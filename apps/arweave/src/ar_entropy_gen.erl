@@ -117,8 +117,7 @@ iteration_end(BucketEndOffset, RangeEnd) ->
 	%% (+ chunk padding) of it.
 	PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
 	PaddedPartitionEnd =
-		ar_chunk_storage:get_chunk_bucket_end(
-			ar_block:get_chunk_padded_offset(PartitionEnd)),
+		ar_chunk_storage:get_chunk_bucket_end(PartitionEnd),
 	%% In addition to limiting this iteration to the PaddedPartitionEnd,
 	%% we also want to limit it to the current storage module's range.
 	%% This allows us to handle both the storage module range as well
@@ -134,12 +133,7 @@ entropy_offsets(Offset) ->
 	BucketEndOffset2 = reset_entropy_offset(BucketEndOffset),
 	Partition = ar_replica_2_9:get_entropy_partition(BucketEndOffset),
 	PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
-	PaddedPartitionEnd =
-		ar_chunk_storage:get_chunk_bucket_end(
-			ar_block:get_chunk_padded_offset(PartitionEnd)),
-	?LOG_DEBUG([{event, entropy_offsets}, {bucket_end_offset, BucketEndOffset},
-		{bucket_end_offset2, BucketEndOffset2}, {partition, Partition},
-		{partition_end, PartitionEnd}, {padded_partition_end, PaddedPartitionEnd}]),
+	PaddedPartitionEnd = ar_chunk_storage:get_chunk_bucket_end(PartitionEnd),
 	entropy_offsets(BucketEndOffset2, PaddedPartitionEnd).
 
 entropy_offsets(BucketEndOffset, PaddedPartitionEnd)
@@ -150,7 +144,7 @@ entropy_offsets(BucketEndOffset, PaddedPartitionEnd) ->
 	[BucketEndOffset | entropy_offsets(NextOffset, PaddedPartitionEnd)].
 
 %% @doc If we are not at the beginning of the entropy, shift the offset to
-%% the left. store_entropy will traverse the entire 2.9 partition shifting
+%% the left. store_entropy_footprint will traverse the entire 2.9 partition shifting
 %% the offset by sector size.
 reset_entropy_offset(BucketEndOffset) ->
 	%% Sanity checks
@@ -163,8 +157,26 @@ shift_entropy_offset(Offset, SectorCount) ->
 	SectorSize = ar_replica_2_9:get_sector_size(),
 	ar_chunk_storage:get_chunk_bucket_end(Offset + SectorSize * SectorCount).
 
+%% @doc Returns a list of 32x 8 MiB entropies. These entropies will need to be sliced
+%% and recombined before they can be used. When properly recombined they contain enough
+%% entropy to cover 1024 chunks. The chunks covered (aka the "footprint") are distributed
+%% throughout the partition
+-spec generate_entropies(StoreID :: ar_storage_module:store_id(),
+						 RewardAddr :: ar_wallet:address(),
+						 BucketEndOffset :: non_neg_integer(),
+						 ReplyTo :: pid()) ->
+							ok.
 generate_entropies(StoreID, RewardAddr, BucketEndOffset, ReplyTo) ->
 	gen_server:cast(name(StoreID), {generate_entropies, RewardAddr, BucketEndOffset, ReplyTo}).
+
+-spec generate_entropies(RewardAddr :: ar_wallet:address(),
+	BucketEndOffset :: non_neg_integer()) ->
+	   [binary()] | {error, term()}.
+generate_entropies(RewardAddr, BucketEndOffset) ->
+	prometheus_histogram:observe_duration(replica_2_9_entropy_duration_milliseconds, [], 
+		fun() ->
+			do_generate_entropies(RewardAddr, BucketEndOffset)
+		end).
 
 map_entropies(_Entropies,
 			[],
@@ -205,7 +217,7 @@ map_entropies(Entropies,
 			Args,
 			Acc) ->
 	% ?LOG_DEBUG([{event, map_entropies}, {bucket_end_offset, BucketEndOffset},
-	% 	{entropy_offsets, EntropyOffsets}, {range_start, RangeStart},
+	% 	{entropy_offsets, length(EntropyOffsets)}, {range_start, RangeStart},
 	% 	{range_end, RangeEnd}, {partition1, ar_replica_2_9:get_entropy_partition(BucketEndOffset)},
 	% 	{partition2, ar_replica_2_9:get_entropy_partition(RangeEnd)}]),
 	
@@ -312,7 +324,7 @@ handle_cast(prepare_entropy, State) ->
 
 handle_cast({generate_entropies, RewardAddr, BucketEndOffset, ReplyTo}, State) ->
 	?LOG_DEBUG([{event, generate_entropies}, {store_id, State#state.store_id},
-			{bucket_end_offset, BucketEndOffset}]),
+			{bucket_end_offset, BucketEndOffset}, {reply_to, ReplyTo}]),
 	Entropies = generate_entropies(RewardAddr, BucketEndOffset),
 	ReplyTo ! {entropy, BucketEndOffset, Entropies},
 	{noreply, State};
@@ -400,10 +412,7 @@ do_prepare_entropy(State) ->
 					_ ->
 						EntropyKeys = generate_entropy_keys(RewardAddr, BucketEndOffset),
 						EntropyOffsets = entropy_offsets(BucketEndOffset),
-						%% Wait for the previous store_entropy to complete. Should only
-						%% return 'false' if the entropy storage process is down (e.g. during
-						%% shutdown)
-						ar_entropy_storage:store_entropy(
+						ar_entropy_storage:store_entropy_footprint(
 							StoreID, Entropies, EntropyOffsets,
 							RangeStart, iteration_end(BucketEndOffset, RangeEnd),
 							EntropyKeys, RewardAddr)
@@ -437,12 +446,7 @@ do_prepare_entropy(State) ->
 			State2
 	end.
 
-%% @doc Returns all the entropies needed to encipher the chunk at PaddedEndOffset.
-generate_entropies(RewardAddr, BucketEndOffset) ->
-	prometheus_histogram:observe_duration(replica_2_9_entropy_duration_milliseconds, [], 
-		fun() ->
-			do_generate_entropies(RewardAddr, BucketEndOffset)
-		end).
+
 
 do_generate_entropies(RewardAddr, BucketEndOffset) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
