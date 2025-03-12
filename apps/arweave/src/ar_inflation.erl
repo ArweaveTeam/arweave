@@ -115,49 +115,49 @@ year_2_test_() ->
 test_year_2() ->
     true = is_in_tolerance(year_sum_rewards(1), ?AR(2750000)).
 
-year_3_test() ->
+year_3_test_() ->
 	{timeout, 60, fun test_year_3/0}.
 
 test_year_3() ->
     true = is_in_tolerance(year_sum_rewards(2), ?AR(1375000)).
 
-year_4_test() ->
+year_4_test_() ->
 	{timeout, 60, fun test_year_4/0}.
 
 test_year_4() ->
     true = is_in_tolerance(year_sum_rewards(3), ?AR(687500)).
 
-year_5_test() ->
+year_5_test_() ->
 	{timeout, 60, fun test_year_5/0}.
 
 test_year_5() ->
     true = is_in_tolerance(year_sum_rewards(4), ?AR(343750)).
 
-year_6_test() ->
+year_6_test_() ->
 	{timeout, 60, fun test_year_6/0}.
 
 test_year_6() ->
     true = is_in_tolerance(year_sum_rewards(5), ?AR(171875)).
 
-year_7_test() ->
+year_7_test_() ->
 	{timeout, 60, fun test_year_7/0}.
 
 test_year_7() ->
     true = is_in_tolerance(year_sum_rewards(6), ?AR(85937.5)).
 
-year_8_test() ->
+year_8_test_() ->
 	{timeout, 60, fun test_year_8/0}.
 
 test_year_8() ->
     true = is_in_tolerance(year_sum_rewards(7), ?AR(42968.75)).
 
-year_9_test() ->
+year_9_test_() ->
 	{timeout, 60, fun test_year_9/0}.
 
 test_year_9() ->
     true = is_in_tolerance(year_sum_rewards(8), ?AR(21484.375)).
 
-year_10_test() ->
+year_10_test_() ->
 	{timeout, 60, fun test_year_10/0}.
 
 test_year_10() ->
