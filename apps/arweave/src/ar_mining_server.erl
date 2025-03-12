@@ -124,7 +124,9 @@ log_prepare_solution_failure2(Solution, FailureReason, AdditionalLogData) ->
 	?LOG_ERROR([{event, failed_to_prepare_block_from_mining_solution},
 			{reason, FailureReason},
 			{solution_hash, ar_util:safe_encode(SolutionH)},
-			{packing_difficulty, PackingDifficulty} | AdditionalLogData]).
+			{packing_difficulty, PackingDifficulty} | AdditionalLogData]),
+	prometheus_gauge:inc(mining_solution_failure, [FailureReason]),
+	prometheus_gauge:inc(mining_solution_total).
 
 -spec get_packing_difficulty(Packing :: ar_storage_module:packing()) ->
 	PackingDifficulty :: non_neg_integer().
