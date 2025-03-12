@@ -200,8 +200,7 @@ handle_info({entropy, BucketEndOffset, Entropies}, State) ->
 	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
 	log_debug(repack_batch_entropy_generated, StoreID, [
 		{bucket_end_offset, BucketEndOffset},
-		{entropies, length(Entropies)},
-		{entropy_offsets, EntropyOffsets}
+		{entropies, length(Entropies)}
 	]),
 
 	State2 = ar_entropy_gen:map_entropies(
@@ -357,7 +356,7 @@ repack(State) ->
 
 get_batch_interval(BucketEndOffset, RangeStart, IterationEnd) ->
 	{ok, Config} = application:get_env(arweave, config),
-	BatchStart = ar_chunk_storage:get_chunk_bucket_start(BucketEndOffset),
+	BatchStart = ar_chunk_storage:get_chunk_byte_from_bucket_end(BucketEndOffset),
 
 	SectorSize = ar_replica_2_9:get_sector_size(),
 	RangeStart2 = ar_chunk_storage:get_chunk_bucket_start(RangeStart + 1),
@@ -422,7 +421,7 @@ repack_chunks([BucketEndOffset | EntropyOffsets], State) ->
 
 	{BatchStart, BatchEnd, BatchOffsets} = get_batch_interval(
 		BucketEndOffset, RangeStart, IterationEnd),
-	log_debug(repack_chunks_offsets, State#state.store_id, [
+	log_debug(repack_chunks, State#state.store_id, [
 		{bucket_end_offset, BucketEndOffset},
 		{batch_start, BatchStart},
 		{batch_end, BatchEnd},
@@ -446,7 +445,8 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 		{bucket_end_offset, BucketEndOffset},
 		{iteration_start, IterationStart},
 		{iteration_end, IterationEnd},
-		{batch_start, BatchStart}, {batch_end, BatchEnd}, {batch_size, BatchSize}
+		{batch_start, BatchStart}, {batch_end, BatchEnd}, {batch_size, BatchSize},
+		{batch_offsets, BatchOffsets}
 	]),
 
 	OffsetChunkMap =
@@ -457,14 +457,14 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 					{batch_end, BatchEnd},
 					{batch_size, BatchSize}
 				]),
-				[];
+				#{};
 			{'EXIT', _Exc} ->
 				log_error(failed_to_read_chunk_range, StoreID, [
 					{batch_start, BatchStart},
 					{batch_end, BatchEnd},
 					{batch_size, BatchSize}
 				]),
-				[];
+				#{};
 			Range ->
 				maps:from_list(Range)
 		end,
@@ -511,15 +511,17 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 				_ -> {no_chunk, none} %% No chunk found, we'll only write entropy
 			end,
 
-			ChunkInfo = maps:get(BucketEndOffset2, Acc),
-
 			?LOG_DEBUG([{event, zip_metadata},
-					{status, Status},
-					{absolute_offset, AbsoluteEndOffset},
-					{bucket_end_offset, BucketEndOffset},
-					{bucket_end_offset2, BucketEndOffset2},
-					{padded_end_offset, PaddedEndOffset},
-					{metadata, OffsetMetadataMap}]),
+				{status, Status},
+				{absolute_offset, AbsoluteEndOffset},
+				{bucket_end_offset, BucketEndOffset},
+				{bucket_end_offset2, BucketEndOffset2},
+				{padded_end_offset, PaddedEndOffset},
+				{chunks, maps:keys(OffsetChunkMap)},
+				{metadata, maps:keys(OffsetMetadataMap)},
+				{chunk_info_map, maps:size(Acc)}]),
+
+			ChunkInfo = maps:get(BucketEndOffset2, Acc),
 
 			ChunkInfo2 = ChunkInfo#chunk_info{
 				status = Status,
@@ -697,7 +699,11 @@ entropy_generated(Entropy, BucketEndOffset, State) ->
 			State;
 		ChunkInfo ->
 			log_debug(entropy_generated, ChunkInfo, State#state.store_id, [
-				{chunk, binary:part(ChunkInfo#chunk_info.chunk, 0, 10)},
+				{status, ChunkInfo#chunk_info.status},
+				{chunk, case ChunkInfo#chunk_info.chunk of
+					undefined -> undefined;
+					Chunk -> binary:part(Chunk, 0, 10)
+				end},
 				{entropy, binary:part(Entropy, 0, 10)}
 			]),
 

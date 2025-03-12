@@ -117,8 +117,7 @@ iteration_end(BucketEndOffset, RangeEnd) ->
 	%% (+ chunk padding) of it.
 	PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
 	PaddedPartitionEnd =
-		ar_chunk_storage:get_chunk_bucket_end(
-			ar_block:get_chunk_padded_offset(PartitionEnd)),
+		ar_chunk_storage:get_chunk_bucket_end(PartitionEnd),
 	%% In addition to limiting this iteration to the PaddedPartitionEnd,
 	%% we also want to limit it to the current storage module's range.
 	%% This allows us to handle both the storage module range as well
@@ -134,9 +133,7 @@ entropy_offsets(Offset) ->
 	BucketEndOffset2 = reset_entropy_offset(BucketEndOffset),
 	Partition = ar_replica_2_9:get_entropy_partition(BucketEndOffset),
 	PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
-	PaddedPartitionEnd =
-		ar_chunk_storage:get_chunk_bucket_end(
-			ar_block:get_chunk_padded_offset(PartitionEnd)),
+	PaddedPartitionEnd = ar_chunk_storage:get_chunk_bucket_end(PartitionEnd),
 	?LOG_DEBUG([{event, entropy_offsets}, {bucket_end_offset, BucketEndOffset},
 		{bucket_end_offset2, BucketEndOffset2}, {partition, Partition},
 		{partition_end, PartitionEnd}, {padded_partition_end, PaddedPartitionEnd}]),
