@@ -159,11 +159,11 @@ open_files(StoreID) ->
 		chunk_storage_file_index
 	).
 
-%% @doc Return {AbsoluteEndOffset, Chunk} for the chunk containing the given byte.
+%% @doc Return {PaddedEndOffset, Chunk} for the chunk containing the given byte.
 get(Byte) ->
 	get(Byte, "default").
 
-%% @doc Return {AbsoluteEndOffset, Chunk} for the chunk containing the given byte.
+%% @doc Return {PaddedEndOffset, Chunk} for the chunk containing the given byte.
 get(Byte, StoreID) ->
 	case ar_sync_record:get_interval(Byte + 1, ar_chunk_storage, StoreID) of
 		not_found ->
@@ -194,13 +194,13 @@ locate_chunk_on_disk(PaddedEndOffset, StoreID, FileIndex) ->
         get_position_and_relative_chunk_offset(ChunkFileStart, PaddedEndOffset),
 	{ChunkFileStart, Filepath, Position, ChunkOffset}.
 
-%% @doc Return a list of {AbsoluteEndOffset, Chunk} pairs for the stored chunks
+%% @doc Return a list of {PaddedEndOffset, Chunk} pairs for the stored chunks
 %% inside the given range. The given interval does not have to cover every chunk
 %% completely - we return all chunks at the intersection with the range.
 get_range(Start, Size) ->
 	get_range(Start, Size, "default").
 
-%% @doc Return a list of {AbsoluteEndOffset, Chunk} pairs for the stored chunks
+%% @doc Return a list of {PaddedEndOffset, Chunk} pairs for the stored chunks
 %% inside the given range. The given interval does not have to cover every chunk
 %% completely - we return all chunks at the intersection with the range. The
 %% very last chunk might be outside of the interval - its start offset is
