@@ -246,7 +246,7 @@ verify_packing(Metadata, State) ->
 verify_chunk_storage(PaddedOffset, Metadata, {End, Start}, State)
 		when PaddedOffset - ?DATA_CHUNK_SIZE >= Start andalso PaddedOffset =< End ->
 	#state{store_id = StoreID} = State,
-	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
+	{AbsoluteOffset, ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
 		_TXRelativeOffset, ChunkSize} = Metadata,
 	{_ChunkFileStart, _Filepath, _Position, ExpectedChunkOffset} =
 				ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
@@ -261,10 +261,23 @@ verify_chunk_storage(PaddedOffset, Metadata, {End, Start}, State)
 					{actual_chunk_offset, ActualChunkOffset}
 				], State);
 		Error ->
+			IsChunkStoredInRocksDB =
+				case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
+					not_found ->
+						false;
+					{ok, Value} ->
+						case binary_to_term(Value) of
+							{_Chunk, _DataPath} ->
+								true;
+							_ ->
+								false
+						end
+				end,
 			invalidate_chunk(
 				invalid_chunk_offset, AbsoluteOffset, ChunkSize, [
 					{expected_chunk_offset, ExpectedChunkOffset}, 
-					{error, Error}
+					{error, Error},
+					{is_chunk_stored_in_rocksdb, IsChunkStoredInRocksDB}
 				], State)
 	end;
 verify_chunk_storage(PaddedOffset, Metadata, _Interval, State) ->
