@@ -2193,6 +2193,8 @@ handle_found_solution(Args, PrevB, State) ->
 							undefined -> 1;
 							_ -> 2
 						end}]),
+			prometheus_gauge:inc(mining_solution_success),
+			prometheus_gauge:inc(mining_solution_total),
 			ar_block_cache:add(block_cache, B),
 			ar_events:send(solution, {accepted, #{ indep_hash => H, source => Source }}),
 			apply_block(update_solution_cache(H, Args, State));
