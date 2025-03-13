@@ -9,8 +9,8 @@
 
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_wallets.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_wallets.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -74,13 +74,13 @@ get_size() ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init([{blocks, []} | _]) ->
+init(#{ blocks := [] }) ->
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
 	ar_node_worker ! wallets_ready,
 	{ok, DAG};
-init([{blocks, Blocks} | Args]) ->
+init(#{ blocks := Blocks } = Args) ->
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, {init, Blocks, Args}),
@@ -170,28 +170,38 @@ handle_call({add_wallets, RootHash, Wallets, Height, Denomination}, _From, DAG) 
 handle_call({set_current, RootHash, Height, PruneDepth}, _, DAG) ->
 	{reply, ok, set_current(DAG, RootHash, Height, PruneDepth)}.
 
-handle_cast({init, Blocks, [{from_state, SearchDepth}]}, _) ->
-	?LOG_DEBUG([{event, init_from_state}, {block_count, length(Blocks)}]),
+handle_cast({init, Blocks, Args}, _) ->
+	SearchDepth = maps:get(search_depth, Args, length(Blocks)),
+	?LOG_DEBUG([{event, reading_account_tree_from_storage},
+			{block_count, length(Blocks)},
+			{search_depth, SearchDepth}]),
 	case find_local_account_tree(Blocks, SearchDepth) of
 		not_found ->
-			ar:console("~n~n\tThe local state is missing an account tree, consider joining "
-					"the network via the trusted peers.~n"),
-			timer:sleep(1000),
-			erlang:halt();
+			B =
+				case length(Blocks) >= ?STORE_BLOCKS_BEHIND_CURRENT of
+					true ->
+						lists:nth(?STORE_BLOCKS_BEHIND_CURRENT, Blocks);
+					false ->
+						lists:last(Blocks)
+				end,
+			case maps:get(trusted_peers, Args, []) of
+				[] ->
+					ar:console("~n~n\tDid not find the account tree in the local state.~n"),
+					timer:sleep(1000),
+					erlang:halt();
+				Peers ->
+					ar:console("~n~n\tDid not find the account tree in the local state, "
+							"downloading from peers...~n"),
+					?LOG_DEBUG([{event, failed_to_find_account_tree_in_storage},
+							{block_count, length(Blocks)},
+							{search_depth, SearchDepth}]),
+					Tree = get_tree_from_peers(B, Peers),
+					initialize_state(Blocks, Tree)
+			end;
 		{Skipped, Tree} ->
 			Blocks2 = lists:nthtail(Skipped, Blocks),
 			initialize_state(Blocks2, Tree)
 	end;
-handle_cast({init, Blocks, [{from_peers, Peers}]}, _) ->
-	B =
-		case length(Blocks) >= ?STORE_BLOCKS_BEHIND_CURRENT of
-			true ->
-				lists:nth(?STORE_BLOCKS_BEHIND_CURRENT, Blocks);
-			false ->
-				lists:last(Blocks)
-		end,
-	Tree = get_tree_from_peers(B, Peers),
-	initialize_state(Blocks, Tree);
 
 handle_cast(Msg, DAG) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
@@ -234,7 +244,9 @@ initialize_state(Blocks, Tree) ->
 	InitialDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
 	{DAG3, LastB} = lists:foldl(
 		fun (B, start) ->
-				{RootHash, UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
+				{Time, {RootHash, UpdatedTree, UpdateMap}} = timer:tc(
+						fun() -> ar_block:hash_wallet_list(Tree) end),
+				?LOG_INFO([{event, computed_account_tree_hash}, {time, Time}]),
 				gen_server:cast(ar_storage, {store_account_tree_update, B#block.height,
 						RootHash, UpdateMap}),
 				RootHash = B#block.wallet_list,

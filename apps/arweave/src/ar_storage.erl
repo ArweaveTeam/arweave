@@ -17,9 +17,10 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_wallets.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
+-include("ar_wallets.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
@@ -882,7 +883,7 @@ read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
 read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K) ->
 	case binary_to_term(Bin) of
 		{Key, Value} ->
-			Tree2 = ar_patricia_tree:insert(Key, Value, Tree),
+			Tree2 = ar_patricia_tree:insert(Key, Value, Tree, K),
 			case Keys of
 				[] ->
 					{ok, Tree2};
@@ -890,9 +891,16 @@ read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K
 					read_wallet_list(get_account_tree_value(H, Prefix), Tree2, Keys2,
 							RootHash, H)
 			end;
-		[{H, Prefix} | Hs] ->
-			read_wallet_list(get_account_tree_value(H, Prefix), Tree, Hs ++ Keys, RootHash,
-					H)
+		[{H, Prefix} | Hs] = L ->
+			{ReadNext, NextKeys} =
+				case Keys of
+					[] ->
+						{{H, Prefix}, Hs};
+					[{H2, Prefix2} | Keys2] ->
+						{{H2, Prefix2}, Keys2 ++ L}
+				end,
+			read_wallet_list(get_account_tree_value(ReadNext), Tree, NextKeys, RootHash,
+					element(1, ReadNext))
 	end;
 read_wallet_list({ok, _, _}, _Tree, _Keys, RootHash, _K) ->
 	read_wallet_list_from_chunk_files(RootHash);
@@ -1299,16 +1307,11 @@ store_account_tree_update(Height, RootHash, Map) ->
 	),
 	?LOG_INFO([{event, stored_account_tree}]).
 
-%% @doc Ignore the prefix when querying a key since the prefix might depend on the order of
-%% insertions and is only used to optimize certain lookups.
+get_account_tree_value({Key, Prefix}) ->
+	get_account_tree_value(Key, Prefix).
+
 get_account_tree_value(Key, Prefix) ->
 	ar_kv:get_prev(account_tree_db, << Key/binary, Prefix/binary >>).
-	% does not work:
-	%ar_kv:get_next(account_tree_db, << Key/binary, Prefix/binary >>).
-	% works:
-	%<< N:(48 * 8) >> = Key,
-	%Key2 = << (N + 1):(48 * 8) >>,
-	%ar_kv:get_prev(account_tree_db, Key2).
 
 %%%===================================================================
 %%% Tests
@@ -1366,16 +1369,27 @@ test_store_and_retrieve_wallet_list() ->
 	TXID = TX#tx.id,
 	ExpectedWL = ar_patricia_tree:from_proplist([{Addr, {0, TXID}}]),
 	WalletListHash = write_wallet_list(0, ExpectedWL),
+	%% 1 key in the tree:
+	%% Addr => {0, TXID}
 	{ok, ActualWL} = read_wallet_list(WalletListHash),
 	assert_wallet_trees_equal(ExpectedWL, ActualWL),
+	HashFun = fun(A, {Balance, LastTX}) ->
+			EncodedBalance = binary:encode_unsigned(Balance),
+			ar_deep_hash:hash([A, EncodedBalance, LastTX])
+		end,
+	?assertMatch({WalletListHash, _, _}, ar_patricia_tree:compute_hash(ActualWL, HashFun)),
 	Addr2 = binary:part(Addr, 0, 16),
 	TXID2 = crypto:strong_rand_bytes(32),
 	ExpectedWL2 = ar_patricia_tree:from_proplist([{Addr, {0, TXID}}, {Addr2, {0, TXID2}}]),
 	WalletListHash2 = write_wallet_list(0, ExpectedWL2),
+	%% 2 keys in the tree:
+	%% Addr => {0, TXID}
+	%% Addr2 => {0, TXID2}
 	{ok, ActualWL2} = read_wallet_list(WalletListHash2),
 	?assertEqual({0, TXID}, read_account(Addr, WalletListHash2)),
 	?assertEqual({0, TXID2}, read_account(Addr2, WalletListHash2)),
 	assert_wallet_trees_equal(ExpectedWL2, ActualWL2),
+	?assertMatch({WalletListHash2, _, _}, ar_patricia_tree:compute_hash(ActualWL2, HashFun)),
 	{WalletListHash, ActualWL3, _UpdateMap} = ar_block:hash_wallet_list(ActualWL),
 	Addr3 = << (binary:part(Addr, 0, 3))/binary, (crypto:strong_rand_bytes(29))/binary >>,
 	TXID3 = crypto:strong_rand_bytes(32),
@@ -1387,8 +1401,13 @@ test_store_and_retrieve_wallet_list() ->
 	?assertEqual({100, TXID3}, read_account(Addr3, WalletListHash3)),
 	?assertEqual({0, TXID4}, read_account(Addr2, WalletListHash3)),
 	?assertEqual({0, TXID}, read_account(Addr, WalletListHash3)),
+	%% 3 keys in the tree:
+	%% Addr => {0, TXID}
+	%% << first 3 bytes of Addr, random bytes >> => {100, TXID3}
+	%% << first 16 bytes of Addr >> => {0, TXID4}
 	{ok, ActualWL6} = read_wallet_list(WalletListHash3),
-	assert_wallet_trees_equal(ActualWL5, ActualWL6).
+	assert_wallet_trees_equal(ActualWL5, ActualWL6),
+	?assertMatch({WalletListHash3, _, _}, ar_patricia_tree:compute_hash(ActualWL6, HashFun)).
 
 test_store_and_retrieve_wallet_list_permutations() ->
 	lists:foreach(
@@ -1439,43 +1458,112 @@ store_and_retrieve_wallet_list(Keys) ->
 	MinBinary = <<>>,
 	MaxBinary = << <<1:1>> || _ <- lists:seq(1, 512) >>,
 	ar_kv:delete_range(account_tree_db, MinBinary, MaxBinary),
-	store_and_retrieve_wallet_list(Keys, ar_patricia_tree:new(), maps:new(), false).
+	store_and_retrieve_wallet_list(Keys,
+			ar_patricia_tree:new(), not_set, not_set, maps:new()).
 
-store_and_retrieve_wallet_list([], Tree, InsertedKeys, IsUpdate) ->
-	store_and_retrieve_wallet_list2(Tree, InsertedKeys, IsUpdate);
-store_and_retrieve_wallet_list([Key | Keys], Tree, InsertedKeys, IsUpdate) ->
+store_and_retrieve_wallet_list([], Tree, HashedTree, StoredTree, InsertedKeys) ->
+	store_and_retrieve_wallet_list2(Tree, HashedTree, StoredTree, InsertedKeys);
+store_and_retrieve_wallet_list([Key | Keys], Tree, HashedTree, StoredTree, InsertedKeys) ->
+	%% Insert a new key.
 	TXID = crypto:strong_rand_bytes(32),
 	Balance = rand:uniform(1000000000),
 	Tree2 = ar_patricia_tree:insert(Key, {Balance, TXID}, Tree),
 	InsertedKeys2 = maps:put(Key, {Balance, TXID}, InsertedKeys),
-	case rand:uniform(2) of
-		1 ->
-			Tree3 = store_and_retrieve_wallet_list2(Tree2, InsertedKeys2, IsUpdate),
-			store_and_retrieve_wallet_list(Keys, Tree3, InsertedKeys2, true);
-		_ ->
-			store_and_retrieve_wallet_list(Keys, Tree2, InsertedKeys2, IsUpdate)
-	end.
+	{HashedTree2, StoredTree2} = store_and_retrieve_wallet_list2(
+			Tree2, HashedTree, StoredTree, InsertedKeys2),
+	%% Update a random key.
+	RandomKey = ar_util:pick_random(maps:keys(InsertedKeys2)),
+	TXID2 = crypto:strong_rand_bytes(32),
+	Balance2 = rand:uniform(1000000000),
+	Tree3 = ar_patricia_tree:insert(RandomKey, {Balance2, TXID2}, Tree2),
+	InsertedKeys3 = maps:put(RandomKey, {Balance2, TXID2}, InsertedKeys2),
+	{HashedTree3, StoredTree3} = store_and_retrieve_wallet_list2(
+			Tree3, HashedTree2, StoredTree2, InsertedKeys3),
+	store_and_retrieve_wallet_list(Keys, Tree3, HashedTree3, StoredTree3, InsertedKeys3).
 
-store_and_retrieve_wallet_list2(Tree, InsertedKeys, IsUpdate) ->
-	{WalletListHash, Tree2} =
-		case IsUpdate of
-			false ->
-				{write_wallet_list(0, Tree), Tree};
+store_and_retrieve_wallet_list2(Tree, HashedTree, StoredTree, InsertedKeys) ->
+	{WalletListHash, HashedTree2, Map} = ar_block:hash_wallet_list(Tree),
+	?assertMatch({WalletListHash, HashedTree2, _},
+			ar_block:hash_wallet_list(HashedTree2)),
+	%% Take the tree with computed hashes from the previous iteration,
+	%% insert the new keys (by inserting all keys again) and recompute the hashes.
+	%% Assert we get the same result as if we had computed the hashes from scratch
+	%% like in Tree.
+	RehashedTree =
+		case HashedTree of
+			not_set ->
+				HashedTree2;
 			_ ->
-				{R, T, Map} = ar_block:hash_wallet_list(Tree),
-				store_account_tree_update(0, R, Map),
-				{R, T}
+				lists:foldl(fun({Key, Value}, Acc) ->
+					ar_patricia_tree:insert(Key, Value, Acc)
+				end, HashedTree, maps:to_list(InsertedKeys))
 		end,
-	{ok, ActualTree} = read_wallet_list(WalletListHash),
+	%% The order of insertions is always the same so we can expect
+	%% tree structures to be exactly equal.
+	?assertMatch({WalletListHash, HashedTree2, _},
+			ar_block:hash_wallet_list(RehashedTree)),
+
+	store_account_tree_update(0, WalletListHash, Map),
+	{WalletListHash, StoredTree2, _} = ar_block:hash_wallet_list(
+			element(2, read_wallet_list(WalletListHash))),
 	maps:foreach(
 		fun(Key, {Balance, TXID}) ->
 			?assertEqual({Balance, TXID}, read_account(Key, WalletListHash))
 		end,
 		InsertedKeys
 	),
-	assert_wallet_trees_equal(Tree, ActualTree),
-	assert_wallet_trees_equal(Tree2, ActualTree),
-	Tree2.
+	%% Take the previous tree fetched from the storage,
+	%% insert the new keys (by inserting all keys again) and recompute the hashes.
+	UpdatedStoredTree =
+		case StoredTree of
+			not_set ->
+				StoredTree2;
+			_ ->
+				lists:foldl(fun({Key, Value}, Acc) ->
+					ar_patricia_tree:insert(Key, Value, Acc)
+				end, StoredTree, maps:to_list(InsertedKeys))
+		end,
+	%% The order of insertions is NOT always the same so we cannot expect
+	%% tree structures to be exactly equal.
+	?assertMatch({WalletListHash, _, _},
+			ar_block:hash_wallet_list(UpdatedStoredTree)),
+	?assertMatch({WalletListHash, StoredTree2, _},
+			ar_block:hash_wallet_list(StoredTree2)),
+
+	assert_wallet_trees_equal(Tree, StoredTree2),
+	assert_wallet_trees_equal(HashedTree2, StoredTree2),
+	assert_wallet_trees_equal(Tree, RehashedTree),
+	assert_wallet_trees_equal(HashedTree2, UpdatedStoredTree),
+
+	%% Check tree iterations.
+	SortedKeys = lists:sort(maps:keys(InsertedKeys)),
+	FirstKey = hd(SortedKeys),
+	?assertEqual([{FirstKey, maps:get(FirstKey, InsertedKeys)}],
+			ar_patricia_tree:get_range(1, StoredTree2)),
+	?assertEqual([{FirstKey, maps:get(FirstKey, InsertedKeys)}],
+			ar_patricia_tree:get_range(FirstKey, 1, StoredTree2)),
+	SortedPairs = lists:map(
+			fun(Key) -> {Key, maps:get(Key, InsertedKeys)} end,
+			lists:sort(maps:keys(InsertedKeys))),
+	?assertEqual(SortedPairs,
+			%% Keys sorting depends on the insertion order.
+			lists:sort(ar_patricia_tree:get_range(FirstKey, length(SortedKeys), StoredTree2))),
+	?assertEqual(SortedPairs,
+			lists:sort(ar_patricia_tree:foldr(
+					fun(Key, Value, Acc) -> [{Key, Value} | Acc] end,
+					[],
+					StoredTree2))),
+	case length(SortedKeys) > 2 of
+		true ->
+			SecondKey = lists:nth(2, SortedKeys),
+			ThirdKey = lists:nth(3, SortedKeys),
+			?assertEqual([{SecondKey, maps:get(SecondKey, InsertedKeys)},
+						{ThirdKey, maps:get(ThirdKey, InsertedKeys)}],
+					lists:sort(ar_patricia_tree:get_range(SecondKey, 2, StoredTree2)));
+		false ->
+			ok
+	end,
+	{HashedTree2, StoredTree2}.
 
 %% From: https://www.erlang.org/doc/programming_examples/list_comprehensions.html#permutations
 permutations([]) -> [[]];
