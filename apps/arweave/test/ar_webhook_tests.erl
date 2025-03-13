@@ -32,6 +32,17 @@ handle([<<"txdata">>], Req, State) ->
 	{ok, Reply, _} = cowboy_req:read_body(Req),
 	JSON = jiffy:decode(Reply, [return_maps]),
 	ets:insert(?MODULE, {{tx_data_payload, maps:get(<<"txid">>, JSON)}, JSON}),
+	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State};
+
+handle([<<"solution">>], Req, State) ->
+	{ok, Reply, _} = cowboy_req:read_body(Req),
+	JSON = jiffy:decode(Reply, [return_maps]),
+	case maps:get(<<"event">>, JSON, not_found) of
+		<<"solution_accepted">> ->
+			ets:update_counter(?MODULE, accepted_solutions, {2, 1}, {accepted_solutions, 0});
+		_ ->
+			ok
+	end,
 	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}.
 
 webhooks_test_() ->
@@ -59,6 +70,10 @@ test_webhooks() ->
 				#config_webhook{
 					url = <<"http://127.0.0.1:", PortBinary/binary, "/txdata">>,
 					events = [transaction_data]
+				},
+				#config_webhook{
+					url = <<"http://127.0.0.1:", PortBinary/binary, "/solution">>,
+					events = [solution]
 				}
 			],
 			transaction_blacklist_files = [TXBlacklistFilename]
@@ -95,6 +110,8 @@ test_webhooks() ->
 					ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 					ar_test_node:mine(),
 					wait_until_height(main, Height),
+					[{_, AcceptedSolutionCount}] = ets:lookup(?MODULE, accepted_solutions),
+					?assert(AcceptedSolutionCount >= Height),
 					SignedTX
 				end,
 				lists:seq(1, 10)

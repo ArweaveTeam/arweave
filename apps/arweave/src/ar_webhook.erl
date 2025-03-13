@@ -212,37 +212,50 @@ handle_info({event, sync_record, _}, State) ->
 handle_info({event, solution, {rejected, #{ solution_hash := SolutionH, reason := Reason, source := Source }}}, State) ->
 	URL = State#state.url,
 	Headers = State#state.headers,
-	Payload = #{ event => solution_rejected, solution_hash => SolutionH, reason => Reason, source => Source },
+	Payload = #{ event => solution_rejected,
+		solution_hash => ar_util:encode(SolutionH),
+		reason => Reason,
+		source => Source },
 	call_webhook(URL, Headers, Payload, solution_rejected),
 	{noreply, State};
 handle_info({event, solution, {stale, #{ solution_hash := SolutionH, source := Source }}}, State) ->
 	URL = State#state.url,
 	Headers = State#state.headers,
-	Payload = #{ event => solution_stale, solution_hash => SolutionH, source => Source },
+	Payload = #{ event => solution_stale,
+		solution_hash => ar_util:encode(SolutionH),
+		source => Source },
 	call_webhook(URL, Headers, Payload, solution_stale),
 	{noreply, State};
 handle_info({event, solution, {partial, #{ solution_hash := SolutionH, source := Source }}}, State) ->
 	URL = State#state.url,
 	Headers = State#state.headers,
-	Payload = #{ event => solution_partial, solution_hash => SolutionH, source => Source },
+	Payload = #{ event => solution_partial,
+		solution_hash => ar_util:encode(SolutionH),
+		source => Source },
 	call_webhook(URL, Headers, Payload, solution_partial),
 	{noreply, State};
 handle_info({event, solution, {accepted, #{ indep_hash := H, source := Source, is_rebase := IsRebase }}}, State) ->
 	URL = State#state.url,
 	Headers = State#state.headers,
-	Payload = #{ event => solution_accepted, indep_hash => H, source => Source, is_rebase => IsRebase },
+	Payload = #{ event => solution_accepted,
+		indep_hash => ar_util:encode(H),
+		source => Source,
+		is_rebase => IsRebase },
 	call_webhook(URL, Headers, Payload, solution_accepted),
 	{noreply, State};
 handle_info({event, solution, {confirmed, #{ indep_hash := BH, confirmations := N }}}, State) ->
 	URL = State#state.url,
 	Headers = State#state.headers,
-	Payload = #{ event => solution_confirmed, indep_hash => BH, confirmations => N },
+	Payload = #{ event => solution_confirmed,
+		indep_hash => ar_util:encode(BH),
+		confirmations => N },
 	call_webhook(URL, Headers, Payload, solution_confirmed),
 	{noreply, State};
 handle_info({event, solution, {orphaned, #{ indep_hash := BH }}}, State) ->
 	URL = State#state.url,
 	Headers = State#state.headers,
-	Payload = #{ event => solution_orphaned, indep_hash => BH },
+	Payload = #{ event => solution_orphaned,
+		indep_hash => ar_util:encode(BH) },
 	call_webhook(URL, Headers, Payload, solution_orphaned),
 	{noreply, State};
 handle_info({event, solution, _}, State) ->
