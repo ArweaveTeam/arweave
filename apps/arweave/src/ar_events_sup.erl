@@ -13,7 +13,7 @@
 %% Supervisor callbacks
 -export([init/1]).
 
--include_lib("arweave/include/ar_sup.hrl").
+-include("../include/ar_sup.hrl").
 
 %% Helper macro for declaring children of supervisor.
 -define(CHILD(Mod, I, Type), {I, {Mod, start_link, [I]}, permanent, ?SHUTDOWN_TIMEOUT, Type,
@@ -53,7 +53,7 @@ init([]) ->
 		?CHILD(ar_events, chunk_storage, worker),
 		%% Events: add_range, remove_range, global_remove_range, cut, global_cut.
 		?CHILD(ar_events, sync_record, worker),
-		%% Events: rejected, stale, partial, accepted.
+		%% Events: rejected, stale, partial, accepted, confirmed, orphaned.
 		?CHILD(ar_events, solution, worker),
 		%% Used for the testing purposes.
 		?CHILD(ar_events, testing, worker)

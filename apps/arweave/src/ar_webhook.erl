@@ -11,7 +11,7 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
--include_lib("arweave/include/ar_config.hrl").
+-include("../include/ar_config.hrl").
 
 -define(NUMBER_OF_TRIES, 10).
 -define(WAIT_BETWEEN_TRIES, 30 * 1000).
@@ -87,6 +87,9 @@ init(Hook) ->
 				ar_events:subscribe(tx),
 				ok = ar_events:subscribe(sync_record),
 				Acc#state{ listen_to_transaction_data_stream = true };
+			(solution, Acc) ->
+				ok = ar_events:subscribe(solution),
+				Acc;
 			(_, Acc) ->
 				?LOG_WARNING("Wrong event name in webhook ~p", [Hook]),
 				Acc
@@ -206,6 +209,58 @@ handle_info({event, sync_record, {global_remove_range, Start, End}},
 handle_info({event, sync_record, _}, State) ->
 	{noreply, State};
 
+handle_info({event, solution, {rejected, #{ solution_hash := SolutionH, reason := Reason, source := Source }}}, State) ->
+	URL = State#state.url,
+	Headers = State#state.headers,
+	Payload = #{ event => solution_rejected,
+		solution_hash => ar_util:encode(SolutionH),
+		reason => Reason,
+		source => Source },
+	call_webhook(URL, Headers, Payload, solution_rejected),
+	{noreply, State};
+handle_info({event, solution, {stale, #{ solution_hash := SolutionH, source := Source }}}, State) ->
+	URL = State#state.url,
+	Headers = State#state.headers,
+	Payload = #{ event => solution_stale,
+		solution_hash => ar_util:encode(SolutionH),
+		source => Source },
+	call_webhook(URL, Headers, Payload, solution_stale),
+	{noreply, State};
+handle_info({event, solution, {partial, #{ solution_hash := SolutionH, source := Source }}}, State) ->
+	URL = State#state.url,
+	Headers = State#state.headers,
+	Payload = #{ event => solution_partial,
+		solution_hash => ar_util:encode(SolutionH),
+		source => Source },
+	call_webhook(URL, Headers, Payload, solution_partial),
+	{noreply, State};
+handle_info({event, solution, {accepted, #{ indep_hash := H, source := Source, is_rebase := IsRebase }}}, State) ->
+	URL = State#state.url,
+	Headers = State#state.headers,
+	Payload = #{ event => solution_accepted,
+		indep_hash => ar_util:encode(H),
+		source => Source,
+		is_rebase => IsRebase },
+	call_webhook(URL, Headers, Payload, solution_accepted),
+	{noreply, State};
+handle_info({event, solution, {confirmed, #{ indep_hash := BH, confirmations := N }}}, State) ->
+	URL = State#state.url,
+	Headers = State#state.headers,
+	Payload = #{ event => solution_confirmed,
+		indep_hash => ar_util:encode(BH),
+		confirmations => N },
+	call_webhook(URL, Headers, Payload, solution_confirmed),
+	{noreply, State};
+handle_info({event, solution, {orphaned, #{ indep_hash := BH }}}, State) ->
+	URL = State#state.url,
+	Headers = State#state.headers,
+	Payload = #{ event => solution_orphaned,
+		indep_hash => ar_util:encode(BH) },
+	call_webhook(URL, Headers, Payload, solution_orphaned),
+	{noreply, State};
+handle_info({event, solution, _}, State) ->
+	{noreply, State};
+
 handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.
@@ -303,7 +358,9 @@ do_call_webhook(URL, Headers, Entity, Event, _N) ->
 
 entity_id(#block{ indep_hash = ID }) -> ar_util:encode(ID);
 entity_id(#tx{ id = ID }) -> ar_util:encode(ID);
-entity_id(#{ txid := TXID }) -> TXID.
+entity_id(#{ txid := TXID }) -> ar_util:encode(TXID);
+entity_id(#{ indep_hash := H }) -> ar_util:encode(H);
+entity_id(#{ solution_hash := H }) -> ar_util:encode(H).
 
 to_json(#block{} = Block) ->
 	{JSONKVPairs} = ar_serialize:block_to_json_struct(Block),

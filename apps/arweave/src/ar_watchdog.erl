@@ -9,7 +9,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, started_hashing/0, block_received_n_confirmations/2, mined_block/3,
-			is_mined_block/1]).
+			is_mined_block/1, block_orphaned/2]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -30,6 +30,9 @@ started_hashing() ->
 
 block_received_n_confirmations(BH, Height) ->
 	gen_server:cast(?MODULE, {block_received_n_confirmations, BH, Height}).
+
+block_orphaned(BH, Height) ->
+	gen_server:cast(?MODULE, {block_orphaned, BH, Height}).
 
 mined_block(BH, Height, PrevH) ->
 	gen_server:cast(?MODULE, {mined_block, BH, Height, PrevH}).
@@ -111,18 +114,40 @@ handle_cast(started_hashing, State) ->
 handle_cast({block_received_n_confirmations, BH, Height}, State) ->
 	MinedBlocks = State#state.mined_blocks,
 	UpdatedMinedBlocks = case maps:take(Height, MinedBlocks) of
-		{BH, Map} when State#state.miner_logging == true ->
-			%% Log the message for block mined by the local node
-			%% got confirmed by the network.
-			Message = io_lib:format("Your block ~s was accepted by the network!",
-					[ar_util:encode(BH)]),
-			?LOG_INFO([{event, block_got_10_confirmations}, {block, ar_util:encode(BH)}]),
-			ar:console("~s~n", [Message]),
+		{BH, Map} ->
+			ar_events:send(solution, {confirmed, #{ indep_hash => BH, confirmations => 10 }}),
 			ar_mining_stats:block_found(),
-			Map;
-		{_, Map} ->
-			ar_mining_stats:block_found(),
-			Map;
+			case State#state.miner_logging of
+				true ->
+					Message = io_lib:format("Your block ~s was accepted by the network!",
+							[ar_util:encode(BH)]),
+					?LOG_INFO([{event, block_got_10_confirmations}, {block, ar_util:encode(BH)}]),
+					ar:console("~s~n", [Message]),
+					ar_mining_stats:block_found(),
+					Map;
+				_ ->
+					Map
+			end;
+		error ->
+			MinedBlocks
+	end,
+	{noreply, State#state{ mined_blocks = UpdatedMinedBlocks }};
+
+handle_cast({block_orphaned, BH, Height}, State) ->
+	MinedBlocks = State#state.mined_blocks,
+	UpdatedMinedBlocks = case maps:take(Height, MinedBlocks) of
+		{BH, Map} ->
+			ar_events:send(solution, {orphaned, #{ indep_hash => BH }}),
+			case State#state.miner_logging of
+				true ->
+					Message = io_lib:format("Your block ~s was orphaned.",
+							[ar_util:encode(BH)]),
+					?LOG_INFO([{event, mined_block_orphaned}, {block, ar_util:encode(BH)}]),
+					ar:console("~s~n", [Message]),
+					Map;
+				_ ->
+					Map
+			end;
 		error ->
 			MinedBlocks
 	end,
