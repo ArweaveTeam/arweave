@@ -705,6 +705,9 @@ prepare_solution(steps, Candidate, Solution) ->
 							Solution#mining_solution{ steps = Steps })
 			end;
 		false ->
+			ar_events:send(solution, {stale,
+					#{ solution_hash => Solution#mining_solution.solution_hash,
+						source => miner }}),
 			log_prepare_solution_failure(Solution, stale_step_number, [
 					{start_step_number, PrevStepNumber},
 					{next_step_number, StepNumber},
@@ -727,6 +730,9 @@ prepare_solution(proofs, Candidate, Solution) ->
 	case {H1, H2} of
 		{not_set, not_set} ->
 			%% We should never end up here..
+			ar_events:send(solution, {rejected,
+					#{ solution_hash => Solution#mining_solution.solution_hash,
+						reason => h1_h2_not_set, source => miner }}),
 			log_prepare_solution_failure(Solution, h1_h2_not_set, []),
 			error;
 		{H1, not_set} ->
@@ -771,6 +777,10 @@ prepare_solution(poa1, Candidate, Solution) ->
 							StoreID = ar_storage_module:id(StorageModule),
 							case ar_chunk_storage:get(RecallByte1, StoreID) of
 								not_found ->
+									ar_events:send(solution, {rejected,
+										#{ solution_hash => Solution#mining_solution.solution_hash,
+											reason => chunk1_for_h2_solution_not_found,
+											source => miner }}),
 									log_prepare_solution_failure(Solution,
 											chunk1_for_h2_solution_not_found,
 											LogData),
@@ -786,6 +796,10 @@ prepare_solution(poa1, Candidate, Solution) ->
 											LogData)
 							end;
 						_ ->
+							ar_events:send(solution, {rejected,
+								#{ solution_hash => Solution#mining_solution.solution_hash,
+									reason => storage_module_for_chunk1_for_h2_solution_not_found,
+									source => miner }}),
 							log_prepare_solution_failure(Solution,
 									storage_module_for_chunk1_for_h2_solution_not_found,
 									LogData),
@@ -903,6 +917,9 @@ may_be_leave_it_to_exit_peer(Solution, FailureReason, AdditionalLogData) ->
 		true ->
 			Solution;
 		false ->
+			ar_events:send(solution, {rejected,
+					#{ solution_hash => Solution#mining_solution.solution_hash,
+						reason => FailureReason, source => miner }}),
 			log_prepare_solution_failure(Solution, FailureReason, AdditionalLogData),
 			error
 	end.
@@ -938,6 +955,8 @@ post_solution(not_set, Solution, State) ->
 			ar:console("WARNING: we failed to validate our solution. Check logs for more "
 					"details~n");
 		{false, Reason} ->
+			ar_events:send(solution, {rejected,
+					#{ reason => Reason, source => miner }}),
 			?LOG_WARNING([{event, found_invalid_solution},
 					{reason, Reason},
 					{partition, PartitionNumber},
@@ -1225,6 +1244,10 @@ validate_solution(Solution, DiffPair) ->
 													Chunk2ID},
 											{true, PoACache, PoA2Cache};
 										error ->
+											ar_events:send(solution, {rejected,
+												#{ solution_hash => Solution#mining_solution.solution_hash,
+													reason => poa2_validation_error,
+													source => miner }}),
 											log_prepare_solution_failure(Solution,
 												poa2_validation_error, []),
 											error;
@@ -1235,6 +1258,9 @@ validate_solution(Solution, DiffPair) ->
 					end
 			end;
 		error ->
+			ar_events:send(solution, {rejected,
+					#{ solution_hash => Solution#mining_solution.solution_hash,
+						reason => poa1_validation_error, source => miner }}),
 			log_prepare_solution_failure(Solution, poa1_validation_error, []),
 			error;
 		false ->

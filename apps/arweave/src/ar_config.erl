@@ -4,10 +4,10 @@
 		pull_from_remote_vdf_server/0, compute_own_vdf/0, is_vdf_server/0,
 		is_public_vdf_server/0, parse/1, parse_storage_module/1, log_config/1]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_p3.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_p3.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -808,6 +808,7 @@ parse_webhook_events([Event | Rest], Events) ->
 		<<"transaction">> -> parse_webhook_events(Rest, [transaction | Events]);
 		<<"transaction_data">> -> parse_webhook_events(Rest, [transaction_data | Events]);
 		<<"block">> -> parse_webhook_events(Rest, [block | Events]);
+		<<"solution">> -> parse_webhook_events(Rest, [solution | Events]);
 		_ -> error
 	end;
 parse_webhook_events([], Events) ->
