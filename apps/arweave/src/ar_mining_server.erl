@@ -7,7 +7,7 @@
 		start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, set_height/1,
 		compute_h2_for_peer/1, prepare_and_post_solution/1, prepare_poa/3,
 		get_recall_bytes/5, active_sessions/0, encode_sessions/1, add_pool_job/6,
-		is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/3,
+		is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/5,
 		get_packing_difficulty/1, get_packing_type/1]).
 -export([pause/0]).
 
@@ -100,33 +100,40 @@ is_one_chunk_solution(Solution) ->
 
 -spec log_prepare_solution_failure(
 	Solution :: #mining_solution{},
+	FailureType :: stale | rejected,
 	FailureReason :: atom(),
+	Source :: atom(),
 	AdditionalLogData :: list({atom(), term()})
 ) ->
 	Ret :: ok.
 
 -ifdef(AR_TEST).
-log_prepare_solution_failure(_Solution, stale_step_number, _AdditionalLogData) ->
+log_prepare_solution_failure(_Solution, stale, _FailureReason, _Source, _AdditionalLogData) ->
 	ok;
-log_prepare_solution_failure(Solution, FailureReason, AdditionalLogData) ->
-	log_prepare_solution_failure2(Solution, FailureReason, AdditionalLogData).
+log_prepare_solution_failure(Solution, FailureType, FailureReason, Source, AdditionalLogData) ->
+	log_prepare_solution_failure2(Solution, FailureType, FailureReason, Source, AdditionalLogData).
 -else.
-log_prepare_solution_failure(Solution, FailureReason, AdditionalLogData) ->
-	log_prepare_solution_failure2(Solution, FailureReason, AdditionalLogData).
+log_prepare_solution_failure(Solution, FailureType, FailureReason, Source, AdditionalLogData) ->
+	log_prepare_solution_failure2(Solution, FailureType, FailureReason, Source, AdditionalLogData).
 -endif.
 
-log_prepare_solution_failure2(Solution, FailureReason, AdditionalLogData) ->
+log_prepare_solution_failure2(Solution, FailureType, FailureReason, Source, AdditionalLogData) ->
 	#mining_solution{
 		solution_hash = SolutionH,
 		packing_difficulty = PackingDifficulty } = Solution,
+
+	ar_events:send(solution, {FailureType,
+		#{ solution_hash => SolutionH,
+			reason => FailureReason,
+			source => Source }}),
+
 	ar:console("~nFailed to prepare block from the mining solution.. Reason: ~p~n",
 			[FailureReason]),
 	?LOG_ERROR([{event, failed_to_prepare_block_from_mining_solution},
 			{reason, FailureReason},
 			{solution_hash, ar_util:safe_encode(SolutionH)},
 			{packing_difficulty, PackingDifficulty} | AdditionalLogData]),
-	prometheus_gauge:inc(mining_solution_failure, [FailureReason]),
-	prometheus_gauge:inc(mining_solution_total).
+	prometheus_gauge:inc(mining_solution_failure, [FailureReason]).
 
 -spec get_packing_difficulty(Packing :: ar_storage_module:packing()) ->
 	PackingDifficulty :: non_neg_integer().
@@ -705,7 +712,7 @@ prepare_solution(steps, Candidate, Solution) ->
 							Solution#mining_solution{ steps = Steps })
 			end;
 		false ->
-			log_prepare_solution_failure(Solution, stale_step_number, [
+			log_prepare_solution_failure(Solution, stale, stale_step_number, miner, [
 					{start_step_number, PrevStepNumber},
 					{next_step_number, StepNumber},
 					{next_seed, ar_util:safe_encode(PrevNextSeed)},
@@ -727,7 +734,7 @@ prepare_solution(proofs, Candidate, Solution) ->
 	case {H1, H2} of
 		{not_set, not_set} ->
 			%% We should never end up here..
-			log_prepare_solution_failure(Solution, h1_h2_not_set, []),
+			log_prepare_solution_failure(Solution, rejected, h1_h2_not_set, miner, []),
 			error;
 		{H1, not_set} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{
@@ -772,7 +779,7 @@ prepare_solution(poa1, Candidate, Solution) ->
 							case ar_chunk_storage:get(RecallByte1, StoreID) of
 								not_found ->
 									log_prepare_solution_failure(Solution,
-											chunk1_for_h2_solution_not_found,
+											rejected, chunk1_for_h2_solution_not_found, miner,
 											LogData),
 									error;
 								{_EndOffset, Chunk} ->
@@ -786,8 +793,8 @@ prepare_solution(poa1, Candidate, Solution) ->
 											LogData)
 							end;
 						_ ->
-							log_prepare_solution_failure(Solution,
-									storage_module_for_chunk1_for_h2_solution_not_found,
+							log_prepare_solution_failure(Solution, rejected,
+									storage_module_for_chunk1_for_h2_solution_not_found, miner,
 									LogData),
 							error
 					end;
@@ -903,7 +910,8 @@ may_be_leave_it_to_exit_peer(Solution, FailureReason, AdditionalLogData) ->
 		true ->
 			Solution;
 		false ->
-			log_prepare_solution_failure(Solution, FailureReason, AdditionalLogData),
+			log_prepare_solution_failure(
+				Solution, rejected, FailureReason, miner, AdditionalLogData),
 			error
 	end.
 
@@ -938,6 +946,8 @@ post_solution(not_set, Solution, State) ->
 			ar:console("WARNING: we failed to validate our solution. Check logs for more "
 					"details~n");
 		{false, Reason} ->
+			ar_events:send(solution, {rejected,
+					#{ reason => Reason, source => miner }}),
 			?LOG_WARNING([{event, found_invalid_solution},
 					{reason, Reason},
 					{partition, PartitionNumber},
@@ -1226,7 +1236,7 @@ validate_solution(Solution, DiffPair) ->
 											{true, PoACache, PoA2Cache};
 										error ->
 											log_prepare_solution_failure(Solution,
-												poa2_validation_error, []),
+												rejected, poa2_validation_error, miner, []),
 											error;
 										false ->
 											{false, poa2}
@@ -1235,7 +1245,7 @@ validate_solution(Solution, DiffPair) ->
 					end
 			end;
 		error ->
-			log_prepare_solution_failure(Solution, poa1_validation_error, []),
+			log_prepare_solution_failure(Solution, rejected, poa1_validation_error, miner, []),
 			error;
 		false ->
 			{false, poa1}

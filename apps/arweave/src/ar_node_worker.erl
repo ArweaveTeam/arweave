@@ -321,15 +321,13 @@ calculate_delay(Bytes) ->
 handle_call({set_reward_addr, Addr}, _From, State) ->
 	{reply, ok, State#{ reward_addr => Addr }}.
 
-
 handle_cast({found_solution, miner, _Solution, _PoACache, _PoA2Cache},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
 handle_cast({found_solution, Source, Solution, PoACache, PoA2Cache}, State) ->
 	[{_, PrevH}] = ets:lookup(node_state, current),
 	PrevB = ar_block_cache:get(block_cache, PrevH),
-	handle_found_solution({Source, Solution, PoACache, PoA2Cache}, PrevB, State);
-
+	handle_found_solution({Source, Solution, PoACache, PoA2Cache}, PrevB, State, false);
 
 handle_cast(process_task_queue, #{ task_queue := TaskQueue } = State) ->
 	RunTask =
@@ -815,7 +813,7 @@ maybe_rebase(#{ pending_rebase := {PrevH, H} } = State) ->
 							{prev_h, ar_util:encode(PrevH)},
 							{solution_h, ar_util:encode(SolutionH)},
 							{expected_new_height, PrevB#block.height + 1}]),
-					handle_found_solution(Args, PrevB, State)
+					handle_found_solution(Args, PrevB, State, true)
 				end;
 		{B, {Status, Timestamp}} ->
 			PrevBlocks = ar_block_cache:get_fork_blocks(block_cache, B),
@@ -1369,6 +1367,14 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	ForkRootB = lists:last(PrevBlocks), %% The root of any detected fork
 	prometheus_gauge:set(block_time, B#block.timestamp - PrevB#block.timestamp),
 	record_economic_metrics(B, PrevB),
+	lists:foldl(
+		fun(OrphanH, OrphanHeight) ->
+			ar_watchdog:block_orphaned(OrphanH, OrphanHeight),
+			OrphanHeight + 1
+		end,
+		ForkRootB#block.height + 1,
+		Orphans
+	),
 	ar_chain_stats:log_fork(Orphans, ForkRootB),
 	record_vdf_metrics(B, PrevB),
 	return_orphaned_txs_to_mempool(CurrentH, ForkRootB#block.indep_hash),
@@ -1866,7 +1872,7 @@ dump_mempool(TXs, MempoolSize) ->
 			?LOG_ERROR([{event, failed_to_dump_mempool}, {reason, Reason}])
 	end.
 
-handle_found_solution(Args, PrevB, State) ->
+handle_found_solution(Args, PrevB, State, IsRebase) ->
 	{Source, Solution, PoACache, PoA2Cache} = Args,
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
@@ -1920,18 +1926,14 @@ handle_found_solution(Args, PrevB, State) ->
 	PassesTimelineCheck =
 		case IsBanned of
 			true ->
-				ar_events:send(solution, {rejected, #{ reason => mining_address_banned,
-						source => Source }}),
-				ar_mining_server:log_prepare_solution_failure(Solution,
-						mining_address_banned, []),
+				ar_mining_server:log_prepare_solution_failure(Solution, rejected,
+						mining_address_banned, Source, []),
 				{false, address_banned};
 			false ->
 				case ar_block:validate_replica_format(Height, PackingDifficulty, ReplicaFormat) of
 					false ->
-						ar_events:send(solution, {rejected,
-								#{ reason => invalid_packing_difficulty, source => Source }}),
 						ar_mining_server:log_prepare_solution_failure(Solution,
-								invalid_packing_difficulty, []),
+								rejected, invalid_packing_difficulty, Source, []),
 						{false, invalid_packing_difficulty};
 					true ->
 						case ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo,
@@ -1941,9 +1943,8 @@ handle_found_solution(Args, PrevB, State) ->
 									NonceLimiterInfo#nonce_limiter_info.global_step_number,
 								PrevBlockVDF =
 									PrevNonceLimiterInfo#nonce_limiter_info.global_step_number,
-								ar_events:send(solution, {stale, #{ source => Source }}),
 								ar_mining_server:log_prepare_solution_failure(Solution,
-									stale_solution, [
+									stale, stale_solution, Source, [
 										{solution_vdf, SolutionVDF},
 										{prev_block_vdf, PrevBlockVDF}
 									]),
@@ -1967,9 +1968,8 @@ handle_found_solution(Args, PrevB, State) ->
 				case {IntervalNumber, NonceLimiterNextSeed, NonceLimiterNextVDFDifficulty}
 						== {PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty} of
 					false ->
-						ar_events:send(solution, {stale, #{ source => Source }}),
-						ar_mining_server:log_prepare_solution_failure(Solution,
-							vdf_seed_data_does_not_match_current_block, [
+						ar_mining_server:log_prepare_solution_failure(Solution, stale,
+							vdf_seed_data_does_not_match_current_block, Source, [
 								{interval_number, IntervalNumber},
 								{prev_interval_number, PrevIntervalNumber},
 								{nonce_limiter_next_seed, ar_util:encode(NonceLimiterNextSeed)},
@@ -1996,9 +1996,8 @@ handle_found_solution(Args, PrevB, State) ->
 			true ->
 				case ar_node_utils:solution_passes_diff_check(Solution, DiffPair) of
 					false ->
-						ar_events:send(solution, {partial, #{ source => Source }}),
-						ar_mining_server:log_prepare_solution_failure(Solution,
-								does_not_pass_diff_check, []),
+						ar_mining_server:log_prepare_solution_failure(Solution, partial,
+								does_not_pass_diff_check, Source, []),
 						{false, diff};
 					true ->
 						true
@@ -2021,10 +2020,8 @@ handle_found_solution(Args, PrevB, State) ->
 			true ->
 				case RewardKey of
 					not_found ->
-						ar_events:send(solution,
-							{rejected, #{ reason => missing_key_file, source => Source }}),
-						ar_mining_server:log_prepare_solution_failure(Solution,
-								mining_key_not_found, []),
+						ar_mining_server:log_prepare_solution_failure(Solution, rejected,
+								missing_key_file, Source, []),
 						{false, wallet_not_found};
 					_ ->
 						true
@@ -2040,8 +2037,8 @@ handle_found_solution(Args, PrevB, State) ->
 					MerkleRebaseThreshold ->
 						true;
 					_ ->
-						ar_mining_server:log_prepare_solution_failure(Solution,
-								invalid_merkle_rebase_threshold, []),
+						ar_mining_server:log_prepare_solution_failure(Solution, rejected,
+								invalid_merkle_rebase_threshold, Source, []),
 						{false, rebase_threshold}
 				end
 		end,
@@ -2070,13 +2067,11 @@ handle_found_solution(Args, PrevB, State) ->
 		false ->
 			{noreply, State};
 		not_found ->
-			ar_events:send(solution,
-					{rejected, #{ reason => vdf_not_found, source => Source }}),
 			?LOG_WARNING([{event, did_not_find_steps_for_mined_block},
 					{seed, ar_util:encode(PrevNextSeed)}, {prev_step_number, PrevStepNumber},
 					{step_number, StepNumber}]),
-			ar_mining_server:log_prepare_solution_failure(Solution,
-					vdf_steps_not_found, []),
+			ar_mining_server:log_prepare_solution_failure(Solution, rejected,
+					vdf_steps_not_found, Source, []),
 			{noreply, State};
 		[NonceLimiterOutput | _] = Steps ->
 			{Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
@@ -2194,19 +2189,20 @@ handle_found_solution(Args, PrevB, State) ->
 							_ -> 2
 						end}]),
 			prometheus_gauge:inc(mining_solution_success),
-			prometheus_gauge:inc(mining_solution_total),
 			ar_block_cache:add(block_cache, B),
-			ar_events:send(solution, {accepted, #{ indep_hash => H, source => Source }}),
+			ar_events:send(solution, {accepted,
+					#{ indep_hash => H, source => Source, is_rebase => IsRebase }}),
 			apply_block(update_solution_cache(H, Args, State));
 		_Steps ->
-			ar_events:send(solution,
-					{rejected, #{ reason => bad_vdf, source => Source }}),
-			?LOG_ERROR([{event, bad_steps},
+			ar_mining_server:log_prepare_solution_failure(
+				Solution, rejected, bad_vdf, Source, [
+					{event, bad_steps},
 					{prev_block, ar_util:encode(PrevH)},
 					{step_number, StepNumber},
 					{prev_step_number, PrevStepNumber},
 					{prev_next_seed, ar_util:encode(PrevNextSeed)},
-					{output, ar_util:encode(NonceLimiterOutput)}]),
+					{output, ar_util:encode(NonceLimiterOutput)}
+				]),
 			{noreply, State}
 	end.
 
