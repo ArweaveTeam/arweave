@@ -17,9 +17,10 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_wallets.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_wallets.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
@@ -882,7 +883,7 @@ read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
 read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K) ->
 	case binary_to_term(Bin) of
 		{Key, Value} ->
-			Tree2 = ar_patricia_tree:insert(Key, Value, Tree),
+			Tree2 = ar_patricia_tree:insert(Key, Value, Tree, K),
 			case Keys of
 				[] ->
 					{ok, Tree2};
@@ -1368,6 +1369,10 @@ test_store_and_retrieve_wallet_list() ->
 	WalletListHash = write_wallet_list(0, ExpectedWL),
 	{ok, ActualWL} = read_wallet_list(WalletListHash),
 	assert_wallet_trees_equal(ExpectedWL, ActualWL),
+	HashFun = fun(Key, Value) ->
+		should_not_be_called
+	end,
+	?assertMatch({WalletListHash, _, _}, ar_patricia_tree:compute_hash(ActualWL, HashFun)),
 	Addr2 = binary:part(Addr, 0, 16),
 	TXID2 = crypto:strong_rand_bytes(32),
 	ExpectedWL2 = ar_patricia_tree:from_proplist([{Addr, {0, TXID}}, {Addr2, {0, TXID2}}]),
@@ -1376,6 +1381,7 @@ test_store_and_retrieve_wallet_list() ->
 	?assertEqual({0, TXID}, read_account(Addr, WalletListHash2)),
 	?assertEqual({0, TXID2}, read_account(Addr2, WalletListHash2)),
 	assert_wallet_trees_equal(ExpectedWL2, ActualWL2),
+	?assertMatch({WalletListHash2, _, _}, ar_patricia_tree:compute_hash(ActualWL2, HashFun)),
 	{WalletListHash, ActualWL3, _UpdateMap} = ar_block:hash_wallet_list(ActualWL),
 	Addr3 = << (binary:part(Addr, 0, 3))/binary, (crypto:strong_rand_bytes(29))/binary >>,
 	TXID3 = crypto:strong_rand_bytes(32),
@@ -1388,7 +1394,8 @@ test_store_and_retrieve_wallet_list() ->
 	?assertEqual({0, TXID4}, read_account(Addr2, WalletListHash3)),
 	?assertEqual({0, TXID}, read_account(Addr, WalletListHash3)),
 	{ok, ActualWL6} = read_wallet_list(WalletListHash3),
-	assert_wallet_trees_equal(ActualWL5, ActualWL6).
+	assert_wallet_trees_equal(ActualWL5, ActualWL6),
+	?assertMatch({WalletListHash3, _, _}, ar_patricia_tree:compute_hash(ActualWL6, HashFun)).
 
 test_store_and_retrieve_wallet_list_permutations() ->
 	lists:foreach(

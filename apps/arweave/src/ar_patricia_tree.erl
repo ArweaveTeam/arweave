@@ -1,9 +1,11 @@
 %%% @doc An implementation of a tree closely resembling a merkle patricia tree.
 -module(ar_patricia_tree).
 
--export([new/0, insert/3, get/2, size/1, compute_hash/2, foldr/3, is_empty/1, from_proplist/1,
+-export([new/0, insert/3, insert/4,
+		get/2, size/1, compute_hash/2, foldr/3, is_empty/1, from_proplist/1,
 		delete/2, get_range/2, get_range/3]).
 
+-include("../include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
@@ -16,7 +18,12 @@ new() ->
 
 %% @doc Insert the given value under the given binary key.
 insert(Key, Value, Tree) when is_binary(Key) ->
-	insert(Key, Value, Tree, 1, root).
+	insert(Key, Value, Tree, 1, root, no_hash).
+
+%% @doc Insert the given value under the given binary key. Also, set the given
+%% sub-tree hash to the corresponding node.
+insert(Key, Value, Tree, SubTreeHash) when is_binary(Key) ->
+	insert(Key, Value, Tree, 1, root, SubTreeHash).
 
 %% @doc Get the value stored under the given key or not_found.
 get(Key, Tree) when is_binary(Key) ->
@@ -58,7 +65,7 @@ is_empty(Tree) ->
 %% @doc Create a tree from the given list of {Key, Value} pairs.
 from_proplist(Proplist) ->
 	lists:foldl(
-		fun({Key, Value}, Acc) -> ar_patricia_tree:insert(Key, Value, Acc) end,
+		fun({Key, Value}, Acc) -> ar_patricia_tree:insert(Key, Value, Acc, no_hash) end,
 		new(),
 		Proplist
 	).
@@ -87,7 +94,7 @@ get_range(_, _, _) ->
 %%% Private functions.
 %%%===================================================================
 
-insert(Key, Value, Tree, Level, Parent) ->
+insert(Key, Value, Tree, Level, Parent, SubTreeHash) ->
 	{KeyPrefix, KeySuffix} = split_by_pos(Key, Level),
 	case maps:get(KeyPrefix, Tree, not_found) of
 		{NodeParent, NodeChildren, NodeHash, NodeSuffix, NodeValue} ->
@@ -102,16 +109,22 @@ insert(Key, Value, Tree, Level, Parent) ->
 							_ ->
 								Size
 						end,
-					UpdatedNode = {NodeParent, NodeChildren, no_hash, NodeSuffix, {v, Value}},
-					invalidate_hash(NodeParent,
-							Tree#{ KeyPrefix => UpdatedNode, size => Size2 });
+					UpdatedNode = {NodeParent, NodeChildren, SubTreeHash, NodeSuffix, {v, Value}},
+					case SubTreeHash of
+						no_hash ->
+							invalidate_hash(NodeParent,
+									Tree#{ KeyPrefix => UpdatedNode, size => Size2 });
+						_ ->
+							Tree#{ KeyPrefix => UpdatedNode, size => Size2 }
+					end;
 				{_, _, true} when KeySuffix > NodeSuffix ->
-					insert(Key, Value, Tree, Level + byte_size(NodeSuffix) + 1, KeyPrefix);
+					insert(Key, Value, Tree,
+							Level + byte_size(NodeSuffix) + 1, KeyPrefix, SubTreeHash);
 				{_, true, _} when KeySuffix < NodeSuffix ->
 					{Head, NodeSuffix3} = strip_head(NodeSuffix2),
 					UpdatedNodeKey = << KeyPrefix/binary, Common/binary, Head/binary >>,
 					PivotChildren = gb_sets:from_list([UpdatedNodeKey]),
-					PivotNode = {NodeParent, PivotChildren, no_hash, KeySuffix, {v, Value}},
+					PivotNode = {NodeParent, PivotChildren, SubTreeHash, KeySuffix, {v, Value}},
 					UpdatedNode = {KeyPrefix, NodeChildren, NodeHash, NodeSuffix3, NodeValue},
 					Size = maps:get(size, Tree),
 					Tree2 = Tree#{
@@ -120,7 +133,12 @@ insert(Key, Value, Tree, Level, Parent) ->
 						size => Size + 1
 					},
 					Tree3 = update_children_parent(UpdatedNodeKey, NodeChildren, Tree2),
-					invalidate_hash(NodeParent, Tree3);
+					case SubTreeHash of
+						no_hash ->
+							invalidate_hash(NodeParent, Tree3);
+						_ ->
+							Tree3
+					end;
 				{false, false, false} ->
 					{KeyHead, KeySuffix3} = strip_head(KeySuffix2),
 					NewNodeKey = << KeyPrefix/binary, Common/binary, KeyHead/binary >>,
@@ -129,7 +147,7 @@ insert(Key, Value, Tree, Level, Parent) ->
 					UpdatedNodeKey = << KeyPrefix/binary, Common/binary, NodeKeyHead/binary >>,
 					UpdatedNode = {KeyPrefix, NodeChildren, NodeHash, NodeSuffix3, NodeValue},
 					PivotChildren = gb_sets:from_list([NewNodeKey, UpdatedNodeKey]),
-					PivotNode = {NodeParent, PivotChildren, no_hash, Common, no_value},
+					PivotNode = {NodeParent, PivotChildren, SubTreeHash, Common, no_value},
 					Size = maps:get(size, Tree),
 					Tree2 = Tree#{
 						NewNodeKey => NewNode,
@@ -138,7 +156,12 @@ insert(Key, Value, Tree, Level, Parent) ->
 						size => Size + 1
 					},
 					Tree3 = update_children_parent(UpdatedNodeKey, NodeChildren, Tree2),
-					invalidate_hash(NodeParent, Tree3)
+					case SubTreeHash of
+						no_hash ->
+							invalidate_hash(NodeParent, Tree3);
+						_ ->
+							Tree3
+					end
 			end;
 		not_found ->
 			NewNode = {Parent, gb_sets:new(), no_hash, KeySuffix, {v, Value}},
@@ -147,10 +170,15 @@ insert(Key, Value, Tree, Level, Parent) ->
 			Size = maps:get(size, Tree),
 			Tree2 = Tree#{
 				KeyPrefix => NewNode,
-				Parent => {NextParent, UpdatedChildren, no_hash, NextSuffix, ParentValue},
+				Parent => {NextParent, UpdatedChildren, SubTreeHash, NextSuffix, ParentValue},
 				size => Size + 1
 			},
-			invalidate_hash(NextParent, Tree2)
+			case SubTreeHash of
+				no_hash ->
+					invalidate_hash(NextParent, Tree2);
+				_ ->
+					Tree2
+			end
 	end.
 
 split_by_pos(<<>>, _Pos) ->
