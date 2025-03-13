@@ -289,10 +289,9 @@ repack(#state{ cursor = Cursor, range_end = RangeEnd } = State)
 					{target_packing, ar_serialize:encode_packing(TargetPacking, true)}]),
 			State2;
 		_ ->
-			?LOG_DEBUG([{event, repacking_complete_but_waiting},
-					{store_id, StoreID},
-					{target_packing, ar_serialize:encode_packing(TargetPacking, true)},
-					{chunk_info_map_size, maps:size(Map)}]),
+			log_debug(repacking_complete_but_waiting, State#state.store_id, [
+				{target_packing, ar_serialize:encode_packing(TargetPacking, true)},
+				{chunk_info_map_size, maps:size(Map)}]),
 			ar_util:cast_after(5000, self(), repack),
 			State
 	end;
@@ -310,14 +309,13 @@ repack(State) ->
 
 	case ar_packing_server:is_buffer_full() of
 		true ->
-			?LOG_DEBUG([{event, repack_in_place_buffer_full},
-					{tags, [repack_in_place]},
-					{pid, self()},
-					{store_id, StoreID},
-					{s, Cursor},
-					{range_start, RangeStart},
-					{range_end, RangeEnd},
-					{required_packing, ar_serialize:encode_packing(TargetPacking, true)}]),
+			log_debug(repack_in_place_buffer_full, State#state.store_id, [
+				{pid, self()},
+				{store_id, StoreID},
+				{s, Cursor},
+				{range_start, RangeStart},
+				{range_end, RangeEnd},
+				{required_packing, ar_serialize:encode_packing(TargetPacking, true)}]),
 			ar_util:cast_after(200, self(), repack),
 			State;
 		false ->
@@ -511,7 +509,7 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 				_ -> {no_chunk, none} %% No chunk found, we'll only write entropy
 			end,
 
-			?LOG_DEBUG([{event, zip_metadata},
+			log_debug(zip_metadata, State#state.store_id, [
 				{status, Status},
 				{absolute_offset, AbsoluteEndOffset},
 				{bucket_end_offset, BucketEndOffset},
@@ -541,7 +539,7 @@ read_chunk_range(BucketEndOffset, BatchStart, BatchEnd, BatchOffsets, State) ->
 			Chunk =  maps:get(PaddedEndOffset, OffsetChunkMap, not_found),
 
 			ChunkInfo3 = case {ReadChunk, Chunk} of
-				{false, _} -> ChunkInfo;
+				{false, _} -> ChunkInfo2;
 				{true, not_found} ->
 					%% Chunk doesn't exist on disk, try chunk data db.
 					read_chunk_and_data_path(ChunkInfo2, no_chunk, StoreID);
@@ -609,7 +607,9 @@ init_chunk_info_map(BucketEndOffsets, Map) ->
 				bucket_end_offset = Offset,
 				status = no_chunk
 			},
-			?LOG_DEBUG([{event, init_chunk_info_map}, {bucket_end_offset, Offset}]),
+			log_debug(init_chunk_info_map, unknown, [
+				{bucket_end_offset, Offset}
+			]),
 			maps:put(Offset, ChunkInfo, Acc)
 		end,
 	Map, BucketEndOffsets).
@@ -630,7 +630,6 @@ chunk_repacked(ChunkInfo, TargetPacking, StoreID) ->
 		chunk = Chunk,
 		absolute_offset = AbsoluteOffset,
 		padded_end_offset = PaddedEndOffset,
-		bucket_end_offset = BucketEnd,
 		relative_offset = RelativeOffset,
 		tx_root = TXRoot,
 		chunk_size = ChunkSize,
@@ -663,21 +662,7 @@ chunk_repacked(ChunkInfo, TargetPacking, StoreID) ->
 			},
 			gen_server:cast(ar_data_sync:name(StoreID), {store_chunk, ChunkArgs, Args});
 		{ok, true} ->
-			case ar_chunk_storage:put(PaddedEndOffset, Chunk, TargetPacking, StoreID) of
-				{ok, NewPacking} ->
-					BucketStart = BucketEnd - ?DATA_CHUNK_SIZE,
-					ar_sync_record:add_async(repacked_chunk,
-						BucketEnd, BucketStart,
-						ar_chunk_storage_replica_2_9_1_entropy, StoreID),
-					ar_sync_record:add_async(repacked_chunk,
-							PaddedEndOffset, StartOffset,
-							NewPacking, ar_data_sync, StoreID);
-				Error3 ->
-					log_error(failed_to_store_repacked_chunk, ChunkInfo, StoreID, [
-						{requested_packing, ar_serialize:encode_packing(TargetPacking, true)},
-						{error, io_lib:format("~p", [Error3])}
-					])
-			end;
+			ar_data_sync:update_chunk(StoreID, AbsoluteOffset, Chunk, TargetPacking);
 		{Error4, _} ->
 			log_error(failed_to_store_repacked_chunk, ChunkInfo, StoreID, [
 				{requested_packing, ar_serialize:encode_packing(TargetPacking, true)},
@@ -693,7 +678,7 @@ entropy_generated(Entropy, BucketEndOffset, State) ->
 	case maps:get(BucketEndOffset, Map, not_found) of
 		not_found ->
 			%% This should never happen.
-			log_error(entropy_generated_no_chunk, State#state.store_id, [
+			log_error(entropy_generated_chunk_not_found, State#state.store_id, [
 				{bucket_end_offset, BucketEndOffset}
 			]),
 			State;

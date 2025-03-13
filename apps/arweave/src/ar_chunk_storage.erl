@@ -109,6 +109,9 @@ is_storage_supported(Offset, ChunkSize, Packing) ->
 %% bytes Offset - ?DATA_CHUNK_SIZE, Offset - ?DATA_CHUNK_SIZE + 1, .., Offset - 1.
 put(PaddedOffset, Chunk, Packing, StoreID) ->
 	GenServerID = name(StoreID),
+	?LOG_DEBUG([{event, ar_chunk_storage_put}, {padded_offset, PaddedOffset},
+		{packing, ar_serialize:encode_packing(Packing, true)}, {store_id, StoreID},
+		{gen_server_id, GenServerID}]),
 	case catch gen_server:call(GenServerID, {put, PaddedOffset, Chunk, Packing}, 180_000) of
 		{'EXIT', {shutdown, {gen_server, call, _}}} ->
 			%% Handle to avoid the large badmatch log on shutdown.
@@ -596,14 +599,11 @@ write_chunk2(_PaddedOffset, ChunkOffset, Chunk, Filepath, F, Position, StoreID) 
 		{position, Position}, {chunk_offset, ChunkOffset}, {padded_offset, _PaddedOffset},
 		{chunk_size, byte_size(Chunk)}, {chunk, binary:part(Chunk, 0, 10)}]),
 
-	StartTime = erlang:monotonic_time(),
 	Result = file:pwrite(F, Position, [<< ChunkOffset:?OFFSET_BIT_SIZE >> | Chunk]),
 	case Result of
 		{error, _Reason} = Error ->
 			Error;
 		ok ->
-			ar_metrics:record_rate_metric(
-				StartTime, byte_size(Chunk), chunk_write_rate_bytes_per_second, [StoreID]),
 			{ok, Filepath}
 	end.
 

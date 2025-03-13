@@ -446,12 +446,6 @@ register() ->
 		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help, "The rate, in bytes per second, at which chunks are read from storage."}
 	]),
-	prometheus_histogram:new([
-		{name, chunk_write_rate_bytes_per_second},
-		{labels, [store_id]},
-		{buckets, [infinity]}, %% we don't care about the histogram portion
-		{help, "The rate, in bytes per second, at which chunks are written to storage."}
-	]),
 	prometheus_gauge:new([{name, sync_tasks},
 		{labels, [state, type, peer]},
 		{help, "The number of syncing tasks. 'state' can be 'queued' or 'scheduled'. "
