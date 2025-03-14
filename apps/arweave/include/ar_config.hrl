@@ -130,6 +130,10 @@
 %% The number of packing workers.
 -define(DEFAULT_PACKING_WORKERS, erlang:system_info(dirty_cpu_schedulers_online)).
 
+%% The default connection tcp delay when arweave is shutting down
+-define(SHUTDOWN_TCP_CONNECTION_TIMEOUT, 60).
+-define(SHUTDOWN_TCP_MAX_CONNECTION_TIMEOUT, ?SHUTDOWN_TCP_CONNECTION_TIMEOUT*5).
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -232,7 +236,8 @@
 	%% Undocumented/unsupported options
 	chunk_storage_file_size = ?CHUNK_GROUP_SIZE,
 	rocksdb_flush_interval_s = ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,
-	rocksdb_wal_sync_interval_s = ?DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S
+	rocksdb_wal_sync_interval_s = ?DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S,
+	shutdown_tcp_connection_timeout = ?SHUTDOWN_TCP_CONNECTION_TIMEOUT
 }).
 
 -endif.

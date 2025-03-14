@@ -13,6 +13,7 @@
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
 		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
 		docs/0, shutdown/1, console/1, console/2]).
+-export([prep_stop/1]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -361,7 +362,9 @@ show_help() ->
 				"resync and/or repack any flagged chunks. When running in verify mode several "
 				"flags are disallowed. See the node output for details."},
 			{"verify_samples (num)", io_lib:format("Number of chunks to sample and unpack "
-				"during 'verify'. Default is ~B.", [?SAMPLE_CHUNK_COUNT])}
+				"during 'verify'. Default is ~B.", [?SAMPLE_CHUNK_COUNT])},
+			{"shutdown_tcp_connection_timeout", "shutdown tcp connection timeout in seconds.",
+				"Default is ~Bs.", [?SHUTDOWN_TCP_CONNECTION_TIMEOUT]}
 		]
 	),
 	erlang:halt().
@@ -682,6 +685,10 @@ parse_cli_args(["rocksdb_flush_interval", Seconds | Rest], C) ->
 parse_cli_args(["rocksdb_wal_sync_interval", Seconds | Rest], C) ->
 	parse_cli_args(Rest, C#config{ rocksdb_wal_sync_interval_s = list_to_integer(Seconds) });
 
+%% tcp shutdown procedure
+parse_cli_args(["shutdown_tcp_connection_timeout", Delay|Rest], C) ->
+		parse_cli_args(Rest, C#config{ shutdown_tcp_connection_timeout = list_to_integer(Delay) });
+
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ chunk_storage_file_size = list_to_integer(Num) });
@@ -845,8 +852,11 @@ benchmark_2_9(Args) ->
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
 
+prep_stop(State) ->
+	State.
+
 stop(_State) ->
-	ok.
+	?LOG_INFO(#{ stop => ?MODULE }).
 
 stop_dependencies() ->
 	{ok, [_Kernel, _Stdlib, _SASL, _OSMon | Deps]} = application:get_key(arweave, applications),
@@ -991,3 +1001,4 @@ console(Format) ->
 console(Format, Params) ->
 	io:format(Format, Params).
 -endif.
+
