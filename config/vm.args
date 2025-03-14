@@ -12,10 +12,10 @@
 ## schedulers that will be used, to do that: +S 16:16
 ######################################################################
 ## Name of the node
--name arweave@127.0.0.1
+-name ${ARNODE:-arweave@127.0.0.1}
 
 ## Cookie for distributed erlang
--setcookie arweave
+-setcookie ${ARCOOKIE:-arweave}
 
 ## This is now the default as of OTP-26
 ## Multi-time warp mode in combination with time correction is the
