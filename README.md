@@ -67,6 +67,8 @@ for more information on running your own VDF server.
 
 **Download the repo:**
 
+Install all of these in one line on Ubuntu with `sudo apt install erlang build-essential clang cmake libsqlite3-dev`
+
 ```sh
 $ git clone --recursive https://github.com/ArweaveTeam/arweave.git
 $ cd arweave
