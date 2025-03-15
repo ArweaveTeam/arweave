@@ -134,9 +134,6 @@ entropy_offsets(Offset) ->
 	Partition = ar_replica_2_9:get_entropy_partition(BucketEndOffset),
 	PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
 	PaddedPartitionEnd = ar_chunk_storage:get_chunk_bucket_end(PartitionEnd),
-	?LOG_DEBUG([{event, entropy_offsets}, {bucket_end_offset, BucketEndOffset},
-		{bucket_end_offset2, BucketEndOffset2}, {partition, Partition},
-		{partition_end, PartitionEnd}, {padded_partition_end, PaddedPartitionEnd}]),
 	entropy_offsets(BucketEndOffset2, PaddedPartitionEnd).
 
 entropy_offsets(BucketEndOffset, PaddedPartitionEnd)
@@ -201,10 +198,10 @@ map_entropies(Entropies,
 			Fun,
 			Args,
 			Acc) ->
-	% ?LOG_DEBUG([{event, map_entropies}, {bucket_end_offset, BucketEndOffset},
-	% 	{entropy_offsets, EntropyOffsets}, {range_start, RangeStart},
-	% 	{range_end, RangeEnd}, {partition1, ar_replica_2_9:get_entropy_partition(BucketEndOffset)},
-	% 	{partition2, ar_replica_2_9:get_entropy_partition(RangeEnd)}]),
+	?LOG_DEBUG([{event, map_entropies}, {bucket_end_offset, BucketEndOffset},
+		{entropy_offsets, length(EntropyOffsets)}, {range_start, RangeStart},
+		{range_end, RangeEnd}, {partition1, ar_replica_2_9:get_entropy_partition(BucketEndOffset)},
+		{partition2, ar_replica_2_9:get_entropy_partition(RangeEnd)}]),
 	
 	case take_and_combine_entropy_slices(Entropies) of
 		{ChunkEntropy, Rest} ->
@@ -309,7 +306,7 @@ handle_cast(prepare_entropy, State) ->
 
 handle_cast({generate_entropies, RewardAddr, BucketEndOffset, ReplyTo}, State) ->
 	?LOG_DEBUG([{event, generate_entropies}, {store_id, State#state.store_id},
-			{bucket_end_offset, BucketEndOffset}]),
+			{bucket_end_offset, BucketEndOffset}, {reply_to, ReplyTo}]),
 	Entropies = generate_entropies(RewardAddr, BucketEndOffset),
 	ReplyTo ! {entropy, BucketEndOffset, Entropies},
 	{noreply, State};
@@ -397,9 +394,6 @@ do_prepare_entropy(State) ->
 					_ ->
 						EntropyKeys = generate_entropy_keys(RewardAddr, BucketEndOffset),
 						EntropyOffsets = entropy_offsets(BucketEndOffset),
-						%% Wait for the previous store_entropy to complete. Should only
-						%% return 'false' if the entropy storage process is down (e.g. during
-						%% shutdown)
 						ar_entropy_storage:store_entropy(
 							StoreID, Entropies, EntropyOffsets,
 							RangeStart, iteration_end(BucketEndOffset, RangeEnd),

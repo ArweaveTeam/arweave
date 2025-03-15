@@ -226,7 +226,7 @@ encipher_replica_2_9_chunk(Chunk, Entropy) ->
 %% @doc Generate the 2.9 entropy.
 -spec generate_replica_2_9_entropy(
 		RewardAddr :: binary(),
-		AbsoluteEndOffset :: non_neg_integer(),
+		BucketEndOffset :: non_neg_integer(),
 		SubChunkStartOffset :: non_neg_integer()
 ) -> binary().
 generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
@@ -436,8 +436,9 @@ worker(PackingState) ->
 			end,
 			decrement_buffer_size(),
 			worker(PackingState);
-		{generate_entropy, Ref, From, {RewardAddr, PaddedEndOffset, SubChunkStart}} ->
-			Entropy = ar_packing_server:generate_replica_2_9_entropy(RewardAddr, PaddedEndOffset, SubChunkStart),
+		{generate_entropy, Ref, From, {RewardAddr, BucketEndOffset, SubChunkStart}} ->
+			Entropy = ar_packing_server:generate_replica_2_9_entropy(
+				RewardAddr, BucketEndOffset, SubChunkStart),
 			From ! {entropy_generated, Ref, Entropy},
 			worker(PackingState)
 	end.
