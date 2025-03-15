@@ -226,7 +226,7 @@ encipher_replica_2_9_chunk(Chunk, Entropy) ->
 %% @doc Generate the 2.9 entropy.
 -spec generate_replica_2_9_entropy(
 		RewardAddr :: binary(),
-		AbsoluteEndOffset :: non_neg_integer(),
+		BucketEndOffset :: non_neg_integer(),
 		SubChunkStartOffset :: non_neg_integer()
 ) -> binary().
 generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
@@ -234,11 +234,7 @@ generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset)
 	PackingState = get_packing_state(),
 	RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
 	
-	Entropy = prometheus_histogram:observe_duration(
-		replica_2_9_entropy_duration_milliseconds, [1], 
-			fun() ->
-				ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key)
-			end),
+	Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
 	%% Primarily needed for testing where the entropy generated exceeds the entropy
 	%% needed for tests.
 	binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE).
@@ -440,8 +436,9 @@ worker(PackingState) ->
 			end,
 			decrement_buffer_size(),
 			worker(PackingState);
-		{generate_entropy, Ref, From, {RewardAddr, PaddedEndOffset, SubChunkStart}} ->
-			Entropy = ar_packing_server:generate_replica_2_9_entropy(RewardAddr, PaddedEndOffset, SubChunkStart),
+		{generate_entropy, Ref, From, {RewardAddr, BucketEndOffset, SubChunkStart}} ->
+			Entropy = ar_packing_server:generate_replica_2_9_entropy(
+				RewardAddr, BucketEndOffset, SubChunkStart),
 			From ! {entropy_generated, Ref, Entropy},
 			worker(PackingState)
 	end.
