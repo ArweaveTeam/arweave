@@ -5,7 +5,7 @@
 	new/0, new/1, set_limit/2,
 	cache_size/1, available_size/1, reserved_size/1, reserved_size/2,
 	add_session/2, reserve_for_session/3, release_for_session/3, drop_session/2,
-	session_exists/2, get_sessions/1
+	session_exists/2, get_sessions/1, with_cached_value/4
 ]).
 
 -define(CACHE_SESSIONS_LIMIT, 4).
@@ -68,9 +68,10 @@ reserved_size(Cache0) ->
 -spec reserved_size(SessionId :: term(), Cache0 :: #ar_mining_cache{}) ->
 	{ok, Size :: non_neg_integer()} | {error, Reason :: term()}.
 reserved_size(SessionId, Cache0) ->
-	with_mining_cache_session(SessionId, fun(Session) ->
+	{ok, Size, _Cache1} = with_mining_cache_session(SessionId, fun(Session) ->
 		{ok, Session#ar_mining_cache_session.reserved_mining_cache_bytes, Session}
-	end, Cache0).
+	end, Cache0),
+	Size.
 
 %% @doc Adds a new mining cache session to the cache.
 %% If the cache limit is exceeded, the oldest session is dropped.
@@ -214,8 +215,12 @@ with_mining_cache_session(SessionId, Fun, Cache0) ->
 	case maps:is_key(SessionId, Cache0#ar_mining_cache.mining_cache_sessions) of
 		true ->
 			case Fun(maps:get(SessionId, Cache0#ar_mining_cache.mining_cache_sessions)) of
-				{ok, Return, Session1} -> {ok, Return, Session1};
-				{ok, Session1} -> {ok, Session1};
+				{ok, Return, Session1} -> {ok, Return, Cache0#ar_mining_cache{
+					mining_cache_sessions = maps:put(SessionId, Session1, Cache0#ar_mining_cache.mining_cache_sessions)
+				}};
+				{ok, Session1} -> {ok, Cache0#ar_mining_cache{
+					mining_cache_sessions = maps:put(SessionId, Session1, Cache0#ar_mining_cache.mining_cache_sessions)
+				}};
 				{error, Reason} -> {error, Reason}
 			end;
 		false ->
