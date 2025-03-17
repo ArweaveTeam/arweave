@@ -2,7 +2,7 @@
 -include_lib("arweave/include/ar_mining_cache.hrl").
 
 -export([
-	new/0, new/1, set_limit/2,
+	new/0, new/1, set_limit/2, get_limit/1,
 	cache_size/1, available_size/1, reserved_size/1, reserved_size/2,
 	add_session/2, reserve_for_session/3, release_for_session/3, drop_session/2,
 	session_exists/2, get_sessions/1, with_cached_value/4
@@ -29,6 +29,12 @@ new(Limit) -> #ar_mining_cache{mining_cache_limit_bytes = Limit}.
 	Cache :: #ar_mining_cache{}.
 set_limit(Limit, Cache) ->
 	Cache#ar_mining_cache{mining_cache_limit_bytes = Limit}.
+
+%% @doc Returns the limit for the mining cache.
+-spec get_limit(Cache :: #ar_mining_cache{}) ->
+	Limit :: non_neg_integer().
+get_limit(Cache) ->
+	Cache#ar_mining_cache.mining_cache_limit_bytes.
 
 %% @doc Returns the size of the cached data in bytes.
 %% Note, that cache size includes both the cached data and the reserved space for sessions.
@@ -57,21 +63,23 @@ available_size(Cache) ->
 -spec reserved_size(Cache0 :: #ar_mining_cache{}) ->
 	{ok, Size :: non_neg_integer()} | {error, Reason :: term()}.
 reserved_size(Cache0) ->
-	lists:sum([
+	{ok, lists:sum([
 		begin
 			{ok, Size} = reserved_size(SessionId, Cache0),
 			Size
 		end || SessionId <- get_sessions(Cache0)
-	]).
+	])}.
 
 %% @doc Returns the reserved size for a session.
 -spec reserved_size(SessionId :: term(), Cache0 :: #ar_mining_cache{}) ->
 	{ok, Size :: non_neg_integer()} | {error, Reason :: term()}.
 reserved_size(SessionId, Cache0) ->
-	{ok, Size, _Cache1} = with_mining_cache_session(SessionId, fun(Session) ->
+	case with_mining_cache_session(SessionId, fun(Session) ->
 		{ok, Session#ar_mining_cache_session.reserved_mining_cache_bytes, Session}
-	end, Cache0),
-	Size.
+	end, Cache0) of
+		{ok, Size, _Cache1} -> {ok, Size};
+		{error, Reason} -> {error, Reason}
+	end.
 
 %% @doc Adds a new mining cache session to the cache.
 %% If the cache limit is exceeded, the oldest session is dropped.
@@ -175,18 +183,21 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 			{error, Reason} -> {error, Reason};
 			{ok, drop} ->
 				{ok, Session#ar_mining_cache_session{
-					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache)
+					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
+					mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes - cached_size(Value0)
 				}};
 			{ok, Value0} -> {ok, Session};
 			{ok, Value1} ->
 				SizeDiff = cached_size(Value1) - cached_size(Value0),
-				SessionAvailableSize = available_size(Cache0) + reserved_size(SessionId, Cache0),
+				SessionAvailableSize = available_size(Cache0) + Session#ar_mining_cache_session.reserved_mining_cache_bytes,
+				CacheLimit = get_limit(Cache0),
 				case SizeDiff > SessionAvailableSize of
-					true -> {error, cache_limit_exceeded};
-					false ->
+					true when CacheLimit =/= 0 -> {error, cache_limit_exceeded};
+					_ ->
 						{ok, Session#ar_mining_cache_session{
 							mining_cache = maps:put(Key, Value1, Session#ar_mining_cache_session.mining_cache),
-							reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + SizeDiff)
+							reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes - SizeDiff),
+							mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes + SizeDiff
 						}}
 				end
 		end
@@ -341,31 +352,36 @@ set_limit_test() ->
 	Cache0 = new(),
 	Data = <<"chunk_data">>,
 	SessionId0 = session0,
-
+	%% Add session
+	Cache1 = add_session(SessionId0, Cache0),
+	%% Add chunk1
 	ChunkId0 = chunk0,
-	{ok, Cache1} = with_cached_value(ChunkId0, SessionId0, Cache0, fun(Value) ->
+	{ok, Cache2} = with_cached_value(ChunkId0, SessionId0, Cache1, fun(Value) ->
 		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
 	end),
-	?assertEqual(byte_size(Data), cache_size(Cache1)),
-
+	?assertEqual(byte_size(Data), cache_size(Cache2)),
+	%% Set limit
 	ChunkId1 = chunk1,
-	Cache2 = set_limit(5, Cache1),
-	{error, cache_limit_exceeded} = with_cached_value(ChunkId1, SessionId0, Cache2, fun(Value) ->
+	Cache3 = set_limit(5, Cache2),
+	%% Try to add chunk2
+	{error, cache_limit_exceeded} = with_cached_value(ChunkId1, SessionId0, Cache3, fun(Value) ->
 		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
 	end),
-	?assertEqual(byte_size(Data), cache_size(Cache2)).
+	?assertEqual(byte_size(Data), cache_size(Cache3)).
 
 drop_session_test() ->
 	Cache0 = new(1024),
 	ChunkId = chunk0,
 	Data = <<"chunk_data">>,
-
 	SessionId0 = session0,
-	{ok, Cache1} = with_cached_value(ChunkId, SessionId0, Cache0, fun(Value) ->
+	%% Add session
+	Cache1 = add_session(SessionId0, Cache0),
+	%% Add chunk1
+	{ok, Cache2} = with_cached_value(ChunkId, SessionId0, Cache1, fun(Value) ->
 		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
 	end),
-	?assertEqual(byte_size(Data), cache_size(Cache1)),
-
-	Cache2 = drop_session(SessionId0, Cache1),
-	?assertNot(session_exists(SessionId0, Cache2)),
-	?assertEqual(0, cache_size(Cache2)).
+	?assertEqual(byte_size(Data), cache_size(Cache2)),
+	%% Drop session
+	Cache3 = drop_session(SessionId0, Cache2),
+	?assertNot(session_exists(SessionId0, Cache3)),
+	?assertEqual(0, cache_size(Cache3)).
