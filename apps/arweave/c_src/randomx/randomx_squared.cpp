@@ -1,5 +1,5 @@
 #include <cassert>
-#include <openssl/sha.h>
+#include "../sha2.h"
 #include "crc32.h"
 #include "randomx_squared.h"
 #include "feistel_msgsize_key_cipher.h"
@@ -185,12 +185,8 @@ extern "C" {
 			// a given partition.
 			unsigned char laneSeed[32];
 			{
-				SHA256_CTX sha256;
-				SHA256_Init(&sha256);
-				SHA256_Update(&sha256, keyData, keySize);
 				unsigned char laneIndex = (unsigned char)i + 1;
-				SHA256_Update(&sha256, &laneIndex, 1);
-				SHA256_Final(laneSeed, &sha256);
+				sha2_p2(laneSeed, keyData, keySize, &laneIndex, 1);
 			}
 			int blakeResult = randomx_blake2b(
 				vmHashes[i].tempHash, sizeof(vmHashes[i].tempHash),
