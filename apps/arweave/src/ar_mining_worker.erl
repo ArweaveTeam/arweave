@@ -314,17 +314,15 @@ handle_task({compute_h0, Candidate, _ExtraArgs}, State) ->
 		true ->
 			%% Try to reserve the cache space for both partitions, as we do not know if we have both, one, or none.
 			case try_to_reserve_cache_space(2, Candidate#mining_candidate.session_key, State) of
-				{true, State1} ->
+				{true, State2} ->
 					%% Cache space reserved, compute h0.
 					ar_mining_hash:compute_h0(self(), Candidate),
-					State1;
+					State2#state{ latest_vdf_step_number = max(StepNumber, LatestVDFStepNumber) };
 				false ->
 					%% We don't have enough cache space to read the recall ranges, so we'll try again later.
 					add_delayed_task(self(), compute_h0, Candidate),
-					State
-			end,
-
-			State1#state{ latest_vdf_step_number = max(StepNumber, LatestVDFStepNumber) };
+					State#state{ latest_vdf_step_number = max(StepNumber, LatestVDFStepNumber) }
+			end;
 		false ->
 			State1
 	end;
