@@ -78,7 +78,7 @@ send_h1_batch_to_peer() ->
 
 %% @doc Compute h2 for a remote peer
 compute_h2_for_peer(Peer, Candidate) ->
-	gen_server:cast(?MODULE, {compute_h2_for_peer, 
+	gen_server:cast(?MODULE, {compute_h2_for_peer,
 		Candidate#mining_candidate{ cm_lead_peer = Peer }}).
 
 computed_h2_for_peer(Candidate) ->
@@ -163,7 +163,7 @@ get_cluster_partitions_list() ->
 
 init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
-	
+
 	ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
 	State = #state{
 		last_peer_response = #{}
@@ -265,8 +265,16 @@ handle_cast({compute_h2_for_peer, Candidate}, State) ->
 	{noreply, State};
 
 handle_cast({computed_h2_for_peer, Candidate}, State) ->
-	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
-	send_h2(Peer, Candidate),
+	#mining_candidate{ cm_lead_peer = Peer, chunk2 = Chunk2 } = Candidate,
+	PoA2 = case ar_mining_server:prepare_poa(poa2, Candidate, #poa{}) of
+		{ok, PoA} -> PoA;
+		{error, _Error} ->
+			%% Fallback. This will probably fail later, but prepare_poa/3 should
+			%% have already printed several errors so we'll continue just in case.
+			%% df: Is this the right fallback?..
+			#poa{ chunk = Chunk2 }
+	end,
+	send_h2(Peer, Candidate#mining_candidate{ poa2 = PoA2 }),
 	{noreply, State};
 
 handle_cast(refetch_peer_partitions, State) ->
@@ -460,7 +468,7 @@ remove_mining_peer(Peer, State) ->
 
 refetch_peer_partitions(Peers) ->
 	spawn(fun() ->
-		
+
 		ar_util:pmap(
 			fun(Peer) ->
 				case ar_http_iface_client:get_cm_partition_table(Peer) of
