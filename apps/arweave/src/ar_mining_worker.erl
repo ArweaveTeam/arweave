@@ -321,7 +321,7 @@ handle_task({compute_h0, Candidate, _ExtraArgs}, State) ->
 				false ->
 					%% We don't have enough cache space to read the recall ranges, so we'll try again later.
 					add_delayed_task(self(), compute_h0, Candidate),
-					State#state{ latest_vdf_step_number = max(StepNumber, LatestVDFStepNumber) }
+					State1#state{ latest_vdf_step_number = max(StepNumber, LatestVDFStepNumber) }
 			end;
 		false ->
 			State1
@@ -385,7 +385,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 		false -> ok;
 		partial -> ar_mining_server:prepare_and_post_solution(Candidate);
 		true ->
-			%% h1 solution found, report it.
+			%% H1 solution found, report it.
 			?LOG_INFO([{event, found_h1_solution},
 				{step, Candidate#mining_candidate.step_number},
 				{worker, State1#state.name},
@@ -395,7 +395,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 			ar_mining_server:prepare_and_post_solution(Candidate),
 			ar_mining_stats:h1_solution()
 	end,
-	%% Check if we need to compute h2.
+	%% Check if we need to compute H2.
 	%% Also store H1 in the cache if needed.
 	{ok, Config} = application:get_env(arweave, config),
 	case ar_mining_cache:with_cached_value(
@@ -440,7 +440,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 %% @doc Handle the `computed_h2` task.
 %% Indicates that the single hash for the second recall range has been computed.
 handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
-	#mining_candidate{ chunk2 = Chunk2, h2 = H2, cm_lead_peer = Peer } = Candidate,
+	#mining_candidate{ h2 = H2, cm_lead_peer = Peer } = Candidate,
 	State1 = hash_computed(h2, Candidate, State),
 	PassesDiffChecks = h2_passes_diff_checks(H2, Candidate, State1),
 	case PassesDiffChecks of
@@ -466,7 +466,7 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 	end,
 	case {PassesDiffChecks, Peer} of
 		{false, _} ->
-			%% h2 does not pass diff checks, do nothing.
+			%% H2 does not pass diff checks, do nothing.
 			ok;
 		{Check, not_set} when partial == Check orelse true == Check ->
 			%% This branch only handles the case where we're not part of a coordinated mining set.
@@ -498,7 +498,7 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 	end;
 
 %% @doc Handle the `compute_h2_for_peer` task.
-%% Indicates that we got a request to compute h2 for a peer.
+%% Indicates that we got a request to compute H2 for a peer.
 handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 	#mining_candidate{
 		h0 = H0,
@@ -644,7 +644,7 @@ process_subchunk(chunk2, Candidate, SubChunk, State) ->
 				%% H1 is not yet calculated, cache the chunk2 for this nonce.
 				{ok, CachedValue#ar_mining_cache_value{chunk2 = SubChunk}};
 			(#ar_mining_cache_value{h1 = H1} = CachedValue) ->
-				%% H1 is already calculated, compute h2 and cache the chunk2 for this nonce.
+				%% H1 is already calculated, compute H2 and cache the chunk2 for this nonce.
 				%% Wrong H1 in the cache?
 				ar_mining_hash:compute_h2(self(), Candidate2#mining_candidate{ h1 = H1 }),
 				{ok, CachedValue#ar_mining_cache_value{chunk2 = SubChunk}}
