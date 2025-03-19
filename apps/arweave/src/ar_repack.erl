@@ -502,6 +502,11 @@ read_chunk_range(BatchStart, BatchEnd, StoreID) ->
 	BatchSizeInBytes = BatchEnd - BatchStart,
 	case catch ar_chunk_storage:get_range(BatchStart, BatchSizeInBytes, StoreID) of
 		[] ->
+			log_debug(chunk_range_has_no_chunks, StoreID, [
+				{batch_start, BatchStart},
+				{batch_end, BatchEnd},
+				{batch_size_bytes, BatchSizeInBytes}
+			]),
 			#{};
 		{'EXIT', _Exc} ->
 			log_error(failed_to_read_chunk_range, StoreID, [
@@ -571,6 +576,17 @@ add_range_to_chunk_info_map(OffsetChunkMap, OffsetMetadataMap, State) ->
 				tx_path = TXPath,
 				chunk_size = ChunkSize
 			},
+
+			case Status of
+				entropy_only ->
+					log_debug(chunk_not_recorded, ChunkInfo2, StoreID, [
+						{is_recorded, IsRecorded},
+						{is_too_small, IsTooSmall},
+						{status, Status}
+					]);
+				_ ->
+					ok
+			end,
 
 			ReadChunk = Status == unpacked_padded orelse Status == needs_repack,
 			Chunk =  maps:get(PaddedEndOffset, OffsetChunkMap, not_found),
@@ -856,3 +872,63 @@ format_logs(Event, ChunkInfo, StoreID, ExtraLogs) ->
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+name_test() ->
+    Funs = [{ar_storage_module, label_by_id, fun(_StoreID) -> "testlabel" end}],
+    ar_test_node:test_with_mocked_functions(Funs, fun() ->
+         Expected = list_to_atom("ar_repack_" ++ "testlabel"),
+         ?assertEqual(Expected, name(123))
+    end).
+
+init_chunk_info_map_test() ->
+    DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, chunk_info_map = #{ }},
+    BucketOffsets = [1000, 2000],
+    NewState = init_chunk_info_map(BucketOffsets, DummyState),
+    Map = NewState#state.chunk_info_map,
+    ?assert(maps:is_key(1000, Map)),
+    ?assert(maps:is_key(2000, Map)),
+    ChunkInfo1 = maps:get(1000, Map),
+    ChunkInfo2 = maps:get(2000, Map),
+    ?assertEqual(no_data, ChunkInfo1#chunk_info.status),
+    ?assertEqual(no_data, ChunkInfo2#chunk_info.status).
+
+cache_chunk_info_test() ->
+    %% Create a dummy chunk_info record.
+    ChunkInfo = #chunk_info{bucket_end_offset = 123, status = no_data},
+    DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, chunk_info_map = #{ }},
+    NewState = cache_chunk_info(ChunkInfo, DummyState),
+    Map = NewState#state.chunk_info_map,
+    ?assertEqual(ChunkInfo, maps:get(123, Map)).
+
+remove_chunk_info_test() ->
+    %% Start with a state having two keys.
+    ChunkInfo1 = #chunk_info{bucket_end_offset = 456, status = no_data},
+    ChunkInfo2 = #chunk_info{bucket_end_offset = 789, status = no_data},
+    InitialMap = #{456 => ChunkInfo1, 789 => ChunkInfo2},
+    DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, chunk_info_map = InitialMap},
+    NewState = remove_chunk_info(456, DummyState),
+    Map = NewState#state.chunk_info_map,
+    ?assertEqual(false, maps:is_key(456, Map)),
+    ?assert(maps:is_key(789, Map)).
+
+store_and_read_cursor_test() ->
+    {ok, Config} = application:get_env(arweave, config),
+    TempFile = filename:join(Config#config.data_dir, "test_repack_cursor"),
+    Funs = [{ar_chunk_storage, get_filepath, fun("repack_in_place_cursor2", _StoreID) -> TempFile end}],
+    ar_test_node:test_with_mocked_functions(Funs, fun() ->
+         %% Create a dummy state record with next_cursor.
+         DummyState = #state{next_cursor = 555, store_id = 42, target_packing = test_packing, chunk_info_map = #{ }},
+         ok = store_cursor(DummyState),
+         {ok, Bin} = file:read_file(TempFile),
+         {Cursor, TargetPacking} = binary_to_term(Bin),
+         ?assertEqual(555, Cursor),
+         ?assertEqual(test_packing, TargetPacking),
+         %% Now test read_cursor/3 when file exists.
+         CursorRead = read_cursor(42, test_packing, 1000),
+         ?assertEqual(555, CursorRead),
+         %% Remove the file and test the default behavior.
+         file:delete(TempFile),
+         DefaultCursor = 1000 + 1,
+         CursorRead2 = read_cursor(42, test_packing, 1000),
+         ?assertEqual(DefaultCursor, CursorRead2)
+    end).
