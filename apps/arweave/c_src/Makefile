@@ -72,18 +72,24 @@ RX512_OUTPUT ?= $(CURDIR)/../priv/rx512_arweave.so
 RX4096_OUTPUT ?= $(CURDIR)/../priv/rx4096_arweave.so
 RXSQUARED_OUTPUT ?= $(CURDIR)/../priv/rxsquared_arweave.so
 VDF_OUTPUT ?= $(CURDIR)/../priv/vdf_arweave.so
+SHA_OUTPUT ?= $(CURDIR)/../priv/sha2.so
 
 COMMON_RANDOMX_SOURCES = $(wildcard $(C_SRC_DIR)/randomx/*.c $(C_SRC_DIR)/randomx/*.cpp)
 RX512_SOURCES = $(COMMON_RANDOMX_SOURCES) $(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/randomx/rx512/*.c)
 RX4096_SOURCES = $(COMMON_RANDOMX_SOURCES) $(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/randomx/rx4096/*.c)
 RXSQUARED_SOURCES = $(COMMON_RANDOMX_SOURCES) $(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/randomx/rxsquared/*.c)
 VDF_SOURCES = $(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/vdf/*.c $(C_SRC_DIR)/vdf/*.cpp)
+SHA_SOURCES =$(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/sha2.cpp)
 
 RX512_OBJECTS = $(addsuffix .o, $(basename $(RX512_SOURCES)))
 RX4096_OBJECTS = $(addsuffix .o, $(basename $(RX4096_SOURCES)))
 RXSQUARED_OBJECTS = $(addsuffix .o, $(basename $(RXSQUARED_SOURCES)))
 VDF_OBJECTS = $(addsuffix .o, $(basename $(VDF_SOURCES)))
+SHA_OBJECTS = $(addsuffix .o, $(basename $(SHA_SOURCES)))
 
+# cryptopp
+CXXFLAGS += -I ../lib
+LIBCRYPTOPP_OUTPUT ?= ../lib/cryptopp/libcryptopp.a
 
 # Verbosity.
 
@@ -99,17 +105,21 @@ link_verbose = $(link_verbose_$(V))
 COMPILE_C = $(c_verbose) $(CC) $(CFLAGS) $(CPPFLAGS) -c
 COMPILE_CPP = $(cpp_verbose) $(CXX) $(CXXFLAGS) $(CPPFLAGS) -c
 
+$(SHA_OUTPUT): $(SHA_OBJECTS)
+	@mkdir -p $(BASEDIR)/priv/
+	$(link_verbose) $(CXX) $(SHA_OBJECTS) $(LDFLAGS) $(LDLIBS) ${LIBCRYPTOPP_OUTPUT} -shared -o $(SHA_OUTPUT)
+
 $(RX512_OUTPUT): $(RX512_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
-	$(link_verbose) $(CXX) $(RX512_OBJECTS) $(LDFLAGS) $(LDLIBS) ../lib/RandomX/build512/librandomx512.a -shared -o $(RX512_OUTPUT)
+	$(link_verbose) $(CXX) $(RX512_OBJECTS) $(LDFLAGS) $(LDLIBS) ${SHA_OUTPUT} ../lib/RandomX/build512/librandomx512.a -shared -o $(RX512_OUTPUT)
 
 $(RX4096_OUTPUT): $(RX4096_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
-	$(link_verbose) $(CXX) $(RX4096_OBJECTS) $(LDFLAGS) $(LDLIBS) ../lib/RandomX/build4096/librandomx4096.a -shared -o $(RX4096_OUTPUT)
+	$(link_verbose) $(CXX) $(RX4096_OBJECTS) $(LDFLAGS) $(LDLIBS) ${SHA_OUTPUT} ../lib/RandomX/build4096/librandomx4096.a -shared -o $(RX4096_OUTPUT)
 
 $(RXSQUARED_OUTPUT): $(RXSQUARED_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
-	$(link_verbose) $(CXX) $(RXSQUARED_OBJECTS) $(LDFLAGS) $(LDLIBS) ../lib/RandomX/buildsquared/librandomxsquared.a -shared -o $(RXSQUARED_OUTPUT)
+	$(link_verbose) $(CXX) $(RXSQUARED_OBJECTS) $(LDFLAGS) $(LDLIBS) ${SHA_OUTPUT} ../lib/RandomX/buildsquared/librandomxsquared.a -shared -o $(RXSQUARED_OUTPUT)
 
 $(VDF_OUTPUT): $(VDF_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
@@ -140,7 +150,7 @@ $(SECP256K1_OUTPUT): $(SECP256K1_OBJECTS)
 %.o: %.cpp
 	$(COMPILE_CPP) $(OUTPUT_OPTION) $<
 
-all: $(RX512_OUTPUT) $(RX4096_OUTPUT) $(RXSQUARED_OUTPUT) $(VDF_OUTPUT) $(SECP256K1_OUTPUT)
+all: ${LIBCRYPTOPP_OUTPUT} ${SHA_OUTPUT} $(RX512_OUTPUT) $(RX4096_OUTPUT) $(RXSQUARED_OUTPUT) $(VDF_OUTPUT) $(SECP256K1_OUTPUT)
 
 clean:
 	@rm -f $(RX512_OUTPUT) $(RX4096_OUTPUT) $(RXSQUARED_OUTPUT) $(VDF_OUTPUT) $(RX512_OBJECTS) $(RX4096_OBJECTS) $(RXSQUARED_OBJECTS) $(VDF_OBJECTS) $(SECP256K1_OUTPUT) $(SECP256K1_OBJECTS)
