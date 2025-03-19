@@ -67,9 +67,9 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast(pull, State) ->
-	{RawPeer, State2} = get_raw_peer_and_update_remote_servers(State),
-	#state{ remote_servers = Q } = State2,
+	#state{ remote_servers = Q } = State,
 	RotatedServers = rotate_servers(Q),
+	{RawPeer, State2} = get_raw_peer_and_update_remote_servers(State),
 	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer) of
 		{error, _} ->
 			?LOG_WARNING([{event, failed_to_resolve_peer},
@@ -166,8 +166,8 @@ handle_cast(pull, State) ->
 
 handle_cast({maybe_request_sessions, SessionKey}, State) ->
 	#state{ remote_servers = Q } = State,
-	{{value, RawPeer}, Q2} = queue:out(Q),
-	RotatedServers = queue:in(RawPeer, Q2),
+	{{value, RawPeer}, _Q2} = queue:out(Q),
+	RotatedServers = rotate_servers(Q),
 	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer) of
 		{error, _} ->
 			%% Push the peer to the back of the queue. We'll also wait and see if another
