@@ -90,11 +90,11 @@ union(I1, I2) ->
 %% The subset is always smaller than or equal to Limit. If random_subset key is present,
 %% the chosen subset is random. Otherwise, the right bound of the first interval is
 %% greater than or equal to start.
-%% @end
 serialize(#{ random_subset := _, limit := Limit, format := Format }, Intervals) ->
 	serialize_random_subset(Intervals, Limit, Format);
-serialize(#{ start := Start, limit := Limit, format := Format }, Intervals) ->
-	serialize_subset(Intervals, Start, Limit, Format).
+serialize(#{ start := Start, limit := Limit, format := Format } = Args, Intervals) ->
+	RightBound = maps:get(right_bound, Args, infinity),
+	serialize_subset(Intervals, Start, RightBound, Limit, Format).
 
 %% @doc Convert the binary produced by to_etf/2 into the set of intervals.
 %% Return {error, invalid} if the binary is not a valid ETF representation of the
@@ -230,7 +230,7 @@ serialize_empty(json) ->
 	jiffy:encode([]).
 
 serialize_random_subset(_Intervals, [], Format, PickedIntervals, Limit) ->
-	serialize_subset(PickedIntervals, 0, Limit, Format);
+	serialize_subset(PickedIntervals, 0, infinity, Limit, Format);
 serialize_random_subset(Intervals, [Offset | Offsets], Format, PickedIntervals, Limit) ->
 	Iter = gb_sets:iterator_from({Offset, 0}, Intervals),
 	case gb_sets:next(Iter) of
@@ -251,24 +251,25 @@ serialize_item(End, Start, etf) ->
 serialize_item(End, Start, json) ->
 	#{ integer_to_binary(End) => integer_to_binary(Start) }.
 
-serialize_subset(Intervals, Start, Limit, Format) ->
+serialize_subset(Intervals, Start, End, Limit, Format) ->
 	case gb_sets:is_empty(Intervals) of
 		true ->
 			serialize_empty(Format);
 		false ->
 			Iterator = gb_sets:iterator_from({Start, 0}, Intervals),
-			serialize_subset(Iterator, [], 0, Limit, Format)
+			serialize_subset(Iterator, [], 0, End, Limit, Format)
 	end.
 
-serialize_subset(_Iterator, L, Count, Limit, Format) when Count == Limit ->
+serialize_subset(_Iterator, L, Count, _RightBound, Limit, Format) when Count == Limit ->
 	serialize_list(L, Format);
-serialize_subset(Iterator, L, Count, Limit, Format) ->
+serialize_subset(Iterator, L, Count, RightBound, Limit, Format) ->
 	case gb_sets:next(Iterator) of
-		none ->
-			serialize_list(L, Format);
-		{{End, Start}, Iterator2} ->
-			L2 = [serialize_item(End, Start, Format) | L],
-			serialize_subset(Iterator2, L2, Count + 1, Limit, Format)
+		{{End, Start}, Iterator2} when Start < RightBound ->
+			End2 = min(End, RightBound),
+			L2 = [serialize_item(End2, Start, Format) | L],
+			serialize_subset(Iterator2, L2, Count + 1, RightBound, Limit, Format);
+		_ ->
+			serialize_list(L, Format)
 	end.
 
 from_etf(Binary) ->

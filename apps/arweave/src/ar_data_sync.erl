@@ -943,15 +943,12 @@ handle_cast(collect_peer_intervals, State) ->
 
 handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
-	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS and
-	%% clear the all_peers_intervals cache so we can start fresh and requery peers for
-	%% their advertised intervals.
+	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS.
 	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
-	{noreply, State#sync_data_state{ all_peers_intervals = #{} }};
+	{noreply, State};
 handle_cast({collect_peer_intervals, Start, End}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
-			store_id = StoreID, weave_size = WeaveSize,
-			all_peers_intervals = AllPeersIntervals } = State,
+			store_id = StoreID, weave_size = WeaveSize } = State,
 	IsJoined =
 		case ar_node:is_joined() of
 			false ->
@@ -1020,19 +1017,11 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 				false ->
 					%% All checks have passed, find and enqueue intervals for one
 					%% sync bucket worth of chunks starting at offset Start
-					ar_peer_intervals:fetch(Start, End2, StoreID, AllPeersIntervals)
+					ar_peer_intervals:fetch(Start, End2, StoreID)
 			end
 	end,
 
 	{noreply, State};
-
-handle_cast({update_all_peers_intervals, AllPeersIntervals}, State) ->
-	%% While we are working through the storage_module range we'll maintain a cache
-	%% of the mapping of peers to their advertised intervals. This ensures we don't query
-	%% each peer's /data_sync_record endpoint too often. Once we've made a full pass through
-	%% the range, we'll clear the cache so that we can incorporate any peer interval changes
-	%% the next time through.
-	{noreply, State#sync_data_state{ all_peers_intervals = AllPeersIntervals }};
 
 handle_cast({enqueue_intervals, []}, State) ->
 	{noreply, State};
@@ -1040,7 +1029,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
 	%% When enqueuing intervals, we want to distribute the intervals among many peers. So
-	%% so that:
+	%% that:
 	%% 1. We can better saturate our network-in bandwidth without overwhelming any one peer.
 	%% 2. So that we limit the risk of blocking on one particularly slow peer.
 	%%
