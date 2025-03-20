@@ -30,7 +30,7 @@
 -define(TASK_CHECK_FREQUENCY_MS, 200).
 -define(STATUS_CHECK_FREQUENCY_MS, 5000).
 
--define(VDF_STEP_CACHE_KEY(CacheRef, Nonce), {CacheRef, Nonce}).
+-define(CACHE_KEY(CacheRef, Nonce), {CacheRef, Nonce}).
 
 %%%===================================================================
 %%% Messages
@@ -381,7 +381,8 @@ handle_task({chunk2, Candidate, [RangeStart, ChunkOffsets]}, State) ->
 handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 	#mining_candidate{ h1 = H1 } = Candidate,
 	State1 = hash_computed(h1, Candidate, State),
-	case h1_passes_diff_checks(H1, Candidate, State1) of
+	H1PassesDiffChecks = h1_passes_diff_checks(H1, Candidate, State1),
+	case H1PassesDiffChecks of
 		false -> ok;
 		partial -> ar_mining_server:prepare_and_post_solution(Candidate);
 		true ->
@@ -397,9 +398,8 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 	end,
 	%% Check if we need to compute H2.
 	%% Also store H1 in the cache if needed.
-	{ok, Config} = application:get_env(arweave, config),
 	case ar_mining_cache:with_cached_value(
-		?VDF_STEP_CACHE_KEY(Candidate#mining_candidate.cache_ref, Candidate#mining_candidate.nonce),
+		?CACHE_KEY(Candidate#mining_candidate.cache_ref, Candidate#mining_candidate.nonce),
 		Candidate#mining_candidate.session_key,
 		State#state.chunk_cache,
 		fun
@@ -407,6 +407,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 				%% This node does not store chunk2. If we're part of a coordinated
 				%% mining set, we can try one of our peers, but this node is done with
 				%% this VDF step.
+				{ok, Config} = application:get_env(arweave, config),
 				case Config#config.coordinated_mining of
 					false -> ok;
 					true ->
@@ -420,11 +421,16 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 				{ok, drop};
 			(#ar_mining_cache_value{chunk2 = undefined} = CachedValue) ->
 				%% chunk2 hasn't been read yet, so we cache H1 and wait for it.
-				{ok, CachedValue#ar_mining_cache_value{h1 = H1}};
-			(#ar_mining_cache_value{chunk2 = Chunk2} = CachedValue) ->
+				%% If H1 passes diff checks, we will skip H2 for this nonce.
+				{ok, CachedValue#ar_mining_cache_value{h1 = H1, h1_passes_diff_checks = H1PassesDiffChecks}};
+			(#ar_mining_cache_value{chunk2 = Chunk2} = CachedValue) when not H1PassesDiffChecks ->
 				%% chunk2 has already been read, so we can compute H2 now.
 				ar_mining_hash:compute_h2(self(), Candidate#mining_candidate{ chunk2 = Chunk2 }),
-				{ok, CachedValue#ar_mining_cache_value{h1 = H1}}
+				{ok, CachedValue#ar_mining_cache_value{h1 = H1}};
+			(#ar_mining_cache_value{chunk2 = _Chunk2} = _CachedValue) ->
+				%% H1 passes diff checks, so we skip H2 for this nonce.
+				%% Might as well drop the cached data, we don't need it anymore.
+				{ok, drop}
 		end
 	) of
 		{ok, ChunkCache2} -> State#state{ chunk_cache = ChunkCache2 };
@@ -482,7 +488,7 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 	end,
 	%% Remove the cached value from the cache.
 	case ar_mining_cache:with_cached_value(
-		?VDF_STEP_CACHE_KEY(Candidate#mining_candidate.cache_ref, Candidate#mining_candidate.nonce),
+		?CACHE_KEY(Candidate#mining_candidate.cache_ref, Candidate#mining_candidate.nonce),
 		Candidate#mining_candidate.session_key,
 		State1#state.chunk_cache,
 		fun(_) -> {ok, drop} end
@@ -611,7 +617,7 @@ process_all_sub_chunks(WhichChunk, Chunk, Candidate, Nonce, State)
 when Candidate#mining_candidate.packing_difficulty == 0 ->
 	%% Spora 2.6 packing (aka difficulty 0).
 	Candidate2 = Candidate#mining_candidate{ nonce = Nonce },
-	process_subchunk(WhichChunk, Candidate2, Chunk, State);
+	process_sub_chunk(WhichChunk, Candidate2, Chunk, State);
 process_all_sub_chunks(
 	WhichChunk,
 	<< SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, Rest/binary >>,
@@ -619,7 +625,7 @@ process_all_sub_chunks(
 ) ->
 	%% Composite packing / replica packing (aka difficulty 1+).
 	Candidate2 = Candidate#mining_candidate{ nonce = Nonce },
-	State2 = process_subchunk(WhichChunk, Candidate2, SubChunk, State),
+	State2 = process_sub_chunk(WhichChunk, Candidate2, SubChunk, State),
 	process_all_sub_chunks(WhichChunk, Rest, Candidate2, Nonce + 1, State2);
 process_all_sub_chunks(WhichChunk, Rest, _Candidate, Nonce, State) ->
 	%% The chunk is not a multiple of the subchunk size.
@@ -629,17 +635,21 @@ process_all_sub_chunks(WhichChunk, Rest, _Candidate, Nonce, State) ->
 			{chunk, WhichChunk}]),
 	State.
 
-process_subchunk(chunk1, Candidate, SubChunk, State) ->
+process_sub_chunk(chunk1, Candidate, SubChunk, State) ->
 	ar_mining_hash:compute_h1(self(), Candidate#mining_candidate{ chunk1 = SubChunk }),
 	State;
-process_subchunk(chunk2, Candidate, SubChunk, State) ->
+process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 	#mining_candidate{ session_key = SessionKey } = Candidate,
 	Candidate2 = Candidate#mining_candidate{ chunk2 = SubChunk },
 	case ar_mining_cache:with_cached_value(
-		?VDF_STEP_CACHE_KEY(Candidate2#mining_candidate.cache_ref, Candidate2#mining_candidate.nonce),
+		?CACHE_KEY(Candidate2#mining_candidate.cache_ref, Candidate2#mining_candidate.nonce),
 		SessionKey,
 		State#state.chunk_cache,
 		fun
+			(#ar_mining_cache_value{h1_passes_diff_checks = true} = CachedValue) ->
+				%% H1 passes diff checks, so we skip H2 for this nonce.
+				%% Might as well drop the cached data, we don't need it anymore.
+				{ok, drop};
 			(#ar_mining_cache_value{h1 = undefined} = CachedValue) ->
 				%% H1 is not yet calculated, cache the chunk2 for this nonce.
 				{ok, CachedValue#ar_mining_cache_value{chunk2 = SubChunk}};
@@ -823,7 +833,7 @@ when Nonce > SubChunksPerRecallRange ->
 	State;
 mark_chunk2_missing(Nonce, SubChunksPerRecallRange, Candidate, State) ->
 	case ar_mining_cache:with_cached_value(
-		?VDF_STEP_CACHE_KEY(Candidate#mining_candidate.cache_ref, Nonce),
+		?CACHE_KEY(Candidate#mining_candidate.cache_ref, Nonce),
 		Candidate#mining_candidate.session_key,
 		State#state.chunk_cache,
 		fun(CachedValue) -> {ok, CachedValue#ar_mining_cache_value{chunk2_missing = true}} end
@@ -845,7 +855,7 @@ remove_sub_chunks_from_cache(#mining_candidate{ cache_ref = CacheRef } = Candida
 		SubChunkCount, State) when CacheRef /= not_set ->
 	#mining_candidate{ nonce = Nonce, session_key = SessionKey } = Candidate,
 	State2 = case ar_mining_cache:with_cached_value(
-		?VDF_STEP_CACHE_KEY(Candidate#mining_candidate.cache_ref, Candidate#mining_candidate.nonce),
+		?CACHE_KEY(Candidate#mining_candidate.cache_ref, Candidate#mining_candidate.nonce),
 		SessionKey,
 		State#state.chunk_cache,
 		fun(_) -> {ok, drop} end
@@ -865,7 +875,7 @@ cache_h1_list(_Candidate, [], State) -> State;
 cache_h1_list(#mining_candidate{ cache_ref = not_set } = _Candidate, [], State) -> State;
 cache_h1_list(Candidate, [ {H1, Nonce} | H1List ], State) ->
 	case ar_mining_cache:with_cached_value(
-		?VDF_STEP_CACHE_KEY(Candidate#mining_candidate.cache_ref, Nonce),
+		?CACHE_KEY(Candidate#mining_candidate.cache_ref, Nonce),
 		Candidate#mining_candidate.session_key,
 		State#state.chunk_cache,
 		fun(CachedValue) ->
