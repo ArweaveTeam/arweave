@@ -427,7 +427,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 				%% chunk2 has already been read, so we can compute H2 now.
 				ar_mining_hash:compute_h2(self(), Candidate#mining_candidate{ chunk2 = Chunk2 }),
 				{ok, CachedValue#ar_mining_cache_value{h1 = H1}};
-			(#ar_mining_cache_value{chunk2 = _Chunk2} = _CachedValue) ->
+			(#ar_mining_cache_value{chunk2 = _Chunk2} = _CachedValue) when H1PassesDiffChecks ->
 				%% H1 passes diff checks, so we skip H2 for this nonce.
 				%% Might as well drop the cached data, we don't need it anymore.
 				{ok, drop}
@@ -646,7 +646,7 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 		SessionKey,
 		State#state.chunk_cache,
 		fun
-			(#ar_mining_cache_value{h1_passes_diff_checks = true} = CachedValue) ->
+			(#ar_mining_cache_value{h1_passes_diff_checks = true} = _CachedValue) ->
 				%% H1 passes diff checks, so we skip H2 for this nonce.
 				%% Might as well drop the cached data, we don't need it anymore.
 				{ok, drop};
