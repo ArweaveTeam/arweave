@@ -180,8 +180,8 @@ get(Byte, IntervalStart, StoreID) ->
 	case get(Byte, ChunkStart, ChunkFileStart, StoreID, 1) of
 		[] ->
 			not_found;
-		[{EndOffset, Chunk}] ->
-			{EndOffset, Chunk}
+		[{PaddedEndOffset, Chunk}] ->
+			{PaddedEndOffset, Chunk}
 	end.
 
 locate_chunk_on_disk(PaddedEndOffset, StoreID) ->
@@ -782,17 +782,19 @@ delete_chunk(PaddedOffset, StoreID) ->
 	end.
 
 get(Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
-	case erlang:get({cfile, {ChunkFileStart, StoreID}}) of
-		undefined ->
-			case ets:lookup(chunk_storage_file_index, {ChunkFileStart, StoreID}) of
-				[] ->
-					[];
-				[{_, Filepath}] ->
-					read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount)
-			end;
-		File ->
-			read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount)
-	end.
+	ReadChunks =
+		case erlang:get({cfile, {ChunkFileStart, StoreID}}) of
+			undefined ->
+				case ets:lookup(chunk_storage_file_index, {ChunkFileStart, StoreID}) of
+					[] ->
+						[];
+					[{_, Filepath}] ->
+						read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount)
+				end;
+			File ->
+				read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount)
+		end,
+	filter_by_sync_record(ReadChunks, Byte, Start, ChunkFileStart, StoreID, ChunkCount).
 
 read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount) ->
 	case file:open(Filepath, [read, raw, binary]) of
@@ -870,6 +872,29 @@ is_offset_valid(_Byte, _BucketStart, 0) ->
 is_offset_valid(Byte, BucketStart, ChunkOffset) ->
 	Delta = Byte - (BucketStart + ChunkOffset rem ?DATA_CHUNK_SIZE),
 	Delta >= 0 andalso Delta < ?DATA_CHUNK_SIZE.
+
+filter_by_sync_record(Chunks, _Byte, _Start, _ChunkFileStart, _StoreID, 1) ->
+	Chunks;
+filter_by_sync_record([], _Byte, _Start, _ChunkFileStart, _StoreID, _ChunkCount) ->
+	[];
+filter_by_sync_record([{PaddedEndOffset, Chunk} | Rest], Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
+	case ar_sync_record:is_recorded(PaddedEndOffset, ar_chunk_storage, StoreID) of
+		false ->
+			%% Filter out repacking artifacts when reading a range of chunks.
+			%% This warning may also occur due to unlucky timing when the chunk is
+			%% being removed.
+			?LOG_WARNING([{event, found_chunk_not_in_sync_record},
+					{padded_end_offset, PaddedEndOffset},
+							{store_id, StoreID},
+							{byte, Byte},
+							{queried_range_start, Start},
+							{chunk_file_start, ChunkFileStart},
+							{requested_chunk_count, ChunkCount}]),
+			filter_by_sync_record(Rest, Byte, Start, ChunkFileStart, StoreID, ChunkCount);
+		_ ->
+			[{PaddedEndOffset, Chunk}
+				| filter_by_sync_record(Rest, Byte, Start, ChunkFileStart, StoreID, ChunkCount)]
+	end.
 
 close_files([{cfile, {_, StoreID} = Key} | Keys], StoreID) ->
 	file:close(erlang:get({cfile, Key})),
