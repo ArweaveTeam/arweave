@@ -1183,6 +1183,11 @@ validate_solution(Solution, DiffPair) ->
 			case ar_node_utils:h1_passes_diff_check(H1, DiffPair, PackingDifficulty) of
 				true ->
 					%% validates solution_hash
+					case SolutionHash of
+						H1 -> ok;
+						_ ->
+							?LOG_ERROR([{event, invalid_solution_hash}, {solution_hash, SolutionHash}, {h1, H1}])
+					end,
 					SolutionHash = H1,
 					{true, PoACache, undefined};
 				false ->
