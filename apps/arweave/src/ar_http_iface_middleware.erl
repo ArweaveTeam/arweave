@@ -356,6 +356,30 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pi
 			end
 	end;
 
+handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedEnd, EncodedLimit], Req, _Pid) ->
+	case catch binary_to_integer(EncodedStart) of
+		{'EXIT', _} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_start_encoding }), Req};
+		Start ->
+			case catch binary_to_integer(EncodedEnd) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_end_encoding }), Req};
+				End ->
+					case catch binary_to_integer(EncodedLimit) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_limit_encoding }), Req};
+						Limit ->
+							case Limit > ?MAX_SHARED_SYNCED_INTERVALS_COUNT of
+								true ->
+									{400, #{}, jiffy:encode(#{ error => limit_too_big }), Req};
+								false ->
+									ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
+									handle_get_data_sync_record(Start, End, Limit, Req)
+							end
+					end
+			end
+	end;
+
 handle(<<"GET">>, [<<"chunk">>, OffsetBinary], Req, _Pid) ->
 	handle_get_chunk(OffsetBinary, Req, json);
 
@@ -1979,6 +2003,22 @@ handle_get_data_sync_record(Start, Limit, Req) ->
 				etf
 		end,
 	Options = #{ start => Start, limit => Limit, format => Format },
+	case ar_global_sync_record:get_serialized_sync_record(Options) of
+		{ok, Binary} ->
+			{200, #{}, Binary, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+	end.
+
+handle_get_data_sync_record(Start, End, Limit, Req) ->
+	Format =
+		case cowboy_req:header(<<"content-type">>, Req) of
+			<<"application/json">> ->
+				json;
+			_ ->
+				etf
+		end,
+	Options = #{ start => Start, right_bound => End, limit => Limit, format => Format },
 	case ar_global_sync_record:get_serialized_sync_record(Options) of
 		{ok, Binary} ->
 			{200, #{}, Binary, Req};

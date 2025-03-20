@@ -2,9 +2,9 @@
 
 -behaviour(gen_server).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_data_discovery.hrl").
 
 -export([start_link/0, get_serialized_sync_record/1, get_serialized_sync_buckets/0]).
 
@@ -40,6 +40,7 @@ start_link() ->
 %% format			required	etf or json		serialize in Erlang Term Format or JSON
 %% random_subset	optional	any()			pick a random subset if the key is present
 %% start			optional	integer()		pick intervals with right bound >= start
+%% right_bound		optional	integer()		pick intervals with right bound <= right_bound
 %% limit			optional	integer()		the number of intervals to pick
 %%
 %% ?MAX_SHARED_SYNCED_INTERVALS_COUNT is both the default and the maximum value for limit.
