@@ -6,35 +6,35 @@
 
 -export([send_tx_json/3, send_tx_json/4, send_tx_binary/3, send_tx_binary/4]).
 -export([send_block_json/3, send_block_binary/3, send_block_binary/4,
-	 send_block_announcement/2,
-	 get_block/3, get_tx/2, get_txs/2, get_tx_from_remote_peers/3,
-	 get_tx_data/2, get_wallet_list_chunk/2, get_wallet_list_chunk/3,
-	 get_wallet_list/2, add_peer/1, get_info/1, get_info/2, get_peers/1,
-	 get_time/2, get_height/1, get_block_index/3,
-	 get_sync_record/1, get_sync_record/3,
-	 get_chunk_binary/3, get_mempool/1,
-	 get_sync_buckets/1, get_recent_hash_list/1,
-	 get_recent_hash_list_diff/2, get_reward_history/3,
-	 get_block_time_history/3, push_nonce_limiter_update/3,
-	 get_vdf_update/1, get_vdf_session/1, get_previous_vdf_session/1,
-	 get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
-	 cm_publish_send/2, get_jobs/2, post_partial_solution/2,
-	 get_pool_cm_jobs/2, post_pool_cm_jobs/2,
-	 post_cm_partition_table_to_pool/2]).
+	send_block_announcement/2,
+	get_block/3, get_tx/2, get_txs/2, get_tx_from_remote_peers/3,
+	get_tx_data/2, get_wallet_list_chunk/2, get_wallet_list_chunk/3,
+	get_wallet_list/2, add_peer/1, get_info/1, get_info/2, get_peers/1,
+	get_time/2, get_height/1, get_block_index/3,
+	get_sync_record/1, get_sync_record/3, get_sync_record/4,
+	get_chunk_binary/3, get_mempool/1,
+	get_sync_buckets/1, get_recent_hash_list/1,
+	get_recent_hash_list_diff/2, get_reward_history/3,
+	get_block_time_history/3, push_nonce_limiter_update/3,
+	get_vdf_update/1, get_vdf_session/1, get_previous_vdf_session/1,
+	get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
+	cm_publish_send/2, get_jobs/2, post_partial_solution/2,
+	get_pool_cm_jobs/2, post_pool_cm_jobs/2,
+	post_cm_partition_table_to_pool/2]).
 -export([get_block_shadow/2, get_block_shadow/3, get_block_shadow/4]).
 
 %% -- Testing exports
 -export([get_tx_from_remote_peer/3]).
 %% -- End of testing exports
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
--include_lib("arweave/include/ar_mining.hrl").
--include_lib("arweave/include/ar_wallets.hrl").
--include_lib("arweave/include/ar_pool.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
+-include("../include/ar_consensus.hrl").
+-include("../include/ar_data_sync.hrl").
+-include("../include/ar_data_discovery.hrl").
+-include("../include/ar_mining.hrl").
+-include("../include/ar_wallets.hrl").
+-include("../include/ar_pool.hrl").
 
 %%--------------------------------------------------------------------
 %% @doc Send a JSON-encoded transaction to the given Peer with default
@@ -370,7 +370,7 @@ get_sync_record(Peer) ->
 		peer => Peer,
 		method => get,
 		path => "/data_sync_record",
-		timeout => 180 * 1000,
+		timeout => 30 * 1000,
 		connect_timeout => 2000,
 		limit => ?MAX_ETF_SYNC_RECORD_SIZE,
 		headers => Headers
@@ -383,7 +383,20 @@ get_sync_record(Peer, Start, Limit) ->
 		method => get,
 		path => "/data_sync_record/" ++ integer_to_list(Start) ++ "/"
 				++ integer_to_list(Limit),
-		timeout => 180 * 1000,
+		timeout => 30 * 1000,
+		connect_timeout => 5000,
+		limit => ?MAX_ETF_SYNC_RECORD_SIZE,
+		headers => Headers
+	}), Start, Limit).
+
+get_sync_record(Peer, Start, End, Limit) ->
+	Headers = [{<<"Content-Type">>, <<"application/etf">>}],
+	handle_sync_record_response(ar_http:req(#{
+		peer => Peer,
+		method => get,
+		path => "/data_sync_record/" ++ integer_to_list(Start) ++ "/"
+				++ integer_to_list(End) ++ "/" ++ integer_to_list(Limit),
+		timeout => 30 * 1000,
 		connect_timeout => 5000,
 		limit => ?MAX_ETF_SYNC_RECORD_SIZE,
 		headers => Headers

@@ -6,13 +6,13 @@
 		invert_map/1,
 		parse_peer/1, peer_to_str/1, parse_port/1, safe_parse_peer/1, format_peer/1,
 		unique/1, count/2,
-		genesis_wallets/0, pmap/2, pfilter/2,
+		genesis_wallets/0, pmap/2, batch_pmap/3, pfilter/2,
 		do_until/3, block_index_entry_from_block/1,
 		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
 		take_every_nth/2, safe_divide/2, terminal_clear/0, print_stacktrace/0, shuffle_list/1,
 		assert_file_exists_and_readable/1, get_system_device/1]).
 
--include_lib("arweave/include/ar.hrl").
+-include("../include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 bool_to_int(true) -> 1;
@@ -216,6 +216,33 @@ pmap(Mapper, List) ->
 		end,
 		ListWithRefs
 	).
+
+%% @doc Run a map in parallel, one batch at a time.
+batch_pmap(_Mapper, [], _BatchSize) ->
+	[];
+batch_pmap(Mapper, List, BatchSize) ->
+	Self = self(),
+	{Batch, Rest} =
+		case length(List) >= BatchSize of
+			true ->
+				lists:split(BatchSize, List);
+			false ->
+				{List, []}
+		end,
+	ListWithRefs = [{Elem, make_ref()} || Elem <- Batch],
+	lists:foreach(fun({Elem, Ref}) ->
+		spawn_link(fun() ->
+			Self ! {pmap_work, Ref, Mapper(Elem)}
+		end)
+	end, ListWithRefs),
+	lists:map(
+		fun({_, Ref}) ->
+			receive
+				{pmap_work, Ref, Mapped} -> Mapped
+			end
+		end,
+		ListWithRefs
+	) ++ batch_pmap(Mapper, Rest, BatchSize).
 
 %% @doc Filter the list in parallel.
 pfilter(Fun, List) ->
