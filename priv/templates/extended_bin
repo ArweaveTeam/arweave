@@ -1000,6 +1000,39 @@ process_internal_args() {
     done
 }
 
+# This function takes a list of terms (usually arguments)
+# and split them in two categories, the one before --
+# and the one after. The one before is used as Erlang
+# VM parameters and should overwrite default configuration,
+# The last part (LOCAL_PARAMS) contains arweave parameters.
+# This function export LOCAL_PARAMS and VM_PARAMS variables.
+parse_args() {
+	local separator="--"
+	local vm_params=""
+	local params=""
+	while test "${*}"
+	do
+		local arg="${1}"
+		if test "${arg}" = ${separator}
+		then
+			test "${vm_params}" \
+				&& vm_params="${vm_params} ${params}" \
+				|| vm_params="${params}"
+			params=""
+		else
+			test "${params}" \
+				&& params="${params} ${arg}" \
+				|| params="${arg}"
+		fi
+
+		# don't forget to shift to remove the previous
+		# argument from the list
+		shift
+	done
+	export VM_PARAMS="${vm_params}"
+	export LOCAL_PARAMS="${params}"
+}
+
 # if ARWEAVE_DEV environment is defined, then
 # we start by rebuild a release.
 if test "${ARWEAVE_DEV}"
@@ -1423,6 +1456,12 @@ case "$1" in
 		;;
 	esac
 
+	# split the argument in two parts based on the previously
+	# passed args, LOCAL_PARAMS is for arweave, VM_PARAMS is for
+	# the vm.
+	parse_args ${ARGS}
+	ARGS=${LOCAL_PARAMS}
+
 	# if not set by user or console_clean use embedded
 	CODE_LOADING_MODE="${CODE_LOADING_MODE:-embedded}"
 
@@ -1435,12 +1474,16 @@ case "$1" in
 
 	# Dump environment info for logging purposes
 	# shellcheck disable=SC2086
-	echo "Exec: $BINDIR/erlexec" $FOREGROUNDOPTIONS \
-	    -boot "$BOOTFILE" -mode "$CODE_LOADING_MODE" \
+	echo "Exec: $BINDIR/erlexec" \
+	    ${VM_PARAMS} \
+	    ${EXTRA_DIST_ARGS} \
+	    ${FOREGROUNDOPTIONS} \
+	    -boot "$BOOTFILE" \
+	    -mode "$CODE_LOADING_MODE" \
 	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
 	    -config "$RELX_CONFIG_PATH" \
 	    -args_file "$VMARGS_PATH" \
-	    $EXTRA_DIST_ARGS -- ${ARWEAVE_OPTS} ${ARGS}
+	    -- ${ARWEAVE_OPTS} ${ARGS}
 	echo "Root: $ROOTDIR"
 
 	# Log the startup
@@ -1460,12 +1503,16 @@ case "$1" in
 	# Start the VM
 	# The variabre FOREGROUNDOPTIONS must NOT be quoted.
 	# shellcheck disable=SC2086
-	exec "$BINDIR/erlexec" $FOREGROUNDOPTIONS \
-	    -boot "$BOOTFILE" -mode "$CODE_LOADING_MODE" \
+	exec "$BINDIR/erlexec" \
+	    ${VM_PARAMS} \
+	    ${EXTRA_DIST_ARGS} \
+	    ${FOREGROUNDOPTIONS} \
+	    -boot "$BOOTFILE" \
+	    -mode "$CODE_LOADING_MODE" \
 	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
 	    -config "$RELX_CONFIG_PATH" \
 	    -args_file "$VMARGS_PATH" \
-	    $EXTRA_DIST_ARGS -- ${ARWEAVE_OPTS} ${ARGS}
+	    -- ${ARWEAVE_OPTS} ${ARGS}
 	# exec will replace the current image and nothing else gets
 	# executed from this point on, this explains the absence
 	# of the pre start hook
