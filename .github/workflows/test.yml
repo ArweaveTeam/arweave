@@ -267,6 +267,7 @@ jobs:
             ar_join,
             ar_kv,
             ar_merkle,
+            ar_mining_cache,
             ar_mining_server,
             ar_mining_stats,
             ar_node,

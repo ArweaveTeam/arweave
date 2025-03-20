@@ -2,9 +2,10 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, start_link/1, set_largest_seen_upper_bound/1, 
+-export([start_link/0, start_link/1, set_largest_seen_upper_bound/1,
 			get_packing/0, get_partitions/0, get_partitions/1, read_recall_range/4,
-			garbage_collect/0, get_replica_format_from_packing_difficulty/1]).
+			is_recall_range_readable/2, garbage_collect/0,
+			get_replica_format_from_packing_difficulty/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -46,6 +47,10 @@ read_recall_range(WhichChunk, Worker, Candidate, RecallRangeStart) ->
 	gen_server:call(?MODULE,
 			{read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}, 60000).
 
+is_recall_range_readable(Candidate, RecallRangeStart) ->
+	gen_server:call(?MODULE,
+			{is_recall_range_readable, Candidate, RecallRangeStart}, 60000).
+
 get_packing() ->
 	{ok, Config} = application:get_env(arweave, config),
 	%% ar_config:validate_storage_modules/1 ensures that we only mine against a single
@@ -63,7 +68,7 @@ get_partitions(PartitionUpperBound) ->
 	AllPartitions = lists:foldl(
 		fun	(Module, Acc) ->
 				Addr = ar_storage_module:module_address(Module),
-				PackingDifficulty = 
+				PackingDifficulty =
 					ar_storage_module:module_packing_difficulty(Module),
 				{Start, End} = ar_storage_module:module_range(Module, 0),
 				Partitions = get_store_id_partitions({Start, End}, []),
@@ -119,6 +124,15 @@ handle_call({read_recall_range, WhichChunk, Worker, Candidate, RecallRangeStart}
 		{Thread, StoreID} ->
 			Thread ! {WhichChunk, {Worker, Candidate, RecallRangeStart, StoreID}},
 			true
+	end,
+	{reply, ThreadFound, State};
+
+handle_call({is_recall_range_readable, Candidate, RecallRangeStart}, _From, State) ->
+	#mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
+	RangeEnd = RecallRangeStart + ar_block:get_recall_range_size(PackingDifficulty),
+	ThreadFound = case find_thread(RecallRangeStart, RangeEnd, State) of
+		not_found -> false;
+		{_, _} -> true
 	end,
 	{reply, ThreadFound, State};
 
@@ -210,7 +224,7 @@ start_io_threads(State) ->
 						partition_to_store_ids = PartitionToStoreIDs } = StateAcc,
 
 					StoreIDs2 = sets:to_list(StoreIDs),
-					
+
 					Thread = start_io_thread(Mode, StoreIDs2),
 					ThreadRef = monitor(process, Thread),
 
@@ -288,7 +302,7 @@ handle_io_thread_down(Ref, Reason, State) ->
 	StoreIDs = maps:get(Device, DeviceToStoreIDs, sets:new()),
 	Thread = start_io_thread(Mode, sets:to_list(StoreIDs)),
 	ThreadRef = monitor(process, Thread),
-	State#state{ io_threads = maps:put(Device, Thread, Threads2),	
+	State#state{ io_threads = maps:put(Device, Thread, Threads2),
 		io_thread_monitor_refs = maps:put(ThreadRef, Device, Refs2) }.
 
 io_thread(Mode, Cache, LastClearTime) ->
@@ -355,7 +369,7 @@ maybe_clear_cached_chunks(Cache, LastClearTime) ->
 %% @doc When we're reading a range for a CM peer we'll cache it temporarily in case
 %% that peer has broken up the batch of H1s into multiple requests. The temporary cache
 %% prevents us from reading the same range from disk multiple times.
-%% 
+%%
 %% However if the request is from our local miner there's no need to cache since the H1
 %% batch is always handled all at once.
 get_chunks(Mode, WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
@@ -370,7 +384,7 @@ get_chunks(Mode, WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
 cached_read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
 	Now = os:system_time(millisecond),
 	case maps:get(RangeStart, Cache, not_found) of
-		not_found ->	
+		not_found ->
 			ChunkOffsets = read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID),
 			Cache2 = maps:put(RangeStart, {Now, ChunkOffsets}, Cache),
 			{ChunkOffsets, Cache2};
@@ -416,7 +430,7 @@ log_read_range(standalone, _Candidate, _WhichChunk, _FoundChunks, _StartTime) ->
 log_read_range(_Mode, Candidate, WhichChunk, FoundChunks, StartTime) ->
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
-	ReadRate = case ElapsedTime > 0 of 
+	ReadRate = case ElapsedTime > 0 of
 		true -> (FoundChunks * 1000 div 4) div ElapsedTime; %% MiB per second
 		false -> 0
 	end,
