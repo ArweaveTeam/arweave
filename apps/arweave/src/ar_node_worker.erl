@@ -450,7 +450,7 @@ handle_info({event, nonce_limiter, initialized}, State) ->
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
 	ar_events:send(node_state, {initialized, B}),
-	ar_events:send(node_state, {checkpoint_block, 
+	ar_events:send(node_state, {checkpoint_block,
 		ar_block_cache:get_checkpoint_block(RecentBI)}),
 	ar:console("Joined the Arweave network successfully at the block ~s, height ~B.~n",
 			[ar_util:encode(Current), Height]),
@@ -602,7 +602,7 @@ terminate(Reason, _State) ->
 						maps:put(TXID, {ar_mempool:get_tx(TXID), Status}, Acc)
 					end,
 					#{},
-					ar_mempool:get_priority_set()	
+					ar_mempool:get_priority_set()
 				),
 			dump_mempool(Mempool, MempoolSize);
 		_ ->
@@ -1452,7 +1452,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
 	ar_events:send(node_state, {new_tip, B, PrevB}),
-	ar_events:send(node_state, {checkpoint_block, 
+	ar_events:send(node_state, {checkpoint_block,
 		ar_block_cache:get_checkpoint_block(RecentBI)}),
 	maybe_reset_miner(State).
 
@@ -2160,7 +2160,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 				unpacked_chunk2_hash = get_unpacked_chunk_hash(
 						PoA2, PackingDifficulty, RecallByte2)
 			}, PrevB),
-			
+
 			BlockTimeHistory2 = lists:sublist(
 				ar_block_time_history:update_history(UnsignedB, PrevB),
 				ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT),
