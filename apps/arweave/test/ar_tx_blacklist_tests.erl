@@ -4,8 +4,8 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include("../include/ar.hrl").
+-include("../include/ar_config.hrl").
 
 -import(ar_test_node, [
 		sign_v1_tx/2, random_v1_data/1, 
@@ -52,6 +52,7 @@ test_uses_blacklists() ->
 	ok = file:write_file(WhitelistFile, <<>>),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	{ok, Config} = application:get_env(arweave, config),
+	StorageModule = {30 * 1024 * 1024, 0, {composite, RewardAddr, 1}},
 	try
 		ar_test_node:start(#{ b0 => B0, addr => RewardAddr,
 				config => Config#config{
@@ -68,7 +69,7 @@ test_uses_blacklists() ->
 				"http://localhost:1985/bad/and/good"
 			],
 			enable = [pack_served_chunks | Config#config.enable]},
-			storage_modules => [{30 * 1024 * 1024, 0, {composite, RewardAddr, 1}}]
+			storage_modules => [StorageModule]
 		}),
 		ar_test_node:connect_to_peer(peer1),
 		BadV1TXIDs = [V1TX#tx.id],
@@ -94,6 +95,14 @@ test_uses_blacklists() ->
 		assert_removed_txs(BadV1TXIDs),
 		assert_present_offsets(GoodOffsets),
 		assert_removed_offsets(BadOffsets),
+		StoreID = ar_storage_module:id(StorageModule),
+		Chunks = ar_chunk_storage:get_range(0, 30 * 1024 * 1024, StoreID),
+		ChunkOffsets = [Offset || {Offset, _Chunk} <- Chunks],
+		?debugFmt("chunk offsets: ~p ~n good offsets: ~p ~n bad offsets: ~p~n",
+		[ChunkOffsets, GoodOffsets, BadOffsets]),
+		?assert(lists:all(fun(BadOffset) ->
+			not lists:member(ar_block:get_chunk_padded_offset(BadOffset), ChunkOffsets)
+		end, lists:flatten(BadOffsets))),
 		assert_does_not_accept_offsets(BadOffsets),
 		%% Add a new transaction to the blacklist, add a blacklisted transaction to whitelist.
 		ok = file:write_file(lists:nth(3, BlacklistFiles), <<>>),
