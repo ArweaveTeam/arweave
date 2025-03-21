@@ -2,7 +2,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, get/2, get/3, add/4, add/5, add_async/5, add_async/6, delete/4, delete_async/5, cut/3,
+-export([start_link/2, get/2, get/3, add/4, add/5, add_async/5, add_async/6, delete/4,
+		delete_async/5, delete_async/6, cut/3,
 		is_recorded/2, is_recorded/3, is_recorded/4, is_recorded_any/3,
 		get_next_synced_interval/4, get_next_synced_interval/5,
 		get_next_unsynced_interval/4,
@@ -131,8 +132,10 @@ delete(End, Start, ID, StoreID) ->
 	end.
 
 delete_async(Event, End, Start, ID, StoreID) ->
+	delete_async(Event, End, Start, ID, StoreID, none).
+delete_async(Event, End, Start, ID, StoreID, ReportErrorsTo) ->
 	GenServerID = name(StoreID),
-	gen_server:cast(GenServerID, {delete_async, Event, End, Start, ID}).
+	gen_server:cast(GenServerID, {delete_async, Event, End, Start, ID, ReportErrorsTo}).
 
 %% @doc Remove everything strictly above the given
 %% Offset from the record. Store the changes on disk
@@ -396,19 +399,21 @@ handle_cast({add_async, Event, End, Start, Packing, ID}, State) ->
 	end,
 	{noreply, State2};
 
-handle_cast({delete_async, Event, End, Start, ID}, State) ->
+handle_cast({delete_async, Event, End, Start, ID, ReportErrorsTo}, State) ->
 	{Reply, State2} = delete2(End, Start, ID, State),
-	case Reply of
-		ok ->
+	case {Reply, ReportErrorsTo} of
+		{ok, _} ->
 			ok;
-		Error ->
+		{Error, none} ->
 			?LOG_ERROR([{event, Event},
 					{operation, delete_async},
 					{status, failed},
 					{sync_record_id, ID},
 					{offset, End},
 					{error, io_lib:format("~p", [Error])},
-					{module, ?MODULE}])
+					{module, ?MODULE}]);
+		{Error, ReportErrorsTo} ->
+			ReportErrorsTo ! {sync_record_delete_error, Event, End, Start, ID, Error}
 	end,
 	{noreply, State2};
 
