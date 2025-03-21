@@ -15,7 +15,7 @@
 		get_chunk_metadata_range/3,
 		get_merkle_rebase_threshold/0]).
 
--export([add_chunk_to_disk_pool/5, update_chunk/4]).
+-export([add_chunk_to_disk_pool/5]).
 
 -export([debug_get_disk_pool_chunks/0]).
 
@@ -108,10 +108,6 @@ is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) ->
 					Offset == TXSize orelse DataPathSize =< ChunkSize
 			end
 	end.
-
-%% @doc Update the chunk data without modifying the chunk metadata.
-update_chunk(StoreID, AbsoluteEndOffset, Chunk, Packing) ->
-	gen_server:cast(name(StoreID), {update_chunk, AbsoluteEndOffset, Chunk, Packing}).
 
 %% @doc Store the given chunk if the proof is valid.
 %% Called when a chunk is pushed to the node via POST /chunk.
@@ -1158,10 +1154,6 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 					Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
 			process_valid_fetched_chunk(ChunkArgs, Args, State)
 	end;
-
-handle_cast({update_chunk, AbsoluteEndOffset, Chunk, Packing}, State) ->
-	do_update_chunk(AbsoluteEndOffset, Chunk, Packing, State),
-	{noreply, State};
 
 handle_cast(process_disk_pool_item, #sync_data_state{ disk_pool_scan_pause = true } = State) ->
 	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), process_disk_pool_item),
@@ -3198,31 +3190,6 @@ store_chunk2(ChunkArgs, Args, State) ->
 							DataPathHash, StoreID),
 					{error, Reason}
 			end
-	end.
-
-do_update_chunk(AbsoluteEndOffset, Chunk, Packing, State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
-	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
-	case ar_chunk_storage:put(PaddedEndOffset, Chunk, Packing, StoreID) of
-		{ok, NewPacking} ->
-			case NewPacking of
-				{replica_2_9, _} ->
-					BucketStartOffset = BucketEndOffset - ?DATA_CHUNK_SIZE,
-					ar_sync_record:add_async(repacked_chunk,
-						BucketEndOffset, BucketStartOffset,
-						ar_chunk_storage_replica_2_9_1_entropy, StoreID);
-				_ -> ok
-			end,
-			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-			ar_sync_record:add_async(repacked_chunk,
-					PaddedEndOffset, StartOffset,
-					NewPacking, ar_data_sync, StoreID);
-		Error ->
-			?LOG_ERROR([{event, failed_to_store_repacked_chunk},
-				{requested_packing, ar_serialize:encode_packing(Packing, true)},
-				{error, io_lib:format("~p", [Error])}]),
-			Error
 	end.
 
 log_failed_to_store_chunk(already_stored,

@@ -47,8 +47,18 @@ store_entropy_footprint(
 		Entropies, EntropyOffsets, RangeStart, RangeEnd, Keys, RewardAddr}).
 
 store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
-	gen_server:cast(name(StoreID), {store_entropy,
-		ChunkEntropy, BucketEndOffset, StoreID, RewardAddr}).
+	case catch gen_server:call(
+			name(StoreID), 
+			{store_entropy, ChunkEntropy, BucketEndOffset, StoreID, RewardAddr},
+			?DEFAULT_CALL_TIMEOUT) of
+		{'EXIT', {Reason, {gen_server, call, _}}} ->
+			?LOG_WARNING([{event, store_entropy}, {module, ?MODULE},
+				{name, name(StoreID)}, {store_id, StoreID},
+				{bucket_end_offset, BucketEndOffset}, {reason, Reason}]),
+			false;
+		Reply ->
+			Reply
+	end.
 
 is_ready(StoreID) ->
 	case catch gen_server:call(name(StoreID), is_ready, ?DEFAULT_CALL_TIMEOUT) of
@@ -75,18 +85,20 @@ handle_cast({store_entropy_footprint,
 		ok),
 	{noreply, State};
 
-handle_cast({store_entropy,
-	ChunkEntropy, BucketEndOffset, StoreID, RewardAddr}, State) ->
-	#state{ store_id = StoreID } = State,
-	do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr),
-	{noreply, State};
-
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_call(is_ready, _From, State) ->
 	{reply, true, State};
+
+
+handle_call({store_entropy, ChunkEntropy, BucketEndOffset, StoreID, RewardAddr},
+		_From, State) ->
+	#state{ store_id = StoreID } = State,
+	do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr),
+	{reply, ok, State};
+
 handle_call(Call, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {call, Call}]),
 	{reply, {error, unhandled_call}, State}.
