@@ -323,8 +323,6 @@ handle_cast(prepare_entropy, State) ->
 	{noreply, State3};
 
 handle_cast({generate_entropies, RewardAddr, BucketEndOffset, ReplyTo}, State) ->
-	?LOG_DEBUG([{event, generate_entropies}, {store_id, State#state.store_id},
-			{bucket_end_offset, BucketEndOffset}, {reply_to, ReplyTo}]),
 	Entropies = generate_entropies(RewardAddr, BucketEndOffset),
 	ReplyTo ! {entropy, BucketEndOffset, Entropies},
 	{noreply, State};
