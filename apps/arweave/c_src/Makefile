@@ -123,7 +123,7 @@ $(RXSQUARED_OUTPUT): $(RXSQUARED_OBJECTS)
 
 $(VDF_OUTPUT): $(VDF_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
-	$(link_verbose) $(CXX) $(VDF_OBJECTS) $(LDFLAGS) $(LDLIBS) -shared -o $(VDF_OUTPUT)
+	$(link_verbose) $(CXX) $(VDF_OBJECTS) $(LDFLAGS) $(LDLIBS) ${SHA_OUTPUT} -shared -o $(VDF_OUTPUT)
 
 SECP256K1_SOURCES = $(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/secp256k1/*.c)
 SECP256K1_OBJECTS = $(addsuffix .o, $(basename $(SECP256K1_SOURCES)))
