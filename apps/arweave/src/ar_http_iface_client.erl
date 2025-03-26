@@ -27,14 +27,14 @@
 -export([get_tx_from_remote_peer/3]).
 %% -- End of testing exports
 
--include("../include/ar.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_data_sync.hrl").
--include("../include/ar_data_discovery.hrl").
--include("../include/ar_mining.hrl").
--include("../include/ar_wallets.hrl").
--include("../include/ar_pool.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
+-include("ar_consensus.hrl").
+-include("ar_data_sync.hrl").
+-include("ar_data_discovery.hrl").
+-include("ar_mining.hrl").
+-include("ar_wallets.hrl").
+-include("ar_pool.hrl").
 
 %%--------------------------------------------------------------------
 %% @doc Send a JSON-encoded transaction to the given Peer with default

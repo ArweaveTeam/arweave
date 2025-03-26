@@ -12,7 +12,7 @@
 		take_every_nth/2, safe_divide/2, terminal_clear/0, print_stacktrace/0, shuffle_list/1,
 		assert_file_exists_and_readable/1, get_system_device/1]).
 
--include("../include/ar.hrl").
+-include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(DEFAULT_PMAP_TIMEOUT, 60_000).

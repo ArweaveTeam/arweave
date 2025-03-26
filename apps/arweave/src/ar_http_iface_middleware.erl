@@ -4,13 +4,13 @@
 
 -export([execute/2, read_body_chunk/4]).
 
--include("../include/ar.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_mining.hrl").
--include("../include/ar_data_sync.hrl").
--include("../include/ar_data_discovery.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
+-include("ar_mining.hrl").
+-include("ar_data_sync.hrl").
+-include("ar_data_discovery.hrl").
 
--include("../include/ar_pool.hrl").
+-include("ar_pool.hrl").
 
 
 -define(HANDLER_TIMEOUT, 55000).
