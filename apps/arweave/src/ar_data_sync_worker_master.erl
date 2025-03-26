@@ -54,7 +54,7 @@ register_workers() ->
 			WorkerMaster = ?CHILD_WITH_ARGS(
 				ar_data_sync_worker_master, worker, ar_data_sync_worker_master,
 				[WorkerNames]),
-				Workers ++ [WorkerMaster];
+				[WorkerMaster] ++ Workers;
 		false ->
 			[]
 	end.
@@ -105,6 +105,14 @@ handle_call(ready_for_work, _From, State) ->
 	TotalTaskCount = State#state.scheduled_task_count + State#state.queued_task_count,
 	ReadyForWork = TotalTaskCount < max_tasks(State#state.worker_count),
 	{reply, ReadyForWork, State};
+
+handle_call({reset_worker, Worker}, _From, State) ->
+	Load = maps:get(Worker, State#state.worker_loads, 0),
+	State2 = State#state{
+		scheduled_task_count = State#state.scheduled_task_count - Load,
+		worker_loads = maps:put(Worker, 0, State#state.worker_loads)
+	},
+	{reply, ok, State2};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
