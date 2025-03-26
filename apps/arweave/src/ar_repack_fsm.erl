@@ -63,7 +63,7 @@ next_state(#chunk_info{state = needs_chunk} = ChunkInfo) ->
 
 	NextState = case {IsTooSmall, SourcePacking, Chunk, IsStorageSupported} of
 		{true, _, _, _} -> entropy_only;
-		{false, none, _, _} ->
+		{false, not_found, _, _} ->
 			%% This offset exists in some of the chunk indices, the chunk is not recorded
 			%% in the sync record. This can happen if there was some corruption at some
 			%% point in the past. We'll clean out the bad indices, and then record
@@ -200,7 +200,7 @@ next_state(#chunk_info{state = needs_entropy} = ChunkInfo) ->
 
 			%% sanity checks
 			true = ChunkInfo#chunk_info.chunk /= not_found,
-			true = ChunkInfo#chunk_info.chunk /= none,
+			true = ChunkInfo#chunk_info.chunk /= not_set,
 			true = ChunkInfo#chunk_info.source_packing == unpacked_padded,
 			%% end sanity checks
 			needs_encipher
@@ -252,13 +252,13 @@ next_state(ChunkInfo) ->
 	ChunkInfo.
 
 
-log_error(Event, ChunkInfo, ExtraLogs) ->
+log_error(Event, #chunk_info{} = ChunkInfo, ExtraLogs) ->
 	?LOG_ERROR(format_logs(Event, ChunkInfo, ExtraLogs)).
 
-log_debug(Event, ChunkInfo, ExtraLogs) ->
+log_debug(Event, #chunk_info{} = ChunkInfo, ExtraLogs) ->
 	?LOG_DEBUG(format_logs(Event, ChunkInfo, ExtraLogs)).
 
-format_logs(Event, ChunkInfo, ExtraLogs) ->
+format_logs(Event, #chunk_info{} = ChunkInfo, ExtraLogs) ->
 	#chunk_info{
 		offsets = Offsets,
 		metadata = Metadata,
