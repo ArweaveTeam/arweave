@@ -20,14 +20,14 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([enqueue_intervals/3, remove_expired_disk_pool_data_roots/0]).
 
--include("../include/ar.hrl").
--include("../include/ar_sup.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_poa.hrl").
--include("../include/ar_data_discovery.hrl").
--include("../include/ar_data_sync.hrl").
--include("../include/ar_sync_buckets.hrl").
+-include("ar.hrl").
+-include("ar_sup.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
+-include("ar_poa.hrl").
+-include("ar_data_discovery.hrl").
+-include("ar_data_sync.hrl").
+-include("ar_sync_buckets.hrl").
 
 -ifdef(AR_TEST).
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5_000).

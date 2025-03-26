@@ -2,9 +2,9 @@
 
 -behaviour(gen_server).
 
--include("../include/ar.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_data_discovery.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
+-include("ar_data_discovery.hrl").
 
 -export([start_link/0, get_serialized_sync_record/1, get_serialized_sync_buckets/0]).
 

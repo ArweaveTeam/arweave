@@ -6,8 +6,8 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_data_discovery.hrl").
+-include("ar.hrl").
+-include("ar_data_discovery.hrl").
 
 -record(state, {
 	peer_queue,

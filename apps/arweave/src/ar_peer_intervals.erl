@@ -2,9 +2,9 @@
 
 -export([fetch/3]).
 
--include("../include/ar.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_data_discovery.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
+-include("ar_data_discovery.hrl").
 
 %% The size of the span of the weave we search at a time.
 %% By searching we mean asking peers about the intervals they have in the given span
