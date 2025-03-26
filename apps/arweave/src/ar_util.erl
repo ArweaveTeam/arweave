@@ -15,6 +15,8 @@
 -include("../include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-define(DEFAULT_PMAP_TIMEOUT, 60_000).
+
 bool_to_int(true) -> 1;
 bool_to_int(_) -> 0.
 
@@ -198,9 +200,14 @@ unique(Res, [X|Xs]) ->
 		true -> unique(Res, Xs)
 	end.
 
-%% @doc Run a map in parallel.
-%% NOTE: Make this efficient for large lists.
+%% @doc Run a map in parallel, throw {pmap_timeout, ?DEFAULT_PMAP_TIMEOUT}
+%% if a worker takes longer than ?DEFAULT_PMAP_TIMEOUT milliseconds.
 pmap(Mapper, List) ->
+	pmap(Mapper, List, ?DEFAULT_PMAP_TIMEOUT).
+
+%% @doc Run a map in parallel, throw {pmap_timeout, Timeout} if a worker
+%% takes longer than Timeout milliseconds.
+pmap(Mapper, List, Timeout) ->
 	Master = self(),
 	ListWithRefs = [{Elem, make_ref()} || Elem <- List],
 	lists:foreach(fun({Elem, Ref}) ->
@@ -212,15 +219,26 @@ pmap(Mapper, List) ->
 		fun({_, Ref}) ->
 			receive
 				{pmap_work, Ref, Mapped} -> Mapped
+			after Timeout ->
+				throw({pmap_timeout, Timeout})
 			end
 		end,
 		ListWithRefs
 	).
 
-%% @doc Run a map in parallel, one batch at a time.
-batch_pmap(_Mapper, [], _BatchSize) ->
-	[];
+%% @doc Run a map in parallel, one batch at a time,
+%% throw {batch_pmap_timeout, ?DEFAULT_PMAP_TIMEOUT} if a worker
+%% takes longer than ?DEFAULT_PMAP_TIMEOUT milliseconds.
 batch_pmap(Mapper, List, BatchSize) ->
+	batch_pmap(Mapper, List, BatchSize, ?DEFAULT_PMAP_TIMEOUT).
+
+%% @doc Run a map in parallel, one batch at a time,
+%% throw {batch_pmap_timeout, Timeout} if a worker takes
+%% longer than Timeout milliseconds.
+batch_pmap(_Mapper, [], _BatchSize, _Timeout) ->
+	[];
+batch_pmap(Mapper, List, BatchSize, Timeout)
+		when BatchSize > 0 ->
 	Self = self(),
 	{Batch, Rest} =
 		case length(List) >= BatchSize of
@@ -239,10 +257,12 @@ batch_pmap(Mapper, List, BatchSize) ->
 		fun({_, Ref}) ->
 			receive
 				{pmap_work, Ref, Mapped} -> Mapped
+			after Timeout ->
+				throw({batch_pmap_timeout, Timeout})
 			end
 		end,
 		ListWithRefs
-	) ++ batch_pmap(Mapper, Rest, BatchSize).
+	) ++ batch_pmap(Mapper, Rest, BatchSize, Timeout).
 
 %% @doc Filter the list in parallel.
 pfilter(Fun, List) ->
