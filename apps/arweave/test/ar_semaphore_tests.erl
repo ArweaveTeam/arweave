@@ -68,7 +68,7 @@ wait_for_two_processes_at_a_time_test_() ->
 
 with_semaphore_(Name, Value, Fun) ->
 	{setup,
-		fun() -> ok = ar_semaphore:start_link(Name, Value) end,
+		fun() -> {ok, _} = ar_semaphore:start_link(Name, Value) end,
 		fun(_) -> _ = ar_semaphore:stop(Name) end,
 		[Fun]
 	}.

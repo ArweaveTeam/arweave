@@ -4,6 +4,7 @@
 
 -export([start/0, execute/2, reset/0, reset_rate_limit/3,
 		ban_peer/2, is_peer_banned/1, cleanup_ban/1, decrement_ip_addr/2]).
+-export([start_link/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -29,16 +30,18 @@ execute(Req, Env) ->
 			end
 	end.
 
+start_link() ->
+	{ok, spawn_link(fun() -> start() end)}.
+
 start() ->
-	?LOG_INFO([{event, ar_blacklist_middleware_start}]),
+	?LOG_INFO([{start, ?MODULE}, {pid, self()}]),
 	{ok, _} =
 		timer:apply_after(
 			?BAN_CLEANUP_INTERVAL,
 			?MODULE,
 			cleanup_ban,
 			[ets:whereis(?MODULE)]
-		),
-	ok.
+		).
 
 %% Ban a peer completely for TTLSeconds seoncds. Since we cannot trust the port,
 %% we ban the whole IP address.

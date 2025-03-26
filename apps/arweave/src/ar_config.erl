@@ -705,6 +705,14 @@ parse_options([{<<"data_sync_request_packed_chunks">>, Bool} | Rest], Config)
 parse_options([{<<"data_sync_request_packed_chunks">>, InvalidValue} | _Rest], _Config) ->
 	{error, {bad_type, data_sync_request_packed_chunks, boolean}, InvalidValue};
 
+%% shutdown procedure
+parse_options([{<<"shutdown_tcp_connection_timeout">>, Delay} | Rest], Config)
+	when is_integer(Delay) andalso Delay > 0 ->
+		NewConfig = Config#config{ shutdown_tcp_connection_timeout = Delay },
+		parse_options(Rest, NewConfig);
+parse_options([{<<"shutdown_tcp_connection_timeout">>, InvalidValue} | Rest], Config) ->
+	{error, {bad_type, shutdown_tcp_connection_timeout, integer}, InvalidValue};
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->

@@ -3,9 +3,13 @@
 %%%===================================================================
 
 -module(ar_http_iface_server).
+-behavior(gen_server).
 
--export([start/0, stop/0]).
+-export([start_link/0]).
+-export([init/1, terminate/2]).
+-export([handle_call/3, handle_cast/2, handle_info/2]).
 -export([split_path/1, label_http_path/1, label_req/1]).
+-export([prep_stop/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
@@ -33,6 +37,20 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+init(_) ->
+	?LOG_INFO([{start, ?MODULE}, {pid, self()}]),
+	% this process needs to be stopped in a clean way,
+	% if something goes wrong, the connections must
+	% be cleaned before leaving.
+	erlang:process_flag(trap_exit, true),
+	{ok, Config} = application:get_env(arweave, config),
+	case start_http_iface_listener(Config) of
+		{ok, Pid} -> {ok, Pid};
+		Elsewise -> {error, Elsewise}
+	end.
 
 split_path(Path) ->
 	binary:split(Path, <<"/">>, [global, trim_all]).
@@ -48,24 +66,24 @@ label_req(Req) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 	ar_http_iface_server:label_http_path(SplitPath).
 
+handle_call(Msg, From, State) ->
+	?LOG_WARNING([{process, ?MODULE}, {received, Msg}, {from, From}]),
+	{noreply, State}.
+
+handle_cast(Msg, State) ->
+	?LOG_WARNING([{process, ?MODULE}, {received, Msg}]),
+	{noreply, State}.
+
+handle_info(Msg = {'EXIT', _From, Reason}, _State) ->
+	?LOG_ERROR([{process, ?MODULE}, {received, Msg}]),
+	{stop, Reason};
+handle_info(Msg, State) ->
+	?LOG_WARNING([{process, ?MODULE}, {received, Msg}]),
+	{noreply, State}.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-%% @doc Start the server
-start() ->
-	{ok, Config} = application:get_env(arweave, config),
-	Semaphores = Config#config.semaphores,
-	maps:map(
-		fun(Name, N) ->
-			ok = ar_semaphore:start_link(Name, N)
-		end,
-		Semaphores
-	),
-	ok = ar_blacklist_middleware:start(),
-	ok = start_http_iface_listener(Config),
-	ok.
-
 start_http_iface_listener(Config) ->
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
 	TlsCertfilePath = Config#config.tls_cert_file,
@@ -84,17 +102,242 @@ start_http_iface_listener(Config) ->
 	},
 	case TlsCertfilePath of
 		not_set ->
-			{ok, _} = cowboy:start_clear(ar_http_iface_listener, TransportOpts, ProtocolOpts);
+			cowboy:start_clear(ar_http_iface_listener, TransportOpts, ProtocolOpts);
 		_ ->
-			{ok, _} = cowboy:start_tls(ar_http_iface_listener, TransportOpts ++ [
+			cowboy:start_tls(ar_http_iface_listener, TransportOpts ++ [
 				{certfile, TlsCertfilePath},
 				{keyfile, TlsKeyfilePath}
 			], ProtocolOpts)
-	end,
-	ok.
+	end.
 
-stop() ->
-	cowboy:stop_listener(ar_http_iface_listener).
+terminate(_Reason, State) ->
+	prep_stop(State).
+
+%%--------------------------------------------------------------------
+%% @doc stop the application and execute the shutdown procedure.
+%% @end
+%%--------------------------------------------------------------------
+-spec prep_stop(State) -> Return when
+	State :: any(),
+	Return :: any.
+
+prep_stop(_State) ->
+	% During the shutdown process of this part of the
+	% code, the caller must not close until every connections
+	% have been closed or killed.
+	{ok, Config} = application:get_env(arweave, config),
+	Delay = 1000*Config#config.shutdown_tcp_connection_timeout,
+	ok = ranch:suspend_listener(ar_http_iface_listener),
+	Pids = terminate_connections(Delay),
+	terminate_listener(Pids, Delay),
+	?LOG_INFO([{stop, ?MODULE}]).
+
+%%--------------------------------------------------------------------
+%% @doc ensure all connections have been closed before stopping the
+%%      cowboy listener.
+%% @end
+%%--------------------------------------------------------------------
+-spec terminate_listener(Pids, Delay) -> Return when
+	  Pids :: [pid()],
+	  Delay :: pos_integer(),
+	  Return :: ok.
+
+terminate_listener([], _Delay) ->
+	?LOG_INFO("All tcp connections have been closed."),
+	cowboy:stop_listener(ar_http_iface_listener);
+terminate_listener(Pids, Delay) ->
+	%
+	receive
+		{'DOWN', Ref, process, Pid, _} ->
+			% one of the process spawned to close tcp connections
+			% has been stopped, it can be removed from the PID
+			% list safely.
+			Filter = fun
+				({P, R}) when P =:= Pid, R =:= Ref -> false;
+				(_) -> true
+			end,
+			NewPids = lists:filter(Filter, Pids),
+			terminate_listener(NewPids, Delay);
+
+		Elsewise ->
+			% received an abnormal message, it will be logged
+			% but the loop should not be broken until all PIDs
+			% are still up. If the message is important, in doubt
+			% we put it at the end of the mailbox.
+			?LOG_ERROR([{msg, Elsewise}]),
+			self() ! Elsewise,
+			terminate_listener(Pids, Delay)
+
+	after
+		(?SHUTDOWN_TCP_MAX_CONNECTION_TIMEOUT*1000) ->
+			terminate_listener([], Delay)
+	end.
+
+%%--------------------------------------------------------------------
+%% @doc terminate all connections. A delay can be set to force close
+%%      or kill the remaining connections.
+%% @end
+%%--------------------------------------------------------------------
+-spec terminate_connections(Delay) -> Return when
+	Delay :: pos_integer(),
+	Return :: [{pid(), reference()}, ...].
+
+terminate_connections(Delay) ->
+	Processes = ranch:procs(ar_http_iface_listener, connections),
+	[ terminate_connection(P, Delay) || P <- Processes ].
+
+%%--------------------------------------------------------------------
+%% @doc terminate a ranch/cowboy connection. this follows the drain
+%%      procedure explained in ranch and cowboy documentation.
+%% @end
+%%--------------------------------------------------------------------
+-spec terminate_connection(Connection, Delay) -> Return when
+	Connection :: ranch:ref(),
+	Delay :: pos_integer(),
+	Return :: pid().
+
+terminate_connection(Connection, Delay) ->
+	% to improve the speed, all terminations are done in
+	% their own processes, only monitored by the caller.
+	spawn_monitor(fun() ->
+		try
+			terminate_connection_init(Connection, Delay)
+		catch
+			E:R ->
+				?LOG_ERROR([{error, E}, {reason, R}])
+		end
+	end).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc terminate connection init procedure.
+%% @end
+%%--------------------------------------------------------------------
+-spec terminate_connection_init(Connection, Delay) -> Return when
+	Connection :: ranch:ref(),
+	Delay :: pos_integer(),
+	Return :: pid().
+
+terminate_connection_init(Connection, Delay) ->
+	try
+		% it seems ranch_tcp does not have a way to "kill" or "close" the
+		% connection from the process. The port needs to be extracted, to
+		% accomplish that, one can check using process_info/2 functions or
+		% extract the process state with sys:get_state/1.
+		{links, Links} = erlang:process_info(Connection, links),
+
+		% in normal situation, a ranch connection process must have only one
+		% port (socket). If it's not the case, this is abnormal.
+		[Socket|_] = [ P || P <- Links, is_port(P) ],
+
+		% let monitor the connection first. a ranch connection is a process
+		% used as "interface" to a socket. the procedure must know if the
+		% process is still alive.
+		Ref = erlang:monitor(port, Socket),
+
+		% let check if information about the sockets can be retrieved, in this
+		% case, the address/port is the information required. It also check if
+		% the socket is still active. If an exception is returned, we assume
+		% the socket is already down.
+		{ok, {PeerAddress, PeerPort}} = inet:peername(Socket),
+
+		% let convert the ip address to something one can print.
+		Peer = string:join([inet:ntoa(PeerAddress), integer_to_list(PeerPort)], ":"),
+
+		% create the timer for the kill timeout
+		{ok, KillRef} = timer:send_after(Delay, {timeout, kill}),
+		?LOG_DEBUG([{timer, KillRef}, {msg, "tcp socket kill timeout"}]),
+
+		% now everything is ready, the socket is set in read-only mode. the
+		% remote peer will receive this information and will try to fetch
+		% the last piece of data from the buffer. It does not guarantee the
+		% socket will be closed, in particular if the connection is slow.
+		?LOG_INFO([{connection, Peer}, {socket, Connection}, {reason, "shutdown"},
+			   {msg, "shutdown (read-only)"}]),
+		ranch_tcp:shutdown(Socket, write),
+
+		% let prepare the state used for the termination loop procedure.
+		State = #{
+			kill_reference => KillRef,
+			reference => Ref,
+			socket => Socket,
+			peer => Peer,
+			delay => Delay,
+			connection => Connection
+		},
+
+		% let start the terminate loop to shutdown properly the connection
+		terminate_connection_loop(State)
+	catch
+		E:R ->
+			?LOG_ERROR([{error, E}, {reason, R}])
+	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc shutdown procedure loop, in charge of dealing with monitoring
+%%      messages and timeouts.
+%% @end
+%%--------------------------------------------------------------------
+-spec terminate_connection_loop(State) -> Return when
+	Socket :: port(),
+	Connection :: pid(),
+	Peer :: string(),
+	Delay :: pos_integer(),
+	MonitorRef :: reference(),
+	State :: #{
+		socket => Socket,
+		connection => Connection,
+		peer => Peer,
+		delay => Delay,
+		ref => MonitorRef
+	},
+	Return :: ok.
+
+terminate_connection_loop(State) ->
+	AfterDelay = maps:get(delay, State)*2,
+	Ref = maps:get(reference, State),
+	Socket = maps:get(socket, State),
+	Connection = maps:get(connection, State),
+	Peer = maps:get(peer, State),
+	receive
+		{'DOWN', Ref, port, Socket, _} ->
+			% the ranch process monitored is down, the loop
+			% now can be stopped.
+			?LOG_INFO([{connection, Peer}, {socket, Connection}, {reason, "shutdown"},
+				{msg, "terminated (normal)"}]),
+			ok;
+
+		{timeout, kill} ->
+			% this timeout set linger tcp parameter
+			% to 0 and close the connection (again). At
+			% this stage, the connection should be closed.
+			% and we should receive a message from
+			% monitoring.
+			?LOG_WARNING([{connection, Peer}, {socket, Connection}, {reason, "shutdown"},
+				{msg, "kill (timeout)"}]),
+			ranch_tcp:setopts(Socket, [{linger, {true, 0}}]),
+			ranch_tcp:close(Socket),
+			terminate_connection_loop(State);
+
+		Msg ->
+			% a message without matching one of the patterns.
+			% this is abnormal but it should not crash the process
+			% until the end of the shutdown procedure.
+			?LOG_WARNING([{received, Msg}]),
+			terminate_connection_loop(State)
+
+	after
+		AfterDelay ->
+			% the ranch process is still up, even after
+			% the shutdown procedure. This is abnormal, and
+			% it must be logged. Instead of doing something
+			% clean, the process is directly killed and the
+			% loop stopped.
+			?LOG_ERROR([{connection, Peer}, {socket, Connection}, {reason, "shutdown"},
+				{msg, "can't kill"}]),
+			erlang:port_close(Socket)
+	end.
 
 name_route([]) ->
 	"/";
