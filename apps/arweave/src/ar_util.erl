@@ -10,6 +10,7 @@
 		do_until/3, block_index_entry_from_block/1,
 		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
 		take_every_nth/2, safe_divide/2, terminal_clear/0, print_stacktrace/0, shuffle_list/1,
+		safe_format/1, safe_format/3,
 		assert_file_exists_and_readable/1, get_system_device/1]).
 
 -include("ar.hrl").
@@ -380,6 +381,22 @@ parse_list_indices(_BadInput, _N) ->
 
 shuffle_list(List) ->
 	lists:sort(fun(_,_) -> rand:uniform() < 0.5 end, List).
+
+%% @doc Format a value and truncate it if it's too long - this can help avoid the node
+%% locking up when accidentally trying to log a large/complex datatype (e.g. a map of chunks).
+
+-spec safe_format(term(), non_neg_integer(), non_neg_integer()) -> string().
+safe_format(Value) ->
+	safe_format(Value, 5, 2000).
+
+safe_format(Value, Depth, Limit) ->
+	ValueStr = io_lib:format("~P", [Value, Depth]),  % Depth limited to 5
+	case length(ValueStr) > Limit of
+		true -> 
+			string:slice(ValueStr, 0, Limit) ++ "... (truncated)";
+		false -> 
+			ValueStr
+	end.
 
 %%%
 %%% Tests.
