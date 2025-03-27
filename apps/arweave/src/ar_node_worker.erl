@@ -1519,9 +1519,8 @@ record_economic_metrics2(B, PrevB) ->
 	prometheus_gauge:set(log_diff, [poa2], ar_retarget:switch_to_log_diff(Diff)),
 	prometheus_gauge:set(network_hashrate, ar_difficulty:get_hash_rate_fixed_ratio(B)),
 	prometheus_gauge:set(endowment_pool, B#block.reward_pool),
+	prometheus_gauge:set(kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier),
 	Period_200_Years = 200 * 365 * 24 * 60 * 60,
-	Burden = ar_pricing:get_storage_cost(B#block.weave_size, B#block.timestamp,
-			B#block.usd_to_ar_rate, B#block.height),
 	case B#block.height >= ar_fork:height_2_6() of
 		true ->
 			#block{ reward_history = RewardHistory } = B,
@@ -1540,7 +1539,9 @@ record_economic_metrics2(B, PrevB) ->
 					PrevB#block.kryder_plus_rate_multiplier, PrevB#block.denomination,
 					BlockInterval},
 			{ExpectedBlockReward,
-					_, _, _, _} = ar_pricing:get_miner_reward_endowment_pool_debt_supply(Args),
+					_, _, _, _, Give, Take} = ar_pricing:get_miner_reward_endowment_pool_debt_supply(Args),
+			prometheus_gauge:set(endowment_pool_take, Take),
+			prometheus_gauge:set(endowment_pool_give, Give),
 			prometheus_gauge:set(expected_block_reward, ExpectedBlockReward),
 			LegacyPricePerGibibyte = ar_pricing:get_storage_cost(1024 * 1024 * 1024,
 					os:system_time(second), PrevB#block.usd_to_ar_rate, B#block.height),
@@ -1551,17 +1552,6 @@ record_economic_metrics2(B, PrevB) ->
 		false ->
 			ok
 	end,
-	%% 2.5 metrics:
-	prometheus_gauge:set(network_burden, Burden),
-	Burden_10_USD_AR = ar_pricing:get_storage_cost(B#block.weave_size, B#block.timestamp,
-			{1, 10}, B#block.height),
-	prometheus_gauge:set(network_burden_10_usd_ar, Burden_10_USD_AR),
-	Burden_200_Years = Burden - ar_pricing:get_storage_cost(B#block.weave_size,
-			B#block.timestamp + Period_200_Years, B#block.usd_to_ar_rate, B#block.height),
-	prometheus_gauge:set(network_burden_200_years, Burden_200_Years),
-	Burden_200_Years_10_USD_AR = Burden_10_USD_AR - ar_pricing:get_storage_cost(
-			B#block.weave_size, B#block.timestamp + Period_200_Years, {1, 10}, B#block.height),
-	prometheus_gauge:set(network_burden_200_years_10_usd_ar, Burden_200_Years_10_USD_AR),
 	case catch ar_pricing:get_expected_min_decline_rate(B#block.timestamp,
 			Period_200_Years, B#block.reward_pool, B#block.weave_size, B#block.usd_to_ar_rate,
 			B#block.height) of
