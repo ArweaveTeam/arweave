@@ -43,6 +43,8 @@
 -define(DEVICE_LOCK_WAIT, 5_000).
 -endif.
 
+-define(STATE_COUNT_INTERVAL, 10_000).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -112,6 +114,7 @@ init({StoreID, ToPacking}) ->
 	{ok, Config} = application:get_env(arweave, config),
 	BatchSize = Config#config.repack_batch_size,
 	gen_server:cast(self(), repack),
+	gen_server:cast(self(), count_states),
 	ar_device_lock:set_device_lock_metric(StoreID, repack, paused),
 	State = #state{ 
 		store_id = StoreID,
@@ -212,6 +215,11 @@ handle_cast({expire_encipher_request, _Ref}, #state{} = State) ->
 	%% Request is from an old batch, ignore.
 	{noreply, State};
 
+handle_cast(count_states, #state{} = State) ->
+	count_states(cache,State),
+	ar_util:cast_after(?STATE_COUNT_INTERVAL, self(), count_states),
+	{noreply, State};
+
 handle_cast(Request, #state{} = State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {request, Request}]),
 	{noreply, State}.
@@ -237,7 +245,6 @@ handle_info({entropy, BucketEndOffset, Entropies}, #state{} = State) ->
 		EntropyKeys, 
 		RewardAddr,
 		fun entropy_generated/3, [], State),
-	
 	{noreply, State2};
 
 %% @doc This is only called during repack_in_place. Called when a chunk has been repacked
@@ -384,7 +391,7 @@ repack_batch(Cursor, #state{} = State) ->
 	IsRecorded = ar_sync_record:is_recorded(
 		BucketStartOffset+1, TargetPacking, ar_data_sync, StoreID),
 
-	case IsRecorded orelse BatchStart < ModuleStart orelse BatchStart > ModuleEnd of
+	case Skip orelse BatchStart < ModuleStart orelse BatchStart > ModuleEnd of
 		true ->
 			%% Skip this BucketEndOffset for one of these reasons:
 			%% 1. BucketEndOffset has already been repacked.
@@ -396,7 +403,25 @@ repack_batch(Cursor, #state{} = State) ->
 			%% 3. The iteration range of this batch starts after the end of the
 			%%    storage module.
 			gen_server:cast(self(), repack),
-			State2;
+			Interval = ar_sync_record:get_next_unsynced_interval(
+				BucketEndOffset, infinity, TargetPacking, ar_data_sync, StoreID),
+			NextCursor = case Interval of
+				not_found ->
+					BucketEndOffset + ?DATA_CHUNK_SIZE;
+				{_, Start} ->
+					Start + ?DATA_CHUNK_SIZE
+			end,
+			log_debug(skipping_cursor, State, [
+				{cursor, Cursor},
+				{next_cursor, NextCursor},
+				{padded_end_offset, PaddedEndOffset},
+				{bucket_end_offset, BucketEndOffset},
+				{is_chunk_recorded, IsChunkRecorded},
+				{batch_start, BatchStart},
+				{module_start, ModuleStart},
+				{module_end, ModuleEnd}
+			]),
+			State#state{ next_cursor = NextCursor };
 		_ ->
 			%% sanity checks
 			true = BatchStart < BatchEnd,
@@ -412,7 +437,11 @@ repack_batch(Cursor, #state{} = State) ->
 				{entropy_end, EntropyEnd},
 				{read_batch_size, BatchSize},
 				{write_batch_size, State2#state.write_batch_size},
-				{footprint_offsets, length(FootprintOffsets)}
+				{footprint_size, FootprintSize},
+				{batch_start, BatchStart},
+				{batch_end, BatchEnd},
+				{batch_offsets, length(BatchOffsets)},
+				{chunk_info_map, maps:size(State3#state.chunk_info_map)}
 			]),
 			State3 = init_chunk_info_map(FootprintOffsets, State2),
 			generate_batch_entropy(BucketEndOffset, State3),
@@ -589,6 +618,7 @@ enqueue_chunk_for_writing(ChunkInfo, #state{} = State) ->
 
 	case gb_sets:size(State2#state.write_queue) >= State2#state.write_batch_size of
 		true ->
+			count_states(queue, State2),
 			ar_repack_io:write_queue(
 				State2#state.write_queue, TargetPacking, RewardAddr, StoreID),
 			State2#state{ write_queue = gb_sets:new() };
@@ -612,12 +642,8 @@ entropy_generated(Entropy, BucketEndOffset, #state{} = State) ->
 			ChunkInfo2 = ChunkInfo#chunk_info{
 				entropy = Entropy
 			},
-
-			% log_debug(entropy_generated, ChunkInfo2, State, []),
-
 			update_chunk_state(ChunkInfo2, State)
 	end.
-
 
 maybe_repack_next_batch(#state{} = State) ->
 	#state{ 
@@ -629,6 +655,7 @@ maybe_repack_next_batch(#state{} = State) ->
 	} = State,
 	case maps:size(Map) of
 		0 ->
+			count_states(queue, State),
 			ar_repack_io:write_queue(WriteQueue, TargetPacking, RewardAddr, StoreID),
 			State2 = State#state{ write_queue = gb_sets:new() },
 			gen_server:cast(self(), repack),
@@ -694,8 +721,6 @@ process_state_change(ChunkInfo, #state{} = State) ->
 		entropy = Entropy,
 		source_packing = Packing
 	} = ChunkInfo,
-
-	% log_debug(process_state_change, ChunkInfo, State, []),
 
 	case ChunkInfo#chunk_info.state of
 		invalid ->
@@ -832,10 +857,10 @@ format_logs(Event, #chunk_info{} = ChunkInfo, #state{} = State, ExtraLogs) ->
 		{entropy, atom_or_binary(Entropy)} | ExtraLogs
 	]).
 
-count_states(#state{} = State) ->
+count_states(cache, #state{} = State) ->
 	#state{
-		chunk_info_map = Map,
-		write_queue = WriteQueue
+		store_id = StoreID,
+		chunk_info_map = Map
 	} = State,
 	MapCount = maps:fold(
 		fun(_BucketEndOffset, ChunkInfo, Acc) ->
@@ -844,6 +869,23 @@ count_states(#state{} = State) ->
 		#{},
 		Map
 	),
+	log_debug(count_cache_states, State, [
+		{cache_size, maps:size(Map)},
+		{states, maps:to_list(MapCount)}
+	]),
+	maps:fold(
+		fun(ChunkState, Count, Acc) ->
+			prometheus_gauge:set(repack_chunk_states, [StoreID, cache, ChunkState], Count),
+			Acc
+		end,
+		ok,
+		MapCount
+	);
+count_states(queue, #state{} = State) ->
+	#state{
+		store_id = StoreID,
+		write_queue = WriteQueue
+	} = State,
 	WriteQueueCount = gb_sets:fold(
 		fun({_BucketEndOffset, ChunkInfo}, Acc) ->
 			maps:update_with(ChunkInfo#chunk_info.state, fun(Count) -> Count + 1 end, 1, Acc)
@@ -851,10 +893,18 @@ count_states(#state{} = State) ->
 		#{},
 		WriteQueue
 	),
-	log_debug(repack_chunk_state_count, State, [
-		{map_states, maps:to_list(MapCount)},
-		{write_queue_states, maps:to_list(WriteQueueCount)}
-	]).	
+	log_debug(count_write_queue_states, State, [
+		{queue_size, gb_sets:size(WriteQueue)},
+		{states, maps:to_list(WriteQueueCount)}
+	]),
+	maps:fold(
+		fun(ChunkState, Count, Acc) ->
+			prometheus_gauge:set(repack_chunk_states, [StoreID, queue, ChunkState], Count),
+			Acc
+		end,
+		ok,
+		WriteQueueCount
+	).
 
 atom_or_binary(Atom) when is_atom(Atom) -> Atom;
 atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_size(Bin))}).	

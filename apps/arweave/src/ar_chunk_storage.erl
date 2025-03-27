@@ -692,7 +692,8 @@ read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID) ->
 	case file:pread(File, Position, (?DATA_CHUNK_SIZE + ?OFFSET_SIZE) * ChunkCount) of
 		{ok, << ChunkOffset:?OFFSET_BIT_SIZE, _Chunk/binary >> = Bin} ->
 			ar_metrics:record_rate_metric(
-				StartTime, byte_size(Bin), chunk_read_rate_bytes_per_second, [StoreID]),
+				StartTime, byte_size(Bin), chunk_read_rate_bytes_per_second, [StoreID, raw]),
+			prometheus_counter:inc(chunks_read, [StoreID], ChunkCount),
 			case is_offset_valid(Byte, BucketStart, ChunkOffset) of
 				true ->
 					extract_end_offset_chunk_pairs(Bin, BucketStart, 1);
