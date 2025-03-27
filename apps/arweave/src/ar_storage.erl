@@ -17,9 +17,9 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_wallets.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
+-include("ar_wallets.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -891,9 +891,16 @@ read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K
 					read_wallet_list(get_account_tree_value(H, Prefix), Tree2, Keys2,
 							RootHash, H)
 			end;
-		[{H, Prefix} | Hs] ->
-			read_wallet_list(get_account_tree_value(H, Prefix), Tree, Hs ++ Keys, RootHash,
-					H)
+		[{H, Prefix} | Hs] = L ->
+			{ReadNext, NextKeys} =
+				case Keys of
+					[] ->
+						{{H, Prefix}, Hs};
+					[{H2, Prefix2} | Keys2] ->
+						{{H2, Prefix2}, Keys2 ++ L}
+				end,
+			read_wallet_list(get_account_tree_value(ReadNext), Tree, NextKeys, RootHash,
+					element(1, ReadNext))
 	end;
 read_wallet_list({ok, _, _}, _Tree, _Keys, RootHash, _K) ->
 	read_wallet_list_from_chunk_files(RootHash);
@@ -1300,16 +1307,11 @@ store_account_tree_update(Height, RootHash, Map) ->
 	),
 	?LOG_INFO([{event, stored_account_tree}]).
 
-%% @doc Ignore the prefix when querying a key since the prefix might depend on the order of
-%% insertions and is only used to optimize certain lookups.
+get_account_tree_value({Key, Prefix}) ->
+	get_account_tree_value(Key, Prefix).
+
 get_account_tree_value(Key, Prefix) ->
 	ar_kv:get_prev(account_tree_db, << Key/binary, Prefix/binary >>).
-	% does not work:
-	%ar_kv:get_next(account_tree_db, << Key/binary, Prefix/binary >>).
-	% works:
-	%<< N:(48 * 8) >> = Key,
-	%Key2 = << (N + 1):(48 * 8) >>,
-	%ar_kv:get_prev(account_tree_db, Key2).
 
 %%%===================================================================
 %%% Tests
@@ -1367,16 +1369,22 @@ test_store_and_retrieve_wallet_list() ->
 	TXID = TX#tx.id,
 	ExpectedWL = ar_patricia_tree:from_proplist([{Addr, {0, TXID}}]),
 	WalletListHash = write_wallet_list(0, ExpectedWL),
+	%% 1 key in the tree:
+	%% Addr => {0, TXID}
 	{ok, ActualWL} = read_wallet_list(WalletListHash),
 	assert_wallet_trees_equal(ExpectedWL, ActualWL),
-	HashFun = fun(Key, Value) ->
-		should_not_be_called
-	end,
+	HashFun = fun(Addr, {Balance, LastTX}) ->
+			EncodedBalance = binary:encode_unsigned(Balance),
+			ar_deep_hash:hash([Addr, EncodedBalance, LastTX])
+		end,
 	?assertMatch({WalletListHash, _, _}, ar_patricia_tree:compute_hash(ActualWL, HashFun)),
 	Addr2 = binary:part(Addr, 0, 16),
 	TXID2 = crypto:strong_rand_bytes(32),
 	ExpectedWL2 = ar_patricia_tree:from_proplist([{Addr, {0, TXID}}, {Addr2, {0, TXID2}}]),
 	WalletListHash2 = write_wallet_list(0, ExpectedWL2),
+	%% 2 keys in the tree:
+	%% Addr => {0, TXID}
+	%% Addr2 => {0, TXID2}
 	{ok, ActualWL2} = read_wallet_list(WalletListHash2),
 	?assertEqual({0, TXID}, read_account(Addr, WalletListHash2)),
 	?assertEqual({0, TXID2}, read_account(Addr2, WalletListHash2)),
@@ -1393,6 +1401,10 @@ test_store_and_retrieve_wallet_list() ->
 	?assertEqual({100, TXID3}, read_account(Addr3, WalletListHash3)),
 	?assertEqual({0, TXID4}, read_account(Addr2, WalletListHash3)),
 	?assertEqual({0, TXID}, read_account(Addr, WalletListHash3)),
+	%% 3 keys in the tree:
+	%% Addr => {0, TXID}
+	%% << first 3 bytes of Addr, random bytes >> => {100, TXID3}
+	%% << first 16 bytes of Addr >> => {0, TXID4}
 	{ok, ActualWL6} = read_wallet_list(WalletListHash3),
 	assert_wallet_trees_equal(ActualWL5, ActualWL6),
 	?assertMatch({WalletListHash3, _, _}, ar_patricia_tree:compute_hash(ActualWL6, HashFun)).
@@ -1467,21 +1479,28 @@ store_and_retrieve_wallet_list2(Tree, InsertedKeys, IsUpdate) ->
 	{WalletListHash, Tree2} =
 		case IsUpdate of
 			false ->
+				%% Return the tree as-is, without computing hashes.
 				{write_wallet_list(0, Tree), Tree};
 			_ ->
+				%% Return the tree containing the computed hashes.
 				{R, T, Map} = ar_block:hash_wallet_list(Tree),
 				store_account_tree_update(0, R, Map),
 				{R, T}
 		end,
-	{ok, ActualTree} = read_wallet_list(WalletListHash),
+	{ok, StoredTree} = read_wallet_list(WalletListHash),
 	maps:foreach(
 		fun(Key, {Balance, TXID}) ->
 			?assertEqual({Balance, TXID}, read_account(Key, WalletListHash))
 		end,
 		InsertedKeys
 	),
-	assert_wallet_trees_equal(Tree, ActualTree),
-	assert_wallet_trees_equal(Tree2, ActualTree),
+	assert_wallet_trees_equal(Tree, StoredTree),
+	assert_wallet_trees_equal(Tree2, StoredTree),
+	HashFun = fun(Addr, {Balance, LastTX}) ->
+			EncodedBalance = binary:encode_unsigned(Balance),
+			ar_deep_hash:hash([Addr, EncodedBalance, LastTX])
+		end,
+	?assertMatch({WalletListHash, _, _}, ar_patricia_tree:compute_hash(StoredTree, HashFun)),
 	Tree2.
 
 %% From: https://www.erlang.org/doc/programming_examples/list_comprehensions.html#permutations
