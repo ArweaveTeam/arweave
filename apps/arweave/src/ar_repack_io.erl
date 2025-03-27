@@ -141,20 +141,35 @@ do_read_batch([BucketEndOffset | FootprintOffsets], BatchStart, BatchEnd, #state
 				]),
 				#{}
 		end,
+
+	ChunkReadSizeInBytes = maps:fold(
+		fun(_Key, Value, Acc) -> Acc + byte_size(Value) end, 
+		0, 
+		OffsetChunkMap
+	),
+	ar_metrics:record_rate_metric(
+		StartTime, ChunkReadSizeInBytes,
+		chunk_read_rate_bytes_per_second, [StoreID, repack]),
+
 	EndTime = erlang:monotonic_time(),
+	ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
 	log_debug(read_batch, State, [
 		{read_range_start, ReadRangeStart},
 		{read_range_end, ReadRangeEnd},
 		{read_range_size_bytes, ReadRangeSizeInBytes},
-		{time_taken, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)}
+		{chunk_read_size_bytes, ChunkReadSizeInBytes},
+		{time_taken, ElapsedTime},
+		{rate, (ChunkReadSizeInBytes / ?MiB / ElapsedTime) * 1000}
 	]),
 
 	ar_repack:chunk_range_read(
 		BucketEndOffset, OffsetChunkMap, OffsetMetadataMap, State#state.store_id),
 	read_batch(FootprintOffsets, BatchStart, BatchEnd, StoreID).
 
-
 process_write_queue(WriteQueue, Packing, RewardAddr, #state{} = State) ->
+	#state{
+		store_id = StoreID
+	} = State,
 	StartTime = erlang:monotonic_time(),
     gb_sets:fold(
         fun({_BucketEndOffset, ChunkInfo}, _) ->
@@ -163,7 +178,11 @@ process_write_queue(WriteQueue, Packing, RewardAddr, #state{} = State) ->
         ok,
         WriteQueue
     ),
+	ar_metrics:record_rate_metric(
+		StartTime, gb_sets:size(WriteQueue) * ?DATA_CHUNK_SIZE,
+		chunk_write_rate_bytes_per_second, [StoreID, repack]),
 	EndTime = erlang:monotonic_time(),
+	ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
 	log_debug(process_write_queue, State, [
 		{write_queue_size, gb_sets:size(WriteQueue)},
 		{time_taken, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)}
