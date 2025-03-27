@@ -134,8 +134,9 @@ show_help() ->
 					"Note: as of 2.9.1 you can only repack in place to the replica_2_9 "
 					"format."
 			},
-			{"repack_batch_size", io_lib:format("The number of chunk fetched from disk "
-				"at a time during in-place repacking. Default: ~B.",
+			{"repack_batch_size", io_lib:format("The number of batches to process at a time "
+				"during in-place repacking. For each partition being repacked, a batch "
+				"requires about 512 MiB of memory. Default: ~B.",
 				[?DEFAULT_REPACK_BATCH_SIZE])},
 			{"polling (num)", lists:flatten(
 					io_lib:format(

@@ -1,0 +1,299 @@
+-module(ar_repack_fsm).
+
+-export([crank_state/1]).
+
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_repack.hrl").
+
+%% @doc: Repeatedly call next_state until the state no longer changes.
+-spec crank_state(chunk_info()) -> chunk_info().
+crank_state(ChunkInfo) ->
+	crank_state(ChunkInfo, next_state(ChunkInfo)).
+
+crank_state(ChunkInfo, ChunkInfo) ->
+	%% State did not change, return the final state
+	ChunkInfo;
+crank_state(_OldChunkInfo, NewChunkInfo) ->
+	%% State has changed, continue cranking
+	crank_state(NewChunkInfo, next_state(NewChunkInfo)).
+
+%% ---------------------------------------------------------------------------
+%% State: needs_chunk
+%% ---------------------------------------------------------------------------
+next_state(
+		#chunk_info{
+			state = needs_chunk, chunk = not_set, metadata = not_set
+		} = ChunkInfo) ->
+	ChunkInfo;
+next_state(
+		#chunk_info{
+			state = needs_chunk, chunk = not_found, metadata = not_found
+		} = ChunkInfo) ->
+	%% Chunk is not recorded in any index.
+	NextState = entropy_only,
+	ChunkInfo#chunk_info{state = NextState};
+next_state(#chunk_info{ state = needs_chunk, metadata = Metadata } = ChunkInfo) 
+		when Metadata == not_set orelse Metadata == not_found ->
+	%% Metadata can not be empty unless chunk is also empty.
+	log_error(invalid_repack_fsm_transition, ChunkInfo, []),
+	ChunkInfo#chunk_info{state = error};
+next_state(#chunk_info{state = needs_chunk} = ChunkInfo) ->
+	#chunk_info{
+		offsets = Offsets,
+		metadata = Metadata,
+		chunk = Chunk,
+		source_packing = SourcePacking,
+		target_packing = TargetPacking
+	} = ChunkInfo,
+	#chunk_metadata{
+		chunk_size = ChunkSize
+	} = Metadata,
+	#chunk_offsets{
+		absolute_offset = AbsoluteEndOffset
+	} = Offsets,
+
+	IsTooSmall = (
+		ChunkSize /= ?DATA_CHUNK_SIZE andalso
+		AbsoluteEndOffset =< ?STRICT_DATA_SPLIT_THRESHOLD
+	),
+
+	IsStorageSupported = ar_chunk_storage:is_storage_supported(
+		AbsoluteEndOffset, ChunkSize, TargetPacking),
+
+	NextState = case {IsTooSmall, SourcePacking, Chunk, IsStorageSupported} of
+		{true, _, _, _} -> entropy_only;
+		{false, not_found, _, _} ->
+			%% This offset exists in some of the chunk indices, the chunk is not recorded
+			%% in the sync record. This can happen if there was some corruption at some
+			%% point in the past. We'll clean out the bad indices, and then record
+			%% the entropy.
+			invalid;
+		{false, TargetPacking, _, _} -> already_repacked;
+		{false, SourcePacking, not_found, _} ->
+			%% Chunk doesn't exist on disk, try chunk data db.
+			needs_data_path;
+		{false, SourcePacking, Chunk, false} -> 
+			%% We are going to move this chunk to RocksDB after repacking so
+			%% we read its DataPath here to pass it later on to store_chunk.
+			needs_data_path;
+		{false, SourcePacking, Chunk, true} -> needs_repack;
+		_ ->
+			log_error(invalid_repack_fsm_transition, ChunkInfo, []),
+			error
+	end,
+	ChunkInfo#chunk_info{state = NextState};
+
+%% ---------------------------------------------------------------------------
+%% State: invalid
+%% ---------------------------------------------------------------------------
+next_state(#chunk_info{state = invalid} = ChunkInfo) ->
+	#chunk_info{
+		entropy = Entropy
+	} = ChunkInfo,
+
+	NextState = case Entropy of
+		not_set -> 
+			%% Still waiting on entropy.
+			invalid;
+		_ -> 
+			%% The chunk data has already been invalidated, now just record and index
+			%% the entropy.
+			write_entropy
+	end,
+	ChunkInfo#chunk_info{state = NextState};
+
+%% ---------------------------------------------------------------------------
+%% State: entropy_only
+%% ---------------------------------------------------------------------------
+next_state(#chunk_info{state = entropy_only} = ChunkInfo) ->
+	#chunk_info{
+		entropy = Entropy
+	} = ChunkInfo,
+
+	NextState = case Entropy of
+		not_set -> 
+			%% Still waiting on entropy.
+			entropy_only;
+		_ ->
+			%% We don't have a record of this chunk anywhere, so we'll record and
+			%% index the entropy 
+			write_entropy
+	end,
+	ChunkInfo#chunk_info{state = NextState};
+
+%% ---------------------------------------------------------------------------
+%% State: already_repacked
+%% ---------------------------------------------------------------------------
+next_state(#chunk_info{state = already_repacked} = ChunkInfo) ->
+	#chunk_info{
+		entropy = Entropy
+	} = ChunkInfo,
+
+	NextState = case Entropy of
+		not_set -> 
+			%% Still waiting on entropy.
+			already_repacked;
+		_ ->
+			%% Repacked chunk already exists on disk so don't write anything
+			%% (neither entropy nor chunk)
+			ignore
+	end,
+	ChunkInfo#chunk_info{state = NextState};
+
+%% ---------------------------------------------------------------------------
+%% State: needs_data_path
+%% ---------------------------------------------------------------------------
+next_state(#chunk_info{state = needs_data_path, data_path = not_set} = ChunkInfo) ->
+	%% Still waiting on data path.
+	ChunkInfo;
+next_state(#chunk_info{state = needs_data_path} = ChunkInfo) ->
+	#chunk_info{
+		chunk = Chunk,
+		data_path = DataPath,
+		source_packing = SourcePacking,
+		target_packing = TargetPacking
+	} = ChunkInfo,
+
+	NextState = case {Chunk, DataPath, SourcePacking} of
+		{not_found, _, _} -> entropy_only;
+		{Chunk, not_found, _} -> entropy_only;
+		{Chunk, DataPath, TargetPacking} -> already_repacked;
+		{Chunk, DataPath, SourcePacking} -> needs_repack;
+		_ ->
+			log_error(invalid_repack_fsm_transition, ChunkInfo, []),
+			error
+	end,
+	ChunkInfo#chunk_info{state = NextState};
+
+%% ---------------------------------------------------------------------------
+%% State: needs_repack
+%% ---------------------------------------------------------------------------
+next_state(#chunk_info{state = needs_repack} = ChunkInfo) ->
+	#chunk_info{
+		source_packing = SourcePacking
+	} = ChunkInfo,
+
+	NextState = case SourcePacking of
+		unpacked_padded -> needs_entropy;
+		_ ->
+			%% Still waiting on repacking.
+			needs_repack
+	end,
+	ChunkInfo#chunk_info{state = NextState};
+
+%% ---------------------------------------------------------------------------
+%% State: needs_entropy
+%% ---------------------------------------------------------------------------
+next_state(#chunk_info{state = needs_entropy} = ChunkInfo) ->
+	#chunk_info{
+		entropy = Entropy
+	} = ChunkInfo,
+
+	NextState = case Entropy of
+		not_set -> 
+			%% Still waiting on entropy.
+			needs_entropy;
+		_ ->
+			%% We now have the unpacked_padded chunk and the entropy, proceed
+			%% with enciphering and storing the chunk.
+
+			%% sanity checks
+			true = ChunkInfo#chunk_info.chunk /= not_found,
+			true = ChunkInfo#chunk_info.chunk /= not_set,
+			true = ChunkInfo#chunk_info.source_packing == unpacked_padded,
+			%% end sanity checks
+			needs_encipher
+	end,
+	ChunkInfo#chunk_info{state = NextState};
+
+%% ---------------------------------------------------------------------------
+%% State: needs_encipher
+%% ---------------------------------------------------------------------------
+next_state(#chunk_info{state = needs_encipher} = ChunkInfo) ->
+	#chunk_info{
+		source_packing = SourcePacking,
+		target_packing = TargetPacking
+	} = ChunkInfo,
+
+	%% sanity checks
+	true = ChunkInfo#chunk_info.chunk /= not_found,
+	true = ChunkInfo#chunk_info.chunk /= not_set,
+	%% end sanity checks
+	
+	IsRepacked = SourcePacking == TargetPacking,
+
+	NextState = case IsRepacked of
+		true -> write_chunk;
+		_  -> needs_encipher
+	end,
+	ChunkInfo#chunk_info{state = NextState};
+
+%% ---------------------------------------------------------------------------
+%% State: write_chunk
+%% ---------------------------------------------------------------------------
+next_state(#chunk_info{state = write_chunk} = ChunkInfo) ->
+	%% write_chunk is a terminal state.
+	ChunkInfo;
+%% ---------------------------------------------------------------------------
+%% State: write_entropy
+%% ---------------------------------------------------------------------------
+next_state(#chunk_info{state = write_entropy} = ChunkInfo) ->
+	%% write_entropy is a terminal state.
+	ChunkInfo;
+%% ---------------------------------------------------------------------------
+%% State: ignore
+%% ---------------------------------------------------------------------------
+next_state(#chunk_info{state = ignore} = ChunkInfo) ->
+	%% ignore is a terminal state.
+	ChunkInfo;
+next_state(ChunkInfo) ->
+	log_error(invalid_repack_fsm_transition, ChunkInfo, []),
+	ChunkInfo.
+
+
+log_error(Event, #chunk_info{} = ChunkInfo, ExtraLogs) ->
+	?LOG_ERROR(format_logs(Event, ChunkInfo, ExtraLogs)).
+
+log_debug(Event, #chunk_info{} = ChunkInfo, ExtraLogs) ->
+	?LOG_DEBUG(format_logs(Event, ChunkInfo, ExtraLogs)).
+
+format_logs(Event, #chunk_info{} = ChunkInfo, ExtraLogs) ->
+	#chunk_info{
+		offsets = Offsets,
+		metadata = Metadata,
+		state = ChunkState,
+		entropy = Entropy,
+		data_path = DataPath,
+		source_packing = SourcePacking,
+		target_packing = TargetPacking,
+		chunk = Chunk
+	} = ChunkInfo,
+	#chunk_offsets{
+		absolute_offset = AbsoluteOffset,
+		padded_end_offset = PaddedEndOffset,
+		bucket_end_offset = BucketEndOffset
+	} = Offsets,
+	ChunkSize = case Metadata of
+		#chunk_metadata{chunk_size = Size} -> Size;
+		_ -> Metadata
+	end,
+	[
+		{event, Event},
+		{state, ChunkState},
+		{bucket_end_offset, BucketEndOffset},
+		{absolute_offset, AbsoluteOffset},
+		{padded_end_offset, PaddedEndOffset},
+		{chunk_size, ChunkSize},
+		{source_packing, ar_serialize:encode_packing(SourcePacking, false)},
+		{target_packing, ar_serialize:encode_packing(TargetPacking, false)},
+		{chunk, atom_or_binary(Chunk)},
+		{entropy, atom_or_binary(Entropy)},
+		{data_path, atom_or_binary(DataPath)}
+		| ExtraLogs
+	].
+
+
+atom_or_binary(Atom) when is_atom(Atom) -> Atom;
+atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_size(Bin))}).
+
