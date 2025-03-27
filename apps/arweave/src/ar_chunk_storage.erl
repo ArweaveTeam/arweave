@@ -874,6 +874,8 @@ is_offset_valid(Byte, BucketStart, ChunkOffset) ->
 	Delta >= 0 andalso Delta < ?DATA_CHUNK_SIZE.
 
 filter_by_sync_record(Chunks, _Byte, _Start, _ChunkFileStart, _StoreID, 1) ->
+	%% The code paths which query a single chunk have already implicitly checked that
+	%% the chunk belongs to the sync_record. E.g. ar_chunk_storage:get/2
 	Chunks;
 filter_by_sync_record([], _Byte, _Start, _ChunkFileStart, _StoreID, _ChunkCount) ->
 	[];
