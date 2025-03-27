@@ -142,11 +142,13 @@ do_read_batch([BucketEndOffset | FootprintOffsets], BatchStart, BatchEnd, #state
 				#{}
 		end,
 	EndTime = erlang:monotonic_time(),
+	ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
 	log_debug(read_batch, State, [
 		{read_range_start, ReadRangeStart},
 		{read_range_end, ReadRangeEnd},
 		{read_range_size_bytes, ReadRangeSizeInBytes},
-		{time_taken, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)}
+		{time_taken, ElapsedTime},
+		{rate, (ReadRangeSizeInBytes / ?MiB / ElapsedTime) * 1000}
 	]),
 
 	ar_repack:chunk_range_read(

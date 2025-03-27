@@ -464,6 +464,8 @@ do_generate_entropies(RewardAddr, BucketEndOffset) ->
 		_ ->
 			ok
 	end,
+	EntropySize = length(Entropies) * ?REPLICA_2_9_ENTROPY_SIZE,
+	prometheus_counter:inc(replica_2_9_entropy_generated, EntropySize),
 	Entropies.
 
 %% @doc Take the first slice of each entropy and combine into a single binary. This binary

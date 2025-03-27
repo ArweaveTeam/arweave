@@ -428,7 +428,7 @@ register() ->
 	]),
 	prometheus_counter:new([
 		{name, packing_requests},
-		{labels, [type, packing, from]},
+		{labels, [type, packing]},
 		{help, "The number of packing requests received. The type label indicates what "
 				"type of operation was requested either: 'pack', 'unpack', or "
 				"'unpack_sub_chunk'. The packing "
@@ -436,9 +436,7 @@ register() ->
 				"indicates the format of the chunk before being unpacked. If type is 'pack' "
 				"then the packing label indicates the format that the chunk will be packed "
 				"to. In all cases its value can be 'unpacked', 'unpacked_padded', "
-				"'spora_2_5', 'spora_2_6', 'composite', or 'replica_2_9'. "
-				"The from label shows where the request was initiated (e.g. the "
-				"calling function, or message). "}
+				"'spora_2_5', 'spora_2_6', 'composite', or 'replica_2_9'."}
 	]),
 	prometheus_counter:new([
 		{name, validating_packed_spora},
@@ -455,6 +453,10 @@ register() ->
 	prometheus_counter:new([{name, chunks_stored},
 		{labels, [packing, store_id]},
 		{help, "The counter is incremented every time a chunk is written to "
+				"chunk_storage."}]),
+	prometheus_counter:new([{name, chunks_read},
+		{labels, [store_id]},
+		{help, "The counter is incremented every time a chunk is read from "
 				"chunk_storage."}]),
 	prometheus_histogram:new([
 		{name, chunk_read_rate_bytes_per_second},
@@ -482,6 +484,8 @@ register() ->
 	prometheus_counter:new([{name, replica_2_9_entropy_stored},
 		{labels, [store_id]},
 		{help, "The number of bytes of replica.2.9 entropy written to chunk storage."}]),
+	prometheus_counter:new([{name, replica_2_9_entropy_generated},
+		{help, "The number of bytes of replica.2.9 entropy generated."}]),
 	prometheus_histogram:new([
 		{name, replica_2_9_entropy_duration_milliseconds},
 		{buckets, [infinity]}, %% we don't care about the histogram portion

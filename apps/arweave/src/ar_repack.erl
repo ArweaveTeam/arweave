@@ -589,6 +589,7 @@ enqueue_chunk_for_writing(ChunkInfo, #state{} = State) ->
 
 	case gb_sets:size(State2#state.write_queue) >= State2#state.write_batch_size of
 		true ->
+			count_states(State2),
 			ar_repack_io:write_queue(
 				State2#state.write_queue, TargetPacking, RewardAddr, StoreID),
 			State2#state{ write_queue = gb_sets:new() };
