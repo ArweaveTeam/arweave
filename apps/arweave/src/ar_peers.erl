@@ -209,7 +209,7 @@ resolve_peers([]) ->
 resolve_peers([RawPeer | Peers]) ->
 	case ar_util:safe_parse_peer(RawPeer) of
 		{ok, Peer} ->
-			[Peer | resolve_peers(Peers)];
+			Peer ++ resolve_peers(Peers);
 		{error, invalid} ->
 			?LOG_WARNING([{event, failed_to_resolve_trusted_peer},
 					{peer, RawPeer}]),
@@ -221,11 +221,11 @@ get_trusted_peers() ->
 	case Config#config.peers of
 		[] ->
 			ArweavePeers = [
-				"sfo-1.na-west-1.arweave.xyz",
-				"ams-1.eu-central-1.arweave.xyz",
-				"fra-1.eu-central-2.arweave.xyz",
-				"blr-1.ap-central-1.arweave.xyz",
-				"sgp-1.ap-central-2.arweave.xyz"
+				"asia.peers.arweave.xyz",
+				"europe.peers.arweave.xyz",
+				"india.peers.arweave.xyz",
+				"north-america.peers.arweave.xyz",
+				"oceania.peers.arweave.xyz"
 			],
 			resolve_peers(ArweavePeers);
 		Peers ->
@@ -346,7 +346,7 @@ resolve_and_cache_peer(RawPeer, Type) ->
 	case ets:lookup(?MODULE, {raw_peer, RawPeer}) of
 		[] ->
 			case ar_util:safe_parse_peer(RawPeer) of
-				{ok, Peer} ->
+				{ok, [Peer]} ->
 					ets:insert(?MODULE, {{raw_peer, RawPeer}, {Peer, Now}}),
 					ets:insert(?MODULE, {{Type, Peer}, RawPeer}),
 					{ok, Peer};
@@ -357,7 +357,7 @@ resolve_and_cache_peer(RawPeer, Type) ->
 			case Timestamp + ?STORE_RESOLVED_DOMAIN_S < Now of
 				true ->
 					case ar_util:safe_parse_peer(RawPeer) of
-						{ok, Peer2} ->
+						{ok, [Peer2]} ->
 							%% The cache entry has expired.
 							ets:delete(?MODULE, {Type, {Peer, Timestamp}}),
 							ets:insert(?MODULE, {{raw_peer, RawPeer}, {Peer2, Now}}),

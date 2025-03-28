@@ -101,21 +101,34 @@ invert_map(Map) ->
     ).
 
 
-%% @doc Parse a string representing a remote host into our internal format.
+%%--------------------------------------------------------------------
+%% @doc Parse a string representing a remote host into our internal
+%%      format.
+%% @end
+%%--------------------------------------------------------------------
+-spec parse_peer(Hostname) -> Return when
+	Hostname :: string() | binary(),
+	Return :: [IpWithPort] | no_return(),
+	IpWithPort :: {A, A, A, A, Port},
+	A :: pos_integer(),
+	Port :: pos_integer().
+
 parse_peer("") -> throw(empty_peer_string);
-parse_peer(BitStr) when is_bitstring(BitStr) ->
-	parse_peer(bitstring_to_list(BitStr));
+parse_peer(BitStr) when is_binary(BitStr) ->
+	parse_peer(binary_to_list(BitStr));
 parse_peer(Str) when is_list(Str) ->
-    [Addr, PortStr] = parse_port_split(Str),
-    case inet:getaddr(Addr, inet) of
-		{ok, {A, B, C, D}} ->
-			{A, B, C, D, parse_port(PortStr)};
+	[Addr, PortStr] = parse_port_split(Str),
+	case inet:getaddrs(Addr, inet) of
+		{ok, [{A, B, C, D}]} ->
+			[{A, B, C, D, parse_port(PortStr)}];
+		{ok, AddrsList} when is_list(AddrsList) ->
+			[{A, B, C, D, parse_port(PortStr)} || {A, B, C, D} <- AddrsList];
 		{error, Reason} ->
 			throw({invalid_peer_string, Str, Reason})
 	end;
 parse_peer({IP, Port}) ->
 	{A, B, C, D} = parse_peer(IP),
-	{A, B, C, D, parse_port(Port)}.
+	[{A, B, C, D, parse_port(Port)}].
 
 peer_to_str(Bin) when is_binary(Bin) ->
 	binary_to_list(Bin);
@@ -138,6 +151,18 @@ parse_port_split(Str) ->
         [Addr, Port] -> [Addr, Port];
         _ -> throw({invalid_peer_string, Str})
     end.
+
+%%--------------------------------------------------------------------
+%% @doc wrapper for parse_peer/1
+%% @end
+%%--------------------------------------------------------------------
+-spec safe_parse_peer(Hostname) -> Return when
+	Hostname :: string() | binary(),
+	Return :: {ok, ReturnOk} | {error, invalid},
+	ReturnOk ::[IpWithPort] | no_return(),
+	IpWithPort :: {A, A, A, A, Port},
+	A :: pos_integer(),
+	Port :: pos_integer().
 
 safe_parse_peer(Peer) ->
 	try

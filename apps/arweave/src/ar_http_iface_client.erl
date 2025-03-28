@@ -1255,7 +1255,8 @@ get_peers(Peer) ->
 					timeout => 2 * 1000
 				}),
 			PeerArray = ar_serialize:dejsonify(Body),
-			lists:map(fun ar_util:parse_peer/1, PeerArray)
+			PeersList = lists:map(fun ar_util:parse_peer/1, PeerArray),
+			lists:flatten(PeersList)
 		end
 	catch _:_ -> unavailable
 	end.

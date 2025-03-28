@@ -410,8 +410,9 @@ parse_cli_args(["verify_samples", N | Rest], C) ->
 	parse_cli_args(Rest, C#config{ verify_samples = list_to_integer(N) });
 parse_cli_args(["peer", Peer | Rest], C = #config{ peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
-		{ok, ValidPeer} ->
-			parse_cli_args(Rest, C#config{ peers = [ValidPeer|Ps] });
+		{ok, ValidPeers} when is_list(ValidPeers) ->
+			NewConfig = C#config{peers = ValidPeers ++ Ps},
+			parse_cli_args(Rest, NewConfig);
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
@@ -419,16 +420,16 @@ parse_cli_args(["peer", Peer | Rest], C = #config{ peers = Ps }) ->
 parse_cli_args(["block_gossip_peer", Peer | Rest],
 		C = #config{ block_gossip_peers = Peers }) ->
 	case ar_util:safe_parse_peer(Peer) of
-		{ok, ValidPeer} ->
-			parse_cli_args(Rest, C#config{ block_gossip_peers = [ValidPeer | Peers] });
+		{ok, ValidPeer} when is_list(ValidPeer) ->
+			parse_cli_args(Rest, C#config{ block_gossip_peers = ValidPeer ++ Peers });
 		{error, _} ->
 			io:format("Peer ~p invalid ~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
 parse_cli_args(["local_peer", Peer | Rest], C = #config{ local_peers = Peers }) ->
 	case ar_util:safe_parse_peer(Peer) of
-		{ok, ValidPeer} ->
-			parse_cli_args(Rest, C#config{ local_peers = [ValidPeer | Peers] });
+		{ok, ValidPeer} when is_list(ValidPeer) ->
+			parse_cli_args(Rest, C#config{ local_peers = ValidPeer ++ Peers });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
@@ -653,15 +654,15 @@ parse_cli_args(["cm_poll_interval", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ cm_poll_interval = list_to_integer(Num) });
 parse_cli_args(["cm_peer", Peer | Rest], C = #config{ cm_peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
-		{ok, ValidPeer} ->
-			parse_cli_args(Rest, C#config{ cm_peers = [ValidPeer|Ps] });
+		{ok, ValidPeer} when is_list(ValidPeer) ->
+			parse_cli_args(Rest, C#config{ cm_peers = ValidPeer ++ Ps });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
 parse_cli_args(["cm_exit_peer", Peer | Rest], C) ->
 	case ar_util:safe_parse_peer(Peer) of
-		{ok, ValidPeer} ->
+		{ok, [ValidPeer|_]} ->
 			parse_cli_args(Rest, C#config{ cm_exit_peer = ValidPeer });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
