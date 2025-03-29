@@ -252,6 +252,7 @@ start_other_node(Node, B0, Config, WaitUntilSync) ->
 start_node(B0, Config) ->
 	start_node(B0, Config, true).
 start_node(B0, Config, WaitUntilSync) ->
+	?LOG_INFO("Starting node"),
 	clean_up_and_stop(),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
@@ -264,6 +265,7 @@ start_node(B0, Config, WaitUntilSync) ->
 		false ->
 			ok
 	end,
+	?LOG_INFO("Node started"),
 	erlang:node().
 
 %% @doc Launch the given number (>= 1, =< ?MAX_MINERS) of the mining nodes in the coordinated

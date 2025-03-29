@@ -51,7 +51,7 @@ register_read_workers() ->
 				Label = ar_storage_module:label_by_id(StoreID),
 				Name = list_to_atom("ar_data_sync_worker_" ++ Label),
 
-				Worker = ?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name]),
+				Worker = ?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name, read]),
 
 				{[ Worker | AccWorkers], AccWorkerMap#{StoreID => Name}}
 			end,

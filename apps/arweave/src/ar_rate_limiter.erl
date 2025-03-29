@@ -40,7 +40,7 @@ throttle2(Peer, Path) ->
 			%% Do not throttle transaction gossip.
 			ok;
 		_ ->
-			case catch gen_server:call(?MODULE, {throttle, Peer, P}, 15000) of
+			case catch gen_server:call(?MODULE, {throttle, Peer, P}, infinity) of
 				{'EXIT', {noproc, {gen_server, call, _}}} ->
 					ok;
 				{'EXIT', Reason} ->

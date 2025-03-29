@@ -65,7 +65,7 @@ register_sync_workers() ->
 	{Workers, WorkerNames} = lists:foldl(
 		fun(Number, {AccWorkers, AccWorkerNames}) ->
 			Name = list_to_atom("ar_data_sync_worker_" ++ integer_to_list(Number)),
-			Worker = ?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name]),
+			Worker = ?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name, sync]),
 			{[Worker | AccWorkers], [Name | AccWorkerNames]}
 		end,
 		{[], []},
@@ -93,6 +93,7 @@ ready_for_work() ->
 %%%===================================================================
 
 init(Workers) ->
+	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers}]),
 	gen_server:cast(?MODULE, process_main_queue),
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 

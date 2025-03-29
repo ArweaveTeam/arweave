@@ -221,7 +221,9 @@ parse_options([{<<"storage_modules">>, L} | Rest], Config) when is_list(L) ->
 		parse_options(Rest, Config#config{
 				storage_modules = StorageModules,
 				repack_in_place_storage_modules = RepackInPlaceStorageModules })
-	catch _:_ ->
+	catch Error:Reason ->
+		?LOG_ERROR([{event, parse_failure}, {option, storage_modules},
+			{error, Error}, {reason, Reason}]),
 		{error, {bad_format, storage_modules, "an array of "
 				"\"{number},{address}[,repack_in_place,{to_packing}]\""}, L}
 	end;
@@ -845,7 +847,7 @@ parse_requests_per_minute_limit_by_ip({[{IP, Object} | Pairs]}, Parsed) ->
 	case ar_util:safe_parse_peer(IP) of
 		{error, invalid} ->
 			error;
-		{ok, {A, B, C, D, _Port}} ->
+		{ok, [{A, B, C, D, _Port}]} ->
 			case parse_atom_number_map(Object, #{}) of
 				error ->
 					error;

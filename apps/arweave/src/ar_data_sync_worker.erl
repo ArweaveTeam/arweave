@@ -6,12 +6,11 @@
 
 -behaviour(gen_server).
 
--export([start_link/1]).
+-export([start_link/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
@@ -29,18 +28,25 @@
 %%% Public interface.
 %%%===================================================================
 
-start_link(Name) ->
-	gen_server:start_link({local, Name}, ?MODULE, Name, []).
+start_link(Name, Mode) ->
+	gen_server:start_link({local, Name}, ?MODULE, {Name, Mode}, []).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
-init(Name) ->
+init({Name, Mode}) ->
+	?LOG_INFO([{event, init}, {module, ?MODULE}, {name, Name}]),
 	{ok, Config} = application:get_env(arweave, config),
 	%% In case there has been a restart we need to tell
 	%% ar_data_sync_worker_master to erase pending worker tasks.
-	gen_server:call(ar_data_sync_worker_master, {reset_worker, Name}, 30_000),
+	%% We only want to do this for sync workers, not read workers.
+	case Mode  of
+		sync ->
+			gen_server:call(ar_data_sync_worker_master, {reset_worker, Name}, 30_000);
+		_ ->
+			ok
+	end,
 	{ok, #state{
 		name = Name,
 		request_packed_chunks = Config#config.data_sync_request_packed_chunks
