@@ -6,7 +6,7 @@
 		delete_async/5, delete_async/6, cut/3,
 		is_recorded/2, is_recorded/3, is_recorded/4, is_recorded_any/3,
 		get_next_synced_interval/4, get_next_synced_interval/5,
-		get_next_unsynced_interval/4,
+		get_next_unsynced_interval/4, get_next_unsynced_interval/5,
 		get_interval/3, get_intersection_size/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -241,6 +241,17 @@ get_next_synced_interval(Offset, EndOffsetUpperBound, Packing, ID, StoreID) ->
 			not_found;
 		[{_, TID}] ->
 			ar_ets_intervals:get_next_interval(TID, Offset, EndOffsetUpperBound)
+	end.
+
+%% @doc Return the lowest unsynced interval with the end offset strictly above the given Offset
+%% and at most EndOffsetUpperBound.
+%% Return not_found if there are no such intervals.
+get_next_unsynced_interval(Offset, EndOffsetUpperBound, Packing, ID, StoreID) ->
+	case ets:lookup(sync_records, {ID, Packing, StoreID}) of
+		[] ->
+			not_found;
+		[{_, TID}] ->
+			ar_ets_intervals:get_next_interval_outside(TID, Offset, EndOffsetUpperBound)
 	end.
 
 %% @doc Return the interval containing the given Offset, including the right bound,

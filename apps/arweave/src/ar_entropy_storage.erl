@@ -132,10 +132,11 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 		BucketEnd, BucketStart, ar_chunk_storage_replica_2_9_1_entropy, StoreID),
 	prometheus_counter:inc(replica_2_9_entropy_stored,
 		[ar_storage_module:label_by_id(StoreID)], ?DATA_CHUNK_SIZE),
+	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	case IsComplete of
 		true ->
 			Packing = {replica_2_9, RewardAddr},
-			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
+			
 			prometheus_counter:inc(chunks_stored,
 				[ar_storage_module:packing_label(Packing),
 				ar_storage_module:label_by_id(StoreID)]),
@@ -252,7 +253,7 @@ do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 	CheckUnpackedChunkRecorded = ar_sync_record:get_interval(
 		Byte + 1, ar_chunk_storage:sync_record_id(unpacked_padded), StoreID),
 
-	{IsUnpackedChunkRecorded, EndOffset} =
+	{IsUnpackedChunkRecorded, PaddedEndOffset} =
 		case CheckUnpackedChunkRecorded of
 			not_found ->
 				{false, BucketEndOffset};
@@ -275,7 +276,7 @@ do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 		end,
 
 	{ChunkFileStart, Filepath, _Position, _ChunkOffset} =
-		ar_chunk_storage:locate_chunk_on_disk(EndOffset, StoreID),
+		ar_chunk_storage:locate_chunk_on_disk(PaddedEndOffset, StoreID),
 
 	%% We allow generating and filling it the 2.9 entropy and storing unpacked chunks (to
 	%% be enciphered later) asynchronously. Whatever comes first, is stored.
@@ -285,14 +286,14 @@ do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 
 	Chunk = case IsUnpackedChunkRecorded of
 		true ->
-			StartOffset = EndOffset - ?DATA_CHUNK_SIZE,
+			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 			case ar_chunk_storage:get(Byte, StartOffset, StoreID) of
 				not_found ->
 					{error, not_found};
 				{error, _} = Error ->
 					Error;
 				{_, UnpackedChunk} ->
-					ar_sync_record:delete(EndOffset, StartOffset, ar_data_sync, StoreID),
+					ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID),
 					ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy)
 			end;
 		false ->
@@ -306,13 +307,14 @@ do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 		{error, _} = Error2 ->
 			Error2;
 		_ ->
-			WriteChunkResult = ar_chunk_storage:write_chunk(EndOffset, Chunk, #{}, StoreID),
+			WriteChunkResult = ar_chunk_storage:write_chunk(
+				PaddedEndOffset, Chunk, #{}, StoreID),
 			case WriteChunkResult of
 				{ok, Filepath} ->
 					ets:insert(chunk_storage_file_index,
 						{{ChunkFileStart, StoreID}, Filepath}),
 					update_sync_records(
-						IsUnpackedChunkRecorded, EndOffset, StoreID, RewardAddr);
+						IsUnpackedChunkRecorded, PaddedEndOffset, StoreID, RewardAddr);
 				Error2 ->
 					Error2
 			end
@@ -323,7 +325,7 @@ do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 			?LOG_ERROR([{event, failed_to_store_replica_2_9_chunk_entropy},
 							{filepath, Filepath},
 							{byte, Byte},
-							{padded_end_offset, EndOffset},
+							{padded_end_offset, PaddedEndOffset},
 							{bucket_end_offset, BucketEndOffset},
 							{store_id, StoreID},
 							{reason, io_lib:format("~p", [Reason])}]);

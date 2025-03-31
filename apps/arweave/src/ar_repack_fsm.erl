@@ -89,17 +89,16 @@ next_state(#chunk_info{state = needs_chunk} = ChunkInfo) ->
 %% ---------------------------------------------------------------------------
 next_state(#chunk_info{state = invalid} = ChunkInfo) ->
 	#chunk_info{
-		entropy = Entropy
+		chunk = Chunk
 	} = ChunkInfo,
 
-	NextState = case Entropy of
-		not_set -> 
-			%% Still waiting on entropy.
-			invalid;
-		_ -> 
-			%% The chunk data has already been invalidated, now just record and index
-			%% the entropy.
-			write_entropy
+	NextState = case Chunk of
+		invalid ->
+			%% Chunk is already invalid, ready to write entropy.
+			entropy_only;
+		_ ->
+			%% Offset has not yet been invalidated.
+			invalid
 	end,
 	ChunkInfo#chunk_info{state = NextState};
 
@@ -156,8 +155,18 @@ next_state(#chunk_info{state = needs_data_path} = ChunkInfo) ->
 	} = ChunkInfo,
 
 	NextState = case {Chunk, DataPath, SourcePacking} of
-		{not_found, _, _} -> entropy_only;
-		{Chunk, not_found, _} -> entropy_only;
+		{not_found, _, _} -> 
+			%% This offset exists in some of the chunk indices and sync records, but there's
+			%% no chunk data.. This can happen if there was some corruption at some
+			%% point in the past. We'll clean out the bad indices, and then record
+			%% the entropy.
+			invalid;
+		{Chunk, not_found, _} -> 
+			%% This offset exists in some of the chunk indices and sync records, but there's
+			%% no data_path. This can happen if there was some corruption at some
+			%% point in the past. We'll clean out the bad indices, and then record
+			%% the entropy.
+			invalid;
 		{Chunk, DataPath, TargetPacking} -> already_repacked;
 		{Chunk, DataPath, SourcePacking} -> needs_repack;
 		_ ->

@@ -195,13 +195,13 @@ map_entropies(_Entropies,
 map_entropies(_Entropies,
 			[BucketEndOffset | _EntropyOffsets],
 			_RangeStart,
-			ModuleEnd,
+			RangeEnd,
 			_Keys,
 			_RewardAddr,
 			_Fun,
 			_Args,
 			Acc)
-		when BucketEndOffset > ModuleEnd ->
+		when BucketEndOffset > RangeEnd ->
 	%% The amount of entropy generated per partition is slightly more than the amount needed.
 	%% So at the end of a partition we will have finished processing chunks, but still have
 	%% some entropy left. In this case we stop the recursion early and wait for the writes
@@ -209,32 +209,32 @@ map_entropies(_Entropies,
 	Acc;
 map_entropies(Entropies,
 			[BucketEndOffset | EntropyOffsets],
-			ModuleStart,
-			ModuleEnd,
+			RangeStart,
+			RangeEnd,
 			Keys,
 			RewardAddr,
 			Fun,
 			Args,
 			Acc) ->
 	% ?LOG_DEBUG([{event, map_entropies}, {bucket_end_offset, BucketEndOffset},
-	% 	{entropy_offsets, length(EntropyOffsets)}, {module_start, ModuleStart},
-	% 	{module_end, ModuleEnd}, {partition1, ar_replica_2_9:get_entropy_partition(BucketEndOffset)},
-	% 	{partition2, ar_replica_2_9:get_entropy_partition(ModuleEnd)}]),
+	% 	{entropy_offsets, length(EntropyOffsets)}, {range_start, RangeStart},
+	% 	{range_end, RangeEnd}, {partition1, ar_replica_2_9:get_entropy_partition(BucketEndOffset)},
+	% 	{partition2, ar_replica_2_9:get_entropy_partition(RangeEnd)}]),
 	
 	case take_and_combine_entropy_slices(Entropies) of
 		{ChunkEntropy, Rest} ->
 			%% Sanity checks
 			true =
 				ar_replica_2_9:get_entropy_partition(BucketEndOffset)
-				== ar_replica_2_9:get_entropy_partition(ModuleEnd),
+				== ar_replica_2_9:get_entropy_partition(RangeEnd),
 			sanity_check_replica_2_9_entropy_keys(BucketEndOffset, RewardAddr, Keys),
 			%% End sanity checks
 
-			Acc2 = case BucketEndOffset > ModuleStart of
+			Acc2 = case BucketEndOffset > RangeStart of
 				true ->
 					erlang:apply(Fun, [ChunkEntropy, BucketEndOffset] ++ Args ++ [Acc]);
 				false ->
-					%% Don't write entropy before the start of the storage module.
+					%% Don't write entropy before the start of the range.
 					Acc
 			end,
 
@@ -242,8 +242,8 @@ map_entropies(Entropies,
 			map_entropies(
 				Rest,
 				EntropyOffsets,
-				ModuleStart,
-				ModuleEnd,
+				RangeStart,
+				RangeEnd,
 				Keys,
 				RewardAddr,
 				Fun,
