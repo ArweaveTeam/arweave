@@ -2233,6 +2233,10 @@ encode_packing(any, false) ->
 	"any";
 encode_packing(not_set, false) ->
 	"not_set";
+encode_packing(missing, false) ->
+	"missing";
+encode_packing(error, false) ->
+	"error";
 encode_packing({spora_2_6, Addr}, _Strict) ->
 	"spora_2_6_" ++ binary_to_list(ar_util:encode(Addr));
 encode_packing({composite, Addr, PackingDifficulty}, _Strict) ->
