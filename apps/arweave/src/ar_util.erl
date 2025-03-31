@@ -2,8 +2,8 @@
 
 -export([bool_to_int/1, int_to_bool/1, ceil_int/2, floor_int/2, between/3,
 		integer_to_binary/1, binary_to_integer/1, pick_random/1, pick_random/2,
-		encode/1, decode/1, safe_encode/1, safe_decode/1, timestamp_to_seconds/1,
-		invert_map/1,
+		encode/1, decode/1, safe_encode/1, safe_decode/1, safe_ets_lookup/2, 
+		timestamp_to_seconds/1,invert_map/1,
 		parse_peer/1, peer_to_str/1, parse_port/1, safe_parse_peer/1, format_peer/1,
 		unique/1, count/2,
 		genesis_wallets/0, pmap/2, batch_pmap/3, pfilter/2,
@@ -84,6 +84,19 @@ safe_decode(E) ->
 	catch
 		_:_ ->
 			{error, invalid}
+	end.
+
+%% @doc Safely lookup a key in an ETS table.
+%% Returns [] if the table doesn't exist - this can happen when running some of the helper
+%% utilities like data_doctor
+safe_ets_lookup(Table, Key) ->
+	try
+		ets:lookup(Table, Key)
+	catch
+		Type:Reason ->
+			?LOG_WARNING([{event, ets_table_not_found}, {table, Table}, {key, Key},
+				{type, Type}, {reason, Reason}]),
+			[]
 	end.
 
 %% @doc Convert an erlang:timestamp() to seconds since the Unix Epoch.
