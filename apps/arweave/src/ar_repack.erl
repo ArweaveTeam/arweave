@@ -23,6 +23,7 @@
 	store_id = undefined,
 	read_batch_size = ?DEFAULT_REPACK_BATCH_SIZE,
 	write_batch_size = 1024,
+	footprint_size = 128,
 	module_start = 0,
 	module_end = 0,
 	batch_start = 0,
@@ -121,7 +122,6 @@ init({StoreID, ToPacking}) ->
 		read_batch_size = BatchSize,
 		module_start = ModuleStart,
 		module_end = PaddedModuleEnd,
-		batch_end = ar_entropy_gen:footprint_end(Cursor, PaddedModuleEnd),
 		next_cursor = Cursor, 
 		target_packing = ToPacking,
 		reward_addr = RewardAddr,
@@ -131,9 +131,10 @@ init({StoreID, ToPacking}) ->
 		{name, name(StoreID)},
 		{read_batch_size, BatchSize},
 		{write_batch_size, State#state.write_batch_size},
+		{footprint_size, State#state.footprint_size},
 		{from_packing, ar_serialize:encode_packing(FromPacking, false)},
         {to_packing, ar_serialize:encode_packing(ToPacking, false)},
-		{padded_module_end, PaddedModuleEnd},
+		{raw_module_end, ModuleEnd},
 		{next_cursor, Cursor}]),
     {ok, State}.
 
@@ -231,6 +232,7 @@ handle_info({entropy, BucketEndOffset, Entropies}, #state{} = State) ->
 		reward_addr = RewardAddr
 	} = State,
 
+	StartTime = erlang:monotonic_time(),
 	%% Generate the next entropy in the batch if needed.
 	generate_batch_entropy(BucketEndOffset + ?DATA_CHUNK_SIZE, State),
 
@@ -307,14 +309,7 @@ handle_info(Request, #state{} = State) ->
 	{noreply, State}.
 
 terminate(Reason, #state{} = State) ->
-	ReasonStr = io_lib:format("~P", [Reason, 20]),  % Depth limited to 5
-        TruncatedStr = if
-            length(ReasonStr) > 2000 -> 
-                string:slice(ReasonStr, 0, 2000) ++ "... (truncated)";
-            true -> 
-                ReasonStr
-        end,
-	log_debug(terminate, State, [{reason, TruncatedStr}]),
+	log_debug(terminate, State, [{reason, ar_util:safe_format(Reason)}]),
 	store_cursor(State),
 	ok.
 
@@ -364,32 +359,28 @@ repack(#state{} = State) ->
 	end.
 
 repack_batch(Cursor, #state{} = State) ->
-	#state{ module_start = ModuleStart, module_end = ModuleEnd,
+	#state{ module_start = ModuleStart, module_end = ModuleEnd, footprint_size = FootprintSize,
 		target_packing = TargetPacking, store_id = StoreID,
 		read_batch_size = BatchSize } = State,
 
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
 	BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(Cursor),
 
 	%% sanity checks
-	true = BucketEndOffset == BucketStartOffset + ?DATA_CHUNK_SIZE,
+	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
 	%% end sanity checks
-
+	
 	BatchStart = BucketStartOffset+1,
-	%% XXX should BatchEnd account for the batch size? i.e. be BatchSize chunks after
-	%% the end of ar_entropy:get:batch_end?
-	BatchEnd = ar_entropy_gen:footprint_end(BucketEndOffset, ModuleEnd),
-	EntropyStart = BucketEndOffset,
-	EntropyEnd = BucketEndOffset + (BatchSize - 1) * ?DATA_CHUNK_SIZE,
-	State2 = State#state{ 
-		batch_start = BatchStart,
-		batch_end = BatchEnd,
-		entropy_start = EntropyStart,
-		entropy_end = min(EntropyEnd, BatchEnd),
-		next_cursor = BucketEndOffset + ?DATA_CHUNK_SIZE
-	},
-	IsRecorded = ar_sync_record:is_recorded(
-		BucketStartOffset+1, TargetPacking, ar_data_sync, StoreID),
+	
+	IsChunkRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
+	%% Skip this offset if it's already packed to TargetPacking, or if it's not recorded
+	%% at all.
+	Skip = case IsChunkRecorded of
+		false -> true;
+		{true, TargetPacking} -> true;
+		_ -> false
+	end,
 
 	case Skip orelse BatchStart < ModuleStart orelse BatchStart > ModuleEnd of
 		true ->
@@ -423,16 +414,38 @@ repack_batch(Cursor, #state{} = State) ->
 			]),
 			State#state{ next_cursor = NextCursor };
 		_ ->
+			BatchOffsets = batch_offsets(BucketEndOffset, FootprintSize, ModuleEnd),
+			RawBatchEnd = lists:max(BatchOffsets),
+			{ReadRangeStart, ReadRangeEnd, _ReadRangeOffsets} = get_read_range(
+				RawBatchEnd, ModuleStart, ModuleEnd, BatchSize),
+			BatchEnd = ar_chunk_storage:get_chunk_bucket_end(ReadRangeEnd),
+
 			%% sanity checks
 			true = BatchStart < BatchEnd,
+			BucketEndOffset = BucketStartOffset + ?DATA_CHUNK_SIZE,
+			RawBatchEnd = ar_chunk_storage:get_chunk_bucket_end(ReadRangeStart+1),
 			%% end sanity checks
-
-			FootprintOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
-			log_debug(repack_batch_start, State2, [
+		
+			EntropyStart = BucketEndOffset,
+			{_, EntropyEnd, _} = get_read_range(EntropyStart, ModuleStart, BatchEnd, BatchSize),
+			
+			State2 = State#state{ 
+				batch_start = BatchStart,
+				batch_end = BatchEnd,
+				entropy_start = EntropyStart,
+				entropy_end = ar_chunk_storage:get_chunk_bucket_end(EntropyEnd),
+				next_cursor = BucketEndOffset + ?DATA_CHUNK_SIZE
+			},
+			State3 = init_chunk_info_map(BatchOffsets, State2),
+			generate_batch_entropy(BucketEndOffset, State3),
+			ar_repack_io:read_batch(BatchOffsets, BatchStart, BatchEnd, StoreID),
+			log_debug(repack_batch_start, State3, [
 				{cursor, Cursor},
 				{bucket_end_offset, BucketEndOffset},
 				{bucket_start_offset, BucketStartOffset},
 				{target_packing, ar_serialize:encode_packing(TargetPacking, false)},
+				{module_start, ModuleStart},
+				{module_end, ModuleEnd},
 				{entropy_start, EntropyStart},
 				{entropy_end, EntropyEnd},
 				{read_batch_size, BatchSize},
@@ -443,11 +456,19 @@ repack_batch(Cursor, #state{} = State) ->
 				{batch_offsets, length(BatchOffsets)},
 				{chunk_info_map, maps:size(State3#state.chunk_info_map)}
 			]),
-			State3 = init_chunk_info_map(FootprintOffsets, State2),
-			generate_batch_entropy(BucketEndOffset, State3),
-			ar_repack_io:read_batch(FootprintOffsets, BatchStart, BatchEnd, StoreID),
 			State3
 	end.
+
+batch_offsets(BucketEndOffset, FootprintSize, ModuleEnd) ->
+	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
+
+	FilteredOffsets = lists:filter(
+		fun(Offset) -> 
+			Offset >= BucketEndOffset andalso Offset =< ModuleEnd
+		end,
+		EntropyOffsets),
+	
+	lists:sublist(FilteredOffsets, FootprintSize).
 
 generate_batch_entropy(BucketEndOffset,
 		#state{ entropy_start = EntropyStart, entropy_end = EntropyEnd }) 
@@ -560,7 +581,7 @@ add_range_to_chunk_info_map(OffsetChunkMap, OffsetMetadataMap, #state{} = State)
 %% @doc Mark any chunks that weren't found in either chunk_storage or the chunks_index.
 mark_missing_chunks([], #state{} = State) ->
 	State;
-mark_missing_chunks([BucketEndOffset | BatchOffsets], #state{} = State) ->
+mark_missing_chunks([BucketEndOffset | ReadRangeOffsets], #state{} = State) ->
 	#state{ 
 		chunk_info_map = Map
 	} = State,
@@ -582,7 +603,7 @@ mark_missing_chunks([BucketEndOffset | BatchOffsets], #state{} = State) ->
 			State
 	end,
 
-	mark_missing_chunks(BatchOffsets, State2).
+	mark_missing_chunks(ReadRangeOffsets, State2).
 
 cache_chunk_info(ChunkInfo, #state{} = State) ->
 	#chunk_info{
@@ -595,6 +616,7 @@ cache_chunk_info(ChunkInfo, #state{} = State) ->
 	}.
 
 remove_chunk_info(BucketEndOffset, #state{} = State) ->
+	count_states(State),
 	State2 = State#state{ chunk_info_map =
 		maps:remove(BucketEndOffset, State#state.chunk_info_map)
 	},
@@ -727,7 +749,9 @@ process_state_change(ChunkInfo, #state{} = State) ->
 			ChunkSize = ChunkInfo#chunk_info.metadata#chunk_metadata.chunk_size,
 			ar_data_sync:invalidate_bad_data_record(
 				BucketEndOffset, ChunkSize, StoreID, repack_found_stale_indices),
-			cache_chunk_info(ChunkInfo, State);
+			ChunkInfo2 = ChunkInfo#chunk_info{ chunk = invalid },
+			State2 = cache_chunk_info(ChunkInfo2, State),
+			update_chunk_state(ChunkInfo2, State2);
 		already_repacked ->
 			%% Remove the chunk and entropy to free up memory.
 			ChunkInfo2 = ChunkInfo#chunk_info{ chunk = <<>> },
