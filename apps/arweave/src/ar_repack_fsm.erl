@@ -6,6 +6,52 @@
 -include("ar_consensus.hrl").
 -include("ar_repack.hrl").
 
+-moduledoc """
+	Maintain a finite state machine (FSM) to track the state each chunk passes through as
+	it is repacked.
+
+	State Transition Diagram:
+	```
+	needs_chunk
+		|
+		+----> entropy_only --------> write_entropy (terminal)
+		|
+		+----> invalid -------------> entropy_only
+		|
+		+----> already_repacked ----> ignore (terminal)
+		|
+		+----> needs_data_path
+				|
+				+----> invalid
+				|
+				+----> already_repacked
+				|
+				+----> needs_repack
+						|
+						+----> needs_entropy
+								|
+								+----> needs_encipher
+										|
+										+----> write_chunk (terminal)
+	```
+
+	Start State: needs_chunk
+	Terminal States: write_chunk, write_entropy, ignore
+
+	State Descriptions:
+	- needs_chunk: Initial state, waiting to read chunk data and metadata
+	- entropy_only: Chunk is too small or not found, only entropy will be recorded
+	- invalid: Chunk is corrupt or inconsistent, will be invalidated
+	- needs_data_path: Chunk not found on disk, checking chunk data db
+	- already_repacked: Chunk is already in target format
+	- needs_repack: Waiting for chunk to be repacked
+	- needs_entropy: Waiting for entropy to be calculated
+	- needs_encipher: Waiting for chunk to be enciphered
+	- write_chunk: Terminal state, chunk will be written
+	- write_entropy: Terminal state, only entropy will be written
+	- ignore: Terminal state, no action needed
+""".
+
 %% @doc: Repeatedly call next_state until the state no longer changes.
 -spec crank_state(chunk_info()) -> chunk_info().
 crank_state(ChunkInfo) ->
