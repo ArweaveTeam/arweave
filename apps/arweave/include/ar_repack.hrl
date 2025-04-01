@@ -16,7 +16,7 @@
 	relative_offset = not_set
 }).
 
--record(chunk_info, {
+-record(repack_chunk, {
 	state = needs_chunk :: 
 		needs_chunk | invalid | entropy_only | already_repacked | needs_data_path |
 		needs_repack | needs_entropy | needs_encipher | needs_write | error,
@@ -29,6 +29,6 @@
 	entropy = not_set :: not_set | binary()
 }).
 
--type chunk_info() :: #chunk_info{}.
+-type repack_chunk() :: #repack_chunk{}.
 
 -endif.
