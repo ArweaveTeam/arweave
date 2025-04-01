@@ -32,7 +32,7 @@
 	target_packing = undefined,
 	reward_addr = undefined,
 	repack_status = undefined,
-	chunk_info_map = #{},
+	repack_chunk_map = #{},
 	write_queue = gb_sets:new()
 }).
 
@@ -136,6 +136,28 @@ init({StoreID, ToPacking}) ->
 		{next_cursor, Cursor}]),
     {ok, State}.
 
+%% @doc Gets the start and end offset of the range of chunks to read starting from
+%% BucketEndOffset. Also includes the BucketEndOffsets covered by that range.
+-spec get_read_range(
+		non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer()) ->
+	{non_neg_integer(), non_neg_integer(), [non_neg_integer()]}.
+get_read_range(BucketEndOffset, ModuleStart, FootprintEnd, BatchSize) ->
+	ReadRangeStart = ar_chunk_storage:get_chunk_byte_from_bucket_end(BucketEndOffset),
+
+	SectorSize = ar_replica_2_9:get_sector_size(),
+	ModuleStart2 = ar_chunk_storage:get_chunk_bucket_start(ModuleStart + 1),
+	RelativeSectorOffset = (BucketEndOffset - ModuleStart2) rem SectorSize,
+	SectorEnd = BucketEndOffset + (SectorSize - RelativeSectorOffset),
+
+	FullRangeSize = ?DATA_CHUNK_SIZE * BatchSize,
+	ReadRangeEnd = lists:min([ReadRangeStart + FullRangeSize, SectorEnd, FootprintEnd]),
+
+	BucketEndOffsets = [BucketEndOffset + (N * ?DATA_CHUNK_SIZE) || 
+		N <- lists:seq(0, BatchSize-1),
+		BucketEndOffset + (N * ?DATA_CHUNK_SIZE) =< ReadRangeEnd],
+
+	{ReadRangeStart, ReadRangeEnd, BucketEndOffsets}.
+
 chunk_range_read(BucketEndOffset, OffsetChunkMap, OffsetMetadataMap, StoreID) ->
 	gen_server:cast(name(StoreID),
 		{chunk_range_read, BucketEndOffset, OffsetChunkMap, OffsetMetadataMap}).
@@ -172,7 +194,7 @@ handle_cast({chunk_range_read, BucketEndOffset, OffsetChunkMap, OffsetMetadataMa
 	} = State,
 	{_ReadRangeStart, _ReadRangeEnd, ReadRangeOffsets} = get_read_range(
 		BucketEndOffset, ModuleStart, FootprintEnd, BatchSize),
-	State2 = add_range_to_chunk_info_map(OffsetChunkMap, OffsetMetadataMap, State),
+	State2 = add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, State),
 	State3 = mark_missing_chunks(ReadRangeOffsets, State2),
 	{noreply, State3};
 
@@ -180,15 +202,15 @@ handle_cast({expire_repack_request, {BucketEndOffset, FootprintID}},
 		#state{footprint_start = FootprintStart} = State) 
 		when FootprintID == FootprintStart ->
 	#state{
-		chunk_info_map = Map
+		repack_chunk_map = Map
 	} = State,
 	State2 = case maps:get(BucketEndOffset, Map, not_found) of
 		not_found ->
 			%% Chunk has already been repacked and processed.
 			State;
-		ChunkInfo ->
-			log_debug(repack_request_expired, ChunkInfo, State, []),
-			remove_chunk_info(BucketEndOffset, State)
+		RepackChunk ->
+			log_debug(repack_request_expired, RepackChunk, State, []),
+			remove_repack_chunk(BucketEndOffset, State)
 	end,
 	{noreply, State2};
 handle_cast({expire_repack_request, _Ref}, #state{} = State) ->
@@ -199,15 +221,15 @@ handle_cast({expire_encipher_request, {BucketEndOffset, FootprintID}},
 		#state{footprint_start = FootprintStart} = State) 
 		when FootprintID == FootprintStart ->
 	#state{
-		chunk_info_map = Map
+		repack_chunk_map = Map
 	} = State,
 	State2 = case maps:get(BucketEndOffset, Map, not_found) of
 		not_found ->
 			%% Chunk has already been processed.
 			State;
-		ChunkInfo ->
-			log_debug(encipher_request_expired, ChunkInfo, State, []),
-			remove_chunk_info(BucketEndOffset, State)
+		RepackChunk ->
+			log_debug(encipher_request_expired, RepackChunk, State, []),
+			remove_repack_chunk(BucketEndOffset, State)
 	end,
 	{noreply, State2};
 handle_cast({expire_encipher_request, _Ref}, #state{} = State) ->
@@ -247,7 +269,7 @@ handle_info({entropy, BucketEndOffset, Entropies}, #state{} = State) ->
 %% from the old format to the new format and is ready to be stored in the chunk storage.
 handle_info({chunk, {packed, {BucketEndOffset, _}, ChunkArgs}}, #state{} = State) ->
 	#state{
-		chunk_info_map = Map
+		repack_chunk_map = Map
 	} = State,
 	
 	State2 = case maps:get(BucketEndOffset, Map, not_found) of
@@ -258,43 +280,43 @@ handle_info({chunk, {packed, {BucketEndOffset, _}, ChunkArgs}}, #state{} = State
 				{absolute_offset, AbsoluteOffset},
 				{chunk_size, ChunkSize},
 				{packing, ar_serialize:encode_packing(Packing, false)},
-				{chunk_info_map, maps:size(Map)}
+				{repack_chunk_map, maps:size(Map)}
 			]),
 			State;
-		ChunkInfo ->
+		RepackChunk ->
 			%% sanity checks
-			true = ChunkInfo#chunk_info.state == needs_repack,
+			true = RepackChunk#repack_chunk.state == needs_repack,
 			%% end sanity checks
 
 			{_, Chunk, _, _, _} = ChunkArgs,
-			ChunkInfo2 = ChunkInfo#chunk_info{
+			RepackChunk2 = RepackChunk#repack_chunk{
 				chunk = Chunk,
 				source_packing = unpacked_padded
 			},
-			update_chunk_state(ChunkInfo2, State)
+			update_chunk_state(RepackChunk2, State)
 	end,
 	{noreply, State2};
 
 handle_info({chunk, {enciphered, {BucketEndOffset, _}, PackedChunk}}, #state{} = State) ->
-	#state{ chunk_info_map = Map } = State,
+	#state{ repack_chunk_map = Map } = State,
 	State2 = case maps:get(BucketEndOffset, Map, not_found) of
 		not_found ->
 			log_warning(chunk_encipher_request_not_found, State, [
 				{bucket_end_offset, BucketEndOffset},
-				{chunk_info_map, maps:size(Map)}
+				{repack_chunk_map, maps:size(Map)}
 			]),
 			State;
-		ChunkInfo ->
+		RepackChunk ->
 			%% sanity checks
-			true = ChunkInfo#chunk_info.state == needs_encipher,
+			true = RepackChunk#repack_chunk.state == needs_encipher,
 			%% end sanity checks
 
-			ChunkInfo2 = ChunkInfo#chunk_info{
+			RepackChunk2 = RepackChunk#repack_chunk{
 				chunk = PackedChunk,
 				entropy = <<>>,
-				source_packing = ChunkInfo#chunk_info.target_packing
+				source_packing = RepackChunk#repack_chunk.target_packing
 			},
-			update_chunk_state(ChunkInfo2, State)
+			update_chunk_state(RepackChunk2, State)
 	end,
 	{noreply, State2};
 
@@ -316,7 +338,7 @@ terminate(Reason, #state{} = State) ->
 %% is the repack batch size.
 repack(#state{ next_cursor = Cursor, module_end = ModuleEnd } = State)
 		when Cursor > ModuleEnd ->
-	#state{ chunk_info_map = Map, store_id = StoreID, target_packing = TargetPacking } = State,
+	#state{ repack_chunk_map = Map, store_id = StoreID, target_packing = TargetPacking } = State,
 
 	case maps:size(Map) of
 		0 ->
@@ -416,7 +438,7 @@ repack_footprint(Cursor, #state{} = State) ->
 				footprint_end = FootprintEnd,
 				next_cursor = BucketEndOffset + ?DATA_CHUNK_SIZE
 			},
-			State3 = init_chunk_info_map(FootprintOffsets, State2),
+			State3 = init_repack_chunk_map(FootprintOffsets, State2),
 
 			%% We'll generate BatchSize entropy footprints, one for each bucket end offset
 			%% starting at BucketEndOffset and ending at EntropyEnd.
@@ -441,7 +463,7 @@ repack_footprint(Cursor, #state{} = State) ->
 				{footprint_start, FootprintStart},
 				{footprint_end, FootprintEnd},
 				{footprint_offsets, length(FootprintOffsets)},
-				{chunk_info_map, maps:size(State3#state.chunk_info_map)}
+				{repack_chunk_map, maps:size(State3#state.repack_chunk_map)}
 			]),
 			State3
 	end.
@@ -487,14 +509,14 @@ generate_repack_entropy(BucketEndOffset, EntropyEnd, #state{} = State) ->
 	generate_repack_entropy(BucketEndOffset + ?DATA_CHUNK_SIZE, EntropyEnd, State).
 
 
-init_chunk_info_map([], #state{} = State) ->
+init_repack_chunk_map([], #state{} = State) ->
 	State;
-init_chunk_info_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
+init_repack_chunk_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 	#state{ 
 		module_start = ModuleStart,
 		footprint_end = FootprintEnd,
 		read_batch_size = BatchSize,
-		chunk_info_map = Map,
+		repack_chunk_map = Map,
 		target_packing = TargetPacking
 	} = State,
 
@@ -504,13 +526,13 @@ init_chunk_info_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 	Map2 = lists:foldl(
 		fun(BucketEndOffset, Acc) ->
 			false = maps:is_key(BucketEndOffset, Acc),
-			ChunkInfo = #chunk_info{
+			RepackChunk = #repack_chunk{
 				offsets = #chunk_offsets{
 					bucket_end_offset = BucketEndOffset
 				},
 				target_packing = TargetPacking
 			},
-			maps:put(BucketEndOffset, ChunkInfo, Acc)
+			maps:put(BucketEndOffset, RepackChunk, Acc)
 		end,
 	Map, ReadRangeOffsets),
 
@@ -518,27 +540,9 @@ init_chunk_info_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 	true = maps:size(Map2) == maps:size(Map) + length(ReadRangeOffsets),
 	%% end sanity checks
 
-	init_chunk_info_map(EntropyOffsets, State#state{ chunk_info_map = Map2 }).
+	init_repack_chunk_map(EntropyOffsets, State#state{ repack_chunk_map = Map2 }).
 
-
-get_read_range(BucketEndOffset, ModuleStart, FootprintEnd, BatchSize) ->
-	ReadRangeStart = ar_chunk_storage:get_chunk_byte_from_bucket_end(BucketEndOffset),
-
-	SectorSize = ar_replica_2_9:get_sector_size(),
-	ModuleStart2 = ar_chunk_storage:get_chunk_bucket_start(ModuleStart + 1),
-	RelativeSectorOffset = (BucketEndOffset - ModuleStart2) rem SectorSize,
-	SectorEnd = BucketEndOffset + (SectorSize - RelativeSectorOffset),
-
-	FullRangeSize = ?DATA_CHUNK_SIZE * BatchSize,
-	ReadRangeEnd = lists:min([ReadRangeStart + FullRangeSize, SectorEnd, FootprintEnd]),
-
-	BucketEndOffsets = [BucketEndOffset + (N * ?DATA_CHUNK_SIZE) || 
-		N <- lists:seq(0, BatchSize-1),
-		BucketEndOffset + (N * ?DATA_CHUNK_SIZE) =< ReadRangeEnd],
-
-	{ReadRangeStart, ReadRangeEnd, BucketEndOffsets}.
-
-add_range_to_chunk_info_map(OffsetChunkMap, OffsetMetadataMap, #state{} = State) ->
+add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = State) ->
 	#state{
 		store_id = StoreID
 	} = State,
@@ -546,7 +550,7 @@ add_range_to_chunk_info_map(OffsetChunkMap, OffsetMetadataMap, #state{} = State)
 	maps:fold(
 		fun(AbsoluteEndOffset, Metadata, Acc) ->
 			#state{
-				chunk_info_map = Map
+				repack_chunk_map = Map
 			} = Acc,
 			{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize} = Metadata,
 			BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
@@ -558,9 +562,9 @@ add_range_to_chunk_info_map(OffsetChunkMap, OffsetMetadataMap, #state{} = State)
 				_ -> not_found
 			end,
 
-			ChunkInfo = maps:get(BucketEndOffset, Map),
+			RepackChunk = maps:get(BucketEndOffset, Map),
 
-			ChunkInfo2 = ChunkInfo#chunk_info{
+			RepackChunk2 = RepackChunk#repack_chunk{
 				source_packing = SourcePacking,
 				offsets = #chunk_offsets{
 					absolute_offset = AbsoluteEndOffset,
@@ -577,7 +581,7 @@ add_range_to_chunk_info_map(OffsetChunkMap, OffsetMetadataMap, #state{} = State)
 				},
 				chunk = maps:get(PaddedEndOffset, OffsetChunkMap, not_found)
 			},
-			update_chunk_state(ChunkInfo2, Acc)
+			update_chunk_state(RepackChunk2, Acc)
 		end,
 		State, OffsetMetadataMap).
 
@@ -587,59 +591,58 @@ mark_missing_chunks([], #state{} = State) ->
 	State;
 mark_missing_chunks([BucketEndOffset | ReadRangeOffsets], #state{} = State) ->
 	#state{ 
-		chunk_info_map = Map
+		repack_chunk_map = Map
 	} = State,
 	
-	ChunkInfo = maps:get(BucketEndOffset, Map, not_found),
+	RepackChunk = maps:get(BucketEndOffset, Map, not_found),
 
-	State2 = case ChunkInfo of
+	State2 = case RepackChunk of
 		not_found ->
 			State;
-		#chunk_info{state = needs_chunk} ->
+		#repack_chunk{state = needs_chunk} ->
 			%% If we're here and still in the needs_chunk state it means we weren't able
 			%% to find the chunk in chunk_storage or the chunks_index.
-			ChunkInfo2 = ChunkInfo#chunk_info{
+			RepackChunk2 = RepackChunk#repack_chunk{
 				chunk = not_found,
 				metadata = not_found
 			},
-			update_chunk_state(ChunkInfo2, State);
+			update_chunk_state(RepackChunk2, State);
 		_ ->
 			State
 	end,
 
 	mark_missing_chunks(ReadRangeOffsets, State2).
 
-cache_chunk_info(ChunkInfo, #state{} = State) ->
-	#chunk_info{
+cache_repack_chunk(RepackChunk, #state{} = State) ->
+	#repack_chunk{
 		offsets = #chunk_offsets{
 			bucket_end_offset = BucketEndOffset
 		}
-	} = ChunkInfo,
-	State#state{ chunk_info_map =
-		maps:put(BucketEndOffset, ChunkInfo, State#state.chunk_info_map)
+	} = RepackChunk,
+	State#state{ repack_chunk_map =
+		maps:put(BucketEndOffset, RepackChunk, State#state.repack_chunk_map)
 	}.
 
-remove_chunk_info(BucketEndOffset, #state{} = State) ->
-	count_states(State),
-	State2 = State#state{ chunk_info_map =
-		maps:remove(BucketEndOffset, State#state.chunk_info_map)
+remove_repack_chunk(BucketEndOffset, #state{} = State) ->
+	State2 = State#state{ repack_chunk_map =
+		maps:remove(BucketEndOffset, State#state.repack_chunk_map)
 	},
 	maybe_repack_next_footprint(State2).
 
-enqueue_chunk_for_writing(ChunkInfo, #state{} = State) ->
+enqueue_chunk_for_writing(RepackChunk, #state{} = State) ->
 	#state{
 		target_packing = TargetPacking,
 		reward_addr = RewardAddr,
 		store_id = StoreID
 	} = State,
-	#chunk_info{
+	#repack_chunk{
 		offsets = #chunk_offsets{
 			bucket_end_offset = BucketEndOffset
 		}
-	} = ChunkInfo,
+	} = RepackChunk,
 	State2 = State#state{
 		write_queue = gb_sets:add_element(
-			{BucketEndOffset, ChunkInfo}, State#state.write_queue)
+			{BucketEndOffset, RepackChunk}, State#state.write_queue)
 	},
 
 	case gb_sets:size(State2#state.write_queue) >= State2#state.write_batch_size of
@@ -654,7 +657,7 @@ enqueue_chunk_for_writing(ChunkInfo, #state{} = State) ->
 
 entropy_generated(Entropy, BucketEndOffset, #state{} = State) ->
 	#state{
-		chunk_info_map = Map
+		repack_chunk_map = Map
 	} = State,
 	
 	case maps:get(BucketEndOffset, Map, not_found) of
@@ -664,16 +667,16 @@ entropy_generated(Entropy, BucketEndOffset, #state{} = State) ->
 				{bucket_end_offset, BucketEndOffset}
 			]),
 			State;
-		ChunkInfo ->
-			ChunkInfo2 = ChunkInfo#chunk_info{
+		RepackChunk ->
+			RepackChunk2 = RepackChunk#repack_chunk{
 				entropy = Entropy
 			},
-			update_chunk_state(ChunkInfo2, State)
+			update_chunk_state(RepackChunk2, State)
 	end.
 
 maybe_repack_next_footprint(#state{} = State) ->
 	#state{ 
-		chunk_info_map = Map,
+		repack_chunk_map = Map,
 		write_queue = WriteQueue,
 		target_packing = TargetPacking,
 		reward_addr = RewardAddr,
@@ -690,112 +693,112 @@ maybe_repack_next_footprint(#state{} = State) ->
 			State
 	end.
 
-read_chunk_and_data_path(ChunkInfo, #state{} = State) ->
+read_chunk_and_data_path(RepackChunk, #state{} = State) ->
 	#state{
 		store_id = StoreID
 	} = State,
-	#chunk_info{
+	#repack_chunk{
 		metadata = Metadata,
 		chunk = MaybeChunk
-	} = ChunkInfo,
+	} = RepackChunk,
 	#chunk_metadata{
 		chunk_data_key = ChunkDataKey
 	} = Metadata,
 	case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
 		not_found ->
-			log_warning(chunk_not_found_in_chunk_data_db, ChunkInfo, State, []),
-			ChunkInfo#chunk_info{ data_path = not_found };
+			log_warning(chunk_not_found_in_chunk_data_db, RepackChunk, State, []),
+			RepackChunk#repack_chunk{ data_path = not_found };
 		{ok, V} ->
 			case binary_to_term(V) of
 				{Chunk, DataPath} ->
-					ChunkInfo#chunk_info{ 
+					RepackChunk#repack_chunk{ 
 						data_path = DataPath,
 						chunk = Chunk
 					};
 				DataPath when MaybeChunk /= not_found ->
-					ChunkInfo#chunk_info{ 
+					RepackChunk#repack_chunk{ 
 						data_path = DataPath,
 						chunk = MaybeChunk
 					};
 				_ ->
-					log_warning(chunk_not_found, ChunkInfo, State, []),
-					ChunkInfo#chunk_info{ data_path = not_found }
+					log_warning(chunk_not_found, RepackChunk, State, []),
+					RepackChunk#repack_chunk{ data_path = not_found }
 			end
 	end.
 
-update_chunk_state(ChunkInfo, #state{} = State) ->
-	ChunkInfo2 = ar_repack_fsm:crank_state(ChunkInfo),
+update_chunk_state(RepackChunk, #state{} = State) ->
+	RepackChunk2 = ar_repack_fsm:crank_state(RepackChunk),
 
-	case ChunkInfo == ChunkInfo2 of
+	case RepackChunk == RepackChunk2 of
 		true ->
 			%% Cache it anyways, just in case.
-			cache_chunk_info(ChunkInfo2, State);
+			cache_repack_chunk(RepackChunk2, State);
 		false ->
-			process_state_change(ChunkInfo2, State)
+			process_state_change(RepackChunk2, State)
 	end.
 
-process_state_change(ChunkInfo, #state{} = State) ->
+process_state_change(RepackChunk, #state{} = State) ->
 	#state{
 		store_id = StoreID,
 		footprint_start = FootprintStart
 	} = State,
-	#chunk_info{
+	#repack_chunk{
 		offsets = #chunk_offsets{
 			bucket_end_offset = BucketEndOffset
 		},
 		chunk = Chunk,
 		entropy = Entropy,
 		source_packing = Packing
-	} = ChunkInfo,
+	} = RepackChunk,
 
-	case ChunkInfo#chunk_info.state of
+	case RepackChunk#repack_chunk.state of
 		invalid ->
-			ChunkSize = ChunkInfo#chunk_info.metadata#chunk_metadata.chunk_size,
+			ChunkSize = RepackChunk#repack_chunk.metadata#chunk_metadata.chunk_size,
 			ar_data_sync:invalidate_bad_data_record(
 				BucketEndOffset, ChunkSize, StoreID, repack_found_stale_indices),
-			ChunkInfo2 = ChunkInfo#chunk_info{ chunk = invalid },
-			State2 = cache_chunk_info(ChunkInfo2, State),
-			update_chunk_state(ChunkInfo2, State2);
+			RepackChunk2 = RepackChunk#repack_chunk{ chunk = invalid },
+			State2 = cache_repack_chunk(RepackChunk2, State),
+			update_chunk_state(RepackChunk2, State2);
 		already_repacked ->
 			%% Remove the chunk and entropy to free up memory.
-			ChunkInfo2 = ChunkInfo#chunk_info{ chunk = <<>> },
-			cache_chunk_info(ChunkInfo2, State);
+			RepackChunk2 = RepackChunk#repack_chunk{ chunk = <<>> },
+			cache_repack_chunk(RepackChunk2, State);
 		needs_data_path ->
-			ChunkInfo2 = read_chunk_and_data_path(ChunkInfo, State),
-			State2 = cache_chunk_info(ChunkInfo2, State),
-			update_chunk_state(ChunkInfo2, State2);
+			RepackChunk2 = read_chunk_and_data_path(RepackChunk, State),
+			State2 = cache_repack_chunk(RepackChunk2, State),
+			update_chunk_state(RepackChunk2, State2);
 		needs_repack ->
 			%% Include BatchStart so that we don't accidentally expire a chunk from some
 			%% future batch. Unlikely, but not impossible.
-			ChunkSize = ChunkInfo#chunk_info.metadata#chunk_metadata.chunk_size,
-			TXRoot = ChunkInfo#chunk_info.metadata#chunk_metadata.tx_root,
-			AbsoluteOffset = ChunkInfo#chunk_info.offsets#chunk_offsets.absolute_offset,
+			ChunkSize = RepackChunk#repack_chunk.metadata#chunk_metadata.chunk_size,
+			TXRoot = RepackChunk#repack_chunk.metadata#chunk_metadata.tx_root,
+			AbsoluteOffset = RepackChunk#repack_chunk.offsets#chunk_offsets.absolute_offset,
 			ar_packing_server:request_repack({BucketEndOffset, FootprintStart}, self(),
 				{unpacked_padded, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize}),
-			cache_chunk_info(ChunkInfo, State);
+			cache_repack_chunk(RepackChunk, State);
 		needs_encipher ->
 			%% We now have the unpacked_padded chunk and the entropy, proceed
 			%% with enciphering and storing the chunk.
 			ar_packing_server:request_encipher(
 				{BucketEndOffset, FootprintStart}, self(), {Chunk, Entropy}),
-			cache_chunk_info(ChunkInfo, State);
+			cache_repack_chunk(RepackChunk, State);
 		write_entropy ->
-			State2 = enqueue_chunk_for_writing(ChunkInfo, State),
-			remove_chunk_info(BucketEndOffset, State2);
+			State2 = enqueue_chunk_for_writing(RepackChunk, State),
+			remove_repack_chunk(BucketEndOffset, State2);
 		write_chunk ->
-			State2 = enqueue_chunk_for_writing(ChunkInfo, State),
-			remove_chunk_info(BucketEndOffset, State2);
+			State2 = enqueue_chunk_for_writing(RepackChunk, State),
+			remove_repack_chunk(BucketEndOffset, State2);
 		ignore ->
 			%% Chunk was already_repacked.
-			remove_chunk_info(BucketEndOffset, State);
+			remove_repack_chunk(BucketEndOffset, State);
 		error ->
 			%% This should never happen.
-			log_error(invalid_chunk_info_state, ChunkInfo, State, []),
-			remove_chunk_info(BucketEndOffset, State);
+			log_error(invalid_repack_chunk_state, RepackChunk, State, []),
+			remove_repack_chunk(BucketEndOffset, State);
 		_ ->
 			%% No action to take now, but since the chunk state changed, we need to update
 			%% the cache.
-			cache_chunk_info(ChunkInfo, State)
+			cache_repack_chunk(RepackChunk, State)
 	end.
 
 read_cursor(StoreID, TargetPacking, ModuleStart) ->
@@ -821,14 +824,14 @@ store_cursor(Cursor, StoreID, TargetPacking) ->
 	Filepath = ar_chunk_storage:get_filepath("repack_in_place_cursor2", StoreID),
 	file:write_file(Filepath, term_to_binary({Cursor, TargetPacking})).
 
-log_error(Event, #chunk_info{} = ChunkInfo, #state{} = State, ExtraLogs) ->
-	?LOG_ERROR(format_logs(Event, ChunkInfo, State, ExtraLogs)).
+log_error(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) ->
+	?LOG_ERROR(format_logs(Event, RepackChunk, State, ExtraLogs)).
 
 log_error(Event, #state{} = State, ExtraLogs) ->
 	?LOG_ERROR(format_logs(Event, State, ExtraLogs)).
 
-log_warning(Event, #chunk_info{} = ChunkInfo, #state{} = State, ExtraLogs) ->
-	?LOG_WARNING(format_logs(Event, ChunkInfo, State, ExtraLogs)).
+log_warning(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) ->
+	?LOG_WARNING(format_logs(Event, RepackChunk, State, ExtraLogs)).
 
 log_warning(Event, #state{} = State, ExtraLogs) ->
 	?LOG_WARNING(format_logs(Event, State, ExtraLogs)).
@@ -836,8 +839,8 @@ log_warning(Event, #state{} = State, ExtraLogs) ->
 log_info(Event, #state{} = State, ExtraLogs) ->
 	?LOG_INFO(format_logs(Event, State, ExtraLogs)).
 
-log_debug(Event, #chunk_info{} = ChunkInfo, #state{} = State, ExtraLogs) ->
-	?LOG_DEBUG(format_logs(Event, ChunkInfo, State, ExtraLogs)).
+log_debug(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) ->
+	?LOG_DEBUG(format_logs(Event, RepackChunk, State, ExtraLogs)).
 	
 log_debug(Event, #state{} = State, ExtraLogs) ->
 	?LOG_DEBUG(format_logs(Event, State, ExtraLogs)).
@@ -853,19 +856,19 @@ format_logs(Event, #state{} = State, ExtraLogs) ->
 		{footprint_end, State#state.footprint_end},
 		{module_start, State#state.module_start},
 		{module_end, State#state.module_end},
-		{chunk_info_map, maps:size(State#state.chunk_info_map)},
+		{repack_chunk_map, maps:size(State#state.repack_chunk_map)},
 		{write_queue, gb_sets:size(State#state.write_queue)}
 		| ExtraLogs
 	].
 
-format_logs(Event, #chunk_info{} = ChunkInfo, #state{} = State, ExtraLogs) ->
-	#chunk_info{
+format_logs(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) ->
+	#repack_chunk{
 		state = ChunkState,
 		offsets = Offsets,
 		metadata = Metadata,
 		chunk = Chunk,
 		entropy = Entropy
-	} = ChunkInfo,
+	} = RepackChunk,
 	#chunk_offsets{	
 		absolute_offset = AbsoluteOffset,
 		bucket_end_offset = BucketEndOffset,
@@ -888,11 +891,11 @@ format_logs(Event, #chunk_info{} = ChunkInfo, #state{} = State, ExtraLogs) ->
 count_states(cache, #state{} = State) ->
 	#state{
 		store_id = StoreID,
-		chunk_info_map = Map
+		repack_chunk_map = Map
 	} = State,
 	MapCount = maps:fold(
-		fun(_BucketEndOffset, ChunkInfo, Acc) ->
-			maps:update_with(ChunkInfo#chunk_info.state, fun(Count) -> Count + 1 end, 1, Acc)
+		fun(_BucketEndOffset, RepackChunk, Acc) ->
+			maps:update_with(RepackChunk#repack_chunk.state, fun(Count) -> Count + 1 end, 1, Acc)
 		end,
 		#{},
 		Map
@@ -915,8 +918,8 @@ count_states(queue, #state{} = State) ->
 		write_queue = WriteQueue
 	} = State,
 	WriteQueueCount = gb_sets:fold(
-		fun({_BucketEndOffset, ChunkInfo}, Acc) ->
-			maps:update_with(ChunkInfo#chunk_info.state, fun(Count) -> Count + 1 end, 1, Acc)
+		fun({_BucketEndOffset, RepackChunk}, Acc) ->
+			maps:update_with(RepackChunk#repack_chunk.state, fun(Count) -> Count + 1 end, 1, Acc)
 		end,
 		#{},
 		WriteQueue
@@ -948,34 +951,34 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 %          ?assertEqual(Expected, name(123))
 %     end).
 
-% init_chunk_info_map_test() ->
-%     DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, chunk_info_map = #{ }},
+% init_repack_chunk_map_test() ->
+%     DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, repack_chunk_map = #{ }},
 %     BucketOffsets = [1000, 2000],
-%     NewState = init_chunk_info_map(BucketOffsets, DummyState),
-%     Map = NewState#state.chunk_info_map,
+%     NewState = init_repack_chunk_map(BucketOffsets, DummyState),
+%     Map = NewState#state.repack_chunk_map,
 %     ?assert(maps:is_key(1000, Map)),
 %     ?assert(maps:is_key(2000, Map)),
-%     ChunkInfo1 = maps:get(1000, Map),
-%     ChunkInfo2 = maps:get(2000, Map),
-%     ?assertEqual(no_data, ChunkInfo1#chunk_info.status),
-%     ?assertEqual(no_data, ChunkInfo2#chunk_info.status).
+%     RepackChunk1 = maps:get(1000, Map),
+%     RepackChunk2 = maps:get(2000, Map),
+%     ?assertEqual(no_data, RepackChunk1#repack_chunk.status),
+%     ?assertEqual(no_data, RepackChunk2#repack_chunk.status).
 
-% cache_chunk_info_test() ->
-%     %% Create a dummy chunk_info record.
-%     ChunkInfo = #chunk_info{bucket_end_offset = 123, status = no_data},
-%     DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, chunk_info_map = #{ }},
-%     NewState = cache_chunk_info(ChunkInfo, DummyState),
-%     Map = NewState#state.chunk_info_map,
-%     ?assertEqual(ChunkInfo, maps:get(123, Map)).
+% cache_repack_chunk_test() ->
+%     %% Create a dummy repack_chunk record.
+%     RepackChunk = #repack_chunk{bucket_end_offset = 123, status = no_data},
+%     DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, repack_chunk_map = #{ }},
+%     NewState = cache_repack_chunk(RepackChunk, DummyState),
+%     Map = NewState#state.repack_chunk_map,
+%     ?assertEqual(RepackChunk, maps:get(123, Map)).
 
-% remove_chunk_info_test() ->
+% remove_repack_chunk_test() ->
 %     %% Start with a state having two keys.
-%     ChunkInfo1 = #chunk_info{bucket_end_offset = 456, status = no_data},
-%     ChunkInfo2 = #chunk_info{bucket_end_offset = 789, status = no_data},
-%     InitialMap = #{456 => ChunkInfo1, 789 => ChunkInfo2},
-%     DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, chunk_info_map = InitialMap},
-%     NewState = remove_chunk_info(456, DummyState),
-%     Map = NewState#state.chunk_info_map,
+%     RepackChunk1 = #repack_chunk{bucket_end_offset = 456, status = no_data},
+%     RepackChunk2 = #repack_chunk{bucket_end_offset = 789, status = no_data},
+%     InitialMap = #{456 => RepackChunk1, 789 => RepackChunk2},
+%     DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, repack_chunk_map = InitialMap},
+%     NewState = remove_repack_chunk(456, DummyState),
+%     Map = NewState#state.repack_chunk_map,
 %     ?assertEqual(false, maps:is_key(456, Map)),
 %     ?assert(maps:is_key(789, Map)).
 
@@ -985,7 +988,7 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 %     Funs = [{ar_chunk_storage, get_filepath, fun("repack_in_place_cursor2", _StoreID) -> TempFile end}],
 %     ar_test_node:test_with_mocked_functions(Funs, fun() ->
 %          %% Create a dummy state record with next_cursor.
-%          DummyState = #state{next_cursor = 555, store_id = 42, target_packing = test_packing, chunk_info_map = #{ }},
+%          DummyState = #state{next_cursor = 555, store_id = 42, target_packing = test_packing, repack_chunk_map = #{ }},
 %          ok = store_cursor(DummyState),
 %          {ok, Bin} = file:read_file(TempFile),
 %          {Cursor, TargetPacking} = binary_to_term(Bin),
