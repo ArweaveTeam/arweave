@@ -216,10 +216,6 @@ map_entropies(Entropies,
 			Fun,
 			Args,
 			Acc) ->
-	% ?LOG_DEBUG([{event, map_entropies}, {bucket_end_offset, BucketEndOffset},
-	% 	{entropy_offsets, length(EntropyOffsets)}, {range_start, RangeStart},
-	% 	{range_end, RangeEnd}, {partition1, ar_replica_2_9:get_entropy_partition(BucketEndOffset)},
-	% 	{partition2, ar_replica_2_9:get_entropy_partition(RangeEnd)}]),
 	
 	case take_and_combine_entropy_slices(Entropies) of
 		{ChunkEntropy, Rest} ->

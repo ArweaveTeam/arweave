@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([name/1, init/1, read_batch/4, write_queue/4]).
+-export([name/1, init/1, read_footprint/4, write_queue/4]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -52,8 +52,17 @@ init(StoreID) ->
 	
     {ok, State}.
 
-read_batch(FootprintOffsets, BatchStart, BatchEnd, StoreID) ->
-	gen_server:cast(name(StoreID), {read_batch, FootprintOffsets, BatchStart, BatchEnd}).
+%% @doc Read all the chunks covered by the given footprint.
+%% The footprint covers:
+%% - A list of offsets determined by the replica.2.9 entropy footprint pattern.
+%% - A set of consecutive chunks following each offset. The number of consecutive chunks
+%%   read for each footprint offset is determined by the repack_batch_size config.
+-spec read_footprint(
+	[non_neg_integer()], non_neg_integer(), non_neg_integer(), ar_storage_module:store_id()) ->
+	ok.
+read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, StoreID) ->
+	gen_server:cast(name(StoreID),
+		{read_footprint, FootprintOffsets, FootprintStart, FootprintEnd}).
 
 write_queue(WriteQueue, Packing, RewardAddr, StoreID) ->
 	gen_server:cast(name(StoreID), {write_queue, WriteQueue, Packing, RewardAddr}).
@@ -67,8 +76,9 @@ handle_call(Request, _From, #state{} = State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({read_batch, FootprintOffsets, BatchStart, BatchEnd}, #state{} = State) ->
-	do_read_batch(FootprintOffsets, BatchStart, BatchEnd, State),
+handle_cast(
+		{read_footprint, FootprintOffsets, FootprintStart, FootprintEnd}, #state{} = State) ->
+	do_read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, State),
 	{noreply, State};
 
 handle_cast({write_queue, WriteQueue, Packing, RewardAddr}, #state{} = State) ->
@@ -93,30 +103,28 @@ terminate(Reason, #state{} = State) ->
 %%% Private functions.
 %%%===================================================================
 
-do_read_batch([], _BatchStart, _BatchEnd, #state{}) ->
+do_read_footprint([], _FootprintStart, _FootprintEnd, #state{}) ->
 	ok;
-do_read_batch([BucketEndOffset | FootprintOffsets], BatchStart, BatchEnd, #state{} = State) 
-		when BucketEndOffset < BatchStart ->
+do_read_footprint([
+	BucketEndOffset | FootprintOffsets], FootprintStart, FootprintEnd, #state{} = State) 
+		when BucketEndOffset < FootprintStart ->
 	%% Advance until we hit a chunk covered by the current storage module
-	do_read_batch(FootprintOffsets, BatchStart, BatchEnd, State);
-do_read_batch([BucketEndOffset | _FootprintOffsets], _BatchStart, BatchEnd, #state{} ) 
-		when BucketEndOffset > BatchEnd ->
+	do_read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, State);
+do_read_footprint(
+	[BucketEndOffset | _FootprintOffsets], _FootprintStart, FootprintEnd, #state{} ) 
+		when BucketEndOffset > FootprintEnd ->
 	ok;
-do_read_batch([BucketEndOffset | FootprintOffsets], BatchStart, BatchEnd, #state{} = State) ->
+do_read_footprint(
+	[BucketEndOffset | FootprintOffsets], FootprintStart, FootprintEnd, #state{} = State) ->
 	#state{ 
 		store_id = StoreID,
 		module_start = ModuleStart,
 		read_batch_size = ReadBatchSize
 	} = State,
-	log_debug(read_batch_start, State, [
-		{bucket_end_offset, BucketEndOffset},
-		{batch_start, BatchStart},
-		{batch_end, BatchEnd},
-		{read_batch_size, ReadBatchSize}
-	]),
-	StartTimeTotal = erlang:monotonic_time(),
+
+	StartTime = erlang:monotonic_time(),
 	{ReadRangeStart, ReadRangeEnd, _ReadRangeOffsets} = ar_repack:get_read_range(
-		BucketEndOffset, ModuleStart, BatchEnd, ReadBatchSize),
+		BucketEndOffset, ModuleStart, FootprintEnd, ReadBatchSize),
 	ReadRangeSizeInBytes = ReadRangeEnd - ReadRangeStart,
 	OffsetChunkMap = 
 		case catch ar_chunk_storage:get_range(ReadRangeStart, ReadRangeSizeInBytes, StoreID) of
@@ -132,22 +140,7 @@ do_read_batch([BucketEndOffset | FootprintOffsets], BatchStart, BatchEnd, #state
 			Range ->
 				maps:from_list(Range)
 		end,
-	ChunkReadSizeInBytes = maps:fold(
-		fun(_Key, Value, Acc) -> Acc + byte_size(Value) end, 
-		0, 
-		OffsetChunkMap
-	),
-	ChunkPrefixes = maps:fold(
-		fun(Key, Value, Acc) -> 
-			Prefix = binary:part(Value, {0, min(10, byte_size(Value))}),
-			[{Key, Prefix} | Acc]
-		end,
-		[],
-		OffsetChunkMap
-	),
-	ar_metrics:record_rate_metric(
-		StartTimeTotal, ChunkReadSizeInBytes,
-		repack_read_rate_bytes_per_second, [StoreID, chunks]),
+
 	
 	OffsetMetadataMap =
 		case ar_data_sync:get_chunk_metadata_range(ReadRangeStart+1, ReadRangeEnd, StoreID) of
@@ -163,24 +156,30 @@ do_read_batch([BucketEndOffset | FootprintOffsets], BatchStart, BatchEnd, #state
 				]),
 				#{}
 		end,
-	ReadSizeInBytes = maps:size(OffsetMetadataMap) * ?DATA_CHUNK_SIZE,
+
+	ChunkReadSizeInBytes = maps:fold(
+		fun(_Key, Value, Acc) -> Acc + byte_size(Value) end, 
+		0, 
+		OffsetChunkMap
+	),
 	ar_metrics:record_rate_metric(
-		StartTimeTotal, ReadSizeInBytes,
-		repack_read_rate_bytes_per_second, [StoreID, total]),
-	
+		StartTime, ChunkReadSizeInBytes,
+		chunk_read_rate_bytes_per_second, [StoreID, repack]),
+
 	EndTime = erlang:monotonic_time(),
-	ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTimeTotal, native, millisecond)),
-	log_debug(read_batch_end, State, [
+	ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
+	log_debug(read_footprint, State, [
 		{read_range_start, ReadRangeStart},
 		{read_range_end, ReadRangeEnd},
 		{read_range_size_bytes, ReadRangeSizeInBytes},
-		{metadata_read_size_bytes, ReadSizeInBytes},
 		{chunk_read_size_bytes, ChunkReadSizeInBytes},
 		{time_taken, ElapsedTime},
-		{chunk_prefixes, ChunkPrefixes},
-		{metadata_keys, maps:keys(OffsetMetadataMap)},
-		{rate1, (ReadSizeInBytes / ?MiB / ElapsedTime) * 1000},
-		{rate2, (ChunkReadSizeInBytes / ?MiB / ElapsedTime) * 1000}
+		{rate, (ChunkReadSizeInBytes / ?MiB / ElapsedTime) * 1000}
+	]),
+
+	ar_repack:chunk_range_read(
+		BucketEndOffset, OffsetChunkMap, OffsetMetadataMap, State#state.store_id),
+	read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, StoreID).
 
 process_write_queue(WriteQueue, Packing, RewardAddr, #state{} = State) ->
 	#state{
@@ -188,8 +187,8 @@ process_write_queue(WriteQueue, Packing, RewardAddr, #state{} = State) ->
 	} = State,
 	StartTime = erlang:monotonic_time(),
     gb_sets:fold(
-        fun({_BucketEndOffset, ChunkInfo}, _) ->
-			write_chunk_info(ChunkInfo, Packing, RewardAddr, State)
+        fun({_BucketEndOffset, RepackChunk}, _) ->
+			write_repack_chunk(RepackChunk, Packing, RewardAddr, State)
         end,
         ok,
         WriteQueue
@@ -205,32 +204,32 @@ process_write_queue(WriteQueue, Packing, RewardAddr, #state{} = State) ->
 		{rate, (gb_sets:size(WriteQueue) / 4 / ElapsedTime) * 1000}
 	]).
 
-write_chunk_info(ChunkInfo, Packing, RewardAddr, #state{} = State) ->
+write_repack_chunk(RepackChunk, Packing, RewardAddr, #state{} = State) ->
 	#state{ 
 		store_id = StoreID
 	} = State,
 	
-	case ChunkInfo#chunk_info.state of
+	case RepackChunk#repack_chunk.state of
 		write_entropy ->
-			Entropy = ChunkInfo#chunk_info.entropy,
-			BucketEndOffset = ChunkInfo#chunk_info.offsets#chunk_offsets.bucket_end_offset,
+			Entropy = RepackChunk#repack_chunk.entropy,
+			BucketEndOffset = RepackChunk#repack_chunk.offsets#chunk_offsets.bucket_end_offset,
 			ar_entropy_storage:store_entropy(Entropy, BucketEndOffset, StoreID, RewardAddr);
 		write_chunk ->
-			wite_chunk(ChunkInfo, Packing, State);
+			wite_chunk(RepackChunk, Packing, State);
 		_ ->
-			log_error(unexpected_chunk_state, State, [ format_logs(ChunkInfo) ])
+			log_error(unexpected_chunk_state, State, [ format_logs(RepackChunk) ])
 	end.
 
-wite_chunk(ChunkInfo, TargetPacking, #state{} = State) ->
+wite_chunk(RepackChunk, TargetPacking, #state{} = State) ->
 	#state{
 		store_id = StoreID
 	} = State,
-	#chunk_info{
+	#repack_chunk{
 		offsets = Offsets,
 		metadata = Metadata,
 		chunk = Chunk,
 		data_path = DataPath
-	} = ChunkInfo,
+	} = RepackChunk,
 	#chunk_offsets{
 		absolute_offset = AbsoluteOffset,
 		padded_end_offset = PaddedEndOffset,
@@ -268,21 +267,21 @@ wite_chunk(ChunkInfo, TargetPacking, #state{} = State) ->
 			},
 			gen_server:cast(ar_data_sync:name(StoreID), {store_chunk, ChunkArgs, Args});
 		{ok, true} ->
-			update_chunk(TargetPacking, ChunkInfo, State);
+			update_chunk(TargetPacking, RepackChunk, State);
 		{Error2, _} ->
 			log_error(failed_to_update_sync_record_for_repacked_chunk, State, [
-				format_logs(ChunkInfo) ++ [{error, io_lib:format("~p", [Error2])}]
+				format_logs(RepackChunk) ++ [{error, io_lib:format("~p", [Error2])}]
 			])
 	end.
 
-update_chunk(Packing, ChunkInfo, #state{} = State) ->
+update_chunk(Packing, RepackChunk, #state{} = State) ->
 	#state{
 		store_id = StoreID
 	} = State,
-	#chunk_info{
+	#repack_chunk{
 		offsets = Offsets,
 		chunk = Chunk
-	} = ChunkInfo,
+	} = RepackChunk,
 	#chunk_offsets{
 		absolute_offset = AbsoluteOffset
 	} = Offsets,
@@ -304,7 +303,7 @@ update_chunk(Packing, ChunkInfo, #state{} = State) ->
 					NewPacking, ar_data_sync, StoreID);
 		Error ->
 			log_error(failed_to_store_repacked_chunk, State, [
-				format_logs(ChunkInfo) ++ 
+				format_logs(RepackChunk) ++ 
 				[
 					{requested_packing, ar_serialize:encode_packing(Packing, true)},
 					{error, io_lib:format("~p", [Error])}
@@ -334,14 +333,14 @@ format_logs(Event, #state{} = State, ExtraLogs) ->
 		| ExtraLogs
 	].
 
-format_logs(#chunk_info{} = ChunkInfo) ->
-	#chunk_info{
+format_logs(#repack_chunk{} = RepackChunk) ->
+	#repack_chunk{
 		state = ChunkState,
 		offsets = Offsets,
 		metadata = Metadata,
 		chunk = Chunk,
 		entropy = Entropy
-	} = ChunkInfo,
+	} = RepackChunk,
 	#chunk_offsets{	
 		absolute_offset = AbsoluteOffset,
 		bucket_end_offset = BucketEndOffset,
