@@ -23,13 +23,11 @@
 	store_id = undefined,
 	read_batch_size = ?DEFAULT_REPACK_BATCH_SIZE,
 	write_batch_size = 1024,
-	footprint_size = 128,
+	num_entropy_offsets = 128,
 	module_start = 0,
 	module_end = 0,
-	batch_start = 0,
-	batch_end = 0,
-	entropy_start = 0,
-	entropy_end = 0,
+	footprint_start = 0,
+	footprint_end = 0,
 	next_cursor = 0, 
 	target_packing = undefined,
 	reward_addr = undefined,
@@ -131,7 +129,7 @@ init({StoreID, ToPacking}) ->
 		{name, name(StoreID)},
 		{read_batch_size, BatchSize},
 		{write_batch_size, State#state.write_batch_size},
-		{footprint_size, State#state.footprint_size},
+		{num_entropy_offsets, State#state.num_entropy_offsets},
 		{from_packing, ar_serialize:encode_packing(FromPacking, false)},
         {to_packing, ar_serialize:encode_packing(ToPacking, false)},
 		{raw_module_end, ModuleEnd},
@@ -169,18 +167,18 @@ handle_cast(repack, #state{} = State) ->
 handle_cast({chunk_range_read, BucketEndOffset, OffsetChunkMap, OffsetMetadataMap}, #state{} = State) ->
 	#state{
 		module_start = ModuleStart,
-		batch_end = BatchEnd,
+		footprint_end = FootprintEnd,
 		read_batch_size = BatchSize
 	} = State,
 	{_ReadRangeStart, _ReadRangeEnd, ReadRangeOffsets} = get_read_range(
-		BucketEndOffset, ModuleStart, BatchEnd, BatchSize),
+		BucketEndOffset, ModuleStart, FootprintEnd, BatchSize),
 	State2 = add_range_to_chunk_info_map(OffsetChunkMap, OffsetMetadataMap, State),
 	State3 = mark_missing_chunks(ReadRangeOffsets, State2),
 	{noreply, State3};
 
-handle_cast({expire_repack_request, {BucketEndOffset, BatchID}},
-		#state{batch_start = BatchStart} = State) 
-		when BatchID == BatchStart ->
+handle_cast({expire_repack_request, {BucketEndOffset, FootprintID}},
+		#state{footprint_start = FootprintStart} = State) 
+		when FootprintID == FootprintStart ->
 	#state{
 		chunk_info_map = Map
 	} = State,
@@ -197,9 +195,9 @@ handle_cast({expire_repack_request, _Ref}, #state{} = State) ->
 	%% Request is from an old batch, ignore.
 	{noreply, State};
 
-handle_cast({expire_encipher_request, {BucketEndOffset, BatchID}},
-		#state{batch_start = BatchStart} = State) 
-		when BatchID == BatchStart ->
+handle_cast({expire_encipher_request, {BucketEndOffset, FootprintID}},
+		#state{footprint_start = FootprintStart} = State) 
+		when FootprintID == FootprintStart ->
 	#state{
 		chunk_info_map = Map
 	} = State,
@@ -227,14 +225,10 @@ handle_cast(Request, #state{} = State) ->
 
 handle_info({entropy, BucketEndOffset, Entropies}, #state{} = State) ->
 	#state{ 
-		batch_start = BatchStart,
-		batch_end = BatchEnd,
+		footprint_start = FootprintStart,
+		footprint_end = FootprintEnd,
 		reward_addr = RewardAddr
 	} = State,
-
-	StartTime = erlang:monotonic_time(),
-	%% Generate the next entropy in the batch if needed.
-	generate_batch_entropy(BucketEndOffset + ?DATA_CHUNK_SIZE, State),
 
 	EntropyKeys = ar_entropy_gen:generate_entropy_keys(RewardAddr, BucketEndOffset),
 	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
@@ -242,8 +236,8 @@ handle_info({entropy, BucketEndOffset, Entropies}, #state{} = State) ->
 	State2 = ar_entropy_gen:map_entropies(
 		Entropies, 
 		EntropyOffsets,
-		BatchStart,
-		BatchEnd,
+		FootprintStart,
+		FootprintEnd,
 		EntropyKeys, 
 		RewardAddr,
 		fun entropy_generated/3, [], State),
@@ -318,7 +312,7 @@ terminate(Reason, #state{} = State) ->
 %%%===================================================================
 
 %% @doc Outer repack loop. Called via `gen_server:cast(self(), repack)`. Each call
-%% repacks another batch of chunks. A batch of chunks is N entropy footprints where N
+%% repacks another footprint of chunks. A repack footprint is N entropy footprints where N
 %% is the repack batch size.
 repack(#state{ next_cursor = Cursor, module_end = ModuleEnd } = State)
 		when Cursor > ModuleEnd ->
@@ -355,11 +349,11 @@ repack(#state{} = State) ->
 			ar_util:cast_after(200, self(), repack),
 			State;
 		false ->
-			repack_batch(Cursor, State)
+			repack_footprint(Cursor, State)
 	end.
 
-repack_batch(Cursor, #state{} = State) ->
-	#state{ module_start = ModuleStart, module_end = ModuleEnd, footprint_size = FootprintSize,
+repack_footprint(Cursor, #state{} = State) ->
+	#state{ module_start = ModuleStart, module_end = ModuleEnd, num_entropy_offsets = NumEntropyOffsets,
 		target_packing = TargetPacking, store_id = StoreID,
 		read_batch_size = BatchSize } = State,
 
@@ -371,7 +365,7 @@ repack_batch(Cursor, #state{} = State) ->
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
 	%% end sanity checks
 	
-	BatchStart = BucketStartOffset+1,
+	FootprintStart = BucketStartOffset+1,
 	
 	IsChunkRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
 	%% Skip this offset if it's already packed to TargetPacking, or if it's not recorded
@@ -382,7 +376,7 @@ repack_batch(Cursor, #state{} = State) ->
 		_ -> false
 	end,
 
-	case Skip orelse BatchStart < ModuleStart orelse BatchStart > ModuleEnd of
+	case Skip orelse FootprintStart < ModuleStart orelse FootprintStart > ModuleEnd of
 		true ->
 			%% Skip this BucketEndOffset for one of these reasons:
 			%% 1. BucketEndOffset has already been repacked.
@@ -408,58 +402,58 @@ repack_batch(Cursor, #state{} = State) ->
 				{padded_end_offset, PaddedEndOffset},
 				{bucket_end_offset, BucketEndOffset},
 				{is_chunk_recorded, IsChunkRecorded},
-				{batch_start, BatchStart},
+				{footprint_start, FootprintStart},
 				{module_start, ModuleStart},
 				{module_end, ModuleEnd}
 			]),
 			State#state{ next_cursor = NextCursor };
 		_ ->
-			BatchOffsets = batch_offsets(BucketEndOffset, FootprintSize, ModuleEnd),
-			RawBatchEnd = lists:max(BatchOffsets),
-			{ReadRangeStart, ReadRangeEnd, _ReadRangeOffsets} = get_read_range(
-				RawBatchEnd, ModuleStart, ModuleEnd, BatchSize),
-			BatchEnd = ar_chunk_storage:get_chunk_bucket_end(ReadRangeEnd),
+			FootprintOffsets = footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd),
+			FootprintEnd = footprint_end(FootprintOffsets, ModuleStart, ModuleEnd, BatchSize),
 
-			%% sanity checks
-			true = BatchStart < BatchEnd,
-			BucketEndOffset = BucketStartOffset + ?DATA_CHUNK_SIZE,
-			RawBatchEnd = ar_chunk_storage:get_chunk_bucket_end(ReadRangeStart+1),
-			%% end sanity checks
-		
-			EntropyStart = BucketEndOffset,
-			{_, EntropyEnd, _} = get_read_range(EntropyStart, ModuleStart, BatchEnd, BatchSize),
-			
 			State2 = State#state{ 
-				batch_start = BatchStart,
-				batch_end = BatchEnd,
-				entropy_start = EntropyStart,
-				entropy_end = ar_chunk_storage:get_chunk_bucket_end(EntropyEnd),
+				footprint_start = FootprintStart,
+				footprint_end = FootprintEnd,
 				next_cursor = BucketEndOffset + ?DATA_CHUNK_SIZE
 			},
-			State3 = init_chunk_info_map(BatchOffsets, State2),
-			generate_batch_entropy(BucketEndOffset, State3),
-			ar_repack_io:read_batch(BatchOffsets, BatchStart, BatchEnd, StoreID),
-			log_debug(repack_batch_start, State3, [
+			State3 = init_chunk_info_map(FootprintOffsets, State2),
+
+			%% We'll generate BatchSize entropy footprints, one for each bucket end offset
+			%% starting at BucketEndOffset and ending at EntropyEnd.
+			{_, EntropyEnd, _} = get_read_range(
+				BucketEndOffset, ModuleStart, FootprintEnd, BatchSize),
+			generate_repack_entropy(
+				BucketEndOffset, ar_chunk_storage:get_chunk_bucket_end(EntropyEnd), State3),
+
+			ar_repack_io:read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, StoreID),
+
+			log_debug(repack_footprint_start, State3, [
 				{cursor, Cursor},
 				{bucket_end_offset, BucketEndOffset},
 				{bucket_start_offset, BucketStartOffset},
 				{target_packing, ar_serialize:encode_packing(TargetPacking, false)},
 				{module_start, ModuleStart},
 				{module_end, ModuleEnd},
-				{entropy_start, EntropyStart},
 				{entropy_end, EntropyEnd},
 				{read_batch_size, BatchSize},
 				{write_batch_size, State2#state.write_batch_size},
-				{footprint_size, FootprintSize},
-				{batch_start, BatchStart},
-				{batch_end, BatchEnd},
-				{batch_offsets, length(BatchOffsets)},
+				{num_entropy_offsets, NumEntropyOffsets},
+				{footprint_start, FootprintStart},
+				{footprint_end, FootprintEnd},
+				{footprint_offsets, length(FootprintOffsets)},
 				{chunk_info_map, maps:size(State3#state.chunk_info_map)}
 			]),
 			State3
 	end.
 
-batch_offsets(BucketEndOffset, FootprintSize, ModuleEnd) ->
+%% @doc Generates the set of entropy offsets that will be used during one iteration of
+%% repack_footprint.
+%% 
+%% One footprint of entropy offsets is generated and then filtered such that:
+%% - no offset is less than BucketEndOffset
+%% - no offset is greater than ModuleEnd
+%% - at most NumEntropyOffsets offsets are returned
+footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd) ->
 	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
 
 	FilteredOffsets = lists:filter(
@@ -468,19 +462,29 @@ batch_offsets(BucketEndOffset, FootprintSize, ModuleEnd) ->
 		end,
 		EntropyOffsets),
 	
-	lists:sublist(FilteredOffsets, FootprintSize).
+	lists:sublist(FilteredOffsets, NumEntropyOffsets).
 
-generate_batch_entropy(BucketEndOffset,
-		#state{ entropy_start = EntropyStart, entropy_end = EntropyEnd }) 
-		when BucketEndOffset < EntropyStart orelse BucketEndOffset > EntropyEnd ->
+footprint_end(FootprintOffsets, ModuleStart, ModuleEnd, BatchSize) ->
+	FirstOffset = lists:min(FootprintOffsets),
+	LastOffset = lists:max(FootprintOffsets),
+	%% The final read range of the footprint starts at the last entropy offset
+	{_, LastOffsetRangeEnd, _} = get_read_range(LastOffset, ModuleStart, ModuleEnd, BatchSize),
+	
+	%% ar_entropy_gen:footprint_end makes sure all offsets are in the same entropy partition
+	FootprintEnd = ar_entropy_gen:footprint_end(FirstOffset, ModuleEnd),
+	min(ar_chunk_storage:get_chunk_bucket_end(LastOffsetRangeEnd), FootprintEnd).
+
+generate_repack_entropy(BucketEndOffset, EntropyEnd, #state{}) 
+		when BucketEndOffset > EntropyEnd ->
 	ok;
-generate_batch_entropy(BucketEndOffset, #state{} = State) ->
+generate_repack_entropy(BucketEndOffset, EntropyEnd, #state{} = State) ->
 	#state{ 
 		store_id = StoreID,
 		reward_addr = RewardAddr
 	} = State,
 
-	ar_entropy_gen:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self()).
+	ar_entropy_gen:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self()),
+	generate_repack_entropy(BucketEndOffset + ?DATA_CHUNK_SIZE, EntropyEnd, State).
 
 
 init_chunk_info_map([], #state{} = State) ->
@@ -488,14 +492,14 @@ init_chunk_info_map([], #state{} = State) ->
 init_chunk_info_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 	#state{ 
 		module_start = ModuleStart,
-		batch_end = BatchEnd,
+		footprint_end = FootprintEnd,
 		read_batch_size = BatchSize,
 		chunk_info_map = Map,
 		target_packing = TargetPacking
 	} = State,
 
 	{_ReadRangeStart, _ReadRangeEnd, ReadRangeOffsets} = get_read_range(
-		EntropyOffset, ModuleStart, BatchEnd, BatchSize),
+		EntropyOffset, ModuleStart, FootprintEnd, BatchSize),
 
 	Map2 = lists:foldl(
 		fun(BucketEndOffset, Acc) ->
@@ -517,7 +521,7 @@ init_chunk_info_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 	init_chunk_info_map(EntropyOffsets, State#state{ chunk_info_map = Map2 }).
 
 
-get_read_range(BucketEndOffset, ModuleStart, BatchEnd, BatchSize) ->
+get_read_range(BucketEndOffset, ModuleStart, FootprintEnd, BatchSize) ->
 	ReadRangeStart = ar_chunk_storage:get_chunk_byte_from_bucket_end(BucketEndOffset),
 
 	SectorSize = ar_replica_2_9:get_sector_size(),
@@ -526,7 +530,7 @@ get_read_range(BucketEndOffset, ModuleStart, BatchEnd, BatchSize) ->
 	SectorEnd = BucketEndOffset + (SectorSize - RelativeSectorOffset),
 
 	FullRangeSize = ?DATA_CHUNK_SIZE * BatchSize,
-	ReadRangeEnd = lists:min([ReadRangeStart + FullRangeSize, SectorEnd, BatchEnd]),
+	ReadRangeEnd = lists:min([ReadRangeStart + FullRangeSize, SectorEnd, FootprintEnd]),
 
 	BucketEndOffsets = [BucketEndOffset + (N * ?DATA_CHUNK_SIZE) || 
 		N <- lists:seq(0, BatchSize-1),
@@ -620,7 +624,7 @@ remove_chunk_info(BucketEndOffset, #state{} = State) ->
 	State2 = State#state{ chunk_info_map =
 		maps:remove(BucketEndOffset, State#state.chunk_info_map)
 	},
-	maybe_repack_next_batch(State2).
+	maybe_repack_next_footprint(State2).
 
 enqueue_chunk_for_writing(ChunkInfo, #state{} = State) ->
 	#state{
@@ -667,7 +671,7 @@ entropy_generated(Entropy, BucketEndOffset, #state{} = State) ->
 			update_chunk_state(ChunkInfo2, State)
 	end.
 
-maybe_repack_next_batch(#state{} = State) ->
+maybe_repack_next_footprint(#state{} = State) ->
 	#state{ 
 		chunk_info_map = Map,
 		write_queue = WriteQueue,
@@ -733,7 +737,7 @@ update_chunk_state(ChunkInfo, #state{} = State) ->
 process_state_change(ChunkInfo, #state{} = State) ->
 	#state{
 		store_id = StoreID,
-		batch_start = BatchStart
+		footprint_start = FootprintStart
 	} = State,
 	#chunk_info{
 		offsets = #chunk_offsets{
@@ -766,14 +770,14 @@ process_state_change(ChunkInfo, #state{} = State) ->
 			ChunkSize = ChunkInfo#chunk_info.metadata#chunk_metadata.chunk_size,
 			TXRoot = ChunkInfo#chunk_info.metadata#chunk_metadata.tx_root,
 			AbsoluteOffset = ChunkInfo#chunk_info.offsets#chunk_offsets.absolute_offset,
-			ar_packing_server:request_repack({BucketEndOffset, BatchStart}, self(),
+			ar_packing_server:request_repack({BucketEndOffset, FootprintStart}, self(),
 				{unpacked_padded, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize}),
 			cache_chunk_info(ChunkInfo, State);
 		needs_encipher ->
 			%% We now have the unpacked_padded chunk and the entropy, proceed
 			%% with enciphering and storing the chunk.
 			ar_packing_server:request_encipher(
-				{BucketEndOffset, BatchStart}, self(), {Chunk, Entropy}),
+				{BucketEndOffset, FootprintStart}, self(), {Chunk, Entropy}),
 			cache_chunk_info(ChunkInfo, State);
 		write_entropy ->
 			State2 = enqueue_chunk_for_writing(ChunkInfo, State),
@@ -845,8 +849,8 @@ format_logs(Event, #state{} = State, ExtraLogs) ->
 		{pid, self()},
 		{store_id, State#state.store_id},
 		{next_cursor, State#state.next_cursor},
-		{batch_start, State#state.batch_start},
-		{batch_end, State#state.batch_end},
+		{footprint_start, State#state.footprint_start},
+		{footprint_end, State#state.footprint_end},
 		{module_start, State#state.module_start},
 		{module_end, State#state.module_end},
 		{chunk_info_map, maps:size(State#state.chunk_info_map)},
