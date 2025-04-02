@@ -402,7 +402,7 @@ test_release_lock() ->
 			"storage_module_5_unpacked" => "device3",
 			"storage_module_6_unpacked" => "device4"
 		},
-		device_locks = #{
+		device_locks = DeviceLocks = #{
 			"device1" => sync,
 			"device2" => {prepare, "storage_module_2_unpacked"},
 			"device3" => {repack, "storage_module_4_unpacked"}
@@ -422,7 +422,7 @@ test_release_lock() ->
 		State, 
 		do_release_lock(sync, "storage_module_4_unpacked", State)),
 	?assertEqual(
-		State, 
+		State#state{ device_locks = DeviceLocks#{ "device4" => sync }},
 		do_release_lock(sync, "storage_module_6_unpacked", State)),
 
 	?assertEqual(

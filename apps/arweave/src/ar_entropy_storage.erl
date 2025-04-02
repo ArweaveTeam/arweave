@@ -7,8 +7,8 @@
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -429,10 +429,6 @@ test_replica_2_9() ->
 	after
 		ok = application:set_env(arweave, config, Config)
 	end.
-
-
-assert_get(Expected, Offset) ->
-	assert_get(Expected, Offset, "default").
 
 assert_get(Expected, Offset, StoreID) ->
 	ExpectedResult =

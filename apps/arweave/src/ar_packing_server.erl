@@ -16,9 +16,9 @@
 %% Only used by ar_bench_packing.erl
 -export([chunk_key/3]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
+-include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -241,8 +241,8 @@ encipher_replica_2_9_chunk(Chunk, Entropy) ->
 		BucketEndOffset :: non_neg_integer(),
 		SubChunkStartOffset :: non_neg_integer()
 ) -> binary().
-generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset) ->
-	Key = ar_replica_2_9:get_entropy_key(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
+generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
+	Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	PackingState = get_packing_state(),
 	RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
 	
@@ -802,19 +802,6 @@ record_buffer_size_metric() ->
 		_ ->
 			ok
 	end.
-
-%% @doc Walk up the stack trace to the parent of the current function. E.g.
-%% example() ->
-%%     get_caller().
-%%
-%% Will return the caller of example/0.
-get_caller() ->
-    {current_stacktrace, CallStack} = process_info(self(), current_stacktrace),
-    calling_function(CallStack).
-calling_function([_, {_, _, _, _}|[{Module, Function, Arity, _}|_]]) ->
-	atom_to_list(Module) ++ ":" ++ atom_to_list(Function) ++ "/" ++ integer_to_list(Arity);
-calling_function(_) ->
-    "unknown".
 
 %% @doc Log actual packings and unpackings
 %% where the StoredPacking does not match the RequestedPacking.
