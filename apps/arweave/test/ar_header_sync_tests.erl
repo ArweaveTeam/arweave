@@ -1,10 +1,7 @@
 -module(ar_header_sync_tests).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_header_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include_lib("kernel/include/file.hrl").
 
 -import(ar_test_node, [sign_v1_tx/3, wait_until_height/2, assert_wait_until_height/2,
 	read_block_when_stored/1, random_v1_data/1
@@ -12,7 +9,9 @@
 
 syncs_headers_test_() ->
 	ar_test_node:test_with_mocked_functions([
-			{ar_fork, height_2_8, fun() -> 10 end}],
+			{ar_fork, height_2_8, fun() -> 10 end},
+			{ar_retarget, is_retarget_height, fun(_Height) -> false end},
+			{ar_retarget, is_retarget_block, fun(_Block) -> false end}],
 			fun test_syncs_headers/0).
 
 test_syncs_headers() ->
