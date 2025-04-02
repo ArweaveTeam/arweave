@@ -15,15 +15,15 @@
 
 -moduledoc """
 	This module handles the repack-in-place logic.
-
-
 """.
+
+-define(REPACK_WRITE_BATCH_SIZE, 1024).
 
 -record(state, {
 	store_id = undefined,
 	read_batch_size = ?DEFAULT_REPACK_BATCH_SIZE,
-	write_batch_size = 1024,
-	num_entropy_offsets = 128,
+	write_batch_size = ?REPACK_WRITE_BATCH_SIZE,
+	num_entropy_offsets,
 	module_start = 0,
 	module_end = 0,
 	footprint_start = 0,
@@ -112,12 +112,15 @@ init({StoreID, ToPacking}) ->
 
 	{ok, Config} = application:get_env(arweave, config),
 	BatchSize = Config#config.repack_batch_size,
+	CacheSize = Config#config.repack_cache_size_mb,
+	NumEntropyOffsets = calculate_num_entropy_offsets(CacheSize, BatchSize),
 	gen_server:cast(self(), repack),
 	gen_server:cast(self(), count_states),
 	ar_device_lock:set_device_lock_metric(StoreID, repack, paused),
 	State = #state{ 
 		store_id = StoreID,
 		read_batch_size = BatchSize,
+		num_entropy_offsets = NumEntropyOffsets,
 		module_start = ModuleStart,
 		module_end = PaddedModuleEnd,
 		next_cursor = Cursor, 
@@ -332,6 +335,9 @@ terminate(Reason, #state{} = State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+calculate_num_entropy_offsets(CacheSize, BatchSize) ->
+	min(1024, (CacheSize * 4) div BatchSize).
 
 %% @doc Outer repack loop. Called via `gen_server:cast(self(), repack)`. Each call
 %% repacks another footprint of chunks. A repack footprint is N entropy footprints where N
@@ -944,62 +950,11 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 %%% Tests.
 %%%===================================================================
 
-% name_test() ->
-%     Funs = [{ar_storage_module, label_by_id, fun(_StoreID) -> "testlabel" end}],
-%     ar_test_node:test_with_mocked_functions(Funs, fun() ->
-%          Expected = list_to_atom("ar_repack_" ++ "testlabel"),
-%          ?assertEqual(Expected, name(123))
-%     end).
-
-% init_repack_chunk_map_test() ->
-%     DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, repack_chunk_map = #{ }},
-%     BucketOffsets = [1000, 2000],
-%     NewState = init_repack_chunk_map(BucketOffsets, DummyState),
-%     Map = NewState#state.repack_chunk_map,
-%     ?assert(maps:is_key(1000, Map)),
-%     ?assert(maps:is_key(2000, Map)),
-%     RepackChunk1 = maps:get(1000, Map),
-%     RepackChunk2 = maps:get(2000, Map),
-%     ?assertEqual(no_data, RepackChunk1#repack_chunk.status),
-%     ?assertEqual(no_data, RepackChunk2#repack_chunk.status).
-
-% cache_repack_chunk_test() ->
-%     %% Create a dummy repack_chunk record.
-%     RepackChunk = #repack_chunk{bucket_end_offset = 123, status = no_data},
-%     DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, repack_chunk_map = #{ }},
-%     NewState = cache_repack_chunk(RepackChunk, DummyState),
-%     Map = NewState#state.repack_chunk_map,
-%     ?assertEqual(RepackChunk, maps:get(123, Map)).
-
-% remove_repack_chunk_test() ->
-%     %% Start with a state having two keys.
-%     RepackChunk1 = #repack_chunk{bucket_end_offset = 456, status = no_data},
-%     RepackChunk2 = #repack_chunk{bucket_end_offset = 789, status = no_data},
-%     InitialMap = #{456 => RepackChunk1, 789 => RepackChunk2},
-%     DummyState = #state{store_id = 1, next_cursor = 0, target_packing = dummy, repack_chunk_map = InitialMap},
-%     NewState = remove_repack_chunk(456, DummyState),
-%     Map = NewState#state.repack_chunk_map,
-%     ?assertEqual(false, maps:is_key(456, Map)),
-%     ?assert(maps:is_key(789, Map)).
-
-% store_and_read_cursor_test() ->
-%     {ok, Config} = application:get_env(arweave, config),
-%     TempFile = filename:join(Config#config.data_dir, "test_repack_cursor"),
-%     Funs = [{ar_chunk_storage, get_filepath, fun("repack_in_place_cursor2", _StoreID) -> TempFile end}],
-%     ar_test_node:test_with_mocked_functions(Funs, fun() ->
-%          %% Create a dummy state record with next_cursor.
-%          DummyState = #state{next_cursor = 555, store_id = 42, target_packing = test_packing, repack_chunk_map = #{ }},
-%          ok = store_cursor(DummyState),
-%          {ok, Bin} = file:read_file(TempFile),
-%          {Cursor, TargetPacking} = binary_to_term(Bin),
-%          ?assertEqual(555, Cursor),
-%          ?assertEqual(test_packing, TargetPacking),
-%          %% Now test read_cursor/3 when file exists.
-%          CursorRead = read_cursor(42, test_packing, 1000),
-%          ?assertEqual(555, CursorRead),
-%          %% Remove the file and test the default behavior.
-%          file:delete(TempFile),
-%          DefaultCursor = 1000 + 1,
-%          CursorRead2 = read_cursor(42, test_packing, 1000),
-%          ?assertEqual(DefaultCursor, CursorRead2)
-%     end).
+cache_size_test() ->
+	?assertEqual(40, calculate_num_entropy_offsets(1000, 100)),
+	?assertEqual(400, calculate_num_entropy_offsets(1000, 10)),
+	?assertEqual(1024, calculate_num_entropy_offsets(30000, 100)),
+	?assertEqual(128, calculate_num_entropy_offsets(12800, 400)),
+	?assertEqual(128, calculate_num_entropy_offsets(3200, 100)),
+	?assertEqual(128, calculate_num_entropy_offsets(1600, 50)),
+	?assertEqual(160, calculate_num_entropy_offsets(4000, 100)).

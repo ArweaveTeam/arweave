@@ -113,6 +113,8 @@
 -define(DEFAULT_REPACK_BATCH_SIZE, 1).
 -endif.
 
+-define(DEFAULT_REPACK_CACHE_SIZE_MB, 4000).
+
 %% default filtering value for the peer list (30days)
 -define(CURRENT_PEERS_LIST_FILTER, 30*60*60*24).
 
@@ -172,6 +174,7 @@
 	storage_modules = [],
 	repack_in_place_storage_modules = [],
 	repack_batch_size = ?DEFAULT_REPACK_BATCH_SIZE,
+	repack_cache_size_mb = ?DEFAULT_REPACK_CACHE_SIZE_MB,
 	start_from_latest_state = false,
 	start_from_block,
 	internal_api_secret = not_set,
