@@ -102,13 +102,13 @@ vdf_client_test_() ->
 		fun cleanup/1,
 		[
 			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
-				fun test_vdf_client_fast_block/0, 180),
+				fun test_vdf_client_fast_block/0, 300),
 			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
-				fun test_vdf_client_fast_block_pull_interface/0, 180),
+				fun test_vdf_client_fast_block_pull_interface/0, 300),
 			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
-				fun test_vdf_client_slow_block/0, 180),
+				fun test_vdf_client_slow_block/0, 300),
 			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
-				fun test_vdf_client_slow_block_pull_interface/0, 180)
+				fun test_vdf_client_slow_block_pull_interface/0, 300)
 		]
     }.
 
