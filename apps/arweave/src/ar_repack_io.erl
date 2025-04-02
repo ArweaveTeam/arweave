@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([name/1, init/1, read_footprint/4, write_queue/4]).
+-export([name/1, read_footprint/4, write_queue/4]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 

@@ -11,10 +11,10 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_data_sync.hrl").
+-include("ar_data_discovery.hrl").
 
 %% The kv storage key to the sync records.
 -define(SYNC_RECORDS_KEY, <<"sync_records">>).
