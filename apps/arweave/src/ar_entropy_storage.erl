@@ -382,46 +382,56 @@ test_replica_2_9() ->
 		StoreID1 = ar_storage_module:id(lists:nth(1, StorageModules)),
 		StoreID2 = ar_storage_module:id(lists:nth(2, StorageModules)),
 		C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-		%% The replica_2_9 storage does not support updates and three chunks are written
-		%% into the first partition when the test node is launched.
+		%% ar_chunk_storage does not allow overwriting a chunk
+		%% with an unpacked_padded chunk.
 		?assertEqual({error, already_stored},
+				ar_chunk_storage:put(?DATA_CHUNK_SIZE, C1, unpacked_padded, StoreID1)),
+		?assertEqual({error, already_stored},
+				ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1, unpacked_padded, StoreID1)),
+		?assertEqual({error, already_stored},
+				ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE, C1, unpacked_padded, StoreID1)),
+		?assertEqual({ok, Packing},
 				ar_chunk_storage:put(?DATA_CHUNK_SIZE, C1, Packing, StoreID1)),
-		?assertEqual({error, already_stored},
+		assert_get(C1, ?DATA_CHUNK_SIZE, StoreID1),
+		?assertEqual({ok, Packing},
 				ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID1)),
-		?assertEqual({error, already_stored},
+		assert_get(C1, 2 * ?DATA_CHUNK_SIZE, StoreID1),
+		?assertEqual({ok, Packing},
 				ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID1)),
+		assert_get(C1, 3 * ?DATA_CHUNK_SIZE, StoreID1),
 
-		%% Store the new chunk.
-		?assertEqual({ok, {replica_2_9, RewardAddr}},
-				ar_chunk_storage:put(4 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID1)),
+		%% Store the new unpacked_padded chunk. Expect it to be enciphered with
+		%% the its entropy.
+		?assertEqual({ok, Packing},
+				ar_chunk_storage:put(4 * ?DATA_CHUNK_SIZE, C1, unpacked_padded, StoreID1)),
 		{ok, P1, _Entropy} =
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 4 * ?DATA_CHUNK_SIZE, C1),
 		assert_get(P1, 4 * ?DATA_CHUNK_SIZE, StoreID1),
 
 		assert_get(not_found, 8 * ?DATA_CHUNK_SIZE, StoreID1),
-		?assertEqual({ok, {replica_2_9, RewardAddr}},
-				ar_chunk_storage:put(8 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID1)),
+		?assertEqual({ok, Packing},
+				ar_chunk_storage:put(8 * ?DATA_CHUNK_SIZE, C1, unpacked_padded, StoreID1)),
 		{ok, P2, _} =
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 8 * ?DATA_CHUNK_SIZE, C1),
 		assert_get(P2, 8 * ?DATA_CHUNK_SIZE, StoreID1),
 
 		%% Store chunks in the second partition.
-		?assertEqual({ok, {replica_2_9, RewardAddr}},
-				ar_chunk_storage:put(12 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID2)),
+		?assertEqual({ok, Packing},
+				ar_chunk_storage:put(12 * ?DATA_CHUNK_SIZE, C1, unpacked_padded, StoreID2)),
 		{ok, P3, Entropy3} =
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 12 * ?DATA_CHUNK_SIZE, C1),
 
 		assert_get(P3, 12 * ?DATA_CHUNK_SIZE, StoreID2),
-		?assertEqual({ok, {replica_2_9, RewardAddr}},
-				ar_chunk_storage:put(15 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID2)),
+		?assertEqual({ok, Packing},
+				ar_chunk_storage:put(15 * ?DATA_CHUNK_SIZE, C1, unpacked_padded, StoreID2)),
 		{ok, P4, Entropy4} =
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 15 * ?DATA_CHUNK_SIZE, C1),
 		assert_get(P4, 15 * ?DATA_CHUNK_SIZE, StoreID2),
 		?assertNotEqual(P3, P4),
 		?assertNotEqual(Entropy3, Entropy4),
 
-		?assertEqual({ok, {replica_2_9, RewardAddr}},
-				ar_chunk_storage:put(16 * ?DATA_CHUNK_SIZE, C1, Packing, StoreID2)),
+		?assertEqual({ok, Packing},
+				ar_chunk_storage:put(16 * ?DATA_CHUNK_SIZE, C1, unpacked_padded, StoreID2)),
 		{ok, P5, Entropy5} =
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 16 * ?DATA_CHUNK_SIZE, C1),
 		assert_get(P5, 16 * ?DATA_CHUNK_SIZE, StoreID2),
