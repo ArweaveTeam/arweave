@@ -105,12 +105,11 @@
 
 -define(CHUNK_GROUP_SIZE, (256 * 1024 * 8000)). % 2 GiB.
 
-%% The default number of batches to process at a time during in-place repacking. For each
-%% partition being repacked, a batch requires about 512 MiB of memory.
+%% The number of consecutive chunks to read at a time during in-place repacking.
 -ifdef(AR_TEST).
 -define(DEFAULT_REPACK_BATCH_SIZE, 2).
 -else.
--define(DEFAULT_REPACK_BATCH_SIZE, 1).
+-define(DEFAULT_REPACK_BATCH_SIZE, 100).
 -endif.
 
 -define(DEFAULT_REPACK_CACHE_SIZE_MB, 4000).
