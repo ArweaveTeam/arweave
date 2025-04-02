@@ -138,6 +138,10 @@ show_help() ->
 				"during in-place repacking. For each partition being repacked, a batch "
 				"requires about 512 MiB of memory. Default: ~B.",
 				[?DEFAULT_REPACK_BATCH_SIZE])},
+			{"repack_cache_size_mb", io_lib:format("The size (in MiB) of the cache for "
+				"in-place repacking. The node will restrict the cache size to this amount for "
+				"each partition being repacked. Default: ~B.",
+				[?DEFAULT_REPACK_CACHE_SIZE_MB])},
 			{"polling (num)", lists:flatten(
 					io_lib:format(
 						"Ask some peers about new blocks every N seconds. Default is ~p.",
@@ -253,14 +257,14 @@ show_help() ->
 				"The time in seconds of how long a pending or orphaned data root is kept in "
 				"the disk pool. The default is 2 * 60 * 60 (2 hours)."},
 			{"max_disk_pool_buffer_mb",
-				"The max total size in mebibytes of the pending chunks in the disk pool."
+				"The max total size (in MiB)) of the pending chunks in the disk pool."
 				"The default is 2000 (2 GiB)."},
 			{"max_disk_pool_data_root_buffer_mb",
-				"The max size in mebibytes per data root of the pending chunks in the disk"
+				"The max size (in MiB) per data root of the pending chunks in the disk"
 				" pool. The default is 50."},
 			{"disk_cache_size_mb",
 				lists:flatten(io_lib:format(
-					"The maximum size in mebibytes of the disk space allocated for"
+					"The maximum size (in MiB) of the disk space allocated for"
 					" storing recent block and transaction headers. Default is ~B.",
 					[?DISK_CACHE_SIZE]
 				)
@@ -474,6 +478,8 @@ parse_cli_args(["storage_module", StorageModuleString | Rest], C) ->
 	end;
 parse_cli_args(["repack_batch_size", N | Rest], C) ->
 	parse_cli_args(Rest, C#config{ repack_batch_size = list_to_integer(N) });
+parse_cli_args(["repack_cache_size_mb", N | Rest], C) ->
+	parse_cli_args(Rest, C#config{ repack_cache_size_mb = list_to_integer(N) });
 parse_cli_args(["polling", Frequency | Rest], C) ->
 	parse_cli_args(Rest, C#config{ polling = list_to_integer(Frequency) });
 parse_cli_args(["block_pollers", N | Rest], C) ->
