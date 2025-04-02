@@ -365,7 +365,9 @@ test_request_unpack() ->
 
 packs_chunks_depending_on_packing_threshold_test_() ->
 	ar_test_node:test_with_mocked_functions([
-			{ar_fork, height_2_9, fun() -> 10 end}],
+			{ar_fork, height_2_9, fun() -> 10 end},
+			{ar_retarget, is_retarget_height, fun(_Height) -> false end},
+			{ar_retarget, is_retarget_block, fun(_Block) -> false end}],
 			fun test_packs_chunks_depending_on_packing_threshold/0).
 
 test_packs_chunks_depending_on_packing_threshold() ->
