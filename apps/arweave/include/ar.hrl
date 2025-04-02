@@ -759,6 +759,22 @@
 	signature_type = ?DEFAULT_KEY_TYPE
 }).
 
+-record(chunk_metadata, {
+	chunk_data_key = not_set :: not_set | not_found | binary(),
+	tx_root = not_set :: not_set | not_found | binary(),
+	tx_path = not_set :: not_set | not_found | binary(),
+	data_root = not_set :: not_set | not_found | binary(),
+	data_path = not_set :: not_set | not_found | binary(),
+	chunk_size = not_set :: not_set | not_found | non_neg_integer()
+}).
+
+-record(chunk_offsets, {
+	absolute_offset = not_set :: not_set | non_neg_integer(),
+	bucket_end_offset = not_set :: not_set | non_neg_integer(),
+	padded_end_offset = not_set :: not_set | non_neg_integer(),
+	relative_offset = not_set :: not_set | non_neg_integer()
+}).
+
 %% A macro to convert AR into Winstons.
 -define(AR(AR), (?WINSTON_PER_AR * AR)).
 

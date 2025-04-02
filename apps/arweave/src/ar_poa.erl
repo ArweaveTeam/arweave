@@ -3,13 +3,12 @@
 -module(ar_poa).
 
 -export([get_data_path_validation_ruleset/2, get_data_path_validation_ruleset/3,
-		 validate_pre_fork_2_5/4, validate/1, validate_paths/4, validate_paths/7,
+		 validate_pre_fork_2_5/4, validate/1, chunk_proof/2, chunk_proof/5, validate_paths/1,
 		 get_padded_offset/1, get_padded_offset/2]).
 
 -include_lib("arweave/include/ar_poa.hrl").
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_pricing.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -54,16 +53,23 @@ validate(Args) ->
 			ExpectedChunkID} = Args,
 	#poa{ chunk = Chunk, unpacked_chunk = UnpackedChunk } = SPoA,
 
-	case validate_paths(SPoA, TXRoot, RecallOffset, BlockStartOffset, BlockSize) of
+	ChunkMetadata = #chunk_metadata{
+		tx_root = TXRoot,
+		tx_path = SPoA#poa.tx_path,
+		data_path = SPoA#poa.data_path
+	},
+	ChunkProof = chunk_proof(ChunkMetadata, RecallOffset, BlockStartOffset, BlockSize),
+
+	case validate_paths(ChunkProof) of
 		{false, _} ->
 			false;
-		{true, ChunkProof} ->
+		{true, ChunkProof2} ->
 			#chunk_proof{
 				chunk_id = ChunkID,
 				chunk_start_offset = ChunkStartOffset,
 				chunk_end_offset = ChunkEndOffset,
 				tx_start_offset = TXStartOffset
-			} = ChunkProof,
+			} = ChunkProof2,
 			case ExpectedChunkID of
 				not_set ->
 					validate2(Packing, {ChunkID, ChunkStartOffset,
@@ -79,63 +85,66 @@ validate(Args) ->
 			end
 	end.
 
-%% @doc Validate the TXPath and DataPath for a chunk. This will return the ChunkID but won't
-%% validate that the ChunkID is correct.
-%% 
-%% SPoA: the proof of access
-%% RecallOffset: the absoluteoffset of the recall byte - 
- validate_paths(#poa{} = SPoA, TXRoot, RecallOffset, BlockStartOffset, BlockSize) ->
-	BlockRelativeOffset = get_recall_bucket_offset(RecallOffset, BlockStartOffset),
-	ValidateDataPathRuleset = get_data_path_validation_ruleset(BlockStartOffset),
+chunk_proof(#chunk_metadata{} = ChunkMetadata, AbsoluteOffset) ->
+	chunk_proof(ChunkMetadata, AbsoluteOffset, ?MERKLE_REBASE_SUPPORT_THRESHOLD).
 
-	Proof = #chunk_proof{
-		absolute_offset = BlockStartOffset + BlockRelativeOffset,
-		tx_root = TXRoot,
-		tx_path = SPoA#poa.tx_path,
-		data_path = SPoA#poa.data_path,
-		block_start_offset = BlockStartOffset,
-		block_end_offset = BlockStartOffset + BlockSize,
-		validate_data_path_ruleset = ValidateDataPathRuleset
-	},
-	validate_paths(Proof).
-
-%% @doc Validate the TXPath and DataPath for a chunk. This will return the ChunkID but won't
-%% validate that the ChunkID is correct.
-validate_paths(TXRoot, TXPath, DataPath, AbsoluteOffset) ->
+chunk_proof(#chunk_metadata{} = ChunkMetadata, AbsoluteOffset, MerkleRebaseSupportThreshold) ->
 	{BlockStartOffset, BlockEndOffset, TXRoot} =
 		ar_block_index:get_block_bounds(AbsoluteOffset),
 
-	Proof = #chunk_proof{
-		absolute_offset = AbsoluteOffset,
-		tx_root = TXRoot,
-		tx_path = TXPath,
-		data_path = DataPath,
-		block_start_offset = BlockStartOffset,
-		block_end_offset = BlockEndOffset,
-		validate_data_path_ruleset = get_data_path_validation_ruleset(BlockStartOffset)
-	},
-	validate_paths(Proof).
+	ChunkMetadata2 = case ChunkMetadata#chunk_metadata.tx_root of
+		not_set ->
+			ChunkMetadata#chunk_metadata{ tx_root = TXRoot };
+		TXRoot ->
+			ChunkMetadata
+	end,
 
-validate_paths(
-		TXRoot, TXPath, DataPath, BlockStartOffset, BlockEndOffset, BlockRelativeOffset,
-		ValidateDataPathRuleset) ->
-	Proof = #chunk_proof{
-		absolute_offset = BlockStartOffset + BlockRelativeOffset,
-		tx_root = TXRoot,
-		tx_path = TXPath,
-		data_path = DataPath,
+	ValidateDataPathRuleset = get_data_path_validation_ruleset(
+		BlockStartOffset, MerkleRebaseSupportThreshold, ?STRICT_DATA_SPLIT_THRESHOLD),
+	chunk_proof(
+		ChunkMetadata2,
+		BlockStartOffset,
+		BlockEndOffset,
+		AbsoluteOffset,
+		ValidateDataPathRuleset
+	).
+
+chunk_proof(#chunk_metadata{} = ChunkMetadata, RecallOffset, BlockStartOffset, BlockSize) ->
+	BlockRelativeOffset = get_recall_bucket_offset(RecallOffset, BlockStartOffset),
+	ValidateDataPathRuleset = get_data_path_validation_ruleset(BlockStartOffset),
+
+	BlockEndOffset = BlockStartOffset + BlockSize,
+	AbsoluteOffset = BlockStartOffset + BlockRelativeOffset,
+	chunk_proof(
+		ChunkMetadata,
+		BlockStartOffset,
+		BlockEndOffset,
+		AbsoluteOffset,
+		ValidateDataPathRuleset
+	).
+
+chunk_proof(#chunk_metadata{} = ChunkMetadata,
+	BlockStartOffset, BlockEndOffset, AbsoluteOffset, ValidateDataPathRuleset) ->
+
+	#chunk_proof{
+		absolute_offset = AbsoluteOffset,
+		metadata = ChunkMetadata,
 		block_start_offset = BlockStartOffset,
 		block_end_offset = BlockEndOffset,
 		validate_data_path_ruleset = ValidateDataPathRuleset
-	},
-	validate_paths(Proof).
+	}.
 
+%% @doc Validate the TXPath and DataPath for a chunk. This will return the ChunkID but won't
+%% validate that the ChunkID is correct.
+-spec validate_paths(#chunk_proof{}) -> {boolean(), #chunk_proof{}}.
 validate_paths(Proof) ->
 	#chunk_proof{
 		absolute_offset = AbsoluteOffset,
-		tx_root = TXRoot,
-		tx_path = TXPath,
-		data_path = DataPath,
+		metadata = #chunk_metadata{
+			tx_root = TXRoot,
+			tx_path = TXPath,
+			data_path = DataPath
+		},
 		block_start_offset = BlockStartOffset,
 		block_end_offset = BlockEndOffset,
 		validate_data_path_ruleset = ValidateDataPathRuleset
@@ -149,7 +158,9 @@ validate_paths(Proof) ->
 			{false, Proof#chunk_proof{ tx_path_is_valid = invalid }};
 		{DataRoot, TXStartOffset, TXEndOffset} ->
 			Proof2 = Proof#chunk_proof{
-				data_root = DataRoot,
+				metadata = Proof#chunk_proof.metadata#chunk_metadata{
+					data_root = DataRoot
+				},
 				tx_start_offset = TXStartOffset,
 				tx_end_offset = TXEndOffset,
 				tx_path_is_valid = valid
@@ -165,6 +176,9 @@ validate_paths(Proof) ->
 						chunk_id = ChunkID,
 						chunk_start_offset = ChunkStartOffset,
 						chunk_end_offset = ChunkEndOffset,
+						metadata = Proof2#chunk_proof.metadata#chunk_metadata{
+							chunk_size = ChunkEndOffset - ChunkStartOffset
+						},
 						data_path_is_valid = valid
 					},
 					{true, Proof3}

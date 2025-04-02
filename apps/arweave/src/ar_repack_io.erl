@@ -227,8 +227,7 @@ wite_chunk(RepackChunk, TargetPacking, #state{} = State) ->
 	#repack_chunk{
 		offsets = Offsets,
 		metadata = Metadata,
-		chunk = Chunk,
-		data_path = DataPath
+		chunk = Chunk
 	} = RepackChunk,
 	#chunk_offsets{
 		absolute_offset = AbsoluteOffset,
@@ -240,7 +239,8 @@ wite_chunk(RepackChunk, TargetPacking, #state{} = State) ->
 		data_root = DataRoot,
 		tx_path = TXPath,
 		chunk_data_key = ChunkDataKey,
-		chunk_size = ChunkSize
+		chunk_size = ChunkSize,
+		data_path = DataPath
 	} = Metadata,
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	IsStorageSupported =
