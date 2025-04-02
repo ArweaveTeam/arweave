@@ -108,8 +108,7 @@
 -define(WINSTON_PER_AR, 1000000000000).
 
 %% The number of bytes in a gibibyte.
--define(KiB, (1024)).
--define(MiB, (1024 * ?KiB)).
+-define(MiB, (1024 * 1024)).
 -define(GiB, (1024 * ?MiB)).
 -define(TiB, (1024 * ?GiB)).
 
