@@ -3,8 +3,8 @@
 -module(ar_poa).
 
 -export([get_data_path_validation_ruleset/2, get_data_path_validation_ruleset/3,
-		 validate_pre_fork_2_5/4, validate/1, chunk_proof/2, chunk_proof/5, validate_paths/1,
-		 get_padded_offset/1, get_padded_offset/2]).
+		 validate_pre_fork_2_5/4, validate/1, chunk_proof/2, chunk_proof/3, chunk_proof/5,
+		 validate_paths/1, get_padded_offset/1, get_padded_offset/2]).
 
 -include_lib("arweave/include/ar_poa.hrl").
 -include_lib("arweave/include/ar.hrl").
