@@ -2225,6 +2225,8 @@ partition_to_json_struct(Bucket, BucketSize, Addr, PackingDifficulty) ->
 		end,
 	{Fields2}.
 
+%% Used in logging among other things, therefore we have more
+%% possible values here than in decode_packing/2.
 encode_packing(undefined, false) ->
 	"undefined";
 encode_packing(none, false) ->
