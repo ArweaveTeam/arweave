@@ -1,10 +1,7 @@
 -module(ar_header_sync_tests).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_header_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include_lib("kernel/include/file.hrl").
 
 -import(ar_test_node, [sign_v1_tx/3, wait_until_height/2, assert_wait_until_height/2,
 	read_block_when_stored/1, random_v1_data/1
@@ -12,7 +9,9 @@
 
 syncs_headers_test_() ->
 	ar_test_node:test_with_mocked_functions([
-			{ar_fork, height_2_8, fun() -> 10 end}],
+			{ar_fork, height_2_8, fun() -> 10 end},
+			{ar_retarget, is_retarget_height, fun(_Height) -> false end},
+			{ar_retarget, is_retarget_block, fun(_Block) -> false end}],
 			fun test_syncs_headers/0).
 
 test_syncs_headers() ->
@@ -90,6 +89,7 @@ test_syncs_headers() ->
 post_random_blocks(Wallet, TargetHeight, B0) ->
 	lists:foldl(
 		fun(Height, Anchor) ->
+			?LOG_INFO([{event, post_random_blocks}, {height, Height}]),
 			TXs =
 				lists:foldl(
 					fun(_, Acc) ->
@@ -109,8 +109,10 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 					[],
 					lists:seq(1, 2)
 				),
+			?LOG_INFO([{event, post_random_blocks}, {transactions_posted, length(TXs)}, {height, Height}]),
 			ar_test_node:mine(),
 			[{H, _, _} | _] = wait_until_height(main, Height),
+			?LOG_INFO([{event, post_random_blocks}, {block_mined, ar_util:encode(H)}, {height, Height}]),
 			?assertEqual(length(TXs), length((read_block_when_stored(H))#block.txs)),
 			H
 		end,
