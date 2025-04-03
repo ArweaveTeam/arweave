@@ -590,7 +590,9 @@ validate_replica_format(Height, CompositePackingDifficulty, 0) ->
 		false ->
 			%% Composite packing is no longer supported.
 			false
-	end.
+	end;
+validate_replica_format(_, _, _) ->
+	false.
 
 get_recall_range_size(0) ->
 	?LEGACY_RECALL_RANGE_SIZE;
