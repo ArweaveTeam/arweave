@@ -38,10 +38,15 @@ setup_external_update() ->
 	%% auto-computed VDF steps getting in the way.
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_server_trusted_peers = [
-			ar_util:format_peer(vdf_server_1()),
-			ar_util:format_peer(vdf_server_2()) ],
-			mine = true}),
+		Config#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_server_trusted_peers = [
+				ar_util:format_peer(vdf_server_1()),
+				ar_util:format_peer(vdf_server_2()) 
+			],
+			mine = true
+		}
+	),
 	ets:new(computed_output, [named_table, ordered_set, public]),
 	ets:new(add_task, [named_table, bag, public]),
 	Pid = spawn(
@@ -171,7 +176,11 @@ test_vdf_server_push_fast_block() ->
 	{ok, Config} = application:get_env(arweave, config),
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(VDFPort) ]}),
+		Config#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(VDFPort) ]
+		}
+	),
 	%% Setup a server to listen for VDF pushes
 	Routes = [{"/[...]", ar_vdf_server_tests, []}],
 	{ok, _} = cowboy:start_clear(
@@ -209,7 +218,11 @@ test_vdf_server_push_slow_block() ->
 	{ok, Config} = application:get_env(arweave, config),
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:1986" ]}),
+		Config#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_client_peers = [ "127.0.0.1:1986" ]
+		}
+	),
 	timer:sleep(3000),
 
 	%% Let peer1 get ahead of main in the VDF chain
@@ -287,13 +300,21 @@ test_vdf_client_fast_block() ->
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
-		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
-			ar_util:format_peer(ar_test_node:peer_ip(main)) ] }),
+		PeerConfig#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_server_trusted_peers = [
+				ar_util:format_peer(ar_test_node:peer_ip(main))
+			]
+		}),
 	%% Start main as a VDF server
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [
-			ar_util:format_peer(ar_test_node:peer_ip(peer1)) ]}),
+		Config#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_client_peers = [
+				ar_util:format_peer(ar_test_node:peer_ip(peer1))
+			]
+		}),
 	ar_test_node:connect_to_peer(peer1),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
@@ -334,12 +355,20 @@ test_vdf_client_fast_block_pull_interface() ->
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
-		PeerConfig#config{ nonce_limiter_server_trusted_peers = [ "127.0.0.1:" ++ integer_to_list(Config#config.port) ],
-				enable = [vdf_server_pull | PeerConfig#config.enable] }),
+		PeerConfig#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_server_trusted_peers = [
+				"127.0.0.1:" ++ integer_to_list(Config#config.port) 
+			],
+			enable = [vdf_server_pull | PeerConfig#config.enable] 
+		}
+	),
 	%% Start the main as a VDF server
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1)) ]}),
+		Config#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1)) ]}),
 	ar_test_node:connect_to_peer(peer1),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
@@ -379,15 +408,23 @@ test_vdf_client_slow_block() ->
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
-		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
-			"127.0.0.1:" ++ integer_to_list(Config#config.port)
-		] }),
+		PeerConfig#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_server_trusted_peers = [
+				"127.0.0.1:" ++ integer_to_list(Config#config.port)
+			] 
+		}
+	),
 	%% Start the main as a VDF server
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [
-			"127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))
-		]}),
+		Config#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_client_peers = [
+				"127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))
+			]
+		}
+	),
 	ar_test_node:connect_to_peer(peer1),
 	timer:sleep(10000),
 
@@ -397,7 +434,7 @@ test_vdf_client_slow_block() ->
 	BI = assert_wait_until_height(peer1, 1).
 
 test_vdf_client_slow_block_pull_interface() ->
-  {ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = application:get_env(arweave, config),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -417,16 +454,25 @@ test_vdf_client_slow_block_pull_interface() ->
 	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
-		PeerConfig#config{ nonce_limiter_server_trusted_peers = [
-			"127.0.0.1:" ++ integer_to_list(Config#config.port) ],
-				enable = [vdf_server_pull | PeerConfig#config.enable] }),
+		PeerConfig#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_server_trusted_peers = [
+				"127.0.0.1:" ++ integer_to_list(Config#config.port) 
+			],
+			enable = [vdf_server_pull | PeerConfig#config.enable] 
+		}
+	),
 	%% Start the main as a VDF server
 	{ok, Config} = application:get_env(arweave, config),
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ nonce_limiter_client_peers = [
-			"127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))
-		]}),
+		Config#config{ 
+			requests_per_minute_limit = 10000,
+			nonce_limiter_client_peers = [
+				"127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))
+			]
+		}
+	),
 	ar_test_node:connect_to_peer(peer1),
 	timer:sleep(10000),
 
