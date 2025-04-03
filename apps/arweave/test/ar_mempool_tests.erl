@@ -26,20 +26,21 @@ reset_node_state() ->
 	ets:match_delete(node_state, {{tx_prefixes, '_'}, '_'}).
 
 add_tx_test_() ->
+	Timeout = 30,
 	{setup, fun start_node/0,
 		fun (GenesisData) ->
 			{foreach, fun reset_node_state/0,
 				[
-					{with, GenesisData, [fun test_mempool_sorting/1]},
-					{with, GenesisData, [fun test_drop_low_priority_txs_header/1]},
-					{with, GenesisData, [fun test_drop_low_priority_txs_data/1]},
-					{with, GenesisData, [fun test_drop_low_priority_txs_data_and_header/1]},
-					{with, GenesisData, [fun test_clashing_last_tx/1]},
-					{with, GenesisData, [fun test_overspent_tx/1]},
-					{with, GenesisData, [fun test_mixed_deposit_spend_tx_old_address/1]},
-					{with, GenesisData, [fun test_mixed_deposit_spend_tx_new_address/1]},
-					{with, GenesisData, [fun test_clash_and_overspend_tx/1]},
-					{with, GenesisData, [fun test_clash_and_low_priority_tx/1]}
+					{timeout, Timeout, {with, GenesisData, [fun test_mempool_sorting/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_drop_low_priority_txs_header/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_drop_low_priority_txs_data/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_drop_low_priority_txs_data_and_header/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_clashing_last_tx/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_overspent_tx/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_mixed_deposit_spend_tx_old_address/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_mixed_deposit_spend_tx_new_address/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_clash_and_overspend_tx/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_clash_and_low_priority_tx/1]}}
 				]
 			}
 		end
