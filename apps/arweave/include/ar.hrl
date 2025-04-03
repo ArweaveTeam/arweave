@@ -759,13 +759,18 @@
 	signature_type = ?DEFAULT_KEY_TYPE
 }).
 
+%% @doc The data_path field will only be not_found if the chunk record is corrupt/invalid.
+%% This can happen if the chunk entry exists in the chunks_index but not in the chunk_data_db.
+%% In this case:
+%% - not_set means that a field has not been queried yet.
+%% - not_found means that the field has been queried but could not be found.
 -record(chunk_metadata, {
-	chunk_data_key = not_set :: not_set | not_found | binary(),
-	tx_root = not_set :: not_set | not_found | binary(),
-	tx_path = not_set :: not_set | not_found | binary(),
-	data_root = not_set :: not_set | not_found | binary(),
+	chunk_data_key = not_set :: not_set | binary(),
+	tx_root = not_set :: not_set | binary(),
+	tx_path = not_set :: not_set | binary(),
+	data_root = not_set :: not_set | binary(),
 	data_path = not_set :: not_set | not_found | binary(),
-	chunk_size = not_set :: not_set | not_found | non_neg_integer()
+	chunk_size = not_set :: not_set | non_neg_integer()
 }).
 
 -record(chunk_offsets, {
