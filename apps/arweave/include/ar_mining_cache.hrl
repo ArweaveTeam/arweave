@@ -4,6 +4,7 @@
 -record(ar_mining_cache_value, {
   chunk1 :: binary() | undefined,
   chunk2 :: binary() | undefined,
+  chunk1_missing = false :: boolean(),
   chunk2_missing = false :: boolean(),
   h1 :: binary() | undefined,
   h1_passes_diff_checks = false :: boolean(),
