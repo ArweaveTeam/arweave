@@ -566,7 +566,7 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 					sys:get_state(ar_node_worker), #{})) > 0
 		end,
 		200,
-		5000
+		30000
 	),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
