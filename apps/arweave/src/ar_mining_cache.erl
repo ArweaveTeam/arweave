@@ -160,9 +160,13 @@ get_sessions(Cache0) ->
 %%
 %% The `Fun` must return one of the following:
 %% - `{ok, drop}`: drops the cached value
-%% - `{ok, {drop_and_release, Size}}`: drops the cached value and
-%%   additionally releases the reserved space (`Size` bytes)
+%% - `{ok, drop, ReservationSizeAdjustment}`: drops the cached value and
+%%   additionally adjusts the reserved space by `ReservationSizeAdjustment` bytes.
+%%   The `ReservationSizeAdjustment` must be negative for now.
 %% - `{ok, Value1}`: replaces the cached value
+%% - `{ok, Value1, ReservationSizeAdjustment}`: replaces the cached value and
+%%   additionally adjusts the reserved space by `ReservationSizeAdjustment` bytes.
+%%   The `ReservationSizeAdjustment` must be negative for now.
 %% - `{error, Reason}`: returns an error
 %%
 %% If the returned value equals to the argument passed into the `Fun`, the cache
@@ -174,7 +178,9 @@ get_sessions(Cache0) ->
 	Fun :: fun(
 		(Value :: #ar_mining_cache_value{}) ->
 			{ok, drop} |
+			{ok, drop, ReservationSizeAdjustment :: neg_integer()} |
 			{ok, Value1 :: #ar_mining_cache_value{}} |
+			{ok, Value1 :: #ar_mining_cache_value{}, ReservationSizeAdjustment :: neg_integer()} |
 			{error, Reason :: term()}
 	)
 ) ->
