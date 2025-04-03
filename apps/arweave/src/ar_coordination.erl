@@ -265,16 +265,8 @@ handle_cast({compute_h2_for_peer, Candidate}, State) ->
 	{noreply, State};
 
 handle_cast({computed_h2_for_peer, Candidate}, State) ->
-	#mining_candidate{ cm_lead_peer = Peer, chunk2 = Chunk2 } = Candidate,
-	PoA2 = case ar_mining_server:prepare_poa(poa2, Candidate, #poa{}) of
-		{ok, PoA} -> PoA;
-		{error, _Error} ->
-			%% Fallback. This will probably fail later, but prepare_poa/3 should
-			%% have already printed several errors so we'll continue just in case.
-			%% df: Is this the right fallback?..
-			#poa{ chunk = Chunk2 }
-	end,
-	send_h2(Peer, Candidate#mining_candidate{ poa2 = PoA2 }),
+	#mining_candidate{ cm_lead_peer = Peer } = Candidate,
+	send_h2(Peer, Candidate),
 	{noreply, State};
 
 handle_cast(refetch_peer_partitions, State) ->
