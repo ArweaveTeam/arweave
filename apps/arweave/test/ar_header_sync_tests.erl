@@ -89,6 +89,7 @@ test_syncs_headers() ->
 post_random_blocks(Wallet, TargetHeight, B0) ->
 	lists:foldl(
 		fun(Height, Anchor) ->
+			?debugFmt("post_random_blocks: height: ~p", [Height]),
 			TXs =
 				lists:foldl(
 					fun(_, Acc) ->
@@ -108,8 +109,10 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 					[],
 					lists:seq(1, 2)
 				),
+			?debugFmt("post_random_blocks: transactions posted", []),
 			ar_test_node:mine(),
 			[{H, _, _} | _] = wait_until_height(main, Height),
+			?debugFmt("post_random_blocks: block mined: ~p", [ar_util:encode(H)]),
 			?assertEqual(length(TXs), length((read_block_when_stored(H))#block.txs)),
 			H
 		end,
