@@ -531,13 +531,9 @@ distribute_output(Candidate, State) ->
 distribute_output([], _Candidate, _State) ->
 	ok;
 distribute_output([{_Partition, _MiningAddress, PackingDifficulty} | _Partitions],
-		_Candidate, #state{ allow_composite_packing = false }) when PackingDifficulty >= 1 ->
-	%% Do not mine with the composite packing until some time after the fork 2.8.
-	ok;
-distribute_output([{_Partition, _MiningAddress, PackingDifficulty} | _Partitions],
-		_Candidate, #state{ allow_replica_2_9_mining = false })
-			when PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY ->
-	%% Do not mine with replica_2_9 until some time after the fork 2.9.
+		_Candidate, #state{ allow_composite_packing = false })
+		when PackingDifficulty >= 1, PackingDifficulty /= ?REPLICA_2_9_PACKING_DIFFICULTY ->
+	%% Only mine with composite packing until some time after the fork 2.9.
 	ok;
 distribute_output([{Partition, MiningAddress, PackingDifficulty} | Partitions],
 		Candidate, State) ->
