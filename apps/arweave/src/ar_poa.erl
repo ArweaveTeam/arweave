@@ -85,12 +85,11 @@ validate(Args) ->
 			end
 	end.
 
-chunk_proof(#chunk_metadata{} = ChunkMetadata, AbsoluteOffset) ->
-	chunk_proof(ChunkMetadata, AbsoluteOffset, ?MERKLE_REBASE_SUPPORT_THRESHOLD).
+chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte) ->
+	chunk_proof(ChunkMetadata, SeekByte, ?MERKLE_REBASE_SUPPORT_THRESHOLD).
 
-chunk_proof(#chunk_metadata{} = ChunkMetadata, AbsoluteOffset, MerkleRebaseSupportThreshold) ->
-	{BlockStartOffset, BlockEndOffset, TXRoot} =
-		ar_block_index:get_block_bounds(AbsoluteOffset),
+chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte, MerkleRebaseSupportThreshold) ->
+	{BlockStartOffset, BlockEndOffset, TXRoot} = ar_block_index:get_block_bounds(SeekByte),
 
 	ChunkMetadata2 = case ChunkMetadata#chunk_metadata.tx_root of
 		not_set ->
@@ -105,7 +104,7 @@ chunk_proof(#chunk_metadata{} = ChunkMetadata, AbsoluteOffset, MerkleRebaseSuppo
 		ChunkMetadata2,
 		BlockStartOffset,
 		BlockEndOffset,
-		AbsoluteOffset,
+		SeekByte,
 		ValidateDataPathRuleset
 	).
 
@@ -114,20 +113,20 @@ chunk_proof(#chunk_metadata{} = ChunkMetadata, RecallOffset, BlockStartOffset, B
 	ValidateDataPathRuleset = get_data_path_validation_ruleset(BlockStartOffset),
 
 	BlockEndOffset = BlockStartOffset + BlockSize,
-	AbsoluteOffset = BlockStartOffset + BlockRelativeOffset,
+	SeekByte = BlockStartOffset + BlockRelativeOffset,
 	chunk_proof(
 		ChunkMetadata,
 		BlockStartOffset,
 		BlockEndOffset,
-		AbsoluteOffset,
+		SeekByte,
 		ValidateDataPathRuleset
 	).
 
 chunk_proof(#chunk_metadata{} = ChunkMetadata,
-	BlockStartOffset, BlockEndOffset, AbsoluteOffset, ValidateDataPathRuleset) ->
+	BlockStartOffset, BlockEndOffset, SeekByte, ValidateDataPathRuleset) ->
 
 	#chunk_proof{
-		absolute_offset = AbsoluteOffset,
+		seek_byte = SeekByte,
 		metadata = ChunkMetadata,
 		block_start_offset = BlockStartOffset,
 		block_end_offset = BlockEndOffset,
@@ -139,7 +138,7 @@ chunk_proof(#chunk_metadata{} = ChunkMetadata,
 -spec validate_paths(#chunk_proof{}) -> {boolean(), #chunk_proof{}}.
 validate_paths(Proof) ->
 	#chunk_proof{
-		absolute_offset = AbsoluteOffset,
+		seek_byte = SeekByte,
 		metadata = #chunk_metadata{
 			tx_root = TXRoot,
 			tx_path = TXPath,
@@ -150,7 +149,7 @@ validate_paths(Proof) ->
 		validate_data_path_ruleset = ValidateDataPathRuleset
 	} = Proof,
 
-	BlockRelativeOffset = AbsoluteOffset - BlockStartOffset,
+	BlockRelativeOffset = SeekByte - BlockStartOffset,
 	BlockSize = BlockEndOffset - BlockStartOffset,
 
 	case ar_merkle:validate_path(TXRoot, BlockRelativeOffset, BlockSize, TXPath) of

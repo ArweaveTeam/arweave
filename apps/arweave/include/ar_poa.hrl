@@ -5,7 +5,7 @@
 
 -record(chunk_proof, {
 	metadata :: #chunk_metadata{},
-	absolute_offset :: non_neg_integer(),
+	seek_byte :: non_neg_integer(),
 	tx_start_offset :: non_neg_integer(),
 	tx_end_offset :: non_neg_integer(),
 	block_start_offset :: non_neg_integer(),
