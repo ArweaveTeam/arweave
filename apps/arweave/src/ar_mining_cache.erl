@@ -1,5 +1,6 @@
 -module(ar_mining_cache).
 -include_lib("arweave/include/ar_mining_cache.hrl").
+-include_lib("arweave/include/ar.hrl").
 
 -export([
 	new/0, new/1, set_limit/2, get_limit/1,
@@ -159,6 +160,8 @@ get_sessions(Cache0) ->
 %%
 %% The `Fun` must return one of the following:
 %% - `{ok, drop}`: drops the cached value
+%% - `{ok, {drop_and_release, Size}}`: drops the cached value and
+%%   additionally releases the reserved space (`Size` bytes)
 %% - `{ok, Value1}`: replaces the cached value
 %% - `{error, Reason}`: returns an error
 %%
@@ -186,7 +189,17 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
 					mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes - cached_size(Value0)
 				}};
+			{ok, drop, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
+				{ok, Session#ar_mining_cache_session{
+					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
+					reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + ReservationSizeAdjustment),
+					mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes - cached_size(Value0)
+				}};
 			{ok, Value0} -> {ok, Session};
+			{ok, Value0, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
+				{ok, Session#ar_mining_cache_session{
+					reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + ReservationSizeAdjustment)
+				}};
 			{ok, Value1} ->
 				SizeDiff = cached_size(Value1) - cached_size(Value0),
 				SessionAvailableSize = available_size(Cache0) + Session#ar_mining_cache_session.reserved_mining_cache_bytes,
@@ -199,7 +212,23 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 							reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes - SizeDiff),
 							mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes + SizeDiff
 						}}
-				end
+				end;
+			{ok, Value1, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
+				SizeDiff = cached_size(Value1) - cached_size(Value0) + ReservationSizeAdjustment,
+				SessionAvailableSize = available_size(Cache0) + Session#ar_mining_cache_session.reserved_mining_cache_bytes,
+				CacheLimit = get_limit(Cache0),
+				case SizeDiff > SessionAvailableSize of
+					true when CacheLimit =/= 0 -> {error, cache_limit_exceeded};
+					_ ->
+						{ok, Session#ar_mining_cache_session{
+							mining_cache = maps:put(Key, Value1, Session#ar_mining_cache_session.mining_cache),
+							reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes - SizeDiff),
+							mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes + SizeDiff
+						}}
+				end;
+			Other ->
+				?LOG_WARNING([{event, unexpected_return_value_from_with_cached_value}, {value, Other}]),
+				{ok, Session}
 		end
 	end, Cache0).
 
