@@ -228,8 +228,9 @@ find_local_account_tree(Blocks, SearchDepth, Skipped) ->
 				{true, lists:last(Blocks)}
 		end,
 	ID = B#block.wallet_list,
-	case ar_storage:read_wallet_list(ID) of
-		{ok, Tree} ->
+	case timer:tc(fun() -> ar_storage:read_wallet_list(ID) end) of
+		{Time, {ok, Tree}} ->
+			?LOG_INFO([{event, fetched_account_tree_from_storage}, {time, Time}]),
 			{Skipped, Tree};
 		_ ->
 			case IsLast of

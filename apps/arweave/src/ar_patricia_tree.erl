@@ -16,6 +16,11 @@
 new() ->
 	#{ root => {no_parent, gb_sets:new(), no_hash, no_prefix, no_value}, size => 0 }.
 
+%% @doc Insert the given values under the given binary keys.
+insert(Keys, Values, Tree) when is_list(Keys) ->
+	lists:foldl(fun({Key, Value}, Acc) -> insert(Key, Value, Acc) end,
+			Tree, lists:zip(Keys, Values));
+
 %% @doc Insert the given value under the given binary key.
 insert(Key, Value, Tree) when is_binary(Key) ->
 	insert(Key, Value, Tree, 1, root, no_hash).

@@ -880,10 +880,10 @@ read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
 	read_wallet_list(get_account_tree_value(Key, <<>>), ar_patricia_tree:new(), [],
 			WalletListHash, WalletListHash).
 
-read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K) ->
+read_wallet_list({ok, << NodeHash:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, NodeHash) ->
 	case binary_to_term(Bin) of
 		{Key, Value} ->
-			Tree2 = ar_patricia_tree:insert(Key, Value, Tree, K),
+			Tree2 = ar_patricia_tree:insert(Key, Value, Tree, NodeHash),
 			case Keys of
 				[] ->
 					{ok, Tree2};
@@ -902,11 +902,11 @@ read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K
 			read_wallet_list(get_account_tree_value(ReadNext), Tree, NextKeys, RootHash,
 					element(1, ReadNext))
 	end;
-read_wallet_list({ok, _, _}, _Tree, _Keys, RootHash, _K) ->
+read_wallet_list({ok, _, _}, _Tree, _Keys, RootHash, _NodeHash) ->
 	read_wallet_list_from_chunk_files(RootHash);
-read_wallet_list(none, _Tree, _Keys, RootHash, _K) ->
+read_wallet_list(none, _Tree, _Keys, RootHash, _NodeHash) ->
 	read_wallet_list_from_chunk_files(RootHash);
-read_wallet_list(Error, _Tree, _Keys, _RootHash, _K) ->
+read_wallet_list(Error, _Tree, _Keys, _RootHash, _NodeHash) ->
 	Error.
 
 read_wallet_list_from_chunk_files(WalletListHash) when is_binary(WalletListHash) ->
@@ -1524,7 +1524,9 @@ store_and_retrieve_wallet_list2(Tree, HashedTree, StoredTree, InsertedKeys) ->
 				end, StoredTree, maps:to_list(InsertedKeys))
 		end,
 	%% The order of insertions is NOT always the same so we cannot expect
-	%% tree structures to be exactly equal.
+	%% tree structures to be exactly equal because the exact representations of
+	%% internal gb_sets' depends on the order of insertions. When we compute
+	%% the hash of a node, we traverse the ordered sets deterministically.
 	?assertMatch({WalletListHash, _, _},
 			ar_block:hash_wallet_list(UpdatedStoredTree)),
 	?assertMatch({WalletListHash, StoredTree2, _},
