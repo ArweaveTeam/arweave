@@ -17,7 +17,9 @@
 
 %% Stop supporting the composite packing ~60 days have passed since 2.9 fork.
 %% 30 days = 30 * 24 * 60 * 60 / 128 = 20250.
+-ifndef(COMPOSITE_PACKING_EXPIRATION_PERIOD_BLOCKS).
 -define(COMPOSITE_PACKING_EXPIRATION_PERIOD_BLOCKS, (20250 * 2)).
+-endif.
 
 %% The number of times we apply an RX hash in each RX2 lane in-between every pair
 %% of mixings.
