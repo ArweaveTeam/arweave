@@ -1123,33 +1123,52 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	{store_fetched_chunk, Peer, Byte, Proof} = Cast,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	SeekByte = get_chunk_seek_offset(Byte + 1) - 1,
-	{BlockStartOffset, BlockEndOffset, TXRoot} = ar_block_index:get_block_bounds(SeekByte),
-	BlockSize = BlockEndOffset - BlockStartOffset,
-	Offset = SeekByte - BlockStartOffset,
-	ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(BlockStartOffset,
-			get_merkle_rebase_threshold()),
-	case validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof,
-			ValidateDataPathRuleset) of
-		{need_unpacking, AbsoluteOffset, ChunkArgs, VArgs} ->
+	case validate_proof(SeekByte, Proof) of
+		{need_unpacking, AbsoluteEndOffset, ChunkProof2} ->
 			case should_unpack(Packing) of
 				{false, Reason, ReasonArgs} ->
 					decrement_chunk_cache_size(),
 					process_invalid_fetched_chunk(Peer, Byte, State, Reason, ReasonArgs);
 				true ->
-					{Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkID} = VArgs,
+					#chunk_proof{
+						block_start_offset = BlockStartOffset,
+						tx_start_offset = TXStartOffset,
+						tx_end_offset = TXEndOffset,
+						chunk_end_offset = ChunkEndOffset,
+						chunk_id = ChunkID,
+						metadata = #chunk_metadata{
+							tx_root = TXRoot,
+							data_root = DataRoot,
+							chunk_size = ChunkSize
+						}
+					} = ChunkProof2,
+					TXSize = TXEndOffset - TXStartOffset,
 					AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
+					ChunkArgs = {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
 					Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
 							Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
-					unpack_fetched_chunk(Cast, AbsoluteOffset, ChunkArgs, Args, State)
+					unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, State)
 			end;
 		false ->
 			decrement_chunk_cache_size(),
 			process_invalid_fetched_chunk(Peer, Byte, State);
-		{true, DataRoot, TXStartOffset, ChunkEndOffset, TXSize, ChunkSize, ChunkID} ->
+		{true, ChunkProof2} ->
+			#chunk_proof{
+				block_start_offset = BlockStartOffset,
+				tx_start_offset = TXStartOffset,
+				tx_end_offset = TXEndOffset,
+				chunk_end_offset = ChunkEndOffset,
+				chunk_id = ChunkID,
+				metadata = #chunk_metadata{
+					tx_root = TXRoot,
+					data_root = DataRoot,
+					chunk_size = ChunkSize
+				}
+			} = ChunkProof2,
+			TXSize = TXEndOffset - TXStartOffset,
 			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			AbsoluteEndOffset = AbsoluteTXStartOffset + ChunkEndOffset,
 			ChunkArgs = {unpacked, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
-			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
 			Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
 					Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
 			process_valid_fetched_chunk(ChunkArgs, Args, State)
@@ -1975,11 +1994,10 @@ validate_fetched_chunk(Args) ->
 		false ->
 			case ar_block_index:get_block_bounds(Offset - 1) of
 				{BlockStart, BlockEnd, TXRoot} ->
-					ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(
-							BlockStart, get_merkle_rebase_threshold()),
+					
 					ChunkOffset = Offset - BlockStart - 1,
 					case validate_proof2(TXRoot, TXPath, DataPath, BlockStart, BlockEnd,
-							ChunkOffset, ValidateDataPathRuleset, ChunkSize, RequestOrigin) of
+							ChunkOffset, ChunkSize, RequestOrigin) of
 						{true, ChunkID} ->
 							{true, ChunkID};
 						false ->
@@ -2747,25 +2765,29 @@ unpack_fetched_chunk(Cast, AbsoluteOffset, ChunkArgs, Args, State) ->
 			end
 	end.
 
-validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataPathRuleset) ->
+validate_proof(SeekByte, Proof) ->
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 
-	BlockEndOffset = BlockStartOffset + BlockSize,
-	case ar_poa:validate_paths(TXRoot, TXPath, DataPath, BlockStartOffset,
-			BlockEndOffset, Offset, ValidateDataPathRuleset) of
+	ChunkMetadata = #chunk_metadata{
+		tx_path = TXPath,
+		data_path = DataPath
+	},
+
+	ChunkProof = ar_poa:chunk_proof(ChunkMetadata, SeekByte, get_merkle_rebase_threshold()),
+	case ar_poa:validate_paths(ChunkProof) of
 		{false, _} ->
 			false;
-		{true, ChunkProof} ->
+		{true, ChunkProof2} ->
 			#chunk_proof{
-				data_root = DataRoot,
+				metadata = Metadata,
 				chunk_id = ChunkID,
-				chunk_start_offset = ChunkStartOffset,
+				block_start_offset = BlockStartOffset,
 				chunk_end_offset = ChunkEndOffset,
-				tx_start_offset = TXStartOffset,
-				tx_end_offset = TXEndOffset
-			} = ChunkProof,
-			TXSize = TXEndOffset - TXStartOffset,
-			ChunkSize = ChunkEndOffset - ChunkStartOffset,
+				tx_start_offset = TXStartOffset
+			} = ChunkProof2,
+			#chunk_metadata{
+				chunk_size = ChunkSize
+			} = Metadata,
 			AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
 			case Packing of
 				unpacked ->
@@ -2775,34 +2797,36 @@ validate_proof(TXRoot, BlockStartOffset, Offset, BlockSize, Proof, ValidateDataP
 						true ->
 							case ChunkSize == byte_size(Chunk) of
 								true ->
-									{true, DataRoot, TXStartOffset, ChunkEndOffset,
-										TXSize, ChunkSize, ChunkID};
+									{true, ChunkProof2};
 								false ->
 									false
 							end
 					end;
 				_ ->
-					ChunkArgs = {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
-					Args = {Packing, DataRoot, TXStartOffset, ChunkEndOffset, TXSize,
-							ChunkID},
-					{need_unpacking, AbsoluteEndOffset, ChunkArgs, Args}
+					{need_unpacking, AbsoluteEndOffset, ChunkProof2}
 			end
 	end.
 
 validate_proof2(
-		TXRoot, TXPath, DataPath, BlockStartOffset,
-		BlockEndOffset, BlockRelativeOffset, ValidateDataPathRuleset,
+		TXRoot, TXPath, DataPath, BlockStartOffset, BlockEndOffset, BlockRelativeOffset,
 		ExpectedChunkSize, RequestOrigin) ->
-	{IsValid, ChunkProof} = ar_poa:validate_paths(
-			TXRoot, TXPath, DataPath, BlockStartOffset,
-			BlockEndOffset, BlockRelativeOffset, ValidateDataPathRuleset),
+	ChunkMetadata = #chunk_metadata{
+		tx_root = TXRoot,
+		tx_path = TXPath,
+		data_path = DataPath
+	},
+	ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(
+		BlockStartOffset, get_merkle_rebase_threshold()),
+	AbsoluteOffset = BlockStartOffset + BlockRelativeOffset,
+	ChunkProof = ar_poa:chunk_proof(ChunkMetadata, BlockStartOffset, BlockEndOffset, AbsoluteOffset, ValidateDataPathRuleset),
+	{IsValid, ChunkProof2} = ar_poa:validate_paths(ChunkProof),
 	case IsValid of
 		true ->
 			#chunk_proof{
 				chunk_id = ChunkID,
 				chunk_start_offset = ChunkStartOffset,
 				chunk_end_offset = ChunkEndOffset
-			} = ChunkProof,
+			} = ChunkProof2,
 			case ChunkEndOffset - ChunkStartOffset == ExpectedChunkSize of
 				false ->
 					log_chunk_error(RequestOrigin, failed_to_validate_data_path_offset,
@@ -2817,7 +2841,7 @@ validate_proof2(
 			#chunk_proof{
 				tx_path_is_valid = TXPathIsValid,
 				data_path_is_valid = DataPathIsValid
-			} = ChunkProof,
+			} = ChunkProof2,
 			case {TXPathIsValid, DataPathIsValid} of
 				{invalid, _} ->
 					log_chunk_error(RequestOrigin, failed_to_validate_tx_path,
