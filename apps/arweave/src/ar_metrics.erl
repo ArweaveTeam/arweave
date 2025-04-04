@@ -289,20 +289,13 @@ register() ->
 		{help, "The number of items in the mining server task queue."}
 	]),
 	prometheus_gauge:new([
-		{name, mining_solution_failure},
+		{name, mining_solution},
 		{labels, [reason]},
-		{help, "The number of times we failed to prepare a block from a mining solution."}
-	]),
-	prometheus_gauge:new([
-		{name, mining_solution_success},
-		{help, "The number of times a block was successfully prepared "
-				"from a mining solution. It does not necessarily mean the block "
-				"ended up in the blockchain."}
-	]),
-	prometheus_gauge:new([
-		{name, mining_solution_total},
-		{help, "The total number of mining solutions no matter whether we failed to "
-				"prepare a block from them or not."}
+		{help, "Incremented whenever the miner generates a solution. The 'reason' label "
+				"will be 'success' if a block was successfully prepared from the solution, "
+				"and will list a failure reason otherwise. Note: even if a block is "
+				"successfully prepared from a solution, it does not necessarily mean "
+				"the block ended up in the blockchain."}
 	]),
 	prometheus_histogram:new([
 		{name, vdf_step_time_milliseconds},

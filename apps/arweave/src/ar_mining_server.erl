@@ -133,7 +133,7 @@ log_prepare_solution_failure2(Solution, FailureType, FailureReason, Source, Addi
 			{reason, FailureReason},
 			{solution_hash, ar_util:safe_encode(SolutionH)},
 			{packing_difficulty, PackingDifficulty} | AdditionalLogData]),
-	prometheus_gauge:inc(mining_solution_failure, [FailureReason]).
+	prometheus_gauge:inc(mining_solution, [FailureReason]).
 
 -spec get_packing_difficulty(Packing :: ar_storage_module:packing()) ->
 	PackingDifficulty :: non_neg_integer().
