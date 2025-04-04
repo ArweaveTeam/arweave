@@ -1,12 +1,11 @@
 -ifndef(AR_POA_HRL).
 -define(AR_POA_HRL, true).
 
+-include("ar.hrl").
+
 -record(chunk_proof, {
-	absolute_offset :: non_neg_integer(),
-	tx_root :: binary(),
-	tx_path :: binary(),
-	data_root :: binary(),
-	data_path :: binary(),
+	metadata :: #chunk_metadata{},
+	seek_byte :: non_neg_integer(),
 	tx_start_offset :: non_neg_integer(),
 	tx_end_offset :: non_neg_integer(),
 	block_start_offset :: non_neg_integer(),
