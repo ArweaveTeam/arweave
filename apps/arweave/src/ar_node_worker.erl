@@ -375,17 +375,25 @@ handle_info({join, Height, BI, Blocks}, State) ->
 
 handle_info({event, node_state, {account_tree_initialized, Height}}, State) ->
 	[{_, {Height2, Blocks, BI}}] = ets:lookup(node_state, join_state),
-	?LOG_INFO([{event, account_tree_initialized}, {height, Height}]),
+	?LOG_INFO([{event, account_tree_initialized_a}, {height, Height}]),
 	ar:console("The account tree has been initialized at the block height ~B.~n", [Height]),
 	%% Take the latest block the account tree is stored for.
 	Blocks2 = lists:nthtail(Height2 - Height, Blocks),
+	?LOG_INFO([{event, account_tree_initialized_b}, {blocks2, length(Blocks2)}]),
 	BI2 = lists:nthtail(Height2 - Height, BI),
+	?LOG_INFO([{event, account_tree_initialized_c}, {bi2, length(BI2)}]),
 	ar_block_index:init(BI2),
+	?LOG_INFO([{event, account_tree_initialized_d}]),
 	Blocks3 = lists:sublist(Blocks2, ?SEARCH_SPACE_UPPER_BOUND_DEPTH),
+	?LOG_INFO([{event, account_tree_initialized_e}, {blocks3, length(Blocks3)}]),
 	Blocks4 = may_be_initialize_nonce_limiter(Blocks3, BI2),
+	?LOG_INFO([{event, account_tree_initialized_f}, {blocks4, length(Blocks4)}]),
 	Blocks5 = Blocks4 ++ lists:nthtail(length(Blocks3), Blocks2),
+	?LOG_INFO([{event, account_tree_initialized_g}, {blocks5, length(Blocks5)}]),
 	ets:insert(node_state, {join_state, {Height, Blocks5, BI2}}),
+	?LOG_INFO([{event, account_tree_initialized_h}]),
 	ar_nonce_limiter:account_tree_initialized(Blocks5),
+	?LOG_INFO([{event, account_tree_initialized_i}]),
 	{noreply, State};
 
 handle_info({event, node_state, _Event}, State) ->
