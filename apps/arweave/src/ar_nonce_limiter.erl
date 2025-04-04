@@ -412,6 +412,7 @@ apply_external_update(Update, Peer) ->
 %%%===================================================================
 
 init([]) ->
+	?LOG_INFO([{event, nonce_limiter_init}]),
 	ok = ar_events:subscribe(node_state),
 	State =
 		case ar_node:is_joined() of
@@ -843,6 +844,7 @@ exclude_computed_steps_from_steps_to_validate(_StepsToValidate, _ComputedSteps, 
 	invalid.
 
 handle_initialized([B | Blocks], State) ->
+	?LOG_INFO([{event, initialized}, {module, ?MODULE}, {blocks, length([B | Blocks])}]),
 	Blocks2 = take_blocks_after_fork([B | Blocks]),
 	handle_initialized2(lists:reverse(Blocks2), State).
 

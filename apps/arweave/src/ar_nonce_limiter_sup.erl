@@ -41,4 +41,5 @@ init([]) ->
 		false ->
 			[NonceLimiter, Client]
 	end,
+	?LOG_INFO([{event, nonce_limiter_sup_init}, {workers, Workers}]),
 	{ok, {{one_for_one, 5, 10}, Workers}}.
