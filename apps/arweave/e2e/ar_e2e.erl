@@ -482,12 +482,13 @@ assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize) ->
 	Proof = ar_serialize:json_map_to_poa_map(
 		jiffy:decode(EncodedProof, [return_maps])
 	),
-	{true, _} = ar_test_node:remote_call(Node, ar_poa, validate_paths, [
-		Block#block.tx_root,
-		maps:get(tx_path, Proof),
-		maps:get(data_path, Proof),
-		EndOffset - 1
-	]),
+	ChunkMetadata = #chunk_metadata{
+		tx_root = Block#block.tx_root,
+		tx_path = maps:get(tx_path, Proof),
+		data_path = maps:get(data_path, Proof)
+	},
+	ChunkProof = ar_poa:chunk_proof(ChunkMetadata, EndOffset - 1),
+	{true, _} = ar_test_node:remote_call(Node, ar_poa, validate_paths, [ChunkProof]),
 	Chunk = maps:get(chunk, Proof),
 
 	maybe_write_chunk_fixture(Packing, EndOffset, Chunk),

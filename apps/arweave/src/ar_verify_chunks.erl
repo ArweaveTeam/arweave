@@ -195,10 +195,16 @@ verify_proof(Metadata, State) ->
 
 	case ar_data_sync:read_data_path(ChunkDataKey, StoreID) of
 		{ok, DataPath} ->
-			case ar_poa:validate_paths(TXRoot, TXPath, DataPath, AbsoluteOffset - 1) of
-				{false, _Proof} ->
+			ChunkMetadata = #chunk_metadata{
+				tx_root = TXRoot,
+				tx_path = TXPath,
+				data_path = DataPath
+			},
+			ChunkProof = ar_poa:chunk_proof(ChunkMetadata, AbsoluteOffset - 1),
+			case ar_poa:validate_paths(ChunkProof) of
+				{false, _} ->
 					invalidate_chunk(validate_paths_error, AbsoluteOffset, ChunkSize, State);
-				{true, _Proof} ->
+				{true, _} ->
 					State
 			end;
 		Error ->
@@ -528,13 +534,13 @@ verify_proof_test_() ->
 		),
 		ar_test_node:test_with_mocked_functions([
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
-			{ar_poa, validate_paths, fun(_, _, _, _) -> {true, <<>>} end}
+			{ar_poa, validate_paths, fun(_) -> {true, <<>>} end}
 		],
 			fun test_verify_proof_valid_paths/0
 		),
 		ar_test_node:test_with_mocked_functions([
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
-			{ar_poa, validate_paths, fun(_, _, _, _) -> {false, <<>>} end}
+			{ar_poa, validate_paths, fun(_) -> {false, <<>>} end}
 		],
 			fun test_verify_proof_invalid_paths/0
 		)
@@ -544,7 +550,7 @@ verify_chunk_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
-			{ar_poa, validate_paths, fun(_, _, _, _) -> {true, <<>>} end},
+			{ar_poa, validate_paths, fun(_) -> {true, <<>>} end},
 			{ar_chunk_storage, read_offset,
 				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
 			{ar_data_sync, get_chunk_data,

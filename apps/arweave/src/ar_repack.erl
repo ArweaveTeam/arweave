@@ -713,22 +713,25 @@ read_chunk_and_data_path(RepackChunk, #state{} = State) ->
 	case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
 		not_found ->
 			log_warning(chunk_not_found_in_chunk_data_db, RepackChunk, State, []),
-			RepackChunk#repack_chunk{ data_path = not_found };
+			RepackChunk#repack_chunk{ 
+				metadata = Metadata#chunk_metadata{ data_path = not_found } };
 		{ok, V} ->
 			case binary_to_term(V) of
 				{Chunk, DataPath} ->
 					RepackChunk#repack_chunk{ 
-						data_path = DataPath,
+						metadata = Metadata#chunk_metadata{ data_path = DataPath },
 						chunk = Chunk
 					};
 				DataPath when MaybeChunk /= not_found ->
 					RepackChunk#repack_chunk{ 
-						data_path = DataPath,
+						metadata = Metadata#chunk_metadata{ data_path = DataPath },
 						chunk = MaybeChunk
 					};
 				_ ->
 					log_warning(chunk_not_found, RepackChunk, State, []),
-					RepackChunk#repack_chunk{ data_path = not_found }
+					RepackChunk#repack_chunk{ 
+						metadata = Metadata#chunk_metadata{ data_path = not_found }
+					}
 			end
 	end.
 

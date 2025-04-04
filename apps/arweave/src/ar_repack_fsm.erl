@@ -53,7 +53,7 @@
 """.
 
 %% @doc: Repeatedly call next_state until the state no longer changes.
--spec crank_state(repack_chunk()) -> repack_chunk().
+-spec crank_state(#repack_chunk{}) -> #repack_chunk{}.
 crank_state(RepackChunk) ->
 	crank_state(RepackChunk, next_state(RepackChunk)).
 
@@ -189,16 +189,21 @@ next_state(#repack_chunk{state = already_repacked} = RepackChunk) ->
 %% ---------------------------------------------------------------------------
 %% State: needs_data_path
 %% ---------------------------------------------------------------------------
-next_state(#repack_chunk{state = needs_data_path, data_path = not_set} = RepackChunk) ->
+next_state(#repack_chunk{
+		state = needs_data_path,
+		metadata = #chunk_metadata{data_path = not_set}} = RepackChunk) ->
 	%% Still waiting on data path.
 	RepackChunk;
 next_state(#repack_chunk{state = needs_data_path} = RepackChunk) ->
 	#repack_chunk{
 		chunk = Chunk,
-		data_path = DataPath,
+		metadata = Metadata,
 		source_packing = SourcePacking,
 		target_packing = TargetPacking
 	} = RepackChunk,
+	#chunk_metadata{
+		data_path = DataPath
+	} = Metadata,
 
 	NextState = case {Chunk, DataPath, SourcePacking} of
 		{not_found, _, _} -> 
@@ -319,7 +324,6 @@ format_logs(Event, #repack_chunk{} = RepackChunk, ExtraLogs) ->
 		metadata = Metadata,
 		state = ChunkState,
 		entropy = Entropy,
-		data_path = DataPath,
 		source_packing = SourcePacking,
 		target_packing = TargetPacking,
 		chunk = Chunk
@@ -329,8 +333,8 @@ format_logs(Event, #repack_chunk{} = RepackChunk, ExtraLogs) ->
 		padded_end_offset = PaddedEndOffset,
 		bucket_end_offset = BucketEndOffset
 	} = Offsets,
-	ChunkSize = case Metadata of
-		#chunk_metadata{chunk_size = Size} -> Size;
+	{ChunkSize, DataPath} = case Metadata of
+		#chunk_metadata{chunk_size = Size, data_path = Path} -> {Size, Path};
 		_ -> Metadata
 	end,
 	[
