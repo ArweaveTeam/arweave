@@ -39,7 +39,6 @@ setup_external_update() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_server_trusted_peers = [
 				ar_util:format_peer(vdf_server_1()),
 				ar_util:format_peer(vdf_server_2()) 
@@ -177,7 +176,6 @@ test_vdf_server_push_fast_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(VDFPort) ]
 		}
 	),
@@ -219,7 +217,6 @@ test_vdf_server_push_slow_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_client_peers = [ "127.0.0.1:1986" ]
 		}
 	),
@@ -301,7 +298,6 @@ test_vdf_client_fast_block() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_server_trusted_peers = [
 				ar_util:format_peer(ar_test_node:peer_ip(main))
 			]
@@ -310,7 +306,6 @@ test_vdf_client_fast_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_client_peers = [
 				ar_util:format_peer(ar_test_node:peer_ip(peer1))
 			]
@@ -356,7 +351,6 @@ test_vdf_client_fast_block_pull_interface() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_server_trusted_peers = [
 				"127.0.0.1:" ++ integer_to_list(Config#config.port) 
 			],
@@ -367,7 +361,6 @@ test_vdf_client_fast_block_pull_interface() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1)) ]}),
 	ar_test_node:connect_to_peer(peer1),
 
@@ -409,7 +402,6 @@ test_vdf_client_slow_block() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_server_trusted_peers = [
 				"127.0.0.1:" ++ integer_to_list(Config#config.port)
 			] 
@@ -419,7 +411,6 @@ test_vdf_client_slow_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_client_peers = [
 				"127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))
 			]
@@ -455,7 +446,6 @@ test_vdf_client_slow_block_pull_interface() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_server_trusted_peers = [
 				"127.0.0.1:" ++ integer_to_list(Config#config.port) 
 			],
@@ -467,7 +457,6 @@ test_vdf_client_slow_block_pull_interface() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
-			requests_per_minute_limit = 10000,
 			nonce_limiter_client_peers = [
 				"127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))
 			]

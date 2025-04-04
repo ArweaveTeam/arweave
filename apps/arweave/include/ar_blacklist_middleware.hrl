@@ -15,43 +15,43 @@ end).
 -define(RPM_BY_PATH(Path, LimitByIP, DefaultPathLimit), fun() ->
 	case Path of
 		[<<"chunk">> | _] ->
-			{chunk,	maps:get(chunk, LimitByIP, 12000)}; % ~50 MB/s.
+			{chunk,	maps:get(chunk, LimitByIP, DefaultPathLimit)}; % ~50 MB/s.
 		[<<"chunk2">> | _] ->
-			{chunk,	maps:get(chunk, LimitByIP, 12000)}; % ~50 MB/s.
+			{chunk,	maps:get(chunk, LimitByIP, DefaultPathLimit)}; % ~50 MB/s.
 		[<<"data_sync_record">> | _] ->
-			{data_sync_record, maps:get(data_sync_record, LimitByIP, 1000)};
+			{data_sync_record, maps:get(data_sync_record, LimitByIP, DefaultPathLimit)};
 		[<<"recent_hash_list_diff">> | _] ->
-			{recent_hash_list_diff,	maps:get(recent_hash_list_diff, LimitByIP, 120)};
+			{recent_hash_list_diff,	maps:get(recent_hash_list_diff, LimitByIP, DefaultPathLimit)};
 		[<<"hash_list">>] ->
-			{block_index, maps:get(block_index, LimitByIP, 10)};
+			{block_index, maps:get(block_index, LimitByIP, DefaultPathLimit)};
 		[<<"hash_list2">>] ->
-			{block_index, maps:get(block_index, LimitByIP, 10)};
+			{block_index, maps:get(block_index, LimitByIP, DefaultPathLimit)};
 		[<<"block_index">>] ->
-			{block_index, maps:get(block_index, LimitByIP, 10)};
+			{block_index, maps:get(block_index, LimitByIP, DefaultPathLimit)};
 		[<<"block_index2">>] ->
-			{block_index, maps:get(block_index, LimitByIP, 10)};
+			{block_index, maps:get(block_index, LimitByIP, DefaultPathLimit)};
 		[<<"wallet_list">>] ->
-			{wallet_list, maps:get(wallet_list, LimitByIP, 10)};
+			{wallet_list, maps:get(wallet_list, LimitByIP, DefaultPathLimit)};
 		[<<"block">>, _Type, _ID, <<"wallet_list">>] ->
-			{wallet_list, maps:get(wallet_list, LimitByIP, 60)};
+			{wallet_list, maps:get(wallet_list, LimitByIP, DefaultPathLimit)};
 		[<<"block">>, _Type, _ID, <<"hash_list">>] ->
-			{block_index, maps:get(block_index, LimitByIP, 10)};
+			{block_index, maps:get(block_index, LimitByIP, DefaultPathLimit)};
 		[<<"vdf">>] ->
-			{get_vdf, maps:get(get_vdf, LimitByIP, 180)};
+			{get_vdf, maps:get(get_vdf, LimitByIP, DefaultPathLimit)};
 		[<<"vdf">>, <<"session">>] ->
-			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, 120)};
+			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, DefaultPathLimit)};
 		[<<"vdf2">>, <<"session">>] ->
-			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, 120)};
+			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, DefaultPathLimit)};
 		[<<"vdf3">>, <<"session">>] ->
-			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, 120)};
+			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, DefaultPathLimit)};
 		[<<"vdf4">>, <<"session">>] ->
-			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, 120)};
+			{get_vdf_session, maps:get(get_vdf_session, LimitByIP, DefaultPathLimit)};
 		[<<"vdf">>, <<"previous_session">>] ->
-			{get_previous_vdf_session, maps:get(get_previous_vdf_session, LimitByIP, 60)};
+			{get_previous_vdf_session, maps:get(get_previous_vdf_session, LimitByIP, DefaultPathLimit)};
 		[<<"vdf2">>, <<"previous_session">>] ->
-			{get_previous_vdf_session, maps:get(get_previous_vdf_session, LimitByIP, 60)};
+			{get_previous_vdf_session, maps:get(get_previous_vdf_session, LimitByIP, DefaultPathLimit)};
 		[<<"vdf4">>, <<"previous_session">>] ->
-			{get_previous_vdf_session, maps:get(get_previous_vdf_session, LimitByIP, 60)};
+			{get_previous_vdf_session, maps:get(get_previous_vdf_session, LimitByIP, DefaultPathLimit)};
 		_ ->
 			{default, maps:get(default, LimitByIP, DefaultPathLimit)}
 	end

@@ -329,7 +329,8 @@ base_cm_config(Peers) ->
 		peers = Peers,
 		coordinated_mining = true,
 		cm_api_secret = <<"test_coordinated_mining_secret">>,
-		cm_poll_interval = 2000
+		cm_poll_interval = 2000,
+		requests_per_minute_limit = 100_000
 	}.
 
 mine() ->
@@ -598,6 +599,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		sync_jobs = 2,
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,
+		requests_per_minute_limit = 100_000,
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
 				double_check_nonce_limiter, serve_wallet_lists | Config#config.enable],
 		debug = true
