@@ -235,6 +235,11 @@ parse_options([{<<"repack_batch_size">>, N} | Rest], Config) when is_integer(N) 
 parse_options([{<<"repack_batch_size">>, Opt} | _], _) ->
 	{error, {bad_type, repack_batch_size, number}, Opt};
 
+parse_options([{<<"repack_cache_size_mb">>, N} | Rest], Config) when is_integer(N) ->
+	parse_options(Rest, Config#config{ repack_cache_size_mb = N });
+parse_options([{<<"repack_cache_size_mb">>, Opt} | _], _) ->
+	{error, {bad_type, repack_cache_size_mb, number}, Opt};
+
 parse_options([{<<"polling">>, Frequency} | Rest], Config) when is_integer(Frequency) ->
 	parse_options(Rest, Config#config{ polling = Frequency });
 parse_options([{<<"polling">>, Opt} | _], _) ->

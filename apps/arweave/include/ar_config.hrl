@@ -105,12 +105,14 @@
 
 -define(CHUNK_GROUP_SIZE, (256 * 1024 * 8000)). % 2 GiB.
 
-%% The default number of chunks fetched from disk at a time during in-place repacking.
+%% The number of consecutive chunks to read at a time during in-place repacking.
 -ifdef(AR_TEST).
 -define(DEFAULT_REPACK_BATCH_SIZE, 2).
 -else.
 -define(DEFAULT_REPACK_BATCH_SIZE, 100).
 -endif.
+
+-define(DEFAULT_REPACK_CACHE_SIZE_MB, 4000).
 
 %% default filtering value for the peer list (30days)
 -define(CURRENT_PEERS_LIST_FILTER, 30*60*60*24).
@@ -171,6 +173,7 @@
 	storage_modules = [],
 	repack_in_place_storage_modules = [],
 	repack_batch_size = ?DEFAULT_REPACK_BATCH_SIZE,
+	repack_cache_size_mb = ?DEFAULT_REPACK_CACHE_SIZE_MB,
 	start_from_latest_state = false,
 	start_from_block,
 	internal_api_secret = not_set,

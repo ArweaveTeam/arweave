@@ -2,18 +2,15 @@
 
 -behaviour(gen_server).
 
--export([start_link/2, get/2, get/3, add/4, add/5, add_async/5, add_async/6, delete/4, delete_async/5, cut/3,
+-export([start_link/2, get/2, get/3, add/4, add/5, add_async/5, add_async/6, delete/4, cut/3,
 		is_recorded/2, is_recorded/3, is_recorded/4, is_recorded_any/3,
 		get_next_synced_interval/4, get_next_synced_interval/5,
-		get_next_unsynced_interval/4,
+		get_next_unsynced_interval/4, get_next_unsynced_interval/5,
 		get_interval/3, get_intersection_size/4]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
+-include("ar.hrl").
 
 %% The kv storage key to the sync records.
 -define(SYNC_RECORDS_KEY, <<"sync_records">>).
@@ -130,10 +127,6 @@ delete(End, Start, ID, StoreID) ->
 			Reply
 	end.
 
-delete_async(Event, End, Start, ID, StoreID) ->
-	GenServerID = name(StoreID),
-	gen_server:cast(GenServerID, {delete_async, Event, End, Start, ID}).
-
 %% @doc Remove everything strictly above the given
 %% Offset from the record. Store the changes on disk
 %% before returning ok.
@@ -238,6 +231,17 @@ get_next_synced_interval(Offset, EndOffsetUpperBound, Packing, ID, StoreID) ->
 			not_found;
 		[{_, TID}] ->
 			ar_ets_intervals:get_next_interval(TID, Offset, EndOffsetUpperBound)
+	end.
+
+%% @doc Return the lowest unsynced interval with the end offset strictly above the given Offset
+%% and at most EndOffsetUpperBound.
+%% Return not_found if there are no such intervals.
+get_next_unsynced_interval(Offset, EndOffsetUpperBound, Packing, ID, StoreID) ->
+	case ets:lookup(sync_records, {ID, Packing, StoreID}) of
+		[] ->
+			not_found;
+		[{_, TID}] ->
+			ar_ets_intervals:get_next_interval_outside(TID, Offset, EndOffsetUpperBound)
 	end.
 
 %% @doc Return the interval containing the given Offset, including the right bound,
@@ -393,22 +397,6 @@ handle_cast({add_async, Event, End, Start, Packing, ID}, State) ->
 					{offset, End},
 					{packing, ar_serialize:encode_packing(Packing, true)},
 					{error, io_lib:format("~p", [Error])}])
-	end,
-	{noreply, State2};
-
-handle_cast({delete_async, Event, End, Start, ID}, State) ->
-	{Reply, State2} = delete2(End, Start, ID, State),
-	case Reply of
-		ok ->
-			ok;
-		Error ->
-			?LOG_ERROR([{event, Event},
-					{operation, delete_async},
-					{status, failed},
-					{sync_record_id, ID},
-					{offset, End},
-					{error, io_lib:format("~p", [Error])},
-					{module, ?MODULE}])
 	end,
 	{noreply, State2};
 

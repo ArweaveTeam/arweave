@@ -3,6 +3,7 @@
 -export([main/1, help/0]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_chunk_storage.hrl").
 
@@ -10,11 +11,15 @@
 %% API
 %%--------------------------------------------------------------------
 
-%% main/1 expects [Dir, StartStr, EndStr, Address1, Address2, ...]
+%% main/1 expects either:
+%% 1. [Dir, StartStr, EndStr, Address1, Address2, ...] for traditional inspection
+%% 2. ["bitmap", DataDir, StorageModule] for generating a bitmap of chunk states
 main(Args) ->
-	%% Expect: [Dir, StartStr, EndStr, Address1, Address2, ...]
 	case Args of
-		[Dir, StartStr, EndStr | AddrListStr] when length(AddrListStr) >= 1 ->
+		["bitmap", DataDir, StorageModuleConfig] ->
+			bitmap(DataDir, StorageModuleConfig),
+			true;
+		["chunks", Dir, StartStr, EndStr | AddrListStr] when length(AddrListStr) >= 1 ->
 			Addresses = [ar_util:decode(AddrStr) || AddrStr <- AddrListStr],
 			application:set_env(arweave, config, #config{
 				disable = [], enable  = [randomx_large_pages]
@@ -34,10 +39,11 @@ main(Args) ->
 	end.
 
 help() ->
-	ar:console("Usage: inspect <directory> <start_range> <end_range> <address1> [address2 ...]~n").
+	ar:console("Usage: inspect chunks <directory> <start_range> <end_range> <address1> [address2 ...]~n"),
+	ar:console("       inspect bitmap <data_dir> <storage_module>~n").
 
 %%--------------------------------------------------------------------
-%% Internal implementation
+%% Inspect Chunks
 %%--------------------------------------------------------------------
 
 %% iterate from Padded (chunk end offset) = Start to End (inclusive)
@@ -204,4 +210,172 @@ print_match({match, Type}) when is_list(Type) ->
 print_match({match, Packing}) ->
 	ar:console("~nMATCH: ~p~n", [ar_serialize:encode_packing(Packing, true)]);
 print_match(no_match) ->
-	ar:console("~nNO MATCH~n"). 
+	ar:console("~nNO MATCH~n").
+
+%%--------------------------------------------------------------------
+%% Inspect Bitmap
+%%--------------------------------------------------------------------
+
+%% @doc Generates a bitmap of the provided storage module. Each pixel is a chunk where
+%% the color is determined by the packing format of the chunk. Each row of the bitmap
+%% is a replica.2.9 sector (so the bitmap is 1024 rows high).
+bitmap(DataDir, StorageModuleConfig) ->
+	{ok, StorageModule} = ar_config:parse_storage_module(StorageModuleConfig),
+	
+	Config = #config{
+		data_dir = DataDir,
+		storage_modules = [StorageModule]},
+	application:set_env(arweave, config, Config),
+	
+	ar_kv_sup:start_link(),
+	ar_storage_sup:start_link(),
+	ar_sync_record_sup:start_link(),
+	
+	StoreID = ar_storage_module:id(StorageModule),
+	{ModuleStart, ModuleEnd} = ar_storage_module:module_range(StorageModule),
+
+	ChunkPackings = get_all_chunk_packings(ModuleStart, ModuleEnd, StoreID),
+	Bitmap = generate_bitmap(ChunkPackings),
+	
+	print_chunk_stats(ChunkPackings),
+	
+	Filename = "bitmap_" ++ StoreID ++ ".ppm",
+	file:write_file(Filename, bitmap_to_binary(Bitmap)),
+	ar:console("Bitmap written to ~s~n", [Filename]).
+
+
+%% @doc Build a list of lists where each inner list represents a sector worth of packing
+%% formats. Each sector row will form a row in the bitmap.
+get_all_chunk_packings(ModuleStart, ModuleEnd, StoreID) ->
+	StartOffset = ar_block:get_chunk_padded_offset(ModuleStart),
+	Partition = StartOffset div ?PARTITION_SIZE,
+	PartitionStart = Partition * ?PARTITION_SIZE,
+	SectorSize = ar_replica_2_9:get_sector_size(),
+	ChunksPerSector = SectorSize div ?DATA_CHUNK_SIZE,
+	NumSectors = ?REPLICA_2_9_ENTROPY_COUNT * ?REPLICA_2_9_ENTROPY_SIZE div SectorSize,
+
+	%% sanity checks
+	NumSectors = 1024,
+	%% end sanity checks
+
+	lists:map(
+		fun(SectorIndex) ->
+			SectorStart = PartitionStart + SectorIndex * SectorSize,
+			ar:console("Partition ~p sector ~4B. Offsets ~p to ~p~n",
+				[Partition, SectorIndex, SectorStart, SectorStart + SectorSize - 1]),
+			
+			lists:map(
+				fun(J) ->
+					Offset = ar_block:get_chunk_padded_offset(SectorStart + J * ?DATA_CHUNK_SIZE),
+					case Offset < ModuleStart orelse Offset > ModuleEnd of
+						true ->
+							%% Flag all chunks that are outside the module range as error
+							none;
+						false ->
+							IsRecorded = ar_sync_record:is_recorded(Offset, ar_data_sync, StoreID),
+							normalize_sync_record(IsRecorded)
+					end
+				end,
+				lists:seq(0, ChunksPerSector - 1)
+			)
+		end,
+		lists:seq(0, NumSectors - 1)
+	).  %% Ensure top-to-bottom order
+
+%% @doc Convert packing formats to RGB pixels.
+generate_bitmap(PackingRows) ->
+	lists:map(
+		fun(Row) ->
+			lists:map(fun packing_color/1, Row)
+		end,
+		PackingRows
+	).
+
+%% @doc Convert a bitmap (list of rows; each row a list of {R, G, B} tuples) 
+%% into a binary PPM image.
+bitmap_to_binary(BitmapRows) ->
+	Height = length(BitmapRows),
+	Width = case BitmapRows of
+				[Row | _] -> length(Row);
+				[] -> 0
+			end,
+	Header = io_lib:format("P6\n~w ~w\n255\n", [Width, Height]),
+	%% Build pixel binary data (each pixel is 3 bytes: R,G,B)
+	PixelData = [ <<R:8, G:8, B:8>> || Row <- BitmapRows, {R, G, B} <- Row ],
+	list_to_binary([Header, PixelData]).
+
+normalize_sync_record(false) ->
+	missing;
+normalize_sync_record({true, Packing}) ->
+	Packing;
+normalize_sync_record(_) ->
+	error.
+
+%% @doc Returns a unique color (as an {R,G,B} tuple) for each recognized packing format.
+packing_color(missing) ->
+	{0, 0, 0};
+packing_color(error) ->
+	{255, 0, 0};
+packing_color(unpacked) ->
+	{255, 255, 255}; 
+packing_color(unpacked_padded) ->
+	{128, 128, 128}; 
+packing_color(none) ->
+	{255, 0, 255};
+packing_color({Format, Addr, _PackingDifficulty}) ->
+	packing_color({Format, Addr});
+packing_color({Format, Addr}) ->
+	BaseColor = packing_color(Format),
+	%% Compute a hash from Addr and extract offsets
+	Hash = erlang:phash2(Addr, 16777216),
+	Roffset = Hash band 255,
+	Goffset = (Hash bsr 8) band 255,
+	Boffset = (Hash bsr 16) band 255,
+	{ (element(1, BaseColor) + Roffset) rem 256,
+	  (element(2, BaseColor) + Goffset) rem 256,
+	  (element(3, BaseColor) + Boffset) rem 256 };
+
+%% Base colors for known packing formats
+packing_color(replica_2_9) ->
+	{0, 0, 255}; %% blue
+packing_color(spora_2_6) ->
+	{0, 255, 0}; %% green
+packing_color(composite) ->
+	{255, 255, 0}; %% yellow
+packing_color(_) ->
+	{255, 0, 0}. %% red for unknown packings
+
+print_chunk_stats(ChunkPackings) ->
+	Counts = chunk_statistics(ChunkPackings),
+	Total = maps:fold(fun(_Format, Count, Acc) -> Count + Acc end, 0, Counts),
+	ar:console("Total chunks: ~p~n", [Total]),
+	ar:console("Chunk counts by packing format:~n"),
+	lists:foreach(
+		fun({Packing, Count}) ->
+			Percentage = case Total of
+				0 -> 0.0;
+				_ -> Count * 100 / Total
+			end,
+			ar:console("~p (~p): ~p chunks (~.2f%)~n", 
+				[
+					ar_serialize:encode_packing(Packing, false),
+					packing_color(Packing), Count, Percentage
+				])
+		end,
+		lists:sort(maps:to_list(Counts))
+	).
+
+chunk_statistics(ChunkPackings) ->
+	lists:foldl(
+		fun(Row, AccCounts) ->
+			lists:foldl(
+				fun(Packing, RowAccCounts) ->
+					maps:update_with(Packing, fun(N) -> N + 1 end, 1, RowAccCounts)
+				end,
+				AccCounts,
+				Row
+			)
+		end,
+		#{},
+		ChunkPackings
+	).
