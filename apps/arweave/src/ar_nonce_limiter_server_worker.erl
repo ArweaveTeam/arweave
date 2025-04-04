@@ -35,8 +35,7 @@ start_link(Name, RawPeer) ->
 %%%===================================================================
 
 init(RawPeer) ->
-	?LOG_INFO([{event, nonce_limiter_server_worker_init}, 
-		{raw_peer, ar_util:format_peer(RawPeer)}]),
+	?LOG_INFO([{event, nonce_limiter_server_worker_init}, {raw_peer, RawPeer}]),
 	ok = ar_events:subscribe(nonce_limiter),
 	case ar_config:is_public_vdf_server() of
 		false ->

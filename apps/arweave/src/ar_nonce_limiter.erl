@@ -45,6 +45,7 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 account_tree_initialized(Blocks) ->
+	?LOG_INFO([{event, nonce_limiter_account_tree_initialized}, {blocks, length(Blocks)}]),
 	gen_server:cast(?MODULE, {account_tree_initialized, Blocks}).
 
 encode_session_key({NextSeed, StartIntervalNumber, NextVDFDifficulty}) ->
@@ -844,7 +845,7 @@ exclude_computed_steps_from_steps_to_validate(_StepsToValidate, _ComputedSteps, 
 	invalid.
 
 handle_initialized([B | Blocks], State) ->
-	?LOG_INFO([{event, initialized}, {module, ?MODULE}, {blocks, length([B | Blocks])}]),
+	?LOG_INFO([{event, ar_nonce_limiter_initialized}, {blocks, length([B | Blocks])}]),
 	Blocks2 = take_blocks_after_fork([B | Blocks]),
 	handle_initialized2(lists:reverse(Blocks2), State).
 
