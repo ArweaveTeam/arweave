@@ -411,9 +411,9 @@ process_partial_solution_partition_number(Solution, Ref) ->
 	end.
 
 process_partial_solution_packing_difficulty(Solution, Ref) ->
-	#mining_solution{ packing_difficulty = PackingDifficulty } = Solution,
+	#mining_solution{ packing_difficulty = PackingDifficulty, replica_format = ReplicaFormat } = Solution,
 	Height = ar_node:get_height(),
-	case ar_block:validate_replica_format(Height, PackingDifficulty, 0) of
+	case ar_block:validate_replica_format(Height, PackingDifficulty, ReplicaFormat) of
 		true ->
 			process_partial_solution_nonce(Solution, Ref);
 		false ->
