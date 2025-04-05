@@ -18,17 +18,32 @@
 mining_test_() ->
 	[
 		{timeout, ?MINING_TEST_TIMEOUT, fun test_single_node_one_chunk/0},
-		ar_test_node:test_with_mocked_functions([
-			ar_test_node:mock_to_force_invalid_h1()],
+		ar_test_node:test_with_mocked_functions(
+			[
+				ar_test_node:mock_to_force_invalid_h1(),
+				{ar_retarget, is_retarget_height, fun(_Height) -> false end},
+				{ar_retarget, is_retarget_block, fun(_Block) -> false end}
+			],
 			fun test_single_node_two_chunk/0, 120),
-		ar_test_node:test_with_mocked_functions([
-			ar_test_node:mock_to_force_invalid_h1()],
+		ar_test_node:test_with_mocked_functions(
+			[
+				ar_test_node:mock_to_force_invalid_h1(),
+				{ar_retarget, is_retarget_height, fun(_Height) -> false end},
+				{ar_retarget, is_retarget_block, fun(_Block) -> false end}
+			],
 			fun test_cross_node/0, 240),
-		ar_test_node:test_with_mocked_functions([
-			ar_test_node:mock_to_force_invalid_h1()],
+		ar_test_node:test_with_mocked_functions(
+			[
+				ar_test_node:mock_to_force_invalid_h1()
+			],
 			fun test_cross_node_retarget/0, ?MINING_TEST_TIMEOUT),
 		{timeout, ?MINING_TEST_TIMEOUT, fun test_two_node_retarget/0},
-		{timeout, ?MINING_TEST_TIMEOUT, fun test_three_node/0},
+		ar_test_node:test_with_mocked_functions(
+			[
+				{ar_retarget, is_retarget_height, fun(_Height) -> false end},
+				{ar_retarget, is_retarget_block, fun(_Block) -> false end}
+			],
+			fun test_three_node/0, ?MINING_TEST_TIMEOUT),
 		{timeout, ?MINING_TEST_TIMEOUT, fun test_no_exit_node/0}
 	].
 
