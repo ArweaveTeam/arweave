@@ -3,11 +3,6 @@ on:
   workflow_dispatch:
   push:
     branches: ["**"]
-  pull_request_target:
-    branches:
-      - 'master'
-      - 'release/**'
-      - 'releases/**'
 
 jobs:
   build:
