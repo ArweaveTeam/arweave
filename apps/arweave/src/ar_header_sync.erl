@@ -223,7 +223,6 @@ handle_cast({remove_tx, TXID}, State) ->
 	{noreply, State};
 
 handle_cast({remove_block, Height}, State) ->
-	?LOG_INFO([{event, removing_block_record}, {height, Height}]),
 	#state{ sync_record = Record } = State,
 	ok = ar_kv:delete(?MODULE, << Height:256 >>),
 	{noreply, State#state{ sync_record = ar_intervals:delete(Record, Height, Height - 1) }};

@@ -88,6 +88,7 @@ get_full_prev_update(Format) ->
 %%%===================================================================
 
 init([]) ->
+	?LOG_INFO([{event, nonce_limiter_server_init}]),
 	ok = ar_events:subscribe(nonce_limiter),
 	{ok, #state{}}.
 
