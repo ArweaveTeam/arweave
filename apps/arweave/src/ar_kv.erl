@@ -354,12 +354,16 @@ handle_info(Message, State) ->
 
 
 
-terminate(_Reason, _State) ->
-	with_each_db(fun(DbRec) ->
+terminate(Reason, _State) ->
+	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, Reason}]),
+	Result = with_each_db(fun(DbRec) ->
+		?LOG_INFO([{event, terminate_db}, {module, ?MODULE}, {db, DbRec#db.name}]),
 		_ = db_flush(DbRec),
 		_ = wal_sync(DbRec),
 		_ = close(DbRec)
-	end).
+	end),
+	?LOG_INFO([{event, terminate_complete}, {module, ?MODULE}]),
+	Result.
 
 
 

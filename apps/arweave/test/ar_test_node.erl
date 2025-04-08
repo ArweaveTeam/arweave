@@ -329,7 +329,8 @@ base_cm_config(Peers) ->
 		peers = Peers,
 		coordinated_mining = true,
 		cm_api_secret = <<"test_coordinated_mining_secret">>,
-		cm_poll_interval = 2000
+		cm_poll_interval = 2000,
+		requests_per_minute_limit = 100_000
 	}.
 
 mine() ->
@@ -389,12 +390,15 @@ load_fixture(Fixture) ->
 
 clean_up_and_stop() ->
 	Config = stop(),
+	?LOG_DEBUG([{event, clean_up_and_stop}, {data_dir, Config#config.data_dir}]),
 	ok = filelib:ensure_dir(Config#config.data_dir),
 	{ok, Entries} = file:list_dir_all(Config#config.data_dir),
 	lists:foreach(
 		fun	("wallets") ->
 				ok;
 			(Entry) ->
+				?LOG_DEBUG([{event, clean_up_and_stop},
+					{delete, filename:join(Config#config.data_dir, Entry)}]),
 				ok = file:del_dir_r(filename:join(Config#config.data_dir, Entry))
 		end,
 		Entries
@@ -598,6 +602,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		sync_jobs = 2,
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,
+		requests_per_minute_limit = 100_000,
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
 				double_check_nonce_limiter, serve_wallet_lists | Config#config.enable],
 		debug = true
@@ -1155,13 +1160,16 @@ unmock_module(Module) ->
 mock_functions(Functions) ->
 	{
 		fun() ->
+			?LOG_DEBUG("Mocking functions: ~p", [Functions]),
 			lists:foldl(
 				fun({Module, Fun, Mock}, Mocked) ->
 					NewMocked = case maps:get(Module, Mocked, false) of
 						false ->
+							?LOG_DEBUG("Mocking [main] module ~p", [Module]),
 							new_mock(Module, [passthrough]),
 							lists:foreach(
 								fun({_TestType, Node}) ->
+									?LOG_DEBUG("Mocking [~p] module ~p", [Node, Module]),
 									remote_call(Node, ar_test_node, new_mock,
 											[Module, [no_link, passthrough]])
 								end,
@@ -1170,9 +1178,11 @@ mock_functions(Functions) ->
 						true ->
 							Mocked
 					end,
+					?LOG_DEBUG("Mocking [main] function ~p", [Fun]),
 					mock_function(Module, Fun, Mock),
 					lists:foreach(
 						fun({_TestType, Node}) ->
+							?LOG_DEBUG("Mocking [~p] function ~p", [Node, Fun]),
 							remote_call(Node, ar_test_node, mock_function,
 									[Module, Fun, Mock])
 						end,
@@ -1184,11 +1194,14 @@ mock_functions(Functions) ->
 			)
 		end,
 		fun(Mocked) ->
+			?LOG_DEBUG("Unmocking functions: ~p", [Mocked]),
 			maps:fold(
 				fun(Module, _, _) ->
+					?LOG_DEBUG("Unmocking [main] module ~p", [Module]),
 					unmock_module(Module),
 					lists:foreach(
 						fun({_Build, Node}) ->
+							?LOG_DEBUG("Unmocking [~p] module ~p", [Node, Module]),
 							remote_call(Node, ar_test_node, unmock_module, [Module])
 						end,
 						all_peers(test))

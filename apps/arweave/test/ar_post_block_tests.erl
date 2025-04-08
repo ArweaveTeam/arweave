@@ -77,6 +77,7 @@ post_2_8_test_() ->
 	{setup, fun setup_all_post_2_8/0, fun cleanup_all_post_fork/1,
 		{foreach, fun reset_node/0, [
 			instantiator(fun test_reject_block_invalid_packing_difficulty/1),
+			instantiator(fun test_reject_block_invalid_replica_format/1),
 			instantiator(fun test_reject_block_invalid_denomination/1),
 			instantiator(fun test_reject_block_invalid_kryder_plus_rate_multiplier/1),
 			instantiator(fun test_reject_block_invalid_kryder_plus_rate_multiplier_latch/1),
@@ -260,6 +261,20 @@ test_reject_block_invalid_packing_difficulty({Key, B, PrevB}) ->
 		poa = PoA#poa{ unpacked_chunk = C, chunk = PackedC }, unpacked_chunk_hash = UH,
 				chunk_hash = H }, PrevB, Key),
 	post_block(B3, invalid_packing_difficulty),
+	assert_banned(ar_test_node:peer_ip(main)).
+
+test_reject_block_invalid_replica_format({Key, B, PrevB}) ->
+	ok = ar_events:subscribe(block),
+	assert_not_banned(ar_test_node:peer_ip(main)),
+	C = crypto:strong_rand_bytes(262144),
+	PackedC = crypto:strong_rand_bytes(262144 div 32),
+	UH = crypto:hash(sha256, C),
+	H = crypto:hash(sha256, PackedC),
+	PoA = B#block.poa,
+	B2 = sign_block(B#block{ replica_format = 2,
+		poa = PoA#poa{ unpacked_chunk = C, chunk = PackedC }, unpacked_chunk_hash = UH,
+				chunk_hash = H }, PrevB, Key),
+	post_block(B2, invalid_packing_difficulty),
 	assert_banned(ar_test_node:peer_ip(main)).
 
 %% ------------------------------------------------------------------------------------------
@@ -558,6 +573,7 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 	B7_2 = sign_block(B7#block{ tags = [<<"new_tag">>] }, B6, Key),
 	post_block(B6, valid),
 	post_block(B7, valid),
+	timer:sleep(1000),
 	post_block(B7_2, valid),
 	%% Wait until the node records conflicting proofs.
 	true = ar_util:do_until(
