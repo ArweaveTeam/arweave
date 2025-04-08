@@ -1,15 +1,11 @@
-#include <openssl/sha.h>
+#include "../sha2.h"
 
 #include "feistel_msgsize_key_cipher.h"
 
 // NOTE feistel_encrypt_block/feistel_decrypt_block with less than 2 blocks have no sense
 
 void feistel_hash(const unsigned char *in_r, const unsigned char *in_k, unsigned char *out) {
-	SHA256_CTX sha256;
-	SHA256_Init(&sha256);
-	SHA256_Update(&sha256, in_r, 32);
-	SHA256_Update(&sha256, in_k, 32);
-	SHA256_Final(out, &sha256);
+  sha2_p2(out, in_r, 32, in_k, 32);
 }
 
 // size_t key_len, 
