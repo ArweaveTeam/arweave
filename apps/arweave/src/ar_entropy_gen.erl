@@ -238,7 +238,7 @@ do_prepare_entropy(State) ->
                 ar_device_lock:release_lock(prepare, StoreID),
                 ?LOG_INFO([{event, storage_module_entropy_preparation_complete},
                         {store_id, StoreID}]),
-                ar:console("The storage module ~s is prepared for 2.9 replication.~n",
+                ar:console("Entropy generation for the storage module ~s is complete. Packing has started. See /metrics for progress~n",
                         [StoreID]),
                 ar_chunk_storage:set_entropy_complete(StoreID),
                 complete;
