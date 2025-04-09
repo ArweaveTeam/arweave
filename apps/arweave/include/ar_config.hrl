@@ -55,7 +55,11 @@
 -endif.
 
 %% The default frequency of checking for the available disk space.
+-ifdef(AR_TEST).
+-define(DISK_SPACE_CHECK_FREQUENCY_MS, 1000).
+-else.
 -define(DISK_SPACE_CHECK_FREQUENCY_MS, 30 * 1000).
+-endif.
 
 -define(NUM_HASHING_PROCESSES,
 	max(1, (erlang:system_info(schedulers_online) - 1))).

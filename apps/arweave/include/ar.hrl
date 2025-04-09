@@ -217,7 +217,11 @@
 -define(REJOIN_RETRIES, 3).
 
 %% Maximum allowed number of accepted requests per minute per IP.
+-ifdef(AR_TEST).
+-define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 100_000).
+-else.
 -define(DEFAULT_REQUESTS_PER_MINUTE_LIMIT, 900).
+-endif.
 
 %% Number of seconds an IP address should be completely banned from doing
 %% HTTP requests after posting an invalid block.

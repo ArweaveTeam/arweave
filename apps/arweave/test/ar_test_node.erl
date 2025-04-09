@@ -329,8 +329,7 @@ base_cm_config(Peers) ->
 		peers = Peers,
 		coordinated_mining = true,
 		cm_api_secret = <<"test_coordinated_mining_secret">>,
-		cm_poll_interval = 2000,
-		requests_per_minute_limit = 100_000
+		cm_poll_interval = 2000
 	}.
 
 mine() ->
@@ -602,7 +601,6 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		sync_jobs = 2,
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,
-		requests_per_minute_limit = 100_000,
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
 				double_check_nonce_limiter, serve_wallet_lists | Config#config.enable],
 		debug = true
@@ -633,6 +631,7 @@ restart_with_config(Node, Config) ->
 	remote_call(Node, ?MODULE, restart_with_config, [Config], 90000).
 
 start_peer(Node, Args) when is_map(Args) ->
+	?LOG_DEBUG([{event, start_peer}, {peer, Node}]),
 	remote_call(Node, ?MODULE, start, [Args], ?PEER_START_TIMEOUT),
 	wait_until_joined(Node),
 	wait_until_syncs_genesis_data(Node);
@@ -1134,42 +1133,63 @@ get_tx_confirmations(Node, TXID) ->
 	end.
 
 new_mock(Module, Options) ->
+	new_mock(Module, Options, 5).
+
+new_mock(_Module, _Options, 0) ->
+	ok;
+new_mock(Module, Options, Retries) ->
 	try
 		meck:new(Module, Options)
 	catch
 		error:E ->
-			?LOG_ERROR("Error creating mock for ~p: ~p", [Module, E])
+			?debugFmt("ar_test_node (retries left ~p): Error creating mock for ~p: ~p",
+					[Retries - 1, Module, E]),
+			timer:sleep(1000),
+			new_mock(Module, Options, Retries - 1)
 	end.
 
 mock_function(Module, Fun, Mock) ->
+	mock_function(Module, Fun, Mock, 5).
+
+mock_function(_Module, _Fun, _Mock, 0) ->
+	ok;
+mock_function(Module, Fun, Mock, Retries) ->
 	try
 		meck:expect(Module, Fun, Mock)
 	catch
 		error:E ->
-			?LOG_ERROR("Error setting mock for ~p: ~p", [Module, E])
+			?debugFmt("ar_test_node (retries left ~p): Error setting mock for ~p: ~p",
+					[Retries - 1, Module, E]),
+			timer:sleep(1000),
+			mock_function(Module, Fun, Mock, Retries - 1)
 	end.
 
 unmock_module(Module) ->
+	unmock_module(Module, 5).
+
+unmock_module(_Module, 0) ->
+	ok;
+unmock_module(Module, Retries) ->
 	try
 		meck:unload(Module)
 	catch
 		error:E ->
-			?LOG_ERROR("Error unloading mock for ~p: ~p", [Module, E])
+			?debugFmt("ar_test_node (retries left ~p): Error unloading mock for ~p: ~p",
+					[Retries - 1, Module, E]),
+			timer:sleep(1000),
+			unmock_module(Module, Retries - 1)
 	end.
 
 mock_functions(Functions) ->
 	{
 		fun() ->
-			?LOG_DEBUG("Mocking functions: ~p", [Functions]),
 			lists:foldl(
 				fun({Module, Fun, Mock}, Mocked) ->
 					NewMocked = case maps:get(Module, Mocked, false) of
 						false ->
-							?LOG_DEBUG("Mocking [main] module ~p", [Module]),
 							new_mock(Module, [passthrough]),
 							lists:foreach(
 								fun({_TestType, Node}) ->
-									?LOG_DEBUG("Mocking [~p] module ~p", [Node, Module]),
 									remote_call(Node, ar_test_node, new_mock,
 											[Module, [no_link, passthrough]])
 								end,
@@ -1178,11 +1198,9 @@ mock_functions(Functions) ->
 						true ->
 							Mocked
 					end,
-					?LOG_DEBUG("Mocking [main] function ~p", [Fun]),
 					mock_function(Module, Fun, Mock),
 					lists:foreach(
 						fun({_TestType, Node}) ->
-							?LOG_DEBUG("Mocking [~p] function ~p", [Node, Fun]),
 							remote_call(Node, ar_test_node, mock_function,
 									[Module, Fun, Mock])
 						end,
@@ -1194,14 +1212,11 @@ mock_functions(Functions) ->
 			)
 		end,
 		fun(Mocked) ->
-			?LOG_DEBUG("Unmocking functions: ~p", [Mocked]),
 			maps:fold(
 				fun(Module, _, _) ->
-					?LOG_DEBUG("Unmocking [main] module ~p", [Module]),
 					unmock_module(Module),
 					lists:foreach(
-						fun({_Build, Node}) ->
-							?LOG_DEBUG("Unmocking [~p] module ~p", [Node, Module]),
+						fun({_TestType, Node}) ->
 							remote_call(Node, ar_test_node, unmock_module, [Module])
 						end,
 						all_peers(test))
@@ -1216,11 +1231,21 @@ test_with_mocked_functions(Functions, TestFun) ->
 	test_with_mocked_functions(Functions, TestFun, ?TEST_MOCKED_FUNCTIONS_TIMEOUT).
 
 test_with_mocked_functions(Functions, TestFun, Timeout) ->
+	WrappedTestFun = fun() ->
+		try
+			TestFun()
+		catch
+			Type:Reason ->
+				?assert(false,
+					iolist_to_binary(
+						io_lib:format("Mocked test failed with ~p: ~p", [Type, Reason])))
+		end
+	end,
 	{Setup, Cleanup} = mock_functions(Functions),
 	{
 		foreach,
 		Setup, Cleanup,
-		[{timeout, Timeout, TestFun}]
+		[{timeout, Timeout, WrappedTestFun}]
 	}.
 
 post_and_mine(#{ miner := Node, await_on := AwaitOnNode }, TXs) ->

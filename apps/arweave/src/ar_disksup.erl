@@ -88,21 +88,26 @@ init([]) ->
 		end,
 	%% Initiate the first check.
 	self() ! timeout,
-	{ok, #state{ port = Port, os = OS, timeout = get_disk_space_check_frequency() }}.
+	Timeout = get_disk_space_check_frequency(),
+	?LOG_INFO([{event, disksup_init}, {os, OS}, {port, Port}, {timeout, Timeout}]),
+	{ok, #state{ port = Port, os = OS, timeout = Timeout }}.
 
 handle_call(get_disk_data, _From, State) ->
 	{reply, State#state.diskdata, State};
 
 handle_call(pause, _From, State) ->
+	?LOG_INFO([{event, pausing_disksup}]),
 	{reply, ok, State#state{ paused = true }};
 
 handle_call(resume, _From, State) ->
+	?LOG_INFO([{event, resuming_disksup}]),
 	{reply, ok, State#state{ paused = false }}.
 
 handle_cast(_Msg, State) ->
 	{noreply, State}.
 
 handle_info(timeout, #state{ paused = true } = State) ->
+	?LOG_INFO([{event, disksup_paused}]),
 	{ok, _Tref} = timer:send_after(State#state.timeout, timeout),
 	{noreply, State};
 handle_info(timeout, State) ->
@@ -266,7 +271,7 @@ broadcast_disk_free({unix, _} = Os, Port) ->
 							StoreID, IsDataDirDrive, Percentage, Bytes
 						})
 			end
-end,
+	end,
 	lists:foreach(HandleSmPath, StorageModulePaths);
 broadcast_disk_free(_, _) ->
 	ar:console("~nWARNING: disk space checks are not supported on your platform. The node "

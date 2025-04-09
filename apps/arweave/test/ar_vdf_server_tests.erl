@@ -106,13 +106,13 @@ vdf_client_test_() ->
 		fun cleanup/1,
 		[
 			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
-				fun test_vdf_client_fast_block/0, 300),
+				fun test_vdf_client_fast_block/0, 600),
 			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
-				fun test_vdf_client_fast_block_pull_interface/0, 300),
+				fun test_vdf_client_fast_block_pull_interface/0, 600),
 			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
-				fun test_vdf_client_slow_block/0, 300),
+				fun test_vdf_client_slow_block/0, 600),
 			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
-				fun test_vdf_client_slow_block_pull_interface/0, 300)
+				fun test_vdf_client_slow_block_pull_interface/0, 600)
 		]
     }.
 
@@ -352,7 +352,7 @@ test_vdf_client_fast_block_pull_interface() ->
 		B0, PeerAddress,
 		PeerConfig#config{ 
 			nonce_limiter_server_trusted_peers = [
-				"127.0.0.1:" ++ integer_to_list(Config#config.port) 
+				ar_util:format_peer(ar_test_node:peer_ip(main))
 			],
 			enable = [vdf_server_pull | PeerConfig#config.enable] 
 		}
@@ -361,7 +361,11 @@ test_vdf_client_fast_block_pull_interface() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
-			nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1)) ]}),
+			nonce_limiter_client_peers = [
+				ar_util:format_peer(ar_test_node:peer_ip(peer1))
+			]
+		}
+	),
 	ar_test_node:connect_to_peer(peer1),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server

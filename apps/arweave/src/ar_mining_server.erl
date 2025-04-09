@@ -682,7 +682,8 @@ prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 prepare_solution(steps, Candidate, Solution) ->
 	#mining_candidate{ step_number = StepNumber } = Candidate,
 	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
-	#nonce_limiter_info{ global_step_number = PrevStepNumber, next_seed = PrevNextSeed,
+	#nonce_limiter_info{ global_step_number = PrevStepNumber, seed = PrevSeed,
+			next_seed = PrevNextSeed,
 			next_vdf_difficulty = PrevNextVDFDifficulty } = TipNonceLimiterInfo,
 	case StepNumber > PrevStepNumber of
 		true ->
@@ -690,9 +691,16 @@ prepare_solution(steps, Candidate, Solution) ->
 					PrevStepNumber, StepNumber, PrevNextSeed, PrevNextVDFDifficulty),
 			case Steps of
 				not_found ->
+					CurrentSessionKey = ar_nonce_limiter:session_key(TipNonceLimiterInfo),
+					SolutionSessionKey = Candidate#mining_candidate.session_key,
 					LogData = [
+						{current_session_key,
+							ar_nonce_limiter:encode_session_key(CurrentSessionKey)},
+						{solution_session_key,
+							ar_nonce_limiter:encode_session_key(SolutionSessionKey)},
 						{start_step_number, PrevStepNumber},
 						{next_step_number, StepNumber},
+						{seed, ar_util:safe_encode(PrevSeed)},
 						{next_seed, ar_util:safe_encode(PrevNextSeed)},
 						{next_vdf_difficulty, PrevNextVDFDifficulty},
 						{h1, ar_util:safe_encode(Candidate#mining_candidate.h1)},

@@ -5,11 +5,12 @@
 -export([start_link/2, name/1]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_chunk_storage.hrl").
--include("../include/ar_verify_chunks.hrl").
+-include("ar.hrl").
+-include("ar_poa.hrl").
+-include("ar_config.hrl").
+-include("ar_consensus.hrl").
+-include("ar_chunk_storage.hrl").
+-include("ar_verify_chunks.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -534,12 +535,14 @@ verify_proof_test_() ->
 		),
 		ar_test_node:test_with_mocked_functions([
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
+			{ar_poa, chunk_proof, fun(_, _) -> #chunk_proof{} end},
 			{ar_poa, validate_paths, fun(_) -> {true, <<>>} end}
 		],
 			fun test_verify_proof_valid_paths/0
 		),
 		ar_test_node:test_with_mocked_functions([
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
+			{ar_poa, chunk_proof, fun(_, _) -> #chunk_proof{} end},
 			{ar_poa, validate_paths, fun(_) -> {false, <<>>} end}
 		],
 			fun test_verify_proof_invalid_paths/0
@@ -551,6 +554,7 @@ verify_chunk_test_() ->
 		ar_test_node:test_with_mocked_functions([
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
 			{ar_poa, validate_paths, fun(_) -> {true, <<>>} end},
+			{ar_poa, chunk_proof, fun(_, _) -> #chunk_proof{} end},
 			{ar_chunk_storage, read_offset,
 				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
 			{ar_data_sync, get_chunk_data,
