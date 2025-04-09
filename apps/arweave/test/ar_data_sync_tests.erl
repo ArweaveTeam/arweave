@@ -12,6 +12,7 @@ recovers_from_corruption_test_() ->
 	{timeout, 140, fun test_recovers_from_corruption/0}.
 
 test_recovers_from_corruption() ->
+	?LOG_DEBUG([{event, test_recovers_from_corruption_start}]),
 	ar_test_data_sync:setup_nodes(),
 	{ok, Config} = application:get_env(arweave, config),
 	StoreID = ar_storage_module:id(hd(ar_storage_module:get_all(262144 * 3))),
@@ -25,6 +26,7 @@ syncs_data_test_() ->
 	{timeout, 240, fun test_syncs_data/0}.
 
 test_syncs_data() ->
+	?LOG_DEBUG([{event, test_syncs_data_start}]),
 	Wallet = ar_test_data_sync:setup_nodes(),
 	Records = ar_test_data_sync:post_random_blocks(Wallet),
 	RecordsWithProofs = lists:flatmap(
@@ -83,6 +85,7 @@ test_syncs_after_joining() ->
 	test_syncs_after_joining(original_split).
 
 test_syncs_after_joining(Split) ->
+	?LOG_DEBUG([{event, test_syncs_after_joining}, {split, Split}]),
 	Wallet = ar_test_data_sync:setup_nodes(),
 	{TX1, Chunks1} = ar_test_data_sync:tx(Wallet, {Split, 1}, v2, ?AR(1)),
 	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
@@ -117,6 +120,7 @@ mock_reset_frequency() ->
 	{ar_nonce_limiter, get_reset_frequency, fun() -> 5 end}.
 
 test_mines_off_only_last_chunks() ->
+	?LOG_DEBUG([{event, test_mines_off_only_last_chunks_start}]),
 	Wallet = ar_test_data_sync:setup_nodes(),
 	%% Submit only the last chunks (smaller than 256 KiB) of transactions.
 	%% Assert the nodes construct correct proofs of access from them.
@@ -180,6 +184,7 @@ mines_off_only_second_last_chunks_test_() ->
 			fun test_mines_off_only_second_last_chunks/0).
 
 test_mines_off_only_second_last_chunks() ->
+	?LOG_DEBUG([{event, test_mines_off_only_second_last_chunks_start}]),
 	Wallet = ar_test_data_sync:setup_nodes(),
 	%% Submit only the second last chunks (smaller than 256 KiB) of transactions.
 	%% Assert the nodes construct correct proofs of access from them.
@@ -229,6 +234,7 @@ disk_pool_rotation_test_() ->
 	{timeout, 120, fun test_disk_pool_rotation/0}.
 
 test_disk_pool_rotation() ->
+	?LOG_DEBUG([{event, test_disk_pool_rotation_start}]),
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	%% Will store the three genesis chunks.
 	%% The third one falls inside the "overlap" (see ar_storage_module.erl)
@@ -284,6 +290,7 @@ test_disk_pool_rotation() ->
 	).
 
 enqueue_intervals_test() ->
+	?LOG_DEBUG([{event, enqueue_intervals_test}]),
 	test_enqueue_intervals([], 2, [], [], [], "Empty Intervals"),
 	Peer1 = {1, 2, 3, 4, 1984},
 	Peer2 = {101, 102, 103, 104, 1984},

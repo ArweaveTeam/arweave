@@ -955,12 +955,16 @@ handle_cast(sync_data2, State) ->
 %%       ar_data_sync_worker_master for syncing.
 handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End } = State,
+	?LOG_DEBUG([{event, collect_peer_intervals_start}, {module, ?MODULE},
+		{function, collect_peer_intervals}, {s, Start}, {e, End}]),
 	gen_server:cast(self(), {collect_peer_intervals, Start, End}),
 	{noreply, State};
 
 handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
 	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS.
+	?LOG_DEBUG([{event, collect_peer_intervals_done}, {module, ?MODULE},
+		{function, collect_peer_intervals}, {s, Start}, {e, End}]),
 	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
 	{noreply, State};
 handle_cast({collect_peer_intervals, Start, End}, State) ->
@@ -1025,6 +1029,11 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 		end,
 	case IsSyncQueueBusy of
 		true ->
+			?LOG_DEBUG([{event, collect_peer_intervals_skipped}, {module, ?MODULE},
+					{function, collect_peer_intervals}, {s, Start}, {e, End},
+					{weave_size, WeaveSize}, {is_joined, IsJoined},
+					{is_disk_space_sufficient, IsDiskSpaceSufficient},
+					{is_sync_queue_busy, IsSyncQueueBusy}]),
 			ok;
 		false ->
 			End2 = min(End, WeaveSize),
@@ -1034,6 +1043,8 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 				false ->
 					%% All checks have passed, find and enqueue intervals for one
 					%% sync bucket worth of chunks starting at offset Start
+					?LOG_DEBUG([{event, fetch_peer_intervals}, {module, ?MODULE},
+							{function, collect_peer_intervals}, {s, Start}, {e, End2}]),
 					ar_peer_intervals:fetch(Start, End2, StoreID)
 			end
 	end,
@@ -1427,8 +1438,7 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, 
 				false ->
 					ok
 			end,
-			ets:insert(ar_data_sync_state,
-					{{is_disk_space_sufficient, StoreID}, true})
+			ets:insert(ar_data_sync_state, {{is_disk_space_sufficient, StoreID}, true})
 	end,
 	{noreply, State};
 handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, Bytes}},
@@ -1468,8 +1478,7 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 				false ->
 					ok
 			end,
-			ets:insert(ar_data_sync_state,
-					{{is_disk_space_sufficient, StoreID}, true})
+			ets:insert(ar_data_sync_state, {{is_disk_space_sufficient, StoreID}, true})
 	end,
 	{noreply, State};
 

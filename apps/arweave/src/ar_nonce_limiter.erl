@@ -59,6 +59,11 @@ is_ahead_on_the_timeline(NonceLimiterInfo1, NonceLimiterInfo2) ->
 	#nonce_limiter_info{ global_step_number = N2 } = NonceLimiterInfo2,
 	N1 > N2.
 
+session_key(#nonce_limiter_info{ 
+		next_seed = NextSeed, global_step_number = StepNumber,
+		next_vdf_difficulty = NextVDFDifficulty }) ->
+	session_key(NextSeed, StepNumber, NextVDFDifficulty).
+
 %% @doc Return the nonce limiter session with the given key.
 get_session(SessionKey) ->
 	gen_server:call(?MODULE, {get_session, SessionKey}, ?DEFAULT_CALL_TIMEOUT).
@@ -714,7 +719,11 @@ handle_info({computed, Args}, State) ->
 					ok;
 				false ->
 					?LOG_WARNING([{event, computed_for_outdated_key}, {step_number, StepNumber},
-						{output, ar_util:encode(Output)}])
+						{output, ar_util:encode(Output)},
+						{prev_output, ar_util:encode(PrevOutput)},
+						{session_output, ar_util:encode(SessionOutput2)},
+						{current_session_key, encode_session_key(CurrentSessionKey)},
+						{session_key, encode_session_key(SessionKey)}])
 			end,
 			{noreply, State};
 		{true, true} ->
@@ -739,9 +748,6 @@ terminate(_Reason, #state{ worker = W }) ->
 %%% Private functions.
 %%%===================================================================
 
-session_key(#nonce_limiter_info{ next_seed = NextSeed, global_step_number = StepNumber,
-		next_vdf_difficulty = NextVDFDifficulty }) ->
-	session_key(NextSeed, StepNumber, NextVDFDifficulty).
 session_key(NextSeed, StepNumber, NextVDFDifficulty) ->
 	{NextSeed, StepNumber div ar_nonce_limiter:get_reset_frequency(), NextVDFDifficulty}.
 
