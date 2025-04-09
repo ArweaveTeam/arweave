@@ -7,6 +7,7 @@
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+-include("ar_poa.hrl").
 -include("ar_sup.hrl").
 -include("ar_config.hrl").
 -include("ar_repack.hrl").
@@ -28,6 +29,7 @@
 	module_end = 0,
 	footprint_start = 0,
 	footprint_end = 0,
+	entropy_end = 0,
 	next_cursor = 0, 
 	target_packing = undefined,
 	reward_addr = undefined,
@@ -255,6 +257,8 @@ handle_info({entropy, BucketEndOffset, Entropies}, #state{} = State) ->
 		reward_addr = RewardAddr
 	} = State,
 
+	generate_repack_entropy(BucketEndOffset + ?DATA_CHUNK_SIZE, State),
+
 	EntropyKeys = ar_entropy_gen:generate_entropy_keys(RewardAddr, BucketEndOffset),
 	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
 
@@ -438,20 +442,21 @@ repack_footprint(Cursor, #state{} = State) ->
 		_ ->
 			FootprintOffsets = footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd),
 			FootprintEnd = footprint_end(FootprintOffsets, ModuleStart, ModuleEnd, BatchSize),
+			{_, EntropyEnd, _} = get_read_range(
+				BucketEndOffset, ModuleStart, FootprintEnd, BatchSize),
 
 			State2 = State#state{ 
 				footprint_start = FootprintStart,
 				footprint_end = FootprintEnd,
+				entropy_end = ar_chunk_storage:get_chunk_bucket_end(EntropyEnd),
 				next_cursor = BucketEndOffset + ?DATA_CHUNK_SIZE
 			},
 			State3 = init_repack_chunk_map(FootprintOffsets, State2),
 
 			%% We'll generate BatchSize entropy footprints, one for each bucket end offset
 			%% starting at BucketEndOffset and ending at EntropyEnd.
-			{_, EntropyEnd, _} = get_read_range(
-				BucketEndOffset, ModuleStart, FootprintEnd, BatchSize),
-			generate_repack_entropy(
-				BucketEndOffset, ar_chunk_storage:get_chunk_bucket_end(EntropyEnd), State3),
+
+			generate_repack_entropy(BucketEndOffset, State3),
 
 			ar_repack_io:read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, StoreID),
 
@@ -502,17 +507,16 @@ footprint_end(FootprintOffsets, ModuleStart, ModuleEnd, BatchSize) ->
 	FootprintEnd = ar_entropy_gen:footprint_end(FirstOffset, ModuleEnd),
 	min(ar_chunk_storage:get_chunk_bucket_end(LastOffsetRangeEnd), FootprintEnd).
 
-generate_repack_entropy(BucketEndOffset, EntropyEnd, #state{}) 
+generate_repack_entropy(BucketEndOffset, #state{ entropy_end = EntropyEnd } = State) 
 		when BucketEndOffset > EntropyEnd ->
 	ok;
-generate_repack_entropy(BucketEndOffset, EntropyEnd, #state{} = State) ->
+generate_repack_entropy(BucketEndOffset, #state{} = State) ->
 	#state{ 
 		store_id = StoreID,
 		reward_addr = RewardAddr
 	} = State,
 
-	ar_entropy_gen:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self()),
-	generate_repack_entropy(BucketEndOffset + ?DATA_CHUNK_SIZE, EntropyEnd, State).
+	ar_entropy_gen:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self()).
 
 
 init_repack_chunk_map([], #state{} = State) ->
