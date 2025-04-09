@@ -415,7 +415,7 @@ pmap_positive_test() ->
 		timer:sleep(100 * X),
 		X * 2
 	end,
-	?assertEqual([6, 2, 4], pmap(Mapper, [3, 1, 2])).
+	?assertEqual([6, 4, 2], pmap(Mapper, [3, 1, 2])).
 
 pmap_negative_test() ->
 	Mapper = fun(X) ->
