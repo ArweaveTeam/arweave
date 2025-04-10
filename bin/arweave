@@ -57,28 +57,109 @@ case $OSTYPE in
     ;;
 esac
 [ -z "$SCRIPT" ] && SCRIPT=$0
-SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd -P)"
-PARENT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd  -P)"
-SYSTEM_NAME="$(uname -s)"
-RELEASE_ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
-# Make the value available to variable substitution calls below
-export REL_NAME="arweave"
-REL_VSN="2.9.5-alpha1"
+export SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd -P)"
+export PARENT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd  -P)"
+export SYSTEM_NAME="$(uname -s)"
+export RELEASE_ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
+export REBAR_CONFIG="${RELEASE_ROOT_DIR}/rebar.config"
+export BUILD_DIR="${RELEASE_ROOT_DIR}/_build"
 
-# export these to match mix release environment variables
-export RELEASE_NAME="arweave"
-export RELEASE_VSN="2.9.5-alpha1"
-export RELEASE_GIT_REV="f5642b0fdab3f2a82a80d107ea6878bb85a7617e"
-export RELEASE_DATETIME="2025-03-06T14:22:51Z"
-export RELEASE_ERTS="12.2.1"
-export RELEASE_CC="cc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0"
-export RELEASE_CMAKE="cmake version 3.22.1"
-export RELEASE_GMAKE="GNU Make 4.3"
+# let extract release relx information from rebar.config.
+# the following erlang code will read/parse the file
+# and extract the information required. In case of issue
+# it print an error message and return 1, else 0.
+extract_release_from_rebar_config() {
+	erl -noshell -eval '
+		try
+			% extract file from REBAR_CONFIG variable
+			C = case os:getenv("REBAR_CONFIG") of
+				false -> throw("REBAR_CONFIG not set");
+				VRC -> VRC
+			end,
+
+			% read/parse rebar.config
+			F = case file:consult(C) of
+				{ok, FC} -> FC;
+				{error, EC} -> throw(EC)
+			end,
+
+			% extract relx section
+			R = case proplists:get_value(relx, F) of
+				undefined -> throw("relx section not found");
+				RX -> RX
+			end,
+
+			% extract release section
+			V = case lists:keyfind(release, 1, R) of
+				M = {release, {_, VX}, _} -> VX;
+				_ -> throw("release not found")
+			end,
+			io:format("~s~n", [V]),
+			erlang:halt(0)
+		catch
+			_:E ->
+				io:format(standard_error, "error: ~p~n", [E]),
+				erlang:halt(255)
+		end.
+	'
+	return $?
+}
+
+# Make the value available to variable substitution calls below
+# Most of The following variables are usually hardcoded by rebar3
+# if they are empty, this means the entry-point is used from
+# the sources.
+export REL_NAME=""
+export REL_VSN=""
+export RELEASE_NAME=""
+export RELEASE_VSN=""
+export RELEASE_GIT_REV=""
+export RELEASE_DATETIME=""
+export RELEASE_ERTS=""
+export RELEASE_CC=""
+export RELEASE_CMAKE=""
+export RELEASE_GMAKE=""
+export ERTS_VSN=""
 export RELEASE_PROG="${SCRIPT}"
 
-ERTS_VSN="12.2.1"
-REL_DIR="$RELEASE_ROOT_DIR/releases/$REL_VSN"
-RUNNER_LOG_DIR="${RUNNER_LOG_DIR:-$RELEASE_ROOT_DIR/logs}"
+# ensure REL_NAME and RELEASE_NAME variables are set
+# by default, if the script is running from sources,
+# the release name must be arweave.
+test -z "${REL_NAME}" && export REL_NAME="arweave"
+test -z "${RELEASE_NAME}" && export RELEASE_NAME="arweave"
+
+# check REL_VSN variable content. This one is quite important
+# to be able to start arweave.
+if test -z "${REL_VSN}"
+then
+	REL_VSN=$(extract_release_from_rebar_config)
+	if test $? -ne 0
+	then
+		echo "error: failed to read rebar file" 1>&2
+		exit 1
+	fi
+
+	if test -z "${REL_VSN}"
+	then
+		echo "error: no release found" 1>&2
+		exit 1
+	fi
+
+	export REL_VSN
+	export REL_PATH="${BUILD_DIR}/default/rel/${REL_NAME}/${REL_VSN}"
+	export REL_PATH_ALT="${BUILD_DIR}/default/rel/${REL_NAME}/releases/${REL_VSN}"
+	if ! test -e ${REL_PATH}
+	then
+		echo "error: ${REL_PATH} does not exist" 1>&2
+		if ! test "${ARWEAVE_DEV}"
+		then
+			exit 1
+		fi
+	fi
+fi
+
+export REL_DIR="${RELEASE_ROOT_DIR}/releases/${REL_VSN}"
+export RUNNER_LOG_DIR="${RUNNER_LOG_DIR:-$RELEASE_ROOT_DIR/logs}"
 export ESCRIPT_NAME="${ESCRIPT_NAME-$SCRIPT}"
 
 # if RELX_RPC_TIMEOUT is set then use that
@@ -884,6 +965,21 @@ add_path() {
     return 1
 }
 
+multi_check_replace_os_vars() {
+	local file="${1}"; shift
+	while test "${*}"
+	do
+		local path=${1}; shift
+		local ret=$(check_replace_os_vars ${file} ${path})
+		if test "${ret}"
+		then
+			echo ${ret}
+			return 0
+		fi
+	done
+	return 1
+}
+
 check_replace_os_vars() {
     IN_FILE_PATH=$(add_path "$1" "$2")
     OUT_FILE_PATH="$IN_FILE_PATH"
@@ -1054,12 +1150,28 @@ SYSTEM_LIB_DIR="$(dirname "$ERTS_DIR")/lib"
 
 # vm_args configuration, we can use priv/files/vm_args or
 # the path from the release.
-VMARGS_PATH=$(add_path vm.args "$VMARGS_PATH" \
-  "${RELEASE_ROOT_DIR}/config" \
-  "${RELEASE_ROOT_DIR}/priv/templates")
-VMARGS_PATH=$(check_replace_os_vars vm.args "$VMARGS_PATH")
-RELX_CONFIG_PATH=$(check_replace_os_vars sys.config "$RELX_CONFIG_PATH" \
-  "${RELEASE_ROOT_DIR}/config")
+VMARGS_PATH=$(add_path \
+	vm.args \
+	"${VMARGS_PATH}" \
+	"${REL_DIR}" \
+	"${REL_PATH}" \
+	"${REL_PATH_ALT}" \
+	"${RELEASE_ROOT_DIR}/config" \
+	"${RELEASE_ROOT_DIR}/priv/templates")
+VMARGS_PATH=$(multi_check_replace_os_vars \
+	vm.args \
+	"${VMARGS_PATH}"\
+	"${REL_DIR}" \
+	"${REL_PATH}" \
+	"${REL_PATH_ALT}" \
+	"${RELEASE_ROOT_DIR}/config")
+RELX_CONFIG_PATH=$(multi_check_replace_os_vars \
+	sys.config \
+	"${RELX_CONFIG_PATH}" \
+	"${REL_DIR}" \
+	"${REL_PATH}" \
+	"${REL_PATH_ALT}" \
+	"${RELEASE_ROOT_DIR}/config")
 
 # Check vm.args and other files referenced via -args_file parameters for:
 #    - nonexisting -args_files
