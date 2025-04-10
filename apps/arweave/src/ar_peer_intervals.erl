@@ -40,6 +40,7 @@ fetch(Start, End, StoreID) when Start >= End ->
 			{range_end, End}]),
 	gen_server:cast(ar_data_sync:name(StoreID), {collect_peer_intervals, Start, End});
 fetch(Start, End, StoreID) ->
+	Parent = ar_data_sync:name(StoreID),
 	spawn_link(fun() ->
 		try
 			End2 = min(Start + ?QUERY_RANGE_STEP_SIZE, End),
@@ -55,8 +56,6 @@ fetch(Start, End, StoreID) ->
 						ar_data_discovery:get_bucket_peers(Bucket)
 				end,
 
-			%% The updated AllPeersIntervals cache is returned so it can be added to the State
-			Parent = ar_data_sync:name(StoreID),
 			End3 =
 				case ar_intervals:is_empty(UnsyncedIntervals) of
 					true ->
@@ -70,8 +69,13 @@ fetch(Start, End, StoreID) ->
 			gen_server:cast(Parent, {collect_peer_intervals, End3, End})
 		catch
 			Class:Reason ->
-				?LOG_INFO([{event, fetch_peers_process_exit}, {pid, StoreID},
-					{store_id, StoreID}, {start, Start}, {class, Class}, {reason, Reason}])
+				?LOG_WARNING([{event, fetch_peers_process_exit},
+						{store_id, StoreID},
+						{range_start, Start},
+						{range_end, End},
+						{class, Class},
+						{reason, Reason}]),
+				gen_server:cast(Parent, {collect_peer_intervals, Start, End})
 		end
 	end).
 
