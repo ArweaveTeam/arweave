@@ -409,6 +409,16 @@ handle_cast(entropy_complete, State) ->
 	State2 = State#state{ entropy_context = {true, RewardAddr} },
 	{noreply, State2};
 
+handle_cast({fix_broken_chunk_storage_record, ChunkFileStart, Start, PaddedEndOffset}, State) ->
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(fix_broken_chunk_storage_record, Config#config.enable) of
+		false ->
+			ok;
+		true ->
+			fix_broken_chunk_storage_record(ChunkFileStart, Start, PaddedEndOffset, State)
+	end,
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -779,6 +789,9 @@ filter_by_sync_record([{PaddedEndOffset, Chunk} | Rest], Intervals, Byte, Start,
 							{queried_range_start, Start},
 							{chunk_file_start, ChunkFileStart},
 							{requested_chunk_count, ChunkCount}]),
+			gen_server:cast(name(StoreID),
+					{fix_broken_chunk_storage_record,
+							ChunkFileStart, Start, PaddedEndOffset}),
 			filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount);
 		_ ->
 			[{PaddedEndOffset, Chunk}
@@ -921,6 +934,59 @@ get_packing_label(Packing, State) ->
 			{Label, State#state{ packing_labels = Map }};
 		Label ->
 			{Label, State}
+	end.
+
+fix_broken_chunk_storage_record(ChunkFileStart, Start, PaddedEndOffset, State) ->
+	{Position, ChunkOffset} =
+		get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, Start),
+	BucketStart = get_chunk_bucket_start(PaddedEndOffset),
+	case BucketStart + (ChunkOffset rem (?DATA_CHUNK_SIZE)) == PaddedEndOffset of
+		false ->
+			?LOG_WARNING([{event, fix_broken_chunk_storage_record_offset_mismatch},
+					{bucket_start, BucketStart},
+					{chunk_offset, ChunkOffset},
+					{padded_end_offset, PaddedEndOffset},
+					{computed_padded_end_offset,
+							BucketStart + (ChunkOffset rem (?DATA_CHUNK_SIZE))}]);
+		true ->
+			fix_broken_chunk_storage_record2(
+					ChunkFileStart, Position, PaddedEndOffset, State)
+	end.
+
+fix_broken_chunk_storage_record2(ChunkFileStart, Position, PaddedEndOffset, State) ->
+	StoreID = State#state.store_id,
+	case ar_sync_record:is_recorded(PaddedEndOffset, ar_chunk_storage, StoreID) of
+		false ->
+			fix_broken_chunk_storage_record3(ChunkFileStart, Position, State);
+		_ ->
+			?LOG_WARNING([
+				{event, requested_broken_chunk_storage_record_fix_for_valid_offset},
+				{chunk_file_start, ChunkFileStart},
+				{position, Position},
+				{padded_end_offset, PaddedEndOffset}])
+	end.
+
+fix_broken_chunk_storage_record3(ChunkFileStart, Position, State) ->
+	StoreID = State#state.store_id,
+	Filepath = filepath(ChunkFileStart, StoreID),
+	case file:open(Filepath, [read, write, raw]) of
+		{ok, F} ->
+			BitSize = ?OFFSET_BIT_SIZE + ?DATA_CHUNK_SIZE * 8,
+			case file:pwrite(F, Position, << 0:BitSize >>) of
+				ok ->
+					prometheus_gauge:inc(fixed_broken_chunk_storage_records);
+				{error, Reason} ->
+					?LOG_WARNING([
+						{event, fix_broken_chunk_storage_record_failed_to_reset_offset},
+						{file, Filepath},
+						{reason, io_lib:format("~p", [Reason])}])
+			end,
+			file:close(F);
+		{error, Reason} ->
+			?LOG_WARNING([
+				{event, fix_broken_chunk_storage_record_failed_to_open_chunk_file},
+				{file, Filepath},
+				{reason, io_lib:format("~p", [Reason])}])
 	end.
 
 %%%===================================================================
