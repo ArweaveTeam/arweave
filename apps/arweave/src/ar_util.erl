@@ -213,7 +213,7 @@ pmap(Mapper, List, Timeout) when Timeout > 0 ->
 		fun({Elem, Ref}) ->
 			{
 				Ref,
-				spawn_link(fun() -> Master ! {pmap_result, Ref, Mapper(Elem)} end)
+				spawn(fun() -> Master ! {pmap_result, Ref, Mapper(Elem)} end)
 			}
 		end,
 		[{Elem, make_ref()} || Elem <- List]
