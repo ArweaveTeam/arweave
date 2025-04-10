@@ -425,7 +425,7 @@ pmap_negative_test() ->
 	%% Timeout is too short.
 	?assertException(throw, {pmap_timeout, 50}, pmap(Mapper, [3, 1, 2], 50)),
 	%% Timeout is long enough for two elements to finish.
-	?assertException(throw, {pmap_timeout, 500}, pmap(Mapper, [3, 1, 2], 500)).
+	?assertException(throw, {pmap_timeout, 200}, pmap(Mapper, [3, 1, 2], 200)).
 
 cast_after(Delay, Module, Message) ->
 	%% Not using timer:apply_after here because send_after is more efficient:
