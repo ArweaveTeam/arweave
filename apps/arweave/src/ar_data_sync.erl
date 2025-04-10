@@ -955,7 +955,7 @@ handle_cast(sync_data2, State) ->
 %%       ar_data_sync_worker_master for syncing.
 handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End } = State,
-	?LOG_DEBUG([{event, collect_peer_intervals_start}, {module, ?MODULE},
+	?LOG_DEBUG([{event, collect_peer_intervals_start},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
 		{s, Start}, {e, End}]),
@@ -965,7 +965,7 @@ handle_cast(collect_peer_intervals, State) ->
 handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
 	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS.
-	?LOG_DEBUG([{event, collect_peer_intervals_done}, {module, ?MODULE},
+	?LOG_DEBUG([{event, collect_peer_intervals_done},
 		{function, collect_peer_intervals}, 
 		{store_id, State#sync_data_state.store_id},
 		{s, Start}, {e, End}]),
@@ -1039,8 +1039,8 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 		end,
 	case IsSyncQueueBusy of
 		true ->
-			?LOG_DEBUG([{event, collect_peer_intervals_skipped}, {module, ?MODULE},
-					{function, collect_peer_intervals}, 
+			?LOG_DEBUG([{event, collect_peer_intervals_skipped},
+					{function, collect_peer_intervals},
 					{store_id, StoreID},
 					{s, Start}, {e, End},
 					{weave_size, WeaveSize}, {is_joined, IsJoined},
@@ -1055,7 +1055,7 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 				false ->
 					%% All checks have passed, find and enqueue intervals for one
 					%% sync bucket worth of chunks starting at offset Start
-					?LOG_DEBUG([{event, fetch_peer_intervals}, {module, ?MODULE},
+					?LOG_DEBUG([{event, fetch_peer_intervals},
 							{function, collect_peer_intervals}, {s, Start}, {e, End2}]),
 					ar_peer_intervals:fetch(Start, End2, StoreID)
 			end
@@ -1380,7 +1380,7 @@ handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, 
 	{noreply, remove_recently_processed_disk_pool_offset(Offset, ChunkDataKey, State)};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+	?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
@@ -1388,7 +1388,7 @@ handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 	{reply, add_block(B, SizeTaggedTXs, StoreID), State};
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+	?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_info({event, node_state, {initialized, B}}, State) ->
@@ -1512,13 +1512,12 @@ handle_info({'DOWN', _,  process, _, Reason},  #sync_data_state{ store_id = Stor
 	{noreply, State};
 
 handle_info(Message,  #sync_data_state{ store_id = StoreID } = State) ->
-	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE},
-			{store_id, StoreID}, {message, Message}]),
+	?LOG_WARNING([{event, unhandled_info}, {store_id, StoreID}, {message, Message}]),
 	{noreply, State}.
 
 terminate(Reason, #sync_data_state{ store_id = StoreID } = State) ->
-	?LOG_INFO([{event, terminate}, {module, ?MODULE},
-			{store_id, StoreID}, {reason, io_lib:format("~p", [Reason])}]),
+	?LOG_INFO([{event, terminate}, {store_id, StoreID},
+			{reason, io_lib:format("~p", [Reason])}]),
 	store_sync_state(State),
 	ok.
 

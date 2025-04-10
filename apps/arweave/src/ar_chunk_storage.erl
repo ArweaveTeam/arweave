@@ -472,10 +472,6 @@ handle_info({Ref, _Reply}, State) when is_reference(Ref) ->
 handle_info({'EXIT', _PID, normal}, State) ->
 	{noreply, State};
 
-handle_info({entropy_generated, _Ref, {error, Reason}}, State) ->
-	?LOG_ERROR([{event, failed_to_generate_replica_2_9_entropy_and_timeout},
-			{error, Reason}]),
-	{noreply, State};
 handle_info({entropy_generated, _Ref, _Entropy}, State) ->
 	?LOG_WARNING([{event, entropy_generation_timed_out}]),
 	{noreply, State};
@@ -913,7 +909,12 @@ get_packing_label(Packing, State) ->
 %%%===================================================================
 
 chunk_bucket_test() ->
-	?assertEqual(786432, ?STRICT_DATA_SPLIT_THRESHOLD),
+	case ?STRICT_DATA_SPLIT_THRESHOLD of
+		786432 ->
+			ok;
+		_ ->
+			throw(unexpected_strict_data_split_threshold)
+	end,
 
 	%% get_chunk_bucket_end pads the provided offset
 	%% get_chunk_bucket_start does not padd the provided offset

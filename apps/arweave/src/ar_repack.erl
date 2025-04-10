@@ -327,6 +327,10 @@ handle_info({chunk, {enciphered, {BucketEndOffset, _}, PackedChunk}}, #state{} =
 	end,
 	{noreply, State2};
 
+handle_info({entropy_generated, _Ref, _Entropy}, State) ->
+	?LOG_WARNING([{event, entropy_generation_timed_out}]),
+	{noreply, State};
+
 handle_info(Request, #state{} = State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {request, Request}]),
 	{noreply, State}.
@@ -507,7 +511,7 @@ footprint_end(FootprintOffsets, ModuleStart, ModuleEnd, BatchSize) ->
 	FootprintEnd = ar_entropy_gen:footprint_end(FirstOffset, ModuleEnd),
 	min(ar_chunk_storage:get_chunk_bucket_end(LastOffsetRangeEnd), FootprintEnd).
 
-generate_repack_entropy(BucketEndOffset, #state{ entropy_end = EntropyEnd } = State) 
+generate_repack_entropy(BucketEndOffset, #state{ entropy_end = EntropyEnd })
 		when BucketEndOffset > EntropyEnd ->
 	ok;
 generate_repack_entropy(BucketEndOffset, #state{} = State) ->
@@ -773,7 +777,9 @@ process_state_change(RepackChunk, #state{} = State) ->
 			State2 = cache_repack_chunk(RepackChunk2, State),
 			update_chunk_state(RepackChunk2, State2);
 		already_repacked ->
-			%% Remove the chunk and entropy to free up memory.
+			%% Remove the chunk to free up memory. If we're in the already_repacked state
+			%% it means the entropy hasn't been set yet. Once it's set we'll transition to
+			%% the ignore state and the RepackChunk will be removed from the cache.
 			RepackChunk2 = RepackChunk#repack_chunk{ chunk = <<>> },
 			cache_repack_chunk(RepackChunk2, State);
 		needs_data_path ->
