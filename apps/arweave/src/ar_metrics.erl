@@ -256,6 +256,8 @@ register() ->
 			"The total number of synced block headers."
 		}
 	]),
+
+	%% Mining.
 	prometheus_gauge:new([
 		{name, mining_rate},
 		{labels, [type, partition]},
@@ -278,7 +280,6 @@ register() ->
 				"The peer label indicates the peer that the value is exchanged with, and the "
 				"direction label can be 'to' or 'from'."}
 	]),
-
 	prometheus_gauge:new([
 		{name, cm_h2_count},
 		{labels, [peer, direction]},
@@ -286,7 +287,6 @@ register() ->
 				"The peer label indicates the peer that the value is exchanged with, and the "
 				"direction label can be 'to' or 'from'."}
 	]),
-
 	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_size},
 		{labels, [partition]},
@@ -307,6 +307,15 @@ register() ->
 				"successfully prepared from a solution, it does not necessarily mean "
 				"the block ended up in the blockchain."}
 	]),
+	prometheus_histogram:new([
+		{name, chunk_storage_sync_record_check_duration_milliseconds},
+		{labels, [requested_chunk_count]},
+		{buckets, [0.1, 1, 10, 100, 1000, 10000]},
+		{help, "The time in milliseconds it took to check the fetched chunk range "
+				"is actually registered by the chunk storage."}
+	]),
+
+	%% VDF.
 	prometheus_histogram:new([
 		{name, vdf_step_time_milliseconds},
 		{buckets, [infinity]}, %% we don't care about the histogram portion
