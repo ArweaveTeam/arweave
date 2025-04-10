@@ -658,7 +658,11 @@ get(Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
 			File ->
 				read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount, StoreID)
 		end,
-	filter_by_sync_record(ReadChunks, Byte, Start, ChunkFileStart, StoreID, ChunkCount).
+	prometheus_histogram:observe_duration(chunk_storage_sync_record_check_duration_milliseconds,
+		[ChunkCount], fun() ->
+			Intervals = get_sync_record_intervals(Start, ChunkCount, StoreID),
+			filter_by_sync_record(ReadChunks, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount)
+		end).
 
 read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount, StoreID) ->
 	case file:open(Filepath, [read, raw, binary]) of
@@ -741,14 +745,29 @@ is_offset_valid(Byte, BucketStart, ChunkOffset) ->
 	Delta = Byte - (BucketStart + ChunkOffset rem ?DATA_CHUNK_SIZE),
 	Delta >= 0 andalso Delta < ?DATA_CHUNK_SIZE.
 
-filter_by_sync_record(Chunks, _Byte, _Start, _ChunkFileStart, _StoreID, 1) ->
+get_sync_record_intervals(Start, ChunkCount, StoreID) ->
+	End = Start + (ChunkCount + 1) * ?DATA_CHUNK_SIZE,
+	get_sync_record_intervals(Start, End, StoreID, ar_intervals:new()).
+
+get_sync_record_intervals(Start, End, _StoreID, Intervals) when Start >= End ->
+	Intervals;
+get_sync_record_intervals(Start, End, StoreID, Intervals) ->
+	case ar_sync_record:get_next_synced_interval(Start, End, ar_chunk_storage, StoreID) of
+		not_found ->
+			Intervals;
+		{End2, Start2} ->
+			get_sync_record_intervals(End2, End, StoreID,
+					ar_intervals:add(Intervals, min(End, End2), Start2))
+	end.
+
+filter_by_sync_record(Chunks, _Intervals, _Byte, _Start, _ChunkFileStart, _StoreID, 1) ->
 	%% The code paths which query a single chunk have already implicitly checked that
 	%% the chunk belongs to the sync_record. E.g. ar_chunk_storage:get/2
 	Chunks;
-filter_by_sync_record([], _Byte, _Start, _ChunkFileStart, _StoreID, _ChunkCount) ->
+filter_by_sync_record([], _Intervals, _Byte, _Start, _ChunkFileStart, _StoreID, _ChunkCount) ->
 	[];
-filter_by_sync_record([{PaddedEndOffset, Chunk} | Rest], Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
-	case ar_sync_record:is_recorded(PaddedEndOffset, ar_chunk_storage, StoreID) of
+filter_by_sync_record([{PaddedEndOffset, Chunk} | Rest], Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
+	case ar_intervals:is_inside(Intervals, PaddedEndOffset) of
 		false ->
 			%% Filter out repacking artifacts when reading a range of chunks.
 			%% This warning may also occur due to unlucky timing when the chunk is
@@ -760,10 +779,10 @@ filter_by_sync_record([{PaddedEndOffset, Chunk} | Rest], Byte, Start, ChunkFileS
 							{queried_range_start, Start},
 							{chunk_file_start, ChunkFileStart},
 							{requested_chunk_count, ChunkCount}]),
-			filter_by_sync_record(Rest, Byte, Start, ChunkFileStart, StoreID, ChunkCount);
+			filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount);
 		_ ->
 			[{PaddedEndOffset, Chunk}
-				| filter_by_sync_record(Rest, Byte, Start, ChunkFileStart, StoreID, ChunkCount)]
+				| filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount)]
 	end.
 
 close_files([{cfile, {_, StoreID} = Key} | Keys], StoreID) ->
