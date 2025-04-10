@@ -331,6 +331,10 @@ handle_call(Call, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {call, Call}]),
 	{reply, {error, unhandled_call}, State}.
 
+handle_info({entropy_generated, _Ref, _Entropy}, State) ->
+	?LOG_WARNING([{event, entropy_generation_timed_out}]),
+	{noreply, State};
+
 handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.
@@ -525,9 +529,6 @@ collect_entropies([], Acc) ->
 	lists:reverse(Acc);
 collect_entropies([Ref | Rest], Acc) ->
 	receive
-		{entropy_generated, Ref, {error, Reason}} ->
-			?LOG_ERROR([{event, failed_to_generate_replica_2_9_entropy}, {error, Reason}]),
-			{error, Reason};
 		{entropy_generated, Ref, Entropy} ->
 			collect_entropies(Rest, [Entropy | Acc])
 	after 60000 ->
@@ -569,7 +570,12 @@ store_cursor(Cursor, StoreID) ->
 
 reset_entropy_offset_test() ->
 	?assertEqual(786432, ar_replica_2_9:get_sector_size()),
-	?assertEqual(786432, ?STRICT_DATA_SPLIT_THRESHOLD),
+	case ?STRICT_DATA_SPLIT_THRESHOLD of
+		786432 ->
+			ok;
+		_ ->
+			throw(unexpected_strict_data_split_threshold)
+	end,
 	%% Slice index of 0 means no shift (all offsets at or below the strict data split
 	%% threshold are not padded)
 	assert_reset_entropy_offset(262144, 0),
