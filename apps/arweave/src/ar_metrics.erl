@@ -314,6 +314,11 @@ register() ->
 		{help, "The time in milliseconds it took to check the fetched chunk range "
 				"is actually registered by the chunk storage."}
 	]),
+	prometheus_gauge:new([
+		{name, fixed_broken_chunk_storage_records},
+		{help, "The number of fixed broken chunk storage records detected when "
+				"reading a range of chunks."}
+	]),
 
 	%% VDF.
 	prometheus_histogram:new([
