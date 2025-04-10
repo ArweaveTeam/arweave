@@ -6,7 +6,7 @@
 		compute_h0/2, compute_h0/5, compute_h0/6,
 		compute_h1/3, compute_h2/3, compute_solution_h/2,
 		indep_hash/1, indep_hash/2, indep_hash2/2, get_block_signature_preimage/4,
-		generate_signed_hash/1, verify_signature/3,
+		generate_signed_hash/1, verify_signature/3, get_reward_key/2,
 		generate_block_data_segment/1, generate_block_data_segment/2,
 		generate_block_data_segment_base/1, get_recall_range/3, verify_tx_root/1,
 		hash_wallet_list/1, generate_hash_list_for_block/2,
@@ -467,6 +467,20 @@ verify_signature(BlockPreimage, PrevCDiff,
 	end;
 verify_signature(_BlockPreimage, _PrevCDiff, _B) ->
 	false.
+
+%% @doc Return the key suitable for ar_wallet:sign/3 from the given public key.
+get_reward_key(Pub, Height) ->
+	case Height >= ar_fork:height_2_9() of
+		false ->
+			{?DEFAULT_KEY_TYPE, Pub};
+		true ->
+			case byte_size(Pub) of
+				?ECDSA_PUB_KEY_SIZE ->
+					{?ECDSA_KEY_TYPE, Pub};
+				_ ->
+					{?RSA_KEY_TYPE, Pub}
+			end
+	end.
 
 %% @doc Generate a block data segment for a pre-2.6 block. It is combined with a nonce
 %% when computing a solution candidate.

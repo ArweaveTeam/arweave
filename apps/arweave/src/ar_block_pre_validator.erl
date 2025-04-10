@@ -427,7 +427,6 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 					recall_byte2 = RecallByte2,
 					packing_difficulty = PackingDifficulty2,
 					replica_format = ReplicaFormat } = CacheB ->
-				may_be_report_double_signing(B, CacheB),
 				LastStepPrevOutput = get_last_step_prev_output(B),
 				LastStepPrevOutput2 = get_last_step_prev_output(CacheB),
 				case LastStepPrevOutput == LastStepPrevOutput2
@@ -488,31 +487,6 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 			invalid;
 		{valid, B5} ->
 			pre_validate_nonce_limiter_global_step_number(B5, PrevB, true, Peer)
-	end.
-
-may_be_report_double_signing(B, B2) ->
-	#block{ reward_key = {_, Key}, signature = Signature1, cumulative_diff = CDiff1,
-			previous_solution_hash = PreviousSolutionH1,
-			previous_cumulative_diff = PrevCDiff } = B,
-	#block{ reward_key = {_, Key}, signature = Signature2, cumulative_diff = CDiff2,
-			previous_cumulative_diff = PrevCDiff2,
-			previous_solution_hash = PreviousSolutionH2 } = B2,
-	case CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff) of
-		true ->
-			Preimage1 = << PreviousSolutionH1/binary,
-					(ar_block:generate_signed_hash(B))/binary >>,
-			Preimage2 = << PreviousSolutionH2/binary,
-					(ar_block:generate_signed_hash(B2))/binary >>,
-			Proof = {Key, Signature1, CDiff1, PrevCDiff, Preimage1, Signature2, CDiff2,
-					PrevCDiff2, Preimage2},
-			?LOG_INFO([{event, report_double_signing},
-				{key, ar_util:encode(Key)}, 
-				{block1, ar_util:encode(B#block.indep_hash)},
-				{block2, ar_util:encode(B2#block.indep_hash)},
-				{height1, B#block.height}, {height2, B2#block.height}]),
-			ar_events:send(block, {double_signing, Proof});
-		false ->
-			ok
 	end.
 
 get_last_step_prev_output(B) ->

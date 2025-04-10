@@ -250,23 +250,10 @@ may_be_apply_double_signing_proof(B, PrevB, Accounts) ->
 			may_be_apply_double_signing_proof2(B, PrevB, Accounts)
 	end.
 
-get_reward_key(Pub, Height) ->
-	case Height >= ar_fork:height_2_9() of
-		false ->
-			{?DEFAULT_KEY_TYPE, Pub};
-		true ->
-			case byte_size(Pub) of
-				?ECDSA_PUB_KEY_SIZE ->
-					{?ECDSA_KEY_TYPE, Pub};
-				_ ->
-					{?RSA_KEY_TYPE, Pub}
-			end
-	end.
-
 may_be_apply_double_signing_proof2(B, PrevB, Accounts) ->
 	{Pub, _Signature1, _CDiff1, _PrevCDiff1, _Preimage1, _Signature2, _CDiff2, _PrevCDiff2,
 			_Preimage2} = B#block.double_signing_proof,
-	Key = get_reward_key(Pub, B#block.height),
+	Key = ar_block:get_reward_key(Pub, B#block.height),
 	case B#block.reward_key == Key of
 		true ->
 			{error, invalid_double_signing_proof_same_address};
@@ -292,7 +279,7 @@ may_be_apply_double_signing_proof3(B, PrevB, Accounts) ->
 			Preimage2} = B#block.double_signing_proof,
 	SignaturePreimage1 = ar_block:get_block_signature_preimage(CDiff1, PrevCDiff1,
 			Preimage1, Height),
-	Key = get_reward_key(Pub, B#block.height),
+	Key = ar_block:get_reward_key(Pub, B#block.height),
 	Addr = ar_wallet:to_address(Key),
 	case ar_wallet:verify(Key, SignaturePreimage1, Signature1) of
 		false ->

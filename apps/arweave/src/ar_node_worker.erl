@@ -490,18 +490,6 @@ handle_info({tx_ready_for_mining, TX}, State) ->
 	ar_events:send(tx, {ready_for_mining, TX}),
 	{noreply, State};
 
-handle_info({event, block, {double_signing, Proof}}, State) ->
-	Map = maps:get(double_signing_proofs, State, #{}),
-	Key = element(1, Proof),
-	Addr = ar_wallet:hash_pub_key(Key),
-	case is_map_key(Addr, Map) of
-		true ->
-			{noreply, State};
-		false ->
-			Map2 = maps:put(Addr, {os:system_time(second), Proof}, Map),
-			{noreply, State#{ double_signing_proofs => Map2 }}
-	end;
-
 handle_info({event, block, {new, Block, _Source}}, State)
 		when length(Block#block.txs) > ?BLOCK_TX_COUNT_LIMIT ->
 	?LOG_WARNING([{event, received_block_with_too_many_txs},
@@ -524,9 +512,10 @@ handle_info({event, block, {new, B, _Source}}, State) ->
 					ar_ignore_registry:remove(H),
 					{noreply, State};
 				_PrevB ->
+					State2 = may_be_report_double_signing(B, State),
 					ar_block_cache:add(block_cache, B),
 					gen_server:cast(?MODULE, apply_block),
-					{noreply, State}
+					{noreply, State2}
 			end;
 		_ ->
 			%% The block's already received from a different peer or
@@ -1023,33 +1012,61 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
 		none ->
 			undefined;
 		{Addr, {_Timestamp, Proof2}, Iterator2} ->
-			{Key, Sig1, _CDiff1, _PrevCDiff1, _Preimage1,
-					Sig2, _CDiff2, _PrevCDiff2, _Preimage2} = Proof2,
+			{Pub, Sig1, CDiff1, PrevCDiff1, Preimage1,
+					Sig2, CDiff2, PrevCDiff2, Preimage2} = Proof2,
 			?LOG_INFO([{event, evaluating_double_signing_proof},
-				{key_size, byte_size(Key)},
+				{key_size, byte_size(Pub)},
 				{sig1_size, byte_size(Sig1)},
 				{sig2_size, byte_size(Sig2)},
 				{height, Height}]),
 			CheckKeyType =
-				case {byte_size(Key) == ?ECDSA_PUB_KEY_SIZE, Height >= ar_fork:height_2_9()} of
+				case {byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE, Height >= ar_fork:height_2_9()} of
 					{true, false} ->
 						false;
 					{true, true} ->
 						byte_size(Sig1) == ?ECDSA_SIG_SIZE
 							andalso byte_size(Sig2) == ?ECDSA_SIG_SIZE;
 					_ ->
-						byte_size(Key) == ?RSA_BLOCK_SIG_SIZE
+						byte_size(Pub) == ?RSA_BLOCK_SIG_SIZE
 							andalso byte_size(Sig1) == ?RSA_BLOCK_SIG_SIZE
 							andalso byte_size(Sig2) == ?RSA_BLOCK_SIG_SIZE
 				end,
-			HasLockedReward =
+			CheckDifferentSignatures =
 				case CheckKeyType of
+					false ->
+						false;
+					true ->
+						Sig1 /= Sig2
+				end,
+			HasLockedReward =
+				case CheckDifferentSignatures of
 					false ->
 						false;
 					true ->
 						ar_rewards:has_locked_reward(Addr, LockedRewards)
 				end,
-			case HasLockedReward of
+			ValidSignatures =
+				case HasLockedReward of
+					false ->
+						false;
+					true ->
+						SignaturePreimage1 = ar_block:get_block_signature_preimage(
+								CDiff1, PrevCDiff1, Preimage1, Height),
+						SignaturePreimage2 = ar_block:get_block_signature_preimage(
+								CDiff2, PrevCDiff2, Preimage2, Height),
+						Key = ar_block:get_reward_key(Pub, Height),
+						ar_wallet:verify(Key, SignaturePreimage1, Sig1)
+								andalso ar_wallet:verify(Key, SignaturePreimage2, Sig2)
+				end,
+			ValidCDiffs =
+				case ValidSignatures of
+					false ->
+						false;
+					true ->
+						CDiff1 == CDiff2
+							orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff1)
+				end,
+			case ValidCDiffs of
 				false ->
 					may_be_get_double_signing_proof2(Iterator2,
 							RootHash, LockedRewards, Height);
@@ -2242,4 +2259,54 @@ update_solution_cache(H, Args, State) ->
 						{Map2, Q2}
 				end,
 			State#{ solution_cache => Map3, solution_cache_records => Q3 }
+	end.
+
+may_be_report_double_signing(B, State) ->
+	#block{ indep_hash = H, hash = SolutionH, cumulative_diff = CDiff1,
+			previous_cumulative_diff = PrevCDiff1,
+			previous_solution_hash = PrevSolutionH1,
+			reward_key = {_, Key},
+			signature = Signature1 } = B,
+	case ar_block_cache:get_by_solution_hash(block_cache,
+			SolutionH, H, CDiff1, PrevCDiff1) of
+		not_found ->
+			State;
+		CacheB ->
+			#block{
+					hash = SolutionH,
+					cumulative_diff = CDiff2,
+					previous_cumulative_diff = PrevCDiff2,
+					previous_solution_hash = PrevSolutionH2,
+					reward_key = {_, Key},
+					signature = Signature2 } = CacheB,
+			case CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff1) of
+				true ->
+					Preimage1 = << PrevSolutionH1/binary,
+							(ar_block:generate_signed_hash(B))/binary >>,
+					Preimage2 = << PrevSolutionH2/binary,
+							(ar_block:generate_signed_hash(CacheB))/binary >>,
+					Proof = {Key, Signature1, CDiff1, PrevCDiff1, Preimage1,
+							Signature2, CDiff2, PrevCDiff2, Preimage2},
+					?LOG_INFO([{event, report_double_signing},
+							{key, ar_util:encode(Key)},
+							{block1, ar_util:encode(H)},
+							{block2, ar_util:encode(CacheB#block.indep_hash)},
+							{height1, B#block.height},
+							{height2, CacheB#block.height}]),
+					cache_double_signing_proof(Proof, State);
+				false ->
+					State
+			end
+	end.
+
+cache_double_signing_proof(Proof, State) ->
+	Map = maps:get(double_signing_proofs, State, #{}),
+	Key = element(1, Proof),
+	Addr = ar_wallet:hash_pub_key(Key),
+	case is_map_key(Addr, Map) of
+		true ->
+			State;
+		false ->
+			Map2 = maps:put(Addr, {os:system_time(second), Proof}, Map),
+			State#{ double_signing_proofs => Map2 }
 	end.

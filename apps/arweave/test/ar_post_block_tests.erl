@@ -573,7 +573,6 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 	B7_2 = sign_block(B7#block{ tags = [<<"new_tag">>] }, B6, Key),
 	post_block(B6, valid),
 	post_block(B7, valid),
-	timer:sleep(1000),
 	post_block(B7_2, valid),
 	%% Wait until the node records conflicting proofs.
 	true = ar_util:do_until(
