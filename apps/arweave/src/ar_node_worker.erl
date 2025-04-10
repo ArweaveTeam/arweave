@@ -362,14 +362,16 @@ handle_cast(Message, #{ task_queue := TaskQueue } = State) ->
 	end.
 
 handle_info({join_from_state, Height, BI, Blocks}, State) ->
-	{ok, _} = ar_wallets:start_link([{blocks, Blocks},
-			{from_state, ?START_FROM_STATE_SEARCH_DEPTH}]),
+	{ok, _} = ar_wallets:start_link(#{ blocks => Blocks,
+			search_depth => ?START_FROM_STATE_SEARCH_DEPTH }),
 	ets:insert(node_state, {join_state, {Height, Blocks, BI}}),
 	{noreply, State};
 
 handle_info({join, Height, BI, Blocks}, State) ->
 	Peers = ar_peers:get_trusted_peers(),
-	{ok, _} = ar_wallets:start_link([{blocks, Blocks}, {from_peers, Peers}]),
+	{ok, _} = ar_wallets:start_link(#{ blocks => Blocks,
+			search_depth => ?START_FROM_STATE_SEARCH_DEPTH,
+			trusted_peers => Peers }),
 	ets:insert(node_state, {join_state, {Height, Blocks, BI}}),
 	{noreply, State};
 
