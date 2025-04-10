@@ -34,10 +34,11 @@
 %%%===================================================================
 
 fetch(Start, End, StoreID) when Start >= End ->
-	%% We've reached the end of the range, next time through we'll start with a clear cache.
-	?LOG_DEBUG([{event, fetch_peer_intervals_end}, {pid, StoreID}, {store_id, StoreID},
-		{start, Start}]),
-	gen_server:cast(ar_data_sync:name(StoreID), {update_all_peers_intervals, #{}});
+	?LOG_DEBUG([{event, fetch_peer_intervals_end},
+			{store_id, StoreID},
+			{range_start, Start},
+			{range_end, End}]),
+	gen_server:cast(ar_data_sync:name(StoreID), {collect_peer_intervals, Start, End});
 fetch(Start, End, StoreID) ->
 	spawn_link(fun() ->
 		try
