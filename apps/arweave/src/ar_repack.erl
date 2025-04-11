@@ -108,7 +108,9 @@ init({StoreID, ToPacking}) ->
 	
 	{replica_2_9, RewardAddr} = ToPacking,
 
-    {ModuleStart, ModuleEnd} = ar_storage_module:get_range(StoreID),
+	Module = ar_storage_module:get_by_id(StoreID),
+	%% Don't include overlap during repack in place.
+    {ModuleStart, ModuleEnd} = ar_storage_module:module_range(Module, 0),
 	PaddedModuleEnd = ar_chunk_storage:get_chunk_bucket_end(ModuleEnd),
     Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
 
@@ -438,9 +440,7 @@ repack_footprint(Cursor, #state{} = State) ->
 				{padded_end_offset, PaddedEndOffset},
 				{bucket_end_offset, BucketEndOffset},
 				{is_chunk_recorded, IsChunkRecorded},
-				{footprint_start, FootprintStart},
-				{module_start, ModuleStart},
-				{module_end, ModuleEnd}
+				{footprint_start, FootprintStart}
 			]),
 			State#state{ next_cursor = NextCursor };
 		_ ->
@@ -469,8 +469,6 @@ repack_footprint(Cursor, #state{} = State) ->
 				{bucket_end_offset, BucketEndOffset},
 				{bucket_start_offset, BucketStartOffset},
 				{target_packing, ar_serialize:encode_packing(TargetPacking, false)},
-				{module_start, ModuleStart},
-				{module_end, ModuleEnd},
 				{entropy_end, EntropyEnd},
 				{read_batch_size, BatchSize},
 				{write_batch_size, State2#state.write_batch_size},
