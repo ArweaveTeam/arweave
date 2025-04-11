@@ -3,7 +3,8 @@
 -behaviour(gen_server).
 
 -export([name/1, acquire_semaphore/1, release_semaphore/1, is_ready/1,
-	is_entropy_recorded/2, delete_record/2, store_entropy_footprint/7, store_entropy/4, record_chunk/7]).
+	is_entropy_recorded/2, delete_record/2, store_entropy_footprint/7, store_entropy/4,
+	record_chunk/5]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -26,7 +27,7 @@ start_link(Name, {StoreID, _}) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-	list_to_atom("ar_entropy_storage_" ++ ar_storage_module:label_by_id(StoreID)).
+	list_to_atom("ar_entropy_storage_" ++ ar_storage_module:label(StoreID)).
 
 init(StoreID) ->
 	?LOG_INFO([{event, ar_entropy_storage_init}, {name, name(StoreID)}, {store_id, StoreID}]),
@@ -131,7 +132,7 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 	ar_sync_record:add_async(replica_2_9_entropy,
 		BucketEnd, BucketStart, ar_chunk_storage_replica_2_9_1_entropy, StoreID),
 	prometheus_counter:inc(replica_2_9_entropy_stored,
-		[ar_storage_module:label_by_id(StoreID)], ?DATA_CHUNK_SIZE),
+		[ar_storage_module:label(StoreID)], ?DATA_CHUNK_SIZE),
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	case IsComplete of
 		true ->
@@ -139,7 +140,7 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 			
 			prometheus_counter:inc(chunks_stored,
 				[ar_storage_module:packing_label(Packing),
-				ar_storage_module:label_by_id(StoreID)]),
+				ar_storage_module:label(StoreID)]),
 			ar_sync_record:add_async(replica_2_9_entropy_with_chunk,
 										PaddedEndOffset,
 										StartOffset,
@@ -175,8 +176,7 @@ generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
 	end.
 
 record_chunk(
-		PaddedEndOffset, Chunk, StoreID,
-		StoreIDLabel, PackingLabel, FileIndex, {IsPrepared, RewardAddr}) ->
+		PaddedEndOffset, Chunk, StoreID, FileIndex, {IsPrepared, RewardAddr}) ->
 	%% Sanity checks
 	true = PaddedEndOffset == ar_block:get_chunk_padded_offset(PaddedEndOffset),
 	%% End sanity checks
@@ -225,19 +225,16 @@ record_chunk(
 				_ ->
 					PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
 					ar_chunk_storage:record_chunk(
-						PaddedEndOffset, PackedChunk, Packing, StoreID,
-						StoreIDLabel, PackingLabel, FileIndex)
+						PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
 			end;
 		no_entropy_yet ->
 			ar_chunk_storage:record_chunk(
-				PaddedEndOffset, Chunk, unpacked_padded, StoreID,
-				StoreIDLabel, PackingLabel, FileIndex);
+				PaddedEndOffset, Chunk, unpacked_padded, StoreID,  FileIndex);
 		{_EndOffset, Entropy} ->
 			Packing = {replica_2_9, RewardAddr},
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
 			ar_chunk_storage:record_chunk(
-				PaddedEndOffset, PackedChunk, Packing, StoreID,
-				StoreIDLabel, PackingLabel, FileIndex)
+				PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
 	end,
 	release_semaphore(Filepath),
 	RecordChunk.
