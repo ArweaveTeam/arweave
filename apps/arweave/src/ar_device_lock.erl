@@ -90,7 +90,7 @@ set_device_lock_metric(StoreID, Mode, Status) ->
 		complete -> 2;
 		_ -> -2		
 	end,
-	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
+	StoreIDLabel = ar_storage_module:label(StoreID),
 	prometheus_gauge:set(device_lock_status, [StoreIDLabel, Mode], StatusCode).
 
 %%%===================================================================

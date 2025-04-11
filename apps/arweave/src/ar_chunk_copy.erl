@@ -48,7 +48,7 @@ register_read_workers() ->
 	{Workers, WorkerMap} = 
 		lists:foldl(
 			fun(StoreID, {AccWorkers, AccWorkerMap}) ->
-				Label = ar_storage_module:label_by_id(StoreID),
+				Label = ar_storage_module:label(StoreID),
 				Name = list_to_atom("ar_data_sync_worker_" ++ Label),
 
 				Worker = ?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name, read]),
