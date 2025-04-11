@@ -41,7 +41,7 @@ start_link(Name, {StoreID, Packing}) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-	list_to_atom("ar_entropy_gen_" ++ ar_storage_module:label_by_id(StoreID)).
+	list_to_atom("ar_entropy_gen_" ++ ar_storage_module:label(StoreID)).
 
 register_workers(Module) ->
 	{ok, Config} = application:get_env(arweave, config),

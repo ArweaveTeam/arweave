@@ -193,12 +193,12 @@ set_total_data_size(DataSize) ->
 
 set_storage_module_data_size(
 		StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex, DataSize) ->
-	StoreLabel = ar_storage_module:label_by_id(StoreID),
+	StoreIDLabel = ar_storage_module:label(StoreID),
 	PackingLabel = ar_storage_module:packing_label(Packing),
 	try	
 		PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
 		prometheus_gauge:set(v2_index_data_size_by_packing,
-			[StoreLabel, PackingLabel, PartitionNumber,
+			[StoreIDLabel, PackingLabel, PartitionNumber,
 			 StorageModuleSize, StorageModuleIndex,
 			 PackingDifficulty],
 			DataSize),
@@ -208,7 +208,7 @@ set_storage_module_data_size(
 		error:badarg ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
 				{reason, prometheus_not_started},
-				{store_id, StoreID}, {store_label, StoreLabel},
+				{store_id, StoreID}, {store_id_label, StoreIDLabel},
 				{packing, ar_serialize:encode_packing(Packing, true)},
 				{packing_label, PackingLabel},
 				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
@@ -216,7 +216,7 @@ set_storage_module_data_size(
 		error:{unknown_metric,default,v2_index_data_size_by_packing} ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
 				{reason, prometheus_not_started},
-				{store_id, StoreID}, {store_label, StoreLabel},
+				{store_id, StoreID}, {store_id_label, StoreIDLabel},
 				{packing, ar_serialize:encode_packing(Packing, true)},
 				{packing_label, PackingLabel},
 				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
@@ -224,7 +224,7 @@ set_storage_module_data_size(
 		Type:Reason ->
 			?LOG_ERROR([{event, set_storage_module_data_size_failed},
 				{type, Type}, {reason, Reason},
-				{store_id, StoreID}, {store_label, StoreLabel},
+				{store_id, StoreID}, {store_id_label, StoreIDLabel},
 				{packing, ar_serialize:encode_packing(Packing, true)},
 				{packing_label, PackingLabel},
 				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},

@@ -1,7 +1,7 @@
 -module(ar_storage_module).
 
 -export([id/1, label/1, address_label/2, module_address/1,
-		module_packing_difficulty/1, packing_label/1, label_by_id/1, get_by_id/1,
+		module_packing_difficulty/1, packing_label/1, get_by_id/1,
 		get_range/1, module_range/1, module_range/2, get_packing/1, get_size/1,
 		get/2, get_strict/2, get_all/1, get_all/2, get_all_packed/3, get_all_module_ranges/0,
 		has_any/1, has_range/2, get_cover/3, get_overlap/1]).
@@ -51,21 +51,14 @@ id({BucketSize, Bucket, Packing}) ->
 	id(BucketSize, Bucket, PackingString).
 
 %% @doc Return the obscure unique label for the given storage module.
-label({BucketSize, Bucket, Packing} = StorageModule) ->
-	StoreID = ar_storage_module:id(StorageModule),
+label("default") ->
+	"default";
+label(StoreID) ->
 	case ets:lookup(?MODULE, {label, StoreID}) of
 		[] ->
-			PackingLabel =
-				case Packing of
-					{spora_2_6, Addr} ->
-						ar_storage_module:address_label(Addr, spora_2_6);
-					{composite, Addr, PackingDifficulty} ->
-						ar_storage_module:address_label(Addr, {composite, PackingDifficulty});
-					{replica_2_9, Addr} ->
-						ar_storage_module:address_label(Addr, replica_2_9);
-					_ ->
-						atom_to_list(Packing)
-				end,
+			StorageModule = get_by_id(StoreID),
+			{BucketSize, Bucket, Packing} = StorageModule,
+			PackingLabel = packing_label(Packing),
 			Label = id(BucketSize, Bucket, PackingLabel),
 			ets:insert(?MODULE, {{label, StoreID}, Label}),
 			Label;
@@ -123,20 +116,6 @@ packing_label({replica_2_9, Addr}) ->
 	list_to_atom("replica_2_9_" ++ AddrLabel);
 packing_label(Packing) ->
 	Packing.
-
-%% @doc Return the obscure unique label for the given store ID.
-label_by_id("default") ->
-	"default";
-label_by_id(StoreID) ->
-	case get_by_id(StoreID) of
-		not_found ->
-			%% Occurs in tests on application shutdown.
-			?LOG_WARNING([{event, store_id_for_label_not_found},
-					{store_id, StoreID}]),
-			"error";
-		M ->
-			label(M)
-	end.
 
 %% @doc Return the storage module with the given identifier or not_found.
 %% Search across both attached modules and repacked in-place modules.
@@ -458,29 +437,44 @@ get_cover2(Start, End, [{BucketSize, Bucket, _Packing} = StorageModule | Storage
 %%%===================================================================
 
 label_test() ->
-	?assertEqual("storage_module_0_1",
-		label({?PARTITION_SIZE, 0, {spora_2_6, <<"a">>}})),
-	?assertEqual("storage_module_0_1",
-		label({?PARTITION_SIZE, 0, {spora_2_6, <<"a">>}})),
-	?assertEqual("storage_module_2_1",
-		label({?PARTITION_SIZE, 2, {spora_2_6, <<"a">>}})),
-	?assertEqual("storage_module_0_2",
-		label({?PARTITION_SIZE, 0, {spora_2_6, <<"b">>}})),
-	?assertEqual("storage_module_524288_3_2",
-		label({524288, 3, {spora_2_6, <<"b">>}})),
-	?assertEqual("storage_module_2_unpacked",
-		label({?PARTITION_SIZE, 2, unpacked})),
-	%% force a _ in the encoded address
-	?assertEqual("storage_module_2_3",
-		label({?PARTITION_SIZE, 2, {spora_2_6, <<"s÷">>}})),
-	?assertEqual("storage_module_524288_2_3",
-		label({524288, 2, {spora_2_6, <<"s÷">>}})),
-	?assertEqual("storage_module_524288_3_4",
-		label({524288, 3, {composite, <<"b">>, 1}})),
-	?assertEqual("storage_module_524288_3_4",
-		label({524288, 3, {composite, <<"b">>, 1}})),
-	?assertEqual("storage_module_524288_3_5",
-		label({524288, 3, {composite, <<"b">>, 2}})).
+	{ok, Config} = application:get_env(arweave, config),
+	try
+		application:set_env(arweave, config, Config#config{storage_modules = [
+			{?PARTITION_SIZE, 0, {spora_2_6, <<"a">>}},
+			{?PARTITION_SIZE, 2, {spora_2_6, <<"a">>}},
+			{?PARTITION_SIZE, 0, {spora_2_6, <<"b">>}},
+			{524288, 3, {spora_2_6, <<"b">>}},
+			{?PARTITION_SIZE, 2, unpacked},
+			{?PARTITION_SIZE, 2, {spora_2_6, <<"s÷">>}},
+			{524288, 2, {spora_2_6, <<"s÷">>}},
+			{524288, 3, {composite, <<"b">>, 1}},
+			{524288, 3, {composite, <<"b">>, 1}},
+			{524288, 3, {composite, <<"b">>, 2}}
+		]}),
+		?assertEqual("storage_module_0_1",
+			label(id({?PARTITION_SIZE, 0, {spora_2_6, <<"a">>}}))),
+		?assertEqual("storage_module_2_1",
+			label(id({?PARTITION_SIZE, 2, {spora_2_6, <<"a">>}}))),
+		?assertEqual("storage_module_0_2",
+			label(id({?PARTITION_SIZE, 0, {spora_2_6, <<"b">>}}))),
+		?assertEqual("storage_module_524288_3_2",
+			label(id({524288, 3, {spora_2_6, <<"b">>}}))),
+		?assertEqual("storage_module_2_unpacked",
+			label(id({?PARTITION_SIZE, 2, unpacked}))),
+		%% force a _ in the encoded address
+		?assertEqual("storage_module_2_3",
+			label(id({?PARTITION_SIZE, 2, {spora_2_6, <<"s÷">>}}))),
+		?assertEqual("storage_module_524288_2_3",
+			label(id({524288, 2, {spora_2_6, <<"s÷">>}}))),
+		?assertEqual("storage_module_524288_3_4",
+			label(id({524288, 3, {composite, <<"b">>, 1}}))),
+		?assertEqual("storage_module_524288_3_4",
+			label(id({524288, 3, {composite, <<"b">>, 1}}))),
+		?assertEqual("storage_module_524288_3_5",
+			label(id({524288, 3, {composite, <<"b">>, 2}})))
+	after
+		application:set_env(arweave, config, Config)
+	end.
 
 has_any_test() ->
 	?assertEqual(false, has_any(0, [])),
