@@ -14,13 +14,13 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([set_reward_addr/1]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_pricing.hrl").
--include("../include/ar_data_sync.hrl").
--include("../include/ar_vdf.hrl").
--include("../include/ar_mining.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
+-include("ar_pricing.hrl").
+-include("ar_data_sync.hrl").
+-include("ar_vdf.hrl").
+-include("ar_mining.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -334,9 +334,13 @@ handle_cast({found_solution, miner, _Solution, _PoACache, _PoA2Cache},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
 handle_cast({found_solution, Source, Solution, PoACache, PoA2Cache}, State) ->
-	[{_, PrevH}] = ets:lookup(node_state, current),
-	PrevB = ar_block_cache:get(block_cache, PrevH),
-	handle_found_solution({Source, Solution, PoACache, PoA2Cache}, PrevB, State, false);
+	case pick_prev_block_for_solution(Solution, Source) of
+		not_found ->
+			{noreply, State};
+		{PrevB, Solution2} ->
+			handle_found_solution(
+					{Source, Solution2, PoACache, PoA2Cache}, PrevB, State, false)
+	end;
 
 handle_cast(process_task_queue, #{ task_queue := TaskQueue } = State) ->
 	RunTask =
@@ -1902,6 +1906,95 @@ dump_mempool(TXs, MempoolSize) ->
 			?LOG_ERROR([{event, failed_to_dump_mempool}, {reason, Reason}])
 	end.
 
+pick_prev_block_for_solution(Solution, Source) ->
+	FrontBlocks = ar_block_cache:get_validated_front(block_cache),
+	PrevBlocks = [ar_block_cache:get(block_cache, B#block.previous_block)
+			|| B <- FrontBlocks],
+	pick_prev_block_from_front_blocks(Solution, Source, FrontBlocks, PrevBlocks).
+
+%% @doc Search for a base block among the validated front blocks.
+pick_prev_block_from_front_blocks(Solution, Source, FrontBlocks, PrevBlocks) ->
+	#mining_solution{ mining_address = MiningAddress } = Solution,
+	case [B || B <- FrontBlocks, B#block.reward_addr == MiningAddress] of
+		[PrevB | _] ->
+			pick_prev_block_for_solution(Solution, Source, PrevB);
+		[] ->
+			pick_prev_block_from_front_blocks2(Solution, Source, FrontBlocks, PrevBlocks)
+	end.
+
+pick_prev_block_from_front_blocks2(Solution, Source, [PrevB | FrontBlocks], PrevBlocks) ->
+	#mining_solution{ step_number = StepNumber } = Solution,
+	MaybeSolutionOffPrevB = may_be_place_solution_on_block(PrevB, StepNumber, Solution),
+	case MaybeSolutionOffPrevB of
+		{false, _Reason} ->
+			pick_prev_block_from_front_blocks2(Solution, Source, FrontBlocks, PrevBlocks);
+		Solution2 ->
+			{PrevB, Solution2}
+	end;
+pick_prev_block_from_front_blocks2(Solution, Source, [], PrevBlocks) ->
+	pick_prev_block_from_prev_blocks(Solution, Source, PrevBlocks).
+
+%% @doc Search for a base block among the previous blocks of the
+%% validated front blocks.
+pick_prev_block_from_prev_blocks(Solution, Source, PrevBlocks) ->
+	#mining_solution{ mining_address = MiningAddress } = Solution,
+	case [B || B <- PrevBlocks, B#block.reward_addr == MiningAddress] of
+		[PrevB | _] ->
+			pick_prev_block_for_solution(Solution, Source, PrevB);
+		[] ->
+			pick_prev_block_from_prev_blocks2(Solution, Source, PrevBlocks)
+	end.
+
+pick_prev_block_from_prev_blocks2(Solution, Source, [PrevB | PrevBlocks]) ->
+	#mining_solution{ step_number = StepNumber } = Solution,
+	MaybeSolutionOffPrevB = may_be_place_solution_on_block(PrevB, StepNumber, Solution),
+	case MaybeSolutionOffPrevB of
+		{false, _Reason} ->
+			pick_prev_block_from_prev_blocks2(Solution, Source, PrevBlocks);
+		Solution2 ->
+			{PrevB, Solution2}
+	end;
+pick_prev_block_from_prev_blocks2(Solution, Source, []) ->
+	#mining_solution{ step_number = StepNumber, solution_hash = SolutionH } = Solution,
+	ar_mining_server:log_prepare_solution_failure(
+			Solution, stale, no_suitable_prev_block, Source,
+			[{step_number, StepNumber}, {solution, ar_util:encode(SolutionH)}]),
+	not_found.
+
+pick_prev_block_for_solution(Solution, Source, PrevB) ->
+	#mining_solution{
+		step_number = StepNumber,
+		solution_hash = SolutionH
+	} = Solution,
+	case may_be_place_solution_on_block(PrevB, StepNumber, Solution) of
+		{false, Reason} ->
+			ar_mining_server:log_prepare_solution_failure(
+				Solution, stale, Reason, Source,
+				[{step_number, StepNumber},
+					{solution, ar_util:encode(SolutionH)},
+					{prev_block, ar_util:encode(PrevB#block.indep_hash)}]),
+			not_found;
+		Solution2 ->
+			{PrevB, Solution2}
+	end.
+
+may_be_place_solution_on_block(PrevB, StepNumber, Solution) ->
+	NonceLimiterInfo = PrevB#block.nonce_limiter_info,
+	#nonce_limiter_info{ global_step_number = PrevStepNumber, next_seed = PrevNextSeed,
+			next_vdf_difficulty = PrevNextVDFDifficulty } = NonceLimiterInfo,
+	case StepNumber > PrevStepNumber of
+		true ->
+			case ar_nonce_limiter:get_steps(
+					PrevStepNumber, StepNumber, PrevNextSeed, PrevNextVDFDifficulty) of
+				not_found ->
+					{false, stale_vdf_session};
+				Steps ->
+					Solution#mining_solution{ steps = Steps }
+			end;
+		false ->
+			{false, stale_step_number}
+	end.
+
 handle_found_solution(Args, PrevB, State, IsRebase) ->
 	{Source, Solution, PoACache, PoA2Cache} = Args,
 	#mining_solution{
@@ -1933,6 +2026,8 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 			nonce_limiter_info = PrevNonceLimiterInfo,
 			height = PrevHeight } = PrevB,
 	Height = PrevHeight + 1,
+
+	% TODO add CDiff check for our addresses
 
 	Now = os:system_time(second),
 	MaxDeviation = ar_block:get_max_timestamp_deviation(),
@@ -2364,3 +2459,249 @@ checker_test() ->
 	?assertEqual({3, #{ true => 3 }}, checker([true, true, true])),
 	?assertEqual({3, #{ true => 2, false => 1}}, checker([true, true, false])),
 	?assertEqual({3, #{ true => 1, false => 2}}, checker([true, false, false])).
+
+pick_prev_block_from_front_blocks_test_() ->
+	{setup,
+		fun() ->
+			%% Mock ar_nonce_limiter:get_steps/4 to return valid steps
+			meck:new(ar_nonce_limiter, [non_strict]),
+			meck:expect(ar_nonce_limiter, get_steps, fun(_, _, _, _) -> {ok, [1, 2, 3]} end)
+		end,
+		fun(_) ->
+			meck:unload(ar_nonce_limiter)
+		end,
+		[
+		{"Test picking block with matching reward address",
+			fun() ->
+				%% Create a mining solution with step number greater than block
+				Solution = #mining_solution{
+					mining_address = <<"addr1">>,
+					step_number = 2
+				},
+
+				%% Create front blocks with different reward addresses
+				FrontBlocks = [
+					#block{
+						reward_addr = <<"addr2">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 1}
+					},
+					#block{
+						reward_addr = <<"addr1">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 1}
+					}
+				],
+
+				%% Call the function
+				{Block, Solution2} = pick_prev_block_from_front_blocks(Solution, self(), FrontBlocks, []),
+				?assertEqual({ok, [1, 2, 3]}, Solution2#mining_solution.steps),
+
+				%% Verify it picked the block with matching reward address
+				?assertEqual(<<"addr1">>, Block#block.reward_addr)
+			end
+		},
+		{"Test picking block from previous blocks when front blocks have higher step number",
+			fun() ->
+				%% Create a mining solution with step number less than front blocks
+				Solution = #mining_solution{
+					mining_address = <<"addr1">>,
+					step_number = 1
+				},
+
+				%% Create front blocks with step numbers higher than solution
+				FrontBlocks = [
+					#block{
+						reward_addr = <<"addr2">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 2},
+						previous_block = <<"prev1">>
+					},
+					#block{
+						reward_addr = <<"addr3">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 2},
+						previous_block = <<"prev2">>
+					}
+				],
+
+				%% Create previous blocks with valid step numbers
+				PrevBlocks = [
+					#block{
+						reward_addr = <<"addr1">>,
+						height = 0,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 0}
+					}
+				],
+
+				%% Call the function
+				{Block, Solution2} = pick_prev_block_from_front_blocks(Solution, self(), FrontBlocks, PrevBlocks),
+				?assertEqual({ok, [1, 2, 3]}, Solution2#mining_solution.steps),
+
+				%% Verify it picked the previous block with matching reward address
+				?assertEqual(<<"addr1">>, Block#block.reward_addr)
+			end
+		},
+		{"Test picking any suitable front block when no reward address matches",
+			fun() ->
+				%% Create a mining solution with step number greater than blocks
+				Solution = #mining_solution{
+					mining_address = <<"addr1">>,
+					step_number = 2
+				},
+
+				%% Create front blocks with different reward addresses but valid step numbers
+				FrontBlocks = [
+					#block{
+						reward_addr = <<"addr2">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 1}
+					},
+					#block{
+						reward_addr = <<"addr3">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 1}
+					}
+				],
+
+				%% Call the function
+				{Block, Solution2} = pick_prev_block_from_front_blocks(Solution, self(), FrontBlocks, []),
+				?assertEqual({ok, [1, 2, 3]}, Solution2#mining_solution.steps),
+
+				%% Verify it picked one of the front blocks
+				?assert(lists:member(Block, FrontBlocks))
+			end
+		},
+		{"Test picking block with matching step number",
+			fun() ->
+				%% Create a mining solution with step number greater than one block
+				Solution = #mining_solution{
+					mining_address = <<"addr1">>,
+					step_number = 2
+				},
+
+				%% Create front blocks with different step numbers
+				FrontBlocks = [
+					#block{
+						reward_addr = <<"addr1">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 1}
+					},
+					#block{
+						reward_addr = <<"addr1">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 2}
+					},
+					#block{
+						reward_addr = <<"addr1">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 3}
+					}
+				],
+
+				%% Call the function
+				{Block, Solution2} = pick_prev_block_from_front_blocks(Solution, self(), FrontBlocks, []),
+				?assertEqual({ok, [1, 2, 3]}, Solution2#mining_solution.steps),
+
+				%% Verify it picked one of the blocks with step number less than solution
+				?assert(Block#block.nonce_limiter_info#nonce_limiter_info.global_step_number < Solution#mining_solution.step_number)
+			end
+		},
+		{"Test picking suitable previous block when front blocks and some previous blocks are not suitable",
+			fun() ->
+				%% Create a mining solution with step number greater than some blocks
+				Solution = #mining_solution{
+					mining_address = <<"addr1">>,
+					step_number = 2
+				},
+
+				%% Create front blocks with step numbers higher than solution
+				FrontBlocks = [
+					#block{
+						reward_addr = <<"addr2">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 3},
+						previous_block = <<"prev1">>
+					},
+					#block{
+						reward_addr = <<"addr3">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 4},
+						previous_block = <<"prev2">>
+					}
+				],
+
+				%% Create previous blocks - some with higher step numbers, one suitable
+				PrevBlocks = [
+					#block{
+						reward_addr = <<"addr4">>,
+						height = 0,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 3}
+					},
+					#block{
+						reward_addr = <<"addr5">>,
+						height = 0,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 1}
+					},
+					#block{
+						reward_addr = <<"addr6">>,
+						height = 0,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 4}
+					}
+				],
+
+				%% Call the function
+				{Block, Solution2} = pick_prev_block_from_front_blocks(Solution, self(), FrontBlocks, PrevBlocks),
+				?assertEqual({ok, [1, 2, 3]}, Solution2#mining_solution.steps),
+
+				%% Verify it picked the previous block with step number 1
+				?assertEqual(1, Block#block.nonce_limiter_info#nonce_limiter_info.global_step_number),
+				?assertEqual(<<"addr5">>, Block#block.reward_addr)
+			end
+		},
+		{"Test returning not_found when no suitable blocks exist",
+			fun() ->
+				%% Create a mining solution with step number less than all blocks
+				Solution = #mining_solution{
+					mining_address = <<"addr1">>,
+					step_number = 1
+				},
+
+				%% Create front blocks with step numbers higher than solution
+				FrontBlocks = [
+					#block{
+						reward_addr = <<"addr2">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 2},
+						previous_block = <<"prev1">>
+					},
+					#block{
+						reward_addr = <<"addr3">>,
+						height = 1,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 3},
+						previous_block = <<"prev2">>
+					}
+				],
+
+				%% Create previous blocks with step numbers higher than solution
+				PrevBlocks = [
+					#block{
+						reward_addr = <<"addr4">>,
+						height = 0,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 2}
+					},
+					#block{
+						reward_addr = <<"addr5">>,
+						height = 0,
+						nonce_limiter_info = #nonce_limiter_info{global_step_number = 3}
+					}
+				],
+
+				%% Call the function
+				Result = pick_prev_block_from_front_blocks(Solution, self(), FrontBlocks, PrevBlocks),
+
+				%% Verify it returned not_found
+				?assertEqual(not_found, Result)
+			end
+		}
+	]}.
