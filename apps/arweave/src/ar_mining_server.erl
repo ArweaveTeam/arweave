@@ -13,11 +13,11 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
--include_lib("arweave/include/ar_mining.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
+-include("ar_data_discovery.hrl").
+-include("ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 
@@ -676,48 +676,8 @@ prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 			_ ->
 				LastStepCheckpoints
 		end,
-	prepare_solution(steps, Candidate, Solution#mining_solution{
+	prepare_solution(proofs, Candidate, Solution#mining_solution{
 			last_step_checkpoints = LastStepCheckpoints2 });
-
-prepare_solution(steps, Candidate, Solution) ->
-	#mining_candidate{ step_number = StepNumber } = Candidate,
-	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
-	#nonce_limiter_info{ global_step_number = PrevStepNumber, next_seed = PrevNextSeed,
-			next_vdf_difficulty = PrevNextVDFDifficulty } = TipNonceLimiterInfo,
-	case StepNumber > PrevStepNumber of
-		true ->
-			Steps = ar_nonce_limiter:get_steps(
-					PrevStepNumber, StepNumber, PrevNextSeed, PrevNextVDFDifficulty),
-			case Steps of
-				not_found ->
-					LogData = [
-						{start_step_number, PrevStepNumber},
-						{next_step_number, StepNumber},
-						{next_seed, ar_util:safe_encode(PrevNextSeed)},
-						{next_vdf_difficulty, PrevNextVDFDifficulty},
-						{h1, ar_util:safe_encode(Candidate#mining_candidate.h1)},
-						{h2, ar_util:safe_encode(Candidate#mining_candidate.h2)}],
-					?LOG_INFO([{event, found_solution_but_failed_to_find_checkpoints}
-						| LogData]),
-					may_be_leave_it_to_exit_peer(
-							prepare_solution(proofs, Candidate,
-									Solution#mining_solution{ steps = [] }),
-							step_checkpoints_not_found, LogData);
-				_ ->
-					prepare_solution(proofs, Candidate,
-							Solution#mining_solution{ steps = Steps })
-			end;
-		false ->
-			log_prepare_solution_failure(Solution, stale, stale_step_number, miner, [
-					{start_step_number, PrevStepNumber},
-					{next_step_number, StepNumber},
-					{next_seed, ar_util:safe_encode(PrevNextSeed)},
-					{next_vdf_difficulty, PrevNextVDFDifficulty},
-					{h1, ar_util:safe_encode(Candidate#mining_candidate.h1)},
-					{h2, ar_util:safe_encode(Candidate#mining_candidate.h2)}
-					]),
-			error
-	end;
 
 prepare_solution(proofs, Candidate, Solution) ->
 	#mining_candidate{

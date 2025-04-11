@@ -14,13 +14,13 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([set_reward_addr/1]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_pricing.hrl").
--include("../include/ar_data_sync.hrl").
--include("../include/ar_vdf.hrl").
--include("../include/ar_mining.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
+-include("ar_pricing.hrl").
+-include("ar_data_sync.hrl").
+-include("ar_vdf.hrl").
+-include("ar_mining.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -324,9 +324,13 @@ handle_cast({found_solution, miner, _Solution, _PoACache, _PoA2Cache},
 		#{ automine := false, miner_2_6 := undefined } = State) ->
 	{noreply, State};
 handle_cast({found_solution, Source, Solution, PoACache, PoA2Cache}, State) ->
-	[{_, PrevH}] = ets:lookup(node_state, current),
-	PrevB = ar_block_cache:get(block_cache, PrevH),
-	handle_found_solution({Source, Solution, PoACache, PoA2Cache}, PrevB, State, false);
+	case pick_prev_block_for_solution(Solution, Source) of
+		not_found ->
+			{noreply, State};
+		{PrevB, Solution2} ->
+			handle_found_solution(
+					{Source, Solution2, PoACache, PoA2Cache}, PrevB, State, false)
+	end;
 
 handle_cast(process_task_queue, #{ task_queue := TaskQueue } = State) ->
 	RunTask =
@@ -1862,6 +1866,68 @@ dump_mempool(TXs, MempoolSize) ->
 		{error, Reason} ->
 			?LOG_ERROR([{event, failed_to_dump_mempool}, {reason, Reason}])
 	end.
+
+pick_prev_block_for_solution(Solution, Source) ->
+	#mining_solution{ step_number = StepNumber } = Solution,
+	[{_, PrevH}] = ets:lookup(node_state, current),
+	PrevB = ar_block_cache:get(block_cache, PrevH),
+	MaybeSolutionOffPrevB = may_be_place_solution_on_block(PrevB, StepNumber, Solution),
+	case MaybeSolutionOffPrevB of
+		{false, _Reason} ->
+			PrevPrevH = PrevB#block.previous_block,
+			PrevPrevB = ar_block_cache:get(block_cache, PrevPrevH),
+			case may_be_place_solution_on_block(PrevPrevB, StepNumber, Solution) of
+				{false, Reason} ->
+					ar_mining_server:log_prepare_solution_failure(
+						Solution, stale, Reason, Source,
+						get_stale_solution_log_data(
+								PrevB, PrevPrevB, StepNumber, Solution)),
+					not_found;
+				Solution2 ->
+					{PrevPrevB, Solution2}
+			end;
+		Solution3 ->
+			{PrevB, Solution3}
+	end.
+
+may_be_place_solution_on_block(PrevB, StepNumber, Solution) ->
+	NonceLimiterInfo = PrevB#block.nonce_limiter_info,
+	#nonce_limiter_info{ global_step_number = PrevStepNumber, next_seed = PrevNextSeed,
+			next_vdf_difficulty = PrevNextVDFDifficulty } = NonceLimiterInfo,
+	case StepNumber > PrevStepNumber of
+		true ->
+			case ar_nonce_limiter:get_steps(
+					PrevStepNumber, StepNumber, PrevNextSeed, PrevNextVDFDifficulty) of
+				not_found ->
+					{false, stale_vdf_session};
+				Steps ->
+					Solution#mining_solution{ steps = Steps }
+			end;
+		false ->
+			{false, stale_step_number}
+	end.
+
+get_stale_solution_log_data(PrevB, PrevPrevB, StepNumber, Solution) ->
+	#nonce_limiter_info{
+		global_step_number = PrevStepNumber,
+		next_seed = PrevNextSeed,
+		next_vdf_difficulty = PrevNextVDFDifficulty
+	} = PrevB#block.nonce_limiter_info,
+	#nonce_limiter_info{
+		global_step_number = PrevPrevStepNumber,
+		next_seed = PrevPrevNextSeed,
+		next_vdf_difficulty = PrevPrevNextVDFDifficulty
+	} = PrevPrevB#block.nonce_limiter_info,
+	[{step_number, StepNumber},
+		{prev_block, ar_util:encode(PrevB#block.indep_hash)},
+		{prev_step_number, PrevStepNumber},
+		{prev_next_seed, ar_util:encode(PrevNextSeed)},
+		{prev_next_vdf_difficulty, PrevNextVDFDifficulty},
+		{prev_prev_block, ar_util:encode(PrevPrevB#block.indep_hash)},
+		{prev_prev_step_number, PrevPrevStepNumber},
+		{prev_prev_next_seed, ar_util:encode(PrevPrevNextSeed)},
+		{prev_prev_next_vdf_difficulty, PrevPrevNextVDFDifficulty},
+		{solution, ar_util:encode(Solution#mining_solution.solution_hash)}].
 
 handle_found_solution(Args, PrevB, State, IsRebase) ->
 	{Source, Solution, PoACache, PoA2Cache} = Args,
