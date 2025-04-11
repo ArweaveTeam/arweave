@@ -33,7 +33,7 @@ start_link(Name, StoreID) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-	list_to_atom("ar_repack_io_" ++ ar_storage_module:label_by_id(StoreID)).
+	list_to_atom("ar_repack_io_" ++ ar_storage_module:label(StoreID)).
 
 init(StoreID) ->
 	{ModuleStart, ModuleEnd} = ar_storage_module:get_range(StoreID),
@@ -164,7 +164,7 @@ do_read_footprint(
 	),
 	ar_metrics:record_rate_metric(
 		StartTime, ChunkReadSizeInBytes,
-		chunk_read_rate_bytes_per_second, [StoreID, repack]),
+		chunk_read_rate_bytes_per_second, [ar_storage_module:label(StoreID), repack]),
 
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
@@ -195,7 +195,7 @@ process_write_queue(WriteQueue, Packing, RewardAddr, #state{} = State) ->
     ),
 	ar_metrics:record_rate_metric(
 		StartTime, gb_sets:size(WriteQueue) * ?DATA_CHUNK_SIZE,
-		chunk_write_rate_bytes_per_second, [StoreID, repack]),
+		chunk_write_rate_bytes_per_second, [ar_storage_module:label(StoreID), repack]),
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
 	log_debug(process_write_queue, State, [

@@ -193,12 +193,12 @@ set_total_data_size(DataSize) ->
 
 set_storage_module_data_size(
 		StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex, DataSize) ->
-	StoreLabel = ar_storage_module:label_by_id(StoreID),
+	StoreIDLabel = ar_storage_module:label(StoreID),
 	PackingLabel = ar_storage_module:packing_label(Packing),
 	try	
 		PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
 		prometheus_gauge:set(v2_index_data_size_by_packing,
-			[StoreLabel, PackingLabel, PartitionNumber,
+			[StoreIDLabel, PackingLabel, PartitionNumber,
 			 StorageModuleSize, StorageModuleIndex,
 			 PackingDifficulty],
 			DataSize),
@@ -208,7 +208,7 @@ set_storage_module_data_size(
 		error:badarg ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
 				{reason, prometheus_not_started},
-				{store_id, StoreID}, {store_label, StoreLabel},
+				{store_id, StoreID}, {store_id_label, StoreIDLabel},
 				{packing, ar_serialize:encode_packing(Packing, true)},
 				{packing_label, PackingLabel},
 				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
@@ -216,7 +216,7 @@ set_storage_module_data_size(
 		error:{unknown_metric,default,v2_index_data_size_by_packing} ->
 			?LOG_WARNING([{event, set_storage_module_data_size_failed},
 				{reason, prometheus_not_started},
-				{store_id, StoreID}, {store_label, StoreLabel},
+				{store_id, StoreID}, {store_id_label, StoreIDLabel},
 				{packing, ar_serialize:encode_packing(Packing, true)},
 				{packing_label, PackingLabel},
 				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
@@ -224,7 +224,7 @@ set_storage_module_data_size(
 		Type:Reason ->
 			?LOG_ERROR([{event, set_storage_module_data_size_failed},
 				{type, Type}, {reason, Reason},
-				{store_id, StoreID}, {store_label, StoreLabel},
+				{store_id, StoreID}, {store_id_label, StoreIDLabel},
 				{packing, ar_serialize:encode_packing(Packing, true)},
 				{packing_label, PackingLabel},
 				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
@@ -968,14 +968,31 @@ test_data_size_stats() ->
 		ets:insert(node_state, [{weave_size, WeaveSize}]),
 
 		ar_mining_stats:pause_performance_reports(120000),
-		do_test_data_size_stats({spora_2_6, <<"MINING">>}, {spora_2_6, <<"PACKING">>}),
-		do_test_data_size_stats({composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}),
-		do_test_data_size_stats({composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2})
+		do_test_data_size_stats(Config, {spora_2_6, <<"MINING">>}, {spora_2_6, <<"PACKING">>}),
+		do_test_data_size_stats(Config, {composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}),
+		do_test_data_size_stats(Config, {composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2})
 	after
 		application:set_env(arweave, config, Config)
 	end.
 
-do_test_data_size_stats(Mining, Packing) ->
+do_test_data_size_stats(Config, Mining, Packing) ->
+	application:set_env(arweave, config, Config#config{ 
+		storage_modules = [
+			{floor(0.1 * ?PARTITION_SIZE), 10, unpacked},
+			{floor(0.1 * ?PARTITION_SIZE), 10, Mining},
+			{floor(0.1 * ?PARTITION_SIZE), 10, Packing},
+			{floor(0.3 * ?PARTITION_SIZE), 4, unpacked},
+			{floor(0.3 * ?PARTITION_SIZE), 4, Mining},
+			{floor(0.3 * ?PARTITION_SIZE), 4, Packing},
+			{floor(0.2 * ?PARTITION_SIZE), 8, unpacked},
+			{floor(0.2 * ?PARTITION_SIZE), 8, Mining},
+			{floor(0.2 * ?PARTITION_SIZE), 8, Packing},
+			{?PARTITION_SIZE, 2, unpacked},
+			{?PARTITION_SIZE, 2, Mining},
+			{?PARTITION_SIZE, 2, Packing}
+		]
+	}),
+
 	reset_all_stats(),
 	?assertEqual(0, get_total_minable_data_size(Mining)),
 	?assertEqual(0, get_partition_data_size(1, Mining)),

@@ -48,7 +48,7 @@
 %%%===================================================================
 
 name(StoreID) ->
-	list_to_atom("ar_data_sync_" ++ ar_storage_module:label_by_id(StoreID)).
+	list_to_atom("ar_data_sync_" ++ ar_storage_module:label(StoreID)).
 
 start_link(Name, StoreID) ->
 	gen_server:start_link({local, Name}, ?MODULE, StoreID, []).
@@ -59,7 +59,7 @@ register_workers() ->
 	StorageModuleWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
-			StoreLabel = ar_storage_module:label(StorageModule),
+			StoreLabel = ar_storage_module:label(StoreID),
 			Name = list_to_atom("ar_data_sync_" ++ StoreLabel),
 			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, none}])
 		end,
@@ -1027,8 +1027,9 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 				%% a bucket size worth of chunks. This number is slightly arbitrary and we
 				%% should feel free to adjust as necessary.
 				IntervalsQueueSize = gb_sets:size(Q),
-				StoreIDLabel = ar_storage_module:label_by_id(StoreID),
-				prometheus_gauge:set(sync_intervals_queue_size, [StoreIDLabel], IntervalsQueueSize),
+				StoreIDLabel = ar_storage_module:label(StoreID),
+				prometheus_gauge:set(sync_intervals_queue_size,
+					[StoreIDLabel], IntervalsQueueSize),
 				case IntervalsQueueSize > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
 					true ->
 						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}),
@@ -2981,7 +2982,7 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 			case put_chunk_data(ChunkDataKey, StoreID, {Chunk, DataPath}) of
 				ok ->
 					PackingLabel = ar_storage_module:packing_label(Packing),
-					StoreIDLabel = ar_storage_module:label_by_id(StoreID),
+					StoreIDLabel = ar_storage_module:label(StoreID),
 					prometheus_counter:inc(chunks_stored, [PackingLabel, StoreIDLabel]),
 					{ok, Packing};
 				Error ->

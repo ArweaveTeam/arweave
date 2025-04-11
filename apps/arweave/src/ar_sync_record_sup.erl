@@ -26,7 +26,7 @@ init([]) ->
 	ConfiguredWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
-			Label = ar_storage_module:label(StorageModule),
+			Label = ar_storage_module:label(StoreID),
 			Name = list_to_atom("ar_sync_record_" ++ Label),
 			?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
 		end,
@@ -37,7 +37,7 @@ init([]) ->
 	RepackInPlaceWorkers = lists:map(
 		fun({StorageModule, _Packing}) ->
 			StoreID = ar_storage_module:id(StorageModule),
-			Label = ar_storage_module:label(StorageModule),
+			Label = ar_storage_module:label(StoreID),
 			Name = list_to_atom("ar_sync_record_" ++ Label),
 			?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
 		end,

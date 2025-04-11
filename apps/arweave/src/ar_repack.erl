@@ -56,7 +56,7 @@ start_link(Name, {StoreID, Packing}) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-	list_to_atom("ar_repack_" ++ ar_storage_module:label_by_id(StoreID)).
+	list_to_atom("ar_repack_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
     {ok, Config} = application:get_env(arweave, config),
@@ -108,7 +108,9 @@ init({StoreID, ToPacking}) ->
 	
 	{replica_2_9, RewardAddr} = ToPacking,
 
-    {ModuleStart, ModuleEnd} = ar_storage_module:get_range(StoreID),
+	Module = ar_storage_module:get_by_id(StoreID),
+	%% Don't include overlap during repack in place.
+    {ModuleStart, ModuleEnd} = ar_storage_module:module_range(Module),
 	PaddedModuleEnd = ar_chunk_storage:get_chunk_bucket_end(ModuleEnd),
     Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
 
@@ -438,9 +440,7 @@ repack_footprint(Cursor, #state{} = State) ->
 				{padded_end_offset, PaddedEndOffset},
 				{bucket_end_offset, BucketEndOffset},
 				{is_chunk_recorded, IsChunkRecorded},
-				{footprint_start, FootprintStart},
-				{module_start, ModuleStart},
-				{module_end, ModuleEnd}
+				{footprint_start, FootprintStart}
 			]),
 			State#state{ next_cursor = NextCursor };
 		_ ->
@@ -469,8 +469,6 @@ repack_footprint(Cursor, #state{} = State) ->
 				{bucket_end_offset, BucketEndOffset},
 				{bucket_start_offset, BucketStartOffset},
 				{target_packing, ar_serialize:encode_packing(TargetPacking, false)},
-				{module_start, ModuleStart},
-				{module_end, ModuleEnd},
 				{entropy_end, EntropyEnd},
 				{read_batch_size, BatchSize},
 				{write_batch_size, State2#state.write_batch_size},
@@ -923,9 +921,10 @@ count_states(cache, #state{} = State) ->
 		{cache_size, maps:size(Map)},
 		{states, maps:to_list(MapCount)}
 	]),
+	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			prometheus_gauge:set(repack_chunk_states, [StoreID, cache, ChunkState], Count),
+			prometheus_gauge:set(repack_chunk_states, [StoreIDLabel, cache, ChunkState], Count),
 			Acc
 		end,
 		ok,
@@ -946,10 +945,11 @@ count_states(queue, #state{} = State) ->
 	log_debug(count_write_queue_states, State, [
 		{queue_size, gb_sets:size(WriteQueue)},
 		{states, maps:to_list(WriteQueueCount)}
-	]),
+	]),	
+	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			prometheus_gauge:set(repack_chunk_states, [StoreID, queue, ChunkState], Count),
+			prometheus_gauge:set(repack_chunk_states, [StoreIDLabel, queue, ChunkState], Count),
 			Acc
 		end,
 		ok,
