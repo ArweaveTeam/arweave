@@ -8,7 +8,8 @@
 		get_longest_chain_cache/1,
 		get_block_and_status/2, remove/2, get_checkpoint_block/1, prune/2,
 		get_by_solution_hash/5, is_known_solution_hash/2,
-		get_siblings/2, get_fork_blocks/2, update_timestamp/3]).
+		get_siblings/2, get_fork_blocks/2, update_timestamp/3,
+		get_validated_front/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -480,6 +481,16 @@ update_timestamp(Tab, H, ReceiveTimestamp) ->
 			end
 	end.
 
+%% @doc Return the list of top validated blocks of the longest chains (the largest
+%% cumulative difficulty blocks).
+get_validated_front(Tab) ->
+	case ets:lookup(Tab, links) of
+		[] ->
+			[];
+		[{_, Set}] ->
+			get_validated_front(Tab, Set)
+	end.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -719,6 +730,31 @@ update_longest_chain_cache(Tab) ->
 			ets:insert_new(Tab, {longest_chain, Result})
 	end,
 	Result.
+
+get_validated_front(Tab, Set) ->
+	{_MaxCDiff, Blocks} = gb_sets:fold(
+		fun({_Height, H}, {CurrentMaxCDiff, CurrentBlocks}) ->
+			case ets:lookup(Tab, {block, H}) of
+				[{_, {B, Status, _Timestamp, _Children}}]
+						when Status == validated;
+							Status == on_chain ->
+					CDiff = B#block.cumulative_diff,
+					case CDiff > CurrentMaxCDiff of
+						true ->
+							{CDiff, [B]};
+						false when CDiff == CurrentMaxCDiff ->
+							{CurrentMaxCDiff, [B | CurrentBlocks]};
+						false ->
+							{CurrentMaxCDiff, CurrentBlocks}
+					end;
+				_ ->
+					{CurrentMaxCDiff, CurrentBlocks}
+			end
+		end,
+		{0, []},
+		Set
+	),
+	Blocks.
 
 %%%===================================================================
 %%% Tests.
@@ -1760,3 +1796,163 @@ block_id(#block{ indep_hash = H }) ->
 on_top(B, PrevB) ->
 	B#block{ previous_block = PrevB#block.indep_hash, height = PrevB#block.height + 1,
 			previous_cumulative_diff = PrevB#block.cumulative_diff }.
+
+get_validated_front_test() ->
+	ets:new(bcache_test, [set, named_table]),
+
+	%% Test empty cache
+	%%
+	%% Height	Block/Status
+	%%
+	%% (empty)
+	?assertEqual([], get_validated_front(bcache_test)),
+
+	%% Test with a single on-chain block
+	%%
+	%% Height	Block/Status
+	%%
+	%% 0		B1/on_chain
+	new(bcache_test, B1 = random_block(0)),
+	?assertEqual([B1], get_validated_front(bcache_test)),
+
+	%% Test with a single validated block
+	%%
+	%% Height	Block/Status
+	%%
+	%% 0		B1/on_chain
+	%% 1		B2/validated (cdiff=1)
+	add_validated(bcache_test, B2 = on_top(random_block(1), B1)),
+	?assertEqual([B2], get_validated_front(bcache_test)),
+
+	%% Test with multiple validated blocks at different heights
+	%%
+	%% Height	Block/Status
+	%%
+	%% 0		B1/on_chain
+	%% 1		B2/validated (cdiff=1)
+	%% 2		B3/validated (cdiff=2)
+	%% 3		B4/validated (cdiff=3)
+	add_validated(bcache_test, B3 = on_top(random_block(2), B2)),
+	add_validated(bcache_test, B4 = on_top(random_block(3), B3)),
+	?assertEqual([B4], get_validated_front(bcache_test)),
+
+	%% Test with multiple blocks at the same highest cumulative difficulty
+	%%
+	%% Height	Block/Status
+	%%
+	%% 0		B1/on_chain
+	%% 1		B2/validated (cdiff=1)
+	%% 2		B3/validated (cdiff=2)
+	%% 3		B4/validated (cdiff=3)
+	%% 3		B5/validated (cdiff=3)
+	add_validated(bcache_test, B5 = on_top(random_block(3), B2)),
+	?assertEqual(lists:sort([B4, B5]),
+			lists:sort(get_validated_front(bcache_test))),
+
+	%% Test with non-validated blocks having higher cumulative difficulty
+	%%
+	%% Height	Block/Status
+	%%
+	%% 0		B1/on_chain
+	%% 1		B2/validated (cdiff=1)
+	%% 2		B3/validated (cdiff=2)
+	%% 3		B4/validated (cdiff=3)
+	%% 3		B5/validated (cdiff=3)
+	%% 4		B6/not_validated (cdiff=4)
+	add(bcache_test, B6 = on_top(random_block(4), B4)),
+	?assertEqual(lists:sort([B4, B5]),
+			lists:sort(get_validated_front(bcache_test))),
+
+	%% Test validating a block with higher cumulative difficulty
+	%%
+	%% Height	Block/Status
+	%%
+	%% 0		B1/on_chain
+	%% 1		B2/validated (cdiff=1)
+	%% 2		B3/validated (cdiff=2)
+	%% 3		B4/validated (cdiff=3)
+	%% 3		B5/validated (cdiff=3)
+	%% 4		B6/validated (cdiff=4)
+	add_validated(bcache_test, B6),
+	?assertEqual([B6], get_validated_front(bcache_test)),
+
+	%% Test with multiple forks at the same height and cumulative difficulty
+	%%
+	%% Height	Block/Status
+	%%
+	%% 0		B1/on_chain
+	%% 1		B2/validated (cdiff=1)
+	%% 2		B3/validated (cdiff=2)
+	%% 3		B4/validated (cdiff=3)
+	%% 3		B5/validated (cdiff=3)
+	%% 4		B6/validated (cdiff=4)
+	%% 4		B7/validated (cdiff=4)
+	%% 4		B8/validated (cdiff=4)
+	add_validated(bcache_test, B7 = on_top(random_block(4), B3)),
+	add_validated(bcache_test, B8 = on_top(random_block(4), B5)),
+	?assertEqual(lists:sort([B6, B7, B8]),
+			lists:sort(get_validated_front(bcache_test))),
+
+	%% Test with a mix of validated and non-validated blocks at different heights
+	%%
+	%% Height	Block/Status
+	%%
+	%% 0		B1/on_chain
+	%% 1		B2/validated (cdiff=1)
+	%% 2		B3/validated (cdiff=2)
+	%% 3		B4/validated (cdiff=3)
+	%% 3		B5/validated (cdiff=3)
+	%% 4		B6/validated (cdiff=4)
+	%% 4		B7/validated (cdiff=4)
+	%% 4		B8/validated (cdiff=4)
+	%% 5		B9/not_validated (cdiff=5)
+	%% 5		B10/not_validated (cdiff=5)
+	add(bcache_test, B9 = on_top(random_block(5), B6)),
+	add(bcache_test, B10 = on_top(random_block(5), B7)),
+	?assertEqual(lists:sort([B6, B7, B8]),
+			lists:sort(get_validated_front(bcache_test))),
+
+	%% Test validating blocks with higher cumulative difficulty
+	%%
+	%% Height	Block/Status
+	%%
+	%% 0		B1/on_chain
+	%% 1		B2/validated (cdiff=1)
+	%% 2		B3/validated (cdiff=2)
+	%% 3		B4/validated (cdiff=3)
+	%% 3		B5/validated (cdiff=3)
+	%% 4		B6/validated (cdiff=4)
+	%% 4		B7/validated (cdiff=4)
+	%% 4		B8/validated (cdiff=4)
+	%% 5		B9/validated (cdiff=5)
+	%% 5		B10/validated (cdiff=5)
+	add_validated(bcache_test, B9),
+	add_validated(bcache_test, B10),
+	?assertEqual(lists:sort([B9, B10]),
+			lists:sort(get_validated_front(bcache_test))),
+
+	%% Test with on_chain blocks at the highest cumulative difficulty
+	%%
+	%% Height	Block/Status
+	%%
+	%% 0		B1/on_chain
+	%% 1		B2/validated (cdiff=1)
+	%% 2		B3/validated (cdiff=2)
+	%% 3		B4/validated (cdiff=3)
+	%% 3		B5/validated (cdiff=3)
+	%% 4		B6/validated (cdiff=4)
+	%% 4		B7/validated (cdiff=4)
+	%% 4		B8/validated (cdiff=4)
+	%% 5		B9/validated (cdiff=5)
+	%% 5		B10/validated (cdiff=5)
+	%% 6		B11/validated (cdiff=6)
+	%% 6		B12/on_chain (cdiff=7)
+	add(bcache_test, B11 = on_top(random_block(6), B9)),
+	mark_tip(bcache_test, block_id(B11)),
+	?assertEqual([B11], get_validated_front(bcache_test)),
+	add(bcache_test, B12 = on_top(random_block(6), B9)),
+	mark_tip(bcache_test, block_id(B12)),
+	?assertEqual(lists:sort([B11, B12]),
+			lists:sort(get_validated_front(bcache_test))),
+
+	ets:delete(bcache_test).
