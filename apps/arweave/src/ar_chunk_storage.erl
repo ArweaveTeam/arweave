@@ -12,7 +12,7 @@
 		get_storage_module_path/2, get_chunk_storage_path/2,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1, 
 		get_chunk_byte_from_bucket_end/1,
-		sync_record_id/1, write_chunk/4, record_chunk/7, read_offset/2]).
+		sync_record_id/1, write_chunk/4, record_chunk/5, read_offset/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -31,8 +31,6 @@
 -record(state, {
 	file_index,
 	store_id,
-	store_id_label,
-	packing_labels = #{},
 	entropy_context = none, %% some data we need pass to ar_entropy_storage
 	range_start,
 	range_end
@@ -48,7 +46,7 @@ start_link(Name, StoreID) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-	list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label_by_id(StoreID)).
+	list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -353,9 +351,8 @@ init("default" = StoreID) ->
 		FileIndex
 	),
 	warn_custom_chunk_group_size(StoreID),
-	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
 	{ok, #state{
-		file_index = FileIndex2, store_id = StoreID, store_id_label = StoreIDLabel }};
+		file_index = FileIndex2, store_id = StoreID }};
 init(StoreID) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
@@ -374,14 +371,12 @@ init(StoreID) ->
 	),
 	warn_custom_chunk_group_size(StoreID),
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
-	StoreIDLabel = ar_storage_module:label_by_id(StoreID),
 
 	State = #state{
 		file_index = FileIndex2,
 		store_id = StoreID,
 		range_start = RangeStart,
-		range_end = RangeEnd,
-		store_id_label = StoreIDLabel
+		range_end = RangeEnd
 	},
 
 	EntropyContext = ar_entropy_gen:initialize_context(
@@ -415,18 +410,16 @@ handle_cast(Cast, State) ->
 
 handle_call({put, PaddedEndOffset, Chunk, Packing}, _From, State)
 		when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
-	#state{ store_id = StoreID, store_id_label = StoreIDLabel,
+	#state{ store_id = StoreID,
 		entropy_context = EntropyContext, file_index = FileIndex } = State,
 
-	{PackingLabel, State2} = get_packing_label(Packing, State),
 	Result = store_chunk(
-		PaddedEndOffset, Chunk, Packing, StoreID,
-		StoreIDLabel, PackingLabel, FileIndex, EntropyContext),
+		PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, EntropyContext),
 	case Result of
 		{ok, FileIndex2, NewPacking} ->
-			{reply, {ok, NewPacking}, State2#state{ file_index = FileIndex2 }};
+			{reply, {ok, NewPacking}, State#state{ file_index = FileIndex2 }};
 		Error ->
-			{reply, Error, State2}
+			{reply, Error, State}
 	end;
 
 handle_call({delete, PaddedEndOffset}, _From, State) ->
@@ -498,25 +491,23 @@ get_filepath(Name, StoreID) ->
 	ChunkDir = get_chunk_storage_path(DataDir, StoreID),
 	filename:join([ChunkDir, Name]).
 
-store_chunk(
-		PaddedEndOffset, Chunk, Packing, StoreID, StoreIDLabel,
-		PackingLabel, FileIndex, EntropyContext) ->
+store_chunk(PaddedEndOffset, Chunk, Packing, StoreID, FileIndex, EntropyContext) ->
 	case Packing == unpacked_padded of
 		true ->
 			ar_entropy_storage:record_chunk(
-				PaddedEndOffset, Chunk, StoreID,
-				StoreIDLabel, PackingLabel, FileIndex, EntropyContext);
+				PaddedEndOffset, Chunk, StoreID, FileIndex, EntropyContext);
 		false ->
 			record_chunk(
-				PaddedEndOffset, Chunk, Packing, StoreID, 
-				StoreIDLabel, PackingLabel, FileIndex)
+				PaddedEndOffset, Chunk, Packing, StoreID, FileIndex)
 	end.
 
 record_chunk(
-		PaddedEndOffset, Chunk, Packing, StoreID, StoreIDLabel, PackingLabel, FileIndex) ->
+		PaddedEndOffset, Chunk, Packing, StoreID, FileIndex) ->
 	case write_chunk(PaddedEndOffset, Chunk, FileIndex, StoreID) of
 		{ok, Filepath} ->
-			prometheus_counter:inc(chunks_stored, [PackingLabel, StoreIDLabel]),
+
+			prometheus_counter:inc(chunks_stored,
+				[ar_storage_module:packing_label(Packing), ar_storage_module:label(StoreID)]),
 			case ar_sync_record:add(
 					PaddedEndOffset, PaddedEndOffset - ?DATA_CHUNK_SIZE,
 					sync_record_id(Packing), StoreID) of
@@ -687,9 +678,11 @@ read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID) ->
 	StartTime = erlang:monotonic_time(),
 	case file:pread(File, Position, (?DATA_CHUNK_SIZE + ?OFFSET_SIZE) * ChunkCount) of
 		{ok, << ChunkOffset:?OFFSET_BIT_SIZE, _Chunk/binary >> = Bin} ->
+			StoreIDLabel = ar_storage_module:label(StoreID),
 			ar_metrics:record_rate_metric(
-				StartTime, byte_size(Bin), chunk_read_rate_bytes_per_second, [StoreID, raw]),
-			prometheus_counter:inc(chunks_read, [StoreID], ChunkCount),
+				StartTime, byte_size(Bin), 
+				chunk_read_rate_bytes_per_second, [StoreIDLabel, raw]),
+			prometheus_counter:inc(chunks_read, [StoreIDLabel], ChunkCount),
 			case is_offset_valid(Byte, BucketStart, ChunkOffset) of
 				true ->
 					extract_end_offset_chunk_pairs(Bin, BucketStart, 1);
@@ -893,16 +886,6 @@ read_chunks_sizes(DataDir) ->
 
 modules_to_defrag(#config{defragmentation_modules = [_ | _] = Modules}) -> Modules;
 modules_to_defrag(#config{storage_modules = Modules}) -> Modules.
-
-get_packing_label(Packing, State) ->
-	case maps:get(Packing, State#state.packing_labels, not_found) of
-		not_found ->
-			Label = ar_storage_module:packing_label(Packing),
-			Map = maps:put(Packing, Label, State#state.packing_labels),
-			{Label, State#state{ packing_labels = Map }};
-		Label ->
-			{Label, State}
-	end.
 
 %%%===================================================================
 %%% Tests.

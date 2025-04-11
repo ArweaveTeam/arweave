@@ -56,7 +56,7 @@ start_link(Name, {StoreID, Packing}) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-	list_to_atom("ar_repack_" ++ ar_storage_module:label_by_id(StoreID)).
+	list_to_atom("ar_repack_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
     {ok, Config} = application:get_env(arweave, config),
@@ -923,9 +923,10 @@ count_states(cache, #state{} = State) ->
 		{cache_size, maps:size(Map)},
 		{states, maps:to_list(MapCount)}
 	]),
+	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			prometheus_gauge:set(repack_chunk_states, [StoreID, cache, ChunkState], Count),
+			prometheus_gauge:set(repack_chunk_states, [StoreIDLabel, cache, ChunkState], Count),
 			Acc
 		end,
 		ok,
@@ -946,10 +947,11 @@ count_states(queue, #state{} = State) ->
 	log_debug(count_write_queue_states, State, [
 		{queue_size, gb_sets:size(WriteQueue)},
 		{states, maps:to_list(WriteQueueCount)}
-	]),
+	]),	
+	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			prometheus_gauge:set(repack_chunk_states, [StoreID, queue, ChunkState], Count),
+			prometheus_gauge:set(repack_chunk_states, [StoreIDLabel, queue, ChunkState], Count),
 			Acc
 		end,
 		ok,
