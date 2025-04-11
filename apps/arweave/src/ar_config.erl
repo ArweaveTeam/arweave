@@ -185,6 +185,8 @@ parse_options([{<<"verify">>, Opt} | _], _) ->
 
 parse_options([{<<"verify_samples">>, N} | Rest], Config) when is_integer(N) ->
 	parse_options(Rest, Config#config{ verify_samples = N });
+parse_options([{<<"verify_samples">>, <<"all">>} | Rest], Config) ->
+	parse_options(Rest, Config#config{ verify_samples = all });
 parse_options([{<<"verify_samples">>, Opt} | _], _) ->
 	{error, {bad_type, verify_samples, number}, Opt};
 
