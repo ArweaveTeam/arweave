@@ -60,8 +60,11 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 	%% the overlap. Main difference is that with the unpacked source node we launch a
 	%% spora node, and then sync data to the unpacked node. It's the syncing process that
 	%% writes data to the overlap.
+	%% 
+	%% However now rthe repack_in_place process explicitly avoid writting to the overlap
+	%% so we're back to the same expected size in all cases.
 	ExpectedPartitionSize = case FromPackingType of
-		unpacked -> ?PARTITION_SIZE +  ar_storage_module:get_overlap(unpacked);
+		unpacked -> ?PARTITION_SIZE;
 		_ -> ?PARTITION_SIZE
 	end,
 
