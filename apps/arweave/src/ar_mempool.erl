@@ -1,6 +1,6 @@
 -module(ar_mempool).
 
--include("../include/ar.hrl").
+-include("ar.hrl").
 
 -export([reset/0, load_from_disk/0, add_tx/2, drop_txs/1, drop_txs/3,
 		get_map/0, get_all_txids/0, take_chunk/2, get_tx/1, is_known_tx/1, has_tx/1,
@@ -65,7 +65,13 @@ load_from_disk() ->
 			reset()
 	end.
 
-add_tx(#tx{ id = TXID } = TX, Status) ->
+add_tx(TX, Status) ->
+	prometheus_histogram:observe_duration(ar_mempool_add_tx_duration_milliseconds,
+		fun() ->
+			add_tx2(TX, Status)
+		end).
+
+add_tx2(#tx{ id = TXID } = TX, Status) ->
 	{Metadata, MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap} =
 		case get_tx_metadata(TXID) of
 			not_found ->
@@ -133,6 +139,12 @@ drop_txs(DroppedTXs) ->
 drop_txs([], _RemoveTXPrefixes, _DropFromDiskPool) ->
 	ok;
 drop_txs(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool) ->
+	prometheus_histogram:observe_duration(drop_txs_duration_milliseconds,
+		fun() ->
+			drop_txs2(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool)
+		end).
+
+drop_txs2(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool) ->
 	{MempoolSize2, PrioritySet2, PropagationQueue2, LastTXMap2, OriginTXMap2} =
 		lists:foldl(
 			fun(TX, {MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap}) ->
@@ -283,10 +295,11 @@ del_from_propagation_queue(Priority, TXID) ->
 del_from_propagation_queue(PropagationQueue, TX = #tx{}, Timestamp) ->
 	Priority = {ar_tx:utility(TX), Timestamp},
 	del_from_propagation_queue(PropagationQueue, Priority, TX#tx.id);
-del_from_propagation_queue(PropagationQueue, Priority, TXID)
-	when is_bitstring(TXID) ->
-	gb_sets:del_element({Priority, TXID}, PropagationQueue).
-
+del_from_propagation_queue(PropagationQueue, Priority, TXID) when is_bitstring(TXID) ->
+	prometheus_histogram:observe_duration(del_from_propagation_queue_duration_milliseconds,
+		fun() ->
+			gb_sets:del_element({Priority, TXID}, PropagationQueue)
+		end).
 
 %% ------------------------------------------------------------------
 %% Private Functions

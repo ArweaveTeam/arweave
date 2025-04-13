@@ -1,6 +1,6 @@
 -module(ar_metrics).
 
--include_lib("arweave/include/ar.hrl").
+-include("ar.hrl").
 
 -export([register/0, get_status_class/1, record_rate_metric/4]).
 
@@ -138,6 +138,29 @@ register() ->
 	prometheus_counter:new([{name, block2_fetched_chunks},
 			{help, "The total number of chunks fetched locally during the successful"
 					" processing of POST /block2."}]),
+	prometheus_histogram:new([
+		{name, ar_mempool_add_tx_duration_milliseconds},
+		{buckets, [0.1, 1, 10, 100, 1000]},
+		{help, "The duration in milliseconds it took to add a transaction to the mempool."}
+	]),
+	prometheus_histogram:new([
+		{name, reverify_mempool_chunk_duration_milliseconds},
+		{buckets, [0.1, 1, 10, 100, 1000]},
+		{help, "The duration in milliseconds it took to reverify a chunk of transactions "
+				"in the mempool."}
+	]),
+	prometheus_histogram:new([
+		{name, drop_txs_duration_milliseconds},
+		{buckets, [0.1, 1, 10, 100, 1000]},
+		{help, "The duration in milliseconds it took to drop a chunk of transactions "
+				"from the mempool."}
+	]),
+	prometheus_histogram:new([
+		{name, del_from_propagation_queue_duration_milliseconds},
+		{buckets, [0.1, 1, 10, 100, 1000]},
+		{help, "The duration in milliseconds it took to remove a transaction from the "
+				"propagation queue after it was emitted to peers."}
+	]),
 
 	%% Data seeding.
 	prometheus_gauge:new([

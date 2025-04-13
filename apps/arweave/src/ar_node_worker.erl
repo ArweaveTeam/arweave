@@ -691,20 +691,25 @@ handle_task({filter_mempool, Mempool}, State) ->
 			[{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
 			Wallets = ar_wallets:get(WalletList, ar_tx:get_addresses(List)),
 			InvalidTXs =
-				lists:foldl(
-					fun(TX, Acc) ->
-						case ar_tx_replay_pool:verify_tx({TX, Rate, Price,
-								KryderPlusRateMultiplier, Denomination, Height,
-								RedenominationHeight, BlockAnchors, RecentTXMap, #{}, Wallets},
-								do_not_verify_signature) of
-							valid ->
-								Acc;
-							{invalid, _Reason} ->
-								[TX | Acc]
-						end
-					end,
-					[],
-					List
+				prometheus_histogram:observe_duration(
+					reverify_mempool_chunk_duration_milliseconds,
+					fun() ->
+						lists:foldl(
+							fun(TX, Acc) ->
+								case ar_tx_replay_pool:verify_tx({TX, Rate, Price,
+										KryderPlusRateMultiplier, Denomination, Height,
+										RedenominationHeight, BlockAnchors, RecentTXMap,
+										#{}, Wallets}, do_not_verify_signature) of
+									valid ->
+										Acc;
+									{invalid, _Reason} ->
+										[TX | Acc]
+								end
+							end,
+							[],
+							List
+						)
+					end
 				),
 			ar_mempool:drop_txs(InvalidTXs),
 			case RemainingMempool of
