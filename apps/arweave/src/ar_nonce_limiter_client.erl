@@ -6,8 +6,8 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_config.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
 
 -record(state, {
 	remote_servers,
@@ -184,6 +184,9 @@ handle_cast({maybe_request_sessions, SessionKey}, State) ->
 					{noreply, State#state{ request_sessions = true }}
 			end
 	end;
+
+handle_cast({update_latest_session_key, Peer, SessionKey}, State) ->
+	{noreply, update_latest_session_key(Peer, SessionKey, State)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
