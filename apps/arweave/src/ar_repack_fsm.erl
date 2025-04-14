@@ -116,14 +116,14 @@ next_state(#repack_chunk{state = needs_chunk} = RepackChunk) ->
 			%% the entropy.
 			invalid;
 		{false, TargetPacking, _, _} -> already_repacked;
-		{false, SourcePacking, not_found, _} ->
+		{false, _, not_found, _} ->
 			%% Chunk doesn't exist on disk, try chunk data db.
 			needs_data_path;
-		{false, SourcePacking, Chunk, false} -> 
+		{false, _, _, false} -> 
 			%% We are going to move this chunk to RocksDB after repacking so
 			%% we read its DataPath here to pass it later on to store_chunk.
 			needs_data_path;
-		{false, SourcePacking, Chunk, true} -> needs_repack;
+		{false, _, _, true} -> needs_repack;
 		_ ->
 			log_error(invalid_repack_fsm_transition, RepackChunk, []),
 			error

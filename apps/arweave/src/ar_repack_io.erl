@@ -230,87 +230,78 @@ wite_chunk(RepackChunk, TargetPacking, #state{} = State) ->
 		chunk = Chunk
 	} = RepackChunk,
 	#chunk_offsets{
-		absolute_offset = AbsoluteOffset,
-		padded_end_offset = PaddedEndOffset,
-		relative_offset = RelativeOffset
-	} = Offsets,
-	#chunk_metadata{
-		tx_root = TXRoot,
-		data_root = DataRoot,
-		tx_path = TXPath,
-		chunk_data_key = ChunkDataKey,
-		chunk_size = ChunkSize,
-		data_path = DataPath
-	} = Metadata,
-	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-	IsStorageSupported =
-		ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, TargetPacking),
-
-	RemoveFromSyncRecordResult = ar_sync_record:delete(PaddedEndOffset,
-		StartOffset, ar_data_sync, StoreID),
-	
-	RemoveFromSyncRecordResult2 =
-		case RemoveFromSyncRecordResult of
-			ok ->
-				ar_sync_record:delete(PaddedEndOffset,
-					StartOffset, ar_chunk_storage, StoreID);
-			Error ->
-				Error
-		end,
-
-	case {RemoveFromSyncRecordResult2, IsStorageSupported} of
-		{ok, false} ->
-			ChunkArgs = {TargetPacking, Chunk, AbsoluteOffset, TXRoot, ChunkSize},
-			Args = {
-				TargetPacking, DataPath, RelativeOffset, 
-				DataRoot, TXPath, StoreID, ChunkDataKey
-			},
-			gen_server:cast(ar_data_sync:name(StoreID), {store_chunk, ChunkArgs, Args});
-		{ok, true} ->
-			update_chunk(TargetPacking, RepackChunk, State);
-		{Error2, _} ->
-			log_error(failed_to_update_sync_record_for_repacked_chunk, State, [
-				format_logs(RepackChunk) ++ [{error, io_lib:format("~p", [Error2])}]
-			])
-	end.
-
-update_chunk(Packing, RepackChunk, #state{} = State) ->
-	#state{
-		store_id = StoreID
-	} = State,
-	#repack_chunk{
-		offsets = Offsets,
-		chunk = Chunk
-	} = RepackChunk,
-	#chunk_offsets{
 		absolute_offset = AbsoluteOffset
 	} = Offsets,
-	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
-	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteOffset),
-	case ar_chunk_storage:put(PaddedEndOffset, Chunk, Packing, StoreID) of
-		{ok, NewPacking} ->
-			case NewPacking of
-				{replica_2_9, _} ->
-					BucketStartOffset = BucketEndOffset - ?DATA_CHUNK_SIZE,
-					ar_sync_record:add_async(repacked_chunk,
-						BucketEndOffset, BucketStartOffset,
-						ar_chunk_storage_replica_2_9_1_entropy, StoreID);
-				_ -> ok
-			end,
-			StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-			ar_sync_record:add_async(repacked_chunk,
-					PaddedEndOffset, StartOffset,
-					NewPacking, ar_data_sync, StoreID);
+	
+	case remove_from_sync_record(Offsets, StoreID) of
+		ok ->
+			WriteResult = 
+				ar_data_sync:write_chunk(
+					AbsoluteOffset, Metadata, Chunk, TargetPacking, StoreID),
+			case WriteResult of
+				{ok, TargetPacking} ->
+					add_to_sync_record(Offsets, Metadata, TargetPacking, StoreID);
+				{ok, WrongPacking} ->
+					%% This shouldn't ever happen - the only time write_chunk should change
+					%% the packing is when writing to unpacked_padded.
+					log_error(repacked_chunk_stored_with_wrong_packing, State, [
+						{requested_packing, ar_serialize:encode_packing(TargetPacking, true)},
+						{stored_packing, ar_serialize:encode_packing(WrongPacking, true)}
+					]);
+				Error ->
+					log_error(failed_to_store_repacked_chunk, State, [
+						{requested_packing, ar_serialize:encode_packing(TargetPacking, true)},
+						{error, io_lib:format("~p", [Error])}
+					])
+			end;
 		Error ->
-			log_error(failed_to_store_repacked_chunk, State, [
-				format_logs(RepackChunk) ++ 
-				[
-					{requested_packing, ar_serialize:encode_packing(Packing, true)},
-					{error, io_lib:format("~p", [Error])}
-				]
+			log_error(failed_to_remove_from_sync_record, State, [
+				{error, io_lib:format("~p", [Error])}
 			])
 	end.
+
+remove_from_sync_record(Offsets, StoreID) ->
+	#chunk_offsets{
+		padded_end_offset = PaddedEndOffset
+	} = Offsets,
+
+	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	
+	case ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID) of
+		ok ->
+			ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
+		Error ->
+			Error
+	end.
+
+add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
+	#chunk_offsets{
+		padded_end_offset = PaddedEndOffset,
+		bucket_end_offset = BucketEndOffset
+	} = Offsets,
+	#chunk_metadata{
+		chunk_size = ChunkSize
+	} = Metadata,
+	
+	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
+	ar_sync_record:add_async(repacked_chunk, PaddedEndOffset, StartOffset,
+			Packing, ar_data_sync, StoreID),
+
+	IsStorageSupported =
+		ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing),
+	IsReplica29 = case Packing of
+		{replica_2_9, _} -> true;
+		_ -> false
+	end,
+
+	case IsStorageSupported andalso IsReplica29 of
+		true ->
+			BucketStartOffset = BucketEndOffset - ?DATA_CHUNK_SIZE,
+			ar_sync_record:add_async(repacked_chunk,
+				BucketEndOffset, BucketStartOffset,
+				ar_chunk_storage_replica_2_9_1_entropy, StoreID);
+		_ -> ok
+	end.
 
 log_error(Event, #state{} = State, ExtraLogs) ->
 	?LOG_ERROR(format_logs(Event, State, ExtraLogs)).
