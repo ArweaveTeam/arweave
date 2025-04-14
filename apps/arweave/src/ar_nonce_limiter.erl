@@ -17,10 +17,10 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_vdf.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_consensus.hrl").
+-include("ar.hrl").
+-include("ar_vdf.hrl").
+-include("ar_config.hrl").
+-include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -542,6 +542,12 @@ handle_call(get_steps, _From, State) ->
 
 handle_call({apply_external_update, Update, Peer}, _From, State) ->
 	Now = os:system_time(millisecond),
+	#nonce_limiter_update{ session_key = SessionKey } = Update,
+	%% The client consults the latest session key by peer to decide whether to request the
+	%% missing VDF session when we call ar_nonce_limiter_client:maybe_request_sessions/1
+	%% during VDF validation.
+	gen_server:cast(ar_nonce_limiter_client,
+			{update_latest_session_key, Peer, SessionKey}),
 	apply_external_update2(Update, State#state{ last_external_update = {Peer, Now} });
 
 handle_call({get_session, SessionKey}, _From, State) ->
