@@ -460,18 +460,17 @@ remove_mining_peer(Peer, State) ->
 
 refetch_peer_partitions(Peers) ->
 	spawn(fun() ->
-		try
-			MapFun = fun(Peer) ->
+
+		ar_util:pmap(
+			fun(Peer) ->
 				case ar_http_iface_client:get_cm_partition_table(Peer) of
-					{ok, PartitionList} -> ar_coordination:update_peer(Peer, PartitionList);
-					_ -> ok
-				end
-			end,
-			ar_util:pmap(MapFun, Peers)
-		catch
-			throw:{pmap_timeout, _} -> ?LOG_WARNING([{event, pmap_timeout}, {module, ?MODULE}, {peers, Peers}]);
-			ErrT:Other -> ?LOG_ERROR([{event, pmap_error}, {module, ?MODULE}, {peers, Peers}, {ErrT, Other}])
-		end,
+					{ok, PartitionList} ->
+						ar_coordination:update_peer(Peer, PartitionList);
+					_ ->
+						ok
+				end end,
+				Peers
+			),
 		%% ar_util:pmap ensures we fetch all the local up-to-date CM peer partitions first,
 		%% then share them with the Pool to fetch the complementary pool CM peer partitions.
 		case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of

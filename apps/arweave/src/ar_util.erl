@@ -16,7 +16,7 @@
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(DEFAULT_PMAP_TIMEOUT, 90_000).
+-define(DEFAULT_PMAP_TIMEOUT, 60_000).
 
 bool_to_int(true) -> 1;
 bool_to_int(_) -> 0.
@@ -221,44 +221,24 @@ pmap(Mapper, List) ->
 
 %% @doc Run a map in parallel, throw {pmap_timeout, Timeout} if a worker
 %% takes longer than Timeout milliseconds.
-pmap(Mapper, List, Timeout) when Timeout > 0 ->
+pmap(Mapper, List, Timeout) ->
 	Master = self(),
-	PidsWithRefs = lists:map(
-		fun({Elem, Ref}) ->
-			{
-				Ref,
-				spawn(fun() -> Master ! {pmap_result, Ref, Mapper(Elem)} end)
-			}
+	ListWithRefs = [{Elem, make_ref()} || Elem <- List],
+	lists:foreach(fun({Elem, Ref}) ->
+		spawn_link(fun() ->
+			Master ! {pmap_work, Ref, Mapper(Elem)}
+		end)
+	end, ListWithRefs),
+	lists:map(
+		fun({_, Ref}) ->
+			receive
+				{pmap_work, Ref, Mapped} -> Mapped
+			after Timeout ->
+				throw({pmap_timeout, Timeout})
+			end
 		end,
-		[{Elem, make_ref()} || Elem <- List]
-	),
-	TRef = erlang:send_after(Timeout, Master, {pmap_timeout, Timeout}),
-	pmap_await(TRef, PidsWithRefs, []).
-
-pmap_await(TRef, [], Acc) ->
-	erlang:cancel_timer(TRef),
-	receive
-		{pmap_timeout, _Timeout} -> ok
-	after 0 -> ok
-	end,
-	Acc;
-pmap_await(TRef, PidsWithRefs, Acc) ->
-	receive
-		{pmap_result, Ref, Mapped} -> pmap_await(TRef, proplists:delete(Ref, PidsWithRefs), [Mapped | Acc]);
-		{pmap_timeout, Timeout} ->
-			lists:map(
-				fun({_, Pid}) -> exit(Pid, kill) end,
-				PidsWithRefs
-			),
-			pmap_cleanup(Timeout)
-	end.
-
-pmap_cleanup(Timeout) ->
-	receive
-		{pmap_result, _Ref, _Mapped} -> pmap_cleanup(Timeout)
-	after 0 -> ok
-	end,
-	throw({pmap_timeout, Timeout}).
+		ListWithRefs
+	).
 
 %% @doc Run a map in parallel, one batch at a time,
 %% throw {batch_pmap_timeout, ?DEFAULT_PMAP_TIMEOUT} if a worker
@@ -439,23 +419,13 @@ round_trip_encode_test() ->
 		lists:seq(1, 64)
 	).
 
-%% Test the parallell mapping functionality.
-pmap_positive_test() ->
+%% Test the paralell mapping functionality.
+pmap_test() ->
 	Mapper = fun(X) ->
 		timer:sleep(100 * X),
 		X * 2
 	end,
-	?assertEqual([6, 4, 2], pmap(Mapper, [3, 1, 2])).
-
-pmap_negative_test() ->
-	Mapper = fun(X) ->
-		timer:sleep(100 * X),
-		X * 2
-	end,
-	%% Timeout is too short.
-	?assertException(throw, {pmap_timeout, 50}, pmap(Mapper, [3, 1, 2], 50)),
-	%% Timeout is long enough for two elements to finish.
-	?assertException(throw, {pmap_timeout, 200}, pmap(Mapper, [3, 1, 2], 200)).
+	?assertEqual([6, 2, 4], pmap(Mapper, [3, 1, 2])).
 
 cast_after(Delay, Module, Message) ->
 	%% Not using timer:apply_after here because send_after is more efficient:
