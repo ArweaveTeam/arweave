@@ -491,6 +491,8 @@ repack_footprint(Cursor, #state{} = State) ->
 footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd) ->
 	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
 
+	%%% XXX maybe also check against partitino end here.
+
 	FilteredOffsets = lists:filter(
 		fun(Offset) -> 
 			Offset >= BucketEndOffset andalso Offset =< ModuleEnd

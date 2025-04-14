@@ -509,7 +509,7 @@ sample_offset(Offset, StoreID, SampleReport) ->
 						success = SampleReport#sample_report.success + 1
 					};
 				{error, Reason} ->
-					?LOG_INFO([{event, sample_chunk}, {offset, Offset}, {status, Reason}]),
+					?LOG_INFO([{event, sample_chunk_error}, {offset, Offset}, {status, Reason}]),
 					SampleReport#sample_report{
 						total = SampleReport#sample_report.total + 1,
 						failure = SampleReport#sample_report.failure + 1

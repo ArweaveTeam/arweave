@@ -10,7 +10,7 @@
 		request_tx_data_removal/3, request_data_removal/4, record_disk_pool_chunks_count/0,
 		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
 		get_chunk_by_byte/2, advance_chunks_index_cursor/1, get_chunk_seek_offset/1,
-		read_chunk/3, read_data_path/2,
+		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3,
 		get_merkle_rebase_threshold/0]).
@@ -668,6 +668,14 @@ read_chunk(Offset, ChunkDataKey, StoreID) ->
 		Error ->
 			Error
 	end.
+
+write_chunk(Offset, ChunkMetadata, Chunk, Packing, StoreID) ->
+	#chunk_metadata{
+		chunk_data_key = ChunkDataKey,
+		chunk_size = ChunkSize,
+		data_path = DataPath
+	} = ChunkMetadata,
+	write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, StoreID).
 
 read_data_path(ChunkDataKey, StoreID) ->
 	read_data_path(undefined, ChunkDataKey, StoreID).
@@ -2950,44 +2958,49 @@ get_chunk_data_key(DataPathHash) ->
 	Timestamp = os:system_time(microsecond),
 	<< Timestamp:256, DataPathHash/binary >>.
 
-write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, State) ->
+write_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing, StoreID) ->
 	case ar_tx_blacklist:is_byte_blacklisted(Offset) of
 		true ->
 			{ok, Packing};
 		false ->
 			write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath,
-					Packing, State)
+					Packing, StoreID)
 	end.
 
 write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Packing,
-		State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	ShouldStoreInChunkStorage = ar_chunk_storage:is_storage_supported(Offset, ChunkSize, Packing),
-	case ShouldStoreInChunkStorage of
-		true ->
+		StoreID) ->
+	ShouldStoreInChunkStorage =
+		ar_chunk_storage:is_storage_supported(Offset, ChunkSize, Packing),
+	case {ShouldStoreInChunkStorage, is_binary(DataPath)} of
+		{true, true} ->
 			PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
-			Result = ar_chunk_storage:put(PaddedOffset, Chunk, Packing, StoreID),
-			case Result of
+			case ar_chunk_storage:put(PaddedOffset, Chunk, Packing, StoreID) of
 				{ok, NewPacking} ->
 					case put_chunk_data(ChunkDataKey, StoreID, DataPath) of
-						ok ->
-							{ok, NewPacking};
-						Error ->
-							Error
+						ok -> {ok, NewPacking};
+						Error -> Error
 					end;
-				_ ->
-					Result
+				Other -> Other
 			end;
-		false ->
+		{true, false} ->
+			%% If ar_data_sync:write_chunk/7 is called directly without a DataPath, we
+			%% should just update chunk storage without modifying chunk_data_db. This
+			%% can happen, for example, durin grepack in place.
+			PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
+			ar_chunk_storage:put(PaddedOffset, Chunk, Packing, StoreID);
+		{false, true} ->
 			case put_chunk_data(ChunkDataKey, StoreID, {Chunk, DataPath}) of
 				ok ->
 					PackingLabel = ar_storage_module:packing_label(Packing),
 					StoreIDLabel = ar_storage_module:label(StoreID),
 					prometheus_counter:inc(chunks_stored, [PackingLabel, StoreIDLabel]),
 					{ok, Packing};
-				Error ->
-					Error
-			end
+				Error -> Error
+			end;
+		{false, false} ->
+			%% For chunks which are only stored in chunk_data_db, we currently require that
+			%% both the Chunk and the DataPath are present.
+			{error, invalid_data_path}
 	end.
 
 
@@ -3187,6 +3200,8 @@ store_chunk2(ChunkArgs, Args, State) ->
 	{_Packing, DataPath, Offset, DataRoot, TXPath, OriginStoreID, OriginChunkDataKey} = Args,
 	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 	StartOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset - ChunkSize),
+	%% This will fail if DataPath is not a string - which is fine as it serves as a sanity
+	%% check that store_chunk2 is called with valid arguments.
 	DataPathHash = crypto:hash(sha256, DataPath),
 	ShouldStoreInChunkStorage = ar_chunk_storage:is_storage_supported(AbsoluteOffset,
 			ChunkSize, Packing),
@@ -3213,7 +3228,7 @@ store_chunk2(ChunkArgs, Args, State) ->
 				end,
 			StoreIndex =
 				case write_chunk(AbsoluteOffset, ChunkDataKey, Chunk, ChunkSize, DataPath,
-						Packing, State) of
+						Packing, StoreID) of
 					{ok, NewPacking} ->
 						{true, NewPacking};
 					Error ->
