@@ -21,7 +21,7 @@
 		get_max_nonce/1, get_recall_range_size/1, get_recall_byte/3,
 		get_sub_chunk_size/1, get_nonces_per_chunk/1, get_nonces_per_recall_range/1,
 		get_sub_chunk_index/2,
-		get_chunk_padded_offset/1]).
+		get_chunk_padded_offset/1, get_double_signing_condition/4]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -666,7 +666,16 @@ get_chunk_padded_offset(Offset) ->
 			Offset
 	end.
 
-
+%% @doc Return true if the given cumulative difficulty - previous cumulative difficulty
+%% pairs satisfy the double signing condition.
+-spec get_double_signing_condition(
+		CDiff1 :: non_neg_integer(),
+		PrevCDiff1 :: non_neg_integer(),
+		CDiff2 :: non_neg_integer(),
+		PrevCDiff2 :: non_neg_integer()
+) -> boolean().
+get_double_signing_condition(CDiff1, PrevCDiff1, CDiff2, PrevCDiff2) ->
+	CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff1).
 
 %%%===================================================================
 %%% Private functions.
