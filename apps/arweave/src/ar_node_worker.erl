@@ -1101,8 +1101,7 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
 					false ->
 						false;
 					true ->
-						CDiff1 == CDiff2
-							orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff1)
+						ar_block:get_double_signing_condition(CDiff1, PrevCDiff1, CDiff2, PrevCDiff2)
 				end,
 			case ValidCDiffs of
 				false ->
@@ -2026,9 +2025,6 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 			nonce_limiter_info = PrevNonceLimiterInfo,
 			height = PrevHeight } = PrevB,
 	Height = PrevHeight + 1,
-
-	% TODO add CDiff check for our addresses
-
 	Now = os:system_time(second),
 	MaxDeviation = ar_block:get_max_timestamp_deviation(),
 	Timestamp =
@@ -2172,12 +2168,29 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 						{false, rebase_threshold}
 				end
 		end,
-	%% Check steps and step checkpoints.
-	HaveSteps =
+
+	PrevCDiff = PrevB#block.cumulative_diff,
+	CDiff = ar_difficulty:next_cumulative_diff(PrevCDiff, Diff, Height),
+	NoDoubleSigning =
 		case CorrectRebaseThreshold of
 			{false, Reason5} ->
+				{false, Reason5};
+			true ->
+				case check_no_double_signing(CDiff, PrevCDiff, MiningAddress) of
+					false ->
+						{false, double_signing};
+					true ->
+						true
+				end
+		end,
+
+	%% Check steps and step checkpoints.
+	HaveSteps =
+		case NoDoubleSigning of
+			{false, Reason6} ->
 				?LOG_WARNING([{event, ignore_mining_solution},
-					{reason, Reason5}, {solution, ar_util:encode(SolutionH)}]),
+						{reason, Reason6},
+						{solution, ar_util:encode(SolutionH)}]),
 				false;
 			true ->
 				ar_nonce_limiter:get_steps(PrevStepNumber, StepNumber, PrevNextSeed,
@@ -2241,8 +2254,6 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 					Denomination2),
 			ScheduledPricePerGiBMinute2 = ar_pricing:redenominate(ScheduledPricePerGiBMinute,
 					Denomination, Denomination2),
-			CDiff = ar_difficulty:next_cumulative_diff(PrevB#block.cumulative_diff, Diff,
-					Height),
 			UnsignedB = pack_block_with_transactions(#block{
 				nonce = Nonce,
 				previous_block = PrevH,
@@ -2359,6 +2370,18 @@ assert_key_type(RewardKey, Height) ->
 			end
 	end.
 
+check_no_double_signing(CDiff, PrevCDiff, MiningAddress) ->
+	Blocks = ar_block_cache:get_blocks_by_miner(block_cache, MiningAddress),
+	not lists:any(
+		fun(B) ->
+			ar_block:get_double_signing_condition(
+					B#block.cumulative_diff,
+					B#block.previous_cumulative_diff,
+					CDiff,
+					PrevCDiff)
+		end,
+		Blocks).
+
 update_solution_cache(H, Args, State) ->
 	%% Maintain a cache of mining solutions for potential reuse in rebasing.
 	%%
@@ -2401,7 +2424,7 @@ may_be_report_double_signing(B, State) ->
 					previous_solution_hash = PrevSolutionH2,
 					reward_key = {_, Key},
 					signature = Signature2 } = CacheB,
-			case CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff1) of
+			case ar_block:get_double_signing_condition(CDiff1, PrevCDiff1, CDiff2, PrevCDiff2) of
 				true ->
 					Preimage1 = << PrevSolutionH1/binary,
 							(ar_block:generate_signed_hash(B))/binary >>,

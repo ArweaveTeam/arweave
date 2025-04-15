@@ -9,7 +9,7 @@
 		get_block_and_status/2, remove/2, get_checkpoint_block/1, prune/2,
 		get_by_solution_hash/5, is_known_solution_hash/2,
 		get_siblings/2, get_fork_blocks/2, update_timestamp/3,
-		get_validated_front/1]).
+		get_validated_front/1, get_blocks_by_miner/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -489,6 +489,26 @@ get_validated_front(Tab) ->
 			[];
 		[{_, Set}] ->
 			get_validated_front(Tab, Set)
+	end.
+
+%% @doc Return all blocks from the cache mined by the given address.
+get_blocks_by_miner(Tab, MinerAddr) ->
+	case ets:lookup(Tab, links) of
+		[{links, Set}] ->
+			gb_sets:fold(
+				fun({_Height, H}, Acc) ->
+					case ets:lookup(Tab, {block, H}) of
+						[{_, {B, _Status, _Timestamp, _Children}}] when B#block.reward_addr == MinerAddr ->
+							[B | Acc];
+						_ ->
+							Acc
+					end
+				end,
+				[],
+				Set
+			);
+		_ ->
+			[]
 	end.
 
 %%%===================================================================
@@ -1956,3 +1976,36 @@ get_validated_front_test() ->
 			lists:sort(get_validated_front(bcache_test))),
 
 	ets:delete(bcache_test).
+
+%% @doc Test that get_blocks_by_miner returns the correct blocks for a given miner.
+get_blocks_by_miner_test() ->
+	ets:new(bcache_test, [set, named_table]),
+	new(bcache_test, B0 = random_block(0)),
+	Tab = bcache_test,
+	?assertEqual([], get_blocks_by_miner(Tab, <<"miner1">>)),
+	% Create some test blocks
+	B1 = #block{ indep_hash = <<"hash1">>, reward_addr = <<"miner1">> },
+	B2 = #block{ indep_hash = <<"hash2">>, reward_addr = <<"miner2">> },
+	B3 = #block{ indep_hash = <<"hash3">>, reward_addr = <<"miner1">> },
+	% Add blocks to cache
+	add(Tab, on_top(B1, B0)),
+	add(Tab, on_top(B2, B0)),
+	add(Tab, on_top(B3, B0)),
+	B1_1 = B1#block{
+		height = 1,
+		previous_block = B0#block.indep_hash,
+		previous_cumulative_diff = B0#block.cumulative_diff },
+	B2_1 = B2#block{
+		height = 1,
+		previous_block = B0#block.indep_hash,
+		previous_cumulative_diff = B0#block.cumulative_diff },
+	B3_1 = B3#block{
+		height = 1,
+		previous_block = B0#block.indep_hash,
+		previous_cumulative_diff = B0#block.cumulative_diff },
+
+	% Test getting blocks by miner
+	?assertEqual([B1_1, B3_1], lists:sort(fun(A, B) -> A#block.indep_hash < B#block.indep_hash end, get_blocks_by_miner(Tab, <<"miner1">>))),
+	?assertEqual([B2_1], get_blocks_by_miner(Tab, <<"miner2">>)),
+	?assertEqual([], get_blocks_by_miner(Tab, <<"miner3">>)),
+	ets:delete(Tab).
