@@ -1,9 +1,9 @@
 -module(ar_block).
 
--export([block_field_size_limit/1, verify_timestamp/2,
-		get_max_timestamp_deviation/0, verify_last_retarget/2, verify_weave_size/3,
-		verify_cumulative_diff/2, verify_block_hash_list_merkle/2, compute_hash_list_merkle/1,
-		compute_h0/2, compute_h0/5, compute_h0/6,
+-export([partition_size/0, strict_data_split_threshold/0, block_field_size_limit/1, 
+		verify_timestamp/2, get_max_timestamp_deviation/0, verify_last_retarget/2,
+		verify_weave_size/3, verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
+		compute_hash_list_merkle/1, compute_h0/2, compute_h0/5, compute_h0/6,
 		compute_h1/3, compute_h2/3, compute_solution_h/2,
 		indep_hash/1, indep_hash/2, indep_hash2/2, get_block_signature_preimage/4,
 		generate_signed_hash/1, verify_signature/3, get_reward_key/2,
@@ -33,6 +33,10 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
+%% @doc Expose constants through a function to allow mocking/injection in tests.
+partition_size() -> ?PARTITION_SIZE.
+strict_data_split_threshold() -> ?STRICT_DATA_SPLIT_THRESHOLD.
 
 %% @doc Check whether the block fields conform to the specified size limits.
 block_field_size_limit(B = #block{ reward_addr = unclaimed }) ->
@@ -570,8 +574,8 @@ integer_to_binary(B#block.strict_data_split_threshold)
 %% of the two recall ranges.
 get_recall_range(H0, PartitionNumber, PartitionUpperBound) ->
 	RecallRange1Offset = binary:decode_unsigned(binary:part(H0, 0, 8), big),
-	RecallRange1Start = PartitionNumber * ?PARTITION_SIZE
-			+ RecallRange1Offset rem min(?PARTITION_SIZE, PartitionUpperBound),
+	RecallRange1Start = PartitionNumber * ar_block:partition_size()
+			+ RecallRange1Offset rem min(ar_block:partition_size(), PartitionUpperBound),
 	RecallRange2Start = binary:decode_unsigned(H0, big) rem PartitionUpperBound,
 	{RecallRange1Start, RecallRange2Start}.
 
@@ -651,13 +655,13 @@ get_sub_chunk_index(0, _Nonce) ->
 get_sub_chunk_index(_PackingDifficulty, Nonce) ->
 	Nonce rem ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
 
-%% @doc Return Offset if it is smaller than or equal to ?STRICT_DATA_SPLIT_THRESHOLD.
+%% @doc Return Offset if it is smaller than or equal to ar_block:strict_data_split_threshold().
 %% Otherwise, return the offset of the last byte of the chunk + the size of the padding.
 -spec get_chunk_padded_offset(Offset :: non_neg_integer()) -> non_neg_integer().
 get_chunk_padded_offset(Offset) ->
-	case Offset > ?STRICT_DATA_SPLIT_THRESHOLD of
+	case Offset > ar_block:strict_data_split_threshold() of
 		true ->
-			ar_poa:get_padded_offset(Offset, ?STRICT_DATA_SPLIT_THRESHOLD);
+			ar_poa:get_padded_offset(Offset, ar_block:strict_data_split_threshold());
 		false ->
 			Offset
 	end.

@@ -24,8 +24,8 @@ setup_all() ->
 	{ok, Config} = application:get_env(arweave, config),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
-		{?PARTITION_SIZE, 1, {spora_2_6, RewardAddr}},
-		{?PARTITION_SIZE, 2, {spora_2_6, RewardAddr}}
+		{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}},
+		{ar_block:partition_size(), 2, {spora_2_6, RewardAddr}}
 	],
 	ar_test_node:start(B0, RewardAddr, Config, StorageModules),
 	Config.
@@ -40,8 +40,8 @@ setup_pool_client() ->
 	{ok, Config} = application:get_env(arweave, config),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
-		{?PARTITION_SIZE, 1, {spora_2_6, RewardAddr}},
-		{?PARTITION_SIZE, 2, {spora_2_6, RewardAddr}}
+		{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}},
+		{ar_block:partition_size(), 2, {spora_2_6, RewardAddr}}
 	],
 	ar_test_node:start(B0, RewardAddr,
 		Config#config{

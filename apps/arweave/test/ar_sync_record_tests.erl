@@ -13,14 +13,14 @@ sync_record_test_() ->
 
 test_sync_record() ->
 	SleepTime = 1000,
-	DiskPoolStart = ?PARTITION_SIZE,
-	PartitionStart = ?PARTITION_SIZE - ?DATA_CHUNK_SIZE,
+	DiskPoolStart = ar_block:partition_size(),
+	PartitionStart = ar_block:partition_size() - ?DATA_CHUNK_SIZE,
 	WeaveSize = 4 * ?DATA_CHUNK_SIZE,
 	[B0] = ar_weave:init([], 1, WeaveSize),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	{ok, Config} = application:get_env(arweave, config),
 	try
-		Partition = {?PARTITION_SIZE, 0, {composite, RewardAddr, 1}},
+		Partition = {ar_block:partition_size(), 0, {composite, RewardAddr, 1}},
 		PartitionID = ar_storage_module:id(Partition),
 		StorageModules = [Partition],
 		ar_test_node:start(B0, RewardAddr, Config, StorageModules),
@@ -143,13 +143,13 @@ test_sync_record() ->
 
 test_sync_record_with_replica_2_9() when ?BLOCK_2_9_SYNCING ->
 	SleepTime = 1000,
-	PartitionStart = ?PARTITION_SIZE - ?DATA_CHUNK_SIZE,
+	PartitionStart = ar_block:partition_size() - ?DATA_CHUNK_SIZE,
 	WeaveSize = 4 * ?DATA_CHUNK_SIZE,
 	[B0] = ar_weave:init([], 1, WeaveSize),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	{ok, Config} = application:get_env(arweave, config),
 	try
-		Partition = {?PARTITION_SIZE, 0, {replica_2_9, RewardAddr}},
+		Partition = {ar_block:partition_size(), 0, {replica_2_9, RewardAddr}},
 		PartitionID = ar_storage_module:id(Partition),
 		StorageModules = [Partition],
 		ar_test_node:start(B0, RewardAddr, Config, StorageModules),

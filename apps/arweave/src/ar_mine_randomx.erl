@@ -108,7 +108,7 @@ randomx_generate_replica_2_9_entropy({_, {stub_state, _}}, Key) ->
 	%% Make it fast, deterministic, and scoped by Key.
 	%% Note that ?REPLICA_2_9_ENTROPY_SIZE is
 	%% reduced significantly in the AR_TEST mode.
-	SubChunkCount = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	SubChunkCount = ar_replica_2_9:sub_chunks_per_entropy(),
 	lists:foldl(
 		fun(N1, Acc) ->
 			lists:foldl(

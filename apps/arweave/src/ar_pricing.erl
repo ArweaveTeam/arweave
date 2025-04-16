@@ -133,7 +133,7 @@ get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
 	%%          (SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal
 	%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerSecond * ?TARGET_BLOCK_TIME,
 	%% EstimatedPartitionCount = max(1, HashRateTotal) div SolutionsPerPartitionPerBlock,
-	%% EstimatedDataSizeInGiB = EstimatedPartitionCount * (?PARTITION_SIZE) div (?GiB),
+	%% EstimatedDataSizeInGiB = EstimatedPartitionCount * (ar_block:partition_size()) div (?GiB),
 	%% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
 	%% PricePerGiBPerSecond = PricePerGibPerBlock div ?TARGET_BLOCK_TIME
 	%% PricePerGiBPerMinute = PricePerGiBPerSecond * 60,
@@ -144,7 +144,7 @@ get_v2_price_per_gib_minute_two_difficulty(Height, B) ->
 		)
 		div
 		(
-			IntervalTotal * max(1, HashRateTotal) * (?PARTITION_SIZE)
+			IntervalTotal * max(1, HashRateTotal) * (ar_block:partition_size())
 		),
 	log_price_metrics(get_v2_price_per_gib_minute_two_difficulty,
 		Height, History, HashRateTotal, RewardTotal, 
@@ -200,7 +200,7 @@ get_v2_price_per_gib_minute_one_difficulty(Height, B) ->
 	%%          (SolutionsPerPartitionPerVDFStep * VDFIntervalTotal) div IntervalTotal
 	%% SolutionsPerPartitionPerBlock = SolutionsPerPartitionPerSecond * ?TARGET_BLOCK_TIME,
 	%% EstimatedPartitionCount = max(1, HashRateTotal) div SolutionsPerPartitionPerBlock,
-	%% EstimatedDataSizeInGiB = EstimatedPartitionCount * (?PARTITION_SIZE) div (?GiB),
+	%% EstimatedDataSizeInGiB = EstimatedPartitionCount * (ar_block:partition_size()) div (?GiB),
 	%% PricePerGiBPerBlock = max(1, RewardTotal) div EstimatedDataSizeInGiB,
 	%% PricePerGiBPerSecond = PricePerGibPerBlock div ?TARGET_BLOCK_TIME
 	%% PricePerGiBPerMinute = PricePerGiBPerSecond * 60,
@@ -211,7 +211,7 @@ get_v2_price_per_gib_minute_one_difficulty(Height, B) ->
 		)
 		div
 		(
-			IntervalTotal * max(1, HashRateTotal) * (?PARTITION_SIZE)
+			IntervalTotal * max(1, HashRateTotal) * (ar_block:partition_size())
 		),
 	log_price_metrics(get_v2_price_per_gib_minute_one_difficulty,
 		Height, History, HashRateTotal, RewardTotal, 
@@ -232,7 +232,7 @@ get_v2_price_per_gib_minute_simple(B) ->
 	%% in gibibytes.
 	(max(1, RewardTotal) * (?GiB) * SolutionsPerPartitionPerBlock)
 		div (max(1, HashRateTotal)
-				* (?PARTITION_SIZE)
+				* (ar_block:partition_size())
 				* 2	% The reward is paid every two minutes whereas we are calculating
 					% the minute rate here.
 			).
@@ -777,7 +777,7 @@ network_data_size(Height,
 		0 -> 0;
 		_ ->
 			EstimatedPartitionCount = AverageHashRate div SolutionsPerPartitionPerBlock,
-			EstimatedPartitionCount * (?PARTITION_SIZE)
+			EstimatedPartitionCount * (ar_block:partition_size())
 	end.
 
 %%%===================================================================

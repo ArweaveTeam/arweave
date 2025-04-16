@@ -101,7 +101,7 @@ next_state(#repack_chunk{state = needs_chunk} = RepackChunk) ->
 
 	IsTooSmall = (
 		ChunkSize /= ?DATA_CHUNK_SIZE andalso
-		AbsoluteEndOffset =< ?STRICT_DATA_SPLIT_THRESHOLD
+		AbsoluteEndOffset =< ar_block:strict_data_split_threshold()
 	),
 
 	IsStorageSupported = ar_chunk_storage:is_storage_supported(

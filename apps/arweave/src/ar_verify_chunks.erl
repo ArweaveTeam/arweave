@@ -689,8 +689,8 @@ test_verify_chunk_storage_should_store() ->
 	?assertEqual(
 		ExpectedState,
 		verify_chunk_storage(
-			?STRICT_DATA_SPLIT_THRESHOLD + 1,
-			{?STRICT_DATA_SPLIT_THRESHOLD + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
+			ar_block:strict_data_split_threshold() + 1,
+			{ar_block:strict_data_split_threshold() + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
@@ -704,8 +704,8 @@ test_verify_chunk_storage_should_store() ->
 			} 
 		},
 		verify_chunk_storage(
-			?STRICT_DATA_SPLIT_THRESHOLD + 1,
-			{?STRICT_DATA_SPLIT_THRESHOLD + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
+			ar_block:strict_data_split_threshold() + 1,
+			{ar_block:strict_data_split_threshold() + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = {composite, Addr, 1} })),
 	ok.
@@ -724,8 +724,8 @@ test_verify_chunk_storage_should_not_store() ->
 	?assertEqual(
 		ExpectedState,
 		verify_chunk_storage(
-			?STRICT_DATA_SPLIT_THRESHOLD + 1,
-			{?STRICT_DATA_SPLIT_THRESHOLD + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
+			ar_block:strict_data_split_threshold() + 1,
+			{ar_block:strict_data_split_threshold() + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	ok.
@@ -801,10 +801,10 @@ test_verify_proof_invalid_paths() ->
 	ok.
 
 test_verify_chunk() ->
-	PreSplitOffset = ?STRICT_DATA_SPLIT_THRESHOLD - (?DATA_CHUNK_SIZE div 2),
-	PostSplitOffset = ?STRICT_DATA_SPLIT_THRESHOLD + (?DATA_CHUNK_SIZE div 2),
-	IntervalStart = ?STRICT_DATA_SPLIT_THRESHOLD - ?DATA_CHUNK_SIZE,
-	IntervalEnd = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE,
+	PreSplitOffset = ar_block:strict_data_split_threshold() - (?DATA_CHUNK_SIZE div 2),
+	PostSplitOffset = ar_block:strict_data_split_threshold() + (?DATA_CHUNK_SIZE div 2),
+	IntervalStart = ar_block:strict_data_split_threshold() - ?DATA_CHUNK_SIZE,
+	IntervalEnd = ar_block:strict_data_split_threshold() + ?DATA_CHUNK_SIZE,
 	Interval = {IntervalEnd, IntervalStart},
 	?assertEqual(
 		#state{ 
@@ -823,7 +823,7 @@ test_verify_chunk() ->
 			#state{packing=unpacked})),
 	?assertEqual(
 		#state{ 
-			cursor = ?STRICT_DATA_SPLIT_THRESHOLD + ?DATA_CHUNK_SIZE + 1,
+			cursor = ar_block:strict_data_split_threshold() + ?DATA_CHUNK_SIZE + 1,
 			packing = unpacked,
 			verify_report = #verify_report{
 				total_error_bytes = ?DATA_CHUNK_SIZE div 2,
