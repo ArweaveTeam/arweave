@@ -169,7 +169,7 @@ test_mines_off_only_last_chunks() ->
 							[ar_chunk_storage:delete(O, ar_storage_module:id(Module))
 									|| Module <- Config#config.storage_modules]
 						end,
-						lists:seq(?DATA_CHUNK_SIZE, ?STRICT_DATA_SPLIT_THRESHOLD,
+						lists:seq(?DATA_CHUNK_SIZE, ar_block:strict_data_split_threshold(),
 								?DATA_CHUNK_SIZE)
 					);
 				_ ->
@@ -220,7 +220,7 @@ test_mines_off_only_second_last_chunks() ->
 							[ar_chunk_storage:delete(O, ar_storage_module:id(Module))
 									|| Module <- Config#config.storage_modules]
 						end,
-						lists:seq(?DATA_CHUNK_SIZE, ?STRICT_DATA_SPLIT_THRESHOLD,
+						lists:seq(?DATA_CHUNK_SIZE, ar_block:strict_data_split_threshold(),
 								?DATA_CHUNK_SIZE)
 					);
 				_ ->

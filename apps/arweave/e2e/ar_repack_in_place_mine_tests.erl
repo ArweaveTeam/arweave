@@ -61,8 +61,8 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 	%% spora node, and then sync data to the unpacked node. It's the syncing process that
 	%% writes data to the overlap.
 	ExpectedPartitionSize = case FromPackingType of
-		unpacked -> ?PARTITION_SIZE +  ar_storage_module:get_overlap(unpacked);
-		_ -> ?PARTITION_SIZE
+		unpacked -> ar_block:partition_size() +  ar_storage_module:get_overlap(unpacked);
+		_ -> ar_block:partition_size()
 	end,
 
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking, ExpectedPartitionSize),

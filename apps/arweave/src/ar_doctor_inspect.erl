@@ -248,8 +248,8 @@ bitmap(DataDir, StorageModuleConfig) ->
 %% formats. Each sector row will form a row in the bitmap.
 get_all_chunk_packings(ModuleStart, ModuleEnd, StoreID) ->
 	StartOffset = ar_block:get_chunk_padded_offset(ModuleStart),
-	Partition = StartOffset div ?PARTITION_SIZE,
-	PartitionStart = Partition * ?PARTITION_SIZE,
+	Partition = StartOffset div ar_block:partition_size(),
+	PartitionStart = Partition * ar_block:partition_size(),
 	SectorSize = ar_replica_2_9:get_sector_size(),
 	ChunksPerSector = SectorSize div ?DATA_CHUNK_SIZE,
 	NumSectors = ?REPLICA_2_9_ENTROPY_COUNT * ?REPLICA_2_9_ENTROPY_SIZE div SectorSize,

@@ -74,11 +74,7 @@
 %% map to chunks that are as far as possible from each other within a partition. With
 %% an entropy size of 8_388_608 bytes and a slice size of 8192 bytes, there are 1024 slices per
 %% entropy, which yields 1024 sectors per partition.
--ifdef(AR_TEST).
-%% 2_097_152 / 24_576 = 85.33333333333333
-%% (85 + 11) = 96 the nearest multiple of 32
--define(REPLICA_2_9_ENTROPY_COUNT, 96).
--else.
+-ifndef(REPLICA_2_9_ENTROPY_COUNT).
 -define(REPLICA_2_9_ENTROPY_COUNT, 429_184).
 -endif.
 
@@ -91,9 +87,7 @@
 %% The size of the mining partition. The weave is broken down into partitions
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
--ifdef(AR_TEST).
--define(PARTITION_SIZE, 2_097_152). % 8 * 256 * 1024
--else.
+-ifndef(PARTITION_SIZE).
 -define(PARTITION_SIZE, 3_600_000_000_000). % 90% of 4 TB.
 -endif.
 
@@ -112,13 +106,7 @@
 -define(LEGACY_RECALL_RANGE_SIZE, 104_857_600). % == 100 * 1024 * 1024
 -endif.
 
--ifdef(FORKS_RESET).
-	-ifdef(AR_TEST).
-		-define(STRICT_DATA_SPLIT_THRESHOLD, (262144 * 3)).
-	-else.
-		-define(STRICT_DATA_SPLIT_THRESHOLD, 0).
-	-endif.
--else.
+-ifndef(STRICT_DATA_SPLIT_THRESHOLD).
 %% The threshold was determined on the mainnet at the 2.5 fork block. The chunks
 %% submitted after the threshold must adhere to stricter validation rules.
 %% This offset is about half way through partition 8
@@ -127,7 +115,7 @@
 
 -ifdef(FORKS_RESET).
 	-ifdef(AR_TEST).
-		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, (?STRICT_DATA_SPLIT_THRESHOLD * 2)).
+		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, (ar_block:strict_data_split_threshold() * 2)).
 	-else.
 		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, 0).
 	-endif.

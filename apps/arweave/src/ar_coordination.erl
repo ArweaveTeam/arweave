@@ -120,14 +120,14 @@ is_coordinated_miner() ->
 %% A single partition in the following format:
 %% {[
 %%   {bucket, PartitionID},
-%%   {bucketsize, ?PARTITION_SIZE},
+%%   {bucketsize, ar_block:partition_size()},
 %%   {addr, EncodedMiningAddress}
 %% ]}
 %%
 %% A single partition with the composite packing is in the following format:
 %% {[
 %%   {bucket, PartitionID},
-%%   {bucketsize, ?PARTITION_SIZE},
+%%   {bucketsize, ar_block:partition_size()},
 %%   {addr, EncodedMiningAddress},
 %%   {pdiff, PackingDifficulty}
 %% ]}
@@ -143,14 +143,14 @@ get_self_plus_external_partitions_list() ->
 %% A single partition in the following format:
 %% {[
 %%   {bucket, PartitionID},
-%%   {bucketsize, ?PARTITION_SIZE},
+%%   {bucketsize, ar_block:partition_size()},
 %%   {addr, EncodedMiningAddress}
 %% ]}
 %%
 %% A single partition with the composite packing is in the following format:
 %% {[
 %%   {bucket, PartitionID},
-%%   {bucketsize, ?PARTITION_SIZE},
+%%   {bucketsize, ar_block:partition_size()},
 %%   {addr, EncodedMiningAddress},
 %%   {pdiff, PackingDifficulty}
 %% ]}
@@ -217,7 +217,7 @@ handle_call(get_cluster_partitions_list, _From, State) ->
 							Acc2;
 						({_Peer, PackingAddr, PackingDifficulty}, Acc2) ->
 							sets:add_element(ar_serialize:partition_to_json_struct(
-									PartitionID, ?PARTITION_SIZE, PackingAddr,
+									PartitionID, ar_block:partition_size(), PackingAddr,
 									PackingDifficulty), Acc2)
 					end,
 					Acc,
@@ -506,7 +506,7 @@ get_unique_partitions_set([{PartitionID, MiningAddress, PackingDifficulty} | Par
 		UniquePartitions) ->
 	get_unique_partitions_set(
 		Partitions,
-		sets:add_element(ar_serialize:partition_to_json_struct(PartitionID, ?PARTITION_SIZE,
+		sets:add_element(ar_serialize:partition_to_json_struct(PartitionID, ar_block:partition_size(),
 				MiningAddress, PackingDifficulty), UniquePartitions)
 	);
 get_unique_partitions_set([{PartitionID, BucketSize, MiningAddress, PackingDifficulty}

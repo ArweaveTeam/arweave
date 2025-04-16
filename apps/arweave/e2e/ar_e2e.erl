@@ -92,11 +92,11 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 
 	?LOG_INFO("Source node ~p started.", [Node]),
 	
-	assert_syncs_range(Node, 0, 4*?PARTITION_SIZE),
+	assert_syncs_range(Node, 0, 4*ar_block:partition_size()),
 	
 	assert_partition_size(Node, 0, unpacked),
 	assert_partition_size(Node, 1, unpacked),
-	assert_partition_size(Node, 2, unpacked, floor(0.5*?PARTITION_SIZE)),
+	assert_partition_size(Node, 2, unpacked, floor(0.5*ar_block:partition_size())),
 
 	assert_chunks(Node, unpacked, Chunks),
 
@@ -122,7 +122,7 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TX2#tx.id)) ++ "/data"
 		}),
 	{ok, ExpectedData} = load_chunk_fixture(
-		unpacked, ?PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE)),
+		unpacked, ar_block:partition_size() + floor(3.75 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(ExpectedData, ar_util:decode(Data)),
 
 	?LOG_INFO("Source node ~p restarted.", [Node]),
@@ -133,7 +133,7 @@ start_source_node(Node, PackingType, WalletFixture) ->
 		[Node, PackingType, WalletFixture]),
 	{Wallet, StorageModules} = source_node_storage_modules(Node, PackingType, WalletFixture),
 	RewardAddr = ar_wallet:to_address(Wallet),
-	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ?PARTITION_SIZE),
+	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ar_block:partition_size()),
 
 	{ok, Config} = ar_test_node:remote_call(Node, application, get_env, [arweave, config]),
 	
@@ -153,40 +153,40 @@ start_source_node(Node, PackingType, WalletFixture) ->
 	%% and B2 starts at a chunk boundary and contains 1 chunk of data.
 	{TX1, B1} = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE), false), %% p1
 	{TX2, B2} = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE), false), %% p1
-	{TX3, B3} = mine_block(Node, Wallet, ?PARTITION_SIZE, false), %% p1 to p2
-	{TX4, B4} = mine_block(Node, Wallet, floor(0.5 * ?PARTITION_SIZE), false), %% p2
-	{TX5, B5} = mine_block(Node, Wallet, ?PARTITION_SIZE, true), %% p3 chunks are stored in disk pool
+	{TX3, B3} = mine_block(Node, Wallet, ar_block:partition_size(), false), %% p1 to p2
+	{TX4, B4} = mine_block(Node, Wallet, floor(0.5 * ar_block:partition_size()), false), %% p2
+	{TX5, B5} = mine_block(Node, Wallet, ar_block:partition_size(), true), %% p3 chunks are stored in disk pool
 
 	%% List of {Block, EndOffset, ChunkSize}
 	Chunks = [
 		%% PaddedEndOffset: 2359296
-		{B1, ?PARTITION_SIZE + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}, 
+		{B1, ar_block:partition_size() + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}, 
 		%% PaddedEndOffset: 2621440
-		{B1, ?PARTITION_SIZE + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}, 
+		{B1, ar_block:partition_size() + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}, 
 		%% PaddedEndOffset: 2883584
-		{B1, ?PARTITION_SIZE + floor(2.5 * ?DATA_CHUNK_SIZE), floor(0.5 * ?DATA_CHUNK_SIZE)},
+		{B1, ar_block:partition_size() + floor(2.5 * ?DATA_CHUNK_SIZE), floor(0.5 * ?DATA_CHUNK_SIZE)},
 		%% PaddedEndOffset: 3145728
-		{B2, ?PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE), floor(0.75 * ?DATA_CHUNK_SIZE)},
+		{B2, ar_block:partition_size() + floor(3.75 * ?DATA_CHUNK_SIZE), floor(0.75 * ?DATA_CHUNK_SIZE)},
 		%% PaddedEndOffset: 3407872
-		{B3, ?PARTITION_SIZE + (5*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ar_block:partition_size() + (5*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
 		%% PaddedEndOffset: 3670016
-		{B3, ?PARTITION_SIZE + (6*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ar_block:partition_size() + (6*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
 		%% PaddedEndOffset: 3932160
-		{B3, ?PARTITION_SIZE + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ar_block:partition_size() + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
 		%% PaddedEndOffset: 4194304
-		{B3, ?PARTITION_SIZE + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
+		{B3, ar_block:partition_size() + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
 	],
 
 	?LOG_INFO("Source node ~p blocks mined.", [Node]),
 
 	SourcePacking = packing_type_to_packing(PackingType, RewardAddr),
 
-	assert_syncs_range(Node, SourcePacking, 0, 4*?PARTITION_SIZE),
+	assert_syncs_range(Node, SourcePacking, 0, 4*ar_block:partition_size()),
 
 	%% No overlap since we aren't syncing or repacking chunks.
-	assert_partition_size(Node, 0, SourcePacking, ?PARTITION_SIZE),
-	assert_partition_size(Node, 1, SourcePacking, ?PARTITION_SIZE),
-	assert_partition_size(Node, 2, SourcePacking, floor(0.5*?PARTITION_SIZE)),
+	assert_partition_size(Node, 0, SourcePacking, ar_block:partition_size()),
+	assert_partition_size(Node, 1, SourcePacking, ar_block:partition_size()),
+	assert_partition_size(Node, 2, SourcePacking, floor(0.5*ar_block:partition_size())),
 	
 	assert_chunks(Node, SourcePacking, Chunks),
 
@@ -217,11 +217,11 @@ source_node_storage_modules(Node, PackingType, WalletFixture) ->
 
 source_node_storage_modules(SourcePacking) ->
 	[
-		{?PARTITION_SIZE, 0, SourcePacking},
-		{?PARTITION_SIZE, 1, SourcePacking},
-		{?PARTITION_SIZE, 2, SourcePacking},
-		{?PARTITION_SIZE, 3, SourcePacking},
-		{?PARTITION_SIZE, 4, SourcePacking}
+		{ar_block:partition_size(), 0, SourcePacking},
+		{ar_block:partition_size(), 1, SourcePacking},
+		{ar_block:partition_size(), 2, SourcePacking},
+		{ar_block:partition_size(), 3, SourcePacking},
+		{ar_block:partition_size(), 4, SourcePacking}
 	].
 	
 mine_block(Node, Wallet, DataSize, IsTemporary) ->
@@ -372,7 +372,7 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 
 assert_partition_size(Node, PartitionNumber, Packing) ->
 	Overlap = ar_storage_module:get_overlap(Packing),
-	assert_partition_size(Node, PartitionNumber, Packing, ?PARTITION_SIZE + Overlap).
+	assert_partition_size(Node, PartitionNumber, Packing, ar_block:partition_size() + Overlap).
 assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 	?LOG_INFO("~p: Asserting partition ~p,~p is size ~p",
 		[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true), Size]),
