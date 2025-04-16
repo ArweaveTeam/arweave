@@ -1,7 +1,6 @@
 -module(ar_http_iface_tests).
 
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include_lib("ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [wait_until_height/2, wait_until_receives_txs/1,

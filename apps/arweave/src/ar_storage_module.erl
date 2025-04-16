@@ -272,12 +272,15 @@ get_cover(Start, End, MaybeStoreID) ->
 %%% Private functions.
 %%%===================================================================
 
-id(BucketSize, Bucket, PackingString) when BucketSize == ?PARTITION_SIZE ->
-	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~s",
-			[Bucket, PackingString])));
 id(BucketSize, Bucket, PackingString) ->
-	binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~B_~s",
-			[BucketSize, Bucket, PackingString]))).
+	case BucketSize == ar_block:partition_size() of
+		true ->
+			binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~s",
+					[Bucket, PackingString])));
+		false ->
+			binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~B_~s",
+					[BucketSize, Bucket, PackingString])))
+	end.
 
 get(Offset, Packing, [{BucketSize, Bucket, Packing2} | StorageModules], StorageModule) ->
 	case Offset =< BucketSize * Bucket
@@ -440,30 +443,30 @@ label_test() ->
 	{ok, Config} = application:get_env(arweave, config),
 	try
 		application:set_env(arweave, config, Config#config{storage_modules = [
-			{?PARTITION_SIZE, 0, {spora_2_6, <<"a">>}},
-			{?PARTITION_SIZE, 2, {spora_2_6, <<"a">>}},
-			{?PARTITION_SIZE, 0, {spora_2_6, <<"b">>}},
+			{ar_block:partition_size(), 0, {spora_2_6, <<"a">>}},
+			{ar_block:partition_size(), 2, {spora_2_6, <<"a">>}},
+			{ar_block:partition_size(), 0, {spora_2_6, <<"b">>}},
 			{524288, 3, {spora_2_6, <<"b">>}},
-			{?PARTITION_SIZE, 2, unpacked},
-			{?PARTITION_SIZE, 2, {spora_2_6, <<"s÷">>}},
+			{ar_block:partition_size(), 2, unpacked},
+			{ar_block:partition_size(), 2, {spora_2_6, <<"s÷">>}},
 			{524288, 2, {spora_2_6, <<"s÷">>}},
 			{524288, 3, {composite, <<"b">>, 1}},
 			{524288, 3, {composite, <<"b">>, 1}},
 			{524288, 3, {composite, <<"b">>, 2}}
 		]}),
 		?assertEqual("storage_module_0_1",
-			label(id({?PARTITION_SIZE, 0, {spora_2_6, <<"a">>}}))),
+			label(id({ar_block:partition_size(), 0, {spora_2_6, <<"a">>}}))),
 		?assertEqual("storage_module_2_1",
-			label(id({?PARTITION_SIZE, 2, {spora_2_6, <<"a">>}}))),
+			label(id({ar_block:partition_size(), 2, {spora_2_6, <<"a">>}}))),
 		?assertEqual("storage_module_0_2",
-			label(id({?PARTITION_SIZE, 0, {spora_2_6, <<"b">>}}))),
+			label(id({ar_block:partition_size(), 0, {spora_2_6, <<"b">>}}))),
 		?assertEqual("storage_module_524288_3_2",
 			label(id({524288, 3, {spora_2_6, <<"b">>}}))),
 		?assertEqual("storage_module_2_unpacked",
-			label(id({?PARTITION_SIZE, 2, unpacked}))),
+			label(id({ar_block:partition_size(), 2, unpacked}))),
 		%% force a _ in the encoded address
 		?assertEqual("storage_module_2_3",
-			label(id({?PARTITION_SIZE, 2, {spora_2_6, <<"s÷">>}}))),
+			label(id({ar_block:partition_size(), 2, {spora_2_6, <<"s÷">>}}))),
 		?assertEqual("storage_module_524288_2_3",
 			label(id({524288, 2, {spora_2_6, <<"s÷">>}}))),
 		?assertEqual("storage_module_524288_3_4",

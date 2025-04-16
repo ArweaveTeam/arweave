@@ -6,12 +6,12 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(WEAVE_SIZE, (3 * ?PARTITION_SIZE)).
+-define(WEAVE_SIZE, (3 * ar_block:partition_size())).
 %% RECALL_RANGE_1 and SYNCED_RECALL_RANGE_2 must be different partitions so that different io
 %% threads are used. 
 %% ?RECALL_RANGE_1 is set so 1 chunk is synced and one is missing.
--define(RECALL_RANGE_1, (3*?PARTITION_SIZE-?DATA_CHUNK_SIZE)).
--define(SYNCED_RECALL_RANGE_2, ?PARTITION_SIZE).
+-define(RECALL_RANGE_1, (3*ar_block:partition_size()-?DATA_CHUNK_SIZE)).
+-define(SYNCED_RECALL_RANGE_2, ar_block:partition_size()).
 -define(UNSYNCED_RECALL_RANGE_2, 0).
 
 
@@ -24,8 +24,8 @@ setup_all() ->
 	{ok, Config} = application:get_env(arweave, config),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
-		{?PARTITION_SIZE, 1, {spora_2_6, RewardAddr}},
-		{?PARTITION_SIZE, 2, {spora_2_6, RewardAddr}}
+		{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}},
+		{ar_block:partition_size(), 2, {spora_2_6, RewardAddr}}
 	],
 	ar_test_node:start(B0, RewardAddr, Config, StorageModules),
 	Config.
@@ -40,8 +40,8 @@ setup_pool_client() ->
 	{ok, Config} = application:get_env(arweave, config),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
-		{?PARTITION_SIZE, 1, {spora_2_6, RewardAddr}},
-		{?PARTITION_SIZE, 2, {spora_2_6, RewardAddr}}
+		{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}},
+		{ar_block:partition_size(), 2, {spora_2_6, RewardAddr}}
 	],
 	ar_test_node:start(B0, RewardAddr,
 		Config#config{

@@ -18,11 +18,11 @@
 %% offset, the threshold where the offset rebases were allowed (and the validation
 %% changed in some other ways on top of that). The threshold where the specific
 %% requirements were imposed on data splits to make each chunk belong to its own
-%% 256 KiB bucket is set to ?STRICT_DATA_SPLIT_THRESHOLD. The code is then passed to
+%% 256 KiB bucket is set to ar_block:strict_data_split_threshold(). The code is then passed to
 %% ar_merkle:validate_path/5.
 get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold) ->
 	get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold,
-			?STRICT_DATA_SPLIT_THRESHOLD).
+			ar_block:strict_data_split_threshold()).
 
 %% @doc Return the merkle proof validation ruleset code depending on the block start
 %% offset, the threshold where the offset rebases were allowed (and the validation
@@ -45,7 +45,7 @@ get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold,
 
 get_data_path_validation_ruleset(BlockStartOffset) ->
 	get_data_path_validation_ruleset(BlockStartOffset, ?MERKLE_REBASE_SUPPORT_THRESHOLD,
-			?STRICT_DATA_SPLIT_THRESHOLD).
+			ar_block:strict_data_split_threshold()).
 
 %% @doc Validate a proof of access.
 validate(Args) ->
@@ -99,7 +99,7 @@ chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte, MerkleRebaseSupportThre
 	end,
 
 	ValidateDataPathRuleset = get_data_path_validation_ruleset(
-		BlockStartOffset, MerkleRebaseSupportThreshold, ?STRICT_DATA_SPLIT_THRESHOLD),
+		BlockStartOffset, MerkleRebaseSupportThreshold, ar_block:strict_data_split_threshold()),
 	chunk_proof(
 		ChunkMetadata2,
 		BlockStartOffset,
@@ -185,9 +185,9 @@ validate_paths(Proof) ->
 	end.
 
 get_recall_bucket_offset(RecallOffset, BlockStartOffset) ->
-	case RecallOffset >= ?STRICT_DATA_SPLIT_THRESHOLD of
+	case RecallOffset >= ar_block:strict_data_split_threshold() of
 		true ->
-			get_padded_offset(RecallOffset + 1, ?STRICT_DATA_SPLIT_THRESHOLD)
+			get_padded_offset(RecallOffset + 1, ar_block:strict_data_split_threshold())
 					- (?DATA_CHUNK_SIZE) - BlockStartOffset;
 		false ->
 			RecallOffset - BlockStartOffset
@@ -266,9 +266,9 @@ validate3(Packing, Args) ->
 	end.
 
 %% @doc Return the smallest multiple of 256 KiB >= Offset
-%% counting from ?STRICT_DATA_SPLIT_THRESHOLD.
+%% counting from ar_block:strict_data_split_threshold().
 get_padded_offset(Offset) ->
-	get_padded_offset(Offset, ?STRICT_DATA_SPLIT_THRESHOLD).
+	get_padded_offset(Offset, ar_block:strict_data_split_threshold()).
 
 %% @doc Return the smallest multiple of 256 KiB >= Offset
 %% counting from StrictDataSplitThreshold.
