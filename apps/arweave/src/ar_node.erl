@@ -289,14 +289,14 @@ get_partition_number(undefined) ->
 get_partition_number(infinity) ->
 	infinity;
 get_partition_number(Offset) ->
-	Offset div ?PARTITION_SIZE.
+	Offset div ar_block:partition_size().
 
 %% @doc Excludes the last partition as it may be incomplete and therefore provides
 %% a mining advantage (e.g. it can fit in RAM)
 get_max_partition_number(infinity) ->
 	infinity;
 get_max_partition_number(PartitionUpperBound) ->
-	max(0, PartitionUpperBound div ?PARTITION_SIZE - 1).
+	max(0, PartitionUpperBound div ar_block:partition_size() - 1).
 
 %% @doc Return the current weave size. Assume the node has joined the network and
 %% initialized the state.

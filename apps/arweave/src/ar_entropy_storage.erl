@@ -178,7 +178,7 @@ generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
 record_chunk(
 		PaddedEndOffset, Chunk, StoreID, FileIndex, {IsPrepared, RewardAddr}) ->
 	%% Sanity checks
-	true = PaddedEndOffset == ar_block:get_chunk_padded_offset(PaddedEndOffset),
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(PaddedEndOffset),
 	%% End sanity checks
 
 	StartOffset = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
@@ -367,11 +367,18 @@ replica_2_9_test_() ->
 	{timeout, 20, fun test_replica_2_9/0}.
 
 test_replica_2_9() ->
+	case ar_block:strict_data_split_threshold() of
+		786432 ->
+			ok;
+		_ ->
+			throw(unexpected_strict_data_split_threshold)
+	end,
+
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	Packing = {replica_2_9, RewardAddr},
 	StorageModules = [
-			{?PARTITION_SIZE, 0, Packing},
-			{?PARTITION_SIZE, 1, Packing}
+			{ar_block:partition_size(), 0, Packing},
+			{ar_block:partition_size(), 1, Packing}
 	],
 	{ok, Config} = application:get_env(arweave, config),
 	try

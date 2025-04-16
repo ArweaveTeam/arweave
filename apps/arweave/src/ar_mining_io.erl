@@ -276,7 +276,7 @@ get_store_id_partitions({Start, End}, Partitions) when Start >= End ->
 	Partitions;
 get_store_id_partitions({Start, End}, Partitions) ->
 	PartitionNumber = ar_node:get_partition_number(Start),
-	get_store_id_partitions({Start + ?PARTITION_SIZE, End}, [PartitionNumber | Partitions]).
+	get_store_id_partitions({Start + ar_block:partition_size(), End}, [PartitionNumber | Partitions]).
 
 open_files(StoreIDs) ->
 	lists:foreach(

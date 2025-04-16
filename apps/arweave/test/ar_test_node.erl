@@ -274,7 +274,7 @@ start_node(B0, Config, WaitUntilSync) ->
 start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
 	%% Set weave larger than what we'll cover with the 3 nodes so that every node can find
 	%% a solution.
-	[B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ?PARTITION_SIZE * 5),
+	[B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ar_block:partition_size() * 5),
 	ExitPeer = peer_ip(peer1),
 	ValidatorPeer = peer_ip(main),
 	MinerNodes = lists:sublist([peer2, peer3, peer4], MiningNodeCount),
@@ -494,7 +494,7 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 	%% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
 	%% Note that replica_2_9 modules do not have ?OVERLAP.
 	RangeNumber = lists:nth(N, [0, 2, 4]),
-	[{?PARTITION_SIZE, RangeNumber, get_default_storage_module_packing(RewardAddr, 0)}].
+	[{ar_block:partition_size(), RangeNumber, get_default_storage_module_packing(RewardAddr, 0)}].
 
 remote_call(Node, Module, Function, Args) ->
 	remote_call(Node, Module, Function, Args, ?REMOTE_CALL_TIMEOUT).
@@ -562,7 +562,7 @@ start(Options) when is_map(Options) ->
 	StorageModules =
 		case maps:get(storage_modules, Options, not_set) of
 			not_set ->
-				[{20 * 1024 * 1024, N,
+				[{10 * ar_block:partition_size(), N,
 						get_default_storage_module_packing(RewardAddr, N, Options)}
 					|| N <- lists:seq(0, 8)];
 			Value3 ->
@@ -576,7 +576,7 @@ start(B0, RewardAddr) ->
 
 %% @doc Start a fresh node with the given genesis block, mining address, and config.
 start(B0, RewardAddr, Config) ->
-	StorageModules = [{20 * 1024 * 1024, N, get_default_storage_module_packing(RewardAddr, N)}
+	StorageModules = [{10 * ar_block:partition_size(), N, get_default_storage_module_packing(RewardAddr, N)}
 			|| N <- lists:seq(0, 8)],
 	start(B0, RewardAddr, Config, StorageModules).
 
@@ -808,7 +808,7 @@ join(JoinOnNode, Rejoin) ->
 			clean_up_and_stop()
 	end,
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	StorageModules = [{?PARTITION_SIZE, N,
+	StorageModules = [{ar_block:partition_size(), N,
 			get_default_storage_module_packing(RewardAddr, N)} || N <- lists:seq(0, 4)],
 	ok = application:set_env(arweave, config, Config#config{
 		start_from_latest_state = false,
@@ -1237,21 +1237,11 @@ test_with_mocked_functions(Functions, TestFun) ->
 	test_with_mocked_functions(Functions, TestFun, ?TEST_MOCKED_FUNCTIONS_TIMEOUT).
 
 test_with_mocked_functions(Functions, TestFun, Timeout) ->
-	WrappedTestFun = fun() ->
-		try
-			TestFun()
-		catch
-			Type:Reason ->
-				?assert(false,
-					iolist_to_binary(
-						io_lib:format("Mocked test failed with ~p: ~p", [Type, Reason])))
-		end
-	end,
 	{Setup, Cleanup} = mock_functions(Functions),
 	{
 		foreach,
 		Setup, Cleanup,
-		[{timeout, Timeout, WrappedTestFun}]
+		[{timeout, Timeout, TestFun}]
 	}.
 
 post_and_mine(#{ miner := Node, await_on := AwaitOnNode }, TXs) ->

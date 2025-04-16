@@ -131,8 +131,8 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 
 	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
 
-	RangeStart = ?PARTITION_SIZE,
-	RangeEnd = 2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking),
+	RangeStart = ar_block:partition_size(),
+	RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
 	RangeSize = RangeEnd - RangeStart,
 
 	%% Partition 1 and half of partition 2 are below the disk pool threshold
@@ -157,7 +157,7 @@ test_syncing_blocked({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	SinkNode = peer2,
 
 	start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
-	ar_e2e:assert_does_not_sync_range(SinkNode, ?PARTITION_SIZE, 2*?PARTITION_SIZE),
+	ar_e2e:assert_does_not_sync_range(SinkNode, ar_block:partition_size(), 2*ar_block:partition_size()),
 	ar_e2e:assert_no_chunks(SinkNode, Chunks).
 
 test_unpacked_and_packed_sync_pack_mine(
@@ -172,12 +172,12 @@ test_unpacked_and_packed_sync_pack_mine(
 	{SinkPacking1, SinkPacking2} = start_sink_node(
 		SinkNode, SourceNode, B0, PackingType1, PackingType2),
 
-	RangeStart1 = ?PARTITION_SIZE,
-	RangeEnd1 = 2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking1),
+	RangeStart1 = ar_block:partition_size(),
+	RangeEnd1 = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking1),
 	RangeSize1 = RangeEnd1 - RangeStart1,
 
-	RangeStart2 = ?PARTITION_SIZE,
-	RangeEnd2 = 2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking2),
+	RangeStart2 = ar_block:partition_size(),
+	RangeEnd2 = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking2),
 	RangeSize2 = RangeEnd2 - RangeStart2,
 
 	%% Data exists as both packed and unmpacked, so will exist in the global sync record
@@ -214,7 +214,7 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 	{ok, Config} = ar_test_node:get_config(SinkNode),
 	
-	Module = {?PARTITION_SIZE, 1, SinkPacking},
+	Module = {ar_block:partition_size(), 1, SinkPacking},
 	StoreID = ar_storage_module:id(Module),
 	StorageModules = [ Module ],
 
@@ -232,8 +232,8 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
 	),
 
-	RangeStart = ?PARTITION_SIZE,
-	RangeEnd = 2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking),
+	RangeStart = ar_block:partition_size(),
+	RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
 	RangeSize = RangeEnd - RangeStart,
 
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
@@ -278,7 +278,7 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 	{ok, Config} = ar_test_node:get_config(SinkNode),
 	
-	Module = {?PARTITION_SIZE, 1, SinkPacking},
+	Module = {ar_block:partition_size(), 1, SinkPacking},
 	StoreID = ar_storage_module:id(Module),
 	StorageModules = [ Module ],
 
@@ -295,8 +295,8 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
 	),
 
-	RangeStart = ?PARTITION_SIZE,
-	RangeEnd = 2*?PARTITION_SIZE + ar_storage_module:get_overlap(SinkPacking),
+	RangeStart = ar_block:partition_size(),
+	RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
 	RangeSize = RangeEnd - RangeStart,
 
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
@@ -332,7 +332,7 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 	{ok, Config} = ar_test_node:get_config(SinkNode),
 
-	Module = {floor(0.5 * ?PARTITION_SIZE), 2, SinkPacking},
+	Module = {floor(0.5 * ar_block:partition_size()), 2, SinkPacking},
 	StoreID = ar_storage_module:id(Module),
 	StorageModules = [ Module ],
 
@@ -348,8 +348,8 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
 	),
 
-	RangeStart = floor(1 * ?PARTITION_SIZE),
-	RangeEnd = floor(1.5 * ?PARTITION_SIZE) + ar_storage_module:get_overlap(SinkPacking),
+	RangeStart = floor(1 * ar_block:partition_size()),
+	RangeEnd = floor(1.5 * ar_block:partition_size()) + ar_storage_module:get_overlap(SinkPacking),
 	RangeSize = RangeEnd - RangeStart,
 
 	%% Make sure the expected data was synced
@@ -361,7 +361,7 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 
 	%% Make sure no extra entropy was generated
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
-	ar_e2e:assert_no_entropy(SinkNode, RangeEnd, 2 * ?PARTITION_SIZE, StoreID),
+	ar_e2e:assert_no_entropy(SinkNode, RangeEnd, 2 * ar_block:partition_size(), StoreID),
 
 	%% Make sure the data is minable
 	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
@@ -380,7 +380,7 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 	{ok, Config} = ar_test_node:get_config(SinkNode),
 
-	Module = {floor(0.5 * ?PARTITION_SIZE), 3, SinkPacking},
+	Module = {floor(0.5 * ar_block:partition_size()), 3, SinkPacking},
 	StoreID = ar_storage_module:id(Module),
 	StorageModules = [ Module ],
 
@@ -396,8 +396,8 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
 	),
 
-	RangeStart = floor(1.5 * ?PARTITION_SIZE),
-	RangeEnd = floor(2 * ?PARTITION_SIZE) + ar_storage_module:get_overlap(SinkPacking),
+	RangeStart = floor(1.5 * ar_block:partition_size()),
+	RangeEnd = floor(2 * ar_block:partition_size()) + ar_storage_module:get_overlap(SinkPacking),
 	RangeSize = RangeEnd - RangeStart,
 
 	%% Make sure the expected data was synced	
@@ -440,11 +440,11 @@ test_disk_pool_threshold({SourcePackingType, SinkPackingType}) ->
 
 	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
 	%% Partition 1 and half of partition 2 are below the disk pool threshold
-	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, ?PARTITION_SIZE, 4*?PARTITION_SIZE),
+	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, ar_block:partition_size(), 4*ar_block:partition_size()),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
-	ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, floor(0.5*?PARTITION_SIZE)),
+	ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, floor(0.5*ar_block:partition_size())),
 	ar_e2e:assert_empty_partition(SinkNode, 3, SinkPacking),
-	ar_e2e:assert_does_not_sync_range(SinkNode, 0, ?PARTITION_SIZE),
+	ar_e2e:assert_does_not_sync_range(SinkNode, 0, ar_block:partition_size()),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
 
 	case SinkPackingType of
@@ -455,11 +455,11 @@ test_disk_pool_threshold({SourcePackingType, SinkPackingType}) ->
 
 			%% Now that we mined a block, the rest of partition 2 is below the disk pool
 			%% threshold
-			ar_e2e:assert_syncs_range(SinkNode, SinkPacking, ?PARTITION_SIZE, 4*?PARTITION_SIZE),
-			ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, ?PARTITION_SIZE),
+			ar_e2e:assert_syncs_range(SinkNode, SinkPacking, ar_block:partition_size(), 4*ar_block:partition_size()),
+			ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, ar_block:partition_size()),
 			%% All of partition 3 is still above the disk pool threshold
 			ar_e2e:assert_empty_partition(SinkNode, 3, SinkPacking),
-			ar_e2e:assert_does_not_sync_range(SinkNode, 0, ?PARTITION_SIZE),
+			ar_e2e:assert_does_not_sync_range(SinkNode, 0, ar_block:partition_size()),
 			ok
 	end.
 
@@ -470,13 +470,13 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
 	{ok, Config} = ar_test_node:get_config(Node),
 	
 	StorageModules = [
-		{?PARTITION_SIZE, 1, SinkPacking},
-		{?PARTITION_SIZE, 2, SinkPacking},
-		{?PARTITION_SIZE, 3, SinkPacking},
-		{?PARTITION_SIZE, 4, SinkPacking},
-		{?PARTITION_SIZE, 5, SinkPacking},
-		{?PARTITION_SIZE, 6, SinkPacking},
-		{?PARTITION_SIZE, 10, SinkPacking}
+		{ar_block:partition_size(), 1, SinkPacking},
+		{ar_block:partition_size(), 2, SinkPacking},
+		{ar_block:partition_size(), 3, SinkPacking},
+		{ar_block:partition_size(), 4, SinkPacking},
+		{ar_block:partition_size(), 5, SinkPacking},
+		{ar_block:partition_size(), 6, SinkPacking},
+		{ar_block:partition_size(), 10, SinkPacking}
 	],
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, Config#config{
@@ -498,8 +498,8 @@ start_sink_node(Node, SourceNode, B0, PackingType1, PackingType2) ->
 	{ok, Config} = ar_test_node:get_config(Node),
 	
 	StorageModules = [
-		{?PARTITION_SIZE, 1, SinkPacking1},
-		{?PARTITION_SIZE, 1, SinkPacking2}
+		{ar_block:partition_size(), 1, SinkPacking1},
+		{ar_block:partition_size(), 1, SinkPacking2}
 	],
 
 	?assertEqual(ar_test_node:peer_name(Node),

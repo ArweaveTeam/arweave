@@ -166,7 +166,7 @@ test_does_not_store_small_chunks_after_2_5() ->
 			%% In practice the chunks are above the strict data split threshold so those
 			%% which do not pass strict validation will not be stored.
 			timer:sleep(2000),
-			GenesisOffset = ?STRICT_DATA_SPLIT_THRESHOLD,
+			GenesisOffset = ar_block:strict_data_split_threshold(),
 			lists:foreach(
 				fun	({Offset, 404}) ->
 						?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}},
@@ -356,7 +356,7 @@ test_accepts_chunks(Split) ->
 	ar_test_node:assert_wait_until_receives_txs([TX]),
 	[{Offset, FirstProof}, {_, SecondProof}, {_, ThirdProof}] = 
 			ar_test_data_sync:build_proofs(TX, Chunks, [TX], 0, 0),
-	EndOffset = Offset + ?STRICT_DATA_SPLIT_THRESHOLD,
+	EndOffset = Offset + ar_block:strict_data_split_threshold(),
 	%% Post the third proof to the disk pool.
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
@@ -390,7 +390,7 @@ test_accepts_chunks(Split) ->
 	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}}, ar_test_node:get_chunk(main, EndOffset + 1)),
 	TXSize = byte_size(binary:list_to_bin(Chunks)),
 	ExpectedOffsetInfo = ar_serialize:jsonify(#{
-		offset => integer_to_binary(TXSize + ?STRICT_DATA_SPLIT_THRESHOLD),
+		offset => integer_to_binary(TXSize + ar_block:strict_data_split_threshold()),
 		size => integer_to_binary(TXSize)
 	}),
 	?assertMatch({ok, {{<<"200">>, _}, _, ExpectedOffsetInfo, _, _}},
@@ -406,7 +406,7 @@ test_accepts_chunks(Split) ->
 		chunk => maps:get(chunk, SecondProof)
 	},
 	SecondChunk = ar_util:decode(maps:get(chunk, SecondProof)),
-	SecondChunkOffset = ?STRICT_DATA_SPLIT_THRESHOLD + FirstChunkSize + byte_size(SecondChunk),
+	SecondChunkOffset = ar_block:strict_data_split_threshold() + FirstChunkSize + byte_size(SecondChunk),
 	ar_test_data_sync:wait_until_syncs_chunk(SecondChunkOffset, ExpectedSecondProof),
 	true = ar_util:do_until(
 		fun() ->
