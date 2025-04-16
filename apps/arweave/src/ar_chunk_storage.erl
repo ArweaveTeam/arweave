@@ -11,7 +11,7 @@
 		list_files/2, run_defragmentation/0, get_position_and_relative_chunk_offset/2,
 		get_storage_module_path/2, get_chunk_storage_path/2,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1, 
-		get_chunk_byte_from_bucket_end/1,
+		get_chunk_byte_from_bucket_end/1, get_chunk_seek_offset/1,
 		sync_record_id/1, write_chunk/4, record_chunk/5, read_offset/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -80,24 +80,30 @@ register_workers() ->
 	ConfiguredWorkers ++ RepackInPlaceWorkers ++ [DefaultChunkStorageWorker].
 
 %% @doc Return true if we can accept the chunk for storage.
-%% 256 KiB chunks are stored in the blob storage optimized for read speed.
+%% 256 KiB chunks are stored on disk in chunk_storage optimized for read speed.
 %% Unpacked chunks smaller than 256 KiB cannot be stored here currently,
 %% because the module does not keep track of the chunk sizes - all chunks
 %% are assumed to be 256 KiB.
+%% 
+%% Put another way:
+%% 1. Small chunks from before the strict data split threshold are never packed and
+%%    never mined, so we store them as unpacked chunks in the rocksdb only.
+%% 2. Small chunks after the strict data split threshold are:
+%%    - stored in the rocksdb when they are unpacked
+%%    - stored in chunk_storage as normal when they are packed
 -spec is_storage_supported(
 		Offset :: non_neg_integer(),
 		ChunkSize :: non_neg_integer(),
 		Packing :: term()
 ) -> true | false.
-
 is_storage_supported(Offset, ChunkSize, Packing) ->
-	case Offset > ?STRICT_DATA_SPLIT_THRESHOLD of
+	case Offset > ar_block:strict_data_split_threshold() of
 		true ->
-			%% All chunks above ?STRICT_DATA_SPLIT_THRESHOLD are placed in 256 KiB buckets
-			%% so technically can be stored in ar_chunk_storage. However, to avoid
+			%% All chunks above ar_block:strict_data_split_threshold() are placed in 256 KiB
+			%% buckets so technically can be stored in ar_chunk_storage. However, to avoid
 			%% managing padding in ar_chunk_storage for unpacked chunks smaller than 256 KiB
 			%% (we do not need fast random access to unpacked chunks after
-			%% ?STRICT_DATA_SPLIT_THRESHOLD anyways), we put them to RocksDB.
+			%% ar_block:strict_data_split_threshold() anyways), we put them to RocksDB.
 			Packing /= unpacked orelse ChunkSize == (?DATA_CHUNK_SIZE);
 		false ->
 			ChunkSize == (?DATA_CHUNK_SIZE)
@@ -292,27 +298,36 @@ get_chunk_bucket_end(Offset) ->
 	get_chunk_bucket_start(Offset) + ?DATA_CHUNK_SIZE.
 
 %% @doc Return the byte (>= ChunkStartOffset, < ChunkEndOffset)
-%% that necessarily belongs to the chunk stored
-%% in the bucket with the given bucket end offset.
--spec get_chunk_byte_from_bucket_end(Offset :: non_neg_integer()) -> non_neg_integer().
+%% that necessarily belongs to the chunk stored  in the bucket with the given bucket end
+%% offset. For buckets above the strict data split threshold, the byte is the first byte
+%% of the chunk that is mapped to the bucket. For buckets below the strict data split
+%% threshold, the byte is just guaranteed to belong to the chunk but is not necessarily the
+%% chunk's first byte.
+-spec get_chunk_byte_from_bucket_end(non_neg_integer()) -> non_neg_integer().
 get_chunk_byte_from_bucket_end(BucketEndOffset) ->
-	case BucketEndOffset >= ?STRICT_DATA_SPLIT_THRESHOLD of
+	%% sanity checks
+	BucketEndOffset = get_chunk_bucket_end(BucketEndOffset),
+	%% end sanity checks
+	
+	get_chunk_seek_offset(BucketEndOffset) - 1.
+
+%% @doc Returns a byte that is guaranteed to be in the unpadded portion of the chunk
+%% identified by Offset. Offset can be any byte within the chunk - in either the unpadded
+%% part or the pad. This typically equates to the first byte of the chunk plus one.
+%% 
+%% If Offset is before the ar_block:strict_data_split_threshold() we just return it because we don't
+%% have any information about where chunks start or end.
+-spec get_chunk_seek_offset(non_neg_integer()) -> non_neg_integer().
+get_chunk_seek_offset(Offset) ->
+	case Offset > ar_block:strict_data_split_threshold() of
 		true ->
-			RelativeBucketEndOffset = BucketEndOffset - ?STRICT_DATA_SPLIT_THRESHOLD,
-			case RelativeBucketEndOffset rem ?DATA_CHUNK_SIZE of
-				0 ->
-					%% The chunk beginning at this offset is the rightmost possible
-					%% chunk that will be routed to this bucket.
-					%% The chunk ending at this offset plus one is the leftmost possible
-					%% chunk routed to this bucket.
-					BucketEndOffset - ?DATA_CHUNK_SIZE;
-				_ ->
-					?STRICT_DATA_SPLIT_THRESHOLD
-							+ ar_util:floor_int(RelativeBucketEndOffset, ?DATA_CHUNK_SIZE)
-			end;
+			ar_poa:get_padded_offset(Offset, ar_block:strict_data_split_threshold())
+					- (?DATA_CHUNK_SIZE)
+					+ 1;
 		false ->
-			BucketEndOffset - 1
+			Offset
 	end.
+
 
 set_entropy_complete(StoreID) ->
 	gen_server:cast(name(StoreID), entropy_complete).
@@ -777,11 +792,11 @@ filter_by_sync_record([{PaddedEndOffset, Chunk} | Rest], Intervals, Byte, Start,
 			%% being removed.
 			?LOG_WARNING([{event, found_chunk_not_in_sync_record},
 					{padded_end_offset, PaddedEndOffset},
-							{store_id, StoreID},
-							{byte, Byte},
-							{queried_range_start, Start},
-							{chunk_file_start, ChunkFileStart},
-							{requested_chunk_count, ChunkCount}]),
+					{store_id, StoreID},
+					{byte, Byte},
+					{queried_range_start, Start},
+					{chunk_file_start, ChunkFileStart},
+					{requested_chunk_count, ChunkCount}]),
 			gen_server:cast(name(StoreID),
 					{fix_broken_chunk_storage_record,
 							ChunkFileStart, Start, PaddedEndOffset}),
@@ -919,16 +934,6 @@ read_chunks_sizes(DataDir) ->
 modules_to_defrag(#config{defragmentation_modules = [_ | _] = Modules}) -> Modules;
 modules_to_defrag(#config{storage_modules = Modules}) -> Modules.
 
-get_packing_label(Packing, State) ->
-	case maps:get(Packing, State#state.packing_labels, not_found) of
-		not_found ->
-			Label = ar_storage_module:packing_label(Packing),
-			Map = maps:put(Packing, Label, State#state.packing_labels),
-			{Label, State#state{ packing_labels = Map }};
-		Label ->
-			{Label, State}
-	end.
-
 fix_broken_chunk_storage_record(ChunkFileStart, Start, PaddedEndOffset, State) ->
 	{Position, ChunkOffset} =
 		get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, Start),
@@ -987,15 +992,22 @@ fix_broken_chunk_storage_record3(ChunkFileStart, Position, State) ->
 %%%===================================================================
 
 chunk_bucket_test() ->
-	case ?STRICT_DATA_SPLIT_THRESHOLD of
-		786432 ->
+	ar_test_node:test_with_mocked_functions([
+		{ar_block, partition_size, fun() -> 2_000_000 end},
+		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+	],
+	fun test_chunk_bucket/0, 30).
+
+test_chunk_bucket() ->
+	case ar_block:strict_data_split_threshold() of
+		700_000 ->
 			ok;
 		_ ->
 			throw(unexpected_strict_data_split_threshold)
 	end,
 
 	%% get_chunk_bucket_end pads the provided offset
-	%% get_chunk_bucket_start does not padd the provided offset
+	%% get_chunk_bucket_start does not pad the provided offset
 
 	%% At and before the STRICT_DATA_SPLIT_THRESHOLD, offsets are not padded.
 	?assertEqual(262144, get_chunk_bucket_end(0)),
@@ -1019,15 +1031,24 @@ chunk_bucket_test() ->
 	?assertEqual(524288, get_chunk_bucket_end(2 * ?DATA_CHUNK_SIZE + 1)),
 	?assertEqual(262144, get_chunk_bucket_start(2 * ?DATA_CHUNK_SIZE + 1)),
 
-	?assertEqual(524288, get_chunk_bucket_end(3 * ?DATA_CHUNK_SIZE - 1)),
-	?assertEqual(262144, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE - 1)),
+	?assertEqual(524288, get_chunk_bucket_end(ar_block:strict_data_split_threshold() - 1)),
+	?assertEqual(262144, get_chunk_bucket_start(ar_block:strict_data_split_threshold() - 1)),
+
+	?assertEqual(524288, get_chunk_bucket_end(ar_block:strict_data_split_threshold())),
+	?assertEqual(262144, get_chunk_bucket_start(ar_block:strict_data_split_threshold())),
+
+	%% After the STRICT_DATA_SPLIT_THRESHOLD, offsets are padded.
+	?assertEqual(786432, get_chunk_bucket_end(ar_block:strict_data_split_threshold() + 1)),
+	?assertEqual(524288, get_chunk_bucket_start(ar_block:strict_data_split_threshold() + 1)),
+
+	?assertEqual(786432, get_chunk_bucket_end(3 * ?DATA_CHUNK_SIZE - 1)),
+	?assertEqual(524288, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE - 1)),
 
 	?assertEqual(786432, get_chunk_bucket_end(3 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(524288, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE)),
 
-	%% After the STRICT_DATA_SPLIT_THRESHOLD, offsets are padded.
-	?assertEqual(1048576, get_chunk_bucket_end(3 * ?DATA_CHUNK_SIZE + 1)),
-	?assertEqual(786432, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(786432, get_chunk_bucket_end(3 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(524288, get_chunk_bucket_start(3 * ?DATA_CHUNK_SIZE + 1)),
 
 	?assertEqual(1048576, get_chunk_bucket_end(4 * ?DATA_CHUNK_SIZE - 1)),
 	?assertEqual(786432, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE - 1)),
@@ -1035,8 +1056,8 @@ chunk_bucket_test() ->
 	?assertEqual(1048576, get_chunk_bucket_end(4 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(786432, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE)),
 
-	?assertEqual(1310720, get_chunk_bucket_end(4 * ?DATA_CHUNK_SIZE + 1)),
-	?assertEqual(1048576, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(1048576, get_chunk_bucket_end(4 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(786432, get_chunk_bucket_start(4 * ?DATA_CHUNK_SIZE + 1)),
 
 	?assertEqual(1310720, get_chunk_bucket_end(5 * ?DATA_CHUNK_SIZE - 1)),
 	?assertEqual(1048576, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE - 1)),
@@ -1044,29 +1065,27 @@ chunk_bucket_test() ->
 	?assertEqual(1310720, get_chunk_bucket_end(5 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(1048576, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE)),
 
-	?assertEqual(1572864, get_chunk_bucket_end(5 * ?DATA_CHUNK_SIZE + 1)),
-	?assertEqual(1310720, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(1310720, get_chunk_bucket_end(5 * ?DATA_CHUNK_SIZE + 1)),
+	?assertEqual(1048576, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE + 1)).
 
-	?assertEqual(1572864, get_chunk_bucket_end(6 * ?DATA_CHUNK_SIZE - 1)),
-	?assertEqual(1310720, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE - 1)),
+get_chunk_byte_from_bucket_end_test() ->
+	ar_test_node:test_with_mocked_functions([
+		{ar_block, partition_size, fun() -> 2_000_000 end},
+		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+	],
+	fun test_get_chunk_byte_from_bucket_end/0, 30).
 
-	?assertEqual(1572864, get_chunk_bucket_end(6 * ?DATA_CHUNK_SIZE)),
-	?assertEqual(1310720, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE)),
-
-	?assertEqual(1835008, get_chunk_bucket_end(6 * ?DATA_CHUNK_SIZE + 1)),
-	?assertEqual(1572864, get_chunk_bucket_start(6 * ?DATA_CHUNK_SIZE + 1)),
+test_get_chunk_byte_from_bucket_end() ->
+	?assertEqual(262143, get_chunk_byte_from_bucket_end(262144)),
+	?assertEqual(524287, get_chunk_byte_from_bucket_end(524288)),
+	?assertEqual(700000, get_chunk_byte_from_bucket_end(786432)),
+	?assertEqual(962144, get_chunk_byte_from_bucket_end(1048576)),
+	?assertEqual(1224288, get_chunk_byte_from_bucket_end(1310720)),
+	?assertEqual(1486432, get_chunk_byte_from_bucket_end(1572864)),
+	?assertEqual(1748576, get_chunk_byte_from_bucket_end(1835008)),
+	?assertEqual(2010720, get_chunk_byte_from_bucket_end(2097152)),
+	?assertEqual(2272864, get_chunk_byte_from_bucket_end(2359296)).
 	
-	?assertEqual(1835008, get_chunk_bucket_end(7 * ?DATA_CHUNK_SIZE)),
-	?assertEqual(1572864, get_chunk_bucket_start(7 * ?DATA_CHUNK_SIZE)),
-
-	?assertEqual(2097152, get_chunk_bucket_end(8 * ?DATA_CHUNK_SIZE)),
-	?assertEqual(1835008, get_chunk_bucket_start(8 * ?DATA_CHUNK_SIZE)),
-
-	?assertEqual(2359296, get_chunk_bucket_end(9 * ?DATA_CHUNK_SIZE)),
-	?assertEqual(2097152, get_chunk_bucket_start(9 * ?DATA_CHUNK_SIZE)),
-
-	?assertEqual(2621440, get_chunk_bucket_end(10 * ?DATA_CHUNK_SIZE)),
-	?assertEqual(2359296, get_chunk_bucket_start(10 * ?DATA_CHUNK_SIZE)).
 	
 well_aligned_test_() ->
 	{timeout, 20, fun test_well_aligned/0}.

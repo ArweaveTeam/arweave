@@ -3,8 +3,8 @@
 -export([crank_state/1]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include("ar_repack.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -moduledoc """
 	Maintain a finite state machine (FSM) to track the state each chunk passes through as
@@ -335,7 +335,7 @@ format_logs(Event, #repack_chunk{} = RepackChunk, ExtraLogs) ->
 	} = Offsets,
 	{ChunkSize, DataPath} = case Metadata of
 		#chunk_metadata{chunk_size = Size, data_path = Path} -> {Size, Path};
-		_ -> Metadata
+		_ -> {not_set, not_set}
 	end,
 	[
 		{event, Event},
@@ -355,4 +355,247 @@ format_logs(Event, #repack_chunk{} = RepackChunk, ExtraLogs) ->
 
 atom_or_binary(Atom) when is_atom(Atom) -> Atom;
 atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_size(Bin))}).
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+state_transition_test_() ->
+	[
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+		],
+		fun test_state_transitions/0, 30)
+	].
+
+test_state_transitions() ->
+	Addr = crypto:strong_rand_bytes(32),
+	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),	
+	Entropy = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+
+	%% ---------------------------------------------------------------------------
+	%% needs_chunk
+	%% ---------------------------------------------------------------------------
+	?assertEqual(needs_chunk, (next_state(#repack_chunk{
+		state = needs_chunk,
+		chunk = not_set,
+		metadata = not_set
+	}))#repack_chunk.state),
+
+	?assertEqual(entropy_only, (next_state(#repack_chunk{
+		state = needs_chunk,
+		chunk = not_found,
+		metadata = not_found
+	}))#repack_chunk.state),
+
+	?assertEqual(error, (next_state(#repack_chunk{
+		state = needs_chunk,
+		chunk = Chunk,
+		metadata = not_set,
+		offsets = #chunk_offsets{}
+	}))#repack_chunk.state),
+
+	?assertEqual(entropy_only, (next_state(#repack_chunk{
+		state = needs_chunk,
+		chunk = Chunk,
+		metadata = #chunk_metadata{chunk_size = 100},
+		offsets = #chunk_offsets{absolute_offset = 100},
+		source_packing = unpacked,
+		target_packing = {replica_2_9, Addr}
+	}))#repack_chunk.state),
+
+	?assertEqual(invalid, (next_state(#repack_chunk{
+		state = needs_chunk,
+		chunk = Chunk,
+		metadata = #chunk_metadata{chunk_size = ?DATA_CHUNK_SIZE},
+		offsets = #chunk_offsets{absolute_offset = 1000000},
+		source_packing = not_found,
+		target_packing = {replica_2_9, Addr}
+	}))#repack_chunk.state),
+
+	?assertEqual(already_repacked, (next_state(#repack_chunk{
+		state = needs_chunk,
+		chunk = Chunk,
+		metadata = #chunk_metadata{chunk_size = ?DATA_CHUNK_SIZE},
+		offsets = #chunk_offsets{absolute_offset = 1000000},
+		source_packing = {replica_2_9, Addr},
+		target_packing = {replica_2_9, Addr}
+	}))#repack_chunk.state),
+
+	?assertEqual(needs_data_path, (next_state(#repack_chunk{
+		state = needs_chunk,
+		chunk = not_found,
+		metadata = #chunk_metadata{chunk_size = ?DATA_CHUNK_SIZE},
+		offsets = #chunk_offsets{absolute_offset = 1000000},
+		source_packing = unpacked,
+		target_packing = {replica_2_9, Addr}
+	}))#repack_chunk.state),
+
+	?assertEqual(needs_data_path, (next_state(#repack_chunk{
+		state = needs_chunk,
+		chunk = Chunk,
+		metadata = #chunk_metadata{chunk_size = 100},
+		offsets = #chunk_offsets{absolute_offset = 1000000},
+		source_packing = {replica_2_9, Addr},
+		target_packing = unpacked
+	}))#repack_chunk.state),
+
+	?assertEqual(needs_repack, (next_state(#repack_chunk{
+		state = needs_chunk,
+		chunk = Chunk,
+		metadata = #chunk_metadata{chunk_size = ?DATA_CHUNK_SIZE},
+		offsets = #chunk_offsets{absolute_offset = 1000000},
+		source_packing = unpacked,
+		target_packing = {replica_2_9, Addr}
+	}))#repack_chunk.state),
+
+	%% ---------------------------------------------------------------------------
+	%% invalid
+	%% ---------------------------------------------------------------------------
+	?assertEqual(entropy_only, (next_state(#repack_chunk{
+		state = invalid,
+		chunk = invalid
+	}))#repack_chunk.state),
+
+	?assertEqual(invalid, (next_state(#repack_chunk{
+		state = invalid,
+		chunk = Chunk
+	}))#repack_chunk.state),
+
+	%% ---------------------------------------------------------------------------
+	%% entropy_only
+	%% ---------------------------------------------------------------------------
+	?assertEqual(entropy_only, (next_state(#repack_chunk{
+		state = entropy_only,
+		entropy = not_set
+	}))#repack_chunk.state),
+
+	?assertEqual(write_entropy, (next_state(#repack_chunk{
+		state = entropy_only,
+		entropy = Entropy
+	}))#repack_chunk.state),
+
+	%% ---------------------------------------------------------------------------
+	%% already_repacked
+	%% ---------------------------------------------------------------------------
+	?assertEqual(already_repacked, (next_state(#repack_chunk{
+		state = already_repacked,
+		entropy = not_set
+	}))#repack_chunk.state),
+
+	?assertEqual(ignore, (next_state(#repack_chunk{
+		state = already_repacked,
+		entropy = Entropy
+	}))#repack_chunk.state),
+
+	%% ---------------------------------------------------------------------------
+	%% needs_data_path
+	%% ---------------------------------------------------------------------------
+	?assertEqual(needs_data_path, (next_state(#repack_chunk{
+		state = needs_data_path,
+		metadata = #chunk_metadata{data_path = not_set}
+	}))#repack_chunk.state),
+
+	?assertEqual(invalid, (next_state(#repack_chunk{
+		state = needs_data_path,
+		chunk = not_found,
+		metadata = #chunk_metadata{data_path = not_found}
+	}))#repack_chunk.state),
+
+	?assertEqual(invalid, (next_state(#repack_chunk{
+		state = needs_data_path,
+		chunk = Chunk,
+		metadata = #chunk_metadata{data_path = not_found}
+	}))#repack_chunk.state),
+
+	?assertEqual(already_repacked, (next_state(#repack_chunk{
+		state = needs_data_path,
+		chunk = Chunk,
+		metadata = #chunk_metadata{data_path = <<"path">>},
+		source_packing = {replica_2_9, Addr},
+		target_packing = {replica_2_9, Addr}
+	}))#repack_chunk.state),
+
+	?assertEqual(needs_repack, (next_state(#repack_chunk{
+		state = needs_data_path,
+		chunk = Chunk,
+		metadata = #chunk_metadata{data_path = <<"path">>},
+		source_packing = unpacked,
+		target_packing = {replica_2_9, Addr}
+	}))#repack_chunk.state),
+
+	%% ---------------------------------------------------------------------------
+	%% needs_repack
+	%% ---------------------------------------------------------------------------
+	?assertEqual(needs_entropy, (next_state(#repack_chunk{
+		state = needs_repack,
+		source_packing = unpacked_padded,
+		chunk = Chunk
+	}))#repack_chunk.state),
+
+	?assertEqual(needs_repack, (next_state(#repack_chunk{
+		state = needs_repack,
+		source_packing = unpacked,
+		chunk = Chunk
+	}))#repack_chunk.state),
+
+	%% ---------------------------------------------------------------------------
+	%% needs_entropy
+	%% ---------------------------------------------------------------------------
+	?assertEqual(needs_entropy, (next_state(#repack_chunk{
+		state = needs_entropy,
+		entropy = not_set,
+		chunk = Chunk,
+		source_packing = unpacked_padded
+	}))#repack_chunk.state),
+
+	?assertEqual(needs_encipher, (next_state(#repack_chunk{
+		state = needs_entropy,
+		entropy = Entropy,
+		chunk = Chunk,
+		source_packing = unpacked_padded
+	}))#repack_chunk.state),
+
+	%% ---------------------------------------------------------------------------
+	%% needs_encipher
+	%% ---------------------------------------------------------------------------
+	?assertEqual(write_chunk, (next_state(#repack_chunk{
+		state = needs_encipher,
+		source_packing = {replica_2_9, Addr},
+		target_packing = {replica_2_9, Addr},
+		chunk = Chunk
+	}))#repack_chunk.state),
+
+	?assertEqual(needs_encipher, (next_state(#repack_chunk{
+		state = needs_encipher,
+		source_packing = unpacked_padded,
+		target_packing = {replica_2_9, Addr},
+		chunk = Chunk
+	}))#repack_chunk.state),
+
+	%% ---------------------------------------------------------------------------
+	%% write_chunk
+	%% ---------------------------------------------------------------------------
+	?assertEqual(write_chunk, (next_state(#repack_chunk{
+		state = write_chunk,
+		chunk = Chunk
+	}))#repack_chunk.state),
+
+	%% ---------------------------------------------------------------------------
+	%% write_entropy
+	%% ---------------------------------------------------------------------------
+	?assertEqual(write_entropy, (next_state(#repack_chunk{
+		state = write_entropy,
+		entropy = Entropy
+	}))#repack_chunk.state),
+
+	%% ---------------------------------------------------------------------------
+	%% ignore
+	%% ---------------------------------------------------------------------------
+	?assertEqual(ignore, (next_state(#repack_chunk{
+		state = ignore,
+		chunk = Chunk
+	}))#repack_chunk.state),
+
+	ok.
 
