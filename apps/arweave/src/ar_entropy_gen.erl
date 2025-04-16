@@ -5,7 +5,7 @@
 -export([name/1, register_workers/1,  initialize_context/2, is_entropy_packing/1,
 	footprint_end/2, map_entropies/9, entropy_offsets/1,
 	generate_entropies/2, generate_entropies/4, generate_entropy_keys/2, 
-	reset_entropy_offset/1, shift_entropy_offset/2]).
+	shift_entropy_offset/2]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -115,7 +115,7 @@ footprint_end(BucketEndOffset, ModuleEnd) ->
 	%% A set of generated entropies covers slighly more than 3.6TB of
 	%% chunks, however we only want to use the first 3.6TB
 	%% (+ chunk padding) of it.
-	PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
+	PartitionEnd = (Partition + 1) * ar_block:partition_size(),
 	PaddedPartitionEnd =
 		ar_chunk_storage:get_chunk_bucket_end(PartitionEnd),
 	%% In addition to limiting this iteration to the PaddedPartitionEnd,
@@ -132,9 +132,8 @@ entropy_offsets(Offset) ->
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Offset),
 	BucketEndOffset2 = reset_entropy_offset(BucketEndOffset),
 	Partition = ar_replica_2_9:get_entropy_partition(BucketEndOffset),
-	PartitionEnd = (Partition + 1) * ?PARTITION_SIZE,
-	PaddedPartitionEnd = ar_chunk_storage:get_chunk_bucket_end(PartitionEnd),
-	entropy_offsets(BucketEndOffset2, PaddedPartitionEnd).
+	{_Start, End} = ar_replica_2_9:get_entropy_partition_range(Partition),
+	entropy_offsets(BucketEndOffset2, End).
 
 entropy_offsets(BucketEndOffset, PaddedPartitionEnd)
 	when BucketEndOffset > PaddedPartitionEnd ->
@@ -568,76 +567,44 @@ store_cursor(Cursor, StoreID) ->
 %%% Tests.
 %%%===================================================================
 
-reset_entropy_offset_test() ->
-	?assertEqual(786432, ar_replica_2_9:get_sector_size()),
-	case ?STRICT_DATA_SPLIT_THRESHOLD of
-		786432 ->
-			ok;
-		_ ->
-			throw(unexpected_strict_data_split_threshold)
-	end,
-	%% Slice index of 0 means no shift (all offsets at or below the strict data split
-	%% threshold are not padded)
-	assert_reset_entropy_offset(262144, 0),
-	assert_reset_entropy_offset(262144, 1),
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE - 1),
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE),
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE + 1),
-	assert_reset_entropy_offset(524288, ?DATA_CHUNK_SIZE * 2),
-	assert_reset_entropy_offset(786432, ?DATA_CHUNK_SIZE * 3),
-	%% Slice index of 1 shift down a sector
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE * 3 + 1),
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE * 4 - 1),
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE * 4),
-	assert_reset_entropy_offset(524288, ?DATA_CHUNK_SIZE * 4 + 1),
-	assert_reset_entropy_offset(524288, ?DATA_CHUNK_SIZE * 5 - 1),
-	assert_reset_entropy_offset(524288, ?DATA_CHUNK_SIZE * 5),
-	assert_reset_entropy_offset(786432, ?DATA_CHUNK_SIZE * 5 + 1),
-	assert_reset_entropy_offset(786432, ?DATA_CHUNK_SIZE * 6),
-	%% Slice index of 2 shift down 2 sectors
-	assert_reset_entropy_offset(262144, ?DATA_CHUNK_SIZE * 7),
-	assert_reset_entropy_offset(524288, ?DATA_CHUNK_SIZE * 8),
-	%% First chunk of new partition, restart slice index at 0, so no shift
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 9, ?DATA_CHUNK_SIZE * 8 + 1),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 9, ?DATA_CHUNK_SIZE * 9 - 1),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 9, ?DATA_CHUNK_SIZE * 9),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 10, ?DATA_CHUNK_SIZE * 9 + 1),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 10, ?DATA_CHUNK_SIZE * 10),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 11, ?DATA_CHUNK_SIZE * 11),
-	%% Slice index of 1 shift down a sector
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 9, ?DATA_CHUNK_SIZE * 12),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 10, ?DATA_CHUNK_SIZE * 13),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 11, ?DATA_CHUNK_SIZE * 14),
-	%% Slice index of 2 shift down 2 sectors
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 9, ?DATA_CHUNK_SIZE * 15),
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 10, ?DATA_CHUNK_SIZE * 16),
-	%% First chunk of new partition, restart slice index at 0, so no shift
-	assert_reset_entropy_offset(?DATA_CHUNK_SIZE * 17, ?DATA_CHUNK_SIZE * 17).
+entropy_offsets_test_() ->
+	ar_test_node:test_with_mocked_functions([
+		{ar_block, partition_size, fun() -> 2_000_000 end},
+		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+	],
+	fun test_entropy_offsets/0, 30).
 
-assert_reset_entropy_offset(ExpectedShiftedOffset, Offset) ->
-	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Offset),
-	?assertEqual(ExpectedShiftedOffset,
-				 reset_entropy_offset(BucketEndOffset),
-				 iolist_to_binary(io_lib:format("Offset: ~p, BucketEndOffset: ~p",
-												[Offset, BucketEndOffset]))).
-
-entropy_offsets_test() ->
+test_entropy_offsets() ->
 	SectorSize = ar_replica_2_9:get_sector_size(),
 	?assertEqual(3 * ?DATA_CHUNK_SIZE, SectorSize),
 
-	%% Any Offset from any of the chunks in the result should yield the same entropy offsets.
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(0)),
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1000)),
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(262144)),
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(786433)),
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1048576)),
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1835008)),
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1835007)),
+	?assertEqual([262144, 1048576, 1835008], entropy_offsets(0)), %% bucket end: 262144
+	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1000)), %% bucket end: 262144
+	?assertEqual([262144, 1048576, 1835008], entropy_offsets(262144)), %% bucket end: 262144
 
-	?assertEqual([524288, 1310720, 2097152], entropy_offsets(524288)),
-	?assertEqual([524288, 1310720, 2097152], entropy_offsets(2097152)),
-	?assertEqual([786432, 1572864], entropy_offsets(786432)),
+	?assertEqual([524288, 1310720, 2097152], entropy_offsets(524288)), %% bucket end: 524288
 
-	?assertEqual([2359296, 3145728, 3932160], entropy_offsets(2097153)),
-	?assertEqual([2621440, 3407872, 4194304], entropy_offsets(2359297)),
-	?assertEqual([2883584,3670016], entropy_offsets(2621441)).
+	?assertEqual([524288, 1310720, 2097152], entropy_offsets(699999)), %% bucket end: 524288
+	?assertEqual([524288, 1310720, 2097152], entropy_offsets(700000)), %% bucket end: 524288
+	?assertEqual([786432, 1572864], entropy_offsets(700001)), %% bucket end: 786432
+
+	?assertEqual([786432, 1572864], entropy_offsets(786432)), %% bucket end: 786432
+	?assertEqual([786432, 1572864], entropy_offsets(786433)), %% bucket end: 786432
+	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1048576)), %% bucket end: 1048576	
+	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1835007)), %% bucket end: 1835008
+	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1835008)), %% bucket end: 1835008
+	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1835009)), %% bucket end: 1835008
+
+	%% entropy partition is determined by the bucket *start* offset. So offsets that are in 
+	%% recall partition 1 may still be in entropy partition 0 (e.g. 2000001, 2097152)
+	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1999999)), %% bucket end: 1835008
+	?assertEqual([262144, 1048576, 1835008], entropy_offsets(2000000)), %% bucket end: 1835008
+	?assertEqual([262144, 1048576, 1835008], entropy_offsets(2000001)), %% bucket end: 1835008
+	?assertEqual([524288, 1310720, 2097152], entropy_offsets(2097152)), %% bucket end: 2097152
+	?assertEqual([524288, 1310720, 2097152], entropy_offsets(2097153)), %% bucket end: 2097152
+
+	%% Entropy partition 1
+	?assertEqual([2359296, 3145728, 3932160], entropy_offsets(2359297)), %% bucket end: 2359296
+	?assertEqual([2621440, 3407872, 4194304], entropy_offsets(2621441)), %% bucket end: 2621440
+
+	ok.

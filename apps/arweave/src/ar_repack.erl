@@ -7,7 +7,7 @@
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include("ar_poa.hrl").
+-include("ar_consensus.hrl").
 -include("ar_sup.hrl").
 -include("ar_config.hrl").
 -include("ar_repack.hrl").
@@ -108,10 +108,12 @@ init({StoreID, ToPacking}) ->
 	
 	{replica_2_9, RewardAddr} = ToPacking,
 
+	%% ModuleStart to PaddedModuleEnd is the *chunk* range that will be repacked. Chunk
+	%% offsets will later be converted to bucket offsets and entropy offsets - and the 
+	%% bucket and entropy ranges may differ from this chunk range.
 	Module = ar_storage_module:get_by_id(StoreID),
-	%% Don't include overlap during repack in place.
     {ModuleStart, ModuleEnd} = ar_storage_module:module_range(Module),
-	PaddedModuleEnd = ar_chunk_storage:get_chunk_bucket_end(ModuleEnd),
+	PaddedModuleEnd = ar_block:get_chunk_padded_offset(ModuleEnd),
     Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
 
 	{ok, Config} = application:get_env(arweave, config),
@@ -244,7 +246,7 @@ handle_cast({expire_encipher_request, _Ref}, #state{} = State) ->
 	{noreply, State};
 
 handle_cast(count_states, #state{} = State) ->
-	count_states(cache,State),
+	count_states(cache, State),
 	ar_util:cast_after(?STATE_COUNT_INTERVAL, self(), count_states),
 	{noreply, State};
 
@@ -280,7 +282,7 @@ handle_info({chunk, {packed, {BucketEndOffset, _}, ChunkArgs}}, #state{} = State
 	#state{
 		repack_chunk_map = Map
 	} = State,
-	
+
 	State2 = case maps:get(BucketEndOffset, Map, not_found) of
 		not_found ->
 			{Packing, _, AbsoluteOffset, _, ChunkSize} = ChunkArgs,
@@ -347,7 +349,7 @@ terminate(Reason, #state{} = State) ->
 %%%===================================================================
 
 calculate_num_entropy_offsets(CacheSize, BatchSize) ->
-	min(1024, (CacheSize * 4) div BatchSize).
+	min(ar_replica_2_9:sub_chunks_per_entropy(), (CacheSize * 4) div BatchSize).
 
 %% @doc Outer repack loop. Called via `gen_server:cast(self(), repack)`. Each call
 %% repacks another footprint of chunks. A repack footprint is N entropy footprints where N
@@ -391,7 +393,8 @@ repack(#state{} = State) ->
 	end.
 
 repack_footprint(Cursor, #state{} = State) ->
-	#state{ module_start = ModuleStart, module_end = ModuleEnd, num_entropy_offsets = NumEntropyOffsets,
+	#state{ module_start = ModuleStart, module_end = ModuleEnd,
+		num_entropy_offsets = NumEntropyOffsets,
 		target_packing = TargetPacking, store_id = StoreID,
 		read_batch_size = BatchSize } = State,
 
@@ -416,8 +419,8 @@ repack_footprint(Cursor, #state{} = State) ->
 
 	case Skip orelse FootprintStart < ModuleStart orelse FootprintStart > ModuleEnd of
 		true ->
-			%% Skip this BucketEndOffset for one of these reasons:
-			%% 1. BucketEndOffset has already been repacked.
+			%% Skip this Cursor for one of these reasons:
+			%% 1. Cursor has already been repacked.
 			%%    Note: we expect this to happen a lot since we iterate through all
 			%%    chunks in the partition, but for each chunk we will repack N
 			%%    entropy footprints.
@@ -427,22 +430,23 @@ repack_footprint(Cursor, #state{} = State) ->
 			%%    storage module.
 			gen_server:cast(self(), repack),
 			Interval = ar_sync_record:get_next_unsynced_interval(
-				BucketEndOffset, infinity, TargetPacking, ar_data_sync, StoreID),
+				Cursor, infinity, TargetPacking, ar_data_sync, StoreID),
 			NextCursor = case Interval of
 				not_found ->
-					BucketEndOffset + ?DATA_CHUNK_SIZE;
+					Cursor + ?DATA_CHUNK_SIZE;
 				{_, Start} ->
-					Start + ?DATA_CHUNK_SIZE
+					Start
 			end,
+			NextCursor2 = max(NextCursor, Cursor + ?DATA_CHUNK_SIZE),
 			log_debug(skipping_cursor, State, [
 				{cursor, Cursor},
-				{next_cursor, NextCursor},
+				{next_cursor, NextCursor2},
 				{padded_end_offset, PaddedEndOffset},
 				{bucket_end_offset, BucketEndOffset},
 				{is_chunk_recorded, IsChunkRecorded},
 				{footprint_start, FootprintStart}
 			]),
-			State#state{ next_cursor = NextCursor };
+			State#state{ next_cursor = NextCursor2 };
 		_ ->
 			FootprintOffsets = footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd),
 			FootprintEnd = footprint_end(FootprintOffsets, ModuleStart, ModuleEnd, BatchSize),
@@ -453,7 +457,7 @@ repack_footprint(Cursor, #state{} = State) ->
 				footprint_start = FootprintStart,
 				footprint_end = FootprintEnd,
 				entropy_end = ar_chunk_storage:get_chunk_bucket_end(EntropyEnd),
-				next_cursor = BucketEndOffset + ?DATA_CHUNK_SIZE
+				next_cursor = Cursor + ?DATA_CHUNK_SIZE
 			},
 			State3 = init_repack_chunk_map(FootprintOffsets, State2),
 
@@ -462,7 +466,8 @@ repack_footprint(Cursor, #state{} = State) ->
 
 			generate_repack_entropy(BucketEndOffset, State3),
 
-			ar_repack_io:read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, StoreID),
+			ar_repack_io:read_footprint(
+				FootprintOffsets, FootprintStart, FootprintEnd, StoreID),
 
 			log_debug(repack_footprint_start, State3, [
 				{cursor, Cursor},
@@ -482,16 +487,20 @@ repack_footprint(Cursor, #state{} = State) ->
 	end.
 
 %% @doc Generates the set of entropy offsets that will be used during one iteration of
-%% repack_footprint.
+%% repack_footprint. Expects to be called with a BucketEndOffset. This is to avoid
+%% unexpected filtering results when a BucketEndOffset is lower than a PickOffset or
+%% an AbsoluteEndOffset.
 %% 
 %% One footprint of entropy offsets is generated and then filtered such that:
 %% - no offset is less than BucketEndOffset
 %% - no offset is greater than ModuleEnd
 %% - at most NumEntropyOffsets offsets are returned
 footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd) ->
+	%% sanity checks
+	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(BucketEndOffset),
+	%% end sanity checks
+	
 	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
-
-	%%% XXX maybe also check against partitino end here.
 
 	FilteredOffsets = lists:filter(
 		fun(Offset) -> 
@@ -558,27 +567,63 @@ init_repack_chunk_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 
 add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = State) ->
 	#state{
-		store_id = StoreID
+		store_id = StoreID,
+		target_packing = TargetPacking
 	} = State,
 	
 	maps:fold(
 		fun(AbsoluteEndOffset, Metadata, Acc) ->
 			#state{
-				repack_chunk_map = Map
+				repack_chunk_map = RepackChunkMap
 			} = Acc,
-			{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize} = Metadata,
+
 			BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
-			PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
+			RepackChunk =  maps:get(BucketEndOffset, RepackChunkMap, not_found),
+			RepackChunk2 = assemble_repack_chunk(
+				RepackChunk, AbsoluteEndOffset, TargetPacking, 
+				Metadata, OffsetChunkMap, StoreID),
 
-			IsRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
-			SourcePacking = case IsRecorded of
-				{true, Packing} -> Packing;
-				_ -> not_found
-			end,
+			case RepackChunk2 of
+				not_found ->
+					Acc;
+				_ ->
+					update_chunk_state(RepackChunk2, Acc)
+			end
+		end,
+		State, OffsetMetadataMap).
 
-			RepackChunk = maps:get(BucketEndOffset, Map),
+assemble_repack_chunk(
+		RepackChunk, AbsoluteEndOffset, TargetPacking, Metadata, OffsetChunkMap, StoreID) ->
+	{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize} = Metadata,
 
-			RepackChunk2 = RepackChunk#repack_chunk{
+	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
+
+	IsRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
+	SourcePacking = case IsRecorded of
+		{true, Packing} -> Packing;
+		_ -> not_found
+	end,
+
+	ShouldRepack = (
+		ar_chunk_storage:is_storage_supported(
+			PaddedEndOffset, ChunkSize, SourcePacking)
+		orelse
+		ar_chunk_storage:is_storage_supported(
+			PaddedEndOffset, ChunkSize, TargetPacking)
+	),
+
+	case {ShouldRepack, RepackChunk} of
+		{true, not_found} ->
+			log_error(chunk_not_found_in_map, [
+				{bucket_end_offset, ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset)},
+				{absolute_end_offset, AbsoluteEndOffset},
+				{padded_end_offset, ar_block:get_chunk_padded_offset(AbsoluteEndOffset)},
+				{chunk_size, ChunkSize}
+			]),
+			not_found;
+		{true, _} ->
+			RepackChunk#repack_chunk{
 				source_packing = SourcePacking,
 				offsets = #chunk_offsets{
 					absolute_offset = AbsoluteEndOffset,
@@ -594,10 +639,10 @@ add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = Stat
 					chunk_size = ChunkSize
 				},
 				chunk = maps:get(PaddedEndOffset, OffsetChunkMap, not_found)
-			},
-			update_chunk_state(RepackChunk2, Acc)
-		end,
-		State, OffsetMetadataMap).
+			};
+		{false, _} ->
+			not_found
+	end.
 
 
 %% @doc Mark any chunks that weren't found in either chunk_storage or the chunks_index.
@@ -849,6 +894,9 @@ log_error(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) ->
 log_error(Event, #state{} = State, ExtraLogs) ->
 	?LOG_ERROR(format_logs(Event, State, ExtraLogs)).
 
+log_error(Event, ExtraLogs) ->
+	?LOG_ERROR(format_logs(Event, ExtraLogs)).
+
 log_warning(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) ->
 	?LOG_WARNING(format_logs(Event, RepackChunk, State, ExtraLogs)).
 
@@ -864,11 +912,16 @@ log_debug(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) ->
 log_debug(Event, #state{} = State, ExtraLogs) ->
 	?LOG_DEBUG(format_logs(Event, State, ExtraLogs)).
 
-format_logs(Event, #state{} = State, ExtraLogs) ->
+format_logs(Event, ExtraLogs) ->
 	[
 		{event, Event},
 		{tags, [repack_in_place]},
-		{pid, self()},
+		{pid, self()}
+		| ExtraLogs
+	].
+
+format_logs(Event, #state{} = State, ExtraLogs) ->
+	format_logs(Event, [
 		{store_id, State#state.store_id},
 		{next_cursor, State#state.next_cursor},
 		{footprint_start, State#state.footprint_start},
@@ -878,7 +931,7 @@ format_logs(Event, #state{} = State, ExtraLogs) ->
 		{repack_chunk_map, maps:size(State#state.repack_chunk_map)},
 		{write_queue, gb_sets:size(State#state.write_queue)}
 		| ExtraLogs
-	].
+	]).
 
 format_logs(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) ->
 	#repack_chunk{
@@ -966,10 +1019,343 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 %%%===================================================================
 
 cache_size_test() ->
-	?assertEqual(40, calculate_num_entropy_offsets(1000, 100)),
-	?assertEqual(400, calculate_num_entropy_offsets(1000, 10)),
-	?assertEqual(1024, calculate_num_entropy_offsets(30000, 100)),
-	?assertEqual(128, calculate_num_entropy_offsets(12800, 400)),
-	?assertEqual(128, calculate_num_entropy_offsets(3200, 100)),
-	?assertEqual(128, calculate_num_entropy_offsets(1600, 50)),
-	?assertEqual(160, calculate_num_entropy_offsets(4000, 100)).
+	?assertEqual(1, calculate_num_entropy_offsets(100, 400)),
+	?assertEqual(2, calculate_num_entropy_offsets(100, 200)),
+	?assertEqual(3, calculate_num_entropy_offsets(300, 400)),
+	?assertEqual(3, calculate_num_entropy_offsets(3000, 400)),
+	?assertEqual(3, calculate_num_entropy_offsets(3, 4)),
+	?assertEqual(3, calculate_num_entropy_offsets(3, 1)),
+	?assertEqual(2, calculate_num_entropy_offsets(5, 10)).
+
+footprint_offsets_test_() ->
+	[
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+		],
+		fun test_footprint_offsets_small/0, 30),
+
+		%% Run footprint_offsets tests using the production constant values.
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, partition_size, fun() -> 3_600_000_000_000 end},
+			{ar_block, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
+			{ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
+			{ar_replica_2_9, sub_chunks_per_entropy, fun() -> 1024 end},
+			{ar_replica_2_9, get_sector_size, fun() -> 3_515_875_328 end}
+		],
+		fun test_footprint_offsets_large/0, 30)
+	].
+
+test_footprint_offsets_small() ->
+    {Start0, End0} = ar_storage_module:module_range({ar_block:partition_size(), 0, unpacked}),
+	{Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 1, unpacked}),
+	PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
+	PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
+
+	?assertEqual(3, ar_replica_2_9:sub_chunks_per_entropy()),
+	?assertEqual({0, 2262144}, {Start0, End0}),
+	?assertEqual({2000000, 4262144}, {Start1, End1}),
+	?assertEqual(2272864, PaddedEnd0),
+	?assertEqual(4370016, PaddedEnd1),
+
+	?assertEqual([262144, 1048576, 1835008], footprint_offsets(262144, 3, PaddedEnd0)),
+	?assertEqual([262144, 1048576], footprint_offsets(262144, 2, PaddedEnd0)),
+	?assertEqual([262144], footprint_offsets(262144, 1, PaddedEnd0)),
+
+	?assertEqual([786432, 1572864], footprint_offsets(786432, 3, PaddedEnd0)),
+	?assertEqual([786432, 1572864], footprint_offsets(786432, 2, PaddedEnd0)),
+	?assertEqual([786432], footprint_offsets(786432, 1, PaddedEnd0)),
+
+	?assertEqual([1048576, 1835008], footprint_offsets(1048576, 3, PaddedEnd0)),
+
+	?assertEqual([1572864], footprint_offsets(1572864, 3, PaddedEnd0)),
+	?assertEqual([1572864], footprint_offsets(1572864, 2, PaddedEnd0)),
+	?assertEqual([1572864], footprint_offsets(1572864, 1, PaddedEnd0)),
+	
+	?assertEqual([1835008], footprint_offsets(1835008, 3, PaddedEnd0)),
+	?assertEqual([2097152], footprint_offsets(2097152, 3, PaddedEnd0)),
+	?assertEqual([2359296, 3145728, 3932160], footprint_offsets(2359296, 3, PaddedEnd1)),
+	?assertEqual([2621440, 3407872, 4194304], footprint_offsets(2621440, 3, PaddedEnd1)),
+	?assertEqual([2883584, 3670016], footprint_offsets(2883584, 3, PaddedEnd1)),
+	?assertEqual([3145728, 3932160], footprint_offsets(3145728, 3, PaddedEnd1)),
+	?assertEqual([4194304], footprint_offsets(4194304, 3, PaddedEnd1)).
+
+%% @doc run a series of footprint_offsets tests using the production constant values.
+test_footprint_offsets_large() ->
+	{Start0, End0} = ar_storage_module:module_range({ar_block:partition_size(), 0, unpacked}),
+	{Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 1, unpacked}),
+	{Start30, End30} = ar_storage_module:module_range({ar_block:partition_size(), 30, unpacked}),
+	PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
+	PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
+	PaddedEnd30 = ar_block:get_chunk_padded_offset(End30),
+
+	?assertEqual(1024, ar_replica_2_9:sub_chunks_per_entropy()),
+	?assertEqual(3515875328, ar_replica_2_9:get_sector_size()),
+	?assertEqual({0, 3600104857600}, {Start0, End0}),
+	?assertEqual({3600000000000, 7200104857600}, {Start1, End1}),
+	?assertEqual({108000000000000, 111600104857600}, {Start30, End30}),
+	?assertEqual(3600104857600, PaddedEnd0),
+	?assertEqual(7200104857600, PaddedEnd1),
+	?assertEqual(111600104939766, PaddedEnd30),
+
+	TestCases = [
+		%% {ExpectedFootprintOffsetsLength, End, BucketEndOffset}
+		%% Partition 0 - special case as there is no lower partition
+		{1024, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0)},
+		{1024, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + ?DATA_CHUNK_SIZE)},
+		{1024, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ?DATA_CHUNK_SIZE))},
+		{1023, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (ar_replica_2_9:get_sector_size()))},
+		{1023, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))},
+		{1022, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ar_replica_2_9:get_sector_size()))},
+		{1022, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))},
+		%% Partition 1 - before the strict data split threshold
+		{1, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1)},
+		{1, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + ?DATA_CHUNK_SIZE)},
+		{1024, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ?DATA_CHUNK_SIZE))},
+		{1023, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (ar_replica_2_9:get_sector_size()))},
+		{1023, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))},
+		{1022, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ar_replica_2_9:get_sector_size()))},
+		{1022, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))},
+		%% Partition 30 - after the strict data split threshold
+		{1, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30)},
+		{1024, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + ?DATA_CHUNK_SIZE)},
+		{1024, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ?DATA_CHUNK_SIZE))},
+		{1023, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (ar_replica_2_9:get_sector_size()))},
+		{1023, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))},
+		{1022, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ar_replica_2_9:get_sector_size()))},
+		{1022, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))}
+	],
+
+	lists:foreach(
+		fun({ExpectedLength, End, BucketEndOffset}) ->
+			?assertEqual(ExpectedLength, length(footprint_offsets(BucketEndOffset, 1024, End)),
+				lists:flatten(io_lib:format(
+					"Offset: ~p, Expected Length: ~p", [BucketEndOffset, ExpectedLength])))
+		end,
+		TestCases
+	),
+
+	ok.
+
+assemble_repack_chunk_test_() ->
+[
+	ar_test_node:test_with_mocked_functions([
+		{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
+	],
+	fun test_assemble_repack_chunk/0, 30),
+	ar_test_node:test_with_mocked_functions([
+			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
+		],
+		fun test_assemble_repack_chunk_too_small_unpacked/0, 30),
+	ar_test_node:test_with_mocked_functions([
+			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, {spora_2_6, <<"addr">>}} end}
+		],
+		fun test_assemble_repack_chunk_too_small_packed/0, 30)
+].
+
+test_assemble_repack_chunk() ->
+	Addr = <<"addr">>,
+	StoreID = "storage_module_100_unpacked",
+	ChunkDataKey = <<"chunk_data_key">>,
+	TXRoot = <<"tx_root">>,
+	DataRoot = <<"data_root">>,
+	TXPath = <<"tx_path">>,
+	RelativeOffset = 1000,
+	ChunkSize = ?DATA_CHUNK_SIZE,
+	Chunk = crypto:strong_rand_bytes(ChunkSize),
+
+	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize},
+
+	% %% Error - BucketEndOffset hasn't been initialized
+	?assertEqual(not_found,
+		assemble_repack_chunk(not_found, 100, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+
+	ExpectedRepackedChunk = #repack_chunk{
+		source_packing = unpacked,
+		metadata = #chunk_metadata{
+			chunk_data_key = ChunkDataKey,
+			tx_root = TXRoot,
+			data_root = DataRoot,
+			tx_path = TXPath,
+			chunk_size = ChunkSize
+		},
+		chunk = Chunk
+	},
+
+	%% Chunk before the strict data split threshold
+	%% unpacked -> unpacked
+	ExpectedOffsets1 = #chunk_offsets{
+		absolute_offset = 100,
+		bucket_end_offset = 262144,
+		padded_end_offset = 100,
+		relative_offset = RelativeOffset
+	},
+	?assertEqual(
+		ExpectedRepackedChunk#repack_chunk{
+			offsets = ExpectedOffsets1,
+			target_packing = unpacked
+		},
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = unpacked
+			}, 100, unpacked, Metadata, #{ 100 => Chunk }, StoreID)
+	),
+	%% unpacked -> packed
+	?assertEqual(
+		ExpectedRepackedChunk#repack_chunk{
+			offsets = ExpectedOffsets1,
+			target_packing = {replica_2_9, Addr}
+		},
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = {replica_2_9, Addr}
+			}, 100, {replica_2_9, Addr}, Metadata, #{ 100 => Chunk }, StoreID)
+	),
+
+	%% Chunk after the strict data split threshold
+	%% unpacked -> unpacked
+	ExpectedOffsets2 = #chunk_offsets{
+		absolute_offset = 10_000_000,
+		bucket_end_offset = 10_223_616,
+		padded_end_offset = 10_223_616,
+		relative_offset = RelativeOffset
+	},
+	?assertEqual(
+		ExpectedRepackedChunk#repack_chunk{
+			offsets = ExpectedOffsets2,
+			target_packing = unpacked
+		},
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = unpacked
+			}, 10_000_000, unpacked, Metadata, #{ 10_223_616 => Chunk }, StoreID)
+	),
+	%% unpacked -> packed
+	?assertEqual(
+		ExpectedRepackedChunk#repack_chunk{
+			offsets = ExpectedOffsets2,
+			target_packing = {replica_2_9, Addr}
+		},
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = {replica_2_9, Addr}
+			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{ 10_223_616 => Chunk }, StoreID)
+	),
+	ok.
+
+test_assemble_repack_chunk_too_small_unpacked() ->
+	Addr = <<"addr">>,
+	StoreID = "storage_module_100_unpacked",
+	ChunkDataKey = <<"chunk_data_key">>,
+	TXRoot = <<"tx_root">>,
+	DataRoot = <<"data_root">>,
+	TXPath = <<"tx_path">>,
+	RelativeOffset = 1000,
+	ChunkSize = 100,
+
+	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize},
+
+	%% Small chunk before the strict data split threshold
+	%% unpacked -> unpacked
+	?assertEqual(not_found,
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = unpacked
+			}, 100, unpacked, Metadata, #{}, StoreID)),
+	%% unpacked -> packed
+	?assertEqual(not_found,
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = {replica_2_9, Addr}
+			}, 100, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+
+	%% Small chunk after the strict data split threshold
+	%% unpacked -> unpacked
+	?assertEqual(not_found,
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = unpacked
+			}, 10_000_000, unpacked, Metadata, #{}, StoreID)),
+	%% unpacked -> packed
+	ExpectedRepackedChunk = #repack_chunk{
+		source_packing = unpacked,
+		target_packing = {replica_2_9, Addr},
+		metadata = #chunk_metadata{
+			chunk_data_key = ChunkDataKey,
+			tx_root = TXRoot,
+			data_root = DataRoot,
+			tx_path = TXPath,
+			chunk_size = ChunkSize
+		},
+		offsets = #chunk_offsets{
+			absolute_offset = 10_000_000,
+			bucket_end_offset = 10_223_616,
+			padded_end_offset = 10_223_616,
+			relative_offset = RelativeOffset
+		},
+		chunk = not_found
+	},
+	?assertEqual(ExpectedRepackedChunk,
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = {replica_2_9, Addr}
+			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+	ok.
+
+test_assemble_repack_chunk_too_small_packed() ->
+	Addr = <<"addr">>,
+	StoreID = "storage_module_100_unpacked",
+	ChunkDataKey = <<"chunk_data_key">>,
+	TXRoot = <<"tx_root">>,
+	DataRoot = <<"data_root">>,
+	TXPath = <<"tx_path">>,
+	RelativeOffset = 1000,
+	ChunkSize = 100,
+
+	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize},
+
+	%% Small chunk before the strict data split threshold
+	%% packed -> unpacked
+	?assertEqual(not_found,
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = unpacked
+			}, 100, unpacked, Metadata, #{}, StoreID)),
+	%% packed -> packed
+	?assertEqual(not_found,
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = {replica_2_9, Addr}
+			}, 100, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+
+	%% Small chunk after the strict data split threshold
+	ExpectedRepackedChunk = #repack_chunk{
+		source_packing = {spora_2_6, Addr},
+		metadata = #chunk_metadata{
+			chunk_data_key = ChunkDataKey,
+			tx_root = TXRoot,
+			data_root = DataRoot,
+			tx_path = TXPath,
+			chunk_size = ChunkSize
+		},
+		offsets = #chunk_offsets{
+			absolute_offset = 10_000_000,
+			bucket_end_offset = 10_223_616,
+			padded_end_offset = 10_223_616,
+			relative_offset = RelativeOffset
+		},
+		chunk = not_found
+	},
+	%% packed -> unpacked
+	?assertEqual(ExpectedRepackedChunk#repack_chunk{target_packing = unpacked},
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = unpacked
+			}, 10_000_000, unpacked, Metadata, #{}, StoreID)),
+	%% packed -> packed
+	?assertEqual(ExpectedRepackedChunk#repack_chunk{target_packing = {replica_2_9, Addr}},
+		assemble_repack_chunk(
+			#repack_chunk{
+				target_packing = {replica_2_9, Addr}
+			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+	ok.

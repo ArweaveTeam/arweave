@@ -280,6 +280,7 @@ jobs:
             ar_peers,
             ar_pricing,
             ar_repack,
+            ar_repack_fsm,
             ar_replica_2_9,
             ar_retarget,
             ar_serialize,

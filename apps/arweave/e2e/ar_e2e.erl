@@ -487,7 +487,7 @@ assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize) ->
 		tx_path = maps:get(tx_path, Proof),
 		data_path = maps:get(data_path, Proof)
 	},
-	ChunkProof = ar_poa:chunk_proof(ChunkMetadata, EndOffset - 1),
+	ChunkProof = ar_test_node:remote_call(Node, ar_poa, chunk_proof, [ChunkMetadata, EndOffset - 1]),
 	{true, _} = ar_test_node:remote_call(Node, ar_poa, validate_paths, [ChunkProof]),
 	Chunk = maps:get(chunk, Proof),
 

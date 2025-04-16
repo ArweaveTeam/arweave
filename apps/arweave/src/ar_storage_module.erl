@@ -162,7 +162,7 @@ get_range(ID) ->
 	{non_neg_integer(), non_neg_integer()}.
 module_range(Module) ->
 	{_BucketSize, _Bucket, Packing} = Module,
-	module_range(Module, get_overlap(Packing)).
+	module_range(Module, ar_storage_module:get_overlap(Packing)).
 
 module_range(Module, Overlap) ->
 	{BucketSize, Bucket, _Packing} = Module,
@@ -284,7 +284,7 @@ id(BucketSize, Bucket, PackingString) ->
 
 get(Offset, Packing, [{BucketSize, Bucket, Packing2} | StorageModules], StorageModule) ->
 	case Offset =< BucketSize * Bucket
-			orelse Offset > BucketSize * (Bucket + 1) + get_overlap(Packing2) of
+			orelse Offset > BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing2) of
 		true ->
 			get(Offset, Packing, StorageModules, StorageModule);
 		false ->
@@ -321,7 +321,7 @@ get_overlap(_Packing) ->
 
 get_all(Offset, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
 	case Offset =< BucketSize * Bucket
-			orelse Offset > BucketSize * (Bucket + 1) + get_overlap(Packing) of
+			orelse Offset > BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing) of
 		true ->
 			get_all(Offset, StorageModules, FoundModules);
 		false ->
@@ -345,7 +345,7 @@ get_all_packed(_Offset, _Packing, []) ->
 
 get_all(Start, End, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
 	case End =< BucketSize * Bucket
-			orelse Start >= BucketSize * (Bucket + 1) + get_overlap(Packing) of
+			orelse Start >= BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing) of
 		true ->
 			get_all(Start, End, StorageModules, FoundModules);
 		false ->
@@ -358,7 +358,7 @@ has_any(_Offset, []) ->
 	false;
 has_any(Offset, [{BucketSize, Bucket, Packing} | StorageModules]) ->
 	case Offset > Bucket * BucketSize
-			andalso Offset =< (Bucket + 1) * BucketSize + get_overlap(Packing) of
+			andalso Offset =< (Bucket + 1) * BucketSize + ar_storage_module:get_overlap(Packing) of
 		true ->
 			true;
 		false ->
