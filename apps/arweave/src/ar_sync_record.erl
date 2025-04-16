@@ -417,7 +417,7 @@ terminate(Reason, State) ->
 %%%===================================================================
 
 name(StoreID) ->
-	list_to_atom("ar_sync_record_" ++ ar_storage_module:label_by_id(StoreID)).
+	list_to_atom("ar_sync_record_" ++ ar_storage_module:label(StoreID)).
 
 add2(End, Start, ID, State) ->
 	#state{ sync_record_by_id = SyncRecordByID, state_db = StateDB,

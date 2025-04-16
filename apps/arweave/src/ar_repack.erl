@@ -7,7 +7,7 @@
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include("ar_poa.hrl").
+-include("ar_consensus.hrl").
 -include("ar_sup.hrl").
 -include("ar_config.hrl").
 -include("ar_repack.hrl").
@@ -56,7 +56,7 @@ start_link(Name, {StoreID, Packing}) ->
 
 %% @doc Return the name of the server serving the given StoreID.
 name(StoreID) ->
-	list_to_atom("ar_repack_" ++ ar_storage_module:label_by_id(StoreID)).
+	list_to_atom("ar_repack_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
     {ok, Config} = application:get_env(arweave, config),
@@ -108,8 +108,12 @@ init({StoreID, ToPacking}) ->
 	
 	{replica_2_9, RewardAddr} = ToPacking,
 
-    {ModuleStart, ModuleEnd} = ar_storage_module:get_range(StoreID),
-	PaddedModuleEnd = ar_chunk_storage:get_chunk_bucket_end(ModuleEnd),
+	%% ModuleStart to PaddedModuleEnd is the *chunk* range that will be repacked. Chunk
+	%% offsets will later be converted to bucket offsets and entropy offsets - and the 
+	%% bucket and entropy ranges may differ from this chunk range.
+	Module = ar_storage_module:get_by_id(StoreID),
+    {ModuleStart, ModuleEnd} = ar_storage_module:module_range(Module),
+	PaddedModuleEnd = ar_block:get_chunk_padded_offset(ModuleEnd),
     Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
 
 	{ok, Config} = application:get_env(arweave, config),
@@ -345,7 +349,7 @@ terminate(Reason, #state{} = State) ->
 %%%===================================================================
 
 calculate_num_entropy_offsets(CacheSize, BatchSize) ->
-	min(1024, (CacheSize * 4) div BatchSize).
+	min(ar_replica_2_9:sub_chunks_per_entropy(), (CacheSize * 4) div BatchSize).
 
 %% @doc Outer repack loop. Called via `gen_server:cast(self(), repack)`. Each call
 %% repacks another footprint of chunks. A repack footprint is N entropy footprints where N
@@ -414,8 +418,8 @@ repack_footprint(Cursor, #state{} = State) ->
 
 	case Skip orelse FootprintStart < ModuleStart orelse FootprintStart > ModuleEnd of
 		true ->
-			%% Skip this BucketEndOffset for one of these reasons:
-			%% 1. BucketEndOffset has already been repacked.
+			%% Skip this Cursor for one of these reasons:
+			%% 1. Cursor has already been repacked.
 			%%    Note: we expect this to happen a lot since we iterate through all
 			%%    chunks in the partition, but for each chunk we will repack N
 			%%    entropy footprints.
@@ -425,10 +429,10 @@ repack_footprint(Cursor, #state{} = State) ->
 			%%    storage module.
 			gen_server:cast(self(), repack),
 			Interval = ar_sync_record:get_next_unsynced_interval(
-				BucketEndOffset, infinity, TargetPacking, ar_data_sync, StoreID),
+				Cursor, infinity, TargetPacking, ar_data_sync, StoreID),
 			NextCursor = case Interval of
 				not_found ->
-					BucketEndOffset + ?DATA_CHUNK_SIZE;
+					Cursor + ?DATA_CHUNK_SIZE;
 				{_, Start} ->
 					Start + ?DATA_CHUNK_SIZE
 			end,
@@ -438,9 +442,7 @@ repack_footprint(Cursor, #state{} = State) ->
 				{padded_end_offset, PaddedEndOffset},
 				{bucket_end_offset, BucketEndOffset},
 				{is_chunk_recorded, IsChunkRecorded},
-				{footprint_start, FootprintStart},
-				{module_start, ModuleStart},
-				{module_end, ModuleEnd}
+				{footprint_start, FootprintStart}
 			]),
 			State#state{ next_cursor = NextCursor };
 		_ ->
@@ -453,7 +455,7 @@ repack_footprint(Cursor, #state{} = State) ->
 				footprint_start = FootprintStart,
 				footprint_end = FootprintEnd,
 				entropy_end = ar_chunk_storage:get_chunk_bucket_end(EntropyEnd),
-				next_cursor = BucketEndOffset + ?DATA_CHUNK_SIZE
+				next_cursor = Cursor + ?DATA_CHUNK_SIZE
 			},
 			State3 = init_repack_chunk_map(FootprintOffsets, State2),
 
@@ -462,15 +464,14 @@ repack_footprint(Cursor, #state{} = State) ->
 
 			generate_repack_entropy(BucketEndOffset, State3),
 
-			ar_repack_io:read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, StoreID),
+			ar_repack_io:read_footprint(
+				FootprintOffsets, FootprintStart, FootprintEnd, StoreID),
 
 			log_debug(repack_footprint_start, State3, [
 				{cursor, Cursor},
 				{bucket_end_offset, BucketEndOffset},
 				{bucket_start_offset, BucketStartOffset},
 				{target_packing, ar_serialize:encode_packing(TargetPacking, false)},
-				{module_start, ModuleStart},
-				{module_end, ModuleEnd},
 				{entropy_end, EntropyEnd},
 				{read_batch_size, BatchSize},
 				{write_batch_size, State2#state.write_batch_size},
@@ -484,13 +485,19 @@ repack_footprint(Cursor, #state{} = State) ->
 	end.
 
 %% @doc Generates the set of entropy offsets that will be used during one iteration of
-%% repack_footprint.
+%% repack_footprint. Expects to be called with a BucketEndOffset. This is to avoid
+%% unexpected filtering results when a BucketEndOffset is lower than a PickOffset or
+%% an AbsoluteEndOffset.
 %% 
 %% One footprint of entropy offsets is generated and then filtered such that:
 %% - no offset is less than BucketEndOffset
 %% - no offset is greater than ModuleEnd
 %% - at most NumEntropyOffsets offsets are returned
 footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd) ->
+	%% sanity checks
+	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(BucketEndOffset),
+	%% end sanity checks
+	
 	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
 
 	FilteredOffsets = lists:filter(
@@ -923,9 +930,10 @@ count_states(cache, #state{} = State) ->
 		{cache_size, maps:size(Map)},
 		{states, maps:to_list(MapCount)}
 	]),
+	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			prometheus_gauge:set(repack_chunk_states, [StoreID, cache, ChunkState], Count),
+			prometheus_gauge:set(repack_chunk_states, [StoreIDLabel, cache, ChunkState], Count),
 			Acc
 		end,
 		ok,
@@ -946,10 +954,11 @@ count_states(queue, #state{} = State) ->
 	log_debug(count_write_queue_states, State, [
 		{queue_size, gb_sets:size(WriteQueue)},
 		{states, maps:to_list(WriteQueueCount)}
-	]),
+	]),	
+	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			prometheus_gauge:set(repack_chunk_states, [StoreID, queue, ChunkState], Count),
+			prometheus_gauge:set(repack_chunk_states, [StoreIDLabel, queue, ChunkState], Count),
 			Acc
 		end,
 		ok,
@@ -964,10 +973,47 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 %%%===================================================================
 
 cache_size_test() ->
-	?assertEqual(40, calculate_num_entropy_offsets(1000, 100)),
-	?assertEqual(400, calculate_num_entropy_offsets(1000, 10)),
-	?assertEqual(1024, calculate_num_entropy_offsets(30000, 100)),
-	?assertEqual(128, calculate_num_entropy_offsets(12800, 400)),
-	?assertEqual(128, calculate_num_entropy_offsets(3200, 100)),
-	?assertEqual(128, calculate_num_entropy_offsets(1600, 50)),
-	?assertEqual(160, calculate_num_entropy_offsets(4000, 100)).
+	?assertEqual(1, calculate_num_entropy_offsets(100, 400)),
+	?assertEqual(2, calculate_num_entropy_offsets(100, 200)),
+	?assertEqual(3, calculate_num_entropy_offsets(300, 400)),
+	?assertEqual(3, calculate_num_entropy_offsets(3000, 400)),
+	?assertEqual(3, calculate_num_entropy_offsets(3, 4)),
+	?assertEqual(3, calculate_num_entropy_offsets(3, 1)),
+	?assertEqual(2, calculate_num_entropy_offsets(5, 10)).
+
+footprint_offsets_test_() ->
+	ar_test_node:test_with_mocked_functions([
+		{ar_block, partition_size, fun() -> 2_000_000 end},
+		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+	],
+	fun test_footprint_offsets/0, 30).
+
+test_footprint_offsets() ->
+	{Start0, End0} = ar_replica_2_9:get_entropy_partition_range(0),
+	{Start1, End1} = ar_replica_2_9:get_entropy_partition_range(1),
+
+	?assertEqual(3, ar_replica_2_9:sub_chunks_per_entropy()),
+	?assertEqual({0, 2272864}, {Start0, End0}),
+	?assertEqual({2272865, 4370016}, {Start1, End1}),
+
+	?assertEqual([262144, 1048576, 1835008], footprint_offsets(262144, 3, End0)),
+	?assertEqual([262144, 1048576], footprint_offsets(262144, 2, End0)),
+	?assertEqual([262144], footprint_offsets(262144, 1, End0)),
+
+	?assertEqual([786432, 1572864], footprint_offsets(786432, 3, End0)),
+	?assertEqual([786432, 1572864], footprint_offsets(786432, 2, End0)),
+	?assertEqual([786432], footprint_offsets(786432, 1, End0)),
+
+	?assertEqual([1048576, 1835008], footprint_offsets(1048576, 3, End0)),
+
+	?assertEqual([1572864], footprint_offsets(1572864, 3, End0)),
+	?assertEqual([1572864], footprint_offsets(1572864, 2, End0)),
+	?assertEqual([1572864], footprint_offsets(1572864, 1, End0)),
+	
+	?assertEqual([1835008], footprint_offsets(1835008, 3, End0)),
+	?assertEqual([2097152], footprint_offsets(2097152, 3, End0)),
+	?assertEqual([2359296, 3145728, 3932160], footprint_offsets(2359296, 3, End1)),
+	?assertEqual([2621440, 3407872, 4194304], footprint_offsets(2621440, 3, End1)),
+	?assertEqual([2883584, 3670016], footprint_offsets(2883584, 3, End1)),
+	?assertEqual([3145728, 3932160], footprint_offsets(3145728, 3, End1)),
+	?assertEqual([4194304], footprint_offsets(4194304, 3, End1)).

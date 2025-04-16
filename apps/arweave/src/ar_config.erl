@@ -77,7 +77,7 @@ parse_storage_module(IOList) ->
 		[PartitionNumberBin, PackingBin, <<"repack_in_place">>, ToPackingBin] ->
 			PartitionNumber = binary_to_integer(PartitionNumberBin),
 			true = PartitionNumber >= 0,
-			parse_storage_module(PartitionNumber, ?PARTITION_SIZE, PackingBin, ToPackingBin);
+			parse_storage_module(PartitionNumber, ar_block:partition_size(), PackingBin, ToPackingBin);
 		[RangeNumberBin, RangeSizeBin, PackingBin, <<"repack_in_place">>, ToPackingBin] ->
 			RangeNumber = binary_to_integer(RangeNumberBin),
 			true = RangeNumber >= 0,
@@ -87,7 +87,7 @@ parse_storage_module(IOList) ->
 		[PartitionNumberBin, PackingBin] ->
 			PartitionNumber = binary_to_integer(PartitionNumberBin),
 			true = PartitionNumber >= 0,
-			parse_storage_module(PartitionNumber, ?PARTITION_SIZE, PackingBin);
+			parse_storage_module(PartitionNumber, ar_block:partition_size(), PackingBin);
 		[RangeNumberBin, RangeSizeBin, PackingBin] ->
 			RangeNumber = binary_to_integer(RangeNumberBin),
 			true = RangeNumber >= 0,
@@ -185,6 +185,8 @@ parse_options([{<<"verify">>, Opt} | _], _) ->
 
 parse_options([{<<"verify_samples">>, N} | Rest], Config) when is_integer(N) ->
 	parse_options(Rest, Config#config{ verify_samples = N });
+parse_options([{<<"verify_samples">>, <<"all">>} | Rest], Config) ->
+	parse_options(Rest, Config#config{ verify_samples = all });
 parse_options([{<<"verify_samples">>, Opt} | _], _) ->
 	{error, {bad_type, verify_samples, number}, Opt};
 

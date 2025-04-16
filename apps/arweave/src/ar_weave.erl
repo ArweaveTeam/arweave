@@ -15,7 +15,7 @@
 %%%===================================================================
 
 %% @doc Create a genesis block. The genesis block includes one transaction with
-%% at least one small chunk and the total data size equal to ?STRICT_DATA_SPLIT_THRESHOLD,
+%% at least one small chunk and the total data size equal to ar_block:strict_data_split_threshold(),
 %% to test the code branches dealing with small chunks placed before the threshold.
 init() ->
 	init([]).
@@ -26,7 +26,7 @@ init(WalletList) ->
 	init(WalletList, 1).
 
 init(WalletList, Diff) ->
-	Size = 262144 * 3, % Matches ?STRICT_DATA_SPLIT_THRESHOLD in tests.
+	Size = 3 * ?DATA_CHUNK_SIZE, % Matches ?STRICT_DATA_SPLIT_THRESHOLD in tests.
 	init(WalletList, Diff, Size).
 
 init(_WalletList, _Diff, GenesisDataSize) when GenesisDataSize > (4 * ?GiB) ->
@@ -99,7 +99,7 @@ init(WalletList, Diff, GenesisDataSize) ->
 			false ->
 				InitialHistory = get_initial_block_time_history(),
 				B1#block{
-					merkle_rebase_support_threshold = ?STRICT_DATA_SPLIT_THRESHOLD * 2,
+					merkle_rebase_support_threshold = ar_block:strict_data_split_threshold() * 2,
 					chunk_hash = crypto:strong_rand_bytes(32),
 					block_time_history = InitialHistory,
 					block_time_history_hash = ar_block_time_history:hash(InitialHistory)

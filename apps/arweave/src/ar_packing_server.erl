@@ -598,6 +598,11 @@ unpack({replica_2_9, RewardAddr} = Packing, AbsoluteEndOffset,
 		_TXRoot, Chunk, ChunkSize, PackingState, _External) ->
 	case validate_chunk_size(Packing, Chunk, ChunkSize) of
 		{error, Reason} ->
+			?LOG_ERROR([{event, unpack_chunk_size_error}, {error, Reason},
+					{chunk_offset, AbsoluteEndOffset},
+					{packing, ar_serialize:encode_packing(Packing, true)},
+					{expected_chunk_size, ChunkSize},
+					{actual_chunk_size, byte_size(Chunk)}]),
 			{error, Reason};
 		{ok, PackedSize} ->
 			SubChunks = get_sub_chunks(Chunk),
@@ -625,6 +630,11 @@ unpack(unpacked_padded, _ChunkOffset, _TXRoot, Chunk, ChunkSize, _PackingState, 
 unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize, PackingState, External) ->
 	case validate_chunk_size(Packing, Chunk, ChunkSize) of
 		{error, Reason} ->
+			?LOG_ERROR([{event, unpack_chunk_size_error}, {error, Reason},
+					{chunk_offset, ChunkOffset},
+					{packing, ar_serialize:encode_packing(Packing, true)},
+					{expected_chunk_size, ChunkSize},
+					{actual_chunk_size, byte_size(Chunk)}]),
 			{error, Reason};
 		{ok, _PackedSize} ->
 			{PackingAtom, Key} = chunk_key(Packing, ChunkOffset, TXRoot),
@@ -737,6 +747,12 @@ repack(RequestedPacking, StoredPacking,
 					ar_mine_randomx:randomx_reencrypt_chunk(StoredPacking, RequestedPacking,
 							RandomXState, UnpackKey, PackKey, Chunk, ChunkSize) end);
 		Error ->
+			?LOG_ERROR([{event, repack_chunk_size_error}, {error, Error},
+					{chunk_offset, ChunkOffset},
+					{requested_packing, ar_serialize:encode_packing(RequestedPacking, true)},
+					{stored_packing, ar_serialize:encode_packing(StoredPacking, true)},
+					{expected_chunk_size, ChunkSize},
+					{actual_chunk_size, byte_size(Chunk)}]),
 			Error
 	end.
 
