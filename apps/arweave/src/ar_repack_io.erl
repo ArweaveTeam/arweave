@@ -173,6 +173,9 @@ do_read_footprint(
 		{read_range_end, ReadRangeEnd},
 		{read_range_size_bytes, ReadRangeSizeInBytes},
 		{chunk_read_size_bytes, ChunkReadSizeInBytes},
+		{footprint_start, FootprintStart},
+		{footprint_end, FootprintEnd},
+		{remaining_offsets, length(FootprintOffsets)},
 		{time_taken, ElapsedTime},
 		{rate, (ChunkReadSizeInBytes / ?MiB / ElapsedTime) * 1000}
 	]),
