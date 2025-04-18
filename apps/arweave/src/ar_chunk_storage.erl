@@ -674,11 +674,12 @@ get(Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
 			File ->
 				read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount, StoreID)
 		end,
-	prometheus_histogram:observe_duration(chunk_storage_sync_record_check_duration_milliseconds,
-		[ChunkCount], fun() ->
-			Intervals = get_sync_record_intervals(Start, ChunkCount, StoreID),
-			filter_by_sync_record(ReadChunks, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount)
-		end).
+	case ar_storage_module:is_repack_in_place(StoreID) of
+		true ->
+			ReadChunks;
+		false ->
+			filter_by_sync_record(ReadChunks, Byte, Start, ChunkFileStart, StoreID, ChunkCount)
+	end.
 
 read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount, StoreID) ->
 	case file:open(Filepath, [read, raw, binary]) of
@@ -763,6 +764,8 @@ is_offset_valid(Byte, BucketStart, ChunkOffset) ->
 	Delta = Byte - (BucketStart + ChunkOffset rem ?DATA_CHUNK_SIZE),
 	Delta >= 0 andalso Delta < ?DATA_CHUNK_SIZE.
 
+
+
 get_sync_record_intervals(Start, ChunkCount, StoreID) ->
 	End = Start + (ChunkCount + 1) * ?DATA_CHUNK_SIZE,
 	get_sync_record_intervals(Start, End, StoreID, ar_intervals:new()).
@@ -777,6 +780,14 @@ get_sync_record_intervals(Start, End, StoreID, Intervals) ->
 			get_sync_record_intervals(End2, End, StoreID,
 					ar_intervals:add(Intervals, min(End, End2), Start2))
 	end.
+
+filter_by_sync_record(ReadChunks, Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
+	prometheus_histogram:observe_duration(chunk_storage_sync_record_check_duration_milliseconds,
+		[ChunkCount],
+		fun() ->
+			Intervals = get_sync_record_intervals(Start, ChunkCount, StoreID),
+			filter_by_sync_record(ReadChunks, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount)
+		end).
 
 filter_by_sync_record(Chunks, _Intervals, _Byte, _Start, _ChunkFileStart, _StoreID, 1) ->
 	%% The code paths which query a single chunk have already implicitly checked that
