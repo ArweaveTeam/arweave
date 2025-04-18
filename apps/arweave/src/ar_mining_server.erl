@@ -89,7 +89,7 @@ active_sessions() ->
 encode_sessions(Sessions) ->
 	lists:map(fun(SessionKey) ->
 		ar_nonce_limiter:encode_session_key(SessionKey)
-	end, sets:to_list(Sessions)).
+	end, Sessions).
 
 is_one_chunk_solution(Solution) ->
 	Solution#mining_solution.recall_byte2 == undefined.
@@ -199,7 +199,7 @@ handle_cast(pause, State) ->
 	ar:console("Pausing mining.~n"),
 	?LOG_INFO([{event, pause_mining}]),
 	ar_mining_stats:mining_paused(),
-	%% Setting paused to true allows all pending tasks to complete, but prevents new output to be 
+	%% Setting paused to true allows all pending tasks to complete, but prevents new output to be
 	%% distributed. Setting diff to infinity ensures that no solutions are found.
 	State2 = set_difficulty({infinity, infinity}, State),
 	{noreply, State2#state{ paused = true }};
@@ -213,12 +213,12 @@ handle_cast({start_mining, Args}, State) ->
 
 	maps:foreach(
 		fun(_Partition, Worker) ->
-			ar_mining_worker:reset(Worker, DiffPair)
+			ar_mining_worker:reset_mining_session(Worker, DiffPair)
 		end,
 		State#state.workers
 	),
 
-	{noreply, State#state{ 
+	{noreply, State#state{
 		paused = false,
 		active_sessions	= sets:new(),
 		diff_pair = DiffPair,
@@ -263,8 +263,8 @@ handle_cast({manual_garbage_collect, Ref}, #state{ gc_process_ref = Ref } = Stat
 	%% references to that data is spread among all the different mining processes. Because of
 	%% this it can take the default garbage collection to clean up all references and
 	%% deallocate the memory - which in turn can cause memory to be exhausted.
-	%% 
-	%% To address this the mining server will force a garbage collection on all mining 
+	%%
+	%% To address this the mining server will force a garbage collection on all mining
 	%% processes every time we process a few VDF steps. The exact number of VDF steps is
 	%% determined by the chunk cache size limit in order to roughly align garbage collection
 	%% with when we expect all references to a recall range's chunks to be evicted from
@@ -394,7 +394,7 @@ update_sessions(NewActiveSessions, CurrentActiveSessions, State) ->
 
 	maps:foreach(
 		fun(_Partition, Worker) ->
-			ar_mining_worker:set_sessions(Worker, NewActiveSessions)
+			ar_mining_worker:set_sessions(Worker, sets:to_list(NewActiveSessions))
 		end,
 		State#state.workers
 	),
@@ -411,7 +411,7 @@ add_sessions([SessionKey | AddedSessions], State) ->
 	ar:console("Starting new mining session: "
 		"next entropy nonce: ~s, interval number: ~B, next vdf difficulty: ~B.~n",
 		[ar_util:safe_encode(NextSeed), StartIntervalNumber, NextVDFDifficulty]),
-	?LOG_INFO([{event, new_mining_session}, 
+	?LOG_INFO([{event, new_mining_session},
 		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
 	add_sessions(AddedSessions, add_seed(SessionKey, State)).
 
@@ -461,51 +461,44 @@ calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
 	IdealRangesPerStep = 2,
 	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty),
 
-	MinimumCacheLimitMiB = max(
+	MinimumCacheLimitBytes = max(
 		1,
 		(IdealStepsPerPartition * IdealRangesPerStep * RecallRangeSize * NumActivePartitions)
-			div ?MiB
 	),
 
 	{ok, Config} = application:get_env(arweave, config),
-	OverallCacheLimitMiB = case Config#config.mining_cache_size_mb of
+	OverallCacheLimitBytes = case Config#config.mining_cache_size_mb of
 		undefined ->
-			MinimumCacheLimitMiB;
+			MinimumCacheLimitBytes;
 		N ->
-			N
+			N * ?MiB
 	end,
-
-	%% Convert the overall cache limit from MiB to sub-chunks. Each partition will track
-	%% their cache in terms of sub-chunks where a spora_2_6 sub-chunk is the same as a chunk,
-	%% and a composite sub-chunk is much smaller than a chunk.
-	OverallCacheLimitSubChunks = (OverallCacheLimitMiB * ?MiB) div 
-		ar_block:get_sub_chunk_size(PackingDifficulty),
 
 	%% We shard the chunk cache across every active worker. Only workers that mine a partition
 	%% included in the current weave are active.
-	PartitionCacheLimit = max(1, OverallCacheLimitSubChunks div NumActivePartitions),
+	PartitionCacheLimitBytes = OverallCacheLimitBytes div NumActivePartitions,
 
 	%% Allow enough compute_h0 tasks to be queued to completely refill the chunk cache.
 	VDFQueueLimit = max(
 		1,
-		PartitionCacheLimit div (2 * ar_block:get_nonces_per_recall_range(PackingDifficulty))
+		PartitionCacheLimitBytes div (2 * ar_block:get_recall_range_size(PackingDifficulty))
 	),
 
 	GarbageCollectionFrequency = 4 * VDFQueueLimit * 1000,
 
-	{MinimumCacheLimitMiB, OverallCacheLimitMiB, PartitionCacheLimit, VDFQueueLimit,
+	{MinimumCacheLimitBytes, OverallCacheLimitBytes, PartitionCacheLimitBytes, VDFQueueLimit,
 		GarbageCollectionFrequency}.
 
 maybe_update_cache_limits({_, _, PartitionCacheLimit, _, _},
 		#state{chunk_cache_limit = PartitionCacheLimit} = State) ->
 	State;
 maybe_update_cache_limits(Limits, State) ->
-	{MinimumCacheLimitMiB, OverallCacheLimitMiB, PartitionCacheLimit, VDFQueueLimit,
+	{MinimumCacheLimitBytes, OverallCacheLimitBytes, PartitionCacheLimitBytes, VDFQueueLimit,
 		GarbageCollectionFrequency} = Limits,
 	maps:foreach(
 		fun(_Partition, Worker) ->
 			ar_mining_worker:set_cache_limits(
-				Worker, PartitionCacheLimit, VDFQueueLimit)
+				Worker, PartitionCacheLimitBytes, VDFQueueLimit)
 		end,
 		State#state.workers
 	),
@@ -513,23 +506,23 @@ maybe_update_cache_limits(Limits, State) ->
 	ar:console(
 		"~nSetting the mining chunk cache size limit to ~B MiB "
 		"(~B sub-chunks per partition).~n",
-			[OverallCacheLimitMiB, PartitionCacheLimit]),
+			[OverallCacheLimitBytes div ?MiB, PartitionCacheLimitBytes div ?MiB]),
 	?LOG_INFO([{event, update_mining_cache_limits},
-		{overall_limit_mb, OverallCacheLimitMiB},
-		{per_partition_sub_chunks, PartitionCacheLimit},
+		{overall_limit_mb, OverallCacheLimitBytes div ?MiB},
+		{per_partition_sub_chunks, PartitionCacheLimitBytes div ?MiB},
 		{vdf_queue_limit_steps, VDFQueueLimit}]),
-	case OverallCacheLimitMiB < MinimumCacheLimitMiB of
+		case OverallCacheLimitBytes < MinimumCacheLimitBytes of
 		true ->
 			ar:console("~nChunk cache size limit (~p MiB) is below minimum limit of "
 				"~p MiB. Mining performance may be impacted.~n"
 				"Consider changing the 'mining_cache_size_mb' option.",
-				[OverallCacheLimitMiB, MinimumCacheLimitMiB]);
+				[OverallCacheLimitBytes div ?MiB, MinimumCacheLimitBytes div ?MiB]);
 		false -> ok
 	end,
 
 	State2 = reset_gc_timer(GarbageCollectionFrequency, State),
 	State2#state{
-		chunk_cache_limit = PartitionCacheLimit
+		chunk_cache_limit = PartitionCacheLimitBytes
 	}.
 
 distribute_output(Candidate, State) ->
@@ -628,7 +621,7 @@ prepare_solution(Solution, State) ->
 prepare_solution_from_candidate(Candidate, State) ->
 	#state{ merkle_rebase_threshold = RebaseThreshold, is_pool_client = IsPoolClient } = State,
 	#mining_candidate{
-		mining_address = MiningAddress, next_seed = NextSeed, 
+		mining_address = MiningAddress, next_seed = NextSeed,
 		next_vdf_difficulty = NextVDFDifficulty, nonce = Nonce,
 		nonce_limiter_output = NonceLimiterOutput, partition_number = PartitionNumber,
 		partition_upper_bound = PartitionUpperBound, poa2 = PoA2, preimage = Preimage,
@@ -663,7 +656,7 @@ prepare_solution_from_candidate(Candidate, State) ->
 
 prepare_solution(last_step_checkpoints, Candidate, Solution) ->
 	#mining_candidate{
-		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty, 
+		next_seed = NextSeed, next_vdf_difficulty = NextVDFDifficulty,
 		start_interval_number = StartIntervalNumber, step_number = StepNumber } = Candidate,
 	LastStepCheckpoints = ar_nonce_limiter:get_step_checkpoints(
 			StepNumber, NextSeed, StartIntervalNumber, NextVDFDifficulty),
@@ -791,7 +784,7 @@ prepare_solution(poa1, Candidate, Solution) ->
 									%% If we are a coordinated miner and not an exit node -
 									%% the exit node will fetch the proofs.
 									may_be_leave_it_to_exit_peer(
-											Solution#mining_solution{ 
+											Solution#mining_solution{
 												poa1 = #poa{ chunk = SubChunk } },
 											chunk1_proofs_for_h2_solution_not_found,
 											LogData)
@@ -848,7 +841,7 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 		poa1 -> {RecallByte1, Chunk1};
 		poa2 -> {RecallByte2, Chunk2}
 	end,
-	
+
 	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
 	case is_poa_complete(CurrentPoA, PackingDifficulty) of
 		true ->
@@ -1053,7 +1046,7 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 			?LOG_DEBUG([{event, mining_debug_skipping_vdf_output}, {reason, stale_session},
 				{step_number, StepNumber},
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-				{active_sessions, encode_sessions(State#state.active_sessions)}]);
+				{active_sessions, encode_sessions(sets:to_list(State#state.active_sessions))}]);
 		true ->
 			{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 			Candidate = #mining_candidate{
@@ -1206,6 +1199,11 @@ validate_solution(Solution, DiffPair) ->
 			case ar_node_utils:h1_passes_diff_check(H1, DiffPair, PackingDifficulty) of
 				true ->
 					%% validates solution_hash
+					case SolutionHash of
+						H1 -> ok;
+						_ ->
+							?LOG_ERROR([{event, invalid_solution_hash}, {solution_hash, SolutionHash}, {h1, H1}])
+					end,
 					SolutionHash = H1,
 					{true, PoACache, undefined};
 				false ->
@@ -1298,51 +1296,51 @@ test_calculate_cache_limits_default() ->
 		mining_cache_size_mb = undefined
 	}),
 	?assertEqual(
-		{4, 4, 16, 4, 16000},
+		{4 * ?MiB, 4 * ?MiB, 4 * ?MiB, 4, 16_000},
 		calculate_cache_limits(1, 0)
 	),
 	?assertEqual(
-		{8, 8, 16, 4, 16000},
+		{8 * ?MiB, 8 * ?MiB, 4 * ?MiB, 4, 16_000},
 		calculate_cache_limits(2, 0)
 	),
 	?assertEqual(
-		{4000, 4000, 16, 4, 16000},
+		{4_000 * ?MiB, 4_000 * ?MiB, 4 * ?MiB, 4, 16_000},
 		calculate_cache_limits(1000, 0)
 	),
 	?assertEqual(
-		{1, 1, 128, 4, 16000},
+		{1 * ?MiB, 1 * ?MiB, 1 * ?MiB, 4, 16_000},
 		calculate_cache_limits(1, 1)
 	),
 	?assertEqual(
-		{2, 2, 128, 4, 16000},
+		{2 * ?MiB, 2 * ?MiB, 1 * ?MiB, 4, 16_000},
 		calculate_cache_limits(2, 1)
 	),
 	?assertEqual(
-		{1000, 1000, 128, 4, 16000},
+		{1_000 * ?MiB, 1_000 * ?MiB, 1 * ?MiB, 4, 16_000},
 		calculate_cache_limits(1000, 1)
 	),
 	?assertEqual(
-		{1, 1, 128, 8, 32000},
+		{512 * ?KiB, 512 * ?KiB, 512 * ?KiB, 4, 16_000},
 		calculate_cache_limits(1, 2)
 	),
 	?assertEqual(
-		{1, 1, 64, 4, 16000},
+		{1 * ?MiB, 1 * ?MiB, 512 * ?KiB, 4, 16_000},
 		calculate_cache_limits(2, 2)
 	),
 	?assertEqual(
-		{500, 500, 64, 4, 16000},
+		{500 * ?MiB, 500 * ?MiB, 512 * ?KiB, 4, 16_000},
 		calculate_cache_limits(1000, 2)
 	),
 	?assertEqual(
-		{1, 1, 128, 64, 256000},
+		{32 * ?KiB, 32 * ?KiB, 32 * ?KiB, 4, 16_000},
 		calculate_cache_limits(1, 32)
 	),
 	?assertEqual(
-		{1, 1, 64, 32, 128000},
+		{64 * ?KiB, 64 * ?KiB, 32 * ?KiB, 4, 16_000},
 		calculate_cache_limits(2, 32)
 	),
 	?assertEqual(
-		{31, 31, 3, 1, 4000},
+		{32_000 * ?KiB, 32_000 * ?KiB, 32 * ?KiB, 4, 16_000},
 		calculate_cache_limits(1000, 32)
 	).
 
@@ -1352,51 +1350,51 @@ test_calculate_cache_limits_custom_low() ->
 		mining_cache_size_mb = 1
 	}),
 	?assertEqual(
-		{4, 1, 4, 1, 4000},
+		{4 * ?MiB, 1 * ?MiB, 1 * ?MiB, 1, 4_000},
 		calculate_cache_limits(1, 0)
 	),
 	?assertEqual(
-		{8, 1, 2, 1, 4000},
+		{8 * ?MiB, 1 * ?MiB, 512 * ?KiB, 1, 4_000},
 		calculate_cache_limits(2, 0)
 	),
 	?assertEqual(
-		{4000, 1, 1, 1, 4000},
+		{4_000 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 0)
 	),
 	?assertEqual(
-		{1, 1, 128, 4, 16000},
+		{1 * ?MiB, 1 * ?MiB, 1 * ?MiB, 4, 16_000},
 		calculate_cache_limits(1, 1)
 	),
 	?assertEqual(
-		{2, 1, 64, 2, 8000},
+		{2 * ?MiB, 1 * ?MiB, 512 * ?KiB, 2, 8_000},
 		calculate_cache_limits(2, 1)
 	),
 	?assertEqual(
-		{1000, 1, 1, 1, 4000},
+		{1_000 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 1)
 	),
 	?assertEqual(
-		{1, 1, 128, 8, 32000},
+		{512 * ?KiB, 1 * ?MiB, 1 * ?MiB, 8, 32_000},
 		calculate_cache_limits(1, 2)
 	),
 	?assertEqual(
-		{1, 1, 64, 4, 16000},
+		{1 * ?MiB, 1 * ?MiB, 512 * ?KiB, 4, 16_000},
 		calculate_cache_limits(2, 2)
 	),
 	?assertEqual(
-		{500, 1, 1, 1, 4000},
+		{512_000 * ?KiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 2)
 	),
 	?assertEqual(
-		{1, 1, 128, 64, 256000},
+		{32 * ?KiB, 1 * ?MiB, 1 * ?MiB, 128, 512_000},
 		calculate_cache_limits(1, 32)
 	),
 	?assertEqual(
-		{1, 1, 64, 32, 128000},
+		{64 * ?KiB, 1 * ?MiB, 512 * ?KiB, 64, 256_000},
 		calculate_cache_limits(2, 32)
 	),
 	?assertEqual(
-		{31, 1, 1, 1, 4000},
+		{32_000 * ?KiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 32)
 	).
 
@@ -1406,50 +1404,50 @@ test_calculate_cache_limits_custom_high() ->
 		mining_cache_size_mb = 500_000
 	}),
 	?assertEqual(
-		{4, 500_000, 2_000_000, 500_000, 2_000_000_000},
+		{4 * ?MiB, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 500_000, 2_000_000_000},
 		calculate_cache_limits(1, 0)
 	),
 	?assertEqual(
-		{8, 500_000, 1_000_000, 250_000, 1_000_000_000},
+		{8 * ?MiB, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 250_000, 1_000_000_000},
 		calculate_cache_limits(2, 0)
 	),
 	?assertEqual(
-		{4000, 500_000, 2_000, 500, 2_000_000},
+		{4_000 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 500, 2_000_000},
 		calculate_cache_limits(1000, 0)
 	),
 	?assertEqual(
-		{1, 500_000, 64_000_000, 2_000_000, 8_000_000_000},
+		{1 * ?MiB, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 2_000_000, 8_000_000_000},
 		calculate_cache_limits(1, 1)
 	),
 	?assertEqual(
-		{2, 500_000, 32_000_000, 1_000_000, 4_000_000_000},
+		{2 * ?MiB, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 1_000_000, 4_000_000_000},
 		calculate_cache_limits(2, 1)
 	),
 	?assertEqual(
-		{1000, 500_000, 64_000, 2_000, 8_000_000},
+		{1000 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 2_000, 8_000_000},
 		calculate_cache_limits(1000, 1)
 	),
 	?assertEqual(
-		{1, 500_000, 64_000_000, 4_000_000, 16_000_000_000},
+		{512 * ?KiB, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 4_000_000, 16_000_000_000},
 		calculate_cache_limits(1, 2)
 	),
 	?assertEqual(
-		{1, 500_000, 32_000_000, 2_000_000, 8_000_000_000},
+		{1 * ?MiB, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 2_000_000, 8_000_000_000},
 		calculate_cache_limits(2, 2)
 	),
 	?assertEqual(
-		{500, 500_000, 64_000, 4_000, 16_000_000},
+		{512_000 * ?KiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 4_000, 16_000_000},
 		calculate_cache_limits(1000, 2)
 	),
 	?assertEqual(
-		{1, 500_000, 64_000_000, 32_000_000, 128_000_000_000},
+		{32 * ?KiB, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 64_000_000, 256_000_000_000},
 		calculate_cache_limits(1, 32)
 	),
 	?assertEqual(
-		{1, 500_000, 32_000_000, 16_000_000, 64_000_000_000},
+		{64 * ?KiB, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 32_000_000, 128_000_000_000},
 		calculate_cache_limits(2, 32)
 	),
 	?assertEqual(
-		{31, 500_000, 64_000, 32_000, 128_000_000},
+		{32_000 * ?KiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 64_000, 256_000_000},
 		calculate_cache_limits(1000, 32)
 	).
