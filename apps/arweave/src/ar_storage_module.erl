@@ -1,10 +1,10 @@
 -module(ar_storage_module).
 
--export([id/1, label/1, address_label/2, module_address/1,
+-export([get_overlap/1, id/1, label/1, address_label/2, module_address/1,
 		module_packing_difficulty/1, packing_label/1, get_by_id/1,
 		get_range/1, module_range/1, module_range/2, get_packing/1, get_size/1,
 		get/2, get_strict/2, get_all/1, get_all/2, get_all_packed/3, get_all_module_ranges/0,
-		has_any/1, has_range/2, get_cover/3, get_overlap/1]).
+		has_any/1, has_range/2, get_cover/3, is_repack_in_place/1]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -32,6 +32,11 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
+get_overlap({replica_2_9, _Addr}) ->
+	?REPLICA_2_9_OVERLAP;
+get_overlap(_Packing) ->
+	?OVERLAP.
 
 %% @doc Return the storage module identifier.
 id("default") -> "default";
@@ -268,6 +273,14 @@ get_cover(Start, End, MaybeStoreID) ->
 			Cover
 	end.
 
+is_repack_in_place(ID) ->
+	{ok, Config} = application:get_env(arweave, config),
+	lists:any(
+		fun({Module, _TargetPacking}) ->
+			ar_storage_module:id(Module) == ID
+		end,
+		Config#config.repack_in_place_storage_modules).
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -313,11 +326,6 @@ get_strict(Offset, Packing,
 	end;
 get_strict(_Offset, _Packing, []) ->
 	not_found.
-
-get_overlap({replica_2_9, _Addr}) ->
-	?REPLICA_2_9_OVERLAP;
-get_overlap(_Packing) ->
-	?OVERLAP.
 
 get_all(Offset, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
 	case Offset =< BucketSize * Bucket
