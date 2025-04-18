@@ -6,6 +6,9 @@
 
 -export([init/1]).
 
+-include_lib("ar_sup.hrl").
+-include_lib("ar_config.hrl").
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -21,5 +24,6 @@ init([]) ->
 	Children = 
 		ar_data_sync_worker_master:register_workers() ++
 		ar_chunk_copy:register_workers() ++
-		ar_data_sync:register_workers(),
+		ar_data_sync:register_workers() ++
+		ar_partition_snapshot:register_workers(),
 	{ok, {{one_for_one, 5, 10}, Children}}.
