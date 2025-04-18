@@ -27,8 +27,8 @@
 	h2_hashes = #{}
 }).
 
--define(TASK_CHECK_FREQUENCY_MS, 200).
--define(STATUS_CHECK_FREQUENCY_MS, 5000).
+-define(TASK_CHECK_INTERVAL_MS, 200).
+-define(STATUS_CHECK_INTERVAL_MS, 5000).
 
 -define(CACHE_KEY(CacheRef, Nonce), {CacheRef, Nonce}).
 
@@ -79,11 +79,11 @@ add_task(Worker, TaskType, Candidate, ExtraArgs) ->
 
 -spec add_delayed_task(Worker :: pid(), TaskType :: atom(), Candidate :: #mining_candidate{}) -> ok.
 add_delayed_task(Worker, TaskType, Candidate) ->
-	%% Delay task by random amount between ?TASK_CHECK_FREQUENCY_MS and 2*?TASK_CHECK_FREQUENCY_MS
+	%% Delay task by random amount between ?TASK_CHECK_INTERVAL_MS and 2*?TASK_CHECK_INTERVAL_MS
 	%% The reason for the randomization to avoid a glut tasks to all get added at the same time -
 	%% in particular when the chunk cache fills up it's possible for all queued compute_h0 tasks
 	%% to be delayed at about the same time.
-	Delay = rand:uniform(?TASK_CHECK_FREQUENCY_MS) + ?TASK_CHECK_FREQUENCY_MS,
+	Delay = rand:uniform(?TASK_CHECK_INTERVAL_MS) + ?TASK_CHECK_INTERVAL_MS,
 	ar_util:cast_after(Delay, Worker, ?MSG_ADD_TASK({TaskType, Candidate, []})).
 
 -spec chunks_read(
@@ -211,7 +211,7 @@ handle_cast(?MSG_ADD_TASK({TaskType, Candidate, _ExtraArgs} = Task), State) ->
 handle_cast(?MSG_HANDLE_TASK, #state{ task_queue = Q } = State) ->
 	case gb_sets:is_empty(Q) of
 		true ->
-			ar_util:cast_after(?TASK_CHECK_FREQUENCY_MS, self(), ?MSG_HANDLE_TASK),
+			ar_util:cast_after(?TASK_CHECK_INTERVAL_MS, self(), ?MSG_HANDLE_TASK),
 			{noreply, State};
 		_ ->
 			gen_server:cast(self(), ?MSG_HANDLE_TASK),
@@ -238,7 +238,7 @@ handle_cast(?MSG_HANDLE_TASK, #state{ task_queue = Q } = State) ->
 
 handle_cast(?MSG_CHECK_WORKER_STATUS, State) ->
 	maybe_warn_about_lag(State#state.task_queue, State#state.name),
-	ar_util:cast_after(?STATUS_CHECK_FREQUENCY_MS, self(), ?MSG_CHECK_WORKER_STATUS),
+	ar_util:cast_after(?STATUS_CHECK_INTERVAL_MS, self(), ?MSG_CHECK_WORKER_STATUS),
 	{noreply, State};
 
 handle_cast(?MSG_GARBAGE_COLLECT, State) ->

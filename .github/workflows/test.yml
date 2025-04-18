@@ -355,6 +355,7 @@ jobs:
             ar_mine_randomx_tests,
             ar_mine_vdf_tests,
             ar_mining_io_tests,
+            ar_mining_worker_tests,
             ar_poller_tests,
             ar_reject_chunks_tests,
             ar_replica_2_9_nif_tests,
