@@ -50,8 +50,8 @@
 name(StoreID) ->
 	list_to_atom("ar_data_sync_" ++ ar_storage_module:label(StoreID)).
 
-start_link(Name, StoreID) ->
-	gen_server:start_link({local, Name}, ?MODULE, StoreID, []).
+start_link(Name, Args) ->
+	gen_server:start_link({local, Name}, ?MODULE, Args, []).
 
 %% @doc Register the workers that will be monitored by ar_data_sync_sup.erl.
 register_workers() ->
