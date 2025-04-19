@@ -12,12 +12,14 @@
 		get_chunk_by_byte/2, advance_chunks_index_cursor/1,
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
-		get_chunk_metadata_range/3,
-		get_merkle_rebase_threshold/0]).
+		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0]).
 
 -export([add_chunk_to_disk_pool/5]).
 
 -export([debug_get_disk_pool_chunks/0]).
+
+%% For data-doctor tools
+-export([init_kv/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([enqueue_intervals/3, remove_expired_disk_pool_data_roots/0]).

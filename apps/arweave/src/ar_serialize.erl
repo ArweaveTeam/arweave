@@ -2229,16 +2229,6 @@ partition_to_json_struct(Bucket, BucketSize, Addr, PackingDifficulty) ->
 %% possible values here than in decode_packing/2.
 encode_packing(undefined, false) ->
 	"undefined";
-encode_packing(none, false) ->
-	"none";
-encode_packing(any, false) ->
-	"any";
-encode_packing(not_set, false) ->
-	"not_set";
-encode_packing(missing, false) ->
-	"missing";
-encode_packing(error, false) ->
-	"error";
 encode_packing({spora_2_6, Addr}, _Strict) ->
 	"spora_2_6_" ++ binary_to_list(ar_util:encode(Addr));
 encode_packing({composite, Addr, PackingDifficulty}, _Strict) ->
@@ -2250,8 +2240,8 @@ encode_packing(unpacked, _Strict) ->
 	"unpacked";
 encode_packing({replica_2_9, Addr}, _Strict) ->
 	"replica_2_9_" ++ binary_to_list(ar_util:encode(Addr));
-encode_packing(unpacked_padded, _Strict) ->
-	"unpacked_padded".
+encode_packing(Packing, false) when is_atom(Packing) ->
+	atom_to_list(Packing).
 
 decode_packing(<<"unpacked">>, _Error) ->
 	unpacked;
