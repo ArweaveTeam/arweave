@@ -226,15 +226,18 @@ bitmap(DataDir, StorageModuleConfig) ->
 		data_dir = DataDir,
 		storage_modules = [StorageModule]},
 	application:set_env(arweave, config, Config),
+
+	StoreID = ar_storage_module:id(StorageModule),
 	
 	ar_kv_sup:start_link(),
 	ar_storage_sup:start_link(),
 	ar_sync_record_sup:start_link(),
+	ar_data_sync:init_kv(StoreID),
 	
-	StoreID = ar_storage_module:id(StorageModule),
 	{ModuleStart, ModuleEnd} = ar_storage_module:module_range(StorageModule),
 
-	ChunkPackings = ar_chunk_visualization:get_chunk_packings(ModuleStart, ModuleEnd, StoreID),
+	ChunkPackings = ar_chunk_visualization:get_chunk_packings(
+		ModuleStart, ModuleEnd, StoreID, true),
 	ar_chunk_visualization:print_chunk_stats(ChunkPackings),
 	Bitmap = ar_chunk_visualization:generate_bitmap(ChunkPackings),
 	
