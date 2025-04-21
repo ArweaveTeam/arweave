@@ -411,7 +411,7 @@ parse_cli_args(["verify", _ | _], C) ->
 	io:format("Invalid verify mode. Valid modes are 'purge' or 'log'.~n"),
 	timer:sleep(1000),
 	erlang:halt();
-parse_cli_args(["verify_samples", <<"all">> | Rest], C) ->
+parse_cli_args(["verify_samples", "all" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ verify_samples = all });
 parse_cli_args(["verify_samples", N | Rest], C) ->
 	parse_cli_args(Rest, C#config{ verify_samples = list_to_integer(N) });

@@ -2,12 +2,11 @@
 
 -behaviour(gen_server).
 
--export([name/1, register_workers/0, get_read_range/4, chunk_range_read/4]).
+-export([name/1, register_workers/0, get_read_range/3, chunk_range_read/4]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include("ar_sup.hrl").
 -include("ar_config.hrl").
 -include("ar_repack.hrl").
@@ -28,7 +27,11 @@
 	module_start = 0,
 	module_end = 0,
 	footprint_start = 0,
+	%% The highest chunk offset that can be read for this repack footprint.
 	footprint_end = 0,
+	%% The highest bucket end offset to generate entropy for. Generating entropy for this
+	%% bucket may yield entropy offsets higher than this because entropy is generated in
+	%% 256 MiB batches.
 	entropy_end = 0,
 	next_cursor = 0, 
 	target_packing = undefined,
@@ -148,18 +151,31 @@ init({StoreID, ToPacking}) ->
 %% @doc Gets the start and end offset of the range of chunks to read starting from
 %% BucketEndOffset. Also includes the BucketEndOffsets covered by that range.
 -spec get_read_range(
-		non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer()) ->
+		non_neg_integer(), non_neg_integer(), non_neg_integer()) ->
 	{non_neg_integer(), non_neg_integer(), [non_neg_integer()]}.
-get_read_range(BucketEndOffset, ModuleStart, FootprintEnd, BatchSize) ->
+get_read_range(BucketEndOffset, RangeEnd, BatchSize) ->
 	ReadRangeStart = ar_chunk_storage:get_chunk_byte_from_bucket_end(BucketEndOffset),
 
+	Partition = ar_node:get_partition_number(BucketEndOffset),
+	{EntropyPartitionStart, EntropyPartitionEnd} =
+		ar_replica_2_9:get_entropy_partition_range(Partition),
 	SectorSize = ar_replica_2_9:get_sector_size(),
-	ModuleStart2 = ar_chunk_storage:get_chunk_bucket_start(ModuleStart + 1),
-	RelativeSectorOffset = (BucketEndOffset - ModuleStart2) rem SectorSize,
-	SectorEnd = BucketEndOffset + (SectorSize - RelativeSectorOffset),
+	EntropyPartitionStartBucket = ar_chunk_storage:get_chunk_bucket_start(EntropyPartitionStart),
+	Sector = (BucketEndOffset - EntropyPartitionStartBucket) div SectorSize,
+	SectorBucketEnd = EntropyPartitionStartBucket + (Sector + 1) * SectorSize,
+	SectorChunkEnd =
+		ar_chunk_storage:get_chunk_byte_from_bucket_end(SectorBucketEnd) + ?DATA_CHUNK_SIZE,
 
+	RangeBucketEnd = ar_chunk_storage:get_chunk_bucket_end(RangeEnd),
+	RangeChunkEnd =
+		ar_chunk_storage:get_chunk_byte_from_bucket_end(RangeBucketEnd) + ?DATA_CHUNK_SIZE,
+	
 	FullRangeSize = ?DATA_CHUNK_SIZE * BatchSize,
-	ReadRangeEnd = lists:min([ReadRangeStart + FullRangeSize, SectorEnd, FootprintEnd]),
+	ReadRangeEnd = lists:min([
+		ReadRangeStart + FullRangeSize,
+		EntropyPartitionEnd,
+		SectorChunkEnd,
+		RangeChunkEnd]),
 
 	BucketEndOffsets = [BucketEndOffset + (N * ?DATA_CHUNK_SIZE) || 
 		N <- lists:seq(0, BatchSize-1),
@@ -197,12 +213,11 @@ handle_cast(repack, #state{} = State) ->
 
 handle_cast({chunk_range_read, BucketEndOffset, OffsetChunkMap, OffsetMetadataMap}, #state{} = State) ->
 	#state{
-		module_start = ModuleStart,
 		footprint_end = FootprintEnd,
 		read_batch_size = BatchSize
 	} = State,
 	{_ReadRangeStart, _ReadRangeEnd, ReadRangeOffsets} = get_read_range(
-		BucketEndOffset, ModuleStart, FootprintEnd, BatchSize),
+		BucketEndOffset, FootprintEnd, BatchSize),
 	State2 = add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, State),
 	State3 = mark_missing_chunks(ReadRangeOffsets, State2),
 	{noreply, State3};
@@ -264,13 +279,12 @@ handle_info({entropy, BucketEndOffset, Entropies}, #state{} = State) ->
 	generate_repack_entropy(BucketEndOffset + ?DATA_CHUNK_SIZE, State),
 
 	EntropyKeys = ar_entropy_gen:generate_entropy_keys(RewardAddr, BucketEndOffset),
-	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
+	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset, FootprintEnd),
 
 	State2 = ar_entropy_gen:map_entropies(
 		Entropies, 
 		EntropyOffsets,
 		FootprintStart,
-		FootprintEnd,
 		EntropyKeys, 
 		RewardAddr,
 		fun entropy_generated/3, [], State),
@@ -393,40 +407,24 @@ repack(#state{} = State) ->
 	end.
 
 repack_footprint(Cursor, #state{} = State) ->
-	#state{ module_start = ModuleStart, module_end = ModuleEnd,
+	#state{ module_end = ModuleEnd,
 		num_entropy_offsets = NumEntropyOffsets,
 		target_packing = TargetPacking, store_id = StoreID,
 		read_batch_size = BatchSize } = State,
 
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
 	BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
-	PaddedEndOffset = ar_block:get_chunk_padded_offset(Cursor),
-
-	%% sanity checks
-	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
-	%% end sanity checks
-	
+	FootprintOffsets = footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd),
 	FootprintStart = BucketStartOffset+1,
-	
-	IsChunkRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
-	%% Skip this offset if it's already packed to TargetPacking, or if it's not recorded
-	%% at all.
-	Skip = case IsChunkRecorded of
-		false -> true;
-		{true, TargetPacking} -> true;
-		_ -> false
-	end,
-
-	case Skip orelse FootprintStart < ModuleStart orelse FootprintStart > ModuleEnd of
-		true ->
+	FootprintEnd = footprint_end(FootprintOffsets, ModuleEnd, BatchSize),
+	case should_repack(Cursor, FootprintStart, FootprintEnd, State) of
+		{false, Logs} ->
 			%% Skip this Cursor for one of these reasons:
 			%% 1. Cursor has already been repacked.
 			%%    Note: we expect this to happen a lot since we iterate through all
 			%%    chunks in the partition, but for each chunk we will repack N
 			%%    entropy footprints.
-			%% 2. The iteration range of this batch ends before the start of the
-			%%    storage module.
-			%% 3. The iteration range of this batch starts after the end of the
+			%% 2. The iteration range of this batch starts after the end of the
 			%%    storage module.
 			gen_server:cast(self(), repack),
 			Interval = ar_sync_record:get_next_unsynced_interval(
@@ -439,19 +437,15 @@ repack_footprint(Cursor, #state{} = State) ->
 			end,
 			NextCursor2 = max(NextCursor, Cursor + ?DATA_CHUNK_SIZE),
 			log_debug(skipping_cursor, State, [
-				{cursor, Cursor},
 				{next_cursor, NextCursor2},
-				{padded_end_offset, PaddedEndOffset},
-				{bucket_end_offset, BucketEndOffset},
-				{is_chunk_recorded, IsChunkRecorded},
-				{footprint_start, FootprintStart}
-			]),
+				{cursor, Cursor},
+				{footprint_start, FootprintStart},
+				{footprint_end, FootprintEnd},
+				{footprint_offsets, length(FootprintOffsets)}
+			] ++ Logs),
 			State#state{ next_cursor = NextCursor2 };
-		_ ->
-			FootprintOffsets = footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd),
-			FootprintEnd = footprint_end(FootprintOffsets, ModuleStart, ModuleEnd, BatchSize),
-			{_, EntropyEnd, _} = get_read_range(
-				BucketEndOffset, ModuleStart, FootprintEnd, BatchSize),
+		true ->
+			{_, EntropyEnd, _} = get_read_range(BucketEndOffset, FootprintEnd, BatchSize),
 
 			State2 = State#state{ 
 				footprint_start = FootprintStart,
@@ -461,29 +455,76 @@ repack_footprint(Cursor, #state{} = State) ->
 			},
 			State3 = init_repack_chunk_map(FootprintOffsets, State2),
 
-			%% We'll generate BatchSize entropy footprints, one for each bucket end offset
-			%% starting at BucketEndOffset and ending at EntropyEnd.
-
-			generate_repack_entropy(BucketEndOffset, State3),
-
-			ar_repack_io:read_footprint(
-				FootprintOffsets, FootprintStart, FootprintEnd, StoreID),
-
-			log_debug(repack_footprint_start, State3, [
+			MaxChunkMapOffset = lists:max(maps:keys(State3#state.repack_chunk_map)),
+			
+			log_info(repack_footprint_start, State3, [
 				{cursor, Cursor},
 				{bucket_end_offset, BucketEndOffset},
-				{bucket_start_offset, BucketStartOffset},
 				{target_packing, ar_serialize:encode_packing(TargetPacking, false)},
 				{entropy_end, EntropyEnd},
 				{read_batch_size, BatchSize},
 				{write_batch_size, State2#state.write_batch_size},
 				{num_entropy_offsets, NumEntropyOffsets},
-				{footprint_start, FootprintStart},
-				{footprint_end, FootprintEnd},
 				{footprint_offsets, length(FootprintOffsets)},
-				{repack_chunk_map, maps:size(State3#state.repack_chunk_map)}
+				{max_chunk_map_offset, MaxChunkMapOffset}
 			]),
+
+			%% sanity checks
+			MaxChunkMapOffset =< FootprintEnd,
+			EntropyEnd =< FootprintEnd,
+			FootprintEnd =< ModuleEnd,
+			%% end sanity checks
+
+			%% We'll generate BatchSize entropy footprints, one for each bucket end offset
+			%% starting at BucketEndOffset and ending at EntropyEnd.
+			generate_repack_entropy(BucketEndOffset, State3),
+
+			ar_repack_io:read_footprint(
+				FootprintOffsets, FootprintStart, FootprintEnd, StoreID),
+
 			State3
+	end.
+
+should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
+	#state{ module_start = ModuleStart, module_end = ModuleEnd,
+		target_packing = TargetPacking, store_id = StoreID } = State,
+	PaddedEndOffset = ar_block:get_chunk_padded_offset(Cursor),
+	IsChunkRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
+	IsEntropyRecorded = ar_entropy_storage:is_entropy_recorded(PaddedEndOffset, StoreID),
+	%% Skip this offset if it's already packed to TargetPacking, or if it's not recorded
+	%% at all.
+	Skip = case {IsChunkRecorded, IsEntropyRecorded} of
+		%% Chunk is missing and we haven't written entropy yet, so we still want to process
+		%% the bucket and write entropy to it.
+		{false, false} -> false;
+		%% Chunk is missing but entropy has already been written, so we can skip.
+		{false, true} -> true;
+		%% Skip if chunk is recorded and already packed to TargetPacking
+		{{true, TargetPacking}, _} -> true;
+		%% Skip if entropy exists for an unpacked chunk as this indicates the chunks
+		%% 1. the chunks are small and therefore can't be packed
+		%% 2. have already been processed and classified as `entropy_only`
+		{{true, unpacked}, true} -> true;
+		_ -> false
+	end,
+
+	ShouldRepack = (
+		not Skip 
+		andalso FootprintStart =< ModuleEnd
+		andalso FootprintEnd >= ModuleStart
+	),
+	case ShouldRepack of
+		false ->
+			Logs = [
+				{cursor, Cursor},
+				{padded_end_offset, PaddedEndOffset},
+				{is_chunk_recorded, IsChunkRecorded},
+				{is_entropy_recorded, IsEntropyRecorded},
+				{skip, Skip}
+			],
+			{false, Logs};
+		_ ->
+			true
 	end.
 
 %% @doc Generates the set of entropy offsets that will be used during one iteration of
@@ -500,25 +541,28 @@ footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd) ->
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(BucketEndOffset),
 	%% end sanity checks
 	
-	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset),
+	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset, ModuleEnd),
 
 	FilteredOffsets = lists:filter(
-		fun(Offset) -> 
-			Offset >= BucketEndOffset andalso Offset =< ModuleEnd
-		end,
+		fun(Offset) -> Offset >= BucketEndOffset end,
 		EntropyOffsets),
 	
 	lists:sublist(FilteredOffsets, NumEntropyOffsets).
 
-footprint_end(FootprintOffsets, ModuleStart, ModuleEnd, BatchSize) ->
+%% @doc Calculates and returns the highest chunk offset that can be read for this 
+%% repack footprint. This is the highest chunk offset that maps to the highest bucket in
+%% the footprint.
+footprint_end(FootprintOffsets, ModuleEnd, BatchSize) ->
 	FirstOffset = lists:min(FootprintOffsets),
 	LastOffset = lists:max(FootprintOffsets),
 	%% The final read range of the footprint starts at the last entropy offset
-	{_, LastOffsetRangeEnd, _} = get_read_range(LastOffset, ModuleStart, ModuleEnd, BatchSize),
-	
-	%% ar_entropy_gen:footprint_end makes sure all offsets are in the same entropy partition
-	FootprintEnd = ar_entropy_gen:footprint_end(FirstOffset, ModuleEnd),
-	min(ar_chunk_storage:get_chunk_bucket_end(LastOffsetRangeEnd), FootprintEnd).
+	{_, LastOffsetRangeEnd, _} = get_read_range(LastOffset, ModuleEnd, BatchSize),
+
+	%% makes sure all offsets are in the same entropy partition
+	Partition = ar_replica_2_9:get_entropy_partition(FirstOffset),
+	{_, EntropyPartitionEnd} = ar_replica_2_9:get_entropy_partition_range(Partition),
+
+	min(LastOffsetRangeEnd, EntropyPartitionEnd).
 
 generate_repack_entropy(BucketEndOffset, #state{ entropy_end = EntropyEnd })
 		when BucketEndOffset > EntropyEnd ->
@@ -531,12 +575,10 @@ generate_repack_entropy(BucketEndOffset, #state{} = State) ->
 
 	ar_entropy_gen:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self()).
 
-
 init_repack_chunk_map([], #state{} = State) ->
 	State;
 init_repack_chunk_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 	#state{ 
-		module_start = ModuleStart,
 		footprint_end = FootprintEnd,
 		read_batch_size = BatchSize,
 		repack_chunk_map = Map,
@@ -544,7 +586,7 @@ init_repack_chunk_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 	} = State,
 
 	{_ReadRangeStart, _ReadRangeEnd, ReadRangeOffsets} = get_read_range(
-		EntropyOffset, ModuleStart, FootprintEnd, BatchSize),
+		EntropyOffset, FootprintEnd, BatchSize),
 
 	Map2 = lists:foldl(
 		fun(BucketEndOffset, Acc) ->
@@ -806,7 +848,8 @@ process_state_change(RepackChunk, #state{} = State) ->
 	} = State,
 	#repack_chunk{
 		offsets = #chunk_offsets{
-			bucket_end_offset = BucketEndOffset
+			bucket_end_offset = BucketEndOffset,
+			absolute_offset = AbsoluteEndOffset
 		},
 		chunk = Chunk,
 		entropy = Entropy,
@@ -817,7 +860,7 @@ process_state_change(RepackChunk, #state{} = State) ->
 		invalid ->
 			ChunkSize = RepackChunk#repack_chunk.metadata#chunk_metadata.chunk_size,
 			ar_data_sync:invalidate_bad_data_record(
-				BucketEndOffset, ChunkSize, StoreID, repack_found_stale_indices),
+				AbsoluteEndOffset, ChunkSize, StoreID, repack_found_stale_indices),
 			RepackChunk2 = RepackChunk#repack_chunk{ chunk = invalid },
 			State2 = cache_repack_chunk(RepackChunk2, State),
 			update_chunk_state(RepackChunk2, State2);
@@ -1026,7 +1069,7 @@ cache_size_test() ->
 	?assertEqual(3, calculate_num_entropy_offsets(3, 4)),
 	?assertEqual(3, calculate_num_entropy_offsets(3, 1)),
 	?assertEqual(2, calculate_num_entropy_offsets(5, 10)).
-
+	
 footprint_offsets_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
@@ -1059,6 +1102,8 @@ test_footprint_offsets_small() ->
 	?assertEqual(4370016, PaddedEnd1),
 
 	?assertEqual([262144, 1048576, 1835008], footprint_offsets(262144, 3, PaddedEnd0)),
+	?assertEqual([262144], footprint_offsets(262144, 3, 1_000_000)),
+	?assertEqual([262144, 1048576], footprint_offsets(262144, 3, 1_500_000)),
 	?assertEqual([262144, 1048576], footprint_offsets(262144, 2, PaddedEnd0)),
 	?assertEqual([262144], footprint_offsets(262144, 1, PaddedEnd0)),
 
@@ -1074,6 +1119,10 @@ test_footprint_offsets_small() ->
 	
 	?assertEqual([1835008], footprint_offsets(1835008, 3, PaddedEnd0)),
 	?assertEqual([2097152], footprint_offsets(2097152, 3, PaddedEnd0)),
+	
+	%% all offsets should be limited to a single entropy partition
+	?assertEqual([2097152], footprint_offsets(2097152, 3, PaddedEnd1)),
+
 	?assertEqual([2359296, 3145728, 3932160], footprint_offsets(2359296, 3, PaddedEnd1)),
 	?assertEqual([2621440, 3407872, 4194304], footprint_offsets(2621440, 3, PaddedEnd1)),
 	?assertEqual([2883584, 3670016], footprint_offsets(2883584, 3, PaddedEnd1)),
@@ -1135,6 +1184,38 @@ test_footprint_offsets_large() ->
 		TestCases
 	),
 
+	ok.
+
+footprint_end_test_() ->
+	[
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+		],
+		fun test_footprint_end_small/0, 30)
+	].
+
+test_footprint_end_small() ->
+	{Start0, End0} = ar_storage_module:module_range({ar_block:partition_size(), 0, unpacked}),
+	{Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 1, unpacked}),
+	PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
+	PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
+
+	?assertEqual(3, ar_replica_2_9:sub_chunks_per_entropy()),
+	?assertEqual({0, 2262144}, {Start0, End0}),
+	?assertEqual({2000000, 4262144}, {Start1, End1}),
+	?assertEqual(2272864, PaddedEnd0),
+	?assertEqual(4370016, PaddedEnd1),
+	?assertEqual({0, 2272864}, ar_replica_2_9:get_entropy_partition_range(0)),
+
+	?assertEqual(2010720,
+		footprint_end([262144, 1048576, 1835008], PaddedEnd0, 1)),
+	?assertEqual(2272864,
+		footprint_end([262144, 1048576, 1835008], PaddedEnd0, 2)),
+	?assertEqual(2272864,
+		footprint_end([262144, 1048576, 1835008], PaddedEnd0, 3)),
+	?assertEqual(2272864,
+		footprint_end([262144, 1048576, 1835008], PaddedEnd1, 4)),
 	ok.
 
 assemble_repack_chunk_test_() ->
@@ -1358,4 +1439,362 @@ test_assemble_repack_chunk_too_small_packed() ->
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
 			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+	ok.
+
+should_repack_test_() ->
+	[
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
+			{ar_sync_record, is_recorded, fun(_, _, _) -> false end},
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> false end}
+		],
+		fun test_should_repack_no_chunk_no_entropy/0, 30),
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
+			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, {replica_2_9, <<"addr">>}} end},
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> true end}
+		],
+		fun test_should_repack_chunk_and_entropy/0, 30),
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
+			{ar_sync_record, is_recorded, fun(_, _, _) -> false end},
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> true end}
+		],
+		fun test_should_repack_entropy_but_no_chunk/0, 30),
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
+			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> true end}
+		],
+		fun test_should_repack_unpacked_chunk_and_entropy/0, 30),
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
+			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> false end}
+		],
+		fun test_should_repack_unpacked_chunk_no_entropy/0, 30)
+	].
+
+test_should_repack_no_chunk_no_entropy() ->
+	%% No chunk exists to repack however we still want to process the bucket and write
+	%% entropy to it.
+	?assertEqual(true,
+		should_repack(600_000, 200_000, 300_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000
+		})),
+	?assertEqual({false, [
+			{cursor, 600_000},
+			{padded_end_offset, 600_000},
+			{is_chunk_recorded, false},
+			{is_entropy_recorded, false},
+			{skip, false}
+		]},
+		should_repack(600_000, 0, 50_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr">>}
+		})),
+	?assertEqual({false, [
+			{cursor, 600_000},
+			{padded_end_offset, 600_000},
+			{is_chunk_recorded, false},
+			{is_entropy_recorded, false},
+			{skip, false}
+		]},
+		should_repack(600_000, 2_000_001, 3_000_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr">>}
+		})),
+	?assertEqual(true,
+		should_repack(750_000, 200_000, 300_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000
+		})).
+
+test_should_repack_chunk_and_entropy() ->
+	%% Chunk is already packed to the target packing
+	?assertEqual({false, [
+			{cursor, 600_000},
+			{padded_end_offset, 600_000},
+			{is_chunk_recorded, {true, {replica_2_9, <<"addr">>}}},
+			{is_entropy_recorded, true},
+			{skip, true}
+		]},
+		should_repack(600_000, 200_000, 300_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr">>}
+		})),
+	%% Chunk exists and needs repacking - but footprint start is beyond the end of the module
+	?assertEqual({false, [
+			{cursor, 600_000},
+			{padded_end_offset, 600_000},
+			{is_chunk_recorded, {true, {replica_2_9, <<"addr">>}}},
+			{is_entropy_recorded, true},
+			{skip, false}
+		]},
+		should_repack(600_000, 2_000_001, 3_000_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr2">>}
+		})),
+	%% Chunk exists, needs repacking and falls within the module.
+	?assertEqual(
+		true, 
+		should_repack(600_000, 200_000, 300_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr2">>}
+		})),
+	?assertEqual({false, [
+			{cursor, 600_000},
+			{padded_end_offset, 600_000},
+			{is_chunk_recorded, {true, {replica_2_9, <<"addr">>}}},
+			{is_entropy_recorded, true},
+			{skip, false}
+		]},
+		should_repack(600_000, 0, 50_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr2">>}
+		})),
+	?assertEqual({false, [
+			{cursor, 600_000},
+			{padded_end_offset, 600_000},
+			{is_chunk_recorded, {true, {replica_2_9, <<"addr">>}}},
+			{is_entropy_recorded, true},
+			{skip, false}
+		]},
+		should_repack(600_000, 2_000_001, 3_000_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr2">>}
+		})).
+	
+test_should_repack_entropy_but_no_chunk() ->
+	%% Entropy exists which means this bucket has been processed, but there is no chunk
+	%% to repack.
+	?assertEqual({false, [
+		{cursor, 600_000},
+		{padded_end_offset, 600_000},
+		{is_chunk_recorded, false},
+		{is_entropy_recorded, true},
+		{skip, true}
+	]},
+	should_repack(600_000, 200_000, 300_000, #state{
+		module_start = 100_000,
+		module_end = 2_000_000,
+		target_packing = {replica_2_9, <<"addr">>}
+	})).
+
+test_should_repack_unpacked_chunk_and_entropy() ->
+	%% Unpacked chunk and entropy exist, which means:
+	%% 1. this bucket has small chunks which can not be written to chunk storage.
+	%% 2. this bucket has already been processed so we can skip
+	?assertEqual({false, [
+		{cursor, 600_000},
+		{padded_end_offset, 600_000},
+		{is_chunk_recorded, {true, unpacked}},
+		{is_entropy_recorded, true},
+		{skip, true}
+	]},
+	should_repack(600_000, 200_000, 300_000, #state{
+		module_start = 100_000,
+		module_end = 2_000_000,
+		target_packing = {replica_2_9, <<"addr">>}
+	})).
+
+test_should_repack_unpacked_chunk_no_entropy() ->
+	%% Chunk is already packed to the target packing
+	?assertEqual({false, [
+		{cursor, 600_000},
+		{padded_end_offset, 600_000},
+		{is_chunk_recorded, {true, unpacked}},
+		{is_entropy_recorded, false},
+		{skip, true}
+	]},
+	should_repack(600_000, 200_000, 300_000, #state{
+		module_start = 100_000,
+		module_end = 2_000_000,
+		target_packing = unpacked
+	})),
+	%% Chunk exists, needs repacking and falls within the module.
+	?assertEqual(
+		true, 
+		should_repack(600_000, 200_000, 300_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr">>}
+		})),
+	?assertEqual({false, [
+			{cursor, 600_000},
+			{padded_end_offset, 600_000},
+			{is_chunk_recorded, {true, unpacked}},
+			{is_entropy_recorded, false},
+			{skip, false}
+		]},
+		should_repack(600_000, 0, 50_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr">>}
+		})),
+	?assertEqual({false, [
+			{cursor, 600_000},
+			{padded_end_offset, 600_000},
+			{is_chunk_recorded, {true, unpacked}},
+			{is_entropy_recorded, false},
+			{skip, false}
+		]},
+		should_repack(600_000, 2_000_001, 3_000_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr">>}
+		})).
+
+
+init_repack_chunk_map_test_() ->
+	[
+		ar_test_node:test_with_mocked_functions(ar_test_node:mainnet_packing_mocks(),
+			fun test_init_repack_chunk_map_a/0, 30),
+		ar_test_node:test_with_mocked_functions(ar_test_node:mainnet_packing_mocks(),
+			fun test_init_repack_chunk_map_b/0, 30)
+	].
+
+%% @doc This tests a specific off-by-one error that occurred in the footprint_end calculation.
+%% Previously there was an ar_entropy_gen:footprint_end function which was incorrect. The
+%% fix removes the ar_entropy_gen:footprint_end function and has everyone use 
+%% ar_replica_2_9:get_entropy_partition_range instead, as that one does the correct end of
+%% range calculation.
+%% 
+%% Keeping this test as it's an easy way to assert no future regressions in this logic.
+test_init_repack_chunk_map_a() ->
+	Cursor = 18003250911837,
+	ModuleStart = 18000000000000,
+	ModuleEnd = 21600104857600,
+	BatchSize = 100,
+	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
+	BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
+	FootprintOffsets = footprint_offsets(BucketEndOffset, 1024, ModuleEnd),
+	FootprintStart = BucketStartOffset+1,
+	FootprintEnd = footprint_end(FootprintOffsets, ModuleEnd, BatchSize),
+
+	State = #state{
+		module_start = ModuleStart,
+		module_end = ModuleEnd,
+		footprint_start = FootprintStart,
+		footprint_end = FootprintEnd,
+		read_batch_size = BatchSize,
+		repack_chunk_map = #{},
+		target_packing = {replica_2_9, <<"addr">>}
+	},
+
+	State2 = init_repack_chunk_map(FootprintOffsets, State),
+	
+	?assertEqual(102334, maps:size(State2#state.repack_chunk_map)),
+	ok.
+
+test_init_repack_chunk_map_b() ->
+	Cursor = 21564833002875,
+	NumEntropyOffsets = 1024,
+	ModuleStart = 18000000000000,
+	ModuleEnd = 21600104857600,
+	BatchSize = 100,
+	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
+	BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
+	FootprintOffsets = footprint_offsets(BucketEndOffset, NumEntropyOffsets, ModuleEnd),
+	FootprintStart = BucketStartOffset+1,
+	FootprintEnd = footprint_end(FootprintOffsets, ModuleEnd, BatchSize),
+	{_, EntropyEnd, _} = get_read_range(BucketEndOffset, FootprintEnd, BatchSize),
+	EntropyEnd2 = ar_chunk_storage:get_chunk_bucket_end(EntropyEnd),
+	{_ReadRangeStart, _ReadRangeEnd, ReadRangeOffsets} = get_read_range(
+		BucketEndOffset, FootprintEnd, BatchSize),
+	State = #state{
+		module_start = ModuleStart,
+		module_end = ModuleEnd,
+		footprint_start = FootprintStart,
+		footprint_end = FootprintEnd,
+		read_batch_size = BatchSize,
+		repack_chunk_map = #{},
+		target_packing = {replica_2_9, <<"addr">>}
+	},
+	State2 = init_repack_chunk_map(FootprintOffsets, State),
+
+	MaxChunkMap = lists:max(maps:keys(State2#state.repack_chunk_map)),
+
+	?assertEqual(ar_chunk_storage:get_chunk_bucket_end(FootprintEnd), MaxChunkMap),
+	?assertEqual(EntropyEnd2, lists:max(ReadRangeOffsets)),
+	ok.
+	
+get_read_range_test_() ->
+	[
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, strict_data_split_threshold, fun() -> 5_000_000 end}
+		],
+			fun test_get_read_range_before_strict/0, 30),
+		ar_test_node:test_with_mocked_functions([
+			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+		],
+			fun test_get_read_range_after_strict/0, 30)
+	].
+
+test_get_read_range_before_strict() ->
+	?assertEqual({2359296, 4456447}, ar_replica_2_9:get_entropy_partition_range(1)),
+	?assertEqual(786432, ar_replica_2_9:get_sector_size()),
+	%% no limit
+	?assertEqual(
+		{2097151, 2883583, [2097152, 2359296, 2621440]},
+		get_read_range(2097152, 4_000_000, 3)
+	),
+	%% sector limit
+	?assertEqual(
+		{2359295, 3145727, [2359296, 2621440, 2883584]},
+		get_read_range(2359296, 4_000_000, 4)
+	),
+	?assertEqual(
+		{3407871, 3932159, [3407872, 3670016]},
+		get_read_range(3407872, 4_000_000, 3)
+	),
+	%% range end limit
+	?assertEqual(
+		{2359295, 2883583, [2359296, 2621440]},
+		get_read_range(2359296, 2_700_000, 4)
+	),
+	%% partition end limit
+	?assertEqual(
+		{3932159, 4456447, [3932160, 4194304]},
+		get_read_range(3932160, 6_000_000, 3)
+	),
+	ok.
+
+test_get_read_range_after_strict() ->
+	?assertEqual({2272865, 4370016}, ar_replica_2_9:get_entropy_partition_range(1)),
+	?assertEqual(786432, ar_replica_2_9:get_sector_size()),
+	%% no limit
+	?assertEqual(
+		{2272864, 3059296, [2359296, 2621440, 2883584]},
+		get_read_range(2359296, 4_000_000, 3)
+	),
+	%% sector limit
+	?assertEqual(
+		{2272864, 3059296, [2359296, 2621440, 2883584]},
+		get_read_range(2359296, 4_000_000, 4)
+	),
+	?assertEqual(
+		{3321440, 3845728, [3407872, 3670016]},
+		get_read_range(3407872, 4_000_000, 3)
+	),
+	%% range end limit
+	?assertEqual(
+		{2272864, 2797152, [2359296, 2621440]},
+		get_read_range(2359296, 2_700_000, 4)
+	),
+	%% partition end limit
+	?assertEqual(
+		{3845728, 4370016, [3932160, 4194304]},
+		get_read_range(3932160, 6_000_000, 3)
+	),
 	ok.

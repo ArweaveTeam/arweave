@@ -3,13 +3,12 @@
 -behaviour(gen_server).
 
 -export([name/1, acquire_semaphore/1, release_semaphore/1, is_ready/1,
-	is_entropy_recorded/2, delete_record/2, store_entropy_footprint/7, store_entropy/4,
+	is_entropy_recorded/2, delete_record/2, store_entropy_footprint/6, store_entropy/4,
 	record_chunk/5]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -39,13 +38,12 @@ init(StoreID) ->
 	Entropies :: [binary()],
 	EntropyOffsets :: [non_neg_integer()],
 	RangeStart :: non_neg_integer(),
-	RangeEnd :: non_neg_integer(),
 	Keys :: [binary()],
 	RewardAddr :: ar_wallet:address()) -> ok.
 store_entropy_footprint(
-	StoreID, Entropies, EntropyOffsets, RangeStart, RangeEnd, Keys, RewardAddr) ->
+	StoreID, Entropies, EntropyOffsets, RangeStart, Keys, RewardAddr) ->
 	gen_server:cast(name(StoreID), {store_entropy_footprint,
-		Entropies, EntropyOffsets, RangeStart, RangeEnd, Keys, RewardAddr}).
+		Entropies, EntropyOffsets, RangeStart, Keys, RewardAddr}).
 
 store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
 	case catch gen_server:call(
@@ -72,13 +70,12 @@ is_ready(StoreID) ->
 	end.
 
 handle_cast({store_entropy_footprint,
-		Entropies, EntropyOffsets, RangeStart, RangeEnd, Keys, RewardAddr}, State) ->
+		Entropies, EntropyOffsets, RangeStart, Keys, RewardAddr}, State) ->
 	#state{ store_id = StoreID } = State,
 	ar_entropy_gen:map_entropies(
 		Entropies,
 		EntropyOffsets,
 		RangeStart,
-		RangeEnd,
 		Keys,
 		RewardAddr,
 		fun do_store_entropy/5,

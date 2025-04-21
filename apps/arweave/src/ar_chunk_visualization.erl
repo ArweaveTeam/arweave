@@ -2,8 +2,7 @@
 
 -export([get_chunk_packings/3, get_chunk_packings/4, generate_bitmap/1, bitmap_to_binary/1, print_chunk_stats/1]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include_lib("ar.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -14,37 +13,57 @@
 get_chunk_packings(ModuleStart, ModuleEnd, StoreID) ->
 	get_chunk_packings(ModuleStart, ModuleEnd, StoreID, false).
 get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
-	StartOffset = ar_block:get_chunk_padded_offset(ModuleStart),
-	Partition = StartOffset div ar_block:partition_size(),
-	PartitionStart = Partition * ar_block:partition_size(),
+	Partition = ar_node:get_partition_number(ModuleStart),
+	PartitionStart = ar_chunk_storage:get_chunk_bucket_start(ModuleStart),
 	SectorSize = ar_replica_2_9:get_sector_size(),
 	BucketsPerSector = SectorSize div ?DATA_CHUNK_SIZE,
-	NumSectors = ?REPLICA_2_9_ENTROPY_COUNT * ?REPLICA_2_9_ENTROPY_SIZE div SectorSize,
+	NumSectors = ar_replica_2_9:get_entropy_partition_size() div SectorSize,
 
+	case PrintProgress of
+		true ->
+			ar:console("Partition ~p~n", [Partition]),
+			ar:console("PartitionStart: ~p~n", [PartitionStart]),
+			ar:console("SectorSize: ~p~n", [SectorSize]),
+			ar:console("BucketsPerSector: ~p~n", [BucketsPerSector]),
+			ar:console("NumSectors: ~p~n", [NumSectors]);
+		_ ->
+			ok
+	end,
+	
 	lists:map(
 		fun(SectorIndex) ->
 			SectorStart = PartitionStart + SectorIndex * SectorSize,
-			SectorEnd = SectorStart + SectorSize - 1,
+			SectorEnd = SectorStart + SectorSize,
+			%% Chunk Range will be a bit larger than the sector range to make sure we don't
+			%% miss any chunks.
+			ChunkRangeStart = ar_chunk_storage:get_chunk_byte_from_bucket_end(SectorStart),
+			ChunkRangeEnd =
+				ar_chunk_storage:get_chunk_byte_from_bucket_end(SectorEnd) + ?DATA_CHUNK_SIZE,
 			case PrintProgress of
 				true ->
-					ar:console("Partition ~p sector ~4B. Offsets ~p to ~p~n", [
-						Partition, SectorIndex, SectorStart, SectorEnd]);
+					ar:console(
+						"Partition ~p sector ~4B. Bucket Offsets ~p to ~p. "
+						"Chunk Range ~p to ~p.~n", [
+							Partition, SectorIndex,
+							SectorStart, SectorEnd,
+							ChunkRangeStart, ChunkRangeEnd]);
 				false ->
 					ok
 			end,
-			{ok, MetadataRange} = ar_data_sync:get_chunk_metadata_range(SectorStart, SectorEnd, StoreID),
+			{ok, MetadataRange} = ar_data_sync:get_chunk_metadata_range(
+					ChunkRangeStart, ChunkRangeEnd, StoreID),
 			
 			% Initialize map with all bucket end offsets set to 'missing'
 			BucketMap = lists:foldl(
 				fun(J, Acc) ->
-					BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(SectorStart + J * ?DATA_CHUNK_SIZE),
+					BucketEndOffset = SectorStart + J * ?DATA_CHUNK_SIZE,
 					case BucketEndOffset < ModuleStart orelse BucketEndOffset > ModuleEnd of
 						true -> Acc;
 						false -> maps:put(BucketEndOffset, missing, Acc)
 					end
 				end,
 				#{},
-				lists:seq(0, BucketsPerSector - 1)),
+				lists:seq(1, BucketsPerSector)),
 
 			% Process metadata to update the map
 			UpdatedMap = maps:fold(
@@ -52,7 +71,8 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
 					BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
 					case maps:is_key(BucketEndOffset, Acc) of
 						true ->
-							IsRecorded = ar_sync_record:is_recorded(AbsoluteEndOffset, ar_data_sync, StoreID),
+							IsRecorded = ar_sync_record:is_recorded(
+								AbsoluteEndOffset, ar_data_sync, StoreID),
 							maps:put(BucketEndOffset,
 								normalize_sync_record(IsRecorded, AbsoluteEndOffset, Metadata),
 								Acc);
@@ -66,13 +86,13 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
 			% Convert map to list in order of bucket end offsets
 			lists:map(
 				fun(J) ->
-					BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(SectorStart + J * ?DATA_CHUNK_SIZE),
+					BucketEndOffset = SectorStart + J * ?DATA_CHUNK_SIZE,
 					case BucketEndOffset < ModuleStart orelse BucketEndOffset > ModuleEnd of
 						true -> none;
 						false -> maps:get(BucketEndOffset, UpdatedMap)
 					end
 				end,
-				lists:seq(0, BucketsPerSector - 1))
+				lists:seq(1, BucketsPerSector))
 		end,
 		lists:seq(0, NumSectors - 1)).
 	
