@@ -6,7 +6,8 @@
 		restart/0, restart/1, restart_with_config/1, restart_with_config/2,
 		start_other_node/4, start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
 		wait_until_height/1, wait_until_height/2, wait_until_height/3, assert_wait_until_height/2, http_get_block/2, get_blocks/1,
-		mock_to_force_invalid_h1/0, get_difficulty_for_invalid_hash/0, invalid_solution/0,
+		mock_to_force_invalid_h1/0, mainnet_packing_mocks/0,
+		get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, new_mock/2, mock_function/3, unmock_module/1, remote_call/4,
 		load_fixture/1,
 		get_default_storage_module_packing/2, get_genesis_chunk/1,
@@ -372,6 +373,16 @@ mock_to_force_invalid_h1() ->
 			{invalid_solution(), invalid_solution()}
 		end
 	}.
+
+%% @doc Mock out packing-related constants to replicate mainnet behavior.
+mainnet_packing_mocks() ->
+	[
+		{ar_block, partition_size, fun() -> 3_600_000_000_000 end},
+		{ar_block, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
+		{ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
+		{ar_replica_2_9, sub_chunks_per_entropy, fun() -> 1024 end},
+		{ar_replica_2_9, get_sector_size, fun() -> 3_515_875_328 end}
+	].
 
 get_difficulty_for_invalid_hash() ->
 	%% Set the difficulty just high enough to exclude the invalid_solution(), this lets

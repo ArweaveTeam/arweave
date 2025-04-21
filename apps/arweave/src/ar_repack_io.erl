@@ -18,9 +18,7 @@
 
 -record(state, {
 	store_id = undefined,
-	read_batch_size = ?DEFAULT_REPACK_BATCH_SIZE,
-	module_start = 0,
-	module_end = 0
+	read_batch_size = ?DEFAULT_REPACK_BATCH_SIZE
 }).
 
 %%%===================================================================
@@ -36,13 +34,10 @@ name(StoreID) ->
 	list_to_atom("ar_repack_io_" ++ ar_storage_module:label(StoreID)).
 
 init(StoreID) ->
-	{ModuleStart, ModuleEnd} = ar_storage_module:get_range(StoreID),
 	{ok, Config} = application:get_env(arweave, config),
 	ReadBatchSize = Config#config.repack_batch_size,
 	State = #state{ 
 		store_id = StoreID,
-		module_start = ModuleStart,
-		module_end = ModuleEnd,
 		read_batch_size = ReadBatchSize
 	},
 	log_info(ar_repack_io_init, State, [
@@ -118,13 +113,12 @@ do_read_footprint(
 	[BucketEndOffset | FootprintOffsets], FootprintStart, FootprintEnd, #state{} = State) ->
 	#state{ 
 		store_id = StoreID,
-		module_start = ModuleStart,
 		read_batch_size = ReadBatchSize
 	} = State,
 
 	StartTime = erlang:monotonic_time(),
 	{ReadRangeStart, ReadRangeEnd, _ReadRangeOffsets} = ar_repack:get_read_range(
-		BucketEndOffset, ModuleStart, FootprintEnd, ReadBatchSize),
+		BucketEndOffset, FootprintEnd, ReadBatchSize),
 	ReadRangeSizeInBytes = ReadRangeEnd - ReadRangeStart,
 	OffsetChunkMap = 
 		case catch ar_chunk_storage:get_range(ReadRangeStart, ReadRangeSizeInBytes, StoreID) of
@@ -173,6 +167,8 @@ do_read_footprint(
 		{read_range_end, ReadRangeEnd},
 		{read_range_size_bytes, ReadRangeSizeInBytes},
 		{chunk_read_size_bytes, ChunkReadSizeInBytes},
+		{chunks_read, maps:size(OffsetChunkMap)},
+		{metadata_read, maps:size(OffsetMetadataMap)},
 		{footprint_start, FootprintStart},
 		{footprint_end, FootprintEnd},
 		{remaining_offsets, length(FootprintOffsets)},
@@ -218,12 +214,12 @@ write_repack_chunk(RepackChunk, Packing, RewardAddr, #state{} = State) ->
 			BucketEndOffset = RepackChunk#repack_chunk.offsets#chunk_offsets.bucket_end_offset,
 			ar_entropy_storage:store_entropy(Entropy, BucketEndOffset, StoreID, RewardAddr);
 		write_chunk ->
-			wite_chunk(RepackChunk, Packing, State);
+			write_chunk(RepackChunk, Packing, State);
 		_ ->
 			log_error(unexpected_chunk_state, State, [ format_logs(RepackChunk) ])
 	end.
 
-wite_chunk(RepackChunk, TargetPacking, #state{} = State) ->
+write_chunk(RepackChunk, TargetPacking, #state{} = State) ->
 	#state{
 		store_id = StoreID
 	} = State,

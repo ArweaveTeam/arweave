@@ -1,7 +1,8 @@
 -module(ar_replica_2_9).
 
 -export([get_entropy_partition/1, get_entropy_partition_range/1, get_entropy_key/3,
-    get_sector_size/0, get_slice_index/1, get_partition_offset/1, sub_chunks_per_entropy/0]).
+    get_sector_size/0, get_slice_index/1, get_partition_offset/1, sub_chunks_per_entropy/0,
+    get_entropy_partition_size/0]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -100,31 +101,55 @@ get_entropy_partition(AbsoluteChunkEndOffset) ->
     ar_node:get_partition_number(BucketStart).
 
 get_entropy_partition_range(PartitionNumber) ->
-    %% 1. Get the bounds of the recall partition. This will yield Start/End offsets for bytes
-    %%    that may fall anywhere within a chunk or bucket. We refer to these offsets as
-    %%    PickOffsets.
-    RecallStart = PartitionNumber * ar_block:partition_size(),
-    RecallEnd = (PartitionNumber + 1) * ar_block:partition_size(),
-    %% 2. Get the first bucket offset greater than PickOffset. This represents the minimum
-    %%    and maximum BucketEndOffsets covered by this partition. We pass in 0 to
-    %%    get_padded_offset/2 to ignore the strict data split threshold.
-    BucketStart = ar_poa:get_padded_offset(RecallStart, 0),
-    BucketEnd = ar_poa:get_padded_offset(RecallEnd, 0),
-    %% 3. Determine the lowest and highest byte offsets that map to the boundary buckets. 
-    %%    These values are the byte boundaries of this entropy partition.
-    ByteStart = ar_block:get_chunk_padded_offset(BucketStart) + 1,
-    ByteEnd = ar_block:get_chunk_padded_offset(BucketEnd),
+    %% The goal of this function is to return the minimum and maximum byte offsets that, when
+    %% fed to ar_replica_2_9:get_entropy_partition/1 will yield the provided PartitinNumber.
+    %% 
+    %% To do this we do a rough reversal of the steps taken by
+    %% ar_replica_2_9:get_entropy_partition/1:
+    %% 
+    %% get_entropy_partition(AbsoluteChunkEndOffset) ->
+    %%    BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
+    %%    ar_node:get_partition_number(BucketStart).
+    %% 
+    %% I say "rough reverseal" because several of the steps are not reversible (e.g. 
+    %% ar_util:floor_int/2 discards data and so it not perfectly reversible). 
+    %% 
+    %% 1. Reverse ar_node:get_partition_number(BucketStart) to get the pick offsets
+    %%    representing the byte boundaries of the recall partition.
+    StartRecall = PartitionNumber * ar_block:partition_size(),
+    EndRecall = (PartitionNumber + 1) * ar_block:partition_size(),
+    %% 2. The next 3 steps reverse ar_replica_2_9:get_entropy_bucket_start/1 to yield the
+    %%    first and last bytes of the entropy partition.
+    %% 
+    %%    Get the first bucket boundary greater than the recall boundaries. This represents
+    %%    the bucket end offset of the bucket which contains the first/last byte of the
+    %%    recall partition. 
+    %% 
+    %%    Note: by passing 0 into get_padded_offset/2 we ignore the strict data split
+    %%    threshold and focus on just finding the nearest 256 KiB aligned boundary greater
+    %%    than the recall boundaries.
+    StartBucket1 = ar_poa:get_padded_offset(StartRecall, 0),
+    EndBucket1 = ar_poa:get_padded_offset(EndRecall, 0),
+    %% 3. ar_replica_2_9:get_entropy_partition/1 allocates this straddling bucket to the 
+    %%    previous partition. So the start of the entropy partition is the first byte which
+    %%    falls in the *next* bucket, and the end of the entropy partition is the last byte
+    %%    which falls in *this* bucket. To get those bytes we'll advance to the next bucket...
+    StartBucket2 = StartBucket1 + ?DATA_CHUNK_SIZE,
+    EndBucket2 = EndBucket1 + ?DATA_CHUNK_SIZE,
+    %% 4. ... and then get the first byte which falls in that bucket
+    StartByte1 = ar_chunk_storage:get_chunk_byte_from_bucket_end(StartBucket2) + 1,
+    EndByte1 = ar_chunk_storage:get_chunk_byte_from_bucket_end(EndBucket2),
 
-    %% 4. Handle the special case of partition 0. Since it has no preceding partition its
+    %% 5. Handle the special case of partition 0. Since it has no preceding partition its
     %%    byte start is 0.
-    ByteStart2 = case PartitionNumber of
+    StartByte2 = case PartitionNumber of
         0 ->
             0;
         _ ->
-            ByteStart
+            StartByte1
     end,
 
-    {ByteStart2, ByteEnd}.
+    {StartByte2, EndByte1}.
 
 %% @doc Return the key used to generate the entropy for the 2.9 replication format.
 %% RewardAddr: The address of the miner that mined the chunk.
@@ -165,6 +190,11 @@ get_slice_index(AbsoluteChunkEndOffset) ->
 -spec sub_chunks_per_entropy() -> pos_integer().
 sub_chunks_per_entropy() ->
 	?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+
+%% @doc Return the size of the entropy partition.
+-spec get_entropy_partition_size() -> pos_integer().    
+get_entropy_partition_size() ->
+    ?REPLICA_2_9_ENTROPY_COUNT * ?REPLICA_2_9_ENTROPY_SIZE.
 
 %%%===================================================================
 %%% Private functions.
@@ -213,9 +243,6 @@ get_entropy_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
     %% falls)
     SubChunkBucket = SubChunkStartOffset div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
     ChunkBucket * ?COMPOSITE_PACKING_SUB_CHUNK_COUNT + SubChunkBucket.
-
-get_entropy_partition_size() ->
-    ?REPLICA_2_9_ENTROPY_COUNT * ?REPLICA_2_9_ENTROPY_SIZE.
 
 %%%===================================================================
 %%% Tests.
@@ -297,19 +324,59 @@ get_entropy_key_test() ->
         {'EXIT', {{badmatch, false}, _}},  catch get_entropy_index(0, 32 * SubChunkSize)).
 
 get_entropy_partition_range_test_() ->
-    ar_test_node:test_with_mocked_functions([
-            {ar_block, partition_size, fun() -> 2_000_000 end},
-            {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
-        ],
-        fun test_get_entropy_partition_range/0, 30).
+    [
+        ar_test_node:test_with_mocked_functions([
+                {ar_block, partition_size, fun() -> 2_000_000 end},
+                {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+            ],
+            fun test_get_entropy_partition_range_after_strict/0, 30),
+        ar_test_node:test_with_mocked_functions([
+                {ar_block, partition_size, fun() -> 2_000_000 end},
+                {ar_block, strict_data_split_threshold, fun() -> 5_000_000 end}
+            ],
+            fun test_get_entropy_partition_range_before_strict/0, 30)
+    ].
 
-test_get_entropy_partition_range() ->
-    %% 2272864 is the highest byte offset that maps to 2091752 which is the first
-    %% BucketEndOffset after the p0 recall partition end of 2000000.
-	?assertEqual({0, 2272864}, get_entropy_partition_range(0)),
-	?assertEqual({2272865, 4370016}, get_entropy_partition_range(1)),
-	?assertEqual({4370017, 6205024}, get_entropy_partition_range(2)),
+test_get_entropy_partition_range_after_strict() ->
+    Start0 = 0,
+    End0 = 2272864,
+    ?assertEqual(0, get_entropy_partition(Start0)),
+    ?assertEqual(0, get_entropy_partition(End0)),
+	?assertEqual({Start0, End0}, get_entropy_partition_range(0)),
+
+    Start1 = 2272865,
+    End1 = 4370016,
+    ?assertEqual(1, get_entropy_partition(Start1)),
+    ?assertEqual(1, get_entropy_partition(End1)),
+	?assertEqual({Start1, End1}, get_entropy_partition_range(1)),
+
+    Start2 = 4370017,
+    End2 = 6205024,
+    ?assertEqual(2, get_entropy_partition(Start2)),
+    ?assertEqual(2, get_entropy_partition(End2)),
+	?assertEqual({Start2, End2}, get_entropy_partition_range(2)),
 	ok.
+
+test_get_entropy_partition_range_before_strict() ->
+    Start0 = 0,
+    End0 = 2359295,
+    ?assertEqual(0, get_entropy_partition(Start0)),
+    ?assertEqual(0, get_entropy_partition(End0)),
+	?assertEqual({Start0, End0}, get_entropy_partition_range(0)),
+    
+    Start1 = 2359296,
+    End1 = 4456447,
+    ?assertEqual(1, get_entropy_partition(Start1)),
+    ?assertEqual(1, get_entropy_partition(End1)),
+	?assertEqual({Start1, End1}, get_entropy_partition_range(1)),
+    
+    Start2 = 4456448,
+    End2 = 6048576,
+    ?assertEqual(2, get_entropy_partition(Start2)),
+    ?assertEqual(2, get_entropy_partition(End2)),
+	?assertEqual({Start2, End2}, get_entropy_partition_range(2)),
+	ok.
+
 
 %% @doc Walk sequentially through all chunks in a couple partitions and verify their slice
 %% indices
