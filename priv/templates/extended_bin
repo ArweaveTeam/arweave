@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 ######################################################################
 # EXTRA_DIST_ARGS environment variable can be set to set extra VM
 # arguments.
@@ -508,10 +508,9 @@ arweave_test_run() {
 	PARAMS="-pa ${TEST_PATH} ${TEST_PATH_BASE} -config ${TEST_CONFIG} -noshell"
 	ENTRY_POINT="-run ar ${TEST_MODULE} ${*} -s init stop"
 	command="erl ${PARAMS} -name ${TEST_NODE} -setcookie ${TEST_COOKIE} ${ENTRY_POINT}"
-	set +e
-	set -x
 	echo -e "\033[0;32m===> Execute command ${command}\033[0m"
-	${command} 2>&1 > "${TEST_LOG}"
+	set -xe -o pipefail
+	${command} | tee "${TEST_LOG}"
 	exit $?
     )
 }
