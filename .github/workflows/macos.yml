@@ -54,7 +54,7 @@ jobs:
 
       - name: Get dependencies
         if: steps.cache.outputs.cache-hit != 'true'
-        run: ./ar-rebar3 test get-deps
+        run: ./ar-rebar3 default get-deps
 
       - uses: actions/cache@v4
         if: steps.cache.outputs.cache-hit != 'true'
@@ -93,9 +93,6 @@ jobs:
 
       - name: Compile arweave release
         run: ./ar-rebar3 default release
-
-      - name: Build arweave test sources
-        run: ./ar-rebar3 test compile
 
       # some artifacts are compiled and only available
       # in arweave directy (libraries)
