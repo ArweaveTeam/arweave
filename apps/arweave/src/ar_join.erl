@@ -235,7 +235,7 @@ do_join(Peers, B, BI) ->
 	PeerQ = queue:from_list(Peers),
 	Trail = lists:sublist(tl(BI), 2 * ?MAX_TX_ANCHOR_DEPTH),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
-	Retries = lists:foldl(fun(Peer, Acc) -> maps:put(Peer, 10, Acc) end, #{}, Peers),
+	Retries = lists:foldl(fun(Peer, Acc) -> maps:put(Peer, 5, Acc) end, #{}, Peers),
 	Blocks = [B#block{ size_tagged_txs = SizeTaggedTXs }
 			| get_block_trail(WorkerQ, PeerQ, Trail, Retries)],
 	ar:console("Downloaded the block trail successfully.~n", []),
