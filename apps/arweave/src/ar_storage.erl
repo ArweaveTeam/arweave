@@ -17,9 +17,10 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_wallets.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
+-include("ar_wallets.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
@@ -331,7 +332,10 @@ read_block(Height, BI) when is_integer(Height) ->
 read_block(H, _BI) ->
 	read_block(H).
 
-%% @doc Read a block from disk, given a hash, a height, or a block index entry.
+%% @doc Read a block from disk, given a hash or a block index entry.
+-spec read_block(
+	B :: binary() | #block{} | [#block{}] | {binary(), non_neg_integer(), non_neg_integer()}
+) -> unavailable | #block{} | [#block{} | unavailable].
 read_block(unavailable) ->
 	unavailable;
 read_block(B) when is_record(B, block) ->
@@ -360,7 +364,8 @@ read_block(BH) ->
 				{error, Reason} ->
 					?LOG_WARNING([{event, error_reading_block_from_kv_storage},
 							{block, ar_util:encode(BH)},
-							{error, io_lib:format("~p", [Reason])}])
+							{error, io_lib:format("~p", [Reason])}]),
+					unavailable
 			end
 	end.
 
