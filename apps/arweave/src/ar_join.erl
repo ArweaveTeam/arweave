@@ -344,8 +344,13 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 							end
 					end
 			end;
-		{tx_response, H, TXID, _Peer, #tx{} = TX} ->
-			ar_disk_cache:write_tx(TX),
+		{tx_response, H, TXID, _Peer, #tx{} = TX, Origin} ->
+			case Origin of
+				storage ->
+					ok;
+				_ ->
+					ar_disk_cache:write_tx(TX)
+			end,
 			{BShadow, TXMap, AwaitingTXCount} = maps:get(H, FetchState),
 			TXMap2 = maps:put(TXID, TX, TXMap),
 			AwaitingTXCount2 = AwaitingTXCount - 1,
@@ -367,7 +372,7 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 				_ ->
 					get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState3)
 			end;
-		{tx_response, H, TXID, Peer, Response} ->
+		{tx_response, H, TXID, Peer, Response, peer} ->
 			PeerRetries = maps:get(Peer, Retries),
 			case PeerRetries > 0 of
 				true ->
@@ -502,7 +507,17 @@ worker() ->
 			end,
 			worker();
 		{get_tx, H, TXID, Peer, From} ->
-			From ! {tx_response, H, TXID, Peer, ar_http_iface_client:get_tx(Peer, TXID)},
+			case ar_storage:read_tx(TXID) of
+				#tx{} = TX ->
+					From ! {tx_response, H, TXID, Peer, TX, storage};
+				unavailable ->
+					case ar_http_iface_client:get_tx_from_remote_peer(Peer, TXID, true) of
+						{TX, _, _, _} ->
+							From ! {tx_response, H, TXID, Peer, TX, peer};
+						Error ->
+							From ! {tx_response, H, TXID, Peer, Error, peer}
+					end
+			end,
 			worker()
 	end.
 

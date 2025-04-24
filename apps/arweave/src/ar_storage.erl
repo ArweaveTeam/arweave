@@ -731,6 +731,9 @@ write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks, TXID) ->
 	end.
 
 %% @doc Read a tx from disk, given a hash.
+-spec read_tx(
+	binary() | #tx{} | [#tx{}]
+) -> unavailable | #tx{} | [#tx{} | unavailable].
 read_tx(unavailable) ->
 	unavailable;
 read_tx(TX) when is_record(TX, tx) ->
