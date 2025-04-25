@@ -371,7 +371,7 @@ show_help() ->
 				"flags are disallowed. See the node output for details."},
 			{"verify_samples (num)", io_lib:format("Number of chunks to sample and unpack "
 				"during 'verify'. Default is ~B.", [?SAMPLE_CHUNK_COUNT])},
-			{"shutdown_tcp_connection_timeout", io_lib:format("shutdown tcp connection timeout in seconds.",
+			{"shutdown_tcp_connection_timeout", io_lib:format("shutdown tcp connection timeout in seconds. "
 				"Default is ~Bs.", [?SHUTDOWN_TCP_CONNECTION_TIMEOUT])}
 		]
 	),
