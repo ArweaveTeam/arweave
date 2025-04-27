@@ -294,13 +294,28 @@ verify_chunk_storage(PaddedOffset, Metadata, {End, Start}, State)
 					{is_chunk_stored_in_rocksdb, IsChunkStoredInRocksDB}
 				], State)
 	end;
-verify_chunk_storage(PaddedOffset, Metadata, _Interval, State) ->
-	#state{ packing = Packing } = State,
+verify_chunk_storage(PaddedOffset, Metadata, Interval, State) ->
+	#state{ packing = Packing, store_id = StoreID } = State,
 	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
 		_TXRelativeOffset, ChunkSize} = Metadata,
 	case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
 		true ->
-			invalidate_chunk(chunk_storage_gap, AbsoluteOffset, ChunkSize, State);
+			Logs = [
+				{ar_data_sync,
+					ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID)},
+				{ar_chunk_storage,
+					ar_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage, StoreID)},
+				{ar_chunk_storage_replica_2_9_1_unpacked,
+					ar_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage_replica_2_9_1_unpacked, StoreID)},
+				{unpacked_padded,
+					ar_sync_record:is_recorded(AbsoluteOffset, unpacked_padded, StoreID)},
+				{ar_chunk_storage_replica_2_9_1_entropy,
+					ar_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID)},
+				{is_blacklisted, ar_tx_blacklist:is_byte_blacklisted(AbsoluteOffset)},
+				{interval, Interval},
+				{padded_offset, PaddedOffset}
+			],
+			invalidate_chunk(chunk_storage_gap, AbsoluteOffset, ChunkSize, Logs, State);
 		false ->
 			verify_chunk_data(Metadata, State)
 	end.
