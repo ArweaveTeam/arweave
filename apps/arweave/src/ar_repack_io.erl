@@ -231,9 +231,13 @@ write_chunk(RepackChunk, TargetPacking, #state{} = State) ->
 	#chunk_offsets{
 		absolute_offset = AbsoluteOffset
 	} = Offsets,
+
+	IsBlacklisted = ar_tx_blacklist:is_byte_blacklisted(AbsoluteOffset),
 	
 	case remove_from_sync_record(Offsets, StoreID) of
-		ok ->
+		ok when IsBlacklisted == true ->
+			ok;
+		ok when IsBlacklisted == false ->
 			WriteResult = 
 				ar_data_sync:write_chunk(
 					AbsoluteOffset, Metadata, Chunk, TargetPacking, StoreID),
@@ -283,8 +287,7 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
 	} = Metadata,
 	
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-	ar_sync_record:add_async(repacked_chunk, PaddedEndOffset, StartOffset,
-			Packing, ar_data_sync, StoreID),
+	ar_sync_record:add(PaddedEndOffset, StartOffset, Packing, ar_data_sync, StoreID),
 
 	IsStorageSupported =
 		ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing),
@@ -296,8 +299,7 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
 	case IsStorageSupported andalso IsReplica29 of
 		true ->
 			BucketStartOffset = BucketEndOffset - ?DATA_CHUNK_SIZE,
-			ar_sync_record:add_async(repacked_chunk,
-				BucketEndOffset, BucketStartOffset,
+			ar_sync_record:add(BucketEndOffset, BucketStartOffset,
 				ar_chunk_storage_replica_2_9_1_entropy, StoreID);
 		_ -> ok
 	end.
