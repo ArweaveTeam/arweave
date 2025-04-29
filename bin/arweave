@@ -290,6 +290,10 @@ arweave_benchmark() {
 	    shift
 	    arweave_benchmark_vdf ${*}
 	    ;;
+	vdf_exp)
+	    shift
+	    arweave_benchmark_vdf_exp ${*}
+	    ;;
 	*)
 	    arweave_benchmark_help
 	    ;;
@@ -323,6 +327,11 @@ arweave_benchmark_packing() {
 
 arweave_benchmark_vdf() {
     ARWEAVE_OPTS="-run ar benchmark_vdf"
+    echo ${*}
+}
+
+arweave_benchmark_vdf_exp() {
+    ARWEAVE_OPTS="-run ar benchmark_vdf_exp"
     echo ${*}
 }
 
