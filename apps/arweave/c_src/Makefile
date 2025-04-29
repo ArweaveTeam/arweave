@@ -84,6 +84,13 @@ RX4096_OBJECTS = $(addsuffix .o, $(basename $(RX4096_SOURCES)))
 RXSQUARED_OBJECTS = $(addsuffix .o, $(basename $(RXSQUARED_SOURCES)))
 VDF_OBJECTS = $(addsuffix .o, $(basename $(VDF_SOURCES)))
 
+UNAME_SYS := $(shell uname -s)
+ifeq ($(UNAME_SYS), Linux)
+  $(C_SRC_DIR)/vdf/vdf_exp_x86.o: CXXFLAGS += -msha
+endif
+ifeq ($(UNAME_SYS), Darwin)
+  $(C_SRC_DIR)/vdf/vdf_exp_arm.o:  CXXFLAGS += -march=armv8-a+crypto
+endif
 
 # Verbosity.
 

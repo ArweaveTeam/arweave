@@ -2,12 +2,14 @@
 
 -on_load(init_nif/0).
 
--export([vdf_sha2_nif/5, vdf_parallel_sha_verify_with_reset_nif/10]).
+-export([vdf_sha2_nif/5, vdf_sha2_exp_nif/5, vdf_parallel_sha_verify_with_reset_nif/10]).
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 vdf_sha2_nif(_Salt, _PrevState, _CheckpointCount, _skipCheckpointCount, _Iterations) ->
+	erlang:nif_error(nif_not_loaded).
+vdf_sha2_exp_nif(_Salt, _PrevState, _CheckpointCount, _skipCheckpointCount, _Iterations) ->
 	erlang:nif_error(nif_not_loaded).
 vdf_parallel_sha_verify_with_reset_nif(_Salt, _PrevState, _CheckpointCount,
 		_skipCheckpointCount, _Iterations, _InCheckpoint, _InRes, _ResetSalt, _ResetSeed,
