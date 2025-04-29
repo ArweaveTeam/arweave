@@ -191,15 +191,15 @@ handle_info({event, tx, {orphaned, TX}},
 handle_info({event, tx, _}, State) ->
 	{noreply, State};
 
-handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, StoreID}},
+handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, Module}},
 		#state{ listen_to_transaction_data_stream = true } = State) ->
-	case StoreID of
-		"default" ->
+	case Module of
+		?DEFAULT_MODULE ->
 			%% The disk pool data is not guaranteed to stay forever so we
 			%% do not want to push it here.
 			{noreply, State};
 		_ ->
-			{noreply, handle_sync_record_add_range(Start, End, StoreID, State)}
+			{noreply, handle_sync_record_add_range(Start, End, Module, State)}
 	end;
 
 handle_info({event, sync_record, {global_remove_range, Start, End}},
@@ -375,13 +375,13 @@ to_json(#tx{} = TX) ->
 to_json(Map) when is_map(Map) ->
 	jiffy:encode(Map).
 
-handle_sync_record_add_range(Start, End, StoreID, State) ->
-	handle_sync_record_add_range(Start, End, StoreID, State, 0).
+handle_sync_record_add_range(Start, End, Module, State) ->
+	handle_sync_record_add_range(Start, End, Module, State, 0).
 
-handle_sync_record_add_range(Start, End, StoreID, State, N) when N < ?NUMBER_OF_TRIES ->
+handle_sync_record_add_range(Start, End, Module, State, N) when N < ?NUMBER_OF_TRIES ->
 	case get_tx_offset_data(Start, End, State#state.tx_offset_cache) of
 		{ok, Data, Cache} ->
-			process_updated_tx_data(Data, StoreID, State#state{ tx_offset_cache = Cache });
+			process_updated_tx_data(Data, Module, State#state{ tx_offset_cache = Cache });
 		not_found ->
 			State;
 		Error ->
@@ -401,18 +401,18 @@ handle_sync_record_add_range(Start, End, _StoreID, State, _N) ->
 	]),
 	State.
 
-process_updated_tx_data([], _StoreID, State) ->
+process_updated_tx_data([], _Module, State) ->
 	State;
-process_updated_tx_data([{TXID, Start, End} | Data], StoreID, State) ->
+process_updated_tx_data([{TXID, Start, End} | Data], Module, State) ->
 	Cache = State#state.tx_offset_cache,
 	case cache_is_tx_data_marked_synced(TXID, Cache) of
 		true ->
 			%% transaction_data_synced webhook has already been sent, advance to next range
-			process_updated_tx_data(Data, StoreID, State);
+			process_updated_tx_data(Data, Module, State);
 		false ->
 			%% Maybe send the transaction_data_synced webhook before advancing to the next range
-			process_updated_tx_data(Data, StoreID,
-				maybe_call_transaction_data_synced_webhook(Start, End, TXID, StoreID, State))
+			process_updated_tx_data(Data, Module,
+				maybe_call_transaction_data_synced_webhook(Start, End, TXID, Module, State))
 	end.
 
 %% @doc Return a list of {TXID, Start2, End2} for recorded transactions from the given range.
@@ -592,10 +592,10 @@ cache_mark_tx_data_unsynced(TXID, Cache) ->
 cache_is_tx_data_marked_unsynced(TXID, Cache) ->
 	maps:get(TXID, Cache#tx_offset_cache.txid_to_status, false) == unsynced.
 
-maybe_call_transaction_data_synced_webhook(Start, End, TXID, MaybeStoreID, State) ->
+maybe_call_transaction_data_synced_webhook(Start, End, TXID, MaybeModule, State) ->
 	Cache = State#state.tx_offset_cache,
 	Cache2 =
-		case is_synced_by_storage_modules(Start, End, MaybeStoreID) of
+		case is_synced_by_storage_modules(Start, End, MaybeModule) of
 			true ->
 				URL = State#state.url,
 				Headers = State#state.headers,
@@ -608,8 +608,8 @@ maybe_call_transaction_data_synced_webhook(Start, End, TXID, MaybeStoreID, State
 		end,
 	State#state{ tx_offset_cache = Cache2 }.
 
-is_synced_by_storage_modules(Start, End, StoreID) ->
-	case ar_storage_module:get_cover(Start, End, StoreID) of
+is_synced_by_storage_modules(Start, End, Module) ->
+	case ar_storage_module:get_cover(Start, End, Module) of
 		not_found ->
 			false;
 		Intervals ->

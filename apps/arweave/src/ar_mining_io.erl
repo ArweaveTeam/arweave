@@ -282,7 +282,7 @@ open_files(StoreIDs) ->
 	lists:foreach(
 		fun(StoreID) ->
 			case StoreID of
-				"default" ->
+				?DEFAULT_MODULE ->
 					ok;
 				_ ->
 					ar_chunk_storage:open_files(StoreID)
@@ -321,14 +321,14 @@ chunks_read(miner, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets
 chunks_read(standalone, Worker, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets) ->
 	Worker ! {chunks_read, WhichChunk, Candidate, RecallRangeStart, ChunkOffsets}.
 
-get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, "default", Intervals) ->
+get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, ?DEFAULT_MODULE, Intervals) ->
 	ReplicaFormat = get_replica_format_from_packing_difficulty(PackingDifficulty),
 	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
-	case ar_sync_record:get_next_synced_interval(Start, End, Packing, ar_data_sync, "default") of
+	case ar_sync_record:get_next_synced_interval(Start, End, Packing, ar_data_sync, ?DEFAULT_MODULE) of
 		not_found ->
 			Intervals;
 		{Right, Left} ->
-			get_packed_intervals(Right, End, MiningAddress, PackingDifficulty, "default",
+			get_packed_intervals(Right, End, MiningAddress, PackingDifficulty, ?DEFAULT_MODULE,
 					ar_intervals:add(Intervals, Right, Left))
 	end;
 get_packed_intervals(_Start, _End, _MiningAddr, _PackingDifficulty, _StoreID, _Intervals) ->
@@ -415,7 +415,7 @@ read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID) ->
 
 filter_by_packing([], _Intervals, _StoreID) ->
 	[];
-filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, "default" = StoreID) ->
+filter_by_packing([{EndOffset, Chunk} | ChunkOffsets], Intervals, ?DEFAULT_MODULE = StoreID) ->
 	case ar_intervals:is_inside(Intervals, EndOffset) of
 		false ->
 			filter_by_packing(ChunkOffsets, Intervals, StoreID);

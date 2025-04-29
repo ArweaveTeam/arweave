@@ -270,7 +270,7 @@ handle_info({event, tx, {preparing_unblacklisting, TXID}}, State) ->
 handle_info({event, tx, _}, State) ->
 	{noreply, State};
 
-handle_info({event, disksup, {remaining_disk_space, "default", true, _Percentage, Bytes}},
+handle_info({event, disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, _Percentage, Bytes}},
 		State) ->
 	{ok, Config} = application:get_env(arweave, config),
 	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,

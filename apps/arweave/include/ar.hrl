@@ -297,6 +297,9 @@
 %% The directory for persisted metrics, NOT relative to the data dir.
 -define(METRICS_DIR, "metrics").
 
+%% The ID and module for the default storage module.
+-define(DEFAULT_MODULE, "default").
+
 %% Default TCP port.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).
 

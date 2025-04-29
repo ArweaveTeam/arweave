@@ -2,7 +2,7 @@
 
 -export([get_overlap/1, id/1, label/1, address_label/2, module_address/1,
 		module_packing_difficulty/1, packing_label/1, get_by_id/1,
-		get_range/1, module_range/1, module_range/2, get_packing/1, get_size/1,
+		get_range/1, module_range/1, module_range/2, get_packing/1,
 		get/2, get_strict/2, get_all/1, get_all/2, get_all_packed/3, get_all_module_ranges/0,
 		has_any/1, has_range/2, get_cover/3, is_repack_in_place/1]).
 
@@ -39,7 +39,7 @@ get_overlap(_Packing) ->
 	?OVERLAP.
 
 %% @doc Return the storage module identifier.
-id("default") -> "default";
+id(?DEFAULT_MODULE) -> ?DEFAULT_MODULE;
 id({BucketSize, Bucket, Packing}) ->
 	PackingString =
 		case Packing of
@@ -56,8 +56,8 @@ id({BucketSize, Bucket, Packing}) ->
 	id(BucketSize, Bucket, PackingString).
 
 %% @doc Return the obscure unique label for the given storage module.
-label("default") ->
-	"default";
+label(?DEFAULT_MODULE) ->
+	?DEFAULT_MODULE;
 label(StoreID) ->
 	case ets:lookup(?MODULE, {label, StoreID}) of
 		[] ->
@@ -124,6 +124,8 @@ packing_label(Packing) ->
 
 %% @doc Return the storage module with the given identifier or not_found.
 %% Search across both attached modules and repacked in-place modules.
+get_by_id(?DEFAULT_MODULE) ->
+	?DEFAULT_MODULE;
 get_by_id(ID) ->
 	{ok, Config} = application:get_env(arweave, config),
 	RepackInPlaceModules = [element(1, El)
@@ -152,7 +154,7 @@ get_all_module_ranges() ->
 		ModuleStoreIDs ++ RepackInPlaceModulesStoreIDs].
 
 %% @doc Return {StartOffset, EndOffset} the given module is responsible for.
-get_range("default") ->
+get_range(?DEFAULT_MODULE) ->
 	{0, infinity};
 get_range(ID) ->
 	Module = get_by_id(ID),
@@ -174,27 +176,17 @@ module_range(Module, Overlap) ->
 	{BucketSize * Bucket, (Bucket + 1) * BucketSize + Overlap}.
 
 %% @doc Return the packing configured for the given module.
-get_packing("default") ->
+get_packing(?DEFAULT_MODULE) ->
 	unpacked;
+get_packing({_BucketSize, _Bucket, Packing}) ->
+	Packing;
 get_packing(ID) ->
 	Module = get_by_id(ID),
 	case Module of
 		not_found ->
 			not_found;
 		_ ->
-			{_BucketSize, _Bucket, Packing} = Module,
-			Packing
-	end.
-
-%% @doc Return the bucket size configured for the given module.
-get_size(ID) ->
-	Module = get_by_id(ID),
-	case Module of
-		not_found ->
-			not_found;
-		_ ->
-			{BucketSize, _Bucket, _Packing} = Module,
-			BucketSize
+			get_packing(Module)
 	end.
 
 %% @doc Return a configured storage module covering the given Offset, preferably
@@ -260,10 +252,10 @@ has_range(Start, End) ->
 %% 2. returns [{7, 10, sm1}, {10, 13, sm_2}]
 %% 3. returns [{7, 10, sm1}, {10, 20, sm_2}, {20, 25, sm_3}]
 %% 4. returns [{7, 10, sm1}, {10, 20, sm_4}, {20, 25, sm_3}]
-get_cover(Start, End, MaybeStoreID) ->
+get_cover(Start, End, MaybeModule) ->
 	{ok, Config} = application:get_env(arweave, config),
 	SortedStorageModules = sort_storage_modules_by_left_bound(
-			Config#config.storage_modules, MaybeStoreID),
+			Config#config.storage_modules, MaybeModule),
 	case get_cover2(Start, End, SortedStorageModules) of
 		[] ->
 			not_found;
@@ -398,7 +390,7 @@ has_range(PartitionStart, PartitionEnd, [{_Start, End} | Intervals])
 has_range(_PartitionStart, PartitionEnd, [{_Start, End} | Intervals]) ->
 	has_range(End, PartitionEnd, Intervals).
 
-sort_storage_modules_by_left_bound(StorageModules, MaybeStoreID) ->
+sort_storage_modules_by_left_bound(StorageModules, MaybeModule) ->
 	lists:sort(
 		fun({BucketSize1, Bucket1, _} = M1, {BucketSize2, Bucket2, _} = M2) ->
 			Start1 = BucketSize1 * Bucket1,
@@ -409,9 +401,7 @@ sort_storage_modules_by_left_bound(StorageModules, MaybeStoreID) ->
 				true ->
 					case Start1 == Start2 of
 						true ->
-							StoreID1 = ar_storage_module:id(M1),
-							StoreID2 = ar_storage_module:id(M2),
-							StoreID1 == MaybeStoreID orelse StoreID2 /= MaybeStoreID;
+							M1 == MaybeModule orelse M2 /= MaybeModule;
 						false ->
 							true
 					end
@@ -521,7 +511,7 @@ sort_storage_modules_by_left_bound_test() ->
 			sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 1, p2}], none)),
 	?assertEqual([{10, 0, p}, {10, 1, p2}, {10, 1, p}],
 			sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 1, p2}],
-					"storage_module_10_1_p2")).
+					{10, 1, p2})).
 
 get_cover2_test() ->
 	?assertEqual(not_found, get_cover2(0, 1, [])),

@@ -44,7 +44,7 @@ register_read_workers() ->
 	{ok, Config} = application:get_env(arweave, config),
 	StoreIDs = [
 		ar_storage_module:id(StorageModule) || StorageModule <- Config#config.storage_modules
-	] ++ ["default"],
+	] ++ [?DEFAULT_MODULE],
 	{Workers, WorkerMap} = 
 		lists:foldl(
 			fun(StoreID, {AccWorkers, AccWorkerMap}) ->
@@ -318,5 +318,5 @@ test_register_workers() ->
 		fun(StoreID) ->
 			?assertEqual(true, ready_for_work(StoreID))
 		end,
-		StoreIDs ++ ["default"]
+		StoreIDs ++ [?DEFAULT_MODULE]
 	).
