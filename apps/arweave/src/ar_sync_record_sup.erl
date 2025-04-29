@@ -33,7 +33,7 @@ init([]) ->
 		Config#config.storage_modules
 	),
 	DefaultSyncRecordWorker = ?CHILD_WITH_ARGS(ar_sync_record, worker, ar_sync_record_default,
-		[ar_sync_record_default, "default"]),
+		[ar_sync_record_default, ?DEFAULT_MODULE]),
 	RepackInPlaceWorkers = lists:map(
 		fun({StorageModule, _Packing}) ->
 			StoreID = ar_storage_module:id(StorageModule),

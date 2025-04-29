@@ -417,7 +417,7 @@ get_storage_modules_paths() ->
 		end,
 		Config#config.storage_modules
 	),
-	[{"default", DataDir} | SMDirs].
+	[{?DEFAULT_MODULE, DataDir} | SMDirs].
 
 ensure_storage_modules_paths() ->
 	StoragePaths = get_storage_modules_paths(),

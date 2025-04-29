@@ -62,7 +62,7 @@ register_workers() ->
 	),
 	
 	DefaultChunkStorageWorker = ?CHILD_WITH_ARGS(ar_chunk_storage, worker,
-		ar_chunk_storage_default, [ar_chunk_storage_default, "default"]),
+		ar_chunk_storage_default, [ar_chunk_storage_default, ?DEFAULT_MODULE]),
 
 	RepackInPlaceWorkers = lists:map(
 		fun({StorageModule, _Packing}) ->
@@ -186,7 +186,7 @@ locate_chunk_on_disk(PaddedEndOffset, StoreID, FileIndex) ->
 %% inside the given range. The given interval does not have to cover every chunk
 %% completely - we return all chunks at the intersection with the range.
 get_range(Start, Size) ->
-	get_range(Start, Size, "default").
+	get_range(Start, Size, ?DEFAULT_MODULE).
 
 %% @doc Return a list of {PaddedEndOffset, Chunk} pairs for the stored chunks
 %% inside the given range. The given interval does not have to cover every chunk
@@ -242,7 +242,7 @@ cut(Offset, StoreID) ->
 
 %% @doc Remove the chunk with the given end offset.
 delete(Offset) ->
-	delete(Offset, "default").
+	delete(Offset, ?DEFAULT_MODULE).
 
 %% @doc Remove the chunk with the given end offset.
 delete(PaddedOffset, StoreID) ->
@@ -276,7 +276,7 @@ run_defragmentation() ->
 			ok = update_sizes_file(Files, #{})
 	end.
 
-get_storage_module_path(DataDir, "default") ->
+get_storage_module_path(DataDir, ?DEFAULT_MODULE) ->
 	DataDir;
 get_storage_module_path(DataDir, StoreID) ->
 	filename:join([DataDir, "storage_modules", StoreID]).
@@ -348,7 +348,7 @@ read_offset(PaddedOffset, StoreID) ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init("default" = StoreID) ->
+init(?DEFAULT_MODULE = StoreID) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
@@ -401,7 +401,7 @@ init(StoreID) ->
 	{ok, State2}.
 
 warn_custom_chunk_group_size(StoreID) ->
-	case StoreID == "default" andalso get_chunk_group_size() /= ?CHUNK_GROUP_SIZE of
+	case StoreID == ?DEFAULT_MODULE andalso get_chunk_group_size() /= ?CHUNK_GROUP_SIZE of
 		true ->
 			%% This warning applies to all store ids, but we will only print it when loading
 			%% the default StoreID to ensure it is only printed once.
@@ -1102,21 +1102,21 @@ well_aligned_test_() ->
 	{timeout, 20, fun test_well_aligned/0}.
 
 test_well_aligned() ->
-	clear("default"),
-	Packing = ar_storage_module:get_packing("default"),
+	clear(?DEFAULT_MODULE),
+	Packing = ar_storage_module:get_packing(?DEFAULT_MODULE),
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C3 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-	{ok, unpacked} = ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1, Packing, "default"),
+	{ok, unpacked} = ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1, Packing, ?DEFAULT_MODULE),
 	assert_get(C1, 2 * ?DATA_CHUNK_SIZE),
-	?assertEqual(not_found, ar_chunk_storage:get(2 * ?DATA_CHUNK_SIZE, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(2 * ?DATA_CHUNK_SIZE + 1, "default")),
+	?assertEqual(not_found, ar_chunk_storage:get(2 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(2 * ?DATA_CHUNK_SIZE + 1, ?DEFAULT_MODULE)),
 	ar_chunk_storage:delete(2 * ?DATA_CHUNK_SIZE),
 	assert_get(not_found, 2 * ?DATA_CHUNK_SIZE),
-	ar_chunk_storage:put(?DATA_CHUNK_SIZE, C2, Packing, "default"),
+	ar_chunk_storage:put(?DATA_CHUNK_SIZE, C2, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, ?DATA_CHUNK_SIZE),
 	assert_get(not_found, 2 * ?DATA_CHUNK_SIZE),
-	ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1, Packing, "default"),
+	ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C1, Packing, ?DEFAULT_MODULE),
 	assert_get(C1, 2 * ?DATA_CHUNK_SIZE),
 	assert_get(C2, ?DATA_CHUNK_SIZE),
 	?assertEqual([{?DATA_CHUNK_SIZE, C2}, {2 * ?DATA_CHUNK_SIZE, C1}],
@@ -1129,13 +1129,13 @@ test_well_aligned() ->
 			ar_chunk_storage:get_range(0, 3 * ?DATA_CHUNK_SIZE)),
 	?assertEqual([{?DATA_CHUNK_SIZE, C2}, {2 * ?DATA_CHUNK_SIZE, C1}],
 			ar_chunk_storage:get_range(0, ?DATA_CHUNK_SIZE + 1)),
-	ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE, C3, Packing, "default"),
+	ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE, C3, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, ?DATA_CHUNK_SIZE),
 	assert_get(C1, 2 * ?DATA_CHUNK_SIZE),
 	assert_get(C3, 3 * ?DATA_CHUNK_SIZE),
-	?assertEqual(not_found, ar_chunk_storage:get(3 * ?DATA_CHUNK_SIZE, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(3 * ?DATA_CHUNK_SIZE + 1, "default")),
-	ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C2, Packing, "default"),
+	?assertEqual(not_found, ar_chunk_storage:get(3 * ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(3 * ?DATA_CHUNK_SIZE + 1, ?DEFAULT_MODULE)),
+	ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE, C2, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, ?DATA_CHUNK_SIZE),
 	assert_get(C2, 2 * ?DATA_CHUNK_SIZE),
 	assert_get(C3, 3 * ?DATA_CHUNK_SIZE),
@@ -1152,44 +1152,44 @@ not_aligned_test_() ->
 	{timeout, 20, fun test_not_aligned/0}.
 
 test_not_aligned() ->
-	clear("default"),
-	Packing = ar_storage_module:get_packing("default"),
+	clear(?DEFAULT_MODULE),
+	Packing = ar_storage_module:get_packing(?DEFAULT_MODULE),
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C3 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-	ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE + 7, C1, Packing, "default"),
+	ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE + 7, C1, Packing, ?DEFAULT_MODULE),
 	assert_get(C1, 2 * ?DATA_CHUNK_SIZE + 7),
 	ar_chunk_storage:delete(2 * ?DATA_CHUNK_SIZE + 7),
 	assert_get(not_found, 2 * ?DATA_CHUNK_SIZE + 7),
-	ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE + 7, C1, Packing, "default"),
+	ar_chunk_storage:put(2 * ?DATA_CHUNK_SIZE + 7, C1, Packing, ?DEFAULT_MODULE),
 	assert_get(C1, 2 * ?DATA_CHUNK_SIZE + 7),
-	?assertEqual(not_found, ar_chunk_storage:get(2 * ?DATA_CHUNK_SIZE + 7, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(?DATA_CHUNK_SIZE + 7 - 1, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(?DATA_CHUNK_SIZE, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(?DATA_CHUNK_SIZE - 1, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(0, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(1, "default")),
-	ar_chunk_storage:put(?DATA_CHUNK_SIZE + 3, C2, Packing, "default"),
+	?assertEqual(not_found, ar_chunk_storage:get(2 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(?DATA_CHUNK_SIZE + 7 - 1, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(?DATA_CHUNK_SIZE - 1, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(0, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(1, ?DEFAULT_MODULE)),
+	ar_chunk_storage:put(?DATA_CHUNK_SIZE + 3, C2, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, ?DATA_CHUNK_SIZE + 3),
-	?assertEqual(not_found, ar_chunk_storage:get(0, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(1, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(2, "default")),
+	?assertEqual(not_found, ar_chunk_storage:get(0, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(1, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(2, ?DEFAULT_MODULE)),
 	ar_chunk_storage:delete(2 * ?DATA_CHUNK_SIZE + 7),
 	assert_get(C2, ?DATA_CHUNK_SIZE + 3),
 	assert_get(not_found, 2 * ?DATA_CHUNK_SIZE + 7),
-	ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE + 7, C3, Packing, "default"),
+	ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE + 7, C3, Packing, ?DEFAULT_MODULE),
 	assert_get(C3, 3 * ?DATA_CHUNK_SIZE + 7),
-	ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE + 7, C1, Packing, "default"),
+	ar_chunk_storage:put(3 * ?DATA_CHUNK_SIZE + 7, C1, Packing, ?DEFAULT_MODULE),
 	assert_get(C1, 3 * ?DATA_CHUNK_SIZE + 7),
-	ar_chunk_storage:put(4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2, C2, Packing, "default"),
+	ar_chunk_storage:put(4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2, C2, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, 4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2),
 	?assertEqual(
 		not_found,
-		ar_chunk_storage:get(4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2, "default")
+		ar_chunk_storage:get(4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2, ?DEFAULT_MODULE)
 	),
-	?assertEqual(not_found, ar_chunk_storage:get(3 * ?DATA_CHUNK_SIZE + 7, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(3 * ?DATA_CHUNK_SIZE + 8, "default")),
-	ar_chunk_storage:put(5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1, C2, Packing, "default"),
+	?assertEqual(not_found, ar_chunk_storage:get(3 * ?DATA_CHUNK_SIZE + 7, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(3 * ?DATA_CHUNK_SIZE + 8, ?DEFAULT_MODULE)),
+	ar_chunk_storage:put(5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1, C2, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, 5 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2 + 1),
 	assert_get(not_found, 2 * ?DATA_CHUNK_SIZE + 7),
 	ar_chunk_storage:delete(4 * ?DATA_CHUNK_SIZE + ?DATA_CHUNK_SIZE div 2),
@@ -1220,17 +1220,17 @@ cross_file_aligned_test_() ->
 	{timeout, 20, fun test_cross_file_aligned/0}.
 
 test_cross_file_aligned() ->
-	clear("default"),
-	Packing = ar_storage_module:get_packing("default"),
+	clear(?DEFAULT_MODULE),
+	Packing = ar_storage_module:get_packing(?DEFAULT_MODULE),
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-	ar_chunk_storage:put(get_chunk_group_size(), C1, Packing, "default"),
+	ar_chunk_storage:put(get_chunk_group_size(), C1, Packing, ?DEFAULT_MODULE),
 	assert_get(C1, get_chunk_group_size()),
-	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size(), "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(0, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() - ?DATA_CHUNK_SIZE - 1, "default")),
-	ar_chunk_storage:put(get_chunk_group_size() + ?DATA_CHUNK_SIZE, C2, Packing, "default"),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size(), ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(0, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() - ?DATA_CHUNK_SIZE - 1, ?DEFAULT_MODULE)),
+	ar_chunk_storage:put(get_chunk_group_size() + ?DATA_CHUNK_SIZE, C2, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, get_chunk_group_size() + ?DATA_CHUNK_SIZE),
 	assert_get(C1, get_chunk_group_size()),
 	?assertEqual([{get_chunk_group_size(), C1}, {get_chunk_group_size() + ?DATA_CHUNK_SIZE, C2}],
@@ -1239,41 +1239,41 @@ test_cross_file_aligned() ->
 	?assertEqual([{get_chunk_group_size(), C1}, {get_chunk_group_size() + ?DATA_CHUNK_SIZE, C2}],
 			ar_chunk_storage:get_range(get_chunk_group_size() - 2 * ?DATA_CHUNK_SIZE - 1,
 					4 * ?DATA_CHUNK_SIZE)),
-	?assertEqual(not_found, ar_chunk_storage:get(0, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() - ?DATA_CHUNK_SIZE - 1, "default")),
-	ar_chunk_storage:delete(get_chunk_group_size(), "default"),
-	assert_get(not_found, get_chunk_group_size(), "default"),
+	?assertEqual(not_found, ar_chunk_storage:get(0, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() - ?DATA_CHUNK_SIZE - 1, ?DEFAULT_MODULE)),
+	ar_chunk_storage:delete(get_chunk_group_size(), ?DEFAULT_MODULE),
+	assert_get(not_found, get_chunk_group_size(), ?DEFAULT_MODULE),
 	assert_get(C2, get_chunk_group_size() + ?DATA_CHUNK_SIZE),
-	ar_chunk_storage:put(get_chunk_group_size(), C2, Packing, "default"),
+	ar_chunk_storage:put(get_chunk_group_size(), C2, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, get_chunk_group_size()).
 
 cross_file_not_aligned_test_() ->
 	{timeout, 20, fun test_cross_file_not_aligned/0}.
 
 test_cross_file_not_aligned() ->
-	clear("default"),
-	Packing = ar_storage_module:get_packing("default"),
+	clear(?DEFAULT_MODULE),
+	Packing = ar_storage_module:get_packing(?DEFAULT_MODULE),
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C3 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-	ar_chunk_storage:put(get_chunk_group_size() + 1, C1, Packing, "default"),
+	ar_chunk_storage:put(get_chunk_group_size() + 1, C1, Packing, ?DEFAULT_MODULE),
 	assert_get(C1, get_chunk_group_size() + 1),
-	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1, "default")),
-	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() - ?DATA_CHUNK_SIZE, "default")),
-	ar_chunk_storage:put(2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2, C2, Packing, "default"),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1, ?DEFAULT_MODULE)),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() - ?DATA_CHUNK_SIZE, ?DEFAULT_MODULE)),
+	ar_chunk_storage:put(2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2, C2, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, 2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2),
-	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1, "default")),
-	ar_chunk_storage:put(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C3, Packing, "default"),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1, ?DEFAULT_MODULE)),
+	ar_chunk_storage:put(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C3, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, 2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2),
 	assert_get(C3, 2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2),
 	?assertEqual([{2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C3},
 			{2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2, C2}],
 			ar_chunk_storage:get_range(2 * get_chunk_group_size()
 					- ?DATA_CHUNK_SIZE div 2 - ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE * 2)),
-	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1, "default")),
+	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1, ?DEFAULT_MODULE)),
 	?assertEqual(
 		not_found,
-		ar_chunk_storage:get(get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2 - 1, "default")
+		ar_chunk_storage:get(get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2 - 1, ?DEFAULT_MODULE)
 	),
 	ar_chunk_storage:delete(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2),
 	assert_get(not_found, 2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2),
@@ -1287,16 +1287,16 @@ test_cross_file_not_aligned() ->
 	assert_get(not_found, 2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2),
 	ar_chunk_storage:delete(get_chunk_group_size() + 1),
 	ar_chunk_storage:delete(100 * get_chunk_group_size() + 1),
-	ar_chunk_storage:put(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C1, Packing, "default"),
+	ar_chunk_storage:put(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C1, Packing, ?DEFAULT_MODULE),
 	assert_get(C1, 2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2),
 	?assertEqual(not_found,
-			ar_chunk_storage:get(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, "default")).
+			ar_chunk_storage:get(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, ?DEFAULT_MODULE)).
 
 clear(StoreID) ->
 	ok = gen_server:call(name(StoreID), reset).
 
 assert_get(Expected, Offset) ->
-	assert_get(Expected, Offset, "default").
+	assert_get(Expected, Offset, ?DEFAULT_MODULE).
 
 assert_get(Expected, Offset, StoreID) ->
 	ExpectedResult =
