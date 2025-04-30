@@ -983,7 +983,7 @@ compute(StepNumber, PrevOutput, VDFDifficulty) ->
 	debug_double_check(
 		"compute",
 		{ok, Output, Checkpoints},
-		fun ar_vdf:debug_sha2/3,
+		fun ar_vdf:compute_legacy/3,
 		[StepNumber, PrevOutput, VDFDifficulty]).
 
 verify(StartStepNumber, PrevOutput, NumCheckpointsBetweenHashes, Hashes, ResetStepNumber,
