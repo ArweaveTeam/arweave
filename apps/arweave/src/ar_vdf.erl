@@ -1,12 +1,12 @@
 -module(ar_vdf).
 
--export([compute/3, compute2/3, verify/8, verify2/8,
+-export([compute/3, compute_legacy/3, compute2/3, verify/8, verify2/8,
 		debug_sha_verify_no_reset/6, debug_sha_verify/8, debug_sha2/3,
 		step_number_to_salt_number/1, checkpoint_buffer_to_checkpoints/1]).
 
--include_lib("arweave/include/ar_vdf.hrl").
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include("ar_vdf.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
 
 step_number_to_salt_number(0) ->
 	0;
@@ -26,6 +26,12 @@ compute(StartStepNumber, PrevOutput, IterationCount) ->
 			ar_vdf_nif:vdf_sha2_nif(SaltBinary, PrevOutput, ?VDF_CHECKPOINT_COUNT_IN_STEP - 1, 0,
 					IterationCount)
 	end.
+
+compute_legacy(StartStepNumber, PrevOutput, IterationCount) ->
+	Salt = step_number_to_salt_number(StartStepNumber - 1),
+	SaltBinary = << Salt:256 >>,
+	ar_vdf_nif:vdf_sha2_nif(SaltBinary, PrevOutput, ?VDF_CHECKPOINT_COUNT_IN_STEP - 1, 0,
+					IterationCount).
 
 -ifdef(AR_TEST).
 %% Slow down VDF calculation on tests since it will complete too fast otherwise.
