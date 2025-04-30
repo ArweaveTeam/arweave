@@ -1,6 +1,11 @@
 #include <string.h>
+#include <errno.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/random.h>
 
-#include <openssl/rand.h>
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
 
@@ -18,16 +23,71 @@ static int secp256k1_load(ErlNifEnv* env, void** priv, ERL_NIF_TERM load_info) {
 	return 0;
 }
 
-#if defined(_MSC_VER)
-// For SecureZeroMemory
-#include <Windows.h>
+static int fill_devurandom(void* buffer, size_t size) {
+	int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+	if (fd == -1) {
+		return 0;
+	}
+
+	size_t offset = 0;
+	while (offset < size) {
+		ssize_t result = read(fd, (char*)buffer + offset, size - offset);
+		if (result == -1) {
+			if (errno == EINTR) continue;
+			goto error;
+		}
+		// EOF
+		if (result == 0) {
+			goto error;
+		}
+		offset += (size_t)result;
+	}
+	
+	close(fd);
+	return 1;
+
+error:
+	close(fd);
+	return 0;
+}
+
+static int fill_random(void* buffer, size_t size) {
+#if defined(__linux__) || defined(__FreeBSD__)
+
+	size_t offset = 0;
+	while (offset < size) {
+		ssize_t result = getrandom((char*)buffer + offset, size - offset, 0);
+		if (result == -1) {
+			if (errno == EINTR) continue;
+			if (errno == ENOSYS) return fill_devurandom(buffer, size);
+			return 0;
+		}
+		offset += (size_t)result;
+	}
+
+#elif defined(__APPLE__)
+
+	size_t offset = 0;
+    while (offset < size) {
+		// max allowed length is 256 bytes
+        size_t chunk = (size - offset > 256) ? 256 : (size - offset);
+        if (getentropy((char*)buffer + offset, chunk) == -1) {
+			if (errno == ENOSYS) return fill_devurandom(buffer, size);
+            return 0;
+        }
+        offset += chunk;
+    }
+
+#else
+	// Unsupported platform
+	return 0;
 #endif
+	return 1;
+}
+
 /* Cleanses memory to prevent leaking sensitive info. Won't be optimized out. */
 static void secure_erase(void *ptr, size_t len) {
-#if defined(_MSC_VER)
-	/* SecureZeroMemory is guaranteed not to be optimized out by MSVC. */
-	SecureZeroMemory(ptr, len);
-#elif defined(__GNUC__)
+#if defined(__GNUC__)
 	/* We use a memory barrier that scares the compiler away from optimizing out the memset.
 	 *
 	 * Quoting Adam Langley <agl@google.com> in commit ad1907fe73334d6c696c8539646c21b11178f20f
@@ -84,7 +144,7 @@ static ERL_NIF_TERM sign_recoverable(ErlNifEnv *env, int argc, const ERL_NIF_TER
 		goto cleanup;
 	}
 
-	if (!RAND_priv_bytes(seed, sizeof(seed))) {
+	if (!fill_random(seed, sizeof(seed))) {
 		error = "Failed to generate random seed for context.";
 		goto cleanup;
 	}
