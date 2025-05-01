@@ -314,10 +314,11 @@ terminate(Reason, State) ->
 do_prepare_entropy(State) ->
 	#state{ 
 		cursor = Start, module_start = ModuleStart, module_end = ModuleEnd,
-		packing = {replica_2_9, RewardAddr},
+		packing = Packing,
 		store_id = StoreID
 	} = State,
 
+	{replica_2_9, RewardAddr} = Packing,
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Start),
 
 	%% Sanity checks:
@@ -349,14 +350,12 @@ do_prepare_entropy(State) ->
 				false
 		end,
 
-	Start2 = advance_entropy_offset(BucketEndOffset, StoreID),
-	State2 = State#state{ cursor = Start2 },
 	CheckIsRecorded =
 		case CheckRangeEnd of
 			complete ->
 				complete;
 			false ->
-				ar_entropy_storage:is_entropy_recorded(BucketEndOffset, StoreID)
+				ar_entropy_storage:is_entropy_recorded(BucketEndOffset, Packing, StoreID)
 		end,
 
 	StoreEntropy =
@@ -379,13 +378,14 @@ do_prepare_entropy(State) ->
 							ModuleStart, EntropyKeys, RewardAddr)
 				end
 		end,
+	NextCursor = advance_entropy_offset(BucketEndOffset, Packing, StoreID),
 	case StoreEntropy of
 		complete ->
 			ar_device_lock:set_device_lock_metric(StoreID, prepare, complete),
 			State#state{ prepare_status = complete };
 		is_recorded ->
 			gen_server:cast(self(), prepare_entropy),
-			State2;
+			State#state{ cursor = NextCursor };
 		{error, Error} ->
 			?LOG_WARNING([{event, failed_to_store_entropy},
 					{cursor, Start},
@@ -395,16 +395,16 @@ do_prepare_entropy(State) ->
 			State;
 		ok ->
 			gen_server:cast(self(), prepare_entropy),
-			case store_cursor(Start2, StoreID) of
+			case store_cursor(NextCursor, StoreID) of
 				ok ->
 					ok;
 				{error, Error} ->
 					?LOG_WARNING([{event, failed_to_store_prepare_entropy_cursor},
-							{chunk_cursor, Start2},
+							{chunk_cursor, NextCursor},
 							{store_id, StoreID},
 							{reason, io_lib:format("~p", [Error])}])
 			end,
-			State2
+			State#state{ cursor = NextCursor }
 	end.
 
 
@@ -467,10 +467,8 @@ sanity_check_replica_2_9_entropy_keys(
 										SubChunkStartOffset + SubChunkSize,
 										Keys).
 
-advance_entropy_offset(BucketEndOffset, StoreID) ->
-	Interval = ar_sync_record:get_next_unsynced_interval(
-		BucketEndOffset, infinity, ar_chunk_storage_replica_2_9_1_entropy, StoreID),
-	case Interval of
+advance_entropy_offset(BucketEndOffset, Packing, StoreID) ->
+	case ar_entropy_storage:get_next_unsynced_interval(BucketEndOffset, Packing, StoreID) of
 		not_found ->
 			BucketEndOffset + ?DATA_CHUNK_SIZE;
 		{_, Start} ->

@@ -96,18 +96,6 @@ init({StoreID, ToPacking}) ->
         {name, name(StoreID)}, {store_id, StoreID},
 		{from_packing, ar_serialize:encode_packing(FromPacking, false)},
         {to_packing, ar_serialize:encode_packing(ToPacking, false)}]),
-
-    %% Sanity checks
-	%% We curently only support repacking in place to replica_2_9 from non-replica_2_9
-	case FromPacking of
-		{replica_2_9, _} ->
-			?LOG_ERROR([{event, repack_in_place_from_replica_2_9_not_supported}]),
-			timer:sleep(5_000),
-			erlang:halt();
-		_ ->
-			ok
-	end,
-    %% End sanity checks
 	
 	{replica_2_9, RewardAddr} = ToPacking,
 
@@ -490,7 +478,8 @@ should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
 		target_packing = TargetPacking, store_id = StoreID } = State,
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(Cursor),
 	IsChunkRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
-	IsEntropyRecorded = ar_entropy_storage:is_entropy_recorded(PaddedEndOffset, StoreID),
+	IsEntropyRecorded = ar_entropy_storage:is_entropy_recorded(
+		PaddedEndOffset, TargetPacking, StoreID),
 	%% Skip this offset if it's already packed to TargetPacking, or if it's not recorded
 	%% at all.
 	Skip = case {IsChunkRecorded, IsEntropyRecorded} of
@@ -1446,31 +1435,31 @@ should_repack_test_() ->
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> false end},
-			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> false end}
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
 		],
 		fun test_should_repack_no_chunk_no_entropy/0, 30),
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, {replica_2_9, <<"addr">>}} end},
-			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> true end}
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
 		],
 		fun test_should_repack_chunk_and_entropy/0, 30),
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> false end},
-			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> true end}
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
 		],
 		fun test_should_repack_entropy_but_no_chunk/0, 30),
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
-			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> true end}
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
 		],
 		fun test_should_repack_unpacked_chunk_and_entropy/0, 30),
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
-			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> false end}
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
 		],
 		fun test_should_repack_unpacked_chunk_no_entropy/0, 30)
 	].

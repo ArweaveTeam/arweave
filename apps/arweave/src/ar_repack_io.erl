@@ -298,9 +298,7 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
 
 	case IsStorageSupported andalso IsReplica29 of
 		true ->
-			BucketStartOffset = BucketEndOffset - ?DATA_CHUNK_SIZE,
-			ar_sync_record:add(BucketEndOffset, BucketStartOffset,
-				ar_chunk_storage_replica_2_9_1_entropy, StoreID);
+			ar_entropy_storage:add_record(BucketEndOffset, Packing, StoreID);
 		_ -> ok
 	end.
 

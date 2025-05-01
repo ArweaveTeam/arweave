@@ -18,6 +18,7 @@ repack_in_place_mine_test_() ->
 	[
 		{timeout, Timeout, {with, {unpacked, replica_2_9}, [fun test_repack_in_place_mine/1]}},
 		{timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}}
+		% {timeout, Timeout, {with, {replica_2_9, replica_2_9}, [fun test_repack_in_place_mine/1]}}
 	].
 
 %% --------------------------------------------------------------------------------------------

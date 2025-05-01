@@ -1986,8 +1986,7 @@ remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
 	Remove3 =
 		case {Remove2, IsSmallChunkBeforeThreshold} of
 			{ok, false} ->
-				ar_sync_record:delete(PaddedEndOffset, StartOffset,
-						ar_chunk_storage_replica_2_9_1_entropy, StoreID);
+				ar_entropy_storage:delete_record(PaddedEndOffset, StartOffset, StoreID);
 			_ ->
 				Remove2
 		end,
