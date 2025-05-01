@@ -34,6 +34,7 @@
 	%% 256 MiB batches.
 	entropy_end = 0,
 	next_cursor = 0, 
+	configured_packing = undefined,
 	target_packing = undefined,
 	reward_addr = undefined,
 	repack_status = undefined,
@@ -121,6 +122,7 @@ init({StoreID, ToPacking}) ->
 		module_start = ModuleStart,
 		module_end = PaddedModuleEnd,
 		next_cursor = Cursor, 
+		configured_packing = FromPacking,
 		target_packing = ToPacking,
 		reward_addr = RewardAddr,
 		repack_status = paused
@@ -599,6 +601,7 @@ init_repack_chunk_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = State) ->
 	#state{
 		store_id = StoreID,
+		configured_packing = ConfiguredPacking,
 		target_packing = TargetPacking
 	} = State,
 	
@@ -612,7 +615,7 @@ add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = Stat
 			RepackChunk =  maps:get(BucketEndOffset, RepackChunkMap, not_found),
 			RepackChunk2 = assemble_repack_chunk(
 				RepackChunk, AbsoluteEndOffset, TargetPacking, 
-				Metadata, OffsetChunkMap, StoreID),
+				Metadata, OffsetChunkMap, ConfiguredPacking, StoreID),
 
 			case RepackChunk2 of
 				not_found ->
@@ -624,17 +627,14 @@ add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = Stat
 		State, OffsetMetadataMap).
 
 assemble_repack_chunk(
-		RepackChunk, AbsoluteEndOffset, TargetPacking, Metadata, OffsetChunkMap, StoreID) ->
+		RepackChunk, AbsoluteEndOffset, TargetPacking, Metadata, OffsetChunkMap,
+		ConfiguredPacking, StoreID) ->
 	{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize} = Metadata,
 
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
 
-	IsRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
-	SourcePacking = case IsRecorded of
-		{true, Packing} -> Packing;
-		_ -> not_found
-	end,
+	SourcePacking = get_chunk_packing(PaddedEndOffset, ConfiguredPacking, StoreID),
 
 	ShouldRepack = (
 		ar_chunk_storage:is_storage_supported(
@@ -675,6 +675,17 @@ assemble_repack_chunk(
 			not_found
 	end.
 
+get_chunk_packing(PaddedEndOffset, ConfiguredPacking, StoreID) ->
+	HasConfiguredPacking = ar_sync_record:is_recorded(
+		PaddedEndOffset, ConfiguredPacking, ar_data_sync, StoreID),
+	case HasConfiguredPacking of
+		true -> ConfiguredPacking;
+		_ ->
+			case ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID) of
+				{true, Packing} -> Packing;
+				_ -> not_found
+			end
+	end.
 
 %% @doc Mark any chunks that weren't found in either chunk_storage or the chunks_index.
 mark_missing_chunks([], #state{} = State) ->
@@ -1210,9 +1221,9 @@ test_footprint_end_small() ->
 assemble_repack_chunk_test_() ->
 [
 	ar_test_node:test_with_mocked_functions([
-		{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
-	],
-	fun test_assemble_repack_chunk/0, 30),
+			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
+		],
+		fun test_assemble_repack_chunk/0, 30),
 	ar_test_node:test_with_mocked_functions([
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
 		],
@@ -1238,7 +1249,8 @@ test_assemble_repack_chunk() ->
 
 	% %% Error - BucketEndOffset hasn't been initialized
 	?assertEqual(not_found,
-		assemble_repack_chunk(not_found, 100, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+		assemble_repack_chunk(not_found, 100, {replica_2_9, Addr}, Metadata, #{}, 
+		unpacked, StoreID)),
 
 	ExpectedRepackedChunk = #repack_chunk{
 		source_packing = unpacked,
@@ -1268,7 +1280,7 @@ test_assemble_repack_chunk() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 100, unpacked, Metadata, #{ 100 => Chunk }, StoreID)
+			}, 100, unpacked, Metadata, #{ 100 => Chunk }, unpacked, StoreID)
 	),
 	%% unpacked -> packed
 	?assertEqual(
@@ -1279,7 +1291,7 @@ test_assemble_repack_chunk() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 100, {replica_2_9, Addr}, Metadata, #{ 100 => Chunk }, StoreID)
+			}, 100, {replica_2_9, Addr}, Metadata, #{ 100 => Chunk }, unpacked, StoreID)
 	),
 
 	%% Chunk after the strict data split threshold
@@ -1298,7 +1310,7 @@ test_assemble_repack_chunk() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 10_000_000, unpacked, Metadata, #{ 10_223_616 => Chunk }, StoreID)
+			}, 10_000_000, unpacked, Metadata, #{ 10_223_616 => Chunk }, unpacked, StoreID)
 	),
 	%% unpacked -> packed
 	?assertEqual(
@@ -1309,7 +1321,8 @@ test_assemble_repack_chunk() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{ 10_223_616 => Chunk }, StoreID)
+			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{ 10_223_616 => Chunk }, 
+			unpacked, StoreID)
 	),
 	ok.
 
@@ -1331,13 +1344,13 @@ test_assemble_repack_chunk_too_small_unpacked() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 100, unpacked, Metadata, #{}, StoreID)),
+			}, 100, unpacked, Metadata, #{}, unpacked, StoreID)),
 	%% unpacked -> packed
 	?assertEqual(not_found,
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 100, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+			}, 100, {replica_2_9, Addr}, Metadata, #{}, unpacked, StoreID)),
 
 	%% Small chunk after the strict data split threshold
 	%% unpacked -> unpacked
@@ -1345,7 +1358,7 @@ test_assemble_repack_chunk_too_small_unpacked() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 10_000_000, unpacked, Metadata, #{}, StoreID)),
+			}, 10_000_000, unpacked, Metadata, #{}, unpacked, StoreID)),
 	%% unpacked -> packed
 	ExpectedRepackedChunk = #repack_chunk{
 		source_packing = unpacked,
@@ -1369,7 +1382,7 @@ test_assemble_repack_chunk_too_small_unpacked() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{}, unpacked, StoreID)),
 	ok.
 
 test_assemble_repack_chunk_too_small_packed() ->
@@ -1390,13 +1403,13 @@ test_assemble_repack_chunk_too_small_packed() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 100, unpacked, Metadata, #{}, StoreID)),
+			}, 100, unpacked, Metadata, #{}, {spora_2_6, <<"addr">>}, StoreID)),
 	%% packed -> packed
 	?assertEqual(not_found,
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 100, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+			}, 100, {replica_2_9, Addr}, Metadata, #{}, {spora_2_6, <<"addr">>}, StoreID)),
 
 	%% Small chunk after the strict data split threshold
 	ExpectedRepackedChunk = #repack_chunk{
@@ -1421,13 +1434,14 @@ test_assemble_repack_chunk_too_small_packed() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 10_000_000, unpacked, Metadata, #{}, StoreID)),
+			}, 10_000_000, unpacked, Metadata, #{}, {spora_2_6, <<"addr">>}, StoreID)),
 	%% packed -> packed
 	?assertEqual(ExpectedRepackedChunk#repack_chunk{target_packing = {replica_2_9, Addr}},
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{},
+			{spora_2_6, <<"addr">>}, StoreID)),
 	ok.
 
 should_repack_test_() ->
