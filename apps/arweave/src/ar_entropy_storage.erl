@@ -83,7 +83,7 @@ handle_cast({store_entropy_footprint,
 		Keys,
 		RewardAddr,
 		fun do_store_entropy/5,
-		[StoreID, RewardAddr],
+		[StoreID],
 		ok),
 	{noreply, State};
 
@@ -98,7 +98,7 @@ handle_call(is_ready, _From, State) ->
 handle_call({store_entropy, ChunkEntropy, BucketEndOffset, StoreID, RewardAddr},
 		_From, State) ->
 	#state{ store_id = StoreID } = State,
-	do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr),
+	do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID),
 	{reply, ok, State};
 
 handle_call(Call, _From, State) ->
@@ -272,9 +272,10 @@ record_chunk(
 	release_semaphore(Filepath),
 	RecordChunk.
 
-do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr, ok) ->
-	do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr).
-do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
+do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID, ok) ->
+	do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID).
+
+do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID) ->
 	%% Sanity checks
 	true = byte_size(ChunkEntropy) == ?DATA_CHUNK_SIZE,
 	%% End sanity checks
