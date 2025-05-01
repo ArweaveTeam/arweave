@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([name/1, register_workers/1,  initialize_context/2, is_entropy_packing/1,
+-export([name/1, register_workers/1,  initialize_context/2,
 	map_entropies/8, entropy_offsets/2,
 	generate_entropies/2, generate_entropies/4, generate_entropy_keys/2, 
 	shift_entropy_offset/2]).
@@ -64,16 +64,20 @@ register_workers(Module) ->
 	),
 	 
 	RepackInPlaceWorkers = lists:filtermap(
-		fun({StorageModule, Packing}) ->
+		fun({StorageModule, ToPacking}) ->
 				StoreID = ar_storage_module:id(StorageModule),
+				ConfiguredPacking = ar_storage_module:get_packing(StorageModule),
 				%% Note: the config validation will prevent a StoreID from being used in both
 				%% `storage_modules` and `repack_in_place_storage_modules`, so there's
 				%% no risk of a `Name` clash with the workers spawned above.
-				case is_entropy_packing(Packing) of
-					 true ->
+				IsEntropyPacking = (
+					is_entropy_packing(ConfiguredPacking) orelse is_entropy_packing(ToPacking)
+				),
+				case IsEntropyPacking of
+					true ->
 						Worker = ?CHILD_WITH_ARGS(
 							Module, worker, Module:name(StoreID),
-							[Module:name(StoreID), {StoreID, Packing}]),
+							[Module:name(StoreID), {StoreID, ToPacking}]),
 						{true, Worker};
 					 false ->
 						false
@@ -193,7 +197,8 @@ map_entropies(Entropies,
 
 			Acc2 = case BucketEndOffset > RangeStart of
 				true ->
-					erlang:apply(Fun, [ChunkEntropy, BucketEndOffset] ++ Args ++ [Acc]);
+					erlang:apply(Fun,
+						[ChunkEntropy, BucketEndOffset, RewardAddr] ++ Args ++ [Acc]);
 				false ->
 					%% Don't write entropy before the start of the range.
 					Acc
@@ -217,8 +222,9 @@ init({StoreID, Packing}) ->
 		{name, name(StoreID)}, {store_id, StoreID},
 		{packing, ar_serialize:encode_packing(Packing, true)}]),
 
-	%% Senity checks
-	{replica_2_9, _} = Packing,
+	ConfiguredPacking = ar_storage_module:get_packing(StoreID),
+	%% Sanity checks
+	true = is_entropy_packing(ConfiguredPacking) orelse is_entropy_packing(Packing),
 	%% End sanity checks
 
 	{ModuleStart, ModuleEnd} = ar_storage_module:get_range(StoreID),
@@ -226,7 +232,7 @@ init({StoreID, Packing}) ->
 
 	%% Provided Packing will only differ from the StoreID packing when this
 	%% module is configured to repack in place.
-	IsRepackInPlace = Packing /= ar_storage_module:get_packing(StoreID),
+	IsRepackInPlace = Packing /= ConfiguredPacking,
 	State = case IsRepackInPlace of
 		true ->
 			#state{};
@@ -284,7 +290,7 @@ handle_cast(prepare_entropy, State) ->
 
 handle_cast({generate_entropies, RewardAddr, BucketEndOffset, ReplyTo}, State) ->
 	Entropies = generate_entropies(RewardAddr, BucketEndOffset),
-	ReplyTo ! {entropy, BucketEndOffset, Entropies},
+	ReplyTo ! {entropy, BucketEndOffset, RewardAddr, Entropies},
 	{noreply, State};
 
 handle_cast(Cast, State) ->

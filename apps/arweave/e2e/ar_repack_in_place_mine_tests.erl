@@ -17,8 +17,10 @@ repack_in_place_mine_test_() ->
 	Timeout = ?REPACK_IN_PLACE_MINE_TEST_TIMEOUT,
 	[
 		{timeout, Timeout, {with, {unpacked, replica_2_9}, [fun test_repack_in_place_mine/1]}},
-		{timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}}
-		% {timeout, Timeout, {with, {replica_2_9, replica_2_9}, [fun test_repack_in_place_mine/1]}}
+		{timeout, Timeout, {with, {spora_2_6, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {replica_2_9, replica_2_9}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {replica_2_9, unpacked}, [fun test_repack_in_place_mine/1]}},
+		{timeout, Timeout, {with, {spora_2_6, unpacked}, [fun test_repack_in_place_mine/1]}}
 	].
 
 %% --------------------------------------------------------------------------------------------
@@ -57,7 +59,7 @@ test_repack_in_place_mine({FromPackingType, ToPackingType}) ->
 		mining_addr = undefined
 	}),
 
-	%% Due to how we launch the unpacked source node it *does* end up syncing data in 
+	%% Due to how we launch the unpacked source node it *does* end up syncing data in
 	%% the overlap. Main difference is that with the unpacked source node we launch a
 	%% spora node, and then sync data to the unpacked node. It's the syncing process that
 	%% writes data to the overlap.
