@@ -2238,6 +2238,8 @@ encode_packing(spora_2_5, _Strict) ->
 	"spora_2_5";
 encode_packing(unpacked, _Strict) ->
 	"unpacked";
+encode_packing(unpacked_padded, _Strict) ->
+	"unpacked_padded";
 encode_packing({replica_2_9, Addr}, _Strict) ->
 	"replica_2_9_" ++ binary_to_list(ar_util:encode(Addr));
 encode_packing(Packing, false) when is_atom(Packing) ->

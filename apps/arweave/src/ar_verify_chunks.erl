@@ -309,8 +309,8 @@ verify_chunk_storage(PaddedOffset, Metadata, Interval, State) ->
 					ar_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage_replica_2_9_1_unpacked, StoreID)},
 				{unpacked_padded,
 					ar_sync_record:is_recorded(AbsoluteOffset, unpacked_padded, StoreID)},
-				{ar_chunk_storage_replica_2_9_1_entropy,
-					ar_sync_record:is_recorded(AbsoluteOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID)},
+				{is_entropy_recorded, ar_entropy_storage:is_entropy_recorded(
+					AbsoluteOffset, Packing, StoreID)},
 				{is_blacklisted, ar_tx_blacklist:is_byte_blacklisted(AbsoluteOffset)},
 				{interval, Interval},
 				{padded_offset, PaddedOffset}

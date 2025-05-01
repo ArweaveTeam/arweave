@@ -287,7 +287,7 @@ assert_has_entropy(Node, StartOffset, EndOffset, StoreID) ->
 		fun() -> 
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
-				[EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID]),
+				[EndOffset, StartOffset, ar_entropy_storage:sync_record_id(), StoreID]),
 			Intersection >= RangeSize
 		end,
 		100,
@@ -299,7 +299,7 @@ assert_has_entropy(Node, StartOffset, EndOffset, StoreID) ->
 		_ ->
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
-				[EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID]),
+				[EndOffset, StartOffset, ar_entropy_storage:sync_record_id(), StoreID]),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
 					"~s failed to prepare entropy range ~p - ~p. Intersection: ~p", 
@@ -311,7 +311,7 @@ assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
 		fun() -> 
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
-				[EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID]),
+				[EndOffset, StartOffset, ar_entropy_storage:sync_record_id(), StoreID]),
 			Intersection > 0
 		end,
 		100,
@@ -321,7 +321,7 @@ assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
 		true ->
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
-				[EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID]),
+				[EndOffset, StartOffset, ar_entropy_storage:sync_record_id(), StoreID]),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
 					"~s found entropy when it should not have. Range: ~p - ~p. "
