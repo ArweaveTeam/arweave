@@ -8,6 +8,14 @@ jobs:
   build:
     runs-on: [self-hosted, macOS, ARM64]
     steps:
+      # we don't have a clean environment on MacOS (no vm, no containers)
+      # we need to clean everything up before executing the workflow
+      - name: cleanup
+        if: always()
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
+      # let checkout arweave
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
@@ -48,9 +56,9 @@ jobs:
             _build/default/plugins/samovar
             _build/default/plugins/verl
             _build/default/plugins/zipper
-          key: deps-cache-${{ hashFiles('rebar.lock') }}
+          key: macos-deps-cache-${{ hashFiles('rebar.lock') }}
           restore-keys: |
-            deps-cache-${{ hashFiles('rebar.lock') }}
+            macos-deps-cache-${{ hashFiles('rebar.lock') }}
 
       - name: Get dependencies
         if: steps.cache.outputs.cache-hit != 'true'
@@ -89,7 +97,7 @@ jobs:
             _build/default/plugins/samovar
             _build/default/plugins/verl
             _build/default/plugins/zipper
-          key: deps-cache-${{ hashFiles('rebar.lock') }}
+          key: macos-deps-cache-${{ hashFiles('rebar.lock') }}
 
       - name: Compile arweave release
         run: ./ar-rebar3 default release
@@ -108,7 +116,7 @@ jobs:
       - name: upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ github.sha }}
+          name: macos-build-${{ github.sha }}
           if-no-files-found: error
           retention-days: 1
           overwrite: true
@@ -130,7 +138,7 @@ jobs:
       - name: upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ github.sha }}
+          name: macos-build-${{ github.sha }}
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 7
@@ -138,4 +146,3 @@ jobs:
           path: |
             _build.tar.gz
             apps.tar.gz
-
