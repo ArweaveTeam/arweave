@@ -535,10 +535,24 @@ handle_info({event, tx, {new, TX, _Source}}, State) ->
 	TXID = TX#tx.id,
 	case ar_mempool:has_tx(TXID) of
 		false ->
-			ar_mempool:add_tx(TX, waiting),
+			InitialStatus =
+				case maps:get(automine, State) of
+					false ->
+						ready_for_mining;
+					true ->
+						waiting
+				end,
+			ar_mempool:add_tx(TX, InitialStatus),
 			case ar_mempool:has_tx(TXID) of
 				true ->
-					start_tx_mining_timer(TX);
+					case maps:get(automine, State) of
+						true ->
+							%% Do not include transactions into blocks until
+							%% they had time to propagate around the network.
+							start_tx_mining_timer(TX);
+						false ->
+							ok
+					end;
 				false ->
 					%% The transaction has been dropped because more valuable transactions
 					%% exceed the mempool limit.
