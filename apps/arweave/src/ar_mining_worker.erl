@@ -308,7 +308,7 @@ handle_task({compute_h0, Candidate, _ExtraArgs}, State) ->
 	case StepNumber >= LatestVDFStepNumber - VDFQueueLimit of
 		true ->
 			%% Try to reserve the cache space for both partitions, as we do not know if we have both, one, or none.
-			case try_to_reserve_cache_range_space(2, Candidate#mining_candidate.session_key, State) of
+			case try_to_reserve_cache_range_space(2, Candidate#mining_candidate.session_key, State1) of
 				{true, State2} ->
 					%% Cache space reserved, compute h0.
 					ar_mining_hash:compute_h0(self(), Candidate),
