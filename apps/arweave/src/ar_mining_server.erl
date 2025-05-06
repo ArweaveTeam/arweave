@@ -505,7 +505,7 @@ maybe_update_cache_limits(Limits, State) ->
 
 	ar:console(
 		"~nSetting the mining chunk cache size limit to ~B MiB "
-		"(~B sub-chunks per partition).~n",
+		"(~B MiB per partition).~n",
 			[OverallCacheLimitBytes div ?MiB, PartitionCacheLimitBytes div ?MiB]),
 	?LOG_INFO([{event, update_mining_cache_limits},
 		{overall_limit_mb, OverallCacheLimitBytes div ?MiB},
