@@ -509,7 +509,7 @@ maybe_update_cache_limits(Limits, State) ->
 			[OverallCacheLimitBytes div ?MiB, PartitionCacheLimitBytes div ?MiB]),
 	?LOG_INFO([{event, update_mining_cache_limits},
 		{overall_limit_mb, OverallCacheLimitBytes div ?MiB},
-		{per_partition_sub_chunks, PartitionCacheLimitBytes div ?MiB},
+		{per_partition_limit_mb, PartitionCacheLimitBytes div ?MiB},
 		{vdf_queue_limit_steps, VDFQueueLimit}]),
 		case OverallCacheLimitBytes < MinimumCacheLimitBytes of
 		true ->

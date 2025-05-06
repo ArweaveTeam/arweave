@@ -816,9 +816,8 @@ try_to_reserve_cache_range_space(Multiplier, SessionKey, #state{
 	packing_difficulty = PackingDifficulty,
 	chunk_cache = ChunkCache0
 } = State) ->
-	case ar_mining_cache:reserve_for_session(
-		SessionKey, Multiplier * ar_block:get_recall_range_size(PackingDifficulty), ChunkCache0
-	) of
+	ReserveSize = Multiplier * ar_block:get_recall_range_size(PackingDifficulty),
+	case ar_mining_cache:reserve_for_session(SessionKey, ReserveSize, ChunkCache0) of
 		{ok, ChunkCache1} ->
 			State1 = State#state{ chunk_cache = ChunkCache1 },
 			{true, State1};
@@ -826,6 +825,9 @@ try_to_reserve_cache_range_space(Multiplier, SessionKey, #state{
 			?LOG_WARNING([{event, mining_worker_failed_to_reserve_cache_space},
 				{worker, State#state.name}, {partition, State#state.partition_number},
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+				{cache_size, ar_mining_cache:cache_size(ChunkCache0)},
+				{cache_limit, ar_mining_cache:get_limit(ChunkCache0)},
+				{reserve_size, ReserveSize},
 				{reason, Reason}]),
 			false
 	end.
@@ -834,16 +836,16 @@ release_cache_range_space(Multiplier, SessionKey, #state{
 	packing_difficulty = PackingDifficulty,
 	chunk_cache = ChunkCache0
 } = State) ->
-	case ar_mining_cache:release_for_session(
-		SessionKey,
-		Multiplier * ar_block:get_recall_range_size(PackingDifficulty),
-		ChunkCache0
-	) of
+	ReleaseSize = Multiplier * ar_block:get_recall_range_size(PackingDifficulty),
+	case ar_mining_cache:release_for_session(SessionKey, ReleaseSize, ChunkCache0) of
 		{ok, ChunkCache1} -> State#state{ chunk_cache = ChunkCache1 };
 		{error, Reason} ->
 			?LOG_ERROR([{event, mining_worker_failed_to_release_cache_space},
 				{worker, State#state.name}, {partition, State#state.partition_number},
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+				{cache_size, ar_mining_cache:cache_size(ChunkCache0)},
+				{cache_limit, ar_mining_cache:get_limit(ChunkCache0)},
+				{release_size, ReleaseSize},
 				{reason, Reason}]),
 			State
 	end.
