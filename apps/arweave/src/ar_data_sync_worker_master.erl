@@ -131,6 +131,20 @@ handle_cast({sync_range, _Args}, #state{ worker_count = 0 } = State) ->
 handle_cast({sync_range, Args}, State) ->
 	{noreply, enqueue_main_task(sync_range, Args, State)};
 
+handle_cast({sync_entropy_footprint, Args}, State) ->
+	#state{ worker_count = WorkerCount } = State,
+	if WorkerCount == 0 ->
+		{noreply, State};
+	true ->
+		{FootprintID, Peer, TargetStoreID} = Args,
+		FormattedPeer = ar_util:format_peer(Peer),
+		State2 = update_queued_task_count(sync_entropy_footprint, FormattedPeer, 1, State),
+		PeerTasks = get_peer_tasks(Peer, State2),
+		PeerTasks2 = enqueue_peer_task(PeerTasks, sync_entropy_footprint, {FootprintID, Peer, TargetStoreID, 3}),
+		{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2), 
+		{noreply, set_peer_tasks(PeerTasks3, State3)}
+	end;
+
 handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
 	{Start, End, Peer, _, _} = Args,
 	DataSize = End - Start,
@@ -140,6 +154,17 @@ handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}
 	{PeerTasks2, State3} = complete_sync_range(
 		PeerTasks, Result, ElapsedNative, DataSize, State2),
 	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),	
+	{noreply, set_peer_tasks(PeerTasks3, State4)};
+
+handle_cast({task_completed, {sync_entropy_footprint, {Worker, Result, Args, ElapsedNative}}}, State) ->
+	{FootprintID, Peer, _TargetStoreID, _Retries} = Args,
+	DataSize = ?DATA_CHUNK_SIZE * 1024, % Approximate size of a footprint
+	State2 = update_scheduled_task_count(
+		Worker, sync_entropy_footprint, ar_util:format_peer(Peer), -1, State),
+	PeerTasks = get_peer_tasks(Peer, State2),
+	{PeerTasks2, State3} = complete_sync_task(
+		PeerTasks, sync_entropy_footprint, Result, ElapsedNative, DataSize, State2),
+	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),
 	{noreply, set_peer_tasks(PeerTasks3, State4)};
 
 handle_cast(rebalance_peers, State) ->
@@ -316,13 +341,13 @@ schedule_sync_range(PeerTasks, Args, State) ->
 	{PeerTasks2, State2}.
 
 %% @doc Schedule a task to be run on a worker.
-schedule_task(Task, Args, State) ->
+schedule_task(TaskType, Args, State) ->
 	{Worker, State2} = get_worker(State),
-	gen_server:cast(Worker, {Task, Args}),
+	gen_server:cast(Worker, {TaskType, Args}),
 
-	FormattedPeer = format_peer(Task, Args),
-	State3 = update_scheduled_task_count(Worker, Task, FormattedPeer, 1, State2),
-	update_queued_task_count(Task, FormattedPeer, -1, State3).
+	FormattedPeer = format_peer(TaskType, Args),
+	State3 = update_scheduled_task_count(Worker, TaskType, FormattedPeer, 1, State2),
+	update_queued_task_count(TaskType, FormattedPeer, -1, State3).
 
 %%--------------------------------------------------------------------
 %% Stage 3: record a completed task and update related values (i.e.
@@ -336,6 +361,23 @@ complete_sync_range(PeerTasks, Result, ElapsedNative, DataSize, State) ->
 		PeerTasks2#peer_tasks.peer, chunk, Result,
 		erlang:convert_time_unit(ElapsedNative, native, microsecond), DataSize,
 		PeerTasks2#peer_tasks.max_active),
+	{PeerTasks2, State}.
+
+complete_sync_task(PeerTasks, TaskType, Result, ElapsedNative, DataSize, State) ->
+	PeerTasks2 = PeerTasks#peer_tasks{
+		active_count = PeerTasks#peer_tasks.active_count - 1
+	},
+	ar_peers:rate_fetched_data(
+		PeerTasks2#peer_tasks.peer, 
+		case TaskType of
+			sync_entropy_footprint -> footprint_batch;
+			_ -> chunk
+		end,
+		Result,
+		erlang:convert_time_unit(ElapsedNative, native, microsecond), 
+		DataSize,
+		PeerTasks2#peer_tasks.max_active
+	),
 	{PeerTasks2, State}.
 
 calculate_targets([], _AllPeerPerformances) ->
@@ -469,7 +511,9 @@ cycle_workers(AverageLoad, #state{ workers = Workers, worker_loads = WorkerLoads
 format_peer(Task, Args) ->
 	case Task of
 		sync_range ->
-			ar_util:format_peer(element(3, Args))
+			ar_util:format_peer(element(3, Args));
+		sync_entropy_footprint ->
+			ar_util:format_peer(element(2, Args))
 	end.
 
 %%%===================================================================
