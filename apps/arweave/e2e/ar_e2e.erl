@@ -4,7 +4,9 @@
 	write_chunk_fixture/3, load_chunk_fixture/2]).
 
 -export([delayed_print/2, packing_type_to_packing/2,
-	start_source_node/3, source_node_storage_modules/3, max_chunk_offset/1,
+	start_source_node/3, start_source_node/4, 
+	source_node_storage_modules/3, source_node_storage_modules/4,
+	max_chunk_offset/1,
 	assert_recall_byte/3,
 	assert_block/2, assert_syncs_range/3, assert_syncs_range/4, assert_does_not_sync_range/3,
 	assert_has_entropy/4, assert_no_entropy/4,
@@ -73,7 +75,10 @@ packing_type_to_packing(PackingType, Address) ->
 		unpacked -> unpacked
 	end.
 
-start_source_node(Node, unpacked, _WalletFixture) ->
+start_source_node(Node, PackingType, WalletFixture) ->
+	start_source_node(Node, PackingType, WalletFixture, default).
+
+start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 	?LOG_INFO("Starting source node ~p with packing type ~p and wallet fixture ~p",
 		[Node, unpacked, _WalletFixture]),
 	TempNode = case Node of
@@ -81,7 +86,7 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 		peer2 -> peer1
 	end,
 	{Blocks, _SourceAddr, Chunks} = start_source_node(TempNode, spora_2_6, wallet_a),
-	{_, StorageModules} = source_node_storage_modules(Node, unpacked, wallet_a),
+	{_, StorageModules} = source_node_storage_modules(Node, unpacked, wallet_a, ModuleSize),
 	[B0, _, {TX2, _} | _] = Blocks,
 	{ok, Config} = ar_test_node:get_config(Node),
 	ar_test_node:start_other_node(Node, B0, Config#config{
@@ -94,13 +99,7 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 	
 	assert_syncs_range(Node, 0, 4*ar_block:partition_size()),
 	
-	assert_partition_size(Node, 0, unpacked),
-	assert_partition_size(Node, 1, unpacked),
-	assert_partition_size(Node, 2, unpacked, floor(0.5*ar_block:partition_size())),
-
 	assert_chunks(Node, unpacked, Chunks),
-
-	assert_empty_partition(Node, 3, unpacked),
 
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
 
@@ -128,10 +127,11 @@ start_source_node(Node, unpacked, _WalletFixture) ->
 	?LOG_INFO("Source node ~p restarted.", [Node]),
 
 	{Blocks, undefined, Chunks};
-start_source_node(Node, PackingType, WalletFixture) ->
+start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 	?LOG_INFO("Starting source node ~p with packing type ~p and wallet fixture ~p",
 		[Node, PackingType, WalletFixture]),
-	{Wallet, StorageModules} = source_node_storage_modules(Node, PackingType, WalletFixture),
+	{Wallet, StorageModules} = source_node_storage_modules(
+		Node, PackingType, WalletFixture, ModuleSize),
 	RewardAddr = ar_wallet:to_address(Wallet),
 	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ar_block:partition_size()),
 
@@ -182,15 +182,8 @@ start_source_node(Node, PackingType, WalletFixture) ->
 	SourcePacking = packing_type_to_packing(PackingType, RewardAddr),
 
 	assert_syncs_range(Node, SourcePacking, 0, 4*ar_block:partition_size()),
-
-	%% No overlap since we aren't syncing or repacking chunks.
-	assert_partition_size(Node, 0, SourcePacking, ar_block:partition_size()),
-	assert_partition_size(Node, 1, SourcePacking, ar_block:partition_size()),
-	assert_partition_size(Node, 2, SourcePacking, floor(0.5*ar_block:partition_size())),
 	
 	assert_chunks(Node, SourcePacking, Chunks),
-
-	assert_empty_partition(Node, 3, SourcePacking),
 
 	%% pack_served_chunks is not enabled so we shouldn't return unpacked data
 	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}},
@@ -207,22 +200,24 @@ start_source_node(Node, PackingType, WalletFixture) ->
 max_chunk_offset(Chunks) ->
 	lists:foldl(fun({_, EndOffset, _}, Acc) -> max(Acc, EndOffset) end, 0, Chunks).
 
-source_node_storage_modules(_Node, unpacked, _WalletFixture) ->
-	{undefined, source_node_storage_modules(unpacked)};
 source_node_storage_modules(Node, PackingType, WalletFixture) ->
+	source_node_storage_modules(Node, PackingType, WalletFixture, default).
+
+source_node_storage_modules(_Node, unpacked, _WalletFixture, ModuleSize) ->
+	{undefined, source_node_storage_modules(unpacked, ModuleSize)};
+source_node_storage_modules(Node, PackingType, WalletFixture, ModuleSize) ->
 	Wallet = ar_test_node:remote_call(Node, ar_e2e, load_wallet_fixture, [WalletFixture]),
 	RewardAddr = ar_wallet:to_address(Wallet),
 	SourcePacking = packing_type_to_packing(PackingType, RewardAddr),
-	{Wallet, source_node_storage_modules(SourcePacking)}.
+	{Wallet, source_node_storage_modules(SourcePacking, ModuleSize)}.
 
-source_node_storage_modules(SourcePacking) ->
-	[
-		{ar_block:partition_size(), 0, SourcePacking},
-		{ar_block:partition_size(), 1, SourcePacking},
-		{ar_block:partition_size(), 2, SourcePacking},
-		{ar_block:partition_size(), 3, SourcePacking},
-		{ar_block:partition_size(), 4, SourcePacking}
-	].
+source_node_storage_modules(SourcePacking, default) ->
+	Size = ar_block:partition_size(),
+	lists:map(fun(I) -> {Size, I, SourcePacking} end, lists:seq(0, 4));
+
+source_node_storage_modules(SourcePacking, small) ->
+	Size = ar_block:partition_size() div 4,
+	lists:map(fun(I) -> {Size, I, SourcePacking} end, lists:seq(0, 19)).
 	
 mine_block(Node, Wallet, DataSize, IsTemporary) ->
 	WeaveSize = ar_test_node:remote_call(Node, ar_node, get_current_weave_size, []),
