@@ -133,11 +133,10 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 
 	RangeStart = ar_block:partition_size(),
 	RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
-	RangeSize = RangeEnd - RangeStart,
 
 	%% Partition 1 and half of partition 2 are below the disk pool threshold
 	ar_e2e:assert_syncs_range(SinkNode,	SinkPacking, RangeStart, RangeEnd),
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
 
 	case SinkPackingType of
@@ -174,17 +173,12 @@ test_unpacked_and_packed_sync_pack_mine(
 
 	RangeStart1 = ar_block:partition_size(),
 	RangeEnd1 = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking1),
-	RangeSize1 = RangeEnd1 - RangeStart1,
-
-	RangeStart2 = ar_block:partition_size(),
-	RangeEnd2 = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking2),
-	RangeSize2 = RangeEnd2 - RangeStart2,
 
 	%% Data exists as both packed and unmpacked, so will exist in the global sync record
 	%% even though replica_2_9 data is filtered out.
 	ar_e2e:assert_syncs_range(SinkNode, RangeStart1, RangeEnd1),
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking1, RangeSize1),
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking2, RangeSize2),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking1),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking2),
 	%% XXX: we should be able to assert the chunks here, but since we have two
 	%% storage modules configured and are querying the replica_2_9 chunk, GET /chunk gets
 	%% confused and tries to load the unpacked chunk, which then fails within the middleware
@@ -234,7 +228,6 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 
 	RangeStart = ar_block:partition_size(),
 	RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
-	RangeSize = RangeEnd - RangeStart,
 
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
@@ -256,7 +249,7 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 	}),
 
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
@@ -297,10 +290,9 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 
 	RangeStart = ar_block:partition_size(),
 	RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
-	RangeSize = RangeEnd - RangeStart,
 
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
-	ar_e2e:assert_partition_size(SinkNode, 1, unpacked_padded, RangeSize),
+	ar_e2e:assert_partition_size(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 
 	%% 2. Run node with sync jobs so that it syncs and packs data
@@ -310,7 +302,7 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),
@@ -350,10 +342,9 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 
 	RangeStart = floor(1 * ar_block:partition_size()),
 	RangeEnd = floor(1.5 * ar_block:partition_size()) + ar_storage_module:get_overlap(SinkPacking),
-	RangeSize = RangeEnd - RangeStart,
 
 	%% Make sure the expected data was synced
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 1, 4)),
@@ -398,10 +389,9 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 
 	RangeStart = floor(1.5 * ar_block:partition_size()),
 	RangeEnd = floor(2 * ar_block:partition_size()) + ar_storage_module:get_overlap(SinkPacking),
-	RangeSize = RangeEnd - RangeStart,
 
 	%% Make sure the expected data was synced	
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 5, 8)),
