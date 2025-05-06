@@ -178,7 +178,7 @@ get_sessions(Cache0) ->
 			{error, Reason :: term()}
 	)
 ) ->
-	Result :: term().
+	Result :: {ok, Cache1 :: #ar_mining_cache{}} | {error, Reason :: term()}.
 with_cached_value(Key, SessionId, Cache0, Fun) ->
 	with_mining_cache_session(SessionId, fun(Session) ->
 		Value0 = maps:get(Key, Session#ar_mining_cache_session.mining_cache, #ar_mining_cache_value{}),

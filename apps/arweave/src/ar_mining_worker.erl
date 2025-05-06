@@ -932,7 +932,7 @@ mark_single_chunk2_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 				{ok, CachedValue#ar_mining_cache_value{chunk2_missing = true}, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)}
 		end
 	) of
-		{ok, ChunkCache1, _} ->
+		{ok, ChunkCache1} ->
 			mark_single_chunk2_missing_or_drop(Nonce + 1, NoncesLeft - 1, Candidate, State#state{ chunk_cache = ChunkCache1 });
 		{error, Reason} ->
 			%% NB: this clause may cause a memory leak, because mining worker will wait for
