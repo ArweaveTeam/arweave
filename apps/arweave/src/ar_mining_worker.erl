@@ -827,6 +827,7 @@ try_to_reserve_cache_range_space(Multiplier, SessionKey, #state{
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 				{cache_size, ar_mining_cache:cache_size(ChunkCache0)},
 				{cache_limit, ar_mining_cache:get_limit(ChunkCache0)},
+				{reserved_size, ar_mining_cache:reserved_size(ChunkCache0)},
 				{reserve_size, ReserveSize},
 				{reason, Reason}]),
 			false
@@ -845,6 +846,7 @@ release_cache_range_space(Multiplier, SessionKey, #state{
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 				{cache_size, ar_mining_cache:cache_size(ChunkCache0)},
 				{cache_limit, ar_mining_cache:get_limit(ChunkCache0)},
+				{reserved_size, ar_mining_cache:reserved_size(ChunkCache0)},
 				{release_size, ReleaseSize},
 				{reason, Reason}]),
 			State
