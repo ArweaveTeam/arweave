@@ -228,7 +228,7 @@ register() ->
 		{help, "Fork recovery depth metric"}
 	]),
 
-	prometheus_gauge:new([
+	prometheus_counter:new([
 		{name, wallet_list_size},
 		{
 			help,
