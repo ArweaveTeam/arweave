@@ -2,12 +2,14 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, get_bucket_peers/1, collect_peers/0, pick_peers/2]).
+-export([start_link/0, get_bucket_peers/1, collect_peers/0, pick_peers/2,
+		 get_entropy_footprint_peers/2]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
 -include("ar_data_discovery.hrl").
+-include("ar_sync_buckets.hrl").
 
 -record(state, {
 	peer_queue,
@@ -15,6 +17,8 @@
 	network_map,
 	expiration_map
 }).
+
+-define(MODULE_ENTROPY_FOOTPRINTS, ar_data_discovery_entropy_footprints).
 
 %% The frequency of asking peers about their data.
 -ifdef(AR_TEST).
@@ -82,6 +86,7 @@ init([]) ->
 		?DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, ?MODULE, collect_peers, []),
 	gen_server:cast(?MODULE, update_network_data_map),
 	ok = ar_events:subscribe(peer),
+	ets:new(?MODULE_ENTROPY_FOOTPRINTS, [set, public, named_table, {keypos, 1}, {read_concurrency, true}]),
 	{ok, #state{
 		peer_queue = queue:new(),
 		peers_pending = 0,
@@ -136,6 +141,38 @@ handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
 		?NETWORK_DATA_BUCKET_SIZE,
 		SyncBuckets
 	),
+
+	ets:match_delete(?MODULE_ENTROPY_FOOTPRINTS, {{ '_', Peer}, '_'}) ,
+
+	WeaveEndForFootprintCalc = ar_node:get_current_weave_size(),
+
+	PopulateFootprintsFun = fun(BucketGlobalOffset, NumBytesInBucket) ->
+		ChunkStartOffset = BucketGlobalOffset,
+		MaxChunkStartOffsetInSegment = BucketGlobalOffset + NumBytesInBucket - ?DATA_CHUNK_SIZE,
+
+		IterFun = fun(CurrentCSO, InnerFun) ->
+			if CurrentCSO =< MaxChunkStartOffsetInSegment ->
+				ChunkPaddedEndOffset = ar_block:get_chunk_padded_offset(CurrentCSO + ?DATA_CHUNK_SIZE),
+				
+				AllOffsetsInFootprint = ar_entropy_gen:entropy_offsets(ChunkPaddedEndOffset, WeaveEndForFootprintCalc),
+				if AllOffsetsInFootprint =/= [] ->
+					FootprintDefiningOffset = hd(AllOffsetsInFootprint),
+					ets:update_counter(?MODULE_ENTROPY_FOOTPRINTS, {FootprintDefiningOffset, Peer}, {2, 1, 0, 0});
+				true -> ok
+				end,
+				InnerFun(CurrentCSO + ?DATA_CHUNK_SIZE, InnerFun);
+			true -> ok
+			end
+		end,
+		IterFun(ChunkStartOffset, IterFun)
+	end,
+
+	ar_sync_buckets:foreach(
+		PopulateFootprintsFun,
+		?NETWORK_DATA_BUCKET_SIZE,
+		SyncBuckets
+	),
+
 	{noreply, State2#state{ network_map = Map2 }};
 
 handle_cast({remove_peer, Peer}, State) ->
@@ -144,17 +181,18 @@ handle_cast({remove_peer, Peer}, State) ->
 		case maps:take(Peer, Map) of
 			error ->
 				Map;
-			{SyncBuckets, Map3} ->
+			{SyncBucketsValue, Map3} ->
 				ar_sync_buckets:foreach(
 					fun(Bucket, Share) ->
 						ets:delete(?MODULE, {Bucket, Share, Peer})
 					end,
 					?NETWORK_DATA_BUCKET_SIZE,
-					SyncBuckets
+					SyncBucketsValue
 				),
 				Map3
 		end,
 	E2 = maps:remove(Peer, E),
+	ets:match_delete(?MODULE_ENTROPY_FOOTPRINTS, {{ '_', Peer}, '_'}) ,
 	{noreply, State#state{ network_map = Map2, expiration_map = E2 }};
 
 handle_cast(Cast, State) ->
@@ -234,3 +272,23 @@ refresh_expiration_timer(Peer, State) ->
 	end,
 	Timer2 = ar_util:cast_after(?PEER_EXPIRATION_TIME_MS, ?MODULE, {remove_peer, Peer}),
 	State#state{ expiration_map = maps:put(Peer, Timer2, Map) }.
+
+%% @doc Get peers who have chunks in a specific entropy footprint.
+%% FootprintDefiningOffset is the canonical starting offset of an entropy footprint.
+%% N is the desired number of peers.
+-spec get_entropy_footprint_peers(FootprintDefiningOffset :: non_neg_integer(), N :: pos_integer()) -> [ar_peer:peer()].
+get_entropy_footprint_peers(FootprintDefiningOffset, N) ->
+	Matches = ets:match_object(?MODULE_ENTROPY_FOOTPRINTS, {{{FootprintDefiningOffset, '$1'}, '$2'}, '$3'}),
+	
+	PeerCounts = lists:filtermap(
+		fun({{{FOD, PeerInMatch}, CountInMatch}, _}) when FOD == FootprintDefiningOffset -> 
+			{true, {PeerInMatch, CountInMatch}};
+		   (_) -> false
+		end, Matches),
+	
+	SortedPeerCounts = lists:sort(
+		fun({_P1, C1}, {_P2, C2}) -> C1 >= C2 end,
+		PeerCounts
+	),
+	BestPeers = [P || {P, _Count} <- SortedPeerCounts],
+	pick_peers(BestPeers, N).
