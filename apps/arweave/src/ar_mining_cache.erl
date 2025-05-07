@@ -208,7 +208,7 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 					mining_server_chunk_cache_release,
 					%% The actual amount of bytes reserved cannot go below zero, so we are
 					%% releasing all the reserved space at maximum.
-					max(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
+					min(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
 				),
 				{ok, Session#ar_mining_cache_session{
 					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
@@ -222,7 +222,7 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 					mining_server_chunk_cache_release,
 					%% The actual amount of bytes reserved cannot go below zero, so we are
 					%% releasing all the reserved space at maximum.
-					max(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
+					min(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
 				),
 				{ok, Session#ar_mining_cache_session{
 					reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + ReservationSizeAdjustment)
@@ -258,7 +258,7 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 							mining_server_chunk_cache_release,
 							%% The actual amount of bytes reserved cannot go below zero, so we are
 							%% releasing all the reserved space at maximum.
-							max(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
+							min(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
 						),
 						{ok, Session#ar_mining_cache_session{
 							mining_cache = maps:put(Key, Value1, Session#ar_mining_cache_session.mining_cache),
