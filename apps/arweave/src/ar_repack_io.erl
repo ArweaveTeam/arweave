@@ -272,9 +272,15 @@ remove_from_sync_record(Offsets, StoreID) ->
 
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	
-	case ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID) of
+	case ar_entropy_storage:delete_record(PaddedEndOffset, StoreID) of
 		ok ->
-			ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
+			case ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID) of
+				ok ->
+					ar_sync_record:delete(
+						PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
+				Error ->
+					Error
+			end;
 		Error ->
 			Error
 	end.
