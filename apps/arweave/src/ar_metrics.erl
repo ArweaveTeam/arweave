@@ -293,22 +293,22 @@ register() ->
 		{help, "The amount of chunks (measured in bytes) "
 			"fetched during mining and not processed yet."}
 	]),
-	prometheus_counter:new([
+	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_reservation},
 		{labels, [session]},
 		{help, "The amount of data reserved during mining."}
 	]),
-	prometheus_counter:new([
+	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_release},
 		{labels, [session]},
 		{help, "The amount of previously reserved data released during mining."}
 	]),
-	prometheus_counter:new([
+	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_store},
 		{labels, [session]},
 		{help, "The amount of data stored during mining."}
 	]),
-	prometheus_counter:new([
+	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_drop},
 		{labels, [session]},
 		{help, "The amount of data dropped during mining."}
