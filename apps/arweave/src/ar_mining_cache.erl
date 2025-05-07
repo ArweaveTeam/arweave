@@ -114,7 +114,7 @@ reserve_for_session(SessionId, Size, Cache0) ->
 		true -> {error, cache_limit_exceeded};
 		false ->
 			with_mining_cache_session(SessionId, fun(#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize} = Session) ->
-				prometheus_gauge:inc(mining_server_chunk_cache_reservation, [element(1, SessionId)], Size),
+				prometheus_gauge:inc(mining_server_chunk_cache_reservation, Size),
 				{ok, Session#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize + Size}}
 			end, Cache0)
 	end.
@@ -125,7 +125,7 @@ reserve_for_session(SessionId, Size, Cache0) ->
 	{ok, Cache1 :: #ar_mining_cache{}} | {error, Reason :: term()}.
 release_for_session(SessionId, Size, Cache0) ->
 	with_mining_cache_session(SessionId, fun(#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize} = Session) ->
-		prometheus_gauge:inc(mining_server_chunk_cache_release, [element(1, SessionId)], min(Size, ReservedSize)),
+		prometheus_gauge:inc(mining_server_chunk_cache_release, min(Size, ReservedSize)),
 		{ok, Session#ar_mining_cache_session{reserved_mining_cache_bytes = max(0, ReservedSize - Size)}}
 	end, Cache0).
 
@@ -137,7 +137,7 @@ drop_session(SessionId, Cache0) ->
 		reserved_mining_cache_bytes = ReservedSize,
 		mining_cache_size_bytes = MiningCacheSize
 	} = maps:get(SessionId, Cache0#ar_mining_cache.mining_cache_sessions),
-	prometheus_gauge:inc(mining_server_chunk_cache_drop, [element(1, SessionId)], ReservedSize + MiningCacheSize),
+	prometheus_gauge:inc(mining_server_chunk_cache_drop, ReservedSize + MiningCacheSize),
 	Cache0#ar_mining_cache{
 		mining_cache_sessions = maps:remove(SessionId, Cache0#ar_mining_cache.mining_cache_sessions),
 		mining_cache_sessions_queue = queue:filter(
@@ -194,7 +194,7 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 			{ok, drop} ->
 				%% Dropping the cached value size of bytes.
 				prometheus_gauge:inc(
-					mining_server_chunk_cache_drop, [element(1, SessionId)], cached_size(Value0)),
+					mining_server_chunk_cache_drop, cached_size(Value0)),
 				{ok, Session#ar_mining_cache_session{
 					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
 					mining_cache_size_bytes = max(0, Session#ar_mining_cache_session.mining_cache_size_bytes - cached_size(Value0))
@@ -202,11 +202,10 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 			{ok, drop, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
 				%% Dropping the cached value size of bytes.
 				prometheus_gauge:inc(
-					mining_server_chunk_cache_drop, [element(1, SessionId)], cached_size(Value0)),
+					mining_server_chunk_cache_drop, cached_size(Value0)),
 				%% Releasing the reserved space in requested amount of bytes.
 				prometheus_gauge:inc(
 					mining_server_chunk_cache_release,
-					[element(1, SessionId)],
 					%% The actual amount of bytes reserved cannot go below zero, so we are
 					%% releasing all the reserved space at maximum.
 					max(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
@@ -221,7 +220,6 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 				%% Releasing the reserved space in requested amount of bytes.
 				prometheus_gauge:inc(
 					mining_server_chunk_cache_release,
-					[element(1, SessionId)],
 					%% The actual amount of bytes reserved cannot go below zero, so we are
 					%% releasing all the reserved space at maximum.
 					max(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
@@ -238,11 +236,10 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 					_ ->
 						%% Storing the cached value size of bytes (counting the diff between the old and new value).
 						prometheus_gauge:inc(
-							mining_server_chunk_cache_store, [element(1, SessionId)], SizeDiff),
+							mining_server_chunk_cache_store, SizeDiff),
 						%% Releasing the reserved space in the same amount of bytes.
 						prometheus_gauge:inc(
 							mining_server_chunk_cache_release,
-							[element(1, SessionId)],
 							%% The actual amount of bytes reserved cannot go below zero, so we are
 							%% releasing all the reserved space at maximum.
 							max(Session#ar_mining_cache_session.reserved_mining_cache_bytes, SizeDiff)
@@ -262,11 +259,10 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 					_ ->
 						%% Storing the cached value size of bytes (counting the diff between the old and new value).
 						prometheus_gauge:inc(
-							mining_server_chunk_cache_store, [element(1, SessionId)], SizeDiff),
+							mining_server_chunk_cache_store, SizeDiff),
 						%% Releasing the reserved space in the same amount of bytes, plus the reservation size adjustment.
 						prometheus_gauge:inc(
 							mining_server_chunk_cache_release,
-							[element(1, SessionId)],
 							%% The actual amount of bytes reserved cannot go below zero, so we are
 							%% releasing all the reserved space at maximum.
 							max(Session#ar_mining_cache_session.reserved_mining_cache_bytes, SizeDiff -ReservationSizeAdjustment)
