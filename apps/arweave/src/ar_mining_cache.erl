@@ -366,30 +366,59 @@ try_detect_mining_session_values_anomalies([], #session_anomalies{
 try_detect_mining_session_values_anomalies([{Key, Value} | Rest], Anomalies) ->
 	try_detect_mining_session_values_anomalies(Rest, try_detect_mining_session_value_anomalies(Key, Value, Anomalies)).
 
-try_detect_mining_session_value_anomalies(Key, #ar_mining_cache_value{
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk1 = undefined,
+	chunk2 = undefined,
+	chunk1_missing = false,
+	chunk2_missing = false
+}, Anomalies0) ->
+	Anomalies0#session_anomalies{
+		both_chunks_missing = Anomalies0#session_anomalies.both_chunks_missing + 1
+	};
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
 	chunk1 = Chunk1,
 	chunk2 = Chunk2
-} = Value, Anomalies) ->
-	case {Chunk1, Chunk2} of
-		{undefined, undefined} -> Anomalies#session_anomalies{
-			both_chunks_missing = Anomalies#session_anomalies.both_chunks_missing + 1
-		};
-		{undefined, _} when is_binary(Chunk2) -> Anomalies#session_anomalies{
-			chunk1_missing = Anomalies#session_anomalies.chunk1_missing + 1,
-			stored_data_size = Anomalies#session_anomalies.stored_data_size + byte_size(Chunk2)
-		};
-		{_, undefined} when is_binary(Chunk1) -> Anomalies#session_anomalies{
-			chunk2_missing = Anomalies#session_anomalies.chunk2_missing + 1,
-			stored_data_size = Anomalies#session_anomalies.stored_data_size + byte_size(Chunk1)
-		};
-		{_, _} when is_binary(Chunk1), is_binary(Chunk2) -> Anomalies#session_anomalies{
-			both_chunks_present = Anomalies#session_anomalies.both_chunks_present + 1,
-			stored_data_size = Anomalies#session_anomalies.stored_data_size + byte_size(Chunk1) + byte_size(Chunk2)
-		};
-		{_, _} ->
-			?LOG_WARNING([{event, unexpected_chunk_value_in_mining_session_anomalies}, {key, Key}, {value, Value}]),
-			Anomalies
-	end.
+}, Anomalies0) when undefined =/= Chunk1 andalso undefined =/= Chunk2 ->
+	Anomalies0#session_anomalies{
+		both_chunks_present = Anomalies0#session_anomalies.both_chunks_present + 1,
+		stored_data_size = Anomalies0#session_anomalies.stored_data_size + byte_size(Chunk1) + byte_size(Chunk2)
+	};
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk1 = undefined,
+	chunk1_missing = false
+}, Anomalies0) ->
+	Anomalies0#session_anomalies{
+		chunk1_missing = Anomalies0#session_anomalies.chunk1_missing + 1
+	};
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk1 = Chunk1,
+	chunk1_missing = true
+}, Anomalies0) when undefined =/= Chunk1 ->
+	Anomalies0#session_anomalies{
+		stored_data_size = Anomalies0#session_anomalies.stored_data_size + byte_size(Chunk1)
+	};
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk2 = undefined,
+	chunk2_missing = false
+}, Anomalies0) ->
+	Anomalies0#session_anomalies{
+		chunk2_missing = Anomalies0#session_anomalies.chunk2_missing + 1
+	};
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk2 = Chunk2,
+	chunk2_missing = true
+}, Anomalies0) when undefined =/= Chunk2 ->
+	Anomalies0#session_anomalies{
+		stored_data_size = Anomalies0#session_anomalies.stored_data_size + byte_size(Chunk2)
+	};
+
+try_detect_mining_session_value_anomalies(_Key, _Value, Anomalies0) ->
+	Anomalies0.
 
 %%%===================================================================
 %%% Tests.
