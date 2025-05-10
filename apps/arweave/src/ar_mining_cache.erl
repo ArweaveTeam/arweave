@@ -4,7 +4,7 @@
 
 -export([
 	new/0, new/1, set_limit/2, get_limit/1,
-	cache_size/1, available_size/1, reserved_size/1, reserved_size/2,
+	cache_size/1, actual_cache_size/1, available_size/1, reserved_size/1, reserved_size/2,
 	add_session/2, reserve_for_session/3, release_for_session/3, drop_session/2,
 	session_exists/2, get_sessions/1, with_cached_value/4
 ]).
@@ -45,6 +45,21 @@ cache_size(Cache) ->
 	maps:fold(
 		fun(_, #ar_mining_cache_session{mining_cache_size_bytes = Size, reserved_mining_cache_bytes = ReservedSize}, Acc) ->
 			Acc + Size + ReservedSize
+		end,
+		0,
+		Cache#ar_mining_cache.mining_cache_sessions
+	).
+
+%% @doc Returns the size of the cached data in bytes.
+%% Note, that cache size includes both the cached data and the reserved space for sessions.
+-spec actual_cache_size(Cache :: #ar_mining_cache{}) ->
+	Size :: non_neg_integer().
+actual_cache_size(Cache) ->
+	maps:fold(
+		fun(_, #ar_mining_cache_session{mining_cache = MiningCache}, Acc) ->
+			Acc + maps:fold(fun(_, CacheValue, Acc0) ->
+				Acc0 + cached_value_size(CacheValue)
+			end, 0, MiningCache)
 		end,
 		0,
 		Cache#ar_mining_cache.mining_cache_sessions
@@ -114,6 +129,7 @@ reserve_for_session(SessionId, Size, Cache0) ->
 		true -> {error, cache_limit_exceeded};
 		false ->
 			with_mining_cache_session(SessionId, fun(#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize} = Session) ->
+				prometheus_gauge:inc(mining_server_chunk_cache_reserve, Size),
 				{ok, Session#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize + Size}}
 			end, Cache0)
 	end.
@@ -124,6 +140,7 @@ reserve_for_session(SessionId, Size, Cache0) ->
 	{ok, Cache1 :: #ar_mining_cache{}} | {error, Reason :: term()}.
 release_for_session(SessionId, Size, Cache0) ->
 	with_mining_cache_session(SessionId, fun(#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize} = Session) ->
+		prometheus_gauge:inc(mining_server_chunk_cache_release, min(Size, ReservedSize)),
 		{ok, Session#ar_mining_cache_session{reserved_mining_cache_bytes = max(0, ReservedSize - Size)}}
 	end, Cache0).
 
@@ -131,6 +148,12 @@ release_for_session(SessionId, Size, Cache0) ->
 -spec drop_session(SessionId :: term(), Cache0 :: #ar_mining_cache{}) ->
 	Cache1 :: #ar_mining_cache{}.
 drop_session(SessionId, Cache0) ->
+	Session = #ar_mining_cache_session{
+		reserved_mining_cache_bytes = ReservedSize,
+		mining_cache_size_bytes = MiningCacheSize
+	} = maps:get(SessionId, Cache0#ar_mining_cache.mining_cache_sessions),
+	prometheus_gauge:inc(mining_server_chunk_cache_drop, ReservedSize + MiningCacheSize),
+	try_detect_mining_session_anomalies(SessionId, Session),
 	Cache0#ar_mining_cache{
 		mining_cache_sessions = maps:remove(SessionId, Cache0#ar_mining_cache.mining_cache_sessions),
 		mining_cache_sessions_queue = queue:filter(
@@ -160,9 +183,11 @@ get_sessions(Cache0) ->
 %%
 %% The `Fun` must return one of the following:
 %% - `{ok, drop}`: drops the cached value
-%% - `{ok, {drop_and_release, Size}}`: drops the cached value and
+%% - `{ok, {drop, Size}}`: drops the cached value and
 %%   additionally releases the reserved space (`Size` bytes)
 %% - `{ok, Value1}`: replaces the cached value
+%% - `{ok, Value1, Size}`: replaces the cached value and
+%%   reserves the reserved space (`Size` bytes)
 %% - `{error, Reason}`: returns an error
 %%
 %% If the returned value equals to the argument passed into the `Fun`, the cache
@@ -174,7 +199,9 @@ get_sessions(Cache0) ->
 	Fun :: fun(
 		(Value :: #ar_mining_cache_value{}) ->
 			{ok, drop} |
+			{ok, drop, Size :: non_neg_integer()} |
 			{ok, Value1 :: #ar_mining_cache_value{}} |
+			{ok, Value1 :: #ar_mining_cache_value{}, Size :: non_neg_integer()} |
 			{error, Reason :: term()}
 	)
 ) ->
@@ -185,28 +212,51 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 		case Fun(Value0) of
 			{error, Reason} -> {error, Reason};
 			{ok, drop} ->
+				%% Dropping the cached value size of bytes.
+				prometheus_gauge:inc(
+					mining_server_chunk_cache_drop, cached_value_size(Value0)),
 				{ok, Session#ar_mining_cache_session{
 					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
-					mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes - cached_size(Value0)
+					mining_cache_size_bytes = max(0, Session#ar_mining_cache_session.mining_cache_size_bytes - cached_value_size(Value0))
 				}};
 			{ok, drop, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
+				%% Dropping the cached value size of bytes.
+				prometheus_gauge:inc(
+					mining_server_chunk_cache_drop, cached_value_size(Value0)),
+				%% Releasing the reserved space in requested amount of bytes.
+				prometheus_gauge:inc(
+					mining_server_chunk_cache_release,
+					%% The actual amount of bytes reserved cannot go below zero, so we are
+					%% releasing all the reserved space at maximum.
+					min(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
+				),
 				{ok, Session#ar_mining_cache_session{
 					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
 					reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + ReservationSizeAdjustment),
-					mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes - cached_size(Value0)
+					mining_cache_size_bytes = max(0, Session#ar_mining_cache_session.mining_cache_size_bytes - cached_value_size(Value0))
 				}};
 			{ok, Value0} -> {ok, Session};
 			{ok, Value0, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
+				%% Releasing the reserved space in requested amount of bytes.
+				prometheus_gauge:inc(
+					mining_server_chunk_cache_release,
+					%% The actual amount of bytes reserved cannot go below zero, so we are
+					%% releasing all the reserved space at maximum.
+					min(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
+				),
 				{ok, Session#ar_mining_cache_session{
 					reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + ReservationSizeAdjustment)
 				}};
 			{ok, Value1} ->
-				SizeDiff = cached_size(Value1) - cached_size(Value0),
+				SizeDiff = cached_value_size(Value1) - cached_value_size(Value0),
 				SessionAvailableSize = available_size(Cache0) + Session#ar_mining_cache_session.reserved_mining_cache_bytes,
 				CacheLimit = get_limit(Cache0),
 				case SizeDiff > SessionAvailableSize of
 					true when CacheLimit =/= 0 -> {error, cache_limit_exceeded};
 					_ ->
+						%% Storing the cached value size of bytes (counting the diff between the old and new value).
+						prometheus_gauge:inc(
+							mining_server_chunk_cache_store, SizeDiff),
 						{ok, Session#ar_mining_cache_session{
 							mining_cache = maps:put(Key, Value1, Session#ar_mining_cache_session.mining_cache),
 							reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes - SizeDiff),
@@ -214,21 +264,31 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 						}}
 				end;
 			{ok, Value1, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
-				SizeDiff = cached_size(Value1) - cached_size(Value0) + ReservationSizeAdjustment,
+				SizeDiff = cached_value_size(Value1) - cached_value_size(Value0),
 				SessionAvailableSize = available_size(Cache0) + Session#ar_mining_cache_session.reserved_mining_cache_bytes,
 				CacheLimit = get_limit(Cache0),
 				case SizeDiff > SessionAvailableSize of
 					true when CacheLimit =/= 0 -> {error, cache_limit_exceeded};
 					_ ->
+						%% Storing the cached value size of bytes (counting the diff between the old and new value).
+						prometheus_gauge:inc(
+							mining_server_chunk_cache_store, SizeDiff),
+						%% Releasing the reserved space in the same amount of bytes, plus the reservation size adjustment.
+						prometheus_gauge:inc(
+							mining_server_chunk_cache_release,
+							%% The actual amount of bytes reserved cannot go below zero, so we are
+							%% releasing all the reserved space at maximum.
+							min(Session#ar_mining_cache_session.reserved_mining_cache_bytes, -ReservationSizeAdjustment)
+						),
 						{ok, Session#ar_mining_cache_session{
 							mining_cache = maps:put(Key, Value1, Session#ar_mining_cache_session.mining_cache),
-							reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes - SizeDiff),
+							reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes - SizeDiff + ReservationSizeAdjustment),
 							mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes + SizeDiff
 						}}
 				end;
 			Other ->
 				?LOG_WARNING([{event, unexpected_return_value_from_with_cached_value}, {value, Other}]),
-				{ok, Session}
+				{error, unexpected_return_value_from_with_cached_value}
 		end
 	end, Cache0).
 
@@ -237,7 +297,7 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 %%%===================================================================
 
 %% Returns the size of the cached data in bytes.
-cached_size(#ar_mining_cache_value{chunk1 = Chunk1, chunk2 = Chunk2}) ->
+cached_value_size(#ar_mining_cache_value{chunk1 = Chunk1, chunk2 = Chunk2}) ->
   MaybeBinarySize = fun
 		(undefined) -> 0;
 		(Binary) -> byte_size(Binary)
@@ -266,6 +326,99 @@ with_mining_cache_session(SessionId, Fun, Cache0) ->
 		false ->
 			{error, session_not_found}
 	end.
+
+-record(session_anomalies, {
+	session_id :: term(),
+	unclaimed_reserved_space = 0 :: non_neg_integer(),
+	stored_data_size = 0 :: non_neg_integer(),
+	both_chunks_present = 0 :: non_neg_integer(),
+	both_chunks_missing = 0 :: non_neg_integer(),
+	chunk1_missing = 0 :: non_neg_integer(),
+	chunk2_missing = 0 :: non_neg_integer()
+}).
+
+try_detect_mining_session_anomalies(SessionId, Session) ->
+	Anomalies = #session_anomalies{
+		session_id = SessionId,
+		unclaimed_reserved_space = Session#ar_mining_cache_session.reserved_mining_cache_bytes
+	},
+	try_detect_mining_session_values_anomalies(maps:to_list(Session#ar_mining_cache_session.mining_cache), Anomalies).
+
+try_detect_mining_session_values_anomalies([], #session_anomalies{
+	session_id = SessionId,
+	unclaimed_reserved_space = UnclaimedReservedSpace,
+	stored_data_size = StoredDataSize,
+	both_chunks_present = BothChunksPresent,
+	both_chunks_missing = BothChunksMissing,
+	chunk1_missing = Chunk1Missing,
+	chunk2_missing = Chunk2Missing
+}) ->
+	?LOG_WARNING([
+		{event, mining_session_anomalies},
+		{session_id, SessionId},
+		{unclaimed_reserved_space, UnclaimedReservedSpace},
+		{stored_data_size, StoredDataSize},
+		{both_chunks_present, BothChunksPresent},
+		{both_chunks_missing, BothChunksMissing},
+		{chunk1_missing, Chunk1Missing},
+		{chunk2_missing, Chunk2Missing}
+	]);
+try_detect_mining_session_values_anomalies([{Key, Value} | Rest], Anomalies) ->
+	try_detect_mining_session_values_anomalies(Rest, try_detect_mining_session_value_anomalies(Key, Value, Anomalies)).
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk1 = undefined,
+	chunk2 = undefined,
+	chunk1_missing = false,
+	chunk2_missing = false
+}, Anomalies0) ->
+	Anomalies0#session_anomalies{
+		both_chunks_missing = Anomalies0#session_anomalies.both_chunks_missing + 1
+	};
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk1 = Chunk1,
+	chunk2 = Chunk2
+}, Anomalies0) when undefined =/= Chunk1 andalso undefined =/= Chunk2 ->
+	Anomalies0#session_anomalies{
+		both_chunks_present = Anomalies0#session_anomalies.both_chunks_present + 1,
+		stored_data_size = Anomalies0#session_anomalies.stored_data_size + byte_size(Chunk1) + byte_size(Chunk2)
+	};
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk1 = undefined,
+	chunk1_missing = false
+}, Anomalies0) ->
+	Anomalies0#session_anomalies{
+		chunk1_missing = Anomalies0#session_anomalies.chunk1_missing + 1
+	};
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk1 = Chunk1,
+	chunk1_missing = true
+}, Anomalies0) when undefined =/= Chunk1 ->
+	Anomalies0#session_anomalies{
+		stored_data_size = Anomalies0#session_anomalies.stored_data_size + byte_size(Chunk1)
+	};
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk2 = undefined,
+	chunk2_missing = false
+}, Anomalies0) ->
+	Anomalies0#session_anomalies{
+		chunk2_missing = Anomalies0#session_anomalies.chunk2_missing + 1
+	};
+
+try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
+	chunk2 = Chunk2,
+	chunk2_missing = true
+}, Anomalies0) when undefined =/= Chunk2 ->
+	Anomalies0#session_anomalies{
+		stored_data_size = Anomalies0#session_anomalies.stored_data_size + byte_size(Chunk2)
+	};
+
+try_detect_mining_session_value_anomalies(_Key, _Value, Anomalies0) ->
+	Anomalies0.
 
 %%%===================================================================
 %%% Tests.
@@ -315,6 +468,7 @@ reserve_test() ->
 		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
 	end),
 	?assertEqual(ReservedSize, cache_size(Cache3)),
+	?assertEqual(byte_size(Data), actual_cache_size(Cache3)),
 	ExpectedReservedSize = ReservedSize - byte_size(Data),
 	?assertMatch({ok, ExpectedReservedSize}, reserved_size(SessionId0, Cache3)),
 	%% Reserve more space
@@ -322,6 +476,34 @@ reserve_test() ->
 	%% Drop session
 	Cache4 = drop_session(SessionId0, Cache3),
 	?assertEqual(0, cache_size(Cache4)).
+
+release_test() ->
+	Cache0 = new(1024),
+	SessionId0 = session0,
+	ChunkId = chunk0,
+	Data = <<"chunk_data">>,
+	ReservedSize = 100,
+	%% Add session
+	Cache1 = add_session(SessionId0, Cache0),
+	%% Reserve space
+	{ok, Cache2} = reserve_for_session(SessionId0, ReservedSize, Cache1),
+	?assertEqual(ReservedSize, cache_size(Cache2)),
+	?assertMatch({ok, ReservedSize}, reserved_size(SessionId0, Cache2)),
+	%% Add chunk1
+	{ok, Cache3} = with_cached_value(ChunkId, SessionId0, Cache2, fun(Value) ->
+		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
+	end),
+	ExpectedReservedSize = ReservedSize - byte_size(Data),
+	?assertMatch({ok, ExpectedReservedSize}, reserved_size(SessionId0, Cache3)),
+	?assertEqual(byte_size(Data), actual_cache_size(Cache3)),
+	%% Release space
+	{ok, Cache4} = release_for_session(SessionId0, 10, Cache3),
+	ExpectedReleasedReserveSize = ExpectedReservedSize - 10,
+	?assertMatch({ok, ExpectedReleasedReserveSize}, reserved_size(SessionId0, Cache4)),
+	?assertEqual(byte_size(Data), actual_cache_size(Cache4)),
+	%% Drop session
+	Cache5 = drop_session(SessionId0, Cache4),
+	?assertEqual(0, cache_size(Cache5)).
 
 with_cached_value_add_chunk_test() ->
 	Cache0 = new(1024),
@@ -375,7 +557,8 @@ with_cached_value_drop_test() ->
 	{ok, Cache3} = with_cached_value(ChunkId, SessionId0, Cache2, fun(_Value) ->
 		{ok, drop}
 	end),
-	?assertEqual(0, cache_size(Cache3)).
+	?assertEqual(0, cache_size(Cache3)),
+	?assertEqual(0, actual_cache_size(Cache3)).
 
 set_limit_test() ->
 	Cache0 = new(),
