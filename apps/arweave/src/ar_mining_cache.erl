@@ -148,11 +148,12 @@ release_for_session(SessionId, Size, Cache0) ->
 -spec drop_session(SessionId :: term(), Cache0 :: #ar_mining_cache{}) ->
 	Cache1 :: #ar_mining_cache{}.
 drop_session(SessionId, Cache0) ->
-	#ar_mining_cache_session{
+	Session = #ar_mining_cache_session{
 		reserved_mining_cache_bytes = ReservedSize,
 		mining_cache_size_bytes = MiningCacheSize
 	} = maps:get(SessionId, Cache0#ar_mining_cache.mining_cache_sessions),
 	prometheus_gauge:inc(mining_server_chunk_cache_drop, ReservedSize + MiningCacheSize),
+	try_detect_mining_session_anomalies(SessionId, Session),
 	Cache0#ar_mining_cache{
 		mining_cache_sessions = maps:remove(SessionId, Cache0#ar_mining_cache.mining_cache_sessions),
 		mining_cache_sessions_queue = queue:filter(
@@ -182,9 +183,11 @@ get_sessions(Cache0) ->
 %%
 %% The `Fun` must return one of the following:
 %% - `{ok, drop}`: drops the cached value
-%% - `{ok, {drop_and_release, Size}}`: drops the cached value and
+%% - `{ok, {drop, Size}}`: drops the cached value and
 %%   additionally releases the reserved space (`Size` bytes)
 %% - `{ok, Value1}`: replaces the cached value
+%% - `{ok, Value1, Size}`: replaces the cached value and
+%%   reserves the reserved space (`Size` bytes)
 %% - `{error, Reason}`: returns an error
 %%
 %% If the returned value equals to the argument passed into the `Fun`, the cache
@@ -196,7 +199,9 @@ get_sessions(Cache0) ->
 	Fun :: fun(
 		(Value :: #ar_mining_cache_value{}) ->
 			{ok, drop} |
+			{ok, drop, Size :: non_neg_integer()} |
 			{ok, Value1 :: #ar_mining_cache_value{}} |
+			{ok, Value1 :: #ar_mining_cache_value{}, Size :: non_neg_integer()} |
 			{error, Reason :: term()}
 	)
 ) ->
@@ -320,6 +325,70 @@ with_mining_cache_session(SessionId, Fun, Cache0) ->
 			end;
 		false ->
 			{error, session_not_found}
+	end.
+
+-record(session_anomalies, {
+	session_id :: term(),
+	unclaimed_reserved_space = 0 :: non_neg_integer(),
+	stored_data_size = 0 :: non_neg_integer(),
+	both_chunks_present = 0 :: non_neg_integer(),
+	both_chunks_missing = 0 :: non_neg_integer(),
+	chunk1_missing = 0 :: non_neg_integer(),
+	chunk2_missing = 0 :: non_neg_integer()
+}).
+
+try_detect_mining_session_anomalies(SessionId, Session) ->
+	Anomalies = #session_anomalies{
+		session_id = SessionId,
+		unclaimed_reserved_space = Session#ar_mining_cache_session.reserved_mining_cache_bytes
+	},
+	try_detect_mining_session_values_anomalies(maps:to_list(Session#ar_mining_cache_session.mining_cache), Anomalies).
+
+try_detect_mining_session_values_anomalies([], #session_anomalies{
+	session_id = SessionId,
+	unclaimed_reserved_space = UnclaimedReservedSpace,
+	stored_data_size = StoredDataSize,
+	both_chunks_present = BothChunksPresent,
+	both_chunks_missing = BothChunksMissing,
+	chunk1_missing = Chunk1Missing,
+	chunk2_missing = Chunk2Missing
+}) ->
+	?LOG_WARNING([
+		{event, mining_session_anomalies},
+		{session_id, SessionId},
+		{unclaimed_reserved_space, UnclaimedReservedSpace},
+		{stored_data_size, StoredDataSize},
+		{both_chunks_present, BothChunksPresent},
+		{both_chunks_missing, BothChunksMissing},
+		{chunk1_missing, Chunk1Missing},
+		{chunk2_missing, Chunk2Missing}
+	]);
+try_detect_mining_session_values_anomalies([{Key, Value} | Rest], Anomalies) ->
+	try_detect_mining_session_values_anomalies(Rest, try_detect_mining_session_value_anomalies(Key, Value, Anomalies)).
+
+try_detect_mining_session_value_anomalies(Key, #ar_mining_cache_value{
+	chunk1 = Chunk1,
+	chunk2 = Chunk2
+} = Value, Anomalies) ->
+	case {Chunk1, Chunk2} of
+		{undefined, undefined} -> Anomalies#session_anomalies{
+			both_chunks_missing = Anomalies#session_anomalies.both_chunks_missing + 1
+		};
+		{undefined, _} when is_binary(Chunk2) -> Anomalies#session_anomalies{
+			chunk1_missing = Anomalies#session_anomalies.chunk1_missing + 1,
+			stored_data_size = Anomalies#session_anomalies.stored_data_size + byte_size(Chunk2)
+		};
+		{_, undefined} when is_binary(Chunk1) -> Anomalies#session_anomalies{
+			chunk2_missing = Anomalies#session_anomalies.chunk2_missing + 1,
+			stored_data_size = Anomalies#session_anomalies.stored_data_size + byte_size(Chunk1)
+		};
+		{_, _} when is_binary(Chunk1), is_binary(Chunk2) -> Anomalies#session_anomalies{
+			both_chunks_present = Anomalies#session_anomalies.both_chunks_present + 1,
+			stored_data_size = Anomalies#session_anomalies.stored_data_size + byte_size(Chunk1) + byte_size(Chunk2)
+		};
+		{_, _} ->
+			?LOG_WARNING([{event, unexpected_chunk_value_in_mining_session_anomalies}, {key, Key}, {value, Value}]),
+			Anomalies
 	end.
 
 %%%===================================================================
