@@ -29,7 +29,7 @@
 
 -define(TASK_CHECK_INTERVAL_MS, 200).
 -define(STATUS_CHECK_INTERVAL_MS, 5000).
-
+-define(REPORT_CHUNK_CACHE_METRICS_INTERVAL_MS, 30000).
 -define(CACHE_KEY(CacheRef, Nonce), {CacheRef, Nonce}).
 
 %%%===================================================================
@@ -47,6 +47,7 @@
 -define(MSG_GARBAGE_COLLECT(StartTime, GCResult), {garbage_collect, StartTime, GCResult}).
 -define(MSG_GARBAGE_COLLECT, {garbage_collect}).
 -define(MSG_FETCHED_LAST_MOMENT_PROOF(Any), {fetched_last_moment_proof, Any}).
+-define(MSG_REPORT_CHUNK_CACHE_METRICS, {report_chunk_cache_metrics}).
 
 %%%===================================================================
 %%% Public interface.
@@ -146,6 +147,7 @@ init({Partition, PackingDifficulty}) ->
 	},
 	gen_server:cast(self(), ?MSG_HANDLE_TASK),
 	gen_server:cast(self(), ?MSG_CHECK_WORKER_STATUS),
+	gen_server:cast(self(), ?MSG_REPORT_CHUNK_CACHE_METRICS),
 	{ok, report_chunk_cache_metrics(State0)}.
 
 handle_call(Request, _From, State) ->
@@ -157,26 +159,26 @@ handle_cast(?MSG_SET_CACHE_LIMITS(CacheLimitBytes, VDFQueueLimit), State) ->
 		chunk_cache = ar_mining_cache:set_limit(CacheLimitBytes, State#state.chunk_cache),
 		vdf_queue_limit = VDFQueueLimit
 	},
-	{noreply, report_chunk_cache_metrics(State1)};
+	{noreply, State1};
 
 handle_cast(?MSG_SET_DIFFICULTY(DiffPair), State) ->
 	State1 = State#state{ diff_pair = DiffPair },
-	{noreply, report_chunk_cache_metrics(State1)};
+	{noreply, State1};
 
 handle_cast(?MSG_RESET_MINING_SESSION(DiffPair), State) ->
 	State1 = update_sessions([], State),
 	State2 = State1#state{ diff_pair = DiffPair },
-	{noreply, report_chunk_cache_metrics(State2)};
+	{noreply, State2};
 
 handle_cast(?MSG_SET_SESSIONS(ActiveSessions), State) ->
 	State1 = update_sessions(ActiveSessions, State),
-	{noreply, report_chunk_cache_metrics(State1)};
+	{noreply, State1};
 
 handle_cast(?MSG_CHUNKS_READ(WhichChunk, Candidate, RangeStart, ChunkOffsets), State) ->
 	case is_session_valid(State, Candidate) of
 		true ->
 			State1 = process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State),
-			{noreply, report_chunk_cache_metrics(State1)};
+			{noreply, State1};
 		false ->
 			?LOG_DEBUG([{event, mining_debug_add_stale_chunks},
 				{worker, State#state.name},
@@ -193,7 +195,7 @@ handle_cast(?MSG_ADD_TASK({TaskType, Candidate, _ExtraArgs} = Task), State) ->
 	case is_session_valid(State, Candidate) of
 		true ->
 			State1 = add_task(Task, State),
-			{noreply, report_chunk_cache_metrics(State1)};
+			{noreply, State1};
 		false ->
 			?LOG_DEBUG([{event, mining_debug_add_stale_task},
 				{worker, State#state.name},
@@ -220,7 +222,7 @@ handle_cast(?MSG_HANDLE_TASK, #state{ task_queue = Q } = State) ->
 			case is_session_valid(State, Candidate) of
 				true ->
 					State1 = handle_task(Task, State#state{ task_queue = Q2 }),
-					{noreply, report_chunk_cache_metrics(State1)};
+					{noreply, State1};
 				false ->
 					?LOG_DEBUG([{event, mining_debug_handle_stale_task},
 						{worker, State#state.name},
@@ -244,6 +246,10 @@ handle_cast(?MSG_CHECK_WORKER_STATUS, State) ->
 handle_cast(?MSG_GARBAGE_COLLECT, State) ->
 	erlang:garbage_collect(self(), [{async, erlang:monotonic_time()}]),
 	{noreply, State};
+
+handle_cast(?MSG_REPORT_CHUNK_CACHE_METRICS, State) ->
+	ar_util:cast_after(?REPORT_CHUNK_CACHE_METRICS_INTERVAL_MS, self(), ?MSG_REPORT_CHUNK_CACHE_METRICS),
+	{noreply, report_chunk_cache_metrics(State)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -343,6 +349,8 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 			%% Read the recall ranges; the result of the read will be reported by the `chunk1` and `chunk2` tasks.
 			ar_mining_io:read_recall_range(chunk1, self(), Candidate2, RecallRange1Start),
 			ar_mining_io:read_recall_range(chunk2, self(), Candidate2, RecallRange2Start),
+			prometheus_counter:inc(mining_server_chunk_cache_recall_ranges_1_requested, [Partition1]),
+			prometheus_counter:inc(mining_server_chunk_cache_recall_ranges_2_requested, [Partition2]),
 			State;
 		{true, false} ->
 			%% Only the first recall range is readable, so we need to release the reserved space for the second
@@ -352,6 +360,7 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 			State2 = mark_second_recall_range_missing(Candidate2, State1),
 			%% Read the recall range; the result of the read will be reported by the `chunk1` task.
 			ar_mining_io:read_recall_range(chunk1, self(), Candidate2, RecallRange1Start),
+			prometheus_counter:inc(mining_server_chunk_cache_recall_ranges_1_requested, [Partition1]),
 			State2;
 		{false, _} ->
 			%% We don't have the recall ranges, so we need to release the reserved space for both partitions.
@@ -363,12 +372,14 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 %% Indicates that the first recall range has been read.
 handle_task({chunk1, Candidate, [RangeStart, ChunkOffsets]}, State) ->
 	State1 = process_chunks(chunk1, Candidate, RangeStart, ChunkOffsets, State),
+	prometheus_counter:inc(mining_server_chunk_cache_recall_ranges_1_reported, [State1#state.partition_number]),
 	State1;
 
 %% @doc Handle the `chunk2` task.
 %% Indicates that the second recall range has been read.
 handle_task({chunk2, Candidate, [RangeStart, ChunkOffsets]}, State) ->
 	State1 = process_chunks(chunk2, Candidate, RangeStart, ChunkOffsets, State),
+	prometheus_counter:inc(mining_server_chunk_cache_recall_ranges_2_reported, [State1#state.partition_number]),
 	State1;
 
 %% @doc Handle the `computed_h1` task.
@@ -816,9 +827,8 @@ try_to_reserve_cache_range_space(Multiplier, SessionKey, #state{
 	packing_difficulty = PackingDifficulty,
 	chunk_cache = ChunkCache0
 } = State) ->
-	case ar_mining_cache:reserve_for_session(
-		SessionKey, Multiplier * ar_block:get_recall_range_size(PackingDifficulty), ChunkCache0
-	) of
+	ReserveSize = Multiplier * ar_block:get_recall_range_size(PackingDifficulty),
+	case ar_mining_cache:reserve_for_session(SessionKey, ReserveSize, ChunkCache0) of
 		{ok, ChunkCache1} ->
 			State1 = State#state{ chunk_cache = ChunkCache1 },
 			{true, State1};
@@ -826,6 +836,10 @@ try_to_reserve_cache_range_space(Multiplier, SessionKey, #state{
 			?LOG_WARNING([{event, mining_worker_failed_to_reserve_cache_space},
 				{worker, State#state.name}, {partition, State#state.partition_number},
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+				{cache_size, ar_mining_cache:cache_size(ChunkCache0)},
+				{cache_limit, ar_mining_cache:get_limit(ChunkCache0)},
+				{reserved_size, ar_mining_cache:reserved_size(ChunkCache0)},
+				{reserve_size, ReserveSize},
 				{reason, Reason}]),
 			false
 	end.
@@ -834,16 +848,17 @@ release_cache_range_space(Multiplier, SessionKey, #state{
 	packing_difficulty = PackingDifficulty,
 	chunk_cache = ChunkCache0
 } = State) ->
-	case ar_mining_cache:release_for_session(
-		SessionKey,
-		Multiplier * ar_block:get_recall_range_size(PackingDifficulty),
-		ChunkCache0
-	) of
+	ReleaseSize = Multiplier * ar_block:get_recall_range_size(PackingDifficulty),
+	case ar_mining_cache:release_for_session(SessionKey, ReleaseSize, ChunkCache0) of
 		{ok, ChunkCache1} -> State#state{ chunk_cache = ChunkCache1 };
 		{error, Reason} ->
 			?LOG_ERROR([{event, mining_worker_failed_to_release_cache_space},
 				{worker, State#state.name}, {partition, State#state.partition_number},
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+				{cache_size, ar_mining_cache:cache_size(ChunkCache0)},
+				{cache_limit, ar_mining_cache:get_limit(ChunkCache0)},
+				{reserved_size, ar_mining_cache:reserved_size(ChunkCache0)},
+				{release_size, ReleaseSize},
 				{reason, Reason}]),
 			State
 	end.
@@ -1055,6 +1070,9 @@ report_and_reset_hashes(State) ->
 
 report_chunk_cache_metrics(#state{chunk_cache = ChunkCache, partition_number = Partition} = State) ->
 	prometheus_gauge:set(mining_server_chunk_cache_size, [Partition], ar_mining_cache:cache_size(ChunkCache)),
+	prometheus_gauge:set(mining_server_chunk_actual_cache_size, [Partition], ar_mining_cache:actual_cache_size(ChunkCache)),
+	{ok, ReservedSize} = ar_mining_cache:reserved_size(ChunkCache),
+	prometheus_gauge:set(mining_server_chunk_reservation_size, [Partition], ReservedSize),
 	State.
 
 %%%===================================================================
