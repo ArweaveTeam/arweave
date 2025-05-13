@@ -287,6 +287,26 @@ register() ->
 				"The peer label indicates the peer that the value is exchanged with, and the "
 				"direction label can be 'to' or 'from'."}
 	]),
+	prometheus_counter:new([
+		{name, mining_server_chunk_cache_recall_ranges_1_requested},
+		{labels, [partition]},
+		{help, "The number of recall ranges requested during mining."}
+	]),
+	prometheus_counter:new([
+		{name, mining_server_chunk_cache_recall_ranges_1_reported},
+		{labels, [partition]},
+		{help, "The number of recall ranges reported during mining."}
+	]),
+	prometheus_counter:new([
+		{name, mining_server_chunk_cache_recall_ranges_2_requested},
+		{labels, [partition]},
+		{help, "The number of recall ranges requested during mining."}
+	]),
+	prometheus_counter:new([
+		{name, mining_server_chunk_cache_recall_ranges_2_reported},
+		{labels, [partition]},
+		{help, "The number of recall ranges reported during mining."}
+	]),
 	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_size},
 		{labels, [partition]},
