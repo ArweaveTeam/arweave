@@ -570,7 +570,8 @@ migrate_tx_record({tx, Format, ID, LastTX, Owner, Tags, Target, Quantity, Data,
 			owner = Owner, tags = Tags, target = Target, quantity = Quantity,
 			data = Data, data_size = DataSize, data_root = DataRoot,
 			signature = Signature, signature_type = ?DEFAULT_KEY_TYPE,
-			reward = Reward, data_tree = DataTree }.
+			reward = Reward, data_tree = DataTree,
+			owner_address = ar_wallet:to_address(Owner, ?DEFAULT_KEY_TYPE) }.
 
 parse_block_kv_binary(Bin) ->
 	case catch ar_serialize:binary_to_block(Bin) of
@@ -754,12 +755,13 @@ read_tx2(ID) ->
 			read_tx_from_file(ID);
 		{ok, Binary} ->
 			TX = parse_tx_kv_binary(Binary),
-			case TX#tx.format == 1 andalso TX#tx.data_size > 0
-					andalso byte_size(TX#tx.data) == 0 of
+			TX2 = TX#tx{ owner_address = ar_tx:get_owner_address(TX) },
+			case TX2#tx.format == 1 andalso TX2#tx.data_size > 0
+					andalso byte_size(TX2#tx.data) == 0 of
 				true ->
-					case read_tx_data_from_kv_storage(TX#tx.id) of
+					case read_tx_data_from_kv_storage(TX2#tx.id) of
 						{ok, Data} ->
-							TX#tx{ data = Data };
+							TX2#tx{ data = Data };
 						Error ->
 							?LOG_WARNING([{event, error_reading_tx_from_kv_storage},
 									{tx, ar_util:encode(ID)},
@@ -767,7 +769,7 @@ read_tx2(ID) ->
 							unavailable
 					end;
 				_ ->
-					TX
+					TX2
 			end
 	end.
 

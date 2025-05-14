@@ -374,7 +374,7 @@ del_from_last_tx_map(LastTXMap, TX) ->
 %% when resolving overspends.
 add_to_origin_tx_map(OriginTXMap, TX) ->
 	Element = unconfirmed_tx(TX),
-	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Origin = ar_tx:get_owner_address(TX),
 	Set2 = case maps:get(Origin, OriginTXMap, not_found) of
 		not_found ->
 			gb_sets:from_list([Element]);
@@ -385,7 +385,7 @@ add_to_origin_tx_map(OriginTXMap, TX) ->
 
 del_from_origin_tx_map(OriginTXMap, TX) ->
 	Element = unconfirmed_tx(TX),
-	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Origin = ar_tx:get_owner_address(TX),
 	case maps:get(Origin, OriginTXMap, not_found) of
 		not_found ->
 			OriginTXMap;
@@ -521,7 +521,7 @@ find_overspent_txs(<<>>) ->
 	[];
 find_overspent_txs(TX)
 		when TX#tx.reward > 0 orelse TX#tx.quantity > 0  ->
-	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Origin = ar_tx:get_owner_address(TX),
 	SpentTXIDs = maps:get(Origin, get_origin_tx_map(), gb_sets:new()),
 	% We only care about the origin wallet since we aren't tracking
 	% unconfirmed deposits
