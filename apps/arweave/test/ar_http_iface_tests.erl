@@ -547,7 +547,7 @@ test_get_format_2_tx(_) ->
 	?assertEqual(ValidTX#tx{
 			data = <<>>,
 			data_size = 4
-		}, ar_serialize:json_struct_to_tx(Body)),
+		}, (ar_serialize:json_struct_to_tx(Body))#tx{ owner_address = not_set }),
 	%% Ensure data can be fetched for format=2 transactions via /tx/[ID]/data.
 	{ok, Data} = wait_until_syncs_tx_data(TXID),
 	?assertEqual(ar_util:encode(<<"DATA">>), Data),
@@ -603,7 +603,7 @@ test_get_format_1_tx(_) ->
 			100,
 			2000
 		),
-	?assertEqual(TX, ar_serialize:json_struct_to_tx(Body)).
+	?assertEqual(TX, (ar_serialize:json_struct_to_tx(Body))#tx{ owner_address = not_set }).
 
 %% @doc Test adding transactions to a block.
 test_add_external_tx_with_tags(_) ->
@@ -626,7 +626,7 @@ test_add_external_tx_with_tags(_) ->
 	B1 = read_block_when_stored(B1Hash, true),
 	TXID = TaggedTX#tx.id,
 	?assertEqual([TXID], [TX2#tx.id || TX2 <- B1#block.txs]),
-	?assertEqual(TaggedTX, ar_storage:read_tx(hd(B1#block.txs))).
+	?assertEqual(TaggedTX, (ar_storage:read_tx(hd(B1#block.txs)))#tx{ owner_address = not_set }).
 
 %% @doc Test getting transactions
 test_find_external_tx(_) ->
@@ -643,8 +643,13 @@ test_find_external_tx(_) ->
 				case ar_http_iface_client:get_tx(ar_test_node:peer_ip(main), TX#tx.id) of
 					not_found ->
 						false;
-					TX ->
-						{ok, TX#tx.id}
+					TX2 ->
+						case TX2#tx.id == TX#tx.id of
+							true ->
+								{ok, TX#tx.id};
+							false ->
+								false
+						end
 				end
 			end,
 			100,

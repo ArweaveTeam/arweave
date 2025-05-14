@@ -6,7 +6,7 @@
 		tags_to_list/1, get_tx_fee/1, get_tx_fee2/1, check_last_tx/2,
 		generate_chunk_tree/1, generate_chunk_tree/2, generate_chunk_id/1,
 		chunk_binary/2, chunks_to_size_tagged_chunks/1, sized_chunks_to_sized_chunk_ids/1,
-		get_addresses/1, get_weave_size_increase/2, utility/1]).
+		get_addresses/1, get_weave_size_increase/2, utility/1, get_owner_address/1]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_pricing.hrl").
@@ -73,12 +73,14 @@ new(Dest, Reward, Qty, Last, SigType) ->
 %% Used in tests and by the handler of the POST /unsigned_tx endpoint, which is
 %% disabled by default.
 sign(TX, {PrivKey, PubKey = {KeyType, Owner}}) ->
-	TX2 = TX#tx{ owner = Owner, signature_type = KeyType },
+	TX2 = TX#tx{ owner = Owner, signature_type = KeyType,
+			owner_address = ar_wallet:to_address(Owner, KeyType) },
 	SignatureDataSegment = generate_signature_data_segment(TX2),
 	sign(TX2, PrivKey, PubKey, SignatureDataSegment).
 
 sign(TX, PrivKey, PubKey = {KeyType, Owner}) ->
-	TX2 = TX#tx{ owner = Owner, signature_type = KeyType },
+	TX2 = TX#tx{ owner = Owner, signature_type = KeyType,
+			owner_address = ar_wallet:to_address(Owner, KeyType) },
 	SignatureDataSegment = generate_signature_data_segment(TX2),
 	sign(TX2, PrivKey, PubKey, SignatureDataSegment).
 
@@ -135,7 +137,7 @@ check_last_tx(_WalletList, TX) when TX#tx.owner == <<>> ->
 check_last_tx(WalletList, _TX) when map_size(WalletList) == 0 ->
 	true;
 check_last_tx(WalletList, TX) ->
-	Addr = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Addr = get_owner_address(TX),
 	case maps:get(Addr, WalletList, not_found) of
 		not_found ->
 			false;
@@ -150,7 +152,7 @@ check_last_tx(WalletList, TX) ->
 check_last_tx(WalletList, _TX) when map_size(WalletList) == 0 ->
 	true;
 check_last_tx(WalletList, TX) ->
-	Addr = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Addr = get_owner_address(TX),
 	case maps:get(Addr, WalletList, not_found) of
 		not_found ->
 			false;
@@ -242,6 +244,12 @@ utility(#tx{ format = 1, reward = Reward, data_size = DataSize }, _Size)
 utility(#tx{ reward = Reward }, _Size) ->
 	{2, Reward}.
 
+%% @doc Return the transaction's owner address. Take the cached value if available.
+get_owner_address(#tx{ owner = Owner, signature_type = KeyType, owner_address = not_set }) ->
+	ar_wallet:to_address(Owner, KeyType);
+get_owner_address(#tx{ owner_address = OwnerAddress }) ->
+	OwnerAddress.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -314,7 +322,8 @@ signature_data_segment_v1(TX) ->
 	end.
 
 sign(TX, PrivKey, {KeyType, Owner}, SignatureDataSegment) ->
-	NewTX = TX#tx{ owner = Owner, signature_type = KeyType },
+	NewTX = TX#tx{ owner = Owner, signature_type = KeyType,
+			owner_address = ar_wallet:to_address(Owner, KeyType) },
 	Sig = ar_wallet:sign(PrivKey, SignatureDataSegment),
 	ID = crypto:hash(?HASH_ALG, <<Sig/binary>>),
 	NewTX#tx{ id = ID, signature = Sig }.
@@ -367,7 +376,7 @@ do_verify(TX, _Args, _VerifySignature) ->
 get_addresses([], Addresses) ->
 	sets:to_list(Addresses);
 get_addresses([TX | TXs], Addresses) ->
-	Source = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Source = get_owner_address(TX),
 	WithSource = sets:add_element(Source, Addresses),
 	WithDest = sets:add_element(TX#tx.target, WithSource),
 	get_addresses(TXs, WithDest).
@@ -386,7 +395,7 @@ do_verify_v1(TX, Args, VerifySignature) ->
 		false ->
 			collect_validation_results(TX#tx.id, [{"invalid_denomination", false}]);
 		true ->
-			From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+			From = get_owner_address(TX),
 			FeeArgs = {TX, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
 					Height, Accounts, TX#tx.target},
 			Checks = [
@@ -428,7 +437,7 @@ do_verify_v2(TX, Args, VerifySignature) ->
 		false ->
 			collect_validation_results(TX#tx.id, [{"invalid_denomination", false}]);
 		true ->
-			From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+			From = get_owner_address(TX),
 			FeeArgs = {TX, PricePerGiBMinute, KryderPlusRateMultiplier, Denomination,
 					Height, Accounts, TX#tx.target},
 			Checks = [
@@ -573,7 +582,7 @@ verify_signature_v2(TX, verify_signature, Height) ->
 	end.
 
 validate_overspend(TX, Accounts) ->
-	From = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	From = get_owner_address(TX),
 	Addresses = case TX#tx.target of
 		<<>> ->
 			[From];

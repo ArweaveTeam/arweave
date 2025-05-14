@@ -206,7 +206,8 @@ tx_roundtrip_test() ->
 			format = 2,
 			tags = [{<<"Name1">>, <<"Value1">>}],
 			data_root = << 0:256 >>,
-			signature_type = ?DEFAULT_KEY_TYPE
+			signature_type = ?DEFAULT_KEY_TYPE,
+			owner_address = ar_wallet:to_address(TXBase#tx.owner, ?DEFAULT_KEY_TYPE)
 		},
 	JsonTX = ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)),
 	?assertEqual(

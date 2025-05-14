@@ -722,6 +722,8 @@
 	last_tx = <<>>,
 	%% The public key the transaction is signed with.
 	owner =	<<>>,
+	%% The owner address. Used as a cache to avoid recomputing it, not serialized.
+	owner_address = not_set,
 	%% A list of arbitrary key-value pairs. Keys and values are binaries.
 	tags = [],
 	%% The address of the recipient, if any. The SHA2-256 hash of the public key.
