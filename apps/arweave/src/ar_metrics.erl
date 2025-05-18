@@ -307,6 +307,21 @@ register() ->
 		{labels, [partition]},
 		{help, "The number of recall ranges reported during mining."}
 	]),
+	prometheus_counter:new([
+		{name, mining_server_chunk_cache_nonce_offset_less_than_chunk1_start_offset},
+		{labels, [partition]},
+		{help, "The number of nonce offsets less than the chunk1 start offset during mining."}
+	]),
+	prometheus_counter:new([
+		{name, mining_server_chunk_cache_nonce_offset_less_than_chunk2_start_offset},
+		{labels, [partition]},
+		{help, "The number of nonce offsets less than the chunk2 start offset during mining."}
+	]),
+	prometheus_counter:new([
+		{name, mining_server_chunk_cache_nonce_offset_greater_than_chunk_end_offset},
+		{labels, [partition]},
+		{help, "The number of nonce offsets greater than the chunk end offset during mining."}
+	]),
 	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_size},
 		{labels, [partition]},
