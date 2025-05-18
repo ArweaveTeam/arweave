@@ -553,13 +553,18 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 %%%===================================================================
 
 process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
+	?LOG_ERROR([{event, mining_worker_process_chunks_start},
+		{chunk, WhichChunk},
+		{partition, State#state.partition_number},
+		{range_start, RangeStart},
+		{chunk_offsets, length(ChunkOffsets)}]),
 	PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
-	SubChunksPerRecallRange = ar_block:get_max_nonce(PackingDifficulty),
+	NoncesPerRecallRange = ar_block:get_max_nonce(PackingDifficulty),
 	NoncesPerChunk = ar_block:get_nonces_per_chunk(PackingDifficulty),
 	SubChunkSize = ar_block:get_sub_chunk_size(PackingDifficulty),
 	process_chunks(
 		WhichChunk, Candidate, RangeStart, 0, NoncesPerChunk,
-		SubChunksPerRecallRange, ChunkOffsets, SubChunkSize, 0, State
+		NoncesPerRecallRange, ChunkOffsets, SubChunkSize, 0, State
 	).
 
 %% Processing chunks for a recall range.
@@ -581,10 +586,15 @@ process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
 %%         |<-      recall range       ->|
 %% [    ][ 1  ][ 2  ] .... [n-2 ][n-1 ][ n  ]
 %%       |<- effective recall range ->|
+%%
+%% The ultimate goal is to process all the sub-chunks in the recall range.
+%% The count of subchunks in the recall range is `NoncesPerRecallRange`.
+%% replica packing: 10 chunks, 32 nonces per chunk, 320 nonces per recall range.
+%% spora 2.6: 200 chunks, 1 nonce per chunk, 200 nonces per recall range.
 process_chunks(
 	WhichChunk, Candidate, _RangeStart, Nonce, _NoncesPerChunk,
-	SubChunksPerRecallRange, _ChunkOffsets, _SubChunkSize, Count, State
-) when Nonce > SubChunksPerRecallRange ->
+	NoncesPerRecallRange, _ChunkOffsets, _SubChunkSize, Count, State
+) when Nonce > NoncesPerRecallRange ->
 	%% We've processed all the sub_chunks in the recall range.
 	case Count of
 		10 -> ok;
@@ -592,7 +602,8 @@ process_chunks(
 			?LOG_ERROR([{event, mining_worker_process_chunks_invalid_count},
 				{count, Count},
 				{nonce, Nonce},
-				{chunk, WhichChunk}]),
+				{chunk, WhichChunk},
+				{partition, State#state.partition_number}]),
 			ok
 	end,
 	ar_mining_stats:chunks_read(case WhichChunk of
@@ -602,19 +613,23 @@ process_chunks(
 	State;
 process_chunks(
 	WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk,
-	SubChunksPerRecallRange, [], SubChunkSize, Count, State
+	NoncesPerRecallRange, [], SubChunkSize, Count, State
 ) ->
+	?LOG_ERROR([{event, mining_worker_process_chunks_no_chunk_offsets},
+		{chunk, WhichChunk},
+		{nonce, Nonce},
+		{partition, State#state.partition_number}]),
 	%% No more ChunkOffsets means no more chunks have been read. Iterate through all the
 	%% remaining nonces and remove the full chunks from the cache.
 	State1 = remove_sub_chunks_from_cache(Candidate#mining_candidate{ nonce = Nonce }, NoncesPerChunk, State),
 	%% Process the next chunk.
 	process_chunks(
 		WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk,
-		NoncesPerChunk, SubChunksPerRecallRange, [], SubChunkSize, Count, State1
+		NoncesPerChunk, NoncesPerRecallRange, [], SubChunkSize, Count, State1
 	);
 process_chunks(
 	WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk,
-	SubChunksPerRecallRange, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State
+	NoncesPerRecallRange, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State
 ) ->
 	NonceOffset = RangeStart + Nonce * SubChunkSize,
 	ChunkStartOffset = ChunkEndOffset - ?DATA_CHUNK_SIZE,
@@ -624,22 +639,36 @@ process_chunks(
 			%% Nonce falls in a chunk which wasn't read from disk (for example, because there are holes
 			%% in the recall range), e.g. the nonce is in the middle of a non-existent chunk.
 			%% Mark single chunk1 as missing or remove it if the corresponding chunk is already read or marked as missing.
-			prometheus_counter:inc(mining_server_chunk_cache_nonce_offset_less_than_chunk1_start_offset, [State#state.partition_number]),
+			?LOG_ERROR([{event, mining_worker_process_chunks_nonce_offset_less_than_chunk1_start_offset},
+				{chunk, WhichChunk},
+				{nonce, Nonce},
+				{nonce_offset, NonceOffset},
+				{chunk_start_offset, ChunkStartOffset},
+				{chunk_end_offset, ChunkEndOffset},
+				{chunk_offsets_left, length(ChunkOffsets)},
+				{partition, State#state.partition_number}]),
 			State1 = mark_single_chunk1_missing_or_drop(Nonce, Candidate, State),
 			process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk,
-				SubChunksPerRecallRange, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State1
+				NoncesPerRecallRange, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State1
 			);
 		{true, _, chunk2} ->
 			%% Skip these nonces (starting from Nonce to Nonce + NoncesPerChunk - 1).
 			%% Nonce falls in a chunk which wasn't read from disk (for example, because there are holes
 			%% in the recall range), e.g. the nonce is in the middle of a non-existent chunk.
 			%% Mark single chunk2 as missing or remove it if the corresponding chunk is already read and H1 is calculated.
-			prometheus_counter:inc(mining_server_chunk_cache_nonce_offset_less_than_chunk2_start_offset, [State#state.partition_number]),
+			?LOG_ERROR([{event, mining_worker_process_chunks_nonce_offset_less_than_chunk2_start_offset},
+				{chunk, WhichChunk},
+				{nonce, Nonce},
+				{nonce_offset, NonceOffset},
+				{chunk_start_offset, ChunkStartOffset},
+				{chunk_end_offset, ChunkEndOffset},
+				{chunk_offsets_left, length(ChunkOffsets)},
+				{partition, State#state.partition_number}]),
 			State1 = mark_single_chunk2_missing_or_drop(Nonce, Candidate, State),
 			process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk,
-				SubChunksPerRecallRange, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State1
+				NoncesPerRecallRange, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State1
 			);
 		{_, true, _} ->
 			%% Skip this chunk.
@@ -649,17 +678,24 @@ process_chunks(
 			%% No need to remove anything from cache, as the nonce is still in the recall range.
 			%%
 			%% Does this ever happen?
-			prometheus_counter:inc(mining_server_chunk_cache_nonce_offset_greater_than_chunk_end_offset, [State#state.partition_number]),
+			?LOG_ERROR([{event, mining_worker_process_chunks_nonce_offset_greater_than_chunk_end_offset},
+				{chunk, WhichChunk},
+				{nonce, Nonce},
+				{nonce_offset, NonceOffset},
+				{chunk_start_offset, ChunkStartOffset},
+				{chunk_end_offset, ChunkEndOffset},
+				{chunk_offsets_left, length(ChunkOffsets)},
+				{partition, State#state.partition_number}]),
 			process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk,
-				SubChunksPerRecallRange, ChunkOffsets, SubChunkSize, Count, State
+				NoncesPerRecallRange, ChunkOffsets, SubChunkSize, Count, State
 			);
 		{false, false, _} ->
 			%% Process all sub-chunks in Chunk, and then advance to the next chunk.
 			State1 = process_all_sub_chunks(WhichChunk, Chunk, 0, Candidate, Nonce, State),
 			process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk,
-				SubChunksPerRecallRange, ChunkOffsets, SubChunkSize, Count + 1, State1
+				NoncesPerRecallRange, ChunkOffsets, SubChunkSize, Count + 1, State1
 			)
 	end.
 
@@ -959,7 +995,7 @@ mark_single_chunk2_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 		fun
 			(#ar_mining_cache_value{chunk1_missing = true}) ->
 				%% We've already marked the chunk1 as missing, so the reservation for it was released.
-				%% We can just drop the cached value. and release the reservation for a single subchunk.
+				%% We can just drop the cached value and release the reservation for a single subchunk.
 				{ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
 			(#ar_mining_cache_value{chunk1 = Chunk1, h1 = undefined} = CachedValue) when undefined /= Chunk1 ->
 				%% We have the corresponding chunk1, but we didn't calculate H1 yet.
@@ -982,7 +1018,7 @@ mark_single_chunk2_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 		{error, Reason} ->
 			%% NB: this clause may cause a memory leak, because mining worker will wait for
 			%% chunk2 to arrive.
-			?LOG_ERROR([{event, mining_worker_failed_to_add_chunk_to_cache}, {reason, Reason}]),
+			?LOG_ERROR([{event, mining_worker_failed_to_mark_chunk2_missing}, {reason, Reason}]),
 			mark_single_chunk2_missing_or_drop(Nonce + 1, NoncesLeft - 1, Candidate, State)
 	end.
 
