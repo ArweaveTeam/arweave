@@ -516,8 +516,8 @@ parse_options([{<<"semaphores">>, Semaphores} | _], _) ->
 	{error, {bad_type, semaphores, object}, Semaphores};
 
 parse_options([{<<"max_connections">>, MaxConnections} | Rest], Config)
-		when is_integer(MaxConnections) ->
-	parse_options(Rest, Config#config{ max_connections = MaxConnections });
+		when is_integer(MaxConnections), MaxConnections >= 1 ->
+	parse_options(Rest, Config#config{ 'http_api.tcp.max_connections' = MaxConnections });
 
 parse_options([{<<"max_gateway_connections">>, MaxGatewayConnections} | Rest], Config)
 		when is_integer(MaxGatewayConnections) ->
@@ -627,13 +627,13 @@ parse_options([{<<"coordinated_mining">>, Opt} | _], _) ->
 	{error, {bad_type, coordinated_mining, boolean}, Opt};
 
 parse_options([{<<"cm_api_secret">>, CMSecret} | Rest], Config)
-  		when is_binary(CMSecret), byte_size(CMSecret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
+		when is_binary(CMSecret), byte_size(CMSecret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
 	parse_options(Rest, Config#config{ cm_api_secret = CMSecret });
 parse_options([{<<"cm_api_secret">>, CMSecret} | _], _) ->
 	{error, {bad_type, cm_api_secret, string}, CMSecret};
 
 parse_options([{<<"cm_poll_interval">>, CMPollInterval} | Rest], Config)
-  		when is_integer(CMPollInterval) ->
+		when is_integer(CMPollInterval) ->
 	parse_options(Rest, Config#config{ cm_poll_interval = CMPollInterval });
 parse_options([{<<"cm_poll_interval">>, CMPollInterval} | _], _) ->
 	{error, {bad_type, cm_poll_interval, number}, CMPollInterval};
@@ -655,7 +655,7 @@ parse_options([{<<"cm_exit_peer">>, Peer} | Rest], Config) ->
 	end;
 
 parse_options([{<<"cm_out_batch_timeout">>, CMBatchTimeout} | Rest], Config)
-  		when is_integer(CMBatchTimeout) ->
+		when is_integer(CMBatchTimeout) ->
 	parse_options(Rest, Config#config{ cm_out_batch_timeout = CMBatchTimeout });
 parse_options([{<<"cm_out_batch_timeout">>, CMBatchTimeout} | _], _) ->
 	{error, {bad_type, cm_out_batch_timeout, number}, CMBatchTimeout};
@@ -691,19 +691,19 @@ parse_options([{<<"pool_server_address">>, Host} | _], _) ->
 
 %% Undocumented/unsupported options
 parse_options([{<<"chunk_storage_file_size">>, ChunkGroupSize} | Rest], Config)
-  		when is_integer(ChunkGroupSize) ->
+		when is_integer(ChunkGroupSize) ->
 	parse_options(Rest, Config#config{ chunk_storage_file_size = ChunkGroupSize });
 parse_options([{<<"chunk_storage_file_size">>, ChunkGroupSize} | _], _) ->
 	{error, {bad_type, chunk_storage_file_size, number}, ChunkGroupSize};
 
 parse_options([{<<"rocksdb_flush_interval">>, IntervalS} | Rest], Config)
-  		when is_integer(IntervalS) ->
+		when is_integer(IntervalS) ->
 	parse_options(Rest, Config#config{ rocksdb_flush_interval_s = IntervalS });
 parse_options([{<<"rocksdb_flush_interval">>, IntervalS} | _], _) ->
 	{error, {bad_type, rocksdb_flush_interval, number}, IntervalS};
 
 parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | Rest], Config)
-  		when is_integer(IntervalS) ->
+		when is_integer(IntervalS) ->
 	parse_options(Rest, Config#config{ rocksdb_wal_sync_interval_s = IntervalS });
 parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | _], _) ->
 	{error, {bad_type, rocksdb_wal_sync_interval, number}, IntervalS};
@@ -719,8 +719,202 @@ parse_options([{<<"shutdown_tcp_connection_timeout">>, Delay} | Rest], Config)
 	when is_integer(Delay) andalso Delay > 0 ->
 		NewConfig = Config#config{ shutdown_tcp_connection_timeout = Delay },
 		parse_options(Rest, NewConfig);
-parse_options([{<<"shutdown_tcp_connection_timeout">>, InvalidValue} | Rest], Config) ->
+parse_options([{<<"shutdown_tcp_connection_timeout">>, InvalidValue} | _Rest], _Config) ->
 	{error, {bad_type, shutdown_tcp_connection_timeout, integer}, InvalidValue};
+parse_options([{<<"shutdown_tcp_mode">>, Mode}|Rest], Config) ->
+	case Mode of
+		<<"shutdown">> ->
+			NewConfig = Config#config{ shutdown_tcp_mode = shutdown },
+			parse_options(Rest, NewConfig);
+		<<"close">> ->
+			NewConfig = Config#config{ shutdown_tcp_mode = close },
+			parse_options(Rest, NewConfig);
+		Mode ->
+			{error, {bad_value, shutdown_tcp_mode}, Mode}
+	end;
+
+%% Global socket configuration
+parse_options([{<<"socket.backend">>, Backend}|Rest], Config) ->
+	case Backend of
+		<<"inet">> ->
+			parse_options(Rest, Config#config{ 'socket.backend' = inet });
+		<<"socket">> ->
+			parse_options(Rest, Config#config{ 'socket.backend' = socket });
+		_ ->
+			{error, {bad_value, 'socket.backend'}, Backend}
+	end;
+
+%% Gun client parameters
+parse_options([{<<"http_client.http.closing_timeout">>, Timeout}|Rest], Config) ->
+	case Timeout of
+		_ when is_integer(Timeout), Timeout >= 0 ->
+			parse_options(Rest, Config#config{ 'http_client.http.closing_timeout' = Timeout });
+		_ ->
+			{error, {bad_value, 'http_client.http.closing_timeout'}, Timeout}
+	end;
+parse_options([{<<"http_client.http.keepalive">>, Timeout}|Rest], Config) ->
+	case Timeout of
+		<<"infinity">> ->
+			parse_options(Rest, Config#config{ 'http_client.http.keepalive' = infinity });
+		_ when is_integer(Timeout), Timeout >= 0 ->
+			parse_options(Rest, Config#config{ 'http_client.http.keepalive' = Timeout });
+		_ ->
+			{error, {bad_value, 'http_client.http.keepalive'}, Timeout}
+	end;
+parse_options([{<<"http_client.tcp.delay_send">>, Delay}|Rest], Config) ->
+	case Delay of
+		_ when is_boolean(Delay) ->
+			parse_options(Rest, Config#config{ 'http_client.tcp.delay_send' = Delay });
+		_ ->
+			{error, {bad_value, 'http_client.tcp.delay_send'}, Delay}
+	end;
+parse_options([{<<"http_client.tcp.keepalive">>, Keepalive}|Rest], Config) ->
+	case Keepalive of
+		_ when is_boolean(Keepalive) ->
+			parse_options(Rest, Config#config{ 'http_client.tcp.keepalive' = Keepalive });
+		_ ->
+			{error, {bad_value, 'http_client.tcp.keepalive'}, Keepalive}
+	end;
+parse_options([{<<"http_client.tcp.linger">>, Linger}|Rest], Config) ->
+	case Linger of
+		_ when is_boolean(Linger) ->
+			parse_options(Rest, Config#config{ 'http_client.tcp.linger' = Linger });
+		_ ->
+			{error, {bad_value, 'http_client.tcp.linger'}, Linger}
+	end;
+parse_options([{<<"http_client.tcp.linger_timeout">>, Timeout}|Rest], Config) ->
+	case Timeout of
+		_ when is_integer(Timeout), Timeout >= 0 ->
+			parse_options(Rest, Config#config{ 'http_client.tcp.linger_timeout' = Timeout });
+
+		_ ->
+			{error, {bad_value, 'http_client.tcp.linger_timeout'}, Timeout}
+	end;
+parse_options([{<<"http_client.tcp.nodelay">>, Nodelay}|Rest], Config) ->
+	case Nodelay of
+		_ when is_boolean(Nodelay) ->
+			parse_options(Rest, Config#config{ 'http_client.tcp.nodelay' = Nodelay });
+		_ ->
+			{error, {bad_value, 'http_client.tcp.nodelay'}, Nodelay }
+	end;
+parse_options([{<<"http_client.tcp.send_timeout_close">>, Value}|Rest], Config) ->
+	case Value of
+		_ when is_boolean(Value) ->
+			parse_options(Rest, Config#config{ 'http_client.tcp.send_timeout_close' = Value });
+		_ ->
+			{error, {bad_value, 'http_client.tcp.send_timeout_close'}, Value}
+	end;
+parse_options([{<<"http_client.tcp.send_timeout">>, Timeout}|Rest], Config) ->
+	case Timeout of
+		_ when is_integer(Timeout), Timeout >= 0 ->
+			parse_options(Rest, Config#config{ 'http_client.tcp.send_timeout' = Timeout });
+		_ ->
+			{error, {bad_value, 'http_client.tcp.send_timeout'}, Timeout}
+	end;
+
+%% Cowboy server parameters
+parse_options([{<<"http_api.http.active_n">>, Active}|Rest], Config) ->
+	case Active of
+		_ when is_integer(Active), Active >= 1 ->
+			parse_options(Rest, Config#config{ 'http_api.http.active_n' = Active });
+		_ ->
+			{error, {bad_value, 'http_api.http.active_n'}, Active}
+	end;
+parse_options([{<<"http_api.http.inactivity_timeout">>, Timeout}|Rest], Config) ->
+	case Timeout of
+		_ when is_integer(Timeout), Timeout >= 0 ->
+			parse_options(Rest, Config#config{ 'http_api.http.inactivity_timeout' = Timeout });
+		_ ->
+			{error, {bad_value, 'http_api.http.inactivity_timeout'}, Timeout}
+	end;
+parse_options([{<<"http_api.http.linger_timeout">>, Timeout}|Rest], Config) ->
+	case Timeout of
+		_ when is_integer(Timeout), Timeout >= 0 ->
+			parse_options(Rest, Config#config{ 'http_api.http.linger_timeout' = Timeout });
+		_ ->
+			{error, {bad_value, 'http_api.http.linger_timeout'}, Timeout}
+	end;
+parse_options([{<<"http_api.http.request_timeout">>, Timeout}|Rest], Config) ->
+	case Timeout of
+		_ when is_integer(Timeout), Timeout >= 0 ->
+			parse_options(Rest, Config#config{ 'http_api.http.request_timeout' = Timeout });
+		_ ->
+			{error, {bad_value, 'http_api.http.request_timeout'}, Timeout}
+	end;
+parse_options([{<<"http_api.tcp.backlog">>, Backlog}|Rest], Config) ->
+	case Backlog of
+		_ when is_integer(Backlog), Backlog >= 1 ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.backlog' = Backlog });
+		_ ->
+			{error, {bad_value, 'http_api.tcp.backlog'}, Backlog}
+	end;
+parse_options([{<<"http_api.tcp.delay_send">>, Delay}|Rest], Config) ->
+	case Delay of
+		_ when is_boolean(Delay) ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.delay_send' = Delay });
+		_ ->
+			{error, {bad_value, 'http_api.tcp.delay_send'}, Delay}
+	end;
+parse_options([{<<"http_api.tcp.keepalive">>, Keepalive}|Rest], Config) ->
+	case Keepalive of
+		_ when is_boolean(Keepalive) ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.keepalive' = Keepalive });
+		_ ->
+			{error, {bad_value, 'http_api.tcp.keepalive'}, Keepalive}
+	end;
+parse_options([{<<"http_api.tcp.linger">>, Linger}|Rest], Config) ->
+	case Linger of
+		_ when is_boolean(Linger) ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.linger' = Linger });
+		_ ->
+			{error, {bad_value, 'http_api.tcp.linger'}, Linger}
+	end;
+parse_options([{<<"http_api.tcp.linger_timeout">>, Timeout}|Rest], Config) ->
+	case Timeout of
+		_ when is_integer(Timeout), Timeout >= 0 ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.linger_timeout' = Timeout });
+		_ ->
+			{error, {bad_value, 'http_api.tcp.linger_timeout'}, Timeout}
+	end;
+parse_options([{<<"http_api.tcp.listener_shutdown">>, Shutdown}|Rest], Config) ->
+	case Shutdown of
+		"brutal_kill" ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.listener_shutdown' = brutal_kill });
+		"infinity" ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.listener_shutdown' = infinity });
+		_ when is_integer(Shutdown), Shutdown >= 0 ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.listener_shutdown' = Shutdown });
+		_ ->
+			{error, {bad_value, 'http_api.tcp.listener_shutdown'}, Shutdown}
+	end;
+parse_options([{<<"http_api.tcp.nodelay">>, Nodelay}|Rest], Config) ->
+	case Nodelay of
+		_ when is_boolean(Nodelay) ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.nodelay' = Nodelay });
+		_ ->
+			{error, {bad_value, 'http_api.tcp.nodelay'}, Nodelay }
+	end;
+parse_options([{<<"http_api.tcp.num_acceptors">>, Acceptors}|Rest], Config) ->
+	case Acceptors of
+		_ when is_integer(Acceptors), Acceptors >= 1 ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.num_acceptors' = Acceptors });
+		_ ->
+			{error, {bad_valud, 'http_api.tcp.num_acceptors'}, Acceptors}
+	end;
+parse_options([{<<"http_api.tcp.send_timeout_close">>, Value}|Rest], Config) ->
+	case Value of
+		_ when is_boolean(Value) ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.send_timeout_close' = Value });
+		_ ->
+			{error, {bad_value, 'http_api.tcp.send_timeout_close'}, Value}
+	end;
+parse_options([{<<"http_api.tcp.send_timeout">>, Timeout}|Rest], Config) ->
+	case Timeout of
+		_ when is_integer(Timeout), Timeout >= 0 ->
+			parse_options(Rest, Config#config{ 'http_api.tcp.send_timeout' = Timeout });
+		_ ->
+			{error, {bad_value, 'http_api.tcp.send_timeout'}, Timeout}
+	end;
 
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
@@ -1074,3 +1268,4 @@ set_verify_flags(Config) ->
 		max_propagation_peers = 0,
 		max_block_propagation_peers = 0
 	}.
+

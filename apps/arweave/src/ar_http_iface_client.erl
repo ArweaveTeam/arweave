@@ -441,14 +441,14 @@ get_mempool([]) ->
 	{error, not_found};
 get_mempool([Peer | Peers]) ->
     case get_mempool(Peer) of
-        {ok, TXIDs} ->
-            {ok, TXIDs};
-        {error, Error} ->
+	{ok, TXIDs} ->
+	    {ok, TXIDs};
+	{error, Error} ->
 			?LOG_DEBUG([{event, failed_to_get_mempool_txids_from_peer},
 					{peer, ar_util:format_peer(Peer)},
 					{error, io_lib:format("~p", [Error])}
 			]),
-            get_mempool(Peers -- [Peer])
+	    get_mempool(Peers -- [Peer])
     end;
 
 get_mempool(Peer) ->
@@ -539,10 +539,10 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 							get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
 					end;
 				% {ok, L} ->
-				% 	?LOG_WARNING([{event, received_reward_history_of_unexpected_length},
-				% 			{expected_length, ExpectedLength}, {received_length, length(L)},
-				% 			{peer, ar_util:format_peer(Peer)}]),
-				% 	get_reward_history(Peers, B, ExpectedRewardHistoryHashes);
+				%	?LOG_WARNING([{event, received_reward_history_of_unexpected_length},
+				%			{expected_length, ExpectedLength}, {received_length, length(L)},
+				%			{peer, ar_util:format_peer(Peer)}]),
+				%	get_reward_history(Peers, B, ExpectedRewardHistoryHashes);
 				{error, _} ->
 					?LOG_WARNING([{event, failed_to_parse_reward_history},
 							{peer, ar_util:format_peer(Peer)}]),
@@ -1433,4 +1433,3 @@ add_header(Name, Value, Headers) when is_binary(Name) andalso is_binary(Value) -
 add_header(Name, Value, Headers) ->
 	?LOG_ERROR([{event, invalid_header}, {name, Name}, {value, Value}]),
 	Headers.
-

@@ -27,7 +27,7 @@ add_ref(ID, Ref) when is_reference(Ref) ->
 
 add_ref(ID, Ref, Timeout) when is_reference(Ref) ->
 	ets:insert(ignored_ids, {ID, {ref, Ref}}),
-	timer:apply_after(Timeout, ar_ignore_registry, remove_ref, [ID, Ref]).
+	{ok, _} = ar_timer:apply_after(Timeout, ar_ignore_registry, remove_ref, [ID, Ref]).
 
 %% @doc Remove a referenced ID record from the registry.
 remove_ref(ID, Ref) when is_reference(Ref) ->
@@ -37,7 +37,7 @@ remove_ref(ID, Ref) when is_reference(Ref) ->
 %% The record expires after Timeout milliseconds.
 add_temporary(ID, Timeout) ->
 	ets:insert(ignored_ids, {ID, temporary}),
-	timer:apply_after(Timeout, ar_ignore_registry, remove_temporary, [ID]).
+	{ok, _} = ar_timer:apply_after(Timeout, ar_ignore_registry, remove_temporary, [ID]).
 
 %% @doc Remove the temporary record from the registry.
 remove_temporary(ID) ->

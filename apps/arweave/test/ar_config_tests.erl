@@ -100,7 +100,7 @@ test_parse_config() ->
 				headers = [{<<"Authorization">>, <<"Bearer 123456">>}]
 			}
 		],
-		max_connections = 512,
+		'http_api.tcp.max_connections' = 512,
 		max_gateway_connections = 64,
 		disk_pool_data_root_expiration_time = 10000,
 		max_disk_pool_buffer_mb = 100000,

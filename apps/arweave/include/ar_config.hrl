@@ -137,8 +137,40 @@
 -define(DEFAULT_PACKING_WORKERS, erlang:system_info(dirty_cpu_schedulers_online)).
 
 %% The default connection tcp delay when arweave is shutting down
--define(SHUTDOWN_TCP_CONNECTION_TIMEOUT, 60).
--define(SHUTDOWN_TCP_MAX_CONNECTION_TIMEOUT, ?SHUTDOWN_TCP_CONNECTION_TIMEOUT*5).
+-define(SHUTDOWN_TCP_CONNECTION_TIMEOUT, 30).
+-define(SHUTDOWN_TCP_MODE, shutdown).
+
+%% Global socket configuration
+-define(DEFAULT_SOCKET_BACKEND, inet).
+
+%% Default Gun HTTP/TCP parameters
+-define(DEFAULT_GUN_HTTP_CLOSING_TIMEOUT, 15_000).
+-define(DEFAULT_GUN_HTTP_KEEPALIVE, 60_000).
+-define(DEFAULT_GUN_TCP_DELAY_SEND, false).
+-define(DEFAULT_GUN_TCP_KEEPALIVE, true).
+-define(DEFAULT_GUN_TCP_LINGER, false).
+-define(DEFAULT_GUN_TCP_LINGER_TIMEOUT, 0).
+-define(DEFAULT_GUN_TCP_NODELAY, true).
+-define(DEFAULT_GUN_TCP_SEND_TIMEOUT_CLOSE, true).
+-define(DEFAULT_GUN_TCP_SEND_TIMEOUT, 15_000).
+
+%% Default Cowboy HTTP/TCP parameters
+-define(DEFAULT_COWBOY_HTTP_ACTIVE_N, 100).
+-define(DEFAULT_COWBOY_HTTP_IDLE_TIMEOUT, 60_000).
+-define(DEFAULT_COWBOY_HTTP_INACTIVITY_TIMEOUT, 300_000).
+-define(DEFAULT_COWBOY_HTTP_LINGER_TIMEOUT, 1000).
+-define(DEFAULT_COWBOY_HTTP_REQUEST_TIMEOUT, 5000).
+-define(DEFAULT_COWBOY_TCP_BACKLOG, 1024).
+-define(DEFAULT_COWBOY_TCP_DELAY_SEND, false).
+-define(DEFAULT_COWBOY_TCP_KEEPALIVE, true).
+-define(DEFAULT_COWBOY_TCP_LINGER, false).
+-define(DEFAULT_COWBOY_TCP_LINGER_TIMEOUT, 0).
+-define(DEFAULT_COWBOY_TCP_MAX_CONNECTIONS, 1024).
+-define(DEFAULT_COWBOY_TCP_NODELAY, true).
+-define(DEFAULT_COWBOY_TCP_NUM_ACCEPTORS, 10).
+-define(DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE, true).
+-define(DEFAULT_COWBOY_TCP_SEND_TIMEOUT, 15_000).
+-define(DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN, 5000).
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -192,7 +224,6 @@
 	max_propagation_peers = ?DEFAULT_MAX_PROPAGATION_PEERS,
 	max_block_propagation_peers = ?DEFAULT_MAX_BLOCK_PROPAGATION_PEERS,
 	webhooks = [],
-	max_connections = 1024,
 	max_gateway_connections = 128,
 	max_poa_option_depth = 500,
 	disk_pool_data_root_expiration_time = ?DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S,
@@ -244,7 +275,45 @@
 	chunk_storage_file_size = ?CHUNK_GROUP_SIZE,
 	rocksdb_flush_interval_s = ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,
 	rocksdb_wal_sync_interval_s = ?DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S,
-	shutdown_tcp_connection_timeout = ?SHUTDOWN_TCP_CONNECTION_TIMEOUT
+
+	% Shutdown procedures
+	shutdown_tcp_connection_timeout = ?SHUTDOWN_TCP_CONNECTION_TIMEOUT,
+	shutdown_tcp_mode = ?SHUTDOWN_TCP_MODE,
+
+	% global socket configuration
+	'socket.backend' = ?DEFAULT_SOCKET_BACKEND,
+
+	% gun network stack configuration.
+	% these parameters are mainly configured using default
+	% values from inet module
+	'http_client.http.closing_timeout' = ?DEFAULT_GUN_HTTP_CLOSING_TIMEOUT,
+	'http_client.http.keepalive' = ?DEFAULT_GUN_HTTP_KEEPALIVE,
+	'http_client.tcp.delay_send' = ?DEFAULT_GUN_TCP_DELAY_SEND,
+	'http_client.tcp.keepalive' = ?DEFAULT_GUN_TCP_KEEPALIVE,
+	'http_client.tcp.linger' = ?DEFAULT_GUN_TCP_LINGER,
+	'http_client.tcp.linger_timeout' = ?DEFAULT_GUN_TCP_LINGER_TIMEOUT,
+	'http_client.tcp.nodelay' = ?DEFAULT_GUN_TCP_NODELAY,
+	'http_client.tcp.send_timeout_close' = ?DEFAULT_GUN_TCP_SEND_TIMEOUT_CLOSE,
+	'http_client.tcp.send_timeout' = ?DEFAULT_GUN_TCP_SEND_TIMEOUT,
+
+	% cowboy network stack configuration.
+	% these parameters are mainly configured using default
+	% values from inet module
+	'http_api.http.active_n' = ?DEFAULT_COWBOY_HTTP_ACTIVE_N,
+	'http_api.http.inactivity_timeout' = ?DEFAULT_COWBOY_HTTP_INACTIVITY_TIMEOUT,
+	'http_api.http.linger_timeout' = ?DEFAULT_COWBOY_HTTP_LINGER_TIMEOUT,
+	'http_api.http.request_timeout' = ?DEFAULT_COWBOY_HTTP_REQUEST_TIMEOUT,
+	'http_api.tcp.backlog' = ?DEFAULT_COWBOY_TCP_BACKLOG,
+	'http_api.tcp.delay_send' = ?DEFAULT_COWBOY_TCP_DELAY_SEND,
+	'http_api.tcp.keepalive' = ?DEFAULT_COWBOY_TCP_KEEPALIVE,
+	'http_api.tcp.linger' = ?DEFAULT_COWBOY_TCP_LINGER,
+	'http_api.tcp.linger_timeout' = ?DEFAULT_COWBOY_TCP_LINGER_TIMEOUT,
+	'http_api.tcp.listener_shutdown' = ?DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN,
+	'http_api.tcp.max_connections' = ?DEFAULT_COWBOY_TCP_MAX_CONNECTIONS,
+	'http_api.tcp.nodelay' = ?DEFAULT_COWBOY_TCP_NODELAY,
+	'http_api.tcp.num_acceptors' = ?DEFAULT_COWBOY_TCP_NUM_ACCEPTORS,
+	'http_api.tcp.send_timeout_close' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE,
+	'http_api.tcp.send_timeout' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT
 }).
 
 -endif.
