@@ -622,10 +622,21 @@ process_chunks(
 	%% No more ChunkOffsets means no more chunks have been read. Iterate through all the
 	%% remaining nonces and remove the full chunks from the cache.
 	State1 = remove_sub_chunks_from_cache(Candidate#mining_candidate{ nonce = Nonce }, NoncesPerChunk, State),
+	%% Drop the reservation for the current nonce group (from Nonce to Nonce + NoncesPerChunk - 1).
+	State2 = case ar_mining_cache:release_for_session(
+		Candidate#mining_candidate.session_key,
+		?DATA_CHUNK_SIZE,
+		State1#state.chunk_cache
+	) of
+		{ok, ChunkCache1} -> State1#state{ chunk_cache = ChunkCache1 };
+		{error, Reason} ->
+			?LOG_ERROR([{event, mining_worker_failed_to_release_reservation_for_session}, {reason, Reason}]),
+			State1
+	end,
 	%% Process the next chunk.
 	process_chunks(
 		WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk,
-		NoncesPerChunk, NoncesPerRecallRange, [], SubChunkSize, Count, State1
+		NoncesPerChunk, NoncesPerRecallRange, [], SubChunkSize, Count, State2
 	);
 process_chunks(
 	WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk,
