@@ -674,15 +674,15 @@ process_chunks(
 			);
 		{false, false, _} ->
 			%% Process all sub-chunks in Chunk, and then advance to the next chunk.
-			State1 = process_all_sub_chunks(WhichChunk, Chunk, 0, Candidate, Nonce, State),
+			State1 = process_all_sub_chunks(WhichChunk, Chunk, Candidate, Nonce, State),
 			process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk,
 				NoncesPerRecallRange, ChunkOffsets, SubChunkSize, Count + 1, State1
 			)
 	end.
 
-process_all_sub_chunks(_WhichChunk, <<>>, _SubChunkCount, _Candidate, _Nonce, State) -> State;
-process_all_sub_chunks(WhichChunk, Chunk, _SubChunkCount, Candidate, Nonce, State)
+process_all_sub_chunks(_WhichChunk, <<>>, _Candidate, _Nonce, State) -> State;
+process_all_sub_chunks(WhichChunk, Chunk, Candidate, Nonce, State)
 when Candidate#mining_candidate.packing_difficulty == 0 ->
 	%% Spora 2.6 packing (aka difficulty 0).
 	Candidate2 = Candidate#mining_candidate{ nonce = Nonce },
@@ -690,13 +690,13 @@ when Candidate#mining_candidate.packing_difficulty == 0 ->
 process_all_sub_chunks(
 	WhichChunk,
 	<< SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, Rest/binary >>,
-	SubChunkCount, Candidate, Nonce, State
+	Candidate, Nonce, State
 ) ->
 	%% Composite packing / replica packing (aka difficulty 1+).
 	Candidate2 = Candidate#mining_candidate{ nonce = Nonce },
 	State1 = process_sub_chunk(WhichChunk, Candidate2, SubChunk, State),
-	process_all_sub_chunks(WhichChunk, Rest, SubChunkCount + 1, Candidate2, Nonce + 1, State1);
-process_all_sub_chunks(WhichChunk, Rest, _SubChunkCount, _Candidate, Nonce, State) ->
+	process_all_sub_chunks(WhichChunk, Rest, Candidate2, Nonce + 1, State1);
+process_all_sub_chunks(WhichChunk, Rest, _Candidate, Nonce, State) ->
 	%% The chunk is not a multiple of the subchunk size.
 	?LOG_ERROR([{event, failed_to_split_chunk_into_sub_chunks},
 			{remaining_size, byte_size(Rest)},
