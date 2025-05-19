@@ -22,6 +22,7 @@
 	get_pool_cm_jobs/2, post_pool_cm_jobs/2,
 	post_cm_partition_table_to_pool/2]).
 -export([get_block_shadow/2, get_block_shadow/3, get_block_shadow/4]).
+-export([stop/1]).
 
 %% -- Testing exports
 -export([get_tx_from_remote_peer/3]).
@@ -441,14 +442,14 @@ get_mempool([]) ->
 	{error, not_found};
 get_mempool([Peer | Peers]) ->
     case get_mempool(Peer) of
-        {ok, TXIDs} ->
-            {ok, TXIDs};
-        {error, Error} ->
+	{ok, TXIDs} ->
+	    {ok, TXIDs};
+	{error, Error} ->
 			?LOG_DEBUG([{event, failed_to_get_mempool_txids_from_peer},
 					{peer, ar_util:format_peer(Peer)},
 					{error, io_lib:format("~p", [Error])}
 			]),
-            get_mempool(Peers -- [Peer])
+	    get_mempool(Peers -- [Peer])
     end;
 
 get_mempool(Peer) ->
@@ -539,10 +540,10 @@ get_reward_history([Peer | Peers], B, ExpectedRewardHistoryHashes) ->
 							get_reward_history(Peers, B, ExpectedRewardHistoryHashes)
 					end;
 				% {ok, L} ->
-				% 	?LOG_WARNING([{event, received_reward_history_of_unexpected_length},
-				% 			{expected_length, ExpectedLength}, {received_length, length(L)},
-				% 			{peer, ar_util:format_peer(Peer)}]),
-				% 	get_reward_history(Peers, B, ExpectedRewardHistoryHashes);
+				%	?LOG_WARNING([{event, received_reward_history_of_unexpected_length},
+				%			{expected_length, ExpectedLength}, {received_length, length(L)},
+				%			{peer, ar_util:format_peer(Peer)}]),
+				%	get_reward_history(Peers, B, ExpectedRewardHistoryHashes);
 				{error, _} ->
 					?LOG_WARNING([{event, failed_to_parse_reward_history},
 							{peer, ar_util:format_peer(Peer)}]),
@@ -1434,3 +1435,34 @@ add_header(Name, Value, Headers) ->
 	?LOG_ERROR([{event, invalid_header}, {name, Name}, {value, Value}]),
 	Headers.
 
+%%--------------------------------------------------------------------
+%% @doc stop the application and execute the shutdown procedure.
+%% @end
+%%--------------------------------------------------------------------
+-spec stop(State) -> Return when
+	State :: any(),
+	Return :: any.
+
+stop(_State) ->
+	terminate_connections(),
+	?LOG_INFO([{stop, ?MODULE}]).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc terminate all active http client connections from gun.
+%% @end
+%%--------------------------------------------------------------------
+terminate_connections() ->
+	erlang:process_flag(trap_exit, true),
+	case ar_http:client_connections() of
+		[] -> ok;
+		SocketsInfo ->
+			% start killers to stop those sockets.
+			Killers = [
+				begin {ok, K} = ar_http:start_killer(S), K end
+				|| #{ socket := S } <- SocketsInfo
+			],
+
+			% wait until all connection killers are done with their job.
+			ar_http:terminate_connections(Killers)
+	end.

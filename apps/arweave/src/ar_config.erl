@@ -627,13 +627,13 @@ parse_options([{<<"coordinated_mining">>, Opt} | _], _) ->
 	{error, {bad_type, coordinated_mining, boolean}, Opt};
 
 parse_options([{<<"cm_api_secret">>, CMSecret} | Rest], Config)
-  		when is_binary(CMSecret), byte_size(CMSecret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
+		when is_binary(CMSecret), byte_size(CMSecret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
 	parse_options(Rest, Config#config{ cm_api_secret = CMSecret });
 parse_options([{<<"cm_api_secret">>, CMSecret} | _], _) ->
 	{error, {bad_type, cm_api_secret, string}, CMSecret};
 
 parse_options([{<<"cm_poll_interval">>, CMPollInterval} | Rest], Config)
-  		when is_integer(CMPollInterval) ->
+		when is_integer(CMPollInterval) ->
 	parse_options(Rest, Config#config{ cm_poll_interval = CMPollInterval });
 parse_options([{<<"cm_poll_interval">>, CMPollInterval} | _], _) ->
 	{error, {bad_type, cm_poll_interval, number}, CMPollInterval};
@@ -655,7 +655,7 @@ parse_options([{<<"cm_exit_peer">>, Peer} | Rest], Config) ->
 	end;
 
 parse_options([{<<"cm_out_batch_timeout">>, CMBatchTimeout} | Rest], Config)
-  		when is_integer(CMBatchTimeout) ->
+		when is_integer(CMBatchTimeout) ->
 	parse_options(Rest, Config#config{ cm_out_batch_timeout = CMBatchTimeout });
 parse_options([{<<"cm_out_batch_timeout">>, CMBatchTimeout} | _], _) ->
 	{error, {bad_type, cm_out_batch_timeout, number}, CMBatchTimeout};
@@ -691,19 +691,19 @@ parse_options([{<<"pool_server_address">>, Host} | _], _) ->
 
 %% Undocumented/unsupported options
 parse_options([{<<"chunk_storage_file_size">>, ChunkGroupSize} | Rest], Config)
-  		when is_integer(ChunkGroupSize) ->
+		when is_integer(ChunkGroupSize) ->
 	parse_options(Rest, Config#config{ chunk_storage_file_size = ChunkGroupSize });
 parse_options([{<<"chunk_storage_file_size">>, ChunkGroupSize} | _], _) ->
 	{error, {bad_type, chunk_storage_file_size, number}, ChunkGroupSize};
 
 parse_options([{<<"rocksdb_flush_interval">>, IntervalS} | Rest], Config)
-  		when is_integer(IntervalS) ->
+		when is_integer(IntervalS) ->
 	parse_options(Rest, Config#config{ rocksdb_flush_interval_s = IntervalS });
 parse_options([{<<"rocksdb_flush_interval">>, IntervalS} | _], _) ->
 	{error, {bad_type, rocksdb_flush_interval, number}, IntervalS};
 
 parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | Rest], Config)
-  		when is_integer(IntervalS) ->
+		when is_integer(IntervalS) ->
 	parse_options(Rest, Config#config{ rocksdb_wal_sync_interval_s = IntervalS });
 parse_options([{<<"rocksdb_wal_sync_interval">>, IntervalS} | _], _) ->
 	{error, {bad_type, rocksdb_wal_sync_interval, number}, IntervalS};
@@ -721,6 +721,17 @@ parse_options([{<<"shutdown_tcp_connection_timeout">>, Delay} | Rest], Config)
 		parse_options(Rest, NewConfig);
 parse_options([{<<"shutdown_tcp_connection_timeout">>, InvalidValue} | Rest], Config) ->
 	{error, {bad_type, shutdown_tcp_connection_timeout, integer}, InvalidValue};
+parse_options([{<<"shutdown_tcp_mode">>, Mode}|Rest], Config) ->
+	case Mode of
+		<<"soft">> ->
+			NewConfig = Config#config{ shutdown_tcp_mode = soft },
+			parse_options(Rest, NewConfig);
+		<<"hard">> ->
+			NewConfig = Config#config{ shutdown_tcp_mode = hard },
+			parse_options(Rest, NewConfig);
+		Mode ->
+			{error, {bad_value, shutdown_tcp_mode}, Mode}
+	end;
 
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
