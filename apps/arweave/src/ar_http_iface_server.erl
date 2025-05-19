@@ -110,8 +110,8 @@ start_http_iface_listener(Config) ->
 			], ProtocolOpts)
 	end.
 
-terminate(_Reason, State) ->
-	prep_stop(State).
+terminate(_Reason, _State) ->
+	ok.
 
 %%--------------------------------------------------------------------
 %% @doc stop the application and execute the shutdown procedure.

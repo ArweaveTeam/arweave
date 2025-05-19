@@ -137,8 +137,8 @@
 -define(DEFAULT_PACKING_WORKERS, erlang:system_info(dirty_cpu_schedulers_online)).
 
 %% The default connection tcp delay when arweave is shutting down
--define(SHUTDOWN_TCP_CONNECTION_TIMEOUT, 60).
--define(SHUTDOWN_TCP_MAX_CONNECTION_TIMEOUT, ?SHUTDOWN_TCP_CONNECTION_TIMEOUT*5).
+-define(SHUTDOWN_TCP_CONNECTION_TIMEOUT, 30).
+-define(SHUTDOWN_TCP_MAX_CONNECTION_TIMEOUT, ?SHUTDOWN_TCP_CONNECTION_TIMEOUT*3).
 
 %% @doc Startup options with default values.
 -record(config, {
