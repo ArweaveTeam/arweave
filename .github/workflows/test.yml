@@ -119,29 +119,6 @@ jobs:
             _build.tar.gz
             apps.tar.gz
 
-      # some artifacts are compiled and only available
-      # in arweave directy (libraries)
-      - name: Prepare artifacts
-        run: |
-          chmod -R u+w ./_build
-          tar czfp _build.tar.gz ./_build
-          tar czfp apps.tar.gz ./apps
-
-      # to avoid reusing artifacts from someone else
-      # and generating issues, an unique artifact is
-      # produced using github checksum.
-      - name: upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-${{ github.sha }}
-          if-no-files-found: error
-          include-hidden-files: true
-          retention-days: 7
-          overwrite: true
-          path: |
-            _build.tar.gz
-            apps.tar.gz
-
   ####################################################################
   # Canary testing, should fail.
   ####################################################################
