@@ -572,7 +572,7 @@ process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
 %% Recall range offset is not aligned to chunk size.
 %% When reading data from disk, we always read the entire chunk.
 %% This means that the amount of data read from disk is always bigger than the
-%% recall range size: we're reading one chunk more than the recall range size.
+%% recall range size:
 %%
 %%         |<-      recall range       ->|
 %% [    ][ 1  ][ 2  ] .... [n-2 ][n-1 ][ n  ]
@@ -581,16 +581,28 @@ process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
 %%
 %% When determining which chunks to process, we find the first chunk that
 %% contains the first nonce of the recall range, and start processing from this
-%% chunk. This effectively shifts the recall range to the left.
+%% chunk. This effectively shifts the recall range to the left:
 %%
 %%         |<-      recall range       ->|
 %% [    ][ 1  ][ 2  ] .... [n-2 ][n-1 ][ n  ]
 %%       |<- effective recall range ->|
 %%
+%% If the recall range start offset aligns with the chunk size accidentally,
+%% current implementation skips the first chunk completely. Fixing this
+%% inconsistency will require a hard fork:
+%%
+%%       |<-      recall range      ->|
+%% [    ][ 1  ][ 2  ] .... [n-2 ][n-1 ][ n  ]
+%%             |<- effective recall range ->|
+%%
 %% The ultimate goal is to process all the sub-chunks in the recall range.
 %% The count of subchunks in the recall range is `NoncesPerRecallRange`.
 %% replica packing: 10 chunks, 32 nonces per chunk, 320 nonces per recall range.
 %% spora 2.6: 200 chunks, 1 nonce per chunk, 200 nonces per recall range.
+%%
+%% Some of the chunks inside (including first and last) might be missing.
+%% This cases must be handled correctly to avoid keeping not needed chunks in
+%% the cache.
 process_chunks(
 	WhichChunk, Candidate, _RangeStart, Nonce, _NoncesPerChunk,
 	NoncesPerRecallRange, _ChunkOffsets, _SubChunkSize, Count, State
@@ -774,9 +786,9 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 		fun
 			(#ar_mining_cache_value{h1_passes_diff_checks = true} = _CachedValue) ->
 				%% H1 passes diff checks, so we skip H2 for this nonce.
-				%% Might as well drop the cached data, we don't need it anymore.
+				%% Drop the cached data, we don't need it anymore.
 				%% Since we already reserved the cache size for chunk2, but we never store it,
-				%% we need to drop the reservation here (minus chunk size).
+				%% we need to drop the reservation here.
 				{ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
 			(#ar_mining_cache_value{h1 = undefined} = CachedValue) ->
 				%% H1 is not yet calculated, cache the chunk2 for this nonce.

@@ -401,6 +401,16 @@ try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
 		stored_data_size = Anomalies0#session_anomalies.stored_data_size + byte_size(Chunk1)
 	};
 
+try_detect_mining_session_value_anomalies(Key, #ar_mining_cache_value{
+	chunk1 = Chunk1,
+	chunk2 = undefined,
+	chunk2_missing = false
+}, Anomalies0) when undefined =/= Chunk1 ->
+	?LOG_WARNING([{event, mining_session_value_anomaly_chunk1_present_chunk2_missing}, {key, Key}]),
+	Anomalies0#session_anomalies{
+		chunk2_missing = Anomalies0#session_anomalies.chunk2_missing + 1
+	};
+
 try_detect_mining_session_value_anomalies(_Key, #ar_mining_cache_value{
 	chunk2 = undefined,
 	chunk2_missing = false
