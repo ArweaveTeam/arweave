@@ -349,8 +349,6 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 			%% Read the recall ranges; the result of the read will be reported by the `chunk1` and `chunk2` tasks.
 			ar_mining_io:read_recall_range(chunk1, self(), Candidate2, RecallRange1Start),
 			ar_mining_io:read_recall_range(chunk2, self(), Candidate2, RecallRange2Start),
-			prometheus_counter:inc(mining_server_chunk_cache_recall_ranges_1_requested, [Partition1]),
-			prometheus_counter:inc(mining_server_chunk_cache_recall_ranges_2_requested, [Partition2]),
 			State;
 		{true, false} ->
 			%% Only the first recall range is readable, so we need to release the reserved space for the second
@@ -360,7 +358,6 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 			State2 = mark_second_recall_range_missing(Candidate2, State1),
 			%% Read the recall range; the result of the read will be reported by the `chunk1` task.
 			ar_mining_io:read_recall_range(chunk1, self(), Candidate2, RecallRange1Start),
-			prometheus_counter:inc(mining_server_chunk_cache_recall_ranges_1_requested, [Partition1]),
 			State2;
 		{false, _} ->
 			%% We don't have the recall ranges, so we need to release the reserved space for both partitions.
@@ -372,14 +369,12 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 %% Indicates that the first recall range has been read.
 handle_task({chunk1, Candidate, [RangeStart, ChunkOffsets]}, State) ->
 	State1 = process_chunks(chunk1, Candidate, RangeStart, ChunkOffsets, State),
-	prometheus_counter:inc(mining_server_chunk_cache_recall_ranges_1_reported, [State1#state.partition_number]),
 	State1;
 
 %% @doc Handle the `chunk2` task.
 %% Indicates that the second recall range has been read.
 handle_task({chunk2, Candidate, [RangeStart, ChunkOffsets]}, State) ->
 	State1 = process_chunks(chunk2, Candidate, RangeStart, ChunkOffsets, State),
-	prometheus_counter:inc(mining_server_chunk_cache_recall_ranges_2_reported, [State1#state.partition_number]),
 	State1;
 
 %% @doc Handle the `computed_h1` task.
