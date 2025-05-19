@@ -621,7 +621,11 @@ process_chunks(
 		{partition, State#state.partition_number}]),
 	%% No more ChunkOffsets means no more chunks have been read. Iterate through all the
 	%% remaining nonces and remove the full chunks from the cache.
-	State1 = remove_sub_chunks_from_cache(Candidate#mining_candidate{ nonce = Nonce }, NoncesPerChunk, State),
+	State1 = case WhichChunk of
+		chunk1 -> mark_single_chunk1_missing_or_drop(Nonce, Candidate, State);
+		chunk2 -> mark_single_chunk2_missing_or_drop(Nonce, Candidate, State)
+	end,
+	% State1 = remove_sub_chunks_from_cache(Candidate#mining_candidate{ nonce = Nonce }, NoncesPerChunk, State),
 	%% Drop the reservation for the current nonce group (from Nonce to Nonce + NoncesPerChunk - 1).
 	State2 = case ar_mining_cache:release_for_session(
 		Candidate#mining_candidate.session_key,
