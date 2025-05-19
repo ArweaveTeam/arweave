@@ -287,63 +287,12 @@ register() ->
 				"The peer label indicates the peer that the value is exchanged with, and the "
 				"direction label can be 'to' or 'from'."}
 	]),
-	prometheus_counter:new([
-		{name, mining_server_chunk_cache_recall_ranges_1_requested},
-		{labels, [partition]},
-		{help, "The number of recall ranges requested during mining."}
-	]),
-	prometheus_counter:new([
-		{name, mining_server_chunk_cache_recall_ranges_1_reported},
-		{labels, [partition]},
-		{help, "The number of recall ranges reported during mining."}
-	]),
-	prometheus_counter:new([
-		{name, mining_server_chunk_cache_recall_ranges_2_requested},
-		{labels, [partition]},
-		{help, "The number of recall ranges requested during mining."}
-	]),
-	prometheus_counter:new([
-		{name, mining_server_chunk_cache_recall_ranges_2_reported},
-		{labels, [partition]},
-		{help, "The number of recall ranges reported during mining."}
-	]),
 	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_size},
-		{labels, [partition]},
+		{labels, [partition, type]},
 		{help, "The amount of data (measured in bytes) "
-			"fetched during mining and not processed yet."}
-	]),
-	prometheus_gauge:new([
-		{name, mining_server_chunk_actual_cache_size},
-		{labels, [partition]},
-		{help, "The amount of actual binary data (measured in bytes) "
-			"fetched during mining and not processed yet."}
-	]),
-	prometheus_gauge:new([
-		{name, mining_server_chunk_reservation_size},
-		{labels, [partition]},
-		{help, "The amount of data (measured in bytes) "
-			"reserved for fetching during mining."}
-	]),
-	prometheus_gauge:new([
-		{name, mining_server_chunk_cache_reserve},
-		{labels, []},
-		{help, "The amount of data reserved during mining."}
-	]),
-	prometheus_gauge:new([
-		{name, mining_server_chunk_cache_release},
-		{labels, []},
-		{help, "The amount of previously reserved data released during mining."}
-	]),
-	prometheus_gauge:new([
-		{name, mining_server_chunk_cache_store},
-		{labels, []},
-		{help, "The amount of data stored during mining."}
-	]),
-	prometheus_gauge:new([
-		{name, mining_server_chunk_cache_drop},
-		{labels, []},
-		{help, "The amount of data dropped during mining."}
+			"fetched during mining and not processed yet. "
+		  "The type label can be 'total', 'reserved'."}
 	]),
 	prometheus_gauge:new([
 		{name, mining_server_task_queue_len},
