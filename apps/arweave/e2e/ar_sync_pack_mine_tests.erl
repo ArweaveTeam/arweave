@@ -342,9 +342,10 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 
 	RangeStart = floor(1 * ar_block:partition_size()),
 	RangeEnd = floor(1.5 * ar_block:partition_size()) + ar_storage_module:get_overlap(SinkPacking),
+	RangeSize = RangeEnd - RangeStart,
 
 	%% Make sure the expected data was synced
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 1, 4)),
@@ -389,9 +390,10 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 
 	RangeStart = floor(1.5 * ar_block:partition_size()),
 	RangeEnd = floor(2 * ar_block:partition_size()) + ar_storage_module:get_overlap(SinkPacking),
+	RangeSize = RangeEnd - RangeStart,
 
 	%% Make sure the expected data was synced	
-	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 5, 8)),
