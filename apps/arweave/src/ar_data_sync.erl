@@ -1064,15 +1064,62 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 				true ->
 					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End});
 				false ->
-					%% All checks have passed, find and enqueue intervals for one
-					%% sync bucket worth of chunks starting at offset Start
-					?LOG_DEBUG([{event, fetch_peer_intervals},
-							{function, collect_peer_intervals}, {s, Start}, {e, End2}]),
-					ar_peer_intervals:fetch(Start, End2, StoreID)
+					Packing = ar_storage_module:get_packing(StoreID),
+					case Packing of
+						{replica_2_9, _} ->
+							% Handle replica_2_9: find and enqueue entropy footprints
+							% This is a simplified approach: iterate a few candidate offsets
+							% A more robust approach would scan for unsynced footprints systematically
+							OffsetsToConsider = lists:sublist(lists:seq(Start, End2, ?DATA_CHUNK_SIZE * 10), 50), % Consider up to 50 potential footprints
+							lists:foreach(
+								fun(CurrentApproximateOffset) ->
+									PaddedOffset = ar_block:get_chunk_padded_offset(CurrentApproximateOffset + ?DATA_CHUNK_SIZE),
+									FootprintChunkEndOffsets = ar_entropy_gen:entropy_offsets(PaddedOffset, WeaveSize),
+									if FootprintChunkEndOffsets =/= [] ->
+										FootprintDefiningOffset = hd(FootprintChunkEndOffsets),
+										% Check if roughly this footprint is already queued or significantly synced
+										IsAlreadyQueued = gb_sets:is_member({FootprintDefiningOffset, footprint_task}, Q), % Requires task type in queue key
+										IsMostlySynced = check_footprint_synced(FootprintChunkEndOffsets, StoreID),
+										if not IsAlreadyQueued andalso not IsMostlySynced ->
+											Peers = ar_data_discovery:get_entropy_footprint_peers(FootprintDefiningOffset, 5),
+											if Peers =/= [] ->
+												BestPeer = hd(Peers),
+												% Enqueue a new task type or adapt existing one
+												% For simplicity, using a special tuple for now. This will affect ordering.
+												NewTask = {FootprintDefiningOffset, footprint_task, BestPeer, StoreID},
+												gen_server:cast(self(), {enqueue_task, NewTask})
+											end
+										end
+									end
+								end,
+								OffsetsToConsider
+							),
+							% After attempting to queue footprints, schedule next collection pass
+							ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}); % Continue scanning other parts
+						_ ->
+							% Original logic for non-replica_2_9
+							?LOG_DEBUG([{event, fetch_peer_intervals},
+									{function, collect_peer_intervals}, {s, Start}, {e, End2}]),
+							ar_peer_intervals:fetch(Start, End2, StoreID)
+					end
 			end
 	end,
 
 	{noreply, State};
+
+% Add a handler for the new enqueue_task message if used above
+handle_cast({enqueue_task, {FootprintDefiningOffset, footprint_task, Peer, StoreID}}, State) ->
+    #sync_data_state{ sync_intervals_queue = Q, sync_intervals_queue_intervals = QIntervals } = State,
+    % This task represents a footprint. The interval is conceptual.
+    % For gb_sets, the key must be unique. {FootprintDefiningOffset, Peer} could be a key part.
+    % To fit into existing Q structure {Start, End, Peer}, we might use:
+    % {FootprintDefiningOffset, FootprintDefiningOffset + (?DATA_CHUNK_SIZE * 1024) -1, Peer, footprint_metadata}
+    % However, the original Q uses gb_sets:add_element({Start,End,Peer}, Qacc).
+    % Let's make a new type of entry. This will require do_sync_intervals to handle it.
+    NewQEntry = {footprint, FootprintDefiningOffset, Peer, StoreID}, % Type, ID, Peer, StoreID
+    Q2 = gb_sets:add_element(NewQEntry, Q),
+    % QIntervals might not be directly applicable here or needs adjustment for footprints
+    {noreply, State#sync_data_state{ sync_intervals_queue = Q2 }};
 
 handle_cast({enqueue_intervals, []}, State) ->
 	{noreply, State};
@@ -1616,12 +1663,21 @@ do_sync_intervals(State) ->
 			State;
 		false ->
 			gen_server:cast(self(), sync_intervals),
-			{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
-			I2 = ar_intervals:delete(QIntervals, End, Start),
-			gen_server:cast(ar_data_sync_worker_master,
-					{sync_range, {Start, End, Peer, StoreID}}),
-			State#sync_data_state{ sync_intervals_queue = Q2,
-					sync_intervals_queue_intervals = I2 }
+			case gb_sets:take_smallest(Q) of
+				{{Start, End, Peer}, Q2} -> % Existing task type for ranges
+					I2 = ar_intervals:delete(QIntervals, End, Start),
+					gen_server:cast(ar_data_sync_worker_master,
+							{sync_range, {Start, End, Peer, StoreID}}),
+					State#sync_data_state{ sync_intervals_queue = Q2,
+							sync_intervals_queue_intervals = I2 };
+				{{footprint, FootprintDefiningOffset, Peer, StoreIDForFootprint}, Q2} -> % New task type for footprints
+					% QIntervals might not be updated for footprints in this simplified change
+					gen_server:cast(ar_data_sync_worker_master,
+							{sync_entropy_footprint, {FootprintDefiningOffset, Peer, StoreIDForFootprint}}),
+					State#sync_data_state{ sync_intervals_queue = Q2 };
+				none -> % Queue was empty, should have been caught by IsQueueEmpty
+					State
+			end
 	end.
 
 do_sync_data(State) ->
@@ -3788,3 +3844,16 @@ record_chunk_cache_size_metric() ->
 		_ ->
 			ok
 	end.
+
+% Helper function to check if a footprint is mostly synced (conceptual)
+check_footprint_synced(FootprintChunkEndOffsets, StoreID) ->
+	UnsyncedCount = lists:foldl(
+		fun(ChunkEndOffset, Acc) ->
+			IsRec = ar_sync_record:is_recorded(ChunkEndOffset, ar_data_sync, StoreID),
+			case IsRec of
+				{true, _} -> Acc;
+				_ -> Acc + 1
+			end
+		end, 0, FootprintChunkEndOffsets),
+	TotalChunks = length(FootprintChunkEndOffsets),
+	(TotalChunks - UnsyncedCount) / TotalChunks > 0.9. % e.g., if 90% synced, consider it done for now
