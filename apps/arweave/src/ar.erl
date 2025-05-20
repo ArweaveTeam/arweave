@@ -12,7 +12,7 @@
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
 		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
-		docs/0, shutdown/1, console/1, console/2]).
+		docs/0, shutdown/1, console/1, console/2, prep_stop/1]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -864,6 +864,10 @@ benchmark_2_9(Args) ->
 
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
+
+prep_stop(State) ->
+	_ = ar_http_iface_server:prep_stop(#{}),
+	State.
 
 stop(_State) ->
 	?LOG_INFO([{stop, ?MODULE}]).
