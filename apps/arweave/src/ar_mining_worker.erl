@@ -552,6 +552,7 @@ process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
 	NoncesPerRecallRange = ar_block:get_max_nonce(PackingDifficulty),
 	NoncesPerChunk = ar_block:get_nonces_per_chunk(PackingDifficulty),
 	SubChunkSize = ar_block:get_sub_chunk_size(PackingDifficulty),
+	?LOG_WARNING([{event, process_chunks}, {nonces_per_recall_range, NoncesPerRecallRange}, {nonces_per_chunk, NoncesPerChunk}, {sub_chunk_size, SubChunkSize}]),
 	process_chunks(
 		WhichChunk, Candidate, RangeStart, 0, NoncesPerChunk,
 		NoncesPerRecallRange, ChunkOffsets, SubChunkSize, 0, State
@@ -598,6 +599,7 @@ process_chunks(
 	WhichChunk, Candidate, _RangeStart, Nonce, _NoncesPerChunk,
 	NoncesPerRecallRange, _ChunkOffsets, _SubChunkSize, Count, State
 ) when Nonce > NoncesPerRecallRange ->
+	?LOG_WARNING([{event, process_chunks_done}, {nonces_per_recall_range, NoncesPerRecallRange}, {nonce, Nonce}]),
 	%% We've processed all the sub_chunks in the recall range.
 	ar_mining_stats:chunks_read(case WhichChunk of
 		chunk1 -> Candidate#mining_candidate.partition_number;
@@ -614,21 +616,10 @@ process_chunks(
 		chunk1 -> mark_single_chunk1_missing_or_drop(Nonce, Candidate, State);
 		chunk2 -> mark_single_chunk2_missing_or_drop(Nonce, Candidate, State)
 	end,
-	%% Drop the reservation for the current nonce group (from Nonce to Nonce + NoncesPerChunk - 1).
-	State2 = case ar_mining_cache:release_for_session(
-		Candidate#mining_candidate.session_key,
-		?DATA_CHUNK_SIZE,
-		State1#state.chunk_cache
-	) of
-		{ok, ChunkCache1} -> State1#state{ chunk_cache = ChunkCache1 };
-		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_release_reservation_for_session}, {reason, Reason}]),
-			State1
-	end,
 	%% Process the next chunk.
 	process_chunks(
 		WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk,
-		NoncesPerChunk, NoncesPerRecallRange, [], SubChunkSize, Count, State2
+		NoncesPerChunk, NoncesPerRecallRange, [], SubChunkSize, Count, State1
 	);
 process_chunks(
 	WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk,
