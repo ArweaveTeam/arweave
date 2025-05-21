@@ -2,10 +2,10 @@
 
 -export([get_entropy_partition/1, get_entropy_partition_range/1, get_entropy_key/3,
     get_sector_size/0, get_slice_index/1, get_partition_offset/1, sub_chunks_per_entropy/0,
-    get_entropy_partition_size/0]).
+    get_entropy_partition_size/0, get_entropy_index/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -moduledoc """
