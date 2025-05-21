@@ -1213,7 +1213,7 @@ mock_functions(Functions) ->
 				fun({Module, Fun, Mock}, Mocked) ->
 					NewMocked = case maps:get(Module, Mocked, false) of
 						false ->
-							new_mock(Module, [passthrough]),
+							new_mock(Module, [no_link, passthrough]),
 							lists:foreach(
 								fun({_TestType, Node}) ->
 									remote_call(Node, ar_test_node, new_mock,
