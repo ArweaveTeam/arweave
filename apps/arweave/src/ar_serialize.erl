@@ -31,13 +31,14 @@
 		json_map_to_candidate/1, encode_packing/2, decode_packing/2,
 		jobs_to_json_struct/1, json_struct_to_jobs/1,
 		partial_solution_response_to_json_struct/1,
-		pool_cm_jobs_to_json_struct/1, json_map_to_pool_cm_jobs/1]).
+		pool_cm_jobs_to_json_struct/1, json_map_to_pool_cm_jobs/1,
+		footprint_to_json_map/2, json_map_to_footprint/1]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_vdf.hrl").
--include("../include/ar_mining.hrl").
--include("../include/ar_pool.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_vdf.hrl").
+-include("ar_mining.hrl").
+-include("ar_pool.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -2352,3 +2353,25 @@ json_map_to_pool_cm_jobs(Map) ->
 	H1ReadJobs = [json_map_to_candidate(Job)
 			|| Job <- maps:get(<<"h1_read_jobs">>, Map, [])],
 	#pool_cm_jobs{ h1_to_h2_jobs = H1ToH2Jobs, h1_read_jobs = H1ReadJobs }.
+
+footprint_to_json_map(Packing, Intervals) ->
+	Intervals2 = ar_intervals:to_list(Intervals),
+	Intervals3 = [[integer_to_list(Start), integer_to_list(End)]
+			|| {End, Start} <- Intervals2],
+	#{
+		packing => encode_packing(Packing, false),
+		intervals => Intervals3
+	}.
+
+json_map_to_footprint(Map) ->
+	Packing = decode_packing(list_to_binary(maps:get(<<"packing">>, Map)), error),
+	case Packing of
+		error ->
+			error({unsupported_packing, maps:get(<<"packing">>, Map)});
+		_ ->
+			Intervals = maps:get(<<"intervals">>, Map),
+			Intervals2 = [{list_to_integer(End), list_to_integer(Start)}
+					|| [Start, End] <- Intervals],
+			Intervals3 = ar_intervals:from_list(Intervals2),
+			{Packing, Intervals3}
+	end.

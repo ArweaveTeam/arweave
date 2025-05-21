@@ -6,9 +6,9 @@
 		get/2, get_strict/2, get_all/1, get_all/2, get_all_packed/3, get_all_module_ranges/0,
 		has_any/1, has_range/2, get_cover/3, is_repack_in_place/1]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 

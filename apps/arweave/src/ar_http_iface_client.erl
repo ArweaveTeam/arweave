@@ -11,7 +11,7 @@
 	get_tx_data/2, get_wallet_list_chunk/2, get_wallet_list_chunk/3,
 	get_wallet_list/2, add_peer/1, get_info/1, get_info/2, get_peers/1,
 	get_time/2, get_height/1, get_block_index/3,
-	get_sync_record/1, get_sync_record/3, get_sync_record/4,
+	get_sync_record/1, get_sync_record/3, get_sync_record/4, get_footprints/3,
 	get_chunk_binary/3, get_mempool/1,
 	get_sync_buckets/1, get_recent_hash_list/1,
 	get_recent_hash_list_diff/2, get_reward_history/3,
@@ -401,6 +401,17 @@ get_sync_record(Peer, Start, End, Limit) ->
 		limit => ?MAX_ETF_SYNC_RECORD_SIZE,
 		headers => Headers
 	}), Start, Limit).
+
+get_footprints(Peer, Partition, Footprint) ->
+	handle_footprints_response(ar_http:req(#{
+		peer => Peer,
+		method => get,
+		path => "/footprints/" ++ integer_to_list(Partition) ++ "/" ++ integer_to_list(Footprint),
+		timeout => 10_000,
+		connect_timeout => 5_000,
+		limit => ?MAX_FOOTPRINT_PAYLOAD_SIZE,
+		headers => p2p_headers()
+	})).
 
 get_chunk_binary(Peer, Offset, RequestedPacking) ->
 	PackingBinary = iolist_to_binary(ar_serialize:encode_packing(RequestedPacking, false)),
@@ -863,6 +874,33 @@ handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Start, Limit)
 			Error
 	end;
 handle_sync_record_response(Reply, _, _) ->
+	{error, Reply}.
+
+handle_footprints_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
+	case catch ar_serialize:json_map_to_footprint(jiffy:decode(Body, [return_maps])) of
+		{'EXIT', Reason} ->
+			{error, Reason};
+		{Packing, Footprint} ->
+			{ok, {Packing, Footprint}}
+	end;
+handle_footprints_response({ok, {{<<"404">>, _}, _, _, _, _}}) ->
+	not_found;
+handle_footprints_response({ok, {{<<"400">>, _}, _, Body, _, _}}) ->
+	case catch jiffy:decode(Body, [return_maps]) of
+		{'EXIT', Reason} ->
+			{error, Reason};
+		#{ <<"error">> := <<"footprint_number_too_large">> } ->
+			{error, footprint_number_too_large};
+		#{ <<"error">> := <<"negative_footprint_number">> } ->
+			{error, negative_footprint_number};
+		#{ <<"error">> := <<"negative_partition_number">> } ->
+			{error, negative_partition_number};
+		#{ <<"error">> := <<"invalid_footprint_number_encoding">> } ->
+			{error, invalid_footprint_number_encoding};
+		Response ->
+			{error, Response}
+	end;
+handle_footprints_response(Reply) ->
 	{error, Reply}.
 
 handle_chunk_response({ok, {{<<"200">>, _}, _, Body, Start, End}}, RequestedPacking, Peer) ->

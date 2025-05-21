@@ -205,6 +205,7 @@
 		post_chunk => ?MAX_PARALLEL_POST_CHUNK_REQUESTS,
 		get_block_index => ?MAX_PARALLEL_BLOCK_INDEX_REQUESTS,
 		get_wallet_list => ?MAX_PARALLEL_WALLET_LIST_REQUESTS,
+		%% The get_sync_record semaphore is shared with GET /footprints.
 		get_sync_record => ?MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS,
 		post_tx => ?MAX_PARALLEL_POST_TX_REQUESTS,
 		get_reward_history => ?MAX_PARALLEL_REWARD_HISTORY_REQUESTS,
