@@ -452,3 +452,22 @@ jobs_to_json_struct_test() ->
 		end,
 		TestCases
 	).
+
+footprint_to_json_map_test() ->
+	Addr = crypto:strong_rand_bytes(32),
+	TestCases = [
+		{ar_intervals:new()},
+		{ar_intervals:from_list([{3, 0}, {2048, 1024}])},
+		{ar_intervals:from_list([{1024, 0}])},
+		{ar_intervals:from_list([{3, 0}, {10000, 500}, {200000, 100000}])}
+	],
+	lists:foreach(
+		fun(TestCase) ->
+			{Intervals} = TestCase,
+			?assertEqual(Intervals,
+				ar_serialize:json_map_to_footprint(jiffy:decode(
+					jiffy:encode(ar_serialize:footprint_to_json_map(Intervals)),
+					[return_maps])))
+		end,
+		TestCases
+	).

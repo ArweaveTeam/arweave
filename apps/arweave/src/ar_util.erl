@@ -42,7 +42,8 @@
 	take_every_nth/2,
 	terminal_clear/0,
 	timestamp_to_seconds/1,invert_map/1,
-	unique/1
+	unique/1,
+	pad_to_closest_multiple_equal_or_above/2
 ]).
 
 -include("ar.hrl").
@@ -246,6 +247,11 @@ unique(Res, [X|Xs]) ->
 		false -> unique([X|Res], Xs);
 		true -> unique(Res, Xs)
 	end.
+
+%% @doc Pad the given value to the closest multiple equal or above the given value.
+-spec pad_to_closest_multiple_equal_or_above(Value :: non_neg_integer(), Multiple :: non_neg_integer()) -> non_neg_integer().
+pad_to_closest_multiple_equal_or_above(Value, Multiple) ->
+	(Value + Multiple - 1) div Multiple * Multiple.
 
 %% @doc Run a map in parallel, throw {pmap_timeout, ?DEFAULT_PMAP_TIMEOUT}
 %% if a worker takes longer than ?DEFAULT_PMAP_TIMEOUT milliseconds.

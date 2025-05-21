@@ -1,7 +1,10 @@
 -module(ar_block).
 
--export([partition_size/0, strict_data_split_threshold/0, block_field_size_limit/1, 
-		verify_timestamp/2, get_max_timestamp_deviation/0, verify_last_retarget/2,
+-export([partition_size/0,
+		get_replica_2_9_entropy_sector_size/0, get_replica_2_9_entropy_partition_size/0,
+		get_sub_chunks_per_replica_2_9_entropy/0, get_replica_2_9_entropy_count/0,
+		strict_data_split_threshold/0,
+		block_field_size_limit/1, verify_timestamp/2, get_max_timestamp_deviation/0, verify_last_retarget/2,
 		verify_weave_size/3, verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
 		compute_hash_list_merkle/1, compute_h0/2, compute_h0/5, compute_h0/6,
 		compute_h1/3, compute_h2/3, compute_solution_h/2,
@@ -37,6 +40,28 @@
 %% @doc Expose constants through a function to allow mocking/injection in tests.
 partition_size() -> ?PARTITION_SIZE.
 strict_data_split_threshold() -> ?STRICT_DATA_SPLIT_THRESHOLD.
+
+%% @doc Return the 2.9 entropy sector size - the largest total size in bytes of the contiguous
+%% area where the 2.9 entropy of every chunk is unique.
+-spec get_replica_2_9_entropy_sector_size() -> pos_integer().
+get_replica_2_9_entropy_sector_size() ->
+	?REPLICA_2_9_ENTROPY_COUNT * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+
+%% @doc Return the size of the 2.9 entropy partition.
+-spec get_replica_2_9_entropy_partition_size() -> pos_integer().
+get_replica_2_9_entropy_partition_size() ->
+	?REPLICA_2_9_ENTROPY_COUNT * ?REPLICA_2_9_ENTROPY_SIZE.
+
+%% @doc Return the number of sub-chunks per entropy. We'll generally create 32x entropies
+%% in order to fully encipher this many chunks.
+-spec get_sub_chunks_per_replica_2_9_entropy() -> pos_integer().
+get_sub_chunks_per_replica_2_9_entropy() ->
+	?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+
+%% @doc Return the number of entropies per partition.
+-spec get_replica_2_9_entropy_count() -> pos_integer().
+get_replica_2_9_entropy_count() ->
+	?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
 
 %% @doc Check whether the block fields conform to the specified size limits.
 block_field_size_limit(B = #block{ reward_addr = unclaimed }) ->
