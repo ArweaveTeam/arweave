@@ -41,8 +41,8 @@
 
 %% The size in bytes of the total RX2 entropy (# of lanes * scratchpad size).
 -ifdef(AR_TEST).
-%% 24_576 bytes worth of entropy.
--define(REPLICA_2_9_ENTROPY_SIZE, (3 * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE)).
+%% 32_768 bytes worth of entropy.
+-define(REPLICA_2_9_ENTROPY_SIZE, (4 * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE)).
 -else.
 %% 8_388_608 bytes worth of entropy.
 -define(REPLICA_2_9_ENTROPY_SIZE, (

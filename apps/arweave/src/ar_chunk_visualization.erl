@@ -15,9 +15,9 @@ get_chunk_packings(ModuleStart, ModuleEnd, StoreID) ->
 get_chunk_packings(ModuleStart, ModuleEnd, StoreID, PrintProgress) ->
 	Partition = ar_node:get_partition_number(ModuleStart),
 	PartitionStart = ar_chunk_storage:get_chunk_bucket_start(ModuleStart),
-	SectorSize = ar_replica_2_9:get_sector_size(),
+	SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
 	BucketsPerSector = SectorSize div ?DATA_CHUNK_SIZE,
-	NumSectors = ar_replica_2_9:get_entropy_partition_size() div SectorSize,
+	NumSectors = ar_block:get_replica_2_9_entropy_partition_size() div SectorSize,
 
 	case PrintProgress of
 		true ->
