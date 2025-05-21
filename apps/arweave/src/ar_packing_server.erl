@@ -27,6 +27,11 @@
 	num_workers
 }).
 
+%% We remember the earliest entropy generation per mining address
+%% until it falls out of this window. Used to track the amount of
+%% redundant entropy generation.
+-define(ENTROPY_GENERATION_STATS_WINDOW_MS, 1000 * 60 * 30). % 30 minutes
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -243,13 +248,30 @@ encipher_replica_2_9_chunk(Chunk, Entropy) ->
 ) -> binary().
 generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
-	PackingState = get_packing_state(),
-	RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
 
-	Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
-	%% Primarily needed for testing where the entropy generated exceeds the entropy
-	%% needed for tests.
-	binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE).
+	entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
+	case ar_replica_2_9_entropy_cache:get(Key) of
+		{ok, Entropy} ->
+			entropy_generation_release(Key),
+			Entropy;
+		not_found ->
+			PackingState = get_packing_state(),
+			RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
+			{ok, Config} = arweave_config:get_env(),
+			MaxEntropies = Config#config.replica_2_9_entropy_cache_max_entropies,
+
+			Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
+			update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
+			EntropySize = ?REPLICA_2_9_ENTROPY_SIZE,
+			MaxSize = MaxEntropies * EntropySize,
+			ar_replica_2_9_entropy_cache:clean_up_space(EntropySize, MaxSize),
+			ar_replica_2_9_entropy_cache:put(Key, Entropy, EntropySize),
+			entropy_generation_release(Key),
+
+			%% Primarily needed for testing where the entropy generated exceeds the entropy
+			%% needed for tests.
+			binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE)
+	end.
 
 %% @doc Pad (to ?DATA_CHUNK_SIZE) and pack the chunk according to the 2.9 replication format.
 %% Return the chunk and the combined entropy used on that chunk.
@@ -290,6 +312,7 @@ init([]) ->
 	Workers = queue:from_list(
 		[spawn_link(fun() -> worker(PackingState) end) || _ <- lists:seq(1, NumWorkers)]),
 	ets:insert(?MODULE, {buffer_size, 0}),
+
 	MaxSize =
 		case Config#config.packing_cache_size_limit of
 			undefined ->
@@ -867,6 +890,60 @@ exor_replica_2_9_sub_chunks(
 		<< EntropyPart:(?COMPOSITE_PACKING_SUB_CHUNK_SIZE)/binary, EntropyRest/binary >>) ->
 	[ar_mine_randomx:exor_sub_chunk(SubChunk, EntropyPart)
 			| exor_replica_2_9_sub_chunks(ChunkRest, EntropyRest)].
+
+entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
+	case ets:insert_new(?MODULE, {{entropy_generation_lock, Key}}) of
+		true ->
+			ok;
+		false ->
+			?LOG_INFO([{event, entropy_generation_lock_collision},
+					{reward_addr, ar_util:encode(RewardAddr)},
+					{key, ar_util:encode(Key)},
+					{bucket_end_offset, BucketEndOffset},
+					{sub_chunk_start_offset, SubChunkStartOffset}]),
+			timer:sleep(100),
+			entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset)
+	end.
+
+entropy_generation_release(Key) ->
+	ets:delete(?MODULE, {entropy_generation_lock, Key}).
+
+update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
+	Tab = entropy_generation_stats,
+	Time = erlang:monotonic_time(millisecond),
+	ets:update_counter(Tab, Key, {2, 1}, {Key, 0, Time}),
+	may_be_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
+	remove_outdated_entropy_generation_stats().
+
+may_be_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
+	Tab = entropy_generation_stats,
+	Now = erlang:monotonic_time(millisecond),
+	[{_, Count, Time}] = ets:lookup(Tab, Key),
+	case Count > 1 of
+		true ->
+			?LOG_WARNING([{event, possibly_redundant_entropy_generation},
+					{reward_addr, ar_util:encode(RewardAddr)},
+					{key, ar_util:encode(Key)},
+					{bucket_end_offset, BucketEndOffset},
+					{sub_chunk_start_offset, SubChunkStartOffset},
+					{count, Count},
+					{seconds_since_first_generation, (Now - Time) / 1_000},
+					{avg_per_second, Count / ((Now - Time) / 1_000)}]);
+		false ->
+			ok
+	end.
+
+remove_outdated_entropy_generation_stats() ->
+	Tab = entropy_generation_stats,
+	Cursor = ets:first(Tab),
+	Now = erlang:monotonic_time(millisecond),
+	case ets:lookup(Tab, Cursor) of
+		[{_, _, Time}] when Time < Now - ?ENTROPY_GENERATION_STATS_WINDOW_MS ->
+			ets:delete(Tab, Cursor),
+			remove_outdated_entropy_generation_stats();
+		_ ->
+			ok
+	end.
 
 %%%===================================================================
 %%% Tests.

@@ -24,13 +24,13 @@ instantiator(GenesisData, SinkPackingType, TestFun) ->
 %% Test Registration
 %% --------------------------------------------------------------------------------------------
 
-replica_2_9_block_sync_test_() ->
+replica_2_9_syncing_test_() ->
 	{setup, fun () -> setup_source_node(replica_2_9) end, 
 		fun (GenesisData) ->
 				[
-					instantiator(GenesisData, replica_2_9, fun test_syncing_blocked/1),
-					instantiator(GenesisData, spora_2_6, fun test_syncing_blocked/1),
-					instantiator(GenesisData, unpacked, fun test_syncing_blocked/1)
+					instantiator(GenesisData, replica_2_9, fun test_replica_2_9_syncing/1),
+					instantiator(GenesisData, spora_2_6, fun test_replica_2_9_syncing/1),
+					instantiator(GenesisData, unpacked, fun test_replica_2_9_syncing/1)
 				]
 		end}.
 
@@ -147,7 +147,7 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 			ok
 	end.
 
-test_syncing_blocked({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
+test_replica_2_9_syncing({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
 	?LOG_INFO([{event, test_syncing_blocked}, {module, ?MODULE},
 		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
@@ -156,8 +156,8 @@ test_syncing_blocked({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	SinkNode = peer2,
 
 	start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
-	ar_e2e:assert_does_not_sync_range(SinkNode, ar_block:partition_size(), 2*ar_block:partition_size()),
-	ar_e2e:assert_no_chunks(SinkNode, Chunks).
+	ar_e2e:assert_syncs_range(SinkNode,
+		ar_block:partition_size(), 2*ar_block:partition_size()).
 
 test_unpacked_and_packed_sync_pack_mine(
 		{{Blocks, _Chunks, SourcePackingType}, {PackingType1, PackingType2}}) ->
