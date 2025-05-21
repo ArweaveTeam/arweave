@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <string.h>
 #include <errno.h>
 #include <stddef.h>
@@ -42,7 +43,7 @@ static int fill_devurandom(void* buffer, size_t size) {
 		}
 		offset += (size_t)result;
 	}
-	
+
 	close(fd);
 	return 1;
 
@@ -68,15 +69,15 @@ static int fill_random(void* buffer, size_t size) {
 #elif defined(__APPLE__)
 
 	size_t offset = 0;
-    while (offset < size) {
+	while (offset < size) {
 		// max allowed length is 256 bytes
-        size_t chunk = (size - offset > 256) ? 256 : (size - offset);
-        if (getentropy((char*)buffer + offset, chunk) == -1) {
+		size_t chunk = (size - offset > 256) ? 256 : (size - offset);
+		if (getentropy((char*)buffer + offset, chunk) == -1) {
 			if (errno == ENOSYS) return fill_devurandom(buffer, size);
-            return 0;
-        }
-        offset += chunk;
-    }
+			return 0;
+		}
+		offset += chunk;
+	}
 
 #else
 	// Unsupported platform
