@@ -1,14 +1,14 @@
 -module(ar_sync_record_tests).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
--include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 sync_record_test_() ->
 	[
-		{timeout, 120, fun test_sync_record/0},
-		{timeout, 120, fun test_sync_record_with_replica_2_9/0}
+		{timeout, 120, fun test_sync_record/0}
 	].
 
 test_sync_record() ->
@@ -139,43 +139,3 @@ test_sync_record() ->
 	after
 		ok = arweave_config:set_env(Config)
 	end.
-
-
-test_sync_record_with_replica_2_9() when ?BLOCK_2_9_SYNCING ->
-	SleepTime = 1000,
-	PartitionStart = ar_block:partition_size() - ?DATA_CHUNK_SIZE,
-	WeaveSize = 4 * ?DATA_CHUNK_SIZE,
-	[B0] = ar_weave:init([], 1, WeaveSize),
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = arweave_config:get_env(),
-	try
-		Partition = {ar_block:partition_size(), 0, {replica_2_9, RewardAddr}},
-		PartitionID = ar_storage_module:id(Partition),
-		StorageModules = [Partition],
-		ar_test_node:start(B0, RewardAddr, Config, StorageModules),
-		Options = #{ format => etf, random_subset => false },
-
-		%% Genesis data only
-		{ok, Binary1} = ar_global_sync_record:get_serialized_sync_record(Options),
-		{ok, Global1} = ar_intervals:safe_from_etf(Binary1),
-
-		?assertEqual([], ar_intervals:to_list(Global1)),
-		?assertEqual({1048576, 0}, ar_sync_record:get_interval(1, ar_data_sync, PartitionID)),
-
-		%% Add a storage module chunk
-		ar_sync_record:add(
-			PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, ar_data_sync, PartitionID),
-		timer:sleep(SleepTime),
-		{ok, Binary5} = ar_global_sync_record:get_serialized_sync_record(Options),
-		{ok, Global5} = ar_intervals:safe_from_etf(Binary5),
-
-		?assertEqual([], ar_intervals:to_list(Global5)),
-		?assertEqual({1048576, 0}, ar_sync_record:get_interval(1, ar_data_sync, PartitionID)),
-		?assertEqual({PartitionStart+?DATA_CHUNK_SIZE, PartitionStart},
-				ar_sync_record:get_interval(PartitionStart+1, ar_data_sync, PartitionID)),
-
-		ar_test_node:stop()
-	after
-		ok = arweave_config:set_env(Config)
-	end;
-test_sync_record_with_replica_2_9() -> ok.
