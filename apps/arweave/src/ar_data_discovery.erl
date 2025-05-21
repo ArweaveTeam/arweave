@@ -2,17 +2,20 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, get_bucket_peers/1, collect_peers/0, pick_peers/2]).
+-export([start_link/0, get_bucket_peers/1, get_footprint_bucket_peers/1,
+		collect_peers/0, pick_peers/2]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+-include("ar_config.hrl").
 -include("ar_data_discovery.hrl").
 
 -record(state, {
 	peer_queue,
 	peers_pending,
 	network_map,
+	footprint_map,
 	expiration_map
 }).
 
@@ -67,6 +70,32 @@ get_bucket_peers(Bucket, Cursor, Peers) ->
 			PickedPeers
 	end.
 
+%% @doc Return the list of ?QUERY_BEST_PEERS_COUNT peers who have at least one byte of
+%% data synced in the given footprint bucket of size ?NETWORK_FOOTPRINT_BUCKET_SIZE.
+%% 80% of the peers are chosen from the 20% of peers with the biggest share
+%% in the given bucket.
+get_footprint_bucket_peers(Bucket) ->
+	case ets:member(ar_peers, block_connections) of
+		true ->
+			[];
+		false ->
+			get_footprint_bucket_peers(Bucket, {Bucket, 0, no_peer}, [])
+	end.
+
+get_footprint_bucket_peers(Bucket, Cursor, Peers) ->
+	case ets:next(ar_data_discovery_footprint_buckets, Cursor) of
+		'$end_of_table' ->
+			UniquePeers = sets:to_list(sets:from_list(Peers)),
+			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
+			PickedPeers;
+		{Bucket, _Share, Peer} = Key ->
+			get_footprint_bucket_peers(Bucket, Key, [Peer | Peers]);
+		_ ->
+			UniquePeers = sets:to_list(sets:from_list(Peers)),
+			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
+			PickedPeers
+	end.
+
 %% @doc Return a list of peers where 80% of the peers are randomly chosen
 %% from the first 20% of Peers and the other 20% of the peers are randomly
 %% chosen from the other 80% of Peers.
@@ -91,6 +120,7 @@ init([]) ->
 		peer_queue = queue:new(),
 		peers_pending = 0,
 		network_map = #{},
+		footprint_map = #{},
 		expiration_map = #{}
 	}}.
 
@@ -110,17 +140,8 @@ handle_cast(update_network_data_map, #state{ peers_pending = N } = State)
 		{{value, Peer}, Queue} ->
 			monitor(process, spawn_link(
 				fun() ->
-					case ar_http_iface_client:get_sync_buckets(Peer) of
-						{ok, SyncBuckets} ->
-							gen_server:cast(?MODULE, {add_peer_sync_buckets, Peer,
-									SyncBuckets});
-						{error, request_type_not_found} ->
-							get_sync_buckets(Peer);
-						Error ->
-							?LOG_DEBUG([{event, failed_to_fetch_sync_buckets},
-								{peer, ar_util:format_peer(Peer)},
-								{reason, io_lib:format("~p", [Error])}])
-					end
+					fetch_sync_buckets(Peer),
+					fetch_footprint_buckets(Peer)
 				end
 			)),
 			gen_server:cast(?MODULE, update_network_data_map),
@@ -143,8 +164,21 @@ handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
 	),
 	{noreply, State2#state{ network_map = Map2 }};
 
+handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
+	#state{ footprint_map = Map } = State,
+	State2 = refresh_expiration_timer(Peer, State),
+	Map2 = maps:put(Peer, FootprintBuckets, Map),
+	ar_sync_buckets:foreach(
+		fun(Bucket, Share) ->
+			ets:insert(ar_data_discovery_footprint_buckets, {{Bucket, Share, Peer}})
+		end,
+		?NETWORK_FOOTPRINT_BUCKET_SIZE,
+		FootprintBuckets
+	),
+	{noreply, State2#state{ footprint_map = Map2 }};
+
 handle_cast({remove_peer, Peer}, State) ->
-	#state{ network_map = Map, expiration_map = E } = State,
+	#state{ network_map = Map, footprint_map = FootprintMap, expiration_map = E } = State,
 	Map2 =
 		case maps:take(Peer, Map) of
 			error ->
@@ -159,8 +193,22 @@ handle_cast({remove_peer, Peer}, State) ->
 				),
 				Map3
 		end,
+	FootprintMap2 =
+		case maps:take(Peer, FootprintMap) of
+			error ->
+				FootprintMap;
+			{FootprintBuckets, Map4} ->
+				ar_sync_buckets:foreach(
+					fun(Bucket, Share) ->
+						ets:delete(ar_data_discovery_footprint_buckets, {Bucket, Share, Peer})
+					end,
+					?NETWORK_FOOTPRINT_BUCKET_SIZE,
+					FootprintBuckets
+				),
+				Map4
+		end,
 	E2 = maps:remove(Peer, E),
-	{noreply, State#state{ network_map = Map2, expiration_map = E2 }};
+	{noreply, State#state{ network_map = Map2, footprint_map = FootprintMap2, expiration_map = E2 }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -219,15 +267,30 @@ collect_peers([Peer | Peers]) ->
 collect_peers([]) ->
 	ok.
 
-get_sync_buckets(Peer) ->
-	case ar_http_iface_client:get_sync_record(Peer) of
-		{ok, SyncRecord} ->
-			SyncBuckets = ar_sync_buckets:from_intervals(SyncRecord),
-			{SyncBuckets2, _} = ar_sync_buckets:serialize(SyncBuckets, ?MAX_SYNC_BUCKETS_SIZE),
-			gen_server:cast(?MODULE, {add_peer_sync_buckets, Peer, SyncBuckets2});
+fetch_sync_buckets(Peer) ->
+	case ar_http_iface_client:get_sync_buckets(Peer) of
+		{ok, SyncBuckets} ->
+			gen_server:cast(?MODULE, {add_peer_sync_buckets, Peer, SyncBuckets});
+		{error, request_type_not_found} ->
+			?LOG_DEBUG([{event, sync_buckets_request_type_not_found},
+					{peer, ar_util:format_peer(Peer)}]);
 		Error ->
-			?LOG_DEBUG([{event, failed_to_fetch_sync_record_from_peer},
-					{peer, ar_util:format_peer(Peer)}, {reason, io_lib:format("~p", [Error])}])
+			?LOG_DEBUG([{event, failed_to_fetch_sync_buckets},
+				{peer, ar_util:format_peer(Peer)},
+				{reason, io_lib:format("~p", [Error])}])
+	end.
+
+fetch_footprint_buckets(Peer) ->
+	case ar_http_iface_client:get_footprint_buckets(Peer) of
+		{ok, SyncBuckets} ->
+			gen_server:cast(?MODULE, {add_peer_footprint_buckets, Peer, SyncBuckets});
+		{error, request_type_not_found} ->
+			?LOG_DEBUG([{event, footprint_buckets_request_type_not_found},
+					{peer, ar_util:format_peer(Peer)}]);
+		Error ->
+			?LOG_DEBUG([{event, failed_to_fetch_footprint_buckets},
+				{peer, ar_util:format_peer(Peer)},
+				{reason, io_lib:format("~p", [Error])}])
 	end.
 
 refresh_expiration_timer(Peer, State) ->

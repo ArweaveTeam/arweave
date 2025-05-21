@@ -1,7 +1,8 @@
 -module(ar_sync_buckets).
 
--export([new/0, from_intervals/1, from_intervals/2, add/3, delete/3, cut/2, get/3, serialize/2,
-		deserialize/1, foreach/3]).
+-export([new/0, new/1, from_intervals/1, from_intervals/2,
+		add/3, delete/3, cut/2, get/3, serialize/2,
+		deserialize/2, foreach/3]).
 
 -include_lib("arweave/include/ar_sync_buckets.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -13,6 +14,9 @@
 %% @doc Return an empty set of buckets.
 new() ->
 	{?DEFAULT_SYNC_BUCKET_SIZE, #{}}.
+
+new(Size) ->
+	{Size, #{}}.
 
 %% @doc Initialize buckets from a set of intervals (see ar_intervals).
 %% The bucket size is ?DEFAULT_SYNC_BUCKET_SIZE.
@@ -91,11 +95,11 @@ serialize(Buckets, MaxSize, PrevSerializedSize) ->
 	end.
 
 %% @doc Deserialize the buckets from Erlang Term Format.
-%% The bucket size must be bigger than or equal to ?DEFAULT_SYNC_BUCKET_SIZE.
-deserialize(SerializedBuckets) ->
+%% The bucket size must be bigger than or equal to ExpectedBucketSize.
+deserialize(SerializedBuckets, ExpectedBucketSize) ->
 	case catch binary_to_term(SerializedBuckets, [safe]) of
 		{BucketSize, Map} when is_map(Map), is_integer(BucketSize),
-				BucketSize >= (?DEFAULT_SYNC_BUCKET_SIZE) ->
+				BucketSize >= ExpectedBucketSize ->
 			{ok, {BucketSize, maps:filter(
 				fun	(Bucket, Share) when
 							is_integer(Bucket), Bucket >= 0,
@@ -164,18 +168,18 @@ buckets_test() ->
 	B1 = {10000000000, #{}},
 	?assertException(throw, uncompressable_buckets, serialize(B1, 10)),
 	{B1, S1} = serialize(B1, 20),
-	{ok, B1} = deserialize(S1),
+	{ok, B1} = deserialize(S1, ?DEFAULT_SYNC_BUCKET_SIZE),
 	B2 = add(5, 0, B1),
 	?assertEqual(5 / Size, get(0, 10, B2)),
 	B3 = add(Size * 2, Size, B2),
 	?assertEqual({Size, #{ 0 => 5 / Size, 1 => 1 }}, B3),
 	{B3, S3} = serialize(B3, 40),
-	{ok, B3} = deserialize(S3),
+	{ok, B3} = deserialize(S3, ?DEFAULT_SYNC_BUCKET_SIZE),
 	%% The size of the serialized buckets is 31 bytes.
 	DoubleSize = 2 * Size,
 	?assertEqual({DoubleSize, #{ 0 => 0.5 + 5 / Size / 2 }}, element(1, serialize(B3, 30))),
 	{_, S3_1} = serialize(B3, 30),
-	?assertEqual({ok, {DoubleSize, #{ 0 => 0.5 + 5 / Size / 2 }}}, deserialize(S3_1)),
+	?assertEqual({ok, {DoubleSize, #{ 0 => 0.5 + 5 / Size / 2 }}}, deserialize(S3_1, ?DEFAULT_SYNC_BUCKET_SIZE)),
 	?assertEqual({Size, #{ 0 => 5 / Size, 1 => 0.5 }}, cut(Size + Size div 2, B3)),
 	?assertEqual({Size, #{ 0 => (1 - (Size - 4) / Size) * (5 / Size), 1 => 0 }},
 			delete(Size * 2, 4, B3)),
