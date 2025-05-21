@@ -385,12 +385,6 @@
 -define(INITIAL_VDF_DIFFICULTY, 600_000).
 -endif.
 
-%% By default we prevent syncing replica 2.9 chunks since they are too expensive to unpack.
-%% This flag will also enable the global sync record filtering.
--ifndef(BLOCK_2_9_SYNCING).
--define(BLOCK_2_9_SYNCING, true).
--endif.
-
 %% @doc A chunk with the proofs of its presence in the weave at a particular offset.
 -record(poa, {
 	%% DEPRECATED. Not used since the fork 2.4.

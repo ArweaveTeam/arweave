@@ -148,7 +148,7 @@ get_read_range(BucketEndOffset, RangeEnd, BatchSize) ->
 	Partition = ar_node:get_partition_number(BucketEndOffset),
 	{EntropyPartitionStart, EntropyPartitionEnd} =
 		ar_replica_2_9:get_entropy_partition_range(Partition),
-	SectorSize = ar_replica_2_9:get_sector_size(),
+	SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
 	EntropyPartitionStartBucket = ar_chunk_storage:get_chunk_bucket_start(EntropyPartitionStart),
 	Sector = (BucketEndOffset - EntropyPartitionStartBucket) div SectorSize,
 	SectorBucketEnd = EntropyPartitionStartBucket + (Sector + 1) * SectorSize,
@@ -368,7 +368,7 @@ terminate(Reason, #state{} = State) ->
 %%%===================================================================
 
 calculate_num_entropy_offsets(CacheSize, BatchSize) ->
-	min(ar_replica_2_9:sub_chunks_per_entropy(), (CacheSize * 4) div BatchSize).
+	min(ar_block:get_sub_chunks_per_replica_2_9_entropy(), (CacheSize * 4) div BatchSize).
 
 %% @doc Outer repack loop. Called via `gen_server:cast(self(), repack)`. Each call
 %% repacks another footprint of chunks. A repack footprint is N entropy footprints where N
@@ -1141,7 +1141,13 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 %%% Tests.
 %%%===================================================================
 
-cache_size_test() ->
+cache_size_test_() ->
+	ar_test_node:test_with_mocked_functions([
+		{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end}
+	],
+	fun test_cache_size/0, 30).
+
+test_cache_size() ->
 	?assertEqual(1, calculate_num_entropy_offsets(100, 400)),
 	?assertEqual(2, calculate_num_entropy_offsets(100, 200)),
 	?assertEqual(3, calculate_num_entropy_offsets(300, 400)),
@@ -1154,6 +1160,9 @@ footprint_offsets_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
+			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
+			{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 		],
 		fun test_footprint_offsets_small/0, 30),
@@ -1163,8 +1172,8 @@ footprint_offsets_test_() ->
 			{ar_block, partition_size, fun() -> 3_600_000_000_000 end},
 			{ar_block, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
 			{ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
-			{ar_replica_2_9, sub_chunks_per_entropy, fun() -> 1024 end},
-			{ar_replica_2_9, get_sector_size, fun() -> 3_515_875_328 end}
+			{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
+			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
 		],
 		fun test_footprint_offsets_large/0, 30)
 	].
@@ -1175,7 +1184,7 @@ test_footprint_offsets_small() ->
 	PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
 	PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
 
-	?assertEqual(3, ar_replica_2_9:sub_chunks_per_entropy()),
+	?assertEqual(3, ar_block:get_sub_chunks_per_replica_2_9_entropy()),
 	?assertEqual({0, 2262144}, {Start0, End0}),
 	?assertEqual({2000000, 4262144}, {Start1, End1}),
 	?assertEqual(2272864, PaddedEnd0),
@@ -1218,8 +1227,8 @@ test_footprint_offsets_large() ->
 	PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
 	PaddedEnd30 = ar_block:get_chunk_padded_offset(End30),
 
-	?assertEqual(1024, ar_replica_2_9:sub_chunks_per_entropy()),
-	?assertEqual(3515875328, ar_replica_2_9:get_sector_size()),
+	?assertEqual(1024, ar_block:get_sub_chunks_per_replica_2_9_entropy()),
+	?assertEqual(3515875328, ar_block:get_replica_2_9_entropy_sector_size()),
 	?assertEqual({0, 3600104857600}, {Start0, End0}),
 	?assertEqual({3600000000000, 7200104857600}, {Start1, End1}),
 	?assertEqual({108000000000000, 111600104857600}, {Start30, End30}),
@@ -1233,26 +1242,26 @@ test_footprint_offsets_large() ->
 		{1024, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0)},
 		{1024, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + ?DATA_CHUNK_SIZE)},
 		{1024, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ?DATA_CHUNK_SIZE))},
-		{1023, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (ar_replica_2_9:get_sector_size()))},
-		{1023, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))},
-		{1022, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ar_replica_2_9:get_sector_size()))},
-		{1022, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))},
+		{1023, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (ar_block:get_replica_2_9_entropy_sector_size()))},
+		{1023, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
+		{1022, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ar_block:get_replica_2_9_entropy_sector_size()))},
+		{1022, PaddedEnd0, ar_chunk_storage:get_chunk_bucket_end(Start0 + (2 * ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
 		%% Partition 1 - before the strict data split threshold
 		{1, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1)},
 		{1, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + ?DATA_CHUNK_SIZE)},
 		{1024, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ?DATA_CHUNK_SIZE))},
-		{1023, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (ar_replica_2_9:get_sector_size()))},
-		{1023, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))},
-		{1022, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ar_replica_2_9:get_sector_size()))},
-		{1022, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))},
+		{1023, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (ar_block:get_replica_2_9_entropy_sector_size()))},
+		{1023, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
+		{1022, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ar_block:get_replica_2_9_entropy_sector_size()))},
+		{1022, PaddedEnd1, ar_chunk_storage:get_chunk_bucket_end(Start1 + (2 * ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
 		%% Partition 30 - after the strict data split threshold
 		{1, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30)},
 		{1024, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + ?DATA_CHUNK_SIZE)},
 		{1024, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ?DATA_CHUNK_SIZE))},
-		{1023, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (ar_replica_2_9:get_sector_size()))},
-		{1023, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))},
-		{1022, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ar_replica_2_9:get_sector_size()))},
-		{1022, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ar_replica_2_9:get_sector_size() + ?DATA_CHUNK_SIZE))}
+		{1023, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (ar_block:get_replica_2_9_entropy_sector_size()))},
+		{1023, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))},
+		{1022, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ar_block:get_replica_2_9_entropy_sector_size()))},
+		{1022, PaddedEnd30, ar_chunk_storage:get_chunk_bucket_end(Start30 + (2 * ar_block:get_replica_2_9_entropy_sector_size() + ?DATA_CHUNK_SIZE))}
 	],
 
 	lists:foreach(
@@ -1270,6 +1279,9 @@ footprint_end_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
+			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
+			{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 		],
 		fun test_footprint_end_small/0, 30)
@@ -1281,7 +1293,7 @@ test_footprint_end_small() ->
 	PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
 	PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
 
-	?assertEqual(3, ar_replica_2_9:sub_chunks_per_entropy()),
+	?assertEqual(3, ar_block:get_sub_chunks_per_replica_2_9_entropy()),
 	?assertEqual({0, 2262144}, {Start0, End0}),
 	?assertEqual({2000000, 4262144}, {Start1, End1}),
 	?assertEqual(2272864, PaddedEnd0),
@@ -1814,11 +1826,15 @@ get_read_range_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
+			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, strict_data_split_threshold, fun() -> 5_000_000 end}
 		],
 			fun test_get_read_range_before_strict/0, 30),
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
+			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 		],
 			fun test_get_read_range_after_strict/0, 30)
@@ -1826,7 +1842,7 @@ get_read_range_test_() ->
 
 test_get_read_range_before_strict() ->
 	?assertEqual({2359296, 4456447}, ar_replica_2_9:get_entropy_partition_range(1)),
-	?assertEqual(786432, ar_replica_2_9:get_sector_size()),
+	?assertEqual(786432, ar_block:get_replica_2_9_entropy_sector_size()),
 	%% no limit
 	?assertEqual(
 		{2097151, 2883583, [2097152, 2359296, 2621440]},
@@ -1855,7 +1871,7 @@ test_get_read_range_before_strict() ->
 
 test_get_read_range_after_strict() ->
 	?assertEqual({2272865, 4370016}, ar_replica_2_9:get_entropy_partition_range(1)),
-	?assertEqual(786432, ar_replica_2_9:get_sector_size()),
+	?assertEqual(786432, ar_block:get_replica_2_9_entropy_sector_size()),
 	%% no limit
 	?assertEqual(
 		{2272864, 3059296, [2359296, 2621440, 2883584]},

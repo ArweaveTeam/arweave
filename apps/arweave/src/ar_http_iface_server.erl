@@ -29,7 +29,8 @@
 
 -define(ENDPOINTS, ["info", "block", "block_announcement", "block2", "tx", "tx2",
 		"queue", "recent_hash_list", "recent_hash_list_diff", "tx_anchor", "arql", "time",
-		"chunk", "chunk2", "data_sync_record", "sync_buckets", "wallet", "unsigned_tx",
+		"chunk", "chunk2", "data_sync_record", "sync_buckets", "footprint_buckets",
+		"wallet", "unsigned_tx",
 		"peers", "hash_list", "block_index", "block_index2", "total_supply", "wallet_list",
 		"height", "metrics", "rates", "vdf", "vdf2", "partial_solution", "pool_cm_jobs"]).
 
@@ -203,6 +204,9 @@ name_route([<<"data_sync_record">>, _Start, _Limit]) ->
 	"/data_sync_record/{start}/{limit}";
 name_route([<<"data_sync_record">>, _Start, _End, _Limit]) ->
 	"/data_sync_record/{start}/{end}/{limit}";
+
+name_route([<<"footprints">>, _Partition, _Number]) ->
+	"/footprints/{partition}/{footprint_number}";
 
 name_route([<<"price">>, _SizeInBytes]) ->
 	"/price/{bytes}";

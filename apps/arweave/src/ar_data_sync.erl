@@ -12,7 +12,8 @@
 		get_chunk_by_byte/2, advance_chunks_index_cursor/1,
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
-		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0]).
+		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
+		is_footprint_record_supported/3]).
 
 -export([add_chunk_to_disk_pool/5]).
 
@@ -34,15 +35,35 @@
 -include("ar_sync_buckets.hrl").
 
 -ifdef(AR_TEST).
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5_000).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
+%% The key for storing migration cursor in the migrations_index database.
+-define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
+
+-ifdef(AR_TEST).
+-define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 1_000).
 -else.
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 300_000).
+-define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 10_000).
 -endif.
 
 -ifdef(AR_TEST).
 -define(DEVICE_LOCK_WAIT, 100).
 -else.
 -define(DEVICE_LOCK_WAIT, 5_000).
+-endif.
+
+%% The number of chunks to migrate per batch during footprint migration.
+-ifdef(AR_TEST).
+-define(FOOTPRINT_MIGRATION_BATCH_SIZE, 10).
+-else.
+-define(FOOTPRINT_MIGRATION_BATCH_SIZE, 100).
+-endif.
+
+-ifdef(AR_TEST).
+-define(ENTROPY_GENERATION_WAIT_TIME_MS, 200).
+-else.
+-define(ENTROPY_GENERATION_WAIT_TIME_MS, 30_000).
 -endif.
 
 %%%===================================================================
@@ -716,6 +737,20 @@ debug_get_disk_pool_chunks(Cursor) ->
 			[{K, V} | debug_get_disk_pool_chunks(K2)]
 	end.
 
+%% @doc Check if the footprint record should be updated for the given chunk.
+%% The footprint record stores multiples of ?DATA_CHUNK_SIZE.
+is_footprint_record_supported(AbsoluteOffset, ChunkSize, Packing) ->
+	IsMatchingPacking =
+		case Packing of
+			{replica_2_9, _Addr} ->
+				true;
+			unpacked_padded ->
+				true;
+			_ ->
+				false
+	end,
+	IsMatchingPacking andalso (AbsoluteOffset > ar_block:strict_data_split_threshold() orelse ChunkSize == ?DATA_CHUNK_SIZE).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -830,8 +865,8 @@ init({StoreID, RepackInPlacePacking}) ->
 			State3 = State2#sync_data_state{
 				sync_status = init_sync_status(StoreID)
 			},
-			gen_server:cast(self(), sync_intervals),
-			gen_server:cast(self(), sync_data),
+			gen_server:cast(self(), may_be_wait_for_entropy_generation),
+			maybe_run_footprint_record_initialization(State3),
 			{ok, State3};
 		_ ->
 			State3 = State2#sync_data_state{
@@ -841,6 +876,34 @@ init({StoreID, RepackInPlacePacking}) ->
 			{ok, State3}
 	end.
 
+handle_cast(may_be_wait_for_entropy_generation, State) ->
+	#sync_data_state{ store_id = StoreID } = State,
+	Packing = ar_storage_module:get_packing(StoreID),
+	StartSyncing =
+		case Packing of
+			{replica_2_9, _Addr} ->
+				{IsEntropyGenerated, _} = ar_entropy_gen:initialize_context(StoreID, Packing),
+				case IsEntropyGenerated of
+					true ->
+						?LOG_INFO([{event, entropy_generation_complete}, {store_id, StoreID}]),
+						true;
+					_ ->
+						?LOG_INFO([{event, waiting_for_entropy_generation}, {store_id, StoreID}]),
+						ar_util:cast_after(?ENTROPY_GENERATION_WAIT_TIME_MS, self(), may_be_wait_for_entropy_generation),
+						false
+				end;
+			_ ->
+				true
+		end,
+	case StartSyncing of
+		true ->
+			gen_server:cast(self(), sync_intervals),
+			gen_server:cast(self(), sync_data);
+		_ ->
+			ok
+	end,
+	{noreply, State};
+
 handle_cast({move_data_root_index, Cursor, N}, State) ->
 	move_data_root_index(Cursor, N, State),
 	{noreply, State};
@@ -848,6 +911,10 @@ handle_cast({move_data_root_index, Cursor, N}, State) ->
 handle_cast(process_store_chunk_queue, State) ->
 	ar_util:cast_after(200, self(), process_store_chunk_queue),
 	{noreply, process_store_chunk_queue(State)};
+
+handle_cast({initialize_footprint_record, Cursor, Packing}, State) ->
+	State2 = initialize_footprint_record(Cursor, Packing, State),
+	{noreply, State2};
 
 handle_cast({join, RecentBI}, State) ->
 	#sync_data_state{ block_index = CurrentBI, store_id = StoreID } = State,
@@ -982,68 +1049,115 @@ handle_cast(sync_data2, State) ->
 %%    b. Sync queue is busy. Will pause until previously queued intervals are scheduled to the
 %%       ar_data_sync_worker_master for syncing.
 handle_cast(collect_peer_intervals, State) ->
-	#sync_data_state{ range_start = Start, range_end = End } = State,
+	#sync_data_state{ range_start = Start, range_end = End,
+			disk_pool_threshold = DiskPoolThreshold,
+			sync_phase = SyncPhase,
+			store_id = StoreID,
+			migrations_index = MI } = State,
 	?LOG_DEBUG([{event, collect_peer_intervals_start},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
 		{s, Start}, {e, End}]),
-	gen_server:cast(self(), {collect_peer_intervals, Start, End}),
-	{noreply, State};
+	CheckIsJoined =
+		case ar_node:is_joined() of
+			false ->
+				ar_util:cast_after(1000, self(), collect_peer_intervals),
+				false;
+			true ->
+				true
+		end,
+	IsFootprintRecordMigrated =
+		case ar_kv:get(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY) of
+			{ok, <<"complete">>} ->
+				true;
+			_ ->
+				ar_util:cast_after(5_000, self(), collect_peer_intervals),
+				false
+		end,
+	IntersectsDiskPool =
+		case CheckIsJoined andalso IsFootprintRecordMigrated of
+			false ->
+				noop;
+			true ->
+				End > DiskPoolThreshold
+		end,
+	%% Alternate between "normal" and footprint-based syncing.
+	%% Footprint-based syncing downloads replica 2.9 chunks footprint by footprint
+	%% to avoid redundant entropy generations for unpacking. "Normal" syncing ignores
+	%% replica 2.9 data and mostly downloads unpacked data from peers storing it.
+	SyncPhase2 =
+		case SyncPhase of
+			undefined ->
+				%% Start with normal syncing.
+				normal;
+			normal ->
+				footprint;
+			footprint ->
+				normal
+		end,
+	State2 =
+		case IntersectsDiskPool of
+			noop ->
+				State;
+			true ->
+				case SyncPhase2 of
+					footprint ->
+						End2 = min(End, DiskPoolThreshold),
+						gen_server:cast(self(), {collect_peer_intervals, Start, End2, footprint}),
+						State#sync_data_state{ sync_phase = footprint };
+					_ ->
+						%% The disk pool is only synced during the "normal" phase.
+						gen_server:cast(self(), {collect_peer_intervals, Start, End, normal}),
+						State#sync_data_state{ sync_phase = normal }
+				end;
+			false ->
+				gen_server:cast(self(), {collect_peer_intervals, Start, End, SyncPhase2}),
+				State#sync_data_state{ sync_phase = SyncPhase2 }
+		end,
+	{noreply, State2};
 
-handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
+handle_cast({collect_peer_intervals, Start, End, Type}, State) when Start >= End ->
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
 	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS.
 	?LOG_DEBUG([{event, collect_peer_intervals_done},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
-		{s, Start}, {e, End}]),
+		{s, Start}, {e, End}, {type, Type}]),
 	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
 	{noreply, State};
-handle_cast({collect_peer_intervals, Start, End}, State) ->
+handle_cast({collect_peer_intervals, Start, End, Type}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			store_id = StoreID, weave_size = WeaveSize } = State,
-	IsJoined =
-		case ar_node:is_joined() of
-			false ->
-				ar_util:cast_after(1000, self(), {collect_peer_intervals, Start, End}),
-				false;
-			true ->
-				true
-		end,
 	IsDiskSpaceSufficient =
-		case IsJoined of
-			false ->
-				false;
+		case is_disk_space_sufficient(StoreID) of
 			true ->
-				case is_disk_space_sufficient(StoreID) of
-					true ->
-						true;
-					IsSufficient ->
-						Delay = case IsSufficient of
-							false ->
-								30_000;
-							not_initialized ->
-								1000
-						end,
-						ar_util:cast_after(Delay, self(), {collect_peer_intervals, Start, End}),
-						false
-				end
+				true;
+			IsSufficient ->
+				Delay = case IsSufficient of
+					false ->
+						30_000;
+					not_initialized ->
+						1000
+				end,
+				ar_util:cast_after(Delay, self(), {collect_peer_intervals, Start, End, Type}),
+				false
 		end,
 	IsSyncQueueBusy =
 		case IsDiskSpaceSufficient of
 			false ->
 				true;
 			true ->
-				%% Q is the number of chunks that we've already queued for syncing. We need
+				%% Q contains chunks we've already queued for syncing. We need
 				%% to manage the queue length.
 				%% 1. Periodically sync_intervals will pull from Q and send work to
 				%%    ar_data_sync_worker_master. We need to make sure Q is long enough so
 				%%    that we never starve ar_data_sync_worker_master of work.
 				%% 2. On the flip side we don't want Q to get so long as to trigger an
 				%%    out-of-memory condition. In the extreme case we could collect and
-				%%    enqueue all chunks in a full 3.6TB storage_module. A Q of this length
-				%%    would have a roughly 500MB memory footprint per storage_module. For a
-				%%    node that is syncing multiple storage modules, this can add up fast.
+				%%    enqueue all chunks in the entire storage module (usually 3.6 TB).
+				%%    A Q of this length would have a roughly 500 MB memory footprint per
+				%%    storage module. For a node that is syncing multiple storage modules,
+				%%    this can add up fast.
 				%% 3. We also want to make sure we are using the most up to date information
 				%%    we can. Every time we add a task to the Q we're locking in a specific
 				%%    view of Peer data availability. If that peer goes offline before we
@@ -1060,7 +1174,7 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 					[StoreIDLabel], IntervalsQueueSize),
 				case IntervalsQueueSize > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
 					true ->
-						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}),
+						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End, Type}),
 						true;
 					false ->
 						false
@@ -1072,7 +1186,7 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 					{function, collect_peer_intervals},
 					{store_id, StoreID},
 					{s, Start}, {e, End},
-					{weave_size, WeaveSize}, {is_joined, IsJoined},
+					{weave_size, WeaveSize},
 					{is_disk_space_sufficient, IsDiskSpaceSufficient},
 					{is_sync_queue_busy, IsSyncQueueBusy}]),
 			ok;
@@ -1080,15 +1194,24 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 			End2 = min(End, WeaveSize),
 			case Start >= End2 of
 				true ->
-					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End});
+					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End, Type});
 				false ->
 					%% All checks have passed, find and enqueue intervals for one
-					%% sync bucket worth of chunks starting at offset Start
+					%% sync bucket worth of chunks starting at offset Start.
+					Footprint =
+						case Type of
+							footprint ->
+								ar_footprint_record:get_footprint(Start + ?DATA_CHUNK_SIZE);
+							_ ->
+								ignore
+						end,
 					?LOG_DEBUG([{event, fetch_peer_intervals},
 							{function, collect_peer_intervals},
 							{store_id, StoreID},
-							{s, Start}, {e, End2}]),
-					ar_peer_intervals:fetch(Start, End2, StoreID)
+							{s, Start}, {e, End2},
+							{type, Type},
+							{footprint, Footprint}]),
+					ar_peer_intervals:fetch(Start, End2, StoreID, Type)
 			end
 	end,
 
@@ -1099,12 +1222,12 @@ handle_cast({enqueue_intervals, []}, State) ->
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
-	%% When enqueuing intervals, we want to distribute the intervals among many peers. So
-	%% that:
-	%% 1. We can better saturate our network-in bandwidth without overwhelming any one peer.
+	%% When enqueuing intervals, we want to distribute the intervals among many peers,
+	%% so that:
+	%% 1. We can better saturate our network bandwidth without overwhelming any one peer.
 	%% 2. So that we limit the risk of blocking on one particularly slow peer.
 	%%
-	%% We do a probabilistic ditribution:
+	%% We do a probabilistic distribution:
 	%% 1. We shuffle the peers list so that the ordering differs from call to call
 	%% 2. We cap the number of chunks to enqueue per peer - at roughly 50% more than
 	%%    their "fair" share (i.e. ?DEFAULT_SYNC_BUCKET_SIZE / NumPeers).
@@ -1179,30 +1302,24 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	SeekByte = ar_chunk_storage:get_chunk_seek_offset(Byte + 1) - 1,
 	case validate_proof(SeekByte, Proof) of
 		{need_unpacking, AbsoluteEndOffset, ChunkProof2} ->
-			case should_unpack(Packing) of
-				{false, Reason, ReasonArgs} ->
-					decrement_chunk_cache_size(),
-					process_invalid_fetched_chunk(Peer, Byte, State, Reason, ReasonArgs);
-				true ->
-					#chunk_proof{
-						block_start_offset = BlockStartOffset,
-						tx_start_offset = TXStartOffset,
-						tx_end_offset = TXEndOffset,
-						chunk_end_offset = ChunkEndOffset,
-						chunk_id = ChunkID,
-						metadata = #chunk_metadata{
-							tx_root = TXRoot,
-							data_root = DataRoot,
-							chunk_size = ChunkSize
-						}
-					} = ChunkProof2,
-					TXSize = TXEndOffset - TXStartOffset,
-					AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
-					ChunkArgs = {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
-					Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
-							Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
-					unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, State)
-			end;
+			#chunk_proof{
+				block_start_offset = BlockStartOffset,
+				tx_start_offset = TXStartOffset,
+				tx_end_offset = TXEndOffset,
+				chunk_end_offset = ChunkEndOffset,
+				chunk_id = ChunkID,
+				metadata = #chunk_metadata{
+					tx_root = TXRoot,
+					data_root = DataRoot,
+					chunk_size = ChunkSize
+				}
+			} = ChunkProof2,
+			TXSize = TXEndOffset - TXStartOffset,
+			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
+			ChunkArgs = {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
+			Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
+					Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
+			unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, State);
 		false ->
 			decrement_chunk_cache_size(),
 			process_invalid_fetched_chunk(Peer, Byte, State);
@@ -1304,7 +1421,7 @@ handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, Stat
 					true ->
 						Iterator2 = data_root_index_reset(Iterator),
 						delete_disk_pool_chunk(Iterator2, Args, State),
-						may_be_reset_disk_pool_full_scan_key(Key, State);
+						maybe_reset_disk_pool_full_scan_key(Key, State);
 					false ->
 						State
 				end,
@@ -1338,21 +1455,28 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 			%% The order is important - in case the VM crashes,
 			%% we will not report false positives to peers,
 			%% and the chunk can still be removed upon retry.
-			RemoveFromSyncRecord = ar_sync_record:delete(PaddedOffset,
-					PaddedStartOffset, ar_data_sync, StoreID),
+			RemoveFromFootprint = ar_footprint_record:delete(PaddedOffset, StoreID),
+			RemoveFromSyncRecord =
+				case RemoveFromFootprint of
+					ok ->
+						ar_sync_record:delete(PaddedOffset,
+								PaddedStartOffset, ar_data_sync, StoreID);
+					Error ->
+						Error
+				end,
 			RemoveFromChunkStorage =
 				case RemoveFromSyncRecord of
 					ok ->
 						ar_chunk_storage:delete(PaddedOffset, StoreID);
-					Error ->
-						Error
+					Error2 ->
+						Error2
 				end,
 			RemoveFromChunksIndex =
 				case RemoveFromChunkStorage of
 					ok ->
 						delete_chunk_metadata(AbsoluteOffset, StoreID);
-					Error2 ->
-						Error2
+					Error3 ->
+						Error3
 				end,
 			case RemoveFromChunksIndex of
 				ok ->
@@ -1685,7 +1809,7 @@ do_sync_data2(#sync_data_state{
 		} = State) ->
 	Intervals =
 		case ar_storage_module:get_packing(OtherStoreID) of
-			{replica_2_9, _} when ?BLOCK_2_9_SYNCING ->
+			{replica_2_9, _} ->
 				%% Do not unpack the 2.9 data by default, finding unpacked data
 				%% may be cheaper.
 				[];
@@ -1993,29 +2117,36 @@ invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
 	end.
 
 remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
-	Remove1 = ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID),
-	IsSmallChunkBeforeThreshold = PaddedEndOffset - StartOffset < ?DATA_CHUNK_SIZE,
+	Remove1 = ar_footprint_record:delete(PaddedEndOffset, StoreID),
 	Remove2 =
-		case {Remove1, IsSmallChunkBeforeThreshold} of
+		case Remove1 of
+			ok ->
+				ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
+			Error ->
+				Error
+		end,
+	IsSmallChunkBeforeThreshold = PaddedEndOffset - StartOffset < ?DATA_CHUNK_SIZE,
+	Remove3 =
+		case {Remove2, IsSmallChunkBeforeThreshold} of
 			{ok, false} ->
 				ar_sync_record:delete(PaddedEndOffset, StartOffset,
 						ar_chunk_storage, StoreID);
 			_ ->
-				Remove1
+				Remove2
 		end,
-	Remove3 =
-		case {Remove2, IsSmallChunkBeforeThreshold} of
+	Remove4 =
+		case {Remove3, IsSmallChunkBeforeThreshold} of
 			{ok, false} ->
 				ar_entropy_storage:delete_record(PaddedEndOffset, StartOffset, StoreID);
 			_ ->
-				Remove2
+				Remove3
 		end,
-	case {Remove3, IsSmallChunkBeforeThreshold} of
+	case {Remove4, IsSmallChunkBeforeThreshold} of
 		{ok, false} ->
 			ar_sync_record:delete(PaddedEndOffset, StartOffset,
 					ar_chunk_storage_replica_2_9_1_unpacked, StoreID);
 		_ ->
-			Remove3
+			Remove4
 	end.
 
 delete_invalid_metadata(AbsoluteEndOffset, StoreID) ->
@@ -3012,17 +3143,16 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 			{error, invalid_data_path}
 	end.
 
-
-update_chunks_index(Args, State) ->
+update_chunks_index(Args, UpdateFootprint, State) ->
 	AbsoluteChunkOffset = element(1, Args),
 	case ar_tx_blacklist:is_byte_blacklisted(AbsoluteChunkOffset) of
 		true ->
 			ok;
 		false ->
-			update_chunks_index2(Args, State)
+			update_chunks_index2(Args, UpdateFootprint, State)
 	end.
 
-update_chunks_index2(Args, State) ->
+update_chunks_index2(Args, UpdateFootprint, State) ->
 	{AbsoluteOffset, Offset, ChunkDataKey, TXRoot, DataRoot, TXPath, ChunkSize,
 			Packing} = Args,
 	#sync_data_state{ store_id = StoreID } = State,
@@ -3033,7 +3163,17 @@ update_chunks_index2(Args, State) ->
 			PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 			case ar_sync_record:add(PaddedOffset, StartOffset, Packing, ar_data_sync, StoreID) of
 				ok ->
-					ok;
+					case UpdateFootprint of
+						true ->
+							case ar_footprint_record:add(PaddedOffset, Packing, StoreID) of
+								ok ->
+									ok;
+								{error, Reason} ->
+									{error, Reason}
+							end;
+						false ->
+							ok
+					end;
 				{error, Reason} ->
 					{error, Reason}
 			end;
@@ -3049,13 +3189,6 @@ pick_missing_blocks([{H, WeaveSize, _} | CurrentBI], BlockTXPairs) ->
 		_ ->
 			{WeaveSize, lists:reverse(After)}
 	end.
-should_unpack({replica_2_9, Addr}) when ?BLOCK_2_9_SYNCING ->
-	%% Unpacking another peer's replica 2.9 chunk is expensive, so don't do it.
-	%% Note: peers running the reference client won't share replica 2.9 chunks
-	%% anyways, so this check is just a backup.
-	{false, got_replica_2_9_chunk_from_peer, [{mining_addr, ar_util:encode(Addr)}]};
-should_unpack(_) ->
-	true.
 
 process_invalid_fetched_chunk(Peer, Byte, State) ->
 	%% Not necessarily a malicious peer, it might happen
@@ -3220,7 +3353,12 @@ store_chunk2(ChunkArgs, Args, State) ->
 				%% The 2.9 chunk storage is write-once.
 				ok;
 			_ ->
-				ar_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync, StoreID)
+				case ar_footprint_record:delete(PaddedOffset, StoreID) of
+					ok ->
+						ar_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync, StoreID);
+					Error ->
+						Error
+				end
 		end,
 	case CleanRecord of
 		{error, Reason} ->
@@ -3240,13 +3378,34 @@ store_chunk2(ChunkArgs, Args, State) ->
 						Packing, StoreID) of
 					{ok, NewPacking} ->
 						{true, NewPacking};
-					Error ->
-						Error
+					Error2 ->
+						Error2
 				end,
-			case StoreIndex of
+			ProcessAlreadyStored =
+				case StoreIndex of
+					already_stored ->
+						case ar_sync_record:is_recorded(PaddedOffset, Packing, ar_data_sync, StoreID) of
+							false ->
+								invalidate_bad_data_record({AbsoluteOffset, ChunkSize,
+										StoreID, chunk_already_stored_but_not_in_sync_record});
+							true ->
+								case ar_footprint_record:is_recorded(PaddedOffset, StoreID) of
+									false ->
+										%% Repair the broken footprint record.
+										ar_footprint_record:add(PaddedOffset, Packing, StoreID);
+									true ->
+										ok
+								end
+						end,
+						already_stored;
+					Else ->
+						Else
+				end,
+			case ProcessAlreadyStored of
 				{true, Packing2} ->
+					UpdateFootprintRecord = is_footprint_record_supported(AbsoluteOffset, ChunkSize, Packing2),
 					case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey, TXRoot,
-							DataRoot, TXPath, ChunkSize, Packing2}, State) of
+							DataRoot, TXPath, ChunkSize, Packing2}, UpdateFootprintRecord, State) of
 						ok ->
 							ok;
 						{error, Reason} ->
@@ -3340,7 +3499,7 @@ process_disk_pool_item(State, Key, Value) ->
 			end,
 			NextCursor = << Key/binary, <<"a">>/binary >>,
 			gen_server:cast(self(), process_disk_pool_item),
-			State2 = may_be_reset_disk_pool_full_scan_key(Key, State),
+			State2 = maybe_reset_disk_pool_full_scan_key(Key, State),
 			{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }};
 		{{ok, {TXStartOffset, _TXPath}}, _} ->
 			DataRootIndexIterator = data_root_index_iterator_v2(DataRootKey, TXStartOffset + 1,
@@ -3366,10 +3525,10 @@ decrease_occupied_disk_pool_size(Size, DataRootKey) ->
 			ok
 	end.
 
-may_be_reset_disk_pool_full_scan_key(Key,
+maybe_reset_disk_pool_full_scan_key(Key,
 		#sync_data_state{ disk_pool_full_scan_start_key = Key } = State) ->
 	State#sync_data_state{ disk_pool_full_scan_start_key = none };
-may_be_reset_disk_pool_full_scan_key(_Key, State) ->
+maybe_reset_disk_pool_full_scan_key(_Key, State) ->
 	State.
 
 parse_disk_pool_chunk(Bin) ->
@@ -3404,6 +3563,7 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 							PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 							StartOffset = ar_block:get_chunk_padded_offset(
 									AbsoluteOffset - ChunkSize),
+							ok = ar_footprint_record:delete(PaddedOffset, StoreID),
 							ok = ar_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync,
 									StoreID),
 							case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync) of
@@ -3513,7 +3673,7 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset
 		false ->
 			{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _, _, _} = Args,
 			case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey,
-					TXRoot, DataRoot, TXPath, ChunkSize, unpacked}, State) of
+					TXRoot, DataRoot, TXPath, ChunkSize, unpacked}, false, State) of
 				ok ->
 					gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, false,
 							Args}),
@@ -3806,5 +3966,75 @@ record_chunk_cache_size_metric() ->
 		[{_, Size}] ->
 			prometheus_gauge:set(chunk_cache_size, Size);
 		_ ->
+			ok
+	end.
+
+maybe_run_footprint_record_initialization(State) ->
+	#sync_data_state{ store_id = StoreID, migrations_index = MI } = State,
+	Packing = ar_storage_module:get_packing(StoreID),
+	case Packing of
+		{replica_2_9, _Addr} ->
+			{FootprintRecordCursor, InitializationComplete} = get_footprint_record_initialization_state(State),
+			case InitializationComplete of
+				true ->
+					ok;
+				false ->
+					?LOG_INFO([{event, initializing_footprint_record},
+							{cursor, FootprintRecordCursor}, {store_id, StoreID}]),
+					gen_server:cast(self(), {initialize_footprint_record, FootprintRecordCursor, Packing})
+			end;
+		_ ->
+			ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
+			ok
+	end.
+
+get_footprint_record_initialization_state(State) ->
+	#sync_data_state{ migrations_index = MI } = State,
+	case ar_kv:get(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY) of
+		not_found ->
+			{0, false};
+		{ok, <<"complete">>} ->
+			{complete, true};
+		{ok, CursorBin} ->
+			Cursor = binary:decode_unsigned(CursorBin),
+			{Cursor, false}
+	end.
+
+%% @doc Initialize the footprint record from the ar_data_sync record.
+initialize_footprint_record(complete, _Packing, State) ->
+	State;
+initialize_footprint_record(Cursor, Packing, State) ->
+	#sync_data_state{
+		store_id = StoreID,
+		range_end = RangeEnd,
+		migrations_index = MI
+	} = State,
+	BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
+
+	case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, Packing, ar_data_sync, StoreID) of
+		not_found ->
+			ok = ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
+			?LOG_INFO([{event, footprint_record_initialized}, {store_id, StoreID}]),
+			State;
+		{IntervalEnd, IntervalStart} ->
+			Cursor2 = max(Cursor, IntervalStart),
+			EndPosition = min(Cursor2 + (BatchSize * ?DATA_CHUNK_SIZE), IntervalEnd),
+			initialize_footprint_range(Cursor2, EndPosition, Packing, StoreID),
+			NewCursor = EndPosition,
+			ok = ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, binary:encode_unsigned(NewCursor)),
+			gen_server:cast(self(), {initialize_footprint_record, NewCursor, Packing}),
+			State
+	end.
+
+%% @doc Migrate chunks in the given range to footprint records.
+initialize_footprint_range(Start, End, _Packing, _StoreID) when Start >= End ->
+	ok;
+initialize_footprint_range(Start, End, Packing, StoreID) ->
+	ChunkOffset = ar_block:get_chunk_padded_offset(Start + ?DATA_CHUNK_SIZE),
+	case ChunkOffset =< End of
+		true ->
+			ar_footprint_record:add(ChunkOffset, Packing, StoreID),
+			initialize_footprint_range(ChunkOffset, End, Packing, StoreID);
+		false ->
 			ok
 	end.

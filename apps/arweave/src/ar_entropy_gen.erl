@@ -143,7 +143,7 @@ reset_entropy_offset(BucketEndOffset) ->
 	shift_entropy_offset(BucketEndOffset, -SliceIndex).
 
 shift_entropy_offset(Offset, SectorCount) ->
-	SectorSize = ar_replica_2_9:get_sector_size(),
+	SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
 	ar_chunk_storage:get_chunk_bucket_end(Offset + SectorSize * SectorCount).
 
 %% @doc Returns a list of 32x 8 MiB entropies. These entropies will need to be sliced
@@ -543,8 +543,8 @@ entropy_offsets_test_() ->
 	fun test_entropy_offsets/0, 30).
 
 test_entropy_offsets() ->
-	SectorSize = ar_replica_2_9:get_sector_size(),
-	?assertEqual(3 * ?DATA_CHUNK_SIZE, SectorSize),
+	SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
+	?assertEqual(2 * ?DATA_CHUNK_SIZE, SectorSize),
 
 	Module0 = {ar_block:partition_size(), 0, unpacked},
 	Module1 = {ar_block:partition_size(), 1, unpacked},
@@ -555,42 +555,42 @@ test_entropy_offsets() ->
 	PaddedModuleEnd0 = ar_chunk_storage:get_chunk_bucket_end(ModuleEnd0),
 	PaddedModuleEnd1 = ar_chunk_storage:get_chunk_bucket_end(ModuleEnd1),
 
-	?assertEqual(2097152, PaddedModuleEnd0),
-	?assertEqual(4194304, PaddedModuleEnd1),
+	?assertEqual(2097152, PaddedModuleEnd0, "1"),
+	?assertEqual(4194304, PaddedModuleEnd1, "2"),
 	
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(0, PaddedModuleEnd0)), %% bucket end: 262144
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1000, PaddedModuleEnd0)), %% bucket end: 262144
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(262144, PaddedModuleEnd0)), %% bucket end: 262144
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(0, PaddedModuleEnd0), "3"), %% bucket end: 262144
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(1000, PaddedModuleEnd0), "4"), %% bucket end: 262144
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(262144, PaddedModuleEnd0), "5"), %% bucket end: 262144
 
-	?assertEqual([524288, 1310720, 2097152], entropy_offsets(524288, PaddedModuleEnd0)), %% bucket end: 524288
+	?assertEqual([524288, 1048576, 1572864, 2097152], entropy_offsets(524288, PaddedModuleEnd0), "6"), %% bucket end: 524288
 
-	?assertEqual([524288, 1310720, 2097152], entropy_offsets(699999, PaddedModuleEnd0)), %% bucket end: 524288
-	?assertEqual([524288, 1310720, 2097152], entropy_offsets(700000, PaddedModuleEnd0)), %% bucket end: 524288
-	?assertEqual([786432, 1572864], entropy_offsets(700001, PaddedModuleEnd0)), %% bucket end: 786432
+	?assertEqual([524288, 1048576, 1572864, 2097152], entropy_offsets(699999, PaddedModuleEnd0), "7"), %% bucket end: 524288
+	?assertEqual([524288, 1048576, 1572864, 2097152], entropy_offsets(700000, PaddedModuleEnd0), "8"), %% bucket end: 524288
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(700001, PaddedModuleEnd0), "9"), %% bucket end: 786432
 
-	?assertEqual([786432, 1572864], entropy_offsets(786432, PaddedModuleEnd0)), %% bucket end: 786432
-	?assertEqual([786432, 1572864], entropy_offsets(786433, PaddedModuleEnd0)), %% bucket end: 786432
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1048576, PaddedModuleEnd0)), %% bucket end: 1048576	
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1835007, PaddedModuleEnd0)), %% bucket end: 1835008
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1835008, PaddedModuleEnd0)), %% bucket end: 1835008
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1835009, PaddedModuleEnd0)), %% bucket end: 1835008
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(786432, PaddedModuleEnd0), "10"), %% bucket end: 786432
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(786433, PaddedModuleEnd0), "11"), %% bucket end: 786432
+	?assertEqual([524288, 1048576, 1572864, 2097152], entropy_offsets(1048576, PaddedModuleEnd0), "12"), %% bucket end: 1048576
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(1835007, PaddedModuleEnd0), "13"), %% bucket end: 1835008
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(1835008, PaddedModuleEnd0), "14"), %% bucket end: 1835008
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(1835009, PaddedModuleEnd0), "15"), %% bucket end: 1835008
 
 	%% entropy partition is determined by the bucket *start* offset. So offsets that are in 
 	%% recall partition 1 may still be in entropy partition 0 (e.g. 2000001, 2097152)
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(1999999, PaddedModuleEnd0)), %% bucket end: 1835008
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(2000000, PaddedModuleEnd0)), %% bucket end: 1835008
-	?assertEqual([262144, 1048576, 1835008], entropy_offsets(2000001, PaddedModuleEnd0)), %% bucket end: 1835008
-	?assertEqual([524288, 1310720, 2097152], entropy_offsets(2097152, PaddedModuleEnd0)), %% bucket end: 2097152
-	?assertEqual([524288, 1310720, 2097152], entropy_offsets(2097153, PaddedModuleEnd0)), %% bucket end: 2097152
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(1999999, PaddedModuleEnd0), "16"), %% bucket end: 1835008
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(2000000, PaddedModuleEnd0), "17"), %% bucket end: 1835008
+	?assertEqual([262144, 786432, 1310720, 1835008], entropy_offsets(2000001, PaddedModuleEnd0), "18"), %% bucket end: 1835008
+	?assertEqual([524288, 1048576, 1572864, 2097152], entropy_offsets(2097152, PaddedModuleEnd0), "19"), %% bucket end: 2097152
+	?assertEqual([524288, 1048576, 1572864, 2097152], entropy_offsets(2097153, PaddedModuleEnd0), "20"), %% bucket end: 2097152
 
 	%% Even when ModuleEnd is high, we should limit entropy to the current entropy partition.
-	?assertEqual([524288, 1310720, 2097152], entropy_offsets(2097152, PaddedModuleEnd1)), %% bucket end: 2097152
+	?assertEqual([524288, 1048576, 1572864, 2097152], entropy_offsets(2097152, PaddedModuleEnd1), "21"), %% bucket end: 2097152
 
 	%% Retstrict offsets to module end.
-	?assertEqual([524288, 1310720], entropy_offsets(2097152, 2_000_000)), %% bucket end: 2097152
+	?assertEqual([524288, 1048576, 1572864], entropy_offsets(2097152, 2_000_000), "22"), %% bucket end: 2097152
 
 	%% Entropy partition 1
-	?assertEqual([2359296, 3145728, 3932160], entropy_offsets(2359297, PaddedModuleEnd1)), %% bucket end: 2359296
-	?assertEqual([2621440, 3407872, 4194304], entropy_offsets(2621441, PaddedModuleEnd1)), %% bucket end: 2621440
+	?assertEqual([2359296, 2883584, 3407872, 3932160], entropy_offsets(2359297, PaddedModuleEnd1), "23"), %% bucket end: 2359296
+	?assertEqual([2621440, 3145728, 3670016, 4194304], entropy_offsets(2621441, PaddedModuleEnd1), "24"), %% bucket end: 2621440
 
 	ok.

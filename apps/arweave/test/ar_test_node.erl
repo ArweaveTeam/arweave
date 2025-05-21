@@ -388,8 +388,8 @@ mainnet_packing_mocks() ->
 		{ar_block, partition_size, fun() -> 3_600_000_000_000 end},
 		{ar_block, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
 		{ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
-		{ar_replica_2_9, sub_chunks_per_entropy, fun() -> 1024 end},
-		{ar_replica_2_9, get_sector_size, fun() -> 3_515_875_328 end}
+		{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
+		{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
 	].
 
 get_difficulty_for_invalid_hash() ->

@@ -271,18 +271,27 @@ remove_from_sync_record(Offsets, StoreID) ->
 	} = Offsets,
 
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
-	
-	case ar_entropy_storage:delete_record(PaddedEndOffset, StoreID) of
+
+	DeleteEntropyRecord = ar_entropy_storage:delete_record(PaddedEndOffset, StoreID),
+	DeleteFootprint =
+		case DeleteEntropyRecord of
+			ok ->
+				ar_footprint_record:delete(PaddedEndOffset, StoreID);
+			Error ->
+				Error
+		end,
+	DeleteSyncRecord =
+		case DeleteFootprint of
+			ok ->
+				ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID);
+			Error2 ->
+				Error2
+		end,
+	case DeleteSyncRecord of
 		ok ->
-			case ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID) of
-				ok ->
-					ar_sync_record:delete(
-						PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
-				Error ->
-					Error
-			end;
-		Error ->
-			Error
+			ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
+		Error3 ->
+			Error3
 	end.
 
 add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
@@ -296,6 +305,12 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
 	
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	ar_sync_record:add(PaddedEndOffset, StartOffset, Packing, ar_data_sync, StoreID),
+	case ar_data_sync:is_footprint_record_supported(PaddedEndOffset, ChunkSize, Packing) of
+		true ->
+			ar_footprint_record:add(PaddedEndOffset, Packing, StoreID);
+		false ->
+			ok
+	end,
 
 	IsStorageSupported =
 		ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing),

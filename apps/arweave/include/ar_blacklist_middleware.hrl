@@ -65,6 +65,9 @@ end).
 			{chunk,	maps:get(chunk, LimitByIP, 12000)}; % ~50 MB/s.
 		[<<"data_sync_record">> | _] ->
 			{data_sync_record,	maps:get(data_sync_record, LimitByIP, 40)};
+		[<<"footprints">> | _] ->
+			%% 262144 * 1024 (chunks per footprint) * 200 (rpm) / 60 (seconds) =~ 800 MB/s
+			{footprints,	maps:get(footprints, LimitByIP, 200)};
 		[<<"recent_hash_list_diff">> | _] ->
 			{recent_hash_list_diff,	maps:get(recent_hash_list_diff, LimitByIP, 240)};
 		[<<"hash_list">>] ->

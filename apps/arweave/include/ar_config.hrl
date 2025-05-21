@@ -133,6 +133,10 @@
 -define(DEFAULT_REPLICA_2_9_WORKERS, 8).
 -endif.
 
+%% The default maximum number of replica 2.9 entropies to cache at a time
+%% while syncing data. Each entropy is 256 MB.
+-define(DEFAULT_REPLICA_2_9_ENTROPY_CACHE_MAX_ENTROPIES, 2).
+
 %% The number of packing workers.
 -define(DEFAULT_PACKING_WORKERS, erlang:system_info(dirty_cpu_schedulers_online)).
 
@@ -237,6 +241,8 @@
 		post_chunk => ?MAX_PARALLEL_POST_CHUNK_REQUESTS,
 		get_block_index => ?MAX_PARALLEL_BLOCK_INDEX_REQUESTS,
 		get_wallet_list => ?MAX_PARALLEL_WALLET_LIST_REQUESTS,
+		%% The get_sync_record semaphore is shared with GET /sync_buckets,
+		%% GET /footprints, and GET /footprint_buckets.
 		get_sync_record => ?MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS,
 		post_tx => ?MAX_PARALLEL_POST_TX_REQUESTS,
 		get_reward_history => ?MAX_PARALLEL_REWARD_HISTORY_REQUESTS,
@@ -273,6 +279,7 @@
 	packing_workers = ?DEFAULT_PACKING_WORKERS,
 	replica_2_9_workers = ?DEFAULT_REPLICA_2_9_WORKERS,
 	disable_replica_2_9_device_limit = false,
+	replica_2_9_entropy_cache_max_entropies = ?DEFAULT_REPLICA_2_9_ENTROPY_CACHE_MAX_ENTROPIES,
 	%% Undocumented/unsupported options
 	chunk_storage_file_size = ?CHUNK_GROUP_SIZE,
 	rocksdb_flush_interval_s = ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,

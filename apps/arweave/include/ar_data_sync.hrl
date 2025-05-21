@@ -209,5 +209,10 @@
 	%% The threshold controlling the brief accumuluation of the chunks in the queue before
 	%% the actual disk dump, to reduce the chance of out-of-order write causing disk
 	%% fragmentation.
-	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
+	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD,
+	%% The phase of the syncing process.
+	%% The phases are:
+	%% - normal: normal left-to-right syncing (normally, of the unpacked data).
+	%% - footprint: footprint-based syncing of replica 2.9 data.
+	sync_phase = undefined
 }).
