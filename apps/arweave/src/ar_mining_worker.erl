@@ -549,13 +549,12 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 
 process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
 	PackingDifficulty = Candidate#mining_candidate.packing_difficulty,
-	NoncesPerRecallRange = ar_block:get_max_nonce(PackingDifficulty),
+	MaxNonce = ar_block:get_max_nonce(PackingDifficulty),
 	NoncesPerChunk = ar_block:get_nonces_per_chunk(PackingDifficulty),
 	SubChunkSize = ar_block:get_sub_chunk_size(PackingDifficulty),
-	?LOG_WARNING([{event, process_chunks}, {nonces_per_recall_range, NoncesPerRecallRange}, {nonces_per_chunk, NoncesPerChunk}, {sub_chunk_size, SubChunkSize}]),
 	process_chunks(
 		WhichChunk, Candidate, RangeStart, 0, NoncesPerChunk,
-		NoncesPerRecallRange, ChunkOffsets, SubChunkSize, 0, State
+		MaxNonce, ChunkOffsets, SubChunkSize, 0, State
 	).
 
 %% Processing chunks for a recall range.
@@ -588,7 +587,7 @@ process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
 %%             |<- effective recall range ->|
 %%
 %% The ultimate goal is to process all the sub-chunks in the recall range.
-%% The count of subchunks in the recall range is `NoncesPerRecallRange`.
+%% The count of subchunks in the recall range is `MaxNonce`.
 %% replica packing: 10 chunks, 32 nonces per chunk, 320 nonces per recall range.
 %% spora 2.6: 200 chunks, 1 nonce per chunk, 200 nonces per recall range.
 %%
@@ -597,9 +596,8 @@ process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State) ->
 %% the cache.
 process_chunks(
 	WhichChunk, Candidate, _RangeStart, Nonce, _NoncesPerChunk,
-	NoncesPerRecallRange, _ChunkOffsets, _SubChunkSize, Count, State
-) when Nonce > NoncesPerRecallRange ->
-	?LOG_WARNING([{event, process_chunks_done}, {nonces_per_recall_range, NoncesPerRecallRange}, {nonce, Nonce}]),
+	MaxNonce, _ChunkOffsets, _SubChunkSize, Count, State
+) when Nonce > MaxNonce ->
 	%% We've processed all the sub_chunks in the recall range.
 	ar_mining_stats:chunks_read(case WhichChunk of
 		chunk1 -> Candidate#mining_candidate.partition_number;
@@ -608,7 +606,7 @@ process_chunks(
 	State;
 process_chunks(
 	WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk,
-	NoncesPerRecallRange, [], SubChunkSize, Count, State
+	MaxNonce, [], SubChunkSize, Count, State
 ) ->
 	%% No more ChunkOffsets means no more chunks have been read. Iterate through all the
 	%% remaining nonces and remove the full chunks from the cache.
@@ -619,11 +617,11 @@ process_chunks(
 	%% Process the next chunk.
 	process_chunks(
 		WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk,
-		NoncesPerChunk, NoncesPerRecallRange, [], SubChunkSize, Count, State1
+		NoncesPerChunk, MaxNonce, [], SubChunkSize, Count, State1
 	);
 process_chunks(
 	WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk,
-	NoncesPerRecallRange, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State
+	MaxNonce, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State
 ) ->
 	NonceOffset = RangeStart + Nonce * SubChunkSize,
 	ChunkStartOffset = ChunkEndOffset - ?DATA_CHUNK_SIZE,
@@ -636,7 +634,7 @@ process_chunks(
 			State1 = mark_single_chunk1_missing_or_drop(Nonce, Candidate, State),
 			process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk,
-				NoncesPerRecallRange, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State1
+				MaxNonce, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State1
 			);
 		{true, _, chunk2} ->
 			%% Skip these nonces (starting from Nonce to Nonce + NoncesPerChunk - 1).
@@ -646,7 +644,7 @@ process_chunks(
 			State1 = mark_single_chunk2_missing_or_drop(Nonce, Candidate, State),
 			process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk,
-				NoncesPerRecallRange, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State1
+				MaxNonce, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State1
 			);
 		{_, true, _} ->
 			%% Skip this chunk.
@@ -656,14 +654,14 @@ process_chunks(
 			%% No need to remove anything from cache, as the nonce is still in the recall range.
 			process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk,
-				NoncesPerRecallRange, ChunkOffsets, SubChunkSize, Count, State
+				MaxNonce, ChunkOffsets, SubChunkSize, Count, State
 			);
 		{false, false, _} ->
 			%% Process all sub-chunks in Chunk, and then advance to the next chunk.
 			State1 = process_all_sub_chunks(WhichChunk, Chunk, Candidate, Nonce, State),
 			process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk,
-				NoncesPerRecallRange, ChunkOffsets, SubChunkSize, Count + 1, State1
+				MaxNonce, ChunkOffsets, SubChunkSize, Count + 1, State1
 			)
 	end.
 
@@ -956,11 +954,6 @@ mark_single_chunk2_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 				%% We've already marked the chunk1 as missing, so the reservation for it was released.
 				%% We can just drop the cached value and release the reservation for a single subchunk.
 				{ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
-			(#ar_mining_cache_value{chunk1 = Chunk1, h1 = undefined} = CachedValue) when undefined /= Chunk1 ->
-				%% We have the corresponding chunk1, but we didn't calculate H1 yet.
-				%% Mark chunk2 as missing to drop the cached value after we calculate H1.
-				%% Drop the reservation for a single subchunk.
-				{ok, CachedValue#ar_mining_cache_value{chunk2_missing = true}, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
 			(#ar_mining_cache_value{h1 = H1}) when undefined /= H1 ->
 				%% We've already calculated H1, so we can drop the cached value.
 				%% Drop the reservation for a single subchunk.
@@ -984,7 +977,7 @@ mark_single_chunk2_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 %% @doc Mark the chunk2 as missing for the whole recall range.
 mark_second_recall_range_missing(Candidate, State) ->
 	#mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
-	mark_second_recall_range_missing(0, ar_block:get_max_nonce(PackingDifficulty), Candidate, State).
+	mark_second_recall_range_missing(0, ar_block:get_nonces_per_recall_range(PackingDifficulty), Candidate, State).
 
 mark_second_recall_range_missing(_Nonce, 0, _Candidate, State) -> State;
 mark_second_recall_range_missing(Nonce, NoncesLeft, Candidate, State) ->
