@@ -316,6 +316,22 @@ handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
 			end
 	end;
 
+handle(<<"GET">>, [<<"footprint_buckets">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
+			case ar_global_sync_record:get_serialized_footprint_buckets() of
+				{ok, Binary} ->
+					{200, #{}, Binary, Req};
+				{error, not_initialized} ->
+					{500, #{}, jiffy:encode(#{ error => not_initialized }), Req};
+				{error, timeout} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			end
+	end;
+
 handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->

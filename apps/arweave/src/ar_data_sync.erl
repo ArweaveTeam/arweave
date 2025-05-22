@@ -13,7 +13,7 @@
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
-		add_footprint/3, delete_footprint/2]).
+		add_footprint/3, delete_footprint/2, get_footprint_offset/1]).
 
 -export([add_chunk_to_disk_pool/5]).
 
