@@ -13,7 +13,7 @@
 	get_time/2, get_height/1, get_block_index/3,
 	get_sync_record/1, get_sync_record/3, get_sync_record/4, get_footprints/3,
 	get_chunk_binary/3, get_mempool/1,
-	get_sync_buckets/1, get_recent_hash_list/1,
+	get_sync_buckets/1, get_footprint_buckets/1, get_recent_hash_list/1,
 	get_recent_hash_list_diff/2, get_reward_history/3,
 	get_block_time_history/3, push_nonce_limiter_update/3,
 	get_vdf_update/1, get_vdf_session/1, get_previous_vdf_session/1,
@@ -480,6 +480,17 @@ get_sync_buckets(Peer) ->
 		peer => Peer,
 		method => get,
 		path => "/sync_buckets",
+		timeout => 10 * 1000,
+		connect_timeout => 2000,
+		limit => ?MAX_SYNC_BUCKETS_SIZE,
+		headers => p2p_headers()
+	})).
+
+get_footprint_buckets(Peer) ->
+	handle_get_sync_buckets_response(ar_http:req(#{
+		peer => Peer,
+		method => get,
+		path => "/footprint_buckets",
 		timeout => 10 * 1000,
 		connect_timeout => 2000,
 		limit => ?MAX_SYNC_BUCKETS_SIZE,
