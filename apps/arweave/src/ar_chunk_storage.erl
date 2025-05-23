@@ -7,10 +7,10 @@
 		open_files/1, get/2, get/3, locate_chunk_on_disk/2,
 		get_range/2, get_range/3, cut/2, delete/1, delete/2,
 		set_entropy_complete/1,
-		get_filepath/2, get_handle_by_filepath/1, close_file/2, close_files/1, 
+		get_filepath/2, get_handle_by_filepath/1, close_file/2, close_files/1,
 		list_files/2, run_defragmentation/0, get_position_and_relative_chunk_offset/2,
 		get_storage_module_path/2, get_chunk_storage_path/2,
-		get_chunk_bucket_start/1, get_chunk_bucket_end/1, 
+		get_chunk_bucket_start/1, get_chunk_bucket_end/1,
 		get_chunk_byte_from_bucket_end/1, get_chunk_seek_offset/1,
 		sync_record_id/1, write_chunk/4, record_chunk/5, read_offset/2]).
 
@@ -60,7 +60,7 @@ register_workers() ->
 		end,
 		Config#config.storage_modules
 	),
-	
+
 	DefaultChunkStorageWorker = ?CHILD_WITH_ARGS(ar_chunk_storage, worker,
 		ar_chunk_storage_default, [ar_chunk_storage_default, ?DEFAULT_MODULE]),
 
@@ -84,7 +84,7 @@ register_workers() ->
 %% Unpacked chunks smaller than 256 KiB cannot be stored here currently,
 %% because the module does not keep track of the chunk sizes - all chunks
 %% are assumed to be 256 KiB.
-%% 
+%%
 %% Put another way:
 %% 1. Small chunks from before the strict data split threshold are never packed and
 %%    never mined, so we store them as unpacked chunks in the rocksdb only.
@@ -308,13 +308,13 @@ get_chunk_byte_from_bucket_end(BucketEndOffset) ->
 	%% sanity checks
 	BucketEndOffset = get_chunk_bucket_end(BucketEndOffset),
 	%% end sanity checks
-	
+
 	get_chunk_seek_offset(BucketEndOffset) - 1.
 
 %% @doc Returns a byte that is guaranteed to be in the unpadded portion of the chunk
 %% identified by Offset. Offset can be any byte within the chunk - in either the unpadded
 %% part or the pad. This typically equates to the first byte of the chunk plus one.
-%% 
+%%
 %% If Offset is before the ar_block:strict_data_split_threshold() we just return it because we don't
 %% have any information about where chunks start or end.
 -spec get_chunk_seek_offset(non_neg_integer()) -> non_neg_integer().
@@ -710,7 +710,7 @@ read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID) ->
 		{ok, << ChunkOffset:?OFFSET_BIT_SIZE, _Chunk/binary >> = Bin} ->
 			StoreIDLabel = ar_storage_module:label(StoreID),
 			ar_metrics:record_rate_metric(
-				StartTime, byte_size(Bin), 
+				StartTime, byte_size(Bin),
 				chunk_read_rate_bytes_per_second, [StoreIDLabel, raw]),
 			prometheus_counter:inc(chunks_read, [StoreIDLabel], ChunkCount),
 			case is_offset_valid(Byte, BucketStart, ChunkOffset) of
@@ -813,8 +813,9 @@ filter_by_sync_record([{PaddedEndOffset, Chunk} | Rest], Intervals, Byte, Start,
 							ChunkFileStart, Start, PaddedEndOffset}),
 			filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount);
 		_ ->
-			[{PaddedEndOffset, Chunk}
-				| filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount)]
+			filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount)
+			% [{PaddedEndOffset, Chunk}
+			% 	| filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount)]
 	end.
 
 close_files([{cfile, {_, StoreID} = Key} | Keys], StoreID) ->
@@ -1096,8 +1097,8 @@ test_get_chunk_byte_from_bucket_end() ->
 	?assertEqual(1748576, get_chunk_byte_from_bucket_end(1835008)),
 	?assertEqual(2010720, get_chunk_byte_from_bucket_end(2097152)),
 	?assertEqual(2272864, get_chunk_byte_from_bucket_end(2359296)).
-	
-	
+
+
 well_aligned_test_() ->
 	{timeout, 20, fun test_well_aligned/0}.
 
