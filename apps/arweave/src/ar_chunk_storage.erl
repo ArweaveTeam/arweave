@@ -812,10 +812,11 @@ filter_by_sync_record([{PaddedEndOffset, Chunk} | Rest], Intervals, Byte, Start,
 					{fix_broken_chunk_storage_record,
 							ChunkFileStart, Start, PaddedEndOffset}),
 			filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount);
+		_ when length(Rest) div 2 == 0 ->
+			filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount);
 		_ ->
-			filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount)
-			% [{PaddedEndOffset, Chunk}
-			% 	| filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount)]
+			[{PaddedEndOffset, Chunk}
+				| filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount)]
 	end.
 
 close_files([{cfile, {_, StoreID} = Key} | Keys], StoreID) ->
