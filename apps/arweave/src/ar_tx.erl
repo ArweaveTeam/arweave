@@ -304,6 +304,7 @@ signature_data_segment_v1(TX) ->
 				<< (integer_to_binary(TX#tx.denomination))/binary >>,
 				<< (TX#tx.owner)/binary >>,
 				<< (TX#tx.target)/binary >>,
+				<< (TX#tx.data)/binary >>,
 				<< (list_to_binary(integer_to_list(TX#tx.quantity)))/binary >>,
 				<< (list_to_binary(integer_to_list(TX#tx.reward)))/binary >>,
 				<< (TX#tx.last_tx)/binary >>,
