@@ -878,7 +878,8 @@ handle_cast({join, RecentBI}, State) ->
 		State#sync_data_state{
 			weave_size = WeaveSize,
 			block_index = RecentBI,
-			disk_pool_threshold = DiskPoolThreshold
+			disk_pool_threshold = DiskPoolThreshold,
+			is_joined = true
 		}),
 	{noreply, State2};
 
@@ -979,68 +980,86 @@ handle_cast(sync_data2, State) ->
 %%    b. Sync queue is busy. Will pause until previously queued intervals are scheduled to the
 %%       ar_data_sync_worker_master for syncing.
 handle_cast(collect_peer_intervals, State) ->
-	#sync_data_state{ range_start = Start, range_end = End } = State,
+	#sync_data_state{ range_start = Start, range_end = End,
+			is_joined = IsJoined,
+			disk_pool_threshold = DiskPoolThreshold } = State,
 	?LOG_DEBUG([{event, collect_peer_intervals_start},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
 		{s, Start}, {e, End}]),
-	gen_server:cast(self(), {collect_peer_intervals, Start, End}),
+	CheckIsJoined =
+		case IsJoined of
+			false ->
+				ar_util:cast_after(1000, self(), collect_peer_intervals),
+				false;
+			true ->
+				true
+		end,
+	IntersectsDiskPool =
+		case CheckIsJoined of
+			false ->
+				noop;
+			true ->
+				End > DiskPoolThreshold
+		end,
+	case IntersectsDiskPool of
+		noop ->
+			noop;
+		true ->
+			gen_server:cast(self(), {collect_peer_intervals, Start, End, normal});
+		false ->
+			{ok, Config} = application:get_env(arweave, config),
+			case lists:member(footprint_based_syncing, Config#config.enable) of
+				true ->
+					gen_server:cast(self(), {collect_peer_intervals, Start, End, footprint});
+				false ->
+					gen_server:cast(self(), {collect_peer_intervals, Start, End, normal})
+			end
+	end,
 	{noreply, State};
 
-handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
+handle_cast({collect_peer_intervals, Start, End, Type}, State) when Start >= End ->
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
 	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS.
 	?LOG_DEBUG([{event, collect_peer_intervals_done},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
-		{s, Start}, {e, End}]),
+		{s, Start}, {e, End}, {type, Type}]),
 	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
 	{noreply, State};
-handle_cast({collect_peer_intervals, Start, End}, State) ->
+handle_cast({collect_peer_intervals, Start, End, Type}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			store_id = StoreID, weave_size = WeaveSize } = State,
-	IsJoined =
-		case ar_node:is_joined() of
-			false ->
-				ar_util:cast_after(1000, self(), {collect_peer_intervals, Start, End}),
-				false;
-			true ->
-				true
-		end,
 	IsDiskSpaceSufficient =
-		case IsJoined of
-			false ->
-				false;
+		case is_disk_space_sufficient(StoreID) of
 			true ->
-				case is_disk_space_sufficient(StoreID) of
-					true ->
-						true;
-					IsSufficient ->
-						Delay = case IsSufficient of
-							false ->
-								30_000;
-							not_initialized ->
-								1000
-						end,
-						ar_util:cast_after(Delay, self(), {collect_peer_intervals, Start, End}),
-						false
-				end
+				true;
+			IsSufficient ->
+				Delay = case IsSufficient of
+					false ->
+						30_000;
+					not_initialized ->
+						1000
+				end,
+				ar_util:cast_after(Delay, self(), {collect_peer_intervals, Start, End, Type}),
+				false
 		end,
 	IsSyncQueueBusy =
 		case IsDiskSpaceSufficient of
 			false ->
 				true;
 			true ->
-				%% Q is the number of chunks that we've already queued for syncing. We need
+				%% Q contains chunks we've already queued for syncing. We need
 				%% to manage the queue length.
 				%% 1. Periodically sync_intervals will pull from Q and send work to
 				%%    ar_data_sync_worker_master. We need to make sure Q is long enough so
 				%%    that we never starve ar_data_sync_worker_master of work.
 				%% 2. On the flip side we don't want Q to get so long as to trigger an
 				%%    out-of-memory condition. In the extreme case we could collect and
-				%%    enqueue all chunks in a full 3.6TB storage_module. A Q of this length
-				%%    would have a roughly 500MB memory footprint per storage_module. For a
-				%%    node that is syncing multiple storage modules, this can add up fast.
+				%%    enqueue all chunks in the entire storage module (usually 3.6 TB).
+				%%    A Q of this length would have a roughly 500 MB memory footprint per
+				%%    storage module. For a node that is syncing multiple storage modules,
+				%%    this can add up fast.
 				%% 3. We also want to make sure we are using the most up to date information
 				%%    we can. Every time we add a task to the Q we're locking in a specific
 				%%    view of Peer data availability. If that peer goes offline before we
@@ -1057,7 +1076,7 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 					[StoreIDLabel], IntervalsQueueSize),
 				case IntervalsQueueSize > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
 					true ->
-						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End}),
+						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End, Type}),
 						true;
 					false ->
 						false
@@ -1069,7 +1088,7 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 					{function, collect_peer_intervals},
 					{store_id, StoreID},
 					{s, Start}, {e, End},
-					{weave_size, WeaveSize}, {is_joined, IsJoined},
+					{weave_size, WeaveSize},
 					{is_disk_space_sufficient, IsDiskSpaceSufficient},
 					{is_sync_queue_busy, IsSyncQueueBusy}]),
 			ok;
@@ -1083,7 +1102,7 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 					%% sync bucket worth of chunks starting at offset Start
 					?LOG_DEBUG([{event, fetch_peer_intervals},
 							{function, collect_peer_intervals}, {s, Start}, {e, End2}]),
-					ar_peer_intervals:fetch(Start, End2, StoreID)
+					ar_peer_intervals:fetch(Start, End2, StoreID, Type)
 			end
 	end,
 
@@ -1094,12 +1113,12 @@ handle_cast({enqueue_intervals, []}, State) ->
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
-	%% When enqueuing intervals, we want to distribute the intervals among many peers. So
-	%% that:
-	%% 1. We can better saturate our network-in bandwidth without overwhelming any one peer.
+	%% When enqueuing intervals, we want to distribute the intervals among many peers,
+	%% so that:
+	%% 1. We can better saturate our network bandwidth without overwhelming any one peer.
 	%% 2. So that we limit the risk of blocking on one particularly slow peer.
 	%%
-	%% We do a probabilistic ditribution:
+	%% We do a probabilistic distribution:
 	%% 1. We shuffle the peers list so that the ordering differs from call to call
 	%% 2. We cap the number of chunks to enqueue per peer - at roughly 50% more than
 	%%    their "fair" share (i.e. ?DEFAULT_SYNC_BUCKET_SIZE / NumPeers).
