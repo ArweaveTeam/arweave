@@ -12,7 +12,7 @@
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
 		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
-		docs/0, shutdown/1, console/1, console/2]).
+		docs/0, shutdown/1, console/1, console/2, prep_stop/1]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -372,7 +372,9 @@ show_help() ->
 			{"verify_samples (num)", io_lib:format("Number of chunks to sample and unpack "
 				"during 'verify'. Default is ~B.", [?SAMPLE_CHUNK_COUNT])},
 			{"shutdown_tcp_connection_timeout", io_lib:format("shutdown tcp connection timeout in seconds. "
-				"Default is ~Bs.", [?SHUTDOWN_TCP_CONNECTION_TIMEOUT])}
+				"Default is ~Bs.", [?SHUTDOWN_TCP_CONNECTION_TIMEOUT])},
+			{"shutdown_tcp_mode", io_lib:format("configure the mode to shutdown tcp connections (soft/hard)."
+				"Default is ~ss.", [?SHUTDOWN_TCP_MODE])}
 		]
 	),
 	erlang:halt().
@@ -700,7 +702,17 @@ parse_cli_args(["rocksdb_wal_sync_interval", Seconds | Rest], C) ->
 
 %% tcp shutdown procedure
 parse_cli_args(["shutdown_tcp_connection_timeout", Delay|Rest], C) ->
-		parse_cli_args(Rest, C#config{ shutdown_tcp_connection_timeout = list_to_integer(Delay) });
+	parse_cli_args(Rest, C#config{ shutdown_tcp_connection_timeout = list_to_integer(Delay) });
+parse_cli_args(["shutdown_tcp_mode", RawMode|Rest], C) ->
+	case RawMode of
+		"soft" ->
+			parse_cli_args(Rest, C#config{ shutdown_tcp_mode = soft });
+		"hard" ->
+			parse_cli_args(Rest, C#config{ shutdown_tcp_mode = hard });
+		Mode ->
+			io:format("Mode ~p is invalid.~n", [Mode]),
+			parse_cli_args(Rest, C)
+	end;
 
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->
@@ -724,7 +736,7 @@ start(Config) ->
 			logger:add_handler(console, logger_std_h, #{level => all});
 		_->
 			ok
-  	end,
+	end,
 	case ar_config:validate_config(Config) of
 		true ->
 			ok;
@@ -864,6 +876,13 @@ benchmark_2_9(Args) ->
 
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
+
+prep_stop(State) ->
+	% When arweave is stopped, the first step is to stop
+	% accepting connections from other peers, and then
+	% start the shutdown procedure.
+	ok = ranch:suspend_listener(ar_http_iface_listener),
+	State.
 
 stop(_State) ->
 	?LOG_INFO([{stop, ?MODULE}]).
@@ -1011,4 +1030,3 @@ console(Format) ->
 console(Format, Params) ->
 	io:format(Format, Params).
 -endif.
-

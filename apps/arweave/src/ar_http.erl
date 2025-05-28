@@ -13,6 +13,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
 	pid_by_peer = #{},
@@ -253,8 +254,21 @@ open_connection(#{ peer := Peer } = Args) ->
 	{IPOrHost, Port} = get_ip_port(Peer),
 	ConnectTimeout = maps:get(connect_timeout, Args,
 			maps:get(timeout, Args, ?HTTP_REQUEST_CONNECT_TIMEOUT)),
-	gun:open(IPOrHost, Port, #{ http_opts => #{ keepalive => 60000 },
-			retry => 0, connect_timeout => ConnectTimeout }).
+	GunOpts = #{
+		retry => 0,
+		connect_timeout => ConnectTimeout,
+		http_opts => #{
+			keepalive => 60_000
+		},
+		transport_opts => [
+			{keepalive, true},
+			{delay_send, false},
+			{nodelay, true},
+			{send_timeout_close, true},
+			{send_timeout, 15_000}
+		]
+	},
+	gun:open(IPOrHost, Port, GunOpts).
 
 get_ip_port({_, _} = Peer) ->
 	Peer;
