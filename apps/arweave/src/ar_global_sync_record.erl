@@ -134,9 +134,14 @@ handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, Module}},
 	Packing = ar_storage_module:get_packing(Module),
 	case Packing of
 		{replica_2_9, _} when ?BLOCK_2_9_SYNCING ->
-			%% Ignore replica.2.9 packing. This is a temporary solution until
-			%% we can support data syncing in batches corresponding to the
-			%% replica.2.9 entropy footprint
+			%% Ignore replica.2.9 packing. We are moving to the new syncing mechanism
+			%% where the data below the disk pool threshold is synced footprint by
+			%% footprint (see GET /footprints/{partition}/{footprint}).
+			%% The data above the disk pool threshold is synced as usual.
+			%% Therefore, the sync record (unlike the footprint record) becomes
+			%% useful in the first place for syncing the disk pool where
+			%% replica 2.9 data is expensive to deal with and at the same time
+			%% we expect peers to have unpacked disk pool data.
 			{noreply, State};
 		_ ->
 			#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
@@ -204,13 +209,13 @@ get_footprint_record() ->
 	).
 
 cache_and_get_sync_buckets(SyncRecord, Key, SyncBuckets) ->
-	SyncBuckets = ar_sync_buckets:from_intervals(SyncRecord, SyncBuckets),
-	{SyncBuckets2, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets,
+	SyncBuckets2 = ar_sync_buckets:from_intervals(SyncRecord, SyncBuckets),
+	{SyncBuckets3, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets2,
 					?MAX_SYNC_BUCKETS_SIZE),
 	ets:insert(?MODULE, {Key, SerializedSyncBuckets}),
 	ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
 			?MODULE, {update_serialized_sync_buckets, Key}),
-	SyncBuckets2.
+	SyncBuckets3.
 
 update_footprint_data(Start, End, State) when Start >= End ->
 	State;
