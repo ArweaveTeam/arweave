@@ -95,7 +95,7 @@ init([]) ->
 	FootprintRecord = get_footprint_record(),
 	FootprintBuckets = cache_and_get_sync_buckets(FootprintRecord,
 			serialized_footprint_buckets,
-			ar_sync_buckets:new(?DEFAULT_SYNC_BUCKET_SIZE div ?DATA_CHUNK_SIZE)),
+			ar_sync_buckets:new(?NETWORK_FOOTPRINT_BUCKET_SIZE)),
 	gen_server:cast(?MODULE, record_v2_index_data_size_metric),
 	{ok, #state{ sync_record = SyncRecord, sync_buckets = SyncBuckets,
 			footprint_record = FootprintRecord, footprint_buckets = FootprintBuckets }}.
