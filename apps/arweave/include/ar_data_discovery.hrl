@@ -8,6 +8,14 @@
 -define(NETWORK_DATA_BUCKET_SIZE, 10_000_000_000). % 10 GB
 -endif.
 
+%% Similar to ?NETWORK_DATA_BUCKET_SIZE, except for a footprint bucket
+%% contains several "footprints" - sets of chunks spread out across the partition.
+-ifdef(AR_TEST).
+-define(NETWORK_FOOTPRINT_BUCKET_SIZE, 36). % 12 (footprints) * 3 (chunks); ~10 MB
+-else.
+-define(NETWORK_FOOTPRINT_BUCKET_SIZE, 37888). % 37 (footprints) * 1024 (chunks); ~10 GB
+-endif.
+
 %% The maximum number of synced intervals shared with peers.
 -ifdef(AR_TEST).
 -define(MAX_SHARED_SYNCED_INTERVALS_COUNT, 20).
