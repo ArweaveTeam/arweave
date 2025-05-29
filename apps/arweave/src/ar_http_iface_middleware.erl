@@ -2115,43 +2115,23 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
 	CheckFootprintNumber =
 		case FindStoreIDPacking of
 			{ok, {StoreID2, Packing2}} ->
-				FootprintSize = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 				FootprintsPerPartition = ?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
 				case FootprintNumber >= FootprintsPerPartition of
 					true ->
 						{400, #{}, jiffy:encode(#{ error => footprint_number_too_large }), Req};
 					false ->
-						{ok, {StoreID2, Packing2, FootprintSize, FootprintsPerPartition}}
+						{ok, {StoreID2, Packing2}}
 				end;
 			Reply2 ->
 				Reply2
 		end,
 	case CheckFootprintNumber of
-		{ok, {StoreID3, Packing3, FootprintSize2, FootprintsPerPartition2}} ->
-			PartitionStartOffset = Partition * FootprintsPerPartition2 * FootprintSize2,
-			FootprintStart = PartitionStartOffset + FootprintNumber * FootprintSize2,
-			Intervals = collect_footprint_intervals(FootprintStart,
-					FootprintStart + FootprintSize2, Packing3, StoreID3),
+		{ok, {StoreID3, Packing3}} ->
+			Intervals = ar_data_sync:get_footprint_intervals(Partition, FootprintNumber, Packing3, StoreID3),
 			Payload = jiffy:encode(ar_serialize:footprint_to_json_map(Packing3, Intervals)),
 			{200, #{}, Payload, Req};
 		Reply3 ->
 			Reply3
-	end.
-
-collect_footprint_intervals(Start, End, Packing, StoreID) ->
-	collect_footprint_intervals(Start, End, Packing, StoreID, ar_intervals:new()).
-
-collect_footprint_intervals(Start, End, _Packing, _StoreID, Intervals) when Start >= End ->
-	Intervals;
-collect_footprint_intervals(Start, End, Packing, StoreID, Intervals) ->
-	case ar_sync_record:get_next_synced_interval(Start, End,
-			Packing, ar_data_sync_footprints, StoreID) of
-		not_found ->
-			Intervals;
-		{End2, Start2} ->
-			End3 = min(End2, End),
-			collect_footprint_intervals(End3, End, Packing, StoreID,
-					ar_intervals:add(Intervals, End3, Start2))
 	end.
 
 handle_get_chunk(OffsetBinary, Req, Encoding) ->
