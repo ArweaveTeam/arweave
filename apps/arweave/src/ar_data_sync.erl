@@ -13,7 +13,9 @@
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
-		add_footprint/3, delete_footprint/2, get_footprint_offset/1]).
+		add_footprint/3, delete_footprint/2, get_footprint_offset/1, get_footprint/1,
+		get_footprint_bucket/1, get_footprint_intervals/3, get_footprint_intervals/4,
+		get_unsynced_footprint_intervals/3]).
 
 -export([add_chunk_to_disk_pool/5]).
 
@@ -3505,12 +3507,79 @@ add_footprint(PaddedOffset, Packing, StoreID) ->
 
 get_footprint_offset(PaddedOffset) ->
 	FootprintsPerPartition = ?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
-	FootprintSize = ?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	FootprintSize = get_footprint_size(),
 	Partition = ar_replica_2_9:get_entropy_partition(PaddedOffset),
 	PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
 	SliceIndex = ar_replica_2_9:get_slice_index(PaddedOffset),
-	EntropyIndex = ar_replica_2_9:get_entropy_index(PaddedOffset, 0),
-	PartitionStartOffset + FootprintSize * (EntropyIndex div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT) + SliceIndex + 1.
+	Footprint = get_footprint(PaddedOffset),
+	PartitionStartOffset + FootprintSize * Footprint + SliceIndex + 1.
+
+get_footprint(Offset) ->
+	EntropyIndex = ar_replica_2_9:get_entropy_index(Offset, 0),
+	EntropyIndex div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
+
+get_footprint_size() ->
+	?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+
+get_footprint_bucket(Offset) ->
+	get_footprint_offset(Offset) div ?NETWORK_FOOTPRINT_BUCKET_SIZE.
+
+get_footprint_intervals(Partition, Footprint, StoreID) ->
+	get_footprint_intervals(Partition, Footprint, any, StoreID).
+
+get_footprint_intervals(Partition, Footprint, Packing, StoreID) ->
+	FootprintSize = get_footprint_size(),
+	FootprintsPerPartition = ?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
+	PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
+	FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
+	collect_footprint_intervals(FootprintStart, FootprintStart + FootprintSize, Packing, StoreID).
+
+get_unsynced_footprint_intervals(Partition, Footprint, StoreID) ->
+	FootprintSize = get_footprint_size(),
+	FootprintsPerPartition = ?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
+	PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
+	FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
+	collect_unsynced_footprint_intervals(FootprintStart, FootprintStart + FootprintSize, StoreID).
+
+collect_footprint_intervals(Start, End, Packing, StoreID) ->
+	collect_footprint_intervals(Start, End, Packing, StoreID, ar_intervals:new()).
+
+collect_footprint_intervals(Start, End, _Packing, _StoreID, Intervals) when Start >= End ->
+	Intervals;
+collect_footprint_intervals(Start, End, Packing, StoreID, Intervals) ->
+	Query =
+		case Packing of
+			any ->
+				ar_sync_record:get_next_synced_interval(Start, End,
+					ar_data_sync_footprints, StoreID);
+			Packing ->
+				ar_sync_record:get_next_synced_interval(Start, End,
+						Packing, ar_data_sync_footprints, StoreID)
+		end,
+	case Query of
+		not_found ->
+			Intervals;
+		{End2, Start2} ->
+			End3 = min(End2, End),
+			collect_footprint_intervals(End3, End, Packing, StoreID,
+					ar_intervals:add(Intervals, End3, Start2))
+	end.
+
+collect_unsynced_footprint_intervals(Start, End, StoreID) ->
+	collect_unsynced_footprint_intervals(Start, End, StoreID, ar_intervals:new()).
+
+collect_unsynced_footprint_intervals(Start, End, _StoreID, Intervals) when Start >= End ->
+	Intervals;
+collect_unsynced_footprint_intervals(Start, End, StoreID, Intervals) ->
+	Query = ar_sync_record:get_next_unsynced_interval(Start, End, ar_data_sync_footprints, StoreID),
+	case Query of
+		not_found ->
+			Intervals;
+		{End2, Start2} ->
+			End3 = min(End2, End),
+			collect_unsynced_footprint_intervals(End3, End, StoreID,
+					ar_intervals:add(Intervals, End3, Start2))
+	end.
 
 delete_footprint(Offset, StoreID) ->
 	FootprintOffset = get_footprint_offset(Offset),
