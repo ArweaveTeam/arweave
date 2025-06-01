@@ -84,9 +84,9 @@ fetch(Start, End, StoreID, footprint) ->
 	spawn_link(fun() ->
 		try
 			Partition = ar_replica_2_9:get_entropy_partition(Start + 1),
-			Footprint = ar_data_sync:get_footprint(Start + 1),
+			Footprint = ar_footprint_record:get_footprint(Start + 1),
 
-			FootprintBucket = ar_data_sync:get_footprint_bucket(Start + 1),
+			FootprintBucket = ar_footprint_record:get_footprint_bucket(Start + 1),
 			{ok, Config} = application:get_env(arweave, config),
 			Peers =
 				case Config#config.sync_from_local_peers_only of
@@ -96,14 +96,23 @@ fetch(Start, End, StoreID, footprint) ->
 						ar_data_discovery:get_footprint_bucket_peers(FootprintBucket)
 				end,
 
-			UnsyncedIntervals = ar_data_sync:get_unsynced_footprint_intervals(Partition, Footprint, StoreID),
+			UnsyncedIntervals = ar_footprint_record:get_unsynced_intervals(Partition, Footprint, StoreID),
 			case ar_intervals:is_empty(UnsyncedIntervals) of
 				true ->
 					ok;
 				false ->
 					fetch_peer_footprint_intervals(Parent, Partition, Footprint, Peers, UnsyncedIntervals)
 			end,
-			Start2 = Start + ?DATA_CHUNK_SIZE, % TODO
+			EntropyIndex = ar_replica_2_9:get_entropy_index(Start + 1, 0),
+			NextEntropyIndex = ar_replica_2_9:get_entropy_index(Start + ?DATA_CHUNK_SIZE + 1, 0),
+			Start2 =
+				case NextEntropyIndex > EntropyIndex of
+					true ->
+						Start + ?DATA_CHUNK_SIZE;
+					false ->
+						Partition = ar_replica_2_9:get_entropy_partition(Start + 1),
+						(Partition + 1) * ?PARTITION_SIZE
+				end,
 			%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
 			gen_server:cast(Parent, {collect_peer_intervals, Start2, End})
 		catch
@@ -247,17 +256,8 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Peers, UnsyncedInte
 			[],
 			Intervals
 		),
-	EnqueueIntervals2 = convert_to_normal_form(EnqueueIntervals),
+	EnqueueIntervals2 = ar_footprint_record:get_intervals_from_footprint_intervals(EnqueueIntervals),
 	gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals2}).
-
-convert_to_normal_form(Intervals) ->
-	convert_to_normal_form(ar_intervals:to_list(Intervals), ar_intervals:new()).
-
-convert_to_normal_form([], Intervals) ->
-	Intervals;
-convert_to_normal_form([{End, Start} | Rest], Intervals) ->
-	% TODO
-	convert_to_normal_form(Rest, ar_intervals:add(Intervals, End, Start)).
 
 get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 	PeerReply = ar_http_iface_client:get_footprints(Peer, Partition, Footprint),
