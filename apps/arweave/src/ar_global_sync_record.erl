@@ -222,7 +222,7 @@ update_footprint_data(Start, End, State) when Start >= End ->
 update_footprint_data(Start, End, State) ->
 	#state{ footprint_record = FootprintRecord,
 			footprint_buckets = FootprintBuckets } = State,
-	Offset = ar_data_sync:get_footprint_offset(Start + ?DATA_CHUNK_SIZE),
+	Offset = ar_footprint_record:get_offset(Start + ?DATA_CHUNK_SIZE),
 	FootprintRecord2 = ar_intervals:add(FootprintRecord, Offset, Offset - 1),
 	FootprintBuckets2 = ar_sync_buckets:add(Offset, Offset - 1, FootprintBuckets),
 	State2 = State#state{ footprint_record = FootprintRecord2,
@@ -234,7 +234,7 @@ remove_footprint_data(Start, End, State) when Start >= End ->
 remove_footprint_data(Start, End, State) ->
 	#state{ footprint_record = FootprintRecord,
 			footprint_buckets = FootprintBuckets } = State,
-	Offset = ar_data_sync:get_footprint_offset(Start + ?DATA_CHUNK_SIZE),
+	Offset = ar_footprint_record:get_offset(Start + ?DATA_CHUNK_SIZE),
 	FootprintRecord2 = ar_intervals:delete(FootprintRecord, Offset, Offset - 1),
 	FootprintBuckets2 = ar_sync_buckets:delete(Offset, Offset - 1, FootprintBuckets),
 	State2 = State#state{ footprint_record = FootprintRecord2,

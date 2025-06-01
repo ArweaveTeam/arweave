@@ -358,7 +358,7 @@ invalidate_sync_record(Type, Cursor, NextCursor, Logs, State) ->
 	case Mode of
 		purge ->
 			ar_sync_record:delete(NextCursor, Cursor, ar_data_sync, StoreID),
-			ar_data_sync:delete_footprint(NextCursor, StoreID);
+			ar_footprint_record:delete(NextCursor, StoreID);
 		log ->
 			ok
 	end,

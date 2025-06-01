@@ -12,10 +12,7 @@
 		get_chunk_by_byte/2, advance_chunks_index_cursor/1,
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
-		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
-		add_footprint/3, delete_footprint/2, get_footprint_offset/1, get_footprint/1,
-		get_footprint_bucket/1, get_footprint_intervals/3, get_footprint_intervals/4,
-		get_unsynced_footprint_intervals/3]).
+		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0]).
 
 -export([add_chunk_to_disk_pool/5]).
 
@@ -1345,7 +1342,7 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 			RemoveFromFootprint =
 				case RemoveFromSyncRecord of
 					ok ->
-						delete_footprint(PaddedOffset, StoreID);
+						ar_footprint_record:delete(PaddedOffset, StoreID);
 					Error ->
 						Error
 				end,
@@ -2006,7 +2003,7 @@ remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
 	Remove2 =
 		case Remove1 of
 			ok ->
-				delete_footprint(PaddedEndOffset, StoreID);
+				ar_footprint_record:delete(PaddedEndOffset, StoreID);
 			Error ->
 				Error
 		end,
@@ -3028,7 +3025,6 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 			{error, invalid_data_path}
 	end.
 
-
 update_chunks_index(Args, UpdateFootprint, State) ->
 	AbsoluteChunkOffset = element(1, Args),
 	case ar_tx_blacklist:is_byte_blacklisted(AbsoluteChunkOffset) of
@@ -3051,7 +3047,7 @@ update_chunks_index2(Args, UpdateFootprint, State) ->
 				ok ->
 					case UpdateFootprint of
 						true ->
-							case add_footprint(PaddedOffset, Packing, StoreID) of
+							case ar_footprint_record:add(PaddedOffset, Packing, StoreID) of
 								ok ->
 									ok;
 								{error, Reason} ->
@@ -3248,7 +3244,7 @@ store_chunk2(ChunkArgs, Args, State) ->
 			_ ->
 				case ar_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync, StoreID) of
 					ok ->
-						delete_footprint(PaddedOffset, StoreID);
+						ar_footprint_record:delete(PaddedOffset, StoreID);
 					Error ->
 						Error
 				end
@@ -3437,7 +3433,7 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 									AbsoluteOffset - ChunkSize),
 							ok = ar_sync_record:delete(PaddedOffset, StartOffset, ar_data_sync,
 									StoreID),
-							ok = delete_footprint(PaddedOffset, StoreID),
+							ok = ar_footprint_record:delete(PaddedOffset, StoreID),
 							case ar_sync_record:is_recorded(PaddedOffset, ar_data_sync) of
 								false ->
 									ar_events:send(sync_record,
@@ -3473,104 +3469,6 @@ get_merkle_rebase_threshold() ->
 		[{_, Threshold}] ->
 			Threshold
 	end.
-
-%% @doc Update the replica 2.9 entropy-aligned record of the synced chunks.
-%% It differs from the normal record (ar_data_sync) in that it only registers
-%% the bucket numbers of the synced chunks and records chunks with the same footprint
-%% next to each other. For example, a record may contain intervals 0-10, 1000-1024,
-%% 1020-2048. This means the node has the first 10 chunks of the first entropy footprint,
-%% the last 24 chunks of the first entropy footprint and chunks 20-48 of the second
-%% entropy footprint. These chunks are from the first partition. The offset of the chunks
-%% from the second partition is shifted by the number of chunks in the replica 2.9
-%% entropy generated per partition (which is slightly bigger than the number of chunks
-%% that can fit in the 3.6 TB partition).
-%%
-%% Note that Packing does not have to be replica_2_9. We maintain this record
-%% for any packing so that it is convenient to serve the data to any client.
-add_footprint(PaddedOffset, Packing, StoreID) ->
-	Offset = get_footprint_offset(PaddedOffset),
-	ar_sync_record:add(Offset, Offset - 1, Packing, ar_data_sync_footprints, StoreID).
-
-get_footprint_offset(PaddedOffset) ->
-	FootprintsPerPartition = ?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
-	FootprintSize = get_footprint_size(),
-	Partition = ar_replica_2_9:get_entropy_partition(PaddedOffset),
-	PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
-	SliceIndex = ar_replica_2_9:get_slice_index(PaddedOffset),
-	Footprint = get_footprint(PaddedOffset),
-	PartitionStartOffset + FootprintSize * Footprint + SliceIndex + 1.
-
-get_footprint(Offset) ->
-	EntropyIndex = ar_replica_2_9:get_entropy_index(Offset, 0),
-	EntropyIndex div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
-
-get_footprint_size() ->
-	?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
-
-get_footprint_bucket(Offset) ->
-	get_footprint_offset(Offset) div ?NETWORK_FOOTPRINT_BUCKET_SIZE.
-
-get_footprint_intervals(Partition, Footprint, StoreID) ->
-	get_footprint_intervals(Partition, Footprint, any, StoreID).
-
-get_footprint_intervals(Partition, Footprint, Packing, StoreID) ->
-	FootprintSize = get_footprint_size(),
-	FootprintsPerPartition = ?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
-	PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
-	FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
-	collect_footprint_intervals(FootprintStart, FootprintStart + FootprintSize, Packing, StoreID).
-
-get_unsynced_footprint_intervals(Partition, Footprint, StoreID) ->
-	FootprintSize = get_footprint_size(),
-	FootprintsPerPartition = ?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
-	PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
-	FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
-	collect_unsynced_footprint_intervals(FootprintStart, FootprintStart + FootprintSize, StoreID).
-
-collect_footprint_intervals(Start, End, Packing, StoreID) ->
-	collect_footprint_intervals(Start, End, Packing, StoreID, ar_intervals:new()).
-
-collect_footprint_intervals(Start, End, _Packing, _StoreID, Intervals) when Start >= End ->
-	Intervals;
-collect_footprint_intervals(Start, End, Packing, StoreID, Intervals) ->
-	Query =
-		case Packing of
-			any ->
-				ar_sync_record:get_next_synced_interval(Start, End,
-					ar_data_sync_footprints, StoreID);
-			Packing ->
-				ar_sync_record:get_next_synced_interval(Start, End,
-						Packing, ar_data_sync_footprints, StoreID)
-		end,
-	case Query of
-		not_found ->
-			Intervals;
-		{End2, Start2} ->
-			End3 = min(End2, End),
-			collect_footprint_intervals(End3, End, Packing, StoreID,
-					ar_intervals:add(Intervals, End3, Start2))
-	end.
-
-collect_unsynced_footprint_intervals(Start, End, StoreID) ->
-	collect_unsynced_footprint_intervals(Start, End, StoreID, ar_intervals:new()).
-
-collect_unsynced_footprint_intervals(Start, End, _StoreID, Intervals) when Start >= End ->
-	Intervals;
-collect_unsynced_footprint_intervals(Start, End, StoreID, Intervals) ->
-	Query = ar_sync_record:get_next_unsynced_interval(Start, End, ar_data_sync_footprints, StoreID),
-	case Query of
-		not_found ->
-			Intervals;
-		{End2, Start2} ->
-			End3 = min(End2, End),
-			collect_unsynced_footprint_intervals(End3, End, StoreID,
-					ar_intervals:add(Intervals, End3, Start2))
-	end.
-
-delete_footprint(Offset, StoreID) ->
-	FootprintOffset = get_footprint_offset(Offset),
-	ar_sync_record:delete(FootprintOffset, FootprintOffset - 1,
-			ar_data_sync_footprints, StoreID).
 
 process_disk_pool_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude, Args,
 		State) ->

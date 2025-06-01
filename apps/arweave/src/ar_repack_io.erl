@@ -283,7 +283,7 @@ remove_from_sync_record(Offsets, StoreID) ->
 	DeleteFootprint =
 		case DeleteSyncRecord of
 			ok ->
-				ar_data_sync:delete_footprint(PaddedEndOffset, StoreID);
+				ar_footprint_record:delete(PaddedEndOffset, StoreID);
 			Error2 ->
 				Error2
 		end,
@@ -305,7 +305,7 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
 	
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	ar_sync_record:add(PaddedEndOffset, StartOffset, Packing, ar_data_sync, StoreID),
-	ar_data_sync:add_footprint(PaddedEndOffset, Packing, StoreID),
+	ar_footprint_record:add(PaddedEndOffset, Packing, StoreID),
 
 	IsStorageSupported =
 		ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing),
