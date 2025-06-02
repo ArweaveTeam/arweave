@@ -243,13 +243,26 @@ encipher_replica_2_9_chunk(Chunk, Entropy) ->
 ) -> binary().
 generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
-	PackingState = get_packing_state(),
-	RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
+	
+	case ar_replica_2_9_entropy_cache:get(Key) of
+		{ok, Entropy} ->
+			Entropy;
+		not_found ->
+			PackingState = get_packing_state(),
+			RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
+			{ok, Config} = application:get_env(arweave, config),
+			MaxEntropies = Config#config.replica_2_9_entropy_cache_max_entropies,
 
-	Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
-	%% Primarily needed for testing where the entropy generated exceeds the entropy
-	%% needed for tests.
-	binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE).
+			Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
+			EntropySize = ?REPLICA_2_9_ENTROPY_SIZE,
+			MaxSize = MaxEntropies * EntropySize,
+			ar_replica_2_9_entropy_cache:clean_up_space(EntropySize, MaxSize),
+			ar_replica_2_9_entropy_cache:put(Key, Entropy, EntropySize),
+
+			%% Primarily needed for testing where the entropy generated exceeds the entropy
+			%% needed for tests.
+			binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE)
+	end.
 
 %% @doc Pad (to ?DATA_CHUNK_SIZE) and pack the chunk according to the 2.9 replication format.
 %% Return the chunk and the combined entropy used on that chunk.
@@ -290,6 +303,7 @@ init([]) ->
 	Workers = queue:from_list(
 		[spawn_link(fun() -> worker(PackingState) end) || _ <- lists:seq(1, NumWorkers)]),
 	ets:insert(?MODULE, {buffer_size, 0}),
+
 	MaxSize =
 		case Config#config.packing_cache_size_limit of
 			undefined ->
