@@ -4,6 +4,7 @@
 
 -include("ar.hrl").
 -include("ar_config.hrl").
+-include("ar_consensus.hrl").
 -include("ar_data_discovery.hrl").
 
 %% The size of the span of the weave we search at a time.

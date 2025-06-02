@@ -285,6 +285,7 @@ jobs:
             ar_repack,
             ar_repack_fsm,
             ar_replica_2_9,
+            ar_replica_2_9_entropy_cache,
             ar_retarget,
             ar_serialize,
             ar_storage_module,
