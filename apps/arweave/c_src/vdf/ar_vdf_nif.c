@@ -1,6 +1,5 @@
 #include <erl_nif.h>
 #include <string.h>
-#include <openssl/sha.h>
 #include <ar_nif.h>
 #include "vdf.h"
 
