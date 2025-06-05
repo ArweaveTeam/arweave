@@ -1,6 +1,7 @@
 -module(ar_sync_buckets).
 
--export([new/0, from_intervals/1, from_intervals/2, add/3, delete/3, cut/2, get/3, serialize/2,
+-export([new/0, new/1, from_intervals/1, from_intervals/2,
+		add/3, delete/3, cut/2, get/3, serialize/2,
 		deserialize/1, foreach/3]).
 
 -include_lib("arweave/include/ar_sync_buckets.hrl").
@@ -13,6 +14,9 @@
 %% @doc Return an empty set of buckets.
 new() ->
 	{?DEFAULT_SYNC_BUCKET_SIZE, #{}}.
+
+new(Size) ->
+	{Size, #{}}.
 
 %% @doc Initialize buckets from a set of intervals (see ar_intervals).
 %% The bucket size is ?DEFAULT_SYNC_BUCKET_SIZE.
