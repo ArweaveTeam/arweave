@@ -189,6 +189,10 @@ handle_info({gun_error, PID, Reason},
 			{noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
 	end;
 
+% missing pattern from gun 2.2+
+handle_info({gun_down, Pid, Protocol, Reason, Streams}, State) ->
+	handle_info({gun_down, Pid, Protocol, Reason, [], Streams}, State);
+
 handle_info({gun_down, PID, Protocol, Reason, _KilledStreams, _UnprocessedStreams},
 			#state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
 	case maps:get(PID, StatusByPID, not_found) of
