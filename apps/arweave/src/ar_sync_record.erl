@@ -368,8 +368,12 @@ handle_call(Request, _From, State) ->
 
 handle_cast(store_state, State) ->
 	{_, State2} = store_state(State),
-	timer:apply_after(
-		?STORE_SYNC_RECORD_FREQUENCY_MS, gen_server, cast, [self(), store_state]),
+	{ok, _} = ar_timer:apply_after(
+		?STORE_SYNC_RECORD_FREQUENCY_MS,
+		gen_server,
+		cast,
+		[self(), store_state]
+	),
 	{noreply, State2};
 
 handle_cast({add_async, Event, End, Start, ID}, State) ->

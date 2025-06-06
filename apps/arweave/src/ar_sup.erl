@@ -30,6 +30,7 @@ start_link() ->
 
 init([]) ->
 	%% These ETS tables should belong to the supervisor.
+	ets:new(ar_timer, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_peers, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_http, [set, public, named_table]),
 	ets:new(ar_blacklist_middleware, [set, public, named_table]),
@@ -65,6 +66,7 @@ init([]) ->
 	ets:new(node_state, [set, public, named_table]),
 	ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
 	Children = [
+		?CHILD(ar_shutdown_manager, worker),
 		?CHILD(ar_rate_limiter, worker),
 		?CHILD(ar_disksup, worker),
 		?CHILD_SUP(ar_events_sup, supervisor),

@@ -727,8 +727,13 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
 	move_data_root_index(State),
-	timer:apply_interval(?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, ar_data_sync,
-			record_disk_pool_chunks_count, []),
+	{ok, _} = ar_timer:apply_interval(
+		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
+		ar_data_sync,
+		record_disk_pool_chunks_count,
+		[]
+	),
+
 	StateMap = read_data_sync_state(),
 	CurrentBI = maps:get(block_index, StateMap),
 	%% Maintain a map of pending, recently uploaded, and orphaned data roots.
@@ -761,8 +766,12 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID},
 		{range_start, State2#sync_data_state.range_start},
 		{range_end, State2#sync_data_state.range_end}]),
-	timer:apply_interval(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
-			remove_expired_disk_pool_data_roots, []),
+	{ok, _} = ar_timer:apply_interval(
+		?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS,
+		?MODULE,
+		remove_expired_disk_pool_data_roots,
+		[]
+	),
 	lists:foreach(
 		fun(_DiskPoolJobNumber) ->
 			gen_server:cast(self(), process_disk_pool_item)
@@ -785,7 +794,12 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	ar:console("~nSetting the data chunk cache size limit to ~B chunks.~n", [Limit]),
 	ets:insert(ar_data_sync_state, {chunk_cache_size_limit, Limit}),
 	ets:insert(ar_data_sync_state, {chunk_cache_size, 0}),
-	timer:apply_interval(200, ?MODULE, record_chunk_cache_size_metric, []),
+	{ok, _} = ar_timer:apply_interval(
+		200,
+		?MODULE,
+		record_chunk_cache_size_metric,
+		[]
+	),
 	gen_server:cast(self(), process_store_chunk_queue),
 	{ok, State2};
 init({StoreID, RepackInPlacePacking}) ->
@@ -793,7 +807,7 @@ init({StoreID, RepackInPlacePacking}) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
-	
+
 	State = init_kv(StoreID),
 
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
@@ -976,7 +990,7 @@ handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
 	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS.
 	?LOG_DEBUG([{event, collect_peer_intervals_done},
-		{function, collect_peer_intervals}, 
+		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
 		{s, Start}, {e, End}]),
 	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
@@ -2024,7 +2038,7 @@ validate_fetched_chunk(Args) ->
 		false ->
 			case ar_block_index:get_block_bounds(Offset - 1) of
 				{BlockStart, BlockEnd, TXRoot} ->
-					
+
 					ChunkOffset = Offset - BlockStart - 1,
 					case validate_proof2(TXRoot, TXPath, DataPath, BlockStart, BlockEnd,
 							ChunkOffset, ChunkSize, RequestOrigin) of

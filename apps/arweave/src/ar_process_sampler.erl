@@ -20,7 +20,7 @@ start_link() ->
 
 %% gen_server callbacks
 init([]) ->
-	timer:send_interval(?SAMPLE_PROCESSES_INTERVAL, sample_processes),
+	{ok, _} = ar_timer:send_interval(?SAMPLE_PROCESSES_INTERVAL, sample_processes),
 	ar_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
 	{ok, #state{}}.
 
@@ -30,7 +30,7 @@ handle_call(_Request, _From, State) ->
 handle_cast(sample_schedulers, State) ->
 	State2 = sample_schedulers(State),
 	{noreply, State2};
-	
+
 handle_cast(_Msg, State) ->
 	{noreply, State}.
 
@@ -51,7 +51,7 @@ handle_info(sample_processes, State) ->
 			Metrics = {
 				MemoryTotal + Memory, ReductionsTotal + Reductions, MsgQueueLenTotal + MsgQueueLen},
 			maps:put(ProcessName, Metrics, Acc)
-		end, 
+		end,
 		#{},
 		ProcessData),
 
@@ -98,7 +98,7 @@ sample_schedulers(#state{ scheduler_samples = undefined } = State) ->
 	%% Start sampling
 	erlang:system_flag(scheduler_wall_time,true),
 	Samples = scheduler:sample_all(),
-	%% Every ?SAMPLE_SCHEDULERS_INTERVAL ms, we'll sample the schedulers for 
+	%% Every ?SAMPLE_SCHEDULERS_INTERVAL ms, we'll sample the schedulers for
 	%% ?SAMPLE_SCHEDULERS_DURATION ms.
 	ar_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
 	ar_util:cast_after(?SAMPLE_SCHEDULERS_DURATION, ?MODULE, sample_schedulers),
@@ -132,7 +132,7 @@ average_utilization(Util) ->
 			prometheus_gauge:set(scheduler_utilization, [Type], Sum / Count)
 		end,
 		Averages).
-	
+
 process_function(Pid) ->
 	case process_info(Pid, [current_function, current_stacktrace, registered_name,
 		status, memory, reductions, message_queue_len, messages]) of
@@ -216,7 +216,7 @@ log_binary_alloc_carrier(Id, Carrier) ->
 
 	prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_carrier_count],
 		CarrierCount),
-	prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_carrier_size], 
+	prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_carrier_size],
 		CarrierSize).
 
 

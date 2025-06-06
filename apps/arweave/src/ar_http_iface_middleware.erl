@@ -35,7 +35,7 @@ execute(Req, #{ handler := ar_http_iface_handler }) ->
 	HandlerPid = spawn_link(fun() ->
 		Pid ! {handled, handle(Req, Pid)}
 	end),
-	{ok, TimeoutRef} = timer:send_after(
+	{ok, TimeoutRef} = ar_timer:send_after(
 		?HANDLER_TIMEOUT,
 		{timeout, HandlerPid, Req}
 	),

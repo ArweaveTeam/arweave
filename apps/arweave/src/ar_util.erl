@@ -1,17 +1,48 @@
 -module(ar_util).
 
--export([bool_to_int/1, int_to_bool/1, ceil_int/2, floor_int/2, between/3,
-		integer_to_binary/1, binary_to_integer/1, pick_random/1, pick_random/2,
-		encode/1, decode/1, safe_encode/1, safe_decode/1, safe_ets_lookup/2, 
-		timestamp_to_seconds/1,invert_map/1,
-		parse_peer/1, peer_to_str/1, parse_port/1, safe_parse_peer/1, format_peer/1,
-		unique/1, count/2,
-		genesis_wallets/0, pmap/2, batch_pmap/3, pfilter/2,
-		do_until/3, block_index_entry_from_block/1,
-		bytes_to_mb_string/1, cast_after/3, encode_list_indices/1, parse_list_indices/1,
-		take_every_nth/2, safe_divide/2, terminal_clear/0, print_stacktrace/0, shuffle_list/1,
-		safe_format/1, safe_format/3,
-		assert_file_exists_and_readable/1, get_system_device/1]).
+-export([
+	assert_file_exists_and_readable/1,
+	batch_pmap/3,
+	between/3,
+	binary_to_integer/1,
+	block_index_entry_from_block/1,
+	bool_to_int/1,
+	bytes_to_mb_string/1,
+	cast_after/3,
+	ceil_int/2,
+	count/2,
+	decode/1,
+	do_until/3,
+	encode/1,
+	encode_list_indices/1,
+	floor_int/2,
+	format_peer/1,
+	genesis_wallets/0,
+	get_system_device/1,
+	integer_to_binary/1,
+	int_to_bool/1,
+	parse_list_indices/1,
+	parse_peer/1,
+	parse_port/1,
+	peer_to_str/1,
+	pfilter/2,
+	pick_random/1,
+	pick_random/2,
+	pmap/2,
+	print_stacktrace/0,
+	safe_decode/1,
+	safe_divide/2,
+	safe_encode/1,
+	safe_ets_lookup/2,
+	safe_format/1,
+	safe_format/3,
+	safe_parse_peer/1,
+	shuffle_list/1,
+	take_every_nth/2,
+	terminal_clear/0,
+	timestamp_to_seconds/1,invert_map/1,
+	unique/1
+]).
 
 -include("ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -107,13 +138,13 @@ timestamp_to_seconds({MegaSecs, Secs, _MicroSecs}) ->
 -spec invert_map(map()) -> map().
 invert_map(Map) ->
     maps:fold(
-        fun(Key, Value, Acc) ->
-            CurrentSet = maps:get(Value, Acc, sets:new()),
-            UpdatedSet = sets:add_element(Key, CurrentSet),
-            maps:put(Value, UpdatedSet, Acc)
-        end,
-        #{},
-        Map
+	fun(Key, Value, Acc) ->
+	    CurrentSet = maps:get(Value, Acc, sets:new()),
+	    UpdatedSet = sets:add_element(Key, CurrentSet),
+	    maps:put(Value, UpdatedSet, Acc)
+	end,
+	#{},
+	Map
     ).
 
 
@@ -163,9 +194,9 @@ parse_port(PortStr) ->
 
 parse_port_split(Str) ->
     case string:tokens(Str, ":") of
-        [Addr] -> [Addr, ?DEFAULT_HTTP_IFACE_PORT];
-        [Addr, Port] -> [Addr, Port];
-        _ -> throw({invalid_peer_string, Str})
+	[Addr] -> [Addr, ?DEFAULT_HTTP_IFACE_PORT];
+	[Addr, Port] -> [Addr, Port];
+	_ -> throw({invalid_peer_string, Str})
     end.
 
 %%--------------------------------------------------------------------
@@ -385,9 +416,9 @@ safe_format(Value) ->
 safe_format(Value, Depth, Limit) ->
 	ValueStr = io_lib:format("~P", [Value, Depth]),  % Depth limited to 5
 	case length(ValueStr) > Limit of
-		true -> 
+		true ->
 			string:slice(ValueStr, 0, Limit) ++ "... (truncated)";
-		false -> 
+		false ->
 			ValueStr
 	end.
 
@@ -482,15 +513,15 @@ get_system_device(Path) ->
 
 print_stacktrace() ->
     try
-        throw(dummy) %% In OTP21+ try/catch is the recommended way to get the stacktrace
+	throw(dummy) %% In OTP21+ try/catch is the recommended way to get the stacktrace
     catch
-        _: _Exception:Stacktrace ->
-            %% Remove the first element (print_stacktrace call)
-            TrimmedStacktrace = lists:nthtail(1, Stacktrace),
+	_: _Exception:Stacktrace ->
+	    %% Remove the first element (print_stacktrace call)
+	    TrimmedStacktrace = lists:nthtail(1, Stacktrace),
 			StacktraceString = lists:foldl(
 				fun(StackTraceEntry, Acc) ->
-                	Acc ++ io_lib:format("  ~p~n", [StackTraceEntry])
-                end, "Stack trace:~n", TrimmedStacktrace),
+			Acc ++ io_lib:format("  ~p~n", [StackTraceEntry])
+		end, "Stack trace:~n", TrimmedStacktrace),
 			?LOG_INFO(StacktraceString)
     end.
 
@@ -503,3 +534,4 @@ assert_file_exists_and_readable(FilePath) ->
 			io:format("~nThe filepath ~p doesn't exist or isn't readable.~n~n", [FilePath]),
 			erlang:halt(1)
 	end.
+
