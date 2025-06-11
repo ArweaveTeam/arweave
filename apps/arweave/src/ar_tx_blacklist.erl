@@ -148,7 +148,7 @@ init([]) ->
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(tx),
 	gen_server:cast(?MODULE, refresh_blacklist),
-	{ok, _} = timer:apply_interval(?STORE_STATE_FREQUENCY_MS, ?MODULE, store_state, []),
+	{ok, _} = ar_timer:apply_interval(?STORE_STATE_FREQUENCY_MS, ?MODULE, store_state, []),
 	{ok, #ar_tx_blacklist_state{}}.
 
 handle_call(Request, _From, State) ->
@@ -164,14 +164,14 @@ handle_cast(start_taking_down, State) ->
 handle_cast(refresh_blacklist, State) ->
 	case refresh_blacklist() of
 		error ->
-			timer:apply_after(
+			{ok, _} = ar_timer:apply_after(
 				?REFRESH_BLACKLISTS_RETRY_DELAY_MS,
 				gen_server,
 				cast,
 				[self(), refresh_blacklist]
 			);
 		ok ->
-			timer:apply_after(
+			{ok, _} = ar_timer:apply_after(
 				?REFRESH_BLACKLISTS_FREQUENCY_MS,
 				gen_server,
 				cast,
@@ -193,14 +193,14 @@ handle_cast(maybe_request_takedown, State) ->
 			false ->
 				State
 		end,
-	State3 = 
+	State3 =
 		case DTS + ?REQUEST_TAKEDOWN_DELAY_MS < Now of
 			true ->
 				request_data_takedown(State2);
 			false ->
 				State2
 		end,
-	timer:apply_after(
+	{ok, _} = ar_timer:apply_after(
 		?CHECK_PENDING_ITEMS_INTERVAL_MS,
 		gen_server,
 		cast,

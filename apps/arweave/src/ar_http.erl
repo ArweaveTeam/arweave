@@ -254,11 +254,31 @@ terminate(Reason, #state{ status_by_pid = StatusByPID }) ->
 %%% ==================================================================
 
 open_connection(#{ peer := Peer } = Args) ->
+	{ok, Config} = application:get_env(arweave, config),
 	{IPOrHost, Port} = get_ip_port(Peer),
 	ConnectTimeout = maps:get(connect_timeout, Args,
 			maps:get(timeout, Args, ?HTTP_REQUEST_CONNECT_TIMEOUT)),
-	gun:open(IPOrHost, Port, #{ http_opts => #{ keepalive => 60000 },
-			retry => 0, connect_timeout => ConnectTimeout }).
+	GunOpts = #{
+		retry => 0,
+		connect_timeout => ConnectTimeout,
+		http_opts => #{
+			closing_timeout => Config#config.'http_client.http.closing_timeout',
+			keepalive => Config#config.'http_client.http.keepalive'
+		},
+		tcp_opts => [
+			{delay_send, Config#config.'http_client.tcp.delay_send'},
+			{keepalive, Config#config.'http_client.tcp.keepalive'},
+			{linger, {
+					Config#config.'http_client.tcp.linger',
+					Config#config.'http_client.tcp.linger_timeout'
+				}
+			},
+			{nodelay, Config#config.'http_client.tcp.nodelay'},
+			{send_timeout_close, Config#config.'http_client.tcp.send_timeout_close'},
+			{send_timeout, Config#config.'http_client.tcp.send_timeout'}
+		]
+	},
+	gun:open(IPOrHost, Port, GunOpts).
 
 get_ip_port({_, _} = Peer) ->
 	Peer;

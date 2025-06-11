@@ -245,7 +245,7 @@ generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) -
 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	PackingState = get_packing_state(),
 	RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
-	
+
 	Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
 	%% Primarily needed for testing where the entropy generated exceeds the entropy
 	%% needed for tests.
@@ -271,7 +271,7 @@ pack_replica_2_9_chunk(RewardAddr, AbsoluteEndOffset, Chunk) ->
 
 init([]) ->
 	{ok, Config} = application:get_env(arweave, config),
-	
+
 	ar:console("~nInitialising RandomX datasets. Keys: ~p, ~p. "
 			"The process may take several minutes.~n",
 			[ar_util:encode(?RANDOMX_PACKING_KEY),
@@ -303,7 +303,7 @@ init([]) ->
 		end,
 	ar:console("~nSetting the packing chunk cache size limit to ~B chunks.~n", [MaxSize]),
 	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
-	timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
+	{ok, _} = ar_timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
 	{ok, #state{
 		workers = Workers, num_workers = NumWorkers }}.
 
@@ -831,7 +831,7 @@ record_buffer_size_metric() ->
 %% @doc Log actual packings and unpackings
 %% where the StoredPacking does not match the RequestedPacking.
 record_packing_request(_Type, RequestedPacking, StoredPacking)
-  		when RequestedPacking == StoredPacking ->
+		when RequestedPacking == StoredPacking ->
 	ok;
 record_packing_request(unpack, _RequestedPacking, StoredPacking) ->
 	%% When unpacking we care about StoredPacking (i.e. what we're unpacking from).
@@ -852,7 +852,7 @@ record_packing_request(Type, RequestedPacking, _StoredPacking) ->
 exor_replica_2_9_chunk(Chunk, Entropy) ->
 	record_packing_request(pack, {replica_2_9, <<>>}, unpacked_padded),
 	iolist_to_binary(exor_replica_2_9_sub_chunks(Chunk, Entropy)).
-		
+
 exor_replica_2_9_sub_chunks(<<>>, <<>>) ->
 	[];
 exor_replica_2_9_sub_chunks(
