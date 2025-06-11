@@ -1,9 +1,10 @@
 -module(ar_peer_intervals).
 
--export([fetch/3]).
+-export([fetch/4]).
 
 -include("ar.hrl").
 -include("ar_config.hrl").
+-include("ar_consensus.hrl").
 -include("ar_data_discovery.hrl").
 
 %% The size of the span of the weave we search at a time.
@@ -33,13 +34,13 @@
 %%% Public interface.
 %%%===================================================================
 
-fetch(Start, End, StoreID) when Start >= End ->
+fetch(Start, End, StoreID, normal) when Start >= End ->
 	?LOG_DEBUG([{event, fetch_peer_intervals_end},
 			{store_id, StoreID},
 			{range_start, Start},
 			{range_end, End}]),
 	gen_server:cast(ar_data_sync:name(StoreID), {collect_peer_intervals, Start, End});
-fetch(Start, End, StoreID) ->
+fetch(Start, End, StoreID, normal) ->
 	Parent = ar_data_sync:name(StoreID),
 	spawn_link(fun() ->
 		try
@@ -70,6 +71,54 @@ fetch(Start, End, StoreID) ->
 		catch
 			Class:Reason ->
 				?LOG_WARNING([{event, fetch_peers_process_exit},
+						{store_id, StoreID},
+						{range_start, Start},
+						{range_end, End},
+						{class, Class},
+						{reason, Reason}]),
+				gen_server:cast(Parent, {collect_peer_intervals, Start, End})
+		end
+	end);
+
+fetch(Start, End, StoreID, footprint) ->
+	Parent = ar_data_sync:name(StoreID),
+	spawn_link(fun() ->
+		try
+			Partition = ar_replica_2_9:get_entropy_partition(Start + 1),
+			Footprint = ar_footprint_record:get_footprint(Start + 1),
+
+			FootprintBucket = ar_footprint_record:get_footprint_bucket(Start + 1),
+			{ok, Config} = application:get_env(arweave, config),
+			Peers =
+				case Config#config.sync_from_local_peers_only of
+					true ->
+						Config#config.local_peers;
+					false ->
+						ar_data_discovery:get_footprint_bucket_peers(FootprintBucket)
+				end,
+
+			UnsyncedIntervals = ar_footprint_record:get_unsynced_intervals(Partition, Footprint, StoreID),
+			case ar_intervals:is_empty(UnsyncedIntervals) of
+				true ->
+					ok;
+				false ->
+					fetch_peer_footprint_intervals(Parent, Partition, Footprint, Peers, UnsyncedIntervals)
+			end,
+			EntropyIndex = ar_replica_2_9:get_entropy_index(Start + 1, 0),
+			NextEntropyIndex = ar_replica_2_9:get_entropy_index(Start + ?DATA_CHUNK_SIZE + 1, 0),
+			Start2 =
+				case NextEntropyIndex > EntropyIndex of
+					true ->
+						Start + ?DATA_CHUNK_SIZE;
+					false ->
+						Partition = ar_replica_2_9:get_entropy_partition(Start + 1),
+						(Partition + 1) * ?PARTITION_SIZE
+				end,
+			%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
+			gen_server:cast(Parent, {collect_peer_intervals, Start2, End})
+		catch
+			Class:Reason ->
+				?LOG_WARNING([{event, fetch_footprint_intervals_process_exit},
 						{store_id, StoreID},
 						{range_start, Start},
 						{range_end, End},
@@ -172,6 +221,50 @@ get_peer_intervals(Peer, Left, SoughtIntervals) ->
 						element(1, ar_intervals:largest(PeerIntervals2))
 				end,
 			{ok, ar_intervals:intersection(PeerIntervals2, SoughtIntervals), PeerRightBound};
+		Error ->
+			Error
+	end.
+
+fetch_peer_footprint_intervals(Parent, Partition, Footprint, Peers, UnsyncedIntervals) ->
+	Intervals =
+		ar_util:batch_pmap(
+			fun(Peer) ->
+				case get_peer_footprint_intervals(Peer, Partition, Footprint, UnsyncedIntervals) of
+					{ok, SoughtIntervals} ->
+						{Peer, SoughtIntervals};
+					{error, Reason} ->
+						?LOG_DEBUG([{event, failed_to_fetch_peer_footprint_intervals},
+								{peer, ar_util:format_peer(Peer)},
+								{reason, io_lib:format("~p", [Reason])}]),
+						ok
+				end
+			end,
+			Peers,
+			?GET_SYNC_RECORD_BATCH_SIZE % fetch sync intervals from so many peers at a time
+		),
+	EnqueueIntervals =
+		lists:foldl(
+			fun	({Peer, SoughtIntervals}, IntervalsAcc) ->
+					case ar_intervals:is_empty(SoughtIntervals) of
+						true ->
+							IntervalsAcc;
+						false ->
+							[{Peer, SoughtIntervals} | IntervalsAcc]
+					end;
+				(_, Acc) ->
+					Acc
+			end,
+			[],
+			Intervals
+		),
+	EnqueueIntervals2 = ar_footprint_record:get_intervals_from_footprint_intervals(EnqueueIntervals),
+	gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals2}).
+
+get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
+	PeerReply = ar_http_iface_client:get_footprints(Peer, Partition, Footprint),
+	case PeerReply of
+		{ok, {_Packing, Intervals}} ->
+			{ok, ar_intervals:intersection(Intervals, SoughtIntervals)};
 		Error ->
 			Error
 	end.
