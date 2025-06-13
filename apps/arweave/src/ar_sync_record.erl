@@ -6,7 +6,7 @@
 		is_recorded/2, is_recorded/3, is_recorded/4, is_recorded_any/3,
 		get_next_synced_interval/4, get_next_synced_interval/5,
 		get_next_unsynced_interval/4, get_next_unsynced_interval/5,
-		get_interval/3, get_intersection_size/4]).
+		get_interval/3, get_intersection_size/4, name/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -52,7 +52,9 @@
 	%% The index of the storage module; undefined for the "default" storage.
 	storage_module_index,
 	%% The number of entries in the write-ahead log.
-	wal
+	wal,
+	%% Whether the sync record is in memory only.
+	in_memory = false
 }).
 
 %%%===================================================================
@@ -219,7 +221,7 @@ get_next_synced_interval(Offset, EndOffsetUpperBound, ID, StoreID) ->
 get_next_unsynced_interval(Offset, EndOffsetUpperBound, ID, StoreID) ->
 	case ets:lookup(sync_records, {ID, StoreID}) of
 		[] ->
-			not_found;
+			{EndOffsetUpperBound, Offset};
 		[{_, TID}] ->
 			ar_ets_intervals:get_next_interval_outside(TID, Offset, EndOffsetUpperBound)
 	end.
@@ -280,17 +282,26 @@ init(StoreID) ->
 			?DEFAULT_MODULE ->
 				{filename:join(?ROCKS_DB_DIR, "ar_sync_record_db"),
 					undefined, undefined, undefined};
+			Atom when is_atom(Atom) ->
+				%% A module without a storage, to use in tests.
+				{undefined, undefined, undefined, undefined};
 			{Size, Index, _Packing} ->
 				{filename:join(["storage_modules", StoreID, ?ROCKS_DB_DIR,
 						"ar_sync_record_db"]), Size, Index,
 							ar_node:get_partition_number(Size * Index)}
 		end,
 	StateDB = {sync_record, StoreID},
-	ok = ar_kv:open(Dir, StateDB),
-	{SyncRecordByID, SyncRecordByIDType, WAL} = read_sync_records(StateDB, StoreID),
+	{SyncRecordByID, SyncRecordByIDType, WAL} =
+		case Dir of
+			undefined ->
+				{#{}, #{}, undefined};
+			_ ->
+				ok = ar_kv:open(Dir, StateDB),
+				read_sync_records(StateDB, StoreID),
+				gen_server:cast(self(), store_state)
+		end,
 	initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
 	initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
-	gen_server:cast(self(), store_state),
 	{ok, #state{
 		state_db = StateDB,
 		store_id = StoreID,
@@ -300,7 +311,8 @@ init(StoreID) ->
 		storage_module_index = StorageModuleIndex,
 		sync_record_by_id = SyncRecordByID,
 		sync_record_by_id_type = SyncRecordByIDType,
-		wal = WAL
+		wal = WAL,
+		in_memory = Dir == undefined
 	}}.
 
 handle_call({get, ID}, _From, State) ->
@@ -419,6 +431,8 @@ terminate(Reason, State) ->
 %%% Private functions.
 %%%===================================================================
 
+name(StoreID) when is_atom(StoreID) ->
+	list_to_atom("ar_sync_record_" ++ atom_to_list(StoreID));
 name(StoreID) ->
 	list_to_atom("ar_sync_record_" ++ ar_storage_module:label(StoreID)).
 
@@ -680,6 +694,8 @@ initialize_sync_record_by_id_type_ets2({{ID, Packing}, SyncRecord, Iterator}, St
 	ets:insert(sync_records, {{ID, Packing, StoreID}, TID}),
 	initialize_sync_record_by_id_type_ets2(maps:next(Iterator), StoreID).
 
+store_state(#state{ in_memory = true }) ->
+	ok;
 store_state(State) ->
 	#state{ state_db = StateDB, sync_record_by_id = SyncRecordByID,
 			sync_record_by_id_type = SyncRecordByIDType, store_id = StoreID,
@@ -731,6 +747,8 @@ get_or_create_type_tid(IDType) ->
 			TID2
 	end.
 
+update_write_ahead_log(_OpParams, _StateDB, #state{ in_memory = true } = State) ->
+	{ok, State};
 update_write_ahead_log(OpParams, StateDB, State) ->
 	#state{
 		wal = WAL
