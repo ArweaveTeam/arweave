@@ -124,8 +124,9 @@ packing_label(Packing) ->
 
 %% @doc Return the storage module with the given identifier or not_found.
 %% Search across both attached modules and repacked in-place modules.
-get_by_id(?DEFAULT_MODULE) ->
-	?DEFAULT_MODULE;
+get_by_id(Atom) when is_atom(Atom) ->
+	%% May be 'default' or an atom from the unit tests.
+	Atom;
 get_by_id(ID) ->
 	{ok, Config} = application:get_env(arweave, config),
 	RepackInPlaceModules = [element(1, El)
