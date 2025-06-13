@@ -1,8 +1,10 @@
 -module(ar_footprint_record).
 
--export([add/3, delete/2, get_offset/1, get_footprint/1, get_footprint_bucket/1, get_intervals/3,
+-export([add/3, delete/2, get_offset/1, get_padded_offset_from_footprint_offset/1,
+		get_footprint/1, get_footprint_bucket/1, get_intervals/3,
 		get_intervals/4, get_unsynced_intervals/3,
-        get_intervals_from_footprint_intervals/1]).
+		get_intervals_from_footprint_intervals/1,
+		get_footprint_size/0, get_footprints_per_partition/0]).
 
 -include("ar.hrl").
 -include("ar_config.hrl").
@@ -39,15 +41,33 @@ add(PaddedOffset, Packing, StoreID) ->
 	ar_sync_record:add(Offset, Offset - 1, Packing, ar_data_sync_footprints, StoreID).
 
 %% @doc Get the offset of a chunk in the footprint record.
--spec get_offset(PaddedOffset :: non_neg_integer()) -> non_neg_integer().
-get_offset(PaddedOffset) ->
+-spec get_offset(Offset :: non_neg_integer()) -> non_neg_integer().
+get_offset(Offset) ->
+	PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
 	FootprintsPerPartition = get_footprints_per_partition(),
 	FootprintSize = get_footprint_size(),
-	Partition = ar_replica_2_9:get_entropy_partition(PaddedOffset),
-	PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
-	SliceIndex = ar_replica_2_9:get_slice_index(PaddedOffset),
-	Footprint = get_footprint(PaddedOffset),
-	PartitionStartOffset + FootprintSize * Footprint + SliceIndex + 1.
+	PartitionSize = FootprintSize * FootprintsPerPartition * ?DATA_CHUNK_SIZE,
+	PartitionOffset = (PaddedOffset - 1) div PartitionSize,
+	PartitionRelativeOffset = PaddedOffset - PartitionOffset * PartitionSize,
+	SliceOffset = (((PartitionRelativeOffset - 1) rem (FootprintSize * ?DATA_CHUNK_SIZE)) div ?DATA_CHUNK_SIZE) * FootprintSize,
+	FootprintOffset = ((PartitionRelativeOffset - 1) div (FootprintSize * ?DATA_CHUNK_SIZE)),
+	?debugFmt("PaddedOffset ~p, PartitionSize ~p, PartitionOffset ~p, PartitionRelativeOffset ~p, SliceOffset ~p, FootprintOffset ~p~n",
+		[PaddedOffset, PartitionSize, PartitionOffset, PartitionRelativeOffset, SliceOffset, FootprintOffset]),
+	PartitionOffset + SliceOffset + FootprintOffset + 1.
+
+%% @doc Return the largest end offset of the chunk that maps to the given footprint offset.
+get_padded_offset_from_footprint_offset(FootprintOffset) ->
+	Start = FootprintOffset - 1,
+	FootprintSize = get_footprint_size(),
+	PartitionSize = FootprintSize * get_footprints_per_partition(),
+	PartitionOffset = (Start div PartitionSize) * PartitionSize,
+	PartitionRelativeOffset = Start - PartitionOffset,
+	SliceSize = get_footprints_per_partition(),
+	SliceOffset = (PartitionRelativeOffset rem FootprintSize) * SliceSize,
+	InFootprintOffset = PartitionRelativeOffset div FootprintSize,
+	?debugFmt("FootprintOffset ~p, PartitionOffset ~p, FootprintSize ~p, SliceSize ~p, SliceOffset ~p, InFootprintOffset ~p ComputedOffset: ~p~n",
+		[FootprintOffset, PartitionOffset, FootprintSize, SliceSize, SliceOffset, InFootprintOffset, ar_block:get_chunk_padded_offset(PartitionOffset + SliceOffset + InFootprintOffset)]),
+	ar_block:get_chunk_padded_offset((PartitionOffset + SliceOffset + InFootprintOffset) * ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE.
 
 %% @doc Get the chunk's footprint's number, >= 0, < the maximum number of footprints
 %% in a partition.
@@ -167,19 +187,91 @@ get_intervals_from_footprint_intervals([{End, Start} | Rest], Intervals) ->
 get_intervals_from_footprint_intervals(Start, End, Intervals) when Start >= End ->
 	Intervals;
 get_intervals_from_footprint_intervals(Start, End, Intervals) ->
-	FootprintSize = get_footprint_size(),
-	PartitionSize = get_footprints_per_partition() * FootprintSize,
-	Partition = Start div PartitionSize,
-	PartitionOffset = Partition * ?PARTITION_SIZE,
-	FootprintOffset = (Start rem FootprintSize) * FootprintSize * ?DATA_CHUNK_SIZE,
-	InFootprintOffset = (Start div FootprintSize) * ?DATA_CHUNK_SIZE,
-	Start2 = PartitionOffset + FootprintOffset + InFootprintOffset,
-	Intervals2 = ar_intervals:add(Intervals, Start2 + ?DATA_CHUNK_SIZE, Start2),
+	Offset = get_padded_offset_from_footprint_offset(Start + 1),
+	Intervals2 = ar_intervals:add(Intervals, Offset, Offset - ?DATA_CHUNK_SIZE),
 	get_intervals_from_footprint_intervals(Start + 1, End, Intervals2).
 
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+-ifdef(TEST).
+
+offset_reversal_test() ->
+	Offsets = [?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE * 2, ?DATA_CHUNK_SIZE * 3, ?DATA_CHUNK_SIZE * 4,
+			?DATA_CHUNK_SIZE * 8, ?DATA_CHUNK_SIZE * 9],
+	[test_offset_reversal(Offset) || Offset <- Offsets].
+
+test_offset_reversal(ByteOffset) ->
+	FootprintOffset = get_offset(ByteOffset),
+
+	FootprintInterval = ar_intervals:from_list([{FootprintOffset, FootprintOffset - 1}]),
+	ResultingByteIntervals = get_intervals_from_footprint_intervals(FootprintInterval),
+	[{GotEnd, GotStart}] = ar_intervals:to_list(ResultingByteIntervals),
+
+	?assertEqual(ByteOffset, GotEnd),
+	?assertEqual(ByteOffset - ?DATA_CHUNK_SIZE, GotStart).
+
+get_unsynced_intervals_test() ->
+	ar_test_node:test_with_mocked_functions(
+		[{ar_storage_module, get_by_id, fun(test_unsynced_store) -> test_unsynced_store end}],
+		fun() ->
+			%% Set up a test sync record server.
+			TestStoreID = test_unsynced_store,
+			TestProcessName = list_to_atom("ar_sync_record_" ++ atom_to_list(TestStoreID)),
+
+			%% Initialize sync_records ETS table if it does not exist.
+			case ets:info(sync_records) of
+				undefined ->
+					ets:new(sync_records, [named_table, public, {read_concurrency, true}]);
+				_ ->
+					%% Clear existing data from previous tests.
+					ets:delete_all_objects(sync_records)
+			end,
+
+			%% Start the sync record process.
+			case whereis(TestProcessName) of
+				undefined ->
+					{ok, _Pid} = ar_sync_record:start_link(TestProcessName, TestStoreID);
+				_ ->
+					ok
+			end,
+
+			%% Test partition 0, footprint 0. It should have unsynced intervals initially.
+			Partition = 0,
+			Footprint = 0,
+
+			%% Get unsynced intervals before adding any data.
+			UnsyncedBefore = get_unsynced_intervals(Partition, Footprint, TestStoreID),
+			UnsyncedBeforeList = ar_intervals:to_list(UnsyncedBefore),
+
+			%% The entire footprint range should be unsynced initially.
+			FootprintSize = get_footprint_size(),
+			FootprintsPerPartition = get_footprints_per_partition(),
+			PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
+			FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
+			FootprintEnd = FootprintStart + FootprintSize,
+			?assertEqual([{FootprintEnd, FootprintStart}], UnsyncedBeforeList),
+
+			%% Add some data to the footprint.
+			%% This should map to partition 0, footprint 0.
+			PaddedOffset = 0,
+			Packing = unpacked,
+			ok = add(PaddedOffset, Packing, TestStoreID),
+
+			%% Get unsynced intervals after adding data.
+			UnsyncedAfter = get_unsynced_intervals(Partition, Footprint, TestStoreID),
+			UnsyncedAfterList = ar_intervals:to_list(UnsyncedAfter),
+
+			%% Assert the exact shape of the unsynced intervals.
+			AddedFootprintOffset = get_offset(PaddedOffset),
+			ExpectedUnsyncedAfter = [
+				{AddedFootprintOffset - 1, FootprintStart},
+				{FootprintEnd, AddedFootprintOffset}
+			],
+
+			?assertEqual(ExpectedUnsyncedAfter, UnsyncedAfterList)
+		end).
 
 get_intervals_from_footprint_intervals_test() ->
 	TestCases =
@@ -198,3 +290,5 @@ test_get_intervals_from_footprint_intervals([{Input, Expected, Title} | Rest]) -
 	?assertEqual(ar_intervals:from_list(Expected),
 			get_intervals_from_footprint_intervals(ar_intervals:from_list(Input)), Title),
 	test_get_intervals_from_footprint_intervals(Rest).
+
+-endif.

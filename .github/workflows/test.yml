@@ -281,6 +281,7 @@ jobs:
             ar_packing_server,
             ar_patricia_tree,
             ar_peers,
+            ar_peer_intervals,
             ar_pricing,
             ar_repack,
             ar_repack_fsm,
