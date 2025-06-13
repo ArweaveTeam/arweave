@@ -211,8 +211,17 @@ get_range(Start, Size, StoreID) ->
 					get(Start2, ChunkStart, ChunkFileStart, StoreID, ChunkCount);
 				true ->
 					SizeBeforeBorder = ChunkFileStart + get_chunk_group_size() - ChunkStart,
-					ChunkCountBeforeBorder = SizeBeforeBorder div ?DATA_CHUNK_SIZE
-							+ case SizeBeforeBorder rem ?DATA_CHUNK_SIZE of 0 -> 0; _ -> 1 end,
+					case SizeBeforeBorder rem ?DATA_CHUNK_SIZE of
+						0 ->
+							ok;
+						Rem ->
+							?LOG_WARNING([{event, chunk_storage_alignment_error},
+								{chunk_start, ChunkStart},
+								{chunk_file_start, ChunkFileStart},
+								{chunk_group_size, get_chunk_group_size()},
+								{remainder, Rem}])
+					end,
+					ChunkCountBeforeBorder = max(SizeBeforeBorder, ?DATA_CHUNK_SIZE) div ?DATA_CHUNK_SIZE,
 					StartAfterBorder = ChunkStart + ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE,
 					SizeAfterBorder = Size2 - ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE
 							+ (Start2 - ChunkStart),
@@ -418,16 +427,6 @@ handle_cast(entropy_complete, State) ->
 	#state{ entropy_context = {_, RewardAddr} } = State,
 	State2 = State#state{ entropy_context = {true, RewardAddr} },
 	{noreply, State2};
-
-handle_cast({fix_broken_chunk_storage_record, ChunkFileStart, Start, PaddedEndOffset}, State) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(fix_broken_chunk_storage_record, Config#config.enable) of
-		false ->
-			ok;
-		true ->
-			fix_broken_chunk_storage_record(ChunkFileStart, Start, PaddedEndOffset, State)
-	end,
-	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -764,8 +763,6 @@ is_offset_valid(Byte, BucketStart, ChunkOffset) ->
 	Delta = Byte - (BucketStart + ChunkOffset rem ?DATA_CHUNK_SIZE),
 	Delta >= 0 andalso Delta < ?DATA_CHUNK_SIZE.
 
-
-
 get_sync_record_intervals(Start, ChunkCount, StoreID) ->
 	End = Start + (ChunkCount + 1) * ?DATA_CHUNK_SIZE,
 	get_sync_record_intervals(Start, End, StoreID, ar_intervals:new()).
@@ -798,19 +795,7 @@ filter_by_sync_record([], _Intervals, _Byte, _Start, _ChunkFileStart, _StoreID, 
 filter_by_sync_record([{PaddedEndOffset, Chunk} | Rest], Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount) ->
 	case ar_intervals:is_inside(Intervals, PaddedEndOffset) of
 		false ->
-			%% Filter out repacking artifacts when reading a range of chunks.
-			%% This warning may also occur due to unlucky timing when the chunk is
-			%% being removed.
-			?LOG_WARNING([{event, found_chunk_not_in_sync_record},
-					{padded_end_offset, PaddedEndOffset},
-					{store_id, StoreID},
-					{byte, Byte},
-					{queried_range_start, Start},
-					{chunk_file_start, ChunkFileStart},
-					{requested_chunk_count, ChunkCount}]),
-			gen_server:cast(name(StoreID),
-					{fix_broken_chunk_storage_record,
-							ChunkFileStart, Start, PaddedEndOffset}),
+			%% The holes between chunks may be filled with entropy.
 			filter_by_sync_record(Rest, Intervals, Byte, Start, ChunkFileStart, StoreID, ChunkCount);
 		_ ->
 			[{PaddedEndOffset, Chunk}
@@ -944,59 +929,6 @@ read_chunks_sizes(DataDir) ->
 
 modules_to_defrag(#config{defragmentation_modules = [_ | _] = Modules}) -> Modules;
 modules_to_defrag(#config{storage_modules = Modules}) -> Modules.
-
-fix_broken_chunk_storage_record(ChunkFileStart, Start, PaddedEndOffset, State) ->
-	{Position, ChunkOffset} =
-		get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, Start),
-	BucketStart = get_chunk_bucket_start(PaddedEndOffset),
-	case BucketStart + (ChunkOffset rem (?DATA_CHUNK_SIZE)) == PaddedEndOffset of
-		false ->
-			?LOG_WARNING([{event, fix_broken_chunk_storage_record_offset_mismatch},
-					{bucket_start, BucketStart},
-					{chunk_offset, ChunkOffset},
-					{padded_end_offset, PaddedEndOffset},
-					{computed_padded_end_offset,
-							BucketStart + (ChunkOffset rem (?DATA_CHUNK_SIZE))}]);
-		true ->
-			fix_broken_chunk_storage_record2(
-					ChunkFileStart, Position, PaddedEndOffset, State)
-	end.
-
-fix_broken_chunk_storage_record2(ChunkFileStart, Position, PaddedEndOffset, State) ->
-	StoreID = State#state.store_id,
-	case ar_sync_record:is_recorded(PaddedEndOffset, ar_chunk_storage, StoreID) of
-		false ->
-			fix_broken_chunk_storage_record3(ChunkFileStart, Position, State);
-		_ ->
-			?LOG_WARNING([
-				{event, requested_broken_chunk_storage_record_fix_for_valid_offset},
-				{chunk_file_start, ChunkFileStart},
-				{position, Position},
-				{padded_end_offset, PaddedEndOffset}])
-	end.
-
-fix_broken_chunk_storage_record3(ChunkFileStart, Position, State) ->
-	StoreID = State#state.store_id,
-	Filepath = filepath(ChunkFileStart, StoreID),
-	case file:open(Filepath, [read, write, raw]) of
-		{ok, F} ->
-			BitSize = ?OFFSET_BIT_SIZE + ?DATA_CHUNK_SIZE * 8,
-			case file:pwrite(F, Position, << 0:BitSize >>) of
-				ok ->
-					prometheus_gauge:inc(fixed_broken_chunk_storage_records);
-				{error, Reason} ->
-					?LOG_WARNING([
-						{event, fix_broken_chunk_storage_record_failed_to_reset_offset},
-						{file, Filepath},
-						{reason, io_lib:format("~p", [Reason])}])
-			end,
-			file:close(F);
-		{error, Reason} ->
-			?LOG_WARNING([
-				{event, fix_broken_chunk_storage_record_failed_to_open_chunk_file},
-				{file, Filepath},
-				{reason, io_lib:format("~p", [Reason])}])
-	end.
 
 %%%===================================================================
 %%% Tests.
@@ -1256,6 +1188,8 @@ test_cross_file_not_aligned() ->
 	C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C2 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	C3 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+	C4 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+	C5 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	ar_chunk_storage:put(get_chunk_group_size() + 1, C1, Packing, ?DEFAULT_MODULE),
 	assert_get(C1, get_chunk_group_size() + 1),
 	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1, ?DEFAULT_MODULE)),
@@ -1266,10 +1200,28 @@ test_cross_file_not_aligned() ->
 	ar_chunk_storage:put(2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C3, Packing, ?DEFAULT_MODULE),
 	assert_get(C2, 2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2),
 	assert_get(C3, 2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2),
+	ar_chunk_storage:put(2 * get_chunk_group_size() + 3 * ?DATA_CHUNK_SIZE div 2, C4, Packing, ?DEFAULT_MODULE),
+	ar_chunk_storage:put(2 * get_chunk_group_size() + 5 * ?DATA_CHUNK_SIZE div 2, C5, Packing, ?DEFAULT_MODULE),
+	?assertEqual([{2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2, C2},
+			{2 * get_chunk_group_size() + 3 * ?DATA_CHUNK_SIZE div 2, C4}],
+			ar_chunk_storage:get_range(2 * get_chunk_group_size()
+					- ?DATA_CHUNK_SIZE div 2, ?DATA_CHUNK_SIZE * 2)),
+	?assertEqual([{2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2, C2},
+			{2 * get_chunk_group_size() + 3 * ?DATA_CHUNK_SIZE div 2, C4},
+			{2 * get_chunk_group_size() + 5 * ?DATA_CHUNK_SIZE div 2, C5}],
+			ar_chunk_storage:get_range(2 * get_chunk_group_size()
+					- ?DATA_CHUNK_SIZE div 2 + 10, ?DATA_CHUNK_SIZE * 2)),
+
 	?assertEqual([{2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C3},
 			{2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2, C2}],
 			ar_chunk_storage:get_range(2 * get_chunk_group_size()
 					- ?DATA_CHUNK_SIZE div 2 - ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE * 2)),
+	?assertEqual([{2 * get_chunk_group_size() - ?DATA_CHUNK_SIZE div 2, C3},
+			{2 * get_chunk_group_size() + ?DATA_CHUNK_SIZE div 2, C2},
+			{2 * get_chunk_group_size() + 3 * ?DATA_CHUNK_SIZE div 2, C4}],
+			ar_chunk_storage:get_range(2 * get_chunk_group_size()
+					- ?DATA_CHUNK_SIZE div 2 - ?DATA_CHUNK_SIZE + 10, ?DATA_CHUNK_SIZE * 2)),
+
 	?assertEqual(not_found, ar_chunk_storage:get(get_chunk_group_size() + 1, ?DEFAULT_MODULE)),
 	?assertEqual(
 		not_found,
