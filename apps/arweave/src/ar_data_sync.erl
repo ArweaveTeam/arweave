@@ -68,7 +68,7 @@ register_workers() ->
 		Config#config.storage_modules
 	),
 	DefaultStorageModuleWorker = ?CHILD_WITH_ARGS(ar_data_sync, worker,
-		ar_data_sync_default, [ar_data_sync_default, {"default", none}]),
+		ar_data_sync_default, [ar_data_sync_default, {?DEFAULT_MODULE, none}]),
 	RepackInPlaceWorkers = lists:map(
 		fun({StorageModule, TargetPacking}) ->
 			StoreID = ar_storage_module:id(StorageModule),
@@ -118,11 +118,11 @@ is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) ->
 %% The item is removed from the disk pool when the chunk's offset
 %% drops below the disk pool threshold.
 add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
-	DataRootIndex = {data_root_index, "default"},
+	DataRootIndex = {data_root_index, ?DEFAULT_MODULE},
 	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
-	DiskPoolChunksIndex = {disk_pool_chunks_index, "default"},
+	DiskPoolChunksIndex = {disk_pool_chunks_index, ?DEFAULT_MODULE},
 	DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	DataRootOffsetReply = get_data_root_offset(DataRootKey, "default"),
+	DataRootOffsetReply = get_data_root_offset(DataRootKey, ?DEFAULT_MODULE),
 	DataRootInDiskPool = ets:lookup(ar_disk_pool_data_roots, DataRootKey),
 	ChunkSize = byte_size(Chunk),
 	{ok, Config} = application:get_env(arweave, config),
@@ -234,7 +234,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 		{ok, {DataPathHash2, DiskPoolChunkKey2, {EndOffset3, PassesBase3, PassesStrict3,
 				PassesRebase3, DiskPoolDataRootValue2}}} ->
 			ChunkDataKey = get_chunk_data_key(DataPathHash2),
-			case put_chunk_data(ChunkDataKey, "default", {Chunk, DataPath}) of
+			case put_chunk_data(ChunkDataKey, ?DEFAULT_MODULE, {Chunk, DataPath}) of
 				{error, Reason2} ->
 					?LOG_WARNING([{event, failed_to_store_chunk_in_disk_pool},
 						{reason, io_lib:format("~p", [Reason2])},
@@ -530,15 +530,15 @@ get_tx_data(TXID, SizeLimit) ->
 
 %% @doc Return the global end offset and size for the given transaction.
 get_tx_offset(TXID) ->
-	TXIndex = {tx_index, "default"},
+	TXIndex = {tx_index, ?DEFAULT_MODULE},
 	get_tx_offset(TXIndex, TXID).
 
 %% @doc Return {ok, [{TXID, AbsoluteStartOffset, AbsoluteEndOffset}, ...]}
 %% where AbsoluteStartOffset, AbsoluteEndOffset are transaction borders
 %% (not clipped by the given range) for all TXIDs intersecting the given range.
 get_tx_offset_data_in_range(Start, End) ->
-	TXIndex = {tx_index, "default"},
-	TXOffsetIndex = {tx_offset_index, "default"},
+	TXIndex = {tx_index, ?DEFAULT_MODULE},
+	TXOffsetIndex = {tx_offset_index, ?DEFAULT_MODULE},
 	get_tx_offset_data_in_range(TXOffsetIndex, TXIndex, Start, End).
 
 %% @doc Return true if the given {DataRoot, DataSize} is in the mempool
@@ -549,7 +549,7 @@ has_data_root(DataRoot, DataSize) ->
 		true ->
 			true;
 		false ->
-			case get_data_root_offset(DataRootKey, "default") of
+			case get_data_root_offset(DataRootKey, ?DEFAULT_MODULE) of
 				{ok, _} ->
 					true;
 				_ ->
@@ -563,7 +563,7 @@ add_block(B, SizeTaggedTXs) ->
 
 %% @doc Request the removal of the transaction data.
 request_tx_data_removal(TXID, Ref, ReplyTo) ->
-	TXIndex = {tx_index, "default"},
+	TXIndex = {tx_index, ?DEFAULT_MODULE},
 	case ar_kv:get(TXIndex, TXID) of
 		{ok, Value} ->
 			{End, Size} = binary_to_term(Value),
@@ -707,7 +707,7 @@ debug_get_disk_pool_chunks() ->
 	debug_get_disk_pool_chunks(first).
 
 debug_get_disk_pool_chunks(Cursor) ->
-	case ar_kv:get_next({disk_pool_chunks_index, "default"}, Cursor) of
+	case ar_kv:get_next({disk_pool_chunks_index, ?DEFAULT_MODULE}, Cursor) of
 		none ->
 			[];
 		{ok, K, V} ->
@@ -719,7 +719,7 @@ debug_get_disk_pool_chunks(Cursor) ->
 %%% Generic server callbacks.
 %%%===================================================================
 
-init({"default" = StoreID, _}) ->
+init({?DEFAULT_MODULE = StoreID, _}) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	{ok, Config} = application:get_env(arweave, config),
@@ -727,8 +727,13 @@ init({"default" = StoreID, _}) ->
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
 	move_data_root_index(State),
-	timer:apply_interval(?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, ar_data_sync,
-			record_disk_pool_chunks_count, []),
+	{ok, _} = ar_timer:apply_interval(
+		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
+		ar_data_sync,
+		record_disk_pool_chunks_count,
+		[]
+	),
+
 	StateMap = read_data_sync_state(),
 	CurrentBI = maps:get(block_index, StateMap),
 	%% Maintain a map of pending, recently uploaded, and orphaned data roots.
@@ -761,8 +766,12 @@ init({"default" = StoreID, _}) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID},
 		{range_start, State2#sync_data_state.range_start},
 		{range_end, State2#sync_data_state.range_end}]),
-	timer:apply_interval(?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, ?MODULE,
-			remove_expired_disk_pool_data_roots, []),
+	{ok, _} = ar_timer:apply_interval(
+		?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS,
+		?MODULE,
+		remove_expired_disk_pool_data_roots,
+		[]
+	),
 	lists:foreach(
 		fun(_DiskPoolJobNumber) ->
 			gen_server:cast(self(), process_disk_pool_item)
@@ -785,7 +794,12 @@ init({"default" = StoreID, _}) ->
 	ar:console("~nSetting the data chunk cache size limit to ~B chunks.~n", [Limit]),
 	ets:insert(ar_data_sync_state, {chunk_cache_size_limit, Limit}),
 	ets:insert(ar_data_sync_state, {chunk_cache_size, 0}),
-	timer:apply_interval(200, ?MODULE, record_chunk_cache_size_metric, []),
+	{ok, _} = ar_timer:apply_interval(
+		200,
+		?MODULE,
+		record_chunk_cache_size_metric,
+		[]
+	),
 	gen_server:cast(self(), process_store_chunk_queue),
 	{ok, State2};
 init({StoreID, RepackInPlacePacking}) ->
@@ -793,7 +807,7 @@ init({StoreID, RepackInPlacePacking}) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
-	
+
 	State = init_kv(StoreID),
 
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
@@ -976,7 +990,7 @@ handle_cast({collect_peer_intervals, Start, End}, State) when Start >= End ->
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
 	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS.
 	?LOG_DEBUG([{event, collect_peer_intervals_done},
-		{function, collect_peer_intervals}, 
+		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
 		{s, Start}, {e, End}]),
 	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
@@ -1630,7 +1644,7 @@ do_sync_data(State) ->
 	%% See if any of StoreID's unsynced intervals can be found in the "default"
 	%% storage_module
 	Intervals = get_unsynced_intervals_from_other_storage_modules(
-		StoreID, "default", RangeStart, min(RangeEnd, DiskPoolThreshold)),
+		StoreID, ?DEFAULT_MODULE, RangeStart, min(RangeEnd, DiskPoolThreshold)),
 	gen_server:cast(self(), sync_data2),
 	%% Find all storage_modules that might include the target chunks (e.g. neighboring
 	%% storage_modules with an overlap, or unpacked copies used for packing, etc...)
@@ -1986,8 +2000,7 @@ remove_invalid_sync_records(PaddedEndOffset, StartOffset, StoreID) ->
 	Remove3 =
 		case {Remove2, IsSmallChunkBeforeThreshold} of
 			{ok, false} ->
-				ar_sync_record:delete(PaddedEndOffset, StartOffset,
-						ar_chunk_storage_replica_2_9_1_entropy, StoreID);
+				ar_entropy_storage:delete_record(PaddedEndOffset, StartOffset, StoreID);
 			_ ->
 				Remove2
 		end,
@@ -2025,7 +2038,7 @@ validate_fetched_chunk(Args) ->
 		false ->
 			case ar_block_index:get_block_bounds(Offset - 1) of
 				{BlockStart, BlockEnd, TXRoot} ->
-					
+
 					ChunkOffset = Offset - BlockStart - 1,
 					case validate_proof2(TXRoot, TXPath, DataPath, BlockStart, BlockEnd,
 							ChunkOffset, ChunkSize, RequestOrigin) of
@@ -2159,7 +2172,7 @@ remove_range(Start, End, Ref, ReplyTo) ->
 			end
 		end,
 	StorageModules = ar_storage_module:get_all(Start, End),
-	StoreIDs = ["default" | [ar_storage_module:id(M) || M <- StorageModules]],
+	StoreIDs = [?DEFAULT_MODULE | [ar_storage_module:id(M) || M <- StorageModules]],
 	RefL = [make_ref() || _ <- StoreIDs],
 	PID = spawn(fun() -> ReplyFun(ReplyFun, sets:from_list(RefL)) end),
 	lists:foreach(
@@ -2193,7 +2206,7 @@ init_kv(StoreID) ->
 	],
 	Dir =
 		case StoreID of
-			"default" ->
+			?DEFAULT_MODULE ->
 				?ROCKS_DB_DIR;
 			_ ->
 				filename:join(["storage_modules", StoreID, ?ROCKS_DB_DIR])
@@ -2313,7 +2326,7 @@ data_root_key_v2(DataRoot, TXSize, Offset) ->
 			(ar_serialize:encode_int(Offset, 8))/binary >>.
 
 record_disk_pool_chunks_count() ->
-	DB = {disk_pool_chunks_index, "default"},
+	DB = {disk_pool_chunks_index, ?DEFAULT_MODULE},
 	case ar_kv:count(DB) of
 		Count when is_integer(Count) ->
 			prometheus_gauge:set(disk_pool_chunks_count, Count);
@@ -2653,7 +2666,7 @@ reset_orphaned_data_roots_disk_pool_timestamps(DataRootKeySet) ->
 		DataRootKeySet
 	).
 
-store_sync_state(#sync_data_state{ store_id = "default" } = State) ->
+store_sync_state(#sync_data_state{ store_id = ?DEFAULT_MODULE } = State) ->
 	#sync_data_state{ block_index = BI } = State,
 	DiskPoolDataRoots = ets:foldl(
 			fun({DataRootKey, V}, Acc) -> maps:put(DataRootKey, V, Acc) end, #{},
@@ -2664,7 +2677,7 @@ store_sync_state(#sync_data_state{ store_id = "default" } = State) ->
 	case ar_storage:write_term(data_sync_state, StoredState) of
 		{error, enospc} ->
 			?LOG_WARNING([{event, failed_to_dump_state}, {reason, disk_full},
-					{store_id, "default"}]),
+					{store_id, ?DEFAULT_MODULE}]),
 			ok;
 		ok ->
 			ok
@@ -3267,7 +3280,7 @@ log_failed_to_store_chunk(Reason, AbsoluteOffset, Offset, DataRoot, DataPathHash
 			{data_root, ar_util:safe_encode(DataRoot)},
 			{store_id, StoreID}]).
 
-get_required_chunk_packing(_Offset, _ChunkSize, #sync_data_state{ store_id = "default" }) ->
+get_required_chunk_packing(_Offset, _ChunkSize, #sync_data_state{ store_id = ?DEFAULT_MODULE }) ->
 	unpacked;
 get_required_chunk_packing(Offset, ChunkSize, State) ->
 	#sync_data_state{ store_id = StoreID } = State,

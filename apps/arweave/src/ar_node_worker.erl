@@ -535,10 +535,24 @@ handle_info({event, tx, {new, TX, _Source}}, State) ->
 	TXID = TX#tx.id,
 	case ar_mempool:has_tx(TXID) of
 		false ->
-			ar_mempool:add_tx(TX, waiting),
+			InitialStatus =
+				case maps:get(automine, State) of
+					false ->
+						ready_for_mining;
+					true ->
+						waiting
+				end,
+			ar_mempool:add_tx(TX, InitialStatus),
 			case ar_mempool:has_tx(TXID) of
 				true ->
-					start_tx_mining_timer(TX);
+					case maps:get(automine, State) of
+						true ->
+							%% Do not include transactions into blocks until
+							%% they had time to propagate around the network.
+							start_tx_mining_timer(TX);
+						false ->
+							ok
+					end;
 				false ->
 					%% The transaction has been dropped because more valuable transactions
 					%% exceed the mempool limit.
@@ -1890,6 +1904,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 	#mining_solution{
 		last_step_checkpoints = LastStepCheckpoints,
 		mining_address = MiningAddress,
+		seed = NonceLimiterSeed,
 		next_seed = NonceLimiterNextSeed,
 		next_vdf_difficulty = NonceLimiterNextVDFDifficulty,
 		nonce = Nonce,
@@ -1971,22 +1986,26 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 	%% Check solution seed.
 	#nonce_limiter_info{ next_seed = PrevNextSeed,
 			next_vdf_difficulty = PrevNextVDFDifficulty,
-			global_step_number = PrevStepNumber } = PrevNonceLimiterInfo,
+			global_step_number = PrevStepNumber,
+			seed = PrevSeed } = PrevNonceLimiterInfo,
 	PrevIntervalNumber = PrevStepNumber div ar_nonce_limiter:get_reset_frequency(),
 	PassesSeedCheck =
 		case PassesTimelineCheck of
 			{false, Reason} ->
 				{false, Reason};
 			true ->
-				case {IntervalNumber, NonceLimiterNextSeed, NonceLimiterNextVDFDifficulty}
-						== {PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty} of
+				case {IntervalNumber, NonceLimiterNextSeed, NonceLimiterNextVDFDifficulty, NonceLimiterSeed}
+						== {PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty, PrevSeed} of
 					false ->
 						ar_mining_server:log_prepare_solution_failure(Solution, stale,
 							vdf_seed_data_does_not_match_current_block, Source, [
+								{output, ar_util:encode(NonceLimiterOutput)},
 								{interval_number, IntervalNumber},
 								{prev_interval_number, PrevIntervalNumber},
 								{nonce_limiter_next_seed, ar_util:encode(NonceLimiterNextSeed)},
+								{nonce_limiter_seed, ar_util:encode(NonceLimiterSeed)},
 								{prev_nonce_limiter_next_seed, ar_util:encode(PrevNextSeed)},
+								{prev_nonce_limiter_seed, ar_util:encode(PrevSeed)},
 								{nonce_limiter_next_vdf_difficulty, NonceLimiterNextVDFDifficulty},
 								{prev_nonce_limiter_next_vdf_difficulty, PrevNextVDFDifficulty}
 							]),

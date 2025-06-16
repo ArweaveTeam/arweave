@@ -193,7 +193,7 @@ get_system_device(StorageModule) ->
 		_ -> Device
 	end.
 
-do_acquire_lock(Mode, "default", State) ->
+do_acquire_lock(Mode, ?DEFAULT_MODULE, State) ->
 	%% "default" storage module is a special case. It can only be in sync mode.
 	case Mode of
 		sync ->

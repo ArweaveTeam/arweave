@@ -378,7 +378,7 @@ set_current(DAG, RootHash, Height, PruneDepth) ->
 	),
 	Tree = ar_diff_dag:get_sink(UpdatedDAG),
 	true = Height >= ar_fork:height_2_2(),
-	prometheus_gauge:set(wallet_list_size, ar_patricia_tree:size(Tree)),
+	prometheus_counter:inc(wallet_list_size, ar_patricia_tree:size(Tree)),
 	ar_diff_dag:filter(UpdatedDAG, PruneDepth).
 
 apply_diff(Diff, Tree) ->

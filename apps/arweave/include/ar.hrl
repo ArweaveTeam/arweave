@@ -33,7 +33,7 @@
 -define(CLIENT_VERSION, 5).
 
 %% The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 83).
+-define(RELEASE_NUMBER, 84).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
@@ -296,6 +296,9 @@
 
 %% The directory for persisted metrics, NOT relative to the data dir.
 -define(METRICS_DIR, "metrics").
+
+%% The ID and module for the default storage module.
+-define(DEFAULT_MODULE, "default").
 
 %% Default TCP port.
 -define(DEFAULT_HTTP_IFACE_PORT, 1984).
@@ -719,6 +722,8 @@
 	last_tx = <<>>,
 	%% The public key the transaction is signed with.
 	owner =	<<>>,
+	%% The owner address. Used as a cache to avoid recomputing it, not serialized.
+	owner_address = not_set,
 	%% A list of arbitrary key-value pairs. Keys and values are binaries.
 	tags = [],
 	%% The address of the recipient, if any. The SHA2-256 hash of the public key.

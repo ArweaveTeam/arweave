@@ -3,8 +3,9 @@
 -behaviour(gen_server).
 
 -export([name/1, acquire_semaphore/1, release_semaphore/1, is_ready/1,
-	is_entropy_recorded/2, delete_record/2, store_entropy_footprint/6, store_entropy/4,
-	record_chunk/5]).
+	sync_record_id/0, is_entropy_recorded/3, get_next_unsynced_interval/3,
+	add_record/3, add_record_async/4, delete_record/2, delete_record/3,
+	store_entropy_footprint/6, store_entropy/4, record_chunk/5]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -31,6 +32,9 @@ name(StoreID) ->
 init(StoreID) ->
 	?LOG_INFO([{event, ar_entropy_storage_init}, {name, name(StoreID)}, {store_id, StoreID}]),
 	{ok, #state{ store_id = StoreID }}.
+
+sync_record_id() ->
+	ar_chunk_storage_replica_2_9_5_entropy.
 
 %% @doc Write all of the entropies in a full 256 MiB entropy footprint to disk.
 -spec store_entropy_footprint(	
@@ -79,7 +83,7 @@ handle_cast({store_entropy_footprint,
 		Keys,
 		RewardAddr,
 		fun do_store_entropy/5,
-		[StoreID, RewardAddr],
+		[StoreID],
 		ok),
 	{noreply, State};
 
@@ -94,7 +98,7 @@ handle_call(is_ready, _From, State) ->
 handle_call({store_entropy, ChunkEntropy, BucketEndOffset, StoreID, RewardAddr},
 		_From, State) ->
 	#state{ store_id = StoreID } = State,
-	do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr),
+	do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID),
 	{reply, ok, State};
 
 handle_call(Call, _From, State) ->
@@ -112,22 +116,40 @@ handle_info(Info, State) ->
 	{noreply, State}.
 
 %% @doc Return true if the 2.9 entropy with the given offset is recorded.
-is_entropy_recorded(PaddedEndOffset, StoreID) ->
-	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
-	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
-	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
+is_entropy_recorded(PaddedEndOffset, {replica_2_9, _} = Packing, StoreID) ->
 	ChunkBucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
-	ar_sync_record:is_recorded(
-		ChunkBucketStart + 1, ar_chunk_storage_replica_2_9_1_entropy, StoreID).
+	IsRecorded = ar_sync_record:is_recorded(
+		ChunkBucketStart + 1, Packing, sync_record_id(), StoreID),
+	case IsRecorded of
+		false ->
+			%% Included for backwards compatibility with entropy written prior to 2.9.5.
+			ar_sync_record:is_recorded(
+				ChunkBucketStart + 1, ar_chunk_storage_replica_2_9_1_entropy, StoreID);
+		_ ->
+			true
+	end;
+is_entropy_recorded(_PaddedEndOffset, _Packing, _StoreID) ->
+	false.
+
+get_next_unsynced_interval(Offset, Packing, StoreID) ->
+	case ar_sync_record:get_next_unsynced_interval(
+			Offset, infinity, Packing, sync_record_id(), StoreID) of
+		not_found ->
+			%% Included for backwards compatibility with entropy written prior to 2.9.5.
+			case ar_sync_record:get_next_unsynced_interval(
+					Offset, infinity, ar_chunk_storage_replica_2_9_1_entropy, StoreID) of
+				not_found ->
+					not_found;
+				Interval ->
+					Interval
+			end;
+		Interval ->
+			Interval
+	end.
 
 update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
-	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
-	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
-	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
 	BucketEnd = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
-	BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
-	ar_sync_record:add_async(replica_2_9_entropy,
-		BucketEnd, BucketStart, ar_chunk_storage_replica_2_9_1_entropy, StoreID),
+	add_record_async(replica_2_9_entropy, BucketEnd, {replica_2_9, RewardAddr}, StoreID),
 	prometheus_counter:inc(replica_2_9_entropy_stored,
 		[ar_storage_module:label(StoreID)], ?DATA_CHUNK_SIZE),
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
@@ -153,14 +175,29 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 			ok
 	end.
 
+add_record(BucketEndOffset, {replica_2_9, _} = Packing, StoreID) ->
+	BucketStartOffset = BucketEndOffset - ?DATA_CHUNK_SIZE,
+	ar_sync_record:add(BucketEndOffset, BucketStartOffset, Packing, sync_record_id(), StoreID).
+
+add_record_async(Event, BucketEndOffset, {replica_2_9, _} = Packing, StoreID) ->
+	BucketStartOffset = BucketEndOffset - ?DATA_CHUNK_SIZE,
+	ar_sync_record:add_async(Event,
+		BucketEndOffset, BucketStartOffset, Packing, sync_record_id(), StoreID).
+
 delete_record(PaddedEndOffset, StoreID) ->
-	%% Entropy indexing changed between 2.9.0 and 2.9.1. So we'll use a new
-	%% sync_record id (ar_chunk_storage_replica_2_9_1_entropy) going forward.
-	%% The old id (ar_chunk_storage_replica_2_9_entropy) should not be used.
 	BucketStart = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
-	ar_sync_record:delete(
-		BucketStart + ?DATA_CHUNK_SIZE, BucketStart,
-		ar_chunk_storage_replica_2_9_1_entropy, StoreID).
+	delete_record(BucketStart + ?DATA_CHUNK_SIZE, BucketStart, StoreID).
+
+delete_record(EndOffset, StartOffset, StoreID) ->
+	case ar_sync_record:delete(EndOffset, StartOffset, sync_record_id(), StoreID) of
+		ok ->
+			%% Included for backwards compatibility with entropy written prior to 2.9.5.
+			ar_sync_record:delete(
+				EndOffset, StartOffset, ar_chunk_storage_replica_2_9_1_entropy, StoreID);
+		Error ->
+			Error
+	end.
+		
 
 generate_missing_entropy(PaddedEndOffset, RewardAddr) ->
 	Entropies = ar_entropy_gen:generate_entropies(RewardAddr, PaddedEndOffset),
@@ -178,6 +215,7 @@ record_chunk(
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(PaddedEndOffset),
 	%% End sanity checks
 
+	Packing = {replica_2_9, RewardAddr},
 	StartOffset = ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
 	{_ChunkFileStart, Filepath, _Position, _ChunkOffset} =
 		ar_chunk_storage:locate_chunk_on_disk(PaddedEndOffset, StoreID),
@@ -189,7 +227,7 @@ record_chunk(
 			true ->
 				{error, already_stored};
 			false ->
-				is_entropy_recorded(PaddedEndOffset, StoreID)
+				is_entropy_recorded(PaddedEndOffset, Packing, StoreID)
 		end,
 	ReadEntropy =
 		case CheckIsEntropyRecorded of
@@ -212,7 +250,6 @@ record_chunk(
 			delete_record(PaddedEndOffset, StoreID),
 			{error, not_prepared_yet};
 		missing_entropy ->
-			Packing = {replica_2_9, RewardAddr},
 			?LOG_WARNING([{event, missing_entropy}, {padded_end_offset, PaddedEndOffset},
 				{store_id, StoreID}, {packing, ar_serialize:encode_packing(Packing, true)}]),
 			Entropy = generate_missing_entropy(PaddedEndOffset, RewardAddr),
@@ -228,7 +265,6 @@ record_chunk(
 			ar_chunk_storage:record_chunk(
 				PaddedEndOffset, Chunk, unpacked_padded, StoreID,  FileIndex);
 		{_EndOffset, Entropy} ->
-			Packing = {replica_2_9, RewardAddr},
 			PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
 			ar_chunk_storage:record_chunk(
 				PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
@@ -236,9 +272,10 @@ record_chunk(
 	release_semaphore(Filepath),
 	RecordChunk.
 
-do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr, ok) ->
-	do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr).
-do_store_entropy(ChunkEntropy, BucketEndOffset, StoreID, RewardAddr) ->
+do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID, ok) ->
+	do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID).
+
+do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID) ->
 	%% Sanity checks
 	true = byte_size(ChunkEntropy) == ?DATA_CHUNK_SIZE,
 	%% End sanity checks

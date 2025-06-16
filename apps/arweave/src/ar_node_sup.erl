@@ -69,7 +69,7 @@ ar_http_iface_server_spec() ->
 	#{ id => ar_http_iface_server
 	 , start => {ar_http_iface_server, start_link, []}
 	 , type => worker
-	 , shutdown => ?SHUTDOWN_TCP_MAX_CONNECTION_TIMEOUT
+	 , shutdown => ?SHUTDOWN_TCP_CONNECTION_TIMEOUT*2*1000
 	 }.
 
 %%--------------------------------------------------------------------

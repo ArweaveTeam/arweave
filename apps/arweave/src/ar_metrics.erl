@@ -228,7 +228,7 @@ register() ->
 		{help, "Fork recovery depth metric"}
 	]),
 
-	prometheus_gauge:new([
+	prometheus_counter:new([
 		{name, wallet_list_size},
 		{
 			help,
@@ -289,9 +289,10 @@ register() ->
 	]),
 	prometheus_gauge:new([
 		{name, mining_server_chunk_cache_size},
-		{labels, [partition]},
-		{help, "The number of chunks (measured in 8192-byte sub-chunks) "
-			"fetched during mining and not processed yet."}
+		{labels, [partition, type]},
+		{help, "The amount of data (measured in bytes) "
+			"fetched during mining and not processed yet. "
+		  "The type label can be 'total', 'reserved'."}
 	]),
 	prometheus_gauge:new([
 		{name, mining_server_task_queue_len},

@@ -34,8 +34,8 @@
 	%% 256 MiB batches.
 	entropy_end = 0,
 	next_cursor = 0, 
+	configured_packing = undefined,
 	target_packing = undefined,
-	reward_addr = undefined,
 	repack_status = undefined,
 	repack_chunk_map = #{},
 	write_queue = gb_sets:new()
@@ -70,20 +70,15 @@ register_workers() ->
             %% Note: the config validation will prevent a StoreID from being used in both
             %% `storage_modules` and `repack_in_place_storage_modules`, so there's
             %% no risk of a `Name` clash with the workers spawned above.
-            case ar_entropy_gen:is_entropy_packing(Packing) of
-                true ->
-                    RepackWorker = ?CHILD_WITH_ARGS(
-                        ar_repack, worker, name(StoreID),
-                        [name(StoreID), {StoreID, Packing}]),
-                    
-                    RepackIOWorker = ?CHILD_WITH_ARGS(
-                        ar_repack_io, worker, ar_repack_io:name(StoreID),
-                        [ar_repack_io:name(StoreID), StoreID]),
-                    
-                    [RepackWorker, RepackIOWorker];
-                false ->
-                    []
-            end
+			RepackWorker = ?CHILD_WITH_ARGS(
+				ar_repack, worker, name(StoreID),
+				[name(StoreID), {StoreID, Packing}]),
+
+			RepackIOWorker = ?CHILD_WITH_ARGS(
+				ar_repack_io, worker, ar_repack_io:name(StoreID),
+				[ar_repack_io:name(StoreID), StoreID]),
+
+			[RepackWorker, RepackIOWorker]
         end,
         Config#config.repack_in_place_storage_modules
     ),
@@ -96,21 +91,7 @@ init({StoreID, ToPacking}) ->
         {name, name(StoreID)}, {store_id, StoreID},
 		{from_packing, ar_serialize:encode_packing(FromPacking, false)},
         {to_packing, ar_serialize:encode_packing(ToPacking, false)}]),
-
-    %% Sanity checks
-	%% We curently only support repacking in place to replica_2_9 from non-replica_2_9
-	case FromPacking of
-		{replica_2_9, _} ->
-			?LOG_ERROR([{event, repack_in_place_from_replica_2_9_not_supported}]),
-			timer:sleep(5_000),
-			erlang:halt();
-		_ ->
-			ok
-	end,
-    %% End sanity checks
 	
-	{replica_2_9, RewardAddr} = ToPacking,
-
 	%% ModuleStart to PaddedModuleEnd is the *chunk* range that will be repacked. Chunk
 	%% offsets will later be converted to bucket offsets and entropy offsets - and the 
 	%% bucket and entropy ranges may differ from this chunk range.
@@ -133,8 +114,8 @@ init({StoreID, ToPacking}) ->
 		module_start = ModuleStart,
 		module_end = PaddedModuleEnd,
 		next_cursor = Cursor, 
+		configured_packing = FromPacking,
 		target_packing = ToPacking,
-		reward_addr = RewardAddr,
 		repack_status = paused
 	},
 	log_info(starting_repack_in_place, State, [
@@ -150,6 +131,14 @@ init({StoreID, ToPacking}) ->
 
 %% @doc Gets the start and end offset of the range of chunks to read starting from
 %% BucketEndOffset. Also includes the BucketEndOffsets covered by that range.
+get_read_range(BucketEndOffset, #state{} = State) ->
+	#state{
+		module_end = ModuleEnd,
+		footprint_end = FootprintEnd,
+		read_batch_size = BatchSize
+	} = State,
+	get_read_range(BucketEndOffset, min(ModuleEnd, FootprintEnd), BatchSize).
+
 -spec get_read_range(
 		non_neg_integer(), non_neg_integer(), non_neg_integer()) ->
 	{non_neg_integer(), non_neg_integer(), [non_neg_integer()]}.
@@ -165,17 +154,13 @@ get_read_range(BucketEndOffset, RangeEnd, BatchSize) ->
 	SectorBucketEnd = EntropyPartitionStartBucket + (Sector + 1) * SectorSize,
 	SectorChunkEnd =
 		ar_chunk_storage:get_chunk_byte_from_bucket_end(SectorBucketEnd) + ?DATA_CHUNK_SIZE,
-
-	RangeBucketEnd = ar_chunk_storage:get_chunk_bucket_end(RangeEnd),
-	RangeChunkEnd =
-		ar_chunk_storage:get_chunk_byte_from_bucket_end(RangeBucketEnd) + ?DATA_CHUNK_SIZE,
 	
 	FullRangeSize = ?DATA_CHUNK_SIZE * BatchSize,
 	ReadRangeEnd = lists:min([
 		ReadRangeStart + FullRangeSize,
 		EntropyPartitionEnd,
 		SectorChunkEnd,
-		RangeChunkEnd]),
+		RangeEnd]),
 
 	BucketEndOffsets = [BucketEndOffset + (N * ?DATA_CHUNK_SIZE) || 
 		N <- lists:seq(0, BatchSize-1),
@@ -212,12 +197,7 @@ handle_cast(repack, #state{} = State) ->
 	{noreply, State3};
 
 handle_cast({chunk_range_read, BucketEndOffset, OffsetChunkMap, OffsetMetadataMap}, #state{} = State) ->
-	#state{
-		footprint_end = FootprintEnd,
-		read_batch_size = BatchSize
-	} = State,
-	{_ReadRangeStart, _ReadRangeEnd, ReadRangeOffsets} = get_read_range(
-		BucketEndOffset, FootprintEnd, BatchSize),
+	{_, _, ReadRangeOffsets} = get_read_range(BucketEndOffset, State),
 	State2 = add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, State),
 	State3 = mark_missing_chunks(ReadRangeOffsets, State2),
 	{noreply, State3};
@@ -244,19 +224,16 @@ handle_cast({expire_repack_request, _Ref}, #state{} = State) ->
 handle_cast({expire_encipher_request, {BucketEndOffset, FootprintID}},
 		#state{footprint_start = FootprintStart} = State) 
 		when FootprintID == FootprintStart ->
-	#state{
-		repack_chunk_map = Map
-	} = State,
-	State2 = case maps:get(BucketEndOffset, Map, not_found) of
-		not_found ->
-			%% Chunk has already been processed.
-			State;
-		RepackChunk ->
-			log_debug(encipher_request_expired, RepackChunk, State, []),
-			remove_repack_chunk(BucketEndOffset, State)
-	end,
-	{noreply, State2};
+	{noreply, expire_exor_request(BucketEndOffset, State)};
 handle_cast({expire_encipher_request, _Ref}, #state{} = State) ->
+	%% Request is from an old batch, ignore.
+	{noreply, State};
+
+handle_cast({expire_decipher_request, {BucketEndOffset, FootprintID}},
+		#state{footprint_start = FootprintStart} = State) 
+		when FootprintID == FootprintStart ->
+	{noreply, expire_exor_request(BucketEndOffset, State)};
+handle_cast({expire_decipher_request, _Ref}, #state{} = State) ->
 	%% Request is from an old batch, ignore.
 	{noreply, State};
 
@@ -269,14 +246,16 @@ handle_cast(Request, #state{} = State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {request, Request}]),
 	{noreply, State}.
 
-handle_info({entropy, BucketEndOffset, Entropies}, #state{} = State) ->
+handle_info({entropy, BucketEndOffset, RewardAddr, Entropies}, #state{} = State) ->
 	#state{ 
 		footprint_start = FootprintStart,
-		footprint_end = FootprintEnd,
-		reward_addr = RewardAddr
+		footprint_end = FootprintEnd
 	} = State,
 
-	generate_repack_entropy(BucketEndOffset + ?DATA_CHUNK_SIZE, State),
+	generate_repack_entropy(
+		BucketEndOffset + ?DATA_CHUNK_SIZE,
+		{replica_2_9, RewardAddr},
+		State),
 
 	EntropyKeys = ar_entropy_gen:generate_entropy_keys(RewardAddr, BucketEndOffset),
 	EntropyOffsets = ar_entropy_gen:entropy_offsets(BucketEndOffset, FootprintEnd),
@@ -287,11 +266,9 @@ handle_info({entropy, BucketEndOffset, Entropies}, #state{} = State) ->
 		FootprintStart,
 		EntropyKeys, 
 		RewardAddr,
-		fun entropy_generated/3, [], State),
+		fun entropy_generated/4, [], State),
 	{noreply, State2};
 
-%% @doc This is only called during repack_in_place. Called when a chunk has been repacked
-%% from the old format to the new format and is ready to be stored in the chunk storage.
 handle_info({chunk, {packed, {BucketEndOffset, _}, ChunkArgs}}, #state{} = State) ->
 	#state{
 		repack_chunk_map = Map
@@ -309,13 +286,40 @@ handle_info({chunk, {packed, {BucketEndOffset, _}, ChunkArgs}}, #state{} = State
 			]),
 			State;
 		RepackChunk ->
+			{Packing, Chunk, _, _, _} = ChunkArgs,
 			%% sanity checks
 			true = RepackChunk#repack_chunk.state == needs_repack,
 			%% end sanity checks
 
-			{_, Chunk, _, _, _} = ChunkArgs,
 			RepackChunk2 = RepackChunk#repack_chunk{
 				chunk = Chunk,
+				source_packing = Packing
+			},
+			update_chunk_state(RepackChunk2, State)
+	end,
+	{noreply, State2};
+
+handle_info({chunk, {deciphered, {BucketEndOffset, _}, UnpackedChunk}}, #state{} = State) ->
+	#state{
+		repack_chunk_map = Map
+	} = State,
+
+	State2 = case maps:get(BucketEndOffset, Map, not_found) of
+		not_found ->
+			log_warning(chunk_decipher_request_not_found, State, [
+				{bucket_end_offset, BucketEndOffset},
+				{repack_chunk_map, maps:size(Map)}
+			]),
+			State;
+		RepackChunk ->
+			%% sanity checks
+			true = RepackChunk#repack_chunk.state == needs_decipher,
+			true = byte_size(UnpackedChunk) == ?DATA_CHUNK_SIZE,
+			%% end sanity checks
+
+			RepackChunk2 = RepackChunk#repack_chunk{
+				chunk = UnpackedChunk,
+				source_entropy = <<>>,
 				source_packing = unpacked_padded
 			},
 			update_chunk_state(RepackChunk2, State)
@@ -338,7 +342,7 @@ handle_info({chunk, {enciphered, {BucketEndOffset, _}, PackedChunk}}, #state{} =
 
 			RepackChunk2 = RepackChunk#repack_chunk{
 				chunk = PackedChunk,
-				entropy = <<>>,
+				target_entropy = <<>>,
 				source_packing = RepackChunk#repack_chunk.target_packing
 			},
 			update_chunk_state(RepackChunk2, State)
@@ -409,7 +413,9 @@ repack(#state{} = State) ->
 repack_footprint(Cursor, #state{} = State) ->
 	#state{ module_end = ModuleEnd,
 		num_entropy_offsets = NumEntropyOffsets,
-		target_packing = TargetPacking, store_id = StoreID,
+		configured_packing = SourcePacking,
+		target_packing = TargetPacking,
+		store_id = StoreID,
 		read_batch_size = BatchSize } = State,
 
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
@@ -445,44 +451,48 @@ repack_footprint(Cursor, #state{} = State) ->
 			] ++ Logs),
 			State#state{ next_cursor = NextCursor2 };
 		true ->
-			{_, EntropyEnd, _} = get_read_range(BucketEndOffset, FootprintEnd, BatchSize),
-
 			State2 = State#state{ 
 				footprint_start = FootprintStart,
 				footprint_end = FootprintEnd,
-				entropy_end = ar_chunk_storage:get_chunk_bucket_end(EntropyEnd),
 				next_cursor = Cursor + ?DATA_CHUNK_SIZE
 			},
-			State3 = init_repack_chunk_map(FootprintOffsets, State2),
 
-			MaxChunkMapOffset = lists:max(maps:keys(State3#state.repack_chunk_map)),
+			{_, EntropyEnd, _} = get_read_range(BucketEndOffset, State2),
+			State3 = State2#state{
+				entropy_end = ar_chunk_storage:get_chunk_bucket_end(EntropyEnd)
+			},
+			State4 = init_repack_chunk_map(FootprintOffsets, State3),
+
+			MaxChunkMapOffset = lists:max(maps:keys(State4#state.repack_chunk_map)),
 			
-			log_info(repack_footprint_start, State3, [
+			log_info(repack_footprint_start, State4, [
 				{cursor, Cursor},
 				{bucket_end_offset, BucketEndOffset},
+				{source_packing, ar_serialize:encode_packing(SourcePacking, false)},
 				{target_packing, ar_serialize:encode_packing(TargetPacking, false)},
 				{entropy_end, EntropyEnd},
 				{read_batch_size, BatchSize},
-				{write_batch_size, State2#state.write_batch_size},
+				{write_batch_size, State4#state.write_batch_size},
 				{num_entropy_offsets, NumEntropyOffsets},
 				{footprint_offsets, length(FootprintOffsets)},
 				{max_chunk_map_offset, MaxChunkMapOffset}
 			]),
 
 			%% sanity checks
-			MaxChunkMapOffset =< FootprintEnd,
-			EntropyEnd =< FootprintEnd,
-			FootprintEnd =< ModuleEnd,
+			true = MaxChunkMapOffset =< FootprintEnd,
+			true = EntropyEnd =< FootprintEnd,
+			true = FootprintEnd =< ModuleEnd,
 			%% end sanity checks
 
 			%% We'll generate BatchSize entropy footprints, one for each bucket end offset
 			%% starting at BucketEndOffset and ending at EntropyEnd.
-			generate_repack_entropy(BucketEndOffset, State3),
+			generate_repack_entropy(BucketEndOffset, SourcePacking, State4),
+			generate_repack_entropy(BucketEndOffset, TargetPacking, State4),
 
 			ar_repack_io:read_footprint(
 				FootprintOffsets, FootprintStart, FootprintEnd, StoreID),
 
-			State3
+			State4
 	end.
 
 should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
@@ -490,7 +500,8 @@ should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
 		target_packing = TargetPacking, store_id = StoreID } = State,
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(Cursor),
 	IsChunkRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
-	IsEntropyRecorded = ar_entropy_storage:is_entropy_recorded(PaddedEndOffset, StoreID),
+	IsEntropyRecorded = ar_entropy_storage:is_entropy_recorded(
+		PaddedEndOffset, TargetPacking, StoreID),
 	%% Skip this offset if it's already packed to TargetPacking, or if it's not recorded
 	%% at all.
 	Skip = case {IsChunkRecorded, IsEntropyRecorded} of
@@ -564,38 +575,56 @@ footprint_end(FootprintOffsets, ModuleEnd, BatchSize) ->
 
 	min(LastOffsetRangeEnd, EntropyPartitionEnd).
 
-generate_repack_entropy(BucketEndOffset, #state{ entropy_end = EntropyEnd })
+generate_repack_entropy(BucketEndOffset, {replica_2_9, _}, #state{ entropy_end = EntropyEnd })
 		when BucketEndOffset > EntropyEnd ->
 	ok;
-generate_repack_entropy(BucketEndOffset, #state{} = State) ->
+generate_repack_entropy(BucketEndOffset, {replica_2_9, RewardAddr}, #state{} = State) ->
 	#state{ 
-		store_id = StoreID,
-		reward_addr = RewardAddr
+		store_id = StoreID
 	} = State,
 
-	ar_entropy_gen:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self()).
+	ar_entropy_gen:generate_entropies(StoreID, RewardAddr, BucketEndOffset, self());
+generate_repack_entropy(_BucketEndOffset, _Packing, #state{}) ->
+	%% Only generate entropy for the replica.2.9 packing format.
+	ok.
 
 init_repack_chunk_map([], #state{} = State) ->
 	State;
 init_repack_chunk_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 	#state{ 
-		footprint_end = FootprintEnd,
-		read_batch_size = BatchSize,
 		repack_chunk_map = Map,
+		configured_packing = SourcePacking,
 		target_packing = TargetPacking
 	} = State,
 
 	{_ReadRangeStart, _ReadRangeEnd, ReadRangeOffsets} = get_read_range(
-		EntropyOffset, FootprintEnd, BatchSize),
+		EntropyOffset, State),
 
 	Map2 = lists:foldl(
 		fun(BucketEndOffset, Acc) ->
 			false = maps:is_key(BucketEndOffset, Acc),
+			SourceEntropy = case SourcePacking of
+				{replica_2_9, _} ->
+					not_set;
+				_ ->
+					%% Setting to <<>> indicates that source entropy is not needed.
+					<<>>
+			end,
+			TargetEntropy = case TargetPacking of
+				{replica_2_9, _} ->
+					not_set;
+				_ ->
+					%% Setting to <<>> indicates that target entropy is not needed.
+					<<>>
+			end,
+
 			RepackChunk = #repack_chunk{
 				offsets = #chunk_offsets{
 					bucket_end_offset = BucketEndOffset
 				},
-				target_packing = TargetPacking
+				target_packing = TargetPacking,
+				source_entropy = SourceEntropy,
+				target_entropy = TargetEntropy
 			},
 			maps:put(BucketEndOffset, RepackChunk, Acc)
 		end,
@@ -610,6 +639,7 @@ init_repack_chunk_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = State) ->
 	#state{
 		store_id = StoreID,
+		configured_packing = ConfiguredPacking,
 		target_packing = TargetPacking
 	} = State,
 	
@@ -623,7 +653,7 @@ add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = Stat
 			RepackChunk =  maps:get(BucketEndOffset, RepackChunkMap, not_found),
 			RepackChunk2 = assemble_repack_chunk(
 				RepackChunk, AbsoluteEndOffset, TargetPacking, 
-				Metadata, OffsetChunkMap, StoreID),
+				Metadata, OffsetChunkMap, ConfiguredPacking, StoreID),
 
 			case RepackChunk2 of
 				not_found ->
@@ -635,17 +665,14 @@ add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = Stat
 		State, OffsetMetadataMap).
 
 assemble_repack_chunk(
-		RepackChunk, AbsoluteEndOffset, TargetPacking, Metadata, OffsetChunkMap, StoreID) ->
+		RepackChunk, AbsoluteEndOffset, TargetPacking, Metadata, OffsetChunkMap,
+		ConfiguredPacking, StoreID) ->
 	{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize} = Metadata,
 
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
 
-	IsRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
-	SourcePacking = case IsRecorded of
-		{true, Packing} -> Packing;
-		_ -> not_found
-	end,
+	SourcePacking = get_chunk_packing(PaddedEndOffset, ConfiguredPacking, StoreID),
 
 	ShouldRepack = (
 		ar_chunk_storage:is_storage_supported(
@@ -686,6 +713,17 @@ assemble_repack_chunk(
 			not_found
 	end.
 
+get_chunk_packing(PaddedEndOffset, ConfiguredPacking, StoreID) ->
+	HasConfiguredPacking = ar_sync_record:is_recorded(
+		PaddedEndOffset, ConfiguredPacking, ar_data_sync, StoreID),
+	case HasConfiguredPacking of
+		true -> ConfiguredPacking;
+		_ ->
+			case ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID) of
+				{true, Packing} -> Packing;
+				_ -> not_found
+			end
+	end.
 
 %% @doc Mark any chunks that weren't found in either chunk_storage or the chunks_index.
 mark_missing_chunks([], #state{} = State) ->
@@ -733,7 +771,6 @@ remove_repack_chunk(BucketEndOffset, #state{} = State) ->
 enqueue_chunk_for_writing(RepackChunk, #state{} = State) ->
 	#state{
 		target_packing = TargetPacking,
-		reward_addr = RewardAddr,
 		store_id = StoreID
 	} = State,
 	#repack_chunk{
@@ -749,18 +786,19 @@ enqueue_chunk_for_writing(RepackChunk, #state{} = State) ->
 	case gb_sets:size(State2#state.write_queue) >= State2#state.write_batch_size of
 		true ->
 			count_states(queue, State2),
-			ar_repack_io:write_queue(
-				State2#state.write_queue, TargetPacking, RewardAddr, StoreID),
+			ar_repack_io:write_queue(State2#state.write_queue, TargetPacking, StoreID),
 			State2#state{ write_queue = gb_sets:new() };
 		false ->
 			State2
 	end.
 
-entropy_generated(Entropy, BucketEndOffset, #state{} = State) ->
+entropy_generated(Entropy, BucketEndOffset, RewardAddr, #state{} = State) ->
 	#state{
-		repack_chunk_map = Map
+		repack_chunk_map = Map,
+		configured_packing = SourcePacking,
+		target_packing = TargetPacking
 	} = State,
-	
+
 	case maps:get(BucketEndOffset, Map, not_found) of
 		not_found ->
 			%% This should never happen.
@@ -769,9 +807,16 @@ entropy_generated(Entropy, BucketEndOffset, #state{} = State) ->
 			]),
 			State;
 		RepackChunk ->
-			RepackChunk2 = RepackChunk#repack_chunk{
-				entropy = Entropy
-			},
+			RepackChunk2 = case {replica_2_9, RewardAddr} of
+				TargetPacking ->
+					RepackChunk#repack_chunk{
+						target_entropy = Entropy
+					};
+				SourcePacking ->
+					RepackChunk#repack_chunk{
+						source_entropy = Entropy
+					}
+			end,
 			update_chunk_state(RepackChunk2, State)
 	end.
 
@@ -780,13 +825,12 @@ maybe_repack_next_footprint(#state{} = State) ->
 		repack_chunk_map = Map,
 		write_queue = WriteQueue,
 		target_packing = TargetPacking,
-		reward_addr = RewardAddr,
 		store_id = StoreID
 	} = State,
 	case maps:size(Map) of
 		0 ->
 			count_states(queue, State),
-			ar_repack_io:write_queue(WriteQueue, TargetPacking, RewardAddr, StoreID),
+			ar_repack_io:write_queue(WriteQueue, TargetPacking, StoreID),
 			State2 = State#state{ write_queue = gb_sets:new() },
 			gen_server:cast(self(), repack),
 			State2;
@@ -851,9 +895,7 @@ process_state_change(RepackChunk, #state{} = State) ->
 			bucket_end_offset = BucketEndOffset,
 			absolute_offset = AbsoluteEndOffset
 		},
-		chunk = Chunk,
-		entropy = Entropy,
-		source_packing = Packing
+		chunk = Chunk
 	} = RepackChunk,
 
 	case RepackChunk#repack_chunk.state of
@@ -879,15 +921,30 @@ process_state_change(RepackChunk, #state{} = State) ->
 			%% future batch. Unlikely, but not impossible.
 			ChunkSize = RepackChunk#repack_chunk.metadata#chunk_metadata.chunk_size,
 			TXRoot = RepackChunk#repack_chunk.metadata#chunk_metadata.tx_root,
-			AbsoluteOffset = RepackChunk#repack_chunk.offsets#chunk_offsets.absolute_offset,
+			SourcePacking = RepackChunk#repack_chunk.source_packing,
+			TargetPacking = RepackChunk#repack_chunk.target_packing,
+
+			Packing = case TargetPacking of
+				{replica_2_9, _} -> unpacked_padded;
+				_ -> TargetPacking
+			end,
+
 			ar_packing_server:request_repack({BucketEndOffset, FootprintStart}, self(),
-				{unpacked_padded, Packing, Chunk, AbsoluteOffset, TXRoot, ChunkSize}),
+				{Packing, SourcePacking, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize}),
+			cache_repack_chunk(RepackChunk, State);
+		needs_decipher ->
+			%% We now have the unpacked_padded chunk and the entropy, proceed
+			%% with enciphering and storing the chunk.
+			SourceEntropy = RepackChunk#repack_chunk.source_entropy,
+			ar_packing_server:request_decipher(
+				{BucketEndOffset, FootprintStart}, self(), {Chunk, SourceEntropy}),
 			cache_repack_chunk(RepackChunk, State);
 		needs_encipher ->
 			%% We now have the unpacked_padded chunk and the entropy, proceed
 			%% with enciphering and storing the chunk.
+			TargetEntropy = RepackChunk#repack_chunk.target_entropy,
 			ar_packing_server:request_encipher(
-				{BucketEndOffset, FootprintStart}, self(), {Chunk, Entropy}),
+				{BucketEndOffset, FootprintStart}, self(), {Chunk, TargetEntropy}),
 			cache_repack_chunk(RepackChunk, State);
 		write_entropy ->
 			State2 = enqueue_chunk_for_writing(RepackChunk, State),
@@ -908,9 +965,25 @@ process_state_change(RepackChunk, #state{} = State) ->
 			cache_repack_chunk(RepackChunk, State)
 	end.
 
+expire_exor_request(BucketEndOffset, State) ->
+	#state{
+		repack_chunk_map = Map
+	} = State,
+	case maps:get(BucketEndOffset, Map, not_found) of
+		not_found ->
+			%% Chunk has already been processed.
+			State;
+		RepackChunk ->
+			log_debug(exor_request_expired, RepackChunk, State, []),
+			remove_repack_chunk(BucketEndOffset, State)
+	end.
+
 read_cursor(StoreID, TargetPacking, ModuleStart) ->
 	Filepath = ar_chunk_storage:get_filepath("repack_in_place_cursor2", StoreID),
-	DefaultCursor = ModuleStart + 1,
+	DefaultCursor = case ModuleStart of
+		0 -> 0;
+		_ -> ModuleStart + 1
+	end,
 	case file:read_file(Filepath) of
 		{ok, Bin} ->
 			case catch binary_to_term(Bin) of
@@ -982,7 +1055,10 @@ format_logs(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) -
 		offsets = Offsets,
 		metadata = Metadata,
 		chunk = Chunk,
-		entropy = Entropy
+		target_entropy = TargetEntropy,
+		source_entropy = SourceEntropy,
+		source_packing = SourcePacking,
+		target_packing = TargetPacking
 	} = RepackChunk,
 	#chunk_offsets{	
 		absolute_offset = AbsoluteOffset,
@@ -1000,7 +1076,10 @@ format_logs(Event, #repack_chunk{} = RepackChunk, #state{} = State, ExtraLogs) -
 		{padded_end_offset, PaddedEndOffset},
 		{chunk_size, ChunkSize},
 		{chunk, atom_or_binary(Chunk)},
-		{entropy, atom_or_binary(Entropy)} | ExtraLogs
+		{source_packing, ar_serialize:encode_packing(SourcePacking, false)},
+		{target_packing, ar_serialize:encode_packing(TargetPacking, false)},
+		{source_entropy, atom_or_binary(SourceEntropy)},
+		{target_entropy, atom_or_binary(TargetEntropy)} | ExtraLogs
 	]).
 
 count_states(cache, #state{} = State) ->
@@ -1221,9 +1300,9 @@ test_footprint_end_small() ->
 assemble_repack_chunk_test_() ->
 [
 	ar_test_node:test_with_mocked_functions([
-		{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
-	],
-	fun test_assemble_repack_chunk/0, 30),
+			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
+		],
+		fun test_assemble_repack_chunk/0, 30),
 	ar_test_node:test_with_mocked_functions([
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
 		],
@@ -1249,7 +1328,8 @@ test_assemble_repack_chunk() ->
 
 	% %% Error - BucketEndOffset hasn't been initialized
 	?assertEqual(not_found,
-		assemble_repack_chunk(not_found, 100, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+		assemble_repack_chunk(not_found, 100, {replica_2_9, Addr}, Metadata, #{}, 
+		unpacked, StoreID)),
 
 	ExpectedRepackedChunk = #repack_chunk{
 		source_packing = unpacked,
@@ -1279,7 +1359,7 @@ test_assemble_repack_chunk() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 100, unpacked, Metadata, #{ 100 => Chunk }, StoreID)
+			}, 100, unpacked, Metadata, #{ 100 => Chunk }, unpacked, StoreID)
 	),
 	%% unpacked -> packed
 	?assertEqual(
@@ -1290,7 +1370,7 @@ test_assemble_repack_chunk() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 100, {replica_2_9, Addr}, Metadata, #{ 100 => Chunk }, StoreID)
+			}, 100, {replica_2_9, Addr}, Metadata, #{ 100 => Chunk }, unpacked, StoreID)
 	),
 
 	%% Chunk after the strict data split threshold
@@ -1309,7 +1389,7 @@ test_assemble_repack_chunk() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 10_000_000, unpacked, Metadata, #{ 10_223_616 => Chunk }, StoreID)
+			}, 10_000_000, unpacked, Metadata, #{ 10_223_616 => Chunk }, unpacked, StoreID)
 	),
 	%% unpacked -> packed
 	?assertEqual(
@@ -1320,7 +1400,8 @@ test_assemble_repack_chunk() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{ 10_223_616 => Chunk }, StoreID)
+			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{ 10_223_616 => Chunk }, 
+			unpacked, StoreID)
 	),
 	ok.
 
@@ -1342,13 +1423,13 @@ test_assemble_repack_chunk_too_small_unpacked() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 100, unpacked, Metadata, #{}, StoreID)),
+			}, 100, unpacked, Metadata, #{}, unpacked, StoreID)),
 	%% unpacked -> packed
 	?assertEqual(not_found,
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 100, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+			}, 100, {replica_2_9, Addr}, Metadata, #{}, unpacked, StoreID)),
 
 	%% Small chunk after the strict data split threshold
 	%% unpacked -> unpacked
@@ -1356,7 +1437,7 @@ test_assemble_repack_chunk_too_small_unpacked() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 10_000_000, unpacked, Metadata, #{}, StoreID)),
+			}, 10_000_000, unpacked, Metadata, #{}, unpacked, StoreID)),
 	%% unpacked -> packed
 	ExpectedRepackedChunk = #repack_chunk{
 		source_packing = unpacked,
@@ -1380,7 +1461,7 @@ test_assemble_repack_chunk_too_small_unpacked() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{}, unpacked, StoreID)),
 	ok.
 
 test_assemble_repack_chunk_too_small_packed() ->
@@ -1401,13 +1482,13 @@ test_assemble_repack_chunk_too_small_packed() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 100, unpacked, Metadata, #{}, StoreID)),
+			}, 100, unpacked, Metadata, #{}, {spora_2_6, <<"addr">>}, StoreID)),
 	%% packed -> packed
 	?assertEqual(not_found,
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 100, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+			}, 100, {replica_2_9, Addr}, Metadata, #{}, {spora_2_6, <<"addr">>}, StoreID)),
 
 	%% Small chunk after the strict data split threshold
 	ExpectedRepackedChunk = #repack_chunk{
@@ -1432,13 +1513,14 @@ test_assemble_repack_chunk_too_small_packed() ->
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = unpacked
-			}, 10_000_000, unpacked, Metadata, #{}, StoreID)),
+			}, 10_000_000, unpacked, Metadata, #{}, {spora_2_6, <<"addr">>}, StoreID)),
 	%% packed -> packed
 	?assertEqual(ExpectedRepackedChunk#repack_chunk{target_packing = {replica_2_9, Addr}},
 		assemble_repack_chunk(
 			#repack_chunk{
 				target_packing = {replica_2_9, Addr}
-			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{}, StoreID)),
+			}, 10_000_000, {replica_2_9, Addr}, Metadata, #{},
+			{spora_2_6, <<"addr">>}, StoreID)),
 	ok.
 
 should_repack_test_() ->
@@ -1446,31 +1528,31 @@ should_repack_test_() ->
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> false end},
-			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> false end}
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
 		],
 		fun test_should_repack_no_chunk_no_entropy/0, 30),
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, {replica_2_9, <<"addr">>}} end},
-			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> true end}
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
 		],
 		fun test_should_repack_chunk_and_entropy/0, 30),
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> false end},
-			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> true end}
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
 		],
 		fun test_should_repack_entropy_but_no_chunk/0, 30),
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
-			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> true end}
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
 		],
 		fun test_should_repack_unpacked_chunk_and_entropy/0, 30),
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
-			{ar_entropy_storage, is_entropy_recorded, fun(_, _) -> false end}
+			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
 		],
 		fun test_should_repack_unpacked_chunk_no_entropy/0, 30)
 	].
@@ -1760,7 +1842,7 @@ test_get_read_range_before_strict() ->
 	),
 	%% range end limit
 	?assertEqual(
-		{2359295, 2883583, [2359296, 2621440]},
+		{2359295, 2700000, [2359296, 2621440]},
 		get_read_range(2359296, 2_700_000, 4)
 	),
 	%% partition end limit
@@ -1789,7 +1871,7 @@ test_get_read_range_after_strict() ->
 	),
 	%% range end limit
 	?assertEqual(
-		{2272864, 2797152, [2359296, 2621440]},
+		{2272864, 2700000, [2359296, 2621440]},
 		get_read_range(2359296, 2_700_000, 4)
 	),
 	%% partition end limit

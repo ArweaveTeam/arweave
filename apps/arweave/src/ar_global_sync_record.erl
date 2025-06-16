@@ -86,7 +86,7 @@ init([]) ->
 			end
 		end,
 		ar_intervals:new(),
-		["default" | Config#config.storage_modules]
+		[?DEFAULT_MODULE | Config#config.storage_modules]
 	),
 	SyncBuckets = ar_sync_buckets:from_intervals(SyncRecord),
 	{SyncBuckets2, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets,
@@ -127,8 +127,9 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, StoreID}}, State) ->
-	case ar_storage_module:get_packing(StoreID) of
+handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, Module}}, State) ->
+	Packing = ar_storage_module:get_packing(Module),
+	case Packing of
 		{replica_2_9, _} when ?BLOCK_2_9_SYNCING ->
 			%% Ignore replica.2.9 packing. This is a temporary solution until
 			%% we can support data syncing in batches corresponding to the

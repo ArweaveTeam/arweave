@@ -12,7 +12,7 @@
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
 		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
-		docs/0, shutdown/1, console/1, console/2]).
+		docs/0, shutdown/1, console/1, console/2, prep_stop/1]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -250,9 +250,13 @@ show_help() ->
 			{"disable (feature)", "Disable a specific (normally enabled) feature."},
 			{"requests_per_minute_limit (number)", "Limit the maximum allowed number of HTTP "
 					"requests per IP address per minute. Default is 900."},
-			{"max_connections", "The number of connections to be handled concurrently. "
-					"Its purpose is to prevent your system from being overloaded and ensuring "
-					"all the connections are handled optimally. Default is 1024."},
+			{"max_connections", io:format(
+				"The number of connections to be handled concurrently. "
+				"Its purpose is to prevent your system from being overloaded and "
+				"ensuring all the connections are handled optimally. "
+				"Default is ~p.",
+				[?DEFAULT_COWBOY_TCP_MAX_CONNECTIONS]
+			)},
 			{"disk_pool_data_root_expiration_time",
 				"The time in seconds of how long a pending or orphaned data root is kept in "
 				"the disk pool. The default is 2 * 60 * 60 (2 hours)."},
@@ -371,8 +375,144 @@ show_help() ->
 				"flags are disallowed. See the node output for details."},
 			{"verify_samples (num)", io_lib:format("Number of chunks to sample and unpack "
 				"during 'verify'. Default is ~B.", [?SAMPLE_CHUNK_COUNT])},
-			{"shutdown_tcp_connection_timeout", io_lib:format("shutdown tcp connection timeout in seconds. "
-				"Default is ~Bs.", [?SHUTDOWN_TCP_CONNECTION_TIMEOUT])}
+
+			% Shutdown management
+			{"shutdown_tcp_connection_timeout", io_lib:format(
+				"Configure shutdown TCP connection timeout (seconds). "
+				"Default is '~p'.",
+				[?SHUTDOWN_TCP_CONNECTION_TIMEOUT]
+			)},
+			{"shutdown_tcp_mode", io_lib:format(
+				"Configure shutdown TCP mode (shutdown or close). "
+				"Default is '~p'.",
+				[?SHUTDOWN_TCP_MODE]
+			)},
+
+			% Global socket configuration
+			{"socket.backend", io_lib:format(
+				"Configure Erlang default socket backend (inet or socket). "
+				"Default is '~p'.",
+				[?DEFAULT_SOCKET_BACKEND]
+			)},
+
+			% Gun HTTP Client Tuning
+			{"http_client.http.closing_timeout", io_lib:format(
+				"Configure HTTP Client closing timeout parameter (milliseconds). "
+				"Default is '~p'.",
+				[?DEFAULT_GUN_HTTP_CLOSING_TIMEOUT]
+			)},
+			{"http_client.http.keepalive", io_lib:format(
+				"Configure HTTP Client keep alive parameter (seconds or infinity). "
+				"Default is '~p'.",
+				[?DEFAULT_GUN_HTTP_KEEPALIVE]
+			)},
+			{"http_client.tcp.delay_send", io_lib:format(
+				"Configure HTTP Client TCP delay send parameter (boolean). "
+				"Default is '~p'.",
+				[?DEFAULT_GUN_TCP_DELAY_SEND]
+			)},
+			{"http_client.tcp.keepalive", io_lib:format(
+				"Configure HTTP Client TCP keepalive parameter (boolean). "
+				"Default is '~p'.",
+				[?DEFAULT_GUN_TCP_KEEPALIVE]
+			)},
+			{"http_client.tcp.linger", io_lib:format(
+				"Configure HTTP Client TCP linger parameter (boolean). "
+				"Default is '~p'.",
+				[?DEFAULT_GUN_TCP_LINGER]
+			)},
+			{"http_client.tcp.linger_timeout", io_lib:format(
+				"Configure HTTP Client TCP linger timeout parameter (seconds). "
+				"Default is '~p'.",
+				[?DEFAULT_GUN_TCP_LINGER_TIMEOUT]
+			)},
+			{"http_client.tcp.nodelay", io_lib:format(
+				"Configure HTTP Client TCP nodelay parameter (boolean). "
+				"Default is '~p'.",
+				[?DEFAULT_GUN_TCP_NODELAY]
+			)},
+			{"http_client.tcp.send_timeout_close", io_lib:format(
+				"Configure HTTP Client TCP send timeout close parameter (boolean). "
+				"Default is '~p'.",
+				[?DEFAULT_GUN_TCP_SEND_TIMEOUT_CLOSE]
+			)},
+			{"http_client.tcp.send_timeout", io_lib:format(
+				"Configure HTTP Client TCP send timeout parameter (milliseconds). "
+				"Default is '~p'.",
+				[?DEFAULT_GUN_TCP_SEND_TIMEOUT]
+			)},
+
+			% Cowboy HTTP Server Tuning
+			{"http_api.http.active_n", io_lib:format(
+				"Configure HTTP Server number of packets requested per sockets (integer). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_HTTP_ACTIVE_N]
+			)},
+			{"http_api.http.inactivity_timeout", io_lib:format(
+				"Configure HTTP Server inactivity timeout (milliseconds). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_HTTP_INACTIVITY_TIMEOUT]
+			)},
+			{"http_api.http.linger_timeout", io_lib:format(
+				"Configure HTTP Server linger timeout (milliseconds). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_HTTP_LINGER_TIMEOUT]
+			)},
+			{"http_api.http.request_timeout", io_lib:format(
+				"Configure HTTP Server request timeout (milliseconds). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_HTTP_REQUEST_TIMEOUT]
+			)},
+			{"http_api.tcp.backlog", io_lib:format(
+				"Configure HTTP Server TCP backlog parameter (integer). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_TCP_BACKLOG]
+			)},
+			{"http_api.tcp.delay_send", io_lib:format(
+				"Configure HTTP Server TCP delay send parameter (boolean). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_TCP_DELAY_SEND]
+			)},
+			{"http_api.tcp.keepalive", io_lib:format(
+				"Configure HTTP Server TCP keepalive parameter (boolean). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_TCP_KEEPALIVE]
+			)},
+			{"http_api.tcp.linger", io_lib:format(
+				"Configure HTTP Server TCP linger parameter (boolean). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_TCP_LINGER]
+			)},
+			{"http_api.tcp.linger_timeout", io_lib:format(
+				"Configure HTTP Server TCP linger timeout parameter (seconds). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_TCP_LINGER_TIMEOUT]
+			)},
+			{"http_api.tcp.listener_shutdown", io_lib:format(
+				"Configure HTTP Server listener shutdown (seconds)."
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN]
+			)},
+			{"http_api.tcp.nodelay", io_lib:format(
+				"Configure HTTP Server TCP nodelay parameter (boolean). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_TCP_NODELAY]
+			)},
+			{"http_api.tcp.num_acceptors", io_lib:format(
+				"Configure HTTP Server TCP acceptors (integer). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_TCP_NUM_ACCEPTORS]
+			)},
+			{"http_api.tcp.send_timeout_close", io_lib:format(
+				"Configure HTTP Server TCP send timeout close parameter (boolean). "
+				"Default is '~p'.",
+				 [?DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE]
+			)},
+			{"http_api.tcp.send_timeout", io_lib:format(
+				"Configure HTTP Server TCP send timeout parameter (milliseconds). "
+				"Default is '~p'.",
+				[?DEFAULT_COWBOY_TCP_SEND_TIMEOUT]
+			)}
 		]
 	),
 	erlang:halt().
@@ -407,7 +547,7 @@ parse_cli_args(["verify", "purge" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ verify = purge });
 parse_cli_args(["verify", "log" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ verify = log });
-parse_cli_args(["verify", _ | _], C) ->
+parse_cli_args(["verify", _ | _], _C) ->
 	io:format("Invalid verify mode. Valid modes are 'purge' or 'log'.~n"),
 	timer:sleep(1000),
 	erlang:halt();
@@ -585,7 +725,18 @@ parse_cli_args(["post_tx_timeout", Num | Rest], C) ->
 parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
 	parse_cli_args(Rest, C#config{ tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ max_connections = list_to_integer(Num) });
+	try list_to_integer(Num) of
+		N when N >= 1 ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.max_connections' = N });
+		_ ->
+			io:format("Invalid max_connections ~p", [Num]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid max_connections ~p", [Num]),
+			parse_cli_args(Rest, C)
+
+	end;
 parse_cli_args(["max_gateway_connections", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_gateway_connections = list_to_integer(Num) });
 parse_cli_args(["max_poa_option_depth", Num | Rest], C) ->
@@ -700,7 +851,280 @@ parse_cli_args(["rocksdb_wal_sync_interval", Seconds | Rest], C) ->
 
 %% tcp shutdown procedure
 parse_cli_args(["shutdown_tcp_connection_timeout", Delay|Rest], C) ->
-		parse_cli_args(Rest, C#config{ shutdown_tcp_connection_timeout = list_to_integer(Delay) });
+	parse_cli_args(Rest, C#config{ shutdown_tcp_connection_timeout = list_to_integer(Delay) });
+parse_cli_args(["shutdown_tcp_mode", RawMode|Rest], C) ->
+	case RawMode of
+		"shutdown" ->
+			parse_cli_args(Rest, C#config{ shutdown_tcp_mode = shutdown});
+		"close" ->
+			parse_cli_args(Rest, C#config{ shutdown_tcp_mode = close });
+		Mode ->
+			io:format("Mode ~p is invalid.~n", [Mode]),
+			parse_cli_args(Rest, C)
+	end;
+
+%% global socket configuration
+parse_cli_args(["socket.backend", Backend|Rest], C) ->
+	case Backend of
+		"inet" ->
+			parse_cli_args(Rest, C#config{ 'socket.backend' = inet });
+		"socket" ->
+			parse_cli_args(Rest, C#config{ 'socket.backend' = socket });
+		_ ->
+			io:format("Invalid socket.backend ~p.", [Backend]),
+			parse_cli_args(Rest, C)
+	end;
+
+%% gun http client configuration
+parse_cli_args(["http_client.http.keepalive", "infinity"|Rest], C) ->
+	parse_cli_args(Rest, C#config{ 'http_client.http.keepalive' = infinity});
+parse_cli_args(["http_client.http.keepalive", Keepalive|Rest], C) ->
+	try list_to_integer(Keepalive) of
+		K when K >= 0 ->
+			parse_cli_args(Rest, C#config{ 'http_client.http.keepalive' = K });
+		_ ->
+			io:format("Invalid http_client.http.keepalive ~p.", [Keepalive]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_client.http.keepalive ~p.", [Keepalive]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_client.tcp.delay_send", DelaySend|Rest], C) ->
+	case DelaySend of
+		"true" ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.delay_send' = true });
+		"false" ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.delay_send' = false });
+		_ ->
+			io:format("Invalid http_client.tcp.delay_send ~p.", [DelaySend]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_client.tcp.keepalive", Keepalive|Rest], C) ->
+	case Keepalive of
+		"true" ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.keepalive' = true });
+		"false" ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.keepalive' = false });
+		_ ->
+			io:format("Invalid http_client.tcp.keepalive ~p.", [Keepalive]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_client.tcp.linger", Linger|Rest], C) ->
+	case Linger of
+		"true" ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.linger' = true });
+		"false" ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.linger' = false});
+		_ ->
+			io:format("Invalid http_client.tcp.linger ~p.", [Linger]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_client.tcp.linger_timeout", Timeout|Rest], C) ->
+	try list_to_integer(Timeout) of
+		T when T >= 0 ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.linger_timeout' = T });
+		_ ->
+			io:format("Invalid http_client.tcp.linger_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_client.tcp.linger_timeout timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_client.tcp.nodelay", Nodelay|Rest], C) ->
+	case Nodelay of
+		"true" ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.nodelay' = true });
+		"false" ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.nodelay' = false });
+		_ ->
+			io:format("Invalid http_client.tcp.nodelay ~p.", [Nodelay]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_client.tcp.send_timeout_close", Value|Rest], C) ->
+	case Value of
+		"true" ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.send_timeout_close' = true });
+		"false" ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.send_timeout_close' = false });
+		_ ->
+			io:format("Invalid http_client.tcp.send_timeout_close ~p.", [Value]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_client.tcp.send_timeout", Timeout|Rest], C) ->
+	try list_to_integer(Timeout) of
+		T when T >= 0 ->
+			parse_cli_args(Rest, C#config{ 'http_client.tcp.send_timeout' = T });
+		_ ->
+			io:format("Invalid http_client.tcp.send_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_client.tcp.send_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	end;
+
+%% cowboy http server configuration
+parse_cli_args(["http_api.http.active_n", Active|Rest], C) ->
+	try list_to_integer(Active) of
+		N when N >= 1 ->
+			parse_cli_args(Rest, C#config{ 'http_api.http.active_n' = N });
+		_ ->
+			io:format("Invalid http_api.http.active_n ~p.", [Active]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_api.http.active_n ~p.", [Active]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.http.inactivity_timeout", Timeout|Rest], C) ->
+	try list_to_integer(Timeout) of
+		T when T >= 0 ->
+			parse_cli_args(Rest, C#config{ 'http_api.http.inactivity_timeout' = T });
+		_ ->
+			io:format("Invalid http_api.http.inactivity_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_api.http.inactivity_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.http.linger_timeout", Timeout|Rest], C) ->
+	try list_to_integer(Timeout) of
+		T when T >= 0 ->
+			parse_cli_args(Rest, C#config{ 'http_api.http.linger_timeout' = T });
+		_ ->
+			io:format("Invalid http_api.http.linger_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_api.http.linger_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.http.request_timeout", Timeout|Rest], C) ->
+	try list_to_integer(Timeout) of
+		T when T >= 0 ->
+			parse_cli_args(Rest, C#config{ 'http_api.http.request_timeout' = T });
+		_ ->
+			io:format("Invalid http_api.http.request_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_api.http.request_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.tcp.backlog", Backlog|Rest], C) ->
+	try list_to_integer(Backlog)of
+		B when B >= 1 ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.backlog' = B });
+		_ ->
+			io:format("Invalid http_api.tcp.backlog ~p.", [Backlog]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_api.tcp.backlog ~p.", [Backlog]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.tcp.delay_send", DelaySend|Rest], C) ->
+	case DelaySend of
+		"true" ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.delay_send' = true });
+		"false" ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.delay_send' = false });
+		_ ->
+			io:format("Invalid http_api.tcp.delay_send ~p.", [DelaySend]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.tcp.keepalive", "true"|Rest], C) ->
+	parse_cli_args(Rest, C#config{ 'http_api.tcp.keepalive' = true});
+parse_cli_args(["http_api.tcp.keepalive", "false"|Rest], C) ->
+	parse_cli_args(Rest, C#config{ 'http_api.tcp.keepalive' = false});
+parse_cli_args(["http_api.tcp.keepalive", Keepalive|Rest], C) ->
+	io:format("Invalid http_api.tcp.keepalive ~p.", [Keepalive]),
+	parse_cli_args(Rest, C);
+parse_cli_args(["http_api.tcp.linger", Linger|Rest], C) ->
+	case Linger of
+		"true" ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.linger' = true });
+		"false" ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.linger' = false});
+		_ ->
+			io:format("Invalid http_api.tcp.linger ~p.", [Linger]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.tcp.linger_timeout", Timeout|Rest], C) ->
+	try list_to_integer(Timeout) of
+		T when T >= 0 ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.linger_timeout' = T });
+		_ ->
+			io:format("Invalid http_api.tcp.linger_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_api.tcp.linger_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.tcp.listener_shutdown", "brutal_kill"|Rest], C) ->
+	parse_cli_args(Rest, C#config{ 'http_api.tcp.listener_shutdown' = brutal_kill});
+parse_cli_args(["http_api.tcp.listener_shutdown", "infinity"|Rest], C) ->
+	parse_cli_args(Rest, C#config{ 'http_api.tcp.listener_shutdown' = infinity });
+parse_cli_args(["http_api.tcp.listener_shutdown", Shutdown|Rest], C) ->
+	try list_to_integer(Shutdown) of
+		S when S >= 0 ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.listener_shutdown' = S });
+		_ ->
+			io:format("Invalid http_api.tcp.listener_shutdown ~p.", [Shutdown]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_api.tcp.listener_shutdown ~p.", [Shutdown]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.tcp.nodelay", Nodelay|Rest], C) ->
+	case Nodelay of
+		"true" ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.nodelay' = true });
+		"false" ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.nodelay' = false });
+		_ ->
+			io:format("Invalid http_api.tcp.nodelay ~p.", [Nodelay]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.tcp.num_acceptors", Acceptors|Rest], C) ->
+	try list_to_integer(Acceptors) of
+		N when N >= 0 ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.num_acceptors' = N });
+		_ ->
+			io:format("Invalid http_api.tcp.num_acceptors ~p.", [Acceptors]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_api.tcp.num_acceptors ~p.", [Acceptors]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.tcp.send_timeout_close", Value|Rest], C) ->
+	case Value of
+		"true" ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.send_timeout_close' = true });
+		"false" ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.send_timeout_close' = false });
+		_ ->
+			io:format("Invalid http_api.tcp.send_timeout_close ~p.", [Value]),
+			parse_cli_args(Rest, C)
+	end;
+parse_cli_args(["http_api.tcp.send_timeout", Timeout|Rest], C) ->
+	try list_to_integer(Timeout) of
+		T when T >= 0 ->
+			parse_cli_args(Rest, C#config{ 'http_api.tcp.send_timeout' = T });
+		_ ->
+			io:format("Invalid http_api.tcp.send_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid http_api.tcp.send_timeout ~p.", [Timeout]),
+			parse_cli_args(Rest, C)
+	end;
 
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->
@@ -724,7 +1148,7 @@ start(Config) ->
 			logger:add_handler(console, logger_std_h, #{level => all});
 		_->
 			ok
-  	end,
+	end,
 	case ar_config:validate_config(Config) of
 		true ->
 			ok;
@@ -748,6 +1172,8 @@ start(Config) ->
 
 start(normal, _Args) ->
 	{ok, Config} = application:get_env(arweave, config),
+	%% Set erlang socket backend
+	persistent_term:put({kernel, inet_backend}, Config#config.'socket.backend'),
 	%% Configure logger
 	ar_logger:init(Config),
 	%% Start the Prometheus metrics subsystem.
@@ -870,6 +1296,16 @@ benchmark_2_9(Args) ->
 
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
+
+prep_stop(State) ->
+	% When arweave is stopped, the first step is to stop
+	% accepting connections from other peers, and then
+	% start the shutdown procedure.
+	ok = ranch:suspend_listener(ar_http_iface_listener),
+
+	% all timers/intervals must be stopped.
+	ar_timer:terminate_timers(),
+	State.
 
 stop(_State) ->
 	?LOG_INFO([{stop, ?MODULE}]).
@@ -1017,4 +1453,3 @@ console(Format) ->
 console(Format, Params) ->
 	io:format(Format, Params).
 -endif.
-

@@ -2,8 +2,8 @@
 
 -export([start/1]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Represents a process that handles downloading the block index and the latest
@@ -235,7 +235,7 @@ do_join(Peers, B, BI) ->
 	PeerQ = queue:from_list(Peers),
 	Trail = lists:sublist(tl(BI), 2 * ?MAX_TX_ANCHOR_DEPTH),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
-	Retries = lists:foldl(fun(Peer, Acc) -> maps:put(Peer, 10, Acc) end, #{}, Peers),
+	Retries = lists:foldl(fun(Peer, Acc) -> maps:put(Peer, 5, Acc) end, #{}, Peers),
 	Blocks = [B#block{ size_tagged_txs = SizeTaggedTXs }
 			| get_block_trail(WorkerQ, PeerQ, Trail, Retries)],
 	ar:console("Downloaded the block trail successfully.~n", []),
@@ -269,8 +269,13 @@ request_blocks([{H, _, _} | Trail], WorkerQ, PeerQ) ->
 
 get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 	receive
-		{block_response, H, _Peer, {_, #block{} = BShadow, _, _}} ->
-			ar_disk_cache:write_block_shadow(BShadow),
+		{block_response, H, _Peer, #block{} = BShadow, Origin} ->
+			case Origin of
+				storage ->
+					ok;
+				_ ->
+					ar_disk_cache:write_block_shadow(BShadow)
+			end,
 			TXCount = length(BShadow#block.txs),
 			FetchState2 = maps:put(H, {BShadow, #{}, TXCount}, FetchState),
 			AwaitingBlockCount = maps:get(awaiting_block_count, FetchState2),
@@ -291,7 +296,7 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 				_ ->
 					get_block_trail_loop(WorkerQ2, PeerQ2, Retries, Trail, FetchState3)
 			end;
-		{block_response, H, Peer, Response} ->
+		{block_response, H, Peer, Response, peer} ->
 			PeerRetries = maps:get(Peer, Retries),
 			case PeerRetries > 0 of
 				true ->
@@ -339,8 +344,13 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 							end
 					end
 			end;
-		{tx_response, H, TXID, _Peer, #tx{} = TX} ->
-			ar_disk_cache:write_tx(TX),
+		{tx_response, H, TXID, _Peer, #tx{} = TX, Origin} ->
+			case Origin of
+				storage ->
+					ok;
+				_ ->
+					ar_disk_cache:write_tx(TX)
+			end,
 			{BShadow, TXMap, AwaitingTXCount} = maps:get(H, FetchState),
 			TXMap2 = maps:put(TXID, TX, TXMap),
 			AwaitingTXCount2 = AwaitingTXCount - 1,
@@ -362,7 +372,7 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 				_ ->
 					get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState3)
 			end;
-		{tx_response, H, TXID, Peer, Response} ->
+		{tx_response, H, TXID, Peer, Response, peer} ->
 			PeerRetries = maps:get(Peer, Retries),
 			case PeerRetries > 0 of
 				true ->
@@ -484,10 +494,30 @@ join_peers(Peers) ->
 worker() ->
 	receive
 		{get_block_shadow, H, Peer, From} ->
-			From ! {block_response, H, Peer, ar_http_iface_client:get_block_shadow([Peer], H)},
+			case ar_storage:read_block(H) of
+				#block{} = B ->
+					From ! {block_response, H, Peer, B, storage};
+				unavailable ->
+					case ar_http_iface_client:get_block_shadow([Peer], H) of
+						{_, B, _, _} ->
+							From ! {block_response, H, Peer, B, peer};
+						Error ->
+							From ! {block_response, H, Peer, Error, peer}
+					end
+			end,
 			worker();
 		{get_tx, H, TXID, Peer, From} ->
-			From ! {tx_response, H, TXID, Peer, ar_http_iface_client:get_tx(Peer, TXID)},
+			case ar_storage:read_tx(TXID) of
+				#tx{} = TX ->
+					From ! {tx_response, H, TXID, Peer, TX, storage};
+				unavailable ->
+					case ar_http_iface_client:get_tx_from_remote_peer(Peer, TXID, true) of
+						{TX, _, _, _} ->
+							From ! {tx_response, H, TXID, Peer, TX, peer};
+						Error ->
+							From ! {tx_response, H, TXID, Peer, Error, peer}
+					end
+			end,
 			worker()
 	end.
 

@@ -45,7 +45,7 @@ test_syncs_headers() ->
 	),
 	%% Throw the event to simulate running out of disk space.
 	ar_disksup:pause(),
-	ar_events:send(disksup, {remaining_disk_space, "default", true, 0, 0}),
+	ar_events:send(disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, 0, 0}),
 	NoSpaceHeight = ?MAX_TX_ANCHOR_DEPTH + 6,
 	NoSpaceTX = sign_v1_tx(main, Wallet,
 		#{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),

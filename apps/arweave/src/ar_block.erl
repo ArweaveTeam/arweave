@@ -544,7 +544,7 @@ generate_block_data_segment_base(B) ->
 							integer_to_binary(ScheduledRateDividend),
 							integer_to_binary(ScheduledRateDivisor),
 							integer_to_binary(B#block.packing_2_5_threshold),
-integer_to_binary(B#block.strict_data_split_threshold)
+							integer_to_binary(B#block.strict_data_split_threshold)
 							| Props
 						];
 					false ->

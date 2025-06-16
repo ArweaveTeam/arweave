@@ -108,13 +108,13 @@ handle_cast(_Msg, State) ->
 
 handle_info(timeout, #state{ paused = true } = State) ->
 	?LOG_INFO([{event, disksup_paused}]),
-	{ok, _Tref} = timer:send_after(State#state.timeout, timeout),
+	{ok, _} = ar_timer:send_after(State#state.timeout, timeout),
 	{noreply, State};
 handle_info(timeout, State) ->
 	NewDiskData = check_disk_space(State#state.os, State#state.port),
 	ensure_storage_modules_paths(),
 	broadcast_disk_free(State#state.os, State#state.port),
-	{ok, _Tref} = timer:send_after(State#state.timeout, timeout),
+	{ok, _} = ar_timer:send_after(State#state.timeout, timeout),
 	{noreply, State#state{ diskdata = NewDiskData }};
 
 handle_info({'EXIT', _Port, Reason}, State) ->
@@ -417,7 +417,7 @@ get_storage_modules_paths() ->
 		end,
 		Config#config.storage_modules
 	),
-	[{"default", DataDir} | SMDirs].
+	[{?DEFAULT_MODULE, DataDir} | SMDirs].
 
 ensure_storage_modules_paths() ->
 	StoragePaths = get_storage_modules_paths(),

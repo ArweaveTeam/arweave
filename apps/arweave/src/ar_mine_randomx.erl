@@ -10,7 +10,7 @@
 		randomx_encrypt_replica_2_9_sub_chunk/1,
 		randomx_decrypt_replica_2_9_sub_chunk/1,
 		randomx_decrypt_replica_2_9_sub_chunk2/1,
-		encipher_sub_chunk/2]).
+		exor_sub_chunk/2]).
 
 %% These exports are required for the STUB mode, where these functions are unused.
 %% Also, some of these functions are used in ar_mine_randomx_tests.
@@ -148,20 +148,20 @@ randomx_decrypt_replica_2_9_sub_chunk({PackingState, Key, SubChunk,
 randomx_decrypt_replica_2_9_sub_chunk2({Entropy, SubChunk, EntropySubChunkIndex}) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
-	{ok, crypto:exor(SubChunk, EntropyPart)}.
+	{ok, exor_sub_chunk(SubChunk, EntropyPart)}.
 
 randomx_encrypt_replica_2_9_sub_chunk(
 		{_PackingState, Entropy, SubChunk, EntropySubChunkIndex}) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
-	{ok, encipher_sub_chunk(SubChunk, EntropyPart)}.
+	{ok, exor_sub_chunk(SubChunk, EntropyPart)}.
 
-%% @doc Encipher the given sub-chunk using the given 2.9 entropy.
--spec encipher_sub_chunk(
+%% @doc Encipher/decipher the given sub-chunk using the given 2.9 entropy.
+-spec exor_sub_chunk(
 		SubChunk :: binary(),
 		EntropyPart :: binary()
 ) -> binary().
-encipher_sub_chunk(SubChunk, EntropyPart) ->
+exor_sub_chunk(SubChunk, EntropyPart) ->
 	crypto:exor(SubChunk, EntropyPart).
 
 %%%===================================================================

@@ -17,9 +17,10 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_wallets.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
+-include("ar_wallets.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
@@ -331,7 +332,10 @@ read_block(Height, BI) when is_integer(Height) ->
 read_block(H, _BI) ->
 	read_block(H).
 
-%% @doc Read a block from disk, given a hash, a height, or a block index entry.
+%% @doc Read a block from disk, given a hash or a block index entry.
+-spec read_block(
+	B :: binary() | #block{} | [#block{}] | {binary(), non_neg_integer(), non_neg_integer()}
+) -> unavailable | #block{} | [#block{} | unavailable].
 read_block(unavailable) ->
 	unavailable;
 read_block(B) when is_record(B, block) ->
@@ -360,7 +364,8 @@ read_block(BH) ->
 				{error, Reason} ->
 					?LOG_WARNING([{event, error_reading_block_from_kv_storage},
 							{block, ar_util:encode(BH)},
-							{error, io_lib:format("~p", [Reason])}])
+							{error, io_lib:format("~p", [Reason])}]),
+					unavailable
 			end
 	end.
 
@@ -565,7 +570,8 @@ migrate_tx_record({tx, Format, ID, LastTX, Owner, Tags, Target, Quantity, Data,
 			owner = Owner, tags = Tags, target = Target, quantity = Quantity,
 			data = Data, data_size = DataSize, data_root = DataRoot,
 			signature = Signature, signature_type = ?DEFAULT_KEY_TYPE,
-			reward = Reward, data_tree = DataTree }.
+			reward = Reward, data_tree = DataTree,
+			owner_address = ar_wallet:to_address(Owner, ?DEFAULT_KEY_TYPE) }.
 
 parse_block_kv_binary(Bin) ->
 	case catch ar_serialize:binary_to_block(Bin) of
@@ -726,6 +732,9 @@ write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks, TXID) ->
 	end.
 
 %% @doc Read a tx from disk, given a hash.
+-spec read_tx(
+	binary() | #tx{} | [#tx{}]
+) -> unavailable | #tx{} | [#tx{} | unavailable].
 read_tx(unavailable) ->
 	unavailable;
 read_tx(TX) when is_record(TX, tx) ->
@@ -746,12 +755,13 @@ read_tx2(ID) ->
 			read_tx_from_file(ID);
 		{ok, Binary} ->
 			TX = parse_tx_kv_binary(Binary),
-			case TX#tx.format == 1 andalso TX#tx.data_size > 0
-					andalso byte_size(TX#tx.data) == 0 of
+			TX2 = TX#tx{ owner_address = ar_tx:get_owner_address(TX) },
+			case TX2#tx.format == 1 andalso TX2#tx.data_size > 0
+					andalso byte_size(TX2#tx.data) == 0 of
 				true ->
-					case read_tx_data_from_kv_storage(TX#tx.id) of
+					case read_tx_data_from_kv_storage(TX2#tx.id) of
 						{ok, Data} ->
-							TX#tx{ data = Data };
+							TX2#tx{ data = Data };
 						Error ->
 							?LOG_WARNING([{event, error_reading_tx_from_kv_storage},
 									{tx, ar_util:encode(ID)},
@@ -759,7 +769,7 @@ read_tx2(ID) ->
 							unavailable
 					end;
 				_ ->
-					TX
+					TX2
 			end
 	end.
 

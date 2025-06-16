@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([name/1, read_footprint/4, write_queue/4]).
+-export([name/1, read_footprint/4, write_queue/3]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -59,8 +59,8 @@ read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, StoreID) ->
 	gen_server:cast(name(StoreID),
 		{read_footprint, FootprintOffsets, FootprintStart, FootprintEnd}).
 
-write_queue(WriteQueue, Packing, RewardAddr, StoreID) ->
-	gen_server:cast(name(StoreID), {write_queue, WriteQueue, Packing, RewardAddr}).
+write_queue(WriteQueue, Packing, StoreID) ->
+	gen_server:cast(name(StoreID), {write_queue, WriteQueue, Packing}).
 	
 
 %%%===================================================================
@@ -76,8 +76,8 @@ handle_cast(
 	do_read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, State),
 	{noreply, State};
 
-handle_cast({write_queue, WriteQueue, Packing, RewardAddr}, #state{} = State) ->
-	process_write_queue(WriteQueue, Packing, RewardAddr, State),
+handle_cast({write_queue, WriteQueue, Packing}, #state{} = State) ->
+	process_write_queue(WriteQueue, Packing, State),
 	{noreply, State};
 
 handle_cast(Request, #state{} = State) ->
@@ -163,6 +163,7 @@ do_read_footprint(
 	EndTime = erlang:monotonic_time(),
 	ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
 	log_debug(read_footprint, State, [
+		{bucket_end_offset, BucketEndOffset},
 		{read_range_start, ReadRangeStart},
 		{read_range_end, ReadRangeEnd},
 		{read_range_size_bytes, ReadRangeSizeInBytes},
@@ -180,14 +181,14 @@ do_read_footprint(
 		BucketEndOffset, OffsetChunkMap, OffsetMetadataMap, State#state.store_id),
 	read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, StoreID).
 
-process_write_queue(WriteQueue, Packing, RewardAddr, #state{} = State) ->
+process_write_queue(WriteQueue, Packing, #state{} = State) ->
 	#state{
 		store_id = StoreID
 	} = State,
 	StartTime = erlang:monotonic_time(),
     gb_sets:fold(
         fun({_BucketEndOffset, RepackChunk}, _) ->
-			write_repack_chunk(RepackChunk, Packing, RewardAddr, State)
+			write_repack_chunk(RepackChunk, Packing, State)
         end,
         ok,
         WriteQueue
@@ -203,20 +204,21 @@ process_write_queue(WriteQueue, Packing, RewardAddr, #state{} = State) ->
 		{rate, (gb_sets:size(WriteQueue) / 4 / ElapsedTime) * 1000}
 	]).
 
-write_repack_chunk(RepackChunk, Packing, RewardAddr, #state{} = State) ->
+write_repack_chunk(RepackChunk, Packing, #state{} = State) ->
 	#state{ 
 		store_id = StoreID
 	} = State,
 	
 	case RepackChunk#repack_chunk.state of
 		write_entropy ->
-			Entropy = RepackChunk#repack_chunk.entropy,
+			{replica_2_9, RewardAddr} = Packing,
+			Entropy = RepackChunk#repack_chunk.target_entropy,
 			BucketEndOffset = RepackChunk#repack_chunk.offsets#chunk_offsets.bucket_end_offset,
 			ar_entropy_storage:store_entropy(Entropy, BucketEndOffset, StoreID, RewardAddr);
 		write_chunk ->
 			write_chunk(RepackChunk, Packing, State);
 		_ ->
-			log_error(unexpected_chunk_state, State, [ format_logs(RepackChunk) ])
+			log_error(unexpected_chunk_state, State, format_logs(RepackChunk))
 	end.
 
 write_chunk(RepackChunk, TargetPacking, #state{} = State) ->
@@ -270,9 +272,15 @@ remove_from_sync_record(Offsets, StoreID) ->
 
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	
-	case ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID) of
+	case ar_entropy_storage:delete_record(PaddedEndOffset, StoreID) of
 		ok ->
-			ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
+			case ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID) of
+				ok ->
+					ar_sync_record:delete(
+						PaddedEndOffset, StartOffset, ar_chunk_storage, StoreID);
+				Error ->
+					Error
+			end;
 		Error ->
 			Error
 	end.
@@ -298,9 +306,7 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
 
 	case IsStorageSupported andalso IsReplica29 of
 		true ->
-			BucketStartOffset = BucketEndOffset - ?DATA_CHUNK_SIZE,
-			ar_sync_record:add(BucketEndOffset, BucketStartOffset,
-				ar_chunk_storage_replica_2_9_1_entropy, StoreID);
+			ar_entropy_storage:add_record(BucketEndOffset, Packing, StoreID);
 		_ -> ok
 	end.
 
@@ -331,7 +337,10 @@ format_logs(#repack_chunk{} = RepackChunk) ->
 		offsets = Offsets,
 		metadata = Metadata,
 		chunk = Chunk,
-		entropy = Entropy
+		source_packing = SourcePacking,
+		target_packing = TargetPacking,
+		target_entropy = TargetEntropy,
+		source_entropy = SourceEntropy
 	} = RepackChunk,
 	#chunk_offsets{	
 		absolute_offset = AbsoluteOffset,
@@ -349,7 +358,10 @@ format_logs(#repack_chunk{} = RepackChunk) ->
 		{padded_end_offset, PaddedEndOffset},
 		{chunk_size, ChunkSize},
 		{chunk, atom_or_binary(Chunk)},
-		{entropy, atom_or_binary(Entropy)}
+		{source_packing, ar_serialize:encode_packing(SourcePacking, false)},
+		{target_packing, ar_serialize:encode_packing(TargetPacking, false)},
+		{source_entropy, atom_or_binary(SourceEntropy)},
+		{target_entropy, atom_or_binary(TargetEntropy)}
 	].
 
 atom_or_binary(Atom) when is_atom(Atom) -> Atom;

@@ -72,7 +72,7 @@ add_tx(TX, Status) ->
 		end).
 
 add_tx2(#tx{ id = TXID } = TX, Status) ->
-	{Metadata, MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap} =
+	CheckRequiresUpdate =
 		case get_tx_metadata(TXID) of
 			not_found ->
 				{_, _, Timestamp} = init_tx_metadata(TX, Status),
@@ -86,52 +86,61 @@ add_tx2(#tx{ id = TXID } = TX, Status) ->
 					add_to_origin_tx_map(get_origin_tx_map(), TX)
 				};
 			{KnownTX, PrevStatus, Timestamp} ->
-				TX2 = assert_same_tx(TX, KnownTX),
-				{
-					{TX2, Status, Timestamp},
-					get_mempool_size(),
-					add_to_priority_set(get_priority_set(), TX2, PrevStatus, Status, Timestamp),
-					get_propagation_queue(),
-					get_last_tx_map(),
-					get_origin_tx_map()
-				}
+				{TX2, IsDataUpdatedRequired} = assert_same_tx(TX, KnownTX),
+				case {Status == PrevStatus, IsDataUpdatedRequired} of
+					{true, false} ->
+						does_not_require_update;
+					_ ->
+						{
+							{TX2, Status, Timestamp},
+							get_mempool_size(),
+							add_to_priority_set(get_priority_set(), TX2, PrevStatus, Status, Timestamp),
+							get_propagation_queue(),
+							get_last_tx_map(),
+							get_origin_tx_map()
+						}
+				end
 		end,
-	% Insert all data at the same time to ensure atomicity
-	ets:insert(node_state, [
-		{{tx, TXID}, Metadata},
-		{mempool_size, MempoolSize},
-		{tx_priority_set, PrioritySet},
-		{tx_propagation_queue, PropagationQueue},
-		{last_tx_map, LastTXMap},
-		{origin_tx_map, OriginTXMap}
-	]),
+	case CheckRequiresUpdate of
+		does_not_require_update ->
+			ok;
+		{Metadata, MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap} ->
+			%% Insert all data at the same time to ensure atomicity
+			ets:insert(node_state, [
+				{{tx, TXID}, Metadata},
+				{mempool_size, MempoolSize},
+				{tx_priority_set, PrioritySet},
+				{tx_propagation_queue, PropagationQueue},
+				{last_tx_map, LastTXMap},
+				{origin_tx_map, OriginTXMap}
+			]),
 	
-	case ar_node:is_joined() of
-		true ->
-			% 1. Drop unconfirmable transactions:
-			%    - those with clashing last_tx
-			%    - those which overspend an account
-			% 2. If the mempool is too large, drop low priority transactions until the
-			%    mempool is small enough
-			% To limit revalidation work, all of these checks assume every TX in the
-			% mempool has previously been validated.
-			drop_txs(find_clashing_txs(TX)),
-			drop_txs(find_overspent_txs(TX)),
-			drop_txs(find_low_priority_txs());
-		false ->
-			noop
-	end,
-	ok.
+			case ar_node:is_joined() of
+				true ->
+					%% 1. Drop unconfirmable transactions:
+					%%    - those with clashing last_tx
+					%%    - those which overspend an account
+					%% 2. If the mempool is too large, drop low priority transactions
+					%%    until the mempool is small enough
+					%% To limit revalidation work, all of these checks assume
+					%% every TX in the mempool has previously been validated.
+					drop_txs(find_clashing_txs(TX)),
+					drop_txs(find_overspent_txs(TX)),
+					drop_txs(find_low_priority_txs());
+				false ->
+					noop
+			end
+	end.
 
 assert_same_tx(#tx{ format = 1 } = TX, #tx{ format = 1 } = TX) ->
-	TX;
+	{TX, false};
 assert_same_tx(#tx{ format = 2, data = Data } = TX, #tx{ format = 2 } = TX2) ->
 	true = TX#tx{ data = <<>> } == TX2#tx{ data = <<>> },
 	case byte_size(Data) == 0 of
 		true ->
-			TX2;
+			{TX2, false};
 		false ->
-			TX
+			{TX, true}
 	end.
 
 drop_txs(DroppedTXs) ->
@@ -365,7 +374,7 @@ del_from_last_tx_map(LastTXMap, TX) ->
 %% when resolving overspends.
 add_to_origin_tx_map(OriginTXMap, TX) ->
 	Element = unconfirmed_tx(TX),
-	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Origin = ar_tx:get_owner_address(TX),
 	Set2 = case maps:get(Origin, OriginTXMap, not_found) of
 		not_found ->
 			gb_sets:from_list([Element]);
@@ -376,7 +385,7 @@ add_to_origin_tx_map(OriginTXMap, TX) ->
 
 del_from_origin_tx_map(OriginTXMap, TX) ->
 	Element = unconfirmed_tx(TX),
-	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Origin = ar_tx:get_owner_address(TX),
 	case maps:get(Origin, OriginTXMap, not_found) of
 		not_found ->
 			OriginTXMap;
@@ -512,7 +521,7 @@ find_overspent_txs(<<>>) ->
 	[];
 find_overspent_txs(TX)
 		when TX#tx.reward > 0 orelse TX#tx.quantity > 0  ->
-	Origin = ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type),
+	Origin = ar_tx:get_owner_address(TX),
 	SpentTXIDs = maps:get(Origin, get_origin_tx_map(), gb_sets:new()),
 	% We only care about the origin wallet since we aren't tracking
 	% unconfirmed deposits

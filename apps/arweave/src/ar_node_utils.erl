@@ -20,8 +20,7 @@
 
 %% @doc Update the given accounts by applying a transaction.
 apply_tx(Accounts, Denomination, TX) ->
-	#tx{ owner = From, signature_type = SigType } = TX,
-	Addr = ar_wallet:to_address(From, SigType),
+	Addr = ar_tx:get_owner_address(TX),
 	case maps:get(Addr, Accounts, not_found) of
 		not_found ->
 			Accounts;
@@ -153,13 +152,11 @@ apply_tx2(Accounts, Denomination, TX) ->
 update_sender_balance(Accounts, Denomination,
 		#tx{
 			id = ID,
-			owner = From,
-			signature_type = SigType,
 			quantity = Qty,
 			reward = Reward,
 			denomination = TXDenomination
-		}) ->
-	Addr = ar_wallet:to_address(From, SigType),
+		} = TX) ->
+	Addr = ar_tx:get_owner_address(TX),
 	case maps:get(Addr, Accounts, not_found) of
 		{Balance, _LastTX} ->
 			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),
@@ -637,9 +634,9 @@ validate_block(merkle_rebase_support_threshold, {NewB, OldB}) ->
 -ifdef(AR_TEST).
 is_wallet_invalid(#tx{ signature = <<>> }, _Wallets) ->
 	false;
-is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
-	Address = ar_wallet:to_address(Owner, SigType),
-	case maps:get(Address, Wallets, not_found) of
+is_wallet_invalid(TX, Wallets) ->
+	OwnerAddress = ar_tx:get_owner_address(TX),
+	case maps:get(OwnerAddress, Wallets, not_found) of
 		{Balance, LastTX} when Balance >= 0 ->
 			case Balance of
 				0 ->
@@ -658,9 +655,9 @@ is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
 			true
 	end.
 -else.
-is_wallet_invalid(#tx{ owner = Owner, signature_type = SigType }, Wallets) ->
-	Address = ar_wallet:to_address(Owner, SigType),
-	case maps:get(Address, Wallets, not_found) of
+is_wallet_invalid(TX, Wallets) ->
+	OwnerAddress = ar_tx:get_owner_address(TX),
+	case maps:get(OwnerAddress, Wallets, not_found) of
 		{Balance, LastTX} when Balance >= 0 ->
 			case Balance of
 				0 ->
