@@ -1,8 +1,8 @@
 #include <string.h>
-#include <openssl/sha.h>
 #include <ar_nif.h>
 #include "../randomx_long_with_entropy.h"
 #include "../feistel_msgsize_key_cipher.h"
+#include "../../sha2.h"
 
 #include "../ar_randomx_impl.h"
 
@@ -91,11 +91,7 @@ static ERL_NIF_TERM encrypt_composite_chunk(ErlNifEnv* envPtr,
 		}
 		// Sub-chunk encryption key is the SHA256 hash of the concatenated
 		// input data and the sub-chunk start offset.
-		SHA256_CTX sha256;
-		SHA256_Init(&sha256);
-		SHA256_Update(&sha256, inputDataPtr->data, inputDataPtr->size);
-		SHA256_Update(&sha256, offsetBytes, offsetByteSize);
-		SHA256_Final(key, &sha256);
+		sha2_p2(key, inputDataPtr->data, inputDataPtr->size, offsetBytes, offsetByteSize);
 
 		// Sequentially encrypt each sub-chunk 'iterations' times.
 		for (int j = 0; j < iterations; j++) {
@@ -147,11 +143,7 @@ static ERL_NIF_TERM decrypt_composite_chunk(ErlNifEnv* envPtr,
 		}
 		// Sub-chunk encryption key is the SHA256 hash of the concatenated
 		// input data and the sub-chunk start offset.
-		SHA256_CTX sha256;
-		SHA256_Init(&sha256);
-		SHA256_Update(&sha256, inputDataPtr->data, inputDataPtr->size);
-		SHA256_Update(&sha256, offsetBytes, offsetByteSize);
-		SHA256_Final(key, &sha256);
+		sha2_p2(key, inputDataPtr->data, inputDataPtr->size, offsetBytes, offsetByteSize);
 
 		// Sequentially decrypt each sub-chunk 'iterations' times.
 		for (int j = 0; j < iterations; j++) {
@@ -405,11 +397,7 @@ static ERL_NIF_TERM rx4096_decrypt_composite_sub_chunk_nif(
 	}
 	// Sub-chunk encryption key is the SHA256 hash of the concatenated
 	// input data and the sub-chunk start offset.
-	SHA256_CTX sha256;
-	SHA256_Init(&sha256);
-	SHA256_Update(&sha256, inputData.data, inputData.size);
-	SHA256_Update(&sha256, offsetBytes, offsetByteSize);
-	SHA256_Final(key, &sha256);
+	sha2_p2(key, inputData.data, inputData.size, offsetBytes, offsetByteSize);
 
 	// Sequentially decrypt each sub-chunk 'iterations' times.
 	for (int j = 0; j < iterations; j++) {

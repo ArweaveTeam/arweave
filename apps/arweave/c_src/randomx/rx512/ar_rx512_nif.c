@@ -1,5 +1,4 @@
 #include <string.h>
-#include <openssl/sha.h>
 #include <ar_nif.h>
 #include "../randomx_long_with_entropy.h"
 #include "../feistel_msgsize_key_cipher.h"
