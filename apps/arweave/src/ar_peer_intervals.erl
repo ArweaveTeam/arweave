@@ -43,7 +43,7 @@ fetch(Start, End, StoreID, normal) when Start >= End ->
 			{store_id, StoreID},
 			{range_start, Start},
 			{range_end, End}]),
-	gen_server:cast(ar_data_sync:name(StoreID), {collect_peer_intervals, Start, End});
+	gen_server:cast(ar_data_sync:name(StoreID), {collect_peer_intervals, Start, End, normal});
 fetch(Start, End, StoreID, normal) ->
 	Parent = ar_data_sync:name(StoreID),
 	spawn_link(fun() ->
@@ -71,7 +71,7 @@ fetch(Start, End, StoreID, normal) ->
 				end,
 
 			%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
-			gen_server:cast(Parent, {collect_peer_intervals, End3, End})
+			gen_server:cast(Parent, {collect_peer_intervals, End3, End, normal})
 		catch
 			Class:Reason ->
 				?LOG_WARNING([{event, fetch_peers_process_exit},
@@ -80,7 +80,7 @@ fetch(Start, End, StoreID, normal) ->
 						{range_end, End},
 						{class, Class},
 						{reason, Reason}]),
-				gen_server:cast(Parent, {collect_peer_intervals, Start, End})
+				gen_server:cast(Parent, {collect_peer_intervals, Start, End, normal})
 		end
 	end);
 
@@ -120,7 +120,7 @@ fetch(Start, End, StoreID, footprint) ->
 						(Partition + 1) * ?PARTITION_SIZE
 				end,
 			%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
-			gen_server:cast(Parent, {collect_peer_intervals, Start2, End})
+			gen_server:cast(Parent, {collect_peer_intervals, Start2, End, footprint})
 		catch
 			Class:Reason ->
 				?LOG_WARNING([{event, fetch_footprint_intervals_process_exit},
@@ -129,7 +129,7 @@ fetch(Start, End, StoreID, footprint) ->
 						{range_end, End},
 						{class, Class},
 						{reason, Reason}]),
-				gen_server:cast(Parent, {collect_peer_intervals, Start, End})
+				gen_server:cast(Parent, {collect_peer_intervals, Start, End, footprint})
 		end
 	end).
 

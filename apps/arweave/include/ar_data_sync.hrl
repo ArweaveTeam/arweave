@@ -138,9 +138,6 @@
 	disk_pool_cursor,
 	%% The weave offset for the disk pool - chunks above this offset are stored there.
 	disk_pool_threshold = 0,
-	%% A flag indicating whether the node has joined the network and the syncing module
-	%% has synchronized its state with the node.
-	is_joined = false,
 	%% A reference to the on-disk key value storage mapping
 	%% TXID => {AbsoluteTXEndOffset, TXSize}.
 	%% Is used to serve transaction data by TXID.

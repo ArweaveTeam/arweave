@@ -33,6 +33,10 @@
 -include("ar_data_sync.hrl").
 -include("ar_sync_buckets.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -ifdef(AR_TEST).
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5_000).
 -else.
@@ -877,8 +881,7 @@ handle_cast({join, RecentBI}, State) ->
 		State#sync_data_state{
 			weave_size = WeaveSize,
 			block_index = RecentBI,
-			disk_pool_threshold = DiskPoolThreshold,
-			is_joined = true
+			disk_pool_threshold = DiskPoolThreshold
 		}),
 	{noreply, State2};
 
@@ -980,14 +983,13 @@ handle_cast(sync_data2, State) ->
 %%       ar_data_sync_worker_master for syncing.
 handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End,
-			is_joined = IsJoined,
 			disk_pool_threshold = DiskPoolThreshold } = State,
 	?LOG_DEBUG([{event, collect_peer_intervals_start},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
 		{s, Start}, {e, End}]),
 	CheckIsJoined =
-		case IsJoined of
+		case ar_node:is_joined() of
 			false ->
 				ar_util:cast_after(1000, self(), collect_peer_intervals),
 				false;
@@ -1095,7 +1097,7 @@ handle_cast({collect_peer_intervals, Start, End, Type}, State) ->
 			End2 = min(End, WeaveSize),
 			case Start >= End2 of
 				true ->
-					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End});
+					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End, Type});
 				false ->
 					%% All checks have passed, find and enqueue intervals for one
 					%% sync bucket worth of chunks starting at offset Start
