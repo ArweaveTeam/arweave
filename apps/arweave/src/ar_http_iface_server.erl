@@ -87,19 +87,7 @@ start_http_iface_listener(Config) ->
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
 	TlsCertfilePath = Config#config.tls_cert_file,
 	TlsKeyfilePath = Config#config.tls_key_file,
-	TransportOpts = [
-		% ranch_tcp parameters
-		{backlog, Config#config.'http_api.tcp.backlog'},
-		{delay_send, Config#config.'http_api.tcp.delay_send'},
-		{keepalive, Config#config.'http_api.tcp.keepalive'},
-		{max_connections, Config#config.'http_api.tcp.max_connections'},
-		{nodelay, Config#config.'http_api.tcp.nodelay'},
-		{num_acceptors, Config#config.'http_api.tcp.num_acceptors'},
-		{port, Config#config.port},
-		{send_timeout_close, Config#config.'http_api.tcp.send_timeout_close'},
-		{send_timeout, Config#config.'http_api.tcp.send_timeout'},
-		{shutdown, Config#config.'http_api.tcp.listener_shutdown'}
-	],
+	TransportOpts = [],
 	ProtocolOpts = #{
 		active_n => Config#config.'http_api.http.active_n',
 		inactivity_timeout => Config#config.'http_api.http.inactivity_timeout',
