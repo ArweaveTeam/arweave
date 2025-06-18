@@ -15,7 +15,7 @@
         generate_random_standard_split/0, generate_random_original_v1_split/0]).
 
 -define(SYNC_CHUNKS_CHECK, 1000).
--define(SYNC_CHUNKS_TIMEOUT, 300*1000).
+-define(SYNC_CHUNKS_TIMEOUT, 60*1000).
 
 get_records_with_proofs(B, TX, Chunks) ->
 	[{B, TX, Chunks, Proof} || Proof <- build_proofs(B, TX, Chunks)].
@@ -339,6 +339,7 @@ post_proofs(Peer, B, TX, Chunks, IsTemporary) ->
 wait_until_syncs_chunk(Offset, ExpectedProof) ->
 	true = ar_util:do_until(
 		fun() ->
+			?debugFmt("Waiting for chunk ~p~n", [Offset]),
 			case ar_test_node:get_chunk(main, Offset) of
 				{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} ->
 					Proof = jiffy:decode(ProofJSON, [return_maps]),
@@ -362,7 +363,7 @@ wait_until_syncs_chunk(Offset, ExpectedProof) ->
 					false
 			end
 		end,
-		100,
+		1000,
 		20_000
 	).
 
@@ -381,6 +382,7 @@ wait_until_syncs_chunks(Node, Proofs, UpperBound) ->
 						true ->
 							true;
 						false ->
+							?debugFmt("Waiting for chunk ~p~n", [EndOffset]),
 							case ar_test_node:get_chunk(Node, EndOffset) of
 								{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} ->
 									FetchedProof = ar_serialize:json_map_to_poa_map(
