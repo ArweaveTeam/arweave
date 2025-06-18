@@ -297,8 +297,8 @@ init(StoreID) ->
 				{#{}, #{}, undefined};
 			_ ->
 				ok = ar_kv:open(Dir, StateDB),
-				read_sync_records(StateDB, StoreID),
 				gen_server:cast(self(), store_state)
+				read_sync_records(StateDB, StoreID)
 		end,
 	initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
 	initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
