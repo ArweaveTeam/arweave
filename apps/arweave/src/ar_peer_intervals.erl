@@ -286,14 +286,14 @@ test_no_unsynced_intervals_test_() ->
 		peer1 => [{0, 5}],
 		peer2 => [{3, 8}]
 	},
-	test_interval_discovery(TestCase, footprint).
+	test_interval_discovery(TestCase, footprint, "No unsynced intervals").
 
 test_basic_interval_discovery_test_() ->
 	TestCase = #{
 		synced => [],
 		peer1 => [{0, 3}]
 	},
-	test_interval_discovery(TestCase, footprint).
+	test_interval_discovery(TestCase, footprint, "Three chunks").
 
 test_overlapping_intervals_test_() ->
 	TestCase = #{
@@ -302,9 +302,9 @@ test_overlapping_intervals_test_() ->
 		peer2 => [{3, 10}],
 		peer3 => [{6, 13}]
 	},
-	test_interval_discovery(TestCase, footprint).
+	test_interval_discovery(TestCase, footprint, "Overlapping intervals").
 
-test_interval_discovery(TestCase, Mode) ->
+test_interval_discovery(TestCase, Mode, Title) ->
 	SyncedChunks = maps:get(synced, TestCase, []),
 	PeerChunksData = maps:remove(synced, TestCase),
 
@@ -344,7 +344,7 @@ test_interval_discovery(TestCase, Mode) ->
 				AllEnqueueIntervals = collect_enqueue_intervals(#{}, StoreID, Mode),
 
 				FlattenedIntervals = lists:flatten(AllEnqueueIntervals),
-				verify_enqueued_intervals(FlattenedIntervals, ExpectedIntervals)
+				verify_enqueued_intervals(FlattenedIntervals, ExpectedIntervals, Title)
 		end
 	end).
 
@@ -354,13 +354,12 @@ collect_enqueue_intervals(Acc, StoreID, Mode) ->
 			Acc2 = update_peer_intervals(EnqueueIntervals, Acc),
 			collect_enqueue_intervals(Acc2, StoreID, Mode);
 		{'$gen_cast', {collect_peer_intervals, Start, End}} when Start >= End ->
-			lists:reverse(maps:to_list(Acc));
+			maps:to_list(Acc);
 		{'$gen_cast', {collect_peer_intervals, Start, End}} ->
 			fetch(Start, End, StoreID, Mode),
 			collect_enqueue_intervals(Acc, StoreID, Mode)
 	after 10_000 ->
-		?assert(maps:size(Acc) > 0, "No enqueue_intervals messages received"),
-		lists:reverse(maps:to_list(Acc))
+		?assert(false, "No enqueue_intervals messages received")
 	end.
 
 update_peer_intervals([], Acc) ->
@@ -381,7 +380,7 @@ create_test_mocks(Peers) ->
 		{ar_data_sync, name, fun(_StoreID) -> self() end}
 	].
 
-verify_enqueued_intervals(EnqueueIntervals, ExpectedIntervals) ->
+verify_enqueued_intervals(EnqueueIntervals, ExpectedIntervals, Title) ->
 	?assert(is_list(EnqueueIntervals)),
 
 	EnqueuedByPeer = maps:from_list(EnqueueIntervals),
@@ -393,9 +392,7 @@ verify_enqueued_intervals(EnqueueIntervals, ExpectedIntervals) ->
 
 		ActualPeerIntervals = maps:get(Peer, EnqueuedByPeer),
 
-		?assertEqual(ExpectedPeerIntervals, ActualPeerIntervals,
-			io_lib:format("Peer ~p intervals mismatch. Expected: ~p, Got: ~p",
-				[Peer, ar_intervals:to_list(ExpectedPeerIntervals), ar_intervals:to_list(ActualPeerIntervals)]))
+		?assertEqual(ar_intervals:to_list(ExpectedPeerIntervals), ar_intervals:to_list(ActualPeerIntervals), Title)
 	end, ok, ExpectedIntervals).
 
 chunks_to_bytes(ChunkIntervals) ->

@@ -44,16 +44,26 @@ add(PaddedOffset, Packing, StoreID) ->
 -spec get_offset(Offset :: non_neg_integer()) -> non_neg_integer().
 get_offset(Offset) ->
 	PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
-	FootprintsPerPartition = get_footprints_per_partition(),
 	FootprintSize = get_footprint_size(),
-	PartitionSize = FootprintSize * FootprintsPerPartition * ?DATA_CHUNK_SIZE,
-	PartitionOffset = (PaddedOffset - 1) div PartitionSize,
-	PartitionRelativeOffset = PaddedOffset - PartitionOffset * PartitionSize,
-	SliceOffset = (((PartitionRelativeOffset - 1) rem (FootprintSize * ?DATA_CHUNK_SIZE)) div ?DATA_CHUNK_SIZE) * FootprintSize,
-	FootprintOffset = ((PartitionRelativeOffset - 1) div (FootprintSize * ?DATA_CHUNK_SIZE)),
-	?debugFmt("PaddedOffset ~p, PartitionSize ~p, PartitionOffset ~p, PartitionRelativeOffset ~p, SliceOffset ~p, FootprintOffset ~p~n",
-		[PaddedOffset, PartitionSize, PartitionOffset, PartitionRelativeOffset, SliceOffset, FootprintOffset]),
-	PartitionOffset + SliceOffset + FootprintOffset + 1.
+	FootprintsPerPartition = get_footprints_per_partition(),
+
+	%% Convert byte offset to chunk index (1-based)
+	ChunkIndex = (PaddedOffset - 1) div ?DATA_CHUNK_SIZE + 1,
+
+	ChunksPerPartition = FootprintsPerPartition * FootprintSize,
+	Partition = (ChunkIndex - 1) div ChunksPerPartition,
+
+	%% Position within partition
+	PartitionOffset = (ChunkIndex - 1) rem ChunksPerPartition,
+	%% Which footprint within the partition
+	Footprint = PartitionOffset div FootprintSize,
+	%% Position within the footprint
+	FootprintOffset = PartitionOffset rem FootprintSize,
+
+	%% Interleave: chunks are arranged so that consecutive footprints are spread out
+	Interleaved = FootprintOffset * FootprintsPerPartition + Footprint,
+	%% Final offset (1-based)
+	Partition * ChunksPerPartition + Interleaved + 1.
 
 %% @doc Return the largest end offset of the chunk that maps to the given footprint offset.
 get_padded_offset_from_footprint_offset(FootprintOffset) ->
@@ -65,8 +75,6 @@ get_padded_offset_from_footprint_offset(FootprintOffset) ->
 	SliceSize = get_footprints_per_partition(),
 	SliceOffset = (PartitionRelativeOffset rem FootprintSize) * SliceSize,
 	InFootprintOffset = PartitionRelativeOffset div FootprintSize,
-	?debugFmt("FootprintOffset ~p, PartitionOffset ~p, FootprintSize ~p, SliceSize ~p, SliceOffset ~p, InFootprintOffset ~p ComputedOffset: ~p~n",
-		[FootprintOffset, PartitionOffset, FootprintSize, SliceSize, SliceOffset, InFootprintOffset, ar_block:get_chunk_padded_offset(PartitionOffset + SliceOffset + InFootprintOffset)]),
 	ar_block:get_chunk_padded_offset((PartitionOffset + SliceOffset + InFootprintOffset) * ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE.
 
 %% @doc Get the chunk's footprint's number, >= 0, < the maximum number of footprints
@@ -197,6 +205,27 @@ get_intervals_from_footprint_intervals(Start, End, Intervals) ->
 
 -ifdef(TEST).
 
+get_offset_test() ->
+	?assertEqual(1, get_offset(?DATA_CHUNK_SIZE)),
+	?assertEqual(4, get_offset(?DATA_CHUNK_SIZE * 2)),
+	?assertEqual(7, get_offset(?DATA_CHUNK_SIZE * 3)),
+	?assertEqual(2, get_offset(?DATA_CHUNK_SIZE * 4)),
+	?assertEqual(5, get_offset(?DATA_CHUNK_SIZE * 5)),
+	?assertEqual(8, get_offset(?DATA_CHUNK_SIZE * 6)),
+	?assertEqual(3, get_offset(?DATA_CHUNK_SIZE * 7)),
+	?assertEqual(6, get_offset(?DATA_CHUNK_SIZE * 8)),
+	?assertEqual(9, get_offset(?DATA_CHUNK_SIZE * 9)),
+	?assertEqual(10, get_offset(?DATA_CHUNK_SIZE * 10)),
+	?assertEqual(13, get_offset(?DATA_CHUNK_SIZE * 11)),
+	?assertEqual(16, get_offset(?DATA_CHUNK_SIZE * 12)),
+	?assertEqual(11, get_offset(?DATA_CHUNK_SIZE * 13)),
+	?assertEqual(14, get_offset(?DATA_CHUNK_SIZE * 14)),
+	?assertEqual(17, get_offset(?DATA_CHUNK_SIZE * 15)),
+	?assertEqual(12, get_offset(?DATA_CHUNK_SIZE * 16)),
+	?assertEqual(15, get_offset(?DATA_CHUNK_SIZE * 17)),
+	?assertEqual(18, get_offset(?DATA_CHUNK_SIZE * 18)),
+	?assertEqual(19, get_offset(?DATA_CHUNK_SIZE * 19)).
+
 offset_reversal_test() ->
 	Offsets = [?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE * 2, ?DATA_CHUNK_SIZE * 3, ?DATA_CHUNK_SIZE * 4,
 			?DATA_CHUNK_SIZE * 8, ?DATA_CHUNK_SIZE * 9],
@@ -280,7 +309,9 @@ get_intervals_from_footprint_intervals_test() ->
 		{[{1, 0}], [{?DATA_CHUNK_SIZE, 0}], "One chunk"},
 		{[{2, 0}], [{?DATA_CHUNK_SIZE, 0}, {?DATA_CHUNK_SIZE * 4, ?DATA_CHUNK_SIZE * 3}], "Two chunks"},
 		{[{1, 0}, {3, 2}], [{?DATA_CHUNK_SIZE, 0}, {?DATA_CHUNK_SIZE * 7, ?DATA_CHUNK_SIZE * 6}], "Two chunks with a hole"},
-		{[{10, 0}], [{?DATA_CHUNK_SIZE * 9, 0}, {?DATA_CHUNK_SIZE * 12, ?DATA_CHUNK_SIZE * 11}], "Chunks in two partitions"}
+		{[{9, 0}], [{?DATA_CHUNK_SIZE * 9, 0}], "Completely covered partition"},
+		{[{10, 0}], [{?DATA_CHUNK_SIZE * 10, 0}], "Completely covered partition plus one chunk"},
+		{[{11, 0}], [{?DATA_CHUNK_SIZE * 10, 0}, {?DATA_CHUNK_SIZE * 13, ?DATA_CHUNK_SIZE * 12}], "Completely covered partition plus two chunks"}
 	],
 	test_get_intervals_from_footprint_intervals(TestCases).
 
