@@ -2127,7 +2127,7 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
 		end,
 	case CheckFootprintNumber of
 		{ok, {StoreID3, Packing3}} ->
-			Intervals = ar_data_sync:get_footprint_intervals(Partition, FootprintNumber, Packing3, StoreID3),
+			Intervals = ar_footprint_record:get_intervals(Partition, FootprintNumber, Packing3, StoreID3),
 			Payload = jiffy:encode(ar_serialize:footprint_to_json_map(Packing3, Intervals)),
 			{200, #{}, Payload, Req};
 		Reply3 ->
