@@ -353,9 +353,9 @@ collect_enqueue_intervals(Acc, StoreID, Mode) ->
 		{'$gen_cast', {enqueue_intervals, EnqueueIntervals}} ->
 			Acc2 = update_peer_intervals(EnqueueIntervals, Acc),
 			collect_enqueue_intervals(Acc2, StoreID, Mode);
-		{'$gen_cast', {collect_peer_intervals, Start, End}} when Start >= End ->
+		{'$gen_cast', {collect_peer_intervals, Start, End, _}} when Start >= End ->
 			maps:to_list(Acc);
-		{'$gen_cast', {collect_peer_intervals, Start, End}} ->
+		{'$gen_cast', {collect_peer_intervals, Start, End, _}} ->
 			fetch(Start, End, StoreID, Mode),
 			collect_enqueue_intervals(Acc, StoreID, Mode)
 	after 10_000 ->
