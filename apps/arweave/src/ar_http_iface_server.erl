@@ -92,11 +92,6 @@ start_http_iface_listener(Config) ->
 		{backlog, Config#config.'http_api.tcp.backlog'},
 		{delay_send, Config#config.'http_api.tcp.delay_send'},
 		{keepalive, Config#config.'http_api.tcp.keepalive'},
-		{linger, {
-				Config#config.'http_api.tcp.linger',
-				Config#config.'http_api.tcp.linger_timeout'
-			}
-		},
 		{max_connections, Config#config.'http_api.tcp.max_connections'},
 		{nodelay, Config#config.'http_api.tcp.nodelay'},
 		{num_acceptors, Config#config.'http_api.tcp.num_acceptors'},
