@@ -1127,6 +1127,12 @@ apply_external_update2(Update, State) ->
 					{reply, #nonce_limiter_update_response{
 							step_number = CurrentStepNumber }, State};
 				false ->
+					?LOG_DEBUG([{event, apply_external_vdf},
+							{result, behind_server},
+							{vdf_server, ar_util:format_peer(Peer)},
+							{session_key, encode_session_key(SessionKey)},
+							{client_step_number, CurrentStepNumber},
+							{server_step_number, StepNumber}]),
 					apply_external_update3(Update, CurrentSession, State)
 			end
 	end.
