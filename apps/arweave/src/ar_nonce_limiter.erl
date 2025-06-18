@@ -548,6 +548,7 @@ handle_call({apply_external_update, Update, Peer}, _From, State) ->
 	%% during VDF validation.
 	gen_server:cast(ar_nonce_limiter_client,
 			{update_latest_session_key, Peer, SessionKey}),
+	?LOG_DEBUG([{event, apply_external_update}, {update, Update}, {peer, Peer}]),
 	apply_external_update2(Update, State#state{ last_external_update = {Peer, Now} });
 
 handle_call({get_session, SessionKey}, _From, State) ->
