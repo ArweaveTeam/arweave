@@ -42,7 +42,8 @@ fetch(Start, End, StoreID, normal) when Start >= End ->
 	?LOG_DEBUG([{event, fetch_peer_intervals_end},
 			{store_id, StoreID},
 			{range_start, Start},
-			{range_end, End}]),
+			{range_end, End},
+			{type, normal}]),
 	gen_server:cast(ar_data_sync:name(StoreID), {collect_peer_intervals, Start, End, normal});
 fetch(Start, End, StoreID, normal) ->
 	Parent = ar_data_sync:name(StoreID),
@@ -78,12 +79,20 @@ fetch(Start, End, StoreID, normal) ->
 						{store_id, StoreID},
 						{range_start, Start},
 						{range_end, End},
+						{type, normal},
 						{class, Class},
 						{reason, Reason}]),
 				gen_server:cast(Parent, {collect_peer_intervals, Start, End, normal})
 		end
 	end);
 
+fetch(Start, End, StoreID, footprint) when Start >= End ->
+	?LOG_DEBUG([{event, fetch_peer_intervals_end},
+			{store_id, StoreID},
+			{range_start, Start},
+			{range_end, End},
+			{type, footprint}]),
+	gen_server:cast(ar_data_sync:name(StoreID), {collect_peer_intervals, Start, End, footprint});
 fetch(Start, End, StoreID, footprint) ->
 	Parent = ar_data_sync:name(StoreID),
 	spawn_link(fun() ->
@@ -127,6 +136,7 @@ fetch(Start, End, StoreID, footprint) ->
 						{store_id, StoreID},
 						{range_start, Start},
 						{range_end, End},
+						{type, footprint},
 						{class, Class},
 						{reason, Reason}]),
 				gen_server:cast(Parent, {collect_peer_intervals, Start, End, footprint})
