@@ -37,6 +37,9 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+%% The key for storing migration cursor in the migrations_index database.
+-define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
+
 -ifdef(AR_TEST).
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5_000).
 -else.
@@ -47,6 +50,13 @@
 -define(DEVICE_LOCK_WAIT, 100).
 -else.
 -define(DEVICE_LOCK_WAIT, 5_000).
+-endif.
+
+%% The number of chunks to migrate per batch during footprint migration.
+-ifdef(AR_TEST).
+-define(FOOTPRINT_MIGRATION_BATCH_SIZE, 10).
+-else.
+-define(FOOTPRINT_MIGRATION_BATCH_SIZE, 100).
 -endif.
 
 %%%===================================================================
@@ -830,8 +840,7 @@ init({StoreID, RepackInPlacePacking}) ->
 			State3 = State2#sync_data_state{
 				sync_status = init_sync_status(StoreID)
 			},
-			gen_server:cast(self(), sync_intervals),
-			gen_server:cast(self(), sync_data),
+			may_be_run_footprint_record_initialization(State3),
 			{ok, State3};
 		_ ->
 			State3 = State2#sync_data_state{
@@ -848,6 +857,10 @@ handle_cast({move_data_root_index, Cursor, N}, State) ->
 handle_cast(process_store_chunk_queue, State) ->
 	ar_util:cast_after(200, self(), process_store_chunk_queue),
 	{noreply, process_store_chunk_queue(State)};
+
+handle_cast({initialize_footprint_record, Cursor, Packing}, State) ->
+	State2 = initialize_footprint_record(Cursor, Packing, State),
+	{noreply, State2};
 
 handle_cast({join, RecentBI}, State) ->
 	#sync_data_state{ block_index = CurrentBI, store_id = StoreID } = State,
@@ -3850,5 +3863,75 @@ record_chunk_cache_size_metric() ->
 		[{_, Size}] ->
 			prometheus_gauge:set(chunk_cache_size, Size);
 		_ ->
+			ok
+	end.
+
+may_be_run_footprint_record_initialization(State) ->
+	#sync_data_state{ store_id = StoreID } = State,
+	Packing = ar_storage_module:get_packing(StoreID),
+	case Packing of
+		{replica_2_9, _Addr} ->
+			{FootprintRecordCursor, InitializationComplete} = get_footprint_record_initialization_state(State),
+			case InitializationComplete of
+				true ->
+					ok;
+				false ->
+					gen_server:cast(self(), {initialize_footprint_record, FootprintRecordCursor, Packing})
+			end;
+		_ ->
+			ok
+	end.
+
+get_footprint_record_initialization_state(State) ->
+	#sync_data_state{ migrations_index = MI } = State,
+	case ar_kv:get(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY) of
+		not_found ->
+			{0, false};
+		{ok, <<"complete">>} ->
+			{complete, true};
+		{ok, CursorBin} ->
+			Cursor = binary:decode_unsigned(CursorBin),
+			{Cursor, false}
+	end.
+
+%% @doc Initialize the footprint record from the ar_data_sync record.
+initialize_footprint_record(complete, _Packing, State) ->
+	State;
+initialize_footprint_record(Cursor, Packing, State) ->
+	#sync_data_state{
+		store_id = StoreID,
+		range_end = RangeEnd,
+		migrations_index = MI
+	} = State,
+	BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
+
+	case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, Packing, ar_data_sync, StoreID) of
+		not_found ->
+			ok = ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
+			?LOG_INFO([{event, footprint_record_initialized}, {store_id, StoreID}]),
+			State;
+		{IntervalEnd, _IntervalStart} ->
+			EndPosition = min(Cursor + (BatchSize * ?DATA_CHUNK_SIZE), IntervalEnd),
+			?LOG_INFO([{event, initializing_footprint_record_range},
+					{range_start, Cursor}, {range_end, EndPosition}, {store_id, StoreID}]),
+			initialize_footprint_range(Cursor, EndPosition, Packing, StoreID),
+			?LOG_INFO([{event, initialized_footprint_record_range},
+					{range_start, Cursor}, {range_end, EndPosition}, {store_id, StoreID}]),
+			NewCursor = EndPosition,
+			ok = ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, binary:encode_unsigned(NewCursor)),
+			gen_server:cast(self(), {initialize_footprint_record, NewCursor, Packing}),
+			State
+	end.
+
+%% @doc Migrate chunks in the given range to footprint records.
+initialize_footprint_range(Start, End, _Packing, _StoreID) when Start >= End ->
+	ok;
+initialize_footprint_range(Start, End, Packing, StoreID) ->
+	ChunkOffset = Start + ?DATA_CHUNK_SIZE,
+	case ChunkOffset =< End of
+		true ->
+			ar_footprint_record:add(ChunkOffset, Packing, StoreID),
+			initialize_footprint_range(ChunkOffset, End, Packing, StoreID);
+		false ->
 			ok
 	end.
