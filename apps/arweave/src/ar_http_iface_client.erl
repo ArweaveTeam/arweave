@@ -31,6 +31,7 @@
 -include("ar_config.hrl").
 -include("ar_consensus.hrl").
 -include("ar_data_sync.hrl").
+-include("ar_sync_buckets.hrl").
 -include("ar_data_discovery.hrl").
 -include("ar_mining.hrl").
 -include("ar_wallets.hrl").
@@ -484,7 +485,7 @@ get_sync_buckets(Peer) ->
 		connect_timeout => 2000,
 		limit => ?MAX_SYNC_BUCKETS_SIZE,
 		headers => p2p_headers()
-	})).
+	}), ?DEFAULT_SYNC_BUCKET_SIZE).
 
 get_footprint_buckets(Peer) ->
 	handle_get_sync_buckets_response(ar_http:req(#{
@@ -495,7 +496,7 @@ get_footprint_buckets(Peer) ->
 		connect_timeout => 2000,
 		limit => ?MAX_SYNC_BUCKETS_SIZE,
 		headers => p2p_headers()
-	})).
+	}), ?NETWORK_FOOTPRINT_BUCKET_SIZE).
 
 get_recent_hash_list(Peer) ->
 	handle_get_recent_hash_list_response(ar_http:req(#{
@@ -990,8 +991,8 @@ handle_mempool_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 handle_mempool_response(Response) ->
 	{error, Response}.
 
-handle_get_sync_buckets_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-	case ar_sync_buckets:deserialize(Body) of
+handle_get_sync_buckets_response({ok, {{<<"200">>, _}, _, Body, _, _}}, BucketSize) ->
+	case ar_sync_buckets:deserialize(Body, BucketSize) of
 		{ok, Buckets} ->
 			{ok, Buckets};
 		{'EXIT', Reason} ->
@@ -1000,9 +1001,9 @@ handle_get_sync_buckets_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 			{error, invalid_response_type}
 	end;
 handle_get_sync_buckets_response({ok, {{<<"400">>, _}, _,
-		<<"Request type not found.">>, _, _}}) ->
+		<<"Request type not found.">>, _, _}}, _BucketSize) ->
 	{error, request_type_not_found};
-handle_get_sync_buckets_response(Response) ->
+handle_get_sync_buckets_response(Response, _BucketSize) ->
 	{error, Response}.
 
 handle_get_recent_hash_list_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->

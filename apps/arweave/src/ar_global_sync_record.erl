@@ -110,7 +110,7 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({update_serialized_sync_buckets, Key}, State) ->
+handle_cast({update_serialized_sync_buckets, serialized_sync_buckets = Key}, State) ->
 	#state{ sync_buckets = SyncBuckets } = State,
 	{SyncBuckets2, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets,
 			?MAX_SYNC_BUCKETS_SIZE),
@@ -118,6 +118,14 @@ handle_cast({update_serialized_sync_buckets, Key}, State) ->
 	ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
 			?MODULE, {update_serialized_sync_buckets, Key}),
 	{noreply, State#state{ sync_buckets = SyncBuckets2 }};
+handle_cast({update_serialized_sync_buckets, serialized_footprint_buckets = Key}, State) ->
+	#state{ footprint_buckets = FootprintBuckets } = State,
+	{FootprintBuckets2, SerializedFootprintBuckets} = ar_sync_buckets:serialize(
+			FootprintBuckets, ?MAX_SYNC_BUCKETS_SIZE),
+	ets:insert(?MODULE, {Key, SerializedFootprintBuckets}),
+	ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
+			?MODULE, {update_serialized_sync_buckets, Key}),
+	{noreply, State#state{ footprint_buckets = FootprintBuckets2 }};
 
 handle_cast(record_v2_index_data_size_metric, State) ->
 	#state{ sync_record = SyncRecord } = State,
