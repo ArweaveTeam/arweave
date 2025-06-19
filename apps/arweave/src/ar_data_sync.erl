@@ -12,7 +12,8 @@
 		get_chunk_by_byte/2, advance_chunks_index_cursor/1,
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
-		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0]).
+		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
+		is_footprint_record_supported/3]).
 
 -export([add_chunk_to_disk_pool/5]).
 
@@ -41,9 +42,9 @@
 -define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
 
 -ifdef(AR_TEST).
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 5_000).
+-define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 1_000).
 -else.
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 300_000).
+-define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 10_000).
 -endif.
 
 -ifdef(AR_TEST).
@@ -729,6 +730,13 @@ debug_get_disk_pool_chunks(Cursor) ->
 			[{K, V} | debug_get_disk_pool_chunks(K2)]
 	end.
 
+%% @doc Check if the footprint record should be updated for the given chunk.
+%% The footprint record stores multiples of ?DATA_CHUNK_SIZE.
+is_footprint_record_supported(AbsoluteOffset, ChunkSize, {replica_2_9, _Addr}) ->
+	AbsoluteOffset > ar_block:strict_data_split_threshold() orelse ChunkSize == ?DATA_CHUNK_SIZE;
+is_footprint_record_supported(_, _, _) ->
+	false.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -996,7 +1004,8 @@ handle_cast(sync_data2, State) ->
 %%       ar_data_sync_worker_master for syncing.
 handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End,
-			disk_pool_threshold = DiskPoolThreshold } = State,
+			disk_pool_threshold = DiskPoolThreshold,
+			sync_phase = SyncPhase } = State,
 	?LOG_DEBUG([{event, collect_peer_intervals_start},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
@@ -1016,21 +1025,32 @@ handle_cast(collect_peer_intervals, State) ->
 			true ->
 				End > DiskPoolThreshold
 		end,
-	case IntersectsDiskPool of
-		noop ->
-			noop;
-		true ->
-			gen_server:cast(self(), {collect_peer_intervals, Start, End, normal});
-		false ->
-			{ok, Config} = application:get_env(arweave, config),
-			case lists:member(footprint_based_syncing, Config#config.enable) of
-				true ->
-					gen_server:cast(self(), {collect_peer_intervals, Start, End, footprint});
-				false ->
-					gen_server:cast(self(), {collect_peer_intervals, Start, End, normal})
-			end
-	end,
-	{noreply, State};
+	State2 =
+		case IntersectsDiskPool of
+			noop ->
+				State;
+			true ->
+				gen_server:cast(self(), {collect_peer_intervals, Start, End, normal}),
+				State;
+			false ->
+				%% Alternate between "normal" and footprint-based syncing.
+				%% Footprint-based syncing downloads replica 2.9 chunks footprint by footprint
+				%% to avoid redundant entropy generations for unpacking. "Normal" syncing ignores
+				%% replica 2.9 data and mostly downloads unpacked data from peers storing it.
+				SyncPhase2 =
+					case SyncPhase of
+						undefined ->
+							%% Start with normal syncing.
+							normal;
+						normal ->
+							footprint;
+						footprint ->
+							normal
+					end,
+				gen_server:cast(self(), {collect_peer_intervals, Start, End, SyncPhase2}),
+				State#sync_data_state{ sync_phase = SyncPhase2 }
+		end,
+	{noreply, State2};
 
 handle_cast({collect_peer_intervals, Start, End, Type}, State) when Start >= End ->
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
@@ -3301,8 +3321,9 @@ store_chunk2(ChunkArgs, Args, State) ->
 				end,
 			case StoreIndex of
 				{true, Packing2} ->
+					UpdateFootprintRecord = is_footprint_record_supported(AbsoluteOffset, ChunkSize, Packing2),
 					case update_chunks_index({AbsoluteOffset, Offset, ChunkDataKey, TXRoot,
-							DataRoot, TXPath, ChunkSize, Packing2}, true, State) of
+							DataRoot, TXPath, ChunkSize, Packing2}, UpdateFootprintRecord, State) of
 						ok ->
 							ok;
 						{error, Reason} ->

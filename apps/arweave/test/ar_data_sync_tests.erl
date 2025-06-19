@@ -19,14 +19,14 @@ test_records_footprints() ->
 		b0 => B0,
 		addr => Addr,
 		storage_modules => [
-			{262144 * 3, 0, unpacked}
+			{262144 * 3, 0, {replica_2_9, Addr}}
 		]
 	}),
 	Peer = ar_test_node:peer_ip(main),
 	%% The partition 1 is not configured.
 	?assertEqual(not_found, ar_http_iface_client:get_footprints(Peer, 1, 0)),
 	{ok, {Packing, Footprint1}} = ar_http_iface_client:get_footprints(Peer, 0, 0),
-	?assertEqual(unpacked, Packing),
+	?assertEqual({replica_2_9, Addr}, Packing),
 	?assertEqual(ar_intervals:from_list([{1, 0}]), Footprint1),
 	{ok, {Packing, Footprint1_1}} = ar_http_iface_client:get_footprints(Peer, 0, 1),
 	?assertEqual(ar_intervals:from_list([{4, 3}]), Footprint1_1),

@@ -268,8 +268,12 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Peers, UnsyncedInte
 get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 	PeerReply = ar_http_iface_client:get_footprints(Peer, Partition, Footprint),
 	case PeerReply of
-		{ok, {_Packing, Intervals}} ->
+		{ok, {{replica_2_9, _Addr}, Intervals}} ->
 			{ok, ar_intervals:intersection(Intervals, SoughtIntervals)};
+		{ok, {_Packing, Intervals}} ->
+			%% In theory, we could also sync non-replica 2.9 data here, but for now we
+			%% leave it to the "normal" syncing procedure.
+			{ok, ar_intervals:new()};
 		Error ->
 			Error
 	end.
@@ -375,7 +379,7 @@ create_test_mocks(Peers) ->
 		{ar_tx_blacklist, get_blacklisted_intervals, fun(_Start, _End) -> ar_intervals:new() end},
 		{ar_http_iface_client, get_footprints, fun(Peer, Partition, Footprint) ->
 			Intervals = ar_footprint_record:get_intervals(Partition, Footprint, Peer),
-			{ok, {unpacked, Intervals}}
+			{ok, {{replica_2_9, crypto:strong_rand_bytes(32)}, Intervals}}
 		end},
 		{ar_data_sync, name, fun(_StoreID) -> self() end}
 	].

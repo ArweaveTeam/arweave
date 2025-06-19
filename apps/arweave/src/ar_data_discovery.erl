@@ -140,13 +140,7 @@ handle_cast(update_network_data_map, #state{ peers_pending = N } = State)
 			monitor(process, spawn_link(
 				fun() ->
 					fetch_sync_buckets(Peer),
-					{ok, Config} = application:get_env(arweave, config),
-					case lists:member(footprint_based_syncing, Config#config.enable) of
-						true ->
-							fetch_footprint_buckets(Peer);
-						false ->
-							ok
-					end
+					fetch_footprint_buckets(Peer)
 				end
 			)),
 			gen_server:cast(?MODULE, update_network_data_map),

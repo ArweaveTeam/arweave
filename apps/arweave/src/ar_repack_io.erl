@@ -305,7 +305,12 @@ add_to_sync_record(Offsets, Metadata, Packing, StoreID) ->
 	
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	ar_sync_record:add(PaddedEndOffset, StartOffset, Packing, ar_data_sync, StoreID),
-	ar_footprint_record:add(PaddedEndOffset, Packing, StoreID),
+	case ar_data_sync:is_footprint_record_supported(PaddedEndOffset, ChunkSize, Packing) of
+		true ->
+			ar_footprint_record:add(PaddedEndOffset, Packing, StoreID);
+		false ->
+			ok
+	end,
 
 	IsStorageSupported =
 		ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing),
