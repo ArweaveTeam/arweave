@@ -861,6 +861,7 @@ init({StoreID, RepackInPlacePacking}) ->
 			State3 = State2#sync_data_state{
 				sync_status = init_sync_status(StoreID)
 			},
+			gen_server:cast(self(), may_be_wait_for_entropy_generation),
 			may_be_run_footprint_record_initialization(State3),
 			{ok, State3};
 		_ ->
