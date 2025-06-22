@@ -8,7 +8,7 @@
 -export([main/0, main/1, create_wallet/0, create_wallet/1,
 		create_ecdsa_wallet/0, create_ecdsa_wallet/1,
 		benchmark_packing/1, benchmark_packing/0, benchmark_2_9/0, benchmark_2_9/1,
-		benchmark_vdf/0, benchmark_vdf_exp/0,
+		benchmark_vdf/0, benchmark_vdf/1,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
 		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
@@ -1273,13 +1273,11 @@ benchmark_packing(Args) ->
 	erlang:halt().
 
 benchmark_vdf() ->
-	ok = application:set_env(arweave, config, #config{}),
-	ar_bench_vdf:run_benchmark(),
-	erlang:halt().
+	benchmark_vdf([]).
 
-benchmark_vdf_exp() ->
-	ok = application:set_env(arweave, config, #config{enable = [ vdf_exp ]}),
-	ar_bench_vdf:run_benchmark(),
+benchmark_vdf(Args) ->
+	ok = application:set_env(arweave, config, #config{}),
+	ar_bench_vdf:run_benchmark_from_cli(Args),
 	erlang:halt().
 
 benchmark_hash() ->
