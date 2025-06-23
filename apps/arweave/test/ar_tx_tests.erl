@@ -824,7 +824,7 @@ joins_network_successfully() ->
 	ar_test_node:mine(peer1),
 	assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 1),
 
-	%% lists:nth(?MAX_TX_ANCHOR_DEPTH - 1, BI) since we'll be at at ?MAX_TX_ANCHOR_DEPTH + 2.
+	%% lists:nth(?MAX_TX_ANCHOR_DEPTH - 1, BI) since we'll be at ?MAX_TX_ANCHOR_DEPTH + 2.
 	TX3 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH - 1, BI)) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
 	ar_test_node:mine(peer1),

@@ -56,7 +56,7 @@ get_recent() ->
         <<"forks">> => get_recent_forks()
     }.
 
-%% @doc Return the the most recent blocks in reverse chronological order.
+%% @doc Return the most recent blocks in reverse chronological order.
 %% 
 %% There are a few list reversals that happen here:
 %% 1. get_block_anchors returns the blocks in reverse chronological order (latest block first)
@@ -79,7 +79,7 @@ get_recent_blocks() ->
     ),
     lists:reverse(Blocks).
 
-%% @doc Return the the most recent forks in reverse chronological order.
+%% @doc Return the most recent forks in reverse chronological order.
 get_recent_forks() ->
     CutOffTime = os:system_time(seconds) - ?RECENT_FORKS_AGE,
     case ar_chain_stats:get_forks(CutOffTime) of

@@ -6,7 +6,7 @@ Path manifests are JSON objects with the following keys.
 | ---------------- | ---------- | ------ | ----------- |
 | `manifest`       | ✓          | string | The manifest type identifier, this MUST be `arweave/paths`. |
 | `version`        | ✓          | string | The manifest specification version, currently "0.1.0". This will be updated with future updates according to [semver](https://semver.org). |
-| `index`          |            | object | The behavior gateways SHOULD follow when the manifest is accessed directly. When defined, `index` MUST contain a member describing the behavior to adopt. Currently, the only supported behavior is `path`. `index` MAY be be omitted, in which case gateways SHOULD serve a listing of all paths. |
+| `index`          |            | object | The behavior gateways SHOULD follow when the manifest is accessed directly. When defined, `index` MUST contain a member describing the behavior to adopt. Currently, the only supported behavior is `path`. `index` MAY be omitted, in which case gateways SHOULD serve a listing of all paths. |
 | `index.path`     |            | string | The default path to load. If defined, the field MUST reference a key in the `paths` object (it MUST NOT reference a transaction ID directly). |
 | `paths`          | ✓          | object | The path mapping between subpaths and the content they resolve to. The object keys represent the subpaths, and the values tell us which content to resolve to. |
 | `paths[path].id` | ✓          | string | The transaction ID to resolve to for the given path. |
