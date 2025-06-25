@@ -327,10 +327,9 @@ assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
 	end.
 
 assert_syncs_range(_Node, {replica_2_9, _}, _StartOffset, _EndOffset) ->
-	%% For now GET /data_sync_record does not work for replica_2_9. We could assert that
-	%% the node *does not* sync the range - but we end up with race conditions around
-	%% the disk pool threshold (as those chunksa above the threshold as initially stored
-	%% as unpacked).
+	%% For now GET /data_sync_record does not work for replica_2_9. We could call
+	%% GET /footprints but we end up with race conditions around the disk pool
+	%% threshold (the chunks above the threshold are initially stored as unpacked).
 	%% So for now we'll just skip the test.
 	ok;
 assert_syncs_range(Node, _Packing, StartOffset, EndOffset) ->
@@ -450,13 +449,7 @@ interval_contains2(Iter, Start, End) ->
 	end.
 
 assert_chunks(Node, Packing, Chunks) ->
-	%% Normally we can't sync replica_2_9 data since it's too expensive to unpack. The
-	%% one exception is if you request the exact format stored by the node.
-	RequestPacking = case Packing of
-		{replica_2_9, _} -> Packing;
-		_ -> any
-	end,
-	assert_chunks(Node, RequestPacking, Packing, Chunks).
+	assert_chunks(Node, any, Packing, Chunks).
 
 assert_chunks(Node, RequestPacking, Packing, Chunks) ->
 	lists:foreach(fun({Block, EndOffset, ChunkSize}) ->

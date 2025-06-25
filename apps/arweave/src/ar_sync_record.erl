@@ -665,6 +665,8 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, Stor
 
 emit_add_range(Start, End, ar_data_sync, Module) ->
 	ar_events:send(sync_record, {add_range, Start, End, ar_data_sync, Module});
+emit_add_range(Start, End, ar_data_sync_footprints, Module) ->
+	ar_events:send(sync_record, {add_range, Start, End, ar_data_sync_footprints, Module});
 emit_add_range(_Start, _End, _ID, _Module) ->
 	ok.
 

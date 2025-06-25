@@ -139,25 +139,22 @@ handle_cast(Cast, State) ->
 	{noreply, State}.
 
 handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, Module}}, State) ->
+	#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
 	Packing = ar_storage_module:get_packing(Module),
 	case Packing of
-		{replica_2_9, _} when ?BLOCK_2_9_SYNCING ->
-			%% Ignore replica.2.9 packing. We are moving to the new syncing mechanism
-			%% where the data below the disk pool threshold is synced footprint by
-			%% footprint (see GET /footprints/{partition}/{footprint}).
-			%% The data above the disk pool threshold is synced as usual.
-			%% Therefore, the sync record (unlike the footprint record) becomes
-			%% useful in the first place for syncing the disk pool where
-			%% replica 2.9 data is expensive to deal with and at the same time
-			%% we expect peers to have unpacked disk pool data.
+		{replica_2_9, _} ->
+			%% Replica 2.9 data is recorded in the footprint record. It is synced
+			%% footprint by footprint (not left to right).
 			{noreply, State};
 		_ ->
-			#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
 			SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
 			SyncBuckets2 = ar_sync_buckets:add(End, Start, SyncBuckets),
-			State2 = update_footprint_data(Start, End, State),
-			{noreply, State2#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }}
+			{noreply, State#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }}
 	end;
+
+handle_info({event, sync_record, {add_range, Start, End, ar_data_sync_footprints, _Module}}, State) ->
+	State2 = update_footprint_data(Start, End, State),
+	{noreply, State2};
 
 handle_info({event, sync_record, {global_cut, Offset}}, State) ->
 	#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
@@ -191,10 +188,9 @@ get_sync_record() ->
 	lists:foldl(
 		fun(Module, Acc) ->
 			case Module of
-				{_, _, {replica_2_9, _}} when ?BLOCK_2_9_SYNCING ->
-					%% Ignore replica.2.9 packing. This is a temporary solution until
-					%% we can support data syncing in batches corresponding to the
-					%% replica.2.9 entropy footprint
+				{_, _, {replica_2_9, _}} ->
+					%% Replica 2.9 data is recorded in the footprint record. It is synced
+					%% footprint by footprint (not left to right).
 					Acc;
 				_ ->
 					StoreID = ar_storage_module:id(Module),
@@ -230,12 +226,11 @@ update_footprint_data(Start, End, State) when Start >= End ->
 update_footprint_data(Start, End, State) ->
 	#state{ footprint_record = FootprintRecord,
 			footprint_buckets = FootprintBuckets } = State,
-	Offset = ar_footprint_record:get_offset(Start + ?DATA_CHUNK_SIZE),
-	FootprintRecord2 = ar_intervals:add(FootprintRecord, Offset, Offset - 1),
-	FootprintBuckets2 = ar_sync_buckets:add(Offset, Offset - 1, FootprintBuckets),
+	FootprintRecord2 = ar_intervals:add(FootprintRecord, Start + 1, Start),
+	FootprintBuckets2 = ar_sync_buckets:add(Start + 1, Start, FootprintBuckets),
 	State2 = State#state{ footprint_record = FootprintRecord2,
 		footprint_buckets = FootprintBuckets2 },
-	update_footprint_data(Start + ?DATA_CHUNK_SIZE, End, State2).
+	update_footprint_data(Start + 1, End, State2).
 
 remove_footprint_data(Start, End, State) when Start >= End ->
 	State;

@@ -1257,30 +1257,24 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	SeekByte = ar_chunk_storage:get_chunk_seek_offset(Byte + 1) - 1,
 	case validate_proof(SeekByte, Proof) of
 		{need_unpacking, AbsoluteEndOffset, ChunkProof2} ->
-			case should_unpack(Packing) of
-				{false, Reason, ReasonArgs} ->
-					decrement_chunk_cache_size(),
-					process_invalid_fetched_chunk(Peer, Byte, State, Reason, ReasonArgs);
-				true ->
-					#chunk_proof{
-						block_start_offset = BlockStartOffset,
-						tx_start_offset = TXStartOffset,
-						tx_end_offset = TXEndOffset,
-						chunk_end_offset = ChunkEndOffset,
-						chunk_id = ChunkID,
-						metadata = #chunk_metadata{
-							tx_root = TXRoot,
-							data_root = DataRoot,
-							chunk_size = ChunkSize
-						}
-					} = ChunkProof2,
-					TXSize = TXEndOffset - TXStartOffset,
-					AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
-					ChunkArgs = {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
-					Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
-							Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
-					unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, State)
-			end;
+			#chunk_proof{
+				block_start_offset = BlockStartOffset,
+				tx_start_offset = TXStartOffset,
+				tx_end_offset = TXEndOffset,
+				chunk_end_offset = ChunkEndOffset,
+				chunk_id = ChunkID,
+				metadata = #chunk_metadata{
+					tx_root = TXRoot,
+					data_root = DataRoot,
+					chunk_size = ChunkSize
+				}
+			} = ChunkProof2,
+			TXSize = TXEndOffset - TXStartOffset,
+			AbsoluteTXStartOffset = BlockStartOffset + TXStartOffset,
+			ChunkArgs = {Packing, Chunk, AbsoluteEndOffset, TXRoot, ChunkSize},
+			Args = {AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot,
+					Chunk, ChunkID, ChunkEndOffset, Peer, Byte},
+			unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, State);
 		false ->
 			decrement_chunk_cache_size(),
 			process_invalid_fetched_chunk(Peer, Byte, State);
@@ -1770,7 +1764,7 @@ do_sync_data2(#sync_data_state{
 		} = State) ->
 	Intervals =
 		case ar_storage_module:get_packing(OtherStoreID) of
-			{replica_2_9, _} when ?BLOCK_2_9_SYNCING ->
+			{replica_2_9, _} ->
 				%% Do not unpack the 2.9 data by default, finding unpacked data
 				%% may be cheaper.
 				[];
@@ -3150,13 +3144,6 @@ pick_missing_blocks([{H, WeaveSize, _} | CurrentBI], BlockTXPairs) ->
 		_ ->
 			{WeaveSize, lists:reverse(After)}
 	end.
-should_unpack({replica_2_9, Addr}) when ?BLOCK_2_9_SYNCING ->
-	%% Unpacking another peer's replica 2.9 chunk is expensive, so don't do it.
-	%% Note: peers running the reference client won't share replica 2.9 chunks
-	%% anyways, so this check is just a backup.
-	{false, got_replica_2_9_chunk_from_peer, [{mining_addr, ar_util:encode(Addr)}]};
-should_unpack(_) ->
-	true.
 
 process_invalid_fetched_chunk(Peer, Byte, State) ->
 	%% Not necessarily a malicious peer, it might happen
