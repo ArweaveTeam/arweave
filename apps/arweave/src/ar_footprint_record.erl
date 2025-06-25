@@ -166,8 +166,9 @@ collect_intervals(Start, End, Packing, StoreID, Intervals) ->
 			Intervals;
 		{End2, Start2} ->
 			End3 = min(End2, End),
+			Start3 = max(Start2, Start),
 			collect_intervals(End3, End, Packing, StoreID,
-					ar_intervals:add(Intervals, End3, Start2))
+					ar_intervals:add(Intervals, End3, Start3))
 	end.
 
 collect_unsynced_intervals(Start, End, StoreID) ->
@@ -241,7 +242,7 @@ test_offset_reversal(ByteOffset) ->
 	?assertEqual(ByteOffset, GotEnd),
 	?assertEqual(ByteOffset - ?DATA_CHUNK_SIZE, GotStart).
 
-get_unsynced_intervals_test() ->
+get_unsynced_intervals_test_() ->
 	ar_test_node:test_with_mocked_functions(
 		[{ar_storage_module, get_by_id, fun(test_unsynced_store) -> test_unsynced_store end}],
 		fun() ->
@@ -266,40 +267,74 @@ get_unsynced_intervals_test() ->
 					ok
 			end,
 
-			%% Test partition 0, footprint 0. It should have unsynced intervals initially.
 			Partition = 0,
 			Footprint = 0,
 
 			%% Get unsynced intervals before adding any data.
 			UnsyncedBefore = get_unsynced_intervals(Partition, Footprint, TestStoreID),
 			UnsyncedBeforeList = ar_intervals:to_list(UnsyncedBefore),
-
-			%% The entire footprint range should be unsynced initially.
-			FootprintSize = get_footprint_size(),
-			FootprintsPerPartition = get_footprints_per_partition(),
-			PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
-			FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
-			FootprintEnd = FootprintStart + FootprintSize,
-			?assertEqual([{FootprintEnd, FootprintStart}], UnsyncedBeforeList),
+			?assertEqual([{3, 0}], UnsyncedBeforeList),
 
 			%% Add some data to the footprint.
 			%% This should map to partition 0, footprint 0.
-			PaddedOffset = 0,
+			PaddedOffset = ?DATA_CHUNK_SIZE,
 			Packing = unpacked,
 			ok = add(PaddedOffset, Packing, TestStoreID),
 
-			%% Get unsynced intervals after adding data.
 			UnsyncedAfter = get_unsynced_intervals(Partition, Footprint, TestStoreID),
 			UnsyncedAfterList = ar_intervals:to_list(UnsyncedAfter),
+			?assertEqual([{3, 1}], UnsyncedAfterList)
+		end).
 
-			%% Assert the exact shape of the unsynced intervals.
-			AddedFootprintOffset = get_offset(PaddedOffset),
-			ExpectedUnsyncedAfter = [
-				{AddedFootprintOffset - 1, FootprintStart},
-				{FootprintEnd, AddedFootprintOffset}
-			],
+get_intervals_test_() ->
+	ar_test_node:test_with_mocked_functions(
+		[{ar_storage_module, get_by_id, fun(test_intervals_store) -> test_intervals_store end}],
+		fun() ->
+			%% Set up a test sync record server.
+			TestStoreID = test_intervals_store,
+			TestProcessName = list_to_atom("ar_sync_record_" ++ atom_to_list(TestStoreID)),
 
-			?assertEqual(ExpectedUnsyncedAfter, UnsyncedAfterList)
+			%% Initialize sync_records ETS table if it does not exist.
+			case ets:info(sync_records) of
+				undefined ->
+					ets:new(sync_records, [named_table, public, {read_concurrency, true}]);
+				_ ->
+					%% Clear existing data from previous tests.
+					ets:delete_all_objects(sync_records)
+			end,
+
+			%% Start the sync record process.
+			case whereis(TestProcessName) of
+				undefined ->
+					{ok, _Pid} = ar_sync_record:start_link(TestProcessName, TestStoreID);
+				_ ->
+					ok
+			end,
+
+			Packing = unpacked,
+			ar_sync_record:add(32, 0,
+					Packing, ar_data_sync_footprints, TestStoreID),
+
+			Partition = 0,
+			Footprint = 0,
+			SyncedIntervals = get_intervals(Partition, Footprint, TestStoreID),
+			SyncedIntervalsList = ar_intervals:to_list(SyncedIntervals),
+			?assertEqual([{3, 0}], SyncedIntervalsList),
+			Partition2 = 0,
+			Footprint2 = 2,
+			SyncedIntervals2 = get_intervals(Partition2, Footprint2, TestStoreID),
+			SyncedIntervalsList2 = ar_intervals:to_list(SyncedIntervals2),
+			?assertEqual([{9, 6}], SyncedIntervalsList2),
+			Partition3 = 1,
+			Footprint3 = 2,
+			SyncedIntervals3 = get_intervals(Partition3, Footprint3, TestStoreID),
+			SyncedIntervalsList3 = ar_intervals:to_list(SyncedIntervals3),
+			?assertEqual([{18, 15}], SyncedIntervalsList3),
+			Partition4 = 2,
+			Footprint4 = 0,
+			SyncedIntervals4 = get_intervals(Partition4, Footprint4, TestStoreID),
+			SyncedIntervalsList4 = ar_intervals:to_list(SyncedIntervals4),
+			?assertEqual([{21, 18}], SyncedIntervalsList4)
 		end).
 
 get_intervals_from_footprint_intervals_test() ->
