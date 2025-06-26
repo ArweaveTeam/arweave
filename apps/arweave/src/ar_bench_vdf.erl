@@ -8,9 +8,9 @@
 run_benchmark_from_cli(Args) ->
 	Mode = list_to_atom(get_flag_value(Args, "mode", "default")),
 	Difficulty = list_to_integer(get_flag_value(Args, "difficulty", integer_to_list(?VDF_DIFFICULTY))),
-	Rounds = list_to_integer(get_flag_value(Args, "rounds", "1")),
+	Verify = list_to_atom(get_flag_value(Args, "verify", "false")),
 
-	run_benchmark(Mode, Difficulty, Rounds).
+	run_benchmark(Mode, Difficulty, Verify).
 
 get_flag_value([], _, DefaultValue) ->
 	DefaultValue;
@@ -24,13 +24,13 @@ show_help() ->
 	io:format("Options:~n"),
 	io:format("  mode <default|experimental> (default: default)~n"),
 	io:format("  difficulty <vdf_difficulty> (default: ~p)~n", [?VDF_DIFFICULTY]),
-	io:format("  rounds <number> (default: 1)~n"),
+	io:format("  verify <true|false> (default: false)~n"),
 	erlang:halt().
 
 run_benchmark() ->
-	run_benchmark(none, ?VDF_DIFFICULTY, 1).
+	run_benchmark(none, ?VDF_DIFFICULTY, false).
 
-run_benchmark(Mode, Difficulty, Rounds) ->
+run_benchmark(Mode, Difficulty, Verify) ->
 	case Mode of
 		none ->
 			%% Run as part of startup, use whatever is set in the config
@@ -41,13 +41,12 @@ run_benchmark(Mode, Difficulty, Rounds) ->
 			ok = application:set_env(arweave, config, #config{})
 	end,
 	Input = crypto:strong_rand_bytes(32),
-	{FullTime, _} = timer:tc(fun() -> 
-		lists:foreach(fun(_) ->
+	{Time, {ok, Output, Checkpoints}} = timer:tc(fun() -> 
 			ar_vdf:compute2(1, Input, Difficulty)
-		end, lists:seq(1, Rounds))
 	end),
-	Time = FullTime / Rounds,
-	io:format("~n~nVDF step computed in ~.2f seconds.~n~n", [Time / 1000000]),
+	io:format("~n~n"),
+	maybe_verify(Verify, Input, Difficulty, Output, Checkpoints),
+	io:format("VDF step computed in ~.2f seconds.~n~n", [Time / 1000000]),
 	case Time > 1150000 of
 		true ->
 			io:format("WARNING: your VDF computation speed is low - consider fetching "
@@ -57,3 +56,22 @@ run_benchmark(Mode, Difficulty, Rounds) ->
 			ok
 	end,
 	Time.
+
+maybe_verify(true, Input, Difficulty, Output, Checkpoints) ->
+	{ok, VerifyOutput, VerifyCheckpoints} = ar_vdf:debug_sha2(1, Input, Difficulty),
+	case Output == VerifyOutput of
+		true ->
+			io:format("Output matches.~n");
+		false ->
+			io:format("Output mismatch. Expected: ~p, Got: ~p~n",
+				[ar_util:encode(Output), ar_util:encode(VerifyOutput)])
+	end,
+	case Checkpoints == VerifyCheckpoints of
+		true ->
+			io:format("Checkpoints match.~n");
+		false ->
+			io:format("Checkpoints mismatch. Expected: ~p, Got: ~p~n",
+				[Checkpoints, VerifyCheckpoints])
+	end;
+maybe_verify(false, _Input, _Difficulty, _Output, _Checkpoints) ->
+	ok.
