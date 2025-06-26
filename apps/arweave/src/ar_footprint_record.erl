@@ -136,12 +136,14 @@ delete(Offset, StoreID) ->
 get_intervals_from_footprint_intervals(FootprintIntervals) ->
 	get_intervals_from_footprint_intervals(ar_intervals:to_list(FootprintIntervals), ar_intervals:new()).
 
+%% @doc Get the number of footprints contained in a partition.
+-spec get_footprints_per_partition() -> non_neg_integer().
+get_footprints_per_partition() ->
+	?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-get_footprints_per_partition() ->
-	?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
 
 get_footprint_size() ->
 	?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.

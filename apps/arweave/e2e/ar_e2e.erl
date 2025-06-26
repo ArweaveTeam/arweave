@@ -423,14 +423,46 @@ assert_mine_and_validate(MinerNode, ValidatorNode, MinerPacking) ->
 has_range(Node, StartOffset, EndOffset) ->
 	NodeIP = ar_test_node:peer_ip(Node),
 	case ar_http_iface_client:get_sync_record(NodeIP) of
-		{ok, SyncRecord} ->
-			interval_contains(SyncRecord, StartOffset, EndOffset);
+		{ok, RegularIntervals} ->
+			FootprintIntervals = collect_footprint_intervals(NodeIP, StartOffset, EndOffset),
+			AllIntervals = ar_intervals:union(RegularIntervals, FootprintIntervals),
+			interval_contains(AllIntervals, StartOffset, EndOffset);
 		Error ->
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
 					"Failed to get sync record from ~p: ~p", [Node, Error]))),
 			false
 	end.
+
+collect_footprint_intervals(NodeIP, StartOffset, EndOffset) ->
+	StartPartition = ar_replica_2_9:get_entropy_partition(StartOffset + 1),
+	LastPartition = ar_replica_2_9:get_entropy_partition(EndOffset + 1),
+	FootprintsPerPartition = ar_footprint_record:get_footprints_per_partition(),
+	collect_footprint_intervals(NodeIP, StartPartition, LastPartition, 0, FootprintsPerPartition - 1, ar_intervals:new()).
+
+collect_footprint_intervals(_NodeIP, Partition, LastPartition, _Footprint, _MaxFootprint, Acc)
+		when Partition > LastPartition ->
+	Acc;
+collect_footprint_intervals(NodeIP, Partition, LastPartition, Footprint, MaxFootprint, Acc)
+		when Footprint > MaxFootprint ->
+	collect_footprint_intervals(NodeIP, Partition + 1, LastPartition, 0, MaxFootprint, Acc);
+collect_footprint_intervals(NodeIP, Partition, LastPartition, Footprint, MaxFootprint, Acc) ->
+	FootprintByteIntervals =
+		case ar_http_iface_client:get_footprints(NodeIP, Partition, Footprint) of
+			{ok, {_Packing, FootprintIntervals}} ->
+				ar_footprint_record:get_intervals_from_footprint_intervals(FootprintIntervals);
+			not_found ->
+				?debugFmt("No footprint record found for partition ~B, footprint ~B~n",
+					[Partition, Footprint]),
+				ar_intervals:new();
+			Error ->
+				?assert(false,
+					iolist_to_binary(io_lib:format(
+					"Failed to get footprint record from ~p: ~p, partition: ~B, footprint: ~B",
+					[NodeIP, Error, Partition, Footprint])))
+		end,
+	NewAcc = ar_intervals:union(Acc, FootprintByteIntervals),
+	collect_footprint_intervals(NodeIP, Partition, LastPartition, Footprint + 1, MaxFootprint, NewAcc).
 
 interval_contains(Intervals, Start, End) when End > Start ->
 	case gb_sets:iterator_from({Start, Start}, Intervals) of

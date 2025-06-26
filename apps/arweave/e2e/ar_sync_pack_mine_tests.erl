@@ -156,7 +156,8 @@ test_replica_2_9_syncing({{Blocks, Chunks, SourcePackingType}, SinkPackingType})
 	SinkNode = peer2,
 
 	start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
-	ar_e2e:assert_chunks(SinkNode, SinkPackingType, Chunks).
+	ar_e2e:assert_syncs_range(SinkNode,
+		ar_block:partition_size(), 2*ar_block:partition_size()).
 
 test_unpacked_and_packed_sync_pack_mine(
 		{{Blocks, _Chunks, SourcePackingType}, {PackingType1, PackingType2}}) ->
