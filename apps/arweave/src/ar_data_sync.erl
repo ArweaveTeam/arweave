@@ -60,6 +60,12 @@
 -define(FOOTPRINT_MIGRATION_BATCH_SIZE, 100).
 -endif.
 
+-ifdef(AR_TEST).
+-define(ENTROPY_GENERATION_WAIT_TIME_MS, 200).
+-else.
+-define(ENTROPY_GENERATION_WAIT_TIME_MS, 30_000).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -732,10 +738,17 @@ debug_get_disk_pool_chunks(Cursor) ->
 
 %% @doc Check if the footprint record should be updated for the given chunk.
 %% The footprint record stores multiples of ?DATA_CHUNK_SIZE.
-is_footprint_record_supported(AbsoluteOffset, ChunkSize, {replica_2_9, _Addr}) ->
-	AbsoluteOffset > ar_block:strict_data_split_threshold() orelse ChunkSize == ?DATA_CHUNK_SIZE;
-is_footprint_record_supported(_, _, _) ->
-	false.
+is_footprint_record_supported(AbsoluteOffset, ChunkSize, Packing) ->
+	IsMatchingPacking =
+		case Packing of
+			{replica_2_9, _Addr} ->
+				true;
+			unpacked_padded ->
+				true;
+			_ ->
+				false
+	end,
+	IsMatchingPacking andalso (AbsoluteOffset > ar_block:strict_data_split_threshold() orelse ChunkSize == ?DATA_CHUNK_SIZE).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -872,7 +885,7 @@ handle_cast(may_be_wait_for_entropy_generation, State) ->
 						true;
 					_ ->
 						?LOG_INFO([{event, waiting_for_entropy_generation}, {store_id, StoreID}]),
-						ar_util:cast_after(30_000, self(), may_be_wait_for_entropy_generation),
+						ar_util:cast_after(?ENTROPY_GENERATION_WAIT_TIME_MS, self(), may_be_wait_for_entropy_generation),
 						false
 				end;
 			_ ->
@@ -1054,28 +1067,36 @@ handle_cast(collect_peer_intervals, State) ->
 			true ->
 				End > DiskPoolThreshold
 		end,
+	%% Alternate between "normal" and footprint-based syncing.
+	%% Footprint-based syncing downloads replica 2.9 chunks footprint by footprint
+	%% to avoid redundant entropy generations for unpacking. "Normal" syncing ignores
+	%% replica 2.9 data and mostly downloads unpacked data from peers storing it.
+	SyncPhase2 =
+		case SyncPhase of
+			undefined ->
+				%% Start with normal syncing.
+				normal;
+			normal ->
+				footprint;
+			footprint ->
+				normal
+		end,
 	State2 =
 		case IntersectsDiskPool of
 			noop ->
 				State;
 			true ->
-				gen_server:cast(self(), {collect_peer_intervals, Start, End, normal}),
-				State;
+				case SyncPhase2 of
+					footprint ->
+						End2 = min(End, DiskPoolThreshold),
+						gen_server:cast(self(), {collect_peer_intervals, Start, End2, footprint}),
+						State#sync_data_state{ sync_phase = footprint };
+					_ ->
+						%% The disk pool is only synced during the "normal" phase.
+						gen_server:cast(self(), {collect_peer_intervals, Start, End, normal}),
+						State#sync_data_state{ sync_phase = normal }
+				end;
 			false ->
-				%% Alternate between "normal" and footprint-based syncing.
-				%% Footprint-based syncing downloads replica 2.9 chunks footprint by footprint
-				%% to avoid redundant entropy generations for unpacking. "Normal" syncing ignores
-				%% replica 2.9 data and mostly downloads unpacked data from peers storing it.
-				SyncPhase2 =
-					case SyncPhase of
-						undefined ->
-							%% Start with normal syncing.
-							normal;
-						normal ->
-							footprint;
-						footprint ->
-							normal
-					end,
 				gen_server:cast(self(), {collect_peer_intervals, Start, End, SyncPhase2}),
 				State#sync_data_state{ sync_phase = SyncPhase2 }
 		end,
