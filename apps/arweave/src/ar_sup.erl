@@ -50,6 +50,7 @@ init([]) ->
 	ets:new(ar_chunk_storage, [set, public, named_table]),
 	ets:new(ar_entropy_storage, [set, public, named_table]),
 	ets:new(ar_mining_stats, [set, public, named_table]),
+	ets:new(entropy_generation_stats, [ordered_set, public, named_table]),
 	ets:new(ar_global_sync_record, [set, public, named_table]),
 	ets:new(ar_disk_pool_data_roots, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_tx_blacklist, [set, public, named_table, {read_concurrency, true}]),
