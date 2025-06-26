@@ -243,9 +243,11 @@ encipher_replica_2_9_chunk(Chunk, Entropy) ->
 ) -> binary().
 generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
-	
+
+	entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	case ar_replica_2_9_entropy_cache:get(Key) of
 		{ok, Entropy} ->
+			entropy_generation_release(Key),
 			Entropy;
 		not_found ->
 			PackingState = get_packing_state(),
@@ -258,6 +260,7 @@ generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) -
 			MaxSize = MaxEntropies * EntropySize,
 			ar_replica_2_9_entropy_cache:clean_up_space(EntropySize, MaxSize),
 			ar_replica_2_9_entropy_cache:put(Key, Entropy, EntropySize),
+			entropy_generation_release(Key),
 
 			%% Primarily needed for testing where the entropy generated exceeds the entropy
 			%% needed for tests.
@@ -874,6 +877,23 @@ exor_replica_2_9_sub_chunks(
 		<< EntropyPart:(?COMPOSITE_PACKING_SUB_CHUNK_SIZE)/binary, EntropyRest/binary >>) ->
 	[ar_mine_randomx:exor_sub_chunk(SubChunk, EntropyPart)
 			| exor_replica_2_9_sub_chunks(ChunkRest, EntropyRest)].
+
+entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
+	case ets:insert_new(?MODULE, {{entropy_generation_lock, Key}}) of
+		true ->
+			ok;
+		false ->
+			?LOG_INFO([{event, entropy_generation_lock_collision},
+					{reward_addr, ar_util:encode(RewardAddr)},
+					{key, ar_util:encode(Key)},
+					{bucket_end_offset, BucketEndOffset},
+					{sub_chunk_start_offset, SubChunkStartOffset}]),
+			timer:sleep(100),
+			entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset)
+	end.
+
+entropy_generation_release(Key) ->
+	ets:delete(?MODULE, {entropy_generation_lock, Key}).
 
 %%%===================================================================
 %%% Tests.
