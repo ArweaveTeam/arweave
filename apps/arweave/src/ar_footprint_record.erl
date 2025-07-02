@@ -50,7 +50,8 @@ get_offset(Offset) ->
 	%% Convert byte offset to chunk index (1-based)
 	ChunkIndex = (PaddedOffset - 1) div ?DATA_CHUNK_SIZE + 1,
 
-	ChunksPerPartition = FootprintsPerPartition * FootprintSize,
+	ChunksPerPartition = ar_util:pad_to_closest_multiple_equal_or_above(?PARTITION_SIZE, ?DATA_CHUNK_SIZE) div ?DATA_CHUNK_SIZE,
+
 	Partition = (ChunkIndex - 1) div ChunksPerPartition,
 
 	%% Position within partition
@@ -107,10 +108,12 @@ get_intervals(Partition, Footprint, StoreID) ->
 ) -> term().
 get_intervals(Partition, Footprint, Packing, StoreID) ->
 	FootprintSize = get_footprint_size(),
-	FootprintsPerPartition = ?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
-	PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
+	FootprintsPerPartition = get_footprints_per_partition(),
+	ChunksPerPartition = ar_util:pad_to_closest_multiple_equal_or_above(?PARTITION_SIZE, ?DATA_CHUNK_SIZE) div ?DATA_CHUNK_SIZE,
+	PartitionStartOffset = Partition * ChunksPerPartition,
 	FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
-	collect_intervals(FootprintStart, FootprintStart + FootprintSize, Packing, StoreID).
+	End = min(FootprintStart + FootprintSize, PartitionStartOffset + ChunksPerPartition),
+	collect_intervals(FootprintStart, End, Packing, StoreID).
 
 %% @doc Get the unsynced footprint intervals of a chunk.
 -spec get_unsynced_intervals(
@@ -218,16 +221,16 @@ get_offset_test() ->
 	?assertEqual(3, get_offset(?DATA_CHUNK_SIZE * 7)),
 	?assertEqual(6, get_offset(?DATA_CHUNK_SIZE * 8)),
 	?assertEqual(9, get_offset(?DATA_CHUNK_SIZE * 9)),
-	?assertEqual(10, get_offset(?DATA_CHUNK_SIZE * 10)),
-	?assertEqual(13, get_offset(?DATA_CHUNK_SIZE * 11)),
-	?assertEqual(16, get_offset(?DATA_CHUNK_SIZE * 12)),
-	?assertEqual(11, get_offset(?DATA_CHUNK_SIZE * 13)),
-	?assertEqual(14, get_offset(?DATA_CHUNK_SIZE * 14)),
-	?assertEqual(17, get_offset(?DATA_CHUNK_SIZE * 15)),
-	?assertEqual(12, get_offset(?DATA_CHUNK_SIZE * 16)),
-	?assertEqual(15, get_offset(?DATA_CHUNK_SIZE * 17)),
-	?assertEqual(18, get_offset(?DATA_CHUNK_SIZE * 18)),
-	?assertEqual(19, get_offset(?DATA_CHUNK_SIZE * 19)).
+	?assertEqual(12, get_offset(?DATA_CHUNK_SIZE * 10)),
+	?assertEqual(15, get_offset(?DATA_CHUNK_SIZE * 11)),
+	?assertEqual(10, get_offset(?DATA_CHUNK_SIZE * 12)),
+	?assertEqual(13, get_offset(?DATA_CHUNK_SIZE * 13)),
+	?assertEqual(16, get_offset(?DATA_CHUNK_SIZE * 14)),
+	?assertEqual(11, get_offset(?DATA_CHUNK_SIZE * 15)),
+	?assertEqual(14, get_offset(?DATA_CHUNK_SIZE * 16)),
+	?assertEqual(17, get_offset(?DATA_CHUNK_SIZE * 17)),
+	?assertEqual(20, get_offset(?DATA_CHUNK_SIZE * 18)),
+	?assertEqual(23, get_offset(?DATA_CHUNK_SIZE * 19)).
 
 offset_reversal_test() ->
 	Offsets = [?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE * 2, ?DATA_CHUNK_SIZE * 3, ?DATA_CHUNK_SIZE * 4,
@@ -323,20 +326,35 @@ get_intervals_test_() ->
 			SyncedIntervalsList = ar_intervals:to_list(SyncedIntervals),
 			?assertEqual([{3, 0}], SyncedIntervalsList),
 			Partition2 = 0,
-			Footprint2 = 2,
+			Footprint2 = 1,
 			SyncedIntervals2 = get_intervals(Partition2, Footprint2, TestStoreID),
 			SyncedIntervalsList2 = ar_intervals:to_list(SyncedIntervals2),
-			?assertEqual([{9, 6}], SyncedIntervalsList2),
-			Partition3 = 1,
+			?assertEqual([{6, 3}], SyncedIntervalsList2),
+			Partition3 = 0,
 			Footprint3 = 2,
 			SyncedIntervals3 = get_intervals(Partition3, Footprint3, TestStoreID),
 			SyncedIntervalsList3 = ar_intervals:to_list(SyncedIntervals3),
-			?assertEqual([{18, 15}], SyncedIntervalsList3),
-			Partition4 = 2,
+			?assertEqual([{8, 6}], SyncedIntervalsList3),
+			Partition4 = 1,
 			Footprint4 = 0,
 			SyncedIntervals4 = get_intervals(Partition4, Footprint4, TestStoreID),
 			SyncedIntervalsList4 = ar_intervals:to_list(SyncedIntervals4),
-			?assertEqual([{21, 18}], SyncedIntervalsList4)
+			?assertEqual([{11, 8}], SyncedIntervalsList4),
+			Partition5 = 1,
+			Footprint5 = 1,
+			SyncedIntervals5 = get_intervals(Partition5, Footprint5, TestStoreID),
+			SyncedIntervalsList5 = ar_intervals:to_list(SyncedIntervals5),
+			?assertEqual([{14, 11}], SyncedIntervalsList5),
+			Partition6 = 1,
+			Footprint6 = 2,
+			SyncedIntervals6 = get_intervals(Partition6, Footprint6, TestStoreID),
+			SyncedIntervalsList6 = ar_intervals:to_list(SyncedIntervals6),
+			?assertEqual([{16, 14}], SyncedIntervalsList6),
+			Partition7 = 2,
+			Footprint7 = 0,
+			SyncedIntervals7 = get_intervals(Partition7, Footprint7, TestStoreID),
+			SyncedIntervalsList7 = ar_intervals:to_list(SyncedIntervals7),
+			?assertEqual([{19, 16}], SyncedIntervalsList7)
 		end).
 
 get_intervals_from_footprint_intervals_test() ->
