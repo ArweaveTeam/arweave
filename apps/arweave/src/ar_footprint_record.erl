@@ -70,7 +70,7 @@ get_offset(Offset) ->
 get_padded_offset_from_footprint_offset(FootprintOffset) ->
 	Start = FootprintOffset - 1,
 	FootprintSize = get_footprint_size(),
-	PartitionSize = FootprintSize * get_footprints_per_partition(),
+	PartitionSize = ar_util:pad_to_closest_multiple_equal_or_above(?PARTITION_SIZE, ?DATA_CHUNK_SIZE) div ?DATA_CHUNK_SIZE,
 	PartitionOffset = (Start div PartitionSize) * PartitionSize,
 	PartitionRelativeOffset = Start - PartitionOffset,
 	SliceSize = get_footprints_per_partition(),
@@ -108,7 +108,6 @@ get_intervals(Partition, Footprint, StoreID) ->
 ) -> term().
 get_intervals(Partition, Footprint, Packing, StoreID) ->
 	FootprintSize = get_footprint_size(),
-	FootprintsPerPartition = get_footprints_per_partition(),
 	ChunksPerPartition = ar_util:pad_to_closest_multiple_equal_or_above(?PARTITION_SIZE, ?DATA_CHUNK_SIZE) div ?DATA_CHUNK_SIZE,
 	PartitionStartOffset = Partition * ChunksPerPartition,
 	FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
@@ -123,10 +122,11 @@ get_intervals(Partition, Footprint, Packing, StoreID) ->
 ) -> term().
 get_unsynced_intervals(Partition, Footprint, StoreID) ->
 	FootprintSize = get_footprint_size(),
-	FootprintsPerPartition = ?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
-	PartitionStartOffset = Partition * FootprintsPerPartition * FootprintSize,
+	ChunksPerPartition = ar_util:pad_to_closest_multiple_equal_or_above(?PARTITION_SIZE, ?DATA_CHUNK_SIZE) div ?DATA_CHUNK_SIZE,
+	PartitionStartOffset = Partition * ChunksPerPartition,
 	FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
-	collect_unsynced_intervals(FootprintStart, FootprintStart + FootprintSize, StoreID).
+	End = min(FootprintStart + FootprintSize, PartitionStartOffset + ChunksPerPartition),
+	collect_unsynced_intervals(FootprintStart, End, StoreID).
 
 %% @doc Delete a chunk from the footprint record.
 -spec delete(Offset :: non_neg_integer(), StoreID :: string()) -> ok.
@@ -188,8 +188,9 @@ collect_unsynced_intervals(Start, End, StoreID, Intervals) ->
 			Intervals;
 		{End2, Start2} ->
 			End3 = min(End2, End),
+			Start3 = max(Start2, Start),
 			collect_unsynced_intervals(End3, End, StoreID,
-					ar_intervals:add(Intervals, End3, Start2))
+					ar_intervals:add(Intervals, End3, Start3))
 	end.
 
 get_intervals_from_footprint_intervals([], Intervals) ->
@@ -364,9 +365,10 @@ get_intervals_from_footprint_intervals_test() ->
 		{[{1, 0}], [{?DATA_CHUNK_SIZE, 0}], "One chunk"},
 		{[{2, 0}], [{?DATA_CHUNK_SIZE, 0}, {?DATA_CHUNK_SIZE * 4, ?DATA_CHUNK_SIZE * 3}], "Two chunks"},
 		{[{1, 0}, {3, 2}], [{?DATA_CHUNK_SIZE, 0}, {?DATA_CHUNK_SIZE * 7, ?DATA_CHUNK_SIZE * 6}], "Two chunks with a hole"},
-		{[{9, 0}], [{?DATA_CHUNK_SIZE * 9, 0}], "Completely covered partition"},
-		{[{10, 0}], [{?DATA_CHUNK_SIZE * 10, 0}], "Completely covered partition plus one chunk"},
-		{[{11, 0}], [{?DATA_CHUNK_SIZE * 10, 0}, {?DATA_CHUNK_SIZE * 13, ?DATA_CHUNK_SIZE * 12}], "Completely covered partition plus two chunks"}
+		{[{8, 0}], [{?DATA_CHUNK_SIZE * 8, 0}], "Completely covered partition"},
+		{[{9, 0}], [{?DATA_CHUNK_SIZE * 9, 0}], "Completely covered partition plus one chunk"},
+		{[{9, 0}, {12, 11}], [{?DATA_CHUNK_SIZE * 10, 0}], "Completely covered partition plus two chunks"},
+		{[{9, 0}, {12, 11}, {13, 12}], [{?DATA_CHUNK_SIZE * 10, 0}, {?DATA_CHUNK_SIZE * 13, ?DATA_CHUNK_SIZE * 12}], "Completely covered partition plus three chunks"}
 	],
 	test_get_intervals_from_footprint_intervals(TestCases).
 

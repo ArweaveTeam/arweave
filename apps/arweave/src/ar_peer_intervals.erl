@@ -280,7 +280,7 @@ get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 	case PeerReply of
 		{ok, {{replica_2_9, _Addr}, Intervals}} ->
 			{ok, ar_intervals:intersection(Intervals, SoughtIntervals)};
-		{ok, {_Packing, Intervals}} ->
+		{ok, {_Packing, _Intervals}} ->
 			%% In theory, we could also sync non-replica 2.9 data here, but for now we
 			%% leave it to the "normal" syncing procedure.
 			{ok, ar_intervals:new()};
