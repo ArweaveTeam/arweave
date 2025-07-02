@@ -329,7 +329,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	%% The price is recomputed every two blocks.
 	?assertEqual(B1#block.price_per_gib_minute, B1#block.scheduled_price_per_gib_minute),
 	ar_test_node:mine(),
-	_BI2 = ar_test_node:wait_until_height(main, 2),
+	ar_test_node:assert_wait_until_height(main, 2),
 	ar_test_node:assert_wait_until_height(peer1, 2),
 	?assertEqual(0, get_balance(MinerPub)),
 	B2 = ar_node:get_current_block(),
