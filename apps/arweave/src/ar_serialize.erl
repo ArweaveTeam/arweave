@@ -2357,7 +2357,7 @@ json_map_to_pool_cm_jobs(Map) ->
 
 footprint_to_json_map(Packing, Intervals) ->
 	Intervals2 = ar_intervals:to_list(Intervals),
-	Intervals3 = [[integer_to_list(Start), integer_to_list(End)]
+	Intervals3 = [[integer_to_binary(Start), integer_to_binary(End)]
 			|| {End, Start} <- Intervals2],
 	#{
 		packing => encode_packing(Packing, false),
@@ -2371,7 +2371,7 @@ json_map_to_footprint(Map) ->
 			error({unsupported_packing, maps:get(<<"packing">>, Map)});
 		_ ->
 			Intervals = maps:get(<<"intervals">>, Map),
-			Intervals2 = [{list_to_integer(End), list_to_integer(Start)}
+			Intervals2 = [{binary_to_integer(End), binary_to_integer(Start)}
 					|| [Start, End] <- Intervals],
 			Intervals3 = ar_intervals:from_list(Intervals2),
 			{Packing, Intervals3}
