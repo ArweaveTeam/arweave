@@ -146,8 +146,11 @@ release_for_session(SessionId, Size, Cache0) ->
 -spec drop_session(SessionId :: term(), Cache0 :: #ar_mining_cache{}) ->
 	Cache1 :: #ar_mining_cache{}.
 drop_session(SessionId, Cache0) ->
+	?LOG_DEBUG([{event, drop_session}, {session_id, SessionId}]),
+	{Session, Sessions} = maps:take(SessionId, Cache0#ar_mining_cache.mining_cache_sessions),
+	maybe_search_for_anomalies(SessionId, Session),
 	Cache0#ar_mining_cache{
-		mining_cache_sessions = maps:remove(SessionId, Cache0#ar_mining_cache.mining_cache_sessions),
+		mining_cache_sessions = Sessions,
 		mining_cache_sessions_queue = queue:filter(
 			fun(SessionId0) -> SessionId0 =/= SessionId end,
 			Cache0#ar_mining_cache.mining_cache_sessions_queue
@@ -285,6 +288,82 @@ with_mining_cache_session(SessionId, Fun, Cache0) ->
 		false ->
 			{error, session_not_found}
 	end.
+
+%% Searches for anomalies in the mining cache session.
+%% If the actual cache size is different from the expected cache size,
+%% it will log a warning.
+%% If the reserved cache size is different from 0, it will log a warning.
+%% It will also search for invalid cache values, e.g. missing chunks, or failed
+%% invariants.
+%%
+%% Perhaps it is a good idea to put this under a config flag, disabled by default.
+maybe_search_for_anomalies(SessionId, #ar_mining_cache_session{
+  mining_cache = MiningCache,
+  mining_cache_size_bytes = MiningCacheSize,
+  reserved_mining_cache_bytes = ReservedMiningCacheBytes
+}) ->
+	ActualCacheSize = maybe_search_for_anomalies_cache_values(SessionId, MiningCache),
+	case ActualCacheSize =/= MiningCacheSize of
+		true -> ?LOG_WARNING([
+			{event, mining_cache_anomaly}, {anomaly, cache_size_mismatch},
+			{session_id, SessionId}, {actual_size, ActualCacheSize}, {expected_size, MiningCacheSize}]);
+		false -> ok
+	end,
+	case ReservedMiningCacheBytes of
+		0 -> ok;
+		_ -> ?LOG_WARNING([
+			{event, mining_cache_anomaly}, {anomaly, reserved_size_mismatch},
+			{session_id, SessionId}, {actual_size, ReservedMiningCacheBytes}, {expected_size, 0}])
+	end.
+
+maybe_search_for_anomalies_cache_values(SessionId, MiningCache) ->
+	OuterAcc0 = {_Anomalies = #{}, _ActualSize = 0},
+	{Anomalies, ActualSize} = maps:fold(fun(_Key, Value, {Anomalies0, ActualSize0}) ->
+		Anomalies1 = lists:foldl(fun(Check, Anomalies) -> Check(Value, Anomalies) end, Anomalies0, [
+			fun maybe_search_for_anomalies_cache_values_chunk1_missing/2,
+			fun maybe_search_for_anomalies_cache_values_chunk2_missing/2,
+			fun maybe_search_for_anomalies_cache_values_h1_missing/2,
+			fun maybe_search_for_anomalies_cache_values_h2_missing/2,
+			fun maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present/2
+		]),
+		{Anomalies1, ActualSize0 + cached_value_size(Value)}
+	end, OuterAcc0, MiningCache),
+	case maps:size(Anomalies) > 0 of
+		true -> ?LOG_WARNING([
+			{event, mining_cache_anomaly}, {anomaly, cached_values_anomalies},
+			{anomalies, Anomalies}, {session_id, SessionId}]);
+		false -> ok
+	end,
+	ActualSize.
+
+maybe_search_for_anomalies_cache_values_chunk1_missing(#ar_mining_cache_value{chunk1 = undefined, chunk1_missing = false}, Anomalies) ->
+	maps:update_with(chunk1_missing, fun(V) -> V + 1 end, 1, Anomalies);
+maybe_search_for_anomalies_cache_values_chunk1_missing(_, Anomalies) ->
+	Anomalies.
+
+maybe_search_for_anomalies_cache_values_chunk2_missing(#ar_mining_cache_value{chunk2 = undefined, chunk2_missing = false}, Anomalies) ->
+	maps:update_with(chunk2_missing, fun(V) -> V + 1 end, 1, Anomalies);
+maybe_search_for_anomalies_cache_values_chunk2_missing(_, Anomalies) ->
+	Anomalies.
+
+maybe_search_for_anomalies_cache_values_h1_missing(#ar_mining_cache_value{h1 = undefined, chunk1 = Chunk1}, Anomalies)
+when undefined =/= Chunk1 ->
+	maps:update_with(h1_missing, fun(V) -> V + 1 end, 1, Anomalies);
+maybe_search_for_anomalies_cache_values_h1_missing(_, Anomalies) ->
+	Anomalies.
+
+maybe_search_for_anomalies_cache_values_h2_missing(#ar_mining_cache_value{h2 = undefined, chunk2 = Chunk2}, Anomalies)
+when undefined =/= Chunk2 ->
+	maps:update_with(h2_missing, fun(V) -> V + 1 end, 1, Anomalies);
+maybe_search_for_anomalies_cache_values_h2_missing(_, Anomalies) ->
+	Anomalies.
+
+maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present(#ar_mining_cache_value{h1_passes_diff_checks = true}, Anomalies) ->
+	maps:update_with(h1_passes_diff_checks_present, fun(V) -> V + 1 end, 1, Anomalies);
+maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present(_, Anomalies) ->
+	Anomalies.
+
+
 
 %%%===================================================================
 %%% Tests.
