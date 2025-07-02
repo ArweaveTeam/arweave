@@ -147,15 +147,18 @@ release_for_session(SessionId, Size, Cache0) ->
 	Cache1 :: #ar_mining_cache{}.
 drop_session(SessionId, Cache0) ->
 	?LOG_DEBUG([{event, drop_session}, {session_id, SessionId}]),
-	{Session, Sessions} = maps:take(SessionId, Cache0#ar_mining_cache.mining_cache_sessions),
-	maybe_search_for_anomalies(SessionId, Session),
-	Cache0#ar_mining_cache{
-		mining_cache_sessions = Sessions,
-		mining_cache_sessions_queue = queue:filter(
-			fun(SessionId0) -> SessionId0 =/= SessionId end,
-			Cache0#ar_mining_cache.mining_cache_sessions_queue
-		)
-	}.
+	case maps:take(SessionId, Cache0#ar_mining_cache.mining_cache_sessions) of
+		{Session, Sessions} ->
+			maybe_search_for_anomalies(SessionId, Session),
+			Cache0#ar_mining_cache{
+				mining_cache_sessions = Sessions,
+				mining_cache_sessions_queue = queue:filter(
+					fun(SessionId0) -> SessionId0 =/= SessionId end,
+					Cache0#ar_mining_cache.mining_cache_sessions_queue
+				)
+			};
+		_ -> Cache0
+	end.
 
 %% @doc Checks if a session exists in the cache.
 -spec session_exists(SessionId :: term(), Cache0 :: #ar_mining_cache{}) ->
@@ -314,9 +317,12 @@ maybe_search_for_anomalies(SessionId, #ar_mining_cache_session{
 		_ -> ?LOG_WARNING([
 			{event, mining_cache_anomaly}, {anomaly, reserved_size_mismatch},
 			{session_id, SessionId}, {actual_size, ReservedMiningCacheBytes}, {expected_size, 0}])
-	end.
+	end;
+maybe_search_for_anomalies(SessionId, _InvalidSession) ->
+	?LOG_ERROR([{event, mining_cache_anomaly}, {anomaly, invalid_session_type}, {session_id, SessionId}]),
+	ok.
 
-maybe_search_for_anomalies_cache_values(SessionId, MiningCache) ->
+maybe_search_for_anomalies_cache_values(SessionId, MiningCache) when is_map(MiningCache) ->
 	OuterAcc0 = {_Anomalies = #{}, _ActualSize = 0},
 	{Anomalies, ActualSize} = maps:fold(fun(_Key, Value, {Anomalies0, ActualSize0}) ->
 		Anomalies1 = lists:foldl(fun(Check, Anomalies) -> Check(Value, Anomalies) end, Anomalies0, [
@@ -334,7 +340,10 @@ maybe_search_for_anomalies_cache_values(SessionId, MiningCache) ->
 			{anomalies, Anomalies}, {session_id, SessionId}]);
 		false -> ok
 	end,
-	ActualSize.
+	ActualSize;
+maybe_search_for_anomalies_cache_values(SessionId, _InvalidCache) ->
+	?LOG_ERROR([{event, mining_cache_anomaly}, {anomaly, invalid_cache_type}, {session_id, SessionId}]),
+	0.
 
 maybe_search_for_anomalies_cache_values_chunk1_missing(#ar_mining_cache_value{chunk1 = undefined, chunk1_missing = false}, Anomalies) ->
 	maps:update_with(chunk1_missing, fun(V) -> V + 1 end, 1, Anomalies);
