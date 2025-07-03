@@ -822,6 +822,11 @@ maybe_rebase(#{ pending_rebase := {PrevH, H} } = State) ->
 							{prev_h, ar_util:encode(PrevH)},
 							{solution_h, ar_util:encode(SolutionH)},
 							{expected_new_height, PrevB#block.height + 1}]),
+					ar:console("Rebasing block ~s (solution ~s, previous block ~s, height ~B).",
+							[
+								ar_util:encode(H), ar_util:encode(SolutionH),
+								ar_util:encode(PrevH), PrevB#block.height + 1
+							]),
 					handle_found_solution(Args, PrevB, State, true)
 				end;
 		{B, {Status, Timestamp}} ->

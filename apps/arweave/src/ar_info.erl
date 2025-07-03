@@ -85,7 +85,15 @@ get_recent_forks() ->
     case ar_chain_stats:get_forks(CutOffTime) of
         {error, _} -> error;
         Forks ->
-            lists:foldl(
+            %% 1. We receive forks in ascending order (oldest first)
+            %% 2. But since we want to truncate the list to only include the most recent forks,
+            %%    we first reverse...
+            ReversedForks = lists:reverse(Forks),
+            %% 3. Then truncate...
+            TruncatedForks = lists:sublist(ReversedForks, ?RECENT_FORKS_LENGTH),
+            %% 4. Then convert to JSON maps
+            %%    (which reverses the list again due to list prepending)
+            RecentForks = lists:foldl(
                 fun(Fork, Acc) ->
                     #fork{ 
                         id = ID, height = Height, timestamp = Timestamp, 
@@ -98,8 +106,11 @@ get_recent_forks() ->
                     } | Acc]
                 end,
                 [],
-                lists:sublist(Forks, ?RECENT_FORKS_LENGTH)
-            )
+                TruncatedForks
+            ),
+            %% 5. Then finally reverse the list again so we end up with forks in descending
+            %%    order (newest first)
+            lists:reverse(RecentForks)
     end.
 
 get_block_timestamp(B, Depth)
