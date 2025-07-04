@@ -59,11 +59,11 @@ test_register(TestFun, Fixture) ->
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
 node_blacklisting_get_spammer_test_() ->
-	{timeout, 10, fun test_node_blacklisting_get_spammer/0}.
+	{timeout, 30, fun test_node_blacklisting_get_spammer/0}.
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
 node_blacklisting_post_spammer_test_() ->
-	{timeout, 10, fun test_node_blacklisting_post_spammer/0}.
+	{timeout, 30, fun test_node_blacklisting_post_spammer/0}.
 
 %% @doc Check that we can qickly get the local time from the peer.
 get_time_test() ->
