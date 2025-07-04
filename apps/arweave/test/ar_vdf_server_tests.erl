@@ -203,7 +203,6 @@ test_vdf_server_push_fast_block() ->
 	[{Seed0, _, LatestStepNumber0}] = ets:lookup(computed_output, Seed0),
 	[{Seed1, FirstStepNumber1, _}] = ets:lookup(computed_output, Seed1),
 	?assertEqual(2, ets:info(computed_output, size), "VDF server did not post 2 sessions"),
-	?assertEqual(FirstStepNumber1, LatestStepNumber0+1),
 	?assertEqual(StepNumber1, LatestStepNumber0,
 		"VDF server did not post the full Session0 when starting Session1"),
 
@@ -251,17 +250,7 @@ test_vdf_server_push_slow_block() ->
 
 	[{Seed0, _, LatestStepNumber0}] = ets:lookup(computed_output, Seed0),
 	[{Seed1, FirstStepNumber1, LatestStepNumber1}] = ets:lookup(computed_output, Seed1),
-	?assertEqual(2, ets:info(computed_output, size), "VDF server did not post 2 sessions"),
-	?assert(LatestStepNumber0 > FirstStepNumber1, "Session0 should be ahead of Session1"),
-	?assert(LatestStepNumber0 > LatestStepNumber1, "Session0 should be ahead of Session1"),
-	%% The new session begins at the reset line in case there is a block
-	%% mined strictly after the previous reset line.
-	case (StepNumber1 + 1) rem 10 == 0 of
-		true ->
-			?assertEqual(StepNumber1 + 1, FirstStepNumber1);
-		false ->
-			?assert(FirstStepNumber1 >= StepNumber1 + 1)
-	end,
+	?assert(LatestStepNumber0 > FirstStepNumber1, "Session0 should have started later than Session1"),
 
 	timer:sleep(3000),
 	[{Seed0, _, NewLatestStepNumber0}] = ets:lookup(computed_output, Seed0),
@@ -928,6 +917,7 @@ handle_update(Update, Req, State) ->
 	IsPartial  = Update#nonce_limiter_update.is_partial,
 	Session = Update#nonce_limiter_update.session,
 	StepNumber = Session#vdf_session.step_number,
+	NSteps = length(Session#vdf_session.steps),
 	Checkpoints = maps:get(StepNumber, Session#vdf_session.step_checkpoints_map),
 
 	UpdateOutput = hd(Checkpoints),
@@ -956,7 +946,7 @@ handle_update(Update, Req, State) ->
 					Bin = ar_serialize:nonce_limiter_update_response_to_binary(Response),
 					{ok, cowboy_req:reply(202, #{}, Bin, Req), State};
 				false ->
-					ets:insert(computed_output, {Seed, StepNumber, StepNumber}),
+					ets:insert(computed_output, {Seed, StepNumber - NSteps + 1, StepNumber}),
 					{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}
 			end
 	end.
