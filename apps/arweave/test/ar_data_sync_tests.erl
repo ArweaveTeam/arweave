@@ -50,9 +50,6 @@ test_recovers_from_corruption() ->
 	?debugFmt("Corrupting ~s...", [StoreID]),
 	[ar_chunk_storage:write_chunk(PaddedEndOffset, << 0:(262144*8) >>, #{}, StoreID)
 			|| PaddedEndOffset <- lists:seq(262144, 262144 * 3, 262144)],
-	%% Give the node some time to sync the corrupted chunks before beginning mining.
-	%% Otherwise, it may fill up its cache with solutions which fail validation and get stuck.
-	timer:sleep(5000),
 	ar_test_node:mine(),
 	ar_test_node:assert_wait_until_height(main, 1).
 
