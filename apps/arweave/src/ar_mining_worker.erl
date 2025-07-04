@@ -436,11 +436,10 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 	) of
 		{ok, ChunkCache2} -> State1#state{ chunk_cache = ChunkCache2 };
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_process_h1},
+			log_error(mining_worker_failed_to_process_h1, Reason, [
 				{worker, State1#state.name}, {partition, State1#state.partition_number},
 				{nonce, Candidate#mining_candidate.nonce},
-				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{reason, Reason}]),
+				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)}]),
 			State1
 	end;
 
@@ -496,11 +495,10 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 	) of
 		{ok, ChunkCache2} -> State1#state{ chunk_cache = ChunkCache2 };
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_process_computed_h2},
+			log_error(mining_worker_failed_to_process_computed_h2, Reason, [
 				{worker, State1#state.name}, {partition, State1#state.partition_number},
 				{nonce, Candidate#mining_candidate.nonce},
-				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{reason, Reason}]),
+				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)}]),
 			State1
 	end;
 
@@ -711,11 +709,10 @@ process_sub_chunk(chunk1, Candidate, SubChunk, State) ->
 	) of
 		{ok, ChunkCache2} -> State#state{ chunk_cache = ChunkCache2 };
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_process_chunk1},
+			log_error(mining_worker_failed_to_process_chunk1, Reason, [
 				{worker, State#state.name}, {partition, State#state.partition_number},
 				{nonce, Candidate#mining_candidate.nonce},
-				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{reason, Reason}]),
+				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)}]),
 			State
 	end;
 process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
@@ -742,11 +739,10 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 	) of
 		{ok, ChunkCache2} -> State#state{ chunk_cache = ChunkCache2 };
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_process_chunk2},
+			log_error(mining_worker_failed_to_process_chunk2, Reason, [
 				{worker, State#state.name}, {partition, State#state.partition_number},
 				{nonce, Candidate2#mining_candidate.nonce},
-				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{reason, Reason}]),
+				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)}]),
 			State
 	end.
 
@@ -878,7 +874,7 @@ try_to_reserve_cache_range_space(Multiplier, SessionKey, #state{
 			State1 = State#state{ chunk_cache = ChunkCache1 },
 			{true, State1};
 		{error, Reason} ->
-			?LOG_WARNING([{event, mining_worker_failed_to_reserve_cache_space},
+			log_warning(mining_worker_failed_to_reserve_cache_space, Reason, [
 				{worker, State#state.name}, {partition, State#state.partition_number},
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 				{cache_size, ar_mining_cache:cache_size(ChunkCache0)},
@@ -944,7 +940,7 @@ mark_single_chunk1_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 		{ok, ChunkCache1} ->
 			mark_single_chunk1_missing_or_drop(Nonce + 1, NoncesLeft - 1, Candidate, State#state{ chunk_cache = ChunkCache1 });
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_mark_chunk1_missing}, {reason, Reason}]),
+			log_error(mining_worker_failed_to_mark_chunk1_missing, Reason, []),
 			mark_single_chunk1_missing_or_drop(Nonce + 1, NoncesLeft - 1, Candidate, State)
 	end.
 
@@ -986,7 +982,7 @@ mark_single_chunk2_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 		{error, Reason} ->
 			%% NB: this clause may cause a memory leak, because mining worker will wait for
 			%% chunk2 to arrive.
-			?LOG_ERROR([{event, mining_worker_failed_to_mark_chunk2_missing}, {reason, Reason}]),
+			log_error(mining_worker_failed_to_mark_chunk2_missing, Reason, []),
 			mark_single_chunk2_missing_or_drop(Nonce + 1, NoncesLeft - 1, Candidate, State)
 	end.
 
@@ -1008,9 +1004,28 @@ mark_second_recall_range_missing(Nonce, NoncesLeft, Candidate, State) ->
 		{error, Reason} ->
 			%% NB: this clause may cause a memory leak, because mining worker will wait for
 			%% chunk2 to arrive.
-			?LOG_ERROR([{event, mining_worker_failed_to_add_chunk_to_cache}, {reason, Reason}]),
+			log_error(mining_worker_failed_to_add_chunk_to_cache, Reason, []),
 			mark_second_recall_range_missing(Nonce + 1, NoncesLeft - 1, Candidate, State)
 	end.
+
+-ifdef(AR_TEST).
+log_error(Event, cache_limit_exceeded, _ExtraArgs) ->
+	%% The log is too noisy in tests.
+	ok;
+log_error(Event, Reason, ExtraArgs) ->
+	?LOG_ERROR([{event, Event}, {reason, Reason} | ExtraArgs]).
+
+log_warning(Event, cache_limit_exceeded, _ExtraArgs) ->
+	%% The log is too noisy in tests.
+	ok;
+log_warning(Event, Reason, ExtraArgs) ->
+	?LOG_WARNING([{event, Event}, {reason, Reason} | ExtraArgs]).
+-else.
+log_error(Event, Reason, ExtraArgs) ->
+	?LOG_ERROR([{event, Event}, {reason, Reason} | ExtraArgs]).
+log_warning(Event, Reason, ExtraArgs) ->
+	?LOG_WARNING([{event, Event}, {reason, Reason} | ExtraArgs]).
+-endif.
 
 cache_h1_list(_Candidate, [], State) -> State;
 cache_h1_list(#mining_candidate{ cache_ref = not_set } = _Candidate, [], State) -> State;
@@ -1028,10 +1043,9 @@ cache_h1_list(Candidate, [ {H1, Nonce} | H1List ], State) ->
 		{ok, ChunkCache1} ->
 			cache_h1_list(Candidate, H1List, State#state{ chunk_cache = ChunkCache1 });
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_cache_h1},
+			log_error(mining_worker_failed_to_cache_h1, Reason, [
 				{worker, State#state.name}, {partition, State#state.partition_number},
-				{nonce, Nonce}, {session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{reason, Reason}]),
+				{nonce, Nonce}, {session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)}]),
 			cache_h1_list(Candidate, H1List, State)
 	end.
 
