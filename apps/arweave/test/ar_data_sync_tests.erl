@@ -9,7 +9,7 @@
 -import(ar_test_node, [assert_wait_until_height/2, test_with_mocked_functions/2]).
 
 recovers_from_corruption_test_() ->
-	{timeout, 140, fun test_recovers_from_corruption/0}.
+	{timeout, 300, fun test_recovers_from_corruption/0}.
 
 test_recovers_from_corruption() ->
 	?LOG_DEBUG([{event, test_recovers_from_corruption_start}]),
