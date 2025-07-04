@@ -616,7 +616,7 @@ parse_options([{<<"p3">>, {P3Config}} | Rest], Config) ->
 			P3Config}
 	end;
 
-parse_options([{<<"http_api_transport_idle_timeout_seconds">>, D} | Rest], Config) when is_integer(D) ->
+parse_options([{<<"http_api.tcp.idle_timeout_seconds">>, D} | Rest], Config) when is_integer(D) ->
 	parse_options(Rest, Config#config{ http_api_transport_idle_timeout = D * 1000 });
 
 parse_options([{<<"coordinated_mining">>, true} | Rest], Config) ->
@@ -715,13 +715,13 @@ parse_options([{<<"data_sync_request_packed_chunks">>, InvalidValue} | _Rest], _
 	{error, {bad_type, data_sync_request_packed_chunks, boolean}, InvalidValue};
 
 %% shutdown procedure
-parse_options([{<<"shutdown_tcp_connection_timeout">>, Delay} | Rest], Config)
+parse_options([{<<"network.tcp.shutdown.connection_timeout">>, Delay} | Rest], Config)
 	when is_integer(Delay) andalso Delay > 0 ->
 		NewConfig = Config#config{ shutdown_tcp_connection_timeout = Delay },
 		parse_options(Rest, NewConfig);
-parse_options([{<<"shutdown_tcp_connection_timeout">>, InvalidValue} | _Rest], _Config) ->
+parse_options([{<<"network.tcp.shutdown.connection_timeout">>, InvalidValue} | _Rest], _Config) ->
 	{error, {bad_type, shutdown_tcp_connection_timeout, integer}, InvalidValue};
-parse_options([{<<"shutdown_tcp_mode">>, Mode}|Rest], Config) ->
+parse_options([{<<"network.tcp.shutdown.mode">>, Mode}|Rest], Config) ->
 	case Mode of
 		<<"shutdown">> ->
 			NewConfig = Config#config{ shutdown_tcp_mode = shutdown },
@@ -734,7 +734,7 @@ parse_options([{<<"shutdown_tcp_mode">>, Mode}|Rest], Config) ->
 	end;
 
 %% Global socket configuration
-parse_options([{<<"socket.backend">>, Backend}|Rest], Config) ->
+parse_options([{<<"network.socket.backend">>, Backend}|Rest], Config) ->
 	case Backend of
 		<<"inet">> ->
 			parse_options(Rest, Config#config{ 'socket.backend' = inet });

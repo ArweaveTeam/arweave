@@ -162,6 +162,7 @@
 -define(DEFAULT_COWBOY_HTTP_REQUEST_TIMEOUT, 5000).
 -define(DEFAULT_COWBOY_TCP_BACKLOG, 1024).
 -define(DEFAULT_COWBOY_TCP_DELAY_SEND, false).
+-define(DEFAULT_COWBOY_TCP_IDLE_TIMEOUT_SECOND, 10).
 -define(DEFAULT_COWBOY_TCP_KEEPALIVE, true).
 -define(DEFAULT_COWBOY_TCP_LINGER, false).
 -define(DEFAULT_COWBOY_TCP_LINGER_TIMEOUT, 0).
@@ -256,7 +257,7 @@
 	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS,
 	tls_cert_file = not_set, %% required to enable TLS
 	tls_key_file = not_set,  %% required to enable TLS
-	http_api_transport_idle_timeout = 10000,
+	http_api_transport_idle_timeout = ?DEFAULT_COWBOY_TCP_IDLE_TIMEOUT_SECOND*1000,
 	p3 = #p3_config{},
 	coordinated_mining = false,
 	cm_api_secret = not_set,
