@@ -112,6 +112,7 @@ add_session(SessionId, Cache0) ->
 			case queue:len(Cache1#ar_mining_cache.mining_cache_sessions_queue) > ?CACHE_SESSIONS_LIMIT of
 				true ->
 					{{value, LastSessionId}, Queue1} = queue:out(Cache1#ar_mining_cache.mining_cache_sessions_queue),
+					maybe_warn_about_session_memory_leak(LastSessionId, maps:get(LastSessionId, Cache1#ar_mining_cache.mining_cache_sessions)),
 					Cache2 = drop_session(LastSessionId, Cache1),
 					Cache2#ar_mining_cache{mining_cache_sessions_queue = Queue1};
 				false ->
@@ -257,11 +258,7 @@ with_cached_value(Key, SessionId, Cache0, Fun) ->
 
 %% Returns the size of the cached data in bytes.
 cached_value_size(#ar_mining_cache_value{chunk1 = Chunk1, chunk2 = Chunk2}) ->
-  MaybeBinarySize = fun
-		(undefined) -> 0;
-		(Binary) -> byte_size(Binary)
-  end,
-  MaybeBinarySize(Chunk1) + MaybeBinarySize(Chunk2).
+	maybe_binary_size(Chunk1) + maybe_binary_size(Chunk2).
 
 %% Executes the `Fun` function with the chunk cache session as argument.
 %% If the session does not exist, it returns an error without executing the `Fun`.
@@ -285,6 +282,25 @@ with_mining_cache_session(SessionId, Fun, Cache0) ->
 		false ->
 			{error, session_not_found}
 	end.
+
+maybe_warn_about_session_memory_leak(SessionId, Session) ->
+	ReservedSize = Session#ar_mining_cache_session.reserved_mining_cache_bytes,
+	ActualSize = maps:fold(fun(_Key, Value, Acc) ->
+		Chunk1Size = maybe_binary_size(Value#ar_mining_cache_value.chunk1),
+		Chunk2Size = maybe_binary_size(Value#ar_mining_cache_value.chunk2),
+		Acc + Chunk1Size + Chunk2Size
+	end, 0, Session#ar_mining_cache_session.mining_cache),
+	case ActualSize + ReservedSize of
+		0 -> ok;
+		_ ->
+			?LOG_WARNING([{event, session_memory_leak},
+				{session_id, SessionId},
+				{actual_size, ActualSize},
+				{reserved_size, ReservedSize}])
+	end.
+
+maybe_binary_size(undefined) -> 0;
+maybe_binary_size(Binary) -> byte_size(Binary).
 
 %%%===================================================================
 %%% Tests.
