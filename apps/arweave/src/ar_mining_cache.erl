@@ -1,6 +1,7 @@
 -module(ar_mining_cache).
--include_lib("arweave/include/ar_mining_cache.hrl").
--include_lib("arweave/include/ar.hrl").
+
+-include("ar_mining_cache.hrl").
+-include("ar.hrl").
 
 -export([
 	new/0, new/1, set_limit/2, get_limit/1,
