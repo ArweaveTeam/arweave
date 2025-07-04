@@ -9,7 +9,11 @@
         "testnet-3.arweave.xyz",
         "testnet-4.arweave.xyz",
         "testnet-5.arweave.xyz",
-        "testnet-6.arweave.xyz"
+        "testnet-6.arweave.xyz",
+        "testnet-7.arweave.xyz",
+        "testnet-8.arweave.xyz",
+        "testnet-9.arweave.xyz",
+        "testnet-10.arweave.xyz"
     ],
     "vdf_server_trusted_peers": [
         "testnet-4.arweave.xyz"
