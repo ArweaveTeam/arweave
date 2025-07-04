@@ -157,5 +157,9 @@ terminate_timers() ->
 	[ cancel(Ref) || Ref <- list_timers() ],
 
 	% then cancel all others timers from timer_tab.
-	[ timer:cancel(Ref) || {Ref, _, _} <- ets:tab2list(timer_tab) ].
-
+	case ets:whereis(timer_tab) of
+		undefined ->
+			ok;
+		_ ->
+			[ timer:cancel(Ref) || {Ref, _, _} <- ets:tab2list(timer_tab) ]
+	end.
