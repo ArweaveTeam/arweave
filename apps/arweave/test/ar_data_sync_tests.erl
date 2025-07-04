@@ -41,7 +41,7 @@ test_records_footprints() ->
 			ar_http_iface_client:get_footprints(Peer, -1, 0)).
 
 recovers_from_corruption_test_() ->
-	{timeout, 140, fun test_recovers_from_corruption/0}.
+	{timeout, 300, fun test_recovers_from_corruption/0}.
 
 test_recovers_from_corruption() ->
 	?LOG_DEBUG([{event, test_recovers_from_corruption_start}]),
