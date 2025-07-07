@@ -1501,18 +1501,6 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 log_applied_block(B) ->
 	Partition1 = ar_node:get_partition_number(B#block.recall_byte),
 	Partition2 = ar_node:get_partition_number(B#block.recall_byte2),
-	case Partition1 of
-		undefined ->
-			ok;
-		_ ->
-			prometheus_gauge:inc(partition_count, [Partition1])
-	end,
-	case Partition2 of
-		undefined ->
-			ok;
-		_ ->
-			prometheus_gauge:inc(partition_count, [Partition2])
-	end,
 	NumChunks = case {Partition1, Partition2} of
 		{undefined, undefined} ->
 			0;

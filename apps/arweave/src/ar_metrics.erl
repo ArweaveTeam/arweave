@@ -404,12 +404,6 @@ register() ->
 				"2-chunk blocks."}
 	]),
 	prometheus_gauge:new([
-		{name, partition_count},
-		{labels, [partition]},
-		{help, "A count of how often each partition is used in a block proof-of-access proof. "
-				"The 'partition' label is the partition number."}
-	]),
-	prometheus_gauge:new([
 		{name, log_diff},
 		{labels, [chunk]},
 		{help, "The current linear difficulty converted to log scale. The chunk label "
