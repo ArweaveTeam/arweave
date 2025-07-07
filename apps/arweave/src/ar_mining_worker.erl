@@ -932,12 +932,9 @@ mark_single_chunk1_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 				%% We've already read the chunk2 from disk, so we can just drop the cached value.
 				%% The cache reservation for corresponding chunk2 was already consumed.
 				{ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
-			(CachedValue) ->
+			(#ar_mining_cache_value{chunk2 = undefined} = CachedValue) ->
 				%% Mark the chunk1 as missing.
-				%% If the corresponding chunk2 will be read from disk, it will be dropped immediately.
-				%% If we didn't read the chunk2 from disk, we didn't reserve the cache space for it;
-				%% in this case the cached value will hang in the cache until the session will be dropped,
-				%% but it will not contain any large binaries, so it will not consume any significant memory.
+				%% When the corresponding chunk2 will be read from disk, it will be dropped immediately.
 				{ok, CachedValue#ar_mining_cache_value{chunk1_missing = true}, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)}
 		end
 	) of
