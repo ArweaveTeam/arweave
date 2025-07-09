@@ -736,6 +736,10 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 		Candidate#mining_candidate.session_key,
 		State#state.chunk_cache,
 		fun
+			(#ar_mining_cache_value{chunk1_missing = true}) ->
+				%% We've already marked the chunk1 as missing, so there was no reservation for it.
+				%% Since there is no need to calculate H2, we can just drop the cached value.
+				{ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
 			(#ar_mining_cache_value{h1_passes_diff_checks = true} = _CachedValue) ->
 				%% H1 passes diff checks, so we skip H2 for this nonce.
 				%% Drop the cached data, we don't need it anymore.
