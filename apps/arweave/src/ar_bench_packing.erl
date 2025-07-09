@@ -59,7 +59,7 @@ show_help() ->
 	io:format("  pdiff <number> (default: 1)~n"),
 	io:format("  rounds <number> (default: 10)~n"),
 	lists:foreach(fun(Test) -> io:format("  ~p~n", [Test]) end, maps:keys(?VALID_TESTS)),
-	erlang:halt().
+	init:stop(1).
 
 run_benchmark(Test, JIT, LargePages, HardwareAES, PackingDifficulty, Rounds) ->
 	timer:sleep(3000),

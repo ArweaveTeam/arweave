@@ -108,7 +108,7 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 						"new one in the most recent blocks. If you have just started a new "
 						"weave using the init option, restart from the local state "
 						"or specify some peers.~n~n"),
-					erlang:halt();
+					init:stop(1);
 			{_, {IntersectionHeight, _}} ->
 				S = State2#state{
 						sync_record = ar_intervals:cut(SyncRecord, IntersectionHeight),

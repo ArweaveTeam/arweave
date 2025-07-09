@@ -518,7 +518,7 @@ show_help() ->
 			)}
 		]
 	),
-	erlang:halt().
+	init:stop(1).
 
 parse_config_file(["config_file", Path | Rest], Skipped, _) ->
 	case read_config_from_file(Path) of
@@ -553,7 +553,7 @@ parse_cli_args(["verify", "log" | Rest], C) ->
 parse_cli_args(["verify", _ | _], _C) ->
 	io:format("Invalid verify mode. Valid modes are 'purge' or 'log'.~n"),
 	timer:sleep(1000),
-	erlang:halt();
+	init:stop(1);
 parse_cli_args(["verify_samples", "all" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ verify_samples = all });
 parse_cli_args(["verify_samples", N | Rest], C) ->
@@ -619,7 +619,7 @@ parse_cli_args(["storage_module", StorageModuleString | Rest], C) ->
 	catch _:_ ->
 		io:format("~nstorage_module value must be "
 				"in the {number},{address}[,repack_in_place,{to_packing}] format.~n~n"),
-		erlang:halt()
+		init:stop(1)
 	end;
 parse_cli_args(["repack_batch_size", N | Rest], C) ->
 	parse_cli_args(Rest, C#config{ repack_batch_size = list_to_integer(N) });
@@ -644,11 +644,11 @@ parse_cli_args(["mining_addr", Addr | Rest], C) ->
 				_ ->
 					io:format("~nmining_addr must be a valid Base64Url string, 43"
 							" characters long.~n~n"),
-					erlang:halt()
+					init:stop(1)
 			end;
 		_ ->
 			io:format("~nYou may specify at most one mining_addr.~n~n"),
-			erlang:halt()
+			init:stop(1)
 	end;
 parse_cli_args(["hashing_threads", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ hashing_threads = list_to_integer(Num) });
@@ -684,7 +684,7 @@ parse_cli_args(["start_from_block", H | Rest], C) ->
 		_ ->
 			io:format("Invalid start_from_block.~n", []),
 			timer:sleep(1000),
-			erlang:halt()
+			init:stop(1)
 	end;
 parse_cli_args(["start_from_latest_state" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ start_from_latest_state = true });
@@ -696,7 +696,7 @@ parse_cli_args(["internal_api_secret", Secret | Rest], C)
 parse_cli_args(["internal_api_secret", _ | _], _) ->
 	io:format("~nThe internal_api_secret must be at least ~B characters long.~n~n",
 			[?INTERNAL_API_SECRET_MIN_LEN]),
-	erlang:halt();
+	init:stop(1);
 parse_cli_args(["enable", Feature | Rest ], C = #config{ enable = Enabled }) ->
 	parse_cli_args(Rest, C#config{ enable = [ list_to_atom(Feature) | Enabled ] });
 parse_cli_args(["disable", Feature | Rest ], C = #config{ disable = Disabled }) ->
@@ -792,7 +792,7 @@ parse_cli_args(["defragment_module", DefragModuleString | Rest], C) ->
 		parse_cli_args(Rest, C#config{ defragmentation_modules = DefragModules2 })
 	catch _:_ ->
 		io:format("~ndefragment_module value must be in the {number},{address} format.~n~n"),
-		erlang:halt()
+		init:stop(1)
 	end;
 parse_cli_args(["tls_cert_file", CertFilePath | Rest], C) ->
     AbsCertFilePath = filename:absname(CertFilePath),
@@ -812,7 +812,7 @@ parse_cli_args(["cm_api_secret", CMSecret | Rest], C)
 parse_cli_args(["cm_api_secret", _ | _], _) ->
 	io:format("~nThe cm_api_secret must be at least ~B characters long.~n~n",
 			[?INTERNAL_API_SECRET_MIN_LEN]),
-	erlang:halt();
+	init:stop(1);
 parse_cli_args(["cm_poll_interval", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ cm_poll_interval = list_to_integer(Num) });
 parse_cli_args(["cm_peer", Peer | Rest], C = #config{ cm_peers = Ps }) ->
@@ -1157,7 +1157,7 @@ start(Config) ->
 			ok;
 		false ->
 			timer:sleep(2000),
-			erlang:halt()
+			init:stop(1)
 	end,
 	Config2 = ar_config:set_dependent_flags(Config),
 	ok = application:set_env(arweave, config, Config2),
@@ -1196,7 +1196,7 @@ set_mining_address(#config{ mining_addr = not_set } = C) ->
 			ar:console("~nFailed to create a wallet, reason: ~p.~n",
 				[io_lib:format("~p", [Reason])]),
 			timer:sleep(500),
-			erlang:halt();
+			init:stop(1);
 		W ->
 			Addr = ar_wallet:to_address(W),
 			ar:console("~nSetting the mining address to ~s.~n", [ar_util:encode(Addr)]),
@@ -1218,7 +1218,7 @@ set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer,
 						"[data_dir]/~s/arweave_keyfile_[mining_addr].json file)."
 						" Do not specify \"mining_addr\" if you want one to be generated.~n~n",
 						[ar_util:encode(Addr), ?WALLET_DIR, ?WALLET_DIR, ?WALLET_DIR]),
-					erlang:halt();
+					init:stop(1);
 				_ ->
 					ok
 			end;
@@ -1250,11 +1250,11 @@ create_wallet(DataDir, KeyType) ->
 					ar:console("Failed to create a wallet, reason: ~p.~n~n",
 							[io_lib:format("~p", [Reason])]),
 					timer:sleep(500),
-					erlang:halt();
+					init:stop(1);
 				W ->
 					Addr = ar_wallet:to_address(W),
 					ar:console("Created a wallet with address ~s.~n", [ar_util:encode(Addr)]),
-					erlang:halt()
+					init:stop(1)
 			end
 	end.
 
@@ -1263,37 +1263,36 @@ create_wallet() ->
 
 create_wallet_fail(?RSA_KEY_TYPE) ->
 	io:format("Usage: ./bin/create-wallet [data_dir]~n"),
-	erlang:halt();
+	init:stop(1);
 create_wallet_fail(?ECDSA_KEY_TYPE) ->
 	io:format("Usage: ./bin/create-ecdsa-wallet [data_dir]~n"),
-	erlang:halt().
+	init:stop(1).
 
 benchmark_packing() ->
 	benchmark_packing([]).
 benchmark_packing(Args) ->
 	ar_bench_timer:initialize(),
 	ar_bench_packing:run_benchmark_from_cli(Args),
-	erlang:halt().
+	init:stop(1).
 
 benchmark_vdf() ->
 	benchmark_vdf([]).
-
 benchmark_vdf(Args) ->
 	ok = application:set_env(arweave, config, #config{}),
 	ar_bench_vdf:run_benchmark_from_cli(Args),
-	erlang:halt().
+	init:stop(1).
 
 benchmark_hash() ->
 	benchmark_hash([]).
 benchmark_hash(Args) ->
 	ar_bench_hash:run_benchmark_from_cli(Args),
-	erlang:halt().
+	init:stop(1).
 
 benchmark_2_9() ->
 	ar_bench_2_9:show_help().
 benchmark_2_9(Args) ->
 	ar_bench_2_9:run_benchmark_from_cli(Args),
-	erlang:halt().
+	init:stop(1).
 
 shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
@@ -1360,7 +1359,7 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 	catch
 		Type:Reason ->
 			io:format("Failed to start the peers due to ~p:~p~n", [Type, Reason]),
-			erlang:halt(1)
+			init:stop(1)
 	end,
 	Result =
 		try
@@ -1370,7 +1369,7 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 		end,
 	case Result of
 		ok -> ok;
-		_ -> erlang:halt(1)
+		_ -> init:stop(1)
 	end.
 
 

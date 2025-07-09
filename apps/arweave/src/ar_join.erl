@@ -60,7 +60,7 @@ start2([]) ->
 	ar:console("~nTrusted peers are not available.~n", []),
 	?LOG_WARNING([{event, not_joining}, {reason, trusted_peers_not_available}]),
 	timer:sleep(1000),
-	erlang:halt();
+	init:stop(1);
 start2(Peers) ->
 	ar:console("Joining the Arweave network...~n"),
 	[{H, _, _} | _] = BI = get_block_index(Peers, ?REJOIN_RETRIES),
@@ -78,7 +78,7 @@ start2(Peers) ->
 			file:write_file(File, term_to_binary({B, Peers, BI})),
 			ar:console("Inconsistent head block and block index. Error dump: ~s.", [File]),
 			timer:sleep(2000),
-			erlang:halt()
+			init:stop(1)
 	end.
 
 get_block_index(Peers, Retries) ->
@@ -100,7 +100,7 @@ get_block_index(Peers, Retries) ->
 					),
 					?LOG_ERROR([{event, failed_to_fetch_block_index}]),
 					timer:sleep(1000),
-					erlang:halt()
+					init:stop(1)
 			end;
 		BI ->
 			BI
@@ -189,7 +189,7 @@ get_block(Peers, H, Retries) ->
 						{block, ar_util:encode(H)}
 					]),
 					timer:sleep(1000),
-					erlang:halt()
+					init:stop(1)
 			end
 	end.
 
@@ -222,7 +222,7 @@ get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries) ->
 						{block, ar_util:encode(TXID)}
 					]),
 					timer:sleep(1000),
-					erlang:halt()
+					init:stop(1)
 			end
 	end.
 
@@ -320,7 +320,7 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 								"consider trying some other trusted peers.", []),
 							?LOG_ERROR([{event, failed_to_join}]),
 							timer:sleep(1000),
-							erlang:halt();
+							init:stop(1);
 						_ ->
 							case queue:member(Peer, PeerQ) of
 								false ->
@@ -395,7 +395,7 @@ get_block_trail_loop(WorkerQ, PeerQ, Retries, Trail, FetchState) ->
 								"consider trying some other trusted peers.", []),
 							?LOG_ERROR([{event, failed_to_join}]),
 							timer:sleep(1000),
-							erlang:halt();
+							init:stop(1);
 						_ ->
 							case queue:member(Peer, PeerQ) of
 								false ->
@@ -462,7 +462,7 @@ maybe_set_reward_history(Blocks, Peers) ->
 					[ar_util:encode((hd(Blocks))#block.indep_hash)]),
 			?LOG_WARNING([{event, failed_to_fetch_reward_history}]),
 			timer:sleep(1000),
-			erlang:halt()
+			init:stop(1)
 	end.
 
 maybe_set_block_time_history([#block{ height = Height } | _] = Blocks, Peers) ->
@@ -477,7 +477,7 @@ maybe_set_block_time_history([#block{ height = Height } | _] = Blocks, Peers) ->
 							"any of the peers. Consider changing the peers.~n",
 							[ar_util:encode((hd(Blocks))#block.indep_hash)]),
 					timer:sleep(1000),
-					erlang:halt()
+					init:stop(1)
 			end;
 		false ->
 			Blocks

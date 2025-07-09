@@ -27,7 +27,7 @@ run_benchmark_from_cli(Args) ->
 			{error, Reason} ->
 				io:format("Error: Could not ensure directory ~p exists. Reason: ~p~n", [Dir, Reason]),
 				show_help(),
-				erlang:halt(1)
+				init:stop(1)
 		end
 	end, Dirs),
 	run_benchmark({Format, Dirs, Threads, DataMiB}).
@@ -56,7 +56,7 @@ show_help() ->
 	io:format("     lower than specified to ensure balanced threads.~n"),
 	io:format("dir: directories to pack data to. If left off, benchmark will just simulate~n"),
 	io:format("     entropy generation without writing to disk.~n~n"),
-	erlang:halt().
+	init:stop(1).
 
 run_benchmark({Format, Dirs, Threads, DataMiB}) ->
 	application:set_env(arweave, config, #config{ 

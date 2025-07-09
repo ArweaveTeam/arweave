@@ -40,7 +40,7 @@ show_help() ->
 	io:format("  jit <0|1> (default: 1)~n"),
 	io:format("  large_pages <0|1> (default: 1)~n"),
 	io:format("  hw_aes <0|1> (default: 1)~n"),
-	erlang:halt().
+	init:stop(1).
 
 run_benchmark(RandomXState) ->
 	run_benchmark(RandomXState, ar_mine_randomx:jit(),

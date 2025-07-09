@@ -177,7 +177,7 @@ handle_cast({init, Blocks, [{from_state, SearchDepth}]}, _) ->
 			ar:console("~n~n\tThe local state is missing an account tree, consider joining "
 					"the network via the trusted peers.~n"),
 			timer:sleep(1000),
-			erlang:halt();
+			init:stop(1);
 		{Skipped, Tree} ->
 			Blocks2 = lists:nthtail(Skipped, Blocks),
 			initialize_state(Blocks2, Tree)
