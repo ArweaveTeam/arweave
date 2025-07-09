@@ -320,7 +320,8 @@ maybe_search_for_anomalies(SessionId, #ar_mining_cache_session{
 		_ -> ?LOG_WARNING([
 			{event, mining_cache_anomaly}, {anomaly, reserved_size_non_zero},
 			{session_id, SessionId}, {actual_size, ReservedMiningCacheBytes}, {expected_size, 0}])
-	end;
+	end,
+	?LOG_INFO([{event, mining_cache_anomaly}, {anomaly, mining_cache_anomaly_search_completed}, {session_id, SessionId}]);
 maybe_search_for_anomalies(SessionId, _InvalidSession) ->
 	?LOG_ERROR([{event, mining_cache_anomaly}, {anomaly, invalid_session_type}, {session_id, SessionId}]),
 	ok.
