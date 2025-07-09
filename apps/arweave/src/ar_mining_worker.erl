@@ -939,7 +939,7 @@ mark_single_chunk1_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 				%% We've already marked the chunk2 as missing, so there was no reservation for it.
 				%% We can just drop the cached value.
 				{ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
-			(#ar_mining_cache_value{chunk2 = Chunk2}) when undefined /= Chunk2 ->
+			(#ar_mining_cache_value{chunk2 = Chunk2}) when is_binary(Chunk2) ->
 				%% We've already read the chunk2 from disk, so we can just drop the cached value.
 				%% The cache reservation for corresponding chunk2 was already consumed.
 				{ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
@@ -973,12 +973,12 @@ mark_single_chunk2_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 				%% We've already marked the chunk1 as missing, so the reservation for it was released.
 				%% We can just drop the cached value and release the reservation for a single subchunk.
 				{ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
-			(#ar_mining_cache_value{chunk1 = Chunk1, h1 = undefined} = CachedValue) when undefined /= Chunk1 ->
+			(#ar_mining_cache_value{chunk1 = Chunk1, h1 = undefined} = CachedValue) when is_binary(Chunk1) ->
 				%% We have the corresponding chunk1, but we didn't calculate H1 yet.
 				%% Mark chunk2 as missing to drop the cached value after we calculate H1.
 				%% Drop the reservation for a single subchunk.
 				{ok, CachedValue#ar_mining_cache_value{chunk2_missing = true}, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
-			(#ar_mining_cache_value{h1 = H1}) when undefined /= H1 ->
+			(#ar_mining_cache_value{h1 = H1}) when is_binary(H1) ->
 				%% We've already calculated H1, so we can drop the cached value.
 				%% Drop the reservation for a single subchunk.
 				{ok, drop, -ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty)};
