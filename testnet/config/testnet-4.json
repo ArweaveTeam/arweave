@@ -6,6 +6,7 @@
         "1226,100000000000,hDdptPiuAlrP5RxEHwZoffm7obIyvvBi40T5PPvp57w"
     ],
     "mining_addr": "hDdptPiuAlrP5RxEHwZoffm7obIyvvBi40T5PPvp57w",
+    "peers": ["testnet-1.arweave.xyz", "testnet-2.arweave.xyz"],
     "vdf_client_peers": [
         "testnet-3.arweave.xyz"
     ],
