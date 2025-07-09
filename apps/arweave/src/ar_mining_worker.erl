@@ -668,15 +668,20 @@ process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk, NoncesPerChunk,
 				NoncesPerRecallRange, [{ChunkEndOffset, Chunk} | ChunkOffsets], SubChunkSize, Count, State1
 			);
-		{_, true, _} ->
+		{_, true, Kind} ->
 			%% Skip this chunk.
 			%% Nonce falls in a chunk beyond the current chunk offset, (for example, because we
 			%% read extra chunk in the beginning of recall range). Move ahead to the next
 			%% chunk offset.
-			%% No need to remove anything from cache, as the nonce is still in the recall range.
+			%% No need to remove anything from cache, as the nonce is still in the recall range,
+			%% but we need to mark the chunk as missing if it's not already.
+			State1 = case Kind of
+				chunk1 -> mark_single_chunk1_missing_or_drop(Nonce, Candidate, State);
+				chunk2 -> mark_single_chunk2_missing_or_drop(Nonce, Candidate, State)
+			end,
 			process_chunks(
 				WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk,
-				NoncesPerRecallRange, ChunkOffsets, SubChunkSize, Count, State
+				NoncesPerRecallRange, ChunkOffsets, SubChunkSize, Count, State1
 			);
 		{false, false, _} ->
 			%% Process all sub-chunks in Chunk, and then advance to the next chunk.
