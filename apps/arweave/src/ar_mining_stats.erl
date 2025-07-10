@@ -4,7 +4,7 @@
 -export([start_link/0, start_performance_reports/0, pause_performance_reports/1, mining_paused/0,
 		set_total_data_size/1, set_storage_module_data_size/6,
 		vdf_computed/0, raw_read_rate/2, chunks_read/2, h1_computed/2, h2_computed/2,
-		h1_solution/0, h2_solution/0, block_found/0,
+		h1_solution/0, h2_solution/0, block_found/0, block_mined_but_orphaned/0,
 		h1_sent_to_peer/2, h1_received_from_peer/2, h2_sent_to_peer/1, h2_received_from_peer/1,
 		get_partition_data_size/2]).
 
@@ -177,6 +177,12 @@ block_found() ->
 
 block_found(Now) ->
 	increment_count(confirmed_block, 1, Now).
+
+block_mined_but_orphaned() ->
+	block_mined_but_orphaned(erlang:monotonic_time(millisecond)).
+
+block_mined_but_orphaned(Now) ->
+	increment_count(block_mined_but_orphaned, 1, Now).
 
 set_total_data_size(DataSize) ->
 	try

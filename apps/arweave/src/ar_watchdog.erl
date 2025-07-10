@@ -128,6 +128,10 @@ handle_cast({block_received_n_confirmations, BH, Height}, State) ->
 				_ ->
 					Map
 			end;
+		{_BH, _Map} ->
+			%% The mined block was orphaned.
+			ar_mining_stats:block_mined_but_orphaned(),
+			MinedBlocks;
 		error ->
 			MinedBlocks
 	end,
