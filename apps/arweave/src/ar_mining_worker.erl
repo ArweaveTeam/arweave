@@ -481,7 +481,18 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 			%% In case of solo mining, the `Check` will always be `true`.
 			%% In case of pool mining, the `Check` will be `partial` or `true`.
 			%% In either case, we prepare and post the solution.
-			ar_mining_server:prepare_and_post_solution(Candidate);
+			case Candidate#mining_candidate.chunk1 of
+				not_set ->
+					?LOG_ERROR([{event, received_solution_candidate_without_chunk1_in_solo_mining},
+							{worker, State#state.name},
+							{step, Candidate#mining_candidate.step_number},
+							{nonce, Candidate#mining_candidate.nonce},
+							{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
+							{h2, ar_util:encode(H2)}]),
+					ok;
+				_ ->
+					ar_mining_server:prepare_and_post_solution(Candidate)
+			end;
 		{Check, _} when partial == Check orelse true == Check ->
 			%% This branch only handles the case where we're part of a coordinated mining set.
 			%% In this case, we prepare the PoA2 and send it to the lead peer.
