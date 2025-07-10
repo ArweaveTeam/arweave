@@ -14,9 +14,12 @@ else
 	CXXFLAGS ?= -O3
 endif
 
-# _mm_crc32_u32 support
-CFLAGS += -msse4.2
-CXXFLAGS += -msse4.2
+UNAME_SYS := $(shell uname -s)
+ifeq ($(UNAME_SYS), Linux)
+	# _mm_crc32_u32 support
+	CFLAGS += -msse4.2
+	CXXFLAGS += -msse4.2
+endif
 
 ERTS_INCLUDE_DIR ?= $(shell erl -noshell -eval 'io:format("~ts/erts-~ts/include/", [code:root_dir(), erlang:system_info(version)]).' -s init stop)
 ERL_INTERFACE_INCLUDE_DIR ?= $(shell erl -noshell -eval 'io:format("~ts", [code:lib_dir(erl_interface, include)]).' -s init stop)
@@ -24,7 +27,6 @@ ERL_INTERFACE_LIB_DIR ?= $(shell erl -noshell -eval 'io:format("~ts", [code:lib_
 
 # System type and C compiler/flags.
 
-UNAME_SYS := $(shell uname -s)
 ifeq ($(UNAME_SYS), Darwin)
 	OSX_CPU_ARCH ?= x86_64
 	# nix systems may not have sysctl where uname -m will return the correct arch
@@ -84,12 +86,20 @@ RX4096_OBJECTS = $(addsuffix .o, $(basename $(RX4096_SOURCES)))
 RXSQUARED_OBJECTS = $(addsuffix .o, $(basename $(RXSQUARED_SOURCES)))
 VDF_OBJECTS = $(addsuffix .o, $(basename $(VDF_SOURCES)))
 
-UNAME_SYS := $(shell uname -s)
+# NOTE tabs here will cause build fail
 ifeq ($(UNAME_SYS), Linux)
   $(C_SRC_DIR)/vdf/vdf_exp_x86.o: CXXFLAGS += -msha
 endif
 ifeq ($(UNAME_SYS), Darwin)
   $(C_SRC_DIR)/vdf/vdf_exp_arm.o:  CXXFLAGS += -march=armv8-a+crypto
+  $(C_SRC_DIR)/vdf/vdf_exp_arm2.o: CXXFLAGS += -march=armv8-a+crypto
+endif
+ifeq ($(UNAME_SYS), Darwin)
+	VDF_ARM_ASM_OBJ = $(C_SRC_DIR)/vdf/sha256-armv8.o
+	VDF_OBJECTS += $(VDF_ARM_ASM_OBJ)
+$(VDF_ARM_ASM_OBJ): $(C_SRC_DIR)/vdf/sha256-armv8.S
+	@echo "Assembling ARM64 specific file: $<"
+	clang -O3 -arch arm64 -c $(C_SRC_DIR)/vdf/sha256-armv8.S -o $(VDF_ARM_ASM_OBJ)
 endif
 
 # Verbosity.
