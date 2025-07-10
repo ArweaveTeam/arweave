@@ -2176,7 +2176,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 			{false, Reason5} ->
 				{false, Reason5};
 			true ->
-				case check_no_double_signing(CDiff, PrevCDiff, MiningAddress) of
+				case check_no_double_signing(CDiff, PrevCDiff, MiningAddress, Height) of
 					false ->
 						{false, double_signing};
 					true ->
@@ -2370,15 +2370,28 @@ assert_key_type(RewardKey, Height) ->
 			end
 	end.
 
-check_no_double_signing(CDiff, PrevCDiff, MiningAddress) ->
+check_no_double_signing(CDiff, PrevCDiff, MiningAddress, Height) ->
 	Blocks = ar_block_cache:get_blocks_by_miner(block_cache, MiningAddress),
 	not lists:any(
 		fun(B) ->
-			ar_block:get_double_signing_condition(
+			case ar_block:get_double_signing_condition(
 					B#block.cumulative_diff,
 					B#block.previous_cumulative_diff,
 					CDiff,
-					PrevCDiff)
+					PrevCDiff) of
+				true ->
+					?LOG_WARNING([{event, avoiding_double_signing},
+							{block, ar_util:encode(B#block.indep_hash)},
+							{height, B#block.height},
+							{new_height, Height},
+							{cdiff, B#block.cumulative_diff},
+							{prev_cdiff, B#block.previous_cumulative_diff},
+							{new_cdiff, CDiff},
+							{new_prev_cdiff, PrevCDiff}]),
+					true;
+				false ->
+					false
+			end
 		end,
 		Blocks).
 
