@@ -1931,7 +1931,8 @@ handle_post_tx({Req, Pid, Encoding}) ->
 								ok ->
 									{200, #{}, <<"OK">>, Req2};
 								{error_response, {Status, Headers, Body}} ->
-									ar_ignore_registry:remove_temporary(TX#tx.id),
+									Ref = erlang:get(tx_id_ref),
+									ar_ignore_registry:remove_ref(TX#tx.id, Ref),
 									{Status, Headers, Body, Req2}
 							end
 					end
@@ -1972,7 +1973,8 @@ handle_post_tx_accepted(Req, TX, Peer) ->
 		byte_size(term_to_binary(TX))),
 	ar_events:send(tx, {new, TX, {pushed, Peer}}),
 	TXID = TX#tx.id,
-	ar_ignore_registry:remove_temporary(TXID),
+	Ref = erlang:get(tx_id_ref),
+	ar_ignore_registry:remove_ref(TXID, Ref),
 	ar_ignore_registry:add_temporary(TXID, 10 * 60 * 1000),
 	ok.
 
@@ -2994,7 +2996,9 @@ post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding}) ->
 		true ->
 			{error, tx_already_processed, TXID, Req};
 		false ->
-			ar_ignore_registry:add_temporary(TXID, 5000),
+			Ref = make_ref(),
+			erlang:put(tx_id_ref, Ref),
+			ar_ignore_registry:add_ref(TXID, Ref, 5000),
 			post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding})
 	end;
 post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
@@ -3012,13 +3016,14 @@ post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
 			{error, timeout}
 	end;
 post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
+	Ref = erlang:get(tx_id_ref),
 	case catch ar_serialize:json_struct_to_tx(Body) of
 		{'EXIT', _} ->
 			case TXID of
 				not_set ->
 					noop;
 				_ ->
-					ar_ignore_registry:remove_temporary(TXID)
+					ar_ignore_registry:remove_ref(TXID, Ref)
 			end,
 			{error, invalid_json, Req};
 		{error, invalid_signature_type} ->
@@ -3026,7 +3031,7 @@ post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
                 not_set ->
                     noop;
                 _ ->
-                    ar_ignore_registry:remove_temporary(TXID),
+                    ar_ignore_registry:remove_ref(TXID, Ref),
 					ar_tx_db:put_error_codes(TXID, [<<"invalid_signature_type">>])
             end,
             {error, invalid_signature_type, Req};
@@ -3035,20 +3040,21 @@ post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
 				not_set ->
 					noop;
 				_ ->
-					ar_ignore_registry:remove_temporary(TXID)
+					ar_ignore_registry:remove_ref(TXID, Ref)
 			end,
 			{error, invalid_json, Req};
 		TX ->
 			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
 	end;
 post_tx_parse_id(parse_binary, {TXID, Req, Body}) ->
+	Ref = erlang:get(tx_id_ref),
 	case catch ar_serialize:binary_to_tx(Body) of
 		{'EXIT', _} ->
 			case TXID of
 				not_set ->
 					noop;
 				_ ->
-					ar_ignore_registry:remove_temporary(TXID)
+					ar_ignore_registry:remove_ref(TXID, Ref)
 			end,
 			{error, invalid_json, Req};
 		{error, _} ->
@@ -3056,7 +3062,7 @@ post_tx_parse_id(parse_binary, {TXID, Req, Body}) ->
 				not_set ->
 					noop;
 				_ ->
-					ar_ignore_registry:remove_temporary(TXID)
+					ar_ignore_registry:remove_ref(TXID, Ref)
 			end,
 			{error, invalid_json, Req};
 		{ok, TX} ->
@@ -3064,6 +3070,7 @@ post_tx_parse_id(parse_binary, {TXID, Req, Body}) ->
 	end;
 post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 	TXID = TX#tx.id,
+	Ref = erlang:get(tx_id_ref),
 	case MaybeTXID of
 		TXID ->
 			{ok, TX, Req};
@@ -3072,7 +3079,7 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 				not_set ->
 					noop;
 				MismatchingTXID ->
-					ar_ignore_registry:remove_temporary(MismatchingTXID)
+					ar_ignore_registry:remove_ref(MismatchingTXID, Ref)
 			end,
 			case byte_size(TXID) > 32 of
 				true ->
@@ -3082,7 +3089,15 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 						true ->
 							{error, tx_already_processed, TXID, Req};
 						false ->
-							ar_ignore_registry:add_temporary(TXID, 5000),
+							Ref2 =
+								case Ref of
+									undefined ->
+										make_ref();
+									_ ->
+										Ref
+								end,
+							erlang:put(tx_id_ref, Ref2),
+							ar_ignore_registry:add_ref(TXID, Ref2, 5000),
 							{ok, TX, Req}
 					end
 			end

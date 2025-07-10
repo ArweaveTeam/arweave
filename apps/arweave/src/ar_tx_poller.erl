@@ -132,11 +132,12 @@ check_for_received_txs(#state{ pending_txids = [] } = State) ->
 	end.
 
 download_and_verify_tx(TXID) ->
-	ar_ignore_registry:add_temporary(TXID, 10_000),
+	Ref = make_ref(),
+	ar_ignore_registry:add_ref(TXID, Ref, 10_000),
 	Peers = lists:sublist(ar_peers:get_peers(current), ?QUERY_PEERS_COUNT),
 	case ar_http_iface_client:get_tx_from_remote_peers(Peers, TXID, false) of
 		not_found ->
-			ar_ignore_registry:remove_temporary(TXID),
+			ar_ignore_registry:remove_ref(TXID, Ref),
 			?LOG_DEBUG([{event, failed_to_get_tx_from_peers},
 					{peers, [ar_util:format_peer(Peer) || Peer <- Peers]},
 					{txid, ar_util:encode(TXID)}
@@ -151,7 +152,7 @@ download_and_verify_tx(TXID) ->
 							TX2#tx.data_size, TX#tx.id),
 					ar_events:send(tx, {new, TX2, {pulled, Peer}}),
 					TXID = TX2#tx.id,
-					ar_ignore_registry:remove_temporary(TXID),
+					ar_ignore_registry:remove_ref(TXID, Ref),
 					ar_ignore_registry:add_temporary(TXID, 10 * 60 * 1000)
 			end
 	end.
