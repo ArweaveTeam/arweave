@@ -310,10 +310,10 @@ maybe_search_for_anomalies(SessionId, #ar_mining_cache_session{
 		{0, 0} -> ok;
 		{EqualSize, EqualSize} -> ?LOG_WARNING([
 			{event, mining_cache_anomaly}, {anomaly, cache_size_non_zero},
-			{session_id, SessionId}, {actual_size, ActualCacheSize}, {expected_size, MiningCacheSize}]);
+			{session_id, SessionId}, {actual_size, ActualCacheSize}, {reported_size, MiningCacheSize}]);
 		{_, _} -> ?LOG_WARNING([
 			{event, mining_cache_anomaly}, {anomaly, cache_size_mismatch},
-			{session_id, SessionId}, {actual_size, ActualCacheSize}, {expected_size, MiningCacheSize}])
+			{session_id, SessionId}, {actual_size, ActualCacheSize}, {reported_size, MiningCacheSize}])
 	end,
 	case ReservedMiningCacheBytes of
 		0 -> ok;
