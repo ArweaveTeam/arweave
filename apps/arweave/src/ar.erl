@@ -323,10 +323,6 @@ show_help() ->
 			{"tls_key_file",
 				"The path to the TLS key file for TLS support, depends "
 				"on 'tls_cert_file' being set as well."},
-			{"http_api_transport_idle_timeout_seconds",
-				"The number of seconds allowed for incoming API client connections to be idle "
-				"before closing them. Default is 10 seconds. Please, do not set this value too low "
-				"as it will negatively affect the performance of the node."},
 			{"coordinated_mining", "Enable coordinated mining. If you are a solo pool miner "
 					"coordinating on a replica with other pool miners, set this flag too. "
 					"To connect the internal nodes, set cm_api_secret, cm_peer, "
@@ -377,19 +373,19 @@ show_help() ->
 				"during 'verify'. Default is ~B.", [?SAMPLE_CHUNK_COUNT])},
 
 			% Shutdown management
-			{"shutdown_tcp_connection_timeout", io_lib:format(
+			{"network.tcp.shutdown.connection_timeout", io_lib:format(
 				"Configure shutdown TCP connection timeout (seconds). "
 				"Default is '~p'.",
 				[?SHUTDOWN_TCP_CONNECTION_TIMEOUT]
 			)},
-			{"shutdown_tcp_mode", io_lib:format(
+			{"network.tcp.shutdown.mode", io_lib:format(
 				"Configure shutdown TCP mode (shutdown or close). "
 				"Default is '~p'.",
 				[?SHUTDOWN_TCP_MODE]
 			)},
 
 			% Global socket configuration
-			{"socket.backend", io_lib:format(
+			{"network.socket.backend", io_lib:format(
 				"Configure Erlang default socket backend (inet or socket). "
 				"Default is '~p'.",
 				[?DEFAULT_SOCKET_BACKEND]
@@ -447,6 +443,13 @@ show_help() ->
 				"Configure HTTP Server number of packets requested per sockets (integer). "
 				"Default is '~p'.",
 				[?DEFAULT_COWBOY_HTTP_ACTIVE_N]
+			)},
+			{"http_api.tcp.idle_timeout_seconds", io_lib:format(
+				"The number of seconds allowed for incoming API client connections to be idle "
+				"before closing them. Default is '~p' seconds. "
+				"Please, do not set this value too low "
+				"as it will negatively affect the performance of the node.",
+				[?DEFAULT_COWBOY_TCP_IDLE_TIMEOUT_SECOND]
 			)},
 			{"http_api.http.inactivity_timeout", io_lib:format(
 				"Configure HTTP Server inactivity timeout (milliseconds). "
@@ -799,7 +802,7 @@ parse_cli_args(["tls_key_file", KeyFilePath | Rest], C) ->
     AbsKeyFilePath = filename:absname(KeyFilePath),
     ar_util:assert_file_exists_and_readable(AbsKeyFilePath),
     parse_cli_args(Rest, C#config{ tls_key_file = AbsKeyFilePath });
-parse_cli_args(["http_api_transport_idle_timeout_seconds", Num | Rest], C) ->
+parse_cli_args(["http_api.tcp.idle_timeout_seconds", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { http_api_transport_idle_timeout = list_to_integer(Num) * 1000 });
 parse_cli_args(["coordinated_mining" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ coordinated_mining = true });
@@ -850,9 +853,9 @@ parse_cli_args(["rocksdb_wal_sync_interval", Seconds | Rest], C) ->
 	parse_cli_args(Rest, C#config{ rocksdb_wal_sync_interval_s = list_to_integer(Seconds) });
 
 %% tcp shutdown procedure
-parse_cli_args(["shutdown_tcp_connection_timeout", Delay|Rest], C) ->
+parse_cli_args(["network.tcp.connection_timeout", Delay|Rest], C) ->
 	parse_cli_args(Rest, C#config{ shutdown_tcp_connection_timeout = list_to_integer(Delay) });
-parse_cli_args(["shutdown_tcp_mode", RawMode|Rest], C) ->
+parse_cli_args(["network.tcp.shutdown.mode", RawMode|Rest], C) ->
 	case RawMode of
 		"shutdown" ->
 			parse_cli_args(Rest, C#config{ shutdown_tcp_mode = shutdown});
@@ -864,7 +867,7 @@ parse_cli_args(["shutdown_tcp_mode", RawMode|Rest], C) ->
 	end;
 
 %% global socket configuration
-parse_cli_args(["socket.backend", Backend|Rest], C) ->
+parse_cli_args(["network.socket.backend", Backend|Rest], C) ->
 	case Backend of
 		"inet" ->
 			parse_cli_args(Rest, C#config{ 'socket.backend' = inet });
