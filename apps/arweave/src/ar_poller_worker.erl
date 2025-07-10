@@ -83,7 +83,8 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 						false ->
 							ok
 					end,
-					ar_ignore_registry:add_temporary({poller_worker, H}, 1000),
+					IgnoreRef = make_ref(),
+					ar_ignore_registry:add_ref({poller_worker, H}, IgnoreRef, 1000),
 					Indices = get_missing_tx_indices(TXIDs),
 					case ar_http_iface_client:get_block(Peer, H, Indices) of
 						{#block{ height = Height } = B, TimeMicroseconds, _Size} ->
@@ -96,7 +97,7 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 							case collect_missing_transactions(B#block.txs) of
 								{ok, TXs} ->
 									B2 = B#block{ txs = TXs },
-									ar_ignore_registry:remove_temporary({poller_worker, H}),
+									ar_ignore_registry:remove_ref({poller_worker, H}, IgnoreRef),
 									gen_server:cast(ar_poller, {block, Peer, B2, TimeMicroseconds}),
 									ok;
 								failed ->
@@ -107,7 +108,7 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 									ok
 							end;
 						Error ->
-							ar_ignore_registry:remove_temporary({poller_worker, H}),
+							ar_ignore_registry:remove_ref({poller_worker, H}, IgnoreRef),
 							?LOG_DEBUG([{event, failed_to_fetch_block},
 									{peer, ar_util:format_peer(Peer)},
 									{block, ar_util:encode(H)},
