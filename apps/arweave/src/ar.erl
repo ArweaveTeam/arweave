@@ -1126,6 +1126,35 @@ parse_cli_args(["http_api.tcp.send_timeout", Timeout|Rest], C) ->
 			parse_cli_args(Rest, C)
 	end;
 
+parse_cli_args(["oom_monitor_report_period", Period|Rest], C) ->
+	try list_to_integer(Period) of
+		P when P >= 0 ->
+			parse_cli_args(Rest, C#config{ oom_monitor_report_period = P });
+		_ ->
+			io:format("Invalid oom_monitor_report_period ~p.", [Period]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid oom_monitor_report_period ~p.", [Period]),
+			parse_cli_args(Rest, C)
+	end;
+
+parse_cli_args(["oom_monitor_filename", Filename|Rest], C) ->
+	parse_cli_args(Rest, C#config{ oom_monitor_filename = Filename });
+
+parse_cli_args(["oom_monitor_top_procs", TopProcs|Rest], C) ->
+	try list_to_integer(TopProcs) of
+		T when T >= 0 ->
+			parse_cli_args(Rest, C#config{ oom_monitor_top_procs = T });
+		_ ->
+			io:format("Invalid oom_monitor_top_procs ~p.", [TopProcs]),
+			parse_cli_args(Rest, C)
+	catch
+		_:_ ->
+			io:format("Invalid oom_monitor_top_procs ~p.", [TopProcs]),
+			parse_cli_args(Rest, C)
+	end;
+
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ chunk_storage_file_size = list_to_integer(Num) });
