@@ -857,7 +857,7 @@ handle_cast({join, RecentBI}, State) ->
 					"in the most recent blocks. If you have just started a new weave using "
 					"the init option, restart from the local state "
 					"or specify some peers.~n~n"),
-			erlang:halt();
+			init:stop(1);
 		{_, {_H, Offset, _TXRoot}} ->
 			PreviousWeaveSize = element(2, hd(CurrentBI)),
 			{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset, PreviousWeaveSize),
@@ -896,7 +896,7 @@ handle_cast({cut, Start}, #sync_data_state{ store_id = StoreID,
 							"`enable remove_orphaned_storage_module_data`.~n",
 							[StoreID, Start]),
 					timer:sleep(2000),
-					erlang:halt();
+					init:stop(1);
 				true ->
 					ok = delete_chunk_metadata_range(Start, End, State),
 					ok = ar_chunk_storage:cut(Start, StoreID),
