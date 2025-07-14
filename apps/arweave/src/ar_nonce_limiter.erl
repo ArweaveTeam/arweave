@@ -903,7 +903,7 @@ apply_chain(#nonce_limiter_info{ global_step_number = StepNumber },
 			" to apply quickly; step number: ~B, previous step number: ~B.",
 			[StepNumber, PrevStepNumber]),
 	timer:sleep(1000),
-	erlang:halt();
+	init:stop(1);
 %% @doc Apply the pre-validated / trusted nonce_limiter_info. Since the info is trusted
 %% we don't validate it here.
 apply_chain(Info, PrevInfo) ->

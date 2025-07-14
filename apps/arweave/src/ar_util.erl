@@ -532,6 +532,6 @@ assert_file_exists_and_readable(FilePath) ->
 			ok;
 		{error, _} ->
 			io:format("~nThe filepath ~p doesn't exist or isn't readable.~n~n", [FilePath]),
-			erlang:halt(1)
+			init:stop(1)
 	end.
 

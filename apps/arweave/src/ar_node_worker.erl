@@ -120,7 +120,7 @@ init([]) ->
 									?LOG_INFO([{event, failed_to_read_local_state},
 											{reason, io_lib:format("~p", [Error])}]),
 									timer:sleep(1000),
-									erlang:halt()
+									init:stop(1)
 							end
 					end
 			end;
@@ -192,7 +192,7 @@ block_index_not_found([]) ->
 			"via the trusted peers.~n"),
 	?LOG_INFO([{event, local_state_empty}]),
 	timer:sleep(1000),
-	erlang:halt();
+	init:stop(1);
 block_index_not_found(BI) ->
 	{Last, _, _} = hd(BI),
 	{First, _, _} = lists:last(BI),
@@ -201,7 +201,7 @@ block_index_not_found(BI) ->
 	?LOG_INFO([{event, local_state_missing_target},
 			{first, ar_util:encode(First)}, {last, ar_util:encode(Last)}]),
 	timer:sleep(1000),
-	erlang:halt().
+	init:stop(1).
 
 
 validate_trusted_peers(#config{ peers = [] }) ->
@@ -214,7 +214,7 @@ validate_trusted_peers(Config) ->
 			ar:console("The specified trusted peers are not valid.~n", []),
 			?LOG_INFO([{event, no_valid_trusted_peers}]),
 			timer:sleep(2000),
-			erlang:halt();
+			init:stop(1);
 		_ ->
 			application:set_env(arweave, config, Config#config{ peers = ValidPeers }),
 			case lists:member(time_syncing, Config#config.disable) of
@@ -279,10 +279,20 @@ validate_clock_sync(Peers) ->
 		end
 	end,
 	Responses = ar_util:pmap(ValidatePeerClock, [P || P <- Peers, not is_pid(P)]),
-	case lists:all(fun(R) -> R end, Responses) of
-		true ->
+	case checker(Responses) of
+		% If more valid nodes are present than invalid nodes, it should be
+		% good
+		{X, #{true := True, false := False}}
+			when X>0, True>False ->
+				ok;
+
+		% If all nodes are valid, then its good
+		{_, #{ true := _ }} ->
 			ok;
-		false ->
+
+		% Else there is a problem somewhere. Too many peers
+		% with clock issues will only cause problems.
+		_ ->
 			ar:console(
 				"~n\tInvalid peers. A valid peer must be part of the"
 				" network ~s and its clock must deviate from ours by no"
@@ -290,7 +300,7 @@ validate_clock_sync(Peers) ->
 			),
 			?LOG_INFO([{event, invalid_peer}]),
 			timer:sleep(1000),
-			erlang:halt()
+			init:stop(1)
 	end.
 
 log_peer_clock_diff(Peer, Delta) ->
@@ -2327,3 +2337,30 @@ cache_double_signing_proof(Proof, State) ->
 			Map2 = maps:put(Addr, {os:system_time(second), Proof}, Map),
 			State#{ double_signing_proofs => Map2 }
 	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc A simple list term checker. The idea is to get some information
+%% regarding the content of a list (e.g. number of same item).
+%% @end
+%%--------------------------------------------------------------------
+-spec checker(List) -> Return when
+	List :: [term()],
+	Return :: {Length, Counter},
+	Length :: pos_integer(),
+	Counter :: #{ term() => pos_integer() }.
+
+checker(List) ->
+	checker(List, length(List), #{}).
+
+checker([], Length, Buffer) ->
+	{Length, Buffer};
+checker([H|T], Length, Buffer) ->
+	V = maps:get(H, Buffer, 0),
+	checker(T, Length, Buffer#{ H => V+1 }).
+
+checker_test() ->
+	?assertEqual({0, #{}}, checker([])),
+	?assertEqual({3, #{ true => 3 }}, checker([true, true, true])),
+	?assertEqual({3, #{ true => 2, false => 1}}, checker([true, true, false])),
+	?assertEqual({3, #{ true => 1, false => 2}}, checker([true, false, false])).

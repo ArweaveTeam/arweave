@@ -11,7 +11,7 @@ main() ->
 	main([]).
 main([]) ->
 	help(),
-	erlang:halt(1);
+	init:stop(1);
 main(Args) ->
     logger:set_handler_config(default, level, error),
     Command = hd(Args),
@@ -29,10 +29,10 @@ main(Args) ->
     end,
     case Success of
         true ->
-            erlang:halt(0);
+            init:stop(0);
         _ ->
             help(),
-            erlang:halt(1)
+            init:stop(1)
     end. 
 
 help() ->
