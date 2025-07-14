@@ -115,9 +115,6 @@
   ],
   "block_throttle_by_ip_interval": 5000,
   "block_throttle_by_solution_interval": 12000,
-  "http_api_transport_idle_timeout_seconds": 15,
-  "shutdown_tcp_mode": "shutdown",
-  "socket.backend": "socket",
   "http_client.http.closing_timeout": 5000,
   "http_client.http.keepalive": "infinity",
   "http_client.tcp.delay_send": true,
@@ -132,6 +129,7 @@
   "http_api.http.linger_timeout": 0,
   "http_api.http.request_timeout": 5000,
   "http_api.tcp.delay_send": true,
+  "http_api.tcp.idle_timeout_seconds": 15,
   "http_api.tcp.keepalive": false,
   "http_api.tcp.linger": true,
   "http_api.tcp.linger_timeout": 0,
@@ -139,5 +137,7 @@
   "http_api.tcp.nodelay": true,
   "http_api.tcp.num_acceptors": 10,
   "http_api.tcp.send_timeout_close": true,
-  "http_api.tcp.send_timeout": 5000
+  "http_api.tcp.send_timeout": 5000,
+  "network.socket.backend": "socket",
+  "network.tcp.shutdown.mode": "shutdown"
 }
