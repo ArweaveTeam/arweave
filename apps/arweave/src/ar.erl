@@ -371,6 +371,8 @@ show_help() ->
 				"flags are disallowed. See the node output for details."},
 			{"verify_samples (num)", io_lib:format("Number of chunks to sample and unpack "
 				"during 'verify'. Default is ~B.", [?SAMPLE_CHUNK_COUNT])},
+			{"vdf (mode)", io_lib:format("VDF implementation (openssl (default), openssllite,"
+				" fused, hiopt_m4). Default is openssl.", [])},
 
 			% Shutdown management
 			{"network.tcp.shutdown.connection_timeout", io_lib:format(
@@ -558,6 +560,17 @@ parse_cli_args(["verify_samples", "all" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ verify_samples = all });
 parse_cli_args(["verify_samples", N | Rest], C) ->
 	parse_cli_args(Rest, C#config{ verify_samples = list_to_integer(N) });
+parse_cli_args(["vdf", Mode | Rest], C) ->
+	ParsedMode = case Mode of
+		"openssl" ->openssl;
+		"openssllite" ->openssllite;
+		"fused" ->fused;
+		"hiopt_m4" ->hiopt_m4;
+		_ ->
+			io:format("VDF ~p is invalid.~n", [Mode]),
+			openssl
+	end,
+	parse_cli_args(Rest, C#config{ vdf = ParsedMode });
 parse_cli_args(["peer", Peer | Rest], C = #config{ peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeers} when is_list(ValidPeers) ->

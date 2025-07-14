@@ -88,11 +88,11 @@ VDF_OBJECTS = $(addsuffix .o, $(basename $(VDF_SOURCES)))
 
 # NOTE tabs here will cause build fail
 ifeq ($(UNAME_SYS), Linux)
-  $(C_SRC_DIR)/vdf/vdf_exp_x86.o: CXXFLAGS += -msha
+  $(C_SRC_DIR)/vdf/vdf_fused_x86.o: CXXFLAGS += -msha
 endif
 ifeq ($(UNAME_SYS), Darwin)
-  $(C_SRC_DIR)/vdf/vdf_exp_arm.o:  CXXFLAGS += -march=armv8-a+crypto
-  $(C_SRC_DIR)/vdf/vdf_exp_arm2.o: CXXFLAGS += -march=armv8-a+crypto
+  $(C_SRC_DIR)/vdf/vdf_fused_arm.o: CXXFLAGS += -march=armv8-a+crypto
+  $(C_SRC_DIR)/vdf/vdf_hiopt_arm.o: CXXFLAGS += -march=armv8-a+crypto
 endif
 ifeq ($(UNAME_SYS), Darwin)
 	VDF_ARM_ASM_OBJ = $(C_SRC_DIR)/vdf/sha256-armv8.o

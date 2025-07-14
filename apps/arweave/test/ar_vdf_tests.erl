@@ -194,11 +194,17 @@ test_vdf_reset_mid_checkpoint_() ->
 	Hashes5 = lists:reverse(Checkpoints1) ++ lists:reverse(Checkpoints2),
 	assert_verify(StartSalt1, ResetSalt, PrevOutput, 1, Hashes5),
 
-	% test vdf_exp
+	% test vdf_fused
 	{ok, Output1Part1, LastStepCheckpoints1Part1} =
-		ar_vdf_nif:vdf_sha2_exp_nif(Salt1, PrevOutput, ResetSaltFlat-1, 0, ?TEST_VDF_DIFFICULTY),
+		ar_vdf_nif:vdf_sha2_fused_nif(Salt1, PrevOutput, ResetSaltFlat-1, 0, ?TEST_VDF_DIFFICULTY),
 	{ok, Output1Part2, LastStepCheckpoints1Part2} =
-		ar_vdf_nif:vdf_sha2_exp_nif(Salt2, MixOutput, ?VDF_CHECKPOINT_COUNT_IN_STEP-ResetSaltFlat-1, 0, ?TEST_VDF_DIFFICULTY),
+		ar_vdf_nif:vdf_sha2_fused_nif(Salt2, MixOutput, ?VDF_CHECKPOINT_COUNT_IN_STEP-ResetSaltFlat-1, 0, ?TEST_VDF_DIFFICULTY),
+
+	% test vdf_hiopt
+	{ok, Output1Part1, LastStepCheckpoints1Part1} =
+		ar_vdf_nif:vdf_sha2_hiopt_nif(Salt1, PrevOutput, ResetSaltFlat-1, 0, ?TEST_VDF_DIFFICULTY),
+	{ok, Output1Part2, LastStepCheckpoints1Part2} =
+		ar_vdf_nif:vdf_sha2_hiopt_nif(Salt2, MixOutput, ?VDF_CHECKPOINT_COUNT_IN_STEP-ResetSaltFlat-1, 0, ?TEST_VDF_DIFFICULTY),
 	ok.
 
 compute_next_vdf_difficulty_test_block() ->

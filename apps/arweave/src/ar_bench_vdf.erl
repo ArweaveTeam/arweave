@@ -22,7 +22,7 @@ get_flag_value([_ | Tail], TargetFlag, DefaultValue) ->
 show_help() ->
 	io:format("~nUsage: benchmark vdf [options]~n"),
 	io:format("Options:~n"),
-	io:format("  mode <default|experimental> (default: default)~n"),
+	io:format("  mode <default|openssl|fused|hiopt_m4> (default: default)~n"),
 	io:format("  difficulty <vdf_difficulty> (default: ~p)~n", [?VDF_DIFFICULTY]),
 	io:format("  verify <true|false> (default: false)~n"),
 	erlang:halt().
@@ -35,8 +35,12 @@ run_benchmark(Mode, Difficulty, Verify) ->
 		none ->
 			%% Run as part of startup, use whatever is set in the config
 			ok;
-		experimental ->
-			ok = application:set_env(arweave, config, #config{enable = [ vdf_exp ]});
+		openssl ->
+			ok = application:set_env(arweave, config, #config{ vdf = openssl });
+		fused ->
+			ok = application:set_env(arweave, config, #config{ vdf = fused });
+		hiopt_m4 ->
+			ok = application:set_env(arweave, config, #config{ vdf = hiopt_m4 });
 		default ->
 			ok = application:set_env(arweave, config, #config{})
 	end,
