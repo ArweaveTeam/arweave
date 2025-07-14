@@ -58,7 +58,7 @@ test_sync_record() ->
 			ar_intervals:to_list(Global3)),
 		%% We need to explicitly declare global removal
 		ar_events:send(sync_record,
-				{global_remove_range, DiskPoolStart+?DATA_CHUNK_SIZE, DiskPoolStart}),
+				{global_remove_range, DiskPoolStart, DiskPoolStart+?DATA_CHUNK_SIZE}),
 		true = ar_util:do_until(
 				fun() ->
 					{ok, Binary4} = ar_global_sync_record:get_serialized_sync_record(Options),
@@ -89,7 +89,7 @@ test_sync_record() ->
 		?assertEqual([{1048576, 0},{PartitionStart+?DATA_CHUNK_SIZE,PartitionStart}],
 			ar_intervals:to_list(Global5)),
 		ar_events:send(sync_record,
-				{global_remove_range, PartitionStart+?DATA_CHUNK_SIZE,PartitionStart}),
+				{global_remove_range, PartitionStart, PartitionStart+?DATA_CHUNK_SIZE}),
 		true = ar_util:do_until(
 				fun() ->
 					{ok, Binary6} = ar_global_sync_record:get_serialized_sync_record(Options),
