@@ -38,7 +38,7 @@ unsigned int H07[8] = { 0x6a09e667U,0xbb67ae85U,0x3c6ef372U,0xa54ff53aU,
 //    SHA
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // NOTE saltBuffer is mutable in progress
-void _vdf_sha2_exp_arm2(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
+void _vdf_sha2_hiopt_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
 	//unsigned char tempOut[VDF_SHA_HASH_SIZE];
 	// 2 different branches for different optimisation cases
 
@@ -96,13 +96,13 @@ void _vdf_sha2_exp_arm2(unsigned char* saltBuffer, unsigned char* seed, unsigned
 //   unsigned char* outCheckpoint = (unsigned char*)malloc(checkpointCount*VDF_SHA_HASH_SIZE);
 //   free(outCheckpoint);
 // for call
-void vdf_sha2_exp_arm2(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
+void vdf_sha2_hiopt_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
 	unsigned char saltBufferStack[SALT_SIZE];
 	// ensure 1 L1 cache page used
 	// no access to heap, except of 0-iteration
 	memcpy(saltBufferStack, saltBuffer, SALT_SIZE);
 
-	_vdf_sha2_exp_arm2(saltBufferStack, seed, out, outCheckpoint, checkpointCount, skipCheckpointCount, hashingIterations);
+	_vdf_sha2_hiopt_arm(saltBufferStack, seed, out, outCheckpoint, checkpointCount, skipCheckpointCount, hashingIterations);
 }
 
 
