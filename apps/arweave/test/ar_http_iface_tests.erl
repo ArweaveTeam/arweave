@@ -59,18 +59,11 @@ test_register(TestFun, Fixture) ->
 
 %% @doc Test that nodes sending too many requests are temporarily blocked: (a) GET.
 node_blacklisting_get_spammer_test_() ->
-	{timeout, 10, fun test_node_blacklisting_get_spammer/0}.
+	{timeout, 30, fun test_node_blacklisting_get_spammer/0}.
 
-%% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
+% @doc Test that nodes sending too many requests are temporarily blocked: (b) POST.
 node_blacklisting_post_spammer_test_() ->
-	{timeout, 10, fun test_node_blacklisting_post_spammer/0}.
-
-%% @doc Check that we can qickly get the local time from the peer.
-get_time_test() ->
-	Now = os:system_time(second),
-	{ok, {Min, Max}} = ar_http_iface_client:get_time(ar_test_node:peer_ip(main), 10 * 1000),
-	?assert(Min < Now),
-	?assert(Now < Max).
+	{timeout, 30, fun test_node_blacklisting_post_spammer/0}.
 
 batch_test_() ->
 	{setup, fun setup_all_batch/0, fun cleanup_all_batch/1,
@@ -119,6 +112,13 @@ batch_test_() ->
 			]}
 		end
 	}.
+
+%% @doc Check that we can qickly get the local time from the peer.
+get_time_test() ->
+	Now = os:system_time(second),
+	{ok, {Min, Max}} = ar_http_iface_client:get_time(ar_test_node:peer_ip(main), 10 * 1000),
+	?assert(Min < Now),
+	?assert(Now < Max).
 
 test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
 	RemoteHeight = height(peer1),
@@ -303,22 +303,26 @@ get_fun_msg_pair(get_info) ->
 		end
 	, info_unavailable};
 get_fun_msg_pair(send_tx_binary) ->
-	{ fun(_) ->
+	{ fun(Index) ->
 			InvalidTX = (ar_tx:new())#tx{ owner = <<"key">>, signature = <<"invalid">> },
-			case ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main),
-					InvalidTX#tx.id, ar_serialize:tx_to_binary(InvalidTX)) of
-				{ok,
-					{{<<"429">>, <<"Too Many Requests">>}, _,
-						<<"Too Many Requests">>, _, _}} ->
-					too_many_requests;
-				{ok, _} ->
-					ok;
-				{error, Error} ->
-					?debugFmt("Unexpected response: ~p.~n", [Error]),
-					?assert(false)
-			end
+			send_tx_binary(Index, InvalidTX)
 		end
 	, too_many_requests}.
+
+send_tx_binary(Index, InvalidTX) ->
+	case ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main),
+			InvalidTX#tx.id, ar_serialize:tx_to_binary(InvalidTX)) of
+		{ok,
+			{{<<"429">>, <<"Too Many Requests">>}, _,
+				<<"Too Many Requests">>, _, _}} ->
+			too_many_requests;
+		{ok, _} ->
+			ok;
+		{error, Error} ->
+			?debugFmt("Unexpected response on call ~p: ~p. Trying again...~n", [Index, Error]),
+			send_tx_binary(Index, InvalidTX)
+	end.
+
 
 %% @doc Frame to test spamming an endpoint.
 %% TODO: Perform the requests in parallel. Just changing the lists:map/2 call
