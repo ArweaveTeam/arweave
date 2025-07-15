@@ -16,7 +16,8 @@
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4,
 		stop/0, stop/1, start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1,
-		stop_peers/1, stop_peer/1, connect_to_peer/1, disconnect_from/1,
+		stop_peers/1, stop_peer/1, connect_peers/2, connect_to_peer/1,
+		disconnect_peers/2, disconnect_from/1,
 		join/2, join_on/1, rejoin_on/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
 
@@ -871,6 +872,9 @@ get_default_storage_module_packing(RewardAddr, Index, Options) ->
 			end
 	end.
 
+connect_peers(Node, Peer) ->
+	remote_call(Node, ar_test_node, connect_to_peer, [Peer]).
+
 connect_to_peer(Node) ->
 	%% Unblock connections possibly blocked in the prior test code.
 	ar_http:unblock_peer_connections(),
@@ -907,6 +911,9 @@ connect_to_peer(Node) ->
 		100,
 	        ?CONNECT_TO_PEER_TIMEOUT
 	).
+
+disconnect_peers(Node, Peer) ->
+	remote_call(Node, ar_test_node, disconnect_from, [Peer]).
 
 disconnect_from(Node) ->
 	ar_http:block_peer_connections(),
