@@ -78,7 +78,7 @@ pick_peers(Peers, N) ->
 %%%===================================================================
 
 init([]) ->
-	{ok, _} = ar_timer:apply_interval(
+	{ok, _} = timer:apply_interval(
 		?DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS,
 		?MODULE,
 		collect_peers,
@@ -179,7 +179,8 @@ handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(Reason, _State) ->
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
 	ok.
 
 %%%===================================================================

@@ -30,6 +30,7 @@ start_link() ->
 
 init([]) ->
 	%% These ETS tables should belong to the supervisor.
+	ets:new(ar_shutdown_manager, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_timer, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_peers, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_http, [set, public, named_table]),

@@ -368,7 +368,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast(store_state, State) ->
 	{_, State2} = store_state(State),
-	{ok, _} = ar_timer:apply_after(
+	{ok, _} = timer:apply_after(
 		?STORE_SYNC_RECORD_FREQUENCY_MS,
 		gen_server,
 		cast,

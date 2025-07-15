@@ -727,7 +727,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
 	move_data_root_index(State),
-	{ok, _} = ar_timer:apply_interval(
+	{ok, _} = timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		ar_data_sync,
 		record_disk_pool_chunks_count,
@@ -766,7 +766,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID},
 		{range_start, State2#sync_data_state.range_start},
 		{range_end, State2#sync_data_state.range_end}]),
-	{ok, _} = ar_timer:apply_interval(
+	{ok, _} = timer:apply_interval(
 		?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS,
 		?MODULE,
 		remove_expired_disk_pool_data_roots,
@@ -794,7 +794,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	ar:console("~nSetting the data chunk cache size limit to ~B chunks.~n", [Limit]),
 	ets:insert(ar_data_sync_state, {chunk_cache_size_limit, Limit}),
 	ets:insert(ar_data_sync_state, {chunk_cache_size, 0}),
-	{ok, _} = ar_timer:apply_interval(
+	{ok, _} = timer:apply_interval(
 		200,
 		?MODULE,
 		record_chunk_cache_size_metric,
@@ -1541,9 +1541,9 @@ handle_info(Message,  #sync_data_state{ store_id = StoreID } = State) ->
 	{noreply, State}.
 
 terminate(Reason, #sync_data_state{ store_id = StoreID } = State) ->
+	store_sync_state(State),
 	?LOG_INFO([{event, terminate}, {store_id, StoreID},
 			{reason, io_lib:format("~p", [Reason])}]),
-	store_sync_state(State),
 	ok.
 
 %%%===================================================================
