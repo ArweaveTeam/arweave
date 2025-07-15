@@ -194,6 +194,7 @@ test_recent_forks() ->
 	ar_test_node:start_peer(peer2, B0),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:connect_to_peer(peer2),
+	ar_test_node:connect_peers(peer1, peer2),
    
 	%% Mine a few blocks, shared by both peers
 	ar_test_node:mine(peer1),
@@ -209,6 +210,7 @@ test_recent_forks() ->
 	%% Disconnect peers, and have peer1 mine 1 block, and peer2 mine 3
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:disconnect_from(peer2),
+	ar_test_node:disconnect_peers(peer1, peer2),
 
 	ar_test_node:mine(peer1),
 	BI1 = ar_test_node:wait_until_height(peer1, 4),
@@ -229,6 +231,7 @@ test_recent_forks() ->
 	%% Reconnect the peers. This will orphan peer1's block
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:connect_to_peer(peer2),
+	ar_test_node:connect_peers(peer1, peer2),
 
 	ar_test_node:wait_until_height(peer1, 6),
 	ar_test_node:wait_until_height(peer2, 6),
@@ -237,6 +240,7 @@ test_recent_forks() ->
 	%% Disconnect peers, and have peer1 mine 2 block2, and peer2 mine 3
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:disconnect_from(peer2),
+	ar_test_node:disconnect_peers(peer1, peer2),
 
 	ar_test_node:mine(peer1),
 	ar_test_node:wait_until_height(peer1, 7),
@@ -259,6 +263,7 @@ test_recent_forks() ->
 	%% Reconnect the peers. This will create a second fork as peer1's blocks are orphaned
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:connect_to_peer(peer2),
+	ar_test_node:connect_peers(peer1, peer2),
 
 	ar_test_node:wait_until_height(peer1, 9),
 	ar_test_node:wait_until_height(peer2, 9),
@@ -266,6 +271,7 @@ test_recent_forks() ->
 
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:disconnect_from(peer2),
+	ar_test_node:disconnect_peers(peer1, peer2),
 
 	assert_forks_json_equal([Fork2, Fork1], get_recent(ar_test_node:peer_ip(peer1), forks)),
 	ok.
