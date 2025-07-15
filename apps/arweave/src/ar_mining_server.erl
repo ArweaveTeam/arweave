@@ -39,8 +39,10 @@
 
 -ifdef(AR_TEST).
 -define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 0).
+-define(MINIMUM_CACHE_LIMIT_BYTES, 100 * ?MiB).
 -else.
 -define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 10).
+-define(MINIMUM_CACHE_LIMIT_BYTES, 1).
 -endif.
 
 -define(FETCH_POA_FROM_PEERS_TIMEOUT_MS, 10000).
@@ -462,7 +464,7 @@ calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
 	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty),
 
 	MinimumCacheLimitBytes = max(
-		1,
+		?MINIMUM_CACHE_LIMIT_BYTES,
 		(IdealStepsPerPartition * IdealRangesPerStep * RecallRangeSize * NumActivePartitions)
 	),
 
