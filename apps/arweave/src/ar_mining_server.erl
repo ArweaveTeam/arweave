@@ -45,6 +45,9 @@
 
 -define(FETCH_POA_FROM_PEERS_TIMEOUT_MS, 10000).
 
+%% Only used when zero partitions are configured.
+-define(ABSOLUTE_MINIMUM_MINING_CACHE_SIZE_MB, 100).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -456,27 +459,32 @@ update_cache_limits(NumActivePartitions, State) ->
 	maybe_update_cache_limits(Limits, State).
 
 calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
-	%% This allows the cache to store enough chunks for 4 concurrent VDF steps per partition.
-	IdealStepsPerPartition = 4,
-	IdealRangesPerStep = 2,
+	StepsPerPartition = 10,
+	RangesPerStep = 2,
 	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty),
+	RecommendedCacheLimitBytesPerPartition = StepsPerPartition * RangesPerStep * RecallRangeSize,
 
-	MinimumCacheLimitBytes = max(
-		1,
-		(IdealStepsPerPartition * IdealRangesPerStep * RecallRangeSize * NumActivePartitions)
+	RecommendedCacheLimitBytes = max(
+		?ABSOLUTE_MINIMUM_MINING_CACHE_SIZE_MB * ?MiB,
+		RecommendedCacheLimitBytesPerPartition * NumActivePartitions
 	),
 
 	{ok, Config} = application:get_env(arweave, config),
-	OverallCacheLimitBytes = case Config#config.mining_cache_size_mb of
+	TotalCacheLimitBytes = case Config#config.mining_cache_size_mb of
 		undefined ->
-			MinimumCacheLimitBytes;
-		N ->
-			N * ?MiB
+			?LOG_INFO([{event, mining_cache_size_fallback_to_recommended},
+				{recommended_size_mb, RecommendedCacheLimitBytes div ?MiB}]),
+			RecommendedCacheLimitBytes;
+		N when N < RecommendedCacheLimitBytes ->
+			?LOG_WARNING([{event, mining_cache_size_below_recommended_minimum},
+				{current_size_mb, N}, {minimum_size_mb, RecommendedCacheLimitBytes div ?MiB}]),
+			N * ?MiB;
+		N -> N * ?MiB
 	end,
 
 	%% We shard the chunk cache across every active worker. Only workers that mine a partition
 	%% included in the current weave are active.
-	PartitionCacheLimitBytes = OverallCacheLimitBytes div NumActivePartitions,
+	PartitionCacheLimitBytes = TotalCacheLimitBytes div NumActivePartitions,
 
 	%% Allow enough compute_h0 tasks to be queued to completely refill the chunk cache.
 	VDFQueueLimit = max(
@@ -486,7 +494,7 @@ calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
 
 	GarbageCollectionFrequency = 4 * VDFQueueLimit * 1000,
 
-	{MinimumCacheLimitBytes, OverallCacheLimitBytes, PartitionCacheLimitBytes, VDFQueueLimit,
+	{RecommendedCacheLimitBytes, TotalCacheLimitBytes, PartitionCacheLimitBytes, VDFQueueLimit,
 		GarbageCollectionFrequency}.
 
 maybe_update_cache_limits({_, _, PartitionCacheLimit, _, _},
