@@ -39,7 +39,8 @@ start() ->
 		?BAN_CLEANUP_INTERVAL,
 		?MODULE,
 		cleanup_ban,
-		[ets:whereis(?MODULE)]
+		[ets:whereis(?MODULE)],
+		#{ skip_on_shutdown => false }
 	).
 
 %% Ban a peer completely for TTLSeconds seoncds. Since we cannot trust the port,
@@ -70,11 +71,12 @@ cleanup_ban(TableID) ->
 			RemoveKeys = ets:foldl(Folder, [], ?MODULE),
 			Delete = fun(Key) -> ets:delete(?MODULE, Key) end,
 			lists:foreach(Delete, RemoveKeys),
-			{ok, _} = ar_timer:apply_after(
+			_ = ar_timer:apply_after(
 				?BAN_CLEANUP_INTERVAL,
 				?MODULE,
 				cleanup_ban,
-				[TableID]
+				[TableID],
+				#{ skip_on_shutdown => true }
 			);
 		_ ->
 			table_owner_died
@@ -120,11 +122,12 @@ update_ip_addr(IPAddr, Req, Delta) ->
 	Key = {rate_limit, IPAddr, PathKey},
 	case ets:update_counter(?MODULE, Key, {2, Delta}, {Key, 0}) of
 		1 ->
-			{ok, _} = ar_timer:apply_after(
+			_ = ar_timer:apply_after(
 				?THROTTLE_PERIOD,
 				?MODULE,
 				reset_rate_limit,
-				[ets:whereis(?MODULE), IPAddr, PathKey]
+				[ets:whereis(?MODULE), IPAddr, PathKey],
+				#{ skip_on_shutdown => true }
 			),
 			pass;
 		Count when Count =< RequestLimit ->

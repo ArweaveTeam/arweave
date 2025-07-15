@@ -487,8 +487,9 @@ handle_info(Info, State) ->
 	?LOG_ERROR([{event, unhandled_info}, {info, io_lib:format("~p", [Info])}]),
 	{noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(Reason, _State) ->
 	sync_and_close_files(),
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
 	ok.
 
 %%%===================================================================

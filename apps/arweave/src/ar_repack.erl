@@ -360,6 +360,7 @@ handle_info(Request, #state{} = State) ->
 terminate(Reason, #state{} = State) ->
 	log_debug(terminate, State, [{reason, ar_util:safe_format(Reason)}]),
 	store_cursor(State),
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
 	ok.
 
 %%%===================================================================

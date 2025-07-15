@@ -303,7 +303,13 @@ init([]) ->
 		end,
 	ar:console("~nSetting the packing chunk cache size limit to ~B chunks.~n", [MaxSize]),
 	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
-	{ok, _} = ar_timer:apply_interval(200, ?MODULE, record_buffer_size_metric, []),
+	{ok, _} = ar_timer:apply_interval(
+		200,
+		?MODULE,
+		record_buffer_size_metric,
+		[],
+		#{ skip_on_shutdown => false }
+	),
 	{ok, #state{
 		workers = Workers, num_workers = NumWorkers }}.
 
@@ -372,7 +378,8 @@ handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(Reason, _State) ->
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
 	ok.
 
 %%%===================================================================

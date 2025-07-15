@@ -82,7 +82,8 @@ init([]) ->
 		?DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS,
 		?MODULE,
 		collect_peers,
-		[]
+		[],
+		#{ skip_on_shutdown => false }
 	),
 	gen_server:cast(?MODULE, update_network_data_map),
 	ok = ar_events:subscribe(peer),
@@ -179,7 +180,8 @@ handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(Reason, _State) ->
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
 	ok.
 
 %%%===================================================================

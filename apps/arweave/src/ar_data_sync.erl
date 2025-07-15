@@ -731,7 +731,8 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		ar_data_sync,
 		record_disk_pool_chunks_count,
-		[]
+		[],
+		#{ skip_on_shutdown => false }
 	),
 
 	StateMap = read_data_sync_state(),
@@ -770,7 +771,8 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 		?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS,
 		?MODULE,
 		remove_expired_disk_pool_data_roots,
-		[]
+		[],
+		#{ skip_on_shutdown => false }
 	),
 	lists:foreach(
 		fun(_DiskPoolJobNumber) ->
@@ -798,7 +800,8 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 		200,
 		?MODULE,
 		record_chunk_cache_size_metric,
-		[]
+		[],
+		#{ skip_on_shutdown => false }
 	),
 	gen_server:cast(self(), process_store_chunk_queue),
 	{ok, State2};
@@ -1541,9 +1544,9 @@ handle_info(Message,  #sync_data_state{ store_id = StoreID } = State) ->
 	{noreply, State}.
 
 terminate(Reason, #sync_data_state{ store_id = StoreID } = State) ->
+	store_sync_state(State),
 	?LOG_INFO([{event, terminate}, {store_id, StoreID},
 			{reason, io_lib:format("~p", [Reason])}]),
-	store_sync_state(State),
 	ok.
 
 %%%===================================================================
