@@ -425,14 +425,14 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 				%% If H1 passes diff checks, we will skip H2 for this nonce.
 				{ok, CachedValue#ar_mining_cache_value{
 					h1 = H1, h1_passes_diff_checks = H1PassesDiffChecks,
-					tags = [computed_h1 | CachedValue#ar_mining_cache_value.tags]
+					tags = [computed_h1_wait_for_chunk2 | CachedValue#ar_mining_cache_value.tags]
 				}};
 			(#ar_mining_cache_value{chunk2 = Chunk2} = CachedValue) when not H1PassesDiffChecks ->
 				%% chunk2 has already been read, so we can compute H2 now.
 				ar_mining_hash:compute_h2(self(), Candidate#mining_candidate{ chunk2 = Chunk2, tags = [computed_h1_compute_h2 | Candidate#mining_candidate.tags] }),
 				{ok, CachedValue#ar_mining_cache_value{
 					h1 = H1,
-					tags = [computed_h1 | CachedValue#ar_mining_cache_value.tags]
+					tags = [computed_h1_compute_h2 | CachedValue#ar_mining_cache_value.tags]
 				}};
 			(#ar_mining_cache_value{chunk2 = _Chunk2} = _CachedValue) when H1PassesDiffChecks ->
 				%% H1 passes diff checks, so we skip H2 for this nonce.
