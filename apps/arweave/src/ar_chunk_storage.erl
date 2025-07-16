@@ -211,16 +211,6 @@ get_range(Start, Size, StoreID) ->
 					get(Start2, ChunkStart, ChunkFileStart, StoreID, ChunkCount);
 				true ->
 					SizeBeforeBorder = ChunkFileStart + get_chunk_group_size() - ChunkStart,
-					case SizeBeforeBorder rem ?DATA_CHUNK_SIZE of
-						0 ->
-							ok;
-						Rem ->
-							?LOG_WARNING([{event, chunk_storage_alignment_error},
-								{chunk_start, ChunkStart},
-								{chunk_file_start, ChunkFileStart},
-								{chunk_group_size, get_chunk_group_size()},
-								{remainder, Rem}])
-					end,
 					ChunkCountBeforeBorder = max(SizeBeforeBorder, ?DATA_CHUNK_SIZE) div ?DATA_CHUNK_SIZE,
 					StartAfterBorder = ChunkStart + ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE,
 					SizeAfterBorder = Size2 - ChunkCountBeforeBorder * ?DATA_CHUNK_SIZE
