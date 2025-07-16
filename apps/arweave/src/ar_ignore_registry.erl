@@ -22,15 +22,15 @@ remove(ID) ->
 
 %% @doc Put a referenced ID record into the registry.
 %% The record may be removed by ar_ignore_registry:remove_ref/2.
-add_ref(ID, Ref) when is_reference(Ref) ->
+add_ref(ID, Ref) ->
 	add_ref(ID, Ref, 10000).
 
-add_ref(ID, Ref, Timeout) when is_reference(Ref) ->
+add_ref(ID, Ref, Timeout) ->
 	ets:insert(ignored_ids, {ID, {ref, Ref}}),
 	{ok, _} = ar_timer:apply_after(Timeout, ar_ignore_registry, remove_ref, [ID, Ref]).
 
 %% @doc Remove a referenced ID record from the registry.
-remove_ref(ID, Ref) when is_reference(Ref) ->
+remove_ref(ID, Ref) ->
 	catch ets:delete_object(ignored_ids, {ID, {ref, Ref}}).
 
 %% @doc Put a temporary ID record into the registry.
