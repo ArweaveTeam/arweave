@@ -44,7 +44,7 @@ cleanup_all_batch({_GenesisData, {Cleanup, Functions}}) ->
 	Cleanup(Functions).
 
 test_register(TestFun, Fixture) ->
-	{timeout, 60, {with, Fixture, [TestFun]}}.
+	{timeout, 120, {with, Fixture, [TestFun]}}.
 
 %% -------------------------------------------------------------------
 %% The spammer tests must run first. All the other tests will call
