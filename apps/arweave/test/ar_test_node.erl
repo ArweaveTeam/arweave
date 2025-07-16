@@ -189,7 +189,7 @@ stop_peers(TestType) ->
 
 stop_peer(Node) ->
 	try
-		rpc:call(peer_name(Node), init, stop, [])
+		rpc:call(peer_name(Node), init, stop, [], 30000)
 	catch
 		_:_ ->
 			%% we don't care if the node is already stopped
@@ -1011,7 +1011,7 @@ wait_until_block_index(BI) ->
 
 %% Safely perform an rpc:call/4 and return results in a tagged tuple.
 safe_remote_call(Node, Module, Function, Args) ->
-    try rpc:call(Node, Module, Function, Args) of
+    try rpc:call(Node, Module, Function, Args, 30000) of
         Result -> {ok, Result}
     catch
         error:Reason ->
