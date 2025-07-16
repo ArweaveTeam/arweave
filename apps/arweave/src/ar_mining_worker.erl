@@ -748,9 +748,9 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 			(#ar_mining_cache_value{h1 = undefined} = CachedValue) ->
 				%% H1 is not yet calculated, cache the chunk2 for this nonce.
 				{ok, CachedValue#ar_mining_cache_value{chunk2 = SubChunk}};
-			(#ar_mining_cache_value{h1 = H1} = CachedValue) ->
+			(#ar_mining_cache_value{h1 = H1, chunk1 = Chunk1} = CachedValue) ->
 				%% H1 is already calculated, compute H2 and cache the chunk2 for this nonce.
-				ar_mining_hash:compute_h2(self(), Candidate2#mining_candidate{ h1 = H1 }),
+				ar_mining_hash:compute_h2(self(), Candidate2#mining_candidate{ h1 = H1, chunk1 = Chunk1 }),
 				{ok, CachedValue#ar_mining_cache_value{chunk2 = SubChunk}}
 		end
 	) of
