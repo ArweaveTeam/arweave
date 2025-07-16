@@ -8,7 +8,8 @@
   chunk2_missing = false :: boolean(),
   h1 :: binary() | undefined,
   h1_passes_diff_checks = false :: boolean(),
-  h2 :: binary() | undefined
+  h2 :: binary() | undefined,
+  tags = [] :: [atom()]
 }).
 
 -record(ar_mining_cache_session, {

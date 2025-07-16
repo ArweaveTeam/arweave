@@ -31,7 +31,8 @@
 	step_number = not_set, %% serialized
 	packing_difficulty = 0, %% serialized
 	replica_format = 0, %% serialized
-	label = <<"not_set">> %% not atom, for prevent atom table pollution DoS
+	label = <<"not_set">>, %% not atom, for prevent atom table pollution DoS
+	tags = []
 }).
 
 -record(mining_solution, {
