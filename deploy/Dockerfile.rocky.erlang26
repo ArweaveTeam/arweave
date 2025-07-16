@@ -16,18 +16,18 @@ RUN dnf update -y && \
 
 # Download and extract Erlang/OTP source
 WORKDIR /tmp
-RUN wget https://github.com/erlang/otp/releases/download/OTP-24.3.4.17/otp_src_24.3.4.17.tar.gz
-RUN tar zxf otp_src_24.3.4.17.tar.gz
+RUN wget https://github.com/erlang/otp/releases/download/OTP-26.2.5.12/otp_src_26.2.5.12.tar.gz
+RUN tar zxf otp_src_26.2.5.12.tar.gz
 
 # Build and install Erlang/OTP
-WORKDIR /tmp/otp_src_24.3.4.17
+WORKDIR /tmp/otp_src_26.2.5.12
 RUN ./configure --prefix=/usr/local && \
     make && \
     make install
 
 # Clean up
 WORKDIR /
-RUN rm -rf /tmp/otp_src_24.3.4.17 /tmp/otp_src_24.3.4.17.tar.gz
+RUN rm -rf /tmp/otp_src_26.2.5.12 /tmp/otp_src_26.2.5.12.tar.gz
 
 # Install other dependencies
 RUN dnf install -y \
@@ -38,7 +38,7 @@ RUN dnf install -y \
 # Set the working directory
 WORKDIR /app
 
-# Define the output directory as a volume 
+# Define the output directory as a volume
 VOLUME /output
 
 # The build steps are executed every time
