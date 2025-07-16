@@ -1004,7 +1004,11 @@ mark_single_chunk2_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 %% @doc Mark the chunk2 as missing for the whole recall range.
 mark_second_recall_range_missing(Candidate, State) ->
 	#mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
+<<<<<<< HEAD
 	mark_second_recall_range_missing(0, ar_block:get_max_nonce(PackingDifficulty), Candidate, State).
+=======
+	mark_second_recall_range_missing(0, ar_block:get_nonces_per_recall_range(PackingDifficulty), Candidate, State, Reason).
+>>>>>>> f2f5b207 (Fix chunk2 not marked as missing)
 
 mark_second_recall_range_missing(_Nonce, 0, _Candidate, State) -> State;
 mark_second_recall_range_missing(Nonce, NoncesLeft, Candidate, State) ->
