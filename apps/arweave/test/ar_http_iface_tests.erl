@@ -334,12 +334,13 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
 	Responses = lists:map(RequestFun, lists:seq(1, NRequests)),
 	?assertEqual(length(Responses), NRequests),
 	ar_blacklist_middleware:reset(),
-	ByResponseType = count_by_response_type(ErrorResponse, Responses),
-	Expected = #{
-		error_responses => ExpectedErrors,
-		ok_responses => NRequests - ExpectedErrors
-	},
-	?assertEqual(Expected, ByResponseType),
+	Got = count_by_response_type(ErrorResponse, Responses),
+	%% Other test nodes may occasionally make some requests in the background disturbing the stats.
+	Tolerance = 5,
+	?debugFmt("ExpectedErrors: ~p, Tolerance: ~p, Got: ~p~n", [ExpectedErrors, Tolerance, maps:get(error_responses, Got)]),
+	?assert(maps:get(error_responses, Got) =< ExpectedErrors + Tolerance),
+	?assert(maps:get(error_responses, Got) >= ExpectedErrors - Tolerance),
+	?assertEqual(NRequests - maps:get(error_responses, Got), maps:get(ok_responses, Got)),
 	ar_rate_limiter:on().
 
 %% @doc Count the number of successful and error responses.
