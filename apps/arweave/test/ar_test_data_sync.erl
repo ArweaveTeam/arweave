@@ -34,7 +34,7 @@ setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 	{B0, Options2} =
 		case maps:get(b0, Options, not_set) of
 			not_set ->
-				[Genesis] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
+				[Genesis] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}], ar_retarget:switch_to_linear_diff(2)),
 				{Genesis, Options#{ b0 => Genesis }};
 			Value ->
 				{Value, Options}
