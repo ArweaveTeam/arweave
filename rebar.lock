@@ -26,7 +26,7 @@
   0},
  {<<"rocksdb">>,
   {git,"https://github.com/ArweaveTeam/erlang-rocksdb.git",
-       {ref,"f580865c0bc18b0302a6190d7fa85e68ec0762e0"}},
+       {ref,"0e0b2f051e8f5720ceaea19dc51a7561f2472279"}},
   0}]}.
 [
 {pkg_hash,[
