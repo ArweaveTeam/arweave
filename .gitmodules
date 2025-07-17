@@ -4,3 +4,6 @@
 [submodule "apps/arweave/lib/secp256k1"]
 	path = apps/arweave/lib/secp256k1
 	url = https://github.com/bitcoin-core/secp256k1
+[submodule "apps/arweave/lib/openssl-sha-lite"]
+	path = apps/arweave/lib/openssl-sha-lite
+	url = https://github.com/ArweaveTeam/openssl-sha-lite
