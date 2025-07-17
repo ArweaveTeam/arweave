@@ -170,7 +170,13 @@ jobs:
             ## Long-running tests. Put these first to limit the overall runtime of the
             ## test suite
             ar_coordinated_mining_tests,
-            ar_data_sync_tests,
+            ar_data_sync_recovers_from_corruption_test,
+            ar_data_sync_syncs_data_test,
+            ar_data_sync_syncs_after_joining_test,
+            ar_data_sync_mines_off_only_last_chunks_test,
+            ar_data_sync_mines_off_only_second_last_chunks_test,
+            ar_data_sync_disk_pool_rotation_test,
+            ar_data_sync_enqueue_intervals_test,
             ar_fork_recovery_tests,
             ar_tx,
             ar_packing_tests,
@@ -251,6 +257,7 @@ jobs:
             ar_node,
             ar_node_utils,
             ar_nonce_limiter,
+            ar_node_worker,
             # ar_p3,
             # ar_p3_config,
             # ar_p3_db,

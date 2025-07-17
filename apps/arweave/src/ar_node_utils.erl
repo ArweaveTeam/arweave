@@ -240,7 +240,7 @@ may_be_apply_double_signing_proof(#block{
 may_be_apply_double_signing_proof(B, PrevB, Accounts) ->
 	{_Pub, _Signature1, CDiff1, PrevCDiff1, _Preimage1, _Signature2, CDiff2, PrevCDiff2,
 			_Preimage2} = B#block.double_signing_proof,
-	case CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff1) of
+	case ar_block:get_double_signing_condition(CDiff1, PrevCDiff1, CDiff2, PrevCDiff2) of
 		false ->
 			{error, invalid_double_signing_proof_cdiff};
 		true ->
