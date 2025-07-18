@@ -328,7 +328,11 @@
 -define(DIFF_ADJUSTMENT_UP_LIMIT, 4).
 
 %% Maximum size of a single data chunk, in bytes.
+-ifdef(AR_TEST).
+-define(DATA_CHUNK_SIZE, (?COMPOSITE_PACKING_SUB_CHUNK_SIZE * 128)).
+-else.
 -define(DATA_CHUNK_SIZE, (256 * 1024)).
+-endif.
 
 %% The maximum allowed packing difficulty.
 -define(MAX_PACKING_DIFFICULTY, 32).
