@@ -2,7 +2,8 @@
 
 -export([validate_config/1, set_dependent_flags/1, use_remote_vdf_server/0,
 		pull_from_remote_vdf_server/0, compute_own_vdf/0, is_vdf_server/0,
-		is_public_vdf_server/0, parse/1, parse_storage_module/1, log_config/1]).
+		is_public_vdf_server/0, is_oom_monitor_enabled/0, parse/1, parse_storage_module/1,
+		log_config/1]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
@@ -64,6 +65,10 @@ is_vdf_server() ->
 is_public_vdf_server() ->
 	{ok, Config} = application:get_env(arweave, config),
 	lists:member(public_vdf_server, Config#config.enable).
+
+is_oom_monitor_enabled() ->
+	{ok, Config} = application:get_env(arweave, config),
+	lists:member(oom_monitor, Config#config.enable).
 
 parse(Config) when is_binary(Config) ->
 	case ar_serialize:json_decode(Config) of
@@ -916,6 +921,23 @@ parse_options([{<<"http_api.tcp.send_timeout">>, Timeout}|Rest], Config) ->
 			{error, {bad_value, 'http_api.tcp.send_timeout'}, Timeout}
 	end;
 
+parse_options([{<<"oom_monitor_report_period">>, Period} | Rest], Config)
+		when is_integer(Period), Period > 0 ->
+	parse_options(Rest, Config#config{ oom_monitor_report_period = Period * 1000 });
+parse_options([{<<"oom_monitor_report_period">>, Period} | _], _) ->
+	{error, {bad_type, oom_monitor_report_period, number}, Period};
+
+parse_options([{<<"oom_monitor_filename">>, Filename} | Rest], Config) when is_binary(Filename) ->
+	parse_options(Rest, Config#config{ oom_monitor_filename = binary_to_list(Filename) });
+parse_options([{<<"oom_monitor_filename">>, Filename} | _], _) ->
+	{error, {bad_type, oom_monitor_filename, string}, Filename};
+
+parse_options([{<<"oom_monitor_top_procs">>, TopProcs} | Rest], Config)
+		when is_integer(TopProcs), TopProcs > 0 ->
+	parse_options(Rest, Config#config{ oom_monitor_top_procs = TopProcs });
+parse_options([{<<"oom_monitor_top_procs">>, TopProcs} | _], _) ->
+	{error, {bad_type, oom_monitor_top_procs, number}, TopProcs};
+
 parse_options([Opt | _], _) ->
 	{error, unknown, Opt};
 parse_options([], Config) ->
@@ -1268,4 +1290,3 @@ set_verify_flags(Config) ->
 		max_propagation_peers = 0,
 		max_block_propagation_peers = 0
 	}.
-
