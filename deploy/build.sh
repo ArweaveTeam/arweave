@@ -33,7 +33,14 @@ fi
 
 BASE_IMAGES=("arweave-base:18.04" "arweave-base:20.04" "arweave-base:22.04" "")
 LINUX_VERSIONS=("ubuntu18" "ubuntu20" "ubuntu22" "rocky9")
-BASE_DOCKERFILES=("Dockerfile.base.ubuntu18.04" "Dockerfile.base.ubuntu20.04" "Dockerfile.base.ubuntu22.04" "")
+BASE_DOCKERFILES=(
+	"Dockerfile.base.ubuntu18.04" \
+	"Dockerfile.base.ubuntu20.04" \
+	"Dockerfile.base.ubuntu20.04.erlang26" \
+	"Dockerfile.base.ubuntu22.04" \
+	"Dockerfile.base.ubuntu22.04.erlang26" \
+	"" \
+)
 
 # If specific Linux version is supplied, filter the arrays
 if [ ! -z "$LINUX_VERSION" ]; then
