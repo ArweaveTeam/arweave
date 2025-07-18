@@ -990,18 +990,6 @@ void sha2_p2_32_32_norm_rev (unsigned char *output,
 	}
 }
 
-
-void long_add(unsigned char* saltBuffer, int checkpointIdx) {
-	unsigned int acc = checkpointIdx;
-	// big endian from erlang
-	for(int i=SALT_SIZE-1;i>=0;i--) {
-		unsigned int value = saltBuffer[i];
-		value += acc;
-		saltBuffer[i] = value & 0xFF;
-		acc = value >> 8;
-		if (acc == 0) break;
-	}
-}
 void _vdf_sha2_exp_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
 	unsigned char tempOut[VDF_SHA_HASH_SIZE];
 	// 2 different branches for different optimisation cases

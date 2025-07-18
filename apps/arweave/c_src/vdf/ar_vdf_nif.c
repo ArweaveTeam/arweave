@@ -51,7 +51,7 @@ static int vdf_load(ErlNifEnv* env, void** priv, ERL_NIF_TERM load_info) {
 			{
 				int val = 0; size_t len = sizeof(val);
 				if (sysctlbyname("hw.optional.arm.FEAT_SHA256", &val, &len, NULL, 0) == 0 && val != 0) {
-					vdf_sha2_exp_ptr = vdf_sha2_exp_arm;
+					vdf_sha2_exp_ptr = vdf_sha2_exp_arm2;
 					return 0;
 				}
 			}
