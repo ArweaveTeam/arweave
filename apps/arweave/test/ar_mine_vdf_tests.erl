@@ -66,10 +66,15 @@ test_vdf_sha() ->
 	ok = test_vdf_sha_verify_break1(Salt1, PrevState, ?CHECKPOINT_COUNT, 0, ?ITERATIONS_SHA, OutCheckpointSha3, RealSha3),
 	ok = test_vdf_sha_verify_break2(Salt1, PrevState, ?CHECKPOINT_COUNT, 0, ?ITERATIONS_SHA, OutCheckpointSha3, RealSha3),
 
-	% test vdf_exp
-	{ok, Real1, _OutCheckpointSha} = ar_vdf_nif:vdf_sha2_exp_nif(Salt1, PrevState, 0, 0, ?ITERATIONS_SHA),
-	{ok, RealSha2, OutCheckpointSha2} = ar_vdf_nif:vdf_sha2_exp_nif(Salt2, Real1, ?CHECKPOINT_COUNT-1, 0, ?ITERATIONS_SHA),
-	{ok, RealSha3, OutCheckpointSha3} = ar_vdf_nif:vdf_sha2_exp_nif(Salt1, PrevState, ?CHECKPOINT_COUNT, 0, ?ITERATIONS_SHA),
+	% test vdf_fused
+	{ok, Real1, _OutCheckpointSha} = ar_vdf_nif:vdf_sha2_fused_nif(Salt1, PrevState, 0, 0, ?ITERATIONS_SHA),
+	{ok, RealSha2, OutCheckpointSha2} = ar_vdf_nif:vdf_sha2_fused_nif(Salt2, Real1, ?CHECKPOINT_COUNT-1, 0, ?ITERATIONS_SHA),
+	{ok, RealSha3, OutCheckpointSha3} = ar_vdf_nif:vdf_sha2_fused_nif(Salt1, PrevState, ?CHECKPOINT_COUNT, 0, ?ITERATIONS_SHA),
+
+	% test vdf_hiopt
+	{ok, Real1, _OutCheckpointSha} = ar_vdf_nif:vdf_sha2_hiopt_nif(Salt1, PrevState, 0, 0, ?ITERATIONS_SHA),
+	{ok, RealSha2, OutCheckpointSha2} = ar_vdf_nif:vdf_sha2_hiopt_nif(Salt2, Real1, ?CHECKPOINT_COUNT-1, 0, ?ITERATIONS_SHA),
+	{ok, RealSha3, OutCheckpointSha3} = ar_vdf_nif:vdf_sha2_hiopt_nif(Salt1, PrevState, ?CHECKPOINT_COUNT, 0, ?ITERATIONS_SHA),
 	ok.
 
 test_vdf_sha_verify_break1(Salt, PrevState, CheckpointCount, SkipCheckpointCount, Iterations, OutCheckpoint, Hash) ->
@@ -122,8 +127,13 @@ test_vdf_sha_skip_iterations() ->
 	ok = test_vdf_sha_verify_break1(Salt1, PrevState, ?CHECKPOINT_COUNT, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA, OutCheckpointSha3, RealSha3),
 	ok = test_vdf_sha_verify_break2(Salt1, PrevState, ?CHECKPOINT_COUNT, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA, OutCheckpointSha3, RealSha3),
 
-	% test vdf_exp
-	{ok, Real1, _OutCheckpointSha} = ar_vdf_nif:vdf_sha2_exp_nif(Salt1, PrevState, 0, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
-	{ok, RealSha2, OutCheckpointSha2} = ar_vdf_nif:vdf_sha2_exp_nif(SaltJump, Real1, ?CHECKPOINT_COUNT-1, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
-	{ok, RealSha3, OutCheckpointSha3} = ar_vdf_nif:vdf_sha2_exp_nif(Salt1, PrevState, ?CHECKPOINT_COUNT, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
+	% test vdf_fused
+	{ok, Real1, _OutCheckpointSha} = ar_vdf_nif:vdf_sha2_fused_nif(Salt1, PrevState, 0, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
+	{ok, RealSha2, OutCheckpointSha2} = ar_vdf_nif:vdf_sha2_fused_nif(SaltJump, Real1, ?CHECKPOINT_COUNT-1, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
+	{ok, RealSha3, OutCheckpointSha3} = ar_vdf_nif:vdf_sha2_fused_nif(Salt1, PrevState, ?CHECKPOINT_COUNT, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
+
+	% test vdf_hiopt
+	{ok, Real1, _OutCheckpointSha} = ar_vdf_nif:vdf_sha2_hiopt_nif(Salt1, PrevState, 0, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
+	{ok, RealSha2, OutCheckpointSha2} = ar_vdf_nif:vdf_sha2_hiopt_nif(SaltJump, Real1, ?CHECKPOINT_COUNT-1, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
+	{ok, RealSha3, OutCheckpointSha3} = ar_vdf_nif:vdf_sha2_hiopt_nif(Salt1, PrevState, ?CHECKPOINT_COUNT, ?CHECKPOINT_SKIP_COUNT, ?ITERATIONS_SHA),
 	ok.

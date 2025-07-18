@@ -190,6 +190,17 @@ parse_options([{<<"verify_samples">>, <<"all">>} | Rest], Config) ->
 parse_options([{<<"verify_samples">>, Opt} | _], _) ->
 	{error, {bad_type, verify_samples, number}, Opt};
 
+parse_options([{<<"vdf">>, Mode} | Rest], Config) ->
+	ParsedMode = case Mode of
+		"openssl" ->openssl;
+		"fused" ->fused;
+		"hiopt_m4" ->hiopt_m4;
+		_ ->
+			io:format("VDF ~p is invalid.~n", [Mode]),
+			openssl
+	end,
+	parse_options(Rest, Config#config{ vdf = ParsedMode });
+
 parse_options([{<<"port">>, Port} | Rest], Config) when is_integer(Port) ->
 	parse_options(Rest, Config#config{ port = Port });
 parse_options([{<<"port">>, Port} | _], _) ->

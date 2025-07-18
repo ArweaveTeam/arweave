@@ -48,18 +48,6 @@ struct vdf_sha_verify_thread_arg {
 	int checkpointIdx;
 };
 
-void long_add(unsigned char* saltBuffer, int checkpointIdx) {
-	unsigned int acc = checkpointIdx;
-	// big endian from erlang
-	for(int i=SALT_SIZE-1;i>=0;i--) {
-		unsigned int value = saltBuffer[i];
-		value += acc;
-		saltBuffer[i] = value & 0xFF;
-		acc = value >> 8;
-		if (acc == 0) break;
-	}
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //    SHA
 ////////////////////////////////////////////////////////////////////////////////////////////////////

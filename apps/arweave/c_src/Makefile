@@ -14,9 +14,20 @@ else
 	CXXFLAGS ?= -O3
 endif
 
-# _mm_crc32_u32 support
-CFLAGS += -msse4.2
-CXXFLAGS += -msse4.2
+UNAME_SYS := $(shell uname -s)
+
+# Configure SHA external libraries, we are using OPENSSL_LITE
+# by default, for all systems
+RANDOMX_LDFLAGS = ../lib/openssl-sha-lite/libcrypto.a
+
+# Set default libs path for secp256k1 implementation
+SECP256K1_LDLIBS = -L /usr/lib -L /usr/local/lib
+
+ifeq ($(UNAME_SYS), Linux)
+	# _mm_crc32_u32 support
+	CFLAGS += -msse4.2
+	CXXFLAGS += -msse4.2
+endif
 
 ERTS_INCLUDE_DIR ?= $(shell erl -noshell -eval 'io:format("~ts/erts-~ts/include/", [code:root_dir(), erlang:system_info(version)]).' -s init stop)
 ERL_INTERFACE_INCLUDE_DIR ?= $(shell erl -noshell -eval 'io:format("~ts", [code:lib_dir(erl_interface, include)]).' -s init stop)
@@ -24,7 +35,6 @@ ERL_INTERFACE_LIB_DIR ?= $(shell erl -noshell -eval 'io:format("~ts", [code:lib_
 
 # System type and C compiler/flags.
 
-UNAME_SYS := $(shell uname -s)
 ifeq ($(UNAME_SYS), Darwin)
 	OSX_CPU_ARCH ?= x86_64
 	# nix systems may not have sysctl where uname -m will return the correct arch
@@ -43,6 +53,8 @@ ifeq ($(UNAME_SYS), Darwin)
 	CXXFLAGS += -arch $(OSX_CPU_ARCH) -finline-functions -Wall
 	LDFLAGS ?= -arch $(OSX_CPU_ARCH)
 	LDFLAGS += -undefined suppress
+	# on MacOS, some libs are also present in /opt/homebrew/lib
+	SECP256K1_LDLIBS += -L /opt/homebrew/lib
 else ifeq ($(UNAME_SYS), FreeBSD)
 	CC ?= cc
 	CFLAGS += -std=c99 -finline-functions -Wall -Wmissing-prototypes
@@ -54,18 +66,17 @@ else ifeq ($(UNAME_SYS), Linux)
 endif
 
 ifneq (, $(shell which pkg-config))
-	CFLAGS += $(shell pkg-config --cflags openssl)
-	CXXFLAGS += $(shell pkg-config --cflags openssl)
-	LDFLAGS += $(shell pkg-config --libs openssl)
+	CFLAGS   += -I../lib/openssl-sha-lite/include
+	CXXFLAGS += -I../lib/openssl-sha-lite/include
 endif
 
 C_SRC_DIR = $(CURDIR)
 
-SECP256K1_CFLAGS = $(CFLAGS)
-SECP256K1_LDLIBS = $(LDFLAGS)
+SECP256K1_CFLAGS += $(CFLAGS)
+SECP256K1_LDLIBS += $(LDFLAGS)
 CFLAGS += -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I /usr/local/include -I ../lib/RandomX/src -I $(C_SRC_DIR)
 CXXFLAGS += -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I ../lib/RandomX/src -std=c++11
-LDLIBS += -L $(ERL_INTERFACE_LIB_DIR) -L /usr/local/lib -lei -lssl -lcrypto
+LDLIBS += -L $(ERL_INTERFACE_LIB_DIR) -L /usr/local/lib -lei
 
 
 RX512_OUTPUT ?= $(CURDIR)/../priv/rx512_arweave.so
@@ -84,12 +95,20 @@ RX4096_OBJECTS = $(addsuffix .o, $(basename $(RX4096_SOURCES)))
 RXSQUARED_OBJECTS = $(addsuffix .o, $(basename $(RXSQUARED_SOURCES)))
 VDF_OBJECTS = $(addsuffix .o, $(basename $(VDF_SOURCES)))
 
-UNAME_SYS := $(shell uname -s)
+# NOTE tabs here will cause build fail
 ifeq ($(UNAME_SYS), Linux)
-  $(C_SRC_DIR)/vdf/vdf_exp_x86.o: CXXFLAGS += -msha
+  $(C_SRC_DIR)/vdf/vdf_fused_x86.o: CXXFLAGS += -msha
 endif
 ifeq ($(UNAME_SYS), Darwin)
-  $(C_SRC_DIR)/vdf/vdf_exp_arm.o:  CXXFLAGS += -march=armv8-a+crypto
+  $(C_SRC_DIR)/vdf/vdf_fused_arm.o: CXXFLAGS += -march=armv8-a+crypto
+  $(C_SRC_DIR)/vdf/vdf_hiopt_arm.o: CXXFLAGS += -march=armv8-a+crypto
+endif
+ifeq ($(UNAME_SYS), Darwin)
+	VDF_ARM_ASM_OBJ = $(C_SRC_DIR)/vdf/sha256-armv8.o
+	VDF_OBJECTS += $(VDF_ARM_ASM_OBJ)
+$(VDF_ARM_ASM_OBJ): $(C_SRC_DIR)/vdf/sha256-armv8.S
+	@echo "Assembling ARM64 specific file: $<"
+	clang -O3 -arch arm64 -c $(C_SRC_DIR)/vdf/sha256-armv8.S -o $(VDF_ARM_ASM_OBJ)
 endif
 
 # Verbosity.
@@ -108,24 +127,24 @@ COMPILE_CPP = $(cpp_verbose) $(CXX) $(CXXFLAGS) $(CPPFLAGS) -c
 
 $(RX512_OUTPUT): $(RX512_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
-	$(link_verbose) $(CXX) $(RX512_OBJECTS) $(LDFLAGS) $(LDLIBS) ../lib/RandomX/build512/librandomx512.a -shared -o $(RX512_OUTPUT)
+	$(link_verbose) $(CXX) $(RX512_OBJECTS) $(RANDOMX_LDFLAGS) $(LDFLAGS) $(LDLIBS) ../lib/RandomX/build512/librandomx512.a -shared -o $(RX512_OUTPUT)
 
 $(RX4096_OUTPUT): $(RX4096_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
-	$(link_verbose) $(CXX) $(RX4096_OBJECTS) $(LDFLAGS) $(LDLIBS) ../lib/RandomX/build4096/librandomx4096.a -shared -o $(RX4096_OUTPUT)
+	$(link_verbose) $(CXX) $(RX4096_OBJECTS) $(RANDOMX_LDFLAGS) $(LDFLAGS) $(LDLIBS) ../lib/RandomX/build4096/librandomx4096.a -shared -o $(RX4096_OUTPUT)
 
 $(RXSQUARED_OUTPUT): $(RXSQUARED_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
-	$(link_verbose) $(CXX) $(RXSQUARED_OBJECTS) $(LDFLAGS) $(LDLIBS) ../lib/RandomX/buildsquared/librandomxsquared.a -shared -o $(RXSQUARED_OUTPUT)
+	$(link_verbose) $(CXX) $(RXSQUARED_OBJECTS) $(RANDOMX_LDFLAGS) $(LDFLAGS) $(LDLIBS) ../lib/RandomX/buildsquared/librandomxsquared.a -shared -o $(RXSQUARED_OUTPUT)
 
 $(VDF_OUTPUT): $(VDF_OBJECTS)
 	@mkdir -p $(BASEDIR)/priv/
-	$(link_verbose) $(CXX) $(VDF_OBJECTS) $(LDFLAGS) $(LDLIBS) -shared -o $(VDF_OUTPUT)
+	$(link_verbose) $(CXX) $(VDF_OBJECTS) $(RANDOMX_LDFLAGS) $(LDFLAGS) $(LDLIBS) -shared -o $(VDF_OUTPUT)
 
 SECP256K1_SOURCES = $(wildcard $(C_SRC_DIR)/*.c $(C_SRC_DIR)/secp256k1/*.c)
 SECP256K1_OBJECTS = $(addsuffix .o, $(basename $(SECP256K1_SOURCES)))
 SECP256K1_CFLAGS += -fPIC -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I /usr/local/include -I $(CURDIR)/../lib/secp256k1/src -I $(CURDIR)/../lib/secp256k1/include -I $(C_SRC_DIR)
-SECP256K1_LDLIBS += -L $(ERL_INTERFACE_LIB_DIR) -L /usr/local/lib -lssl -lcrypto
+SECP256K1_LDLIBS += -L $(ERL_INTERFACE_LIB_DIR)
 SECP256K1_OUTPUT ?= $(CURDIR)/../priv/secp256k1_arweave.so
 
 $(SECP256K1_OUTPUT): $(SECP256K1_OBJECTS)
