@@ -36,7 +36,10 @@
 %% @end
 %%--------------------------------------------------------------------
 apply_after(Time, Module, Function, Arguments) ->
-	case timer:apply_after(Time, Module, Function, Arguments) of
+	M = timer,
+	F = apply_after,
+	A = [Time, Module, Function, Arguments],
+	case ar_shutdown_manager:apply(M, F, A) of
 		{ok, TimerRef} -> {ok, TimerRef};
 		Elsewise -> Elsewise
 	end.
@@ -47,7 +50,10 @@ apply_after(Time, Module, Function, Arguments) ->
 %% @end
 %%--------------------------------------------------------------------
 apply_interval(Time, Module, Function, Arguments) ->
-	case timer:apply_interval(Time, Module, Function, Arguments) of
+	M = timer,
+	F = apply_interval,
+	A = [Time, Module, Function, Arguments],
+	case ar_shutdown_manager:apply(M, F, A) of
 		{ok, TimerRef} ->
 			insert_timer(TimerRef, #{
 				pid => self(),
@@ -75,7 +81,10 @@ send_after(Time, Message) ->
 %% @end
 %%--------------------------------------------------------------------
 send_after(Time, Pid, Message) ->
-	case timer:send_after(Time, Pid, Message) of
+	M = timer,
+	F = send_after,
+	A = [Time, Pid, Message],
+	case ar_shutdown_manager:apply(M, F, A) of
 		{ok, TimerRef} -> {ok, TimerRef};
 		Elsewise -> Elsewise
 	end.
@@ -94,7 +103,10 @@ send_interval(Time, Message) ->
 %% @end
 %%--------------------------------------------------------------------
 send_interval(Time, Pid, Message) ->
-	case timer:send_interval(Time, Pid, Message) of
+	M = timer,
+	F = send_interval,
+	A = [Time, Pid, Message],
+	case ar_shutdown_manager:apply(M, F, A) of
 		{ok, TimerRef} ->
 			insert_timer(TimerRef, #{
 				pid => self(),

@@ -24,13 +24,16 @@
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
 -export([
+	apply/3,
 	connections/0,
 	connections/1,
 	list_connections/0,
 	list_connections/1,
+	shutdown/0,
 	socket_info/1,
 	socket_info/2,
 	start_killer/1,
+	state/0,
 	terminate_connections/0
 ]).
 -include_lib("eunit/include/eunit.hrl").
@@ -49,12 +52,58 @@ start_link(Args) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
 %%--------------------------------------------------------------------
+%% @doc returns service state.
+%% @end
+%%--------------------------------------------------------------------
+-spec state() -> shutdown | running.
+
+state() ->
+	case ets:lookup(?MODULE, state) of
+		[{state, shutdown}] -> shutdown;
+		_ -> running
+	end.
+
+%%--------------------------------------------------------------------
+%% @doc set state value to shutdown.
+%% @end
+%%--------------------------------------------------------------------
+-spec shutdown() -> boolean().
+
+shutdown() ->
+	ets:insert(?MODULE, {state, shutdown}).
+
+%%--------------------------------------------------------------------
+%% @doc apply a function only if the service is running.
+%% @end
+%%--------------------------------------------------------------------
+-spec apply(Module, Function, Arguments) -> Return when
+	Module :: atom(),
+	Function :: atom(),
+	Arguments :: [term()],
+	Return :: any() | {error, shutdown}.
+
+apply(Module, Function, Arguments) ->
+	case state() of
+		running ->
+			erlang:apply(Module, Function, Arguments);
+		shutdown ->
+			?LOG_ERROR([
+				{state, shutdown},
+				{module, Module},
+				{function, Function},
+				{function, Arguments}
+			]),
+			{error, shutdown}
+	end.
+
+%%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 init(_Args) ->
 	erlang:process_flag(trap_exit, true),
 	StartedAt = erlang:system_time(),
 	?LOG_INFO([{start, ?MODULE}, {pid, self()}, {started_at, StartedAt}]),
+	ets:insert(?MODULE, {state, running}),
 	{ok, #{ started_at => StartedAt }}.
 
 %%--------------------------------------------------------------------
