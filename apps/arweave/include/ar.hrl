@@ -328,7 +328,11 @@
 -define(DIFF_ADJUSTMENT_UP_LIMIT, 4).
 
 %% Maximum size of a single data chunk, in bytes.
+-ifdef(AR_TEST).
+-define(DATA_CHUNK_SIZE, (?COMPOSITE_PACKING_SUB_CHUNK_SIZE * 128)).
+-else.
 -define(DATA_CHUNK_SIZE, (256 * 1024)).
+-endif.
 
 %% The maximum allowed packing difficulty.
 -define(MAX_PACKING_DIFFICULTY, 32).
@@ -336,11 +340,7 @@
 %% The number of sub-chunks in a compositely packed chunk.
 %% The composite packing with the packing difficulty 1 matches approximately the non-composite
 %% 2.6 packing in terms of computational costs.
--ifdef(AR_TEST).
--define(COMPOSITE_PACKING_SUB_CHUNK_COUNT, 2).
--else.
 -define(COMPOSITE_PACKING_SUB_CHUNK_COUNT, 32).
--endif.
 
 %% The size of a unit sub-chunk in the compositely packed chunk.
 -define(COMPOSITE_PACKING_SUB_CHUNK_SIZE,
