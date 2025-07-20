@@ -458,8 +458,8 @@ update_cache_limits(NumActivePartitions, State) ->
 	maybe_update_cache_limits(Limits, State).
 
 calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
-	%% This allows the cache to store enough chunks for 4 concurrent VDF steps per partition.
-	IdealStepsPerPartition = 4,
+	%% This allows the cache to store enough chunks for 10 concurrent VDF steps per partition.
+	IdealStepsPerPartition = 10,
 	IdealRangesPerStep = 2,
 	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty),
 
