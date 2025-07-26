@@ -170,7 +170,15 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 										StartOffset,
 										{replica_2_9, RewardAddr},
 										ar_data_sync,
-										StoreID);
+										StoreID),
+			%% Here we assume we do not store unpadded small chunks (small chunks
+			%% before the strict data split threshold), thus ?DATA_CHUNK_SIZE.
+			case ar_data_sync:is_footprint_record_supported(PaddedEndOffset, ?DATA_CHUNK_SIZE, Packing) of
+				true ->
+					ar_footprint_record:add(PaddedEndOffset, Packing, StoreID);
+				false ->
+					ok
+			end;
 		false ->
 			ok
 	end.
