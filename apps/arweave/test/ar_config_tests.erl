@@ -39,6 +39,7 @@ test_parse_config() ->
 			{192, 168, 2, 3, 1984},
 			{172, 16, 10, 11, 1985}
 		],
+		sync_from_local_peers_only = true,
 		block_gossip_peers = [{159,203,158,108,1984}, {150,150,150,150, 1983}],
 		data_dir = "some_data_dir",
 		log_dir = "log_dir",
