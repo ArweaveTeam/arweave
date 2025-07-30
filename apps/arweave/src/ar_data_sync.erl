@@ -3935,6 +3935,8 @@ may_be_run_footprint_record_initialization(State) ->
 				true ->
 					ok;
 				false ->
+					?LOG_INFO([{event, initializing_footprint_record},
+							{cursor, FootprintRecordCursor}, {store_id, StoreID}]),
 					gen_server:cast(self(), {initialize_footprint_record, FootprintRecordCursor, Packing})
 			end;
 		_ ->
@@ -3971,11 +3973,7 @@ initialize_footprint_record(Cursor, Packing, State) ->
 			State;
 		{IntervalEnd, _IntervalStart} ->
 			EndPosition = min(Cursor + (BatchSize * ?DATA_CHUNK_SIZE), IntervalEnd),
-			?LOG_INFO([{event, initializing_footprint_record_range},
-					{range_start, Cursor}, {range_end, EndPosition}, {store_id, StoreID}]),
 			initialize_footprint_range(Cursor, EndPosition, Packing, StoreID),
-			?LOG_INFO([{event, initialized_footprint_record_range},
-					{range_start, Cursor}, {range_end, EndPosition}, {store_id, StoreID}]),
 			NewCursor = EndPosition,
 			ok = ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, binary:encode_unsigned(NewCursor)),
 			gen_server:cast(self(), {initialize_footprint_record, NewCursor, Packing}),
