@@ -3978,6 +3978,8 @@ may_be_run_footprint_record_initialization(State) ->
 				true ->
 					ok;
 				false ->
+					?LOG_INFO([{event, initializing_footprint_record},
+							{cursor, FootprintRecordCursor}, {store_id, StoreID}]),
 					gen_server:cast(self(), {initialize_footprint_record, FootprintRecordCursor, Packing})
 			end;
 		_ ->
