@@ -145,6 +145,13 @@ parse_options([{<<"local_peers">>, Peers} | Rest], Config) when is_list(Peers) -
 parse_options([{<<"local_peers">>, Peers} | _], _) ->
 	{error, {bad_type, local_peers, array}, Peers};
 
+parse_options([{<<"sync_from_local_peers_only">>, true} | Rest], Config) ->
+	parse_options(Rest, Config#config{ sync_from_local_peers_only = true });
+parse_options([{<<"sync_from_local_peers_only">>, false} | Rest], Config) ->
+	parse_options(Rest, Config#config{ sync_from_local_peers_only = false });
+parse_options([{<<"sync_from_local_peers_only">>, Opt} | _], _) ->
+	{error, {bad_type, sync_from_local_peers_only, boolean}, Opt};
+
 parse_options([{<<"start_from_latest_state">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config{ start_from_latest_state = true });
 parse_options([{<<"start_from_latest_state">>, false} | Rest], Config) ->
