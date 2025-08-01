@@ -74,6 +74,7 @@ shutdown() ->
 
 %%--------------------------------------------------------------------
 %% @doc apply a function only if the service is running.
+%% @see apply/4
 %% @end
 %%--------------------------------------------------------------------
 -spec apply(Module, Function, Arguments) -> Return when
@@ -83,6 +84,22 @@ shutdown() ->
 	Return :: any() | {error, shutdown}.
 
 apply(Module, Function, Arguments) ->
+	apply(Module, Function, Arguments, #{}).
+
+%%--------------------------------------------------------------------
+%% @doc execute a MFA with extra option for filtering.
+%% @end
+%%--------------------------------------------------------------------
+-spec apply(Module, Function, Arguments, Opts) -> Return when
+	Module :: atom(),
+	Function :: atom(),
+	Arguments :: [term()],
+	Opts :: #{ shutdown_mode => boolean() },
+	Return :: any() | {error, shutdown}.
+
+apply(Module, Function, Arguments, #{ shutdown_mode := false }) ->
+	erlang:apply(Module, Function, Arguments);
+apply(Module, Function, Arguments, Opts) ->
 	case state() of
 		running ->
 			erlang:apply(Module, Function, Arguments);
