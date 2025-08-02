@@ -9,6 +9,10 @@ testnet-3
 testnet-4
 testnet-5
 testnet-6
+testnet-7
+testnet-8
+testnet-9
+testnet-10
 )
 
 # Get the current hostname
