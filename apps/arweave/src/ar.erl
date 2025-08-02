@@ -284,6 +284,11 @@ show_help() ->
 				"active per physical disk at a time. Default: ~B",
 				[?DEFAULT_REPLICA_2_9_WORKERS]
 			)},
+			{"replica_2_9_entropy_cache_max_entropies (num)", io_lib:format(
+				"The maximum number of replica 2.9 entropies to cache at a time "
+				"while syncing data. Each entropy is 256 MB. Default: ~B",
+				[?DEFAULT_REPLICA_2_9_ENTROPY_CACHE_MAX_ENTROPIES]
+			)},
 			{"max_vdf_validation_thread_count", io_lib:format("\tThe maximum number "
 					"of threads used for VDF validation. Default: ~B",
 					[?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT])},
@@ -774,6 +779,8 @@ parse_cli_args(["packing_workers", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ packing_workers = list_to_integer(Num) });
 parse_cli_args(["replica_2_9_workers", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ replica_2_9_workers = list_to_integer(Num) });
+parse_cli_args(["replica_2_9_entropy_cache_max_entropies", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ replica_2_9_entropy_cache_max_entropies = list_to_integer(Num) });
 parse_cli_args(["max_vdf_validation_thread_count", Num | Rest], C) ->
 	parse_cli_args(Rest,
 			C#config{ max_nonce_limiter_validation_thread_count = list_to_integer(Num) });
