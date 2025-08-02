@@ -85,7 +85,7 @@ count_storage_modules() {
     fi
     
     # Count directories matching storage_module_*_MINING_ADDRESS pattern
-    count=$(find "$dir" -maxdepth 1 -type d -name "storage_module_*_${mining_addr}" 2>/dev/null | wc -l)
+    count=$(find "$dir" -maxdepth 1 -type d -name "storage_module_*_${mining_addr}.replica.2.9" 2>/dev/null | wc -l)
     echo "$count"
 }
 
@@ -121,7 +121,7 @@ create_storage_module() {
     local partition_num="$2"
     local mining_addr="$3"
     
-    local storage_dir="${volume_dir}/storage_module_$(printf "%02d" $partition_num)_${mining_addr}"
+    local storage_dir="${volume_dir}/storage_module_$(printf "%02d" $partition_num)_${mining_addr}.replica.2.9"
     
     # Check if volume directory exists
     if [ ! -d "$volume_dir" ]; then
@@ -147,7 +147,7 @@ create_symlink() {
     local partition_num="$2"
     local mining_addr="$3"
     
-    local link_name="storage_module_$(printf "%02d" $partition_num)_${mining_addr}"
+    local link_name="storage_module_$(printf "%02d" $partition_num)_${mining_addr}.replica.2.9"
     
     execute_command "Creating symlink: $link_name -> $target_dir" "ln -sf '$target_dir' '$link_name'"
     
