@@ -101,6 +101,7 @@ handle_info({event, node_state, _}, State) ->
 	{noreply, State}.
 
 terminate(Reason, State) ->
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
 	ok.
 
 %%%===================================================================

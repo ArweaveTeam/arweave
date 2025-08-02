@@ -105,7 +105,7 @@ handle_info(Info, State) ->
 	{noreply, State}.
 
 terminate(Reason, _State) ->
-	?LOG_WARNING("Unexpected terminate: ~p", [Reason]),
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
 	ok.
 
 %%% Internal functions.

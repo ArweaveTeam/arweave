@@ -65,7 +65,8 @@ handle_cast(_Msg, State) ->
 handle_info(_Info, State) ->
 	{noreply, State}.
 
-terminate(_Reason, _state) ->
+terminate(Reason, _state) ->
+	?LOG_INFO([{module, ?MODULE}, {pid, self()}, {callback, terminate},{reason, Reason}]),
 	ok.
 
 %%%===================================================================

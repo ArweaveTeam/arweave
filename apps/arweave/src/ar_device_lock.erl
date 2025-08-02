@@ -5,7 +5,7 @@
 -export([get_store_id_to_device_map/0, is_ready/0, acquire_lock/3, release_lock/2,
 	set_device_lock_metric/3]).
 
--export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2]).
+-export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2, terminate/2]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_config.hrl").
@@ -152,6 +152,10 @@ handle_cast(Request, State) ->
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
+
+terminate(Reason, _State) ->
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
+	ok.
 
 %%%===================================================================
 %%% Private functions.

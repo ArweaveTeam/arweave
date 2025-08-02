@@ -7,7 +7,7 @@
 
 -export([start_link/0]).
 -export([init/1]).
--export([handle_call/3, handle_cast/2, handle_info/2]).
+-export([handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([split_path/1, label_http_path/1, label_req/1]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -79,6 +79,10 @@ handle_info(Msg = {'EXIT', _From, Reason}, _State) ->
 handle_info(Msg, State) ->
 	?LOG_WARNING([{process, ?MODULE}, {received, Msg}]),
 	{noreply, State}.
+
+terminate(Reason, _State) ->
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
+	ok.
 
 %%%===================================================================
 %%% Private functions.
