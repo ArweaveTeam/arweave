@@ -27,7 +27,13 @@ add_ref(ID, Ref) ->
 
 add_ref(ID, Ref, Timeout) ->
 	ets:insert(ignored_ids, {ID, {ref, Ref}}),
-	{ok, _} = ar_timer:apply_after(Timeout, ar_ignore_registry, remove_ref, [ID, Ref]).
+	{ok, _} = ar_timer:apply_after(
+		Timeout,
+		ar_ignore_registry,
+		remove_ref,
+		[ID, Ref],
+		#{ skip_on_shutdown => false }
+	).
 
 %% @doc Remove a referenced ID record from the registry.
 remove_ref(ID, Ref) ->
@@ -38,7 +44,13 @@ remove_ref(ID, Ref) ->
 add_temporary(ID, Timeout) ->
 	Ref = make_ref(),
 	ets:insert(ignored_ids, {ID, {temporary, Ref}}),
-	{ok, _} = ar_timer:apply_after(Timeout, ar_ignore_registry, remove_temporary, [ID, Ref]).
+	{ok, _} = ar_timer:apply_after(
+		Timeout,
+		ar_ignore_registry,
+		remove_temporary,
+		[ID, Ref],
+		#{ skip_on_shutdown => false }
+	).
 
 %% @doc Remove the temporary record from the registry.
 remove_temporary(ID, Ref) ->

@@ -108,13 +108,23 @@ handle_cast(_Msg, State) ->
 
 handle_info(timeout, #state{ paused = true } = State) ->
 	?LOG_INFO([{event, disksup_paused}]),
-	{ok, _} = ar_timer:send_after(State#state.timeout, timeout),
+	{ok, _} = ar_timer:send_after(
+		State#state.timeout,
+		self(),
+		timeout,
+		#{ skip_on_shutdown => false }
+	),
 	{noreply, State};
 handle_info(timeout, State) ->
 	NewDiskData = check_disk_space(State#state.os, State#state.port),
 	ensure_storage_modules_paths(),
 	broadcast_disk_free(State#state.os, State#state.port),
-	{ok, _} = ar_timer:send_after(State#state.timeout, timeout),
+	{ok, _} = ar_timer:send_after(
+		State#state.timeout,
+		self(),
+		timeout,
+		#{ skip_on_shutdown => false }
+	),
 	{noreply, State#state{ diskdata = NewDiskData }};
 
 handle_info({'EXIT', _Port, Reason}, State) ->
@@ -123,13 +133,14 @@ handle_info({'EXIT', _Port, Reason}, State) ->
 handle_info(_Info, State) ->
 	{noreply, State}.
 
-terminate(_Reason, State) ->
+terminate(Reason, State) ->
 	case State#state.port of
 		not_used ->
 			ok;
 		Port ->
 			port_close(Port)
 	end,
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
 	ok.
 
 %%%===================================================================

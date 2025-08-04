@@ -1311,6 +1311,10 @@ shutdown([NodeName]) ->
 	rpc:cast(NodeName, init, stop, []).
 
 prep_stop(State) ->
+	% the service will be stopped, ar_shutdown_manager
+	% must be noticed and its state modified.
+	_ = ar_shutdown_manager:shutdown(),
+
 	% When arweave is stopped, the first step is to stop
 	% accepting connections from other peers, and then
 	% start the shutdown procedure.

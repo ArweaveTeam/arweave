@@ -36,9 +36,17 @@ unblock_peer_connections() ->
 	ets:delete(?MODULE, block_peer_connections),
 	ok.
 
-req(#{ peer := {_, _} } = Args) ->
+req(Args) ->
+	case ar_shutdown_manager:state() of
+		running ->
+			req2(Args);
+		shutdown ->
+			{error, shutdown}
+	end.
+
+req2(#{ peer := {_, _} } = Args) ->
 	req(Args, false);
-req(#{ peer := Peer } = Args) ->
+req2(#{ peer := Peer } = Args) ->
 	{ok, Config} = application:get_env(arweave, config),
 	case Config#config.port == element(5, Peer) of
 		true ->
@@ -245,8 +253,8 @@ handle_info(Message, State) ->
 	{noreply, State}.
 
 terminate(Reason, #state{ status_by_pid = StatusByPID }) ->
-	?LOG_INFO([{event, http_client_terminating}, {reason, io_lib:format("~p", [Reason])}]),
 	maps:map(fun(PID, _Status) -> gun:shutdown(PID) end, StatusByPID),
+	?LOG_INFO([{event, http_client_terminating}, {reason, io_lib:format("~p", [Reason])}]),
 	ok.
 
 %%% ==================================================================

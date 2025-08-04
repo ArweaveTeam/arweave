@@ -385,11 +385,12 @@ init([]) ->
 			load_peers(),
 			gen_server:cast(?MODULE, rank_peers),
 			gen_server:cast(?MODULE, ping_peers),
-			{ok, _} = ar_timer:apply_interval(
+			_ = ar_timer:apply_interval(
 				?GET_MORE_PEERS_FREQUENCY_MS,
 				?MODULE,
 				discover_peers,
-				[]
+				[],
+				#{ skip_on_shutdown => true }
 			);
 		_ ->
 			ok
@@ -472,8 +473,9 @@ handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
 
-terminate(_Reason, _State) ->
-	store_peers().
+terminate(Reason, _State) ->
+	store_peers(),
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]).
 
 %%%===================================================================
 %%% Private functions.

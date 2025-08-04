@@ -37,7 +37,9 @@ execute(Req, #{ handler := ar_http_iface_handler }) ->
 	end),
 	{ok, TimeoutRef} = ar_timer:send_after(
 		?HANDLER_TIMEOUT,
-		{timeout, HandlerPid, Req}
+		self(),
+		{timeout, HandlerPid, Req},
+		#{ skip_on_shutdown => false }
 	),
 	loop(TimeoutRef);
 execute(Req, Env) ->

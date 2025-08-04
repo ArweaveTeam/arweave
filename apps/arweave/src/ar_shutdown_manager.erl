@@ -24,13 +24,17 @@
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
 -export([
+	apply/3,
+	apply/4,
 	connections/0,
 	connections/1,
 	list_connections/0,
 	list_connections/1,
+	shutdown/0,
 	socket_info/1,
 	socket_info/2,
 	start_killer/1,
+	state/0,
 	terminate_connections/0
 ]).
 -include_lib("eunit/include/eunit.hrl").
@@ -49,12 +53,75 @@ start_link(Args) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
 %%--------------------------------------------------------------------
+%% @doc returns service state.
+%% @end
+%%--------------------------------------------------------------------
+-spec state() -> shutdown | running.
+
+state() ->
+	case ets:lookup(?MODULE, state) of
+		[{state, shutdown}] -> shutdown;
+		_ -> running
+	end.
+
+%%--------------------------------------------------------------------
+%% @doc set state value to shutdown.
+%% @end
+%%--------------------------------------------------------------------
+-spec shutdown() -> boolean().
+
+shutdown() ->
+	ets:insert(?MODULE, {state, shutdown}).
+
+%%--------------------------------------------------------------------
+%% @doc apply a function only if the service is running.
+%% @see apply/4
+%% @end
+%%--------------------------------------------------------------------
+-spec apply(Module, Function, Arguments) -> Return when
+	Module :: atom(),
+	Function :: atom(),
+	Arguments :: [term()],
+	Return :: any() | {error, shutdown}.
+
+apply(Module, Function, Arguments) ->
+	apply(Module, Function, Arguments, #{}).
+
+%%--------------------------------------------------------------------
+%% @doc execute a MFA with extra option for filtering.
+%% @end
+%%--------------------------------------------------------------------
+-spec apply(Module, Function, Arguments, Opts) -> Return when
+	Module :: atom(),
+	Function :: atom(),
+	Arguments :: [term()],
+	Opts :: #{ skip_on_shutdown => boolean() },
+	Return :: any() | {error, shutdown}.
+
+apply(Module, Function, Arguments, #{ skip_on_shutdown := false }) ->
+	erlang:apply(Module, Function, Arguments);
+apply(Module, Function, Arguments, Opts) ->
+	case state() of
+		running ->
+			erlang:apply(Module, Function, Arguments);
+		shutdown ->
+			?LOG_ERROR([
+				{state, shutdown},
+				{module, Module},
+				{function, Function},
+				{function, Arguments}
+			]),
+			{error, shutdown}
+	end.
+
+%%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 init(_Args) ->
 	erlang:process_flag(trap_exit, true),
 	StartedAt = erlang:system_time(),
 	?LOG_INFO([{start, ?MODULE}, {pid, self()}, {started_at, StartedAt}]),
+	ets:insert(?MODULE, {state, running}),
 	{ok, #{ started_at => StartedAt }}.
 
 %%--------------------------------------------------------------------
@@ -96,8 +163,8 @@ terminate(_Reason = shutdown, _State = #{ started_at := StartedAt }) ->
 		{started_at, StartedAt},
 		{stopped_at, Now},
 		{uptime, Now-StartedAt}
-	]).
-
+	]),
+	ok.
 
 %%--------------------------------------------------------------------
 %% @hidden

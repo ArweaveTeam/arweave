@@ -148,7 +148,13 @@ init([]) ->
 	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(tx),
 	gen_server:cast(?MODULE, refresh_blacklist),
-	{ok, _} = ar_timer:apply_interval(?STORE_STATE_FREQUENCY_MS, ?MODULE, store_state, []),
+	{ok, _} = ar_timer:apply_interval(
+		?STORE_STATE_FREQUENCY_MS,
+		?MODULE,
+		store_state,
+		[],
+		#{ skip_on_shutdown => false }
+	),
 	{ok, #ar_tx_blacklist_state{}}.
 
 handle_call(Request, _From, State) ->
@@ -164,18 +170,20 @@ handle_cast(start_taking_down, State) ->
 handle_cast(refresh_blacklist, State) ->
 	case refresh_blacklist() of
 		error ->
-			{ok, _} = ar_timer:apply_after(
+			_ = ar_timer:apply_after(
 				?REFRESH_BLACKLISTS_RETRY_DELAY_MS,
 				gen_server,
 				cast,
-				[self(), refresh_blacklist]
+				[self(), refresh_blacklist],
+				#{ skip_on_shutdown => true }
 			);
 		ok ->
-			{ok, _} = ar_timer:apply_after(
+			_ = ar_timer:apply_after(
 				?REFRESH_BLACKLISTS_FREQUENCY_MS,
 				gen_server,
 				cast,
-				[self(), refresh_blacklist]
+				[self(), refresh_blacklist],
+				#{ skip_on_shutdown => true }
 			)
 	end,
 	{noreply, State};
@@ -200,11 +208,12 @@ handle_cast(maybe_request_takedown, State) ->
 			false ->
 				State2
 		end,
-	{ok, _} = ar_timer:apply_after(
+	_ = ar_timer:apply_after(
 		?CHECK_PENDING_ITEMS_INTERVAL_MS,
 		gen_server,
 		cast,
-		[self(), maybe_request_takedown]
+		[self(), maybe_request_takedown],
+		#{ skip_on_shutdown => true }
 	),
 	{noreply, State3};
 
@@ -314,9 +323,9 @@ handle_info(Info, State) ->
 	{noreply, State}.
 
 terminate(Reason, _State) ->
-	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, Reason}]),
 	store_state(),
-	close_dets().
+	close_dets(),
+	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, Reason}]).
 
 %%%===================================================================
 %%% Private functions.

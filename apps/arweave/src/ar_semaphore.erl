@@ -2,7 +2,8 @@
 -behaviour(gen_server).
 
 -export([start_link/2, acquire/2, stop/1]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+-include_lib("kernel/include/logger.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -68,6 +69,10 @@ handle_info({'DOWN', _,  process, Pid, _}, {Capacity, WaitingPids, Queue}) ->
 		error ->
 			{noreply, {Capacity, WaitingPids, Queue}}
 	end.
+
+terminate(Reason, _State) ->
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
+	ok.
 
 %%%===================================================================
 %%% Private functions.

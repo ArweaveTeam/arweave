@@ -20,7 +20,12 @@ start_link() ->
 
 %% gen_server callbacks
 init([]) ->
-	{ok, _} = ar_timer:send_interval(?SAMPLE_PROCESSES_INTERVAL, sample_processes),
+	{ok, _} = ar_timer:send_interval(
+		?SAMPLE_PROCESSES_INTERVAL,
+		self(),
+		sample_processes,
+		#{ skip_on_shutdown => false }
+	),
 	ar_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
 	{ok, #state{}}.
 
@@ -90,7 +95,8 @@ handle_info(sample_processes, State) ->
 handle_info(_Info, State) ->
 	{noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(Reason, _State) ->
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
 	ok.
 
 %% Internal functions
