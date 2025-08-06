@@ -497,7 +497,7 @@ collect_entropies([Ref | Rest], Acc) ->
 	receive
 		{entropy_generated, Ref, Entropy} ->
 			collect_entropies(Rest, [Entropy | Acc])
-	after 60000 ->
+	after 600_000 ->
 		?LOG_ERROR([{event, entropy_generation_timeout}, {ref, Ref}]),
 		{error, timeout}
 	end.
