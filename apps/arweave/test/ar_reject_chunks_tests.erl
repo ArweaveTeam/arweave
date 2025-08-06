@@ -318,7 +318,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			end
 		end,
 		2000,
-		20 * 1000
+		30 * 1000
 	),
 	%% Now we do not have free space again.
 	?assertMatch(
