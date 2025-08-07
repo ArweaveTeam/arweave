@@ -60,12 +60,6 @@
 -define(FOOTPRINT_MIGRATION_BATCH_SIZE, 100).
 -endif.
 
--ifdef(AR_TEST).
--define(ENTROPY_GENERATION_WAIT_TIME_MS, 200).
--else.
--define(ENTROPY_GENERATION_WAIT_TIME_MS, 30_000).
--endif.
-
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -865,7 +859,10 @@ init({StoreID, RepackInPlacePacking}) ->
 			State3 = State2#sync_data_state{
 				sync_status = init_sync_status(StoreID)
 			},
-			gen_server:cast(self(), may_be_wait_for_entropy_generation),
+			%% Start syncing immediately. For replica_2_9 packing, chunks will be
+			%% written as unpacked_padded first and upgraded once entropy arrives.
+			gen_server:cast(self(), sync_intervals),
+			gen_server:cast(self(), sync_data),
 			maybe_run_footprint_record_initialization(State3),
 			{ok, State3};
 		_ ->
@@ -875,34 +872,6 @@ init({StoreID, RepackInPlacePacking}) ->
 			ar_device_lock:set_device_lock_metric(StoreID, sync, off),
 			{ok, State3}
 	end.
-
-handle_cast(may_be_wait_for_entropy_generation, State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	Packing = ar_storage_module:get_packing(StoreID),
-	StartSyncing =
-		case Packing of
-			{replica_2_9, _Addr} ->
-				{IsEntropyGenerated, _} = ar_entropy_gen:initialize_context(StoreID, Packing),
-				case IsEntropyGenerated of
-					true ->
-						?LOG_INFO([{event, entropy_generation_complete}, {store_id, StoreID}]),
-						true;
-					_ ->
-						?LOG_INFO([{event, waiting_for_entropy_generation}, {store_id, StoreID}]),
-						ar_util:cast_after(?ENTROPY_GENERATION_WAIT_TIME_MS, self(), may_be_wait_for_entropy_generation),
-						false
-				end;
-			_ ->
-				true
-		end,
-	case StartSyncing of
-		true ->
-			gen_server:cast(self(), sync_intervals),
-			gen_server:cast(self(), sync_data);
-		_ ->
-			ok
-	end,
-	{noreply, State};
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
 	move_data_root_index(Cursor, N, State),
