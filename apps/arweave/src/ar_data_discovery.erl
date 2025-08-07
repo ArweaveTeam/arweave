@@ -250,8 +250,16 @@ pick_peers(Peers, PeerLen, N) ->
 
 collect_peers() ->
 	N = ?DATA_DISCOVERY_COLLECT_PEERS_COUNT,
-	%% rank peers by current rating since we care about their recent throughput performance
-	collect_peers(lists:sublist(ar_peers:get_peers(current), N)).
+	{ok, Config} = application:get_env(arweave, config),
+	Peers =
+		case Config#config.sync_from_local_peers_only of
+			true ->
+				Config#config.local_peers;
+			false ->
+				%% rank peers by current rating since we care about their recent throughput performance
+				ar_peers:get_peers(current)
+		end,
+	collect_peers(lists:sublist(Peers, N)).
 
 collect_peers([Peer | Peers]) ->
 	gen_server:cast(?MODULE, {add_peer, Peer}),
