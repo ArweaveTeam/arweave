@@ -212,9 +212,10 @@ do_acquire_lock(Mode, StoreID, State) ->
 	PrepareLocks = count_prepare_locks(State),
 	{Acquired, NewDeviceLock} = case Mode of
 		sync ->
-			%% Can only aquire a sync lock if the device is in sync mode
+			%% Allow syncing while we prepare.
 			case DeviceLock of
 				sync -> {true, sync};
+				{prepare, StoreID} -> {true, DeviceLock};
 				_ -> {false, DeviceLock}
 			end;
 		prepare ->
@@ -348,7 +349,7 @@ test_acquire_lock() ->
 		{true, State}, 
 		do_acquire_lock(sync, "storage_module_0_unpacked", State)),
 	?assertEqual(
-		{false, State}, 
+		{true, State}, 
 		do_acquire_lock(sync, "storage_module_2_unpacked", State)),
 	?assertEqual(
 		{false, State}, 
