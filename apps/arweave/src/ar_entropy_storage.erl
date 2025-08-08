@@ -170,7 +170,15 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 										StartOffset,
 										{replica_2_9, RewardAddr},
 										ar_data_sync,
-										StoreID);
+										StoreID),
+			%% Here we assume we do not store unpadded small chunks (small chunks
+			%% before the strict data split threshold), thus ?DATA_CHUNK_SIZE.
+			case ar_data_sync:is_footprint_record_supported(PaddedEndOffset, ?DATA_CHUNK_SIZE, Packing) of
+				true ->
+					ar_footprint_record:add(PaddedEndOffset, Packing, StoreID);
+				false ->
+					ok
+			end;
 		false ->
 			ok
 	end.
@@ -398,7 +406,7 @@ release_semaphore(Filepath) ->
 %%%===================================================================
 
 replica_2_9_test_() ->
-	{timeout, 20, fun test_replica_2_9/0}.
+	{timeout, 60, fun test_replica_2_9/0}.
 
 test_replica_2_9() ->
 	case ar_block:strict_data_split_threshold() of
