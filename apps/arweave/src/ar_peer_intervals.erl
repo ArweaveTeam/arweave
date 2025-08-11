@@ -27,7 +27,7 @@
 
 %% The number of the release adding support for the
 %% GET /data_sync_record/[start]/[end]/[limit] endpoint.
--define(GET_SYNC_RECORD_RIGHT_BOUND_SUPPORT_RELEASE, 82).
+-define(GET_SYNC_RECORD_RIGHT_BOUND_SUPPORT_RELEASE, 83).
 
 %%%===================================================================
 %%% Public interface.

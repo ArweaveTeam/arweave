@@ -201,6 +201,8 @@ name_route([<<"chunk_proof2">>, _Offset]) ->
 
 name_route([<<"data_sync_record">>, _Start, _Limit]) ->
 	"/data_sync_record/{start}/{limit}";
+name_route([<<"data_sync_record">>, _Start, _End, _Limit]) ->
+	"/data_sync_record/{start}/{end}/{limit}";
 
 name_route([<<"price">>, _SizeInBytes]) ->
 	"/price/{bytes}";
