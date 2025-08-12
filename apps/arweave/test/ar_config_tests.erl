@@ -117,6 +117,7 @@ test_parse_config() ->
 			gateway_arql := 3,
 			get_sync_record := 10
 		},
+		vdf = hiopt_m4,
 		max_nonce_limiter_validation_thread_count = 2,
 		max_nonce_limiter_last_step_validation_thread_count = 3,
 		nonce_limiter_server_trusted_peers = ["127.0.0.1", "2.3.4.5", "6.7.8.9:1982"],
