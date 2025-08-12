@@ -192,9 +192,9 @@ parse_options([{<<"verify_samples">>, Opt} | _], _) ->
 
 parse_options([{<<"vdf">>, Mode} | Rest], Config) ->
 	ParsedMode = case Mode of
-		"openssl" ->openssl;
-		"fused" ->fused;
-		"hiopt_m4" ->hiopt_m4;
+		<<"openssl">> -> openssl;
+		<<"fused">> -> fused;
+		<<"hiopt_m4">> -> hiopt_m4;
 		_ ->
 			io:format("VDF ~p is invalid.~n", [Mode]),
 			openssl
