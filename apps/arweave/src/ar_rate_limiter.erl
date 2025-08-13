@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, throttle/2, off/0, on/0]).
+-export([start_link/0, throttle/2, off/0, on/0, is_on_cooldown/2, set_cooldown/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -58,6 +58,22 @@ off() ->
 on() ->
 	gen_server:cast(?MODULE, turn_on).
 
+%% @doc Return true if Peer is on cooldown for the given Path.
+is_on_cooldown(Peer, RPMKey) ->
+	Now = os:system_time(millisecond),
+	case ets:lookup(?MODULE, {cooldown, Peer, RPMKey}) of
+		[{_, Until}] when Until > Now -> true;
+		_ -> false
+	end.
+
+%% @doc Put Peer on cooldown for the given Path for Milliseconds.
+set_cooldown(Peer, RPMKey, Milliseconds) when Milliseconds > 0 ->
+	Until = os:system_time(millisecond) + Milliseconds,
+	ets:insert(?MODULE, {{cooldown, Peer, RPMKey}, Until}),
+	ok;
+set_cooldown(_Peer, _RPMKey, _Milliseconds) ->
+	ok.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -77,12 +93,12 @@ handle_call(Request, _From, State) ->
 
 handle_cast({throttle, Peer, Path, From}, State) ->
 	#state{ traces = Traces } = State,
-	{Type, Limit} = ?RPM_BY_PATH(Path)(),
+	{RPMKey, Limit} = ?RPM_BY_PATH(Path)(),
 	Now = os:system_time(millisecond),
-	case maps:get({Peer, Type}, Traces, not_found) of
+	case maps:get({Peer, RPMKey}, Traces, not_found) of
 		not_found ->
 			gen_server:reply(From, ok),
-			Traces2 = maps:put({Peer, Type}, {1, queue:from_list([Now])}, Traces),
+			Traces2 = maps:put({Peer, RPMKey}, {1, queue:from_list([Now])}, Traces),
 			{noreply, State#state{ traces = Traces2 }};
 		{N, Trace} ->
 			{N2, Trace2} = cut_trace(N, queue:in(Now, Trace), Now),
@@ -99,7 +115,7 @@ handle_cast({throttle, Peer, Path, From}, State) ->
 					{noreply, State};
 				false ->
 					gen_server:reply(From, ok),
-					Traces2 = maps:put({Peer, Type}, {N2 + 1, Trace2}, Traces),
+					Traces2 = maps:put({Peer, RPMKey}, {N2 + 1, Trace2}, Traces),
 					{noreply, State#state{ traces = Traces2 }}
 			end
 	end;

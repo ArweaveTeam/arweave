@@ -34,6 +34,7 @@ init([]) ->
 	ets:new(ar_timer, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_peers, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_http, [set, public, named_table]),
+	ets:new(ar_rate_limiter, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_blacklist_middleware, [set, public, named_table]),
 	ets:new(blacklist, [set, public, named_table]),
 	ets:new(ignored_ids, [bag, public, named_table]),

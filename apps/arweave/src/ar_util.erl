@@ -3,6 +3,7 @@
 -export([
 	assert_file_exists_and_readable/1,
 	batch_pmap/3,
+	batch_pmap/4,
 	between/3,
 	binary_to_integer/1,
 	block_index_entry_from_block/1,
@@ -234,7 +235,8 @@ format_peer(Peer) ->
 count(A, List) ->
 	length([ B || B <- List, A == B ]).
 
-%% @doc Takes a list and return the unique values in it.
+%% @doc Takes a list and returns the unique values in it (preserving the order of the first
+%% occurence of each value).
 unique(Xs) when not is_list(Xs) ->
 [Xs];
 unique(Xs) -> unique([], Xs).
@@ -271,15 +273,14 @@ pmap(Mapper, List, Timeout) ->
 		ListWithRefs
 	).
 
-%% @doc Run a map in parallel, one batch at a time,
-%% throw {batch_pmap_timeout, ?DEFAULT_PMAP_TIMEOUT} if a worker
-%% takes longer than ?DEFAULT_PMAP_TIMEOUT milliseconds.
+%% @doc Run a map in parallel, one batch at a time. If a worker does not
+%% finish within Timeout milliseconds, return {error, timeout, Elem} for that element
+%% instead of throwing.
 batch_pmap(Mapper, List, BatchSize) ->
 	batch_pmap(Mapper, List, BatchSize, ?DEFAULT_PMAP_TIMEOUT).
 
-%% @doc Run a map in parallel, one batch at a time,
-%% throw {batch_pmap_timeout, Timeout} if a worker takes
-%% longer than Timeout milliseconds.
+%% @doc Run a map in parallel, one batch at a time. If a worker takes
+%% longer than Timeout milliseconds, return {error, timeout, Elem}.
 batch_pmap(_Mapper, [], _BatchSize, _Timeout) ->
 	[];
 batch_pmap(Mapper, List, BatchSize, Timeout)
@@ -299,11 +300,11 @@ batch_pmap(Mapper, List, BatchSize, Timeout)
 		end)
 	end, ListWithRefs),
 	lists:map(
-		fun({_, Ref}) ->
+		fun({Elem, Ref}) ->
 			receive
 				{pmap_work, Ref, Mapped} -> Mapped
 			after Timeout ->
-				throw({batch_pmap_timeout, Timeout})
+				{error, timeout, Elem}
 			end
 		end,
 		ListWithRefs
@@ -428,7 +429,8 @@ safe_format(Value, Depth, Limit) ->
 
 %% @doc Test that unique functions correctly.
 basic_unique_test() ->
-	[a, b, c] = unique([a, a, b, b, b, c, c]).
+	[a, b, c] = unique([a, a, b, b, b, c, c]),
+	[a, b, c] = unique([a, b, c, c, b, a]).
 
 %% @doc Ensure that hosts are formatted as lists correctly.
 basic_peer_format_test() ->

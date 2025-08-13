@@ -55,16 +55,10 @@ get_bucket_peers(Bucket) ->
 
 get_bucket_peers(Bucket, Cursor, Peers) ->
 	case ets:next(?MODULE, Cursor) of
-		'$end_of_table' ->
-			UniquePeers = sets:to_list(sets:from_list(Peers)),
-			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
-			PickedPeers;
 		{Bucket, _Share, Peer} = Key ->
 			get_bucket_peers(Bucket, Key, [Peer | Peers]);
-		_ ->
-			UniquePeers = sets:to_list(sets:from_list(Peers)),
-			PickedPeers = pick_peers(UniquePeers, ?QUERY_BEST_PEERS_COUNT),
-			PickedPeers
+		_ -> % matches `end_of_table` or an unexpected value
+			ar_util:unique(Peers)
 	end.
 
 %% @doc Return a list of peers where 80% of the peers are randomly chosen
