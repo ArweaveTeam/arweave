@@ -38,6 +38,10 @@
 %% into the peer map every DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS milliseconds.
 -define(DATA_DISCOVERY_COLLECT_PEERS_COUNT, 1000).
 
+%% The number of the release adding support for the
+%% GET /footprint_buckets endpoint.
+-define(GET_FOOTPRINT_BUCKETS_SUPPORT_RELEASE, 87).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -283,6 +287,14 @@ fetch_sync_buckets(Peer) ->
 	end.
 
 fetch_footprint_buckets(Peer) ->
+	case ar_peers:get_peer_release(Peer) >= ?GET_FOOTPRINT_BUCKETS_SUPPORT_RELEASE of
+		true ->
+			fetch_footprint_buckets2(Peer);
+		false ->
+			ok
+	end.
+
+fetch_footprint_buckets2(Peer) ->
 	case ar_http_iface_client:get_footprint_buckets(Peer) of
 		{ok, SyncBuckets} ->
 			gen_server:cast(?MODULE, {add_peer_footprint_buckets, Peer, SyncBuckets});
