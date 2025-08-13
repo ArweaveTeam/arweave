@@ -24,7 +24,7 @@ execute(Req, Env) ->
 					{ok, Req, Env};
 				false ->
 					case increment_ip_addr(IPAddr, Req) of
-						block -> {stop, blacklisted(Req)};
+						{block, Limit} -> {stop, blacklisted(Limit, Req)};
 						pass -> {ok, Req, Env}
 					end
 			end
@@ -83,10 +83,14 @@ cleanup_ban(TableID) ->
 	end.
 
 %private functions
-blacklisted(Req) ->
+blacklisted(Limit, Req) ->
 	cowboy_req:reply(
 		429,
-		#{<<"connection">> => <<"close">>},
+		#{
+			<<"connection">> => <<"close">>,
+			<<"retry-after">> => integer_to_binary(?THROTTLE_PERIOD div 1000),
+			<<"x-rate-limit-limit">> => integer_to_binary(Limit)
+		},
 		<<"Too Many Requests">>,
 		Req
 	).
@@ -133,7 +137,7 @@ update_ip_addr(IPAddr, Req, Delta) ->
 		Count when Count =< RequestLimit ->
 			pass;
 		_ ->
-			block
+			{block, Limit}
 	end.
 
 requesting_ip_addr(Req) ->

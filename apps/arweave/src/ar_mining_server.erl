@@ -1023,7 +1023,8 @@ may_be_empty_poa(#poa{} = PoA) ->
 fetch_poa_from_peers(_RecallByte, PackingDifficulty) when PackingDifficulty >= 1 ->
 	not_found;
 fetch_poa_from_peers(RecallByte, _PackingDifficulty) ->
-	Peers = ar_data_discovery:get_bucket_peers(RecallByte div ?NETWORK_DATA_BUCKET_SIZE),
+	BucketPeers = ar_data_discovery:get_bucket_peers(RecallByte div ?NETWORK_DATA_BUCKET_SIZE),
+	Peers = ar_data_discovery:pick_peers(BucketPeers, ?QUERY_BEST_PEERS_COUNT),
 	From = self(),
 	lists:foreach(
 		fun(Peer) ->

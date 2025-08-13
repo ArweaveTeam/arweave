@@ -1084,7 +1084,9 @@ handle_cast({collect_peer_intervals, Start, End}, State) ->
 					%% All checks have passed, find and enqueue intervals for one
 					%% sync bucket worth of chunks starting at offset Start
 					?LOG_DEBUG([{event, fetch_peer_intervals},
-							{function, collect_peer_intervals}, {s, Start}, {e, End2}]),
+							{function, collect_peer_intervals},
+							{store_id, StoreID},
+							{s, Start}, {e, End2}]),
 					ar_peer_intervals:fetch(Start, End2, StoreID)
 			end
 	end,
