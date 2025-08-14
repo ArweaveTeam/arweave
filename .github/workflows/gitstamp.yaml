@@ -12,7 +12,7 @@ on:
 
 jobs:
   gitstamp:
-    runs-on: [self-hosted, ubuntu, amd64]
+    runs-on: [self-hosted, ubuntu, amd64, build-runner]
     name: Timestamp commit with Gitstamp
     steps:
       - name: Clone repository
