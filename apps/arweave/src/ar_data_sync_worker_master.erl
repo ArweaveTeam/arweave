@@ -132,13 +132,23 @@ handle_cast({sync_range, Args}, State) ->
 	{noreply, enqueue_main_task(sync_range, Args, State)};
 
 handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
-	{Start, End, Peer, _, _} = Args,
+    {Start, End, Peer, TargetStoreID, _} = Args,
 	DataSize = End - Start,
 	State2 = update_scheduled_task_count(
 		Worker, sync_range, ar_util:format_peer(Peer), -1, State),
 	PeerTasks = get_peer_tasks(Peer, State2),
 	{PeerTasks2, State3} = complete_sync_range(
 		PeerTasks, Result, ElapsedNative, DataSize, State2),
+    %% Feed progress reporter
+    AbsoluteEndOffset = End,
+    Packing = ar_storage_module:get_packing(TargetStoreID),
+    ar_sync_progress_reporter:record_peer_progress(Peer, AbsoluteEndOffset, TargetStoreID, Packing),
+    case Result of
+        ok -> ar_sync_progress_reporter:record_peer_success(Peer);
+        {error, not_found} -> ar_sync_progress_reporter:record_peer_not_found(Peer);
+        {error, Reason} -> ar_sync_progress_reporter:record_peer_error(Peer, Reason);
+		_ -> ok
+    end,
 	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),	
 	{noreply, set_peer_tasks(PeerTasks3, State4)};
 
