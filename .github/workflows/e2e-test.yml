@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, ubuntu, amd64]
+    runs-on: [self-hosted, ubuntu, amd64, build-runner]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,7 +125,7 @@ jobs:
 
   e2e-tests:
     needs: build
-    runs-on: [self-hosted, ubuntu, amd64]
+    runs-on: [self-hosted, ubuntu, amd64, build-runner]
     strategy:
       max-parallel: 4
       matrix:

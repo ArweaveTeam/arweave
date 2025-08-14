@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, ubuntu, amd64]
+    runs-on: [self-hosted, ubuntu, amd64, build-runner]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,7 +124,7 @@ jobs:
   ####################################################################
   canary:
     needs: build
-    runs-on: [self-hosted, ubuntu, amd64]
+    runs-on: [self-hosted, ubuntu, amd64, build-runner]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -162,7 +162,7 @@ jobs:
   ####################################################################
   eunit-tests-long-running:
     needs: canary
-    runs-on: [self-hosted, ubuntu, amd64]
+    runs-on: [self-hosted, ubuntu, amd64, build-runner]
     strategy:
       max-parallel: 4
       matrix:
@@ -227,7 +227,7 @@ jobs:
   ####################################################################
   eunit-tests-modules:
     needs: canary
-    runs-on: [self-hosted, ubuntu, amd64]
+    runs-on: [self-hosted, ubuntu, amd64, build-runner]
     strategy:
       max-parallel: 4
       matrix:
@@ -324,7 +324,7 @@ jobs:
   ####################################################################
   eunit-tests-suite:
     needs: canary
-    runs-on: [self-hosted, ubuntu, amd64]
+    runs-on: [self-hosted, ubuntu, amd64, build-runner]
     strategy:
       max-parallel: 4
       matrix:

@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, build-runner]
     steps:
       # we don't have a clean environment on MacOS (no vm, no containers)
       # we need to clean everything up before executing the workflow
@@ -65,7 +65,7 @@ jobs:
 
   canary:
     needs: build
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, build-runner]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,7 +88,7 @@ jobs:
 
   tests:
     needs: canary
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, build-runner]
     strategy:
       max-parallel: 3
       matrix:
