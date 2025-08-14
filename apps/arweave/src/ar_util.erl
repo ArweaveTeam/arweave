@@ -304,7 +304,7 @@ batch_pmap(Mapper, List, BatchSize, Timeout)
 			receive
 				{pmap_work, Ref, Mapped} -> Mapped
 			after Timeout ->
-				{error, timeout, Elem}
+				{error, batch_pmap_timeout, Elem}
 			end
 		end,
 		ListWithRefs
