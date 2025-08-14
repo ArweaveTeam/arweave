@@ -128,10 +128,12 @@ handle_info({event, node_state, {initialized, _B}}, State) ->
     ar_util:cast_after(?REPORT_INTERVAL_MS, self(), report),
     {noreply, State#state{ joined = true }};
 
+handle_info({event, node_state, _}, State) ->
+	{noreply, State};
+
 handle_info(Info, State) ->
     ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
     {noreply, State}.
-
 
 %%%===================================================================
 %%% Internal helpers.
