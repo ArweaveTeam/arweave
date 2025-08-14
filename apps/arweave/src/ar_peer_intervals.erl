@@ -58,21 +58,25 @@ fetch(Start, End, StoreID) ->
 					false ->
 						ar_data_discovery:get_bucket_peers(Bucket)
 				end,
-
 			HotPeers = [
 				Peer || Peer <- AllPeers,
 				not ar_rate_limiter:is_on_cooldown(Peer, ?GET_SYNC_RECORD_RPM_KEY) andalso
 				not ar_rate_limiter:is_throttled(Peer, ?GET_SYNC_RECORD_PATH)
 			],
-			RemovedPeers = AllPeers -- HotPeers,
 			Peers = ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT),
 
-			?LOG_DEBUG([{event, fetch_peer_intervals}, {function, fetch}, {parent, Parent},
-				{bucket, Bucket},
-				{removed_count, length(RemovedPeers)},
-				{removed_peers, string:join([ar_util:format_peer(P) || P <- RemovedPeers], ", ")},
-				{num_peers, length(Peers)},
-				{peers, string:join([ar_util:format_peer(Peer) || Peer <- Peers], ", ")}]),
+			case length(Peers) < ?QUERY_BEST_PEERS_COUNT of
+				true ->
+					RemovedPeers = AllPeers -- HotPeers,
+					?LOG_DEBUG([{event, weak_peer_selection},
+						{function, fetch_peer_intervals}, {parent, Parent}, {bucket, Bucket},
+						{removed_count, length(RemovedPeers)},
+						{removed_peers, string:join([ar_util:format_peer(P) || P <- RemovedPeers], ", ")},
+						{num_peers, length(Peers)},
+						{peers, string:join([ar_util:format_peer(Peer) || Peer <- Peers], ", ")}]);
+				false ->
+					ok
+			end,
 
 			End3 =
 				case ar_intervals:is_empty(UnsyncedIntervals) of

@@ -838,7 +838,6 @@ handle_get_jobs_response(Reply) ->
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_intervals:safe_from_etf(Body);
 handle_sync_record_response({ok, {{<<"429">>, _}, _, _, _, _}} = Reply) ->
-	?LOG_DEBUG([{event, too_many_requests}, {endpoint, data_sync_record}, {reply, Reply}]),
 	{error, too_many_requests};
 handle_sync_record_response(Reply) ->
 	{error, Reply}.
