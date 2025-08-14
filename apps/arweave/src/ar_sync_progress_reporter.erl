@@ -4,7 +4,6 @@
 
 -export([start_link/0,
 	record_peer_progress/4,
-	record_peer_download/2,
 	record_peer_success/1,
 	record_peer_not_found/1,
 	record_peer_error/2]).
@@ -41,9 +40,6 @@ start_link() ->
 record_peer_progress(Peer, AbsoluteEndOffset, StoreID, Packing) ->
 	gen_server:cast(?MODULE, {peer_progress, Peer, AbsoluteEndOffset, StoreID, Packing}).
 
-record_peer_download(Peer, Bytes) ->
-	gen_server:cast(?MODULE, {peer_download, Peer, Bytes}).
-
 record_peer_success(Peer) ->
 	gen_server:cast(?MODULE, {peer_count, Peer, success}).
 
@@ -51,8 +47,8 @@ record_peer_not_found(Peer) ->
 	gen_server:cast(?MODULE, {peer_count, Peer, not_found}).
 
 record_peer_error(Peer, Reason) ->
-	gen_server:cast(?MODULE, {peer_count, Peer, error}),
-	gen_server:cast(?MODULE, {record_error, io_lib:format("~s: ~p", [ar_util:format_peer(Peer), Reason])}).
+    gen_server:cast(?MODULE, {peer_count, Peer, error}),
+    gen_server:cast(?MODULE, {record_error, format_error(Peer, Reason)}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -89,16 +85,8 @@ handle_cast({peer_count, Peer, Type}, State) ->
 	Entry = maps:put(Type, NewCount, Entry0),
 	{noreply, State#state{ peer_stats = maps:put(Peer, Entry, PeerStats0) }};
 
-handle_cast({peer_download, Peer, Bytes}, State) ->
-	Now = erlang:system_time(millisecond),
-	PeerStats0 = State#state.peer_stats,
-	Entry0 = maps:get(Peer, PeerStats0, #{}),
-	AccBytes = maps:get(dl_bytes, Entry0, 0) + Bytes,
-	Entry = maps:merge(Entry0, #{ dl_bytes => AccBytes, updated_at => Now }),
-	{noreply, State#state{ peer_stats = maps:put(Peer, Entry, PeerStats0) }};
-
 handle_cast({record_error, MsgIOL}, State) ->
-	Msg = lists:flatten(MsgIOL),
+    Msg = lists:flatten(MsgIOL),
 	Errors0 = State#state.recent_errors,
 	Errors1 = [Msg | Errors0],
 	Errors = case length(Errors1) > ?MAX_ERRORS of
@@ -266,17 +254,17 @@ print_report(State, PackingRate, WriteRates) ->
     %% Peers table
     PeerStats = maps:values(State#state.peer_stats),
     SortedPeers = lists:sublist(sort_peers_by_updated(PeerStats), 1, min(?MAX_ROWS, length(PeerStats))),
-    ar:console("+----------------------+----------------+--------+-----------+----------------+--------+----------+--------+----------------+\n", []),
-    ar:console("|         Peer         | AbsEndOffset   | Mode   | Partition |     Packing    | Succ % | NotFnd % | Err %  | Download MiB/s |\n", []),
-    ar:console("+----------------------+----------------+--------+-----------+----------------+--------+----------+--------+----------------+\n", []),
+    ar:console("+----------------------+----------------+-----------+--------+----------+--------+----------------+\n", []),
+    ar:console("|         Peer         | AbsEndOffset   | Partition | Succ % | NotFnd % | Err %  | Download MiB/s |\n", []),
+    ar:console("+----------------------+----------------+-----------+--------+----------+--------+----------------+\n", []),
     lists:foreach(fun print_peer_row/1, SortedPeers),
-    ar:console("+----------------------+----------------+--------+-----------+----------------+--------+----------+--------+----------------+\n", []),
+    ar:console("+----------------------+----------------+-----------+--------+----------+--------+----------------+\n", []),
     ar:console("Total peers queried: ~B\n", [map_size(State#state.peer_stats)]),
 
     %% Storage modules section
     ar:console("\nRecent storage writes (up to ~B):\n", [?MAX_ROWS]),
     ar:console("+-------------------------------+------------------+------------------+------------------+----------------------+-----------------+\n", []),
-    ar:console("|        Storage Module         |     Size         |      Added       |     Partition    |          Packing     | WriteRate MiB/s |\n", []) ,
+    ar:console("|        Storage Module         |     Size         |      Added       |     Partition    |      Packing       | WriteRate MiB/s |\n", []) ,
     ar:console("+-------------------------------+------------------+------------------+------------------+----------------------+-----------------+\n", []),
     lists:foreach(fun(Row) -> print_storage_row(Row, WriteRates) end, State#state.storage_recent),
     ar:console("+-------------------------------+------------------+------------------+------------------+----------------------+-----------------+\n", []),
@@ -293,6 +281,13 @@ print_report(State, PackingRate, WriteRates) ->
 
 sort_peers_by_updated(Peers) ->
 	lists:sort(fun(A, B) -> maps:get(updated_at, A, 0) >= maps:get(updated_at, B, 0) end, Peers).
+
+format_error(Peer, {error, not_found}) ->
+    lists:flatten(io_lib:format("~s: not_found", [ar_util:format_peer(Peer)]));
+format_error(Peer, {ok, {{StatusBin, _}, _Headers, _Body, _Start, _End}}) when is_binary(StatusBin) ->
+    lists:flatten(io_lib:format("~s: ~s", [ar_util:format_peer(Peer), StatusBin]));
+format_error(Peer, Reason) ->
+    lists:flatten(io_lib:format("~s: ~p", [ar_util:format_peer(Peer), Reason])).
 
 %% Compute write rate (MiB/s) by summing Added deltas over the report interval
 get_write_rate_from_added(Rows) ->
@@ -377,9 +372,7 @@ print_peer_row(Entry) ->
     end,
 	Offset = maps:get(offset, Entry, 0),
 	Partition = ar_node:get_partition_number(Offset),
-	Packing = maps:get(packing, Entry, unpacked),
-	Mode = case Packing of {replica_2_9, _} -> "footprint"; _ -> "normal" end,
-	PackingStr = ar_serialize:encode_packing(Packing, true),
+
 	S = maps:get(success, Entry, 0),
 	N = maps:get(not_found, Entry, 0),
 	E = maps:get(error, Entry, 0),
@@ -388,8 +381,8 @@ print_peer_row(Entry) ->
 	NR = (N * 100) div Tot,
 	ER = (E * 100) div Tot,
     DLRate = compute_peer_dl_rate(Entry),
-    ar:console("| ~20s | ~14B | ~6s | ~9B | ~14s | ~5B% | ~7B% | ~5B% | ~9.2f |\n",
-        [PeerStr, Offset, Mode, Partition, PackingStr, SR, NR, ER, DLRate]).
+    ar:console("| ~20s | ~14B | ~9B | ~5B% | ~7B% | ~5B% | ~14.2f |\n",
+        [PeerStr, Offset, Partition, SR, NR, ER, DLRate]).
 
 print_storage_row(Entry, WriteRates) ->
     StoreID = maps:get(module, Entry),
@@ -400,5 +393,5 @@ print_storage_row(Entry, WriteRates) ->
     PackingStr = ar_serialize:encode_packing(Packing, true),
     WriteRateMiBs = maps:get(StoreID, WriteRates, 0.0),
     AddedStr = lists:flatten(io_lib:format("+~B", [Added])),
-    ar:console("| ~29s | ~16B | ~16s | ~16B | ~22s | ~9.2f |\n",
+    ar:console("| ~29s | ~16B | ~16s | ~16B | ~20s | ~15.2f |\n",
         [StoreID, Size, AddedStr, Partition, PackingStr, WriteRateMiBs]).

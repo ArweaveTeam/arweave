@@ -860,8 +860,6 @@ handle_get_jobs_response(Reply) ->
 
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
     ar_intervals:safe_from_etf(Body);
-handle_sync_record_response({ok, {{<<"404">>, _}, _, _Body, _Start, _End}}) ->
-    {error, not_found};
 handle_sync_record_response(Reply) ->
 	{error, Reply}.
 
@@ -887,8 +885,7 @@ handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Start, Limit)
 		Error ->
 			Error
 	end;
-handle_sync_record_response({ok, {{<<"404">>, _}, _, _Body, _StartTs, _EndTs}}, _Start, _Limit) ->
-    {error, not_found};
+
 handle_sync_record_response(Reply, _, _) ->
 	{error, Reply}.
 
