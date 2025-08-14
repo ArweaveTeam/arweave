@@ -149,8 +149,15 @@ fetch(Start, End, StoreID, footprint) ->
 						Partition = ar_replica_2_9:get_entropy_partition(Start + ?DATA_CHUNK_SIZE),
 						(Partition + 1) * ?PARTITION_SIZE
 				end,
+			Start3 =
+				case Start2 > Start of
+					true ->
+						Start2;
+					false ->
+						min(Start + ?DATA_CHUNK_SIZE, End)
+				end,
 			%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
-			gen_server:cast(Parent, {collect_peer_intervals, Start2, End, footprint})
+			gen_server:cast(Parent, {collect_peer_intervals, Start3, End, footprint})
 		catch
 			Class:Reason ->
 				?LOG_WARNING([{event, fetch_footprint_intervals_process_exit},
