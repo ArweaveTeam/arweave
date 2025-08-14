@@ -25,7 +25,8 @@
 %% The number of peers to fetch sync intervals from in parallel at a time.
 -define(GET_SYNC_RECORD_BATCH_SIZE, 2).
 -define(GET_SYNC_RECORD_COOLDOWN_MS, 60 * 1000).
-
+-define(GET_SYNC_RECORD_RPM_KEY, data_sync_record).
+-define(GET_SYNC_RECORD_PATH, [<<"data_sync_record">>]).
 
 %% The number of the release adding support for the
 %% GET /data_sync_record/[start]/[end]/[limit] endpoint.
@@ -60,7 +61,8 @@ fetch(Start, End, StoreID) ->
 
 			HotPeers = [
 				Peer || Peer <- AllPeers,
-				not ar_rate_limiter:is_on_cooldown(Peer, data_sync_record)
+				not ar_rate_limiter:is_on_cooldown(Peer, ?GET_SYNC_RECORD_RPM_KEY) andalso
+				not ar_rate_limiter:is_throttled(Peer, ?GET_SYNC_RECORD_PATH)
 			],
 			RemovedPeers = AllPeers -- HotPeers,
 			Peers = ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT),
@@ -150,7 +152,15 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals) ->
 		),
 	{EnqueueIntervals, MinRightBound} =
 		lists:foldl(
-			fun	({Peer, SoughtIntervals, RightBound}, {IntervalsAcc, RightBoundAcc}) ->
+			fun	({error, batch_pmap_timeout, Peer}, Acc) ->
+					?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
+						{parent, Parent},
+						{peer, ar_util:format_peer(Peer)},
+						{reason, batch_pmap_timeout}]),
+					ar_rate_limiter:set_cooldown(
+						Peer, ?GET_SYNC_RECORD_RPM_KEY, ?GET_SYNC_RECORD_COOLDOWN_MS),
+					Acc;
+				({Peer, SoughtIntervals, RightBound}, {IntervalsAcc, RightBoundAcc}) ->
 					case ar_intervals:is_empty(SoughtIntervals) of
 						true ->
 							{IntervalsAcc, RightBoundAcc};
@@ -158,14 +168,6 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals) ->
 							{[{Peer, SoughtIntervals} | IntervalsAcc],
 								min(RightBound, RightBoundAcc)}
 					end;
-				({error, timeout, Peer}, Acc) ->
-					?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
-						{parent, Parent},
-						{peer, ar_util:format_peer(Peer)},
-						{reason, batch_pmap_timeout}]),
-					ar_rate_limiter:set_cooldown(
-						Peer, data_sync_record, ?GET_SYNC_RECORD_COOLDOWN_MS),
-					Acc;
 				(ok, Acc) ->
 					Acc;
 				(Error, Acc) ->
@@ -191,7 +193,7 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals) ->
 %%				not be all intervals covering this gigabyte, so we take the right bound
 %%				to know where to query next
 maybe_get_peer_intervals(Peer, Left, SoughtIntervals) ->
-	case ar_rate_limiter:is_on_cooldown(Peer, data_sync_record) of
+	case ar_rate_limiter:is_on_cooldown(Peer, ?GET_SYNC_RECORD_RPM_KEY) of
 		true ->
 			{error, cooldown};
 		false ->
@@ -219,7 +221,8 @@ get_peer_intervals(Peer, Left, SoughtIntervals) ->
 				end,
 			{ok, ar_intervals:intersection(PeerIntervals2, SoughtIntervals), PeerRightBound};
 		{error, too_many_requests} = Error ->
-			ar_rate_limiter:set_cooldown(Peer, data_sync_record, ?GET_SYNC_RECORD_COOLDOWN_MS),
+			ar_rate_limiter:set_cooldown(Peer,
+				?GET_SYNC_RECORD_RPM_KEY, ?GET_SYNC_RECORD_COOLDOWN_MS),
 			Error;
 		Error ->
 			Error
