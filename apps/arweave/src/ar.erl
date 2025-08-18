@@ -280,10 +280,16 @@ show_help() ->
 				"logical CPU cores."},
 			{"replica_2_9_workers (num)", io_lib:format(
 				"The number of replica 2.9 workers to spawn. Replica 2.9 workers are used "
-				"to generate entropy the replica.2.9 format. At most one worker will be "
-				"active per physical disk at a time. Default: ~B",
+				"to generate entropy for the replica.2.9 format. By default, at most one "
+				"worker will be active per physical disk at a time. Default: ~B",
 				[?DEFAULT_REPLICA_2_9_WORKERS]
 			)},
+			{"disable_replica_2_9_device_limit",
+				"Disable the device limit for the replica.2.9 format. By default, at most "
+				"one worker will be active per physical disk at a time, setting this flag "
+				"removes this limit allowing multiple workers to be active on a given "
+				"physical disk."
+			},
 			{"max_vdf_validation_thread_count", io_lib:format("\tThe maximum number "
 					"of threads used for VDF validation. Default: ~B",
 					[?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT])},
@@ -774,6 +780,8 @@ parse_cli_args(["packing_workers", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ packing_workers = list_to_integer(Num) });
 parse_cli_args(["replica_2_9_workers", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ replica_2_9_workers = list_to_integer(Num) });
+parse_cli_args(["disable_replica_2_9_device_limit" | Rest], C) ->
+	parse_cli_args(Rest, C#config{ disable_replica_2_9_device_limit = true });
 parse_cli_args(["max_vdf_validation_thread_count", Num | Rest], C) ->
 	parse_cli_args(Rest,
 			C#config{ max_nonce_limiter_validation_thread_count = list_to_integer(Num) });
@@ -1366,8 +1374,8 @@ tests(Mod) ->
 
 tests(TestType, Mods, Config) when is_list(Mods) ->
 	TotalTimeout = case TestType of
-		e2e -> ?E2E_TEST_TIMEOUT;
-		_ -> ?TEST_TIMEOUT
+		e2e -> ?E2E_TEST_SUITE_TIMEOUT;
+		_ -> ?TEST_SUITE_TIMEOUT
 	end,
 	try
 		start_for_tests(TestType, Config),

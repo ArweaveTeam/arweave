@@ -144,9 +144,13 @@
 -endif.
 
 %% How long to wait before giving up on unit test(s).
--define(TEST_TIMEOUT, 90 * 60). %% 90 minutes
+-define(TEST_SUITE_TIMEOUT, 90 * 60). %% 90 minutes
 %% How long to wait before giving up on e2e test(s).
--define(E2E_TEST_TIMEOUT, 6 * 60 * 60). %% 6 hours
+-define(E2E_TEST_SUITE_TIMEOUT, 6 * 60 * 60). %% 6 hours
+%% Default test timeout to use if a test starts a node. We keep having test failures due to
+%% the timeout elapsing, and I think it may be that sometimes on the runner it just takes a
+%% while to launch a test node.
+-define(TEST_NODE_TIMEOUT, 300). %% 5 minutes
 
 %% The maximum byte size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * 1024 * 1024).

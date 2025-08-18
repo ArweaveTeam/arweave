@@ -141,7 +141,7 @@ try_boot_peer(TestType, Node, Retries) ->
     Cmd = io_lib:format(
         "erl +S ~B:~B -pa ~s -config config/sys.config -noshell " ++
 		"-name ~s -setcookie ~s -run ar main debug port ~p " ++
-        "data_dir .tmp/data_~s_~s no_auto_join " ++
+        "data_dir .tmp/data_~s_~s no_auto_join disable_replica_2_9_device_limit " ++
 		"> ~s-~s.out 2>&1 &",
         [Schedulers, Schedulers, string:join(Paths, " "), NodeName, Cookie, Port,
 			atom_to_list(TestType), NodeName, Node, get_node_namespace()]),
@@ -332,7 +332,8 @@ base_cm_config(Peers) ->
 		peers = Peers,
 		coordinated_mining = true,
 		cm_api_secret = <<"test_coordinated_mining_secret">>,
-		cm_poll_interval = 2000
+		cm_poll_interval = 2000,
+		disable_replica_2_9_device_limit = true
 	}.
 
 mine() ->
@@ -611,6 +612,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		mining_addr = RewardAddr,
 		storage_modules = StorageModules,
 		disk_space_check_frequency = 1000,
+		disable_replica_2_9_device_limit = true,
 		sync_jobs = 2,
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,

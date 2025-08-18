@@ -8,8 +8,6 @@
 -import(ar_test_node, [wait_until_height/2, assert_wait_until_height/2,
 	read_block_when_stored/1, random_v1_data/1]).
 
--define(DEFAULT_EUNIT_TEST_TIMEOUT, 360).
-
 %% -------------------------------------------------------------------------------------------
 %% Test registration
 %% -------------------------------------------------------------------------------------------
@@ -27,19 +25,19 @@ accepts_gossips_and_mines_test_() ->
 		end
 	end,
 	[
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"One RSA transaction with wallet list anchor followed by one with block anchor",
 			PrepareTestFor(fun one_wallet_list_one_block_anchored_txs/2, ?RSA_KEY_TYPE)
 		}},
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"One ECDSA transaction with wallet list anchor followed by one with block anchor",
 			PrepareTestFor(fun one_wallet_list_one_block_anchored_txs/2, ?ECDSA_KEY_TYPE)
 		}},
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"Two RSA transactions with block anchor",
 			PrepareTestFor(fun two_block_anchored_txs/2, ?RSA_KEY_TYPE)
 		}},
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"Two ECDSA transactions with block anchor",
 			PrepareTestFor(fun two_block_anchored_txs/2, ?ECDSA_KEY_TYPE)
 		}}
@@ -58,11 +56,11 @@ polls_for_transactions_and_gossips_and_mines_test_() ->
 		end
 	end,
 	[
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"Two RSA transactions with block anchor",
 			PrepareTestFor(fun two_block_anchored_txs/2, ?RSA_KEY_TYPE)
 		}},
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"Two ECDSA transactions with block anchor",
 			PrepareTestFor(fun two_block_anchored_txs/2, ?ECDSA_KEY_TYPE)
 		}}
@@ -86,15 +84,15 @@ keeps_txs_after_new_block_test_() ->
 	[
 		%% Main node receives the second set then the first set. Peer node only
 		%% receives the second set.
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"First set: two block anchored txs, second set: empty",
 			PrepareTestFor(fun two_block_anchored_txs/2, fun empty_tx_set/2)
 		}},
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"First set: empty, second set: two block anchored txs",
 			PrepareTestFor(fun empty_tx_set/2, fun two_block_anchored_txs/2)
 		}},
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"First set: two block anchored txs, second set: two block anchored txs",
 			PrepareTestFor(fun two_block_anchored_txs/2, fun two_block_anchored_txs/2)
 		}}
@@ -107,11 +105,11 @@ returns_error_when_txs_exceed_balance_test_() ->
 		end
 	end,
 	[
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"Three transactions with block anchor",
 			PrepareTestFor(fun block_anchor_txs_spending_balance_plus_one_more/2)
 		}},
-		{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, {
+		{timeout, ?TEST_NODE_TIMEOUT, {
 			"Five transactions with mixed anchors",
 			PrepareTestFor(fun mixed_anchor_txs_spending_balance_plus_one_more/2)
 			}}
@@ -127,30 +125,30 @@ mines_blocks_under_the_size_limit_test_() ->
 	[
 		{
 			"Five transactions with block anchors",
-			{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, PrepareTestFor(fun() -> grouped_txs() end)}
+			{timeout, ?TEST_NODE_TIMEOUT, PrepareTestFor(fun() -> grouped_txs() end)}
 		}
 	].
 
 joins_network_successfully_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun joins_network_successfully/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun joins_network_successfully/0}.
 
 recovers_from_forks_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun() -> recovers_from_forks(7) end}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun() -> recovers_from_forks(7) end}.
 
 rejects_transactions_above_the_size_limit_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_rejects_transactions_above_the_size_limit/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_rejects_transactions_above_the_size_limit/0}.
 
 accepts_at_most_one_wallet_list_anchored_tx_per_block_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_accepts_at_most_one_wallet_list_anchored_tx_per_block/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_accepts_at_most_one_wallet_list_anchored_tx_per_block/0}.
 
 does_not_allow_to_spend_mempool_tokens_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_does_not_allow_to_spend_mempool_tokens/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_does_not_allow_to_spend_mempool_tokens/0}.
 
 does_not_allow_to_replay_empty_wallet_txs_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_does_not_allow_to_replay_empty_wallet_txs/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_does_not_allow_to_replay_empty_wallet_txs/0}.
 
 rejects_txs_with_outdated_anchors_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun() ->
+	{timeout, ?TEST_NODE_TIMEOUT, fun() ->
 		%% Post a transaction anchoring the block at ?MAX_TX_ANCHOR_DEPTH + 1.
 		%%
 		%% Expect the transaction to be rejected.
@@ -167,13 +165,13 @@ rejects_txs_with_outdated_anchors_test_() ->
 	end}.
 
 drops_v1_txs_exceeding_mempool_limit_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun test_drops_v1_txs_exceeding_mempool_limit/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_drops_v1_txs_exceeding_mempool_limit/0}.
 
 drops_v2_txs_exceeding_mempool_limit_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun drops_v2_txs_exceeding_mempool_limit/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun drops_v2_txs_exceeding_mempool_limit/0}.
 
 mines_format_2_txs_without_size_limit_test_() ->
-	{timeout, ?DEFAULT_EUNIT_TEST_TIMEOUT, fun mines_format_2_txs_without_size_limit/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun mines_format_2_txs_without_size_limit/0}.
 
 %% -------------------------------------------------------------------------------------------
 %% Test functions

@@ -98,6 +98,7 @@
   },
   "packing_rate": 20,
   "replica_2_9_workers": 16,
+  "disable_replica_2_9_device_limit": true,
   "packing_workers": 25,
   "max_nonce_limiter_validation_thread_count": 2,
   "max_nonce_limiter_last_step_validation_thread_count": 3,

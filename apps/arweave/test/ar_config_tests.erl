@@ -68,6 +68,7 @@ test_parse_config() ->
 		post_tx_timeout = 50,
 		max_emitters = 4,
 		replica_2_9_workers = 16,
+		disable_replica_2_9_device_limit = true,
 		packing_workers = 25,
 		tx_propagation_parallelization = undefined,
 		sync_jobs = 10,

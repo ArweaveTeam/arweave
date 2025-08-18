@@ -91,9 +91,9 @@ vdf_server_push_test_() ->
      	fun cleanup/1,
 		[
 			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
-				fun test_vdf_server_push_fast_block/0, 120),
+				fun test_vdf_server_push_fast_block/0, ?TEST_SUITE_TIMEOUT),
 			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
-				fun test_vdf_server_push_slow_block/0, 120)
+				fun test_vdf_server_push_slow_block/0, ?TEST_SUITE_TIMEOUT)
 		]
     }.
 
