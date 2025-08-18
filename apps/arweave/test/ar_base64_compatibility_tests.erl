@@ -124,6 +124,8 @@ assert_encode(Input) ->
 			?assertException(error, badarg, ar_util:encode(Input));
 		{'EXIT', {badarith, _}} ->
 			?assertException(error, badarg, ar_util:encode(Input));
+		{'EXIT', {missing_padding, _}} ->
+			?assertException(error, badarg, ar_util:encode(Input));
 		Output ->
 			?assertEqual(Output, ar_util:encode(Input))
 	end.
@@ -135,6 +137,8 @@ assert_decode(Input) ->
 		{'EXIT', {function_clause, _}} ->
 			?assertException(error, badarg, ar_util:decode(Input));
 		{'EXIT', {badarith, _}} ->
+			?assertException(error, badarg, ar_util:decode(Input));
+		{'EXIT', {missing_padding, _}} ->
 			?assertException(error, badarg, ar_util:decode(Input));
 		Output ->
 			?assertEqual(Output, ar_util:decode(Input))
