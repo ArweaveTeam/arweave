@@ -1,0 +1,67 @@
+######################################################################
+# A canary test suite, checking if the test suite is correctly
+# working.
+######################################################################
+name: "arweave-test-suite-canary-template"
+
+on:
+  workflow_call:
+    inputs:
+      os_arch:
+        description: "operating system architecture"
+        default: "amd64"
+        type: "string"
+      os_name:
+        description: "operating system name"
+        default: "ubuntu"
+        type: "string"
+      os_release:
+        description: "operating system release"
+        default: "22.04"
+        type: "string"
+
+env:
+  cache_key: ${{ inputs.os_arch }}-${{ inputs.os_name }}-${{ inputs.os_release }}
+
+####################################################################
+# Canary testing, should fail.
+####################################################################
+jobs:
+  canary:
+    runs-on:
+      - self-hosted
+      - builder-runner
+      - ${{ inputs.os_arch }}
+      - ${{ inputs.os_name }}
+      - ${{ inputs.os_release }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.sha }}-${{ env.cache_key }}
+
+      # Both artifacts (_build and apps dir) are
+      # required.
+      - name: Extract artifact
+        run: |
+          tar zxfp _build.tar.gz
+          tar zxfp apps.tar.gz
+
+      - id: canary
+        name: ar_canary.erl
+        continue-on-error: true
+        run: bash scripts/github_workflow.sh "tests" "ar_canary"
+
+      - name: should fail
+        run: |
+          if test "${{ steps.canary.outcome }}" = "failure"
+          then
+            exit 0
+          else
+            exit 1
+          fi

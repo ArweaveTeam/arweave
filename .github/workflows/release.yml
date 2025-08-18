@@ -1,0 +1,178 @@
+######################################################################
+# All releases are generated using this workflow. The goal is to
+# make our life easier when releasing a new version of Arweave.
+# Instead of doing the process manually, some builders will be used
+# to produce the necessary tarballs, create the checksums, packs them
+# together and finally create the release on github side with a
+# message from the repository (in release_notes directory).
+######################################################################
+name: Release
+
+on:
+  push:
+    tags:
+      - N.**
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+        type: string
+      make_latest:
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  # prepare ubuntu 22.04 release (jammy) on amd64 arch
+  ubuntu-jammy-release:
+    uses: ArweaveTeam/arweave/.github/workflows/x-release-linux.yml@master
+    secrets: inherit
+    with:
+      os_arch: amd64
+      os_release: jammy
+      os_name: ubuntu
+      tag: ${{ github.ref_name || inputs.tag }}
+
+  # prepare ubuntu 24.04 release (noble) on amd64 arch
+  ubuntu-noble-release:
+    uses: ArweaveTeam/arweave/.github/workflows/x-release-linux.yml@master
+    secrets: inherit
+    with:
+      os_arch: amd64
+      os_release: noble
+      os_name: ubuntu
+      tag: ${{ github.ref_name || inputs.tag }}
+
+  # prepare rocky 9 release on amd64 arch
+  rockylinux-9-release:
+    uses: ArweaveTeam/arweave/.github/workflows/x-release-linux.yml@master
+    secrets: inherit
+    with:
+      os_arch: x86_64
+      os_release: 9
+      os_name: rockylinux
+      tag: ${{ github.ref_name || inputs.tag }}
+
+  # prepare macos release on arm64 arch
+  macos-release:
+    uses: ArweaveTeam/arweave/.github/workflows/x-release-macos.yml@master
+    secrets: inherit
+    with:
+      tag: ${{ github.ref_name || inputs.tag }}
+
+  # craft the release using the previous builds
+  release:
+    needs:
+      - ubuntu-jammy-release
+      - ubuntu-noble-release
+      - rockylinux-9-release
+      - macos-release
+
+    permissions:
+      contents: write
+      packages: write
+
+    runs-on:
+      - self-hosted
+      - release-runner
+      - amd64
+
+    steps:
+
+      # a new checkout is required to have the release
+      # message from releases_notes directory.
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      # let fetch ubuntu jammy tarball
+      - name: Download Ubuntu Jammy Release
+        uses: actions/download-artifact@v5
+        with:
+          name: arweave-ubuntu-jammy-amd64
+          path: ./arweave-ubuntu-jammy-amd64
+
+      # let fetch ubuntu noble tarball
+      - name: Download Ubuntu Noble Release
+        uses: actions/download-artifact@v5
+        with:
+          name: arweave-ubuntu-noble-amd64
+          path: ./arweave-ubuntu-noble-amd64
+
+      # let fetch rocky 9 tarball
+      - name: Download Rockylinux 9 Release
+        uses: actions/download-artifact@v5
+        with:
+          name: arweave-rockylinux-9-x86_64
+          path: ./arweave-rockylinux-9-x86_64
+
+      # let fetch macos tarball
+      - name: Download MacOS Release
+        uses: actions/download-artifact@v5
+        with:
+          name: arweave-macos-15-arm64
+          path: ./arweave-macos-15-arm64
+
+      # now this part is a bit tricky. it will rename
+      # all tarball using the tag pushed. To avoid
+      # some weird behaviors, the name is sanitized
+      # by removing few symbols and replacing them
+      # with a dash (-).
+      - name: Prepare Release Tarballs and Checksums
+        run: |
+          #!/bin/sh
+          set -eux
+
+          # define variables
+          releasedir="$(pwd)/_releases"
+          ref=${{ github.ref_name }}
+          release_name=$(echo ${ref} | sed -Ee 's!(/|:|@|\[|\]|\(|\)|\~)!-!g' -e 's!^N\.!!')
+
+          # prepare release directory
+          mkdir -p "${releasedir}"
+
+          # prepare a release using a directory and a postfix name
+          _prepare_release() {
+            local dir=${1}
+            local name=${2}
+            local checksum
+            cd ${dir}
+
+            # rename arweave tarball
+            cp arweave*.tar.gz ${releasedir}/arweave-${release_name}.${name}.tar.gz
+
+            # prepare checksum file
+            checksum=$(cat arweave*.tar.gz.SHA256 | awk '{ print $1 }')
+            echo "${checksum} arweave-${release_name}.${name}.tar.gz" \
+              > ${releasedir}/arweave-${release_name}.${name}.tar.gz.SHA256
+
+            cd ..
+          }
+
+          # prepare releases for each distribution
+          _prepare_release arweave-ubuntu-jammy-amd64 ubuntu22.x86_64
+          _prepare_release arweave-ubuntu-noble-amd64 ubuntu24.x86_64
+          _prepare_release arweave-rockylinux-9-x86_64 rocky9.x86_64
+          _prepare_release arweave-macos-15-arm64 macos.arm64
+
+          # check if the checksums are correct
+          cd ${releasedir}
+          cat *.SHA256 > checksums.txt
+          cat *.SHA256 > SHA256
+          sha256sum -c checksums.txt
+          sha256sum -c SHA256
+          cd ..
+
+      # Release the version based on the new tag
+      - name: Release the new version on github
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: Release ${{ github.ref_name }}
+          body_path: release_notes/${{ github.ref_name }}/README.md
+          files: |
+            _releases/*.tar.gz
+            _releases/checksums.txt
+            _releases/SHA256
+            LICENSE.md
+          make_latest: ${{ inputs.make_latest || true }}

@@ -1,0 +1,53 @@
+######################################################################
+# Release template for Linux based systems, including at this time
+# Ubuntu and Rockylinux.
+######################################################################
+name: "arweave-release-linux-template"
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      os_arch:
+        description: "operating system architecture"
+        default: "amd64"
+        type: "string"
+      os_name:
+        description: "operating system name"
+        default: "ubuntu"
+        type: "string"
+      os_release:
+        description: "operating system release"
+        default: "22.04"
+        type: "string"
+
+jobs:
+  linux-release:
+    runs-on:
+      - self-hosted
+      - release-runner
+      - ${{ inputs.os_arch }}
+      - ${{ inputs.os_name }}
+      - ${{ inputs.os_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      - name: Create Arweave Release
+        run: |
+          set -eux
+          ./rebar3 as prod tar
+          f=$(ls _build/prod/rel/arweave/arweave-*.tar.gz)
+          sha256sum ${f} > ${f}.SHA256
+
+      - name: Upload Arweave artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arweave-${{ inputs.os_name }}-${{ inputs.os_release }}-${{ inputs.os_arch }}
+          if-no-files-found: error
+          path: |
+            _build/prod/rel/arweave/arweave-*.tar.gz
+            _build/prod/rel/arweave/arweave-*.tar.gz.SHA256

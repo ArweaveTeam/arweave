@@ -1,0 +1,25 @@
+######################################################################
+# Test suite for Ubuntu 22.04. This is the official OS supported by
+# arweave team. The complete test suite should be executed.
+######################################################################
+name: "Test on arch:amd64 distribution:ubuntu release:22.04"
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ArweaveTeam/arweave/.github/workflows/x-build.yml@master
+    secrets: inherit
+
+  test-canary:
+    needs: [build]
+    uses: ArweaveTeam/arweave/.github/workflows/x-test-canary.yml@master
+    secrets: inherit
+
+  test:
+    needs: [test-canary]
+    uses: ArweaveTeam/arweave/.github/workflows/x-test-full.yml@master
+    secrets: inherit

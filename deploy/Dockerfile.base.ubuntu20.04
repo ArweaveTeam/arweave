@@ -3,6 +3,12 @@ FROM ubuntu:20.04
 # Set noninteractive installation
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Add add-apt-repository application
+RUN apt-get update && apt-get install -y software-properties-common
+
+# Add rabbitmq erlang R26 repository
+RUN add-apt-repository -y ppa:rabbitmq/rabbitmq-erlang-26
+
 # Install the necessary software to add a new repository over HTTPS
 RUN apt-get update && apt-get install -y \
     apt-transport-https \
@@ -18,11 +24,3 @@ RUN apt-get install -y \
     libwxbase3.0-0v5 \
     libwxgtk3.0-gtk3-0v5 \
     libsctp1
-
-# Download and install the Erlang Solutions package
-RUN wget https://packages.erlang-solutions.com/erlang/debian/pool/esl-erlang_24.3.3-1~ubuntu~$(lsb_release -cs)_amd64.deb && \
-    dpkg -i esl-erlang_24.3.3-1~ubuntu~$(lsb_release -cs)_amd64.deb
-
-# Install other dependencies
-RUN apt-get install -y \
-    esl-erlang=1:24.3.3-1
