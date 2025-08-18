@@ -105,7 +105,7 @@ apply(Module, Function, Arguments, Opts) ->
 		running ->
 			erlang:apply(Module, Function, Arguments);
 		shutdown ->
-			?LOG_ERROR([
+			?LOG_WARNING([
 				{state, shutdown},
 				{module, Module},
 				{function, Function},
