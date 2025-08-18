@@ -1,0 +1,148 @@
+######################################################################
+# Common way to build arweave. This template should be compatible with
+# any kind of systems but it expects the images/vm/servers used to
+# compile already have every requirement installed.
+######################################################################
+name: "arweave-build-template"
+
+on:
+  workflow_call:
+    inputs:
+      os_arch:
+        description: "operating system architecture"
+        default: "amd64"
+        type: "string"
+      os_name:
+        description: "operating system name"
+        default: "ubuntu"
+        type: "string"
+      os_release:
+        description: "operating system release"
+        default: "22.04"
+        type: "string"
+
+env:
+  cache_key: ${{ inputs.os_arch }}-${{ inputs.os_name }}-${{ inputs.os_release }}
+
+jobs:
+  build-template:
+    runs-on:
+      - self-hosted
+      - builder-runner
+      - ${{ inputs.os_arch }}
+      - ${{ inputs.os_name }}
+      - ${{ inputs.os_release }}
+
+    steps:
+      - name: checkout arweave repository
+        uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      # only arweave dependencies are being cached,
+      # those are not updated everyday and this is
+      # unecessary to fetch them everytime.
+      - name: extract cache
+        uses: actions/cache@v4
+        id: cache
+        with:
+          path: |
+            _build/default/lib/accept
+            _build/default/lib/b64fast
+            _build/default/lib/cowboy
+            _build/default/lib/cowlib
+            _build/default/lib/gun
+            _build/default/lib/jiffy
+            _build/default/lib/prometheus
+            _build/default/lib/prometheus_cowboy
+            _build/default/lib/prometheus_httpd
+            _build/default/lib/prometheus_process_collector
+            _build/default/lib/quantile_estimator
+            _build/default/lib/ranch
+            _build/default/lib/.rebar3
+            _build/default/lib/recon
+            _build/default/lib/rocksdb
+            _build/default/plugins/
+            _build/default/plugins/aleppo
+            _build/default/plugins/geas
+            _build/default/plugins/geas_rebar3
+            _build/default/plugins/hex_core
+            _build/default/plugins/katana_code
+            _build/default/plugins/pc
+            _build/default/plugins/.rebar3
+            _build/default/plugins/rebar3_archive_plugin
+            _build/default/plugins/rebar3_elvis_plugin
+            _build/default/plugins/rebar3_hex
+            _build/default/plugins/samovar
+            _build/default/plugins/verl
+            _build/default/plugins/zipper
+          key: deps-cache-${{ hashFiles('rebar.lock') }}-${{ env.cache_key }}
+          restore-keys: |
+            deps-cache-${{ hashFiles('rebar.lock') }}-${{ env.cache_key }}
+
+      - name: Get dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: ./ar-rebar3 test get-deps
+
+      - uses: actions/cache@v4
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            _build/default/lib/accept
+            _build/default/lib/b64fast
+            _build/default/lib/cowboy
+            _build/default/lib/cowlib
+            _build/default/lib/gun
+            _build/default/lib/jiffy
+            _build/default/lib/prometheus
+            _build/default/lib/prometheus_cowboy
+            _build/default/lib/prometheus_httpd
+            _build/default/lib/prometheus_process_collector
+            _build/default/lib/quantile_estimator
+            _build/default/lib/ranch
+            _build/default/lib/.rebar3
+            _build/default/lib/recon
+            _build/default/lib/rocksdb
+            _build/default/plugins/
+            _build/default/plugins/aleppo
+            _build/default/plugins/geas
+            _build/default/plugins/geas_rebar3
+            _build/default/plugins/hex_core
+            _build/default/plugins/katana_code
+            _build/default/plugins/pc
+            _build/default/plugins/.rebar3
+            _build/default/plugins/rebar3_archive_plugin
+            _build/default/plugins/rebar3_elvis_plugin
+            _build/default/plugins/rebar3_hex
+            _build/default/plugins/samovar
+            _build/default/plugins/verl
+            _build/default/plugins/zipper
+          key: deps-cache-${{ hashFiles('rebar.lock') }}-${{ env.cache_key }}
+
+      - name: Compile arweave release
+        run: ./ar-rebar3 default release
+
+      - name: Build arweave test sources
+        run: ./ar-rebar3 test compile
+
+      # some artifacts are compiled and only available
+      # in arweave directory (libraries)
+      - name: Prepare artifacts
+        run: |
+          chmod -R u+w ./_build
+          tar czfp _build.tar.gz ./_build ./bin/arweave
+          tar czfp apps.tar.gz ./apps
+
+      # to avoid reusing artifacts from someone else
+      # and generating issues, an unique artifact is
+      # produced using github checksum.
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.sha }}-${{ env.cache_key }}
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+          path: |
+            _build.tar.gz
+            apps.tar.gz

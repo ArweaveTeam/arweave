@@ -1,0 +1,37 @@
+######################################################################
+# Test suite for MacOS. The support of MacOS is mainly for the VDF
+# part, it should not be required to do the full test suite.
+######################################################################
+name: "Test on arch:arm64 distribution:macos release:15"
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ArweaveTeam/arweave/.github/workflows/x-build.yml@master
+    secrets: inherit
+    with:
+      os_arch: arm64
+      os_name: macos
+      os_release: 15
+
+  test-canary:
+    needs: [build]
+    uses: ArweaveTeam/arweave/.github/workflows/x-test-canary.yml@master
+    secrets: inherit
+    with:
+      os_arch: arm64
+      os_name: macos
+      os_release: 15
+
+  test:
+    needs: [test-canary]
+    uses: ArweaveTeam/arweave/.github/workflows/x-test-vdf.yml@master
+    secrets: inherit
+    with:
+      os_arch: arm64
+      os_name: macos
+      os_release: 15

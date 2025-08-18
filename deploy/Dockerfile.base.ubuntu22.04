@@ -3,5 +3,11 @@ FROM ubuntu:22.04
 # Set noninteractive installation
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Add add-apt-repository application
+RUN apt-get update && apt-get install -y software-properties-common
+
+# Add rabbitmq erlang R26 repository
+RUN add-apt-repository -y ppa:rabbitmq/rabbitmq-erlang-26
+
 # Install other dependencies
 RUN apt-get update && apt-get install -y erlang
