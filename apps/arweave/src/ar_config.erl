@@ -285,6 +285,13 @@ parse_options([{<<"replica_2_9_workers">>, N} | Rest], Config) when is_integer(N
 parse_options([{<<"replica_2_9_workers">>, Opt} | _], _) ->
 	{error, {bad_type, replica_2_9_workers, number}, Opt};
 
+parse_options([{<<"disable_replica_2_9_device_limit">>, true} | Rest], Config) ->
+	parse_options(Rest, Config#config{ disable_replica_2_9_device_limit = true });
+parse_options([{<<"disable_replica_2_9_device_limit">>, false} | Rest], Config) ->
+	parse_options(Rest, Config);
+parse_options([{<<"disable_replica_2_9_device_limit">>, Opt} | _], _) ->
+	{error, {bad_type, disable_replica_2_9_device_limit, boolean}, Opt};
+
 parse_options([{<<"diff">>, Diff} | Rest], Config) when is_integer(Diff) ->
 	parse_options(Rest, Config#config{ diff = Diff });
 parse_options([{<<"diff">>, Diff} | _], _) ->

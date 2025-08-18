@@ -272,6 +272,7 @@
 	pool_worker_name = not_set,
 	packing_workers = ?DEFAULT_PACKING_WORKERS,
 	replica_2_9_workers = ?DEFAULT_REPLICA_2_9_WORKERS,
+	disable_replica_2_9_device_limit = false,
 	%% Undocumented/unsupported options
 	chunk_storage_file_size = ?CHUNK_GROUP_SIZE,
 	rocksdb_flush_interval_s = ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,
