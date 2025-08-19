@@ -3,7 +3,6 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
@@ -300,6 +299,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof3))
 	),
 	ar_test_node:mine(peer1),
+	assert_wait_until_height(main, 1),
 	true = ar_util:do_until(
 		fun() ->
 			%% After a block is mined, the chunks receive their absolute offsets, which
@@ -312,7 +312,8 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			case ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof3)) of
 				{ok, {{<<"303">>, _}, _, _, _, _}} ->
 					true;
-				_ ->
+				Response ->
+					?debugFmt("post_chunk response: ~p", [Response]),
 					false
 			end
 		end,
