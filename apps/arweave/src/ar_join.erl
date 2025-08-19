@@ -527,7 +527,7 @@ worker() ->
 
 %% @doc Check that nodes can join a running network by using the fork recoverer.
 basic_node_join_test_() ->
-	{timeout, 60, fun() ->
+	{timeout, ?TEST_NODE_TIMEOUT, fun() ->
 		[B0] = ar_weave:init([]),
 		ar_test_node:start(B0),
 		ar_test_node:mine(),
@@ -540,7 +540,7 @@ basic_node_join_test_() ->
 
 %% @doc Ensure that both nodes can mine after a join.
 node_join_test_() ->
-	{timeout, 60, fun() ->
+	{timeout, ?TEST_NODE_TIMEOUT, fun() ->
 		[B0] = ar_weave:init([]),
 		ar_test_node:start(B0),
 		ar_test_node:mine(),
