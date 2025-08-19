@@ -2,61 +2,58 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [http_get_block/2]).
-
--define(MINING_TEST_TIMEOUT, 240).
--define(API_TEST_TIMEOUT, 120).
--define(PARTITION_TEST_TIMEOUT, 120).
 
 %% --------------------------------------------------------------------
 %% Test registration
 %% --------------------------------------------------------------------
 mining_test_() ->
 	[
-		{timeout, ?MINING_TEST_TIMEOUT, fun test_single_node_one_chunk/0},
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_single_node_one_chunk/0},
 		ar_test_node:test_with_mocked_functions(
 			[
 				ar_test_node:mock_to_force_invalid_h1(),
 				{ar_retarget, is_retarget_height, fun(_Height) -> false end},
 				{ar_retarget, is_retarget_block, fun(_Block) -> false end}
 			],
-			fun test_single_node_two_chunk/0, 120),
+			fun test_single_node_two_chunk/0, ?TEST_NODE_TIMEOUT),
 		ar_test_node:test_with_mocked_functions(
 			[
 				ar_test_node:mock_to_force_invalid_h1(),
 				{ar_retarget, is_retarget_height, fun(_Height) -> false end},
 				{ar_retarget, is_retarget_block, fun(_Block) -> false end}
 			],
-			fun test_cross_node/0, 240),
+			fun test_cross_node/0, ?TEST_NODE_TIMEOUT),
 		ar_test_node:test_with_mocked_functions(
 			[
-				ar_test_node:mock_to_force_invalid_h1()
+				ar_test_node:mock_to_force_invalid_h1(),
+				mock_for_single_difficulty_adjustment_height(),
+				mock_for_single_difficulty_adjustment_block()
 			],
-			fun test_cross_node_retarget/0, ?MINING_TEST_TIMEOUT),
-		{timeout, ?MINING_TEST_TIMEOUT, fun test_two_node_retarget/0},
+			fun test_cross_node_retarget/0, 2 * ?TEST_NODE_TIMEOUT),
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_two_node_retarget/0},
 		ar_test_node:test_with_mocked_functions(
 			[
 				{ar_retarget, is_retarget_height, fun(_Height) -> false end},
 				{ar_retarget, is_retarget_block, fun(_Block) -> false end}
 			],
-			fun test_three_node/0, ?MINING_TEST_TIMEOUT),
-		{timeout, ?MINING_TEST_TIMEOUT, fun test_no_exit_node/0}
+			fun test_three_node/0, 2 * ?TEST_NODE_TIMEOUT),
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_no_exit_node/0}
 	].
 
 api_test_() ->
 	[
-		{timeout, ?API_TEST_TIMEOUT, fun test_no_secret/0},
-		{timeout, ?API_TEST_TIMEOUT, fun test_bad_secret/0},
-		{timeout, ?API_TEST_TIMEOUT, fun test_partition_table/0}
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_no_secret/0},
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_bad_secret/0},
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_partition_table/0}
 	].
 
 refetch_partitions_test_() ->
 	[
-		{timeout, ?PARTITION_TEST_TIMEOUT, fun test_peers_by_partition/0}
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_peers_by_partition/0}
 	].
 
 %% --------------------------------------------------------------------
@@ -530,3 +527,19 @@ dummy_poa() ->
 
 dummy_session_key() ->
 	{crypto:strong_rand_bytes(32), rand:uniform(100), rand:uniform(10000)}.
+
+mock_for_single_difficulty_adjustment_height() ->
+	{ar_retarget, is_retarget_height, fun(Height) ->
+		case Height of
+			?RETARGET_BLOCKS -> true;
+			_ -> false
+		end
+	end}.
+
+mock_for_single_difficulty_adjustment_block() ->
+	{ar_retarget, is_retarget_block, fun(Block) ->
+		case Block#block.height of
+			?RETARGET_BLOCKS -> true;
+			_ -> false
+		end
+	end}.
