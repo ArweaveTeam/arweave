@@ -356,7 +356,7 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 			%% recall range.
 			State1 = release_cache_range_space(1, Candidate2#mining_candidate.session_key, State),
 			%% Mark second recall range as missing, not to wait for it to arrive.
-			State2 = mark_second_recall_range_missing(Candidate2, State1),
+			State2 = mark_recall_range_missing(chunk2, Candidate2, State1),
 			%% Read the recall range; the result of the read will be reported by the `chunk1` task.
 			ar_mining_io:read_recall_range(chunk1, self(), Candidate2, RecallRange1Start),
 			State2;
@@ -525,8 +525,7 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 			ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
 			%% Mark second recall range as missing, just like if we didn't have the recall range
 			%% in a regular mining setup.
-			%% This is done because we only have a part of H1 list that passes diff checks.
-			State1 = mark_second_recall_range_missing(Candidate3, State),
+			State1 = mark_recall_range_missing(chunk1, Candidate3, State),
 			%% After we marked the whole second recall range as missing, we can cache the H1 list.
 			%% During this process, we also reset the chunk2_missing flag to false for the entries
 			%% we have H1 for.
@@ -991,26 +990,31 @@ mark_single_chunk2_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 			mark_single_chunk2_missing_or_drop(Nonce + 1, NoncesLeft - 1, Candidate, State)
 	end.
 
-%% @doc Mark the chunk2 as missing for the whole recall range.
-mark_second_recall_range_missing(Candidate, State) ->
+%% @doc Mark the chunk1 or chunk2 as missing for the whole recall range.
+mark_recall_range_missing(WhichChunk, Candidate, State) ->
 	#mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
-	mark_second_recall_range_missing(0, ar_block:get_nonces_per_recall_range(PackingDifficulty), Candidate, State).
+	mark_recall_range_missing(WhichChunk, 0, ar_block:get_nonces_per_recall_range(PackingDifficulty), Candidate, State).
 
-mark_second_recall_range_missing(_Nonce, 0, _Candidate, State) -> State;
-mark_second_recall_range_missing(Nonce, NoncesLeft, Candidate, State) ->
+mark_recall_range_missing(_WhichChunk, _Nonce, 0, _Candidate, State) -> State;
+mark_recall_range_missing(WhichChunk, Nonce, NoncesLeft, Candidate, State) ->
 	case ar_mining_cache:with_cached_value(
 		?CACHE_KEY(Candidate#mining_candidate.cache_ref, Nonce),
 		Candidate#mining_candidate.session_key,
 		State#state.chunk_cache,
-		fun(CachedValue) -> {ok, CachedValue#ar_mining_cache_value{ chunk2_missing = true }} end
-	) of
+		fun(CachedValue) ->
+			case WhichChunk of
+				chunk1 -> {ok, CachedValue#ar_mining_cache_value{ chunk1_missing = true }};
+				chunk2 -> {ok, CachedValue#ar_mining_cache_value{ chunk2_missing = true }}
+			end
+		end
+		) of
 		{ok, ChunkCache1} ->
-			mark_second_recall_range_missing(Nonce + 1, NoncesLeft - 1, Candidate, State#state{ chunk_cache = ChunkCache1 });
+			mark_recall_range_missing(WhichChunk, Nonce + 1, NoncesLeft - 1, Candidate, State#state{ chunk_cache = ChunkCache1 });
 		{error, Reason} ->
 			%% NB: this clause may cause a memory leak, because mining worker will wait for
-			%% chunk2 to arrive.
+			%% WhichChunk to arrive.
 			?LOG_ERROR([{event, mining_worker_failed_to_add_chunk_to_cache}, {reason, Reason}]),
-			mark_second_recall_range_missing(Nonce + 1, NoncesLeft - 1, Candidate, State)
+			mark_recall_range_missing(WhichChunk, Nonce + 1, NoncesLeft - 1, Candidate, State)
 	end.
 
 cache_h1_list(_Candidate, [], State) -> State;
@@ -1021,9 +1025,9 @@ cache_h1_list(Candidate, [ {H1, Nonce} | H1List ], State) ->
 		Candidate#mining_candidate.session_key,
 		State#state.chunk_cache,
 		fun(CachedValue) ->
-			%% Store the H1 received from peer, and set chunk2_missing to false,
+			%% Store the H1 received from peer, and set chunk1_missing to false,
 			%% marking that we have a recall range for this H1 list.
-			{ok, CachedValue#ar_mining_cache_value{ h1 = H1, chunk2_missing = false }}
+			{ok, CachedValue#ar_mining_cache_value{ h1 = H1, chunk1_missing = false }}
 		end
 	) of
 		{ok, ChunkCache1} ->
