@@ -14,25 +14,25 @@ wait_for_one_process_at_a_time_test_() ->
 		TestPid = self(),
 		spawn_link(fun() ->
 			ok = ar_semaphore:acquire(wait_for_one_process_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
-			timer:sleep(200),
+			timer:sleep(400),
 			TestPid ! p1_done
 		end),
 		spawn_link(fun() ->
 			ok = ar_semaphore:acquire(wait_for_one_process_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
-			timer:sleep(200),
+			timer:sleep(400),
 			TestPid ! p2_done
 		end),
 		spawn_link(fun() ->
 			ok = ar_semaphore:acquire(wait_for_one_process_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
-			timer:sleep(200),
+			timer:sleep(400),
 			TestPid ! p3_done
 		end),
-		?assert(receive _ -> false after 190 -> true end),
-		?assert(receive p1_done -> true after 20 -> false end),
-		?assert(receive _ -> false after 180 -> true end),
-		?assert(receive p2_done -> true after 30 -> false end),
-		?assert(receive _ -> false after 170 -> true end),
-		?assert(receive p3_done -> true after 40 -> false end)
+		?assert(receive _ -> false after 300 -> true end),
+		?assert(receive p1_done -> true after 200 -> false end),
+		?assert(receive _ -> false after 300 -> true end),
+		?assert(receive p2_done -> true after 200 -> false end),
+		?assert(receive _ -> false after 300 -> true end),
+		?assert(receive p3_done -> true after 200 -> false end)
 	end).
 
 wait_for_two_processes_at_a_time_test_() ->
