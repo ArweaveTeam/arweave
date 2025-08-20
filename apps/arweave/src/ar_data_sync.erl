@@ -132,7 +132,9 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 		case {DataRootOffsetReply, DataRootInDiskPool} of
 			{not_found, []} ->
 				?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
-					{reason, data_root_not_found}, {offset, Offset}]),
+					{reason, data_root_not_found}, {offset, Offset}, {chunk_size, ChunkSize},
+					{data_root, ar_util:encode(DataRoot)},
+					{data_root_key, ar_util:encode(DataRootKey)}]),
 				{error, data_root_not_found};
 			{not_found, [{_, {Size, Timestamp, TXIDSet}}]} ->
 				case Size + ChunkSize > DataRootLimit
@@ -382,6 +384,8 @@ maybe_drop_data_root_from_disk_pool(_, 0, _) ->
 maybe_drop_data_root_from_disk_pool(DataRoot, _, _) when byte_size(DataRoot) < 32 ->
 	ok;
 maybe_drop_data_root_from_disk_pool(DataRoot, TXSize, TXID) ->
+	?LOG_DEBUG([{event, maybe_drop_data_root_from_disk_pool}, {data_root, ar_util:encode(DataRoot)},
+			{tx_size, TXSize}, {tx_id, ar_util:encode(TXID)}]),
 	Key = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
 	case ets:lookup(ar_disk_pool_data_roots, Key) of
 		[] ->
@@ -909,6 +913,7 @@ handle_cast({cut, Start}, #sync_data_state{ store_id = StoreID,
 	{noreply, State};
 
 handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
+	?LOG_DEBUG([{event, add_tip_block}]),
 	#sync_data_state{ store_id = StoreID, weave_size = CurrentWeaveSize,
 			block_index = CurrentBI } = State,
 	{BlockStartOffset, Blocks} = pick_missing_blocks(CurrentBI, BlockTXPairs),
@@ -2601,6 +2606,7 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
 add_block_data_roots([], _CurrentWeaveSize, _StoreID) ->
 	{ok, sets:new()};
 add_block_data_roots(SizeTaggedTXs, CurrentWeaveSize, StoreID) ->
+	?LOG_DEBUG([{event, add_block_data_roots}]),
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
 	{BlockSize, DataRootIndexKeySet, Args} = lists:foldl(
@@ -2638,6 +2644,7 @@ add_block_data_roots(SizeTaggedTXs, CurrentWeaveSize, StoreID) ->
 	{ok, DataRootIndexKeySet}.
 
 update_data_root_index(DataRoot, TXSize, AbsoluteTXStartOffset, TXPath, StoreID) ->
+	?LOG_DEBUG([{event, update_data_root_index}, {data_root, ar_util:encode(DataRoot)}]),
 	ar_kv:put({data_root_index, StoreID},
 			data_root_key_v2(DataRoot, TXSize, AbsoluteTXStartOffset), TXPath).
 

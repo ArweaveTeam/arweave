@@ -1397,6 +1397,7 @@ apply_validated_block(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	end.
 
 apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
+	?LOG_DEBUG([{event, apply_validated_block2}]),
 	[{current, CurrentH}] = ets:lookup(node_state, current),
 	BH = B#block.indep_hash,
 	%% Overwrite the block to store computed size tagged txs - they
@@ -1445,6 +1446,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	),
 	ar_disk_cache:write_block(B),
 	BlockTXs = B#block.txs,
+	?LOG_DEBUG([{event, apply_validated_block2_drop_txs}]),
 	ar_mempool:drop_txs(BlockTXs, false, false),
 	gen_server:cast(self(), {filter_mempool, ar_mempool:get_all_txids()}),
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
@@ -1461,6 +1463,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	OrphanCount = length(Orphans),
 	ar_block_index:update(AddedBIElements, OrphanCount),
 	RecentBI2 = lists:sublist(RecentBI, ?BLOCK_INDEX_HEAD_LEN),
+	?LOG_DEBUG([{event, apply_validated_block2_add_tip_block}]),
 	ar_data_sync:add_tip_block(BlockTXPairs, RecentBI2),
 	ar_header_sync:add_tip_block(B, RecentBI2),
 	lists:foreach(
