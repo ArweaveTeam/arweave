@@ -169,6 +169,7 @@ jobs:
         core_test_mod: [
             ## Long-running tests. Put these first to limit the overall runtime of the
             ## test suite
+            ar_reject_chunks_tests,
             ar_coordinated_mining_tests,
             ar_data_sync_recovers_from_corruption_test,
             ar_data_sync_syncs_data_test,
@@ -182,8 +183,7 @@ jobs:
             ar_packing_tests,
             ar_poa,
             ar_vdf_server_tests,
-            ar_post_block_tests,
-            ar_reject_chunks_tests
+            ar_post_block_tests
           ]
     steps:
       - uses: actions/checkout@v4

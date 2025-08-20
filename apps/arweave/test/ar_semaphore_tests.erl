@@ -17,11 +17,13 @@ wait_for_one_process_at_a_time_test_() ->
 			timer:sleep(400),
 			TestPid ! p1_done
 		end),
+		timer:sleep(10),
 		spawn_link(fun() ->
 			ok = ar_semaphore:acquire(wait_for_one_process_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
 			timer:sleep(400),
 			TestPid ! p2_done
 		end),
+		timer:sleep(10),
 		spawn_link(fun() ->
 			ok = ar_semaphore:acquire(wait_for_one_process_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
 			timer:sleep(400),
