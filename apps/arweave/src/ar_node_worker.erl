@@ -724,6 +724,7 @@ handle_task({filter_mempool, Mempool}, State) ->
 						)
 					end
 				),
+			?LOG_DEBUG([{event, drop_txs_invalid}, {invalid_txs, length(InvalidTXs)}]),
 			ar_mempool:drop_txs(InvalidTXs),
 			case RemainingMempool of
 				[] ->
@@ -1446,8 +1447,9 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	),
 	ar_disk_cache:write_block(B),
 	BlockTXs = B#block.txs,
-	?LOG_DEBUG([{event, apply_validated_block2_drop_txs}]),
+	?LOG_DEBUG([{event, apply_validated_block2_drop_txs}, {block_txs, length(BlockTXs)}]),
 	ar_mempool:drop_txs(BlockTXs, false, false),
+	?LOG_DEBUG([{event, apply_validated_block2_filter_mempool}]),
 	gen_server:cast(self(), {filter_mempool, ar_mempool:get_all_txids()}),
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs),
 	Height = B#block.height,

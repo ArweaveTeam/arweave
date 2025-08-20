@@ -124,9 +124,13 @@ add_tx2(#tx{ id = TXID } = TX, Status) ->
 					%%    until the mempool is small enough
 					%% To limit revalidation work, all of these checks assume
 					%% every TX in the mempool has previously been validated.
+					?LOG_DEBUG([{event, drop_txs_clashing}]),
 					drop_txs(find_clashing_txs(TX)),
+					?LOG_DEBUG([{event, drop_txs_overspent}]),
 					drop_txs(find_overspent_txs(TX)),
-					drop_txs(find_low_priority_txs());
+					?LOG_DEBUG([{event, drop_txs_low_priority}]),
+					drop_txs(find_low_priority_txs()),
+					?LOG_DEBUG([{event, drop_txs_done}]);
 				false ->
 					noop
 			end
@@ -148,6 +152,8 @@ drop_txs(DroppedTXs) ->
 drop_txs([], _RemoveTXPrefixes, _DropFromDiskPool) ->
 	ok;
 drop_txs(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool) ->
+	?LOG_DEBUG([{event, drop_txs}, {dropped_txs, length(DroppedTXs)}, {remove_tx_prefixes, RemoveTXPrefixes},
+			{drop_from_disk_pool, DropFromDiskPool}]),
 	prometheus_histogram:observe_duration(drop_txs_duration_milliseconds,
 		fun() ->
 			drop_txs2(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool)
