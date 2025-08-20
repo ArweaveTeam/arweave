@@ -385,7 +385,7 @@ maybe_drop_data_root_from_disk_pool(DataRoot, _, _) when byte_size(DataRoot) < 3
 	ok;
 maybe_drop_data_root_from_disk_pool(DataRoot, TXSize, TXID) ->
 	?LOG_DEBUG([{event, maybe_drop_data_root_from_disk_pool}, {data_root, ar_util:encode(DataRoot)},
-			{tx_size, TXSize}, {tx_id, ar_util:encode(TXID)}]),
+			{tx_size, TXSize}, {tx_id, ar_util:encode(TXID)} ]),
 	Key = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
 	case ets:lookup(ar_disk_pool_data_roots, Key) of
 		[] ->
