@@ -200,9 +200,6 @@ unpad_chunk(Unpacked, ChunkSize, PackedSize) ->
 		_ ->
 			case is_zero(Padding) of
 				false ->
-					?LOG_WARNING([{event, unpad_chunk_error}, {packed_size, PackedSize},
-							{chunk_size, ChunkSize}, {padding, binary_part(Padding, 0, 64)},
-							{unpacked, binary_part(Unpacked, 0, 64)}]),
 					error;
 				true ->
 					binary:part(Unpacked, 0, ChunkSize)
@@ -652,6 +649,10 @@ unpack({replica_2_9, RewardAddr} = Packing, AbsoluteEndOffset,
 					case ar_packing_server:unpad_chunk(Packing, Unpacked,
 							ChunkSize, PackedSize) of
 						error ->
+							?LOG_WARNING([{event, unpad_chunk_error},
+									{packed_size, PackedSize},
+									{chunk_size, ChunkSize},
+									{absolute_end_offset, AbsoluteEndOffset}]),
 							{error, invalid_padding};
 						UnpackedChunk ->
 							{ok, UnpackedChunk, was_not_already_unpacked}
