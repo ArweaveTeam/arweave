@@ -716,6 +716,8 @@ handle_task({filter_mempool, Mempool}, State) ->
 									valid ->
 										Acc;
 									{invalid, _Reason} ->
+										?LOG_DEBUG([{event, drop_txs_invalid_tx}, {tx_id, ar_util:encode(TX#tx.id)},
+												{reason, _Reason}]),
 										[TX | Acc]
 								end
 							end,
