@@ -81,6 +81,9 @@ randomx_decrypt_chunk(Packing, RandomxState, Key, Chunk, ChunkSize) ->
 			%% Validating the padding (for spora_2_6 and composite) and then remove it.
 			case ar_packing_server:unpad_chunk(Packing, Unpacked, ChunkSize, PackedSize) of
 				error ->
+					?LOG_WARNING([{event, unpad_chunk_error},
+							{packed_size, PackedSize},
+							{chunk_size, ChunkSize}]),
 					{error, invalid_padding};
 				UnpackedChunk ->
 					{ok, UnpackedChunk}
