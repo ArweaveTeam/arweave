@@ -31,7 +31,10 @@
 -define(GET_SYNC_RECORD_BATCH_SIZE, 2).
 -define(GET_SYNC_RECORD_COOLDOWN_MS, 60 * 1000).
 -define(GET_SYNC_RECORD_RPM_KEY, data_sync_record).
+-define(GET_FOOTPRINT_RECORD_RPM_KEY, footprints).
+-define(GET_FOOTPRINT_RECORD_COOLDOWN_MS, 60 * 1000).
 -define(GET_SYNC_RECORD_PATH, [<<"data_sync_record">>]).
+-define(GET_FOOTPRINT_RECORD_PATH, [<<"footprints">>]).
 
 %% The number of the release adding support for the
 %% GET /data_sync_record/[start]/[end]/[limit] endpoint.
@@ -77,9 +80,9 @@ fetch(Start, End, StoreID, normal) ->
 					?LOG_DEBUG([{event, weak_peer_selection},
 						{function, fetch_peer_intervals}, {parent, Parent}, {bucket, Bucket},
 						{removed_count, length(RemovedPeers)},
-						{removed_peers, string:join([ar_util:format_peer(P) || P <- RemovedPeers], ", ")},
+						{removed_peers, print_peers(RemovedPeers)},
 						{num_peers, length(Peers)},
-						{peers, string:join([ar_util:format_peer(Peer) || Peer <- Peers], ", ")}]);
+						{peers, print_peers(Peers)}]);
 				false ->
 					ok
 			end,
@@ -95,14 +98,15 @@ fetch(Start, End, StoreID, normal) ->
 			%% if needed.
 			gen_server:cast(Parent, {collect_peer_intervals, End3, End, normal})
 		catch
-			Class:Reason ->
+			Class:Reason:Stacktrace ->
 				?LOG_WARNING([{event, fetch_peers_process_exit},
 						{store_id, StoreID},
 						{range_start, Start},
 						{range_end, End},
 						{type, normal},
 						{class, Class},
-						{reason, Reason}]),
+						{reason, Reason},
+						{stacktrace, Stacktrace}]),
 				gen_server:cast(Parent, {collect_peer_intervals, Start, End, normal})
 		end
 	end);
@@ -123,13 +127,32 @@ fetch(Start, End, StoreID, footprint) ->
 
 			FootprintBucket = ar_footprint_record:get_footprint_bucket(Start + ?DATA_CHUNK_SIZE),
 			{ok, Config} = application:get_env(arweave, config),
-			Peers =
+			AllPeers =
 				case Config#config.sync_from_local_peers_only of
 					true ->
 						Config#config.local_peers;
 					false ->
 						ar_data_discovery:get_footprint_bucket_peers(FootprintBucket)
 				end,
+			HotPeers = [
+				Peer || Peer <- AllPeers,
+				not ar_rate_limiter:is_on_cooldown(Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY) andalso
+				not ar_rate_limiter:is_throttled(Peer, ?GET_FOOTPRINT_RECORD_PATH)
+			],
+			Peers = ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT),
+
+			case length(Peers) < ?QUERY_BEST_PEERS_COUNT of
+				true ->
+					RemovedPeers = AllPeers -- HotPeers,
+					?LOG_DEBUG([{event, weak_peer_selection},
+						{function, fetch_peer_footprint_intervals}, {parent, Parent}, {bucket, FootprintBucket},
+						{removed_count, length(RemovedPeers)},
+						{removed_peers, print_peers(RemovedPeers)},
+						{num_peers, length(Peers)},
+						{peers, print_peers(Peers)}]);
+				false ->
+					ok
+			end,
 
 			UnsyncedIntervals = ar_footprint_record:get_unsynced_intervals(Partition, Footprint, StoreID),
 
@@ -159,14 +182,15 @@ fetch(Start, End, StoreID, footprint) ->
 			%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
 			gen_server:cast(Parent, {collect_peer_intervals, Start3, End, footprint})
 		catch
-			Class:Reason ->
+			Class:Reason:Stacktrace ->
 				?LOG_WARNING([{event, fetch_footprint_intervals_process_exit},
 						{store_id, StoreID},
 						{range_start, Start},
 						{range_end, End},
 						{type, footprint},
 						{class, Class},
-						{reason, Reason}]),
+						{reason, Reason},
+						{stacktrace, Stacktrace}]),
 				gen_server:cast(Parent, {collect_peer_intervals, Start, End, footprint})
 		end
 	end).
@@ -307,22 +331,39 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Peers, UnsyncedInte
 	Intervals =
 		ar_util:batch_pmap(
 			fun(Peer) ->
-				case get_peer_footprint_intervals(Peer, Partition, Footprint, UnsyncedIntervals) of
+				case maybe_get_peer_footprint_intervals(Peer, Partition, Footprint, UnsyncedIntervals) of
 					{ok, SoughtIntervals} ->
 						{Peer, SoughtIntervals};
+					{error, cooldown} ->
+						%% Skipping peer because we hit a 429 and put it on cooldown.
+						ok;
 					{error, Reason} ->
 						?LOG_DEBUG([{event, failed_to_fetch_peer_footprint_intervals},
-								{peer, ar_util:format_peer(Peer)},
-								{reason, io_lib:format("~p", [Reason])}]),
+							{parent, Parent},
+							{peer, ar_util:format_peer(Peer)},
+							{reason, io_lib:format("~p", [Reason])}]),
 						ok
 				end
 			end,
 			Peers,
-			?GET_SYNC_RECORD_BATCH_SIZE % fetch sync intervals from so many peers at a time
+			?GET_SYNC_RECORD_BATCH_SIZE, % fetch sync intervals from so many peers at a time
+			%% We'll rely on the timeout to also flag when we are approaching a peer's RPM
+			%% limit. As we approach the limit we will self-throttle the requests. Eventually this
+			%% throttling will exceed 60s and we'll timout the batch_pmap and flag the peer for
+			%% cooldown.
+			60 * 1000
 		),
 	EnqueueIntervals =
 		lists:foldl(
-			fun	({Peer, SoughtIntervals}, IntervalsAcc) ->
+			fun	({error, batch_pmap_timeout, Peer}, Acc) ->
+					?LOG_DEBUG([{event, failed_to_fetch_peer_footprint_intervals},
+						{parent, Parent},
+						{peer, ar_util:format_peer(Peer)},
+						{reason, batch_pmap_timeout}]),
+					ar_rate_limiter:set_cooldown(
+						Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY, ?GET_FOOTPRINT_RECORD_COOLDOWN_MS),
+					Acc;
+				({Peer, SoughtIntervals}, IntervalsAcc) ->
 					case ar_intervals:is_empty(SoughtIntervals) of
 						true ->
 							IntervalsAcc;
@@ -330,13 +371,27 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Peers, UnsyncedInte
 							ByteIntervals = ar_footprint_record:get_intervals_from_footprint_intervals(SoughtIntervals),
 							[{Peer, ByteIntervals} | IntervalsAcc]
 					end;
-				(_, Acc) ->
+				(ok, Acc) ->
+					Acc;
+				(Error, Acc) ->
+					?LOG_DEBUG([{event, failed_to_fetch_peer_footprint_intervals},
+						{parent, Parent},
+						{peer, unknown},
+						{reason, io_lib:format("~p", [Error])}]),
 					Acc
 			end,
 			[],
 			Intervals
 		),
 	gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals}).
+
+maybe_get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
+	case ar_rate_limiter:is_on_cooldown(Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY) of
+		true ->
+			{error, cooldown};
+		false ->
+			get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals)
+	end.
 
 get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 	PeerReply = ar_http_iface_client:get_footprints(Peer, Partition, Footprint),
@@ -349,9 +404,16 @@ get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 			%% In theory, we could also sync non-replica 2.9 data here, but for now we
 			%% leave it to the "normal" syncing procedure.
 			{ok, ar_intervals:new()};
+		{error, too_many_requests} = Error ->
+			ar_rate_limiter:set_cooldown(Peer,
+				?GET_FOOTPRINT_RECORD_RPM_KEY, ?GET_FOOTPRINT_RECORD_COOLDOWN_MS),
+			Error;
 		Error ->
 			Error
 	end.
+
+print_peers(Peers) ->
+	string:join([io_lib:format("~p", [ar_util:format_peer(Peer)]) || Peer <- Peers], ", ").
 
 %%%===================================================================
 %%% Tests
