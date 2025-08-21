@@ -25,10 +25,9 @@ VDF Server on MacOS. Refer to the [mining VDF guide](https://docs.arweave.org/de
 for more information on running your own VDF server.
 
 **General requirements:**
-- OpenSSL 1.1.1+
 - OpenSSL development headers
 - GCC or Clang (GCC 8+ recommended)
-- Erlang OTP v24, with OpenSSL support
+- Erlang OTP v26, with OpenSSL support
 - GNU Make
 - CMake (CMake version > 3.10.0)
 - SQLite3 header
@@ -38,7 +37,16 @@ for more information on running your own VDF server.
   <summary>To install the dependencies on <b>Ubuntu 22 (recommended)</b>:</summary>
   </br>
 
+  Erlang R26 is now required, Erlang R24 is outdated. Unfortunately, Ubuntu 22.04
+  does not support natively Erlang R26, a PPA repository is then required. The
+  RabbitMQ Team is maintaining this release for all Ubuntu version:
+
   ```sh
+  # add rabbitmq ppa repository
+  sudo add-apt-repository ppa:rabbitmq/rabbitmq-erlang-26
+  sudo apt update
+
+  # install required packages
   sudo apt install erlang libssl-dev libgmp-dev libsqlite3-dev make cmake gcc g++
   ```
 
@@ -52,7 +60,7 @@ for more information on running your own VDF server.
   1. Install [Homebrew](https://brew.sh/)
   2. Install dependencies
   ```sh
-  brew install gmp openssl@1.1 erlang@24 cmake pkg-config
+  brew install gmp erlang@26 cmake pkg-config
   ```
   3. Homebrew may ask you to update your `LDFLAGS` for erlang: don't. You should however
   update your `PATH` as requested.
