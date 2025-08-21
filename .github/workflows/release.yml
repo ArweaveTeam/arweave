@@ -25,7 +25,7 @@ on:
 jobs:
   # prepare ubuntu 22.04 release (jammy) on amd64 arch
   ubuntu-jammy-release:
-    uses: ArweaveTeam/arweave/.github/workflows/x-release-linux.yml@master
+    uses: ArweaveTeam/arweave/.github/workflows/x-release-linux.yml@${{ github.head_ref || github.ref_name }}
     secrets: inherit
     with:
       os_arch: amd64
@@ -35,7 +35,7 @@ jobs:
 
   # prepare ubuntu 24.04 release (noble) on amd64 arch
   ubuntu-noble-release:
-    uses: ArweaveTeam/arweave/.github/workflows/x-release-linux.yml@master
+    uses: ArweaveTeam/arweave/.github/workflows/x-release-linux.yml@${{ github.head_ref || github.ref_name }} 
     secrets: inherit
     with:
       os_arch: amd64
@@ -45,7 +45,7 @@ jobs:
 
   # prepare rocky 9 release on amd64 arch
   rockylinux-9-release:
-    uses: ArweaveTeam/arweave/.github/workflows/x-release-linux.yml@master
+    uses: ArweaveTeam/arweave/.github/workflows/x-release-linux.yml@${{ github.head_ref || github.ref_name }} 
     secrets: inherit
     with:
       os_arch: x86_64
@@ -55,7 +55,7 @@ jobs:
 
   # prepare macos release on arm64 arch
   macos-release:
-    uses: ArweaveTeam/arweave/.github/workflows/x-release-macos.yml@master
+    uses: ArweaveTeam/arweave/.github/workflows/x-release-macos.yml@${{ github.head_ref || github.ref_name }} 
     secrets: inherit
     with:
       tag: ${{ github.ref_name || inputs.tag }}
