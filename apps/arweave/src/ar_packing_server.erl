@@ -435,12 +435,11 @@ worker(PackingState) ->
 					From ! {chunk, {unpacked, Ref, {Packing, U, AbsoluteOffset, TXRoot,
 							ChunkSize}}};
 				{error, invalid_packed_size} ->
-					?LOG_WARNING([{event, got_unpacked_chunk_of_invalid_size}]);
+					From ! {chunk, {unpack_error, Ref, Args, invalid_packed_size}};
 				{error, invalid_chunk_size} ->
-					?LOG_WARNING([{event, got_unpacked_chunk_with_invalid_chunk_size}]);
+					From ! {chunk, {unpack_error, Ref, Args, invalid_chunk_size}};
 				{error, invalid_padding} ->
-					?LOG_WARNING([{event, got_unpacked_chunk_with_invalid_padding},
-						{absolute_end_offset, AbsoluteOffset}]);
+					From ! {chunk, {unpack_error, Ref, Args, invalid_padding}};
 				{exception, Error} ->
 					?LOG_ERROR([{event, failed_to_unpack_chunk},
 							{absolute_end_offset, AbsoluteOffset},
