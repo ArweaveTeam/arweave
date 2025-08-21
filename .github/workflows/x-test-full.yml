@@ -30,7 +30,7 @@ jobs:
   eunit-tests-suite:
     runs-on:
       - self-hosted
-      - builder-runner
+      - build-runner
       - ${{ inputs.os_arch }}
       - ${{ inputs.os_name }}
       - ${{ inputs.os_release }}
