@@ -136,12 +136,17 @@ jobs:
         run: ./ar-rebar3 test release
 
       # some artifacts are compiled and only available
-      # in arweave directory (libraries)
+      # in arweave directory (libraries).
       - name: Prepare artifacts
         run: |
           chmod -R u+w ./_build
-          tar czfp _build.tar.gz ./_build ./bin/arweave
-          tar czfp apps.tar.gz ./apps
+
+          # rebar is using a lot of absolute symlink,
+          # this can generate issue on standalone worker
+          # to avoid this problem, links must be
+          # deferenced with -h flag.
+          tar czfhp _build.tar.gz ./_build ./bin/arweave
+          tar czfhp apps.tar.gz ./apps
 
       # to avoid reusing artifacts from someone else
       # and generating issues, an unique artifact is
