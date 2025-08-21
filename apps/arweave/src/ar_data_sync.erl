@@ -1537,6 +1537,26 @@ handle_info({chunk, {unpacked, Key, ChunkArgs}}, State) ->
 			{noreply, State}
 	end;
 
+handle_info({chunk, {unpack_error, Key, ChunkArgs, Error}}, State) ->
+	#sync_data_state{ packing_map = PackingMap } = State,
+	case maps:get(Key, PackingMap, not_found) of
+		{unpack_fetched_chunk, Args} ->
+			{Packing, _Chunk, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
+			{_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot,
+					_Chunk, _ChunkID, _ChunkEndOffset, Peer, _Byte} = Args,
+			?LOG_WARNING([{event, got_invalid_packed_chunk},
+					{peer, ar_util:format_peer(Peer)},
+					{absolute_end_offset, AbsoluteEndOffset},
+					{packing, ar_serialize:encode_packing(Packing, true)},
+					{chunk_size, ChunkSize},
+					{error, io_lib:format("~p", [Error])}]),
+			State2 = State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) },
+			ar_peers:issue_warning(Peer, chunk, Error),
+			{noreply, State2};
+		_ ->
+			{noreply, State}
+	end;
+
 handle_info({chunk, {packed, Key, ChunkArgs}}, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	Packing = element(1, ChunkArgs),
