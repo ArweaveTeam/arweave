@@ -34,6 +34,16 @@ jobs:
       - ${{ inputs.os_release }}
 
     steps:
+      # On standalone runners, it is always required to cleanup
+      # first. By default executed on all runners, to start with
+      # clean environment.
+      - name: cleanup
+        if: always()
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
+      # checkout arweave repository and extract it in
+      # working directory.
       - name: checkout arweave repository
         uses: actions/checkout@v4
         with:
