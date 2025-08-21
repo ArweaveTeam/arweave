@@ -1,4 +1,7 @@
-name: "arweave-test-suite-standard"
+######################################################################
+# Arweave Test Suite dedicated for VDF testing.
+######################################################################
+name: "arweave-test-suite-vdf"
 
 on:
   workflow_call:
@@ -100,6 +103,11 @@ jobs:
             ar_vdf_server_tests,
           ]
     steps:
+      - name: cleanup
+        if: always()
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"

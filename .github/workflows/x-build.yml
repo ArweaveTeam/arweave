@@ -133,7 +133,7 @@ jobs:
         run: ./ar-rebar3 default release
 
       - name: Build arweave test sources
-        run: ./ar-rebar3 test compile
+        run: ./ar-rebar3 test release
 
       # some artifacts are compiled and only available
       # in arweave directory (libraries)

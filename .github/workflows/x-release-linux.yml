@@ -32,6 +32,11 @@ jobs:
       - ${{ inputs.os_name }}
       - ${{ inputs.os_release }}
     steps:
+      - name: cleanup
+        if: always()
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
