@@ -97,14 +97,14 @@ init([]) ->
 		?CHILD(ar_tx_poller, worker),
 		?CHILD_SUP(ar_block_pre_validator_sup, supervisor),
 		?CHILD_SUP(ar_poller_sup, supervisor),
-		?CHILD_SUP(ar_node_sup, supervisor),
 		?CHILD_SUP(ar_webhook_sup, supervisor),
 		?CHILD(ar_p3, worker),
 		?CHILD(ar_p3_db, worker),
 		?CHILD(ar_pool, worker),
 		?CHILD(ar_pool_job_poller, worker),
 		?CHILD(ar_pool_cm_job_poller, worker),
-		?CHILD(ar_chain_stats, worker)
+		?CHILD(ar_chain_stats, worker),
+		?CHILD_SUP(ar_node_sup, supervisor)
 	],
 	{ok, Config} = application:get_env(arweave, config),
 	DebugChildren = case Config#config.debug of
