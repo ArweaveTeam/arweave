@@ -1,7 +1,7 @@
 ######################################################################
 # Full Arweave Test Suite. Mostly used on Linux like systems.
 ######################################################################
-name: "arweave-test-suite-standard"
+name: "arweave-test-suite-full"
 
 on:
   workflow_call:
@@ -126,6 +126,11 @@ jobs:
             ar_reject_chunks_tests
           ]
     steps:
+      - name: cleanup
+        if: always()
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
