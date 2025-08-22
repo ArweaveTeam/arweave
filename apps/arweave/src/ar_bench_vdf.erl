@@ -25,7 +25,7 @@ show_help() ->
 	io:format("  mode <default|openssl|fused|hiopt_m4> (default: default)~n"),
 	io:format("  difficulty <vdf_difficulty> (default: ~p)~n", [?VDF_DIFFICULTY]),
 	io:format("  verify <true|false> (default: false)~n"),
-	erlang:halt().
+	init:stop(1).
 
 run_benchmark() ->
 	run_benchmark(none, ?VDF_DIFFICULTY, false).

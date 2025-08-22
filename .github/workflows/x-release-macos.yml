@@ -47,6 +47,62 @@ jobs:
           f=$(ls _build/prod/rel/arweave/arweave-*.tar.gz)
           sha256sum ${f} > ${f}.SHA256
 
+      - name: Prepare tarball tests
+        run: |
+          set -eux
+          f=$(ls ${PWD}/_build/prod/rel/arweave/arweave-*.tar.gz)
+          mkdir _extract
+          cd _extract
+          tar zxf "${f}"
+
+      - name: Test vdf openssl
+        run: |
+          cd _extract
+          ./bin/arweave benchmark vdf mode openssl verify true 2>&1 \
+            | grep -E "^VDF step computed in .* seconds."
+
+      - name: Test vdf fused
+        run: |
+          cd _extract
+          ./bin/arweave benchmark vdf mode openssl verify true 2>&1 \
+            | grep -E "^VDF step computed in .* seconds." 2>&1 \
+
+      - name: Test vdf hiopt_m4
+        run: |
+          cd _extract
+          ./bin/arweave benchmark vdf mode openssl hiopt_m4 true 2>&1 \
+            | grep -E "^VDF step computed in .* seconds."
+
+      - name: Test create rsa key
+        run: |
+          cd _extract
+          mkdir _rsa
+          set +e
+          (./bin/arweave wallet create rsa _rsa 2>&1) >/dev/null
+          set -e
+          test 1 = $(ls _rsa/wallets/arweave_keyfile*.json | wc -l)
+
+      - name: Test create ecdsa
+        run: |
+          cd _extract
+          mkdir _ecdsa
+          set +e
+          (./bin/arweave wallet create ecdsa _ecdsa 2>&1) >/dev/null
+          set -e
+          test 1 = $(ls _ecdsa/wallets/arweave_keyfile*.json | wc -l)
+
+      - name: Test arweave execution
+        run: |
+          cd _extract
+          ./bin/arweave foreground 2>&1 \
+            | grep -Ee '^Usage: arweave-server' \
+                   -e '^Compatible with network: arweave.N.1'
+
+      - name: Cleanup tests
+        if: always()
+        run: |
+          rm -rf _extract
+
       - name: Upload Arweave artifacts
         uses: actions/upload-artifact@v4
         with:
