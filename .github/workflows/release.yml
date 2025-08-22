@@ -21,6 +21,14 @@ on:
         required: false
         default: true
         type: boolean
+      prerelease:
+        required: false
+        default: true
+        type: boolean
+      draft:
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   # prepare ubuntu 22.04 release (jammy) on amd64 arch
@@ -176,3 +184,5 @@ jobs:
             _releases/SHA256
             LICENSE.md
           make_latest: ${{ inputs.make_latest || true }}
+          prerelease: ${{ inputs.prerelease || true }}
+          draft: ${{ inputs.draft || false }}
