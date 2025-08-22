@@ -1,30 +1,43 @@
-To release a new arweave version using this new
-github workflow:
+# Arweave Releases
 
- 0. Determine the release version - it must start with
-    `N.`. We'll refer to that release version as
-    `${release}` in the following instructions.
+This document explains how arweave is released using Github Actions.
 
- 1. create a new commit containing a release message
-    in `release_notes/${release}/README.md`
+## Release procedure
 
-    ```
-    mkdir release_notes/${release}
-    echo "new release" > release_notes/${release}/README.md
-    git commit -am "bump version"
-    ```
+1. find a release version using `N.X.Y.Z.*` format, for example
+   `N.9.8.7-alpha2`. During the next step, it will be called
+   `${release_version}`.
+   
+2. create a new release notes containing the instruction of the new
+   release.
 
- 2. push the new release without any tag for now
+```sh
+mkdir release_notes/${release_version}
+touch release_notes/${release_version}/README.md
+cat > release_notes/${release_version}/README.md <<EOF
+# New release!
 
-    `git push`
+Here the message...
+EOF
+```
 
- 3. create a tag called `${release}`
+3. create a new commit containing the release message and the last
+   modification required, like modifying the release name in other
+   place, or bumping a version number
+   
+4. push this commit to master or via a PR.
 
-    `git tag ${release}`
+```sh
+git push
+```
 
- 4. push the tag
+5. create a new tag and push it to the repository.
 
-    `git push --tags`
+```sh
+git tag ${release_version}
+git push origin refs/tags/${release_version}
+```
 
- 5. a new release should have been created containing
-    the message created in step (1).
+6. If the tag match the required specification, a github action
+   workflow will be executed to generate the artifacts for the
+   release.
