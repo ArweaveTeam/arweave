@@ -145,6 +145,13 @@ parse_options([{<<"local_peers">>, Peers} | Rest], Config) when is_list(Peers) -
 parse_options([{<<"local_peers">>, Peers} | _], _) ->
 	{error, {bad_type, local_peers, array}, Peers};
 
+parse_options([{<<"sync_from_local_peers_only">>, true} | Rest], Config) ->
+	parse_options(Rest, Config#config{ sync_from_local_peers_only = true });
+parse_options([{<<"sync_from_local_peers_only">>, false} | Rest], Config) ->
+	parse_options(Rest, Config#config{ sync_from_local_peers_only = false });
+parse_options([{<<"sync_from_local_peers_only">>, Opt} | _], _) ->
+	{error, {bad_type, sync_from_local_peers_only, boolean}, Opt};
+
 parse_options([{<<"start_from_latest_state">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config{ start_from_latest_state = true });
 parse_options([{<<"start_from_latest_state">>, false} | Rest], Config) ->
@@ -291,6 +298,11 @@ parse_options([{<<"disable_replica_2_9_device_limit">>, false} | Rest], Config) 
 	parse_options(Rest, Config);
 parse_options([{<<"disable_replica_2_9_device_limit">>, Opt} | _], _) ->
 	{error, {bad_type, disable_replica_2_9_device_limit, boolean}, Opt};
+
+parse_options([{<<"replica_2_9_entropy_cache_max_entropies">>, N} | Rest], Config) when is_integer(N)->
+	parse_options(Rest, Config#config{ replica_2_9_entropy_cache_max_entropies = N });
+parse_options([{<<"replica_2_9_entropy_cache_max_entropies">>, Opt} | _], _) ->
+	{error, {bad_type, replica_2_9_entropy_cache_max_entropies, number}, Opt};
 
 parse_options([{<<"diff">>, Diff} | Rest], Config) when is_integer(Diff) ->
 	parse_options(Rest, Config#config{ diff = Diff });
