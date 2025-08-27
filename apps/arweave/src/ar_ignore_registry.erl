@@ -69,3 +69,16 @@ member(ID) ->
 permanent_member(ID) ->
 	Entries = ets:lookup(ignored_ids, ID),
 	lists:member({ID, permanent}, Entries).
+
+%% @doc Put a permanent ID record into the registry with data flag.
+add_with_data(ID) ->
+    ets:insert(ignored_ids, {ID, permanent_with_data}).
+
+%% @doc Check if there is a permanent record with data in the registry.
+permanent_member_with_data(ID) ->
+    case ets:lookup(ignored_ids, ID) of
+        [{ID, permanent_with_data}] ->
+            true;
+        _ ->
+            false
+    end.

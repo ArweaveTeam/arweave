@@ -108,7 +108,8 @@ batch_test_() ->
 				test_register(
 					fun test_fallback_to_block_endpoint_if_cannot_send_tx/1, GenesisData),
 				test_register(fun test_get_recent_hash_list_diff/1, GenesisData),
-				test_register(fun test_get_total_supply/1, GenesisData)
+				test_register(fun test_get_total_supply/1, GenesisData),
+				test_register(fun test_import_missing_data_for_existing_tx/1, GenesisData)
 			]}
 		end
 	}.
@@ -1021,6 +1022,55 @@ wait_until_syncs_tx_data(TXID) ->
 		100,
 		10000
 	).
+
+test_import_missing_data_for_existing_tx(_) ->
+    LocalHeight = ar_node:get_height(),
+    % Create a format 2 transaction with data
+    Data = <<"TEST DATA FOR IMPORT">>,
+    DataRoot = (ar_tx:generate_chunk_tree(#tx{ data = Data }))#tx.data_root,
+    TX = #tx{ id = TXID } = (ar_tx:new(Data))#tx{
+        format = 2,
+        data_root = DataRoot,
+        data_size = byte_size(Data)
+    },
+
+    % First, post the transaction without data (simulating gossip)
+    TXWithoutData = TX#tx{ data = <<>> },
+    ar_http_iface_client:send_tx_json(ar_test_node:peer_ip(main), TXWithoutData#tx.id,
+        ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TXWithoutData))),
+    wait_until_receives_txs([TXWithoutData]),
+
+    % Verify the transaction exists but data is missing
+    ?assertMatch(
+        {ok, {{<<"404">>, _}, _, _, _, _}},
+        ar_http:req(#{
+            method => get,
+            peer => ar_test_node:peer_ip(main),
+            path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data"
+        })
+    ),
+
+    % Now post the same transaction with data included
+    ?assertMatch(
+        {ok, {{<<"200">>, _}, _, <<"OK">>, _, _}},
+        ar_http_iface_client:send_tx_json(ar_test_node:peer_ip(main), TX#tx.id,
+            ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)))
+    ),
+
+    % Mine the transaction
+    ar_test_node:mine(),
+    wait_until_height(main, LocalHeight + 1),
+
+    % Verify the data is now available
+    {ok, RetrievedData} = wait_until_syncs_tx_data(TXID),
+    ?assertEqual(ar_util:encode(Data), RetrievedData),
+
+    % Verify posting the same transaction again returns 208
+    ?assertMatch(
+        {ok, {{<<"208">>, _}, _, <<"Transaction already processed.">>, _, _}},
+        ar_http_iface_client:send_tx_json(ar_test_node:peer_ip(main), TX#tx.id,
+            ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX)))
+).
 
 height(Node) ->
 	ar_test_node:remote_call(Node, ar_node, get_height, []).
