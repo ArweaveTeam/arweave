@@ -13,7 +13,8 @@
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
-		is_footprint_record_supported/3]).
+		is_footprint_record_supported/3, get_data_roots_for_offset/1, are_data_roots_synced/3,
+		get_disk_pool_threshold/0]).
 
 -export([add_chunk_to_disk_pool/5]).
 
@@ -746,6 +747,18 @@ is_footprint_record_supported(AbsoluteOffset, ChunkSize, Packing) ->
 	end,
 	IsMatchingPacking andalso (AbsoluteOffset > ar_block:strict_data_split_threshold() orelse ChunkSize == ?DATA_CHUNK_SIZE).
 
+%% @doc Return the disk pool threshold, a byte offset where
+%% the disk pool begins - the data above this offset is considered
+%% to belong to the disk pool. For example, we do not store the
+%% disk pool data in the storage modules due to the risk of orphans.
+get_disk_pool_threshold() ->
+	case ets:lookup(ar_data_sync_state, disk_pool_threshold) of
+		[] ->
+			0;
+		[{_, DiskPoolThreshold}] ->
+			DiskPoolThreshold
+	end.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -876,6 +889,24 @@ init({StoreID, RepackInPlacePacking}) ->
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
 	move_data_root_index(Cursor, N, State),
+	{noreply, State};
+
+handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, Entries}, State) ->
+	#sync_data_state{ store_id = ?DEFAULT_MODULE } = State,
+	DataRootIndexKeySet = sets:from_list([
+		<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>
+		|| {DataRoot, TXSize, _TXStart, _TXPath} <- Entries
+	]),
+	BlockSize = BlockEnd - BlockStart,
+	lists:foreach(
+		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
+			ok = update_data_root_index(DataRoot, TXSize, TXStartOffset, TXPath, ?DEFAULT_MODULE)
+		end,
+		Entries
+	),
+	ok = ar_kv:put({data_root_offset_index, ?DEFAULT_MODULE},
+			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
+			term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})),
 	{noreply, State};
 
 handle_cast(process_store_chunk_queue, State) ->
@@ -1022,7 +1053,6 @@ handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End,
 			disk_pool_threshold = DiskPoolThreshold,
 			sync_phase = SyncPhase,
-			store_id = StoreID,
 			migrations_index = MI } = State,
 	?LOG_DEBUG([{event, collect_peer_intervals_start},
 		{function, collect_peer_intervals},
@@ -1534,9 +1564,9 @@ handle_info({chunk, {unpack_error, Key, ChunkArgs, Error}}, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	case maps:get(Key, PackingMap, not_found) of
 		{unpack_fetched_chunk, Args} ->
-			{Packing, _Chunk, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
+			{Packing, _Chunk1, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
 			{_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot,
-					_Chunk, _ChunkID, _ChunkEndOffset, Peer, _Byte} = Args,
+					_Chunk2, _ChunkID, _ChunkEndOffset, Peer, _Byte} = Args,
 			?LOG_WARNING([{event, got_invalid_packed_chunk},
 					{peer, ar_util:format_peer(Peer)},
 					{absolute_end_offset, AbsoluteEndOffset},
@@ -3957,6 +3987,65 @@ record_chunk_cache_size_metric() ->
 			prometheus_gauge:set(chunk_cache_size, Size);
 		_ ->
 			ok
+	end.
+
+%% @doc Get data roots for a given offset (>= BlockStartOffset, < BlockEndOffset) from local indices.
+%% Return only entries corresponding to non-empty transactions.
+%% Return the complete list of entries in the order they appear in the data root index,
+%% which corresponds to sorted #tx records in the block.
+%% Return {ok, {TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath}, ...]}}
+%% or {error, Reason}.
+get_data_roots_for_offset(Offset) ->
+	{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Offset),
+	true = Offset >= BlockStart andalso Offset < BlockEnd,
+	StoreID = ?DEFAULT_MODULE,
+	DB = {data_root_offset_index, StoreID},
+	case ar_kv:get(DB, << BlockStart:?OFFSET_KEY_BITSIZE >>) of
+		not_found ->
+			{error, not_found};
+		{ok, Bin} ->
+			{TXRoot2, BlockSize, DataRootIndexKeySet} = binary_to_term(Bin),
+			true = TXRoot2 == TXRoot,
+			{ok, {TXRoot, BlockSize, lists:sort(
+				fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1}, {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
+					TXStart1 < TXStart2
+				end,
+				sets:fold(
+					fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
+						read_data_root_entries(DataRoot, TXSize, BlockEnd, StoreID, Acc)
+					end,
+				[],
+				DataRootIndexKeySet
+			))}}
+	end.
+
+%% @doc Return true if the data roots for the given block range are synced, false otherwise.
+%% Assert the given BlockEnd and TXRoot match the stored values.
+are_data_roots_synced(BlockStart, BlockEnd, TXRoot) ->
+	DB = {data_root_offset_index, ?DEFAULT_MODULE},
+	case ar_kv:get(DB, << BlockStart:?OFFSET_KEY_BITSIZE >>) of
+		not_found ->
+			false;
+		{ok, Bin} ->
+			{TXRoot2, BlockSize, _DataRootIndexKeySet} = binary_to_term(Bin),
+			true = TXRoot2 == TXRoot,
+			true = BlockSize == BlockEnd - BlockStart,
+			true
+	end.
+
+read_data_root_entries(_DataRoot, _TXSize, 0, _StoreID, Acc) ->
+	Acc;
+read_data_root_entries(DataRoot, TXSize, Cursor, StoreID, Acc) ->
+	Key = data_root_key_v2(DataRoot, TXSize, Cursor - 1),
+	case ar_kv:get_prev({data_root_index, StoreID}, Key) of
+		{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
+				TXStartSize:8, TXStart:(TXStartSize * 8) >>, TXPath} ->
+			[{DataRoot, TXSize, TXStart, TXPath}
+				| read_data_root_entries(DataRoot, TXSize, TXStart, StoreID, Acc)];
+		{ok, _, _} ->
+			Acc;
+		none ->
+			Acc
 	end.
 
 maybe_run_footprint_record_initialization(State) ->

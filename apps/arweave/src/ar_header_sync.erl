@@ -73,11 +73,11 @@ init([]) ->
 		end,
 	lists:foreach(
 		fun(_) ->
-			gen_server:cast(?MODULE, process_item)
+			gen_server:cast(self(), process_item)
 		end,
 		lists:seq(1, Config#config.header_sync_jobs)
 	),
-	gen_server:cast(?MODULE, store_sync_state),
+	gen_server:cast(self(), store_sync_state),
 	ets:insert(?MODULE, {synced_blocks, ar_intervals:sum(SyncRecord)}),
 	{ok,
 		#state{
@@ -98,39 +98,45 @@ handle_cast({join, Height, RecentBI, Blocks}, State) ->
 			block_index = RecentBI
 		 },
 	StartHeight = PrevHeight - length(CurrentBI) + 1,
-	State3 =
+	{Status, State4} =
 		case {CurrentBI, ar_block_index:get_intersection(StartHeight, CurrentBI)} of
 			{[], _} ->
-				State2;
+				{ok, State2};
 			{_, no_intersection} ->
 				io:format("~nWARNING: the stored block index of the header syncing module "
 						"has no intersection with the "
 						"new one in the most recent blocks. If you have just started a new "
 						"weave using the init option, restart from the local state "
 						"or specify some peers.~n~n"),
-					init:stop(1);
+					init:stop(1),
+					{error, State2};
 			{_, {IntersectionHeight, _}} ->
-				S = State2#state{
+				State3 = State2#state{
 						sync_record = ar_intervals:cut(SyncRecord, IntersectionHeight),
 						retry_record = ar_intervals:cut(RetryRecord, IntersectionHeight) },
-				ok = store_sync_state(S),
+				ok = store_sync_state(State3),
 				%% Delete from the kv store only after the sync record is saved - no matter
 				%% what happens to the process, if a height is in the record, it must be
 				%% present in the kv store.
 				ok = ar_kv:delete_range(?MODULE, << (IntersectionHeight + 1):256 >>,
 						<< (PrevHeight + 1):256 >>),
-				S
+				{ok, State3}
 		end,
-	State4 =
-		lists:foldl(
-			fun(B, S) ->
-				element(2, add_block(B, S))
-			end,
-			State3,
-			Blocks
-		),
-	ok = store_sync_state(State4),
-	{noreply, State4};
+	case Status of
+		error ->
+			{noreply, State4};
+		ok ->
+			State5 =
+				lists:foldl(
+					fun(B, Acc) ->
+						element(2, add_block(B, Acc))
+					end,
+					State4,
+					Blocks
+				),
+			ok = store_sync_state(State5),
+			{noreply, State5}
+	end;
 
 handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 	#state{ sync_record = SyncRecord, retry_record = RetryRecord,
@@ -159,15 +165,15 @@ handle_cast({add_tip_block, #block{ height = Height } = B, RecentBI}, State) ->
 
 handle_cast({add_historical_block, _, _, _, _, _},
 		#state{ is_disk_space_sufficient = false } = State) ->
-	gen_server:cast(?MODULE, process_item),
+	gen_server:cast(self(), process_item),
 	{noreply, State};
 handle_cast({add_historical_block, B, H, H2, TXRoot, Backoff}, State) ->
 	case add_block(B, State) of
 		{ok, State2} ->
-			gen_server:cast(?MODULE, process_item),
+			gen_server:cast(self(), process_item),
 			{noreply, State2};
 		{_Error, State2} ->
-			gen_server:cast(?MODULE, {failed_to_get_block, H, H2, TXRoot, B#block.height,
+			gen_server:cast(self(), {failed_to_get_block, H, H2, TXRoot, B#block.height,
 					Backoff}),
 			{noreply, State2}
 	end;
@@ -176,7 +182,7 @@ handle_cast({add_block, B}, State) ->
 	{noreply, element(2, add_block(B, State))};
 
 handle_cast(process_item, #state{ is_disk_space_sufficient = false } = State) ->
-	ar_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, ?MODULE, process_item),
+	ar_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, self(), process_item),
 	{noreply, State};
 handle_cast(process_item, #state{ retry_queue = Queue, retry_record = RetryRecord } = State) ->
 	prometheus_gauge:set(downloader_queue_size, queue:len(Queue)),
@@ -214,7 +220,7 @@ handle_cast({failed_to_get_block, H, H2, TXRoot, Height, Backoff},
 		#state{ retry_queue = Queue } = State) ->
 	Backoff2 = update_backoff(Backoff),
 	Queue2 = enqueue({block, {H, H2, TXRoot, Height}}, Backoff2, Queue),
-	gen_server:cast(?MODULE, process_item),
+	gen_server:cast(self(), process_item),
 	{noreply, State#state{ retry_queue = Queue2 }};
 
 handle_cast({remove_tx, TXID}, State) ->
@@ -228,7 +234,7 @@ handle_cast({remove_block, Height}, State) ->
 	{noreply, State#state{ sync_record = ar_intervals:delete(Record, Height, Height - 1) }};
 
 handle_cast(store_sync_state, State) ->
-	ar_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, ?MODULE, store_sync_state),
+	ar_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, self(), store_sync_state),
 	case store_sync_state(State) of
 		ok ->
 			{noreply, State};
@@ -321,7 +327,7 @@ handle_info({'DOWN', _,  process, _, noproc}, State) ->
 handle_info({'DOWN', _,  process, _, Reason}, State) ->
 	?LOG_WARNING([{event, header_sync_job_failed}, {reason, io_lib:format("~p", [Reason])},
 			{action, spawning_another_one}]),
-	gen_server:cast(?MODULE, process_item),
+	gen_server:cast(self(), process_item),
 	{noreply, State};
 
 handle_info({_Ref, _Atom}, State) ->
@@ -427,27 +433,28 @@ process_item(Queue) ->
 	Now = os:system_time(second),
 	case queue:out(Queue) of
 		{empty, _Queue} ->
-			ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE, process_item),
+			ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, self(), process_item),
 			Queue;
 		{{value, {Item, {BackoffTimestamp, _} = Backoff}}, Queue2}
 				when BackoffTimestamp > Now ->
-			ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, ?MODULE, process_item),
+			ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, self(), process_item),
 			enqueue(Item, Backoff, Queue2);
 		{{value, {{block, {H, H2, TXRoot, Height}}, Backoff}}, Queue2} ->
 			case check_fork(Height, H, TXRoot) of
 				false ->
 					ok;
 				true ->
+					Parent = self(),
 					monitor(process, spawn(
 						fun() ->
 							%% Trap exit to avoid corrupting any open files on quit..
 							process_flag(trap_exit, true),
 							case download_block(H, H2, TXRoot) of
 								{error, _Reason} ->
-									gen_server:cast(?MODULE, {failed_to_get_block, H, H2,
+									gen_server:cast(Parent, {failed_to_get_block, H, H2,
 											TXRoot, Height, Backoff});
 								{ok, B} ->
-									gen_server:cast(?MODULE, {add_historical_block, B, H, H2,
+									gen_server:cast(Parent, {add_historical_block, B, H, H2,
 											TXRoot, Backoff})
 							end
 						end
