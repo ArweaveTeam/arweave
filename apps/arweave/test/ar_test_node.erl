@@ -19,7 +19,8 @@
 		stop/0, stop/1, start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1,
 		stop_peers/1, stop_peer/1, connect_peers/2, connect_to_peer/1,
 		disconnect_peers/2, disconnect_from/1,
-		join/2, join_on/1, rejoin_on/1,
+		join/2, join/3, join_on/1, join_on/2, rejoin_on/1,
+		generate_join_config/0, generate_join_config/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
 
 		mine/0, get_tx_anchor/1, get_tx_confirmations/2, get_tx_price/2, get_tx_price/3,
@@ -40,8 +41,9 @@
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_consensus.hrl").
+
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -855,31 +857,43 @@ stop() ->
 stop(Node) ->
 	remote_call(Node, ar_test_node, stop, []).
 
-rejoin_on(#{ node := Node, join_on := JoinOnNode }) ->
-	join_on(#{ node => Node, join_on => JoinOnNode }, true).
+rejoin_on(#{ node := Node, join_on := JoinOnNode } = Options) ->
+	Config = maps:get(config, Options, generate_join_config(Node)),
+	join_on(#{ node => Node, join_on => JoinOnNode, config => Config }, true).
 
-join_on(#{ node := Node, join_on := JoinOnNode }) ->
-	join_on(#{ node => Node, join_on => JoinOnNode }, false).
+generate_join_config(Node) ->
+	remote_call(Node, ar_test_node, generate_join_config, []).
 
-join_on(#{ node := Node, join_on := JoinOnNode }, Rejoin) ->
-	remote_call(Node, ar_test_node, join, [JoinOnNode, Rejoin], ?REMOTE_CALL_TIMEOUT).
+generate_join_config() ->
+	{ok, Config} = arweave_config:get_env(),
+	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	StorageModules = [{ar_block:partition_size(), N,
+			get_default_storage_module_packing(RewardAddr, N)} || N <- lists:seq(0, 4)],
+	Config#config{
+		mining_addr = RewardAddr,
+		storage_modules = StorageModules
+	}.
+
+join_on(Params) ->
+	join_on(Params, false).
+
+join_on(#{ node := Node, join_on := JoinOnNode } = Params, Rejoin) ->
+	Config = maps:get(config, Params, generate_join_config(Node)),
+	remote_call(Node, ar_test_node, join, [JoinOnNode, Rejoin, Config], ?REMOTE_CALL_TIMEOUT).
 
 join(JoinOnNode, Rejoin) ->
+	join(JoinOnNode, Rejoin, generate_join_config()).
+
+join(JoinOnNode, Rejoin, Config) ->
 	Peer = peer_ip(JoinOnNode),
-	{ok, Config} = arweave_config:get_env(),
 	case Rejoin of
 		true ->
 			stop();
 		false ->
 			clean_up_and_stop()
 	end,
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	StorageModules = [{ar_block:partition_size(), N,
-			get_default_storage_module_packing(RewardAddr, N)} || N <- lists:seq(0, 4)],
 	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = false,
-		mining_addr = RewardAddr,
-		storage_modules = StorageModules,
 		auto_join = true,
 		peers = [Peer]
 	}),
