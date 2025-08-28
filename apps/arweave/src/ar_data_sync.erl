@@ -13,7 +13,7 @@
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
-		is_footprint_record_supported/3]).
+		is_footprint_record_supported/3, get_data_roots_for_offset/1]).
 
 -export([add_chunk_to_disk_pool/5]).
 
@@ -1521,9 +1521,9 @@ handle_info({chunk, {unpack_error, Key, ChunkArgs, Error}}, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	case maps:get(Key, PackingMap, not_found) of
 		{unpack_fetched_chunk, Args} ->
-			{Packing, _Chunk, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
+			{Packing, _Chunk1, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
 			{_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot,
-					_Chunk, _ChunkID, _ChunkEndOffset, Peer, _Byte} = Args,
+					_Chunk2, _ChunkID, _ChunkEndOffset, Peer, _Byte} = Args,
 			?LOG_WARNING([{event, got_invalid_packed_chunk},
 					{peer, ar_util:format_peer(Peer)},
 					{absolute_end_offset, AbsoluteEndOffset},
@@ -3917,6 +3917,38 @@ record_chunk_cache_size_metric() ->
 		_ ->
 			ok
 	end.
+
+%% @doc Get data roots for a given offset (>= BlockStartOffset, < BlockEndOffset) from local indices.
+%% Returns {ok, {TXRoot, BlockSize, Entries}} or {error, Reason}.
+get_data_roots_for_offset(Offset) ->
+	{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Offset),
+	true = Offset >= BlockStart andalso Offset < BlockEnd,
+	StoreID = ?DEFAULT_MODULE,
+	DB = {data_root_offset_index, StoreID},
+	case ar_kv:get(DB, << BlockStart:?OFFSET_KEY_BITSIZE >>) of
+		not_found ->
+			{error, not_found};
+		{ok, Bin} ->
+			{TXRoot2, BlockSize, DataRootIndexKeySet} = binary_to_term(Bin),
+			true = TXRoot2 == TXRoot,
+			Entries = sets:fold(
+				fun
+					({error, _} = Err, _Acc) ->
+						Err;
+					(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = Key, Acc) ->
+						case ar_kv:get({data_root_index, StoreID}, Key) of
+							{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
+									TXStartSize:8, TXStart:(TXStartSize * 8) >>, TXPath} ->
+								[{DataRoot, TXSize, TXStart, TXPath} | Acc];
+							_Err ->
+								{error, data_root_entry_not_found}
+						end
+				end,
+				[],
+				DataRootIndexKeySet
+			),
+			{ok, {TXRoot, BlockSize, lists:reverse(Entries)}}
+		end.
 
 may_be_run_footprint_record_initialization(State) ->
 	#sync_data_state{ store_id = StoreID } = State,
