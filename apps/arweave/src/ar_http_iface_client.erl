@@ -20,7 +20,7 @@
 	get_cm_partition_table/1, cm_h1_send/2, cm_h2_send/2,
 	cm_publish_send/2, get_jobs/2, post_partial_solution/2,
 	get_pool_cm_jobs/2, post_pool_cm_jobs/2,
-	post_cm_partition_table_to_pool/2]).
+	post_cm_partition_table_to_pool/2, get_data_roots/2]).
 -export([get_block_shadow/2, get_block_shadow/3, get_block_shadow/4]).
 -export([log_failed_request/2]).
 
@@ -778,6 +778,116 @@ post_cm_partition_table_to_pool(Peer, Payload) ->
 		connect_timeout => 2000
 	})).
 
+%% @doc Fetch data_root metadata for the block that starts at or before the given offset,
+%% and validate it against the local block index. Also recompute the TXRoot from entries.
+get_data_roots(Peer, Offset) ->
+	Path = "/data_roots/" ++ integer_to_list(Offset),
+	Response = ar_http:req(#{
+			peer => Peer,
+			method => get,
+			path => Path,
+			timeout => 10 * 1000,
+			connect_timeout => 2000,
+			headers => p2p_headers()
+		}),
+	handle_get_data_roots_response(Response, Offset).
+
+handle_get_data_roots_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Offset) ->
+	case ar_serialize:binary_to_data_roots(Body) of
+		{ok, {TXRoot, BlockSize, Entries}} ->
+			handle_get_data_root_response(TXRoot, BlockSize, Entries, Offset);
+		_ ->
+			{error, invalid_response}
+	end;
+handle_get_data_roots_response({ok, {{<<"404">>, _}, _, _, _, _}}, _Offset) ->
+	{error, not_found};
+handle_get_data_roots_response(Other, _Offset) ->
+	{error, Other}.
+
+handle_get_data_root_response(TXRoot, BlockSize, Entries, Offset) ->
+	{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
+	CheckBlockBounds =
+		case Offset >= BlockStart andalso Offset < BlockEnd of
+			false ->
+				{error, invalid_block_bounds};
+			true ->
+				ok
+		end,
+	CheckBlockSize =
+		case CheckBlockBounds of
+			ok ->
+				case BlockSize == BlockEnd - BlockStart of
+					false ->
+						{error, invalid_block_size};
+					true ->
+						ok
+				end;
+			Error ->
+				Error
+		end,
+	PrepareDataRootPairs =
+		case CheckBlockSize of
+			ok ->
+				prepare_data_root_pairs(Entries, BlockStart);
+			Error2 ->
+				Error2
+		end,
+	ValidateTXRoot =
+		case PrepareDataRootPairs of
+			{ok, Triplets} ->
+				Pairs = [{DR, L} || {DR, L, _TXPath} <- Triplets],
+				{RecomputedTXRoot, Tree} = ar_merkle:generate_tree(Pairs),
+				case RecomputedTXRoot == TXRoot andalso TXRoot == ExpectedTXRoot of
+					false ->
+						{error, invalid_tx_root};
+					true ->
+						{ok, {Triplets, Tree}}
+				end
+			end,
+	case ValidateTXRoot of
+		{ok, {Triplets2, Tree2}} ->
+			verify_tx_paths(Triplets2, TXRoot, Tree2);
+		Error3 ->
+			Error3
+	end.
+
+prepare_data_root_pairs(Entries, BlockStart) ->
+	lists:foldl(
+		fun
+			({DataRoot, TXSize, TXStartOffset, TXPath}, {ok, Acc}) ->
+				Label = TXStartOffset + TXSize - BlockStart,
+				case Label >= 0 of
+					true ->
+						{ok, [{DataRoot, Label, TXPath} | Acc]};
+					false ->
+						{error, invalid_entry_merkle_label}
+				end;
+			(_, {error, _} = Error) ->
+				Error
+		end,
+		{ok, []},
+		Entries
+	).
+
+verify_tx_paths(Triplets, TXRoot, Tree) ->
+	lists:foldl(
+		fun
+			({_, Label, TXPath}, ok) ->
+				RelEndIndex = Label - 1,
+				GeneratedPath = ar_merkle:generate_path(TXRoot, RelEndIndex, Tree),
+				case GeneratedPath == TXPath of
+					true ->
+						ok;
+					false ->
+						{error, invalid_tx_path}
+				end;
+			(_, {error, _} = Error) ->
+				Error
+		end,
+		ok,
+		Triplets
+	).
+
 get_peer_and_path_from_url(URL) ->
 	#{ host := Host, path := P } = Parsed = uri_string:parse(URL),
 	Peer = case maps:get(port, Parsed, undefined) of
@@ -860,7 +970,7 @@ handle_get_jobs_response(Reply) ->
 
 handle_sync_record_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 	ar_intervals:safe_from_etf(Body);
-handle_sync_record_response({ok, {{<<"429">>, _}, _, _, _, _}} = Reply) ->
+handle_sync_record_response({ok, {{<<"429">>, _}, _, _, _, _}}) ->
 	{error, too_many_requests};
 handle_sync_record_response(Reply) ->
 	{error, Reply}.
