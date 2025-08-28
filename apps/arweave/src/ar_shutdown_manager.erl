@@ -15,7 +15,7 @@
 %%%
 %%% When arweave application is stopped, this application should
 %%% receive `shutdown' due to trap exist. In this situation, terminate
-%%% functon is then called.
+%%% function is then called.
 %%%
 %%% @end
 %%%===================================================================
