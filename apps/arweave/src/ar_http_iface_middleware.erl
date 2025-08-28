@@ -564,6 +564,33 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 			end
 	end;
 
+%% Return data root metadata for the block containing the offset, >= BlockStartOffset, < BlockEndOffset.
+%% Return only entries corresponding to non-empty transactions.
+%% Return the complete list of entries in the order they appear in the data root index,
+%% which corresponds to sorted #tx records in the block.
+%% GET /data_roots/{offset}
+handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
+			case catch binary_to_integer(OffsetBin) of
+				{'EXIT', _} ->
+					{400, #{}, <<>>, Req};
+				Offset ->
+					case ar_data_sync:get_data_roots_for_offset(Offset) of
+						{ok, {TXRoot, BlockSize, Entries}} ->
+							Payload = ar_serialize:data_roots_to_binary({TXRoot, BlockSize, Entries}),
+							{200, #{}, Payload, Req};
+						{error, not_found} ->
+							{404, #{}, jiffy:encode(#{ error => not_found }), Req};
+						_ ->
+							{500, #{}, <<>>, Req}
+					end
+			end
+	end;
+
 handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 	Joined =
 		case ar_node:is_joined() of

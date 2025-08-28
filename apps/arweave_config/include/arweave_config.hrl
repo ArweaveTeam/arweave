@@ -73,6 +73,7 @@
 -define(MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS, 10).
 -define(MAX_PARALLEL_REWARD_HISTORY_REQUESTS, 1).
 -define(MAX_PARALLEL_GET_TX_REQUESTS, 20).
+-define(MAX_PARALLEL_GET_DATA_ROOTS_REQUESTS, 1).
 
 %% The number of parallel tx validation processes.
 -define(MAX_PARALLEL_POST_TX_REQUESTS, 20).
@@ -241,7 +242,8 @@
 		get_sync_record => ?MAX_PARALLEL_GET_SYNC_RECORD_REQUESTS,
 		post_tx => ?MAX_PARALLEL_POST_TX_REQUESTS,
 		get_reward_history => ?MAX_PARALLEL_REWARD_HISTORY_REQUESTS,
-		get_tx => ?MAX_PARALLEL_GET_TX_REQUESTS
+		get_tx => ?MAX_PARALLEL_GET_TX_REQUESTS,
+		get_data_roots => ?MAX_PARALLEL_GET_DATA_ROOTS_REQUESTS
 	},
 	disk_cache_size = ?DISK_CACHE_SIZE,
 	max_nonce_limiter_validation_thread_count
