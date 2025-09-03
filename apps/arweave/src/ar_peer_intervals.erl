@@ -40,6 +40,10 @@
 %% GET /data_sync_record/[start]/[end]/[limit] endpoint.
 -define(GET_SYNC_RECORD_RIGHT_BOUND_SUPPORT_RELEASE, 83).
 
+%% The number of the release adding support for the
+%% GET /footprints/[partition]/[footprint] endpoint.
+-define(GET_FOOTPRINT_RECORD_SUPPORT_RELEASE, 87).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -394,7 +398,15 @@ maybe_get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) 
 	end.
 
 get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
-	PeerReply = ar_http_iface_client:get_footprints(Peer, Partition, Footprint),
+	PeerReply =
+		case ar_peers:get_peer_release(Peer) >= ?GET_FOOTPRINT_RECORD_SUPPORT_RELEASE of
+			true ->
+				ar_http_iface_client:get_footprints(Peer, Partition, Footprint);
+			false ->
+				%% We expect to get here only if the peer is upgraded and then downgraded again,
+				%% because we check the peer release at the bucket collection stage.
+				not_found
+		end,
 	case PeerReply of
 		{ok, {{replica_2_9, _Addr}, Intervals}} ->
 			{ok, ar_intervals:intersection(Intervals, SoughtIntervals)};
@@ -518,7 +530,8 @@ create_test_mocks(Peers) ->
 			Intervals = ar_footprint_record:get_intervals(Partition, Footprint, Peer),
 			{ok, {{replica_2_9, crypto:strong_rand_bytes(32)}, Intervals}}
 		end},
-		{ar_data_sync, name, fun(_StoreID) -> self() end}
+		{ar_data_sync, name, fun(_StoreID) -> self() end},
+		{ar_peers, get_peer_release, fun(_Peer) -> 87 end}
 	].
 
 verify_enqueued_intervals(EnqueueIntervals, ExpectedIntervals, Title) ->
