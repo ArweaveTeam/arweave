@@ -1,6 +1,6 @@
 -module(ar_peer_intervals).
 
--export([fetch/4]).
+-export([fetch/4, do_fetch/4]).
 
 -include("ar.hrl").
 -include("ar_config.hrl").
@@ -58,61 +58,9 @@ fetch(Start, End, StoreID, normal) when Start >= End ->
 fetch(Start, End, StoreID, normal) ->
 	Parent = ar_data_sync:name(StoreID),
 	spawn_link(fun() ->
-		try
-			End2 = min(Start + ?QUERY_RANGE_STEP_SIZE, End),
-			UnsyncedIntervals = get_unsynced_intervals(Start, End2, StoreID),
-
-			Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
-			{ok, Config} = application:get_env(arweave, config),
-			AllPeers =
-				case Config#config.sync_from_local_peers_only of
-					true ->
-						Config#config.local_peers;
-					false ->
-						ar_data_discovery:get_bucket_peers(Bucket)
-				end,
-			HotPeers = [
-				Peer || Peer <- AllPeers,
-				not ar_rate_limiter:is_on_cooldown(Peer, ?GET_SYNC_RECORD_RPM_KEY) andalso
-				not ar_rate_limiter:is_throttled(Peer, ?GET_SYNC_RECORD_PATH)
-			],
-			Peers = ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT),
-
-			case length(Peers) < ?QUERY_BEST_PEERS_COUNT of
-				true ->
-					RemovedPeers = AllPeers -- HotPeers,
-					?LOG_DEBUG([{event, weak_peer_selection},
-						{function, fetch_peer_intervals}, {parent, Parent}, {bucket, Bucket},
-						{removed_count, length(RemovedPeers)},
-						{removed_peers, print_peers(RemovedPeers)},
-						{num_peers, length(Peers)},
-						{peers, print_peers(Peers)}]);
-				false ->
-					ok
-			end,
-
-			End3 =
-				case ar_intervals:is_empty(UnsyncedIntervals) of
-					true ->
-						End2;
-					false ->
-						min(End2, fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals))
-				end,
-			%% Schedule the next sync bucket. The cast handler logic will pause collection
-			%% if needed.
-			gen_server:cast(Parent, {collect_peer_intervals, End3, End, normal})
-		catch
-			Class:Reason:Stacktrace ->
-				?LOG_WARNING([{event, fetch_peers_process_exit},
-						{store_id, StoreID},
-						{range_start, Start},
-						{range_end, End},
-						{type, normal},
-						{class, Class},
-						{reason, Reason},
-						{stacktrace, Stacktrace}]),
-				gen_server:cast(Parent, {collect_peer_intervals, Start, End, normal})
-		end
+		{End2, EnqueueIntervals} = do_fetch(Start, End, StoreID, normal),
+		gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals}),
+		gen_server:cast(Parent, {collect_peer_intervals, End2, End, normal})
 	end);
 
 fetch(Start, End, StoreID, footprint) when Start >= End ->
@@ -125,79 +73,145 @@ fetch(Start, End, StoreID, footprint) when Start >= End ->
 fetch(Start, End, StoreID, footprint) ->
 	Parent = ar_data_sync:name(StoreID),
 	spawn_link(fun() ->
-		try
-			Partition = ar_replica_2_9:get_entropy_partition(Start + ?DATA_CHUNK_SIZE),
-			Footprint = ar_footprint_record:get_footprint(Start + ?DATA_CHUNK_SIZE),
+		{End2, EnqueueIntervals} = do_fetch(Start, End, StoreID, footprint),
+		gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals}),
+		gen_server:cast(Parent, {collect_peer_intervals, End2, End, footprint})
+	end).
 
-			FootprintBucket = ar_footprint_record:get_footprint_bucket(Start + ?DATA_CHUNK_SIZE),
-			{ok, Config} = application:get_env(arweave, config),
-			AllPeers =
-				case Config#config.sync_from_local_peers_only of
-					true ->
-						Config#config.local_peers;
-					false ->
-						ar_data_discovery:get_footprint_bucket_peers(FootprintBucket)
-				end,
-			HotPeers = [
-				Peer || Peer <- AllPeers,
-				not ar_rate_limiter:is_on_cooldown(Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY) andalso
-				not ar_rate_limiter:is_throttled(Peer, ?GET_FOOTPRINT_RECORD_PATH)
-			],
-			Peers = ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT),
+do_fetch(Start, End, StoreID, normal) ->
+	Parent = ar_data_sync:name(StoreID),
+	try
+		End2 = min(Start + ?QUERY_RANGE_STEP_SIZE, End),
+		UnsyncedIntervals = get_unsynced_intervals(Start, End2, StoreID),
 
-			case length(Peers) < ?QUERY_BEST_PEERS_COUNT of
+		Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
+		{ok, Config} = application:get_env(arweave, config),
+		AllPeers =
+			case Config#config.sync_from_local_peers_only of
 				true ->
-					RemovedPeers = AllPeers -- HotPeers,
-					?LOG_DEBUG([{event, weak_peer_selection},
-						{function, fetch_peer_footprint_intervals}, {parent, Parent}, {bucket, FootprintBucket},
-						{removed_count, length(RemovedPeers)},
-						{removed_peers, print_peers(RemovedPeers)},
-						{num_peers, length(Peers)},
-						{peers, print_peers(Peers)}]);
+					Config#config.local_peers;
 				false ->
-					ok
+					ar_data_discovery:get_bucket_peers(Bucket)
 			end,
+		HotPeers = [
+			Peer || Peer <- AllPeers,
+			not ar_rate_limiter:is_on_cooldown(Peer, ?GET_SYNC_RECORD_RPM_KEY) andalso
+			not ar_rate_limiter:is_throttled(Peer, ?GET_SYNC_RECORD_PATH)
+		],
+		Peers = ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT),
 
-			UnsyncedIntervals = ar_footprint_record:get_unsynced_intervals(Partition, Footprint, StoreID),
+		case length(Peers) < ?QUERY_BEST_PEERS_COUNT of
+			true ->
+				RemovedPeers = AllPeers -- HotPeers,
+				?LOG_DEBUG([{event, weak_peer_selection},
+					{function, fetch_peer_intervals}, {parent, Parent}, {bucket, Bucket},
+					{removed_count, length(RemovedPeers)},
+					{removed_peers, print_peers(RemovedPeers)},
+					{num_peers, length(Peers)},
+					{peers, print_peers(Peers)}]);
+			false ->
+				ok
+		end,
 
+		{End4, EnqueueIntervals} =
 			case ar_intervals:is_empty(UnsyncedIntervals) of
 				true ->
-					ok;
+					{End2, []};
+				false ->
+					{End3, EnqueueIntervals2} = fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals),
+					{min(End2, End3), EnqueueIntervals2}
+			end,
+		%% Schedule the next sync bucket. The cast handler logic will pause collection
+		%% if needed.
+		{End4, EnqueueIntervals}
+	catch
+		Class:Reason:Stacktrace ->
+			?LOG_WARNING([{event, fetch_peers_process_exit},
+					{store_id, StoreID},
+					{range_start, Start},
+					{range_end, End},
+					{type, normal},
+					{class, Class},
+					{reason, Reason},
+					{stacktrace, Stacktrace}]),
+			{Start, []}
+	end;
+
+do_fetch(Start, End, StoreID, footprint) ->
+	Parent = ar_data_sync:name(StoreID),
+	try
+		Partition = ar_replica_2_9:get_entropy_partition(Start + ?DATA_CHUNK_SIZE),
+		Footprint = ar_footprint_record:get_footprint(Start + ?DATA_CHUNK_SIZE),
+
+		FootprintBucket = ar_footprint_record:get_footprint_bucket(Start + ?DATA_CHUNK_SIZE),
+		{ok, Config} = application:get_env(arweave, config),
+		AllPeers =
+			case Config#config.sync_from_local_peers_only of
+				true ->
+					Config#config.local_peers;
+				false ->
+					ar_data_discovery:get_footprint_bucket_peers(FootprintBucket)
+			end,
+		HotPeers = [
+			Peer || Peer <- AllPeers,
+			not ar_rate_limiter:is_on_cooldown(Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY) andalso
+			not ar_rate_limiter:is_throttled(Peer, ?GET_FOOTPRINT_RECORD_PATH)
+		],
+		Peers = ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT),
+
+		case length(Peers) < ?QUERY_BEST_PEERS_COUNT of
+			true ->
+				RemovedPeers = AllPeers -- HotPeers,
+				?LOG_DEBUG([{event, weak_peer_selection},
+					{function, fetch_peer_footprint_intervals}, {parent, Parent}, {bucket, FootprintBucket},
+					{removed_count, length(RemovedPeers)},
+					{removed_peers, print_peers(RemovedPeers)},
+					{num_peers, length(Peers)},
+					{peers, print_peers(Peers)}]);
+			false ->
+				ok
+		end,
+
+		UnsyncedIntervals = ar_footprint_record:get_unsynced_intervals(Partition, Footprint, StoreID),
+
+		EnqueueIntervals =
+			case ar_intervals:is_empty(UnsyncedIntervals) of
+				true ->
+					[];
 				false ->
 					fetch_peer_footprint_intervals(Parent, Partition, Footprint, Peers, UnsyncedIntervals)
 			end,
-			EntropyIndex = ar_replica_2_9:get_entropy_index(Start + ?DATA_CHUNK_SIZE, 0),
-			NextEntropyIndex = ar_replica_2_9:get_entropy_index(Start + ?DATA_CHUNK_SIZE * 2, 0),
-			Start2 =
-				case NextEntropyIndex > EntropyIndex of
-					true ->
-						Start + ?DATA_CHUNK_SIZE;
-					false ->
-						Partition = ar_replica_2_9:get_entropy_partition(Start + ?DATA_CHUNK_SIZE),
-						(Partition + 1) * ?PARTITION_SIZE
-				end,
-			Start3 =
-				case Start2 > Start of
-					true ->
-						Start2;
-					false ->
-						min(Start + ?DATA_CHUNK_SIZE, End)
-				end,
-			%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
-			gen_server:cast(Parent, {collect_peer_intervals, Start3, End, footprint})
-		catch
-			Class:Reason:Stacktrace ->
-				?LOG_WARNING([{event, fetch_footprint_intervals_process_exit},
-						{store_id, StoreID},
-						{range_start, Start},
-						{range_end, End},
-						{type, footprint},
-						{class, Class},
-						{reason, Reason},
-						{stacktrace, Stacktrace}]),
-				gen_server:cast(Parent, {collect_peer_intervals, Start, End, footprint})
-		end
-	end).
+		EntropyIndex = ar_replica_2_9:get_entropy_index(Start + ?DATA_CHUNK_SIZE, 0),
+		NextEntropyIndex = ar_replica_2_9:get_entropy_index(Start + ?DATA_CHUNK_SIZE * 2, 0),
+		Start2 =
+			case NextEntropyIndex > EntropyIndex of
+				true ->
+					Start + ?DATA_CHUNK_SIZE;
+				false ->
+					Partition = ar_replica_2_9:get_entropy_partition(Start + ?DATA_CHUNK_SIZE),
+					(Partition + 1) * ?PARTITION_SIZE
+			end,
+		Start3 =
+			case Start2 > Start of
+				true ->
+					Start2;
+				false ->
+					min(Start + ?DATA_CHUNK_SIZE, End)
+			end,
+		%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
+		{Start3, EnqueueIntervals}
+	catch
+		Class:Reason:Stacktrace ->
+			?LOG_WARNING([{event, fetch_footprint_intervals_process_exit},
+					{store_id, StoreID},
+					{range_start, Start},
+					{range_end, End},
+					{type, footprint},
+					{class, Class},
+					{reason, Reason},
+					{stacktrace, Stacktrace}]),
+			{Start, []}
+	end.
 
 %%%===================================================================
 %%% Private functions.
@@ -283,8 +297,7 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals) ->
 			{[], infinity},
 			Intervals
 		),
-	gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals}),
-	MinRightBound.
+	{MinRightBound, EnqueueIntervals}.
 
 %% @doc
 %% @return {ok, Intervals, PeerRightBound} | Error
@@ -387,7 +400,7 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Peers, UnsyncedInte
 			[],
 			Intervals
 		),
-	gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals}).
+	EnqueueIntervals.
 
 maybe_get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 	case ar_rate_limiter:is_on_cooldown(Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY) of
