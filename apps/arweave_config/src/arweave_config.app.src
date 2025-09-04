@@ -1,0 +1,10 @@
+{application, arweave_config, [
+	{description, "Arweave Configuration"},
+	{vsn, "0.0.1"},
+	{mod, {arweave_config, []}},
+	{applications, [
+		kernel,
+		stdlib,
+		sasl
+	]}
+]}.
