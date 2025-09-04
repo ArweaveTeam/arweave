@@ -5,6 +5,8 @@
 -behavior(arweave_config_spec).
 -compile(export_all).
 
+type() -> {ok, boolean}.
+
 default() -> {ok, false}.
 
 required() -> {ok, false}.
@@ -32,7 +34,10 @@ long_argument() -> {ok, [debug]}.
 
 elements() -> {ok, 0}.
 
-handle_get(Key) -> {ok, value};
+check(_Key, Value) when is_boolean(Value) -> ok;
+check(_, _) -> {error, bad_value}.
+
+handle_get(Key) -> {ok, value}.
 
 handle_set(Key, Value) ->
 	% 1. set otp debug mode

@@ -7,7 +7,7 @@
 %%% @end
 %%%===================================================================
 -module(arweave_config_spec).
--export([init/1, required/0, optional/0]).
+-export([init/1]).
 -include_lib("kernel/include/logger.hrl").
 
 % a configuration key.
@@ -86,28 +86,6 @@
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-required() -> [
-	configuration_key,
-	runtime
-].
-
-%%--------------------------------------------------------------------
-%%
-%%--------------------------------------------------------------------
-optional() -> [
-	short_argument,
-	long_argument,
-	elements,
-	type,
-	environment,
-	legacy,
-	short_description,
-	long_description
-].
-
-%%--------------------------------------------------------------------
-%%
-%%--------------------------------------------------------------------
 init(ModuleSpec) ->
 	Specs = ModuleSpec:spec(),
 	init_loop(Specs).
@@ -117,23 +95,37 @@ init(ModuleSpec) ->
 %%--------------------------------------------------------------------
 init_loop([]) -> ok;
 init_loop([Module|Rest]) when is_atom(Module) ->
-	{ok, _} = init_module(Module, #{}),
+	{ok, R} = init_module(Module, #{}),
+	io:format("~p~n", [R]),
 	init_loop(Rest).
 
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
 init_module(Module, State) ->
-	Required = required(),
-	init_module_loop_required(Module, Required, State),
+	init_module_required(Module, State).
 
-	Optional = optional(),
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+init_module_required(Module, State) ->
+	Required = ?MODULE:behaviour_info(callbacks) -- ?MODULE:behaviour_info(optional_callbacks),
+	{ok, NewState} = init_module_loop_required(Module, Required, State),
+	init_module_optional(Module, NewState).
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+init_module_optional(Module, State) ->
+	Optional = ?MODULE:behaviour_info(optional_callbacks),
 	init_module_loop_optional(Module, Optional, State).
 
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-init_module_loop_required(Module, [Function|Rest], State) ->
+init_module_loop_required(_Module, [], State) ->
+	{ok, State};
+init_module_loop_required(Module, [{Function,0}|Rest], State) ->
 	try erlang:apply(Module, Function, []) of
 		{ok, Return} ->
 			NewState = State#{ Function => Return },
@@ -143,12 +135,16 @@ init_module_loop_required(Module, [Function|Rest], State) ->
 	catch
 		_E:R ->
 			{error, R}
-	end.
+	end;
+init_module_loop_required(Module, [_|Rest], State) ->
+	init_module_loop_required(Module, Rest, State).
 
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-init_module_loop_optional(Module, [Function|Rest], State) ->
+init_module_loop_optional(_Module, [], State) ->
+	{ok, State};
+init_module_loop_optional(Module, [{Function,0}|Rest], State) ->
 	try erlang:apply(Module, Function, []) of
 		{ok, Return} ->
 			NewState = State#{ Function => Return },
@@ -158,4 +154,6 @@ init_module_loop_optional(Module, [Function|Rest], State) ->
 	catch
 		_:_ ->
 			init_module_loop_optional(Module, Rest, State)
-	end.
+	end;
+init_module_loop_optional(Module, [_|Rest], State) ->
+	init_module_loop_optional(Module, Rest, State).
