@@ -5,27 +5,27 @@
 -behavior(arweave_config_spec).
 -compile(export_all).
 
-required() -> true.
+required() -> {ok, true}.
 
-legacy() -> [data_dir].
+legacy() -> {ok, [data_dir]}.
 
-runtime() -> false.
+runtime() -> {ok, false}.
 
-short_description() -> <<"">>.
+short_description() -> {ok, <<"">>}.
 
-long_description() -> <<"">>.
+long_description() -> {ok, <<"">>}.
 
-configuration_key() -> [global,data,directory].
+configuration_key() -> {ok, [global,data,directory]}.
 
-environment() -> "AR_DATA_DIRECTORY".
+environment() -> {ok, "AR_DATA_DIRECTORY"}.
 
-short_argument() -> $D.
+short_argument() -> {ok, $D}.
 
-long_argument() -> [data, directory].
+long_argument() -> {ok, [data, directory]}.
 
-elements() -> 1.
+elements() -> {ok, 1}.
 
-type() -> path.
+type() -> {ok, path}.
 
 check(Path) -> 
 	case filelib:is_dir(Path) of
@@ -33,6 +33,6 @@ check(Path) ->
 		false -> {error, not_directory}
 	end.
 
-handle_get(Key) -> {ok, value};
+handle_get(Key) -> {ok, value}.
 
 handle_set(Key, Value) -> {ok, Value}.

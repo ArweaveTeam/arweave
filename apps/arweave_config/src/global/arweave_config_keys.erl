@@ -133,13 +133,3 @@
 % 	% [webhooks, {event}, {event_type}, url] => #{},
 % 	% [webhooks, {event}, {event_type}, headers] => #{},
 % }.
-
-
-check(Key, Value) ->
-	case maps:get(Key, spec(), undefined) of
-		undefined ->
-			{error, undefined};
-		#{ check := Check } ->
-			Check(Key, Value)
-	end.
-
