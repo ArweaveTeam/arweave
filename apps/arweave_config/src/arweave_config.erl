@@ -1,22 +1,145 @@
 %%%===================================================================
-%%% @doc
+%%% @doc Arweave Configuration Application.
 %%%
-%%% Arweave Configuration Erlang application to manage static and
+%%% Arweave  Configuration Erlang  application  to  manage static  and
 %%% dynamic arweave parameters during startup phase or runtime.
+%%%
+%%% == Design ==
+%%%
+%%% ```
+%%%  _____________        ___________       ____________________
+%%% |             |      |           |     |                    |
+%%% | environment |      | arguments |     | configuration file |
+%%% |_____________|      |___________|     |____________________|
+%%%          |             |                 |
+%%%          | +-----------+                 |
+%%%          | | +---------------------------+
+%%%  ________:_:_:__                  _______
+%%% |               |                |       |
+%%% | specification |--------------->| store |
+%%% |_______________|                |_______| 
+%%%         :    |                    __________
+%%%         |    |                   |          |
+%%%         |    +------------------>| callback |
+%%%         |                        |__________|
+%%%         |
+%%%   ______|_       _________
+%%%  /        |     |         |
+%%% | Dynamic |<----| arweave |
+%%% |________/      |_________|
+%%%         :
+%%%         |
+%%%   ______|______
+%%%  |             |
+%%%  | WUI/GUI/CLI |
+%%%  |_____________|
+%%%
+%%% '''
+%%%
+%%% When Arweave  is started, `arweave_config' application  is started
+%%% just  before (strong  requirement), to  prepare the  configuration
+%%% parameters.
+%%%
+%%% Firstly,    `arweave_config'   will    load   all    configuration
+%%% specifications in  memory, using `arweave_config_spec'  module and
+%%% process. The specifications contain  the complete rule to describe
+%%% a parameter, how to get or set it, but also the documentation.
+%%%
+%%% ```
+%%% arweave_config_spec:start_link().
+%%% '''
+%%%
+%%% Secondly, `arweave_config' will look  for all environment variable
+%%% defined from  the specification.  When an environment  variable is
+%%% found, the value is defined using the parameter key.
+%%%
+%%% ```
+%%% arweave_config_environment:load().
+%%% '''
+%%%
+%%% Third,  `arweave_config' will  look for  the arguments  from the
+%%% command line. The arguments will be parsed using the rule
+%%% specified  from `arweave_config_spec'.  If  a  value match  and is
+%%% correct, this one is set as parameter, even if the parameter    is
+%%% already configured from environment variable.
+%%%
+%%% ```
+%%% arweave_config_arguments:load(Arguments).
+%%% '''
+%%%
+%%% Fourth,  `arweave_config' will  read  the  configuration file,  if
+%%% provided,  and load  it. The  configuration file  parameters don't
+%%% have priority over environment variables  and/or arguments if they
+%%% have been previously defined.
+%%%
+%%% ```
+%%% arweave_config_file:load(ConfigurationFile).
+%%% '''
+%%%
+%%% Fifth,   `arweave_config'  should   now  be   ready  to   accept
+%%% configuration events from outside world.
+%%%
+%%% ```
+%%% % returns a parameter value.
+%%% {ok, Value} = arweave_config:get(Key).
+%%%
+%%% % set a new value to a specific parameter.
+%%% {ok, Value, Previous} = arweave_config:set(Key, Value).
+%%%
+%%% % show the whole configuration
+%%% {ok, Parameters} = arweave_config:show().
+%%%
+%%% % returns the complete information (including value,
+%%% % spec and documentation) from a key
+%%% {ok, Info} = arweave_config:show(Key).
+%%% '''
+%%%
+%%% Finally,   `arweave_config'  service   is  ready,   and  `arweave'
+%%% application  can be  started  safely.  When `arweave'  terminates,
+%%% `arewave_config' is stopped after.
+%%%
+%%% == Parameters ==
+%%%
+%%% ```
+%%% - debug:
+%%%   - key: global.debug
+%%%   - short argument: -d
+%%%   - long argument: --debug
+%%%   - environment: AR_DEBUG
+%%%   - configuration: $.global.debug
+%%%   - required: false
+%%% - data_directory:
+%%%   - key: global.data_directory
+%%%   - short argument: -D
+%%%   - long argument: --data_directory
+%%%   - environment: AR_DATA_DIRECTORY
+%%%   - configuration: $.global.data_directory
+%%% '''
+%%%
+%%% == (todo) Wizard ==
+%%%
+%%% If `--wizard' argument or `AR_WIZARD=true' environment variables
+%%% are set, a wizard is started to help user to configure `arweave'.
+%%%
+%%% == (todo) Auto-tuning ==
+%%%
+%%% If `--auto-tunning' argument  or `AR_AUTO_TUNING=true' environment
+%%% variable are set,  `arweave_config' will try to  optimize and tune
+%%% the configuration based on the system.
 %%%
 %%% == (todo) Parameters Source Priority ==
 %%%
 %%% The first layer of configuration is from environment variable.
 %%%
-%%% The second layer of configuration is from command line arguments,
+%%% The second layer of configuration  is from command line arguments,
 %%% it will overwrite environment variable.
 %%%
-%%% The third layer of configuration is from configuration file, it
+%%% The third  layer of configuration  is from configuration  file, it
 %%% will overwrite configuration from both environment variable and
 %%% command line.
 %%%
-%%% The last layer of configuration is from runtime environment.
-%%% When an user set dynamically a parameter during runtime, the
+%%% The last layer of configuration  is from runtime environment. When
+%%% an user set dynamically a parameter during runtime, the
 %%% parameter is set ONLY in memory. A manual action is required
 %%% to save the configuration locally (or export it).
 %%%
@@ -36,9 +159,9 @@
 %%%
 %%% == (todo) Legacy Configuration ==
 %%%
-%%% To keep the old way to configure Arweave, an environment variable
-%%% can be used to switch between this interface. When
-%%% `AR_CONFIG_LEGACY' is set with any kind of value, configuration
+%%% To keep the old way  to configure Arweave, an environment variable
+%%% can   be   used   to   switch   between   this   interface.   When
+%%% `AR_CONFIG_LEGACY' is  set with  any kind of  value, configuration
 %%% file and parameters will be interpreted as legacy configuration.
 %%%
 %%% ```
@@ -115,7 +238,7 @@
 %%% arweave config storage disable 3 unpacked
 %%% arweave config storage discard 3 unpacked
 %%% '''
-%%% 
+%%%
 %%% === (todo) Metrics Configuration Interface ===
 %%%
 %%% ```
@@ -143,8 +266,8 @@
 %%%
 %%% == (todo) Environment Variables ==
 %%%
-%%% Only available during startup. Those variables can
-%%% alter the configuration of an Arweave peer.
+%%% Only  available  during startup.  Those  variables  can alter  the
+%%% configuration of an Arweave peer.
 %%%
 %%% ```
 %%% export AR_CONFIG_LEGACY=true
@@ -159,15 +282,60 @@
 %%% arweave ${command} ${subcommand} help
 %%% '''
 %%%
+%%% == (todo) Command Line Interface ==
+%%%
+%%% A script can  communicate to an Erlang node  and execute functions
+%%% if it has access to the cookie. This is not a very safe solution,
+%%% but it  is easy and  quick to implement.  The only drawback  is to
+%%% define a protocol  to communicate safely with the  node, and avoid
+%%% command shell scripting mistakes (e.g. single/double quotes).
+%%%
+%%% Functions  can  be  executed  using  `erl_call'  command,  usually
+%%% provided with any release. This command can execute a remote
+%%% procedure call:
+%%%
+%%% ```
+%%% # rpc call
+%%% erl_call -r -c ${cookie} -a arweave_config_cli set "[${input}]"
+%%% '''
+%%%
+%%% Or evaluate some code interpreted by the BEAM:
+%%%
+%%% ```
+%%% # eval call
+%%% cat | erl_call -r -c ${cookie} -e << EOF
+%%% arweave_config_cli:set([${input}]).
+%%% EOF
+%%% '''
+%%%
+%%% The variable `${input}' should then  contain the arguments to pass
+%%% to `arweave_config', but due to the problems listed above, it
+%%% should  be  encoded using  base64.  The  string received  is  then
+%%% sanitized and parsed.
+%%%
+%%% The returned value should also be encoded using base64.
+%%%
+%%% == (todo) Web User Interface ==
+%%%
+%%% `arweave_config' is able  to start a web interface  listening to a
+%%% random port  (e.g. http://localhost:34945)  to give access  to the
+%%% wizard or the configuration by an user.
+%%%
+%%% == (todo) Graphical User Interface ==
+%%%
+%%% `arweave_config' has  been designed  to support different  kind of
+%%% interface, mainly using Erlang node to communicate. A graphical in
+%%% interface any language can be designed and get access to the node.
+%%%
 %%% @end
 %%%===================================================================
 -module(arweave_config).
 -behavior(application).
 -export([start/2, stop/1]).
--export([spec/0]).
+-export([get/1, get/2, set/2, show/0, show/1, spec/0]).
 
 %%--------------------------------------------------------------------
-%%
+%% @hidden
 %%--------------------------------------------------------------------
 start(_StartType, _StartArgs) ->
 	{ok, Pid} = arweave_config_sup:start_link(),
@@ -175,15 +343,113 @@ start(_StartType, _StartArgs) ->
 	{ok, Pid}.
 
 %%--------------------------------------------------------------------
-%%
+%% @hidden
 %%--------------------------------------------------------------------
 stop(_Args) ->
 	ok.
 
 %%-------------------------------------------------------------------
-%%
+%% @doc Returns the list of modules where parameters are defined.
+%% @end
 %%-------------------------------------------------------------------
 spec() -> [
 	arweave_config_global_data_directory,
 	arweave_config_global_debug
 ].
+
+%%--------------------------------------------------------------------
+%% @doc Get a value from the configuration.
+%%
+%% == Examples ==
+%%
+%% ```
+%% > get(<<"global.debug">>).
+%% {ok, false}
+%%
+%% > get([global, debug]).
+%% {ok, false}
+%%
+%% > get([test]).
+%% {error, #{ reason => not_found }}.
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+get(Key) ->
+	todo.
+
+%%--------------------------------------------------------------------
+%% @doc Get a value from the  configuration, if not defined, a default
+%% value can be returned instead.
+%%
+%% == Examples ==
+%%
+%% ```
+%% > get(<<"global.debug">>, true).
+%% {ok, false}
+%%
+%% > get([global, debug], true).
+%% {ok, false}
+%%
+%% > get([test] true).
+%% {ok, true}
+%% '''
+%% @end
+%%--------------------------------------------------------------------
+get(Key, Default) ->
+	todo.
+
+%%--------------------------------------------------------------------
+%% @doc Set a configuration value using a key.
+%%
+%% == Examples==
+%%
+%% ```
+%% > set(<<"global.debug">>, <<"true">>).
+%% {ok, true}
+%%
+%% > set([global, debug]), true).
+%% {ok, true}
+%%
+%% > set("global.debug", "true").
+%% {ok, true}
+%%
+%% > set("global.debug", 1234).
+%% {error, #{ reason => not_boolean }}
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+set(Key, Value) ->
+	todo.
+
+%%--------------------------------------------------------------------
+%% @doc Returns the configuration keys, values with their
+%% specifications.
+%%
+%% == Examples ==
+%%
+%% ```
+%% > show().
+%% #{ [global,debug] => #{ value => true }}
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+show() ->
+	todo.
+
+%%--------------------------------------------------------------------
+%% @doc Returns a key value and specification.
+%%
+%% == Examples ==
+%%
+%% ```
+%% > show([global,debug]).
+%% {ok, #{value => true}}
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+show(Key) ->
+	todo.
