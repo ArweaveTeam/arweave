@@ -1,0 +1,2 @@
+-module(arweave_config_arguments).
+-compile(export_all).

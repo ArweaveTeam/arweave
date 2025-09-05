@@ -37,7 +37,8 @@ elements() -> {ok, 0}.
 check(_Key, Value) when is_boolean(Value) -> ok;
 check(_, _) -> {error, bad_value}.
 
-handle_get(Key) -> {ok, value}.
+handle_get(Key) ->
+	{ok, value}.
 
 handle_set(Key, Value) ->
 	% 1. set otp debug mode

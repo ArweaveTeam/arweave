@@ -1,0 +1,2 @@
+-module(arweave_config_file).
+-compile(export_all).
