@@ -121,11 +121,25 @@
 %%% If `--wizard' argument or `AR_WIZARD=true' environment variables
 %%% are set, a wizard is started to help user to configure `arweave'.
 %%%
+%%% == (todo) Specification Validation during Compilation ==
+%%%
+%%% The  specifications  for the  arguments  are  globally static  and
+%%% defined one  time. In  this case,  those specifications  should be
+%%% checked  during  compilation  time,  and  raise  an  error  before
+%%% producing a compiled module.
+%%%
+%%% see: https://www.erlang.org/doc/apps/syntax_tools/merl.html
+%%%
+%%% see: https://github.com/2600hz/erlang-parse-trans
+%%%
 %%% == (todo) Auto-tuning ==
 %%%
 %%% If `--auto-tunning' argument  or `AR_AUTO_TUNING=true' environment
 %%% variable are set,  `arweave_config' will try to  optimize and tune
 %%% the configuration based on the system.
+%%%
+%%% Note: auto-tuning could also be done on the system side using
+%%% `sysctl' functions for Unix/Linux OS.
 %%%
 %%% == (todo) Parameters Source Priority ==
 %%%
@@ -172,6 +186,33 @@
 %%%
 %%% ```
 %%% {
+%%%   "global": {
+%%%     "debug": true,
+%%%     "config_file": "",
+%%%   },
+%%%   "modules": {
+%%%   },
+%%%   "blocks": {},
+%%%   "chunks": {},
+%%%   "transactions": {},
+%%%   "peers": {
+%%%     "${peer}": {
+%%%     }
+%%%   },
+%%%   "packing": {
+%%%   },
+%%%   "mining": {
+%%%   },
+%%%   "cooperative_mining": {
+%%%   },
+%%%   "storage": {
+%%%     "3": {
+%%%       "unpacked": {},
+%%%       "replica.2.9": {},
+%%%       "${type}":{}
+%%%     },
+%%%     "${index}": {}
+%%%   }
 %%% }
 %%% '''
 %%%

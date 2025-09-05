@@ -5,6 +5,8 @@
 -behavior(arweave_config_spec).
 -compile(export_all).
 
+deprecated() -> false.
+
 type() -> {ok, boolean}.
 
 default() -> {ok, false}.
