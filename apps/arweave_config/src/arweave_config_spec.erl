@@ -14,91 +14,113 @@
 -behavior(gen_server).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
+-export([is_function_exported/3]).
 -include_lib("kernel/include/logger.hrl").
 
 % a configuration key.
 -type key() :: [atom() | {atom()}].
+-type error_message() :: #{ reason => term() }.
+-type error_return() :: {error, error_message()}.
+-type handle_get_ok_return() :: {ok, CurrentValue :: term()}.
+-type handle_set_ok_return() :: {ok, NewValue :: term(), PreviousValue :: term()}.
 
 %---------------------------------------------------------------------
-% required:  defines the  configuration key  used to  identify arweave
+% REQUIRED:  defines the  configuration key  used to  identify arweave
 % parameter, usually stored in a data store like ETS.
 %---------------------------------------------------------------------
--callback configuration_key() -> {ok, key()}.
+-callback configuration_key() -> Return when
+	  Return :: {ok, key()}.
 
 %---------------------------------------------------------------------
-% required: defines  if the  parameter can be  set during  runtime. if
+% REQUIRED: defines  if the  parameter can be  set during  runtime. if
 % true, the  parameter can be set  when arweave is running,  else, the
 % parameter can only be set during startup
 %---------------------------------------------------------------------
--callback runtime() -> {ok, boolean()}.
+-callback runtime() -> Return when
+	  Return :: {ok, boolean()}.
 
 %---------------------------------------------------------------------
-% required: defines how to retrieve the value using the key Key.
+% REQUIRED: defines how to retrieve the value using the key Key.
 %---------------------------------------------------------------------
 -callback handle_get(Key) -> Return when
 	Key :: key(),
-	Return :: {ok, term()} | {error, term()}.
+	Return :: handle_get_ok_return() | error_return().
 
 %---------------------------------------------------------------------
-% required: defines  how to set the  value Value with the  key Key. It
+% REQUIRED: defines  how to set the  value Value with the  key Key. It
 % should be transaction.
 %---------------------------------------------------------------------
 -callback handle_set(Key, Value) -> Return when
 	Key :: key(),
 	Value :: term(),
-	Return :: {ok, term()} | {error, term()}.
+	Return :: handle_set_ok_return() | error_return().
 
 %---------------------------------------------------------------------
-% optional: short argument used to  configure the parameter, usually a
+% OPTIONAL: short argument used to  configure the parameter, usually a
 % single ASCII letter.
 %---------------------------------------------------------------------
--callback short_argument() -> {ok, pos_integer()}.
+-callback short_argument() -> Return when
+	  Return :: {ok, pos_integer()}.
 
 %---------------------------------------------------------------------
-% optional: a long argument, used  to configure the parameter, usually
-% lower cases words separated by dashes
+% OPTIONAL: a long argument, used  to configure the parameter, usually
+% lower cases words separated by dashes.
 %---------------------------------------------------------------------
--callback long_argument() -> {ok, [string()]}.
+-callback long_argument() -> Return when
+	  Return :: {ok, [string()]}.
 
 %---------------------------------------------------------------------
-% optional: the number of element to fetch after the flag
+% OPTIONAL: the number of element to fetch after the flag.
 %---------------------------------------------------------------------
--callback elements() -> {ok, pos_integer()}.
+-callback elements() -> Return when
+	  Return :: {ok, pos_integer()}.
 
 %---------------------------------------------------------------------
-% optional: the type of the value
+% OPTIONAL: the type of the value.
 %---------------------------------------------------------------------
--callback type() -> {ok, atom()}.
+-callback type() -> Return when
+	  Return :: {ok, atom()}.
 
 %---------------------------------------------------------------------
-% optional: a function to check the value attributed with the key.
+% OPTIONAL: a function to check the value attributed with the key.
 %---------------------------------------------------------------------
 -callback check(Key, Value) -> Return when
 	Key :: key(),
 	Value :: term(),
-	Return :: ok | {error, term()}.
+	Return :: ok | error_return().
 
 %---------------------------------------------------------------------
-% optional: a function returning  a string representing an environment
+% OPTIONAL: a function returning  a string representing an environment
 % variable.
 %---------------------------------------------------------------------
--callback environment() -> {ok, string()}.
+-callback environment() -> Return when
+	Return :: {ok, string()}.
 
 %---------------------------------------------------------------------
-% optional: a list  of legacy references used to  previously fetch the
+% OPTIONAL: a list  of legacy references used to  previously fetch the
 % value.
 %---------------------------------------------------------------------
--callback legacy() -> {ok, [term()]}.
+-callback legacy() -> Return when
+	Return :: {ok, [term()]}.
 
 %---------------------------------------------------------------------
-% optional: a short description of the parameter.
+% OPTIONAL: a short description of the parameter.
 %---------------------------------------------------------------------
--callback short_description() -> {ok, iolist()}.
+-callback short_description() -> Return when
+	Return :: {ok, iolist()}.
 
 %---------------------------------------------------------------------
-% optional: a long description of the parameter.
+% OPTIONAL: a long description of the parameter.
 %---------------------------------------------------------------------
--callback long_description() -> {ok, iolist()}.
+-callback long_description() -> Return when
+	Return :: {ok, iolist()}.
+
+%---------------------------------------------------------------------
+% OPTIONAL: defines if a parameter is deprecated, can eventually
+% returns a message.
+%---------------------------------------------------------------------
+-callback deprecated() -> Return when
+	Return :: true | {true, term()} | false.
 
 -optional_callbacks([
 	short_argument/0,
@@ -109,7 +131,8 @@
 	environment/0,
 	legacy/0,
 	short_description/0,
-	long_description/0
+	long_description/0,
+	deprecated/0
 ]).
 
 %%--------------------------------------------------------------------
@@ -118,6 +141,25 @@
 %%--------------------------------------------------------------------
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+callbacks_check() -> [
+ 	{configuration_key, arweave_config_spec_configuration_key},
+	{deprecated, arweave_config_spec_deprecated}
+ 	% {runtime, arweave_config_spec_runtime},
+ 	% {handle_set, arweave_config_spec_handle_set},
+ 	% {handle_get, arweave_config_spec_handle_set}
+% 	{short_argument, arweave_config_spec_short_argument},
+% 	{long_argument, arweave_config_spec_long_argument},
+% 	{elements, arweave_config_spec_elements},
+% 	{type, arweave_config_spec_type},
+% 	{environment, arweave_config_spec_environment},
+% 	{legacy, arweave_config_spec_legacy},
+% 	{short_description, arweave_config_spec_short_description},
+% 	{long_description, arweave_config_spec_long_description},
+].
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -139,63 +181,17 @@ init_loop([Module|Rest], Buffer) when is_atom(Module) ->
 %% @hidden
 %%--------------------------------------------------------------------
 init_module(Module, State) ->
-	init_module_required(Module, State).
+	init_module(Module, callbacks_check(), State).
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-init_module_required(Module, State) ->
-	Required = ?MODULE:behaviour_info(callbacks) -- ?MODULE:behaviour_info(optional_callbacks),
-	{ok, NewState} = init_module_loop_required(Module, Required, State),
-	init_module_optional(Module, NewState#{
-		get => fun Module:handle_get/1,
-		set => fun Module:handle_set/2
-	}).
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-init_module_optional(Module, State) ->
-	Optional = ?MODULE:behaviour_info(optional_callbacks),
-	init_module_loop_optional(Module, Optional, State).
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-init_module_loop_required(_Module, [], State) ->
+init_module(Module, [], State) ->
 	{ok, State};
-init_module_loop_required(Module, [{Function,0}|Rest], State) ->
-	try erlang:apply(Module, Function, []) of
-		{ok, Return} ->
-			NewState = State#{ Function => Return },
-			init_module_loop_required(Module, Rest, NewState);
+init_module(Module, [{Callback, ModuleCallback}|Rest], State) ->
+	case erlang:apply(ModuleCallback, init, [Module, State]) of
+		{ok, NewState} ->
+			init_module(Module, Rest, NewState);
 		Elsewise ->
 			Elsewise
-	catch
-		_E:R ->
-			{error, R}
-	end;
-init_module_loop_required(Module, [_|Rest], State) ->
-	init_module_loop_required(Module, Rest, State).
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-init_module_loop_optional(_Module, [], State) ->
-	{ok, State};
-init_module_loop_optional(Module, [{Function,0}|Rest], State) ->
-	try erlang:apply(Module, Function, []) of
-		{ok, Return} ->
-			NewState = State#{ Function => Return },
-			init_module_loop_optional(Module, Rest, NewState);
-		Elsewise ->
-			Elsewise
-	catch
-		_:_ ->
-			init_module_loop_optional(Module, Rest, State)
-	end;
-init_module_loop_optional(Module, [_|Rest], State) ->
-	init_module_loop_optional(Module, Rest, State).
+	end.
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -226,3 +222,26 @@ handle_cast(Msg, State) ->
 %%--------------------------------------------------------------------
 handle_info(Msg, State) ->
 	{noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc Check if a function from a module is exported.
+%% @end
+%%--------------------------------------------------------------------
+-spec is_function_exported(Module, Function, Arity) -> Return when
+	Module :: atom(),
+	Function :: atom(),
+	Arity :: pos_integer(),
+	Return :: boolean().
+
+is_function_exported(Module, Function, Arity) ->
+	try
+		Exports = Module:module_info(exports),
+		proplists:get_value(Function, Exports, undefined)
+	of
+		undefined -> false;
+		A when A =:= Arity -> true;
+		_ -> false
+	catch
+		_:_ -> false
+	end.
