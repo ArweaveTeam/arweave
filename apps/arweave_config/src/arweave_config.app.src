@@ -6,5 +6,24 @@
 		kernel,
 		stdlib,
 		sasl
+	]},
+	{modules, [
+		arweave_config,
+		arweave_config_sup,
+		arweave_config_store,
+		arweave_config_cli,
+		arweave_config_arguments,
+		arweave_config_environment,
+		arweave_config_file,
+		arweave_config_parameters,
+		arweave_config_parser,
+		arweave_config_spec,
+		arweave_config_spec_configuration_key,
+		arweave_config_spec_deprecated
+	]},
+	{registered, [
+		arweave_config,
+		arweave_config_sup,
+		arweave_config_store
 	]}
 ]}.

@@ -15,11 +15,13 @@
 %% At this time, only ASCII characters are supported.
 %% @end
 %%--------------------------------------------------------------------
--spec key(String) -> Return when
-	String :: binary() | string(),
+-spec key(Key) -> Return when
+	Key :: atom() | binary() | string(),
 	Return :: {ok, [atom() | binary()]}
 	        | {error, term()}.
 
+key(Atom) when is_atom(Atom) ->
+	key(atom_to_binary(Atom));
 key(List) when is_list(List) ->
 	key(list_to_binary(List));
 key(Binary) when is_binary(Binary) ->
