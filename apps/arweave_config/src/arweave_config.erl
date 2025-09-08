@@ -380,7 +380,7 @@
 %%--------------------------------------------------------------------
 start(_StartType, _StartArgs) ->
 	{ok, Pid} = arweave_config_sup:start_link(),
-	ok = arweave_config_spec:init(?MODULE),
+	% ok = arweave_config_spec:init(?MODULE),
 	{ok, Pid}.
 
 %%--------------------------------------------------------------------

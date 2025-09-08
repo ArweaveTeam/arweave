@@ -3,46 +3,271 @@
 %%% @end
 %%%===================================================================
 -module(arweave_config_store).
--compile(export_all).
+-vsn(1).
+-compile([export_all]).
+-compile({no_auto_import,[get/1]}).
 -behavior(gen_server).
+-export([
+	start_link/0,
+	get/1,
+	get/2,
+	set/2,
+	to_map/0,
+	from_map/1
+]).
+-export([
+	init/1,
+	handle_call/3,
+	handle_cast/2,
+	handle_info/2
+]).
+-record(key, {id}).
+-record(value, {value, meta}).
+-include_lib("eunit/include/eunit.hrl").
 
+%%--------------------------------------------------------------------
+%% @doc Starts `arweave_config_store' registered process.
+%% @end
+%%--------------------------------------------------------------------
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+
+%%--------------------------------------------------------------------
+%% @doc Retrieve a key from configuration store using ETS directly.
+%% @see lookup/1
+%% @end
+%%--------------------------------------------------------------------
+-spec get(Key) -> Return when
+	Key :: term(),
+	Return :: {ok, term()} | {error, undefined}.
+
+get(Key) ->
+	case arweave_config_parser:key(Key) of
+		{ok, Id} -> lookup(Id);
+		Elsewise -> Elsewise
+	end.
+
+get1_test() ->
+	{ok, Pid} = start_link(),
+	?assertEqual(
+		{error, undefined},
+		get(test)
+	),
+	gen_server:stop(Pid).
+
+%%--------------------------------------------------------------------
+%% @doc Retrieve a value from ETS table, if not defined, return the
+%% default value from second argument.
+%% @end
+%%--------------------------------------------------------------------
+-spec get(Key, Default) -> Return when
+	Key :: term(),
+	Default :: term(),
+	Return :: term() | Default.
+
+get(Key, Default) ->
+	case get(Key) of
+		{ok, Value} -> Value;
+		_ -> Default
+	end.
+
+get2_test() ->
+	{ok, Pid} = start_link(),
+	?assertEqual(
+		default,
+		get(test, default)
+	),
+	gen_server:stop(Pid).
+
+%%--------------------------------------------------------------------
+%% @doc Configure a value using a new key.
+%% @todo if the key is already defined, the old value should be
+%%       returned.
+%% @end
+%%--------------------------------------------------------------------
+-spec set(Key, Value) -> Return when
+	Key :: term(),
+	Value :: term(),
+	Return :: {ok, New}
+		| {ok, New, Old}
+		| {error, term()},
+	New :: {Id, Value},
+	Old :: {Id, Value},
+	Id :: term().
+
+set(Key, Value) ->
+	case arweave_config_parser:key(Key) of
+		{ok, Id} ->
+			gen_server:call(?MODULE, {set, Id, Value});
+		Elsewise ->
+			Elsewise
+	end.
+
+set2_test() ->
+	{ok, Pid} = start_link(),
+	?assertEqual(
+		{ok, {[test], data}},
+		set(test, data)
+	),
+	gen_server:stop(Pid).
+
+%%--------------------------------------------------------------------
+%% @doc Converts a map into a valid structure ready to be inserted
+%% into an ETS table.
+%% @todo create the import feature.
+%%
+%% ```
+%% % from:
+%% #{ 1 => 2, 2 => #{ 3 => 4 }}.
+%%
+%% % every keys/values must be valid, and then the final data
+%% % structure before insert should look like that:
+%% [{1, 2}, {[2,3], 4}].
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec from_map(Map) -> Return when
+	Map :: map(),
+	Return :: {ok, list()} | {error, term()}.
+
+from_map(Data) when is_map(Data) ->
+	{wip, todo}.
+
+%%--------------------------------------------------------------------
+%% @doc Converts the content of the ETS table into a map. It will
+%% be easier to export the database in this case.
+%% @todo the merger is not finished yet.
+%%
+%% ```
+%% % the final output should look like that
+%% #{ key1 => #{ key2 => value } }.
+%%
+%% % it can easily be converted into json, yaml or toml.
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec to_map() -> Return when
+	Return :: map().
+
+to_map() ->
+	Parameters = ets:tab2list(?MODULE),
+	to_map(Parameters, []).
+
+to_map([], Buffer) -> Buffer;
+to_map([{#key{ id = Id }, #value{ value = Value }}|Rest], Buffer) ->
+	to_map(Rest, [map_path(Id, Value)|Buffer]).
+
+map_path(List, Value) ->
+	[H|Rest] = lists:reverse(List),
+	map_path2(Rest, #{ H => Value }).
+
+map_path2([], Buffer) -> Buffer;
+map_path2([H|T], Buffer) ->
+	map_path2(T, #{ H => Buffer }).
+
+map_path2_test() ->
+	?assertEqual(
+		#{
+			1 => #{
+				2 => #{
+				       3 => data
+				}
+			}
+		},
+		map_path([1,2,3], data)
+	).
+
+% map_merger_test() ->
+% 	?assertEqual(
+% 		#{
+% 			1 => #{
+% 				2 => test,
+% 				3 => data
+% 			}
+% 		},
+% 		map_merger(
+% 			#{ 1 => #{ 2 => test }},
+% 			#{ 1 => #{ 3 => data }}
+% 		)
+% 	).
+
+
+% map_merge_test() ->
+% 	?assertEqual(
+% 		#{
+% 			1 => #{
+% 				2 => test,
+% 				3 => data
+% 			},
+% 			t => #{
+% 			       1 => #{
+% 				      test => data
+% 				}
+% 			}
+% 		},
+% 		map_merge([
+% 			#{ 1 => #{ 2 => test } },
+% 			#{ 1 => #{ 3 => data } },
+% 			#{ t => #{ 1 => #{ test => data }}
+% 		])
+% 	).
+
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc a wrapper around ets:lookup/2
+%% @end
+%%--------------------------------------------------------------------
+lookup(Id) ->
+	case ets:lookup(?MODULE, #key{ id = Id }) of
+		[] ->
+			{error, undefined};
+		[{#key{ id = Id }, #value{ value = Value}}] ->
+			{ok, {Id, Value}}
+	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
 init(_Args) ->
 	erlang:process_flag(trap_exit, true),
 	Ets = ets:new(?MODULE, [named_table, protected]),
 	{ok, Ets}.
 
 %%--------------------------------------------------------------------
-%% ets:insert({["global", "debug"], {true, #{}}}).
+%% @hidden
 %%--------------------------------------------------------------------
-% handle_call({import, File, Format}, From, State) ->
-%	{reply, ok, State};
-% handle_call({export, json}, From, State) ->
-%	List = ets:tab2list(?MODULE),
-%	{reply, List, State};
-handle_call({get, Key}, From, State) ->
-	Return = ets:lookup(?MODULE, Key),
-	{reply, {ok, Return}, State};
-handle_call({add, Key, Value}, From, State) ->
-	ets:insert(?MODULE, Key, {Value, #{}}),
-	{reply, {ok, Value}, State};
-handle_call({delete, Key}, From, State) ->
-	Value = ets:take(?MODULE, Key),
-	{reply, {ok, Value}, State};
+handle_call({set, Id, Value}, _From, State) ->
+	K = #key{ id = Id },
+	V = #value{ value = Value, meta = #{} },
+	case ets:insert(?MODULE, {K, V}) of
+		true ->
+			{reply, {ok, {Id, Value}}, State};
+		false ->
+			{reply, {error, {Id, Value}}, State}
+	end;
+handle_call({delete, Id}, From, State) ->
+	case ets:take(?MODULE, #key{ id = Id }) of
+		[] ->
+			{reply, {error, undefined}, State};
+		[{_, #value{ value = Value}}] ->
+			{reply, {ok, {Id, Value}}, State}
+	end;
 handle_call(Msg, From, State) ->
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
-%%
+%% @hidden
 %%--------------------------------------------------------------------
-handle_cast(Msg, State) ->
+handle_cast(_Msg, State) ->
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
-%%
+%% @hidden
 %%--------------------------------------------------------------------
-handle_info(Msg, State) ->
+handle_info(_Msg, State) ->
 	{noreply, State}.
 
