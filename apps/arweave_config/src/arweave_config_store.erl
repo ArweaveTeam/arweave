@@ -23,6 +23,7 @@
 ]).
 -record(key, {id}).
 -record(value, {value, meta}).
+-include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%--------------------------------------------------------------------
@@ -31,7 +32,6 @@
 %%--------------------------------------------------------------------
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
 
 %%--------------------------------------------------------------------
 %% @doc Retrieve a key from configuration store using ETS directly.
@@ -154,12 +154,34 @@ from_map(Data) when is_map(Data) ->
 
 to_map() ->
 	Parameters = ets:tab2list(?MODULE),
-	to_map(Parameters, []).
+	ListOfMap = to_map(Parameters, []),
+	map_merge(ListOfMap).
 
 to_map([], Buffer) -> Buffer;
 to_map([{#key{ id = Id }, #value{ value = Value }}|Rest], Buffer) ->
 	to_map(Rest, [map_path(Id, Value)|Buffer]).
 
+to_map_test() ->
+	{ok, Pid} = start_link(),
+	set("test.a.b", 1),
+	set(<<"test.a.c">>, 2),
+	?assertEqual(
+		#{
+			test => #{
+				a => #{
+				       b => 1,
+				       c => 2
+				}
+			}
+		},
+		to_map()
+	),
+	gen_server:stop(Pid).
+
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
 map_path(List, Value) ->
 	[H|Rest] = lists:reverse(List),
 	map_path2(Rest, #{ H => Value }).
@@ -180,40 +202,55 @@ map_path2_test() ->
 		map_path([1,2,3], data)
 	).
 
-% map_merger_test() ->
-% 	?assertEqual(
-% 		#{
-% 			1 => #{
-% 				2 => test,
-% 				3 => data
-% 			}
-% 		},
-% 		map_merger(
-% 			#{ 1 => #{ 2 => test }},
-% 			#{ 1 => #{ 3 => data }}
-% 		)
-% 	).
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+map_merge(ListOfMap) ->
+	lists:foldr(fun(X, A) -> map_merge(X, A) end, #{}, ListOfMap).
 
+map_merge(A, B) when is_map(A), is_map(B) ->
+	I = maps:iterator(A),
+	map_merge2(I, B).
 
-% map_merge_test() ->
-% 	?assertEqual(
-% 		#{
-% 			1 => #{
-% 				2 => test,
-% 				3 => data
-% 			},
-% 			t => #{
-% 			       1 => #{
-% 				      test => data
-% 				}
-% 			}
-% 		},
-% 		map_merge([
-% 			#{ 1 => #{ 2 => test } },
-% 			#{ 1 => #{ 3 => data } },
-% 			#{ t => #{ 1 => #{ test => data }}
-% 		])
-% 	).
+map_merge2(none, B) -> B;
+map_merge2({K, V, I2}, B) when is_map(V), is_map_key(K, B) ->
+	BV = maps:get(K, B, #{}),
+	Result = map_merge(V, BV),
+	map_merge2(I2, B#{ K => Result });
+map_merge2({K, V, I2}, B) when is_map_key(K, B) ->
+	BV = maps:get(K, B),
+	case V =:= BV of
+		true ->
+			map_merge2(I2, B#{ K => V });
+		false ->
+			?LOG_WARNING("overwrite value: ~p", [K, V, BV]),
+			map_merge2(I2, B#{ K => V })
+	end;
+map_merge2({K, V, I2}, B) ->
+	map_merge2(I2, B#{ K => V });
+map_merge2(I = [0|_], B) ->
+	I2 = maps:next(I),
+	map_merge2(I2, B).
+
+map_merge_test() ->
+	?assertEqual(
+		#{
+			1 => #{
+				2 => test,
+				3 => data
+			},
+			t => #{
+			       1 => #{
+				      test => data
+				}
+			}
+		},
+		map_merge([
+			#{ 1 => #{ 2 => test } },
+			#{ 1 => #{ 3 => data } },
+			#{ t => #{ 1 => #{ test => data }}}
+		])
+	).
 
 
 %%--------------------------------------------------------------------
