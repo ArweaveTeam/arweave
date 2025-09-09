@@ -12,6 +12,7 @@
 %%%===================================================================
 -module(arweave_config_spec).
 -behavior(gen_server).
+-export([get/1, set/1]).
 -export([start_link/1]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
@@ -117,6 +118,14 @@
 	Return :: {ok, iolist()}.
 
 %---------------------------------------------------------------------
+% @TODO: protected callback
+% OPTIONAL: defines if the value should be public or protected (not
+% displayed or even encrypted, useful for password)
+%---------------------------------------------------------------------
+% -callback protected() -> Return when
+%       Return :: boolean().
+
+%---------------------------------------------------------------------
 % OPTIONAL: defines if a parameter is deprecated, can eventually
 % returns a message.
 %---------------------------------------------------------------------
@@ -166,14 +175,52 @@ get(Spec) ->
 %% keys and values then if everything is good, it will execute a side
 %% effect (to modify the application state) and finally store/update
 %% the value in `arweave_config_store'.
+%%
+%% == Examples ==
+%%
+%% A parameter is already parsed and should be valid. Mostly used
+%% internally.
+%%
+%% ```
+%% set({parameter, [global,debug], true}).
+%% '''
+%%
+%% An environment is made of a key (usually in uppercase) prefixed by
+%% `AR_' and followed by a value. both values are not parsed and
+%% sanitized.
+%%
+%% ```
+%% set({environment, <<"AR_DEBUG">>, <<"true">>}).
+%% set({environment, <<"AR_DEBUG">>, <<"false">>}).
+%% '''
+%%
+%% An argument format is usually a binary or a list of binaries. Both
+%% values are not parsed nor sanitized.
+%%
+%% ```
+%% set({argument, <<"-d">>, <<"true">>}).
+%% set({argument, <<"--global.debug">>, <<"true">>}).
+%% set({argument, <<"--global.debug">>, <<"false">>}).
+%% set({argument, <<"--global.test">>, [<<"list">>, <<"of">>, <<"value">>]}).
+%% '''
+%%
+%% A configuration is usually a parsed JSON, YAML or TOML file using a
+%% map datastructure.
+%%
+%% ```
+%% set({config, #{ <<"global">> => #{ <<"debug">> => true }}).
+%% '''
+%%
 %% @end
 %%--------------------------------------------------------------------
-set(environment, {Key, Value}) ->
-	gen_server:cast(?MODULE, {set, environment, Key, Value}).
-% set(argument, {Key, Value}) ->
-% 	gen_server:cast(?MODULE, {set, argument, Key, Value});
-% set(config, Config) ->
-% 	gen_server:cast(?MODULE, {set, config, Value}).
+set({parameter, Key, Value}) ->
+	gen_server:cast(?MODULE, {set, parameter, Key, Value});
+set({environment, Key, Value}) ->
+	gen_server:cast(?MODULE, {set, environment, Key, Value});
+set({argument, Key, Value}) ->
+	gen_server:cast(?MODULE, {set, argument, Key, Value});
+set({config, Config}) ->
+	gen_server:cast(?MODULE, {set, config, Config}).
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -282,19 +329,35 @@ handle_call({set, config, Value}, _From, State) ->
 	% 1. the configuration received should be a map, if not, it
 	%    should fail.
 	{reply, ok, State};
-handle_call(_Msg, _From, State) ->
+handle_call(Msg, From, State) ->
+	?LOG_WARNING([
+		{message, Msg},
+		{from, From},
+		{module, ?MODULE},
+		{function, handle_call}
+	]),
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_cast(_Msg, State) ->
+handle_cast(Msg, State) ->
+	?LOG_WARNING([
+		{message, Msg},
+		{module, ?MODULE},
+		{function, handle_cast}
+	]),
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_info(_Msg, State) ->
+handle_info(Msg, State) ->
+	?LOG_WARNING([
+		{message, Msg},
+		{module, ?MODULE},
+		{function, handle_info}
+	]),
 	{noreply, State}.
 
 %%--------------------------------------------------------------------

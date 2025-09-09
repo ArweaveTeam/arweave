@@ -1,5 +1,13 @@
 %%%===================================================================
-%%% @doc
+%%% @doc Manage and store local environment variable.
+%%%
+%%% This module has been created to be a frontend around the local
+%%% system environment variable. Environment variables are set
+%%% read-only after a program is started. In this case, there is no
+%%% point to call `os:getenv/0' and parse all values everytime. This
+%%% module is getting environment variables, parses them and store
+%%% them in an ETS table called `arweave_config_environment'.
+%%%
 %%% @end
 %%%===================================================================
 -module(arweave_config_environment).
@@ -10,6 +18,7 @@
 -export([handle_call/3, handle_cast/2, handle_info/2]).
 -compile({no_auto_import,[get/0]}).
 -include_lib("kernel/include/logger.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 %%--------------------------------------------------------------------
 %% @doc start `arweave_config_environment' process.
@@ -50,12 +59,25 @@ init(_) ->
 	_Environment = [
 		begin
 			[K,V] = re:split(E, "=", [{parts, 2}, {return, list}]),
-			ets:insert(Ets, {K, V}),
-			{K,V}
+			BK = list_to_binary(K),
+			VK = list_to_binary(V),
+			ets:insert(Ets, {BK, VK}),
+			{BK,VK}
 		end ||
 		E <- os:getenv()
 	],
 	{ok, Ets}.
+
+init_test() ->
+	{ok, Ets} = init([]),
+	% All element of the ets should be in binary.
+	[
+	 	begin
+			?assertEqual(true, is_binary(Key)),
+			?assertEqual(true, is_binary(Value))
+		end
+		|| {Key, Value} <- ets:tab2list(Ets)
+	].
 
 %%--------------------------------------------------------------------
 %%
@@ -86,7 +108,7 @@ handle_cast(load, State) ->
 				{key, Key},
 				{value, Value}
 			]),
-			arweave_config_spec:set(environment, Key, Value)
+			arweave_config_spec:set({environment, Key, Value})
 		end,
 		get()
 	),
