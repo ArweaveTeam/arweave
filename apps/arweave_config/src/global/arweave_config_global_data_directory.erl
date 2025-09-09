@@ -32,7 +32,7 @@ short_description() -> {ok, <<"">>}.
 
 long_description() -> {ok, <<"">>}.
 
-environment() -> {ok, "AR_DATA_DIRECTORY"}.
+environment() -> {ok, <<"AR_DATA_DIRECTORY">>}.
 
 short_argument() -> {ok, <<"">>}.
 
