@@ -47,5 +47,52 @@ children() ->
 				[]
 			},
 			type => worker
+		},
+		% check and configure parameters using
+		% environment variable.
+		#{
+			id => arweave_config_environment,
+			start => {
+				arweave_config_environment,
+				start_link,
+				[]
+			},
+			type => worker,
+			restart => transient
 		}
+		% check and configure parameters using
+		% command line arguments.
+		% #{
+		% 	id => arweave_config_arguments,
+		% 	start => {
+		% 		arweave_config_arguments,
+		% 		start_link,
+		% 		[]
+		% 	},
+		% 	type => worker,
+		% 	restart => transient
+		% },
+		% check and configure parameters using
+		% configuration file.
+		% #{
+		%   	id => arweave_config_file,
+		% 	start => {
+		% 		arweave_config_file,
+		% 		start_link,
+		% 		[]
+		% 	},
+		% 	type => worker,
+		% 	restart => transient
+		% }
+		% start configuration listener, if
+		% defined
+		% #{
+		% 	id => arweave_config_listener,
+		% 	start => {
+		% 	  	arweave_config_listener,
+		% 		start_link,
+		% 		[]
+		% 	},
+		% 	type => worker
+		% }
 	].
