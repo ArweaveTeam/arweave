@@ -155,6 +155,27 @@ start_link(Module) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Module, []).
 
 %%--------------------------------------------------------------------
+%% @doc get a specification.
+%% @end
+%%--------------------------------------------------------------------
+get(Spec) ->
+	gen_server:call(?MODULE, {get, Spec}, 10_000).
+
+%%--------------------------------------------------------------------
+%% @doc set a parameters. The process will be in charge to check both
+%% keys and values then if everything is good, it will execute a side
+%% effect (to modify the application state) and finally store/update
+%% the value in `arweave_config_store'.
+%% @end
+%%--------------------------------------------------------------------
+set(environment, {Key, Value}) ->
+	gen_server:cast(?MODULE, {set, environment, Key, Value}).
+% set(argument, {Key, Value}) ->
+% 	gen_server:cast(?MODULE, {set, argument, Key, Value});
+% set(config, Config) ->
+% 	gen_server:cast(?MODULE, {set, config, Value}).
+
+%%--------------------------------------------------------------------
 %% @hidden
 %% @doc Returns a list of module callbacks to check specifications.
 %% This function has been created to avoid having to deal with a very
@@ -239,12 +260,28 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_call({check, _Key, _Value}, _From, State) ->
-	Return = wip,
-	{reply, Return, State};
-handle_call({get, Key}, _From, State) ->
-	Value = maps:get(Key, State),
-	{reply, {ok, Value}, State};
+handle_call({set, environment, Key, Value}, _From, State) ->
+	% 1. check if an environment key is present in the spec
+	%   true = environment(Key),
+	% 2. ensure the specification is good for the key/value
+	%   {ok, Value} = check(Key, Value),
+	% 3. if valid, store the key/value in arweave_store
+	%   arweave_config_store:set(Key, Value)
+	{reply, ok, State};
+handle_call({set, argument, Key, Value}, _From, State) ->
+	% 1. the arguments are usually passed to the module entry
+	%    point, in the case of arweave, this is ar module. We need
+	%    a way to retrieve those arguments, a switch will then be
+	%    required on ar module
+	% 2. parse the arguments and check if they are present in the
+	%    specifications
+	% 3. if it's good, store the key/value in the configuration
+	%    store
+	{reply, ok, State};
+handle_call({set, config, Value}, _From, State) ->
+	% 1. the configuration received should be a map, if not, it
+	%    should fail.
+	{reply, ok, State};
 handle_call(_Msg, _From, State) ->
 	{noreply, State}.
 

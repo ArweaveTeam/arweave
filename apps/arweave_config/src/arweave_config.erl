@@ -100,21 +100,21 @@
 %%%
 %%% == Parameters ==
 %%%
+%%% The  parameters are  values stored  in `arweave_config_store'  and
+%%% validated by `arweave_config_spec'. A parameter key is a list of
+%%% term, usually atoms and binaries,  representing a path. An exemple
+%%% with a global variable:
+%%%
 %%% ```
-%%% - debug:
-%%%   - key: global.debug
-%%%   - short argument: -d
-%%%   - long argument: --debug
-%%%   - environment: AR_DEBUG
-%%%   - configuration: $.global.debug
-%%%   - required: false
-%%% - data_directory:
-%%%   - key: global.data_directory
-%%%   - short argument: -D
-%%%   - long argument: --data_directory
-%%%   - environment: AR_DATA_DIRECTORY
-%%%   - configuration: $.global.data_directory
+%%% [global, debug]
+%%% [peers, <<"127.0.0.1:1234">>, enabled]
+%%% [storage, 3, enabled]
+%%% [storage, 3, unpacked]
+%%% [storage, 3, 'replica.2.9']
 %%% '''
+%%%
+%%% A parameter value is any kind of term stored using a path
+%%% previously defined.
 %%%
 %%% == (todo) Wizard ==
 %%%
