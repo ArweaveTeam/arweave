@@ -40,28 +40,61 @@ short_description() -> {ok, [
 	<<"Enable debug mode.">>
 ]}.
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 long_description() -> {ok, [
 	"When enabled, debug mode will increase the verbosity level",
 	"of the application."
 ]}.
 
-
+%%--------------------------------------------------------------------
+%% if returns true, then the environment variable is generated from
+%% the configuration key and prefixed with "AR":
+%%   AR_GLOBAL_DEBUG
+%% it can also be overwritten.
+%%--------------------------------------------------------------------
 environment() -> {ok, "AR_DEBUG"}.
 
+%%--------------------------------------------------------------------
+%% not defined by default. It should return a positive integer, in the
+%% printable ASCII range (e.g. a-z, A-Z and 0-9).
+%%--------------------------------------------------------------------
 short_argument() -> {ok, $d}.
 
+%%--------------------------------------------------------------------
+%% should convert the configuration key by default, like that:
+%%   [global, debug] will be come --global.debug
+%% but it can be overwritten using long_argument parameter.
+%%--------------------------------------------------------------------
 long_argument() -> {ok, [debug]}.
 
+%%--------------------------------------------------------------------
+%% define the numbers of elements to take after the short or long
+%% argument. If it's a flag (default), it's set to 0.
+%%--------------------------------------------------------------------
 elements() -> {ok, 0}.
 
+%%--------------------------------------------------------------------
+%% check if the key/value passed are valid (or not).
+%%--------------------------------------------------------------------
 check(_Key, Value) when is_boolean(Value) -> ok;
 check(_, _) -> {error, bad_value}.
 
+%%--------------------------------------------------------------------
+%% @doc Returns debug value.
+%% @end
+%%--------------------------------------------------------------------
 handle_get(_Key) ->
-	{ok, value}.
+	Value = arweave_config_store:get([global, debug]),
+	{ok, Value}.
 
+%%--------------------------------------------------------------------
+%% @doc Configure the node in debug mode.
+%% @end 
+%%--------------------------------------------------------------------
 handle_set(_Key, Value) ->
-	% 1. set otp debug mode
-	% 2. in case of success, update the value in the
-	%    configuration store.
+	logger:set_module_level(arweave_config, Value),
+	logger:set_module_level(arweave, Value),
+	arewave_config_store:set([global, debug], Value),
 	{ok, Value}.
