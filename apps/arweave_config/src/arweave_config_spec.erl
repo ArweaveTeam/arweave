@@ -12,6 +12,7 @@
 %%%===================================================================
 -module(arweave_config_spec).
 -behavior(gen_server).
+-export([start_link/1]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
 -export([is_function_exported/3]).
@@ -37,7 +38,7 @@
 % parameter can only be set during startup
 %---------------------------------------------------------------------
 -callback runtime() -> Return when
-	  Return :: {ok, boolean()}.
+	  Return :: boolean().
 
 %---------------------------------------------------------------------
 % REQUIRED: defines how to retrieve the value using the key Key.
@@ -136,29 +137,50 @@
 ]).
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc Start `arweave_config' spec server.
+%%
+%% == Examples ==
+%%
+%% ```
+%% {ok, P} = arweave_config_spec:start_link(arweave_config).
+%% '''
+%%
 %% @end
 %%--------------------------------------------------------------------
-start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+-spec start_link(Module) -> Return when
+	Module :: atom(),
+	Return :: {ok, pid()}.
+
+start_link(Module) ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, Module, []).
 
 %%--------------------------------------------------------------------
 %% @hidden
+%% @doc Returns a list of module callbacks to check specifications.
+%% This function has been created to avoid having to deal with a very
+%% long and complex file. Each module callbacks only export an init/2
+%% function to initialize the final state corresponding to a spec
+%% callback.
+%% @end
 %%--------------------------------------------------------------------
 callbacks_check() -> [
+	% mandatory callbacks
  	{configuration_key, arweave_config_spec_configuration_key},
-	{deprecated, arweave_config_spec_deprecated}
- 	% {runtime, arweave_config_spec_runtime},
- 	% {handle_set, arweave_config_spec_handle_set},
- 	% {handle_get, arweave_config_spec_handle_set}
-% 	{short_argument, arweave_config_spec_short_argument},
-% 	{long_argument, arweave_config_spec_long_argument},
-% 	{elements, arweave_config_spec_elements},
-% 	{type, arweave_config_spec_type},
-% 	{environment, arweave_config_spec_environment},
-% 	{legacy, arweave_config_spec_legacy},
-% 	{short_description, arweave_config_spec_short_description},
-% 	{long_description, arweave_config_spec_long_description},
+ 	{runtime, arweave_config_spec_runtime},
+ 	{handle_get, arweave_config_spec_handle_get},
+ 	{handle_set, arweave_config_spec_handle_set},
+
+	% optional callbacks
+	{check, arweave_config_spec_check},
+	{deprecated, arweave_config_spec_deprecated},
+ 	{environment, arweave_config_spec_environment},
+ 	{short_argument, arweave_config_spec_short_argument},
+ 	{long_argument, arweave_config_spec_long_argument},
+ 	{elements, arweave_config_spec_elements},
+ 	{type, arweave_config_spec_type},
+ 	{legacy, arweave_config_spec_legacy},
+ 	{short_description, arweave_config_spec_short_description},
+ 	{long_description, arweave_config_spec_long_description}
 ].
 
 %%--------------------------------------------------------------------
@@ -167,30 +189,45 @@ callbacks_check() -> [
 init(ModuleSpec) ->
 	erlang:process_flag(trap_exit, true),
 	Specs = ModuleSpec:spec(),
-	{ok, State} = init_loop(Specs, #{}).
+	{ok, State} = init_loop(Specs, #{}),
+	?LOG_INFO("~p ready", [?MODULE]),
+	{ok, State}.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-init_loop([], Buffer) -> {ok, Buffer};
+init_loop([], Buffer) ->
+	{ok, Buffer};
 init_loop([Module|Rest], Buffer) when is_atom(Module) ->
-	{ok, #{ configuration_key := K } = R} = init_module(Module, #{}),
-	init_loop(Rest, Buffer#{ K => R }).
+	case init_module(Module, #{}) of
+		{ok, #{ configuration_key := K } = R} ->
+			init_loop(Rest, Buffer#{ K => R });
+		discard ->
+			init_loop(Rest, Buffer);
+		{discard, _Message} ->
+			init_loop(Rest, Buffer);
+		Elsewise ->
+			Elsewise
+	end.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 init_module(Module, State) ->
-	init_module(Module, callbacks_check(), State).
+	CallbacksCheck = callbacks_check(),
+	init_module(Module, CallbacksCheck, State).
 
 init_module(Module, [], State) ->
+	?LOG_INFO("loaded module ~p", [Module]),
 	{ok, State};
-init_module(Module, [{Callback, ModuleCallback}|Rest], State) ->
+init_module(Module, [{_Callback, ModuleCallback}|Rest], State) ->
 	case erlang:apply(ModuleCallback, init, [Module, State]) of
 		{ok, NewState} ->
+			?LOG_INFO("checked callback ~p:~p", [Module,ModuleCallback]),
 			init_module(Module, Rest, NewState);
 		Elsewise ->
-			Elsewise
+			?LOG_WARNING("can't load module ~p", [Module]),
+			{discard, Elsewise}
 	end.
 
 %%--------------------------------------------------------------------
@@ -202,25 +239,25 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_call({check, Key, Value}, From, State) ->
+handle_call({check, _Key, _Value}, _From, State) ->
 	Return = wip,
 	{reply, Return, State};
-handle_call({get, Key}, From, State) ->
+handle_call({get, Key}, _From, State) ->
 	Value = maps:get(Key, State),
 	{reply, {ok, Value}, State};
-handle_call(Msg, From, State) ->
+handle_call(_Msg, _From, State) ->
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_cast(Msg, State) ->
+handle_cast(_Msg, State) ->
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_info(Msg, State) ->
+handle_info(_Msg, State) ->
 	{noreply, State}.
 
 %%--------------------------------------------------------------------

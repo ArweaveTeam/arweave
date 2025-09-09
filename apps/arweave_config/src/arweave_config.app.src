@@ -24,6 +24,7 @@
 	{registered, [
 		arweave_config,
 		arweave_config_sup,
-		arweave_config_store
+		arweave_config_store,
+		arweave_config_spec
 	]}
 ]}.

@@ -1,0 +1,24 @@
+-module(arweave_config_spec_environment).
+-export([init/2]).
+-include("arweave_config_spec.hrl").
+
+default() -> undefined.
+
+init(Module, State) ->
+	case is_function_exported(Module, environment, 0) of
+		true ->
+			init2(Module, State);
+		false ->
+			{ok, State#{ environment => default() }}
+	end.
+
+init2(Module, State) ->
+	try erlang:apply(Module, environment, []) of
+		{ok, Environment} ->
+			{ok, State#{ environment => Environment }};
+		Elsewise ->
+			{error, Elsewise}
+	catch
+		_:R ->
+			{error, R}
+	end.
