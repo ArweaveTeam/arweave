@@ -54,7 +54,7 @@ long_description() -> {ok, [
 %%   AR_GLOBAL_DEBUG
 %% it can also be overwritten.
 %%--------------------------------------------------------------------
-environment() -> {ok, "AR_DEBUG"}.
+environment() -> {ok, <<"AR_DEBUG">>}.
 
 %%--------------------------------------------------------------------
 %% not defined by default. It should return a positive integer, in the

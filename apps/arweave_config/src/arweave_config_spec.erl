@@ -214,13 +214,16 @@ get(Spec) ->
 %% @end
 %%--------------------------------------------------------------------
 set({parameter, Key, Value}) ->
-	gen_server:cast(?MODULE, {set, parameter, Key, Value});
+	gen_server:call(?MODULE, {set, parameter, Key, Value});
 set({environment, Key, Value}) ->
-	gen_server:cast(?MODULE, {set, environment, Key, Value});
+	gen_server:call(
+		?MODULE,
+		{set, environment, Key, Value}
+	);
 set({argument, Key, Value}) ->
-	gen_server:cast(?MODULE, {set, argument, Key, Value});
+	gen_server:call(?MODULE, {set, argument, Key, Value});
 set({config, Config}) ->
-	gen_server:cast(?MODULE, {set, config, Config}).
+	gen_server:call(?MODULE, {set, config, Config}).
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -257,9 +260,15 @@ callbacks_check() -> [
 init(ModuleSpec) ->
 	erlang:process_flag(trap_exit, true),
 	Specs = ModuleSpec:spec(),
-	{ok, State} = init_loop(Specs, #{}),
+	{ok, MapSpec} = init_loop(Specs, #{}),
+	Ets = ets:new(?MODULE, [named_table, protected]),
+	[
+		ets:insert(?MODULE, {K, V})
+		||
+		{K, V} <- maps:to_list(MapSpec)
+	],
 	?LOG_INFO("~p ready", [?MODULE]),
-	{ok, State}.
+	{ok, Ets}.
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -308,6 +317,15 @@ terminate(_, _) ->
 %% @hidden
 %%--------------------------------------------------------------------
 handle_call({set, environment, Key, Value}, _From, State) ->
+	Pattern = {'$1', #{ environment => '$2' }},
+	Guard = [{'=:=', '$2', Key}],
+	Select = [{{'$1', '$2'}}],
+	case ets:select(?MODULE, [{Pattern, Guard, Select}]) of
+		I = [{Param, Key}] ->
+			io:format("~p~n", [I]);
+		_ ->
+			ok
+	end,
 	% 1. check if an environment key is present in the spec
 	%   true = environment(Key),
 	% 2. ensure the specification is good for the key/value
