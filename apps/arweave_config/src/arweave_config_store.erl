@@ -133,7 +133,7 @@ set2_test() ->
 	Return :: {ok, list()} | {error, term()}.
 
 from_map(Data) when is_map(Data) ->
-	{wip, todo}.
+	todo.
 
 %%--------------------------------------------------------------------
 %% @doc Converts the content of the ETS table into a map. It will

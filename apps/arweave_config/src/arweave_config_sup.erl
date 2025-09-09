@@ -31,8 +31,21 @@ supervisor() ->
 children() -> 
 	[
 		#{
+			id => arweave_config_spec,
+			start => {
+				arweave_config_spec,
+				start_link,
+				[arweave_config]
+			},
+			type => worker
+		},
+		#{
 		  	id => arweave_config_store,
-			start => {arweave_config_store, start_link, []},
+			start => {
+				arweave_config_store,
+				start_link,
+				[]
+			},
 			type => worker
 		}
 	].

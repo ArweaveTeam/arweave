@@ -1,7 +1,13 @@
+%%%===================================================================
+%%%
+%%%===================================================================
 -module(arweave_config_spec_configuration_key).
--compile(export_all).
+-export([init/2]).
 -import(arweave_config_spec, [is_function_exported/3]).
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 init(Module, State) ->
 	case is_function_exported(Module, configuration_key, 0) of
 		true ->
