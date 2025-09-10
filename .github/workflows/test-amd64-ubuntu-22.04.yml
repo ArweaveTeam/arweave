@@ -11,15 +11,15 @@ on:
 
 jobs:
   build:
-    uses: ArweaveTeam/arweave/.github/workflows/x-build.yml@master
+    uses: ./.github/workflows/x-build.yml
     secrets: inherit
 
   test-canary:
     needs: [build]
-    uses: ArweaveTeam/arweave/.github/workflows/x-test-canary.yml@master
+    uses: ./.github/workflows/x-test-canary.yml
     secrets: inherit
 
   test:
     needs: [test-canary]
-    uses: ArweaveTeam/arweave/.github/workflows/x-test-full.yml@master
+    uses: ./.github/workflows/x-test-full.yml
     secrets: inherit
