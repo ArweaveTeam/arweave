@@ -374,16 +374,20 @@
 -behavior(application).
 -export([start/0, stop/0]).
 -export([get/1, get/2, set/2, show/0, show/1, spec/0]).
+-export([export/0, export/1]).
 -export([start/2, stop/1]).
+-compile({no_auto_import,[get/1]}).
 
 %%--------------------------------------------------------------------
-%%
+%% @doc helper function to started `arweave_config' application.
+%% @end
 %%--------------------------------------------------------------------
 start() ->
 	application:ensure_all_started(?MODULE).
 
 %%--------------------------------------------------------------------
-%%
+%% @doc help function to stop `arweave_config' application.
+%% @end
 %%--------------------------------------------------------------------
 stop() ->
 	application:stop(?MODULE).
@@ -430,7 +434,12 @@ spec() -> [
 %% @end
 %%--------------------------------------------------------------------
 get(Key) ->
-	todo.
+	case arweave_config_parser:key(Key) of
+		{ok, Parameter} ->
+			arweave_config_store:get(Parameter);
+		Elsewise ->
+			Elsewise
+	end.
 
 %%--------------------------------------------------------------------
 %% @doc Get a value from the  configuration, if not defined, a default
@@ -451,7 +460,12 @@ get(Key) ->
 %% @end
 %%--------------------------------------------------------------------
 get(Key, Default) ->
-	todo.
+	case get(Key) of
+		{ok, Value} ->
+			{ok, Value};
+		_Elsewise ->
+			{ok, Default}
+	end.
 
 %%--------------------------------------------------------------------
 %% @doc Set a configuration value using a key.
@@ -475,7 +489,12 @@ get(Key, Default) ->
 %% @end
 %%--------------------------------------------------------------------
 set(Key, Value) ->
-	todo.
+	case arweave_config_parse:key(Key) of
+		{ok, Parameter} ->
+			arweave_config_spec:set(Parameter, Value);
+		Elsewise ->
+			Elsewise
+	end.
 
 %%--------------------------------------------------------------------
 %% @doc Returns the configuration keys, values with their
@@ -484,14 +503,14 @@ set(Key, Value) ->
 %% == Examples ==
 %%
 %% ```
-%% > show().
-%% #{ [global,debug] => #{ value => true }}
+%% {ok, #{ [global,debug] => {Value = true, Metadata = #{}} }} =
+%%   arweave_config:show().
 %% '''
 %%
 %% @end
 %%--------------------------------------------------------------------
 show() ->
-	todo.
+	arweave_config_store:show().
 
 %%--------------------------------------------------------------------
 %% @doc Returns a key value and specification.
@@ -499,11 +518,48 @@ show() ->
 %% == Examples ==
 %%
 %% ```
-%% > show([global,debug]).
-%% {ok, #{value => true}}
+%% {ok, Value = true, Metadata = #{}} =
+%%   show([global,debug]).
 %% '''
 %%
 %% @end
 %%--------------------------------------------------------------------
 show(Key) ->
-	todo.
+	case arweave_config_parse:key(Key) of
+		{ok, Parameter} ->
+			arweave_config_store:get(Parameter);
+		Elsewise ->
+			Elsewise
+	end.
+
+%%--------------------------------------------------------------------
+%% @doc export the configuration as map.
+%% @end
+%%--------------------------------------------------------------------
+export() ->
+	arweave_config_store:export().
+
+%%--------------------------------------------------------------------
+%% @doc export the configuration in any other format (e.g. json).
+%% @TODO: use the correct Module/Function.
+%% @end
+%%--------------------------------------------------------------------
+export(json) ->
+	% export the configuration in json format.
+	Map = arweave_config_store:export(),
+	export(json, Map);
+export(yaml) ->
+	% export the configuration in yaml format.
+	Map = arweave_config_store:export(),
+	export(yaml, Map);
+export(inline) ->
+	% export the configuration in "arweave inline format", where
+	% the parameter is converted in key/value line by line.
+	Map = arweave_config_store:export(),
+	export(arweave_config_inliner, Map).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+export(Module, Map) ->
+	Module:encode(Map).

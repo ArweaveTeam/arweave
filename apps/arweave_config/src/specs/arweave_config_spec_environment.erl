@@ -25,16 +25,9 @@ check(Module, undefined, State) ->
 	{ok, State#{ environment => undefined }};
 check(Module, Environment, State) when is_binary(Environment) ->
 	{ok, State#{ environment => Environment }};
-check(Module, Environment, State) when is_list(Environment) ->
-	check_list(Module, Environment, Environment, State).
-
-check_list(Module, [], Env, State) ->
-	{ok, State#{ environment => Env }};
-check_list(Module, [Item|Rest], Env, State) when is_binary(Item) ->
-	check_list(Module, Rest, Env, State);
-check_list(Module, Rest, Env, State) ->
+check(Module, Env, State) ->
 	{error, #{
-			reason => {invalid, Rest},
+			reason => {invalid, Env},
 			module => Module,
 			callback => environment,
 			state => State
