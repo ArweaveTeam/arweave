@@ -1,5 +1,36 @@
 %%%===================================================================
+%%% @doc
 %%%
+%%% Arweave Debug Mode Parameter.
+%%%
+%%% ```
+%%% # print usage and help about this flag
+%%% ./bin/arweave help -d
+%%% ./bin/arweave help --global.debug
+%%% ./bin/arweave help AR_DEBUG
+%%%
+%%% # dynamic help
+%%% ./bin/arweave config help global.debug
+%%%
+%%% # configure debug mode from environment variable
+%%% export AR_DEBUG=true
+%%%
+%%% # configure debug mode via short argument
+%%% ./bin/arweave -d
+%%%
+%%% # configure debug mode via long argument
+%%% ./bin/arweave --global.debug
+%%%
+%%% # configure dynamically debug mode during runtime
+%%% ./bin/arweave config get global.debug
+%%% ./bin/arweave config set global.debug true
+%%% ./bin/arweave config set global.debug false
+%%%
+%%% # configure dynamically debug mode using webui
+%%% curl -X POST ${TARGET}/v1/config/global/debug -d'true'
+%%% '''
+%%%
+%%% @end
 %%%===================================================================
 -module(arweave_config_global_debug).
 -behavior(arweave_config_spec).
@@ -22,31 +53,54 @@
 	handle_set/2
 ]).
 
-configuration_key() -> {ok, [global,debug]}.
-
-runtime() -> true.
-
-deprecated() -> false.
-
-type() -> {ok, boolean}.
-
-default() -> {ok, false}.
-
-required() -> {ok, false}.
-
-legacy() -> {ok, [debug]}.
-
-short_description() -> {ok, [
-	<<"Enable debug mode.">>
-]}.
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+configuration_key() -> [global,debug].
 
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-long_description() -> {ok, [
+runtime() -> true.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+deprecated() -> false.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+type() -> boolean.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+default() -> false.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+required() -> false.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+legacy() -> [debug].
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+short_description() -> 
+	[<<"Enable debug mode.">>].
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+long_description() -> [
 	"When enabled, debug mode will increase the verbosity level",
 	"of the application."
-]}.
+].
 
 %%--------------------------------------------------------------------
 %% if returns true, then the environment variable is generated from
@@ -54,26 +108,26 @@ long_description() -> {ok, [
 %%   AR_GLOBAL_DEBUG
 %% it can also be overwritten.
 %%--------------------------------------------------------------------
-environment() -> {ok, <<"AR_DEBUG">>}.
+environment() -> [<<"AR_DEBUG">>].
 
 %%--------------------------------------------------------------------
 %% not defined by default. It should return a positive integer, in the
 %% printable ASCII range (e.g. a-z, A-Z and 0-9).
 %%--------------------------------------------------------------------
-short_argument() -> {ok, $d}.
+short_argument() -> $d.
 
 %%--------------------------------------------------------------------
 %% should convert the configuration key by default, like that:
 %%   [global, debug] will be come --global.debug
 %% but it can be overwritten using long_argument parameter.
 %%--------------------------------------------------------------------
-long_argument() -> {ok, [debug]}.
+long_argument() -> [global,debug].
 
 %%--------------------------------------------------------------------
 %% define the numbers of elements to take after the short or long
 %% argument. If it's a flag (default), it's set to 0.
 %%--------------------------------------------------------------------
-elements() -> {ok, 0}.
+elements() -> 0.
 
 %%--------------------------------------------------------------------
 %% check if the key/value passed are valid (or not).

@@ -16,12 +16,12 @@ default() -> false.
 init(Module, State) ->
 	case is_function_exported(Module, deprecated, 0) of
 		true ->
-			init2(Module, State);
+			fetch(Module, State);
 		false ->
 			{ok, State#{ deprecated => default() }}
 	end.
 
-init2(Module, State) ->
+fetch(Module, State) ->
 	try Module:deprecated() of
 		false ->
 			NewState = State#{ deprecated => default() },
