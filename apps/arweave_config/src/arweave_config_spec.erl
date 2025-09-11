@@ -10,15 +10,49 @@
 %%% loading and  managing arweave configuration  specification, stored
 %%% in a map.
 %%%
+%%% == `arweave_config_spec' process ==
+%%%
+%%% The `arweave_config_spec' process is a frontend for
+%%% `arweave_config_store'. The idea is to pass the parameter from
+%%% another module/process, check it first based on the specification,
+%%% and then forward the valid result to store it.
+%%%
+%%% ```
+%%%  ____________________________
+%%% |                            |
+%%% | arweave_config_environment |<--+
+%%% |____________________________|   |
+%%%    |      / \                    |
+%%%    |       | [specification      |
+%%%    |       |  errors]            |
+%%%  _\ /______|__________           |
+%%% |                     |          |
+%%% | arweave_config_spec |          |
+%%% |_____________________|          |
+%%%    |                             |
+%%%    | [specification success]     |
+%%%    |                             |
+%%%  _\_/__________________          |
+%%% |                      |         |
+%%% | arweave_config_store |---------+ [valid result]
+%%% |______________________|
+%%%
+%%% '''
+%%%
 %%% @end
 %%%===================================================================
 -module(arweave_config_spec).
 -behavior(gen_server).
--export([get/1, set/1]).
--export([start_link/1]).
+-export([
+	 start_link/1,
+	 get/1,
+	 get_environment/1,
+	 set/2
+]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
 -export([is_function_exported/3]).
+-compile({no_auto_import,[get/1]}).
 -include_lib("kernel/include/logger.hrl").
 
 % A raw key from external sources (cli, api...), non-sanitized,
@@ -142,6 +176,8 @@
 %---------------------------------------------------------------------
 -callback legacy() -> Return when
 	Return :: undefined
+		| atom()
+		| iolist()
 		| [atom() | iolist()].
 
 %---------------------------------------------------------------------
@@ -198,7 +234,7 @@
 %---------------------------------------------------------------------
 % @TODO: formatter callback
 % OPTIONAL: defines a function callback to format short or long
-% help message. 
+% help message.
 % DEFAULT: undefined
 %---------------------------------------------------------------------
 % -callback formatter(Type, Value) when
@@ -269,8 +305,34 @@ start_link(Module) ->
 %% @doc get a specification.
 %% @end
 %%--------------------------------------------------------------------
-get(Spec) ->
-	gen_server:call(?MODULE, {get, Spec}, 10_000).
+get(ParameterSpec) ->
+	Pattern = {'$1', '$2'},
+	Guard = [{'=:=', '$1', ParameterSpec}],
+	Select = [{{'$1', '$2'}}],
+	case ets:select(?MODULE, [{Pattern, Guard, Select}]) of
+		[{Parameter, Spec}] ->
+			{ok, Parameter, Spec};
+		_Elsewise ->
+			{error, not_found}
+	end.
+
+get_environment(EnvironmentKey) ->
+	Pattern = {'$1', #{ environment => '$2'}},
+	Guard = [{'=:=', '$2', EnvironmentKey}],
+	Select = ['$1'],
+	case ets:select(?MODULE, [{Pattern, Guard, Select}]) of
+		[Parameter] ->
+			[{Parameter, Value}] = ets:lookup(?MODULE, Parameter),
+			{ok, Parameter, Value};
+		_Elsewise ->
+			{error, not_found}
+	end.
+
+get_short_argument(ArgumentKey) ->
+	ok.
+
+get_long_argument(ArgumentKey) ->
+	ok.
 
 %%--------------------------------------------------------------------
 %% @doc set a parameters. The process will be in charge to check both
@@ -280,52 +342,21 @@ get(Spec) ->
 %%
 %% == Examples ==
 %%
-%% A parameter is already parsed and should be valid. Mostly used
-%% internally.
-%%
 %% ```
-%% set({parameter, [global,debug], true}).
-%% '''
-%%
-%% An environment is made of a key (usually in uppercase) prefixed by
-%% `AR_' and followed by a value. both values are not parsed and
-%% sanitized.
-%%
-%% ```
-%% set({environment, <<"AR_DEBUG">>, <<"true">>}).
-%% set({environment, <<"AR_DEBUG">>, <<"false">>}).
-%% '''
-%%
-%% An argument format is usually a binary or a list of binaries. Both
-%% values are not parsed nor sanitized.
-%%
-%% ```
-%% set({argument, <<"-d">>, <<"true">>}).
-%% set({argument, <<"--global.debug">>, <<"true">>}).
-%% set({argument, <<"--global.debug">>, <<"false">>}).
-%% set({argument, <<"--global.test">>, [<<"list">>, <<"of">>, <<"value">>]}).
-%% '''
-%%
-%% A configuration is usually a parsed JSON, YAML or TOML file using a
-%% map datastructure.
-%%
-%% ```
-%% set({config, #{ <<"global">> => #{ <<"debug">> => true }}).
+%% {ok, NewValue = true, OldValue = false} =
+%%   set([global, debug], <<"true">>).
 %% '''
 %%
 %% @end
 %%--------------------------------------------------------------------
-set({parameter, Key, Value}) ->
-	gen_server:call(?MODULE, {set, parameter, Key, Value});
-set({environment, Key, Value}) ->
-	gen_server:call(
-		?MODULE,
-		{set, environment, Key, Value}
-	);
-set({argument, Key, Value}) ->
-	gen_server:call(?MODULE, {set, argument, Key, Value});
-set({config, Config}) ->
-	gen_server:call(?MODULE, {set, config, Config}).
+-spec set(Parameter, Value) -> Return when
+	Parameter :: [atom() | iolist()],
+	Value :: term(),
+	Return :: {ok, term()}
+		| {error, term()}.
+
+set(Parameter, Value) ->
+	gen_server:call(?MODULE, {set, Parameter, Value}, 10_000).
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -418,41 +449,32 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_call({set, environment, EnvironmentKey, Value}, _From, State) ->
-	Pattern = {'$1', #{ environment => '$2', check => '$3'}},
-	Guard = [{'=:=', '$2', EnvironmentKey}],
-	Select = [{{'$1', '$2', '$3'}}],
-	I = ets:select(?MODULE, [{Pattern, Guard, Select}]),
-	io:format("~p~n", [I]),
-	case I of
-		[{Parameter, EnvironmentKey, Check}] ->
-			R = Check(Parameter, Value),
-			io:format("~p~n", [R]);
-		_ ->
-			ok
-	end,
+handle_call({set, Parameter, Value}, _From, State) ->
+	% 1. a parsed parameter is received
+	% 2. the parameter specification is extracted
+	%    from the specification store
+	case get(Parameter) of
+		% 3. if the specification is present, the value
+		%    is checked:
+		{ok, Parameter, Spec} ->
+			R = check(Parameter, Value, Spec),
+			% 4. forward the Parameter/Value to 
+			%    arweave_config_store, without answering
+			%    to the caller. arweave_store will
+			%    send the answer.
+			% arweave_config_store:set(
+			%   Parameter,
+			%   Value,
+			%   #{ from => From }
+			% ),
+			% {noreply, State}
+			{reply, R, State};
 
-	% 1. check if an environment key is present in the spec
-	%   true = environment(Key),
-	% 2. ensure the specification is good for the key/value
-	%   {ok, Value} = check(Key, Value),
-	% 3. if valid, store the key/value in arweave_store
-	%   arweave_config_store:set(Key, Value)
-	{reply, ok, State};
-handle_call({set, argument, Key, Value}, _From, State) ->
-	% 1. the arguments are usually passed to the module entry
-	%    point, in the case of arweave, this is ar module. We need
-	%    a way to retrieve those arguments, a switch will then be
-	%    required on ar module
-	% 2. parse the arguments and check if they are present in the
-	%    specifications
-	% 3. if it's good, store the key/value in the configuration
-	%    store
-	{reply, ok, State};
-handle_call({set, config, Value}, _From, State) ->
-	% 1. the configuration received should be a map, if not, it
-	%    should fail.
-	{reply, ok, State};
+		% no match or error: reply to the caller the reason
+		% of the error
+		Elsewise ->
+			{reply, Elsewise, State}
+	end;
 handle_call(Msg, From, State) ->
 	?LOG_WARNING([
 		{message, Msg},
@@ -506,3 +528,57 @@ is_function_exported(Module, Function, Arity) ->
 	catch
 		_:_ -> false
 	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc A pipeline function to check if the value is correct or not.
+%% @end
+%%--------------------------------------------------------------------
+check(Parameter, Value, Spec) ->
+	check_type(Parameter, Value, Spec, #{}).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc Check the type of the value associated with the parameter.
+%% @end
+%%--------------------------------------------------------------------
+check_type(Parameter, Value, Spec = #{ type := Type }, Buffer) ->
+	try
+		Result = arweave_config_type:Type(Value),
+		check_function(Parameter, Value, Spec, Buffer#{ type => Result })
+	catch
+		E:R ->
+			Error = {E, R},
+			check_function(Parameter, Value, Spec, Buffer#{ type => Error })
+	end;
+check_type(Parameter, Value, Spec, Buffer) ->
+	check_function(Parameter, Value, Spec, Buffer#{ type => undefined }).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc If a custom check function exists, use it.
+%% @end
+%%--------------------------------------------------------------------
+check_function(Parameter, Value, Spec = #{ check := Check }, Buffer) ->
+	try
+		Result = Check(Parameter, Value),
+		check_final(Parameter, Value, Spec, Buffer#{ check => Result })
+	catch
+		E:R ->
+			Error = {E, R},
+			check_final(Parameter, Value, Spec, Buffer#{ check => Error })
+	end;
+check_function(Parameter, Value, Spec, Buffer) ->
+	check_final(Parameter, Value, Spec, Buffer#{ check => undefined }).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc final check function, all returned values from the previous
+%% call should be present in `Buffer' variable.
+%% @end
+%%--------------------------------------------------------------------
+check_final(_, Value, _, Buffer = #{ type := undefined, check := undefined }) ->
+	{ok, Value, Buffer};
+check_final(_, Value, _, Buffer) ->
+	{ok, Value, Buffer}.
+
