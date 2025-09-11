@@ -1,5 +1,7 @@
 %%%===================================================================
-%%% @doc Arweave config specification behavior.
+%%% @doc
+%%%
+%%% Arweave configuration specification behavior.
 %%%
 %%% When used  as module, `arweave_config_spec' defines  a behavior to
 %%% deal with arweave parameters.
@@ -31,26 +33,18 @@
 % parameter, usually stored in a data store like ETS.
 %---------------------------------------------------------------------
 -callback configuration_key() -> Return when
-	  Return :: {ok, key()}.
+	Return :: [atom() | iolist() | tuple()].
 
 %---------------------------------------------------------------------
-% REQUIRED: defines  if the  parameter can be  set during  runtime. if
-% true, the  parameter can be set  when arweave is running,  else, the
-% parameter can only be set during startup
-%---------------------------------------------------------------------
--callback runtime() -> Return when
-	  Return :: boolean().
-
-%---------------------------------------------------------------------
-% REQUIRED: defines how to retrieve the value using the key Key.
+% REQUIRED: defines how to retrieve the value using the parameter key.
 %---------------------------------------------------------------------
 -callback handle_get(Key) -> Return when
 	Key :: key(),
 	Return :: handle_get_ok_return() | error_return().
 
 %---------------------------------------------------------------------
-% REQUIRED: defines  how to set the  value Value with the  key Key. It
-% should be transaction.
+% REQUIRED: defines how to set the value Value with the parameter key.
+% It should be transaction.
 %---------------------------------------------------------------------
 -callback handle_set(Key, Value) -> Return when
 	Key :: key(),
@@ -58,30 +52,43 @@
 	Return :: handle_set_ok_return() | error_return().
 
 %---------------------------------------------------------------------
+% OPTIONAL: defines  if the  parameter can be  set during  runtime. if
+% true, the  parameter can be set  when arweave is running,  else, the
+% parameter can only be set during startup
+% DEFAULT: false
+%---------------------------------------------------------------------
+-callback runtime() -> Return when
+	Return :: boolean().
+
+%---------------------------------------------------------------------
 % OPTIONAL: short argument used to  configure the parameter, usually a
-% single ASCII letter.
+% single ASCII letter present in range 0-9, a-z and A-Z.
+% DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback short_argument() -> Return when
-	  Return :: {ok, pos_integer()}.
+	Return :: undefined | pos_integer().
 
 %---------------------------------------------------------------------
 % OPTIONAL: a long argument, used  to configure the parameter, usually
 % lower cases words separated by dashes.
+% DEFAULT: converted parameter key (e.g. --global.debug)
 %---------------------------------------------------------------------
 -callback long_argument() -> Return when
-	  Return :: {ok, [string()]}.
+	Return :: undefined | iolist().
 
 %---------------------------------------------------------------------
 % OPTIONAL: the number of element to fetch after the flag.
+% DEFAULT: 0
 %---------------------------------------------------------------------
 -callback elements() -> Return when
-	  Return :: {ok, pos_integer()}.
+	Return :: pos_integer().
 
 %---------------------------------------------------------------------
 % OPTIONAL: the type of the value.
+% DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback type() -> Return when
-	  Return :: {ok, atom()}.
+	Return :: undefined | atom().
 
 %---------------------------------------------------------------------
 % OPTIONAL: a function to check the value attributed with the key.
@@ -94,45 +101,88 @@
 %---------------------------------------------------------------------
 % OPTIONAL: a function returning  a string representing an environment
 % variable.
+% DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback environment() -> Return when
-	Return :: {ok, string()}.
+	Return :: undefined | [string()].
 
 %---------------------------------------------------------------------
 % OPTIONAL: a list  of legacy references used to  previously fetch the
 % value.
+% DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback legacy() -> Return when
-	Return :: {ok, [term()]}.
+	Return :: undefined | [atom() | iolist()].
 
 %---------------------------------------------------------------------
 % OPTIONAL: a short description of the parameter.
+% DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback short_description() -> Return when
-	Return :: {ok, iolist()}.
+	Return :: undefined | iolist().
 
 %---------------------------------------------------------------------
 % OPTIONAL: a long description of the parameter.
+% DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback long_description() -> Return when
-	Return :: {ok, iolist()}.
+	Return :: undefined | iolist().
+
+%---------------------------------------------------------------------
+% OPTIONAL: defines if a parameter is deprecated, can eventually
+% returns a message.
+% DEFAULT: false
+%---------------------------------------------------------------------
+-callback deprecated() -> Return when
+	Return :: true | {true, term()} | false.
 
 %---------------------------------------------------------------------
 % @TODO: protected callback
 % OPTIONAL: defines if the value should be public or protected (not
 % displayed or even encrypted, useful for password)
+% DEFAULT: false
 %---------------------------------------------------------------------
 % -callback protected() -> Return when
 %       Return :: boolean().
 
 %---------------------------------------------------------------------
-% OPTIONAL: defines if a parameter is deprecated, can eventually
-% returns a message.
+% @TODO: dependencies callback
+% OPTIONAL: defines a list of required parameters to be set
+% DEFAULT: undefined
 %---------------------------------------------------------------------
--callback deprecated() -> Return when
-	Return :: true | {true, term()} | false.
+% -callback dependencies() -> Return when
+% 	Return :: undefined | [atom()|iolist()|tuple()].
+
+%---------------------------------------------------------------------
+% @TODO: conflicts callback
+% OPTIONAL: defines a list of conflicting parameters
+% DEFAULT: undefined
+%---------------------------------------------------------------------
+% -callback conflicts() -> RETURN when
+% 	Return :: undefined | [atom()|iolist()|tuple()].
+
+%---------------------------------------------------------------------
+% @TODO: formatter callback
+% OPTIONAL: defines a function callback to format short or long
+% help message. 
+% DEFAULT: undefined
+%---------------------------------------------------------------------
+% -callback formatter(Type, Value) when
+% 	Type :: short | long,
+% 	Value :: iolist(),
+% 	Return :: undefined | {ok, FormattedValue},
+% 	FormattedValue :: iolist().
+
+%---------------------------------------------------------------------
+% @TODO: positional arguments callback
+% OPTIONAL: defines if the argument is positional, those are found
+% after a special separator, usually `--'.
+%---------------------------------------------------------------------
+% -callback positional() -> Return when
+% 	Return :: boolean().
 
 -optional_callbacks([
+	runtime/0,
 	short_argument/0,
 	long_argument/0,
 	elements/0,
@@ -303,7 +353,7 @@ init_module(Module, [{_Callback, ModuleCallback}|Rest], State) ->
 			?LOG_INFO("checked callback ~p:~p", [Module,ModuleCallback]),
 			init_module(Module, Rest, NewState);
 		Elsewise ->
-			?LOG_WARNING("can't load module ~p", [Module]),
+			?LOG_WARNING("can't load module ~p:~p", [Module, Elsewise]),
 			{discard, Elsewise}
 	end.
 

@@ -7,15 +7,15 @@ default() -> undefined.
 init(Module, State) ->
 	case is_function_exported(Module, type, 0) of
 		true ->
-			init2(Module, State);
+			fetch(Module, State);
 		false ->
 			{ok, State#{ type => default() }}
 	end.
 
-init2(Module, State) ->
+fetch(Module, State) ->
 	try erlang:apply(Module, type, []) of
-		{ok, T} ->
-			{ok, State#{ type=> T }};
+		T when is_atom(T) ->
+			{ok, State#{ type => T }};
 		Elsewise ->
 			{error, Elsewise}
 	catch

@@ -7,14 +7,14 @@ default() -> 0.
 init(Module, State) ->
 	case is_function_exported(Module, elements, 0) of
 		true ->
-			init2(Module, State);
+			fetch(Module, State);
 		false ->
 			{ok, State#{ elements => default() }}
 	end.
 
-init2(Module, State) ->
+fetch(Module, State) ->
 	try erlang:apply(Module, elements, []) of
-		{ok, E} when is_integer(E), E >= 0 ->
+		E when is_integer(E), E >= 0 ->
 			{ok, State#{ elements => E}};
 		Elsewise ->
 			{error, #{
