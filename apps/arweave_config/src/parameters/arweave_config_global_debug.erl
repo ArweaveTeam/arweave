@@ -108,7 +108,7 @@ long_description() -> [
 %%   AR_GLOBAL_DEBUG
 %% it can also be overwritten.
 %%--------------------------------------------------------------------
-environment() -> [<<"AR_DEBUG">>].
+environment() -> <<"AR_DEBUG">>.
 
 %%--------------------------------------------------------------------
 %% not defined by default. It should return a positive integer, in the

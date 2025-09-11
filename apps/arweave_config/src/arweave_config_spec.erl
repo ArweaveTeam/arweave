@@ -21,35 +21,58 @@
 -export([is_function_exported/3]).
 -include_lib("kernel/include/logger.hrl").
 
-% a configuration key.
--type key() :: [atom() | {atom()}].
--type error_message() :: #{ reason => term() }.
--type error_return() :: {error, error_message()}.
--type handle_get_ok_return() :: {ok, CurrentValue :: term()}.
--type handle_set_ok_return() :: {ok, NewValue :: term(), PreviousValue :: term()}.
+% A raw key from external sources (cli, api...), non-sanitized,
+% non-parsed.
+-type key() :: term().
+
+% An arweave parameter, parsed and valid, containing only known
+% terms and specified.
+-type parameter() :: [atom() | {atom()} | binary()].
+
+% A value associated with a key/parameter, usually any kind of term.
+-type value() :: term().
 
 %---------------------------------------------------------------------
 % REQUIRED:  defines the  configuration key  used to  identify arweave
 % parameter, usually stored in a data store like ETS.
 %---------------------------------------------------------------------
 -callback configuration_key() -> Return when
-	Return :: [atom() | iolist() | tuple()].
+	Return :: parameter().
 
 %---------------------------------------------------------------------
 % REQUIRED: defines how to retrieve the value using the parameter key.
 %---------------------------------------------------------------------
--callback handle_get(Key) -> Return when
-	Key :: key(),
-	Return :: handle_get_ok_return() | error_return().
+-callback handle_get(Parameter) -> Return when
+	Parameter :: parameter(),
+	Return :: {ok, value()}
+		| {ok, Action}
+		| {ok, MFA}
+		| {error, map()},
+	CallbackReturn :: {ok, term()} | {error, term()},
+	Action :: fun ((Parameter) -> CallbackReturn),
+	MFA :: {atom(), atom(), list()}.
 
 %---------------------------------------------------------------------
 % REQUIRED: defines how to set the value Value with the parameter key.
-% It should be transaction.
+% It should be transaction. This callback must be improved, instead
+% of returning directly a value, it should also be possible to return
+% a list of MFA or lambda functions executed in order like
+% transactions.
 %---------------------------------------------------------------------
--callback handle_set(Key, Value) -> Return when
-	Key :: key(),
-	Value :: term(),
-	Return :: handle_set_ok_return() | error_return().
+-callback handle_set(Parameter, Value) -> Return when
+	Parameter:: parameter(),
+	Value :: value(),
+	CallbackReturn :: {ok, term()} | {error, term()},
+	Action :: fun ((Parameter, Value) -> CallbackReturn),
+	Actions :: [Action],
+	MFA :: {atom(), atom(), list()},
+	MFAs :: [MFA],
+	Return :: {ok, term()}
+		| {ok, Action}
+		| {ok, Actions}
+		| {ok, MFA}
+		| {ok, MFAs}
+		| {error, map()}.
 
 %---------------------------------------------------------------------
 % OPTIONAL: defines  if the  parameter can be  set during  runtime. if
@@ -66,7 +89,8 @@
 % DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback short_argument() -> Return when
-	Return :: undefined | pos_integer().
+	Return :: undefined
+		| pos_integer().
 
 %---------------------------------------------------------------------
 % OPTIONAL: a long argument, used  to configure the parameter, usually
@@ -74,7 +98,8 @@
 % DEFAULT: converted parameter key (e.g. --global.debug)
 %---------------------------------------------------------------------
 -callback long_argument() -> Return when
-	Return :: undefined | iolist().
+	Return :: undefined
+		| iolist().
 
 %---------------------------------------------------------------------
 % OPTIONAL: the number of element to fetch after the flag.
@@ -88,7 +113,9 @@
 % DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback type() -> Return when
-	Return :: undefined | atom().
+	Return :: undefined
+		| atom()
+		| fun ((term()) -> {ok, term()}).
 
 %---------------------------------------------------------------------
 % OPTIONAL: a function to check the value attributed with the key.
@@ -96,7 +123,8 @@
 -callback check(Key, Value) -> Return when
 	Key :: key(),
 	Value :: term(),
-	Return :: ok | error_return().
+	Return :: ok
+		| {error, term()}.
 
 %---------------------------------------------------------------------
 % OPTIONAL: a function returning  a string representing an environment
@@ -104,7 +132,8 @@
 % DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback environment() -> Return when
-	Return :: undefined | [string()].
+	Return :: undefined
+		| binary().
 
 %---------------------------------------------------------------------
 % OPTIONAL: a list  of legacy references used to  previously fetch the
@@ -112,21 +141,24 @@
 % DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback legacy() -> Return when
-	Return :: undefined | [atom() | iolist()].
+	Return :: undefined
+		| [atom() | iolist()].
 
 %---------------------------------------------------------------------
 % OPTIONAL: a short description of the parameter.
 % DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback short_description() -> Return when
-	Return :: undefined | iolist().
+	Return :: undefined
+		| iolist().
 
 %---------------------------------------------------------------------
 % OPTIONAL: a long description of the parameter.
 % DEFAULT: undefined
 %---------------------------------------------------------------------
 -callback long_description() -> Return when
-	Return :: undefined | iolist().
+	Return :: undefined
+		| iolist().
 
 %---------------------------------------------------------------------
 % OPTIONAL: defines if a parameter is deprecated, can eventually
@@ -134,7 +166,9 @@
 % DEFAULT: false
 %---------------------------------------------------------------------
 -callback deprecated() -> Return when
-	Return :: true | {true, term()} | false.
+	Return :: true
+		| {true, term()}
+		| false.
 
 %---------------------------------------------------------------------
 % @TODO: protected callback
@@ -180,6 +214,24 @@
 %---------------------------------------------------------------------
 % -callback positional() -> Return when
 % 	Return :: boolean().
+
+%---------------------------------------------------------------------
+% @TODO: before/after arguments callback
+% OPTIONAL: defines if another argument should be set before or after
+% the current one
+%---------------------------------------------------------------------
+% -callback before() -> Return when
+% 	Return :: undefined | [atom()].
+% -callback after() -> Return when
+% 	Return :: undefined | [atom()].
+
+%---------------------------------------------------------------------
+% @TODO: dryrun argument
+% OPTIONAL: instead of executing the set callback, it simply returns
+% the action and modification would have been applied.
+%---------------------------------------------------------------------
+% -callback dryrun() -> Return when
+% 	Return :: term().
 
 -optional_callbacks([
 	runtime/0,
@@ -366,16 +418,20 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_call({set, environment, Key, Value}, _From, State) ->
-	Pattern = {'$1', #{ environment => '$2' }},
-	Guard = [{'=:=', '$2', Key}],
-	Select = [{{'$1', '$2'}}],
-	case ets:select(?MODULE, [{Pattern, Guard, Select}]) of
-		I = [{Param, Key}] ->
-			io:format("~p~n", [I]);
+handle_call({set, environment, EnvironmentKey, Value}, _From, State) ->
+	Pattern = {'$1', #{ environment => '$2', check => '$3'}},
+	Guard = [{'=:=', '$2', EnvironmentKey}],
+	Select = [{{'$1', '$2', '$3'}}],
+	I = ets:select(?MODULE, [{Pattern, Guard, Select}]),
+	io:format("~p~n", [I]),
+	case I of
+		[{Parameter, EnvironmentKey, Check}] ->
+			R = Check(Parameter, Value),
+			io:format("~p~n", [R]);
 		_ ->
 			ok
 	end,
+
 	% 1. check if an environment key is present in the spec
 	%   true = environment(Key),
 	% 2. ensure the specification is good for the key/value
