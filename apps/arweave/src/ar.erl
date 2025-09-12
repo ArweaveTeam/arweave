@@ -735,6 +735,7 @@ parse_cli_args(["internal_api_secret", _ | _], _) ->
 			[?INTERNAL_API_SECRET_MIN_LEN]),
 	init:stop(1);
 parse_cli_args(["enable", Feature | Rest ], C = #config{ enable = Enabled }) ->
+	% arweave_config:set([modules,Feature,enabled], true]).
 	parse_cli_args(Rest, C#config{ enable = [ list_to_atom(Feature) | Enabled ] });
 parse_cli_args(["disable", Feature | Rest ], C = #config{ disable = Disabled }) ->
 	parse_cli_args(Rest, C#config{ disable = [ list_to_atom(Feature) | Disabled ] });

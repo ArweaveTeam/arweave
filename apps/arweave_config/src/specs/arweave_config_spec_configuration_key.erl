@@ -1,5 +1,45 @@
 %%%===================================================================
-%%% @doc
+%%% @doc Arweave Configuration Specification Configuration Key.
+%%%
+%%% A specification for a specification key is a way to describe a 
+%%% parameter in arweave_config. The idea is to have something similar
+%%% like a path/uri that can be checked before updated. A simple
+%%% example with the debug parameter:
+%%%
+%%% ```
+%%% [global,debug].
+%%% '''
+%%%
+%%% How to configure a "dynamic" key, for example, with a peer or a
+%%% storage module? It can be done by inserting a special term to
+%%% define what kind of type is accepted.
+%%%
+%%% ```
+%%% [peers,{peer},enabled].
+%%% '''
+%%%
+%%% What if the variable parameter can have many types?
+%%%
+%%% ```
+%%% [peers, {[peer,ipv4,ipv6]}, enabled].
+%%% '''
+%%%
+%%% Now, how it's possible to match quickly the content of a parameter
+%%% and this kind of key?
+%%%
+%%% ```
+%%% RawKey = <<"peers.[127.0.0.1].enabled">>.
+%%% Value = <<"true">>.
+%%% FormattedKey = [peers, <<"127.0.0.1">>, enabled].
+%%% Specification = [peers, {[peer,ipv4,ipv6]}, enabled].
+%%%
+%%% % an idea for an internal representation
+%%% % InternalSpec = [peers, fun param/1, enabled].
+%%%
+%%% {ok, Spec} = find(FormattedKey).
+%%% true = is_valid(FormattedKey, Spec).
+%%% '''
+%%%
 %%% @end
 %%%===================================================================
 -module(arweave_config_spec_configuration_key).
