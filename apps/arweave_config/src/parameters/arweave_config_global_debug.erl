@@ -50,7 +50,7 @@
 	elements/0,
 	check/2,
 	handle_get/1,
-	handle_set/2
+	handle_set/3
 ]).
 
 %%--------------------------------------------------------------------
@@ -147,7 +147,7 @@ handle_get(_Key) ->
 %% @doc Configure the node in debug mode.
 %% @end 
 %%--------------------------------------------------------------------
-handle_set(_Key, Value) ->
+handle_set(_Key, Value, _OldValue) ->
 	logger:set_module_level(arweave_config, Value),
 	logger:set_module_level(arweave, Value),
 	arewave_config_store:set([global, debug], Value),

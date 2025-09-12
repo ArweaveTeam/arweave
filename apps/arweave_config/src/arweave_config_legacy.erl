@@ -1,0 +1,3 @@
+-module(arweave_config_legacy).
+-compile(export_all).
+-include_lib("arweave/include/ar_config.hrl").
