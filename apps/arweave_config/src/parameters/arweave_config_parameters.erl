@@ -5,9 +5,10 @@ init() ->
 	#{
 		% #config.init
 		[global,init] => #{
+			default => false,
 			short_argument => undefined,
 			long_argument => <<"init">>,
-			legacy => [init],
+			legacy => init,
 			runtime => false,
 			short_description => [
 				<<"Start a new weave.">>
@@ -161,7 +162,19 @@ init() ->
 	
 		% storage configuration
 		[storage,{index},{type},state] => #{},
-		[storage,{index},{type},public_key] => #{}
+		[storage,{index},{type},public_key] => #{},
+
+		% semaphores
+		[semaphores, get_chunk] => #{},
+		[semaphores, get_and_path_chunk] => #{},
+		[semaphores, get_tx_data] => #{},
+		[semaphores, post_chunk] => #{},
+		[semaphores, get_block_index] => #{},
+		[semaphores, get_wallet_list] => #{},
+		[semaphores, get_sync_record] => #{},
+		[semaphores, post_tx] => #{},
+		[semaphores, get_reward_history] => #{},
+		[semaphores, get_tx] => #{}
 	
 		% webhooks
 		% [webhooks, {event}, {event_type}, url] => #{},

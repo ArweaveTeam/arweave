@@ -14,25 +14,37 @@
 %%%          |             |                 |
 %%%          | +-----------+                 |
 %%%          | | +---------------------------+
-%%%  ________:_:_:__                  _______
-%%% |               |                |       |
-%%% | specification |--------------->| store |
-%%% |_______________|                |_______| 
-%%%         :    |                    __________
-%%%         |    |                   |          |
-%%%         |    +------------------>| callback |
-%%%         |                        |__________|
-%%%         |
-%%%   ______|_       _________
-%%%  /        |     |         |
-%%% | Dynamic |<----| arweave |
-%%% |________/      |_________|
-%%%         :
-%%%         |
-%%%   ______|______
-%%%  |             |
-%%%  | WUI/GUI/CLI |
-%%%  |_____________|
+%%%          | | |
+%%% ________ | | | ____________________________________[static]__
+%%%          | | |                              [configuration]
+%%%          | | |
+%%%  _______ | | | _______________________________________________
+%%% |        | | |                                                |
+%%%  ________:_:_:__          _______       _________________     |
+%%% |               |        |       |     |                 |    |
+%%% | specification |------->| store |<----| arweave_config  |<-+ |
+%%% |_______________|        |_______|     |_________________|  | |
+%%%         : :  |         __________        _______________    | |
+%%% |       | |  |        /          |      (               )   | |
+%%% |       | |  +------->| callback |     ( arweave modules )--+ |
+%%% |       | |           |_________/       (_______________)     |
+%%% |       | |                                                   |
+%%% |       | |                                                   |
+%%% |       | |                                  [arweave_config] | 
+%%% |       | |                                          [module] |
+%%% |______ | |___________________________________________________|
+%%%         | |
+%%%  ______ | |_______________________________________[dynamic]__
+%%%         | |                                 [configuration]
+%%%         + +-----------+
+%%%   ______|______   ____|_____
+%%%  |             | |          |
+%%%  | socket      | | rpc/eval |
+%%%  |_____________| |__________|
+%%%   ______|______   ____|_____
+%%%  |             | |          |
+%%%  | WUI/GUI/CLI | | CLI      |
+%%%  |_____________| |__________|
 %%%
 %%% '''
 %%%
@@ -54,6 +66,10 @@
 %%% found, the value is defined using the parameter key.
 %%%
 %%% ```
+%%% arweave_config:load(environment)
+%%%
+%%% % or
+%%%
 %%% arweave_config_environment:load().
 %%% '''
 %%%
@@ -64,6 +80,12 @@
 %%% already configured from environment variable.
 %%%
 %%% ```
+%%% arweave_config:load(arguments)
+%%% arweave_config:load({arguments, Arguments}).
+%%%
+%%% % or
+%%%
+%%% arweave_config_arguments:load().
 %%% arweave_config_arguments:load(Arguments).
 %%% '''
 %%%
@@ -73,6 +95,12 @@
 %%% have been previously defined.
 %%%
 %%% ```
+%%% arweave_config:load(configuration).
+%%% arweave_config:load({configuration, Path}).
+%%%
+%%% % or
+%%%
+%%% arweave_config_file:load().
 %%% arweave_config_file:load(ConfigurationFile).
 %%% '''
 %%%
@@ -96,7 +124,7 @@
 %%%
 %%% Finally,   `arweave_config'  service   is  ready,   and  `arweave'
 %%% application  can be  started  safely.  When `arweave'  terminates,
-%%% `arewave_config' is stopped after.
+%%% `arweave_config' is stopped after.
 %%%
 %%% == Parameters ==
 %%%
@@ -372,9 +400,19 @@
 %%%===================================================================
 -module(arweave_config).
 -behavior(application).
--export([start/0, stop/0]).
--export([get/1, get/2, set/2, show/0, show/1, spec/0]).
--export([export/0, export/1]).
+-export([
+	start/0,
+	stop/0,
+	get/1,
+	get/2,
+	set/2,
+	show/0,
+	show/1, 
+	spec/0,
+	export/0,
+	export/1,
+	load/1
+]).
 -export([start/2, stop/1]).
 -compile({no_auto_import,[get/1]}).
 
@@ -541,9 +579,14 @@ export() ->
 
 %%--------------------------------------------------------------------
 %% @doc export the configuration in any other format (e.g. json).
+%% @TODO: create the interface
 %% @TODO: use the correct Module/Function.
 %% @end
 %%--------------------------------------------------------------------
+export(legacy) ->
+	% export the configuration as a tuple (or also called
+	% #config{} record.
+	todo;
 export(json) ->
 	% export the configuration in json format.
 	Map = arweave_config_store:export(),
@@ -563,3 +606,35 @@ export(inline) ->
 %%--------------------------------------------------------------------
 export(Module, Map) ->
 	Module:encode(Map).
+
+%%--------------------------------------------------------------------
+%% @doc Load manually different sources for the parameters. Interface
+%% to many modules/functions.
+%% @TODO: create the interface
+%%
+%% @see arweave_config_environment:load/0
+%% @see arweave_config_arguments:load/0
+%% @see arweave_config_arguments:load/1
+%% @see arweave_config_file:load/0
+%% @see arweave_config_file:load/1
+%% @end
+%%--------------------------------------------------------------------
+-spec load(Sources) -> Return when
+	Sources :: environment
+		 | arguments | {arguments, Arguments}
+		 | configuration | {configuration, Path},
+	Arguments :: [string()],
+	Path :: iolist(),
+	Return :: ok | {error, Reason},
+	Reason :: term().
+
+load(environment) ->
+	todo;
+load(arguments) ->
+	todo;
+load({arguments, _Arguments}) ->
+	todo;
+load(configuration) ->
+	todo;
+load({configuration, _Path}) ->
+	todo.

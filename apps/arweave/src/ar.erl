@@ -36,6 +36,24 @@ main() ->
 main("") ->
 	show_help();
 main(Args) ->
+	% Let start arweave_config application, this application
+	% will be in charge of the whole application
+	%   {ok, _} = application:ensure_all_started(arweave_config),
+	%
+	% load environment variable
+	%   {ok, _} = arweave_config:load(environment),
+	%
+	% load the arguments from the command line
+	%   {ok, _} = arweave_config:load({arguments, Args}),
+	%
+	% finally, load the configuration if it present/configured in
+	% the environment or arguments
+	%   {ok, _} = arweave_config:load(configuration),
+	%
+	% we can't deal with everything right now, then we can export
+	% the configuration as legacy (record).
+	%   {ok, LegacyConfig} = arweave_config:export(legacy),
+	%   start(LegacyConfig).
 	start(parse_config_file(Args, [], #config{})).
 
 show_help() ->

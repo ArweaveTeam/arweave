@@ -12,13 +12,21 @@
 %%%
 %%% == `arweave_config_spec' process ==
 %%%
-%%% The `arweave_config_spec' process is a frontend for
-%%% `arweave_config_store'. The idea is to pass the parameter from
+%%% The    `arweave_config_spec'   process    is   a    frontend   for
+%%% `arweave_config_store'.  The idea  is to  pass the  parameter from
 %%% another module/process, check it first based on the specification,
-%%% and then forward the valid result to store it.
+%%% and then  forward the valid  result to  store it. here  an example
+%%% anwith the environment
 %%%
 %%% ```
-%%%  ____________________________
+%%%  _____________
+%%% |             |
+%%% | system      |
+%%% | environment |
+%%% |_____________|
+%%%    |
+%%%    |
+%%%  _\_/________________________
 %%% |                            |
 %%% | arweave_config_environment |<--+
 %%% |____________________________|   |
@@ -93,9 +101,10 @@
 % a list of MFA or lambda functions executed in order like
 % transactions.
 %---------------------------------------------------------------------
--callback handle_set(Parameter, Value) -> Return when
+-callback handle_set(Parameter, Value, OldValue) -> Return when
 	Parameter:: parameter(),
 	Value :: value(),
+	OldValue :: value(),
 	CallbackReturn :: {ok, term()} | {error, term()},
 	Action :: fun ((Parameter, Value) -> CallbackReturn),
 	Actions :: [Action],
