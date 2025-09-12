@@ -67,6 +67,14 @@ set(Key, Value) ->
 			throw({undefined, Key})
 	end.
 
+%%
+%% draft
+%%
+% update(Fun, Key ) when is_function(Fun) ->
+% 	OldValue = get(Key),
+% 	{ok, Result} = Fun(OldValue, Value),
+% 	set(Key, Result).
+
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
