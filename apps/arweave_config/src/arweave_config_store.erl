@@ -44,8 +44,10 @@ start_link() ->
 
 get(Key) ->
 	case arweave_config_parser:key(Key) of
-		{ok, Id} -> lookup(Id);
-		Elsewise -> Elsewise
+		{ok, Id} ->
+			lookup(Id);
+		Elsewise ->
+			{error, Elsewise}
 	end.
 
 get1_test() ->
@@ -263,7 +265,9 @@ lookup(Id) ->
 		[] ->
 			{error, undefined};
 		[{#key{ id = Id }, #value{ value = Value}}] ->
-			{ok, {Id, Value}}
+			{ok, Value};
+		Elsewise ->
+			{error, Elsewise}
 	end.
 
 %%--------------------------------------------------------------------

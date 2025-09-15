@@ -147,14 +147,15 @@ handle_get(_Key) ->
 %% @doc Configure the node in debug mode.
 %% @end 
 %%--------------------------------------------------------------------
-handle_set(_Key, Value, _OldValue) ->
-	case Value of
-		true ->
-			logger:set_module_level(arweave_config, debug),
-			logger:set_module_level(arweave, debug);
-		false ->
-			logger:set_module_level(arweave_config, info),
-			logger:set_module_level(arweave, info)
-	end,
-	arweave_config_store:set([global, debug], Value),
-	{ok, Value}.
+handle_set(_, true, false) ->
+	logger:set_module_level(arweave_config, debug),
+	logger:set_module_level(arweave, debug),
+	{store, true};
+handle_set(_, false, true) ->
+	logger:set_module_level(arweave_config, info),
+	logger:set_module_level(arweave, info),
+	{store, false};
+handle_set(_, _, _) ->
+	logger:set_module_level(arweave_config, debug),
+	logger:set_module_level(arweave, debug),
+	{store, false}.
