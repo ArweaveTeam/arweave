@@ -1,3 +1,43 @@
+%%%===================================================================
+%%% @doc Configuration specification type.
+%%%
+%%% A type MUST BE defined somewhere. This is a way to reuse already
+%%% used format on the system.
+%%%
+%%% A type CAN CONVERT a value to an internal Erlang term.
+%%%
+%%% ```
+%%% % type boolean:
+%%% boolean(<<"true">>) -> {ok, true}.
+%%% boolean("true") -> {ok, true}.
+%%% '''
+%%%
+%%% == TODO ==
+%%%
+%%% 1. Configures a default generic  type (e.g. any) returning always,
+%%% `ok' it  should be defined in  this module or any  other. At this,
+%%% time ,  he default value  is set to  `undefined', but this  is not
+%%% coherent with the rest of the code.
+%%%
+%%% ```
+%%% any(_, _) -> ok.
+%%% '''
+%%% 
+%%% 2. Configures a default generic type (e.g. none) returning always
+%%% `error'.
+%%%
+%%% ```
+%%% none(_, _) -> {error, none}.
+%%% '''
+%%%
+%%% 3. Configure a custom Module/Function type callback:
+%%%
+%%% ```
+%%% {Module, Function}
+%%% '''
+%%%
+%%% @end
+%%%===================================================================
 -module(arweave_config_spec_type).
 -export([init/2]).
 -include("arweave_config_spec.hrl").

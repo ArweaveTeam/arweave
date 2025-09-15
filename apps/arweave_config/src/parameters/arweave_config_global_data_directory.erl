@@ -102,6 +102,6 @@ handle_get(Key) ->
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-handle_set(Key, _Value, OldValue) ->
-	?LOG_INFO("~p is a read only value, it cannot be set", [Key]),
-	{ok, OldValue}.
+handle_set(Key, Value, OldValue) ->
+	?LOG_INFO("~p is a read only value, it cannot be set", [{Key, Value, OldValue}]),
+	{error, #{ reason => read_only }}

@@ -1,7 +1,5 @@
 %%%===================================================================
-%%% @doc
-%%%
-%%% Arweave configuration specification behavior.
+%%% @doc Arweave configuration specification behavior.
 %%%
 %%% When used  as module, `arweave_config_spec' defines  a behavior to
 %%% deal with arweave parameters.
@@ -45,6 +43,23 @@
 %%% | arweave_config_store |---------+ [valid result]
 %%% |______________________|
 %%%
+%%% '''
+%%%
+%%% == TODO ===
+%%%
+%%% === Check Parameter Function ===
+%%%
+%%% A function is required to check manually/on demande a value
+%%% without setting it. It will be needed for testing.
+%%%
+%%% === Variable Parameter Item Specification ===
+%%%
+%%% Parameter item can be a variable, defined by a `type'. This is
+%%% helpful when setting different kind of values like storage modules
+%%% or peers.
+%%%
+%%% ```
+%%% [peers, {peer}, enabled]
 %%% '''
 %%%
 %%% @end
