@@ -52,6 +52,7 @@
 	handle_get/1,
 	handle_set/3
 ]).
+-include_lib("kernel/include/logger.hrl").
 
 %%--------------------------------------------------------------------
 %%
@@ -147,15 +148,13 @@ handle_get(_Key) ->
 %% @doc Configure the node in debug mode.
 %% @end 
 %%--------------------------------------------------------------------
-handle_set(_, true, false) ->
+handle_set(Param, true, _) ->
+	?LOG_INFO("enable ~p", [Param]),
 	logger:set_module_level(arweave_config, debug),
 	logger:set_module_level(arweave, debug),
 	{store, true};
-handle_set(_, false, true) ->
+handle_set(Param, false, _) ->
+	?LOG_INFO("disable ~p", [Param]),
 	logger:set_module_level(arweave_config, info),
 	logger:set_module_level(arweave, info),
-	{store, false};
-handle_set(_, _, _) ->
-	logger:set_module_level(arweave_config, debug),
-	logger:set_module_level(arweave, debug),
 	{store, false}.
