@@ -133,6 +133,17 @@ elements() -> 0.
 %%--------------------------------------------------------------------
 %% check if the key/value passed are valid (or not).
 %%--------------------------------------------------------------------
+check(Key, Value) when is_list(Value) ->
+	check(Key, list_to_binary(Value));
+check(_Key, Value) when is_binary(Value) ->
+	try erlang:binary_to_existing_atom(Value) of
+		true -> ok;
+		false -> ok;
+		_ -> {error, bad_value}
+	catch
+		_:_ ->
+			{error, bad_value}
+	end;
 check(_Key, Value) when is_boolean(Value) -> ok;
 check(_, _) -> {error, bad_value}.
 
@@ -148,6 +159,10 @@ handle_get(_Key) ->
 %% @doc Configure the node in debug mode.
 %% @end 
 %%--------------------------------------------------------------------
+handle_set(Param, X, Y) when is_binary(X) ->
+	handle_set(Param, binary_to_existing_atom(X), Y);
+handle_set(Param, X, Y) when is_binary(Y) ->
+	handle_set(Param, X, binary_to_existing_atom(Y));
 handle_set(Param, true, _) ->
 	?LOG_INFO("enable ~p", [Param]),
 	logger:set_module_level(arweave_config, debug),
