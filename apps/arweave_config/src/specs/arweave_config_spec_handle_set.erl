@@ -5,7 +5,7 @@
 init(Module, State) ->
 	case is_function_exported(Module, handle_set, 3) of
 		true ->
-			{ok, State#{ get => fun Module:handle_set/3 }};
+			{ok, State#{ set => fun Module:handle_set/3 }};
 		false ->
 			{error, #{
 					reason => undefined,

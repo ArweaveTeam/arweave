@@ -105,16 +105,16 @@
 	Parameter:: parameter(),
 	Value :: value(),
 	OldValue :: value(),
-	CallbackReturn :: {ok, term()} | {error, term()},
-	Action :: fun ((Parameter, Value) -> CallbackReturn),
-	Actions :: [Action],
-	MFA :: {atom(), atom(), list()},
-	MFAs :: [MFA],
+	% CallbackReturn :: {ok, term()} | {error, term()},
+	% Action :: fun ((Parameter, Value) -> CallbackReturn),
+	% Actions :: [Action],
+	% MFA :: {atom(), atom(), list()},
+	% MFAs :: [MFA],
 	Return :: {ok, term()}
-		| {ok, Action}
-		| {ok, Actions}
-		| {ok, MFA}
-		| {ok, MFAs}
+		% | {ok, Action}
+		% | {ok, Actions}
+		% | {ok, MFA}
+		% | {ok, MFAs}
 		| {error, map()}.
 
 %---------------------------------------------------------------------
@@ -459,28 +459,9 @@ terminate(_, _) ->
 %% @hidden
 %%--------------------------------------------------------------------
 handle_call({set, Parameter, Value}, _From, State) ->
-	% 1. a parsed parameter is received
-	% 2. the parameter specification is extracted
-	%    from the specification store
-	case get(Parameter) of
-		% 3. if the specification is present, the value
-		%    is checked:
-		{ok, Parameter, Spec} ->
-			R = check(Parameter, Value, Spec),
-			% 4. forward the Parameter/Value to 
-			%    arweave_config_store, without answering
-			%    to the caller. arweave_store will
-			%    send the answer.
-			% arweave_config_store:set(
-			%   Parameter,
-			%   Value,
-			%   #{ from => From }
-			% ),
-			% {noreply, State}
-			{reply, R, State};
-
-		% no match or error: reply to the caller the reason
-		% of the error
+	case apply_set(Parameter, Value) of
+		Return = {ok, Return} ->
+			{reply, Return, State};
 		Elsewise ->
 			{reply, Elsewise, State}
 	end;
@@ -586,8 +567,45 @@ check_function(Parameter, Value, Spec, Buffer) ->
 %% call should be present in `Buffer' variable.
 %% @end
 %%--------------------------------------------------------------------
-check_final(_, Value, _, Buffer = #{ type := undefined, check := undefined }) ->
-	{ok, Value, Buffer};
 check_final(_, Value, _, Buffer) ->
-	{ok, Value, Buffer}.
+	case Buffer of
+		#{ type := undefined, check := undefined } ->
+			{ok, Value, Buffer};
+		#{ type := ok, check := ok } ->
+			{ok, Value, Buffer};
+		#{ type := undefined, check := ok } ->
+			{ok, Value, Buffer};
+		#{ type := ok, check := undefined } ->
+			{ok, Value, Buffer};
+		#{ type := _, check := ok } ->
+			{ok, Value, Buffer};
+		_ ->
+			{error, Value, Buffer}
+	end.
 
+apply_set(Parameter, Value) ->
+	case get(Parameter) of
+		{ok, Parameter, Spec} ->
+			apply_set2(Parameter, Value, Spec);
+		Elsewise ->
+			Elsewise
+	end.
+
+apply_set2(Parameter, Value, Spec) ->
+	case check(Parameter, Value, Spec) of
+		{ok, Return, _} ->
+			apply_set3(Parameter, Return, Spec);
+		Elsewise ->
+			Elsewise
+	end.
+
+apply_set3(Parameter, Value, Spec = #{ set := Set }) ->
+	try Set(Parameter, Value, undefined) of
+		{ok, Value} ->
+			{ok, Value};
+		Elsewise ->
+			Elsewise
+	catch
+		E:R ->
+			{E,R}
+	end.
