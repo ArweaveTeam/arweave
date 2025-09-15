@@ -148,7 +148,13 @@ handle_get(_Key) ->
 %% @end 
 %%--------------------------------------------------------------------
 handle_set(_Key, Value, _OldValue) ->
-	logger:set_module_level(arweave_config, Value),
-	logger:set_module_level(arweave, Value),
-	arewave_config_store:set([global, debug], Value),
+	case Value of
+		true ->
+			logger:set_module_level(arweave_config, debug),
+			logger:set_module_level(arweave, debug);
+		false ->
+			logger:set_module_level(arweave_config, info),
+			logger:set_module_level(arweave, info)
+	end,
+	arweave_config_store:set([global, debug], Value),
 	{ok, Value}.
