@@ -1,5 +1,13 @@
 %%%===================================================================
+%%% @doc Runtime Specification Definition.
 %%%
+%%% Runtime callback has been created to deal with different kind of
+%%% parameters. Some are static and can be set only at startup. Others
+%%% are dynamic and can be set during runtime.
+%%%
+%%% == TODO ==
+%%%
+%%% @end
 %%%===================================================================
 -module(arweave_config_spec_runtime).
 -export([init/2]).
