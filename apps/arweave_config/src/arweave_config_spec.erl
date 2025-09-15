@@ -669,6 +669,7 @@ check_function(Parameter, Value, Spec, Buffer) ->
 %% @end
 %%--------------------------------------------------------------------
 check_final(_, Value, _, Buffer) ->
+	?LOG_DEBUG("~p", [Buffer]),
 	case Buffer of
 		#{ type := undefined, check := undefined } ->
 			{ok, Value, Buffer};
