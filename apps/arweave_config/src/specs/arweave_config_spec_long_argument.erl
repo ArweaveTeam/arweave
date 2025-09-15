@@ -1,3 +1,20 @@
+%%%===================================================================
+%%% @doc Long argument specification.
+%%%
+%%% ```
+%%% % example
+%%% Parameter = [global, debug].
+%%% LongArgumentDefault = <<"--global.debug">>.
+%%%
+%%% % example
+%%% Spec = [peers, {peer}, enabled].
+%%% Parameter = [peers, <<"127.0.0.1:1984">>, enabled].
+%%% Key = <<"peers.[127.0.0.1:1984].ebaled">>.
+%%% LongArgumentDefault = <<"--peers.[peer].enabled">>.
+%%% '''
+%%%
+%%% @end
+%%%===================================================================
 -module(arweave_config_spec_long_argument).
 -export([init/2]).
 -include("arweave_config_spec.hrl").
@@ -33,4 +50,3 @@ check(Module, LA, State) ->
 			callback => long_argument
 		}
 	}.
-

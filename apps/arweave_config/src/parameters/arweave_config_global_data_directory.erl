@@ -21,6 +21,7 @@
 	handle_get/1,
 	handle_set/3
 ]).
+-include_lib("kernel/include/logger.hrl").
 
 %%--------------------------------------------------------------------
 %%
@@ -94,9 +95,13 @@ check(Path) ->
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-handle_get(_Key) -> {ok, value}.
+handle_get(Key) ->
+	Return = arweave_config_store:get(Key),
+	{ok, Return}.
 
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-handle_set(_Key, Value, _OldValue) -> {ok, Value}.
+handle_set(Key, _Value, OldValue) ->
+	?LOG_INFO("~p is a read only value, it cannot be set", [Key]),
+	{ok, OldValue}.

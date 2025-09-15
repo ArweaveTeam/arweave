@@ -52,11 +52,14 @@
 -module(arweave_config_spec).
 -behavior(gen_server).
 -export([
-	 start_link/1,
-	 spec/1,
-	 get_environment/1,
-	 get/1,
-	 set/2
+	start_link/1,
+	spec/1,
+	get_environments/0,
+	get_environment/1,
+	get_short_arguments/0,
+	get_long_arguments/0,
+	get/1,
+	set/2
 ]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
@@ -359,7 +362,17 @@ spec(ParameterSpec) ->
 	end.
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc returns the list of environment variable supported.
+%% @end
+%%--------------------------------------------------------------------
+get_environments() ->
+	Pattern = {'$1', #{ environment => '$2'}},
+	Guard = [],
+	Select = [{{'$2', '$1'}}],
+	ets:select(?MODULE, [{Pattern, Guard, Select}]).
+
+%%--------------------------------------------------------------------
+%% @doc Returns the specification for an environment variable.
 %% @end
 %%--------------------------------------------------------------------
 get_environment(EnvironmentKey) ->
@@ -375,14 +388,42 @@ get_environment(EnvironmentKey) ->
 	end.
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc Returns the list of short arguments supported with the number
+%% of elements required.
+%% @end
+%%--------------------------------------------------------------------
+get_short_arguments() ->
+	Pattern = {'$1', #{
+		short_argument => '$2',
+		elements => '$3'
+	}},
+	Guard = [],
+	Select = [{{{{'$2', '$3'}}, '$1'}}],
+	ets:select(?MODULE, [{Pattern, Guard, Select}]).
+
+%%--------------------------------------------------------------------
+%% @doc returns specification for a short argument.
 %% @end
 %%--------------------------------------------------------------------
 get_short_argument(ArgumentKey) ->
 	todo.
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc Returns the list of long arguments supported with the number
+%% of elements required.
+%% @end
+%%--------------------------------------------------------------------
+get_long_arguments() ->
+	Pattern = {'$1', #{
+		long_argument => '$2',
+		elements => '$3'
+	}},
+	Guard = [],
+	Select = [{{{{'$2', '$3'}}, '$1'}}],
+	ets:select(?MODULE, [{Pattern, Guard, Select}]).
+
+%%--------------------------------------------------------------------
+%% @doc Returns specification from a long argument.
 %% @end
 %%--------------------------------------------------------------------
 get_long_argument(ArgumentKey) ->
