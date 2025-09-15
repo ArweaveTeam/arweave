@@ -53,8 +53,9 @@
 -behavior(gen_server).
 -export([
 	 start_link/1,
-	 get/1,
+	 spec/1,
 	 get_environment/1,
+	 get/1,
 	 set/2
 ]).
 -export([init/1, terminate/2]).
@@ -100,10 +101,41 @@
 % of returning directly a value, it should also be possible to return
 % a list of MFA or lambda functions executed in order like
 % transactions.
+%
+% `{ok, term()}' will simply returns the term, the side effect is
+% protected during the execution, and the module can do whatever (even
+% setting the value anywhere).
+%
+% `{store, term()}' will automatically store the returned value into
+% `arweave_config_store' using `arweave_config_store:set/2' function.
+%
+% `{error, map()}' will return an error and the reason.
+%
+% == TODO ==
+%
+% `{ok, action() | actions()}' will execute a list of action in order
+% first from last. Those are function with side effects, and their
+% return is not controlled. Those action should be defined as `fun/3':
+%
+% ```
+% Action = fun (Parameter, NewValue, OldValue) ->
+%   % do some action...
+% end.
+% '''
+%
+% `{ok, mfa() | mfas()}' same than the previous action definition.
+%
+% ```
+% -module(my_module).
+% export([mfa/3]).
+% mfa(Parameter, NewValue, OldValue) ->
+%   ok.
+% '''
+%
 %---------------------------------------------------------------------
--callback handle_set(Parameter, Value, OldValue) -> Return when
+-callback handle_set(Parameter, NewValue, OldValue) -> Return when
 	Parameter:: parameter(),
-	Value :: value(),
+	NewValue :: value(),
 	OldValue :: value(),
 	% CallbackReturn :: {ok, term()} | {error, term()},
 	% Action :: fun ((Parameter, Value) -> CallbackReturn),
@@ -111,6 +143,7 @@
 	% MFA :: {atom(), atom(), list()},
 	% MFAs :: [MFA],
 	Return :: {ok, term()}
+		| {store, term()}
 		% | {ok, Action}
 		% | {ok, Actions}
 		% | {ok, MFA}
@@ -311,10 +344,10 @@ start_link(Module) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Module, []).
 
 %%--------------------------------------------------------------------
-%% @doc get a specification.
+%% @doc returns parameter's specification from specification store.
 %% @end
 %%--------------------------------------------------------------------
-get(ParameterSpec) ->
+spec(ParameterSpec) ->
 	Pattern = {'$1', '$2'},
 	Guard = [{'=:=', '$1', ParameterSpec}],
 	Select = [{{'$1', '$2'}}],
@@ -325,6 +358,10 @@ get(ParameterSpec) ->
 			{error, not_found}
 	end.
 
+%%--------------------------------------------------------------------
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
 get_environment(EnvironmentKey) ->
 	Pattern = {'$1', #{ environment => '$2'}},
 	Guard = [{'=:=', '$2', EnvironmentKey}],
@@ -337,11 +374,26 @@ get_environment(EnvironmentKey) ->
 			{error, not_found}
 	end.
 
+%%--------------------------------------------------------------------
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
 get_short_argument(ArgumentKey) ->
-	ok.
+	todo.
 
+%%--------------------------------------------------------------------
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
 get_long_argument(ArgumentKey) ->
-	ok.
+	todo.
+
+%%--------------------------------------------------------------------
+%% @doc get a value using a parameter.
+%% @end
+%%--------------------------------------------------------------------
+get(Parameter) ->
+	gen_server:call(?MODULE, {get, Parameter}, 10_000).
 
 %%--------------------------------------------------------------------
 %% @doc set a parameters. The process will be in charge to check both
@@ -393,7 +445,8 @@ callbacks_check() -> [
  	{type, arweave_config_spec_type},
  	{legacy, arweave_config_spec_legacy},
  	{short_description, arweave_config_spec_short_description},
- 	{long_description, arweave_config_spec_long_description}
+ 	{long_description, arweave_config_spec_long_description},
+	{default, arweave_config_spec_default}
 ].
 
 %%--------------------------------------------------------------------
@@ -458,6 +511,13 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
+handle_call({get, Parameter}, _From, State) ->
+	case apply_get(Parameter) of
+		{ok, Value} ->
+			{reply, {ok, Value}, State};
+		Elsewise ->
+			{reply, Elsewise, State}
+	end;
 handle_call({set, Parameter, Value}, _From, State) ->
 	case apply_set(Parameter, Value) of
 		Return = {ok, Return} ->
@@ -583,14 +643,22 @@ check_final(_, Value, _, Buffer) ->
 			{error, Value, Buffer}
 	end.
 
+%%--------------------------------------------------------------------
+%% 1. get he specification, if they are present, we can continue
+%% to execute the transaction
+%%--------------------------------------------------------------------
 apply_set(Parameter, Value) ->
-	case get(Parameter) of
+	case spec(Parameter) of
 		{ok, Parameter, Spec} ->
 			apply_set2(Parameter, Value, Spec);
 		Elsewise ->
 			Elsewise
 	end.
 
+%%--------------------------------------------------------------------
+%% 2. check if the specification match the parameter/value,
+%% if everything is fine, we can continue the execution
+%%--------------------------------------------------------------------
 apply_set2(Parameter, Value, Spec) ->
 	case check(Parameter, Value, Spec) of
 		{ok, Return, _} ->
@@ -599,13 +667,56 @@ apply_set2(Parameter, Value, Spec) ->
 			Elsewise
 	end.
 
+%%--------------------------------------------------------------------
+%% 3. let retrieve the value (if set) and use the handle_set/3
+%% callback to set the value.
+%%--------------------------------------------------------------------
 apply_set3(Parameter, Value, Spec = #{ set := Set }) ->
-	try Set(Parameter, Value, undefined) of
-		{ok, Value} ->
-			{ok, Value};
+	Default = maps:get(default, Spec, undefined),
+	OldValue = arweave_config_store:get(Parameter, Default),
+	try Set(Parameter, Value, OldValue) of
+		{ok, NewValue} ->
+			{ok, NewValue, OldValue};
+		{store, NewValue} ->
+			apply_set4(Parameter,NewValue,OldValue,Spec);
 		Elsewise ->
 			Elsewise
 	catch
 		E:R ->
 			{E,R}
 	end.
+
+%%--------------------------------------------------------------------
+%% 4. the previous callback returned `store', then we store
+%% the value into arweave_config_store.
+%%--------------------------------------------------------------------
+apply_set4(Parameter, NewValue, OldValue, _Spec) ->
+	try arweave_config_store:set(Parameter, NewValue) of
+		{ok, {_, _}} ->
+			{ok, NewValue, OldValue};
+		Elsewise ->
+			Elsewise
+	catch
+		E:R ->
+			{E, R}
+	end.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+apply_get(Parameter) ->
+	case spec(Parameter) of
+		{ok, Parameter, Spec} ->
+			apply_get2(Parameter, Spec);
+		Elsewise ->
+			Elsewise
+	end.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+apply_get2(Parameter, _Spec = #{ default := Default }) ->
+	Value = arweave_config_store:get(Parameter, Default),
+	{ok, Value};
+apply_get2(Parameter, _Spec) ->
+	arweave_config_store:get(Parameter).
