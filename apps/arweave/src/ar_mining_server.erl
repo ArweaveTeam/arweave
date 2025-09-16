@@ -1339,10 +1339,7 @@ calculate_cache_limits_test_() ->
 	}.
 
 test_calculate_cache_limits_default() ->
-	{ok, Config} = application:get_env(arweave, config),
-	application:set_env(arweave, config, Config#config{
-		mining_cache_size_mb = undefined
-	}),
+	arweave_config:set(mining_cache_size_mb, undefined),
 	?assertEqual(
 		{400 * ?MiB, 400 * ?MiB, 4 * ?MiB, 4, 16_000},
 		calculate_cache_limits(100, 0)
@@ -1393,10 +1390,7 @@ test_calculate_cache_limits_default() ->
 	).
 
 test_calculate_cache_limits_custom_low() ->
-	{ok, Config} = application:get_env(arweave, config),
-	application:set_env(arweave, config, Config#config{
-		mining_cache_size_mb = 1
-	}),
+	arweave_config:set(mining_cache_size_mb, 1),
 	?assertEqual(
 		{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 1, 4_000},
 		calculate_cache_limits(1, 0)
@@ -1447,10 +1441,7 @@ test_calculate_cache_limits_custom_low() ->
 	).
 
 test_calculate_cache_limits_custom_high() ->
-	{ok, Config} = application:get_env(arweave, config),
-	application:set_env(arweave, config, Config#config{
-		mining_cache_size_mb = 500_000
-	}),
+	arweave_config:set(mining_cache_size_mb, 500_000),
 	?assertEqual(
 		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 500_000, 2_000_000_000},
 		calculate_cache_limits(1, 0)

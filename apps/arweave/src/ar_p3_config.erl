@@ -60,9 +60,10 @@ parse_p3(BadToken, _P3Config) ->
 
 validate_config(Config) when
 	is_record(Config, config) andalso
-	is_record(Config#config.p3, p3_config) ->
-	PaymentsValid = validate_payments(Config#config.p3#p3_config.payments),
-	ServicesValid = validate_services(Config#config.p3#p3_config.services),
+	is_record(arweave_config:get(p3), p3_config) ->
+	ConfigP3 = Config#config.p3,
+	PaymentsValid = validate_payments(ConfigP3#p3_config.payments),
+	ServicesValid = validate_services(ConfigP3#p3_config.services),
 	case PaymentsValid and ServicesValid of
 		true ->
 			{ok, Config#config.p3};
