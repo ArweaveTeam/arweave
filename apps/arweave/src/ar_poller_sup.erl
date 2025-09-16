@@ -21,14 +21,13 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	{ok, Config} = application:get_env(arweave, config),
 	Children = lists:map(
 		fun(Num) ->
 			Name = list_to_atom("ar_poller_worker_" ++ integer_to_list(Num)),
 			{Name, {ar_poller_worker, start_link, [Name]}, permanent, ?SHUTDOWN_TIMEOUT,
 					worker, [ar_poller_worker]}
 		end,
-		lists:seq(1, Config#config.block_pollers)
+		lists:seq(1, arweave_config:get(block_pollers))
 	),
 	Workers = [element(1, El) || El <- Children],
 	Children2 = [?CHILD_WITH_ARGS(ar_poller, worker, ar_poller, [ar_poller, Workers]) | Children],

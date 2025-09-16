@@ -5,6 +5,7 @@
 %% functions will be useable from the REPL as first-class commands. As an
 %% example, running the `config().` in the REPL will return current node config.
 %%
+%% TODO/cleanup: remove this file, it does not seem to be used
 
 -module(user_default).
 -include_lib("arweave/include/user_default.hrl").

@@ -442,7 +442,6 @@ optimal_partition_hash_hps(PoA1Multiplier, VDFSpeed, PartitionDataSize, TotalDat
 	H1Optimal + H2Optimal.
 
 generate_report() ->
-	{ok, Config} = application:get_env(arweave, config),
 	Height = ar_node:get_height(),
 	Packing = ar_mining_io:get_packing(),
 	Partitions = ar_mining_io:get_partitions(),
@@ -450,7 +449,7 @@ generate_report() ->
 		Height,
 		Packing,
 		Partitions,
-		Config#config.cm_peers,
+		arweave_config:get(cm_peers),
 		ar_node:get_weave_size(),
 		erlang:monotonic_time(millisecond)
 	).
@@ -973,8 +972,13 @@ test_vdf_stats() ->
 test_data_size_stats() ->
 	{ok, Config} = application:get_env(arweave, config),
 	try
-		application:set_env(arweave, config,
-			Config#config{ mining_addr = <<"MINING">> }),
+		application:set_env(
+		  	arweave,
+			config,
+			Config#config{
+				mining_addr = <<"MINING">>
+			}
+		),
 
 		WeaveSize = floor(2 * ar_block:partition_size()),
 		ets:insert(node_state, [{weave_size, WeaveSize}]),

@@ -28,9 +28,8 @@ start_link(Name) ->
 %%%===================================================================
 
 init([]) ->
-	{ok, Config} = application:get_env(arweave, config),
 	[ok] = ar_events:subscribe([node_state]),
-	State = #state{ polling_frequency_ms = Config#config.polling * 1000 },
+	State = #state{ polling_frequency_ms = arweave_config:get(polling) * 1000 },
 	case ar_node:is_joined() of
 		true ->
 			{ok, handle_node_state_initialized(State)};
@@ -201,8 +200,7 @@ slow_block_application_warning(N) ->
 			"paused.~n~n", [N]).
 
 warning(Peer, Event) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(Peer, Config#config.peers) of
+	case lists:member(Peer, arweave_config:get(peers)) of
 		false ->
 			ok;
 		true ->

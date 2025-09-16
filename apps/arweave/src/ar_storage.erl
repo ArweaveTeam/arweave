@@ -423,8 +423,7 @@ read_account2(Addr, RootHash) ->
 	%% from the number in the latest block.
 	Size = ar_wallets:get_size(),
 	MaxFileCount = Size div ?WALLET_LIST_CHUNK_SIZE + 1,
-	{ok, Config} = application:get_env(arweave, config),
-	read_account(Addr, RootHash, 0, MaxFileCount, Config#config.data_dir, false).
+	read_account(Addr, RootHash, 0, MaxFileCount, arweave_config:get(data_dir), false).
 
 read_account(_Addr, _RootHash, Left, Right, _DataDir, _RightFileFound) when Left == Right ->
 	not_found;
@@ -487,9 +486,11 @@ read_account2(Addr, RootHash, Pos, Left, _Right, DataDir, L, _RightFileFound) ->
 	end.
 
 lookup_block_filename(H) ->
-	{ok, Config} = application:get_env(arweave, config),
-	Name = filename:join([Config#config.data_dir, ?BLOCK_DIR,
-			binary_to_list(ar_util:encode(H))]),
+	Name = filename:join([
+		arweave_config:get(data_dir),
+		?BLOCK_DIR,
+		binary_to_list(ar_util:encode(H))
+	]),
 	NameJSON = iolist_to_binary([Name, ".json"]),
 	case is_file(NameJSON) of
 		true ->
@@ -946,10 +947,9 @@ read_wallet_list_chunk(RootHash) ->
 	read_wallet_list_chunk(RootHash, 0, ar_patricia_tree:new()).
 
 read_wallet_list_chunk(RootHash, Position, Tree) ->
-	{ok, Config} = application:get_env(arweave, config),
 	Filename =
 		binary_to_list(iolist_to_binary([
-			Config#config.data_dir,
+			arweave_config:get(data_dir),
 			"/",
 			?WALLET_LIST_DIR,
 			"/",
@@ -1044,8 +1044,7 @@ read_block_from_file(Filename, Encoding) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	{ok, Config} = application:get_env(arweave, config),
-	ensure_directories(Config#config.data_dir),
+	ensure_directories(arweave_config:get(data_dir)),
 	%% Copy genesis transactions (snapshotted in the repo) into data_dir/txs
 	ar_weave:add_mainnet_v1_genesis_txs(),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_storage_tx_confirmation_db"),
@@ -1096,8 +1095,7 @@ block_index_tip() ->
 	end.
 
 write_block(B) ->
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(disk_logging, Config#config.enable) of
+	case lists:member(disk_logging, arweave_config:get(enable)) of
 		true ->
 			?LOG_INFO([{event, writing_block_to_disk},
 					{block, ar_util:encode(B#block.indep_hash)}]);
@@ -1145,8 +1143,9 @@ parse_block_binary(Bin) ->
 	end.
 
 filepath(PathComponents) ->
-	{ok, Config} = application:get_env(arweave, config),
-	to_string(filename:join([Config#config.data_dir | PathComponents])).
+	to_string(filename:join([
+		arweave_config:get(data_dir) | PathComponents
+	])).
 
 to_string(Bin) when is_binary(Bin) ->
 	binary_to_list(Bin);
@@ -1164,12 +1163,15 @@ ensure_directories(DataDir) ->
 	filelib:ensure_dir(filename:join([DataDir, ?TX_DIR, "migrated_v1"]) ++ "/").
 
 get_same_disk_storage_modules_total_size() ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get(data_dir),
 	{ok, Info} = file:read_file_info(DataDir),
 	Device = Info#file_info.major_device,
-	get_same_disk_storage_modules_total_size(0, Config#config.storage_modules, DataDir,
-			Device).
+	get_same_disk_storage_modules_total_size(
+		0,
+		arweave_config:get(storage_modules),
+		DataDir,
+		Device
+	).
 
 get_same_disk_storage_modules_total_size(TotalSize, [], _DataDir, _Device) ->
 	TotalSize;
@@ -1226,8 +1228,7 @@ write_file_atomic(Filename, Data) ->
 	end.
 
 write_term(Name, Term) ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get(data_dir),
 	write_term(DataDir, Name, Term, override).
 
 write_term(Dir, Name, Term) when is_atom(Name) ->
@@ -1252,8 +1253,7 @@ write_term(Dir, Name, Term, Override) ->
 	end.
 
 read_term(Name) ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get(data_dir),
 	read_term(DataDir, Name).
 
 read_term(Dir, Name) when is_atom(Name) ->
@@ -1270,8 +1270,7 @@ read_term(Dir, Name) ->
 	end.
 
 delete_term(Name) ->
-	{ok, Config} = application:get_env(arweave, config),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get(data_dir),
 	file:delete(filename:join(DataDir, atom_to_list(Name))).
 
 store_account_tree_update(Height, RootHash, Map) ->

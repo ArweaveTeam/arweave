@@ -50,11 +50,10 @@ fetch(Start, End, StoreID) ->
 			UnsyncedIntervals = get_unsynced_intervals(Start, End2, StoreID),
 
 			Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
-			{ok, Config} = application:get_env(arweave, config),
 			AllPeers =
-				case Config#config.sync_from_local_peers_only of
+			case arweave_config:get(sync_from_local_peers_only) of
 					true ->
-						Config#config.local_peers;
+						arweave_config:get(local_peers);
 					false ->
 						ar_data_discovery:get_bucket_peers(Bucket)
 				end,

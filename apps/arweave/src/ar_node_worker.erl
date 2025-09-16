@@ -94,11 +94,11 @@ init([]) ->
 	%% Read persisted mempool.
 	ar_mempool:load_from_disk(),
 	%% Join the network.
-	{ok, Config} = application:get_env(arweave, config),
-	validate_trusted_peers(Config),
-	StartFromLocalState = Config#config.start_from_latest_state orelse
-			Config#config.start_from_block /= undefined,
-	case {StartFromLocalState, Config#config.init, Config#config.auto_join} of
+	validate_trusted_peers(),
+	StartFromLocalState =
+		arweave_config:get(start_from_latest_state)
+		orelse arweave_config:get(start_from_block) /= undefined,
+		case {StartFromLocalState, arweave_config:get(init), arweave_config:get(auto_join)} of
 		{false, false, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
 		{true, _, _} ->
@@ -106,7 +106,7 @@ init([]) ->
 				not_found ->
 					block_index_not_found([]);
 				BI ->
-					case get_block_index_at_state(BI, Config) of
+					case get_block_index_at_state(BI) of
 						not_found ->
 							block_index_not_found(BI);
 						BI2 ->
@@ -125,11 +125,15 @@ init([]) ->
 					end
 			end;
 		{false, true, _} ->
+			% TODO: to modify
 			Config2 = Config#config{ init = false },
 			application:set_env(arweave, config, Config2),
 			InitialBalance = ?AR(?LOCALNET_BALANCE),
-			[B0] = ar_weave:init([{Config#config.mining_addr, InitialBalance, <<>>}],
-					ar_retarget:switch_to_linear_diff(Config#config.diff)),
+			[B0] = 
+				ar_weave:init(
+					[{arweave_config:get(mining_addr), InitialBalance, <<>>}],
+					ar_retarget:switch_to_linear_diff(arweave_config:get(diff))
+				 ),
 			RootHash0 = B0#block.wallet_list,
 			RootHash0 = ar_storage:write_wallet_list(0, B0#block.account_tree),
 			start_from_state([B0]);
@@ -147,7 +151,7 @@ init([]) ->
 		ar_mempool:get_priority_set()
 	),
 	%% May be start mining.
-	case Config#config.mine of
+	case arweave_config:get(mine) of
 		true ->
 			gen_server:cast(?MODULE, automine);
 		_ ->
@@ -171,12 +175,12 @@ init([]) ->
 		solution_cache_records => queue:new()
 	}}.
 
-get_block_index_at_state(BI, Config) ->
-	case Config#config.start_from_latest_state of
+get_block_index_at_state(BI) ->
+	case arweave_config:get(start_from_latest_state) of
 		true ->
 			BI;
 		false ->
-			H = Config#config.start_from_block,
+			H = arweave_config:get(start_from_block),
 			get_block_index_at_state2(BI, H)
 	end.
 
@@ -203,11 +207,14 @@ block_index_not_found(BI) ->
 	timer:sleep(1000),
 	init:stop(1).
 
+% get the peers from the configuration and check them.
+validate_trusted_peers() ->
+	case arweave_config:get(peers) of
+		[] -> ok;
+		Peers -> validate_trusted_peers(Peers)
+	end.
 
-validate_trusted_peers(#config{ peers = [] }) ->
-	ok;
-validate_trusted_peers(Config) ->
-	Peers = Config#config.peers,
+validate_trusted_peers(Peers) ->
 	ValidPeers = filter_valid_peers(Peers),
 	case ValidPeers of
 		[] ->
@@ -216,8 +223,9 @@ validate_trusted_peers(Config) ->
 			timer:sleep(2000),
 			init:stop(1);
 		_ ->
+			% TODO: modify set configuration
 			application:set_env(arweave, config, Config#config{ peers = ValidPeers }),
-			case lists:member(time_syncing, Config#config.disable) of
+			case lists:member(time_syncing, arweave_config:get(disable)) of
 				false ->
 					validate_clock_sync(ValidPeers);
 				true ->
@@ -851,8 +859,7 @@ maybe_rebase(#{ pending_rebase := {PrevH, H} } = State) ->
 maybe_rebase(State) ->
 	[{_, H}] = ets:lookup(node_state, current),
 	B = ar_block_cache:get(block_cache, H),
-	{ok, Config} = application:get_env(arweave, config),
-	case B#block.reward_addr == Config#config.mining_addr of
+	case B#block.reward_addr == arewave_config:get(mining_addr) of
 		false ->
 			{noreply, State};
 		true ->
