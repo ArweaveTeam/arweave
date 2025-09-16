@@ -415,6 +415,7 @@
 ]).
 -export([start/2, stop/1]).
 -compile({no_auto_import,[get/1]}).
+-include_lib("kernel/include/logger.hrl").
 
 %%--------------------------------------------------------------------
 %% @doc helper function to started `arweave_config' application.
@@ -471,6 +472,17 @@ spec() -> [
 %%
 %% @end
 %%--------------------------------------------------------------------
+get(Key) when is_atom(Key) ->
+	% TODO: pattern to remove.
+	% this pattern is ONLY for legacy purpose, it should be
+	% removed after the full migration to the new arweave
+	% configuration format.
+	?LOG_DEBUG([
+		{function, ?FUNCTION_NAME},
+		{module, ?MODULE},
+		{key, Key}
+	]),
+	arweave_config_legacy:get(Key);
 get(Key) ->
 	case arweave_config_parser:key(Key) of
 		{ok, Parameter} ->
@@ -526,6 +538,18 @@ get(Key, Default) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+set(Key, Value) when is_atom(Key) ->
+	% TODO: pattern to remove.
+	% this pattern is ONLY for legacy purpose and should be
+	% removed after the migration to the new arweave configuration
+	% format.
+	?LOG_DEBUG([
+		{function, ?FUNCTION_NAME},
+		{module, ?MODULE},
+		{key, Key},
+		{value, Value}
+	]),
+	arweave_config_legacy:set(Key, Value);
 set(Key, Value) ->
 	case arweave_config_parse:key(Key) of
 		{ok, Parameter} ->
