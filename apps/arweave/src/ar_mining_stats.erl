@@ -981,10 +981,10 @@ test_data_size_stats() ->
 		do_test_data_size_stats({composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}),
 		do_test_data_size_stats({composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2})
 	after
-		application:set_env(arweave, config, Config)
+		ok
 	end.
 
-do_test_data_size_stats(Config, Mining, Packing) ->
+do_test_data_size_stats(Mining, Packing) ->
 	arweave_config:set(storage_modules, [
 		{floor(0.1 * ar_block:partition_size()), 10, unpacked},
 		{floor(0.1 * ar_block:partition_size()), 10, Mining},
@@ -1515,4 +1515,6 @@ test_report(Mining, Packing, PoA1Multiplier) ->
 			]
 		},
 		Report2)
+	after
+		ok
 	end.

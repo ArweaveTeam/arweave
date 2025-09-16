@@ -919,7 +919,7 @@ modules_to_defrag() ->
 		storages_modules => arweave_config:get(storages_modules)
 	}).
 
-modules_to_defrag(#{defragmentation_modules = [_|_] := Modules}) -> Modules;
+modules_to_defrag(#{defragmentation_modules := [_|_] = Modules}) -> Modules;
 modules_to_defrag(#{storage_modules := Modules}) -> Modules.
 
 %%%===================================================================

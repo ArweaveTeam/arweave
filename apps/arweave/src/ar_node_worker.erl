@@ -126,8 +126,7 @@ init([]) ->
 			end;
 		{false, true, _} ->
 			% TODO: to modify
-			Config2 = Config#config{ init = false },
-			application:set_env(arweave, config, Config2),
+			arweave_config:set(init, false),
 			InitialBalance = ?AR(?LOCALNET_BALANCE),
 			[B0] = 
 				ar_weave:init(
@@ -224,7 +223,7 @@ validate_trusted_peers(Peers) ->
 			init:stop(1);
 		_ ->
 			% TODO: modify set configuration
-			application:set_env(arweave, config, Config#config{ peers = ValidPeers }),
+			arweave_config:set(peers, ValidPeers),
 			case lists:member(time_syncing, arweave_config:get(disable)) of
 				false ->
 					validate_clock_sync(ValidPeers);

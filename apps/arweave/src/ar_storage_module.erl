@@ -127,8 +127,10 @@ packing_label(Packing) ->
 get_by_id(?DEFAULT_MODULE) ->
 	?DEFAULT_MODULE;
 get_by_id(ID) ->
-	RepackInPlaceModules = [element(1, El)
-			|| El <- Config#config.repack_in_place_storage_modules],
+	RepackInPlaceModules = [
+		element(1, El)
+		|| El <- arweave_config:get(repack_in_place_storage_modules)
+	],
 	get_by_id(ID, arweave_config:get(storage_modules) ++ RepackInPlaceModules).
 
 get_by_id(_ID, []) ->
@@ -143,8 +145,10 @@ get_by_id(ID, [Module | Modules]) ->
 
 get_all_module_ranges() ->
 	RepackInPlaceModulesStoreIDs = [
-			{{BucketSize, Bucket, TargetPacking}, ar_storage_module:id(Module)}
-		|| {{BucketSize, Bucket, _Packing} = Module, TargetPacking} <- Config#config.repack_in_place_storage_modules],
+		{{BucketSize, Bucket, TargetPacking}, ar_storage_module:id(Module)}
+		|| {{BucketSize, Bucket, _Packing} = Module, TargetPacking}
+		<- arweave_config:get(repack_in_place_storage_modules)
+	],
 	ModuleStoreIDs = [
 		{Module, ar_storage_module:id(Module)}
 		|| Module <- arweave_config:get(storage_modules)
@@ -447,7 +451,7 @@ label_test() ->
 			{524288, 3, {composite, <<"b">>, 1}},
 			{524288, 3, {composite, <<"b">>, 1}},
 			{524288, 3, {composite, <<"b">>, 2}}
-		],
+		]),
 		?assertEqual("storage_module_0_spora_2_6_1",
 			label(id({ar_block:partition_size(), 0, {spora_2_6, <<"a">>}}))),
 		?assertEqual("storage_module_2_spora_2_6_1",
@@ -469,6 +473,8 @@ label_test() ->
 			label(id({524288, 3, {composite, <<"b">>, 1}}))),
 		?assertEqual("storage_module_524288_3_composite_5",
 			label(id({524288, 3, {composite, <<"b">>, 2}})))
+	after
+		ok
 	end.
 
 has_any_test() ->

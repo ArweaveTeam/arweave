@@ -70,9 +70,13 @@ init([]) ->
 	gen_server:cast(?MODULE, pre_validate),
 	ok = ar_events:subscribe(block),
 	ThrottleBySolutionInterval = arweave_config:get(block_throttle_by_solution_interval),
-	ThrottleByIPInterval = arweave_config:get(block_throttle_by_ip_interval,
-	{ok, #state{ throttle_by_ip_interval = ThrottleByIPInterval,
-			throttle_by_solution_interval = ThrottleBySolutionInterval }}.
+	ThrottleByIPInterval = arweave_config:get(block_throttle_by_ip_interval),
+	{ok,
+	 	#state{
+			throttle_by_ip_interval = ThrottleByIPInterval,
+			throttle_by_solution_interval = ThrottleBySolutionInterval
+		}
+	}.
 
 handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTimestamps,
 			hash_timestamps = HashTimestamps,
