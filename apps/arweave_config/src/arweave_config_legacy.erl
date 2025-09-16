@@ -65,7 +65,7 @@ get() ->
 %%--------------------------------------------------------------------
 get(Key) ->
 	try gen_server:call(?MODULE, {get, Key}, 1000) of
-		{ok, Value} -> {ok, Value};
+		{ok, Value} -> Value;
 		_Elsewise -> undefined
 	catch
 		_E:_R:_S -> undefined
@@ -116,9 +116,9 @@ init(_) ->
 init_test() ->
 	{ok, _Pid} = start_link(),
 	?assertEqual(true, has_key(init)),
-	?assertEqual({ok, false}, get(init)),
+	?assertEqual(false, get(init)),
 	set(init, true),
-	?assertEqual({ok, true}, get(init)),
+	?assertEqual(true, get(init)),
 	{ok, C1} = application:get_env(arweave, config),
 	?assertEqual(true, C1#config.init),
 	?assertEqual(C1, get()),

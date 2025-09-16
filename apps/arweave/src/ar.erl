@@ -591,10 +591,10 @@ parse_cli_args(["verify_samples", N | Rest], C) ->
 	parse_cli_args(Rest, C#config{ verify_samples = list_to_integer(N) });
 parse_cli_args(["vdf", Mode | Rest], C) ->
 	ParsedMode = case Mode of
-		"openssl" ->openssl;
-		"openssllite" ->openssllite;
-		"fused" ->fused;
-		"hiopt_m4" ->hiopt_m4;
+		"openssl" -> openssl;
+		"openssllite" -> openssllite;
+		"fused" -> fused;
+		"hiopt_m4" -> hiopt_m4;
 		_ ->
 			io:format("VDF ~p is invalid.~n", [Mode]),
 			openssl
@@ -882,12 +882,14 @@ parse_cli_args(["max_vdf_last_step_validation_thread_count", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			max_nonce_limiter_last_step_validation_thread_count = list_to_integer(Num) });
 parse_cli_args(["vdf_server_trusted_peer", Peer | Rest], C) ->
-	% TODO arweave_config
 	#config{ nonce_limiter_server_trusted_peers = Peers } = C,
+	PAC = arweave_config:get(nonce_limiter_server_trusted_peers),
+	arweave_config:set(nonce_limiter_server_trusted_peers, [Peer|PAC]),
 	parse_cli_args(Rest, C#config{ nonce_limiter_server_trusted_peers = [Peer | Peers] });
 parse_cli_args(["vdf_client_peer", RawPeer | Rest],
 		C = #config{ nonce_limiter_client_peers = Peers }) ->
-	% TODO arweave_config
+	PAC = arweave_config:get(nonce_limiter_client_peers),
+	arweave_config:set(nonce_limiter_client_peers, [RawPeer|PAC]),
 	parse_cli_args(Rest, C#config{ nonce_limiter_client_peers = [RawPeer | Peers] });
 parse_cli_args(["debug" | Rest], C) ->
 	arweave_config:set(debug, true),
@@ -906,11 +908,11 @@ parse_cli_args(["block_throttle_by_solution_interval", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			block_throttle_by_solution_interval = list_to_integer(Num) });
 parse_cli_args(["defragment_module", DefragModuleString | Rest], C) ->
-	% TODO arweave_config
-	DefragModules = C#config.defragmentation_modules,
+	DefragModules = arweave_config:get(defragmentation_modules),
 	try
 		{ok, DefragModule} = ar_config:parse_storage_module(DefragModuleString),
 		DefragModules2 = [DefragModule | DefragModules],
+		arweave_config:set(defragmentation_modules, DefragModules2),
 		parse_cli_args(Rest, C#config{ defragmentation_modules = DefragModules2 })
 	catch _:_ ->
 		io:format("~ndefragment_module value must be in the {number},{address} format.~n~n"),
@@ -944,9 +946,10 @@ parse_cli_args(["cm_poll_interval", Num | Rest], C) ->
 	arweave_config:set(cm_poll_interval, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ cm_poll_interval = list_to_integer(Num) });
 parse_cli_args(["cm_peer", Peer | Rest], C = #config{ cm_peers = Ps }) ->
-	% TODO: arweave_config
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} when is_list(ValidPeer) ->
+			PAC = arweave_config:get(cm_peers),
+			arweave_config:set(cm_peers, [ValidPeer|PAC]),
 			parse_cli_args(Rest, C#config{ cm_peers = ValidPeer ++ Ps });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
@@ -1308,7 +1311,7 @@ parse_cli_args(["http_api.tcp.send_timeout", Timeout|Rest], C) ->
 
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->
-	% TODO: arweave_config
+	arweave_config:set(chunk_storage_file_size, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ chunk_storage_file_size = list_to_integer(Num) });
 
 parse_cli_args([Arg | _Rest], _O) ->
