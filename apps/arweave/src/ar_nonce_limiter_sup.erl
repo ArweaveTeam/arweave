@@ -21,7 +21,6 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	{ok, Config} = application:get_env(arweave, config),
 	ServerWorkers = lists:map(
 		fun(Peer) ->
 			Name = list_to_atom("ar_nonce_limiter_server_worker_"
@@ -29,7 +28,7 @@ init([]) ->
 			?CHILD_WITH_ARGS(ar_nonce_limiter_server_worker,
 					worker, Name, [Name, Peer])
 		end,
-		Config#config.nonce_limiter_client_peers
+		arweave_config:get(nonce_limiter_client_peers)
 	),
 	Client = ?CHILD(ar_nonce_limiter_client, worker),
 	Server = ?CHILD(ar_nonce_limiter_server, worker),

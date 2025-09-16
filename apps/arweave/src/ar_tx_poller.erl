@@ -79,8 +79,7 @@ handle_info({event, node_state, {initialized, _}}, State) ->
 	%% Send a check_for_received_txs cast periodically to check for externally submitted
 	%% transactions. If there have not been any for longer than 30 seconds, request the
 	%% mempool from a peer and download the transactions.
-    {ok, Config} = application:get_env(arweave, config),
-    case lists:member(tx_poller, Config#config.disable) of
+    case lists:member(tx_poller, arweave_config:get(disable)) of
         true ->
             ok;
         false ->
