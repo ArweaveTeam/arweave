@@ -33,7 +33,7 @@ children() ->
 	 	#{
 		  	id => arweave_config_legacy,
 			start => {
-				arweave_config_spec,
+				arweave_config_legacy,
 				start_link,
 				[]
 			},
