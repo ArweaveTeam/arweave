@@ -30,6 +30,15 @@ supervisor() ->
 %%--------------------------------------------------------------------
 children() -> 
 	[
+	 	#{
+		  	id => arweave_config_legacy,
+			start => {
+				arweave_config_spec,
+				start_link,
+				[]
+			},
+			type => worker
+		},
 		#{
 			id => arweave_config_spec,
 			start => {
