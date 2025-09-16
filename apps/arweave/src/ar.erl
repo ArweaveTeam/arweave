@@ -617,7 +617,7 @@ parse_cli_args(["block_gossip_peer", Peer | Rest],
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} when is_list(ValidPeer) ->
 			PAC = arweave_config:get(block_gossip_peers),
-			arweave_config:set(block_gossip_peers, ValidPeers ++ PAC),
+			arweave_config:set(block_gossip_peers, ValidPeer ++ PAC),
 			parse_cli_args(Rest, C#config{ block_gossip_peers = ValidPeer ++ Peers });
 		{error, _} ->
 			io:format("Peer ~p invalid ~n", [Peer]),
@@ -627,7 +627,7 @@ parse_cli_args(["local_peer", Peer | Rest], C = #config{ local_peers = Peers }) 
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} when is_list(ValidPeer) ->
 			PAC = arweave_config:get(local_peers),
-			arweave_config:set(local_peers, ValidPeers ++ PAC),
+			arweave_config:set(local_peers, ValidPeer ++ PAC),
 			parse_cli_args(Rest, C#config{ local_peers = ValidPeer ++ Peers });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
@@ -749,7 +749,7 @@ parse_cli_args(["max_emitters", Num | Rest], C) ->
 	arweave_config:set(max_emitters, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ max_emitters = list_to_integer(Num) });
 parse_cli_args(["disk_space", Size | Rest], C) ->
-	arweave_config:set(disk_space, (list_to_integer(Size) * 1024 * 1024 * 1024))
+	arweave_config:set(disk_space, (list_to_integer(Size) * 1024 * 1024 * 1024)),
 	parse_cli_args(Rest,
 			C#config{ disk_space = (list_to_integer(Size) * 1024 * 1024 * 1024) });
 parse_cli_args(["disk_space_check_frequency", Frequency | Rest], C) ->
