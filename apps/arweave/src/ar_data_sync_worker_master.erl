@@ -61,7 +61,6 @@ register_workers() ->
 
 
 register_sync_workers() ->
-	{ok, Config} = application:get_env(arweave, config),
 	{Workers, WorkerNames} = lists:foldl(
 		fun(Number, {AccWorkers, AccWorkerNames}) ->
 			Name = list_to_atom("ar_data_sync_worker_" ++ integer_to_list(Number)),
@@ -69,14 +68,13 @@ register_sync_workers() ->
 			{[Worker | AccWorkers], [Name | AccWorkerNames]}
 		end,
 		{[], []},
-		lists:seq(1, Config#config.sync_jobs)
+		lists:seq(1, arweave_config:get(sync_jobs))
 	),
 	{Workers, WorkerNames}.
 
 %% @doc Returns true if syncing is enabled (i.e. sync_jobs > 0).
 is_syncing_enabled() ->
-	{ok, Config} = application:get_env(arweave, config),
-	Config#config.sync_jobs > 0.
+	arweave_config:get(sync_jobs) > 0.
 
 %% @doc Returns true if we can accept new tasks. Will always return false if syncing is
 %% disabled (i.e. sync_jobs = 0).

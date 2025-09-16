@@ -71,7 +71,6 @@ get_serialized_sync_buckets() ->
 
 init([]) ->
 	ok = ar_events:subscribe(sync_record),
-	{ok, Config} = application:get_env(arweave, config),
 	SyncRecord = lists:foldl(
 		fun(Module, Acc) ->
 			case Module of
@@ -86,7 +85,7 @@ init([]) ->
 			end
 		end,
 		ar_intervals:new(),
-		[?DEFAULT_MODULE | Config#config.storage_modules]
+		[?DEFAULT_MODULE | arweave_config:get(storage_modules)]
 	),
 	SyncBuckets = ar_sync_buckets:from_intervals(SyncRecord),
 	{SyncBuckets2, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets,

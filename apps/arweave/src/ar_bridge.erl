@@ -122,9 +122,8 @@ handle_info({event, block, {new, B, _}}, State) ->
 			%% The cache should have been just pruned and this block is old.
 			{noreply, State};
 		_ ->
-			{ok, Config} = application:get_env(arweave, config),
 			TrustedPeers = ar_peers:get_trusted_peers(),
-			SpecialPeers = Config#config.block_gossip_peers,
+			SpecialPeers = arweave_config:get(block_gossip_peers),
 			Peers = ((SpecialPeers ++ ar_peers:get_peers(current)) -- TrustedPeers) ++ TrustedPeers,
 			JSON =
 				case B#block.height >= ar_fork:height_2_6() of
@@ -252,7 +251,6 @@ send_to_worker(Peer, {JSON, B}, W) ->
 	end.
 
 send_and_log(Peer, H, Height, Format, Bin, RecallByte) ->
-	{ok, Config} = application:get_env(arweave, config),
 	Reply =
 		case Format of
 			json ->
@@ -260,7 +258,7 @@ send_and_log(Peer, H, Height, Format, Bin, RecallByte) ->
 			binary ->
 				ar_http_iface_client:send_block_binary(Peer, H, Bin, RecallByte)
 		end,
-	case lists:member(Peer, Config#config.block_gossip_peers) of
+	case lists:member(Peer, arweave_config:get(block_gossip_peers) of
 		true ->
 			?LOG_INFO([{event, sent_block_to_block_gossip_peer},
 				{format, Format},
