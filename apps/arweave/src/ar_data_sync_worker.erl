@@ -37,7 +37,6 @@ start_link(Name, Mode) ->
 
 init({Name, Mode}) ->
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {name, Name}]),
-	{ok, Config} = application:get_env(arweave, config),
 	%% In case there has been a restart we need to tell
 	%% ar_data_sync_worker_master to erase pending worker tasks.
 	%% We only want to do this for sync workers, not read workers.
@@ -49,7 +48,7 @@ init({Name, Mode}) ->
 	end,
 	{ok, #state{
 		name = Name,
-		request_packed_chunks = Config#config.data_sync_request_packed_chunks
+		request_packed_chunks = arweave_config:get(data_sync_request_packed_chunks)
 	}}.
 
 handle_call(Request, _From, State) ->

@@ -13,12 +13,12 @@
 
 execute(Req, Env) ->
 	IPAddr = requesting_ip_addr(Req),
-	{ok, Config} = application:get_env(arweave, config),
-	case lists:member(blacklist, Config#config.disable) of
+	case lists:member(blacklist, arweave_config:get(disable)) of
 		true ->
 			{ok, Req, Env};
 		_ ->
-			LocalIPs = [peer_to_ip_addr(Peer) || Peer <- Config#config.local_peers],
+			LocalPeers = arweave_config:get(local_peers),
+			LocalIPs = [peer_to_ip_addr(Peer) || Peer <- LocalPeers],
 			case lists:member(IPAddr, LocalIPs) of
 				true ->
 					{ok, Req, Env};
@@ -148,6 +148,9 @@ peer_to_ip_addr({A, B, C, D, _}) -> {A, B, C, D}.
 
 get_key_limit(IPAddr, Req) ->
 	Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-	{ok, Config} = application:get_env(arweave, config),
-	Map = maps:get(IPAddr, Config#config.requests_per_minute_limit_by_ip, #{}),
+	Map = maps:get(
+		IPAddr,
+	       arweave_config:get(requests_per_minute_limit_by_ip),
+	       #{}
+	),
 	?RPM_BY_PATH(Path, Map)().
