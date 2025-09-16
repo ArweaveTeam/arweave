@@ -635,11 +635,8 @@ test_max_peer_queue() ->
 	?assertEqual(20, max_peer_queue(#performance{ current_rating = 1 }, 100, 10)).
 
 test_cut_peer_queue() ->
-	{ok, OriginalConfig} = application:get_env(arweave, config),
 	try
-		ok = application:set_env(arweave, config, OriginalConfig#config{
-			sync_jobs = 10
-		}),
+		arweave_config:set(sync_jobs, 10),
 
 		Peer1 = {1, 2, 3, 4, 1984},
 		TaskQueue = lists:seq(1, 100),
@@ -669,8 +666,6 @@ test_cut_peer_queue() ->
 		{PeerTasks4, State4} = cut_peer_queue(undefined, PeerTasks, State),
 		assert_peer_tasks(TaskQueue, 0, 8, PeerTasks4),
 		?assertEqual(100, State4#state.queued_task_count)
-	after
-		application:set_env(arweave, config, OriginalConfig)
 	end.
 
 test_update_active() ->
