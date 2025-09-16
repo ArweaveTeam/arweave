@@ -473,6 +473,8 @@ test_replica_2_9() ->
 				ar_packing_server:pack_replica_2_9_chunk(RewardAddr, 16 * ?DATA_CHUNK_SIZE, C1),
 		assert_get(P5, 16 * ?DATA_CHUNK_SIZE, StoreID2),
 		?assertNotEqual(Entropy4, Entropy5)
+	after
+		ok
 	end.
 
 assert_get(Expected, Offset, StoreID) ->

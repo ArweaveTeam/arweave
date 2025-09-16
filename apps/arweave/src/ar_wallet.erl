@@ -137,7 +137,7 @@ wallet_filepath2(Wallet) ->
 		".json"
 	]),
 	filename:join([
-		arweave_config:get(data_dir)),
+		arweave_config:get(data_dir),
 		?WALLET_DIR,
 		Filename
 	]).

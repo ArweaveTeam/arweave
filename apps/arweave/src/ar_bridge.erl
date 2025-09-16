@@ -258,7 +258,7 @@ send_and_log(Peer, H, Height, Format, Bin, RecallByte) ->
 			binary ->
 				ar_http_iface_client:send_block_binary(Peer, H, Bin, RecallByte)
 		end,
-	case lists:member(Peer, arweave_config:get(block_gossip_peers) of
+	case lists:member(Peer, arweave_config:get(block_gossip_peers)) of
 		true ->
 			?LOG_INFO([{event, sent_block_to_block_gossip_peer},
 				{format, Format},

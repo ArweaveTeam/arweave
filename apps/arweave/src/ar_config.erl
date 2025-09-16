@@ -859,10 +859,10 @@ parse_options([{<<"network.tcp.shutdown.mode">>, Mode}|Rest], Config) ->
 parse_options([{<<"network.socket.backend">>, Backend}|Rest], Config) ->
 	case Backend of
 		<<"inet">> ->
-			arweave_config:set(socket.backend, inet),
+			arweave_config:set('socket.backend', inet),
 			parse_options(Rest, Config#config{ 'socket.backend' = inet });
 		<<"socket">> ->
-			arweave_config:set(socket.backend, socket),
+			arweave_config:set('socket.backend', socket),
 			parse_options(Rest, Config#config{ 'socket.backend' = socket });
 		_ ->
 			{error, {bad_value, 'socket.backend'}, Backend}
@@ -907,6 +907,7 @@ parse_options([{<<"http_client.tcp.keepalive">>, Keepalive}|Rest], Config) ->
 parse_options([{<<"http_client.tcp.linger">>, Linger}|Rest], Config) ->
 	case Linger of
 		_ when is_boolean(Linger) ->
+			arweave_config:set('http_client.tcp.linger', Linger),
 			parse_options(Rest, Config#config{ 'http_client.tcp.linger' = Linger });
 		_ ->
 			{error, {bad_value, 'http_client.tcp.linger'}, Linger}
@@ -914,6 +915,7 @@ parse_options([{<<"http_client.tcp.linger">>, Linger}|Rest], Config) ->
 parse_options([{<<"http_client.tcp.linger_timeout">>, Timeout}|Rest], Config) ->
 	case Timeout of
 		_ when is_integer(Timeout), Timeout >= 0 ->
+			arweave_config:set('http_client.tcp.linger_timeout', Timeout),
 			parse_options(Rest, Config#config{ 'http_client.tcp.linger_timeout' = Timeout });
 
 		_ ->
@@ -922,6 +924,7 @@ parse_options([{<<"http_client.tcp.linger_timeout">>, Timeout}|Rest], Config) ->
 parse_options([{<<"http_client.tcp.nodelay">>, Nodelay}|Rest], Config) ->
 	case Nodelay of
 		_ when is_boolean(Nodelay) ->
+			arweave_config:set('http_client.tcp.nodelay', Nodelay),
 			parse_options(Rest, Config#config{ 'http_client.tcp.nodelay' = Nodelay });
 		_ ->
 			{error, {bad_value, 'http_client.tcp.nodelay'}, Nodelay }
@@ -929,6 +932,7 @@ parse_options([{<<"http_client.tcp.nodelay">>, Nodelay}|Rest], Config) ->
 parse_options([{<<"http_client.tcp.send_timeout_close">>, Value}|Rest], Config) ->
 	case Value of
 		_ when is_boolean(Value) ->
+			arweave_config:set('http_client.tcp.send_timeout_close', Value),
 			parse_options(Rest, Config#config{ 'http_client.tcp.send_timeout_close' = Value });
 		_ ->
 			{error, {bad_value, 'http_client.tcp.send_timeout_close'}, Value}
@@ -936,6 +940,7 @@ parse_options([{<<"http_client.tcp.send_timeout_close">>, Value}|Rest], Config) 
 parse_options([{<<"http_client.tcp.send_timeout">>, Timeout}|Rest], Config) ->
 	case Timeout of
 		_ when is_integer(Timeout), Timeout >= 0 ->
+			arweave_config:set('http_client.tcp.send_timeout', Timeout),
 			parse_options(Rest, Config#config{ 'http_client.tcp.send_timeout' = Timeout });
 		_ ->
 			{error, {bad_value, 'http_client.tcp.send_timeout'}, Timeout}
@@ -945,6 +950,7 @@ parse_options([{<<"http_client.tcp.send_timeout">>, Timeout}|Rest], Config) ->
 parse_options([{<<"http_api.http.active_n">>, Active}|Rest], Config) ->
 	case Active of
 		_ when is_integer(Active), Active >= 1 ->
+			arweave_config:set('http_api.http.active_n', Active),
 			parse_options(Rest, Config#config{ 'http_api.http.active_n' = Active });
 		_ ->
 			{error, {bad_value, 'http_api.http.active_n'}, Active}
@@ -952,6 +958,7 @@ parse_options([{<<"http_api.http.active_n">>, Active}|Rest], Config) ->
 parse_options([{<<"http_api.http.inactivity_timeout">>, Timeout}|Rest], Config) ->
 	case Timeout of
 		_ when is_integer(Timeout), Timeout >= 0 ->
+			arweave_config:set('http_api.http.inactivity_timeout', Timeout),
 			parse_options(Rest, Config#config{ 'http_api.http.inactivity_timeout' = Timeout });
 		_ ->
 			{error, {bad_value, 'http_api.http.inactivity_timeout'}, Timeout}
@@ -959,6 +966,7 @@ parse_options([{<<"http_api.http.inactivity_timeout">>, Timeout}|Rest], Config) 
 parse_options([{<<"http_api.http.linger_timeout">>, Timeout}|Rest], Config) ->
 	case Timeout of
 		_ when is_integer(Timeout), Timeout >= 0 ->
+			arweave_config:set('http_api.http.linger_timeout', Timeout),
 			parse_options(Rest, Config#config{ 'http_api.http.linger_timeout' = Timeout });
 		_ ->
 			{error, {bad_value, 'http_api.http.linger_timeout'}, Timeout}
@@ -966,6 +974,7 @@ parse_options([{<<"http_api.http.linger_timeout">>, Timeout}|Rest], Config) ->
 parse_options([{<<"http_api.http.request_timeout">>, Timeout}|Rest], Config) ->
 	case Timeout of
 		_ when is_integer(Timeout), Timeout >= 0 ->
+			arweave_config:set('http_api.http.request_timeout', Timeout),
 			parse_options(Rest, Config#config{ 'http_api.http.request_timeout' = Timeout });
 		_ ->
 			{error, {bad_value, 'http_api.http.request_timeout'}, Timeout}
@@ -973,6 +982,7 @@ parse_options([{<<"http_api.http.request_timeout">>, Timeout}|Rest], Config) ->
 parse_options([{<<"http_api.tcp.backlog">>, Backlog}|Rest], Config) ->
 	case Backlog of
 		_ when is_integer(Backlog), Backlog >= 1 ->
+			arweave_config:set('http_api.tcp.backlog', Backlog),
 			parse_options(Rest, Config#config{ 'http_api.tcp.backlog' = Backlog });
 		_ ->
 			{error, {bad_value, 'http_api.tcp.backlog'}, Backlog}
@@ -980,6 +990,7 @@ parse_options([{<<"http_api.tcp.backlog">>, Backlog}|Rest], Config) ->
 parse_options([{<<"http_api.tcp.delay_send">>, Delay}|Rest], Config) ->
 	case Delay of
 		_ when is_boolean(Delay) ->
+			arweave_config:set('http_api.tcp.delay_send', Delay),
 			parse_options(Rest, Config#config{ 'http_api.tcp.delay_send' = Delay });
 		_ ->
 			{error, {bad_value, 'http_api.tcp.delay_send'}, Delay}
@@ -987,6 +998,7 @@ parse_options([{<<"http_api.tcp.delay_send">>, Delay}|Rest], Config) ->
 parse_options([{<<"http_api.tcp.keepalive">>, Keepalive}|Rest], Config) ->
 	case Keepalive of
 		_ when is_boolean(Keepalive) ->
+			arweave_config:set('http_api.tcp.keepalive', Keepalive),
 			parse_options(Rest, Config#config{ 'http_api.tcp.keepalive' = Keepalive });
 		_ ->
 			{error, {bad_value, 'http_api.tcp.keepalive'}, Keepalive}
@@ -994,6 +1006,7 @@ parse_options([{<<"http_api.tcp.keepalive">>, Keepalive}|Rest], Config) ->
 parse_options([{<<"http_api.tcp.linger">>, Linger}|Rest], Config) ->
 	case Linger of
 		_ when is_boolean(Linger) ->
+			arweave_config:set('http_api.tcp.linger', Linger),
 			parse_options(Rest, Config#config{ 'http_api.tcp.linger' = Linger });
 		_ ->
 			{error, {bad_value, 'http_api.tcp.linger'}, Linger}
@@ -1001,6 +1014,7 @@ parse_options([{<<"http_api.tcp.linger">>, Linger}|Rest], Config) ->
 parse_options([{<<"http_api.tcp.linger_timeout">>, Timeout}|Rest], Config) ->
 	case Timeout of
 		_ when is_integer(Timeout), Timeout >= 0 ->
+			arweave_config:set('http_api.tcp.linger_timeout', Timeout),
 			parse_options(Rest, Config#config{ 'http_api.tcp.linger_timeout' = Timeout });
 		_ ->
 			{error, {bad_value, 'http_api.tcp.linger_timeout'}, Timeout}
@@ -1008,10 +1022,13 @@ parse_options([{<<"http_api.tcp.linger_timeout">>, Timeout}|Rest], Config) ->
 parse_options([{<<"http_api.tcp.listener_shutdown">>, Shutdown}|Rest], Config) ->
 	case Shutdown of
 		"brutal_kill" ->
+			arweave_config:set('http_api.tcp.listener_shutdown', brutal_kill),
 			parse_options(Rest, Config#config{ 'http_api.tcp.listener_shutdown' = brutal_kill });
 		"infinity" ->
+			arweave_config:set('http_api.tcp.listener_shutdown', infinity),
 			parse_options(Rest, Config#config{ 'http_api.tcp.listener_shutdown' = infinity });
 		_ when is_integer(Shutdown), Shutdown >= 0 ->
+			arweave_config:set('http_api.tcp.listener_shutdown', Shutdown),
 			parse_options(Rest, Config#config{ 'http_api.tcp.listener_shutdown' = Shutdown });
 		_ ->
 			{error, {bad_value, 'http_api.tcp.listener_shutdown'}, Shutdown}
@@ -1019,6 +1036,7 @@ parse_options([{<<"http_api.tcp.listener_shutdown">>, Shutdown}|Rest], Config) -
 parse_options([{<<"http_api.tcp.nodelay">>, Nodelay}|Rest], Config) ->
 	case Nodelay of
 		_ when is_boolean(Nodelay) ->
+			arweave_config:set('http_api.tcp.nodelay', Nodelay),
 			parse_options(Rest, Config#config{ 'http_api.tcp.nodelay' = Nodelay });
 		_ ->
 			{error, {bad_value, 'http_api.tcp.nodelay'}, Nodelay }
@@ -1026,6 +1044,7 @@ parse_options([{<<"http_api.tcp.nodelay">>, Nodelay}|Rest], Config) ->
 parse_options([{<<"http_api.tcp.num_acceptors">>, Acceptors}|Rest], Config) ->
 	case Acceptors of
 		_ when is_integer(Acceptors), Acceptors >= 1 ->
+			arweave_config:set('http_api.tcp.num_acceptors', Acceptors),
 			parse_options(Rest, Config#config{ 'http_api.tcp.num_acceptors' = Acceptors });
 		_ ->
 			{error, {bad_valud, 'http_api.tcp.num_acceptors'}, Acceptors}
@@ -1033,6 +1052,7 @@ parse_options([{<<"http_api.tcp.num_acceptors">>, Acceptors}|Rest], Config) ->
 parse_options([{<<"http_api.tcp.send_timeout_close">>, Value}|Rest], Config) ->
 	case Value of
 		_ when is_boolean(Value) ->
+			arweave_config:set('http_api.tcp.send_timeout_close', Value),
 			parse_options(Rest, Config#config{ 'http_api.tcp.send_timeout_close' = Value });
 		_ ->
 			{error, {bad_value, 'http_api.tcp.send_timeout_close'}, Value}
@@ -1040,6 +1060,7 @@ parse_options([{<<"http_api.tcp.send_timeout_close">>, Value}|Rest], Config) ->
 parse_options([{<<"http_api.tcp.send_timeout">>, Timeout}|Rest], Config) ->
 	case Timeout of
 		_ when is_integer(Timeout), Timeout >= 0 ->
+			arweave_config:set('http_api.tcp.send_timeout', Timeout),
 			parse_options(Rest, Config#config{ 'http_api.tcp.send_timeout' = Timeout });
 		_ ->
 			{error, {bad_value, 'http_api.tcp.send_timeout'}, Timeout}
@@ -1249,7 +1270,7 @@ format_storage_module(StorageModule) ->
 %% @doc Validate the configuration options.
 %% -------------------------------------------------------------------
 validate_init(Config) ->
-	case Config#config.init of
+	case arweave_config:get(init) of
 		true ->
 			case ?NETWORK_NAME of
 				"arweave.N.1" ->
@@ -1320,7 +1341,7 @@ validate_cm_pool(Config) ->
 validate_unique_replication_type(#config{ mine = false }) ->
 	true;
 validate_unique_replication_type(Config) ->
-	MiningAddr = Config#config.mining_addr,
+	MiningAddr = arweave_config:get(mining_addr),
 	UniquePackingDifficulties = lists:foldl(
 		fun({_, _, {composite, Addr, Difficulty}}, Acc) when Addr =:= MiningAddr ->
 			sets:add_element({composite, Difficulty}, Acc);
@@ -1357,12 +1378,20 @@ validate_verify(_Config) ->
 
 disable_vdf(Config) ->
 	RemovePublicVDFServer =
-		lists:filter(fun(Item) -> Item =/= public_vdf_server end, Config#config.enable),
+		lists:filter(
+			fun(Item) -> Item =/= public_vdf_server
+			end,
+			arweave_config:get(enable)
+		),
+	arweave_config:set(nonce_limiter_client_peers, []),
+	arweave_config:set(nonce_limiter_server_trusted_peers, []),
+	arweave_config:set(enable, RemovePublicVDFServer),
+	arweave_config:set(disable, [compute_own_vdf|arweave_config:get(disable)]),
 	Config#config{
 		nonce_limiter_client_peers = [],
 		nonce_limiter_server_trusted_peers = [],
 		enable = RemovePublicVDFServer,
-		disable = [compute_own_vdf | Config#config.disable]
+		disable = [compute_own_vdf | arweave_config:get(disable)]
 	}.
 
 set_verify_flags(#config{ verify = false } = Config) ->
@@ -1382,6 +1411,18 @@ set_verify_flags(Config) ->
 	io:format("~n  - cm_peers []"),
 	io:format("~n  - cm_exit_peer not_set"),
 	io:format("~n  - all VDF features disabled"),
+	arweave_config:set(auto_join, false),
+	arweave_config:set(start_from_latest_state, true),
+	arweave_config:set(sync_jobs, 0),
+	arweave_config:set(block_pollers, 0),
+	arweave_config:set(header_sync_jobs, 0),
+	arweave_config:set(disable, [tx_poller|arweave_config:get(disable)]),
+	arweave_config:set(replica_2_9_workers, 0),
+	arweave_config:set(coordinated_mining, false),
+	arweave_config:set(cm_peers, []),
+	arweave_config:set(cm_exit_peer, not_set),
+	arweave_config:set(max_propagation_peers, 0),
+	arweave_config:set(max_block_propagation_peers, 0),
 	Config2 = disable_vdf(Config),
 	Config2#config{
 		auto_join = false,
@@ -1389,7 +1430,7 @@ set_verify_flags(Config) ->
 		sync_jobs = 0,
 		block_pollers = 0,
 		header_sync_jobs = 0,
-		disable = [tx_poller | Config#config.disable],
+		disable = [tx_poller | arweave_config:get(disable)],
 		replica_2_9_workers = 0,
 		coordinated_mining = false,
 		cm_peers = [],

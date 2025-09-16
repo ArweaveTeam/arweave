@@ -81,7 +81,7 @@ init_debug() ->
 				type => file,
 				max_no_files => 20,
 				max_no_bytes => 51418800, % 10 x 5MB
-				modes => [raw, append],
+				modes => [raw, append]
 			},
 			LoggerConfig = #{ config => DebugLoggerConfigDisk, level => Level },
 			logger:add_handler(disk_debug_log, logger_std_h, LoggerConfig),

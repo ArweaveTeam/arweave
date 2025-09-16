@@ -228,8 +228,10 @@ get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries) ->
 %% @doc Perform the joining process.
 do_join(Peers, B, BI) ->
 	ar:console("Downloading the block trail.~n", []),
-	WorkerQ = queue:from_list([spawn(fun() -> worker() end)
-			|| _ <- lists:seq(1, arweave_config:get(join_workers)]),
+	WorkerQ = queue:from_list([
+		spawn(fun() -> worker() end)
+		|| _ <- lists:seq(1, arweave_config:get(join_workers))
+	]),
 	PeerQ = queue:from_list(Peers),
 	Trail = lists:sublist(tl(BI), 2 * ?MAX_TX_ANCHOR_DEPTH),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),

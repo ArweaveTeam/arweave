@@ -666,6 +666,8 @@ test_cut_peer_queue() ->
 		{PeerTasks4, State4} = cut_peer_queue(undefined, PeerTasks, State),
 		assert_peer_tasks(TaskQueue, 0, 8, PeerTasks4),
 		?assertEqual(100, State4#state.queued_task_count)
+	after
+		ok
 	end.
 
 test_update_active() ->
