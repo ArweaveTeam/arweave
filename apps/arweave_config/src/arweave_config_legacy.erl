@@ -13,6 +13,8 @@
 %%% not dynamic at all, this means this performance issue will only
 %%% impact arweave during startup.
 %%%
+%%% @TODO TO REMOVE when legacy configuration will be dropped.
+%%%
 %%% == Examples ==
 %%%
 %%% @end
@@ -20,7 +22,17 @@
 -module(arweave_config_legacy).
 -behavior(gen_server).
 -export([start_link/0, stop/0]).
--export([keys/0, has_key/1, get/0, get/1, set/2, import/0, export/0]).
+-export([
+	router/0,
+	route/2,
+	keys/0,
+	has_key/1,
+	get/0,
+	get/1,
+	set/2,
+	import/0,
+	export/0
+]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_info/2, handle_cast/2]).
 -export([config_to_proplist/1, proplist_to_config/1]).
@@ -28,6 +40,34 @@
 -include_lib("arweave/include/ar_config.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+%%--------------------------------------------------------------------
+%% @doc route legacy parameter to new parameter.
+%% @TODO TO REMOVE when legacy configuration will be dropped.
+%% @TODO this function should return a map or a proplist from
+%%       arweave_config_spec.
+%% @end
+%%--------------------------------------------------------------------
+router() ->
+	#{
+		data_dir => [global, data, directory],
+		debug => [global, debug]
+	 }.
+
+%%--------------------------------------------------------------------
+%% @doc a simple router.
+%% @TODO TO REMOVE when legacy configuration will be dropped.
+%% @end
+%%--------------------------------------------------------------------
+route(LegacyKey, Value) ->
+	Router = router(),
+	case is_map_key(LegacyKey, Router) of
+		true ->
+			#{ LegacyKey := Parameter } = Router,
+			arweave_config_spec:set(Parameter, Value);
+		false ->
+			ok
+	end.
 
 %%--------------------------------------------------------------------
 %% @doc returns the complete list of all keys.
@@ -183,8 +223,14 @@ handle_call(Msg = {set, Key, Value}, From, State)
 		OldValue = proplists:get_value(Key, State),
 		Return = {ok, Value, OldValue},
 		NewState = lists:keyreplace(Key, 1, State, {Key, Value}),
+		% TODO: temporary legacy configuration compatibility
+		% layer.
 		NewConfig = proplist_to_config(NewState),
 		application:set_env(arweave,config,NewConfig),
+
+		% TODO: temporary router to remove, mainly used for 
+		% testing.
+		route(Key, Value),
 		{reply, Return, NewState};
 handle_call(Msg = export, From, State) ->
 	?LOG_DEBUG([{message, Msg}, {from, From}]),
