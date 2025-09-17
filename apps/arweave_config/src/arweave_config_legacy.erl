@@ -163,25 +163,31 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_call({has_key, Key}, _From, State) ->
+handle_call(Msg = {has_key, Key}, From, State) ->
+	?LOG_DEBUG([{message, Msg}, {from, From}]),
 	{reply, proplists:is_defined(Key, State), State};	
-handle_call(keys, _From, State) ->
+handle_call(Msg = keys, From, State) ->
+	?LOG_DEBUG([{message, Msg}, {from, From}]),
 	{reply, proplists:get_keys(State), State};
-handle_call(get, _From, State) ->
+handle_call(Msg = get, From, State) ->
+	?LOG_DEBUG([{message, Msg}, {from, From}]),
 	{reply, {ok, proplist_to_config(State)}, State};
-handle_call({get, Key}, _From, State)
+handle_call(Msg = {get, Key}, From, State)
 	when is_atom(Key) ->
+		?LOG_DEBUG([{message, Msg}, {from, From}]),
 		Return = {ok, proplists:get_value(Key, State)},
 		{reply, Return, State};
-handle_call({set, Key, Value}, _From, State)
+handle_call(Msg = {set, Key, Value}, From, State)
 	when is_atom(Key) ->
+		?LOG_DEBUG([{message, Msg}, {from, From}]),
 		OldValue = proplists:get_value(Key, State),
 		Return = {ok, Value, OldValue},
 		NewState = lists:keyreplace(Key, 1, State, {Key, Value}),
 		NewConfig = proplist_to_config(NewState),
 		application:set_env(arweave,config,NewConfig),
 		{reply, Return, NewState};
-handle_call(export, _From, State) ->
+handle_call(Msg = export, From, State) ->
+	?LOG_DEBUG([{message, Msg}, {from, From}]),
 	Return = proplist_to_config(State),
 	{reply, Return, State};
 handle_call(Message, From, State) ->
@@ -197,20 +203,23 @@ handle_call(Message, From, State) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_cast(import, State) ->
+handle_cast(Msg = import, State) ->
+	?LOG_DEBUG([{message, Msg}]),
 	case import_config() of
 		{ok, NewState} ->
 			{noreply, NewState};
 		_ ->
 			{noreply, State}
 	end;
-handle_cast(_, State) ->
+handle_cast(Msg, State) ->
+	?LOG_ERROR("received: ~p", [Msg]),
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_info(_, State) ->
+handle_info(Msg, State) ->
+	?LOG_ERROR("received: ~p", [Msg]),
 	{noreply, State}.
 
 %%--------------------------------------------------------------------
