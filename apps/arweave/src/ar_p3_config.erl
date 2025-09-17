@@ -63,7 +63,7 @@ validate_config(Config) when is_record(Config, p3_config) ->
 	ServicesValid = validate_services(Config#p3_config.services),
 	case PaymentsValid and ServicesValid of
 		true ->
-			{ok, Config#config.p3};
+			{ok, Config};
 		false ->
 			{stop, "Error validating P3 config"}
 	end.
