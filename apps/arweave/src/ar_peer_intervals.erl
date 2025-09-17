@@ -64,20 +64,6 @@ fetch(Start, End, StoreID) ->
 				not ar_rate_limiter:is_throttled(Peer, ?GET_SYNC_RECORD_PATH)
 			],
 			Peers = ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT),
-
-			case length(Peers) < ?QUERY_BEST_PEERS_COUNT of
-				true ->
-					RemovedPeers = AllPeers -- HotPeers,
-					?LOG_DEBUG([{event, weak_peer_selection},
-						{function, fetch_peer_intervals}, {parent, Parent}, {bucket, Bucket},
-						{removed_count, length(RemovedPeers)},
-						{removed_peers, string:join([ar_util:format_peer(P) || P <- RemovedPeers], ", ")},
-						{num_peers, length(Peers)},
-						{peers, string:join([ar_util:format_peer(Peer) || Peer <- Peers], ", ")}]);
-				false ->
-					ok
-			end,
-
 			End3 =
 				case ar_intervals:is_empty(UnsyncedIntervals) of
 					true ->
