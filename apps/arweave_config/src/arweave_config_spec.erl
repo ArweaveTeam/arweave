@@ -665,6 +665,8 @@ check_type(Parameter, Value, Spec, Buffer) ->
 %% @doc If a custom check function exists, use it.
 %% @end
 %%--------------------------------------------------------------------
+check_function(Parameter, Value, Spec = #{ check := undefined }, Buffer) ->
+	check_final(Parameter, Value, Spec, Buffer#{ check => ok });
 check_function(Parameter, Value, Spec = #{ check := Check }, Buffer) ->
 	try
 		Result = Check(Parameter, Value),
