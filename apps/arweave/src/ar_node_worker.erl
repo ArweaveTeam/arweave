@@ -858,7 +858,7 @@ maybe_rebase(#{ pending_rebase := {PrevH, H} } = State) ->
 maybe_rebase(State) ->
 	[{_, H}] = ets:lookup(node_state, current),
 	B = ar_block_cache:get(block_cache, H),
-	case B#block.reward_addr == arewave_config:get(mining_addr) of
+	case B#block.reward_addr == arweave_config:get(mining_addr) of
 		false ->
 			{noreply, State};
 		true ->
