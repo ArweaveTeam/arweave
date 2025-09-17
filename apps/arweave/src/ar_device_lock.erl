@@ -171,9 +171,9 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 initialize_state(State) ->
-	StorageModules = arweave_config:get({legacy, storage_modules}),
+	StorageModules = arweave_config:get(storage_modules),
 	RepackInPlaceModules = [element(1, El)
-			|| El <- arweave_config:get({legacy, repack_in_place_storage_modules})],
+			|| El <- arweave_config:get(repack_in_place_storage_modules)],
 	StoreIDToDevice = lists:foldl(
 		fun(Module, Acc) ->
 			StoreID = ar_storage_module:id(Module),
@@ -196,7 +196,7 @@ initialize_state(State) ->
 	State2.
 
 get_system_device(StorageModule) ->
-	DataDir = arweave_config:get({legacy, data_dir}),
+	DataDir = arweave_config:get(data_dir),
 	StoreID = ar_storage_module:id(StorageModule),
 	Path = ar_chunk_storage:get_chunk_storage_path(DataDir, StoreID),
 	Device = ar_util:get_system_device(Path),

@@ -20,7 +20,7 @@
 -module(arweave_config_legacy).
 -behavior(gen_server).
 -export([start_link/0, stop/0]).
--export([keys/0, has_key/1, get/0, get/1, set/2]).
+-export([keys/0, has_key/1, get/0, get/1, set/2, import/0, export/0]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_info/2, handle_cast/2]).
 -export([config_to_proplist/1, proplist_to_config/1]).
@@ -51,6 +51,9 @@ has_key(Key) ->
 %% @doc Returns the whole configuration as record.
 %% @end
 %%--------------------------------------------------------------------
+-spec get() -> Return when
+	Return :: undefined | {ok, #config{}}.
+
 get() ->
 	try gen_server:call(?MODULE, get, 1000) of
 		{ok, Value} -> Value;
@@ -63,6 +66,10 @@ get() ->
 %% @doc Returns the value of a key.
 %% @end
 %%--------------------------------------------------------------------
+-spec get(Key) -> Return when
+	Key :: atom(),
+	Return :: undefined | {ok, term()}.
+
 get(Key) ->
 	try gen_server:call(?MODULE, {get, Key}, 1000) of
 		{ok, Value} -> Value;
@@ -75,6 +82,11 @@ get(Key) ->
 %% @doc Set a value to a key.
 %% @end
 %%--------------------------------------------------------------------
+-spec set(Key, Value) -> Return when
+	Key :: atom(),
+	Value :: term(),
+	Return :: {ok, Value} | error.
+
 set(Key, Value) ->
 	try gen_server:call(?MODULE, {set, Key, Value}, 1000) of
 		{ok, NewValue, _OldValue} -> {ok, NewValue};
@@ -82,6 +94,24 @@ set(Key, Value) ->
 	catch
 		_E:_R:_S -> error
 	end.
+
+%%--------------------------------------------------------------------
+%% @doc import configuration from `application:get(arweave,config)'.
+%% @end
+%%--------------------------------------------------------------------
+-spec import() -> ok.
+
+import() ->
+	gen_server:cast(?MODULE, import).
+
+%%--------------------------------------------------------------------
+%% @doc export the current configuration as `#config{}' record.
+%% @end
+%%--------------------------------------------------------------------
+-spec export() -> #config{}.
+
+export() ->
+	gen_server:call(?MODULE, export, 1000).
 
 %%--------------------------------------------------------------------
 %% @doc start `arweave_config_legacy' process.
@@ -151,6 +181,9 @@ handle_call({set, Key, Value}, _From, State)
 		NewConfig = proplist_to_config(NewState),
 		application:set_env(arweave,config,NewConfig),
 		{reply, Return, NewState};
+handle_call(export, _From, State) ->
+	Return = proplist_to_config(State),
+	{reply, Return, State};
 handle_call(Message, From, State) ->
 	Error = [
 		{from, From},
@@ -164,6 +197,13 @@ handle_call(Message, From, State) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
+handle_cast(import, State) ->
+	case import_config() of
+		{ok, NewState} ->
+			{noreply, NewState};
+		_ ->
+			{noreply, State}
+	end;
 handle_cast(_, State) ->
 	{noreply, State}.
 
@@ -218,4 +258,14 @@ proplist_to_config3(Proplist) ->
 	Values2 = [config|Values],
 	erlang:list_to_tuple(Values2).
 	
+% import config from application:get_env/2.
+import_config() ->
+	case application:get_env(arweave, config) of
+		{ok, Config} when is_tuple(Config),
+			element(1, Config) =:= config ->
+				Proplist = config_to_proplist(Config),
+				{ok, Proplist};
+		Elsewise ->
+			Elsewise
+	end.
 

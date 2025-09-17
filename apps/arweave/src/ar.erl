@@ -37,9 +37,11 @@ main("") ->
 	show_help();
 main(Args) ->
 	% Let start arweave_config application, this application
-	% will be in charge of the whole application
-	%   {ok, _} = application:ensure_all_started(arweave_config),
-	%
+	% will be in charge of the whole application. arweave_config
+	% is also acting as a proxy between the legacy configuration
+	% and the new one.
+	{ok, _} = application:ensure_all_started(arweave_config),
+	
 	% load environment variable
 	%   {ok, _} = arweave_config:load(environment),
 	%
