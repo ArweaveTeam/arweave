@@ -13,7 +13,15 @@ default() -> false.
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-init(Module, State) ->
+init(Map, State) when is_map(Map) ->
+	% @TODO check the returned value (should be a boolean).
+	case is_map_key(deprecated, Map) of
+		true ->
+			{ok, State#{ deprecated => maps:get(deprecated, Map) }};
+		false ->
+			{ok, State#{ deprecated => default() }}
+	end;
+init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, deprecated, 0) of
 		true ->
 			fetch(Module, State);

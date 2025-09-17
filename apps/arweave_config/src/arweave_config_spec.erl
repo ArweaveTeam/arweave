@@ -358,8 +358,8 @@
 	Module :: atom(),
 	Return :: {ok, pid()}.
 
-start_link(Module) ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, Module, []).
+start_link(Args) ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
 %%--------------------------------------------------------------------
 %% @doc returns parameter's specification from specification store.
@@ -525,8 +525,26 @@ init(ModuleSpec) ->
 %% @hidden
 %%--------------------------------------------------------------------
 init_loop([], Buffer) ->
+	% no more arguments to path, the buffer is returned, it should
+	% contain the complete list of all arguments specification
+	% supported.
 	{ok, Buffer};
+init_loop([Map|Rest], Buffer) when is_map(Map) ->
+	% the argument is defined as map, then all callback are
+	% checked as map key.
+	case init_map(Map, #{}) of
+		{ok, #{ configuration_key := K } = R} ->
+			init_loop(Rest, Buffer#{ K => R });
+		discard ->
+			init_loop(Rest, Buffer);
+		{discard, _Message} ->
+			init_loop(Rest, Buffer);
+		Elsewise ->
+			Elsewise
+	end;
 init_loop([Module|Rest], Buffer) when is_atom(Module) ->
+	% the argument is defined as module callback, then
+	% all callback are checked as functions exported.
 	case init_module(Module, #{}) of
 		{ok, #{ configuration_key := K } = R} ->
 			init_loop(Rest, Buffer#{ K => R });
@@ -546,7 +564,7 @@ init_module(Module, State) ->
 	init_module(Module, CallbacksCheck, State).
 
 init_module(Module, [], State) ->
-	?LOG_INFO("loaded module ~p", [Module]),
+	?LOG_INFO("loaded callback module ~p", [Module]),
 	{ok, State};
 init_module(Module, [{_Callback, ModuleCallback}|Rest], State) ->
 	case erlang:apply(ModuleCallback, init, [Module, State]) of
@@ -555,6 +573,26 @@ init_module(Module, [{_Callback, ModuleCallback}|Rest], State) ->
 			init_module(Module, Rest, NewState);
 		Elsewise ->
 			?LOG_WARNING("can't load module ~p:~p", [Module, Elsewise]),
+			{discard, Elsewise}
+	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+init_map(Map, State) ->
+	CallbacksCheck = callbacks_check(),
+	init_map(Map, CallbacksCheck, State).
+
+init_map(Map, [], State) ->
+	?LOG_INFO("loaded callback map ~p", [Map]),
+	{ok, State};
+init_map(Map, [{_Callback, ModuleCallback}|Rest], State) ->
+	case erlang:apply(ModuleCallback, init, [Map, State]) of
+		{ok, NewState} ->
+			?LOG_INFO("checked callback ~p:~p", [Map, ModuleCallback]),	
+			init_map(Map, Rest, NewState);
+		Elsewise ->
+			?LOG_WARNING("can't load module ~p:~p", [Map, Elsewise]),
 			{discard, Elsewise}
 	end.
 

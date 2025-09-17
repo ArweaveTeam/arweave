@@ -98,8 +98,22 @@
 %%%===================================================================
 -module(arweave_config_http_server).
 -export([start_link/0, stop/0]).
+-export([start_as_child/0, stop_as_child/0]).
 -export([init/2]).
 -include_lib("kernel/include/logger.hrl").
+
+start_as_child() ->
+	Spec = #{
+			id => ?MODULE,
+			start => {?MODULE, start_link, []},
+			type => worker,
+			restart => temporary 
+	},
+	supervisor:start_child(arweave_config_sup, Spec).
+
+stop_as_child() ->
+	ranch:stop_listener(?MODULE),
+	supervisor:terminate_child(arweave_config_sup, ?MODULE).
 
 start_link() ->
 	Opts = [{port, 4891}],

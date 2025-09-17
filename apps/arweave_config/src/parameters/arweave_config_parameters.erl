@@ -9,9 +9,64 @@
 %%
 %%--------------------------------------------------------------------
 init() -> 
-	#{
+	[
+	  	#{
+			configuration_key => [webui, enabled],
+			default => false,
+			short_argument => undefined,
+			long_argument => undefined,
+			runtime => true,
+			short_description => 
+				<<"Configure web user interface">>,
+			environment => <<"AR_WEBUI">>,
+			type => boolean,
+			handle_get => fun(K) ->
+				arweave_config_store:get([webui,enabled])
+			end,
+			handle_set =>
+				fun
+					(_,true,true) ->
+						{ok, true};
+					(_,false,false) ->
+						{ok, false};
+					(_,true,false) ->
+						% start webui
+						arweave_config_http_server:start_as_child(),
+						{store, true};
+					(_,false,true) ->
+						% stop webui
+						arweave_config_http_server:stop_as_child(),
+						{store, false}
+				end
+		},
+		#{
+			configuration_key => [webui,listen,port],
+			short_argument => undefined,
+			long_argument => [webui,listen,port],
+			runtime => true,
+			short_description => [],
+			long_description => [],
+			type => tcp_port,
+			environment => <<"AR_WEBUI_LISTEN_PORT">>,
+			handle_get => fun(K) -> todo end,
+			handle_set => fun(K,V,O) -> todo end
+		},
+		#{
+			configuration_key => [webui,listen,address],
+			short_argument => undefined,
+			long_argument => [webui,listen,address],
+			runtime => true,
+			short_description => [],
+			long_description => [],
+			type => [ipv4,ipv6,unix_sock],
+			environment => <<"AR_WEBUI_LISTEN_ADDRESS">>,
+			handle_get => fun(K) -> todo end,
+			handle_set => fun(K,V,O) -> todo end
+
+		},
 		% #config.init
-		[global,init] => #{
+		#{
+			configuration_key => [global, init],
 			default => false,
 			short_argument => undefined,
 			long_argument => <<"init">>,
@@ -19,23 +74,34 @@ init() ->
 			runtime => false,
 			short_description => [
 				<<"Start a new weave.">>
-			]
+			],
+			handle_get => fun(K) -> todo end,
+			handle_set => fun(K,V,O) -> todo end
 		},
 
 		% #config.sync_jobs
-		[global,data,jobs,sync] => #{
+		#{
+			configuration_key => [global,data,jobs,sync],
 			legacy => [sync_jobs],
 			runtime => true,
-			description => ""
+			description => "",
+			handle_get => fun(K) -> todo end,
+			handle_set => fun(K,V,O) -> todo end
 		},
 		
 		% #config.header_sync_jobs	
-		[global,data,jobs,headers,sync] => #{
+		#{
+			configuration_key => [global,data,jobs,headers,sync],
 			legacy => [header_sync_jobs],
 			runtime => true,
-			description => ""
-		},
+			description => "",
+			handle_get => fun(K) -> todo end,
+			handle_set => fun(K,V,O) -> todo end
+		}
+	].
 	
+draft2() ->
+	#{
 		% config.verify_simples
 		[global,chunks,verify,samples] => #{
 			legacy => [verify_samples]

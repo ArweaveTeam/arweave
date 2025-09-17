@@ -16,7 +16,8 @@
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-init(Module, State) ->
+init(Map, State) when is_map(Map) -> {ok, State};
+init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, runtime, 0) of
 		true ->
 			init2(Module, State);

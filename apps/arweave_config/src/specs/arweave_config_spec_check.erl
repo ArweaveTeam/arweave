@@ -17,7 +17,14 @@
 	
 default() -> undefined.
 
-init(Module, State) ->
+init(Map, State) when is_map(Map) ->
+	case is_map_key(check, Map) of
+		true ->
+			{ok, State#{ check => maps:get(check, Map) }};
+		false ->
+			{ok, State#{ check => default() }}
+	end;
+init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, check, 2) of
 		true ->
 			{ok, State#{ check => fun Module:check/2 }};

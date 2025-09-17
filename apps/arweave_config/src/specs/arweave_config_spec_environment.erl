@@ -4,7 +4,15 @@
 
 default() -> undefined.
 
-init(Module, State) ->
+init(Map, State) when is_map(Map) ->
+	case is_map_key(environment, Map) of
+		true ->
+			Value = maps:get(environment, Map),
+			{ok, State#{ environment => Value }};
+		false ->
+			{ok, State#{ environment => default() }}
+	end;
+init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, environment, 0) of
 		true ->
 			fetch(Module, State);
