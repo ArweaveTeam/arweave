@@ -553,7 +553,7 @@ set(Key, Value) when is_atom(Key) ->
 	]),
 	arweave_config_legacy:set(Key, Value);
 set(Key, Value) ->
-	case arweave_config_parse:key(Key) of
+	case arweave_config_parser:key(Key) of
 		{ok, Parameter} ->
 			arweave_config_spec:set(Parameter, Value);
 		Elsewise ->
