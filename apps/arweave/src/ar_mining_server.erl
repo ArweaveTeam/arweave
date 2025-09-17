@@ -479,7 +479,7 @@ calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
 		(?IDEAL_STEPS_PER_PARTITION * IdealRangesPerStep * RecallRangeSize * NumActivePartitions)
 	),
 
-	OverallCacheLimitBytes = case arweave_config:get({legacy, mining_cache_size_mb}) of
+	OverallCacheLimitBytes = case arweave_config:get(mining_cache_size_mb) of
 		undefined ->
 			MinimumCacheLimitBytes;
 		N ->
@@ -974,7 +974,7 @@ post_solution(error, _State) ->
 	?LOG_WARNING([{event, found_solution_but_could_not_build_a_block}]),
 	error;
 post_solution(Solution, State) ->
-	post_solution(arweave_config:get({legacy, cm_exit_peer}), Solution, State).
+	post_solution(arweave_config:get(cm_exit_peer), Solution, State).
 
 post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
 	%% When posting a partial solution the pool client will skip many of the validation steps
@@ -1175,7 +1175,7 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing, Nonce) ->
 	end.
 
 dump_invalid_solution_data(Data) ->
-	DataDir = arweave_config:get({legacy, data_dir}),
+	DataDir = arweave_config:get(data_dir),
 	ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
 	File = filename:join(DataDir, "invalid_solution_data_dump_" ++ ID),
 	file:write_file(File, term_to_binary(Data)).

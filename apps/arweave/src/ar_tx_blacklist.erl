@@ -332,7 +332,7 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 initialize_state() ->
-	DataDir = arweave_config:get({legacy, data_dir}),
+	DataDir = arweave_config:get(data_dir),
 	Dir = filename:join(DataDir, "ar_tx_blacklist"),
 	ok = filelib:ensure_dir(Dir ++ "/"),
 	Names = [
