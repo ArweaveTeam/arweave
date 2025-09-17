@@ -449,10 +449,12 @@ stop(_Args) ->
 %% @doc Returns the list of modules where parameters are defined.
 %% @end
 %%-------------------------------------------------------------------
-spec() -> [
-	arweave_config_global_data_directory,
-	arweave_config_global_debug
-].
+spec() ->
+	[
+		arweave_config_global_data_directory,
+		arweave_config_global_debug
+		| arweave_config_parameters:init()
+	].
 
 %%--------------------------------------------------------------------
 %% @doc Get a value from the configuration.

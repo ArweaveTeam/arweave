@@ -49,7 +49,17 @@
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-init(Module, State) ->
+init(Map, State) when is_map(Map) ->
+	case is_map_key(configuration_key, Map) of
+		true ->
+			fetch(Map, State);
+		false ->
+			{error, #{
+					reason => missing_key
+				}
+			}
+	end;
+init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, configuration_key, 0) of
 		true ->
 			fetch(Module, State);
@@ -66,7 +76,10 @@ init(Module, State) ->
 %%--------------------------------------------------------------------
 %% retrieve the value returned by the callback.
 %%--------------------------------------------------------------------
-fetch(Module, State) ->
+fetch(Map, State) when is_map(Map) ->
+	CK = maps:get(configuration_key, Map),
+	check(Map, CK, State);
+fetch(Module, State) when is_atom(Module) ->
 	try
 		CK = Module:configuration_key(),
 		check(Module, CK, State)

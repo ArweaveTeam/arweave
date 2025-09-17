@@ -21,7 +21,8 @@
 
 default() -> undefined.
 
-init(Module, State) ->
+init(Map, State) when is_map(Map) -> {ok, State};
+init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, long_argument, 0) of
 		true ->
 			fetch(Module, State);
