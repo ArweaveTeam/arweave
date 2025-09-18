@@ -731,7 +731,6 @@ prepare_solution(proofs, Candidate, Solution) ->
 		seed = Seed,
 		mining_address = MiningAddress,
 		nonce_limiter_output = NonceLimiterOutput,
-		chunk1 = Chunk1,
 		chunk2 = Chunk2
 	} = Candidate,
 	#mining_solution{ poa1 = PoA1, poa2 = PoA2 } = Solution,
@@ -740,38 +739,27 @@ prepare_solution(proofs, Candidate, Solution) ->
 	ExpectedH0 = ar_block:compute_h0(NonceLimiterOutput,
 			PartitionNumber, Seed, MiningAddress,
 			PackingDifficulty),
-	{ExpectedH1, _} = ar_block:compute_h1(ExpectedH0, Nonce, Chunk1),
 	case {H0, H1, H2} of
 		{_, not_set, not_set} ->
 			%% We should never end up here..
 			log_prepare_solution_failure(Solution, rejected, h1_h2_not_set, miner, []),
 			error;
-		{ExpectedH0, ExpectedH1, not_set} ->
+		{ExpectedH0, _H1, not_set} ->
 			prepare_solution(poa1, Candidate, Solution#mining_solution{
 				solution_hash = H1, recall_byte1 = RecallByte1,
 				poa1 = may_be_empty_poa(PoA1), poa2 = #poa{} });
-		{ExpectedH0, _H1, not_set} ->
-			log_prepare_solution_failure(Solution, rejected, incorrect_h1, miner, []),
-			error;
 		{_H0, _H1, not_set} ->
 			log_prepare_solution_failure(Solution, rejected, incorrect_h0, miner, []),
 			error;
-		{ExpectedH0, H1, H2} ->
-			{ExpectedH2, _} =
-				case Chunk2 of
-					not_set ->
-						{H2, not_set};
-					_ ->
-						ar_block:compute_h2(ExpectedH1, Chunk2, ExpectedH0)
-				end,
-			case H2 == ExpectedH2 of
-				false ->
-					log_prepare_solution_failure(Solution, rejected, incorrect_h2, miner, []),
-					error;
+		{ExpectedH0, _H1, _H2} ->
+			case is_h2_valid(Chunk2, H0, H1, H2) of
 				true ->
 					prepare_solution(poa2, Candidate, Solution#mining_solution{
 						solution_hash = H2, recall_byte1 = RecallByte1, recall_byte2 = RecallByte2,
-						poa1 = may_be_empty_poa(PoA1), poa2 = may_be_empty_poa(PoA2) })
+						poa1 = may_be_empty_poa(PoA1), poa2 = may_be_empty_poa(PoA2) });
+				false ->
+					log_prepare_solution_failure(Solution, rejected, incorrect_h2, miner, []),
+					error
 			end;
 		_ ->
 			log_prepare_solution_failure(Solution, rejected, incorrect_h0, miner, []),
@@ -784,12 +772,18 @@ prepare_solution(poa1, Candidate, Solution) ->
 		mining_address = MiningAddress, packing_difficulty = PackingDifficulty,
 		replica_format = ReplicaFormat
 	} = Solution,
-	#mining_candidate{ chunk1 = Chunk1, nonce = Nonce,
+	#mining_candidate{ h0 = H0, h1 = H1, chunk1 = Chunk1, nonce = Nonce,
 			partition_number = PartitionNumber } = Candidate,
 
 	case prepare_poa(poa1, Candidate, CurrentPoA1) of
 		{ok, PoA1} ->
-			Solution#mining_solution{ poa1 = PoA1 };
+			case is_h1_valid(Chunk1, PoA1, H0, H1, Nonce) of
+				true ->
+					Solution#mining_solution{ poa1 = PoA1 };
+				false ->
+					log_prepare_solution_failure(Solution, rejected, incorrect_h1, miner, []),
+					error
+			end;
 		{error, Error} ->
 			Modules = ar_storage_module:get_all(RecallByte1 + 1),
 			ModuleIDs = [ar_storage_module:id(Module) || Module <- Modules],
@@ -946,6 +940,26 @@ may_be_leave_it_to_exit_peer(Solution, FailureReason, AdditionalLogData) ->
 				Solution, rejected, FailureReason, miner, AdditionalLogData),
 			error
 	end.
+
+is_h1_valid(Chunk, PoA, H0, H1, Nonce) ->
+	Chunk1 = case Chunk of
+		not_set ->
+			PoA#poa.chunk;
+		_ ->
+			Chunk
+	end,
+	{ExpectedH1, _} = ar_block:compute_h1(H0, Nonce, Chunk1),
+	H1 == ExpectedH1.
+
+is_h2_valid(Chunk, H0, H1, H2) ->
+	{ExpectedH2, _} =
+		case Chunk of
+			not_set ->
+				{H2, not_set};
+			_ ->
+				ar_block:compute_h2(H1, Chunk, H0)
+		end,
+	H2 == ExpectedH2.
 
 post_solution(error, _State) ->
 	?LOG_WARNING([{event, found_solution_but_could_not_build_a_block}]),
