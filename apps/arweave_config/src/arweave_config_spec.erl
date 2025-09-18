@@ -102,7 +102,7 @@
 	Return :: parameter().
 
 %---------------------------------------------------------------------
-% REQUIRED: defines how to retrieve the value using the parameter key.
+% OPTIONAL: defines how to retrieve the value using the parameter key.
 %---------------------------------------------------------------------
 -callback handle_get(Parameter) -> Return when
 	Parameter :: parameter(),
@@ -115,7 +115,7 @@
 	MFA :: {atom(), atom(), list()}.
 
 %---------------------------------------------------------------------
-% REQUIRED: defines how to set the value Value with the parameter key.
+% OPTIONAL: defines how to set the value Value with the parameter key.
 % It should be transaction. This callback must be improved, instead
 % of returning directly a value, it should also be possible to return
 % a list of MFA or lambda functions executed in order like
@@ -331,6 +331,8 @@
 % 	Return :: term().
 
 -optional_callbacks([
+	handle_get/1,
+	handle_set/3,
 	runtime/0,
 	short_argument/0,
 	long_argument/0,
@@ -499,10 +501,10 @@ callbacks_check() -> [
 	% mandatory callbacks
  	{configuration_key, arweave_config_spec_configuration_key},
  	{runtime, arweave_config_spec_runtime},
- 	{handle_get, arweave_config_spec_handle_get},
- 	{handle_set, arweave_config_spec_handle_set},
 
 	% optional callbacks
+ 	{handle_get, arweave_config_spec_handle_get},
+ 	{handle_set, arweave_config_spec_handle_set},
 	{check, arweave_config_spec_check},
 	{deprecated, arweave_config_spec_deprecated},
  	{environment, arweave_config_spec_environment},
@@ -780,6 +782,7 @@ apply_set2(Parameter, Value, Spec) ->
 %% callback to set the value.
 %%--------------------------------------------------------------------
 apply_set3(Parameter, Value, Spec = #{ set := Set }) ->
+	% if handle_set/3 is present, we execute it.
 	Default = maps:get(default, Spec, undefined),
 	OldValue = arweave_config_store:get(Parameter, Default),
 	try Set(Parameter, Value, OldValue) of
@@ -792,7 +795,13 @@ apply_set3(Parameter, Value, Spec = #{ set := Set }) ->
 	catch
 		E:R ->
 			{E,R}
-	end.
+	end;
+apply_set3(Parameter, Value, Spec) ->
+	% if no handle_set/3 has been configured, we only store the
+	% value by default.
+	Default = maps:get(default, Spec, undefined),
+	OldValue = arweave_config_store:get(Parameter, Default),
+	apply_set4(Parameter, Value, OldValue, Spec).
 
 %%--------------------------------------------------------------------
 %% 4. the previous callback returned `store', then we store
@@ -823,6 +832,20 @@ apply_get(Parameter) ->
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
+apply_get2(Parameter, _Spec = #{ get := Get, default := Default }) ->
+	case Get(Parameter) of
+		{ok, Value} ->
+			{ok, Value};
+		_ ->
+			{ok, Default}
+	end;
+apply_get2(Parameter, _Spec = #{ get := Get }) ->
+	case get(Parameter) of
+		{ok, Value} ->
+			{ok, Value};
+		Elsewise ->
+			{error, Elsewise}
+	end;
 apply_get2(Parameter, _Spec = #{ default := Default }) ->
 	Value = arweave_config_store:get(Parameter, Default),
 	{ok, Value};
