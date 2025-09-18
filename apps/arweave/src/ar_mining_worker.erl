@@ -180,14 +180,9 @@ handle_cast(?MSG_CHUNKS_READ(WhichChunk, Candidate, RangeStart, ChunkOffsets), S
 			State1 = process_chunks(WhichChunk, Candidate, RangeStart, ChunkOffsets, State),
 			{noreply, State1};
 		false ->
-			?LOG_DEBUG([{event, mining_debug_add_stale_chunks},
-				{worker, State#state.name},
-				{active_sessions,
-					ar_mining_server:encode_sessions(ar_mining_cache:get_sessions(State#state.chunk_cache))},
-				{candidate_session,
-					ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{partition_number, Candidate#mining_candidate.partition_number},
-				{step_number, Candidate#mining_candidate.step_number}]),
+			log_debug(mining_debug_add_stale_chunks, Candidate, State, [
+				{active_sessions, 
+					ar_mining_server:encode_sessions(ar_mining_cache:get_sessions(State#state.chunk_cache))}]),
 			{noreply, State}
 	end;
 
@@ -197,16 +192,10 @@ handle_cast(?MSG_ADD_TASK({TaskType, Candidate, _ExtraArgs} = Task), State) ->
 			State1 = add_task(Task, State),
 			{noreply, State1};
 		false ->
-			?LOG_DEBUG([{event, mining_debug_add_stale_task},
-				{worker, State#state.name},
+			log_debug(mining_debug_add_stale_task, Candidate, State, [
 				{task, TaskType},
 				{active_sessions,
-					ar_mining_server:encode_sessions(ar_mining_cache:get_sessions(State#state.chunk_cache))},
-				{candidate_session,
-					ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{partition_number, Candidate#mining_candidate.partition_number},
-				{step_number, Candidate#mining_candidate.step_number},
-				{nonce, Candidate#mining_candidate.nonce}]),
+					ar_mining_server:encode_sessions(ar_mining_cache:get_sessions(State#state.chunk_cache))}]),
 			{noreply, State}
 	end;
 
@@ -224,16 +213,10 @@ handle_cast(?MSG_HANDLE_TASK, #state{ task_queue = Q } = State) ->
 					State1 = handle_task(Task, State#state{ task_queue = Q2 }),
 					{noreply, State1};
 				false ->
-					?LOG_DEBUG([{event, mining_debug_handle_stale_task},
-						{worker, State#state.name},
+					log_debug(mining_debug_handle_stale_task, Candidate, State, [
 						{task, TaskType},
 						{active_sessions,
-							ar_mining_server:encode_sessions(ar_mining_cache:get_sessions(State#state.chunk_cache))},
-						{candidate_session, ar_nonce_limiter:encode_session_key(
-							Candidate#mining_candidate.session_key)},
-						{partition_number, Candidate#mining_candidate.partition_number},
-						{step_number, Candidate#mining_candidate.step_number},
-						{nonce, Candidate#mining_candidate.nonce}]),
+							ar_mining_server:encode_sessions(ar_mining_cache:get_sessions(State#state.chunk_cache))}]),
 					{noreply, State}
 			end
 	end;
@@ -260,9 +243,8 @@ handle_info(?MSG_GARBAGE_COLLECT(StartTime, GCResult), State) ->
 	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, millisecond),
 	case GCResult == false orelse ElapsedTime > ?GC_LOG_THRESHOLD of
 		true ->
-			?LOG_DEBUG([
-				{event, mining_debug_garbage_collect}, {process, State#state.name}, {pid, self()},
-				{gc_time, ElapsedTime}, {gc_result, GCResult}]);
+			log_debug(mining_debug_garbage_collect, State, 
+				[{pid, self()}, {gc_time, ElapsedTime}, {gc_result, GCResult}]);
 		false ->
 			ok
 	end,
@@ -389,11 +371,9 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 		partial -> ar_mining_server:prepare_and_post_solution(Candidate);
 		true ->
 			%% H1 solution found, report it.
-			?LOG_INFO([{event, found_h1_solution},
-				{step, Candidate#mining_candidate.step_number},
-				{worker, State1#state.name},
+			
+			log_info(found_h1_solution, Candidate, State1, [
 				{h1, ar_util:encode(H1)},
-				{p1, Candidate#mining_candidate.partition_number},
 				{difficulty, get_difficulty(State1, Candidate)}]),
 			ar_mining_server:prepare_and_post_solution(Candidate),
 			ar_mining_stats:h1_solution()
@@ -437,11 +417,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 	) of
 		{ok, ChunkCache2} -> State1#state{ chunk_cache = ChunkCache2 };
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_process_h1},
-				{worker, State1#state.name}, {partition, State1#state.partition_number},
-				{nonce, Candidate#mining_candidate.nonce},
-				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{reason, Reason}]),
+			log_error(mining_worker_failed_to_process_h1, Candidate, State1, [{reason, Reason}]),
 			State1
 	end;
 
@@ -454,22 +430,14 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 	case PassesDiffChecks of
 		false -> ok;
 		partial ->
-			?LOG_INFO([{event, found_h2_partial_solution},
-					{worker, State1#state.name},
-					{step, Candidate#mining_candidate.step_number},
-					{h2, ar_util:encode(H2)},
-					{p1, Candidate#mining_candidate.partition_number},
-					{p2, Candidate#mining_candidate.partition_number2},
-					{partial_difficulty, get_partial_difficulty(State1, Candidate)}]);
+			log_info(found_h2_partial_solution, Candidate, State1, [
+				{h2, ar_util:encode(H2)},
+				{partial_difficulty, get_partial_difficulty(State1, Candidate)}]);
 		true ->
-			?LOG_INFO([{event, found_h2_solution},
-					{worker, State#state.name},
-					{step, Candidate#mining_candidate.step_number},
-					{h2, ar_util:encode(H2)},
-					{p1, Candidate#mining_candidate.partition_number},
-					{p2, Candidate#mining_candidate.partition_number2},
-					{difficulty, get_difficulty(State1, Candidate)},
-					{partial_difficulty, get_partial_difficulty(State1, Candidate)}]),
+			log_info(found_h2_solution, Candidate, State1, [
+				{h2, ar_util:encode(H2)},
+				{difficulty, get_difficulty(State1, Candidate)},
+				{partial_difficulty, get_partial_difficulty(State1, Candidate)}]),
 			ar_mining_stats:h2_solution()
 	end,
 	case {PassesDiffChecks, Peer} of
@@ -497,11 +465,7 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 	) of
 		{ok, ChunkCache2} -> State1#state{ chunk_cache = ChunkCache2 };
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_process_computed_h2},
-				{worker, State1#state.name}, {partition, State1#state.partition_number},
-				{nonce, Candidate#mining_candidate.nonce},
-				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{reason, Reason}]),
+			log_error(mining_worker_failed_to_process_computed_h2, Candidate, State1, [{reason, Reason}]),
 			State1
 	end;
 
@@ -523,6 +487,8 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 	case Range2Exists of
 		true ->
 			ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
+			log_debug(mining_debug_h1_received_from_peer, Candidate3, State, [
+				{h1_list_length, length(H1List)}]),
 			%% First we mark the whole first recall range as missing
 			%% Then we can cache the H1 list. During this process, we also reset the chunk1_missing
 			%% flag to false for the entries we have H1 for.
@@ -620,7 +586,8 @@ process_chunks(
 	) of
 		{ok, ChunkCache1} -> State1#state{ chunk_cache = ChunkCache1 };
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_release_reservation_for_session}, {reason, Reason}]),
+			log_error(mining_worker_failed_to_release_reservation_for_session,
+				Candidate, State1, [{reason, Reason}]),
 			State1
 	end,
 	%% Process the next chunk.
@@ -688,9 +655,9 @@ process_all_sub_chunks(
 	Candidate2 = Candidate#mining_candidate{ nonce = Nonce },
 	State1 = process_sub_chunk(WhichChunk, Candidate2, SubChunk, State),
 	process_all_sub_chunks(WhichChunk, Rest, Candidate2, Nonce + 1, State1);
-process_all_sub_chunks(WhichChunk, Rest, _Candidate, Nonce, State) ->
+process_all_sub_chunks(WhichChunk, Rest, Candidate, Nonce, State) ->
 	%% The chunk is not a multiple of the subchunk size.
-	?LOG_ERROR([{event, failed_to_split_chunk_into_sub_chunks},
+	log_error(failed_to_split_chunk_into_sub_chunks, Candidate, State, [
 			{remaining_size, byte_size(Rest)},
 			{nonce, Nonce},
 			{chunk, WhichChunk}]),
@@ -708,11 +675,7 @@ process_sub_chunk(chunk1, Candidate, SubChunk, State) ->
 	) of
 		{ok, ChunkCache2} -> State#state{ chunk_cache = ChunkCache2 };
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_process_chunk1},
-				{worker, State#state.name}, {partition, State#state.partition_number},
-				{nonce, Candidate#mining_candidate.nonce},
-				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{reason, Reason}]),
+			log_error(mining_worker_failed_to_process_chunk1, Candidate, State, [{reason, Reason}]),
 			State
 	end;
 process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
@@ -743,11 +706,7 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 	) of
 		{ok, ChunkCache2} -> State#state{ chunk_cache = ChunkCache2 };
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_process_chunk2},
-				{worker, State#state.name}, {partition, State#state.partition_number},
-				{nonce, Candidate2#mining_candidate.nonce},
-				{session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{reason, Reason}]),
+			log_error(mining_worker_failed_to_process_chunk2, Candidate2, State, [{reason, Reason}]),
 			State
 	end.
 
@@ -838,8 +797,7 @@ update_sessions(ActiveSessions, State) ->
 add_sessions([], State) -> State;
 add_sessions([SessionKey | AddedSessions], State) ->
 	ChunkCache = ar_mining_cache:add_session(SessionKey, State#state.chunk_cache),
-	?LOG_DEBUG([{event, mining_debug_add_session},
-		{worker, State#state.name}, {partition, State#state.partition_number},
+	log_debug(mining_debug_add_session, State, [
 		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
 	add_sessions(AddedSessions, State#state{chunk_cache = ChunkCache}).
 
@@ -847,9 +805,8 @@ remove_sessions([], State) -> State;
 remove_sessions([SessionKey | RemovedSessions], State) ->
 	ChunkCache = ar_mining_cache:drop_session(SessionKey, State#state.chunk_cache),
 	TaskQueue = remove_tasks(SessionKey, State#state.task_queue),
-	?LOG_DEBUG([{event, mining_debug_remove_session},
-		{worker, State#state.name}, {partition, State#state.partition_number},
-		{session, ar_nonce_limiter:encode_session_key(SessionKey)}]),
+	log_debug(mining_debug_remove_session, State, [
+		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
 	remove_sessions(RemovedSessions, State#state{
 		task_queue = TaskQueue,
 		chunk_cache = ChunkCache
@@ -879,8 +836,7 @@ try_to_reserve_cache_range_space(Multiplier, SessionKey, #state{
 			State1 = State#state{ chunk_cache = ChunkCache1 },
 			{true, State1};
 		{error, Reason} ->
-			?LOG_WARNING([{event, mining_worker_failed_to_reserve_cache_space},
-				{worker, State#state.name}, {partition, State#state.partition_number},
+			log_warning(mining_worker_failed_to_reserve_cache_space, State, [
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 				{cache_size, ar_mining_cache:cache_size(ChunkCache0)},
 				{cache_limit, ar_mining_cache:get_limit(ChunkCache0)},
@@ -898,8 +854,7 @@ release_cache_range_space(Multiplier, SessionKey, #state{
 	case ar_mining_cache:release_for_session(SessionKey, ReleaseSize, ChunkCache0) of
 		{ok, ChunkCache1} -> State#state{ chunk_cache = ChunkCache1 };
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_release_cache_space},
-				{worker, State#state.name}, {partition, State#state.partition_number},
+			log_error(mining_worker_failed_to_release_cache_space, State, [
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 				{cache_size, ar_mining_cache:cache_size(ChunkCache0)},
 				{cache_limit, ar_mining_cache:get_limit(ChunkCache0)},
@@ -942,7 +897,8 @@ mark_single_chunk1_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 		{ok, ChunkCache1} ->
 			mark_single_chunk1_missing_or_drop(Nonce + 1, NoncesLeft - 1, Candidate, State#state{ chunk_cache = ChunkCache1 });
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_mark_chunk1_missing}, {reason, Reason}]),
+			log_error(mining_worker_failed_to_mark_chunk1_missing,
+				Candidate, State, [{reason, Reason}]),
 			mark_single_chunk1_missing_or_drop(Nonce + 1, NoncesLeft - 1, Candidate, State)
 	end.
 
@@ -984,7 +940,8 @@ mark_single_chunk2_missing_or_drop(Nonce, NoncesLeft, Candidate, State) ->
 		{error, Reason} ->
 			%% NB: this clause may cause a memory leak, because mining worker will wait for
 			%% chunk2 to arrive.
-			?LOG_ERROR([{event, mining_worker_failed_to_mark_chunk2_missing}, {reason, Reason}]),
+			log_error(mining_worker_failed_to_mark_chunk2_missing,
+				Candidate, State, [{reason, Reason}]),
 			mark_single_chunk2_missing_or_drop(Nonce + 1, NoncesLeft - 1, Candidate, State)
 	end.
 
@@ -1011,7 +968,7 @@ mark_recall_range_missing(WhichChunk, Nonce, NoncesLeft, Candidate, State) ->
 		{error, Reason} ->
 			%% NB: this clause may cause a memory leak, because mining worker will wait for
 			%% WhichChunk to arrive.
-			?LOG_ERROR([{event, mining_worker_failed_to_add_chunk_to_cache}, {reason, Reason}]),
+			log_error(mining_worker_failed_to_add_chunk_to_cache, Candidate, State, [{reason, Reason}]),
 			mark_recall_range_missing(WhichChunk, Nonce + 1, NoncesLeft - 1, Candidate, State)
 	end.
 
@@ -1031,10 +988,7 @@ cache_h1_list(Candidate, [ {H1, Nonce} | H1List ], State) ->
 		{ok, ChunkCache1} ->
 			cache_h1_list(Candidate, H1List, State#state{ chunk_cache = ChunkCache1 });
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_cache_h1},
-				{worker, State#state.name}, {partition, State#state.partition_number},
-				{nonce, Nonce}, {session_key, ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)},
-				{reason, Reason}]),
+			log_error(mining_worker_failed_to_cache_h1, Candidate, State, [{reason, Reason}]),
 			cache_h1_list(Candidate, H1List, State)
 	end.
 
@@ -1087,9 +1041,60 @@ report_chunk_cache_metrics(#state{chunk_cache = ChunkCache, partition_number = P
 	case ar_mining_cache:reserved_size(ChunkCache) of
 		{ok, ReservedSize} -> prometheus_gauge:set(mining_server_chunk_cache_size, [Partition, "reserved"], ReservedSize);
 		{error, Reason} ->
-			?LOG_ERROR([{event, mining_worker_failed_to_report_chunk_cache_metrics}, {reason, Reason}])
+			log_error(mining_worker_failed_to_report_chunk_cache_metrics, State, [{reason, Reason}])
 	end,
 	State.
+
+format_logs(State = #state{}) ->
+	#state{
+		name = Name,
+		partition_number = PartitionNumber,
+		latest_vdf_step_number = LatestStepNumber
+	} = State,
+	[
+		{worker, Name}, {state_partition, PartitionNumber}, {latest_vdf_step_number, LatestStepNumber}
+	];
+format_logs(Candidate = #mining_candidate{}) ->
+	#mining_candidate{
+		cm_lead_peer = Peer,
+		session_key = SessionKey,
+		step_number = StepNumber,
+		partition_number = Partition,
+		partition_number2 = Partition2,
+		nonce = Nonce
+	} = Candidate,
+	[{cm_peer, Peer}, {candidate_session, ar_nonce_limiter:encode_session_key(SessionKey)},
+		{candidate_step_number, StepNumber}, {candidate_nonce, Nonce},
+		{candidate_partition, Partition}, {candidate_partition2, Partition2}];
+format_logs(undefined) ->
+	[].
+
+format_logs(Event, Candidate, State, ExtraLogs) ->
+	[{event, Event}] ++ format_logs(State) ++ format_logs(Candidate) ++ ExtraLogs.
+
+log_debug(Event, Candidate, State, ExtraLogs) ->
+	?LOG_DEBUG(format_logs(Event, Candidate, State, ExtraLogs)).
+
+log_debug(Event, State, ExtraLogs) ->
+	log_debug(Event, undefined, State, ExtraLogs).	
+
+log_error(Event, Candidate, State, ExtraLogs) ->
+	?LOG_ERROR(format_logs(Event, Candidate, State, ExtraLogs)).
+
+log_error(Event, State, ExtraLogs) ->
+	log_error(Event, undefined, State, ExtraLogs).
+
+log_info(Event, Candidate, State, ExtraLogs) ->
+	?LOG_INFO(format_logs(Event, Candidate, State, ExtraLogs)).
+
+log_info(Event, State, ExtraLogs) ->
+	log_info(Event, undefined, State, ExtraLogs).
+
+log_warning(Event, Candidate, State, ExtraLogs) ->
+	?LOG_WARNING(format_logs(Event, Candidate, State, ExtraLogs)).
+
+log_warning(Event, State, ExtraLogs) ->
+	log_warning(Event, undefined, State, ExtraLogs).
 
 %%%===================================================================
 %%% Public Test interface.

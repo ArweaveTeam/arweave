@@ -1119,12 +1119,17 @@ apply_external_update2(Update, State) ->
 			case CurrentStepNumber >= StepNumber of
 				true ->
 					%% Inform the peer we are ahead.
-					?LOG_DEBUG([{event, apply_external_vdf},
-							{result, ahead_of_server},
-							{vdf_server, ar_util:format_peer(Peer)},
-							{session_key, encode_session_key(SessionKey)},
-							{client_step_number, CurrentStepNumber},
-							{server_step_number, StepNumber}]),
+					case CurrentStepNumber > StepNumber of
+						true ->
+							?LOG_DEBUG([{event, apply_external_vdf},
+									{result, ahead_of_server},
+									{vdf_server, ar_util:format_peer(Peer)},
+									{session_key, encode_session_key(SessionKey)},
+									{client_step_number, CurrentStepNumber},
+									{server_step_number, StepNumber}]);
+						false ->
+							ok
+					end,
 					{reply, #nonce_limiter_update_response{
 							step_number = CurrentStepNumber }, State};
 				false ->
