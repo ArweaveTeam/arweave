@@ -17,13 +17,10 @@ default() -> undefined.
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
+init(#{ default := Default }, State) ->
+	{ok, State#{ default => Default }};
 init(Map, State) when is_map(Map) ->
-	case is_map_key(default, Map) of
-		true ->
-			{ok, State#{ default => maps:get(default, Map)}};
-		false ->
-			{ok, State#{ default => default() }}
-	end;
+	{ok, State#{ default => default() }};
 init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, default, 0) of
 		true ->
@@ -32,6 +29,9 @@ init(Module, State) when is_atom(Module) ->
 			{ok, State#{ default => default() }}
 	end.
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 fetch(Module, State) ->
 	try Module:default() of
 		Default ->

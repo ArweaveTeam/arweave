@@ -49,16 +49,13 @@
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
+init(Map = #{ configuration_key := CK }, State) when is_list(CK) ->
+	fetch(Map, State);
 init(Map, State) when is_map(Map) ->
-	case is_map_key(configuration_key, Map) of
-		true ->
-			fetch(Map, State);
-		false ->
-			{error, #{
-					reason => missing_key
-				}
-			}
-	end;
+	{error, #{
+			reason => missing_key
+		}
+	};
 init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, configuration_key, 0) of
 		true ->

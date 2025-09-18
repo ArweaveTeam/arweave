@@ -1,18 +1,29 @@
+%%%===================================================================
+%%% @doc Specification callback module define short description field.
+%%% @end
+%%%===================================================================
 -module(arweave_config_spec_short_description).
 -export([init/2]).
 -include("arweave_config_spec.hrl").
 
-default() -> <<>>.
-
-init(Map, State) when is_map(Map) -> {ok, State};
+%%--------------------------------------------------------------------
+%% 
+%%--------------------------------------------------------------------
+init(#{ short_description := SD }, State) ->
+	{ok, State#{ short_description => SD }};
+init(Map, State) when is_map(Map) ->
+	{ok, State};
 init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, short_description, 0) of
 		true ->
 			fetch(Module, State);
 		false ->
-			{ok, State#{ short_description => default() }}
+			{ok, State}
 	end.
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 fetch(Module, State) ->
 	try
 		SD = erlang:apply(Module, short_description, []),
@@ -22,6 +33,9 @@ fetch(Module, State) ->
 			{error, R}
 	end.
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 check(_Module, undefined, State) ->
 	{ok, State#{ short_description => undefined }};
 check(_Module, SD, State) when is_binary(SD); is_list(SD) ->

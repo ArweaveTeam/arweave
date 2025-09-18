@@ -82,7 +82,7 @@ init() ->
 		% #config.sync_jobs
 		#{
 			configuration_key => [global,data,jobs,sync],
-			legacy => [sync_jobs],
+			legacy => sync_jobs,
 			runtime => true,
 			description => "",
 			handle_get => fun(K) -> todo end,
@@ -92,7 +92,7 @@ init() ->
 		% #config.header_sync_jobs	
 		#{
 			configuration_key => [global,data,jobs,headers,sync],
-			legacy => [header_sync_jobs],
+			legacy => header_sync_jobs,
 			runtime => true,
 			description => "",
 			handle_get => fun(K) -> todo end,
