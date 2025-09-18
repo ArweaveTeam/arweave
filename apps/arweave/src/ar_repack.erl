@@ -1141,7 +1141,13 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 %%% Tests.
 %%%===================================================================
 
-cache_size_test() ->
+cache_size_test_() ->
+	ar_test_node:test_with_mocked_functions([
+		{ar_block, sub_chunks_per_entropy, fun() -> 3 end}
+	],
+	fun test_cache_size/0, 30).
+
+test_cache_size() ->
 	?assertEqual(1, calculate_num_entropy_offsets(100, 400)),
 	?assertEqual(2, calculate_num_entropy_offsets(100, 200)),
 	?assertEqual(3, calculate_num_entropy_offsets(300, 400)),
@@ -1154,6 +1160,9 @@ footprint_offsets_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, replica_2_9_entropy_sector_size, fun() -> 786432 end},
+			{ar_block, replica_2_9_entropy_partition_size, fun() -> 2359296 end},
+			{ar_block, sub_chunks_per_entropy, fun() -> 3 end},
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 		],
 		fun test_footprint_offsets_small/0, 30),
@@ -1270,6 +1279,9 @@ footprint_end_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, replica_2_9_entropy_sector_size, fun() -> 786432 end},
+			{ar_block, replica_2_9_entropy_partition_size, fun() -> 2359296 end},
+			{ar_block, sub_chunks_per_entropy, fun() -> 3 end},
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 		],
 		fun test_footprint_end_small/0, 30)
@@ -1814,11 +1826,15 @@ get_read_range_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, replica_2_9_entropy_sector_size, fun() -> 786432 end},
+			{ar_block, replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, strict_data_split_threshold, fun() -> 5_000_000 end}
 		],
 			fun test_get_read_range_before_strict/0, 30),
 		ar_test_node:test_with_mocked_functions([
 			{ar_block, partition_size, fun() -> 2_000_000 end},
+			{ar_block, replica_2_9_entropy_sector_size, fun() -> 786432 end},
+			{ar_block, replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 		],
 			fun test_get_read_range_after_strict/0, 30)
