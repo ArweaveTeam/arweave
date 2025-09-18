@@ -371,7 +371,10 @@ valid_solution() ->
 mock_to_force_invalid_h1() ->
 	{
 		ar_block, compute_h1,
-		fun(_H0, _Nonce, _Chunk1) ->
+		fun(H0, Nonce, Chunk1) ->
+			%% First call the original compute_h1 function
+			meck:passthrough([H0, Nonce, Chunk1]),
+			%% Then return invalid solutions
 			{invalid_solution(), invalid_solution()}
 		end
 	}.
