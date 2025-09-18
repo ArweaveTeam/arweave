@@ -3,11 +3,55 @@
 %%% @end
 %%%===================================================================
 -module(arweave_config_type).
--compile(export_all).
+-export([
+	none/1,
+	any/1,
+	boolean/1,
+	integer/1,
+	pos_integer/1,
+	ipv4/1,
+	ipv6/1,
+	unix_sock/1,
+	tcp_port/1,
+	path/1,
+	atom/1,
+	string/1,
+	base64/1,
+	base64url/1
+
+]).
 -include_lib("kernel/include/file.hrl").
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc always returns an error.
+%% @end
+%%--------------------------------------------------------------------
+none(V) -> {error, V}.
+
+%%--------------------------------------------------------------------
+%% @doc always returns the value.
+%% @end
+%%--------------------------------------------------------------------
+any(V) -> {ok, V}.
+
+%%--------------------------------------------------------------------
+%% @doc check if the data is an atom and convert list/binary to
+%% existing atoms.
+%% @end
+%%--------------------------------------------------------------------
+atom(List) when is_list(List) ->
+	try list_to_existing_atom(List)
+	catch _:_ -> {error, List}
+	end;
+atom(Binary) when is_binary(Binary) ->
+	try binary_to_existing_atom(Binary)
+	catch _:_ -> {error, Binary}
+	end;
+atom(V) when is_atom(V) -> {ok, V};
+atom(V) -> {error, V}.
+
+%%--------------------------------------------------------------------
+%% @doc check booleans from binary, list, integer and atoms.
 %% @end
 %%--------------------------------------------------------------------
 boolean(<<"true">>) -> {ok, true};
@@ -19,7 +63,7 @@ boolean(1) -> {ok, true};
 boolean(V) -> {error, V}.
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc check integers.
 %% @end
 %%--------------------------------------------------------------------
 integer(List) when is_list(List) ->
@@ -34,7 +78,7 @@ integer(V) ->
 	{error, V}.
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc check positive integers.
 %% @end
 %%--------------------------------------------------------------------
 pos_integer(Data) ->
@@ -46,7 +90,7 @@ pos_integer(Data) ->
 	end.
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc check ipv4 addresses.
 %% @end
 %%--------------------------------------------------------------------
 ipv4(Binary) when is_binary(Binary) ->
@@ -60,7 +104,7 @@ ipv4(List) when is_list(List) ->
 	end.
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc check ipv6 addresses.
 %% @end
 %%--------------------------------------------------------------------
 ipv6(Binary) when is_binary(Binary) ->
@@ -114,7 +158,7 @@ unix_sock3(Path) ->
 	end.
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc check tcp port.
 %% @end
 %%--------------------------------------------------------------------
 tcp_port(Binary) when is_binary(Binary) ->
@@ -130,7 +174,7 @@ tcp_port(Integer) when is_integer(Integer) ->
 	end.
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc check unix path.
 %% @end
 %%--------------------------------------------------------------------
 path(List) when is_list(List) ->
@@ -142,3 +186,28 @@ path(Binary) when is_binary(Binary) ->
 		false ->
 			{error, Binary}
 	end.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+string(String) -> string(String, String).
+string([], String) -> {ok, String};
+string([H|T], String) when is_integer(H) -> string(T, String);
+string(_, String) -> {error, String}.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+base64(Binary) -> 
+	try {ok, base64:decode(Binary)}
+	catch _:_ -> {error, Binary}
+	end.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+base64url(Binary) ->
+	try {ok, b64fast:decode(Binary)}
+	catch _:_ -> {error, Binary}
+	end.
+

@@ -42,20 +42,27 @@ main(Args) ->
 	% and the new one.
 	{ok, _} = application:ensure_all_started(arweave_config),
 	
-	% load environment variable
-	%   {ok, _} = arweave_config:load(environment),
+	% load environment variable.
+	ok = arweave_config_environment:load(),
+
+	% load the arguments from the command line.
+	%   ok = arweave_config_arguments:load(Args)
 	%
-	% load the arguments from the command line
-	%   {ok, _} = arweave_config:load({arguments, Args}),
-	%
-	% finally, load the configuration if it present/configured in
-	% the environment or arguments
-	%   {ok, _} = arweave_config:load(configuration),
+	% load the configuration if it present/configured in
+	% the environment or arguments.
+	%   ok = arweave_config_file:load(),
 	%
 	% we can't deal with everything right now, then we can export
 	% the configuration as legacy (record).
 	%   {ok, LegacyConfig} = arweave_config:export(legacy),
 	%   start(LegacyConfig).
+	%
+	% the startup phase is over, we got parameters from
+	% environments, arguments and configuration file(s).
+	% arweave_config can now switch to runtime mode. All
+	% parameters with runtime set to false will be set in
+	% read-only.
+	%   ok = arweave_config:runtime().
 	start(parse_config_file(Args, [], #config{})).
 
 show_help() ->
