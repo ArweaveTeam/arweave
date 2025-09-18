@@ -13,6 +13,22 @@
 %%% not dynamic at all, this means this performance issue will only
 %%% impact arweave during startup.
 %%%
+%%% ```
+%%%  _________     ______________________     _______________________
+%%% |         |   |                      |   |                       |
+%%% | arweave |-->| arweave_config:set/2 |-->| arweave_config_legacy |
+%%% |_________|   |______________________|   |_______________________|
+%%%                                             ||
+%%%                                            _||_
+%%%                                            \  /
+%%%                                           __\/_________________
+%%%                                          |                     |
+%%%                                          | application:set_env |
+%%%                                          |_____________________|
+%%%
+%%%
+%%% '''
+%%%
 %%% @TODO TO REMOVE when legacy configuration will be dropped.
 %%%
 %%% == Examples ==
@@ -49,10 +65,7 @@
 %% @end
 %%--------------------------------------------------------------------
 router() ->
-	#{
-		data_dir => [global, data, directory],
-		debug => [global, debug]
-	 }.
+	arweave_config_spec:get_legacy().
 
 %%--------------------------------------------------------------------
 %% @doc a simple router.
@@ -61,11 +74,10 @@ router() ->
 %%--------------------------------------------------------------------
 route(LegacyKey, Value) ->
 	Router = router(),
-	case is_map_key(LegacyKey, Router) of
-		true ->
-			#{ LegacyKey := Parameter } = Router,
+	case Router of
+		#{ LegacyKey := Parameter } ->
 			arweave_config_spec:set(Parameter, Value);
-		false ->
+		_ ->
 			ok
 	end.
 
@@ -205,7 +217,7 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 handle_call(Msg = {has_key, Key}, From, State) ->
 	?LOG_DEBUG([{message, Msg}, {from, From}]),
-	{reply, proplists:is_defined(Key, State), State};	
+	{reply, proplists:is_defined(Key, State), State};
 handle_call(Msg = keys, From, State) ->
 	?LOG_DEBUG([{message, Msg}, {from, From}]),
 	{reply, proplists:get_keys(State), State};
@@ -223,12 +235,13 @@ handle_call(Msg = {set, Key, Value}, From, State)
 		OldValue = proplists:get_value(Key, State),
 		Return = {ok, Value, OldValue},
 		NewState = lists:keyreplace(Key, 1, State, {Key, Value}),
+
 		% TODO: temporary legacy configuration compatibility
 		% layer.
 		NewConfig = proplist_to_config(NewState),
 		application:set_env(arweave,config,NewConfig),
 
-		% TODO: temporary router to remove, mainly used for 
+		% TODO: temporary router to remove, mainly used for
 		% testing.
 		route(Key, Value),
 		{reply, Return, NewState};
@@ -289,7 +302,7 @@ proplist_to_config(Proplist)
 		proplist_to_config2(Proplist, Fields, Proplist, 1).
 
 % check the order of the fields, if not in right order, it will fail.
-proplist_to_config2([], [], Proplist, _Pos) -> 
+proplist_to_config2([], [], Proplist, _Pos) ->
 	proplist_to_config3(Proplist);
 proplist_to_config2([I={Key,_}|R1], [Key|R2], Proplist, Pos) ->
 	proplist_to_config2(R1, R2, Proplist, Pos+1);
@@ -312,7 +325,7 @@ proplist_to_config3(Proplist) ->
 	Values = lists:map(fun({_,V}) -> V end, Proplist),
 	Values2 = [config|Values],
 	erlang:list_to_tuple(Values2).
-	
+
 % import config from application:get_env/2.
 import_config() ->
 	case application:get_env(arweave, config) of

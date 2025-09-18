@@ -20,9 +20,6 @@ init() ->
 				<<"Configure web user interface">>,
 			environment => <<"AR_WEBUI">>,
 			type => boolean,
-			handle_get => fun(K) ->
-				arweave_config_store:get([webui,enabled])
-			end,
 			handle_set =>
 				fun
 					(_,true,true) ->
@@ -48,8 +45,6 @@ init() ->
 			long_description => [],
 			type => tcp_port,
 			environment => <<"AR_WEBUI_LISTEN_PORT">>,
-			handle_get => fun(K) -> todo end,
-			handle_set => fun(K,V,O) -> todo end
 		},
 		#{
 			configuration_key => [webui,listen,address],
@@ -59,10 +54,7 @@ init() ->
 			short_description => [],
 			long_description => [],
 			type => [ipv4,ipv6,unix_sock],
-			environment => <<"AR_WEBUI_LISTEN_ADDRESS">>,
-			handle_get => fun(K) -> todo end,
-			handle_set => fun(K,V,O) -> todo end
-
+			environment => <<"AR_WEBUI_LISTEN_ADDRESS">>
 		},
 		% #config.init
 		#{
@@ -74,9 +66,7 @@ init() ->
 			runtime => false,
 			short_description => [
 				<<"Start a new weave.">>
-			],
-			handle_get => fun(K) -> todo end,
-			handle_set => fun(K,V,O) -> todo end
+			]
 		},
 
 		% #config.sync_jobs
@@ -85,8 +75,6 @@ init() ->
 			legacy => sync_jobs,
 			runtime => true,
 			description => "",
-			handle_get => fun(K) -> todo end,
-			handle_set => fun(K,V,O) -> todo end
 		},
 		
 		% #config.header_sync_jobs	
@@ -95,23 +83,23 @@ init() ->
 			legacy => header_sync_jobs,
 			runtime => true,
 			description => "",
-			handle_get => fun(K) -> todo end,
-			handle_set => fun(K,V,O) -> todo end
+		},
+	
+		% config.verify_simples
+		#{
+			configuration_key => [global,chunks,verify,samples],
+			legacy => verify_samples
+		},
+	
+		% config.verify
+		#{
+			configuration_key => [global,chunks,verify],
+			legacy => verify
 		}
 	].
 	
 draft2() ->
 	#{
-		% config.verify_simples
-		[global,chunks,verify,samples] => #{
-			legacy => [verify_samples]
-		},
-	
-		% config.verify
-		[global,chunks,verify] => #{
-			legacy => [verify]
-		},
-	
 		% global network configuration
 		[global,network,http_api,port] => #{},
 		[global,network,http_api,tcp,max_connections] => #{
