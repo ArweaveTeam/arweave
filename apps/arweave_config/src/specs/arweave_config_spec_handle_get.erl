@@ -1,21 +1,23 @@
+%%%===================================================================
+%%%
+%%%===================================================================
 -module(arweave_config_spec_handle_get).
 -export([init/2]).
 -include("arweave_config_spec.hrl").
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+init(#{ handle_get := Get }, State) when is_function(Get, 1) ->
+	{ok, State#{ get => Get }};
 init(Map, State) when is_map(Map) ->
-	case is_map_key(handle_get, Map) of
-		true ->
-			Value = maps:get(handle_get, Map),
-			{ok, State#{ get => Value }};
-		false ->
-			{error, #{
-					reason => undefined,
-					key => handle_get,
-					arity => 1,
-					map => Map
-				}
-			}
-		end;
+	{error, #{
+			reason => undefined,
+			key => handle_get,
+			arity => 1,
+			map => Map
+		}
+	};
 init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, handle_get, 1) of
 		true ->

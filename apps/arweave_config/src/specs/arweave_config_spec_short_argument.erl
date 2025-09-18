@@ -14,7 +14,10 @@ default() -> undefined.
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-init(Map, State) when is_map(Map) -> {ok, State};
+init(Map = #{ short_argument := SA }, State) ->
+	{ok, State#{ short_argument => SA }};
+init(Map, State) when is_map(Map) ->
+	{ok, State};
 init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, short_argument, 0) of
 		true ->
@@ -22,7 +25,7 @@ init(Module, State) when is_atom(Module) ->
 			fetch(Module, State);
 		false ->
 			?LOG_DEBUG("~p is undefined", [{Module, short_argument, []}]),
-			{ok, State#{ short_argument => default() }}
+			{ok, State}
 	end.
 
 fetch(Module, State) ->
@@ -35,7 +38,7 @@ fetch(Module, State) ->
 	end.
 
 check(Module, undefined, State) ->
-	{ok, State#{ short_argument => undefined }};
+	{ok, State};
 check(Module, SA, State)
 	when integer(SA),
 		( SA >= $0 andalso SA =< $9 );

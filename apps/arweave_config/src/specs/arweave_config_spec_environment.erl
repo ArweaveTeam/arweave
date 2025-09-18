@@ -1,25 +1,28 @@
+%%%===================================================================
+%%%
+%%%===================================================================
 -module(arweave_config_spec_environment).
 -export([init/2]).
 -include("arweave_config_spec.hrl").
 
-default() -> undefined.
-
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+init(#{ environment := Env }, State) ->
+	{ok, State#{ environment => Env }};
 init(Map, State) when is_map(Map) ->
-	case is_map_key(environment, Map) of
-		true ->
-			Value = maps:get(environment, Map),
-			{ok, State#{ environment => Value }};
-		false ->
-			{ok, State#{ environment => default() }}
-	end;
+	{ok, State};
 init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, environment, 0) of
 		true ->
 			fetch(Module, State);
 		false ->
-			{ok, State#{ environment => default() }}
+			{ok, State}
 	end.
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 fetch(Module, State) ->
 	try
 		Env = erlang:apply(Module, environment, []),
@@ -29,8 +32,9 @@ fetch(Module, State) ->
 			{error, R}
 	end.
 
-check(Module, undefined, State) ->
-	{ok, State#{ environment => undefined }};
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 check(Module, Environment, State) when is_binary(Environment) ->
 	{ok, State#{ environment => Environment }};
 check(Module, Env, State) ->

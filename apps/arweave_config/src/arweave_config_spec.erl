@@ -69,6 +69,7 @@
 -export([
 	start_link/1,
 	spec/1,
+	get_legacy/0,
 	get_environments/0,
 	get_environment/1,
 	get_short_arguments/0,
@@ -443,6 +444,16 @@ get_long_arguments() ->
 %%--------------------------------------------------------------------
 get_long_argument(ArgumentKey) ->
 	todo.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+get_legacy() ->
+	Pattern = {'$1', #{ legacy => '$2' }},
+	Guard = [{'=/=', '$2', undefined}],
+	Select = [{{'$2', '$1'}}],
+	Query = [{Pattern, Guard, Select}],
+	maps:from_list(ets:select(?MODULE, Query)).
 
 %%--------------------------------------------------------------------
 %% @doc get a value using a parameter.

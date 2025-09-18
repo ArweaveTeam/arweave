@@ -15,19 +15,17 @@
 -export([init/2]).
 -include("arweave_config_spec.hrl").
 	
-default() -> undefined.
-
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+init(#{ check := Check }, State) when is_function(Check, 2) ->
+	{ok, State#{ check => Check }};
 init(Map, State) when is_map(Map) ->
-	case is_map_key(check, Map) of
-		true ->
-			{ok, State#{ check => maps:get(check, Map) }};
-		false ->
-			{ok, State#{ check => default() }}
-	end;
+	{ok, State};
 init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, check, 2) of
 		true ->
 			{ok, State#{ check => fun Module:check/2 }};
 		false ->
-			{ok, State#{ check => default() }}
+			{ok, State}
 	end.

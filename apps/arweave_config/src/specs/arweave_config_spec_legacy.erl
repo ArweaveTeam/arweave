@@ -1,18 +1,28 @@
+%%%===================================================================
+%%%
+%%%===================================================================
 -module(arweave_config_spec_legacy).
 -export([init/2]).
 -include("arweave_config_spec.hrl").
-	
-default() -> undefined.
 
-init(Map, State) when is_map(Map) -> {ok, State};
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+init(#{ legacy := Legacy }, State) when is_list(Legacy); is_atom(Legacy) ->
+	{ok, State#{ legacy => Legacy }};
+init(Map, State) when is_map(Map) ->
+	{ok, State};
 init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, legacy, 0) of
 		true ->
 			fetch(Module, State);
 		false ->
-			{ok, State#{ legacy => default() }}
+			{ok, State}
 	end.
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 fetch(Module, State) ->
 	try
 		L = erlang:apply(Module, legacy, []),
@@ -22,8 +32,9 @@ fetch(Module, State) ->
 			{error, R}
 	end.
 
-check(_Module, undefined, State) ->
-	{ok, State#{ legacy => undefined }};
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 check(_Module, Legacy, State) when is_atom(Legacy) ->
 	{ok, State#{ legacy => Legacy }};
 check(Module, Legacy, State) when is_list(Legacy) ->

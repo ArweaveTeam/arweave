@@ -44,7 +44,10 @@
 	
 default() -> undefined.
 
-init(Map, State) when is_map(Map) -> {ok, State};
+init(#{ type := Type }, State) ->
+	{ok, State#{ type => Type }};
+init(Map, State) when is_map(Map) ->
+	{ok, State};
 init(Module, State) when is_atom(Module) ->
 	case is_function_exported(Module, type, 0) of
 		true ->
