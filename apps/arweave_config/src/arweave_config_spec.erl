@@ -62,18 +62,42 @@
 %%% [peers, {peer}, enabled]
 %%% '''
 %%%
+%%% === Check for duplicated values ===
+%%%
+%%% A warning (or an error) should be returned when there is a
+%%% duplicated specification. Here a quick list of error/warning:
+%%%
+%%% - errors (stop execution):
+%%%   - duplicated configuration_key
+%%% - warnings (last one overwrite the first one):
+%%%   - duplicated environments
+%%%   - duplicated short arguments
+%%%   - duplicated long arguments
+%%%   - duplicated legacy
+%%%
+%%% ===  Improve callback functions ===
+%%% 
+%%% Add support for pre/post actions.
+%%%
+%%% Add support for MFA
+%%%
+%%% Add support for embedded lambdas
+%%%
 %%% @end
 %%%===================================================================
 -module(arweave_config_spec).
 -behavior(gen_server).
 -export([
 	start_link/1,
+	spec/0,
 	spec/1,
 	get_legacy/0,
 	get_environments/0,
 	get_environment/1,
 	get_short_arguments/0,
+	get_short_argument/1,
 	get_long_arguments/0,
+	get_long_argument/1,
 	get/1,
 	set/2
 ]).
@@ -365,6 +389,17 @@ start_link(Args) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
 %%--------------------------------------------------------------------
+%% @doc returns the full list of specifications.
+%% @end
+%%--------------------------------------------------------------------
+spec() ->
+	Pattern = {'$1', '$2'},
+	Guard = [],
+	Select = [{{'$1', '$2'}}],
+	Result = ets:select(?MODULE, [{Pattern, Guard, Select}]),
+	maps:from_list(Result).
+
+%%--------------------------------------------------------------------
 %% @doc returns parameter's specification from specification store.
 %% @end
 %%--------------------------------------------------------------------
@@ -424,7 +459,13 @@ get_short_arguments() ->
 %% @end
 %%--------------------------------------------------------------------
 get_short_argument(ArgumentKey) ->
-	todo.
+	Pattern = {'$1', #{
+		short_argument => '$2',
+		elements => '$3'
+	}},
+	Guard = [{'=:=', '$2', ArgumentKey}],
+	Select = [{{'$2', '$_'}}],
+	ets:select(?MODULE, [{Pattern, Guard, Select}]).
 
 %%--------------------------------------------------------------------
 %% @doc Returns the list of long arguments supported with the number
@@ -445,10 +486,18 @@ get_long_arguments() ->
 %% @end
 %%--------------------------------------------------------------------
 get_long_argument(ArgumentKey) ->
-	todo.
+	Pattern = {'$1', #{
+		long_argument => '$2',
+		elements => '$3'
+	}},
+	Guard = [{'=:=', '$2', ArgumentKey}],
+	Select = [{{'$2', '$_'}}],
+	ets:select(?MODULE, [{Pattern, Guard, Select}]).
 
 %%--------------------------------------------------------------------
-%%
+%% @doc Returns legacy keys (used for legacy configuration 
+%% compatibility).
+%% @end
 %%--------------------------------------------------------------------
 get_legacy() ->
 	Pattern = {'$1', #{ legacy => '$2' }},
@@ -500,9 +549,9 @@ set(Parameter, Value) ->
 callbacks_check() -> [
 	% mandatory callbacks
  	{configuration_key, arweave_config_spec_configuration_key},
- 	{runtime, arweave_config_spec_runtime},
 
 	% optional callbacks
+ 	{runtime, arweave_config_spec_runtime},
  	{handle_get, arweave_config_spec_handle_get},
  	{handle_set, arweave_config_spec_handle_set},
 	{check, arweave_config_spec_check},
@@ -754,6 +803,7 @@ check_final(_, Value, _, Buffer) ->
 	end.
 
 %%--------------------------------------------------------------------
+%% @hidden
 %% 1. get he specification, if they are present, we can continue
 %% to execute the transaction
 %%--------------------------------------------------------------------
@@ -766,6 +816,7 @@ apply_set(Parameter, Value) ->
 	end.
 
 %%--------------------------------------------------------------------
+%% @hidden
 %% 2. check if the specification match the parameter/value,
 %% if everything is fine, we can continue the execution
 %%--------------------------------------------------------------------
@@ -778,6 +829,7 @@ apply_set2(Parameter, Value, Spec) ->
 	end.
 
 %%--------------------------------------------------------------------
+%% @hidden
 %% 3. let retrieve the value (if set) and use the handle_set/3
 %% callback to set the value.
 %%--------------------------------------------------------------------
@@ -804,6 +856,7 @@ apply_set3(Parameter, Value, Spec) ->
 	apply_set4(Parameter, Value, OldValue, Spec).
 
 %%--------------------------------------------------------------------
+%% @hidden
 %% 4. the previous callback returned `store', then we store
 %% the value into arweave_config_store.
 %%--------------------------------------------------------------------
@@ -819,7 +872,9 @@ apply_set4(Parameter, NewValue, OldValue, _Spec) ->
 	end.
 
 %%--------------------------------------------------------------------
-%%
+%% @hidden
+%% @doc
+%% @end
 %%--------------------------------------------------------------------
 apply_get(Parameter) ->
 	case spec(Parameter) of
@@ -830,7 +885,7 @@ apply_get(Parameter) ->
 	end.
 
 %%--------------------------------------------------------------------
-%%
+%% @hidden
 %%--------------------------------------------------------------------
 apply_get2(Parameter, _Spec = #{ get := Get, default := Default }) ->
 	case Get(Parameter) of
