@@ -76,7 +76,7 @@
 %%%   - duplicated legacy
 %%%
 %%% ===  Improve callback functions ===
-%%% 
+%%%
 %%% Add support for pre/post actions.
 %%%
 %%% Add support for MFA
@@ -225,17 +225,16 @@
 % DEFAULT: 0
 %---------------------------------------------------------------------
 -callback elements() -> Return when
-	Return :: [Type],
-	Type :: atom().
+	Return :: pos_integer().
 
 %---------------------------------------------------------------------
 % OPTIONAL: the type of the value.
 % DEFAULT: undefined
 %---------------------------------------------------------------------
-% -callback type() -> Return when
-% 	Return :: undefined
-% 		| atom()
-% 		| fun ((term()) -> {ok, term()}).
+-callback type() -> Return when
+	Return :: undefined
+		| atom()
+		| fun ((term()) -> {ok, term()}).
 
 %---------------------------------------------------------------------
 % OPTIONAL: a function to check the value attributed with the key.
@@ -291,15 +290,6 @@
 	Return :: true
 		| {true, term()}
 		| false.
-
-%---------------------------------------------------------------------
-% @TODO fail callback
-% OPTIONAL: defines if a wrong value should stop the execution, with a
-% specific error set.
-%---------------------------------------------------------------------
-% -spec fail() -> Return when
-% 	Return :: boolean()
-% 		| {true, term()}.
 
 %---------------------------------------------------------------------
 % @TODO: protected callback
@@ -364,6 +354,15 @@
 % -callback dryrun() -> Return when
 % 	Return :: term().
 
+%---------------------------------------------------------------------
+% @TODO fail callback
+% OPTIONAL: defines if a wrong value should stop the execution, with a
+% specific error set.
+%---------------------------------------------------------------------
+% -spec fail() -> Return when
+% 	Return :: boolean()
+% 		| {true, term()}.
+
 -optional_callbacks([
 	handle_get/1,
 	handle_set/3,
@@ -371,6 +370,7 @@
 	short_argument/0,
 	long_argument/0,
 	elements/0,
+	type/0,
 	check/2,
 	environment/0,
 	legacy/0,
@@ -462,7 +462,7 @@ get_short_arguments() ->
 	% is required to cleanup things.
 	[
 		{Argument, Spec}
-		|| {Argument, {_, Spec}} 
+		|| {Argument, {_, Spec}}
 		<- ets:select(?MODULE, [{Pattern, Guard, Select}])
 	].
 
@@ -478,7 +478,7 @@ get_short_argument(ArgumentKey) ->
 	% is required to cleanup things.
 	[
 		{Argument, Spec}
-		|| {Argument, {_, Spec}} 
+		|| {Argument, {_, Spec}}
 		<- ets:select(?MODULE, [{Pattern, Guard, Select}])
 	].
 
@@ -495,7 +495,7 @@ get_long_arguments() ->
 	% is required to cleanup things.
 	[
 		{Argument, Spec}
-		|| {Argument, {_, Spec}} 
+		|| {Argument, {_, Spec}}
 		<- ets:select(?MODULE, [{Pattern, Guard, Select}])
 	].
 
@@ -511,12 +511,12 @@ get_long_argument(ArgumentKey) ->
 	% is required to cleanup things.
 	[
 		{Argument, Spec}
-		|| {Argument, {_, Spec}} 
+		|| {Argument, {_, Spec}}
 		<- ets:select(?MODULE, [{Pattern, Guard, Select}])
 	].
 
 %%--------------------------------------------------------------------
-%% @doc Returns legacy keys (used for legacy configuration 
+%% @doc Returns legacy keys (used for legacy configuration
 %% compatibility).
 %% @end
 %%--------------------------------------------------------------------
@@ -581,6 +581,7 @@ callbacks_check() -> [
  	{short_argument, arweave_config_spec_short_argument},
  	{long_argument, arweave_config_spec_long_argument},
  	{elements, arweave_config_spec_elements},
+ 	{type, arweave_config_spec_type},
  	{legacy, arweave_config_spec_legacy},
  	{short_description, arweave_config_spec_short_description},
  	{long_description, arweave_config_spec_long_description},
@@ -671,7 +672,7 @@ init_map(Map, [], State) ->
 init_map(Map, [{_Callback, ModuleCallback}|Rest], State) ->
 	case erlang:apply(ModuleCallback, init, [Map, State]) of
 		{ok, NewState} ->
-			?LOG_INFO("checked callback ~p:~p", [Map, ModuleCallback]),	
+			?LOG_INFO("checked callback ~p:~p", [Map, ModuleCallback]),
 			init_map(Map, Rest, NewState);
 		Elsewise ->
 			?LOG_WARNING("can't load module ~p:~p", [Map, Elsewise]),
@@ -760,36 +761,25 @@ is_function_exported(Module, Function, Arity) ->
 %% @doc A pipeline function to check if the value is correct or not.
 %% @end
 %%--------------------------------------------------------------------
-check(Parameter, [Value], Spec) ->
-	check_elements_type(Parameter, Value, Spec, #{});
-check(Parameter, Value, Spec) when is_boolean(Value) ->
-	check_elements_type(Parameter, Value, Spec, #{}).
+check(Parameter, Value, Spec) ->
+	check_type(Parameter, Value, Spec, #{}).
 
 %%--------------------------------------------------------------------
 %% @hidden
 %% @doc Check the type of the value associated with the parameter.
 %% @end
 %%--------------------------------------------------------------------
-check_elements_type(Parameter, Value, Spec = #{ elements := []}, Buffer) ->
-	try
-		Result = arweave_config_type:boolean(Value),
-		check_function(Parameter, Value, Spec, Buffer#{ elements => [Result] })
-	catch
-		E:R ->
-			Error = {E, R},
-			check_function(Parameter, Value, Spec, Buffer#{ elements => [Error] })
-	end;
-check_elements_type(Parameter, Value, Spec = #{ elements := [Type] }, Buffer) ->
+check_type(Parameter, Value, Spec = #{ type := Type }, Buffer) ->
 	try
 		Result = arweave_config_type:Type(Value),
-		check_function(Parameter, Value, Spec, Buffer#{ elements => [Result] })
+		check_function(Parameter, Value, Spec, Buffer#{ type => Result })
 	catch
 		E:R ->
 			Error = {E, R},
-			check_function(Parameter, Value, Spec, Buffer#{ elements => Error })
+			check_function(Parameter, Value, Spec, Buffer#{ type => Error })
 	end;
-check_elements_type(Parameter, Value, Spec, Buffer) ->
-	check_function(Parameter, Value, Spec, Buffer#{ elements => undefined }).
+check_type(Parameter, Value, Spec, Buffer) ->
+	check_function(Parameter, Value, Spec, Buffer#{ type => undefined }).
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -861,8 +851,8 @@ apply_set2(Parameter, Value, Spec) ->
 
 %%--------------------------------------------------------------------
 %% @hidden
-%% 3. let retrieve the old value (if set) and use the handle_set/3
-%% callback to set the new value.
+%% 3. let retrieve the value (if set) and use the handle_set/3
+%% callback to set the value.
 %%--------------------------------------------------------------------
 apply_set3(Parameter, Value, Spec = #{ set := Set }) ->
 	% if handle_set/3 is present, we execute it.
