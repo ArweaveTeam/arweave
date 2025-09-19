@@ -22,8 +22,8 @@
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-init(#{ long_argument := LA }, State) ->
-	{ok, State#{ long_argument => LA }};
+init(Map = #{ long_argument := LA }, State) ->
+	check(Map, LA, State);
 init(Map, State) when is_map(Map) ->
 	{ok, State};
 init(Module, State) when is_atom(Module) ->
@@ -31,7 +31,7 @@ init(Module, State) when is_atom(Module) ->
 		true ->
 			fetch(Module, State);
 		false ->
-			{ok, State}
+			check(Module, undefined, State)
 	end.
 
 %%--------------------------------------------------------------------
@@ -49,9 +49,9 @@ fetch(Module, State) ->
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-check(Module, undefined, State) ->
+check(Module, false, State) ->
 	{ok, State};
-check(Module, true, State = #{ configuration_key := CK }) ->
+check(Module, undefined, State = #{ configuration_key := CK }) ->
 	{ok, State#{ long_argument => convert(CK) }};
 check(Module, LA, State) when is_binary(LA) orelse is_list(LA) ->
 	{ok, State#{ long_argument => convert(LA) }};
@@ -72,7 +72,8 @@ convert(<<"--", _/binary>> = Binary) -> Binary;
 convert(Binary) when is_binary(Binary) -> <<"--", Binary/binary>>.
 
 convert([], Buffer) -> 
-	Bin = list_to_binary(lists:join("-", lists:reverse(Buffer))),
+	Sep = application:get_env(arweave_config, long_argument_separator, "."),
+	Bin = list_to_binary(lists:join(Sep, lists:reverse(Buffer))),
 	<<"--", Bin/binary>>;
 convert([H|T], Buffer) when is_integer(H) ->
 	convert([integer_to_binary(H)|T], Buffer);

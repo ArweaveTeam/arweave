@@ -66,7 +66,7 @@
 %%% found, the value is defined using the parameter key.
 %%%
 %%% ```
-%%% arweave_config:load(environment)
+%%% arweave_config:load(environment).
 %%%
 %%% % or
 %%%
@@ -80,7 +80,7 @@
 %%% already configured from environment variable.
 %%%
 %%% ```
-%%% arweave_config:load(arguments)
+%%% arweave_config:load(arguments).
 %%% arweave_config:load({arguments, Arguments}).
 %%%
 %%% % or

@@ -36,7 +36,6 @@
 -behavior(arweave_config_spec).
 -export([
 	deprecated/0,
-	type/0,
 	default/0,
 	required/0,
 	legacy/0,
@@ -68,11 +67,6 @@ runtime() -> true.
 %%
 %%--------------------------------------------------------------------
 deprecated() -> false.
-
-%%--------------------------------------------------------------------
-%%
-%%--------------------------------------------------------------------
-type() -> boolean.
 
 %%--------------------------------------------------------------------
 %%
@@ -128,7 +122,7 @@ long_argument() -> [global,debug].
 %% define the numbers of elements to take after the short or long
 %% argument. If it's a flag (default), it's set to 0.
 %%--------------------------------------------------------------------
-elements() -> 0.
+elements() -> [].
 
 %%--------------------------------------------------------------------
 %% check if the key/value passed are valid (or not).
