@@ -28,6 +28,9 @@ init(Module, State) when is_atom(Module) ->
 			{ok, State}
 	end.
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 fetch(Module, State) ->
 	try
 		SA = erlang:apply(Module, short_argument, []),
@@ -37,6 +40,9 @@ fetch(Module, State) ->
 			{error, R}
 	end.
 
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
 check(Module, undefined, State) ->
 	{ok, State};
 check(Module, SA, State)

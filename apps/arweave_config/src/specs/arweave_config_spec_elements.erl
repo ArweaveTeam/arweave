@@ -7,7 +7,7 @@
 %%% example `--global.network.shutdown.mode=kill'
 %%%
 %%% ```
-%%% elements() -> [{mode, Type}].
+%%% elements() -> [Type].
 %%% '''
 %%%
 %%% In the documentation (long description format):
@@ -48,13 +48,13 @@
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-default() -> 0.
+default() -> [].
 
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-init(#{ elements := E }, State) when is_integer(E), E >= 0 ->
-	{ok, State#{ elements => E }};
+init(Map = #{ elements := E }, State) ->
+	check(Map, E, State);
 init(Map, State) when is_map(Map) ->
 	{ok, State#{ elements => default() }};
 init(Module, State) when is_atom(Module) ->
@@ -70,8 +70,8 @@ init(Module, State) when is_atom(Module) ->
 %%--------------------------------------------------------------------
 fetch(Module, State) ->
 	try erlang:apply(Module, elements, []) of
-		E when is_integer(E), E >= 0 ->
-			{ok, State#{ elements => E}};
+		E ->
+			check(Module, E, State);
 		Elsewise ->
 			{error, #{
 					module => Module,
@@ -83,3 +83,25 @@ fetch(Module, State) ->
 		_:R ->
 			{error, R}
 	end.
+
+%%--------------------------------------------------------------------
+%%
+%%--------------------------------------------------------------------
+check(Module, E, State) ->
+	check(Module, E, E, State).
+
+check(Module, [], [], State) ->
+	{ok, State#{ elements => [] }};
+check(Module, [], E, State) ->
+	{ok, State#{ elements => E }};
+check(Module, [Type|Rest], E, State) when is_atom(Type) ->
+	check(Module, Rest, E, State);
+check(Module, _, E, State) ->
+	{error, #{
+			module => Module,
+			callback => elements,
+			reason => {bad_value, E}
+		}
+	}.
+
+

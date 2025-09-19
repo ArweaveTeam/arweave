@@ -225,16 +225,17 @@
 % DEFAULT: 0
 %---------------------------------------------------------------------
 -callback elements() -> Return when
-	Return :: pos_integer().
+	Return :: [Type],
+	Type :: atom().
 
 %---------------------------------------------------------------------
 % OPTIONAL: the type of the value.
 % DEFAULT: undefined
 %---------------------------------------------------------------------
--callback type() -> Return when
-	Return :: undefined
-		| atom()
-		| fun ((term()) -> {ok, term()}).
+% -callback type() -> Return when
+% 	Return :: undefined
+% 		| atom()
+% 		| fun ((term()) -> {ok, term()}).
 
 %---------------------------------------------------------------------
 % OPTIONAL: a function to check the value attributed with the key.
@@ -290,6 +291,15 @@
 	Return :: true
 		| {true, term()}
 		| false.
+
+%---------------------------------------------------------------------
+% @TODO fail callback
+% OPTIONAL: defines if a wrong value should stop the execution, with a
+% specific error set.
+%---------------------------------------------------------------------
+% -spec fail() -> Return when
+% 	Return :: boolean()
+% 		| {true, term()}.
 
 %---------------------------------------------------------------------
 % @TODO: protected callback
@@ -361,7 +371,6 @@
 	short_argument/0,
 	long_argument/0,
 	elements/0,
-	type/0,
 	check/2,
 	environment/0,
 	legacy/0,
@@ -446,26 +455,32 @@ get_environment(EnvironmentKey) ->
 %% @end
 %%--------------------------------------------------------------------
 get_short_arguments() ->
-	Pattern = {'$1', #{
-		short_argument => '$2',
-		elements => '$3'
-	}},
+	Pattern = {'$1', #{ short_argument => '$2' }},
 	Guard = [],
-	Select = [{{{{'$2', '$3'}}, '$1'}}],
-	ets:select(?MODULE, [{Pattern, Guard, Select}]).
+	Select = [{{'$2', '$_'}}],
+	% match spec does not support correctly map, so, a filter
+	% is required to cleanup things.
+	[
+		{Argument, Spec}
+		|| {Argument, {_, Spec}} 
+		<- ets:select(?MODULE, [{Pattern, Guard, Select}])
+	].
 
 %%--------------------------------------------------------------------
 %% @doc returns specification for a short argument.
 %% @end
 %%--------------------------------------------------------------------
 get_short_argument(ArgumentKey) ->
-	Pattern = {'$1', #{
-		short_argument => '$2',
-		elements => '$3'
-	}},
+	Pattern = {'$1', #{ short_argument => '$2' }},
 	Guard = [{'=:=', '$2', ArgumentKey}],
 	Select = [{{'$2', '$_'}}],
-	ets:select(?MODULE, [{Pattern, Guard, Select}]).
+	% match spec does not support correctly map, so, a filter
+	% is required to cleanup things.
+	[
+		{Argument, Spec}
+		|| {Argument, {_, Spec}} 
+		<- ets:select(?MODULE, [{Pattern, Guard, Select}])
+	].
 
 %%--------------------------------------------------------------------
 %% @doc Returns the list of long arguments supported with the number
@@ -473,26 +488,32 @@ get_short_argument(ArgumentKey) ->
 %% @end
 %%--------------------------------------------------------------------
 get_long_arguments() ->
-	Pattern = {'$1', #{
-		long_argument => '$2',
-		elements => '$3'
-	}},
+	Pattern = {'$1', #{ long_argument => '$2' }},
 	Guard = [],
-	Select = [{{{{'$2', '$3'}}, '$1'}}],
-	ets:select(?MODULE, [{Pattern, Guard, Select}]).
+	Select = [{{'$2', '$_'}}],
+	% match spec does not support correctly map, so, a filter
+	% is required to cleanup things.
+	[
+		{Argument, Spec}
+		|| {Argument, {_, Spec}} 
+		<- ets:select(?MODULE, [{Pattern, Guard, Select}])
+	].
 
 %%--------------------------------------------------------------------
 %% @doc Returns specification from a long argument.
 %% @end
 %%--------------------------------------------------------------------
 get_long_argument(ArgumentKey) ->
-	Pattern = {'$1', #{
-		long_argument => '$2',
-		elements => '$3'
-	}},
+	Pattern = {'$1', #{ long_argument => '$2' }},
 	Guard = [{'=:=', '$2', ArgumentKey}],
 	Select = [{{'$2', '$_'}}],
-	ets:select(?MODULE, [{Pattern, Guard, Select}]).
+	% match spec does not support correctly map, so, a filter
+	% is required to cleanup things.
+	[
+		{Argument, Spec}
+		|| {Argument, {_, Spec}} 
+		<- ets:select(?MODULE, [{Pattern, Guard, Select}])
+	].
 
 %%--------------------------------------------------------------------
 %% @doc Returns legacy keys (used for legacy configuration 
@@ -560,7 +581,6 @@ callbacks_check() -> [
  	{short_argument, arweave_config_spec_short_argument},
  	{long_argument, arweave_config_spec_long_argument},
  	{elements, arweave_config_spec_elements},
- 	{type, arweave_config_spec_type},
  	{legacy, arweave_config_spec_legacy},
  	{short_description, arweave_config_spec_short_description},
  	{long_description, arweave_config_spec_long_description},
@@ -740,25 +760,36 @@ is_function_exported(Module, Function, Arity) ->
 %% @doc A pipeline function to check if the value is correct or not.
 %% @end
 %%--------------------------------------------------------------------
-check(Parameter, Value, Spec) ->
-	check_type(Parameter, Value, Spec, #{}).
+check(Parameter, [Value], Spec) ->
+	check_elements_type(Parameter, Value, Spec, #{});
+check(Parameter, Value, Spec) when is_boolean(Value) ->
+	check_elements_type(Parameter, Value, Spec, #{}).
 
 %%--------------------------------------------------------------------
 %% @hidden
 %% @doc Check the type of the value associated with the parameter.
 %% @end
 %%--------------------------------------------------------------------
-check_type(Parameter, Value, Spec = #{ type := Type }, Buffer) ->
+check_elements_type(Parameter, Value, Spec = #{ elements := []}, Buffer) ->
 	try
-		Result = arweave_config_type:Type(Value),
-		check_function(Parameter, Value, Spec, Buffer#{ type => Result })
+		Result = arweave_config_type:boolean(Value),
+		check_function(Parameter, Value, Spec, Buffer#{ elements => [Result] })
 	catch
 		E:R ->
 			Error = {E, R},
-			check_function(Parameter, Value, Spec, Buffer#{ type => Error })
+			check_function(Parameter, Value, Spec, Buffer#{ elements => [Error] })
 	end;
-check_type(Parameter, Value, Spec, Buffer) ->
-	check_function(Parameter, Value, Spec, Buffer#{ type => undefined }).
+check_elements_type(Parameter, Value, Spec = #{ elements := [Type] }, Buffer) ->
+	try
+		Result = arweave_config_type:Type(Value),
+		check_function(Parameter, Value, Spec, Buffer#{ elements => [Result] })
+	catch
+		E:R ->
+			Error = {E, R},
+			check_function(Parameter, Value, Spec, Buffer#{ elements => Error })
+	end;
+check_elements_type(Parameter, Value, Spec, Buffer) ->
+	check_function(Parameter, Value, Spec, Buffer#{ elements => undefined }).
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -830,8 +861,8 @@ apply_set2(Parameter, Value, Spec) ->
 
 %%--------------------------------------------------------------------
 %% @hidden
-%% 3. let retrieve the value (if set) and use the handle_set/3
-%% callback to set the value.
+%% 3. let retrieve the old value (if set) and use the handle_set/3
+%% callback to set the new value.
 %%--------------------------------------------------------------------
 apply_set3(Parameter, Value, Spec = #{ set := Set }) ->
 	% if handle_set/3 is present, we execute it.

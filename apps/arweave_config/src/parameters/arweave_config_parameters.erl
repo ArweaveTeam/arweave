@@ -33,14 +33,16 @@ init() ->
 			configuration_key => [global,data,jobs,sync],
 			legacy => sync_jobs,
 			runtime => true,
-			short_description => ""
+			short_description => "",
+			elements => [pos_integer]
 		},
 		% #config.header_sync_jobs
 		#{
 			configuration_key => [global,data,jobs,headers,sync],
 			legacy => header_sync_jobs,
 			runtime => true,
-			short_description => ""
+			short_description => "",
+			elements => [pos_integer]
 		},
 
 		%---------------------------------------------------------------------
@@ -49,13 +51,11 @@ init() ->
 	  	#{
 			configuration_key => [webui, enabled],
 			default => false,
-			short_argument => undefined,
-			long_argument => undefined,
 			runtime => true,
 			short_description =>
 				<<"Configure web user interface">>,
 			environment => <<"AR_WEBUI">>,
-			type => boolean,
+			elements => [],
 			handle_set =>
 				fun
 					(_,true,true) ->
@@ -74,23 +74,20 @@ init() ->
 		},
 		#{
 			configuration_key => [webui,listen,port],
-			short_argument => undefined,
-			long_argument => [webui,listen,port],
+			elements => [],
 			runtime => true,
 			short_description => [],
 			long_description => [],
-			type => tcp_port,
 			environment => <<"AR_WEBUI_LISTEN_PORT">>
 		},
 		#{
 			configuration_key => [webui,listen,address],
 			short_argument => undefined,
-			long_argument => [webui,listen,address],
 			runtime => true,
 			short_description => [],
 			long_description => [],
-			type => [ipv4,ipv6,unix_sock],
-			environment => <<"AR_WEBUI_LISTEN_ADDRESS">>
+			environment => <<"AR_WEBUI_LISTEN_ADDRESS">>,
+			elements => [[ipv4,ipv6,unix_socket]]
 		},
 
 		%---------------------------------------------------------------------
@@ -114,17 +111,17 @@ init() ->
 			configuration_key => [global,network,connections,max],
 			runtime => true,
 			legacy => 'max_connections',
-			type => pos_integer
+			elements => [pos_integer]
 		},
 		#{
 			configuration_key => [global,network,socket,backend],
-			type => atom,
+			elements => [atom],
 			legacy => 'network.socket.backend',
 			runtime => true
 		},
 		#{
 			configuration_key => [global,network,tcp,shutdown,mode],
-			type => atom,
+			elements => [atom],
 			legacy => 'network.tcp.shutdown.mode',
 			runtime => true
 		},
@@ -136,101 +133,101 @@ init() ->
 			configuration_key => [global,network,api,port],
 			runtime => false,
 			legacy => 'port',
-			type => pos_integer
+			elements => [pos_integer]
 		},
 		#{
 			configuration_key => [global,network,api,tcp,max_connections],
 			runtime => true,
 			legacy => 'http_api.tcp.max_connections',
-			type => pos_integer
+			elements => [pos_integer]
 		},
 		#{
 			configuration_key => [global,network,api,tcp,send_timeout_close],
 			legacy => 'http_client.tcp.send_timeout_close',
 			runtime => true,
-			type => boolean
+			elements => []
 		},
 		#{
 			configuration_key => [global,network,api,tcp,send_timeout],
 			runtime => true,
 			legacy => 'http_api.tcp.send_timeout',
-			type => pos_integer
+			elements => []
 		},
 		#{
 			configuration_key => [global,network,api,tcp,num_acceptors],
 			legacy => 'http_api.tcp.num_acceptors',
-			type => pos_integer,
+			elements => [pos_integer],
 			runtime => true
 		},
 		#{
 			configuration_key => [global,network,api,tcp,nodelay],
-			type => boolean,
+			elements => [],
 			legacy => 'http_api.tcp.nodelay',
 			runtime => true
 		},
 		#{
 			configuration_key => [global,network,api,tcp,listener_shutdown],
-			type => atom,
+			elements => [],
 			legacy => 'http_api.tcp.listener_shutdown',
 			runtime => true
 		},
 		#{
 			configuration_key => [global,network,api,tcp,linger],
-			type => boolean,
+			elements => [],
 			legacy => 'http_api.tcp.linger',
 			runtime => true
 		},
 		#{
 			configuration_key => [global,network,api,tcp,linger_timeout],
-			type => pos_integer,
+			elements => [],
 			legacy => 'http_api.tcp.linger_timeout',
 			runtime => true
 		},
 		#{
 			configuration_key => [global,network,api,tcp,keepalive],
-			type => pos_integer,
+			elements => [],
 			legacy => 'http_api.tcp.keepalive',
 			runtime => true
 		},
 		#{
 			configuration_key => [global,network,api,tcp,idle_timeout_seconds],
-			type => pos_integer,
+			elements => [],
 			legacy => 'http_api.tcp.idle_timeout_seconds',
 			runtime => true
 		},
 		#{
 			configuration_key => [global,network,api,tcp,backlog],
-			type => pos_integer,
+			elements => [],
 			legacy => 'http_api.tcp.backlog',
 			runtime => true
 		},
 		#{
 			configuration_key => [global,network,api,tcp,delay_send],
-			type => boolean,
+			elements => [],
 			legacy => 'http_api.tcp.delay_send',
 			runtime => true
 		},
 		#{
 			configuration_key => [global,network,api,http,request_timeout],
-			type => pos_integer,
+			elements => [pos_integer],
 			runtime => true,
 			legacy => 'http_api.http.request_timeout'
 		},
 		#{
 			configuration_key => [global,network,api,http,linger_timeout],
-			type => pos_integer,
+			elements => [pos_integer],
 			runtime => true,
 			legacy => 'http_api.http.linger_timeout'
 		},
 		#{
 			configuration_key => [global,network,api,http,inactivity_timeout],
-			type => pos_integer,
+			elements => [pos_integer],
 			runtime => true,
 			legacy => 'http_api.http.inactivity_timeout'
 		},
 		#{
 			configuration_key => [global,network,api,http,active_n],
-			type => pos_integer,
+			elements => [pos_integer],
 			runtime => true,
 			legacy => 'http_api.http.active_n'
 		},
@@ -267,25 +264,25 @@ init() ->
 			configuration_key => [global,network,client,tcp,keepalive],
 			legacy => 'http_client.tcp.keepalive',
 			runtime => true,
-			type => pos_integer
+			elements => [pos_integer]
 		},
 		#{
 			configuration_key => [global,network,client,tcp,delay_send],
 			legacy => 'http_client.tcp.delay_send',
 			runtime => true,
-			type => boolean
+			elements => [boolean]
 		},
 		#{
 			configuration_key => [global,network,client,http,keepalive],
 			legacy => 'http_client.http.keepalive',
 			runtime => true,
-			type => pos_integer
+			elements => [pos_integer] 
 		},
 		#{
 			configuration_key => [global,network,client,http,closing_timeout],
 			legacy => 'http_client.http.closing_timeout',
 			runtime => true,
-			type => pos_integer
+			elements => [pos_integer]
 		},
 
 		%---------------------------------------------------------------------
@@ -295,7 +292,7 @@ init() ->
 			configuration_key => [mining,difficulty],
 			legacy => 'diff',
 			runtime => false,
-			type => pos_integer
+			elements => [pos_integer]
 		},
 
 		%---------------------------------------------------------------------
