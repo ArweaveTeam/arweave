@@ -4,7 +4,7 @@
 -export([apply_tx/3, apply_txs/3, update_accounts/3, validate/6,
 	h1_passes_diff_check/3, h2_passes_diff_check/3, solution_passes_diff_check/2,
 	block_passes_diff_check/1, block_passes_diff_check/2, passes_diff_check/4,
-	update_account/6, is_account_banned/2]).
+	scaled_diff/2, update_account/6, is_account_banned/2]).
 
 -include("../include/ar.hrl").
 -include("../include/ar_pricing.hrl").
@@ -99,7 +99,8 @@ block_passes_diff_check(SolutionHash, Block) ->
 	DiffPair = ar_difficulty:diff_pair(Block),
 	passes_diff_check(SolutionHash, IsPoA1, DiffPair, PackingDifficulty).
 
-passes_diff_check(_SolutionHash, _IsPoA1, not_set, _PackingDifficulty) ->
+passes_diff_check(SolutionHash, IsPoA1, not_set, _PackingDifficulty) ->
+	?LOG_ERROR([{event, diff_check_not_set}, {solution_hash, SolutionHash}, {is_poa1, IsPoA1}]),
 	false;
 passes_diff_check(SolutionHash, IsPoA1, {PoA1Diff, Diff}, PackingDifficulty) ->
 	Diff2 =
@@ -109,22 +110,23 @@ passes_diff_check(SolutionHash, IsPoA1, {PoA1Diff, Diff}, PackingDifficulty) ->
 			false ->
 				Diff
 		end,
-	Diff3 =
-		case PackingDifficulty of
-			0 ->
-				Diff2;
-			_ ->
-				SubDiff = ar_difficulty:sub_diff(Diff2, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
-				%% We are introducing composite packing along with reducing the recall range
-				%% from 200 MiB to 50 MiB while keeping the total worth of the nonces constant
-				%% so we want the mining difficulty to be 1 / (PackingDifficulty * 4)
-				%% of the difficulty applied to the 200 MiB-range nonces.
-				ar_difficulty:scale_diff(SubDiff, {1, PackingDifficulty * 4},
-						%% The minimal difficulty height. It does not change at the
-						%% packing difficulty fork.
-						ar_fork:height_2_8())
-		end,
-	binary:decode_unsigned(SolutionHash) > Diff3.
+	binary:decode_unsigned(SolutionHash) > scaled_diff(Diff2, PackingDifficulty).
+
+scaled_diff(RawDiff, PackingDifficulty) ->
+	case PackingDifficulty of
+		0 ->
+			RawDiff;
+		_ ->
+			SubDiff = ar_difficulty:sub_diff(RawDiff, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
+			%% We are introducing composite packing along with reducing the recall range
+			%% from 200 MiB to 50 MiB while keeping the total worth of the nonces constant
+			%% so we want the mining difficulty to be 1 / (PackingDifficulty * 4)
+			%% of the difficulty applied to the 200 MiB-range nonces.
+			ar_difficulty:scale_diff(SubDiff, {1, PackingDifficulty * 4},
+					%% The minimal difficulty height. It does not change at the
+					%% packing difficulty fork.
+					ar_fork:height_2_8())
+	end.
 
 update_account(Addr, Balance, LastTX, 1, true, Accounts) ->
 	maps:put(Addr, {Balance, LastTX}, Accounts);

@@ -583,10 +583,15 @@ generate_peer_report(Peer, Report) ->
 
 report_performance() ->
 	Report = generate_report(),
-	set_metrics(Report),
-	ReportString = format_report(Report),
-	ar:console("~s", [ReportString]),
-	log_report(ReportString).
+	case Report#report.partitions of
+		[] ->
+			ok;
+		_ ->
+			set_metrics(Report),
+			ReportString = format_report(Report),
+			ar:console("~s", [ReportString]),
+			log_report(ReportString)
+	end.
 
 log_report(ReportString) ->
 	Lines = string:tokens(lists:flatten(ReportString), "\n"),
