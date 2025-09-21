@@ -11,7 +11,8 @@ validate_test_() ->
 	[
 		{timeout, 60, fun test_validate_repack_in_place/0},
 		{timeout, 60, fun test_validate_cm_pool/0},
-		{timeout, 60, fun test_validate_storage_modules/0}
+		{timeout, 60, fun test_validate_storage_modules/0},
+		{timeout, 60, fun test_validate_cm/0}
 	].
 
 test_parse_config() ->
@@ -200,16 +201,24 @@ test_validate_repack_in_place() ->
 test_validate_cm_pool() ->
 	?assertEqual(false,
 		ar_config:validate_config(
-			#config{coordinated_mining = true, is_pool_server = true})),
+			#config{
+				coordinated_mining = true, is_pool_server = true,
+				mine = true, cm_api_secret = <<"secret">>})),
 	?assertEqual(true,
 		ar_config:validate_config(
-			#config{coordinated_mining = true, is_pool_server = false})),
+			#config{
+				coordinated_mining = true, is_pool_server = false,
+				mine = true, cm_api_secret = <<"secret">>})),
 	?assertEqual(true,
 		ar_config:validate_config(
-			#config{coordinated_mining = false, is_pool_server = true})),
+			#config{
+				coordinated_mining = false, is_pool_server = true,
+				mine = true, cm_api_secret = <<"secret">>})),
 	?assertEqual(true,
 		ar_config:validate_config(
-			#config{coordinated_mining = false, is_pool_server = false})),
+			#config{
+				coordinated_mining = false, is_pool_server = false,
+				mine = true, cm_api_secret = <<"secret">>})),
 	?assertEqual(false,
 		ar_config:validate_config(
 			#config{is_pool_server = true, is_pool_client = true, mine = true})),
@@ -235,6 +244,21 @@ test_validate_cm_pool() ->
 		ar_config:validate_config(
 			#config{is_pool_client = false, mine = false})).
 
+test_validate_cm() ->
+	?assertEqual(true,
+		ar_config:validate_config(
+			#config{coordinated_mining = true, mine = true, cm_api_secret = <<"secret">>})),
+	?assertEqual(true,
+		ar_config:validate_config(
+			#config{coordinated_mining = false, mine = false, cm_api_secret = not_set})),
+	?assertEqual(false,
+		ar_config:validate_config(
+			#config{coordinated_mining = true, mine = false, cm_api_secret = <<"secret">>})),
+	?assertEqual(false,
+		ar_config:validate_config(
+			#config{coordinated_mining = true, mine = true, cm_api_secret = not_set})).
+
+		
 test_validate_storage_modules() ->
 	Addr1 = crypto:strong_rand_bytes(32),
 	Addr2 = crypto:strong_rand_bytes(32),

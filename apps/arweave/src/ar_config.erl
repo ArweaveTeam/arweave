@@ -19,6 +19,7 @@ validate_config(Config) ->
 	validate_storage_modules(Config) andalso
 	validate_repack_in_place(Config) andalso
 	validate_cm_pool(Config) andalso
+	validate_cm(Config) andalso
 	validate_unique_replication_type(Config) andalso
 	validate_verify(Config).
 
@@ -1212,6 +1213,17 @@ validate_cm_pool(Config) ->
 			true
 	end,
 	A andalso B andalso C.
+
+validate_cm(#config{ coordinated_mining = false }) ->
+	true;
+validate_cm(#config{ cm_api_secret = not_set }) ->
+	io:format("~nThe cm_api_secret must be set when coordinated_mining is set.~n~n"),
+	false;
+validate_cm(#config{ mine = false }) ->
+	io:format("~nThe mine flag must be set when coordinated_mining is set.~n~n"),
+	false;
+validate_cm(_Config) ->
+	true.
 
 validate_unique_replication_type(#config{ mine = false }) ->
 	true;

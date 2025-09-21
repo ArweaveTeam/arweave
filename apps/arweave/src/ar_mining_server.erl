@@ -988,7 +988,8 @@ post_solution(not_set, Solution, State) ->
 					{recall_byte1, RecallByte1},
 					{recall_byte2, RecallByte2},
 					{solution_h, ar_util:safe_encode(H)},
-					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
+					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)},
+					{diff_pair, DiffPair}]),
 			ar:console("WARNING: we failed to validate our solution. Check logs for more "
 					"details~n");
 		{false, Reason} ->
@@ -1002,7 +1003,8 @@ post_solution(not_set, Solution, State) ->
 					{recall_byte1, RecallByte1},
 					{recall_byte2, RecallByte2},
 					{solution_h, ar_util:safe_encode(H)},
-					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)}]),
+					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)},
+					{diff_pair, DiffPair}]),
 			ar:console("WARNING: the solution we found is invalid. Check logs for more "
 					"details~n");
 		{true, PoACache, PoA2Cache} ->
@@ -1262,7 +1264,13 @@ validate_solution(Solution, DiffPair) ->
 							%% This can happen if the difficulty has increased between the
 							%% time the H1 solution was found and now. In this case,
 							%% there is no H2 solution, so we flag the solution invalid.
-							{false, h1_diff_check};
+							{Diff1, _} = DiffPair,
+							{false, {h1_diff_check,
+								ar_util:safe_encode(H0),
+								ar_util:safe_encode(H1),
+								binary:decode_unsigned(H1),
+								ar_node_utils:scaled_diff(Diff1, PackingDifficulty)
+							}};
 						false ->
 							#mining_solution{
 								recall_byte2 = RecallByte2, poa2 = PoA2 } = Solution,
@@ -1270,7 +1278,14 @@ validate_solution(Solution, DiffPair) ->
 							case ar_node_utils:h2_passes_diff_check(H2, DiffPair,
 									PackingDifficulty) of
 								false ->
-									{false, h2_diff_check};
+									{_, Diff2} = DiffPair,
+									{false, {h2_diff_check,
+										ar_util:safe_encode(H0),
+										ar_util:safe_encode(H1),
+										ar_util:safe_encode(H2),
+										binary:decode_unsigned(H2),
+										ar_node_utils:scaled_diff(Diff2, PackingDifficulty)
+									}};
 								true ->
 									SolutionHash = H2,
 									RecallByte2 = ar_block:get_recall_byte(RecallRange2Start,

@@ -431,11 +431,13 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
 		false -> ok;
 		partial ->
 			log_info(found_h2_partial_solution, Candidate, State1, [
-				{h2, ar_util:encode(H2)},
+				{h0, ar_util:safe_encode(Candidate#mining_candidate.h0)},
+				{h2, ar_util:safe_encode(H2)},
 				{partial_difficulty, get_partial_difficulty(State1, Candidate)}]);
 		true ->
 			log_info(found_h2_solution, Candidate, State1, [
-				{h2, ar_util:encode(H2)},
+				{h0, ar_util:safe_encode(Candidate#mining_candidate.h0)},
+				{h2, ar_util:safe_encode(H2)},
 				{difficulty, get_difficulty(State1, Candidate)},
 				{partial_difficulty, get_partial_difficulty(State1, Candidate)}]),
 			ar_mining_stats:h2_solution()
@@ -489,13 +491,21 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 			ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
 			log_debug(mining_debug_h1_received_from_peer, Candidate3, State, [
 				{h1_list_length, length(H1List)}]),
+
+			%% Add the candidate session to the cache. This is only needed during rare occasions
+			%% where a CM peer has added a new session a few seconds before this node does.
+			%% Typically all CM peers will be on the same VDF sessions within a few seconds, but
+			%% this step prevents the H1s shared during those few seconds from being rejected.
+			ChunkCache = ar_mining_cache:add_session(
+				Candidate3#mining_candidate.session_key, State#state.chunk_cache),
+			State1 = State#state{ chunk_cache = ChunkCache },	
 			%% First we mark the whole first recall range as missing
 			%% Then we can cache the H1 list. During this process, we also reset the chunk1_missing
 			%% flag to false for the entries we have H1 for.
 			%% After these manipulations we will only handle the second recall range nonces that
 			%% have corresponding H1s.
-			State1 = mark_recall_range_missing(chunk1, Candidate3, State),
-			cache_h1_list(Candidate3, H1List, State1);
+			State2 = mark_recall_range_missing(chunk1, Candidate3, State1),
+			cache_h1_list(Candidate3, H1List, State2);
 		false ->
 			%% This can happen for two reasons:
 			%% 1. (most common) Remote peer has requested a range we don't have from a
