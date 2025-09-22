@@ -32,10 +32,9 @@ init([]) ->
 		end,
 		ar_mining_io:get_partitions(infinity)
 	),
-	Children = MiningWorkers ++ [
-		?CHILD(ar_mining_server, worker),
+	Children = [
+		?CHILD(ar_mining_stats, worker),
 		?CHILD(ar_mining_hash, worker),
-		?CHILD(ar_mining_io, worker),
-		?CHILD(ar_mining_stats, worker)
-	],
+		?CHILD(ar_mining_io, worker)
+	] ++ MiningWorkers ++ [?CHILD(ar_mining_server, worker)],
 	{ok, {{one_for_one, 5, 10}, Children}}.

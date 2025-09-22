@@ -135,7 +135,7 @@ garbage_collect(Worker) ->
 
 init({Partition, PackingDifficulty}) ->
 	Name = name(Partition, PackingDifficulty),
-	?LOG_DEBUG([{event, mining_debug_worker_started},
+	?LOG_INFO([{event, mining_worker_started},
 		{worker, Name}, {pid, self()}, {partition, Partition}]),
 	ChunkCache = ar_mining_cache:new(),
 	State0 = #state{

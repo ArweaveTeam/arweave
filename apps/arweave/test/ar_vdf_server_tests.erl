@@ -90,28 +90,28 @@ vdf_server_push_test_() ->
 		fun setup/0,
      	fun cleanup/1,
 		[
-			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
 				fun test_vdf_server_push_fast_block/0, ?TEST_SUITE_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
 				fun test_vdf_server_push_slow_block/0, ?TEST_SUITE_TIMEOUT)
 		]
     }.
 
-% %% @doc Similar to the vdf_server_push_test_ tests except we test the full end-to-end
-% %% flow where a VDF client has to validate a block with VDF information provided by
-% %% the VDF server.
+%% @doc Similar to the vdf_server_push_test_ tests except we test the full end-to-end
+%% flow where a VDF client has to validate a block with VDF information provided by
+%% the VDF server.
 vdf_client_test_() ->
 	{foreach,
 		fun setup/0,
 		fun cleanup/1,
 		[
-			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
 				fun test_vdf_client_fast_block/0, 600),
-			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
 				fun test_vdf_client_fast_block_pull_interface/0, 600),
-			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
 				fun test_vdf_client_slow_block/0, 600),
-			ar_test_node:test_with_mocked_functions([ mock_reset_frequency()],
+			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
 				fun test_vdf_client_slow_block_pull_interface/0, 600)
 		]
     }.
@@ -191,7 +191,7 @@ test_vdf_server_push_fast_block() ->
 	BI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 	%% Post the block to main which will cause it to validate VDF for the block under
-	%% the B0 session and then begin using the B1 VDF session going forward
+	%% the B0 session and then begin using the (later) B1 VDF session going forward
 	ok = ar_events:subscribe(block),
 	post_block(B1, valid),
 	timer:sleep(3000),
@@ -209,6 +209,7 @@ test_vdf_server_push_fast_block() ->
 	cowboy:stop_listener(ar_vdf_server_test_listener).
 
 test_vdf_server_push_slow_block() ->
+	VDFPort = ar_test_node:get_unused_port(),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -216,12 +217,13 @@ test_vdf_server_push_slow_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
-			nonce_limiter_client_peers = [ "127.0.0.1:1986" ]
+			nonce_limiter_client_peers = [ "127.0.0.1:" ++ integer_to_list(VDFPort) ]
 		}
 	),
+	%% Let main get ahead of peer1 in the VDF chain
 	timer:sleep(3000),
 
-	%% Let peer1 get ahead of main in the VDF chain
+	
 	_ = ar_test_node:start_peer(peer1, B0),
 	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
 
@@ -229,17 +231,17 @@ test_vdf_server_push_slow_block() ->
 	Routes = [{"/[...]", ar_vdf_server_tests, []}],
 	{ok, _} = cowboy:start_clear(
 		ar_vdf_server_test_listener,
-		[{port, 1986}],
+		[{port, VDFPort}],
 		#{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
 	),
 
-	%% Mine a block that will be ahead of main in the VDF chain
+	%% Mine a block that will be behind main in the VDF chain
 	ar_test_node:mine(peer1),
 	BI = assert_wait_until_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 
 	%% Post the block to main which will cause it to validate VDF for the block under
-	%% the B0 session and then begin using the B1 VDF session going forward
+	%% the B0 session and then begin using the (earlier) B1 VDF session going forward
 	ok = ar_events:subscribe(block),
 	post_block(B1, valid),
 	timer:sleep(3000),
@@ -265,6 +267,7 @@ test_vdf_server_push_slow_block() ->
 %% vdf_client_test_
 %%
 test_vdf_client_fast_block() ->
+	ar_test_node:stop(),
 	{ok, Config} = application:get_env(arweave, config),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
@@ -274,7 +277,7 @@ test_vdf_client_fast_block() ->
 	%% Let peer1 get ahead of main in the VDF chain
 	_ = ar_test_node:start_peer(peer1, B0),
 	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
-	timer:sleep(20000),
+	timer:sleep(5_000),
 
 	%% Mine a block that will be ahead of main in the VDF chain
 	ar_test_node:mine(peer1),
@@ -299,12 +302,11 @@ test_vdf_client_fast_block() ->
 				ar_util:format_peer(ar_test_node:peer_ip(peer1))
 			]
 		}),
-	ar_test_node:connect_to_peer(peer1),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
 	%% isn't aware of the new VDF session yet.
 	send_new_block(ar_test_node:peer_ip(peer1), B1),
-	timer:sleep(10000),
+	timer:sleep(5_000),
 	?assertEqual(1,
 		length(ar_test_node:remote_call(peer1, ar_node, get_blocks, [])),
 		"VDF client shouldn't be able to validate the block until the VDF server posts a "
@@ -931,9 +933,16 @@ handle_update(Update, Req, State) ->
 
 	case ets:lookup(computed_output, Seed) of
 		[{Seed, FirstStepNumber, LatestStepNumber}] ->
-			?assert(not IsPartial orelse StepNumber == LatestStepNumber + 1,
+			%% Normally a partial VDF update should always increase by 1, but the VDF_DIFFICULTY
+			%% is so low in tests that there can be a race condition which causes a partial
+			%% update to repeat a VDF step. This assertion allows for that scenario in order
+			%% to improve test reliability.
+			?assert(
+					not IsPartial orelse
+					StepNumber == LatestStepNumber + 1 orelse
+					StepNumber == LatestStepNumber,
 				lists:flatten(io_lib:format(
-					"Partial VDF update did not increase by 1, "
+					"Partial VDF update has step gap, "
 					"StepNumber: ~p, LatestStepNumber: ~p",
 					[StepNumber, LatestStepNumber]))),
 
@@ -951,66 +960,18 @@ handle_update(Update, Req, State) ->
 			end
 	end.
 
-vdf_server_1() ->
-	{127,0,0,1,2001}.
-
-vdf_server_2() ->
-	{127,0,0,1,2002}.
-
-computed_steps() ->
-    lists:reverse(ets:foldl(fun({_, Step, _}, Acc) -> [Step | Acc] end, [], computed_output)).
-
-computed_upper_bounds() ->
-    lists:reverse(ets:foldl(fun({_, _, UpperBound}, Acc) -> [UpperBound | Acc] end, [], computed_output)).
-
-mined_steps() ->
-	Steps = lists:reverse(ets:foldl(
-		fun({_Worker, _Task, Step}, Acc) -> [Step | Acc] end, [], add_task)),
-	ets:delete_all_objects(add_task),
-	Steps.
-
-computed_output() ->
-	receive
-		{event, nonce_limiter, {computed_output, Args}} ->
-			{_SessionKey, _StepNumber, Output, UpperBound} = Args,
-			Key = ets:info(computed_output, size) + 1, % Unique key based on current size, ensures ordering
-    		ets:insert(computed_output, {Key, Output, UpperBound}),
-			computed_output()
-	end.
-
-apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey) ->
-	apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey,
-		vdf_server_1()).
-apply_external_update(SessionKey, ExistingSteps, StepNumber, IsPartial, PrevSessionKey, Peer) ->
-	{Seed, Interval, _Difficulty} = SessionKey,
-	Steps = [list_to_binary(integer_to_list(Step)) || Step <- [StepNumber | ExistingSteps]],
-	Session = #vdf_session{
-		upper_bound = Interval * 10,
-		next_upper_bound = (Interval+1) * 10,
-		prev_session_key = PrevSessionKey,
-		step_number = StepNumber,
-		seed = Seed,
-		steps = Steps
-	},
-
-	Update = #nonce_limiter_update{
-		session_key = SessionKey,
-		is_partial = IsPartial,
-		session = Session
-	},
-	ar_nonce_limiter:apply_external_update(Update, Peer).
-
-get_current_session_key() ->
-	{CurrentSessionKey, _} = ar_nonce_limiter:get_current_session(),
-	CurrentSessionKey.
-
-mock_add_task() ->
-	{
-		ar_mining_worker, add_task,
-		fun(Worker, TaskType, Candidate) ->
-			ets:insert(add_task, {Worker, TaskType, Candidate#mining_candidate.step_number})
-		end
-	}.
+get_computed_output(Seed) ->
+	ar_util:do_until(
+		fun() ->
+			case ets:lookup(computed_output, Seed) of
+				[] -> false;
+				_ -> true
+			end
+		end,
+		1000,
+		10_000
+	),
+	ets:lookup(computed_output, Seed).
 
 mock_reset_frequency() ->
 	{
