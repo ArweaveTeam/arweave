@@ -17,6 +17,7 @@ init() ->
 		#{
 			configuration_key => [global, init],
 			default => false,
+			type => boolean,
 			short_argument => undefined,
 			long_argument => <<"init">>,
 			legacy => init,
@@ -35,7 +36,6 @@ init() ->
 			runtime => true,
 			short_description => ""
 		},
-		% #config.header_sync_jobs
 		#{
 			configuration_key => [global,data,jobs,headers,sync],
 			legacy => header_sync_jobs,

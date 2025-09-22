@@ -91,6 +91,7 @@
 	start_link/1,
 	spec/0,
 	spec/1,
+	spec_to_argparse/0,
 	get_legacy/0,
 	get_environments/0,
 	get_environment/1,
@@ -221,13 +222,6 @@
 		| iolist().
 
 %---------------------------------------------------------------------
-% OPTIONAL: the number of element to fetch after the flag.
-% DEFAULT: 0
-%---------------------------------------------------------------------
--callback elements() -> Return when
-	Return :: pos_integer().
-
-%---------------------------------------------------------------------
 % OPTIONAL: the type of the value.
 % DEFAULT: undefined
 %---------------------------------------------------------------------
@@ -290,6 +284,19 @@
 	Return :: true
 		| {true, term()}
 		| false.
+
+%--------------------------------------------------------------------
+% OPTIONAL: defines the number of arguments to take
+% DEFAULT: 1
+% see: argparse
+%--------------------------------------------------------------------
+-callback nargs() -> Return when
+	Return :: pos_integer()
+		| list
+		| nonempty_list
+		| 'maybe'
+		| {'maybe', term()}
+		| all.
 
 %---------------------------------------------------------------------
 % @TODO: protected callback
@@ -369,14 +376,14 @@
 	runtime/0,
 	short_argument/0,
 	long_argument/0,
-	elements/0,
 	type/0,
 	check/2,
 	environment/0,
 	legacy/0,
 	short_description/0,
 	long_description/0,
-	deprecated/0
+	deprecated/0,
+	nargs/0
 ]).
 
 %%--------------------------------------------------------------------
@@ -572,35 +579,56 @@ callbacks_check() -> [
  	{configuration_key, arweave_config_spec_configuration_key},
 
 	% optional callbacks
- 	{runtime, arweave_config_spec_runtime},
  	{handle_get, arweave_config_spec_handle_get},
  	{handle_set, arweave_config_spec_handle_set},
+	{default, arweave_config_spec_default},
+ 	{type, arweave_config_spec_type},
 	{check, arweave_config_spec_check},
+ 	{runtime, arweave_config_spec_runtime},
 	{deprecated, arweave_config_spec_deprecated},
  	{environment, arweave_config_spec_environment},
  	{short_argument, arweave_config_spec_short_argument},
  	{long_argument, arweave_config_spec_long_argument},
- 	{elements, arweave_config_spec_elements},
- 	{type, arweave_config_spec_type},
  	{legacy, arweave_config_spec_legacy},
  	{short_description, arweave_config_spec_short_description},
  	{long_description, arweave_config_spec_long_description},
-	{default, arweave_config_spec_default}
+	{nargs, arweave_config_spec_nargs}
 ].
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 init(ModuleSpec) ->
+	% catch exception
 	erlang:process_flag(trap_exit, true),
+
+	% create the ETS table, this one should be only reachable by
+	% the current process to avoid doing nasty things with the
+	% specification during runtime.
+	Ets = ets:new(?MODULE, [
+		named_table,
+		protected
+	]),
+
+	% ensure the module given in argument got spec/0 function
+	% defined. It should return a list of atoms or maps.
 	Specs = ModuleSpec:spec(),
+
+	% parse and load all specifications from each modules.
 	{ok, MapSpec} = init_loop(Specs, #{}),
-	Ets = ets:new(?MODULE, [named_table, protected]),
+
+
+	% insert all specification into the specification store (ETS).
+	% @TODO specification must be unique, when inserting a new
+	% specification, if the same key exists, a warning should be
+	% displayed in some way.
 	[
 		ets:insert(?MODULE, {K, V})
 		||
 		{K, V} <- maps:to_list(MapSpec)
 	],
+ 
+	% It should be good, we can start the module.
 	?LOG_INFO("~p ready", [?MODULE]),
 	{ok, Ets}.
 
@@ -927,3 +955,56 @@ apply_get2(Parameter, _Spec = #{ default := Default }) ->
 	{ok, Value};
 apply_get2(Parameter, _Spec) ->
 	arweave_config_store:get(Parameter).
+
+%%--------------------------------------------------------------------
+%% @doc Converts arweave configuration specification to argparse map.
+%% @see argparse
+%% @end
+%%--------------------------------------------------------------------
+spec_to_argparse() ->
+	% fetch the specifications and convert them to proplists, it
+	% will be easier to loop over.
+	Specs = [
+		maps:to_list(X)
+		||
+		{_, X} <- maps:to_list(spec())
+	],
+	#{ arguments => spec_to_argparse(Specs, []) }.
+
+% @hidden
+spec_to_argparse([], Buffer) -> Buffer;
+spec_to_argparse([Spec|Rest], Buffer) ->
+	ArgParse = spec_to_argparse2(Spec, #{}),
+	spec_to_argparse(Rest, [ArgParse|Buffer]).
+
+% @hidden
+spec_to_argparse2([], ArgParse) -> ArgParse;
+spec_to_argparse2([{configuration_key, Name}|Rest], ArgParse) ->
+	% convert the configuration key parameter to name
+	spec_to_argparse2(Rest, ArgParse#{ name => Name });
+spec_to_argparse2([{default, Default}|Rest], ArgParse) ->
+	spec_to_argparse2(Rest, ArgParse#{ default => Default });
+spec_to_argparse2([{nargs, Nargs}|Rest], ArgParse) ->
+	spec_to_argparse2(Rest, ArgParse#{ nargs => Nargs });
+spec_to_argparse2([{long_argument, Long}|Rest], ArgParse)
+	when is_binary(Long) ->
+		% arweave config spec uses binary, convert it.
+		spec_to_argparse2(Rest, ArgParse#{ long => binary_to_list(Long) });
+spec_to_argparse2([{short_argument, Short}|Rest], ArgParse) ->
+	spec_to_argparse2(Rest, ArgParse#{ short => Short });
+spec_to_argparse2([{required, Required}|Rest], ArgParse) ->
+	spec_to_argparse2(Rest, ArgParse#{ required => Required });
+spec_to_argparse2([{short_description, SD}|Rest], ArgParse) ->
+	spec_to_argparse2(Rest, ArgParse#{ help => SD });
+spec_to_argparse2([{type, Type}|Rest], ArgParse) ->
+	% At this time, only support boolean type
+	case Type of
+		boolean ->
+			spec_to_argparse2(Rest, ArgParse#{ type => Type });
+		_Elsewise ->
+			spec_to_argparse2(Rest, ArgParse)
+	end;
+spec_to_argparse2([Ignore|Rest], ArgParse) ->
+	?LOG_DEBUG("ignored value: ~p", [Ignore]),
+	spec_to_argparse2(Rest, ArgParse).
+
