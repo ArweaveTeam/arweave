@@ -4,6 +4,7 @@
 %%%===================================================================
 -module(arweave_config_parameters).
 -export([init/0]).
+-include("arweave_config.hrl").
 
 %%--------------------------------------------------------------------
 %% @doc parameters specification from maps.
@@ -15,11 +16,13 @@ init() ->
 		% global configuration
 		%---------------------------------------------------------------------
 		#{
-			configuration_key => [global, init],
-			default => false,
+			configuration_key => [global,init],
+			default => ?DEFAULT_GLOBAL_INIT,
 			type => boolean,
-			short_argument => undefined,
-			long_argument => <<"init">>,
+			short_argument => <<"Start a new weave">>,
+			long_argument => [
+				"Start a new weave."
+			],
 			legacy => init,
 			runtime => false,
 			short_description => [
@@ -33,14 +36,31 @@ init() ->
 		#{
 			configuration_key => [global,data,jobs,sync],
 			legacy => sync_jobs,
-			runtime => true,
-			short_description => ""
+			type => pos_integer,
+			default => 100,
+			short_argument => $j,
+			long_argument => <<"-global.data.jobs.sync">>,
+			short_description =>
+				<<"The number of data syncing jobs to run.">>
+			long_description => [
+				"The number of data syncing jobs to run.",
+				"Each job periodically picks a range and downloads it from peer peers."
+			],
+			runtime => true
 		},
 		#{
 			configuration_key => [global,data,jobs,headers,sync],
 			legacy => header_sync_jobs,
+			type => pos_integer,
+			default => 1,
 			runtime => true,
-			short_description => ""
+			short_argument => $J,
+			long_argument => <<"-global.data.jobs.headers.sync">>,
+			short_description => "The number of header syncing jobs to run.",
+			long_description => [
+				"The number of header syncing jobs to run.",
+				"Each job periodically picks the latest not synced block header"
+			]
 		},
 
 		%---------------------------------------------------------------------
@@ -97,12 +117,12 @@ init() ->
 		% chunks configuration
 		%---------------------------------------------------------------------
 		#{
-			configuration_key => [global,chunks,verify,samples],
+			configuration_key => [chunks,verify,samples],
 			runtime => false,
 			legacy => verify_samples
 		},
 		#{
-			configuration_key => [global,chunks,verify],
+			configuration_key => [chunks,verify],
 			runtime => false,
 			legacy => verify
 		},
