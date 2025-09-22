@@ -99,6 +99,7 @@ garbage_collect() ->
 %%%===================================================================
 
 init(Mode) ->
+	?LOG_INFO([{event, mining_io_init}, {mode, Mode}]),
 	gen_server:cast(self(), initialize_state),
 	{ok, #state{ mode = Mode }}.
 
@@ -213,10 +214,11 @@ start_io_threads(State) ->
     % Step 1: Group StoreIDs by their system device
 	case ar_device_lock:get_store_id_to_device_map() of
 		{error, Reason} ->
-			?LOG_ERROR([{event, error_initializing_state}, {module, ?MODULE},
+			?LOG_ERROR([{event, error_initializing_mining_io_state}, {module, ?MODULE},
 				{reason, io_lib:format("~p", [Reason])}]),
 			{error, Reason};
 		StoreIDToDevice ->
+			?LOG_INFO([{event, starting_mining_io_threads}, {store_id_to_device, StoreIDToDevice}]),
 			DeviceToStoreIDs = ar_util:invert_map(StoreIDToDevice),
 			% Step 2: Start IO threads for each device and populate map indices
 			State2 = maps:fold(
