@@ -137,7 +137,7 @@ init({Partition, PackingDifficulty}) ->
 	Name = name(Partition, PackingDifficulty),
 	?LOG_INFO([{event, mining_worker_started},
 		{worker, Name}, {pid, self()}, {partition, Partition}]),
-	ChunkCache = ar_mining_cache:new(),
+	ChunkCache = ar_mining_cache:new(Name),
 	State0 = #state{
 		name = Name,
 		chunk_cache = ChunkCache,
@@ -489,8 +489,6 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 	case Range2Exists of
 		true ->
 			ar_mining_stats:h1_received_from_peer(Peer, length(H1List)),
-			log_debug(mining_debug_h1_received_from_peer, Candidate3, State, [
-				{h1_list_length, length(H1List)}]),
 
 			%% Add the candidate session to the cache. This is only needed during rare occasions
 			%% where a CM peer has added a new session a few seconds before this node does.

@@ -3,7 +3,7 @@
 -include_lib("arweave/include/ar.hrl").
 
 -export([
-	new/0, new/1, set_limit/2, get_limit/1,
+	new/1, new/2, set_limit/2, get_limit/1,
 	cache_size/1, actual_cache_size/1, available_size/1, reserved_size/1, reserved_size/2,
 	add_session/2, reserve_for_session/3, release_for_session/3, drop_session/2,
 	session_exists/2, get_sessions/1, with_cached_value/4
@@ -16,14 +16,14 @@
 %%%===================================================================
 
 %% @doc Creates a new mining cache with a default limit of 0.
--spec new() ->
+-spec new(Name :: term()) ->
 	Cache :: #ar_mining_cache{}.
-new() -> #ar_mining_cache{}.
+new(Name) -> #ar_mining_cache{name = Name}.
 
 %% @doc Creates a new mining cache with a given limit.
--spec new(Limit :: pos_integer()) ->
+-spec new(Name :: term(), Limit :: pos_integer()) ->
 	Cache :: #ar_mining_cache{}.
-new(Limit) -> #ar_mining_cache{mining_cache_limit_bytes = Limit}.
+new(Name, Limit) -> #ar_mining_cache{name = Name, mining_cache_limit_bytes = Limit}.
 
 %% @doc Sets the limit for the mining cache.
 -spec set_limit(Limit :: pos_integer(), Cache :: #ar_mining_cache{}) ->
@@ -115,6 +115,7 @@ add_session(SessionKey, Cache0) ->
 					Cache2 = drop_session(LastSessionKey, Cache1),
 					?LOG_DEBUG([
 						{event, mining_cache_add_drop_session},
+						{cache_name, Cache1#ar_mining_cache.name},
 						{added_session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 						{dropped_session_key, ar_nonce_limiter:encode_session_key(LastSessionKey)},
 						{num_sessions, queue:len(Queue1)}]),
@@ -122,6 +123,7 @@ add_session(SessionKey, Cache0) ->
 				false ->
 					?LOG_DEBUG([
 						{event, mining_cache_add_session},
+						{cache_name, Cache1#ar_mining_cache.name},
 						{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 						{num_sessions,
 							queue:len(Cache1#ar_mining_cache.mining_cache_sessions_queue)}]),
@@ -156,16 +158,21 @@ release_for_session(SessionKey, Size, Cache0) ->
 -spec drop_session(SessionKey :: term(), Cache0 :: #ar_mining_cache{}) ->
 	Cache1 :: #ar_mining_cache{}.
 drop_session(SessionKey, Cache0) ->
-	?LOG_DEBUG([{event, drop_session}, {session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
 	case maps:take(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions) of
 		{Session, Sessions} ->
 			maybe_search_for_anomalies(SessionKey, Session),
+			Queue0 = queue:filter(
+				fun(SessionKey0) -> SessionKey0 =/= SessionKey end,
+				Cache0#ar_mining_cache.mining_cache_sessions_queue
+			),
+			?LOG_DEBUG([
+				{event, mining_cache_drop_session},
+				{cache_name, Cache0#ar_mining_cache.name},
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+				{num_sessions, queue:len(Queue0)}]),
 			Cache0#ar_mining_cache{
 				mining_cache_sessions = Sessions,
-				mining_cache_sessions_queue = queue:filter(
-					fun(SessionKey0) -> SessionKey0 =/= SessionKey end,
-					Cache0#ar_mining_cache.mining_cache_sessions_queue
-				)
+				mining_cache_sessions_queue = Queue0
 			};
 		_ -> Cache0
 	end.
@@ -262,7 +269,9 @@ with_cached_value(Key, SessionKey, Cache0, Fun) ->
 						}}
 				end;
 			Other ->
-				?LOG_WARNING([{event, unexpected_return_value_from_with_cached_value}, {value, Other}]),
+				?LOG_WARNING([
+					{event, unexpected_return_value_from_with_cached_value},
+					{cache_name, Cache0#ar_mining_cache.name}, {value, Other}]),
 				{error, unexpected_return_value_from_with_cached_value}
 		end
 	end, Cache0).
@@ -442,11 +451,11 @@ maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present({_, _}, An
 -include_lib("eunit/include/eunit.hrl").
 
 cache_size_test() ->
-	Cache = new(),
+	Cache = new(test_cache),
 	?assertEqual(0, cache_size(Cache)).
 
 add_session_test() ->
-	Cache0 = new(),
+	Cache0 = new(test_cache),
 	SessionKey0 = session0,
 	Cache1 = add_session(SessionKey0, Cache0),
 	?assert(session_exists(SessionKey0, Cache1)),
@@ -455,7 +464,7 @@ add_session_test() ->
 	?assertEqual([SessionKey0], get_sessions(Cache1)).
 
 add_session_limit_test() ->
-	Cache0 = new(),
+	Cache0 = new(test_cache),
 	Cache1 = add_session(session0, Cache0),
 	Cache2 = add_session(session1, Cache1),
 	Cache3 = add_session(session2, Cache2),
@@ -467,7 +476,7 @@ add_session_limit_test() ->
 	?assertEqual(0, cache_size(Cache5)).
 
 reserve_test() ->
-	Cache0 = new(1024),
+	Cache0 = new(test_cache, 1024),
 	SessionKey0 = session0,
 	ChunkId = chunk0,
 	Data = <<"chunk_data">>,
@@ -493,7 +502,7 @@ reserve_test() ->
 	?assertEqual(0, cache_size(Cache4)).
 
 release_test() ->
-	Cache0 = new(1024),
+	Cache0 = new(test_cache, 1024),
 	SessionKey0 = session0,
 	ChunkId = chunk0,
 	Data = <<"chunk_data">>,
@@ -521,7 +530,7 @@ release_test() ->
 	?assertEqual(0, cache_size(Cache5)).
 
 with_cached_value_add_chunk_test() ->
-	Cache0 = new(1024),
+	Cache0 = new(test_cache, 1024),
 	ChunkId = chunk0,
 	Data = <<"chunk_data">>,
 	SessionKey0 = session0,
@@ -539,7 +548,7 @@ with_cached_value_add_chunk_test() ->
 	?assertEqual(byte_size(Data) * 2, cache_size(Cache3)).
 
 with_cached_value_add_hash_test() ->
-	Cache0 = new(),
+	Cache0 = new(test_cache),
 	ChunkId = chunk0,
 	Hash = <<"hash">>,
 	SessionKey0 = session0,
@@ -557,7 +566,7 @@ with_cached_value_add_hash_test() ->
 	?assertEqual(0, cache_size(Cache3)).
 
 with_cached_value_drop_test() ->
-	Cache0 = new(1024),
+	Cache0 = new(test_cache, 1024),
 	ChunkId = chunk0,
 	Data = <<"chunk_data">>,
 	SessionKey0 = session0,
@@ -576,7 +585,7 @@ with_cached_value_drop_test() ->
 	?assertEqual(0, actual_cache_size(Cache3)).
 
 set_limit_test() ->
-	Cache0 = new(),
+	Cache0 = new(test_cache),
 	Data = <<"chunk_data">>,
 	SessionKey0 = session0,
 	%% Add session
@@ -597,7 +606,7 @@ set_limit_test() ->
 	?assertEqual(byte_size(Data), cache_size(Cache3)).
 
 drop_session_test() ->
-	Cache0 = new(1024),
+	Cache0 = new(test_cache, 1024),
 	ChunkId = chunk0,
 	Data = <<"chunk_data">>,
 	SessionKey0 = session0,
