@@ -400,6 +400,8 @@
 %%%===================================================================
 -module(arweave_config).
 -behavior(application).
+-behavior(gen_server).
+% common interface functions.
 -export([
 	start/0,
 	stop/0,
@@ -411,9 +413,14 @@
 	spec/0,
 	export/0,
 	export/1,
-	load/1
+	load/1,
+	runtime/0,
+	is_runtime/0
 ]).
+% application behavior callbacks.
 -export([start/2, stop/1]).
+% gen_server behavior callbacks
+-export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2]).
 -compile({no_auto_import,[get/1]}).
 -include_lib("kernel/include/logger.hrl").
 
@@ -664,3 +671,63 @@ load(configuration) ->
 	todo;
 load({configuration, _Path}) ->
 	todo.
+
+%%--------------------------------------------------------------------
+%% @doc Start arweave_config process.
+%% @end
+%%--------------------------------------------------------------------
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%%--------------------------------------------------------------------
+%% @doc Switch to runtime mode. No rollback is possible there, this is
+%% a one time operation to announce arweave config is ready to deal
+%% with dynamic configuration.
+%% @end
+%%--------------------------------------------------------------------
+-spec runtime() -> ok.
+
+runtime() ->
+	gen_server:cast(?MODULE, runtime).
+
+%%--------------------------------------------------------------------
+%% @doc Returns if arweave config is in runtime mode or not.
+%% @end
+%%--------------------------------------------------------------------
+-spec is_runtime() -> boolean().
+
+is_runtime() ->
+	case ets:lookup(?MODULE, runtime) of
+		[{runtime, true}] -> true;
+		_Elsewise -> false
+	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+init(_) ->
+	ets:new(?MODULE, [named_table, protected]),
+	{ok, ?MODULE}.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+handle_call(_, _, State) -> {noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+handle_cast(runtime, State) ->
+	try ets:insert(?MODULE, {runtime, true}) of
+		true -> ok;
+		Elsewise -> {error, Elsewise}
+	catch
+		E:R -> {E,R}
+	end,
+	{noreply, State};
+handle_cast(_, State) -> {noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+handle_info(_, State) -> {noreply, State}.
