@@ -123,9 +123,10 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 			gen_server:cast(ar_poller, {peer_out_of_sync, Peer}),
 			{noreply, State#state{ pause = true }};
 		{error, Reason} ->
-			?LOG_DEBUG([{event, failed_to_get_recent_hash_list_diff},
-					{peer, ar_util:format_peer(Peer)},
-					{reason, io_lib:format("~p", [Reason])}]),
+			ar_http_iface_client:log_failed_request(Reason,
+				[{event, failed_to_get_recent_hash_list_diff},
+				{peer, ar_util:format_peer(Peer)},
+				{reason, io_lib:format("~p", [Reason])}]),
 			{noreply, State#state{ pause = true }}
 	end;
 handle_cast({poll, _Ref}, State) ->

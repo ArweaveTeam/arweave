@@ -127,7 +127,11 @@ check_for_received_txs(#state{ pending_txids = [] } = State) ->
 	case Reply of
 		{ok, TXIDs} ->
 			State#state{ pending_txids = TXIDs };
-		{error, _Error} ->
+		{error, Error} ->
+			?LOG_DEBUG([{event, failed_to_get_mempool_txids_from_peers},
+					{peers, [ar_util:format_peer(Peer) || Peer <- Peers]},
+					{error, io_lib:format("~p", [Error])}
+			]),
 			State
 	end.
 

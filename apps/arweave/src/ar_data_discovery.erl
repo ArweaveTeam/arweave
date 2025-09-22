@@ -110,6 +110,11 @@ handle_cast(update_network_data_map, #state{ peers_pending = N } = State)
 									SyncBuckets});
 						{error, request_type_not_found} ->
 							get_sync_buckets(Peer);
+						{error, Reason} ->
+							ar_http_iface_client:log_failed_request(Reason,
+								[{event, failed_to_fetch_sync_buckets},
+								{peer, ar_util:format_peer(Peer)},
+								{reason, io_lib:format("~p", [Reason])}]);
 						Error ->
 							?LOG_DEBUG([{event, failed_to_fetch_sync_buckets},
 								{peer, ar_util:format_peer(Peer)},
