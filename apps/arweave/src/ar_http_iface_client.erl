@@ -22,6 +22,7 @@
 	get_pool_cm_jobs/2, post_pool_cm_jobs/2,
 	post_cm_partition_table_to_pool/2]).
 -export([get_block_shadow/2, get_block_shadow/3, get_block_shadow/4]).
+-export([log_failed_request/2]).
 
 %% -- Testing exports
 -export([get_tx_from_remote_peer/3]).
@@ -441,14 +442,13 @@ get_mempool([]) ->
 	{error, not_found};
 get_mempool([Peer | Peers]) ->
     case get_mempool(Peer) of
-	{ok, TXIDs} ->
-	    {ok, TXIDs};
-	{error, Error} ->
-			?LOG_DEBUG([{event, failed_to_get_mempool_txids_from_peer},
+		{ok, TXIDs} ->
+			{ok, TXIDs};
+		{error, Error} ->
+			log_failed_request(Error, [{event, failed_to_get_mempool_txids_from_peer},
 					{peer, ar_util:format_peer(Peer)},
-					{error, io_lib:format("~p", [Error])}
-			]),
-	    get_mempool(Peers -- [Peer])
+					{error, io_lib:format("~p", [Error])}]),
+			get_mempool(Peers -- [Peer])
     end;
 
 get_mempool(Peer) ->
@@ -1437,3 +1437,12 @@ add_header(Name, Value, Headers) when is_binary(Name) andalso is_binary(Value) -
 add_header(Name, Value, Headers) ->
 	?LOG_ERROR([{event, invalid_header}, {name, Name}, {value, Value}]),
 	Headers.
+
+%% @doc Utility to filter out some log spam. We generally don't want to log a failed HTTP
+%% request if the peer just times out or is no longer taking connections.
+log_failed_request(Reason, Log) ->
+	case Reason of
+		{error,{shutdown,econnrefused}} -> ok;
+		{error,{shutdown,timeout}} -> ok;
+		_ -> ?LOG_DEBUG(Log)
+	end.
