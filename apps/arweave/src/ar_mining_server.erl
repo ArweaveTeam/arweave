@@ -45,6 +45,14 @@
 -define(MINIMUM_CACHE_LIMIT_BYTES, 1).
 -endif.
 
+%% The number of concurrent VDF steps per partition that will fit in the cache. The higher this
+%% number the more memory the cache can use (roughly ?IDEAL_STEPS_PER_PARTITION * 5 MiB per
+%% partition). Also the higher the number the more the miner is able to respond to temporary
+%% hashrate slowdowns (e.g. a system process temporarily consumes all CPU) or temporary VDF
+%% step spikes (e.g. the node validates an block with an advanced VDF step and unlocks many
+%% VDF steps at once) without losing hashrate.
+-define(IDEAL_STEPS_PER_PARTITION, 20).
+
 -define(FETCH_POA_FROM_PEERS_TIMEOUT_MS, 10000).
 
 %%%===================================================================
@@ -459,14 +467,12 @@ update_cache_limits(NumActivePartitions, State) ->
 	maybe_update_cache_limits(Limits, State).
 
 calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
-	%% This allows the cache to store enough chunks for 4 concurrent VDF steps per partition.
-	IdealStepsPerPartition = 4,
 	IdealRangesPerStep = 2,
 	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty),
 
 	MinimumCacheLimitBytes = max(
 		?MINIMUM_CACHE_LIMIT_BYTES,
-		(IdealStepsPerPartition * IdealRangesPerStep * RecallRangeSize * NumActivePartitions)
+		(?IDEAL_STEPS_PER_PARTITION * IdealRangesPerStep * RecallRangeSize * NumActivePartitions)
 	),
 
 	{ok, Config} = application:get_env(arweave, config),
@@ -1361,51 +1367,111 @@ test_calculate_cache_limits_default() ->
 		mining_cache_size_mb = undefined
 	}),
 	?assertEqual(
-		{400 * ?MiB, 400 * ?MiB, 4 * ?MiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(100, 0)
 	),
 	?assertEqual(
-		{800 * ?MiB, 800 * ?MiB, 4 * ?MiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 200 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 200 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(200, 0)
 	),
 	?assertEqual(
-		{4_000 * ?MiB, 4_000 * ?MiB, 4 * ?MiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(1000, 0)
 	),
 	?assertEqual(
-		{100 * ?MiB, 100 * ?MiB, 1 * ?MiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 256 * ?KiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(100, 1)
 	),
 	?assertEqual(
-		{200 * ?MiB, 200 * ?MiB, 1 * ?MiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 256 * ?KiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(200, 1)
 	),
 	?assertEqual(
-		{1_000 * ?MiB, 1_000 * ?MiB, 1 * ?MiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 256 * ?KiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(1000, 1)
 	),
 	?assertEqual(
-		{100 * ?MiB, 100 * ?MiB, 512 * ?KiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 128 * ?KiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(200, 2)
 	),
 	?assertEqual(
-		{200 * ?MiB, 200 * ?MiB, 512 * ?KiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 128 * ?KiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(400, 2)
 	),
 	?assertEqual(
-		{500 * ?MiB, 500 * ?MiB, 512 * ?KiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 125 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 125 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 128 * ?KiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(1000, 2)
 	),
 	?assertEqual(
-		{200 * ?MiB, 200 * ?MiB, 32 * ?KiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 8 * ?KiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(6_400, 32)
 	),
 	?assertEqual(
-		{400 * ?MiB, 400 * ?MiB, 32 * ?KiB, 4, 16_000},
+		{
+			?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
+			?IDEAL_STEPS_PER_PARTITION * 8 * ?KiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(12_800, 32)
 	),
 	?assertEqual(
-		{625 * ?MiB, 625 * ?MiB, 32 * ?KiB, 4, 16_000},
+		{
+			trunc(?IDEAL_STEPS_PER_PARTITION * 156.25 * ?MiB),
+			trunc(?IDEAL_STEPS_PER_PARTITION * 156.25 * ?MiB),
+			?IDEAL_STEPS_PER_PARTITION * 8 * ?KiB,
+			?IDEAL_STEPS_PER_PARTITION,
+			?IDEAL_STEPS_PER_PARTITION * 4000},
 		calculate_cache_limits(20_000, 32)
 	).
 
@@ -1423,7 +1489,7 @@ test_calculate_cache_limits_custom_low() ->
 		calculate_cache_limits(2, 0)
 	),
 	?assertEqual(
-		{4_000 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
+		{?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 0)
 	),
 	?assertEqual(
@@ -1435,7 +1501,7 @@ test_calculate_cache_limits_custom_low() ->
 		calculate_cache_limits(2, 1)
 	),
 	?assertEqual(
-		{1_000 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
+		{?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 1)
 	),
 	?assertEqual(
@@ -1447,7 +1513,7 @@ test_calculate_cache_limits_custom_low() ->
 		calculate_cache_limits(2, 2)
 	),
 	?assertEqual(
-		{512_000 * ?KiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
+		{?IDEAL_STEPS_PER_PARTITION * 128_000 * ?KiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
 		calculate_cache_limits(1000, 2)
 	),
 	?assertEqual(
@@ -1459,7 +1525,7 @@ test_calculate_cache_limits_custom_low() ->
 		calculate_cache_limits(2, 32)
 	),
 	?assertEqual(
-		{2_000 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 64_000, 1, 4_000},
+		{?IDEAL_STEPS_PER_PARTITION * 500 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 64_000, 1, 4_000},
 		calculate_cache_limits(64_000, 32)
 	).
 
@@ -1477,7 +1543,7 @@ test_calculate_cache_limits_custom_high() ->
 		calculate_cache_limits(2, 0)
 	),
 	?assertEqual(
-		{4_000 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 500, 2_000_000},
+		{?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 500, 2_000_000},
 		calculate_cache_limits(1000, 0)
 	),
 	?assertEqual(
@@ -1489,7 +1555,7 @@ test_calculate_cache_limits_custom_high() ->
 		calculate_cache_limits(2, 1)
 	),
 	?assertEqual(
-		{1000 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 2_000, 8_000_000},
+		{?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 2_000, 8_000_000},
 		calculate_cache_limits(1000, 1)
 	),
 	?assertEqual(
@@ -1501,7 +1567,7 @@ test_calculate_cache_limits_custom_high() ->
 		calculate_cache_limits(2, 2)
 	),
 	?assertEqual(
-		{512_000 * ?KiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 4_000, 16_000_000},
+		{?IDEAL_STEPS_PER_PARTITION * 128_000 * ?KiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 4_000, 16_000_000},
 		calculate_cache_limits(1000, 2)
 	),
 	?assertEqual(
@@ -1513,6 +1579,6 @@ test_calculate_cache_limits_custom_high() ->
 		calculate_cache_limits(2, 32)
 	),
 	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000 * ?KiB, 64_000, 256_000_000},
+		{(?IDEAL_STEPS_PER_PARTITION * 2 * (?RECALL_RANGE_SIZE div 32) * 1000), 512_000_000 * ?KiB, 512_000 * ?KiB, 64_000, 256_000_000},
 		calculate_cache_limits(1000, 32)
 	).
