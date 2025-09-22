@@ -19,6 +19,7 @@
 
 
 -record(ar_mining_cache, {
+  name = not_set :: term(),
   mining_cache_sessions = #{} :: #{term() => #ar_mining_cache_session{}},
   mining_cache_sessions_queue = queue:new() :: queue:queue(),
   mining_cache_limit_bytes = 0 :: non_neg_integer()
