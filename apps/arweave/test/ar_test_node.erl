@@ -1167,11 +1167,21 @@ new_mock(Module, Options) ->
 new_mock(_Module, _Options, 0) ->
 	ok;
 new_mock(Module, Options, Retries) ->
+	Options2 = lists:usort([no_link | Options]),
 	try
-		meck:new(Module, Options)
+		meck:new(Module, Options2)
 	catch
+		%% If the mock is already started, treat as success
+		error:{already_started, _Pid} ->
+			ok;
+		%% Retry on other errors
 		error:E ->
 			?debugFmt("ar_test_node (retries left ~p): Error creating mock for ~p: ~p",
+					[Retries - 1, Module, E]),
+			timer:sleep(1000),
+			new_mock(Module, Options, Retries - 1);
+		exit:E ->
+			?debugFmt("ar_test_node (retries left ~p): Exit creating mock for ~p: ~p",
 					[Retries - 1, Module, E]),
 			timer:sleep(1000),
 			new_mock(Module, Options, Retries - 1)
@@ -1190,6 +1200,11 @@ mock_function(Module, Fun, Mock, Retries) ->
 			?debugFmt("ar_test_node (retries left ~p): Error setting mock for ~p: ~p",
 					[Retries - 1, Module, E]),
 			timer:sleep(1000),
+			mock_function(Module, Fun, Mock, Retries - 1);
+		exit:E ->
+			?debugFmt("ar_test_node (retries left ~p): Exit setting mock for ~p: ~p",
+					[Retries - 1, Module, E]),
+			timer:sleep(1000),
 			mock_function(Module, Fun, Mock, Retries - 1)
 	end.
 
@@ -1202,8 +1217,17 @@ unmock_module(Module, Retries) ->
 	try
 		meck:unload(Module)
 	catch
+		%% If it's already not mocked, consider it a success
+		error:{not_mocked, Module} ->
+			ok;
+		%% Retry on other errors
 		error:E ->
 			?debugFmt("ar_test_node (retries left ~p): Error unloading mock for ~p: ~p",
+					[Retries - 1, Module, E]),
+			timer:sleep(1000),
+			unmock_module(Module, Retries - 1);
+		exit:E ->
+			?debugFmt("ar_test_node (retries left ~p): Exit unloading mock for ~p: ~p",
 					[Retries - 1, Module, E]),
 			timer:sleep(1000),
 			unmock_module(Module, Retries - 1)
@@ -1212,49 +1236,57 @@ unmock_module(Module, Retries) ->
 mock_functions(Functions) ->
 	{
 		fun() ->
-			lists:foldl(
-				fun({Module, Fun, Mock}, Mocked) ->
-					NewMocked = case maps:get(Module, Mocked, false) of
-						false ->
-							new_mock(Module, [passthrough]),
+			with_meck_lock(fun() ->
+				lists:foldl(
+					fun({Module, Fun, Mock}, Mocked) ->
+						NewMocked = case maps:get(Module, Mocked, false) of
+							false ->
+								new_mock(Module, [passthrough]),
+								lists:foreach(
+									fun({_TestType, Node}) ->
+										remote_call(Node, ar_test_node, new_mock,
+												[Module, [no_link, passthrough]])
+									end,
+									all_peers(test)),
+								maps:put(Module, true, Mocked);
+							true ->
+								Mocked
+							end,
+							mock_function(Module, Fun, Mock),
 							lists:foreach(
 								fun({_TestType, Node}) ->
-									remote_call(Node, ar_test_node, new_mock,
-											[Module, [no_link, passthrough]])
+									remote_call(Node, ar_test_node, mock_function,
+											[Module, Fun, Mock])
 								end,
 								all_peers(test)),
-							maps:put(Module, true, Mocked);
-						true ->
-							Mocked
+							NewMocked
 					end,
-					mock_function(Module, Fun, Mock),
-					lists:foreach(
-						fun({_TestType, Node}) ->
-							remote_call(Node, ar_test_node, mock_function,
-									[Module, Fun, Mock])
-						end,
-						all_peers(test)),
-					NewMocked
-				end,
-				maps:new(),
-				Functions
-			)
+					maps:new(),
+					Functions
+				)
+			end)
 		end,
 		fun(Mocked) ->
-			maps:fold(
-				fun(Module, _, _) ->
-					unmock_module(Module),
-					lists:foreach(
-						fun({_TestType, Node}) ->
-							remote_call(Node, ar_test_node, unmock_module, [Module])
-						end,
-						all_peers(test))
-				end,
-				noop,
-				Mocked
-			)
+			with_meck_lock(fun() ->
+				maps:fold(
+					fun(Module, _, _) ->
+						unmock_module(Module),
+						lists:foreach(
+							fun({_TestType, Node}) ->
+								remote_call(Node, ar_test_node, unmock_module, [Module])
+							end,
+							all_peers(test))
+					end,
+					noop,
+					Mocked
+				)
+			end)
 		end
 	}.
+
+%% @doc Execute Fun under a distributed lock to avoid concurrent meck operations.
+with_meck_lock(Fun) when is_function(Fun, 0) ->
+	global:trans({arweave, meck_lock}, Fun).
 
 test_with_mocked_functions(Functions, TestFun) ->
 	test_with_mocked_functions(Functions, TestFun, ?TEST_MOCKED_FUNCTIONS_TIMEOUT).
