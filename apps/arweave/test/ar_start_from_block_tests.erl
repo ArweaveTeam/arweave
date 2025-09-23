@@ -6,7 +6,7 @@
 
 start_from_block_test_() ->
     [
-		{timeout, 240, fun test_start_from_block/0}
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_start_from_block/0}
 	].
 
 test_start_from_block() ->

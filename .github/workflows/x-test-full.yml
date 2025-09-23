@@ -122,6 +122,7 @@ jobs:
             ar_packing_tests,
             ar_poa,
             ar_vdf_server_tests,
+            ar_vdf_external_update_tests,
             ar_post_block_tests,
             ar_reject_chunks_tests
           ]

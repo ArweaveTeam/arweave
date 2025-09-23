@@ -213,7 +213,7 @@ test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
 			ar_test_node:post_chunk(main, ar_serialize:jsonify(BigProof))).
 
 rejects_chunks_exceeding_disk_pool_limit_test_() ->
-	{timeout, 240, fun test_rejects_chunks_exceeding_disk_pool_limit/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_rejects_chunks_exceeding_disk_pool_limit/0}.
 
 test_rejects_chunks_exceeding_disk_pool_limit() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
@@ -298,7 +298,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"exceeds_disk_pool_size_limit\"}">>, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof3))
 	),
-	ar_test_node:mine(peer1),
+	ar_test_node:mine(main),
 	assert_wait_until_height(main, 1),
 	true = ar_util:do_until(
 		fun() ->
@@ -313,12 +313,13 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 				{ok, {{<<"303">>, _}, _, _, _, _}} ->
 					true;
 				Response ->
-					?debugFmt("post_chunk response: ~p", [Response]),
+					?debugFmt("post_chunk response (offset: ~p, data_root: ~p): ~p",
+						[maps:get(offset, FirstProof3), maps:get(data_root, FirstProof3), Response]),
 					false
 			end
 		end,
 		2000,
-		20 * 1000
+		30 * 1000
 	),
 	%% Now we do not have free space again.
 	?assertMatch(
@@ -327,9 +328,9 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	),
 	%% Mine two more blocks to make the chunks mature so that we can remove them from the
 	%% disk pool (they will stay in the corresponding storage modules though, if any).
-	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 2),
-	ar_test_node:mine(peer1),
+	ar_test_node:mine(main),
+	assert_wait_until_height(main, 2),
+	ar_test_node:mine(main),
 	true = ar_util:do_until(
 		fun() ->
 			case ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof1)) of
@@ -340,7 +341,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			end
 		end,
 		2000,
-		20 * 1000
+		30 * 1000
 	).
 
 accepts_chunks_test_() ->

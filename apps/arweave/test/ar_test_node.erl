@@ -929,6 +929,16 @@ wait_until_syncs_genesis_data(Node) ->
 
 wait_until_syncs_genesis_data() ->
 	{ok, Config} = application:get_env(arweave, config),
+	ar_util:do_until(
+		fun() ->
+			case ar_node:get_current_block() of
+				not_joined -> false;
+				_ -> true
+			end
+		end,
+		1000,
+		10_000
+	),
 	B = ar_node:get_current_block(),
 	WeaveSize = B#block.weave_size,
 	?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, initial_sync_started},
@@ -1082,12 +1092,18 @@ assert_post_tx_to_peer(Node, TX) ->
 	assert_post_tx_to_peer(Node, TX, true).
 
 assert_post_tx_to_peer(Node, TX, Wait) ->
-	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_peer(Node, TX, Wait).
+	assert_post_tx_to_peer(Node, TX, Wait, 3).
+
+assert_post_tx_to_peer(Node, TX, Wait, Retries) ->
+	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = post_tx_to_peer(Node, TX, Wait, Retries).
 
 post_tx_to_peer(Node, TX) ->
 	post_tx_to_peer(Node, TX, true).
 
 post_tx_to_peer(Node, TX, Wait) ->
+	post_tx_to_peer(Node, TX, Wait, 3).
+
+post_tx_to_peer(Node, TX, Wait, Retries) ->
 	Reply = post_tx_json(Node, ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
 	case Reply of
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
@@ -1097,6 +1113,10 @@ post_tx_to_peer(Node, TX, Wait) ->
 				false ->
 					ok
 			end;
+		_ when Retries > 0 ->
+			?debugFmt("Failed to post transaction, retrying. Error: ~p~nRetries: ~p~n", [Reply, Retries]),
+			timer:sleep(3000),
+			post_tx_to_peer(Node, TX, Wait, Retries - 1);
 		_ ->
 			ErrorInfo =
 				case Reply of

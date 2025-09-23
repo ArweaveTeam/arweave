@@ -95,6 +95,10 @@ handle_computed_output(Peer, Args, State) ->
 	#state{ pause_until = Timestamp, format = Format } = State,
 	{SessionKey, StepNumber, Output, _PartitionUpperBound} = Args,
 	CurrentStepNumber = ar_nonce_limiter:get_current_step_number(),
+	?LOG_DEBUG([{event, handle_computed_output}, {peer, ar_util:format_peer(Peer)},
+		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}, {step_number, StepNumber},
+		 {current_step_number, CurrentStepNumber},
+		{timestamp, Timestamp}, {format, Format}]),
 	case os:system_time(second) < Timestamp of
 		true ->
 			{noreply, State};
@@ -112,7 +116,8 @@ push_update(SessionKey, StepNumber, Output, Peer, Format, State) ->
 	Update = ar_nonce_limiter_server:make_partial_nonce_limiter_update(
 		SessionKey, Session, StepNumber, Output),
 	case Update of
-		not_found -> State;
+		not_found -> 
+			State;
 		_ ->
 			case ar_http_iface_client:push_nonce_limiter_update(Peer, Update, Format) of
 				ok -> State;
@@ -131,7 +136,7 @@ push_update(SessionKey, StepNumber, Output, Peer, Format, State) ->
 						{false, _, _, _} ->
 							%% Client requested a different payload format
 							?LOG_DEBUG([{event, vdf_client_requested_different_format},
-								{peer, ar_util:format_peer(Peer)},
+								{peer, ar_util:format_peer(Peer)}, {step_number, StepNumber},
 								{format, Format}, {requested_format, RequestedFormat}]),
 							push_update(SessionKey, StepNumber, Output, Peer, RequestedFormat,
 									State#state{ format = RequestedFormat });

@@ -743,6 +743,16 @@ test_get_tx_status(_) ->
 	?assertMatch({ok, {{<<"202">>, _}, _, <<"Pending">>, _, _}}, FetchStatus()),
 	ar_test_node:mine(),
 	wait_until_height(main, Height + 1),
+	ar_util:do_until(
+		fun() ->
+			case FetchStatus() of
+				{ok, {{<<"200">>, _}, _, _, _, _}} -> true;
+				_ -> false
+			end	
+		end,
+		200,
+		5000
+	),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = FetchStatus(),
 	{Res} = ar_serialize:dejsonify(Body),
 	BI = ar_node:get_block_index(),

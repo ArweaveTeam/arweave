@@ -314,6 +314,10 @@ handle_info({event, nonce_limiter, {computed_output, Args}}, State) ->
 				SessionKey, StepNumber, Output, PartitionUpperBound, not_set, State)
 	end;
 
+handle_info({event, nonce_limiter, {valid, _}}, State) ->
+	%% Silently ignore validation messages
+	{noreply, State};
+
 handle_info({event, nonce_limiter, Message}, State) ->
 	?LOG_DEBUG([{event, mining_debug_skipping_nonce_limiter}, {message, Message}]),
 	{noreply, State};

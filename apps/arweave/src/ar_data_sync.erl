@@ -132,7 +132,8 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 		case {DataRootOffsetReply, DataRootInDiskPool} of
 			{not_found, []} ->
 				?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
-					{reason, data_root_not_found}, {offset, Offset}]),
+					{reason, data_root_not_found}, {offset, Offset},
+					{data_root, ar_util:encode(DataRoot)}]),
 				{error, data_root_not_found};
 			{not_found, [{_, {Size, Timestamp, TXIDSet}}]} ->
 				case Size + ChunkSize > DataRootLimit

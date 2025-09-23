@@ -63,14 +63,22 @@ get_block_index() ->
 %% @doc Return the current tip block. Assume the node has joined the network and
 %% initialized the state.
 get_current_block() ->
-	[{_, Current}] = ar_util:safe_ets_lookup(node_state, current),
-	ar_block_cache:get(block_cache, Current).
+	case ar_util:safe_ets_lookup(node_state, current) of
+		[{_, Current}] ->
+			ar_block_cache:get(block_cache, Current);
+		_ ->
+			not_joined
+	end.
 
 %% @doc Return the current network difficulty. Assume the node has joined the network and
 %% initialized the state.
 get_current_diff() ->
-	[{_, DiffPair}] = ar_util:safe_ets_lookup(node_state, diff_pair),
-	DiffPair.
+	case ar_util:safe_ets_lookup(node_state, diff_pair) of
+		[{_, DiffPair}] ->
+			DiffPair;
+		_ ->
+			not_joined
+	end.
 
 get_block_index_and_height() ->
 	Props =
