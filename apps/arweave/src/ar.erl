@@ -1548,6 +1548,7 @@ tests(Mod) ->
 	tests(test, Mod).
 
 tests(TestType, Mods, Config) when is_list(Mods) ->
+	_ = application:ensure_all_started(arweave_config),
 	TotalTimeout = case TestType of
 		e2e -> ?E2E_TEST_SUITE_TIMEOUT;
 		_ -> ?TEST_SUITE_TIMEOUT
