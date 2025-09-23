@@ -342,9 +342,7 @@ maybe_search_for_anomalies(SessionKey, #ar_mining_cache_session{
 			{event, mining_cache_anomaly}, {anomaly, reserved_size_non_zero},
 			{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 			{actual_size, ReservedMiningCacheBytes}, {expected_size, 0}])
-	end,
-	?LOG_DEBUG([{event, mining_cache_anomaly}, {anomaly, mining_cache_anomaly_search_completed},
-		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]);
+	end;
 maybe_search_for_anomalies(SessionKey, _InvalidSession) ->
 	?LOG_ERROR([{event, mining_cache_anomaly}, {anomaly, invalid_session_type},
 		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),

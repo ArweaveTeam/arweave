@@ -101,6 +101,7 @@ jobs:
             ar_vdf_tests,
             # long running
             ar_vdf_server_tests,
+            ar_vdf_external_update_tests,
           ]
     steps:
       - name: cleanup
