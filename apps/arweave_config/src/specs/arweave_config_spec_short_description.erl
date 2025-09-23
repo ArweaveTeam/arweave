@@ -9,8 +9,8 @@
 %%--------------------------------------------------------------------
 %% 
 %%--------------------------------------------------------------------
-init(#{ short_description := SD }, State) ->
-	{ok, State#{ short_description => SD }};
+init(Map = #{ short_description := SD }, State) ->
+	check(Map, SD, State);
 init(Map, State) when is_map(Map) ->
 	{ok, State};
 init(Module, State) when is_atom(Module) ->
@@ -37,7 +37,7 @@ fetch(Module, State) ->
 %%
 %%--------------------------------------------------------------------
 check(_Module, undefined, State) ->
-	{ok, State#{ short_description => undefined }};
+	{ok, State};
 check(_Module, SD, State) when is_binary(SD); is_list(SD) ->
 	{ok, State#{ short_description => SD }};
 check(Module, SD, State) ->

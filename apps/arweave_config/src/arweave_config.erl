@@ -122,9 +122,16 @@
 %%% {ok, Info} = arweave_config:show(Key).
 %%% '''
 %%%
-%%% Finally,   `arweave_config'  service   is  ready,   and  `arweave'
-%%% application  can be  started  safely.  When `arweave'  terminates,
-%%% `arweave_config' is stopped after.
+%%% Finally,   `arweave_config'  service   is  ready. Th last step is
+%%% to notice `arweave_config' application the initialization phase is
+%%% done by calling `arweave_config:runtime()'.
+%%%
+%%% ```
+%%% ok = arweave_config:runtime().
+%%% '''
+%%%
+%%% Other applications  (e.g. `arweave')  can be started  safely. When
+%%% `arweave' terminates, _config' is stopped after.
 %%%
 %%% == Parameters ==
 %%%

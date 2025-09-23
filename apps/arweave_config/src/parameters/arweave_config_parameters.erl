@@ -19,7 +19,6 @@ init() ->
 			configuration_key => [global,init],
 			default => ?DEFAULT_GLOBAL_INIT,
 			type => boolean,
-			short_argument => <<"Start a new weave">>,
 			long_argument => [
 				"Start a new weave."
 			],
@@ -41,7 +40,7 @@ init() ->
 			short_argument => $j,
 			long_argument => <<"-global.data.jobs.sync">>,
 			short_description =>
-				<<"The number of data syncing jobs to run.">>
+				<<"The number of data syncing jobs to run.">>,
 			long_description => [
 				"The number of data syncing jobs to run.",
 				"Each job periodically picks a range and downloads it from peer peers."
