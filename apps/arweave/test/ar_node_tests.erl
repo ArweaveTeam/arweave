@@ -184,6 +184,7 @@ test_persisted_mempool() ->
 	),
 	Config = ar_test_node:stop(),
 	try
+		_ = arweave_config:start(),
 		%% Rejoin the network.
 		%% Expect the pending transactions to be picked up and distributed.
 		ok = application:set_env(arweave, config, Config#config{

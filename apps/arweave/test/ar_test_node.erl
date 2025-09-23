@@ -623,6 +623,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 				double_check_nonce_limiter, serve_wallet_lists | Config#config.enable],
 		debug = true
 	}),
+	_ = arweave_config:start(),
 	ar:start_dependencies(),
 	wait_until_joined(),
 	wait_until_syncs_genesis_data().
@@ -639,6 +640,7 @@ restart_with_config(Config) ->
 
 	update_config(Config),
 
+	_ = arweave_config:start(),
 	ar:start_dependencies(),
 	wait_until_joined().
 
@@ -816,6 +818,7 @@ join_on(#{ node := Node, join_on := JoinOnNode }, Rejoin) ->
 	remote_call(Node, ar_test_node, join, [JoinOnNode, Rejoin], ?REMOTE_CALL_TIMEOUT).
 
 join(JoinOnNode, Rejoin) ->
+	_ = arweave_config:start(),
 	Peer = peer_ip(JoinOnNode),
 	{ok, Config} = application:get_env(arweave, config),
 	case Rejoin of
