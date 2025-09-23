@@ -1,12 +1,102 @@
 %%%===================================================================
-%%% @doc
+%%% @doc Arweave Configuration Data Store.
+%%%
+%%% This module/process is in charge to store the configuration.
+%%% Usually, `arweave_config_spec' is the only process allowed to do
+%%% so, but this rule is not enforced at the moment.
+%%%
+%%% == Features ==
+%%%
+%%% === Dealing with map root value ===
+%%%
+%%% While creating new parameter, a problem will probably arise very
+%%% soon. What if a leaf is also a branch? Let imagine we want to
+%%% create a more flexible way to configure the debugging parameter,
+%%% and permit users to configure debug on some part of the code, the
+%%% implementation would be something like the code below:
+%%%
+%%% ```
+%%% {[global,debug], true}
+%%% {[global,debug,arweave_config], true}
+%%% '''
+%%%
+%%% Unfortunately, this will not work in the current implementation, a
+%%% map. When a value is already present and is not a `map()', then it
+%%% will  be  set  as  `root'  item.  The  `root'  is  represented  as
+%%% underscore character (`_').
+%%%
+%%% ```
+%%% % extracted from arweave_config_store
+%%% Proplist = [
+%%%   {[global,debug], true},
+%%%   {[global,debug,arweave_config, true}
+%%% ].
+%%%
+%%% % converted as map
+%%% Maps = [
+%%%   #{ global => #{ debug => true }},
+%%%   #{ global => #{ debug => #{ arweave_config => true }}}
+%%% ]
+%%%
+%%% % merged as map
+%%% MergedMap = #{
+%%%   global => #{
+%%%     debug => #{
+%%%       '_' => true,
+%%%       arweave_config => true
+%%%     }
+%%%   }
+%%% }
+%%%
+%%% % as JSON
+%%% {
+%%%   "global": {
+%%%     "debug": {
+%%%       "_": true,
+%%%       "arweave_config": true
+%%%     }
+%%%   }
+%%% }
+%%%
+%%% % as YAML
+%%% global:
+%%%   debug:
+%%%     "_": true
+%%%     arweave_config: true
+%%% '''
+%%%
+%%% The key `_' then becomes a reserved key.
+%%%
+%%% == TODO ==
+%%%
+%%% === Single Line Format Support ===
+%%%
+%%% Instead of exporting classic JSON format, an easier one can be
+%%% created, where one value is attributed on one line:
+%%%
+%%% ```
+%%% global.debug=true
+%%% global.data.directory="."
+%%% peers.[127.0.0.1:1984].enabled=true
+%%% '''
+%%%
+%%% The separatator could be `=' or a null char (e.g `\t', ` '). One
+%%% huge advantage is no external module will be required to
+%%% parse/decode, and the format is pretty close from what we already
+%%% have in the database.
+%%%
+%%% === JSON Support ===
+%%%
+%%% The key present in the store can have different type, usually
+%%% `atom()', `binary()' and/or `integer()'. Encoder like `jiffy' will
+%%% not encode `integer()' key to JSON string directly, then, a
+%%% conversion step will be required.
+%%%
 %%% @end
 %%%===================================================================
 -module(arweave_config_store).
--vsn(1).
--compile([export_all]).
--compile({no_auto_import,[get/1]}).
 -behavior(gen_server).
+-vsn(1).
 -export([
 	start_link/0,
 	get/1,
@@ -21,6 +111,7 @@
 	handle_cast/2,
 	handle_info/2
 ]).
+-compile({no_auto_import,[get/1]}).
 -record(key, {id}).
 -record(value, {value, meta}).
 -include_lib("kernel/include/logger.hrl").
@@ -208,36 +299,60 @@ map_path2_test() ->
 %% @hidden
 %%--------------------------------------------------------------------
 map_merge(ListOfMap) ->
-	lists:foldr(fun(X, A) -> map_merge(X, A) end, #{}, ListOfMap).
+	lists:foldr(
+		fun(X, A) ->
+			map_merge(X, A)
+		end,
+		#{},
+		ListOfMap
+	).
 
 map_merge(A, B) when is_map(A), is_map(B) ->
 	I = maps:iterator(A),
-	map_merge2(I, B).
+	map_merge2(I, B);
+map_merge(A, B) when is_map(A) ->
+	A#{ '_' => B }.
 
 map_merge2(none, B) -> B;
-map_merge2({K, V, I2}, B) when is_map(V), is_map_key(K, B) ->
-	BV = maps:get(K, B, #{}),
-	Result = map_merge(V, BV),
-	map_merge2(I2, B#{ K => Result });
-map_merge2({K, V, I2}, B) when is_map_key(K, B) ->
-	BV = maps:get(K, B),
-	case V =:= BV of
-		true ->
-			map_merge2(I2, B#{ K => V });
-		false ->
-			?LOG_WARNING("overwrite value: ~p", [K, V, BV]),
-			map_merge2(I2, B#{ K => V })
-	end;
+map_merge2({K, V, I2}, B)
+	when is_map(V), is_map_key(K, B) ->
+		BV = maps:get(K, B, #{}),
+		Result = map_merge(V, BV),
+		map_merge2(I2, B#{ K => Result });
+map_merge2({K, V, I2}, B)
+	when is_map_key(K, B) ->
+		BV = maps:get(K, B),
+		case V =:= BV of
+			true ->
+				map_merge2(I2, B#{ K => V });
+			false ->
+				map_merge3(I2, B, K, BV, V)
+		end;
 map_merge2({K, V, I2}, B) ->
 	map_merge2(I2, B#{ K => V });
 map_merge2(I = [0|_], B) ->
 	I2 = maps:next(I),
 	map_merge2(I2, B).
 
+map_merge3(I2, B, K, BV, V) when is_map(BV) ->
+	case is_map_key('_', BV) of
+		true ->
+			OV = maps:get('_', BV),
+			?LOG_WARNING("overwrite root key '~p' (_) value '~p' with '~p'", [K, OV, V]),
+			map_merge2(I2, B#{ K => BV#{ '_' => V }});
+		false ->
+			map_merge2(I2, B#{ K => BV#{ '_' => V }})
+	end;
+map_merge3(I2, B, K, BV, V) ->
+	?LOG_WARNING("overwrite value: ~p", [K, V, BV]),
+	map_merge2(I2, B#{ K => V }).
+
+
 map_merge_test() ->
 	?assertEqual(
 		#{
 			1 => #{
+			       '_' => 1,
 				2 => test,
 				3 => data
 			},
@@ -248,6 +363,7 @@ map_merge_test() ->
 			}
 		},
 		map_merge([
+			#{ 1 => 1 },
 			#{ 1 => #{ 2 => test } },
 			#{ 1 => #{ 3 => data } },
 			#{ t => #{ 1 => #{ test => data }}}

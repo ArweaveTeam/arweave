@@ -92,6 +92,7 @@
 	spec/0,
 	spec/1,
 	spec_to_argparse/0,
+	get_default/1,
 	get_legacy/0,
 	get_environments/0,
 	get_environment/1,
@@ -426,6 +427,21 @@ spec(ParameterSpec) ->
 	case ets:select(?MODULE, [{Pattern, Guard, Select}]) of
 		[{Parameter, Spec}] ->
 			{ok, Parameter, Spec};
+		_Elsewise ->
+			{error, not_found}
+	end.
+
+%%--------------------------------------------------------------------
+%% @doc returns default parameter value if defined.
+%% @end
+%%--------------------------------------------------------------------
+get_default(Parameter) ->
+	Pattern = {'$1', #{ default => '$2'}},
+	Guard = [{'=:=', '$1', Parameter}],
+	Select = ['$2'],
+	case ets:select(?MODULE, [{Pattern, Guard, Select}]) of
+		[Default] ->
+			{ok, Default};
 		_Elsewise ->
 			{error, not_found}
 	end.
