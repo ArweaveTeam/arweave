@@ -125,7 +125,7 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals) ->
 						%% Skipping peer because we hit a 429 and put it on cooldown.
 						ok;
 					{error, Reason} ->
-						?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
+						ar_http_iface_client:log_failed_request(Reason, [{event, failed_to_fetch_peer_intervals},
 							{parent, Parent},
 							{peer, ar_util:format_peer(Peer)},
 							{reason, io_lib:format("~p", [Reason])}]),
@@ -161,7 +161,7 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals) ->
 				(ok, Acc) ->
 					Acc;
 				(Error, Acc) ->
-					?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
+					ar_http_iface_client:log_failed_request(Error, [{event, failed_to_fetch_peer_intervals},
 						{parent, Parent},
 						{peer, unknown},
 						{reason, io_lib:format("~p", [Error])}]),

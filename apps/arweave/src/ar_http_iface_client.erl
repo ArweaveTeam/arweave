@@ -1444,5 +1444,9 @@ log_failed_request(Reason, Log) ->
 	case Reason of
 		{error,{shutdown,econnrefused}} -> ok;
 		{error,{shutdown,timeout}} -> ok;
+		{error,timeout} -> ok;
+		{error,{shutdown,ehostunreach}} -> ok;
+		{error,{stream_error,closed}} -> ok;
+		{error,{stream_error,closing}} -> ok;
 		_ -> ?LOG_DEBUG(Log)
 	end.

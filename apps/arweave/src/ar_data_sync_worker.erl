@@ -291,10 +291,10 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args, State) ->
 						{error, {ok, {{<<"404">>, _}, _, _, _, _}} = Reason} ->
 							{error, Reason};
 						{error, Reason} ->
-							?LOG_DEBUG([{event, failed_to_fetch_chunk},
-									{peer, ar_util:format_peer(Peer)},
-									{start_offset, Start2}, {end_offset, End},
-									{reason, io_lib:format("~p", [Reason])}]),
+							ar_http_iface_client:log_failed_request({error, Reason}, [{event, failed_to_fetch_chunk},
+								{peer, ar_util:format_peer(Peer)},
+								{start_offset, Start2}, {end_offset, End},
+								{reason, io_lib:format("~p", [Reason])}]),
 							{error, Reason}
 					end
 			end
