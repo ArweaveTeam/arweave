@@ -473,6 +473,12 @@ spec() ->
 %%--------------------------------------------------------------------
 %% @doc Get a value from the configuration.
 %%
+%% Note: the behavior of this function is not the same depending of
+%% the kind of parameter desired. Indeed, to help the transition to
+%% the new configuration format, when an `atom' is set as first
+%% argument,   `arweave_config'  will   act  as   proxy  to   the  old
+%% configuration method (using a record).
+%%
 %% == Examples ==
 %%
 %% ```
@@ -502,7 +508,12 @@ get(Key) when is_atom(Key) ->
 get(Key) ->
 	case arweave_config_parser:key(Key) of
 		{ok, Parameter} ->
-			arweave_config_store:get(Parameter);
+			case arweave_config_store:get(Parameter) of
+				{ok, Value} ->
+					{ok, Value};
+				_Elsewise -> 
+					arweave_config_spec:get_default(Parameter)
+			end;
 		Elsewise ->
 			Elsewise
 	end.
@@ -515,22 +526,22 @@ get(Key) ->
 %%
 %% ```
 %% > get(<<"global.debug">>, true).
-%% {ok, false}
+%% false
 %%
 %% > get([global, debug], true).
-%% {ok, false}
+%% false
 %%
-%% > get([test] true).
-%% {ok, true}
+%% > get([test], true).
+%% true
 %% '''
 %% @end
 %%--------------------------------------------------------------------
 get(Key, Default) ->
 	case get(Key) of
 		{ok, Value} ->
-			{ok, Value};
+			Value;
 		_Elsewise ->
-			{ok, Default}
+			Default
 	end.
 
 %%--------------------------------------------------------------------
