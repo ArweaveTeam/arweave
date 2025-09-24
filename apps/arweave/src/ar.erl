@@ -48,18 +48,21 @@ main(Args) ->
 	% load the arguments from the command line using
 	% arweave_config.
 	%   ok = arweave_config_arguments:load(Args)
-	%
+
 	% load the configuration if it present/configured in
 	% the environment or arguments. Also check if the default
 	% configuration file (e.g. config.json) is present in the
 	% current path.
 	%   ok = arweave_config_file:load(),
-	%
+
 	% we can't deal with everything right now, then we can export
 	% the configuration as legacy (record).
 	%   {ok, LegacyConfig} = arweave_config:export(legacy),
 	%   start(LegacyConfig).
-	%
+	
+	% let parse legacy argument/configuration format
+	ParsedConfiguration = parse_config_file(Args, [], #config{}),
+	
 	% the startup phase is over, we got parameters from
 	% environments, arguments and configuration file(s).
 	% arweave_config can now switch to runtime mode. All
@@ -68,8 +71,8 @@ main(Args) ->
 	ok = arweave_config:runtime(),
 
 	% now, let start arweave using the legacy configuration and
-	% arguments. The new method is not readyt yet.
-	start(parse_config_file(Args, [], #config{})).
+	% arguments. The new method is not ready yet.
+	start(ParsedConfiguration).
 
 show_help() ->
 	io:format("Usage: arweave-server [options]~n"),
