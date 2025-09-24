@@ -46,7 +46,9 @@
 	get/0,
 	get/1,
 	set/2,
+	reset/0,
 	import/0,
+	import/1,
 	export/0
 ]).
 -export([init/1, terminate/2]).
@@ -177,6 +179,20 @@ import() ->
 	gen_server:cast(?MODULE, import).
 
 %%--------------------------------------------------------------------
+%% @doc import #config{} record and set it as new state.
+%% @end
+%%--------------------------------------------------------------------
+import(Config) ->
+	gen_server:cast(?MODULE, {import, Config}).
+
+%%--------------------------------------------------------------------
+%% @doc reset the legacy configuration by using the default values.
+%% @end
+%%--------------------------------------------------------------------
+reset() ->
+	gen_server:cast(?MODULE, reset).
+
+%%--------------------------------------------------------------------
 %% @doc export the current configuration as `#config{}' record.
 %% @end
 %%--------------------------------------------------------------------
@@ -293,6 +309,21 @@ handle_cast(Msg = import, State) ->
 		_ ->
 			{noreply, State}
 	end;
+handle_cast(Msg = {import, Config}, State) ->
+	case import_config(Config) of
+		{ok, NewState} ->
+			{noreply, NewState};
+		_ ->
+			{noreply, State}
+	end;
+handle_cast(Msg = reset, State) ->
+	?LOG_DEBUG([{message, Msg}]),
+	case reset_config() of
+		{ok, NewState} ->
+			{noreply, NewState};
+		_ ->
+			{noreply, State}
+	end;
 handle_cast(Msg, State) ->
 	?LOG_ERROR("received: ~p", [Msg]),
 	{noreply, State}.
@@ -360,3 +391,13 @@ import_config() ->
 			Elsewise
 	end.
 
+import_config(Config) when is_record(Config, config) ->
+	Proplist = config_to_proplist(Config),
+	{ok, Proplist};
+import_config(Config) ->
+	{error, Config}.
+
+% reset internal configuration using #config{} record.
+reset_config() ->
+	Proplist = config_to_proplist(#config{}),
+	{ok, Proplist}.

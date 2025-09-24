@@ -233,8 +233,10 @@
 
 %---------------------------------------------------------------------
 % OPTIONAL: a function to check the value attributed with the key.
+% @TODO: add key/value origin/source .
 %---------------------------------------------------------------------
 -callback check(Key, Value) -> Return when
+	% From :: environment | argument | legacy | api | atom(),
 	Key :: key(),
 	Value :: term(),
 	Return :: ok
