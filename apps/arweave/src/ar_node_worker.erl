@@ -160,7 +160,7 @@ init([]) ->
 	]),
 	gen_server:cast(?MODULE, compute_mining_difficulty),
 	{ok, #{
-		miner_2_6 => undefined,
+		miner_state => undefined,
 		io_threads => [],
 		automine => false,
 		tags => [],
@@ -331,7 +331,7 @@ handle_call({set_reward_addr, Addr}, _From, State) ->
 	{reply, ok, State#{ reward_addr => Addr }}.
 
 handle_cast({found_solution, miner, _Solution, _PoACache, _PoA2Cache},
-		#{ automine := false, miner_2_6 := undefined } = State) ->
+		#{ automine := false, miner_state := undefined } = State) ->
 	{noreply, State};
 handle_cast({found_solution, Source, Solution, PoACache, PoA2Cache}, State) ->
 	[{_, PrevH}] = ets:lookup(node_state, current),
@@ -742,7 +742,7 @@ handle_task(compute_mining_difficulty, State) ->
 		_ ->
 			ok
 	end,
-	case maps:get(miner_2_6, State) of
+	case maps:get(miner_state, State) of
 		undefined ->
 			ok;
 		_ ->
@@ -789,9 +789,13 @@ get_max_block_size([{_BH, PrevWeaveSize, _TXRoot} | BI], WeaveSize, Max) ->
 	get_max_block_size(BI, PrevWeaveSize, Max2).
 
 apply_block(State) ->
+	{ok, Config} = application:get_env(arweave, config),
+	AllowRebase = Config#config.allow_rebase,
 	case ar_block_cache:get_earliest_not_validated_from_longest_chain(block_cache) of
-		not_found ->
+		not_found when AllowRebase == true ->
 			maybe_rebase(State);
+		not_found when AllowRebase == false ->
+			{noreply, State};
 		Args ->
 			%% Cancel the pending rebase, if there is one.
 			State2 = State#{ pending_rebase => false },
@@ -1635,14 +1639,14 @@ return_orphaned_txs_to_mempool(H, BaseH) ->
 
 %% @doc Stop the current mining session and optionally start a new one,
 %% depending on the automine setting.
-maybe_reset_miner(#{ miner_2_6 := Miner_2_6, automine := false } = State) ->
-	case Miner_2_6 of
+maybe_reset_miner(#{ miner_state := MinerState, automine := false } = State) ->
+	case MinerState of
 		undefined ->
 			ok;
 		_ ->
 			ar_mining_server:pause()
 	end,
-	State#{ miner_2_6 => undefined };
+	State#{ miner_state => undefined };
 maybe_reset_miner(State) ->
 	start_mining(State).
 
@@ -1651,10 +1655,10 @@ start_mining(State) ->
 	[{_, MerkleRebaseThreshold}] = ets:lookup(node_state,
 			merkle_rebase_support_threshold),
 	[{_, Height}] = ets:lookup(node_state, height),
-	case maps:get(miner_2_6, State) of
+	case maps:get(miner_state, State) of
 		undefined ->
 			ar_mining_server:start_mining({DiffPair, MerkleRebaseThreshold, Height}),
-			State#{ miner_2_6 => running };
+			State#{ miner_state => running };
 		_ ->
 			ar_mining_server:set_difficulty(DiffPair),
 			ar_mining_server:set_merkle_rebase_threshold(MerkleRebaseThreshold),

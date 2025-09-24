@@ -279,6 +279,8 @@
 	rocksdb_wal_sync_interval_s = ?DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S,
 	%% openssl (will be removed), fused, hiopt_m4
 	vdf = openssl,
+	%% Turn on/off the rebasing check. Only disabled in tests.
+	allow_rebase = true,
 
 	% Shutdown procedures
 	shutdown_tcp_connection_timeout = ?SHUTDOWN_TCP_CONNECTION_TIMEOUT,

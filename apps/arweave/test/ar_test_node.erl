@@ -240,7 +240,8 @@ update_config(Config) ->
 		local_peers = Config#config.local_peers,
 		mine = Config#config.mine,
 		storage_modules = Config#config.storage_modules,
-		repack_in_place_storage_modules = Config#config.repack_in_place_storage_modules
+		repack_in_place_storage_modules = Config#config.repack_in_place_storage_modules,
+		allow_rebase = Config#config.allow_rebase
 	},
 	ok = application:set_env(arweave, config, Config2),
 	?LOG_INFO("Updated Config:"),
@@ -333,7 +334,9 @@ base_cm_config(Peers) ->
 		coordinated_mining = true,
 		cm_api_secret = <<"test_coordinated_mining_secret">>,
 		cm_poll_interval = 2000,
-		disable_replica_2_9_device_limit = true
+		disable_replica_2_9_device_limit = true,
+		%% Disable rebasing by default to make the tests more reliable.
+		allow_rebase = false
 	}.
 
 mine() ->
@@ -621,6 +624,8 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		header_sync_jobs = 2,
 		enable = [search_in_rocksdb_when_mining, serve_tx_data_without_limits,
 				double_check_nonce_limiter, serve_wallet_lists | Config#config.enable],
+		%% Disable rebasing by default to make the tests more reliable.
+		allow_rebase = false,
 		debug = true
 	}),
 	ar:start_dependencies(),
