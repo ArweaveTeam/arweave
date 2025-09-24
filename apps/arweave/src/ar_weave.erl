@@ -162,10 +162,11 @@ add_mainnet_v1_genesis_txs() ->
 	case filelib:is_dir("genesis_data/genesis_txs") of
 		true ->
 			{ok, Files} = file:list_dir("genesis_data/genesis_txs"),
+			{ok, Config} = application:get_env(arweave, config),
 			lists:foldl(
 				fun(F, Acc) ->
 					SourcePath = "genesis_data/genesis_txs/" ++ F,
-					TargetPath = arweave_config:get(data_dir) ++ "/" ++ ?TX_DIR ++ "/" ++ F,
+					TargetPath = Config#config.data_dir ++ "/" ++ ?TX_DIR ++ "/" ++ F,
 					file:copy(SourcePath, TargetPath),
 					[ar_util:decode(hd(string:split(F, ".")))|Acc]
 				end,

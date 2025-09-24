@@ -120,27 +120,14 @@ new_keyfile(KeyType, WalletName) ->
 	end.
 
 wallet_filepath(Wallet) ->
-	Filename = lists:flatten([
-		"arweave_keyfile_",
-		binary_to_list(Wallet),
-		".json"
-	]),
-	filename:join([
-		arweave_config:get(data_dir),
-		?WALLET_DIR,
-		Filename
-	]).
+	{ok, Config} = application:get_env(arweave, config),
+	Filename = lists:flatten(["arweave_keyfile_", binary_to_list(Wallet), ".json"]),
+	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
 
 wallet_filepath2(Wallet) ->
-	Filename = lists:flatten([
-		binary_to_list(Wallet),
-		".json"
-	]),
-	filename:join([
-		arweave_config:get(data_dir),
-		?WALLET_DIR,
-		Filename
-	]).
+	{ok, Config} = application:get_env(arweave, config),
+	Filename = lists:flatten([binary_to_list(Wallet), ".json"]),
+	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
 
 %% @doc Read the keyfile for the key with the given address from disk.
 %% Return not_found if arweave_keyfile_[addr].json or [addr].json is not found
@@ -320,7 +307,8 @@ base64_address_with_optional_checksum_to_decoded_address_safe(AddrBase64)->
 %% @doc Read a wallet of one of the given types from disk. Files modified later are prefered.
 %% If no file is found, create one of the type standing first in the list.
 get_or_create_wallet(Types) ->
-	WalletDir = filename:join(arweave_config:get(data_dir), ?WALLET_DIR),
+	{ok, Config} = application:get_env(arweave, config),
+	WalletDir = filename:join(Config#config.data_dir, ?WALLET_DIR),
 	Entries =
 		lists:reverse(lists:sort(filelib:fold_files(
 			WalletDir,

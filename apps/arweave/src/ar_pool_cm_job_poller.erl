@@ -73,7 +73,8 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 push_cm_jobs_to_cm_peers(Jobs) ->
-	Peers = arweave_config:get(cm_peers),
+	{ok, Config} = application:get_env(arweave, config),
+	Peers = Config#config.cm_peers,
 	Payload = ar_serialize:jsonify(ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
 	push_cm_jobs_to_cm_peers(Payload, Peers).
 

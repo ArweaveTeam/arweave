@@ -47,7 +47,8 @@ req(Args) ->
 req2(#{ peer := {_, _} } = Args) ->
 	req(Args, false);
 req2(#{ peer := Peer } = Args) ->
-	case arweave_config:get(port) == element(5, Peer) of
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.port == element(5, Peer) of
 		true ->
 			%% Do not block requests to self.
 			req(Args, false);
@@ -261,6 +262,7 @@ terminate(Reason, #state{ status_by_pid = StatusByPID }) ->
 %%% ==================================================================
 
 open_connection(#{ peer := Peer } = Args) ->
+	{ok, Config} = application:get_env(arweave, config),
 	{IPOrHost, Port} = get_ip_port(Peer),
 	ConnectTimeout = maps:get(connect_timeout, Args,
 			maps:get(timeout, Args, ?HTTP_REQUEST_CONNECT_TIMEOUT)),
@@ -268,20 +270,20 @@ open_connection(#{ peer := Peer } = Args) ->
 		retry => 0,
 		connect_timeout => ConnectTimeout,
 		http_opts => #{
-			closing_timeout => arweave_config:get('http_client.http.closing_timeout'),
-			keepalive => arweave_config:get('http_client.http.keepalive')
+			closing_timeout => Config#config.'http_client.http.closing_timeout',
+			keepalive => Config#config.'http_client.http.keepalive'
 		},
 		tcp_opts => [
-			{delay_send, arweave_config:get('http_client.tcp.delay_send')},
-			{keepalive, arweave_config:get('http_client.tcp.keepalive')},
+			{delay_send, Config#config.'http_client.tcp.delay_send'},
+			{keepalive, Config#config.'http_client.tcp.keepalive'},
 			{linger, {
-			   		arweave_config:get('http_client.tcp.linger'),
-					arweave_config:get('http_client.tcp.linger_timeout')
+					Config#config.'http_client.tcp.linger',
+					Config#config.'http_client.tcp.linger_timeout'
 				}
 			},
-			{nodelay, arweave_config:get('http_client.tcp.nodelay')},
-			{send_timeout_close, arweave_config:get('http_client.tcp.send_timeout_close')},
-			{send_timeout, arweave_config:get('http_client.tcp.send_timeout')}
+			{nodelay, Config#config.'http_client.tcp.nodelay'},
+			{send_timeout_close, Config#config.'http_client.tcp.send_timeout_close'},
+			{send_timeout, Config#config.'http_client.tcp.send_timeout'}
 		]
 	},
 	gun:open(IPOrHost, Port, GunOpts).
@@ -418,7 +420,8 @@ await_response( #{ pid := PID, stream_ref := Ref, timeout := Timeout
 	end.
 
 log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
-	case lists:member(http_logging, arweave_config:get(enable)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(http_logging, Config#config.enable) of
 		true when Type == warn ->
 			?LOG_WARNING([
 				{event, Event},

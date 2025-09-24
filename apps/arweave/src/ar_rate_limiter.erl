@@ -26,7 +26,8 @@ start_link() ->
 %% @doc Hang until it is safe to make another request to the given Peer with the given Path.
 %% The limits are configured in include/ar_blacklist_middleware.hrl.
 throttle(Peer, Path) ->
-	case lists:member(Peer, arweave_config:get(local_peers)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(Peer, Config#config.local_peers) of
 		true ->
 			ok;
 		false ->

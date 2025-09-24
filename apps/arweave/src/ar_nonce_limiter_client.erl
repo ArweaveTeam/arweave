@@ -59,7 +59,8 @@ init([]) ->
 		true ->
 			gen_server:cast(?MODULE, pull)
 	end,
-	{ok, #state{ remote_servers = queue:from_list(arweave_config:get(nonce_limiter_server_trusted_peers)) }}.
+	{ok, Config} = application:get_env(arweave, config),
+	{ok, #state{ remote_servers = queue:from_list(Config#config.nonce_limiter_server_trusted_peers) }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),

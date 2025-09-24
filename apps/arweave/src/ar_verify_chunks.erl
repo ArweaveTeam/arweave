@@ -43,23 +43,21 @@ name(StoreID) ->
 %%%===================================================================
 
 init(StoreID) ->
-	?LOG_INFO([
-		{event, verify_chunk_storage_started},
-		{store_id, StoreID},
-		{mode, arweave_config:get(verify)},
-		{chunk_samples, arweave_config:get(verify_samples)}
-	]),
+	{ok, Config} = application:get_env(arweave, config),
+	?LOG_INFO([{event, verify_chunk_storage_started},
+		{store_id, StoreID}, {mode, Config#config.verify},
+		{chunk_samples, Config#config.verify_samples}]),
 	{StartOffset, EndOffset} = ar_storage_module:get_range(StoreID),
 	gen_server:cast(self(), sample),
 	{ok, #state{
-		mode = arweave_config:get(verify),
+		mode = Config#config.verify,
 		store_id = StoreID,
 		packing = ar_storage_module:get_packing(StoreID),
 		start_offset = StartOffset,
 		end_offset = EndOffset,
 		cursor = StartOffset,
 		ready = is_ready(EndOffset),
-		chunk_samples = arweave_config:get(verify_samples),
+		chunk_samples = Config#config.verify_samples,
 		verify_report = #verify_report{
 			start_time = erlang:system_time(millisecond)
 		}

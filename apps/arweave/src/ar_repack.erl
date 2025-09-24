@@ -62,6 +62,8 @@ name(StoreID) ->
 	list_to_atom("ar_repack_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
+    {ok, Config} = application:get_env(arweave, config),
+    
     RepackInPlaceWorkers = lists:flatmap(
         fun({StorageModule, Packing}) ->
             StoreID = ar_storage_module:id(StorageModule),
@@ -78,7 +80,7 @@ register_workers() ->
 
 			[RepackWorker, RepackIOWorker]
         end,
-        arweave_config:get(repack_in_place_storage_modules)
+        Config#config.repack_in_place_storage_modules
     ),
 
     RepackInPlaceWorkers.
@@ -98,8 +100,9 @@ init({StoreID, ToPacking}) ->
 	PaddedModuleEnd = ar_block:get_chunk_padded_offset(ModuleEnd),
     Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
 
-	BatchSize = arweave_config:get(repack_batch_size),
-	CacheSize = arweave_config:get(repack_cache_size_mb),
+	{ok, Config} = application:get_env(arweave, config),
+	BatchSize = Config#config.repack_batch_size,
+	CacheSize = Config#config.repack_cache_size_mb,
 	NumEntropyOffsets = calculate_num_entropy_offsets(CacheSize, BatchSize),
 	gen_server:cast(self(), repack),
 	gen_server:cast(self(), count_states),

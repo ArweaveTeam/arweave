@@ -209,7 +209,8 @@ list_connections(gun) ->
 		{_, P, _, _} <- supervisor:which_children(gun_sup)
 	]);
 list_connections(cowboy) ->
-	Filters = [{'=:=', peer_port, arweave_config:get(port)}],
+	{ok, Config} = application:get_env(arweave, config),
+	Filters = [{'=:=', peer_port, Config#config.port}],
 	SocketsInfo = connections(#{ filters => Filters }),
 	[ S || #{ socket := S } <- SocketsInfo ].
 
@@ -239,7 +240,8 @@ killers_connections_init(Sockets) ->
 
 killers_connections_loop([]) -> ok;
 killers_connections_loop(Killers) ->
-	TcpTimeout = 1000*arweave_config:get(shutdown_tcp_connection_timeout),
+	{ok, Config} = application:get_env(arweave, config),
+	TcpTimeout = 1000*Config#config.shutdown_tcp_connection_timeout,
 	receive
 		{'EXIT', Pid, _} ->
 			Filter = fun
@@ -287,7 +289,8 @@ killer_init(Socket) ->
 	?LOG_DEBUG([{socket, Socket}, {pid, self()}, {action, started}]),
 	erlang:process_flag(trap_exit, true),
 	erlang:link(Socket),
-	Mode = arweave_config:get(shutdown_tcp_mode),
+	{ok, Config} = application:get_env(arweave, config),
+	Mode = Config#config.shutdown_tcp_mode,
 	State = socket_info(Socket),
 	NewState = killer_loop(State#{
 		counter => 0,

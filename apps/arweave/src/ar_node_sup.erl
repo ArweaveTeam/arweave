@@ -90,7 +90,8 @@ ar_blacklist_middleware_spec() ->
 %% configuration.
 %%--------------------------------------------------------------------
 ar_semaphores_spec() ->
-	Semaphores = arweave_config:get(semaphores),
+	{ok, Config} = application:get_env(arweave, config),
+	Semaphores = Config#config.semaphores,
 	[ ar_semaphore_spec(Name, N) || {Name, N} <- maps:to_list(Semaphores) ].
 
 ar_semaphore_spec(Name, N) ->

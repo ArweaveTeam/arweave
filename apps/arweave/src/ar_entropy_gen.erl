@@ -44,6 +44,7 @@ name(StoreID) ->
 	list_to_atom("ar_entropy_gen_" ++ ar_storage_module:label(StoreID)).
 
 register_workers(Module) ->
+	{ok, Config} = application:get_env(arweave, config),
 	ConfiguredWorkers = lists:filtermap(
 		fun(StorageModule) ->
 				StoreID = ar_storage_module:id(StorageModule),
@@ -59,7 +60,7 @@ register_workers(Module) ->
 						false
 				end
 		end,
-		arweave_config:get(storage_modules)
+		Config#config.storage_modules
 	),
 	 
 	RepackInPlaceWorkers = lists:filtermap(
@@ -82,7 +83,7 @@ register_workers(Module) ->
 						false
 				end
 		end,
-		arweave_config:get(repack_in_place_storage_modules)
+		Config#config.repack_in_place_storage_modules
 	),
 
 	ConfiguredWorkers ++ RepackInPlaceWorkers.

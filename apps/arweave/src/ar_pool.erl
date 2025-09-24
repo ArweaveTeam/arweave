@@ -66,7 +66,8 @@ start_link() ->
 
 %% @doc Return true if we are a pool client.
 is_client() ->
-	arweave_config:get(is_pool_client) == true.
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.is_pool_client == true.
 
 %% @doc Return a list of up to two most recently cached VDF session key, seed pairs.
 get_current_session_key_seed_pairs() ->
@@ -96,13 +97,15 @@ post_partial_solution(Solution) ->
 
 %% @doc Return the pool server as a "peer" recognized by ar_http_iface_client.
 pool_peer() ->
-	{pool, arweave_config:get(pool_server_address)}.
+	{ok, Config} = application:get_env(arweave, config),
+	{pool, Config#config.pool_server_address}.
 
 %% @doc Process the set of coordinated mining jobs received from the pool.
 process_cm_jobs(Jobs, Peer) ->
 	#pool_cm_jobs{ h1_to_h2_jobs = H1ToH2Jobs, h1_read_jobs = H1ReadJobs } = Jobs,
+	{ok, Config} = application:get_env(arweave, config),
 	Partitions = ar_mining_io:get_partitions(infinity),
-	case arweave_config:get(mine) of
+	case Config#config.mine of
 		true ->
 			process_h1_to_h2_jobs(H1ToH2Jobs, Peer, Partitions);
 		_ ->

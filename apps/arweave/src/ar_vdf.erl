@@ -17,7 +17,8 @@ step_number_to_salt_number(StepNumber) ->
 compute(StartStepNumber, PrevOutput, IterationCount) ->
 	Salt = step_number_to_salt_number(StartStepNumber - 1),
 	SaltBinary = << Salt:256 >>,
-	case arweave_config:get(vdf) of
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.vdf of
 		openssl ->
 			ar_vdf_nif:vdf_sha2_nif(SaltBinary, PrevOutput, ?VDF_CHECKPOINT_COUNT_IN_STEP - 1, 0,
 					IterationCount);

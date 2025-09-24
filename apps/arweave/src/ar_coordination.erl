@@ -104,13 +104,15 @@ garbage_collect() ->
 
 %% Return true if we are an exit peer in the coordinated mining setup.
 is_exit_peer() ->
-	arweave_config:get(coordinated_mining) == true
-		andalso arweave_config:get(cm_exit_peer) == not_set.
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.coordinated_mining == true andalso
+			Config#config.cm_exit_peer == not_set.
 
 %% Return true if we are a CM miner in the coordinated mining setup.
 %% A CM miner may be but does not have to be an exit node.
 is_coordinated_miner() ->
-	arweave_config:get(coordinated_mining) == true.
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.coordinated_mining == true.
 
 %% @doc Return a list of unique partitions including local partitions and all of
 %% external (relevant pool peers') partitions.
@@ -160,15 +162,17 @@ get_cluster_partitions_list() ->
 %%%===================================================================
 
 init([]) ->
+	{ok, Config} = application:get_env(arweave, config),
+
 	ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
 	State = #state{
 		last_peer_response = #{}
 	},
-	State2 = case arweave_config:get(coordinated_mining) of
+	State2 = case Config#config.coordinated_mining of
 		false ->
 			State;
 		true ->
-			case arweave_config:get(cm_exit_peer) of
+			case Config#config.cm_exit_peer of
 				not_set ->
 					ar:console(
 						"This node is configured as a Coordinated Mining Exit Node. If this is "
@@ -182,9 +186,7 @@ init([]) ->
 			}
 	end,
 	{ok, State2#state{
-			out_batch_timeout = arweave_config:get(cm_out_batch_timeout) 
-		}
-	}.
+		out_batch_timeout = Config#config.cm_out_batch_timeout }}.
 
 %% Helper function to see state while testing and later for monitoring API
 handle_call(get_public_state, _From, State) ->
@@ -276,22 +278,19 @@ handle_cast({computed_h2_for_peer, Candidate}, State) ->
 	{noreply, State};
 
 handle_cast(refetch_peer_partitions, State) ->
-	Peers = arweave_config:get(cm_peers),
+	{ok, Config} = application:get_env(arweave, config),
+	Peers = Config#config.cm_peers,
 	Peers2 =
-		case arweave_config:get(cm_exit_peer) == not_set
-				orelse lists:member(arweave_config:get(cm_exit_peer), Peers) of
+		case Config#config.cm_exit_peer == not_set
+				orelse lists:member(Config#config.cm_exit_peer, Peers) of
 			true ->
 				%% Either we are the exit node or the exit node
 				%% is already configured as yet another mining peer.
 				Peers;
 			false ->
-				[arweave_config:get(cm_exit_peer) | Peers]
+				[Config#config.cm_exit_peer | Peers]
 		end,
-	ar_util:cast_after(
-		arweave_config:get(cm_poll_interval),
-		?MODULE,
-		refetch_peer_partitions
-	),
+	ar_util:cast_after(Config#config.cm_poll_interval, ?MODULE, refetch_peer_partitions),
 	refetch_peer_partitions(Peers2),
 	{noreply, State};
 

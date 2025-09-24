@@ -414,6 +414,7 @@ test_replica_2_9() ->
 			{ar_block:partition_size(), 0, Packing},
 			{ar_block:partition_size(), 1, Packing}
 	],
+	{ok, Config} = application:get_env(arweave, config),
 	try
 		ar_test_node:start(#{ reward_addr => RewardAddr, storage_modules => StorageModules }),
 		StoreID1 = ar_storage_module:id(lists:nth(1, StorageModules)),
@@ -474,7 +475,7 @@ test_replica_2_9() ->
 		assert_get(P5, 16 * ?DATA_CHUNK_SIZE, StoreID2),
 		?assertNotEqual(Entropy4, Entropy5)
 	after
-		ok
+		ok = application:set_env(arweave, config, Config)
 	end.
 
 assert_get(Expected, Offset, StoreID) ->

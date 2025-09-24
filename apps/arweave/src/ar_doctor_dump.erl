@@ -23,7 +23,8 @@ dump([IncludeTXs, H, MinHeight, DataDir, OutputDir]) ->
 	ok = filelib:ensure_dir(filename:join([OutputDir, "blocks", "dummy"])),
 	ok = filelib:ensure_dir(filename:join([OutputDir, "txs", "dummy"])),
 
-	arweave_config:set(data_dir, DataDir),
+	Config = #config{data_dir = DataDir},
+	application:set_env(arweave, config, Config),
 	ar_kv_sup:start_link(),
 	ar_storage_sup:start_link(),
 

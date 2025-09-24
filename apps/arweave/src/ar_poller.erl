@@ -61,10 +61,11 @@ init(Workers) ->
 		false ->
 			ok
 	end,
+	{ok, Config} = application:get_env(arweave, config),
 	{ok, #state{ 
 		workers = Workers,
 		worker_count = length(Workers),
-		in_sync_trusted_peers = sets:from_list(arweave_config:get(peers)) 
+		in_sync_trusted_peers = sets:from_list(Config#config.peers) 
 	}}.
 
 handle_call(Request, _From, State) ->
@@ -96,7 +97,8 @@ handle_cast(collect_peers, State) ->
 
 handle_cast({peer_out_of_sync_timeout, Peer}, State) ->
 	#state{ in_sync_trusted_peers = Set } = State,
-	case lists:member(Peer, arweave_config:get(peers)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(Peer, Config#config.peers) of
 		false ->
 			{noreply, State};
 		true ->
@@ -105,7 +107,8 @@ handle_cast({peer_out_of_sync_timeout, Peer}, State) ->
 
 handle_cast({peer_out_of_sync, Peer}, State) ->
 	#state{ in_sync_trusted_peers = Set } = State,
-	case lists:member(Peer, arweave_config:get(peers)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(Peer, Config#config.peers) of
 		false ->
 			{noreply, State};
 		true ->
@@ -116,7 +119,7 @@ handle_cast({peer_out_of_sync, Peer}, State) ->
 					ar_mining_stats:pause_performance_reports(60000),
 					ar_util:terminal_clear(),
 					TrustedPeersStr = string:join([ar_util:format_peer(Peer2)
-							|| Peer2 <- arweave_config:get(peers)], ", "),
+							|| Peer2 <- Config#config.peers], ", "),
 					?LOG_INFO([{event, node_out_of_sync}, {peer, ar_util:format_peer(Peer)},
 						{trusted_peers, TrustedPeersStr}]),
 					ar:console("WARNING: The node is out of sync with all of the specified "

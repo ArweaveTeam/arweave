@@ -58,12 +58,14 @@ parse_p3(BadToken, _P3Config) ->
 		"Unexpected 'p3' token. Valid tokens: 'payments', 'services'.",
 		BadToken).
 
-validate_config(Config) when is_record(Config, p3_config) ->
-	PaymentsValid = validate_payments(Config#p3_config.payments),
-	ServicesValid = validate_services(Config#p3_config.services),
+validate_config(Config) when
+	is_record(Config, config) andalso
+	is_record(Config#config.p3, p3_config) ->
+	PaymentsValid = validate_payments(Config#config.p3#p3_config.payments),
+	ServicesValid = validate_services(Config#config.p3#p3_config.services),
 	case PaymentsValid and ServicesValid of
 		true ->
-			{ok, Config};
+			{ok, Config#config.p3};
 		false ->
 			{stop, "Error validating P3 config"}
 	end.
