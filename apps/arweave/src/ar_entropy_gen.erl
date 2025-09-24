@@ -59,7 +59,7 @@ register_workers(Module) ->
 						false
 				end
 		end,
-		arwave_config:get(storage_modules)
+		arweave_config:get(storage_modules)
 	),
 	 
 	RepackInPlaceWorkers = lists:filtermap(
