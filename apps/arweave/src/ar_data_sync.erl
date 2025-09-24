@@ -57,6 +57,7 @@ start_link(Name, Args) ->
 
 %% @doc Register the workers that will be monitored by ar_data_sync_sup.erl.
 register_workers() ->
+	{ok, Config} = application:get_env(arweave, config),
 	StorageModuleWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
@@ -64,7 +65,7 @@ register_workers() ->
 			Name = list_to_atom("ar_data_sync_" ++ StoreLabel),
 			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, none}])
 		end,
-		arweave_config:get(storage_modules)
+		Config#config.storage_modules
 	),
 	DefaultStorageModuleWorker = ?CHILD_WITH_ARGS(ar_data_sync, worker,
 		ar_data_sync_default, [ar_data_sync_default, {?DEFAULT_MODULE, none}]),
@@ -74,7 +75,7 @@ register_workers() ->
 			Name = ar_data_sync:name(StoreID),
 			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, TargetPacking}])
 		end,
-		arweave_config:get(repack_in_place_storage_modules)
+		Config#config.repack_in_place_storage_modules
 	),
 	StorageModuleWorkers ++ [DefaultStorageModuleWorker] ++ RepackInPlaceWorkers.
 
@@ -124,8 +125,9 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	DataRootOffsetReply = get_data_root_offset(DataRootKey, ?DEFAULT_MODULE),
 	DataRootInDiskPool = ets:lookup(ar_disk_pool_data_roots, DataRootKey),
 	ChunkSize = byte_size(Chunk),
-	DataRootLimit = arweave_config:get(max_disk_pool_data_root_buffer_mb) * 1024 * 1024,
-	DiskPoolLimit = arweave_config:get(max_disk_pool_buffer_mb) * 1024 * 1024,
+	{ok, Config} = application:get_env(arweave, config),
+	DataRootLimit = Config#config.max_disk_pool_data_root_buffer_mb * 1024 * 1024,
+	DiskPoolLimit = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
 	CheckDiskPool =
 		case {DataRootOffsetReply, DataRootInDiskPool} of
 			{not_found, []} ->
@@ -498,8 +500,9 @@ get_chunk_proof(Offset, Options) ->
 %% the size is bigger than ?MAX_SERVED_TX_DATA_SIZE, unless the limitation
 %% is disabled in the configuration.
 get_tx_data(TXID) ->
+	{ok, Config} = application:get_env(arweave, config),
 	SizeLimit =
-		case lists:member(serve_tx_data_without_limits, arweave_config:get(enable)) of
+		case lists:member(serve_tx_data_without_limits, Config#config.enable) of
 			true ->
 				infinity;
 			false ->
@@ -520,8 +523,8 @@ get_tx_data(TXID, SizeLimit) ->
 				true ->
 					{error, tx_data_too_big};
 				false ->
-					Pack =
-					lists:member(pack_served_chunks, arweave_config:get(enable)),
+					{ok, Config} = application:get_env(arweave, config),
+					Pack = lists:member(pack_served_chunks, Config#config.enable),
 					get_tx_data(Offset - Size, Offset, [], Pack)
 			end
 	end.
@@ -720,6 +723,7 @@ debug_get_disk_pool_chunks(Cursor) ->
 init({?DEFAULT_MODULE = StoreID, _}) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
+	{ok, Config} = application:get_env(arweave, config),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
@@ -775,11 +779,12 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 		fun(_DiskPoolJobNumber) ->
 			gen_server:cast(self(), process_disk_pool_item)
 		end,
-		lists:seq(1, arweave_config:get(disk_pool_jobs))
+		lists:seq(1, Config#config.disk_pool_jobs)
 	),
 	gen_server:cast(self(), store_sync_state),
+	{ok, Config} = application:get_env(arweave, config),
 	Limit =
-		case arweave_config:get(data_cache_size_limit) of
+		case Config#config.data_cache_size_limit of
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),
@@ -860,8 +865,9 @@ handle_cast({join, RecentBI}, State) ->
 		{_, {_H, Offset, _TXRoot}} ->
 			PreviousWeaveSize = element(2, hd(CurrentBI)),
 			{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset, PreviousWeaveSize),
+			{ok, Config} = application:get_env(arweave, config),
 			[gen_server:cast(name(ar_storage_module:id(Module)),
-					{cut, Offset}) || Module <- arweave_config:get(storage_modules)],
+					{cut, Offset}) || Module <- Config#config.storage_modules],
 			ok = ar_chunk_storage:cut(Offset, StoreID),
 			ok = ar_sync_record:cut(Offset, ar_data_sync, StoreID),
 			ar_events:send(sync_record, {global_cut, Offset}),
@@ -885,8 +891,8 @@ handle_cast({cut, Start}, #sync_data_state{ store_id = StoreID,
 		not_found ->
 			ok;
 		_Interval ->
-			case
-				lists:member(remove_orphaned_storage_module_data, arweave_config:get(enable)) of
+			{ok, Config} = application:get_env(arweave, config),
+			case lists:member(remove_orphaned_storage_module_data, Config#config.enable) of
 				false ->
 					ar:console("The storage module ~s contains some orphaned data above the "
 							"weave offset ~B. Make sure you are joining the network through "
@@ -1480,21 +1486,22 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, 
 	{noreply, State};
 handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, Bytes}},
 		#sync_data_state{ store_id = StoreID } = State) ->
+	{ok, Config} = application:get_env(arweave, config),
 	%% Default values:
 	%% max_disk_pool_buffer_mb = ?DEFAULT_MAX_DISK_POOL_BUFFER_MB = 100_000
 	%% disk_cache_size = ?DISK_CACHE_SIZE = 5_120
 	%% DiskPoolSize = ~100GB
 	%% DisckCacheSize = ~5GB
 	%% BufferSize = ~10GB
-	DiskPoolSize = arweave_config:get(max_disk_pool_buffer_mb) * 1024 * 1024,
-	DiskCacheSize = arweave_config:get(disk_cache_size) * 1024 * 1024,
+	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
+	DiskCacheSize = Config#config.disk_cache_size * 1024 * 1024,
 	BufferSize = 10_000_000_000,
 	case Bytes < DiskPoolSize + DiskCacheSize + (BufferSize div 2) of
 		true ->
 			ar:console("error: Not enough disk space left on 'data_dir' disk for "
 				"the requested 'disk_pool_size' ~Bmb and 'disk_cache_size' ~Bmb "
 				"either lower these values or add more disk space.~n",
-			[arweave_config:get(max_disk_pool_buffer_mb), arweave_config:get(disk_cache_size)]),
+			[Config#config.max_disk_pool_buffer_mb, Config#config.disk_cache_size]),
 			case is_disk_space_sufficient(StoreID) of
 				false ->
 					ok;
@@ -1710,7 +1717,8 @@ do_sync_data2(#sync_data_state{
 
 remove_expired_disk_pool_data_roots() ->
 	Now = os:system_time(microsecond),
-	ExpirationTime = arweave_config:get(disk_pool_data_root_expiration_time) * 1000000,
+	{ok, Config} = application:get_env(arweave, config),
+	ExpirationTime = Config#config.disk_pool_data_root_expiration_time * 1000000,
 	ets:foldl(
 		fun({Key, {_Size, Timestamp, _TXIDSet}}, _Acc) ->
 			case Timestamp + ExpirationTime > Now of
@@ -3649,7 +3657,8 @@ find_storage_module_for_disk_pool_chunk(Offset) ->
 %% @doc Ensure we store the disk pool chunk in the most useful storage module.
 %% Primarily relevant for tests and miners that are repacking data between storage modules.
 sort_storage_modules_for_disk_pool_chunk(Modules) ->
-	MiningAddress = arweave_config:get(mining_addr),
+	{ok, Config} = application:get_env(arweave, config),
+	MiningAddress = Config#config.mining_addr,
     CompareFun =
 		fun({_, _, {composite, Addr1, _}}, _) ->
 				%% Storage modules with composite packing

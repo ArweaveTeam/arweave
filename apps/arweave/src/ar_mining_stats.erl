@@ -442,6 +442,7 @@ optimal_partition_hash_hps(PoA1Multiplier, VDFSpeed, PartitionDataSize, TotalDat
 	H1Optimal + H2Optimal.
 
 generate_report() ->
+	{ok, Config} = application:get_env(arweave, config),
 	Height = ar_node:get_height(),
 	Packing = ar_mining_io:get_packing(),
 	Partitions = ar_mining_io:get_partitions(),
@@ -449,7 +450,7 @@ generate_report() ->
 		Height,
 		Packing,
 		Partitions,
-		arweave_config:get(cm_peers),
+		Config#config.cm_peers,
 		ar_node:get_weave_size(),
 		erlang:monotonic_time(millisecond)
 	).
@@ -970,35 +971,39 @@ test_vdf_stats() ->
 	?assertEqual(undefined, vdf_speed(1000)).
 
 test_data_size_stats() ->
+	{ok, Config} = application:get_env(arweave, config),
 	try
-		arweave_config:set(mining_addr, <<"MINING">>),
+		application:set_env(arweave, config,
+			Config#config{ mining_addr = <<"MINING">> }),
 
 		WeaveSize = floor(2 * ar_block:partition_size()),
 		ets:insert(node_state, [{weave_size, WeaveSize}]),
 
 		ar_mining_stats:pause_performance_reports(120000),
-		do_test_data_size_stats({spora_2_6, <<"MINING">>}, {spora_2_6, <<"PACKING">>}),
-		do_test_data_size_stats({composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}),
-		do_test_data_size_stats({composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2})
+		do_test_data_size_stats(Config, {spora_2_6, <<"MINING">>}, {spora_2_6, <<"PACKING">>}),
+		do_test_data_size_stats(Config, {composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}),
+		do_test_data_size_stats(Config, {composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2})
 	after
-		ok
+		application:set_env(arweave, config, Config)
 	end.
 
-do_test_data_size_stats(Mining, Packing) ->
-	arweave_config:set(storage_modules, [
-		{floor(0.1 * ar_block:partition_size()), 10, unpacked},
-		{floor(0.1 * ar_block:partition_size()), 10, Mining},
-		{floor(0.1 * ar_block:partition_size()), 10, Packing},
-		{floor(0.3 * ar_block:partition_size()), 4, unpacked},
-		{floor(0.3 * ar_block:partition_size()), 4, Mining},
-		{floor(0.3 * ar_block:partition_size()), 4, Packing},
-		{floor(0.2 * ar_block:partition_size()), 8, unpacked},
-		{floor(0.2 * ar_block:partition_size()), 8, Mining},
-		{floor(0.2 * ar_block:partition_size()), 8, Packing},
-		{ar_block:partition_size(), 2, unpacked},
-		{ar_block:partition_size(), 2, Mining},
-		{ar_block:partition_size(), 2, Packing}
-	]),
+do_test_data_size_stats(Config, Mining, Packing) ->
+	application:set_env(arweave, config, Config#config{ 
+		storage_modules = [
+			{floor(0.1 * ar_block:partition_size()), 10, unpacked},
+			{floor(0.1 * ar_block:partition_size()), 10, Mining},
+			{floor(0.1 * ar_block:partition_size()), 10, Packing},
+			{floor(0.3 * ar_block:partition_size()), 4, unpacked},
+			{floor(0.3 * ar_block:partition_size()), 4, Mining},
+			{floor(0.3 * ar_block:partition_size()), 4, Packing},
+			{floor(0.2 * ar_block:partition_size()), 8, unpacked},
+			{floor(0.2 * ar_block:partition_size()), 8, Mining},
+			{floor(0.2 * ar_block:partition_size()), 8, Packing},
+			{ar_block:partition_size(), 2, unpacked},
+			{ar_block:partition_size(), 2, Mining},
+			{ar_block:partition_size(), 2, Packing}
+		]
+	}),
 
 	reset_all_stats(),
 	?assertEqual(0, get_total_minable_data_size(Mining)),
@@ -1306,6 +1311,7 @@ test_report_poa1_multiple_2() ->
 	test_report({composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2}, 2).
 
 test_report(Mining, Packing, PoA1Multiplier) ->
+	{ok, Config} = application:get_env(arweave, config),
 	MiningAddress = case Mining of
 		{spora_2_6, Addr} ->
 			Addr;
@@ -1347,8 +1353,11 @@ test_report(Mining, Packing, PoA1Multiplier) ->
 	],
 	
 	try	
-		arweave_config:set(storage_modules, StorageModules),
-		arweave_config:set(mining_addr, MiningAddress),
+		application:set_env(arweave, config,
+			Config#config{
+				storage_modules = StorageModules,
+				mining_addr = MiningAddress
+			}),
 		ar_mining_stats:pause_performance_reports(120000),
 		reset_all_stats(),
 		Partitions = [
@@ -1516,5 +1525,5 @@ test_report(Mining, Packing, PoA1Multiplier) ->
 		},
 		Report2)
 	after
-		ok
+		application:set_env(arweave, config, Config)
 	end.

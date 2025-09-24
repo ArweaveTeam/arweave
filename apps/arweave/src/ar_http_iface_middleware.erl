@@ -91,7 +91,8 @@ handle(Req, Pid) ->
 handle(Peer, Req, Pid) ->
 	Method = cowboy_req:method(Req),
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-	case lists:member(http_logging, arweave_config:get(enable)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(http_logging, Config#config.enable) of
 		true ->
 			?LOG_INFO([
 				{event, http_request},
@@ -282,7 +283,8 @@ handle(<<"GET">>, [<<"unconfirmed_tx2">>, Hash], Req, _Pid) ->
 %% served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
-	case lists:member(serve_html_data, arweave_config:get(disable)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(serve_html_data, Config#config.disable) of
 		true ->
 			{421, #{}, <<"Serving HTML data is disabled on this node.">>, Req};
 		_ ->
@@ -1907,7 +1909,8 @@ handle_post_tx({Req, Pid, Encoding}) ->
 		false ->
 			not_joined(Req);
 		true ->
-			case ar_semaphore:acquire(post_tx, arweave_config:get(post_tx_timeout) * 1000) of
+			{ok, Config} = application:get_env(arweave, config),
+			case ar_semaphore:acquire(post_tx, Config#config.post_tx_timeout * 1000) of
 				{error, timeout} ->
 					{503, #{}, <<>>, Req};
 				ok ->
@@ -2062,8 +2065,8 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								ok = ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT),
 								{Packing, ok};
 							{{true, _}, _StoreID} ->
-								case
-									lists:member(pack_served_chunks, arweave_config:get(enable)) of
+								{ok, Config} = application:get_env(arweave, config),
+								case lists:member(pack_served_chunks, Config#config.enable) of
 									false ->
 										{none, {reply, {404, #{}, <<>>, Req}}};
 									true ->
@@ -2293,20 +2296,13 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 	end.
 
 check_internal_api_secret(Req) ->
+	{ok, Config} = application:get_env(arweave, config),
 	check_api_secret(
-		<<"x-internal-api-secret">>,
-		arweave_config:get(internal_api_secret),
-		<<"Internal API">>,
-		Req
-	 ).
+		<<"x-internal-api-secret">>, Config#config.internal_api_secret, <<"Internal API">>, Req).
 
 check_cm_api_secret(Req) ->
-	check_api_secret(
-		<<"x-cm-api-secret">>,
-		arweave_config:get(cm_api_secret),
-		<<"CM API">>,
-		Req
-	 ).
+	{ok, Config} = application:get_env(arweave, config),
+	check_api_secret(<<"x-cm-api-secret">>, Config#config.cm_api_secret, <<"CM API">>, Req).
 
 check_api_secret(Header, Secret, APIName, Req) ->
 	Reject = fun(Msg) ->
@@ -2545,8 +2541,9 @@ check_block_receive_timestamp(H) ->
 	end.
 
 handle_post_partial_solution(Req, Pid) ->
+	{ok, Config} = application:get_env(arweave, config),
 	CMExitNode = ar_coordination:is_exit_peer() andalso ar_pool:is_client(),
-	case {arweave_config:get(is_pool_server), CMExitNode} of
+	case {Config#config.is_pool_server, CMExitNode} of
 		{false, false} ->
 			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
 		{true, _} ->
@@ -2595,8 +2592,9 @@ handle_post_partial_solution_cm_exit_peer_pool_client(Req, Pid) ->
 	end.
 
 handle_get_jobs(PrevOutput, Req) ->
+	{ok, Config} = application:get_env(arweave, config),
 	CMExitNode = ar_coordination:is_exit_peer() andalso ar_pool:is_client(),
-	case {arweave_config:get(is_pool_server), CMExitNode} of
+	case {Config#config.is_pool_server, CMExitNode} of
 		{false, false} ->
 			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
 		{true, _} ->
@@ -2788,8 +2786,9 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 		unavailable ->
 			{404, #{}, <<"Not Found.">>, Req};
 		B ->
+			{ok, Config} = application:get_env(arweave, config),
 			case {B#block.height >= ar_fork:height_2_2(),
-					lists:member(serve_wallet_lists, arweave_config:get(enable))} of
+					lists:member(serve_wallet_lists, Config#config.enable)} of
 				{true, false} ->
 					{400, #{},
 						jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
@@ -2822,7 +2821,8 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 %% field :: nonce | previous_block | timestamp | last_retarget | diff | height | hash |
 %%			indep_hash | txs | hash_list | wallet_list | reward_addr | tags | reward_pool
 process_request(get_block, [Type, ID, Field], Req) ->
-	case lists:member(subfield_queries, arweave_config:get(enable)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(subfield_queries, Config#config.enable) of
 		true ->
 			case find_block(Type, ID) of
 				{error, height_not_integer} ->
@@ -3160,7 +3160,8 @@ handle_post_vdf3(Req, Pid, Peer) ->
 	end.
 
 handle_get_vdf(Req, Call, Format) ->
-	case lists:member(public_vdf_server, arweave_config:get(enable)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(public_vdf_server, Config#config.enable) of
 		true ->
 			handle_get_vdf2(Req, Call, Format);
 		false ->

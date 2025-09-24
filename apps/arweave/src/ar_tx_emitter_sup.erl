@@ -21,7 +21,8 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	MaxEmitters = arweave_config:get(max_emitters),
+	{ok, Config} = application:get_env(arweave, config),
+	MaxEmitters = Config#config.max_emitters,
 	Workers = lists:map(fun tx_workers/1, lists:seq(1, MaxEmitters)),
 	WorkerNames = [ Name || #{ id := Name } <- Workers],
 	Emitter = tx_emitter([ar_tx_emitter, WorkerNames]),

@@ -59,8 +59,8 @@ show_help() ->
 	init:stop(1).
 
 run_benchmark({Format, Dirs, Threads, DataMiB}) ->
-	arweave_config:set(disable, []),
-	arweave_config:set(enable, [randomx_large_pages]),
+	application:set_env(arweave, config, #config{ 
+		disable = [], enable  = [randomx_large_pages] }),
 
 	ThreadDirPairs = assign_threads_to_dirs(Threads, Dirs),
 

@@ -21,7 +21,8 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	case arweave_config:get(verify) of
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.verify of
 		false ->
 			ignore;
 		_ ->
@@ -31,7 +32,7 @@ init([]) ->
 					Name = ar_verify_chunks:name(StoreID),
 					?CHILD_WITH_ARGS(ar_verify_chunks, worker, Name, [Name, StoreID])
 				end,
-				arweave_config:get(storage_modules)
+				Config#config.storage_modules
 			),
 			Reporter = ?CHILD(ar_verify_chunks_reporter, worker),
 			{ok, {{one_for_one, 5, 10}, [Reporter | Workers]}}

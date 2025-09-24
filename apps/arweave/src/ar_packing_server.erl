@@ -270,6 +270,8 @@ pack_replica_2_9_chunk(RewardAddr, AbsoluteEndOffset, Chunk) ->
 %%%===================================================================
 
 init([]) ->
+	{ok, Config} = application:get_env(arweave, config),
+
 	ar:console("~nInitialising RandomX datasets. Keys: ~p, ~p. "
 			"The process may take several minutes.~n",
 			[ar_util:encode(?RANDOMX_PACKING_KEY),
@@ -282,14 +284,14 @@ init([]) ->
 	H1String = io_lib:format("~.3f", [H1 / 1000]),
 	ar:console("Hashing benchmark~nH0: ~s ms~nH1/H2: ~s ms~n", [H0String, H1String]),
 	?LOG_INFO([{event, hash_benchmark}, {h0_ms, H0String}, {h1_ms, H1String}]),
-	NumWorkers = arweave_config:get(packing_workers),
+	NumWorkers = Config#config.packing_workers,
 	ar:console("~nStarting ~B packing threads.~n", [NumWorkers]),
 	?LOG_INFO([{event, starting_packing_threads}, {num_threads, NumWorkers}]),
 	Workers = queue:from_list(
 		[spawn_link(fun() -> worker(PackingState) end) || _ <- lists:seq(1, NumWorkers)]),
 	ets:insert(?MODULE, {buffer_size, 0}),
 	MaxSize =
-		case arweave_config:get(packing_cache_size_limit) of
+		case Config#config.packing_cache_size_limit of
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),

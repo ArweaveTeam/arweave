@@ -22,6 +22,7 @@ start_link() ->
 
 init([]) ->
 	ets:new(sync_records, [set, public, named_table, {read_concurrency, true}]),
+	{ok, Config} = application:get_env(arweave, config),
 	ConfiguredWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
@@ -29,7 +30,7 @@ init([]) ->
 			Name = list_to_atom("ar_sync_record_" ++ Label),
 			?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
 		end,
-		arweave_config:get(storage_modules)
+		Config#config.storage_modules
 	),
 	DefaultSyncRecordWorker = ?CHILD_WITH_ARGS(ar_sync_record, worker, ar_sync_record_default,
 		[ar_sync_record_default, ?DEFAULT_MODULE]),
@@ -40,7 +41,7 @@ init([]) ->
 			Name = list_to_atom("ar_sync_record_" ++ Label),
 			?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
 		end,
-		arweave_config:get(repack_in_place_storage_modules)
+		Config#config.repack_in_place_storage_modules
 	),
 	Workers = [DefaultSyncRecordWorker] ++ ConfiguredWorkers ++ RepackInPlaceWorkers,
 	{ok, {{one_for_one, 5, 10}, Workers}}.

@@ -177,7 +177,8 @@ packing_rounds({spora_2_6, _Addr}) ->
 	?RANDOMX_PACKING_ROUNDS_2_6.
 
 jit() ->
-	case lists:member(randomx_jit, arweave_config:get(disable)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(randomx_jit, Config#config.disable) of
 		true ->
 			0;
 		_ ->
@@ -185,7 +186,8 @@ jit() ->
 	end.
 
 large_pages() ->
-	case lists:member(randomx_large_pages, arweave_config:get(enable)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(randomx_large_pages, Config#config.enable) of
 		true ->
 			1;
 		_ ->
@@ -193,7 +195,8 @@ large_pages() ->
 	end.
 
 hardware_aes() ->
-	case lists:member(randomx_hardware_aes, arweave_config:get(disable)) of
+	{ok, Config} = application:get_env(arweave, config),
+	case lists:member(randomx_hardware_aes, Config#config.disable) of
 		true ->
 			0;
 		_ ->

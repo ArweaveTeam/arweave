@@ -21,8 +21,9 @@ main(Args) ->
 			true;
 		["chunks", Dir, StartStr, EndStr | AddrListStr] when length(AddrListStr) >= 1 ->
 			Addresses = [ar_util:decode(AddrStr) || AddrStr <- AddrListStr],
-			arweave_config:set(disable, []),
-			arweave_config:set(enable, [randomx_large_pages]),
+			application:set_env(arweave, config, #config{
+				disable = [], enable  = [randomx_large_pages]
+			}),
 			ar_metrics:register(),
 			ar_packing_sup:start_link(),
 			Start = ar_block:get_chunk_padded_offset(list_to_integer(StartStr)),
@@ -221,8 +222,10 @@ print_match(no_match) ->
 bitmap(DataDir, StorageModuleConfig) ->
 	{ok, StorageModule} = ar_config:parse_storage_module(StorageModuleConfig),
 	
-	arweave_config:set(data_dir, DataDir),
-	arweave_config:set(storage_modules, [StorageModule]),
+	Config = #config{
+		data_dir = DataDir,
+		storage_modules = [StorageModule]},
+	application:set_env(arweave, config, Config),
 
 	StoreID = ar_storage_module:id(StorageModule),
 	

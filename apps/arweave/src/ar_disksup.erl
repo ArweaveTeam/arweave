@@ -48,7 +48,8 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 get_disk_space_check_frequency() ->
-	arweave_config:get(disk_space_check_frequency).
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.disk_space_check_frequency.
 
 get_disk_data() ->
 	gen_server:call(?MODULE, get_disk_data, ?DEFAULT_CALL_TIMEOUT).
@@ -418,13 +419,14 @@ skip_to_eol([_ | T]) ->
 	skip_to_eol(T).
 
 get_storage_modules_paths() ->
-	DataDir = arweave_config:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	SMDirs = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
 			{StoreID, filename:join([DataDir, "storage_modules", StoreID])}
 		end,
-		arweave_config:get(storage_modules)
+		Config#config.storage_modules
 	),
 	[{?DEFAULT_MODULE, DataDir} | SMDirs].
 

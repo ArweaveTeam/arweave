@@ -41,9 +41,9 @@ register_workers() ->
 	Workers ++ [ChunkCopy].
 
 register_read_workers() ->
-	StorageModules = arweave_config:get(storage_modules),
+	{ok, Config} = application:get_env(arweave, config),
 	StoreIDs = [
-		ar_storage_module:id(StorageModule) || StorageModule <- StorageModules
+		ar_storage_module:id(StorageModule) || StorageModule <- Config#config.storage_modules
 	] ++ [?DEFAULT_MODULE],
 	{Workers, WorkerMap} = 
 		lists:foldl(
@@ -311,10 +311,9 @@ test_process_queue() ->
 		queue:to_list(Worker3#worker_tasks.task_queue)).
 
 test_register_workers() ->
+	{ok, Config} = application:get_env(arweave, config),
 	StoreIDs = [
-		ar_storage_module:id(StorageModule)
-		|| StorageModule <- arweave_config:get(storage_modules)
-	],
+		ar_storage_module:id(StorageModule) || StorageModule <- Config#config.storage_modules],
 	lists:foreach(
 		fun(StoreID) ->
 			?assertEqual(true, ready_for_work(StoreID))

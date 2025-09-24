@@ -479,7 +479,8 @@ calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
 		(?IDEAL_STEPS_PER_PARTITION * IdealRangesPerStep * RecallRangeSize * NumActivePartitions)
 	),
 
-	OverallCacheLimitBytes = case arweave_config:get(mining_cache_size_mb) of
+	{ok, Config} = application:get_env(arweave, config),
+	OverallCacheLimitBytes = case Config#config.mining_cache_size_mb of
 		undefined ->
 			MinimumCacheLimitBytes;
 		N ->
@@ -974,7 +975,8 @@ post_solution(error, _State) ->
 	?LOG_WARNING([{event, found_solution_but_could_not_build_a_block}]),
 	error;
 post_solution(Solution, State) ->
-	post_solution(arweave_config:get(cm_exit_peer), Solution, State).
+	{ok, Config} = application:get_env(arweave, config),
+	post_solution(Config#config.cm_exit_peer, Solution, State).
 
 post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
 	%% When posting a partial solution the pool client will skip many of the validation steps
@@ -1175,9 +1177,9 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing, Nonce) ->
 	end.
 
 dump_invalid_solution_data(Data) ->
-	DataDir = arweave_config:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
 	ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
-	File = filename:join(DataDir, "invalid_solution_data_dump_" ++ ID),
+	File = filename:join(Config#config.data_dir, "invalid_solution_data_dump_" ++ ID),
 	file:write_file(File, term_to_binary(Data)).
 
 get_sub_chunk(Chunk, 0, _Nonce) ->
@@ -1365,7 +1367,10 @@ calculate_cache_limits_test_() ->
 	}.
 
 test_calculate_cache_limits_default() ->
-	arweave_config:set(mining_cache_size_mb, undefined),
+	{ok, Config} = application:get_env(arweave, config),
+	application:set_env(arweave, config, Config#config{
+		mining_cache_size_mb = undefined
+	}),
 	?assertEqual(
 		{
 			?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
@@ -1476,7 +1481,10 @@ test_calculate_cache_limits_default() ->
 	).
 
 test_calculate_cache_limits_custom_low() ->
-	arweave_config:set(mining_cache_size_mb, 1),
+	{ok, Config} = application:get_env(arweave, config),
+	application:set_env(arweave, config, Config#config{
+		mining_cache_size_mb = 1
+	}),
 	?assertEqual(
 		{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 1, 4_000},
 		calculate_cache_limits(1, 0)
@@ -1527,7 +1535,10 @@ test_calculate_cache_limits_custom_low() ->
 	).
 
 test_calculate_cache_limits_custom_high() ->
-	arweave_config:set(mining_cache_size_mb, 500_000),
+	{ok, Config} = application:get_env(arweave, config),
+	application:set_env(arweave, config, Config#config{
+		mining_cache_size_mb = 500_000
+	}),
 	?assertEqual(
 		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 500_000, 2_000_000_000},
 		calculate_cache_limits(1, 0)

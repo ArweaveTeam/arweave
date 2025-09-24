@@ -49,6 +49,7 @@ name(StoreID) ->
 	list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
+	{ok, Config} = application:get_env(arweave, config),
 	ConfiguredWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
@@ -57,7 +58,7 @@ register_workers() ->
 			?CHILD_WITH_ARGS(ar_chunk_storage, worker,
 				ChunkStorageName, [ChunkStorageName, StoreID])
 		end,
-		arweave_config:get(storage_modules)
+		Config#config.storage_modules
 	),
 	
 	DefaultChunkStorageWorker = ?CHILD_WITH_ARGS(ar_chunk_storage, worker,
@@ -73,7 +74,7 @@ register_workers() ->
 			?CHILD_WITH_ARGS(ar_chunk_storage, worker,
 				ChunkStorageName, [ChunkStorageName, StoreID])
 		end,
-		arweave_config:get(repack_in_place_storage_modules)
+		Config#config.repack_in_place_storage_modules
 	),
 
 	ConfiguredWorkers ++ RepackInPlaceWorkers ++ [DefaultChunkStorageWorker].
@@ -257,20 +258,19 @@ delete(PaddedOffset, StoreID) ->
 
 %% @doc Run defragmentation of chunk files if enabled
 run_defragmentation() ->
-	case arweave_config:get(run_defragmentation) of
+	{ok, Config} = application:get_env(arweave, config),
+	case Config#config.run_defragmentation of
 		false ->
 			ok;
 		true ->
 			ar:console("Defragmentation threshold: ~B bytes.~n",
-					   [arweave_config:get(defragmentation_trigger_threshold)]),
-			DefragModules = modules_to_defrag(),
-			Sizes = read_chunks_sizes(arweave_config:get(data_dir)),
-			Files = files_to_defrag(
-				DefragModules,
-				arweave_config:get(data_dir),
-				arweave_config:get(defragmentation_trigger_threshold),
-				Sizes
-			),
+					   [Config#config.defragmentation_trigger_threshold]),
+			DefragModules = modules_to_defrag(Config),
+			Sizes = read_chunks_sizes(Config#config.data_dir),
+			Files = files_to_defrag(DefragModules,
+									Config#config.data_dir,
+									Config#config.defragmentation_trigger_threshold,
+									Sizes),
 			ok = defrag_files(Files),
 			ok = update_sizes_file(Files, #{})
 	end.
@@ -350,7 +350,8 @@ read_offset(PaddedOffset, StoreID) ->
 init(?DEFAULT_MODULE = StoreID) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
-	DataDir = arweave_config:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	Dir = get_storage_module_path(DataDir, StoreID),
 	ok = filelib:ensure_dir(Dir ++ "/"),
 	ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
@@ -369,7 +370,8 @@ init(?DEFAULT_MODULE = StoreID) ->
 init(StoreID) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
-	DataDir = arweave_config:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	Dir = get_storage_module_path(DataDir, StoreID),
 	ok = filelib:ensure_dir(Dir ++ "/"),
 	ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
@@ -495,10 +497,12 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 get_chunk_group_size() ->
-	arweave_config:get(chunk_storage_file_size).
+	{ok, Config} = application:get_env(arweave, config),
+	Config#config.chunk_storage_file_size.
 
 get_filepath(Name, StoreID) ->
-	DataDir = arweave_config:get(data_dir),
+	{ok, Config} = application:get_env(arweave, config),
+	DataDir = Config#config.data_dir,
 	ChunkDir = get_chunk_storage_path(DataDir, StoreID),
 	filename:join([ChunkDir, Name]).
 
@@ -870,7 +874,8 @@ defrag_files([Filepath | Rest]) ->
 	defrag_files(Rest).
 
 update_sizes_file([], Sizes) ->
-	SizesFile = filename:join(arweave_config:get(data_dir), "chunks_sizes"),
+	{ok, Config} = application:get_env(arweave, config),
+	SizesFile = filename:join(Config#config.data_dir, "chunks_sizes"),
 	case file:open(SizesFile, [write, raw]) of
 		{error, Reason} ->
 			?LOG_ERROR([
@@ -913,14 +918,8 @@ read_chunks_sizes(DataDir) ->
 			error
 	end.
 
-modules_to_defrag() ->
-	modules_to_defrag(#{
-		defragmentation_modules => arweave_config:get(defragmentation_modules),
-		storages_modules => arweave_config:get(storages_modules)
-	}).
-
-modules_to_defrag(#{defragmentation_modules := [_|_] = Modules}) -> Modules;
-modules_to_defrag(#{storage_modules := Modules}) -> Modules.
+modules_to_defrag(#config{defragmentation_modules = [_ | _] = Modules}) -> Modules;
+modules_to_defrag(#config{storage_modules = Modules}) -> Modules.
 
 %%%===================================================================
 %%% Tests.

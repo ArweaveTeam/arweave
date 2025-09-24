@@ -1414,15 +1414,18 @@ handle_cm_noop_response(Response) ->
 	{error, Response}.
 
 p2p_headers() ->
-	[{<<"x-p2p-port">>, integer_to_binary(arweave_config:get(port))},
+	{ok, Config} = application:get_env(arweave, config),
+	[{<<"x-p2p-port">>, integer_to_binary(Config#config.port)},
 			{<<"x-release">>, integer_to_binary(?RELEASE_NUMBER)}].
 
 cm_p2p_headers() ->
-	add_header(<<"x-cm-api-secret">>, arweave_config:get(cm_api_secret), p2p_headers()).
+	{ok, Config} = application:get_env(arweave, config),
+	add_header(<<"x-cm-api-secret">>, Config#config.cm_api_secret, p2p_headers()).
 
 pool_client_headers() ->
-	Headers = add_header(<<"x-pool-api-key">>, arweave_config:get(pool_api_key), p2p_headers()),
-	case arweave_config:get(pool_worker_name) of
+	{ok, Config} = application:get_env(arweave, config),
+	Headers = add_header(<<"x-pool-api-key">>, Config#config.pool_api_key, p2p_headers()),
+	case Config#config.pool_worker_name of
 		not_set ->
 			Headers;
 		WorkerName ->
