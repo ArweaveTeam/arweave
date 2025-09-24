@@ -140,7 +140,27 @@ get(Key) ->
 	Return :: {ok, Value} | error.
 
 set(Key, Value) ->
-	try gen_server:call(?MODULE, {set, Key, Value}, 1000) of
+	set(Key, Value, #{}).
+
+%%--------------------------------------------------------------------
+%% @doc Set a value to a key (custom options). When setting `set_env'
+%% to `true', the environment application arweave/config is configured
+%% with the content of the store from this process.
+%%
+%% Warning: this part is not protected against race condition, if
+%% another process is setting application environment variable with
+%% `application:set_env/2' function, the state present in this process
+%% will not have the correct information.
+%% @end
+%%--------------------------------------------------------------------
+-spec set(Key, Value, Opts) -> Return when
+	Key :: atom(),
+	Value :: term(),
+	Opts :: #{ set_env => boolean() },
+	Return :: {ok, Value} | error.
+
+set(Key, Value, Opts) ->
+	try gen_server:call(?MODULE, {set, Key, Value, Opts}, 1000) of
 		{ok, NewValue, _OldValue} -> {ok, NewValue};
 		_Elsewise -> error
 	catch
@@ -229,21 +249,24 @@ handle_call(Msg = {get, Key}, From, State)
 		?LOG_DEBUG([{message, Msg}, {from, From}]),
 		Return = {ok, proplists:get_value(Key, State)},
 		{reply, Return, State};
-handle_call(Msg = {set, Key, Value}, From, State)
-	when is_atom(Key) ->
+handle_call(Msg = {set, Key, Value, Opts}, From, State)
+	when is_atom(Key), is_map(Opts) ->
 		?LOG_DEBUG([{message, Msg}, {from, From}]),
 		OldValue = proplists:get_value(Key, State),
 		Return = {ok, Value, OldValue},
 		NewState = lists:keyreplace(Key, 1, State, {Key, Value}),
-
-		% TODO: temporary legacy configuration compatibility
-		% layer.
-		NewConfig = proplist_to_config(NewState),
-		application:set_env(arweave,config,NewConfig),
-
-		% TODO: temporary router to remove, mainly used for
-		% testing.
-		route(Key, Value),
+		Fun = fun
+			(set_env, true) ->
+				NewConfig = proplist_to_config(NewState),
+				application:set_env(arweave, config, NewConfig);
+			(route, true) ->
+				route(Key, Value);
+			(_, _) ->
+				 ignore
+		end,
+		try maps:map(Fun, Opts)
+		catch _:_ -> ok
+		end,
 		{reply, Return, NewState};
 handle_call(Msg = export, From, State) ->
 	?LOG_DEBUG([{message, Msg}, {from, From}]),
