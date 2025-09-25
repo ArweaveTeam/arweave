@@ -442,7 +442,6 @@ optimal_partition_hash_hps(PoA1Multiplier, VDFSpeed, PartitionDataSize, TotalDat
 	H1Optimal + H2Optimal.
 
 generate_report() ->
-	{ok, Config} = application:get_env(arweave, config),
 	Height = ar_node:get_height(),
 	Packing = ar_mining_io:get_packing(),
 	Partitions = ar_mining_io:get_partitions(),
@@ -450,6 +449,7 @@ generate_report() ->
 		Height,
 		Packing,
 		Partitions,
+		arweave_config:get(cm_peers),
 		Config#config.cm_peers,
 		ar_node:get_weave_size(),
 		erlang:monotonic_time(millisecond)
@@ -971,20 +971,20 @@ test_vdf_stats() ->
 	?assertEqual(undefined, vdf_speed(1000)).
 
 test_data_size_stats() ->
-	{ok, Config} = application:get_env(arweave, config),
+	Config = arweave_config_legacy:export(),
 	try
-		application:set_env(arweave, config,
-			Config#config{ mining_addr = <<"MINING">> }),
+		arweave_config:set(mining_address, <<"MINING">>),
+		Config2 = arweave_config_legacy:export(),
 
 		WeaveSize = floor(2 * ar_block:partition_size()),
 		ets:insert(node_state, [{weave_size, WeaveSize}]),
 
 		ar_mining_stats:pause_performance_reports(120000),
-		do_test_data_size_stats(Config, {spora_2_6, <<"MINING">>}, {spora_2_6, <<"PACKING">>}),
-		do_test_data_size_stats(Config, {composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}),
-		do_test_data_size_stats(Config, {composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2})
+		do_test_data_size_stats(Config2, {spora_2_6, <<"MINING">>}, {spora_2_6, <<"PACKING">>}),
+		do_test_data_size_stats(Config2, {composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}),
+		do_test_data_size_stats(Config2, {composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2})
 	after
-		application:set_env(arweave, config, Config)
+		arweave_config_legacy:import(Config)
 	end.
 
 do_test_data_size_stats(Config, Mining, Packing) ->
@@ -1311,7 +1311,7 @@ test_report_poa1_multiple_2() ->
 	test_report({composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2}, 2).
 
 test_report(Mining, Packing, PoA1Multiplier) ->
-	{ok, Config} = application:get_env(arweave, config),
+	Config = arweave_config_legacy:export(),
 	MiningAddress = case Mining of
 		{spora_2_6, Addr} ->
 			Addr;
@@ -1353,7 +1353,7 @@ test_report(Mining, Packing, PoA1Multiplier) ->
 	],
 	
 	try	
-		application:set_env(arweave, config,
+		arweave_config_legacy:import(
 			Config#config{
 				storage_modules = StorageModules,
 				mining_addr = MiningAddress
@@ -1525,5 +1525,5 @@ test_report(Mining, Packing, PoA1Multiplier) ->
 		},
 		Report2)
 	after
-		application:set_env(arweave, config, Config)
+		arweave_config_legacy:import(Config)
 	end.
