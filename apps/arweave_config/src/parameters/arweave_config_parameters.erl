@@ -65,7 +65,7 @@ init() ->
 		%---------------------------------------------------------------------
 		% webui configuration
 		%---------------------------------------------------------------------
-	  	#{
+		#{
 			configuration_key => [webui, enabled],
 			default => false,
 			short_argument => undefined,
@@ -371,7 +371,7 @@ init() ->
 			configuration_key => [semaphores, get_wallet_list]
 		},
 		#{
-		  	configuration_key => [semaphores, get_sync_record]
+			configuration_key => [semaphores, get_sync_record]
 		},
 		#{
 			 configuration_key => [semaphores, post_tx]
@@ -380,8 +380,8 @@ init() ->
 			configuration_key => [semaphores, get_reward_history]
 		},
 		#{
-		  	configuration_key => [semaphores, get_tx]
-	  	}
+			configuration_key => [semaphores, get_tx]
+		}
 
 		%---------------------------------------------------------------------
 		% webhooks
@@ -393,4 +393,3 @@ init() ->
 		% coordinated mining configuration
 		%---------------------------------------------------------------------
 	].
-

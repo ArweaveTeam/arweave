@@ -110,7 +110,7 @@ start_as_child() ->
 			id => ?MODULE,
 			start => {?MODULE, start_link, []},
 			type => worker,
-			restart => temporary 
+			restart => temporary
 	},
 	supervisor:start_child(arweave_config_sup, Spec).
 
@@ -135,7 +135,7 @@ stop() ->
 %%--------------------------------------------------------------------
 %%
 %%--------------------------------------------------------------------
-dispatch() -> 
+dispatch() ->
 	cowboy_router:compile([
 		{'_', router()}
 	]).

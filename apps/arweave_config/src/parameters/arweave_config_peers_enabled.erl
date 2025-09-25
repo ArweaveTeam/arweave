@@ -31,11 +31,11 @@
 %%%  - a peer can be an IPv4 address only
 %%%
 %%%    1.2.3.4
-%%%  
+%%%
 %%%  - a peer can be an Ipv4 address with a port
 %%%
 %%%    1.2.3.4:1234
-%%%  
+%%%
 %%%  - a peer can be a domain name only. the domain name will be then
 %%%    converted as an IPv4 with port
 %%%

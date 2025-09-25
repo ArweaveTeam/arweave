@@ -11,7 +11,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %%--------------------------------------------------------------------
-%% @doc parses a string and converted it to a configuration key. 
+%% @doc parses a string and converted it to a configuration key.
 %% At this time, only ASCII characters are supported.
 %%
 %% == Examples ==
@@ -126,7 +126,7 @@ key_parse_string(<<"]">>, Buffer, Key, Pos) ->
 	key_parse(<<>>, <<>>, [{string, Buffer}|Key], Pos+1);
 key_parse_string(<<"].", Rest/binary>>, Buffer, Key, Pos) ->
 	key_parse(Rest, <<>>, [{string, Buffer}|Key], Pos+2);
-key_parse_string(<<C:8, Rest/binary>>, Buffer, Key, Pos) 
+key_parse_string(<<C:8, Rest/binary>>, Buffer, Key, Pos)
 	when C >= $!, C =< $/;
 	     C >= $0, C =< $9;
 	     C >= $?, C =< $Z;
@@ -156,7 +156,7 @@ key_convert([], Buffer) ->
 key_convert([{string, Value}|Rest], Buffer) ->
 	key_convert(Rest, [Value|Buffer]);
 key_convert([Item|Rest], Buffer) ->
-	try 
+	try
 		Integer = binary_to_integer(Item),
 		key_convert(Rest, [Integer|Buffer])
 	catch

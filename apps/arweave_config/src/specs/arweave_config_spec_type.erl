@@ -22,7 +22,7 @@
 %%% ```
 %%% any(_, _) -> ok.
 %%% '''
-%%% 
+%%%
 %%% 2. Configures a default generic type (e.g. none) returning always
 %%% `error'.
 %%%
@@ -41,7 +41,7 @@
 -module(arweave_config_spec_type).
 -export([init/2]).
 -include("arweave_config_spec.hrl").
-	
+
 default() -> undefined.
 
 init(#{ type := Type }, State) ->

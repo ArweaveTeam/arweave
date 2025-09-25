@@ -1,7 +1,7 @@
 %%%===================================================================
 %%% @doc Arweave Configuration Specification Configuration Key.
 %%%
-%%% A specification for a specification key is a way to describe a 
+%%% A specification for a specification key is a way to describe a
 %%% parameter in arweave_config. The idea is to have something similar
 %%% like a path/uri that can be checked before updated. A simple
 %%% example with the debug parameter:

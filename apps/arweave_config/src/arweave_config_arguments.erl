@@ -181,7 +181,7 @@ parse(Item, Rest, Buffer, State = #{ kind := long }) ->
 				value => [Value]
 			 },
 			parse2(Rest, Buffer, NewState);
-		[Argument] -> 
+		[Argument] ->
 			Position = maps:get(position, State),
 			NewState = State#{
 				item => Item,

@@ -316,7 +316,7 @@
 % DEFAULT: undefined
 %---------------------------------------------------------------------
 % -callback dependencies() -> Return when
-% 	Return :: undefined | [atom()|iolist()|tuple()].
+%	Return :: undefined | [atom()|iolist()|tuple()].
 
 %---------------------------------------------------------------------
 % @TODO: conflicts callback
@@ -324,7 +324,7 @@
 % DEFAULT: undefined
 %---------------------------------------------------------------------
 % -callback conflicts() -> RETURN when
-% 	Return :: undefined | [atom()|iolist()|tuple()].
+%	Return :: undefined | [atom()|iolist()|tuple()].
 
 %---------------------------------------------------------------------
 % @TODO: formatter callback
@@ -333,10 +333,10 @@
 % DEFAULT: undefined
 %---------------------------------------------------------------------
 % -callback formatter(Type, Value) when
-% 	Type :: short | long,
-% 	Value :: iolist(),
-% 	Return :: undefined | {ok, FormattedValue},
-% 	FormattedValue :: iolist().
+%	Type :: short | long,
+%	Value :: iolist(),
+%	Return :: undefined | {ok, FormattedValue},
+%	FormattedValue :: iolist().
 
 %---------------------------------------------------------------------
 % @TODO: positional arguments callback
@@ -344,7 +344,7 @@
 % after a special separator, usually `--'.
 %---------------------------------------------------------------------
 % -callback positional() -> Return when
-% 	Return :: boolean().
+%	Return :: boolean().
 
 %---------------------------------------------------------------------
 % @TODO: before/after arguments callback
@@ -352,9 +352,9 @@
 % the current one
 %---------------------------------------------------------------------
 % -callback before() -> Return when
-% 	Return :: undefined | [atom()].
+%	Return :: undefined | [atom()].
 % -callback after() -> Return when
-% 	Return :: undefined | [atom()].
+%	Return :: undefined | [atom()].
 
 %---------------------------------------------------------------------
 % @TODO: dryrun argument
@@ -362,7 +362,7 @@
 % the action and modification would have been applied.
 %---------------------------------------------------------------------
 % -callback dryrun() -> Return when
-% 	Return :: term().
+%	Return :: term().
 
 %---------------------------------------------------------------------
 % @TODO fail callback
@@ -370,8 +370,8 @@
 % specific error set.
 %---------------------------------------------------------------------
 % -spec fail() -> Return when
-% 	Return :: boolean()
-% 		| {true, term()}.
+%	Return :: boolean()
+%		| {true, term()}.
 
 -optional_callbacks([
 	handle_get/1,
@@ -594,22 +594,22 @@ set(Parameter, Value) ->
 %%--------------------------------------------------------------------
 callbacks_check() -> [
 	% mandatory callbacks
- 	{configuration_key, arweave_config_spec_configuration_key},
+	{configuration_key, arweave_config_spec_configuration_key},
 
 	% optional callbacks
- 	{handle_get, arweave_config_spec_handle_get},
- 	{handle_set, arweave_config_spec_handle_set},
+	{handle_get, arweave_config_spec_handle_get},
+	{handle_set, arweave_config_spec_handle_set},
 	{default, arweave_config_spec_default},
- 	{type, arweave_config_spec_type},
+	{type, arweave_config_spec_type},
 	{check, arweave_config_spec_check},
- 	{runtime, arweave_config_spec_runtime},
+	{runtime, arweave_config_spec_runtime},
 	{deprecated, arweave_config_spec_deprecated},
- 	{environment, arweave_config_spec_environment},
- 	{short_argument, arweave_config_spec_short_argument},
- 	{long_argument, arweave_config_spec_long_argument},
- 	{legacy, arweave_config_spec_legacy},
- 	{short_description, arweave_config_spec_short_description},
- 	{long_description, arweave_config_spec_long_description},
+	{environment, arweave_config_spec_environment},
+	{short_argument, arweave_config_spec_short_argument},
+	{long_argument, arweave_config_spec_long_argument},
+	{legacy, arweave_config_spec_legacy},
+	{short_description, arweave_config_spec_short_description},
+	{long_description, arweave_config_spec_long_description},
 	{nargs, arweave_config_spec_nargs}
 ].
 
@@ -645,7 +645,7 @@ init(ModuleSpec) ->
 		||
 		{K, V} <- maps:to_list(MapSpec)
 	],
- 
+
 	% It should be good, we can start the module.
 	?LOG_INFO("~p ready", [?MODULE]),
 	{ok, Ets}.
@@ -1025,4 +1025,3 @@ spec_to_argparse2([{type, Type}|Rest], ArgParse) ->
 spec_to_argparse2([Ignore|Rest], ArgParse) ->
 	?LOG_DEBUG("ignored value: ~p", [Ignore]),
 	spec_to_argparse2(Rest, ArgParse).
-

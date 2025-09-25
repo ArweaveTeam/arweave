@@ -2,7 +2,7 @@
 %%% @doc Arweave configuration file manager.
 %%%
 %%% This module/process is in charge to manage arweave configuration
-%%% file(s). 
+%%% file(s).
 %%%
 %%% == Procedure ==
 %%%

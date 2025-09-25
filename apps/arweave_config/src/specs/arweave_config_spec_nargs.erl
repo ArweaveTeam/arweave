@@ -1,7 +1,7 @@
 %%%===================================================================
 %%% @doc nargs parameter interface from `argparse' module.
 %%% @see argparse
-%%% @end 
+%%% @end
 %%%===================================================================
 -module(arweave_config_spec_nargs).
 -export([init/2]).
