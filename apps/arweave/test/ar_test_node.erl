@@ -126,8 +126,9 @@ boot_peers(TestType) ->
 boot_peer(TestType, Node) ->
 	try_boot_peer(TestType, Node, ?MAX_BOOT_RETRIES).
 
-try_boot_peer(_TestType, _Node, 0) ->
+try_boot_peer(TestType, Node, 0) ->
     %% You might log an error or handle this case specifically as per your application logic.
+    io:format("~p", [{error, TestType, Node}]),
     {error, max_retries_exceeded};
 try_boot_peer(TestType, Node, Retries) ->
     NodeName = peer_name(Node),
@@ -140,20 +141,25 @@ try_boot_peer(TestType, Node, Retries) ->
 	Schedulers = erlang:system_info(schedulers_online),
     Cmd = io_lib:format(
         "erl +S ~B:~B -pa ~s -config config/sys.config -noshell " ++
-		"-name ~s -setcookie ~s -run ar main debug port ~p " ++
+	"+W i +v " ++
+	"-name ~s -setcookie ~s -run ar main debug port ~p " ++
         "data_dir .tmp/data_~s_~s no_auto_join disable_replica_2_9_device_limit " ++
-		"> ~s-~s.out 2>&1 &",
+	"> ~s-~s.out 2>&1 &",
         [Schedulers, Schedulers, string:join(Paths, " "), NodeName, Cookie, Port,
 			atom_to_list(TestType), NodeName, Node, get_node_namespace()]),
 	io:format("Launching peer ~p: ~s~n", [Node, Cmd]),
     os:cmd(Cmd),
-    case wait_until_node_is_ready(NodeName) of
+    try wait_until_node_is_ready(NodeName) of
         {ok, _Node} ->
             io:format("~s started at port ~p.~n", [NodeName, Port]),
             {node(), NodeName};
         {error, Reason} ->
             io:format("Error starting ~s: ~p. Retries left: ~p~n", [NodeName, Reason, Retries]),
             try_boot_peer(TestType, Node, Retries - 1)
+    catch
+        E:R:S ->
+	    io:format("~p~n", [{E,R,S}]),
+	    init:stop(1)
     end.
 
 wait_for_peers([]) ->
@@ -190,8 +196,9 @@ stop_peer(Node) ->
 	try
 		rpc:call(peer_name(Node), init, stop, [], 30000)
 	catch
-		_:_ ->
+		E:R:S ->
 			%% we don't care if the node is already stopped
+			io:format("error: ~p~n", [{E,R,S}]),
 			ok
 	end.
 
@@ -212,13 +219,13 @@ wait_until_joined() ->
 	 ).
 
 get_config(Node) ->
-	remote_call(Node, arweave_config_legacy, export, []).
+	remote_call(Node, application, get_env, [arweave, config]).
 
 set_config(Node, Config) ->
 	remote_call(Node, arweave_config_legacy, import, [Config]).
 
 update_config(Config) ->
-	BaseConfig = arweave_config_legacy:export(),
+	{ok, BaseConfig} = application:get_env(arweave, config),
 	Config2 = BaseConfig#config{
 		start_from_latest_state = Config#config.start_from_latest_state,
 		auto_join = Config#config.auto_join,
@@ -256,7 +263,8 @@ start_node(B0, Config) ->
 start_node(B0, Config, WaitUntilSync) ->
 	?LOG_INFO("Starting node"),
 	clean_up_and_stop(),
-	BaseConfig = arweave_config_legacy:export(),
+	{ok, _} = application:ensure_all_started(arweave_config),
+	{ok, BaseConfig} = application:get_env(arweave, config),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
 	update_config(Config),
 	ar:start_dependencies(),
@@ -276,6 +284,7 @@ start_node(B0, Config, WaitUntilSync) ->
 start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
 	%% Set weave larger than what we'll cover with the 3 nodes so that every node can find
 	%% a solution.
+	{ok, _} = application:ensure_all_started(arweave_config),
 	[B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ar_block:partition_size() * 5),
 	ExitPeer = peer_ip(peer1),
 	ValidatorPeer = peer_ip(main),
@@ -348,7 +357,7 @@ mine(Node) ->
 %% @doc Fetch and decode a binary-encoded block by hash H from the HTTP API of the
 %% given node. Return {ok, B} | {error, Reason}.
 http_get_block(H, Node) ->
-	Config = remote_call(Node, arweave_config_legacy, export, []),
+	{ok, Config} = remote_call(Node, application, get_env, [arweave, config]),
 	Port = Config#config.port,
 	Peer = {127, 0, 0, 1, Port},
 	case ar_http:req(#{ peer => Peer, method => get,
@@ -573,8 +582,7 @@ start(Options) when is_map(Options) ->
 	Config =
 		case maps:get(config, Options, not_set) of
 			not_set ->
-				element(2,
-					arweave_config_legacy:export());
+				element(2, application:get_env(arweave, config));
 			Value2 ->
 				Value2
 		end,
@@ -607,9 +615,9 @@ start(B0, RewardAddr, Config) ->
 %% Config after the test is done. Otherwise the tests that run after yours may fail.
 start(B0, RewardAddr, Config, StorageModules) ->
 	clean_up_and_stop(),
-	_ = arweave_config:start(),
+	{ok, _} = arweave_config:start(),
 	write_genesis_files(Config#config.data_dir, B0),
-	ok = arweave_config_legacy:import(Config#config{
+	arweave_config_legacy:import(Config#config{
 		start_from_latest_state = true,
 		auto_join = true,
 		peers = [],
@@ -805,7 +813,7 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 	).
 
 stop() ->
-	Config = arweave_config_legacy:export(),
+	{ok, Config} = application:get_env(arweave, config),
 	application:stop(arweave),
 	ar:stop_dependencies(),
 	Config.
@@ -825,7 +833,7 @@ join_on(#{ node := Node, join_on := JoinOnNode }, Rejoin) ->
 join(JoinOnNode, Rejoin) ->
 	_ = arweave_config:start(),
 	Peer = peer_ip(JoinOnNode),
-	Config = arweave_config_legacy:export(),
+	{ok, Config} = application:get_env(arweave, config),
 	case Rejoin of
 		true ->
 			stop();
@@ -1037,12 +1045,13 @@ safe_remote_call(Node, Module, Function, Args) ->
     try rpc:call(Node, Module, Function, Args, 30000) of
         Result -> {ok, Result}
     catch
-        error:Reason ->
+        error:Reason:S ->
             %% Log the error if necessary
-            io:format("Remote call error: ~p~n", [Reason]),
+            io:format("Remote call error: ~p (~p)~n", [Reason,S]),
             {error, Reason};
-        _:_ ->
+        E:R:S->
             %% Catching other exceptions, returning a general error.
+	    io:format("error: ~p~n", [{E,R,S}]),
             {error, unknown}
     end.
 
@@ -1204,8 +1213,9 @@ new_mock(Module, Options, Retries) ->
 			ok;
 		%% Retry on other errors
 		error:E ->
+		E:R:S ->
 			?debugFmt("ar_test_node (retries left ~p): Error creating mock for ~p: ~p",
-					[Retries - 1, Module, E]),
+					[Retries - 1, Module, {E,R,S}]),
 			timer:sleep(1000),
 			new_mock(Module, Options, Retries - 1);
 		exit:E ->
@@ -1224,14 +1234,9 @@ mock_function(Module, Fun, Mock, Retries) ->
 	try
 		meck:expect(Module, Fun, Mock)
 	catch
-		error:E ->
+		E:R:S ->
 			?debugFmt("ar_test_node (retries left ~p): Error setting mock for ~p: ~p",
-					[Retries - 1, Module, E]),
-			timer:sleep(1000),
-			mock_function(Module, Fun, Mock, Retries - 1);
-		exit:E ->
-			?debugFmt("ar_test_node (retries left ~p): Exit setting mock for ~p: ~p",
-					[Retries - 1, Module, E]),
+					[Retries - 1, Module, {E,R,S}]),
 			timer:sleep(1000),
 			mock_function(Module, Fun, Mock, Retries - 1)
 	end.
@@ -1249,14 +1254,9 @@ unmock_module(Module, Retries) ->
 		error:{not_mocked, Module} ->
 			ok;
 		%% Retry on other errors
-		error:E ->
+		E:R:S ->
 			?debugFmt("ar_test_node (retries left ~p): Error unloading mock for ~p: ~p",
-					[Retries - 1, Module, E]),
-			timer:sleep(1000),
-			unmock_module(Module, Retries - 1);
-		exit:E ->
-			?debugFmt("ar_test_node (retries left ~p): Exit unloading mock for ~p: ~p",
-					[Retries - 1, Module, E]),
+					[Retries - 1, Module, {E,R,S}]),
 			timer:sleep(1000),
 			unmock_module(Module, Retries - 1)
 	end.

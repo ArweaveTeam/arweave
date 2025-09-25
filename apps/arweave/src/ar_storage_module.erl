@@ -440,7 +440,7 @@ get_cover2(Start, End, [{BucketSize, Bucket, _Packing} = StorageModule | Storage
 label_test() ->
 	{ok, Config} = application:get_env(arweave, config),
 	try
-		application:set_env(arweave, config, Config#config{storage_modules = [
+		arweave_config_legacy:import(Config#config{storage_modules = [
 			{ar_block:partition_size(), 0, {spora_2_6, <<"a">>}},
 			{ar_block:partition_size(), 2, {spora_2_6, <<"a">>}},
 			{ar_block:partition_size(), 0, {spora_2_6, <<"b">>}},
@@ -474,7 +474,7 @@ label_test() ->
 		?assertEqual("storage_module_524288_3_composite_5",
 			label(id({524288, 3, {composite, <<"b">>, 2}})))
 	after
-		application:set_env(arweave, config, Config)
+		arweave_config_legacy:import(Config)
 	end.
 
 has_any_test() ->

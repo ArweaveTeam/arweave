@@ -279,7 +279,7 @@ polls_for_transactions_and_gossips_and_mines(B0, TXFuns) ->
 			TXs
 		)
 	after
-		application:set_env(arweave, config, MainConfig),
+		arweave_config_legacy:import(MainConfig),
 		ar_test_node:set_config(peer1, PeerConfig)
 	end.
 
@@ -343,7 +343,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 			lists:sort((read_block_when_stored(hd(BI2)))#block.txs)
 		)
 	after
-		application:set_env(arweave, config, MainConfig),
+		arweave_config_legacy:import(MainConfig),
 		ar_test_node:set_config(peer1, PeerConfig)
 	end.
 

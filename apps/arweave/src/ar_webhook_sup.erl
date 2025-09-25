@@ -28,6 +28,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
+	{ok, Config} = application:get_env(arweave, config),
 	Children = lists:map(
 		fun
 			(Hook) when is_record(Hook, config_webhook) ->
@@ -38,6 +39,6 @@ init([]) ->
 				?LOG_ERROR([{event, failed_to_parse_webhook_config},
 					{webhook_config, io_lib:format("~p", [Hook])}])
 		end,
-		arweave_config:get(webhooks)
+		Config#config.webhooks
 	),
 	{ok, {{one_for_one, 5, 10}, Children}}.

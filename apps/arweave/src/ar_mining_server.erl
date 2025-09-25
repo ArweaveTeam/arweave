@@ -1355,7 +1355,7 @@ setup() ->
 	Config.
 
 cleanup(Config) ->
-	application:set_env(arweave, config, Config).
+	arweave_config_legacy:import(Config).
 
 calculate_cache_limits_test_() ->
 	{setup, fun setup/0, fun cleanup/1,
@@ -1368,7 +1368,7 @@ calculate_cache_limits_test_() ->
 
 test_calculate_cache_limits_default() ->
 	{ok, Config} = application:get_env(arweave, config),
-	application:set_env(arweave, config, Config#config{
+	arweave_config_legacy:import(Config#config{
 		mining_cache_size_mb = undefined
 	}),
 	?assertEqual(
@@ -1482,7 +1482,7 @@ test_calculate_cache_limits_default() ->
 
 test_calculate_cache_limits_custom_low() ->
 	{ok, Config} = application:get_env(arweave, config),
-	application:set_env(arweave, config, Config#config{
+	arweave_config_legacy:import(Config#config{
 		mining_cache_size_mb = 1
 	}),
 	?assertEqual(
@@ -1536,7 +1536,7 @@ test_calculate_cache_limits_custom_low() ->
 
 test_calculate_cache_limits_custom_high() ->
 	{ok, Config} = application:get_env(arweave, config),
-	application:set_env(arweave, config, Config#config{
+	arweave_config_legacy:import(Config#config{
 		mining_cache_size_mb = 500_000
 	}),
 	?assertEqual(

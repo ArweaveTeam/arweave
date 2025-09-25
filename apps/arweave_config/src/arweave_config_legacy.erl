@@ -222,10 +222,12 @@ init(_) ->
 	case application:get_env(arweave, config) of
 		undefined ->
 			Proplist = config_to_proplist(#config{}),
+			application:set_env(arweave, config, #config{}),
 			{ok, Proplist};
 		{ok, Config} when is_tuple(Config),
 			element(1, Config) =:= config ->
 				Proplist = config_to_proplist(Config),
+				application:set_env(arweave, config, #config{}),
 				{ok, Proplist};
 		_ ->
 			{stop, configuration_error}
@@ -271,6 +273,11 @@ handle_call(Msg = {set, Key, Value, Opts}, From, State)
 		OldValue = proplists:get_value(Key, State),
 		Return = {ok, Value, OldValue},
 		NewState = lists:keyreplace(Key, 1, State, {Key, Value}),
+
+		% temporary
+		NewConfig = proplist_to_config(NewState),
+		application:set_env(arweave, config, NewConfig),
+
 		Fun = fun
 			(set_env, true) ->
 				NewConfig = proplist_to_config(NewState),

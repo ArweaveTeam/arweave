@@ -126,7 +126,7 @@ init([]) ->
 			end;
 		{false, true, _} ->
 			Config2 = Config#config{ init = false },
-			application:set_env(arweave, config, Config2),
+			arweave_config_legacy:import(Config2),
 			InitialBalance = ?AR(?LOCALNET_BALANCE),
 			[B0] = ar_weave:init([{Config#config.mining_addr, InitialBalance, <<>>}],
 					ar_retarget:switch_to_linear_diff(Config#config.diff)),
@@ -216,7 +216,7 @@ validate_trusted_peers(Config) ->
 			timer:sleep(2000),
 			init:stop(1);
 		_ ->
-			application:set_env(arweave, config, Config#config{ peers = ValidPeers }),
+			arweave_config_legacy:import(Config#config{ peers = ValidPeers }),
 			case lists:member(time_syncing, Config#config.disable) of
 				false ->
 					validate_clock_sync(ValidPeers);

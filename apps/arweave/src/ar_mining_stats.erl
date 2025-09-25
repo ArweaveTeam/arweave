@@ -442,6 +442,7 @@ optimal_partition_hash_hps(PoA1Multiplier, VDFSpeed, PartitionDataSize, TotalDat
 	H1Optimal + H2Optimal.
 
 generate_report() ->
+	{ok, Config} = application:get_env(arweave, config),
 	Height = ar_node:get_height(),
 	Packing = ar_mining_io:get_packing(),
 	Partitions = ar_mining_io:get_partitions(),
@@ -449,7 +450,7 @@ generate_report() ->
 		Height,
 		Packing,
 		Partitions,
-		arweave_config:get(cm_peers),
+		Config#config.cm_peers,
 		ar_node:get_weave_size(),
 		erlang:monotonic_time(millisecond)
 	).
@@ -970,10 +971,10 @@ test_vdf_stats() ->
 	?assertEqual(undefined, vdf_speed(1000)).
 
 test_data_size_stats() ->
-	Config = arweave_config_legacy:export(),
+	{ok, Config} = application:get_env(arweave, config),
 	try
 		arweave_config:set(mining_address, <<"MINING">>),
-		Config2 = arweave_config_legacy:export(),
+		{ok, Config2} = application:get_env(arweave, config),
 
 		WeaveSize = floor(2 * ar_block:partition_size()),
 		ets:insert(node_state, [{weave_size, WeaveSize}]),
@@ -987,7 +988,7 @@ test_data_size_stats() ->
 	end.
 
 do_test_data_size_stats(Config, Mining, Packing) ->
-	application:set_env(arweave, config, Config#config{ 
+	arweave_config_legacy:import(Config#config{ 
 		storage_modules = [
 			{floor(0.1 * ar_block:partition_size()), 10, unpacked},
 			{floor(0.1 * ar_block:partition_size()), 10, Mining},
@@ -1310,7 +1311,7 @@ test_report_poa1_multiple_2() ->
 	test_report({composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2}, 2).
 
 test_report(Mining, Packing, PoA1Multiplier) ->
-	Config = arweave_config_legacy:export(),
+	{ok, Config} = application:get_env(arweave, config),
 	MiningAddress = case Mining of
 		{spora_2_6, Addr} ->
 			Addr;

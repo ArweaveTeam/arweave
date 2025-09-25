@@ -414,7 +414,7 @@ test_replica_2_9() ->
 			{ar_block:partition_size(), 0, Packing},
 			{ar_block:partition_size(), 1, Packing}
 	],
-	Config = arweave_config_legacy:export(),
+	{ok, Config} = application:get_env(arweave, config),
 	try
 		ar_test_node:start(#{ reward_addr => RewardAddr, storage_modules => StorageModules }),
 		StoreID1 = ar_storage_module:id(lists:nth(1, StorageModules)),

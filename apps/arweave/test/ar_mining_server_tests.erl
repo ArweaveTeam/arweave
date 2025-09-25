@@ -31,7 +31,7 @@ setup_all() ->
 	Config.
 
 cleanup_all(Config) ->
-	ok = application:set_env(arweave, config, Config).
+	arweave_config_legacy:import(Config).
 
 %% @doc Setup the environment so we can control VDF step generation.
 setup_pool_client() ->
@@ -54,7 +54,7 @@ setup_pool_client() ->
 	Config.
 
 cleanup_pool_client(Config) ->
-	ok = application:set_env(arweave, config, Config).
+	arweave_config_legacy:import(Config).
 
 setup_one() ->
 	ets:new(mock_counter, [set, public, named_table]),
