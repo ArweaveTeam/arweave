@@ -52,11 +52,11 @@ test_webhooks() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 	try
+		Config = arweave_config_legacy:export(),
 		Port = ar_test_node:get_unused_port(),
 		PortBinary = integer_to_binary(Port),
 		TXBlacklistFilename = random_tx_blacklist_filename(),
 		Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config = arweave_config_legacy:export(),
 		arweave_config_legacy:import(Config#config{
 			webhooks = [
 				#config_webhook{
@@ -214,6 +214,7 @@ test_webhooks() ->
 		assert_transaction_data_synced(V2TXID),
 		cowboy:stop_listener(ar_webhook_test_listener)
 	after
+		arweave_config_legacy:import(Config),
 		arweave_config:set(webhooks, [])
 	end.
 
