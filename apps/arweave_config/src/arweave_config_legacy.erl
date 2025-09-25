@@ -312,6 +312,9 @@ handle_cast(Msg = import, State) ->
 	?LOG_DEBUG([{message, Msg}]),
 	case import_config() of
 		{ok, NewState} ->
+			% temporary
+			NewConfig = proplist_to_config(NewState),
+			application:set_env(arweave, config, NewConfig),
 			{noreply, NewState};
 		_ ->
 			{noreply, State}
@@ -319,6 +322,9 @@ handle_cast(Msg = import, State) ->
 handle_cast(Msg = {import, Config}, State) ->
 	case import_config(Config) of
 		{ok, NewState} ->
+			% temporary
+			NewConfig = proplist_to_config(NewState),
+			application:set_env(arweave, config, NewConfig),
 			{noreply, NewState};
 		_ ->
 			{noreply, State}
