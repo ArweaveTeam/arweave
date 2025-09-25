@@ -57,7 +57,7 @@ test_webhooks() ->
 		PortBinary = integer_to_binary(Port),
 		TXBlacklistFilename = random_tx_blacklist_filename(),
 		Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-		arweave_config_legacy:import(Config#config{
+		Config2 = Config#config{
 			webhooks = [
 				#config_webhook{
 					url = <<"http://127.0.0.1:", PortBinary/binary, "/tx">>,
@@ -77,8 +77,7 @@ test_webhooks() ->
 				}
 			],
 			transaction_blacklist_files = [TXBlacklistFilename]
-		}),
-		{ok, Config2} = application:get_env(arweave, config),
+		},
 		ar_test_node:start(#{
 			b0 => B0,
 			addr => Addr,
@@ -214,8 +213,9 @@ test_webhooks() ->
 		assert_transaction_data_synced(V2TXID),
 		cowboy:stop_listener(ar_webhook_test_listener)
 	after
-		arweave_config_legacy:import(Config),
-		arweave_config:set(webhooks, [])
+		arweave_config_legacy:import(Config#config{
+			webhooks = []
+		})
 	end.
 
 create_v2_tx(Wallet) ->

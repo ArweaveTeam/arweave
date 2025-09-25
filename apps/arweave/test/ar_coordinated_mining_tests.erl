@@ -152,8 +152,11 @@ test_no_secret() ->
 test_bad_secret() ->
 	[Node, _ExitNode, _ValidatorNode] = ar_test_node:start_coordinated(1),
 	Peer = ar_test_node:peer_ip(Node),
+	{ok, Config} = application:get_env(arweave, config),
 	try
-		arweave_config:set(cm_api_secret, <<"this_is_not_the_actual_secret">>),
+		arweave_config_legacy:import(Config#config{
+			cm_api_secret = <<"this_is_not_the_actual_secret">>
+		}),
 		?assertMatch(
 			{error, {ok, {{<<"421">>, _}, _, 
 				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
@@ -171,14 +174,14 @@ test_bad_secret() ->
 				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 			ar_http_iface_client:cm_publish_send(Peer, dummy_solution()))
 	after
-		arweave_config_legacy:reset()
+		arweave_config_legacy:import(Config)
 	end.
 
 test_partition_table() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), 5 * ar_block:partition_size()),
 	Config = ar_test_node:base_cm_config([]),
 	arweave_config_legacy:import(Config),
-	MiningAddr = arweave_config:get(mining_addr),
+	MiningAddr = MiningAddr = Config#config.mining_addr,
 	RandomAddress = crypto:strong_rand_bytes(32),
 	Peer = ar_test_node:peer_ip(main),
 
@@ -250,7 +253,7 @@ test_peers_by_partition() ->
 	BaseConfig = ar_test_node:base_cm_config([]),
 	arweave_config_legacy:import(BaseConfig#config{ cm_exit_peer = Peer1 }),
 	{ok, Config} = application:get_env(arweave, config),
-	MiningAddr = arweave_config:get(mining_addr),
+	MiningAddr = Config#config.mining_addr,
 	
 	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
 		cm_exit_peer = not_set,
