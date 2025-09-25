@@ -41,7 +41,7 @@ main(Args) ->
 	% is also acting as a proxy between the legacy configuration
 	% and the new one.
 	{ok, _} = arweave_config:start(),
-	
+
 	% load environment variable using arweave_config.
 	% ok = arweave_config_environment:load(),
 
@@ -59,10 +59,10 @@ main(Args) ->
 	% the configuration as legacy (record).
 	%   {ok, LegacyConfig} = arweave_config:export(legacy),
 	%   start(LegacyConfig).
-	
+
 	% let parse legacy argument/configuration format
 	ParsedConfiguration = parse_config_file(Args, [], #config{}),
-	
+
 	% the startup phase is over, we got parameters from
 	% environments, arguments and configuration file(s).
 	% arweave_config can now switch to runtime mode. All
@@ -72,6 +72,7 @@ main(Args) ->
 
 	% now, let start arweave using the legacy configuration and
 	% arguments. The new method is not ready yet.
+	arweave_config_legacy:import(ParsedConfiguration),
 	start(ParsedConfiguration).
 
 show_help() ->
@@ -1551,7 +1552,7 @@ tests(Mod) ->
 	tests(test, Mod).
 
 tests(TestType, Mods, Config) when is_list(Mods) ->
-	_ = application:ensure_all_started(arweave_config),
+	{ok, _} = arweave_config:start(),
 	TotalTimeout = case TestType of
 		e2e -> ?E2E_TEST_SUITE_TIMEOUT;
 		_ -> ?TEST_SUITE_TIMEOUT

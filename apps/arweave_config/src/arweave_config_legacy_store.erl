@@ -87,7 +87,7 @@ init(_) ->
 %%
 %%--------------------------------------------------------------------
 handle_call({has_key, Key}, _From, State) ->
-	{reply, erlang:is_map_key(Key, State), State};	
+	{reply, erlang:is_map_key(Key, State), State};
 handle_call(keys, _From, State) ->
 	{reply, maps:keys(State), State};
 handle_call({get, Key}, _From, State)
@@ -131,4 +131,4 @@ proplist_to_config(Proplist)
 		Values = lists:map(fun({_,V}) -> V end, Proplist),
 		Values2 = [config|Values],
 		erlang:list_to_tuple(Values2).
-	
+

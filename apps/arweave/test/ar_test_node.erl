@@ -141,7 +141,6 @@ try_boot_peer(TestType, Node, Retries) ->
 	Schedulers = erlang:system_info(schedulers_online),
     Cmd = io_lib:format(
         "erl +S ~B:~B -pa ~s -config config/sys.config -noshell " ++
-	"+W i +v " ++
 	"-name ~s -setcookie ~s -run ar main debug port ~p " ++
         "data_dir .tmp/data_~s_~s no_auto_join disable_replica_2_9_device_limit " ++
 	"> ~s-~s.out 2>&1 &",
@@ -182,7 +181,8 @@ peer_name(Node) ->
 	).
 
 peer_port(Node) ->
-	ar_test_node:remote_call(Node, arweave_config, get, [port]).
+	{ok, Config} = ar_test_node:remote_call(Node, application, get_env, [arweave, config]),
+	Config#config.port.
 
 stop_peers([]) ->
 	ok;
@@ -263,7 +263,7 @@ start_node(B0, Config) ->
 start_node(B0, Config, WaitUntilSync) ->
 	?LOG_INFO("Starting node"),
 	clean_up_and_stop(),
-	{ok, _} = application:ensure_all_started(arweave_config),
+	{ok, _} = arweave_config:start(),
 	{ok, BaseConfig} = application:get_env(arweave, config),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
 	update_config(Config),
@@ -284,7 +284,7 @@ start_node(B0, Config, WaitUntilSync) ->
 start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =< ?MAX_MINERS ->
 	%% Set weave larger than what we'll cover with the 3 nodes so that every node can find
 	%% a solution.
-	{ok, _} = application:ensure_all_started(arweave_config),
+	{ok, _} = arweave_config:start(),
 	[B0] = ar_weave:init([], get_difficulty_for_invalid_hash(), ar_block:partition_size() * 5),
 	ExitPeer = peer_ip(peer1),
 	ValidatorPeer = peer_ip(main),

@@ -30,7 +30,7 @@
 %%% |       | |           |_________/       (_______________)     |
 %%% |       | |                                                   |
 %%% |       | |                                                   |
-%%% |       | |                                  [arweave_config] | 
+%%% |       | |                                  [arweave_config] |
 %%% |       | |                                          [module] |
 %%% |______ | |___________________________________________________|
 %%%         | |
@@ -416,7 +416,7 @@
 	get/2,
 	set/2,
 	show/0,
-	show/1, 
+	show/1,
 	spec/0,
 	export/0,
 	export/1,
@@ -511,7 +511,7 @@ get(Key) ->
 			case arweave_config_store:get(Parameter) of
 				{ok, Value} ->
 					{ok, Value};
-				_Elsewise -> 
+				_Elsewise ->
 					arweave_config_spec:get_default(Parameter)
 			end;
 		Elsewise ->

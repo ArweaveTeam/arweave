@@ -59,7 +59,7 @@ show_help() ->
 	init:stop(1).
 
 run_benchmark({Format, Dirs, Threads, DataMiB}) ->
-	arweave_config_legacy:import(#config{ 
+	arweave_config_legacy:import(#config{
 		disable = [],
 		enable  = [randomx_large_pages]
 	}),
@@ -67,11 +67,11 @@ run_benchmark({Format, Dirs, Threads, DataMiB}) ->
 	ThreadDirPairs = assign_threads_to_dirs(Threads, Dirs),
 
 	Context = prepare_context(Format, Threads, DataMiB),
-		
+
 	PackedData = get_total_data(Format, Threads, Context),
 
 	Iterations = get_iterations(Format, Threads, Context),
-	
+
 	case Dirs of
 		[] ->
 			ar:console("~n~nRunning ~p threads (~p iterations per thread) to pack ~.1f MiB of data~n", [Threads, Iterations, PackedData]);
@@ -90,7 +90,7 @@ run_benchmark({Format, Dirs, Threads, DataMiB}) ->
 	ar:console("~n~nTimes: ~p~n", [Times]),
 	Average = lists:sum(Times) / length(Times),
 	ar:console("~nAverage: ~p ms~n", [Average]),
-	
+
 	Rate = PackedData / Average * 1000,
 	ar:console("~nTime ~p ms, ~.1f MiB, ~.2f MiB/s ~n~n", [Average, PackedData, Rate]).
 
@@ -113,7 +113,7 @@ prepare_context(replica_2_9, Threads, DataMiB) ->
 	DataPerThread = DataMiB * ?MiB div Threads,
 	EntropyPerThread = DataPerThread div ?REPLICA_2_9_ENTROPY_SIZE,
 	RandomXState = ar_mine_randomx:init_fast2(
-		rxsquared, ?RANDOMX_PACKING_KEY, 1, 1, 
+		rxsquared, ?RANDOMX_PACKING_KEY, 1, 1,
 		erlang:system_info(dirty_cpu_schedulers_online)),
 	{RandomXState, SubChunk, Key, EntropyPerThread};
 prepare_context(spora_2_6, Threads, DataMiB) ->
@@ -123,7 +123,7 @@ prepare_context(spora_2_6, Threads, DataMiB) ->
 	Offset = rand:uniform(1024 * 1024 * 1024),
 	{spora_2_6, Key} = ar_packing_server:chunk_key({spora_2_6, Address}, Offset, Root),
 	{rx512, RandomXState} = ar_mine_randomx:init_fast2(
-		rx512, ?RANDOMX_PACKING_KEY, 1, 1, 
+		rx512, ?RANDOMX_PACKING_KEY, 1, 1,
 		erlang:system_info(dirty_cpu_schedulers_online)),
 	ChunksPerThread = DataMiB * ?MiB div Threads div ?DATA_CHUNK_SIZE,
 	{RandomXState, Chunk, Key, ChunksPerThread};
@@ -134,7 +134,7 @@ prepare_context({composite, Difficulty}, Threads, DataMiB) ->
 	Offset = rand:uniform(1024 * 1024 * 1024),
 	{composite, Key} = ar_packing_server:chunk_key({composite, Address, Difficulty}, Offset, Root),
 	{rx4096, RandomXState} = ar_mine_randomx:init_fast2(
-		rx4096, ?RANDOMX_PACKING_KEY, 1, 1, 
+		rx4096, ?RANDOMX_PACKING_KEY, 1, 1,
 		erlang:system_info(dirty_cpu_schedulers_online)),
 	ChunksPerThread = DataMiB * ?MiB div Threads div ?DATA_CHUNK_SIZE,
 	{RandomXState, Chunk, Key, ChunksPerThread}.
@@ -162,7 +162,7 @@ pack_chunks(replica_2_9, Thread, Dir, Context, Count) ->
 		undefined ->
 			ok;
 		_ ->
-			
+
 			Filename = io_lib:format("t~p_e~p.bin", [Thread, Count]),
 			Path = filename:join(Dir, Filename),
 			file:write_file(Path, PackedSubChunks)
@@ -208,5 +208,5 @@ pack_sub_chunks(SubChunk, Entropy, Index, State, PackedSubChunks) ->
 	{ok, PackedSubChunk} = ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk(
 			{State, Entropy, SubChunk, Index}),
 	pack_sub_chunks(
-		SubChunk, Entropy, Index + 1, State, 
+		SubChunk, Entropy, Index + 1, State,
 		[PackedSubChunk | PackedSubChunks]).

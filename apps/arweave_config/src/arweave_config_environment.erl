@@ -94,13 +94,13 @@ handle_call(Msg, From, State) ->
 %%--------------------------------------------------------------------
 handle_cast(load, State) ->
 	Spec = arweave_config_spec:get_environments(),
-	Mapping = [ 
+	Mapping = [
 		begin
 			?LOG_DEBUG("found environment ~p", [EnvKey]),
-			{Parameter, EnvValue} 
+			{Parameter, EnvValue}
 		end
 	||
-		{EnvKey, EnvValue} <- get(), 
+		{EnvKey, EnvValue} <- get(),
 		{EnvSpec, Parameter} <- Spec,
 		EnvSpec =:= EnvKey
 	],

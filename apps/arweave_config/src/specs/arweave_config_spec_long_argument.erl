@@ -71,7 +71,7 @@ convert(List) when is_list(List) -> convert(List, []);
 convert(<<"-", _/binary>> = Binary) -> Binary;
 convert(Binary) when is_binary(Binary) -> <<"-", Binary/binary>>.
 
-convert([], Buffer) -> 
+convert([], Buffer) ->
 	Sep = application:get_env(arweave_config, long_argument_separator, "."),
 	Bin = list_to_binary(lists:join(Sep, lists:reverse(Buffer))),
 	<<"-", Bin/binary>>;
