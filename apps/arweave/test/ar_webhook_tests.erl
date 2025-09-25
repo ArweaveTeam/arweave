@@ -51,13 +51,13 @@ webhooks_test_() ->
 test_webhooks() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
-	{ok, Config} = application:get_env(arweave, config),
 	try
 		Port = ar_test_node:get_unused_port(),
 		PortBinary = integer_to_binary(Port),
 		TXBlacklistFilename = random_tx_blacklist_filename(),
 		Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config2 = Config#config{
+		Config = arweave_config_legacy:export(),
+		arweave_config_legacy:import(Config#config{
 			webhooks = [
 				#config_webhook{
 					url = <<"http://127.0.0.1:", PortBinary/binary, "/tx">>,
@@ -77,7 +77,7 @@ test_webhooks() ->
 				}
 			],
 			transaction_blacklist_files = [TXBlacklistFilename]
-		},
+		}),
 		ar_test_node:start(#{ b0 => B0, addr => Addr, config => Config2,
 				%% Replica 2.9 modules do not support updates.
 				storage_modules =>[{10 * 1024 * 1024, 0, {composite, Addr, 1}}] }),
@@ -209,7 +209,7 @@ test_webhooks() ->
 		assert_transaction_data_synced(V2TXID),
 		cowboy:stop_listener(ar_webhook_test_listener)
 	after
-		application:set_env(arweave, config, Config#config{ webhooks = [] })
+		arweave_config:set(webhooks, [])
 	end.
 
 create_v2_tx(Wallet) ->
@@ -257,11 +257,12 @@ upload_chunks([Proof | Proofs]) ->
 	upload_chunks(Proofs).
 
 random_tx_blacklist_filename() ->
-	{ok, Config} = application:get_env(arweave, config),
+	Config = arweave_config_legacy:export(),
 	filename:join(Config#config.data_dir,
 		"ar-webhook-tests-transaction-blacklist-"
 		++
-		binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32)))).
+		binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32)))
+	).
 
 append_txid_to_file(TXID, Filename) ->
 	{ok, F} = file:open(Filename, [append]),
