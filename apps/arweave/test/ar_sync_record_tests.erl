@@ -137,7 +137,7 @@ test_sync_record() ->
 
 		ar_test_node:stop()
 	after
-		ok = application:set_env(arweave, config, Config)
+		arweave_config_legacy:import(Config)
 	end.
 
 
@@ -176,6 +176,6 @@ test_sync_record_with_replica_2_9() when ?BLOCK_2_9_SYNCING ->
 
 		ar_test_node:stop()
 	after
-		ok = application:set_env(arweave, config, Config)
+		arweave_config_legacy:import(Config)
 	end;
 test_sync_record_with_replica_2_9() -> ok.

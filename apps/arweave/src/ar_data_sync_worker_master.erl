@@ -639,7 +639,7 @@ test_max_peer_queue() ->
 test_cut_peer_queue() ->
 	{ok, OriginalConfig} = application:get_env(arweave, config),
 	try
-		ok = application:set_env(arweave, config, OriginalConfig#config{
+		arweave_config_legacy:import(OriginalConfig#config{
 			sync_jobs = 10
 		}),
 
@@ -672,7 +672,7 @@ test_cut_peer_queue() ->
 		assert_peer_tasks(TaskQueue, 0, 8, PeerTasks4),
 		?assertEqual(100, State4#state.queued_task_count)
 	after
-		application:set_env(arweave, config, OriginalConfig)
+		arweave_config_legacy:import(OriginalConfig)
 	end.
 
 test_update_active() ->

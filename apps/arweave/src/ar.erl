@@ -40,10 +40,10 @@ main(Args) ->
 	% will be in charge of the whole application. arweave_config
 	% is also acting as a proxy between the legacy configuration
 	% and the new one.
-	{ok, _} = application:ensure_all_started(arweave_config),
+	{ok, _} = arweave_config:start(),
 	
 	% load environment variable using arweave_config.
-	ok = arweave_config_environment:load(),
+	% ok = arweave_config_environment:load(),
 
 	% load the arguments from the command line using
 	% arweave_config.
@@ -68,7 +68,7 @@ main(Args) ->
 	% arweave_config can now switch to runtime mode. All
 	% parameters with runtime set to false will be set in
 	% read-only.
-	ok = arweave_config:runtime(),
+	% ok = arweave_config:runtime(),
 
 	% now, let start arweave using the legacy configuration and
 	% arguments. The new method is not ready yet.
@@ -1359,7 +1359,7 @@ start(Config) ->
 			init:stop(1)
 	end,
 	Config2 = ar_config:set_dependent_flags(Config),
-	ok = application:set_env(arweave, config, Config2),
+	arweave_config_legacy:import(Config2),
 	filelib:ensure_dir(Config2#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
 	case Config2#config.nonce_limiter_server_trusted_peers of
@@ -1400,7 +1400,7 @@ set_mining_address(#config{ mining_addr = not_set } = C) ->
 			Addr = ar_wallet:to_address(W),
 			ar:console("~nSetting the mining address to ~s.~n", [ar_util:encode(Addr)]),
 			C2 = C#config{ mining_addr = Addr },
-			application:set_env(arweave, config, C2),
+			arweave_config_legacy:import(C2),
 			set_mining_address(C2)
 	end;
 set_mining_address(#config{ mine = false }) ->
@@ -1443,7 +1443,7 @@ create_wallet(DataDir, KeyType) ->
 		false ->
 			create_wallet_fail(KeyType);
 		true ->
-			ok = application:set_env(arweave, config, #config{ data_dir = DataDir }),
+			arweave_config_legacy:import(#config{ data_dir = DataDir }),
 			case ar_wallet:new_keyfile(KeyType) of
 				{error, Reason} ->
 					ar:console("Failed to create a wallet, reason: ~p.~n~n",
@@ -1477,7 +1477,7 @@ benchmark_packing(Args) ->
 benchmark_vdf() ->
 	benchmark_vdf([]).
 benchmark_vdf(Args) ->
-	ok = application:set_env(arweave, config, #config{}),
+	arweave_config_legacy:import(#config{}),
 	ar_bench_vdf:run_benchmark_from_cli(Args),
 	init:stop(1).
 
@@ -1561,8 +1561,8 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 		ar_test_node:boot_peers(TestType),
 		ar_test_node:wait_for_peers(TestType)
 	catch
-		Type:Reason ->
-			io:format("Failed to start the peers due to ~p:~p~n", [Type, Reason]),
+		Type:Reason:S ->
+			io:format("Failed to start the peers due to ~p:~p (~p)~n", [Type, Reason, S]),
 			init:stop(1)
 	end,
 	Result =
@@ -1578,6 +1578,7 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 
 
 start_for_tests(TestType, Config) ->
+	{ok, _} = arweave_config:start(),
 	UniqueName = ar_test_node:get_node_namespace(),
 	TestConfig = Config#config{
 		peers = [],
@@ -1586,12 +1587,15 @@ start_for_tests(TestType, Config) ->
 		disable = [randomx_jit],
 		auto_join = false
 	},
+	arweave_config_legacy:import(TestConfig),
 	start(TestConfig).
 
 %% @doc Run the tests for a set of module(s).
 %% Supports strings so that it can be trivially induced from a unix shell call.
-tests(TestType, Mod) when not is_list(Mod) -> tests(TestType, [Mod]);
+tests(TestType, Mod) when not is_list(Mod) ->
+	tests(TestType, [Mod]);
 tests(TestType, Args) ->
+	{ok, _} = arweave_config:start(),
 	Mods =
 		lists:map(
 			fun(Mod) when is_atom(Mod) -> Mod;

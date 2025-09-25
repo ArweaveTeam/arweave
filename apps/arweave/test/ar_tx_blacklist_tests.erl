@@ -461,4 +461,4 @@ decode_chunk(EncodedProof) ->
 
 teardown(Config) ->
 	ok = ar_test_node:remote_call(peer1, cowboy, stop_listener, [ar_tx_blacklist_test_listener]),
-	application:set_env(arweave, config, Config).
+	arweave_config_legacy:import(Config).

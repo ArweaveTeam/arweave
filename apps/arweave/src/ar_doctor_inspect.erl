@@ -21,8 +21,9 @@ main(Args) ->
 			true;
 		["chunks", Dir, StartStr, EndStr | AddrListStr] when length(AddrListStr) >= 1 ->
 			Addresses = [ar_util:decode(AddrStr) || AddrStr <- AddrListStr],
-			application:set_env(arweave, config, #config{
-				disable = [], enable  = [randomx_large_pages]
+			arweave_config_legacy:import(#config{
+				disable = [],
+				enable  = [randomx_large_pages]
 			}),
 			ar_metrics:register(),
 			ar_packing_sup:start_link(),
@@ -225,7 +226,7 @@ bitmap(DataDir, StorageModuleConfig) ->
 	Config = #config{
 		data_dir = DataDir,
 		storage_modules = [StorageModule]},
-	application:set_env(arweave, config, Config),
+	arweave_config_legacy:import(Config),
 
 	StoreID = ar_storage_module:id(StorageModule),
 	

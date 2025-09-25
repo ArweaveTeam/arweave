@@ -249,7 +249,7 @@ test_peers_by_partition() ->
 
 	BaseConfig = ar_test_node:base_cm_config([]),
 	arweave_config_legacy:import(BaseConfig#config{ cm_exit_peer = Peer1 }),
-	Config = arweave_config_legacy:export(),
+	{ok, Config} = application:get_env(arweave, config),
 	MiningAddr = arweave_config:get(mining_addr),
 	
 	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
