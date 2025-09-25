@@ -1,0 +1,8 @@
+{"1.2.0",
+[{<<"parse_trans">>,{pkg,<<"parse_trans">>,<<"3.4.2">>},0}]}.
+[
+{pkg_hash,[
+ {<<"parse_trans">>, <<"C352DDC1A0D5E54F9B1654D45F9C432EEF76F9CEA371C55DDFF769EF688FDB74">>}]},
+{pkg_hash_ext,[
+ {<<"parse_trans">>, <<"4C25347DE3B7C35732D32E69AB43D1CEEE0BEAE3F3B3ADE1B59CBD3DD224D9CA">>}]}
+].

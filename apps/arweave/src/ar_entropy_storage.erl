@@ -475,7 +475,7 @@ test_replica_2_9() ->
 		assert_get(P5, 16 * ?DATA_CHUNK_SIZE, StoreID2),
 		?assertNotEqual(Entropy4, Entropy5)
 	after
-		ok = application:set_env(arweave, config, Config)
+		arweave_config_legacy:import(Config)
 	end.
 
 assert_get(Expected, Offset, StoreID) ->

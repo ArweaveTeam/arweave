@@ -26,8 +26,8 @@ setup() ->
     {Config, PeerConfig}.
 
 cleanup({Config, PeerConfig}) ->
-	application:set_env(arweave, config, Config),
-	ar_test_node:remote_call(peer1, application, set_env, [arweave, config, PeerConfig]),
+	arweave_config_legacy:import(Config),
+	ar_test_node:remote_call(peer1, arweave_config_legacy, import, [PeerConfig]),
 	ets:delete(computed_output).
 
 setup_external_update() ->
@@ -58,7 +58,7 @@ setup_external_update() ->
 
 cleanup_external_update({Pid, Config}) ->
 	exit(Pid, kill),
-	ok = application:set_env(arweave, config, Config),
+	arweave_config_legacy:import(Config),
 	ets:delete(add_task),
 	ets:delete(computed_output).
 

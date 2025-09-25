@@ -36,7 +36,44 @@ main() ->
 main("") ->
 	show_help();
 main(Args) ->
-	start(parse_config_file(Args, [], #config{})).
+	% Let start arweave_config application, this application
+	% will be in charge of the whole application. arweave_config
+	% is also acting as a proxy between the legacy configuration
+	% and the new one.
+	{ok, _} = arweave_config:start(),
+
+	% load environment variable using arweave_config.
+	% ok = arweave_config_environment:load(),
+
+	% load the arguments from the command line using
+	% arweave_config.
+	%   ok = arweave_config_arguments:load(Args)
+
+	% load the configuration if it present/configured in
+	% the environment or arguments. Also check if the default
+	% configuration file (e.g. config.json) is present in the
+	% current path.
+	%   ok = arweave_config_file:load(),
+
+	% we can't deal with everything right now, then we can export
+	% the configuration as legacy (record).
+	%   {ok, LegacyConfig} = arweave_config:export(legacy),
+	%   start(LegacyConfig).
+
+	% let parse legacy argument/configuration format
+	ParsedConfiguration = parse_config_file(Args, [], #config{}),
+
+	% the startup phase is over, we got parameters from
+	% environments, arguments and configuration file(s).
+	% arweave_config can now switch to runtime mode. All
+	% parameters with runtime set to false will be set in
+	% read-only.
+	% ok = arweave_config:runtime(),
+
+	% now, let start arweave using the legacy configuration and
+	% arguments. The new method is not ready yet.
+	arweave_config_legacy:import(ParsedConfiguration),
+	start(ParsedConfiguration).
 
 show_help() ->
 	io:format("Usage: arweave-server [options]~n"),
@@ -553,33 +590,41 @@ read_config_from_file(Path) ->
 
 parse_cli_args([], C) -> C;
 parse_cli_args(["mine" | Rest], C) ->
+	arweave_config:set(mine, true),
 	parse_cli_args(Rest, C#config{ mine = true });
 parse_cli_args(["verify", "purge" | Rest], C) ->
+	arweave_config:set(verify, purge),
 	parse_cli_args(Rest, C#config{ verify = purge });
 parse_cli_args(["verify", "log" | Rest], C) ->
+	arweave_config:set(verify, log),
 	parse_cli_args(Rest, C#config{ verify = log });
 parse_cli_args(["verify", _ | _], _C) ->
 	io:format("Invalid verify mode. Valid modes are 'purge' or 'log'.~n"),
 	timer:sleep(1000),
 	init:stop(1);
 parse_cli_args(["verify_samples", "all" | Rest], C) ->
+	arweave_config:set(verify_samples, all),
 	parse_cli_args(Rest, C#config{ verify_samples = all });
 parse_cli_args(["verify_samples", N | Rest], C) ->
+	arweave_config:set(verify_samples, list_to_integer(N)),
 	parse_cli_args(Rest, C#config{ verify_samples = list_to_integer(N) });
 parse_cli_args(["vdf", Mode | Rest], C) ->
 	ParsedMode = case Mode of
-		"openssl" ->openssl;
-		"openssllite" ->openssllite;
-		"fused" ->fused;
-		"hiopt_m4" ->hiopt_m4;
+		"openssl" -> openssl;
+		"openssllite" -> openssllite;
+		"fused" -> fused;
+		"hiopt_m4" -> hiopt_m4;
 		_ ->
 			io:format("VDF ~p is invalid.~n", [Mode]),
 			openssl
 	end,
+	arweave_config:set(vdf, ParsedMode),
 	parse_cli_args(Rest, C#config{ vdf = ParsedMode });
 parse_cli_args(["peer", Peer | Rest], C = #config{ peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeers} when is_list(ValidPeers) ->
+			PAC = arweave_config:get(peers),
+			arweave_config:set(peers, ValidPeers ++ PAC),
 			NewConfig = C#config{peers = ValidPeers ++ Ps},
 			parse_cli_args(Rest, NewConfig);
 		{error, _} ->
@@ -590,6 +635,8 @@ parse_cli_args(["block_gossip_peer", Peer | Rest],
 		C = #config{ block_gossip_peers = Peers }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} when is_list(ValidPeer) ->
+			PAC = arweave_config:get(block_gossip_peers),
+			arweave_config:set(block_gossip_peers, ValidPeer ++ PAC),
 			parse_cli_args(Rest, C#config{ block_gossip_peers = ValidPeer ++ Peers });
 		{error, _} ->
 			io:format("Peer ~p invalid ~n", [Peer]),
@@ -598,42 +645,62 @@ parse_cli_args(["block_gossip_peer", Peer | Rest],
 parse_cli_args(["local_peer", Peer | Rest], C = #config{ local_peers = Peers }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} when is_list(ValidPeer) ->
+			PAC = arweave_config:get(local_peers),
+			arweave_config:set(local_peers, ValidPeer ++ PAC),
 			parse_cli_args(Rest, C#config{ local_peers = ValidPeer ++ Peers });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
 parse_cli_args(["sync_from_local_peers_only" | Rest], C) ->
+	arweave_config:set(sync_from_local_peers_only, true),
 	parse_cli_args(Rest, C#config{ sync_from_local_peers_only = true });
 parse_cli_args(["transaction_blacklist", File | Rest],
 	C = #config{ transaction_blacklist_files = Files } ) ->
+	FAC = arweave_config:get(transaction_blacklist_files),
+	arweave_config:set(transaction_blacklist_files, [File|FAC]),
 	parse_cli_args(Rest, C#config{ transaction_blacklist_files = [File | Files] });
 parse_cli_args(["transaction_blacklist_url", URL | Rest],
 		C = #config{ transaction_blacklist_urls = URLs} ) ->
+	UAC = arweave_config:get(transaction_blacklist_urls),
+	arweave_config:set(transaction_blacklist_urls, [URL|UAC]),
 	parse_cli_args(Rest, C#config{ transaction_blacklist_urls = [URL | URLs] });
 parse_cli_args(["transaction_whitelist", File | Rest],
 		C = #config{ transaction_whitelist_files = Files } ) ->
+	FAC = arweave_config:get(transaction_whitelist_files),
+	arweave_config:set(transaction_whitelist_files, [File|FAC]),
 	parse_cli_args(Rest, C#config{ transaction_whitelist_files = [File | Files] });
 parse_cli_args(["transaction_whitelist_url", URL | Rest],
 		C = #config{ transaction_whitelist_urls = URLs} ) ->
+	UAC = arweave_config:get(transaction_whitelist_urls),
+	arweave_config:set(transaction_whitelist_urls, [URL|UAC]),
 	parse_cli_args(Rest, C#config{ transaction_whitelist_urls = [URL | URLs] });
 parse_cli_args(["port", Port | Rest], C) ->
+	arweave_config:set(port, list_to_integer(Port)),
 	parse_cli_args(Rest, C#config{ port = list_to_integer(Port) });
 parse_cli_args(["data_dir", DataDir | Rest], C) ->
+	arweave_config:set(data_dir, DataDir),
 	parse_cli_args(Rest, C#config{ data_dir = DataDir });
 parse_cli_args(["log_dir", Dir | Rest], C) ->
+	arweave_config:set(log_dir, Dir),
 	parse_cli_args(Rest, C#config{ log_dir = Dir });
 parse_cli_args(["storage_module", StorageModuleString | Rest], C) ->
 	try
 		case ar_config:parse_storage_module(StorageModuleString) of
 			{ok, StorageModule} ->
+				SAC = arweave_config:get(storage_modules),
+				arweave_config:set(storage_modules, [StorageModule|SAC]),
 				StorageModules = C#config.storage_modules,
 				parse_cli_args(Rest, C#config{
-						storage_modules = [StorageModule | StorageModules] });
+					storage_modules = [StorageModule | StorageModules]
+				});
 			{repack_in_place, StorageModule} ->
+				SAC = arweave_config:get(repack_in_place_storage_modules),
+				arweave_config:set(repack_in_place_storage_modules, [StorageModule|SAC]),
 				StorageModules = C#config.repack_in_place_storage_modules,
 				parse_cli_args(Rest, C#config{
-						repack_in_place_storage_modules = [StorageModule | StorageModules] })
+					repack_in_place_storage_modules = [StorageModule | StorageModules]
+				})
 		end
 	catch _:_ ->
 		io:format("~nstorage_module value must be "
@@ -641,24 +708,32 @@ parse_cli_args(["storage_module", StorageModuleString | Rest], C) ->
 		init:stop(1)
 	end;
 parse_cli_args(["repack_batch_size", N | Rest], C) ->
+	arweave_config:set(repack_batch_size, list_to_integer(N)),
 	parse_cli_args(Rest, C#config{ repack_batch_size = list_to_integer(N) });
 parse_cli_args(["repack_cache_size_mb", N | Rest], C) ->
+	arweave_config:set(repack_cache_size_mb, list_to_integer(N)),
 	parse_cli_args(Rest, C#config{ repack_cache_size_mb = list_to_integer(N) });
 parse_cli_args(["polling", Frequency | Rest], C) ->
+	arweave_config:set(polling, list_to_integer(Frequency)),
 	parse_cli_args(Rest, C#config{ polling = list_to_integer(Frequency) });
 parse_cli_args(["block_pollers", N | Rest], C) ->
+	arweave_config:set(block_pollers, list_to_integer(N)),
 	parse_cli_args(Rest, C#config{ block_pollers = list_to_integer(N) });
 parse_cli_args(["no_auto_join" | Rest], C) ->
+	arweave_config:set(auto_join, false),
 	parse_cli_args(Rest, C#config{ auto_join = false });
 parse_cli_args(["join_workers", N | Rest], C) ->
+	arweave_config:set(join_workers, list_to_integer(N)),
 	parse_cli_args(Rest, C#config{ join_workers = list_to_integer(N) });
 parse_cli_args(["diff", N | Rest], C) ->
+	arweave_config:set(diff, list_to_integer(N)),
 	parse_cli_args(Rest, C#config{ diff = list_to_integer(N) });
 parse_cli_args(["mining_addr", Addr | Rest], C) ->
 	case C#config.mining_addr of
 		not_set ->
 			case ar_util:safe_decode(Addr) of
 				{ok, DecodedAddr} when byte_size(DecodedAddr) == 32 ->
+					arweave_config:set(mining_addr, DecodedAddr),
 					parse_cli_args(Rest, C#config{ mining_addr = DecodedAddr });
 				_ ->
 					io:format("~nmining_addr must be a valid Base64Url string, 43"
@@ -670,14 +745,18 @@ parse_cli_args(["mining_addr", Addr | Rest], C) ->
 			init:stop(1)
 	end;
 parse_cli_args(["hashing_threads", Num | Rest], C) ->
+	arweave_config:set(hashing_threads, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ hashing_threads = list_to_integer(Num) });
 parse_cli_args(["data_cache_size_limit", Num | Rest], C) ->
+	arweave_config:set(data_cache_size_limit, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{
 			data_cache_size_limit = list_to_integer(Num) });
 parse_cli_args(["packing_cache_size_limit", Num | Rest], C) ->
+	arweave_config:set(packing_cache_size_limit, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{
 			packing_cache_size_limit = list_to_integer(Num) });
 parse_cli_args(["mining_cache_size_mb", Num | Rest], C) ->
+	arweave_config:set(mining_cache_size_mb, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{
 			mining_cache_size_mb = list_to_integer(Num) });
 parse_cli_args(["mining_server_chunk_cache_size_limit", _Num | Rest], C) ->
@@ -686,19 +765,24 @@ parse_cli_args(["mining_server_chunk_cache_size_limit", _Num | Rest], C) ->
 			"instead.", []),
 	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["max_emitters", Num | Rest], C) ->
+	arweave_config:set(max_emitters, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ max_emitters = list_to_integer(Num) });
 parse_cli_args(["disk_space", Size | Rest], C) ->
+	arweave_config:set(disk_space, (list_to_integer(Size) * 1024 * 1024 * 1024)),
 	parse_cli_args(Rest,
 			C#config{ disk_space = (list_to_integer(Size) * 1024 * 1024 * 1024) });
 parse_cli_args(["disk_space_check_frequency", Frequency | Rest], C) ->
+	arweave_config:set(disk_space_check_frequency, list_to_integer(Frequency) * 1000),
 	parse_cli_args(Rest, C#config{
 		disk_space_check_frequency = list_to_integer(Frequency) * 1000
 	});
 parse_cli_args(["start_from_block_index" | Rest], C) ->
+	arweave_config:set(start_from_latest_state, true),
 	parse_cli_args(Rest, C#config{ start_from_latest_state = true });
 parse_cli_args(["start_from_block", H | Rest], C) ->
 	case ar_util:safe_decode(H) of
 		{ok, Decoded} when byte_size(Decoded) == 48 ->
+			arweave_config:set(start_from_block, Decoded),
 			parse_cli_args(Rest, C#config{ start_from_block = Decoded });
 		_ ->
 			io:format("Invalid start_from_block.~n", []),
@@ -706,19 +790,26 @@ parse_cli_args(["start_from_block", H | Rest], C) ->
 			init:stop(1)
 	end;
 parse_cli_args(["start_from_latest_state" | Rest], C) ->
+	arweave_config:set(start_from_latest_state, true),
 	parse_cli_args(Rest, C#config{ start_from_latest_state = true });
 parse_cli_args(["init" | Rest], C)->
+	arweave_config:set(init, true),
 	parse_cli_args(Rest, C#config{ init = true });
 parse_cli_args(["internal_api_secret", Secret | Rest], C)
 		when length(Secret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
+	arweave_config:set(internal_api_secret, list_to_binary(Secret)),
 	parse_cli_args(Rest, C#config{ internal_api_secret = list_to_binary(Secret)});
 parse_cli_args(["internal_api_secret", _ | _], _) ->
 	io:format("~nThe internal_api_secret must be at least ~B characters long.~n~n",
 			[?INTERNAL_API_SECRET_MIN_LEN]),
 	init:stop(1);
 parse_cli_args(["enable", Feature | Rest ], C = #config{ enable = Enabled }) ->
+	EAC = arweave_config:get(enable),
+	arweave_config:set(enable, [list_to_atom(Feature)|EAC]),
 	parse_cli_args(Rest, C#config{ enable = [ list_to_atom(Feature) | Enabled ] });
 parse_cli_args(["disable", Feature | Rest ], C = #config{ disable = Disabled }) ->
+	DAC = arweave_config:get(disable),
+	arweave_config:set(disable, [list_to_atom(Feature)|DAC]),
 	parse_cli_args(Rest, C#config{ disable = [ list_to_atom(Feature) | Disabled ] });
 parse_cli_args(["gateway", _ | Rest ], C) ->
 	?LOG_WARNING("Deprecated option found 'gateway': "
@@ -729,26 +820,36 @@ parse_cli_args(["custom_domain", _ | Rest], C = #config{ }) ->
 			" this option has been removed and is a no-op.", []),
 	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["requests_per_minute_limit", Num | Rest], C) ->
+	arweave_config:set(requests_per_minute_limit, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ requests_per_minute_limit = list_to_integer(Num) });
 parse_cli_args(["max_propagation_peers", Num | Rest], C) ->
+	arweave_config:set(max_propagation_peers, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ max_propagation_peers = list_to_integer(Num) });
 parse_cli_args(["max_block_propagation_peers", Num | Rest], C) ->
+	arweave_config:set(max_block_propagation_peers, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ max_block_propagation_peers = list_to_integer(Num) });
 parse_cli_args(["sync_jobs", Num | Rest], C) ->
+	arweave_config:set(sync_jobs, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ sync_jobs = list_to_integer(Num) });
 parse_cli_args(["header_sync_jobs", Num | Rest], C) ->
+	arweave_config:set(header_sync_jobs, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ header_sync_jobs = list_to_integer(Num) });
 parse_cli_args(["data_sync_request_packed_chunks" | Rest], C) ->
+	arweave_config:set(data_sync_request_packed_chunks, true),
 	parse_cli_args(Rest, C#config{ data_sync_request_packed_chunks = true });
 parse_cli_args(["tx_validators", Num | Rest], C) ->
+	arweave_config:set(tx_validators, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ tx_validators = list_to_integer(Num) });
 parse_cli_args(["post_tx_timeout", Num | Rest], C) ->
+	arweave_config:set(post_tx_timeout, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config { post_tx_timeout = list_to_integer(Num) });
 parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
+	arweave_config:set(tx_propagation_parallelization, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->
 	try list_to_integer(Num) of
 		N when N >= 1 ->
+			arweave_config:set('http_api.tcp.max_connections', N),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.max_connections' = N });
 		_ ->
 			io:format("Invalid max_connections ~p", [Num]),
@@ -760,56 +861,77 @@ parse_cli_args(["max_connections", Num | Rest], C) ->
 
 	end;
 parse_cli_args(["max_gateway_connections", Num | Rest], C) ->
+	arweave_config:set(max_gateway_connections, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ max_gateway_connections = list_to_integer(Num) });
 parse_cli_args(["max_poa_option_depth", Num | Rest], C) ->
+	arweave_config:set(max_poa_option_depth, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ max_poa_option_depth = list_to_integer(Num) });
 parse_cli_args(["disk_pool_data_root_expiration_time", Num | Rest], C) ->
+	arweave_config:set(disk_pool_data_root_expiration_time, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{
 			disk_pool_data_root_expiration_time = list_to_integer(Num) });
 parse_cli_args(["max_disk_pool_buffer_mb", Num | Rest], C) ->
+	arweave_config:set(max_disk_pool_buffer_mb, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ max_disk_pool_buffer_mb = list_to_integer(Num) });
 parse_cli_args(["max_disk_pool_data_root_buffer_mb", Num | Rest], C) ->
+	arweave_config:set(max_disk_pool_data_root_buffer_mb, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
 parse_cli_args(["disk_cache_size_mb", Num | Rest], C) ->
+	arweave_config:set(disk_cache_size, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ disk_cache_size = list_to_integer(Num) });
 parse_cli_args(["packing_rate", _Num | Rest], C) ->
 	?LOG_WARNING("Deprecated option found 'packing_rate': "
 		" this option has been removed and is now a no-op.", []),
 	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["packing_workers", Num | Rest], C) ->
+	arweave_config:set(packing_workers, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ packing_workers = list_to_integer(Num) });
 parse_cli_args(["replica_2_9_workers", Num | Rest], C) ->
+	arweave_config:set(replica_2_9_workers, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ replica_2_9_workers = list_to_integer(Num) });
 parse_cli_args(["disable_replica_2_9_device_limit" | Rest], C) ->
+	arweave_config:set(disable_replica_2_9_device_limit, true),
 	parse_cli_args(Rest, C#config{ disable_replica_2_9_device_limit = true });
 parse_cli_args(["max_vdf_validation_thread_count", Num | Rest], C) ->
+	arweave_config:set(max_nonce_limiter_validation_thread_count, list_to_integer(Num)),
 	parse_cli_args(Rest,
 			C#config{ max_nonce_limiter_validation_thread_count = list_to_integer(Num) });
 parse_cli_args(["max_vdf_last_step_validation_thread_count", Num | Rest], C) ->
+	arweave_config:set(max_nonce_limiter_last_step_validation_thread_count, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{
 			max_nonce_limiter_last_step_validation_thread_count = list_to_integer(Num) });
 parse_cli_args(["vdf_server_trusted_peer", Peer | Rest], C) ->
 	#config{ nonce_limiter_server_trusted_peers = Peers } = C,
+	PAC = arweave_config:get(nonce_limiter_server_trusted_peers),
+	arweave_config:set(nonce_limiter_server_trusted_peers, [Peer|PAC]),
 	parse_cli_args(Rest, C#config{ nonce_limiter_server_trusted_peers = [Peer | Peers] });
 parse_cli_args(["vdf_client_peer", RawPeer | Rest],
 		C = #config{ nonce_limiter_client_peers = Peers }) ->
+	PAC = arweave_config:get(nonce_limiter_client_peers),
+	arweave_config:set(nonce_limiter_client_peers, [RawPeer|PAC]),
 	parse_cli_args(Rest, C#config{ nonce_limiter_client_peers = [RawPeer | Peers] });
 parse_cli_args(["debug" | Rest], C) ->
+	arweave_config:set(debug, true),
 	parse_cli_args(Rest, C#config{ debug = true });
 parse_cli_args(["run_defragmentation" | Rest], C) ->
+	arweave_config:set(run_defragmentation, true),
 	parse_cli_args(Rest, C#config{ run_defragmentation = true });
 parse_cli_args(["defragmentation_trigger_threshold", Num | Rest], C) ->
+	arweave_config:set(defragmentation_trigger_threshold, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ defragmentation_trigger_threshold = list_to_integer(Num) });
 parse_cli_args(["block_throttle_by_ip_interval", Num | Rest], C) ->
+	arweave_config:set(block_throttle_by_ip_interval, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ block_throttle_by_ip_interval = list_to_integer(Num) });
 parse_cli_args(["block_throttle_by_solution_interval", Num | Rest], C) ->
+	arweave_config:set(block_throttle_by_solution_interval, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{
 			block_throttle_by_solution_interval = list_to_integer(Num) });
 parse_cli_args(["defragment_module", DefragModuleString | Rest], C) ->
-	DefragModules = C#config.defragmentation_modules,
+	DefragModules = arweave_config:get(defragmentation_modules),
 	try
 		{ok, DefragModule} = ar_config:parse_storage_module(DefragModuleString),
 		DefragModules2 = [DefragModule | DefragModules],
+		arweave_config:set(defragmentation_modules, DefragModules2),
 		parse_cli_args(Rest, C#config{ defragmentation_modules = DefragModules2 })
 	catch _:_ ->
 		io:format("~ndefragment_module value must be in the {number},{address} format.~n~n"),
@@ -818,27 +940,35 @@ parse_cli_args(["defragment_module", DefragModuleString | Rest], C) ->
 parse_cli_args(["tls_cert_file", CertFilePath | Rest], C) ->
     AbsCertFilePath = filename:absname(CertFilePath),
     ar_util:assert_file_exists_and_readable(AbsCertFilePath),
+    arweave_config:set(tls_cert_file, AbsCertFilePath),
     parse_cli_args(Rest, C#config{ tls_cert_file = AbsCertFilePath });
 parse_cli_args(["tls_key_file", KeyFilePath | Rest], C) ->
     AbsKeyFilePath = filename:absname(KeyFilePath),
     ar_util:assert_file_exists_and_readable(AbsKeyFilePath),
+    arweave_config:set(tls_key_file, AbsKeyFilePath),
     parse_cli_args(Rest, C#config{ tls_key_file = AbsKeyFilePath });
 parse_cli_args(["http_api.tcp.idle_timeout_seconds", Num | Rest], C) ->
+	arweave_config:set(http_api_transport_idle_timeout, list_to_integer(Num) * 1000),
 	parse_cli_args(Rest, C#config { http_api_transport_idle_timeout = list_to_integer(Num) * 1000 });
 parse_cli_args(["coordinated_mining" | Rest], C) ->
+	arweave_config:set(coordinated_mining, true),
 	parse_cli_args(Rest, C#config{ coordinated_mining = true });
 parse_cli_args(["cm_api_secret", CMSecret | Rest], C)
 		when length(CMSecret) >= ?INTERNAL_API_SECRET_MIN_LEN ->
+	arweave_config:set(cm_api_secret, list_to_binary(CMSecret)),
 	parse_cli_args(Rest, C#config{ cm_api_secret = list_to_binary(CMSecret) });
 parse_cli_args(["cm_api_secret", _ | _], _) ->
 	io:format("~nThe cm_api_secret must be at least ~B characters long.~n~n",
 			[?INTERNAL_API_SECRET_MIN_LEN]),
 	init:stop(1);
 parse_cli_args(["cm_poll_interval", Num | Rest], C) ->
+	arweave_config:set(cm_poll_interval, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ cm_poll_interval = list_to_integer(Num) });
 parse_cli_args(["cm_peer", Peer | Rest], C = #config{ cm_peers = Ps }) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ValidPeer} when is_list(ValidPeer) ->
+			PAC = arweave_config:get(cm_peers),
+			arweave_config:set(cm_peers, [ValidPeer|PAC]),
 			parse_cli_args(Rest, C#config{ cm_peers = ValidPeer ++ Ps });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
@@ -847,40 +977,52 @@ parse_cli_args(["cm_peer", Peer | Rest], C = #config{ cm_peers = Ps }) ->
 parse_cli_args(["cm_exit_peer", Peer | Rest], C) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, [ValidPeer|_]} ->
+			arweave_config:set(cm_exit_peer, ValidPeer),
 			parse_cli_args(Rest, C#config{ cm_exit_peer = ValidPeer });
 		{error, _} ->
 			io:format("Peer ~p is invalid.~n", [Peer]),
 			parse_cli_args(Rest, C)
 	end;
 parse_cli_args(["cm_out_batch_timeout", Num | Rest], C) ->
+	arweave_config:set(cm_out_batch_timeout, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ cm_out_batch_timeout = list_to_integer(Num) });
 parse_cli_args(["cm_in_batch_timeout", _Num | Rest], C) ->
 	?LOG_WARNING("Deprecated option found 'cm_in_batch_timeout': "
 		" this option has been removed and is now a no-op.", []),
 	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["is_pool_server" | Rest], C) ->
+	arweave_config:set(is_pool_server, true),
 	parse_cli_args(Rest, C#config{ is_pool_server = true });
 parse_cli_args(["is_pool_client" | Rest], C) ->
+	arweave_config:set(is_pool_client, true),
 	parse_cli_args(Rest, C#config{ is_pool_client = true });
 parse_cli_args(["pool_api_key", Key | Rest], C) ->
+	arweave_config:set(pool_api_key, list_to_binary(Key)),
 	parse_cli_args(Rest, C#config{ pool_api_key = list_to_binary(Key) });
 parse_cli_args(["pool_server_address", Host | Rest], C) ->
+	arweave_config:set(pool_server_address, list_to_binary(Host)),
 	parse_cli_args(Rest, C#config{ pool_server_address = list_to_binary(Host) });
 parse_cli_args(["pool_worker_name", Host | Rest], C) ->
+	arweave_config:set(pool_worker_name, list_to_binary(Host)),
 	parse_cli_args(Rest, C#config{ pool_worker_name = list_to_binary(Host) });
 parse_cli_args(["rocksdb_flush_interval", Seconds | Rest], C) ->
+	arweave_config:set(rocksdb_flush_interval_s, list_to_integer(Seconds)),
 	parse_cli_args(Rest, C#config{ rocksdb_flush_interval_s = list_to_integer(Seconds) });
 parse_cli_args(["rocksdb_wal_sync_interval", Seconds | Rest], C) ->
+	arweave_config:set(rocksdb_wal_sync_interval_s, list_to_integer(Seconds)),
 	parse_cli_args(Rest, C#config{ rocksdb_wal_sync_interval_s = list_to_integer(Seconds) });
 
 %% tcp shutdown procedure
 parse_cli_args(["network.tcp.connection_timeout", Delay|Rest], C) ->
+	arweave_config:set(shutdown_tcp_connection_timeout, list_to_integer(Delay)),
 	parse_cli_args(Rest, C#config{ shutdown_tcp_connection_timeout = list_to_integer(Delay) });
 parse_cli_args(["network.tcp.shutdown.mode", RawMode|Rest], C) ->
 	case RawMode of
 		"shutdown" ->
+			arweave_config:set(shutdown_tcp_mode, shutdown),
 			parse_cli_args(Rest, C#config{ shutdown_tcp_mode = shutdown});
 		"close" ->
+			arweave_config:set(shutdown_tcp_mode, close),
 			parse_cli_args(Rest, C#config{ shutdown_tcp_mode = close });
 		Mode ->
 			io:format("Mode ~p is invalid.~n", [Mode]),
@@ -891,8 +1033,10 @@ parse_cli_args(["network.tcp.shutdown.mode", RawMode|Rest], C) ->
 parse_cli_args(["network.socket.backend", Backend|Rest], C) ->
 	case Backend of
 		"inet" ->
+			arweave_config:set('socket.backend', inet),
 			parse_cli_args(Rest, C#config{ 'socket.backend' = inet });
 		"socket" ->
+			arweave_config:set('socket.backend', socket),
 			parse_cli_args(Rest, C#config{ 'socket.backend' = socket });
 		_ ->
 			io:format("Invalid socket.backend ~p.", [Backend]),
@@ -905,6 +1049,7 @@ parse_cli_args(["http_client.http.keepalive", "infinity"|Rest], C) ->
 parse_cli_args(["http_client.http.keepalive", Keepalive|Rest], C) ->
 	try list_to_integer(Keepalive) of
 		K when K >= 0 ->
+			arweave_config:set('http_client.http.keepalive', K),
 			parse_cli_args(Rest, C#config{ 'http_client.http.keepalive' = K });
 		_ ->
 			io:format("Invalid http_client.http.keepalive ~p.", [Keepalive]),
@@ -917,8 +1062,10 @@ parse_cli_args(["http_client.http.keepalive", Keepalive|Rest], C) ->
 parse_cli_args(["http_client.tcp.delay_send", DelaySend|Rest], C) ->
 	case DelaySend of
 		"true" ->
+			arweave_config:set('http_client.tcp.delay_send', true),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.delay_send' = true });
 		"false" ->
+			arweave_config:set('http_client.tcp.delay_send', false),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.delay_send' = false });
 		_ ->
 			io:format("Invalid http_client.tcp.delay_send ~p.", [DelaySend]),
@@ -927,8 +1074,10 @@ parse_cli_args(["http_client.tcp.delay_send", DelaySend|Rest], C) ->
 parse_cli_args(["http_client.tcp.keepalive", Keepalive|Rest], C) ->
 	case Keepalive of
 		"true" ->
+			arweave_config:set('http_client.tcp.keepalive', true),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.keepalive' = true });
 		"false" ->
+			arweave_config:set('http_client.tcp.keepalive', false),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.keepalive' = false });
 		_ ->
 			io:format("Invalid http_client.tcp.keepalive ~p.", [Keepalive]),
@@ -937,8 +1086,10 @@ parse_cli_args(["http_client.tcp.keepalive", Keepalive|Rest], C) ->
 parse_cli_args(["http_client.tcp.linger", Linger|Rest], C) ->
 	case Linger of
 		"true" ->
+			arweave_config:set('http_client.tcp.linger', true),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.linger' = true });
 		"false" ->
+			arweave_config:set('http_client.tcp.linger', false),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.linger' = false});
 		_ ->
 			io:format("Invalid http_client.tcp.linger ~p.", [Linger]),
@@ -947,6 +1098,7 @@ parse_cli_args(["http_client.tcp.linger", Linger|Rest], C) ->
 parse_cli_args(["http_client.tcp.linger_timeout", Timeout|Rest], C) ->
 	try list_to_integer(Timeout) of
 		T when T >= 0 ->
+			arweave_config:set('http_client.tcp.linger_timeout', T),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.linger_timeout' = T });
 		_ ->
 			io:format("Invalid http_client.tcp.linger_timeout ~p.", [Timeout]),
@@ -959,8 +1111,10 @@ parse_cli_args(["http_client.tcp.linger_timeout", Timeout|Rest], C) ->
 parse_cli_args(["http_client.tcp.nodelay", Nodelay|Rest], C) ->
 	case Nodelay of
 		"true" ->
+			arweave_config:set('http_client.tcp.nodelay', true),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.nodelay' = true });
 		"false" ->
+			arweave_config:set('http_client.tcp.nodelay', false),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.nodelay' = false });
 		_ ->
 			io:format("Invalid http_client.tcp.nodelay ~p.", [Nodelay]),
@@ -969,8 +1123,10 @@ parse_cli_args(["http_client.tcp.nodelay", Nodelay|Rest], C) ->
 parse_cli_args(["http_client.tcp.send_timeout_close", Value|Rest], C) ->
 	case Value of
 		"true" ->
+			arweave_config:set('http_client.tcp.send_timeout_close', true),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.send_timeout_close' = true });
 		"false" ->
+			arweave_config:set('http_client.tcp.send_timeout_close', false),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.send_timeout_close' = false });
 		_ ->
 			io:format("Invalid http_client.tcp.send_timeout_close ~p.", [Value]),
@@ -979,6 +1135,7 @@ parse_cli_args(["http_client.tcp.send_timeout_close", Value|Rest], C) ->
 parse_cli_args(["http_client.tcp.send_timeout", Timeout|Rest], C) ->
 	try list_to_integer(Timeout) of
 		T when T >= 0 ->
+			arweave_config:set('http_client.tcp.send_timeout', T),
 			parse_cli_args(Rest, C#config{ 'http_client.tcp.send_timeout' = T });
 		_ ->
 			io:format("Invalid http_client.tcp.send_timeout ~p.", [Timeout]),
@@ -993,6 +1150,7 @@ parse_cli_args(["http_client.tcp.send_timeout", Timeout|Rest], C) ->
 parse_cli_args(["http_api.http.active_n", Active|Rest], C) ->
 	try list_to_integer(Active) of
 		N when N >= 1 ->
+			arweave_config:set('http_api.http.active_n', N),
 			parse_cli_args(Rest, C#config{ 'http_api.http.active_n' = N });
 		_ ->
 			io:format("Invalid http_api.http.active_n ~p.", [Active]),
@@ -1005,6 +1163,7 @@ parse_cli_args(["http_api.http.active_n", Active|Rest], C) ->
 parse_cli_args(["http_api.http.inactivity_timeout", Timeout|Rest], C) ->
 	try list_to_integer(Timeout) of
 		T when T >= 0 ->
+			arweave_config:set('http_api.http.inactivity_timeout', T),
 			parse_cli_args(Rest, C#config{ 'http_api.http.inactivity_timeout' = T });
 		_ ->
 			io:format("Invalid http_api.http.inactivity_timeout ~p.", [Timeout]),
@@ -1017,6 +1176,7 @@ parse_cli_args(["http_api.http.inactivity_timeout", Timeout|Rest], C) ->
 parse_cli_args(["http_api.http.linger_timeout", Timeout|Rest], C) ->
 	try list_to_integer(Timeout) of
 		T when T >= 0 ->
+			arweave_config:set('http_api.http.linger_timeout', T),
 			parse_cli_args(Rest, C#config{ 'http_api.http.linger_timeout' = T });
 		_ ->
 			io:format("Invalid http_api.http.linger_timeout ~p.", [Timeout]),
@@ -1029,6 +1189,7 @@ parse_cli_args(["http_api.http.linger_timeout", Timeout|Rest], C) ->
 parse_cli_args(["http_api.http.request_timeout", Timeout|Rest], C) ->
 	try list_to_integer(Timeout) of
 		T when T >= 0 ->
+			arweave_config:set('http_api.http.request_timeout', T),
 			parse_cli_args(Rest, C#config{ 'http_api.http.request_timeout' = T });
 		_ ->
 			io:format("Invalid http_api.http.request_timeout ~p.", [Timeout]),
@@ -1041,6 +1202,7 @@ parse_cli_args(["http_api.http.request_timeout", Timeout|Rest], C) ->
 parse_cli_args(["http_api.tcp.backlog", Backlog|Rest], C) ->
 	try list_to_integer(Backlog)of
 		B when B >= 1 ->
+			arweave_config:set('http_api.tcp.backlog', B),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.backlog' = B });
 		_ ->
 			io:format("Invalid http_api.tcp.backlog ~p.", [Backlog]),
@@ -1053,16 +1215,20 @@ parse_cli_args(["http_api.tcp.backlog", Backlog|Rest], C) ->
 parse_cli_args(["http_api.tcp.delay_send", DelaySend|Rest], C) ->
 	case DelaySend of
 		"true" ->
+			arweave_config:set('http_api.tcp.delay_send', true),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.delay_send' = true });
 		"false" ->
+			arweave_config:set('http_api.tcp.delay_send', false),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.delay_send' = false });
 		_ ->
 			io:format("Invalid http_api.tcp.delay_send ~p.", [DelaySend]),
 			parse_cli_args(Rest, C)
 	end;
 parse_cli_args(["http_api.tcp.keepalive", "true"|Rest], C) ->
+	arweave_config:set('http_api.tcp.keepalive', true),
 	parse_cli_args(Rest, C#config{ 'http_api.tcp.keepalive' = true});
 parse_cli_args(["http_api.tcp.keepalive", "false"|Rest], C) ->
+	arweave_config:set('http_api.tcp.keepalive', false),
 	parse_cli_args(Rest, C#config{ 'http_api.tcp.keepalive' = false});
 parse_cli_args(["http_api.tcp.keepalive", Keepalive|Rest], C) ->
 	io:format("Invalid http_api.tcp.keepalive ~p.", [Keepalive]),
@@ -1070,8 +1236,10 @@ parse_cli_args(["http_api.tcp.keepalive", Keepalive|Rest], C) ->
 parse_cli_args(["http_api.tcp.linger", Linger|Rest], C) ->
 	case Linger of
 		"true" ->
+			arweave_config:set('http_api.tcp.linger', true),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.linger' = true });
 		"false" ->
+			arweave_config:set('http_api.tcp.linger', false),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.linger' = false});
 		_ ->
 			io:format("Invalid http_api.tcp.linger ~p.", [Linger]),
@@ -1080,6 +1248,7 @@ parse_cli_args(["http_api.tcp.linger", Linger|Rest], C) ->
 parse_cli_args(["http_api.tcp.linger_timeout", Timeout|Rest], C) ->
 	try list_to_integer(Timeout) of
 		T when T >= 0 ->
+			arweave_config:set('http_api.tcp.linger_timeout', T),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.linger_timeout' = T });
 		_ ->
 			io:format("Invalid http_api.tcp.linger_timeout ~p.", [Timeout]),
@@ -1090,12 +1259,15 @@ parse_cli_args(["http_api.tcp.linger_timeout", Timeout|Rest], C) ->
 			parse_cli_args(Rest, C)
 	end;
 parse_cli_args(["http_api.tcp.listener_shutdown", "brutal_kill"|Rest], C) ->
+	arweave_config:set('http_api.tcp.listener_shutdown', brutal_kill),
 	parse_cli_args(Rest, C#config{ 'http_api.tcp.listener_shutdown' = brutal_kill});
 parse_cli_args(["http_api.tcp.listener_shutdown", "infinity"|Rest], C) ->
+	arweave_config:set('http_api.tcp.listener_shutdown', infinity),
 	parse_cli_args(Rest, C#config{ 'http_api.tcp.listener_shutdown' = infinity });
 parse_cli_args(["http_api.tcp.listener_shutdown", Shutdown|Rest], C) ->
 	try list_to_integer(Shutdown) of
 		S when S >= 0 ->
+			arweave_config:set('http_api.tcp.listener_shutdown', S),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.listener_shutdown' = S });
 		_ ->
 			io:format("Invalid http_api.tcp.listener_shutdown ~p.", [Shutdown]),
@@ -1108,8 +1280,10 @@ parse_cli_args(["http_api.tcp.listener_shutdown", Shutdown|Rest], C) ->
 parse_cli_args(["http_api.tcp.nodelay", Nodelay|Rest], C) ->
 	case Nodelay of
 		"true" ->
+			arweave_config:set('http_api.tcp.nodelay', true),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.nodelay' = true });
 		"false" ->
+			arweave_config:set('http_api.tcp.nodelay', false),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.nodelay' = false });
 		_ ->
 			io:format("Invalid http_api.tcp.nodelay ~p.", [Nodelay]),
@@ -1118,6 +1292,7 @@ parse_cli_args(["http_api.tcp.nodelay", Nodelay|Rest], C) ->
 parse_cli_args(["http_api.tcp.num_acceptors", Acceptors|Rest], C) ->
 	try list_to_integer(Acceptors) of
 		N when N >= 0 ->
+			arweave_config:set('http_api.tcp.num_acceptors', N),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.num_acceptors' = N });
 		_ ->
 			io:format("Invalid http_api.tcp.num_acceptors ~p.", [Acceptors]),
@@ -1130,8 +1305,10 @@ parse_cli_args(["http_api.tcp.num_acceptors", Acceptors|Rest], C) ->
 parse_cli_args(["http_api.tcp.send_timeout_close", Value|Rest], C) ->
 	case Value of
 		"true" ->
+			arweave_config:set('http_api.tcp.send_timeout_close', true),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.send_timeout_close' = true });
 		"false" ->
+			arweave_config:set('http_api.tcp.send_timeout_close', false),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.send_timeout_close' = false });
 		_ ->
 			io:format("Invalid http_api.tcp.send_timeout_close ~p.", [Value]),
@@ -1140,6 +1317,7 @@ parse_cli_args(["http_api.tcp.send_timeout_close", Value|Rest], C) ->
 parse_cli_args(["http_api.tcp.send_timeout", Timeout|Rest], C) ->
 	try list_to_integer(Timeout) of
 		T when T >= 0 ->
+			arweave_config:set('http_api.tcp.send_timeout', T),
 			parse_cli_args(Rest, C#config{ 'http_api.tcp.send_timeout' = T });
 		_ ->
 			io:format("Invalid http_api.tcp.send_timeout ~p.", [Timeout]),
@@ -1152,6 +1330,7 @@ parse_cli_args(["http_api.tcp.send_timeout", Timeout|Rest], C) ->
 
 %% Undocumented/unsupported options
 parse_cli_args(["chunk_storage_file_size", Num | Rest], C) ->
+	arweave_config:set(chunk_storage_file_size, list_to_integer(Num)),
 	parse_cli_args(Rest, C#config{ chunk_storage_file_size = list_to_integer(Num) });
 
 parse_cli_args([Arg | _Rest], _O) ->
@@ -1181,7 +1360,7 @@ start(Config) ->
 			init:stop(1)
 	end,
 	Config2 = ar_config:set_dependent_flags(Config),
-	ok = application:set_env(arweave, config, Config2),
+	arweave_config_legacy:import(Config2),
 	filelib:ensure_dir(Config2#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
 	case Config2#config.nonce_limiter_server_trusted_peers of
@@ -1222,7 +1401,7 @@ set_mining_address(#config{ mining_addr = not_set } = C) ->
 			Addr = ar_wallet:to_address(W),
 			ar:console("~nSetting the mining address to ~s.~n", [ar_util:encode(Addr)]),
 			C2 = C#config{ mining_addr = Addr },
-			application:set_env(arweave, config, C2),
+			arweave_config_legacy:import(C2),
 			set_mining_address(C2)
 	end;
 set_mining_address(#config{ mine = false }) ->
@@ -1265,7 +1444,7 @@ create_wallet(DataDir, KeyType) ->
 		false ->
 			create_wallet_fail(KeyType);
 		true ->
-			ok = application:set_env(arweave, config, #config{ data_dir = DataDir }),
+			arweave_config_legacy:import(#config{ data_dir = DataDir }),
 			case ar_wallet:new_keyfile(KeyType) of
 				{error, Reason} ->
 					ar:console("Failed to create a wallet, reason: ~p.~n~n",
@@ -1299,7 +1478,7 @@ benchmark_packing(Args) ->
 benchmark_vdf() ->
 	benchmark_vdf([]).
 benchmark_vdf(Args) ->
-	ok = application:set_env(arweave, config, #config{}),
+	arweave_config_legacy:import(#config{}),
 	ar_bench_vdf:run_benchmark_from_cli(Args),
 	init:stop(1).
 
@@ -1373,6 +1552,7 @@ tests(Mod) ->
 	tests(test, Mod).
 
 tests(TestType, Mods, Config) when is_list(Mods) ->
+	{ok, _} = arweave_config:start(),
 	TotalTimeout = case TestType of
 		e2e -> ?E2E_TEST_SUITE_TIMEOUT;
 		_ -> ?TEST_SUITE_TIMEOUT
@@ -1382,8 +1562,8 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 		ar_test_node:boot_peers(TestType),
 		ar_test_node:wait_for_peers(TestType)
 	catch
-		Type:Reason ->
-			io:format("Failed to start the peers due to ~p:~p~n", [Type, Reason]),
+		Type:Reason:S ->
+			io:format("Failed to start the peers due to ~p:~p (~p)~n", [Type, Reason, S]),
 			init:stop(1)
 	end,
 	Result =
@@ -1399,6 +1579,7 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 
 
 start_for_tests(TestType, Config) ->
+	{ok, _} = arweave_config:start(),
 	UniqueName = ar_test_node:get_node_namespace(),
 	TestConfig = Config#config{
 		peers = [],
@@ -1407,12 +1588,15 @@ start_for_tests(TestType, Config) ->
 		disable = [randomx_jit],
 		auto_join = false
 	},
+	arweave_config_legacy:import(TestConfig),
 	start(TestConfig).
 
 %% @doc Run the tests for a set of module(s).
 %% Supports strings so that it can be trivially induced from a unix shell call.
-tests(TestType, Mod) when not is_list(Mod) -> tests(TestType, [Mod]);
+tests(TestType, Mod) when not is_list(Mod) ->
+	tests(TestType, [Mod]);
 tests(TestType, Args) ->
+	{ok, _} = arweave_config:start(),
 	Mods =
 		lists:map(
 			fun(Mod) when is_atom(Mod) -> Mod;
