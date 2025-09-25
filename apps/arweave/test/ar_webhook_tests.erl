@@ -82,7 +82,7 @@ test_webhooks() ->
 		ar_test_node:start(#{
 			b0 => B0,
 			addr => Addr,
-			config => Config,
+			config => Config2,
 			%% Replica 2.9 modules do not support updates.
 			storage_modules =>[{10 * 1024 * 1024, 0, {composite, Addr, 1}}]
 		}),
