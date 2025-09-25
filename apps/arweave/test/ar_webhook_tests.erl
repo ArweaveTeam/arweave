@@ -78,9 +78,14 @@ test_webhooks() ->
 			],
 			transaction_blacklist_files = [TXBlacklistFilename]
 		}),
-		ar_test_node:start(#{ b0 => B0, addr => Addr, config => Config2,
-				%% Replica 2.9 modules do not support updates.
-				storage_modules =>[{10 * 1024 * 1024, 0, {composite, Addr, 1}}] }),
+		Config2 = arweave_config_legacy:export(),
+		ar_test_node:start(#{
+			b0 => B0,
+			addr => Addr,
+			config => Config,
+			%% Replica 2.9 modules do not support updates.
+			storage_modules =>[{10 * 1024 * 1024, 0, {composite, Addr, 1}}]
+		}),
 		%% Setup a server that would be listening for the webhooks and registering
 		%% them in the ETS table.
 		ets:new(?MODULE, [named_table, set, public]),
