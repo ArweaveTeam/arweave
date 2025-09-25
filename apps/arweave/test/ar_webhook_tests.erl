@@ -51,8 +51,8 @@ webhooks_test_() ->
 test_webhooks() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
+	Config = arweave_config_legacy:export(),
 	try
-		Config = arweave_config_legacy:export(),
 		Port = ar_test_node:get_unused_port(),
 		PortBinary = integer_to_binary(Port),
 		TXBlacklistFilename = random_tx_blacklist_filename(),
