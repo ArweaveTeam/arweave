@@ -450,7 +450,6 @@ generate_report() ->
 		Packing,
 		Partitions,
 		arweave_config:get(cm_peers),
-		Config#config.cm_peers,
 		ar_node:get_weave_size(),
 		erlang:monotonic_time(millisecond)
 	).
