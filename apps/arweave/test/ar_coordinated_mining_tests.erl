@@ -177,7 +177,7 @@ test_bad_secret() ->
 test_partition_table() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), 5 * ar_block:partition_size()),
 	Config = ar_test_node:base_cm_config([]),
-	
+	arweave_config_legacy:import(Config),
 	MiningAddr = arweave_config:get(mining_addr),
 	RandomAddress = crypto:strong_rand_bytes(32),
 	Peer = ar_test_node:peer_ip(main),
