@@ -1122,6 +1122,7 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 				partition_upper_bound = PartitionUpperBound,
 				cm_diff = PartialDiff
 			},
+			prometheus_gauge:inc(mining_vdf_step),
 			distribute_output(Candidate, State3),
 			?LOG_DEBUG([{event, mining_debug_processing_vdf_output},
 				{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
