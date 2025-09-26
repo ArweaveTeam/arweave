@@ -365,7 +365,7 @@ get_hashrate_divisor(PackingDifficulty) ->
 	%% Basically:
 	%% - composite packing generate 32x the number of hashes, but they are compared against
 	%%   a higher solution difficulty
-	%% - compsoite uses a 4x lower read recall range which *reduces* the number of hashes
+	%% - composite uses a 4x lower read recall range which *reduces* the number of hashes
 	%%   4-fold, and increases the solution difficulty
 	%% - finally as the difficulty increases, the number of hashes generated decreases as does
 	%%   the solution difficulty

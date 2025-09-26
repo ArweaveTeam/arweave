@@ -320,7 +320,15 @@ register() ->
 		{help, "The number of fixed broken chunk storage records detected when "
 				"reading a range of chunks."}
 	]),
-
+	prometheus_gauge:new([
+		{name, mining_server_tasks},
+		{labels, [task]},
+		{help, "Incremented each time the mining server adds a task to the task queue."}
+	]),
+	prometheus_gauge:new([
+		{name, mining_vdf_step},
+		{help, "Incremented each time the mining server processes a VDF step."}
+	]),
 	%% VDF.
 	prometheus_histogram:new([
 		{name, vdf_step_time_milliseconds},
