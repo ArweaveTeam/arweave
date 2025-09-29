@@ -436,7 +436,10 @@
 %% @end
 %%--------------------------------------------------------------------
 start() ->
-	application:ensure_all_started(?MODULE).
+	logger:set_application_level(?MODULE, debug),
+	Result = application:ensure_all_started(?MODULE, permanent),
+	?LOG_DEBUG("arweave config start result: ~p", [Result]),
+	Result.
 
 %%--------------------------------------------------------------------
 %% @doc help function to stop `arweave_config' application.

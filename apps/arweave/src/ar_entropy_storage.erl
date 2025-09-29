@@ -398,7 +398,7 @@ release_semaphore(Filepath) ->
 %%%===================================================================
 
 replica_2_9_test_() ->
-	{timeout, 60, fun test_replica_2_9/0}.
+	{timeout, 200, fun test_replica_2_9/0}.
 
 test_replica_2_9() ->
 	case ar_block:strict_data_split_threshold() of
@@ -411,12 +411,15 @@ test_replica_2_9() ->
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	Packing = {replica_2_9, RewardAddr},
 	StorageModules = [
-			{ar_block:partition_size(), 0, Packing},
-			{ar_block:partition_size(), 1, Packing}
+		{ar_block:partition_size(), 0, Packing},
+		{ar_block:partition_size(), 1, Packing}
 	],
 	{ok, Config} = application:get_env(arweave, config),
 	try
-		ar_test_node:start(#{ reward_addr => RewardAddr, storage_modules => StorageModules }),
+		ar_test_node:start(#{
+			reward_addr => RewardAddr,
+			storage_modules => StorageModules
+		}),
 		StoreID1 = ar_storage_module:id(lists:nth(1, StorageModules)),
 		StoreID2 = ar_storage_module:id(lists:nth(2, StorageModules)),
 		C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),

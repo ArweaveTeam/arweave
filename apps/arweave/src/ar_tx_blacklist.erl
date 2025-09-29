@@ -284,6 +284,9 @@ handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
 
+handle_info({'EXIT', Pid, shutdown}, State) ->
+	?LOG_DEBUG("terminate: ~p", [{?MODULE, Pid}]),
+	{stop, normal, State};
 handle_info({removed_range, Ref}, State) ->
 	case erlang:get(Ref) of
 		undefined ->

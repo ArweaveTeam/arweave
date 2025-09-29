@@ -973,7 +973,9 @@ test_vdf_stats() ->
 test_data_size_stats() ->
 	{ok, Config} = application:get_env(arweave, config),
 	try
-		arweave_config:set(mining_address, <<"MINING">>),
+		arweave_config_legacy:import(Config#config{
+			mining_addr = <<"MINING">>
+		}),
 		{ok, Config2} = application:get_env(arweave, config),
 
 		WeaveSize = floor(2 * ar_block:partition_size()),

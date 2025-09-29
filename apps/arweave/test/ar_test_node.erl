@@ -213,7 +213,11 @@ wait_until_joined(Node) ->
 %% @doc Wait until the node joins the network (initializes the state).
 wait_until_joined() ->
 	ar_util:do_until(
-		fun() -> ar_node:is_joined() end,
+		fun() ->
+			Result = ar_node:is_joined(),
+			io:format("node joined: ~p~n", [Result]),
+			Result
+		end,
 		100,
 		?WAIT_UNTIL_JOINED_TIMEOUT
 	 ).

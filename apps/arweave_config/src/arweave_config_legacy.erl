@@ -219,14 +219,17 @@ stop() ->
 %% @hidden
 %%--------------------------------------------------------------------
 init(_) ->
+	logger:set_module_level(?MODULE, debug),
 	case application:get_env(arweave, config) of
 		undefined ->
 			Proplist = config_to_proplist(#config{}),
+			?LOG_DEBUG([{configuration, Proplist}]),
 			application:set_env(arweave, config, #config{}),
 			{ok, Proplist};
 		{ok, Config} when is_tuple(Config),
 			element(1, Config) =:= config ->
 				Proplist = config_to_proplist(Config),
+				?LOG_DEBUG([{configuration, Proplist}]),
 				application:set_env(arweave, config, #config{}),
 				{ok, Proplist};
 		_ ->

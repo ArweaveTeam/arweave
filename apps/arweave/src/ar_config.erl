@@ -471,7 +471,7 @@ parse_options([{<<"transaction_blacklists">>, TransactionBlacklists} | Rest], Co
 		when is_list(TransactionBlacklists) ->
 	case safe_map(fun binary_to_list/1, TransactionBlacklists) of
 		{ok, TransactionBlacklistStrings} ->
-			arweave_config:set(transaction_blacklist_files, TransactionBlacklistStrings),
+			% arweave_config:set(transaction_blacklist_files, TransactionBlacklistStrings),
 			parse_options(Rest, Config#config{
 				transaction_blacklist_files = TransactionBlacklistStrings
 			});
@@ -485,7 +485,7 @@ parse_options([{<<"transaction_blacklist_urls">>, TransactionBlacklistURLs} | Re
 		when is_list(TransactionBlacklistURLs) ->
 	case safe_map(fun binary_to_list/1, TransactionBlacklistURLs) of
 		{ok, TransactionBlacklistURLStrings} ->
-			arweave_config:set(transaction_blacklist_urls, TransactionBlacklistURLStrings),
+			% arweave_config:set(transaction_blacklist_urls, TransactionBlacklistURLStrings),
 			parse_options(Rest, Config#config{
 				transaction_blacklist_urls = TransactionBlacklistURLStrings
 			});
@@ -499,7 +499,7 @@ parse_options([{<<"transaction_whitelists">>, TransactionWhitelists} | Rest], Co
 		when is_list(TransactionWhitelists) ->
 	case safe_map(fun binary_to_list/1, TransactionWhitelists) of
 		{ok, TransactionWhitelistStrings} ->
-			arweave_config:set(transaction_whitelist_files, TransactionWhitelistStrings),
+			% arweave_config:set(transaction_whitelist_files, TransactionWhitelistStrings),
 			parse_options(Rest, Config#config{
 				transaction_whitelist_files = TransactionWhitelistStrings
 			});
@@ -513,7 +513,7 @@ parse_options([{<<"transaction_whitelist_urls">>, TransactionWhitelistURLs} | Re
 		when is_list(TransactionWhitelistURLs) ->
 	case safe_map(fun binary_to_list/1, TransactionWhitelistURLs) of
 		{ok, TransactionWhitelistURLStrings} ->
-			arweave_config:set(transaction_whitelist_urls, TransactionWhitelistURLStrings),
+			% arweave_config:set(transaction_whitelist_urls, TransactionWhitelistURLStrings),
 			parse_options(Rest, Config#config{
 				transaction_whitelist_urls = TransactionWhitelistURLStrings
 			});
