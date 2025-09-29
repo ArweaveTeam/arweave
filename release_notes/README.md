@@ -28,9 +28,9 @@ Here the message...
 EOF
 ```
 
-3. create a new commit containing the release message and the last
-   modification required, like modifying the release name in other
-   place, or bumping a version number
+3. create a new commit containing the release message updating the version names/numbers in:
+   - `rebar.config`
+   - `arweave.app.src`
    
 4. push this commit to master or via a PR.
 
