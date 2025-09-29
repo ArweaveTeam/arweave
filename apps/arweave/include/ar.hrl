@@ -33,7 +33,7 @@
 -define(CLIENT_VERSION, 5).
 
 %% The current build number -- incremented for every release.
--define(RELEASE_NUMBER, 87).
+-define(RELEASE_NUMBER, 88).
 
 -define(DEFAULT_REQUEST_HEADERS,
 	[
