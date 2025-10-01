@@ -662,13 +662,14 @@ test_drops_v1_txs_exceeding_mempool_limit() ->
 		end,
 		lists:sublist(TXs, 5)
 	),
-	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
+	Peer1 = ar_test_node:peer_ip(peer1),
+	{{ok, Mempool1}, Peer1} = ar_http_iface_client:get_mempool(Peer1),
 	%% The transactions have the same utility therefore they are sorted in the
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool1),
 	Last = lists:last(TXs),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, Last, false),
-	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
+	{{ok, Mempool2}, Peer1} = ar_http_iface_client:get_mempool(Peer1),
 	%% There is no place for the last transaction in the mempool.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 5)], Mempool2).
 
@@ -694,13 +695,14 @@ drops_v2_txs_exceeding_mempool_limit() ->
 		end,
 		lists:sublist(TXs, 10)
 	),
-	{ok, Mempool1} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
+	Peer1 = ar_test_node:peer_ip(peer1),
+	{{ok, Mempool1}, Peer1} = ar_http_iface_client:get_mempool(Peer1),
 	%% The transactions have the same utility therefore they are sorted in the
 	%% order of submission.
 	?assertEqual([TX#tx.id || TX <- lists:sublist(TXs, 10)], Mempool1),
 	Last = lists:last(TXs),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(peer1, Last, false),
-	{ok, Mempool2} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
+	{{ok, Mempool2}, Peer1} = ar_http_iface_client:get_mempool(Peer1),
 	%% The last TX is twice as big and twice as valuable so it replaces two
 	%% other transactions in the memory pool.
 	?assertEqual([Last#tx.id | [TX#tx.id || TX <- lists:sublist(TXs, 8)]], Mempool2),
@@ -708,7 +710,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 	StrippedTX = ar_test_node:sign_tx(Key, #{ last_tx => B0#block.indep_hash,
 			data => BigChunk, tags => [{<<"nonce">>, integer_to_binary(12)}] }),
 	ar_test_node:assert_post_tx_to_peer(peer1, StrippedTX#tx{ data = <<>> }),
-	{ok, Mempool3} = ar_http_iface_client:get_mempool(ar_test_node:peer_ip(peer1)),
+	{{ok, Mempool3}, Peer1} = ar_http_iface_client:get_mempool(Peer1),
 	?assertEqual([Last#tx.id] ++ [TX#tx.id || TX <- lists:sublist(TXs, 8)]
 			++ [StrippedTX#tx.id], Mempool3).
 

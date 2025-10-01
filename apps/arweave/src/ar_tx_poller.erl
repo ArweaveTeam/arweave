@@ -17,7 +17,8 @@
 -include("../include/ar_config.hrl").
 -record(state, {
 	last_seen_tx_timestamp = 0,
-	pending_txids = []
+	pending_txids = [],
+	latest_txid_source_peer = none
 }).
 
 %% Number of peers to query for a transaction.
@@ -115,7 +116,7 @@ check_for_received_txs(#state{ pending_txids = [TXID | PendingTXIDs] } = State) 
 		true ->
 			ok;
 		false ->
-			download_and_verify_tx(TXID)
+			download_and_verify_tx(TXID, State#state.latest_txid_source_peer)
 	end,
 	gen_server:cast(self(), check_for_received_txs),
 	State#state{ pending_txids = PendingTXIDs };
@@ -125,8 +126,9 @@ check_for_received_txs(#state{ pending_txids = [] } = State) ->
 	Reply = ar_http_iface_client:get_mempool(Peers),
 	ar_util:cast_after(?POLL_INTERVAL_MS, self(), check_for_received_txs),
 	case Reply of
-		{ok, TXIDs} ->
-			State#state{ pending_txids = TXIDs };
+		{{ok, TXIDs}, TXIDPeer} ->
+			State#state{ pending_txids = TXIDs,
+				latest_txid_source_peer = TXIDPeer };
 		{error, Error} ->
 			?LOG_DEBUG([{event, failed_to_get_mempool_txids_from_peers},
 					{peers, [ar_util:format_peer(Peer) || Peer <- Peers]},
@@ -135,7 +137,7 @@ check_for_received_txs(#state{ pending_txids = [] } = State) ->
 			State
 	end.
 
-download_and_verify_tx(TXID) ->
+download_and_verify_tx(TXID, TXIDPeer) ->
 	Ref = make_ref(),
 	ar_ignore_registry:add_ref(TXID, Ref, 10_000),
 	Peers = lists:sublist(ar_peers:get_peers(current), ?QUERY_PEERS_COUNT),
@@ -144,12 +146,13 @@ download_and_verify_tx(TXID) ->
 			ar_ignore_registry:remove_ref(TXID, Ref),
 			?LOG_DEBUG([{event, failed_to_get_tx_from_peers},
 					{peers, [ar_util:format_peer(Peer) || Peer <- Peers]},
-					{txid, ar_util:encode(TXID)}
+					{txid, ar_util:encode(TXID)},
+					{txid_peer, ar_util:format_peer(TXIDPeer)}
 			]);
 		{TX, Peer, Time, Size} ->
 			case ar_tx_validator:validate(TX) of
 				{invalid, Code} ->
-					log_invalid_tx(Code, TXID, TX, Peer);
+					log_invalid_tx(Code, TXID, TX, Peer, TXIDPeer);
 				{valid, TX2} ->
 					ar_peers:rate_fetched_data(Peer, tx, Time, Size),
 					ar_data_sync:add_data_root_to_disk_pool(TX2#tx.data_root,
@@ -161,34 +164,37 @@ download_and_verify_tx(TXID) ->
 			end
 	end.
 
-log_invalid_tx(tx_bad_anchor, TXID, TX, Peer) ->
+log_invalid_tx(tx_bad_anchor, TXID, TX, Peer, TXIDPeer) ->
 	LastTX = ar_util:encode(TX#tx.last_tx),
 	CurrentHeight = ar_node:get_height(),
 	CurrentBlockHash = ar_util:encode(ar_node:get_current_block_hash()),
-	?LOG_INFO(format_invalid_tx_message(tx_bad_anchor, TXID, Peer, [
-		{last_tx, LastTX},
-		{current_height, CurrentHeight},
-		{current_block_hash, CurrentBlockHash}
-	]));
-log_invalid_tx(tx_verification_failed, TXID, TX, Peer) ->
+	?LOG_INFO(format_invalid_tx_message(tx_bad_anchor,
+		TXID, Peer, TXIDPeer, [
+			{last_tx, LastTX},
+			{current_height, CurrentHeight},
+			{current_block_hash, CurrentBlockHash}
+		]));
+log_invalid_tx(tx_verification_failed, TXID, TX, Peer, TXIDPeer) ->
 	LastTX = ar_util:encode(TX#tx.last_tx),
 	CurrentHeight = ar_node:get_height(),
 	CurrentBlockHash = ar_util:encode(ar_node:get_current_block_hash()),
 	ErrorCodes = ar_tx_db:get_error_codes(TXID),
-	?LOG_INFO(format_invalid_tx_message(tx_verification_failed, TXID, Peer, [
-		{last_tx, LastTX},
-		{current_height, CurrentHeight},
-		{current_block_hash, CurrentBlockHash},
-		{error_codes, ErrorCodes}
-	]));
-log_invalid_tx(Code, TXID, _TX, Peer) ->
-	?LOG_INFO(format_invalid_tx_message(Code, TXID, Peer, [])).
+	?LOG_INFO(format_invalid_tx_message(tx_verification_failed,
+		TXID, Peer, TXIDPeer, [
+			{last_tx, LastTX},
+			{current_height, CurrentHeight},
+			{current_block_hash, CurrentBlockHash},
+			{error_codes, ErrorCodes}
+		]));
+log_invalid_tx(Code, TXID, _TX, Peer, TXIDPeer) ->
+	?LOG_INFO(format_invalid_tx_message(Code, TXID, Peer, TXIDPeer, [])).
 
-format_invalid_tx_message(Code, TXID, Peer, ExtraLogs) ->
+format_invalid_tx_message(Code, TXID, Peer, TXIDPeer, ExtraLogs) ->
 	[
-		{event, fetched_invalid_tx},
+		{event, fetched_already_included_or_invalid_tx},
 		{txid, ar_util:encode(TXID)},
 		{code, Code},
-		{peer, ar_util:format_peer(Peer)}
+		{peer, ar_util:format_peer(Peer)},
+		{txid_peer, ar_util:format_peer(TXIDPeer)}
 		| ExtraLogs
 	].
