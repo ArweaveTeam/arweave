@@ -16,12 +16,19 @@ get_price_per_gib_minute_test_() ->
 				{ar_pricing_transition, transition_start_2_6_8, fun() -> 5 end},
 				{ar_pricing_transition, transition_start_2_7_2, fun() -> 15 end},
 				{ar_pricing_transition, transition_length_2_6_8, fun() -> 20 end},
-				{ar_pricing_transition, transition_length_2_7_2, fun() -> 40 end}
+				{ar_pricing_transition, transition_length_2_7_2, fun() -> 40 end},
+				%% This test uses specific price constants computed for this partition size.
+				{ar_block, partition_size, fun() -> 2097152 end}
 			],
 			fun test_price_per_gib_minute_transition_phases/0),
-		{timeout, 30, fun test_v2_price/0},
 		ar_test_node:test_with_mocked_functions(
 			[
+				{ar_block, partition_size, fun() -> 2097152 end}
+			],
+			fun test_v2_price/0),
+		ar_test_node:test_with_mocked_functions(
+			[
+				{ar_block, partition_size, fun() -> 2097152 end},
 				{ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
 			],
 			fun test_v2_price_with_poa1_diff_multiplier/0)

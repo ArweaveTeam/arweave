@@ -6,9 +6,9 @@
 		get/2, get_strict/2, get_all/1, get_all/2, get_all_packed/3, get_all_module_ranges/0,
 		has_any/1, has_range/2, get_cover/3, is_repack_in_place/1]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -126,6 +126,9 @@ packing_label(Packing) ->
 %% Search across both attached modules and repacked in-place modules.
 get_by_id(?DEFAULT_MODULE) ->
 	?DEFAULT_MODULE;
+get_by_id(Atom) when is_atom(Atom) ->
+	%% May be 'default' or an atom from the unit tests.
+	Atom;
 get_by_id(ID) ->
 	{ok, Config} = application:get_env(arweave, config),
 	RepackInPlaceModules = [element(1, El)
