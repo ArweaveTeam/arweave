@@ -71,7 +71,7 @@ get_serialized_sync_buckets() ->
 
 init([]) ->
 	ok = ar_events:subscribe(sync_record),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	SyncRecord = lists:foldl(
 		fun(Module, Acc) ->
 			case Module of

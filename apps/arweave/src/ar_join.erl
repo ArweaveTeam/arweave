@@ -71,7 +71,7 @@ start2(Peers) ->
 		ExpectedBIMerkleH ->
 			do_join(Peers, B, BI);
 		_ ->
-			{ok, Config} = application:get_env(arweave, config),
+			{ok, Config} = arweave_config:get_env(),
 			ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
 			File = filename:join(Config#config.data_dir,
 					"inconsistent_joining_data_dump_" ++ ID),
@@ -229,7 +229,7 @@ get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries) ->
 %% @doc Perform the joining process.
 do_join(Peers, B, BI) ->
 	ar:console("Downloading the block trail.~n", []),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	WorkerQ = queue:from_list([spawn(fun() -> worker() end)
 			|| _ <- lists:seq(1, Config#config.join_workers)]),
 	PeerQ = queue:from_list(Peers),

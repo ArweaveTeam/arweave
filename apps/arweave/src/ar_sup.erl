@@ -104,7 +104,7 @@ init([]) ->
 		?CHILD(ar_pool_cm_job_poller, worker),
 		?CHILD(ar_chain_stats, worker)
 	],
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	DebugChildren = case Config#config.debug of
 		true -> [?CHILD(ar_process_sampler, worker)];
 		false -> []

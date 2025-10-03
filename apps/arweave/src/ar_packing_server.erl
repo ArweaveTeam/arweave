@@ -270,7 +270,7 @@ pack_replica_2_9_chunk(RewardAddr, AbsoluteEndOffset, Chunk) ->
 %%%===================================================================
 
 init([]) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 
 	ar:console("~nInitialising RandomX datasets. Keys: ~p, ~p. "
 			"The process may take several minutes.~n",

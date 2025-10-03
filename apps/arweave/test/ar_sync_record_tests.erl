@@ -18,7 +18,7 @@ test_sync_record() ->
 	WeaveSize = 4 * ?DATA_CHUNK_SIZE,
 	[B0] = ar_weave:init([], 1, WeaveSize),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	try
 		Partition = {ar_block:partition_size(), 0, {composite, RewardAddr, 1}},
 		PartitionID = ar_storage_module:id(Partition),
@@ -137,7 +137,7 @@ test_sync_record() ->
 
 		ar_test_node:stop()
 	after
-		ok = application:set_env(arweave, config, Config)
+		ok = arweave_config:set_env(Config)
 	end.
 
 
@@ -147,7 +147,7 @@ test_sync_record_with_replica_2_9() when ?BLOCK_2_9_SYNCING ->
 	WeaveSize = 4 * ?DATA_CHUNK_SIZE,
 	[B0] = ar_weave:init([], 1, WeaveSize),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	try
 		Partition = {ar_block:partition_size(), 0, {replica_2_9, RewardAddr}},
 		PartitionID = ar_storage_module:id(Partition),
@@ -176,6 +176,6 @@ test_sync_record_with_replica_2_9() when ?BLOCK_2_9_SYNCING ->
 
 		ar_test_node:stop()
 	after
-		ok = application:set_env(arweave, config, Config)
+		ok = arweave_config:set_env(Config)
 	end;
 test_sync_record_with_replica_2_9() -> ok.

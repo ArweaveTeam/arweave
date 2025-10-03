@@ -267,7 +267,7 @@ count(Name) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	S0 = #state{
 		db_flush_timer = #timer{interval_ms = Config#config.rocksdb_flush_interval_s * 1000},
 		wal_sync_timer = #timer{interval_ms = Config#config.rocksdb_wal_sync_interval_s * 1000}
@@ -602,13 +602,13 @@ with_each_db(Callback) ->
 
 
 get_data_dir() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Config#config.data_dir.
 
 
 
 get_base_log_dir() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Config#config.log_dir.
 
 

@@ -34,7 +34,7 @@ lookup_block_filename(H) when is_binary(H)->
 	PathBlock =
 		case get(ar_disk_cache_path) of
 			undefined ->
-				{ok, Config} = application:get_env(arweave, config),
+				{ok, Config} = arweave_config:get_env(),
 				Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
 				put(ar_disk_cache_path, Path),
 				filename:join(Path, ?DISK_CACHE_BLOCK_DIR);
@@ -60,7 +60,7 @@ lookup_block_filename(H) when is_binary(H)->
 lookup_tx_filename(Hash) when is_binary(Hash) ->
 	PathTX = case get(ar_disk_cache_path) of
 		undefined ->
-			{ok, Config} = application:get_env(arweave, config),
+			{ok, Config} = arweave_config:get_env(),
 			Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
 			put(ar_disk_cache_path, Path),
 			filename:join(Path, ?DISK_CACHE_TX_DIR);
@@ -142,7 +142,7 @@ start_link() ->
 init([]) ->
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
 	BlockPath = filename:join(Path, ?DISK_CACHE_BLOCK_DIR),
 	TXPath = filename:join(Path, ?DISK_CACHE_TX_DIR),
@@ -282,12 +282,12 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 
 get_block_path() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
 	filename:join(Path, ?DISK_CACHE_BLOCK_DIR).
 
 get_tx_path() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
 	filename:join(Path, ?DISK_CACHE_TX_DIR).
 
