@@ -47,7 +47,7 @@ bench_read(Args) ->
 		data_dir = DataDir,
 		storage_modules = StorageModules,
 		mining_addr = Address},
-	application:set_env(arweave, config, Config),
+	arweave_config_legacy:import(Config),
 
 	ar_kv_sup:start_link(),
 	ar_storage_sup:start_link(),

@@ -144,105 +144,211 @@ config_fixture() ->
 	{ok, FileData} = file:read_file(Path),
 	FileData.
 
+% helper to use the new configuration interface
+arweave_config_validate(Config) ->
+	arweave_config_legacy:reset(),
+	arweave_config_legacy:import(Config),
+	Export = arweave_config_legacy:export(),
+	ar_config:validate_config(Export).
+
 test_validate_repack_in_place() ->
 	Addr1 = crypto:strong_rand_bytes(32),
 	Addr2 = crypto:strong_rand_bytes(32),
 	PartitionSize = ar_block:partition_size(),
-	?assertEqual(true,
-		ar_config:validate_config(#config{
-			storage_modules = [],
-			repack_in_place_storage_modules = []})),
-	?assertEqual(true,
-			ar_config:validate_config(#config{
-				storage_modules = [{PartitionSize, 0, {spora_2_6, Addr1}}],
-				repack_in_place_storage_modules = []})),
-	?assertEqual(true,
-		ar_config:validate_config(#config{
-			storage_modules = [{PartitionSize, 0, {spora_2_6, Addr1}}],
-			repack_in_place_storage_modules = [
-				{{PartitionSize, 1, {spora_2_6, Addr1}}, {replica_2_9, Addr2}}]})),
-	?assertEqual(false,
-		ar_config:validate_config(#config{
-			storage_modules = [{PartitionSize, 0, {spora_2_6, Addr1}}],
-			repack_in_place_storage_modules = [
-				{{PartitionSize, 0, {spora_2_6, Addr1}}, {replica_2_9, Addr2}}]})),
-	?assertEqual(true,
-		ar_config:validate_config(#config{
-			storage_modules = [],
-			repack_in_place_storage_modules = [
-				{{PartitionSize, 0, {replica_2_9, Addr1}}, {replica_2_9, Addr2}}]})),
-	?assertEqual(true,
-		ar_config:validate_config(#config{
-			storage_modules = [],
-			repack_in_place_storage_modules = [
-				{{PartitionSize, 0, {replica_2_9, Addr1}}, {spora_2_6, Addr2}}]})),
-	?assertEqual(true,
-		ar_config:validate_config(#config{
-			storage_modules = [],
-			repack_in_place_storage_modules = [
-				{{PartitionSize, 0, {replica_2_9, Addr2}}, unpacked}]})),
-	?assertEqual(true,
-		ar_config:validate_config(#config{
-			storage_modules = [],
-			repack_in_place_storage_modules = [
-				{{PartitionSize, 0, unpacked}, {replica_2_9, Addr2}}]})),
-	?assertEqual(true,
-		ar_config:validate_config(#config{
-			storage_modules = [],
-			repack_in_place_storage_modules = [
-				{{PartitionSize, 0, {spora_2_6, Addr1}}, {replica_2_9, Addr2}}]})),
-	?assertEqual(true,
-		ar_config:validate_config(#config{
-			storage_modules = [],
-			repack_in_place_storage_modules = [
-				{{PartitionSize, 0, unpacked}, {spora_2_6, Addr2}}]})).
 
+	?assertEqual(
+		true,
+		arweave_config_validate(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = []
+		})
+	),
+
+	?assertEqual(
+		true,
+		arweave_config_validate(#config{
+			storage_modules = [{PartitionSize, 0, {spora_2_6, Addr1}}],
+			repack_in_place_storage_modules = []
+		})
+	),
+
+	?assertEqual(
+		true,
+		arweave_config_validate(#config{
+			storage_modules = [{PartitionSize, 0, {spora_2_6, Addr1}}],
+			repack_in_place_storage_modules = [
+				{{PartitionSize, 1, {spora_2_6, Addr1}}, {replica_2_9, Addr2}}
+			]
+		})
+	),
+
+	?assertEqual(
+		false,
+		ar_config:validate_config(#config{
+			storage_modules = [{PartitionSize, 0, {spora_2_6, Addr1}}],
+			repack_in_place_storage_modules = [
+				{{PartitionSize, 0, {spora_2_6, Addr1}}, {replica_2_9, Addr2}}
+			]
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = [
+				{{PartitionSize, 0, {replica_2_9, Addr1}}, {replica_2_9, Addr2}}
+			]
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = [
+				{{PartitionSize, 0, {replica_2_9, Addr1}}, {spora_2_6, Addr2}}
+			]
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = [
+				{{PartitionSize, 0, {replica_2_9, Addr2}}, unpacked}
+			]
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = [
+				{{PartitionSize, 0, unpacked}, {replica_2_9, Addr2}}
+			]
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = [
+				{{PartitionSize, 0, {spora_2_6, Addr1}}, {replica_2_9, Addr2}}
+			]
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			storage_modules = [],
+			repack_in_place_storage_modules = [
+				{{PartitionSize, 0, unpacked}, {spora_2_6, Addr2}}
+			]
+		})
+	).
 
 test_validate_cm_pool() ->
-	?assertEqual(false,
-		ar_config:validate_config(
-			#config{
-				coordinated_mining = true, is_pool_server = true,
-				mine = true, cm_api_secret = <<"secret">>})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{
-				coordinated_mining = true, is_pool_server = false,
-				mine = true, cm_api_secret = <<"secret">>})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{
-				coordinated_mining = false, is_pool_server = true,
-				mine = true, cm_api_secret = <<"secret">>})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{
-				coordinated_mining = false, is_pool_server = false,
-				mine = true, cm_api_secret = <<"secret">>})),
-	?assertEqual(false,
-		ar_config:validate_config(
-			#config{is_pool_server = true, is_pool_client = true, mine = true})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{is_pool_server = true, is_pool_client = false})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{is_pool_server = false, is_pool_client = true, mine = true})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{is_pool_server = false, is_pool_client = false, mine = true})),
-	?assertEqual(false,
-		ar_config:validate_config(
-			#config{is_pool_client = true, mine = false})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{is_pool_client = true, mine = true})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{is_pool_client = false, mine = true})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{is_pool_client = false, mine = false})).
+	?assertEqual(
+		false,
+		ar_config:validate_config(#config{
+			coordinated_mining = true,
+			is_pool_server = true
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			coordinated_mining = true,
+			is_pool_server = false
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			coordinated_mining = false,
+			is_pool_server = true
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			coordinated_mining = false,
+			is_pool_server = false
+		})
+	),
+
+	?assertEqual(
+		false,
+		ar_config:validate_config(#config{
+			is_pool_server = true,
+			is_pool_client = true, mine = true
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			is_pool_server = true,
+			is_pool_client = false
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			is_pool_server = false,
+			is_pool_client = true,
+			mine = true
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			is_pool_server = false,
+			is_pool_client = false,
+			mine = true
+		})
+	),
+
+	?assertEqual(
+		false,
+		ar_config:validate_config(#config{
+			is_pool_client = true,
+			mine = false
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			is_pool_client = true,
+			mine = true
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			is_pool_client = false,
+			mine = true
+		})
+	),
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			is_pool_client = false,
+			mine = false
+		})
+	).
 
 test_validate_cm() ->
 	?assertEqual(true,
@@ -269,33 +375,47 @@ test_validate_storage_modules() ->
 	Legacy = {PartitionSize, 1, LegacyPacking},
 	Replica29 = {PartitionSize, 2, {replica_2_9, Addr1}},
 
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{
-				storage_modules = [Unpacked, Legacy, Replica29],
-				mining_addr = Addr1,
-				mine = false})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{
-				storage_modules = [Unpacked, Legacy, Replica29],
-				mining_addr = Addr2,
-				mine = true})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{
-				storage_modules = [Unpacked, Legacy],
-				mining_addr = Addr1,
-				mine = true})),
-	?assertEqual(true,
-		ar_config:validate_config(
-			#config{
-				storage_modules = [Unpacked, Replica29],
-				mining_addr = Addr1,
-				mine = true})),
-	?assertEqual(false,
-		ar_config:validate_config(
-			#config{
-				storage_modules = [Legacy, Replica29],
-				mining_addr = Addr1,
-				mine = true})).
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			storage_modules = [Unpacked, Legacy, Replica29],
+			mining_addr = Addr1,
+			mine = false
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			storage_modules = [Unpacked, Legacy, Replica29],
+			mining_addr = Addr2,
+			mine = true
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			storage_modules = [Unpacked, Legacy],
+			mining_addr = Addr1,
+			mine = true
+		})
+	),
+
+	?assertEqual(
+		true,
+		ar_config:validate_config(#config{
+			storage_modules = [Unpacked, Replica29],
+			mining_addr = Addr1,
+			mine = true
+		})
+	),
+
+	?assertEqual(
+		false,
+		ar_config:validate_config(#config{
+			storage_modules = [Legacy, Replica29],
+			mining_addr = Addr1,
+			mine = true
+		})
+	).

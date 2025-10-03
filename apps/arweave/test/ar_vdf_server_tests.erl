@@ -20,8 +20,40 @@ setup() ->
     {Config, PeerConfig}.
 
 cleanup({Config, PeerConfig}) ->
-	application:set_env(arweave, config, Config),
-	ar_test_node:remote_call(peer1, application, set_env, [arweave, config, PeerConfig]),
+	arweave_config_legacy:import(Config),
+	ar_test_node:remote_call(peer1, arweave_config_legacy, import, [PeerConfig]),
+	ets:delete(computed_output).
+
+setup_external_update() ->
+	{ok, Config} = application:get_env(arweave, config),
+	[B0] = ar_weave:init(),
+	%% Start the testnode with a configured VDF server so that it doesn't compute its own VDF -
+	%% this is necessary so that we can test the behavior of apply_external_update without any
+	%% auto-computed VDF steps getting in the way.
+	_ = ar_test_node:start(
+		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
+		Config#config{ 
+			nonce_limiter_server_trusted_peers = [
+				ar_util:format_peer(vdf_server_1()),
+				ar_util:format_peer(vdf_server_2()) 
+			],
+			mine = true
+		}
+	),
+	ets:new(computed_output, [named_table, ordered_set, public]),
+	ets:new(add_task, [named_table, bag, public]),
+	Pid = spawn(
+		fun() ->
+			ok = ar_events:subscribe(nonce_limiter),
+			computed_output()
+		end
+	),
+	{Pid, Config}.
+
+cleanup_external_update({Pid, Config}) ->
+	exit(Pid, kill),
+	arweave_config_legacy:import(Config),
+	ets:delete(add_task),
 	ets:delete(computed_output).
 
 %% -------------------------------------------------------------------------------------------------

@@ -15,7 +15,8 @@
 		prometheus_cowboy,
 		prometheus_process_collector,
 		prometheus_httpd,
-		runtime_tools
+		runtime_tools,
+		arweave_config
 	]},
 	{extra_applications, [recon]}
 ]}.

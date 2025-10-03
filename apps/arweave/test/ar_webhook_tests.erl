@@ -78,9 +78,13 @@ test_webhooks() ->
 			],
 			transaction_blacklist_files = [TXBlacklistFilename]
 		},
-		ar_test_node:start(#{ b0 => B0, addr => Addr, config => Config2,
-				%% Replica 2.9 modules do not support updates.
-				storage_modules =>[{10 * 1024 * 1024, 0, {composite, Addr, 1}}] }),
+		ar_test_node:start(#{
+			b0 => B0,
+			addr => Addr,
+			config => Config2,
+			%% Replica 2.9 modules do not support updates.
+			storage_modules =>[{10 * 1024 * 1024, 0, {composite, Addr, 1}}]
+		}),
 		%% Setup a server that would be listening for the webhooks and registering
 		%% them in the ETS table.
 		ets:new(?MODULE, [named_table, set, public]),
@@ -209,7 +213,9 @@ test_webhooks() ->
 		assert_transaction_data_synced(V2TXID),
 		cowboy:stop_listener(ar_webhook_test_listener)
 	after
-		application:set_env(arweave, config, Config#config{ webhooks = [] })
+		arweave_config_legacy:import(Config#config{
+			webhooks = []
+		})
 	end.
 
 create_v2_tx(Wallet) ->
@@ -261,7 +267,8 @@ random_tx_blacklist_filename() ->
 	filename:join(Config#config.data_dir,
 		"ar-webhook-tests-transaction-blacklist-"
 		++
-		binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32)))).
+		binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32)))
+	).
 
 append_txid_to_file(TXID, Filename) ->
 	{ok, F} = file:open(Filename, [append]),
