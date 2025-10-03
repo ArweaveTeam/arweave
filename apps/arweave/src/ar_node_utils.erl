@@ -6,10 +6,10 @@
 	block_passes_diff_check/1, block_passes_diff_check/2, passes_diff_check/4,
 	scaled_diff/2, update_account/6, is_account_banned/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_pricing.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_mining.hrl").
+-include("ar.hrl").
+-include("ar_pricing.hrl").
+-include("ar_consensus.hrl").
+-include("ar_mining.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
