@@ -475,7 +475,7 @@ e2e_deposit_before_charge() ->
 		{Sender2Address, ?AR(10000), <<>>},
 		{DepositAddress, ?AR(10000), <<>>}
 	]),
-	{ok, BaseConfig} = application:get_env(arweave, config),
+	{ok, BaseConfig} = arweave_config:get_env(),
 	try
 		Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 3) },
 		ar_test_node:start(B0, RewardAddress, Config),
@@ -685,7 +685,7 @@ e2e_deposit_before_charge() ->
 			{<<"200">>, <<"0">>}, get_balance(Sender2Address),
 			"No balance change expected")
 	after
-		ok = application:set_env(arweave, config, BaseConfig)
+		ok = arweave_config:set_env(BaseConfig)
 	end.
 
 e2e_charge_before_deposit() ->
@@ -701,7 +701,7 @@ e2e_charge_before_deposit() ->
 	[B0] = ar_weave:init([
 		{Address1, ?AR(10000), <<>>}
 	]),
-	{ok, BaseConfig} = application:get_env(arweave, config),
+	{ok, BaseConfig} = arweave_config:get_env(),
 	try
 		Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -2000, 2) },
 		ar_test_node:start(B0, RewardAddress, Config),
@@ -775,7 +775,7 @@ e2e_charge_before_deposit() ->
 
 		?assertEqual({<<"200">>, <<"-800">>}, get_balance(Address1))
 	after
-		ok = application:set_env(arweave, config, BaseConfig)
+		ok = arweave_config:set_env(BaseConfig)
 	end.
 
 %% @doc Test that nodes correctly scan old blocks that came in while they were offline.
@@ -789,7 +789,7 @@ e2e_restart_p3_service() ->
 		{Sender1Address, ?AR(10000), <<>>},
 		{DepositAddress, ?AR(10000), <<>>}
 	]),
-	{ok, BaseConfig} = application:get_env(arweave, config),
+	{ok, BaseConfig} = arweave_config:get_env(),
 	try
 		Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, -100, 1) },
 		ar_test_node:start(B0, RewardAddress, Config),
@@ -849,7 +849,7 @@ e2e_restart_p3_service() ->
 		?assertEqual(5, ar_p3_db:get_scan_height(),
 			"Restarting node should not have reset scan height db: scan height 5")
 	after
-		ok = application:set_env(arweave, config, BaseConfig)
+		ok = arweave_config:set_env(BaseConfig)
 	end.
 
 %% @doc Test that a bunch of concurrent requests don't overspend the P3 account and that they
@@ -866,7 +866,7 @@ e2e_concurrent_requests() ->
 		{Address1, ?AR(10000), <<>>},
 		{DepositAddress, ?AR(10000), <<>>}
 	]),
-	{ok, BaseConfig} = application:get_env(arweave, config),
+	{ok, BaseConfig} = arweave_config:get_env(),
 	try
 		Config = BaseConfig#config{ p3 = sample_p3_config(DepositAddress, 0, 1, 100) },
 		ar_test_node:start(B0, RewardAddress, Config),
@@ -935,7 +935,7 @@ e2e_concurrent_requests() ->
 		{ok, AccountValid} = ar_p3_db:get_account(Address1),
 		?assertEqual(Count+1, AccountValid#p3_account.count)
 	after
-		ok = application:set_env(arweave, config, BaseConfig)
+		ok = arweave_config:set_env(BaseConfig)
 	end.
 
 %% ------------------------------------------------------------------

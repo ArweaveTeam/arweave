@@ -43,7 +43,7 @@ name(StoreID) ->
 %%%===================================================================
 
 init(StoreID) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	?LOG_INFO([{event, verify_chunk_storage_started},
 		{store_id, StoreID}, {mode, Config#config.verify},
 		{chunk_samples, Config#config.verify_samples}]),

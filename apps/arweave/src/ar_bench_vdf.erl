@@ -36,13 +36,13 @@ run_benchmark(Mode, Difficulty, Verify) ->
 			%% Run as part of startup, use whatever is set in the config
 			ok;
 		openssl ->
-			ok = application:set_env(arweave, config, #config{ vdf = openssl });
+			ok = arweave_config:set_env(#config{ vdf = openssl });
 		fused ->
-			ok = application:set_env(arweave, config, #config{ vdf = fused });
+			ok = arweave_config:set_env(#config{ vdf = fused });
 		hiopt_m4 ->
-			ok = application:set_env(arweave, config, #config{ vdf = hiopt_m4 });
+			ok = arweave_config:set_env(#config{ vdf = hiopt_m4 });
 		default ->
-			ok = application:set_env(arweave, config, #config{})
+			ok = arweave_config:set_env(#config{})
 	end,
 	Input = crypto:strong_rand_bytes(32),
 	{Time, {ok, Output, Checkpoints}} = timer:tc(fun() -> 

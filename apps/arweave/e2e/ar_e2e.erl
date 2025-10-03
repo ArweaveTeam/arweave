@@ -135,7 +135,7 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 	RewardAddr = ar_wallet:to_address(Wallet),
 	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ar_block:partition_size()),
 
-	{ok, Config} = ar_test_node:remote_call(Node, application, get_env, [arweave, config]),
+	{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
 	
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, Config#config{

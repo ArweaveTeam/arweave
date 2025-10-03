@@ -45,7 +45,7 @@ init(_) ->
 	% if something goes wrong, the connections must
 	% be cleaned before leaving.
 	erlang:process_flag(trap_exit, true),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	case start_http_iface_listener(Config) of
 		{ok, Pid} -> {ok, Pid};
 		Elsewise -> {error, Elsewise}

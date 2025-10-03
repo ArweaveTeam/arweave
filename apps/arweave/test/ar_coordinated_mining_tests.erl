@@ -152,10 +152,11 @@ test_no_secret() ->
 test_bad_secret() ->
 	[Node, _ExitNode, _ValidatorNode] = ar_test_node:start_coordinated(1),
 	Peer = ar_test_node:peer_ip(Node),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	try
-		ok = application:set_env(arweave, config,
-				Config#config{ cm_api_secret = <<"this_is_not_the_actual_secret">> }),
+		ok = arweave_config:set_env(Config#config{
+			cm_api_secret = <<"this_is_not_the_actual_secret">>
+		}),
 		?assertMatch(
 			{error, {ok, {{<<"421">>, _}, _, 
 				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
@@ -173,7 +174,7 @@ test_bad_secret() ->
 				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 			ar_http_iface_client:cm_publish_send(Peer, dummy_solution()))
 	after
-		ok = application:set_env(arweave, config, Config)
+		ok = arweave_config:set_env(Config)
 	end.
 
 test_partition_table() ->

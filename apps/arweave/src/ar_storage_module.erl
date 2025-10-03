@@ -127,7 +127,7 @@ packing_label(Packing) ->
 get_by_id(?DEFAULT_MODULE) ->
 	?DEFAULT_MODULE;
 get_by_id(ID) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	RepackInPlaceModules = [element(1, El)
 			|| El <- Config#config.repack_in_place_storage_modules],
 	get_by_id(ID, Config#config.storage_modules ++ RepackInPlaceModules).
@@ -143,7 +143,7 @@ get_by_id(ID, [Module | Modules]) ->
 	end.
 
 get_all_module_ranges() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	RepackInPlaceModulesStoreIDs = [
 			{{BucketSize, Bucket, TargetPacking}, ar_storage_module:id(Module)}
 		|| {{BucketSize, Bucket, _Packing} = Module, TargetPacking} <- Config#config.repack_in_place_storage_modules],
@@ -192,7 +192,7 @@ get_packing(ID) ->
 %% @doc Return a configured storage module covering the given Offset, preferably
 %% with the given Packing. Return not_found if none is found.
 get(Offset, Packing) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	get(Offset, Packing, Config#config.storage_modules, not_found).
 
 %% @doc Return a configured storage module with the given Packing covering the given Offset.
@@ -203,7 +203,7 @@ get_strict(Offset, Packing) ->
 
 %% @doc Return the list of all configured storage modules covering the given Offset.
 get_all(Offset) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	get_all(Offset, Config#config.storage_modules, []).
 
 %% @doc Return the list of identifiers of all configured storage modules
@@ -215,17 +215,17 @@ get_all_packed(Offset, Packing) ->
 %% @doc Return the list of configured storage modules whose ranges intersect
 %% the given interval.
 get_all(Start, End) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	get_all(Start, End, Config#config.storage_modules, []).
 
 %% @doc Return true if the given Offset belongs to at least one storage module.
 has_any(Offset) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	has_any(Offset, Config#config.storage_modules).
 
 %% @doc Return true if the given range is covered by the configured storage modules.
 has_range(Start, End) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	case ets:lookup(?MODULE, unique_sorted_intervals) of
 		[] ->
 			Intervals = get_unique_sorted_intervals(Config#config.storage_modules),
@@ -253,7 +253,7 @@ has_range(Start, End) ->
 %% 3. returns [{7, 10, sm1}, {10, 20, sm_2}, {20, 25, sm_3}]
 %% 4. returns [{7, 10, sm1}, {10, 20, sm_4}, {20, 25, sm_3}]
 get_cover(Start, End, MaybeModule) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	SortedStorageModules = sort_storage_modules_by_left_bound(
 			Config#config.storage_modules, MaybeModule),
 	case get_cover2(Start, End, SortedStorageModules) of
@@ -266,7 +266,7 @@ get_cover(Start, End, MaybeModule) ->
 	end.
 
 is_repack_in_place(ID) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	lists:any(
 		fun({Module, _TargetPacking}) ->
 			ar_storage_module:id(Module) == ID
@@ -438,9 +438,9 @@ get_cover2(Start, End, [{BucketSize, Bucket, _Packing} = StorageModule | Storage
 %%%===================================================================
 
 label_test() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	try
-		application:set_env(arweave, config, Config#config{storage_modules = [
+		arweave_config:set_env(Config#config{storage_modules = [
 			{ar_block:partition_size(), 0, {spora_2_6, <<"a">>}},
 			{ar_block:partition_size(), 2, {spora_2_6, <<"a">>}},
 			{ar_block:partition_size(), 0, {spora_2_6, <<"b">>}},
@@ -474,7 +474,7 @@ label_test() ->
 		?assertEqual("storage_module_524288_3_composite_5",
 			label(id({524288, 3, {composite, <<"b">>, 2}})))
 	after
-		application:set_env(arweave, config, Config)
+		arweave_config:set_env(Config)
 	end.
 
 has_any_test() ->

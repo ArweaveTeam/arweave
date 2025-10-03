@@ -21,7 +21,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Children = lists:map(
 		fun(Num) ->
 			Name = list_to_atom("ar_poller_worker_" ++ integer_to_list(Num)),

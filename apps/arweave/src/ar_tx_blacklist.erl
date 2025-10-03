@@ -332,7 +332,7 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 initialize_state() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	DataDir = Config#config.data_dir,
 	Dir = filename:join(DataDir, "ar_tx_blacklist"),
 	ok = filelib:ensure_dir(Dir ++ "/"),
@@ -353,7 +353,7 @@ initialize_state() ->
 	).
 
 refresh_blacklist() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	WhitelistFiles = Config#config.transaction_whitelist_files,
 	case load_from_files(WhitelistFiles) of
 		error ->
@@ -369,7 +369,7 @@ refresh_blacklist() ->
 	end.
 
 refresh_blacklist(Whitelist) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	BlacklistFiles = Config#config.transaction_blacklist_files,
 	case load_from_files(BlacklistFiles) of
 		error ->

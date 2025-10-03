@@ -442,7 +442,7 @@ optimal_partition_hash_hps(PoA1Multiplier, VDFSpeed, PartitionDataSize, TotalDat
 	H1Optimal + H2Optimal.
 
 generate_report() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Height = ar_node:get_height(),
 	Packing = ar_mining_io:get_packing(),
 	Partitions = ar_mining_io:get_partitions(),
@@ -971,10 +971,11 @@ test_vdf_stats() ->
 	?assertEqual(undefined, vdf_speed(1000)).
 
 test_data_size_stats() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	try
-		application:set_env(arweave, config,
-			Config#config{ mining_addr = <<"MINING">> }),
+		arweave_config:set_env(Config#config{
+			mining_addr = <<"MINING">>
+		}),
 
 		WeaveSize = floor(2 * ar_block:partition_size()),
 		ets:insert(node_state, [{weave_size, WeaveSize}]),
@@ -984,11 +985,11 @@ test_data_size_stats() ->
 		do_test_data_size_stats(Config, {composite, <<"MINING">>, 1}, {composite, <<"PACKING">>, 1}),
 		do_test_data_size_stats(Config, {composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2})
 	after
-		application:set_env(arweave, config, Config)
+		arweave_config:set_env(Config)
 	end.
 
 do_test_data_size_stats(Config, Mining, Packing) ->
-	application:set_env(arweave, config, Config#config{ 
+	arweave_config:set_env(Config#config{ 
 		storage_modules = [
 			{floor(0.1 * ar_block:partition_size()), 10, unpacked},
 			{floor(0.1 * ar_block:partition_size()), 10, Mining},
@@ -1311,7 +1312,7 @@ test_report_poa1_multiple_2() ->
 	test_report({composite, <<"MINING">>, 2}, {composite, <<"PACKING">>, 2}, 2).
 
 test_report(Mining, Packing, PoA1Multiplier) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	MiningAddress = case Mining of
 		{spora_2_6, Addr} ->
 			Addr;
@@ -1353,11 +1354,10 @@ test_report(Mining, Packing, PoA1Multiplier) ->
 	],
 	
 	try	
-		application:set_env(arweave, config,
-			Config#config{
-				storage_modules = StorageModules,
-				mining_addr = MiningAddress
-			}),
+		arweave_config:set_env(Config#config{
+			storage_modules = StorageModules,
+			mining_addr = MiningAddress
+		}),
 		ar_mining_stats:pause_performance_reports(120000),
 		reset_all_stats(),
 		Partitions = [
@@ -1525,5 +1525,5 @@ test_report(Mining, Packing, PoA1Multiplier) ->
 		},
 		Report2)
 	after
-		application:set_env(arweave, config, Config)
+		arweave_config:set_env(Config)
 	end.

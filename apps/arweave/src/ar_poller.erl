@@ -61,7 +61,7 @@ init(Workers) ->
 		false ->
 			ok
 	end,
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	{ok, #state{ 
 		workers = Workers,
 		worker_count = length(Workers),
@@ -97,7 +97,7 @@ handle_cast(collect_peers, State) ->
 
 handle_cast({peer_out_of_sync_timeout, Peer}, State) ->
 	#state{ in_sync_trusted_peers = Set } = State,
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	case lists:member(Peer, Config#config.peers) of
 		false ->
 			{noreply, State};
@@ -107,7 +107,7 @@ handle_cast({peer_out_of_sync_timeout, Peer}, State) ->
 
 handle_cast({peer_out_of_sync, Peer}, State) ->
 	#state{ in_sync_trusted_peers = Set } = State,
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	case lists:member(Peer, Config#config.peers) of
 		false ->
 			{noreply, State};

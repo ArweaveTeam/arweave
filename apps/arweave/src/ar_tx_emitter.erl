@@ -148,7 +148,7 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 max_propagation_peers() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Config#config.max_propagation_peers.
 
 emit(_Set, _Peers, _MaxPeers, N, State) when N =< 0 ->

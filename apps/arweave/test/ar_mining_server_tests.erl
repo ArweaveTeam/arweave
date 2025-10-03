@@ -21,7 +21,7 @@
 setup_all() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
 		{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}},
@@ -31,13 +31,13 @@ setup_all() ->
 	Config.
 
 cleanup_all(Config) ->
-	ok = application:set_env(arweave, config, Config).
+	ok = arweave_config:set_env(Config).
 
 %% @doc Setup the environment so we can control VDF step generation.
 setup_pool_client() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
 		{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}},
@@ -54,7 +54,7 @@ setup_pool_client() ->
 	Config.
 
 cleanup_pool_client(Config) ->
-	ok = application:set_env(arweave, config, Config).
+	ok = arweave_config:set_env(Config).
 
 setup_one() ->
 	ets:new(mock_counter, [set, public, named_table]),

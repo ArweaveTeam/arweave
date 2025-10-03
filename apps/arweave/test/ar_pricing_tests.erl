@@ -309,7 +309,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assert(?REWARD_HISTORY_BLOCKS == 3),
 	?assert(?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE == 2),
 	?assertEqual(262144 * 3, B0#block.weave_size),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	{_, MinerPub} = ar_wallet:load_key(Config#config.mining_addr),
 	?assertEqual(0, get_balance(MinerPub)),
 	?assertEqual(0, get_reserved_balance(Config#config.mining_addr)),

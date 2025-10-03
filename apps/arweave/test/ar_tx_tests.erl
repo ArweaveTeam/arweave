@@ -231,8 +231,8 @@ polls_for_transactions_and_gossips_and_mines(B0, TXFuns) ->
 	%% Expect them to be accepted, fetched by the peer we did not push them to
 	%% and included into the block.
 	%% Expect the block to be accepted by the peer.
-	{ok, MainConfig} = application:get_env(arweave, config),
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, MainConfig} = arweave_config:get_env(),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
 	try
 		MainConfig2 = MainConfig#config{ max_propagation_peers = 0 },
 		_ = ar_test_node:start(#{ b0 => B0, config => MainConfig2 }),
@@ -279,7 +279,7 @@ polls_for_transactions_and_gossips_and_mines(B0, TXFuns) ->
 			TXs
 		)
 	after
-		application:set_env(arweave, config, MainConfig),
+		arweave_config:set_env(MainConfig),
 		ar_test_node:set_config(peer1, PeerConfig)
 	end.
 
@@ -293,8 +293,8 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Expect the block to be accepted.
 	%% Expect transactions from the difference between the two sets to be kept in the mempool.
 	%% Mine a block on the first node, expect the difference to be included into the block.
-	{ok, MainConfig} = application:get_env(arweave, config),
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, MainConfig} = arweave_config:get_env(),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
 
 	try
 		MainConfig2 = MainConfig#config{ disable = [tx_poller | MainConfig#config.disable] },
@@ -343,7 +343,7 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 			lists:sort((read_block_when_stored(hd(BI2)))#block.txs)
 		)
 	after
-		application:set_env(arweave, config, MainConfig),
+		arweave_config:set_env(MainConfig),
 		ar_test_node:set_config(peer1, PeerConfig)
 	end.
 
@@ -860,7 +860,7 @@ recovers_from_forks(ForkHeight) ->
 	_ = ar_test_node:start(B0),
 	_ = ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	MainPort = Config#config.port,
 	PreForkTXs = lists:foldl(
 		fun(Height, TXs) ->

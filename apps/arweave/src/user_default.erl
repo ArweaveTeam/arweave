@@ -13,5 +13,5 @@
 
 
 config() ->
-  {ok, Config} = application:get_env(arweave, config),
+  {ok, Config} = arweave_config:get_env(),
   Config.

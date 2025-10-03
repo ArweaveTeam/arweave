@@ -162,7 +162,7 @@ add_mainnet_v1_genesis_txs() ->
 	case filelib:is_dir("genesis_data/genesis_txs") of
 		true ->
 			{ok, Files} = file:list_dir("genesis_data/genesis_txs"),
-			{ok, Config} = application:get_env(arweave, config),
+			{ok, Config} = arweave_config:get_env(),
 			lists:foldl(
 				fun(F, Acc) ->
 					SourcePath = "genesis_data/genesis_txs/" ++ F,

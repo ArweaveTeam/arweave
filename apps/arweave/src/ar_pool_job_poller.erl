@@ -39,7 +39,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast(fetch_jobs, State) ->
 	PrevOutput = (ar_pool:get_latest_job())#job.output,
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Peer =
 		case {Config#config.coordinated_mining, Config#config.cm_exit_peer} of
 			{true, not_set} ->

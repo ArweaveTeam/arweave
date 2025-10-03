@@ -47,7 +47,7 @@ req(Args) ->
 req2(#{ peer := {_, _} } = Args) ->
 	req(Args, false);
 req2(#{ peer := Peer } = Args) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	case Config#config.port == element(5, Peer) of
 		true ->
 			%% Do not block requests to self.
@@ -262,7 +262,7 @@ terminate(Reason, #state{ status_by_pid = StatusByPID }) ->
 %%% ==================================================================
 
 open_connection(#{ peer := Peer } = Args) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	{IPOrHost, Port} = get_ip_port(Peer),
 	ConnectTimeout = maps:get(connect_timeout, Args,
 			maps:get(timeout, Args, ?HTTP_REQUEST_CONNECT_TIMEOUT)),
@@ -420,7 +420,7 @@ await_response( #{ pid := PID, stream_ref := Ref, timeout := Timeout
 	end.
 
 log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	case lists:member(http_logging, Config#config.enable) of
 		true when Type == warn ->
 			?LOG_WARNING([

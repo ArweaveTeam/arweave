@@ -176,7 +176,7 @@ peer_name(Node) ->
 	).
 
 peer_port(Node) ->
-	{ok, Config} = ar_test_node:remote_call(Node, application, get_env, [arweave, config]),
+	{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
 	Config#config.port.
 
 stop_peers([]) ->
@@ -213,13 +213,13 @@ wait_until_joined() ->
 	 ).
 
 get_config(Node) ->
-	remote_call(Node, application, get_env, [arweave, config]).
+	remote_call(Node, arweave_config, get_env, []).
 
 set_config(Node, Config) ->
-	remote_call(Node, application, set_env, [arweave, config, Config]).
+	remote_call(Node, arweave_config, set_env, [Config]).
 
 update_config(Config) ->
-	{ok, BaseConfig} = application:get_env(arweave, config),
+	{ok, BaseConfig} = arweave_config:get_env(),
 	Config2 = BaseConfig#config{
 		start_from_latest_state = Config#config.start_from_latest_state,
 		auto_join = Config#config.auto_join,
@@ -243,7 +243,7 @@ update_config(Config) ->
 		repack_in_place_storage_modules = Config#config.repack_in_place_storage_modules,
 		allow_rebase = Config#config.allow_rebase
 	},
-	ok = application:set_env(arweave, config, Config2),
+	ok = arweave_config:set_env(Config2),
 	?LOG_INFO("Updated Config:"),
 	ar_config:log_config(Config2),
 	Config2.
@@ -257,7 +257,7 @@ start_node(B0, Config) ->
 start_node(B0, Config, WaitUntilSync) ->
 	?LOG_INFO("Starting node"),
 	clean_up_and_stop(),
-	{ok, BaseConfig} = application:get_env(arweave, config),
+	{ok, BaseConfig} = arweave_config:get_env(),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
 	update_config(Config),
 	ar:start_dependencies(),
@@ -349,7 +349,7 @@ mine(Node) ->
 %% @doc Fetch and decode a binary-encoded block by hash H from the HTTP API of the
 %% given node. Return {ok, B} | {error, Reason}.
 http_get_block(H, Node) ->
-	{ok, Config} = remote_call(Node, application, get_env, [arweave, config]),
+	{ok, Config} = remote_call(Node, arweave_config, get_env, []),
 	Port = Config#config.port,
 	Peer = {127, 0, 0, 1, Port},
 	case ar_http:req(#{ peer => Peer, method => get,
@@ -574,7 +574,7 @@ start(Options) when is_map(Options) ->
 	Config =
 		case maps:get(config, Options, not_set) of
 			not_set ->
-				element(2, application:get_env(arweave, config));
+				element(2, arweave_config:get_env());
 			Value2 ->
 				Value2
 		end,
@@ -608,7 +608,7 @@ start(B0, RewardAddr, Config) ->
 start(B0, RewardAddr, Config, StorageModules) ->
 	clean_up_and_stop(),
 	write_genesis_files(Config#config.data_dir, B0),
-	ok = application:set_env(arweave, config, Config#config{
+	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = true,
 		auto_join = true,
 		peers = [],
@@ -803,7 +803,7 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 	).
 
 stop() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	application:stop(arweave),
 	ar:stop_dependencies(),
 	Config.
@@ -822,7 +822,7 @@ join_on(#{ node := Node, join_on := JoinOnNode }, Rejoin) ->
 
 join(JoinOnNode, Rejoin) ->
 	Peer = peer_ip(JoinOnNode),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	case Rejoin of
 		true ->
 			stop();
@@ -832,7 +832,7 @@ join(JoinOnNode, Rejoin) ->
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = [{ar_block:partition_size(), N,
 			get_default_storage_module_packing(RewardAddr, N)} || N <- lists:seq(0, 4)],
-	ok = application:set_env(arweave, config, Config#config{
+	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = false,
 		mining_addr = RewardAddr,
 		storage_modules = StorageModules,
@@ -933,7 +933,7 @@ wait_until_syncs_genesis_data(Node) ->
 	ok = remote_call(Node, ar_test_node, wait_until_syncs_genesis_data, [], 100_000).
 
 wait_until_syncs_genesis_data() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	ar_util:do_until(
 		fun() ->
 			case ar_node:get_current_block() of

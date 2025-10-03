@@ -15,13 +15,13 @@
 
 setup() ->
 	ets:new(computed_output, [named_table, set, public]),
-	{ok, Config} = application:get_env(arweave, config),
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, Config} = arweave_config:get_env(),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
     {Config, PeerConfig}.
 
 cleanup({Config, PeerConfig}) ->
-	application:set_env(arweave, config, Config),
-	ar_test_node:remote_call(peer1, application, set_env, [arweave, config, PeerConfig]),
+	arweave_config:set_env(Config),
+	ar_test_node:remote_call(peer1, arweave_config, set_env, [PeerConfig]),
 	ets:delete(computed_output).
 
 %% -------------------------------------------------------------------------------------------------
@@ -104,7 +104,7 @@ test_vdf_server_push_fast_block() ->
 	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
 	timer:sleep(3000),
 
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
@@ -145,7 +145,7 @@ test_vdf_server_push_slow_block() ->
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
@@ -200,7 +200,7 @@ test_vdf_server_push_slow_block() ->
 %%
 test_vdf_client_fast_block() ->
 	ar_test_node:stop(),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -218,7 +218,7 @@ test_vdf_client_fast_block() ->
 	ar_test_node:stop(peer1),
 
 	%% Restart peer1 as a VDF client
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ 
@@ -253,7 +253,7 @@ test_vdf_client_fast_block() ->
 	BI = assert_wait_until_height(peer1, 1).
 
 test_vdf_client_fast_block_pull_interface() ->
-  	{ok, Config} = application:get_env(arweave, config),
+  	{ok, Config} = arweave_config:get_env(),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -271,7 +271,7 @@ test_vdf_client_fast_block_pull_interface() ->
 	ar_test_node:stop(peer1),
 
 	%% Restart peer1 as a VDF client
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ 
@@ -309,7 +309,7 @@ test_vdf_client_fast_block_pull_interface() ->
 	BI = assert_wait_until_height(peer1, 1).
 
 test_vdf_client_slow_block() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -326,7 +326,7 @@ test_vdf_client_slow_block() ->
 	ar_test_node:stop(peer1),
 
 	%% Restart peer1 as a VDF client
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ 
@@ -353,7 +353,7 @@ test_vdf_client_slow_block() ->
 	BI = assert_wait_until_height(peer1, 1).
 
 test_vdf_client_slow_block_pull_interface() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	{_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(10000), <<>>}]),
 
@@ -370,7 +370,7 @@ test_vdf_client_slow_block_pull_interface() ->
 	ar_test_node:stop(peer1),
 
 	%% Restart peer1 as a VDF client
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ 
@@ -381,7 +381,7 @@ test_vdf_client_slow_block_pull_interface() ->
 		}
 	),
 	%% Start the main as a VDF server
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		Config#config{ 
