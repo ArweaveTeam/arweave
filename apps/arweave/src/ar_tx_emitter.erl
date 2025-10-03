@@ -67,7 +67,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast(process_chunk, State) ->
 	% only current (active) peers should be used, using lifetime
-	% peers will create unecessary timeouts. The first to
+	% peers will create unnecessary timeouts. The first to
 	% contact are the trusted peers.
 	TrustedPeers = ar_peers:get_trusted_peers(),
 	CurrentPeers = ar_peers:get_peers(current),
