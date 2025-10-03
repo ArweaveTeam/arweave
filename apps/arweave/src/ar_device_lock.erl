@@ -7,8 +7,8 @@
 
 -export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2, terminate/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_config.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 

@@ -2,9 +2,9 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
 
 -import(ar_test_node, [assert_wait_until_height/2]).
 

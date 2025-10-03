@@ -9,8 +9,8 @@
 		wallet_filepath/3,
 		get_or_create_wallet/1, recover_key/3]).
 
--include("../include/ar.hrl").
--include("../include/ar_config.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
 
 -include_lib("public_key/include/public_key.hrl").
 
