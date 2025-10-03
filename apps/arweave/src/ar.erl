@@ -14,10 +14,11 @@
 		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
 		docs/0, shutdown/1, console/1, console/2, prep_stop/1]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_verify_chunks.hrl").
+
 -include_lib("arweave_config/include/arweave_config.hrl").
--include("../include/ar_verify_chunks.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 

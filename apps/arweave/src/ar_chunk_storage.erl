@@ -19,11 +19,12 @@
 %% Used in tests.
 -export([delete_chunk/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_sup.hrl").
+-include("ar.hrl").
+-include("ar_sup.hrl").
+-include("ar_consensus.hrl").
+-include("ar_chunk_storage.hrl").
+
 -include_lib("arweave_config/include/arweave_config.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_chunk_storage.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
