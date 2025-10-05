@@ -393,14 +393,11 @@ get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 			Error
 	end.
 
-print_peers(Peers) ->
-	string:join([io_lib:format("~p", [ar_util:format_peer(Peer)]) || Peer <- Peers], ", ").
-
 %%%===================================================================
 %%% Tests
 %%%===================================================================
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 
 test_no_unsynced_intervals_test_() ->
 	TestCase = #{
