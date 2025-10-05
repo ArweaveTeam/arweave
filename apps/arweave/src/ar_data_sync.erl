@@ -1220,7 +1220,8 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 
 	?LOG_DEBUG([{event, enqueue_intervals}, {pid, self()},
 		{queue_before, gb_sets:size(Q)}, {queue_after, gb_sets:size(Q2)},
-		{num_peers, NumPeers}, {chunks_per_peer, ChunksPerPeer}]),
+		{num_peers, NumPeers}, {chunks_per_peer, ChunksPerPeer},
+		{intervals, Intervals}]),
 
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
@@ -2862,10 +2863,6 @@ enqueue_intervals([{Peer, Intervals} | Rest], ChunksToEnqueue, {Q, QIntervals}) 
 	enqueue_intervals(Rest, ChunksToEnqueue, {Q2, QIntervals2}).
 
 enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
-	?LOG_DEBUG([{event, enqueue_peer_intervals}, {pid, self()},
-		{peer, ar_util:format_peer(Peer)}, {num_intervals, gb_sets:size(Intervals)},
-		{chunks_to_enqueue, ChunksToEnqueue}]),
-
 	%% Only keep unique intervals. We may get some duplicates for two
 	%% reasons:
 	%% 1) find_peer_intervals might choose the same interval several
@@ -2874,6 +2871,11 @@ enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
 	%% 2) We ask many peers simultaneously about the same interval
 	%%    to make finding of the relatively rare intervals quicker.
 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
+	?LOG_DEBUG([{event, enqueue_peer_intervals}, {pid, self()},
+		{peer, ar_util:format_peer(Peer)},
+		{num_intervals, gb_sets:size(Intervals)},
+		{num_q_intervals, gb_sets:size(QIntervals)},
+		{num_outer_join_intervals, gb_sets:size(OuterJoin)}]),
 	{_, {Q2, QIntervals2}}  = ar_intervals:fold(
 		fun	(_, {0, {QAcc, QIAcc}}) ->
 				{0, {QAcc, QIAcc}};
