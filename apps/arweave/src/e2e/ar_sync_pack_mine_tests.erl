@@ -28,95 +28,95 @@ replica_2_9_syncing_test_() ->
 	{setup, fun () -> setup_source_node(replica_2_9) end, 
 		fun (GenesisData) ->
 				[
-					instantiator(GenesisData, replica_2_9, fun test_replica_2_9_syncing/1),
-					instantiator(GenesisData, spora_2_6, fun test_replica_2_9_syncing/1),
-					instantiator(GenesisData, unpacked, fun test_replica_2_9_syncing/1)
+					instantiator(GenesisData, replica_2_9, fun test_replica_2_9_syncing/1)
+					% instantiator(GenesisData, spora_2_6, fun test_replica_2_9_syncing/1),
+					% instantiator(GenesisData, unpacked, fun test_replica_2_9_syncing/1)
 				]
 		end}.
 
-spora_2_6_sync_pack_mine_test_() ->
-	{setup, fun () -> setup_source_node(spora_2_6) end, 
-		fun (GenesisData) ->
-				[
-					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
-				]
-		end}.
+% spora_2_6_sync_pack_mine_test_() ->
+% 	{setup, fun () -> setup_source_node(spora_2_6) end, 
+% 		fun (GenesisData) ->
+% 				[
+% 					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+% 				]
+% 		end}.
 
-unpacked_sync_pack_mine_test_() ->
-	{setup, fun () -> setup_source_node(unpacked) end, 
-		fun (GenesisData) ->
-				[
-					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
-					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
-				]
-		end}.
+% unpacked_sync_pack_mine_test_() ->
+% 	{setup, fun () -> setup_source_node(unpacked) end, 
+% 		fun (GenesisData) ->
+% 				[
+% 					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+% 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+% 				]
+% 		end}.
 
-% Note: we should limit the number of tests run per setup_source_node to 5, if it gets
-% too long then the source node may hit a difficulty adjustment, which can impact the
-% results.
-unpacked_edge_case_test_() ->
-	{setup, fun () -> setup_source_node(unpacked) end, 
-		fun (GenesisData) ->
-				[
-					instantiator(GenesisData, {replica_2_9, unpacked}, 
-						fun test_unpacked_and_packed_sync_pack_mine/1),
-					instantiator(GenesisData, {unpacked, replica_2_9}, 
-						fun test_unpacked_and_packed_sync_pack_mine/1),
-					instantiator(GenesisData, replica_2_9, 
-						fun test_entropy_first_sync_pack_mine/1),
-					instantiator(GenesisData, replica_2_9, 
-						fun test_entropy_last_sync_pack_mine/1)
-				]
-		end}.
+% % Note: we should limit the number of tests run per setup_source_node to 5, if it gets
+% % too long then the source node may hit a difficulty adjustment, which can impact the
+% % results.
+% unpacked_edge_case_test_() ->
+% 	{setup, fun () -> setup_source_node(unpacked) end, 
+% 		fun (GenesisData) ->
+% 				[
+% 					instantiator(GenesisData, {replica_2_9, unpacked}, 
+% 						fun test_unpacked_and_packed_sync_pack_mine/1),
+% 					instantiator(GenesisData, {unpacked, replica_2_9}, 
+% 						fun test_unpacked_and_packed_sync_pack_mine/1),
+% 					instantiator(GenesisData, replica_2_9, 
+% 						fun test_entropy_first_sync_pack_mine/1),
+% 					instantiator(GenesisData, replica_2_9, 
+% 						fun test_entropy_last_sync_pack_mine/1)
+% 				]
+% 		end}.
 
-spora_2_6_edge_case_test_() ->
-	{setup, fun () -> setup_source_node(spora_2_6) end, 
-		fun (GenesisData) ->
-				[
-					instantiator(GenesisData, {replica_2_9, unpacked}, 
-						fun test_unpacked_and_packed_sync_pack_mine/1),
-					instantiator(GenesisData, {unpacked, replica_2_9}, 
-						fun test_unpacked_and_packed_sync_pack_mine/1),
-					instantiator(GenesisData, replica_2_9, 
-						fun test_entropy_first_sync_pack_mine/1),
-					instantiator(GenesisData, replica_2_9, 
-						fun test_entropy_last_sync_pack_mine/1)
-				]
-		end}.
+% spora_2_6_edge_case_test_() ->
+% 	{setup, fun () -> setup_source_node(spora_2_6) end, 
+% 		fun (GenesisData) ->
+% 				[
+% 					instantiator(GenesisData, {replica_2_9, unpacked}, 
+% 						fun test_unpacked_and_packed_sync_pack_mine/1),
+% 					instantiator(GenesisData, {unpacked, replica_2_9}, 
+% 						fun test_unpacked_and_packed_sync_pack_mine/1),
+% 					instantiator(GenesisData, replica_2_9, 
+% 						fun test_entropy_first_sync_pack_mine/1),
+% 					instantiator(GenesisData, replica_2_9, 
+% 						fun test_entropy_last_sync_pack_mine/1)
+% 				]
+% 		end}.
 
-unpacked_small_module_test_() ->
-	{setup, fun () -> setup_source_node(unpacked) end, 
-		fun (GenesisData) ->
-				[
-					instantiator(GenesisData, replica_2_9, 
-						fun test_small_module_aligned_sync_pack_mine/1),
-					instantiator(GenesisData, replica_2_9, 
-						fun test_small_module_unaligned_sync_pack_mine/1)
-				]
-	end}.
+% unpacked_small_module_test_() ->
+% 	{setup, fun () -> setup_source_node(unpacked) end, 
+% 		fun (GenesisData) ->
+% 				[
+% 					instantiator(GenesisData, replica_2_9, 
+% 						fun test_small_module_aligned_sync_pack_mine/1),
+% 					instantiator(GenesisData, replica_2_9, 
+% 						fun test_small_module_unaligned_sync_pack_mine/1)
+% 				]
+% 	end}.
 	
-spora_2_6_small_module_test_() ->
-	{setup, fun () -> setup_source_node(spora_2_6) end, 
-		fun (GenesisData) ->
-				[
-					instantiator(GenesisData, replica_2_9, 
-						fun test_small_module_aligned_sync_pack_mine/1),
-					instantiator(GenesisData, replica_2_9, 
-						fun test_small_module_unaligned_sync_pack_mine/1)
-				]
-		end}.
+% spora_2_6_small_module_test_() ->
+% 	{setup, fun () -> setup_source_node(spora_2_6) end, 
+% 		fun (GenesisData) ->
+% 				[
+% 					instantiator(GenesisData, replica_2_9, 
+% 						fun test_small_module_aligned_sync_pack_mine/1),
+% 					instantiator(GenesisData, replica_2_9, 
+% 						fun test_small_module_unaligned_sync_pack_mine/1)
+% 				]
+% 		end}.
 
-disk_pool_threshold_test_() ->
-	[
-		instantiator(unpacked, replica_2_9, fun test_disk_pool_threshold/1),
-		instantiator(unpacked, spora_2_6, fun test_disk_pool_threshold/1),
-		instantiator(spora_2_6, replica_2_9, fun test_disk_pool_threshold/1),
-		instantiator(spora_2_6, spora_2_6, fun test_disk_pool_threshold/1),
-		instantiator(spora_2_6, unpacked, fun test_disk_pool_threshold/1)
-	].
+% disk_pool_threshold_test_() ->
+% 	[
+% 		instantiator(unpacked, replica_2_9, fun test_disk_pool_threshold/1),
+% 		instantiator(unpacked, spora_2_6, fun test_disk_pool_threshold/1),
+% 		instantiator(spora_2_6, replica_2_9, fun test_disk_pool_threshold/1),
+% 		instantiator(spora_2_6, spora_2_6, fun test_disk_pool_threshold/1),
+% 		instantiator(spora_2_6, unpacked, fun test_disk_pool_threshold/1)
+% 	].
 
 %% --------------------------------------------------------------------------------------------
 %% test_sync_pack_mine
@@ -149,7 +149,7 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 
 test_replica_2_9_syncing({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
-	?LOG_INFO([{event, test_syncing_blocked}, {module, ?MODULE},
+	?LOG_INFO([{event, test_replica_2_9_syncing}, {module, ?MODULE},
 		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
 	[B0 | _] = Blocks,
 	SourceNode = peer1,

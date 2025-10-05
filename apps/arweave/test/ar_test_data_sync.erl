@@ -339,7 +339,6 @@ post_proofs(Peer, B, TX, Chunks, IsTemporary) ->
 wait_until_syncs_chunk(Offset, ExpectedProof) ->
 	true = ar_util:do_until(
 		fun() ->
-			?debugFmt("Waiting for chunk ~p~n", [Offset]),
 			case ar_test_node:get_chunk(main, Offset) of
 				{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} ->
 					Proof = jiffy:decode(ProofJSON, [return_maps]),
@@ -382,7 +381,6 @@ wait_until_syncs_chunks(Node, Proofs, UpperBound) ->
 						true ->
 							true;
 						false ->
-							?debugFmt("Waiting for chunk ~p~n", [EndOffset]),
 							case ar_test_node:get_chunk(Node, EndOffset) of
 								{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} ->
 									FetchedProof = ar_serialize:json_map_to_poa_map(

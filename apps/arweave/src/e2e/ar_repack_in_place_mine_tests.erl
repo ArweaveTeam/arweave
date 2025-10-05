@@ -1,7 +1,6 @@
 -module(ar_repack_in_place_mine_tests).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
--include("../include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
