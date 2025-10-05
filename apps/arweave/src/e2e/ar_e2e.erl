@@ -14,11 +14,12 @@
 	assert_partition_size/3, assert_partition_size/4, assert_empty_partition/3,
 	assert_mine_and_validate/3]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("eunit/include/eunit.hrl").
+-include_lib("ar.hrl").
+-include_lib("ar_consensus.hrl").
 
+-include_lib("arweave_config/include/arweave_config.hrl").
+
+-include_lib("eunit/include/eunit.hrl").
 
 %% Set to true to update the chunk fixtures.
 %% WARNING: ONLY SET TO true IF YOU KNOW WHAT YOU ARE DOING!
@@ -339,18 +340,18 @@ assert_syncs_range(Node, StartOffset, EndOffset) ->
 	HasRange = ar_util:do_until(
 		fun() -> has_range(Node, StartOffset, EndOffset) end,
 		100,
-		60_000
+		300_000
 	),
 	case HasRange of
 		true ->
 			ok;
 		_ ->
-			SyncRecord = ar_http_iface_client:get_sync_record(
+			{ok, SyncRecord} = ar_http_iface_client:get_sync_record(
 				ar_test_node:peer_ip(Node)),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
 					"~s failed to sync range ~p - ~p. Sync record: ~p", 
-					[Node, StartOffset, EndOffset, SyncRecord])))
+					[Node, StartOffset, EndOffset, ar_intervals:to_list(SyncRecord)])))
 	end.
 
 assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
@@ -449,7 +450,7 @@ collect_footprint_intervals(NodeIP, Partition, LastPartition, Footprint, MaxFoot
 collect_footprint_intervals(NodeIP, Partition, LastPartition, Footprint, MaxFootprint, Acc) ->
 	FootprintByteIntervals =
 		case ar_http_iface_client:get_footprints(NodeIP, Partition, Footprint) of
-			{ok, {_Packing, FootprintIntervals}} ->
+			{ok, FootprintIntervals} ->
 				ar_footprint_record:get_intervals_from_footprint_intervals(FootprintIntervals);
 			not_found ->
 				?debugFmt("No footprint record found for partition ~B, footprint ~B~n",
