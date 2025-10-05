@@ -43,8 +43,8 @@ add(Offset, Packing, StoreID) ->
 %% @doc Add a chunk to the footprint record asynchronously.
 -spec add_async(Tag :: term(), Offset :: non_neg_integer(), Packing :: term(), StoreID :: string()) -> ok.
 add_async(Tag, Offset, Packing, StoreID) ->
-	Offset = get_offset(Offset),
-	ar_sync_record:add_async(Tag, Offset, Offset - 1, Packing, ar_data_sync_footprints, StoreID).
+	FootprintOffset = get_offset(Offset),
+	ar_sync_record:add_async(Tag, FootprintOffset, FootprintOffset - 1, Packing, ar_data_sync_footprints, StoreID).
 
 %% @doc Get the offset of a chunk in the footprint record.
 -spec get_offset(Offset :: non_neg_integer()) -> non_neg_integer().
@@ -219,7 +219,7 @@ get_intervals_from_footprint_intervals(Start, End, Intervals) ->
 %%% Tests.
 %%%===================================================================
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 
 get_offset_test() ->
 	%% The first chunk of the first footprint.
