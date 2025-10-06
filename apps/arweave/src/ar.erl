@@ -178,20 +178,14 @@ show_help() ->
 				"more chunks. This cache is subdivided into sub-caches for each mined "
 				"partition. When omitted, it is determined based on the number of "
 				"mining partitions."},
-			{"mining_server_chunk_cache_size_limit (num)", "DEPRECATED. Use "
-				"mining_cache_size_mb instead."},
 			{"max_emitters (num)", io_lib:format("The number of transaction propagation "
 				"processes to spawn. Must be at least 1. Default is ~B.", [?NUM_EMITTER_PROCESSES])},
-			{"tx_validators (num)", "Ignored. Set the post_tx key in the semaphores object"
-				" in the configuration file instead."},
 			{"post_tx_timeout", io_lib:format("The time in seconds to wait for the available"
 				" tx validation process before dropping the POST /tx request. Default is ~B."
 				" By default ~B validation processes are running. You can override it by"
 				" setting a different value for the post_tx key in the semaphores object"
 				" in the configuration file.", [?DEFAULT_POST_TX_TIMEOUT,
 						?MAX_PARALLEL_POST_TX_REQUESTS])},
-			{"tx_propagation_parallelization (num)",
-				"DEPRECATED. Does not affect anything."},
 			{"max_propagation_peers", io_lib:format(
 				"The maximum number of peers to propagate transactions to. "
 				"Default is ~B.", [?DEFAULT_MAX_PROPAGATION_PEERS])},
@@ -230,7 +224,6 @@ show_help() ->
 											 "If a transaction is in both lists, it is "
 											 "considered whitelisted."},
 			{"transaction_whitelist_url", "An HTTP endpoint serving a transaction whitelist."},
-			{"disk_space (num)", "DEPRECATED. Does not take effect anymore."},
 			{"disk_space_check_frequency (num)",
 				io_lib:format(
 					"The frequency in seconds of requesting the information "
@@ -273,8 +266,6 @@ show_help() ->
 					[?DISK_CACHE_SIZE]
 				)
 			)},
-			{"packing_rate",
-				"DEPRECATED. Does not affect anything. Use packing_workers instead."},
 			{"packing_workers (num)",
 				"The number of packing workers to spawn. The default is the number of "
 				"logical CPU cores."},
@@ -347,7 +338,6 @@ show_help() ->
 					"values to hash. A higher value reduces network traffic, a lower value "
 					"reduces hashing latency. Default is ~B.",
 					[?DEFAULT_CM_BATCH_TIMEOUT_MS])},
-			{"cm_in_batch_timeout", "DEPRECATED. Does not affect anything."},
 			{"cm_peer (IP:port)", "The peer(s) to mine in coordination with. You need to also "
 					"set coordinated_mining, cm_api_secret, and cm_exit_peer. The same "
 					"peer may be specified as cm_peer and cm_exit_peer. If we are an exit "
@@ -680,16 +670,8 @@ parse_cli_args(["packing_cache_size_limit", Num | Rest], C) ->
 parse_cli_args(["mining_cache_size_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			mining_cache_size_mb = list_to_integer(Num) });
-parse_cli_args(["mining_server_chunk_cache_size_limit", _Num | Rest], C) ->
-	?LOG_WARNING("Deprecated option found 'mining_server_chunk_cache_size_limit': "
-			"this option has been removed and is a no-op. Please use mining_cache_size_mb "
-			"instead.", []),
-	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["max_emitters", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_emitters = list_to_integer(Num) });
-parse_cli_args(["disk_space", Size | Rest], C) ->
-	parse_cli_args(Rest,
-			C#config{ disk_space = (list_to_integer(Size) * 1024 * 1024 * 1024) });
 parse_cli_args(["disk_space_check_frequency", Frequency | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 		disk_space_check_frequency = list_to_integer(Frequency) * 1000
@@ -720,10 +702,6 @@ parse_cli_args(["enable", Feature | Rest ], C = #config{ enable = Enabled }) ->
 	parse_cli_args(Rest, C#config{ enable = [ list_to_atom(Feature) | Enabled ] });
 parse_cli_args(["disable", Feature | Rest ], C = #config{ disable = Disabled }) ->
 	parse_cli_args(Rest, C#config{ disable = [ list_to_atom(Feature) | Disabled ] });
-parse_cli_args(["gateway", _ | Rest ], C) ->
-	?LOG_WARNING("Deprecated option found 'gateway': "
-		" this option has been removed and is now a no-op.", []),
-	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["custom_domain", _ | Rest], C = #config{ }) ->
 	?LOG_WARNING("Deprecated option found 'custom_domain': "
 			" this option has been removed and is a no-op.", []),
@@ -740,12 +718,8 @@ parse_cli_args(["header_sync_jobs", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ header_sync_jobs = list_to_integer(Num) });
 parse_cli_args(["data_sync_request_packed_chunks" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ data_sync_request_packed_chunks = true });
-parse_cli_args(["tx_validators", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ tx_validators = list_to_integer(Num) });
 parse_cli_args(["post_tx_timeout", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config { post_tx_timeout = list_to_integer(Num) });
-parse_cli_args(["tx_propagation_parallelization", Num|Rest], C) ->
-	parse_cli_args(Rest, C#config{ tx_propagation_parallelization = list_to_integer(Num) });
 parse_cli_args(["max_connections", Num | Rest], C) ->
 	try list_to_integer(Num) of
 		N when N >= 1 ->
@@ -759,10 +733,6 @@ parse_cli_args(["max_connections", Num | Rest], C) ->
 			parse_cli_args(Rest, C)
 
 	end;
-parse_cli_args(["max_gateway_connections", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ max_gateway_connections = list_to_integer(Num) });
-parse_cli_args(["max_poa_option_depth", Num | Rest], C) ->
-	parse_cli_args(Rest, C#config{ max_poa_option_depth = list_to_integer(Num) });
 parse_cli_args(["disk_pool_data_root_expiration_time", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{
 			disk_pool_data_root_expiration_time = list_to_integer(Num) });
@@ -772,10 +742,6 @@ parse_cli_args(["max_disk_pool_data_root_buffer_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
 parse_cli_args(["disk_cache_size_mb", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ disk_cache_size = list_to_integer(Num) });
-parse_cli_args(["packing_rate", _Num | Rest], C) ->
-	?LOG_WARNING("Deprecated option found 'packing_rate': "
-		" this option has been removed and is now a no-op.", []),
-	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["packing_workers", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ packing_workers = list_to_integer(Num) });
 parse_cli_args(["replica_2_9_workers", Num | Rest], C) ->
@@ -854,10 +820,6 @@ parse_cli_args(["cm_exit_peer", Peer | Rest], C) ->
 	end;
 parse_cli_args(["cm_out_batch_timeout", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ cm_out_batch_timeout = list_to_integer(Num) });
-parse_cli_args(["cm_in_batch_timeout", _Num | Rest], C) ->
-	?LOG_WARNING("Deprecated option found 'cm_in_batch_timeout': "
-		" this option has been removed and is now a no-op.", []),
-	parse_cli_args(Rest, C#config{ });
 parse_cli_args(["is_pool_server" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ is_pool_server = true });
 parse_cli_args(["is_pool_client" | Rest], C) ->
