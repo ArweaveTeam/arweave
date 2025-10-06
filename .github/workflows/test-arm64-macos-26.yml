@@ -2,7 +2,7 @@
 # Test suite for MacOS. The support of MacOS is mainly for the VDF
 # part, it should not be required to do the full test suite.
 ######################################################################
-name: "Test on arch:arm64 distribution:macos release:15"
+name: "Test on arch:arm64 distribution:macos release:26"
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
     with:
       os_arch: arm64
       os_name: macos
-      os_release: 15
+      os_release: 26
 
   test-canary:
     needs: [build]
@@ -25,7 +25,7 @@ jobs:
     with:
       os_arch: arm64
       os_name: macos
-      os_release: 15
+      os_release: 26
 
   test:
     needs: [test-canary]
@@ -34,4 +34,4 @@ jobs:
     with:
       os_arch: arm64
       os_name: macos
-      os_release: 15
+      os_release: 26

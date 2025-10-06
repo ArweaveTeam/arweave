@@ -19,7 +19,7 @@ on:
         type: "string"
       os_release:
         description: "operating system release"
-        default: "15"
+        default: "26"
         type: "string"
 
 jobs:
