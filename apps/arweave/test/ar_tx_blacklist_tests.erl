@@ -51,7 +51,7 @@ test_uses_blacklists() ->
 	WhitelistFile = random_filename(),
 	ok = file:write_file(WhitelistFile, <<>>),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	StorageModule = {30 * 1024 * 1024, 0, {composite, RewardAddr, 1}},
 	try
 		ar_test_node:start(#{ b0 => B0, addr => RewardAddr,
@@ -278,7 +278,7 @@ create_files(BadTXIDs, [{Start1, End1}, {Start2, End2}, {Start3, End3}]) ->
 	[Filename || {Filename, _} <- Files].
 
 random_filename() ->
-	{ok, Config} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, Config} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
 	filename:join(Config#config.data_dir,
 		"ar-tx-blacklist-tests-transaction-blacklist-"
 		++
@@ -461,4 +461,4 @@ decode_chunk(EncodedProof) ->
 
 teardown(Config) ->
 	ok = ar_test_node:remote_call(peer1, cowboy, stop_listener, [ar_tx_blacklist_test_listener]),
-	application:set_env(arweave, config, Config).
+	arweave_config:set_env(Config).

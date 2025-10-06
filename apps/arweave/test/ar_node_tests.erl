@@ -186,7 +186,7 @@ test_persisted_mempool() ->
 	try
 		%% Rejoin the network.
 		%% Expect the pending transactions to be picked up and distributed.
-		ok = application:set_env(arweave, config, Config#config{
+		ok = arweave_config:set_env(Config#config{
 			start_from_latest_state = false,
 			peers = [ar_test_node:peer_ip(peer1)]
 		}),
@@ -199,5 +199,5 @@ test_persisted_mempool() ->
 		B = read_block_when_stored(H),
 		?assertEqual([SignedTX#tx.id], B#block.txs)
 	after
-		ok = application:set_env(arweave, config, Config)
+		ok = arweave_config:set_env(Config)
 	end.

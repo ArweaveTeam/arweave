@@ -46,7 +46,7 @@ test_mines_off_only_second_last_chunks() ->
 					%% bound based on the nonce limiter entropy reset, but ar_data_sync waits
 					%% for ?SEARCH_SPACE_UPPER_BOUND_DEPTH confirmations before packing the
 					%% chunks.
-					{ok, Config} = application:get_env(arweave, config),
+					{ok, Config} = arweave_config:get_env(),
 					lists:foreach(
 						fun(O) ->
 							[ar_chunk_storage:delete(O, ar_storage_module:id(Module))

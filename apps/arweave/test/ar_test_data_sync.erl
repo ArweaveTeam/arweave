@@ -39,11 +39,11 @@ setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 			Value ->
 				{Value, Options}
 		end,
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Options3 = Options2#{ config => Config#config{ 
 		enable = Config#config.enable ++ [pack_served_chunks] } },
 	ar_test_node:start(Options3),
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, application, get_env, [arweave, config]),
+	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
 	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig#config{ 
 		enable = Config#config.enable ++ [pack_served_chunks] }),
 	ar_test_node:connect_to_peer(peer1),
@@ -250,7 +250,7 @@ get_tx_offset(Node, TXID) ->
 	}).
 
 get_tx_data(TXID) ->
-  {ok, Config} = application:get_env(arweave, config),
+  {ok, Config} = arweave_config:get_env(),
 	ar_http:req(#{
 		method => get,
 		peer => {127, 0, 0, 1, Config#config.port},

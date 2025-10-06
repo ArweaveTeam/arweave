@@ -217,7 +217,7 @@ resolve_peers([RawPeer | Peers]) ->
 	end.
 
 get_trusted_peers() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	case Config#config.peers of
 		[] ->
 			ArweavePeers = [
@@ -233,7 +233,7 @@ get_trusted_peers() ->
 	end.
 -else.
 get_trusted_peers() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Config#config.peers.
 -endif.
 
@@ -376,7 +376,7 @@ resolve_and_cache_peer(RawPeer, Type) ->
 %%%===================================================================
 
 init([]) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	case Config#config.verify of
 		false ->
 			%% Trap exit to avoid corrupting any open files on quit.
@@ -715,7 +715,7 @@ ping_peers(Peers) ->
 %% Do not filter out loopback IP addresses with custom port in the debug mode
 %% to allow multiple local VMs to peer with each other.
 is_loopback_ip({127, _, _, _, Port}) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	Port == Config#config.port;
 is_loopback_ip({_, _, _, _, _}) ->
 	false.

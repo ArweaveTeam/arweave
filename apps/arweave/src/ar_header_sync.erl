@@ -62,7 +62,7 @@ init([]) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([tx, disksup]),
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_header_sync_db"), ?MODULE),
 	{SyncRecord, Height, CurrentBI} =
 		case ar_storage:read_term(header_sync_state) of
@@ -272,7 +272,7 @@ handle_info({event, tx, _}, State) ->
 
 handle_info({event, disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, _Percentage, Bytes}},
 		State) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
 	DiskCacheSize = Config#config.disk_cache_size * 1048576,
 	BufferSize = 10_000_000_000,

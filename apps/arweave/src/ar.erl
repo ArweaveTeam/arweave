@@ -1181,7 +1181,7 @@ start(Config) ->
 			init:stop(1)
 	end,
 	Config2 = ar_config:set_dependent_flags(Config),
-	ok = application:set_env(arweave, config, Config2),
+	ok = arweave_config:set_env(Config2),
 	filelib:ensure_dir(Config2#config.log_dir ++ "/"),
 	warn_if_single_scheduler(),
 	case Config2#config.nonce_limiter_server_trusted_peers of
@@ -1195,7 +1195,7 @@ start(Config) ->
 
 
 start(normal, _Args) ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	%% Set erlang socket backend
 	persistent_term:put({kernel, inet_backend}, Config#config.'socket.backend'),
 	%% Configure logger
@@ -1222,7 +1222,7 @@ set_mining_address(#config{ mining_addr = not_set } = C) ->
 			Addr = ar_wallet:to_address(W),
 			ar:console("~nSetting the mining address to ~s.~n", [ar_util:encode(Addr)]),
 			C2 = C#config{ mining_addr = Addr },
-			application:set_env(arweave, config, C2),
+			arweave_config:set_env(C2),
 			set_mining_address(C2)
 	end;
 set_mining_address(#config{ mine = false }) ->
@@ -1265,7 +1265,7 @@ create_wallet(DataDir, KeyType) ->
 		false ->
 			create_wallet_fail(KeyType);
 		true ->
-			ok = application:set_env(arweave, config, #config{ data_dir = DataDir }),
+			ok = arweave_config:set_env(#config{ data_dir = DataDir }),
 			case ar_wallet:new_keyfile(KeyType) of
 				{error, Reason} ->
 					ar:console("Failed to create a wallet, reason: ~p.~n~n",
@@ -1299,7 +1299,7 @@ benchmark_packing(Args) ->
 benchmark_vdf() ->
 	benchmark_vdf([]).
 benchmark_vdf(Args) ->
-	ok = application:set_env(arweave, config, #config{}),
+	ok = arweave_config:set_env(#config{}),
 	ar_bench_vdf:run_benchmark_from_cli(Args),
 	init:stop(1).
 
@@ -1340,7 +1340,7 @@ stop_dependencies() ->
 	lists:foreach(fun(Dep) -> application:stop(Dep) end, Deps).
 
 start_dependencies() ->
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	ar_config:log_config(Config).
 

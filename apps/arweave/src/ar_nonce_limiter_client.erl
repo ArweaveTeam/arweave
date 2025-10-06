@@ -59,7 +59,7 @@ init([]) ->
 		true ->
 			gen_server:cast(?MODULE, pull)
 	end,
-	{ok, Config} = application:get_env(arweave, config),
+	{ok, Config} = arweave_config:get_env(),
 	{ok, #state{ remote_servers = queue:from_list(Config#config.nonce_limiter_server_trusted_peers) }}.
 
 handle_call(Request, _From, State) ->
