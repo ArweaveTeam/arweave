@@ -118,8 +118,8 @@ jobs:
       - name: Download MacOS Release
         uses: actions/download-artifact@v5
         with:
-          name: arweave-macos-15-arm64
-          path: ./arweave-macos-15-arm64
+          name: arweave-macos-26-arm64
+          path: ./arweave-macos-26-arm64
 
       # now this part is a bit tricky. it will rename
       # all tarball using the tag pushed. To avoid
@@ -161,7 +161,7 @@ jobs:
           _prepare_release arweave-ubuntu-jammy-amd64 ubuntu22.x86_64
           _prepare_release arweave-ubuntu-noble-amd64 ubuntu24.x86_64
           _prepare_release arweave-rockylinux-9-x86_64 rocky9.x86_64
-          _prepare_release arweave-macos-15-arm64 macos.arm64
+          _prepare_release arweave-macos-26-arm64 macos.arm64
 
           # check if the checksums are correct
           cd ${releasedir}
