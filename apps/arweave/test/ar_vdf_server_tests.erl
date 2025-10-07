@@ -218,7 +218,7 @@ test_vdf_client_fast_block() ->
 	ar_test_node:stop(peer1),
 
 	%% Restart peer1 as a VDF client
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
+	{ok, PeerConfig} = ar_test_node:get_config(peer1),
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		PeerConfig#config{ 

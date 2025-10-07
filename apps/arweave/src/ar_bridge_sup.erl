@@ -27,7 +27,7 @@ init([]) ->
 			{Name, {ar_block_propagation_worker, start_link, [Name]}, permanent,
 			 ?SHUTDOWN_TIMEOUT, worker, [ar_block_propagation_worker]}
 		end,
-		lists:seq(1, ?BLOCK_PROPAGATION_PARALLELIZATION)
+		lists:seq(1, ar_bridge:block_propagation_parallelization())
 	),
 	Workers = [element(1, El) || El <- Children],
 	Children2 = [?CHILD_WITH_ARGS(ar_bridge, worker, ar_bridge, [ar_bridge, Workers]) | Children],

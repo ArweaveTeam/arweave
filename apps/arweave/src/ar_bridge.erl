@@ -12,6 +12,8 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
+-export([block_propagation_parallelization/0]).
+
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_config.hrl").
 
@@ -23,6 +25,8 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
+block_propagation_parallelization() ->
+	?BLOCK_PROPAGATION_PARALLELIZATION.
 
 %%--------------------------------------------------------------------
 %% @doc

@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0,
-		start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, set_height/1,
+		start_mining/1, is_paused/0, set_difficulty/1, set_merkle_rebase_threshold/1, set_height/1,
 		compute_h2_for_peer/1, prepare_and_post_solution/1, prepare_poa/3,
 		get_recall_bytes/5, active_sessions/0, encode_sessions/1, add_pool_job/6,
 		is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/5,
@@ -66,6 +66,11 @@ start_link() ->
 %% @doc Start mining.
 start_mining(Args) ->
 	gen_server:cast(?MODULE, {start_mining, Args}).
+
+%% @doc Return true if the mining server is paused.
+is_paused() ->
+	?LOG_INFO([{event, calling_is_paused}]),
+	gen_server:call(?MODULE, is_paused, 60_000).
 
 %% @doc Compute H2 for a remote peer (used in coordinated mining).
 compute_h2_for_peer(Candidate) ->
@@ -201,6 +206,10 @@ init([]) ->
 handle_call(active_sessions, _From, State) ->
 	{reply, State#state.active_sessions, State};
 
+handle_call(is_paused, _From, State) ->
+	?LOG_INFO([{event, is_paused}, {paused, State#state.paused}]),
+	{reply, State#state.paused, State};
+
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
@@ -264,6 +273,9 @@ handle_cast({compute_h2_for_peer, Candidate}, State) ->
 	end,
 	{noreply, State};
 
+handle_cast({prepare_and_post_solution, _}, #state{ paused = true } = State) ->
+	%% Ignore solutions when the server is paused. Should only happen in tests.
+	{noreply, State};
 handle_cast({prepare_and_post_solution, CandidateOrSolution}, State) ->
 	prepare_and_post_solution(CandidateOrSolution, State),
 	{noreply, State};
