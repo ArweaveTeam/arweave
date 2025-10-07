@@ -69,7 +69,6 @@ start_mining(Args) ->
 
 %% @doc Return true if the mining server is paused.
 is_paused() ->
-	?LOG_INFO([{event, calling_is_paused}]),
 	gen_server:call(?MODULE, is_paused, 60_000).
 
 %% @doc Compute H2 for a remote peer (used in coordinated mining).
@@ -207,7 +206,6 @@ handle_call(active_sessions, _From, State) ->
 	{reply, State#state.active_sessions, State};
 
 handle_call(is_paused, _From, State) ->
-	?LOG_INFO([{event, is_paused}, {paused, State#state.paused}]),
 	{reply, State#state.paused, State};
 
 handle_call(Request, _From, State) ->
