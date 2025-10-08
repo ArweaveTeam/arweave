@@ -9,9 +9,9 @@
 fork_at_entropy_reset_point_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([mock_reset_frequency(), mock_block_propagation_parallelization()],
-			fun test_fork_checkpoints_not_found/0, 180),
+			fun test_fork_checkpoints_not_found/0, ?TEST_NODE_TIMEOUT),
 		ar_test_node:test_with_mocked_functions([mock_reset_frequency(), mock_block_propagation_parallelization()],
-			fun test_fork_refuse_validation/0, 180)
+			fun test_fork_refuse_validation/0, ?TEST_NODE_TIMEOUT)
 	].
 
 %% Scenario:
