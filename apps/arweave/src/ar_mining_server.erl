@@ -588,11 +588,15 @@ prepare_and_post_solution(#mining_candidate{} = Candidate, State) ->
 	%% A solo miner builds a solution from a candidate here or a CM miner who received
 	%% H2 from another peer reads chunk1 and sends it to the exit peer.
 	Solution = prepare_solution_from_candidate(Candidate, State),
-	post_solution(Solution, State);
+	Ret = post_solution(Solution, State),
+	maybe_flush_solution_queue(Ret),
+	Ret;
 prepare_and_post_solution(#mining_solution{} = Solution, State) ->
 	%% An exit peer receives a mining solution, possibly without the VDF data and chunk proofs.
 	Solution2 = prepare_solution(Solution, State),
-	post_solution(Solution2, State).
+	Ret = post_solution(Solution2, State),
+	maybe_flush_solution_queue(Ret),
+	Ret.
 
 prepare_solution(Solution, State) ->
 	#state{ merkle_rebase_threshold = RebaseThreshold, is_pool_client = IsPoolClient } = State,
@@ -991,7 +995,8 @@ post_solution(Solution, State) ->
 post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
 	%% When posting a partial solution the pool client will skip many of the validation steps
 	%% that are normally performed before sharing a solution.
-	ar_pool:post_partial_solution(Solution);
+	ar_pool:post_partial_solution(Solution),
+	ok;
 post_solution(not_set, Solution, State) ->
 	#state{ diff_pair = DiffPair } = State,
 	#mining_solution{
@@ -1011,7 +1016,8 @@ post_solution(not_set, Solution, State) ->
 					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)},
 					{diff_pair, DiffPair}]),
 			ar:console("WARNING: we failed to validate our solution. Check logs for more "
-					"details~n");
+					"details~n"),
+			error;
 		{false, Reason} ->
 			ar_events:send(solution, {rejected,
 					#{ reason => Reason, source => miner }}),
@@ -1026,9 +1032,11 @@ post_solution(not_set, Solution, State) ->
 					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)},
 					{diff_pair, DiffPair}]),
 			ar:console("WARNING: the solution we found is invalid. Check logs for more "
-					"details~n");
+					"details~n"),
+			error;
 		{true, PoACache, PoA2Cache} ->
-			ar_node_worker:found_solution(miner, Solution, PoACache, PoA2Cache)
+			ar_node_worker:found_solution(miner, Solution, PoACache, PoA2Cache),
+			ok
 	end;
 post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
 	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution) of
@@ -1038,7 +1046,8 @@ post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
 			?LOG_WARNING([{event, found_partial_solution_but_failed_to_reach_exit_node},
 					{reason, io_lib:format("~p", [Reason])}]),
 			ar:console("We found a partial solution but failed to reach the exit node, "
-					"error: ~p.", [io_lib:format("~p", [Reason])])
+					"error: ~p.", [io_lib:format("~p", [Reason])]),
+			error
 	end;
 post_solution(ExitPeer, Solution, _State) ->
 	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
@@ -1048,8 +1057,31 @@ post_solution(ExitPeer, Solution, _State) ->
 			?LOG_WARNING([{event, found_solution_but_failed_to_reach_exit_node},
 					{reason, io_lib:format("~p", [Reason])}]),
 			ar:console("We found a solution but failed to reach the exit node, "
-					"error: ~p.", [io_lib:format("~p", [Reason])])
+					"error: ~p.", [io_lib:format("~p", [Reason])]),
+			error
 	end.
+
+-ifdef(AR_TEST).
+%% @doc During tests the miner can mine so many solutions in parallel
+%% that it fills up the ar_mining_server queue and can cause flaky timeouts.
+%% To avoid this we'll flush the queue after a successful solution is posted.
+maybe_flush_solution_queue(ok) ->
+	flush_solution_queue(),
+	ok;
+maybe_flush_solution_queue(_Other) ->
+	ok.
+
+flush_solution_queue() ->
+	receive
+		{'$gen_cast', {prepare_and_post_solution, _}} ->
+			flush_solution_queue()
+	after 0 ->
+		ok
+	end.
+-else.
+maybe_flush_solution_queue(_Ret) ->
+	ok.
+-endif.
 
 may_be_empty_poa(not_set) ->
 	#poa{};

@@ -10,7 +10,7 @@ start_from_block_test_() ->
 	].
 
 test_start_from_block() ->
-    [B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
+    [B0] = ar_weave:init(),
 	ar_test_node:start(B0),
     ar_test_node:start_peer(peer1, B0),
     ar_test_node:start_peer(peer2, B0),

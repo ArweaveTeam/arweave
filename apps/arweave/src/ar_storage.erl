@@ -1331,7 +1331,7 @@ store_and_retrieve_block_test_() ->
 	{timeout, 60, fun test_store_and_retrieve_block/0}.
 
 test_store_and_retrieve_block() ->
-	[B0] = ar_weave:init([]),
+	[B0] = ar_weave:init(),
 	ar_test_node:start(B0),
 	TXIDs = [TX#tx.id || TX <- B0#block.txs],
 	FetchedB0 = read_block(B0#block.indep_hash),

@@ -27,7 +27,7 @@ fork_at_entropy_reset_point_test_() ->
 %% that the block is rejected and that the VDF client can later get on
 %% the correct chain and then mine a solution there.
 test_fork_checkpoints_not_found() ->
-	[B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
+	[B0] = ar_weave:init(),
 
 	%% Start nodes in such way that they will not gossip blocks to
 	%% each other. This lets us control when blocks are shared.
@@ -107,7 +107,8 @@ test_fork_checkpoints_not_found() ->
 %% broke this fix for nodes using `disable vdf_server_pull`. We've now
 %% re-applied the fix and added this test.
 test_fork_refuse_validation() ->
-	[B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
+	% [B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
+	[B0] = ar_weave:init(),
 
 	%% Start nodes in such way that they will not gossip blocks to
 	%% each other. This lets us control when blocks are shared.

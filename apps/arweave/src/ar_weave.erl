@@ -24,6 +24,7 @@ init() ->
 %% list - we use it to sign a transaction included in the genesis block.
 init(WalletList) ->
 	init(WalletList, 1).
+	% init(WalletList, trunc(1.0e40)).
 
 init(WalletList, Diff) ->
 	Size = 3 * ?DATA_CHUNK_SIZE, % Matches ?STRICT_DATA_SPLIT_THRESHOLD in tests.
