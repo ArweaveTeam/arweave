@@ -84,7 +84,7 @@ test_fork_checkpoints_not_found() ->
 	ar_test_node:wait_until_height(peer1, 3).
 
 %% Scenario:
-%% 1 ,There's a chain fork on a block that opens a new VDF session.
+%% 1. There's a chain fork on a block that opens a new VDF session.
 %%    The "winning" block has a higher VDF step than the "losing" block. 
 %%    Both blocks need to be validated using the current VDF session
 %%    (not the new one)
@@ -104,7 +104,7 @@ test_fork_checkpoints_not_found() ->
 %% We built in a fix for this scenario before 2.9.5-alpha1, but it relied on
 %% VDF Pull being enabled (in which case the VDF client would explicitly ask
 %% the server for the full current and previous sessions). In 2.9.5-alpha1 we
-%% broke this fix for nodes using `didable vdf_server_pull`. We've now
+%% broke this fix for nodes using `disable vdf_server_pull`. We've now
 %% re-applied the fix and added this test.
 test_fork_refuse_validation() ->
 	[B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
