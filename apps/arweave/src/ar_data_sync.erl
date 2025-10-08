@@ -13,7 +13,8 @@
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
-		is_footprint_record_supported/3, get_data_roots_for_offset/1]).
+		is_footprint_record_supported/3, get_data_roots_for_offset/1,
+		get_disk_pool_threshold/0]).
 
 -export([add_chunk_to_disk_pool/5]).
 
@@ -745,6 +746,18 @@ is_footprint_record_supported(AbsoluteOffset, ChunkSize, Packing) ->
 	end,
 	IsMatchingPacking andalso (AbsoluteOffset > ar_block:strict_data_split_threshold() orelse ChunkSize == ?DATA_CHUNK_SIZE).
 
+%% @doc Return the disk pool threshold, a byte offset where
+%% the disk pool begins - the data above this offset is considered
+%% to belong to the disk pool. For example, we do not store the
+%% disk pool data in the storage modules due to the risk of orphans.
+get_disk_pool_threshold() ->
+	case ets:lookup(ar_data_sync_state, disk_pool_threshold) of
+		[] ->
+			0;
+		[{_, DiskPoolThreshold}] ->
+			DiskPoolThreshold
+	end.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -875,6 +888,27 @@ init({StoreID, RepackInPlacePacking}) ->
 
 handle_cast({move_data_root_index, Cursor, N}, State) ->
 	move_data_root_index(Cursor, N, State),
+	{noreply, State};
+
+handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, Entries}, State) ->
+	%% Insert into data_root_index and data_root_offset_index for default module only.
+	#sync_data_state{ store_id = ?DEFAULT_MODULE } = State,
+	DataRootIndexKeySet = sets:from_list([
+		<< DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary >>
+		|| {DataRoot, TXSize, _TXStart, _TXPath} <- Entries
+	]),
+	BlockSize = BlockEnd - BlockStart,
+	ok = ar_kv:put({data_root_offset_index, ?DEFAULT_MODULE},
+			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
+			term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})),
+	lists:foreach(
+		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
+			ok = ar_kv:put({data_root_index, ?DEFAULT_MODULE},
+				data_root_key_v2(DataRoot, TXSize, TXStartOffset), TXPath)
+		end,
+		Entries
+	),
+	ok = ar_sync_record:add(BlockEnd, BlockStart, data_roots, ?DEFAULT_MODULE),
 	{noreply, State};
 
 handle_cast(process_store_chunk_queue, State) ->
@@ -1021,7 +1055,6 @@ handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End,
 			disk_pool_threshold = DiskPoolThreshold,
 			sync_phase = SyncPhase,
-			store_id = StoreID,
 			migrations_index = MI } = State,
 	?LOG_DEBUG([{event, collect_peer_intervals_start},
 		{function, collect_peer_intervals},

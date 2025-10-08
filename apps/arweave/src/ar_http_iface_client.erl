@@ -846,7 +846,12 @@ handle_get_data_root_response(TXRoot, BlockSize, Entries, Offset) ->
 			end,
 	case ValidateTXRoot of
 		{ok, {Triplets2, Tree2}} ->
-			verify_tx_paths(Triplets2, TXRoot, Tree2);
+			case verify_tx_paths(Triplets2, TXRoot, Tree2) of
+				ok ->
+					{ok, {TXRoot, BlockSize, Entries}};
+				Error4 ->
+					Error4
+			end;
 		Error3 ->
 			Error3
 	end.
