@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0,
-		start_mining/1, set_difficulty/1, set_merkle_rebase_threshold/1, set_height/1,
+		start_mining/1, is_paused/0, set_difficulty/1, set_merkle_rebase_threshold/1, set_height/1,
 		compute_h2_for_peer/1, prepare_and_post_solution/1, prepare_poa/3,
 		get_recall_bytes/5, active_sessions/0, encode_sessions/1, add_pool_job/6,
 		is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/5,
@@ -66,6 +66,10 @@ start_link() ->
 %% @doc Start mining.
 start_mining(Args) ->
 	gen_server:cast(?MODULE, {start_mining, Args}).
+
+%% @doc Return true if the mining server is paused.
+is_paused() ->
+	gen_server:call(?MODULE, is_paused, 60_000).
 
 %% @doc Compute H2 for a remote peer (used in coordinated mining).
 compute_h2_for_peer(Candidate) ->
@@ -201,6 +205,9 @@ init([]) ->
 handle_call(active_sessions, _From, State) ->
 	{reply, State#state.active_sessions, State};
 
+handle_call(is_paused, _From, State) ->
+	{reply, State#state.paused, State};
+
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
@@ -264,6 +271,9 @@ handle_cast({compute_h2_for_peer, Candidate}, State) ->
 	end,
 	{noreply, State};
 
+handle_cast({prepare_and_post_solution, _}, #state{ paused = true } = State) ->
+	%% Ignore solutions when the server is paused. Should only happen in tests.
+	{noreply, State};
 handle_cast({prepare_and_post_solution, CandidateOrSolution}, State) ->
 	prepare_and_post_solution(CandidateOrSolution, State),
 	{noreply, State};
@@ -578,11 +588,15 @@ prepare_and_post_solution(#mining_candidate{} = Candidate, State) ->
 	%% A solo miner builds a solution from a candidate here or a CM miner who received
 	%% H2 from another peer reads chunk1 and sends it to the exit peer.
 	Solution = prepare_solution_from_candidate(Candidate, State),
-	post_solution(Solution, State);
+	Ret = post_solution(Solution, State),
+	maybe_flush_solution_queue(Ret),
+	Ret;
 prepare_and_post_solution(#mining_solution{} = Solution, State) ->
 	%% An exit peer receives a mining solution, possibly without the VDF data and chunk proofs.
 	Solution2 = prepare_solution(Solution, State),
-	post_solution(Solution2, State).
+	Ret = post_solution(Solution2, State),
+	maybe_flush_solution_queue(Ret),
+	Ret.
 
 prepare_solution(Solution, State) ->
 	#state{ merkle_rebase_threshold = RebaseThreshold, is_pool_client = IsPoolClient } = State,
@@ -981,7 +995,8 @@ post_solution(Solution, State) ->
 post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
 	%% When posting a partial solution the pool client will skip many of the validation steps
 	%% that are normally performed before sharing a solution.
-	ar_pool:post_partial_solution(Solution);
+	ar_pool:post_partial_solution(Solution),
+	ok;
 post_solution(not_set, Solution, State) ->
 	#state{ diff_pair = DiffPair } = State,
 	#mining_solution{
@@ -1001,7 +1016,8 @@ post_solution(not_set, Solution, State) ->
 					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)},
 					{diff_pair, DiffPair}]),
 			ar:console("WARNING: we failed to validate our solution. Check logs for more "
-					"details~n");
+					"details~n"),
+			error;
 		{false, Reason} ->
 			ar_events:send(solution, {rejected,
 					#{ reason => Reason, source => miner }}),
@@ -1016,9 +1032,11 @@ post_solution(not_set, Solution, State) ->
 					{nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)},
 					{diff_pair, DiffPair}]),
 			ar:console("WARNING: the solution we found is invalid. Check logs for more "
-					"details~n");
+					"details~n"),
+			error;
 		{true, PoACache, PoA2Cache} ->
-			ar_node_worker:found_solution(miner, Solution, PoACache, PoA2Cache)
+			ar_node_worker:found_solution(miner, Solution, PoACache, PoA2Cache),
+			ok
 	end;
 post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
 	case ar_http_iface_client:post_partial_solution(ExitPeer, Solution) of
@@ -1028,7 +1046,8 @@ post_solution(ExitPeer, Solution, #state{ is_pool_client = true }) ->
 			?LOG_WARNING([{event, found_partial_solution_but_failed_to_reach_exit_node},
 					{reason, io_lib:format("~p", [Reason])}]),
 			ar:console("We found a partial solution but failed to reach the exit node, "
-					"error: ~p.", [io_lib:format("~p", [Reason])])
+					"error: ~p.", [io_lib:format("~p", [Reason])]),
+			error
 	end;
 post_solution(ExitPeer, Solution, _State) ->
 	case ar_http_iface_client:cm_publish_send(ExitPeer, Solution) of
@@ -1038,8 +1057,31 @@ post_solution(ExitPeer, Solution, _State) ->
 			?LOG_WARNING([{event, found_solution_but_failed_to_reach_exit_node},
 					{reason, io_lib:format("~p", [Reason])}]),
 			ar:console("We found a solution but failed to reach the exit node, "
-					"error: ~p.", [io_lib:format("~p", [Reason])])
+					"error: ~p.", [io_lib:format("~p", [Reason])]),
+			error
 	end.
+
+-ifdef(AR_TEST).
+%% @doc During tests the miner can mine so many solutions in parallel
+%% that it fills up the ar_mining_server queue and can cause flaky timeouts.
+%% To avoid this we'll flush the queue after a successful solution is posted.
+maybe_flush_solution_queue(ok) ->
+	flush_solution_queue(),
+	ok;
+maybe_flush_solution_queue(_Other) ->
+	ok.
+
+flush_solution_queue() ->
+	receive
+		{'$gen_cast', {prepare_and_post_solution, _}} ->
+			flush_solution_queue()
+	after 0 ->
+		ok
+	end.
+-else.
+maybe_flush_solution_queue(_Ret) ->
+	ok.
+-endif.
 
 may_be_empty_poa(not_set) ->
 	#poa{};

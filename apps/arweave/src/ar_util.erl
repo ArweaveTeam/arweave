@@ -460,6 +460,8 @@ pmap_test() ->
 	end,
 	?assertEqual([6, 2, 4], pmap(Mapper, [3, 1, 2])).
 
+cast_after(0, Module, Message) ->
+	gen_server:cast(Module, Message);
 cast_after(Delay, Module, Message) ->
 	%% Not using timer:apply_after here because send_after is more efficient:
 	%% http://erlang.org/doc/efficiency_guide/commoncaveats.html#timer-module.

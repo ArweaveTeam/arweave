@@ -26,7 +26,7 @@ test_recent_blocks_announcement() ->
 	test_recent_blocks(announcement).
 
 test_recent_blocks(Type) ->
-	[B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
+	[B0] = ar_weave:init(),
 	ar_test_node:start_peer(peer1, B0),
 	GenesisBlock = [#{
 		<<"id">> => ar_util:encode(B0#block.indep_hash),
@@ -112,7 +112,7 @@ expected_blocks(Node, BI, ForcePending) ->
 %% Recent forks tests
 %% -------------------------------------------------------------------------------------------
 test_get_recent_forks() ->
-	[B0] = ar_weave:init([]),
+	[B0] = ar_weave:init(),
 	ar_test_node:start(B0),
 
 	ForkRootB1 = #block{ indep_hash = <<"1">>, height = 1 },
@@ -188,7 +188,7 @@ test_get_recent_forks() ->
 	ok.
 
 test_recent_forks() ->
-	[B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
+	[B0] = ar_weave:init(),
 	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:start_peer(peer2, B0),

@@ -53,7 +53,7 @@ maybe_request_sessions(SessionKey) ->
 %%%===================================================================
 
 init([]) ->
-	case ar_config:use_remote_vdf_server() andalso ar_config:pull_from_remote_vdf_server() of
+	case ar_config:use_remote_vdf_server() of
 		false ->
 			ok;
 		true ->
@@ -66,7 +66,65 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast(pull, State) ->
+handle_cast(pull, State = #state{ request_sessions = RequestSessions }) ->
+	DoPull = (
+		ar_config:pull_from_remote_vdf_server() orelse
+		RequestSessions == true
+	),
+	case DoPull of
+		true ->
+			{Delay, State1} = do_pull(State),
+			ar_util:cast_after(Delay, ?MODULE, pull),
+			{noreply, State1};
+		false ->
+			ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
+			{noreply, State}
+	end;
+
+handle_cast({maybe_request_sessions, SessionKey}, State) ->
+	#state{ remote_servers = Q } = State,
+	{{value, RawPeer}, _Q2} = queue:out(Q),
+	RotatedServers = rotate_servers(Q),
+	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer) of
+		{error, _} ->
+			%% Push the peer to the back of the queue. We'll also wait and see if another
+			%% `maybe_request_sessions` message comes in before we fetch the full session.
+			{noreply, State#state{ remote_servers = RotatedServers }};
+		{ok, Peer} ->
+			case get_latest_session_key(Peer, State) of
+				SessionKey ->
+					%% No reason to make extra requests. And don't rotate the peers.
+					{noreply, State};
+				_ ->
+					%% Ensure the current and previous sessions are fetched and applied on
+					%% the next `pull` message.
+					?LOG_DEBUG([{event, vdf_request_sessions},
+							{peer, ar_util:format_peer(Peer)},
+							{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
+					{noreply, State#state{ request_sessions = true }}
+			end
+	end;
+
+handle_cast({update_latest_session_key, Peer, SessionKey}, State) ->
+	{noreply, update_latest_session_key(Peer, SessionKey, State)};
+
+handle_cast(Cast, State) ->
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+	{noreply, State}.
+
+handle_info(Message, State) ->
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
+	{noreply, State}.
+
+terminate(Reason, _State) ->
+	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
+	ok.
+
+%%%===================================================================
+%%% Private functions.
+%%%===================================================================
+
+do_pull(State) ->
 	#state{ remote_servers = Q } = State,
 	RotatedServers = rotate_servers(Q),
 	{RawPeer, State2} = get_raw_peer_and_update_remote_servers(State),
@@ -74,9 +132,8 @@ handle_cast(pull, State) ->
 		{error, _} ->
 			?LOG_WARNING([{event, failed_to_resolve_peer},
 					{raw_peer, io_lib:format("~p", [RawPeer])}]),
-			gen_server:cast(?MODULE, pull),
 			%% Push the peer to the back of the queue.
-			{noreply, State#state{ remote_servers = RotatedServers }};
+			{0, State#state{ remote_servers = RotatedServers }};
 		{ok, Peer} ->
 			case ar_http_iface_client:get_vdf_update(Peer) of
 				{ok, Update} ->
@@ -102,47 +159,38 @@ handle_cast(pull, State) ->
 						true ->
 							case fetch_and_apply_session_and_previous_session(Peer) of
 								{error, _} ->
-									gen_server:cast(?MODULE, pull),
-									{noreply, State3#state{
-											remote_servers = RotatedServers }};
+									{0, State3#state{ 
+										remote_servers = RotatedServers }};
 								_ ->
-									ar_util:cast_after(?PULL_FREQUENCY_MS,
-											?MODULE, pull),
-									{noreply, State3#state{ request_sessions = false }}
+									{?PULL_FREQUENCY_MS, State3#state{
+										request_sessions = false }}
 							end;
 						false ->
 							case UpdateResponse of
 								ok ->
-									ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
-									{noreply, State3};
+									{?PULL_FREQUENCY_MS, State3};
 								#nonce_limiter_update_response{ step_number = StepNumber }
 										when StepNumber > SessionStepNumber ->
 									%% We are ahead of the server - may be, it is not
 									%% the fastest server in the list so try another one,
 									%% if there are more servers in the configuration
 									%% and they are not on timeout.
-									gen_server:cast(?MODULE, pull),
-									{noreply, State3#state{
+									{0, State3#state{
 											remote_servers = RotatedServers }};
 								#nonce_limiter_update_response{ step_number = StepNumber }
 										when StepNumber == SessionStepNumber ->
 									%% We are in sync with the server. Re-try soon.
-									ar_util:cast_after(?NO_UPDATE_PULL_FREQUENCY_MS,
-											?MODULE, pull),
-									{noreply, State3};
+									{?NO_UPDATE_PULL_FREQUENCY_MS, State3};
 								_ ->
 									%% We have received a partial session, but there's a gap
 									%% in the step numbers, e.g., the update we received is at
 									%% step 100, but our last seen step was 90.
 									case fetch_and_apply_session(Peer) of
 										{error, _} ->
-											gen_server:cast(?MODULE, pull),
-											{noreply, State3#state{
+											{0, State3#state{
 													remote_servers = RotatedServers }};
 										_ ->
-											ar_util:cast_after(?PULL_FREQUENCY_MS,
-													?MODULE, pull),
-											{noreply, State3}
+											{?PULL_FREQUENCY_MS, State3}
 									end
 							end
 					end;
@@ -152,57 +200,15 @@ handle_cast(pull, State) ->
 							{error, not_found}]),
 					%% The server might be restarting.
 					%% Try another one, if there are any.
-					gen_server:cast(?MODULE, pull),
-					{noreply, State#state{ remote_servers = RotatedServers }};
+					{0, State#state{ remote_servers = RotatedServers }};
 				{error, Reason} ->
 					?LOG_WARNING([{event, failed_to_fetch_vdf_update},
 							{peer, ar_util:format_peer(Peer)},
 							{error, io_lib:format("~p", [Reason])}]),
 					%% Try another server, if there are any.
-					gen_server:cast(?MODULE, pull),
-					{noreply, State#state{ remote_servers = RotatedServers }}
+					{0, State#state{ remote_servers = RotatedServers }}
 			end
-	end;
-
-handle_cast({maybe_request_sessions, SessionKey}, State) ->
-	#state{ remote_servers = Q } = State,
-	{{value, RawPeer}, _Q2} = queue:out(Q),
-	RotatedServers = rotate_servers(Q),
-	case ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer) of
-		{error, _} ->
-			%% Push the peer to the back of the queue. We'll also wait and see if another
-			%% `maybe_request_sessions` message comes in before we fetch the full session.
-			{noreply, State#state{ remote_servers = RotatedServers }};
-		{ok, Peer} ->
-			case get_latest_session_key(Peer, State) of
-				SessionKey ->
-					%% No reason to make extra requests. And don't rotate the peers.
-					{noreply, State};
-				_ ->
-					%% Ensure the current and previous sessions are fetched and applied on
-					%% the next `pull` message.
-					{noreply, State#state{ request_sessions = true }}
-			end
-	end;
-
-handle_cast({update_latest_session_key, Peer, SessionKey}, State) ->
-	{noreply, update_latest_session_key(Peer, SessionKey, State)};
-
-handle_cast(Cast, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
-	{noreply, State}.
-
-handle_info(Message, State) ->
-	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
-	{noreply, State}.
-
-terminate(Reason, _State) ->
-	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
-	ok.
-
-%%%===================================================================
-%%% Private functions.
-%%%===================================================================
+	end.
 
 get_raw_peer_and_update_remote_servers(State) ->
 	#state{ remote_servers = Q,

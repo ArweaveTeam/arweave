@@ -130,7 +130,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	PeerPath = ar_test_node:remote_call(peer1, ar_wallet, wallet_filepath, [WalletName]),
 	%% Copy the key because we mine blocks on both nodes using the same key in this test.
 	{ok, _} = file:copy(Path, PeerPath),
-	[B0] = ar_weave:init([]),
+	[B0] = ar_weave:init(),
 	ar_test_node:start(B0, RewardAddr),
 	ar_test_node:start_peer(peer1, B0, RewardAddr),
 	ar_test_node:disconnect_from(peer1),

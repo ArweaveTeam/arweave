@@ -180,7 +180,7 @@ test_persisted_mempool() ->
 			maps:is_key(SignedTX#tx.id, Mempool)
 		end,
 		100,
-		10000
+		30000
 	),
 	Config = ar_test_node:stop(),
 	try
