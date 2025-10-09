@@ -169,7 +169,9 @@ register() ->
 	]),
 	prometheus_gauge:new([
 		{name, v2_index_data_size},
-		{help, "The size (in bytes) of the data stored and indexed."}
+		{help, "The size (in bytes) of the data stored and indexed. Note: if "
+				"multiple storage modules cover the same range of data, that "
+				"range will be counted multiple times."}
 	]),
 	prometheus_gauge:new([
 		{name, v2_index_data_size_by_packing},
