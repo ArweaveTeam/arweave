@@ -891,23 +891,21 @@ handle_cast({move_data_root_index, Cursor, N}, State) ->
 	{noreply, State};
 
 handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, Entries}, State) ->
-	%% Insert into data_root_index and data_root_offset_index for default module only.
 	#sync_data_state{ store_id = ?DEFAULT_MODULE } = State,
 	DataRootIndexKeySet = sets:from_list([
-		<< DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary >>
+		<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>
 		|| {DataRoot, TXSize, _TXStart, _TXPath} <- Entries
 	]),
 	BlockSize = BlockEnd - BlockStart,
-	ok = ar_kv:put({data_root_offset_index, ?DEFAULT_MODULE},
-			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
-			term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})),
 	lists:foreach(
 		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
-			ok = ar_kv:put({data_root_index, ?DEFAULT_MODULE},
-				data_root_key_v2(DataRoot, TXSize, TXStartOffset), TXPath)
+			ok = update_data_root_index(DataRoot, TXSize, TXStartOffset, TXPath, ?DEFAULT_MODULE)
 		end,
 		Entries
 	),
+	ok = ar_kv:put({data_root_offset_index, ?DEFAULT_MODULE},
+			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
+			term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})),
 	ok = ar_sync_record:add(BlockEnd, BlockStart, data_roots, ?DEFAULT_MODULE),
 	{noreply, State};
 
@@ -974,7 +972,8 @@ handle_cast({cut, Start}, #sync_data_state{ store_id = StoreID,
 				true ->
 					ok = delete_chunk_metadata_range(Start, End, State),
 					ok = ar_chunk_storage:cut(Start, StoreID),
-					ok = ar_sync_record:cut(Start, ar_data_sync, StoreID)
+					ok = ar_sync_record:cut(Start, ar_data_sync, StoreID),
+					ok = ar_sync_record:cut(Start, data_roots, ?DEFAULT_MODULE)
 			end
 	end,
 	{noreply, State};
@@ -2544,6 +2543,7 @@ get_disk_pool_threshold(BI) ->
 	ar_node:get_partition_upper_bound(BI).
 
 remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
+	ok = ar_sync_record:cut(BlockStartOffset, data_roots, ?DEFAULT_MODULE),
 	ok = remove_tx_index_range(BlockStartOffset, WeaveSize, State),
 	{ok, OrphanedDataRoots} = remove_data_root_index_range(BlockStartOffset, WeaveSize, State),
 	ok = remove_data_root_offset_index_range(BlockStartOffset, WeaveSize, State),
@@ -2785,7 +2785,10 @@ add_block_data_roots(SizeTaggedTXs, CurrentWeaveSize, StoreID) ->
 					ok = update_data_root_index(DataRoot, TXSize, TXOffset, TXPath, StoreID)
 				end,
 				Args
-			);
+			),
+			%% Also mark the range in the data_roots sync record (default module).
+			ok = ar_sync_record:add(CurrentWeaveSize + BlockSize, CurrentWeaveSize,
+					data_roots, ?DEFAULT_MODULE);
 		false ->
 			do_not_update_data_root_offset_index
 	end,
@@ -4004,23 +4007,24 @@ get_data_roots_for_offset(Offset) ->
 		{ok, Bin} ->
 			{TXRoot2, BlockSize, DataRootIndexKeySet} = binary_to_term(Bin),
 			true = TXRoot2 == TXRoot,
-			Entries = sets:fold(
+			{_Cursor, Entries} = sets:fold(
 				fun
 					({error, _} = Err, _Acc) ->
 						Err;
-					(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = Key, Acc) ->
-						case ar_kv:get({data_root_index, StoreID}, Key) of
+					(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, {Cursor, Acc}) ->
+						Key = data_root_key_v2(DataRoot, TXSize, Cursor - TXSize),
+						case ar_kv:get_prev({data_root_index, StoreID}, Key) of
 							{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
 									TXStartSize:8, TXStart:(TXStartSize * 8) >>, TXPath} ->
-								[{DataRoot, TXSize, TXStart, TXPath} | Acc];
-							_Err ->
+								{TXStart, [{DataRoot, TXSize, TXStart, TXPath} | Acc]};
+							_ ->
 								{error, data_root_entry_not_found}
 						end
 				end,
-				[],
+				{BlockEnd, []},
 				DataRootIndexKeySet
 			),
-			{ok, {TXRoot, BlockSize, lists:reverse(Entries)}}
+			{ok, {TXRoot, BlockSize, Entries}}
 		end.
 
 maybe_run_footprint_record_initialization(State) ->
