@@ -131,6 +131,40 @@ test_partitions() ->
 			{3, MiningAddress, 0},
 			{4, MiningAddress, 0}],
 		ar_mining_io:get_partitions(trunc(5 * ar_block:partition_size()))).
+get_minable_storge_modules_test() ->
+	{ok, Config} = arweave_config:get_env(),
+	Addr = Config#config.mining_addr,
+	try
+		Input = [
+			{100, 0, {spora_2_6, Addr}},
+			{200, 0, unpacked},
+			{300, 0, {replica_2_9, Addr}}
+		],
+		Expected = [
+			{100, 0, {spora_2_6, Addr}},
+			{300, 0, {replica_2_9, Addr}}
+		],
+		arweave_config:set_env(Config#config{storage_modules = Input}),
+		?assertEqual(Expected, ar_mining_io:get_minable_storage_modules())
+	after
+		arweave_config:set_env(Config)
+	end.
+
+get_packing_test() ->
+	{ok, Config} = arweave_config:get_env(),
+	Addr = Config#config.mining_addr,
+	try
+		Input = [
+			{100, 0, unpacked},
+			{200, 0, {spora_2_6, Addr}},
+			{300, 0, {replica_2_9, Addr}}
+		],
+		Expected = {spora_2_6, Addr},
+		arweave_config:set_env(Config#config{storage_modules = Input}),
+		?assertEqual(Expected, ar_mining_io:get_packing())
+	after
+		arweave_config:set_env(Config)
+	end.
 
 default_candidate() ->
 	{ok, Config} = arweave_config:get_env(),
