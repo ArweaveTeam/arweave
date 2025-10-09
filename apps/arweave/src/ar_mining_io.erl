@@ -3,7 +3,8 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_link/1, set_largest_seen_upper_bound/1,
-			get_packing/0, get_partitions/0, get_partitions/1, read_recall_range/4,
+			get_packing/0, get_partitions/0, get_partitions/1, 
+			get_minable_storage_modules/0, read_recall_range/4,
 			is_recall_range_readable/2, garbage_collect/0,
 			get_replica_format_from_packing_difficulty/1]).
 
@@ -52,10 +53,9 @@ is_recall_range_readable(Candidate, RecallRangeStart) ->
 			{is_recall_range_readable, Candidate, RecallRangeStart}, 60000).
 
 get_packing() ->
-	{ok, Config} = arweave_config:get_env(),
 	%% ar_config:validate_storage_modules/1 ensures that we only mine against a single
-	%% packing format. So we can grab it any partition.
-	case Config#config.storage_modules of
+	%% packing format. So we can grab any partition.
+	case get_minable_storage_modules() of
 		[] -> undefined;
         [{_, _, Packing} | _Rest] -> Packing
     end.
@@ -63,7 +63,6 @@ get_packing() ->
 get_partitions(PartitionUpperBound) when PartitionUpperBound =< 0 ->
 	[];
 get_partitions(PartitionUpperBound) ->
-	{ok, Config} = arweave_config:get_env(),
 	Max = ar_node:get_max_partition_number(PartitionUpperBound),
 	AllPartitions = lists:foldl(
 		fun	(Module, Acc) ->
@@ -81,15 +80,25 @@ get_partitions(PartitionUpperBound) ->
 				)
 		end,
 		sets:new(),
-		Config#config.storage_modules
+		get_minable_storage_modules()
 	),
 	FilteredPartitions = sets:filter(
-        fun ({PartitionNumber, Addr, _PackingDifficulty}) ->
-            PartitionNumber =< Max andalso Addr == Config#config.mining_addr
+        fun ({PartitionNumber, _Addr, _PackingDifficulty}) ->
+            PartitionNumber =< Max
         end,
         AllPartitions
     ),
     lists:sort(sets:to_list(FilteredPartitions)).
+
+get_minable_storage_modules() ->
+	{ok, Config} = arweave_config:get_env(),
+	lists:filter(
+		fun	(Module) ->
+				ar_storage_module:module_address(Module) == Config#config.mining_addr
+		end,
+		Config#config.storage_modules
+	).
+
 
 garbage_collect() ->
 	gen_server:cast(?MODULE, garbage_collect).
