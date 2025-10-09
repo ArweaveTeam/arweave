@@ -131,6 +131,7 @@ test_partitions() ->
 			{3, MiningAddress, 0},
 			{4, MiningAddress, 0}],
 		ar_mining_io:get_partitions(trunc(5 * ar_block:partition_size()))).
+
 get_minable_storge_modules_test() ->
 	{ok, Config} = arweave_config:get_env(),
 	Addr = Config#config.mining_addr,

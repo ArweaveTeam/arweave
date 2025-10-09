@@ -53,10 +53,9 @@ is_recall_range_readable(Candidate, RecallRangeStart) ->
 			{is_recall_range_readable, Candidate, RecallRangeStart}, 60000).
 
 get_packing() ->
-	Partitions = get_minable_storage_modules(),
 	%% ar_config:validate_storage_modules/1 ensures that we only mine against a single
 	%% packing format. So we can grab any partition.
-	case Partitions of
+	case get_minable_storage_modules() of
 		[] -> undefined;
         [{_, _, Packing} | _Rest] -> Packing
     end.
@@ -65,7 +64,6 @@ get_partitions(PartitionUpperBound) when PartitionUpperBound =< 0 ->
 	[];
 get_partitions(PartitionUpperBound) ->
 	Max = ar_node:get_max_partition_number(PartitionUpperBound),
-	MinableStorageModules = get_minable_storage_modules(),
 	AllPartitions = lists:foldl(
 		fun	(Module, Acc) ->
 				Addr = ar_storage_module:module_address(Module),
@@ -82,7 +80,7 @@ get_partitions(PartitionUpperBound) ->
 				)
 		end,
 		sets:new(),
-		MinableStorageModules
+		get_minable_storage_modules()
 	),
 	FilteredPartitions = sets:filter(
         fun ({PartitionNumber, _Addr, _PackingDifficulty}) ->
