@@ -17,9 +17,6 @@
 -define(UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S, 300).
 -endif.
 
-%% The frequency of recalculating the total size of the stored unique data.
--define(UPDATE_SIZE_METRIC_FREQUENCY_MS, 10000).
-
 -record(state, {
 	sync_record,
 	sync_buckets
@@ -94,7 +91,6 @@ init([]) ->
 	ets:insert(?MODULE, {serialized_sync_buckets, SerializedSyncBuckets}),
 	ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
 			?MODULE, update_serialized_sync_buckets),
-	gen_server:cast(?MODULE, record_v2_index_data_size_metric),
 	{ok, #state{ sync_record = SyncRecord, sync_buckets = SyncBuckets2 }}.
 
 handle_call({get_serialized_sync_record, Args}, _From, State) ->
@@ -115,13 +111,6 @@ handle_cast(update_serialized_sync_buckets, State) ->
 	ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
 			?MODULE, update_serialized_sync_buckets),
 	{noreply, State#state{ sync_buckets = SyncBuckets2 }};
-
-handle_cast(record_v2_index_data_size_metric, State) ->
-	#state{ sync_record = SyncRecord } = State,
-	ar_mining_stats:set_total_data_size(ar_intervals:sum(SyncRecord)),
-	ar_util:cast_after(?UPDATE_SIZE_METRIC_FREQUENCY_MS, ?MODULE,
-			record_v2_index_data_size_metric),
-	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
