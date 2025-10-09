@@ -184,7 +184,7 @@
 	block_gossip_peers = [],
 	local_peers = [],
 	sync_from_local_peers_only = false,
-	data_dir = ".",
+	data_dir = "./data",
 	log_dir = ?LOG_DIR,
 	polling = ?DEFAULT_POLLING_INTERVAL, % Polling frequency in seconds.
 	block_pollers = ?DEFAULT_BLOCK_POLLERS,
