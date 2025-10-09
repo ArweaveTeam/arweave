@@ -3,7 +3,7 @@
 -export([run_benchmark/0, run_benchmark_from_cli/1]).
 
 -include_lib("arweave/include/ar_vdf.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 run_benchmark_from_cli(Args) ->
 	Mode = list_to_atom(get_flag_value(Args, "mode", "default")),

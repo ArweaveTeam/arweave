@@ -2,7 +2,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [sign_v1_tx/3, read_block_when_stored/1]).

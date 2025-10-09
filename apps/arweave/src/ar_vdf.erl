@@ -6,7 +6,7 @@
 
 -include("ar_vdf.hrl").
 -include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 step_number_to_salt_number(0) ->
 	0;

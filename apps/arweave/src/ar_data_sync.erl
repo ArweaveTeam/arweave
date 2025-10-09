@@ -27,7 +27,7 @@
 -include("ar.hrl").
 -include("ar_sup.hrl").
 -include("ar_consensus.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_poa.hrl").
 -include("ar_data_discovery.hrl").
 -include("ar_data_sync.hrl").

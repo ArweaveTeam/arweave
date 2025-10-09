@@ -40,7 +40,7 @@
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3]).
 
 -include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").

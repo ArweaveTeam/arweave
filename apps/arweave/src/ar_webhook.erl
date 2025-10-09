@@ -11,7 +11,7 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
--include("../include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 -define(NUMBER_OF_TRIES, 10).
 -define(WAIT_BETWEEN_TRIES, 30 * 1000).

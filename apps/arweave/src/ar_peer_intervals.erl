@@ -3,7 +3,7 @@
 -export([fetch/3]).
 
 -include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_data_discovery.hrl").
 
 %% The size of the span of the weave we search at a time.

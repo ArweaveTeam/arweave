@@ -29,7 +29,7 @@
 %% -- End of testing exports
 
 -include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_consensus.hrl").
 -include("ar_data_sync.hrl").
 -include("ar_data_discovery.hrl").

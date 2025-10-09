@@ -4,7 +4,7 @@
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 enqueue_intervals_test() ->
 	?LOG_DEBUG([{event, enqueue_intervals_test}]),

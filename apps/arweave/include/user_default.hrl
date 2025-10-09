@@ -11,7 +11,7 @@
 -include_lib("arweave/include/ar_block.hrl").
 -include_lib("arweave/include/ar_chain_stats.hrl").
 -include_lib("arweave/include/ar_chunk_storage.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_data_discovery.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").

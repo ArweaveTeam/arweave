@@ -38,7 +38,7 @@
 	terminate_connections/0
 ]).
 -include_lib("eunit/include/eunit.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 %%--------------------------------------------------------------------
 %% @hidden

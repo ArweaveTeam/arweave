@@ -5,7 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include("../include/ar.hrl").
--include("../include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 -import(ar_test_node, [
 		sign_v1_tx/2, random_v1_data/1, 

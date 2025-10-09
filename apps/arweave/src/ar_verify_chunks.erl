@@ -7,7 +7,7 @@
 
 -include("ar.hrl").
 -include("ar_poa.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_consensus.hrl").
 -include("ar_chunk_storage.hrl").
 -include("ar_verify_chunks.hrl").
