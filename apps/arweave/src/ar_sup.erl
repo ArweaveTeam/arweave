@@ -109,4 +109,8 @@ init([]) ->
 		true -> [?CHILD(ar_process_sampler, worker)];
 		false -> []
 	end,
-	{ok, {{one_for_one, 5, 10}, Children ++ DebugChildren}}.
+	OOMMonitorChildren = case ar_config:is_oom_monitor_enabled() of
+		true -> [?CHILD(ar_oom_monitor, worker)];
+		false -> []
+	end,
+	{ok, {{one_for_one, 5, 10}, Children ++ DebugChildren ++ OOMMonitorChildren}}.

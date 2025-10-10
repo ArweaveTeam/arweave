@@ -173,6 +173,11 @@
 -define(DEFAULT_COWBOY_TCP_SEND_TIMEOUT, 15_000).
 -define(DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN, 5000).
 
+%% The default OOM monitor report period in milliseconds.
+-define(DEFAULT_OOM_MONITOR_REPORT_PERIOD_MS, 5000).
+-define(DEFAULT_OOM_MONITOR_FILENAME, "/tmp/arweave_oom_monitor.log").
+-define(DEFAULT_OOM_MONITOR_TOP_PROCS, 20).
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -319,7 +324,12 @@
 	'http_api.tcp.nodelay' = ?DEFAULT_COWBOY_TCP_NODELAY,
 	'http_api.tcp.num_acceptors' = ?DEFAULT_COWBOY_TCP_NUM_ACCEPTORS,
 	'http_api.tcp.send_timeout_close' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE,
-	'http_api.tcp.send_timeout' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT
+	'http_api.tcp.send_timeout' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT,
+
+	% OOM Monitor Configuration
+	oom_monitor_report_period = ?DEFAULT_OOM_MONITOR_REPORT_PERIOD_MS,
+	oom_monitor_filename = ?DEFAULT_OOM_MONITOR_FILENAME,
+	oom_monitor_top_procs = ?DEFAULT_OOM_MONITOR_TOP_PROCS
 }).
 
 -endif.
