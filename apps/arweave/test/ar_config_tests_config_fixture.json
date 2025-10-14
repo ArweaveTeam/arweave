@@ -41,7 +41,6 @@
   "mining_cache_size_mb": 3,
   "max_propagation_peers": 8,
   "max_block_propagation_peers": 60,
-  "tx_validators": 3,
   "post_tx_timeout": 50,
   "max_emitters": 4,
   "sync_jobs": 10,
@@ -63,14 +62,11 @@
   ],
   "transaction_whitelists": ["some_whitelist_1", "some_whitelist_2"],
   "transaction_whitelist_urls": ["http://some_whitelist"],
-  "disk_space": 44,
   "disk_space_check_frequency": 10,
   "init": true,
   "internal_api_secret": "some_very_very_long_secret",
   "enable": ["feature_1", "feature_2"],
   "disable": ["feature_3", "feature_4"],
-  "gateway": "gateway.localhost",
-  "custom_domains": ["domain1.example", "domain2.example"],
   "webhooks": [
     {
       "events": ["transaction", "block"],
@@ -81,7 +77,6 @@
     }
   ],
   "max_connections": 512,
-  "max_gateway_connections": 64,
   "disk_pool_data_root_expiration_time": 10000,
   "max_disk_pool_buffer_mb": 100000,
   "max_disk_pool_data_root_buffer_mb": 100000000,
@@ -96,7 +91,6 @@
     "arql": 3,
     "gateway_arql": 3
   },
-  "packing_rate": 20,
   "replica_2_9_workers": 16,
   "disable_replica_2_9_device_limit": true,
   "packing_workers": 25,

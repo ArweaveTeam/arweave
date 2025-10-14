@@ -342,35 +342,16 @@ parse_options([{<<"mining_cache_size_mb">>, Limit} | Rest], Config)
 parse_options([{<<"mining_cache_size_mb">>, Limit} | _], _) ->
 	{error, {bad_type, mining_cache_size_mb, number}, Limit};
 
-parse_options([{<<"mining_server_chunk_cache_size_limit">>, Limit} | Rest], Config)
-		when is_integer(Limit) ->
-	?LOG_WARNING("Deprecated option found 'mining_server_chunk_cache_size_limit': "
-			"this option has been removed and is a no-op. Please use mining_cache_size_mb "
-			"instead.", []),
-	parse_options(Rest, Config);
-
 parse_options([{<<"max_emitters">>, Value} | Rest], Config) when is_integer(Value) ->
 	parse_options(Rest, Config#config{ max_emitters = Value });
 parse_options([{<<"max_emitters">>, Value} | _], _) ->
 	{error, {bad_type, max_emitters, number}, Value};
-
-parse_options([{<<"tx_validators">>, Value} | Rest], Config)
-		when is_integer(Value) ->
-	parse_options(Rest, Config#config{ tx_validators = Value });
-parse_options([{<<"tx_validators">>, Value} | _], _) ->
-	{error, {bad_type, tx_validators, number}, Value};
 
 parse_options([{<<"post_tx_timeout">>, Value} | Rest], Config)
 		when is_integer(Value) ->
 	parse_options(Rest, Config#config{ post_tx_timeout = Value });
 parse_options([{<<"post_tx_timeout">>, Value} | _], _) ->
 	{error, {bad_type, post_tx_timeout, number}, Value};
-
-parse_options([{<<"tx_propagation_parallelization">>, Value} | Rest], Config)
-		when is_integer(Value) ->
-	parse_options(Rest, Config#config{ tx_propagation_parallelization = Value });
-parse_options([{<<"tx_propagation_parallelization">>, Value} | _], _) ->
-	{error, {bad_type, tx_propagation_parallelization, number}, Value};
 
 parse_options([{<<"max_propagation_peers">>, Value} | Rest], Config)
 		when is_integer(Value) ->
@@ -470,11 +451,6 @@ parse_options([{<<"transaction_whitelist_urls">>, TransactionWhitelistURLs} | Re
 parse_options([{<<"transaction_whitelist_urls">>, TransactionWhitelistURLs} | _], _) ->
 	{error, {bad_type, transaction_whitelist_urls, array}, TransactionWhitelistURLs};
 
-parse_options([{<<"disk_space">>, DiskSpace} | Rest], Config) when is_integer(DiskSpace) ->
-	parse_options(Rest, Config#config{ disk_space = DiskSpace * 1024 * 1024 * 1024 });
-parse_options([{<<"disk_space">>, DiskSpace} | _], _) ->
-	{error, {bad_type, disk_space, number}, DiskSpace};
-
 parse_options([{<<"disk_space_check_frequency">>, Frequency} | Rest], Config)
 		when is_integer(Frequency) ->
 	parse_options(Rest, Config#config{ disk_space_check_frequency = Frequency * 1000 });
@@ -513,14 +489,7 @@ parse_options([{<<"disable">>, Features} | Rest], Config) when is_list(Features)
 	end;
 parse_options([{<<"disable">>, Features} | _], _) ->
 	{error, {bad_type, disable, array}, Features};
-parse_options([{<<"gateway">>, _} | Rest], Config) ->
-	?LOG_WARNING("Deprecated option found 'gateway': "
-		" this option has been removed and is a no-op.", []),
-	parse_options(Rest, Config);
-parse_options([{<<"custom_domains">>, _} | Rest], Config) ->
-	?LOG_WARNING("Deprecated option found 'custom_domains': "
-			" this option has been removed and is a no-op.", []),
-	parse_options(Rest, Config);
+
 parse_options([{<<"webhooks">>, WebhookConfigs} | Rest], Config) when is_list(WebhookConfigs) ->
 	case parse_webhooks(WebhookConfigs, []) of
 		{ok, ParsedWebhooks} ->
@@ -545,14 +514,6 @@ parse_options([{<<"max_connections">>, MaxConnections} | Rest], Config)
 		when is_integer(MaxConnections), MaxConnections >= 1 ->
 	parse_options(Rest, Config#config{ 'http_api.tcp.max_connections' = MaxConnections });
 
-parse_options([{<<"max_gateway_connections">>, MaxGatewayConnections} | Rest], Config)
-		when is_integer(MaxGatewayConnections) ->
-	parse_options(Rest, Config#config{ max_gateway_connections = MaxGatewayConnections });
-
-parse_options([{<<"max_poa_option_depth">>, MaxPOAOptionDepth} | Rest], Config)
-		when is_integer(MaxPOAOptionDepth) ->
-	parse_options(Rest, Config#config{ max_poa_option_depth = MaxPOAOptionDepth });
-
 parse_options([{<<"disk_pool_data_root_expiration_time">>, D} | Rest], Config)
 		when is_integer(D) ->
 	parse_options(Rest, Config#config{ disk_pool_data_root_expiration_time = D });
@@ -566,11 +527,6 @@ parse_options([{<<"max_disk_pool_data_root_buffer_mb">>, D} | Rest], Config)
 
 parse_options([{<<"disk_cache_size_mb">>, D} | Rest], Config) when is_integer(D) ->
 	parse_options(Rest, Config#config{ disk_cache_size = D });
-
-parse_options([{<<"packing_rate">>, D} | Rest], Config) when is_integer(D) ->
-	?LOG_WARNING("Deprecated option found 'packing_rate': "
-			" this option has been removed and is a no-op.", []),
-	parse_options(Rest, Config);
 
 parse_options([{<<"max_nonce_limiter_validation_thread_count">>, D} | Rest], Config)
 		when is_integer(D) ->
@@ -685,11 +641,6 @@ parse_options([{<<"cm_out_batch_timeout">>, CMBatchTimeout} | Rest], Config)
 	parse_options(Rest, Config#config{ cm_out_batch_timeout = CMBatchTimeout });
 parse_options([{<<"cm_out_batch_timeout">>, CMBatchTimeout} | _], _) ->
 	{error, {bad_type, cm_out_batch_timeout, number}, CMBatchTimeout};
-
-parse_options([{<<"cm_in_batch_timeout">>, _CMBatchTimeout} | Rest], Config) ->
-	?LOG_WARNING("Deprecated option found 'cm_in_batch_timeout': "
-		" this option has been removed and is a no-op.", []),
-	parse_options(Rest, Config);
 
 parse_options([{<<"is_pool_server">>, true} | Rest], Config) ->
 	parse_options(Rest, Config#config{ is_pool_server = true });

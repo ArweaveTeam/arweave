@@ -65,13 +65,11 @@ test_parse_config() ->
 		mining_cache_size_mb = 3,
 		max_propagation_peers = 8,
 		max_block_propagation_peers = 60,
-		tx_validators = 3,
 		post_tx_timeout = 50,
 		max_emitters = 4,
 		replica_2_9_workers = 16,
 		disable_replica_2_9_device_limit = true,
 		packing_workers = 25,
-		tx_propagation_parallelization = undefined,
 		sync_jobs = 10,
 		header_sync_jobs = 1,
 		disk_pool_jobs = 2,
@@ -84,7 +82,6 @@ test_parse_config() ->
 				default := 100
 			}
 		},
-		disk_space = 44 * 1024 * 1024 * 1024,
 		disk_space_check_frequency = 10 * 1000,
 		start_from_latest_state = true,
 		start_from_block = ExpectedBlockHash,
@@ -103,7 +100,6 @@ test_parse_config() ->
 			}
 		],
 		'http_api.tcp.max_connections' = 512,
-		max_gateway_connections = 64,
 		disk_pool_data_root_expiration_time = 10000,
 		max_disk_pool_buffer_mb = 100000,
 		max_disk_pool_data_root_buffer_mb = 100000000,
