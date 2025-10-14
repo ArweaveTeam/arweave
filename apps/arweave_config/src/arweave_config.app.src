@@ -1,0 +1,21 @@
+{application, arweave_config, [
+	{id, "arweave_config"},
+	{description, "Arweave Configuration"},
+	{vsn, "0.0.1"},
+	{mod, {arweave_config, []}},
+	{env, []},
+	{applications, [
+		kernel,
+		stdlib,
+		sasl,
+		cowboy
+	]},
+	{modules, [
+		arweave_config,
+		arweave_config_sup
+	]},
+	{registered, [
+		arweave_config,
+		arweave_config_sup
+	]}
+]}.

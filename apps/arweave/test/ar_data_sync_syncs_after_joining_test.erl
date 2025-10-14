@@ -4,7 +4,7 @@
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 -import(ar_test_node, [assert_wait_until_height/2, test_with_mocked_functions/2]).
 

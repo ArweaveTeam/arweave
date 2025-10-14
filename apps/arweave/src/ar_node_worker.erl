@@ -16,7 +16,7 @@
 
 -include("../include/ar.hrl").
 -include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include("../include/ar_pricing.hrl").
 -include("../include/ar_data_sync.hrl").
 -include("../include/ar_vdf.hrl").

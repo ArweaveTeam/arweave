@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_data_discovery.hrl").
 
 -export([start_link/0, get_serialized_sync_record/1, get_serialized_sync_buckets/0]).

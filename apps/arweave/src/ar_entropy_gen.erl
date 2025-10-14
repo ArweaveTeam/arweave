@@ -11,7 +11,7 @@
 
 -include("../include/ar.hrl").
 -include("../include/ar_sup.hrl").
--include("../include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include("../include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").

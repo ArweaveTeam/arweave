@@ -3,7 +3,7 @@
 -export([start/1]).
 
 -include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Represents a process that handles downloading the block index and the latest

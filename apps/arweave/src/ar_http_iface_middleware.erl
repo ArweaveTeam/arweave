@@ -5,7 +5,7 @@
 -export([execute/2, read_body_chunk/4]).
 
 -include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_mining.hrl").
 -include("ar_data_sync.hrl").
 -include("ar_data_discovery.hrl").

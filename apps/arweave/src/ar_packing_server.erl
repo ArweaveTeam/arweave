@@ -17,7 +17,7 @@
 -export([chunk_key/3]).
 
 -include("ar.hrl").
--include("ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").

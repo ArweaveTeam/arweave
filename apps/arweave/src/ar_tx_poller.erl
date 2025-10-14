@@ -14,7 +14,7 @@
 ]).
 
 -include("../include/ar.hrl").
--include("../include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -record(state, {
 	last_seen_tx_timestamp = 0,
 	pending_txids = []

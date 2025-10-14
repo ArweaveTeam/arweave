@@ -2,7 +2,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(DISTANT_FUTURE_BLOCK_HEIGHT, 262800000). %% 1,000 years from genesis

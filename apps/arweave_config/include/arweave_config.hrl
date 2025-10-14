@@ -1,9 +1,9 @@
 -ifndef(AR_CONFIG_HRL).
 -define(AR_CONFIG_HRL, true).
 
--include_lib("ar.hrl").
--include_lib("ar_p3.hrl").
--include_lib("ar_verify_chunks.hrl").
+-include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar_p3.hrl").
+-include_lib("arweave/include/ar_verify_chunks.hrl").
 
 -record(config_webhook, {
 	events = [],

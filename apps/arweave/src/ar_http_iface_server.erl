@@ -11,7 +11,7 @@
 -export([split_path/1, label_http_path/1, label_req/1]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(HTTP_IFACE_MIDDLEWARES, [

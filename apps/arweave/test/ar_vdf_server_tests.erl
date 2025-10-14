@@ -5,7 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_config.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 -import(ar_test_node, [assert_wait_until_height/2, post_block/2, send_new_block/2]).
 
