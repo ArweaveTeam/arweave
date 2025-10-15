@@ -536,7 +536,6 @@ store_cursor(Cursor, StoreID) ->
 
 entropy_offsets_test_() ->
 	ar_test_node:test_with_mocked_functions([
-		{ar_block, partition_size, fun() -> 2_000_000 end},
 		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 	],
 	fun test_entropy_offsets/0, 30).
