@@ -25,6 +25,9 @@
 %% WARNING: ONLY SET TO true IF YOU KNOW WHAT YOU ARE DOING!
 -define(UPDATE_CHUNK_FIXTURES, false).
 
+%% Partition size is 2,000,000 bytes, so round up to a full chunk
+-define(ALIGNED_PARTITION_SIZE, 2_097_152).
+
 -spec fixture_dir(atom()) -> binary().
 fixture_dir(FixtureType) ->
 	Dir = filename:dirname(?FILE),
@@ -98,7 +101,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 
 	?LOG_INFO("Source node ~p started.", [Node]),
 	
-	assert_syncs_range(Node, 0, 4*ar_block:partition_size()),
+	assert_syncs_range(Node, 0, 4*?ALIGNED_PARTITION_SIZE),
 	
 	assert_chunks(Node, unpacked, Chunks),
 
@@ -122,7 +125,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TX2#tx.id)) ++ "/data"
 		}),
 	{ok, ExpectedData} = load_chunk_fixture(
-		unpacked, ar_block:partition_size() + floor(3.75 * ?DATA_CHUNK_SIZE)),
+		unpacked, ?ALIGNED_PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(ExpectedData, ar_util:decode(Data)),
 
 	?LOG_INFO("Source node ~p restarted.", [Node]),
@@ -134,7 +137,8 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 	{Wallet, StorageModules} = source_node_storage_modules(
 		Node, PackingType, WalletFixture, ModuleSize),
 	RewardAddr = ar_wallet:to_address(Wallet),
-	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ar_block:partition_size()),
+
+	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ?ALIGNED_PARTITION_SIZE),
 
 	{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
 	
@@ -152,37 +156,43 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 
 	%% Note: small chunks will be padded to 256 KiB. So B1 actually contains 3 chunks of data
 	%% and B2 starts at a chunk boundary and contains 1 chunk of data.
-	{TX1, B1} = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE), false), %% p1
-	{TX2, B2} = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE), false), %% p1
-	{TX3, B3} = mine_block(Node, Wallet, ar_block:partition_size(), false), %% p1 to p2
-	{TX4, B4} = mine_block(Node, Wallet, floor(0.5 * ar_block:partition_size()), false), %% p2
-	{TX5, B5} = mine_block(Node, Wallet, ar_block:partition_size(), true), %% p3 chunks are stored in disk pool
+	%% 
+	%% p1, 2097152 to 2883584
+	{TX1, B1} = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE), infinity),
+	%% p1, 2883584 to 3145728
+	{TX2, B2} = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE), infinity),
+	%% p1 to p2, 3145728 to 5242880
+	{TX3, B3} = mine_block(Node, Wallet, ?ALIGNED_PARTITION_SIZE, infinity),
+	%% p2, 5242880 to 6291456 (disk pool threshold falls in the middle of p2)
+	{TX4, B4} = mine_block(Node, Wallet, floor(0.5 * ?ALIGNED_PARTITION_SIZE), 2 * ?DATA_CHUNK_SIZE),
+	%% p3, 6291456 to 8388608 (chunks are stored in disk pool)
+	{TX5, B5} = mine_block(Node, Wallet, ?ALIGNED_PARTITION_SIZE, 0),
 
 	%% List of {Block, EndOffset, ChunkSize}
 	Chunks = [
 		%% PaddedEndOffset: 2359296
-		{B1, ar_block:partition_size() + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}, 
+		{B1, ?ALIGNED_PARTITION_SIZE + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}, 
 		%% PaddedEndOffset: 2621440
-		{B1, ar_block:partition_size() + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}, 
+		{B1, ?ALIGNED_PARTITION_SIZE + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}, 
 		%% PaddedEndOffset: 2883584
-		{B1, ar_block:partition_size() + floor(2.5 * ?DATA_CHUNK_SIZE), floor(0.5 * ?DATA_CHUNK_SIZE)},
+		{B1, ?ALIGNED_PARTITION_SIZE + floor(2.5 * ?DATA_CHUNK_SIZE), floor(0.5 * ?DATA_CHUNK_SIZE)},
 		%% PaddedEndOffset: 3145728
-		{B2, ar_block:partition_size() + floor(3.75 * ?DATA_CHUNK_SIZE), floor(0.75 * ?DATA_CHUNK_SIZE)},
+		{B2, ?ALIGNED_PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE), floor(0.75 * ?DATA_CHUNK_SIZE)},
 		%% PaddedEndOffset: 3407872
-		{B3, ar_block:partition_size() + (5*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ?ALIGNED_PARTITION_SIZE + (5*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
 		%% PaddedEndOffset: 3670016
-		{B3, ar_block:partition_size() + (6*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ?ALIGNED_PARTITION_SIZE + (6*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
 		%% PaddedEndOffset: 3932160
-		{B3, ar_block:partition_size() + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ?ALIGNED_PARTITION_SIZE + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
 		%% PaddedEndOffset: 4194304
-		{B3, ar_block:partition_size() + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
+		{B3, ?ALIGNED_PARTITION_SIZE + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
 	],
 
 	?LOG_INFO("Source node ~p blocks mined.", [Node]),
 
 	SourcePacking = packing_type_to_packing(PackingType, RewardAddr),
 
-	assert_syncs_range(Node, SourcePacking, 0, 4*ar_block:partition_size()),
+	assert_syncs_range(Node, SourcePacking, 0, 4*?ALIGNED_PARTITION_SIZE),
 	
 	assert_chunks(Node, SourcePacking, Chunks),
 
@@ -509,12 +519,17 @@ assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize) ->
 		data_path = maps:get(data_path, Proof)
 	},
 	ChunkProof = ar_test_node:remote_call(Node, ar_poa, chunk_proof, [ChunkMetadata, EndOffset - 1]),
+	?LOG_INFO([{chunk_proof, ChunkProof}]),
 	{true, _} = ar_test_node:remote_call(Node, ar_poa, validate_paths, [ChunkProof]),
 	Chunk = maps:get(chunk, Proof),
 
 	maybe_write_chunk_fixture(Packing, EndOffset, Chunk),
 
 	{ok, ExpectedPackedChunk} = load_chunk_fixture(Packing, EndOffset),
+	?assertEqual(byte_size(ExpectedPackedChunk), byte_size(Chunk),
+		iolist_to_binary(io_lib:format(
+			"~p: Chunk at offset ~p size mismatch expected ~p, got ~p",
+			[Node, EndOffset, byte_size(ExpectedPackedChunk), byte_size(Chunk)]))),
 	?assertEqual(ExpectedPackedChunk, Chunk,
 		iolist_to_binary(io_lib:format(
 			"~p: Chunk at offset ~p, size ~p, packing ~p does not match packed chunk",
