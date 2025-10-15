@@ -301,6 +301,11 @@ fetch_footprint_buckets2(Peer) ->
 		{error, request_type_not_found} ->
 			?LOG_DEBUG([{event, footprint_buckets_request_type_not_found},
 					{peer, ar_util:format_peer(Peer)}]);
+		{error, Reason} ->
+			ar_http_iface_client:log_failed_request(Reason,
+				[{event, failed_to_fetch_footprint_buckets},
+				{peer, ar_util:format_peer(Peer)},
+				{reason, io_lib:format("~p", [Reason])}]);
 		Error ->
 			?LOG_DEBUG([{event, failed_to_fetch_footprint_buckets},
 				{peer, ar_util:format_peer(Peer)},
