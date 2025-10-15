@@ -116,7 +116,7 @@
 %% How far into the past or future the block can be in order to be accepted for
 %% processing.
 -ifdef(AR_TEST).
--define(STORE_BLOCKS_BEHIND_CURRENT, 10).
+-define(STORE_BLOCKS_BEHIND_CURRENT, 5).
 -else.
 -define(STORE_BLOCKS_BEHIND_CURRENT, 50).
 -endif.

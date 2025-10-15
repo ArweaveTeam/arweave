@@ -5,11 +5,11 @@
 -include("ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [peer_ip/1, post_and_mine/2]).
-
+%% Test syncs missing data roots from a peer (NOT through header syncing)".
 data_roots_syncs_from_peer_test_() ->
-	{"Syncs missing data roots from a peer (NOT through header syncing)",
-		fun test_data_roots_syncs_from_peer/0}.
+	ar_test_node:test_with_mocked_functions([
+			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
+		fun test_data_roots_syncs_from_peer/0).
 
 test_data_roots_syncs_from_peer() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
@@ -17,8 +17,13 @@ test_data_roots_syncs_from_peer() ->
 
 	%% Start peer1 (node B) that will mine blocks with data.
 	ar_test_node:start_peer(peer1, B0),
+	%% Start main from the same block.
+	ar_test_node:start_peer(main, B0),
 	%% Ensure peer1 has fully joined before submitting transactions.
 	ar_test_node:wait_until_joined(peer1),
+	ar_test_node:wait_until_joined(main),
+	%% Disconnect the peers to create a block gap on main.
+	ar_test_node:disconnect_from(peer1),
 
 	%% Mine ~5 blocks with transactions with data on peer1 BEFORE main joins.
 	TXsAndBlocks = lists:map(
@@ -30,11 +35,18 @@ test_data_roots_syncs_from_peer() ->
 					reward => ?AR(1),
 					tx_anchor_peer => peer1,
 					get_fee_peer => peer1 })),
-			B = post_and_mine(#{ miner => peer1, await_on => peer1 }, [TX]),
+			B = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 }, [TX]),
 			{TX, B}
 		end,
-		lists:seq(1, 5)
+		lists:seq(1, 3)
 	),
+	%% The node fetches this many latest blocks after joining the network.
+	%% We want all our data blocks be older so that the node has to use
+	%% the data root syncing mechanism to fetch data roots (we explicitly
+	%% assert the unexpected data roots are not synced further down here).
+	?assertEqual(10, 2 * ?MAX_TX_ANCHOR_DEPTH),
+	[ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 }, [])
+		|| _ <- lists:seq(1, 10)],
 
 	%% Now start main (node A) with header syncing disabled and storage modules covering PART of the range.
 	{ok, BaseConfig} = application:get_env(arweave, config),
@@ -44,8 +56,6 @@ test_data_roots_syncs_from_peer() ->
 	MainConfig = BaseConfig#config{
 		mine = false,
 		header_sync_jobs = 0,
-		auto_join = true,
-		peers = [peer_ip(peer1)],
 		storage_modules = [
 			%% The first MB of the weave.
 			{MB, 0, {replica_2_9, MainRewardAddr}},
@@ -54,7 +64,9 @@ test_data_roots_syncs_from_peer() ->
 		]
 	},
     ConfiguredRanges = ar_intervals:from_list([{MB, 0}, {6 * MB, 3 * MB}]),
-	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
+
+	ar_test_node:join_on(#{ node => main, join_on => peer1, config => MainConfig }, true),
+	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:wait_until_joined(main),
 
 	%% For each block, assert that only blocks intersecting configured ranges
@@ -70,7 +82,7 @@ test_data_roots_syncs_from_peer() ->
                     ?debugFmt("Asserting data roots synced for partitions we configured, range intersection: ~p", [Intersection]),
                     wait_until_data_roots_range(BlockStart, BlockEnd);
 				true ->
-                    ?debugFmt("Asserting no data roots for partitions we did not configure", []),
+                    ?debugFmt("Asserting no data roots for partitions we did not configure, block range: ~p", [BlockRange]),
                     assert_no_data_roots(BlockStart)
 			end
 		end,

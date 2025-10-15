@@ -828,70 +828,88 @@ handle_get_data_root_response(TXRoot, BlockSize, Entries, Offset) ->
 	PrepareDataRootPairs =
 		case CheckBlockSize of
 			ok ->
-				prepare_data_root_pairs(Entries, BlockStart);
+				prepare_data_root_pairs(Entries, BlockStart, BlockSize);
 			Error2 ->
 				Error2
 		end,
 	ValidateTXRoot =
 		case PrepareDataRootPairs of
 			{ok, Triplets} ->
-				Pairs = [{DR, L} || {DR, L, _TXPath} <- Triplets],
-				{RecomputedTXRoot, Tree} = ar_merkle:generate_tree(Pairs),
-				case RecomputedTXRoot == TXRoot andalso TXRoot == ExpectedTXRoot of
+				case TXRoot == ExpectedTXRoot of
 					false ->
 						{error, invalid_tx_root};
 					true ->
-						{ok, {Triplets, Tree}}
-				end
-			end,
+						{ok, Triplets}
+				end;
+			{error, _} = Error3 ->
+				Error3
+		end,
 	case ValidateTXRoot of
-		{ok, {Triplets2, Tree2}} ->
-			case verify_tx_paths(Triplets2, TXRoot, Tree2) of
+		{ok, Triplets2} ->
+			case verify_tx_paths(Triplets2, TXRoot, BlockStart, BlockEnd, 0) of
 				ok ->
 					{ok, {TXRoot, BlockSize, Entries}};
 				Error4 ->
 					Error4
 			end;
-		Error3 ->
-			Error3
+		Error5 ->
+			Error5
 	end.
 
-prepare_data_root_pairs(Entries, BlockStart) ->
-	lists:foldl(
+prepare_data_root_pairs(Entries, BlockStart, BlockSize) ->
+	Result = lists:foldr(
 		fun
-			({DataRoot, TXSize, TXStartOffset, TXPath}, {ok, Acc}) ->
+			(_, {error, _} = Error) ->
+				Error;
+			({_DataRoot, 0, _TXStartOffset, _TXPath}, _Acc) ->
+				{error, invalid_zero_tx_size};
+			({DataRoot, TXSize, TXStartOffset, TXPath}, {ok, {Total, Acc}}) ->
 				Label = TXStartOffset + TXSize - BlockStart,
 				case Label >= 0 of
 					true ->
-						{ok, [{DataRoot, Label, TXPath} | Acc]};
+						PaddedSize = get_padded_size(TXSize, BlockStart),
+						{ok, {Total + PaddedSize, [{DataRoot, Label, TXPath} | Acc]}};
 					false ->
 						{error, invalid_entry_merkle_label}
-				end;
-			(_, {error, _} = Error) ->
-				Error
+				end
 		end,
-		{ok, []},
+		{ok, {0,[]}},
 		Entries
-	).
+	),
+	case Result of
+		{ok, {Total, Entries2}} ->
+			case Total == BlockSize of
+				true ->
+					{ok, lists:reverse(Entries2)};
+				false ->
+					{error, invalid_total_tx_size}
+			end;
+		Error6 ->
+			Error6
+	end.
 
-verify_tx_paths(Triplets, TXRoot, Tree) ->
-	lists:foldl(
-		fun
-			({_, Label, TXPath}, ok) ->
-				RelEndIndex = Label - 1,
-				GeneratedPath = ar_merkle:generate_path(TXRoot, RelEndIndex, Tree),
-				case GeneratedPath == TXPath of
-					true ->
-						ok;
-					false ->
-						{error, invalid_tx_path}
-				end;
-			(_, {error, _} = Error) ->
-				Error
-		end,
-		ok,
-		Triplets
-	).
+get_padded_size(TXSize, BlockStart) ->
+	case BlockStart >= ar_block:get_strict_data_split_threshold() of
+		true ->
+			ar_poa:get_padded_offset(TXSize, 0);
+		false ->
+			TXSize
+	end.
+
+verify_tx_paths([], _TXRoot, _BlockStart, _BlockEnd, _TXStartOffset) ->
+	ok;
+verify_tx_paths([Entry | Entries], TXRoot, BlockStart, BlockEnd, TXStartOffset) ->
+	{DataRoot, TXEndOffset, TXPath} = Entry,
+	BlockSize = BlockEnd - BlockStart,
+	case ar_merkle:validate_path(TXRoot, TXEndOffset - 1, BlockSize, TXPath) of
+		false ->
+			{error, invalid_tx_path};
+		{DataRoot, TXStartOffset, TXEndOffset} ->
+			PaddedEndOffset = get_padded_size(TXEndOffset, BlockStart),
+			verify_tx_paths(Entries, TXRoot, BlockStart, BlockEnd, PaddedEndOffset);
+		_ ->
+			{error, invalid_tx_path}
+	end.
 
 get_peer_and_path_from_url(URL) ->
 	#{ host := Host, path := P } = Parsed = uri_string:parse(URL),

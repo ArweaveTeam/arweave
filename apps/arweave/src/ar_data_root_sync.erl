@@ -14,13 +14,17 @@
 	store_id,
 	range_start,
 	range_end,
-	scan_cursor = 0
+	scan_cursor
 }).
 
 -define(DATA_ROOTS_SYNC_RELEASE_NUMBER, 88).
 
 %% How long we wait before (re-)scanning our range for unsynced data roots.
+-ifdef(AR_TEST).
+-define(DATA_ROOTS_SYNC_SCAN_INTERVAL_MS, 2000).
+-else.
 -define(DATA_ROOTS_SYNC_SCAN_INTERVAL_MS, 600_000). % 10 minutes.
+-endif.
 
 %%%===================================================================
 %%% Public interface.
@@ -37,12 +41,21 @@ start_link(StoreID) ->
 init([StoreID]) ->
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 	gen_server:cast(self(), sync),
-	{ok, #state{ store_id = StoreID, range_start = RangeStart, range_end = RangeEnd }}.
+	{ok, #state{ store_id = StoreID,
+			range_start = RangeStart,
+			range_end = RangeEnd,
+			scan_cursor = RangeStart }}.
 
 handle_cast(sync, State) ->
-	{Delay, State2} = sync_block_data_roots(State),
-	ar_util:cast_after(Delay, self(), sync),
-	{noreply, State2};
+	case ar_node:is_joined() of
+		false ->
+			ar_util:cast_after(500, self(), sync),
+			{noreply, State};
+		true ->
+			{Delay, State2} = sync_block_data_roots(State),
+			ar_util:cast_after(Delay, self(), sync),
+			{noreply, State2}
+	end;
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -66,7 +79,7 @@ terminate(_Reason, _State) ->
 sync_block_data_roots(#state{ store_id = StoreID, range_start = RangeStart,
 	range_end = RangeEnd, scan_cursor = Cursor } = State) ->
 	End = min(RangeEnd, ar_data_sync:get_disk_pool_threshold()),
-	{ok, Cursor2} = sync_block_data_roots(StoreID, RangeStart, End, Cursor),
+	{ok, Cursor2} = sync_block_data_roots(StoreID, Cursor, End),
 	{Delay, Cursor3} =
 		case Cursor2 >= End of
 			true ->
@@ -76,17 +89,16 @@ sync_block_data_roots(#state{ store_id = StoreID, range_start = RangeStart,
 		end,
 	{Delay, State#state{ scan_cursor = Cursor3 }}.
 
-sync_block_data_roots(_StoreID, _RangeStart, RangeEnd, Cursor) when Cursor >= RangeEnd ->
+sync_block_data_roots(_StoreID, Cursor, RangeEnd) when Cursor >= RangeEnd ->
 	{ok, Cursor};
-sync_block_data_roots(StoreID, RangeStart, RangeEnd, Cursor) ->
-	Cursor2 = max(Cursor, RangeStart),
-	{BlockStart, BlockEnd, _} = ar_block_index:get_block_bounds(Cursor2),
-	Cursor3 =
+sync_block_data_roots(StoreID, Cursor, RangeEnd) ->
+	{BlockStart, BlockEnd, _} = ar_block_index:get_block_bounds(Cursor),
+	Cursor2 =
 		case BlockStart >= RangeEnd of
 			true ->
 				RangeEnd;
 			false ->
-				case ar_sync_record:is_recorded(Cursor2 + 1, data_roots, ?DEFAULT_MODULE) of
+				case ar_sync_record:is_recorded(Cursor + 1, data_roots, ?DEFAULT_MODULE) of
 					true ->
 						BlockEnd;
 					false ->
@@ -94,7 +106,7 @@ sync_block_data_roots(StoreID, RangeStart, RangeEnd, Cursor) ->
 						BlockEnd
 				end
 		end,
-	sync_block_data_roots(StoreID, RangeStart, RangeEnd, Cursor3).
+	sync_block_data_roots(StoreID, Cursor2, RangeEnd).
 
 maybe_fetch_and_store(BlockStart, BlockEnd) ->
 	Peers = ar_peers:get_peers(current),
