@@ -1,6 +1,7 @@
 -module(ar_block).
 
--export([partition_size/0,
+-export([get_consensus_window_size/0, get_max_tx_anchor_depth/0,
+		partition_size/0,
 		get_replica_2_9_entropy_sector_size/0, get_replica_2_9_entropy_partition_size/0,
 		get_sub_chunks_per_replica_2_9_entropy/0, get_replica_2_9_entropy_count/0,
 		strict_data_split_threshold/0,
@@ -36,6 +37,16 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
+%% @doc Return the number of blocks we track during consensus. The node
+%% does not accept new blocks originating from blocks older than the oldest
+%% block in this window.
+get_consensus_window_size() ->
+	?STORE_BLOCKS_BEHIND_CURRENT.
+
+%% @doc Return the maximum allowed block depth of the transaction block anchor.
+get_max_tx_anchor_depth() ->
+	ar_block:get_consensus_window_size().
 
 %% @doc Expose constants through a function to allow mocking/injection in tests.
 partition_size() -> ?PARTITION_SIZE.
