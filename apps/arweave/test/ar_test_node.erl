@@ -19,6 +19,7 @@
 		stop_peers/1, stop_peer/1, connect_peers/2, connect_to_peer/1,
 		disconnect_peers/2, disconnect_from/1,
 		join/2, join/3, join_on/1, join_on/2, rejoin_on/1,
+		generate_join_config/0, generate_join_config/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
 
 		mine/0, get_tx_anchor/1, get_tx_confirmations/2, get_tx_price/2, get_tx_price/3,
@@ -812,8 +813,11 @@ stop(Node) ->
 	remote_call(Node, ar_test_node, stop, []).
 
 rejoin_on(#{ node := Node, join_on := JoinOnNode } = Options) ->
-	Config = maps:get(config, Options, generate_join_config()),
+	Config = maps:get(config, Options, generate_join_config(Node)),
 	join_on(#{ node => Node, join_on => JoinOnNode, config => Config }, true).
+
+generate_join_config(Node) ->
+	remote_call(Node, ar_test_node, generate_join_config, []).
 
 generate_join_config() ->
 	{ok, Config} = application:get_env(arweave, config),
@@ -829,7 +833,7 @@ join_on(Params) ->
 	join_on(Params, false).
 
 join_on(#{ node := Node, join_on := JoinOnNode } = Params, Rejoin) ->
-	Config = maps:get(config, Params, generate_join_config()),
+	Config = maps:get(config, Params, generate_join_config(Node)),
 	remote_call(Node, ar_test_node, join, [JoinOnNode, Rejoin, Config], ?REMOTE_CALL_TIMEOUT).
 
 join(JoinOnNode, Rejoin) ->
