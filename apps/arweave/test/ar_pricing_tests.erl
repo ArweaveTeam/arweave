@@ -548,7 +548,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assert(ar_difficulty:get_hash_rate_fixed_ratio(B11) > 1),
 	?assertEqual(lists:sublist([{MinerAddr, ar_difficulty:get_hash_rate_fixed_ratio(B11), B11#block.reward, 1}
 			| B10#block.reward_history],
-			?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+			?REWARD_HISTORY_BLOCKS + ar_block:get_consensus_window_size()),
 			B11#block.reward_history),
 	TX11 = ar_test_node:sign_tx(main, Key3, #{ denomination => 1, target => ar_wallet:to_address(Pub5),
 			quantity => 100 }),
