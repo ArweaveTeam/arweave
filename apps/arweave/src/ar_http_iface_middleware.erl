@@ -1616,14 +1616,14 @@ handle_get_block_index_range(Start, _End, CurrentHeight, _RecentBI, Req, _Encodi
 		when Start > CurrentHeight ->
 	{400, #{}, jiffy:encode(#{ error => start_too_big }), Req};
 handle_get_block_index_range(Start, End, CurrentHeight, RecentBI, Req, Encoding) ->
-	CheckpointHeight = CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT + 1,
+	CheckpointHeight = CurrentHeight - ar_block:get_consensus_window_size() + 1,
 	RecentRange =
 		case End >= CheckpointHeight of
 			true ->
 				Top = min(CurrentHeight, End),
 				Range1 = lists:nthtail(CurrentHeight - Top, RecentBI),
 				lists:sublist(Range1, min(Top - Start + 1,
-						?STORE_BLOCKS_BEHIND_CURRENT - (CurrentHeight - Top)));
+						ar_block:get_consensus_window_size() - (CurrentHeight - Top)));
 			false ->
 				[]
 		end,
@@ -2546,7 +2546,7 @@ post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	case ar_node:is_joined() of
 		true ->
-			ConfirmedHeight = ar_node:get_height() - ?STORE_BLOCKS_BEHIND_CURRENT,
+			ConfirmedHeight = ar_node:get_height() - ar_block:get_consensus_window_size(),
 			case {Encoding, ConfirmedHeight >= ar_fork:height_2_6()} of
 				{json, true} ->
 					%% We gesticulate it explicitly here that POST /block is not

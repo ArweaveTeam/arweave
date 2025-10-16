@@ -34,7 +34,7 @@
 %% {solution, SolutionHash} => set(BlockHash)
 %%   - all blocks with the same solution hash
 %% longest_chain => [{BlockHash, [TXIDs]}]
-%%  - the top ?STORE_BLOCKS_BEHIND_CURRENT blocks of the longest chain
+%%  - the top ar_block:get_consensus_window_size() blocks of the longest chain
 %% tip -> BlockHash
 %%   - curent block chain tip
 %% links -> gb_set({Height, BlockHash})
@@ -252,7 +252,7 @@ get_earliest_not_validated_from_longest_chain(Tab) ->
 	end.
 
 %% @doc Return the list of {BH, TXIDs} pairs corresponding to the top up to the
-%% ?STORE_BLOCKS_BEHIND_CURRENT blocks of the longest chain and the number of blocks
+%% ar_block:get_consensus_window_size() blocks of the longest chain and the number of blocks
 %% in this list that are not on chain yet.
 %%
 %% The cache is updated via update_longest_chain_cache/1 which calls
@@ -268,7 +268,7 @@ get_longest_chain_block_txs_pairs(Tab, H, N, PrevStatus, PrevH, Pairs, NotOnChai
 		[{_, {B, {not_validated, awaiting_nonce_limiter_validation}, _Timestamp,
 				_Children}}] ->
 			get_longest_chain_block_txs_pairs(Tab, B#block.previous_block,
-					?STORE_BLOCKS_BEHIND_CURRENT, none, none, [], 0);
+					ar_block:get_consensus_window_size(), none, none, [], 0);
 		[{_, {B, Status, _Timestamp, _Children}}] ->
 			case PrevStatus == on_chain andalso Status /= on_chain of
 				true ->
@@ -728,7 +728,7 @@ prune2(Tab, Depth, TipHeight) ->
 
 update_longest_chain_cache(Tab) ->
 	[{_, {_CDiff, H}}] = ets:lookup(Tab, max_cdiff),
-	Result = get_longest_chain_block_txs_pairs(Tab, H, ?STORE_BLOCKS_BEHIND_CURRENT,
+	Result = get_longest_chain_block_txs_pairs(Tab, H, ar_block:get_consensus_window_size(),
 			none, none, [], 0),
 	case ets:update_element(Tab, longest_chain, {2, Result}) of
 		true -> ok;
