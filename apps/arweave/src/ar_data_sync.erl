@@ -4011,25 +4011,31 @@ get_data_roots_for_offset(Offset) ->
 		{ok, Bin} ->
 			{TXRoot2, BlockSize, DataRootIndexKeySet} = binary_to_term(Bin),
 			true = TXRoot2 == TXRoot,
-			{_Cursor, Entries} = sets:fold(
-				fun
-					({error, _} = Err, _Acc) ->
-						Err;
-					(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, {Cursor, Acc}) ->
-						Key = data_root_key_v2(DataRoot, TXSize, Cursor - TXSize),
-						case ar_kv:get_prev({data_root_index, StoreID}, Key) of
-							{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
-									TXStartSize:8, TXStart:(TXStartSize * 8) >>, TXPath} ->
-								{TXStart, [{DataRoot, TXSize, TXStart, TXPath} | Acc]};
-							_ ->
-								{error, data_root_entry_not_found}
-						end
+			{ok, {TXRoot, BlockSize, lists:sort(
+				fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1}, {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
+					TXStart1 < TXStart2
 				end,
-				{BlockEnd, []},
+				sets:fold(
+					fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
+						read_data_root_entries(DataRoot, TXSize, BlockEnd, StoreID, Acc)
+					end,
+				[],
 				DataRootIndexKeySet
-			),
-			{ok, {TXRoot, BlockSize, Entries}}
-		end.
+			))}}
+	end.
+
+read_data_root_entries(DataRoot, TXSize, Cursor, StoreID, Acc) ->
+	Key = data_root_key_v2(DataRoot, TXSize, Cursor - 1),
+	case ar_kv:get_prev({data_root_index, StoreID}, Key) of
+		{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
+				TXStartSize:8, TXStart:(TXStartSize * 8) >>, TXPath} ->
+			[{DataRoot, TXSize, TXStart, TXPath}
+				| read_data_root_entries(DataRoot, TXSize, TXStart, StoreID, Acc)];
+		{ok, _, _} ->
+			Acc;
+		none ->
+			Acc
+	end.
 
 maybe_run_footprint_record_initialization(State) ->
 	#sync_data_state{ store_id = StoreID, migrations_index = MI } = State,

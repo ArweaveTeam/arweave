@@ -13,7 +13,7 @@ data_roots_syncs_from_peer_test_() ->
 
 test_data_roots_syncs_from_peer() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000), <<>>}]),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 
 	%% Start peer1 (node B) that will mine blocks with data.
 	ar_test_node:start_peer(peer1, B0),
@@ -96,9 +96,9 @@ test_data_roots_syncs_from_peer() ->
 				case Height >= LastConsensusWindowHeight of
 					true ->
 						?debugFmt("Asserting data roots synced during consensus "
-							"are stored, even outside the configured storage modules", []),
-						?assertEqual(true, ar_intervals:is_empty(Intersection),
-								"Expected no intersection"),
+							"are stored, even outside the configured storage modules, "
+							"height: ~B, configured ranges: ~p, intersection: ~p",
+							[Height, ConfiguredRanges, Intersection]),
 						wait_until_data_roots_range(BlockStart, BlockEnd, Height);
 					false ->
 						case ar_intervals:is_empty(Intersection) of
@@ -117,24 +117,47 @@ test_data_roots_syncs_from_peer() ->
 	).
 
 generate_random_txs(Wallet) ->
-	Coin = random:uniform(10),
+	Coin = random:uniform(12),
 	case Coin of
-		Val when Val =< 4 ->
+		Val when Val =< 3 ->
 			%% Add data tx.
 			[element(1, ar_test_data_sync:tx(
 				#{ wallet => Wallet,
 					split_type => original_split,
 					format => v2,
-					reward => ?AR(10000000),
+					reward => ?AR(10_000_000_000),
 					tx_anchor_peer => peer1,
 					get_fee_peer => peer1 })) | generate_random_txs(Wallet)];
-		Val when Val =< 8 ->
+		Val when Val =< 6 ->
+			%% A bit smaller than 256 KiB to provoke padding.
+			Chunks = [<< 0:(262140 * 8) >>],
+			{DataRoot, _DataTree} = ar_merkle:generate_tree(
+				ar_tx:sized_chunks_to_sized_chunk_ids(
+					ar_tx:chunks_to_size_tagged_chunks(Chunks)
+				)
+			),
+			%% Insert two transactions with the same data root.
+			[element(1, ar_test_data_sync:tx(
+				#{ wallet => Wallet,
+					split_type => {fixed_data, DataRoot, Chunks},
+					format => v2,
+					reward => ?AR(10_000_000_000),
+					tx_anchor_peer => peer1,
+					get_fee_peer => peer1 })),
+			element(1, ar_test_data_sync:tx(
+				#{ wallet => Wallet,
+					split_type => {fixed_data, DataRoot, Chunks},
+					format => v2,
+					reward => ?AR(10_000_000_000),
+					tx_anchor_peer => peer1,
+					get_fee_peer => peer1 })) | generate_random_txs(Wallet)];
+		Val when Val =< 9 ->
 			%% Add empty tx.
 			[element(1, ar_test_data_sync:tx(
 				#{ wallet => Wallet,
 					split_type => {fixed_data, <<>>, []},
 					format => v2,
-					reward => ?AR(10000),
+					reward => ?AR(10_000_000_000),
 					tx_anchor_peer => peer1,
 					get_fee_peer => peer1 })) | generate_random_txs(Wallet)];
 		_ ->

@@ -509,8 +509,6 @@ handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
 							{200, #{}, Payload, Req};
 						{error, not_found} ->
 							{404, #{}, jiffy:encode(#{ error => not_found }), Req};
-						{error, data_root_entry_not_found} ->
-							{404, #{}, jiffy:encode(#{ error => data_root_entry_not_found }), Req};
 						_ ->
 							{500, #{}, <<>>, Req}
 					end
