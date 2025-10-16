@@ -6,7 +6,7 @@
 -export([delayed_print/2, packing_type_to_packing/2,
 	start_source_node/3, start_source_node/4, 
 	source_node_storage_modules/3, source_node_storage_modules/4,
-	max_chunk_offset/1,
+	max_chunk_offset/1, aligned_partition_size/2, aligned_partition_size/3,
 	assert_recall_byte/3,
 	assert_block/2, assert_syncs_range/3, assert_syncs_range/4, assert_does_not_sync_range/3,
 	assert_has_entropy/4, assert_no_entropy/4,
@@ -192,8 +192,16 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 	SourcePacking = packing_type_to_packing(PackingType, RewardAddr),
 
 	assert_syncs_range(Node, SourcePacking, 0, 4*?ALIGNED_PARTITION_SIZE),
-	
 	assert_chunks(Node, SourcePacking, Chunks),
+
+	%% Restart the node to allow it to copy chunks between storage modules.
+	ar_test_node:restart(Node),
+	?LOG_INFO("Source node ~p restarted.", [Node]),
+
+	assert_syncs_range(Node, SourcePacking, 0, 4*?ALIGNED_PARTITION_SIZE),
+	assert_chunks(Node, SourcePacking, Chunks),
+	assert_partition_size(Node, 0, SourcePacking),
+	assert_partition_size(Node, 1, SourcePacking),
 
 	%% pack_served_chunks is not enabled so we shouldn't return unpacked data
 	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}},
@@ -209,6 +217,16 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 
 max_chunk_offset(Chunks) ->
 	lists:foldl(fun({_, EndOffset, _}, Acc) -> max(Acc, EndOffset) end, 0, Chunks).
+
+aligned_partition_size(PartitionNumber, Packing) ->
+	Start = ar_block:partition_size() * PartitionNumber,
+	End = Start + ar_block:partition_size(),
+	aligned_partition_size(Start, End, Packing).
+aligned_partition_size(Start, End, Packing) ->
+	EndWithOverlap = End + ar_storage_module:get_overlap(Packing),
+	AlignedStart = ar_util:floor_int(Start, ?DATA_CHUNK_SIZE),
+	AlignedEnd = ar_util:floor_int(EndWithOverlap, ?DATA_CHUNK_SIZE),
+	AlignedEnd - AlignedStart.
 
 source_node_storage_modules(Node, PackingType, WalletFixture) ->
 	source_node_storage_modules(Node, PackingType, WalletFixture, default).
@@ -375,8 +393,8 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 			[Node, StartOffset, EndOffset]))).
 
 assert_partition_size(Node, PartitionNumber, Packing) ->
-	Overlap = ar_storage_module:get_overlap(Packing),
-	assert_partition_size(Node, PartitionNumber, Packing, ar_block:partition_size() + Overlap).
+	PartitionSize = aligned_partition_size(PartitionNumber, Packing),
+	assert_partition_size(Node, PartitionNumber, Packing, PartitionSize).
 assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 	?LOG_INFO("~p: Asserting partition ~p,~p is size ~p",
 		[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true), Size]),
