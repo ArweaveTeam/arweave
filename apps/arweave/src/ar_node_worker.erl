@@ -73,7 +73,7 @@ tx_id_prefix(TXID) ->
 	binary:part(TXID, 0, 8).
 
 %% @doc Return true if the given transaction identifier is found in the mempool or
-%% block cache (the last ?STORE_BLOCKS_BEHIND_CURRENT blocks).
+%% block cache (the last ar_block:get_consensus_window_size() blocks).
 is_mempool_or_block_cache_tx(TXID) ->
 	ets:match_object(tx_prefixes, {tx_id_prefix(TXID), TXID}) /= [].
 
@@ -407,7 +407,7 @@ handle_info({event, nonce_limiter, initialized}, State) ->
 	ar_storage:store_block_index(BI),
 	RecentBI = lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN),
 	Current = element(1, hd(RecentBI)),
-	RecentBlocks = lists:sublist(Blocks, ?STORE_BLOCKS_BEHIND_CURRENT),
+	RecentBlocks = lists:sublist(Blocks, ar_block:get_consensus_window_size()),
 	RecentBlocks2 = set_poa_caches(RecentBlocks),
 	ar_block_cache:initialize_from_list(block_cache, RecentBlocks2),
 	B = hd(RecentBlocks2),
@@ -775,7 +775,7 @@ get_block_anchors_and_recent_txs_map(BlockTXPairs) ->
 			{[BH | Acc1], Acc3}
 		end,
 		{[], #{}},
-		lists:sublist(BlockTXPairs, ?MAX_TX_ANCHOR_DEPTH)
+		lists:sublist(BlockTXPairs, ar_block:get_max_tx_anchor_depth())
 	).
 
 get_max_block_size([_SingleElement]) ->
@@ -995,7 +995,7 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 							true ->
 								BlockTimeHistory2 = ar_block_time_history:update_history(B, PrevB),
 								Len2 = ar_block_time_history:history_length()
-										+ ?STORE_BLOCKS_BEHIND_CURRENT,
+										+ ar_block:get_consensus_window_size(),
 								BlockTimeHistory3 = lists:sublist(BlockTimeHistory2, Len2),
 								B2#block{ block_time_history = BlockTimeHistory3 };
 							false ->
@@ -1231,7 +1231,7 @@ block_index_entry(B) ->
 
 update_block_txs_pairs(B, PrevBlocks, BlockTXPairs) ->
 	lists:sublist(update_block_txs_pairs2(B, PrevBlocks, BlockTXPairs),
-			2 * ?MAX_TX_ANCHOR_DEPTH).
+			2 * ar_block:get_max_tx_anchor_depth()).
 
 update_block_txs_pairs2(B, [PrevB, PrevPrevB | PrevBlocks], BP) ->
 	[block_txs_pair(B) | update_block_txs_pairs2(PrevB, [PrevPrevB | PrevBlocks], BP)];
@@ -1409,7 +1409,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	%% off and then back on this fork.
 	ar_block_cache:add(block_cache, B),
 	ar_block_cache:mark_tip(block_cache, BH),
-	ar_block_cache:prune(block_cache, ?STORE_BLOCKS_BEHIND_CURRENT),
+	ar_block_cache:prune(block_cache, ar_block:get_consensus_window_size()),
 	%% We could have missed a few blocks due to networking issues, which would then
 	%% be picked by ar_poller and end up waiting for missing transactions to be fetched.
 	%% Thefore, it is possible (although not likely) that there are blocks above the new tip,
@@ -1442,7 +1442,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 				%% Use a twice bigger depth than the depth requested on join to serve
 				%% the wallet trees to the joining nodes.
 				ok = ar_wallets:set_current(
-					Wallets, CurrentB#block.height, ?STORE_BLOCKS_BEHIND_CURRENT * 2),
+					Wallets, CurrentB#block.height, ar_block:get_consensus_window_size() * 2),
 				CurrentB
 		end,
 		start,
@@ -1769,7 +1769,7 @@ start_from_state(BI, Height) ->
 			),
 
 			BlockTimeHistoryBI = lists:sublist(BI2,
-					ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT),
+					ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
 			case {ar_storage:read_reward_history(RewardHistoryBI),
 					ar_storage:read_block_time_history(Height2, BlockTimeHistoryBI)} of
 				{not_found, _} ->
@@ -1795,7 +1795,7 @@ start_from_state(BI, Height) ->
 	end.
 
 read_recent_blocks(BI, SearchDepth) ->
-	read_recent_blocks2(lists:sublist(BI, 2 * ?MAX_TX_ANCHOR_DEPTH + SearchDepth),
+	read_recent_blocks2(lists:sublist(BI, 2 * ar_block:get_max_tx_anchor_depth() + SearchDepth),
 			SearchDepth, 0).
 
 read_recent_blocks2(_BI, Depth, Skipped) when Skipped > Depth orelse
@@ -1813,7 +1813,7 @@ read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped) ->
 				false ->
 					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
 							B#block.height),
-					case read_recent_blocks3(BI, 2 * ?MAX_TX_ANCHOR_DEPTH - 1,
+					case read_recent_blocks3(BI, 2 * ar_block:get_max_tx_anchor_depth() - 1,
 							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }]) of
 						not_found ->
 							not_found;
@@ -2216,7 +2216,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 
 			BlockTimeHistory2 = lists:sublist(
 				ar_block_time_history:update_history(UnsignedB, PrevB),
-				ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT),
+				ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
 			UnsignedB2 = UnsignedB#block{
 				block_time_history = BlockTimeHistory2,
 				block_time_history_hash = ar_block_time_history:hash(BlockTimeHistory2)
