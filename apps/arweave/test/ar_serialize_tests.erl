@@ -252,9 +252,9 @@ query_roundtrip_test() ->
 
 data_roots_roundtrip_test() ->
 	%% TXRoot must be empty or 32 bytes:
-	?assertEqual({error, invalid_input}, ar_serialize:binary_to_data_roots({<<"a">>, 0, []})),
+	?assertEqual({error, invalid_input1}, ar_serialize:binary_to_data_roots({<<"a">>, 0, []})),
 	%% The number of entries must not exceed the transaction count limit:
-	?assertEqual({error, invalid_input},
+	?assertEqual({error, invalid_input1},
 		ar_serialize:binary_to_data_roots({<<>>, 0, make_entries(1001)})),
     TXRoot = crypto:strong_rand_bytes(32),
     BlockSizes = [0, 1, 255, 256, 65535, 65536, 123456789],

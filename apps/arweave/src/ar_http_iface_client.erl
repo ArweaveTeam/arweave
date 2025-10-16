@@ -889,7 +889,7 @@ prepare_data_root_pairs(Entries, BlockStart, BlockSize) ->
 	end.
 
 get_padded_size(TXSize, BlockStart) ->
-	case BlockStart >= ar_block:get_strict_data_split_threshold() of
+	case BlockStart >= ar_block:strict_data_split_threshold() of
 		true ->
 			ar_poa:get_padded_offset(TXSize, 0);
 		false ->
@@ -1217,7 +1217,7 @@ parse_recent_hash_list_diff(<< H:48/binary, Len:16, TXIDs:(32 * Len)/binary, Res
 			parse_recent_hash_list_diff(Rest)
 	end;
 parse_recent_hash_list_diff(_Input) ->
-	{error, invalid_input}.
+	{error, invalid_input4}.
 
 count_blocks_on_top(Bin) ->
 	count_blocks_on_top(Bin, 0).
@@ -1227,7 +1227,7 @@ count_blocks_on_top(<<>>, N) ->
 count_blocks_on_top(<< _H:48/binary, Len:16, _TXIDs:(32 * Len)/binary, Rest/binary >>, N) ->
 	count_blocks_on_top(Rest, N + 1);
 count_blocks_on_top(_Bin, _N) ->
-	{error, invalid_input}.
+	{error, invalid_input5}.
 
 parse_txids(<< TXID:32/binary, Rest/binary >>) ->
 	[TXID | parse_txids(Rest)];

@@ -3995,7 +3995,11 @@ record_chunk_cache_size_metric() ->
 	end.
 
 %% @doc Get data roots for a given offset (>= BlockStartOffset, < BlockEndOffset) from local indices.
-%% Returns {ok, {TXRoot, BlockSize, Entries}} or {error, Reason}.
+%% Return only entries corresponding to non-empty transactions.
+%% Return the complete list of entries in the order they appear in the data root index,
+%% which corresponds to sorted #tx records in the block.
+%% Return {ok, {TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath}, ...]}}
+%% or {error, Reason}.
 get_data_roots_for_offset(Offset) ->
 	{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Offset),
 	true = Offset >= BlockStart andalso Offset < BlockEnd,

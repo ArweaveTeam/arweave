@@ -489,6 +489,9 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 	end;
 
 %% Return data root metadata for the block containing the offset, >= BlockStartOffset, < BlockEndOffset.
+%% Return only entries corresponding to non-empty transactions.
+%% Return the complete list of entries in the order they appear in the data root index,
+%% which corresponds to sorted #tx records in the block.
 %% GET /data_roots/{offset}
 handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
 	case ar_node:is_joined() of

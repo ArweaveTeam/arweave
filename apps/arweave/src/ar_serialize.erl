@@ -1269,7 +1269,7 @@ data_roots_to_binary({TXRoot, BlockSize, Entries}) when is_binary(TXRoot) ->
 			<< DataRoot:32/binary,
 				(encode_int(TXSize, 8))/binary,
 				(encode_int(TXStartOffset, 8))/binary,
-				(encode_bin(TXPath, 8))/binary >>
+                (encode_bin(TXPath, 24))/binary >>
 		end,
 		Entries),
 	<< (encode_bin(TXRoot, 8))/binary,
@@ -1285,25 +1285,25 @@ binary_to_data_roots(<< TXRootSize:8, TXRoot:TXRootSize/binary,
 		{ok, Entries, <<>>} ->
 			{ok, {TXRoot, BlockSize, lists:reverse(Entries)}};
 		{ok, _Entries, _Tail} ->
-			{error, invalid_input};
+			{error, invalid_input3};
 		{'EXIT', _} ->
 			{error, exception};
 		Error ->
 			Error
 	end;
 binary_to_data_roots(_Other) ->
-	{error, invalid_input}.
+	{error, invalid_input1}.
 
 binary_to_data_root_entries(0, Bin, Acc) ->
 	{ok, Acc, Bin};
 binary_to_data_root_entries(N, << DataRoot:32/binary,
 		TXSizeSize:8, TXSize:(TXSizeSize*8),
 		TXStartSize:8, TXStartOffset:(TXStartSize*8),
-		TXPathSize:8, TXPath:TXPathSize/binary, Rest/binary >>, Acc) when N > 0 ->
+        TXPathSize:24, TXPath:TXPathSize/binary, Rest/binary >>, Acc) when N > 0 ->
 	binary_to_data_root_entries(N - 1, Rest,
 		[{DataRoot, TXSize, TXStartOffset, TXPath} | Acc]);
 binary_to_data_root_entries(_N, _Bin, _Acc) ->
-	{error, invalid_input}.
+	{error, invalid_input2}.
 
 %% @doc Take a JSON struct and produce JSON string.
 jsonify(JSONStruct) ->

@@ -13,7 +13,7 @@ data_roots_syncs_from_peer_test_() ->
 
 test_data_roots_syncs_from_peer() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
-	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}]),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000), <<>>}]),
 
 	%% Start peer1 (node B) that will mine blocks with data.
 	ar_test_node:start_peer(peer1, B0),
@@ -25,28 +25,42 @@ test_data_roots_syncs_from_peer() ->
 	%% Disconnect the peers to create a block gap on main.
 	ar_test_node:disconnect_from(peer1),
 
-	%% Mine ~5 blocks with transactions with data on peer1 BEFORE main joins.
-	TXsAndBlocks = lists:map(
-		fun(_I) ->
-			TX = element(1, ar_test_data_sync:tx(
+	%% Mine blocks with transactions with data on peer1 BEFORE main joins.
+	DataTXs = [element(1, ar_test_data_sync:tx(
 				#{ wallet => Wallet,
 					split_type => original_split,
 					format => v2,
 					reward => ?AR(1),
 					tx_anchor_peer => peer1,
-					get_fee_peer => peer1 })),
-			B = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 }, [TX]),
-			{TX, B}
-		end,
-		lists:seq(1, 3)
-	),
+					get_fee_peer => peer1 }))
+				|| _ <- lists:seq(1, 3)],
+	EmptyTXs = [element(1, ar_test_data_sync:tx(
+				#{ wallet => Wallet,
+					split_type => {fixed_data, <<>>, []},
+					format => v2,
+					reward => ?AR(1),
+					tx_anchor_peer => peer1,
+					get_fee_peer => peer1 })) || _ <- lists:seq(1, 3)],
+	B1 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
+			[lists:nth(1, DataTXs)]),
+	%% Empty transactions should be ignored.
+	B2 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
+			[lists:nth(1, EmptyTXs), lists:nth(2, DataTXs), lists:nth(2, EmptyTXs)]),
+	B3 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
+			[lists:nth(3, EmptyTXs), lists:nth(3, DataTXs)]),
 	%% The node fetches this many latest blocks after joining the network.
 	%% We want all our data blocks be older so that the node has to use
 	%% the data root syncing mechanism to fetch data roots (we explicitly
 	%% assert the unexpected data roots are not synced further down here).
 	?assertEqual(10, 2 * ?MAX_TX_ANCHOR_DEPTH),
-	[ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 }, [])
-		|| _ <- lists:seq(1, 10)],
+	Blocks = [B1, B2, B3
+		| lists:map(
+			fun(_) ->
+				TXs = generate_random_txs(Wallet),
+				ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 }, TXs)
+			end,
+			lists:seq(1, 11)
+		)],
 
 	%% Now start main (node A) with header syncing disabled and storage modules covering PART of the range.
 	{ok, BaseConfig} = application:get_env(arweave, config),
@@ -69,27 +83,65 @@ test_data_roots_syncs_from_peer() ->
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:wait_until_joined(main),
 
-	%% For each block, assert that only blocks intersecting configured ranges
-    %% get data roots synced.
+	LastConsensusWindowHeight = 4,
 	lists:foreach(
-		fun({_TX, B}) ->
-			BlockStart = B#block.weave_size - B#block.block_size,
-			BlockEnd = B#block.weave_size,
-            BlockRange = ar_intervals:from_list([{BlockEnd, BlockStart}]),
-			Intersection = ar_intervals:intersection(BlockRange, ConfiguredRanges),
-            case ar_intervals:is_empty(Intersection) of
-				false ->
-                    ?debugFmt("Asserting data roots synced for partitions we configured, range intersection: ~p", [Intersection]),
-                    wait_until_data_roots_range(BlockStart, BlockEnd);
-				true ->
-                    ?debugFmt("Asserting no data roots for partitions we did not configure, block range: ~p", [BlockRange]),
-                    assert_no_data_roots(BlockStart)
-			end
+		fun	(#block{ block_size = 0 }) ->
+				ok;
+			(B) ->
+				Height = B#block.height,
+				BlockStart = B#block.weave_size - B#block.block_size,
+				BlockEnd = B#block.weave_size,
+				BlockRange = ar_intervals:from_list([{BlockEnd, BlockStart}]),
+				Intersection = ar_intervals:intersection(BlockRange, ConfiguredRanges),
+				case Height >= LastConsensusWindowHeight of
+					true ->
+						?debugFmt("Asserting data roots synced during consensus "
+							"are stored, even outside the configured storage modules", []),
+						?assertEqual(true, ar_intervals:is_empty(Intersection),
+								"Expected no intersection"),
+						wait_until_data_roots_range(BlockStart, BlockEnd, Height);
+					false ->
+						case ar_intervals:is_empty(Intersection) of
+							false ->
+								?debugFmt("Asserting data roots synced for partitions "
+									"we configured, range intersection: ~p", [Intersection]),
+								wait_until_data_roots_range(BlockStart, BlockEnd, Height);
+							true ->
+								?debugFmt("Asserting no data roots for partitions "
+									"we did not configure, block range: ~p", [BlockRange]),
+								assert_no_data_roots(BlockStart)
+						end
+				end
 		end,
-		TXsAndBlocks
+		Blocks
 	).
 
-wait_until_data_roots_range(BlockStart, BlockEnd) ->
+generate_random_txs(Wallet) ->
+	Coin = random:uniform(10),
+	case Coin of
+		Val when Val =< 4 ->
+			%% Add data tx.
+			[element(1, ar_test_data_sync:tx(
+				#{ wallet => Wallet,
+					split_type => original_split,
+					format => v2,
+					reward => ?AR(10000000),
+					tx_anchor_peer => peer1,
+					get_fee_peer => peer1 })) | generate_random_txs(Wallet)];
+		Val when Val =< 8 ->
+			%% Add empty tx.
+			[element(1, ar_test_data_sync:tx(
+				#{ wallet => Wallet,
+					split_type => {fixed_data, <<>>, []},
+					format => v2,
+					reward => ?AR(10000),
+					tx_anchor_peer => peer1,
+					get_fee_peer => peer1 })) | generate_random_txs(Wallet)];
+		_ ->
+			[]
+	end.
+
+wait_until_data_roots_range(BlockStart, BlockEnd, Height) ->
 	true = ar_util:do_until(
 		fun() ->
 			Peer = ar_test_node:peer_ip(main),
@@ -99,8 +151,13 @@ wait_until_data_roots_range(BlockStart, BlockEnd) ->
 					case ar_serialize:binary_to_data_roots(Body) of
 						{ok, {_TXRoot, BlockSize, _Entries}} when BlockStart + BlockSize == BlockEnd ->
                             true;
-						_ ->
-                            ?debugFmt("Received get data roots reply with unexpected block size", []),
+						{ok, {_TXRoot, BlockSize2, _Entries}} ->
+                            ?debugFmt("Received get data roots reply "
+								"with unexpected block size: ~B, expected: ~B, height: ~B",
+								[BlockSize2, BlockEnd - BlockStart, Height]),
+							?assert(false);
+						{error, Error} ->
+							?debugFmt("Unexpected error: ~p, height: ~B", [Error, Height]),
 							?assert(false)
 					end;
 				{ok, {{<<"404">>, _}, _, _, _, _}} ->
