@@ -8,6 +8,8 @@
 %% Test syncs missing data roots from a peer (NOT through header syncing)".
 data_roots_syncs_from_peer_test_() ->
 	ar_test_node:test_with_mocked_functions([
+			{ar_block, get_consensus_window_size, fun() -> 5 end},
+			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
 		fun test_data_roots_syncs_from_peer/0).
 
@@ -52,7 +54,7 @@ test_data_roots_syncs_from_peer() ->
 	%% We want all our data blocks be older so that the node has to use
 	%% the data root syncing mechanism to fetch data roots (we explicitly
 	%% assert the unexpected data roots are not synced further down here).
-	?assertEqual(10, 2 * ?MAX_TX_ANCHOR_DEPTH),
+	?assertEqual(10, 2 * ar_block:get_max_tx_anchor_depth()),
 	Blocks = [B1, B2, B3
 		| lists:map(
 			fun(_) ->
