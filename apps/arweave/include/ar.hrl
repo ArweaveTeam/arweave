@@ -204,8 +204,6 @@
 -define(MEMPOOL_DATA_SIZE_LIMIT, 500 * 1024 * 1024).
 -endif.
 
--define(MAX_TX_ANCHOR_DEPTH, ?STORE_BLOCKS_BEHIND_CURRENT).
-
 %% Default timeout for establishing an HTTP connection.
 -define(HTTP_REQUEST_CONNECT_TIMEOUT, 10 * 1000).
 
@@ -315,17 +313,6 @@
 
 %% The adjustment of difficutly going from SHA-384 to RandomX.
 -define(RANDOMX_DIFF_ADJUSTMENT, (-14)).
--ifdef(AR_TEST).
--define(RANDOMX_KEY_SWAP_FREQ, (?STORE_BLOCKS_BEHIND_CURRENT + 1)).
--define(RANDOMX_MIN_KEY_GEN_AHEAD, 1).
--define(RANDOMX_MAX_KEY_GEN_AHEAD, 4).
--define(RANDOMX_KEEP_KEY, 3).
--else.
--define(RANDOMX_KEY_SWAP_FREQ, 2000).
--define(RANDOMX_MIN_KEY_GEN_AHEAD, (30 + ?STORE_BLOCKS_BEHIND_CURRENT)).
--define(RANDOMX_MAX_KEY_GEN_AHEAD, (90 + ?STORE_BLOCKS_BEHIND_CURRENT)).
--define(RANDOMX_KEEP_KEY, ?STORE_BLOCKS_BEHIND_CURRENT).
--endif.
 
 %% Max allowed difficulty multiplication and division factors, before the fork 2.4.
 -define(DIFF_ADJUSTMENT_DOWN_LIMIT, 2).
@@ -611,7 +598,7 @@
 	%% After 2.8 the new hash is computed from the new history element and the previous hash.
 	reward_history_hash,
 	%% The network hash rates, block rewards, and mining addresses from the latest
-	%% ?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT blocks. Used internally, not gossiped.
+	%% ?REWARD_HISTORY_BLOCKS + ar_block:get_consensus_window_size() blocks. Used internally, not gossiped.
 	reward_history = [],
 	%% The total number of Winston emitted when the endowment was not sufficient
 	%% to compensate mining.
@@ -716,7 +703,7 @@
 	id = <<>>,
 	%% Either the identifier of the previous transaction from
 	%% the same wallet or the identifier of one of the
-	%% last ?MAX_TX_ANCHOR_DEPTH blocks.
+	%% last ar_block:get_max_tx_anchor_depth() blocks.
 	last_tx = <<>>,
 	%% The public key the transaction is signed with.
 	owner =	<<>>,

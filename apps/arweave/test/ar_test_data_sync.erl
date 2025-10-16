@@ -7,7 +7,7 @@
 
 -export([setup_nodes/0, setup_nodes/1,
 		imperfect_split/1, build_proofs/3, build_proofs/5,
-        tx/2, tx/3, tx/4, wait_until_syncs_chunk/2,
+        tx/1, tx/2, tx/3, tx/4, wait_until_syncs_chunk/2,
         wait_until_syncs_chunks/1, wait_until_syncs_chunks/2, wait_until_syncs_chunks/3,
         get_tx_offset/2, get_tx_data/1,
         post_random_blocks/1, get_records_with_proofs/3, post_proofs/4, post_proofs/5,
@@ -59,54 +59,63 @@ tx(Wallet, SplitType, Format) ->
 	tx(Wallet, SplitType, Format, fetch).
 
 tx(Wallet, SplitType, Format, Reward) ->
+	tx(#{ wallet => Wallet, split_type => SplitType,
+			format => Format, reward => Reward }).
+
+tx(Params) when is_map(Params) ->
+	#{ wallet := Wallet, split_type := SplitType,
+		format := Format, reward := Reward } = Params,
+	TXAnchorPeer = maps:get(tx_anchor_peer, Params, main),
+	TXAnchor = ar_test_node:get_tx_anchor(TXAnchorPeer),
+	GetFeePeer = maps:get(get_fee_peer, Params, peer1),
 	case {SplitType, Format} of
 		{{fixed_data, DataRoot, Chunks}, v2} ->
 			Data = binary:list_to_bin(Chunks),
 			Args = #{ data_size => byte_size(Data), data_root => DataRoot,
-					last_tx => ar_test_node:get_tx_anchor(main) },
+					last_tx => TXAnchor },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			{ar_test_node:sign_tx(Wallet, Args2), Chunks};
+			{ar_test_node:sign_tx(GetFeePeer, Wallet, Args2), Chunks};
 		{{fixed_data, DataRoot, Chunks}, v1} ->
 			Data = binary:list_to_bin(Chunks),
 			Args = #{ data_size => byte_size(Data), data_root => DataRoot,
-					last_tx => ar_test_node:get_tx_anchor(main), data => Data },
+					last_tx => TXAnchor, data => Data },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			{ar_test_node:sign_v1_tx(Wallet, Args2), Chunks};
+			{ar_test_node:sign_v1_tx(GetFeePeer, Wallet, Args2), Chunks};
 		{original_split, v1} ->
 			{_, Chunks} = generate_random_original_v1_split(),
 			Data = binary:list_to_bin(Chunks),
-			Args = #{ data => Data, last_tx => ar_test_node:get_tx_anchor(main) },
+			Args = #{ data => Data, last_tx => TXAnchor },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			{ar_test_node:sign_v1_tx(Wallet, Args2), Chunks};
+			{ar_test_node:sign_v1_tx(GetFeePeer, Wallet, Args2), Chunks};
 		{original_split, v2} ->
 			{DataRoot, Chunks} = generate_random_original_split(),
 			Data = binary:list_to_bin(Chunks),
 			Args = #{ data_size => byte_size(Data), data_root => DataRoot,
-					last_tx => ar_test_node:get_tx_anchor(main) },
+					last_tx => TXAnchor },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			{ar_test_node:sign_tx(Wallet, Args2), Chunks};
+			{ar_test_node:sign_tx(GetFeePeer, Wallet, Args2), Chunks};
 		{{custom_split, ChunkNumber}, v2} ->
 			{DataRoot, Chunks} = generate_random_split(ChunkNumber),
 			Args = #{ data_size => byte_size(binary:list_to_bin(Chunks)),
-					last_tx => ar_test_node:get_tx_anchor(main), data_root => DataRoot },
+					last_tx => TXAnchor, data_root => DataRoot },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			TX = ar_test_node:sign_tx(Wallet, Args2),
+			TX = ar_test_node:sign_tx(GetFeePeer, Wallet, Args2),
 			{TX, Chunks};
 		{standard_split, v2} ->
 			{DataRoot, Chunks} = generate_random_standard_split(),
 			Data = binary:list_to_bin(Chunks),
 			Args = #{ data_size => byte_size(Data), data_root => DataRoot,
-					last_tx => ar_test_node:get_tx_anchor(main) },
+					last_tx => TXAnchor },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			TX = ar_test_node:sign_tx(Wallet, Args2),
+			TX = ar_test_node:sign_tx(GetFeePeer, Wallet, Args2),
 			{TX, Chunks};
 		{{original_split, ChunkNumber}, v2} ->
 			{DataRoot, Chunks} = generate_random_original_split(ChunkNumber),
 			Data = binary:list_to_bin(Chunks),
 			Args = #{ data_size => byte_size(Data), data_root => DataRoot,
-					last_tx => ar_test_node:get_tx_anchor(main) },
+					last_tx => TXAnchor },
 			Args2 = case Reward of fetch -> Args; _ -> Args#{ reward => Reward } end,
-			TX = ar_test_node:sign_tx(Wallet, Args2),
+			TX = ar_test_node:sign_tx(GetFeePeer, Wallet, Args2),
 			{TX, Chunks}
 	end.
 

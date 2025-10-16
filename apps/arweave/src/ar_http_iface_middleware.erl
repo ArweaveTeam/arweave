@@ -488,6 +488,33 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 			end
 	end;
 
+%% Return data root metadata for the block containing the offset, >= BlockStartOffset, < BlockEndOffset.
+%% Return only entries corresponding to non-empty transactions.
+%% Return the complete list of entries in the order they appear in the data root index,
+%% which corresponds to sorted #tx records in the block.
+%% GET /data_roots/{offset}
+handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
+			case catch binary_to_integer(OffsetBin) of
+				{'EXIT', _} ->
+					{400, #{}, <<>>, Req};
+				Offset ->
+					case ar_data_sync:get_data_roots_for_offset(Offset) of
+						{ok, {TXRoot, BlockSize, Entries}} ->
+							Payload = ar_serialize:data_roots_to_binary({TXRoot, BlockSize, Entries}),
+							{200, #{}, Payload, Req};
+						{error, not_found} ->
+							{404, #{}, jiffy:encode(#{ error => not_found }), Req};
+						_ ->
+							{500, #{}, <<>>, Req}
+					end
+			end
+	end;
+
 handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 	Joined =
 		case ar_node:is_joined() of
@@ -1615,14 +1642,14 @@ handle_get_block_index_range(Start, _End, CurrentHeight, _RecentBI, Req, _Encodi
 		when Start > CurrentHeight ->
 	{400, #{}, jiffy:encode(#{ error => start_too_big }), Req};
 handle_get_block_index_range(Start, End, CurrentHeight, RecentBI, Req, Encoding) ->
-	CheckpointHeight = CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT + 1,
+	CheckpointHeight = CurrentHeight - ar_block:get_consensus_window_size() + 1,
 	RecentRange =
 		case End >= CheckpointHeight of
 			true ->
 				Top = min(CurrentHeight, End),
 				Range1 = lists:nthtail(CurrentHeight - Top, RecentBI),
 				lists:sublist(Range1, min(Top - Start + 1,
-						?STORE_BLOCKS_BEHIND_CURRENT - (CurrentHeight - Top)));
+						ar_block:get_consensus_window_size() - (CurrentHeight - Top)));
 			false ->
 				[]
 		end,
@@ -2545,7 +2572,7 @@ post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	case ar_node:is_joined() of
 		true ->
-			ConfirmedHeight = ar_node:get_height() - ?STORE_BLOCKS_BEHIND_CURRENT,
+			ConfirmedHeight = ar_node:get_height() - ar_block:get_consensus_window_size(),
 			case {Encoding, ConfirmedHeight >= ar_fork:height_2_6()} of
 				{json, true} ->
 					%% We gesticulate it explicitly here that POST /block is not
