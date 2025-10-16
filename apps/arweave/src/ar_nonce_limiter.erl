@@ -439,11 +439,14 @@ get_blocks() ->
 	B = ar_node:get_current_block(),
 	[B | get_blocks(B#block.previous_block, 1)].
 
-get_blocks(_H, N) when N >= ?STORE_BLOCKS_BEHIND_CURRENT ->
-	[];
 get_blocks(H, N) ->
-	#block{} = B = ar_block_cache:get(block_cache, H),
-	[B | get_blocks(B#block.previous_block, N + 1)].
+	case N >= ar_block:get_consensus_window_size() of
+		true ->
+			[];
+		false ->
+			#block{} = B = ar_block_cache:get(block_cache, H),
+			[B | get_blocks(B#block.previous_block, N + 1)]
+	end.
 
 handle_call(get_current_step_number, _From,
 		#state{ current_session_key = undefined } = State) ->
@@ -612,7 +615,7 @@ handle_cast({initialize, _}, State) ->
 	{noreply, State};
 
 handle_cast({account_tree_initialized, Blocks}, State) ->
-	{noreply, handle_initialized(lists:sublist(Blocks, ?STORE_BLOCKS_BEHIND_CURRENT), State)};
+	{noreply, handle_initialized(lists:sublist(Blocks, ar_block:get_consensus_window_size()), State)};
 
 handle_cast({apply_tip, B, PrevB}, State) ->
 	{noreply, apply_tip2(B, PrevB, State)};

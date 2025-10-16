@@ -585,9 +585,9 @@ get_block_time_history([Peer | Peers], B, ExpectedBlockTimeHistoryHashes) ->
 	Fork_2_7 = ar_fork:height_2_7(),
 	true = Height >= Fork_2_7,
 	ExpectedLength = min(Height - Fork_2_7 + 1,
-			ar_block_time_history:history_length() + ?STORE_BLOCKS_BEHIND_CURRENT),
+			ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
 	true = length(ExpectedBlockTimeHistoryHashes) == min(Height - Fork_2_7 + 1,
-			?STORE_BLOCKS_BEHIND_CURRENT),
+			ar_block:get_consensus_window_size()),
 	case ar_http:req(#{
 				peer => Peer,
 				method => get,
