@@ -1323,13 +1323,16 @@ stop(_State) ->
 	?LOG_INFO([{stop, ?MODULE}]).
 
 stop_dependencies() ->
+	?LOG_INFO("========== Stopping Arweave Node  =========="),
 	{ok, [_Kernel, _Stdlib, _SASL, _OSMon | Deps]} = application:get_key(arweave, applications),
 	lists:foreach(fun(Dep) -> application:stop(Dep) end, Deps).
 
 start_dependencies() ->
+	?LOG_INFO("========== Starting Arweave Node  =========="),
 	{ok, Config} = arweave_config:get_env(),
+	ar_config:log_config(Config),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
-	ar_config:log_config(Config).
+	ok.
 
 %% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.
 %% for validating a block, will be blocked on initializing a RandomX dataset,
