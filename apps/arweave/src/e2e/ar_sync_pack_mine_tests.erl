@@ -1,8 +1,7 @@
 -module(ar_sync_pack_mine_tests).
 
--include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %% --------------------------------------------------------------------------------------------
@@ -28,95 +27,95 @@ replica_2_9_syncing_test_() ->
 	{setup, fun () -> setup_source_node(replica_2_9) end, 
 		fun (GenesisData) ->
 				[
-					instantiator(GenesisData, replica_2_9, fun test_replica_2_9_syncing/1)
-					% instantiator(GenesisData, spora_2_6, fun test_replica_2_9_syncing/1),
-					% instantiator(GenesisData, unpacked, fun test_replica_2_9_syncing/1)
+					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
 				]
 		end}.
 
-% spora_2_6_sync_pack_mine_test_() ->
-% 	{setup, fun () -> setup_source_node(spora_2_6) end, 
-% 		fun (GenesisData) ->
-% 				[
-% 					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
-% 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
-% 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
-% 				]
-% 		end}.
+spora_2_6_sync_pack_mine_test_() ->
+	{setup, fun () -> setup_source_node(spora_2_6) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+				]
+		end}.
 
-% unpacked_sync_pack_mine_test_() ->
-% 	{setup, fun () -> setup_source_node(unpacked) end, 
-% 		fun (GenesisData) ->
-% 				[
-% 					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
-% 					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
-% 					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
-% 				]
-% 		end}.
+unpacked_sync_pack_mine_test_() ->
+	{setup, fun () -> setup_source_node(unpacked) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
+				]
+		end}.
 
-% % Note: we should limit the number of tests run per setup_source_node to 5, if it gets
-% % too long then the source node may hit a difficulty adjustment, which can impact the
-% % results.
-% unpacked_edge_case_test_() ->
-% 	{setup, fun () -> setup_source_node(unpacked) end, 
-% 		fun (GenesisData) ->
-% 				[
-% 					instantiator(GenesisData, {replica_2_9, unpacked}, 
-% 						fun test_unpacked_and_packed_sync_pack_mine/1),
-% 					instantiator(GenesisData, {unpacked, replica_2_9}, 
-% 						fun test_unpacked_and_packed_sync_pack_mine/1),
-% 					instantiator(GenesisData, replica_2_9, 
-% 						fun test_entropy_first_sync_pack_mine/1),
-% 					instantiator(GenesisData, replica_2_9, 
-% 						fun test_entropy_last_sync_pack_mine/1)
-% 				]
-% 		end}.
+% Note: we should limit the number of tests run per setup_source_node to 5, if it gets
+% too long then the source node may hit a difficulty adjustment, which can impact the
+% results.
+unpacked_edge_case_test_() ->
+	{setup, fun () -> setup_source_node(unpacked) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, {replica_2_9, unpacked}, 
+						fun test_unpacked_and_packed_sync_pack_mine/1),
+					instantiator(GenesisData, {unpacked, replica_2_9}, 
+						fun test_unpacked_and_packed_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_entropy_first_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_entropy_last_sync_pack_mine/1)
+				]
+		end}.
 
-% spora_2_6_edge_case_test_() ->
-% 	{setup, fun () -> setup_source_node(spora_2_6) end, 
-% 		fun (GenesisData) ->
-% 				[
-% 					instantiator(GenesisData, {replica_2_9, unpacked}, 
-% 						fun test_unpacked_and_packed_sync_pack_mine/1),
-% 					instantiator(GenesisData, {unpacked, replica_2_9}, 
-% 						fun test_unpacked_and_packed_sync_pack_mine/1),
-% 					instantiator(GenesisData, replica_2_9, 
-% 						fun test_entropy_first_sync_pack_mine/1),
-% 					instantiator(GenesisData, replica_2_9, 
-% 						fun test_entropy_last_sync_pack_mine/1)
-% 				]
-% 		end}.
+spora_2_6_edge_case_test_() ->
+	{setup, fun () -> setup_source_node(spora_2_6) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, {replica_2_9, unpacked}, 
+						fun test_unpacked_and_packed_sync_pack_mine/1),
+					instantiator(GenesisData, {unpacked, replica_2_9}, 
+						fun test_unpacked_and_packed_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_entropy_first_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_entropy_last_sync_pack_mine/1)
+				]
+		end}.
 
-% unpacked_small_module_test_() ->
-% 	{setup, fun () -> setup_source_node(unpacked) end, 
-% 		fun (GenesisData) ->
-% 				[
-% 					instantiator(GenesisData, replica_2_9, 
-% 						fun test_small_module_aligned_sync_pack_mine/1),
-% 					instantiator(GenesisData, replica_2_9, 
-% 						fun test_small_module_unaligned_sync_pack_mine/1)
-% 				]
-% 	end}.
+unpacked_small_module_test_() ->
+	{setup, fun () -> setup_source_node(unpacked) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, 
+						fun test_small_module_aligned_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_small_module_unaligned_sync_pack_mine/1)
+				]
+	end}.
 	
-% spora_2_6_small_module_test_() ->
-% 	{setup, fun () -> setup_source_node(spora_2_6) end, 
-% 		fun (GenesisData) ->
-% 				[
-% 					instantiator(GenesisData, replica_2_9, 
-% 						fun test_small_module_aligned_sync_pack_mine/1),
-% 					instantiator(GenesisData, replica_2_9, 
-% 						fun test_small_module_unaligned_sync_pack_mine/1)
-% 				]
-% 		end}.
+spora_2_6_small_module_test_() ->
+	{setup, fun () -> setup_source_node(spora_2_6) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, 
+						fun test_small_module_aligned_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_small_module_unaligned_sync_pack_mine/1)
+				]
+		end}.
 
-% disk_pool_threshold_test_() ->
-% 	[
-% 		instantiator(unpacked, replica_2_9, fun test_disk_pool_threshold/1),
-% 		instantiator(unpacked, spora_2_6, fun test_disk_pool_threshold/1),
-% 		instantiator(spora_2_6, replica_2_9, fun test_disk_pool_threshold/1),
-% 		instantiator(spora_2_6, spora_2_6, fun test_disk_pool_threshold/1),
-% 		instantiator(spora_2_6, unpacked, fun test_disk_pool_threshold/1)
-% 	].
+disk_pool_threshold_test_() ->
+	[
+		instantiator(unpacked, replica_2_9, fun test_disk_pool_threshold/1),
+		instantiator(unpacked, spora_2_6, fun test_disk_pool_threshold/1),
+		instantiator(spora_2_6, replica_2_9, fun test_disk_pool_threshold/1),
+		instantiator(spora_2_6, spora_2_6, fun test_disk_pool_threshold/1),
+		instantiator(spora_2_6, unpacked, fun test_disk_pool_threshold/1)
+	].
 
 %% --------------------------------------------------------------------------------------------
 %% test_sync_pack_mine
@@ -146,18 +145,6 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 			ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
 			ok
 	end.
-
-test_replica_2_9_syncing({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
-	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
-	?LOG_INFO([{event, test_replica_2_9_syncing}, {module, ?MODULE},
-		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
-	[B0 | _] = Blocks,
-	SourceNode = peer1,
-	SinkNode = peer2,
-
-	start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
-	ar_e2e:assert_syncs_range(SinkNode,
-		ar_block:partition_size(), 2*ar_block:partition_size()).
 
 test_unpacked_and_packed_sync_pack_mine(
 		{{Blocks, _Chunks, SourcePackingType}, {PackingType1, PackingType2}}) ->
@@ -340,9 +327,9 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
 	),
 
-	RangeStart = floor(1 * ar_block:partition_size()),
-	RangeEnd = floor(1.5 * ar_block:partition_size()) + ar_storage_module:get_overlap(SinkPacking),
-	RangeSize = RangeEnd - RangeStart,
+	RangeStart = floor(ar_block:partition_size()),
+	RangeEnd = floor(1.5 * ar_block:partition_size()),
+	RangeSize = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
 
 	%% Make sure the expected data was synced
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
@@ -389,8 +376,8 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	),
 
 	RangeStart = floor(1.5 * ar_block:partition_size()),
-	RangeEnd = floor(2 * ar_block:partition_size()) + ar_storage_module:get_overlap(SinkPacking),
-	RangeSize = RangeEnd - RangeStart,
+	RangeEnd = floor(2 * ar_block:partition_size()),
+	RangeSize = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
 
 	%% Make sure the expected data was synced	
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
@@ -431,10 +418,14 @@ test_disk_pool_threshold({SourcePackingType, SinkPackingType}) ->
 	[B0 | _] = Blocks,
 
 	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
+	RangeStart = floor(2 * ar_block:partition_size()),
+	RangeEnd = floor(2.5 * ar_block:partition_size()),
+	RangeSize = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
+
 	%% Partition 1 and half of partition 2 are below the disk pool threshold
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, ar_block:partition_size(), 4*ar_block:partition_size()),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
-	ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, floor(0.5*ar_block:partition_size())),
+	ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, RangeSize),
 	ar_e2e:assert_empty_partition(SinkNode, 3, SinkPacking),
 	ar_e2e:assert_does_not_sync_range(SinkNode, 0, ar_block:partition_size()),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),

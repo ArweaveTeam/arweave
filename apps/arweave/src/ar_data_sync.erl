@@ -1223,7 +1223,8 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	?LOG_DEBUG([{event, enqueue_intervals}, {pid, self()},
 		{queue_before, gb_sets:size(Q)}, {queue_after, gb_sets:size(Q2)},
 		{num_peers, NumPeers}, {chunks_per_peer, ChunksPerPeer},
-		{intervals, Intervals}]),
+		{intervals, Intervals}, {q_intervals_before, ar_intervals:to_list(QIntervals)},
+		{q_intervals_after, ar_intervals:to_list(QIntervals2)}]),
 
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
@@ -1252,16 +1253,6 @@ handle_cast({pack_and_store_chunk, Args} = Cast,
 	case is_disk_space_sufficient(StoreID) of
 		true ->
 			pack_and_store_chunk(Args, State);
-		_ ->
-			ar_util:cast_after(30000, self(), Cast),
-			{noreply, State}
-	end;
-
-handle_cast({store_chunk, ChunkArgs, Args} = Cast,
-		#sync_data_state{ store_id = StoreID } = State) ->
-	case is_disk_space_sufficient(StoreID) of
-		true ->
-			{noreply, store_chunk(ChunkArgs, Args, State)};
 		_ ->
 			ar_util:cast_after(30000, self(), Cast),
 			{noreply, State}
@@ -1772,10 +1763,11 @@ do_sync_data(State) ->
 	OtherStorageModules = [ar_storage_module:id(Module)
 			|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
 			ar_storage_module:id(Module) /= StoreID],
-	?LOG_INFO([{event, sync_data}, {store_id, StoreID}, {range_start, RangeStart},
-			{range_end, RangeEnd}, {disk_pool_threshold, DiskPoolThreshold},
-			{default_intervals, length(Intervals)},
-			{other_storage_modules, length(OtherStorageModules)}]),
+	?LOG_INFO([{event, sync_data}, {stage, copy_from_default_storage_module},
+		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd},
+		{range_end, RangeEnd}, {disk_pool_threshold, DiskPoolThreshold},
+		{default_intervals, length(Intervals)},
+		{other_storage_modules, length(OtherStorageModules)}]),
 	State#sync_data_state{
 		unsynced_intervals_from_other_storage_modules = Intervals,
 		other_storage_modules_with_unsynced_intervals = OtherStorageModules
@@ -1787,8 +1779,8 @@ do_sync_data2(#sync_data_state{
 		other_storage_modules_with_unsynced_intervals = [] } = State) ->
 	#sync_data_state{ store_id = StoreID,
 		range_start = RangeStart, range_end = RangeEnd } = State,
-	?LOG_INFO([{event, sync_data_complete}, {store_id, StoreID}, {range_start, RangeStart},
-			{range_end, RangeEnd}]),
+	?LOG_INFO([{event, sync_data}, {stage, complete},
+		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd}]),
 	ar_util:cast_after(2000, self(), collect_peer_intervals),
 	State;
 %% @doc Check to see if a neighboring storage_module may have already synced one of our
@@ -1798,9 +1790,11 @@ do_sync_data2(#sync_data_state{
 			unsynced_intervals_from_other_storage_modules = [],
 			other_storage_modules_with_unsynced_intervals = [OtherStoreID | OtherStoreIDs]
 		} = State) ->
-	Intervals =
-		case ar_storage_module:get_packing(OtherStoreID) of
-			{replica_2_9, _} ->
+	Packing = ar_storage_module:get_packing(StoreID),
+	OtherPacking = ar_storage_module:get_packing(OtherStoreID),
+	Intervals = 
+		case {Packing == OtherPacking, OtherPacking} of
+			{false, {replica_2_9, _}} ->
 				%% Do not unpack the 2.9 data by default, finding unpacked data
 				%% may be cheaper.
 				[];
@@ -1808,6 +1802,10 @@ do_sync_data2(#sync_data_state{
 				get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
 						RangeStart, RangeEnd)
 		end,
+	?LOG_INFO([{event, sync_data}, {stage, copy_from_other_storage_modules},
+		{store_id, StoreID}, {other_store_id, OtherStoreID}, 
+		{range_start, RangeStart}, {range_end, RangeEnd},
+		{found_intervals, length(Intervals)}]),
 	gen_server:cast(self(), sync_data2),
 	State#sync_data_state{
 		unsynced_intervals_from_other_storage_modules = Intervals,
