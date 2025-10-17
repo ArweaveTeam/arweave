@@ -293,7 +293,12 @@ test_node_blacklisting_post_spammer() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_tx_binary),
 	NErrors = 11,
 	NRequests = Config#config.requests_per_minute_limit div 2 + NErrors,
-	node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, NErrors).
+	node_blacklisting_test_frame(
+		RequestFun,
+		ErrorResponse,
+		NRequests,
+		NErrors
+	).
 
 %% @doc Given a label, return a fun and a message.
 -spec get_fun_msg_pair(atom()) -> {fun(), any()}.
@@ -325,13 +330,16 @@ send_tx_binary(Index, InvalidTX) ->
 
 
 %% @doc Frame to test spamming an endpoint.
-%% TODO: Perform the requests in parallel. Just changing the lists:map/2 call
-%% to an ar_util:pmap/2 call fails the tests currently.
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
 	ar_blacklist_middleware:reset(),
 	ar_rate_limiter:off(),
-	Responses = lists:map(RequestFun, lists:seq(1, NRequests)),
+	Responses = ar_util:batch_pmap(
+		RequestFun,
+		lists:seq(1, NRequests),
+		50,
+		60_000
+	),
 	?assertEqual(length(Responses), NRequests),
 	ar_blacklist_middleware:reset(),
 	Got = count_by_response_type(ErrorResponse, Responses),

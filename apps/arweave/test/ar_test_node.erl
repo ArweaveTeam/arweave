@@ -129,34 +129,72 @@ boot_peer(TestType, Node) ->
 	try_boot_peer(TestType, Node, ?MAX_BOOT_RETRIES).
 
 try_boot_peer(_TestType, _Node, 0) ->
-    %% You might log an error or handle this case specifically as per your application logic.
-    {error, max_retries_exceeded};
+	%% You might log an error or handle this case specifically
+	%% as per your application logic.
+	{error, max_retries_exceeded};
 try_boot_peer(TestType, Node, Retries) ->
-    NodeName = peer_name(Node),
-    Port = get_unused_port(),
-    Cookie = erlang:get_cookie(),
-
+	NodeName = peer_name(Node),
+	Port = get_unused_port(),
+	Cookie = erlang:get_cookie(),
 	Paths = code:get_path(),
-
-    filelib:ensure_dir("./.tmp"),
+	filelib:ensure_dir("./.tmp"),
 	Schedulers = erlang:system_info(schedulers_online),
-    Cmd = io_lib:format(
-        "erl +S ~B:~B -pa ~s -config config/sys.config -noshell " ++
-		"-name ~s -setcookie ~s -run ar main debug port ~p " ++
-        "data_dir .tmp/data_~s_~s no_auto_join disable_replica_2_9_device_limit " ++
-		"> ~s-~s.out 2>&1 &",
-        [Schedulers, Schedulers, string:join(Paths, " "), NodeName, Cookie, Port,
-			atom_to_list(TestType), NodeName, Node, get_node_namespace()]),
-	io:format("Launching peer ~p: ~s~n", [Node, Cmd]),
-    os:cmd(Cmd),
-    case wait_until_node_is_ready(NodeName) of
-        {ok, _Node} ->
-            io:format("~s started at port ~p.~n", [NodeName, Port]),
-            {node(), NodeName};
-        {error, Reason} ->
-            io:format("Error starting ~s: ~p. Retries left: ~p~n", [NodeName, Reason, Retries]),
-            try_boot_peer(TestType, Node, Retries - 1)
-    end.
+	RawCommand = string:join([
+		"erl +S ~B:~B",
+		"-pa", "~s",
+		"-config", "config/sys.config",
+		"-noshell",
+		"-name", "~s",
+		"-setcookie", "~s",
+		"-run ar main",
+		"debug",
+		"port", "~p",
+		"data_dir", ".tmp/data_~s_~s",
+		"no_auto_join",
+		"disable_replica_2_9_device_limit",
+		"> ~s-~s.out 2>&1"
+	], " "),
+	CommandParams = [
+		Schedulers,
+		Schedulers,
+		string:join(Paths, " "),
+		NodeName,
+		Cookie,
+		Port,
+		atom_to_list(TestType),
+		NodeName,
+		Node,
+		get_node_namespace()
+	],
+	Cmd = io_lib:format(RawCommand, CommandParams),
+	run_command(Node, Cmd),
+	case wait_until_node_is_ready(NodeName) of
+		{ok, _Node} ->
+			io:format("~s started at port ~p.~n", [NodeName, Port]),
+			{node(), NodeName};
+		{error, Reason} ->
+			io:format("Error starting ~s: ~p. Retries left: ~p~n", [NodeName, Reason, Retries]),
+			try_boot_peer(TestType, Node, Retries - 1)
+	end.
+
+%%--------------------------------------------------------------------
+%% @doc run a command in asynchronous way using `spawn/1' instead of
+%% using `&' from shell feature.
+%% @end 
+%%--------------------------------------------------------------------
+run_command(Node, Command) ->
+	spawn(fun() -> run_command_init(Node, Command) end).
+
+%% @hidden
+run_command_init(Node, Command) ->
+	io:format("Launching peer (~p) ~p: ~s~n", [self(), Node, Command]),
+	try
+		Result = os:cmd(Command),
+		io:format("command result: ~p~n", [Result])
+	catch
+		E:R:S ->
+			io:format("failed command: ~p:~p:~p~n", [E,R,S])
+	end.
 
 wait_for_peers([]) ->
 	ok;
@@ -193,7 +231,8 @@ stop_peer(Node) ->
 	try
 		rpc:call(peer_name(Node), init, stop, [], 30000)
 	catch
-		_:_ ->
+		E:R:S ->
+			io:format("stop_peer error: ~p:~p:~p~n", [E,R,S]),
 			%% we don't care if the node is already stopped
 			ok
 	end.
@@ -259,6 +298,7 @@ start_node(B0, Config) ->
 start_node(B0, Config, WaitUntilSync) ->
 	?LOG_INFO("Starting node"),
 	clean_up_and_stop(),
+	arweave_config:start(),
 	{ok, BaseConfig} = arweave_config:get_env(),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
 	update_config(Config),
@@ -559,6 +599,7 @@ start() ->
 	start(#{}).
 
 start(Options) when is_map(Options) ->
+	arweave_config:start(),
 	B0 =
 		case maps:get(b0, Options, not_set) of
 			not_set ->
@@ -609,6 +650,7 @@ start(B0, RewardAddr, Config) ->
 %% Config after the test is done. Otherwise the tests that run after yours may fail.
 start(B0, RewardAddr, Config, StorageModules) ->
 	clean_up_and_stop(),
+	arweave_config:start(),
 	write_genesis_files(Config#config.data_dir, B0),
 	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = true,
@@ -1050,12 +1092,13 @@ safe_remote_call(Node, Module, Function, Args) ->
     try rpc:call(Node, Module, Function, Args, 30000) of
         Result -> {ok, Result}
     catch
-        error:Reason ->
+        error:Reason:S ->
             %% Log the error if necessary
-            io:format("Remote call error: ~p~n", [Reason]),
+            io:format("Remote call error: ~p:~p~n", [Reason,S]),
             {error, Reason};
-        _:_ ->
+	E:R:S ->
             %% Catching other exceptions, returning a general error.
+            io:format("Remote call error: ~p:~p:~p~n", [E,R,S]),
             {error, unknown}
     end.
 

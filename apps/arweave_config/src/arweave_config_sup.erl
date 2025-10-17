@@ -40,4 +40,14 @@ supervisor() ->
 %% @hidden
 %%--------------------------------------------------------------------
 children() ->
-	[].
+	[
+		#{
+			id => arweave_config_legacy,
+			start => {
+				arweave_config_legacy,
+				start_link,
+				[]
+			},
+			type => worker
+		}
+	].

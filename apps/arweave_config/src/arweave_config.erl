@@ -66,7 +66,7 @@ stop() ->
 -spec get_env() -> {ok, #config{}}.
 
 get_env() ->
-	application:get_env(arweave_config, config).
+	arweave_config_legacy:get_env().
 
 %%--------------------------------------------------------------------
 %% @doc A wrapper for `application:set_env/3'.
@@ -78,7 +78,7 @@ get_env() ->
 -spec set_env(term()) -> ok.
 
 set_env(Value) ->
-	application:set_env(arweave_config, config, Value).
+	arweave_config_legacy:set_env(Value).
 
 %%--------------------------------------------------------------------
 %% @hidden
