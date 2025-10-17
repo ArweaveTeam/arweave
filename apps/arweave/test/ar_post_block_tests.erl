@@ -1,7 +1,7 @@
 -module(ar_post_block_tests).
 
--include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 

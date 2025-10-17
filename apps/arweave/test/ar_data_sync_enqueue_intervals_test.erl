@@ -2,9 +2,9 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
 
 enqueue_intervals_test() ->
 	?LOG_DEBUG([{event, enqueue_intervals_test}]),

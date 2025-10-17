@@ -257,7 +257,7 @@ get_next_synced_interval(Offset, EndOffsetUpperBound, Packing, ID, StoreID) ->
 get_next_unsynced_interval(Offset, EndOffsetUpperBound, Packing, ID, StoreID) ->
 	case ets:lookup(sync_records, {ID, Packing, StoreID}) of
 		[] ->
-			not_found;
+			{EndOffsetUpperBound, Offset};
 		[{_, TID}] ->
 			ar_ets_intervals:get_next_interval_outside(TID, Offset, EndOffsetUpperBound)
 	end.

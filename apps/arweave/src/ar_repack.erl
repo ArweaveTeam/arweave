@@ -1159,7 +1159,6 @@ test_cache_size() ->
 footprint_offsets_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
-			{ar_block, partition_size, fun() -> 2_000_000 end},
 			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
 			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
@@ -1278,7 +1277,6 @@ test_footprint_offsets_large() ->
 footprint_end_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
-			{ar_block, partition_size, fun() -> 2_000_000 end},
 			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
 			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
@@ -1825,14 +1823,12 @@ test_init_repack_chunk_map_b() ->
 get_read_range_test_() ->
 	[
 		ar_test_node:test_with_mocked_functions([
-			{ar_block, partition_size, fun() -> 2_000_000 end},
 			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
 			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, strict_data_split_threshold, fun() -> 5_000_000 end}
 		],
 			fun test_get_read_range_before_strict/0, 30),
 		ar_test_node:test_with_mocked_functions([
-			{ar_block, partition_size, fun() -> 2_000_000 end},
 			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
 			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}

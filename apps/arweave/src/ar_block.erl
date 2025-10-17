@@ -26,10 +26,10 @@
 		get_sub_chunk_index/2,
 		get_chunk_padded_offset/1, get_double_signing_condition/4]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_block.hrl").
--include("../include/ar_vdf.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_block.hrl").
+-include("ar_vdf.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 

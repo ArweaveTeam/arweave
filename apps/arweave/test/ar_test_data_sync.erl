@@ -318,17 +318,17 @@ post_blocks(Wallet, BlockMap) ->
 	).
 
 post_proofs(Peer, B, TX, Chunks) ->
-	post_proofs(Peer, B, TX, Chunks, false).
-post_proofs(Peer, B, TX, Chunks, IsTemporary) ->
+	post_proofs(Peer, B, TX, Chunks, infinity).
+post_proofs(Peer, B, TX, Chunks, DiskPoolThreshold) ->
 	Proofs = build_proofs(B, TX, Chunks),
-
-	HttpStatus = case IsTemporary of
-		true -> <<"303">>;
-		false -> <<"200">>
-	end,
 
 	lists:foreach(
 		fun({_, Proof}) ->
+			Offset = binary_to_integer(maps:get(offset, Proof)),
+			HttpStatus = case Offset > DiskPoolThreshold of
+				true -> <<"303">>;
+				false -> <<"200">>
+			end,
 			{ok, {{HttpStatus, _}, _, _, _, _}} =
 				ar_test_node:post_chunk(Peer, ar_serialize:jsonify(Proof))
 		end,
@@ -339,7 +339,6 @@ post_proofs(Peer, B, TX, Chunks, IsTemporary) ->
 wait_until_syncs_chunk(Offset, ExpectedProof) ->
 	true = ar_util:do_until(
 		fun() ->
-			?debugFmt("Waiting for chunk ~p~n", [Offset]),
 			case ar_test_node:get_chunk(main, Offset) of
 				{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} ->
 					Proof = jiffy:decode(ProofJSON, [return_maps]),
@@ -382,7 +381,6 @@ wait_until_syncs_chunks(Node, Proofs, UpperBound) ->
 						true ->
 							true;
 						false ->
-							?debugFmt("Waiting for chunk ~p~n", [EndOffset]),
 							case ar_test_node:get_chunk(Node, EndOffset) of
 								{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} ->
 									FetchedProof = ar_serialize:json_map_to_poa_map(

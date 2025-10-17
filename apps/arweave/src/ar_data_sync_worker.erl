@@ -162,6 +162,7 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
 			{true, Packing2} ->
 				{Packing2, ar_data_sync:get_chunk_by_byte(Start + 1, OriginStoreID)}
 		end,
+	PaddedEnd = ar_block:get_chunk_padded_offset(End),
 	case ReadChunkMetadata of
 		ok ->
 			ok;
@@ -177,7 +178,7 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
 		{_, {error, Reason}} ->
 			?LOG_ERROR([{event, failed_to_query_chunk_metadata}, {offset, Start + 1},
 					{reason, io_lib:format("~p", [Reason])}]);
-		{_, {ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}}} when AbsoluteOffset > End ->
+		{_, {ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}}} when AbsoluteOffset > PaddedEnd ->
 			ok;
 		{Packing3, {ok, _Key, {AbsoluteOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
 				RelativeOffset, ChunkSize}}} ->

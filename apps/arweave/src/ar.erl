@@ -14,10 +14,10 @@
 		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
 		docs/0, shutdown/1, console/1, console/2, prep_stop/1]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_verify_chunks.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
+-include("ar_verify_chunks.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -1343,13 +1343,16 @@ stop(_State) ->
 	?LOG_INFO([{stop, ?MODULE}]).
 
 stop_dependencies() ->
+	?LOG_INFO("========== Stopping Arweave Node  =========="),
 	{ok, [_Kernel, _Stdlib, _SASL, _OSMon | Deps]} = application:get_key(arweave, applications),
 	lists:foreach(fun(Dep) -> application:stop(Dep) end, Deps).
 
 start_dependencies() ->
+	?LOG_INFO("========== Starting Arweave Node  =========="),
 	{ok, Config} = application:get_env(arweave, config),
+	ar_config:log_config(Config),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
-	ar_config:log_config(Config).
+	ok.
 
 %% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.
 %% for validating a block, will be blocked on initializing a RandomX dataset,

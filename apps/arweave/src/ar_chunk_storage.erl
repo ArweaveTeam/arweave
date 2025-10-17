@@ -19,11 +19,11 @@
 %% Used in tests.
 -export([delete_chunk/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_sup.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_chunk_storage.hrl").
+-include("ar.hrl").
+-include("ar_sup.hrl").
+-include("ar_config.hrl").
+-include("ar_consensus.hrl").
+-include("ar_chunk_storage.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -927,7 +927,6 @@ modules_to_defrag(#config{storage_modules = Modules}) -> Modules.
 
 chunk_bucket_test() ->
 	ar_test_node:test_with_mocked_functions([
-		{ar_block, partition_size, fun() -> 2_000_000 end},
 		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 	],
 	fun test_chunk_bucket/0, 30).
@@ -1004,7 +1003,6 @@ test_chunk_bucket() ->
 
 get_chunk_byte_from_bucket_end_test() ->
 	ar_test_node:test_with_mocked_functions([
-		{ar_block, partition_size, fun() -> 2_000_000 end},
 		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 	],
 	fun test_get_chunk_byte_from_bucket_end/0, 30).

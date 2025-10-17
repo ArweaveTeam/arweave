@@ -13,8 +13,8 @@
 	terminate/2
 ]).
 
--include("../include/ar.hrl").
--include("../include/ar_config.hrl").
+-include("ar.hrl").
+-include("ar_config.hrl").
 -record(state, {
 	last_seen_tx_timestamp = 0,
 	pending_txids = []

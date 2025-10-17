@@ -14,13 +14,13 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([set_reward_addr/1]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_pricing.hrl").
--include("../include/ar_data_sync.hrl").
--include("../include/ar_vdf.hrl").
--include("../include/ar_mining.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_config.hrl").
+-include("ar_pricing.hrl").
+-include("ar_data_sync.hrl").
+-include("ar_vdf.hrl").
+-include("ar_mining.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 

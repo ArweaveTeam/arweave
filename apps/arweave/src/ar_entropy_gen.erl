@@ -9,10 +9,10 @@
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_sup.hrl").
--include("../include/ar_config.hrl").
--include("../include/ar_consensus.hrl").
+-include("ar.hrl").
+-include("ar_sup.hrl").
+-include("ar_config.hrl").
+-include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -536,7 +536,6 @@ store_cursor(Cursor, StoreID) ->
 
 entropy_offsets_test_() ->
 	ar_test_node:test_with_mocked_functions([
-		{ar_block, partition_size, fun() -> 2_000_000 end},
 		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 	],
 	fun test_entropy_offsets/0, 30).
