@@ -225,7 +225,7 @@ aligned_partition_size(PartitionNumber, Packing) ->
 aligned_partition_size(Start, End, Packing) ->
 	EndWithOverlap = End + ar_storage_module:get_overlap(Packing),
 	AlignedStart = ar_util:floor_int(Start, ?DATA_CHUNK_SIZE),
-	AlignedEnd = ar_util:floor_int(EndWithOverlap, ?DATA_CHUNK_SIZE),
+	AlignedEnd = ar_util:ceil_int(EndWithOverlap, ?DATA_CHUNK_SIZE),
 	AlignedEnd - AlignedStart.
 
 source_node_storage_modules(Node, PackingType, WalletFixture) ->
