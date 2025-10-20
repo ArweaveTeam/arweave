@@ -27,6 +27,15 @@ jobs:
       os_name: macos
       os_release: 26
 
+  common-test:
+    needs: [test-canary]
+    uses: ./.github/workflows/x-common-test.yml
+    secrets: inherit
+    with:
+      os_arch: arm64
+      os_name: macos
+      os_release: 26
+
   test:
     needs: [test-canary]
     uses: ./.github/workflows/x-test-vdf.yml

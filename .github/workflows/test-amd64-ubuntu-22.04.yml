@@ -19,6 +19,11 @@ jobs:
     uses: ./.github/workflows/x-test-canary.yml
     secrets: inherit
 
+  common-test:
+    needs: [test-canary]
+    uses: ./.github/workflows/x-common-test.yml
+    secrets: inherit
+
   test:
     needs: [test-canary]
     uses: ./.github/workflows/x-test-full.yml

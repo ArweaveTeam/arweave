@@ -36,7 +36,9 @@ main() ->
 main("") ->
 	show_help();
 main(Args) ->
-	start(parse_config_file(Args, [], #config{})).
+	arweave_config:start(),
+	ConfigFile = parse_config_file(Args, [], #config{}),
+	start(ConfigFile).
 
 show_help() ->
 	io:format("Usage: arweave-server [options]~n"),
@@ -1340,12 +1342,13 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 		_ -> ?TEST_SUITE_TIMEOUT
 	end,
 	try
+		arweave_config:start(),
 		start_for_tests(TestType, Config),
 		ar_test_node:boot_peers(TestType),
 		ar_test_node:wait_for_peers(TestType)
 	catch
-		Type:Reason ->
-			io:format("Failed to start the peers due to ~p:~p~n", [Type, Reason]),
+		Type:Reason:S ->
+			io:format("Failed to start the peers due to ~p:~p:~p~n", [Type, Reason, S]),
 			init:stop(1)
 	end,
 	Result =
