@@ -1,15 +1,15 @@
 %%%===================================================================
+%%% GNU General Public License, version 2 (GPL-2.0)
+%%% The GNU General Public License (GPL-2.0)
+%%% Version 2, June 1991
+%%%
+%%% ------------------------------------------------------------------
+%%%
 %%% @author Arweave Team
 %%% @author Mathieu Kerjouan
 %%% @copyright 2025 (c) Arweave
 %%% @doc
 %%% @end
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
 %%%===================================================================
 -module(arweave_config_legacy_SUITE).
 -export([suite/0, description/0]).

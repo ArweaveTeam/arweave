@@ -1,15 +1,15 @@
 %%%===================================================================
+%%% GNU General Public License, version 2 (GPL-2.0)
+%%% The GNU General Public License (GPL-2.0)
+%%% Version 2, June 1991
+%%%
+%%% ------------------------------------------------------------------
+%%%
 %%% @copyright 2025 (c) Arweave
 %%% @author Arweave Team
 %%% @author Mathieu Kerjouan
 %%% @doc Arweave Configuration Application Supervisor.
 %%% @end
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
 %%%===================================================================
 -module(arweave_config_sup).
 -export([start_link/0]).
@@ -41,6 +41,33 @@ supervisor() ->
 %%--------------------------------------------------------------------
 children() ->
 	[
+		#{
+			id => arweave_config,
+			start => {
+				arweave_config,
+				start_link,
+				[]
+			},
+			type => worker
+		},
+		#{
+			id => arweave_config_store,
+			start => {
+				arweave_config_store,
+				start_link,
+				[]
+			},
+			type => worker
+		},
+		#{
+			id => arweave_config_spec,
+			start => {
+				arweave_config_spec,
+				start_link,
+				[]
+			},
+			type => worker
+		},
 		#{
 			id => arweave_config_legacy,
 			start => {

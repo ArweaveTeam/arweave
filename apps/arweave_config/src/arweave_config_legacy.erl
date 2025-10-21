@@ -1,4 +1,10 @@
 %%%===================================================================
+%%% GNU General Public License, version 2 (GPL-2.0)
+%%% The GNU General Public License (GPL-2.0)
+%%% Version 2, June 1991
+%%%
+%%% ------------------------------------------------------------------
+%%%
 %%% @copyright 2025 (c) Arweave
 %%% @author Arweave Team
 %%% @author Mathieu Kerjouan
@@ -228,9 +234,9 @@ handle_call(Msg = {set, Key, Value, Opts}, From, State)
 	when is_atom(Key), is_map(Opts) ->
 		?LOG_DEBUG([{message, Msg}, {from, From}]),
 		OldValue = proplists:get_value(Key, State),
-		Return = {ok, Value, OldValue},
 		NewState = lists:keyreplace(Key, 1, State, {Key, Value}),
 		set_environment(NewState),
+		Return = {ok, Value, OldValue},
 		{reply, Return, NewState};
 handle_call(Msg = get_env, From, State) ->
 	?LOG_DEBUG([{message, Msg}, {from, From}]),
