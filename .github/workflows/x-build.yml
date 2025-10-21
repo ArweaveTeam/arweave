@@ -51,7 +51,7 @@ jobs:
 
       # only arweave dependencies are being cached,
       # those are not updated everyday and this is
-      # unecessary to fetch them everytime.
+      # unnecessary to fetch them everytime.
       - name: extract cache
         uses: actions/cache@v4
         id: cache
