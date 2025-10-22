@@ -231,7 +231,11 @@ get_next_synced_interval(Offset, EndOffsetUpperBound, ID, StoreID) ->
 
 %% @doc Return the lowest unsynced interval with the end offset strictly above the given Offset
 %% and at most EndOffsetUpperBound.
-%% Return not_found if there are no such intervals.
+%% Return not_found when Offset >= EndOffsetUpperBound.
+%% Return {EndOffsetUpperBound, Offset} when no records are found.
+get_next_unsynced_interval(Offset, EndOffsetUpperBound, _ID, _StoreID)
+		when Offset >= EndOffsetUpperBound ->
+	not_found;
 get_next_unsynced_interval(Offset, EndOffsetUpperBound, ID, StoreID) ->
 	case ets:lookup(sync_records, {ID, StoreID}) of
 		[] ->
@@ -253,7 +257,11 @@ get_next_synced_interval(Offset, EndOffsetUpperBound, Packing, ID, StoreID) ->
 
 %% @doc Return the lowest unsynced interval with the end offset strictly above the given Offset
 %% and at most EndOffsetUpperBound.
-%% Return not_found if there are no such intervals.
+%% Return not_found when Offset >= EndOffsetUpperBound.
+%% Return {EndOffsetUpperBound, Offset} when no records are found.
+get_next_unsynced_interval(Offset, EndOffsetUpperBound, _Packing, _ID, _StoreID)
+		when Offset >= EndOffsetUpperBound ->
+	not_found;
 get_next_unsynced_interval(Offset, EndOffsetUpperBound, Packing, ID, StoreID) ->
 	case ets:lookup(sync_records, {ID, Packing, StoreID}) of
 		[] ->
