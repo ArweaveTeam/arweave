@@ -69,38 +69,10 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 		mining_addr = undefined
 	}),
 
-	%% The expected size varies a lot based on some quirks of the e2e setup. Comments inline.
-	case {ModuleSize, FromPackingType} of
-		{default, unpacked} ->
-			%% When launching an unpacked source node, we first launch a spora node and then
-			%% sync to an unpacked node. Because of this, the unpacked node ends up with
-			%% data in the overlap spaces.
-			ExpectedSize = ar_block:partition_size() + ar_storage_module:get_overlap(unpacked),
-			ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking, ExpectedSize),
-			ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, ExpectedSize);
-		{small, unpacked} ->
-			%% When we have small modules, the overlap is replicated 4 times (once for each
-			%% of the small modules). And because of how we launch the unpacked source node,
-			%% the syncing phase causes the overlap to be populated.
-			ExpectedSize = 
-				ar_block:partition_size() + (4 * ar_storage_module:get_overlap(unpacked)),
-			ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking, ExpectedSize),
-			ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, ExpectedSize);
-		{small, spora_2_6} ->
-			%% This scenario is weird and one that I don't fully understand. For now we'll
-			%% just assert the these values and will aim to better understand the "why" later.
-			ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking,
-				ar_block:partition_size() + (3 * ar_storage_module:get_overlap(unpacked))),
-			ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking,
-				ar_block:partition_size());
-		_ ->
-			%% In all other situations we have a "vanilla" source node setup which populates
-			%% the partitions either via genesis data or direct seeding. Since no syncing
-			%% or repacking happens, the overlap is not populated.
-			ExpectedSize = ar_block:partition_size(),
-			ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking, ExpectedSize),
-			ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, ExpectedSize)
-	end,
+	ExpectedSize0 = ar_e2e:aligned_partition_size(RepackerNode, 0, ToPacking),
+	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking, ExpectedSize0),
+	ExpectedSize1 = ar_e2e:aligned_partition_size(RepackerNode, 1, ToPacking),
+	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, ExpectedSize1),
 
 	ar_test_node:stop(RepackerNode),
 
@@ -142,4 +114,3 @@ start_validator_node(ValidatorNode, RepackerNode, B0) ->
 		}, true)
 	),
 	ok.
-	

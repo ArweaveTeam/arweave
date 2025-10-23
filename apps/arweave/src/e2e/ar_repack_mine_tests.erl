@@ -56,8 +56,12 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	ar_e2e:assert_syncs_range(RepackerNode, 0, 4*ar_block:partition_size()),
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
+	RangeStart2 = 2 * ar_block:partition_size(),
+	RangeEnd2 = RangeStart2 + floor(0.5 * ar_block:partition_size()),
+	RangeSize2 = ar_util:ceil_int(RangeEnd2, ?DATA_CHUNK_SIZE)
+		- ar_util:floor_int(RangeStart2, ?DATA_CHUNK_SIZE),
 	ar_e2e:assert_partition_size(
-		RepackerNode, 2, ToPacking, floor(0.5*ar_block:partition_size())),
+		RepackerNode, 2, ToPacking, RangeSize2),
 	%% Don't assert chunks here. Since we have two storage modules defined we won't know
 	%% which packing format will be found - which complicates the assertion. We'll rely
 	%% on the assert_chunks later (after we restart with only a single set of storage modules)
@@ -72,8 +76,12 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	ar_e2e:assert_syncs_range(RepackerNode, ToPacking, 0, 4*ar_block:partition_size()),
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
 	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
+	RangeStart4 = 2 * ar_block:partition_size(),
+	RangeEnd4 = RangeStart4 + floor(0.5 * ar_block:partition_size()),
+	RangeSize4 = ar_util:ceil_int(RangeEnd4, ?DATA_CHUNK_SIZE)
+		- ar_util:floor_int(RangeStart4, ?DATA_CHUNK_SIZE),
 	ar_e2e:assert_partition_size(
-		RepackerNode, 2, ToPacking, floor(0.5*ar_block:partition_size())),
+		RepackerNode, 2, ToPacking, RangeSize4),
 	ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
 	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
 
@@ -88,9 +96,12 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 			ar_e2e:assert_syncs_range(RepackerNode, ToPacking, 0, 4*ar_block:partition_size()),
 			ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
 			ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),			
-			ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking, ar_block:partition_size()),
-			%% All of partition 3 is still above the disk pool threshold
-			ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking)
+			ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking),
+			%% All of partition 3 is still above the disk pool threshold,
+			%% except for one chunk crossing the disk pool threshold: 6291456 > 6029312.
+			%% The overlap chunk is NOT synced because its end offset is above
+			%% the threshold so the disk pool process does not consider it mature.
+			ar_e2e:assert_partition_size(RepackerNode, 3, ToPacking, ?DATA_CHUNK_SIZE)
 	end.
 
 start_validator_node(ValidatorNode, RepackerNode, B0) ->
@@ -104,4 +115,3 @@ start_validator_node(ValidatorNode, RepackerNode, B0) ->
 		}, true)
 	),
 	ok.
-	
