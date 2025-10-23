@@ -54,9 +54,17 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 
 	ar_e2e:assert_syncs_range(RepackerNode, 0, 4*ar_block:partition_size()),
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
-	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
+	RangeStart1 = ar_block:partition_size(),
+	RangeEnd1 = 2 * ar_block:partition_size(),
+	RangeSize1 = ar_util:ceil_int(RangeEnd1, ?DATA_CHUNK_SIZE)
+		- ar_util:floor_int(RangeStart1, ?DATA_CHUNK_SIZE),
+	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, RangeSize1),
+	RangeStart2 = 2 * ar_block:partition_size(),
+	RangeEnd2 = RangeStart2 + floor(0.5 * ar_block:partition_size()),
+	RangeSize2 = ar_util:ceil_int(RangeEnd2, ?DATA_CHUNK_SIZE)
+		- ar_util:floor_int(RangeStart2, ?DATA_CHUNK_SIZE),
 	ar_e2e:assert_partition_size(
-		RepackerNode, 2, ToPacking, floor(0.5*ar_block:partition_size())),
+		RepackerNode, 2, ToPacking, RangeSize2),
 	%% Don't assert chunks here. Since we have two storage modules defined we won't know
 	%% which packing format will be found - which complicates the assertion. We'll rely
 	%% on the assert_chunks later (after we restart with only a single set of storage modules)
@@ -70,9 +78,17 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	}),
 	ar_e2e:assert_syncs_range(RepackerNode, ToPacking, 0, 4*ar_block:partition_size()),
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
-	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),
+	RangeStart3 = ar_block:partition_size(),
+	RangeEnd3 = 2 * ar_block:partition_size(),
+	RangeSize3 = ar_util:ceil_int(RangeEnd3, ?DATA_CHUNK_SIZE)
+		- ar_util:floor_int(RangeStart3, ?DATA_CHUNK_SIZE),
+	ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, RangeSize3),
+	RangeStart4 = 2 * ar_block:partition_size(),
+	RangeEnd4 = RangeStart4 + floor(0.5 * ar_block:partition_size()),
+	RangeSize4 = ar_util:ceil_int(RangeEnd4, ?DATA_CHUNK_SIZE)
+		- ar_util:floor_int(RangeStart4, ?DATA_CHUNK_SIZE),
 	ar_e2e:assert_partition_size(
-		RepackerNode, 2, ToPacking, floor(0.5*ar_block:partition_size())),
+		RepackerNode, 2, ToPacking, RangeSize4),
 	ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
 	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
 
@@ -120,7 +136,15 @@ test_repacking_blocked({FromPackingType, ToPackingType}) ->
 	}),
 
 	ar_e2e:assert_empty_partition(RepackerNode, 1, ToPacking),
-	ar_e2e:assert_no_chunks(RepackerNode, Chunks),
+	%% Ensure chunks are absent for the specific target packing
+	lists:foreach(fun({_Block, EndOffset, _ChunkSize}) ->
+		Result = ar_test_node:get_chunk(RepackerNode, EndOffset, ToPacking),
+		{ok, {{StatusCode, _}, _, _, _, _}} = Result,
+		?assertEqual(<<"404">>, StatusCode,
+			iolist_to_binary(io_lib:format(
+				"Chunk found when it should not have been. Node: ~p, Offset: ~p",
+				[RepackerNode, EndOffset])))
+	end, Chunks),
 
 	ar_test_node:restart_with_config(RepackerNode, Config#config{
 		storage_modules = StorageModules,
@@ -128,7 +152,14 @@ test_repacking_blocked({FromPackingType, ToPackingType}) ->
 	}),
 
 	ar_e2e:assert_empty_partition(RepackerNode, 1, ToPacking),
-	ar_e2e:assert_no_chunks(RepackerNode, Chunks).
+	lists:foreach(fun({_Block, EndOffset, _ChunkSize}) ->
+		Result2 = ar_test_node:get_chunk(RepackerNode, EndOffset, ToPacking),
+		{ok, {{StatusCode2, _}, _, _, _, _}} = Result2,
+		?assertEqual(<<"404">>, StatusCode2,
+			iolist_to_binary(io_lib:format(
+				"Chunk found when it should not have been. Node: ~p, Offset: ~p",
+				[RepackerNode, EndOffset])))
+	end, Chunks).
 
 start_validator_node(ValidatorNode, RepackerNode, B0) ->
 	{ok, Config} = ar_test_node:get_config(ValidatorNode),
