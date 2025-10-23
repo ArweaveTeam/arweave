@@ -3,7 +3,8 @@
 -export([get_overlap/1, id/1, label/1, address_label/2, module_address/1,
 		module_packing_difficulty/1, packing_label/1, get_by_id/1,
 		get_range/1, module_range/1, module_range/2, get_packing/1,
-		get/2, get_strict/2, get_all/1, get_all/2, get_all_packed/3, get_all_module_ranges/0,
+		get/2, get_strict/2, get_all/1, get_all/2, get_all/3,
+		get_all_packed/2, get_all_packed/3, get_all_module_ranges/0,
 		has_any/1, has_range/2, get_cover/3, is_repack_in_place/1]).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -208,7 +209,7 @@ get_strict(Offset, Packing) ->
 %% @doc Return the list of all configured storage modules covering the given Offset.
 get_all(Offset) ->
 	{ok, Config} = arweave_config:get_env(),
-	get_all(Offset, Config#config.storage_modules, []).
+	get_all2(Offset, Config#config.storage_modules, []).
 
 %% @doc Return the list of identifiers of all configured storage modules
 %% covering the given Offset and Packing. If a module is configured with
@@ -220,7 +221,12 @@ get_all_packed(Offset, Packing) ->
 %% the given interval.
 get_all(Start, End) ->
 	{ok, Config} = arweave_config:get_env(),
-	get_all(Start, End, Config#config.storage_modules, []).
+	get_all(Start, End, Config#config.storage_modules).
+
+%% @doc Return the list of storage modules chosen from the given list
+%% whose ranges intersect the given interval.
+get_all(Start, End, StorageModules) ->
+	get_all2(Start, End, StorageModules, []).
 
 %% @doc Return true if the given Offset belongs to at least one storage module.
 has_any(Offset) ->
@@ -323,15 +329,15 @@ get_strict(Offset, Packing,
 get_strict(_Offset, _Packing, []) ->
 	not_found.
 
-get_all(Offset, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
+get_all2(Offset, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
 	case Offset =< BucketSize * Bucket
 			orelse Offset > BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing) of
 		true ->
-			get_all(Offset, StorageModules, FoundModules);
+			get_all2(Offset, StorageModules, FoundModules);
 		false ->
-			get_all(Offset, StorageModules, [StorageModule | FoundModules])
+			get_all2(Offset, StorageModules, [StorageModule | FoundModules])
 	end;
-get_all(_Offset, [], FoundModules) ->
+get_all2(_Offset, [], FoundModules) ->
 	FoundModules.
 
 get_all_packed(Offset, Packing,
@@ -347,15 +353,15 @@ get_all_packed(Offset, Packing, [_Element | StorageModules]) ->
 get_all_packed(_Offset, _Packing, []) ->
 	[].
 
-get_all(Start, End, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
+get_all2(Start, End, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
 	case End =< BucketSize * Bucket
 			orelse Start >= BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing) of
 		true ->
-			get_all(Start, End, StorageModules, FoundModules);
+			get_all2(Start, End, StorageModules, FoundModules);
 		false ->
-			get_all(Start, End, StorageModules, [StorageModule | FoundModules])
+			get_all2(Start, End, StorageModules, [StorageModule | FoundModules])
 	end;
-get_all(_Start, _End, [], FoundModules) ->
+get_all2(_Start, _End, [], FoundModules) ->
 	FoundModules.
 
 has_any(_Offset, []) ->
