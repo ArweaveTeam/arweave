@@ -226,7 +226,8 @@ aligned_partition_size(Start, End, Packing) ->
 	EndWithOverlap = End + ar_storage_module:get_overlap(Packing),
 	AlignedStart = ar_util:floor_int(Start, ?DATA_CHUNK_SIZE),
 	AlignedEnd = ar_util:ceil_int(EndWithOverlap, ?DATA_CHUNK_SIZE),
-	AlignedEnd - AlignedStart.
+	Size = AlignedEnd - AlignedStart,
+	{Size, AlignedStart, AlignedEnd}.
 
 source_node_storage_modules(Node, PackingType, WalletFixture) ->
 	source_node_storage_modules(Node, PackingType, WalletFixture, default).
@@ -323,10 +324,15 @@ assert_has_entropy(Node, StartOffset, EndOffset, StoreID) ->
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
 				[EndOffset, StartOffset, ar_entropy_storage:sync_record_id(), StoreID]),
+			Intervals = ar_test_node:remote_call(
+					Node, ar_sync_record, get,
+					[ar_entropy_storage:sync_record_id(), StoreID]),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
-					"~s failed to prepare entropy range ~p - ~p. Intersection: ~p", 
-					[Node, StartOffset, EndOffset, Intersection])))
+					"~s failed to prepare entropy range ~p - ~p. "
+					"Intersection size: ~p. Intervals: ~p", 
+					[Node, StartOffset, EndOffset, Intersection,
+					ar_intervals:to_list(Intervals)])))
 	end.
 
 assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
@@ -345,11 +351,15 @@ assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
 				[EndOffset, StartOffset, ar_entropy_storage:sync_record_id(), StoreID]),
+			Intervals = ar_test_node:remote_call(
+				Node, ar_sync_record, get,
+				[ar_entropy_storage:sync_record_id(), StoreID]),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
 					"~s found entropy when it should not have. Range: ~p - ~p. "
-					"Intersection: ~p", 
-					[Node, StartOffset, EndOffset, Intersection])));
+					"Intersection size: ~p. Intervals: ~p", 
+					[Node, StartOffset, EndOffset, Intersection,
+					ar_intervals:to_list(Intervals)])));
 		_ ->
 			ok
 	end.
@@ -393,7 +403,7 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 			[Node, StartOffset, EndOffset]))).
 
 assert_partition_size(Node, PartitionNumber, Packing) ->
-	PartitionSize = aligned_partition_size(PartitionNumber, Packing),
+	{PartitionSize, _, _} = aligned_partition_size(PartitionNumber, Packing),
 	assert_partition_size(Node, PartitionNumber, Packing, PartitionSize).
 assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 	?LOG_INFO("~p: Asserting partition ~p,~p is size ~p",

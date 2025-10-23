@@ -329,7 +329,7 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 
 	RangeStart = floor(ar_block:partition_size()),
 	RangeEnd = floor(1.5 * ar_block:partition_size()),
-	RangeSize = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
+	{RangeSize, AlignedStart, AlignedEnd} = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
 
 	%% Make sure the expected data was synced
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
@@ -339,8 +339,8 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
 
 	%% Make sure no extra entropy was generated
-	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
-	ar_e2e:assert_no_entropy(SinkNode, RangeEnd, 2 * ar_block:partition_size(), StoreID),
+	ar_e2e:assert_has_entropy(SinkNode, AlignedStart, AlignedEnd, StoreID),
+	ar_e2e:assert_no_entropy(SinkNode, AlignedEnd, 2 * ar_block:partition_size(), StoreID),
 
 	%% Make sure the data is minable
 	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
@@ -377,7 +377,7 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 
 	RangeStart = floor(1.5 * ar_block:partition_size()),
 	RangeEnd = floor(2 * ar_block:partition_size()),
-	RangeSize = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
+	{RangeSize, AlignedStart, AlignedEnd} = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
 
 	%% Make sure the expected data was synced	
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
@@ -389,8 +389,8 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
 
 	%% Make sure no extra entropy was generated
-	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
-	ar_e2e:assert_no_entropy(SinkNode, 0, RangeStart, StoreID),
+	ar_e2e:assert_has_entropy(SinkNode, AlignedStart, AlignedEnd, StoreID),
+	ar_e2e:assert_no_entropy(SinkNode, 0, AlignedStart, StoreID),
 
 	%% Make sure the data is minable
 	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
@@ -420,7 +420,7 @@ test_disk_pool_threshold({SourcePackingType, SinkPackingType}) ->
 	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
 	RangeStart = floor(2 * ar_block:partition_size()),
 	RangeEnd = floor(2.5 * ar_block:partition_size()),
-	RangeSize = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
+	{RangeSize, _, _} = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
 
 	%% Partition 1 and half of partition 2 are below the disk pool threshold
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, ar_block:partition_size(), 4*ar_block:partition_size()),
