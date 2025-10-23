@@ -6,7 +6,7 @@
 -export([delayed_print/2, packing_type_to_packing/2,
 	start_source_node/3, start_source_node/4, 
 	source_node_storage_modules/3, source_node_storage_modules/4,
-	max_chunk_offset/1, aligned_partition_size/2, aligned_partition_size/3,
+	max_chunk_offset/1, aligned_partition_size/3,
 	assert_recall_byte/3,
 	assert_block/2, assert_syncs_range/3, assert_syncs_range/4, assert_does_not_sync_range/3,
 	assert_has_entropy/4, assert_no_entropy/4,
@@ -219,15 +219,43 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 max_chunk_offset(Chunks) ->
 	lists:foldl(fun({_, EndOffset, _}, Acc) -> max(Acc, EndOffset) end, 0, Chunks).
 
-aligned_partition_size(PartitionNumber, Packing) ->
-	Start = ar_block:partition_size() * PartitionNumber,
-	End = Start + ar_block:partition_size(),
-	aligned_partition_size(Start, End, Packing).
-aligned_partition_size(Start, End, Packing) ->
-	EndWithOverlap = End + ar_storage_module:get_overlap(Packing),
-	AlignedStart = ar_util:floor_int(Start, ?DATA_CHUNK_SIZE),
-	AlignedEnd = ar_util:ceil_int(EndWithOverlap, ?DATA_CHUNK_SIZE),
-	AlignedEnd - AlignedStart.
+aligned_partition_size(Node, Partition, Packing) ->
+	{ok, Config} = ar_test_node:get_config(Node),
+	%% Include both regular storage modules and repack_in_place modules.
+	%% For repack_in_place modules, use the target packing.
+	RepackInPlaceModules = [{BucketSize, Bucket, TargetPacking}
+		|| {{BucketSize, Bucket, _FromPacking}, TargetPacking} <- Config#config.repack_in_place_storage_modules],
+	AllStorageModules = Config#config.storage_modules ++ RepackInPlaceModules,
+	StorageModules = get_storage_modules_by_partition(Partition, AllStorageModules),
+	StorageModules2 = filter_storage_modules_by_packing(StorageModules, Packing),
+	aligned_partition_size2(StorageModules2, 0).
+
+get_storage_modules_by_partition(Partition, [{BucketSize, Bucket, Packing} | Modules]) ->
+	case ar_node:get_partition_number(Bucket * BucketSize) == Partition of
+		true ->
+			[{BucketSize, Bucket, Packing}
+				| get_storage_modules_by_partition(Partition, Modules)];
+		false ->
+			get_storage_modules_by_partition(Partition, Modules)
+	end;
+get_storage_modules_by_partition(_Partition, []) ->
+	[].
+
+filter_storage_modules_by_packing([{_, _, Packing} = Module | Modules], Packing) ->
+	[Module | filter_storage_modules_by_packing(Modules, Packing)];
+filter_storage_modules_by_packing([_Module | Modules], Packing) ->
+	filter_storage_modules_by_packing(Modules, Packing);
+filter_storage_modules_by_packing([], _Packing) ->
+	[].
+
+aligned_partition_size2([{ModuleSize, Bucket, Packing} | Modules], Acc) ->
+	Overlap = ar_storage_module:get_overlap(Packing),
+	ModuleStart = Bucket * ModuleSize,
+	ModuleEnd = ModuleStart + ModuleSize,
+	AlignedModuleSize = ar_util:ceil_int(ModuleEnd, ?DATA_CHUNK_SIZE) - ar_util:floor_int(ModuleStart, ?DATA_CHUNK_SIZE),
+	aligned_partition_size2(Modules, Acc + AlignedModuleSize + Overlap);
+aligned_partition_size2([], Acc) ->
+	Acc.
 
 source_node_storage_modules(Node, PackingType, WalletFixture) ->
 	source_node_storage_modules(Node, PackingType, WalletFixture, default).
@@ -324,10 +352,15 @@ assert_has_entropy(Node, StartOffset, EndOffset, StoreID) ->
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
 				[EndOffset, StartOffset, ar_entropy_storage:sync_record_id(), StoreID]),
+			Intervals = ar_test_node:remote_call(
+					Node, ar_sync_record, get,
+					[ar_entropy_storage:sync_record_id(), StoreID]),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
-					"~s failed to prepare entropy range ~p - ~p. Intersection: ~p", 
-					[Node, StartOffset, EndOffset, Intersection])))
+					"~s failed to prepare entropy range ~p - ~p. "
+					"Intersection size: ~p. Intervals: ~p", 
+					[Node, StartOffset, EndOffset, Intersection,
+					ar_intervals:to_list(Intervals)])))
 	end.
 
 assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
@@ -346,11 +379,15 @@ assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
 				[EndOffset, StartOffset, ar_entropy_storage:sync_record_id(), StoreID]),
+			Intervals = ar_test_node:remote_call(
+				Node, ar_sync_record, get,
+				[ar_entropy_storage:sync_record_id(), StoreID]),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
 					"~s found entropy when it should not have. Range: ~p - ~p. "
-					"Intersection: ~p", 
-					[Node, StartOffset, EndOffset, Intersection])));
+					"Intersection size: ~p. Intervals: ~p", 
+					[Node, StartOffset, EndOffset, Intersection,
+					ar_intervals:to_list(Intervals)])));
 		_ ->
 			ok
 	end.
@@ -388,7 +425,7 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 			[Node, StartOffset, EndOffset]))).
 
 assert_partition_size(Node, PartitionNumber, Packing) ->
-	PartitionSize = aligned_partition_size(PartitionNumber, Packing),
+	PartitionSize = aligned_partition_size(Node, PartitionNumber, Packing),
 	assert_partition_size(Node, PartitionNumber, Packing, PartitionSize).
 assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 	?LOG_INFO("~p: Asserting partition ~p,~p is size ~p",
