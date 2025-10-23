@@ -1,6 +1,7 @@
 -module(ar_tx_tests).
 
--include("../include/ar.hrl").
+-include("ar.hrl").
+
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").

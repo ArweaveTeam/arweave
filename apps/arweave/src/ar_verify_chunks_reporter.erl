@@ -6,8 +6,8 @@
 -export([start_link/0, update/2]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include("../include/ar.hrl").
--include("../include/ar_verify_chunks.hrl").
+-include("ar.hrl").
+-include("ar_verify_chunks.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {

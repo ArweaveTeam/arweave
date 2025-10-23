@@ -1,7 +1,6 @@
 -module(ar_repack_in_place_mine_tests).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
--include("../include/ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -76,9 +75,10 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 			%% When launching an unpacked source node, we first launch a spora node and then
 			%% sync to an unpacked node. Because of this, the unpacked node ends up with
 			%% data in the overlap spaces.
-			ExpectedSize = ar_block:partition_size() + ar_storage_module:get_overlap(unpacked),
-			ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking, ExpectedSize),
-			ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking, ExpectedSize);
+			ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking,
+				ar_e2e:aligned_partition_size(0, ToPacking)),
+			ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking,
+				ar_e2e:aligned_partition_size(1, ToPacking));
 		{small, unpacked} ->
 			%% When we have small modules, the overlap is replicated 4 times (once for each
 			%% of the small modules). And because of how we launch the unpacked source node,

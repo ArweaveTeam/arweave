@@ -1,8 +1,7 @@
 -module(ar_sync_pack_mine_tests).
 
--include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 %% --------------------------------------------------------------------------------------------
@@ -24,13 +23,13 @@ instantiator(GenesisData, SinkPackingType, TestFun) ->
 %% Test Registration
 %% --------------------------------------------------------------------------------------------
 
-replica_2_9_block_sync_test_() ->
+replica_2_9_syncing_test_() ->
 	{setup, fun () -> setup_source_node(replica_2_9) end, 
 		fun (GenesisData) ->
 				[
-					instantiator(GenesisData, replica_2_9, fun test_syncing_blocked/1),
-					instantiator(GenesisData, spora_2_6, fun test_syncing_blocked/1),
-					instantiator(GenesisData, unpacked, fun test_syncing_blocked/1)
+					instantiator(GenesisData, replica_2_9, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, spora_2_6, fun test_sync_pack_mine/1),
+					instantiator(GenesisData, unpacked, fun test_sync_pack_mine/1)
 				]
 		end}.
 
@@ -146,18 +145,6 @@ test_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
 			ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
 			ok
 	end.
-
-test_syncing_blocked({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
-	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
-	?LOG_INFO([{event, test_syncing_blocked}, {module, ?MODULE},
-		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
-	[B0 | _] = Blocks,
-	SourceNode = peer1,
-	SinkNode = peer2,
-
-	start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
-	ar_e2e:assert_does_not_sync_range(SinkNode, ar_block:partition_size(), 2*ar_block:partition_size()),
-	ar_e2e:assert_no_chunks(SinkNode, Chunks).
 
 test_unpacked_and_packed_sync_pack_mine(
 		{{Blocks, _Chunks, SourcePackingType}, {PackingType1, PackingType2}}) ->
@@ -340,9 +327,9 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
 	),
 
-	RangeStart = floor(1 * ar_block:partition_size()),
-	RangeEnd = floor(1.5 * ar_block:partition_size()) + ar_storage_module:get_overlap(SinkPacking),
-	RangeSize = RangeEnd - RangeStart,
+	RangeStart = floor(ar_block:partition_size()),
+	RangeEnd = floor(1.5 * ar_block:partition_size()),
+	{RangeSize, AlignedStart, AlignedEnd} = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
 
 	%% Make sure the expected data was synced
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
@@ -352,8 +339,8 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
 
 	%% Make sure no extra entropy was generated
-	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
-	ar_e2e:assert_no_entropy(SinkNode, RangeEnd, 2 * ar_block:partition_size(), StoreID),
+	ar_e2e:assert_has_entropy(SinkNode, AlignedStart, AlignedEnd, StoreID),
+	ar_e2e:assert_no_entropy(SinkNode, AlignedEnd, 2 * ar_block:partition_size(), StoreID),
 
 	%% Make sure the data is minable
 	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
@@ -389,8 +376,8 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	),
 
 	RangeStart = floor(1.5 * ar_block:partition_size()),
-	RangeEnd = floor(2 * ar_block:partition_size()) + ar_storage_module:get_overlap(SinkPacking),
-	RangeSize = RangeEnd - RangeStart,
+	RangeEnd = floor(2 * ar_block:partition_size()),
+	{RangeSize, AlignedStart, AlignedEnd} = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
 
 	%% Make sure the expected data was synced	
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
@@ -402,8 +389,8 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
 
 	%% Make sure no extra entropy was generated
-	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
-	ar_e2e:assert_no_entropy(SinkNode, 0, RangeStart, StoreID),
+	ar_e2e:assert_has_entropy(SinkNode, AlignedStart, AlignedEnd, StoreID),
+	ar_e2e:assert_no_entropy(SinkNode, 0, AlignedStart, StoreID),
 
 	%% Make sure the data is minable
 	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
@@ -431,10 +418,14 @@ test_disk_pool_threshold({SourcePackingType, SinkPackingType}) ->
 	[B0 | _] = Blocks,
 
 	SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
+	RangeStart = floor(2 * ar_block:partition_size()),
+	RangeEnd = floor(2.5 * ar_block:partition_size()),
+	{RangeSize, _, _} = ar_e2e:aligned_partition_size(RangeStart, RangeEnd, SinkPacking), 
+
 	%% Partition 1 and half of partition 2 are below the disk pool threshold
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, ar_block:partition_size(), 4*ar_block:partition_size()),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
-	ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, floor(0.5*ar_block:partition_size())),
+	ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, RangeSize),
 	ar_e2e:assert_empty_partition(SinkNode, 3, SinkPacking),
 	ar_e2e:assert_does_not_sync_range(SinkNode, 0, ar_block:partition_size()),
 	ar_e2e:assert_chunks(SinkNode, SinkPacking, Chunks),

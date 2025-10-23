@@ -15,7 +15,7 @@
         generate_random_standard_split/0, generate_random_original_v1_split/0]).
 
 -define(SYNC_CHUNKS_CHECK, 1000).
--define(SYNC_CHUNKS_TIMEOUT, 300*1000).
+-define(SYNC_CHUNKS_TIMEOUT, 60*1000).
 
 get_records_with_proofs(B, TX, Chunks) ->
 	[{B, TX, Chunks, Proof} || Proof <- build_proofs(B, TX, Chunks)].
@@ -318,17 +318,17 @@ post_blocks(Wallet, BlockMap) ->
 	).
 
 post_proofs(Peer, B, TX, Chunks) ->
-	post_proofs(Peer, B, TX, Chunks, false).
-post_proofs(Peer, B, TX, Chunks, IsTemporary) ->
+	post_proofs(Peer, B, TX, Chunks, infinity).
+post_proofs(Peer, B, TX, Chunks, DiskPoolThreshold) ->
 	Proofs = build_proofs(B, TX, Chunks),
-
-	HttpStatus = case IsTemporary of
-		true -> <<"303">>;
-		false -> <<"200">>
-	end,
 
 	lists:foreach(
 		fun({_, Proof}) ->
+			Offset = binary_to_integer(maps:get(offset, Proof)),
+			HttpStatus = case Offset > DiskPoolThreshold of
+				true -> <<"303">>;
+				false -> <<"200">>
+			end,
 			{ok, {{HttpStatus, _}, _, _, _, _}} =
 				ar_test_node:post_chunk(Peer, ar_serialize:jsonify(Proof))
 		end,
@@ -362,7 +362,7 @@ wait_until_syncs_chunk(Offset, ExpectedProof) ->
 					false
 			end
 		end,
-		100,
+		1000,
 		20_000
 	).
 

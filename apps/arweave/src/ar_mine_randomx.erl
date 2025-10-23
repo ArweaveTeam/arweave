@@ -81,6 +81,9 @@ randomx_decrypt_chunk(Packing, RandomxState, Key, Chunk, ChunkSize) ->
 			%% Validating the padding (for spora_2_6 and composite) and then remove it.
 			case ar_packing_server:unpad_chunk(Packing, Unpacked, ChunkSize, PackedSize) of
 				error ->
+					?LOG_WARNING([{event, unpad_chunk_error},
+							{packed_size, PackedSize},
+							{chunk_size, ChunkSize}]),
 					{error, invalid_padding};
 				UnpackedChunk ->
 					{ok, UnpackedChunk}
@@ -108,7 +111,7 @@ randomx_generate_replica_2_9_entropy({_, {stub_state, _}}, Key) ->
 	%% Make it fast, deterministic, and scoped by Key.
 	%% Note that ?REPLICA_2_9_ENTROPY_SIZE is
 	%% reduced significantly in the AR_TEST mode.
-	SubChunkCount = ar_replica_2_9:sub_chunks_per_entropy(),
+	SubChunkCount = ar_block:get_sub_chunks_per_replica_2_9_entropy(),
 	lists:foldl(
 		fun(N1, Acc) ->
 			lists:foldl(

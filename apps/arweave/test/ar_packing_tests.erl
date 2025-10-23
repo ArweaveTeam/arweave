@@ -360,8 +360,17 @@ test_request_unpack() ->
             ?assertEqual(UnpackedData, Unpacked2)
     after ?REQUEST_UNPACK_TIMEOUT ->
         erlang:error(timeout)
-    end.
-
+    end,
+	%% invalid padding
+	ar_packing_server:request_unpack(?CHUNK_OFFSET, {
+		{spora_2_6, RewardAddress}, Spora26Data,
+		?CHUNK_OFFSET, TXRoot, ChunkSize - 10}), % reduce chunk size to create invalid padding
+	receive
+		{chunk, {unpack_error, _, {{spora_2_6, RewardAddress}, Spora26Data, _, _, _}, invalid_padding}} ->
+			ok
+	after ?REQUEST_UNPACK_TIMEOUT ->
+		erlang:error(timeout)
+	end.
 
 packs_chunks_depending_on_packing_threshold_test_() ->
 	ar_test_node:test_with_mocked_functions([
