@@ -250,6 +250,60 @@ query_roundtrip_test() ->
 	),
 	?assertEqual({ok, Query}, ar_serialize:json_struct_to_query(QueryJSON)).
 
+data_roots_roundtrip_test() ->
+	%% TXRoot must be empty or 32 bytes:
+	?assertEqual({error, invalid_input1}, ar_serialize:binary_to_data_roots({<<"a">>, 0, []})),
+	%% The number of entries must not exceed the transaction count limit:
+	?assertEqual({error, invalid_input1},
+		ar_serialize:binary_to_data_roots({<<>>, 0, make_entries(1001)})),
+    TXRoot = crypto:strong_rand_bytes(32),
+    BlockSizes = [0, 1, 255, 256, 65535, 65536, 123456789],
+    Cases = lists:flatten([
+		{<<>>, 0, []},
+        [{TXRoot, BS, []} || BS <- BlockSizes],
+		[{TXRoot, BS, make_entries(1)} || BS <- BlockSizes],
+		[{TXRoot, BS, make_entries(2)} || BS <- BlockSizes],
+		[{TXRoot, BS, make_entries(1000)} || BS <- BlockSizes]
+    ]),
+    lists:foreach(
+        fun({TR, BS, Entries}) ->
+            Bin = ar_serialize:data_roots_to_binary({TR, BS, Entries}),
+            ?assertMatch({ok, {TR, BS, _}}, ar_serialize:binary_to_data_roots(Bin)),
+            ?assertEqual({ok, {TR, BS, Entries}}, ar_serialize:binary_to_data_roots(Bin))
+        end,
+        Cases
+    ).
+
+make_entries(N) ->
+    lists:map(
+        fun(I) ->
+            DataRoot = crypto:strong_rand_bytes(32),
+			TXSize =
+				case I rem 2 of
+					0 ->
+						0;
+					_ ->
+						rand:uniform(1000000)
+				end,
+			TXStartOffset =
+				case I rem 2 of
+					0 ->
+						0;
+					_ ->
+						rand:uniform(1000000)
+				end,
+			TXPath =
+				case I rem 2 of
+					0 ->
+						<<>>;
+					_ ->
+						crypto:strong_rand_bytes(200)
+				end,
+            {DataRoot, TXSize, TXStartOffset, TXPath}
+        end,
+        lists:seq(1, N)
+    ).
+
 candidate_to_json_struct_test() ->
 
 	Test = fun(Candidate) ->

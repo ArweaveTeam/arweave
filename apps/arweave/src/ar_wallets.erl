@@ -184,9 +184,9 @@ handle_cast({init, Blocks, [{from_state, SearchDepth}]}, _) ->
 	end;
 handle_cast({init, Blocks, [{from_peers, Peers}]}, _) ->
 	B =
-		case length(Blocks) >= ?STORE_BLOCKS_BEHIND_CURRENT of
+		case length(Blocks) >= ar_block:get_consensus_window_size() of
 			true ->
-				lists:nth(?STORE_BLOCKS_BEHIND_CURRENT, Blocks);
+				lists:nth(ar_block:get_consensus_window_size(), Blocks);
 			false ->
 				lists:last(Blocks)
 		end,
@@ -211,9 +211,9 @@ find_local_account_tree(_Blocks, Skipped, Skipped) ->
 	not_found;
 find_local_account_tree(Blocks, SearchDepth, Skipped) ->
 	{IsLast, B} =
-		case length(Blocks) >= ?STORE_BLOCKS_BEHIND_CURRENT of
+		case length(Blocks) >= ar_block:get_consensus_window_size() of
 			true ->
-				{false, lists:nth(?STORE_BLOCKS_BEHIND_CURRENT, Blocks)};
+				{false, lists:nth(ar_block:get_consensus_window_size(), Blocks)};
 			false ->
 				{true, lists:last(Blocks)}
 		end,
@@ -231,7 +231,7 @@ find_local_account_tree(Blocks, SearchDepth, Skipped) ->
 	end.
 
 initialize_state(Blocks, Tree) ->
-	InitialDepth = ?STORE_BLOCKS_BEHIND_CURRENT,
+	InitialDepth = ar_block:get_consensus_window_size(),
 	{DAG3, LastB} = lists:foldl(
 		fun (B, start) ->
 				{RootHash, UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),

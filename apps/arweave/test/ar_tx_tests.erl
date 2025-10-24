@@ -150,7 +150,7 @@ does_not_allow_to_replay_empty_wallet_txs_test_() ->
 
 rejects_txs_with_outdated_anchors_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun() ->
-		%% Post a transaction anchoring the block at ?MAX_TX_ANCHOR_DEPTH + 1.
+		%% Post a transaction anchoring the block at ar_block:get_max_tx_anchor_depth() + 1.
 		%%
 		%% Expect the transaction to be rejected.
 		Key = {_, Pub} = ar_wallet:new(),
@@ -158,8 +158,8 @@ rejects_txs_with_outdated_anchors_test_() ->
 			{ar_wallet:to_address(Pub), ?AR(20), <<>>}
 		]),
 		_ = ar_test_node:start_peer(peer1, B0),
-		mine_blocks(peer1, ?MAX_TX_ANCHOR_DEPTH),
-		assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH),
+		mine_blocks(peer1, ar_block:get_max_tx_anchor_depth()),
+		assert_wait_until_height(peer1, ar_block:get_max_tx_anchor_depth()),
 		TX1 = ar_test_node:sign_v1_tx(Key, #{ last_tx => B0#block.indep_hash }),
 		{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 			ar_test_node:post_tx_to_peer(peer1, TX1)
@@ -716,7 +716,7 @@ drops_v2_txs_exceeding_mempool_limit() ->
 			++ [StrippedTX#tx.id], Mempool3).
 
 joins_network_successfully() ->
-	%% Start a node and mine ?MAX_TX_ANCHOR_DEPTH blocks, some of them
+	%% Start a node and mine ar_block:get_max_tx_anchor_depth() blocks, some of them
 	%% with transactions.
 	%%
 	%% Join this node by another node.
@@ -768,12 +768,12 @@ joins_network_successfully() ->
 			{TXs ++ [{TX, AnchorType}], TX#tx.id}
 		end,
 		{[], <<>>},
-		lists:seq(1, ?MAX_TX_ANCHOR_DEPTH)
+		lists:seq(1, ar_block:get_max_tx_anchor_depth())
 	),
 	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
 	BI = ar_test_node:remote_call(peer1, ar_node, get_block_index, []),
 	?assertEqual(ok, ar_test_node:wait_until_block_index(BI)),
-	TX1 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH + 1, BI)) }),
+	TX1 = ar_test_node:sign_tx(Key, #{ last_tx => element(1, lists:nth(ar_block:get_max_tx_anchor_depth() + 1, BI)) }),
 	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
 		ar_test_node:post_tx_to_peer(main, TX1),
 	%% Expect transactions to be on main.
@@ -799,7 +799,7 @@ joins_network_successfully() ->
 					?assertMatch({ok, {{<<"400">>, _}, _,
 							<<"Invalid anchor (last_tx).">>, _, _}}, Reply);
 				block_anchor ->
-					RecentBHL = lists:sublist(?BI_TO_BHL(BI), ?MAX_TX_ANCHOR_DEPTH),
+					RecentBHL = lists:sublist(?BI_TO_BHL(BI), ar_block:get_max_tx_anchor_depth()),
 					case lists:member(TX#tx.last_tx, RecentBHL) of
 						true ->
 							?assertMatch({ok, {{<<"400">>, _}, _,
@@ -816,31 +816,31 @@ joins_network_successfully() ->
 
 	%% Mine the block on main first to ensure that it can't be rebased after the 2-block
 	%% fork from peer1 wins.
-	TX2 = ar_test_node:sign_tx(main, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI)) }),
+	TX2 = ar_test_node:sign_tx(main, Key, #{ last_tx => element(1, lists:nth(ar_block:get_max_tx_anchor_depth(), BI)) }),
 	ar_test_node:assert_post_tx_to_peer(main, TX2),
 	ar_test_node:mine(),
-	wait_until_height(main, ?MAX_TX_ANCHOR_DEPTH + 1),
+	wait_until_height(main, ar_block:get_max_tx_anchor_depth() + 1),
 
 	%% mine two blocks on peer to ensure that the main branch is orphaned.
 	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 1),
+	assert_wait_until_height(peer1, ar_block:get_max_tx_anchor_depth() + 1),
 
-	%% lists:nth(?MAX_TX_ANCHOR_DEPTH - 1, BI) since we'll be at at ?MAX_TX_ANCHOR_DEPTH + 2.
-	TX3 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH - 1, BI)) }),
+	%% lists:nth(ar_block:get_max_tx_anchor_depth() - 1, BI) since we'll be at at ar_block:get_max_tx_anchor_depth() + 2.
+	TX3 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(ar_block:get_max_tx_anchor_depth() - 1, BI)) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX3),
 	ar_test_node:mine(peer1),
-	BI2 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 2),
+	BI2 = assert_wait_until_height(peer1, ar_block:get_max_tx_anchor_depth() + 2),
 
 	ar_test_node:connect_to_peer(peer1),
 
-	wait_until_height(main, ?MAX_TX_ANCHOR_DEPTH + 2),
+	wait_until_height(main, ar_block:get_max_tx_anchor_depth() + 2),
 
-	TX4 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(?MAX_TX_ANCHOR_DEPTH, BI2)) }),
+	TX4 = ar_test_node:sign_tx(peer1, Key, #{ last_tx => element(1, lists:nth(ar_block:get_max_tx_anchor_depth(), BI2)) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX4),
 	ar_test_node:assert_wait_until_receives_txs([TX4]),
 	ar_test_node:mine(peer1),
-	BI3 = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 3),
-	BI3 = wait_until_height(main, ?MAX_TX_ANCHOR_DEPTH + 3),
+	BI3 = assert_wait_until_height(peer1, ar_block:get_max_tx_anchor_depth() + 3),
+	BI3 = wait_until_height(main, ar_block:get_max_tx_anchor_depth() + 3),
 
 	?assertEqual([TX4#tx.id], (read_block_when_stored(hd(BI3)))#block.txs),
 	?assertEqual([TX3#tx.id], (read_block_when_stored(hd(BI2)))#block.txs).
