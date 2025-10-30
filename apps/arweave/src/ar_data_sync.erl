@@ -3713,28 +3713,27 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset
 
 process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset, MayConclude,
 		Args, State) ->
-	%% The chunk has received a decent number of confirmations so we put it in a storage
-	%% module. If the have no storage modules configured covering this offset, proceed to
-	%% the next offset. If there are several suitable storage modules, we choose one.
-	%% The other modules will either sync the chunk themselves or copy it over from the
-	%% other module the next time the node is restarted.
+	%% The chunk has received a decent number of confirmations so we put it in storage
+	%% module(s). If we have no storage modules configured covering this offset, proceed to
+	%% the next offset. If there are several suitable storage modules, send the chunk
+	%% to those modules who have not have it synced yet.
 	#sync_data_state{ store_id = DefaultStoreID } = State,
 	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _PassedBaseValidation,
 			_PassedStrictValidation, _PassedRebaseValidation} = Args,
-	FindStorageModule =
-		case find_storage_module_for_disk_pool_chunk(AbsoluteOffset) of
-			not_found ->
+	FindStorageModules =
+		case ar_storage_module:get_all(AbsoluteOffset) of
+			[] ->
 				gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 						MayConclude, Args}),
 				{noreply, State};
-			StoreID ->
-				StoreID
+			Modules ->
+				[ar_storage_module:id(Module) || Module <- Modules]
 		end,
 	IsBlacklisted =
-		case FindStorageModule of
+		case FindStorageModules of
 			{noreply, State2} ->
 				{noreply, State2};
-			StoreID2 ->
+			StoreIDs ->
 				case ar_tx_blacklist:is_byte_blacklisted(AbsoluteOffset) of
 					true ->
 						gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
@@ -3742,56 +3741,56 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 						{noreply, remove_recently_processed_disk_pool_offset(AbsoluteOffset,
 								ChunkDataKey, State)};
 					false ->
-						StoreID2
+						StoreIDs
 				end
 		end,
 	IsSynced =
 		case IsBlacklisted of
 			{noreply, State3} ->
 				{noreply, State3};
-			StoreID3 ->
-				case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID3) of
-					{true, _Packing} ->
+			StoreIDs2 ->
+				case filter_storage_modules_by_synced_offset(AbsoluteOffset, StoreIDs2) of
+					[] ->
 						gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 								MayConclude, Args}),
 						{noreply, remove_recently_processed_disk_pool_offset(AbsoluteOffset,
 								ChunkDataKey, State)};
-					false ->
-						StoreID3
+					StoreIDs3 ->
+						StoreIDs3
 				end
 		end,
 	IsProcessed =
 		case IsSynced of
 			{noreply, State4} ->
 				{noreply, State4};
-			StoreID4 ->
+			StoreIDs4 ->
 				case is_recently_processed_offset(AbsoluteOffset, ChunkDataKey, State) of
 					true ->
 						gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 								false, Args}),
 						{noreply, State};
 					false ->
-						StoreID4
+						StoreIDs4
 				end
 		end,
 	IsChunkCacheFull =
 		case IsProcessed of
 			{noreply, State5} ->
 				{noreply, State5};
-			StoreID5 ->
+			StoreIDs5 ->
 				case is_chunk_cache_full() of
 					true ->
 						gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 								false, Args}),
 						{noreply, State};
 					false ->
-						StoreID5
+						StoreIDs5
 				end
 		end,
 	case IsChunkCacheFull of
 		{noreply, State6} ->
 			{noreply, State6};
-		StoreID6 ->
+		StoreIDs6 ->
 			case read_chunk(AbsoluteOffset, ChunkDataKey, DefaultStoreID) of
 				not_found ->
 					?LOG_ERROR([{event, disk_pool_chunk_not_found},
@@ -3817,43 +3816,14 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 					increment_chunk_cache_size(),
 					Args2 = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath, unpacked,
 							Offset, ChunkSize, Chunk, Chunk, none, none},
-					gen_server:cast(name(StoreID6), {pack_and_store_chunk, Args2}),
+					[gen_server:cast(name(StoreID6), {pack_and_store_chunk, Args2})
+						|| StoreID6 <- StoreIDs6],
 					gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 							false, Args}),
 					{noreply, cache_recently_processed_offset(AbsoluteOffset, ChunkDataKey,
 							State)}
 			end
 	end.
-
-find_storage_module_for_disk_pool_chunk(Offset) ->
-	case ar_storage_module:get_all(Offset) of
-		[] ->
-			not_found;
-		Modules ->
-			SortedModules = sort_storage_modules_for_disk_pool_chunk(Modules),
-			ar_storage_module:id(hd(SortedModules))
-	end.
-
-%% @doc Ensure we store the disk pool chunk in the most useful storage module.
-%% Primarily relevant for tests and miners that are repacking data between storage modules.
-sort_storage_modules_for_disk_pool_chunk(Modules) ->
-	{ok, Config} = arweave_config:get_env(),
-	MiningAddress = Config#config.mining_addr,
-    CompareFun =
-		fun({_, _, {composite, Addr1, _}}, _) ->
-				%% Storage modules with composite packing
-				%% for our current mining address have the highest priority.
-				Addr1 == MiningAddress;
-			(_, {_, _, {composite, Addr1, _}}) ->
-				Addr1 == MiningAddress;
-			({_, _, {spora_2_6, Addr1}}, _) ->
-				Addr1 == MiningAddress;
-			(_, {_, _, {spora_2_6, Addr1}}) ->
-				Addr1 == MiningAddress;
-			(_, _) ->
-				true
-		end,
-    lists:sort(CompareFun, Modules).
 
 remove_recently_processed_disk_pool_offset(Offset, ChunkDataKey, State) ->
 	#sync_data_state{ recently_processed_disk_pool_offsets = Map } = State,
@@ -3891,6 +3861,16 @@ cache_recently_processed_offset(Offset, ChunkDataKey, State) ->
 				Map
 		end,
 	State#sync_data_state{ recently_processed_disk_pool_offsets = Map2 }.
+
+filter_storage_modules_by_synced_offset(AbsoluteOffset, [StoreID | StoreIDs]) ->
+	case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID) of
+		{true, _Packing} ->
+			filter_storage_modules_by_synced_offset(AbsoluteOffset, StoreIDs);
+		false ->
+			[StoreID | filter_storage_modules_by_synced_offset(AbsoluteOffset, StoreIDs)]
+	end;
+filter_storage_modules_by_synced_offset(_, []) ->
+	[].
 
 process_unpacked_chunk(ChunkArgs, Args, State) ->
 	{_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot, _Chunk, ChunkID,
