@@ -50,6 +50,15 @@ children() ->
 			},
 			type => worker
 		},
+	 	#{
+			id => arweave_config_environment,
+			start => {
+				arweave_config_environment,
+				start_link,
+				[]
+			},
+			type => worker
+		},
 		#{
 			id => arweave_config_store,
 			start => {
