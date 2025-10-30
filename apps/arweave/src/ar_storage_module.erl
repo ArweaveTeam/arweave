@@ -3,8 +3,7 @@
 -export([get_overlap/1, id/1, label/1, address_label/2, module_address/1,
 		module_packing_difficulty/1, packing_label/1, get_by_id/1,
 		get_range/1, module_range/1, module_range/2, get_packing/1,
-		get/2, get_strict/2, get_all/1, get_all/2, get_all/3,
-		get_all_packed/2, get_all_packed/3, get_all_module_ranges/0,
+		get/2, get_all/1, get_all/2, get_all/3,
 		has_any/1, has_range/2, get_cover/3, is_repack_in_place/1]).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -147,17 +146,6 @@ get_by_id(ID, [Module | Modules]) ->
 			get_by_id(ID, Modules)
 	end.
 
-get_all_module_ranges() ->
-	{ok, Config} = arweave_config:get_env(),
-	RepackInPlaceModulesStoreIDs = [
-			{{BucketSize, Bucket, TargetPacking}, ar_storage_module:id(Module)}
-		|| {{BucketSize, Bucket, _Packing} = Module, TargetPacking} <- Config#config.repack_in_place_storage_modules],
-	ModuleStoreIDs = [{Module, ar_storage_module:id(Module)}
-			|| Module <- Config#config.storage_modules],
-
-	[{module_range(Module), Packing, StoreID} || {{_, _, Packing} = Module, StoreID} <-
-		ModuleStoreIDs ++ RepackInPlaceModulesStoreIDs].
-
 %% @doc Return {StartOffset, EndOffset} the given module is responsible for.
 get_range(?DEFAULT_MODULE) ->
 	{0, infinity};
@@ -200,22 +188,10 @@ get(Offset, Packing) ->
 	{ok, Config} = arweave_config:get_env(),
 	get(Offset, Packing, Config#config.storage_modules, not_found).
 
-%% @doc Return a configured storage module with the given Packing covering the given Offset.
-%% Return not_found if none is found. If a module is configured with in-place repacking,
-%% pick the target packing (the one we are repacking to.)
-get_strict(Offset, Packing) ->
-	get_strict(Offset, Packing, get_all_module_ranges()).
-
 %% @doc Return the list of all configured storage modules covering the given Offset.
 get_all(Offset) ->
 	{ok, Config} = arweave_config:get_env(),
 	get_all2(Offset, Config#config.storage_modules, []).
-
-%% @doc Return the list of identifiers of all configured storage modules
-%% covering the given Offset and Packing. If a module is configured with
-%% in-place repacking, pick the target packing (the one we are repacking to.)
-get_all_packed(Offset, Packing) ->
-	get_all_packed(Offset, Packing, get_all_module_ranges()).
 
 %% @doc Return the list of configured storage modules whose ranges intersect
 %% the given interval.
@@ -313,22 +289,6 @@ get(Offset, Packing, [{BucketSize, Bucket, Packing2} | StorageModules], StorageM
 get(_Offset, _Packing, [], StorageModule) ->
 	StorageModule.
 
-get_strict(Offset, Packing,
-		[{{RangeStart, RangeEnd}, ModulePacking, StoreID} | StorageModules]) ->
-	case Offset =< RangeStart orelse Offset > RangeEnd of
-		true ->
-			get_strict(Offset, Packing, StorageModules);
-		false ->
-			case Packing == ModulePacking of
-				true ->
-					{ok, StoreID};
-				false ->
-					get_strict(Offset, Packing, StorageModules)
-			end
-	end;
-get_strict(_Offset, _Packing, []) ->
-	not_found.
-
 get_all2(Offset, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
 	case Offset =< BucketSize * Bucket
 			orelse Offset > BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing) of
@@ -339,19 +299,6 @@ get_all2(Offset, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules
 	end;
 get_all2(_Offset, [], FoundModules) ->
 	FoundModules.
-
-get_all_packed(Offset, Packing,
-		[{{RangeStart, RangeEnd}, Packing, StoreID} | StorageModules]) ->
-	case Offset =< RangeStart orelse Offset > RangeEnd of
-		true ->
-			get_all_packed(Offset, Packing, StorageModules);
-		false ->
-			[StoreID | get_all_packed(Offset, Packing, StorageModules)]
-	end;
-get_all_packed(Offset, Packing, [_Element | StorageModules]) ->
-	get_all_packed(Offset, Packing, StorageModules);
-get_all_packed(_Offset, _Packing, []) ->
-	[].
 
 get_all2(Start, End, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
 	case End =< BucketSize * Bucket
