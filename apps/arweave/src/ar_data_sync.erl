@@ -1824,16 +1824,8 @@ do_sync_data2(#sync_data_state{
 		} = State) ->
 	Packing = ar_storage_module:get_packing(StoreID),
 	OtherPacking = ar_storage_module:get_packing(OtherStoreID),
-	Intervals = 
-		case {Packing == OtherPacking, OtherPacking} of
-			{false, {replica_2_9, _}} ->
-				%% Do not unpack the 2.9 data by default, finding unpacked data
-				%% may be cheaper.
-				[];
-			_ ->
-				get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
-						RangeStart, RangeEnd)
-		end,
+	Intervals = get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
+			RangeStart, RangeEnd),
 	?LOG_INFO([{event, sync_data}, {stage, copy_from_other_storage_modules},
 		{store_id, StoreID}, {other_store_id, OtherStoreID}, 
 		{range_start, RangeStart}, {range_end, RangeEnd},
