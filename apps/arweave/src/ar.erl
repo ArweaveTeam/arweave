@@ -1321,6 +1321,7 @@ warn_if_single_scheduler() ->
 	end.
 
 shell() ->
+	arweave_config:start(),
 	Config = #config{ debug = true },
 	start_for_tests(test,Config),
 	ar_test_node:boot_peers(test).
