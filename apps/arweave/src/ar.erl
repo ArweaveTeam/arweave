@@ -14,10 +14,11 @@
 		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
 		docs/0, shutdown/1, console/1, console/2, prep_stop/1]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_verify_chunks.hrl").
+
 -include_lib("arweave_config/include/arweave_config.hrl").
--include("../include/ar_verify_chunks.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -283,6 +284,11 @@ show_help() ->
 				"removes this limit allowing multiple workers to be active on a given "
 				"physical disk."
 			},
+			{"replica_2_9_entropy_cache_max_entropies (num)", io_lib:format(
+				"The maximum number of replica 2.9 entropies to cache at a time "
+				"while syncing data. Each entropy is 256 MB. Default: ~B",
+				[?DEFAULT_REPLICA_2_9_ENTROPY_CACHE_MAX_ENTROPIES]
+			)},
 			{"max_vdf_validation_thread_count", io_lib:format("\tThe maximum number "
 					"of threads used for VDF validation. Default: ~B",
 					[?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT])},
@@ -750,6 +756,8 @@ parse_cli_args(["replica_2_9_workers", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ replica_2_9_workers = list_to_integer(Num) });
 parse_cli_args(["disable_replica_2_9_device_limit" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ disable_replica_2_9_device_limit = true });
+parse_cli_args(["replica_2_9_entropy_cache_max_entropies", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ replica_2_9_entropy_cache_max_entropies = list_to_integer(Num) });
 parse_cli_args(["max_vdf_validation_thread_count", Num | Rest], C) ->
 	parse_cli_args(Rest,
 			C#config{ max_nonce_limiter_validation_thread_count = list_to_integer(Num) });
@@ -1300,13 +1308,16 @@ stop(_State) ->
 	?LOG_INFO([{stop, ?MODULE}]).
 
 stop_dependencies() ->
+	?LOG_INFO("========== Stopping Arweave Node  =========="),
 	{ok, [_Kernel, _Stdlib, _SASL, _OSMon | Deps]} = application:get_key(arweave, applications),
 	lists:foreach(fun(Dep) -> application:stop(Dep) end, Deps).
 
 start_dependencies() ->
+	?LOG_INFO("========== Starting Arweave Node  =========="),
 	{ok, Config} = arweave_config:get_env(),
+	ar_config:log_config(Config),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
-	ar_config:log_config(Config).
+	ok.
 
 %% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.
 %% for validating a block, will be blocked on initializing a RandomX dataset,
