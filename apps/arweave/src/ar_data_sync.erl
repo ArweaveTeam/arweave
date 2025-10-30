@@ -858,10 +858,12 @@ init({StoreID, RepackInPlacePacking}) ->
 	State = init_kv(StoreID),
 
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+	RangeStart2 = max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
+	RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
 	State2 = State#sync_data_state{
 		store_id = StoreID,
-		range_start = RangeStart,
-		range_end = RangeEnd,
+		range_start = RangeStart2,
+		range_end = RangeEnd2,
 		%% weave_size and disk_pool_threshold will be set on join
 		weave_size = 0,
 		disk_pool_threshold = 0
