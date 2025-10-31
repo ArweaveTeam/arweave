@@ -72,7 +72,68 @@ init() ->
 					logger:set_application_level(arweave, debug),
 					legacy_set(K, V, S)
 			end
+		},
+
+		%-----------------------------------------------------
+		% arweave_config http api parameters
+		%-----------------------------------------------------
+		{
+			parameter => [config,http,api,enabled],
+			environment => <<"AR_CONFIG_HTTP_API_ENABLED">>,
+			short_description => "enable arweave configuration http api interface",
+			% @todo enable it by default after testing
+			default => false,
+			type => boolean,
+			required => false
+		},
+		{
+			parameter => [config,http,api,listen,port],
+			environment => <<"AR_CONFIG_HTTP_API_LISTEN_PORT">>,
+			short_description => "set arweave configuration http api interface port",
+			default => 4891,
+			type => tcp_port,
+			required => false
+		},
+		{
+			parameter => [config,http,api,listen,interface],
+			environment => <<"AR_CONFIG_HTTP_API_LISTEN_INTERFACE">>,
+			short_description => "set arweave configuration http api listen interface",
+			type => ipv4,
+			required => false,
+			% can be an ip address or an unix socket path,
+			% the configuration should be transparent
+			% though and we should avoid using
+			%   {local, socket_path}
+			% the rule is probably to say if the value
+			% start with / then this is an unix socket,
+			% else this is an ip address or an hostname.
+			default => <<"127.0.0.1">>
 		}
+		% @todo implement read, write and token parameters
+		% {
+		% 	parameter => [config,http,api,read],
+		% 	environment => <<"AR_CONFIG_HTTP_API_READ">>,
+		% 	short_description => "allow read (get method) on arweave configuration http api",
+		% 	type => boolean,
+		% 	required => false,
+		% 	default => true
+		% },
+		% {
+		% 	parameter => [config,http,api,write],
+		% 	environment => <<"AR_CONFIG_HTTP_API_WRITE">>,
+		% 	short_description => "allow write (post method) on arweave configuration http api",
+		% 	type => boolean,
+		% 	required => false,
+		% 	default => true
+		% },
+		% {
+		% 	parameter => [config,http,api,token],
+		% 	environment => <<"AR_CONFIG_HTTP_API_TOKEN">>,
+		% 	short_description => "set an access token for arweave configuration http api interface",
+		% 	type => string,
+		% 	required => false,
+		% 	default => <<>>
+		% }
 	].
 
 legacy_get(_K, #{ spec := #{ legacy := L }}) ->
