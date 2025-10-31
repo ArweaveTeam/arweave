@@ -25,7 +25,8 @@
 	default_set/1,
 	default_set_state/1,
 	default_multi/1,
-	default_runtime/1
+	default_runtime/1,
+	default_multi_types/1
 ]).
 -include("arweave_config.hrl").
 -include_lib("common_test/include/ct.hrl").
@@ -98,7 +99,8 @@ all() ->
 		default_set,
 		default_set_state,
 		default_multi,
-		default_runtime
+		default_runtime,
+		default_multi_types
 	].
 
 %%--------------------------------------------------------------------
@@ -169,7 +171,9 @@ default_set_state(_Config) ->
 	{ok, empty, undefined} =
 		arweave_config_spec:set([default_set_state], ok),
 	{ok, full, empty} =
-		arweave_config_spec:set([default_set_state], ok).
+		arweave_config_spec:set([default_set_state], ok),
+
+	{comment, "set state tested"}.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -177,13 +181,21 @@ default_set_state(_Config) ->
 %%--------------------------------------------------------------------
 default_multi(_Config) ->
 	% default value to 1
+	ct:pal(test, 1, "set value to 1"),
 	{ok, 1} = arweave_config_spec:get([one]),
 	{ok, one, 1} = arweave_config_spec:set([one], one),
 
 	% on default value, but always return 3
+	ct:pal(test, 1, "get value"),
 	{ok, 3} = arweave_config_spec:get([three]),
-	{ok, 3, undefined} = arweave_config_spec:set([three], any).
+	{ok, 3, undefined} = arweave_config_spec:set([three], any),
 
+	{comment, "multi spec tested"}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
 default_runtime(_Config) ->
 	ct:pal(test, 1, "initial state not in runtime"),
 	false = arweave_config:is_runtime(),
@@ -204,6 +216,25 @@ default_runtime(_Config) ->
 
 	% not_runtime parameter can't be set during runtime
 	{error, _} = arweave_config_spec:set([not_runtime], 2).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+default_multi_types(_Config) ->
+	ct:pal(test, 1, "set a boolean"),
+	{ok, true, undefined} =
+		arweave_config_spec:set([default], <<"true">>),
+
+	ct:pal(test, 1, "set an integer"),
+	{ok, 1, true} =
+		arweave_config_spec:set([default], 1),
+
+	ct:pal(test, 1, "set an ipv4"),
+	{ok, <<"127.0.0.1">>, 1} =
+		arweave_config_spec:set([default], <<"127.0.0.1">>),
+
+	{comment, "multi types tested"}.
 
 %%--------------------------------------------------------------------
 %% @doc defines custom parameters for tests.
@@ -293,5 +324,12 @@ specs(default_runtime) ->
 		#{
 			parameter_key => [not_runtime],
 			runtime => false
+		}
+	];
+specs(default_multi_types) ->
+	[
+		#{
+			parameter_key => [default],
+			type => [boolean, integer, ipv4]
 		}
 	].

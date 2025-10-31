@@ -244,7 +244,7 @@
 -callback type() -> Return when
 	Return :: undefined
 		| atom()
-		| fun ((term()) -> {ok, term()} | {error, term()}).
+		| [atom()].
 
 %---------------------------------------------------------------------
 % OPTIONAL: a function returning  a string representing an environment
@@ -833,8 +833,8 @@ check(Parameter, Value, Spec) ->
 %% @end
 %%--------------------------------------------------------------------
 check_type(Parameter, Value, Spec = #{ type := Type }, Buffer) ->
-	try
-		arweave_config_type:Type(Value)
+	case
+		check_type(Value, Type)
 	of
 		ok ->
 			NewBuffer = Buffer#{ type => ok },
@@ -845,13 +845,54 @@ check_type(Parameter, Value, Spec = #{ type := Type }, Buffer) ->
 		Error ->
 			NewBuffer = Buffer#{ type => Error },
 			check_final(Parameter, Value, Spec, NewBuffer)
-	catch
-		E:R ->
-			NewBuffer = Buffer#{ type => {E, R} },
-			check_final(Parameter, Value, Spec, NewBuffer)
 	end;
 check_type(Parameter, Value, Spec, Buffer) ->
 	check_final(Parameter, Value, Spec, Buffer#{ type => undefined }).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc check a single type.
+%% @end
+%%--------------------------------------------------------------------
+-spec check_type(Value, Types) -> Return when
+	Value :: term(),
+	Types :: atom() | [atom()],
+	Return :: ok | {ok, Value} | {error, term()}.
+
+check_type(Value, Types) when is_list(Types) ->
+	check_types(Value, Types);
+check_type(Value, Type) when is_atom(Type) ->
+	try
+		arweave_config_type:Type(Value)
+	of
+		ok -> {ok, Value};
+		{ok, V} -> {ok, V};
+		{error, Reason} -> {error, Reason}
+	catch
+		E:R -> {E, R}
+	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @doc check a list of type.
+%% @end
+%%--------------------------------------------------------------------
+-spec check_types(Value, Types) -> Return when
+	Value :: term(),
+	Types :: [atom()],
+	Return :: ok | {ok, Value} | {error, term()}.
+
+check_types(_Value, []) ->
+	{error, <<"value does not match types">>};
+check_types(Value, [Type|Rest]) when is_atom(Type) ->
+		case check_type(Value, Type) of
+			ok ->
+				{ok, Value};
+			{ok, V} ->
+				{ok, V};
+			{error, _} ->
+				check_types(Value, Rest)
+		end.
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -984,16 +1025,18 @@ apply_get(Parameter) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-apply_get2(Parameter, _Spec = #{ get := Get, default := Default }) ->
-	State = local_state(#{}),
-	case Get(Parameter, #{}) of
+apply_get2(Parameter, Spec = #{ get := Get, default := Default }) ->
+	State = local_state(#{ spec => Spec }),
+	case Get(Parameter, State) of
 		{ok, Value} ->
 			{ok, Value};
-		_ ->
+		X ->
+			io:format("~p~n", [X]),
 			{ok, Default}
 	end;
-apply_get2(Parameter, _Spec = #{ get := Get }) ->
-	case Get(Parameter, #{}) of
+apply_get2(Parameter, Spec = #{ get := Get }) ->
+	State = local_state(#{ spec => Spec }),
+	case Get(Parameter, State) of
 		{ok, Value} ->
 			{ok, Value};
 		Elsewise ->

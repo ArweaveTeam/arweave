@@ -27,7 +27,8 @@
 	path/1,
 	base64/1,
 	base64url/1,
-	tcp_port/1
+	tcp_port/1,
+	file/1
 ]).
 -include_lib("common_test/include/ct.hrl").
 
@@ -79,7 +80,8 @@ all() ->
 		path,
 		base64,
 		base64url,
-		tcp_port
+		tcp_port,
+		file
 	].
 
 none(_Config) ->
@@ -96,11 +98,11 @@ atom(_Config) ->
 boolean(_Config) ->
 	[
 		{ok, true} = arweave_config_type:boolean(X)
-		|| X <- [<<"true">>, "true", true, 1]
+		|| X <- [<<"true">>, "true", true]
 	],
 	[
 		{ok, false} = arweave_config_type:boolean(X)
-		|| X <- [<<"false">>, "false", false, 0]
+		|| X <- [<<"false">>, "false", false]
 	],
 	{error, not_boolean} =
 		arweave_config_type:boolean(not_boolean).
@@ -150,3 +152,26 @@ tcp_port(_Config) ->
 	{ok, 1234} = arweave_config_type:tcp_port(<<"1234">>),
 	{error, 78912} = arweave_config_type:tcp_port(<<"78912">>).
 
+file(_Config) ->
+	ct:pal(test, 1, "test absolute path and path as binary"),
+	{ok, <<"/tmp/arweave.sock">>} =
+		arweave_config_type:file(<<"/tmp/arweave.sock">>),
+
+	ct:pal(test, 1, "test relative path and path as list"),
+	{ok, P1} =
+		arweave_config_type:file("./arweave.sock"),
+	true = is_binary(P1),
+
+	ct:pal(test, 1, "test a wrong path"),
+	{error, _} =
+		arweave_config_type:file("/random/t/a/b/c.sock"),
+
+	ct:pal(test, 1, "test a file without write access"),
+	{error, _} =
+		arweave_config_type:file("/root/data/arweave.sock"),
+
+	ct:pal(test, 1, "test a wrong erlang type"),
+	{error, _} =
+		arweave_config_type:file(1234),
+
+	ok.
