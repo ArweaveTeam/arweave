@@ -11,12 +11,12 @@
 %%% @doc
 %%% @end
 %%%===================================================================
--module(arweave_config_SUITE).
+-module(arweave_config_environment_SUITE).
 -export([suite/0, description/0]).
 -export([init_per_suite/1, end_per_suite/1]).
 -export([init_per_testcase/2, end_per_testcase/2]).
 -export([all/0]).
--export([arweave_config/1]).
+-export([default/1]).
 -include("arweave_config.hrl").
 -include_lib("common_test/include/ct.hrl").
 
@@ -28,7 +28,7 @@ suite() -> [{userdata, [description()]}].
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-description() -> {description, "arweave_config test main interface"}.
+description() -> {description, "arweave config environment interface"}.
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -44,48 +44,74 @@ end_per_suite(_Config) -> ok.
 %% @hidden
 %%--------------------------------------------------------------------
 init_per_testcase(_TestCase, Config) ->
+	set_environment(),
 	ct:pal(info, 1, "start arweave_config"),
 	ok = arweave_config:start(),
-	Config.
+	[{environment, environment()}|Config].
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 end_per_testcase(_TestCase, _Config) ->
 	ct:pal(info, 1, "stop arweave_config"),
-	ok = arweave_config:stop().
+	ok = arweave_config:stop(),
+	unset_environment().
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 all() ->
-	[ arweave_config ].
+	[ default ].
 
 %%--------------------------------------------------------------------
-%% @doc test `arweave_config' main interface.
+%% @doc test `arweave_config_environment' main interface.
 %% @end
 %%--------------------------------------------------------------------
-arweave_config(_Config) ->
-	% legacy compatible interface, to remove
-	ct:pal(test, 1, "init legacy environment"),
-	ok = arweave_config:set_env(#config{}),
+default(Config) ->
+	Environment = proplists:get_value(environment, Config),
+	ArweaveEnvironment = arweave_config_environment:get(),
 
-	% legacy compatible interface, to remove
-	ct:pal(test, 1, "get legacy environment"),
-	{ok, Config1} = arweave_config:get_env(),
-	false = Config1#config.init,
+	% let check if all variables we have configured are present
+	[
+	 	begin
+			VE = proplists:get_value(list_to_binary(K), ArweaveEnvironment),
+			VE = list_to_binary(V)
+		end
+		|| {K, V} <- Environment
+	],
 
-	% legacy compatible interface, to remove
-	ct:pal(test, 1, "set legacy environment"),
-	ok = arweave_config:set_env(#config{ init = true }),
-	{ok, Config2} = arweave_config:get_env(),
-	true = Config2#config.init,
+	% let check them one by one.
+	[
+		begin
+			{ok, VE} = arweave_config_environment:get(list_to_binary(K)),
+			VE = list_to_binary(V)
+		end
+		|| {K, V} <- Environment
+	],
 
-	% check runtime mode
-	false = arweave_config:is_runtime(),
+	% load the environment, it will lookup in the environment list
+	% and set the value, in our case, AR_DEBUG should be
+	% configured and set to true instead of false.
+	{ok, false} = arweave_config:get([debug]),
+	ok = arweave_config_environment:load(),
+	{ok, true} = arweave_config:get([debug]).
 
-	ct:pal(test, 1, "switch to runtime mode"),
-	ok = arweave_config:runtime(),
-	true = arweave_config:is_runtime(),
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+environment() ->
+	[{"AR_TEST_ENVIRONMENT_VARIABLE", "test"}
+	,{"AR_DEBUG", "true"}
+	].
 
-	{comment, "arweave_config interface tested"}.
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+set_environment() ->
+	[ os:putenv(K,V) || {K,V} <- environment() ].
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+unset_environment() ->
+	[ os:unsetenv(K) || {K,_} <- environment() ].
