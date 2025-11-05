@@ -139,7 +139,7 @@ do_fetch(Start, End, StoreID, footprint) ->
 				true ->
 					[];
 				false ->
-					fetch_peer_footprint_intervals(Parent, Partition, Footprint, End, Peers, UnsyncedIntervals)
+					fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, UnsyncedIntervals)
 			end,
 		EntropyIndex = ar_replica_2_9:get_entropy_index(Start + ?DATA_CHUNK_SIZE, 0),
 		NextEntropyIndex = ar_replica_2_9:get_entropy_index(Start + ?DATA_CHUNK_SIZE * 2, 0),
@@ -304,7 +304,7 @@ get_peer_intervals(Peer, Left, SoughtIntervals) ->
 			Error
 	end.
 
-fetch_peer_footprint_intervals(Parent, Partition, Footprint, End, Peers, UnsyncedIntervals) ->
+fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, UnsyncedIntervals) ->
 	Intervals =
 		ar_util:batch_pmap(
 			fun(Peer) ->
@@ -348,17 +348,25 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, End, Peers, Unsynce
 							ByteIntervals =
 								ar_footprint_record:get_intervals_from_footprint_intervals(SoughtIntervals),
 							%% SoughtIntervals may include intervals beyond
-							%% the weave_size that this node has observed.
+							%% the storage module boundaries.
 							%% This is because during the
 							%% UnsyncedIntervals -> SoughtIntervals process we
 							%% end up querying all advertised intervals belonging
 							%% to a footprint that interseects UnsyncedIntervals.
-							%% If the peer has observed more of the weave than
-							%% this node, this can cause this node to try to
-							%% store a chunk that lies beyond its observed
-							%% weave_size. To avoid this we explicitly remove 
-							%% all intervals beyond the end of the weave.
-							[{Peer, ar_intervals:cut(ByteIntervals, End)} | IntervalsAcc]
+							%% This can cause this node to try to
+							%% store a chunk that lies beyond its configured
+							%% storage module range. To avoid this we explicitly remove
+							%% all intervals beyond the provided boundaries.
+							ByteIntervals2 = ar_intervals:cut(ByteIntervals, End),
+							PaddedStart =
+								case ar_block:get_chunk_padded_offset(Start) of
+									Start ->
+										Start;
+									Offset ->
+										Offset - ?DATA_CHUNK_SIZE
+								end,
+							ByteIntervals3 = ar_intervals:outerjoin(ar_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2),
+							[{Peer, ByteIntervals3} | IntervalsAcc]
 					end;
 				(ok, Acc) ->
 					Acc;
