@@ -3970,27 +3970,32 @@ record_chunk_cache_size_metric() ->
 %% Return {ok, {TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath}, ...]}}
 %% or {error, Reason}.
 get_data_roots_for_offset(Offset) ->
-	{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Offset),
-	true = Offset >= BlockStart andalso Offset < BlockEnd,
-	StoreID = ?DEFAULT_MODULE,
-	DB = {data_root_offset_index, StoreID},
-	case ar_kv:get(DB, << BlockStart:?OFFSET_KEY_BITSIZE >>) of
-		not_found ->
+	case Offset > get_disk_pool_threshold() of
+		true ->
 			{error, not_found};
-		{ok, Bin} ->
-			{TXRoot2, BlockSize, DataRootIndexKeySet} = binary_to_term(Bin),
-			true = TXRoot2 == TXRoot,
-			{ok, {TXRoot, BlockSize, lists:sort(
-				fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1}, {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
-					TXStart1 < TXStart2
-				end,
-				sets:fold(
-					fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
-						read_data_root_entries(DataRoot, TXSize, BlockEnd, StoreID, Acc)
-					end,
-				[],
-				DataRootIndexKeySet
-			))}}
+		false ->
+			{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Offset),
+			true = Offset >= BlockStart andalso Offset < BlockEnd,
+			StoreID = ?DEFAULT_MODULE,
+			DB = {data_root_offset_index, StoreID},
+			case ar_kv:get(DB, << BlockStart:?OFFSET_KEY_BITSIZE >>) of
+				not_found ->
+					{error, not_found};
+				{ok, Bin} ->
+					{TXRoot2, BlockSize, DataRootIndexKeySet} = binary_to_term(Bin),
+					true = TXRoot2 == TXRoot,
+					{ok, {TXRoot, BlockSize, lists:sort(
+						fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1}, {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
+							TXStart1 < TXStart2
+						end,
+						sets:fold(
+							fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
+								read_data_root_entries(DataRoot, TXSize, BlockEnd, StoreID, Acc)
+							end,
+						[],
+						DataRootIndexKeySet
+					))}}
+			end
 	end.
 
 %% @doc Return true if the data roots for the given block range are synced, false otherwise.
