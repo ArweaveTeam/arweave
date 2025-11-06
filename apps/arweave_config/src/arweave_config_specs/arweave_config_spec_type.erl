@@ -51,6 +51,7 @@
 -export([init/2]).
 -include("arweave_config_spec.hrl").
 -include_lib("kernel/include/logger.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 init(#{ type := Type }, State) ->
 	{ok, State#{ type => Type }};

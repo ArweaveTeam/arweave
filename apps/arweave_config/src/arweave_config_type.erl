@@ -19,7 +19,7 @@
 	integer/1,
 	pos_integer/1,
 	ipv4/1,
-	unix_sock/1,
+	file/1,
 	tcp_port/1,
 	path/1,
 	atom/1,
@@ -71,7 +71,7 @@ atom(V) -> {error, V}.
 %% @end
 %%--------------------------------------------------------------------
 -spec boolean(Input) -> Return when
-	Input :: string() | binary() | boolean() | integer(),
+	Input :: string() | binary() | boolean(),
 	Return :: {ok, boolean()} | {error, Input}.
 
 boolean(<<"true">>) -> {ok, true};
@@ -80,8 +80,6 @@ boolean("true") -> {ok, true};
 boolean("false") -> {ok, false};
 boolean(true) -> {ok, true};
 boolean(false) -> {ok, false};
-boolean(0) -> {ok, false};
-boolean(1) -> {ok, true};
 boolean(V) -> {error, V}.
 
 %%--------------------------------------------------------------------
@@ -107,7 +105,7 @@ pos_integer(Data) ->
 	case integer(Data) of
 		{ok, Integer} when Integer >= 0 ->
 			{ok, Integer};
-		Elsewise ->
+		_Else ->
 			{error, Data}
 	end.
 
@@ -135,44 +133,70 @@ ipv4(Elsewise) ->
 	{error, Elsewise}.
 
 %%--------------------------------------------------------------------
-%% @doc Defines unix_sock type. An UNIX socket should have an absolute
-%% path, with the correct right. If not, it should fail.
-%% @TODO finish the implementation.
-%% success steps:
-%% 1. check if the filename does not exist
-%% 2. check if the filename end with ".sock"
-%% 3. check if the directory is read_write
-%% 4. check if the owner or group are current user
+%% @doc Defines file type.
+%% @todo if an unix socket path length is > 108, it will fail, needs
+%% to be fixed.
 %% @end
 %%--------------------------------------------------------------------
-unix_sock(Binary) when is_binary(Binary) ->
+file(List) when is_list(List) ->
+	file(list_to_binary(List));
+file(Binary) when is_binary(Binary) ->
 	case filename:pathtype(Binary) of
 		absolute ->
-			unix_sock2(Binary);
-		_ ->
-			{error, Binary}
-	end.
+			file2(Binary);
+		relative ->
+			{ok, Cwd} = file:get_cwd(),
+			Absolute = filename:join(Cwd, Binary),
+			file2(Absolute)
+	end;
+file(Path) ->
+	type_error(
+		file,
+		<<"unsupported format">>,
+		#{ path => Path }
+	 ).
 
-unix_sock2(Path) ->
+% check if the directory is present, arweave_config should not
+% be in charge of creating it.
+file2(Path) ->
 	Split = filename:split(Path),
-	[Filename|Reverse] = lists:reverse(Split),
+	[_Filename|Reverse] = lists:reverse(Split),
 	Directory = filename:join(lists:reverse(Reverse)),
 	case filelib:is_dir(Directory) of
 		true ->
-			unix_sock3(Path);
+			file3(Path, Directory);
 		false ->
-			{error, Path}
+			type_error(
+				file,
+				<<"directory not found">>,
+				#{
+					path => Path,
+					directory => Directory
+				 }
+			)
 	end.
 
-unix_sock3(Path) ->
+% check if the directory has a read/write access.
+file3(Path, Directory) ->
 	Split = filename:split(Path),
-	[Filename|_] = lists:reverse(Split),
-	case file:read_info(Path) of
-		{ok, #file_info{ access = read_write }} ->
-			{ok, Path};
-		_Elsewise ->
-			{error, Path}
+	[_Filename|_] = lists:reverse(Split),
+	case file:read_file_info(Directory) of
+		{ok, #file_info{access = read_write }} ->
+			file4(Path);
+		{error, Reason} ->
+			type_error(
+				file,
+				Reason,
+				#{ path => Path }
+			)
 	end.
+
+% convert a list into path. It should not be the case there, but it's
+% to avoid having different type format.
+file4(Path) when is_list(Path) ->
+	{ok, list_to_binary(Path)};
+file4(Path) ->
+	{ok, Path}.
 
 %%--------------------------------------------------------------------
 %% @doc check tcp port.
@@ -240,3 +264,16 @@ base64url(Binary) ->
 	catch _:_ -> {error, Binary}
 	end.
 
+%%--------------------------------------------------------------------
+%% common format for all errors
+%%--------------------------------------------------------------------
+type_error(Name, Reason, Data) ->
+	{error, #{
+			status => error,
+			message => #{
+				type => Name,
+				reason => Reason,
+				data => Data
+			}
+		 }
+	}.
