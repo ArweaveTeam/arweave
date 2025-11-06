@@ -482,6 +482,17 @@ assert_mine_and_validate(MinerNode, ValidatorNode, MinerPacking) ->
 	{ok, ValidatorBlock} = ar_test_node:http_get_block(element(1, hd(ValidatorBI)), ValidatorNode),
 	?assertEqual(MinerBlock, ValidatorBlock).
 
+get_intervals(NodeIP, StartOffset, EndOffset) ->
+	case ar_http_iface_client:get_sync_record(NodeIP) of
+		{ok, RegularIntervals} ->
+			FootprintIntervals = collect_footprint_intervals(NodeIP, StartOffset, EndOffset),
+			AllIntervals = ar_intervals:union(RegularIntervals, FootprintIntervals),
+			AllIntervals;
+		_Error ->
+			FootprintIntervals = collect_footprint_intervals(NodeIP, StartOffset, EndOffset),
+			FootprintIntervals
+	end.
+
 has_range(Node, StartOffset, EndOffset) ->
 	NodeIP = ar_test_node:peer_ip(Node),
 	case ar_http_iface_client:get_sync_record(NodeIP) of
@@ -490,9 +501,11 @@ has_range(Node, StartOffset, EndOffset) ->
 			AllIntervals = ar_intervals:union(RegularIntervals, FootprintIntervals),
 			interval_contains(AllIntervals, StartOffset, EndOffset);
 		Error ->
+			Intervals = get_intervals(NodeIP, StartOffset, EndOffset),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
-					"Failed to get sync record from ~p: ~p", [Node, Error]))),
+					"Failed to get sync record from ~p: ~p; range: ~p - ~p; intervals managed to collect: ~p",
+						[Node, Error, StartOffset, EndOffset, ar_intervals:to_list(Intervals)]))),
 			false
 	end.
 
