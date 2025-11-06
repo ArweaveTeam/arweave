@@ -241,6 +241,8 @@ get_storage_modules_by_partition(Partition, [{BucketSize, Bucket, Packing} | Mod
 get_storage_modules_by_partition(_Partition, []) ->
 	[].
 
+filter_storage_modules_by_packing([{_, _, {replica_2_9, _} = Packing} = Module | Modules], unpacked_padded) ->
+	[Module | filter_storage_modules_by_packing(Modules, Packing)];
 filter_storage_modules_by_packing([{_, _, Packing} = Module | Modules], Packing) ->
 	[Module | filter_storage_modules_by_packing(Modules, Packing)];
 filter_storage_modules_by_packing([_Module | Modules], Packing) ->
