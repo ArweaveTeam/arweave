@@ -141,23 +141,16 @@ do_fetch(Start, End, StoreID, footprint) ->
 				false ->
 					fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, UnsyncedIntervals)
 			end,
-		EntropyIndex = ar_replica_2_9:get_entropy_index(Start + ?DATA_CHUNK_SIZE, 0),
-		NextEntropyIndex = ar_replica_2_9:get_entropy_index(Start + ?DATA_CHUNK_SIZE * 2, 0),
+		Partition = ar_replica_2_9:get_entropy_partition(Start + ?DATA_CHUNK_SIZE),
+		{_PartitionStart, PartitionEnd} = ar_replica_2_9:get_entropy_partition_range(Partition),
 		Start2 =
-			case NextEntropyIndex > EntropyIndex of
+			case Start + 2 * ?DATA_CHUNK_SIZE > PartitionEnd of
 				true ->
-					Start + ?DATA_CHUNK_SIZE;
+					PartitionEnd;
 				false ->
-					Partition = ar_replica_2_9:get_entropy_partition(Start + ?DATA_CHUNK_SIZE),
-					(Partition + 1) * ?PARTITION_SIZE
+					Start + ?DATA_CHUNK_SIZE
 			end,
-		Start3 =
-			case Start2 > Start of
-				true ->
-					Start2;
-				false ->
-					min(Start + ?DATA_CHUNK_SIZE, End)
-			end,
+		Start3 = min(Start2, End),
 		%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
 		{Start3, EnqueueIntervals}
 	catch
