@@ -127,9 +127,9 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, Module}}, State) ->
+handle_info({event, sync_record, {add_range, Start, End, ar_data_sync,
+		#{ packing := Packing }}}, State) ->
 	#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets } = State,
-	Packing = ar_storage_module:get_packing(Module),
 	case Packing of
 		{replica_2_9, _} ->
 			%% Replica 2.9 data is recorded in the footprint record. It is synced
@@ -141,7 +141,7 @@ handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, Module}},
 			{noreply, State#state{ sync_record = SyncRecord2, sync_buckets = SyncBuckets2 }}
 	end;
 
-handle_info({event, sync_record, {add_range, Start, End, ar_data_sync_footprints, _Module}}, State) ->
+handle_info({event, sync_record, {add_range, Start, End, ar_data_sync_footprints, _Options}}, State) ->
 	State2 = update_footprint_data(Start, End, State),
 	{noreply, State2};
 
