@@ -191,7 +191,8 @@ handle_info({event, tx, {orphaned, TX}},
 handle_info({event, tx, _}, State) ->
 	{noreply, State};
 
-handle_info({event, sync_record, {add_range, Start, End, ar_data_sync, Module}},
+handle_info({event, sync_record, {add_range, Start, End, ar_data_sync,
+			#{ module := Module }}},
 		#state{ listen_to_transaction_data_stream = true } = State) ->
 	case Module of
 		?DEFAULT_MODULE ->
@@ -393,7 +394,7 @@ handle_sync_record_add_range(Start, End, Module, State, N) when N < ?NUMBER_OF_T
 			timer:sleep(?WAIT_BETWEEN_TRIES),
 			handle_sync_record_add_range(Start, End, State, N + 1)
 	end;
-handle_sync_record_add_range(Start, End, _StoreID, State, _N) ->
+handle_sync_record_add_range(Start, End, _Module, State, _N) ->
 	?LOG_WARNING([{event, gave_up_webhook_tx_offset_data_fetch},
 		{range_start, Start},
 		{range_end, End},

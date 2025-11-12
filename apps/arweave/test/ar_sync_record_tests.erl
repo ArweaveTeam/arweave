@@ -37,7 +37,7 @@ test_sync_record() ->
 
 		%% Add a diskpool chunk
 		ar_sync_record:add(
-			DiskPoolStart+?DATA_CHUNK_SIZE, DiskPoolStart, ar_data_sync, ?DEFAULT_MODULE),
+			DiskPoolStart+?DATA_CHUNK_SIZE, DiskPoolStart, unpacked, ar_data_sync, ?DEFAULT_MODULE),
 		timer:sleep(SleepTime),
 		{ok, Binary2} = ar_global_sync_record:get_serialized_sync_record(Options),
 		{ok, Global2} = ar_intervals:safe_from_etf(Binary2),
@@ -69,7 +69,7 @@ test_sync_record() ->
 
 		%% Add a storage module chunk
 		ar_sync_record:add(
-			PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, ar_data_sync, PartitionID),
+			PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, unpacked, ar_data_sync, PartitionID),
 		timer:sleep(SleepTime),
 		{ok, Binary5} = ar_global_sync_record:get_serialized_sync_record(Options),
 		{ok, Global5} = ar_intervals:safe_from_etf(Binary5),
@@ -105,9 +105,9 @@ test_sync_record() ->
 
 		%% Add chunk to both diskpool and storage module
 		ar_sync_record:add(
-			PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, ar_data_sync, ?DEFAULT_MODULE),
+			PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, unpacked, ar_data_sync, ?DEFAULT_MODULE),
 		ar_sync_record:add(
-			PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, ar_data_sync, PartitionID),
+			PartitionStart+?DATA_CHUNK_SIZE, PartitionStart, unpacked, ar_data_sync, PartitionID),
 		timer:sleep(SleepTime),
 		{ok, Binary6} = ar_global_sync_record:get_serialized_sync_record(Options),
 		{ok, Global6} = ar_intervals:safe_from_etf(Binary6),
