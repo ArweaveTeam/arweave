@@ -3584,6 +3584,10 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 								false ->
 									ar_events:send(sync_record,
 											{global_remove_range, StartOffset, PaddedOffset});
+								{{true, {replica_2_9, _}}, _StoreID} ->
+									%% Replica 2.9 data is recorded in the footprint record.
+									ar_events:send(sync_record,
+											{global_remove_range, StartOffset, PaddedOffset});
 								_ ->
 									ok
 							end,
