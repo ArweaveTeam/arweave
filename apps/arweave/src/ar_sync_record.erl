@@ -475,7 +475,7 @@ add2(End, Start, ID, State) ->
 	{Reply, State3} = update_write_ahead_log({add, {End, Start, ID}}, StateDB, State2),
 	case Reply of
 		ok ->
-			emit_add_range(Start, End, ID, Module);
+			emit_add_range(Start, End, ID, #{ module => Module });
 		_ ->
 			ok
 	end,
@@ -499,7 +499,7 @@ add2(End, Start, Packing, ID, State) ->
 	{Reply, State3} = update_write_ahead_log({{add, Packing}, {End, Start, ID}}, StateDB, State2),
 	case Reply of
 		ok ->
-			emit_add_range(Start, End, ID, Module);
+			emit_add_range(Start, End, ID, #{ module => Module, packing => Packing });
 		_ ->
 			ok
 	end,
@@ -628,7 +628,7 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, Stor
 					{End, Start, ID} = Params,
 					SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
 					SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
-					emit_add_range(Start, End, ID, Module),
+					emit_add_range(Start, End, ID, #{ module => Module }),
 					SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
 					replay_write_ahead_log(
 						SyncRecordByID2, SyncRecordByIDType, N + 1,
@@ -640,7 +640,7 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, Stor
 					SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
 					ByType = maps:get({ID, Packing}, SyncRecordByIDType, ar_intervals:new()),
 					ByType2 = ar_intervals:add(ByType, End, Start),
-					emit_add_range(Start, End, ID, Module),
+					emit_add_range(Start, End, ID, #{ module => Module, packing => Packing }),
 					SyncRecordByIDType2 = maps:put({ID, Packing}, ByType2, SyncRecordByIDType),
 					replay_write_ahead_log(
 						SyncRecordByID2, SyncRecordByIDType2, N + 1,
@@ -686,11 +686,11 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, Stor
 			end
 	end.
 
-emit_add_range(Start, End, ar_data_sync, Module) ->
-	ar_events:send(sync_record, {add_range, Start, End, ar_data_sync, Module});
-emit_add_range(Start, End, ar_data_sync_footprints, Module) ->
-	ar_events:send(sync_record, {add_range, Start, End, ar_data_sync_footprints, Module});
-emit_add_range(_Start, _End, _ID, _Module) ->
+emit_add_range(Start, End, ar_data_sync, Options) ->
+	ar_events:send(sync_record, {add_range, Start, End, ar_data_sync, Options});
+emit_add_range(Start, End, ar_data_sync_footprints, Options) ->
+	ar_events:send(sync_record, {add_range, Start, End, ar_data_sync_footprints, Options});
+emit_add_range(_Start, _End, _ID, _Options) ->
 	ok.
 
 emit_remove_range(Start, End, Module) ->
