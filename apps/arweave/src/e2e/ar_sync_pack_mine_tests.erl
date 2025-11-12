@@ -343,7 +343,7 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 	AlignedStart = ar_util:floor_int(RangeStart, ?DATA_CHUNK_SIZE),
 	AlignedEnd = ar_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE),
 	ar_e2e:assert_has_entropy(SinkNode, AlignedStart, AlignedEnd, StoreID),
-	ar_e2e:assert_no_entropy(SinkNode, AlignedEnd, 2 * ar_block:partition_size(), StoreID),
+	ar_e2e:assert_no_entropy(SinkNode, AlignedEnd + ar_block:partition_size(), AlignedEnd, StoreID),
 
 	%% Make sure the data is minable
 	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
