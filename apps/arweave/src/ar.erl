@@ -11,7 +11,8 @@
 		benchmark_vdf/0, benchmark_vdf/1,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
-		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
+		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, shell_e2e/0,
+		stop_shell/0, stop_shell_e2e/0,
 		docs/0, shutdown/1, console/1, console/2, prep_stop/1]).
 
 -include("ar.hrl").
@@ -1165,7 +1166,6 @@ start(Config) ->
 	end,
 	start_dependencies().
 
-
 start(normal, _Args) ->
 	{ok, Config} = arweave_config:get_env(),
 	%% Set erlang socket backend
@@ -1334,11 +1334,29 @@ warn_if_single_scheduler() ->
 shell() ->
 	arweave_config:start(),
 	Config = #config{ debug = true },
-	start_for_tests(test,Config),
-	ar_test_node:boot_peers(test).
+	start_for_tests(test, Config),
+	ar_test_node:boot_peers(test),
+	ar_test_node:wait_for_peers(test).
+
+shell_e2e() ->
+	try
+		arweave_config:start(),
+		Config = #config{ debug = true },
+		start_for_tests(e2e, Config),
+		ar_test_node:boot_peers(e2e),
+		ar_test_node:wait_for_peers(e2e)
+	catch
+		Type:Reason:S ->
+			io:format("Failed to start the peers due to ~p:~p:~p~n", [Type, Reason, S]),
+			init:stop(1)
+	end.
 
 stop_shell() ->
 	ar_test_node:stop_peers(test),
+	init:stop().
+
+stop_shell_e2e() ->
+	ar_test_node:stop_peers(e2e),
 	init:stop().
 
 %% @doc Run all of the tests associated with the core project.
@@ -1373,7 +1391,6 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 		ok -> ok;
 		_ -> init:stop(1)
 	end.
-
 
 start_for_tests(TestType, Config) ->
 	UniqueName = ar_test_node:get_node_namespace(),
