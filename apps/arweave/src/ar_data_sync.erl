@@ -3719,7 +3719,7 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteOffset,
 	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _PassedBaseValidation,
 			_PassedStrictValidation, _PassedRebaseValidation} = Args,
 	FindStorageModules =
-		case ar_storage_module:get_all(AbsoluteOffset - ChunkSize + 1) of
+		case ar_storage_module:get_all(AbsoluteOffset - ChunkSize, AbsoluteOffset) of
 			[] ->
 				gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 						MayConclude, Args}),
