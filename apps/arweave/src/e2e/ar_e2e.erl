@@ -253,9 +253,12 @@ filter_storage_modules_by_packing([], _Packing) ->
 aligned_partition_size2([{ModuleSize, Bucket, Packing} | Modules], Acc) ->
 	Overlap = ar_storage_module:get_overlap(Packing),
 	ModuleStart = Bucket * ModuleSize,
+	%% Every storage module begins syncing at this offset:
+	AlignedModuleStart = max(0, ar_block:get_chunk_padded_offset(ModuleStart) - ?DATA_CHUNK_SIZE),
 	ModuleEnd = ModuleStart + ModuleSize,
-	AlignedModuleSize = ar_util:ceil_int(ModuleEnd, ?DATA_CHUNK_SIZE) - ar_util:floor_int(ModuleStart, ?DATA_CHUNK_SIZE),
-	aligned_partition_size2(Modules, Acc + AlignedModuleSize + Overlap);
+	AlignedModuleEnd = ar_block:get_chunk_padded_offset(ModuleEnd + Overlap),
+	AlignedModuleSize = AlignedModuleEnd - AlignedModuleStart,
+	aligned_partition_size2(Modules, Acc + AlignedModuleSize);
 aligned_partition_size2([], Acc) ->
 	Acc.
 
@@ -276,7 +279,9 @@ source_node_storage_modules(SourcePacking, default) ->
 
 source_node_storage_modules(SourcePacking, small) ->
 	Size = ar_block:partition_size() div 4,
-	lists:map(fun(I) -> {Size, I, SourcePacking} end, lists:seq(0, 19)).
+	%% Put strict data split threshold inside the first storage module.
+	[{Size * 2, 0, SourcePacking}
+			| lists:map(fun(I) -> {Size, I, SourcePacking} end, lists:seq(2, 19))].
 	
 mine_block(Node, Wallet, DataSize, IsTemporary) ->
 	WeaveSize = ar_test_node:remote_call(Node, ar_node, get_current_weave_size, []),

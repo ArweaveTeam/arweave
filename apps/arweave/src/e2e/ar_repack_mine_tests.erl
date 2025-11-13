@@ -98,10 +98,10 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 			ar_e2e:assert_partition_size(RepackerNode, 1, ToPacking),			
 			ar_e2e:assert_partition_size(RepackerNode, 2, ToPacking),
 			%% All of partition 3 is still above the disk pool threshold,
-			%% except for one chunk crossing the disk pool threshold: 6291456 > 6029312.
-			%% The overlap chunk is NOT synced because its end offset is above
-			%% the threshold so the disk pool process does not consider it mature.
-			ar_e2e:assert_partition_size(RepackerNode, 3, ToPacking, ?DATA_CHUNK_SIZE)
+			%% except for two chunks, both are below the disk pool threshold = 6291456.
+			%% The chunk ending at 6029312 crosses the beginnig of the partition 3 so
+			%% it is also synced by this partition.
+			ar_e2e:assert_partition_size(RepackerNode, 3, ToPacking, 2 * ?DATA_CHUNK_SIZE)
 	end.
 
 start_validator_node(ValidatorNode, RepackerNode, B0) ->
