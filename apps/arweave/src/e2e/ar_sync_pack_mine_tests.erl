@@ -341,9 +341,9 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 
 	%% Make sure no extra entropy was generated
 	AlignedStart = ar_util:floor_int(RangeStart, ?DATA_CHUNK_SIZE),
-	AlignedEnd = ar_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE),
+	AlignedEnd = ar_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE,
 	ar_e2e:assert_has_entropy(SinkNode, AlignedStart, AlignedEnd, StoreID),
-	ar_e2e:assert_no_entropy(SinkNode, AlignedEnd + ar_block:partition_size(), AlignedEnd, StoreID),
+	ar_e2e:assert_no_entropy(SinkNode, AlignedEnd, AlignedEnd + ar_block:partition_size(), StoreID),
 
 	%% Make sure the data is minable
 	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
@@ -394,7 +394,7 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 
 	%% Make sure no extra entropy was generated
 	AlignedStart = ar_util:floor_int(RangeStart, ?DATA_CHUNK_SIZE),
-	AlignedEnd = ar_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE),
+	AlignedEnd = ar_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE,
 	ar_e2e:assert_has_entropy(SinkNode, AlignedStart, AlignedEnd, StoreID),
 	ar_e2e:assert_no_entropy(SinkNode, 0, AlignedStart, StoreID),
 
@@ -445,12 +445,12 @@ test_disk_pool_threshold({SourcePackingType, SinkPackingType}) ->
 			%% Now that we mined a block, the rest of partition 2 is below the disk pool
 			%% threshold
 			ar_e2e:assert_syncs_range(SinkNode, SinkPacking, ar_block:partition_size(), 4*ar_block:partition_size()),
-			ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking, ar_util:ceil_int(ar_block:partition_size(), ?DATA_CHUNK_SIZE)),
+			ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking),
 			%% All of partition 3 is still above the disk pool threshold,
-			%% except for one chunk crossing the disk pool threshold: 6291456 > 6029312.
-			%% The overlap chunk is NOT synced because its end offset is above
-			%% the threshold so the disk pool process does not consider it mature.
-			ar_e2e:assert_partition_size(SinkNode, 3, SinkPacking, ?DATA_CHUNK_SIZE),
+			%% except for two chunks, both are below the disk pool threshold = 6291456.
+			%% The chunk ending at 6029312 crosses the beginnig of the partition 3 so
+			%% it is also synced by this partition.
+			ar_e2e:assert_partition_size(SinkNode, 3, SinkPacking, 2 * ?DATA_CHUNK_SIZE),
 			ar_e2e:assert_does_not_sync_range(SinkNode, 0, ar_block:partition_size()),
 			ok
 	end.
