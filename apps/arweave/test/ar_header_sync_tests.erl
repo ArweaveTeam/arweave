@@ -18,9 +18,9 @@ test_syncs_headers() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2000), <<>>}]),
 	ar_test_node:start(B0),
-	post_random_blocks(Wallet, ?MAX_TX_ANCHOR_DEPTH + 5, B0),
+	post_random_blocks(Wallet, ar_block:get_max_tx_anchor_depth() + 5, B0),
 	ar_test_node:join_on(#{ node => peer1, join_on => main }),
-	BI = assert_wait_until_height(peer1, ?MAX_TX_ANCHOR_DEPTH + 5),
+	BI = assert_wait_until_height(peer1, ar_block:get_max_tx_anchor_depth() + 5),
 	lists:foreach(
 		fun(Height) ->
 			{ok, B} = ar_util:do_until(
@@ -41,12 +41,12 @@ test_syncs_headers() ->
 			MainTXs = ar_storage:read_tx(B#block.txs),
 			?assertEqual(TXs, MainTXs)
 		end,
-		lists:reverse(lists:seq(0, ?MAX_TX_ANCHOR_DEPTH + 5))
+		lists:reverse(lists:seq(0, ar_block:get_max_tx_anchor_depth() + 5))
 	),
 	%% Throw the event to simulate running out of disk space.
 	ar_disksup:pause(),
 	ar_events:send(disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, 0, 0}),
-	NoSpaceHeight = ?MAX_TX_ANCHOR_DEPTH + 6,
+	NoSpaceHeight = ar_block:get_max_tx_anchor_depth() + 6,
 	NoSpaceTX = sign_v1_tx(main, Wallet,
 		#{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
 	ar_test_node:assert_post_tx_to_peer(main, NoSpaceTX),

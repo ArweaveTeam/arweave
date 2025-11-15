@@ -16,12 +16,19 @@ get_price_per_gib_minute_test_() ->
 				{ar_pricing_transition, transition_start_2_6_8, fun() -> 5 end},
 				{ar_pricing_transition, transition_start_2_7_2, fun() -> 15 end},
 				{ar_pricing_transition, transition_length_2_6_8, fun() -> 20 end},
-				{ar_pricing_transition, transition_length_2_7_2, fun() -> 40 end}
+				{ar_pricing_transition, transition_length_2_7_2, fun() -> 40 end},
+				%% This test uses specific price constants computed for this partition size.
+				{ar_block, partition_size, fun() -> 2097152 end}
 			],
 			fun test_price_per_gib_minute_transition_phases/0),
-		{timeout, 30, fun test_v2_price/0},
 		ar_test_node:test_with_mocked_functions(
 			[
+				{ar_block, partition_size, fun() -> 2097152 end}
+			],
+			fun test_v2_price/0),
+		ar_test_node:test_with_mocked_functions(
+			[
+				{ar_block, partition_size, fun() -> 2097152 end},
 				{ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
 			],
 			fun test_v2_price_with_poa1_diff_multiplier/0)
@@ -541,7 +548,7 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assert(ar_difficulty:get_hash_rate_fixed_ratio(B11) > 1),
 	?assertEqual(lists:sublist([{MinerAddr, ar_difficulty:get_hash_rate_fixed_ratio(B11), B11#block.reward, 1}
 			| B10#block.reward_history],
-			?REWARD_HISTORY_BLOCKS + ?STORE_BLOCKS_BEHIND_CURRENT),
+			?REWARD_HISTORY_BLOCKS + ar_block:get_consensus_window_size()),
 			B11#block.reward_history),
 	TX11 = ar_test_node:sign_tx(main, Key3, #{ denomination => 1, target => ar_wallet:to_address(Pub5),
 			quantity => 100 }),

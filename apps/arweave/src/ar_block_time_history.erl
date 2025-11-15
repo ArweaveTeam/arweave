@@ -43,7 +43,7 @@ set_history([B | Blocks], History) ->
 
 get_hashes(Blocks) ->
 	TipB = hd(Blocks),
-	Len = min(TipB#block.height - ar_fork:height_2_7() + 1, ?STORE_BLOCKS_BEHIND_CURRENT),
+	Len = min(TipB#block.height - ar_fork:height_2_7() + 1, ar_block:get_consensus_window_size()),
 	[B#block.block_time_history_hash || B <- lists:sublist(Blocks, Len)].
 
 sum_history(B) ->
