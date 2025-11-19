@@ -26,7 +26,9 @@
 	default_set_state/1,
 	default_multi/1,
 	default_runtime/1,
-	default_multi_types/1
+	default_multi_types/1,
+	spec_environment/1,
+	spec_long_argument/1
 ]).
 -include("arweave_config.hrl").
 -include_lib("common_test/include/ct.hrl").
@@ -100,7 +102,9 @@ all() ->
 		default_set_state,
 		default_multi,
 		default_runtime,
-		default_multi_types
+		default_multi_types,
+		spec_environment,
+		spec_long_argument
 	].
 
 %%--------------------------------------------------------------------
@@ -237,6 +241,100 @@ default_multi_types(_Config) ->
 	{comment, "multi types tested"}.
 
 %%--------------------------------------------------------------------
+%% @doc test environment specification callback module.
+%% @end
+%%--------------------------------------------------------------------
+spec_environment(_Config) ->
+	% an environment can be any kind of binary
+	{ok, #{ environment := <<"test">> }} =
+		arweave_config_spec_environment:init(#{
+				environment => <<"test">>
+			},
+			#{}
+		),
+
+	% an environment can be a list
+	{ok, #{ environment := <<"AR_TEST">> }} =
+		arweave_config_spec_environment:init(#{
+				environment => "AR_TEST"
+			},
+			#{}
+		),
+
+	% an environment set to true will generate automatically
+	% an environment variable using the parameter key prefixed
+	% with AR.
+	{ok, #{ environment := <<"AR_TEST">> }} =
+		arweave_config_spec_environment:init(#{
+				environment => true
+			},
+			#{
+				parameter_key => [test]
+			}
+		),
+
+	{ok, #{ environment := <<"AR_TEST_1_2_3_DATA">> }} =
+		arweave_config_spec_environment:init(#{
+				environment => true
+			},
+			#{
+				parameter_key => [test,1,2,3,data]
+			}
+		),
+
+	% an environment can't be a float.
+	{error, _} =
+		arweave_config_spec_environment:init(#{
+				environment => 1.0
+			},
+			#{}
+		),
+
+	{comment, "environment spec tested"}.
+
+%%--------------------------------------------------------------------
+%% @doc test long argument specification callback module.
+%% @end
+%%--------------------------------------------------------------------
+spec_long_argument(_Config) ->
+	{ok, #{}} =
+		arweave_config_spec_long_argument:init(#{}, #{}),
+
+	{ok, #{ long_argument := <<"--test">> }} =
+		arweave_config_spec_long_argument:init(#{
+				long_argument => <<"test">>
+			},
+			#{}
+		),
+
+	{ok, #{ long_argument := <<"--test.data">> }} =
+		arweave_config_spec_long_argument:init(#{
+				long_argument => true
+			},
+			#{
+				parameter_key => [test, data]
+			}
+		),
+
+	{ok, #{ long_argument := <<"--test.1.data">> }} =
+		arweave_config_spec_long_argument:init(#{
+				long_argument => undefined
+			},
+			#{
+				parameter_key => [test, 1, data]
+			}
+		),
+
+	{ok, #{}} =
+		arweave_config_spec_long_argument:init(#{
+				long_argument => false
+			},
+			#{}
+		),
+
+	{comment, "long argument spec tested"}.
+
+%%--------------------------------------------------------------------
 %% @doc defines custom parameters for tests.
 %% @end
 %%--------------------------------------------------------------------
@@ -333,3 +431,4 @@ specs(default_multi_types) ->
 			type => [boolean, integer, ipv4]
 		}
 	].
+

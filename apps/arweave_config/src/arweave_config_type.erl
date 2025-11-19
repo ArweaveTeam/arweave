@@ -25,7 +25,8 @@
 	atom/1,
 	string/1,
 	base64/1,
-	base64url/1
+	base64url/1,
+	inet_backend/1
 
 ]).
 -include_lib("kernel/include/file.hrl").
@@ -277,3 +278,17 @@ type_error(Name, Reason, Data) ->
 			}
 		 }
 	}.
+
+%%--------------------------------------------------------------------
+%% @doc define inet_backend type.
+%% @see gen_tcp:inet_backend()
+%% @end
+%%--------------------------------------------------------------------
+inet_backend("inet") -> {ok, inet};
+inet_backend(<<"inet">>) -> {ok, inet};
+inet_backend(inet) -> {ok, inet};
+inet_backend("socket") -> {ok, socket};
+inet_backend(<<"socket">>) -> {ok, socket};
+inet_backend(socket) -> {ok, socket};
+inet_backend(Else) -> {error, Else}.
+

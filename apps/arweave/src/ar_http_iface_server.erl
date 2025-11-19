@@ -93,34 +93,37 @@ start_http_iface_listener(Config) ->
 	TlsKeyfilePath = Config#config.tls_key_file,
 	TransportOpts = [
 		% ranch_tcp parameters
-		{backlog, Config#config.'http_api.tcp.backlog'},
-		{delay_send, Config#config.'http_api.tcp.delay_send'},
-		{keepalive, Config#config.'http_api.tcp.keepalive'},
+		{backlog, arweave_config:get([network,api,tcp,backlog])},
+		{delay_send, arweave_config:get([network,api,tcp,delay_send])},
+		{keepalive, arweave_config:get([network,api,tcp,keepalive])},
 		{linger, {
-				Config#config.'http_api.tcp.linger',
-				Config#config.'http_api.tcp.linger_timeout'
+				arweave_config:get([network,api,tcp,linger]),
+				arweave_config:get([network,api,tcp,linger_timeout])
 			}
 		},
-		{max_connections, Config#config.'http_api.tcp.max_connections'},
-		{nodelay, Config#config.'http_api.tcp.nodelay'},
-		{num_acceptors, Config#config.'http_api.tcp.num_acceptors'},
-		{port, Config#config.port},
-		{send_timeout_close, Config#config.'http_api.tcp.send_timeout_close'},
-		{send_timeout, Config#config.'http_api.tcp.send_timeout'},
-		{shutdown, Config#config.'http_api.tcp.listener_shutdown'}
+		{max_connections, arweave_config:get([network,api,tcp,connections,max])},
+		{nodelay, arweave_config:get([network,api,tcp,nodelay])},
+		{num_acceptors, arweave_config:get([network,api,tcp,num_acceptors])},
+		{port, arweave_config:get([network,api,listen,port])},
+		{send_timeout_close, arweave_config:get([network,api,tcp,send_timeout_close])},
+		{send_timeout, arweave_config:get([network,api,tcp,send_timeout])},
+		{shutdown, arweave_config:get([network,api,tcp,listener_shutdown])}
 	],
 	ProtocolOpts = #{
-		active_n => Config#config.'http_api.http.active_n',
-		inactivity_timeout => Config#config.'http_api.http.inactivity_timeout',
-		linger_timeout => Config#config.'http_api.http.linger_timeout',
-		request_timeout => Config#config.'http_api.http.request_timeout',
-		idle_timeout => Config#config.http_api_transport_idle_timeout,
+		active_n => arweave_config:get([network,api,http,active_n]),
+		inactivity_timeout => arweave_config:get([network,api,http,inactivity_timeout]),
+		linger_timeout => arweave_config:get([network,api,http,linger_timeout]),
+		request_timeout => arweave_config:get([network,api,http,request_timeout]),
+		idle_timeout => arweave_config:get([network,api,tcp,idle_timeout]),
 		middlewares => ?HTTP_IFACE_MIDDLEWARES,
 		env => #{
 			dispatch => Dispatch
 		},
 		metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
-		stream_handlers => [cowboy_metrics_h, cowboy_stream_h]
+		stream_handlers => [
+			cowboy_metrics_h,
+			cowboy_stream_h
+		]
 	},
 	case TlsCertfilePath of
 		not_set ->

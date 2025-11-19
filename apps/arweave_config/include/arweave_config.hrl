@@ -141,37 +141,38 @@
 -define(SHUTDOWN_TCP_MODE, shutdown).
 
 %% Global socket configuration
--define(DEFAULT_SOCKET_BACKEND, inet).
+-define(CONFIG_NETWORK_SOCKET_BACKEND, inet).
 
 %% Default Gun HTTP/TCP parameters
--define(DEFAULT_GUN_HTTP_CLOSING_TIMEOUT, 15_000).
--define(DEFAULT_GUN_HTTP_KEEPALIVE, 60_000).
--define(DEFAULT_GUN_TCP_DELAY_SEND, false).
--define(DEFAULT_GUN_TCP_KEEPALIVE, true).
--define(DEFAULT_GUN_TCP_LINGER, false).
--define(DEFAULT_GUN_TCP_LINGER_TIMEOUT, 0).
--define(DEFAULT_GUN_TCP_NODELAY, true).
--define(DEFAULT_GUN_TCP_SEND_TIMEOUT_CLOSE, true).
--define(DEFAULT_GUN_TCP_SEND_TIMEOUT, 15_000).
+-define(CONFIG_NETWORK_CLIENT_HTTP_CLOSING_TIMEOUT, 15_000).
+-define(CONFIG_NETWORK_CLIENT_HTTP_CONNECTION_RETRY, 0).
+-define(CONFIG_NETWORK_CLIENT_HTTP_CONNECTION_TIMEOUT, 10_000).
+-define(CONFIG_NETWORK_CLIENT_HTTP_KEEPALIVE, 60_000).
+-define(CONFIG_NETWORK_CLIENT_TCP_DELAY_SEND, false).
+-define(CONFIG_NETWORK_CLIENT_TCP_KEEPALIVE, true).
+-define(CONFIG_NETWORK_CLIENT_TCP_LINGER, false).
+-define(CONFIG_NETWORK_CLIENT_TCP_LINGER_TIMEOUT, 0).
+-define(CONFIG_NETWORK_CLIENT_TCP_NODELAY, true).
+-define(CONFIG_NETWORK_CLIENT_TCP_SEND_TIMEOUT, 15_000).
+-define(CONFIG_NETWORK_CLIENT_TCP_SEND_TIMEOUT_CLOSE, true).
 
 %% Default Cowboy HTTP/TCP parameters
--define(DEFAULT_COWBOY_HTTP_ACTIVE_N, 100).
--define(DEFAULT_COWBOY_HTTP_IDLE_TIMEOUT, 60_000).
--define(DEFAULT_COWBOY_HTTP_INACTIVITY_TIMEOUT, 300_000).
--define(DEFAULT_COWBOY_HTTP_LINGER_TIMEOUT, 1000).
--define(DEFAULT_COWBOY_HTTP_REQUEST_TIMEOUT, 5000).
--define(DEFAULT_COWBOY_TCP_BACKLOG, 1024).
--define(DEFAULT_COWBOY_TCP_DELAY_SEND, false).
--define(DEFAULT_COWBOY_TCP_IDLE_TIMEOUT_SECOND, 10).
--define(DEFAULT_COWBOY_TCP_KEEPALIVE, true).
--define(DEFAULT_COWBOY_TCP_LINGER, false).
--define(DEFAULT_COWBOY_TCP_LINGER_TIMEOUT, 0).
--define(DEFAULT_COWBOY_TCP_MAX_CONNECTIONS, 1024).
--define(DEFAULT_COWBOY_TCP_NODELAY, true).
--define(DEFAULT_COWBOY_TCP_NUM_ACCEPTORS, 10).
--define(DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE, true).
--define(DEFAULT_COWBOY_TCP_SEND_TIMEOUT, 15_000).
--define(DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN, 5000).
+-define(CONFIG_NETWORK_API_HTTP_ACTIVE_N, 100).
+-define(CONFIG_NETWORK_API_HTTP_INACTIVITY_TIMEOUT, 300_000).
+-define(CONFIG_NETWORK_API_HTTP_LINGER_TIMEOUT, 1000).
+-define(CONFIG_NETWORK_API_HTTP_REQUEST_TIMEOUT, 5000).
+-define(CONFIG_NETWORK_API_TCP_BACKLOG, 1024).
+-define(CONFIG_NETWORK_API_TCP_CONNECTIONS_MAX, 1024).
+-define(CONFIG_NETWORK_API_TCP_DELAY_SEND, false).
+-define(CONFIG_NETWORK_API_TCP_IDLE_TIMEOUT, 10_000).
+-define(CONFIG_NETWORK_API_TCP_KEEPALIVE, true).
+-define(CONFIG_NETWORK_API_TCP_LINGER, false).
+-define(CONFIG_NETWORK_API_TCP_LINGER_TIMEOUT, 0).
+-define(CONFIG_NETWORK_API_TCP_LISTENER_SHUTDOWN, 5000).
+-define(CONFIG_NETWORK_API_TCP_NODELAY, true).
+-define(CONFIG_NETWORK_API_TCP_NUM_ACCEPTORS, 10).
+-define(CONFIG_NETWORK_API_TCP_SEND_TIMEOUT, 15_000).
+-define(CONFIG_NETWORK_API_TCP_SEND_TIMEOUT_CLOSE, true).
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -252,7 +253,7 @@
 	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS,
 	tls_cert_file = not_set, %% required to enable TLS
 	tls_key_file = not_set,  %% required to enable TLS
-	http_api_transport_idle_timeout = ?DEFAULT_COWBOY_TCP_IDLE_TIMEOUT_SECOND*1000,
+	http_api_transport_idle_timeout = ?CONFIG_NETWORK_API_TCP_IDLE_TIMEOUT,
 	p3 = #p3_config{},
 	coordinated_mining = false,
 	cm_api_secret = not_set,
@@ -282,39 +283,39 @@
 	shutdown_tcp_mode = ?SHUTDOWN_TCP_MODE,
 
 	% global socket configuration
-	'socket.backend' = ?DEFAULT_SOCKET_BACKEND,
+	'socket.backend' = ?CONFIG_NETWORK_SOCKET_BACKEND,
 
 	% gun network stack configuration.
 	% these parameters are mainly configured using default
 	% values from inet module
-	'http_client.http.closing_timeout' = ?DEFAULT_GUN_HTTP_CLOSING_TIMEOUT,
-	'http_client.http.keepalive' = ?DEFAULT_GUN_HTTP_KEEPALIVE,
-	'http_client.tcp.delay_send' = ?DEFAULT_GUN_TCP_DELAY_SEND,
-	'http_client.tcp.keepalive' = ?DEFAULT_GUN_TCP_KEEPALIVE,
-	'http_client.tcp.linger' = ?DEFAULT_GUN_TCP_LINGER,
-	'http_client.tcp.linger_timeout' = ?DEFAULT_GUN_TCP_LINGER_TIMEOUT,
-	'http_client.tcp.nodelay' = ?DEFAULT_GUN_TCP_NODELAY,
-	'http_client.tcp.send_timeout_close' = ?DEFAULT_GUN_TCP_SEND_TIMEOUT_CLOSE,
-	'http_client.tcp.send_timeout' = ?DEFAULT_GUN_TCP_SEND_TIMEOUT,
+	'http_client.http.closing_timeout' = ?CONFIG_NETWORK_CLIENT_HTTP_CLOSING_TIMEOUT,
+	'http_client.http.keepalive' = ?CONFIG_NETWORK_CLIENT_HTTP_KEEPALIVE,
+	'http_client.tcp.delay_send' = ?CONFIG_NETWORK_CLIENT_TCP_DELAY_SEND,
+	'http_client.tcp.keepalive' = ?CONFIG_NETWORK_CLIENT_TCP_KEEPALIVE,
+	'http_client.tcp.linger' = ?CONFIG_NETWORK_CLIENT_TCP_LINGER,
+	'http_client.tcp.linger_timeout' = ?CONFIG_NETWORK_CLIENT_TCP_LINGER_TIMEOUT,
+	'http_client.tcp.nodelay' = ?CONFIG_NETWORK_CLIENT_TCP_NODELAY,
+	'http_client.tcp.send_timeout_close' = ?CONFIG_NETWORK_CLIENT_TCP_SEND_TIMEOUT_CLOSE,
+	'http_client.tcp.send_timeout' = ?CONFIG_NETWORK_CLIENT_TCP_SEND_TIMEOUT,
 
 	% cowboy network stack configuration.
 	% these parameters are mainly configured using default
 	% values from inet module
-	'http_api.http.active_n' = ?DEFAULT_COWBOY_HTTP_ACTIVE_N,
-	'http_api.http.inactivity_timeout' = ?DEFAULT_COWBOY_HTTP_INACTIVITY_TIMEOUT,
-	'http_api.http.linger_timeout' = ?DEFAULT_COWBOY_HTTP_LINGER_TIMEOUT,
-	'http_api.http.request_timeout' = ?DEFAULT_COWBOY_HTTP_REQUEST_TIMEOUT,
-	'http_api.tcp.backlog' = ?DEFAULT_COWBOY_TCP_BACKLOG,
-	'http_api.tcp.delay_send' = ?DEFAULT_COWBOY_TCP_DELAY_SEND,
-	'http_api.tcp.keepalive' = ?DEFAULT_COWBOY_TCP_KEEPALIVE,
-	'http_api.tcp.linger' = ?DEFAULT_COWBOY_TCP_LINGER,
-	'http_api.tcp.linger_timeout' = ?DEFAULT_COWBOY_TCP_LINGER_TIMEOUT,
-	'http_api.tcp.listener_shutdown' = ?DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN,
-	'http_api.tcp.max_connections' = ?DEFAULT_COWBOY_TCP_MAX_CONNECTIONS,
-	'http_api.tcp.nodelay' = ?DEFAULT_COWBOY_TCP_NODELAY,
-	'http_api.tcp.num_acceptors' = ?DEFAULT_COWBOY_TCP_NUM_ACCEPTORS,
-	'http_api.tcp.send_timeout_close' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE,
-	'http_api.tcp.send_timeout' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT
+	'http_api.http.active_n' = ?CONFIG_NETWORK_API_HTTP_ACTIVE_N,
+	'http_api.http.inactivity_timeout' = ?CONFIG_NETWORK_API_HTTP_INACTIVITY_TIMEOUT,
+	'http_api.http.linger_timeout' = ?CONFIG_NETWORK_API_HTTP_LINGER_TIMEOUT,
+	'http_api.http.request_timeout' = ?CONFIG_NETWORK_API_HTTP_REQUEST_TIMEOUT,
+	'http_api.tcp.backlog' = ?CONFIG_NETWORK_API_TCP_BACKLOG,
+	'http_api.tcp.delay_send' = ?CONFIG_NETWORK_API_TCP_DELAY_SEND,
+	'http_api.tcp.keepalive' = ?CONFIG_NETWORK_API_TCP_KEEPALIVE,
+	'http_api.tcp.linger' = ?CONFIG_NETWORK_API_TCP_LINGER,
+	'http_api.tcp.linger_timeout' = ?CONFIG_NETWORK_API_TCP_LINGER_TIMEOUT,
+	'http_api.tcp.listener_shutdown' = ?CONFIG_NETWORK_API_TCP_LISTENER_SHUTDOWN,
+	'http_api.tcp.max_connections' = ?CONFIG_NETWORK_API_TCP_CONNECTIONS_MAX,
+	'http_api.tcp.nodelay' = ?CONFIG_NETWORK_API_TCP_NODELAY,
+	'http_api.tcp.num_acceptors' = ?CONFIG_NETWORK_API_TCP_NUM_ACCEPTORS,
+	'http_api.tcp.send_timeout_close' = ?CONFIG_NETWORK_API_TCP_SEND_TIMEOUT_CLOSE,
+	'http_api.tcp.send_timeout' = ?CONFIG_NETWORK_API_TCP_SEND_TIMEOUT
 }).
 
 -endif.
