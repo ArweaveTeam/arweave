@@ -2293,7 +2293,7 @@ handle_get_chunk_proof2(Offset, Req, Encoding) ->
 	CheckRecords =
 		case ar_sync_record:is_recorded(Offset, ar_data_sync) of
 			false ->
-				{none, {reply, {404, #{}, <<>>, Req}}};
+				{reply, {404, #{}, <<>>, Req}};
 			{{true, _Packing}, _StoreID} ->
 				ok
 		end,
