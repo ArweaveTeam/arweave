@@ -269,8 +269,10 @@ truncate_term(Term) when is_binary(Term) ->
         true ->
             Term
     end;
-truncate_term(Term) when is_list(Term) ->
-    [truncate_term(Elem) || Elem <- Term];
+truncate_term([]) ->
+    [];
+truncate_term([Head | Tail]) ->
+    [truncate_term(Head) | truncate_term(Tail)];
 truncate_term(Term) when is_tuple(Term) ->
     List = tuple_to_list(Term),
     TruncatedList = [truncate_term(Elem) || Elem <- List],
