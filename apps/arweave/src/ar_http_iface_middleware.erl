@@ -33,7 +33,12 @@
 execute(Req, #{ handler := ar_http_iface_handler }) ->
 	Pid = self(),
 	HandlerPid = spawn_link(fun() ->
-		Pid ! {handled, handle(Req, Pid)}
+		{Duration, Response = {Code, _, _, Resp}}
+			= timer:tc(fun() ->
+					handle(Req, Pid)
+				end),
+		log(Code, Resp, #{duration => Duration}),
+		Pid ! {handled, Response}
 	end),
 	{ok, TimeoutRef} = ar_timer:send_after(
 		?HANDLER_TIMEOUT,
@@ -44,6 +49,76 @@ execute(Req, #{ handler := ar_http_iface_handler }) ->
 	loop(TimeoutRef);
 execute(Req, Env) ->
 	{ok, Req, Env}.
+
+%%--------------------------------------------------------------------
+%% @doc Logs client requests. HTTP logging is done only if
+%% arweave_http_api handler is started.
+%% @end
+%%--------------------------------------------------------------------
+log(Code, Resp, Init) ->
+	case ar_logger:is_started(arweave_http_api) of
+		true ->
+			Buffer = Init#{
+				domain => [arweave,http,api],
+				code => "undefined",
+				method => "undefined",
+				path => "undefined",
+				peer_ip => "undefined",
+				peer_port => "undefined",
+				body_length => 0,
+				version => "undefined"
+			},
+			Meta = log_code(Code, Resp, Buffer),
+			logger:info("", [], Meta);
+		_ ->
+			ok
+	end.
+
+log_code(Code, Resp, Buffer) when is_integer(Code) ->
+	NewBuffer = Buffer#{code => integer_to_list(Code)},
+	log_method(Code, Resp, NewBuffer);
+log_code(Code, Resp, Buffer) ->
+	log_method(Code, Resp, Buffer).
+
+log_method(Code, Resp = #{method := Method}, Buffer)
+	when is_binary(Method) ->
+		NewBuffer = Buffer#{method => binary_to_list(Method)},
+		log_path(Code, Resp, NewBuffer);
+log_method(Code, Resp, Buffer) ->
+	log_path(Code, Resp, Buffer).
+
+log_path(Code, Resp = #{path := Path}, Buffer)
+	when is_binary(Path) ->
+		NewBuffer = Buffer#{path => binary_to_list(Path)},
+		log_peer(Code, Resp, NewBuffer);
+log_path(Code, Resp, Buffer) ->
+	log_peer(Code, Resp, Buffer).
+
+log_peer(Code, Resp = #{peer := {IP={A,B,C,D},Port}}, Buffer)
+	when is_integer(A), is_integer(B), is_integer(C), is_integer(D),
+	     is_integer(Port) ->
+		PeerIP = inet:ntoa(IP),
+		PeerPort = integer_to_list(Port),
+		NewBuffer = Buffer#{
+			peer_ip => PeerIP,
+			peer_port => PeerPort
+		},
+		log_body_length(Code, Resp, NewBuffer);
+log_peer(Code, Resp, Buffer) ->
+	log_body_length(Code, Resp, Buffer).
+
+log_body_length(Code, Resp = #{body_length := BodyLength}, Buffer)
+	when is_integer(BodyLength) ->
+		NewBuffer = Buffer#{body_length => integer_to_list(BodyLength)},
+		log_version(Code, Resp, NewBuffer);
+log_body_length(Code, Resp, Buffer) ->
+	log_version(Code, Resp, Buffer).
+
+log_version(_Code, _Resp = #{version := Version}, Buffer)
+	when is_atom(Version) ->
+		Buffer#{version => atom_to_list(Version)};
+log_version(_Code, _Resp, Buffer) ->
+	Buffer.
 
 %%%===================================================================
 %%% Private functions.
