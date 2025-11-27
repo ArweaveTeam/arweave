@@ -104,7 +104,7 @@ get() ->
 		{ok, Value} -> Value;
 		_Elsewise -> undefined
 	catch
-		E:R:S -> throw({error, {R, S}})
+		_E:R:S -> throw({error, {R, S}})
 	end.
 
 %%--------------------------------------------------------------------
@@ -120,7 +120,7 @@ get(Key) when is_atom(Key) ->
 		{ok, Value} -> Value;
 		_Elsewise -> undefined
 	catch
-		E:R:S -> throw({error, {R, S}})
+		_E:R:S -> throw({error, {R, S}})
 	end.
 
 %%--------------------------------------------------------------------
@@ -157,7 +157,7 @@ set(Key, Value, Opts) when is_atom(Key), is_map(Opts) ->
 		{ok, NewValue, _OldValue} -> {ok, NewValue};
 		Elsewise -> {error, Elsewise}
 	catch
-		E:R:S -> throw({error, {R, S}})
+		_E:R:S -> throw({error, {R, S}})
 	end.
 
 %%--------------------------------------------------------------------
