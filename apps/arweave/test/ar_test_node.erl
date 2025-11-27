@@ -5,7 +5,9 @@
 		wait_until_joined/0, wait_until_joined/1,
 		restart/0, restart/1, restart_with_config/1, restart_with_config/2,
 		start_other_node/4, start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
-		wait_until_height/1, wait_until_height/2, wait_until_height/3, assert_wait_until_height/2, 
+		wait_until_height/1, wait_until_height/2, wait_until_height/3, wait_until_height/4,
+		do_wait_until_height/2,
+		assert_wait_until_height/2,
 		wait_until_mining_paused/1, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, mainnet_packing_mocks/0,
 		get_difficulty_for_invalid_hash/0, invalid_solution/0,
@@ -1025,19 +1027,22 @@ wait_until_syncs_genesis_data() ->
 	ok.
 
 wait_until_height(Node, TargetHeight) ->
-	wait_until_height(Node, TargetHeight, true).
+	wait_until_height(Node, TargetHeight, true, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
 
 wait_until_height(Node, TargetHeight, Strict) ->
+	wait_until_height(Node, TargetHeight, Strict, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
+
+wait_until_height(Node, TargetHeight, Strict, Timeout) ->
 	{BI, Height} = case Node of
 		main ->
 			{
-				wait_until_height(TargetHeight),
+				do_wait_until_height(TargetHeight, Timeout),
 				ar_node:get_height()
 			};
 		_ ->
 			{
-				remote_call(Node, ?MODULE, wait_until_height, [TargetHeight],
-					?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500),
+				remote_call(Node, ?MODULE, do_wait_until_height, [TargetHeight, Timeout],
+					Timeout + 500),
 				remote_call(Node, ar_node, get_height, [])
 			}
 	end,
@@ -1051,6 +1056,9 @@ wait_until_height(Node, TargetHeight, Strict) ->
 	BI.
 
 wait_until_height(TargetHeight) ->
+	do_wait_until_height(TargetHeight, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
+
+do_wait_until_height(TargetHeight, Timeout) ->
 	{ok, BI} = ar_util:do_until(
 		fun() ->
 			case ar_node:get_blocks() of
@@ -1061,7 +1069,7 @@ wait_until_height(TargetHeight) ->
 			end
 		end,
 		100,
-		?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT
+		Timeout
 	),
 	BI.
 
