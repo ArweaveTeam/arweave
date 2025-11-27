@@ -110,35 +110,87 @@ handlers() -> #{
 	% This handler can be configured on demand, all message
 	% greater or equal than info are being logged.
 	arweave_info => #{
-		level => debug,
+		level => info,
 		config => #{
 			type => file,
 			file => logfile_path(#{
 				prefix => "arweave",
 				level => info
 			}),
-			max_no_files => 10,
-			max_no_bytes => 51_418_800,
+			compress_on_rotate => arweave_config:get(
+				[logging,compress_on_rotate],
+				false
+			),
+			max_no_files => arweave_config:get(
+				[logging,sync_mode_qlen],
+				10
+			),
+			max_no_bytes => arweave_config:get(
+				[logging,max_no_bytes],
+				51_418_800
+			),
 			modes => [raw, append],
-			sync_mode_qlen => 10,
-			drop_mode_qlen => 200,
-			flush_qlen => 1000,
-			burst_limit_enable => true,
-			burst_limit_max_count => 500,
-			burst_limit_window_time => 1000,
-			overload_kill_enable => true,
-			overload_kill_qlen => 20_000,
-			overload_kill_mem_size => 3_000_000,
-			overload_kill_restart_after => 5000
+			sync_mode_qlen => arweave_config:get(
+				[logging,sync_mode_qlen],
+				10
+			),
+			drop_mode_qlen => arweave_config:get(
+				[logging,drop_mode_qlen],
+				200
+			),
+			flush_qlen => arweave_config:get(
+				[logging,flush_qlen],
+				1000
+			),
+			burst_limit_enable => arweave_config:get(
+				[logging,burst_limit_enable],
+				true
+			),
+			burst_limit_max_count => arweave_config:get(
+				[logging,burst_limit_max_count],
+				500
+			),
+			burst_limit_window_time => arweave_config:get(
+				[logging,burst_limit_window_time],
+				1000
+			),
+			overload_kill_enable => arweave_config:get(
+				[logging,overload_kill_enable],
+				true
+			),
+			overload_kill_qlen => arweave_config:get(
+				[logging,overload_kill_qlen],
+				20_000
+			),
+			overload_kill_mem_size => arweave_config:get(
+				[logging,overload_kill_mem_size],
+				3_000_000
+			),
+			overload_kill_restart_after => arweave_config:get(
+				[logging,overload_kill_restart_after],
+				5000
+			)
 		},
 		formatter => {
 			logger_formatter, #{
-				chars_limit => 16256,
-				depth => 256,
+				chars_limit => arweave_config:get(
+					[logging,formatter,chars_limit],
+					16256
+				),
+				depth => arweave_config:get(
+					[logging,formatter,depth],
+					256
+				),
 				legacy_header => false,
-				max_size => 8128,
+				max_size => arweave_config:get(
+					[logging,formatter,max_size],
+					8128
+				),
 				single_line => true,
-				template => template(),
+				template => arweave_config:get(
+					[logging,formatter,template],
+					template()
+				),
 				time_offset => "Z"
 			}
 		},
@@ -159,28 +211,80 @@ handlers() -> #{
 				prefix => "arweave",
 				level => debug
 			}),
-			max_no_files => 10,
-			max_no_bytes => 51_418_800,
+			compress_on_rotate => arweave_config:get(
+				[logging,handlers,debug,compress_on_rotate],
+				false
+			),
+			max_no_files => arweave_config:get(
+				[logging,handlers,debug,max_no_files],
+				10
+			),
+			max_no_bytes => arweave_config:get(
+				[logging,handlers,debug,max_no_bytes],
+				51_418_800
+			),
 			modes => [raw, append],
-			sync_mode_qlen => 10,
-			drop_mode_qlen => 200,
-			flush_qlen => 1000,
-			burst_limit_enable => true,
-			burst_limit_max_count => 500,
-			burst_limit_window_time => 1000,
-			overload_kill_enable => true,
-			overload_kill_qlen => 20_000,
-			overload_kill_mem_size => 3_000_000,
-			overload_kill_restart_after => 5000
+			sync_mode_qlen => arweave_config:get(
+				[logging,handlers,debug,sync_mode_qlen],
+				10
+			),
+			drop_mode_qlen => arweave_config:get(
+				[logging,handlers,debug,drop_mode_qlen],
+				200
+			),
+			flush_qlen => arweave_config:get(
+				[logging,handlers,debug,flush_qlen],
+				1000
+			),
+			burst_limit_enable => arweave_config:get(
+				[logging,handlers,debug,burst_limit_enable],
+				true
+			),
+			burst_limit_max_count => arweave_config:get(
+				[logging,handlers,debug,burst_limit_max_count],
+				500
+			),
+			burst_limit_window_time => arweave_config:get(
+				[logging,handlers,debug,burst_limit_window_time],
+				1000
+			),
+			overload_kill_enable => arweave_config:get(
+				[logging,handlers,debug,overload_kill_enable],
+				true
+			),
+			overload_kill_qlen => arweave_config:get(
+				[logging,handlers,debug,overload_kill_qlen],
+				20_000
+			),
+			overload_kill_mem_size => arweave_config:get(
+				[logging,handlers,debug,overload_kill_mem_size],
+				3_000_000
+			),
+			overload_kill_restart_after => arweave_config:get(
+				[logging,handlers,debug,overload_kill_restart_after],
+				5000
+			)
 		},
 		formatter => {
 			logger_formatter, #{
-				chars_limit => 16256,
-				depth => 256,
+				chars_limit => arweave_config:get(
+					[logging,handlers,debug,formatter,chars_limit],
+					16256
+				),
+				depth => arweave_config:get(
+					[logging,handlers,debug,formatter,depth],
+					256
+				),
 				legacy_header => false,
-				max_size => 8128,
+				max_size => arweave_config:get(
+					[logging,handlers,debug,formatter,max_size],
+					8128
+				),
 				single_line => true,
-				template => template(),
+				template => arweave_config:get(
+					[logging,handlers,debug,formatter,template],
+					template()
+				),
 				time_offset => "Z"
 			}
 		},
@@ -201,27 +305,76 @@ handlers() -> #{
 				prefix => "arweave-http-api",
 				level => debug
 			}),
-			max_no_files => 10,
-			max_no_bytes => 51_418_800,
+			compress_on_rotate => arweave_config:get(
+				[logging,handlers,http,api,compress_on_rotate],
+				false
+			),
+			max_no_files => arweave_config:get(
+				[logging,handlers,http,api,max_no_files],
+				10
+			),
+			max_no_bytes => arweave_config:get(
+				[logging,handlers,http,api,max_no_bytes],
+				51_418_800
+			),
 			modes => [raw, append],
-			sync_mode_qlen => 10,
-			drop_mode_qlen => 200,
-			flush_qlen => 1000,
-			burst_limit_enable => true,
-			burst_limit_max_count => 500,
-			burst_limit_window_time => 1000,
-			overload_kill_enable => true,
-			overload_kill_qlen => 20_000,
-			overload_kill_mem_size => 3_000_000,
-			overload_kill_restart_after => 5000
+			sync_mode_qlen => arweave_config:get(
+				[logging,handlers,http,api,sync_mode_qlen],
+				10
+			),
+			drop_mode_qlen => arweave_config:get(
+				[logging,handlers,http,api,drop_mode_qlen],
+				200
+			),
+			flush_qlen => arweave_config:get(
+				[logging,handlers,http,api,flush_qlen],
+				1000
+			),
+			burst_limit_enable => arweave_config:get(
+				[logging,handlers,http,api,burst_limit_enable],
+				true
+			),
+			burst_limit_max_count => arweave_config:get(
+				[logging,handlers,http,api,burst_limit_max_count],
+				500
+			),
+			burst_limit_window_time => arweave_config:get(
+				[logging,handlers,http,api,burst_limit_window_time],
+				1000
+			),
+			overload_kill_enable => arweave_config:get(
+				[logging,handlers,http,api,overload_kill_enable],
+				true
+			),
+			overload_kill_qlen => arweave_config:get(
+				[logging,handlers,http,api,overload_kill_qlen],
+				20_000
+			),
+			overload_kill_mem_size => arweave_config:get(
+				[logging,handlers,http,api,overload_kill_mem_size],
+				3_000_000
+			),
+			overload_kill_restart_after => arweave_config:get(
+				[logging,handlers,http,api,overload_kill_restart_after],
+				5000
+			)
 		},
 		formatter => {
 			logger_formatter, #{
 				legacy_header => false,
 				single_line => true,
-				chars_limit => 16256,
-				max_size => 8128,
-				depth => 256,
+				chars_limit => arweave_config:get(
+					[logging,handlers,http,api,formatter,chars_limit],
+					16256
+				),
+				max_size => arweave_config:get(
+					[logging,handlers,http,api,formatter,max_size],
+					8128
+				),
+				depth => arweave_config:get(
+					[logging,handlers,http,api,formatter,depth],
+					256
+				),
 				template => [
 					time, " ",
 					"ip=", peer_ip, " ",

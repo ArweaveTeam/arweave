@@ -192,22 +192,14 @@
 % '''
 %
 %---------------------------------------------------------------------
--callback handle_set(Parameter, NewValue, State) -> Return when
+-callback handle_set(Parameter, NewValue, State, Args) -> Return when
 	Parameter:: parameter(),
 	NewValue :: value(),
 	State :: map(),
-	% CallbackReturn :: {ok, term()} | {error, term()},
-	% Action :: fun ((Parameter, Value) -> CallbackReturn),
-	% Actions :: [Action],
-	% MFA :: {atom(), atom(), list()},
-	% MFAs :: [MFA],
+	Args :: term(),
 	Return :: ignore
 		| {ok, term()}
 		| {store, term()}
-		% | {ok, Action}
-		% | {ok, Actions}
-		% | {ok, MFA}
-		% | {ok, MFAs}
 		| {error, map()}.
 
 %---------------------------------------------------------------------
@@ -305,6 +297,24 @@
 		| {'maybe', term()}
 		| all.
 
+%--------------------------------------------------------------------
+% OPTIONAL: defines if the parameter is enabled or not.
+% DEFAULT: true
+%--------------------------------------------------------------------
+-callback enabled() -> Return when
+	  Return :: boolean()
+		| {false, term()}.
+
+%---------------------------------------------------------------------
+% @TODO inherit callback
+% OPTIONAL: defines an inherited parameter.
+% DEFAULT: undefined
+%---------------------------------------------------------------------
+-callback inherit() -> Return when
+	Return :: Parameter | {Parameter, Fields},
+	Parameter :: [atom()],
+	Fields :: [atom()].
+
 %---------------------------------------------------------------------
 % @TODO: protected callback
 % OPTIONAL: defines if the value should be public or protected (not
@@ -379,7 +389,7 @@
 
 -optional_callbacks([
 	handle_get/2,
-	handle_set/3,
+	handle_set/4,
 	runtime/0,
 	short_argument/0,
 	long_argument/0,
@@ -389,7 +399,9 @@
 	short_description/0,
 	long_description/0,
 	deprecated/0,
-	nargs/0
+	nargs/0,
+	enabled/0,
+	inherit/0
 ]).
 
 %%--------------------------------------------------------------------
@@ -611,6 +623,7 @@ callbacks_check() -> [
 	{parameter_key, arweave_config_spec_parameter_key},
 
 	% optional callbacks
+	{enabled, arweave_config_spec_enabled},
 	{handle_get, arweave_config_spec_handle_get},
 	{handle_set, arweave_config_spec_handle_set},
 	{default, arweave_config_spec_default},
@@ -623,46 +636,176 @@ callbacks_check() -> [
 	{legacy, arweave_config_spec_legacy},
 	{short_description, arweave_config_spec_short_description},
 	{long_description, arweave_config_spec_long_description},
-	{nargs, arweave_config_spec_nargs}
+	{nargs, arweave_config_spec_nargs},
+	{inherit, arweave_config_spec_inherit}
 ].
 
 %%--------------------------------------------------------------------
 %% @hidden
+%% @TODO check if the specs are correct (list of maps).
 %%--------------------------------------------------------------------
+-spec init(Specs) -> Return when
+	Specs :: [atom() | map()],
+	Return :: {ok, NamedEts},
+	NamedEts :: ?MODULE.
+
 init([]) ->
 	Specs = arweave_config_parameters:init(),
-	init2(Specs);
+	init_process(Specs);
 init(Specs) when is_list(Specs) ->
-	init2(Specs).
+	init_process(Specs).
 
-init2(Specs) ->
-	% catch exception
+%%--------------------------------------------------------------------
+%% @hidden
+%% init process. this one should not crash, then we catch all
+%% exceptions.
+%%--------------------------------------------------------------------
+init_process(Specs) ->
 	erlang:process_flag(trap_exit, true),
+	init_ets(Specs).
 
-	% create the ETS table, this one should be only reachable by
-	% the current process to avoid doing nasty things with the
-	% specification during runtime.
-	Ets = ets:new(?MODULE, [
+%%--------------------------------------------------------------------
+%% @hidden
+%% create the ETS table, this one should be only reachable by
+%% the current process to avoid doing nasty things with the
+%% specification during runtime.
+%%--------------------------------------------------------------------
+init_ets(Specs) ->
+	ets:new(?MODULE, [
 		named_table,
 		protected
 	]),
+	init_parameters(Specs).
 
-	% parse and load all specifications from each modules.
-	{ok, MapSpec} = init_loop(Specs, #{}),
+%%--------------------------------------------------------------------
+%% @hidden
+%% parse and load all specifications from each modules.
+%%--------------------------------------------------------------------
+init_parameters(Specs) ->
+	case init_loop(Specs, #{}) of
+		{ok, MapSpec} ->
+			init_inherit(MapSpec);
+		Else ->
+			{error, Else}
+	end.
 
-	% insert all specification into the specification store (ETS).
-	% @TODO specification must be unique, when inserting a new
-	% specification, if the same key exists, a warning should be
-	% displayed in some way.
+%%--------------------------------------------------------------------
+%% @hidden
+%% loops over parameters and if `inherit' spec is defined, update the
+%% parameters accordingly. At the end of this function, the specs
+%% should be ready.
+%%--------------------------------------------------------------------
+init_inherit(MapSpec) ->
+	InheritedMap = inherit_loop(MapSpec),
+	init_state(InheritedMap).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% loop over the specifications and set inherited values if present.
+%%--------------------------------------------------------------------
+inherit_loop(Specs) ->
+	inherit_loop(maps:iterator(Specs), Specs, #{}).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% this loop restrist the inherited values to be a tuple containing
+%% the inherited parameter and the list of fields.
+%%--------------------------------------------------------------------
+inherit_loop(none, _Specs, Buffer) -> Buffer;
+inherit_loop(Iterator, Specs, Buffer) ->
+	case maps:next(Iterator) of
+		{K, Parameter = #{inherit := {Parent, Fields}}, Next} ->
+			NewParameter = inherit(Parameter, Fields, Parent, Specs),
+			NewBuffer = Buffer#{ K => NewParameter },
+			inherit_loop(Next, Specs, NewBuffer);
+		{K, Parameter, Next} ->
+			NewBuffer = Buffer#{ K => Parameter },
+			inherit_loop(Next, Specs, NewBuffer)
+	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% loop over inherited fields and search them in parent parameter. if
+%% the original parameter does not have a field set, use the one from
+%% the parent.
+%%--------------------------------------------------------------------
+-spec inherit(Parameter, InheritedFields, ParentKey, Specs) -> Return when
+	Parameter :: map(),
+	InheritedFields :: [atom()],
+	ParentKey :: list(),
+	Specs :: map(),
+	Return :: map().
+
+inherit(Parameter, _, ParentKey, Specs)
+	when is_map_key(ParentKey, Specs) =:= false ->
+		?LOG_WARNING("undefined inherited parent: ~p", [Parameter]),
+		Parameter;
+inherit(Parameter, Fields, ParentKey, Specs) ->
+	Parent = maps:get(ParentKey, Specs),
+	inherit(Parameter, Fields, Parent).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% check if the parameter is set from the original spec.
+%%--------------------------------------------------------------------
+-spec inherit(Parameter, Fields, Parent) -> Return when
+	Parameter :: map(),
+	Fields :: [atom()],
+	Parent :: map(),
+	Return :: map().
+
+inherit(Parameter, [], _) -> Parameter;
+inherit(Parameter, [Field|Rest], Parent) ->
+	case maps:get(Field, Parameter, undefined) of
+		undefined ->
+			inherit2(Parameter,[Field|Rest],Parent);
+		_ ->
+			inherit(Parameter, Rest, Parent)
+	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% check if the parent spec got the inherited field and set it.
+%%--------------------------------------------------------------------
+-spec inherit2(Parameter, Fields, Parent) -> Return when
+	Parameter :: map(),
+	Fields :: [atom()],
+	Parent :: map(),
+	Return :: map().
+
+inherit2(Parameter, [Field|Rest], Parent) ->
+	case maps:get(Field, Parent, undefined) of
+		undefined ->
+			inherit(Parameter, Rest, Parent);
+		Value ->
+			NewParameter = Parameter#{
+				Field => Value
+			},
+			inherit(NewParameter, Rest, Parent)
+	end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% insert all specification into the specification store (ETS).
+%% @TODO specification must be unique, when inserting a new
+%% specification, if the same key exists, a warning should be
+%% displayed in some way.
+%%--------------------------------------------------------------------
+init_state(MapSpec) ->
 	[
 		ets:insert(?MODULE, {K, V})
 		||
 		{K, V} <- maps:to_list(MapSpec)
 	],
+	init_final(?MODULE).
 
-	% It should be good, we can start the module.
+%%--------------------------------------------------------------------
+%% @hidden
+%% It should be good, we can start the module.
+%%--------------------------------------------------------------------
+init_final(State) ->
 	?LOG_INFO("~p ready", [?MODULE]),
-	{ok, Ets}.
+	{ok, State}.
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -677,26 +820,32 @@ init_loop([Map|Rest], Buffer) when is_map(Map) ->
 	% checked as map key.
 	case init_map(Map, #{}) of
 		{ok, #{ parameter_key := K } = R} ->
+			?LOG_DEBUG("checked callback from map ~p:~p", [Map]),
 			init_loop(Rest, Buffer#{ K => R });
 		discard ->
+			?LOG_NOTICE("can't load parameter from module ~p", [Map]),
 			init_loop(Rest, Buffer);
 		{discard, _Message} ->
+			?LOG_NOTICE("can't load parameter from module ~p", [Map]),
 			init_loop(Rest, Buffer);
 		Elsewise ->
-			Elsewise
+			throw(Elsewise)
 	end;
 init_loop([Module|Rest], Buffer) when is_atom(Module) ->
 	% the argument is defined as module callback, then
 	% all callback are checked as functions exported.
 	case init_module(Module, #{}) of
 		{ok, #{ parameter_key := K } = R} ->
+			?LOG_DEBUG("checked callback from map ~p:~p", [Module]),
 			init_loop(Rest, Buffer#{ K => R });
 		discard ->
+			?LOG_NOTICE("can't load parameter from module ~p", [Module]),
 			init_loop(Rest, Buffer);
 		{discard, _Message} ->
+			?LOG_NOTICE("can't load parameter from module ~p", [Module]),
 			init_loop(Rest, Buffer);
 		Elsewise ->
-			Elsewise
+			throw(Elsewise)
 	end.
 
 %%--------------------------------------------------------------------
@@ -707,15 +856,13 @@ init_module(Module, State) ->
 	init_module(Module, CallbacksCheck, State).
 
 init_module(Module, [], State) ->
-	?LOG_INFO("loaded callback module ~p", [Module]),
+	?LOG_DEBUG("loaded callback module ~p", [Module]),
 	{ok, State};
 init_module(Module, [{_Callback, ModuleCallback}|Rest], State) ->
 	case erlang:apply(ModuleCallback, init, [Module, State]) of
 		{ok, NewState} ->
-			?LOG_INFO("checked callback from module ~p:~p", [Module,ModuleCallback]),
 			init_module(Module, Rest, NewState);
 		Elsewise ->
-			?LOG_WARNING("can't load parameter from module ~p:~p", [Module, Elsewise]),
 			{discard, Elsewise}
 	end.
 
@@ -727,15 +874,13 @@ init_map(Map, State) ->
 	init_map(Map, CallbacksCheck, State).
 
 init_map(Map, [], State) ->
-	?LOG_INFO("loaded callback map ~p", [Map]),
+	?LOG_DEBUG("loaded callback map ~p", [Map]),
 	{ok, State};
 init_map(Map, [{_Callback, ModuleCallback}|Rest], State) ->
 	case erlang:apply(ModuleCallback, init, [Map, State]) of
 		{ok, NewState} ->
-			?LOG_INFO("checked callback from map ~p:~p", [Map, ModuleCallback]),
 			init_map(Map, Rest, NewState);
 		Elsewise ->
-			?LOG_WARNING("can't load parameter from map ~p:~p", [Map, Elsewise]),
 			{discard, Elsewise}
 	end.
 
@@ -966,22 +1111,24 @@ apply_set_parameter(Parameter, Value, Spec) ->
 %% callback to set the value.
 %%--------------------------------------------------------------------
 apply_set_value(Parameter, Value, Spec = #{ set := Set }) ->
-	% if handle_set/3 is present, we execute it.
+	% if handle_set/4 is present, we execute it.
 	Default = maps:get(default, Spec, undefined),
+
+	% @todo: potential race condition
 	OldValue = arweave_config_store:get(Parameter, Default),
 	State = local_state(#{
 		spec => Spec,
 		old_value => OldValue
 	}),
-	try Set(Parameter, Value, State) of
+
+	Args = maps:get(set_args, Spec, []),
+	try Set(Parameter, Value, State, Args) of
 		ignore ->
 			{ok, OldValue, OldValue};
 		{ok, NewValue} ->
 			{ok, NewValue, OldValue};
 		{store, NewValue} ->
-			apply_set_store(Parameter,NewValue,OldValue,Spec);
-		Elsewise ->
-			Elsewise
+			apply_set_store(Parameter,NewValue,OldValue,Spec)
 	catch
 		E:R ->
 			{E,R}
@@ -1030,8 +1177,7 @@ apply_get2(Parameter, Spec = #{ get := Get, default := Default }) ->
 	case Get(Parameter, State) of
 		{ok, Value} ->
 			{ok, Value};
-		X ->
-			io:format("~p~n", [X]),
+		_ ->
 			{ok, Default}
 	end;
 apply_get2(Parameter, Spec = #{ get := Get }) ->

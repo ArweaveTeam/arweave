@@ -26,7 +26,9 @@
 	default_set_state/1,
 	default_multi/1,
 	default_runtime/1,
-	default_multi_types/1
+	default_multi_types/1,
+	default_inherit/1,
+	default_environment/1
 ]).
 -include("arweave_config.hrl").
 -include_lib("common_test/include/ct.hrl").
@@ -100,7 +102,9 @@ all() ->
 		default_set_state,
 		default_multi,
 		default_runtime,
-		default_multi_types
+		default_multi_types,
+		default_inherit,
+		default_environment
 	].
 
 %%--------------------------------------------------------------------
@@ -237,6 +241,69 @@ default_multi_types(_Config) ->
 	{comment, "multi types tested"}.
 
 %%--------------------------------------------------------------------
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+default_inherit(_Config) ->
+	ct:pal(test, 1, "check inheritance"),
+	{ok, true} = arweave_config:get([default]),
+	{ok, true} = arweave_config:get([inherit,all]),
+	{ok, 1} = arweave_config:get([inherit,nothing]),
+
+	ct:pal(test, 1, "check specs from ets"),
+	[{_, #{ type := boolean, default := true}}] =
+		ets:lookup(arweave_config_spec, [default]),
+
+	[{_, #{ type := boolean, default := true}}] =
+		ets:lookup(arweave_config_spec, [inherit, all]),
+
+	[{_, #{ type := boolean }}] =
+		ets:lookup(arweave_config_spec, [inherit, type]),
+
+	[{_, #{ default := true }}] =
+		ets:lookup(arweave_config_spec, [inherit, default]),
+
+	[{_, #{ default := 1, type := pos_integer }}] =
+		ets:lookup(arweave_config_spec, [inherit, nothing]),
+
+	{comment, "inherit feature tested"}.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
+default_environment(_Config) ->
+	ct:pal(test, 1, "get the list of environment variables"),
+	Env = arweave_config_spec:get_environments(),
+
+	ct:pal(test, 1, "check disabled environment"),
+	false = lists:search(fun
+		({_, [environment,disabled]}) -> true;
+		(_) -> false end,
+		Env
+	),
+
+	ct:pal(test, 1, "check enabled environment (generated)"),
+	{value, {<<"AR_ENVIRONMENT_ENABLED">>, [environment,enabled]}} =
+		lists:search(fun
+			({_,[environment,enabled]}) -> true;
+			(_) -> false
+		end,
+		Env
+	),
+
+	ct:pal(test, 1, "check custom enabled environment"),
+	{value, {<<"CUSTOM">>, [environment,custom]}} =
+		lists:search(fun
+			({_,[environment,custom]}) -> true;
+			(_) -> false
+		end,
+		Env
+	),
+
+	{comment, "environment feature tested"}.
+
+%%--------------------------------------------------------------------
 %% @doc defines custom parameters for tests.
 %% @end
 %%--------------------------------------------------------------------
@@ -273,7 +340,7 @@ specs(default_set) ->
 		#{
 			parameter_key => [default_set],
 			handle_set => fun
-				(K, V, S) ->
+				(K, V, S, _) ->
 					V ! ok,
 					{ok, ok}
 			end
@@ -284,7 +351,7 @@ specs(default_set_state) ->
 		#{
 			parameter_key => [default_set_state],
 			handle_set => fun
-				(_K, _V, #{ config := Config }) ->
+				(_K, _V, #{ config := Config }, _) ->
 					case Config of
 						#{ default_set_state := empty } ->
 							{store, full};
@@ -307,7 +374,7 @@ specs(default_multi) ->
 					{ok, 3}
 			end,
 			handle_set => fun
-				(_K, _V, _S) ->
+				(_K, _V, _S, _) ->
 					{ok, 3}
 			end
 		}
@@ -331,5 +398,46 @@ specs(default_multi_types) ->
 		#{
 			parameter_key => [default],
 			type => [boolean, integer, ipv4]
+		}
+	];
+specs(default_inherit) ->
+	[
+		#{
+			parameter_key => [default],
+			type => boolean,
+			default => true
+		},
+		#{
+			parameter_key => [inherit,all],
+			inherit => [default]
+		},
+		#{
+			parameter_key => [inherit,type],
+			inherit => {[default], [type]}
+		},
+		#{
+			parameter_key => [inherit,default],
+			inherit => {[default], [default]}
+		},
+		#{
+			parameter_key => [inherit,nothing],
+			inherit => [default],
+			type => pos_integer,
+			default => 1
+		}
+	];
+specs(default_environment) ->
+	[
+		#{
+			parameter_key => [environment,disabled],
+			environment => false
+		},
+		#{
+			parameter_key => [environment,enabled],
+			environment => true
+		},
+		#{
+			parameter_key => [environment,custom],
+			environment => <<"CUSTOM">>
 		}
 	].
