@@ -71,6 +71,7 @@
 -include("arweave_config.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-record(?MODULE, {proplist, record}).
 
 %%--------------------------------------------------------------------
 %% @doc Returns the complete list of all keys from configuration
@@ -204,7 +205,11 @@ init(_) ->
 	Proplist = config_to_proplist(#config{}),
 	?LOG_DEBUG([{configuration, Proplist}]),
 	set_environment(Proplist),
-	{ok, Proplist}.
+	{ok, #?MODULE{
+		proplist = Proplist,
+		record = #config{}
+	      }
+	}.
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -216,32 +221,35 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_call(Msg = {has_key, Key}, From, State) ->
+handle_call(Msg = {has_key, Key}, From, State = #?MODULE{ proplist = P }) ->
 	?LOG_DEBUG([{message, Msg}, {from, From}]),
-	{reply, proplists:is_defined(Key, State), State};
-handle_call(Msg = keys, From, State) ->
+	{reply, proplists:is_defined(Key, P), State};
+handle_call(Msg = keys, From, State = #?MODULE{ proplist = P }) ->
 	?LOG_DEBUG([{message, Msg}, {from, From}]),
-	{reply, [ K || {K,_} <- State ], State};
-handle_call(Msg = get, From, State) ->
+	{reply, [ K || {K,_} <- P ], State};
+handle_call(Msg = get, From, State = #?MODULE{ record = R }) ->
 	?LOG_DEBUG([{message, Msg}, {from, From}]),
-	{reply, {ok, proplist_to_config(State)}, State};
-handle_call(Msg = {get, Key}, From, State)
+	{reply, {ok, R}, State};
+handle_call(Msg = {get, Key}, From, State = #?MODULE{ proplist = P })
 	when is_atom(Key) ->
 		?LOG_DEBUG([{message, Msg}, {from, From}]),
-		Return = {ok, proplists:get_value(Key, State)},
+		Return = {ok, proplists:get_value(Key, P)},
 		{reply, Return, State};
-handle_call(Msg = {set, Key, Value, Opts}, From, State)
+handle_call(Msg = {set, Key, Value, Opts}, From, State = #?MODULE{ proplist = P })
 	when is_atom(Key), is_map(Opts) ->
 		?LOG_DEBUG([{message, Msg}, {from, From}]),
-		OldValue = proplists:get_value(Key, State),
-		NewState = lists:keyreplace(Key, 1, State, {Key, Value}),
-		set_environment(NewState),
+		OldValue = proplists:get_value(Key, P),
+		NewP = lists:keyreplace(Key, 1, P, {Key, Value}),
+		set_environment(NewP),
 		Return = {ok, Value, OldValue},
+		NewState = State#?MODULE{
+			proplist = NewP,
+			record = proplist_to_config(NewP)
+		},
 		{reply, Return, NewState};
-handle_call(Msg = get_env, From, State) ->
+handle_call(Msg = get_env, From, State = #?MODULE{ record = R }) ->
 	?LOG_DEBUG([{message, Msg}, {from, From}]),
-	Return = proplist_to_config(State),
-	{reply, {ok, Return}, State};
+	{reply, {ok, R}, State};
 handle_call(Message, From, State) ->
 	Error = [
 		{from, From},
@@ -258,8 +266,12 @@ handle_call(Message, From, State) ->
 handle_cast(Msg = {set_env, Config}, State) ->
 	?LOG_DEBUG([{message, Msg}]),
 	case import_config(Config) of
-		{ok, NewState} ->
-			set_environment(NewState),
+		{ok, NewP} ->
+			set_environment(NewP),
+			NewState = State#?MODULE{
+				proplist = NewP,
+				record = proplist_to_config(NewP)
+			},
 			{noreply, NewState};
 		_ ->
 			{noreply, State}
@@ -267,7 +279,11 @@ handle_cast(Msg = {set_env, Config}, State) ->
 handle_cast(Msg = reset, State) ->
 	?LOG_DEBUG([{message, Msg}]),
 	case reset_config() of
-		{ok, NewState} ->
+		{ok, NewP} ->
+			NewState = State#?MODULE{
+				proplist = NewP,
+				record = proplist_to_config(NewP)
+			},
 			{noreply, NewState};
 		_ ->
 			{noreply, State}
