@@ -63,10 +63,13 @@ test_fork_checkpoints_not_found() ->
 	ar_test_node:wait_until_height(peer1, 1),
 
 	ar_test_node:disconnect_from(peer1),
-	%% Make sure that we are deep into the new session before we try to mine
-	wait_until_step_number(main, ?TEST_RESET_FREQUENCY + 101),
-	ar_test_node:mine(main),
-	[H2 | _] = ar_test_node:wait_until_height(main, 2),
+	%% Make sure that we are deep into the new session before we try to mine.
+	%% Suspend peer1's nonce limiter so it cannot advance to the new session while isolated.
+	[H2 | _] = with_nonce_limiter_paused(peer1, fun() ->
+		wait_until_step_number(main, ?TEST_RESET_FREQUENCY + 101),
+		ar_test_node:mine(main),
+		ar_test_node:wait_until_height(main, 2)
+	end),
 
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
@@ -189,3 +192,27 @@ wait_until_step_number(Node, StepNumber) ->
 		end,
 		500, 
 	60000).
+
+with_nonce_limiter_paused(Node, Fun) when is_function(Fun, 0) ->
+	Pid = suspend_nonce_limiter(Node),
+	try
+		Fun()
+	after
+		resume_nonce_limiter(Node, Pid)
+	end.
+
+suspend_nonce_limiter(Node) ->
+	Pid = ar_test_node:remote_call(Node, erlang, whereis, [ar_nonce_limiter]),
+	?assert(is_pid(Pid)),
+	ok = ar_test_node:remote_call(Node, sys, suspend, [Pid]),
+	Pid.
+
+resume_nonce_limiter(_Node, undefined) ->
+	ok;
+resume_nonce_limiter(Node, Pid) ->
+	case ar_test_node:remote_call(Node, erlang, is_process_alive, [Pid]) of
+		true ->
+			ok = ar_test_node:remote_call(Node, sys, resume, [Pid]);
+		false ->
+			ok
+	end.
