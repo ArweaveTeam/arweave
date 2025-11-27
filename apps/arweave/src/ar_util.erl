@@ -29,7 +29,7 @@
 	pfilter/2,
 	pick_random/1,
 	pick_random/2,
-	pmap/2,
+	pmap/2, pmap/3,
 	print_stacktrace/0,
 	safe_decode/1,
 	safe_divide/2,
