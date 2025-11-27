@@ -734,18 +734,13 @@ debug_get_disk_pool_chunks(Cursor) ->
 	end.
 
 %% @doc Check if the footprint record should be updated for the given chunk.
-%% The footprint record stores multiples of ?DATA_CHUNK_SIZE.
-is_footprint_record_supported(AbsoluteOffset, ChunkSize, Packing) ->
-	IsMatchingPacking =
-		case Packing of
-			{replica_2_9, _Addr} ->
-				true;
-			unpacked_padded ->
-				true;
-			_ ->
-				false
-	end,
-	IsMatchingPacking andalso (AbsoluteOffset > ar_block:strict_data_split_threshold() orelse ChunkSize == ?DATA_CHUNK_SIZE).
+%% We maintain the footprint record for all chunks so that footprint-based syncing
+%% correctly identifies already-synced chunks. Note: in the early weave (before the
+%% strict data split threshold), multiple small chunks may map to the same bucket,
+%% making the footprint record imprecise. This is acceptable since footprint syncing
+%% is primarily for replica 2.9 data and small chunks can use "normal" syncing.
+is_footprint_record_supported(_AbsoluteOffset, _ChunkSize, _Packing) ->
+	true.
 
 %% @doc Return the disk pool threshold, a byte offset where
 %% the disk pool begins - the data above this offset is considered
@@ -4032,22 +4027,17 @@ read_data_root_entries(DataRoot, TXSize, Cursor, StoreID, Acc) ->
 	end.
 
 maybe_run_footprint_record_initialization(State) ->
-	#sync_data_state{ store_id = StoreID, migrations_index = MI } = State,
+	#sync_data_state{ store_id = StoreID } = State,
 	Packing = ar_storage_module:get_packing(StoreID),
-	case Packing of
-		{replica_2_9, _Addr} ->
-			{FootprintRecordCursor, InitializationComplete} = get_footprint_record_initialization_state(State),
-			case InitializationComplete of
-				true ->
-					ok;
-				false ->
-					?LOG_INFO([{event, initializing_footprint_record},
-							{cursor, FootprintRecordCursor}, {store_id, StoreID}]),
-					gen_server:cast(self(), {initialize_footprint_record, FootprintRecordCursor, Packing})
-			end;
-		_ ->
-			ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
-			ok
+	{FootprintRecordCursor, InitializationComplete} = get_footprint_record_initialization_state(State),
+	case InitializationComplete of
+		true ->
+			ok;
+		false ->
+			?LOG_INFO([{event, initializing_footprint_record},
+					{cursor, FootprintRecordCursor}, {store_id, StoreID},
+					{packing, ar_serialize:encode_packing(Packing, false)}]),
+			gen_server:cast(self(), {initialize_footprint_record, FootprintRecordCursor, Packing})
 	end.
 
 get_footprint_record_initialization_state(State) ->
@@ -4063,6 +4053,7 @@ get_footprint_record_initialization_state(State) ->
 	end.
 
 %% @doc Initialize the footprint record from the ar_data_sync record.
+%% We don't filter by packing to ensure all synced intervals are migrated.
 initialize_footprint_record(complete, _Packing, State) ->
 	State;
 initialize_footprint_record(Cursor, Packing, State) ->
@@ -4073,7 +4064,7 @@ initialize_footprint_record(Cursor, Packing, State) ->
 	} = State,
 	BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
 
-	case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, Packing, ar_data_sync, StoreID) of
+	case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, ar_data_sync, StoreID) of
 		not_found ->
 			ok = ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
 			?LOG_INFO([{event, footprint_record_initialized}, {store_id, StoreID}]),
@@ -4092,11 +4083,5 @@ initialize_footprint_record(Cursor, Packing, State) ->
 initialize_footprint_range(Start, End, _Packing, _StoreID) when Start >= End ->
 	ok;
 initialize_footprint_range(Start, End, Packing, StoreID) ->
-	ChunkOffset = ar_block:get_chunk_padded_offset(Start + ?DATA_CHUNK_SIZE),
-	case ChunkOffset =< End of
-		true ->
-			ar_footprint_record:add(ChunkOffset, Packing, StoreID),
-			initialize_footprint_range(ChunkOffset, End, Packing, StoreID);
-		false ->
-			ok
-	end.
+	ar_footprint_record:add(Start + 1, Packing, StoreID),
+	initialize_footprint_range(Start + ?DATA_CHUNK_SIZE, End, Packing, StoreID).
