@@ -1160,18 +1160,24 @@ start(Config) ->
 
 start(normal, _Args) ->
 	{ok, Config} = arweave_config:get_env(),
+
 	%% Set erlang socket backend
 	persistent_term:put({kernel, inet_backend}, Config#config.'socket.backend'),
+
 	%% Configure logger
 	ar_logger:init(Config),
+
 	%% Start the Prometheus metrics subsystem.
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
+
 	%% Register custom metrics.
 	ar_metrics:register(),
+
 	%% Start other apps which we depend on.
 	set_mining_address(Config),
 	ar_chunk_storage:run_defragmentation(),
+
 	%% Start Arweave.
 	ar_sup:start_link().
 
