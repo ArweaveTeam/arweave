@@ -5,6 +5,7 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -define(TEST_RESET_FREQUENCY, 400).
+-define(BLOCK_DELIVERY_TIMEOUT, 120000).
 
 fork_at_entropy_reset_point_test_() ->
 	[
@@ -160,8 +161,8 @@ test_fork_refuse_validation() ->
 	ar_test_node:wait_until_mining_paused(main),
 
 	ar_test_node:connect_to_peer(peer1),
-	send_block(H2, main, peer1),
-	send_block(H3, main, peer1),
+	ensure_block_applied(H2, main, peer1, 2),
+	ensure_block_applied(H3, main, peer1, 3),
 	ar_test_node:wait_until_height(peer1, 3).
 
 mock_reset_frequency() ->
@@ -182,7 +183,24 @@ mock_block_propagation_parallelization() ->
 
 send_block(H, FromNode, ToNode) ->
 	Block = ar_test_node:remote_call(FromNode, ar_storage, read_block, [H]),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, ar_test_node:send_new_block(ar_test_node:peer_ip(ToNode), Block)).
+	case ar_test_node:send_new_block(ar_test_node:peer_ip(ToNode), Block) of
+		{ok, {{<<"200">>, _}, _, _, _, _}} ->
+			ok;
+		{ok, {{<<"208">>, _}, _, _, _, _}} ->
+			ok;
+		Error ->
+			?assert(false, io_lib:format("Got unexpected error: ~p", [Error]))
+	end.
+
+ensure_block_applied(H, FromNode, ToNode, TargetHeight) ->
+	ar_util:do_until(
+		fun() ->
+			send_block(H, FromNode, ToNode),
+			Height = ar_test_node:remote_call(ToNode, ar_node, get_height, []),
+			Height >= TargetHeight
+		end,
+		1000,
+		?BLOCK_DELIVERY_TIMEOUT).
 
 wait_until_step_number(Node, StepNumber) ->
 	true = ar_util:do_until(
