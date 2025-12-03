@@ -38,6 +38,9 @@ jobs:
       - ${{ inputs.os_name }}
       - ${{ inputs.os_release }}
 
+    strategy:
+      fail-fast: false
+
     steps:
       - name: cleanup
         if: always()
