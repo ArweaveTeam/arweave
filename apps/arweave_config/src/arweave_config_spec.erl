@@ -305,6 +305,24 @@
 		| {'maybe', term()}
 		| all.
 
+%--------------------------------------------------------------------
+% OPTIONAL: defines if the parameter is enabled or not.
+% DEFAULT: true
+%--------------------------------------------------------------------
+-callback enabled() -> Return when
+	  Return :: boolean()
+		| {false, term()}.
+
+%---------------------------------------------------------------------
+% @TODO baseline callback
+% OPTIONAL: defines a baseline, default value from another parameter
+% key. If defined, it should be taken before default/0 or if default/0
+% callback is not present.
+% DEFAULT: undefined
+%---------------------------------------------------------------------
+% -callback baseline() -> Return when
+% 	  Return :: parameter().
+
 %---------------------------------------------------------------------
 % @TODO: protected callback
 % OPTIONAL: defines if the value should be public or protected (not
@@ -389,7 +407,8 @@
 	short_description/0,
 	long_description/0,
 	deprecated/0,
-	nargs/0
+	nargs/0,
+	enabled/0
 ]).
 
 %%--------------------------------------------------------------------
@@ -611,6 +630,7 @@ callbacks_check() -> [
 	{parameter_key, arweave_config_spec_parameter_key},
 
 	% optional callbacks
+	{enabled, arweave_config_spec_enabled},
 	{handle_get, arweave_config_spec_handle_get},
 	{handle_set, arweave_config_spec_handle_set},
 	{default, arweave_config_spec_default},
@@ -677,26 +697,32 @@ init_loop([Map|Rest], Buffer) when is_map(Map) ->
 	% checked as map key.
 	case init_map(Map, #{}) of
 		{ok, #{ parameter_key := K } = R} ->
+			?LOG_DEBUG("checked callback from map ~p:~p", [Map]),
 			init_loop(Rest, Buffer#{ K => R });
 		discard ->
+			?LOG_NOTICE("can't load parameter from module ~p", [Map]),
 			init_loop(Rest, Buffer);
 		{discard, _Message} ->
+			?LOG_NOTICE("can't load parameter from module ~p", [Map]),
 			init_loop(Rest, Buffer);
 		Elsewise ->
-			Elsewise
+			throw(Elsewise)
 	end;
 init_loop([Module|Rest], Buffer) when is_atom(Module) ->
 	% the argument is defined as module callback, then
 	% all callback are checked as functions exported.
 	case init_module(Module, #{}) of
 		{ok, #{ parameter_key := K } = R} ->
+			?LOG_DEBUG("checked callback from map ~p:~p", [Module]),
 			init_loop(Rest, Buffer#{ K => R });
 		discard ->
+			?LOG_NOTICE("can't load parameter from module ~p", [Module]),
 			init_loop(Rest, Buffer);
 		{discard, _Message} ->
+			?LOG_NOTICE("can't load parameter from module ~p", [Module]),
 			init_loop(Rest, Buffer);
 		Elsewise ->
-			Elsewise
+			throw(Elsewise)
 	end.
 
 %%--------------------------------------------------------------------
@@ -707,15 +733,13 @@ init_module(Module, State) ->
 	init_module(Module, CallbacksCheck, State).
 
 init_module(Module, [], State) ->
-	?LOG_INFO("loaded callback module ~p", [Module]),
+	?LOG_DEBUG("loaded callback module ~p", [Module]),
 	{ok, State};
 init_module(Module, [{_Callback, ModuleCallback}|Rest], State) ->
 	case erlang:apply(ModuleCallback, init, [Module, State]) of
 		{ok, NewState} ->
-			?LOG_INFO("checked callback from module ~p:~p", [Module,ModuleCallback]),
 			init_module(Module, Rest, NewState);
 		Elsewise ->
-			?LOG_WARNING("can't load parameter from module ~p:~p", [Module, Elsewise]),
 			{discard, Elsewise}
 	end.
 
@@ -727,15 +751,13 @@ init_map(Map, State) ->
 	init_map(Map, CallbacksCheck, State).
 
 init_map(Map, [], State) ->
-	?LOG_INFO("loaded callback map ~p", [Map]),
+	?LOG_DEBUG("loaded callback map ~p", [Map]),
 	{ok, State};
 init_map(Map, [{_Callback, ModuleCallback}|Rest], State) ->
 	case erlang:apply(ModuleCallback, init, [Map, State]) of
 		{ok, NewState} ->
-			?LOG_INFO("checked callback from map ~p:~p", [Map, ModuleCallback]),
 			init_map(Map, Rest, NewState);
 		Elsewise ->
-			?LOG_WARNING("can't load parameter from map ~p:~p", [Map, Elsewise]),
 			{discard, Elsewise}
 	end.
 
