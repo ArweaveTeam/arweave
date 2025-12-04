@@ -250,7 +250,7 @@ show_help() ->
 				"Its purpose is to prevent your system from being overloaded and "
 				"ensuring all the connections are handled optimally. "
 				"Default is ~p.",
-				[?DEFAULT_COWBOY_TCP_MAX_CONNECTIONS]
+				[?CONFIG_NETWORK_API_TCP_CONNECTIONS_MAX]
 			)},
 			{"disk_pool_data_root_expiration_time",
 				"The time in seconds of how long a pending or orphaned data root is kept in "
@@ -388,133 +388,128 @@ show_help() ->
 			{"network.socket.backend", io_lib:format(
 				"Configure Erlang default socket backend (inet or socket). "
 				"Default is '~p'.",
-				[?DEFAULT_SOCKET_BACKEND]
+				[?CONFIG_NETWORK_SOCKET_BACKEND]
 			)},
 
 			% Gun HTTP Client Tuning
 			{"http_client.http.closing_timeout", io_lib:format(
 				"Configure HTTP Client closing timeout parameter (milliseconds). "
 				"Default is '~p'.",
-				[?DEFAULT_GUN_HTTP_CLOSING_TIMEOUT]
+				[?CONFIG_NETWORK_CLIENT_HTTP_CLOSING_TIMEOUT]
 			)},
 			{"http_client.http.keepalive", io_lib:format(
 				"Configure HTTP Client keep alive parameter (seconds or infinity). "
 				"Default is '~p'.",
-				[?DEFAULT_GUN_HTTP_KEEPALIVE]
-			)},
-			{"http_client.tcp.delay_send", io_lib:format(
-				"Configure HTTP Client TCP delay send parameter (boolean). "
-				"Default is '~p'.",
-				[?DEFAULT_GUN_TCP_DELAY_SEND]
+				[?CONFIG_NETWORK_CLIENT_HTTP_KEEPALIVE]
 			)},
 			{"http_client.tcp.keepalive", io_lib:format(
 				"Configure HTTP Client TCP keepalive parameter (boolean). "
 				"Default is '~p'.",
-				[?DEFAULT_GUN_TCP_KEEPALIVE]
+				[?CONFIG_NETWORK_CLIENT_TCP_KEEPALIVE]
 			)},
 			{"http_client.tcp.linger", io_lib:format(
 				"Configure HTTP Client TCP linger parameter (boolean). "
 				"Default is '~p'.",
-				[?DEFAULT_GUN_TCP_LINGER]
+				[?CONFIG_NETWORK_CLIENT_TCP_LINGER]
 			)},
 			{"http_client.tcp.linger_timeout", io_lib:format(
 				"Configure HTTP Client TCP linger timeout parameter (seconds). "
 				"Default is '~p'.",
-				[?DEFAULT_GUN_TCP_LINGER_TIMEOUT]
+				[?CONFIG_NETWORK_CLIENT_TCP_LINGER_TIMEOUT]
 			)},
 			{"http_client.tcp.nodelay", io_lib:format(
 				"Configure HTTP Client TCP nodelay parameter (boolean). "
 				"Default is '~p'.",
-				[?DEFAULT_GUN_TCP_NODELAY]
+				[?CONFIG_NETWORK_CLIENT_TCP_NODELAY]
 			)},
 			{"http_client.tcp.send_timeout_close", io_lib:format(
 				"Configure HTTP Client TCP send timeout close parameter (boolean). "
 				"Default is '~p'.",
-				[?DEFAULT_GUN_TCP_SEND_TIMEOUT_CLOSE]
+				[?CONFIG_NETWORK_CLIENT_TCP_SEND_TIMEOUT_CLOSE]
 			)},
 			{"http_client.tcp.send_timeout", io_lib:format(
 				"Configure HTTP Client TCP send timeout parameter (milliseconds). "
 				"Default is '~p'.",
-				[?DEFAULT_GUN_TCP_SEND_TIMEOUT]
+				[?CONFIG_NETWORK_CLIENT_TCP_SEND_TIMEOUT]
 			)},
 
 			% Cowboy HTTP Server Tuning
 			{"http_api.http.active_n", io_lib:format(
 				"Configure HTTP Server number of packets requested per sockets (integer). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_HTTP_ACTIVE_N]
+				[?CONFIG_NETWORK_API_HTTP_ACTIVE_N]
 			)},
 			{"http_api.tcp.idle_timeout_seconds", io_lib:format(
 				"The number of seconds allowed for incoming API client connections to be idle "
-				"before closing them. Default is '~p' seconds. "
+				"before closing them. Default is '~p' milliseconds. "
 				"Please, do not set this value too low "
 				"as it will negatively affect the performance of the node.",
-				[?DEFAULT_COWBOY_TCP_IDLE_TIMEOUT_SECOND]
+				[?CONFIG_NETWORK_API_TCP_IDLE_TIMEOUT]
 			)},
 			{"http_api.http.inactivity_timeout", io_lib:format(
 				"Configure HTTP Server inactivity timeout (milliseconds). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_HTTP_INACTIVITY_TIMEOUT]
+				[?CONFIG_NETWORK_API_HTTP_INACTIVITY_TIMEOUT]
 			)},
 			{"http_api.http.linger_timeout", io_lib:format(
 				"Configure HTTP Server linger timeout (milliseconds). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_HTTP_LINGER_TIMEOUT]
+				[?CONFIG_NETWORK_API_HTTP_LINGER_TIMEOUT]
 			)},
 			{"http_api.http.request_timeout", io_lib:format(
 				"Configure HTTP Server request timeout (milliseconds). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_HTTP_REQUEST_TIMEOUT]
+				[?CONFIG_NETWORK_API_HTTP_REQUEST_TIMEOUT]
 			)},
 			{"http_api.tcp.backlog", io_lib:format(
 				"Configure HTTP Server TCP backlog parameter (integer). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_TCP_BACKLOG]
+				[?CONFIG_NETWORK_API_TCP_BACKLOG]
 			)},
 			{"http_api.tcp.delay_send", io_lib:format(
 				"Configure HTTP Server TCP delay send parameter (boolean). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_TCP_DELAY_SEND]
+				[?CONFIG_NETWORK_API_TCP_DELAY_SEND]
 			)},
 			{"http_api.tcp.keepalive", io_lib:format(
 				"Configure HTTP Server TCP keepalive parameter (boolean). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_TCP_KEEPALIVE]
+				[?CONFIG_NETWORK_API_TCP_KEEPALIVE]
 			)},
 			{"http_api.tcp.linger", io_lib:format(
 				"Configure HTTP Server TCP linger parameter (boolean). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_TCP_LINGER]
+				[?CONFIG_NETWORK_API_TCP_LINGER]
 			)},
 			{"http_api.tcp.linger_timeout", io_lib:format(
 				"Configure HTTP Server TCP linger timeout parameter (seconds). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_TCP_LINGER_TIMEOUT]
+				[?CONFIG_NETWORK_API_TCP_LINGER_TIMEOUT]
 			)},
 			{"http_api.tcp.listener_shutdown", io_lib:format(
 				"Configure HTTP Server listener shutdown (seconds)."
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN]
+				[?CONFIG_NETWORK_API_TCP_LISTENER_SHUTDOWN]
 			)},
 			{"http_api.tcp.nodelay", io_lib:format(
 				"Configure HTTP Server TCP nodelay parameter (boolean). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_TCP_NODELAY]
+				[?CONFIG_NETWORK_API_TCP_NODELAY]
 			)},
 			{"http_api.tcp.num_acceptors", io_lib:format(
 				"Configure HTTP Server TCP acceptors (integer). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_TCP_NUM_ACCEPTORS]
+				[?CONFIG_NETWORK_API_TCP_NUM_ACCEPTORS]
 			)},
 			{"http_api.tcp.send_timeout_close", io_lib:format(
 				"Configure HTTP Server TCP send timeout close parameter (boolean). "
 				"Default is '~p'.",
-				 [?DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE]
+				 [?CONFIG_NETWORK_API_TCP_SEND_TIMEOUT_CLOSE]
 			)},
 			{"http_api.tcp.send_timeout", io_lib:format(
 				"Configure HTTP Server TCP send timeout parameter (milliseconds). "
 				"Default is '~p'.",
-				[?DEFAULT_COWBOY_TCP_SEND_TIMEOUT]
+				[?CONFIG_NETWORK_API_TCP_SEND_TIMEOUT]
 			)}
 		]
 	),

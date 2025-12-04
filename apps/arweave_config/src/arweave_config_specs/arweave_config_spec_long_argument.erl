@@ -26,9 +26,13 @@
 %%% @end
 %%%===================================================================
 -module(arweave_config_spec_long_argument).
+-compile(warnings_as_errors).
 -export([init/2]).
 -include("arweave_config_spec.hrl").
 
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
 init(Map = #{ long_argument := LA }, State) ->
 	check(Map, LA, State);
 init(Map, State) when is_map(Map) ->
@@ -41,6 +45,9 @@ init(Module, State) when is_atom(Module) ->
 			check(Module, undefined, State)
 	end.
 
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
 fetch(Module, State) ->
 	try
 		LA = erlang:apply(Module, long_argument, []),
@@ -50,11 +57,16 @@ fetch(Module, State) ->
 			{error, R}
 	end.
 
-check(Module, false, State) ->
-	{ok, State};
-check(Module, undefined, State = #{ parameter_key := CK }) ->
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+check(_Module, true, State = #{ parameter_key := CK }) ->
 	{ok, State#{ long_argument => convert(CK) }};
-check(Module, LA, State) when is_binary(LA) orelse is_list(LA) ->
+check(_Module, false, State) ->
+	{ok, State};
+check(_Module, undefined, State = #{ parameter_key := CK }) ->
+	{ok, State#{ long_argument => convert(CK) }};
+check(_Module, LA, State) when is_binary(LA) orelse is_list(LA) ->
 	{ok, State#{ long_argument => convert(LA) }};
 check(Module, LA, State) ->
 	{error, #{
@@ -65,14 +77,20 @@ check(Module, LA, State) ->
 		}
 	}.
 
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
 convert(List) when is_list(List) -> convert(List, []);
-convert(<<"-", _/binary>> = Binary) -> Binary;
-convert(Binary) when is_binary(Binary) -> <<"-", Binary/binary>>.
+convert(<<"--", _/binary>> = Binary) -> Binary;
+convert(Binary) when is_binary(Binary) -> <<"--", Binary/binary>>.
 
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
 convert([], Buffer) ->
 	Sep = application:get_env(arweave_config, long_argument_separator, "."),
 	Bin = list_to_binary(lists:join(Sep, lists:reverse(Buffer))),
-	<<"-", Bin/binary>>;
+	<<"--", Bin/binary>>;
 convert([H|T], Buffer) when is_integer(H) ->
 	convert([integer_to_binary(H)|T], Buffer);
 convert([H|T], Buffer) when is_atom(H) ->

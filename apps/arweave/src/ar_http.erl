@@ -262,28 +262,39 @@ terminate(Reason, #state{ status_by_pid = StatusByPID }) ->
 %%% ==================================================================
 
 open_connection(#{ peer := Peer } = Args) ->
-	{ok, Config} = arweave_config:get_env(),
+	% {ok, Config} = arweave_config:get_env(),
 	{IPOrHost, Port} = get_ip_port(Peer),
-	ConnectTimeout = maps:get(connect_timeout, Args,
-			maps:get(timeout, Args, ?HTTP_REQUEST_CONNECT_TIMEOUT)),
+	DefaultTimeout = arweave_config:get([network,client,http,connection,timeout]),
+	ConnectTimeout = maps:get(
+		connect_timeout,
+		Args,
+		maps:get(timeout, Args,DefaultTimeout)
+	), 
 	GunOpts = #{
-		retry => 0,
+		retry => arweave_config:get([network,client,http,retry]),
 		connect_timeout => ConnectTimeout,
 		http_opts => #{
-			closing_timeout => Config#config.'http_client.http.closing_timeout',
-			keepalive => Config#config.'http_client.http.keepalive'
+			closing_timeout =>
+				arweave_config:get([network,client,http,closing_timeout]),
+			keepalive =>
+				arweave_config:get([network,client,http,keepalive])
 		},
 		tcp_opts => [
-			{delay_send, Config#config.'http_client.tcp.delay_send'},
-			{keepalive, Config#config.'http_client.tcp.keepalive'},
+			{delay_send,
+			 	arweave_config:get([network,client,http,delay_send])},
+			{keepalive,
+			 	arweave_config:get([network,client,tcp,keepalive])},
 			{linger, {
-					Config#config.'http_client.tcp.linger',
-					Config#config.'http_client.tcp.linger_timeout'
+					arweave_config:get([network,client,tcp,linger]),
+					arweave_config:get([network,client,tcp,linger_timeout])
 				}
 			},
-			{nodelay, Config#config.'http_client.tcp.nodelay'},
-			{send_timeout_close, Config#config.'http_client.tcp.send_timeout_close'},
-			{send_timeout, Config#config.'http_client.tcp.send_timeout'}
+			{nodelay,
+			 	arweave_config:get([network,client,tcp,nodelay])},
+			{send_timeout_close,
+				arweave_config:get([network,client,tcp,send_timeout_close])},
+			{send_timeout,
+			 	arweave_config:get([network,client,tcp,send_timeout])}
 		]
 	},
 	gun:open(IPOrHost, Port, GunOpts).

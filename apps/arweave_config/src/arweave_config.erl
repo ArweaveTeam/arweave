@@ -115,7 +115,7 @@ set_env(Value) ->
 %%--------------------------------------------------------------------
 -spec get(ParameterKey) -> Return when
 	ParameterKey :: atom() | string() | binary() | list(),
-	Return :: {ok, term()} | {error, term()}.
+	Return :: term().
 
 get(Key) when is_atom(Key) ->
 	% TODO: pattern to remove.
@@ -131,14 +131,25 @@ get(Key) when is_atom(Key) ->
 get(Key) ->
 	case arweave_config_parser:key(Key) of
 		{ok, Parameter} ->
-			case arweave_config_store:get(Parameter) of
-				{ok, Value} ->
-					{ok, Value};
-				_Elsewise ->
-					arweave_config_spec:get_default(Parameter)
-			end;
+			get_store(Parameter);
 		Elsewise ->
-			Elsewise
+			throw(Elsewise)
+	end.
+
+get_store(Parameter) ->
+	case arweave_config_store:get(Parameter) of
+		{ok, Value} ->
+			Value;
+		_Elsewise ->
+			get_default_spec(Parameter)
+	end.
+
+get_default_spec(Parameter) ->
+	case arweave_config_spec:get_default(Parameter) of
+		{ok, Value} ->
+			Value;
+		Elsewise ->
+			throw(Elsewise)
 	end.
 
 %%--------------------------------------------------------------------
@@ -165,11 +176,10 @@ get(Key) ->
 	Return :: term().
 
 get(Key, Default) ->
-	case get(Key) of
-		{ok, Value} ->
-			Value;
-		_Elsewise ->
-			Default
+	try
+		get(Key)
+	catch
+		_:_:_ -> Default
 	end.
 
 %%--------------------------------------------------------------------

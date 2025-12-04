@@ -13,7 +13,7 @@
 %%%===================================================================
 -module(arweave_config_parameters).
 -export([init/0]).
--include_("arweave_config.hrl").
+-include("arweave_config.hrl").
 
 %%--------------------------------------------------------------------
 %% @doc returns a list of map containing arweave parameters.
@@ -72,6 +72,312 @@ init() ->
 					logger:set_application_level(arweave, debug),
 					legacy_set(K, V, S)
 			end
+		},
+
+		%-----------------------------------------------------
+		% network global configuration
+		%-----------------------------------------------------
+		#{
+			% see inet:inet_backend().
+			parameter_key => [network,socket,backend],
+			default => ?CONFIG_NETWORK_SOCKET_BACKEND,
+			runtime => false,
+			type => inet_backend,
+			handle_set => fun legacy_set/3
+		},
+
+		%-----------------------------------------------------
+		% arweave client (gun) global configuration
+		%-----------------------------------------------------
+		#{
+			% see gun:http_opts(). default value is 15000.
+			parameter_key => [network,client,http,closing_timeout],
+			legacy => 'http_client.http.closing_timeout',
+			environment => true,
+			default => ?CONFIG_NETWORK_CLIENT_HTTP_CLOSING_TIMEOUT,
+			type => pos_integer,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gun:http_opts(). default to infinity.
+			parameter_key => [network,client,http,keepalive],
+			legacy => 'http_client.http.keepalive',
+			environment => true,
+			default => ?CONFIG_NETWORK_CLIENT_HTTP_KEEPALIVE,
+			type => pos_integer,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:options().
+			parameter_key => [network,client,http,delay_send],
+			legacy => 'http_client.tcp.delay_send',
+			environment => true,
+			default => ?CONFIG_NETWORK_CLIENT_TCP_DELAY_SEND,
+			type => boolean,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:options().
+			parameter_key => [network,client,tcp,keepalive],
+			legacy => 'http_client.tcp.keepalive',
+			environment => true,
+			default => ?CONFIG_NETWORK_CLIENT_TCP_KEEPALIVE,
+			type => boolean,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:options().
+			parameter_key => [network,client,tcp,linger_timeout],
+			legacy => 'http_client.tcp.linger_timeout',
+			environment => true,
+			default => ?CONFIG_NETWORK_CLIENT_TCP_LINGER_TIMEOUT,
+			type => pos_integer,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:options().
+			parameter_key => [network,client,tcp,linger],
+			legacy => 'http_client.tcp.linger',
+			environment => true,
+			default => ?CONFIG_NETWORK_CLIENT_TCP_LINGER,
+			type => boolean,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			%see gen_tcp:options().
+			parameter_key => [network,client,tcp,nodelay],
+			legacy => 'http_client.tcp.nodelay',
+			environment => true,
+			default => ?CONFIG_NETWORK_CLIENT_TCP_NODELAY,
+			type => boolean,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			%see gen_tcp:options().
+			parameter_key => [network,client,tcp,send_timeout_close],
+			legacy => 'http_client.tcp.send_timeout_close',
+			environment => true,
+			default => ?CONFIG_NETWORK_CLIENT_TCP_SEND_TIMEOUT_CLOSE,
+			type => boolean,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			%see gen_tcp:options().
+			parameter_key => [network,client,tcp,send_timeout],
+			legacy => 'http_client.tcp.send_timeout',
+			environment => true,
+			default => ?CONFIG_NETWORK_CLIENT_TCP_SEND_TIMEOUT,
+			type => pos_integer,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gun:opts(). set retry value.
+			parameter_key => [network,client,http,connection,retry],
+			default => ?CONFIG_NETWORK_CLIENT_HTTP_CONNECTION_RETRY,
+			environment => true,
+			type => pos_integer,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gun:opts(). set connect_timeout value
+			parameter_key => [network,client,http,connection,timeout],
+			default => ?CONFIG_NETWORK_CLIENT_HTTP_CONNECTION_TIMEOUT,
+			environment => true,
+			type => pos_integer,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gun:opts().
+			parameter_key => [network,client,http,retry],
+			default => ?CONFIG_NETWORK_CLIENT_HTTP_CONNECTION_RETRY,
+			environment => true,
+			type => pos_integer,
+			runtime => false,
+			handle_set => fun legacy_set/3
+		},
+
+		%-----------------------------------------------------
+		% arweave api (cowboy) global configuration
+		%-----------------------------------------------------
+		#{
+			% see cowboy:start_clear/3.
+			parameter_key => [network,api,listen,port],
+			legacy => port,
+			type => tcp_port,
+			default => 1984,
+			runtime => false,
+			environment => <<"AR_PORT">>,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see cowboy_http:opts(). set active_n value.
+			parameter_key => [network,api,http,active_n],
+			legacy => 'http_api.http.active_n',
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_HTTP_ACTIVE_N,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see cowboy_http:opts(). set inactivity_timeout value.
+			parameter_key => [network,api,http,inactivity_timeout],
+			legacy => 'http_api.http.inactivity_timeout',
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_HTTP_INACTIVITY_TIMEOUT,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see cowboy_http:opts(). set linger_timeout value.
+			parameter_key => [network,api,http,linger_timeout],
+			legacy => 'http_api.http.linger_timeout',
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_HTTP_LINGER_TIMEOUT,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see cowboy_http:opts(). set request_timeout value.
+			parameter_key => [network,api,http,request_timeout],
+			legacy => 'http_api.http.request_timeout',
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_HTTP_REQUEST_TIMEOUT,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:listen_option().
+			parameter_key => [network,api,tcp,backlog],
+			legacy => 'http_api.tcp.backlog',
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_TCP_BACKLOG,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:option().
+			parameter_key => [network,api,tcp,delay_send],
+			legacy => 'http_api.tcp.delay_send',
+			type => boolean,
+			default => ?CONFIG_NETWORK_API_TCP_DELAY_SEND,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:option().
+			parameter_key => [network,api,tcp,keepalive],
+			legacy => 'http_api.tcp.keepalive',
+			type => boolean,
+			default => ?CONFIG_NETWORK_API_TCP_KEEPALIVE,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:option().
+			parameter_key => [network,api,tcp,linger_timeout],
+			legacy => 'http_api.tcp.linger_timeout',
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_TCP_LINGER_TIMEOUT,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:option().
+			parameter_key => [network,api,tcp,linger],
+			legacy => 'http_api.tcp.linger',
+			type => boolean,
+			default => ?CONFIG_NETWORK_API_TCP_LINGER,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% @todo to check.
+			parameter_key => [network,api,tcp,listener_shutdown],
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_TCP_LISTENER_SHUTDOWN,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see ranch:transport_opts().
+			parameter_key => [network,api,tcp,num_acceptors],
+			legacy => 'http_api.tcp.num_acceptors',
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_TCP_NUM_ACCEPTORS,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:option().
+			parameter_key => [network,api,tcp,send_timeout_close],
+			legacy => 'http_api.tcp.send_timeout_close',
+			type => boolean,
+			default => ?CONFIG_NETWORK_API_TCP_SEND_TIMEOUT_CLOSE,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:option().
+			parameter_key => [network,api,tcp,send_timeout],
+			legacy => 'http_api.tcp.send_timeout',
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_TCP_SEND_TIMEOUT,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see ranch:transport_opts(). set max_connections value.
+			parameter_key => [network,api,tcp,connections,max],
+			legacy => 'http_api.tcp.max_connections',
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_TCP_CONNECTIONS_MAX,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:option().
+			parameter_key => [network,api,tcp,nodelay],
+			legacy => 'http_api.tcp.nodelay',
+			type => boolean,
+			default => ?CONFIG_NETWORK_API_TCP_NODELAY,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
+		},
+		#{
+			% see gen_tcp:option().
+			parameter_key => [network,api,tcp,idle_timeout],
+			legacy => http_api_transport_idle_timeout,
+			type => pos_integer,
+			default => ?CONFIG_NETWORK_API_TCP_IDLE_TIMEOUT,
+			runtime => false,
+			environment => true,
+			handle_set => fun legacy_set/3
 		},
 
 		%-----------------------------------------------------
