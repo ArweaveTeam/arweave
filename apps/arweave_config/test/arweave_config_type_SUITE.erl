@@ -28,7 +28,8 @@
 	base64/1,
 	base64url/1,
 	tcp_port/1,
-	file/1
+	file/1,
+	logging_template/1
 ]).
 -include_lib("common_test/include/ct.hrl").
 
@@ -81,7 +82,8 @@ all() ->
 		base64,
 		base64url,
 		tcp_port,
-		file
+		file,
+		logging_template
 	].
 
 none(_Config) ->
@@ -173,5 +175,36 @@ file(_Config) ->
 	ct:pal(test, 1, "test a wrong erlang type"),
 	{error, _} =
 		arweave_config_type:file(1234),
+
+	ok.
+
+logging_template(_Config) ->
+	ct:pal(test, 1, "valid template can be string"),
+	{ok, ["test", "\n"]} =
+		arweave_config_type:logging_template("test"),
+
+	ct:pal(test, 1, "valid template can be a binary"),
+	{ok, ["test","\n"]} =
+		arweave_config_type:logging_template(<<"test">>),
+
+	ct:pal(test, 1, "An atom start with %"),
+	{ok, [test,"\n"]} =
+		arweave_config_type:logging_template(<<"%test">>),
+
+	ct:pal(test, 1, "a string and an atom can be part of the same template"),
+	{ok, ["message:", " ", test, "\n"]} =
+		arweave_config_type:logging_template("message: %test"),
+
+	ct:pal(test, 1, "an atom must start with a null char"),
+	{ok, ["message:%test","\n"]} =
+		arweave_config_type:logging_template("message:%test"),
+
+	ct:pal(test, 1, "an atom must only use [a-zA-Z_] chars"),
+	{error, _} =
+		arweave_config_type:logging_template("%test!#&"),
+
+	ct:pal(test, 1, "an atom must exist"),
+	{error, _} =
+		arweave_config_type:logging_template("%total_random_atom"),
 
 	ok.

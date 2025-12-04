@@ -84,21 +84,12 @@ init() ->
 		% arweave logging feature
 		%-----------------------------------------------------
 		#{
-			enabled => {false, wip},
-			% see: https://www.erlang.org/doc/apps/kernel/logger_formatter.html
-			% this parameter is not used yet.
-			% TODO: create a special type for this
-			% parameter, a templating like language will
-			% be required to define this parameter from
-			% the configuration or command line, something
-			% like:
-			%   "%time [%level] %msg\n"
-			% will produce:
-			%   [time," [",level,"] ",msg,"\n"]
-			% where %xyz is a defined and valid atom.
+			enabled => true,
+			% parse a string and convert it to valid
+			% logger template.
 			parameter_key => [logging,formatter,template],
 			default => [time," [",level,"] ",mfa,":",line," ",msg,"\n"],
-			% type => logging_template,
+			type => logging_template,
 			environment => false,
 			runtime => false
 		},
