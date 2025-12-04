@@ -36,6 +36,7 @@ jobs:
       - ${{ inputs.os_release }}
 
     strategy:
+      fail-fast: false
       max-parallel: 12
       matrix:
         core_test_mod: [
