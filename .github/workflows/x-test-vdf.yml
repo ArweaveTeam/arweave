@@ -55,6 +55,7 @@ jobs:
             ar_entropy_storage,
             ar_ets_intervals,
             ar_events,
+            ar_footprint_record,
             ar_inflation,
             ar_intervals,
             ar_join,
@@ -65,6 +66,7 @@ jobs:
             ar_nonce_limiter,
             ar_patricia_tree,
             ar_peers,
+            ar_peer_intervals,
             ar_pricing,
             ar_retarget,
             ar_serialize,
@@ -91,7 +93,7 @@ jobs:
             # long running
             ar_vdf_block_validation_tests,
             ar_vdf_server_tests,
-            ar_vdf_external_update_tests,
+            ar_vdf_external_update_tests
           ]
     steps:
       - name: cleanup

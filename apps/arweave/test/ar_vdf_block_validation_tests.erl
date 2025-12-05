@@ -5,6 +5,7 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -define(TEST_RESET_FREQUENCY, 400).
+-define(BLOCK_DELIVERY_TIMEOUT, 120000).
 
 fork_at_entropy_reset_point_test_() ->
 	[
@@ -63,10 +64,13 @@ test_fork_checkpoints_not_found() ->
 	ar_test_node:wait_until_height(peer1, 1),
 
 	ar_test_node:disconnect_from(peer1),
-	%% Make sure that we are deep into the new session before we try to mine
-	wait_until_step_number(main, ?TEST_RESET_FREQUENCY + 101),
-	ar_test_node:mine(main),
-	[H2 | _] = ar_test_node:wait_until_height(main, 2),
+	%% Make sure that we are deep into the new session before we try to mine.
+	%% Suspend peer1's nonce limiter so it cannot advance to the new session while isolated.
+	[H2 | _] = with_nonce_limiter_paused(peer1, fun() ->
+		wait_until_step_number(main, ?TEST_RESET_FREQUENCY + 101),
+		ar_test_node:mine(main),
+		ar_test_node:wait_until_height(main, 2)
+	end),
 
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
@@ -157,8 +161,8 @@ test_fork_refuse_validation() ->
 	ar_test_node:wait_until_mining_paused(main),
 
 	ar_test_node:connect_to_peer(peer1),
-	send_block(H2, main, peer1),
-	send_block(H3, main, peer1),
+	ensure_block_applied(H2, main, peer1, 2),
+	ensure_block_applied(H3, main, peer1, 3),
 	ar_test_node:wait_until_height(peer1, 3).
 
 mock_reset_frequency() ->
@@ -179,7 +183,24 @@ mock_block_propagation_parallelization() ->
 
 send_block(H, FromNode, ToNode) ->
 	Block = ar_test_node:remote_call(FromNode, ar_storage, read_block, [H]),
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, ar_test_node:send_new_block(ar_test_node:peer_ip(ToNode), Block)).
+	case ar_test_node:send_new_block(ar_test_node:peer_ip(ToNode), Block) of
+		{ok, {{<<"200">>, _}, _, _, _, _}} ->
+			ok;
+		{ok, {{<<"208">>, _}, _, _, _, _}} ->
+			ok;
+		Error ->
+			?assert(false, io_lib:format("Got unexpected error: ~p", [Error]))
+	end.
+
+ensure_block_applied(H, FromNode, ToNode, TargetHeight) ->
+	ar_util:do_until(
+		fun() ->
+			send_block(H, FromNode, ToNode),
+			Height = ar_test_node:remote_call(ToNode, ar_node, get_height, []),
+			Height >= TargetHeight
+		end,
+		1000,
+		?BLOCK_DELIVERY_TIMEOUT).
 
 wait_until_step_number(Node, StepNumber) ->
 	true = ar_util:do_until(
@@ -189,3 +210,27 @@ wait_until_step_number(Node, StepNumber) ->
 		end,
 		500, 
 	60000).
+
+with_nonce_limiter_paused(Node, Fun) when is_function(Fun, 0) ->
+	Pid = suspend_nonce_limiter(Node),
+	try
+		Fun()
+	after
+		resume_nonce_limiter(Node, Pid)
+	end.
+
+suspend_nonce_limiter(Node) ->
+	Pid = ar_test_node:remote_call(Node, erlang, whereis, [ar_nonce_limiter]),
+	?assert(is_pid(Pid)),
+	ok = ar_test_node:remote_call(Node, sys, suspend, [Pid]),
+	Pid.
+
+resume_nonce_limiter(_Node, undefined) ->
+	ok;
+resume_nonce_limiter(Node, Pid) ->
+	case ar_test_node:remote_call(Node, erlang, is_process_alive, [Pid]) of
+		true ->
+			ok = ar_test_node:remote_call(Node, sys, resume, [Pid]);
+		false ->
+			ok
+	end.

@@ -5,7 +5,9 @@
 		wait_until_joined/0, wait_until_joined/1,
 		restart/0, restart/1, restart_with_config/1, restart_with_config/2,
 		start_other_node/4, start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
-		wait_until_height/1, wait_until_height/2, wait_until_height/3, assert_wait_until_height/2, 
+		wait_until_height/1, wait_until_height/2, wait_until_height/3, wait_until_height/4,
+		do_wait_until_height/2,
+		assert_wait_until_height/2,
 		wait_until_mining_paused/1, http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, mainnet_packing_mocks/0,
 		get_difficulty_for_invalid_hash/0, invalid_solution/0,
@@ -19,7 +21,8 @@
 		stop/0, stop/1, start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1,
 		stop_peers/1, stop_peer/1, connect_peers/2, connect_to_peer/1,
 		disconnect_peers/2, disconnect_from/1,
-		join/2, join_on/1, rejoin_on/1,
+		join/2, join/3, join_on/1, join_on/2, rejoin_on/1,
+		generate_join_config/0, generate_join_config/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
 
 		mine/0, get_tx_anchor/1, get_tx_confirmations/2, get_tx_price/2, get_tx_price/3,
@@ -40,8 +43,9 @@
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_consensus.hrl").
+
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -430,8 +434,8 @@ mainnet_packing_mocks() ->
 		{ar_block, partition_size, fun() -> 3_600_000_000_000 end},
 		{ar_block, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
 		{ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
-		{ar_replica_2_9, sub_chunks_per_entropy, fun() -> 1024 end},
-		{ar_replica_2_9, get_sector_size, fun() -> 3_515_875_328 end}
+		{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 1024 end},
+		{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 3_515_875_328 end}
 	].
 
 get_difficulty_for_invalid_hash() ->
@@ -855,31 +859,43 @@ stop() ->
 stop(Node) ->
 	remote_call(Node, ar_test_node, stop, []).
 
-rejoin_on(#{ node := Node, join_on := JoinOnNode }) ->
-	join_on(#{ node => Node, join_on => JoinOnNode }, true).
+rejoin_on(#{ node := Node, join_on := JoinOnNode } = Options) ->
+	Config = maps:get(config, Options, generate_join_config(Node)),
+	join_on(#{ node => Node, join_on => JoinOnNode, config => Config }, true).
 
-join_on(#{ node := Node, join_on := JoinOnNode }) ->
-	join_on(#{ node => Node, join_on => JoinOnNode }, false).
+generate_join_config(Node) ->
+	remote_call(Node, ar_test_node, generate_join_config, []).
 
-join_on(#{ node := Node, join_on := JoinOnNode }, Rejoin) ->
-	remote_call(Node, ar_test_node, join, [JoinOnNode, Rejoin], ?REMOTE_CALL_TIMEOUT).
+generate_join_config() ->
+	{ok, Config} = arweave_config:get_env(),
+	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	StorageModules = [{ar_block:partition_size(), N,
+			get_default_storage_module_packing(RewardAddr, N)} || N <- lists:seq(0, 4)],
+	Config#config{
+		mining_addr = RewardAddr,
+		storage_modules = StorageModules
+	}.
+
+join_on(Params) ->
+	join_on(Params, false).
+
+join_on(#{ node := Node, join_on := JoinOnNode } = Params, Rejoin) ->
+	Config = maps:get(config, Params, generate_join_config(Node)),
+	remote_call(Node, ar_test_node, join, [JoinOnNode, Rejoin, Config], ?REMOTE_CALL_TIMEOUT).
 
 join(JoinOnNode, Rejoin) ->
+	join(JoinOnNode, Rejoin, generate_join_config()).
+
+join(JoinOnNode, Rejoin, Config) ->
 	Peer = peer_ip(JoinOnNode),
-	{ok, Config} = arweave_config:get_env(),
 	case Rejoin of
 		true ->
 			stop();
 		false ->
 			clean_up_and_stop()
 	end,
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	StorageModules = [{ar_block:partition_size(), N,
-			get_default_storage_module_packing(RewardAddr, N)} || N <- lists:seq(0, 4)],
 	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = false,
-		mining_addr = RewardAddr,
-		storage_modules = StorageModules,
 		auto_join = true,
 		peers = [Peer]
 	}),
@@ -1011,19 +1027,22 @@ wait_until_syncs_genesis_data() ->
 	ok.
 
 wait_until_height(Node, TargetHeight) ->
-	wait_until_height(Node, TargetHeight, true).
+	wait_until_height(Node, TargetHeight, true, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
 
 wait_until_height(Node, TargetHeight, Strict) ->
+	wait_until_height(Node, TargetHeight, Strict, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
+
+wait_until_height(Node, TargetHeight, Strict, Timeout) ->
 	{BI, Height} = case Node of
 		main ->
 			{
-				wait_until_height(TargetHeight),
+				do_wait_until_height(TargetHeight, Timeout),
 				ar_node:get_height()
 			};
 		_ ->
 			{
-				remote_call(Node, ?MODULE, wait_until_height, [TargetHeight],
-					?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT + 500),
+				remote_call(Node, ?MODULE, do_wait_until_height, [TargetHeight, Timeout],
+					Timeout + 500),
 				remote_call(Node, ar_node, get_height, [])
 			}
 	end,
@@ -1037,6 +1056,9 @@ wait_until_height(Node, TargetHeight, Strict) ->
 	BI.
 
 wait_until_height(TargetHeight) ->
+	do_wait_until_height(TargetHeight, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
+
+do_wait_until_height(TargetHeight, Timeout) ->
 	{ok, BI} = ar_util:do_until(
 		fun() ->
 			case ar_node:get_blocks() of
@@ -1047,7 +1069,7 @@ wait_until_height(TargetHeight) ->
 			end
 		end,
 		100,
-		?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT
+		Timeout
 	),
 	BI.
 
