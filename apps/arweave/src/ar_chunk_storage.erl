@@ -12,6 +12,7 @@
 		get_storage_module_path/2, get_chunk_storage_path/2,
 		get_chunk_bucket_start/1, get_chunk_bucket_end/1, 
 		get_chunk_byte_from_bucket_end/1, get_chunk_seek_offset/1,
+		get_chunk_file_start/1,
 		sync_record_id/1, write_chunk/4, record_chunk/5, read_offset/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
