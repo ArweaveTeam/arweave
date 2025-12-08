@@ -165,11 +165,13 @@ get(Key) ->
 	Return :: term().
 
 get(Key, Default) ->
-	case get(Key) of
+	try get(Key) of
 		{ok, Value} ->
 			Value;
-		_Elsewise ->
+		_Else ->
 			Default
+	catch
+		_:_ -> Default
 	end.
 
 %%--------------------------------------------------------------------
