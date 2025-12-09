@@ -16,7 +16,7 @@
 -export([init_per_suite/1, end_per_suite/1]).
 -export([init_per_testcase/2, end_per_testcase/2]).
 -export([all/0]).
--export([arweave_config/1]).
+-export([arweave_config/1, arweave_config_legacy/1]).
 -include("arweave_config.hrl").
 -include_lib("common_test/include/ct.hrl").
 
@@ -59,13 +59,42 @@ end_per_testcase(_TestCase, _Config) ->
 %% @hidden
 %%--------------------------------------------------------------------
 all() ->
-	[ arweave_config ].
+	[
+		arweave_config,
+		arweave_config_legacy
+	].
 
 %%--------------------------------------------------------------------
-%% @doc test `arweave_config' main interface.
+%% @doc test `arweave_config' interface
 %% @end
 %%--------------------------------------------------------------------
 arweave_config(_Config) ->
+	ct:pal(test, 1, "get an existing parameter"),
+	{ok, _} = arweave_config:get([debug]),
+
+	ct:pal(test, 1, "get a missing parameter"),
+	{error, _} = arweave_config:get([missing, parameter]),
+
+	ct:pal(test, 1, "get an existing parameter with default value"),
+	_ = arweave_config:get([debug], true),
+
+	ct:pal(test, 1, "get a missing parameter with default value"),
+	1 = arweave_config:get([missing, parameter], 1),
+
+	ct:pal(test, 1, "set an existing parameter"),
+	{ok, DebugValue1, _} = arweave_config:set([debug], true),
+	{ok, DebugValue1} = arweave_config:get([debug]),
+
+	ct:pal(test, 1, "unset an existing parameter"),
+	{ok, DebugValue2, _} = arweave_config:set([debug], false),
+	{ok, DebugValue2} = arweave_config:get([debug]),
+	ok.
+
+%%--------------------------------------------------------------------
+%% @doc test `arweave_config' legacy interface.
+%% @end
+%%--------------------------------------------------------------------
+arweave_config_legacy(_Config) ->
 	% legacy compatible interface, to remove
 	ct:pal(test, 1, "init legacy environment"),
 	ok = arweave_config:set_env(#config{}),
@@ -89,3 +118,4 @@ arweave_config(_Config) ->
 	true = arweave_config:is_runtime(),
 
 	{comment, "arweave_config interface tested"}.
+
