@@ -151,35 +151,45 @@ init_randomx_state(Threads) ->
 
 collect_entropy_samples(TargetSamples, MinDiskMs, Threads, RandomXState, RewardAddress, ChunkDir) ->
 	collect_entropy_samples_loop(
-		0, TargetSamples, MinDiskMs, Threads, RandomXState, RewardAddress, ChunkDir, [], []).
+		0, TargetSamples, MinDiskMs, Threads, RandomXState, RewardAddress, ChunkDir, [], [], 0, []).
 
 collect_entropy_samples_loop(_Iteration, TargetSamples, _MinDiskMs, _Threads, _RandomXState, 
-		_RewardAddr, _ChunkDir, AllResults, ValidResults) 
+		_RewardAddr, _ChunkDir, AllResults, ValidResults, _CachedCount, _AllDiskMs) 
 		when length(ValidResults) >= TargetSamples ->
 	ar:console("~n"),
 	{lists:reverse(AllResults), lists:reverse(ValidResults)};
+collect_entropy_samples_loop(_Iteration, _TargetSamples, _MinDiskMs, _Threads, _RandomXState, 
+		_RewardAddr, ChunkDir, _AllResults, [], CachedCount, AllDiskMs) 
+		when CachedCount >= 100, ChunkDir /= undefined ->
+	%% 100 consecutive cached iterations without finding a valid sample
+	print_rated_speed_too_low_error(AllDiskMs),
+	erlang:halt(1);
 collect_entropy_samples_loop(Iteration, TargetSamples, MinDiskMs, Threads, RandomXState, 
-		RewardAddr, ChunkDir, AllResults, ValidResults) ->
-	Result = run_entropy_iteration(Iteration, Threads, RandomXState, RewardAddr, ChunkDir),
-	NewValidResults = process_entropy_sample(Result, MinDiskMs, ChunkDir, ValidResults),
+		RewardAddr, ChunkDir, AllResults, ValidResults, CachedCount, AllDiskMs) ->
+	{_EntropyMs, DiskMs} = Result = run_entropy_iteration(Iteration, Threads, RandomXState, RewardAddr, ChunkDir),
+	{NewValidResults, NewCachedCount} = process_entropy_sample(Result, MinDiskMs, ChunkDir, ValidResults, CachedCount),
+	NewAllDiskMs = case DiskMs > 0 of
+		true -> [DiskMs | AllDiskMs];
+		false -> AllDiskMs
+	end,
 	collect_entropy_samples_loop(
 		Iteration + 1, TargetSamples, MinDiskMs, Threads, RandomXState, RewardAddr, ChunkDir, 
-		[Result | AllResults], NewValidResults).
+		[Result | AllResults], NewValidResults, NewCachedCount, NewAllDiskMs).
 
-process_entropy_sample({EntropyMs, DiskMs} = Result, MinDiskMs, ChunkDir, ValidResults) ->
+process_entropy_sample({EntropyMs, DiskMs} = Result, MinDiskMs, ChunkDir, ValidResults, CachedCount) ->
 	case ChunkDir of
 		undefined ->
 			%% CPU-only: all samples count
 			print_entropy_cpu_sample(length(ValidResults) + 1, EntropyMs),
-			[Result | ValidResults];
+			{[Result | ValidResults], 0};
 		_ ->
 			case DiskMs >= MinDiskMs of
 				true ->
 					print_entropy_valid_sample(length(ValidResults) + 1, EntropyMs, DiskMs),
-					[Result | ValidResults];
+					{[Result | ValidResults], 0};
 				false ->
 					print_cached_sample(),
-					ValidResults
+					{ValidResults, CachedCount + 1}
 			end
 	end.
 
@@ -471,6 +481,17 @@ print_entropy_valid_sample(SampleNum, EntropyMs, DiskMs) ->
 
 print_cached_sample() ->
 	ar:console(".", []).
+
+print_rated_speed_too_low_error(AllDiskMs) ->
+	MiBPerIteration = calculate_mib_per_iteration(),
+	MinDiskMs = lists:min(AllDiskMs),
+	MinWriteSpeed = MiBPerIteration / (MinDiskMs / 1000),
+	ar:console("~n~n=== Benchmark Stopped ===~n~n"),
+	ar:console("Benchmark is unable to proceed as the configured rated_speed is too low.~n"),
+	ar:console("The slowest write speed observed was ~p MiB/s (~p MB/s).~n~n", 
+		[round(MinWriteSpeed), round(MinWriteSpeed * 1.048576)]),
+	ar:console("Please re-run the benchmark with a rated_speed that more correctly~n"),
+	ar:console("reflects the rated speed of the disk being written to.~n~n").
 
 print_entropy_results(AllResults, ValidResults, ChunkDir, Threads) ->
 	MiBPerIteration = calculate_mib_per_iteration(),
