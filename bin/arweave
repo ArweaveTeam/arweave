@@ -324,10 +324,6 @@ arweave_check_hugepages() {
 arweave_benchmark() {
     case "${1}"
     in
-	2.9)
-	    shift
-	    arweave_benchmark_2_9 ${*}
-	    ;;
 	hash)
 	    shift
 	    arweave_benchmark_hash ${*}
@@ -351,18 +347,12 @@ arweave_benchmark() {
 }
 
 arweave_benchmark_help() {
-    echo "Usage: ${REL_NAME} benchmark [2.9|hash|packing|vdf]"
+    echo "Usage: ${REL_NAME} benchmark [hash|packing|vdf]"
     echo "Execute Arweave benchmarks. Examples:"
-    echo "  ${REL_NAME} benchmark 2.9"
     echo "  ${REL_NAME} benchmark hash"
     echo "  ${REL_NAME} benchmark packing"
     echo "  ${REL_NAME} benchmark vdf"
     exit 1
-}
-
-arweave_benchmark_2_9() {
-    ARWEAVE_OPTS="-run ar benchmark_2_9"
-    echo ${*}
 }
 
 arweave_benchmark_hash() {
