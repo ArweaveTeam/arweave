@@ -8,7 +8,7 @@
 		pack/4, unpack/5, repack/6, unpack_sub_chunk/5,
 		is_buffer_full/0, record_buffer_size_metric/0,
 		pad_chunk/1, unpad_chunk/3, unpad_chunk/4,
-		generate_replica_2_9_entropy/3, encipher_replica_2_9_chunk/2,
+		generate_replica_2_9_entropy/3, encipher_replica_2_9_chunk/2, exor_replica_2_9_chunk/2,
 		pack_replica_2_9_chunk/3, request_entropy_generation/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -235,6 +235,7 @@ get_randomx_state_for_h0(PackingDifficulty, PackingState) ->
 		Entropy :: binary()
 ) -> binary().
 encipher_replica_2_9_chunk(Chunk, Entropy) ->
+	record_packing_request(pack, {replica_2_9, <<>>}, unpacked_padded),
 	exor_replica_2_9_chunk(Chunk, Entropy).
 
 %% @doc Generate the 2.9 entropy.
@@ -486,11 +487,11 @@ worker(PackingState) ->
 			decrement_buffer_size(),
 			worker(PackingState);
 		{encipher, Ref, From, {Chunk, Entropy}} ->
-			PackedChunk = exor_replica_2_9_chunk(Chunk, Entropy),
+			PackedChunk = encipher_replica_2_9_chunk(Chunk, Entropy),
 			From ! {chunk, {enciphered, Ref, PackedChunk}},
 			worker(PackingState);
 		{decipher, Ref, From, {Chunk, Entropy}} ->
-			UnpackedChunk = exor_replica_2_9_chunk(Chunk, Entropy),
+			UnpackedChunk = encipher_replica_2_9_chunk(Chunk, Entropy),
 			From ! {chunk, {deciphered, Ref, UnpackedChunk}},
 			worker(PackingState);
 		{generate_entropy, Ref, From, {RewardAddr, BucketEndOffset, SubChunkStart}} ->
@@ -880,7 +881,6 @@ record_packing_request(Type, RequestedPacking, _StoredPacking) ->
 		[Type, packing_atom(RequestedPacking)]).
 
 exor_replica_2_9_chunk(Chunk, Entropy) ->
-	record_packing_request(pack, {replica_2_9, <<>>}, unpacked_padded),
 	iolist_to_binary(exor_replica_2_9_sub_chunks(Chunk, Entropy)).
 
 exor_replica_2_9_sub_chunks(<<>>, <<>>) ->
