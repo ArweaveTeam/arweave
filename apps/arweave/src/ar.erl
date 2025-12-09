@@ -7,7 +7,7 @@
 
 -export([main/0, main/1, create_wallet/0, create_wallet/1,
 		create_ecdsa_wallet/0, create_ecdsa_wallet/1,
-		benchmark_packing/1, benchmark_packing/0, benchmark_2_9/0, benchmark_2_9/1,
+		benchmark_packing/1, benchmark_packing/0,
 		benchmark_vdf/0, benchmark_vdf/1,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
@@ -1276,13 +1276,6 @@ create_wallet_fail(?ECDSA_KEY_TYPE) ->
 	io:format("Usage: ./bin/create-ecdsa-wallet [data_dir]~n"),
 	init:stop(1).
 
-benchmark_packing() ->
-	benchmark_packing([]).
-benchmark_packing(Args) ->
-	ar_bench_timer:initialize(),
-	ar_bench_packing:run_benchmark_from_cli(Args),
-	init:stop(1).
-
 benchmark_vdf() ->
 	benchmark_vdf([]).
 benchmark_vdf(Args) ->
@@ -1296,10 +1289,10 @@ benchmark_hash(Args) ->
 	ar_bench_hash:run_benchmark_from_cli(Args),
 	init:stop(1).
 
-benchmark_2_9() ->
-	ar_bench_2_9:show_help().
-benchmark_2_9(Args) ->
-	ar_bench_2_9:run_benchmark_from_cli(Args),
+benchmark_packing() ->
+	benchmark_packing([]).
+benchmark_packing(Args) ->
+	ar_bench_packing:run_benchmark_from_cli(Args),
 	init:stop(1).
 
 shutdown([NodeName]) ->
