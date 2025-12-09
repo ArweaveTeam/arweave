@@ -92,7 +92,7 @@ run_benchmark({Dir, Threads, TargetSamples, LargePages, RatedSpeedMB, ReadLoadTh
 	{AllEntropyResults, ValidEntropyResults} = collect_entropy_samples(
 		TargetSamples, MinDiskMs, Threads, RandomXState, RewardAddress, ChunkDir),
 	
-	print_entropy_results(AllEntropyResults, ValidEntropyResults, ChunkDir),
+	print_entropy_results(AllEntropyResults, ValidEntropyResults, ChunkDir, Threads),
 	
 	%% Phase 2: Packing (only if disk I/O enabled)
 	case ChunkDir of
@@ -102,8 +102,9 @@ run_benchmark({Dir, Threads, TargetSamples, LargePages, RatedSpeedMB, ReadLoadTh
 			%% Sync and drop page cache so reads hit disk
 			sync_and_drop_cache(),
 			close_file_handles(),
-			PackingResults = collect_packing_samples(TargetSamples, ChunkDir),
-			print_packing_results(PackingResults)
+			PackingResults = collect_packing_samples(
+				TargetSamples, Threads, RandomXState, ChunkDir),
+			print_packing_results(PackingResults, Threads)
 	end,
 	
 	stop_read_load(ReadPids),
@@ -210,59 +211,81 @@ time_entropy_disk_write(Iteration, ChunkDir, Entropies) ->
 %%% Phase 2: Packing - Sample Collection
 %%%===================================================================
 
-collect_packing_samples(TargetSamples, ChunkDir) ->
+collect_packing_samples(TargetSamples, Threads, RandomXState, ChunkDir) ->
 	ar:console("~n=== Phase 2: Packing Benchmark ===~n"),
 	ar:console("~nRunning packing benchmark:"),
-	collect_packing_samples_loop(0, TargetSamples, ChunkDir, []).
+	%% Generate a new reward address for unpacking entropy
+	UnpackRewardAddr = crypto:strong_rand_bytes(32),
+	collect_packing_samples_loop(0, TargetSamples, Threads, RandomXState, UnpackRewardAddr, ChunkDir, []).
 
-collect_packing_samples_loop(SampleNum, TargetSamples, _ChunkDir, Results) 
+collect_packing_samples_loop(SampleNum, TargetSamples, _Threads, _RandomXState, _UnpackRewardAddr, _ChunkDir, Results) 
 		when SampleNum >= TargetSamples ->
 	ar:console("~n"),
 	lists:reverse(Results);
-collect_packing_samples_loop(SampleNum, TargetSamples, ChunkDir, Results) ->
-	Result = run_packing_iteration(SampleNum, ChunkDir),
-	print_packing_sample(SampleNum + 1, Result),
-	collect_packing_samples_loop(SampleNum + 1, TargetSamples, ChunkDir, [Result | Results]).
+collect_packing_samples_loop(SampleNum, TargetSamples, Threads, RandomXState, UnpackRewardAddr, ChunkDir, Results) ->
+	Result = run_packing_iteration(SampleNum, Threads, RandomXState, UnpackRewardAddr, ChunkDir),
+	print_packing_sample(SampleNum + 1, Result, Threads),
+	collect_packing_samples_loop(SampleNum + 1, TargetSamples, Threads, RandomXState, UnpackRewardAddr, ChunkDir, [Result | Results]).
 
-run_packing_iteration(Iteration, ChunkDir) ->
+run_packing_iteration(Iteration, _Threads, RandomXState, UnpackRewardAddr, ChunkDir) ->
 	BaseOffset = Iteration * ?FOOTPRINTS_PER_ITERATION * ?DATA_CHUNK_SIZE,
+	
+	%% Step 1: Generate unpack entropy (parallelized across threads)
+	{UnpackEntropyMs, UnpackEntropies} = time_entropy_generation(Iteration, RandomXState, UnpackRewardAddr),
+	
+	%% Step 2-5: Walk through entropy using map_entropies (same pattern as phase 1)
+	{DecipherMs, ReadMs, EncipherMs, WriteMs} = pack_all_chunks(ChunkDir, UnpackEntropies, BaseOffset),
+	
+	{UnpackEntropyMs, DecipherMs, ReadMs, EncipherMs, WriteMs}.
+
+pack_all_chunks(_ChunkDir, [], _BaseOffset) ->
+	{0, 0, 0, 0};
+pack_all_chunks(ChunkDir, [Footprint | Rest], BaseOffset) ->
 	Offsets = ar_entropy_gen:entropy_offsets(BaseOffset + ?DATA_CHUNK_SIZE, ?PARTITION_SIZE),
-	run_packing_for_offsets(Offsets, ChunkDir, {0, 0, 0}).
+	{D1, R1, E1, W1} = ar_entropy_gen:map_entropies(
+		Footprint, Offsets, 0, [], <<>>,
+		fun pack_chunk_callback/5, [ChunkDir], {0, 0, 0, 0}),
+	{D2, R2, E2, W2} = pack_all_chunks(ChunkDir, Rest, BaseOffset + ?DATA_CHUNK_SIZE),
+	{D1 + D2, R1 + R2, E1 + E2, W1 + W2}.
 
-run_packing_for_offsets([], _ChunkDir, Acc) ->
-	Acc;
-run_packing_for_offsets([BucketEndOffset | Rest], ChunkDir, {ReadAcc, EncipherAcc, WriteAcc}) ->
-	{ReadMs, EncipherMs, WriteMs} = pack_single_chunk(ChunkDir, BucketEndOffset),
-	run_packing_for_offsets(Rest, ChunkDir, {ReadAcc + ReadMs, EncipherAcc + EncipherMs, WriteAcc + WriteMs}).
+pack_chunk_callback(UnpackEntropy, BucketEndOffset, _RewardAddr, ChunkDir, {DAcc, RAcc, EAcc, WAcc}) ->
+	{DecipherMs, ReadMs, EncipherMs, WriteMs} = pack_single_chunk(ChunkDir, BucketEndOffset, UnpackEntropy),
+	{DAcc + DecipherMs, RAcc + ReadMs, EAcc + EncipherMs, WAcc + WriteMs}.
 
-pack_single_chunk(ChunkDir, PaddedEndOffset) ->
+pack_single_chunk(ChunkDir, PaddedEndOffset, UnpackEntropy) ->
+	%% Step 2: Generate random packed chunk and decipher it
+	RandomPackedChunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+	DecipherStart = erlang:monotonic_time(microsecond),
+	UnpackedChunk = ar_packing_server:exor_replica_2_9_chunk(RandomPackedChunk, UnpackEntropy),
+	DecipherEnd = erlang:monotonic_time(microsecond),
+	DecipherMs = (DecipherEnd - DecipherStart) / 1000,
+	
+	%% Step 3: Read pack entropy from disk
 	ChunkFileStart = ar_chunk_storage:get_chunk_file_start(PaddedEndOffset),
 	{Position, _ChunkOffset} = ar_chunk_storage:get_position_and_relative_chunk_offset(
 		ChunkFileStart, PaddedEndOffset),
 	Filepath = filename:join(ChunkDir, integer_to_list(ChunkFileStart)),
 	FH = get_file_handle(Filepath),
 	
-	%% Time the read
 	ReadStart = erlang:monotonic_time(microsecond),
 	{ok, EntropyWithHeader} = file:pread(FH, Position, ?OFFSET_BIT_SIZE div 8 + ?DATA_CHUNK_SIZE),
-	<< _ChunkOffset:?OFFSET_BIT_SIZE, Entropy/binary >> = EntropyWithHeader,
+	<< _StoredChunkOffset:?OFFSET_BIT_SIZE, PackEntropy/binary >> = EntropyWithHeader,
 	ReadEnd = erlang:monotonic_time(microsecond),
 	ReadMs = (ReadEnd - ReadStart) / 1000,
 	
-	%% Generate random chunk and time the encipher
-	RandomChunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+	%% Step 4: Encipher the unpacked chunk with pack entropy
 	EncipherStart = erlang:monotonic_time(microsecond),
-	PackedChunk = ar_packing_server:exor_replica_2_9_chunk(RandomChunk, Entropy),
+	PackedChunk = ar_packing_server:exor_replica_2_9_chunk(UnpackedChunk, PackEntropy),
 	EncipherEnd = erlang:monotonic_time(microsecond),
 	EncipherMs = (EncipherEnd - EncipherStart) / 1000,
 	
-	%% Time the write (overwrite entropy with packed chunk)
+	%% Step 5: Write the packed chunk
 	WriteStart = erlang:monotonic_time(microsecond),
 	ok = file:pwrite(FH, Position + (?OFFSET_BIT_SIZE div 8), PackedChunk),
 	WriteEnd = erlang:monotonic_time(microsecond),
 	WriteMs = (WriteEnd - WriteStart) / 1000,
 	
-	{ReadMs, EncipherMs, WriteMs}.
+	{DecipherMs, ReadMs, EncipherMs, WriteMs}.
 
 %%%===================================================================
 %%% Entropy Generation
@@ -434,7 +457,7 @@ print_cache_fill_start(_ChunkDir) ->
 
 print_entropy_cpu_sample(SampleNum, EntropyMs) ->
 	EntropyRate = calculate_mib_per_iteration() / (EntropyMs / 1000),
-	ar:console("~nSample ~p: Entropy ~.1f MiB/s", [SampleNum, EntropyRate]).
+	ar:console("~nSample ~p: Entropy: ~p MiB/s", [SampleNum, round(EntropyRate)]).
 
 print_entropy_valid_sample(SampleNum, EntropyMs, DiskMs) ->
 	case SampleNum of
@@ -444,12 +467,12 @@ print_entropy_valid_sample(SampleNum, EntropyMs, DiskMs) ->
 	MiBPerIteration = calculate_mib_per_iteration(),
 	EntropyRate = MiBPerIteration / (EntropyMs / 1000),
 	DiskRate = MiBPerIteration / (DiskMs / 1000),
-	ar:console("~nSample ~p: Entropy ~.1f MiB/s, Disk ~.1f MiB/s", [SampleNum, EntropyRate, DiskRate]).
+	ar:console("~nSample ~p: Entropy: ~p MiB/s, Write: ~p MiB/s", [SampleNum, round(EntropyRate), round(DiskRate)]).
 
 print_cached_sample() ->
 	ar:console(".", []).
 
-print_entropy_results(AllResults, ValidResults, ChunkDir) ->
+print_entropy_results(AllResults, ValidResults, ChunkDir, Threads) ->
 	MiBPerIteration = calculate_mib_per_iteration(),
 	{AllEntropyTimes, _} = lists:unzip(AllResults),
 	{ValidEntropyTimes, ValidDiskTimes} = lists:unzip(ValidResults),
@@ -471,7 +494,7 @@ print_entropy_results(AllResults, ValidResults, ChunkDir) ->
 	ar:console("Data per iteration:   ~p MiB (~p chunks)~n", [MiBPerIteration, MiBPerIteration * 4]),
 	ar:console("Total iterations:     ~p (~p excluded, ~p samples)~n", [TotalIterations, CachedCount, ValidCount]),
 	ar:console("~n"),
-	ar:console("Entropy generation:   ~.2f MiB/s~n", [EntropyRate]),
+	ar:console("Entropy generation:   ~.2f MiB/s (~p threads)~n", [EntropyRate, Threads]),
 	
 	case ChunkDir of
 		undefined ->
@@ -482,7 +505,7 @@ print_entropy_results(AllResults, ValidResults, ChunkDir) ->
 			ar:console("Disk write:           ~.2f MiB/s~n", [DiskRate]),
 			{EffectiveRate, Bottleneck} = case EntropyRate < DiskRate of
 				true -> {EntropyRate, "CPU (entropy generation)"};
-				false -> {DiskRate, "Disk I/O"}
+				false -> {DiskRate, "Disk Write"}
 			end,
 			ar:console("~nBottleneck:           ~s~n", [Bottleneck]),
 			ar:console("Effective rate:       ~.2f MiB/s~n", [EffectiveRate]),
@@ -495,33 +518,44 @@ print_preparation_extrapolation(EffectiveRate) ->
 	ar:console("~nEstimated preparation time for ~.1f TB partition: ~s~n", 
 		[PartitionSizeTB, format_duration(TotalSeconds)]).
 
-print_packing_sample(SampleNum, {ReadMs, EncipherMs, WriteMs}) ->
+print_packing_sample(SampleNum, {UnpackEntropyMs, DecipherMs, ReadMs, EncipherMs, WriteMs}, _Threads) ->
 	MiBPerIteration = calculate_mib_per_iteration(),
+	UnpackEntropyRate = MiBPerIteration / (UnpackEntropyMs / 1000),
+	DecipherRate = MiBPerIteration / (DecipherMs / 1000),
 	ReadRate = MiBPerIteration / (ReadMs / 1000),
 	EncipherRate = MiBPerIteration / (EncipherMs / 1000),
 	WriteRate = MiBPerIteration / (WriteMs / 1000),
-	ar:console("~nSample ~p: Read ~.1f MiB/s, Encipher ~.1f MiB/s, Write ~.1f MiB/s", 
-		[SampleNum, ReadRate, EncipherRate, WriteRate]).
+	ar:console("~nSample ~p: Entropy: ~p MiB/s, Decipher: ~p MiB/s, Read: ~p MiB/s, Encipher: ~p MiB/s, Write: ~p MiB/s", 
+		[SampleNum, round(UnpackEntropyRate), round(DecipherRate), round(ReadRate), 
+		 round(EncipherRate), round(WriteRate)]).
 
-print_packing_results(Results) ->
+print_packing_results(Results, Threads) ->
 	MiBPerIteration = calculate_mib_per_iteration(),
 	SampleCount = length(Results),
 	
-	{ReadTimes, EncipherTimes, WriteTimes} = lists:foldl(
-		fun({R, E, W}, {RAcc, EAcc, WAcc}) -> {RAcc + R, EAcc + E, WAcc + W} end,
-		{0, 0, 0},
+	{UnpackEntropyTimes, DecipherTimes, ReadTimes, EncipherTimes, WriteTimes} = lists:foldl(
+		fun({UE, D, R, E, W}, {UEAcc, DAcc, RAcc, EAcc, WAcc}) -> 
+			{UEAcc + UE, DAcc + D, RAcc + R, EAcc + E, WAcc + W} 
+		end,
+		{0, 0, 0, 0, 0},
 		Results),
 	
+	AvgUnpackEntropyMs = UnpackEntropyTimes / SampleCount,
+	AvgDecipherMs = DecipherTimes / SampleCount,
 	AvgReadMs = ReadTimes / SampleCount,
 	AvgEncipherMs = EncipherTimes / SampleCount,
 	AvgWriteMs = WriteTimes / SampleCount,
 	
+	UnpackEntropyRate = MiBPerIteration / (AvgUnpackEntropyMs / 1000),
+	DecipherRate = MiBPerIteration / (AvgDecipherMs / 1000),
 	ReadRate = MiBPerIteration / (AvgReadMs / 1000),
 	EncipherRate = MiBPerIteration / (AvgEncipherMs / 1000),
 	WriteRate = MiBPerIteration / (AvgWriteMs / 1000),
 	
 	%% Identify bottleneck (slowest operation = lowest rate)
 	{EffectiveRate, Bottleneck} = find_bottleneck([
+		{UnpackEntropyRate, io_lib:format("CPU (unpack entropy, ~p threads)", [Threads])},
+		{DecipherRate, "CPU (decipher)"},
 		{ReadRate, "Disk read"},
 		{EncipherRate, "CPU (encipher)"},
 		{WriteRate, "Disk write"}
@@ -530,6 +564,8 @@ print_packing_results(Results) ->
 	ar:console("~n--- Packing Results ---~n~n"),
 	ar:console("Samples:              ~p~n", [SampleCount]),
 	ar:console("~n"),
+	ar:console("Unpack entropy:       ~.2f MiB/s (~p threads)~n", [UnpackEntropyRate, Threads]),
+	ar:console("Decipher:             ~.2f MiB/s~n", [DecipherRate]),
 	ar:console("Read:                 ~.2f MiB/s~n", [ReadRate]),
 	ar:console("Encipher:             ~.2f MiB/s~n", [EncipherRate]),
 	ar:console("Write:                ~.2f MiB/s~n", [WriteRate]),
