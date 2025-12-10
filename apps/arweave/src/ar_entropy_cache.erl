@@ -1,4 +1,4 @@
--module(ar_replica_2_9_entropy_cache).
+-module(ar_entropy_cache).
 
 -behaviour(gen_server).
 
@@ -20,7 +20,7 @@
 %% @doc Return the stored value, if any, for the given Key.
 -spec get(Key :: string()) -> {ok, term()} | not_found.
 get(Key) ->
-	get(Key, replica_2_9_entropy_cache).
+	get(Key, ar_entropy_cache).
 
 %% @doc Make sure the cache has enough space (i.e., clean up the oldest records, if any)
 %% to store Size worth of elements such that the total size does not exceed MaxSize.
@@ -59,14 +59,14 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast({clean_up_space, Size, MaxSize}, State) ->
-	Table = replica_2_9_entropy_cache,
-	OrderedKeyTable = replica_2_9_entropy_cache_ordered_keys,
+	Table = ar_entropy_cache,
+	OrderedKeyTable = ar_entropy_cache_ordered_keys,
 	clean_up_space(Size, MaxSize, Table, OrderedKeyTable),
 	{noreply, State};
 
 handle_cast({put, Key, Value, Size}, State) ->
-	Table = replica_2_9_entropy_cache,
-	OrderedKeyTable = replica_2_9_entropy_cache_ordered_keys,
+	Table = ar_entropy_cache,
+	OrderedKeyTable = ar_entropy_cache_ordered_keys,
 	put(Key, Value, Size, Table, OrderedKeyTable),
 	{noreply, State};
 

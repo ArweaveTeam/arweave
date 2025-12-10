@@ -5,11 +5,9 @@
 		randomx_decrypt_chunk/5,
 		randomx_decrypt_sub_chunk/5,
 		randomx_reencrypt_chunk/7,
-
 		randomx_generate_replica_2_9_entropy/2,
 		randomx_encrypt_replica_2_9_sub_chunk/1,
 		randomx_decrypt_replica_2_9_sub_chunk/1,
-		randomx_decrypt_replica_2_9_sub_chunk2/1,
 		exor_sub_chunk/2]).
 
 %% These exports are required for the STUB mode, where these functions are unused.
@@ -143,12 +141,8 @@ randomx_generate_replica_2_9_entropy({rxsquared, RandomxState}, Key) ->
 	),
 	EntropyFused.
 
-randomx_decrypt_replica_2_9_sub_chunk({PackingState, Key, SubChunk,
-		EntropySubChunkIndex}) ->
-	Entropy = randomx_generate_replica_2_9_entropy(PackingState, Key),
-	randomx_decrypt_replica_2_9_sub_chunk2({Entropy, SubChunk, EntropySubChunkIndex}).
-
-randomx_decrypt_replica_2_9_sub_chunk2({Entropy, SubChunk, EntropySubChunkIndex}) ->
+randomx_decrypt_replica_2_9_sub_chunk(
+		{_PackingState, Entropy, SubChunk, EntropySubChunkIndex}) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	EntropyPart = binary:part(Entropy, EntropySubChunkIndex * SubChunkSize, SubChunkSize),
 	{ok, exor_sub_chunk(SubChunk, EntropyPart)}.
