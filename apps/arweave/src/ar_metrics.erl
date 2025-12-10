@@ -58,7 +58,7 @@ register() ->
 	%%       See: https://github.com/deadtrickster/prometheus.erl/blob/6dd56bf321e99688108bb976283a80e4d82b3d30/src/prometheus_time.erl#L2-L84
 	prometheus_histogram:new([
 		{name, ar_http_request_duration_seconds},
-		{buckets, [0.01, 0.1, 0.5, 1, 5, 10, 30, 60]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
         {labels, [http_method, route, status_class]},
 		{
 			help,
@@ -68,7 +68,7 @@ register() ->
 	]),
 	prometheus_histogram:new([
 		{name, http_client_get_chunk_duration_seconds},
-		{buckets, [0.1, 1, 10, 60]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
         {labels, [status_class, peer]},
 		{
 			help,
@@ -140,24 +140,24 @@ register() ->
 					" processing of POST /block2."}]),
 	prometheus_histogram:new([
 		{name, ar_mempool_add_tx_duration_milliseconds},
-		{buckets, [0.1, 1, 10, 100, 1000]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help, "The duration in milliseconds it took to add a transaction to the mempool."}
 	]),
 	prometheus_histogram:new([
 		{name, reverify_mempool_chunk_duration_milliseconds},
-		{buckets, [0.1, 1, 10, 100, 1000]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help, "The duration in milliseconds it took to reverify a chunk of transactions "
 				"in the mempool."}
 	]),
 	prometheus_histogram:new([
 		{name, drop_txs_duration_milliseconds},
-		{buckets, [0.1, 1, 10, 100, 1000]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help, "The duration in milliseconds it took to drop a chunk of transactions "
 				"from the mempool."}
 	]),
 	prometheus_histogram:new([
 		{name, del_from_propagation_queue_duration_milliseconds},
-		{buckets, [0.1, 1, 10, 100, 1000]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help, "The duration in milliseconds it took to remove a transaction from the "
 				"propagation queue after it was emitted to peers."}
 	]),
@@ -239,14 +239,14 @@ register() ->
 	]),
 	prometheus_histogram:new([
 		{name, block_pre_validation_time},
-		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 50, 100, 1000, 2000, 5000, 10000]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help,
 			"The time in milliseconds taken to parse the POST /block input and perform a "
 			"preliminary validation before relaying the block to peers."}
 	]),
 	prometheus_histogram:new([
 		{name, block_processing_time},
-		{buckets, [0.1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help,
 			"The time in seconds taken to validate the block and apply it on top of "
 			"the current state, possibly involving a chain reorganisation."}
@@ -313,7 +313,7 @@ register() ->
 	prometheus_histogram:new([
 		{name, chunk_storage_sync_record_check_duration_milliseconds},
 		{labels, [requested_chunk_count]},
-		{buckets, [0.1, 1, 10, 100, 1000, 10000]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help, "The time in milliseconds it took to check the fetched chunk range "
 				"is actually registered by the chunk storage."}
 	]),
