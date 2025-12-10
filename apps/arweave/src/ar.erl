@@ -1159,7 +1159,16 @@ start(Config) ->
 
 
 start(normal, _Args) ->
+	% Load configuration from environment variable, it will
+	% impact only feature supporting arweave_config.
+	arweave_config_environment:load(),
+
+	% Load the old configuration from arweave_config.
 	{ok, Config} = arweave_config:get_env(),
+
+	% arweave_config can now switch in runtime mode. Setting
+	% parameters without "runtime" flag set to true will fail now.
+	arweave_config:runtime(),
 
 	%% Set erlang socket backend
 	persistent_term:put({kernel, inet_backend}, Config#config.'socket.backend'),

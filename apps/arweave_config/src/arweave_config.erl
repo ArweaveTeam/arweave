@@ -221,6 +221,19 @@ set(Key, Value) ->
 	end.
 
 %%--------------------------------------------------------------------
+%%
+%% == Examples ==
+%%
+%% ```
+%% 10 = getm(#{}, logdir, [logging,default,path], 10).
+%% parameter_value = getm(#{}, logdir, [logging,default,path], 10).
+%% 1 = getm(#{ logdir => 1 }, logdir, [logging,default,path], 10).
+%% '''
+%%
+%%--------------------------------------------------------------------
+% getm(MapKey, Map, Parameter, Default) ->
+
+%%--------------------------------------------------------------------
 %% @doc Start arweave_config process.
 %% @end
 %%--------------------------------------------------------------------
