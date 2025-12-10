@@ -76,6 +76,7 @@ is_ready(StoreID) ->
 handle_cast({store_entropy_footprint,
 		Entropies, EntropyOffsets, RangeStart, Keys, RewardAddr}, State) ->
 	#state{ store_id = StoreID } = State,
+	Start = erlang:monotonic_time(millisecond),
 	ar_entropy_gen:map_entropies(
 		Entropies,
 		EntropyOffsets,
@@ -85,6 +86,10 @@ handle_cast({store_entropy_footprint,
 		fun do_store_entropy/5,
 		[StoreID],
 		ok),
+	End = erlang:monotonic_time(millisecond),
+	?LOG_DEBUG([{event, store_entropy_footprint}, {module, ?MODULE},
+		{name, name(StoreID)}, {offset, hd(EntropyOffsets)},
+		{num_entropies, length(Entropies)}, {duration, End - Start}]),
 	{noreply, State};
 
 handle_cast(Cast, State) ->

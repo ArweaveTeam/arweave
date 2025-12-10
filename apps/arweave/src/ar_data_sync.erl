@@ -1051,10 +1051,6 @@ handle_cast(collect_peer_intervals, State) ->
 			disk_pool_threshold = DiskPoolThreshold,
 			sync_phase = SyncPhase,
 			migrations_index = MI } = State,
-	?LOG_DEBUG([{event, collect_peer_intervals_start},
-		{function, collect_peer_intervals},
-		{store_id, State#sync_data_state.store_id},
-		{s, Start}, {e, End}]),
 	CheckIsJoined =
 		case ar_node:is_joined() of
 			false ->
@@ -1092,6 +1088,14 @@ handle_cast(collect_peer_intervals, State) ->
 			footprint ->
 				normal
 		end,
+	?LOG_DEBUG([{event, collect_peer_intervals_start},
+		{function, collect_peer_intervals},
+		{store_id, State#sync_data_state.store_id},
+		{s, Start}, {e, End},
+		{is_joined, CheckIsJoined}, 
+		{is_footprint_record_migrated, IsFootprintRecordMigrated},
+		{intersects_disk_pool, IntersectsDiskPool},
+		{sync_phase, SyncPhase2}]),
 	State2 =
 		case IntersectsDiskPool of
 			noop ->
@@ -1250,8 +1254,8 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	?LOG_DEBUG([{event, enqueue_intervals}, {pid, self()},
 		{queue_before, gb_sets:size(Q)}, {queue_after, gb_sets:size(Q2)},
 		{num_peers, NumPeers}, {chunks_per_peer, ChunksPerPeer},
-		{intervals, Intervals}, {q_intervals_before, ar_intervals:to_list(QIntervals)},
-		{q_intervals_after, ar_intervals:to_list(QIntervals2)}]),
+		{q_intervals_before, gb_sets:size(QIntervals)},
+		{q_intervals_after, gb_sets:size(QIntervals2)}]),
 
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
@@ -1632,7 +1636,7 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 	case Bytes < DiskPoolSize + DiskCacheSize + (BufferSize div 2) of
 		true ->
 			ar:console("error: Not enough disk space left on 'data_dir' disk for "
-				"the requested 'disk_pool_size' ~Bmb and 'disk_cache_size' ~Bmb "
+				"the requested 'max_disk_pool_buffer_mb' ~Bmb and 'disk_cache_size_mb' ~Bmb "
 				"either lower these values or add more disk space.~n",
 			[Config#config.max_disk_pool_buffer_mb, Config#config.disk_cache_size]),
 			case is_disk_space_sufficient(StoreID) of

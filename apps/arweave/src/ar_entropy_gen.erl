@@ -219,7 +219,7 @@ map_entropies(Entropies,
 
 
 init({StoreID, Packing}) ->
-	?LOG_INFO([{event, ar_entropy_storage_init},
+	?LOG_INFO([{event, ar_entropy_gen_init},
 		{name, name(StoreID)}, {store_id, StoreID},
 		{packing, ar_serialize:encode_packing(Packing, true)}]),
 
