@@ -40,8 +40,6 @@ init([]) ->
 	ets:new(ignored_ids, [bag, public, named_table]),
 	ets:new(ar_tx_emitter_recently_emitted, [set, public, named_table]),
 	ets:new(ar_tx_db, [set, public, named_table]),
-	ets:new(replica_2_9_entropy_cache, [set, public, named_table]),
-	ets:new(replica_2_9_entropy_cache_ordered_keys, [ordered_set, public, named_table]),
 	ets:new(ar_nonce_limiter, [set, public, named_table]),
 	ets:new(ar_nonce_limiter_server, [set, public, named_table]),
 	ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
