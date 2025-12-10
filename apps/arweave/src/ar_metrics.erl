@@ -100,7 +100,7 @@ register() ->
 	]),
 	prometheus_histogram:declare([
 		{name, tx_propagation_bits_per_second},
-		{buckets, [10, 100, 1000, 100000, 1000000, 100000000, 1000000000]},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help, "The throughput (in bits/s) of transaction propagation."}
 	]),
 	prometheus_gauge:new([
@@ -226,7 +226,7 @@ register() ->
 
 	prometheus_histogram:new([
 		{name, fork_recovery_depth},
-		{buckets, lists:seq(1, 50)},
+		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help, "Fork recovery depth metric"}
 	]),
 
