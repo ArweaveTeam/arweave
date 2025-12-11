@@ -12,10 +12,40 @@
 	]},
 	{modules, [
 		arweave_config,
-		arweave_config_sup
+		arweave_config_environment,
+		arweave_config_http_server,
+		arweave_config_legacy,
+		arweave_config_parameters,
+		arweave_config_parser,
+		arweave_config_signal_handler,
+		arweave_config_spec,
+		arweave_config_spec_default,
+		arweave_config_spec_deprecated,
+		arweave_config_spec_enabled,
+		arweave_config_spec_environment,
+		arweave_config_spec_handle_get,
+		arweave_config_spec_handle_set,
+		arweave_config_spec_inherit,
+		arweave_config_spec_legacy,
+		arweave_config_spec_long_argument,
+		arweave_config_spec_long_description,
+		arweave_config_spec_nargs,
+		arweave_config_spec_parameter_key,
+		arweave_config_spec_runtime,
+		arweave_config_spec_short_argument,
+		arweave_config_spec_short_description,
+		arweave_config_spec_type,
+		arweave_config_store,
+		arweave_config_sup,
+		arweave_config_type
 	]},
 	{registered, [
 		arweave_config,
-		arweave_config_sup
+		arweave_config_sup,
+		arweave_config_legacy,
+		arweave_config_environment,
+		arweave_config_spec,
+		arweave_config_store,
+		arweave_config_signal_handler
 	]}
 ]}.

@@ -1,0 +1,17 @@
+{application, arweave_diagnostic, [
+	{id, "arweave_diagnostic"},
+	{description, "Arweave Diagnostic Tool"},
+	{vsn, "0.0.1"},
+	{mod, {arweave_diagnostic, []}},
+	{env, []},
+	{applications, [
+		kernel,
+		stdlib,
+		sasl
+	]},
+	{modules, [
+		arweave_diagnostic
+	]},
+	{registered, [
+	]}
+]}.

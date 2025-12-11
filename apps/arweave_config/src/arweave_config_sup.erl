@@ -85,5 +85,13 @@ children() ->
 				[]
 			},
 			type => worker
+		},
+		#{
+			id => arweave_config_signal_handler,
+			start => {
+				arweave_config_signal_handler,
+				start_link,
+				[]
+			}
 		}
 	].
