@@ -93,7 +93,6 @@ record_fork_depth(Orphans, ForkRootB) ->
 record_fork_depth([], _ForkRootB, 0) ->
 	ok;
 record_fork_depth([], _ForkRootB, N) ->
-	prometheus_histogram:observe(fork_recovery_depth, N),
 	ok;
 record_fork_depth([H | Orphans], ForkRootB, N) ->
 	SolutionHashInfo =

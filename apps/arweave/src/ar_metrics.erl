@@ -224,12 +224,6 @@ register() ->
 		{help, "The number of the VDF steps a received block is ahead of our current step."}
 	]),
 
-	prometheus_histogram:new([
-		{name, fork_recovery_depth},
-		{buckets, [infinity]}, %% we don't care about the histogram portion
-		{help, "Fork recovery depth metric"}
-	]),
-
 	prometheus_counter:new([
 		{name, wallet_list_size},
 		{
