@@ -93,18 +93,19 @@ start_http_iface_listener(Config) ->
 	TlsKeyfilePath = Config#config.tls_key_file,
 	TransportOpts = #{
 		% ranch_tcp parameters
-		backlog => Config#config.'http_api.tcp.backlog',
-		delay_send => Config#config.'http_api.tcp.delay_send',
-		keepalive => Config#config.'http_api.tcp.keepalive',
-		linger => {
-				Config#config.'http_api.tcp.linger',
-				Config#config.'http_api.tcp.linger_timeout'
-		},
+                alarms => get_alarms(Config),
+		%backlog => Config#config.'http_api.tcp.backlog',
+		%delay_send => Config#config.'http_api.tcp.delay_send',
+		%keepalive => Config#config.'http_api.tcp.keepalive',
+		%linger => {
+		%		Config#config.'http_api.tcp.linger',
+		%		Config#config.'http_api.tcp.linger_timeout'
+		%},
 		max_connections => Config#config.'http_api.tcp.max_connections',
-		nodelay => Config#config.'http_api.tcp.nodelay',
+		%nodelay => Config#config.'http_api.tcp.nodelay',
 		num_acceptors => Config#config.'http_api.tcp.num_acceptors',
-		send_timeout_close => Config#config.'http_api.tcp.send_timeout_close',
-		send_timeout => Config#config.'http_api.tcp.send_timeout',
+		%send_timeout_close => Config#config.'http_api.tcp.send_timeout_close',
+		%send_timeout => Config#config.'http_api.tcp.send_timeout',
 		shutdown => Config#config.'http_api.tcp.listener_shutdown',
 		socket_opts => [
 			{port, Config#config.port}
@@ -294,3 +295,13 @@ name_route([<<"coordinated_mining">>, <<"state">>]) ->
 
 name_route(_) ->
 	undefined.
+
+%% ALARMS
+get_alarms(Config) ->
+    %% TODO: We can generate this from a list in the config, 
+    %% and have a default of 50%, 75%, 99%. (If it makes sense)
+    #{
+      reached_50percent_active_connections => 
+          ar_http_iface_alarms:alarm_reached_connections_threshold(
+                    0.001, Config#config.'http_api.tcp.max_connections')
+     }.
