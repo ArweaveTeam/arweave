@@ -5,7 +5,7 @@
 -export([start_link/0]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--export([get/1, clean_up_space/2, put/3]).
+-export([get/1, clean_up_space/2, put/3, total_size/0]).
 
 -include("ar.hrl").
 
@@ -47,6 +47,12 @@ put(Key, Value, Size) ->
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+%% @doc Return the size of the cache.
+-spec total_size() -> non_neg_integer().
+total_size() ->
+	Table = ar_entropy_cache,
+	total_size(Table).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -86,6 +92,14 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
+total_size(Table) ->
+	case ets:lookup(Table, total_size) of
+		[] ->
+			0;
+		[{_, Value}] ->
+			Value
+	end.
+
 get(Key, Table) ->
 	case ets:lookup(Table, {key, Key}) of
 		[] ->
@@ -99,13 +113,7 @@ get(Key, Table) ->
 	end.
 
 clean_up_space(Size, MaxSize, Table, OrderedKeyTable) ->
-	TotalSize =
-		case ets:lookup(Table, total_size) of
-			[] ->
-				0;
-			[{_, Value}] ->
-				Value
-		end,
+	TotalSize = total_size(Table),
 	case TotalSize + Size > MaxSize of
 		true ->
 			case ets:first(OrderedKeyTable) of
@@ -117,6 +125,11 @@ clean_up_space(Size, MaxSize, Table, OrderedKeyTable) ->
 					ets:delete(OrderedKeyTable, EarliestKey),
 					FetchedKeyCount = get_fetched_key_count(Table, Key),
 					?LOG_DEBUG([{event, release_replica_2_9_entropy},
+							{key, ar_util:encode(Key)},
+							{size, Size},
+							{total_size, TotalSize},
+							{max_size, MaxSize},
+							{released_size, ElementSize},
 							{fetched_key_count, FetchedKeyCount}]),
 					ets:delete(Table, {fetched_key_count, Key}),
 					clean_up_space(Size, MaxSize, Table, OrderedKeyTable)

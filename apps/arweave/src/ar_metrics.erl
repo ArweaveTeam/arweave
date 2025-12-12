@@ -519,6 +519,10 @@ register() ->
 		{help, "The number of bytes of replica.2.9 entropy written to chunk storage."}]),
 	prometheus_counter:new([{name, replica_2_9_entropy_generated},
 		{help, "The number of bytes of replica.2.9 entropy generated."}]),
+	prometheus_counter:new([{name, replica_2_9_entropy_stats},
+		{labels, [partition, stat]},
+		{help, "Count of different replica_2_9 entropy events: 'cache_hit', 'cache_miss', "
+			   "'redundant'."}]),
 	prometheus_histogram:new([
 		{name, replica_2_9_entropy_duration_milliseconds},
 		{buckets, [infinity]}, %% we don't care about the histogram portion

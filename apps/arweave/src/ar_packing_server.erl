@@ -252,13 +252,31 @@ decipher_replica_2_9_chunk(Chunk, Entropy) ->
 ) -> binary().
 generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
+	Footprint = ar_footprint_record:get_footprint(BucketEndOffset),
+	Partition = ar_node:get_partition_number(BucketEndOffset),
 
 	entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	case ar_entropy_cache:get(Key) of
 		{ok, Entropy} ->
+			?LOG_DEBUG([{event, entropy_cache_hit},
+				{key, ar_util:encode(Key)},
+				{reward_addr, ar_util:encode(RewardAddr)},
+				{bucket_end_offset, BucketEndOffset},
+				{sub_chunk_start_offset, SubChunkStartOffset},
+				{footprint, Footprint},
+				{entropy_cache_size, ar_entropy_cache:total_size() / ?MiB}]),
+			prometheus_counter:inc(replica_2_9_entropy_stats, [Partition, cache_hit]),
 			entropy_generation_release(Key),
 			Entropy;
 		not_found ->
+			?LOG_DEBUG([{event, entropy_cache_miss},
+				{key, ar_util:encode(Key)},
+				{reward_addr, ar_util:encode(RewardAddr)},
+				{bucket_end_offset, BucketEndOffset},
+				{sub_chunk_start_offset, SubChunkStartOffset},
+				{footprint, Footprint},
+				{entropy_cache_size, ar_entropy_cache:total_size() / ?MiB}]),
+			prometheus_counter:inc(replica_2_9_entropy_stats, [Partition, cache_miss]),
 			PackingState = get_packing_state(),
 			RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
 			{ok, Config} = arweave_config:get_env(),
@@ -266,10 +284,9 @@ generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) -
 
 			Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
 			update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
-			EntropySize = ?REPLICA_2_9_ENTROPY_SIZE,
-			MaxSize = MaxEntropies * EntropySize,
-			ar_entropy_cache:clean_up_space(EntropySize, MaxSize),
-			ar_entropy_cache:put(Key, Entropy, EntropySize),
+			MaxSize = MaxEntropies * ?REPLICA_2_9_ENTROPY_SIZE,
+			ar_entropy_cache:clean_up_space(?REPLICA_2_9_ENTROPY_SIZE, MaxSize),
+			ar_entropy_cache:put(Key, Entropy, ?REPLICA_2_9_ENTROPY_SIZE),
 			entropy_generation_release(Key),
 
 			%% Primarily needed for testing where the entropy generated exceeds the entropy
@@ -897,7 +914,7 @@ entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset) -
 		true ->
 			ok;
 		false ->
-			?LOG_INFO([{event, entropy_generation_lock_collision},
+			?LOG_DEBUG([{event, entropy_generation_lock_collision},
 					{reward_addr, ar_util:encode(RewardAddr)},
 					{key, ar_util:encode(Key)},
 					{bucket_end_offset, BucketEndOffset},
@@ -913,6 +930,7 @@ update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartO
 	Tab = entropy_generation_stats,
 	Time = erlang:monotonic_time(millisecond),
 	ets:update_counter(Tab, Key, {2, 1}, {Key, 0, Time}),
+	prometheus_counter:inc(replica_2_9_entropy_generated, ?REPLICA_2_9_ENTROPY_SIZE),
 	maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	remove_outdated_entropy_generation_stats().
 
@@ -922,6 +940,8 @@ maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubC
 	[{_, Count, Time}] = ets:lookup(Tab, Key),
 	case Count > 1 of
 		true ->
+			Partition = ar_node:get_partition_number(BucketEndOffset),
+			prometheus_counter:inc(replica_2_9_entropy_stats, [Partition, redundant]),
 			?LOG_WARNING([{event, possibly_redundant_entropy_generation},
 					{reward_addr, ar_util:encode(RewardAddr)},
 					{key, ar_util:encode(Key)},
