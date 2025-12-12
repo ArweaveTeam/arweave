@@ -94,6 +94,15 @@ do_fetch(Start, End, StoreID, normal) ->
 					{End3, EnqueueIntervals2} = fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals),
 					{min(End2, End3), EnqueueIntervals2}
 			end,
+		?LOG_DEBUG([{event, fetch_peer_intervals},
+			{function, do_fetch},
+			{store_id, StoreID},
+			{range_start, Start},
+			{range_end, End},
+			{type, normal},
+			{unsynced_intervals, ar_intervals:sum(UnsyncedIntervals)},
+			{enqueue_intervals, length(EnqueueIntervals)},
+			{peers, Peers}]),
 		%% Schedule the next sync bucket. The cast handler logic will pause collection
 		%% if needed.
 		{End4, EnqueueIntervals}
@@ -359,6 +368,17 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 										Offset - ?DATA_CHUNK_SIZE
 								end,
 							ByteIntervals3 = ar_intervals:outerjoin(ar_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2),
+							?LOG_DEBUG([{event, fetch_peer_intervals},
+								{function, fetch_peer_footprint_intervals},
+								{peer, ar_util:format_peer(Peer)},
+								{partition, Partition},
+								{footprint, Footprint},
+								{unsynced_intervals, ar_intervals:sum(UnsyncedIntervals)},
+								{sought_intervals, ar_intervals:sum(SoughtIntervals)},
+								{intervals, length(Intervals)},
+								{byte_intervals, ar_intervals:sum(ByteIntervals)},
+								{byte_intervals2, ar_intervals:sum(ByteIntervals2)},
+								{byte_intervals3, ar_intervals:sum(ByteIntervals3)}]),
 							[{Peer, ByteIntervals3} | IntervalsAcc]
 					end;
 				(ok, Acc) ->

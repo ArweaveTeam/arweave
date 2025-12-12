@@ -432,8 +432,7 @@ do_generate_entropies(RewardAddr, BucketEndOffset) ->
 		{error, _Reason} ->
 			flush_entropy_messages();
 		_ ->
-			EntropySize = length(Entropies) * ?REPLICA_2_9_ENTROPY_SIZE,
-			prometheus_counter:inc(replica_2_9_entropy_generated, EntropySize)
+			ok
 	end,
 	Entropies.
 

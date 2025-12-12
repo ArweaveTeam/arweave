@@ -1219,6 +1219,7 @@ handle_cast({collect_peer_intervals, Start, End, Type}, State) ->
 	{noreply, State};
 
 handle_cast({enqueue_intervals, []}, State) ->
+	?LOG_DEBUG([{event, enqueue_interval_empty}, {pid, self()}]),
 	{noreply, State};
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
@@ -1254,8 +1255,8 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	?LOG_DEBUG([{event, enqueue_intervals}, {pid, self()},
 		{queue_before, gb_sets:size(Q)}, {queue_after, gb_sets:size(Q2)},
 		{num_peers, NumPeers}, {chunks_per_peer, ChunksPerPeer},
-		{q_intervals_before, gb_sets:size(QIntervals)},
-		{q_intervals_after, gb_sets:size(QIntervals2)}]),
+		{q_intervals_before, ar_intervals:sum(QIntervals)},
+		{q_intervals_after, ar_intervals:sum(QIntervals2)}]),
 
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};
@@ -2896,9 +2897,9 @@ enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
 	?LOG_DEBUG([{event, enqueue_peer_intervals}, {pid, self()},
 		{peer, ar_util:format_peer(Peer)},
-		{num_intervals, gb_sets:size(Intervals)},
-		{num_q_intervals, gb_sets:size(QIntervals)},
-		{num_outer_join_intervals, gb_sets:size(OuterJoin)}]),
+		{num_intervals, ar_intervals:sum(Intervals)},
+		{num_q_intervals, ar_intervals:sum(QIntervals)},
+		{num_outer_join_intervals, ar_intervals:sum(OuterJoin)}]),
 	{_, {Q2, QIntervals2}}  = ar_intervals:fold(
 		fun	(_, {0, {QAcc, QIAcc}}) ->
 				{0, {QAcc, QIAcc}};
@@ -2939,6 +2940,7 @@ unpack_fetched_chunk(Cast, AbsoluteOffset, ChunkArgs, Args, State) ->
 					ar_util:cast_after(1000, self(), Cast),
 					{noreply, State};
 				false ->
+					?LOG_DEBUG([{event, request_unpack}, {absolute_offset, AbsoluteOffset}]),
 					ar_packing_server:request_unpack({AbsoluteOffset, unpacked}, ChunkArgs),
 					{noreply, State#sync_data_state{
 							packing_map = PackingMap#{
