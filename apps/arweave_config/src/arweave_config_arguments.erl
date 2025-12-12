@@ -41,17 +41,16 @@
 	% load/1,
 	% get/0,
 	% reset/0
-	parse/1
+	parse/1,
+	parse/2
 ]).
 -export([init/1]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
 -include_lib("kernel/include/logger.hrl").
 
 %%--------------------------------------------------------------------
-%% @doc Parses an argument from command line. Erlang is usually giving
-%% us these arguments as a `[string()]', but we want it to be a
-%% `[binary()]', to make our life easier when displaying this
-%% information somewhere else (e.g. JSON).
+%% @doc Parses command line arguments.
+%% @see parse/2
 %% @end
 %%--------------------------------------------------------------------
 -spec parse(Args) -> Return when
@@ -62,43 +61,83 @@
 	Reason :: map().
 
 parse(Args) ->
-	parse_converter(Args, []).
+	parse(Args, #{}).
+
+%%--------------------------------------------------------------------
+%% @doc Parses an argument from command line. Erlang is usually giving
+%% us these arguments as a `[string()]', but we want it to be a
+%% `[binary()]', to make our life easier when displaying this
+%% information somewhere else (e.g. JSON).
+%%
+%% Custom specifications can be set using `long_arguments' and
+%% `short_arguments' options. Those are mostly used for testing and
+%% debugging purpose, by default, this function will fetch
+%% specifications from `arweave_config_spec' process.
+%% @end
+%%--------------------------------------------------------------------
+-spec parse(Args, Opts) -> Return when
+	Args :: [binary()],
+	Opts :: #{
+		long_arguments => #{},
+		short_arguments => #{}
+	},
+	Return :: {ok, [{Spec, Values}]} | {error, Reason},
+	Spec :: map(),
+	Values :: [term()],
+	Reason :: map().
+
+parse(Args, Opts) ->
+	parse_converter(Args, Opts). 
 
 %%--------------------------------------------------------------------
 %% @hidden
 %% @doc type converter, the parser only check binary data.
 %% @end
 %%--------------------------------------------------------------------
-parse_converter([], Buffer) ->
-	parse_final(lists:reverse(Buffer));
-parse_converter([Arg|Rest], Buffer) when is_list(Arg) ->
+parse_converter(Args, Opts) ->
+	parse_converter(Args, [], Opts).
+
+parse_converter([], Buffer, Opts) ->
+	Reverse = lists:reverse(Buffer),
+	parse_final(Reverse, Opts);
+parse_converter([Arg|Rest], Buffer, Opts) when is_list(Arg) ->
 	NewBuffer = [list_to_binary(Arg)|Buffer],
-	parse_converter(Rest, NewBuffer);
-parse_converter([Arg|Rest], Buffer) when is_integer(Arg) ->
+	parse_converter(Rest, NewBuffer, Opts);
+parse_converter([Arg|Rest], Buffer, Opts) when is_integer(Arg) ->
 	NewBuffer = [integer_to_binary(Arg)|Buffer],
-	parse_converter(Rest, NewBuffer);
-parse_converter([Arg|Rest], Buffer) when is_float(Arg) ->
+	parse_converter(Rest, NewBuffer, Opts);
+parse_converter([Arg|Rest], Buffer, Opts) when is_float(Arg) ->
 	NewBuffer = [float_to_binary(Arg)|Buffer],
-	parse_converter(Rest, NewBuffer);
-parse_converter([Arg|Rest], Buffer) when is_atom(Arg) ->
+	parse_converter(Rest, NewBuffer, Opts);
+parse_converter([Arg|Rest], Buffer, Opts) when is_atom(Arg) ->
 	NewBuffer = [atom_to_binary(Arg)|Buffer],
-	parse_converter(Rest, NewBuffer);
-parse_converter([Arg|Rest], Buffer) when is_binary(Arg) ->
+	parse_converter(Rest, NewBuffer, Opts);
+parse_converter([Arg|Rest], Buffer, Opts) when is_binary(Arg) ->
 	NewBuffer = [Arg|Buffer],
-	parse_converter(Rest, NewBuffer).
+	parse_converter(Rest, NewBuffer, Opts).
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-parse_final(Args) ->
+parse_final(Args, Opts) ->
 	try
-		% @todo it's annoying to convert these values, longs/short
-		% args from specifications should be returned as map directly.
-		LongArgs = maps:from_list(
-			arweave_config_spec:get_long_arguments()
+		LongArgs = maps:get(
+			long_arguments,
+			Opts, 
+			% @todo it's annoying to convert these values, longs/short
+			% args from specifications should be returned as map directly.
+			maps:from_list(
+				arweave_config_spec:get_long_arguments()
+			)
 		),
-		ShortArgs = maps:from_list(
-			arweave_config_spec:get_short_arguments()
+		ShortArgs = maps:get(
+			short_arguments,
+			Opts,
+			% @todo it's annoying to convert these values, longs/short
+			% args from specifications should be returned as map directly.
+			maps:from_list(
+				arweave_config_spec:get_short_arguments()
+			)
 		),
 		State = #{
 			args => Args,
@@ -107,7 +146,7 @@ parse_final(Args) ->
 			pos => 1,
 			actions => []
 		},
-		parse(Args, State)
+		parse(Args, State, Opts)
 	catch
 		_:R ->
 			{error, #{
@@ -121,17 +160,18 @@ parse_final(Args) ->
 %% @doc loop over the arguments and check them.
 %% @end
 %%--------------------------------------------------------------------
--spec parse(Args, State) -> Return when
+-spec parse(Args, State, Opts) -> Return when
 	Args :: [binary()],
 	State :: map(),
+	Opts :: map(),
 	Return :: {ok, [{Spec, Values}]} | {error, Reason},
 	Spec :: map(),
 	Values :: [term()],
 	Reason :: map().
 
-parse([], #{ actions := Buffer }) ->
+parse([], #{ actions := Buffer }, _Opts) ->
 	{ok, lists:reverse(Buffer)};
-parse([Arg = <<"---",_/binary>>|_], State) ->
+parse([Arg = <<"---",_/binary>>|_], State, _Opts) ->
 	Pos = maps:get(pos, State),
 	{error, #{
 			reason => <<"bad_argument">>,
@@ -139,7 +179,7 @@ parse([Arg = <<"---",_/binary>>|_], State) ->
 			position => Pos
 		}
 	};
-parse([Arg = <<"--",_/binary>>|Rest], State = #{la := LA})
+parse([Arg = <<"--",_/binary>>|Rest], State = #{la := LA}, Opts)
 	when is_map_key(Arg, LA) ->
 		% by default, we assume the argument is a long
 		% arguments and we try to find it.
@@ -147,22 +187,22 @@ parse([Arg = <<"--",_/binary>>|Rest], State = #{la := LA})
 		Pos = maps:get(pos, State),
 		case apply_spec(Rest, Spec, State#{ pos => Pos+1 }) of
 			{ok, NewRest, NewState} ->
-				parse(NewRest, NewState);
+				parse(NewRest, NewState, Opts);
 			Else ->
 				Else
 		end;
-parse([<<"-", Arg>>|Rest], State = #{sa := SA})
+parse([<<"-", Arg>>|Rest], State = #{sa := SA}, Opts)
 	when is_map_key(Arg, SA),
 	     Arg =/= $- ->
 		Spec = maps:get(Arg, SA),
 		Pos = maps:get(pos, State),
 		case apply_spec(Rest, Spec, State#{ pos => Pos+1 }) of
 			{ok, NewRest, NewState} ->
-				parse(NewRest, NewState);
+				parse(NewRest, NewState, Opts);
 			Else ->
 				Else
 		end;
-parse([Unknown|_], #{ pos := Pos }) ->
+parse([Unknown|_], #{ pos := Pos }, _Opts) ->
 	{error, #{
 			reason => <<"unknown argument">>,
 			argument => Unknown,

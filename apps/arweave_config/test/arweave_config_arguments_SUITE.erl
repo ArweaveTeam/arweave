@@ -79,5 +79,64 @@ default(_Config) ->
 %% @end
 %%--------------------------------------------------------------------
 parser(_Config) ->
+	% Create a custom long arguments map
+	LongArguments = #{
+		<<"--boolean">> => #{
+			type => boolean
+		},
+		<<"--integer">> => #{
+			type => integer
+		},
+		<<"--integer.pos">> => #{
+			type => pos_integer
+		}
+	},
+
+	% create a custom short argmuents map
+	ShortArguments = #{
+		$b => #{
+			type => boolean
+		},
+		$i => #{
+			type => integer
+		},
+		$I => #{
+			type => pos_integer
+		}
+	},
+	Arguments = [
+		% long arguments
+		<<"--boolean">>,
+		<<"--boolean">>, <<"true">>,
+		<<"--boolean">>, <<"false">>,
+		<<"--boolean">>, <<"True">>,
+		<<"--boolean">>, <<"TRUE">>,
+		<<"--boolean">>, <<"FALSE">>,
+		<<"--integer">>, <<"-65535">>,
+		<<"--integer">>, <<"-0">>,
+		<<"--integer">>, <<"-65535">>,
+		<<"--integer.pos">>, <<"0">>,
+		<<"--integer.pos">>, <<"65535">>,
+
+		% short arguments
+		<<"-b">>,
+		<<"-b">>, <<"true">>,
+		<<"-b">>, <<"on">>,
+		<<"-b">>, <<"off">>,
+		<<"-b">>, <<"false">>,
+		<<"-i">>, <<"65535">>,
+		<<"-i">>, <<"0">>,
+		<<"-i">>, <<"-65535">>,
+		<<"-I">>, <<"0">>,
+		<<"-I">>, <<"65535">>
+	],
+	Opts = #{
+		long_arguments => LongArguments,
+		short_arguments => ShortArguments
+	},
+
+	ct:pal(test, 1, "parse ~p", [Arguments]),
+	{ok, _} = arweave_config_arguments:parse(Arguments, Opts),
 
 	{comment, "arguments parser tested"}.
+
