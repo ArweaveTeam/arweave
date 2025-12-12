@@ -52,6 +52,8 @@ fetch(Module, State) ->
 
 check(Module, false, State) ->
 	{ok, State};
+check(Module, true, State = #{ parameter_key := CK }) ->
+	{ok, State#{ long_argument => convert(CK) }};
 check(Module, undefined, State = #{ parameter_key := CK }) ->
 	{ok, State#{ long_argument => convert(CK) }};
 check(Module, LA, State) when is_binary(LA) orelse is_list(LA) ->
@@ -72,7 +74,7 @@ convert(Binary) when is_binary(Binary) -> <<"-", Binary/binary>>.
 convert([], Buffer) ->
 	Sep = application:get_env(arweave_config, long_argument_separator, "."),
 	Bin = list_to_binary(lists:join(Sep, lists:reverse(Buffer))),
-	<<"-", Bin/binary>>;
+	<<"--", Bin/binary>>;
 convert([H|T], Buffer) when is_integer(H) ->
 	convert([integer_to_binary(H)|T], Buffer);
 convert([H|T], Buffer) when is_atom(H) ->
