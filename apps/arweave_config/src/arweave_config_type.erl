@@ -68,19 +68,38 @@ atom(V) when is_atom(V) -> {ok, V};
 atom(V) -> {error, V}.
 
 %%--------------------------------------------------------------------
-%% @doc check booleans from binary, list, integer and atoms.
+%% @doc check booleans from binary, list, integer and atoms. When a
+%% string is used, a regexp is being used and ignore the case of the
+%% word.
+%%
+%% == Examples ==
+%%
+%% ```
+%% {ok, true} = boolean(true).
+%% {ok, true} = boolean(<<"true">>).
+%% {ok, true} = boolean("true").
+%% {ok, true} = boolean("on").
+%% {ok, true} = boolean(<<"TruE">>).
+%% '''
+%%
 %% @end
 %%--------------------------------------------------------------------
 -spec boolean(Input) -> Return when
 	Input :: string() | binary() | boolean(),
 	Return :: {ok, boolean()} | {error, Input}.
 
-boolean(<<"true">>) -> {ok, true};
-boolean(<<"false">>) -> {ok, false};
-boolean("true") -> {ok, true};
-boolean("false") -> {ok, false};
 boolean(true) -> {ok, true};
+boolean(on) -> {ok, true};
 boolean(false) -> {ok, false};
+boolean(off) -> {ok, false};
+boolean(String) when is_list(String); is_binary(String) ->
+	Regexp = "^(?:(?<f>false|off)|(?<t>true|on))$",
+	Opts = [extended, caseless, {capture, all_names, binary}],
+	case re:run(String, Regexp, Opts) of
+		{match, [<<>>, _True]} -> {ok, true};
+		{match, [_False, <<>>]} -> {ok, false};
+		_ -> {error, String}
+	end;
 boolean(V) -> {error, V}.
 
 %%--------------------------------------------------------------------

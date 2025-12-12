@@ -26,6 +26,7 @@
 %%% @end
 %%%===================================================================
 -module(arweave_config_spec_long_argument).
+-compile(warnings_as_errors).
 -export([init/2]).
 -include("arweave_config_spec.hrl").
 
@@ -50,11 +51,13 @@ fetch(Module, State) ->
 			{error, R}
 	end.
 
-check(Module, false, State) ->
+check(_Module, false, State) ->
 	{ok, State};
-check(Module, undefined, State = #{ parameter_key := CK }) ->
+check(_Module, true, State = #{ parameter_key := CK }) ->
 	{ok, State#{ long_argument => convert(CK) }};
-check(Module, LA, State) when is_binary(LA) orelse is_list(LA) ->
+check(_Module, undefined, State = #{ parameter_key := CK }) ->
+	{ok, State#{ long_argument => convert(CK) }};
+check(_Module, LA, State) when is_binary(LA) orelse is_list(LA) ->
 	{ok, State#{ long_argument => convert(LA) }};
 check(Module, LA, State) ->
 	{error, #{
@@ -72,7 +75,7 @@ convert(Binary) when is_binary(Binary) -> <<"-", Binary/binary>>.
 convert([], Buffer) ->
 	Sep = application:get_env(arweave_config, long_argument_separator, "."),
 	Bin = list_to_binary(lists:join(Sep, lists:reverse(Buffer))),
-	<<"-", Bin/binary>>;
+	<<"--", Bin/binary>>;
 convert([H|T], Buffer) when is_integer(H) ->
 	convert([integer_to_binary(H)|T], Buffer);
 convert([H|T], Buffer) when is_atom(H) ->

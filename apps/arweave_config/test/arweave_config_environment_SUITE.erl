@@ -69,49 +69,96 @@ all() ->
 %%--------------------------------------------------------------------
 default(Config) ->
 	Environment = proplists:get_value(environment, Config),
+
+	ct:pal(test, 1, "ensure arweave_config_environment is started"),
+	true = is_process_alive(whereis(arweave_config_environment)),
+
+	ct:pal(test, 1, "send an unsupported message to the process"),
+	ok = gen_server:call(arweave_config_environment, '@random_test', 1000),
+	ok = gen_server:cast(arweave_config_environment, '@random_test'),
+	_ = erlang:send(arweave_config_environment, '@random_test'),
+
+	ct:pal(test, 1, "reset arweave_config_environment"),
+	arweave_config_environment:reset(),
+
+	ct:pal(test, 1, "retrieve environment from arweave_config_environment"),
 	ArweaveEnvironment = arweave_config_environment:get(),
 
-	% let check if all variables we have configured are present
+	ct:pal(test, 1, "check if variables have been configured"),
 	[
 	 	begin
-			VE = proplists:get_value(list_to_binary(K), ArweaveEnvironment),
+			ct:pal(test, 1, "found: ~p", [{K,V}]),
+			BK = list_to_binary(K),
+			VE = proplists:get_value(BK, ArweaveEnvironment),
+			ct:pal(test, 1, "~p", [{BK,VE}]),
 			VE = list_to_binary(V)
 		end
 		|| {K, V} <- Environment
 	],
 
-	% let check them one by one.
+	ct:pal(test, 1, "check all variables one by one"),
 	[
 		begin
-			{ok, VE} = arweave_config_environment:get(list_to_binary(K)),
+			ct:pal(test, 1, "check: ~p", [{K,V}]),
+			BK = list_to_binary(K),
+			{ok, VE} = arweave_config_environment:get(BK),
 			VE = list_to_binary(V)
 		end
 		|| {K, V} <- Environment
 	],
+
+	ct:pal(test, 1, "check current value of debug parameter"),
+	{ok, false} = arweave_config:get([debug]),
+	#config{ debug = false } = arweave_config_legacy:get(),
 
 	% load the environment, it will lookup in the environment list
 	% and set the value, in our case, AR_DEBUG should be
 	% configured and set to true instead of false.
-	{ok, false} = arweave_config:get([debug]),
+	ct:pal(test, 1, "load the environment"),
 	ok = arweave_config_environment:load(),
-	{ok, true} = arweave_config:get([debug]).
+
+	ct:pal(test, 1, "check [debug] parameter."),
+	{ok, true} = arweave_config:get([debug]),
+
+	ct:pal(test, 1, "check [debug] parameter (legacy)."),
+	#config{ debug = true } = arweave_config_legacy:get(),
+
+	ct:pal(test, 1, "check unconfigured environment variable"),
+	{error, not_found} =
+		arweave_config_environment:get(<<"UNKNOWN_VARIABLE">>),
+
+	{comment, "environment feature tested"}.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 environment() ->
-	[{"AR_TEST_ENVIRONMENT_VARIABLE", "test"}
-	,{"AR_DEBUG", "true"}
+	[
+		{"AR_TEST_ENVIRONMENT_VARIABLE", "test"},
+		{"AR_DEBUG", "true"}
 	].
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 set_environment() ->
-	[ os:putenv(K,V) || {K,V} <- environment() ].
+	[
+		begin
+			ct:pal(test, 1, "prepare: set ~p=~p",[K,V]),
+			os:putenv(K,V),
+			V = os:getenv(K)
+		end
+		|| {K,V} <- environment()
+	].
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 unset_environment() ->
-	[ os:unsetenv(K) || {K,_} <- environment() ].
+	[
+		begin
+			ct:pal(test, 1, "cleanup: unset ~p", [K]),
+			os:unsetenv(K)
+		end
+		|| {K,_} <- environment()
+	].
