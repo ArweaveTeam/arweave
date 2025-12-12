@@ -60,6 +60,14 @@ children() ->
 			type => worker
 		},
 		#{
+			id => arweave_config_arguments,
+			start => {
+				arweave_config_arguments,
+				start_link,
+				[]
+			}
+		},
+		#{
 			id => arweave_config_store,
 			start => {
 				arweave_config_store,
