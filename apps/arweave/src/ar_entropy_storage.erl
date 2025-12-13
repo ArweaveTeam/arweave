@@ -76,6 +76,7 @@ is_ready(StoreID) ->
 handle_cast({store_entropy_footprint,
 		Entropies, EntropyOffsets, RangeStart, Keys, RewardAddr}, State) ->
 	#state{ store_id = StoreID } = State,
+	Start = erlang:monotonic_time(millisecond),
 	ar_entropy_gen:map_entropies(
 		Entropies,
 		EntropyOffsets,
@@ -85,6 +86,10 @@ handle_cast({store_entropy_footprint,
 		fun do_store_entropy/5,
 		[StoreID],
 		ok),
+	End = erlang:monotonic_time(millisecond),
+	?LOG_DEBUG([{event, store_entropy_footprint}, {module, ?MODULE},
+		{name, name(StoreID)}, {offset, hd(EntropyOffsets)},
+		{num_entropies, length(Entropies)}, {duration, End - Start}]),
 	{noreply, State};
 
 handle_cast(Cast, State) ->
@@ -170,7 +175,16 @@ update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 										StartOffset,
 										{replica_2_9, RewardAddr},
 										ar_data_sync,
-										StoreID);
+										StoreID),
+			%% Here we assume we do not store unpadded small chunks (small chunks
+			%% before the strict data split threshold), thus ?DATA_CHUNK_SIZE.
+			case ar_data_sync:is_footprint_record_supported(PaddedEndOffset, ?DATA_CHUNK_SIZE, Packing) of
+				true ->
+					ar_footprint_record:add_async(replica_2_9_entropy_with_chunk,
+							PaddedEndOffset, Packing, StoreID);
+				false ->
+					ok
+			end;
 		false ->
 			ok
 	end.
@@ -325,6 +339,7 @@ do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID) ->
 					Error;
 				{_, UnpackedChunk} ->
 					ar_sync_record:delete(PaddedEndOffset, StartOffset, ar_data_sync, StoreID),
+					ar_footprint_record:delete(PaddedEndOffset, StoreID),
 					ar_packing_server:encipher_replica_2_9_chunk(UnpackedChunk, ChunkEntropy)
 			end;
 		false ->

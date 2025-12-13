@@ -605,7 +605,7 @@ get_status_class(418) ->
 get_status_class(419) ->
 	"missing_chunk";
 get_status_class(Data) when is_integer(Data), Data > 0 ->
-	prometheus_http:status_class(Data);
+	integer_to_list(Data);
 get_status_class(Data) when is_binary(Data) ->
 	case catch binary_to_integer(Data) of
 		{_, _} ->

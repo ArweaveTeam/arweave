@@ -12,7 +12,7 @@ test_verify_block_txs() ->
 	Key1 = ar_wallet:new(),
 	Key2 = ar_wallet:new(),
 	RandomBlockAnchors =
-		[crypto:strong_rand_bytes(32) || _ <- lists:seq(1, ?MAX_TX_ANCHOR_DEPTH)],
+		[crypto:strong_rand_bytes(32) || _ <- lists:seq(1, ar_block:get_max_tx_anchor_depth())],
 	BlockAnchorTXAtForkHeight = tx(Key1, fee(ar_fork:height_2_0()), <<"hash">>),
 	BlockAnchorTXAfterForkHeight =
 		tx(Key1, fee(ar_fork:height_2_0() + 1), <<"hash">>),

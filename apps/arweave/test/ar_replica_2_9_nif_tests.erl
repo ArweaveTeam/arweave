@@ -69,7 +69,7 @@ test_vectors({FastState, _LightState}) ->
 		48,99 >>,
 	?assertEqual(PackedHashExpd, PackedHashReal),
 	{ok, Unpacked} = ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk(
-		{FastState, Key, Packed, EntropySubChunkIndex}),
+		{FastState, Entropy, Packed, EntropySubChunkIndex}),
 	?assertEqual(SubChunk, Unpacked),
 
 	ok.
@@ -82,7 +82,7 @@ test_pack_unpack_sub_chunks({State, _LightState}) ->
 	PackedSubChunks = pack_sub_chunks(SubChunk, Entropy, 0, SubChunk, State),
 	?assert(lists:all(fun(PackedSubChunk) -> byte_size(PackedSubChunk) == 8192 end,
 			PackedSubChunks)),
-	unpack_sub_chunks(PackedSubChunks, 0, SubChunk, Entropy).
+	unpack_sub_chunks(PackedSubChunks, 0, SubChunk, Entropy, State).
 
 pack_sub_chunks(_SubChunk, _Entropy, Index, _PreviousSubChunk, _State)
 		when Index == 1024 ->
@@ -94,11 +94,11 @@ pack_sub_chunks(SubChunk, Entropy, Index, PreviousSubChunk, State) ->
 	?assertNotEqual(PackedSubChunk, PreviousSubChunk, Note),
 	[PackedSubChunk | pack_sub_chunks(SubChunk, Entropy, Index + 1, PackedSubChunk, State)].
 
-unpack_sub_chunks([], _Index, _SubChunk, _Entropy) ->
+unpack_sub_chunks([], _Index, _SubChunk, _Entropy, _State) ->
 	ok;
-unpack_sub_chunks([PackedSubChunk | PackedSubChunks], Index, SubChunk, Entropy) ->
-	{ok, UnpackedSubChunk} = ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk2(
-			{Entropy, PackedSubChunk, Index}),
+unpack_sub_chunks([PackedSubChunk | PackedSubChunks], Index, SubChunk, Entropy, State) ->
+	{ok, UnpackedSubChunk} = ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk(
+			{State, Entropy, PackedSubChunk, Index}),
 	Note = io_lib:format("Unpacked a sub-chunk, index=~B.~n", [Index]),
 	?assertEqual(SubChunk, UnpackedSubChunk, Note),
-	unpack_sub_chunks(PackedSubChunks, Index + 1, SubChunk, Entropy).
+	unpack_sub_chunks(PackedSubChunks, Index + 1, SubChunk, Entropy, State).

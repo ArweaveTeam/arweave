@@ -4,8 +4,10 @@
 
 -export([execute/2, read_body_chunk/4]).
 
--include("ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
+
+-include("ar.hrl").
+-include("ar_consensus.hrl").
 -include("ar_mining.hrl").
 -include("ar_data_sync.hrl").
 -include("ar_data_discovery.hrl").
@@ -392,6 +394,22 @@ handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
 			end
 	end;
 
+handle(<<"GET">>, [<<"footprint_buckets">>], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
+			case ar_global_sync_record:get_serialized_footprint_buckets() of
+				{ok, Binary} ->
+					{200, #{}, Binary, Req};
+				{error, not_initialized} ->
+					{500, #{}, jiffy:encode(#{ error => not_initialized }), Req};
+				{error, timeout} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			end
+	end;
+
 handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
@@ -457,6 +475,57 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedEnd, EncodedLimi
 			end
 	end;
 
+%% Return the information about the presence of the data from the given footprint
+%% in the given partition. The returned intervals contain the numbers of the chunks
+%% starting from 0 belonging to the given footprint (and present on this node).
+%% The footprint is constructed like a replica 2.9 entropy footprint where chunks are
+%% spread out across the partition. Therefore, the interval [0, 2] does not denote
+%% two adjacent chunks but rather two chunks separated by
+%% ar_block:get_replica_2_9_entropy_count() chunks.
+%% Note that we do not only record footprints for replica_2_9 storage modules, but
+%% for any packing, because we want to make it convenient for any client to fetch
+%% the data from us.
+%%
+%% Example response:
+%% {
+%%   "packing": "replica_2_9_A5KJQ7LjCyfGpNj-L-pasroRRVA7z_vWDNcK4aSgZs0",
+%%   "intervals": [
+%%     ["0", "1"],
+%%     ["2", "10"],
+%%     ["12", "1024"]
+%%   ]
+%% }
+%%
+%% Example response:
+%% {
+%%   "packing": "unpacked",
+%%   "intervals": ["0", "1024"]
+%% }
+%%
+%% Return 404 when no storage module is configured for the given partition.
+%%
+%% Return 400 when the partition or footprint number is not a non-negative integer or the
+%% footprint number is too large.
+%%
+%% GET /footprints/{partition_number}/{footprint_number}
+handle(<<"GET">>, [<<"footprints">>, EncodedPartition, EncodedFootprintNumber], Req, _Pid) ->
+	case catch binary_to_integer(EncodedPartition) of
+		{'EXIT', _} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_partition_encoding }), Req};
+		Partition when Partition >= 0 ->
+			case catch binary_to_integer(EncodedFootprintNumber) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_footprint_number_encoding }), Req};
+				FootprintNumber when FootprintNumber >= 0 ->
+					ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
+					handle_get_footprints(Partition, FootprintNumber, Req);
+				_ ->
+					{400, #{}, jiffy:encode(#{ error => negative_footprint_number }), Req}
+			end;
+		_ ->
+			{400, #{}, jiffy:encode(#{ error => negative_partition_number }), Req}
+	end;
+
 handle(<<"GET">>, [<<"chunk">>, OffsetBinary], Req, _Pid) ->
 	handle_get_chunk(OffsetBinary, Req, json);
 
@@ -491,6 +560,33 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 							{500, #{}, <<>>, Req};
 						{error, timeout} ->
 							{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+					end
+			end
+	end;
+
+%% Return data root metadata for the block containing the offset, >= BlockStartOffset, < BlockEndOffset.
+%% Return only entries corresponding to non-empty transactions.
+%% Return the complete list of entries in the order they appear in the data root index,
+%% which corresponds to sorted #tx records in the block.
+%% GET /data_roots/{offset}
+handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
+			case catch binary_to_integer(OffsetBin) of
+				{'EXIT', _} ->
+					{400, #{}, <<>>, Req};
+				Offset ->
+					case ar_data_sync:get_data_roots_for_offset(Offset) of
+						{ok, {TXRoot, BlockSize, Entries}} ->
+							Payload = ar_serialize:data_roots_to_binary({TXRoot, BlockSize, Entries}),
+							{200, #{}, Payload, Req};
+						{error, not_found} ->
+							{404, #{}, jiffy:encode(#{ error => not_found }), Req};
+						_ ->
+							{500, #{}, <<>>, Req}
 					end
 			end
 	end;
@@ -1622,14 +1718,14 @@ handle_get_block_index_range(Start, _End, CurrentHeight, _RecentBI, Req, _Encodi
 		when Start > CurrentHeight ->
 	{400, #{}, jiffy:encode(#{ error => start_too_big }), Req};
 handle_get_block_index_range(Start, End, CurrentHeight, RecentBI, Req, Encoding) ->
-	CheckpointHeight = CurrentHeight - ?STORE_BLOCKS_BEHIND_CURRENT + 1,
+	CheckpointHeight = CurrentHeight - ar_block:get_consensus_window_size() + 1,
 	RecentRange =
 		case End >= CheckpointHeight of
 			true ->
 				Top = min(CurrentHeight, End),
 				Range1 = lists:nthtail(CurrentHeight - Top, RecentBI),
 				lists:sublist(Range1, min(Top - Start + 1,
-						?STORE_BLOCKS_BEHIND_CURRENT - (CurrentHeight - Top)));
+						ar_block:get_consensus_window_size() - (CurrentHeight - Top)));
 			false ->
 				[]
 		end,
@@ -2105,6 +2201,58 @@ handle_get_data_sync_record(Start, End, Limit, Req) ->
 			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
+handle_get_footprints(Partition, FootprintNumber, Req) ->
+	FootprintsPerPartition = ar_block:get_replica_2_9_entropy_count(),
+	CheckFootprintNumber =
+		case FootprintNumber >= FootprintsPerPartition of
+			true ->
+				{400, #{}, jiffy:encode(#{ error => footprint_number_too_large }), Req};
+			false ->
+				ok
+		end,
+	{Start, End} = ar_replica_2_9:get_entropy_partition_range(Partition),
+	FindStorageModules =
+		case CheckFootprintNumber of
+			ok ->
+				case ar_storage_module:get_all(Start, End) of
+					[] ->
+						{404, #{}, <<>>, Req};
+					Modules ->
+						{ok, Modules}
+				end;
+			Reply ->
+				Reply
+		end,
+	FindStoreIDPacking =
+		case FindStorageModules of
+			{ok, StorageModules} ->
+				{ok, [{ar_storage_module:id(Module), Packing}
+						|| {_, _, Packing} = Module <- StorageModules]};
+			Reply2 ->
+				Reply2
+		end,
+	CollectIntervals =
+		case FindStoreIDPacking of
+			{ok, L} ->
+				{ok, lists:foldl(
+					fun({StoreID2, Packing2}, Acc) ->
+						Intervals = ar_footprint_record:get_intervals(Partition, FootprintNumber, Packing2, StoreID2),
+						ar_intervals:union(Acc, Intervals)
+					end,
+					ar_intervals:new(),
+					L
+				)};
+			Reply3 ->
+				Reply3
+		end,
+	case CollectIntervals of
+		{ok, Intervals2} ->
+			Payload = jiffy:encode(ar_serialize:footprint_to_json_map(Intervals2)),
+			{200, #{}, Payload, Req};
+		Reply4 ->
+			Reply4
+	end.
+
 handle_get_chunk(OffsetBinary, Req, Encoding) ->
 	case catch binary_to_integer(OffsetBinary) of
 		Offset when is_integer(Offset) ->
@@ -2132,10 +2280,6 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 							{{true, RequestedPacking}, _StoreID} ->
 								ok = ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT),
 								{RequestedPacking, ok};
-							{{true, {replica_2_9, _}}, _StoreID} when ?BLOCK_2_9_SYNCING ->
-								%% Don't serve replica 2.9 chunks as they are expensive to
-								%% unpack.
-								{none, {reply, {404, #{}, <<>>, Req}}};
 							{{true, Packing}, _StoreID} when RequestedPacking == any ->
 								ok = ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT),
 								{Packing, ok};
@@ -2224,7 +2368,7 @@ handle_get_chunk_proof2(Offset, Req, Encoding) ->
 	CheckRecords =
 		case ar_sync_record:is_recorded(Offset, ar_data_sync) of
 			false ->
-				{none, {reply, {404, #{}, <<>>, Req}}};
+				{reply, {404, #{}, <<>>, Req}};
 			{{true, _Packing}, _StoreID} ->
 				ok
 		end,
@@ -2504,7 +2648,7 @@ post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	case ar_node:is_joined() of
 		true ->
-			ConfirmedHeight = ar_node:get_height() - ?STORE_BLOCKS_BEHIND_CURRENT,
+			ConfirmedHeight = ar_node:get_height() - ar_block:get_consensus_window_size(),
 			case {Encoding, ConfirmedHeight >= ar_fork:height_2_6()} of
 				{json, true} ->
 					%% We gesticulate it explicitly here that POST /block is not

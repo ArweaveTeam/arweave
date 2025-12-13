@@ -233,7 +233,7 @@ do_join(Peers, B, BI) ->
 	WorkerQ = queue:from_list([spawn(fun() -> worker() end)
 			|| _ <- lists:seq(1, Config#config.join_workers)]),
 	PeerQ = queue:from_list(Peers),
-	Trail = lists:sublist(tl(BI), 2 * ?MAX_TX_ANCHOR_DEPTH),
+	Trail = lists:sublist(tl(BI), 2 * ar_block:get_max_tx_anchor_depth()),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),
 	Retries = lists:foldl(fun(Peer, Acc) -> maps:put(Peer, 5, Acc) end, #{}, Peers),
 	Blocks = [B#block{ size_tagged_txs = SizeTaggedTXs }
@@ -244,12 +244,12 @@ do_join(Peers, B, BI) ->
 	ar_node_worker ! {join, B#block.height, BI, Blocks3},
 	join_peers(Peers).
 
-%% @doc Get the 2 * ?MAX_TX_ANCHOR_DEPTH blocks preceding the head block.
-%% If the block list is shorter than 2 * ?MAX_TX_ANCHOR_DEPTH, simply
+%% @doc Get the 2 * ar_block:get_max_tx_anchor_depth() blocks preceding the head block.
+%% If the block list is shorter than 2 * ar_block:get_max_tx_anchor_depth(), simply
 %% get all existing blocks.
 %%
-%% The node needs 2 * ?MAX_TX_ANCHOR_DEPTH block anchors so that it
-%% can validate transactions even if it enters a ?MAX_TX_ANCHOR_DEPTH-deep
+%% The node needs 2 * ar_block:get_max_tx_anchor_depth() block anchors so that it
+%% can validate transactions even if it enters a ar_block:get_max_tx_anchor_depth()-deep
 %% fork recovery (which is the deepest fork recovery possible) immediately after
 %% joining the network.
 get_block_trail(_WorkerQ, _PeerQ, [], _Retries) ->

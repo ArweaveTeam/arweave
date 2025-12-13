@@ -6,7 +6,9 @@
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(WEAVE_SIZE, (3 * ?PARTITION_SIZE)).
+-define(ALIGNED_PARTITION_SIZE, 2_097_152).
+-define(WEAVE_SIZE, (3 * ?ALIGNED_PARTITION_SIZE)).
+
 %% RECALL_RANGE_1 and SYNCED_RECALL_RANGE_2 must be different partitions so that different io
 %% threads are used. 
 %% ?RECALL_RANGE_1 is set so 1 chunk is synced and one is missing.

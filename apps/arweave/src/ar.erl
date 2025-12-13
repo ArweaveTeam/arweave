@@ -7,17 +7,19 @@
 
 -export([main/0, main/1, create_wallet/0, create_wallet/1,
 		create_ecdsa_wallet/0, create_ecdsa_wallet/1,
-		benchmark_packing/1, benchmark_packing/0, benchmark_2_9/0, benchmark_2_9/1,
+		benchmark_packing/1, benchmark_packing/0,
 		benchmark_vdf/0, benchmark_vdf/1,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
-		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, stop_shell/0,
+		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, shell_e2e/0,
+		stop_shell/0, stop_shell_e2e/0,
 		docs/0, shutdown/1, console/1, console/2, prep_stop/1]).
 
--include("../include/ar.hrl").
--include("../include/ar_consensus.hrl").
+-include("ar.hrl").
+-include("ar_consensus.hrl").
+-include("ar_verify_chunks.hrl").
+
 -include_lib("arweave_config/include/arweave_config.hrl").
--include("../include/ar_verify_chunks.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -283,6 +285,11 @@ show_help() ->
 				"removes this limit allowing multiple workers to be active on a given "
 				"physical disk."
 			},
+			{"replica_2_9_entropy_cache_max_entropies (num)", io_lib:format(
+				"The maximum number of replica 2.9 entropies to cache at a time "
+				"while syncing data. Each entropy is 256 MB. Default: ~B",
+				[?DEFAULT_REPLICA_2_9_ENTROPY_CACHE_MAX_ENTROPIES]
+			)},
 			{"max_vdf_validation_thread_count", io_lib:format("\tThe maximum number "
 					"of threads used for VDF validation. Default: ~B",
 					[?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT])},
@@ -750,6 +757,8 @@ parse_cli_args(["replica_2_9_workers", Num | Rest], C) ->
 	parse_cli_args(Rest, C#config{ replica_2_9_workers = list_to_integer(Num) });
 parse_cli_args(["disable_replica_2_9_device_limit" | Rest], C) ->
 	parse_cli_args(Rest, C#config{ disable_replica_2_9_device_limit = true });
+parse_cli_args(["replica_2_9_entropy_cache_max_entropies", Num | Rest], C) ->
+	parse_cli_args(Rest, C#config{ replica_2_9_entropy_cache_max_entropies = list_to_integer(Num) });
 parse_cli_args(["max_vdf_validation_thread_count", Num | Rest], C) ->
 	parse_cli_args(Rest,
 			C#config{ max_nonce_limiter_validation_thread_count = list_to_integer(Num) });
@@ -1157,7 +1166,6 @@ start(Config) ->
 	end,
 	start_dependencies().
 
-
 start(normal, _Args) ->
 	% Load configuration from environment variable, it will
 	% impact only feature supporting arweave_config.
@@ -1268,13 +1276,6 @@ create_wallet_fail(?ECDSA_KEY_TYPE) ->
 	io:format("Usage: ./bin/create-ecdsa-wallet [data_dir]~n"),
 	init:stop(1).
 
-benchmark_packing() ->
-	benchmark_packing([]).
-benchmark_packing(Args) ->
-	ar_bench_timer:initialize(),
-	ar_bench_packing:run_benchmark_from_cli(Args),
-	init:stop(1).
-
 benchmark_vdf() ->
 	benchmark_vdf([]).
 benchmark_vdf(Args) ->
@@ -1288,10 +1289,10 @@ benchmark_hash(Args) ->
 	ar_bench_hash:run_benchmark_from_cli(Args),
 	init:stop(1).
 
-benchmark_2_9() ->
-	ar_bench_2_9:show_help().
-benchmark_2_9(Args) ->
-	ar_bench_2_9:run_benchmark_from_cli(Args),
+benchmark_packing() ->
+	benchmark_packing([]).
+benchmark_packing(Args) ->
+	ar_bench_packing:run_benchmark_from_cli(Args),
 	init:stop(1).
 
 shutdown([NodeName]) ->
@@ -1315,13 +1316,16 @@ stop(_State) ->
 	?LOG_INFO([{stop, ?MODULE}]).
 
 stop_dependencies() ->
+	?LOG_INFO("========== Stopping Arweave Node  =========="),
 	{ok, [_Kernel, _Stdlib, _SASL, _OSMon | Deps]} = application:get_key(arweave, applications),
 	lists:foreach(fun(Dep) -> application:stop(Dep) end, Deps).
 
 start_dependencies() ->
+	?LOG_INFO("========== Starting Arweave Node  =========="),
 	{ok, Config} = arweave_config:get_env(),
+	ar_config:log_config(Config),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
-	ar_config:log_config(Config).
+	ok.
 
 %% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.
 %% for validating a block, will be blocked on initializing a RandomX dataset,
@@ -1338,11 +1342,29 @@ warn_if_single_scheduler() ->
 shell() ->
 	arweave_config:start(),
 	Config = #config{ debug = true },
-	start_for_tests(test,Config),
-	ar_test_node:boot_peers(test).
+	start_for_tests(test, Config),
+	ar_test_node:boot_peers(test),
+	ar_test_node:wait_for_peers(test).
+
+shell_e2e() ->
+	try
+		arweave_config:start(),
+		Config = #config{ debug = true },
+		start_for_tests(e2e, Config),
+		ar_test_node:boot_peers(e2e),
+		ar_test_node:wait_for_peers(e2e)
+	catch
+		Type:Reason:S ->
+			io:format("Failed to start the peers due to ~p:~p:~p~n", [Type, Reason, S]),
+			init:stop(1)
+	end.
 
 stop_shell() ->
 	ar_test_node:stop_peers(test),
+	init:stop().
+
+stop_shell_e2e() ->
+	ar_test_node:stop_peers(e2e),
 	init:stop().
 
 %% @doc Run all of the tests associated with the core project.
@@ -1377,7 +1399,6 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 		ok -> ok;
 		_ -> init:stop(1)
 	end.
-
 
 start_for_tests(TestType, Config) ->
 	UniqueName = ar_test_node:get_node_namespace(),

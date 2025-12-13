@@ -13,7 +13,7 @@
 %% Supervisor callbacks
 -export([init/1]).
 
--include("../include/ar_sup.hrl").
+-include("ar_sup.hrl").
 
 %% Helper macro for declaring children of supervisor.
 -define(CHILD(Mod, I, Type), {I, {Mod, start_link, [I]}, permanent, ?SHUTDOWN_TIMEOUT, Type,

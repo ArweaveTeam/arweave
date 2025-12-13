@@ -6,7 +6,7 @@
 -export([delayed_print/2, packing_type_to_packing/2,
 	start_source_node/3, start_source_node/4, 
 	source_node_storage_modules/3, source_node_storage_modules/4,
-	max_chunk_offset/1,
+	max_chunk_offset/1, aligned_partition_size/3,
 	assert_recall_byte/3,
 	assert_block/2, assert_syncs_range/3, assert_syncs_range/4, assert_does_not_sync_range/3,
 	assert_has_entropy/4, assert_no_entropy/4,
@@ -14,15 +14,19 @@
 	assert_partition_size/3, assert_partition_size/4, assert_empty_partition/3,
 	assert_mine_and_validate/3]).
 
--include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
--include_lib("eunit/include/eunit.hrl").
+-include_lib("ar.hrl").
+-include_lib("ar_consensus.hrl").
 
+-include_lib("arweave_config/include/arweave_config.hrl").
+
+-include_lib("eunit/include/eunit.hrl").
 
 %% Set to true to update the chunk fixtures.
 %% WARNING: ONLY SET TO true IF YOU KNOW WHAT YOU ARE DOING!
 -define(UPDATE_CHUNK_FIXTURES, false).
+
+%% Partition size is 2,000,000 bytes, so round up to a full chunk
+-define(ALIGNED_PARTITION_SIZE, 2_097_152).
 
 -spec fixture_dir(atom()) -> binary().
 fixture_dir(FixtureType) ->
@@ -97,7 +101,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 
 	?LOG_INFO("Source node ~p started.", [Node]),
 	
-	assert_syncs_range(Node, 0, 4*ar_block:partition_size()),
+	assert_syncs_range(Node, 0, 4*?ALIGNED_PARTITION_SIZE),
 	
 	assert_chunks(Node, unpacked, Chunks),
 
@@ -121,7 +125,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 			path => "/tx/" ++ binary_to_list(ar_util:encode(TX2#tx.id)) ++ "/data"
 		}),
 	{ok, ExpectedData} = load_chunk_fixture(
-		unpacked, ar_block:partition_size() + floor(3.75 * ?DATA_CHUNK_SIZE)),
+		unpacked, ?ALIGNED_PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE)),
 	?assertEqual(ExpectedData, ar_util:decode(Data)),
 
 	?LOG_INFO("Source node ~p restarted.", [Node]),
@@ -133,7 +137,8 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 	{Wallet, StorageModules} = source_node_storage_modules(
 		Node, PackingType, WalletFixture, ModuleSize),
 	RewardAddr = ar_wallet:to_address(Wallet),
-	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ar_block:partition_size()),
+
+	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ?ALIGNED_PARTITION_SIZE),
 
 	{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
 	
@@ -151,39 +156,53 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 
 	%% Note: small chunks will be padded to 256 KiB. So B1 actually contains 3 chunks of data
 	%% and B2 starts at a chunk boundary and contains 1 chunk of data.
-	{TX1, B1} = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE), false), %% p1
-	{TX2, B2} = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE), false), %% p1
-	{TX3, B3} = mine_block(Node, Wallet, ar_block:partition_size(), false), %% p1 to p2
-	{TX4, B4} = mine_block(Node, Wallet, floor(0.5 * ar_block:partition_size()), false), %% p2
-	{TX5, B5} = mine_block(Node, Wallet, ar_block:partition_size(), true), %% p3 chunks are stored in disk pool
+	%% 
+	%% p1, 2097152 to 2883584
+	{TX1, B1} = mine_block(Node, Wallet, floor(2.5 * ?DATA_CHUNK_SIZE), infinity),
+	%% p1, 2883584 to 3145728
+	{TX2, B2} = mine_block(Node, Wallet, floor(0.75 * ?DATA_CHUNK_SIZE), infinity),
+	%% p1 to p2, 3145728 to 5242880
+	{TX3, B3} = mine_block(Node, Wallet, ?ALIGNED_PARTITION_SIZE, infinity),
+	%% p2, 5242880 to 6291456 (disk pool threshold falls in the middle of p2)
+	{TX4, B4} = mine_block(Node, Wallet, floor(0.5 * ?ALIGNED_PARTITION_SIZE), 2 * ?DATA_CHUNK_SIZE),
+	%% p3, 6291456 to 8388608 (chunks are stored in disk pool)
+	{TX5, B5} = mine_block(Node, Wallet, ?ALIGNED_PARTITION_SIZE, 0),
 
 	%% List of {Block, EndOffset, ChunkSize}
 	Chunks = [
 		%% PaddedEndOffset: 2359296
-		{B1, ar_block:partition_size() + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}, 
+		{B1, ?ALIGNED_PARTITION_SIZE + ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}, 
 		%% PaddedEndOffset: 2621440
-		{B1, ar_block:partition_size() + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}, 
+		{B1, ?ALIGNED_PARTITION_SIZE + (2*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}, 
 		%% PaddedEndOffset: 2883584
-		{B1, ar_block:partition_size() + floor(2.5 * ?DATA_CHUNK_SIZE), floor(0.5 * ?DATA_CHUNK_SIZE)},
+		{B1, ?ALIGNED_PARTITION_SIZE + floor(2.5 * ?DATA_CHUNK_SIZE), floor(0.5 * ?DATA_CHUNK_SIZE)},
 		%% PaddedEndOffset: 3145728
-		{B2, ar_block:partition_size() + floor(3.75 * ?DATA_CHUNK_SIZE), floor(0.75 * ?DATA_CHUNK_SIZE)},
+		{B2, ?ALIGNED_PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE), floor(0.75 * ?DATA_CHUNK_SIZE)},
 		%% PaddedEndOffset: 3407872
-		{B3, ar_block:partition_size() + (5*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ?ALIGNED_PARTITION_SIZE + (5*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
 		%% PaddedEndOffset: 3670016
-		{B3, ar_block:partition_size() + (6*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ?ALIGNED_PARTITION_SIZE + (6*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
 		%% PaddedEndOffset: 3932160
-		{B3, ar_block:partition_size() + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
+		{B3, ?ALIGNED_PARTITION_SIZE + (7*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE},
 		%% PaddedEndOffset: 4194304
-		{B3, ar_block:partition_size() + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
+		{B3, ?ALIGNED_PARTITION_SIZE + (8*?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE}
 	],
 
 	?LOG_INFO("Source node ~p blocks mined.", [Node]),
 
 	SourcePacking = packing_type_to_packing(PackingType, RewardAddr),
 
-	assert_syncs_range(Node, SourcePacking, 0, 4*ar_block:partition_size()),
-	
+	assert_syncs_range(Node, SourcePacking, 0, 4*?ALIGNED_PARTITION_SIZE),
 	assert_chunks(Node, SourcePacking, Chunks),
+
+	%% Restart the node to allow it to copy chunks between storage modules.
+	ar_test_node:restart(Node),
+	?LOG_INFO("Source node ~p restarted.", [Node]),
+
+	assert_syncs_range(Node, SourcePacking, 0, 4*?ALIGNED_PARTITION_SIZE),
+	assert_chunks(Node, SourcePacking, Chunks),
+	assert_partition_size(Node, 0, SourcePacking),
+	assert_partition_size(Node, 1, SourcePacking),
 
 	%% pack_served_chunks is not enabled so we shouldn't return unpacked data
 	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}},
@@ -199,6 +218,49 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 
 max_chunk_offset(Chunks) ->
 	lists:foldl(fun({_, EndOffset, _}, Acc) -> max(Acc, EndOffset) end, 0, Chunks).
+
+aligned_partition_size(Node, Partition, Packing) ->
+	{ok, Config} = ar_test_node:get_config(Node),
+	%% Include both regular storage modules and repack_in_place modules.
+	%% For repack_in_place modules, use the target packing.
+	RepackInPlaceModules = [{BucketSize, Bucket, TargetPacking}
+		|| {{BucketSize, Bucket, _FromPacking}, TargetPacking} <- Config#config.repack_in_place_storage_modules],
+	AllStorageModules = Config#config.storage_modules ++ RepackInPlaceModules,
+	StorageModules = get_storage_modules_by_partition(Partition, AllStorageModules),
+	StorageModules2 = filter_storage_modules_by_packing(StorageModules, Packing),
+	aligned_partition_size2(StorageModules2, 0).
+
+get_storage_modules_by_partition(Partition, [{BucketSize, Bucket, Packing} | Modules]) ->
+	case ar_node:get_partition_number(Bucket * BucketSize) == Partition of
+		true ->
+			[{BucketSize, Bucket, Packing}
+				| get_storage_modules_by_partition(Partition, Modules)];
+		false ->
+			get_storage_modules_by_partition(Partition, Modules)
+	end;
+get_storage_modules_by_partition(_Partition, []) ->
+	[].
+
+filter_storage_modules_by_packing([{_, _, {replica_2_9, _} = Packing} = Module | Modules], unpacked_padded) ->
+	[Module | filter_storage_modules_by_packing(Modules, Packing)];
+filter_storage_modules_by_packing([{_, _, Packing} = Module | Modules], Packing) ->
+	[Module | filter_storage_modules_by_packing(Modules, Packing)];
+filter_storage_modules_by_packing([_Module | Modules], Packing) ->
+	filter_storage_modules_by_packing(Modules, Packing);
+filter_storage_modules_by_packing([], _Packing) ->
+	[].
+
+aligned_partition_size2([{ModuleSize, Bucket, Packing} | Modules], Acc) ->
+	Overlap = ar_storage_module:get_overlap(Packing),
+	ModuleStart = Bucket * ModuleSize,
+	%% Every storage module begins syncing at this offset:
+	AlignedModuleStart = max(0, ar_block:get_chunk_padded_offset(ModuleStart) - ?DATA_CHUNK_SIZE),
+	ModuleEnd = ModuleStart + ModuleSize,
+	AlignedModuleEnd = ar_block:get_chunk_padded_offset(ModuleEnd + Overlap),
+	AlignedModuleSize = AlignedModuleEnd - AlignedModuleStart,
+	aligned_partition_size2(Modules, Acc + AlignedModuleSize);
+aligned_partition_size2([], Acc) ->
+	Acc.
 
 source_node_storage_modules(Node, PackingType, WalletFixture) ->
 	source_node_storage_modules(Node, PackingType, WalletFixture, default).
@@ -217,7 +279,9 @@ source_node_storage_modules(SourcePacking, default) ->
 
 source_node_storage_modules(SourcePacking, small) ->
 	Size = ar_block:partition_size() div 4,
-	lists:map(fun(I) -> {Size, I, SourcePacking} end, lists:seq(0, 19)).
+	%% Put strict data split threshold inside the first storage module.
+	[{Size * 2, 0, SourcePacking}
+			| lists:map(fun(I) -> {Size, I, SourcePacking} end, lists:seq(2, 19))].
 	
 mine_block(Node, Wallet, DataSize, IsTemporary) ->
 	WeaveSize = ar_test_node:remote_call(Node, ar_node, get_current_weave_size, []),
@@ -295,10 +359,15 @@ assert_has_entropy(Node, StartOffset, EndOffset, StoreID) ->
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
 				[EndOffset, StartOffset, ar_entropy_storage:sync_record_id(), StoreID]),
+			Intervals = ar_test_node:remote_call(
+					Node, ar_sync_record, get,
+					[ar_entropy_storage:sync_record_id(), StoreID]),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
-					"~s failed to prepare entropy range ~p - ~p. Intersection: ~p", 
-					[Node, StartOffset, EndOffset, Intersection])))
+					"~s failed to prepare entropy range ~p - ~p. "
+					"Intersection size: ~p. Intervals: ~p", 
+					[Node, StartOffset, EndOffset, Intersection,
+					ar_intervals:to_list(Intervals)])))
 	end.
 
 assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
@@ -317,22 +386,19 @@ assert_no_entropy(Node, StartOffset, EndOffset, StoreID) ->
 			Intersection = ar_test_node:remote_call(
 				Node, ar_sync_record, get_intersection_size,
 				[EndOffset, StartOffset, ar_entropy_storage:sync_record_id(), StoreID]),
+			Intervals = ar_test_node:remote_call(
+				Node, ar_sync_record, get,
+				[ar_entropy_storage:sync_record_id(), StoreID]),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
 					"~s found entropy when it should not have. Range: ~p - ~p. "
-					"Intersection: ~p", 
-					[Node, StartOffset, EndOffset, Intersection])));
+					"Intersection size: ~p. Intervals: ~p", 
+					[Node, StartOffset, EndOffset, Intersection,
+					ar_intervals:to_list(Intervals)])));
 		_ ->
 			ok
 	end.
 
-assert_syncs_range(_Node, {replica_2_9, _}, _StartOffset, _EndOffset) ->
-	%% For now GET /data_sync_record does not work for replica_2_9. We could assert that
-	%% the node *does not* sync the range - but we end up with race conditions around
-	%% the disk pool threshold (as those chunksa above the threshold as initially stored
-	%% as unpacked).
-	%% So for now we'll just skip the test.
-	ok;
 assert_syncs_range(Node, _Packing, StartOffset, EndOffset) ->
 	assert_syncs_range(Node, StartOffset, EndOffset).
 
@@ -340,18 +406,18 @@ assert_syncs_range(Node, StartOffset, EndOffset) ->
 	HasRange = ar_util:do_until(
 		fun() -> has_range(Node, StartOffset, EndOffset) end,
 		100,
-		60_000
+		300_000
 	),
 	case HasRange of
 		true ->
 			ok;
 		_ ->
-			SyncRecord = ar_http_iface_client:get_sync_record(
+			{ok, SyncRecord} = ar_http_iface_client:get_sync_record(
 				ar_test_node:peer_ip(Node)),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
 					"~s failed to sync range ~p - ~p. Sync record: ~p", 
-					[Node, StartOffset, EndOffset, SyncRecord])))
+					[Node, StartOffset, EndOffset, ar_intervals:to_list(SyncRecord)])))
 	end.
 
 assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
@@ -366,8 +432,8 @@ assert_does_not_sync_range(Node, StartOffset, EndOffset) ->
 			[Node, StartOffset, EndOffset]))).
 
 assert_partition_size(Node, PartitionNumber, Packing) ->
-	Overlap = ar_storage_module:get_overlap(Packing),
-	assert_partition_size(Node, PartitionNumber, Packing, ar_block:partition_size() + Overlap).
+	PartitionSize = aligned_partition_size(Node, PartitionNumber, Packing),
+	assert_partition_size(Node, PartitionNumber, Packing, PartitionSize).
 assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 	?LOG_INFO("~p: Asserting partition ~p,~p is size ~p",
 		[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true), Size]),
@@ -421,17 +487,62 @@ assert_mine_and_validate(MinerNode, ValidatorNode, MinerPacking) ->
 	{ok, ValidatorBlock} = ar_test_node:http_get_block(element(1, hd(ValidatorBI)), ValidatorNode),
 	?assertEqual(MinerBlock, ValidatorBlock).
 
+get_intervals(NodeIP, StartOffset, EndOffset) ->
+	case ar_http_iface_client:get_sync_record(NodeIP) of
+		{ok, RegularIntervals} ->
+			FootprintIntervals = collect_footprint_intervals(NodeIP, StartOffset, EndOffset),
+			AllIntervals = ar_intervals:union(RegularIntervals, FootprintIntervals),
+			AllIntervals;
+		_Error ->
+			FootprintIntervals = collect_footprint_intervals(NodeIP, StartOffset, EndOffset),
+			FootprintIntervals
+	end.
+
 has_range(Node, StartOffset, EndOffset) ->
 	NodeIP = ar_test_node:peer_ip(Node),
 	case ar_http_iface_client:get_sync_record(NodeIP) of
-		{ok, SyncRecord} ->
-			interval_contains(SyncRecord, StartOffset, EndOffset);
+		{ok, RegularIntervals} ->
+			FootprintIntervals = collect_footprint_intervals(NodeIP, StartOffset, EndOffset),
+			AllIntervals = ar_intervals:union(RegularIntervals, FootprintIntervals),
+			interval_contains(AllIntervals, StartOffset, EndOffset);
 		Error ->
+			Intervals = get_intervals(NodeIP, StartOffset, EndOffset),
 			?assert(false, 
 				iolist_to_binary(io_lib:format(
-					"Failed to get sync record from ~p: ~p", [Node, Error]))),
+					"Failed to get sync record from ~p: ~p; range: ~p - ~p; intervals managed to collect: ~p",
+						[Node, Error, StartOffset, EndOffset, ar_intervals:to_list(Intervals)]))),
 			false
 	end.
+
+collect_footprint_intervals(NodeIP, StartOffset, EndOffset) ->
+	StartPartition = ar_replica_2_9:get_entropy_partition(StartOffset + 1),
+	LastPartition = ar_replica_2_9:get_entropy_partition(EndOffset + 1),
+	FootprintsPerPartition = ar_footprint_record:get_footprints_per_partition(),
+	collect_footprint_intervals(NodeIP, StartPartition, LastPartition, 0, FootprintsPerPartition - 1, ar_intervals:new()).
+
+collect_footprint_intervals(_NodeIP, Partition, LastPartition, _Footprint, _MaxFootprint, Acc)
+		when Partition > LastPartition ->
+	Acc;
+collect_footprint_intervals(NodeIP, Partition, LastPartition, Footprint, MaxFootprint, Acc)
+		when Footprint > MaxFootprint ->
+	collect_footprint_intervals(NodeIP, Partition + 1, LastPartition, 0, MaxFootprint, Acc);
+collect_footprint_intervals(NodeIP, Partition, LastPartition, Footprint, MaxFootprint, Acc) ->
+	FootprintByteIntervals =
+		case ar_http_iface_client:get_footprints(NodeIP, Partition, Footprint) of
+			{ok, FootprintIntervals} ->
+				ar_footprint_record:get_intervals_from_footprint_intervals(FootprintIntervals);
+			not_found ->
+				?debugFmt("No footprint record found for partition ~B, footprint ~B~n",
+					[Partition, Footprint]),
+				ar_intervals:new();
+			Error ->
+				?assert(false,
+					iolist_to_binary(io_lib:format(
+					"Failed to get footprint record from ~p: ~p, partition: ~B, footprint: ~B",
+					[NodeIP, Error, Partition, Footprint])))
+		end,
+	NewAcc = ar_intervals:union(Acc, FootprintByteIntervals),
+	collect_footprint_intervals(NodeIP, Partition, LastPartition, Footprint + 1, MaxFootprint, NewAcc).
 
 interval_contains(Intervals, Start, End) when End > Start ->
 	case gb_sets:iterator_from({Start, Start}, Intervals) of
@@ -450,13 +561,7 @@ interval_contains2(Iter, Start, End) ->
 	end.
 
 assert_chunks(Node, Packing, Chunks) ->
-	%% Normally we can't sync replica_2_9 data since it's too expensive to unpack. The
-	%% one exception is if you request the exact format stored by the node.
-	RequestPacking = case Packing of
-		{replica_2_9, _} -> Packing;
-		_ -> any
-	end,
-	assert_chunks(Node, RequestPacking, Packing, Chunks).
+	assert_chunks(Node, any, Packing, Chunks).
 
 assert_chunks(Node, RequestPacking, Packing, Chunks) ->
 	lists:foreach(fun({Block, EndOffset, ChunkSize}) ->
@@ -483,12 +588,17 @@ assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize) ->
 		data_path = maps:get(data_path, Proof)
 	},
 	ChunkProof = ar_test_node:remote_call(Node, ar_poa, chunk_proof, [ChunkMetadata, EndOffset - 1]),
+	?LOG_INFO([{chunk_proof, ChunkProof}]),
 	{true, _} = ar_test_node:remote_call(Node, ar_poa, validate_paths, [ChunkProof]),
 	Chunk = maps:get(chunk, Proof),
 
 	maybe_write_chunk_fixture(Packing, EndOffset, Chunk),
 
 	{ok, ExpectedPackedChunk} = load_chunk_fixture(Packing, EndOffset),
+	?assertEqual(byte_size(ExpectedPackedChunk), byte_size(Chunk),
+		iolist_to_binary(io_lib:format(
+			"~p: Chunk at offset ~p size mismatch expected ~p, got ~p",
+			[Node, EndOffset, byte_size(ExpectedPackedChunk), byte_size(Chunk)]))),
 	?assertEqual(ExpectedPackedChunk, Chunk,
 		iolist_to_binary(io_lib:format(
 			"~p: Chunk at offset ~p, size ~p, packing ~p does not match packed chunk",
