@@ -2039,21 +2039,28 @@ handle_post_tx(Req, Peer, TX) ->
 	end.
 
 handle_post_tx_accepted(Req, TX, Peer) ->
-	%% Exclude successful requests with valid transactions from the
-	%% IP-based throttling, to avoid connectivity issues at the times
-	%% of excessive transaction volumes.
-	{A, B, C, D, _} = Peer,
-	ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
-	BodyReadTime = ar_http_req:body_read_time(Req),
-	ar_peers:rate_gossiped_data(Peer, tx,
-		erlang:convert_time_unit(BodyReadTime, native, microsecond),
-		byte_size(term_to_binary(TX))),
-	ar_events:send(tx, {new, TX, {pushed, Peer}}),
-	TXID = TX#tx.id,
-	Ref = erlang:get(tx_id_ref),
-	ar_ignore_registry:remove_ref(TXID, Ref),
-	ar_ignore_registry:add_temporary(TXID, 10 * 60 * 1000),
-	ok.
+    %% Exclude successful requests with valid transactions from the
+    %% IP-based throttling, to avoid connectivity issues at the times
+    %% of excessive transaction volumes.
+    {A, B, C, D, _} = Peer,
+    ar_blacklist_middleware:decrement_ip_addr({A, B, C, D}, Req),
+    BodyReadTime = ar_http_req:body_read_time(Req),
+    ar_peers:rate_gossiped_data(Peer, tx,
+        erlang:convert_time_unit(BodyReadTime, native, microsecond),
+        byte_size(term_to_binary(TX))),
+    ar_events:send(tx, {new, TX, {pushed, Peer}}),
+    TXID = TX#tx.id,
+    Ref = erlang:get(tx_id_ref),
+    ar_ignore_registry:remove_ref(TXID, Ref),
+    ar_ignore_registry:add_temporary(TXID, 10 * 60 * 1000),
+    % Mark as processed with data if this is a format 2 tx with data
+    case TX#tx.format == 2 andalso byte_size(TX#tx.data) > 0 of
+        true ->
+            ar_ignore_registry:add_with_data(TXID);
+        false ->
+            ok
+    end,
+    ok.
 
 handle_post_tx_verification_response() ->
 	{error_response, {400, #{}, <<"Transaction verification failed.">>}}.
@@ -3069,15 +3076,24 @@ post_tx_parse_id(check_header, {Req, Pid, Encoding}) ->
 			end
 	end;
 post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding}) ->
-	case ar_mempool:is_known_tx(TXID) of
-		true ->
-			{error, tx_already_processed, TXID, Req};
-		false ->
-			Ref = make_ref(),
-			erlang:put(tx_id_ref, Ref),
-			ar_ignore_registry:add_ref(TXID, Ref, 5000),
-			post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding})
-	end;
+    case ar_mempool:is_known_tx(TXID) of
+        true ->
+            % Check if this is a format 2 tx with data that we haven't processed with data yet
+            case should_accept_tx_with_data(TXID, Req) of
+                true ->
+                    Ref = make_ref(),
+                    erlang:put(tx_id_ref, Ref),
+                    ar_ignore_registry:add_ref(TXID, Ref, 5000),
+                    post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding});
+                false ->
+                    {error, tx_already_processed, TXID, Req}
+            end;
+        false ->
+            Ref = make_ref(),
+            erlang:put(tx_id_ref, Ref),
+            ar_ignore_registry:add_ref(TXID, Ref, 5000),
+            post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding})
+end;
 post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
@@ -3092,6 +3108,25 @@ post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
 		{error, timeout} ->
 			{error, timeout}
 	end;
+post_tx_parse_id(check_ignore_list, {TXID, Req, Pid, Encoding}) ->
+    case ar_mempool:is_known_tx(TXID) of
+        true ->
+            % Check if this is a format 2 tx with data that we haven't processed with data yet
+            case should_accept_tx_with_data(TXID, Req) of
+                true ->
+                    Ref = make_ref(),
+                    erlang:put(tx_id_ref, Ref),
+                    ar_ignore_registry:add_ref(TXID, Ref, 5000),
+                    post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding});
+                false ->
+                    {error, tx_already_processed, TXID, Req}
+            end;
+        false ->
+            Ref = make_ref(),
+            erlang:put(tx_id_ref, Ref),
+            ar_ignore_registry:add_ref(TXID, Ref, 5000),
+            post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding})
+     end;
 post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
 	Ref = erlang:get(tx_id_ref),
 	case catch ar_serialize:json_struct_to_tx(Body) of
@@ -3180,6 +3215,26 @@ post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 			end
 	end.
 
+should_accept_tx_with_data(TXID, Req) ->
+    % Only accept if we haven't already processed this tx with data
+    case ar_ignore_registry:permanent_member_with_data(TXID) of
+        true ->
+            false; % Already processed with data
+        false ->
+            % Check if this request has a content-length indicating data
+            case cowboy_req:header(<<"content-length">>, Req, <<"0">>) of
+                <<"0">> ->
+                    false; % No data in request
+                ContentLength ->
+                    try
+                        Size = binary_to_integer(ContentLength),
+                        % Only accept if there's substantial data (> base tx size)
+                        Size > 1000 % Rough estimate for tx with meaningful data
+                    catch
+                        _:_ -> false
+                    end
+            end
+    end.
 handle_post_vdf(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case ets:member(ar_peers, {vdf_server_peer, Peer}) of
