@@ -248,7 +248,6 @@ handle_call(Msg = {set, Key, Value, Opts}, From, State = #?MODULE{ proplist = P 
 		},
 		{reply, Return, NewState};
 handle_call(Msg = get_env, From, State = #?MODULE{ record = R }) ->
-	?LOG_DEBUG([{message, Msg}, {from, From}]),
 	{reply, {ok, R}, State};
 handle_call(Message, From, State) ->
 	Error = [

@@ -244,7 +244,8 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals) ->
 						true ->
 							{IntervalsAcc, RightBoundAcc};
 						false ->
-							{[{Peer, SoughtIntervals} | IntervalsAcc],
+							%% FootprintKey = none for normal syncing
+							{[{Peer, SoughtIntervals, none} | IntervalsAcc],
 								min(RightBound, RightBoundAcc)}
 					end;
 				(ok, Acc) ->
@@ -379,7 +380,9 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 								{byte_intervals, ar_intervals:sum(ByteIntervals)},
 								{byte_intervals2, ar_intervals:sum(ByteIntervals2)},
 								{byte_intervals3, ar_intervals:sum(ByteIntervals3)}]),
-							[{Peer, ByteIntervals3} | IntervalsAcc]
+							%% FootprintKey = {Peer, Partition, Footprint} for footprint syncing
+							FootprintKey = {Peer, Partition, Footprint},
+							[{Peer, ByteIntervals3, FootprintKey} | IntervalsAcc]
 					end;
 				(ok, Acc) ->
 					Acc;
@@ -516,7 +519,7 @@ collect_enqueue_intervals(Acc, StoreID, Mode) ->
 
 update_peer_intervals([], Acc) ->
 	Acc;
-update_peer_intervals([{Peer, Intervals} | Rest], Acc) ->
+update_peer_intervals([{Peer, Intervals, _FootprintKey} | Rest], Acc) ->
 	PeerIntervals = maps:get(Peer, Acc, ar_intervals:new()),
 	PeerIntervals2 = ar_intervals:union(PeerIntervals, Intervals),
 	update_peer_intervals(Rest, maps:put(Peer, PeerIntervals2, Acc)).

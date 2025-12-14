@@ -230,14 +230,14 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
 			end
 	end.
 
-sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount}, _State) when Start >= End ->
+sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount, _FootprintKey}, _State) when Start >= End ->
 	ok;
-sync_range({Start, End, Peer, _TargetStoreID, 0}, _State) ->
+sync_range({Start, End, Peer, _TargetStoreID, 0, _FootprintKey}, _State) ->
 	?LOG_DEBUG([{event, sync_range_retries_exhausted},
 				{peer, ar_util:format_peer(Peer)},
 				{start_offset, Start}, {end_offset, End}]),
 	{error, timeout};
-sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args, State) ->
+sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, State) ->
 	IsChunkCacheFull =
 		case ar_data_sync:is_chunk_cache_full() of
 			true ->
@@ -281,12 +281,12 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount} = Args, State) ->
 							gen_server:cast(ar_data_sync:name(TargetStoreID),
 									{store_fetched_chunk, Peer, Start2 - 1, Proof}),
 							ar_data_sync:increment_chunk_cache_size(),
-							sync_range({Start3, End, Peer, TargetStoreID, RetryCount}, State);
+							sync_range({Start3, End, Peer, TargetStoreID, RetryCount, FootprintKey}, State);
 						{error, timeout} ->
 							?LOG_DEBUG([{event, timeout_fetching_chunk},
 									{peer, ar_util:format_peer(Peer)},
 									{start_offset, Start2}, {end_offset, End}]),
-							Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1},
+							Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1, FootprintKey},
 							ar_util:cast_after(1000, self(), {sync_range, Args2}),
 							recast;
 						{error, {ok, {{<<"404">>, _}, _, _, _, _}} = Reason} ->

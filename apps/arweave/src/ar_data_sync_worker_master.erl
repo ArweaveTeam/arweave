@@ -36,7 +36,13 @@
 	workers = queue:new(),
 	worker_count = 0,
 	worker_loads = #{},
-	peer_tasks = #{}
+	peer_tasks = #{},
+	%% Footprint queue management - limits concurrent footprint processing
+	%% to avoid overloading the entropy cache
+	footprint_queues = #{},           %% FootprintKey => queue of {Task, Args}
+	footprint_active_counts = #{},    %% FootprintKey => count of active tasks
+	active_footprints = sets:new(),   %% set of FootprintKey currently being processed
+	max_footprints = 100              %% maximum concurrent footprints
 }).
 
 %%%===================================================================
@@ -96,10 +102,12 @@ init(Workers) ->
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers}]),
 	gen_server:cast(?MODULE, process_main_queue),
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
-
+	{ok, Config} = arweave_config:get_env(),
+	MaxFootprints = Config#config.replica_2_9_entropy_cache_max_entropies div 32,
 	{ok, #state{
 		workers = queue:from_list(Workers),
-		worker_count = length(Workers)
+		worker_count = length(Workers),
+		max_footprints = max(1, MaxFootprints)
 	}}.
 
 handle_call(ready_for_work, _From, State) ->
@@ -129,18 +137,20 @@ handle_cast(process_main_queue, State) ->
 handle_cast({sync_range, _Args}, #state{ worker_count = 0 } = State) ->
 	{noreply, State};
 handle_cast({sync_range, Args}, State) ->
-	{noreply, enqueue_main_task(sync_range, Args, State)};
+	{_Start, _End, _Peer, _TargetStoreID, FootprintKey} = Args,
+	{noreply, enqueue_sync_range_task(FootprintKey, Args, State)};
 
 handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
-	{Start, End, Peer, _, _} = Args,
+	{Start, End, Peer, _, _, FootprintKey} = Args,
 	DataSize = End - Start,
 	State2 = update_scheduled_task_count(
 		Worker, sync_range, ar_util:format_peer(Peer), -1, State),
 	PeerTasks = get_peer_tasks(Peer, State2),
 	{PeerTasks2, State3} = complete_sync_range(
 		PeerTasks, Result, ElapsedNative, DataSize, State2),
-	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),	
-	{noreply, set_peer_tasks(PeerTasks3, State4)};
+	{PeerTasks3, State4} = process_peer_queue(PeerTasks2, State3),
+	State5 = complete_footprint_task(FootprintKey, set_peer_tasks(PeerTasks3, State4)),
+	{noreply, State5};
 
 handle_cast(rebalance_peers, State) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
@@ -178,7 +188,7 @@ process_main_queue(State) ->
 	{Task, Args, State2} = dequeue_main_task(State),
 	State4 = case Task of
 		sync_range ->
-			{_Start, _End, Peer, _TargetStoreID} = Args,
+			{_Start, _End, Peer, _TargetStoreID, _FootprintKey} = Args,
 			PeerTasks = get_peer_tasks(Peer, State2),
 			PeerTasks2 = enqueue_peer_task(PeerTasks, sync_range, Args),
 			{PeerTasks3, State3} = process_peer_queue(PeerTasks2, State2),
@@ -304,14 +314,108 @@ peer_has_queued_tasks(PeerTasks) ->
 	PeerTasks#peer_tasks.task_queue_len > 0.
 
 %%--------------------------------------------------------------------
+%% Stage 1c: footprint queue management
+%%--------------------------------------------------------------------
+
+%% @doc Enqueue a sync_range task, managing footprint concurrency limits.
+%% For tasks with FootprintKey = none, enqueue normally.
+%% For tasks with a FootprintKey, limit concurrent footprints.
+enqueue_sync_range_task(none, Args, State) ->
+	%% Non-footprint task, enqueue normally
+	enqueue_main_task(sync_range, Args, State);
+enqueue_sync_range_task(FootprintKey, Args, State) ->
+	#state{ active_footprints = ActiveFootprints, max_footprints = MaxFootprints,
+			footprint_queues = FootprintQueues, footprint_active_counts = ActiveCounts } = State,
+	IsActive = sets:is_element(FootprintKey, ActiveFootprints),
+	ActiveCount = sets:size(ActiveFootprints),
+	case IsActive of
+		true ->
+			%% Footprint is already active, enqueue to main queue
+			State2 = increment_footprint_active_count(FootprintKey, State),
+			enqueue_main_task(sync_range, Args, State2);
+		false when ActiveCount < MaxFootprints ->
+			%% Room for new footprint, activate it and enqueue to main queue
+			State2 = State#state{
+				active_footprints = sets:add_element(FootprintKey, ActiveFootprints),
+				footprint_active_counts = maps:put(FootprintKey, 1, ActiveCounts)
+			},
+			enqueue_main_task(sync_range, Args, State2);
+		false ->
+			%% No room, queue the task for later
+			Queue = maps:get(FootprintKey, FootprintQueues, queue:new()),
+			Queue2 = queue:in({sync_range, Args}, Queue),
+			State#state{ footprint_queues = maps:put(FootprintKey, Queue2, FootprintQueues) }
+	end.
+
+%% @doc Increment the active count for a footprint.
+increment_footprint_active_count(none, State) ->
+	State;
+increment_footprint_active_count(FootprintKey, State) ->
+	#state{ footprint_active_counts = ActiveCounts } = State,
+	Count = maps:get(FootprintKey, ActiveCounts, 0),
+	State#state{ footprint_active_counts = maps:put(FootprintKey, Count + 1, ActiveCounts) }.
+
+%% @doc Handle completion of a footprint task.
+%% Decrements the active count and activates a new footprint if this one is done.
+complete_footprint_task(none, State) ->
+	State;
+complete_footprint_task(FootprintKey, State) ->
+	#state{ footprint_active_counts = ActiveCounts, active_footprints = ActiveFootprints } = State,
+	Count = maps:get(FootprintKey, ActiveCounts, 1),
+	NewCount = Count - 1,
+	case NewCount =< 0 of
+		true ->
+			%% This footprint is done, remove it and try to activate a new one
+			State2 = State#state{
+				active_footprints = sets:del_element(FootprintKey, ActiveFootprints),
+				footprint_active_counts = maps:remove(FootprintKey, ActiveCounts)
+			},
+			activate_next_footprint(State2);
+		false ->
+			State#state{ footprint_active_counts = maps:put(FootprintKey, NewCount, ActiveCounts) }
+	end.
+
+%% @doc Activate the next waiting footprint queue if any.
+activate_next_footprint(State) ->
+	#state{ footprint_queues = FootprintQueues, active_footprints = ActiveFootprints,
+			max_footprints = MaxFootprints, footprint_active_counts = ActiveCounts } = State,
+	ActiveCount = sets:size(ActiveFootprints),
+	case ActiveCount >= MaxFootprints orelse maps:size(FootprintQueues) == 0 of
+		true ->
+			State;
+		false ->
+			%% Pick the next footprint queue and activate it
+			[{NextFootprintKey, Queue} | _] = maps:to_list(FootprintQueues),
+			State2 = State#state{
+				footprint_queues = maps:remove(NextFootprintKey, FootprintQueues),
+				active_footprints = sets:add_element(NextFootprintKey, ActiveFootprints),
+				footprint_active_counts = maps:put(NextFootprintKey, 0, ActiveCounts)
+			},
+			%% Enqueue all tasks from this footprint queue to the main queue
+			enqueue_footprint_queue(NextFootprintKey, Queue, State2)
+	end.
+
+%% @doc Enqueue all tasks from a footprint queue to the main queue.
+enqueue_footprint_queue(FootprintKey, Queue, State) ->
+	case queue:out(Queue) of
+		{empty, _} ->
+			State;
+		{{value, {Task, Args}}, Queue2} ->
+			State2 = increment_footprint_active_count(FootprintKey, State),
+			State3 = enqueue_main_task(Task, Args, State2),
+			enqueue_footprint_queue(FootprintKey, Queue2, State3)
+	end.
+
+%%--------------------------------------------------------------------
 %% Stage 2: schedule tasks to be run on workers
 %%--------------------------------------------------------------------
 
 %% @doc Schedule a sync_range task - this task may come from the main queue or a
 %% peer-specific queue.
 schedule_sync_range(PeerTasks, Args, State) ->
-	{Start, End, Peer, TargetStoreID} = Args,
-	State2 = schedule_task(sync_range, {Start, End, Peer, TargetStoreID, 3}, State),
+	{Start, End, Peer, TargetStoreID, FootprintKey} = Args,
+	%% Pass FootprintKey as 6th element so it comes back in task_completed
+	State2 = schedule_task(sync_range, {Start, End, Peer, TargetStoreID, 3, FootprintKey}, State),
 	PeerTasks2 = PeerTasks#peer_tasks{ active_count = PeerTasks#peer_tasks.active_count + 1 },
 	{PeerTasks2, State2}.
 
@@ -491,6 +595,13 @@ queue_test_() ->
 		{timeout, 30, fun test_process_main_queue/0}
 	].
 
+footprint_queue_test_() ->
+	[
+		{timeout, 30, fun test_footprint_queue_none/0},
+		{timeout, 30, fun test_footprint_queue_limit/0},
+		{timeout, 30, fun test_footprint_queue_completion/0}
+	].
+
 rebalance_peers_test_() ->
 	[
 		{timeout, 30, fun test_max_peer_queue/0},
@@ -541,7 +652,7 @@ test_get_worker() ->
 	{worker1, _} = get_worker(State6).
 
 test_format_peer() ->
-	?assertEqual("1.2.3.4:1984", format_peer(sync_range, {0, 100, {1, 2, 3, 4, 1984}, 2})).
+	?assertEqual("1.2.3.4:1984", format_peer(sync_range, {0, 100, {1, 2, 3, 4, 1984}, 2, none})).
 
 test_enqueue_main_task() ->
 	Peer1 = {1, 2, 3, 4, 1984},
@@ -550,17 +661,16 @@ test_enqueue_main_task() ->
 	StoreID2 = ar_storage_module:id({ar_block:partition_size(), 2, default}),
 	State0 = #state{},
 
-	Ref = make_ref(),
-	State1 = enqueue_main_task(sync_range, {0, 100, Peer1, StoreID1}, State0),
-	State2 = push_main_task(sync_range, {100, 200, Peer2, StoreID2}, State1),
+	State1 = enqueue_main_task(sync_range, {0, 100, Peer1, StoreID1, none}, State0),
+	State2 = push_main_task(sync_range, {100, 200, Peer2, StoreID2, none}, State1),
 	assert_main_queue([
-		{sync_range, {100, 200, Peer2, StoreID2}},
-		{sync_range, {0, 100, Peer1, StoreID1}}
+		{sync_range, {100, 200, Peer2, StoreID2, none}},
+		{sync_range, {0, 100, Peer1, StoreID1, none}}
 	], State2),
 	?assertEqual(2, State2#state.queued_task_count),
 
 	{Task1, Args1, State3} = dequeue_main_task(State2),
-	assert_task(sync_range, {100, 200, Peer2, StoreID2}, Task1, Args1),
+	assert_task(sync_range, {100, 200, Peer2, StoreID2, none}, Task1, Args1),
 
 	%% queued_task_count isn't decremented until we schedule tasks
 	?assertEqual(2, State3#state.queued_task_count).
@@ -573,23 +683,23 @@ test_enqueue_peer_task() ->
 	PeerATasks = #peer_tasks{ peer = PeerA },
 	PeerBTasks = #peer_tasks{ peer = PeerB },
 	
-	PeerATasks1 = enqueue_peer_task(PeerATasks, sync_range, {0, 100, PeerA, StoreID1}),
-	PeerATasks2 = enqueue_peer_task(PeerATasks1, sync_range, {100, 200, PeerA, StoreID1}),
-	PeerBTasks1 = enqueue_peer_task(PeerBTasks, sync_range, {200, 300, PeerB, StoreID1}),
+	PeerATasks1 = enqueue_peer_task(PeerATasks, sync_range, {0, 100, PeerA, StoreID1, none}),
+	PeerATasks2 = enqueue_peer_task(PeerATasks1, sync_range, {100, 200, PeerA, StoreID1, none}),
+	PeerBTasks1 = enqueue_peer_task(PeerBTasks, sync_range, {200, 300, PeerB, StoreID1, none}),
 	assert_peer_tasks([
-		{sync_range, {0, 100, PeerA, StoreID1}},
-		{sync_range, {100, 200, PeerA, StoreID1}}
+		{sync_range, {0, 100, PeerA, StoreID1, none}},
+		{sync_range, {100, 200, PeerA, StoreID1, none}}
 	], 0, 8, PeerATasks2),
 	assert_peer_tasks([
-		{sync_range, {200, 300, PeerB, StoreID1}}
+		{sync_range, {200, 300, PeerB, StoreID1, none}}
 	], 0, 8, PeerBTasks1),
 
 	{PeerATasks3, Task1, Args1} = dequeue_peer_task(PeerATasks2),
-	assert_task(sync_range, {0, 100, PeerA, StoreID1}, Task1, Args1),
+	assert_task(sync_range, {0, 100, PeerA, StoreID1, none}, Task1, Args1),
 	{PeerBTasks2, Task2, Args2} = dequeue_peer_task(PeerBTasks1),
-	assert_task(sync_range, {200, 300, PeerB, StoreID1}, Task2, Args2),
+	assert_task(sync_range, {200, 300, PeerB, StoreID1, none}, Task2, Args2),
 	assert_peer_tasks([
-		{sync_range, {100, 200, PeerA, StoreID1}}
+		{sync_range, {100, 200, PeerA, StoreID1, none}}
 	], 0, 8, PeerATasks3),
 	assert_peer_tasks([], 0, 8, PeerBTasks2).
 
@@ -602,18 +712,18 @@ test_process_main_queue() ->
 		workers = queue:from_list([worker1, worker2, worker3]), worker_count = 3
 	},
 
-	State1 = enqueue_main_task(sync_range, {0, 100, Peer1, StoreID1}, State0),
-	State2 = enqueue_main_task(sync_range, {100, 200, Peer1, StoreID1}, State1),
-	State3 = enqueue_main_task(sync_range, {200, 300, Peer1, StoreID1}, State2),
-	State4 = enqueue_main_task(sync_range, {300, 400, Peer1, StoreID1}, State3),
-	State5 = enqueue_main_task(sync_range, {400, 500, Peer1, StoreID1}, State4),
-	State6 = enqueue_main_task(sync_range, {500, 600, Peer1, StoreID1}, State5),
-	State7 = enqueue_main_task(sync_range, {600, 700, Peer1, StoreID1}, State6),
-	State8 = enqueue_main_task(sync_range, {700, 800, Peer1, StoreID1}, State7),
+	State1 = enqueue_main_task(sync_range, {0, 100, Peer1, StoreID1, none}, State0),
+	State2 = enqueue_main_task(sync_range, {100, 200, Peer1, StoreID1, none}, State1),
+	State3 = enqueue_main_task(sync_range, {200, 300, Peer1, StoreID1, none}, State2),
+	State4 = enqueue_main_task(sync_range, {300, 400, Peer1, StoreID1, none}, State3),
+	State5 = enqueue_main_task(sync_range, {400, 500, Peer1, StoreID1, none}, State4),
+	State6 = enqueue_main_task(sync_range, {500, 600, Peer1, StoreID1, none}, State5),
+	State7 = enqueue_main_task(sync_range, {600, 700, Peer1, StoreID1, none}, State6),
+	State8 = enqueue_main_task(sync_range, {700, 800, Peer1, StoreID1, none}, State7),
 	%% 9th task queued for Peer1 won't be scheduled
-	State9 = enqueue_main_task(sync_range, {800, 900, Peer1, StoreID1}, State8),
-	State10 = enqueue_main_task(sync_range, {900, 1000, Peer2, StoreID1}, State9),
-	State11 = enqueue_main_task(sync_range, {1000, 1100, Peer2, StoreID1}, State10),
+	State9 = enqueue_main_task(sync_range, {800, 900, Peer1, StoreID1, none}, State8),
+	State10 = enqueue_main_task(sync_range, {900, 1000, Peer2, StoreID1, none}, State9),
+	State11 = enqueue_main_task(sync_range, {1000, 1100, Peer2, StoreID1, none}, State10),
 	?assertEqual(11, State11#state.queued_task_count),
 	?assertEqual(0, State11#state.scheduled_task_count),
 
@@ -625,8 +735,76 @@ test_process_main_queue() ->
 
 	PeerTasks = get_peer_tasks(Peer1, State12),
 	assert_peer_tasks(
-		[{sync_range, {800, 900, Peer1, StoreID1}}],
+		[{sync_range, {800, 900, Peer1, StoreID1, none}}],
 		8, 8, PeerTasks).
+
+%% Test that tasks with FootprintKey = none are enqueued normally
+test_footprint_queue_none() ->
+	Peer1 = {1, 2, 3, 4, 1984},
+	StoreID1 = ar_storage_module:id({ar_block:partition_size(), 1, default}),
+	State0 = #state{ max_footprints = 2 },
+	
+	%% Enqueue tasks with FootprintKey = none
+	State1 = enqueue_sync_range_task(none, {0, 100, Peer1, StoreID1, none}, State0),
+	State2 = enqueue_sync_range_task(none, {100, 200, Peer1, StoreID1, none}, State1),
+	
+	%% Both should be in the main queue
+	?assertEqual(2, State2#state.task_queue_len),
+	?assertEqual(0, sets:size(State2#state.active_footprints)).
+
+%% Test that footprint queue limits concurrent footprints
+test_footprint_queue_limit() ->
+	Peer1 = {1, 2, 3, 4, 1984},
+	Peer2 = {5, 6, 7, 8, 1985},
+	StoreID1 = ar_storage_module:id({ar_block:partition_size(), 1, default}),
+	FootprintKey1 = {Peer1, 0, 1},
+	FootprintKey2 = {Peer2, 0, 2},
+	FootprintKey3 = {Peer1, 0, 3},
+	State0 = #state{ max_footprints = 2 },
+	
+	%% Add tasks for first two footprints - should be enqueued to main queue
+	State1 = enqueue_sync_range_task(FootprintKey1, {0, 100, Peer1, StoreID1, FootprintKey1}, State0),
+	?assertEqual(1, State1#state.task_queue_len),
+	?assertEqual(1, sets:size(State1#state.active_footprints)),
+	
+	State2 = enqueue_sync_range_task(FootprintKey2, {100, 200, Peer2, StoreID1, FootprintKey2}, State1),
+	?assertEqual(2, State2#state.task_queue_len),
+	?assertEqual(2, sets:size(State2#state.active_footprints)),
+	
+	%% Third footprint should be queued (not in main queue)
+	State3 = enqueue_sync_range_task(FootprintKey3, {200, 300, Peer1, StoreID1, FootprintKey3}, State2),
+	?assertEqual(2, State3#state.task_queue_len), %% main queue unchanged
+	?assertEqual(2, sets:size(State3#state.active_footprints)), %% active footprints unchanged
+	?assertEqual(1, maps:size(State3#state.footprint_queues)), %% one footprint waiting
+	
+	%% Additional task for FootprintKey1 (already active) should go to main queue
+	State4 = enqueue_sync_range_task(FootprintKey1, {300, 400, Peer1, StoreID1, FootprintKey1}, State3),
+	?assertEqual(3, State4#state.task_queue_len),
+	?assertEqual(2, sets:size(State4#state.active_footprints)).
+
+%% Test that completing a footprint activates the next waiting footprint
+test_footprint_queue_completion() ->
+	Peer1 = {1, 2, 3, 4, 1984},
+	StoreID1 = ar_storage_module:id({ar_block:partition_size(), 1, default}),
+	FootprintKey1 = {Peer1, 0, 1},
+	FootprintKey2 = {Peer1, 0, 2},
+	FootprintKey3 = {Peer1, 0, 3},
+	State0 = #state{ max_footprints = 2 },
+	
+	%% Fill up with two footprints and queue a third
+	State1 = enqueue_sync_range_task(FootprintKey1, {0, 100, Peer1, StoreID1, FootprintKey1}, State0),
+	State2 = enqueue_sync_range_task(FootprintKey2, {100, 200, Peer1, StoreID1, FootprintKey2}, State1),
+	State3 = enqueue_sync_range_task(FootprintKey3, {200, 300, Peer1, StoreID1, FootprintKey3}, State2),
+	
+	%% Complete FootprintKey1 - should activate FootprintKey3
+	State4 = complete_footprint_task(FootprintKey1, State3),
+	?assertEqual(2, sets:size(State4#state.active_footprints)),
+	?assertEqual(true, sets:is_element(FootprintKey2, State4#state.active_footprints)),
+	?assertEqual(true, sets:is_element(FootprintKey3, State4#state.active_footprints)),
+	?assertEqual(false, sets:is_element(FootprintKey1, State4#state.active_footprints)),
+	?assertEqual(0, maps:size(State4#state.footprint_queues)), %% waiting queue now empty
+	%% The task from FootprintKey3 should now be in the main queue
+	?assertEqual(3, State4#state.task_queue_len).
 
 test_max_peer_queue() ->
 	?assertEqual(undefined, max_peer_queue(#performance{ current_rating = 10 }, 0, 10)),

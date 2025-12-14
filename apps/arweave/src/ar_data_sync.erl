@@ -1774,10 +1774,10 @@ do_sync_intervals(State) ->
 			State;
 		false ->
 			gen_server:cast(self(), sync_intervals),
-			{{Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
+			{{Start, End, Peer, FootprintKey}, Q2} = gb_sets:take_smallest(Q),
 			I2 = ar_intervals:delete(QIntervals, End, Start),
 			gen_server:cast(ar_data_sync_worker_master,
-					{sync_range, {Start, End, Peer, StoreID}}),
+					{sync_range, {Start, End, Peer, StoreID, FootprintKey}}),
 			State#sync_data_state{ sync_intervals_queue = Q2,
 					sync_intervals_queue_intervals = I2 }
 	end.
@@ -2882,11 +2882,11 @@ get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeSt
 
 enqueue_intervals([], _ChunksToEnqueue, {Q, QIntervals}) ->
 	{Q, QIntervals};
-enqueue_intervals([{Peer, Intervals} | Rest], ChunksToEnqueue, {Q, QIntervals}) ->
-	{Q2, QIntervals2} = enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}),
+enqueue_intervals([{Peer, Intervals, FootprintKey} | Rest], ChunksToEnqueue, {Q, QIntervals}) ->
+	{Q2, QIntervals2} = enqueue_peer_intervals(Peer, Intervals, FootprintKey, ChunksToEnqueue, {Q, QIntervals}),
 	enqueue_intervals(Rest, ChunksToEnqueue, {Q2, QIntervals2}).
 
-enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
+enqueue_peer_intervals(Peer, Intervals, FootprintKey, ChunksToEnqueue, {Q, QIntervals}) ->
 	%% Only keep unique intervals. We may get some duplicates for two
 	%% reasons:
 	%% 1) find_peer_intervals might choose the same interval several
@@ -2908,18 +2908,18 @@ enqueue_peer_intervals(Peer, Intervals, ChunksToEnqueue, {Q, QIntervals}) ->
 				ChunkOffsets = lists:seq(Start, RangeEnd - 1, ?DATA_CHUNK_SIZE),
 				ChunksEnqueued = length(ChunkOffsets),
 				{ChunksToEnqueue2 - ChunksEnqueued,
-					enqueue_peer_range(Peer, Start, RangeEnd, ChunkOffsets, {QAcc, QIAcc})}
+					enqueue_peer_range(Peer, FootprintKey, Start, RangeEnd, ChunkOffsets, {QAcc, QIAcc})}
 		end,
 		{ChunksToEnqueue, {Q, QIntervals}},
 		OuterJoin
 	),
 	{Q2, QIntervals2}.
 
-enqueue_peer_range(Peer, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
+enqueue_peer_range(Peer, FootprintKey, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
 	Q2 = lists:foldl(
 		fun(ChunkStart, QAcc) ->
 			gb_sets:add_element(
-				{ChunkStart, min(ChunkStart + ?DATA_CHUNK_SIZE, RangeEnd), Peer},
+				{ChunkStart, min(ChunkStart + ?DATA_CHUNK_SIZE, RangeEnd), Peer, FootprintKey},
 				QAcc)
 		end,
 		Q,
