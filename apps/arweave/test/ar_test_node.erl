@@ -302,7 +302,9 @@ start_node(B0, Config) ->
 start_node(B0, Config, WaitUntilSync) ->
 	?LOG_INFO("Starting node"),
 	clean_up_and_stop(),
+	prometheus:start(),
 	arweave_config:start(),
+	arweave_limiter:start(),
 	{ok, BaseConfig} = arweave_config:get_env(),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
 	update_config(Config),
@@ -603,7 +605,9 @@ start() ->
 	start(#{}).
 
 start(Options) when is_map(Options) ->
+	prometheus:start(),
 	arweave_config:start(),
+	ok = arweave_limiter:start(),
 	B0 =
 		case maps:get(b0, Options, not_set) of
 			not_set ->
@@ -654,7 +658,9 @@ start(B0, RewardAddr, Config) ->
 %% Config after the test is done. Otherwise the tests that run after yours may fail.
 start(B0, RewardAddr, Config, StorageModules) ->
 	clean_up_and_stop(),
+	prometheus:start(),
 	arweave_config:start(),
+	arweave_limiter:start(),
 	write_genesis_files(Config#config.data_dir, B0),
 	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = true,

@@ -24,6 +24,7 @@ start_node() ->
 
 reset_node() ->
 	ar_blacklist_middleware:reset(),
+	arweave_limiter_sup:reset_all(),
 	ar_test_node:remote_call(peer1, ar_blacklist_middleware, reset, []),
 	ar_test_node:connect_to_peer(peer1).
 
@@ -281,18 +282,22 @@ test_single_regossip(_) ->
 test_node_blacklisting_get_spammer() ->
 	{ok, Config} = arweave_config:get_env(),
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
+	LimitWithBursts = Config#config.'http_api.limiter.general.sliding_window_limit'
+		+ Config#config.'http_api.limiter.general.leaky_limit',
 	node_blacklisting_test_frame(
 		RequestFun,
 		ErrorResponse,
-		Config#config.requests_per_minute_limit div 2 + 1,
+		LimitWithBursts,
 		1
 	).
 
 test_node_blacklisting_post_spammer() ->
 	{ok, Config} = arweave_config:get_env(),
+	LimitWithBursts = Config#config.'http_api.limiter.general.sliding_window_limit'
+		+ Config#config.'http_api.limiter.general.leaky_limit',
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_tx_binary),
 	NErrors = 11,
-	NRequests = Config#config.requests_per_minute_limit div 2 + NErrors,
+	NRequests = LimitWithBursts + NErrors,
 	node_blacklisting_test_frame(
 		RequestFun,
 		ErrorResponse,
@@ -333,6 +338,7 @@ send_tx_binary(Index, InvalidTX) ->
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
 	ar_blacklist_middleware:reset(),
+	arweave_limiter_sup:reset_all(),
 	ar_rate_limiter:off(),
 	Responses = ar_util:batch_pmap(
 		RequestFun,
@@ -342,13 +348,15 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
 	),
 	?assertEqual(length(Responses), NRequests),
 	ar_blacklist_middleware:reset(),
+	arweave_limiter_sup:reset_all(),
 	Got = count_by_response_type(ErrorResponse, Responses),
 	%% Other test nodes may occasionally make some requests in the background disturbing the stats.
 	Tolerance = 5,
-	?debugFmt("ExpectedErrors: ~p, Tolerance: ~p, Got: ~p~n", [ExpectedErrors, Tolerance, maps:get(error_responses, Got)]),
-	?assert(maps:get(error_responses, Got) =< ExpectedErrors + Tolerance),
-	?assert(maps:get(error_responses, Got) >= ExpectedErrors - Tolerance),
-	?assertEqual(NRequests - maps:get(error_responses, Got), maps:get(ok_responses, Got)),
+	?debugFmt("Requests sent: ~p, ExpectedErrors: ~p, Tolerance: ~p, Got: ~p~n",
+		[NRequests, ExpectedErrors, Tolerance, maps:get(error_responses, Got, 0)]),
+	?assert(maps:get(error_responses, Got, 0) =< ExpectedErrors + Tolerance),
+	?assert(maps:get(error_responses, Got, 0) >= ExpectedErrors - Tolerance),
+	?assertEqual(NRequests - maps:get(error_responses, Got, 0), maps:get(ok_responses, Got, 0)),
 	ar_rate_limiter:on().
 
 %% @doc Count the number of successful and error responses.
@@ -756,7 +764,7 @@ test_get_tx_status(_) ->
 			case FetchStatus() of
 				{ok, {{<<"200">>, _}, _, _, _, _}} -> true;
 				_ -> false
-			end	
+			end
 		end,
 		200,
 		5000
