@@ -258,24 +258,10 @@ generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) -
 	entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	case ar_entropy_cache:get(Key) of
 		{ok, Entropy} ->
-			?LOG_DEBUG([{event, entropy_cache_hit},
-				{key, ar_util:encode(Key)},
-				{reward_addr, ar_util:encode(RewardAddr)},
-				{bucket_end_offset, BucketEndOffset},
-				{sub_chunk_start_offset, SubChunkStartOffset},
-				{footprint, Footprint},
-				{entropy_cache_size, ar_entropy_cache:total_size() / ?MiB}]),
 			prometheus_counter:inc(replica_2_9_entropy_stats, [Partition, cache_hit]),
 			entropy_generation_release(Key),
 			Entropy;
 		not_found ->
-			?LOG_DEBUG([{event, entropy_cache_miss},
-				{key, ar_util:encode(Key)},
-				{reward_addr, ar_util:encode(RewardAddr)},
-				{bucket_end_offset, BucketEndOffset},
-				{sub_chunk_start_offset, SubChunkStartOffset},
-				{footprint, Footprint},
-				{entropy_cache_size, ar_entropy_cache:total_size() / ?MiB}]),
 			prometheus_counter:inc(replica_2_9_entropy_stats, [Partition, cache_miss]),
 			PackingState = get_packing_state(),
 			RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
@@ -914,11 +900,6 @@ entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset) -
 		true ->
 			ok;
 		false ->
-			?LOG_DEBUG([{event, entropy_generation_lock_collision},
-					{reward_addr, ar_util:encode(RewardAddr)},
-					{key, ar_util:encode(Key)},
-					{bucket_end_offset, BucketEndOffset},
-					{sub_chunk_start_offset, SubChunkStartOffset}]),
 			timer:sleep(100),
 			entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset)
 	end.
