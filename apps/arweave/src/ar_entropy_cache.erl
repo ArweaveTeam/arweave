@@ -124,13 +124,6 @@ clean_up_space(Size, MaxSize, Table, OrderedKeyTable) ->
 					ets:update_counter(Table, total_size, -ElementSize, {total_size, 0}),
 					ets:delete(OrderedKeyTable, EarliestKey),
 					FetchedKeyCount = get_fetched_key_count(Table, Key),
-					?LOG_DEBUG([{event, release_replica_2_9_entropy},
-							{key, ar_util:encode(Key)},
-							{size, Size},
-							{total_size, TotalSize},
-							{max_size, MaxSize},
-							{released_size, ElementSize},
-							{fetched_key_count, FetchedKeyCount}]),
 					ets:delete(Table, {fetched_key_count, Key}),
 					clean_up_space(Size, MaxSize, Table, OrderedKeyTable)
 			end;

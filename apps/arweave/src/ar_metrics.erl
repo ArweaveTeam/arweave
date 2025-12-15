@@ -602,12 +602,10 @@ get_status_class({error, {closed,_}}) ->
 	"closed";
 get_status_class({error, noproc}) ->
 	"noproc";
-get_status_class(208) ->
-	"already_processed";
-get_status_class(418) ->
-	"missing_transactions";
-get_status_class(419) ->
-	"missing_chunk";
+get_status_class({error, {down,_}}) ->
+	"down";
+get_status_class({error, {stream_error,_}}) ->
+	"stream_error";
 get_status_class(Data) when is_integer(Data), Data > 0 ->
 	integer_to_list(Data);
 get_status_class(Data) when is_binary(Data) ->
