@@ -29,6 +29,117 @@
 %%%
 %%% @todo returns a comprehensive error message.
 %%%
+%%% @todo when parsing fails, the documentation of the last parameter
+%%%       should be displayed, or the documentation of the whole
+%%%       application.
+%%%
+%%% @todo sub-arguments parsing, a more complex way to parse certain
+%%% kind of value will be required in some situation, for example for
+%%% peers and storage modules. see section below.
+%%%
+%%% == TODO: sub-arguments parsing ==
+%%%
+%%% Note: the following section is a draft and acts as an example for
+%%% the future implementation.
+%%%
+%%% Let say one wants to configure one specific peer. Instead of
+%%% pushing this value in many different place, one can set some
+%%% options on this peer. For example:
+%%%
+%%% ```
+%%% --peer europe.arweave.xyz --trusted \
+%%% --peer vdf-server-3.arweave.xyz --trusted --vdf
+%%% '''
+%%%
+%%% In this code, the peer(s) `europe.arweave.xyz' will now be set as
+%%% `trusted' and `vdf-server-3.arweave.xyz' will be set as `trusted'
+%%% and `vdf'. The main information - here the peer - is not
+%%% duplicated across many options.
+%%%
+%%% ```
+%%% {
+%%%   "peers": {
+%%%     "europe.arweave.xyz": {
+%%%       "trusted": true
+%%%     },
+%%%     "vdf-server-3.arweave.xyz": {
+%%%       "trusted": true,
+%%%       "vdf": true
+%%%     }
+%%%   }
+%%% }
+%%% '''
+%%%
+%%% Another example with storage modules. One wants to configure
+%%% storages module with many different options.
+%%%
+%%% ```
+%%% --storage.module 0 \
+%%%   --protocol unpacked \
+%%%   --enabled \
+%%% --storage.module 0
+%%%   --protocol replica.2.9 \
+%%%   --start 0 \
+%%%   --end 7200000000000 \
+%%%   --pubkey L-cPRwGcnMFyQW-APh_fS4lMGioLg76-ECovqXIlmJ4 \
+%%%   --enabled
+%%% '''
+%%%
+%%% The first argument will create storage module `0' using unpacked
+%%% data. The second storage module will use `replica.2.9' with custom
+%%% options (e.g. offset and pubkey). The final representation of the
+%%% data as JSON would be represented like the following snippet:
+%%%
+%%% ```
+%%% {
+%%%   "storage": {
+%%%     {
+%%%       "modules": [
+%%%         {
+%%%           "partition": "0",
+%%%           "protocol": "unpacked",
+%%%           "status": "enabled"
+%%%         },
+%%%         {
+%%%           "partition": "0",
+%%%           "protocol: "replica.2.9",
+%%%           "start": "0",
+%%%           "end": "7200000000000",
+%%%           "pubkey": "L-cPRwGcnMFyQW-APh_fS4lMGioLg76-ECovqXIlmJ4",
+%%%           "status": "enabled"
+%%%         }
+%%%      ]
+%%%   }
+%%% }
+%%% '''
+%%%
+%%% On the specification side, a sub-argument could be represented by
+%%% a function, returning a list of spec.
+%%%
+%%% ```
+%%% #{
+%%%   short_argument => {<<"-S">>, fun storage/0},
+%%%   long_argument => {<<"--storage.module">>, {M,F,A}}
+%%% }
+%%%
+%%% storage() ->
+%%%   [
+%%%     #{
+%%%       % implicit definition of parameter key
+%%%       % parameter_key => [storage,modules,0]
+%%%       long_argument => <<"--enabled">>,
+%%%       short_argument => $E,
+%%%       type => boolean,
+%%%       default => true
+%%%     },
+%%%     #{
+%%%       long_argument => <<"--protocol">>,
+%%%       type => storage_protocol
+%%%       required => true
+%%%     }
+%%%   ].
+%%% '''
+%%%
 %%% @end
 %%%===================================================================
 -module(arweave_config_arguments).
@@ -37,10 +148,9 @@
 -compile({no_auto_import,[get/0]}).
 -export([
 	start_link/0,
-	% load/0,
-	% load/1,
-	% get/0,
-	% reset/0
+	load/0,
+	load/1,
+	get/0,
 	parse/1,
 	parse/2
 ]).
@@ -87,7 +197,7 @@ parse(Args) ->
 	Reason :: map().
 
 parse(Args, Opts) ->
-	parse_converter(Args, Opts). 
+	parse_converter(Args, Opts).
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -123,7 +233,7 @@ parse_final(Args, Opts) ->
 	try
 		LongArgs = maps:get(
 			long_arguments,
-			Opts, 
+			Opts,
 			% @todo it's annoying to convert these values, longs/short
 			% args from specifications should be returned as map directly.
 			maps:from_list(
@@ -262,27 +372,81 @@ apply_spec([Value|Rest], Spec = #{type := Type}, State) ->
 	end.
 
 %%--------------------------------------------------------------------
-%% @doc
+%% @doc starts arweave_config_arguments server.
 %% @end
 %%--------------------------------------------------------------------
 start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+	gen_server:start_link({local, ?MODULE}, ?MODULE, #{}, []).
+
+%%--------------------------------------------------------------------
+%% @doc loads arguments from `init:get_plain_arguments/0'.
+%% @see init:get_plain_arguments/0
+%% @end
+%%--------------------------------------------------------------------
+load() ->
+	gen_server:cast(?MODULE, load).
+
+%%--------------------------------------------------------------------
+%% @doc loads arguments from command line.
+%% @end
+%%--------------------------------------------------------------------
+load(Args) ->
+	gen_server:call(?MODULE, {load, Args}, 10_000).
+
+%%--------------------------------------------------------------------
+%% @doc returns parsed arguments from process state.
+%% @end
+%%--------------------------------------------------------------------
+get() ->
+	gen_server:call(?MODULE, get, 10_000).
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-init(_) ->
-	{ok, []}.
+init(Opts) ->
+	RawArgs = maps:get(raw_args, Opts, []),
+	State = #{
+		raw_args => RawArgs
+	},
+	{ok, State}.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
+handle_call(get, _From, State) ->
+	Args = maps:get(args, State, []),
+	{reply, Args, State};
+handle_call({load, Args}, _From, State) ->
+	try
+		parse(Args)
+	of
+		Result = {ok, _Parsed} ->
+			NewState = State#{ args => Args },
+			{reply, Result, NewState};
+		Else ->
+			{reply, Else, State}
+	catch
+		Error:Reason ->
+			{reply, {Error, Reason}}
+	end;
 handle_call(_, _, State) ->
 	{reply, ok, State}.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
+handle_cast(load, State) ->
+	Args = init:get_plain_arguments(),
+	case parse(Args) of
+		{ok, Parsed} ->
+			NewState = State#{
+				args => Parsed,
+				raw_args => Args
+			},
+			{noreply, NewState};
+		_Else ->
+			{noreply, State}
+	end;
 handle_cast(_, State) ->
 	{noreply, State}.
 

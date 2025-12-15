@@ -130,13 +130,40 @@ parser(_Config) ->
 		<<"-I">>, <<"0">>,
 		<<"-I">>, <<"65535">>
 	],
+
+	% --peer 127.0.0.1 --vdf --trusted
+	% --storage.module 1.unpacked --enabled
+
 	Opts = #{
 		long_arguments => LongArguments,
 		short_arguments => ShortArguments
 	},
 
 	ct:pal(test, 1, "parse ~p", [Arguments]),
-	{ok, _} = arweave_config_arguments:parse(Arguments, Opts),
+	Result = [
+		{#{type => boolean},[true]},
+		{#{type => boolean},[true]},
+		{#{type => boolean},[false]},
+		{#{type => boolean},[true]},
+		{#{type => boolean},[true]},
+		{#{type => boolean},[false]},
+		{#{type => integer},[-65535]},
+		{#{type => integer},[0]},
+		{#{type => integer},[-65535]},
+		{#{type => pos_integer},[0]},
+		{#{type => pos_integer},[65535]},
+		{#{type => boolean},[true]},
+		{#{type => boolean},[true]},
+		{#{type => boolean},[true]},
+		{#{type => boolean},[false]},
+		{#{type => boolean},[false]},
+		{#{type => integer},[65535]},
+		{#{type => integer},[0]},
+		{#{type => integer},[-65535]},
+		{#{type => pos_integer},[0]},
+		{#{type => pos_integer},[65535]}
+	],
+	{ok, Result} = arweave_config_arguments:parse(Arguments, Opts),
 
 	{comment, "arguments parser tested"}.
 
