@@ -49,11 +49,12 @@
 %%%===================================================================
 -module(arweave_config_environment).
 -behavior(gen_server).
+-compile(warnings_as_errors).
+-compile({no_auto_import,[get/0]}).
 -export([load/0, get/0, get/1, reset/0]).
 -export([start_link/0]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
--compile({no_auto_import,[get/0]}).
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
