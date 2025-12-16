@@ -611,11 +611,13 @@ get_status_class(Data) when is_integer(Data), Data > 0 ->
 get_status_class(Data) when is_binary(Data) ->
 	case catch binary_to_integer(Data) of
 		{_, _} ->
+			?LOG_DEBUG([{event, unknown_status}, {status, Data}]),
 			"unknown";
 		Status ->
 			get_status_class(Status)
 	end;
 get_status_class(Data) when is_atom(Data) ->
 	atom_to_list(Data);
-get_status_class(_) ->
+get_status_class(Data) ->
+	?LOG_DEBUG([{event, unknown_status}, {status, Data}]),
 	"unknown".
