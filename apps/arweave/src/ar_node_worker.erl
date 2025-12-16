@@ -1586,7 +1586,7 @@ record_economic_metrics2(B, PrevB) ->
 			prometheus_gauge:set(endowment_pool_take, Take),
 			prometheus_gauge:set(endowment_pool_give, Give),
 			prometheus_gauge:set(expected_block_reward, ExpectedBlockReward),
-			LegacyPricePerGibibyte = ar_pricing:get_storage_cost(1024 * 1024 * 1024,
+			LegacyPricePerGibibyte = ar_pricing:get_storage_cost(?MiB * 1024,
 					os:system_time(second), PrevB#block.usd_to_ar_rate, B#block.height),
 			prometheus_gauge:set(legacy_price_per_gibibyte_minute, LegacyPricePerGibibyte),
 			prometheus_gauge:set(available_supply,

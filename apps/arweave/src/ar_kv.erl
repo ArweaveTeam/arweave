@@ -647,12 +647,12 @@ test_rocksdb_iterator() ->
 			ok = ar_kv:put(
 				test,
 				<< SmallerPrefix/binary, Suffix/binary >>,
-				crypto:strong_rand_bytes(40 * 1024 * 1024)
+				crypto:strong_rand_bytes(40 * ?MiB)
 			),
 			ok = ar_kv:put(
 				test,
 				<< BiggerPrefix/binary, Suffix/binary >>,
-				crypto:strong_rand_bytes(40 * 1024 * 1024)
+				crypto:strong_rand_bytes(40 * ?MiB)
 			)
 		end,
 		Suffixes1
@@ -667,9 +667,9 @@ test_rocksdb_iterator() ->
 		{prefix_extractor, {capped_prefix_transform, 29}},
 		{optimize_filters_for_hits, true},
 		{max_open_files, 1000000},
-		{write_buffer_size, 256 * 1024 * 1024},
-		{target_file_size_base, 256 * 1024 * 1024},
-		{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}
+		{write_buffer_size, 256 * ?MiB},
+		{target_file_size_base, 256 * ?MiB},
+		{max_bytes_for_level_base, 10 * 256 * ?MiB}
 	],
 	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"),
 			[{"default", Opts2}, {"test", Opts2}], [], [default, test]),
@@ -679,12 +679,12 @@ test_rocksdb_iterator() ->
 			ok = ar_kv:put(
 				test,
 				<< SmallerPrefix/binary, Suffix/binary >>,
-				crypto:strong_rand_bytes(40 * 1024 * 1024)
+				crypto:strong_rand_bytes(40 * ?MiB)
 			),
 			ok = ar_kv:put(
 				test,
 				<< BiggerPrefix/binary, Suffix/binary >>,
-				crypto:strong_rand_bytes(50 * 1024 * 1024)
+				crypto:strong_rand_bytes(50 * ?MiB)
 			)
 		end,
 		Suffixes2

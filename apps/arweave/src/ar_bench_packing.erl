@@ -10,7 +10,6 @@
 
 -define(TB, 1_000_000_000_000).
 -define(FOOTPRINTS_PER_ITERATION, 1).
--define(ENTROPY_FOOTPRINT_SIZE, (?REPLICA_2_9_ENTROPY_SIZE * ?COMPOSITE_PACKING_SUB_CHUNK_COUNT)).
 
 %%%===================================================================
 %%% CLI and Entry Points
@@ -118,7 +117,7 @@ configure_randomx(LargePages) ->
 	end.
 
 calculate_mib_per_iteration() ->
-	BytesPerIteration = ?FOOTPRINTS_PER_ITERATION * ?ENTROPY_FOOTPRINT_SIZE,
+	BytesPerIteration = ?FOOTPRINTS_PER_ITERATION * ar_block:get_replica_2_9_footprint_size(),
 	BytesPerIteration div ?MiB.
 
 calculate_min_disk_ms(RatedSpeedMB) ->
@@ -415,7 +414,7 @@ create_read_load_file(Dir, SizeGB) ->
 	ar:console("Creating read load file...~n"),
 	{ok, FH} = file:open(ReadFile, [write, raw, binary]),
 	lists:foreach(
-		fun(_) -> file:write(FH, crypto:strong_rand_bytes(1024 * 1024)) end,
+		fun(_) -> file:write(FH, crypto:strong_rand_bytes(?MiB)) end,
 		lists:seq(1, SizeMB)),
 	file:close(FH),
 	ReadFile.

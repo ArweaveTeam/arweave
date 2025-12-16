@@ -70,7 +70,7 @@ test_data_roots_syncs_from_peer() ->
 	{ok, BaseConfig} = arweave_config:get_env(),
 	MainRewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	%% Cover only the first partition and half of the second one to ensure partial coverage.
-	MB = 1024 * 1024,
+	MB = ?MiB,
 	MainConfig = BaseConfig#config{
 		mine = false,
 		header_sync_jobs = 0,

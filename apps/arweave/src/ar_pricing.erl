@@ -420,7 +420,7 @@ get_storage_cost(DataSize, Timestamp, Rate, Height) ->
 			Rate,
 			Height
 		),
-	StorageCost = max(1, PerpetualGBStorageCost div (1024 * 1024 * 1024)) * Size,
+	StorageCost = max(1, PerpetualGBStorageCost div (?MiB * 1024)) * Size,
 	HashingCost = StorageCost,
 	StorageCost + HashingCost.
 
@@ -444,7 +444,7 @@ get_miner_reward_and_endowment_pool(Args) ->
 			Rate,
 			Height
 		),
-	Burden = WeaveSize * StorageCostPerGBPerBlock div (1024 * 1024 * 1024),
+	Burden = WeaveSize * StorageCostPerGBPerBlock div (?MiB * 1024),
 	Pool2 = Pool + PoolFeeShare,
 	case BaseReward >= Burden of
 		true ->
@@ -515,7 +515,7 @@ get_expected_min_decline_rate(Timestamp, Period, Amount, Size, Rate, Height) ->
 	%% => 1 / Rate = exp((Sum1 - Sum2) / Amount)
 	%% => Rate = 1 / exp((Sum1 - Sum2) / Amount)
 	{ExpDiv, ExpDivisor} = ar_fraction:natural_exponent(
-			{(Sum1 - Sum2) * Size, Amount * (1024 * 1024 * 1024)}, 16),
+			{(Sum1 - Sum2) * Size, Amount * (?MiB * 1024)}, 16),
 	ar_fraction:reduce({ExpDivisor, ExpDiv}, 1000000).
 
 %%%===================================================================

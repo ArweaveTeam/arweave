@@ -143,8 +143,8 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	DataRootInDiskPool = ets:lookup(ar_disk_pool_data_roots, DataRootKey),
 	ChunkSize = byte_size(Chunk),
 	{ok, Config} = arweave_config:get_env(),
-	DataRootLimit = Config#config.max_disk_pool_data_root_buffer_mb * 1024 * 1024,
-	DiskPoolLimit = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
+	DataRootLimit = Config#config.max_disk_pool_data_root_buffer_mb * ?MiB,
+	DiskPoolLimit = Config#config.max_disk_pool_buffer_mb * ?MiB,
 	CheckDiskPool =
 		case {DataRootOffsetReply, DataRootInDiskPool} of
 			{not_found, []} ->
@@ -1631,8 +1631,8 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 	%% DiskPoolSize = ~100GB
 	%% DisckCacheSize = ~5GB
 	%% BufferSize = ~10GB
-	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
-	DiskCacheSize = Config#config.disk_cache_size * 1024 * 1024,
+	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * ?MiB,
+	DiskCacheSize = Config#config.disk_cache_size * ?MiB,
 	BufferSize = 10_000_000_000,
 	case Bytes < DiskPoolSize + DiskCacheSize + (BufferSize div 2) of
 		true ->
@@ -2367,26 +2367,26 @@ init_kv(StoreID) ->
 			{disk_pool_chunks_index_old, StoreID}, {migrations_index, StoreID}]),
 	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_chunk_db"), [{max_open_files, 10000},
 			{max_background_compactions, 8},
-			{write_buffer_size, 256 * 1024 * 1024}, % 256 MiB per memtable.
-			{target_file_size_base, 256 * 1024 * 1024}, % 256 MiB per SST file.
+			{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
+			{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
 			%% 10 files in L1 to make L1 == L0 as recommended by the
 			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-			{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}], {chunk_data_db, StoreID}),
+			{max_bytes_for_level_base, 10 * 256 * ?MiB}], {chunk_data_db, StoreID}),
 	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_disk_pool_chunks_index_db"), [
 			{max_open_files, 1000}, {max_background_compactions, 8},
-			{write_buffer_size, 256 * 1024 * 1024}, % 256 MiB per memtable.
-			{target_file_size_base, 256 * 1024 * 1024}, % 256 MiB per SST file.
+			{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
+			{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
 			%% 10 files in L1 to make L1 == L0 as recommended by the
 			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-			{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}] ++ BloomFilterOpts,
+			{max_bytes_for_level_base, 10 * 256 * ?MiB}] ++ BloomFilterOpts,
 			{disk_pool_chunks_index, StoreID}),
 	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_data_root_index_db"), [
 			{max_open_files, 100}, {max_background_compactions, 8},
-			{write_buffer_size, 256 * 1024 * 1024}, % 256 MiB per memtable.
-			{target_file_size_base, 256 * 1024 * 1024}, % 256 MiB per SST file.
+			{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
+			{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
 			%% 10 files in L1 to make L1 == L0 as recommended by the
 			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-			{max_bytes_for_level_base, 10 * 256 * 1024 * 1024}] ++ BloomFilterOpts,
+			{max_bytes_for_level_base, 10 * 256 * ?MiB}] ++ BloomFilterOpts,
 			{data_root_index, StoreID}),
 	#sync_data_state{
 		chunks_index = {chunks_index, StoreID},
