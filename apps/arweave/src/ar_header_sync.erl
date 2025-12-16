@@ -279,7 +279,7 @@ handle_info({event, tx, _}, State) ->
 handle_info({event, disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, _Percentage, Bytes}},
 		State) ->
 	{ok, Config} = arweave_config:get_env(),
-	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * 1024 * 1024,
+	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * ?MiB,
 	DiskCacheSize = Config#config.disk_cache_size * 1048576,
 	BufferSize = 10_000_000_000,
 	case Bytes < DiskPoolSize + DiskCacheSize + BufferSize div 2 of

@@ -142,11 +142,11 @@ generate_random_split(ChunkCount) ->
 
 generate_random_original_v1_split() ->
 	%% Make sure v1 data does not end with a digit, otherwise it's malleable.
-	Data = << (crypto:strong_rand_bytes(rand:uniform(1024 * 1024)))/binary, <<"a">>/binary >>,
+	Data = << (crypto:strong_rand_bytes(rand:uniform(?MiB)))/binary, <<"a">>/binary >>,
 	original_split(Data).
 
 generate_random_original_split() ->
-	Data = << (crypto:strong_rand_bytes(rand:uniform(1024 * 1024)))/binary >>,
+	Data = << (crypto:strong_rand_bytes(rand:uniform(?MiB)))/binary >>,
 	original_split(Data).
 
 generate_random_standard_split() ->

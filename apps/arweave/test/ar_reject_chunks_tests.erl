@@ -218,7 +218,7 @@ rejects_chunks_exceeding_disk_pool_limit_test_() ->
 test_rejects_chunks_exceeding_disk_pool_limit() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	Data1 = crypto:strong_rand_bytes(
-		(?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024) + 1
+		(?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * ?MiB) + 1
 	),
 	Chunks1 = ar_test_data_sync:imperfect_split(Data1),
 	{DataRoot1, _} = ar_merkle:generate_tree(
@@ -246,7 +246,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		min(
 			?DEFAULT_MAX_DISK_POOL_BUFFER_MB - ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
 			?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB - 1
-		) * 1024 * 1024
+		) * ?MiB
 	),
 	Chunks2 = ar_test_data_sync:imperfect_split(Data2),
 	{DataRoot2, _} = ar_merkle:generate_tree(
@@ -269,10 +269,10 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		Proofs2
 	),
 	Left =
-		?DEFAULT_MAX_DISK_POOL_BUFFER_MB * 1024 * 1024 -
+		?DEFAULT_MAX_DISK_POOL_BUFFER_MB * ?MiB -
 		lists:sum([byte_size(Chunk) || Chunk <- tl(Chunks1)]) -
 		byte_size(Data2),
-	?assert(Left < ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * 1024 * 1024),
+	?assert(Left < ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * ?MiB),
 	Data3 = crypto:strong_rand_bytes(Left + 1),
 	Chunks3 = ar_test_data_sync:imperfect_split(Data3),
 	{DataRoot3, _} = ar_merkle:generate_tree(

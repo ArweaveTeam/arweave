@@ -135,8 +135,8 @@
 -endif.
 
 %% The default maximum number of replica 2.9 entropies to cache at a time
-%% while syncing data. Each entropy is 256 MB.
--define(DEFAULT_REPLICA_2_9_ENTROPY_CACHE_MAX_ENTROPIES, 2).
+%% while syncing data. Each entropy is 256 MiB.
+-define(DEFAULT_REPLICA_2_9_ENTROPY_CACHE_SIZE_MB, 4000).
 
 %% The number of packing workers.
 -define(DEFAULT_PACKING_WORKERS, erlang:system_info(dirty_cpu_schedulers_online)).
@@ -276,7 +276,7 @@
 	packing_workers = ?DEFAULT_PACKING_WORKERS,
 	replica_2_9_workers = ?DEFAULT_REPLICA_2_9_WORKERS,
 	disable_replica_2_9_device_limit = false,
-	replica_2_9_entropy_cache_max_entropies = ?DEFAULT_REPLICA_2_9_ENTROPY_CACHE_MAX_ENTROPIES,
+	replica_2_9_entropy_cache_size_mb = ?DEFAULT_REPLICA_2_9_ENTROPY_CACHE_SIZE_MB,
 	%% Undocumented/unsupported options
 	chunk_storage_file_size = ?CHUNK_GROUP_SIZE,
 	rocksdb_flush_interval_s = ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,

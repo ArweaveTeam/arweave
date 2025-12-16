@@ -98,7 +98,7 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 								TX = ar_test_node:sign_tx(main, Wallet,
 									#{
 										last_tx => Anchor,
-										data => crypto:strong_rand_bytes(10 * 1024 * 1024)
+										data => crypto:strong_rand_bytes(10 * ?MiB)
 									}),
 								ar_test_node:assert_post_tx_to_peer(main, TX),
 								[TX | Acc];

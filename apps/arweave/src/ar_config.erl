@@ -301,10 +301,10 @@ parse_options([{<<"disable_replica_2_9_device_limit">>, false} | Rest], Config) 
 parse_options([{<<"disable_replica_2_9_device_limit">>, Opt} | _], _) ->
 	{error, {bad_type, disable_replica_2_9_device_limit, boolean}, Opt};
 
-parse_options([{<<"replica_2_9_entropy_cache_max_entropies">>, N} | Rest], Config) when is_integer(N)->
-	parse_options(Rest, Config#config{ replica_2_9_entropy_cache_max_entropies = N });
-parse_options([{<<"replica_2_9_entropy_cache_max_entropies">>, Opt} | _], _) ->
-	{error, {bad_type, replica_2_9_entropy_cache_max_entropies, number}, Opt};
+parse_options([{<<"replica_2_9_entropy_cache_size_mb">>, N} | Rest], Config) when is_integer(N)->
+	parse_options(Rest, Config#config{ replica_2_9_entropy_cache_size_mb = N });
+parse_options([{<<"replica_2_9_entropy_cache_size_mb">>, Opt} | _], _) ->
+	{error, {bad_type, replica_2_9_entropy_cache_size_mb, number}, Opt};
 
 parse_options([{<<"diff">>, Diff} | Rest], Config) when is_integer(Diff) ->
 	parse_options(Rest, Config#config{ diff = Diff });

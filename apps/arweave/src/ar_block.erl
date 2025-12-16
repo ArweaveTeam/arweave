@@ -4,7 +4,7 @@
 		partition_size/0,
 		get_replica_2_9_entropy_sector_size/0, get_replica_2_9_entropy_partition_size/0,
 		get_sub_chunks_per_replica_2_9_entropy/0, get_replica_2_9_entropy_count/0,
-		strict_data_split_threshold/0,
+		get_replica_2_9_footprint_size/0, strict_data_split_threshold/0,
 		block_field_size_limit/1, verify_timestamp/2, get_max_timestamp_deviation/0, verify_last_retarget/2,
 		verify_weave_size/3, verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
 		compute_hash_list_merkle/1, compute_h0/2, compute_h0/5, compute_h0/6,
@@ -68,6 +68,11 @@ get_replica_2_9_entropy_partition_size() ->
 -spec get_sub_chunks_per_replica_2_9_entropy() -> pos_integer().
 get_sub_chunks_per_replica_2_9_entropy() ->
 	?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+
+%% @doc Return the total size in bytes for a full footprint of entropy.
+-spec get_replica_2_9_footprint_size() -> pos_integer().
+get_replica_2_9_footprint_size() ->
+	?REPLICA_2_9_ENTROPY_SIZE * ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
 
 %% @doc Return the number of entropies per partition.
 -spec get_replica_2_9_entropy_count() -> pos_integer().

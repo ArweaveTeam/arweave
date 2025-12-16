@@ -25,7 +25,7 @@
 }).
 
 %% The maximum size in bytes the blocks enqueued for pre-validation can occupy.
--define(MAX_PRE_VALIDATION_QUEUE_SIZE, (200 * 1024 * 1024)).
+-define(MAX_PRE_VALIDATION_QUEUE_SIZE, (200 * ?MiB)).
 
 %%%===================================================================
 %%% Public interface.

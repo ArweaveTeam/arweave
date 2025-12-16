@@ -266,11 +266,10 @@ generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) -
 			PackingState = get_packing_state(),
 			RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
 			{ok, Config} = arweave_config:get_env(),
-			MaxEntropies = Config#config.replica_2_9_entropy_cache_max_entropies,
 
 			Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
 			update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
-			MaxSize = MaxEntropies * ?REPLICA_2_9_ENTROPY_SIZE,
+			MaxSize = Config#config.replica_2_9_entropy_cache_size_mb * ?MiB,
 			ar_entropy_cache:clean_up_space(?REPLICA_2_9_ENTROPY_SIZE, MaxSize),
 			ar_entropy_cache:put(Key, Entropy, ?REPLICA_2_9_ENTROPY_SIZE),
 			entropy_generation_release(Key),

@@ -153,11 +153,11 @@
 -define(TEST_NODE_TIMEOUT, 300). %% 5 minutes
 
 %% The maximum byte size of a single POST body.
--define(MAX_BODY_SIZE, 15 * 1024 * 1024).
+-define(MAX_BODY_SIZE, 15 * ?MiB).
 
 %% The maximum allowed size in bytes for the data field of
 %% a format=1 transaction.
--define(TX_DATA_SIZE_LIMIT, 10 * 1024 * 1024).
+-define(TX_DATA_SIZE_LIMIT, 10 * ?MiB).
 
 %% The maximum allowed size in bytes for the combined data fields of
 %% the format=1 transactions included in a block. Must be greater than
@@ -190,18 +190,18 @@
 %% The data field of a format=1 transaction is considered to belong to
 %% its headers.
 -ifdef(AR_TEST).
--define(MEMPOOL_HEADER_SIZE_LIMIT, 50 * 1024 * 1024).
+-define(MEMPOOL_HEADER_SIZE_LIMIT, 50 * ?MiB).
 -else.
--define(MEMPOOL_HEADER_SIZE_LIMIT, 250 * 1024 * 1024).
+-define(MEMPOOL_HEADER_SIZE_LIMIT, 250 * ?MiB).
 -endif.
 
 %% The maximum allowed size of transaction data stored in mempool.
 %% The format=1 transactions are not counted as their data is considered
 %% to be part of the header.
 -ifdef(AR_TEST).
--define(MEMPOOL_DATA_SIZE_LIMIT, 50 * 1024 * 1024).
+-define(MEMPOOL_DATA_SIZE_LIMIT, 50 * ?MiB).
 -else.
--define(MEMPOOL_DATA_SIZE_LIMIT, 500 * 1024 * 1024).
+-define(MEMPOOL_DATA_SIZE_LIMIT, 500 * ?MiB).
 -endif.
 
 %% Default timeout for establishing an HTTP connection.
