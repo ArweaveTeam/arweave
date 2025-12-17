@@ -45,6 +45,7 @@ on:
           - ar_intervals
           - ar_join
           - ar_kv
+          - ar_limiter
           - ar_mempool_tests
           - ar_merkle
           - ar_mine_randomx_tests

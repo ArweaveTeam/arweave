@@ -59,6 +59,7 @@ jobs:
             ar_intervals,
             ar_join,
             ar_kv,
+            ar_limiter,
             ar_merkle,
             ar_mining_cache,
             ar_mining_server,
