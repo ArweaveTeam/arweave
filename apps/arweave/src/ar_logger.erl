@@ -290,7 +290,7 @@ handlers() -> #{
 		},
 		filter_default => log,
 		filters => [
-			{n_wildcard, {fun logger_filters:level/2, {stop, gt, debug}}},
+			{n_wildcard, {fun logger_filters:level/2, {stop, lt, debug}}},
 			{n_http, {fun logger_filters:domain/2, {stop, sub, [arweave,http]}}}
 		]
 	},
