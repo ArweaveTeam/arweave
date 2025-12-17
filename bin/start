@@ -1,17 +1,232 @@
 #!/usr/bin/env bash
-set -e
+######################################################################
+# Arweave Heartbeat script, unrelated to heart(3erl). This script will
+# restart arweave in case of crash. 
+#
+# The epmd feature is a workaround to deal with a bug. When arweave
+# stops, in some case, an epmd session leaks and is still registered
+# in epmd. Two solutions: (1) wait for the timeout, but for some
+# reason it can take more than 24h (2) kill/restart epmd. This feature
+# is optional and can be activated by setting
+# ARWEAVE_EPMD_AUTO_RESTART environment variable.
+######################################################################
 SCRIPT_DIR=$(dirname ${0})
 ARWEAVE=${SCRIPT_DIR}/arweave
 
-while true; do
-    echo Launching Erlang Virtual Machine...
-    if ${ARWEAVE} foreground ${*}
-    then
-        echo "Arweave Heartbeat: Server terminated safely."
-        exit 0
-    else
-        echo "Arweave Heartbeat: The Arweave server has terminated. It will restart in 15 seconds."
-        echo "Arweave Heartbeat: If you would like to avoid this, press control+c to kill the server."
-        sleep 15
-    fi
+# set the default before restarting arweave
+ARWEAVE_RESTART_DELAY=${ARWEAVE_RESTART_DELAY:=15}
+
+# set the number of restart allowed.
+ARWEAVE_RESTART_LIMIT=${ARWEAVE_RESTART_LIMIT:=""}
+
+# set epmd auto restart. this is a workaround when arweave crash, an
+# epmd session can still be present (epmd session leak). If enabled,
+# a recovery/restart procedure is started automatically.
+ARWEAVE_EPMD_AUTO_RESTART=${ARWEAVE_EPMD_AUTO_RESTART:=""}
+
+# defines the method to restart method to use. At this time, only
+# kill and systemctl are supported. If systemctl is used, epmd service
+# must be called "epmd". If epmd is running with a different user,
+# systemctl will be called with sudo and the process' user.
+ARWEAVE_EPMD_RESTART_METHOD=${ARWEAVE_EPMD_RESTART_METHOD:="kill"}
+
+######################################################################
+# function helper to print arweave heartbeat messages.
+######################################################################
+_msg() {
+	printf -- 'Arweave Heartbeat: %s\n' "${*}"
+}
+
+######################################################################
+# print the signal name instead of its number and return it.
+######################################################################
+_signal_sys() {
+	local code="${1}"
+	local kill_code
+	if test ${code} -gt 127
+	then
+		kill_code=$((code-128))
+	else
+		kill_code=${code}
+	fi
+	case "${kill_code}" in
+		1) echo SIGHUP;;
+		2) echo SIGINT;;
+		3) echo SIGQUIT;;
+		4) echo SIGILL;;
+		5) echo SIGTRAP;;
+		6) echo SIGABRT;;
+		7) echo SIGBUS;;
+		9) echo SIGKILL;;
+		10) echo SIGUSR1;;
+		11) echo SIGSEGV;;
+		12) echo SIGUSR2;;
+		13) echo SIGPIPE;;
+		14) echo SIGALRM;;
+		15) echo SIGTERM;;
+		17) echo SIGCHLD;;
+		18) echo SIGSTOP;;
+		*) echo "UNKNOWN_${code}";;
+	esac
+	return ${code}
+}
+
+######################################################################
+# this function is a quick and dirty patch to deal with epmd
+# session leaks. When arweave is stopping, in some situation
+# epmd keeps its session. It can be annoying.
+######################################################################
+_epmd_restart() {
+	# only try to restart epmd if ARWEAVE_EPMD_AUTO_RESTART is set
+	# not everyone want to do that.
+	test "${ARWEAVE_EPMD_AUTO_RESTART}" || return 0
+	_msg "Start epmd restart procedure"
+
+	# check epmd program existance.
+	local epmd=$(which epmd)
+	test "${epmd}" || return 1
+	test -x "${epmd}" || return 1
+
+	# check how many arweave process is running, if
+	# there is more than one, there is a problem and epmd
+	# should not be restarted.
+	local instances=$(pgrep -f "${ARWEAVE}" | wc -l)
+	if test "${instances}" -gt 1
+	then
+		_msg "More than one arweave instance is running."
+		_msg "epmd can't be restarted, here the nodes:"
+		epmd -names
+		return 1
+	fi
+
+	# check if epmd daemon is started. If it's the case, then we
+	# extract some information (e.g. UID, GID, PPID)
+	local epmd_pid=$(pgrep epmd)
+	if ! test "${epmd_pid}"
+	then
+		_msg "epmd is not started, can't restart it."
+		return 1
+	fi
+	local epmd_pid_user=$(ps -houser -p ${epmd_pid} | xargs echo)
+	local epmd_pid_group=$(ps -hogroup -p ${epmd_pid} | xargs echo)
+	local epmd_pid_ppid=$(ps -hoppid -p ${epmd_pid} | xargs echo)
+
+	# extract epmd session in better format
+	local epmd_sessions=$(epmd -names \
+		| sed 1d \
+		| sed -E "s/name (.+) at port (.+)/\1:\2/")
+	local epmd_sessions_count=$(echo ${epmd_sessions} | wc -w)
+
+	# small epmd report
+	_msg "epmd (${epmd_pid})" \
+		"run as ${epmd_pid_user}:${epmd_pid_group}" \
+		"with ${epmd_sessions_count} sessions" \
+		"with ppid ${epmd_pid_ppid}."
+
+	# check if there is an epmd session leak,
+	# an arweave existing session should not be present.
+	# only work if node's name is "arweave".
+	${epmd} -names | awk 'BEGIN{f=0} $1~/name/ && $2~/arweave/{f=1} END{exit f}'
+	epmd_session_leak="$?"
+	if test "${epmd_session_leak}" -eq 1
+	then
+		local ret=1
+
+		# kill method used. only called if epmd's user is the same
+		# than the one used by this script.
+		if test "${ARWEAVE_EPMD_RESTART_METHOD}" = "kill" \
+			&& test "${epmd_pid_user}" = "${USER}"
+		then
+			kill ${epmd_pid}
+			ret=${?}
+		fi
+
+		# systemctl method used. invoke systemctl to restart epmd.
+		if test "${ARWEAVE_EPMD_RESTART_METHOD}" = "systemctl" \
+			&& test "${epmd_pid_user}" = "${USER}"
+		then
+			systemctl restart epmd
+			ret=${?}
+		fi
+
+		# systemctl method (sudo) used. invoke systemctl with
+		# sudo and the pid's user.
+		if test "${ARWEAVE_EPMD_RESTART_METHOD}" = "systemctl" \
+			&& test "${epmd_pid_user}" != "${USER}"
+		then
+			sudo -u "${epmd_pid_user}" systemctl restart epmd
+			ret=${?}
+		fi
+
+		# if no methods are available, and the user's pid is
+		# not our, then we stop.
+		if test "${epmd_pid_user}" != "${USER}" \
+			&& test "${ret}" != 0
+		then
+			_msg "epmd can't be restarted (uid:${epmd_pid_user})."
+			ret=${ret}
+		fi
+
+		if test "${ret}" -ne 0
+		then
+			_msg "epmd (${epmd_pid}) restart failed."
+			ret=${ret}
+		fi
+
+		return "${ret}"
+	fi
+	return 0
+}
+
+######################################################################
+# main script
+######################################################################
+restart_counter=0
+while true
+do
+	# check for epmd presence (if the feature is enabled)
+	_epmd_restart
+
+	# we would like to avoid restarting arweave too much
+	if test "${ARWEAVE_RESTART_LIMIT}" \
+		&& test "${restart_counter}" -gt "${ARWEAVE_RESTART_LIMIT}"
+	then
+		_msg "Number of restart reached: ${restart_counter}."
+		_msg "Arweave will not be restarted."
+		_msg "Please check the system."
+		exit 1
+	fi
+
+	# start arweave
+	_msg "Launching Erlang Virtual Machine..."
+	${ARWEAVE} foreground ${*}
+	ret="${?}"
+
+	# arweave terminated normally (0).
+	if test "${ret}" -eq 0
+	then
+       		_msg "Server terminated safely."
+       		exit 0
+	fi
+
+	# arweave terminated with an error code, it needs to be
+	# restarted.
+	if test "${ret}" -le 127
+	then
+        	_msg "The Arweave server has terminated with an error code (${ret})." 
+	fi
+
+	# arweave terminated with a signal from the system or another
+	# process, it could be an OOM. In this case, we need to
+	# restart epmd and ensure everything is fine.
+	if test "${ret}" -gt 127
+	then
+		signal=$(_signal_sys ${ret})
+		_msg "The Arweave server has been terminated by the system (${signal})."
+	fi
+
+	_msg "It will restart in ${ARWEAVE_RESTART_DELAY} seconds."
+       	_msg "If you would like to avoid this, press control+c to kill the server."
+        sleep "${ARWEAVE_RESTART_DELAY}"
+	restart_counter=$((restart_counter+1))
 done
