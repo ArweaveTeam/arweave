@@ -1774,7 +1774,8 @@ do_sync_intervals(State) ->
 			State;
 		false ->
 			gen_server:cast(self(), sync_intervals),
-			{{Start, End, Peer, FootprintKey}, Q2} = gb_sets:take_smallest(Q),
+			{{FootprintKey, Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
+			?LOG_DEBUG([{event, sync_intervals}, {s, Start}, {e, End}, {peer, ar_util:format_peer(Peer)}, {footprint_key, FootprintKey}]),
 			I2 = ar_intervals:delete(QIntervals, End, Start),
 			gen_server:cast(ar_data_sync_worker_master,
 					{sync_range, {Start, End, Peer, StoreID, FootprintKey}}),
@@ -2919,7 +2920,7 @@ enqueue_peer_range(Peer, FootprintKey, RangeStart, RangeEnd, ChunkOffsets, {Q, Q
 	Q2 = lists:foldl(
 		fun(ChunkStart, QAcc) ->
 			gb_sets:add_element(
-				{ChunkStart, min(ChunkStart + ?DATA_CHUNK_SIZE, RangeEnd), Peer, FootprintKey},
+				{FootprintKey, ChunkStart, min(ChunkStart + ?DATA_CHUNK_SIZE, RangeEnd), Peer},
 				QAcc)
 		end,
 		Q,
