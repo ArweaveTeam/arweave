@@ -539,6 +539,56 @@ register() ->
 	]),
 
 	%% ---------------------------------------------------------------------------------------
+	%% ar_limiter related metrics
+	%% ---------------------------------------------------------------------------------------
+    	prometheus_histogram:new([
+			{name, ar_limiter_response_time_milliseconds},
+			{help, "Time it took for the limiter to respond to requests"},
+			{buckets, [infinity]}, %% For meaningful results on this, we need buckets
+			{labels, [limiter_id]} ]),
+
+    	prometheus_counter:new([
+			{name, ar_limiter_requests_total},
+			{help, "The number of requests the limiter has processed"},
+			{labels, [limiter_id]}]),
+    	prometheus_counter:new([{name, ar_limiter_rejected_total},
+			{help, "The number of request were rejected by the limiter"},
+			{labels, [limiter_id, reason]}
+			]),
+    	prometheus_gauge:new([
+			{name, ar_limiter_concurrent_requests},
+			{help, "The number of concurrent handlers the limiter is monitoring currently"},
+			{labels, [limiter_id]}]),
+    	prometheus_gauge:new([
+			{name, ar_limiter_peers},
+			{help, "The number of peers the limiter is monitoring currently"},
+			%% limiting type:
+			%% sliding_window -> baseline, leaky_bucket -> burst, concurrency -> concurrency
+			{labels, [limiter_id, limiting_type]}]),
+    	prometheus_gauge:new([
+			{name, ar_limiter_tracked_items_total},
+			{help, "The number of timestamps, leaky tokens, concurrent processes are tracked"},
+			%% limiting type:
+			%% sliding_window -> baseline, leaky_bucket -> burst, concurrency -> concurrency
+			{labels, [limiter_id, limiting_type]}]),
+    	prometheus_counter:new([
+			{name, ar_limiter_leaky_ticks},
+			{help, "The number of leaky bucket ticks the limiter has processed"},
+			{labels, [limiter_id]}]),
+    	prometheus_counter:new([
+			{name, ar_limiter_leaky_tick_delete_peer_total},
+			{help, "The number of times a peer has been dropped from the leaky bucket token register"},
+			{labels, [limiter_id]}]),
+    	prometheus_counter:new([
+			{name, ar_limiter_leaky_tick_reductions_total},
+			{help, "The total leaky bucket token reductions the limiter has done"},
+			{labels, [limiter_id]}]),
+    	prometheus_counter:new([
+			{name, ar_limiter_leaky_tick_reductions_peer},
+			{help, "The times a leaky bucket token reduction had have to be performed"},
+			{labels, [limiter_id]}]),
+
+	%% ---------------------------------------------------------------------------------------
 	%% Debug-only metrics
 	%% ---------------------------------------------------------------------------------------
 	prometheus_counter:new([{name, process_functions},
