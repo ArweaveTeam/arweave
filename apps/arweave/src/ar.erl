@@ -1185,6 +1185,9 @@ start(normal, _Args) ->
 	%% Configure logger
 	ar_logger:init(Config),
 
+	?LOG_INFO("========== Starting Arweave Node  =========="),
+	ar_config:log_config(Config),
+
 	%% Start the Prometheus metrics subsystem.
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
@@ -1322,9 +1325,6 @@ stop_dependencies() ->
 	lists:foreach(fun(Dep) -> application:stop(Dep) end, Deps).
 
 start_dependencies() ->
-	?LOG_INFO("========== Starting Arweave Node  =========="),
-	{ok, Config} = arweave_config:get_env(),
-	ar_config:log_config(Config),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	ok.
 
