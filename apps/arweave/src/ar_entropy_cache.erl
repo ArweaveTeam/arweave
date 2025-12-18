@@ -1,17 +1,10 @@
 -module(ar_entropy_cache).
 
--behaviour(gen_server).
-
--export([start_link/0]).
--export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
-
 -export([get/1, clean_up_space/2, put/3, total_size/0]).
 
 -include("ar.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
-
--record(state, {}).
 
 %%%===================================================================
 %%% Public interface.
@@ -31,7 +24,9 @@ get(Key) ->
 		MaxSize :: non_neg_integer()
 ) -> ok.
 clean_up_space(Size, MaxSize) ->
-	gen_server:cast(?MODULE, {clean_up_space, Size, MaxSize}).
+	Table = ar_entropy_cache,
+	OrderedKeyTable = ar_entropy_cache_ordered_keys,
+	clean_up_space(Size, MaxSize, Table, OrderedKeyTable).
 
 %% @doc Store the given Value in the cache. Associate it with the given Size and
 %% increase the total cache size accordingly.
@@ -41,52 +36,15 @@ clean_up_space(Size, MaxSize) ->
 		Size :: non_neg_integer()
 ) -> ok.
 put(Key, Value, Size) ->
-	gen_server:cast(?MODULE, {put, Key, Value, Size}).
-
-%% @doc Start the server.
-start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+	Table = ar_entropy_cache,
+	OrderedKeyTable = ar_entropy_cache_ordered_keys,
+	put(Key, Value, Size, Table, OrderedKeyTable).
 
 %% @doc Return the size of the cache.
 -spec total_size() -> non_neg_integer().
 total_size() ->
 	Table = ar_entropy_cache,
 	total_size(Table).
-
-%%%===================================================================
-%%% Generic server callbacks.
-%%%===================================================================
-
-init([]) ->
-	{ok, #state{}}.
-
-handle_call(Request, _From, State) ->
-	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
-	{reply, ok, State}.
-
-handle_cast({clean_up_space, Size, MaxSize}, State) ->
-	Table = ar_entropy_cache,
-	OrderedKeyTable = ar_entropy_cache_ordered_keys,
-	clean_up_space(Size, MaxSize, Table, OrderedKeyTable),
-	{noreply, State};
-
-handle_cast({put, Key, Value, Size}, State) ->
-	Table = ar_entropy_cache,
-	OrderedKeyTable = ar_entropy_cache_ordered_keys,
-	put(Key, Value, Size, Table, OrderedKeyTable),
-	{noreply, State};
-
-handle_cast(Cast, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
-	{noreply, State}.
-
-handle_info(_Message, State) ->
-	{noreply, State}.
-
-terminate(Reason, _State) ->
-	?LOG_INFO([{event, terminate}, {module, ?MODULE},
-			{reason, io_lib:format("~p", [Reason])}]),
-	ok.
 
 %%%===================================================================
 %%% Private functions.
@@ -125,6 +83,12 @@ clean_up_space(Size, MaxSize, Table, OrderedKeyTable) ->
 					ets:delete(OrderedKeyTable, EarliestKey),
 					FetchedKeyCount = get_fetched_key_count(Table, Key),
 					ets:delete(Table, {fetched_key_count, Key}),
+					?LOG_DEBUG([{event, clean_up_entropy_cache},
+							{key, ar_util:encode(Key)},
+							{total_size, TotalSize},
+							{max_size, MaxSize},
+							{released_size, ElementSize},
+							{fetched_key_count, FetchedKeyCount}]),
 					clean_up_space(Size, MaxSize, Table, OrderedKeyTable)
 			end;
 		false ->
