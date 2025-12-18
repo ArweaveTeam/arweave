@@ -778,9 +778,9 @@ test_footprint_queue_limit() ->
 	Peer1 = {1, 2, 3, 4, 1984},
 	Peer2 = {5, 6, 7, 8, 1985},
 	StoreID1 = ar_storage_module:id({ar_block:partition_size(), 1, default}),
-	FootprintKey1 = {Peer1, 0, 1},
-	FootprintKey2 = {Peer2, 0, 2},
-	FootprintKey3 = {Peer1, 0, 3},
+	FootprintKey1 = {0, 1, Peer1},
+	FootprintKey2 = {0, 2, Peer2},
+	FootprintKey3 = {0, 3, Peer1},
 	State0 = #state{ max_footprints = 2 },
 	
 	%% Add tasks for first two footprints - should be enqueued directly to peer queues
@@ -812,9 +812,9 @@ test_footprint_queue_limit() ->
 test_footprint_queue_completion() ->
 	Peer1 = {1, 2, 3, 4, 1984},
 	StoreID1 = ar_storage_module:id({ar_block:partition_size(), 1, default}),
-	FootprintKey1 = {Peer1, 0, 1},
-	FootprintKey2 = {Peer1, 0, 2},
-	FootprintKey3 = {Peer1, 0, 3},
+	FootprintKey1 = {0, 1, Peer1},
+	FootprintKey2 = {0, 2, Peer1},
+	FootprintKey3 = {0, 3, Peer1},
 	State0 = #state{ max_footprints = 2 },
 	
 	%% Fill up with two footprints and queue a third

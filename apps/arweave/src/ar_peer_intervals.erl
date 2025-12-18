@@ -380,8 +380,7 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 								{byte_intervals, ar_intervals:sum(ByteIntervals)},
 								{byte_intervals2, ar_intervals:sum(ByteIntervals2)},
 								{byte_intervals3, ar_intervals:sum(ByteIntervals3)}]),
-							%% FootprintKey = {Peer, Partition, Footprint} for footprint syncing
-							FootprintKey = {Peer, Partition, Footprint},
+							FootprintKey = {Partition, Footprint, Peer},
 							[{Peer, ByteIntervals3, FootprintKey} | IntervalsAcc]
 					end;
 				(ok, Acc) ->
