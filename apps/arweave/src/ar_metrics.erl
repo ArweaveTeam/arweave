@@ -580,12 +580,14 @@ register() ->
 			{help, "The number of times a peer has been dropped from the leaky bucket token register"},
 			{labels, [limiter_id]}]),
     	prometheus_counter:new([
-			{name, ar_limiter_leaky_tick_reductions_total},
-			{help, "The total leaky bucket token reductions the limiter has done"},
+			%% To show how much tokens clients are burning for bursts.
+			{name, ar_limiter_leaky_tick_token_reductions_total},
+			{help, "All the consumed leaky bucket tokens that were reduced for all peers in total"},
 			{labels, [limiter_id]}]),
     	prometheus_counter:new([
+			%% To see how many peers bite into their burst tokens. (in a period)
 			{name, ar_limiter_leaky_tick_reductions_peer},
-			{help, "The times a leaky bucket token reduction had have to be performed"},
+			{help, "The times a leaky bucket token reduction had have to be performed for a peer"},
 			{labels, [limiter_id]}]),
 
 	%% ---------------------------------------------------------------------------------------

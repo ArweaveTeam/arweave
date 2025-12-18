@@ -57,11 +57,22 @@ register_or_reject_call(LimiterRef, Peer) ->
     %% If inaccuraccy due to providing the timestamp from the caller process
     %% or performance becomes an issue, we'll change this. For now, testability
     %% is more important.
+    %% NOTE: UNIT tests now showed this inaccuracy, and timestamps processed
+    %%       by the server out of order.
     Now = erlang:monotonic_time(millisecond),
     register_or_reject_call(LimiterRef, Peer, Now).
 
 register_or_reject_call(LimiterRef, Peer, Now) ->
-    gen_server:call(LimiterRef, {register_or_reject, Peer, Now}).
+    prometheus_counter:inc(ar_limiter_requests_total,
+                           [atom_to_list(LimiterRef)]),
+    case gen_server:call(LimiterRef, {register_or_reject, Peer, Now}) of
+        {reject, Reason, _Data} = Rejection ->
+            prometheus_counter:inc(ar_limiter_rejected_total,
+                                   [atom_to_list(LimiterRef), atom_to_list(Reason)]),
+            Rejection;
+        Accept ->
+            Accept
+    end.
 
 stop(LimiterRef) ->
     gen_server:stop(LimiterRef).
@@ -70,6 +81,7 @@ stop(LimiterRef) ->
 %% gen_server callbacks
 init([Args]) ->
     process_flag(trap_exit, true),
+    Id = maps:get(id, Args),
     TickMs = maps:get(tick_interval_ms, Args, ?DEFAULT_TICK_INTERVAL_MS),
     LeakyRateLimit = maps:get(leaky_rate_limit, Args, ?DEFAULT_LEAKY_RATE_LIMIT),
     ConcurrencyLimit = maps:get(concurrency_limit, Args, ?DEFAULT_CONCURRENCY_LIMIT),
@@ -79,6 +91,7 @@ init([Args]) ->
 
     {ok, Ref} = timer:send_interval(TickMs, self(), {tick, rate_limit}),
     {ok, #{
+           id => atom_to_list(Id),
            timer_ref => Ref,
            tick_ms => TickMs,
            tick_reduction => TickReduction,
@@ -158,11 +171,17 @@ handle_cast(_Request, State) ->
     {noreply, State}.
 
 handle_info({tick, rate_limit},
-            State = #{tick_reduction := TickReduction, leaky_tokens := LeakyTokens}) ->
+            State = #{id := Id, tick_reduction := TickReduction, leaky_tokens := LeakyTokens}) ->
+    prometheus_counter:inc(ar_limiter_leaky_ticks, [Id]),
+    %% This is going to be more precise than ar_limiter_leaky_ticks*ar_limiter_peers
+    SizeBefore = maps:size(LeakyTokens),
+    prometheus_counter:inc(ar_limiter_leaky_tick_reductions_peer, [Id], SizeBefore),
     NewTokens =
         maps:fold(fun(Key, Value, AccIn) ->
-                          fold_decrease_rate(Key, Value, AccIn, TickReduction)
+                          fold_decrease_rate(Id, Key, Value, AccIn, TickReduction)
                   end, #{}, LeakyTokens),
+    prometheus_counter:inc(
+      ar_limiter_leaky_tick_delete_peer_total, [Id], SizeBefore - maps:size(NewTokens)),
     {noreply, State#{leaky_tokens => NewTokens}};
 handle_info({'DOWN', MonitorRef, process, Pid, Reason},
             State = #{concurrent_requests := ConcurrentRequests,
@@ -211,11 +230,15 @@ do_add_and_order_timestamps(Ts, [Head | Rest])  ->
 update_token(Peer, Token, LeakyToken) ->
     maps:put(Peer, Token, LeakyToken).
 
-fold_decrease_rate(_Key, Counter, Acc, _TickReduction)
+fold_decrease_rate(_Id, _Key, Counter, Acc, _TickReduction)
   when is_integer(Counter), Counter =< 0 ->
     Acc;
-fold_decrease_rate(Key, Counter, Acc, TickReduction) ->
-    maps:put(Key, Counter - TickReduction, Acc).
+fold_decrease_rate(Id, Key, Counter, Acc, TickReduction) when Counter < TickReduction ->
+    prometheus_counter:inc(ar_limiter_leaky_tick_reductions_peer, [Id], Counter),
+    maps:put(Key, 0, Acc);
+fold_decrease_rate(Id, Key, Counter, Acc, TickReduction) ->
+    prometheus_counter:inc(ar_limiter_leaky_tick_reductions_peer, [Id], TickReduction),
+    maps:put(Key, Counter-TickReduction, Acc).
 
 %% Concurrency magic
 register_concurrent(Peer, Pid, ConcurrentRequests, ConcurrentMonitors) ->

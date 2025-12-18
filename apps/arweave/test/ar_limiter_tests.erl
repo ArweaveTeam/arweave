@@ -38,21 +38,30 @@ add_and_order_test() ->
     ?assertEqual([5,7,8], ?M:add_and_order_timestamps(5, [7,8])),
     ok.
 
+do_setup(Config) ->
+    meck:new(prometheus_counter, []),
+    meck:expect(prometheus_counter, inc, 2, ok),
+    meck:expect(prometheus_counter, inc, 3, ok),
+    {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER, Config),
+    LimiterPid.
+
+cleanup(_LimiterPid) ->
+    meck:unload(prometheus_counter),
+    ?M:stop(?TEST_LIMITER).
+
 rate_limiter_happy_path_0_leaky_tokens_test_() ->
     {setup,
      fun() ->
-             {ok, _LimiterPid} = ?M:start_link(?TEST_LIMITER,
-                                               #{leaky_rate_limit => 0,
-                                                 concurrency_limit => 5,
-                                                 sliding_window_limit => 2,
-                                                 sliding_window_duration => 1000,
-                                                 tick_interval_ms => 100000})
+             %% Start with 0 leaky_rate, reject when sliding window is exhausted.
+             do_setup(#{id => ?TEST_LIMITER,
+                        leaky_rate_limit => 0,
+                        concurrency_limit => 5,
+                        sliding_window_limit => 2,
+                        sliding_window_duration => 1000,
+                        tick_interval_ms => 100000})
      end,
-     fun(_) ->
-             ?M:stop(?TEST_LIMITER)
-     end,
+     fun cleanup/1,
      [fun() ->
-              %% Start with 0 leaky_rate, reject when sliding window is exhausted.
               IP = {1,2,3,4},
 
               Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 1),
@@ -96,26 +105,19 @@ rate_limiter_happy_path_0_sliding_window_test_() ->
     {
      setup,
      fun() ->
-             %% Start with low limits, and extremely high interval, so we can control
-             %% ticks manually in the test.
-             %% Sliding window limit is 0, so we test the extremes.
-             {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER,
-                                              #{leaky_rate_limit => 5,
-                                                concurrency_limit => 2,
-                                                sliding_window_limit => 0,
-                                                tick_interval_ms => 100000}),
-             LimiterPid
+            do_setup(#{id => ?TEST_LIMITER,
+                       leaky_rate_limit => 5,
+                       concurrency_limit => 2,
+                       sliding_window_limit => 0,
+                       tick_interval_ms => 100000})
      end,
-     fun(_LimiterPid) ->
-             %% stop the service
-             ?M:stop(?TEST_LIMITER)
-     end,
+     fun cleanup/1,
      fun(LimiterPid) ->
              [fun() ->
-                      %% init state, the ip is not blocked
                       IP = {1,2,3,4},
-
+                      %% init state, the ip is not blocked
                       Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
+                      timer:sleep(20),
                       Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
 
                       %% wait a bit so they are surely started.
@@ -168,28 +170,22 @@ rate_limiter_rejected_due_concurrency_test_() ->
     {
      setup,
      fun() ->
-             %% Start with low limits, and extremely high interval, so we can control
-             %% ticks manually in the test.
-             %% Sliding window limit is 0, so we test the extremes.
-             {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER,
-                                              #{leaky_rate_limit=> 5,
-                                                concurrency_limit => 2,
-                                                sliding_window_limit => 0,
-                                                tick_interval_ms => 100000}),
-             LimiterPid
+             do_setup(#{id => ?TEST_LIMITER,
+                        leaky_rate_limit=> 5,
+                        concurrency_limit => 2,
+                        sliding_window_limit => 0,
+                        tick_interval_ms => 100000})
      end,
-     fun(_LimiterPid) ->
-             %% stop the service
-             ?M:stop(?TEST_LIMITER)
-     end,
+     fun cleanup/1,
      fun(LimiterPid) ->
              [fun() ->
-
                       %% init state, the ip is not blocked
                       IP = {1,2,3,4},
 
                       Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
+                      timer:sleep(20),
                       Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
+                      timer:sleep(20),
                       Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {reject, concurrency, _Data}, IP, 0),
 
                       %% wait a bit so they are surely started.
@@ -251,27 +247,22 @@ rate_limiter_rejected_due_leaky_rate_test_() ->
     {
      setup,
      fun() ->
-             %% Start with low limits, and extremely high interval, so we can control
-             %% ticks manually in the test.
-             %% Sliding window limit is 0, so we test the extremes.
-             {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER,
-                                                   #{leaky_rate_limit=> 2,
-                                                     concurrency_limit => 5,
-                                                     sliding_window_limit => 0,
-                                                     tick_interval_ms => 100000}),
-             LimiterPid
+             do_setup(#{id => ?TEST_LIMITER,
+                        leaky_rate_limit => 2,
+                        concurrency_limit => 5,
+                        sliding_window_limit => 0,
+                        tick_interval_ms => 100000})
      end,
-     fun(_LimiterPid) ->
-             %% stop the service
-             ?M:stop(?TEST_LIMITER)
-     end,
+     fun cleanup/1,
      fun(LimiterPid) ->
              [fun() ->
                       %% init state, the ip is not blocked
                       IP = {1,2,3,4},
 
                       Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
+                      timer:sleep(20),
                       Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
+                      timer:sleep(20),
                       Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {reject, rate_limit, _Data}, IP, 0),
 
                       %% wait a bit so they are surely started.
@@ -312,7 +303,7 @@ rate_limiter_rejected_due_leaky_rate_test_() ->
                       Caller2 ! done,
                       Caller3 ! done,
                       Caller4 ! done,
-                      
+
                       LimiterPid ! {tick, rate_limit},
                       %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
                       LimiterPid ! {tick, rate_limit},
@@ -332,20 +323,13 @@ rate_limiter_exhaust_both_sliding_window_and_leaky_bucket_test_() ->
     {
      setup,
      fun() ->
-             %% Start with low limits, and extremely high interval, so we can control
-             %% ticks manually in the test.
-             %% Sliding window limit is 0, so we test the extremes.
-             {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER,
-                                                   #{leaky_rate_limit=> 1,
-                                                     concurrency_limit => 10,
-                                                     sliding_window_limit => 1,
-                                                     tick_interval_ms => 100000}),
-             LimiterPid
+             do_setup(#{id => ?TEST_LIMITER,
+                        leaky_rate_limit=> 1,
+                        concurrency_limit => 10,
+                        sliding_window_limit => 1,
+                        tick_interval_ms => 100000})
      end,
-     fun(_LimiterPid) ->
-             %% stop the service
-             ?M:stop(?TEST_LIMITER)
-     end,
+     fun cleanup/1,
      fun(LimiterPid) ->
              [fun() ->
                       %% init state, the ip is not blocked
@@ -393,7 +377,7 @@ rate_limiter_exhaust_both_sliding_window_and_leaky_bucket_test_() ->
                         leaky_tokens := LeakyTokens} = ?M:info(?TEST_LIMITER),
                       ?assertEqual(0, maps:size(ConcurrentReqs)),
                       ?assertMatch(0, maps:size(LeakyTokens)),
-                      
+
                       ok
               end]
      end}.
