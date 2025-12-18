@@ -25,6 +25,5 @@ init([]) ->
 	ets:new(ar_entropy_cache_ordered_keys, [ordered_set, public, named_table]),
 
 	{ok, {{one_for_one, 5, 10}, [
-		?CHILD(ar_packing_server, worker),
-		?CHILD(ar_entropy_cache, worker)
+		?CHILD(ar_packing_server, worker)
 	]}}.
