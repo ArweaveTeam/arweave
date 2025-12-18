@@ -160,12 +160,19 @@ generate_entropies(StoreID, RewardAddr, BucketEndOffset, ReplyTo) ->
 	gen_server:cast(name(StoreID), {generate_entropies, RewardAddr, BucketEndOffset, ReplyTo}).
 
 -spec generate_entropies(RewardAddr :: ar_wallet:address(),
-	BucketEndOffset :: non_neg_integer()) ->
-	   [binary()] | {error, term()}.
+						 BucketEndOffset :: non_neg_integer()) ->
+	   						[binary()] | {error, term()}.
 generate_entropies(RewardAddr, BucketEndOffset) ->
+	generate_entropies(RewardAddr, BucketEndOffset, true).
+
+-spec generate_entropies(RewardAddr :: ar_wallet:address(),
+	BucketEndOffset :: non_neg_integer(),
+	CacheEntropy :: boolean()) ->
+	   [binary()] | {error, term()}.
+generate_entropies(RewardAddr, BucketEndOffset, CacheEntropy) ->
 	prometheus_histogram:observe_duration(replica_2_9_entropy_duration_milliseconds, [], 
 		fun() ->
-			do_generate_entropies(RewardAddr, BucketEndOffset)
+			do_generate_entropies(RewardAddr, BucketEndOffset, CacheEntropy)
 		end).
 
 map_entropies(_Entropies,
@@ -373,7 +380,7 @@ do_prepare_entropy(State) ->
 				is_recorded;
 			false ->
 				%% Get all the entropies needed to encipher the chunk at BucketEndOffset.
-				Entropies = generate_entropies(RewardAddr, BucketEndOffset),
+				Entropies = generate_entropies(RewardAddr, BucketEndOffset, false),
 				case Entropies of
 					{error, Reason} ->
 						{error, Reason};
@@ -416,14 +423,14 @@ do_prepare_entropy(State) ->
 
 
 
-do_generate_entropies(RewardAddr, BucketEndOffset) ->
+do_generate_entropies(RewardAddr, BucketEndOffset, CacheEntropy) ->
 	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
 	EntropyTasks =
 		lists:map(
 			fun(Offset) ->
 				Ref = make_ref(),
 				ar_packing_server:request_entropy_generation(
-					Ref, self(), {RewardAddr, BucketEndOffset, Offset}),
+					Ref, self(), {RewardAddr, BucketEndOffset, Offset, CacheEntropy}),
 				Ref
 			end,
 			lists:seq(0, ?DATA_CHUNK_SIZE - SubChunkSize, SubChunkSize)),

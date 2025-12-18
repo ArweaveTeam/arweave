@@ -8,7 +8,7 @@
 		pack/4, unpack/5, repack/6, unpack_sub_chunk/5,
 		is_buffer_full/0, record_buffer_size_metric/0,
 		pad_chunk/1, unpad_chunk/3, unpad_chunk/4,
-		generate_replica_2_9_entropy/3, encipher_replica_2_9_chunk/2, decipher_replica_2_9_chunk/2, 
+		encipher_replica_2_9_chunk/2, decipher_replica_2_9_chunk/2, 
 		exor_replica_2_9_chunk/2, pack_replica_2_9_chunk/3, request_entropy_generation/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -64,9 +64,11 @@ request_decipher(Ref, ReplyTo, {Chunk, Entropy}) ->
 	ar_util:cast_after(600000, ReplyTo, {expire_decipher_request, Ref}),
 	gen_server:cast(?MODULE, {decipher_request, ReplyTo, Ref, {Chunk, Entropy}}).
 
-request_entropy_generation(Ref, ReplyTo, {RewardAddr, BucketEndOffset, SubChunkStart}) ->
+request_entropy_generation(
+		Ref, ReplyTo, {RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}) ->
 	gen_server:cast(?MODULE,
-		{generate_entropy, ReplyTo, Ref, {RewardAddr, BucketEndOffset, SubChunkStart}}).
+		{generate_entropy, ReplyTo, Ref,
+			{RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}}).
 
 %% @doc Pack the chunk for mining. Packing ensures every mined chunk of data is globally
 %% unique and cannot be easily inferred during mining from any metadata stored in RAM.
@@ -125,7 +127,8 @@ unpack_sub_chunk({replica_2_9, RewardAddr} = Packing,
 		true ->
 			PackingState = get_packing_state(),
 			record_packing_request(unpack_sub_chunk, not_set, Packing),
-			Entropy = generate_replica_2_9_entropy(RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
+			Entropy = generate_replica_2_9_entropy(
+				RewardAddr, AbsoluteEndOffset, SubChunkStartOffset),
 			RandomXState = get_randomx_state_by_packing(Packing, PackingState),
 			EntropySubChunkIndex = ar_replica_2_9:get_slice_index(AbsoluteEndOffset),
 			case prometheus_histogram:observe_duration(packing_duration_milliseconds,
@@ -251,8 +254,19 @@ decipher_replica_2_9_chunk(Chunk, Entropy) ->
 		SubChunkStartOffset :: non_neg_integer()
 ) -> binary().
 generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) ->
+	generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, true).
+
+-spec generate_replica_2_9_entropy(
+		RewardAddr :: binary(),
+		BucketEndOffset :: non_neg_integer(),
+		SubChunkStartOffset :: non_neg_integer(),
+		CacheEntropy :: boolean()
+) -> binary().
+generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, false) ->
 	Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
-	Footprint = ar_footprint_record:get_footprint(BucketEndOffset),
+	do_generate_entropy(RewardAddr, Key);
+generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, true) ->
+	Key = ar_replica_2_9:get_entropy_key(RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	Partition = ar_node:get_partition_number(BucketEndOffset),
 
 	entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
@@ -263,21 +277,23 @@ generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset) -
 			Entropy;
 		not_found ->
 			prometheus_counter:inc(replica_2_9_entropy_stats, [Partition, cache_miss]),
-			PackingState = get_packing_state(),
-			RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
-			{ok, Config} = arweave_config:get_env(),
-
-			Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
+			Entropy = do_generate_entropy(RewardAddr, Key),
 			update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
+			{ok, Config} = arweave_config:get_env(),
 			MaxSize = Config#config.replica_2_9_entropy_cache_size_mb * ?MiB,
 			ar_entropy_cache:clean_up_space(?REPLICA_2_9_ENTROPY_SIZE, MaxSize),
 			ar_entropy_cache:put(Key, Entropy, ?REPLICA_2_9_ENTROPY_SIZE),
 			entropy_generation_release(Key),
-
-			%% Primarily needed for testing where the entropy generated exceeds the entropy
-			%% needed for tests.
-			binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE)
+			Entropy
 	end.
+
+do_generate_entropy(RewardAddr, Key) ->
+	PackingState = get_packing_state(),
+	RandomXState = get_randomx_state_by_packing({replica_2_9, RewardAddr}, PackingState),
+	Entropy = ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key),
+	%% Primarily needed for testing where the entropy generated exceeds the entropy
+	%% needed for tests.
+	binary_part(Entropy, 0, ?REPLICA_2_9_ENTROPY_SIZE).
 
 %% @doc Pad (to ?DATA_CHUNK_SIZE) and pack the chunk according to the 2.9 replication format.
 %% Return the chunk and the combined entropy used on that chunk.
@@ -393,11 +409,12 @@ handle_cast({decipher_request, From, Ref, {Chunk, Entropy}}, State) ->
 	{{value, Worker}, Workers2} = queue:out(Workers),
 	Worker ! {decipher, Ref, From, {Chunk, Entropy}},
 	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
-handle_cast(
-		{generate_entropy, From, Ref, {RewardAddr, BucketEndOffset, SubChunkStart}}, State) ->
+handle_cast({generate_entropy, From, Ref,
+		{RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}}, State) ->
 	#state{ workers = Workers } = State,
 	{{value, Worker}, Workers2} = queue:out(Workers),
-	Worker ! {generate_entropy, Ref, From, {RewardAddr, BucketEndOffset, SubChunkStart}},
+	Worker ! {generate_entropy, Ref, From,
+		{RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}},
 	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -502,9 +519,9 @@ worker(PackingState) ->
 			UnpackedChunk = decipher_replica_2_9_chunk(Chunk, Entropy),
 			From ! {chunk, {deciphered, Ref, UnpackedChunk}},
 			worker(PackingState);
-		{generate_entropy, Ref, From, {RewardAddr, BucketEndOffset, SubChunkStart}} ->
-			Entropy = ar_packing_server:generate_replica_2_9_entropy(
-				RewardAddr, BucketEndOffset, SubChunkStart),
+		{generate_entropy, Ref, From, {RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}} ->
+			Entropy = generate_replica_2_9_entropy(
+				RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy),
 			From ! {entropy_generated, Ref, Entropy},
 			worker(PackingState)
 	end.
@@ -911,6 +928,11 @@ update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartO
 	Time = erlang:monotonic_time(millisecond),
 	ets:update_counter(Tab, Key, {2, 1}, {Key, 0, Time}),
 	prometheus_counter:inc(replica_2_9_entropy_generated, ?REPLICA_2_9_ENTROPY_SIZE),
+	?LOG_DEBUG([{event, entropy_generation},
+		{key, ar_util:encode(Key)},
+		{reward_addr, ar_util:encode(RewardAddr)},
+		{bucket_end_offset, BucketEndOffset},
+		{sub_chunk_start_offset, SubChunkStartOffset}]),
 	maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	remove_outdated_entropy_generation_stats().
 
@@ -922,7 +944,7 @@ maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubC
 		true ->
 			Partition = ar_node:get_partition_number(BucketEndOffset),
 			prometheus_counter:inc(replica_2_9_entropy_stats, [Partition, redundant]),
-			?LOG_WARNING([{event, possibly_redundant_entropy_generation},
+			?LOG_DEBUG([{event, possibly_redundant_entropy_generation},
 					{reward_addr, ar_util:encode(RewardAddr)},
 					{key, ar_util:encode(Key)},
 					{bucket_end_offset, BucketEndOffset},
