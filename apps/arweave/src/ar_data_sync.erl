@@ -3147,9 +3147,9 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 		{false, true} ->
 			case put_chunk_data(ChunkDataKey, StoreID, {Chunk, DataPath}) of
 				ok ->
-					PackingLabel = ar_storage_module:packing_label(Packing),
-					StoreIDLabel = ar_storage_module:label(StoreID),
-					prometheus_counter:inc(chunks_stored, [PackingLabel, StoreIDLabel]),
+					prometheus_counter:inc(chunks_stored, [
+						ar_storage_module:packing_label(Packing),
+						ar_storage_module:label(StoreID)]),
 					{ok, Packing};
 				Error -> Error
 			end;

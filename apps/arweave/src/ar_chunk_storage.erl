@@ -522,7 +522,6 @@ record_chunk(
 		PaddedEndOffset, Chunk, Packing, StoreID, FileIndex) ->
 	case write_chunk(PaddedEndOffset, Chunk, FileIndex, StoreID) of
 		{ok, Filepath} ->
-
 			prometheus_counter:inc(chunks_stored,
 				[ar_storage_module:packing_label(Packing), ar_storage_module:label(StoreID)]),
 			case ar_sync_record:add(
