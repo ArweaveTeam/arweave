@@ -20,6 +20,13 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3, format_status/2]).
 
+-ifdef(TEST).
+-export([register_or_reject_call/3,
+         expire_and_get_requests/4,
+         drop_expired/3,
+         add_and_order_timestamps/2]).
+-endif.
+
 -define(SERVER, ?MODULE).
 
 %% TODO: determine sensible defaults based on desired load profile,
@@ -34,23 +41,6 @@
 -define(DEFAULT_SLIDING_WINDOW_LIMIT, 5).
 
 -include_lib("arweave/include/ar.hrl").
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
--define(TEST_LIMITER, test_limiter).
--define(assertHandlerRegisterOrRejectCall(LimiterRef, Pattern, Peer, Now),
- 	((fun () ->
-                  spawn_link(fun() ->
-                                     ?assertMatch(
-                                        Pattern,
-                                        register_or_reject_call(LimiterRef, Peer, Now)),
-                                     receive
-                                         done -> ok
-                                     end
-                             end)
-	  end)())).
--endif.
 
 %%% API
 start_link(LimiterRef, Args) ->
@@ -115,7 +105,7 @@ handle_call({register_or_reject, Peer, Now}, {FromPid, _},
     Tokens = maps:get(Peer, LeakyTokens, 0) + 1,
     Concurrency = length(maps:get(Peer, ConcurrentRequests, [])) + 1,
 
-    SlidingTimestampsForPeer0 = 
+    SlidingTimestampsForPeer0 =
         expire_and_get_requests(Peer, SlidingTimestamps, SlidingWindowDuration, Now),
 
     case Concurrency > ConcurrencyLimit of
@@ -135,8 +125,6 @@ handle_call({register_or_reject, Peer, Now}, {FromPid, _},
                             {NewRequests, NewMonitors} =
                                 register_concurrent(
                                   Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
-                            %% QUESTION: AT THIS POINT, DO WE WANT TO ADD THE REQUEST
-                            %%           TIMESTAMP TO THE SLIDING WINDOW TO PENALISE THE BURST?
                             {reply, register,
                              State#{leaky_tokens => NewLeakyTokens,
                                     concurrent_requests => NewRequests,
@@ -217,7 +205,7 @@ do_add_and_order_timestamps(Ts, []) ->
 do_add_and_order_timestamps(Ts, [Head | _Rest] = Timestamps) when Ts >= Head ->
     [Ts | Timestamps];
 do_add_and_order_timestamps(Ts, [Head | Rest])  ->
-    [Head | do_add_and_order_timestamps(Ts, Rest)].  
+    [Head | do_add_and_order_timestamps(Ts, Rest)].
 
 %% Token manipulation
 update_token(Peer, Token, LeakyToken) ->
@@ -252,279 +240,3 @@ remove_concurrent(MonitorRef, _Pid, _Reason, ConcurrentRequests, ConcurrentMonit
         end,
     NewConcurrentMonitors = maps:remove(MonitorRef, ConcurrentMonitors),
     {NewConcurrentRequests, NewConcurrentMonitors}.
-
-%% TESTS
--ifdef(TEST).
-
-expire_test() ->
-    IP = {1,2,3,4},
-    ?assertEqual([], expire_and_get_requests(IP, #{}, 1000, 1)),
-    ?assertEqual([1], drop_expired([1], 1000, 500)),
-    ?assertEqual([1], expire_and_get_requests(IP, #{IP => [1]}, 1000, 500)),
-    ?assertEqual([1, 500], expire_and_get_requests(IP, #{IP => [1, 500]}, 1000, 501)),
-    ?assertEqual([500, 501], expire_and_get_requests(IP, #{IP => [1, 500, 501]}, 1000, 1100)),
-    ?assertEqual([500, 501], expire_and_get_requests(IP, #{IP => [1, 500, 501]}, 1000, 1499)),
-    ?assertEqual([501], expire_and_get_requests(IP, #{IP => [1, 500, 501]}, 1000, 1500)),
-    ?assertEqual([], expire_and_get_requests(IP, #{IP => [1, 500, 501]}, 1000, 1501)),
-    ok.
-
-add_and_order_test() ->
-    ?assertEqual([5], add_and_order_timestamps(5, [])),
-    ?assertEqual([1,2,3,4,5], add_and_order_timestamps(5, [1,2,3,4])),
-    ?assertEqual([1,2,3,4,5,6,7], add_and_order_timestamps(5, [1,2,3,4,6,7])),
-    ?assertEqual([5,7,8], add_and_order_timestamps(5, [7,8])),
-    ok.
-
-rate_limiter_happy_path_0_leaky_tokens_test() ->
-    %% Start with 0 leaky_rate, reject when sliding window is exhausted.
-    IP = {1,2,3,4},
-    {ok, LimiterPid} = ?MODULE:start_link(?TEST_LIMITER,
-                                          #{leaky_rate_limit => 0,
-                                            concurrency_limit => 5,
-                                            sliding_window_limit => 2,
-                                            sliding_window_duration => 1000,
-                                            tick_interval_ms => 100000}),
-    
-    Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 1),
-    Caller1 ! done,
-
-    timer:sleep(100),
-    Info1 = info(?TEST_LIMITER),
-    ?assertMatch(#{sliding_timestamps := #{IP := [1]}}, Info1),
-    #{concurrent_requests := ConcurrentReqs1} = Info1,
-    ?assertEqual(0, maps:size(ConcurrentReqs1)),
-
-    Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 500),
-    Caller2 ! done,
-
-    timer:sleep(100),
-    Info2 = info(?TEST_LIMITER),
-    ?assertMatch(#{sliding_timestamps := #{IP := [1,500]}}, Info2),
-    #{concurrent_requests := ConcurrentReqs2} = Info2,
-    ?assertEqual(0, maps:size(ConcurrentReqs2)),
-
-    Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 2000),
-    Caller3 ! done,
-    timer:sleep(100),
-    %% 2 previous ts expired due to the time elapsed.
-    ?assertMatch(#{sliding_timestamps := #{IP := [2000]}}, info(?TEST_LIMITER)),
-    
-    Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 2001),
-    Caller4 ! done,
-    timer:sleep(100),
-    ?assertMatch(#{sliding_timestamps := #{IP := [2000, 2001]}}, info(?TEST_LIMITER)),
-    
-    Caller5 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {reject, rate_limit, _} , IP, 2002),
-    Caller5 ! done,
-    timer:sleep(100),
-    %% Wait a bit for surely have request processed, and observe, no new timestamp
-    ?assertMatch(#{sliding_timestamps := #{IP := [2000, 2001]}}, info(?TEST_LIMITER)),
-
-    ?MODULE:stop(?TEST_LIMITER).
-
-rate_limiter_happy_path_0_sliding_window_test() ->
-    %% Start with low limits, and extremely high interval, so we can control
-    %% ticks manually in the test.
-    %% Sliding window limit is 0, so we test the extremes.
-    {ok, LimiterPid} = ?MODULE:start_link(?TEST_LIMITER,
-                                          #{leaky_rate_limit => 5,
-                                            concurrency_limit => 2,
-                                            sliding_window_limit => 0,
-                                            tick_interval_ms => 100000}),
-
-    % init state, the ip is not blocked
-    IP = {1,2,3,4},
-
-    %% Spawn link will crash the test process and make the test fail if
-    %% assertion fails.
-    %% FIXME: needs proper cleanup, in case of a test failure as well.
-    Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
-    Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
-
-    %% wait a bit so they are surely started.
-    timer:sleep(100),
-    ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
-                   leaky_tokens := #{IP := 2}}, info(?TEST_LIMITER)),
-
-
-    Caller1 ! done,
-    %% wait a tiny bit so the logic surely runs.
-    timer:sleep(100),
-    ?assertMatch(#{concurrent_requests := #{IP := [_]},
-                   leaky_tokens := #{IP := 2}}, info(?TEST_LIMITER)),
-
-    Caller2 ! done,
-    %% wait a tiny bit so the logic surely runs.
-    timer:sleep(100),
-    %% Keys deleted
-    ?assertMatch(#{concurrent_requests := #{},
-                   leaky_tokens := #{IP := 2}}, info(?TEST_LIMITER)),
-
-    %% manually trigger a tick.
-    LimiterPid ! {tick, rate_limit},
-    %% wait a tiny bit so the tick logic surely runs.
-    timer:sleep(100),
-    ?assertMatch(#{concurrent_requests := #{},
-                   leaky_tokens := #{IP := 1}}, info(?TEST_LIMITER)),
-
-    %% manually trigger a tick.
-    LimiterPid ! {tick, rate_limit},
-    %% wait a tiny bit so the tick logic surely runs.
-    timer:sleep(100),
-    ?assertMatch(#{concurrent_requests := #{},
-                   leaky_tokens := #{IP := 0}}, info(?TEST_LIMITER)),
-
-    %% manually trigger a tick.
-    LimiterPid ! {tick, rate_limit},
-    %% wait a tiny bit so the tick logic surely runs.
-    timer:sleep(100),
-    %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
-    ?assertMatch(#{concurrent_requests := #{},
-                   leaky_tokens := #{}}, info(?TEST_LIMITER)),
-
-    % stop the service
-    ?MODULE:stop(?TEST_LIMITER).
-
-rate_limiter_rejected_due_concurrency_test() ->
-    %% Start with low limits, and extremely high interval, so we can control
-    %% ticks manually in the test.
-    %% Sliding window limit is 0, so we test the extremes.
-    {ok, LimiterPid} = ?MODULE:start_link(?TEST_LIMITER,
-                                          #{leaky_rate_limit=> 5,
-                                            concurrency_limit => 2,
-                                            sliding_window_limit => 0,
-                                            tick_interval_ms => 100000}),
-
-    % init state, the ip is not blocked
-    IP = {1,2,3,4},
-
-    %% Spawn link will crash the test process and make the test fail if
-    %% assertion fails.
-    %% FIXME: needs proper cleanup, in case of a failure as well.
-    Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
-    Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
-    Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {reject, concurrency, _Data}, IP, 0),
-
-    %% wait a bit so they are surely started.
-    timer:sleep(100),
-
-    ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
-                   leaky_tokens := #{IP := 2}}, info(?TEST_LIMITER)),
-
-
-    Caller1 ! done,
-    Caller2 ! done,
-    Caller3 ! done,
-    %% wait a tiny bit so the logic surely runs.
-    timer:sleep(100),
-    %% Keys deleted
-    %% NOTE: concurrent_requests := #{} matches to any map, so we don't what's in there.
-    ?assertMatch(#{concurrent_requests := #{},
-                   leaky_tokens := #{IP := 2}}, info(?TEST_LIMITER)),
-
-    %% manually trigger a tick.
-    LimiterPid ! {tick, rate_limit},
-    %% wait a tiny bit so the tick logic surely runs.
-    timer:sleep(100),
-    ?assertMatch(#{concurrent_requests := #{},
-                   leaky_tokens := #{IP := 1}}, info(?TEST_LIMITER)),
-
-    %% Concurrency reduced, one handler terminated, will register again
-    Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
-    %% wait a tiny bit so the logic surely runs.
-    timer:sleep(100),
-    Caller4 ! done,
-    %% Keys deleted
-    ?assertMatch(#{concurrent_requests := #{},
-                   leaky_tokens := #{IP := 2}}, info(?TEST_LIMITER)),
-
-
-    %% manually trigger two ticks.
-    LimiterPid ! {tick, rate_limit},
-    LimiterPid ! {tick, rate_limit},
-    %% wait a tiny bit so the tick logic surely runs.
-    timer:sleep(100),
-    ?assertMatch(#{concurrent_requests := #{},
-                   leaky_tokens := #{IP := 0}}, info(?TEST_LIMITER)),
-
-    %% manually trigger a tick.
-    LimiterPid ! {tick, rate_limit},
-    %% wait a tiny bit so the tick logic surely runs.
-    timer:sleep(100),
-    %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
-    ?assertMatch(#{concurrent_requests := #{},
-                   leaky_tokens := #{}}, info(?TEST_LIMITER)),
-
-    % stop the service
-    ?MODULE:stop(?TEST_LIMITER).
-
-rate_limiter_rejected_due_leaky_rate_test() ->
-    %% Start with low limits, and extremely high interval, so we can control
-    %% ticks manually in the test.
-    %% Sliding window limit is 0, so we test the extremes.
-    {ok, LimiterPid} = ?MODULE:start_link(?TEST_LIMITER,
-                                          #{leaky_rate_limit=> 2,
-                                            concurrency_limit => 5,
-                                            sliding_window_limit => 0,
-                                            tick_interval_ms => 100000}),
-
-    % init state, the ip is not blocked
-    IP = {1,2,3,4},
-
-    %% Spawn link will crash the test process and make the test fail if
-    %% assertion fails.
-    %% FIXME: needs proper cleanup, in case of a failure as well.
-    Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
-    Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
-    Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {reject, rate_limit, _Data}, IP, 0),
-
-    %% wait a bit so they are surely started.
-    timer:sleep(100),
-    %% 2 concurrent, 2 token
-    ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
-                   leaky_tokens := #{IP := 2}}, info(?TEST_LIMITER)),
-
-    %% Simulate a tick
-    LimiterPid ! {tick, rate_limit},
-    %% wait a tiny bit so the logic surely runs.
-    timer:sleep(100),
-    %% 2 concurrent, but tokens reduced.
-    ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
-                   leaky_tokens := #{IP := 1}}, info(?TEST_LIMITER)),
-
-
-    %% Tokens reduced, will register again
-    Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, register, IP, 0),
-    %% wait a tiny bit so the logic surely runs.
-    timer:sleep(100),
-    %% 3 concurrent, 2 tokens
-    ?assertMatch(#{concurrent_requests := #{IP := [_,_,_]},
-                   leaky_tokens := #{IP := 2}}, info(?TEST_LIMITER)),
-
-
-    %% manually trigger two ticks.
-    LimiterPid ! {tick, rate_limit},
-    LimiterPid ! {tick, rate_limit},
-
-    %% wait a tiny bit so the tick logic surely runs.
-    timer:sleep(100),
-    ?assertMatch(#{concurrent_requests := #{IP := [_,_,_]},
-                   leaky_tokens := #{IP := 0}}, info(?TEST_LIMITER)),
-
-    %% Clean up
-    Caller1 ! done,
-    Caller2 ! done,
-    Caller3 ! done,
-    Caller4 ! done,
-
-    %% wait a tiny bit so the tick logic surely runs.
-    timer:sleep(100),
-    %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
-    ?assertMatch(#{concurrent_requests := #{},
-                   leaky_tokens := #{}}, info(?TEST_LIMITER)),
-
-
-    % stop the service
-    ?MODULE:stop(?TEST_LIMITER).
-
--endif.
