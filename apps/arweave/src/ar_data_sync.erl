@@ -1558,9 +1558,16 @@ handle_info({chunk, {unpacked, Key, ChunkArgs}}, State) ->
 		{unpack_fetched_chunk, Args} ->
 			State2 = State#sync_data_state{ packing_map = maps:remove(Key, PackingMap) },
 			process_unpacked_chunk(ChunkArgs, Args, State2);
-		_ ->
-			{noreply, State}
-	end;
+		Result ->
+			{Packing, _U, AbsoluteOffset, _TXRoot, ChunkSize} = ChunkArgs,
+			Reason = missing_unpacked_chunk,
+			prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+			?LOG_DEBUG([{event, skipping_synced_chunk}, 
+					{reason, Reason}, {key, Key},
+					{packing, ar_serialize:encode_packing(Packing, true)},
+					{absolute_offset, AbsoluteOffset},
+					{chunk_size, ChunkSize}, {result, Result}]),
+			{noreply, State}	end;
 
 handle_info({chunk, {unpack_error, Key, ChunkArgs, Error}}, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
@@ -1775,7 +1782,9 @@ do_sync_intervals(State) ->
 		false ->
 			gen_server:cast(self(), sync_intervals),
 			{{FootprintKey, Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
-			?LOG_DEBUG([{event, sync_intervals}, {s, Start}, {e, End}, {peer, ar_util:format_peer(Peer)}, {footprint_key, FootprintKey}]),
+			?LOG_DEBUG([{event, sync_intervals},
+				{s, Start}, {e, End},
+				{peer, ar_util:format_peer(Peer)}, {footprint_key, FootprintKey}]),
 			I2 = ar_intervals:delete(QIntervals, End, Start),
 			gen_server:cast(ar_data_sync_worker_master,
 					{sync_range, {Start, End, Peer, StoreID, FootprintKey}}),
@@ -2941,7 +2950,6 @@ unpack_fetched_chunk(Cast, AbsoluteOffset, ChunkArgs, Args, State) ->
 					ar_util:cast_after(1000, self(), Cast),
 					{noreply, State};
 				false ->
-					?LOG_DEBUG([{event, request_unpack}, {absolute_offset, AbsoluteOffset}]),
 					ar_packing_server:request_unpack({AbsoluteOffset, unpacked}, ChunkArgs),
 					{noreply, State#sync_data_state{
 							packing_map = PackingMap#{
@@ -3212,7 +3220,9 @@ process_invalid_fetched_chunk(Peer, Byte, State) ->
 	process_invalid_fetched_chunk(Peer, Byte, State, got_invalid_proof_from_peer, []).
 process_invalid_fetched_chunk(Peer, Byte, State, Event, ExtraLogs) ->
 	#sync_data_state{ weave_size = WeaveSize } = State,
-	?LOG_WARNING([{event, Event}, {peer, ar_util:format_peer(Peer)},
+	prometheus_counter:inc(sync_chunks_skipped, [Event]),
+	?LOG_WARNING([{event, skipping_synced_chunk},
+			{reason, Event}, {peer, ar_util:format_peer(Peer)},
 			{byte, Byte}, {weave_size, WeaveSize} | ExtraLogs]),
 	{noreply, State}.
 
@@ -3223,13 +3233,25 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 			ChunkEndOffset, Peer, Byte} = Args,
 	case is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) of
 		false ->
-			?LOG_WARNING([{event, got_too_big_proof_from_peer},
-					{peer, ar_util:format_peer(Peer)}]),
+			Reason = got_too_big_proof_from_peer,
+			prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+			?LOG_WARNING([{event, skipping_synced_chunk},
+					{reason, Reason},
+					{peer, ar_util:format_peer(Peer)},
+					{absolute_end_offset, AbsoluteEndOffset},
+					{store_id, StoreID}]),
 			decrement_chunk_cache_size(),
 			{noreply, State};
 		true ->
 			case ar_sync_record:is_recorded(Byte + 1, ar_data_sync, StoreID) of
 				{true, _} ->
+					Reason = chunk_already_synced,
+					prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+					?LOG_DEBUG([{event, skipping_synced_chunk},
+						{reason, Reason},
+						{peer, ar_util:format_peer(Peer)},
+						{absolute_end_offset, AbsoluteEndOffset},
+						{store_id, StoreID}]),
 					%% The chunk has been synced by another job already.
 					decrement_chunk_cache_size(),
 					{noreply, State};
@@ -3250,15 +3272,21 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 	end.
 
 pack_and_store_chunk({_, AbsoluteOffset, _, _, _, _, _, _, _, _, _, _},
-		#sync_data_state{ disk_pool_threshold = DiskPoolThreshold } = State)
+		#sync_data_state{ store_id = StoreID, disk_pool_threshold = DiskPoolThreshold } = State)
 		when AbsoluteOffset > DiskPoolThreshold ->
 	%% We do not put data into storage modules unless it is well confirmed.
+	Reason = chunk_is_above_disk_pool_threshold,
+	prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+	?LOG_DEBUG([{event, skipping_synced_chunk},
+		{reason, Reason},
+		{absolute_end_offset, AbsoluteOffset},
+		{store_id, StoreID}]),
 	decrement_chunk_cache_size(),
 	{noreply, State};
 pack_and_store_chunk(Args, State) ->
 	{DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath, Packing, Offset, ChunkSize, Chunk,
 			UnpackedChunk, OriginStoreID, OriginChunkDataKey} = Args,
-	#sync_data_state{ packing_map = PackingMap } = State,
+	#sync_data_state{ store_id = StoreID, packing_map = PackingMap } = State,
 	RequiredPacking = get_required_chunk_packing(AbsoluteOffset, ChunkSize, State),
 	PackingStatus =
 		case {RequiredPacking, Packing} of
@@ -3275,6 +3303,12 @@ pack_and_store_chunk(Args, State) ->
 		{need_packing, RequiredPacking} ->
 			case maps:is_key({AbsoluteOffset, RequiredPacking}, PackingMap) of
 				true ->
+					Reason = chunk_already_being_packed,
+					prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+					?LOG_DEBUG([{event, skipping_synced_chunk},
+						{reason, Reason},
+						{absolute_end_offset, AbsoluteOffset},
+						{store_id, StoreID}]),
 					decrement_chunk_cache_size(),
 					{noreply, State};
 				false ->
@@ -3875,11 +3909,9 @@ filter_storage_modules_by_synced_offset(_, []) ->
 process_unpacked_chunk(ChunkArgs, Args, State) ->
 	{_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot, _Chunk, ChunkID,
 			_ChunkEndOffset, Peer, Byte} = Args,
-	{_Packing, Chunk, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
+	{_Packing, Chunk, _AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
 	case validate_chunk_id_size(Chunk, ChunkID, ChunkSize) of
 		false ->
-			?LOG_DEBUG([{event, invalid_unpacked_fetched_chunk},
-					{absolute_end_offset, AbsoluteEndOffset}]),
 			decrement_chunk_cache_size(),
 			process_invalid_fetched_chunk(Peer, Byte, State);
 		true ->
