@@ -27,9 +27,9 @@
 %%% 2. Peer Management:
 %%%    - Each peer has a queue of pending tasks and tracks active task count
 %%%    - Each peer has a max_active limit that controls how many tasks can be
-%%%      concurrently scheduled for that peer
+%%%      concurrently active for that peer
 %%%    - When a peer has capacity (active_count < max_active) and queued tasks,
-%%%      tasks are scheduled to workers
+%%%      tasks are dispatched to workers
 %%%
 %%% 3. Worker Management:
 %%%    - Workers are selected using round-robin with load balancing
@@ -233,11 +233,11 @@ terminate(Reason, _State) ->
 %% Peer queue management
 %%--------------------------------------------------------------------
 
-%% @doc If a peer has capacity, take the next task from its queue and schedule it.
+%% @doc If a peer has capacity, take the next task from its queue and dispatch it.
 process_peer_queue(PeerTasks, State) ->
 	case queue:is_empty(State#state.workers) of
 		true ->
-			%% No workers available, can't schedule
+			%% No workers available, can't dispatch
 			{PeerTasks, State};
 		false ->
 			case peer_has_capacity(PeerTasks) andalso peer_has_queued_tasks(PeerTasks) of
@@ -467,10 +467,10 @@ enqueue_footprint(FootprintKey, Queue, State) ->
 	end.
 
 %%--------------------------------------------------------------------
-%% Schedule tasks to be run on workers
+%% Dispatch tasks to be run on workers
 %%--------------------------------------------------------------------
 
-%% @doc Schedule a sync_range task from a peer queue.
+%% @doc Dispatch a sync_range task from a peer queue.
 dispatch_task(PeerTasks, Args, State) ->
 	{Start, End, Peer, TargetStoreID, FootprintKey} = Args,
 	{Worker, State2} = get_worker(State),
@@ -756,7 +756,7 @@ test_enqueue_peer_task() ->
 test_footprint_queue_none() ->
 	Peer1 = {1, 2, 3, 4, 1984},
 	StoreID1 = ar_storage_module:id({ar_block:partition_size(), 1, default}),
-	%% Set up a peer with max_active = 0 so tasks stay in queue (can't be scheduled)
+	%% Set up a peer with max_active = 0 so tasks stay in queue (can't be dispatched)
 	PeerTasks0 = #peer{peer = Peer1, max_active = 0},
 	State0 = #state{ 
 		max_footprints = 2,

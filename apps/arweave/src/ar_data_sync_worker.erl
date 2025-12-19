@@ -264,12 +264,15 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 			recast;
 		true ->
 			Start2 = ar_tx_blacklist:get_next_not_blacklisted_byte(Start + 1),
-			case Start2 - 1 >= End of
-				true ->
+			Byte = Start2 - 1,
+			IsRecorded = ar_sync_record:is_recorded(Byte + 1, ar_data_sync, TargetStoreID),
+			case {Byte >= End, IsRecorded} of
+				{true, _} ->
 					ok;
-				false ->
-					Packing = get_target_packing(TargetStoreID,
-							State#state.request_packed_chunks),
+				{_, {true, _}} ->
+					ok;
+				_ ->
+					Packing = get_target_packing(TargetStoreID, State#state.request_packed_chunks),
 					case ar_http_iface_client:get_chunk_binary(Peer, Start2, Packing) of
 						{ok, #{ chunk := Chunk } = Proof, _Time, _TransferSize} ->
 							%% In case we fetched a packed small chunk,
@@ -279,9 +282,11 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 							Start3 = ar_block:get_chunk_padded_offset(
 									Start2 + byte_size(Chunk)) + 1,
 							gen_server:cast(ar_data_sync:name(TargetStoreID),
-									{store_fetched_chunk, Peer, Start2 - 1, Proof}),
+									{store_fetched_chunk, Peer, Byte, Proof}),
 							ar_data_sync:increment_chunk_cache_size(),
-							sync_range({Start3, End, Peer, TargetStoreID, RetryCount, FootprintKey}, State);
+							sync_range(
+								{Start3, End, Peer, TargetStoreID, RetryCount, FootprintKey},
+								State);
 						{error, timeout} ->
 							?LOG_DEBUG([{event, timeout_fetching_chunk},
 									{peer, ar_util:format_peer(Peer)},
@@ -292,7 +297,8 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 						{error, {ok, {{<<"404">>, _}, _, _, _, _}} = Reason} ->
 							{error, Reason};
 						{error, Reason} ->
-							ar_http_iface_client:log_failed_request({error, Reason}, [{event, failed_to_fetch_chunk},
+							ar_http_iface_client:log_failed_request({error, Reason}, [
+								{event, failed_to_fetch_chunk},
 								{peer, ar_util:format_peer(Peer)},
 								{start_offset, Start2}, {end_offset, End},
 								{reason, io_lib:format("~p", [Reason])}]),

@@ -340,13 +340,14 @@ init([]) ->
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),
-				Limit2 = min(1200, erlang:ceil(Free * 0.9 / 3 / 262144)),
+				Limit2 = min(1200, erlang:ceil(Free * 0.9 / 3 / ?DATA_CHUNK_SIZE)),
 				Limit3 = ar_util:ceil_int(Limit2, 100),
 				Limit3;
 			Limit ->
 				Limit
 		end,
 	ar:console("~nSetting the packing chunk cache size limit to ~B chunks.~n", [MaxSize]),
+	?LOG_INFO([{event, packing_chunk_cache_size_limit}, {max_size, MaxSize}]),
 	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
 	{ok, _} = ar_timer:apply_interval(
 		200,
