@@ -1782,9 +1782,6 @@ do_sync_intervals(State) ->
 		false ->
 			gen_server:cast(self(), sync_intervals),
 			{{FootprintKey, Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
-			?LOG_DEBUG([{event, sync_intervals},
-				{s, Start}, {e, End},
-				{peer, ar_util:format_peer(Peer)}, {footprint_key, FootprintKey}]),
 			I2 = ar_intervals:delete(QIntervals, End, Start),
 			gen_server:cast(ar_data_sync_worker_master,
 					{sync_range, {Start, End, Peer, StoreID, FootprintKey}}),

@@ -929,11 +929,6 @@ update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartO
 	Time = erlang:monotonic_time(millisecond),
 	ets:update_counter(Tab, Key, {2, 1}, {Key, 0, Time}),
 	prometheus_counter:inc(replica_2_9_entropy_generated, ?REPLICA_2_9_ENTROPY_SIZE),
-	?LOG_DEBUG([{event, entropy_generation},
-		{key, ar_util:encode(Key)},
-		{reward_addr, ar_util:encode(RewardAddr)},
-		{bucket_end_offset, BucketEndOffset},
-		{sub_chunk_start_offset, SubChunkStartOffset}]),
 	maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	remove_outdated_entropy_generation_stats().
 

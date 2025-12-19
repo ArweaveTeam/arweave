@@ -489,7 +489,8 @@ register() ->
 
 	prometheus_gauge:new([{name, sync_tasks},
 		{labels, [state, type, peer]},
-		{help, "The number of syncing tasks. 'state' can be 'queued' or 'scheduled'. "
+		{help, "The number of syncing tasks. 'state' can be 'pending', 'active', "
+				"'footprint_active', or 'footprint_pending'. "
 				"'type' can be 'sync_range' or 'read_range'. 'peer' is the peer the task "
 				"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
 
