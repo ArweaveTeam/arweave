@@ -312,11 +312,6 @@ register() ->
 				"is actually registered by the chunk storage."}
 	]),
 	prometheus_gauge:new([
-		{name, fixed_broken_chunk_storage_records},
-		{help, "The number of fixed broken chunk storage records detected when "
-				"reading a range of chunks."}
-	]),
-	prometheus_gauge:new([
 		{name, mining_server_tasks},
 		{labels, [task]},
 		{help, "Incremented each time the mining server adds a task to the task queue."}
@@ -497,6 +492,10 @@ register() ->
 		{help, "The number of syncing tasks. 'state' can be 'queued' or 'scheduled'. "
 				"'type' can be 'sync_range' or 'read_range'. 'peer' is the peer the task "
 				"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
+
+	prometheus_counter:new([{name, sync_chunks_skipped},
+		{labels, [reason]},
+		{help, "The number of chunks skipped during syncing."}]),
 
 	prometheus_gauge:new([{name, device_lock_status},
 		{labels, [store_id, mode]},
