@@ -13,8 +13,8 @@ execute(Req, Env) ->
     IPAddr = requesting_ip_addr(Req),
     
     case ar_limiter:register_or_reject_call(LimiterRef, IPAddr) of
-        reject ->
-            {stop, reject(Req)};
+        {reject, Reason, Data} ->
+            {stop, reject(Req, Reason, Data)};
         _ ->
             {ok, Req, Env}
     end.
@@ -29,7 +29,7 @@ get_limiter_ref(Req) ->
             general
     end.
 
-reject(Req) ->
+reject(Req, _Reason, _Data) ->
     cowboy_req:reply(
       429,
       #{

@@ -42,6 +42,7 @@ children_spec() ->
 	lists:flatten([
 		ar_node_worker_spec(),
 		ar_semaphores_spec(),
+		ar_limiter_sup_spec(),
 		ar_blacklist_middleware_spec(),
 		ar_http_iface_server_spec()
 	]).
@@ -70,6 +71,16 @@ ar_http_iface_server_spec() ->
 	 , start => {ar_http_iface_server, start_link, []}
 	 , type => worker
 	 , shutdown => ?SHUTDOWN_TCP_CONNECTION_TIMEOUT*2*1000
+	 }.
+
+%%--------------------------------------------------------------------
+%% ar_limiter_sup is the supervisor for the rate limiter processes
+%%--------------------------------------------------------------------
+ar_limiter_sup_spec() ->
+	#{ id => ar_limiter_sup
+	 , start => {ar_limiter_sup, start_link, []}
+	 , type => supervisor
+	 , shutdown => ?SHUTDOWN_TIMEOUT
 	 }.
 
 %%--------------------------------------------------------------------
