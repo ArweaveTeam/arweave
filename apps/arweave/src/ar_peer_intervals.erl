@@ -91,7 +91,8 @@ do_fetch(Start, End, StoreID, normal) ->
 				true ->
 					{End2, []};
 				false ->
-					{End3, EnqueueIntervals2} = fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals),
+					{End3, EnqueueIntervals2} =
+						fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals),
 					{min(End2, End3), EnqueueIntervals2}
 			end,
 		?LOG_DEBUG([{event, fetch_peer_intervals},
@@ -141,14 +142,16 @@ do_fetch(Start, End, StoreID, footprint) ->
 		],
 		Peers = ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT),
 
-		UnsyncedIntervals = ar_footprint_record:get_unsynced_intervals(Partition, Footprint, StoreID),
+		UnsyncedIntervals =
+			ar_footprint_record:get_unsynced_intervals(Partition, Footprint, StoreID),
 
 		EnqueueIntervals =
 			case ar_intervals:is_empty(UnsyncedIntervals) of
 				true ->
 					[];
 				false ->
-					fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, UnsyncedIntervals)
+					fetch_peer_footprint_intervals(
+						Parent, Partition, Footprint, Start, End, Peers, UnsyncedIntervals)
 			end,
 		Partition = ar_replica_2_9:get_entropy_partition(Start + ?DATA_CHUNK_SIZE),
 		{_PartitionStart, PartitionEnd} = ar_replica_2_9:get_entropy_partition_range(Partition),
@@ -311,7 +314,8 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 	Intervals =
 		ar_util:batch_pmap(
 			fun(Peer) ->
-				case maybe_get_peer_footprint_intervals(Peer, Partition, Footprint, UnsyncedIntervals) of
+				case maybe_get_peer_footprint_intervals(
+						Peer, Partition, Footprint, UnsyncedIntervals) of
 					{ok, SoughtIntervals} ->
 						{Peer, SoughtIntervals};
 					{error, cooldown} ->
@@ -349,7 +353,8 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 							IntervalsAcc;
 						false ->
 							ByteIntervals =
-								ar_footprint_record:get_intervals_from_footprint_intervals(SoughtIntervals),
+								ar_footprint_record:get_intervals_from_footprint_intervals(
+									SoughtIntervals),
 							%% SoughtIntervals may include intervals beyond
 							%% the storage module boundaries.
 							%% This is because during the
@@ -368,7 +373,8 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 									Offset ->
 										Offset - ?DATA_CHUNK_SIZE
 								end,
-							ByteIntervals3 = ar_intervals:outerjoin(ar_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2),
+							ByteIntervals3 = ar_intervals:outerjoin(
+								ar_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2),
 							?LOG_DEBUG([{event, fetch_peer_intervals},
 								{function, fetch_peer_footprint_intervals},
 								{peer, ar_util:format_peer(Peer)},
