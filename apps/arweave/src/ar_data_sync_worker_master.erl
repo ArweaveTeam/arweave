@@ -77,22 +77,23 @@
 	peer = undefined,
 	pending = queue:new(),
 	active_count = 0,
+	pending_count = 0, %% count of tasks for this peer in either the pending or footprint queues
 	max_active = ?MIN_MAX_ACTIVE
 }).
 
 -record(footprint, {
-	queue = queue:new(),   %% queue of pending tasks
+	pending = queue:new(),   %% queue of pending tasks
 	active_count = 0       %% count of active tasks (0 = inactive)
 }).
 
 -record(state, {
 	total_pending_count = 0,  %% total count of tasks queued in peer queues
 	total_active_count = 0,
-	total_footprint_pending_count = 0,
 	workers = queue:new(),
 	active_count_per_worker = #{},
 	peers = #{},              %% Peer => #peer{}
 	footprints = #{},         %% FootprintKey => #footprint{}
+	active_footprint_count = 0, %% count of footprints with active_count > 0
 	max_footprints = 100      %% maximum concurrent footprints
 }).
 
@@ -165,8 +166,7 @@ handle_call(ready_for_work, _From, State) ->
 	WorkerCount = queue:len(State#state.workers),
 	TotalTaskCount = 
 		State#state.total_active_count +
-		State#state.total_pending_count +
-		State#state.total_footprint_pending_count,
+		State#state.total_pending_count,
 	ReadyForWork = TotalTaskCount < max_tasks(WorkerCount),
 	{reply, ReadyForWork, State};
 
@@ -193,20 +193,25 @@ handle_cast({sync_range, Args}, State) ->
 
 handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
 	{Start, End, Peer, _, _, FootprintKey} = Args,
+	?LOG_DEBUG([{event, task_completed},
+		{peer, ar_util:format_peer(Peer)},
+		{result, Result},
+		{args, Args}]),
 	DataSize = End - Start,
 	State2 = increment_active_task_count(Worker, Peer, -1, State),
 	PeerTasks = get_peer_tasks(Peer, State2),
-	{PeerTasks2, State3} = complete_task(
-		PeerTasks, Result, ElapsedNative, DataSize, State2),
-	State4 = set_peer_tasks(PeerTasks2, State3),
+	ar_peers:rate_fetched_data(
+		PeerTasks#peer.peer, chunk, Result,
+		erlang:convert_time_unit(ElapsedNative, native, microsecond), DataSize,
+		PeerTasks#peer.max_active),
 	%% Process all peer queues, starting with the peer that just completed
-	State5 = process_all_peer_queues(Peer, State4),
-	State6 = complete_footprint_task(FootprintKey, Peer, State5),
-	{noreply, State6};
+	State3 = complete_footprint_task(FootprintKey, Peer, State2),
+	State4 = process_all_peer_queues(Peer, State3),
+	{noreply, State4};
 
 handle_cast(rebalance_peers, State) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
-	State2 = purge_empty_peers(State),
+	State2 = State, %purge_empty_peers(State),
 	Peers = maps:keys(State2#state.peers),
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	Targets = calculate_targets(Peers, AllPeerPerformances, State2),
@@ -234,19 +239,27 @@ terminate(Reason, _State) ->
 %%--------------------------------------------------------------------
 
 %% @doc If a peer has capacity, take the next task from its queue and dispatch it.
-process_peer_queue(PeerTasks, State) ->
+process_peer_queue(Peer, State) ->
 	case queue:is_empty(State#state.workers) of
 		true ->
 			%% No workers available, can't dispatch
-			{PeerTasks, State};
+			?LOG_DEBUG([{event, process_peer_queue}, {peer, ar_util:format_peer(Peer)}, {no_workers}]),
+			State;
 		false ->
+			PeerTasks = get_peer_tasks(Peer, State),
+			?LOG_DEBUG([{event, process_peer_queue}, {peer, ar_util:format_peer(Peer)},
+				{has_capacity, peer_has_capacity(PeerTasks)},
+				{has_queued_tasks, peer_has_queued_tasks(PeerTasks)},
+				{pending_count, PeerTasks#peer.pending_count},
+				{active_count, PeerTasks#peer.active_count},
+				{max_active, PeerTasks#peer.max_active}
+			]),
 			case peer_has_capacity(PeerTasks) andalso peer_has_queued_tasks(PeerTasks) of
 				true ->
-					{PeerTasks2, Args} = dequeue_peer_task(PeerTasks),
-					{PeerTasks3, State2} = dispatch_task(PeerTasks2, Args, State),
-					process_peer_queue(PeerTasks3, State2);
+					State2 = dispatch_task(PeerTasks, State),
+					process_peer_queue(Peer, State2);
 				false ->
-					{PeerTasks, State}
+					State
 			end
 	end.
 
@@ -254,23 +267,14 @@ process_peer_queue(PeerTasks, State) ->
 %% This maintains locality (same peer/footprint) while ensuring worker capacity
 %% is filled from all peers.
 process_all_peer_queues(PriorityPeer, State) ->
-	AllPeers = maps:to_list(maps:remove(PriorityPeer, State#state.peers)),
-	%% Put priority peer at the front of the list
-	PriorityPeerTask = maps:get(PriorityPeer, State#state.peers, undefined),
-	PeerList = case PriorityPeerTask of
-		undefined ->
-			AllPeers;
-		_ ->
-			[{PriorityPeer, PriorityPeerTask} | AllPeers]
-	end,
-	process_all_peer_queues2(PeerList, State).
+	AllPeers = maps:keys(maps:remove(PriorityPeer, State#state.peers)),
+	process_all_peer_queues2([PriorityPeer | AllPeers], State).
 
 process_all_peer_queues2([], State) ->
 	State;
-process_all_peer_queues2([{_Peer, PeerTasks} | Rest], State) ->
-	{PeerTasks2, State2} = process_peer_queue(PeerTasks, State),
-	State3 = set_peer_tasks(PeerTasks2, State2),
-	process_all_peer_queues2(Rest, State3).
+process_all_peer_queues2([Peer | Rest], State) ->
+	State2 = process_peer_queue(Peer, State),
+	process_all_peer_queues2(Rest, State2).
 
 %% @doc the maximum number of tasks we can have in process - including tasks queued here as well
 %% as those active on ar_data_sync_workers.
@@ -279,13 +283,13 @@ max_tasks(WorkerCount) ->
 
 %% @doc The maximum number of tasks we can have queued for a given peer.
 max_peer_queue(_Peformance, 0, _WorkerCount) ->
-	undefined;
+	infinity;
 max_peer_queue(_Performance, 0.0, _WorkerCount) ->
-	undefined;
+	infinity;
 max_peer_queue(#performance{ current_rating = 0 } = _Performance, _TotalThroughput, _WorkerCount) ->
-	undefined;
+	infinity;
 max_peer_queue(#performance{ current_rating = 0.0 } = _Performance, _TotalThroughput, _WorkerCount) ->
-	undefined;
+	infinity;
 max_peer_queue(Performance, TotalThroughput, WorkerCount) ->
 	%% estimate of of this peer's througput
 	PeerThroughput = Performance#performance.current_rating,
@@ -300,43 +304,46 @@ max_peer_queue(Performance, TotalThroughput, WorkerCount) ->
 %% @doc Cut a peer's queue to store roughly 15 minutes worth of tasks. This prevents
 %% a slow peer from filling up the ar_data_sync_worker_master queues, stalling the
 %% workers and preventing ar_data_sync from pushing new tasks.
-cut_peer_queue(_MaxQueue, PeerTasks, #state{ total_active_count = 0 } = State) ->
-	{PeerTasks, State};
-cut_peer_queue(undefined, PeerTasks, State) ->
-	{PeerTasks, State};
-cut_peer_queue(MaxQueue, PeerTasks, State) ->
-	Peer = PeerTasks#peer.peer,
+cut_peer_queue(_Peer, _Performance, _TotalThroughput, #state{ total_active_count = 0 } = State) ->
+	State;
+cut_peer_queue(Peer, Performance, TotalThroughput, State) ->
+	WorkerCount = queue:len(State#state.workers),
+	PeerTasks = get_peer_tasks(Peer, State),
+	MaxQueue = max_peer_queue(Performance, TotalThroughput, WorkerCount),
 	Pending = PeerTasks#peer.pending,
-	case queue:len(Pending) - MaxQueue of
-		TasksToCut when TasksToCut > 0 ->
+	case MaxQueue == infinity orelse queue:len(Pending) - MaxQueue =< 0 of
+		true ->
+			State;
+		false ->
+			TasksToCut = queue:len(Pending) - MaxQueue,
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
 			%% oldest tasks.
-			{Pending2, _} = queue:split(MaxQueue, Pending),
+			{Pending2, RemovedQueue} = queue:split(MaxQueue, Pending),
+			%% Decrement footprint active task counts for all removed tasks
+			State2 = cut_footprint_active_task_counts(RemovedQueue, Peer, State),
 			?LOG_DEBUG([{event, cut_peer_queue},
 				{peer, ar_util:format_peer(Peer)},
-				{pending_len, queue:len(Pending)},
 				{active_count, PeerTasks#peer.active_count},
 				{active_tasks, State#state.total_active_count},
 				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut},
-				{pending_len2, queue:len(Pending2)}
+				{old_pending_count, queue:len(Pending)},
+				{new_pending_count, queue:len(Pending2)}
 			]),
-			{
-				PeerTasks#peer{ pending = Pending2 },
-				increment_pending_task_count(Peer, -TasksToCut, State)
-			};
-		_ ->
-			{PeerTasks, State}
+			State3 = set_peer_tasks(PeerTasks#peer{ pending = Pending2 }, State2),
+			increment_pending_task_count(pending, Peer, -TasksToCut, State3)
 	end.
 
 %% @doc Enqueue a task to a peer queue, process the queue, and update counters.
-enqueue_peer_task(Peer, Args, State) ->
-	{_Start, _End, Peer, _TargetStoreID, FootprintKey} = Args,
+enqueue_peer_task(FootprintKey, Peer, Args, State) ->
+	{_Start, _End, Peer, _TargetStoreID, _FootprintKey} = Args,
 	PeerTasks = get_peer_tasks(Peer, State),
 	Pending = queue:in(Args, PeerTasks#peer.pending),
-	PeerTasks2 = PeerTasks#peer{ pending = Pending },
-	{PeerTasks3, State2} = process_peer_queue(PeerTasks2, State),
-	State3 = increment_pending_task_count(Peer, 1, State2),
-	set_peer_tasks(PeerTasks3, State3).
+	PeerTasks2 = PeerTasks#peer{
+		pending = Pending
+	},
+	State2 = set_peer_tasks(PeerTasks2, State),
+	State3 = increment_pending_task_count(pending, Peer, 1, State2),
+	increment_footprint_active_task_count(FootprintKey, Peer, 1, State3).
 
 dequeue_peer_task(PeerTasks) ->
 	{{value, Args}, Pending} = queue:out(PeerTasks#peer.pending),
@@ -359,39 +366,36 @@ peer_has_queued_tasks(PeerTasks) ->
 enqueue_task(none, Args, State) ->
 	%% Non-footprint task, enqueue directly to peer queue
 	{_Start, _End, Peer, _TargetStoreID, _FootprintKey} = Args,
-	enqueue_peer_task(Peer, Args, State);
+	State2 = enqueue_peer_task(none, Peer, Args, State),
+	process_peer_queue(Peer, State2);
 enqueue_task(FootprintKey, Args, State) ->
-	#state{ footprints = Footprints, max_footprints = MaxFootprints } = State,
+	#state{ max_footprints = MaxFootprints,
+			active_footprint_count = ActiveCount } = State,
 	{_Start, _End, Peer, _TargetStoreID, _FootprintKey} = Args,
-	Footprint = maps:get(FootprintKey, Footprints, #footprint{}),
-	ActiveFootprintCount = count_active_footprints(Footprints),
-	IsActive = Footprint#footprint.active_count > 0,
-	case IsActive of
+	State3 = case get_footprint_active_task_count(FootprintKey, State) > 0 of
 		true ->
 			%% Footprint is already active, enqueue directly to peer queue
-			State2 = increment_footprint_active_task_count(FootprintKey, Peer, 1, State),
-			enqueue_peer_task(Peer, Args, State2);
-		false when ActiveFootprintCount < MaxFootprints ->
+			enqueue_peer_task(FootprintKey, Peer, Args, State);
+		false when ActiveCount < MaxFootprints ->
 			%% Room for new footprint, activate it and enqueue directly to peer queue
-			State2 = increment_footprint_active_task_count(FootprintKey, Peer, 1, State),
-			enqueue_peer_task(Peer, Args, State2);
+			Footprint = get_footprint(FootprintKey, State),
+			?LOG_DEBUG([{event, activate_footprint},
+						{source, enqueue_task},
+						{active_footprints, ActiveCount + 1},
+						{active_tasks, Footprint#footprint.active_count},
+						{pending_tasks, queue:len(Footprint#footprint.pending)},
+						{footprint_key, FootprintKey}]),
+			State2 = State#state{ active_footprint_count = ActiveCount + 1 },
+			enqueue_peer_task(FootprintKey, Peer, Args, State2);
 		false ->
 			%% No room, queue the task for later
-			State2 = increment_footprint_pending_task_count(Peer, 1, State),
-			Queue = queue:in(Args, Footprint#footprint.queue),
-			Footprint2 = Footprint#footprint{ queue = Queue },
-			State2#state{ footprints = maps:put(FootprintKey, Footprint2, Footprints) }
-	end.
-
-%% @doc Count how many footprints are currently active (active_count > 0).
-count_active_footprints(Footprints) ->
-	maps:fold(
-		fun(_Key, Footprint, Acc) ->
-			case Footprint#footprint.active_count > 0 of
-				true -> Acc + 1;
-				false -> Acc
-			end
-		end, 0, Footprints).
+			Footprint = get_footprint(FootprintKey, State),
+			Pending = queue:in(Args, Footprint#footprint.pending),
+			Footprint2 = Footprint#footprint{ pending = Pending },
+			State2 = set_footprint(FootprintKey, Footprint2, State),
+			increment_pending_task_count(footprint_pending, Peer, 1, State2)
+	end,
+	process_peer_queue(Peer, State3).
 
 %% @doc Handle completion of a footprint task.
 %% Decrements the active active_count and activates a new footprint if this one is done.
@@ -399,58 +403,90 @@ complete_footprint_task(none, _Peer, State) ->
 	State;
 complete_footprint_task(FootprintKey, Peer, State) ->
 	State2 = increment_footprint_active_task_count(FootprintKey, Peer, -1, State),
-	IsFootprintDone = 
-		case maps:get(FootprintKey, State2#state.footprints, none) of
-			none ->
-				true;
-			Footprint ->
-				Footprint#footprint.active_count =< 0
-		end,
-	case IsFootprintDone of
+	case get_footprint_active_task_count(FootprintKey, State2) =< 0 of
 		true ->
-			%% This footprint is done, remove it and try to activate a new one
-			?LOG_DEBUG([{event, deactivate_footprint}, {footprint_key, FootprintKey}]),
-			State3 = State2#state{
-				footprints = maps:remove(FootprintKey, State2#state.footprints)
-			},
-			activate_next_footprint(State3);
+			Footprint = get_footprint(FootprintKey, State2),
+			case queue:is_empty(Footprint#footprint.pending) of
+				true ->
+					%% This footprint is done and has no queued tasks, remove it and try to activate a new one
+					?LOG_DEBUG([{event, deactivate_footprint},
+						{active_tasks, Footprint#footprint.active_count},
+						{pending_tasks, queue:len(Footprint#footprint.pending)},
+						{footprint_key, FootprintKey}]),
+					State3 = State2#state{
+						footprints = maps:remove(FootprintKey, State2#state.footprints),
+						active_footprint_count = State2#state.active_footprint_count - 1
+					},
+					activate_next_footprint(State3);
+				false ->
+					%% This footprint has queued tasks, activate it by enqueuing its tasks
+					?LOG_DEBUG([{event, activate_footprint},
+						{source, complete_footprint_task},
+						{active_tasks, Footprint#footprint.active_count},
+						{pending_tasks, queue:len(Footprint#footprint.pending)},
+						{footprint_key, FootprintKey}]),
+					State3 = set_footprint(
+						FootprintKey, Footprint#footprint{ pending = queue:new() }, State2),
+					%% Enqueue all tasks from this footprint queue directly to peer queues
+					enqueue_footprint(FootprintKey, Footprint#footprint.pending, State3)
+			end;
 		false ->
 			State2
 	end.
 
 %% @doc Activate the next waiting footprint queue if any.
 activate_next_footprint(State) ->
-	#state{ footprints = Footprints, max_footprints = MaxFootprints } = State,
-	ActiveCount = count_active_footprints(Footprints),
-	%% Find a footprint with queued tasks
-	NextFootprint = maps:fold(
-		fun(Key, Footprint, Acc) ->
-			case Acc of
-				none ->
-					case Footprint#footprint.active_count =< 0 andalso
-					     not queue:is_empty(Footprint#footprint.queue) of
-						true ->
-							{Key, Footprint};
-						false ->
-							Acc
-					end;
-				_ ->
-					Acc
-			end
-		end, none, Footprints),
-	case ActiveCount >= MaxFootprints orelse NextFootprint == none of
+	#state{ footprints = Footprints, max_footprints = MaxFootprints,
+			active_footprint_count = ActiveCount } = State,
+	case ActiveCount >= MaxFootprints of
 		true ->
 			State;
 		false ->
-			{FootprintKey, Footprint} = NextFootprint,
-			?LOG_DEBUG([{event, activate_footprint},
-				{count, ActiveCount + 1}, {footprint_key, FootprintKey}]),
-			Footprint2 = Footprint#footprint{ active_count = 0, queue = queue:new() },
-			State2 = State#state{
-				footprints = maps:put(FootprintKey, Footprint2, Footprints)
-			},
-			%% Enqueue all tasks from this footprint queue directly to peer queues
-			enqueue_footprint(FootprintKey, Footprint#footprint.queue, State2)
+			%% Find a footprint with queued tasks
+			NextFootprint = find_next_inactive_footprint(Footprints),
+			case NextFootprint of
+				none ->
+					?LOG_DEBUG([{event, activate_footprint_none}]),
+					State;
+				{FootprintKey, Footprint} ->
+					?LOG_DEBUG([{event, activate_footprint},
+						{source, activate_next_footprint},
+						{active_footprints, ActiveCount + 1},
+						{active_tasks, Footprint#footprint.active_count},
+						{pending_tasks, queue:len(Footprint#footprint.pending)},
+						{footprint_key, FootprintKey}]),
+					State2 = State#state{ active_footprint_count = ActiveCount + 1 },
+					State3 = set_footprint(
+						FootprintKey, Footprint#footprint{ pending = queue:new() }, State2),
+					%% Enqueue all tasks from this footprint queue directly to peer queues
+					enqueue_footprint(FootprintKey, Footprint#footprint.pending, State3)
+			end
+	end.
+
+%% @doc Find the next inactive footprint with the most queued tasks.
+find_next_inactive_footprint(Footprints) ->
+	case maps:fold(
+		fun(Key, Footprint, Acc) ->
+			case Footprint#footprint.active_count =< 0 andalso
+			     not queue:is_empty(Footprint#footprint.pending) of
+				true ->
+					PendingCount = queue:len(Footprint#footprint.pending),
+					case Acc of
+						none ->
+							{Key, Footprint, PendingCount};
+						{_AccKey, _AccFootprint, AccCount} when PendingCount > AccCount ->
+							{Key, Footprint, PendingCount};
+						_ ->
+							Acc
+					end;
+				false ->
+					Acc
+			end
+		end, none, Footprints) of
+		none ->
+			none;
+		{Key, Footprint, _PendingCount} ->
+			{Key, Footprint}
 	end.
 
 %% @doc Enqueue all tasks from a footprint queue directly to peer queues.
@@ -460,10 +496,9 @@ enqueue_footprint(FootprintKey, Queue, State) ->
 			State;
 		{{value, Args}, Queue2} ->
 			{_Start, _End, Peer, _TargetStoreID, _FootprintKey} = Args,
-			State2 = increment_footprint_active_task_count(FootprintKey, Peer, 1, State),
-			State3 = increment_footprint_pending_task_count(Peer, -1, State2),
-			State4 = enqueue_peer_task(Peer, Args, State3),
-			enqueue_footprint(FootprintKey, Queue2, State4)
+			State2 = increment_pending_task_count(footprint_pending, Peer, -1, State),
+			State3 = enqueue_peer_task(FootprintKey, Peer, Args, State2),
+			enqueue_footprint(FootprintKey, Queue2, State3)
 	end.
 
 %%--------------------------------------------------------------------
@@ -471,30 +506,22 @@ enqueue_footprint(FootprintKey, Queue, State) ->
 %%--------------------------------------------------------------------
 
 %% @doc Dispatch a sync_range task from a peer queue.
-dispatch_task(PeerTasks, Args, State) ->
+dispatch_task(PeerTasks, State) ->
+	{PeerTasks2, Args} = dequeue_peer_task(PeerTasks),
 	{Start, End, Peer, TargetStoreID, FootprintKey} = Args,
 	{Worker, State2} = get_worker(State),
 	%% Pass FootprintKey as 6th element so it comes back in task_completed
 	gen_server:cast(Worker, {sync_range, {Start, End, Peer, TargetStoreID, 3, FootprintKey}}),
-	State3 = increment_active_task_count(Worker, Peer, 1, State2),
-	State4 = increment_pending_task_count(Peer, -1, State3),
-	PeerTasks2 = PeerTasks#peer{ active_count = PeerTasks#peer.active_count + 1 },
-	{PeerTasks2, State4}.
+	State3 = set_peer_tasks(PeerTasks2, State2),
+	?LOG_DEBUG([{event, dispatch_task}, {peer, ar_util:format_peer(PeerTasks2#peer.peer)},
+		{dequeued_task, Args}]),
+	State4 = increment_active_task_count(Worker, Peer, 1, State3),
+	increment_pending_task_count(pending, Peer, -1, State4).
 
 %%--------------------------------------------------------------------
 %% Record a completed task and update related values (i.e.
 %% EMA, max_active, peer queue length)
 %%--------------------------------------------------------------------
-complete_task(PeerTasks, Result, ElapsedNative, DataSize, State) ->
-	PeerTasks2 = PeerTasks#peer{ 
-		active_count = PeerTasks#peer.active_count - 1
-	},
-	ar_peers:rate_fetched_data(
-		PeerTasks2#peer.peer, chunk, Result,
-		erlang:convert_time_unit(ElapsedNative, native, microsecond), DataSize,
-		PeerTasks2#peer.max_active),
-	{PeerTasks2, State}.
-
 calculate_targets(Peers, AllPeerPerformances, State) ->
 	TotalThroughput =
 		lists:foldl(
@@ -536,39 +563,28 @@ purge_empty_peers(State) ->
 rebalance_peers([], _AllPeerPerformances, _Targets, State) ->
 	State;
 rebalance_peers([Peer | Peers], AllPeerPerformances, Targets, State) ->
-	PeerTasks = maps:get(Peer, State#state.peers),
 	Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
-	{PeerTasks2, State2} = rebalance_peer(PeerTasks, Performance, Targets, State),
-	State3 = set_peer_tasks(PeerTasks2, State2),
-	rebalance_peers(Peers, AllPeerPerformances, Targets, State3).
+	State2 = rebalance_peer(Peer, Performance, Targets, State),
+	log_rebalance_peer(Peer, Performance, Targets, State, State2),
+	rebalance_peers(Peers, AllPeerPerformances, Targets, State2).
 
-rebalance_peer(PeerTasks, Performance, Targets, State) ->
+rebalance_peer(Peer, Performance, Targets, State) ->
 	{TargetLatency, TotalThroughput, TotalMaxActive} = Targets,
-	WorkerCount = queue:len(State#state.workers),
-	MaxPeerQueue = max_peer_queue(Performance, TotalThroughput, WorkerCount),
-	{PeerTasks2, State2} = cut_peer_queue(
-		MaxPeerQueue,
-		PeerTasks,
-		State),
-	PeerTasks3 = update_max_active(PeerTasks2, Performance, TotalMaxActive, TargetLatency, State2),
-	?LOG_DEBUG([{event, rebalance_peer},
-		{peer, ar_util:format_peer(PeerTasks#peer.peer)},
-		{max_peer_queue, MaxPeerQueue},
-		{max_active, PeerTasks3#peer.max_active}]),
-	{PeerTasks3, State2}.
+	State2 = cut_peer_queue(Peer, Performance, TotalThroughput, State),
+	update_max_active(Peer, Performance, TotalMaxActive, TargetLatency, State2).
 
-update_max_active(PeerTasks, Performance, TotalMaxActive, TargetLatency, State) ->
+update_max_active(Peer, Performance, TotalMaxActive, TargetLatency, State) ->
 	%% Determine target max_active:
 	%% 1. Increase max_active when the peer's average latency is less than the threshold
 	%% 2. OR increase max_active when the workers are not fully utilized
-	%% 3. Decrease max_active if the most recent request was slower than the threshold - this
-	%%    allows us to respond more quickly to a sudden drop in performance
+	%% 3. Decrease max_active when the peer's average latency is more than the threshold
 	%%
 	%% Once we have the target max_active, find the maximum of the currently active tasks
 	%% and queued tasks. The new max_active is the minimum of the target and that value.
 	%% This prevents situations where we have a low number of active tasks and no queue which
 	%% causes each request to complete fast and hikes up the max_active. Then we get a new
 	%% batch of queued tasks and since the max_active is so high we overwhelm the peer.
+	PeerTasks = get_peer_tasks(Peer, State),
 	MaxActive = PeerTasks#peer.max_active,
 	FasterThanTarget = Performance#performance.average_latency < TargetLatency,
 	WorkerCount = queue:len(State#state.workers),
@@ -582,45 +598,77 @@ update_max_active(PeerTasks, Performance, TotalMaxActive, TargetLatency, State) 
 			MaxActive-1
 	end,
 
-	%% Can't have more active tasks than workers.
-	WorkerLimitedMaxActive = min(TargetMaxActive, WorkerCount),
-	%% Can't have more active tasks than we have active or queued tasks.
-	TaskLimitedMaxActive = min(
-		WorkerLimitedMaxActive, 
-		max(PeerTasks#peer.active_count, queue:len(PeerTasks#peer.pending))
-	),
-	%% Can't have less than the minimum.
-	PeerTasks#peer{
-		max_active = max(TaskLimitedMaxActive, ?MIN_MAX_ACTIVE)
-	}.
+	%% Can't have more active tasks than workers or available tasks.
+	MaxTasks = max(PeerTasks#peer.active_count, PeerTasks#peer.pending_count),
+	UpperBound = min(WorkerCount, MaxTasks),
+	PeerTasks2 = PeerTasks#peer{
+		max_active = ar_util:between(
+			TargetMaxActive, ?MIN_MAX_ACTIVE, max(UpperBound, ?MIN_MAX_ACTIVE))
+	},
+	set_peer_tasks(PeerTasks2, State).
+
+log_rebalance_peer(Peer, Performance, Targets, StateBefore, StateAfter) ->
+	{TargetLatency, TotalThroughput, TotalMaxActive} = Targets,
+	PeerTasksBefore = get_peer_tasks(Peer, StateBefore),
+	PeerTasksAfter = get_peer_tasks(Peer, StateAfter),
+	?LOG_DEBUG([{event, rebalance_peer},
+		{peer, ar_util:format_peer(Peer)},
+		{active_count, PeerTasksBefore#peer.active_count},
+		{queued_count, queue:len(PeerTasksBefore#peer.pending)},
+		{pending_count, PeerTasksBefore#peer.pending_count},
+		{peer_latency, Performance#performance.average_latency},
+		{target_latency, TargetLatency},
+		{peer_throughput, Performance#performance.current_rating},
+		{total_throughput, TotalThroughput},
+		{total_max_active, TotalMaxActive},
+		{worker_count, queue:len(StateBefore#state.workers)},
+		{old_max_active, PeerTasksBefore#peer.max_active},
+		{new_max_active, PeerTasksAfter#peer.max_active},
+		{old_max_peer_queue, queue:len(PeerTasksBefore#peer.pending)},
+		{new_max_peer_queue, queue:len(PeerTasksAfter#peer.pending)}]).
 
 %%--------------------------------------------------------------------
 %% Helpers
 %%--------------------------------------------------------------------
-increment_pending_task_count(Peer, N, State) ->
-	prometheus_gauge:inc(sync_tasks, [pending, sync_range, ar_util:format_peer(Peer)], N),
-	State#state{ total_pending_count = State#state.total_pending_count + N }.
+increment_pending_task_count(Type, Peer, N, State) ->
+	prometheus_gauge:inc(sync_tasks, [Type, sync_range, ar_util:format_peer(Peer)], N),
+	PeerTasks = get_peer_tasks(Peer, State),
+	PeerTasks2 = PeerTasks#peer{
+		pending_count = PeerTasks#peer.pending_count + N
+	},
+	State2 = set_peer_tasks(PeerTasks2, State),
+	State2#state{ total_pending_count = State2#state.total_pending_count + N }.
 increment_active_task_count(Worker, Peer, N, State) ->
 	prometheus_gauge:inc(sync_tasks, [active, sync_range, ar_util:format_peer(Peer)], N),
-	ActiveCount = maps:get(Worker, State#state.active_count_per_worker, 0) + N,
-	State#state{
-		total_active_count = State#state.total_active_count + N,
-		active_count_per_worker = maps:put(Worker, ActiveCount, State#state.active_count_per_worker)
+	PeerTasks = get_peer_tasks(Peer, State),
+	PeerTasks2 = PeerTasks#peer{
+		active_count = PeerTasks#peer.active_count + N
+	},
+	State2 = set_peer_tasks(PeerTasks2, State),
+	ActiveCount = maps:get(Worker, State2#state.active_count_per_worker, 0) + N,
+	State2#state{
+		total_active_count = State2#state.total_active_count + N,
+		active_count_per_worker = maps:put(Worker, ActiveCount, State2#state.active_count_per_worker)
 	}.
 
 increment_footprint_active_task_count(none, _Peer, _N, State) ->
 	State;
 increment_footprint_active_task_count(FootprintKey, Peer, N, State) ->
 	prometheus_gauge:inc(sync_tasks, [footprint_active, sync_range, ar_util:format_peer(Peer)], N),
-	#state{ footprints = Footprints } = State,
-	Footprint = maps:get(FootprintKey, Footprints, #footprint{}),
+	Footprint = get_footprint(FootprintKey, State),
 	Footprint2 = Footprint#footprint{ active_count = Footprint#footprint.active_count + N },
-	State#state{ footprints = maps:put(FootprintKey, Footprint2, Footprints) }.
+	set_footprint(FootprintKey, Footprint2, State).
 
-increment_footprint_pending_task_count(Peer, N, State) ->
-	prometheus_gauge:inc(sync_tasks,
-		[footprint_pending, sync_range, ar_util:format_peer(Peer)], N),
-	State#state{ total_footprint_pending_count = State#state.total_footprint_pending_count + N }.
+%% @doc Decrement footprint active task counts for all tasks in the removed queue.
+cut_footprint_active_task_counts(RemovedQueue, Peer, State) ->
+	case queue:out(RemovedQueue) of
+		{empty, _} ->
+			State;
+		{{value, Args}, RemainingQueue} ->
+			{_Start, _End, _Peer, _TargetStoreID, FootprintKey} = Args,
+			State2 = increment_footprint_active_task_count(FootprintKey, Peer, -1, State),
+			cut_footprint_active_task_counts(RemainingQueue, Peer, State2)
+	end.
 	
 get_peer_tasks(Peer, State) ->
 	maps:get(Peer, State#state.peers, #peer{peer = Peer}).
@@ -629,6 +677,16 @@ set_peer_tasks(PeerTasks, State) ->
 	State#state{ peers =
 		maps:put(PeerTasks#peer.peer, PeerTasks, State#state.peers)
 	}.
+
+get_footprint(FootprintKey, State) ->
+	maps:get(FootprintKey, State#state.footprints, #footprint{}).
+
+set_footprint(FootprintKey, Footprint, State) ->
+	State#state{ footprints = maps:put(FootprintKey, Footprint, State#state.footprints) }.
+
+get_footprint_active_task_count(FootprintKey, State) ->
+	Footprint = get_footprint(FootprintKey, State),
+	Footprint#footprint.active_count.
 
 get_worker(State) ->
 	WorkerCount = queue:len(State#state.workers),
@@ -684,12 +742,12 @@ test_counters() ->
 	?assertEqual(0, maps:get("worker1", State#state.active_count_per_worker, 0)),
 	?assertEqual(0, State#state.total_pending_count),
 	State2 = increment_active_task_count("worker1", "localhost", 10, State),
-	State3 = increment_pending_task_count("localhost", 10, State2),
+	State3 = increment_pending_task_count(pending, "localhost", 10, State2),
 	?assertEqual(10, State3#state.total_active_count),
 	?assertEqual(10, maps:get("worker1", State3#state.active_count_per_worker, 0)),
 	?assertEqual(10, State3#state.total_pending_count),
 	State4 = increment_active_task_count("worker1", "localhost", -1, State3),
-	State5 = increment_pending_task_count("localhost", -1, State4),
+	State5 = increment_pending_task_count(pending, "localhost", -1, State4),
 	?assertEqual(9, State5#state.total_active_count),
 	?assertEqual(9, maps:get("worker1", State5#state.active_count_per_worker, 0)),
 	?assertEqual(9, State5#state.total_pending_count),
@@ -697,7 +755,7 @@ test_counters() ->
 	?assertEqual(10, State6#state.total_active_count),
 	?assertEqual(1, maps:get("worker2", State6#state.active_count_per_worker, 0)),
 	State7 = increment_active_task_count("worker1", "1.2.3.4:1984", -1, State6),
-	State8 = increment_pending_task_count("1.2.3.4:1984", -1, State7),
+	State8 = increment_pending_task_count(pending, "1.2.3.4:1984", -1, State7),
 	?assertEqual(9, State8#state.total_active_count),
 	?assertEqual(8, maps:get("worker1", State8#state.active_count_per_worker, 0)),
 	?assertEqual(8, State8#state.total_pending_count).
@@ -729,9 +787,9 @@ test_enqueue_peer_task() ->
 		}
 	},
 	
-	State1 = enqueue_peer_task(PeerA, {0, 100, PeerA, StoreID1, none}, State0),
-	State2 = enqueue_peer_task(PeerA, {100, 200, PeerA, StoreID1, none}, State1),
-	State3 = enqueue_peer_task(PeerB, {200, 300, PeerB, StoreID1, none}, State2),
+	State1 = enqueue_peer_task(none, PeerA, {0, 100, PeerA, StoreID1, none}, State0),
+	State2 = enqueue_peer_task(none, PeerA, {100, 200, PeerA, StoreID1, none}, State1),
+	State3 = enqueue_peer_task(none, PeerB, {200, 300, PeerB, StoreID1, none}, State2),
 	
 	PeerATasks = get_peer_tasks(PeerA, State3),
 	PeerBTasks = get_peer_tasks(PeerB, State3),
@@ -771,7 +829,7 @@ test_footprint_queue_none() ->
 	%% Both should be in the peer queue, not main queue (which no longer exists)
 	PeerTasks = get_peer_tasks(Peer1, State2),
 	?assertEqual(2, queue:len(PeerTasks#peer.pending)),
-	?assertEqual(0, count_active_footprints(State2#state.footprints)).
+	?assertEqual(0, State2#state.active_footprint_count).
 
 %% Test that footprint queue limits concurrent footprints
 test_footprint_queue_limit() ->
@@ -787,26 +845,26 @@ test_footprint_queue_limit() ->
 	State1 = enqueue_task(FootprintKey1, {0, 100, Peer1, StoreID1, FootprintKey1}, State0),
 	PeerTasks1 = get_peer_tasks(Peer1, State1),
 	?assertEqual(1, queue:len(PeerTasks1#peer.pending)),
-	?assertEqual(1, count_active_footprints(State1#state.footprints)),
+	?assertEqual(1, State1#state.active_footprint_count),
 	
 	State2 = enqueue_task(FootprintKey2, {100, 200, Peer2, StoreID1, FootprintKey2}, State1),
 	PeerTasks2 = get_peer_tasks(Peer2, State2),
 	?assertEqual(1, queue:len(PeerTasks2#peer.pending)),
-	?assertEqual(2, count_active_footprints(State2#state.footprints)),
+	?assertEqual(2, State2#state.active_footprint_count),
 	
 	%% Third footprint should be queued (not in peer queues yet)
 	State3 = enqueue_task(FootprintKey3, {200, 300, Peer1, StoreID1, FootprintKey3}, State2),
 	PeerTasks3 = get_peer_tasks(Peer1, State3),
 	?assertEqual(1, queue:len(PeerTasks3#peer.pending)), %% peer queue unchanged
-	?assertEqual(2, count_active_footprints(State3#state.footprints)), %% active footprints unchanged
-	Footprint3 = maps:get(FootprintKey3, State3#state.footprints, #footprint{}),
-	?assertEqual(false, queue:is_empty(Footprint3#footprint.queue)), %% one footprint waiting
+	?assertEqual(2, State3#state.active_footprint_count), %% active footprints unchanged
+	Footprint3 = get_footprint(FootprintKey3, State3),
+	?assertEqual(false, queue:is_empty(Footprint3#footprint.pending)), %% one footprint waiting
 	
 	%% Additional task for FootprintKey1 (already active) should go to peer queue
 	State4 = enqueue_task(FootprintKey1, {300, 400, Peer1, StoreID1, FootprintKey1}, State3),
 	PeerTasks4 = get_peer_tasks(Peer1, State4),
 	?assertEqual(2, queue:len(PeerTasks4#peer.pending)),
-	?assertEqual(2, count_active_footprints(State4#state.footprints)).
+	?assertEqual(2, State4#state.active_footprint_count).
 
 %% Test that completing a footprint activates the next waiting footprint
 test_footprint_queue_completion() ->
@@ -824,22 +882,22 @@ test_footprint_queue_completion() ->
 	
 	%% Complete FootprintKey1 - should activate FootprintKey3
 	State4 = complete_footprint_task(FootprintKey1, Peer1, State3),
-	?assertEqual(2, count_active_footprints(State4#state.footprints)),
-	Footprint2 = maps:get(FootprintKey2, State4#state.footprints, #footprint{}),
-	Footprint3 = maps:get(FootprintKey3, State4#state.footprints, #footprint{}),
+	?assertEqual(2, State4#state.active_footprint_count),
+	Footprint2 = get_footprint(FootprintKey2, State4),
+	Footprint3 = get_footprint(FootprintKey3, State4),
 	?assertEqual(1, Footprint2#footprint.active_count),
 	?assertEqual(1, Footprint3#footprint.active_count),
 	?assertEqual(false, maps:is_key(FootprintKey1, State4#state.footprints)),
-	?assertEqual(true, queue:is_empty(Footprint3#footprint.queue)), %% waiting queue now empty
+	?assertEqual(true, queue:is_empty(Footprint3#footprint.pending)), %% waiting queue now empty
 	%% The task from FootprintKey3 should now be in the peer queue
 	PeerTasks = get_peer_tasks(Peer1, State4),
 	?assertEqual(3, queue:len(PeerTasks#peer.pending)).
 
 test_max_peer_queue() ->
-	?assertEqual(undefined, max_peer_queue(#performance{ current_rating = 10 }, 0, 10)),
-	?assertEqual(undefined, max_peer_queue(#performance{ current_rating = 10 }, 0.0, 10)),
-	?assertEqual(undefined, max_peer_queue(#performance{ current_rating = 0 }, 100, 10)),
-	?assertEqual(undefined, max_peer_queue(#performance{ current_rating = 0.0 }, 100, 10)),
+	?assertEqual(infinity, max_peer_queue(#performance{ current_rating = 10 }, 0, 10)),
+	?assertEqual(infinity, max_peer_queue(#performance{ current_rating = 10 }, 0.0, 10)),
+	?assertEqual(infinity, max_peer_queue(#performance{ current_rating = 0 }, 100, 10)),
+	?assertEqual(infinity, max_peer_queue(#performance{ current_rating = 0.0 }, 100, 10)),
 	?assertEqual(50, max_peer_queue(#performance{ current_rating = 10 }, 100, 10)),
 	?assertEqual(20, max_peer_queue(#performance{ current_rating = 1 }, 100, 10)).
 
@@ -851,30 +909,42 @@ test_cut_peer_queue() ->
 		}),
 
 		Peer1 = {1, 2, 3, 4, 1984},
-		Pending = lists:seq(1, 100),
-		PeerTasks = #peer{
-			peer = Peer1,
-			pending = queue:from_list(Pending)
-		},
-		State = #state{
+		StoreID1 = ar_storage_module:id({ar_block:partition_size(), 1, default}),
+		Pending = [{I * 100, (I + 1) * 100, Peer1, StoreID1, none} || I <- lists:seq(0, 99)],
+		State0 = #state{
+			peers = #{Peer1 => #peer{
+				peer = Peer1,
+				pending = queue:from_list(Pending),
+				max_active = 8
+			}},
 			total_pending_count = length(Pending),
-			total_active_count = 10
+			total_active_count = 10,
+			workers = queue:from_list(lists:seq(1, 10))
 		},
 		
-		{PeerTasks1, State1} = cut_peer_queue(200, PeerTasks, State),
+		%% Test with high max_queue (infinity case - TotalThroughput = 0)
+		Performance1 = #performance{ current_rating = 10 },
+		State1 = cut_peer_queue(Peer1, Performance1, 0, State0),
+		PeerTasks1 = get_peer_tasks(Peer1, State1),
 		assert_peer_tasks(Pending, 0, 8, PeerTasks1),
 		?assertEqual(100, State1#state.total_pending_count),
 
-		{PeerTasks2, State2} = cut_peer_queue(20, PeerTasks, State),
+		%% Test cutting queue to 20
+		Performance2 = #performance{ current_rating = 1 },
+		State2 = cut_peer_queue(Peer1, Performance2, 100, State0),
+		PeerTasks2 = get_peer_tasks(Peer1, State2),
 		assert_peer_tasks(lists:sublist(Pending, 1, 20), 0, 8, PeerTasks2),
 		?assertEqual(20, State2#state.total_pending_count),
 
-		{PeerTasks3, State3} = cut_peer_queue(
-			20, PeerTasks, State#state{ total_active_count = 0 }),
+		%% Test with total_active_count = 0 (should not cut)
+		State3 = cut_peer_queue(Peer1, Performance2, 100, State0#state{ total_active_count = 0 }),
+		PeerTasks3 = get_peer_tasks(Peer1, State3),
 		assert_peer_tasks(Pending, 0, 8, PeerTasks3),
 		?assertEqual(100, State3#state.total_pending_count),
 
-		{PeerTasks4, State4} = cut_peer_queue(undefined, PeerTasks, State),
+		%% Test with infinity max_queue (TotalThroughput = 0)
+		State4 = cut_peer_queue(Peer1, Performance1, 0, State0),
+		PeerTasks4 = get_peer_tasks(Peer1, State4),
 		assert_peer_tasks(Pending, 0, 8, PeerTasks4),
 		?assertEqual(100, State4#state.total_pending_count)
 	after
@@ -884,61 +954,105 @@ test_cut_peer_queue() ->
 test_update_active() ->
 	Workers20 = queue:from_list(lists:seq(1, 20)),
 	Workers10 = queue:from_list(lists:seq(1, 10)),
-	Result1 = update_max_active(
-		#peer{max_active = 10, active_count = 10, pending = queue:from_list(lists:seq(1, 30))},
-		#performance{average_latency = 100},
-		20,
-		200,
-		#state{ workers = Workers20 }),
-	?assertEqual(11, Result1#peer.max_active),
+	Peer1 = "peer1",
 	
-	Result2 = update_max_active(
-		#peer{max_active = 10, active_count = 20, pending = queue:from_list(lists:seq(1, 30))},
-		#performance{average_latency = 300},
-		20,
-		200,
-		#state{ workers = Workers20 }),
-	?assertEqual(9, Result2#peer.max_active),
+	State1 = #state{
+		workers = Workers20,
+		peers = #{Peer1 => #peer{
+			peer = Peer1,
+			max_active = 10,
+			active_count = 10,
+			pending = queue:from_list(lists:seq(1, 30)),
+			pending_count = 30
+		}}
+	},
+	State1Result = update_max_active(Peer1, #performance{average_latency = 100}, 20, 200, State1),
+	PeerTasks1 = get_peer_tasks(Peer1, State1Result),
+	?assertEqual(11, PeerTasks1#peer.max_active),
+	
+	State2 = #state{
+		workers = Workers20,
+		peers = #{Peer1 => #peer{
+			peer = Peer1,
+			max_active = 10,
+			active_count = 20,
+			pending = queue:from_list(lists:seq(1, 30)),
+			pending_count = 30
+		}}
+	},
+	State2Result = update_max_active(Peer1, #performance{average_latency = 300}, 20, 200, State2),
+	PeerTasks2 = get_peer_tasks(Peer1, State2Result),
+	?assertEqual(9, PeerTasks2#peer.max_active),
 
-	Result3 = update_max_active(
-		#peer{max_active = 10, active_count = 20, pending = queue:from_list(lists:seq(1, 30))},
-		#performance{average_latency = 300},
-		10,
-		200,
-		#state{ workers = Workers20 }),
-	?assertEqual(11, Result3#peer.max_active),
+	State3 = #state{
+		workers = Workers20,
+		peers = #{Peer1 => #peer{
+			peer = Peer1,
+			max_active = 10,
+			active_count = 20,
+			pending = queue:from_list(lists:seq(1, 30)),
+			pending_count = 30
+		}}
+	},
+	State3Result = update_max_active(Peer1, #performance{average_latency = 300}, 10, 200, State3),
+	PeerTasks3 = get_peer_tasks(Peer1, State3Result),
+	?assertEqual(11, PeerTasks3#peer.max_active),
 	
-	Result4 = update_max_active(
-		#peer{max_active = 10, active_count = 20, pending = queue:from_list(lists:seq(1, 30))},
-		#performance{average_latency = 100},
-		10,
-		200,
-		#state{ workers = Workers10 }),
-	?assertEqual(10, Result4#peer.max_active),
+	State4 = #state{
+		workers = Workers10,
+		peers = #{Peer1 => #peer{
+			peer = Peer1,
+			max_active = 10,
+			active_count = 20,
+			pending = queue:from_list(lists:seq(1, 30)),
+			pending_count = 30
+		}}
+	},
+	State4Result = update_max_active(Peer1, #performance{average_latency = 100}, 10, 200, State4),
+	PeerTasks4 = get_peer_tasks(Peer1, State4Result),
+	?assertEqual(10, PeerTasks4#peer.max_active),
 	
-	Result5 = update_max_active(
-		#peer{max_active = 10, active_count = 5, pending = queue:from_list(lists:seq(1, 10))},
-		#performance{average_latency = 100},
-		20,
-		200,
-		#state{ workers = Workers20 }),
-	?assertEqual(10, Result5#peer.max_active),
+	State5 = #state{
+		workers = Workers20,
+		peers = #{Peer1 => #peer{
+			peer = Peer1,
+			max_active = 10,
+			active_count = 5,
+			pending = queue:from_list(lists:seq(1, 10)),
+			pending_count = 10
+		}}
+	},
+	State5Result = update_max_active(Peer1, #performance{average_latency = 100}, 20, 200, State5),
+	PeerTasks5 = get_peer_tasks(Peer1, State5Result),
+	?assertEqual(10, PeerTasks5#peer.max_active),
 	
-	Result6 = update_max_active(
-		#peer{max_active = 10, active_count = 10, pending = queue:from_list(lists:seq(1, 5))},
-		#performance{average_latency = 100},
-		20,
-		200,
-		#state{ workers = Workers20 }),
-	?assertEqual(10, Result6#peer.max_active),
+	State6 = #state{
+		workers = Workers20,
+		peers = #{Peer1 => #peer{
+			peer = Peer1,
+			max_active = 10,
+			active_count = 10,
+			pending = queue:from_list(lists:seq(1, 5)),
+			pending_count = 5
+		}}
+	},
+	State6Result = update_max_active(Peer1, #performance{average_latency = 100}, 20, 200, State6),
+	PeerTasks6 = get_peer_tasks(Peer1, State6Result),
+	?assertEqual(10, PeerTasks6#peer.max_active),
 
-	Result7 = update_max_active(
-		#peer{max_active = 8, active_count = 20, pending = queue:from_list(lists:seq(1, 30))},
-		#performance{average_latency = 300},
-		20,
-		200,
-		#state{ workers = Workers20 }),
-	?assertEqual(8, Result7#peer.max_active).
+	State7 = #state{
+		workers = Workers20,
+		peers = #{Peer1 => #peer{
+			peer = Peer1,
+			max_active = 8,
+			active_count = 20,
+			pending = queue:from_list(lists:seq(1, 30)),
+			pending_count = 30
+		}}
+	},
+	State7Result = update_max_active(Peer1, #performance{average_latency = 300}, 20, 200, State7),
+	PeerTasks7 = get_peer_tasks(Peer1, State7Result),
+	?assertEqual(8, PeerTasks7#peer.max_active).
 
 test_calculate_targets() ->
 	State0 = #state{},

@@ -67,11 +67,13 @@ handle_cast({read_range, Args}, State) ->
 	{noreply, State};
 
 handle_cast({sync_range, Args}, State) ->
+	{_, _, Peer, _, _, _} = Args,
 	StartTime = erlang:monotonic_time(),
 	SyncResult = sync_range(Args, State),
 	EndTime = erlang:monotonic_time(),
 	case SyncResult of
 		recast ->
+			?LOG_DEBUG([{event, sync_range_recast}, {peer, ar_util:format_peer(Peer)}, {args, Args}]),
 			ok;
 		_ ->
 			gen_server:cast(ar_data_sync_worker_master, {task_completed,
@@ -230,7 +232,8 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
 			end
 	end.
 
-sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount, _FootprintKey}, _State) when Start >= End ->
+sync_range({Start, End, Peer, _TargetStoreID, _RetryCount, _FootprintKey} = Args, _State) when Start >= End ->
+	?LOG_DEBUG([{event, sync_range_done1}, {peer, ar_util:format_peer(Peer)}, {args, Args}]),
 	ok;
 sync_range({Start, End, Peer, _TargetStoreID, 0, _FootprintKey}, _State) ->
 	?LOG_DEBUG([{event, sync_range_retries_exhausted},
@@ -268,8 +271,12 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 			IsRecorded = ar_sync_record:is_recorded(Byte + 1, ar_data_sync, TargetStoreID),
 			case {Byte >= End, IsRecorded} of
 				{true, _} ->
+					?LOG_DEBUG([{event, sync_range_done2}, {peer, ar_util:format_peer(Peer)},
+						{args, Args}]),
 					ok;
 				{_, {true, _}} ->
+					?LOG_DEBUG([{event, sync_range_recorded}, {peer, ar_util:format_peer(Peer)},
+						{args, Args}]),
 					ok;
 				_ ->
 					Packing = get_target_packing(TargetStoreID, State#state.request_packed_chunks),
@@ -295,6 +302,8 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 							ar_util:cast_after(1000, self(), {sync_range, Args2}),
 							recast;
 						{error, {ok, {{<<"404">>, _}, _, _, _, _}} = Reason} ->
+							?LOG_DEBUG([{event, sync_range_404}, {peer, ar_util:format_peer(Peer)},
+								{args, Args}]),
 							{error, Reason};
 						{error, Reason} ->
 							ar_http_iface_client:log_failed_request({error, Reason}, [
