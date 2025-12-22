@@ -8,6 +8,8 @@
 
 -behaviour(gen_server).
 
+-include_lib("arweave/include/ar.hrl").
+
 %% API
 -export([
          start_link/2,
@@ -26,8 +28,6 @@
          drop_expired/3,
          add_and_order_timestamps/2]).
 -endif.
-
--define(SERVER, ?MODULE).
 
 %% TODO: determine sensible defaults based on desired load profile,
 %%       and where to store these macros what config are they a part of,
@@ -106,7 +106,8 @@ init([Args]) ->
           }}.
 
 handle_call({register_or_reject, Peer, Now}, {FromPid, _},
-            State = #{leaky_rate_limit := LeakyRateLimit,
+            State = #{id := Id,
+                      leaky_rate_limit := LeakyRateLimit,
                       leaky_tokens := LeakyTokens,
                       concurrency_limit := ConcurrencyLimit,
                       concurrent_requests := ConcurrentRequests,
@@ -124,6 +125,8 @@ handle_call({register_or_reject, Peer, Now}, {FromPid, _},
     case Concurrency > ConcurrencyLimit of
         true ->
             %% Concurrency Hard Limit
+            ?LOG_WARNING([{event, ar_limiter_reject}, {reason, concurrency},
+                          {peer, Peer}, {id, Id}]),
             {reply, {reject, concurrency, data}, State};
         _ ->
             case length(SlidingTimestampsForPeer0) + 1 > SlidingWindowLimit of
@@ -132,6 +135,8 @@ handle_call({register_or_reject, Peer, Now}, {FromPid, _},
                     case Tokens > LeakyRateLimit of
                         true ->
                             %% Burst exhausted with the Leaky Tokens
+                            ?LOG_WARNING([{event, ar_limiter_reject}, {reason, rate_limit},
+                                          {peer, Peer}, {id, Id}]),
                             {reply, {reject, rate_limit, data}, State};
                         false ->
                             NewLeakyTokens = update_token(Peer, Tokens, LeakyTokens),

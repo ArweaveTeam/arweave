@@ -15,6 +15,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(HTTP_IFACE_MIDDLEWARES, [
+	ar_http_iface_rate_limiter_middleware,
 	ar_blacklist_middleware,
 	ar_network_middleware,
 	cowboy_router,

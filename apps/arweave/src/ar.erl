@@ -1179,6 +1179,7 @@ start(normal, _Args) ->
 	%% Start the Prometheus metrics subsystem.
 	prometheus_registry:register_collector(prometheus_process_collector),
 	prometheus_registry:register_collector(ar_metrics_collector),
+	prometheus_registry:register_collector(ar_limiter_metrics_collector),
 
 	%% Register custom metrics.
 	ar_metrics:register(),

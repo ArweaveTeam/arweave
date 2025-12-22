@@ -556,10 +556,6 @@ register() ->
 			{labels, [limiter_id, reason]}
 			]),
     	prometheus_gauge:new([
-			{name, ar_limiter_concurrent_requests},
-			{help, "The number of concurrent handlers the limiter is monitoring currently"},
-			{labels, [limiter_id]}]),
-    	prometheus_gauge:new([
 			{name, ar_limiter_peers},
 			{help, "The number of peers the limiter is monitoring currently"},
 			%% limiting type:
