@@ -65,7 +65,7 @@ tracked_items_info({Id, Info}, Acc) ->
 count_sliding_timestamps(Info) ->
     SlidingTimestamps = maps:get(sliding_timestamps, Info),
     maps:fold(fun(_Peer, TimestampList, Acc) ->
-                        length(TimestampList) ++ Acc
+                        length(TimestampList) + Acc
                 end, 0, SlidingTimestamps).
 
 peers(AllInfo) ->
