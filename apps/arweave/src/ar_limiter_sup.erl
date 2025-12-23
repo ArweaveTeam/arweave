@@ -18,7 +18,7 @@
 %% API functions
 %% ===================================================================
 start_link() ->
-    start_link(get_limiter_config).
+    start_link(get_limiter_config()).
 
 start_link(Config) ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, [Config]).
