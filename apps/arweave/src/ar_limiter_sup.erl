@@ -46,7 +46,7 @@ child_spec(#{id := Id} = Config) ->
        type => worker,
        shutdown => ?SHUTDOWN_TIMEOUT}.
 
-get_limiter_configs() ->
+get_limiter_config() ->
     %% TODO: get from ar_config.
     [#{id => general},
      #{id => metrics}].
