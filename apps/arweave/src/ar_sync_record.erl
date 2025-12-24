@@ -11,6 +11,7 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 %% The kv storage key to the sync records.
 -define(SYNC_RECORDS_KEY, <<"sync_records">>).
@@ -299,16 +300,18 @@ init(StoreID) ->
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	StorageModule = ar_storage_module:get_by_id(StoreID),
+	{ok, Config} = arweave_config:get_env(),
+	DataDir = Config#config.data_dir,
 	{Dir, StorageModuleSize, StorageModuleIndex, PartitionNumber} =
 		case StorageModule of
 			?DEFAULT_MODULE ->
-				{filename:join(?ROCKS_DB_DIR, "ar_sync_record_db"),
+				{filename:join([DataDir, ?ROCKS_DB_DIR, "ar_sync_record_db"]),
 					undefined, undefined, undefined};
 			Atom when is_atom(Atom) ->
 				%% A module without a storage, to use in tests.
 				{undefined, undefined, undefined, undefined};
 			{Size, Index, _Packing} ->
-				{filename:join(["storage_modules", StoreID, ?ROCKS_DB_DIR,
+				{filename:join([DataDir, "storage_modules", StoreID, ?ROCKS_DB_DIR,
 						"ar_sync_record_db"]), Size, Index,
 							ar_node:get_partition_number(Size * Index)}
 		end,
@@ -318,7 +321,7 @@ init(StoreID) ->
 			undefined ->
 				{#{}, #{}, undefined};
 			_ ->
-				ok = ar_kv:open(Dir, StateDB),
+				ok = ar_kv:open(#{ path => Dir, name => StateDB }),
 				gen_server:cast(self(), store_state),
 				read_sync_records(StateDB, StoreID)
 		end,
