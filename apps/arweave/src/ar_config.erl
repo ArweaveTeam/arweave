@@ -122,7 +122,8 @@ validate_config(Config) ->
 	validate_cm_pool(Config) andalso
 	validate_cm(Config) andalso
 	validate_unique_replication_type(Config) andalso
-	validate_verify(Config).
+	validate_verify(Config) andalso
+	validate_start_from_state(Config).
 
 %%--------------------------------------------------------------------
 %% @doc Some flags force other flags to be set.
@@ -131,8 +132,14 @@ validate_config(Config) ->
 -spec set_dependent_flags(Config :: #config{}) -> #config{}.
 
 set_dependent_flags(Config) ->
-	Config2 = set_verify_flags(Config),
+	Config1 = set_start_from_state_flags(Config),
+	Config2 = set_verify_flags(Config1),
 	Config2.
+
+set_start_from_state_flags(#config{ start_from_state = not_set } = Config) ->
+	Config;
+set_start_from_state_flags(Config) ->
+	Config#config{ start_from_latest_state = true }.
 
 use_remote_vdf_server() ->
 	{ok, Config} = arweave_config:get_env(),
@@ -264,6 +271,11 @@ parse_options([{<<"start_from_latest_state">>, false} | Rest], Config) ->
 	parse_options(Rest, Config#config{ start_from_latest_state = false });
 parse_options([{<<"start_from_latest_state">>, Opt} | _], _) ->
 	{error, {bad_type, start_from_latest_state, boolean}, Opt};
+
+parse_options([{<<"start_from_state">>, Folder} | Rest], Config) when is_binary(Folder) ->
+	parse_options(Rest, Config#config{ start_from_state = binary_to_list(Folder) });
+parse_options([{<<"start_from_state">>, Folder} | _], _) ->
+	{error, {bad_type, start_from_state, string}, Folder};
 
 parse_options([{<<"start_from_block">>, H} | Rest], Config) when is_binary(H) ->
 	case ar_util:safe_decode(H) of
@@ -1960,6 +1972,8 @@ log_config_value(local_peers, FieldValue) ->
 	format_peers(FieldValue);
 log_config_value(mining_addr, FieldValue) ->
 	format_binary(FieldValue);
+log_config_value(start_from_state, FieldValue) ->
+	FieldValue;
 log_config_value(start_from_block, FieldValue) ->
 	format_binary(FieldValue);
 log_config_value(storage_modules, FieldValue) ->
@@ -2103,6 +2117,17 @@ validate_verify(#config{ repack_in_place_storage_modules = RepackInPlaceStorageM
 	false;
 validate_verify(_Config) ->
 	true.
+
+validate_start_from_state(#config{ start_from_state = not_set }) ->
+	true;
+validate_start_from_state(#config{ start_from_state = Folder, data_dir = DataDir }) ->
+	case filename:absname(Folder) == filename:absname(DataDir) of
+		true ->
+			io:format("~nstart_from_state folder cannot be the same as data_dir.~n~n"),
+			false;
+		false ->
+			true
+	end.
 
 disable_vdf(Config) ->
 	RemovePublicVDFServer =
