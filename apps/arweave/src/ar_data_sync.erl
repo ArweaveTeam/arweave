@@ -889,22 +889,8 @@ handle_cast({move_data_root_index, Cursor, N}, State) ->
 	{noreply, State};
 
 handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, Entries}, State) ->
-	#sync_data_state{ store_id = ?DEFAULT_MODULE } = State,
-	DataRootIndexKeySet = sets:from_list([
-		<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>
-		|| {DataRoot, TXSize, _TXStart, _TXPath} <- Entries
-	]),
-	BlockSize = BlockEnd - BlockStart,
-	lists:foreach(
-		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
-			ok = update_data_root_index(DataRoot, TXSize, TXStartOffset, TXPath, ?DEFAULT_MODULE)
-		end,
-		Entries
-	),
-	ok = ar_kv:put({data_root_offset_index, ?DEFAULT_MODULE},
-			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
-			term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})),
-	{noreply, State};
+	{_, State2} = handle_store_data_roots(BlockStart, BlockEnd, TXRoot, Entries, State),
+	{noreply, State2};
 
 handle_cast(process_store_chunk_queue, State) ->
 	ar_util:cast_after(200, self(), process_store_chunk_queue),
@@ -1530,9 +1516,31 @@ handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	{reply, add_block(B, SizeTaggedTXs, StoreID), State};
 
+handle_call({store_data_roots_sync, BlockStart, BlockEnd, TXRoot, Entries}, _From, State) ->
+	{Reply, State2} = handle_store_data_roots(BlockStart, BlockEnd, TXRoot, Entries, State),
+	{reply, Reply, State2};
+
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
 	{reply, ok, State}.
+
+handle_store_data_roots(BlockStart, BlockEnd, TXRoot, Entries, State) ->
+	#sync_data_state{ store_id = ?DEFAULT_MODULE } = State,
+	DataRootIndexKeySet = sets:from_list([
+		<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>
+		|| {DataRoot, TXSize, _TXStart, _TXPath} <- Entries
+	]),
+	BlockSize = BlockEnd - BlockStart,
+	lists:foreach(
+		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
+			ok = update_data_root_index(DataRoot, TXSize, TXStartOffset, TXPath, ?DEFAULT_MODULE)
+		end,
+		Entries
+	),
+	ok = ar_kv:put({data_root_offset_index, ?DEFAULT_MODULE},
+			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
+			term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})),
+	{ok, State}.
 
 handle_info({event, node_state, {initialized, B}}, State) ->
 	{noreply, State#sync_data_state{ weave_size = B#block.weave_size }};
