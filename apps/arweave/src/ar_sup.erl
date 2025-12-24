@@ -90,7 +90,7 @@ init([]) ->
 		?CHILD_SUP(ar_verify_chunks_sup, supervisor),
 		?CHILD(ar_global_sync_record, worker),
 		?CHILD_SUP(ar_nonce_limiter_sup, supervisor),
-		?CHILD_SUP(ar_mining_sup, supervisor),
+		mining_sup(),
 		?CHILD(ar_coordination, worker),
 		?CHILD_SUP(ar_tx_emitter_sup, supervisor),
 		?CHILD(ar_tx_poller, worker),
@@ -109,3 +109,11 @@ init([]) ->
 		false -> []
 	end,
 	{ok, {{one_for_one, 5, 10}, Children ++ DebugChildren}}.
+
+-ifdef(LOCALNET).
+mining_sup() ->
+	?CHILD_SUP(ar_localnet_mining_sup, supervisor).
+-else.
+mining_sup() ->
+	?CHILD_SUP(ar_mining_sup, supervisor).
+-endif.

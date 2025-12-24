@@ -85,7 +85,7 @@ init() ->
 			environment => <<"AR_START_FROM_STATE">>,
 			long_argument => <<"--start-from-state">>,
 			handle_get => fun legacy_get/2,
-			handle_set => fun legacy_set/3
+			handle_set => fun legacy_set/4
 		},
 	 	#{
 			enabled => true,
