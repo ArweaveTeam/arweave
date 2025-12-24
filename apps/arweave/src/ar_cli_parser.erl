@@ -83,6 +83,9 @@ show_help() ->
 			{"sync_from_local_peers_only", "If set, the data (not headers) is only synced "
 					"from the local network peers specified via the local_peer parameter."},
 			{"start_from_latest_state", "Start the node from the latest stored state."},
+			{"start_from_state (folder)", "Start the node from the state stored in the "
+					"specified folder. This folder must be different from data_dir. "
+					"Implicitly sets start_from_latest_state to true."},
 			{"start_from_block (block hash)", "Start the node from the state corresponding "
 					"to the given block hash."},
 			{"start_from_block_index", "The legacy name for start_from_latest_state."},
@@ -697,6 +700,8 @@ parse(["disk_space_check_frequency", Frequency | Rest], C) ->
 	});
 parse(["start_from_block_index" | Rest], C) ->
 	parse(Rest, C#config{ start_from_latest_state = true });
+parse(["start_from_state", Folder | Rest], C) ->
+	parse(Rest, C#config{ start_from_state = Folder });
 parse(["start_from_block", H | Rest], C) ->
 	case ar_util:safe_decode(H) of
 		{ok, Decoded} when byte_size(Decoded) == 48 ->
