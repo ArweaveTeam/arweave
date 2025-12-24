@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, name/1, store_data_roots/4, validate_data_roots/4]).
+-export([start_link/1, name/1, store_data_roots/4, store_data_roots_sync/4, validate_data_roots/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
@@ -42,6 +42,11 @@ name(StoreID) ->
 store_data_roots(BlockStart, BlockEnd, TXRoot, Entries) ->
 	gen_server:cast(ar_data_sync_default, {store_data_roots,
 		BlockStart, BlockEnd, TXRoot, Entries}).
+
+%% @doc Store the given data roots synchronously.
+store_data_roots_sync(BlockStart, BlockEnd, TXRoot, Entries) ->
+	gen_server:call(ar_data_sync_default, {store_data_roots_sync,
+		BlockStart, BlockEnd, TXRoot, Entries}, 120000).
 
 %% @doc Validate the given data roots against the local block index.
 %% Also recompute the TXRoot from entries and verify Merkle paths.

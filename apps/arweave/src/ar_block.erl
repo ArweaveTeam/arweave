@@ -12,7 +12,7 @@
 		indep_hash/1, indep_hash/2, indep_hash2/2, get_block_signature_preimage/4,
 		generate_signed_hash/1, verify_signature/3, get_reward_key/2,
 		generate_block_data_segment/1, generate_block_data_segment/2,
-		generate_block_data_segment_base/1, get_recall_range/3, verify_tx_root/1,
+		generate_block_data_segment_base/1, get_recall_range/3, get_recall_range/5, verify_tx_root/1,
 		hash_wallet_list/1, generate_hash_list_for_block/2,
 		generate_tx_root_for_block/1, generate_tx_root_for_block/2,
 		generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
@@ -613,12 +613,30 @@ generate_block_data_segment_base(B) ->
 
 %% @doc Return {RecallRange1Start, RecallRange2Start} - the start offsets
 %% of the two recall ranges.
-get_recall_range(H0, PartitionNumber, PartitionUpperBound) ->
+%% In LOCALNET mode, RecallRange1 and RecallRange2 are passed through directly.
+%% In normal mode, they are computed from H0 and PartitionNumber.
+-ifdef(LOCALNET).
+get_recall_range(H0, PartitionNumber, PartitionUpperBound, not_set, not_set) ->
+	RecallRange1Offset = binary:decode_unsigned(binary:part(H0, 0, 8), big),
+	RecallRange1Start = PartitionNumber * ar_block:partition_size()
+			+ RecallRange1Offset rem min(ar_block:partition_size(), PartitionUpperBound),
+	RecallRange2Start = binary:decode_unsigned(H0, big) rem PartitionUpperBound,
+	{RecallRange1Start, RecallRange2Start};
+
+get_recall_range(_H0, _PartitionNumber, _PartitionUpperBound, RecallRange1, RecallRange2) ->
+	{RecallRange1, RecallRange2}.
+-else.
+get_recall_range(H0, PartitionNumber, PartitionUpperBound, _RecallRange1, _RecallRange2) ->
 	RecallRange1Offset = binary:decode_unsigned(binary:part(H0, 0, 8), big),
 	RecallRange1Start = PartitionNumber * ar_block:partition_size()
 			+ RecallRange1Offset rem min(ar_block:partition_size(), PartitionUpperBound),
 	RecallRange2Start = binary:decode_unsigned(H0, big) rem PartitionUpperBound,
 	{RecallRange1Start, RecallRange2Start}.
+-endif.
+
+%% @doc Compatibility version for 3 arguments.
+get_recall_range(H0, PartitionNumber, PartitionUpperBound) ->
+	get_recall_range(H0, PartitionNumber, PartitionUpperBound, not_set, not_set).
 
 vdf_step_number(#block{ nonce_limiter_info = Info }) ->
 	Info#nonce_limiter_info.global_step_number.

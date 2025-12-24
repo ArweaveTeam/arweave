@@ -12,9 +12,10 @@
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
 		tests/0, tests/1, e2e/0, e2e/1,
-		shell/0, shell_e2e/0,
-		stop_shell/0, stop_shell_e2e/0,
-		docs/0, shutdown/1, console/1, console/2, prep_stop/1]).
+		shell/0, shell_e2e/0, shell_localnet/0,
+		stop_shell/0, stop_shell_e2e/0, stop_shell_localnet/0,
+		docs/0, shutdown/1, console/1, console/2, prep_stop/1,
+		shell_localnet/1]).
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
@@ -1362,6 +1363,23 @@ stop_shell_e2e() ->
 %% Usage: ./bin/test [module | module:test ...]
 tests()     -> ar_test_runner:run(test).
 tests(Args) -> ar_test_runner:run(test, Args).
+
+shell_localnet() ->
+	shell_localnet([]).
+
+shell_localnet(_Args) ->
+	try
+		ar_localnet:start(),
+		io:format("Shell is ready.~n")
+	catch
+		Type:Reason:S ->
+			io:format("Failed to start localnet due to ~p:~p:~p~n", [Type, Reason, S]),
+			init:stop(1)
+	end.
+
+stop_shell_localnet() ->
+	ar_test_node:stop(),
+	init:stop().
 
 %% @doc Run e2e tests.
 %% Usage: ./bin/e2e [module | module:test ...]
