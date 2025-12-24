@@ -69,9 +69,12 @@ get_scan_height() ->
 %%%===================================================================
 init([]) ->
 	process_flag(trap_exit, true),
+	{ok, Config} = arweave_config:get_env(),
+	DataDir = Config#config.data_dir,
 	%% Database for general P3 state data (e.g. last scanned block height)
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_p3_ledger_db"),
-			ar_p3_state_db),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "ar_p3_ledger_db"]),
+		name => ar_p3_state_db}),
 	{ok, #{}}.
 
 handle_call({get_or_create_account, Address, PublicKey, Asset}, _From, State) ->
@@ -156,10 +159,12 @@ create_account(Address, PublicKey, Asset) ->
 		{"default", BasicOpts},
 		{"p3_account", BasicOpts},
 		{"p3_tx", BasicOpts}],
-	ok = ar_kv:open(
-		filename:join([?ROCKS_DB_DIR, "ar_p3_ledger_db", DatabaseId]),
-		ColumnFamilyDescriptors, [],
-		[{?MODULE, Address}, {p3_account, Address}, {p3_tx, Address}]),
+	{ok, Config} = arweave_config:get_env(),
+	DataDir = Config#config.data_dir,
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "ar_p3_ledger_db", DatabaseId]),
+		cf_descriptors => ColumnFamilyDescriptors,
+		cf_names => [{?MODULE, Address}, {p3_account, Address}, {p3_tx, Address}]}),
 	Account = #p3_account{
 		address = Address,
 		public_key = PublicKey,

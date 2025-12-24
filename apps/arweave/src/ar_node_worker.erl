@@ -98,12 +98,12 @@ init([]) ->
 	{ok, Config} = arweave_config:get_env(),
 	validate_trusted_peers(Config),
 	StartFromLocalState = Config#config.start_from_latest_state orelse
-			Config#config.start_from_block /= undefined,
+			Config#config.start_from_block /= not_set,
 	case {StartFromLocalState, Config#config.init, Config#config.auto_join} of
 		{false, false, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
 		{true, _, _} ->
-			case ar_storage:read_block_index() of
+			case ar_storage:read_block_index(Config#config.start_from_state) of
 				not_found ->
 					block_index_not_found([]);
 				BI ->
@@ -372,22 +372,29 @@ handle_cast(Message, #{ task_queue := TaskQueue } = State) ->
 			{noreply, State#{ task_queue => gb_sets:insert(Task, TaskQueue) }}
 	end.
 
-handle_info({join_from_state, Height, BI, Blocks}, State) ->
+handle_info({join_from_state, Height, BI, Blocks, CustomDir}, State) ->
 	{ok, _} = ar_wallets:start_link([{blocks, Blocks},
-			{from_state, ?START_FROM_STATE_SEARCH_DEPTH}]),
-	ets:insert(node_state, {join_state, {Height, Blocks, BI}}),
+			{from_state, ?START_FROM_STATE_SEARCH_DEPTH},
+			{custom_dir, CustomDir}]),
+	ets:insert(node_state, {join_state, {Height, Blocks, BI, CustomDir}}),
 	{noreply, State};
 
 handle_info({join, Height, BI, Blocks}, State) ->
 	Peers = ar_peers:get_trusted_peers(),
 	{ok, _} = ar_wallets:start_link([{blocks, Blocks}, {from_peers, Peers}]),
-	ets:insert(node_state, {join_state, {Height, Blocks, BI}}),
+	ets:insert(node_state, {join_state, {Height, Blocks, BI, not_set}}),
 	{noreply, State};
 
 handle_info({event, node_state, {account_tree_initialized, Height}}, State) ->
-	[{_, {Height2, Blocks, BI}}] = ets:lookup(node_state, join_state),
+	[{_, {Height2, Blocks, BI, CustomDir}}] = ets:lookup(node_state, join_state),
 	?LOG_INFO([{event, account_tree_initialized}, {height, Height}]),
 	ar:console("The account tree has been initialized at the block height ~B.~n", [Height]),
+	case CustomDir of
+		not_set ->
+			ok;
+		_ ->
+			ar_storage:close_start_from_state_databases()
+	end,
 	%% Take the latest block the account tree is stored for.
 	Blocks2 = lists:nthtail(Height2 - Height, Blocks),
 	BI2 = lists:nthtail(Height2 - Height, BI),
@@ -395,7 +402,7 @@ handle_info({event, node_state, {account_tree_initialized, Height}}, State) ->
 	Blocks3 = lists:sublist(Blocks2, ?SEARCH_SPACE_UPPER_BOUND_DEPTH),
 	Blocks4 = may_be_initialize_nonce_limiter(Blocks3, BI2),
 	Blocks5 = Blocks4 ++ lists:nthtail(length(Blocks3), Blocks2),
-	ets:insert(node_state, {join_state, {Height, Blocks5, BI2}}),
+	ets:insert(node_state, {join_state, {Height, Blocks5, BI2, CustomDir}}),
 	ar_nonce_limiter:account_tree_initialized(Blocks5),
 	{noreply, State};
 
@@ -403,7 +410,7 @@ handle_info({event, node_state, _Event}, State) ->
 	{noreply, State};
 
 handle_info({event, nonce_limiter, initialized}, State) ->
-	[{_, {Height, Blocks, BI}}] = ets:lookup(node_state, join_state),
+	[{_, {Height, Blocks, BI, _CustomDir}}] = ets:lookup(node_state, join_state),
 	ar_storage:store_block_index(BI),
 	RecentBI = lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN),
 	Current = element(1, hd(RecentBI)),
@@ -1750,7 +1757,11 @@ start_from_state([#block{} = GenesisB]) ->
 		block_time_history = BlockTimeHistory
 	}]}.
 start_from_state(BI, Height) ->
-	case read_recent_blocks(BI, min(length(BI) - 1, ?START_FROM_STATE_SEARCH_DEPTH)) of
+	{ok, Config} = arweave_config:get_env(),
+	start_from_state(BI, Height, Config#config.start_from_state).
+
+start_from_state(BI, Height, CustomDir) ->
+	case read_recent_blocks(BI, min(length(BI) - 1, ?START_FROM_STATE_SEARCH_DEPTH), CustomDir) of
 		not_found ->
 			?LOG_ERROR([{event, start_from_state}, {reason, block_headers_not_found}]),
 			block_headers_not_found;
@@ -1770,8 +1781,8 @@ start_from_state(BI, Height) ->
 
 			BlockTimeHistoryBI = lists:sublist(BI2,
 					ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
-			case {ar_storage:read_reward_history(RewardHistoryBI),
-					ar_storage:read_block_time_history(Height2, BlockTimeHistoryBI)} of
+			case {ar_storage:read_reward_history(RewardHistoryBI, CustomDir),
+					ar_storage:read_block_time_history(Height2, BlockTimeHistoryBI, CustomDir)} of
 				{not_found, _} ->
 					?LOG_ERROR([{event, start_from_state_error},
 							{reason, reward_history_not_found},
@@ -1789,32 +1800,32 @@ start_from_state(BI, Height) ->
 				{RewardHistory, BlockTimeHistory} ->
 					Blocks2 = ar_rewards:set_reward_history(Blocks, RewardHistory),
 					Blocks3 = ar_block_time_history:set_history(Blocks2, BlockTimeHistory),
-					self() ! {join_from_state, Height2, BI2, Blocks3},
+					self() ! {join_from_state, Height2, BI2, Blocks3, CustomDir},
 					ok
 			end
 	end.
 
-read_recent_blocks(BI, SearchDepth) ->
+read_recent_blocks(BI, SearchDepth, CustomDir) ->
 	read_recent_blocks2(lists:sublist(BI, 2 * ar_block:get_max_tx_anchor_depth() + SearchDepth),
-			SearchDepth, 0).
+			SearchDepth, 0, CustomDir).
 
-read_recent_blocks2(_BI, Depth, Skipped) when Skipped > Depth orelse
+read_recent_blocks2(_BI, Depth, Skipped, _CustomDir) when Skipped > Depth orelse
 		(Skipped > 0 andalso Depth == Skipped) ->
 	not_found;
-read_recent_blocks2([], _SearchDepth, Skipped) ->
+read_recent_blocks2([], _SearchDepth, Skipped, _CustomDir) ->
 	{Skipped, []};
-read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped) ->
-	case ar_storage:read_block(BH) of
+read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped, CustomDir) ->
+	case ar_storage:read_block(BH, CustomDir) of
 		B = #block{} ->
-			TXs = ar_storage:read_tx(B#block.txs),
+			TXs = ar_storage:read_tx(B#block.txs, CustomDir),
 			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
 				true ->
-					read_recent_blocks2(BI, SearchDepth, Skipped + 1);
+					read_recent_blocks2(BI, SearchDepth, Skipped + 1, CustomDir);
 				false ->
 					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
 							B#block.height),
 					case read_recent_blocks3(BI, 2 * ar_block:get_max_tx_anchor_depth() - 1,
-							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }]) of
+							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }], CustomDir) of
 						not_found ->
 							not_found;
 						Blocks ->
@@ -1824,17 +1835,17 @@ read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped) ->
 		Error ->
 			ar:console("Skipping the block ~s, reason: ~p.~n", [ar_util:encode(BH),
 					io_lib:format("~p", [Error])]),
-			read_recent_blocks2(BI, SearchDepth, Skipped + 1)
+			read_recent_blocks2(BI, SearchDepth, Skipped + 1, CustomDir)
 	end.
 
-read_recent_blocks3([], _BlocksToRead, Blocks) ->
+read_recent_blocks3([], _BlocksToRead, Blocks, _CustomDir) ->
 	lists:reverse(Blocks);
-read_recent_blocks3(_BI, 0, Blocks) ->
+read_recent_blocks3(_BI, 0, Blocks, _CustomDir) ->
 	lists:reverse(Blocks);
-read_recent_blocks3([{BH, _, _} | BI], BlocksToRead, Blocks) ->
-	case ar_storage:read_block(BH) of
+read_recent_blocks3([{BH, _, _} | BI], BlocksToRead, Blocks, CustomDir) ->
+	case ar_storage:read_block(BH, CustomDir) of
 		B = #block{} ->
-			TXs = ar_storage:read_tx(B#block.txs),
+			TXs = ar_storage:read_tx(B#block.txs, CustomDir),
 			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
 				true ->
 					ar:console("Failed to find all transaction headers for the block ~s.~n",
@@ -1844,7 +1855,7 @@ read_recent_blocks3([{BH, _, _} | BI], BlocksToRead, Blocks) ->
 					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
 							B#block.height),
 					read_recent_blocks3(BI, BlocksToRead - 1,
-							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | Blocks])
+							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | Blocks], CustomDir)
 			end;
 		Error ->
 			ar:console("Failed to read block header ~s, reason: ~p.~n",
