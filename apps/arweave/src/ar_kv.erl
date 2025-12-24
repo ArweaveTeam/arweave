@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/0, create_ets/0, open/2, open/3, open/4, put/3, get/2,
+	start_link/0, create_ets/0, open/1, close/1, put/3, get/2,
 	get_next_by_prefix/4, get_next/2, get_prev/2, get_range/2, get_range/3,
 	delete/2, delete_range/3, count/1
 ]).
@@ -81,26 +81,28 @@ create_ets() ->
 
 
 
-%% @doc Open a key-value store located at the given filesystem path relative to
-%% the data directory and identified by the given Name.
-open(DataDirRelativePath, Name) ->
-	open(DataDirRelativePath, [], Name).
-
-
-
-%% @doc Open a key-value store with the given options located at the given filesystem path
-%% relative to the data directory and identified by the given Name.
-open(DataDirRelativePath, UserOptions, Name) ->
-	gen_server:call(?MODULE, {open, {DataDirRelativePath, UserOptions, Name}}, ?DEFAULT_CALL_TIMEOUT).
-
-
-
-%% @doc Open a key-value store with the column families located at the given filesystem path
-%% relative to the data directory and identified by the given Name.
-open(DataDirRelativePath, CfDescriptors, UserOptions, CfNames) ->
-	gen_server:call(
-		?MODULE, {open, {DataDirRelativePath, CfDescriptors, UserOptions, CfNames}}, ?DEFAULT_CALL_TIMEOUT
-	).
+%% @doc Open a key-value store.
+%% Args is a map with the following keys:
+%% - path: the filesystem path of the database (required)
+%% - name: the name of the database (required for plain databases, not used for column family databases)
+%% - log_path: the filesystem path of the log file (optional, [data_dir]/logs/rocksdb/ by default)
+%% - options: the options for the database (optional, see ?DEFAULT_ROCKSDB_DATABASE_OPTIONS for the default options)
+%% - cf_descriptors: the column family descriptors (optional, see rocksdb:open/3 for the supported options)
+%% - cf_names: the column family names (required if cf_descriptors is provided)
+open(Args) ->
+	Path = maps:get(path, Args),
+	CustomLogPath = maps:get(log_path, Args, not_set),
+	Options = maps:get(options, Args, []),
+	case maps:get(cf_descriptors, Args, undefined) of
+		undefined ->
+			Name = maps:get(name, Args),
+			gen_server:call(?MODULE, {open, {Path, CustomLogPath, Options, Name}}, ?DEFAULT_CALL_TIMEOUT);
+		CFDescriptors ->
+			CFNames = maps:get(cf_names, Args),
+			gen_server:call(
+				?MODULE, {open, {Path, CustomLogPath, CFDescriptors, Options, CFNames}}, ?DEFAULT_CALL_TIMEOUT
+			)
+	end.
 
 
 
@@ -278,11 +280,11 @@ init([]) ->
 
 
 
-handle_call({open, {DataDirRelativePath, UserOptions, Name}}, _From, State) ->
-	DbRec0 = new_dbrec(Name, DataDirRelativePath, UserOptions),
+handle_call({open, {Filepath, LogFilepath, UserOptions, Name}}, _From, State) ->
+	DbRec0 = new_dbrec(Name, Filepath, LogFilepath, UserOptions),
 	case ets:lookup(?MODULE, DbRec0#db.name) of
 		[] ->
-			case open(DbRec0) of
+			case do_open(DbRec0) of
 				ok -> {reply, ok, State};
 				{error, Reason} -> {reply, {error, Reason}, State}
 			end;
@@ -293,11 +295,11 @@ handle_call({open, {DataDirRelativePath, UserOptions, Name}}, _From, State) ->
 			{reply, {error, {already_open, Filepath, Options}}, State}
 	end;
 
-handle_call({open, {DataDirRelativePath, CfDescriptors, UserOptions, CfNames}}, _From, State) ->
-	DbRec0 = new_dbrec(CfNames, CfDescriptors, DataDirRelativePath, UserOptions),
+handle_call({open, {Filepath, LogFilepath, CfDescriptors, UserOptions, CfNames}}, _From, State) ->
+	DbRec0 = new_dbrec(CfNames, CfDescriptors, Filepath, LogFilepath, UserOptions),
 	case ets:lookup(?MODULE, hd(CfNames)) of
 		[] ->
-			case open(DbRec0) of
+			case do_open(DbRec0) of
 				ok -> {reply, ok, State};
 				{error, Reason} -> {reply, {error, Reason}, State}
 			end;
@@ -308,6 +310,14 @@ handle_call({open, {DataDirRelativePath, CfDescriptors, UserOptions, CfNames}}, 
 			{reply, ok, State};
 		[#db{filepath = Filepath1, db_options = Options1}] ->
 			{reply, {error, {already_open, Filepath1, Options1}}, State}
+	end;
+
+handle_call({close, Name}, _From, State) ->
+	case ets:lookup(?MODULE, Name) of
+		[] ->
+			{reply, {error, not_found}, State};
+		[DbRec] ->
+			{reply, close(DbRec), State}
 	end;
 
 handle_call(Request, _From, State) ->
@@ -398,9 +408,8 @@ init_wal_sync_timer(#state{wal_sync_timer = Timer0} = S0) ->
 
 
 %% @doc Create a new plain database record.
-new_dbrec(Name, DataDirRelativePath, UserOptions) ->
-	Filepath = filename:join(get_data_dir(), DataDirRelativePath),
-	LogDir = filename:join([get_base_log_dir(), ?ROCKS_DB_DIR, filename:basename(Filepath)]),
+new_dbrec(Name, Filepath, LogFilepath, UserOptions) ->
+	LogDir = filename:join([get_base_log_dir(LogFilepath), ?ROCKS_DB_DIR, filename:basename(Filepath)]),
 	ok = filelib:ensure_dir(Filepath ++ "/"),
 	ok = filelib:ensure_dir(LogDir ++ "/"),
 	DefaultOptionsMap = (?DEFAULT_ROCKSDB_DATABASE_OPTIONS)#{db_log_dir => LogDir},
@@ -410,9 +419,8 @@ new_dbrec(Name, DataDirRelativePath, UserOptions) ->
 
 
 %% @doc  Create a new 'column-family' database record.
-new_dbrec(CfNames, CfDescriptors, DataDirRelativePath, UserOptions) ->
-	Filepath = filename:join(get_data_dir(), DataDirRelativePath),
-	LogDir = filename:join([get_base_log_dir(), ?ROCKS_DB_DIR, filename:basename(Filepath)]),
+new_dbrec(CfNames, CfDescriptors, Filepath, LogFilepath, UserOptions) ->
+	LogDir = filename:join([get_base_log_dir(LogFilepath), ?ROCKS_DB_DIR, filename:basename(Filepath)]),
 	ok = filelib:ensure_dir(Filepath ++ "/"),
 	ok = filelib:ensure_dir(LogDir ++ "/"),
 	DefaultOptionsMap = (?DEFAULT_ROCKSDB_DATABASE_OPTIONS)#{db_log_dir => LogDir},
@@ -431,7 +439,7 @@ new_dbrec(CfNames, CfDescriptors, DataDirRelativePath, UserOptions) ->
 %% name parameter.
 %% When opening 'column-family' database, the record will have a column name; several
 %% database records will be inserted during the process.
-open(#db{db_handle = undefined, cf_descriptors = undefined, filepath = Filepath, db_options = DbOptions} = DbRec0) ->
+do_open(#db{db_handle = undefined, cf_descriptors = undefined, filepath = Filepath, db_options = DbOptions} = DbRec0) ->
 	case rocksdb:open(Filepath, DbOptions) of
 		{ok, Db} ->
 			DbRec1 = DbRec0#db{db_handle = Db},
@@ -444,7 +452,7 @@ open(#db{db_handle = undefined, cf_descriptors = undefined, filepath = Filepath,
 			{error, failed}
 	end;
 
-open(#db{
+do_open(#db{
 	db_handle = undefined, cf_descriptors = CfDescriptors, cf_names = CfNames,
 	filepath = Filepath, db_options = DbOptions
 } = DbRec0) ->
@@ -469,7 +477,7 @@ open(#db{
 			{error, failed}
 	end;
 
-open(#db{} = DbRec0) ->
+do_open(#db{} = DbRec0) ->
 	?LOG_ERROR([
 		{event, db_operation_failed}, {op, open}, {error, already_open},
 		{name, io_lib:format("~p", [DbRec0#db.name])}
@@ -482,6 +490,9 @@ open(#db{} = DbRec0) ->
 %% the user to ensure that both db_flush/1 and wal_sync/1 functions are called
 %% prior to calling this function.
 %% Database must be open at the moment of calling the function.
+close(Name) when not is_record(Name, db) ->
+	gen_server:call(?MODULE, {close, Name}, ?DEFAULT_CALL_TIMEOUT);
+
 close(#db{db_handle = undefined}) -> {error, closed};
 
 close(#db{db_handle = Db, name = Name}) ->
@@ -601,15 +612,20 @@ with_each_db(Callback) ->
 
 
 
-get_data_dir() ->
+get_base_log_dir(LogFilepath) ->
+	case LogFilepath of
+		not_set ->
+			{ok, Config} = arweave_config:get_env(),
+			Config#config.log_dir;
+		_ ->
+			LogFilepath
+	end.
+
+
+
+test_get_data_dir() ->
 	{ok, Config} = arweave_config:get_env(),
 	Config#config.data_dir.
-
-
-
-get_base_log_dir() ->
-	{ok, Config} = arweave_config:get_env(),
-	Config#config.log_dir.
 
 
 
@@ -625,17 +641,22 @@ rocksdb_iterator_test_() ->
 
 
 test_rocksdb_iterator() ->
-	destroy("test_db"),
+	test_destroy("test_db"),
+	DataDir = test_get_data_dir(),
 	%% Configure the DB similarly to how it used to be configured before the tested change.
 	Opts = [
 		{prefix_extractor, {capped_prefix_transform, 28}},
 		{optimize_filters_for_hits, true},
 		{max_open_files, 1000000}
 	],
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"),
-			[{"default", Opts}, {"test", Opts}], [], [default, test]),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"),
-			[{"default", Opts}, {"test", Opts}], [], [default, test]),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "test_db"]),
+		cf_descriptors => [{"default", Opts}, {"test", Opts}],
+		cf_names => [default, test]}),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "test_db"]),
+		cf_descriptors => [{"default", Opts}, {"test", Opts}],
+		cf_names => [default, test]}),
 	SmallerPrefix = crypto:strong_rand_bytes(29),
 	<< O1:232 >> = SmallerPrefix,
 	BiggerPrefix = << (O1 + 1):232 >>,
@@ -671,8 +692,10 @@ test_rocksdb_iterator() ->
 		{target_file_size_base, 256 * ?MiB},
 		{max_bytes_for_level_base, 10 * 256 * ?MiB}
 	],
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"),
-			[{"default", Opts2}, {"test", Opts2}], [], [default, test]),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "test_db"]),
+		cf_descriptors => [{"default", Opts2}, {"test", Opts2}],
+		cf_names => [default, test]}),
 	%% Store new data enough for new SST files to be created.
 	lists:foreach(
 		fun(Suffix) ->
@@ -692,11 +715,13 @@ test_rocksdb_iterator() ->
 	assert_iteration(test, SmallerPrefix, BiggerPrefix, Suffixes),
 	%% Close the database to make sure the new data is flushed.
 	test_close(test),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"),
-			[{"default", Opts2}, {"test", Opts2}], [], [default1, test1]),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "test_db"]),
+		cf_descriptors => [{"default", Opts2}, {"test", Opts2}],
+		cf_names => [default1, test1]}),
 	assert_iteration(test1, SmallerPrefix, BiggerPrefix, Suffixes),
 	test_close(test1),
-	destroy("test_db").
+	test_destroy("test_db").
 
 
 
@@ -706,8 +731,11 @@ delete_range_test_() ->
 
 
 test_delete_range() ->
-	destroy("test_db"),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "test_db"), test_db),
+	test_destroy("test_db"),
+	DataDir = test_get_data_dir(),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "test_db"]),
+		name => test_db}),
 	ok = ar_kv:put(test_db, << 0:256 >>, << 0:256 >>),
 	ok = ar_kv:put(test_db, << 1:256 >>, << 1:256 >>),
 	ok = ar_kv:put(test_db, << 2:256 >>, << 2:256 >>),
@@ -745,7 +773,7 @@ test_delete_range() ->
 	?assertEqual(not_found, ar_kv:get(test_db, << 3:256 >>)),
 	?assertEqual(not_found, ar_kv:get(test_db, << 4:256 >>)),
 
-	destroy("test_db").
+	test_destroy("test_db").
 
 
 
@@ -801,8 +829,8 @@ assert_iteration(Name, SmallerPrefix, BiggerPrefix, Suffixes) ->
 
 
 
-destroy(Name) ->
-	RocksDBDir = filename:join(get_data_dir(), ?ROCKS_DB_DIR),
+test_destroy(Name) ->
+	RocksDBDir = filename:join(test_get_data_dir(), ?ROCKS_DB_DIR),
 	Filename = filename:join(RocksDBDir, Name),
 	case filelib:is_dir(Filename) of
 		true ->
