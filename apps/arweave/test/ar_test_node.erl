@@ -78,6 +78,7 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
 all_peers(test) ->
 	[{test, peer1}, {test, peer2}, {test, peer3}, {test, peer4}];
 all_peers(e2e) ->
@@ -388,7 +389,7 @@ base_cm_config(Peers) ->
 	}.
 
 mine() ->
-	gen_server:cast(ar_node_worker, mine).
+	ar_node_worker:mine_one_block().
 
 %% @doc Start mining on the given node. The node will be mining until it finds a block.
 mine(Node) ->
