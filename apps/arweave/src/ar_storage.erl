@@ -15,6 +15,7 @@
 		wallet_list_filepath/1, wallet_list_filepath/2, tx_filepath/1, tx_filepath/2,
 		tx_data_filepath/1, tx_data_filepath/2, read_tx_file/1,
 		read_migrated_v1_tx_file/1, read_migrated_v1_tx_file/2, ensure_directories/1, write_file_atomic/2,
+		write_tx_data/3,
 		write_term/2, write_term/3, read_term/1, read_term/2, delete_term/1, is_file/1,
 		migrate_tx_record/1, migrate_block_record/1, read_account/2, read_account/4, read_block_from_file/2]).
 
