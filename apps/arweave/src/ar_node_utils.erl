@@ -99,6 +99,11 @@ block_passes_diff_check(SolutionHash, Block) ->
 	DiffPair = ar_difficulty:diff_pair(Block),
 	passes_diff_check(SolutionHash, IsPoA1, DiffPair, PackingDifficulty).
 
+-ifdef(LOCALNET).
+passes_diff_check(_SolutionHash, _IsPoA1, _DiffPair, _PackingDifficulty) ->
+	true.
+
+-else.
 passes_diff_check(SolutionHash, IsPoA1, not_set, _PackingDifficulty) ->
 	?LOG_ERROR([{event, diff_check_not_set}, {solution_hash, SolutionHash}, {is_poa1, IsPoA1}]),
 	false;
@@ -111,6 +116,7 @@ passes_diff_check(SolutionHash, IsPoA1, {PoA1Diff, Diff}, PackingDifficulty) ->
 				Diff
 		end,
 	binary:decode_unsigned(SolutionHash) > scaled_diff(Diff2, PackingDifficulty).
+-endif.
 
 scaled_diff(RawDiff, PackingDifficulty) ->
 	case PackingDifficulty of

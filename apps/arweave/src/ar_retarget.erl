@@ -72,6 +72,10 @@ maybe_retarget(Height, {CurPoA1Diff, CurDiff}, TS, LastRetargetTS, PrevTS) ->
 			{CurPoA1Diff, CurDiff}
 	end.
 
+-ifdef(LOCALNET).
+calculate_difficulty(OldDiff, _TS, _Last, _Height, _PrevTS) ->
+	OldDiff.
+-else.
 calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 	Fork_1_7 = ar_fork:height_1_7(),
 	Fork_1_8 = ar_fork:height_1_8(),
@@ -109,8 +113,13 @@ calculate_difficulty(OldDiff, TS, Last, Height, PrevTS) ->
 		_ ->
 			calculate_difficulty_before_1_8(OldDiff, TS, Last, Height)
 	end.
+-endif.
 
 %% @doc Assert the new block has an appropriate difficulty.
+-ifdef(LOCALNET).
+validate_difficulty(_NewB, _OldB) ->
+	true.
+-else.
 validate_difficulty(NewB, OldB) ->
 	case ar_retarget:is_retarget_block(NewB) of
 		true ->
@@ -122,6 +131,7 @@ validate_difficulty(NewB, OldB) ->
 			(NewB#block.diff == OldB#block.diff) and
 				(NewB#block.last_retarget == OldB#block.last_retarget)
 	end.
+-endif.
 
 %% @doc The number a hash must be greater than, to give the same odds of success
 %% as the old-style Diff (number of leading zeros in the bitstring).

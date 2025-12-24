@@ -1,7 +1,7 @@
 -module(ar_block_index).
 
 -export([init/1, update/2, member/1, get_list/1, get_list_by_hash/1, get_element_by_height/1,
-		get_block_bounds/1, get_intersection/2, get_intersection/1, get_range/2, get_last/0]).
+		get_block_bounds/1, get_block_bounds_with_height/1, get_intersection/2, get_intersection/1, get_range/2, get_last/0]).
 
 %%%===================================================================
 %%% Public interface.
@@ -49,13 +49,19 @@ get_element_by_height(Height) ->
 %% @doc Return {BlockStartOffset, BlockEndOffset, TXRoot} where Offset >= BlockStartOffset,
 %% Offset < BlockEndOffset.
 get_block_bounds(Offset) ->
+	{BlockStart, BlockEnd, TXRoot, _} = get_block_bounds_with_height(Offset),
+	{BlockStart, BlockEnd, TXRoot}.
+
+%% @doc Return {BlockStartOffset, BlockEndOffset, TXRoot, Height} where Offset >= BlockStartOffset,
+%% Offset < BlockEndOffset.
+get_block_bounds_with_height(Offset) ->
 	{WeaveSize, Height, _H, TXRoot} = Key = ets:next(block_index, {Offset, n, n, n}),
 	case Height of
 		0 ->
-			{0, WeaveSize, TXRoot};
+			{0, WeaveSize, TXRoot, 0};
 		_ ->
 			{PrevWeaveSize, _, _, _} = ets:prev(block_index, Key),
-			{PrevWeaveSize, WeaveSize, TXRoot}
+			{PrevWeaveSize, WeaveSize, TXRoot, Height}
 	end.
 
 %% @doc Return {Height, {H, WeaveSize, TXRoot}} with the triplet present in both
