@@ -4028,7 +4028,7 @@ get_data_roots_for_offset(Offset) ->
 						end,
 						sets:fold(
 							fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
-								read_data_root_entries(DataRoot, TXSize, BlockEnd, StoreID, Acc)
+								read_data_root_entries(DataRoot, TXSize, BlockStart, BlockEnd, StoreID, Acc)
 							end,
 						[],
 						DataRootIndexKeySet
@@ -4050,15 +4050,15 @@ are_data_roots_synced(BlockStart, BlockEnd, TXRoot) ->
 			true
 	end.
 
-read_data_root_entries(_DataRoot, _TXSize, 0, _StoreID, Acc) ->
+read_data_root_entries(_DataRoot, _TXSize, _BlockStart, 0, _StoreID, Acc) ->
 	Acc;
-read_data_root_entries(DataRoot, TXSize, Cursor, StoreID, Acc) ->
+read_data_root_entries(DataRoot, TXSize, BlockStart, Cursor, StoreID, Acc) ->
 	Key = data_root_key_v2(DataRoot, TXSize, Cursor - 1),
 	case ar_kv:get_prev({data_root_index, StoreID}, Key) of
 		{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
-				TXStartSize:8, TXStart:(TXStartSize * 8) >>, TXPath} ->
+				TXStartSize:8, TXStart:(TXStartSize * 8) >>, TXPath} when TXStart >= BlockStart ->
 			[{DataRoot, TXSize, TXStart, TXPath}
-				| read_data_root_entries(DataRoot, TXSize, TXStart, StoreID, Acc)];
+				| read_data_root_entries(DataRoot, TXSize, BlockStart, TXStart, StoreID, Acc)];
 		{ok, _, _} ->
 			Acc;
 		none ->
