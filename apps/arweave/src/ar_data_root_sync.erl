@@ -225,7 +225,7 @@ prepare_data_root_pairs(Entries, BlockStart, BlockSize) ->
 		{ok, {Total, Entries2}} ->
 			case Total == BlockSize of
 				true ->
-					{ok, lists:reverse(Entries2)};
+					{ok, Entries2};
 				false ->
 					{error, invalid_total_tx_size}
 			end;
