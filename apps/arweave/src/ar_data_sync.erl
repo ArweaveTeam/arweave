@@ -4011,7 +4011,7 @@ record_chunk_cache_size_metric() ->
 %% Return {ok, {TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath}, ...]}}
 %% or {error, Reason}.
 get_data_roots_for_offset(Offset) ->
-	case Offset > get_disk_pool_threshold() of
+	case Offset >= get_disk_pool_threshold() of
 		true ->
 			{error, not_found};
 		false ->
