@@ -552,6 +552,70 @@ handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
 			end
 	end;
 
+%% Accept data roots for a given block offset (>= BlockStartOffset, < BlockEndOffset).
+%% Expect only entries corresponding to non-empty transactions.
+%% Expect the complete list of entries in the order they appear in the data root index,
+%% which corresponds to sorted #tx records in the block.
+%% POST /data_roots/{offset}
+handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
+			DiskPoolThreshold = ar_data_sync:get_disk_pool_threshold(),
+			ReadOffset =
+				case catch binary_to_integer(OffsetBin) of
+					{'EXIT', _} ->
+						{reply, {400, #{}, <<>>, Req}};
+					Offset when Offset >= DiskPoolThreshold ->
+						{reply, {400, #{}, jiffy:encode(#{ error => offset_above_disk_pool_threshold }), Req}};
+					Offset when Offset < 0 ->
+						{reply, {400, #{}, jiffy:encode(#{ error => negative_offset }), Req}};
+					Offset ->
+						{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
+						case ar_data_sync:are_data_roots_synced(BlockStart, BlockEnd, ExpectedTXRoot) of
+							true ->
+								{reply, {200, #{}, <<>>, Req}};
+							false ->
+								{Offset, BlockStart, BlockEnd}
+						end
+				end,
+			case ReadOffset of
+				{reply, Reply} ->
+					Reply;
+				{Offset2, BlockStart2, BlockEnd2} ->
+					case read_complete_body(Req, Pid) of
+						{ok, Body, Req2} ->
+							case ar_serialize:binary_to_data_roots(Body) of
+								{ok, {TXRoot, BlockSize, Entries}} ->
+									case ar_data_root_sync:validate_data_roots(TXRoot, BlockSize, Entries, Offset2) of
+										{ok, _} ->
+											case catch ar_data_root_sync:store_data_roots_sync(
+													BlockStart2, BlockEnd2, TXRoot, Entries) of
+												ok ->
+													{200, #{}, <<>>, Req2};
+												{'EXIT', {timeout, _}} ->
+													{503, #{}, jiffy:encode(#{ error => timeout }), Req2};
+												{'EXIT', _} ->
+													{503, #{}, jiffy:encode(#{ error => timeout }), Req2};
+												{error, Reason} ->
+													{503, #{}, jiffy:encode(#{ error => Reason }), Req2}
+											end;
+										{error, Reason} ->
+											{400, #{}, jiffy:encode(#{ error => Reason }), Req2}
+									end;
+								_ ->
+									{400, #{}, jiffy:encode(#{ error => invalid_format }), Req2}
+							end;
+						{error, body_size_too_large} ->
+							{400, #{}, <<>>, Req};
+						{error, timeout} ->
+							{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+					end
+			end
+	end;
+
 handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 	Joined =
 		case ar_node:is_joined() of
