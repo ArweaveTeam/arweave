@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, name/1]).
+-export([start_link/1, name/1, store_data_roots/4, validate_data_roots/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
@@ -37,6 +37,65 @@ start_link(StoreID) ->
 	
 name(StoreID) ->
 	list_to_atom("ar_data_root_sync_" ++ ar_storage_module:label(StoreID)).
+
+%% @doc Store the given data roots.
+store_data_roots(BlockStart, BlockEnd, TXRoot, Entries) ->
+	gen_server:cast(ar_data_sync_default, {store_data_roots,
+		BlockStart, BlockEnd, TXRoot, Entries}).
+
+%% @doc Validate the given data roots against the local block index.
+%% Also recompute the TXRoot from entries and verify Merkle paths.
+validate_data_roots(TXRoot, BlockSize, Entries, Offset) ->
+	{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
+	CheckBlockBounds =
+		case Offset >= BlockStart andalso Offset < BlockEnd of
+			false ->
+				{error, invalid_block_bounds};
+			true ->
+				ok
+		end,
+	CheckBlockSize =
+		case CheckBlockBounds of
+			ok ->
+				case BlockSize == BlockEnd - BlockStart of
+					false ->
+						{error, invalid_block_size};
+					true ->
+						ok
+				end;
+			Error ->
+				Error
+		end,
+	PrepareDataRootPairs =
+		case CheckBlockSize of
+			ok ->
+				prepare_data_root_pairs(Entries, BlockStart, BlockSize);
+			Error2 ->
+				Error2
+		end,
+	ValidateTXRoot =
+		case PrepareDataRootPairs of
+			{ok, Triplets} ->
+				case TXRoot == ExpectedTXRoot of
+					false ->
+						{error, invalid_tx_root};
+					true ->
+						{ok, Triplets}
+				end;
+			{error, _} = Error3 ->
+				Error3
+		end,
+	case ValidateTXRoot of
+		{ok, Triplets2} ->
+			case verify_tx_paths(Triplets2, TXRoot, BlockStart, BlockEnd, 0) of
+				ok ->
+					{ok, {TXRoot, BlockSize, Entries}};
+				Error4 ->
+					Error4
+			end;
+		Error5 ->
+			Error5
+	end.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -123,7 +182,7 @@ maybe_fetch_and_store(BlockStart, BlockEnd) ->
 	case fetch_data_roots_from_peers(Peers2, BlockStart) of
 		{ok, {TXRoot, BlockSize, Entries}} ->
 			BlockSize = BlockEnd - BlockStart,
-			send_to_storage(BlockStart, BlockEnd, TXRoot, Entries);
+			store_data_roots(BlockStart, BlockEnd, TXRoot, Entries);
 		_ ->
 			ok
 	end.
@@ -142,6 +201,57 @@ fetch_data_roots_from_peers([Peer | Rest], Offset) ->
 			fetch_data_roots_from_peers(Rest, Offset)
 	end.
 
-send_to_storage(BlockStart, BlockEnd, TXRoot, Entries) ->
-	gen_server:cast(ar_data_sync_default, {store_data_roots,
-		BlockStart, BlockEnd, TXRoot, Entries}).
+prepare_data_root_pairs(Entries, BlockStart, BlockSize) ->
+	Result = lists:foldr(
+		fun
+			(_, {error, _} = Error) ->
+				Error;
+			({_DataRoot, 0, _TXStartOffset, _TXPath}, _Acc) ->
+				{error, invalid_zero_tx_size};
+			({DataRoot, TXSize, TXStartOffset, TXPath}, {ok, {Total, Acc}}) ->
+				MerkleLabel = TXStartOffset + TXSize - BlockStart,
+				case MerkleLabel >= 0 of
+					true ->
+						PaddedSize = get_padded_size(TXSize, BlockStart),
+						{ok, {Total + PaddedSize, [{DataRoot, MerkleLabel, TXPath} | Acc]}};
+					false ->
+						{error, invalid_entry_merkle_label}
+				end
+		end,
+		{ok, {0,[]}},
+		Entries
+	),
+	case Result of
+		{ok, {Total, Entries2}} ->
+			case Total == BlockSize of
+				true ->
+					{ok, lists:reverse(Entries2)};
+				false ->
+					{error, invalid_total_tx_size}
+			end;
+		Error6 ->
+			Error6
+	end.
+
+get_padded_size(TXSize, BlockStart) ->
+	case BlockStart >= ar_block:strict_data_split_threshold() of
+		true ->
+			ar_poa:get_padded_offset(TXSize, 0);
+		false ->
+			TXSize
+	end.
+
+verify_tx_paths([], _TXRoot, _BlockStart, _BlockEnd, _TXStartOffset) ->
+	ok;
+verify_tx_paths([Entry | Entries], TXRoot, BlockStart, BlockEnd, TXStartOffset) ->
+	{DataRoot, TXEndOffset, TXPath} = Entry,
+	BlockSize = BlockEnd - BlockStart,
+	case ar_merkle:validate_path(TXRoot, TXEndOffset - 1, BlockSize, TXPath) of
+		false ->
+			{error, invalid_tx_path};
+		{DataRoot, TXStartOffset, TXEndOffset} ->
+			PaddedEndOffset = get_padded_size(TXEndOffset, BlockStart),
+			verify_tx_paths(Entries, TXRoot, BlockStart, BlockEnd, PaddedEndOffset);
+		_ ->
+			{error, invalid_tx_path}
+	end.
