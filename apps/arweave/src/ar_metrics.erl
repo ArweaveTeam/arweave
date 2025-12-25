@@ -576,6 +576,10 @@ register() ->
 			{help, "The number of times a peer has been dropped from the leaky bucket token register"},
 			{labels, [limiter_id]}]),
     	prometheus_counter:new([
+			{name, ar_limiter_cleanup_tick_expired_sliding_peers_deleted_total},
+			{help, "The number of times a peer has been dropped from the sliding window timestamp register"},
+			{labels, [limiter_id]}]),
+    	prometheus_counter:new([
 			%% To show how much tokens clients are burning for bursts.
 			{name, ar_limiter_leaky_tick_token_reductions_total},
 			{help, "All the consumed leaky bucket tokens that were reduced for all peers in total"},

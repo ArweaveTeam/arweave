@@ -23,16 +23,20 @@
          terminate/2, code_change/3, format_status/2]).
 
 -ifdef(TEST).
--export([register_or_reject_call/3,
+-export([%register_or_reject_call/3,
          expire_and_get_requests/4,
          drop_expired/3,
-         add_and_order_timestamps/2]).
+         add_and_order_timestamps/2,
+         cleanup_expired_sliding_peers/3]).
 -endif.
 
 %% TODO: determine sensible defaults based on desired load profile,
 %%       and where to store these macros what config are they a part of,
 %%       semantically?
 -define(DEFAULT_TICK_INTERVAL_MS, 1000).
+%% Sliding Window Timestamp Cleanup might be an expensive operation under high load, so keep it
+%% rare.
+-define(DEFAULT_TIMESTAMP_CLEANUP_INTERVAL_MS, 120000).
 -define(DEFAULT_LEAKY_RATE_LIMIT, 5).
 -define(DEFAULT_CONCURRENCY_LIMIT, 2).
 -define(DEFAULT_TICK_REDUCTION, 1).
@@ -50,22 +54,9 @@ info(LimiterRef) ->
     gen_server:call(LimiterRef, get_info).
 
 register_or_reject_call(LimiterRef, Peer) ->
-    %% FIXME?
-    %% Ideally, we would like to take this timestamp in the process, so
-    %% we don't have timestamps out of order. This would bring additional
-    %% opportunities for optimisations as well.
-    %% If inaccuraccy due to providing the timestamp from the caller process
-    %% or performance becomes an issue, we'll change this. For now, testability
-    %% is more important.
-    %% NOTE: UNIT tests now showed this inaccuracy, and timestamps processed
-    %%       by the server out of order.
-    Now = erlang:monotonic_time(millisecond),
-    register_or_reject_call(LimiterRef, Peer, Now).
-
-register_or_reject_call(LimiterRef, Peer, Now) ->
     prometheus_counter:inc(ar_limiter_requests_total,
                            [atom_to_list(LimiterRef)]),
-    case gen_server:call(LimiterRef, {register_or_reject, Peer, Now}) of
+    case gen_server:call(LimiterRef, {register_or_reject, Peer}) of
         {reject, Reason, _Data} = Rejection ->
             prometheus_counter:inc(ar_limiter_rejected_total,
                                    [atom_to_list(LimiterRef), atom_to_list(Reason)]),
@@ -82,18 +73,23 @@ stop(LimiterRef) ->
 init([Args]) ->
     process_flag(trap_exit, true),
     Id = maps:get(id, Args),
-    TickMs = maps:get(tick_interval_ms, Args, ?DEFAULT_TICK_INTERVAL_MS),
+    LeakyTickMs = maps:get(leaky_tick_interval_ms, Args, ?DEFAULT_TICK_INTERVAL_MS),
+    TimestampCleanupTickMs = maps:get(timestamp_cleanup_interval_ms, Args,
+                                      ?DEFAULT_TIMESTAMP_CLEANUP_INTERVAL_MS),
     LeakyRateLimit = maps:get(leaky_rate_limit, Args, ?DEFAULT_LEAKY_RATE_LIMIT),
     ConcurrencyLimit = maps:get(concurrency_limit, Args, ?DEFAULT_CONCURRENCY_LIMIT),
     TickReduction = maps:get(tick_reduction, Args, ?DEFAULT_TICK_REDUCTION),
     SlidingWindowDuration = maps:get(sliding_window_duration, Args, ?DEFAULT_SLIDING_WINDOW_DURATION),
     SlidingWindowLimit = maps:get(sliding_window_limit, Args, ?DEFAULT_SLIDING_WINDOW_LIMIT),
 
-    {ok, Ref} = timer:send_interval(TickMs, self(), {tick, rate_limit}),
+    {ok, LeakyRef} = timer:send_interval(LeakyTickMs, self(), {tick, leaky_bucket_reduction}),
+    {ok, TsRef} = timer:send_interval(TimestampCleanupTickMs, self(), {tick, sliding_window_timestamp_cleanup}),
     {ok, #{
            id => atom_to_list(Id),
-           timer_ref => Ref,
-           tick_ms => TickMs,
+           leaky_tick_timer_ref => LeakyRef,
+           timestamp_cleanup_timer_ref => TsRef,
+           leaky_tick_ms => LeakyTickMs,
+           timestamp_cleanup_tick_ms => TimestampCleanupTickMs,
            tick_reduction => TickReduction,
            leaky_rate_limit => LeakyRateLimit,
            concurrency_limit => ConcurrencyLimit,
@@ -105,7 +101,7 @@ init([Args]) ->
            sliding_timestamps => #{} %% Peer -> Ordered list of timestamps
           }}.
 
-handle_call({register_or_reject, Peer, Now}, {FromPid, _},
+handle_call({register_or_reject, Peer}, {FromPid, _},
             State = #{id := Id,
                       leaky_rate_limit := LeakyRateLimit,
                       leaky_tokens := LeakyTokens,
@@ -116,6 +112,7 @@ handle_call({register_or_reject, Peer, Now}, {FromPid, _},
                       sliding_window_limit := SlidingWindowLimit,
                       sliding_timestamps := SlidingTimestamps
                      }) ->
+    Now = ar_limiter_time:ts_now(),
     Tokens = maps:get(Peer, LeakyTokens, 0) + 1,
     Concurrency = length(maps:get(Peer, ConcurrentRequests, [])) + 1,
 
@@ -143,7 +140,7 @@ handle_call({register_or_reject, Peer, Now}, {FromPid, _},
                             {NewRequests, NewMonitors} =
                                 register_concurrent(
                                   Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
-                            {reply, register,
+                            {reply, {register, leaky},
                              State#{leaky_tokens => NewLeakyTokens,
                                     concurrent_requests => NewRequests,
                                     concurrent_monitors := NewMonitors}}
@@ -154,9 +151,9 @@ handle_call({register_or_reject, Peer, Now}, {FromPid, _},
                           Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
                     SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
                     NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
-                    {reply, register, State#{sliding_timestamps := NewSlidingTimestamps,
-                                             concurrent_requests => NewRequests,
-                                             concurrent_monitors := NewMonitors}}
+                    {reply, {register, sliding}, State#{sliding_timestamps := NewSlidingTimestamps,
+                                                        concurrent_requests => NewRequests,
+                                                        concurrent_monitors := NewMonitors}}
             end
     end;
 handle_call(get_info, _From, State =
@@ -175,10 +172,18 @@ handle_call(Request, From, State) ->
 handle_cast(_Request, State) ->
     {noreply, State}.
 
-handle_info({tick, rate_limit},
+handle_info({tick, sliding_window_timestamp_cleanup},
+            State = #{id := Id, sliding_timestamps := SlidingTimestamps,
+                      sliding_window_duration := SlidingWindowDuration}) ->
+    Now = ar_limiter_time:ts_now(),
+    NewSlidingTimestamps = cleanup_expired_sliding_peers(SlidingTimestamps, SlidingWindowDuration, Now),
+    Deleted = maps:size(SlidingTimestamps) - maps:size(NewSlidingTimestamps),
+    prometheus_counter:inc(ar_limiter_cleanup_tick_expired_sliding_peers_deleted_total, [Id], Deleted),
+    {noreply, State#{sliding_timestamps => NewSlidingTimestamps}};
+handle_info({tick, leaky_bucket_reduction},
             State = #{id := Id, tick_reduction := TickReduction, leaky_tokens := LeakyTokens}) ->
-    prometheus_counter:inc(ar_limiter_leaky_ticks, [Id]),
     %% This is going to be more precise than ar_limiter_leaky_ticks*ar_limiter_peers
+    prometheus_counter:inc(ar_limiter_leaky_ticks, [Id]),
     SizeBefore = maps:size(LeakyTokens),
     prometheus_counter:inc(ar_limiter_leaky_tick_reductions_peer, [Id], SizeBefore),
     NewTokens =
@@ -230,6 +235,16 @@ do_add_and_order_timestamps(Ts, [Head | _Rest] = Timestamps) when Ts >= Head ->
     [Ts | Timestamps];
 do_add_and_order_timestamps(Ts, [Head | Rest])  ->
     [Head | do_add_and_order_timestamps(Ts, Rest)].
+
+cleanup_expired_sliding_peers(SlidingTimestamps, WindowDuration, Now) ->
+    maps:fold(fun(Peer, TsList, AccIn) ->
+                      case drop_expired(TsList, WindowDuration, Now) of
+                          [] ->
+                              AccIn;
+                          ValidTimestamps ->
+                              AccIn#{Peer => ValidTimestamps}
+                      end
+              end, #{}, SlidingTimestamps).
 
 %% Token manipulation
 update_token(Peer, Token, LeakyToken) ->
