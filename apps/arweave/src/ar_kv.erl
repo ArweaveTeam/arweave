@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/0, create_ets/0, open/1, close/1, put/3, get/2,
+	start_link/0, create_ets/0, open/1, open_readonly/1, close/1, put/3, get/2,
 	get_next_by_prefix/4, get_next/2, get_prev/2, get_range/2, get_range/3,
 	delete/2, delete_range/3, count/1
 ]).
@@ -43,7 +43,9 @@
 	%% column families only fields, must be set to undefined for plain databases.
 	cf_names = undefined :: [term()],
 	cf_descriptors = undefined :: [rocksdb:cf_descriptor()],
-	cf_handle = undefined :: rocksdb:cf_handle()
+	cf_handle = undefined :: rocksdb:cf_handle(),
+
+	readonly :: boolean()
 }).
 
 -define(msg_trigger_timer(Kind, Secret), {msg_trigger_timer, Kind, Secret}).
@@ -89,20 +91,31 @@ create_ets() ->
 %% - options: the options for the database (optional, see ?DEFAULT_ROCKSDB_DATABASE_OPTIONS for the default options)
 %% - cf_descriptors: the column family descriptors (optional, see rocksdb:open/3 for the supported options)
 %% - cf_names: the column family names (required if cf_descriptors is provided)
+%% - readonly: whether to open the database in read-only mode (optional, false by default)
 open(Args) ->
 	Path = maps:get(path, Args),
 	CustomLogPath = maps:get(log_path, Args, not_set),
 	Options = maps:get(options, Args, []),
+	ReadOnly = maps:get(readonly, Args, false),
 	case maps:get(cf_descriptors, Args, undefined) of
 		undefined ->
 			Name = maps:get(name, Args),
-			gen_server:call(?MODULE, {open, {Path, CustomLogPath, Options, Name}}, ?DEFAULT_CALL_TIMEOUT);
+			gen_server:call(?MODULE, {open, {Path, CustomLogPath, Options, Name, ReadOnly}}, ?DEFAULT_CALL_TIMEOUT);
 		CFDescriptors ->
 			CFNames = maps:get(cf_names, Args),
 			gen_server:call(
-				?MODULE, {open, {Path, CustomLogPath, CFDescriptors, Options, CFNames}}, ?DEFAULT_CALL_TIMEOUT
+				?MODULE, {open, {Path, CustomLogPath, CFDescriptors, Options, CFNames, ReadOnly}}, ?DEFAULT_CALL_TIMEOUT
 			)
 	end.
+
+
+
+%% @doc Open a key-value store in read-only mode.
+%% This will not modify any database files (no WAL writes, no compaction, no manifest updates).
+%% Useful for reading snapshot data without altering it.
+%% Args is a map with the same keys as open/1.
+open_readonly(Args) ->
+	open(Args#{ readonly => true }).
 
 
 
@@ -280,8 +293,8 @@ init([]) ->
 
 
 
-handle_call({open, {Filepath, LogFilepath, UserOptions, Name}}, _From, State) ->
-	DbRec0 = new_dbrec(Name, Filepath, LogFilepath, UserOptions),
+handle_call({open, {Filepath, LogFilepath, UserOptions, Name, ReadOnly}}, _From, State) ->
+	DbRec0 = new_dbrec(Name, Filepath, LogFilepath, UserOptions, ReadOnly),
 	case ets:lookup(?MODULE, DbRec0#db.name) of
 		[] ->
 			case do_open(DbRec0) of
@@ -295,8 +308,8 @@ handle_call({open, {Filepath, LogFilepath, UserOptions, Name}}, _From, State) ->
 			{reply, {error, {already_open, Filepath, Options}}, State}
 	end;
 
-handle_call({open, {Filepath, LogFilepath, CfDescriptors, UserOptions, CfNames}}, _From, State) ->
-	DbRec0 = new_dbrec(CfNames, CfDescriptors, Filepath, LogFilepath, UserOptions),
+handle_call({open, {Filepath, LogFilepath, CfDescriptors, UserOptions, CfNames, ReadOnly}}, _From, State) ->
+	DbRec0 = new_dbrec(CfNames, CfDescriptors, Filepath, LogFilepath, UserOptions, ReadOnly),
 	case ets:lookup(?MODULE, hd(CfNames)) of
 		[] ->
 			case do_open(DbRec0) of
@@ -408,18 +421,18 @@ init_wal_sync_timer(#state{wal_sync_timer = Timer0} = S0) ->
 
 
 %% @doc Create a new plain database record.
-new_dbrec(Name, Filepath, LogFilepath, UserOptions) ->
+new_dbrec(Name, Filepath, LogFilepath, UserOptions, ReadOnly) ->
 	LogDir = filename:join([get_base_log_dir(LogFilepath), ?ROCKS_DB_DIR, filename:basename(Filepath)]),
 	ok = filelib:ensure_dir(Filepath ++ "/"),
 	ok = filelib:ensure_dir(LogDir ++ "/"),
 	DefaultOptionsMap = (?DEFAULT_ROCKSDB_DATABASE_OPTIONS)#{db_log_dir => LogDir},
 	DbOptions = maps:to_list(maps:merge(maps:from_list(UserOptions), DefaultOptionsMap)),
-	#db{name = Name, filepath = Filepath, db_options = DbOptions}.
+	#db{ name = Name, filepath = Filepath, db_options = DbOptions, readonly = ReadOnly }.
 
 
 
 %% @doc  Create a new 'column-family' database record.
-new_dbrec(CfNames, CfDescriptors, Filepath, LogFilepath, UserOptions) ->
+new_dbrec(CfNames, CfDescriptors, Filepath, LogFilepath, UserOptions, ReadOnly) ->
 	LogDir = filename:join([get_base_log_dir(LogFilepath), ?ROCKS_DB_DIR, filename:basename(Filepath)]),
 	ok = filelib:ensure_dir(Filepath ++ "/"),
 	ok = filelib:ensure_dir(LogDir ++ "/"),
@@ -428,7 +441,8 @@ new_dbrec(CfNames, CfDescriptors, Filepath, LogFilepath, UserOptions) ->
 	#db{
 		name = hd(CfNames), filepath = Filepath,
 		db_options = DbOptions,
-		cf_descriptors = CfDescriptors, cf_names = CfNames
+		cf_descriptors = CfDescriptors, cf_names = CfNames,
+		readonly = ReadOnly
 	}.
 
 
@@ -439,8 +453,19 @@ new_dbrec(CfNames, CfDescriptors, Filepath, LogFilepath, UserOptions) ->
 %% name parameter.
 %% When opening 'column-family' database, the record will have a column name; several
 %% database records will be inserted during the process.
-do_open(#db{db_handle = undefined, cf_descriptors = undefined, filepath = Filepath, db_options = DbOptions} = DbRec0) ->
-	case rocksdb:open(Filepath, DbOptions) of
+do_open(#db{
+	db_handle = undefined, cf_descriptors = undefined,
+	filepath = Filepath, db_options = DbOptions,
+	readonly = ReadOnly
+} = DbRec0) ->
+	Open =
+		case ReadOnly of
+			true ->
+				rocksdb:open_readonly(Filepath, DbOptions);
+			false ->
+				rocksdb:open(Filepath, DbOptions)
+		end,
+	case Open of
 		{ok, Db} ->
 			DbRec1 = DbRec0#db{db_handle = Db},
 			true = ets:insert(?MODULE, DbRec1),
@@ -454,9 +479,17 @@ do_open(#db{db_handle = undefined, cf_descriptors = undefined, filepath = Filepa
 
 do_open(#db{
 	db_handle = undefined, cf_descriptors = CfDescriptors, cf_names = CfNames,
-	filepath = Filepath, db_options = DbOptions
+	filepath = Filepath, db_options = DbOptions,
+	readonly = ReadOnly
 } = DbRec0) ->
-	case rocksdb:open(Filepath, DbOptions, CfDescriptors) of
+	Open =
+		case ReadOnly of
+			true ->
+				rocksdb:open_readonly(Filepath, DbOptions, CfDescriptors);
+			false ->
+				rocksdb:open(Filepath, DbOptions, CfDescriptors)
+		end,
+	case Open of
 		{ok, Db, Cfs} ->
 			FirstDbRec = lists:foldr(
 				fun({Cf, CfName}, _) ->
@@ -540,6 +573,9 @@ db_flush(#db{name = Name, db_handle = Db}) ->
 wal_sync(#db{name = Name, db_handle = undefined}) ->
 	?LOG_ERROR([{event, db_operation_failed}, {op, wal_sync}, {error, closed}, {name, io_lib:format("~p", [Name])}]),
 	{error, closed};
+
+wal_sync(#db{readonly = true}) ->
+	ok;
 
 wal_sync(#db{name = Name, db_handle = Db}) ->
 	case rocksdb:sync_wal(Db) of
