@@ -37,12 +37,13 @@
 %% Sliding Window Timestamp Cleanup might be an expensive operation under high load, so keep it
 %% rare.
 -define(DEFAULT_TIMESTAMP_CLEANUP_INTERVAL_MS, 120000).
--define(DEFAULT_LEAKY_RATE_LIMIT, 5).
--define(DEFAULT_CONCURRENCY_LIMIT, 2).
--define(DEFAULT_TICK_REDUCTION, 1).
+-define(DEFAULT_TIMESTAMP_CLEANUP_EXPIRY, 120000).
+-define(DEFAULT_LEAKY_RATE_LIMIT, 150).
+-define(DEFAULT_CONCURRENCY_LIMIT, 150).
+-define(DEFAULT_TICK_REDUCTION, 30).
 
 -define(DEFAULT_SLIDING_WINDOW_DURATION, 1000).
--define(DEFAULT_SLIDING_WINDOW_LIMIT, 5).
+-define(DEFAULT_SLIDING_WINDOW_LIMIT, 150). %% previously recommened rate was 9000/min
 
 -include_lib("arweave/include/ar.hrl").
 
@@ -76,6 +77,8 @@ init([Args]) ->
     LeakyTickMs = maps:get(leaky_tick_interval_ms, Args, ?DEFAULT_TICK_INTERVAL_MS),
     TimestampCleanupTickMs = maps:get(timestamp_cleanup_interval_ms, Args,
                                       ?DEFAULT_TIMESTAMP_CLEANUP_INTERVAL_MS),
+    TimestampCleanupExpiry = maps:get(timestamp_cleanup_expiry, Args,
+                                      ?DEFAULT_TIMESTAMP_CLEANUP_EXPIRY),
     LeakyRateLimit = maps:get(leaky_rate_limit, Args, ?DEFAULT_LEAKY_RATE_LIMIT),
     ConcurrencyLimit = maps:get(concurrency_limit, Args, ?DEFAULT_CONCURRENCY_LIMIT),
     TickReduction = maps:get(tick_reduction, Args, ?DEFAULT_TICK_REDUCTION),
@@ -90,6 +93,7 @@ init([Args]) ->
            timestamp_cleanup_timer_ref => TsRef,
            leaky_tick_ms => LeakyTickMs,
            timestamp_cleanup_tick_ms => TimestampCleanupTickMs,
+           timestamp_cleanup_expiry => TimestampCleanupExpiry,
            tick_reduction => TickReduction,
            leaky_rate_limit => LeakyRateLimit,
            concurrency_limit => ConcurrencyLimit,
@@ -174,9 +178,9 @@ handle_cast(_Request, State) ->
 
 handle_info({tick, sliding_window_timestamp_cleanup},
             State = #{id := Id, sliding_timestamps := SlidingTimestamps,
-                      sliding_window_duration := SlidingWindowDuration}) ->
+                      timestamp_cleanup_expiry := CleanupExpiry}) ->
     Now = ar_limiter_time:ts_now(),
-    NewSlidingTimestamps = cleanup_expired_sliding_peers(SlidingTimestamps, SlidingWindowDuration, Now),
+    NewSlidingTimestamps = cleanup_expired_sliding_peers(SlidingTimestamps, CleanupExpiry, Now),
     Deleted = maps:size(SlidingTimestamps) - maps:size(NewSlidingTimestamps),
     prometheus_counter:inc(ar_limiter_cleanup_tick_expired_sliding_peers_deleted_total, [Id], Deleted),
     {noreply, State#{sliding_timestamps => NewSlidingTimestamps}};

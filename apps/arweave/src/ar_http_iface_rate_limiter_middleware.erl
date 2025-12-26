@@ -7,8 +7,6 @@
 -include_lib("arweave/include/ar.hrl").
 
 execute(Req, Env) ->
-    ?LOG_INFO([{pid, self()}, {event, rate_limiting}]),
-
     LimiterRef = get_limiter_ref(Req),
     IPAddr = requesting_ip_addr(Req),
     
