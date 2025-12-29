@@ -487,12 +487,12 @@ register() ->
 		{help, "The rate, in bytes per second, at which chunks are written to storage."}
 	]),
 
-	prometheus_gauge:new([{name, sync_tasks},
-		{labels, [state, type, peer]},
-		{help, "The number of syncing tasks. 'state' can be 'pending', 'active', "
-				"'footprint_active', or 'footprint_pending'. "
-				"'type' can be 'sync_range' or 'read_range'. 'peer' is the peer the task "
-				"is intended for - for 'read_range' tasks this will be 'localhost'."}]),
+	prometheus_counter:new([{name, sync_tasks},
+		{labels, [state, peer]},
+		{help, "The number of syncing tasks. 'state' can be 'waiting_in', 'waiting_out', "
+				"'queued_in', 'queued_out', 'dispatched', 'completed', "
+				"'activate_footprint', or 'deactivate_footprint'. "
+				" 'peer' is the peer the task is intended for."}]),
 
 	prometheus_counter:new([{name, sync_chunks_skipped},
 		{labels, [reason]},
