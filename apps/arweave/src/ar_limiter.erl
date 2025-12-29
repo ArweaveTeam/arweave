@@ -23,16 +23,12 @@
          terminate/2, code_change/3, format_status/2]).
 
 -ifdef(TEST).
--export([%register_or_reject_call/3,
-         expire_and_get_requests/4,
+-export([expire_and_get_requests/4,
          drop_expired/3,
          add_and_order_timestamps/2,
          cleanup_expired_sliding_peers/3]).
 -endif.
 
-%% TODO: determine sensible defaults based on desired load profile,
-%%       and where to store these macros what config are they a part of,
-%%       semantically?
 -define(DEFAULT_TICK_INTERVAL_MS, 1000).
 %% Sliding Window Timestamp Cleanup might be an expensive operation under high load, so keep it
 %% rare.

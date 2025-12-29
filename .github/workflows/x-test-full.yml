@@ -60,6 +60,7 @@ jobs:
             ar_join,
             ar_kv,
             ar_limiter,
+            ar_limiter_metrics_collector,
             ar_merkle,
             ar_mining_cache,
             ar_mining_server,
