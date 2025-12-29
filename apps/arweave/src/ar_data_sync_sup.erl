@@ -21,6 +21,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
+	ets:new(footprint_activation_times, [named_table, public, set]),
 	Children = 
 		ar_data_sync_worker_master:register_workers() ++
 		ar_chunk_copy:register_workers() ++

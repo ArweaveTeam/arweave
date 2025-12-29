@@ -67,13 +67,24 @@ handle_cast({read_range, Args}, State) ->
 	{noreply, State};
 
 handle_cast({sync_range, Args}, State) ->
-	{_, _, Peer, _, _, _} = Args,
+	{_, _, Peer, _, RetryCount, FootprintKey} = Args,
 	StartTime = erlang:monotonic_time(),
 	SyncResult = sync_range(Args, State),
 	EndTime = erlang:monotonic_time(),
 	case SyncResult of
 		recast ->
-			?LOG_DEBUG([{event, sync_range_recast}, {peer, ar_util:format_peer(Peer)}, {args, Args}]),
+			%% Only log at WARNING when retries are exhausted (RetryCount <= 1),
+			%% otherwise log at DEBUG to reduce noise
+			case RetryCount =< 1 of
+				true ->
+					?LOG_WARNING([{event, sync_range_recast_exhausted}, 
+						{peer, ar_util:format_peer(Peer)}, 
+						{footprint_key, FootprintKey},
+						{retry_count, RetryCount},
+						{worker, State#state.name}]);
+				false ->
+					ok
+			end,
 			ok;
 		_ ->
 			gen_server:cast(ar_data_sync_worker_master, {task_completed,
@@ -233,7 +244,6 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
 	end.
 
 sync_range({Start, End, Peer, _TargetStoreID, _RetryCount, _FootprintKey} = Args, _State) when Start >= End ->
-	?LOG_DEBUG([{event, sync_range_done1}, {peer, ar_util:format_peer(Peer)}, {args, Args}]),
 	ok;
 sync_range({Start, End, Peer, _TargetStoreID, 0, _FootprintKey}, _State) ->
 	?LOG_DEBUG([{event, sync_range_retries_exhausted},
@@ -271,12 +281,8 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 			IsRecorded = ar_sync_record:is_recorded(Byte + 1, ar_data_sync, TargetStoreID),
 			case {Byte >= End, IsRecorded} of
 				{true, _} ->
-					?LOG_DEBUG([{event, sync_range_done2}, {peer, ar_util:format_peer(Peer)},
-						{args, Args}]),
 					ok;
 				{_, {true, _}} ->
-					?LOG_DEBUG([{event, sync_range_recorded}, {peer, ar_util:format_peer(Peer)},
-						{args, Args}]),
 					ok;
 				_ ->
 					Packing = get_target_packing(TargetStoreID, State#state.request_packed_chunks),

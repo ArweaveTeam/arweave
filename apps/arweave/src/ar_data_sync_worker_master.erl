@@ -70,8 +70,11 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(REBALANCE_FREQUENCY_MS, 10*1000).
+-define(CHECK_LONG_RUNNING_FOOTPRINTS_MS, 10*1000).
+-define(LONG_RUNNING_FOOTPRINT_THRESHOLD_S, 60).
 -define(MIN_MAX_ACTIVE, 8).
 -define(MIN_PEER_QUEUE, 20).
+-define(FOOTPRINT_ACTIVATION_TABLE, footprint_activation_times).
 
 -record(peer, {
 	peer = undefined,
@@ -153,6 +156,7 @@ ready_for_work() ->
 
 init(Workers) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
+	ar_util:cast_after(?CHECK_LONG_RUNNING_FOOTPRINTS_MS, ?MODULE, check_long_running_footprints),
 	{ok, Config} = arweave_config:get_env(),
 	MaxFootprints = (Config#config.replica_2_9_entropy_cache_size_mb * ?MiB)
 		div ar_block:get_replica_2_9_footprint_size(),
@@ -216,6 +220,11 @@ handle_cast(rebalance_peers, State) ->
 	State3 = rebalance_peers(Peers, AllPeerPerformances, Targets, State2),
 	{noreply, State3};
 
+handle_cast(check_long_running_footprints, State) ->
+	ar_util:cast_after(?CHECK_LONG_RUNNING_FOOTPRINTS_MS, ?MODULE, check_long_running_footprints),
+	log_long_running_footprints(State),
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -245,13 +254,13 @@ process_peer_queue(Peer, State) ->
 			State;
 		false ->
 			PeerTasks = get_peer_tasks(Peer, State),
-			?LOG_DEBUG([{event, process_peer_queue}, {peer, ar_util:format_peer(Peer)},
-				{has_capacity, peer_has_capacity(PeerTasks)},
-				{has_queued_tasks, peer_has_queued_tasks(PeerTasks)},
-				{waiting_count, PeerTasks#peer.waiting_count},
-				{dispatched_count, PeerTasks#peer.dispatched_count},
-				{max_dispatched, PeerTasks#peer.max_dispatched}
-			]),
+			% ?LOG_DEBUG([{event, process_peer_queue}, {peer, ar_util:format_peer(Peer)},
+			% 	{has_capacity, peer_has_capacity(PeerTasks)},
+			% 	{has_queued_tasks, peer_has_queued_tasks(PeerTasks)},
+			% 	{waiting_count, PeerTasks#peer.waiting_count},
+			% 	{dispatched_count, PeerTasks#peer.dispatched_count},
+			% 	{max_dispatched, PeerTasks#peer.max_dispatched}
+			% ]),
 			case peer_has_capacity(PeerTasks) andalso peer_has_queued_tasks(PeerTasks) of
 				true ->
 					State2 = dispatch_task(PeerTasks, State),
@@ -317,23 +326,32 @@ cut_peer_queue(Peer, Performance, TotalThroughput, State) ->
 			%% The peer has a large queue of tasks. Reduce the queue size by removing the
 			%% oldest tasks.
 			{Queued2, RemovedQueue} = queue:split(MaxQueue, Queued),
+			State2 = set_peer_tasks(PeerTasks#peer{ queued = Queued2 }, State),
 			%% Decrement footprint active task counts for all removed tasks
-			State2 = cut_active_footprint_task_counts(RemovedQueue, Peer, State),
+			State3 = cut_active_footprint_task_counts(RemovedQueue, Peer, State2),
+			PeerTasks2 = get_peer_tasks(Peer, State3),
 			?LOG_DEBUG([{event, cut_peer_queue},
 				{peer, ar_util:format_peer(Peer)},
-				{dispatched_count, PeerTasks#peer.dispatched_count},
-				{active_tasks, State#state.total_dispatched_count},
+				{dispatched_count, PeerTasks2#peer.dispatched_count},
+				{active_tasks, State3#state.total_dispatched_count},
 				{max_queue, MaxQueue}, {tasks_to_cut, TasksToCut},
 				{old_queued_count, queue:len(Queued)},
 				{new_queued_count, queue:len(Queued2)}
 			]),
-			State3 = set_peer_tasks(PeerTasks#peer{ queued = Queued2 }, State2),
 			increment_queued_task_count(Peer, -TasksToCut, State3)
 	end.
 
 %% @doc Enqueue a task to a peer queue, process the queue, and update counters.
 enqueue_peer_task(FootprintKey, Peer, Args, State) ->
-	{_Start, _End, Peer, _TargetStoreID, _FootprintKey} = Args,
+	{_Start, _End, Peer, _TargetStoreID, ArgsFootprintKey} = Args,
+	case FootprintKey =/= ArgsFootprintKey of
+		true ->
+			?LOG_WARNING([{event, footprint_key_mismatch},
+				{param_footprint_key, FootprintKey},
+				{args_footprint_key, ArgsFootprintKey}]);
+		false ->
+			ok
+	end,
 	PeerTasks = get_peer_tasks(Peer, State),
 	Queued = queue:in(Args, PeerTasks#peer.queued),
 	PeerTasks2 = PeerTasks#peer{
@@ -383,7 +401,7 @@ enqueue_task(FootprintKey, Args, State) ->
 						{active_tasks, Footprint#footprint.active_count},
 						{waiting_tasks, queue:len(Footprint#footprint.waiting)},
 						{footprint_key, FootprintKey}]),
-			activate_footprint(Peer),
+			activate_footprint(FootprintKey, Peer),
 			State2 = State#state{ active_footprint_count = ActiveCount + 1 },
 			enqueue_peer_task(FootprintKey, Peer, Args, State2);
 		false ->
@@ -401,6 +419,14 @@ enqueue_task(FootprintKey, Args, State) ->
 complete_footprint_task(none, _Peer, State) ->
 	State;
 complete_footprint_task(FootprintKey, Peer, State) ->
+	case maps:is_key(FootprintKey, State#state.footprints) of
+		false ->
+			?LOG_WARNING([{event, complete_footprint_task_not_found},
+				{footprint_key, FootprintKey},
+				{peer, ar_util:format_peer(Peer)}]);
+		true ->
+			ok
+	end,
 	State2 = increment_active_footprint_task_count(FootprintKey, Peer, -1, State),
 	case get_active_footprint_task_count(FootprintKey, State2) =< 0 of
 		true ->
@@ -412,7 +438,7 @@ complete_footprint_task(FootprintKey, Peer, State) ->
 						{active_tasks, Footprint#footprint.active_count},
 						{waiting_tasks, queue:len(Footprint#footprint.waiting)},
 						{footprint_key, FootprintKey}]),
-					deactivate_footprint(Peer),
+					deactivate_footprint(FootprintKey, Peer),
 					State3 = State2#state{
 						footprints = maps:remove(FootprintKey, State2#state.footprints),
 						active_footprint_count = State2#state.active_footprint_count - 1
@@ -456,7 +482,7 @@ activate_next_footprint(State) ->
 						{waiting_tasks, queue:len(Footprint#footprint.waiting)},
 						{footprint_key, FootprintKey}]),
 					{_, _, Peer} = FootprintKey,
-					activate_footprint(Peer),
+					activate_footprint(FootprintKey, Peer),
 					State2 = State#state{ active_footprint_count = ActiveCount + 1 },
 					State3 = set_footprint(
 						FootprintKey, Footprint#footprint{ waiting = queue:new() }, State2),
@@ -692,22 +718,148 @@ increment_active_footprint_task_count(FootprintKey, Peer, N, State) ->
 	Footprint2 = Footprint#footprint{ active_count = Footprint#footprint.active_count + N },
 	set_footprint(FootprintKey, Footprint2, State).
 
-activate_footprint(Peer) ->
-	prometheus_counter:inc(sync_tasks, [activate_footprint, ar_util:format_peer(Peer)], 1).
+activate_footprint(FootprintKey, Peer) ->
+	prometheus_counter:inc(sync_tasks, [activate_footprint, ar_util:format_peer(Peer)], 1),
+	case ets:info(?FOOTPRINT_ACTIVATION_TABLE) of
+		undefined ->
+			?LOG_WARNING([{event, footprint_activate_no_ets_table},
+				{footprint_key, FootprintKey}]);
+		_ ->
+			?LOG_DEBUG([{event, footprint_activated},
+				{footprint_key, FootprintKey}]),
+			ets:insert(?FOOTPRINT_ACTIVATION_TABLE, {FootprintKey, erlang:monotonic_time()})
+	end.
 
-deactivate_footprint(Peer) ->
-	prometheus_counter:inc(sync_tasks, [deactivate_footprint, ar_util:format_peer(Peer)], 1).
+deactivate_footprint(FootprintKey, Peer) ->
+	prometheus_counter:inc(sync_tasks, [deactivate_footprint, ar_util:format_peer(Peer)], 1),
+	case ets:info(?FOOTPRINT_ACTIVATION_TABLE) of
+		undefined ->
+			?LOG_WARNING([{event, footprint_deactivate_no_ets_table},
+				{footprint_key, FootprintKey}]);
+		_ ->
+			case ets:lookup(?FOOTPRINT_ACTIVATION_TABLE, FootprintKey) of
+				[{FootprintKey, ActivationTime}] ->
+					DurationMs = erlang:convert_time_unit(
+						erlang:monotonic_time() - ActivationTime, native, millisecond),
+					?LOG_DEBUG([{event, footprint_deactivated},
+						{footprint_key, FootprintKey},
+						{duration_ms, DurationMs}]),
+					ets:delete(?FOOTPRINT_ACTIVATION_TABLE, FootprintKey);
+				[] ->
+					?LOG_WARNING([{event, footprint_deactivate_not_in_ets},
+						{footprint_key, FootprintKey}])
+			end
+	end.
+
+log_long_running_footprints(State) ->
+	Now = erlang:monotonic_time(),
+	ThresholdNative = erlang:convert_time_unit(
+		?LONG_RUNNING_FOOTPRINT_THRESHOLD_S, second, native),
+	LongRunning = ets:foldl(
+		fun({FootprintKey, ActivationTime}, Acc) ->
+			Duration = Now - ActivationTime,
+			case Duration > ThresholdNative of
+				true ->
+					DurationS = erlang:convert_time_unit(Duration, native, second),
+					Footprint = get_footprint(FootprintKey, State),
+					[{FootprintKey, DurationS, 
+					  Footprint#footprint.active_count,
+					  queue:len(Footprint#footprint.waiting)} | Acc];
+				false ->
+					Acc
+			end
+		end, [], ?FOOTPRINT_ACTIVATION_TABLE),
+	case LongRunning of
+		[] ->
+			ok;
+		_ ->
+			%% Sort by duration descending to find the longest
+			Sorted = lists:sort(
+				fun({_, D1, _, _}, {_, D2, _, _}) -> D1 > D2 end, 
+				LongRunning),
+			{LongestKey, LongestDuration, LongestActiveCount, _} = hd(Sorted),
+			LongestFootprint = get_footprint(LongestKey, State),
+			WaitingTasks = queue:to_list(LongestFootprint#footprint.waiting),
+			ActiveTasks = find_active_tasks_for_footprint(LongestKey, State),
+			Summary = [{Key, DurS, ActCnt, WaitCnt} || 
+				{Key, DurS, ActCnt, WaitCnt} <- Sorted],
+			?LOG_WARNING([{event, long_running_footprints},
+				{count, length(LongRunning)},
+				{footprints, Summary},
+				{longest_footprint_key, LongestKey},
+				{longest_duration_s, LongestDuration},
+				{longest_active_count, LongestActiveCount},
+				{longest_waiting_tasks, WaitingTasks},
+				{longest_active_tasks, ActiveTasks}])
+	end.
+
+find_active_tasks_for_footprint(FootprintKey, State) ->
+	%% Scan all peer queues to find tasks matching this footprint
+	maps:fold(
+		fun(_Peer, PeerTasks, Acc) ->
+			QueuedTasks = queue:to_list(PeerTasks#peer.queued),
+			MatchingTasks = [Args || {_Start, _End, _P, _StoreID, FK} = Args <- QueuedTasks,
+									 FK =:= FootprintKey],
+			MatchingTasks ++ Acc
+		end, [], State#state.peers).
 
 %% @doc Decrement footprint active task counts for all tasks in the removed queue.
+%% After decrementing, check if any footprints should be deactivated.
 cut_active_footprint_task_counts(RemovedQueue, Peer, State) ->
+	{State2, AffectedFootprints} = cut_active_footprint_task_counts2(
+		RemovedQueue, Peer, State, sets:new([{version, 2}])),
+	%% Check each affected footprint for deactivation
+	deactivate_empty_footprints(sets:to_list(AffectedFootprints), Peer, State2).
+
+cut_active_footprint_task_counts2(RemovedQueue, Peer, State, AffectedFootprints) ->
 	case queue:out(RemovedQueue) of
 		{empty, _} ->
-			State;
+			{State, AffectedFootprints};
 		{{value, Args}, RemainingQueue} ->
 			{_Start, _End, _Peer, _TargetStoreID, FootprintKey} = Args,
 			State2 = increment_active_footprint_task_count(FootprintKey, Peer, -1, State),
-			cut_active_footprint_task_counts(RemainingQueue, Peer, State2)
+			AffectedFootprints2 = case FootprintKey of
+				none -> AffectedFootprints;
+				_ -> sets:add_element(FootprintKey, AffectedFootprints)
+			end,
+			cut_active_footprint_task_counts2(RemainingQueue, Peer, State2, AffectedFootprints2)
 	end.
+
+deactivate_empty_footprints([], _Peer, State) ->
+	State;
+deactivate_empty_footprints([FootprintKey | Rest], Peer, State) ->
+	State2 = case get_active_footprint_task_count(FootprintKey, State) =< 0 of
+		true ->
+			Footprint = get_footprint(FootprintKey, State),
+			case queue:is_empty(Footprint#footprint.waiting) of
+				true ->
+					%% Footprint has no active or waiting tasks, deactivate it
+					?LOG_DEBUG([{event, deactivate_footprint},
+						{source, cut_peer_queue},
+						{active_tasks, Footprint#footprint.active_count},
+						{waiting_tasks, queue:len(Footprint#footprint.waiting)},
+						{footprint_key, FootprintKey}]),
+					deactivate_footprint(FootprintKey, Peer),
+					State3 = State#state{
+						footprints = maps:remove(FootprintKey, State#state.footprints),
+						active_footprint_count = State#state.active_footprint_count - 1
+					},
+					activate_next_footprint(State3);
+				false ->
+					%% Footprint has waiting tasks, enqueue them
+					?LOG_DEBUG([{event, enqueue_footprint},
+						{source, cut_peer_queue},
+						{active_tasks, Footprint#footprint.active_count},
+						{waiting_tasks, queue:len(Footprint#footprint.waiting)},
+						{footprint_key, FootprintKey}]),
+					State3 = set_footprint(
+						FootprintKey, Footprint#footprint{ waiting = queue:new() }, State),
+					enqueue_footprint(FootprintKey, Footprint#footprint.waiting, State3)
+			end;
+		false ->
+			State
+	end,
+	deactivate_empty_footprints(Rest, Peer, State2).
 	
 get_peer_tasks(Peer, State) ->
 	maps:get(Peer, State#state.peers, #peer{peer = Peer}).
