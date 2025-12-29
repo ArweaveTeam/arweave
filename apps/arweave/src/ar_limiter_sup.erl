@@ -5,7 +5,7 @@
 -export([start_link/0, all_info/0]).
 
 -ifdef(TEST).
--export([start_link/1]).
+-export([start_link/1, child_spec/1]).
 -endif.
 
 %% Supervisor callbacks
@@ -49,7 +49,11 @@ child_spec(#{id := Id} = Config) ->
 get_limiter_config() ->
     %% TODO: get from ar_config.
     [#{id => general},
-     #{id => metrics}].
+     %% Very limited concurrency defaults
+     #{id => metrics,
+       leaky_rate_limit=> 1,
+       sliding_window_limit => 3,
+       concurrency_limit => 2}].
 
 all_info() ->
     Children = supervisor:which_children(?MODULE),
