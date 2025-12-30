@@ -287,10 +287,18 @@ get_peer_release(Peer) ->
 rate_fetched_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
 	rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, 1).
 rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, Concurrency) ->
-	gen_server:cast(?MODULE,
-		{valid_data, Peer, DataType, LatencyMicroseconds / 1000, DataSize, Concurrency});
+	try
+		gen_server:cast(?MODULE,
+			{valid_data, Peer, DataType, LatencyMicroseconds / 1000, DataSize, Concurrency})
+	catch
+		_:_ -> ok
+	end;
 rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize, _Concurrency) ->
-	gen_server:cast(?MODULE, {invalid_data, Peer, DataType}).
+	try
+		gen_server:cast(?MODULE, {invalid_data, Peer, DataType})
+	catch
+		_:_ -> ok
+	end.
 
 rate_gossiped_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
 	case check_peer(Peer) of

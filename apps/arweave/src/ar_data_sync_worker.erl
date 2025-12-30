@@ -1,6 +1,6 @@
 %%% @doc A process fetching the weave data from the network and from the local
 %%% storage modules, one chunk (or a range of chunks) at a time. The workers
-%%% are coordinated by ar_data_sync_worker_master. The workers do not update the
+%%% are coordinated by ar_data_sync_coordinator. The workers do not update the
 %%% storage - updates are handled by ar_data_sync_* processes.
 -module(ar_data_sync_worker).
 
@@ -39,11 +39,11 @@ init({Name, Mode}) ->
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {name, Name}]),
 	{ok, Config} = arweave_config:get_env(),
 	%% In case there has been a restart we need to tell
-	%% ar_data_sync_worker_master to erase pending worker tasks.
+	%% ar_data_sync_coordinator to erase pending worker tasks.
 	%% We only want to do this for sync workers, not read workers.
 	case Mode  of
 		sync ->
-			gen_server:call(ar_data_sync_worker_master, {reset_worker, Name}, 30_000);
+			gen_server:call(ar_data_sync_coordinator, {reset_worker, Name}, 30_000);
 		_ ->
 			ok
 	end,
@@ -87,7 +87,7 @@ handle_cast({sync_range, Args}, State) ->
 			end,
 			ok;
 		_ ->
-			gen_server:cast(ar_data_sync_worker_master, {task_completed,
+			gen_server:cast(ar_data_sync_coordinator, {task_completed,
 				{sync_range, {State#state.name, SyncResult, Args, EndTime-StartTime}}})
 	end,
 	{noreply, State};
