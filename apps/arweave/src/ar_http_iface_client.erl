@@ -1530,5 +1530,6 @@ log_failed_request(Reason, Log) ->
 		{error,{shutdown,ehostunreach}} -> ok;
 		{error,{stream_error,closed}} -> ok;
 		{error,{stream_error,closing}} -> ok;
+		{error,{stream_error,{closed,normal}}} -> ok;
 		_ -> ?LOG_DEBUG(Log)
 	end.

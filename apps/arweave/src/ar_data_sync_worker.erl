@@ -308,8 +308,6 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 							ar_util:cast_after(1000, self(), {sync_range, Args2}),
 							recast;
 						{error, {ok, {{<<"404">>, _}, _, _, _, _}} = Reason} ->
-							?LOG_DEBUG([{event, sync_range_404}, {peer, ar_util:format_peer(Peer)},
-								{args, Args}]),
 							{error, Reason};
 						{error, Reason} ->
 							ar_http_iface_client:log_failed_request({error, Reason}, [
