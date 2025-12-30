@@ -579,6 +579,69 @@ get_footprint_stats(Pid) ->
 			Error
 	end.
 
+%% Standalone tests (no setup/cleanup needed)
+standalone_test_() ->
+	[
+		{timeout, 30, fun test_peer_name/0},
+		{timeout, 30, fun test_lookup/0},
+		{timeout, 30, fun test_get_or_start/0}
+	].
+
+test_peer_name() ->
+	%% Test that peer_name creates a valid atom from a peer tuple
+	Peer1 = {1, 2, 3, 4, 1984},
+	Name1 = peer_name(Peer1),
+	?assertEqual(true, is_atom(Name1)),
+	?assertEqual("ar_peer_1.2.3.4:1984", atom_to_list(Name1)),
+	
+	%% Different peer produces different name
+	Peer2 = {192, 168, 1, 1, 8080},
+	Name2 = peer_name(Peer2),
+	?assertEqual("ar_peer_192.168.1.1:8080", atom_to_list(Name2)),
+	?assertNotEqual(Name1, Name2).
+
+test_lookup() ->
+	%% Lookup of non-existent peer returns undefined
+	Peer1 = {10, 20, 30, 40, 9999},
+	?assertEqual(undefined, lookup(Peer1)),
+	
+	%% Register a process and verify lookup finds it
+	Peer2 = {50, 60, 70, 80, 1234},
+	Name2 = peer_name(Peer2),
+	TestPid = spawn(fun() -> receive stop -> ok end end),
+	register(Name2, TestPid),
+	?assertEqual({ok, TestPid}, lookup(Peer2)),
+	
+	%% Cleanup
+	TestPid ! stop,
+	unregister(Name2).
+
+test_get_or_start() ->
+	%% Start the supervisor (unlink so its shutdown doesn't affect our test process)
+	{ok, SupPid} = ar_peer_worker_sup:start_link(),
+	unlink(SupPid),
+	
+	%% First call creates a new worker
+	Peer1 = {11, 22, 33, 44, 5555},
+	{ok, Pid1} = get_or_start(Peer1),
+	?assertEqual(true, is_pid(Pid1)),
+	?assertEqual(true, is_process_alive(Pid1)),
+	
+	%% Second call returns the same pid
+	{ok, Pid2} = get_or_start(Peer1),
+	?assertEqual(Pid1, Pid2),
+	
+	%% Different peer gets a different worker
+	Peer2 = {55, 66, 77, 88, 6666},
+	{ok, Pid3} = get_or_start(Peer2),
+	?assertEqual(true, is_pid(Pid3)),
+	?assertNotEqual(Pid1, Pid3),
+	
+	%% Cleanup - stop the supervisor which stops all children
+	exit(SupPid, shutdown),
+	timer:sleep(10).
+
+%% Tests that require setup/cleanup
 peer_worker_test_() ->
 	{foreach,
 		fun setup/0,
