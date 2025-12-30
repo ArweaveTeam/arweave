@@ -1045,7 +1045,7 @@ handle_cast(sync_data2, State) ->
 %%    we left off after a pause. There are 2 main conditions that can trigger a pause:
 %%    a. Insufficient disk space. Will pause until disk space frees up
 %%    b. Sync queue is busy. Will pause until previously queued intervals are scheduled to the
-%%       ar_data_sync_worker_master for syncing.
+%%       ar_data_sync_coordinator for syncing.
 handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End,
 			disk_pool_threshold = DiskPoolThreshold,
@@ -1151,8 +1151,8 @@ handle_cast({collect_peer_intervals, Start, End, Type}, State) ->
 				%% Q contains chunks we've already queued for syncing. We need
 				%% to manage the queue length.
 				%% 1. Periodically sync_intervals will pull from Q and send work to
-				%%    ar_data_sync_worker_master. We need to make sure Q is long enough so
-				%%    that we never starve ar_data_sync_worker_master of work.
+%%    ar_data_sync_coordinator. We need to make sure Q is long enough so
+%%    that we never starve ar_data_sync_coordinator of work.
 				%% 2. On the flip side we don't want Q to get so long as to trigger an
 				%%    out-of-memory condition. In the extreme case we could collect and
 				%%    enqueue all chunks in the entire storage module (usually 3.6 TB).
@@ -1702,7 +1702,7 @@ terminate(Reason, #sync_data_state{ store_id = StoreID } = State) ->
 %%%===================================================================
 
 init_sync_status(StoreID) ->
-	SyncStatus = case ar_data_sync_worker_master:is_syncing_enabled() of
+	SyncStatus = case ar_data_sync_coordinator:is_syncing_enabled() of
 		true -> paused;
 		false -> off
 	end,
@@ -1768,7 +1768,7 @@ do_sync_intervals(State) ->
 			true ->
 				true;
 			false ->
-				case ar_data_sync_worker_master:ready_for_work() of
+				case ar_data_sync_coordinator:ready_for_work() of
 					false ->
 						ar_util:cast_after(200, self(), sync_intervals),
 						true;
@@ -1783,7 +1783,7 @@ do_sync_intervals(State) ->
 			gen_server:cast(self(), sync_intervals),
 			{{FootprintKey, Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
 			I2 = ar_intervals:delete(QIntervals, End, Start),
-			gen_server:cast(ar_data_sync_worker_master,
+			gen_server:cast(ar_data_sync_coordinator,
 					{sync_range, {Start, End, Peer, StoreID, FootprintKey}}),
 			State#sync_data_state{ sync_intervals_queue = Q2,
 					sync_intervals_queue_intervals = I2 }
