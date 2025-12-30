@@ -42,7 +42,10 @@
 	total_dispatched_count = 0,
 	workers = queue:new(),
 	dispatched_count_per_worker = #{},
-	known_peers = #{}           %% #{Peer => Pid} - cached peer worker Pids
+	known_peers = #{},          %% #{Peer => Pid} - cached peer worker Pids
+	%% Global footprint tracking
+	total_active_footprints = 0,  %% count of active footprints across all peers
+	max_footprints = 0            %% global max footprints limit
 }).
 
 %%%===================================================================
@@ -64,7 +67,6 @@ register_workers() ->
 		false ->
 			[]
 	end.
-
 
 register_sync_workers() ->
 	{ok, Config} = arweave_config:get_env(),
@@ -100,10 +102,20 @@ ready_for_work() ->
 
 init(Workers) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
-	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers}]),
+	MaxFootprints = calculate_max_footprints(),
+	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers}, 
+		{max_footprints, MaxFootprints}]),
 	{ok, #state{
-		workers = queue:from_list(Workers)
+		workers = queue:from_list(Workers),
+		max_footprints = MaxFootprints
 	}}.
+
+calculate_max_footprints() ->
+	{ok, Config} = arweave_config:get_env(),
+	%% Calculate global max footprints based on entropy cache size
+	FootprintSize = ar_block:get_replica_2_9_footprint_size(),
+	max(1, (Config#config.replica_2_9_entropy_cache_size_mb * ?MiB) div FootprintSize).
+
 
 handle_call(ready_for_work, _From, State) ->
 	WorkerCount = queue:len(State#state.workers),
@@ -135,8 +147,10 @@ handle_cast({sync_range, Args}, State) ->
 				undefined ->
 					{noreply, State1};
 				_ ->
+					%% Check if there's global capacity for new footprints
+					HasCapacity = State1#state.total_active_footprints < State1#state.max_footprints,
 					%% Enqueue task to peer worker (fire-and-forget)
-					ar_peer_worker:enqueue_task(Pid, FootprintKey, Args),
+					ar_peer_worker:enqueue_task(Pid, FootprintKey, Args, HasCapacity),
 					%% Optimistically assume task was queued (not waiting)
 					State2 = State1#state{ total_task_count = State1#state.total_task_count + 1 },
 					%% Process the queue to dispatch if there's capacity
@@ -171,6 +185,27 @@ handle_cast(rebalance_peers, State) ->
 	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State),
 	{noreply, State2};
 
+handle_cast({footprint_activated, _Peer}, State) ->
+	NewCount = State#state.total_active_footprints + 1,
+	{noreply, State#state{ total_active_footprints = NewCount }};
+
+handle_cast({footprint_deactivated, _Peer}, State) ->
+	NewCount = max(0, State#state.total_active_footprints - 1),
+	State2 = State#state{ total_active_footprints = NewCount },
+	%% Notify all peers that capacity is available so they can activate waiting footprints
+	case NewCount < State2#state.max_footprints of
+		true ->
+			notify_peers_capacity_available(State2#state.known_peers);
+		false ->
+			ok
+	end,
+	{noreply, State2};
+
+handle_cast({peer_worker_started, Peer, Pid}, State) ->
+	%% Peer worker (re)started - update cached PID
+	State2 = State#state{ known_peers = maps:put(Peer, Pid, State#state.known_peers) },
+	{noreply, State2};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -194,8 +229,8 @@ terminate(Reason, _State) ->
 %% @doc If a peer has capacity, take tasks from its queue and dispatch them.
 process_peer_queue(Pid, State) ->
 	WorkerCount = queue:len(State#state.workers),
-	Tasks = ar_peer_worker:process_queue(Pid, WorkerCount),
-	dispatch_tasks(Pid, Tasks, State).
+	TasksToDispatch = ar_peer_worker:process_queue(Pid, WorkerCount),
+	dispatch_tasks(Pid, TasksToDispatch, State).
 
 %% @doc Process all peer queues, with the priority peer processed first.
 process_all_peer_queues(PriorityPeer, State) ->
@@ -320,10 +355,10 @@ increment_dispatched_task_count(Worker, N, State) ->
 %% @doc Add a peer to known_peers if not already present. Returns {Pid, State}.
 %% The Pid is cached so we don't have to do whereis + atom lookup on every call.
 maybe_add_peer(Peer, State) ->
-	case maps:find(Peer, State#state.known_peers) of
-		{ok, Pid} -> 
+	case State#state.known_peers of
+		#{Peer := Pid} -> 
 			{Pid, State};
-		error -> 
+		_ -> 
 			case ar_peer_worker:get_or_start(Peer) of
 				{ok, Pid} ->
 					{Pid, State#state{ known_peers = maps:put(Peer, Pid, State#state.known_peers) }};
@@ -347,6 +382,24 @@ cycle_workers(AverageLoad, State) ->
 			{Worker, State2};
 		false ->
 			cycle_workers(AverageLoad, State2)
+	end.
+
+%% Notify all known peers that global footprint capacity is available.
+notify_peers_capacity_available(KnownPeers) ->
+	%% Iterate through peers, stop when one activates a footprint to avoid over-activation
+	PeerList = maps:to_list(KnownPeers),
+	try_activate_footprint(PeerList).
+
+try_activate_footprint([]) ->
+	ok;
+try_activate_footprint([{_Peer, Pid} | Rest]) ->
+	case ar_peer_worker:try_activate_footprint(Pid) of
+		true ->
+			%% A footprint was activated, stop here
+			ok;
+		false ->
+			%% No footprint activated, try next peer
+			try_activate_footprint(Rest)
 	end.
 
 %%%===================================================================
