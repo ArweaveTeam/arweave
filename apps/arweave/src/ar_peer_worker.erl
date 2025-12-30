@@ -50,6 +50,7 @@
 -define(MIN_PEER_QUEUE, 20).
 -define(CHECK_LONG_RUNNING_FOOTPRINTS_MS, 60000).  %% Check every 60 seconds
 -define(LONG_RUNNING_FOOTPRINT_THRESHOLD_S, 120).
+-define(IDLE_SHUTDOWN_THRESHOLD_S, 300).  %% Shutdown after 5 minutes of no tasks
 
 -record(footprint, {
 	waiting = queue:new(),   %% queue of waiting tasks
@@ -64,6 +65,7 @@
 	dispatched_count = 0,
 	waiting_count = 0,
 	max_dispatched = ?MIN_MAX_DISPATCHED,
+	last_task_time,                %% monotonic time when last task was received
 	%% Footprint management (coordinator tracks global limits)
 	footprints = #{},              %% FootprintKey => #footprint{}
 	active_footprints = sets:new() %% set of active FootprintKeys
@@ -152,8 +154,8 @@ rebalance(Pid, Performance, RebalanceParams) ->
 	try
 		gen_server:call(Pid, {rebalance, Performance, RebalanceParams}, 5000)
 	catch
-		exit:{timeout, _} -> 0;
-		_:_ -> 0
+		exit:{timeout, _} -> {error, timeout};
+		_:_ -> {error, timeout}
 	end.
 
 %%%===================================================================
@@ -167,7 +169,8 @@ init([Peer]) ->
 	%% Notify coordinator of our PID (handles restarts updating stale cached PIDs)
 	gen_server:cast(ar_data_sync_coordinator, {peer_worker_started, Peer, self()}),
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {peer, PeerFormatted}]),
-	{ok, #state{ peer = Peer, peer_formatted = PeerFormatted }}.
+	{ok, #state{ peer = Peer, peer_formatted = PeerFormatted, 
+				 last_task_time = erlang:monotonic_time() }}.
 
 handle_call(get_max_dispatched, _From, State) ->
 	{reply, State#state.max_dispatched, State};
@@ -196,7 +199,7 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	{QueueScalingFactor, TargetLatency, WorkersStarved} = RebalanceParams,
 	#state{ task_queue = Queue, max_dispatched = MaxDispatched,
 			dispatched_count = Dispatched, waiting_count = Waiting,
-			peer_formatted = PeerFormatted } = State,
+			peer_formatted = PeerFormatted, last_task_time = LastTaskTime } = State,
 	
 	%% 1. Cut queue if needed
 	MaxQueueLen = max_queue_length(Performance, QueueScalingFactor),
@@ -223,19 +226,34 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	NewMaxDispatched = ar_util:between(TargetMax, ?MIN_MAX_DISPATCHED, max(MaxTasks, ?MIN_MAX_DISPATCHED)),
 	State3 = State2#state{ max_dispatched = NewMaxDispatched },
 	
-	%% 3. Log rebalance
+	%% 3. Check if we should shutdown (idle worker)
+	NewQueueLen = queue:len(State3#state.task_queue),
+	NewWaiting = State3#state.waiting_count,
+	NewDispatched = State3#state.dispatched_count,
+	IdleSeconds = erlang:convert_time_unit(
+		erlang:monotonic_time() - LastTaskTime, native, second),
+	ShouldShutdown = (NewDispatched == 0) andalso (NewQueueLen == 0) andalso 
+					 (NewWaiting == 0) andalso (IdleSeconds >= ?IDLE_SHUTDOWN_THRESHOLD_S),
+	
+	%% 4. Log rebalance
 	?LOG_DEBUG([{event, rebalance_peer},
 		{peer, PeerFormatted},
-		{dispatched_count, State3#state.dispatched_count},
-		{queued_count, queue:len(State3#state.task_queue)},
-		{waiting_count, State3#state.waiting_count},
+		{dispatched_count, NewDispatched},
+		{queued_count, NewQueueLen},
+		{waiting_count, NewWaiting},
 		{max_queue_len, MaxQueueLen},
 		{faster_than_target, FasterThanTarget},
 		{workers_starved, WorkersStarved},
 		{max_dispatched, NewMaxDispatched},
-		{removed_count, RemovedCount}]),
+		{removed_count, RemovedCount},
+		{idle_seconds, IdleSeconds},
+		{should_shutdown, ShouldShutdown}]),
 	
-	{reply, RemovedCount, State3};
+	Result = case ShouldShutdown of
+		true -> {shutdown, RemovedCount};
+		false -> {ok, RemovedCount}
+	end,
+	{reply, Result, State3};
 
 handle_call(try_activate_footprint, _From, State) ->
 	%% Global capacity became available - try to activate a waiting footprint
@@ -247,7 +265,8 @@ handle_call(Request, _From, State) ->
 	{reply, {error, unhandled}, State}.
 
 handle_cast({enqueue_task, FootprintKey, Args, HasCapacity}, State) ->
-	State2 = do_enqueue_task(FootprintKey, Args, HasCapacity, State),
+	State1 = State#state{ last_task_time = erlang:monotonic_time() },
+	State2 = do_enqueue_task(FootprintKey, Args, HasCapacity, State1),
 	{noreply, State2};
 
 handle_cast({task_completed, FootprintKey, Result, ElapsedNative, DataSize}, State) ->
@@ -432,15 +451,12 @@ activate_waiting_tasks(FootprintKey, Footprint, State) ->
 %% @doc Activate a footprint - common logic for new activations.
 %% Sets activation_time, adds to active set, notifies coordinator, logs.
 activate_footprint(FootprintKey, State) ->
-	#state{ footprints = Footprints, peer_formatted = PeerFormatted,
+	#state{ footprints = Footprints,
 			active_footprints = ActiveFootprints } = State,
 	Footprint = maps:get(FootprintKey, Footprints),
 	Footprint2 = Footprint#footprint{ activation_time = erlang:monotonic_time() },
 	increment_metrics(activate_footprint, State, 1),
 	notify_footprint_activated(State#state.peer),
-	?LOG_DEBUG([{event, activate_footprint},
-		{peer, PeerFormatted},
-		{footprint_key, FootprintKey}]),
 	State#state{
 		footprints = maps:put(FootprintKey, Footprint2, Footprints),
 		active_footprints = sets:add_element(FootprintKey, ActiveFootprints)
@@ -464,9 +480,9 @@ try_activate_waiting_footprint(State) ->
 find_waiting_footprint(Footprints, ActiveFootprints) ->
 	maps:fold(
 		fun(Key, Footprint, Acc) ->
-			IsInactive = not sets:is_element(Key, ActiveFootprints),
+			IsActive = sets:is_element(Key, ActiveFootprints),
 			HasWaiting = not queue:is_empty(Footprint#footprint.waiting),
-			case IsInactive andalso HasWaiting of
+			case not IsActive andalso HasWaiting of
 				true ->
 					WaitingCount = queue:len(Footprint#footprint.waiting),
 					case Acc of
@@ -725,8 +741,8 @@ test_cut_queue({Peer, Pid}) ->
 		%% RebalanceParams = {QueueScalingFactor, TargetLatency, WorkersStarved}
 		%% FasterThanTarget = (50.0 < 100.0) = true
 		RebalanceParams = {0.1, 100.0, false},
-		RemovedCount = rebalance(Pid, Performance, RebalanceParams),
-		?assertEqual(5, RemovedCount),
+		Result = rebalance(Pid, Performance, RebalanceParams),
+		?assertEqual({ok, 5}, Result),
 
 		%% Check we have 20 tasks left (MIN_PEER_QUEUE)
 		{ok, State2} = gen_server:call(Pid, get_state),

@@ -330,8 +330,23 @@ rebalance_peers2([{Peer, Pid} | Rest], AllPeerPerformances, Targets, State) ->
 	QueueScalingFactor = queue_scaling_factor(TotalThroughput, WorkerCount),
 	WorkersStarved = TotalMaxDispatched < WorkerCount,
 	RebalanceParams = {QueueScalingFactor, TargetLatency, WorkersStarved},
-	RemovedCount = ar_peer_worker:rebalance(Pid, Performance, RebalanceParams),
-	State2 = State#state{ total_task_count = max(0, State#state.total_task_count - RemovedCount) },
+	Result = ar_peer_worker:rebalance(Pid, Performance, RebalanceParams),
+	State2 = case Result of
+		{shutdown, RemovedCount} ->
+			%% Peer worker is idle and should be shutdown
+			?LOG_INFO([{event, shutdown_idle_peer_worker},
+				{peer, ar_util:format_peer(Peer)}]),
+			ar_peer_worker:stop(Pid),
+			State#state{
+				total_task_count = max(0, State#state.total_task_count - RemovedCount),
+				known_peers = maps:remove(Peer, State#state.known_peers)
+			};
+		{ok, RemovedCount} ->
+			State#state{ total_task_count = max(0, State#state.total_task_count - RemovedCount) };
+		{error, timeout} ->
+			%% Peer worker timed out, skip it
+			State
+	end,
 	rebalance_peers2(Rest, AllPeerPerformances, Targets, State2).
 
 %% @doc Scaling factor for calculating per-peer max queue size.
