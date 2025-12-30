@@ -172,6 +172,9 @@
 -define(DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE, true).
 -define(DEFAULT_COWBOY_TCP_SEND_TIMEOUT, 15_000).
 -define(DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN, 5000).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT, 150).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_DURATION, 1000).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT, 150).
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -314,7 +317,15 @@
 	'http_api.tcp.nodelay' = ?DEFAULT_COWBOY_TCP_NODELAY,
 	'http_api.tcp.num_acceptors' = ?DEFAULT_COWBOY_TCP_NUM_ACCEPTORS,
 	'http_api.tcp.send_timeout_close' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE,
-	'http_api.tcp.send_timeout' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT
+	'http_api.tcp.send_timeout' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT,
+
+	'http_api.limiter.general.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.general.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.general.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT
+
 }).
 
 -endif.

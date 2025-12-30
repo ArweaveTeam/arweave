@@ -23,7 +23,8 @@
          terminate/2, code_change/3, format_status/2]).
 
 -ifdef(TEST).
--export([expire_and_get_requests/4,
+-export([reset_all/1,
+         expire_and_get_requests/4,
          drop_expired/3,
          add_and_order_timestamps/2,
          cleanup_expired_sliding_peers/3]).
@@ -62,9 +63,11 @@ register_or_reject_call(LimiterRef, Peer) ->
             Accept
     end.
 
+reset_all(LimiterRef) ->
+    whereis(LimiterRef) == undefined orelse gen_server:call(LimiterRef, reset_all).
+
 stop(LimiterRef) ->
     gen_server:stop(LimiterRef).
-
 
 %% gen_server callbacks
 init([Args]) ->
@@ -101,6 +104,11 @@ init([Args]) ->
            sliding_timestamps => #{} %% Peer -> Ordered list of timestamps
           }}.
 
+handle_call(reset_all, _From, State) ->
+    {reply, ok, State#{concurrent_requests => #{},
+                       concurrent_monitors => #{},
+                       leaky_tokens => #{},
+                       sliding_timestamps => #{}}};
 handle_call({register_or_reject, Peer}, {FromPid, _},
             State = #{id := Id,
                       leaky_rate_limit := LeakyRateLimit,
@@ -133,6 +141,8 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                         true ->
                             %% Burst exhausted with the Leaky Tokens
                             ?LOG_WARNING([{event, ar_limiter_reject}, {reason, rate_limit},
+                                          {sliding_window_limit, SlidingWindowLimit},
+                                          {leaky_rate_limit, LeakyRateLimit},
                                           {peer, Peer}, {id, Id}]),
                             {reply, {reject, rate_limit, data}, State};
                         false ->

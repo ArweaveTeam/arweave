@@ -5,7 +5,7 @@
 -export([start_link/0, all_info/0]).
 
 -ifdef(TEST).
--export([start_link/1, child_spec/1]).
+-export([start_link/1, child_spec/1, reset_all/0]).
 -endif.
 
 %% Supervisor callbacks
@@ -47,14 +47,23 @@ child_spec(#{id := Id} = Config) ->
        shutdown => ?SHUTDOWN_TIMEOUT}.
 
 get_limiter_config() ->
+    {ok, Config} = arweave_config:get_env(),
     %% TODO: get from ar_config.
-    [#{id => general},
+    [#{id => general,
+       sliding_window_limit => Config#config.'http_api.limiter.general.sliding_window_limit',
+       sliding_window_duration => Config#config.'http_api.limiter.general.sliding_window_duration',
+       leaky_rate_limit => Config#config.'http_api.limiter.general.leaky_limit'
+      },
      %% Very limited concurrency defaults
      #{id => metrics,
-       leaky_rate_limit=> 1,
+       leaky_rate_limit => 1,
        sliding_window_limit => 3,
        concurrency_limit => 2}].
 
 all_info() ->
     Children = supervisor:which_children(?MODULE),
     [{Id, ar_limiter:info(Id)}  || {Id, _Child, _Type, _Modules} <- Children].
+
+reset_all() ->
+    Children = supervisor:which_children(?MODULE),
+    [{Id, ar_limiter:reset_all(Id)}  || {Id, _Child, _Type, _Modules} <- Children].
