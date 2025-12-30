@@ -38,11 +38,11 @@
 -define(REBALANCE_FREQUENCY_MS, 10*1000).
 
 -record(state, {
-	total_queued_count = 0,     %% total count of tasks in the queued state (across all peers)
+	total_task_count = 0,       %% total count of tasks (queued + waiting, across all peers)
 	total_dispatched_count = 0,
 	workers = queue:new(),
 	dispatched_count_per_worker = #{},
-	known_peers = []            %% list of peers we've seen
+	known_peers = #{}           %% #{Peer => Pid} - cached peer worker Pids
 }).
 
 %%%===================================================================
@@ -107,7 +107,7 @@ init(Workers) ->
 
 handle_call(ready_for_work, _From, State) ->
 	WorkerCount = queue:len(State#state.workers),
-	TotalTaskCount = State#state.total_dispatched_count + State#state.total_queued_count,
+	TotalTaskCount = State#state.total_dispatched_count + State#state.total_task_count,
 	ReadyForWork = TotalTaskCount < max_tasks(WorkerCount),
 	{reply, ReadyForWork, State};
 
@@ -129,17 +129,19 @@ handle_cast({sync_range, Args}, State) ->
 			{noreply, State};
 		false ->
 			{_Start, _End, Peer, _TargetStoreID, FootprintKey} = Args,
-			%% Track this peer if we haven't seen it before
-			State1 = maybe_add_peer(Peer, State),
-			%% Enqueue task to peer worker (which handles footprint management)
-			case ar_peer_worker:enqueue_task(Peer, FootprintKey, Args) of
-				{ok, {_WaitingDelta, QueuedDelta}} ->
-					State2 = State1#state{ total_queued_count = State1#state.total_queued_count + QueuedDelta },
+			%% Track this peer and get cached Pid
+			{Pid, State1} = maybe_add_peer(Peer, State),
+			case Pid of
+				undefined ->
+					{noreply, State1};
+				_ ->
+					%% Enqueue task to peer worker (fire-and-forget)
+					ar_peer_worker:enqueue_task(Pid, FootprintKey, Args),
+					%% Optimistically assume task was queued (not waiting)
+					State2 = State1#state{ total_task_count = State1#state.total_task_count + 1 },
 					%% Process the queue to dispatch if there's capacity
-					State3 = process_peer_queue(Peer, State2),
-					{noreply, State3};
-				{error, _Reason} ->
-					{noreply, State1}
+					State3 = process_peer_queue(Pid, State2),
+					{noreply, State3}
 			end
 	end;
 
@@ -148,7 +150,13 @@ handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}
 	DataSize = End - Start,
 	State2 = increment_dispatched_task_count(Worker, -1, State),
 	%% Notify peer worker (handles footprint completion, performance rating)
-	ar_peer_worker:task_completed(Peer, FootprintKey, Result, ElapsedNative, DataSize),
+	case maps:find(Peer, State2#state.known_peers) of
+		{ok, Pid} ->
+			ar_peer_worker:task_completed(Pid, FootprintKey, Result, ElapsedNative, DataSize);
+		error ->
+			%% Peer not in cache (shouldn't happen normally)
+			?LOG_WARNING([{event, task_completed_unknown_peer}, {peer, ar_util:format_peer(Peer)}])
+	end,
 	%% Process all peer queues, starting with the peer that just completed
 	State3 = process_all_peer_queues(Peer, State2),
 	{noreply, State3};
@@ -156,10 +164,11 @@ handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}
 handle_cast(rebalance_peers, State) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 	%% TODO: Add logic to purge empty peer workers (no queued tasks, no dispatched tasks).
-	Peers = State#state.known_peers,
+	PeerPids = State#state.known_peers,  %% #{Peer => Pid}
+	Peers = maps:keys(PeerPids),
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
-	Targets = calculate_targets(Peers, AllPeerPerformances, State),
-	State2 = rebalance_peers(Peers, AllPeerPerformances, Targets, State),
+	Targets = calculate_targets(PeerPids, AllPeerPerformances, State),
+	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State),
 	{noreply, State2};
 
 handle_cast(Cast, State) ->
@@ -183,10 +192,10 @@ terminate(Reason, _State) ->
 %%--------------------------------------------------------------------
 
 %% @doc If a peer has capacity, take tasks from its queue and dispatch them.
-process_peer_queue(Peer, State) ->
+process_peer_queue(Pid, State) ->
 	WorkerCount = queue:len(State#state.workers),
-	Tasks = ar_peer_worker:process_queue(Peer, WorkerCount),
-	dispatch_tasks(Peer, Tasks, State).
+	Tasks = ar_peer_worker:process_queue(Pid, WorkerCount),
+	dispatch_tasks(Pid, Tasks, State).
 
 %% @doc Process all peer queues, with the priority peer processed first.
 process_all_peer_queues(PriorityPeer, State) ->
@@ -194,14 +203,20 @@ process_all_peer_queues(PriorityPeer, State) ->
 		true ->
 			State;
 		false ->
-			OtherPeers = lists:delete(PriorityPeer, State#state.known_peers),
-			process_all_peer_queues2([PriorityPeer | OtherPeers], State)
+			PeerPids = State#state.known_peers,
+			PriorityPid = maps:get(PriorityPeer, PeerPids, undefined),
+			OtherPids = maps:values(maps:remove(PriorityPeer, PeerPids)),
+			AllPids = case PriorityPid of
+				undefined -> OtherPids;
+				_ -> [PriorityPid | OtherPids]
+			end,
+			process_all_peer_queues2(AllPids, State)
 	end.
 
 process_all_peer_queues2([], State) ->
 	State;
-process_all_peer_queues2([Peer | Rest], State) ->
-	State2 = process_peer_queue(Peer, State),
+process_all_peer_queues2([Pid | Rest], State) ->
+	State2 = process_peer_queue(Pid, State),
 	process_all_peer_queues2(Rest, State2).
 
 %% @doc the maximum number of tasks we can have in process.
@@ -213,27 +228,29 @@ max_tasks(WorkerCount) ->
 %% Dispatch tasks to be run on workers
 %%--------------------------------------------------------------------
 
-%% @doc Dispatch tasks from a peer to workers.
+%% @doc Dispatch tasks to workers.
 %% Caller must ensure workers are available before calling.
-dispatch_tasks(_Peer, [], State) ->
+dispatch_tasks(_Pid, [], State) ->
 	State;
-dispatch_tasks(Peer, [Args | Rest], State) ->
+dispatch_tasks(Pid, [Args | Rest], State) ->
 	{Worker, State2} = get_worker(State),
 	{Start, End, Peer, TargetStoreID, FootprintKey} = Args,
 	%% Pass FootprintKey as 6th element so it comes back in task_completed
 	gen_server:cast(Worker, {sync_range, {Start, End, Peer, TargetStoreID, 3, FootprintKey}}),
 	State3 = increment_dispatched_task_count(Worker, 1, State2),
-	State4 = State3#state{ total_queued_count = max(0, State3#state.total_queued_count - 1) },
-	dispatch_tasks(Peer, Rest, State4).
+	State4 = State3#state{ total_task_count = max(0, State3#state.total_task_count - 1) },
+	dispatch_tasks(Pid, Rest, State4).
 
 %%--------------------------------------------------------------------
 %% Rebalancing
 %%--------------------------------------------------------------------
 
 %% @doc Calculate rebalance parameters.
+%% PeerPids is #{Peer => Pid}
 %% Returns {WorkerCount, TargetLatency, TotalThroughput, TotalMaxDispatched}
-calculate_targets(Peers, AllPeerPerformances, State) ->
+calculate_targets(PeerPids, AllPeerPerformances, State) ->
 	WorkerCount = queue:len(State#state.workers),
+	Peers = maps:keys(PeerPids),
 	TotalThroughput =
 		lists:foldl(
 			fun(Peer, Acc) -> 
@@ -250,14 +267,14 @@ calculate_targets(Peers, AllPeerPerformances, State) ->
 		true -> TotalLatency / length(Peers);
 		false -> 0.0
 	end,
-	TotalMaxDispatched = lists:foldl(
-		fun(Peer, Acc) ->
-			case ar_peer_worker:get_max_dispatched(Peer) of
+	TotalMaxDispatched = maps:fold(
+		fun(_Peer, Pid, Acc) ->
+			case ar_peer_worker:get_max_dispatched(Pid) of
 				{error, _} -> Acc;
 				MaxDispatched -> MaxDispatched + Acc
 			end
 		end,
-		0, Peers),
+		0, PeerPids),
 	?LOG_DEBUG([{event, sync_performance_targets},
 		{worker_count, WorkerCount},
 		{target_latency, TargetLatency},
@@ -265,18 +282,22 @@ calculate_targets(Peers, AllPeerPerformances, State) ->
 		{total_max_dispatched, TotalMaxDispatched}]),
     {WorkerCount, TargetLatency, TotalThroughput, TotalMaxDispatched}.
 
-rebalance_peers([], _AllPeerPerformances, _Targets, State) ->
+%% PeerPidsList is [{Peer, Pid}]
+rebalance_peers(PeerPids, AllPeerPerformances, Targets, State) ->
+	rebalance_peers2(maps:to_list(PeerPids), AllPeerPerformances, Targets, State).
+
+rebalance_peers2([], _AllPeerPerformances, _Targets, State) ->
 	State;
-rebalance_peers([Peer | Peers], AllPeerPerformances, Targets, State) ->
+rebalance_peers2([{Peer, Pid} | Rest], AllPeerPerformances, Targets, State) ->
 	{WorkerCount, TargetLatency, TotalThroughput, TotalMaxDispatched} = Targets,
 	Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 	%% Calculate rebalance params (peer calculates FasterThanTarget from Performance)
 	QueueScalingFactor = queue_scaling_factor(TotalThroughput, WorkerCount),
 	WorkersStarved = TotalMaxDispatched < WorkerCount,
 	RebalanceParams = {QueueScalingFactor, TargetLatency, WorkersStarved},
-	RemovedCount = ar_peer_worker:rebalance(Peer, Performance, RebalanceParams),
-	State2 = State#state{ total_queued_count = max(0, State#state.total_queued_count - RemovedCount) },
-	rebalance_peers(Peers, AllPeerPerformances, Targets, State2).
+	RemovedCount = ar_peer_worker:rebalance(Pid, Performance, RebalanceParams),
+	State2 = State#state{ total_task_count = max(0, State#state.total_task_count - RemovedCount) },
+	rebalance_peers2(Rest, AllPeerPerformances, Targets, State2).
 
 %% @doc Scaling factor for calculating per-peer max queue size.
 %% Peer worker calculates: MaxQueue = max(PeerThroughput * ScalingFactor, MIN_PEER_QUEUE)
@@ -296,11 +317,19 @@ increment_dispatched_task_count(Worker, N, State) ->
 		dispatched_count_per_worker = maps:put(Worker, ActiveCount, State#state.dispatched_count_per_worker)
 	}.
 
-%% @doc Add a peer to known_peers if not already present.
+%% @doc Add a peer to known_peers if not already present. Returns {Pid, State}.
+%% The Pid is cached so we don't have to do whereis + atom lookup on every call.
 maybe_add_peer(Peer, State) ->
-	case lists:member(Peer, State#state.known_peers) of
-		true -> State;
-		false -> State#state{ known_peers = [Peer | State#state.known_peers] }
+	case maps:find(Peer, State#state.known_peers) of
+		{ok, Pid} -> 
+			{Pid, State};
+		error -> 
+			case ar_peer_worker:get_or_start(Peer) of
+				{ok, Pid} ->
+					{Pid, State#state{ known_peers = maps:put(Peer, Pid, State#state.known_peers) }};
+				{error, _} ->
+					{undefined, State}
+			end
 	end.
 
 get_worker(State) ->
