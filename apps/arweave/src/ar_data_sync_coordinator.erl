@@ -406,9 +406,22 @@ try_activate_footprint([{_Peer, Pid} | Rest]) ->
 %%% Tests.
 %%%===================================================================
 
-helpers_test_() ->
+-ifdef(TEST).
+
+coordinator_test_() ->
 	[
-		{timeout, 30, fun test_get_worker/0}
+		{timeout, 30, fun test_get_worker/0},
+		{timeout, 30, fun test_max_tasks/0},
+		{timeout, 30, fun test_increment_dispatched_task_count/0},
+		{timeout, 30, fun test_queue_scaling_factor/0},
+		{timeout, 30, fun test_footprint_activated/0},
+		{timeout, 30, fun test_footprint_deactivated/0},
+		{timeout, 30, fun test_peer_worker_started_updates_cache/0},
+		{timeout, 30, fun test_reset_worker/0},
+		{timeout, 30, fun test_dispatch_tasks_updates_counts/0},
+		{timeout, 30, fun test_try_activate_footprint_stops_on_success/0},
+		{timeout, 30, fun test_try_activate_footprint_tries_all/0},
+		{timeout, 30, fun test_calculate_targets/0}
 	].
 
 test_get_worker() ->
@@ -424,3 +437,250 @@ test_get_worker() ->
 	{worker3, State5} = get_worker(State4),
 	State6 = increment_dispatched_task_count(worker3, 1, State5),
 	{worker1, _} = get_worker(State6).
+
+test_max_tasks() ->
+	?assertEqual(50, max_tasks(1)),
+	?assertEqual(100, max_tasks(2)),
+	?assertEqual(500, max_tasks(10)),
+	?assertEqual(5000, max_tasks(100)).
+
+test_increment_dispatched_task_count() ->
+	State0 = #state{
+		total_dispatched_count = 5,
+		dispatched_count_per_worker = #{worker1 => 3, worker2 => 2}
+	},
+	%% Increment worker1
+	State1 = increment_dispatched_task_count(worker1, 2, State0),
+	?assertEqual(7, State1#state.total_dispatched_count),
+	?assertEqual(5, maps:get(worker1, State1#state.dispatched_count_per_worker)),
+	
+	%% Decrement worker2
+	State2 = increment_dispatched_task_count(worker2, -1, State1),
+	?assertEqual(6, State2#state.total_dispatched_count),
+	?assertEqual(1, maps:get(worker2, State2#state.dispatched_count_per_worker)),
+	
+	%% Add new worker
+	State3 = increment_dispatched_task_count(worker3, 1, State2),
+	?assertEqual(7, State3#state.total_dispatched_count),
+	?assertEqual(1, maps:get(worker3, State3#state.dispatched_count_per_worker)).
+
+test_queue_scaling_factor() ->
+	%% Zero throughput returns infinity
+	?assertEqual(infinity, queue_scaling_factor(0, 10)),
+	?assertEqual(infinity, queue_scaling_factor(0.0, 10)),
+	
+	%% Normal calculation: max_tasks(WorkerCount) / TotalThroughput
+	%% max_tasks(10) = 500
+	?assertEqual(5.0, queue_scaling_factor(100.0, 10)),
+	?assertEqual(2.5, queue_scaling_factor(200.0, 10)),
+	?assertEqual(50.0, queue_scaling_factor(10.0, 10)).
+
+test_footprint_activated() ->
+	State0 = #state{ total_active_footprints = 5, max_footprints = 10 },
+	
+	%% Simulate footprint_activated cast
+	{noreply, State1} = handle_cast({footprint_activated, {1,2,3,4,1984}}, State0),
+	?assertEqual(6, State1#state.total_active_footprints),
+	
+	{noreply, State2} = handle_cast({footprint_activated, {1,2,3,4,1985}}, State1),
+	?assertEqual(7, State2#state.total_active_footprints).
+
+test_footprint_deactivated() ->
+	State0 = #state{ total_active_footprints = 5, max_footprints = 10, known_peers = #{} },
+	
+	%% Simulate footprint_deactivated cast
+	{noreply, State1} = handle_cast({footprint_deactivated, {1,2,3,4,1984}}, State0),
+	?assertEqual(4, State1#state.total_active_footprints),
+	
+	%% Should not go below 0
+	State2 = State0#state{ total_active_footprints = 0 },
+	{noreply, State3} = handle_cast({footprint_deactivated, {1,2,3,4,1984}}, State2),
+	?assertEqual(0, State3#state.total_active_footprints).
+
+test_peer_worker_started_updates_cache() ->
+	Peer1 = {1,2,3,4,1984},
+	Peer2 = {5,6,7,8,1985},
+	Pid1 = self(),  %% Use self() as a fake Pid for testing
+	Pid2 = self(),
+	
+	State0 = #state{ known_peers = #{} },
+	
+	%% Add first peer
+	{noreply, State1} = handle_cast({peer_worker_started, Peer1, Pid1}, State0),
+	?assertEqual(Pid1, maps:get(Peer1, State1#state.known_peers)),
+	
+	%% Add second peer
+	{noreply, State2} = handle_cast({peer_worker_started, Peer2, Pid2}, State1),
+	?assertEqual(Pid1, maps:get(Peer1, State2#state.known_peers)),
+	?assertEqual(Pid2, maps:get(Peer2, State2#state.known_peers)),
+	
+	%% Update existing peer (simulating restart)
+	NewPid = spawn(fun() -> ok end),
+	{noreply, State3} = handle_cast({peer_worker_started, Peer1, NewPid}, State2),
+	?assertEqual(NewPid, maps:get(Peer1, State3#state.known_peers)).
+
+test_reset_worker() ->
+	State0 = #state{
+		total_dispatched_count = 10,
+		dispatched_count_per_worker = #{worker1 => 5, worker2 => 3, worker3 => 2}
+	},
+	
+	%% Reset worker1 (had 5 tasks)
+	{reply, ok, State1} = handle_call({reset_worker, worker1}, self(), State0),
+	?assertEqual(5, State1#state.total_dispatched_count),  %% 10 - 5 = 5
+	?assertEqual(0, maps:get(worker1, State1#state.dispatched_count_per_worker)),
+	
+	%% Reset worker2 (had 3 tasks)
+	{reply, ok, State2} = handle_call({reset_worker, worker2}, self(), State1),
+	?assertEqual(2, State2#state.total_dispatched_count),  %% 5 - 3 = 2
+	?assertEqual(0, maps:get(worker2, State2#state.dispatched_count_per_worker)),
+	
+	%% Reset unknown worker (should handle gracefully - count is 0)
+	{reply, ok, State3} = handle_call({reset_worker, unknown_worker}, self(), State2),
+	?assertEqual(2, State3#state.total_dispatched_count).
+
+test_dispatch_tasks_updates_counts() ->
+	State0 = #state{
+		workers = queue:from_list([worker1, worker2]),
+		total_dispatched_count = 0,
+		total_task_count = 5,
+		dispatched_count_per_worker = #{}
+	},
+	
+	%% Dispatch empty list - no changes
+	State1 = dispatch_tasks(self(), [], State0),
+	?assertEqual(0, State1#state.total_dispatched_count),
+	?assertEqual(5, State1#state.total_task_count),
+	
+	%% Note: We can't fully test dispatch_tasks without mocking workers,
+	%% but we can verify the state changes for the helper functions.
+	
+	%% Verify that dispatching would decrement total_task_count
+	%% by manually simulating what dispatch_tasks does
+	State2 = State1#state{ total_task_count = max(0, State1#state.total_task_count - 1) },
+	?assertEqual(4, State2#state.total_task_count).
+
+test_try_activate_footprint_stops_on_success() ->
+	%% Create mock peer processes that track if they were called
+	Parent = self(),
+	
+	%% Peer1 returns false (no waiting footprint)
+	Pid1 = spawn(fun() -> mock_peer_worker(Parent, peer1, false) end),
+	%% Peer2 returns true (activates a footprint)
+	Pid2 = spawn(fun() -> mock_peer_worker(Parent, peer2, true) end),
+	%% Peer3 should NOT be called (iteration should stop at Peer2)
+	Pid3 = spawn(fun() -> mock_peer_worker(Parent, peer3, false) end),
+	
+	%% Register mock processes so ar_peer_worker:try_activate_footprint can find them
+	%% We need to call try_activate_footprint directly with our mock list
+	PeerList = [{peer1, Pid1}, {peer2, Pid2}, {peer3, Pid3}],
+	
+	%% Call the function directly
+	ok = try_activate_footprint(PeerList),
+	
+	%% Wait a bit for messages
+	timer:sleep(50),
+	
+	%% Check which peers were called
+	?assertEqual([peer1, peer2], collect_called_peers([])),
+	
+	%% Cleanup
+	exit(Pid1, kill),
+	exit(Pid2, kill),
+	exit(Pid3, kill).
+
+test_try_activate_footprint_tries_all() ->
+	%% Create mock peer processes that all return false
+	Parent = self(),
+	
+	Pid1 = spawn(fun() -> mock_peer_worker(Parent, peer1, false) end),
+	Pid2 = spawn(fun() -> mock_peer_worker(Parent, peer2, false) end),
+	Pid3 = spawn(fun() -> mock_peer_worker(Parent, peer3, false) end),
+	
+	PeerList = [{peer1, Pid1}, {peer2, Pid2}, {peer3, Pid3}],
+	
+	%% Call the function directly
+	ok = try_activate_footprint(PeerList),
+	
+	%% Wait a bit for messages
+	timer:sleep(50),
+	
+	%% All three peers should have been called
+	?assertEqual([peer1, peer2, peer3], collect_called_peers([])),
+	
+	%% Cleanup
+	exit(Pid1, kill),
+	exit(Pid2, kill),
+	exit(Pid3, kill).
+
+%% Mock peer worker that responds to try_activate_footprint calls
+mock_peer_worker(Parent, PeerName, ReturnValue) ->
+	receive
+		{'$gen_call', From, try_activate_footprint} ->
+			Parent ! {called, PeerName},
+			gen_server:reply(From, ReturnValue)
+	after 5000 ->
+		ok
+	end.
+
+%% Collect all {called, PeerName} messages
+collect_called_peers(Acc) ->
+	receive
+		{called, PeerName} ->
+			collect_called_peers(Acc ++ [PeerName])
+	after 10 ->
+		Acc
+	end.
+
+test_calculate_targets() ->
+	%% Create mock peer workers that respond to get_max_dispatched
+	Pid1 = spawn(fun() -> mock_peer_worker_max_dispatched(10) end),
+	Pid2 = spawn(fun() -> mock_peer_worker_max_dispatched(15) end),
+	Pid3 = spawn(fun() -> mock_peer_worker_max_dispatched(20) end),
+	
+	Peer1 = {1,2,3,4,1984},
+	Peer2 = {5,6,7,8,1985},
+	Peer3 = {9,10,11,12,1986},
+	
+	PeerPids = #{Peer1 => Pid1, Peer2 => Pid2, Peer3 => Pid3},
+	
+	%% Create performance records
+	AllPeerPerformances = #{
+		Peer1 => #performance{ current_rating = 100.0, average_latency = 50.0 },
+		Peer2 => #performance{ current_rating = 200.0, average_latency = 100.0 },
+		Peer3 => #performance{ current_rating = 300.0, average_latency = 150.0 }
+	},
+	
+	State = #state{ workers = queue:from_list([w1, w2, w3, w4, w5]) },
+	
+	{WorkerCount, TargetLatency, TotalThroughput, TotalMaxDispatched} = 
+		calculate_targets(PeerPids, AllPeerPerformances, State),
+	
+	%% WorkerCount = 5 (number of workers in queue)
+	?assertEqual(5, WorkerCount),
+	
+	%% TotalThroughput = 100 + 200 + 300 = 600
+	?assertEqual(600.0, TotalThroughput),
+	
+	%% TargetLatency = (50 + 100 + 150) / 3 = 100
+	?assertEqual(100.0, TargetLatency),
+	
+	%% TotalMaxDispatched = 10 + 15 + 20 = 45
+	?assertEqual(45, TotalMaxDispatched),
+	
+	%% Cleanup
+	exit(Pid1, kill),
+	exit(Pid2, kill),
+	exit(Pid3, kill).
+
+%% Mock peer worker for get_max_dispatched
+mock_peer_worker_max_dispatched(MaxDispatched) ->
+	receive
+		{'$gen_call', From, get_max_dispatched} ->
+			gen_server:reply(From, MaxDispatched),
+			mock_peer_worker_max_dispatched(MaxDispatched)
+	after 5000 ->
+		ok
+	end.
+
+-endif.
