@@ -573,20 +573,25 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 					Offset when Offset < 0 ->
 						{reply, {400, #{}, jiffy:encode(#{ error => negative_offset }), Req}};
 					Offset ->
-						Offset
+						{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
+						case ar_data_sync:are_data_roots_synced(BlockStart, BlockEnd, ExpectedTXRoot) of
+							true ->
+								{reply, {200, #{}, <<>>, Req}};
+							false ->
+								{Offset, BlockStart, BlockEnd}
+						end
 				end,
 			case ReadOffset of
 				{reply, Reply} ->
 					Reply;
-				Offset2 ->
+				{Offset2, BlockStart2, BlockEnd2} ->
 					case read_complete_body(Req, Pid) of
 						{ok, Body, Req2} ->
 							case ar_serialize:binary_to_data_roots(Body) of
 								{ok, {TXRoot, BlockSize, Entries}} ->
 									case ar_data_root_sync:validate_data_roots(TXRoot, BlockSize, Entries, Offset2) of
 										{ok, _} ->
-											{BlockStart, BlockEnd, _} = ar_block_index:get_block_bounds(Offset2),
-											ar_data_root_sync:store_data_roots(BlockStart, BlockEnd, TXRoot, Entries),
+											ar_data_root_sync:store_data_roots(BlockStart2, BlockEnd2, TXRoot, Entries),
 											{200, #{}, <<>>, Req2};
 										{error, Reason} ->
 											{400, #{}, jiffy:encode(#{ error => Reason }), Req2}
