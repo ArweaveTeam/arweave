@@ -174,7 +174,12 @@
 -define(DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN, 5000).
 -define(DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT, 150).
 -define(DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_DURATION, 1000).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_TIMESTAMP_CLEANUP_INTERVAL, 120000).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_TIMESTAMP_CLEANUP_EXPIRY, 120000).
 -define(DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT, 150).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL, 1000).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_REDUCTION, 30).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT, 150).
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -323,9 +328,18 @@
                      ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT,
 	'http_api.limiter.general.sliding_window_duration' =
                      ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_DURATION,
+	'http_api_limiter.general.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api_limiter.general.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_TIMESTAMP_CLEANUP_EXPIRY,
 	'http_api.limiter.general.leaky_limit' =
-                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT
-
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT,
+	'http_api.limiter.general.leaky_tick_intercal' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.general.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.general.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT
 }).
 
 -endif.

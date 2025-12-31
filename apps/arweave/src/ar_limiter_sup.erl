@@ -52,7 +52,12 @@ get_limiter_config() ->
     [#{id => general,
        sliding_window_limit => Config#config.'http_api.limiter.general.sliding_window_limit',
        sliding_window_duration => Config#config.'http_api.limiter.general.sliding_window_duration',
-       leaky_rate_limit => Config#config.'http_api.limiter.general.leaky_limit'
+       timestamp_cleanup_tick_ms =>
+           Config#config.'http_api_limiter.general.sliding_window_timestamp_cleanup_interval',
+       timestamp_cleanup_expiry =>Config#config.'http_api_limiter.general.sliding_window_timestamp_cleanup_expiry',
+       leaky_rate_limit => Config#config.'http_api.limiter.general.leaky_limit',
+       leaky_tick_ms => Config#config.'http_api.limiter.general.leaky_tick_intercal',
+       concurrency_limit => Config#config.'http_api.limiter.general.concurrency_limit'
       },
      %% Very limited concurrency defaults
      #{id => metrics,

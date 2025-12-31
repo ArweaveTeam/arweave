@@ -8,8 +8,6 @@
 
 -behaviour(gen_server).
 
--include_lib("arweave/include/ar.hrl").
-
 %% API
 -export([
          start_link/2,
@@ -30,19 +28,20 @@
          cleanup_expired_sliding_peers/3]).
 -endif.
 
--define(DEFAULT_TICK_INTERVAL_MS, 1000).
-%% Sliding Window Timestamp Cleanup might be an expensive operation under high load, so keep it
-%% rare.
--define(DEFAULT_TIMESTAMP_CLEANUP_INTERVAL_MS, 120000).
--define(DEFAULT_TIMESTAMP_CLEANUP_EXPIRY, 120000).
--define(DEFAULT_LEAKY_RATE_LIMIT, 150).
--define(DEFAULT_CONCURRENCY_LIMIT, 150).
--define(DEFAULT_TICK_REDUCTION, 30).
+%% -define(DEFAULT_TICK_INTERVAL_MS, 1000).
+%% %% Sliding Window Timestamp Cleanup might be an expensive operation under high load, so keep it
+%% %% rare.
+%% -define(DEFAULT_TIMESTAMP_CLEANUP_INTERVAL_MS, 120000).
+%% -define(DEFAULT_TIMESTAMP_CLEANUP_EXPIRY, 120000).
+%% -define(DEFAULT_LEAKY_RATE_LIMIT, 150).
+%% -define(DEFAULT_CONCURRENCY_LIMIT, 150).
+%% -define(DEFAULT_TICK_REDUCTION, 30).
 
--define(DEFAULT_SLIDING_WINDOW_DURATION, 1000).
--define(DEFAULT_SLIDING_WINDOW_LIMIT, 150). %% previously recommened rate was 9000/min
+%% -define(DEFAULT_SLIDING_WINDOW_DURATION, 1000).
+%% -define(DEFAULT_SLIDING_WINDOW_LIMIT, 150). %% previously recommened rate was 9000/min
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 %%% API
 start_link(LimiterRef, Args) ->
@@ -73,16 +72,19 @@ stop(LimiterRef) ->
 init([Args]) ->
     process_flag(trap_exit, true),
     Id = maps:get(id, Args),
-    LeakyTickMs = maps:get(leaky_tick_interval_ms, Args, ?DEFAULT_TICK_INTERVAL_MS),
+    LeakyTickMs = maps:get(leaky_tick_interval_ms, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL),
     TimestampCleanupTickMs = maps:get(timestamp_cleanup_interval_ms, Args,
-                                      ?DEFAULT_TIMESTAMP_CLEANUP_INTERVAL_MS),
+                                      ?DEFAULT_HTTP_API_LIMITER_GENERAL_TIMESTAMP_CLEANUP_INTERVAL),
     TimestampCleanupExpiry = maps:get(timestamp_cleanup_expiry, Args,
-                                      ?DEFAULT_TIMESTAMP_CLEANUP_EXPIRY),
-    LeakyRateLimit = maps:get(leaky_rate_limit, Args, ?DEFAULT_LEAKY_RATE_LIMIT),
-    ConcurrencyLimit = maps:get(concurrency_limit, Args, ?DEFAULT_CONCURRENCY_LIMIT),
-    TickReduction = maps:get(tick_reduction, Args, ?DEFAULT_TICK_REDUCTION),
-    SlidingWindowDuration = maps:get(sliding_window_duration, Args, ?DEFAULT_SLIDING_WINDOW_DURATION),
-    SlidingWindowLimit = maps:get(sliding_window_limit, Args, ?DEFAULT_SLIDING_WINDOW_LIMIT),
+                                      ?DEFAULT_HTTP_API_LIMITER_GENERAL_TIMESTAMP_CLEANUP_EXPIRY),
+    LeakyRateLimit = maps:get(leaky_rate_limit, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT),
+    ConcurrencyLimit = maps:get(concurrency_limit, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT),
+    TickReduction = maps:get(tick_reduction, Args,
+                             ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_REDUCTION),
+    SlidingWindowDuration = maps:get(sliding_window_duration, Args,
+                                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_DURATION),
+    SlidingWindowLimit = maps:get(sliding_window_limit, Args,
+                                  ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT),
 
     {ok, LeakyRef} = timer:send_interval(LeakyTickMs, self(), {tick, leaky_bucket_reduction}),
     {ok, TsRef} = timer:send_interval(TimestampCleanupTickMs, self(), {tick, sliding_window_timestamp_cleanup}),
