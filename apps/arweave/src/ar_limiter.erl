@@ -28,18 +28,6 @@
          cleanup_expired_sliding_peers/3]).
 -endif.
 
-%% -define(DEFAULT_TICK_INTERVAL_MS, 1000).
-%% %% Sliding Window Timestamp Cleanup might be an expensive operation under high load, so keep it
-%% %% rare.
-%% -define(DEFAULT_TIMESTAMP_CLEANUP_INTERVAL_MS, 120000).
-%% -define(DEFAULT_TIMESTAMP_CLEANUP_EXPIRY, 120000).
-%% -define(DEFAULT_LEAKY_RATE_LIMIT, 150).
-%% -define(DEFAULT_CONCURRENCY_LIMIT, 150).
-%% -define(DEFAULT_TICK_REDUCTION, 30).
-
-%% -define(DEFAULT_SLIDING_WINDOW_DURATION, 1000).
-%% -define(DEFAULT_SLIDING_WINDOW_LIMIT, 150). %% previously recommened rate was 9000/min
-
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
