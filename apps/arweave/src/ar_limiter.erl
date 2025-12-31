@@ -254,10 +254,10 @@ fold_decrease_rate(_Id, _Key, Counter, Acc, _TickReduction)
   when is_integer(Counter), Counter =< 0 ->
     Acc;
 fold_decrease_rate(Id, Key, Counter, Acc, TickReduction) when Counter < TickReduction ->
-    prometheus_counter:inc(ar_limiter_leaky_tick_reductions_peer, [Id], Counter),
+    prometheus_counter:inc(ar_limiter_leaky_tick_token_reductions_total, [Id], Counter),
     maps:put(Key, 0, Acc);
 fold_decrease_rate(Id, Key, Counter, Acc, TickReduction) ->
-    prometheus_counter:inc(ar_limiter_leaky_tick_reductions_peer, [Id], TickReduction),
+    prometheus_counter:inc(ar_limiter_leaky_tick_token_reductions_total, [Id], TickReduction),
     maps:put(Key, Counter-TickReduction, Acc).
 
 %% Concurrency magic
