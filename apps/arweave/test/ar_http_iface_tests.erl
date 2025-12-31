@@ -17,12 +17,10 @@ start_node() ->
 		{ar_wallet:to_address(Pub2), ?AR(10000), <<>>},
 		{ar_wallet:to_address(Pub3), ?AR(10), <<"TEST_ID">>}
 	], 0), %% Set difficulty to 0 to speed up tests
-	B0AndConfig = B0#{config => #config{'http_api.limiter.general.sliding_window_limit' = 1000000,
-                                            'http_api.limiter.general.sliding_window_duration' = 1000}},
-	ar_test_node:start(B0AndConfig),
-	ar_test_node:start_peer(peer1, B0AndConfig),
+	ar_test_node:start(B0),
+	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
-	{B0AndConfig, Wallet1, Wallet2, StaticWallet}.
+	{B0, Wallet1, Wallet2, StaticWallet}.
 
 reset_node() ->
 	ar_blacklist_middleware:reset(),
