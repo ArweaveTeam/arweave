@@ -1,4 +1,4 @@
--module(ar_limiter_metrics_collector).
+-module(arweave_limiter_metrics_collector).
 
 -behaviour(prometheus_collector).
 

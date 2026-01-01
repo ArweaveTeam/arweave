@@ -4,7 +4,7 @@
 %%%      combined with a concurrency limiter similar to Ranch's connection pool.
 %%%      It only stores data in process memory.
 %%%
--module(ar_limiter).
+-module(arweave_limiter_pool).
 
 -behaviour(gen_server).
 
@@ -110,7 +110,7 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                       sliding_window_limit := SlidingWindowLimit,
                       sliding_timestamps := SlidingTimestamps
                      }) ->
-    Now = ar_limiter_time:ts_now(),
+    Now = arweave_limiter_time:ts_now(),
     Tokens = maps:get(Peer, LeakyTokens, 0) + 1,
     Concurrency = length(maps:get(Peer, ConcurrentRequests, [])) + 1,
 
@@ -175,7 +175,7 @@ handle_cast(_Request, State) ->
 handle_info({tick, sliding_window_timestamp_cleanup},
             State = #{id := Id, sliding_timestamps := SlidingTimestamps,
                       timestamp_cleanup_expiry := CleanupExpiry}) ->
-    Now = ar_limiter_time:ts_now(),
+    Now = arweave_limiter_time:ts_now(),
     NewSlidingTimestamps = cleanup_expired_sliding_peers(SlidingTimestamps, CleanupExpiry, Now),
     Deleted = maps:size(SlidingTimestamps) - maps:size(NewSlidingTimestamps),
     prometheus_counter:inc(ar_limiter_cleanup_tick_expired_sliding_peers_deleted_total, [Id], Deleted),

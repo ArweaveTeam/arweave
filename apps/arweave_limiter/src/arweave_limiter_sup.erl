@@ -1,4 +1,4 @@
--module(ar_limiter_sup).
+-module(arweave_limiter_sup).
 -behaviour(supervisor).
 
 %% API
@@ -27,12 +27,13 @@ start_link(Config) ->
 %% Supervisor callbacks
 %% ===================================================================
 init([Config]) ->
-	{ok, {supervisor_spec(Config), children_spec(Config)}}.
+    arweave_limiter_metrics:register(),
+    {ok, {supervisor_spec(Config), children_spec(Config)}}.
 
 supervisor_spec(_Config) ->
-	#{ strategy => one_for_all,
-           intensity => 5,
-           period => 10 }.
+    #{ strategy => one_for_all,
+       intensity => 5,
+       period => 10 }.
 
 %%--------------------------------------------------------------------
 %% Child spec generation based on Config.
@@ -42,7 +43,7 @@ children_spec(Configs) ->
 
 child_spec(#{id := Id} = Config) ->
     #{ id => Id,
-       start => {ar_limiter, start_link, [Id, Config]},
+       start => {arweave_limiter_pool, start_link, [Id, Config]},
        type => worker,
        shutdown => ?SHUTDOWN_TIMEOUT}.
 
@@ -67,8 +68,8 @@ get_limiter_config() ->
 
 all_info() ->
     Children = supervisor:which_children(?MODULE),
-    [{Id, ar_limiter:info(Id)}  || {Id, _Child, _Type, _Modules} <- Children].
+    [{Id, arweave_limiter_pool:info(Id)}  || {Id, _Child, _Type, _Modules} <- Children].
 
 reset_all() ->
     Children = supervisor:which_children(?MODULE),
-    [{Id, ar_limiter:reset_all(Id)}  || {Id, _Child, _Type, _Modules} <- Children].
+    [{Id, arweave_limiter_pool:reset_all(Id)}  || {Id, _Child, _Type, _Modules} <- Children].

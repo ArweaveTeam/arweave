@@ -1,11 +1,10 @@
--module(ar_limiter_tests).
+-module(arweave_limiter_pool_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave/include/ar.hrl").
 
--include("../include/ar.hrl").
-
--define(M, ar_limiter).
--define(TABLE, eunit_ar_limiter_tests_mock).
+-define(M, arweave_limiter_pool).
+-define(TABLE, eunit_arweave_limiter_tests_mock).
 -define(KEY, ts_now).
 -define(TEST_LIMITER, test_limiter).
 
@@ -68,25 +67,26 @@ cleanup_timestamps_map_test() ->
 setup(Config) ->
     ?TABLE = ets:new(?TABLE, [named_table, public]),
     ?setTsMock(0),
-    {module,ar_limiter_time} = code:ensure_loaded(ar_limiter_time),
+    {module, arweave_limiter_time} = code:ensure_loaded(arweave_limiter_time),
 
-    ok = meck:new(prometheus_counter, []),
+    ok = meck:new(prometheus_counter, [passthrough]),
     ok = meck:expect(prometheus_counter, inc, 2, ok),
     ok = meck:expect(prometheus_counter, inc, 3, ok),
 
-    ok = meck:new(ar_limiter_time, []),
-    ok = meck:expect(ar_limiter_time, ts_now,
+    ok = meck:new(arweave_limiter_time, []),
+    ok = meck:expect(arweave_limiter_time, ts_now,
                      fun() ->
                              [{?KEY, Value}] = ets:lookup(?TABLE, ?KEY),
                              Value
                      end),
-    0 = ar_limiter_time:ts_now(),
+    0 = arweave_limiter_time:ts_now(),
     {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER, Config),
     LimiterPid.
 
 cleanup(_Config, _LimiterPid) ->
-    true = meck:validate(ar_limiter_time),
-    ok = meck:unload([prometheus_counter, ar_limiter_time]),
+    true = meck:validate(arweave_limiter_time),
+    true = meck:validate(prometheus_counter),
+    ok = meck:unload([prometheus_counter, arweave_limiter_time]),
     ?M:stop(?TEST_LIMITER),
     true = ets:delete(?TABLE),
     ok.
@@ -481,7 +481,8 @@ peer_cleanup(_Config, LimiterPid) ->
              ?assertEqual(1, maps:size(SlidingTimestamps)),
              ?assertEqual(0, maps:size(LeakyTokens)),
 
-             meck:expect(ar_limiter_time, ts_now, fun() -> 20000 end),
+             ?setTsMock(20000),
+
              timer:sleep(500),
              %% Trigger timestamp cleanup.
              LimiterPid ! {tick, sliding_window_timestamp_cleanup},

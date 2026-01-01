@@ -10,7 +10,7 @@ execute(Req, Env) ->
     LimiterRef = get_limiter_ref(Req),
     IPAddr = requesting_ip_addr(Req),
     
-    case ar_limiter:register_or_reject_call(LimiterRef, IPAddr) of
+    case arweave_limiter:register_or_reject_call(LimiterRef, IPAddr) of
         {reject, Reason, Data} ->
             {stop, reject(Req, Reason, Data)};
         _ ->

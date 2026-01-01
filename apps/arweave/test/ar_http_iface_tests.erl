@@ -24,7 +24,7 @@ start_node() ->
 
 reset_node() ->
 	ar_blacklist_middleware:reset(),
-	ar_limiter_sup:reset_all(),
+	arweave_limiter_sup:reset_all(),
 	ar_test_node:remote_call(peer1, ar_blacklist_middleware, reset, []),
 	ar_test_node:connect_to_peer(peer1).
 
@@ -338,7 +338,7 @@ send_tx_binary(Index, InvalidTX) ->
 -spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
 	ar_blacklist_middleware:reset(),
-	ar_limiter_sup:reset_all(),
+	arweave_limiter_sup:reset_all(),
 	ar_rate_limiter:off(),
 	Responses = ar_util:batch_pmap(
 		RequestFun,
@@ -348,7 +348,7 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
 	),
 	?assertEqual(length(Responses), NRequests),
 	ar_blacklist_middleware:reset(),
-	ar_limiter_sup:reset_all(),
+	arweave_limiter_sup:reset_all(),
 	Got = count_by_response_type(ErrorResponse, Responses),
 	%% Other test nodes may occasionally make some requests in the background disturbing the stats.
 	Tolerance = 5,

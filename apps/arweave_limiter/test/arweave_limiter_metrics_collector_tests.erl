@@ -1,13 +1,12 @@
--module(ar_limiter_metrics_collector_tests).
+-module(arweave_limiter_metrics_collector_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave/include/ar.hrl").
 
--include("../include/ar.hrl").
-
--define(M, ar_limiter_metrics_collector).
--define(S, ar_limiter_sup).
--define(L, ar_limiter).
--define(ME, ar_metrics).
+-define(M, arweave_limiter_metrics_collector).
+-define(S, arweave_limiter_sup).
+-define(L, arweave_limiter).
+-define(ME, arweave_limiter_metrics).
 
 -define(GENERAL, general_test).
 -define(METRICS, metrics_test).

@@ -7,7 +7,7 @@
 %%%       and mock time related functions, and so manipulate and control time precisely
 %%%       in tests. So here it is.
 
--module(ar_limiter_time).
+-module(arweave_limiter_time).
 
 -export([
          ts_now/0
