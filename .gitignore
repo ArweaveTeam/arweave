@@ -38,4 +38,5 @@ _*
 *.swp
 *~
 localnet_snapshot/wallets/arweave_keyfile_*
+!**/_*.json
 
