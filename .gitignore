@@ -37,3 +37,5 @@ screenlog.0
 _*
 *.swp
 *~
+!**/_*.json
+
