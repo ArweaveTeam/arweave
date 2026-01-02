@@ -42,7 +42,7 @@ add_metric_family({Name, Type, Help, Metrics}, Callback) ->
 	Callback(create_mf(?METRIC_NAME(Name), Help, Type, Metrics)).
 
 metrics() ->
-    AllInfo = ar_limiter_sup:all_info(),
+    AllInfo = arweave_limiter_sup:all_info(),
     [
      {ar_limiter_tracked_items_total, gauge, "tracked requests, timestamps, leaky tokens", tracked_items(AllInfo)},
      {ar_limiter_peers, gauge, "", peers(AllInfo)}
