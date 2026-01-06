@@ -37,6 +37,7 @@ main("") ->
 	show_help();
 main(Args) ->
 	arweave_config:start(),
+	arweave_limiter:start(),
 	ConfigFile = parse_config_file(Args, [], #config{}),
 	start(ConfigFile).
 
@@ -1338,6 +1339,7 @@ warn_if_single_scheduler() ->
 
 shell() ->
 	arweave_config:start(),
+	arweave_limiter:start(),
 	Config = #config{ debug = true },
 	start_for_tests(test,Config),
 	ar_test_node:boot_peers(test).
@@ -1359,7 +1361,9 @@ tests(TestType, Mods, Config) when is_list(Mods) ->
 		_ -> ?TEST_SUITE_TIMEOUT
 	end,
 	try
+		prometheus:start(),
 		arweave_config:start(),
+                arweave_limiter:start(),
 		start_for_tests(TestType, Config),
 		ar_test_node:boot_peers(TestType),
 		ar_test_node:wait_for_peers(TestType)

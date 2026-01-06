@@ -27,7 +27,7 @@ start_link(Config) ->
 %% Supervisor callbacks
 %% ===================================================================
 init([Config]) ->
-    arweave_limiter_metrics:register(),
+    ok = arweave_limiter_metrics:register(),
     {ok, {supervisor_spec(Config), children_spec(Config)}}.
 
 supervisor_spec(_Config) ->

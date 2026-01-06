@@ -10,7 +10,11 @@
                   stdlib,
                   sasl,
                   arweave_config,
-                  prometheus
+                  prometheus,
+                  prometheus_cowboy,
+                  prometheus_process_collector,
+                  prometheus_httpd,
+                  runtime_tools
                  ]},
   {modules, [
              arweave_limiter,
