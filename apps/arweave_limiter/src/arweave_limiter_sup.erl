@@ -43,7 +43,7 @@ children_spec(Configs) ->
 
 child_spec(#{id := Id} = Config) ->
     #{ id => Id,
-       start => {arweave_limiter_pool, start_link, [Id, Config]},
+       start => {arweave_limiter_group, start_link, [Id, Config]},
        type => worker,
        shutdown => ?SHUTDOWN_TIMEOUT}.
 
@@ -68,8 +68,8 @@ get_limiter_config() ->
 
 all_info() ->
     Children = supervisor:which_children(?MODULE),
-    [{Id, arweave_limiter_pool:info(Id)}  || {Id, _Child, _Type, _Modules} <- Children].
+    [{Id, arweave_limiter_group:info(Id)}  || {Id, _Child, _Type, _Modules} <- Children].
 
 reset_all() ->
     Children = supervisor:which_children(?MODULE),
-    [{Id, arweave_limiter_pool:reset_all(Id)}  || {Id, _Child, _Type, _Modules} <- Children].
+    [{Id, arweave_limiter_group:reset_all(Id)}  || {Id, _Child, _Type, _Modules} <- Children].

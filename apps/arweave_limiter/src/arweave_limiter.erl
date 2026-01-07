@@ -75,4 +75,4 @@ stop(_State) ->
 %% @end
 %%--------------------------------------------------------------------
 register_or_reject_call(LimiterRef, Peer) ->
-    arweave_limiter_pool:register_or_reject_call(LimiterRef, Peer).
+    arweave_limiter_group:register_or_reject_call(LimiterRef, Peer).

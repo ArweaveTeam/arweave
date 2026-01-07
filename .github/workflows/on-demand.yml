@@ -45,7 +45,7 @@ on:
           - ar_intervals
           - ar_join
           - ar_kv
-          - arweave_limiter_pool
+          - arweave_limiter_group
           - arweave_limiter_metrics_collector
           - ar_mempool_tests
           - ar_merkle

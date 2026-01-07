@@ -2,9 +2,15 @@
 %%% @doc Leaky bucket token rate limiter based on
 %%%      https://gist.github.com/humaite/21a84c3b3afac07fcebe476580f3a40b
 %%%      combined with a concurrency limiter similar to Ranch's connection pool.
+%%%      The leaky bucket limiter sits on top of a sliding window limiter.
+%%%
+%%%      Concurrency is validated first, then sliding window, followed by leaky
+%%%      bucket. If sliding windows passes, the call is accepted, otherwise it
+%%%      burns leaky tokens, if those are exhausted as well, the call will be 
+%%%      marked as rejected.
 %%%      It only stores data in process memory.
 %%%
--module(arweave_limiter_pool).
+-module(arweave_limiter_group).
 
 -behaviour(gen_server).
 

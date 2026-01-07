@@ -1,9 +1,9 @@
--module(arweave_limiter_pool_tests).
+-module(arweave_limiter_group_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
 
--define(M, arweave_limiter_pool).
+-define(M, arweave_limiter_group).
 -define(TABLE, eunit_arweave_limiter_tests_mock).
 -define(KEY, ts_now).
 -define(TEST_LIMITER, test_limiter).
