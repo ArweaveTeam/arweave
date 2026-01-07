@@ -64,7 +64,11 @@ get_limiter_config() ->
      #{id => metrics,
        leaky_rate_limit => 1,
        sliding_window_limit => 3,
-       concurrency_limit => 2}].
+       concurrency_limit => 2},
+     %% Local peers
+     #{id => local_peers,
+       no_limit => true}
+    ].
 
 all_info() ->
     Children = supervisor:which_children(?MODULE),

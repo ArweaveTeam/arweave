@@ -66,6 +66,9 @@ stop(LimiterRef) ->
 init([Args]) ->
     process_flag(trap_exit, true),
     Id = maps:get(id, Args),
+
+    IsDisabled = maps:get(no_limit, Args, false),
+
     LeakyTickMs = maps:get(leaky_tick_interval_ms, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL),
     TimestampCleanupTickMs = maps:get(timestamp_cleanup_interval_ms, Args,
                                       ?DEFAULT_HTTP_API_LIMITER_GENERAL_TIMESTAMP_CLEANUP_INTERVAL),
@@ -84,6 +87,7 @@ init([Args]) ->
     {ok, TsRef} = timer:send_interval(TimestampCleanupTickMs, self(), {tick, sliding_window_timestamp_cleanup}),
     {ok, #{
            id => atom_to_list(Id),
+           is_disabled => IsDisabled,
            leaky_tick_timer_ref => LeakyRef,
            timestamp_cleanup_timer_ref => TsRef,
            leaky_tick_ms => LeakyTickMs,
@@ -107,6 +111,7 @@ handle_call(reset_all, _From, State) ->
                        sliding_timestamps => #{}}};
 handle_call({register_or_reject, Peer}, {FromPid, _},
             State = #{id := Id,
+                      is_disabled := IsDisabled,
                       leaky_rate_limit := LeakyRateLimit,
                       leaky_tokens := LeakyTokens,
                       concurrency_limit := ConcurrencyLimit,
@@ -122,44 +127,48 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
 
     SlidingTimestampsForPeer0 =
         expire_and_get_requests(Peer, SlidingTimestamps, SlidingWindowDuration, Now),
-
-    case Concurrency > ConcurrencyLimit of
+    case IsDisabled of 
         true ->
-            %% Concurrency Hard Limit
-            ?LOG_WARNING([{event, ar_limiter_reject}, {reason, concurrency},
-                          {peer, Peer}, {id, Id}]),
-            {reply, {reject, concurrency, data}, State};
+            {reply, {register, no_limiting_applied}, State};
         _ ->
-            case length(SlidingTimestampsForPeer0) + 1 > SlidingWindowLimit of
+            case Concurrency > ConcurrencyLimit of
                 true ->
-                    %% Sliding Window limited, check Leaky Bucket Tokens
-                    case Tokens > LeakyRateLimit of
+                    %% Concurrency Hard Limit
+                    ?LOG_WARNING([{event, ar_limiter_reject}, {reason, concurrency},
+                                  {peer, Peer}, {id, Id}]),
+                    {reply, {reject, concurrency, data}, State};
+                _ ->
+                    case length(SlidingTimestampsForPeer0) + 1 > SlidingWindowLimit of
                         true ->
-                            %% Burst exhausted with the Leaky Tokens
-                            ?LOG_WARNING([{event, ar_limiter_reject}, {reason, rate_limit},
-                                          {sliding_window_limit, SlidingWindowLimit},
-                                          {leaky_rate_limit, LeakyRateLimit},
-                                          {peer, Peer}, {id, Id}]),
-                            {reply, {reject, rate_limit, data}, State};
-                        false ->
-                            NewLeakyTokens = update_token(Peer, Tokens, LeakyTokens),
+                            %% Sliding Window limited, check Leaky Bucket Tokens
+                            case Tokens > LeakyRateLimit of
+                                true ->
+                                    %% Burst exhausted with the Leaky Tokens
+                                    ?LOG_WARNING([{event, ar_limiter_reject}, {reason, rate_limit},
+                                                  {sliding_window_limit, SlidingWindowLimit},
+                                                  {leaky_rate_limit, LeakyRateLimit},
+                                                  {peer, Peer}, {id, Id}]),
+                                    {reply, {reject, rate_limit, data}, State};
+                                false ->
+                                    NewLeakyTokens = update_token(Peer, Tokens, LeakyTokens),
+                                    {NewRequests, NewMonitors} =
+                                        register_concurrent(
+                                          Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
+                                    {reply, {register, leaky},
+                                     State#{leaky_tokens => NewLeakyTokens,
+                                            concurrent_requests => NewRequests,
+                                            concurrent_monitors := NewMonitors}}
+                            end;
+                        _ ->
                             {NewRequests, NewMonitors} =
                                 register_concurrent(
                                   Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
-                            {reply, {register, leaky},
-                             State#{leaky_tokens => NewLeakyTokens,
-                                    concurrent_requests => NewRequests,
-                                    concurrent_monitors := NewMonitors}}
-                    end;
-                _ ->
-                    {NewRequests, NewMonitors} =
-                        register_concurrent(
-                          Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
-                    SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
-                    NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
-                    {reply, {register, sliding}, State#{sliding_timestamps := NewSlidingTimestamps,
-                                                        concurrent_requests => NewRequests,
-                                                        concurrent_monitors := NewMonitors}}
+                            SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
+                            NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
+                            {reply, {register, sliding}, State#{sliding_timestamps := NewSlidingTimestamps,
+                                                                concurrent_requests => NewRequests,
+                                                                concurrent_monitors := NewMonitors}}
+                    end
             end
     end;
 handle_call(get_info, _From, State =
