@@ -226,20 +226,19 @@ aligned_partition_size(Node, Partition, Packing) ->
 	RepackInPlaceModules = [{BucketSize, Bucket, TargetPacking}
 		|| {{BucketSize, Bucket, _FromPacking}, TargetPacking} <- Config#config.repack_in_place_storage_modules],
 	AllStorageModules = Config#config.storage_modules ++ RepackInPlaceModules,
-	StorageModules = get_storage_modules_by_partition(Partition, AllStorageModules),
+	PartitionStart = Partition * ar_block:partition_size(),
+	PartitionEnd = (Partition + 1) * ar_block:partition_size(),
+	StorageModules = filter_storage_modules_by_partition(
+		PartitionStart, PartitionEnd, AllStorageModules),
 	StorageModules2 = filter_storage_modules_by_packing(StorageModules, Packing),
-	aligned_partition_size2(StorageModules2, 0).
+	aligned_partition_size2(StorageModules2, PartitionStart, PartitionEnd, 0).
 
-get_storage_modules_by_partition(Partition, [{BucketSize, Bucket, Packing} | Modules]) ->
-	case ar_node:get_partition_number(Bucket * BucketSize) == Partition of
-		true ->
-			[{BucketSize, Bucket, Packing}
-				| get_storage_modules_by_partition(Partition, Modules)];
-		false ->
-			get_storage_modules_by_partition(Partition, Modules)
-	end;
-get_storage_modules_by_partition(_Partition, []) ->
-	[].
+filter_storage_modules_by_partition(PartitionStart, PartitionEnd, Modules) ->
+	lists:filter(fun({ModuleSize, Bucket, _Packing}) ->
+		ModuleStart = Bucket * ModuleSize,
+		ModuleEnd = ModuleStart + ModuleSize,
+		ModuleStart < PartitionEnd andalso ModuleEnd > PartitionStart
+	end, Modules).
 
 filter_storage_modules_by_packing([{_, _, {replica_2_9, _} = Packing} = Module | Modules], unpacked_padded) ->
 	[Module | filter_storage_modules_by_packing(Modules, Packing)];
@@ -250,16 +249,17 @@ filter_storage_modules_by_packing([_Module | Modules], Packing) ->
 filter_storage_modules_by_packing([], _Packing) ->
 	[].
 
-aligned_partition_size2([{ModuleSize, Bucket, Packing} | Modules], Acc) ->
+aligned_partition_size2([{ModuleSize, Bucket, Packing} | Modules], PartitionStart, PartitionEnd, Acc) ->
 	Overlap = ar_storage_module:get_overlap(Packing),
 	ModuleStart = Bucket * ModuleSize,
-	%% Every storage module begins syncing at this offset:
-	AlignedModuleStart = max(0, ar_block:get_chunk_padded_offset(ModuleStart) - ?DATA_CHUNK_SIZE),
 	ModuleEnd = ModuleStart + ModuleSize,
-	AlignedModuleEnd = ar_block:get_chunk_padded_offset(ModuleEnd + Overlap),
+	ClippedStart = max(ModuleStart, PartitionStart),
+	ClippedEnd = min(ModuleEnd, PartitionEnd),
+	AlignedModuleStart = max(0, ar_block:get_chunk_padded_offset(ClippedStart) - ?DATA_CHUNK_SIZE),
+	AlignedModuleEnd = ar_block:get_chunk_padded_offset(ClippedEnd + Overlap),
 	AlignedModuleSize = AlignedModuleEnd - AlignedModuleStart,
-	aligned_partition_size2(Modules, Acc + AlignedModuleSize);
-aligned_partition_size2([], Acc) ->
+	aligned_partition_size2(Modules, PartitionStart, PartitionEnd, Acc + AlignedModuleSize);
+aligned_partition_size2([], _PartitionStart, _PartitionEnd, Acc) ->
 	Acc.
 
 source_node_storage_modules(Node, PackingType, WalletFixture) ->
@@ -532,8 +532,8 @@ collect_footprint_intervals(NodeIP, Partition, LastPartition, Footprint, MaxFoot
 			{ok, FootprintIntervals} ->
 				ar_footprint_record:get_intervals_from_footprint_intervals(FootprintIntervals);
 			not_found ->
-				?debugFmt("No footprint record found for partition ~B, footprint ~B~n",
-					[Partition, Footprint]),
+				?debugFmt("No footprint record found on ~p for partition ~B, footprint ~B",
+					[NodeIP, Partition, Footprint]),
 				ar_intervals:new();
 			Error ->
 				?assert(false,

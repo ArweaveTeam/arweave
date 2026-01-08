@@ -98,6 +98,17 @@ unpacked_small_module_test_() ->
 	end}.
 	
 spora_2_6_small_module_test_() ->
+	{setup, fun () -> setup_source_node(replica_2_9) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, 
+						fun test_small_module_aligned_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_small_module_unaligned_sync_pack_mine/1)
+				]
+		end}.
+
+replica_2_9_small_module_test_() ->
 	{setup, fun () -> setup_source_node(spora_2_6) end, 
 		fun (GenesisData) ->
 				[
@@ -105,6 +116,39 @@ spora_2_6_small_module_test_() ->
 						fun test_small_module_aligned_sync_pack_mine/1),
 					instantiator(GenesisData, replica_2_9, 
 						fun test_small_module_unaligned_sync_pack_mine/1)
+				]
+		end}.
+
+unpacked_large_module_test_() ->
+	{setup, fun () -> setup_source_node(unpacked) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, 
+						fun test_large_module_aligned_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_large_module_unaligned_sync_pack_mine/1)
+				]
+	end}.
+	
+spora_2_6_large_module_test_() ->
+	{setup, fun () -> setup_source_node(replica_2_9) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, 
+						fun test_large_module_aligned_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_large_module_unaligned_sync_pack_mine/1)
+				]
+		end}.
+
+replica_2_9_large_module_test_() ->
+	{setup, fun () -> setup_source_node(spora_2_6) end, 
+		fun (GenesisData) ->
+				[
+					instantiator(GenesisData, replica_2_9, 
+						fun test_large_module_aligned_sync_pack_mine/1),
+					instantiator(GenesisData, replica_2_9, 
+						fun test_large_module_unaligned_sync_pack_mine/1)
 				]
 		end}.
 
@@ -387,7 +431,7 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking, RangeSize),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
-	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 5, 8)),
+	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 5, 4)),
 	%% Even though the packing type is replica_2_9, the data will still exist in the
 	%% default partition as unpacked - and so will exist in the global sync record.
 	ar_e2e:assert_syncs_range(SinkNode, RangeStart, RangeEnd),
@@ -395,6 +439,109 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	%% Make sure no extra entropy was generated
 	AlignedStart = ar_util:floor_int(RangeStart, ?DATA_CHUNK_SIZE),
 	AlignedEnd = ar_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE,
+	ar_e2e:assert_has_entropy(SinkNode, AlignedStart, AlignedEnd, StoreID),
+	ar_e2e:assert_no_entropy(SinkNode, 0, AlignedStart, StoreID),
+
+	%% Make sure the data is minable
+	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
+	ok.
+
+test_large_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
+	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
+	?LOG_INFO([{event, test_large_module_aligned_sync_pack_mine}, {module, ?MODULE},
+		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+	[B0 | _] = Blocks,
+	SourceNode = peer1,
+	SinkNode = peer2,
+
+	Wallet = ar_test_node:remote_call(SinkNode, ar_e2e, load_wallet_fixture, [wallet_b]),
+	SinkAddr = ar_wallet:to_address(Wallet),
+	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
+	{ok, Config} = ar_test_node:get_config(SinkNode),
+
+	ModuleSize = floor(1.5 * ar_block:partition_size()),
+	Module = {ModuleSize, 1, SinkPacking},
+	StoreID = ar_storage_module:id(Module),
+	StorageModules = [ Module ],
+
+	Config2 = Config#config{
+		peers = [ar_test_node:peer_ip(SourceNode)],
+		start_from_latest_state = true,
+		storage_modules = StorageModules,
+		auto_join = true,
+		mining_addr = SinkAddr
+	},
+	?assertEqual(ar_test_node:peer_name(SinkNode),
+		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
+	),
+
+	RangeStart = ModuleSize,
+	RangeEnd = 2 * ModuleSize,
+
+	%% Make sure the expected data was synced
+	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
+	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
+	ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking),
+	ar_e2e:assert_empty_partition(SinkNode, 0, SinkPacking),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
+	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 7, 2)),
+
+	%% Make sure entropy was generated for the module range
+	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
+
+	%% Make sure the data is minable
+	ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking),
+	ok.
+
+test_large_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPackingType}) ->
+	ar_e2e:delayed_print(<<" ~p -> ~p ">>, [SourcePackingType, SinkPackingType]),
+	?LOG_INFO([{event, test_large_module_unaligned_sync_pack_mine}, {module, ?MODULE},
+		{from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+	[B0 | _] = Blocks,
+	SourceNode = peer1,
+	SinkNode = peer2,
+
+	Wallet = ar_test_node:remote_call(SinkNode, ar_e2e, load_wallet_fixture, [wallet_b]),
+	SinkAddr = ar_wallet:to_address(Wallet),
+	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
+	{ok, Config} = ar_test_node:get_config(SinkNode),
+
+	%% Storage module 2x the size of a partition, unaligned (starts at middle of partition 0)
+	%% To achieve an unaligned start with integer partition index, we use 2.5*partition size
+	%% with index 1, giving offset = 2.5*partition (middle of partition 2)
+	%% But data may not extend that far, so instead we use 1.5*partition which still tests
+	%% a module larger than a partition with an unaligned start.
+	Module = {floor(1.5 * ar_block:partition_size()), 1, SinkPacking},
+	StoreID = ar_storage_module:id(Module),
+	StorageModules = [ Module ],
+
+	Config2 = Config#config{
+		peers = [ar_test_node:peer_ip(SourceNode)],
+		start_from_latest_state = true,
+		storage_modules = StorageModules,
+		auto_join = true,
+		mining_addr = SinkAddr
+	},
+	?assertEqual(ar_test_node:peer_name(SinkNode),
+		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
+	),
+
+	%% Module covers [1.5*partition, 3*partition) - starts in middle of partition 1
+	RangeStart = floor(1.5 * ar_block:partition_size()),
+	_RangeEnd = floor(3 * ar_block:partition_size()),
+
+	%% Make sure the expected data was synced
+	%% Data exists in [1.5*partition, 2*partition) range within this module
+	ar_e2e:assert_syncs_range(SinkNode, RangeStart, floor(2 * ar_block:partition_size())),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked_padded),
+	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
+	%% Chunks 5-8 are in the second half of partition 1
+	ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 5, 4)),
+
+	%% Make sure entropy was generated for the module range
+	AlignedStart = ar_util:floor_int(RangeStart, ?DATA_CHUNK_SIZE),
+	AlignedEnd = ar_util:ceil_int(floor(2 * ar_block:partition_size()), ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE,
 	ar_e2e:assert_has_entropy(SinkNode, AlignedStart, AlignedEnd, StoreID),
 	ar_e2e:assert_no_entropy(SinkNode, 0, AlignedStart, StoreID),
 
