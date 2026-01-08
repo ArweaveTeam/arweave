@@ -180,6 +180,7 @@
 -define(DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL, 1000).
 -define(DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_REDUCTION, 30).
 -define(DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT, 150).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_IS_MANUAL_REDUCTION_DISABLED, false).
 
 %% @doc Startup options with default values.
 -record(config, {
@@ -339,7 +340,9 @@
 	'http_api.limiter.general.leaky_tick_reduction' =
                      ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_REDUCTION,
 	'http_api.limiter.general.concurrency_limit' =
-                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT,
+	'http_api.limiter.general.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_IS_MANUAL_REDUCTION_DISABLED
 }).
 
 -endif.

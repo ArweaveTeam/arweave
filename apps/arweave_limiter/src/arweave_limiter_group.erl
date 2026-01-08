@@ -6,7 +6,7 @@
 %%%
 %%%      Concurrency is validated first, then sliding window, followed by leaky
 %%%      bucket. If sliding windows passes, the call is accepted, otherwise it
-%%%      burns leaky tokens, if those are exhausted as well, the call will be 
+%%%      burns leaky tokens, if those are exhausted as well, the call will be
 %%%      marked as rejected.
 %%%      It only stores data in process memory.
 %%%
@@ -19,6 +19,7 @@
          start_link/2,
          info/1,
          register_or_reject_call/2,
+         reduce_for_peer/2,
          stop/1
         ]).
 
@@ -56,6 +57,12 @@ register_or_reject_call(LimiterRef, Peer) ->
             Accept
     end.
 
+reduce_for_peer(LimiterRef, Peer) ->
+    Result = gen_server:call(LimiterRef, {reduce_for_peer, Peer}),
+    Result == ok andalso prometheus_counter:inc(ar_limiter_reduce_requests_total,
+                                                [atom_to_list(LimiterRef)]),
+    Result.
+
 reset_all(LimiterRef) ->
     whereis(LimiterRef) == undefined orelse gen_server:call(LimiterRef, reset_all).
 
@@ -68,6 +75,7 @@ init([Args]) ->
     Id = maps:get(id, Args),
 
     IsDisabled = maps:get(no_limit, Args, false),
+    IsManualReductionDisabled = maps:get(is_manual_reduction_disabled, Args, false),
 
     LeakyTickMs = maps:get(leaky_tick_interval_ms, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL),
     TimestampCleanupTickMs = maps:get(timestamp_cleanup_interval_ms, Args,
@@ -88,6 +96,7 @@ init([Args]) ->
     {ok, #{
            id => atom_to_list(Id),
            is_disabled => IsDisabled,
+           is_manual_reduction_disabled => IsManualReductionDisabled,
            leaky_tick_timer_ref => LeakyRef,
            timestamp_cleanup_timer_ref => TsRef,
            leaky_tick_ms => LeakyTickMs,
@@ -127,7 +136,7 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
 
     SlidingTimestampsForPeer0 =
         expire_and_get_requests(Peer, SlidingTimestamps, SlidingWindowDuration, Now),
-    case IsDisabled of 
+    case IsDisabled of
         true ->
             {reply, {register, no_limiting_applied}, State};
         _ ->
@@ -171,6 +180,14 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                     end
             end
     end;
+handle_call({reduce_for_peer, Peer}, _From, State =
+                #{is_manual_reduction_disabled := false,
+                  leaky_tokens := LeakyTokens}) ->
+    NewLeakyTokens = do_reduce_for_peer(Peer, LeakyTokens),
+    {reply, ok, State#{leaky_tokens => NewLeakyTokens}};
+handle_call({reduce_for_peer, _Peer}, _From, State =
+                #{is_manual_reduction_disabled := true}) ->
+    {reply, disabled, State};
 handle_call(get_info, _From, State =
                 #{sliding_timestamps := SlidingTimestamps,
                   leaky_tokens := LeakyTokens,
@@ -264,6 +281,14 @@ cleanup_expired_sliding_peers(SlidingTimestamps, WindowDuration, Now) ->
 %% Token manipulation
 update_token(Peer, Token, LeakyToken) ->
     maps:put(Peer, Token, LeakyToken).
+
+do_reduce_for_peer(Peer, LeakyTokens) ->
+    case maps:get(Peer, LeakyTokens, 0) of
+        0 ->
+            LeakyTokens;
+        Tokens ->
+            LeakyTokens#{Peer => Tokens - 1}
+    end.
 
 fold_decrease_rate(_Id, _Key, Counter, Acc, _TickReduction)
   when is_integer(Counter), Counter =< 0 ->

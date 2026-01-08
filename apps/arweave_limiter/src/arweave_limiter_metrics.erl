@@ -22,6 +22,10 @@ register() ->
                                  {help, "The number of request were rejected by the limiter"},
                                  {labels, [limiter_id, reason]}
                                 ]),
+    ok = prometheus_counter:new([{name, ar_limiter_reduce_requests_total},
+                                 {help, "The number of reduce request by peer in total"},
+                                 {labels, [limiter_id]}
+                                ]),
     ok = prometheus_gauge:new([
                                {name, ar_limiter_peers},
                                {help, "The number of peers the limiter is monitoring currently"},

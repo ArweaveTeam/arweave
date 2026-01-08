@@ -58,7 +58,8 @@ get_limiter_config() ->
        timestamp_cleanup_expiry =>Config#config.'http_api_limiter.general.sliding_window_timestamp_cleanup_expiry',
        leaky_rate_limit => Config#config.'http_api.limiter.general.leaky_limit',
        leaky_tick_ms => Config#config.'http_api.limiter.general.leaky_tick_intercal',
-       concurrency_limit => Config#config.'http_api.limiter.general.concurrency_limit'
+       concurrency_limit => Config#config.'http_api.limiter.general.concurrency_limit',
+       is_manual_reduction_disabled => 'http_api.limiter.general.is_manual_reduction_disabled'
       },
      %% Very limited concurrency defaults
      #{id => metrics,

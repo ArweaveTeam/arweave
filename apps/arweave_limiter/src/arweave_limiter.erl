@@ -25,7 +25,7 @@
          stop/1
         ]).
 
--export([register_or_reject_call/2]).
+-export([register_or_reject_call/2, reduce_for_peer/2]).
 
 -include_lib("kernel/include/logger.hrl").
 
@@ -76,3 +76,11 @@ stop(_State) ->
 %%--------------------------------------------------------------------
 register_or_reject_call(LimiterRef, Peer) ->
     arweave_limiter_group:register_or_reject_call(LimiterRef, Peer).
+
+
+%%--------------------------------------------------------------------
+%% @doc Reduce leaky tokens for peer.
+%% @end
+%%--------------------------------------------------------------------
+reduce_for_peer(LimiterRef, Peer) ->
+    arweave_limiter_group:reduce_for_peer(LimiterRef, Peer).
