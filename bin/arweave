@@ -515,7 +515,8 @@ arweave_test_run() {
 	fi
 
         TEST_PATH="$(./rebar3 as ${TEST_PROFILE} path)"
-        # FIXME: Generate path for all apps -> Should we fetch this from somewhere?
+        
+        ## TODO: Generate path for all apps -> Should we fetch this from somewhere?
         APPS=("arweave" "arweave_config" "arweave_limiter" "arweave_diagnostic")
 
 	PATH_ARGS=""
@@ -525,9 +526,6 @@ arweave_test_run() {
             PATH_ARGS="${PATH_ARGS} ${P}"
         done
 
-	##TEST_PATH_BASE="$(./rebar3 as ${TEST_PROFILE} path --base)/lib/arweave/test"
-
-        ##PARAMS="-pa ${TEST_PATH} ${TEST_PATH_BASE} -config ${TEST_CONFIG} -noshell"
         PARAMS="-pa ${TEST_PATH} ${PATH_ARGS} -config ${TEST_CONFIG} -noshell"
 	ENTRY_POINT="-run ar ${TEST_MODULE} ${*} -s init stop"
 	command="erl ${PARAMS} -name ${TEST_NODE} -setcookie ${TEST_COOKIE} ${ENTRY_POINT}"
