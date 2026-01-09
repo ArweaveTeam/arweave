@@ -79,9 +79,9 @@ init([Args]) ->
 
     LeakyTickMs = maps:get(leaky_tick_interval_ms, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL),
     TimestampCleanupTickMs = maps:get(timestamp_cleanup_interval_ms, Args,
-                                      ?DEFAULT_HTTP_API_LIMITER_GENERAL_TIMESTAMP_CLEANUP_INTERVAL),
+                                      ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL),
     TimestampCleanupExpiry = maps:get(timestamp_cleanup_expiry, Args,
-                                      ?DEFAULT_HTTP_API_LIMITER_GENERAL_TIMESTAMP_CLEANUP_EXPIRY),
+                                      ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY),
     LeakyRateLimit = maps:get(leaky_rate_limit, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT),
     ConcurrencyLimit = maps:get(concurrency_limit, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT),
     TickReduction = maps:get(tick_reduction, Args,
@@ -197,8 +197,8 @@ handle_call(get_info, _From, State =
               leaky_tokens => LeakyTokens,
               concurrent_requests => ConcurrentRequests,
               concurrent_monitors => ConcurrentMonitors}, State};
-handle_call(Request, From, State) ->
-    ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}, {from, From}]),
+handle_call(Request, From, State = #{id := Id}) ->
+    ?LOG_WARNING([{event, unhandled_call}, {id, Id}, {module, ?MODULE}, {request, Request}, {from, From}]),
     {reply, ok, State}.
 
 handle_cast(_Request, State) ->
@@ -233,8 +233,8 @@ handle_info({'DOWN', MonitorRef, process, Pid, Reason},
           MonitorRef, Pid, Reason, ConcurrentRequests, ConcurrentMonitors),
     {noreply, State#{concurrent_requests => NewConcurrentRequests,
                      concurrent_monitors => NewConcurrentMonitors}};
-handle_info(Info, State) ->
-    ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
+handle_info(Info, State = #{id := Id}) ->
+    ?LOG_WARNING([{event, unhandled_info}, {id, Id}, {module, ?MODULE}, {info, Info}]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
