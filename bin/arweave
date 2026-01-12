@@ -517,10 +517,10 @@ arweave_test_run() {
         TEST_PATH="$(./rebar3 as ${TEST_PROFILE} path)"
         
         ## TODO: Generate path for all apps -> Should we fetch this from somewhere?
-        APPS=("arweave" "arweave_config" "arweave_limiter" "arweave_diagnostic")
+        APPS="arweave arweave_config arweave_limiter arweave_diagnostic"
 
 	PATH_ARGS=""
-        for app in "${APPS[@]}"; do
+        for app in $APPS; do
             P="$(./rebar3 as ${TEST_PROFILE} path --base)/lib/${app}/test"
             echo $P
             PATH_ARGS="${PATH_ARGS} ${P}"
