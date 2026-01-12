@@ -165,7 +165,7 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                                     {reply, {register, leaky},
                                      State#{leaky_tokens => NewLeakyTokens,
                                             concurrent_requests => NewRequests,
-                                            concurrent_monitors := NewMonitors}}
+                                            concurrent_monitors => NewMonitors}}
                             end;
                         _ ->
                             {NewRequests, NewMonitors} =
@@ -173,9 +173,9 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                                   Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
                             SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
                             NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
-                            {reply, {register, sliding}, State#{sliding_timestamps := NewSlidingTimestamps,
+                            {reply, {register, sliding}, State#{sliding_timestamps => NewSlidingTimestamps,
                                                                 concurrent_requests => NewRequests,
-                                                                concurrent_monitors := NewMonitors}}
+                                                                concurrent_monitors => NewMonitors}}
                     end
             end
     end;
