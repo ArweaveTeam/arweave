@@ -11,7 +11,8 @@
 		benchmark_vdf/0, benchmark_vdf/1,
 		benchmark_hash/1, benchmark_hash/0, start/0,
 		start/1, start/2, stop/1, stop_dependencies/0, start_dependencies/0,
-		tests/0, tests/1, tests/2, e2e/0, e2e/1, shell/0, shell_e2e/0,
+		tests/0, tests/1, e2e/0, e2e/1,
+		shell/0, shell_e2e/0,
 		stop_shell/0, stop_shell_e2e/0,
 		docs/0, shutdown/1, console/1, console/2, prep_stop/1]).
 
@@ -1341,94 +1342,26 @@ warn_if_single_scheduler() ->
 	end.
 
 shell() ->
-	arweave_config:start(),
-	Config = #config{ debug = true },
-	start_for_tests(test, Config),
-	ar_test_node:boot_peers(test),
-	ar_test_node:wait_for_peers(test).
+	ar_test_runner:start_shell(test).
 
 shell_e2e() ->
-	try
-		arweave_config:start(),
-		Config = #config{ debug = true },
-		start_for_tests(e2e, Config),
-		ar_test_node:boot_peers(e2e),
-		ar_test_node:wait_for_peers(e2e)
-	catch
-		Type:Reason:S ->
-			io:format("Failed to start the peers due to ~p:~p:~p~n", [Type, Reason, S]),
-			init:stop(1)
-	end.
+	ar_test_runner:start_shell(e2e).
 
 stop_shell() ->
-	ar_test_node:stop_peers(test),
-	init:stop().
+	ar_test_runner:stop_shell(test).
 
 stop_shell_e2e() ->
-	ar_test_node:stop_peers(e2e),
-	init:stop().
+	ar_test_runner:stop_shell(e2e).
 
-%% @doc Run all of the tests associated with the core project.
-tests() ->
-	tests(test, [], #config{ debug = true }).
+%% @doc Run unit tests.
+%% Usage: ./bin/test [module | module:test ...]
+tests()     -> ar_test_runner:run(test).
+tests(Args) -> ar_test_runner:run(test, Args).
 
-tests(Mod) ->
-	tests(test, Mod).
-
-tests(TestType, Mods, Config) when is_list(Mods) ->
-	TotalTimeout = case TestType of
-		e2e -> ?E2E_TEST_SUITE_TIMEOUT;
-		_ -> ?TEST_SUITE_TIMEOUT
-	end,
-	try
-		arweave_config:start(),
-		start_for_tests(TestType, Config),
-		ar_test_node:boot_peers(TestType),
-		ar_test_node:wait_for_peers(TestType)
-	catch
-		Type:Reason:S ->
-			io:format("Failed to start the peers due to ~p:~p:~p~n", [Type, Reason, S]),
-			init:stop(1)
-	end,
-	Result =
-		try
-			eunit:test({timeout, TotalTimeout, [Mods]}, [verbose, {print_depth, 100}])
-		after
-			ar_test_node:stop_peers(TestType)
-		end,
-	case Result of
-		ok -> ok;
-		_ -> init:stop(1)
-	end.
-
-start_for_tests(TestType, Config) ->
-	UniqueName = ar_test_node:get_node_namespace(),
-	TestConfig = Config#config{
-		peers = [],
-		data_dir = ".tmp/data_" ++ atom_to_list(TestType) ++ "_main_" ++ UniqueName,
-		port = ar_test_node:get_unused_port(),
-		disable = [randomx_jit],
-		auto_join = false
-	},
-	start(TestConfig).
-
-%% @doc Run the tests for a set of module(s).
-%% Supports strings so that it can be trivially induced from a unix shell call.
-tests(TestType, Mod) when not is_list(Mod) -> tests(TestType, [Mod]);
-tests(TestType, Args) ->
-	Mods =
-		lists:map(
-			fun(Mod) when is_atom(Mod) -> Mod;
-			   (Str) -> list_to_atom(Str)
-			end,
-			Args
-		),
-	tests(TestType, Mods, #config{ debug = true }).
-
-e2e() ->
-	tests(e2e, [ar_sync_pack_mine_tests, ar_repack_mine_tests, ar_repack_in_place_mine_tests]).
-e2e(Mod) ->
-	tests(e2e, Mod).
+%% @doc Run e2e tests.
+%% Usage: ./bin/e2e [module | module:test ...]
+e2e()     -> ar_test_runner:run(e2e).
+e2e(Args) -> ar_test_runner:run(e2e, Args).
 
 %% @doc Generate the project documentation.
 docs() ->
