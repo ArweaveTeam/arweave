@@ -149,7 +149,26 @@ rate_limiter_process_test_() ->
          sliding_window_duration => 1000,
          timestamp_cleanup_expiry => 1000,
          leaky_tick_interval_ms => 100000},
-       fun peer_cleanup/2}
+       fun peer_cleanup/2},
+      {#{id => ?TEST_LIMITER,
+         tick_reduction => 1,
+         leaky_rate_limit => 5,
+         concurrency_limit => 10,
+         sliding_window_limit => 0,
+         sliding_window_duration => 1000,
+         timestamp_cleanup_expiry => 1000,
+         leaky_tick_interval_ms => 100000},
+       fun leaky_manual_reduction/2},
+      {#{id => ?TEST_LIMITER,
+         is_manual_reduction_disabled => true,
+         tick_reduction => 1,
+         leaky_rate_limit => 5,
+         concurrency_limit => 10,
+         sliding_window_limit => 0,
+         sliding_window_duration => 1000,
+         timestamp_cleanup_expiry => 1000,
+         leaky_tick_interval_ms => 100000},
+       fun leaky_manual_reduction_disabled/2}
      ]}.
 
 simple_sliding_happy() ->
@@ -496,6 +515,84 @@ peer_cleanup(_Config, LimiterPid) ->
              ?assertEqual(0, maps:size(ConcurrentReqs)),
              ?assertEqual(0, maps:size(SlidingTimestamps2)),
              ?assertEqual(0, maps:size(LeakyTokens)),
+
+             ok
+     end}.
+
+leaky_manual_reduction(_Config, _LimiterPid) ->
+    {"Leaky tokens manual peer reduction",
+     fun() ->
+             %% init state, the ip is not blocked
+             IP = {1,2,3,4},
+
+             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 1),
+             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 20),
+             Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 40),
+             Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 60),
+             %% wait a bit so they are surely started.
+             timer:sleep(100),
+             %% 2 concurrent, 2 token
+             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+                            leaky_tokens := #{IP := 4}}, ?M:info(?TEST_LIMITER)),
+
+             ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+             ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+
+             %% 2 concurrent, but tokens reduced.
+             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+                            leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
+
+             ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+             ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+
+             %% 4 concurrent, but tokens reduced.
+             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+                            leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
+
+             ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+
+             %% 4 concurrent, no change, there is nothing to reduce beyond 0
+             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+                            leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
+
+             %% Clean up
+             Caller1 ! done,
+             Caller2 ! done,
+             Caller3 ! done,
+             Caller4 ! done,
+
+             ok
+     end}.
+
+leaky_manual_reduction_disabled(_Config, _LimiterPid) ->
+    {"Leaky tokens manual peer reduction",
+     fun() ->
+             %% init state, the ip is not blocked
+             IP = {1,2,3,4},
+
+             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 1),
+             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 20),
+             Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 40),
+             Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 60),
+             %% wait a bit so they are surely started.
+             timer:sleep(100),
+             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+                            leaky_tokens := #{IP := 4}}, ?M:info(?TEST_LIMITER)),
+
+             ?assertEqual(disabled, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+
+             %% Didn't reduce anything
+             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+                            leaky_tokens := #{IP := 4}}, ?M:info(?TEST_LIMITER)),
+
+             %% We can repeat this, but still disabled
+             ?assertEqual(disabled, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+
+             %% Clean up
+             Caller1 ! done,
+             Caller2 ! done,
+             Caller3 ! done,
+             Caller4 ! done,
 
              ok
      end}.
