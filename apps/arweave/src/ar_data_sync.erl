@@ -1104,29 +1104,31 @@ handle_cast(collect_peer_intervals, State) ->
 				case SyncPhase2 of
 					footprint ->
 						End2 = min(End, DiskPoolThreshold),
-						gen_server:cast(self(), {collect_peer_intervals, Start, End2, footprint}),
+						gen_server:cast(self(),
+							{collect_peer_intervals, Start, Start, End2, footprint}),
 						State#sync_data_state{ sync_phase = footprint };
 					_ ->
 						%% The disk pool is only synced during the "normal" phase.
-						gen_server:cast(self(), {collect_peer_intervals, Start, End, normal}),
+						gen_server:cast(self(),
+							{collect_peer_intervals, Start, Start, End, normal}),
 						State#sync_data_state{ sync_phase = normal }
 				end;
 			false ->
-				gen_server:cast(self(), {collect_peer_intervals, Start, End, SyncPhase2}),
+				gen_server:cast(self(), {collect_peer_intervals, Start, Start, End, SyncPhase2}),
 				State#sync_data_state{ sync_phase = SyncPhase2 }
 		end,
 	{noreply, State2};
 
-handle_cast({collect_peer_intervals, Start, End, Type}, State) when Start >= End ->
+handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) when Offset >= End ->
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
 	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS.
 	?LOG_DEBUG([{event, collect_peer_intervals_done},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
-		{s, Start}, {e, End}, {type, Type}]),
+		{offset, Offset}, {s, Start}, {e, End}, {type, Type}]),
 	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
 	{noreply, State};
-handle_cast({collect_peer_intervals, Start, End, Type}, State) ->
+handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			store_id = StoreID, weave_size = WeaveSize } = State,
 	IsDiskSpaceSufficient =
@@ -1140,7 +1142,8 @@ handle_cast({collect_peer_intervals, Start, End, Type}, State) ->
 					not_initialized ->
 						1000
 				end,
-				ar_util:cast_after(Delay, self(), {collect_peer_intervals, Start, End, Type}),
+				ar_util:cast_after(Delay, self(),
+					{collect_peer_intervals, Offset, Start, End, Type}),
 				false
 		end,
 	IsSyncQueueBusy =
@@ -1151,8 +1154,8 @@ handle_cast({collect_peer_intervals, Start, End, Type}, State) ->
 				%% Q contains chunks we've already queued for syncing. We need
 				%% to manage the queue length.
 				%% 1. Periodically sync_intervals will pull from Q and send work to
-%%    ar_data_sync_coordinator. We need to make sure Q is long enough so
-%%    that we never starve ar_data_sync_coordinator of work.
+				%%    ar_data_sync_coordinator. We need to make sure Q is long enough so
+				%%    that we never starve ar_data_sync_coordinator of work.
 				%% 2. On the flip side we don't want Q to get so long as to trigger an
 				%%    out-of-memory condition. In the extreme case we could collect and
 				%%    enqueue all chunks in the entire storage module (usually 3.6 TB).
@@ -1175,7 +1178,8 @@ handle_cast({collect_peer_intervals, Start, End, Type}, State) ->
 					[StoreIDLabel], IntervalsQueueSize),
 				case IntervalsQueueSize > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
 					true ->
-						ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End, Type}),
+						ar_util:cast_after(500, self(),
+							{collect_peer_intervals, Offset, Start, End, Type}),
 						true;
 					false ->
 						false
@@ -1186,33 +1190,34 @@ handle_cast({collect_peer_intervals, Start, End, Type}, State) ->
 			?LOG_DEBUG([{event, collect_peer_intervals_skipped},
 					{function, collect_peer_intervals},
 					{store_id, StoreID},
-					{s, Start}, {e, End},
+					{offset, Offset}, {s, Start}, {e, End},
 					{weave_size, WeaveSize},
 					{is_disk_space_sufficient, IsDiskSpaceSufficient},
 					{is_sync_queue_busy, IsSyncQueueBusy}]),
 			ok;
 		false ->
 			End2 = min(End, WeaveSize),
-			case Start >= End2 of
+			case Offset >= End2 of
 				true ->
-					ar_util:cast_after(500, self(), {collect_peer_intervals, Start, End, Type});
+					ar_util:cast_after(500, self(),
+						{collect_peer_intervals, Offset, Start, End, Type});
 				false ->
 					%% All checks have passed, find and enqueue intervals for one
 					%% sync bucket worth of chunks starting at offset Start.
 					Footprint =
 						case Type of
 							footprint ->
-								ar_footprint_record:get_footprint(Start + ?DATA_CHUNK_SIZE);
+								ar_footprint_record:get_footprint(Offset + ?DATA_CHUNK_SIZE);
 							_ ->
 								ignore
 						end,
 					?LOG_DEBUG([{event, fetch_peer_intervals},
 							{function, collect_peer_intervals},
 							{store_id, StoreID},
-							{s, Start}, {e, End2},
+							{offset, Offset}, {s, Start}, {e, End2},
 							{type, Type},
 							{footprint, Footprint}]),
-					ar_peer_intervals:fetch(Start, End2, StoreID, Type)
+					ar_peer_intervals:fetch(Offset, Start, End2, StoreID, Type)
 			end
 	end,
 

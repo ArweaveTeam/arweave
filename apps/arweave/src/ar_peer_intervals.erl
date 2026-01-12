@@ -1,11 +1,10 @@
 -module(ar_peer_intervals).
 
--export([fetch/4, do_fetch/4]).
+-export([fetch/5]).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -include("ar.hrl").
--include("ar_consensus.hrl").
 -include("ar_data_discovery.hrl").
 
 -ifdef(AR_TEST).
@@ -49,28 +48,30 @@
 %%% Public interface.
 %%%===================================================================
 
-fetch(Start, End, StoreID, Type) when Start >= End ->
+fetch(Offset, Start, End, StoreID, Type) when Offset >= End ->
 	?LOG_DEBUG([{event, fetch_peer_intervals_end},
 			{store_id, StoreID},
+			{offset, Offset},
 			{range_start, Start},
 			{range_end, End},
 			{type, Type}]),
-	gen_server:cast(ar_data_sync:name(StoreID), {collect_peer_intervals, Start, End, Type});
-fetch(Start, End, StoreID, Type) ->
+	gen_server:cast(ar_data_sync:name(StoreID),
+		{collect_peer_intervals, Offset, Start, End, Type});
+fetch(Offset, Start, End, StoreID, Type) ->
 	Parent = ar_data_sync:name(StoreID),
 	spawn_link(fun() ->
-		{End2, EnqueueIntervals} = do_fetch(Start, End, StoreID, Type),
+		{End2, EnqueueIntervals} = do_fetch(Offset, Start, End, StoreID, Type),
 		gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals}),
-		gen_server:cast(Parent, {collect_peer_intervals, End2, End, Type})
+		gen_server:cast(Parent, {collect_peer_intervals, End2, Start, End, Type})
 	end).
 
-do_fetch(Start, End, StoreID, normal) ->
+do_fetch(Offset, Start, End, StoreID, normal) ->
 	Parent = ar_data_sync:name(StoreID),
 	try
-		End2 = min(Start + ?QUERY_RANGE_STEP_SIZE, End),
-		UnsyncedIntervals = get_unsynced_intervals(Start, End2, StoreID),
+		End2 = min(Offset + ?QUERY_RANGE_STEP_SIZE, End),
+		UnsyncedIntervals = get_unsynced_intervals(Offset, End2, StoreID),
 
-		Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
+		Bucket = Offset div ?NETWORK_DATA_BUCKET_SIZE,
 		{ok, Config} = arweave_config:get_env(),
 		AllPeers =
 			case Config#config.sync_from_local_peers_only of
@@ -92,12 +93,13 @@ do_fetch(Start, End, StoreID, normal) ->
 					{End2, []};
 				false ->
 					{End3, EnqueueIntervals2} =
-						fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals),
+						fetch_peer_intervals(Parent, Offset, Peers, UnsyncedIntervals),
 					{min(End2, End3), EnqueueIntervals2}
 			end,
 		?LOG_DEBUG([{event, fetch_peer_intervals},
 			{function, do_fetch},
 			{store_id, StoreID},
+			{offset, Offset},
 			{range_start, Start},
 			{range_end, End},
 			{type, normal},
@@ -111,22 +113,23 @@ do_fetch(Start, End, StoreID, normal) ->
 		Class:Reason:Stacktrace ->
 			?LOG_WARNING([{event, fetch_peers_process_exit},
 					{store_id, StoreID},
+					{offset, Offset},
 					{range_start, Start},
 					{range_end, End},
 					{type, normal},
 					{class, Class},
 					{reason, Reason},
 					{stacktrace, Stacktrace}]),
-			{Start, []}
+			{Offset, []}
 	end;
 
-do_fetch(Start, End, StoreID, footprint) ->
+do_fetch(Offset, Start, End, StoreID, footprint) ->
 	Parent = ar_data_sync:name(StoreID),
 	try
-		Partition = ar_replica_2_9:get_entropy_partition(Start + ?DATA_CHUNK_SIZE),
-		Footprint = ar_footprint_record:get_footprint(Start + ?DATA_CHUNK_SIZE),
+		Partition = ar_replica_2_9:get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
+		Footprint = ar_footprint_record:get_footprint(Offset + ?DATA_CHUNK_SIZE),
 
-		FootprintBucket = ar_footprint_record:get_footprint_bucket(Start + ?DATA_CHUNK_SIZE),
+		FootprintBucket = ar_footprint_record:get_footprint_bucket(Offset + ?DATA_CHUNK_SIZE),
 		{ok, Config} = arweave_config:get_env(),
 		AllPeers =
 			case Config#config.sync_from_local_peers_only of
@@ -151,32 +154,42 @@ do_fetch(Start, End, StoreID, footprint) ->
 					[];
 				false ->
 					fetch_peer_footprint_intervals(
-						Parent, Partition, Footprint, Start, End, Peers, UnsyncedIntervals)
+						Parent, Partition, Footprint, Offset, End, Peers, UnsyncedIntervals)
 			end,
-		Partition = ar_replica_2_9:get_entropy_partition(Start + ?DATA_CHUNK_SIZE),
-		{_PartitionStart, PartitionEnd} = ar_replica_2_9:get_entropy_partition_range(Partition),
-		Start2 =
-			case Start + 2 * ?DATA_CHUNK_SIZE > PartitionEnd of
-				true ->
-					PartitionEnd;
-				false ->
-					Start + ?DATA_CHUNK_SIZE
-			end,
-		Start3 = min(Start2, End),
+		Offset2 = get_next_fetch_offset(Offset, Start, End),
 		%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
-		{Start3, EnqueueIntervals}
+		{Offset2, EnqueueIntervals}
 	catch
 		Class:Reason:Stacktrace ->
 			?LOG_WARNING([{event, fetch_footprint_intervals_process_exit},
 					{store_id, StoreID},
+					{offset, Offset},
 					{range_start, Start},
 					{range_end, End},
 					{type, footprint},
 					{class, Class},
 					{reason, Reason},
 					{stacktrace, Stacktrace}]),
-			{Start, []}
+			{Offset, []}
 	end.
+
+%% @doc Calculate the next fetch start position after processing a sector.
+%% Advances by one chunk within a sector, or jumps to the next partition boundary
+%% when near the sector end.
+get_next_fetch_offset(Offset, Start, End) ->
+	SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
+	Partition = ar_replica_2_9:get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
+	{PartitionStart, PartitionEnd} = ar_replica_2_9:get_entropy_partition_range(Partition),
+	SectorStart = max(Start, PartitionStart),
+	SectorEnd = min(PartitionEnd, SectorStart + SectorSize),
+	Offset2 =
+		case Offset + 2 * ?DATA_CHUNK_SIZE > SectorEnd of
+			true ->
+				PartitionEnd;
+			false ->
+				Offset + ?DATA_CHUNK_SIZE
+		end,
+	min(Offset2, End).
 
 %%%===================================================================
 %%% Private functions.
@@ -491,7 +504,7 @@ test_interval_discovery(TestCase, Mode, Title) ->
 		End = TestRangeEnd,
 		StoreID = test_store_id,
 
-		fetch(Start, End, StoreID, Mode),
+		fetch(Start, Start, End, StoreID, Mode),
 
 		%% Verify we get the expected intervals enqueued
 		case maps:size(ExpectedIntervals) == 0 of
@@ -513,10 +526,10 @@ collect_enqueue_intervals(Acc, StoreID, Mode) ->
 		{'$gen_cast', {enqueue_intervals, EnqueueIntervals}} ->
 			Acc2 = update_peer_intervals(EnqueueIntervals, Acc),
 			collect_enqueue_intervals(Acc2, StoreID, Mode);
-		{'$gen_cast', {collect_peer_intervals, Start, End, _}} when Start >= End ->
+		{'$gen_cast', {collect_peer_intervals, Offset, Start, End, _}} when Offset >= End ->
 			maps:to_list(Acc);
-		{'$gen_cast', {collect_peer_intervals, Start, End, _}} ->
-			fetch(Start, End, StoreID, Mode),
+		{'$gen_cast', {collect_peer_intervals, Offset, Start, End, _}} ->
+			fetch(Offset, Start, End, StoreID, Mode),
 			collect_enqueue_intervals(Acc, StoreID, Mode)
 	after 10_000 ->
 		?assert(false, "No enqueue_intervals messages received")
@@ -624,5 +637,75 @@ add_bytes_to_footprint([{End, Start} | Rest], Packing, StoreID) ->
 		lists:seq(Start + ?DATA_CHUNK_SIZE, End, ?DATA_CHUNK_SIZE)
 	),
 	add_bytes_to_footprint(Rest, Packing, StoreID).
+
+%% Tests for get_next_fetch_offset/4
+%% 4 binary conditions (shown as debug output 0/1 for each):
+%%   1. Start > PartitionStart
+%%   2. PartitionEnd > SectorStart + SectorSize
+%%   3. Offset + 2*CHUNK > SectorEnd
+%%   4. Offset2 > End
+%% Pattern labeled 0-F in hex (e.g., 0101 = 5)
+%% Note: 0xxx (cond1=0, cond2=0) requires partition < SectorSize, impossible in tests
+get_next_fetch_offset_test() ->
+	SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
+	{P0Start, P0End} = ar_replica_2_9:get_entropy_partition_range(0),
+	Chunk = ?DATA_CHUNK_SIZE,
+
+	?assertEqual(P0Start + Chunk,
+		get_next_fetch_offset(P0Start, P0Start, P0End),
+		"simple advance"),
+
+	?assertEqual(P0Start + 1000,
+		get_next_fetch_offset(P0Start, P0Start, P0Start + 1000),
+		"simple advance, limited by End"),
+
+	?assertEqual(P0End,
+		get_next_fetch_offset(P0Start + SectorSize - 1, P0Start, P0End),
+		"jump to PartitionEnd"),
+
+	?assertEqual(P0Start + SectorSize,
+		get_next_fetch_offset(P0Start + SectorSize - 1, P0Start, P0Start + SectorSize),
+		"jump to PartitionEnd, limited by End"),
+
+	Start8 = P0End - SectorSize,
+	?assertEqual(Start8 + Chunk,
+		get_next_fetch_offset(Start8, Start8, P0End),
+		"simple advance, mid-partition Start"),
+
+	Start9 = P0End - SectorSize,
+	?assertEqual(Start9 + 1000,
+		get_next_fetch_offset(Start9, Start9, Start9 + 1000),
+		"simple advance, mid-partition Start, limited by End"),
+
+	StartA = P0End - SectorSize,
+	?assertEqual(P0End,
+		get_next_fetch_offset(StartA + Chunk, StartA, P0End),
+		"jump to PartitionEnd, mid-partition Start"),
+
+	StartB = P0End - SectorSize,
+	SmallEndB = P0End - Chunk,
+	?assertEqual(SmallEndB,
+		get_next_fetch_offset(StartB + Chunk, StartB, SmallEndB),
+		"jump to PartitionEnd, mid-partition Start, limited by End"),
+
+	MidStart = P0Start + SectorSize,
+	?assertEqual(MidStart + Chunk,
+		get_next_fetch_offset(MidStart, MidStart, P0End),
+		"simple advance, mid-partition Start, SectorEnd past PartitionEnd"),
+
+	?assertEqual(MidStart + 1000,
+		get_next_fetch_offset(MidStart, MidStart, MidStart + 1000),
+		"simple advance, mid-partition Start, SectorEnd past PartitionEnd, limited by End"),
+
+	?assertEqual(P0End,
+		get_next_fetch_offset(MidStart + Chunk, MidStart, P0End),
+		"jump to PartitionEnd, mid-partition Start, SectorEnd past PartitionEnd"),
+
+	SmallEndF = MidStart + SectorSize,
+	?assertEqual(SmallEndF,
+		get_next_fetch_offset(MidStart + Chunk, MidStart, SmallEndF),
+		"jump to PartitionEnd, mid-partition Start, SectorEnd past PartitionEnd, limited by End"),
+
+	ok.
 
 -endif.
