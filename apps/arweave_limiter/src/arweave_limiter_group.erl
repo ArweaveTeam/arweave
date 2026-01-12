@@ -71,7 +71,6 @@ stop(LimiterRef) ->
 
 %% gen_server callbacks
 init([Config] = _Args) ->
-    process_flag(trap_exit, true),
     Id = maps:get(id, Config),
 
     IsDisabled = maps:get(no_limit, Config, false),
