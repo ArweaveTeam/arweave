@@ -517,8 +517,12 @@ arweave_test() {
 }
 
 arweave_test_help() {
-    echo "Usage: ${REL_NAME} test MODULE"
-    echo "Run Arweave Test Suite for module MODULE"
+    echo "Usage: ${REL_NAME} test [module | module:test ...]"
+    echo "Run Arweave Test Suite"
+    echo "  test                     - run all tests"
+    echo "  test module              - run all tests in module"
+    echo "  test module:test         - run specific test from module"
+    echo "  test mod1 mod2:test mod3 - mixed mode"
 }
 
 arweave_e2e() {
@@ -533,8 +537,12 @@ arweave_e2e() {
 }
 
 arweave_e2e_help() {
-    echo "Usage: ${REL_NAME} test_e2e MODULE"
-    echo "Run Arweave e2e Test Suite for module MODULE"
+    echo "Usage: ${REL_NAME} test_e2e [module | module:test ...]"
+    echo "Run Arweave e2e Test Suite"
+    echo "  test_e2e                     - run all e2e tests"
+    echo "  test_e2e module              - run all tests in module"
+    echo "  test_e2e module:test         - run specific test from module"
+    echo "  test_e2e mod1 mod2:test mod3 - mixed mode"
 }
 
 # test and e2e features are sharing the same procedures.
@@ -549,7 +557,9 @@ arweave_test_run() {
 	# if a specific test is specified
 	if test "${1}"
 	then
-	    TEST_NODE="${TEST_NODE_NAME}-${1}@${TEST_NODE_HOST}"
+	    # Replace colons with underscores for valid node name
+	    SANITIZED_ARG="${1//:/_}"
+	    TEST_NODE="${TEST_NODE_NAME}-${SANITIZED_ARG}@${TEST_NODE_HOST}"
 	else
 	    TEST_NODE="${TEST_NODE_NAME}@${TEST_NODE_HOST}"
 	fi
@@ -714,8 +724,8 @@ relx_usage() {
                 then
 		  echo ""
 		  echo "Arweave Commands (developer mode):"
-		  echo "  test                    Run Arweave test Suite"
-		  echo "  test_e2e                Run Arweave e2e Test Suite"
+		  echo "  test [MODULE [TEST]]     Run Arweave test Suite"
+		  echo "  test_e2e [MODULE [TEST]] Run Arweave e2e Test Suite"
 		fi
 	    fi
 	    ;;
