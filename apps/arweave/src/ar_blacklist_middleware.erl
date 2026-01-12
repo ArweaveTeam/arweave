@@ -3,7 +3,7 @@
 -export([start/0, ban_peer/2, is_peer_banned/1, cleanup_ban/1]).
 -export([start_link/0]).
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 -export([reset/0]).
 -endif.
 

@@ -7,7 +7,7 @@
 	collect_mf/2
 ]).
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 -export([
          metrics/0
         ]).

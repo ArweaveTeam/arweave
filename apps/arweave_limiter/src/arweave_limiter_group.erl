@@ -27,7 +27,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3, format_status/2]).
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 -export([reset_all/1,
          expire_and_get_requests/4,
          drop_expired/3,

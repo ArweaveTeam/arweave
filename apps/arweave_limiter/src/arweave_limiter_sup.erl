@@ -4,7 +4,7 @@
 %% API
 -export([start_link/0, all_info/0]).
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 -export([start_link/1, child_spec/1, reset_all/0]).
 -endif.
 
