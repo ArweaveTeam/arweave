@@ -39,8 +39,8 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 %%% API
-start_link(LimiterRef, Args) ->
-    gen_server:start_link({local, LimiterRef}, ?MODULE, [Args], []).
+start_link(LimiterRef, Config) ->
+    gen_server:start_link({local, LimiterRef}, ?MODULE, [Config], []).
 
 info(LimiterRef) ->
     gen_server:call(LimiterRef, get_info).
@@ -70,25 +70,25 @@ stop(LimiterRef) ->
     gen_server:stop(LimiterRef).
 
 %% gen_server callbacks
-init([Args]) ->
+init([Config] = _Args) ->
     process_flag(trap_exit, true),
-    Id = maps:get(id, Args),
+    Id = maps:get(id, Config),
 
-    IsDisabled = maps:get(no_limit, Args, false),
-    IsManualReductionDisabled = maps:get(is_manual_reduction_disabled, Args, false),
+    IsDisabled = maps:get(no_limit, Config, false),
+    IsManualReductionDisabled = maps:get(is_manual_reduction_disabled, Config, false),
 
-    LeakyTickMs = maps:get(leaky_tick_interval_ms, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL),
-    TimestampCleanupTickMs = maps:get(timestamp_cleanup_interval_ms, Args,
+    LeakyTickMs = maps:get(leaky_tick_interval_ms, Config, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL),
+    TimestampCleanupTickMs = maps:get(timestamp_cleanup_interval_ms, Config,
                                       ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL),
-    TimestampCleanupExpiry = maps:get(timestamp_cleanup_expiry, Args,
+    TimestampCleanupExpiry = maps:get(timestamp_cleanup_expiry, Config,
                                       ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY),
-    LeakyRateLimit = maps:get(leaky_rate_limit, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT),
-    ConcurrencyLimit = maps:get(concurrency_limit, Args, ?DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT),
-    TickReduction = maps:get(tick_reduction, Args,
+    LeakyRateLimit = maps:get(leaky_rate_limit, Config, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT),
+    ConcurrencyLimit = maps:get(concurrency_limit, Config, ?DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT),
+    TickReduction = maps:get(tick_reduction, Config,
                              ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_REDUCTION),
-    SlidingWindowDuration = maps:get(sliding_window_duration, Args,
+    SlidingWindowDuration = maps:get(sliding_window_duration, Config,
                                      ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_DURATION),
-    SlidingWindowLimit = maps:get(sliding_window_limit, Args,
+    SlidingWindowLimit = maps:get(sliding_window_limit, Config,
                                   ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT),
 
     {ok, LeakyRef} = timer:send_interval(LeakyTickMs, self(), {tick, leaky_bucket_reduction}),
