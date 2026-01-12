@@ -1,3 +1,22 @@
+%%%
+%%% @doc Cowboy handler to manage server-side rate limiting.
+%%%
+%%% This module provides a routing layer, mapping incoming requests
+%%% to respective rate limiter groups (RLG). 
+%%% The mapping logic can be extended in a quite complex manner if 
+%%% required, however it should be  considered that the execute function will be
+%%% called for each HTTP request.
+%%% 
+%%% Also, there is nothing limiting the developer from calling multiple RLGs
+%%% for a single request, if necessary.
+%%%
+%%% The LimiterRef reference  in the arweave_limiter:register_or_reject_call/2
+%%% call must match one of the RLGs started by the arweave_limiter application,
+%%% otherwise a noproc error will be raised.
+%%% 
+%%% We currency use IP addresses and ports as Keys for the calling peers. 
+%%% However, any Erlang term might be used as a key in an RLG.
+%%% 
 -module(ar_http_iface_rate_limiter_middleware).
 
 -behaviour(cowboy_middleware).
