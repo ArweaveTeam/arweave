@@ -97,7 +97,7 @@ unpacked_small_module_test_() ->
 				]
 	end}.
 	
-spora_2_6_small_module_test_() ->
+replica_2_9_small_module_test_() ->
 	{setup, fun () -> setup_source_node(replica_2_9) end, 
 		fun (GenesisData) ->
 				[
@@ -108,7 +108,7 @@ spora_2_6_small_module_test_() ->
 				]
 		end}.
 
-replica_2_9_small_module_test_() ->
+spora_2_6_small_module_test_() ->
 	{setup, fun () -> setup_source_node(spora_2_6) end, 
 		fun (GenesisData) ->
 				[
