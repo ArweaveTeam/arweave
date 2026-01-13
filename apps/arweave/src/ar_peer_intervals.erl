@@ -385,7 +385,7 @@ maybe_get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) 
 
 get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 	PeerReply =
-		case ar_peers:get_peer_release(Peer) >= ?GET_FOOTPRINT_RECORD_SUPPORT_RELEASE of
+		case ar_peers:get_peer_release(Peer) >= ?GET_FOOTPRINT_SUPPORT_RELEASE of
 			true ->
 				ar_http_iface_client:get_footprints(Peer, Partition, Footprint);
 			false ->

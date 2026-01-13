@@ -41,6 +41,7 @@
 %% GET /data_sync_record/[start]/[end]/[limit] endpoint.
 -define(GET_SYNC_RECORD_RIGHT_BOUND_SUPPORT_RELEASE, 83).
 
-%% The number of the release adding support for the
-%% GET /footprints/[partition]/[footprint] endpoint.
--define(GET_FOOTPRINT_RECORD_SUPPORT_RELEASE, 89).
+%% The number of the release adding support for endpoints:
+%% GET /footprints/[partition]/[footprint] 
+%% GET /footprint_buckets
+-define(GET_FOOTPRINT_SUPPORT_RELEASE, 89).

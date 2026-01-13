@@ -575,7 +575,7 @@ increment_metrics(Metric, #state{ peer_formatted = PeerFormatted }, Value) ->
 %%% Tests.
 %%%===================================================================
 
--ifdef(TEST).
+-ifdef(AR_TEST).
 -include_lib("eunit/include/eunit.hrl").
 
 %% @doc Test-only helper to get footprint stats by calling get_state.
