@@ -445,12 +445,35 @@ get_intervals_from_footprint_intervals_test() ->
 	[
 		{[], [], "Empty"},
 		{[{1, 0}], [{?DATA_CHUNK_SIZE, 0}], "One chunk"},
-		{[{2, 0}], [{?DATA_CHUNK_SIZE, 0}, {?DATA_CHUNK_SIZE * 3, ?DATA_CHUNK_SIZE * 2}], "Two chunks"},
-		{[{1, 0}, {3, 2}], [{?DATA_CHUNK_SIZE, 0}, {?DATA_CHUNK_SIZE * 5, ?DATA_CHUNK_SIZE * 4}], "Two chunks with a hole"},
-		{[{8, 0}], [{?DATA_CHUNK_SIZE * 8, 0}], "Completely covered partition"},
-		{[{9, 0}], [{?DATA_CHUNK_SIZE * 9, 0}], "Completely covered partition plus one chunk"},
-		{[{9, 0}, {13, 12}], [{?DATA_CHUNK_SIZE * 10, 0}], "Completely covered partition plus two chunks"},
-		{[{9, 0}, {13, 12}, {15, 14}], [{?DATA_CHUNK_SIZE * 10, 0}, {?DATA_CHUNK_SIZE * 14, ?DATA_CHUNK_SIZE * 13}], "Completely covered partition plus three chunks"}
+		{[{2, 0}], [
+			{?DATA_CHUNK_SIZE, 0}, {?DATA_CHUNK_SIZE * 3, ?DATA_CHUNK_SIZE * 2}], "Two chunks"},
+		{[{4, 0}], [
+			{?DATA_CHUNK_SIZE, 0},
+			{?DATA_CHUNK_SIZE * 3, ?DATA_CHUNK_SIZE * 2}, 
+			{?DATA_CHUNK_SIZE * 5, ?DATA_CHUNK_SIZE * 4},
+			{?DATA_CHUNK_SIZE * 7, ?DATA_CHUNK_SIZE * 6}], "Full footprint"},
+		{[{5, 0}], [
+			{?DATA_CHUNK_SIZE * 5, ?DATA_CHUNK_SIZE * 4},
+			{?DATA_CHUNK_SIZE * 3, 0}, 
+			{?DATA_CHUNK_SIZE * 7, ?DATA_CHUNK_SIZE * 6}], "Footprint wraparound"},
+		{[{6, 3}], [
+			{?DATA_CHUNK_SIZE * 7, ?DATA_CHUNK_SIZE * 6},
+			{?DATA_CHUNK_SIZE * 2, ?DATA_CHUNK_SIZE * 1},
+			{?DATA_CHUNK_SIZE * 4, ?DATA_CHUNK_SIZE * 3}], "Bits of two footprints"},
+		{[{1, 0}, {3, 2}], [
+			{?DATA_CHUNK_SIZE, 0},
+			{?DATA_CHUNK_SIZE * 5,
+			?DATA_CHUNK_SIZE * 4}], "Two chunks with a hole"},
+		{[{8, 0}], [
+			{?DATA_CHUNK_SIZE * 8, 0}], "Completely covered partition"},
+		{[{9, 0}], [
+			{?DATA_CHUNK_SIZE * 9, 0}], "Completely covered partition plus one chunk"},
+		{[{9, 0}, {13, 12}], [
+			{?DATA_CHUNK_SIZE * 10, 0}], "Completely covered partition plus two chunks"},
+		{[{9, 0}, {13, 12}, {15, 14}], [
+			{?DATA_CHUNK_SIZE * 10, 0},
+			{?DATA_CHUNK_SIZE * 14, ?DATA_CHUNK_SIZE * 13}],
+			"Completely covered partition plus three chunks"}
 	],
 	test_get_intervals_from_footprint_intervals(TestCases).
 

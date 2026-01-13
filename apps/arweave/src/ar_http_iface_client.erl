@@ -942,6 +942,8 @@ handle_footprints_response({ok, {{<<"400">>, _}, _, Body, _, _}}) ->
 		Response ->
 			{error, Response}
 	end;
+handle_footprints_response({ok, {{<<"429">>, _}, _, _, _, _}}) ->
+	{error, too_many_requests};
 handle_footprints_response(Reply) ->
 	{error, Reply}.
 

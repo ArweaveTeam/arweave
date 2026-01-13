@@ -36,14 +36,6 @@
 -define(GET_SYNC_RECORD_PATH, [<<"data_sync_record">>]).
 -define(GET_FOOTPRINT_RECORD_PATH, [<<"footprints">>]).
 
-%% The number of the release adding support for the
-%% GET /data_sync_record/[start]/[end]/[limit] endpoint.
--define(GET_SYNC_RECORD_RIGHT_BOUND_SUPPORT_RELEASE, 83).
-
-%% The number of the release adding support for the
-%% GET /footprints/[partition]/[footprint] endpoint.
--define(GET_FOOTPRINT_RECORD_SUPPORT_RELEASE, 87).
-
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -96,16 +88,6 @@ do_fetch(Offset, Start, End, StoreID, normal) ->
 						fetch_peer_intervals(Parent, Offset, Peers, UnsyncedIntervals),
 					{min(End2, End3), EnqueueIntervals2}
 			end,
-		?LOG_DEBUG([{event, fetch_peer_intervals},
-			{function, do_fetch},
-			{store_id, StoreID},
-			{offset, Offset},
-			{range_start, Start},
-			{range_end, End},
-			{type, normal},
-			{unsynced_intervals, ar_intervals:sum(UnsyncedIntervals)},
-			{enqueue_intervals, length(EnqueueIntervals)},
-			{peers, Peers}]),
 		%% Schedule the next sync bucket. The cast handler logic will pause collection
 		%% if needed.
 		{End4, EnqueueIntervals}
@@ -365,29 +347,8 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 						true ->
 							IntervalsAcc;
 						false ->
-							ByteIntervals =
-								ar_footprint_record:get_intervals_from_footprint_intervals(
-									SoughtIntervals),
-							%% SoughtIntervals may include intervals beyond
-							%% the storage module boundaries.
-							%% This is because during the
-							%% UnsyncedIntervals -> SoughtIntervals process we
-							%% end up querying all advertised intervals belonging
-							%% to a footprint that interseects UnsyncedIntervals.
-							%% This can cause this node to try to
-							%% store a chunk that lies beyond its configured
-							%% storage module range. To avoid this we explicitly remove
-							%% all intervals beyond the provided boundaries.
-							ByteIntervals2 = ar_intervals:cut(ByteIntervals, End),
-							PaddedStart =
-								case ar_block:get_chunk_padded_offset(Start) of
-									Start ->
-										Start;
-									Offset ->
-										Offset - ?DATA_CHUNK_SIZE
-								end,
-							ByteIntervals3 = ar_intervals:outerjoin(
-								ar_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2),
+							ByteIntervals = 
+								cut_peer_footprint_intervals(SoughtIntervals, Start, End),
 							?LOG_DEBUG([{event, fetch_peer_intervals},
 								{function, fetch_peer_footprint_intervals},
 								{peer, ar_util:format_peer(Peer)},
@@ -396,11 +357,9 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 								{unsynced_intervals, ar_intervals:sum(UnsyncedIntervals)},
 								{sought_intervals, ar_intervals:sum(SoughtIntervals)},
 								{intervals, length(Intervals)},
-								{byte_intervals, ar_intervals:sum(ByteIntervals)},
-								{byte_intervals2, ar_intervals:sum(ByteIntervals2)},
-								{byte_intervals3, ar_intervals:sum(ByteIntervals3)}]),
+								{byte_intervals, ar_intervals:sum(ByteIntervals)}]),
 							FootprintKey = {Partition, Footprint, Peer},
-							[{Peer, ByteIntervals3, FootprintKey} | IntervalsAcc]
+							[{Peer, ByteIntervals, FootprintKey} | IntervalsAcc]
 					end;
 				(ok, Acc) ->
 					Acc;
@@ -447,196 +406,78 @@ get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 			Error
 	end.
 
+%% @doc The intervals returned by a peer may include intervals beyond the
+%% storage module boundaries. This is because we end up querying all advertised 
+%% intervals belonging to a footprint that intersects this node's unsynced
+%% intervals. This can cause this node to try to store a chunk that lies beyond
+%% its configured storage module range. To avoid this we explicitly remove all
+%% intervals beyond the provided boundaries.
+cut_peer_footprint_intervals(FootprintIntervals, Start, End) -> 
+	ByteIntervals =
+		ar_footprint_record:get_intervals_from_footprint_intervals(FootprintIntervals),
+	ByteIntervals2 = ar_intervals:cut(ByteIntervals, End),
+	PaddedStart =
+		case ar_block:get_chunk_padded_offset(Start) of
+			Start ->
+				Start;
+			Offset ->
+				Offset - ?DATA_CHUNK_SIZE
+		end,
+	ar_intervals:outerjoin(
+		ar_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2).
+
 %%%===================================================================
 %%% Tests
 %%%===================================================================
 
 -ifdef(AR_TEST).
 
-test_no_unsynced_intervals_test_() ->
-	TestCase = #{
-		synced => [{0, 10}],
-		peer1 => [{0, 5}],
-		peer2 => [{3, 8}]
-	},
-	test_interval_discovery(TestCase, footprint, "No unsynced intervals").
+cut_peer_footprint_intervals_test() ->
 
-test_basic_interval_discovery_test_() ->
-	TestCase = #{
-		synced => [],
-		peer1 => [{0, 3}]
-	},
-	test_interval_discovery(TestCase, footprint, "Three chunks").
+	?assertEqual(
+		ar_intervals:from_list([{786432, 524288}, {1310720, 1048576}]),
+		cut_peer_footprint_intervals(
+			ar_intervals:from_list([{4, 0}]), 262144, 1572864),
+		"Full Footprint 0, aligned boundaries"),
 
-test_overlapping_intervals_test_() ->
-	TestCase = #{
-		synced => [{8, 12}],
-		peer1 => [{0, 1}],
-		peer2 => [{3, 10}],
-		peer3 => [{6, 13}]
-	},
-	test_interval_discovery(TestCase, footprint, "Overlapping intervals").
+	?assertEqual(
+		ar_intervals:from_list([{524288,262144}, {1048576,786432}, {1572864,1310720}]),
+		cut_peer_footprint_intervals(
+			ar_intervals:from_list([{8, 4}]), 262144, 1572864),
+		"Full Footprint 1 cut to aligned boundaries"),
 
-test_interval_discovery(TestCase, Mode, Title) ->
-	SyncedChunks = maps:get(synced, TestCase, []),
-	PeerChunksData = maps:remove(synced, TestCase),
+	?assertEqual(
+		ar_intervals:from_list([
+			{262144,200000}, {786432, 524288}, {1310720, 1048576}, {1600000,1572864}]),
+		cut_peer_footprint_intervals(
+			ar_intervals:from_list([{4, 0}]), 200000, 1600000),
+		"Full Footprint 0, unaligned boundaries, pre-strict"),
 
-	%% Convert to bytes
-	SyncedBytes = chunks_to_bytes(SyncedChunks),
-	PeerBytesData = maps:map(fun(_K, V) -> chunks_to_bytes(V) end, PeerChunksData),
+	?assertEqual(
+		ar_intervals:from_list([{524288,262144}, {1048576, 786432}, {1572864, 1310720}]),
+		cut_peer_footprint_intervals(
+			ar_intervals:from_list([{8, 4}]), 200000, 1600000),
+		"Full Footprint 1, unaligned boundaries, pre-strict"),
 
-	TestRangeEnd = 50 * ?DATA_CHUNK_SIZE,
-	UnsyncedBytes = calculate_unsynced_from_synced(SyncedBytes, TestRangeEnd),
+	?assertEqual(
+		ar_intervals:from_list([{2883584,2621440}, {3407872,3145728}]),
+		cut_peer_footprint_intervals(
+			ar_intervals:from_list([{12, 8}]), 2400000, 3500000),
+		"Full Footprint 2, unaligned boundaries, post-strict"),
+	
+	?assertEqual(
+		ar_intervals:from_list([{2621440,2359296}, {3145728,2883584}, {3500000,3407872}]),
+		cut_peer_footprint_intervals(
+			ar_intervals:from_list([{16, 12}]), 2400000, 3500000),
+		"Full Footprint 3, unaligned boundaries, post-strict"),
 
-	Peers = maps:keys(PeerBytesData),
+	?assertEqual(
+		ar_intervals:from_list([{2621440,2359296}, {3500000,3407872}]),
+		cut_peer_footprint_intervals(
+			ar_intervals:from_list([{16, 14}, {13, 12}]), 2400000, 3500000),
+		"Partial Footprint 3, unaligned boundaries, post-strict"),
 
-	ExpectedIntervals = calculate_expected_intervals(UnsyncedBytes, PeerBytesData),
-
-	Mocks = create_test_mocks(Peers),
-
-	TestConfig = #config{ sync_from_local_peers_only = false, local_peers = [] },
-	arweave_config:set_env(TestConfig),
-
-	setup_sync_record_servers(SyncedBytes, PeerBytesData),
-
-	ar_test_node:test_with_mocked_functions(Mocks, fun() ->
-		Start = 0,
-		End = TestRangeEnd,
-		StoreID = test_store_id,
-
-		fetch(Start, Start, End, StoreID, Mode),
-
-		%% Verify we get the expected intervals enqueued
-		case maps:size(ExpectedIntervals) == 0 of
-			true ->
-				receive
-					{'$gen_cast', {enqueue_intervals, []}} -> ok
-				after 100 -> ok
-				end;
-			false ->
-				AllEnqueueIntervals = collect_enqueue_intervals(#{}, StoreID, Mode),
-
-				FlattenedIntervals = lists:flatten(AllEnqueueIntervals),
-				verify_enqueued_intervals(FlattenedIntervals, ExpectedIntervals, Title)
-		end
-	end).
-
-collect_enqueue_intervals(Acc, StoreID, Mode) ->
-	receive
-		{'$gen_cast', {enqueue_intervals, EnqueueIntervals}} ->
-			Acc2 = update_peer_intervals(EnqueueIntervals, Acc),
-			collect_enqueue_intervals(Acc2, StoreID, Mode);
-		{'$gen_cast', {collect_peer_intervals, Offset, Start, End, _}} when Offset >= End ->
-			maps:to_list(Acc);
-		{'$gen_cast', {collect_peer_intervals, Offset, Start, End, _}} ->
-			fetch(Offset, Start, End, StoreID, Mode),
-			collect_enqueue_intervals(Acc, StoreID, Mode)
-	after 10_000 ->
-		?assert(false, "No enqueue_intervals messages received")
-	end.
-
-update_peer_intervals([], Acc) ->
-	Acc;
-update_peer_intervals([{Peer, Intervals, _FootprintKey} | Rest], Acc) ->
-	PeerIntervals = maps:get(Peer, Acc, ar_intervals:new()),
-	PeerIntervals2 = ar_intervals:union(PeerIntervals, Intervals),
-	update_peer_intervals(Rest, maps:put(Peer, PeerIntervals2, Acc)).
-
-create_test_mocks(Peers) ->
-	[
-		{ar_data_discovery, get_footprint_bucket_peers, fun(_FootprintBucket) -> Peers end},
-		{ar_tx_blacklist, get_blacklisted_intervals, fun(_Start, _End) -> ar_intervals:new() end},
-		{ar_http_iface_client, get_footprints, fun(Peer, Partition, Footprint) ->
-			Intervals = ar_footprint_record:get_intervals(Partition, Footprint, Peer),
-			{ok, Intervals}
-		end},
-		{ar_data_sync, name, fun(_StoreID) -> self() end},
-		{ar_peers, get_peer_release, fun(_Peer) -> 87 end}
-	].
-
-verify_enqueued_intervals(EnqueueIntervals, ExpectedIntervals, Title) ->
-	?assert(is_list(EnqueueIntervals)),
-
-	EnqueuedByPeer = maps:from_list(EnqueueIntervals),
-
-	%% Verify each expected peer has intervals
-	maps:fold(fun(Peer, ExpectedPeerIntervals, _) ->
-		?assert(maps:is_key(Peer, EnqueuedByPeer),
-			io_lib:format("Expected peer ~p not found in enqueued intervals", [Peer])),
-
-		ActualPeerIntervals = maps:get(Peer, EnqueuedByPeer),
-
-		?assertEqual(ar_intervals:to_list(ExpectedPeerIntervals), ar_intervals:to_list(ActualPeerIntervals), Title)
-	end, ok, ExpectedIntervals).
-
-chunks_to_bytes(ChunkIntervals) ->
-	lists:map(fun({Start, End}) ->
-		StartBytes = trunc(Start * ?DATA_CHUNK_SIZE),
-		EndBytes = trunc(End * ?DATA_CHUNK_SIZE),
-		{EndBytes, StartBytes}
-	end, ChunkIntervals).
-
-%% Calculate unsynced intervals as gaps in synced intervals within the test range
-calculate_unsynced_from_synced(SyncedBytes, TestRangeEnd) ->
-	case SyncedBytes of
-		[] ->
-			%% Nothing synced, everything is unsynced
-			[{TestRangeEnd, 0}];
-		_ ->
-			%% Find gaps in synced intervals
-			SyncedIntervals = ar_intervals:from_list(SyncedBytes),
-			TestRange = ar_intervals:from_list([{TestRangeEnd, 0}]),
-			UnsyncedIntervals = ar_intervals:outerjoin(SyncedIntervals, TestRange),
-			ar_intervals:to_list(UnsyncedIntervals)
-	end.
-
-calculate_expected_intervals(UnsyncedBytes, PeerBytesData) ->
-	%% For each peer, calculate intersection with unsynced intervals
-	UnsyncedIntervals = ar_intervals:from_list(UnsyncedBytes),
-	ExpectedByPeer = maps:map(fun(_Peer, PeerIntervals) ->
-		PeerIntervalsObj = ar_intervals:from_list(PeerIntervals),
-		Intersection = ar_intervals:intersection(UnsyncedIntervals, PeerIntervalsObj),
-		Intersection
-	end, PeerBytesData),
-	maps:filter(fun(_Peer, Intervals) -> not ar_intervals:is_empty(Intervals) end, ExpectedByPeer).
-
-setup_sync_record_servers(SyncedBytes, PeerBytesData) ->
-	case ets:info(sync_records) of
-		undefined ->
-			ets:new(sync_records, [named_table, public, {read_concurrency, true}]);
-		_ ->
-			ets:delete_all_objects(sync_records)
-	end,
-
-	Packing = unpacked,
-	SyncedStoreID = test_store_id,
-	ProcessName = ar_sync_record:name(SyncedStoreID),
-	case whereis(ProcessName) of
-		undefined -> ar_sync_record:start_link(ProcessName, SyncedStoreID);
-		_ -> ok
-	end,
-	add_bytes_to_footprint(SyncedBytes, Packing, SyncedStoreID),
-
-	maps:foreach(
-		fun(Peer, PeerBytes) ->
-			PeerProcessName = ar_sync_record:name(Peer),
-			case whereis(PeerProcessName) of
-				undefined -> ar_sync_record:start_link(PeerProcessName, Peer);
-				_ -> ok
-			end,
-			add_bytes_to_footprint(PeerBytes, Packing, Peer)
-		end,
-		PeerBytesData
-	).
-
-add_bytes_to_footprint([], _Packing, _StoreID) -> ok;
-add_bytes_to_footprint([{End, Start} | Rest], Packing, StoreID) ->
-	lists:foreach(
-		fun(Offset) ->
-			ar_footprint_record:add(Offset, Packing, StoreID) end,
-		lists:seq(Start + ?DATA_CHUNK_SIZE, End, ?DATA_CHUNK_SIZE)
-	),
-	add_bytes_to_footprint(Rest, Packing, StoreID).
+	ok.
 
 %% Tests for get_next_fetch_offset/4
 %% 4 binary conditions (shown as debug output 0/1 for each):

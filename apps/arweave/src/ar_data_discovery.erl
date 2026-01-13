@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, get_bucket_peers/1, get_footprint_bucket_peers/1,
-		collect_peers/0, pick_peers/2]).
+		collect_peers/0, pick_peers/2, report_bucket_stats/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -25,6 +25,13 @@
 -define(DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, 2 * 1000).
 -else.
 -define(DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, 4 * 60 * 1000).
+-endif.
+
+%% The frequency of logging bucket stats.
+-ifdef(AR_TEST).
+-define(REPORT_BUCKET_STATS_FREQUENCY_MS, 10 * 1000).
+-else.
+-define(REPORT_BUCKET_STATS_FREQUENCY_MS, 60 * 1000).
 -endif.
 
 %% The expiration time of peer's buckets. If a peer is found in the list of
@@ -107,6 +114,13 @@ init([]) ->
 		[],
 		#{ skip_on_shutdown => false }
 	),
+	{ok, _} = ar_timer:apply_interval(
+		?REPORT_BUCKET_STATS_FREQUENCY_MS,
+		?MODULE,
+		report_bucket_stats,
+		[],
+		#{ skip_on_shutdown => true }
+	),
 	gen_server:cast(?MODULE, update_network_data_map),
 	ok = ar_events:subscribe(peer),
 	{ok, #state{
@@ -118,7 +132,7 @@ init([]) ->
 	}}.
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+	?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
 	{reply, ok, State}.
 
 handle_cast({add_peer, Peer}, #state{ peer_queue = Queue } = State) ->
@@ -204,7 +218,7 @@ handle_cast({remove_peer, Peer}, State) ->
 	{noreply, State#state{ network_map = Map2, footprint_map = FootprintMap2, expiration_map = E2 }};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+	?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
 	{noreply, State}.
 
 handle_info({'DOWN', _,  process, _, _}, #state{ peers_pending = N } = State) ->
@@ -218,11 +232,11 @@ handle_info({event, peer, _}, State) ->
 	{noreply, State};
 
 handle_info(Message, State) ->
-	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
+	?LOG_WARNING([{event, unhandled_info}, {message, Message}]),
 	{noreply, State}.
 
 terminate(Reason, _State) ->
-	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
+	?LOG_INFO([{pid, self()},{callback, terminate},{reason, Reason}]),
 	ok.
 
 %%%===================================================================
@@ -267,6 +281,77 @@ collect_peers([Peer | Peers]) ->
 	collect_peers(Peers);
 collect_peers([]) ->
 	ok.
+
+%% @doc Log bucket statistics for each configured storage module.
+report_bucket_stats() ->
+	StartTime = erlang:monotonic_time(millisecond),
+	{ok, Config} = arweave_config:get_env(),
+	StorageModules = Config#config.storage_modules,
+	lists:foreach(
+		fun(Module) ->
+			StoreID = ar_storage_module:id(Module),
+			{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+			report_bucket_stats(StoreID, RangeStart, RangeEnd, normal),
+			report_bucket_stats(StoreID, RangeStart, RangeEnd, footprint)
+		end,
+		StorageModules
+	),
+	ElapsedMs = erlang:monotonic_time(millisecond) - StartTime,
+	?LOG_DEBUG([{event, bucket_stats_complete}, {elapsed_ms, ElapsedMs}]).
+
+report_bucket_stats(StoreID, RangeStart, RangeEnd, normal) ->
+	StartBucket = RangeStart div ?NETWORK_DATA_BUCKET_SIZE,
+	EndBucket = (RangeEnd - 1) div ?NETWORK_DATA_BUCKET_SIZE,
+	TotalBuckets = EndBucket - StartBucket + 1,
+	{AllPeers, ZeroCount, HealthyCount} =
+		bucket_stats(StartBucket, EndBucket, ?MODULE, sets:new()),
+	set_bucket_stats_metrics(StoreID, normal, AllPeers, TotalBuckets, ZeroCount, HealthyCount);
+report_bucket_stats(StoreID, RangeStart, RangeEnd, footprint) ->
+	StartBucket = ar_footprint_record:get_footprint_bucket(RangeStart + ?DATA_CHUNK_SIZE),
+	EndBucket = ar_footprint_record:get_footprint_bucket(RangeEnd),
+	TotalBuckets = max(0, EndBucket - StartBucket + 1),
+	{AllPeers, ZeroCount, HealthyCount} =
+		bucket_stats(StartBucket, EndBucket, ar_data_discovery_footprint_buckets, sets:new()),
+	set_bucket_stats_metrics(StoreID, footprint, AllPeers, TotalBuckets, ZeroCount, HealthyCount).
+
+bucket_stats(StartBucket, EndBucket, _Table, AllPeers) when StartBucket > EndBucket ->
+	{AllPeers, 0, 0};
+bucket_stats(StartBucket, EndBucket, Table, AllPeers) ->
+	bucket_stats(StartBucket, EndBucket, Table, AllPeers, 0, 0).
+
+bucket_stats(Bucket, EndBucket, _Table, AllPeers, ZeroCount, HealthyCount)
+		when Bucket > EndBucket ->
+	{AllPeers, ZeroCount, HealthyCount};
+bucket_stats(Bucket, EndBucket, Table, AllPeers, ZeroCount, HealthyCount) ->
+	{BucketPeers, AllPeers2} = get_bucket_peers_and_collect(Bucket, Table, AllPeers),
+	PeerCount = length(BucketPeers),
+	{ZeroCount2, HealthyCount2} =
+		case PeerCount of
+			0 -> {ZeroCount + 1, HealthyCount};
+			N when N >= 3 -> {ZeroCount, HealthyCount + 1};
+			_ -> {ZeroCount, HealthyCount}
+		end,
+	bucket_stats(Bucket + 1, EndBucket, Table, AllPeers2, ZeroCount2, HealthyCount2).
+
+get_bucket_peers_and_collect(Bucket, Table, AllPeers) ->
+	get_bucket_peers_and_collect(Bucket, Table, {Bucket, 0, no_peer}, [], AllPeers).
+
+get_bucket_peers_and_collect(Bucket, Table, Cursor, BucketPeers, AllPeers) ->
+	case ets:next(Table, Cursor) of
+		{Bucket, _Share, Peer} = Key ->
+			get_bucket_peers_and_collect(Bucket, Table, Key,
+				[Peer | BucketPeers], sets:add_element(Peer, AllPeers));
+		_ ->
+			{ar_util:unique(BucketPeers), AllPeers}
+	end.
+
+set_bucket_stats_metrics(StoreID, Type, AllPeers, TotalBuckets, ZeroCount, HealthyCount) ->
+	NumPeers = sets:size(AllPeers),
+	StoreIDLabel = ar_storage_module:label(StoreID),
+	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, num_peers], NumPeers),
+	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, total_buckets], TotalBuckets),
+	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, zero_peer_count], ZeroCount),
+	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, healthy_peer_count], HealthyCount).
 
 fetch_sync_buckets(Peer) ->
 	case ar_http_iface_client:get_sync_buckets(Peer) of
