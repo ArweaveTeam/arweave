@@ -27,7 +27,7 @@ on:
           - ar_data_sync_recovers_from_corruption_test
           - ar_data_sync_syncs_after_joining_test
           - ar_data_sync_syncs_data_test
-          - ar_data_sync_worker_master
+          - ar_data_sync_coordinator
           - ar_deep_hash
           - ar_device_lock
           - ar_diff_dag
@@ -64,6 +64,9 @@ on:
           - ar_packing_tests
           - ar_patricia_tree
           - ar_peers
+          - ar_peer_intervals
+          - ar_peer_intervals_discovery_test
+          - ar_peer_worker
           - ar_poa
           - ar_poller_tests
           - ar_pool

@@ -487,6 +487,12 @@ register() ->
 		{help, "The rate, in bytes per second, at which chunks are written to storage."}
 	]),
 
+	prometheus_gauge:new([{name, data_discovery},
+		{labels, [type, store_id, stat]},
+		{help, "Tracks peer availability statistics from data discovery across buckets. "
+				"'type' is 'normal' or 'footprint'. "
+				"'stat' is 'num_peers', 'total_buckets', 'zero_peer_count', or 'healthy_peer_count'."}]),
+
 	prometheus_counter:new([{name, sync_tasks},
 		{labels, [state, peer]},
 		{help, "The number of syncing tasks. 'state' can be 'waiting_in', 'waiting_out', "

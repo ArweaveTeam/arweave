@@ -1211,12 +1211,6 @@ handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 							_ ->
 								ignore
 						end,
-					?LOG_DEBUG([{event, fetch_peer_intervals},
-							{function, collect_peer_intervals},
-							{store_id, StoreID},
-							{offset, Offset}, {s, Start}, {e, End2},
-							{type, Type},
-							{footprint, Footprint}]),
 					ar_peer_intervals:fetch(Offset, Start, End2, StoreID, Type)
 			end
 	end,
@@ -1224,7 +1218,6 @@ handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 	{noreply, State};
 
 handle_cast({enqueue_intervals, []}, State) ->
-	?LOG_DEBUG([{event, enqueue_interval_empty}, {pid, self()}]),
 	{noreply, State};
 handle_cast({enqueue_intervals, Intervals}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
@@ -2907,11 +2900,6 @@ enqueue_peer_intervals(Peer, Intervals, FootprintKey, ChunksToEnqueue, {Q, QInte
 	%% 2) We ask many peers simultaneously about the same interval
 	%%    to make finding of the relatively rare intervals quicker.
 	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-	?LOG_DEBUG([{event, enqueue_peer_intervals}, {pid, self()},
-		{peer, ar_util:format_peer(Peer)},
-		{num_intervals, ar_intervals:sum(Intervals)},
-		{num_q_intervals, ar_intervals:sum(QIntervals)},
-		{num_outer_join_intervals, ar_intervals:sum(OuterJoin)}]),
 	{_, {Q2, QIntervals2}}  = ar_intervals:fold(
 		fun	(_, {0, {QAcc, QIAcc}}) ->
 				{0, {QAcc, QIAcc}};

@@ -77,6 +77,7 @@ is_on_cooldown(Peer, RPMKey) ->
 
 %% @doc Put Peer on cooldown for the given RPMKey for Milliseconds.
 set_cooldown(Peer, RPMKey, Milliseconds) when Milliseconds > 0 ->
+	?LOG_DEBUG([{event, set_cooldown}, {peer, ar_util:format_peer(Peer)}, {rpm_key, RPMKey}, {milliseconds, Milliseconds}]),
 	Until = os:system_time(millisecond) + Milliseconds,
 	ets:insert(?MODULE, {{cooldown, Peer, RPMKey}, Until}),
 	ok;

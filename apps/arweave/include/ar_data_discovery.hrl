@@ -36,3 +36,11 @@
 %% How many peers with the biggest synced shares in the given bucket to query per bucket
 %% per sync job iteration.
 -define(QUERY_BEST_PEERS_COUNT, 15).
+
+%% The number of the release adding support for the
+%% GET /data_sync_record/[start]/[end]/[limit] endpoint.
+-define(GET_SYNC_RECORD_RIGHT_BOUND_SUPPORT_RELEASE, 83).
+
+%% The number of the release adding support for the
+%% GET /footprints/[partition]/[footprint] endpoint.
+-define(GET_FOOTPRINT_RECORD_SUPPORT_RELEASE, 89).
