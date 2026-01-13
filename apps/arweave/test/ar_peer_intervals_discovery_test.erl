@@ -105,7 +105,7 @@ create_test_mocks(Peers) ->
 			{ok, Intervals}
 		end},
 		{ar_data_sync, name, fun(_StoreID) -> self() end},
-		{ar_peers, get_peer_release, fun(_Peer) -> ?GET_FOOTPRINT_RECORD_SUPPORT_RELEASE end},
+		{ar_peers, get_peer_release, fun(_Peer) -> ?GET_FOOTPRINT_SUPPORT_RELEASE end},
 		{ar_rate_limiter, is_on_cooldown, fun(_Peer, _Key) -> false end},
 		{ar_rate_limiter, is_throttled, fun(_Peer, _Path) -> false end}
 	].

@@ -33,7 +33,6 @@
 -include_lib("arweave/include/ar_sup.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_peers.hrl").
--include_lib("eunit/include/eunit.hrl").
 
 -define(REBALANCE_FREQUENCY_MS, 10*1000).
 
@@ -421,7 +420,8 @@ try_activate_footprint([{_Peer, Pid} | Rest]) ->
 %%% Tests.
 %%%===================================================================
 
--ifdef(TEST).
+-ifdef(AR_TEST).
+-include_lib("eunit/include/eunit.hrl").
 
 coordinator_test_() ->
 	[
