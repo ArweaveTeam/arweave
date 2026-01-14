@@ -70,7 +70,7 @@ test_parse_config() ->
 		max_emitters = 4,
 		replica_2_9_workers = 16,
 		disable_replica_2_9_device_limit = true,
-		replica_2_9_entropy_cache_size_mb = 4,
+		replica_2_9_entropy_cache_size_mb = 2000,
 		packing_workers = 25,
 		sync_jobs = 10,
 		header_sync_jobs = 1,

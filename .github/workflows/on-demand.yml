@@ -33,6 +33,7 @@ on:
           - ar_diff_dag
           - ar_difficulty_tests
           - ar_entropy_gen
+          - ar_entropy_cache
           - ar_entropy_storage
           - ar_ets_intervals
           - ar_events
