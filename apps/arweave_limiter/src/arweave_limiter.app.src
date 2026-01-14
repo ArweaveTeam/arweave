@@ -1,0 +1,30 @@
+{application, arweave_limiter,
+ [
+  {id, "arweave_limiter"},
+  {description, "Arweave Rate Limiter"},
+  {vsn, "0.0.1"},
+  {mod, {arweave_limiter, []}},
+  {env, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  sasl,
+                  arweave_config,
+                  prometheus,
+                  prometheus_cowboy,
+                  prometheus_process_collector,
+                  prometheus_httpd,
+                  runtime_tools
+                 ]},
+  {modules, [
+             arweave_limiter,
+             arweave_limiter_sup,
+             arweave_limiter_time,
+             arweave_limiter_metrics,
+             arweave_limiter_metrics_collector
+            ]},
+  {registered, [
+                arweave_limiter,
+                arweave_limiter_sup
+               ]}
+ ]}.

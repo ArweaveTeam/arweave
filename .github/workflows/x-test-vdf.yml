@@ -59,6 +59,8 @@ jobs:
             ar_intervals,
             ar_join,
             ar_kv,
+            arweave_limiter_group,
+            arweave_limiter_metrics_collector,
             ar_merkle,
             ar_node,
             ar_node_utils,
