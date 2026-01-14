@@ -1,5 +1,6 @@
 -module(ar_localnet_mining_server).
 
+-behaviour(ar_mining_server_behaviour).
 -behaviour(gen_server).
 
 -export([start_link/0, start_mining/1, pause/0, is_paused/0, set_difficulty/1,
