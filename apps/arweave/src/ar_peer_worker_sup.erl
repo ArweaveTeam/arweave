@@ -19,6 +19,7 @@ start_link() ->
 %%%===================================================================
 
 init([]) ->
+	ets:new(ar_peer_worker, [set, public, named_table, {read_concurrency, true}]),
 	ChildSpec = #{
 		id => ar_peer_worker,
 		start => {ar_peer_worker, start_link, []},
