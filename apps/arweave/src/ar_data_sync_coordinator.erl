@@ -435,7 +435,6 @@ coordinator_test_() ->
 		{timeout, 30, fun test_max_tasks/0},
 		{timeout, 30, fun test_increment_dispatched_task_count/0},
 		{timeout, 30, fun test_queue_scaling_factor/0},
-		{timeout, 30, fun test_footprint_activated/0},
 		{timeout, 30, fun test_footprint_deactivated/0},
 		{timeout, 30, fun test_peer_worker_started_updates_cache/0},
 		{timeout, 30, fun test_reset_worker/0},
@@ -495,16 +494,6 @@ test_queue_scaling_factor() ->
 	?assertEqual(5.0, queue_scaling_factor(100.0, 10)),
 	?assertEqual(2.5, queue_scaling_factor(200.0, 10)),
 	?assertEqual(50.0, queue_scaling_factor(10.0, 10)).
-
-test_footprint_activated() ->
-	State0 = #state{ total_active_footprints = 5, max_footprints = 10 },
-	
-	%% Simulate footprint_activated cast
-	{noreply, State1} = handle_cast({footprint_activated, {1,2,3,4,1984}}, State0),
-	?assertEqual(6, State1#state.total_active_footprints),
-	
-	{noreply, State2} = handle_cast({footprint_activated, {1,2,3,4,1985}}, State1),
-	?assertEqual(7, State2#state.total_active_footprints).
 
 test_footprint_deactivated() ->
 	State0 = #state{ total_active_footprints = 5, max_footprints = 10, known_peers = #{} },
