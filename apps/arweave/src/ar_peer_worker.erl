@@ -37,14 +37,13 @@
 %% Lifecycle
 -export([start_link/1, get_or_start/1, stop/1]).
 %% Operations (all take Pid as first arg - coordinator caches Peer->Pid mapping)
--export([enqueue_task/4, task_completed/5, process_queue/2, 
+-export([enqueue_task/5, task_completed/5, process_queue/2,
          get_max_dispatched/1, rebalance/3, try_activate_footprint/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_peers.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -define(MIN_MAX_DISPATCHED, 8).
 -define(MIN_PEER_QUEUE, 20).
@@ -112,10 +111,19 @@ stop(Pid) ->
 %%% Coordinator caches Peer->Pid mapping to avoid lookup overhead.
 %%%===================================================================
 
-%% @doc Enqueue a task asynchronously. Fire-and-forget.
+%% @doc Enqueue a task and process the queue synchronously.
+%% Returns {WasActivated, TasksToDispatch} where:
+%% - WasActivated: true if a new footprint was just activated, false otherwise
+%% - TasksToDispatch: list of tasks ready to dispatch
 %% HasCapacity indicates whether the global footprint limit allows activating new footprints.
-enqueue_task(Pid, FootprintKey, Args, HasCapacity) ->
-	gen_server:cast(Pid, {enqueue_task, FootprintKey, Args, HasCapacity}).
+%% WorkerCount is used to calculate available dispatch slots.
+enqueue_task(Pid, FootprintKey, Args, HasCapacity, WorkerCount) ->
+	try
+		gen_server:call(Pid, {enqueue_task, FootprintKey, Args, HasCapacity, WorkerCount}, 5000)
+	catch
+		exit:{timeout, _} -> {false, []};
+		_:_ -> {false, []}
+	end.
 
 %% @doc Try to activate a waiting footprint (called when global capacity becomes available).
 %% Returns true if a footprint was activated, false otherwise.
@@ -127,11 +135,8 @@ try_activate_footprint(Pid) ->
 		_:_ -> false
 	end.
 
-%% @doc Notify task completed, update footprint accounting and rate data fetched.
-task_completed(Pid, FootprintKey, Result, ElapsedNative, DataSize) ->
-	gen_server:cast(Pid, {task_completed, FootprintKey, Result, ElapsedNative, DataSize}).
-
-%% @doc Process the queue, return list of Args to dispatch.
+%% @doc Process the queue and return tasks ready for dispatch.
+%% Used to drain queued tasks without enqueuing new ones (e.g., after task completion).
 process_queue(Pid, WorkerCount) ->
 	try
 		gen_server:call(Pid, {process_queue, WorkerCount}, 5000)
@@ -139,6 +144,10 @@ process_queue(Pid, WorkerCount) ->
 		exit:{timeout, _} -> [];
 		_:_ -> []
 	end.
+
+%% @doc Notify task completed, update footprint accounting and rate data fetched.
+task_completed(Pid, FootprintKey, Result, ElapsedNative, DataSize) ->
+	gen_server:cast(Pid, {task_completed, FootprintKey, Result, ElapsedNative, DataSize}).
 
 %% @doc Get max_dispatched for this peer.
 get_max_dispatched(Pid) ->
@@ -180,21 +189,20 @@ handle_call(get_state, _From, State) ->
 	%% Test-only: keep for tests to access raw state
 	{reply, {ok, State}, State};
 
+handle_call({enqueue_task, FootprintKey, Args, HasCapacity, WorkerCount}, _From, State) ->
+	State1 = State#state{ last_task_time = erlang:monotonic_time() },
+	{WasActivated, State2} = do_enqueue_task(FootprintKey, Args, HasCapacity, State1),
+	{TasksToDispatch, State3} = do_process_queue(State2, WorkerCount),
+	{reply, {WasActivated, TasksToDispatch}, State3};
+
 handle_call({process_queue, WorkerCount}, _From, State) ->
-	#state{ dispatched_count = Dispatched, max_dispatched = MaxDispatched, task_queue = Queue } = State,
-	AvailableSlots = min(WorkerCount, MaxDispatched - Dispatched),
-	{TasksToDispatch, RemainingQueue} = dequeue_tasks(Queue, AvailableSlots, []),
-	TaskCount = length(TasksToDispatch),
-	case TaskCount > 0 of
-		true ->
-			increment_metrics(dispatched, State, TaskCount),
-			increment_metrics(queued_out, State, TaskCount);
-		false ->
-			ok
-	end,
-	{reply,
-		TasksToDispatch,
-		State#state{ task_queue = RemainingQueue, dispatched_count = Dispatched + TaskCount }};
+	{TasksToDispatch, State2} = do_process_queue(State, WorkerCount),
+	{reply, TasksToDispatch, State2};
+
+handle_call({try_activate_footprint}, _From, State) ->
+	%% Global capacity became available - try to activate a waiting footprint
+	{Activated, State2} = try_activate_waiting_footprint(State),
+	{reply, Activated, State2};
 
 handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	{QueueScalingFactor, TargetLatency, WorkersStarved} = RebalanceParams,
@@ -256,19 +264,9 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	end,
 	{reply, Result, State3};
 
-handle_call(try_activate_footprint, _From, State) ->
-	%% Global capacity became available - try to activate a waiting footprint
-	{Activated, State2} = try_activate_waiting_footprint(State),
-	{reply, Activated, State2};
-
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, {error, unhandled}, State}.
-
-handle_cast({enqueue_task, FootprintKey, Args, HasCapacity}, State) ->
-	State1 = State#state{ last_task_time = erlang:monotonic_time() },
-	State2 = do_enqueue_task(FootprintKey, Args, HasCapacity, State1),
-	{noreply, State2};
 
 handle_cast({task_completed, FootprintKey, Result, ElapsedNative, DataSize}, State) ->
 	#state{ dispatched_count = DispatchedCount, max_dispatched = MaxDispatched, 
@@ -326,18 +324,39 @@ max_queue_length(Performance, ScalingFactor) ->
 	max(trunc(PeerThroughput * ScalingFactor), ?MIN_PEER_QUEUE).
 
 %%%===================================================================
-%%% Private functions - Footprint management
+%%% Private functions - Task management
 %%%===================================================================
 
-%% @doc Enqueue a task, respecting global footprint limits.
-%% HasCapacity: true if coordinator says there's room for new footprints.
+%% @doc Process tasks from queue based on sync workers.
+do_process_queue(State, WorkerCount) ->
+	#state{ 
+		dispatched_count = Dispatched,
+		max_dispatched = MaxDispatched,
+		task_queue = Queue } = State,
+
+	AvailableSlots = min(WorkerCount, MaxDispatched - Dispatched),
+	{Tasks, RQ} = dequeue_tasks(Queue, AvailableSlots, []),
+	TaskCount = length(Tasks),
+	case TaskCount > 0 of
+		true ->
+			increment_metrics(dispatched, State, TaskCount),
+			increment_metrics(queued_out, State, TaskCount);
+		false ->
+			ok
+	end,
+	NewDispatched = Dispatched + TaskCount,
+	State2 = State#state{ task_queue = RQ, dispatched_count = NewDispatched },
+	{Tasks, State2}.
+
+%% @doc Enqueue a 'normal' task. Footprint limits can be ignored.
 do_enqueue_task(none, Args, _HasCapacity, State) ->
 	%% No footprint key - enqueue directly to peer queue
 	#state{ task_queue = Queue } = State,
 	NewQueue = queue:in(Args, Queue),
 	increment_metrics(queued_in, State, 1),
-	State#state{ task_queue = NewQueue };
+	{false, State#state{ task_queue = NewQueue }};
 
+%% @doc Enqueue a 'footprint' task respecting footprint limits.
 do_enqueue_task(FootprintKey, Args, HasCapacity, State) ->
 	#state{ footprints = Footprints, task_queue = Queue, 
 			active_footprints = ActiveFootprints } = State,
@@ -345,17 +364,17 @@ do_enqueue_task(FootprintKey, Args, HasCapacity, State) ->
 	IsActive = sets:is_element(FootprintKey, ActiveFootprints),
 	case IsActive of
 		true ->
-			%% Footprint is already active, add task to it
+			%% Footprint is already active, add task to it (not a new activation)
 			NewQueue = queue:in(Args, Queue),
 			Footprint2 = Footprint#footprint{ active_count = Footprint#footprint.active_count + 1 },
 			increment_metrics(queued_in, State, 1),
 			increment_metrics(activate_footprint_task, State, 1),
-			State#state{ 
+			{false, State#state{ 
 				task_queue = NewQueue,
 				footprints = maps:put(FootprintKey, Footprint2, Footprints)
-			};
+			}};
 		false when HasCapacity ->
-			%% New footprint and global capacity available - activate it
+			%% New footprint and global capacity available - activate it (new activation)
 			NewQueue = queue:in(Args, Queue),
 			Footprint2 = Footprint#footprint{ active_count = 1 },
 			increment_metrics(queued_in, State, 1),
@@ -364,17 +383,18 @@ do_enqueue_task(FootprintKey, Args, HasCapacity, State) ->
 				task_queue = NewQueue,
 				footprints = maps:put(FootprintKey, Footprint2, Footprints)
 			},
-			activate_footprint(FootprintKey, State2);
+			State3 = activate_footprint(FootprintKey, State2),
+			{true, State3};
 		false ->
-			%% No global capacity - queue task for later
+			%% No global capacity - queue task for later (no activation)
 			Footprint2 = Footprint#footprint{ 
 				waiting = queue:in(Args, Footprint#footprint.waiting) 
 			},
 			increment_metrics(waiting_in, State, 1),
-			State#state{ 
+			{false, State#state{ 
 				footprints = maps:put(FootprintKey, Footprint2, Footprints),
 				waiting_count = State#state.waiting_count + 1
-			}
+			}}
 	end.
 
 %% @doc Handle completion of a footprint task.
@@ -681,9 +701,9 @@ cleanup({Peer, Pid}) ->
 test_enqueue_and_process({Peer, Pid}) ->
 	fun() ->
 		%% Enqueue some tasks (no footprint)
-		enqueue_task(Pid, none, {0, 100, Peer, store1, none}, true),
-		enqueue_task(Pid, none, {100, 200, Peer, store1, none}, true),
-		enqueue_task(Pid, none, {200, 300, Peer, store1, none}, true),
+		enqueue_task(Pid, none, {0, 100, Peer, store1, none}, true, 2),
+		enqueue_task(Pid, none, {100, 200, Peer, store1, none}, true, 2),
+		enqueue_task(Pid, none, {200, 300, Peer, store1, none}, true, 2),
 
 		%% Sync to ensure casts processed
 		{ok, _} = gen_server:call(Pid, get_state),
@@ -701,7 +721,7 @@ test_enqueue_and_process({Peer, Pid}) ->
 test_task_completed({Peer, Pid}) ->
 	fun() ->
 		%% Enqueue and dispatch a task (no footprint)
-		enqueue_task(Pid, none, {0, 100, Peer, store1, none}, true),
+		enqueue_task(Pid, none, {0, 100, Peer, store1, none}, true, 1),
 		{ok, _} = gen_server:call(Pid, get_state), %% sync
 		[_Task] = process_queue(Pid, 1),
 
@@ -717,7 +737,7 @@ test_cut_queue({Peer, Pid}) ->
 	fun() ->
 		%% Enqueue 25 tasks (more than MIN_PEER_QUEUE = 20)
 		lists:foreach(fun(I) ->
-			enqueue_task(Pid, none, {I * 100, (I + 1) * 100, Peer, store1, none}, true)
+			enqueue_task(Pid, none, {I * 100, (I + 1) * 100, Peer, store1, none}, true, 1)
 		end, lists:seq(0, 24)),
 
 		%% Sync and check we have 25 tasks
@@ -743,7 +763,7 @@ test_footprint_basic({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
 		%% Enqueue task with footprint - should activate it (HasCapacity=true)
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true),
+		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true, 1),
 		
 		%% Check footprint stats (get_footprint_stats syncs via call)
 		Stats = get_footprint_stats(Pid),
@@ -768,8 +788,8 @@ test_multiple_footprints({Peer, Pid}) ->
 		FootprintKey2 = {store1, 2000, Peer},
 		
 		%% Enqueue tasks for two footprints
-		enqueue_task(Pid, FootprintKey1, {0, 100, Peer, store1, FootprintKey1}, true),
-		enqueue_task(Pid, FootprintKey2, {100, 200, Peer, store1, FootprintKey2}, true),
+		enqueue_task(Pid, FootprintKey1, {0, 100, Peer, store1, FootprintKey1}, true, 1),
+		enqueue_task(Pid, FootprintKey2, {100, 200, Peer, store1, FootprintKey2}, true, 1),
 		
 		Stats = get_footprint_stats(Pid),
 		?assertEqual(2, maps:get(active_footprint_count, Stats))
@@ -779,9 +799,9 @@ test_footprint_completion({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
 		%% Enqueue multiple tasks for same footprint (HasCapacity=true)
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true),
-		enqueue_task(Pid, FootprintKey, {100, 200, Peer, store1, FootprintKey}, true),
-		enqueue_task(Pid, FootprintKey, {200, 300, Peer, store1, FootprintKey}, true),
+		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true, 1),
+		enqueue_task(Pid, FootprintKey, {100, 200, Peer, store1, FootprintKey}, true, 1),
+		enqueue_task(Pid, FootprintKey, {200, 300, Peer, store1, FootprintKey}, true, 1),
 		
 		Stats1 = get_footprint_stats(Pid),  %% Syncs via call
 		?assertEqual(3, maps:get(total_active_tasks, Stats1)),
@@ -804,8 +824,8 @@ test_footprint_waiting_queue({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
 		%% Enqueue task with HasCapacity=false - should go to waiting queue
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, false),
-		enqueue_task(Pid, FootprintKey, {100, 200, Peer, store1, FootprintKey}, false),
+		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, false, 1),
+		enqueue_task(Pid, FootprintKey, {100, 200, Peer, store1, FootprintKey}, false, 1),
 		
 		%% Sync and check state
 		{ok, State} = gen_server:call(Pid, get_state),
@@ -830,7 +850,7 @@ test_try_activate_footprint({Peer, Pid}) ->
 		?assertEqual(false, Result1),
 		
 		%% Enqueue task with HasCapacity=false - goes to waiting
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, false),
+		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, false, 1),
 		{ok, _} = gen_server:call(Pid, get_state), %% sync
 		
 		%% Now try_activate_footprint should return true
@@ -853,7 +873,7 @@ test_footprint_task_cycling({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
 		%% Enqueue one task with HasCapacity=true (activates footprint)
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true),
+		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true, 1),
 		{ok, _} = gen_server:call(Pid, get_state), %% sync
 		
 		%% Dispatch the task
@@ -882,10 +902,10 @@ test_active_footprints_set({Peer, Pid}) ->
 		?assertEqual(0, sets:size(State0#state.active_footprints)),
 		
 		%% Activate two footprints
-		enqueue_task(Pid, FootprintKey1, {0, 100, Peer, store1, FootprintKey1}, true),
-		enqueue_task(Pid, FootprintKey2, {100, 200, Peer, store1, FootprintKey2}, true),
+		enqueue_task(Pid, FootprintKey1, {0, 100, Peer, store1, FootprintKey1}, true, 1),
+		enqueue_task(Pid, FootprintKey2, {100, 200, Peer, store1, FootprintKey2}, true, 1),
 		%% Third one goes to waiting
-		enqueue_task(Pid, FootprintKey3, {200, 300, Peer, store1, FootprintKey3}, false),
+		enqueue_task(Pid, FootprintKey3, {200, 300, Peer, store1, FootprintKey3}, false, 1),
 		
 		{ok, State1} = gen_server:call(Pid, get_state),
 		?assertEqual(2, sets:size(State1#state.active_footprints)),
@@ -906,15 +926,15 @@ test_add_task_to_active_footprint({Peer, Pid}) ->
 		FootprintKey = {store1, 1000, Peer},
 		
 		%% Activate footprint with one task
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true),
+		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true, 1),
 		{ok, State1} = gen_server:call(Pid, get_state),
 		Footprint1 = maps:get(FootprintKey, State1#state.footprints),
 		?assertEqual(1, Footprint1#footprint.active_count),
 		?assertEqual(1, queue:len(State1#state.task_queue)),
 		
 		%% Add more tasks to same footprint (regardless of HasCapacity, goes to task_queue since active)
-		enqueue_task(Pid, FootprintKey, {100, 200, Peer, store1, FootprintKey}, true),
-		enqueue_task(Pid, FootprintKey, {200, 300, Peer, store1, FootprintKey}, false),
+		enqueue_task(Pid, FootprintKey, {100, 200, Peer, store1, FootprintKey}, true, 1),
+		enqueue_task(Pid, FootprintKey, {200, 300, Peer, store1, FootprintKey}, false, 1),
 		
 		{ok, State2} = gen_server:call(Pid, get_state),
 		Footprint2 = maps:get(FootprintKey, State2#state.footprints),
@@ -932,7 +952,7 @@ test_footprint_deactivation_removes_from_map({Peer, Pid}) ->
 		FootprintKey = {store1, 1000, Peer},
 		
 		%% Activate footprint
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true),
+		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true, 1),
 		{ok, State1} = gen_server:call(Pid, get_state),
 		
 		%% Footprint should exist in map

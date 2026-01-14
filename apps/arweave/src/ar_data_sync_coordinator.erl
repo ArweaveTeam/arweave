@@ -148,12 +148,22 @@ handle_cast({sync_range, Args}, State) ->
 				_ ->
 					%% Check if there's global capacity for new footprints
 					HasCapacity = State1#state.total_active_footprints < State1#state.max_footprints,
-					%% Enqueue task to peer worker (fire-and-forget)
-					ar_peer_worker:enqueue_task(Pid, FootprintKey, Args, HasCapacity),
-					%% Optimistically assume task was queued (not waiting)
-					State2 = State1#state{ total_task_count = State1#state.total_task_count + 1 },
-					%% Process the queue to dispatch if there's capacity
-					State3 = process_peer_queue(Pid, State2),
+					WorkerCount = queue:len(State1#state.workers),
+					{WasActivated, TasksToDispatch} = ar_peer_worker:enqueue_task(
+						Pid, FootprintKey, Args, HasCapacity, WorkerCount),
+					State2 = case WasActivated of
+						true ->
+							State1#state{ 
+								total_active_footprints = State1#state.total_active_footprints + 1,
+								total_task_count = State1#state.total_task_count + 1
+							};
+						false ->
+							State1#state{
+								total_task_count = State1#state.total_task_count + 1
+							}
+					end,
+					%% Dispatch tasks to workers
+					State3 = dispatch_tasks(Pid, TasksToDispatch, State2),
 					{noreply, State3}
 			end
 	end;
@@ -183,10 +193,6 @@ handle_cast(rebalance_peers, State) ->
 	Targets = calculate_targets(PeerPids, AllPeerPerformances, State),
 	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State),
 	{noreply, State2};
-
-handle_cast({footprint_activated, _Peer}, State) ->
-	NewCount = State#state.total_active_footprints + 1,
-	{noreply, State#state{ total_active_footprints = NewCount }};
 
 handle_cast({footprint_deactivated, _Peer}, State) ->
 	NewCount = max(0, State#state.total_active_footprints - 1),
