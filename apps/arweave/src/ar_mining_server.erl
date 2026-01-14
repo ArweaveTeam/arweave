@@ -1,6 +1,7 @@
 %%% @doc The 2.6 mining server.
 -module(ar_mining_server).
 
+-behaviour(ar_mining_server_behaviour).
 -behaviour(gen_server).
 
 -export([start_link/0,
