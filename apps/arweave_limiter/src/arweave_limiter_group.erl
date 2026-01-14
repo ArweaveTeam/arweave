@@ -61,6 +61,9 @@ register_or_reject_call(LimiterRef, Peer) ->
             Accept
     end.
 
+%% This function is called when a transaction is accepted. This is how the previous
+%% solution dealt with high loads. This will perform double reduction. (as the periodic
+%% reduction is still occurring).
 reduce_for_peer(LimiterRef, Peer) ->
     Result = gen_server:call(LimiterRef, {reduce_for_peer, Peer}),
     Result == ok andalso prometheus_counter:inc(ar_limiter_reduce_requests_total,
