@@ -50,6 +50,11 @@ config(LimiterRef) ->
     gen_server:call(LimiterRef, get_config).
 
 register_or_reject_call(LimiterRef, Peer) ->
+    {Time, Value} = timer:tc(fun do_register_or_reject_call/2, [LimiterRef, Peer]),
+    prometheus_histogram:observe(ar_limiter_response_time_microseconds, [LimiterRef], Time),
+    Value.
+
+do_register_or_reject_call(LimiterRef, Peer) ->
     prometheus_counter:inc(ar_limiter_requests_total,
                            [atom_to_list(LimiterRef)]),
     case gen_server:call(LimiterRef, {register_or_reject, Peer}) of
@@ -149,7 +154,7 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
             case Concurrency > ConcurrencyLimit of
                 true ->
                     %% Concurrency Hard Limit
-                    ?LOG_WARNING([{event, ar_limiter_reject}, {reason, concurrency},
+                    ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, concurrency},
                                   {peer, Peer}, {id, Id}]),
                     {reply, {reject, concurrency, data}, State};
                 _ ->
@@ -159,7 +164,7 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                             case Tokens > LeakyRateLimit of
                                 true ->
                                     %% Burst exhausted with the Leaky Tokens
-                                    ?LOG_WARNING([{event, ar_limiter_reject}, {reason, rate_limit},
+                                    ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, rate_limit},
                                                   {sliding_window_limit, SlidingWindowLimit},
                                                   {leaky_rate_limit, LeakyRateLimit},
                                                   {peer, Peer}, {id, Id}]),

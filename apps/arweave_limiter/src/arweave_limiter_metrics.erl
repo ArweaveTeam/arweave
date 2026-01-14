@@ -9,10 +9,11 @@
 %% @doc Declare Arweave Rate Limiter metrics.
 register() ->
     ok = prometheus_histogram:new([
-                                   {name, ar_limiter_response_time_milliseconds},
+                                   {name, ar_limiter_response_time_microseconds},
                                    {help, "Time it took for the limiter to respond to requests"},
-                                   {buckets, [infinity]}, %% For meaningful results on this, we need buckets
-                                   {labels, [limiter_id]} ]),
+                                   %% buckets might be reduced for production
+                                   {buckets, [100, 500, 1000, 5000, 10000, 50000, 100000, infinity]}, 
+                                   {labels, [limiter_id]}]),
 
     ok = prometheus_counter:new([
                                  {name, ar_limiter_requests_total},
