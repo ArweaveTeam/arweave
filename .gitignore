@@ -35,3 +35,4 @@ release/output
 node_modules
 screenlog.0
 _*
+*.swp
