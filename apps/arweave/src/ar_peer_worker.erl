@@ -76,18 +76,19 @@
 %%%===================================================================
 
 start_link(Peer) ->
-	Name = peer_name(Peer),
-	gen_server:start_link({local, Name}, ?MODULE, [Peer], []).
+	case gen_server:start_link(?MODULE, [Peer], []) of
+		{ok, Pid} ->
+			ets:insert(?MODULE, {Peer, Pid}),
+			{ok, Pid};
+		Error ->
+			Error
+	end.
 
-%% @doc Convert peer tuple to a process name atom.
-peer_name(Peer) ->
-	list_to_atom("ar_peer_" ++ ar_util:format_peer(Peer)).
-
-%% @doc Lookup a peer worker pid by name.
+%% @doc Lookup a peer worker pid by ETS registry.
 lookup(Peer) ->
-	case whereis(peer_name(Peer)) of
-		undefined -> undefined;
-		Pid -> {ok, Pid}
+	case ets:lookup(?MODULE, Peer) of
+		[] -> undefined;
+		[{_, Pid}] -> {ok, Pid}
 	end.
 
 %% @doc Get the pid of an existing peer worker or start a new one.
@@ -296,7 +297,9 @@ handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, State) ->
+	%% Clean up ETS entry when process terminates
+	ets:delete(?MODULE, State#state.peer),
 	ok.
 
 %%%===================================================================
@@ -598,39 +601,24 @@ get_footprint_stats(Pid) ->
 %% Standalone tests (no setup/cleanup needed)
 standalone_test_() ->
 	[
-		{timeout, 30, fun test_peer_name/0},
 		{timeout, 30, fun test_lookup/0},
 		{timeout, 30, fun test_get_or_start/0}
 	].
-
-test_peer_name() ->
-	%% Test that peer_name creates a valid atom from a peer tuple
-	Peer1 = {1, 2, 3, 4, 1984},
-	Name1 = peer_name(Peer1),
-	?assertEqual(true, is_atom(Name1)),
-	?assertEqual("ar_peer_1.2.3.4:1984", atom_to_list(Name1)),
-	
-	%% Different peer produces different name
-	Peer2 = {192, 168, 1, 1, 8080},
-	Name2 = peer_name(Peer2),
-	?assertEqual("ar_peer_192.168.1.1:8080", atom_to_list(Name2)),
-	?assertNotEqual(Name1, Name2).
 
 test_lookup() ->
 	%% Lookup of non-existent peer returns undefined
 	Peer1 = {10, 20, 30, 40, 9999},
 	?assertEqual(undefined, lookup(Peer1)),
 	
-	%% Register a process and verify lookup finds it
+	%% Insert a process and verify lookup finds it
 	Peer2 = {50, 60, 70, 80, 1234},
-	Name2 = peer_name(Peer2),
 	TestPid = spawn(fun() -> receive stop -> ok end end),
-	register(Name2, TestPid),
+	ets:insert(?MODULE, {Peer2, TestPid}),
 	?assertEqual({ok, TestPid}, lookup(Peer2)),
 	
 	%% Cleanup
 	TestPid ! stop,
-	unregister(Name2).
+	ets:delete(?MODULE, Peer2).
 
 test_get_or_start() ->
 	%% Start the supervisor (unlink so its shutdown doesn't affect our test process)
@@ -684,7 +672,9 @@ setup() ->
 	{ok, Pid} = gen_server:start(?MODULE, [Peer], []),
 	{Peer, Pid}.
 
-cleanup({_Peer, Pid}) ->
+cleanup({Peer, Pid}) ->
+	%% Clean up ETS entry when removing the worker
+	ets:delete(?MODULE, Peer),
 	gen_server:stop(Pid),
 	ok.
 
