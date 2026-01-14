@@ -1,0 +1,29 @@
+---
+name: build
+description: "Arweave build commands and structure"
+alwaysApply: true
+---
+
+# Arweave Project Rules
+
+## Build Commands
+- To compile the project: `./ar-rebar3 prod compile`
+
+## Project Structure
+- This is an Erlang/OTP project using rebar3
+- It contains multiple apps in the `apps` directory
+- The main app is `arweave`
+- Source files: `apps/<app>/src/`
+- Test files: `apps/<app>/test/`
+- Include files: `apps/<app>/include/`
+
+## Running Tests
+- To run tests for a specific module: `./bin/test <module>`
+  - Example: `./bin/test ar_mining_io_tests`
+- To run tests for a specific test: `./bin/test <module>:<test>`
+  - Example: `./bin/test ar_mining_io_tests:read_recall_range_test_`
+- Multiple modules and/or tests can be run together
+  - Example: `./bin/test ar_mining_io_tests ar_data_sync_root_tests:data_roots_syncs_from_peer_test_`
+
+## Testing Notes
+- Test profile uses smaller values for constants like `?PARTITION_SIZE` and `?REPLICA_2_9_ENTROPY_COUNT` (defined in rebar.config)
