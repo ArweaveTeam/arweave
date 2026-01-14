@@ -265,6 +265,8 @@ drop_expired([TS|Timestamps], WindowDuration, Now) when TS + WindowDuration =< N
 drop_expired(Timestamps, _WindowDuration, _Now) ->
     Timestamps.
 
+%% There is no idomatic way of adding an element to the end of a list in Erlang.
+%% So, we reverse the list add it to the beginning and reverse it again.
 add_and_order_timestamps(Ts, Timestamps) ->
     lists:reverse(do_add_and_order_timestamps(Ts, lists:reverse(Timestamps))).
 
@@ -273,6 +275,8 @@ do_add_and_order_timestamps(Ts, []) ->
 do_add_and_order_timestamps(Ts, [Head | _Rest] = Timestamps) when Ts >= Head ->
     [Ts | Timestamps];
 do_add_and_order_timestamps(Ts, [Head | Rest])  ->
+    %% This clause shouldn't really reached, because we use monotonic time
+    %% for timestamps.
     [Head | do_add_and_order_timestamps(Ts, Rest)].
 
 cleanup_expired_sliding_peers(SlidingTimestamps, WindowDuration, Now) ->
