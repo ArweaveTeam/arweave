@@ -18,6 +18,7 @@
 -export([
          start_link/2,
          info/1,
+         config/1,
          register_or_reject_call/2,
          reduce_for_peer/2,
          stop/1
@@ -44,6 +45,9 @@ start_link(LimiterRef, Config) ->
 
 info(LimiterRef) ->
     gen_server:call(LimiterRef, get_info).
+
+config(LimiterRef) ->
+    gen_server:call(LimiterRef, get_config).
 
 register_or_reject_call(LimiterRef, Peer) ->
     prometheus_counter:inc(ar_limiter_requests_total,
@@ -196,8 +200,12 @@ handle_call(get_info, _From, State =
               leaky_tokens => LeakyTokens,
               concurrent_requests => ConcurrentRequests,
               concurrent_monitors => ConcurrentMonitors}, State};
+handle_call(get_config, _From, State) ->
+    {reply, filter_state_for_config(State), State};
 handle_call(Request, From, State = #{id := Id}) ->
-    ?LOG_WARNING([{event, unhandled_call}, {id, Id}, {module, ?MODULE}, {request, Request}, {from, From}]),
+    ?LOG_WARNING([{event, unhandled_call}, {id, Id}, {module, ?MODULE},
+                  {request, Request}, {from, From},
+                  {config, filter_state_for_config(State)}]),
     {reply, ok, State}.
 
 handle_cast(_Request, State) ->
@@ -322,3 +330,30 @@ remove_concurrent(MonitorRef, _Pid, _Reason, ConcurrentRequests, ConcurrentMonit
         end,
     NewConcurrentMonitors = maps:remove(MonitorRef, ConcurrentMonitors),
     {NewConcurrentRequests, NewConcurrentMonitors}.
+
+filter_state_for_config(#{id := Id,
+                          is_disabled := IsDisabled,
+                          is_manual_reduction_disabled := IsManualReductionDisabled,
+                          leaky_tick_timer_ref := LeakyRef,
+                          timestamp_cleanup_timer_ref := TsRef,
+                          leaky_tick_ms := LeakyTickMs,
+                          timestamp_cleanup_tick_ms := TimestampCleanupTickMs,
+                          timestamp_cleanup_expiry := TimestampCleanupExpiry,
+                          tick_reduction := TickReduction,
+                          leaky_rate_limit := LeakyRateLimit,
+                          concurrency_limit := ConcurrencyLimit,
+                          sliding_window_duration := SlidingWindowDuration,
+                          sliding_window_limit := SlidingWindowLimit}) ->
+    #{id => Id,
+      is_disabled => IsDisabled,
+      is_manual_reduction_disabled => IsManualReductionDisabled,
+      leaky_tick_timer_ref => LeakyRef,
+      timestamp_cleanup_timer_ref => TsRef,
+      leaky_tick_ms => LeakyTickMs,
+      timestamp_cleanup_tick_ms => TimestampCleanupTickMs,
+      timestamp_cleanup_expiry => TimestampCleanupExpiry,
+      tick_reduction => TickReduction,
+      leaky_rate_limit => LeakyRateLimit,
+      concurrency_limit => ConcurrencyLimit,
+      sliding_window_duration => SlidingWindowDuration,
+      sliding_window_limit => SlidingWindowLimit}.

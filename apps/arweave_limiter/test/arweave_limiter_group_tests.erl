@@ -213,6 +213,7 @@ simple_sliding_happy() ->
 simple_leaky_happy_path(_Config, LimiterPid) ->
     {"Leaky happy path",
      fun() ->
+             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              IP = {1,2,3,4},
              %% init state, the ip is not blocked
              Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 0),
@@ -267,6 +268,7 @@ simple_leaky_happy_path(_Config, LimiterPid) ->
 rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
     {"rejected due concurrency",
      fun() ->
+             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
@@ -333,6 +335,7 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
 rejected_due_leaky_rate(_Config, LimiterPid) ->
     {"rejected due leaky rate",
      fun() ->
+             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
@@ -395,6 +398,7 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
 both_exhausted(_Config, LimiterPid) ->
     {"Both exhausted",
      fun() ->
+             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              IP = {1,2,3,4},
 
              Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding}, IP, -1),
@@ -449,6 +453,7 @@ both_exhausted(_Config, LimiterPid) ->
 peer_cleanup(_Config, LimiterPid) ->
     {"Peer cleanup",
      fun() ->
+             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
@@ -522,8 +527,10 @@ peer_cleanup(_Config, LimiterPid) ->
 leaky_manual_reduction(_Config, _LimiterPid) ->
     {"Leaky tokens manual peer reduction",
      fun() ->
+             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
+             NonRecordedIP = {2,3,4,5,1984},
 
              Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 1),
              Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 20),
@@ -537,6 +544,9 @@ leaky_manual_reduction(_Config, _LimiterPid) ->
 
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+
+             %% call for one that's surely not in the state
+             ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, NonRecordedIP)),
 
              %% 2 concurrent, but tokens reduced.
              ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
@@ -567,6 +577,7 @@ leaky_manual_reduction(_Config, _LimiterPid) ->
 leaky_manual_reduction_disabled(_Config, _LimiterPid) ->
     {"Leaky tokens manual peer reduction",
      fun() ->
+             ?assertMatch(#{is_manual_reduction_disabled := true}, ?M:config(?TEST_LIMITER)),
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
