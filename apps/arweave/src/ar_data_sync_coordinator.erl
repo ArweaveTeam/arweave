@@ -37,8 +37,8 @@
 -define(REBALANCE_FREQUENCY_MS, 10*1000).
 
 -record(state, {
-	total_task_count = 0,       %% total count of tasks (queued + waiting, across all peers)
-	total_dispatched_count = 0,
+	total_queued_count = 0,       %% total count of non-dispatched tasks across all peers
+	total_dispatched_count = 0,   %% total count tasks currently assigned to a worker
 	workers = queue:new(),
 	dispatched_count_per_worker = #{},
 	known_peers = #{},          %% #{Peer => Pid} - cached peer worker Pids
@@ -118,7 +118,7 @@ calculate_max_footprints() ->
 
 handle_call(ready_for_work, _From, State) ->
 	WorkerCount = queue:len(State#state.workers),
-	TotalTaskCount = State#state.total_dispatched_count + State#state.total_task_count,
+	TotalTaskCount = State#state.total_dispatched_count + State#state.total_queued_count,
 	ReadyForWork = TotalTaskCount < max_tasks(WorkerCount),
 	{reply, ReadyForWork, State};
 
@@ -155,11 +155,11 @@ handle_cast({sync_range, Args}, State) ->
 						true ->
 							State1#state{ 
 								total_active_footprints = State1#state.total_active_footprints + 1,
-								total_task_count = State1#state.total_task_count + 1
+								total_queued_count = State1#state.total_queued_count + 1
 							};
 						false ->
 							State1#state{
-								total_task_count = State1#state.total_task_count + 1
+								total_queued_count = State1#state.total_queued_count + 1
 							}
 					end,
 					%% Dispatch tasks to workers
@@ -198,13 +198,13 @@ handle_cast({footprint_deactivated, _Peer}, State) ->
 	NewCount = max(0, State#state.total_active_footprints - 1),
 	State2 = State#state{ total_active_footprints = NewCount },
 	%% Notify all peers that capacity is available so they can activate waiting footprints
-	case NewCount < State2#state.max_footprints of
+	State3 = case NewCount < State2#state.max_footprints of
 		true ->
-			notify_peers_capacity_available(State2#state.known_peers);
+			notify_peers_capacity_available(State2);
 		false ->
-			ok
+			State2
 	end,
-	{noreply, State2};
+	{noreply, State3};
 
 handle_cast({peer_worker_started, Peer, Pid}, State) ->
 	%% Peer worker (re)started - update cached PID
@@ -232,6 +232,8 @@ terminate(Reason, _State) ->
 %%--------------------------------------------------------------------
 
 %% @doc If a peer has capacity, take tasks from its queue and dispatch them.
+%% Note: a new footprint will not be activated while dispatching tasks as only tasks
+%% belonging to an already active footprint will be in the ar_peer_worker's task queue
 process_peer_queue(Pid, State) ->
 	WorkerCount = queue:len(State#state.workers),
 	TasksToDispatch = ar_peer_worker:process_queue(Pid, WorkerCount),
@@ -263,7 +265,6 @@ process_all_peer_queues2([Pid | Rest], State) ->
 max_tasks(WorkerCount) ->
 	WorkerCount * 50.
 
-
 %%--------------------------------------------------------------------
 %% Dispatch tasks to be run on workers
 %%--------------------------------------------------------------------
@@ -277,8 +278,10 @@ dispatch_tasks(Pid, [Args | Rest], State) ->
 	{Start, End, Peer, TargetStoreID, FootprintKey} = Args,
 	%% Pass FootprintKey as 6th element so it comes back in task_completed
 	gen_server:cast(Worker, {sync_range, {Start, End, Peer, TargetStoreID, 3, FootprintKey}}),
+	%% When a task is dispatched it's removed from the ar_peer_worker's task queue and sent to
+	%% an ar_data_sync_worker.
 	State3 = increment_dispatched_task_count(Worker, 1, State2),
-	State4 = State3#state{ total_task_count = max(0, State3#state.total_task_count - 1) },
+	State4 = State3#state{ total_queued_count = max(0, State3#state.total_queued_count - 1) },
 	dispatch_tasks(Pid, Rest, State4).
 
 %%--------------------------------------------------------------------
@@ -343,11 +346,11 @@ rebalance_peers2([{Peer, Pid} | Rest], AllPeerPerformances, Targets, State) ->
 				{peer, ar_util:format_peer(Peer)}]),
 			ar_peer_worker:stop(Pid),
 			State#state{
-				total_task_count = max(0, State#state.total_task_count - RemovedCount),
+				total_queued_count = max(0, State#state.total_queued_count - RemovedCount),
 				known_peers = maps:remove(Peer, State#state.known_peers)
 			};
 		{ok, RemovedCount} ->
-			State#state{ total_task_count = max(0, State#state.total_task_count - RemovedCount) };
+			State#state{ total_queued_count = max(0, State#state.total_queued_count - RemovedCount) };
 		{error, timeout} ->
 			%% Peer worker timed out, skip it
 			State
@@ -405,18 +408,23 @@ cycle_workers(AverageLoad, State) ->
 	end.
 
 %% Notify all known peers that global footprint capacity is available.
-notify_peers_capacity_available(KnownPeers) ->
+notify_peers_capacity_available(#state{ known_peers = KnownPeers } = State) ->
 	%% Iterate through peers, stop when one activates a footprint to avoid over-activation
 	PeerList = maps:to_list(KnownPeers),
-	try_activate_footprint(PeerList).
+	case try_activate_footprint(PeerList) of
+		true ->
+			State#state{ total_active_footprints = State#state.total_active_footprints + 1 };
+		false ->
+			State
+	end.
 
 try_activate_footprint([]) ->
-	ok;
+	false;
 try_activate_footprint([{_Peer, Pid} | Rest]) ->
 	case ar_peer_worker:try_activate_footprint(Pid) of
 		true ->
 			%% A footprint was activated, stop here
-			ok;
+			true;
 		false ->
 			%% No footprint activated, try next peer
 			try_activate_footprint(Rest)
@@ -553,22 +561,22 @@ test_dispatch_tasks_updates_counts() ->
 	State0 = #state{
 		workers = queue:from_list([worker1, worker2]),
 		total_dispatched_count = 0,
-		total_task_count = 5,
+		total_queued_count = 5,
 		dispatched_count_per_worker = #{}
 	},
 	
 	%% Dispatch empty list - no changes
 	State1 = dispatch_tasks(self(), [], State0),
 	?assertEqual(0, State1#state.total_dispatched_count),
-	?assertEqual(5, State1#state.total_task_count),
+	?assertEqual(5, State1#state.total_queued_count),
 	
 	%% Note: We can't fully test dispatch_tasks without mocking workers,
 	%% but we can verify the state changes for the helper functions.
 	
-	%% Verify that dispatching would decrement total_task_count
+	%% Verify that dispatching would decrement total_queued_count
 	%% by manually simulating what dispatch_tasks does
-	State2 = State1#state{ total_task_count = max(0, State1#state.total_task_count - 1) },
-	?assertEqual(4, State2#state.total_task_count).
+	State2 = State1#state{ total_queued_count = max(0, State1#state.total_queued_count - 1) },
+	?assertEqual(4, State2#state.total_queued_count).
 
 test_try_activate_footprint_stops_on_success() ->
 	%% Create mock peer processes that track if they were called
