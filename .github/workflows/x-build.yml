@@ -49,6 +49,14 @@ jobs:
         with:
           submodules: "recursive"
 
+      # before doing anything, we would like to know what kind of
+      # software and libraries are present on the system for debugging
+      # purpose
+      - name: get software and libraries information
+        run: |
+          sh ./scripts/system_info.sh > _version.yaml
+          cat _version.yaml
+
       # only arweave dependencies are being cached,
       # those are not updated everyday and this is
       # unecessary to fetch them everytime.
@@ -159,5 +167,6 @@ jobs:
           retention-days: 1
           overwrite: true
           path: |
+            _version.yaml
             _build.tar.gz
             apps.tar.gz
