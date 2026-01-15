@@ -17,10 +17,40 @@
 %%%
 %%% Task Flow:
 %%% 1. Tasks are enqueued to the appropriate ar_peer_worker
-%%% 2. Peer workers manage footprints and queue tasks based on capacity
-%%% 3. Coordinator pulls tasks from peer queues and dispatches to workers
-%%% 4. On task completion, peer workers update metrics and footprint state
-%%% 5. Coordinator processes peer queues to fill available worker capacity
+%%% 2. Peer workers store those tasks in either
+%%%    - their task_queue (ready for dispatch) if they belong to an active footprint
+%%%    - or in a waiting queue (not ready for dispatch) if they don't belong to an
+%%%      active footprint
+%%% 3. Periodically the coordinator pulls tasks from peer queues and dispatches to workers.
+%%%    This is event based and happens in response to one of these events:
+%%%    - a new task is sent to the coordinator
+%%%    - a task is completed by an ar_data_sync_worker
+%%% 4. On task completion, peer workers update metrics and notify coordinator.
+%%% 5. When a footprint completes, a new footprint is activated. Footprint activation is
+%%%    handled both by the ar_peer_worker (if it has waiting tasks) or by the coordinator
+%%%    (if the ar_peer_worker does not have waiting tasks, coordinator will find another
+%%%    peer that does). Note: footprint activation does not immediately dispatch tasks.
+%%% 
+%%% Tasks can be in one of three states:
+%%% - waiting: the task belongs to an inactive footprint and is stored in a
+%%%            "waiting" queue on the ar_peer_worker. A task in the "waiting"
+%%%            state contributes to the total_queued_count, but can not be dispatched
+%%%            until its footprint becomes active.
+%%% - queued: the task belongs to an activae footprint and is stored in the
+%%%           ar_peer_worker's task queue. It will be dispatched as soon as
+%%%           an ar_data_sync_worker becomes available.  A task in the "queued"
+%%%           state contributes to the total_queued_count.
+%%% - dispatched: the task has been dispatched to an ar_data_sync_worker and is
+%%%            being processed. A task in the "dispatched" state contributes to the
+%%%            total_dispatched_count.
+%%% 
+%%% Footprints can be in one of two states:
+%%% - active: All tasks belonging to an active footprint are moved to the
+%%%           ar_peer_worker's task queue and are eligible to be dispatched.
+%%% - inactive: All tasks belonging to an inactive footprint are stored in the
+%%%             ar_peer_worker's "waiting" queue. They are not eligible to be 
+%%%             dispatched until their footprint becomes active.
+%%%
 -module(ar_data_sync_coordinator).
 
 -behaviour(gen_server).

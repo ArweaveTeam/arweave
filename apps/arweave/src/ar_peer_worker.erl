@@ -50,6 +50,7 @@
 -define(CHECK_LONG_RUNNING_FOOTPRINTS_MS, 60000).  %% Check every 60 seconds
 -define(LONG_RUNNING_FOOTPRINT_THRESHOLD_S, 120).
 -define(IDLE_SHUTDOWN_THRESHOLD_S, 300).  %% Shutdown after 5 minutes of no tasks
+-define(CALL_TIMEOUT_MS, 30000).
 
 -record(footprint, {
 	waiting = queue:new(),   %% queue of waiting tasks
@@ -119,7 +120,9 @@ stop(Pid) ->
 %% WorkerCount is used to calculate available dispatch slots.
 enqueue_task(Pid, FootprintKey, Args, HasCapacity, WorkerCount) ->
 	try
-		gen_server:call(Pid, {enqueue_task, FootprintKey, Args, HasCapacity, WorkerCount}, 5000)
+		gen_server:call(Pid,
+			{enqueue_task, FootprintKey, Args, HasCapacity, WorkerCount},
+			?CALL_TIMEOUT_MS)
 	catch
 		exit:{timeout, _} -> {false, []};
 		_:_ -> {false, []}
@@ -129,7 +132,7 @@ enqueue_task(Pid, FootprintKey, Args, HasCapacity, WorkerCount) ->
 %% Returns true if a footprint was activated, false otherwise.
 try_activate_footprint(Pid) ->
 	try
-		gen_server:call(Pid, try_activate_footprint, 5000)
+		gen_server:call(Pid, try_activate_footprint, ?CALL_TIMEOUT_MS)
 	catch
 		exit:{timeout, _} -> false;
 		_:_ -> false
@@ -139,7 +142,7 @@ try_activate_footprint(Pid) ->
 %% Used to drain queued tasks without enqueuing new ones (e.g., after task completion).
 process_queue(Pid, WorkerCount) ->
 	try
-		gen_server:call(Pid, {process_queue, WorkerCount}, 5000)
+		gen_server:call(Pid, {process_queue, WorkerCount}, ?CALL_TIMEOUT_MS)
 	catch
 		exit:{timeout, _} -> [];
 		_:_ -> []
@@ -152,7 +155,7 @@ task_completed(Pid, FootprintKey, Result, ElapsedNative, DataSize) ->
 %% @doc Get max_dispatched for this peer.
 get_max_dispatched(Pid) ->
 	try
-		gen_server:call(Pid, get_max_dispatched, 5000)
+		gen_server:call(Pid, get_max_dispatched, ?CALL_TIMEOUT_MS)
 	catch
 		exit:{timeout, _} -> {error, timeout};
 		_:_ -> {error, error}
@@ -162,7 +165,7 @@ get_max_dispatched(Pid) ->
 %% Returns RemovedCount (number of tasks cut from queue).
 rebalance(Pid, Performance, RebalanceParams) ->
 	try
-		gen_server:call(Pid, {rebalance, Performance, RebalanceParams}, 5000)
+		gen_server:call(Pid, {rebalance, Performance, RebalanceParams}, ?CALL_TIMEOUT_MS)
 	catch
 		exit:{timeout, _} -> {error, timeout};
 		_:_ -> {error, timeout}
