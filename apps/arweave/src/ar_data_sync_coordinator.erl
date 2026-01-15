@@ -624,7 +624,7 @@ test_try_activate_footprint_stops_on_success() ->
 	PeerList = [{peer1, Pid1}, {peer2, Pid2}, {peer3, Pid3}],
 	
 	%% Call the function directly
-	ok = try_activate_footprint(PeerList),
+	true = try_activate_footprint(PeerList),
 	
 	%% Wait a bit for messages
 	timer:sleep(50),
@@ -648,7 +648,7 @@ test_try_activate_footprint_tries_all() ->
 	PeerList = [{peer1, Pid1}, {peer2, Pid2}, {peer3, Pid3}],
 	
 	%% Call the function directly
-	ok = try_activate_footprint(PeerList),
+	false = try_activate_footprint(PeerList),
 	
 	%% Wait a bit for messages
 	timer:sleep(50),
