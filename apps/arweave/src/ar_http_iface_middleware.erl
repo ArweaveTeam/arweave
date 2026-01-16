@@ -2042,8 +2042,8 @@ handle_post_tx_accepted(Req, TX, Peer) ->
 	%% Exclude successful requests with valid transactions from the
 	%% IP-based throttling, to avoid connectivity issues at the times
 	%% of excessive transaction volumes.
-	%% {A, B, C, D, _} = Peer, -> Peer is the peer key for the general rate limiter group.
-	arweave_limiter:reduce_for_peer(general, Peer),
+	{A, B, C, D, _} = Peer, %%-> Peer is the peer key for the general rate limiter group.
+	arweave_limiter:reduce_for_peer(general, {A, B, C, D}),
 	BodyReadTime = ar_http_req:body_read_time(Req),
 	ar_peers:rate_gossiped_data(Peer, tx,
 		erlang:convert_time_unit(BodyReadTime, native, microsecond),
