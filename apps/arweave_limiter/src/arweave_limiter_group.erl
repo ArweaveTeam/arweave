@@ -21,6 +21,7 @@
          config/1,
          register_or_reject_call/2,
          reduce_for_peer/2,
+         reset_all/1,
          stop/1
         ]).
 
@@ -29,7 +30,7 @@
          terminate/2, code_change/3, format_status/2]).
 
 -ifdef(AR_TEST).
--export([reset_all/1,
+-export([
          expire_and_get_requests/4,
          drop_expired/3,
          add_and_order_timestamps/2,
@@ -330,18 +331,25 @@ register_concurrent(Peer, Pid, ConcurrentRequests, ConcurrentMonitors) ->
 remove_concurrent(MonitorRef, _Pid, _Reason, ConcurrentRequests, ConcurrentMonitors) ->
     %% Peer for a MonitorRef shouldn't be undefined, because we started to
     %% monitor the process as a first thing when register was called.
-    Peer = maps:get(MonitorRef, ConcurrentMonitors),
-    ConcurrentForPeer = maps:get(Peer, ConcurrentRequests),
-    NewConcurrentForPeer = proplists:delete(MonitorRef, ConcurrentForPeer),
-    NewConcurrentRequests =
-        case NewConcurrentForPeer of
-            [] ->
-                maps:remove(Peer, ConcurrentRequests);
-            _ ->
-                ConcurrentRequests#{Peer => NewConcurrentForPeer}
-        end,
-    NewConcurrentMonitors = maps:remove(MonitorRef, ConcurrentMonitors),
-    {NewConcurrentRequests, NewConcurrentMonitors}.
+    case maps:get(MonitorRef, ConcurrentMonitors, not_found) of
+        not_found ->
+            %% MonitorRef not found. This happens when we reset all the peers
+            %% manually. This also means everything else has been deleted as well.
+            %% Nothing to do, just return the current state.
+            {ConcurrentRequests, ConcurrentMonitors};
+        Peer ->
+            ConcurrentForPeer = maps:get(Peer, ConcurrentRequests),
+            NewConcurrentForPeer = proplists:delete(MonitorRef, ConcurrentForPeer),
+            NewConcurrentRequests =
+                case NewConcurrentForPeer of
+                    [] ->
+                        maps:remove(Peer, ConcurrentRequests);
+                    _ ->
+                        ConcurrentRequests#{Peer => NewConcurrentForPeer}
+                end,
+            NewConcurrentMonitors = maps:remove(MonitorRef, ConcurrentMonitors),
+            {NewConcurrentRequests, NewConcurrentMonitors}
+    end.
 
 filter_state_for_config(#{id := Id,
                           is_disabled := IsDisabled,
