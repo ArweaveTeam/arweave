@@ -12,7 +12,7 @@ register() ->
                                    {name, ar_limiter_response_time_microseconds},
                                    {help, "Time it took for the limiter to respond to requests"},
                                    %% buckets might be reduced for production
-                                   {buckets, [100, 500, 1000, 5000, 10000, 50000, 100000, infinity]}, 
+                                   {buckets, [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50]},
                                    {labels, [limiter_id]}]),
 
     ok = prometheus_counter:new([

@@ -9,7 +9,9 @@
 
 -ifdef(AR_TEST).
 -export([
-         metrics/0
+         metrics/0,
+         tracked_items/1,
+         peers/1
         ]).
 -endif.
 

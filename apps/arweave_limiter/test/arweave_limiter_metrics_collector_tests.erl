@@ -50,7 +50,8 @@ do_setup() ->
 do_setup_with_data() ->
     {LimiterIds, _Callers} = do_setup(),
     %% Generate IP tuples (up to like 16k peers), but any term can be a peer ID.
-    IPs = [{1,2,X div 128, X rem 128} || X <- lists:seq(1, 1000)],
+    Port = 1984,
+    IPs = [{1,2,X div 128, X rem 128, Port} || X <- lists:seq(1, 1000)],
 
     Callers = lists:foldl(fun(IP, Acc) ->
                                   Acc ++ [?assertHandlerRegisterOrRejectCall(?GENERAL, {register, _}, IP) ||
@@ -98,7 +99,20 @@ rate_limiter_happy_path_sanity_check_test_() ->
                          [{ar_limiter_tracked_items_total,gauge,
                            "tracked requests, timestamps, leaky tokens",
                            _},
-                          {ar_limiter_peers,gauge,[],_}], ?M:metrics())
+                          {ar_limiter_peers,gauge,[],_}], ?M:metrics()),
 
+                      Info = arweave_limiter_group:info(?GENERAL),
+                      ?assertMatch(
+                         [
+                          {[{limiter_id, ?GENERAL}, {limiting_type, concurrency}], 150*1000},
+                          {[{limiter_id, ?GENERAL}, {limiting_type, leaky_bucket_tokens}], 1000},
+                          {[{limiter_id, ?GENERAL}, {limiting_type, sliding_window_timestamps}], 100*1000}
+                         ], ?M:tracked_items([{?GENERAL, Info}])),
+                      ?assertMatch(
+                         [
+                          {[{limiter_id, ?GENERAL}, {limiting_type, concurrency}], 1000},
+                          {[{limiter_id, ?GENERAL}, {limiting_type, leaky_bucket_tokens}], 1000},
+                          {[{limiter_id, ?GENERAL}, {limiting_type, sliding_window_timestamps}], 1000}
+                         ], ?M:peers([{?GENERAL, Info}]))
               end]
      end}.

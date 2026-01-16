@@ -51,7 +51,7 @@ config(LimiterRef) ->
 
 register_or_reject_call(LimiterRef, Peer) ->
     {Time, Value} = timer:tc(fun do_register_or_reject_call/2, [LimiterRef, Peer]),
-    prometheus_histogram:observe(ar_limiter_response_time_microseconds, [LimiterRef], Time),
+    prometheus_histogram:observe(ar_limiter_response_time_microseconds, [atom_to_list(LimiterRef)], Time),
     Value.
 
 do_register_or_reject_call(LimiterRef, Peer) ->
