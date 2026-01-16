@@ -62,6 +62,8 @@ get_peer_key(Req) ->
     {{A, B, C, D}, _Port} = cowboy_req:peer(Req),
     {A, B, C, D}.
 
+config_peer_to_ip_addr({{A, B, C, D}, _Port}) -> {A, B, C, D};
+config_peer_to_ip_addr({A, B, C, D, _Port}) -> {A, B, C, D};
 config_peer_to_ip_addr({A, B, C, D}) -> {A, B, C, D}.
 
 path_to_limiter_ref([<<"chunk">> | _]) -> chunk;
