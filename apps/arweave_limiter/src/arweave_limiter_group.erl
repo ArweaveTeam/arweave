@@ -37,6 +37,7 @@
          cleanup_expired_sliding_peers/3]).
 -endif.
 
+
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -89,8 +90,8 @@ init([Config] = _Args) ->
     IsDisabled = maps:get(no_limit, Config, false),
     IsManualReductionDisabled = maps:get(is_manual_reduction_disabled, Config, false),
 
-    LeakyTickMs = maps:get(leaky_tick_interval_ms, Config, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL),
-    TimestampCleanupTickMs = maps:get(timestamp_cleanup_interval_ms, Config,
+    LeakyTickMs = maps:get(leaky_tick_ms, Config, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL),
+    TimestampCleanupTickMs = maps:get(timestamp_cleanup_tick_ms, Config,
                                       ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL),
     TimestampCleanupExpiry = maps:get(timestamp_cleanup_expiry, Config,
                                       ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY),
@@ -253,7 +254,8 @@ handle_info(Info, State = #{id := Id}) ->
     ?LOG_WARNING([{event, unhandled_info}, {id, Id}, {module, ?MODULE}, {info, Info}]),
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, #{leaky_tick_timer_ref := _LeakyRef,
+                     timestamp_cleanup_timer_ref := _TsRef} = _State) ->
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -354,8 +356,6 @@ remove_concurrent(MonitorRef, _Pid, _Reason, ConcurrentRequests, ConcurrentMonit
 filter_state_for_config(#{id := Id,
                           is_disabled := IsDisabled,
                           is_manual_reduction_disabled := IsManualReductionDisabled,
-                          leaky_tick_timer_ref := LeakyRef,
-                          timestamp_cleanup_timer_ref := TsRef,
                           leaky_tick_ms := LeakyTickMs,
                           timestamp_cleanup_tick_ms := TimestampCleanupTickMs,
                           timestamp_cleanup_expiry := TimestampCleanupExpiry,
@@ -367,8 +367,6 @@ filter_state_for_config(#{id := Id,
     #{id => Id,
       is_disabled => IsDisabled,
       is_manual_reduction_disabled => IsManualReductionDisabled,
-      leaky_tick_timer_ref => LeakyRef,
-      timestamp_cleanup_timer_ref => TsRef,
       leaky_tick_ms => LeakyTickMs,
       timestamp_cleanup_tick_ms => TimestampCleanupTickMs,
       timestamp_cleanup_expiry => TimestampCleanupExpiry,

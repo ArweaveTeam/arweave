@@ -304,7 +304,7 @@ start_node(B0, Config, WaitUntilSync) ->
 	clean_up_and_stop(),
 	prometheus:start(),
 	arweave_config:start(),
-	arweave_limiter:start(),
+	ok = arweave_limiter:start(),
 	{ok, BaseConfig} = arweave_config:get_env(),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
 	update_config(Config),
@@ -660,7 +660,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 	clean_up_and_stop(),
 	prometheus:start(),
 	arweave_config:start(),
-	arweave_limiter:start(),
+	ok = arweave_limiter:start(),
 	write_genesis_files(Config#config.data_dir, B0),
 	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = true,

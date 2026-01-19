@@ -31,7 +31,7 @@
 
 
 %%--------------------------------------------------------------------
-%% @doc helper function to start `arweave_config' application.
+%% @doc helper function to start `arweave_limiter' application.
 %% @end
 %%--------------------------------------------------------------------
 -spec start() -> ok | {error, term()}.
@@ -39,7 +39,7 @@
 start() ->
     case application:ensure_all_started(?MODULE, permanent) of
         {ok, Dependencies} ->
-            ?LOG_DEBUG("arweave_limiter started dependencies: ~p", Dependencies),
+            ?LOG_DEBUG("arweave_limiter started dependencies: ~p", [Dependencies]),
             ok;
         Elsewise ->
             Elsewise
