@@ -902,7 +902,7 @@ parse_options([{<<"http_api.tcp.send_timeout">>, Timeout}|Rest], Config) ->
 %% RATE LIMITER GENERAL
 parse_options([{<<"http_api.limiter.general.sliding_window_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.general.sliding_window_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.general.sliding_window_limit'}, Limit}
@@ -938,7 +938,7 @@ parse_options([{<<"http_api.limiter.general.sliding_window_timestamp_cleanup_exp
 
 parse_options([{<<"http_api.limiter.general.leaky_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.general.leaky_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.general.leaky_limit'}, Limit}
@@ -981,7 +981,7 @@ parse_options([{<<"http_api.limiter.general.is_manual_reduction_disabled">>, IsD
 %% RATE LIMITER CHUNK
 parse_options([{<<"http_api.limiter.chunk.sliding_window_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.chunk.sliding_window_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.chunk.sliding_window_limit'}, Limit}
@@ -1017,7 +1017,7 @@ parse_options([{<<"http_api.limiter.chunk.sliding_window_timestamp_cleanup_expir
 
 parse_options([{<<"http_api.limiter.chunk.leaky_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.chunk.leaky_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.chunk.leaky_limit'}, Limit}
@@ -1060,7 +1060,7 @@ parse_options([{<<"http_api.limiter.chunk.is_manual_reduction_disabled">>, IsDis
 %% RATE LIMITER DATA_SYNC_RECORD
 parse_options([{<<"http_api.limiter.data_sync_record.sliding_window_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.data_sync_record.sliding_window_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.data_sync_record.sliding_window_limit'}, Limit}
@@ -1096,7 +1096,7 @@ parse_options([{<<"http_api.limiter.data_sync_record.sliding_window_timestamp_cl
 
 parse_options([{<<"http_api.limiter.data_sync_record.leaky_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.data_sync_record.leaky_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.data_sync_record.leaky_limit'}, Limit}
@@ -1139,7 +1139,7 @@ parse_options([{<<"http_api.limiter.data_sync_record.is_manual_reduction_disable
 %% RATE LIMITER RECENT_HASH_LIST_DIFF
 parse_options([{<<"http_api.limiter.recent_hash_list_diff.sliding_window_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.recent_hash_list_diff.sliding_window_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.recent_hash_list_diff.sliding_window_limit'}, Limit}
@@ -1175,7 +1175,7 @@ parse_options([{<<"http_api.limiter.recent_hash_list_diff.sliding_window_timesta
 
 parse_options([{<<"http_api.limiter.recent_hash_list_diff.leaky_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.recent_hash_list_diff.leaky_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.recent_hash_list_diff.leaky_limit'}, Limit}
@@ -1218,7 +1218,7 @@ parse_options([{<<"http_api.limiter.recent_hash_list_diff.is_manual_reduction_di
 %% RATE LIMITER BLOCK_INDEX
 parse_options([{<<"http_api.limiter.block_index.sliding_window_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.block_index.sliding_window_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.block_index.sliding_window_limit'}, Limit}
@@ -1254,7 +1254,7 @@ parse_options([{<<"http_api.limiter.block_index.sliding_window_timestamp_cleanup
 
 parse_options([{<<"http_api.limiter.block_index.leaky_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.block_index.leaky_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.block_index.leaky_limit'}, Limit}
@@ -1297,7 +1297,7 @@ parse_options([{<<"http_api.limiter.block_index.is_manual_reduction_disabled">>,
 %% RATE LIMITER WALLET_LIST
 parse_options([{<<"http_api.limiter.wallet_list.sliding_window_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.wallet_list.sliding_window_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.wallet_list.sliding_window_limit'}, Limit}
@@ -1333,7 +1333,7 @@ parse_options([{<<"http_api.limiter.wallet_list.sliding_window_timestamp_cleanup
 
 parse_options([{<<"http_api.limiter.wallet_list.leaky_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.wallet_list.leaky_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.wallet_list.leaky_limit'}, Limit}
@@ -1376,7 +1376,7 @@ parse_options([{<<"http_api.limiter.wallet_list.is_manual_reduction_disabled">>,
 %% RATE LIMITER GET_VDF
 parse_options([{<<"http_api.limiter.get_vdf.sliding_window_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.get_vdf.sliding_window_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.get_vdf.sliding_window_limit'}, Limit}
@@ -1412,7 +1412,7 @@ parse_options([{<<"http_api.limiter.get_vdf.sliding_window_timestamp_cleanup_exp
 
 parse_options([{<<"http_api.limiter.get_vdf.leaky_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.get_vdf.leaky_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.get_vdf.leaky_limit'}, Limit}
@@ -1455,7 +1455,7 @@ parse_options([{<<"http_api.limiter.get_vdf.is_manual_reduction_disabled">>, IsD
 %% RATE LIMITER GET_VDF_SESSION
 parse_options([{<<"http_api.limiter.get_vdf_session.sliding_window_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.get_vdf_session.sliding_window_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.get_vdf_session.sliding_window_limit'}, Limit}
@@ -1491,7 +1491,7 @@ parse_options([{<<"http_api.limiter.get_vdf_session.sliding_window_timestamp_cle
 
 parse_options([{<<"http_api.limiter.get_vdf_session.leaky_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.get_vdf_session.leaky_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.get_vdf_session.leaky_limit'}, Limit}
@@ -1534,7 +1534,7 @@ parse_options([{<<"http_api.limiter.get_vdf_session.is_manual_reduction_disabled
 %% RATE LIMITER GET_PREVIOUS_VDF_SESSION
 parse_options([{<<"http_api.limiter.get_previous_vdf_session.sliding_window_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.get_previous_vdf_session.sliding_window_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.get_previous_vdf_session.sliding_window_limit'}, Limit}
@@ -1570,7 +1570,7 @@ parse_options([{<<"http_api.limiter.get_previous_vdf_session.sliding_window_time
 
 parse_options([{<<"http_api.limiter.get_previous_vdf_session.leaky_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.get_previous_vdf_session.leaky_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.get_previous_vdf_session.leaky_limit'}, Limit}
@@ -1613,7 +1613,7 @@ parse_options([{<<"http_api.limiter.get_previous_vdf_session.is_manual_reduction
 %% RATE LIMITER METRICS
 parse_options([{<<"http_api.limiter.metrics.sliding_window_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.metrics.sliding_window_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.metrics.sliding_window_limit'}, Limit}
@@ -1649,7 +1649,7 @@ parse_options([{<<"http_api.limiter.metrics.sliding_window_timestamp_cleanup_exp
 
 parse_options([{<<"http_api.limiter.metrics.leaky_limit">>, Limit}|Rest], Config) ->
     case Limit of
-        Limit when is_integer(Limit), Limit > 0 ->
+        Limit when is_integer(Limit), Limit >= 0 ->
             parse_options(Rest, Config#config{'http_api.limiter.metrics.leaky_limit' = Limit });
         _ ->
             {error, {bad_value, 'http_api.limiter.metrics.leaky_limit'}, Limit}
