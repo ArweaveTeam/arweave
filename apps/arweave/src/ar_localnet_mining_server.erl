@@ -244,7 +244,33 @@ sample_chunk_with_proof(_StoreID, Intervals, MiningAddr) ->
 	case ar_data_sync:get_chunk(RecallByte + 1, Options) of
 		{ok, Proof} ->
 			#{ chunk := PackedChunk, tx_path := TXPath, data_path := DataPath } = Proof,
-			{RecallByte, PackedChunk, #poa{ chunk = PackedChunk, data_path = DataPath, tx_path = TXPath }};
+			case maps:get(unpacked_chunk, Proof, not_found) of
+				not_found ->
+					#{ tx_root := TXRoot, absolute_end_offset := AbsoluteEndOffset,
+						chunk_size := ChunkSize } = Proof,
+					case ar_packing_server:unpack(
+						Packing, AbsoluteEndOffset, TXRoot, PackedChunk, ChunkSize
+					) of
+						{ok, UnpackedChunk} ->
+							PaddedUnpackedChunk = ar_packing_server:pad_chunk(UnpackedChunk),
+							{RecallByte, PackedChunk, #poa{
+								chunk = PackedChunk,
+								unpacked_chunk = PaddedUnpackedChunk,
+								data_path = DataPath,
+								tx_path = TXPath
+							}};
+						Error ->
+							{error, Error}
+					end;
+				UnpackedChunk ->
+					PaddedUnpackedChunk = ar_packing_server:pad_chunk(UnpackedChunk),
+					{RecallByte, PackedChunk, #poa{
+						chunk = PackedChunk,
+						unpacked_chunk = PaddedUnpackedChunk,
+						data_path = DataPath,
+						tx_path = TXPath
+					}}
+			end;
 		Error ->
 			{error, Error}
 	end.
