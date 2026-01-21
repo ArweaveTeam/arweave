@@ -11,10 +11,13 @@ else
     RANDOMX_JIT=
 fi
 
+SNAPSHOT_DIR="${1:-localnet_snapshot}"
+
 export ERL_EPMD_ADDRESS=127.0.0.1
+export LOCALNET_SNAPSHOT_DIR="$SNAPSHOT_DIR"
 
 ERL_LOCALNET_OPTS="-pa $(./rebar3 as localnet path) $(./rebar3 as localnet path --base)/lib/arweave/test -config config/sys.config"
-echo -e "\033[0;32m===> Starting localnet shell from localnet_snapshot...\033[0m"
+echo -e "\033[0;32m===> Starting localnet shell from ${SNAPSHOT_DIR}...\033[0m"
 
 # Check if BEAM process is running
 if pgrep -f "beam.smp" > /dev/null; then

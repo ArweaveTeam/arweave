@@ -1,12 +1,14 @@
 -module(ar_localnet).
 
 -export([start/0, start/1, submit_snapshot_data/0, format_packing/1,
-		mine_one_block/0, mine_until_height/1]).
+		mine_one_block/0, mine_until_height/1, create_snapshot/0]).
 
 -include("ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
+-include_lib("kernel/include/file.hrl").
 
 -define(WAIT_UNTIL_JOINED_TIMEOUT, 200_000).
+-define(DEFAULT_SNAPSHOT_DIR, "localnet_snapshot").
 
 %% @doc Start a node from the localnet_snapshot directory.
 %% Disable mining (can be triggered by request).
@@ -18,7 +20,7 @@ start() ->
 	}).
 
 start(Config) ->
-	SnapshotDir = "localnet_snapshot",
+	SnapshotDir = snapshot_dir(Config),
 	DataDir = Config#config.data_dir,
 	arweave_config:start(),
 	ok = filelib:ensure_dir(DataDir ++ "/"),
@@ -79,6 +81,33 @@ mine_one_block() ->
 mine_until_height(Height) ->
 	ar_node_worker:mine_until_height(Height).
 
+%% @doc Create a reproducible snapshot in localnet_snapshot_[mainnet_starting_height]_[localnet_end_height].
+create_snapshot() ->
+	{ok, Config} = arweave_config:get_env(),
+	case ar_node:is_joined() of
+		false ->
+			{error, node_not_joined};
+		true ->
+			SnapshotDir = snapshot_dir(Config),
+			case open_snapshot_databases(SnapshotDir) of
+				{ok, CloseSnapshotDbs} ->
+					SnapshotResult =
+						case ar_storage:read_block_index(SnapshotDir) of
+							not_found ->
+								{error, snapshot_block_index_not_found};
+							BI ->
+								MainnetStartHeight = length(BI) - 1,
+								LocalnetEndHeight = ar_node:get_height(),
+								NewSnapshotDir = snapshot_dir_name(MainnetStartHeight, LocalnetEndHeight),
+								create_snapshot(SnapshotDir, Config#config.data_dir, NewSnapshotDir)
+						end,
+					CloseSnapshotDbs(),
+					SnapshotResult;
+				{error, _} = Error ->
+					Error
+			end
+	end.
+
 wait_until_joined() ->
 	ar_util:do_until(
 		fun() -> ar_node:is_joined() end,
@@ -98,6 +127,8 @@ format_packing(Other) ->
 	io_lib:format("~p", [Other]).
 
 submit_snapshot_data() ->
+	{ok, Config} = arweave_config:get_env(),
+	SnapshotDir = snapshot_dir(Config),
 	io:format("Seeding data from snapshot...~n"),
 	SnapshotTXs = snapshot_txs(),
 	BlockStarts = lists:sort(maps:keys(SnapshotTXs)),
@@ -106,7 +137,8 @@ submit_snapshot_data() ->
 			fun(BlockStart, {AccBigChunk, AccSmallChunk}) ->
 				TXIDs = maps:get(BlockStart, SnapshotTXs),
 				TXs = lists:map(fun(TXID) ->
-					Filename = "localnet_snapshot/seed_txs/" ++ binary_to_list(TXID) ++ ".json",
+					Filename = filename:join([SnapshotDir, "seed_txs",
+						binary_to_list(TXID) ++ ".json"]),
 					case file:read_file(Filename) of
 						{ok, JSON} ->
 							Map = jiffy:decode(JSON, [return_maps]),
@@ -302,4 +334,142 @@ snapshot_txs() ->
 		20424523 => [<<"CQv9OVOCzntq2DRqNJ9j_WnWPcsniyGRXpt4i_a8Iy0">>],
 		20599699 => [<<"35wYULjhQBiTFh9u-PJz6ki0v7Zi1whk_AhowUt99Ac">>]
 	}.
+
+snapshot_dir(Config) ->
+	case os:getenv("LOCALNET_SNAPSHOT_DIR") of
+		false ->
+			case Config#config.start_from_state of
+				not_set ->
+					?DEFAULT_SNAPSHOT_DIR;
+				Dir ->
+					Dir
+			end;
+		Dir ->
+			Dir
+	end.
+
+snapshot_dir_name(MainnetStartHeight, LocalnetEndHeight) ->
+	lists:flatten(
+		io_lib:format("localnet_snapshot_~B_~B", [MainnetStartHeight, LocalnetEndHeight])
+	).
+
+open_snapshot_databases(SnapshotDir) ->
+	case ar_storage:open_start_from_state_databases(SnapshotDir) of
+		ok ->
+			{ok, fun ar_storage:close_start_from_state_databases/0};
+		{error, _} = Error ->
+			Error
+	end.
+
+create_snapshot(SnapshotDir, DataDir, NewSnapshotDir) ->
+	case ensure_snapshot_dir(NewSnapshotDir) of
+		ok ->
+			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "rocksdb"),
+			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "wallets"),
+			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "ar_tx_blacklist"),
+			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "data_sync_state"),
+			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "header_sync_state"),
+			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "mempool"),
+			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "peers"),
+			ok = copy_required_dir(SnapshotDir, NewSnapshotDir, "seed_txs"),
+			io:format("Snapshot created: ~s~n", [NewSnapshotDir]),
+			{ok, NewSnapshotDir};
+		{error, _} = Error ->
+			Error
+	end.
+
+ensure_snapshot_dir(NewSnapshotDir) ->
+	case file:read_file_info(NewSnapshotDir) of
+		{ok, _} ->
+			{error, {snapshot_dir_exists, NewSnapshotDir}};
+		{error, enoent} ->
+			filelib:ensure_dir(filename:join(NewSnapshotDir, "placeholder") ++ "/");
+		{error, Reason} ->
+			{error, {snapshot_dir_unavailable, Reason}}
+	end.
+
+copy_from_dir(PrimaryDir, FallbackDir, TargetDir, Name) ->
+	PrimaryPath = filename:join([PrimaryDir, Name]),
+	FallbackPath = filename:join([FallbackDir, Name]),
+	TargetPath = filename:join([TargetDir, Name]),
+	case exists_on_disk(PrimaryPath) of
+		true ->
+			copy_any(PrimaryPath, TargetPath);
+		false ->
+			case exists_on_disk(FallbackPath) of
+				true ->
+					copy_any(FallbackPath, TargetPath);
+				false ->
+					ok
+			end
+	end.
+
+copy_required_dir(SourceDir, TargetDir, Name) ->
+	SourcePath = filename:join([SourceDir, Name]),
+	TargetPath = filename:join([TargetDir, Name]),
+	case exists_on_disk(SourcePath) of
+		true ->
+			copy_any(SourcePath, TargetPath);
+		false ->
+			{error, {snapshot_path_missing, SourcePath}}
+	end.
+
+exists_on_disk(Path) ->
+	case file:read_file_info(Path) of
+		{ok, _} ->
+			true;
+		_ ->
+			false
+	end.
+
+copy_any(SourcePath, TargetPath) ->
+	case file:read_file_info(SourcePath) of
+		{ok, #file_info{ type = directory }} ->
+			copy_dir(SourcePath, TargetPath);
+		{ok, #file_info{ type = regular }} ->
+			filelib:ensure_dir(TargetPath),
+			case file:copy(SourcePath, TargetPath) of
+				{ok, _} ->
+					ok;
+				Error ->
+					Error
+			end;
+		{ok, #file_info{ type = symlink }} ->
+			copy_symlink(SourcePath, TargetPath);
+		{ok, #file_info{ type = other }} ->
+			{error, {unsupported_type, SourcePath}};
+		{error, Reason} ->
+			{error, {read_file_info_failed, SourcePath, Reason}}
+	end.
+
+copy_dir(SourceDir, TargetDir) ->
+	case file:list_dir(SourceDir) of
+		{ok, Entries} ->
+			ok = filelib:ensure_dir(filename:join([TargetDir, "placeholder"]) ++ "/"),
+			lists:foldl(
+				fun(Entry, Acc) ->
+					case Acc of
+						ok ->
+							SourcePath = filename:join([SourceDir, Entry]),
+							TargetPath = filename:join([TargetDir, Entry]),
+							copy_any(SourcePath, TargetPath);
+						{error, _} = Error ->
+							Error
+					end
+				end,
+				ok,
+				Entries
+			);
+		{error, Reason} ->
+			{error, {list_dir_failed, SourceDir, Reason}}
+	end.
+
+copy_symlink(SourcePath, TargetPath) ->
+	case file:read_link(SourcePath) of
+		{ok, LinkTarget} ->
+			filelib:ensure_dir(TargetPath),
+			file:make_symlink(LinkTarget, TargetPath);
+		{error, Reason} ->
+			{error, {read_link_failed, SourcePath, Reason}}
+	end.
 
