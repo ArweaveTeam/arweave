@@ -974,14 +974,26 @@ apply_chain(Info, PrevInfo) ->
 			partition_upper_bound = UpperBound,
 			next_partition_upper_bound = NextUpperBound, global_step_number = StepNumber,
 			steps = Steps, last_step_checkpoints = LastStepCheckpoints } = Info,
-	Count = StepNumber - PrevStepNumber,
 	Output = hd(Steps),
-	Count = length(Steps),
+	assert_step_count(StepNumber, PrevStepNumber, Steps),
 	SessionKey = session_key(PrevInfo),
 	NextSessionKey = session_key(Info),
 	Args = {StepNumber, SessionKey, NextSessionKey, Seed, UpperBound, NextUpperBound,
 			VDFDifficulty, NextVDFDifficulty, Steps, LastStepCheckpoints},
 	gen_server:cast(?MODULE, {validated_steps, Args}).
+
+-ifdef(LOCALNET).
+assert_step_count(StepNumber, PrevStepNumber, Steps) ->
+	case StepNumber == PrevStepNumber of
+		true ->
+			true = length(Steps) > 0;
+		false ->
+			true = StepNumber - PrevStepNumber == length(Steps)
+	end.
+-else.
+assert_step_count(StepNumber, PrevStepNumber, Steps) ->
+	true = StepNumber - PrevStepNumber == length(Steps).
+-endif.
 
 apply_tip(#block{ height = Height } = B, PrevB, #state{ sessions = Sessions } = State) ->
 	case Height + 1 < ar_fork:height_2_6() of
