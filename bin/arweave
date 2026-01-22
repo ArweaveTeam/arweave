@@ -564,9 +564,19 @@ arweave_test_run() {
 	    TEST_NODE="${TEST_NODE_NAME}@${TEST_NODE_HOST}"
 	fi
 
-	TEST_PATH="$(./rebar3 as ${TEST_PROFILE} path)"
-	TEST_PATH_BASE="$(./rebar3 as ${TEST_PROFILE} path --base)/lib/arweave/test"
-	PARAMS="-pa ${TEST_PATH} ${TEST_PATH_BASE} -config ${TEST_CONFIG} -noshell"
+        TEST_PATH="$(./rebar3 as ${TEST_PROFILE} path)"
+        
+        ## TODO: Generate path for all apps -> Should we fetch this from somewhere?
+        APPS="arweave arweave_config arweave_limiter arweave_diagnostic"
+
+	PATH_ARGS=""
+        for app in $APPS; do
+            P="$(./rebar3 as ${TEST_PROFILE} path --base)/lib/${app}/test"
+            echo $P
+            PATH_ARGS="${PATH_ARGS} ${P}"
+        done
+
+        PARAMS="-pa ${TEST_PATH} ${PATH_ARGS} -config ${TEST_CONFIG} -noshell"
 	ENTRY_POINT="-run ar ${TEST_MODULE} ${*} -s init stop"
 	command="erl ${PARAMS} -name ${TEST_NODE} -setcookie ${TEST_COOKIE} ${ENTRY_POINT}"
 	echo -e "\033[0;32m===> Execute command ${command}\033[0m"

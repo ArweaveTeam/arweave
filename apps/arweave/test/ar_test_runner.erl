@@ -107,6 +107,7 @@ run_tests(TestType, TestSpec) ->
 ensure_started(TestType) ->
 	try
 		arweave_config:start(),
+		ok = arweave_limiter:start(),
 		start_for_tests(TestType),
 		ar_test_node:boot_peers(TestType),
 		ar_test_node:wait_for_peers(TestType)

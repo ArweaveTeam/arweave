@@ -178,6 +178,112 @@
 -define(DEFAULT_COWBOY_TCP_SEND_TIMEOUT, 15_000).
 -define(DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN, 5000).
 
+%% Common RLG Settings
+-define(DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL, 120000).
+-define(DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY, 120000).
+-define(DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED, false).
+
+%% General RLG
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT, 0).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_DURATION, 1000).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT, 450).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL, 30000).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_REDUCTION, 450).
+-define(DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT, 150).
+
+%% Chunk RLG
+-define(DEFAULT_HTTP_API_LIMITER_CHUNK_SLIDING_WINDOW_LIMIT, 100).
+-define(DEFAULT_HTTP_API_LIMITER_CHUNK_SLIDING_WINDOW_DURATION, 1000).
+-define(DEFAULT_HTTP_API_LIMITER_CHUNK_LEAKY_LIMIT, 6000).
+-define(DEFAULT_HTTP_API_LIMITER_CHUNK_LEAKY_TICK_INTERVAL, 30000).
+-define(DEFAULT_HTTP_API_LIMITER_CHUNK_LEAKY_TICK_REDUCTION, 30).
+-define(DEFAULT_HTTP_API_LIMITER_CHUNK_CONCURRENCY_LIMIT, 200).
+
+%% Data Sync RLG
+-define(DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_SLIDING_WINDOW_LIMIT, 0).
+-define(DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_SLIDING_WINDOW_DURATION, 1000).
+-define(DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_LEAKY_LIMIT, 20).
+-define(DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_INTERVAL, 30000).
+-define(DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_REDUCTION, 20).
+-define(DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_CONCURRENCY_LIMIT, 40).
+
+%% Recent Hash List Diff RLG
+-define(DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_SLIDING_WINDOW_LIMIT, 0).
+-define(DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_SLIDING_WINDOW_DURATION, 1000).
+-define(DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_LEAKY_LIMIT, 120).
+-define(DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_LEAKY_TICK_INTERVAL, 30000).
+-define(DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_LEAKY_TICK_REDUCTION, 120).
+-define(DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_CONCURRENCY_LIMIT, 240).
+
+%% Block Index RLG
+-define(DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_SLIDING_WINDOW_LIMIT, 0).
+-define(DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_SLIDING_WINDOW_DURATION, 1000).
+-ifdef(AR_TEST).
+-define(DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_LEAKY_LIMIT, 10).
+-else.
+-define(DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_LEAKY_LIMIT, 1).
+-endif.
+-define(DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_LEAKY_TICK_INTERVAL, 30000).
+-define(DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_LEAKY_TICK_REDUCTION, 1).
+-define(DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_CONCURRENCY_LIMIT, 2).
+
+%% Wallet list RLG
+-define(DEFAULT_HTTP_API_LIMITER_WALLET_LIST_SLIDING_WINDOW_LIMIT, 0).
+-define(DEFAULT_HTTP_API_LIMITER_WALLET_LIST_SLIDING_WINDOW_DURATION, 1000).
+-ifdef(AR_TEST).
+-define(DEFAULT_HTTP_API_LIMITER_WALLET_LIST_LEAKY_LIMIT, 10).
+-else.
+-define(DEFAULT_HTTP_API_LIMITER_WALLET_LIST_LEAKY_LIMIT, 1).
+-endif.
+-define(DEFAULT_HTTP_API_LIMITER_WALLET_LIST_LEAKY_TICK_INTERVAL, 30000).
+-define(DEFAULT_HTTP_API_LIMITER_WALLET_LIST_LEAKY_TICK_REDUCTION, 1).
+-define(DEFAULT_HTTP_API_LIMITER_WALLET_LIST_CONCURRENCY_LIMIT, 2).
+
+%% Get VDF RLG
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_SLIDING_WINDOW_LIMIT, 0).
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_SLIDING_WINDOW_DURATION, 1000).
+-ifdef(AR_TEST).
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_LEAKY_LIMIT, 4500).
+-else.
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_LEAKY_LIMIT, 90).
+-endif.
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_LEAKY_TICK_INTERVAL, 30000).
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_LEAKY_TICK_REDUCTION, 90).
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_CONCURRENCY_LIMIT, 90).
+
+%% VDF Session RLG
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_SLIDING_WINDOW_LIMIT, 0).
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_SLIDING_WINDOW_DURATION, 1000).
+-ifdef(AR_TEST).
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_LEAKY_LIMIT, 50000).
+-else.
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_LEAKY_LIMIT, 30).
+-endif.
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_LEAKY_TICK_INTERVAL, 30000).
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_LEAKY_TICK_REDUCTION, 30).
+-define(DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_CONCURRENCY_LIMIT, 30).
+
+%% Previous VDF Session RLG
+-define(DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_SLIDING_WINDOW_LIMIT, 0).
+-define(DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_SLIDING_WINDOW_DURATION, 1000).
+-ifdef(AR_TEST).
+-define(DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_LEAKY_LIMIT, 50000).
+-else.
+-define(DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_LEAKY_LIMIT, 30).
+-endif.
+-define(DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_LEAKY_TICK_INTERVAL, 30000).
+-define(DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_LEAKY_TICK_REDUCTION, 30).
+-define(DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_CONCURRENCY_LIMIT, 30).
+
+%% Metrics RLG
+-define(DEFAULT_HTTP_API_LIMITER_METRICS_SLIDING_WINDOW_LIMIT, 0).
+-define(DEFAULT_HTTP_API_LIMITER_METRICS_SLIDING_WINDOW_DURATION, 1000).
+-define(DEFAULT_HTTP_API_LIMITER_METRICS_LEAKY_LIMIT, 2).
+-define(DEFAULT_HTTP_API_LIMITER_METRICS_LEAKY_TICK_INTERVAL, 1000).
+-define(DEFAULT_HTTP_API_LIMITER_METRICS_LEAKY_TICK_REDUCTION, 2).
+-define(DEFAULT_HTTP_API_LIMITER_METRICS_CONCURRENCY_LIMIT, 2).
+
+
 %% @doc Startup options with default values.
 -record(config, {
 	init = false,
@@ -323,7 +429,199 @@
 	'http_api.tcp.nodelay' = ?DEFAULT_COWBOY_TCP_NODELAY,
 	'http_api.tcp.num_acceptors' = ?DEFAULT_COWBOY_TCP_NUM_ACCEPTORS,
 	'http_api.tcp.send_timeout_close' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE,
-	'http_api.tcp.send_timeout' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT
+	'http_api.tcp.send_timeout' = ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT,
+
+	'http_api.limiter.general.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.general.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.general.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api.limiter.general.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
+	'http_api.limiter.general.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT,
+	'http_api.limiter.general.leaky_tick_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.general.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.general.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT,
+	'http_api.limiter.general.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED,
+
+        'http_api.limiter.chunk.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_CHUNK_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.chunk.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_CHUNK_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.chunk.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api.limiter.chunk.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
+	'http_api.limiter.chunk.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_CHUNK_LEAKY_LIMIT,
+	'http_api.limiter.chunk.leaky_tick_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_CHUNK_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.chunk.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_CHUNK_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.chunk.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_CHUNK_CONCURRENCY_LIMIT,
+	'http_api.limiter.chunk.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED,
+
+	'http_api.limiter.data_sync_record.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.data_sync_record.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.data_sync_record.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api.limiter.data_sync_record.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
+	'http_api.limiter.data_sync_record.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_LEAKY_LIMIT,
+	'http_api.limiter.data_sync_record.leaky_tick_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.data_sync_record.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.data_sync_record.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_DATA_SYNC_RECORD_CONCURRENCY_LIMIT,
+	'http_api.limiter.data_sync_record.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED,
+
+	'http_api.limiter.recent_hash_list_diff.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.recent_hash_list_diff.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.recent_hash_list_diff.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api.limiter.recent_hash_list_diff.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
+	'http_api.limiter.recent_hash_list_diff.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_LEAKY_LIMIT,
+	'http_api.limiter.recent_hash_list_diff.leaky_tick_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.recent_hash_list_diff.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.recent_hash_list_diff.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_RECENT_HASH_LIST_DIFF_CONCURRENCY_LIMIT,
+	'http_api.limiter.recent_hash_list_diff.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED,
+
+	'http_api.limiter.block_index.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.block_index.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.block_index.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api.limiter.block_index.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
+	'http_api.limiter.block_index.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_LEAKY_LIMIT,
+	'http_api.limiter.block_index.leaky_tick_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.block_index.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.block_index.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_BLOCK_INDEX_CONCURRENCY_LIMIT,
+	'http_api.limiter.block_index.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED,
+
+	'http_api.limiter.wallet_list.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_WALLET_LIST_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.wallet_list.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_WALLET_LIST_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.wallet_list.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api.limiter.wallet_list.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
+	'http_api.limiter.wallet_list.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_WALLET_LIST_LEAKY_LIMIT,
+	'http_api.limiter.wallet_list.leaky_tick_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_WALLET_LIST_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.wallet_list.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_WALLET_LIST_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.wallet_list.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_WALLET_LIST_CONCURRENCY_LIMIT,
+	'http_api.limiter.wallet_list.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED,
+
+	'http_api.limiter.get_vdf.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.get_vdf.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.get_vdf.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api.limiter.get_vdf.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
+	'http_api.limiter.get_vdf.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_LEAKY_LIMIT,
+	'http_api.limiter.get_vdf.leaky_tick_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.get_vdf.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.get_vdf.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_CONCURRENCY_LIMIT,
+	'http_api.limiter.get_vdf.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED,
+
+	'http_api.limiter.get_vdf_session.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.get_vdf_session.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.get_vdf_session.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api.limiter.get_vdf_session.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
+	'http_api.limiter.get_vdf_session.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_LEAKY_LIMIT,
+	'http_api.limiter.get_vdf_session.leaky_tick_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.get_vdf_session.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.get_vdf_session.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_VDF_SESSION_CONCURRENCY_LIMIT,
+	'http_api.limiter.get_vdf_session.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED,
+
+	'http_api.limiter.get_previous_vdf_session.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.get_previous_vdf_session.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.get_previous_vdf_session.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api.limiter.get_previous_vdf_session.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
+	'http_api.limiter.get_previous_vdf_session.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_LEAKY_LIMIT,
+	'http_api.limiter.get_previous_vdf_session.leaky_tick_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.get_previous_vdf_session.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.get_previous_vdf_session.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_GET_PREVIOUS_VDF_SESSION_CONCURRENCY_LIMIT,
+	'http_api.limiter.get_previous_vdf_session.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED,
+
+	'http_api.limiter.metrics.sliding_window_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_METRICS_SLIDING_WINDOW_LIMIT,
+	'http_api.limiter.metrics.sliding_window_duration' =
+                     ?DEFAULT_HTTP_API_LIMITER_METRICS_SLIDING_WINDOW_DURATION,
+	'http_api.limiter.metrics.sliding_window_timestamp_cleanup_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
+	'http_api.limiter.metrics.sliding_window_timestamp_cleanup_expiry' =
+                     ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
+	'http_api.limiter.metrics.leaky_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_METRICS_LEAKY_LIMIT,
+	'http_api.limiter.metrics.leaky_tick_interval' =
+                     ?DEFAULT_HTTP_API_LIMITER_METRICS_LEAKY_TICK_INTERVAL,
+	'http_api.limiter.metrics.leaky_tick_reduction' =
+                     ?DEFAULT_HTTP_API_LIMITER_METRICS_LEAKY_TICK_REDUCTION,
+	'http_api.limiter.metrics.concurrency_limit' =
+                     ?DEFAULT_HTTP_API_LIMITER_METRICS_CONCURRENCY_LIMIT,
+	'http_api.limiter.metrics.is_manual_reduction_disabled' =
+                     ?DEFAULT_HTTP_API_LIMITER_IS_MANUAL_REDUCTION_DISABLED
+
+
 }).
 
 -endif.
