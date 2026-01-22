@@ -174,14 +174,12 @@ get_active_partition_upper_bound(StepNumber, SessionKey) ->
 %% computed yet.
 -ifdef(LOCALNET).
 get_steps(StepNumber, StepNumber, _NextSeed, _NextVDFDifficulty) ->
-	[{_, NonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
-	[NonceLimiterInfo#nonce_limiter_info.output];
+	not_found;
 get_steps(StartStepNumber, EndStepNumber, NextSeed, NextVDFDifficulty)
 		when EndStepNumber > StartStepNumber ->
 	SessionKey = session_key(NextSeed, StartStepNumber, NextVDFDifficulty),
 	gen_server:call(?MODULE, {get_steps, StartStepNumber, EndStepNumber, SessionKey},
 			?DEFAULT_CALL_TIMEOUT).
-
 -else.
 get_steps(StartStepNumber, EndStepNumber, NextSeed, NextVDFDifficulty)
 		when EndStepNumber > StartStepNumber ->
