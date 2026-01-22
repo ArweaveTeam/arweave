@@ -156,7 +156,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 				case Size + ChunkSize > DataRootLimit
 						orelse DiskPoolSize + ChunkSize > DiskPoolLimit of
 					true ->
-						?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+						?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 							{reason, exceeds_disk_pool_size_limit1}, {offset, Offset},
 							{data_root_size, Size}, {chunk_size, ChunkSize},
 							{data_root_limit, DataRootLimit}, {disk_pool_size, DiskPoolSize},
@@ -168,7 +168,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 			_ ->
 				case DiskPoolSize + ChunkSize > DiskPoolLimit of
 					true ->
-						?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+						?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 							{reason, exceeds_disk_pool_size_limit2}, {offset, Offset},
 							{chunk_size, ChunkSize}, {disk_pool_size, DiskPoolSize},
 							{disk_pool_limit, DiskPoolLimit}]),
@@ -191,7 +191,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 			{ok, DiskPoolDataRootValue} ->
 				case validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
 					false ->
-						?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+						?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 							{reason, invalid_proof}, {offset, Offset}]),
 						{error, invalid_proof};
 					{true, PassesBase, PassesStrict, PassesRebase, EndOffset} ->
