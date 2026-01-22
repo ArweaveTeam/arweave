@@ -59,7 +59,7 @@
 -ifdef(AR_TEST).
 -define(FOOTPRINT_MIGRATION_BATCH_SIZE, 10).
 -else.
--define(FOOTPRINT_MIGRATION_BATCH_SIZE, 100).
+-define(FOOTPRINT_MIGRATION_BATCH_SIZE, 200).
 -endif.
 
 %%%===================================================================
@@ -148,7 +148,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	CheckDiskPool =
 		case {DataRootOffsetReply, DataRootInDiskPool} of
 			{not_found, []} ->
-				?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+				?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 					{reason, data_root_not_found}, {offset, Offset},
 					{data_root, ar_util:encode(DataRoot)}]),
 				{error, data_root_not_found};
@@ -156,7 +156,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 				case Size + ChunkSize > DataRootLimit
 						orelse DiskPoolSize + ChunkSize > DiskPoolLimit of
 					true ->
-						?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+						?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 							{reason, exceeds_disk_pool_size_limit1}, {offset, Offset},
 							{data_root_size, Size}, {chunk_size, ChunkSize},
 							{data_root_limit, DataRootLimit}, {disk_pool_size, DiskPoolSize},
@@ -168,7 +168,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 			_ ->
 				case DiskPoolSize + ChunkSize > DiskPoolLimit of
 					true ->
-						?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+						?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 							{reason, exceeds_disk_pool_size_limit2}, {offset, Offset},
 							{chunk_size, ChunkSize}, {disk_pool_size, DiskPoolSize},
 							{disk_pool_limit, DiskPoolLimit}]),
@@ -191,7 +191,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 			{ok, DiskPoolDataRootValue} ->
 				case validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
 					false ->
-						?LOG_WARNING([{event, failed_to_add_chunk_to_disk_pool},
+						?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 							{reason, invalid_proof}, {offset, Offset}]),
 						{error, invalid_proof};
 					{true, PassesBase, PassesStrict, PassesRebase, EndOffset} ->
@@ -4104,7 +4104,7 @@ initialize_footprint_record(Cursor, Packing, State) ->
 			initialize_footprint_range(Cursor2, EndPosition, Packing, StoreID),
 			NewCursor = EndPosition,
 			ok = ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, binary:encode_unsigned(NewCursor)),
-			gen_server:cast(self(), {initialize_footprint_record, NewCursor, Packing}),
+			ar_util:cast_after(1_000, self(), {initialize_footprint_record, NewCursor, Packing}),
 			State
 	end.
 
