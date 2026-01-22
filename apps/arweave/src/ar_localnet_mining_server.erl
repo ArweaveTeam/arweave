@@ -152,9 +152,21 @@ mine_block6({RecallByte2, _Chunk2, PoA2}, Stage1Data, State, MiningAddr, _Storag
 
 mine_block7(Stage1Data, Stage2Data, State, MiningAddr) ->
 	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
-	{SessionKey, Session} = ar_nonce_limiter:get_current_session(),
-	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 	PrevStepNumber = TipNonceLimiterInfo#nonce_limiter_info.global_step_number,
+	SessionKey = ar_nonce_limiter:session_key(TipNonceLimiterInfo),
+	Session =
+		case ar_nonce_limiter:get_session(SessionKey) of
+			not_found ->
+				?LOG_ERROR([
+					{event, localnet_nonce_limiter_session_not_found},
+					{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+					{prev_step_number, PrevStepNumber}
+				]),
+				error;
+			FoundSession ->
+				FoundSession
+		end,
+	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 	{StepNumber, Output, Seed, Checkpoints, Steps} =
 		case Session#vdf_session.step_number == PrevStepNumber of
 			true ->
