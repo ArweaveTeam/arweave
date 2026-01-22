@@ -1892,11 +1892,18 @@ poa_map_to_json_map(Map) ->
 		data_path => ar_util:encode(DataPath),
 		packing => BinaryPacking
 	},
-	case maps:get(end_offset, Map, not_found) of
+	Map3 =
+		case maps:get(absolute_end_offset, Map, not_found) of
+			not_found ->
+				Map2;
+			EndOffset ->
+				Map2#{ absolute_end_offset => integer_to_binary(EndOffset) }
+		end,
+	case maps:get(chunk_size, Map, not_found) of
 		not_found ->
-			Map2;
-		EndOffset ->
-			Map2#{ end_offset => integer_to_binary(EndOffset) }
+			Map3;
+		ChunkSize ->
+			Map3#{ chunk_size => integer_to_binary(ChunkSize) }
 	end.
 
 poa_no_chunk_map_to_json_map(Map) ->
@@ -1905,11 +1912,11 @@ poa_no_chunk_map_to_json_map(Map) ->
 		tx_path => ar_util:encode(TXPath),
 		data_path => ar_util:encode(DataPath)
 	},
-	case maps:get(end_offset, Map, not_found) of
+	case maps:get(absolute_end_offset, Map, not_found) of
 		not_found ->
 			Map2;
 		EndOffset ->
-			Map2#{ end_offset => integer_to_binary(EndOffset) }
+			Map2#{ absolute_end_offset => integer_to_binary(EndOffset) }
 	end.
 
 json_map_to_poa_map(JSON) ->

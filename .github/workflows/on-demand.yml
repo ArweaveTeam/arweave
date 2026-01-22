@@ -38,6 +38,7 @@ on:
           - ar_ets_intervals
           - ar_events
           - ar_fork_recovery_tests
+          - ar_get_chunk_tests
           - ar_header_sync_tests
           - ar_http_iface_tests
           - ar_http_util_tests
