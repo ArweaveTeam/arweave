@@ -1,20 +1,49 @@
 -module(ar_test_node).
 
 %% The new, more flexible, and more user-friendly interface.
--export([boot_peers/1, wait_for_peers/1, get_config/1,set_config/2,
-		wait_until_joined/0, wait_until_joined/1,
-		restart/0, restart/1, restart_with_config/1, restart_with_config/2,
-		start_other_node/4, start_node/2, start_node/3, start_coordinated/1, base_cm_config/1, mine/1,
-		wait_until_height/1, wait_until_height/2, wait_until_height/3, wait_until_height/4,
-		do_wait_until_height/2,
-		assert_wait_until_height/2,
-		wait_until_mining_paused/1, http_get_block/2, get_blocks/1,
-		mock_to_force_invalid_h1/0, mainnet_packing_mocks/0,
-		get_difficulty_for_invalid_hash/0, invalid_solution/0,
-		valid_solution/0, new_mock/2, mock_function/3, unmock_module/1, remote_call/4,
-		load_fixture/1,
-		get_default_storage_module_packing/2, get_genesis_chunk/1,
-		all_nodes/1, new_custom_size_rsa_wallet/1]).
+-export([
+	all_nodes/1,
+	assert_wait_until_height/2,
+	base_cm_config/1,
+	boot_peers/1,
+	do_wait_until_height/2,
+	get_blocks/1,
+	get_config/1,
+	get_default_storage_module_packing/2,
+	get_difficulty_for_invalid_hash/0,
+	get_genesis_chunk/1,
+	http_get_block/2,
+	invalid_solution/0,
+	load_fixture/1,
+	mainnet_packing_mocks/0,
+	mine/1,
+	mock_function/3,
+	mock_to_force_invalid_h1/0,
+	new_custom_size_rsa_wallet/1,
+	new_mock/2,
+	random_id/0,
+	random_id/2,
+	remote_call/4,
+	restart/0,
+	restart/1,
+	restart_with_config/1,
+	restart_with_config/2,
+	set_config/2,
+	start_coordinated/1,
+	start_node/2,
+	start_node/3,
+	start_other_node/4,
+	unmock_module/1,
+	valid_solution/0,
+	wait_for_peers/1,
+	wait_until_height/1,
+	wait_until_height/2,
+	wait_until_height/3,
+	wait_until_height/4,
+	wait_until_joined/0,
+	wait_until_joined/1,
+	wait_until_mining_paused/1
+]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3, start/4,
@@ -184,7 +213,7 @@ try_boot_peer(TestType, Node, Retries) ->
 %%--------------------------------------------------------------------
 %% @doc run a command in asynchronous way using `spawn/1' instead of
 %% using `&' from shell feature.
-%% @end 
+%% @end
 %%--------------------------------------------------------------------
 run_command(Node, Command) ->
 	spawn(fun() -> run_command_init(Node, Command) end).
@@ -214,9 +243,69 @@ wait_for_peer(Node) ->
 self_node() ->
 	list_to_atom(get_node()).
 
+%%--------------------------------------------------------------------
+%% @doc produce a 4 bytes random number encoded in base 36.
+%%
+%% ```
+%% "A8OPD1" = random_id().
+%% '''
+%%
+%% @see random_id/2
+%% @end
+%%--------------------------------------------------------------------
+-spec random_id() -> string().
+
+random_id() ->
+	random_id(4, 36).
+
+%%--------------------------------------------------------------------
+%% @doc generate a random id.
+%%
+%% ```
+%% "110000" = random_id(1, 2).
+%% "3E2CD7EF" = ar_test_node:random_id(4,16).
+%% "EKFYOKCJ0" = ar_test_node:random_id(6,36).
+%% '''
+%%
+%% @see crypto:strong_rand_bytes/1
+%% @end
+%%--------------------------------------------------------------------
+-spec random_id(Length, EncodedBase) -> Return when
+	Length :: pos_integer(),
+	EncodedBase :: pos_integer(),
+	Return :: string().
+
+random_id(Length, EncodedBase)
+	when is_integer(Length), Length>=1,
+	     is_integer(EncodedBase), EncodedBase>=2, EncodedBase=<37 ->
+	<<Binary:(Length*8)>> = crypto:strong_rand_bytes(Length),
+	integer_to_list(Binary, EncodedBase);
+random_id(_, _) ->
+	random_id(4, 36).
+
+%%--------------------------------------------------------------------
+%% @doc To avoid collision with other node started on the system, a
+%% random name is required. A timestamp is also inserted as well.
+%%
+%% ```
+%% 'test--1769158195-TGVTRQ@127.0.0.1' =
+%%   ar_test_node:peer_name(test).
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
 peer_name(Node) ->
+	Timestamp = integer_to_list(erlang:system_time(second)),
+	RandomId = random_id(),
 	list_to_atom(
-		atom_to_list(Node) ++ "-" ++ get_node_namespace() ++ "@127.0.0.1"
+		atom_to_list(Node)
+		++ "-"
+		++ get_node_namespace()
+		++ "-"
+		++ Timestamp
+		++ "-"
+		++ RandomId
+		++ "@127.0.0.1"
 	).
 
 peer_port(Node) ->
@@ -1024,7 +1113,7 @@ wait_until_syncs_genesis_data() ->
 		gen_server:cast(
 			list_to_atom("ar_data_sync_" ++ ar_storage_module:label(ar_storage_module:id(M))),
 			sync_data
-		) 
+		)
 		|| M <- Config#config.storage_modules
 	],
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, Packing)
