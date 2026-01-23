@@ -22,6 +22,21 @@
 %%--------------------------------------------------------------------
 init() ->
 	[
+		% set configuration file
+		#{
+			enabled => true,
+			parameter_key => [configuration],
+			default => "./config.json",
+			type => path,
+			runtime => false,
+			deprecated => false,
+			required => false,
+			environment => <<"AR_CONFIGURATION">>,
+			short_argument => $c,
+			long_argument => <<"--configuration">>
+		},
+
+		% set data directory
 		#{
 			enabled => true,
 			parameter_key => [data,directory],
