@@ -43,6 +43,14 @@
 %%%
 %%% '''
 %%%
+%%% == TODO ==
+%%%
+%%% @todo store the configuration spec in the process and modify the
+%%% `get/0' function to return it.
+%%%
+%%% @todo creates `get_environment/0' and `get_environment/1' to
+%%% retrieve one environment value.
+%%%
 %%% @end
 %%%===================================================================
 -module(arweave_config_environment).

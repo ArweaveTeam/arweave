@@ -9,6 +9,12 @@
 %%% @author Arweave Team
 %%% @author Mathieu Kerjouan
 %%% @doc Arweave Configuration Parameters.
+%%%
+%%% == TODO ==
+%%%
+%%% @todo create an `include' parameter to include files from
+%%% other places.
+%%%
 %%% @end
 %%%===================================================================
 -module(arweave_config_parameters).
@@ -22,6 +28,33 @@
 %%--------------------------------------------------------------------
 init() ->
 	[
+		% set configuration file. The configuration parameter
+		% is a list of binary, stored in arweave_config_file
+		% process.
+		#{
+			enabled => true,
+			parameter_key => [configuration],
+			default => [],
+			type => path,
+			runtime => true,
+			deprecated => false,
+			required => false,
+			environment => <<"AR_CONFIGURATION">>,
+			short_argument => $c,
+			long_argument => <<"--configuration">>,
+			handle_set => fun
+				(_, V, _ ,_) ->
+					{ok, _} = arweave_config_file:add(V),
+					P = arweave_config_file:get_paths(),
+					{store, P}
+			end,
+			handle_get => fun
+				(_, _) ->
+					{ok, arweave_config_file:get_paths()}
+			end
+		},
+
+		% set data directory
 		#{
 			enabled => true,
 			parameter_key => [data,directory],
