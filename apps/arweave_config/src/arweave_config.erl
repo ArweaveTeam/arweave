@@ -211,7 +211,18 @@ set(Key, Value) when is_atom(Key) ->
 		{key, Key},
 		{value, Value}
 	]),
-	arweave_config_legacy:set(Key, Value);
+	case arweave_config_legacy:set(Key, Value) of
+		{ok, V} ->
+			case arweave_config_spec:get_legacy(Key) of
+				{ok, PK} ->
+					_ = set(PK, Value),
+					{ok, V};
+				Else ->
+					Else
+			end;
+		Else ->
+			Else
+	end;
 set(Key, Value) ->
 	case arweave_config_parser:key(Key) of
 		{ok, Parameter} ->

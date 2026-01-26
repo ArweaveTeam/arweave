@@ -8,8 +8,6 @@
 %%% @copyright 2025 (c) Arweave
 %%% @author Arweave Team
 %%% @author Mathieu Kerjouan
-%%% @doc Arweave Configuration Interface.
-%%%
 %%% @doc Manage and store local environment variable.
 %%%
 %%% This module has been created to be a frontend around the local
@@ -49,13 +47,13 @@
 %%%===================================================================
 -module(arweave_config_environment).
 -behavior(gen_server).
+-compile(warnings_as_errors).
+-compile({no_auto_import,[get/0]}).
 -export([load/0, get/0, get/1, reset/0]).
 -export([start_link/0]).
--export([init/1, terminate/2]).
+-export([init/1]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
--compile({no_auto_import,[get/0]}).
 -include_lib("kernel/include/logger.hrl").
--include_lib("eunit/include/eunit.hrl").
 
 %%--------------------------------------------------------------------
 %% @doc start `arweave_config_environment' process.
@@ -68,6 +66,8 @@ start_link() ->
 %% @doc load environment variable into `arweave_config'.
 %% @end
 %%--------------------------------------------------------------------
+-spec load() -> ok.
+
 load() ->
 	gen_server:call(?MODULE, load, 10_000).
 
@@ -75,12 +75,18 @@ load() ->
 %% @doc returns the environment variables stored.
 %% @end
 %%--------------------------------------------------------------------
+-spec get() -> [{binary(), binary()}].
+
 get() ->
 	ets:tab2list(?MODULE).
 
 %%--------------------------------------------------------------------
 %% @doc returns the environment variables stored.
 %%--------------------------------------------------------------------
+-spec get(Key) -> Return when
+	Key :: binary(),
+	Return :: {ok, binary()} | {error, term()}.
+
 get(Key) ->
 	case ets:lookup(?MODULE, Key) of
 		[{Key, Value}] -> {ok, Value};
@@ -88,18 +94,21 @@ get(Key) ->
 	end.
 
 %%--------------------------------------------------------------------
-%% @hidden
 %% @doc reset the environment variable. Remove all environment
-%% variable set and reload them from the environment. Mostly used for
+%% variables set and reload them from the environment. Mostly used for
 %% development and testing purpose.
 %% @end
 %%--------------------------------------------------------------------
+-spec reset() -> {ok, [{binary(), binary()}]}.
+
 reset() ->
-	gen_server:cast(?MODULE, reset).
+	gen_server:call(?MODULE, reset, 1000).
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
+-spec init(any()) -> {ok, reference() | atom()}.
+
 init(_) ->
 	% list environment variables available on the system
 	% when arweave is started. These variables will need
@@ -108,30 +117,15 @@ init(_) ->
 	handle_reset(),
 	{ok, Ets}.
 
-init_test() ->
-	{ok, Ets} = init([]),
-	% All element of the ets should be in binary format.
-	[
-	 	begin
-			?assertEqual(true, is_binary(Key)),
-			?assertEqual(true, is_binary(Value))
-		end
-		|| {Key, Value} <- ets:tab2list(Ets)
-	].
-
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-terminate(_, _) -> ok.
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-handle_call(load, _From, State) ->
+handle_call(Msg = load, From, State) ->
+	?LOG_DEBUG("received: ~p", [Msg, From]),
 	Spec = arweave_config_spec:get_environments(),
 	Mapping = [
 		begin
-			?LOG_DEBUG("found environment ~p", [EnvKey]),
+			?LOG_DEBUG("found environment ~p=~p", [EnvKey,EnvValue]),
 			{Parameter, EnvValue}
 		end
 	||
@@ -146,6 +140,10 @@ handle_call(load, _From, State) ->
 		Mapping
 	),
 	{reply, ok, State};
+handle_call(Msg = reset, From, State) ->
+	?LOG_DEBUG("received: ~p", [Msg, From]),
+	Result = handle_reset(),
+	{reply, {ok, Result}, State};
 handle_call(Msg, From, State) ->
 	?LOG_WARNING([
 		{module, ?MODULE},
@@ -153,14 +151,11 @@ handle_call(Msg, From, State) ->
 		{from, From},
 		{message, Msg}
 	]),
-	{noreply, State}.
+	{reply, ok, State}.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_cast(reset, State) ->
-	handle_reset(),
-	{noreply, State};
 handle_cast(Msg, State) ->
 	?LOG_WARNING([
 		{module, ?MODULE},
@@ -196,7 +191,6 @@ handle_reset() ->
 			[K,V] = re:split(E, "=", [{parts, 2}, {return, list}]),
 			BK = list_to_binary(K),
 			VK = list_to_binary(V),
-			?LOG_DEBUG("found environment ~p=~p", [BK, VK]),
 			ets:insert(?MODULE, {BK, VK}),
 			{BK,VK}
 		end ||

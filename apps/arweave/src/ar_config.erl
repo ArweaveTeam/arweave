@@ -1,20 +1,105 @@
+%%%===================================================================
+%%% GNU General Public License, version 2 (GPL-2.0)
+%%% The GNU General Public License (GPL-2.0)
+%%% Version 2, June 1991
+%%%
+%%% ------------------------------------------------------------------
+%%%
+%%% @copyright 2026 (c) Arweave
+%%% @author Arweave Team
+%%% @doc arweave legacy configuration parser module.
+%%% @end
+%%%===================================================================
 -module(ar_config).
-
--export([validate_config/1, set_dependent_flags/1, use_remote_vdf_server/0,
-		pull_from_remote_vdf_server/0, compute_own_vdf/0, is_vdf_server/0,
-		is_public_vdf_server/0, parse/1, parse_storage_module/1, log_config/1]).
-
+-export([
+	compute_own_vdf/0,
+	is_public_vdf_server/0,
+	is_vdf_server/0,
+	log_config/1,
+	parse/1,
+	parse_config_file/1,
+	parse_storage_module/1,
+	pull_from_remote_vdf_server/0,
+	set_dependent_flags/1,
+	use_remote_vdf_server/0,
+	validate_config/1
+]).
 -include("ar.hrl").
 -include("ar_consensus.hrl").
 -include("ar_p3.hrl").
-
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
+%%--------------------------------------------------------------------
+%% @doc Take legacy command line argument and look for config_file
+%% parameter, then read and parse the file.
+%% @end
+%%--------------------------------------------------------------------
+-spec parse_config_file(Args) -> Return when
+	Args :: [string()],
+	Return :: {ok, #config{}}
+		| {error, term(), term()}
+		| {error, term()}.
+
+parse_config_file(Args) ->
+	parse_config_file(Args, [], #config{}).
+
+%%--------------------------------------------------------------------
+%% @hidden
+%%--------------------------------------------------------------------
+-spec parse_config_file(Args, Skipped, Config) -> Return when
+	Args :: [string()],
+	Skipped :: [string()],
+	Config :: #config{},
+	Return :: {ok, #config{}}
+		| {error, term(), term()}
+		| {error, term()}.
+
+parse_config_file([], _, Config) ->
+	{ok, Config};
+parse_config_file(["config_file", Path | Rest], Skipped, _) ->
+	case read_config_from_file(Path) of
+		{ok, Config} ->
+			parse_config_file(Rest, Skipped, Config);
+		{error, Reason, Item} ->
+			io:format("Failed to parse config: ~p: ~p.~n", [Reason, Item]),
+			ar_cli_parser:show_help(),
+			{error, Reason, Item};
+		{error, Reason} ->
+			io:format("Failed to parse config: ~p.~n", [Reason]),
+			ar_cli_parser:show_help(),
+			{error, Reason}
+	end;
+parse_config_file([Arg | Rest], Skipped, Config) ->
+	parse_config_file(Rest, [Arg | Skipped], Config).
+
+%%--------------------------------------------------------------------
+%% @doc read the content of a configuration and then parse it with
+%% `ar_config:parse/1'.
+%% @end
+%%--------------------------------------------------------------------
+-spec read_config_from_file(Path) -> Return when
+	Path :: string(),
+	Return :: {ok, binary()}
+		| {error, file_unreadable, Path}.
+
+read_config_from_file(Path) ->
+	case file:read_file(Path) of
+		{ok, FileData} ->
+			ar_config:parse(FileData);
+		{error, _} ->
+			{error, file_unreadable, Path}
+	end.
+
+%%--------------------------------------------------------------------
+%% @doc Validate legacy configuration file as `#config{}' record.
+%% @end
+%%--------------------------------------------------------------------
 -spec validate_config(Config :: #config{}) -> boolean().
+
 validate_config(Config) ->
 	validate_init(Config) andalso
 	validate_storage_modules(Config) andalso
@@ -24,8 +109,12 @@ validate_config(Config) ->
 	validate_unique_replication_type(Config) andalso
 	validate_verify(Config).
 
--spec set_dependent_flags(Config :: #config{}) -> #config{}.
+%%--------------------------------------------------------------------
 %% @doc Some flags force other flags to be set.
+%% @end
+%%--------------------------------------------------------------------
+-spec set_dependent_flags(Config :: #config{}) -> #config{}.
+
 set_dependent_flags(Config) ->
 	Config2 = set_verify_flags(Config),
 	Config2.

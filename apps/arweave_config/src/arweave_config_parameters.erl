@@ -35,7 +35,7 @@ init() ->
 			long_description => "",
 			environment => <<"AR_DATA_DIRECTORY">>,
 			short_argument => $D,
-			long_argument => <<"--data-directory">>,
+			long_argument => <<"--data.directory">>,
 			handle_get => fun legacy_get/2,
 			handle_set => fun legacy_set/4
 		},
@@ -105,6 +105,7 @@ init() ->
 			default => "./logs",
 			type => path,
 			environment => true,
+			long_argument => true,
 			runtime => false,
 			handle_set => fun
 				(_K, Path, _S, _) when is_list(Path) ->
@@ -122,6 +123,7 @@ init() ->
 			default => 8128,
 			type => pos_integer,
 			environment => true,
+			long_argument => true,
 			runtime => true,
 			handle_set => {
 				fun logger_set/4,
@@ -137,6 +139,7 @@ init() ->
 			default => 256,
 			type => pos_integer,
 			environment => true,
+			long_argument => true,
 			runtime => true,
 			handle_set => {
 				fun logger_set/4,
@@ -152,6 +155,7 @@ init() ->
 			default => 16256,
 			type => pos_integer,
 			environment => true,
+			long_argument => true,
 			runtime => true,
 			handle_set => {
 				fun logger_set/4,
@@ -165,6 +169,7 @@ init() ->
 			default => 20,
 			type => pos_integer,
 			environment => true,
+			long_argument => true,
 			runtime => true,
 			handle_set => {
 				fun logger_set/4,
@@ -180,6 +185,7 @@ init() ->
 			default => 51418800,
 			type => pos_integer,
 			environment => true,
+			long_argument => true,
 			runtime => true,
 			handle_set => {
 				fun logger_set/4,
@@ -193,6 +199,7 @@ init() ->
 			default => false,
 			type => boolean,
 			environment => true,
+			long_argument => true,
 			runtime => true,
 			handle_set => {
 				fun logger_set/4,
@@ -206,6 +213,7 @@ init() ->
 			type => pos_integer,
 			default => 10,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_info,config,sync_mode_qlen]
@@ -218,6 +226,7 @@ init() ->
 			type => pos_integer,
 			default => 200,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_info,config,drop_mode_qlen]
@@ -230,6 +239,7 @@ init() ->
 			type => pos_integer,
 			default => 1000,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_info,config,flush_qlen]
@@ -242,6 +252,7 @@ init() ->
 			type => boolean,
 			default => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_info,config,burst_limit_enable]
@@ -254,6 +265,7 @@ init() ->
 			type => pos_integer,
 			default => 500,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_info,config,burst_limit_max_count]
@@ -266,6 +278,7 @@ init() ->
 			type => pos_integer,
 			default => 1000,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_info,config,burst_limit_window_time]
@@ -278,6 +291,7 @@ init() ->
 			type => boolean,
 			default => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_info,config,overload_kill_enable]
@@ -290,6 +304,7 @@ init() ->
 			type => pos_integer,
 			default => 20_000,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_info,config,overload_kill_qlen]
@@ -302,6 +317,7 @@ init() ->
 			type => pos_integer,
 			default => 3_000_000,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_info,config,overload_kill_mem_size]
@@ -314,6 +330,7 @@ init() ->
 			type => pos_integer,
 			default => 5000,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_info,config,overload_kill_restart_after]
@@ -327,6 +344,7 @@ init() ->
 			default => false,
 			type => boolean,
 			environment => true,
+			long_argument => true,
 			runtime => true,
 			handle_set => fun
 				(_,true,_,_) ->
@@ -343,6 +361,7 @@ init() ->
 			inherit => [logging,max_no_files],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,max_no_files]
@@ -354,6 +373,7 @@ init() ->
 			inherit => [logging,max_no_bytes],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,max_no_bytes]
@@ -365,6 +385,7 @@ init() ->
 			inherit => [logging,sync_mode_qlen],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,sync_mode_qlen]
@@ -376,6 +397,7 @@ init() ->
 			inherit => [logging,drop_mode_qlen],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,drop_mode_qlen]
@@ -387,6 +409,7 @@ init() ->
 			inherit => [logging,flush_qlen],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,flush_qlen]
@@ -398,6 +421,7 @@ init() ->
 			inherit => [logging,burst_limit_enable],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,burst_limit_enable]
@@ -409,6 +433,7 @@ init() ->
 			inherit => [logging,burst_limit_max_count],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,burst_limit_max_count]
@@ -420,6 +445,7 @@ init() ->
 			inherit => [logging,burst_limit_window_time],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,burst_limit_window_time]
@@ -431,6 +457,7 @@ init() ->
 			inherit => [logging,overload_kill_enable],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,overload_kill_enable]
@@ -442,6 +469,7 @@ init() ->
 			inherit => [logging,overload_kill_qlen],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,overload_kill_qlen]
@@ -453,6 +481,7 @@ init() ->
 			inherit => [logging,overload_kill_mem_size],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,overload_kill_mem_size]
@@ -464,6 +493,7 @@ init() ->
 			inherit => [logging,overload_kill_restart_after],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,config,overload_kill_restart_after]
@@ -475,6 +505,7 @@ init() ->
 			inherit => [logging,formatter,chars_limit],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,formatter,chars_limit]
@@ -486,6 +517,7 @@ init() ->
 			inherit => [logging,formatter,depth],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,formatter,depth]
@@ -497,6 +529,7 @@ init() ->
 			inherit => [logging,formatter,max_size],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,formatter,max_size]
@@ -508,6 +541,7 @@ init() ->
 			inherit => [logging,formatter,template],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_debug,formatter,template]
@@ -521,6 +555,7 @@ init() ->
 			default => false,
 			type => boolean,
 			environment => true,
+			long_argument => true,
 			runtime => true,
 			handle_set => fun
 				(_K,true,_S,_) ->
@@ -537,6 +572,7 @@ init() ->
 			inherit => [logging,max_no_files],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,max_no_files]
@@ -548,6 +584,7 @@ init() ->
 			inherit => [logging,max_no_bytes],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,max_no_bytes]
@@ -559,6 +596,7 @@ init() ->
 			inherit => [logging,sync_mode_qlen],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,sync_mode_qlen]
@@ -570,6 +608,7 @@ init() ->
 			inherit => [logging,drop_mode_qlen],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,drop_mode_qlen]
@@ -581,6 +620,7 @@ init() ->
 			inherit => [logging,flush_qlen],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,flush_qlen]
@@ -592,6 +632,7 @@ init() ->
 			inherit => [logging,burst_limit_enable],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,burst_limit_enable]
@@ -603,6 +644,7 @@ init() ->
 			inherit => [logging,burst_limit_max_count],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,burst_limit_max_count]
@@ -614,6 +656,7 @@ init() ->
 			inherit => [logging,burst_limit_window_time],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,burst_limit_window_time]
@@ -625,6 +668,7 @@ init() ->
 			inherit => [logging,overload_kill_enable],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,overload_kill_enable]
@@ -636,6 +680,7 @@ init() ->
 			inherit => [logging,overload_kill_qlen],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,overload_kill_qlen]
@@ -647,6 +692,7 @@ init() ->
 			inherit => [logging,overload_kill_mem_size],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,overload_kill_mem_size]
@@ -658,6 +704,7 @@ init() ->
 			inherit => [logging,overload_kill_restart_after],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,overload_kill_restart_after]
@@ -669,6 +716,7 @@ init() ->
 			inherit => {[logging,compress_on_rotate], [type, default]},
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,config,compress_on_rotate]
@@ -680,6 +728,7 @@ init() ->
 			inherit => [logging,formatter,chars_limit],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,formatter,chars_limit]
@@ -691,6 +740,7 @@ init() ->
 			inherit => [logging,formatter,max_size],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,formatter,max_size]
@@ -702,6 +752,7 @@ init() ->
 			inherit => [logging,formatter,depth],
 			runtime => true,
 			environment => true,
+			long_argument => true,
 			handle_set => {
 				fun logger_set/4,
 				[arweave_http_api,formatter,depth]
@@ -713,7 +764,8 @@ init() ->
 		%-----------------------------------------------------
 		#{
 			parameter_key => [config,http,api,enabled],
-			environment => <<"AR_CONFIG_HTTP_API_ENABLED">>,
+			environment => true,
+			long_argument => true,
 			short_description => <<"enable arweave configuration http api interface">>,
 			% @todo enable it by default after testing
 			default => false,
@@ -723,7 +775,8 @@ init() ->
 		},
 		#{
 			parameter_key => [config,http,api,listen,port],
-			environment => <<"AR_CONFIG_HTTP_API_LISTEN_PORT">>,
+			environment => true,
+			long_argument => true,
 			short_description => "set arweave configuration http api interface port",
 			default => 4891,
 			type => tcp_port,
@@ -732,7 +785,8 @@ init() ->
 		},
 		#{
 			parameter_key => [config,http,api,listen,address],
-			environment => <<"AR_CONFIG_HTTP_API_LISTEN_ADDRESS">>,
+			environment => true,
+			long_argument => true,
 			short_description => "set arweave configuration http api listen address",
 			type => [ipv4, file],
 			required => false,

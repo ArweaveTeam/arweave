@@ -8,7 +8,7 @@
 %%% @copyright 2025 (c) Arweave
 %%% @author Arweave Team
 %%% @author Mathieu Kerjouan
-%%% @deprecated This module is a temporary interface.
+%%% @deprecated This module is a legacy compat layer.
 %%% @doc temporary interface to arweave legacy configuration.
 %%%
 %%% This  module is  mainly used  as a  process to  deal with  arweave
@@ -52,22 +52,25 @@
 %%%===================================================================
 -module(arweave_config_legacy).
 -behavior(gen_server).
+-compile(warnings_as_errors).
+-compile({no_auto_import,[get/0, get/1]}).
 -export([start_link/0, stop/0]).
 -export([
-	keys/0,
-	has_key/1,
 	get/0,
 	get/1,
-	set/2,
-	reset/0,
-	set_env/1,
+	get_config_value/2,
 	get_env/0,
-	get_config_value/2
+	has_key/1,
+	keys/0,
+	merge/1,
+	reset/0,
+	set/1,
+	set/2,
+	set_env/1
 ]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_info/2, handle_cast/2]).
 -export([config_to_proplist/1, proplist_to_config/1]).
--compile({no_auto_import,[get/0, get/1]}).
 -include("arweave_config.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -124,6 +127,20 @@ get(Key) when is_atom(Key) ->
 	end.
 
 %%--------------------------------------------------------------------
+%% @doc Set a new config file.
+%% @end
+%%--------------------------------------------------------------------
+-spec set(Config) -> Return when
+	Config :: #config{},
+	Return :: ok | {error, term()} | timeout.
+
+set(Config)
+	when is_record(Config, config) ->
+		gen_server:call(?MODULE, {set, Config}, 1000);
+set(_) ->
+	{error, badarg}.
+
+%%--------------------------------------------------------------------
 %% @doc Set a value to a key.
 %% @end
 %%--------------------------------------------------------------------
@@ -165,14 +182,14 @@ set(Key, Value, Opts) when is_atom(Key), is_map(Opts) ->
 %% @end
 %%--------------------------------------------------------------------
 set_env(Config) when is_record(Config, config) ->
-	gen_server:cast(?MODULE, {set_env, Config}).
+	gen_server:call(?MODULE, {set_env, Config}, 1000).
 
 %%--------------------------------------------------------------------
 %% @doc reset the legacy configuration by using the default values.
 %% @end
 %%--------------------------------------------------------------------
 reset() ->
-	gen_server:cast(?MODULE, reset).
+	gen_server:call(?MODULE, reset, 1000).
 
 %%--------------------------------------------------------------------
 %% @doc export the current configuration as `#config{}' record.
@@ -182,6 +199,19 @@ reset() ->
 
 get_env() ->
 	gen_server:call(?MODULE, get_env, 1000).
+
+%%--------------------------------------------------------------------
+%% @doc merge a configuration file (set only modified values).
+%% @end
+%%--------------------------------------------------------------------
+-spec merge(Config) -> Return when
+	Config :: #config{},
+	Return :: {ok, Config} | {error, term()}.
+
+merge(Config) when is_record(Config, config) ->
+	gen_server:call(?MODULE, {merge, Config}, 1000);
+merge(_) ->
+	{error, badarg}.
 
 %%--------------------------------------------------------------------
 %% @doc start `arweave_config_legacy' process.
@@ -202,6 +232,7 @@ stop() ->
 %% @hidden
 %%--------------------------------------------------------------------
 init(_) ->
+	?LOG_INFO("start ~p  process", [?MODULE]),
 	Proplist = config_to_proplist(#config{}),
 	?LOG_DEBUG([{configuration, Proplist}]),
 	set_environment(Proplist),
@@ -221,6 +252,37 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
+handle_call(Msg = {merge, Config}, From, State = #?MODULE{ proplist = P })
+	when is_record(Config, config) ->
+		?LOG_DEBUG([{message, Msg}, {from, From}]),
+		try
+			Proplist = config_to_proplist(Config),
+			Zipped = lists:zip(Proplist, P),
+			MergedProplist = lists:foldr(fun
+				% same values, nothing to change
+				({{K, NV}, {K, OV}}, Acc) when NV =:= OV ->
+					[{K, OV}|Acc];
+				% different values, we set the new one
+				({{K, NV}, {K, OV}}, Acc) when NV =/= OV ->
+					[{K, NV}|Acc];
+				% something wrong, the configuration
+				% is bad
+				(Else, _Acc) ->
+					throw({error, {badconfig, Else}})
+				end,
+				[],
+				Zipped
+			),
+			NewConfig = proplist_to_config(MergedProplist),
+			NewState = State#?MODULE{
+				proplist = MergedProplist,
+				record = NewConfig
+			},
+			{reply, {ok, NewConfig}, NewState}
+		catch
+			_Error:Reason ->
+				{reply, {error, Reason}, State}
+		end;
 handle_call(Msg = {has_key, Key}, From, State = #?MODULE{ proplist = P }) ->
 	?LOG_DEBUG([{message, Msg}, {from, From}]),
 	{reply, proplists:is_defined(Key, P), State};
@@ -235,6 +297,21 @@ handle_call(Msg = {get, Key}, From, State = #?MODULE{ proplist = P })
 		?LOG_DEBUG([{message, Msg}, {from, From}]),
 		Return = {ok, proplists:get_value(Key, P)},
 		{reply, Return, State};
+handle_call(Msg = {set, Config}, From, State)
+	when is_record(Config, config) ->
+		?LOG_DEBUG([{message, Msg}, {from, From}]),
+		try
+			Proplist = config_to_proplist(Config),
+			NewState = #?MODULE{
+				proplist = Proplist,
+				record = Config
+			},
+			set_environment(Config),
+			{reply, ok, NewState}
+		catch
+			_Error:Reason ->
+				{reply, {error, Reason}, State}
+		end;
 handle_call(Msg = {set, Key, Value, Opts}, From, State = #?MODULE{ proplist = P })
 	when is_atom(Key), is_map(Opts) ->
 		?LOG_DEBUG([{message, Msg}, {from, From}]),
@@ -248,7 +325,33 @@ handle_call(Msg = {set, Key, Value, Opts}, From, State = #?MODULE{ proplist = P 
 		},
 		{reply, Return, NewState};
 handle_call(Msg = get_env, From, State = #?MODULE{ record = R }) ->
+	?LOG_DEBUG([{message, Msg}, {from, From}]),
 	{reply, {ok, R}, State};
+handle_call(Msg = {set_env, Config}, From, State) ->
+	?LOG_DEBUG([{message, Msg}, {from, From}]),
+	case import_config(Config) of
+		{ok, NewP} ->
+			set_environment(NewP),
+			NewState = State#?MODULE{
+				proplist = NewP,
+				record = proplist_to_config(NewP)
+			},
+			{reply, ok, NewState};
+		_ ->
+			{reply, error, State}
+	end;
+handle_call(Msg = reset, From, State) ->
+	?LOG_DEBUG([{message, Msg}, {from, From}]),
+	case reset_config() of
+		{ok, NewP} ->
+			NewState = State#?MODULE{
+				proplist = NewP,
+				record = proplist_to_config(NewP)
+			},
+			{reply, ok, NewState};
+		_ ->
+			{reply, error, State}
+	end;
 handle_call(Message, From, State) ->
 	Error = [
 		{from, From},
@@ -262,31 +365,6 @@ handle_call(Message, From, State) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_cast(Msg = {set_env, Config}, State) ->
-	?LOG_DEBUG([{message, Msg}]),
-	case import_config(Config) of
-		{ok, NewP} ->
-			set_environment(NewP),
-			NewState = State#?MODULE{
-				proplist = NewP,
-				record = proplist_to_config(NewP)
-			},
-			{noreply, NewState};
-		_ ->
-			{noreply, State}
-	end;
-handle_cast(Msg = reset, State) ->
-	?LOG_DEBUG([{message, Msg}]),
-	case reset_config() of
-		{ok, NewP} ->
-			NewState = State#?MODULE{
-				proplist = NewP,
-				record = proplist_to_config(NewP)
-			},
-			{noreply, NewState};
-		_ ->
-			{noreply, State}
-	end;
 handle_cast(Msg, State) ->
 	?LOG_ERROR("received: ~p", [Msg]),
 	{noreply, State}.

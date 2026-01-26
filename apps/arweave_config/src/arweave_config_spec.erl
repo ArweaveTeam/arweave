@@ -96,6 +96,7 @@
 %%%===================================================================
 -module(arweave_config_spec).
 -behavior(gen_server).
+-compile(warnings_as_errors).
 -export([
 	start_link/0,
 	start_link/1,
@@ -105,6 +106,7 @@
 	spec_to_argparse/0,
 	get_default/1,
 	get_legacy/0,
+	get_legacy/1,
 	get_environments/0,
 	get_environment/1,
 	get_short_arguments/0,
@@ -122,7 +124,7 @@
 
 % A raw key from external sources (cli, api...), non-sanitized,
 % non-parsed.
--type key() :: term().
+% -type key() :: term().
 
 % An arweave parameter, parsed and valid, containing only known
 % terms and specified.
@@ -579,6 +581,23 @@ get_legacy() ->
 	maps:from_list(ets:select(?MODULE, Query)).
 
 %%--------------------------------------------------------------------
+%% @doc Returns the parameter keys (if it exists) using a legacy
+%% parameter from `#config{}' record.
+%% @end
+%%--------------------------------------------------------------------
+get_legacy(Key) ->
+	Pattern = {'$1', #{ legacy => Key }},
+	Guard = [{'=/=', Key, undefined}],
+	Select = ['$1'],
+	Query = [{Pattern, Guard, Select}],
+	case ets:select(?MODULE, Query) of
+		[V] ->
+			{ok, V};
+		_ ->
+			{error, undefined}
+	end.
+
+%%--------------------------------------------------------------------
 %% @doc get a value using a parameter.
 %% @end
 %%--------------------------------------------------------------------
@@ -820,7 +839,7 @@ init_loop([Map|Rest], Buffer) when is_map(Map) ->
 	% checked as map key.
 	case init_map(Map, #{}) of
 		{ok, #{ parameter_key := K } = R} ->
-			?LOG_DEBUG("checked callback from map ~p:~p", [Map]),
+			?LOG_DEBUG("checked callback from map ~p", [Map]),
 			init_loop(Rest, Buffer#{ K => R });
 		discard ->
 			?LOG_NOTICE("can't load parameter from module ~p", [Map]),
@@ -836,7 +855,7 @@ init_loop([Module|Rest], Buffer) when is_atom(Module) ->
 	% all callback are checked as functions exported.
 	case init_module(Module, #{}) of
 		{ok, #{ parameter_key := K } = R} ->
-			?LOG_DEBUG("checked callback from map ~p:~p", [Module]),
+			?LOG_DEBUG("checked callback from map ~p", [Module]),
 			init_loop(Rest, Buffer#{ K => R });
 		discard ->
 			?LOG_NOTICE("can't load parameter from module ~p", [Module]),
@@ -1122,7 +1141,9 @@ apply_set_value(Parameter, Value, Spec = #{ set := Set }) ->
 	}),
 
 	Args = maps:get(set_args, Spec, []),
-	try Set(Parameter, Value, State, Args) of
+	try
+		Set(Parameter, Value, State, Args)
+	of
 		ignore ->
 			{ok, OldValue, OldValue};
 		{ok, NewValue} ->
