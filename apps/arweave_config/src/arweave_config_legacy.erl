@@ -66,11 +66,13 @@
 	reset/0,
 	set/1,
 	set/2,
-	set_env/1
+	set_env/1,
+	config_merge/2,
+	config_to_proplist/1,
+	proplist_to_config/1
 ]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_info/2, handle_cast/2]).
--export([config_to_proplist/1, proplist_to_config/1]).
 -include("arweave_config.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -252,54 +254,32 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_call(Msg = {merge, Config}, From, State = #?MODULE{ proplist = P })
+handle_call({merge, Config}, _From, State = #?MODULE{ proplist = P })
 	when is_record(Config, config) ->
-		?LOG_DEBUG([{message, Msg}, {from, From}]),
 		try
-			Proplist = config_to_proplist(Config),
-			Zipped = lists:zip(Proplist, P),
-			MergedProplist = lists:foldr(fun
-				% same values, nothing to change
-				({{K, NV}, {K, OV}}, Acc) when NV =:= OV ->
-					[{K, OV}|Acc];
-				% different values, we set the new one
-				({{K, NV}, {K, OV}}, Acc) when NV =/= OV ->
-					[{K, NV}|Acc];
-				% something wrong, the configuration
-				% is bad
-				(Else, _Acc) ->
-					throw({error, {badconfig, Else}})
-				end,
-				[],
-				Zipped
-			),
-			NewConfig = proplist_to_config(MergedProplist),
+			MergedProplist = config_merge(P, Config),
+			MergedConfig = proplist_to_config(MergedProplist),
 			NewState = State#?MODULE{
 				proplist = MergedProplist,
-				record = NewConfig
+				record = MergedConfig 
 			},
-			{reply, {ok, NewConfig}, NewState}
+			{reply, {ok, MergedConfig}, NewState}
 		catch
 			_Error:Reason ->
 				{reply, {error, Reason}, State}
 		end;
-handle_call(Msg = {has_key, Key}, From, State = #?MODULE{ proplist = P }) ->
-	?LOG_DEBUG([{message, Msg}, {from, From}]),
+handle_call({has_key, Key}, _From, State = #?MODULE{ proplist = P }) ->
 	{reply, proplists:is_defined(Key, P), State};
-handle_call(Msg = keys, From, State = #?MODULE{ proplist = P }) ->
-	?LOG_DEBUG([{message, Msg}, {from, From}]),
+handle_call(keys, _From, State = #?MODULE{ proplist = P }) ->
 	{reply, [ K || {K,_} <- P ], State};
-handle_call(Msg = get, From, State = #?MODULE{ record = R }) ->
-	?LOG_DEBUG([{message, Msg}, {from, From}]),
+handle_call(get, _From, State = #?MODULE{ record = R }) ->
 	{reply, {ok, R}, State};
-handle_call(Msg = {get, Key}, From, State = #?MODULE{ proplist = P })
+handle_call({get, Key}, _From, State = #?MODULE{ proplist = P })
 	when is_atom(Key) ->
-		?LOG_DEBUG([{message, Msg}, {from, From}]),
 		Return = {ok, proplists:get_value(Key, P)},
 		{reply, Return, State};
-handle_call(Msg = {set, Config}, From, State)
+handle_call({set, Config}, _From, State)
 	when is_record(Config, config) ->
-		?LOG_DEBUG([{message, Msg}, {from, From}]),
 		try
 			Proplist = config_to_proplist(Config),
 			NewState = #?MODULE{
@@ -312,9 +292,8 @@ handle_call(Msg = {set, Config}, From, State)
 			_Error:Reason ->
 				{reply, {error, Reason}, State}
 		end;
-handle_call(Msg = {set, Key, Value, Opts}, From, State = #?MODULE{ proplist = P })
+handle_call({set, Key, Value, Opts}, _From, State = #?MODULE{ proplist = P })
 	when is_atom(Key), is_map(Opts) ->
-		?LOG_DEBUG([{message, Msg}, {from, From}]),
 		OldValue = proplists:get_value(Key, P),
 		NewP = lists:keyreplace(Key, 1, P, {Key, Value}),
 		set_environment(NewP),
@@ -324,11 +303,9 @@ handle_call(Msg = {set, Key, Value, Opts}, From, State = #?MODULE{ proplist = P 
 			record = proplist_to_config(NewP)
 		},
 		{reply, Return, NewState};
-handle_call(Msg = get_env, From, State = #?MODULE{ record = R }) ->
-	?LOG_DEBUG([{message, Msg}, {from, From}]),
+handle_call(get_env, _From, State = #?MODULE{ record = R }) ->
 	{reply, {ok, R}, State};
-handle_call(Msg = {set_env, Config}, From, State) ->
-	?LOG_DEBUG([{message, Msg}, {from, From}]),
+handle_call({set_env, Config}, _From, State) ->
 	case import_config(Config) of
 		{ok, NewP} ->
 			set_environment(NewP),
@@ -340,8 +317,7 @@ handle_call(Msg = {set_env, Config}, From, State) ->
 		_ ->
 			{reply, error, State}
 	end;
-handle_call(Msg = reset, From, State) ->
-	?LOG_DEBUG([{message, Msg}, {from, From}]),
+handle_call(reset, _From, State) ->
 	case reset_config() of
 		{ok, NewP} ->
 			NewState = State#?MODULE{
@@ -522,3 +498,62 @@ get_config_value(Key, Config)
 			false -> {error, undefined};
 			{Key, Value} -> {ok, Value}
 		end.
+
+%%--------------------------------------------------------------------
+%% @hidden
+%% @private
+%% @doc Merge configuration as records or proplists, return the
+%% configuration as proplist.
+%% @end
+%%--------------------------------------------------------------------
+-spec config_merge(OldConfig, NewConfig) -> Return when
+	OldConfig :: #config{} | proplists:proplist(),
+	NewConfig :: #config{} | proplists:proplist(),
+	Return :: proplists:proplist().
+
+config_merge(OldConfig, NewConfig)
+	when is_record(OldConfig, config) ->
+		OldProplist = config_to_proplist(OldConfig),
+		config_merge(OldProplist, NewConfig);
+config_merge(OldConfig, NewConfig)
+	when is_record(NewConfig, config) ->
+		NewProplist = config_to_proplist(NewConfig),
+		config_merge(OldConfig, NewProplist);
+config_merge(OldConfig, NewConfig)
+	when is_list(OldConfig), is_list(NewConfig) ->
+		Zipped = lists:zip(NewConfig, OldConfig),
+		lists:foldr(
+			fun
+				% same values, nothing to change
+				({{K, NV}, {K, OV}}, Acc) when NV =:= OV ->
+					[{K, OV}|Acc];
+				% different values, we set the new one
+				({{K, NV}, {K, OV}}, Acc) when NV =/= OV ->
+					[{K, NV}|Acc];
+				% something wrong, the configuration
+				% is bad
+				(Else, _Acc) ->
+					throw({error, {badconfig, Else}})
+			end,
+			[],
+			Zipped
+		).
+
+config_merge_test() ->
+	Merged1 = proplist_to_config(
+		config_merge(
+			#config{ init = false },
+			#config{ init = true }
+		)
+	),
+	#config{ init = Init1 } = Merged1, 
+	?assertEqual(true, Init1),
+
+	Merged2 = proplist_to_config(
+		config_merge(
+			#config{ init = true },
+			#config{ init = true }
+		)
+	),
+	#config{ init = Init2 } = Merged2, 
+	?assertEqual(true, Init2).

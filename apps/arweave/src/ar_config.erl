@@ -18,6 +18,7 @@
 	log_config/1,
 	parse/1,
 	parse_config_file/1,
+	parse_config_file/2,
 	parse_storage_module/1,
 	pull_from_remote_vdf_server/0,
 	set_dependent_flags/1,
@@ -34,8 +35,8 @@
 %%%===================================================================
 
 %%--------------------------------------------------------------------
-%% @doc Take legacy command line argument and look for config_file
-%% parameter, then read and parse the file.
+%% @doc
+%% @see parse_config_file/2
 %% @end
 %%--------------------------------------------------------------------
 -spec parse_config_file(Args) -> Return when
@@ -46,6 +47,21 @@
 
 parse_config_file(Args) ->
 	parse_config_file(Args, [], #config{}).
+
+%%--------------------------------------------------------------------
+%% @doc Take legacy command line argument and look for config_file
+%% parameter, then read and parse the file.
+%% @end
+%%--------------------------------------------------------------------
+-spec parse_config_file(Args, Config) -> Return when
+	Args :: [string()],
+	Config :: #config{},
+	Return :: {ok, #config{}}
+		| {error, term(), term()}
+		| {error, term()}.
+
+parse_config_file(Args, Config) ->
+	parse_config_file(Args, [], Config).
 
 %%--------------------------------------------------------------------
 %% @hidden
