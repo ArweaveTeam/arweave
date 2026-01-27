@@ -4,7 +4,7 @@ This directory contains Jupyter notebooks using the Erlang kernel for interactiv
 
 ## Prerequisites
 
-- Jupyter in a uv-managed environment
+- Python 3 with venv + pip
 - Erlang kernel for Jupyter
 
 Quick setup:

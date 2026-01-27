@@ -15,17 +15,18 @@ cd "$REPO_ROOT"
 mkdir -p "$REPO_ROOT/.tmp"
 mkdir -p "$JUPYTER_DATA_DIR"
 
-if ! command -v uv >/dev/null 2>&1; then
-  echo "uv is not installed or not on PATH."
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is not installed or not on PATH."
   exit 1
 fi
 
 if [ -d "$REPO_ROOT/.venv" ]; then
   echo "Using existing virtual environment at: $REPO_ROOT/.venv"
 else
-  uv venv "$REPO_ROOT/.venv"
+  python3 -m venv "$REPO_ROOT/.venv"
 fi
-uv pip install --python "$REPO_ROOT/.venv" jupyter
+"$REPO_ROOT/.venv/bin/python" -m pip install --upgrade pip
+"$REPO_ROOT/.venv/bin/python" -m pip install jupyter pandas
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "curl is not installed or not on PATH."
@@ -109,9 +110,9 @@ EOF
 
 install_kernel
 
-if ! PATH="$REPO_ROOT/.venv/bin:$PATH" JUPYTER_DATA_DIR="$JUPYTER_DATA_DIR" uv run jupyter kernelspec list 2>/dev/null | grep -q "[[:space:]]${ERLANG_KERNEL_NAME}[[:space:]]"; then
+if ! PATH="$REPO_ROOT/.venv/bin:$PATH" JUPYTER_DATA_DIR="$JUPYTER_DATA_DIR" "$REPO_ROOT/.venv/bin/jupyter" kernelspec list 2>/dev/null | grep -q "[[:space:]]${ERLANG_KERNEL_NAME}[[:space:]]"; then
   echo "Kernel not found after install: ${ERLANG_KERNEL_NAME}"
-  echo "Check kernelspec list: uv run jupyter kernelspec list"
+  echo "Check kernelspec list: $REPO_ROOT/.venv/bin/jupyter kernelspec list"
   exit 1
 fi
 
