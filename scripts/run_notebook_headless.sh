@@ -27,14 +27,17 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-NODE_NAME="${LOCALNET_NODE_NAME:-main-localnet}"
-NODE_COOKIE="${LOCALNET_COOKIE:-localnet}"
+NODE_NAME_FULL="main-localnet@127.0.0.1"
+NODE_COOKIE="localnet"
 JOIN_TIMEOUT_SEC="${JOIN_TIMEOUT_SEC:-300}"
 JOIN_POLL_SEC="${JOIN_POLL_SEC:-1}"
 EXEC_TIMEOUT_SEC="${EXEC_TIMEOUT_SEC:-1200}"
 KERNEL_NAME="${ERLANG_JUPYTER_KERNEL:-erlang}"
 JUPYTER_DATA_DIR="${JUPYTER_DATA_DIR:-$REPO_ROOT/.tmp/jupyter}"
 JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-$REPO_ROOT/.jupyter}"
+LOCALNET_HTTP_HOST="${LOCALNET_HTTP_HOST:-127.0.0.1}"
+LOCALNET_HTTP_PORT="${LOCALNET_HTTP_PORT:-1984}"
+LOCALNET_NETWORK_NAME="${LOCALNET_NETWORK_NAME:-arweave.localnet}"
 
 STARTED_LOCALNET=0
 LOCALNET_PID=""
@@ -57,19 +60,6 @@ resolve_notebook() {
   fi
 }
 
-erl_eval() {
-  local expr="$1"
-  erl -noshell -eval "$expr" -eval "init:stop()."
-}
-
-node_ping() {
-  erl_eval "net_kernel:start([checker, shortnames]), erlang:set_cookie(node(), '${NODE_COOKIE}'), io:format(\"~p\", [net_adm:ping('${NODE_NAME_FULL}')])"
-}
-
-node_joined() {
-  erl_eval "net_kernel:start([checker, shortnames]), erlang:set_cookie(node(), '${NODE_COOKIE}'), io:format(\"~p\", [rpc:call('${NODE_NAME_FULL}', ar_node, is_joined, [])])"
-}
-
 start_localnet() {
   if [ "$(uname -s)" == "Darwin" ]; then
     RANDOMX_JIT="disable randomx_jit"
@@ -85,24 +75,59 @@ start_localnet() {
 
   ./ar-rebar3 localnet compile
 
-  erl $ERL_LOCALNET_OPTS -sname "$NODE_NAME_START" -setcookie "$NODE_COOKIE" -noshell -s ar shell_localnet -eval "timer:sleep(infinity)." &
+  erl $ERL_LOCALNET_OPTS -name "$NODE_NAME_FULL" -setcookie "$NODE_COOKIE" -noshell -s ar shell_localnet -eval "timer:sleep(infinity)." &
   LOCALNET_PID="$!"
   STARTED_LOCALNET=1
 }
 
-wait_for_joined() {
+fetch_info() {
+  curl -fsS --max-time 2 \
+    -H "x-network: ${LOCALNET_NETWORK_NAME}" \
+    "http://${LOCALNET_HTTP_HOST}:${LOCALNET_HTTP_PORT}/info" 2>/dev/null | tr -d '\n' || true
+}
+
+parse_info_network() {
+  local info="$1"
+  echo "$info" | sed -E -n 's/.*"network"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p'
+}
+
+parse_info_height() {
+  local info="$1"
+  echo "$info" | sed -E -n 's/.*"height"[[:space:]]*:[[:space:]]*(-?[0-9]+).*/\1/p'
+}
+
+wait_for_info_height() {
   local start
+  local info
+  local network
+  local height
   start="$(date +%s)"
 
   while true; do
-    if [ "$(node_ping)" = "pong" ]; then
-      if [ "$(node_joined)" = "true" ]; then
+    info="$(fetch_info)"
+    if [ -n "$info" ]; then
+      network="$(parse_info_network "$info")"
+      if [ -z "$network" ]; then
+        echo "Failed to parse network from /info: $info"
+        return 1
+      fi
+      if [ "$network" != "$LOCALNET_NETWORK_NAME" ]; then
+        echo "Found node at ${LOCALNET_HTTP_HOST}:${LOCALNET_HTTP_PORT} with network ${network}, expected ${LOCALNET_NETWORK_NAME}."
+        return 1
+      fi
+
+      height="$(parse_info_height "$info")"
+      if [ -z "$height" ]; then
+        echo "Failed to parse height from /info: $info"
+        return 1
+      fi
+      if [ "$height" != "-1" ]; then
         return 0
       fi
     fi
 
     if [ "$(( $(date +%s) - start ))" -ge "$JOIN_TIMEOUT_SEC" ]; then
-      echo "Timed out waiting for localnet to join."
+      echo "Timed out waiting for localnet /info height."
       return 1
     fi
 
@@ -112,18 +137,6 @@ wait_for_joined() {
 
 cleanup() {
   if [ "$STARTED_LOCALNET" = "1" ] && [ -n "$LOCALNET_PID" ]; then
-    if [ "$(node_ping)" = "pong" ]; then
-      erl_eval "net_kernel:start([checker, shortnames]), erlang:set_cookie(node(), '${NODE_COOKIE}'), rpc:cast('${NODE_NAME_FULL}', init, stop, [])"
-      local stop_start
-      stop_start="$(date +%s)"
-      while [ "$(node_ping)" = "pong" ]; do
-        if [ "$(( $(date +%s) - stop_start ))" -ge 15 ]; then
-          break
-        fi
-        sleep 1
-      done
-    fi
-
     kill "$LOCALNET_PID" >/dev/null 2>&1 || true
   fi
 }
@@ -165,20 +178,15 @@ run_notebook() {
   rm -rf "$tmp_dir"
 }
 
-NODE_HOST="$(hostname -s 2>/dev/null || hostname)"
-NODE_NAME_SHORT="${NODE_NAME%@*}"
-NODE_NAME_FULL="${NODE_NAME_SHORT}@${NODE_HOST}"
-NODE_NAME_START="$NODE_NAME_SHORT"
-
 cd "$REPO_ROOT"
 
 trap cleanup EXIT
 
 resolve_notebook
 
-if [ "$(node_ping)" != "pong" ]; then
+if [ -z "$(fetch_info)" ]; then
   start_localnet
 fi
 
-wait_for_joined
+wait_for_info_height
 run_notebook
