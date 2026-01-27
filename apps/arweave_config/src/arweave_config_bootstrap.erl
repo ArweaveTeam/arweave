@@ -96,12 +96,15 @@ init_config_file(_Args, State = #{ mode := "new" }) ->
 	% @todo enable arweave_config_file.
 	?LOG_WARNING("arweave_config does not support config file."),
 	{next, init_arguments, State};
-init_config_file(Args, State) ->
+init_config_file(Args, State = #{ config := Config }) ->
 	% @todo enable arweave_config_file_legacy.
-	case ar_config:parse_config_file(Args) of
-		{ok, Config} when is_record(Config, config)  ->
+	case ar_config:parse_config_file(Args, Config) of
+		{ok, NewConfig} when is_record(NewConfig, config)  ->
 			arweave_config_legacy:merge(Config),
-			{next, init_arguments, State};
+			NewState = State#{
+				config => NewConfig
+			},
+			{next, init_arguments, NewState};
 		{error, Reason, _} ->
 			{error, Reason};
 		{error, Reason} ->
@@ -120,18 +123,23 @@ init_arguments(Args, State = #{ mode := "new" }) ->
 		{ok, _} ->
 			case arweave_config_arguments:load() of
 				ok ->
-					{next, init_runtime, State};
+					NewConfig = arweave_config_legacy:get(),
+					NewState = State#{
+						config => NewConfig
+					},
+					{next, init_runtime, NewState};
 				Else ->
 					{error, Else}
 			end;
 		Else ->
 			{error, Else}
 	end;
-init_arguments(Args, State) ->
-	case arweave_config_arguments_legacy:set(Args) of
-		{ok, _} ->
-			arweave_config_arguments_legacy:load(),
-			{next, init_runtime, State};
+init_arguments(Args, State = #{ config := Config }) ->
+	case ar_cli_parser:parse(Args, Config) of
+		{ok, NewConfig} ->
+			arweave_config_legacy:set(NewConfig),
+			NewState = State#{ config => NewConfig },
+			{next, init_runtime, NewState};
 		Else ->
 			{error, Else}
 	end.
@@ -158,14 +166,14 @@ init_runtime(_Args, State) ->
 %% @doc finalize arweave configuration initialization.
 %% @end
 %%--------------------------------------------------------------------
-init_final(_Args, State) ->
+init_final(_Args, State = #{ config := Config }) ->
 	% parse the arguments from command line and check if a
 	% configuration file is defined, returns #config{} record.
 	% Note: this function will halt the node and print helps if
 	% the arguments or configuration file are wrong.
 	% @todo: re-enable legacy parser
 	% Config = ar_cli_parser:parse_config_file(Args)
-	Config = arweave_config_legacy:get(),
+	arweave_config_legacy:set(Config),
 	NewState = State#{
 		config => Config
 	},
