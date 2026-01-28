@@ -48,6 +48,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: "recursive"
+          lfs: true
 
       # before doing anything, we would like to know what kind of
       # software and libraries are present on the system for debugging
