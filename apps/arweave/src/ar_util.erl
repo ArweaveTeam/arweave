@@ -24,6 +24,7 @@
 	int_to_bool/1,
 	parse_list_indices/1,
 	parse_peer/1,
+	parse_peer/2,
 	parse_port/1,
 	peer_to_str/1,
 	pfilter/2,
@@ -38,6 +39,7 @@
 	safe_format/1,
 	safe_format/3,
 	safe_parse_peer/1,
+	safe_parse_peer/2,
 	shuffle_list/1,
 	take_every_nth/2,
 	terminal_clear/0,
@@ -162,12 +164,34 @@ invert_map(Map) ->
 	A :: pos_integer(),
 	Port :: pos_integer().
 
-parse_peer("") -> throw(empty_peer_string);
-parse_peer(BitStr) when is_binary(BitStr) ->
-	parse_peer(binary_to_list(BitStr));
-parse_peer(Str) when is_list(Str) ->
+parse_peer(Hostname) ->
+	parse_peer(Hostname, #{}).
+
+%%--------------------------------------------------------------------
+%% @doc Parse a string representing a remote host into our internal
+%%      format.
+%% @end
+%%--------------------------------------------------------------------
+-spec parse_peer(Hostname, Opts) -> Return when
+	Hostname :: string() | binary(),
+	Opts :: #{
+		  module_resolve => atom()
+	},
+	Return :: [IpWithPort] | no_return(),
+	IpWithPort :: {A, A, A, A, Port},
+	A :: pos_integer(),
+	Port :: pos_integer().
+
+parse_peer("", _Opts) ->
+	throw(empty_peer_string);
+parse_peer(BitStr, Opts) when is_binary(BitStr) ->
+	parse_peer(binary_to_list(BitStr), Opts);
+parse_peer(Str, Opts) when is_list(Str) ->
+	% useful to mock the resolver, instead of using
+	% inet, any other custom module can be used.
+	ResolveModule = maps:get(module_resolve, Opts, inet),
 	[Addr, PortStr] = parse_port_split(Str),
-	case inet:getaddrs(Addr, inet) of
+	case ResolveModule:getaddrs(Addr, inet) of
 		{ok, [{A, B, C, D}]} ->
 			[{A, B, C, D, parse_port(PortStr)}];
 		{ok, AddrsList} when is_list(AddrsList) ->
@@ -175,17 +199,64 @@ parse_peer(Str) when is_list(Str) ->
 		{error, Reason} ->
 			throw({invalid_peer_string, Str, Reason})
 	end;
-parse_peer({IP, Port}) ->
-	{A, B, C, D} = parse_peer(IP),
-	[{A, B, C, D, parse_port(Port)}].
+parse_peer({IP, Port}, Opts) ->
+	{A, B, C, D} = parse_peer(IP, Opts),
+	[{A, B, C, D, parse_port(Port)}];
+parse_peer(_Peer, _) ->
+	throw(invalid_peer).
+
+parse_peer_test() ->
+	?assertThrow(
+		empty_peer_string,
+		parse_peer("")
+	),
+	?assertThrow(
+		invalid_peer,
+		parse_peer(1)
+	),
+	?assertEqual(
+		[{127,0,0,1,1985}],
+		parse_peer({{127,0,0,1}, 1985})
+	),
+
+	Opts = #{ module_resolve => ar_test_inet_mock },
+	?assertEqual(
+		[{127,0,0,1,1984}],
+		parse_peer("single.record.local", Opts)
+	),
+	?assertEqual(
+		{ok, [
+			{127,0,0,2,1984},
+			{127,0,0,3,1984},
+			{127,0,0,4,1984},
+			{127,0,0,5,1984}
+		]},
+		parse_peer("multi.record.local", Opts)
+	),
+	?assertThrow(
+		{invalid_peer_string,_,_},
+		parse_peer("error.test.local", Opts)
+	).
+
+
+%%--------------------------------------------------------------------
+%% @doc convert a peer as tuple or binary to string.
+%% @end
+%%--------------------------------------------------------------------
+-spec peer_to_str(Peer) -> Return when
+	Peer :: binary() | string() | tuple(),
+	Return :: string().
 
 peer_to_str(Bin) when is_binary(Bin) ->
 	binary_to_list(Bin);
 peer_to_str(Str) when is_list(Str) ->
 	Str;
 peer_to_str({A, B, C, D, Port}) ->
-	integer_to_list(A) ++ "_" ++ integer_to_list(B) ++ "_" ++ integer_to_list(C) ++ "_"
-			++ integer_to_list(D) ++ "_" ++ integer_to_list(Port).
+	integer_to_list(A) ++ "_" ++
+	integer_to_list(B) ++ "_" ++
+	integer_to_list(C) ++ "_" ++
+	integer_to_list(D) ++ "_" ++
+	integer_to_list(Port).
 
 %% @doc Parses a port string into an integer.
 parse_port(Int) when is_integer(Int) -> Int;
@@ -203,32 +274,49 @@ parse_port_split(Str) ->
 
 %%--------------------------------------------------------------------
 %% @doc wrapper for parse_peer/1
+%% @see safe_parse_peer/2
 %% @end
 %%--------------------------------------------------------------------
--spec safe_parse_peer(Hostname) -> Return when
+safe_parse_peer(Peer) ->
+	safe_parse_peer(Peer, #{}).
+
+%%--------------------------------------------------------------------
+%% @doc wrapper for parse_peer/1
+%% @end
+%%--------------------------------------------------------------------
+-spec safe_parse_peer(Hostname, Opts) -> Return when
 	Hostname :: string() | binary(),
+	Opts :: map(),
 	Return :: {ok, ReturnOk} | {error, invalid},
 	ReturnOk ::[IpWithPort] | no_return(),
 	IpWithPort :: {A, A, A, A, Port},
 	A :: pos_integer(),
 	Port :: pos_integer().
 
-safe_parse_peer(Peer) ->
+safe_parse_peer(Peer, Opts) ->
 	try
-		{ok, parse_peer(Peer)}
+		{ok, parse_peer(Peer, Opts)}
 	catch
 		_:_ -> {error, invalid}
 	end.
 
 %% @doc Take a remote host ID in various formats, return a HTTP-friendly string.
+format_peer([{Host, Port}|_]) ->
+	format_peer({Host, Port});
+format_peer([{A, B, C, D, Port}|_]) ->
+	format_peer({A, B, C, D, Port});
+format_peer(Host) when is_list(Host) ->
+	format_peer({Host, ?DEFAULT_HTTP_IFACE_PORT});
 format_peer({A, B, C, D}) ->
 	format_peer({A, B, C, D, ?DEFAULT_HTTP_IFACE_PORT});
 format_peer({A, B, C, D, Port}) ->
-	lists:flatten(io_lib:format("~w.~w.~w.~w:~w", [A, B, C, D, Port]));
-format_peer(Host) when is_list(Host) ->
-	format_peer({Host, ?DEFAULT_HTTP_IFACE_PORT});
+	lists:flatten(
+		io_lib:format("~w.~w.~w.~w:~w", [A, B, C, D, Port])
+	);
 format_peer({Host, Port}) ->
-	lists:flatten(io_lib:format("~s:~w", [Host, Port]));
+	lists:flatten(
+		io_lib:format("~s:~w", [Host, Port])
+	);
 format_peer(Peer) ->
 	Peer.
 
