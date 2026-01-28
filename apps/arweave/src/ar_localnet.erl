@@ -16,15 +16,27 @@
 	-define(LOCALNET_START_FROM_STATE_SEARCH_DEPTH, ?START_FROM_STATE_SEARCH_DEPTH).
 -endif.
 
+-define(LOCALNET_DATA_DIR, ".tmp/data_localnet_main").
+
 %% @doc Start a node from the localnet_snapshot directory.
 %% Disable mining (can be triggered by request).
 %% Configure a single storage module with the first 20 MiB of partition 0.
 %% Seed the storage module with data.
 start() ->
 	start(#config{
-		data_dir = ".tmp/data_localnet_main"
+		data_dir = ?LOCALNET_DATA_DIR
 	}).
 
+start(SnapshotDir) when is_list(SnapshotDir) ->
+	start(#config{
+		data_dir = ?LOCALNET_DATA_DIR,
+		start_from_state = SnapshotDir
+	});
+start(SnapshotDir) when is_atom(SnapshotDir) ->
+	start(#config{
+		data_dir = ?LOCALNET_DATA_DIR,
+		start_from_state = atom_to_list(SnapshotDir)
+	});
 start(Config) ->
 	SnapshotDir = snapshot_dir(Config),
 	DataDir = Config#config.data_dir,
@@ -408,14 +420,9 @@ snapshot_txs() ->
 	}.
 
 snapshot_dir(Config) ->
-	case os:getenv("LOCALNET_SNAPSHOT_DIR") of
-		false ->
-			case Config#config.start_from_state of
-				not_set ->
-					?DEFAULT_SNAPSHOT_DIR;
-				Dir ->
-					Dir
-			end;
+	case Config#config.start_from_state of
+		not_set ->
+			?DEFAULT_SNAPSHOT_DIR;
 		Dir ->
 			Dir
 	end.
