@@ -55,9 +55,10 @@ start_localnet() {
   fi
 
   export ERL_EPMD_ADDRESS=127.0.0.1
-  ERL_LOCALNET_OPTS="-pa $(./rebar3 as localnet path) $(./rebar3 as localnet path --base)/lib/arweave/test -config config/sys.config"
 
   ./ar-rebar3 localnet compile
+
+  ERL_LOCALNET_OPTS="-pa $(./rebar3 as localnet path) $(./rebar3 as localnet path --base)/lib/arweave/test -config config/sys.config"
 
   erl $ERL_LOCALNET_OPTS -name "$NODE_NAME_FULL" -setcookie "$NODE_COOKIE" -noshell -s ar shell_localnet -eval "timer:sleep(infinity)." &
   LOCALNET_PID="$!"
