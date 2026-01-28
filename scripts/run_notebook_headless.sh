@@ -8,23 +8,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NOTEBOOK_NAME="pricing_transition_localnet"
 NOTEBOOK_PATH=""
 NOTEBOOK_ARG=""
-SNAPSHOT_DIR=""
 
 while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --snapshot-dir)
-      SNAPSHOT_DIR="$2"
-      shift 2
-      ;;
-    --snapshot-dir=*)
-      SNAPSHOT_DIR="${1#*=}"
-      shift 1
-      ;;
-    *)
-      NOTEBOOK_ARG="$1"
-      shift 1
-      ;;
-  esac
+  NOTEBOOK_ARG="$1"
+  shift 1
 done
 
 NODE_NAME_FULL="main-localnet@127.0.0.1"
@@ -68,9 +55,6 @@ start_localnet() {
   fi
 
   export ERL_EPMD_ADDRESS=127.0.0.1
-  if [ -n "$SNAPSHOT_DIR" ]; then
-    export LOCALNET_SNAPSHOT_DIR="$SNAPSHOT_DIR"
-  fi
   ERL_LOCALNET_OPTS="-pa $(./rebar3 as localnet path) $(./rebar3 as localnet path --base)/lib/arweave/test -config config/sys.config"
 
   ./ar-rebar3 localnet compile

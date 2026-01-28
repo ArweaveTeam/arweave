@@ -325,10 +325,19 @@ tests(Args) -> ar_test_runner:run(test, Args).
 shell_localnet() ->
 	shell_localnet([]).
 
-shell_localnet(_Args) ->
+shell_localnet(Args) ->
 	try
-		ar_localnet:start(),
-		io:format("Shell is ready.~n")
+		case Args of
+			[] ->
+				ar_localnet:start(),
+				io:format("Shell is ready.~n");
+			[SnapshotDir] ->
+				ar_localnet:start(SnapshotDir),
+				io:format("Shell is ready.~n");
+			_ ->
+				io:format("Usage: ./bin/localnet_shell [snapshot_dir]~n"),
+				erlang:error({invalid_args, Args})
+		end
 	catch
 		Type:Reason:S ->
 			io:format("Failed to start localnet due to ~p:~p:~p~n", [Type, Reason, S]),
