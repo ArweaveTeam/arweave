@@ -66,12 +66,6 @@ start(Config) ->
 	}),
 	ar:start_dependencies(),
 	wait_until_joined(),
-	case store_snapshot_data(SnapshotDir) of
-		ok ->
-			ok;
-		{error, _} = Error ->
-			error(Error)
-	end,
 	submit_snapshot_data(),
 	io:format("~n~nLocalnet node started~n"),
 	io:format("  Snapshot: ~s~n", [SnapshotDir]),
@@ -127,16 +121,6 @@ wait_until_joined() ->
 		?WAIT_UNTIL_JOINED_TIMEOUT
 	 ).
 
-store_snapshot_data(SnapshotDir) ->
-	case open_snapshot_databases(SnapshotDir) of
-		{ok, CloseSnapshotDbs} ->
-			Result = store_snapshot_data2(SnapshotDir),
-			CloseSnapshotDbs(),
-			Result;
-		{error, _} = Error ->
-			Error
-	end.
-
 store_snapshot_data2(SnapshotDir) ->
 	case ar_node:get_block_index() of
 		[] ->
@@ -146,41 +130,49 @@ store_snapshot_data2(SnapshotDir) ->
 			SearchDepth = min(Height, ?LOCALNET_START_FROM_STATE_SEARCH_DEPTH),
 			io:format("Copying snapshot data into data_dir from ~s~n", [SnapshotDir]),
 			io:format("  Height: ~B, search depth: ~B~n", [Height, SearchDepth]),
-			case read_recent_blocks_from_snapshot(BI, SearchDepth, SnapshotDir) of
+			case read_recent_blocks_local(BI, SearchDepth) of
+				{Skipped, _Blocks} ->
+					io:format("  Local blocks available (skipped: ~B). Skip backfill.~n",
+						[Skipped]),
+					ok;
 				not_found ->
-					{error, block_headers_not_found};
-				{Skipped, Blocks} ->
-					io:format("  Recent blocks: ~B (skipped: ~B)~n",
-						[length(Blocks), Skipped]),
-					BI2 = lists:nthtail(Skipped, BI),
-					Height2 = Height - Skipped,
-					RewardHistoryBI = reward_history_bi(Height2, BI2),
-					BlockTimeHistoryBI = block_time_history_bi(BI2),
-					io:format("  Reward history: ~B entries~n", [length(RewardHistoryBI)]),
-					io:format("  Block time history: ~B entries~n", [length(BlockTimeHistoryBI)]),
-					case store_snapshot_blocks_from_list(Blocks) of
-						{ok, TxIds} ->
-							io:format("  Tx headers to copy: ~B~n", [length(TxIds)]),
-							case store_snapshot_tx_headers(TxIds, SnapshotDir) of
+					store_snapshot_data3(BI, Height, SearchDepth, SnapshotDir)
+			end
+	end.
+
+store_snapshot_data3(BI, Height, SearchDepth, SnapshotDir) ->
+	case read_recent_blocks_from_snapshot(BI, SearchDepth, SnapshotDir) of
+		not_found ->
+			{error, block_headers_not_found};
+		{Skipped, Blocks} ->
+			io:format("  Recent blocks: ~B (skipped: ~B)~n",
+				[length(Blocks), Skipped]),
+			BI2 = lists:nthtail(Skipped, BI),
+			Height2 = Height - Skipped,
+			RewardHistoryBI = reward_history_bi(Height2, BI2),
+			BlockTimeHistoryBI = block_time_history_bi(BI2),
+			io:format("  Reward history: ~B entries~n", [length(RewardHistoryBI)]),
+			io:format("  Block time history: ~B entries~n", [length(BlockTimeHistoryBI)]),
+			case store_snapshot_blocks_from_list(Blocks) of
+				{ok, TxIds} ->
+					io:format("  Tx headers to copy: ~B~n", [length(TxIds)]),
+					case store_snapshot_tx_headers(TxIds, SnapshotDir) of
+						ok ->
+							case store_snapshot_history_entries(
+								RewardHistoryBI,
+								start_from_state_reward_history_db,
+								reward_history_db,
+								reward_history
+							) of
 								ok ->
 									case store_snapshot_history_entries(
-										RewardHistoryBI,
-										start_from_state_reward_history_db,
-										reward_history_db,
-										reward_history
+										BlockTimeHistoryBI,
+										start_from_state_block_time_history_db,
+										block_time_history_db,
+										block_time_history
 									) of
 										ok ->
-											case store_snapshot_history_entries(
-												BlockTimeHistoryBI,
-												start_from_state_block_time_history_db,
-												block_time_history_db,
-												block_time_history
-											) of
-												ok ->
-													store_snapshot_wallet_list(Blocks, SnapshotDir, SearchDepth);
-												{error, _} = Error ->
-													Error
-											end;
+											store_snapshot_wallet_list(Blocks, SnapshotDir, SearchDepth);
 										{error, _} = Error ->
 											Error
 									end;
@@ -189,7 +181,9 @@ store_snapshot_data2(SnapshotDir) ->
 							end;
 						{error, _} = Error ->
 							Error
-					end
+					end;
+				{error, _} = Error ->
+					Error
 			end
 	end.
 
@@ -442,20 +436,35 @@ open_snapshot_databases(SnapshotDir) ->
 create_snapshot(SnapshotDir, DataDir, NewSnapshotDir) ->
 	case ensure_snapshot_dir(NewSnapshotDir) of
 		ok ->
-			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "wallets"),
-			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "ar_tx_blacklist"),
-			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "data_sync_state"),
-			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "header_sync_state"),
-			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "mempool"),
-			ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "peers"),
-			ok = copy_required_dir(SnapshotDir, NewSnapshotDir, "seed_txs"),
-			case create_snapshot_rocksdb(NewSnapshotDir) of
+			case maybe_backfill_snapshot_data(SnapshotDir) of
 				ok ->
-					io:format("Snapshot created: ~s~n", [NewSnapshotDir]),
-					{ok, NewSnapshotDir};
+					ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "wallets"),
+					ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "ar_tx_blacklist"),
+					ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "data_sync_state"),
+					ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "header_sync_state"),
+					ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "mempool"),
+					ok = copy_from_dir(DataDir, SnapshotDir, NewSnapshotDir, "peers"),
+					ok = copy_required_dir(SnapshotDir, NewSnapshotDir, "seed_txs"),
+					case create_snapshot_rocksdb(NewSnapshotDir) of
+						ok ->
+							io:format("Snapshot created: ~s~n", [NewSnapshotDir]),
+							{ok, NewSnapshotDir};
+						{error, _} = Error ->
+							Error
+					end;
 				{error, _} = Error ->
 					Error
 			end;
+		{error, _} = Error ->
+			Error
+	end.
+
+maybe_backfill_snapshot_data(SnapshotDir) ->
+	case open_snapshot_databases(SnapshotDir) of
+		{ok, CloseSnapshotDbs} ->
+			Result = store_snapshot_data2(SnapshotDir),
+			CloseSnapshotDbs(),
+			Result;
 		{error, _} = Error ->
 			Error
 	end.
@@ -1090,12 +1099,12 @@ store_snapshot_blocks_from_list(Blocks) ->
 
 
 store_snapshot_tx_headers(TxIds, SnapshotDir) ->
+	io:format("Startup copy: tx headers to copy ~B~n", [length(TxIds)]),
 	lists:foldl(
 		fun(TXID, Acc) ->
 			case Acc of
 				ok ->
 					TXID2 = tx_id(TXID),
-					io:format("Startup copy: tx header ~s~n", [ar_util:encode(TXID2)]),
 					case ar_kv:get(tx_db, TXID2) of
 						{ok, _} ->
 							ok;
