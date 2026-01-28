@@ -25,7 +25,7 @@ if [ -d "$REPO_ROOT/.venv" ]; then
 else
   uv venv "$REPO_ROOT/.venv"
 fi
-uv pip install --python "$REPO_ROOT/.venv" jupyter
+uv pip install --python "$REPO_ROOT/.venv" jupyter matplotlib pandas sos sos-notebook
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "curl is not installed or not on PATH."
