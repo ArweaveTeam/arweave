@@ -573,13 +573,13 @@ get_perpetual_gb_cost(Init, Height) ->
 %% @doc Return the cost in USD of storing 1 GB per year at the given time.
 -spec get_gb_cost_per_year_at_timestamp(Timestamp::integer(), Height::nonegint()) -> usd().
 get_gb_cost_per_year_at_timestamp(Timestamp, Height) ->
-	Datetime = system_time_to_universal_time(Timestamp, seconds),
+	Datetime = calendar:system_time_to_universal_time(Timestamp, second),
 	get_gb_cost_per_year_at_datetime(Datetime, Height).
 
 %% @doc Return the cost in USD of storing 1 GB per average block time at the given time.
 -spec get_gb_cost_per_block_at_timestamp(integer(), nonegint()) -> usd().
 get_gb_cost_per_block_at_timestamp(Timestamp, Height) ->
-	Datetime = system_time_to_universal_time(Timestamp, seconds),
+	Datetime = calendar:system_time_to_universal_time(Timestamp, second),
 	get_gb_cost_per_block_at_datetime(Datetime, Height).
 
 %% @doc Return the cost in USD of storing 1 GB per year.
@@ -691,13 +691,6 @@ fraction_of_year(PrevY, NextY, {{Y, Mo, D}, {H, Mi, S}}, Height) ->
 		false ->
 			(Now - Start) / (End - Start)
 	end.
-
-%% TODO Use calendar:system_time_to_universal_time/2 in Erlang OTP-21.
-system_time_to_universal_time(Time, TimeUnit) ->
-	Seconds = erlang:convert_time_unit(Time, TimeUnit, seconds),
-	DaysFrom0To1970 = 719528,
-	SecondsPerDay = 86400,
-	calendar:gregorian_seconds_to_datetime(Seconds + (DaysFrom0To1970 * SecondsPerDay)).
 
 recalculate_usd_to_ar_rate2(#block{ height = PrevHeight } = B) ->
 	case is_price_adjustment_height(PrevHeight + 1) of
