@@ -6,6 +6,8 @@ alwaysApply: true
 
 # Arweave Project Rules
 
+To better reason about the Arweave protocol, **read `.cursor/rules/protocol.mdc`** in this directory.
+
 ## Build Commands
 - To compile the project: `./ar-rebar3 prod compile`
 

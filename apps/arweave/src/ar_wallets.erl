@@ -170,19 +170,10 @@ handle_call({add_wallets, RootHash, Wallets, Height, Denomination}, _From, DAG) 
 handle_call({set_current, RootHash, Height, PruneDepth}, _, DAG) ->
 	{reply, ok, set_current(DAG, RootHash, Height, PruneDepth)}.
 
-handle_cast({init, Blocks, [{from_state, SearchDepth}]}, _) ->
-	?LOG_DEBUG([{event, init_from_state}, {block_count, length(Blocks)}]),
-	case find_local_account_tree(Blocks, SearchDepth) of
-		not_found ->
-			ar:console("~n~n\tThe local state is missing an account tree, consider joining "
-					"the network via the trusted peers.~n"),
-			timer:sleep(1000),
-			init:stop(1);
-		{Skipped, Tree} ->
-			Blocks2 = lists:nthtail(Skipped, Blocks),
-			initialize_state(Blocks2, Tree)
-	end;
-handle_cast({init, Blocks, [{from_peers, Peers}]}, _) ->
+handle_cast({init, Blocks, Args}, _) ->
+	case proplists:get_value(from_state, Args) of
+		undefined ->
+			Peers = proplists:get_value(from_peers, Args),
 	B =
 		case length(Blocks) >= ar_block:get_consensus_window_size() of
 			true ->
@@ -192,6 +183,20 @@ handle_cast({init, Blocks, [{from_peers, Peers}]}, _) ->
 		end,
 	Tree = get_tree_from_peers(B, Peers),
 	initialize_state(Blocks, Tree);
+		SearchDepth ->
+			?LOG_DEBUG([{event, init_from_state}, {block_count, length(Blocks)}]),
+			CustomDir = proplists:get_value(custom_dir, Args, not_set),
+			case find_local_account_tree(Blocks, SearchDepth, CustomDir) of
+				not_found ->
+					ar:console("~n~n\tThe local state is missing an account tree, consider joining "
+							"the network via the trusted peers.~n"),
+					timer:sleep(1000),
+					init:stop(1);
+				{Skipped, Tree} ->
+					Blocks2 = lists:nthtail(Skipped, Blocks),
+					initialize_state(Blocks2, Tree)
+			end
+	end;
 
 handle_cast(Msg, DAG) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
@@ -204,12 +209,12 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-find_local_account_tree(Blocks, SearchDepth) ->
-	find_local_account_tree(Blocks, SearchDepth, 0).
+find_local_account_tree(Blocks, SearchDepth, CustomDir) ->
+	find_local_account_tree(Blocks, SearchDepth, 0, CustomDir).
 
-find_local_account_tree(_Blocks, Skipped, Skipped) ->
+find_local_account_tree(_Blocks, Skipped, Skipped, _CustomDir) ->
 	not_found;
-find_local_account_tree(Blocks, SearchDepth, Skipped) ->
+find_local_account_tree(Blocks, SearchDepth, Skipped, CustomDir) ->
 	{IsLast, B} =
 		case length(Blocks) >= ar_block:get_consensus_window_size() of
 			true ->
@@ -218,7 +223,7 @@ find_local_account_tree(Blocks, SearchDepth, Skipped) ->
 				{true, lists:last(Blocks)}
 		end,
 	ID = B#block.wallet_list,
-	case ar_storage:read_wallet_list(ID) of
+	case ar_storage:read_wallet_list(ID, CustomDir) of
 		{ok, Tree} ->
 			{Skipped, Tree};
 		_ ->
@@ -226,7 +231,7 @@ find_local_account_tree(Blocks, SearchDepth, Skipped) ->
 				true ->
 					not_found;
 				false ->
-					find_local_account_tree(tl(Blocks), SearchDepth, Skipped + 1)
+					find_local_account_tree(tl(Blocks), SearchDepth, Skipped + 1, CustomDir)
 			end
 	end.
 

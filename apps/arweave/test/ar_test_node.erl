@@ -78,6 +78,7 @@
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
 all_peers(test) ->
 	[{test, peer1}, {test, peer2}, {test, peer3}, {test, peer4}];
 all_peers(e2e) ->
@@ -388,7 +389,7 @@ base_cm_config(Peers) ->
 	}.
 
 mine() ->
-	gen_server:cast(ar_node_worker, mine).
+	ar_node_worker:mine_one_block().
 
 %% @doc Start mining on the given node. The node will be mining until it finds a block.
 mine(Node) ->
@@ -490,10 +491,15 @@ write_genesis_files(DataDir, B0) ->
 	),
 	_ = ar_kv:create_ets(),
 	{ok, _} = ar_kv:start_link(),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),
-			block_time_history_db),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_index_db"), block_index_db),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "reward_history_db"]),
+		name => reward_history_db}),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_time_history_db"]),
+		name => block_time_history_db}),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_index_db"]),
+		name => block_index_db}),
 	H = B0#block.indep_hash,
 	WeaveSize = B0#block.weave_size,
 	TXRoot = B0#block.tx_root,

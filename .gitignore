@@ -37,3 +37,7 @@ screenlog.0
 _*
 *.swp
 *~
+!**/_*.json
+.jupyter/migrated
+notebooks/.ipynb_checkpoints
+
