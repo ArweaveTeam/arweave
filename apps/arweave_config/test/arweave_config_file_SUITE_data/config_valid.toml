@@ -27,3 +27,66 @@ overload_kill_mem_size = 3_000_000
 
 # http api logging handlers parameters
 [logging.handlers.http.api]
+
+######################################################################
+# draft: features
+######################################################################
+# [features.feature_1]
+# enabled = true
+# 
+# [features.feature_2]
+# enabled = false
+
+######################################################################
+# draft: network
+######################################################################
+
+######################################################################
+# draft: rate limiter 
+######################################################################
+
+######################################################################
+# draft: peers
+# Could it be helpful to create some helpers to group easily vdf or
+# trusted peers?
+#   peers.vdf = [...]
+#   peers.trusted = [...]
+######################################################################
+# [peers.default]
+# ...
+#
+# [peers."127.0.0.1:1984"]
+# vdf = true
+# ...
+#
+# [peers."127.0.0.2:1984"]
+# trusted = true
+# ...
+#
+# [peers."mypeers.arweave.xyz"]
+# ...
+#
+
+######################################################################
+# draft: storage modules
+# format: [storage.{type}.{index}]
+######################################################################
+# [storage.default]
+# address = "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+#
+# [storage.unpacked.0]
+# enabled = true
+# path = ...
+# size = ...
+# 
+# [storage.spora_2_6.10]
+# enabled = true
+# address = "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+#
+# [storage.replica_2_9.0]
+# enabled = true
+# address = address_value
+# repack_in_place = true
+#
+# [storage.s
+#
