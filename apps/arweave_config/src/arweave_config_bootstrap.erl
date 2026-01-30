@@ -21,12 +21,11 @@
 -compile(warnings_as_errors).
 -export([
 	start/1,
-	init/2,
-	init_environment/2,
-	init_config_file/2,
-	init_arguments/2,
-	init_runtime/2,
-	init_final/2
+	init_environment/1,
+	init_config_file/1,
+	init_arguments/1,
+	init_runtime/1,
+	init_final/1
 ]).
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -50,30 +49,12 @@ start(Args) ->
 	Config = arweave_config_legacy:get(),
 	State = #{
 		mode => ArweaveConfigMode,
-		config => Config
+		config => Config,
+		args => Args
 	},
-	init(Args, State).
 
-%%--------------------------------------------------------------------
-%% @hidden
-%% @private
-%% @doc start initialize arweave configuration, this function will
-%% parse arguments and configuration file. If everything is fine, then
-%% arweave can be started.
-%% @end
-%%--------------------------------------------------------------------
--spec init(Args, State) -> Return when
-	Args :: [string() | binary()],
-	State :: map(),
-	Return :: {ok, #config{}} | {error, term()}.
-
-init(Args, State) ->
-	case do_loop(init_environment, Args, State) of
-		{ok, #{ config := Config }} ->
-			{ok, Config};
-		Else ->
-			Else
-	end.
+	% Let call the fsm loop.
+	arweave_config_fsm:init(?MODULE, init_environment, State).
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -81,7 +62,7 @@ init(Args, State) ->
 %% @doc init arweave configuration with environment variable.
 %% @end
 %%--------------------------------------------------------------------
-init_environment(_Args, State) ->
+init_environment(State) ->
 	arweave_config_environment:reset(),
 	arweave_config_environment:load(),
 	{next, init_config_file, State}.
@@ -92,11 +73,11 @@ init_environment(_Args, State) ->
 %% @doc init arweave configuration from configuration file.
 %% @end
 %%--------------------------------------------------------------------
-init_config_file(_Args, State = #{ mode := "new" }) ->
+init_config_file(State = #{ mode := "new" }) ->
 	% @todo enable arweave_config_file.
 	?LOG_WARNING("arweave_config does not support config file."),
 	{next, init_arguments, State};
-init_config_file(Args, State = #{ config := Config }) ->
+init_config_file(State = #{ args := Args, config := Config }) ->
 	% @todo enable arweave_config_file_legacy.
 	case ar_config:parse_config_file(Args, Config) of
 		{ok, NewConfig} when is_record(NewConfig, config)  ->
@@ -117,7 +98,7 @@ init_config_file(Args, State = #{ config := Config }) ->
 %% @doc init arweave configuration from command line arguments.
 %% @end
 %%--------------------------------------------------------------------
-init_arguments(Args, State = #{ mode := "new" }) ->
+init_arguments(State = #{ args := Args, mode := "new" }) ->
 	?LOG_WARNING("arweave_config will use new argument format."),
 	case arweave_config_arguments:set(Args) of
 		{ok, _} ->
@@ -134,7 +115,7 @@ init_arguments(Args, State = #{ mode := "new" }) ->
 		Else ->
 			{error, Else}
 	end;
-init_arguments(Args, State = #{ config := Config }) ->
+init_arguments(State = #{ config := Config, args := Args }) ->
 	case ar_cli_parser:parse(Args, Config) of
 		{ok, NewConfig} ->
 			arweave_config_legacy:set(NewConfig),
@@ -152,7 +133,7 @@ init_arguments(Args, State = #{ config := Config }) ->
 %% configured in this mode.
 %% @end
 %%--------------------------------------------------------------------
-init_runtime(_Args, State) ->
+init_runtime(State) ->
 	case arweave_config:runtime() of
 		ok ->
 			{next, init_final, State};
@@ -166,7 +147,7 @@ init_runtime(_Args, State) ->
 %% @doc finalize arweave configuration initialization.
 %% @end
 %%--------------------------------------------------------------------
-init_final(_Args, State = #{ config := Config }) ->
+init_final(_State = #{ config := Config }) ->
 	% parse the arguments from command line and check if a
 	% configuration file is defined, returns #config{} record.
 	% Note: this function will halt the node and print helps if
@@ -174,41 +155,4 @@ init_final(_Args, State = #{ config := Config }) ->
 	% @todo: re-enable legacy parser
 	% Config = ar_cli_parser:parse_config_file(Args)
 	arweave_config_legacy:set(Config),
-	NewState = State#{
-		config => Config
-	},
-	{ok, NewState}.
-
-%%--------------------------------------------------------------------
-%% @hidden
-%% @private
-%% @doc main loop where all callbacks are executed.
-%% @end
-%%--------------------------------------------------------------------
--spec do_loop(Callback, Args, State) -> Return when
-	Callback :: atom(),
-	Args :: [string() | binary()],
-	State :: map(),
-	Return ::
-		{ok, State} |
-		{next, Callback, State} |
-		{error, Reason},
-	Reason :: term().
-
-do_loop(Callback, Args, State) ->
-	try
-		?LOG_DEBUG("bootstrap ~p", [Callback]),
-		erlang:apply(?MODULE, Callback, [Args, State])
-	of
-		{ok, NewState} ->
-			{ok, NewState};
-		{next, NextCallback, NewState} ->
-			do_loop(NextCallback, Args, NewState);
-		{error, Reason} ->
-			{error, Reason};
-		{error, Reason, _State} ->
-			{error, Reason}
-	catch
-		_Error:Reason ->
-			{error, Reason}
-	end.
+	{ok, Config}.
