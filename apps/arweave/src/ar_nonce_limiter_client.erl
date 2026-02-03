@@ -36,6 +36,12 @@
 -define(ROTATE_REMOTE_SERVERS_MS, 30_000).
 -endif.
 
+-type nonce_limiter_session_key() :: {
+		binary(),
+		pos_integer(),
+		pos_integer()
+	}.
+
 %%--------------------------------------------------------------------
 %% @doc Start the server.
 %% @end
@@ -54,6 +60,10 @@ start_link() ->
 %% the last computed output(s) of the previous session to the client.
 %% @end
 %%--------------------------------------------------------------------
+-spec maybe_request_sessions(SessionKey) -> Return when
+	SessionKey :: nonce_limiter_session_key(),
+	Return :: ok.
+
 maybe_request_sessions(SessionKey) ->
 	gen_server:cast(?MODULE, {maybe_request_sessions, SessionKey}).
 
