@@ -1811,7 +1811,8 @@ start_from_state(BI, Height) ->
 	start_from_state(BI, Height, Config#config.start_from_state).
 
 start_from_state(BI, Height, CustomDir) ->
-	case read_recent_blocks(BI, min(length(BI) - 1, ?START_FROM_STATE_SEARCH_DEPTH), CustomDir) of
+	case ar_node:read_recent_blocks(BI,
+			min(length(BI) - 1, ?START_FROM_STATE_SEARCH_DEPTH), CustomDir) of
 		not_found ->
 			?LOG_ERROR([{event, start_from_state}, {reason, block_headers_not_found}]),
 			block_headers_not_found;
@@ -1853,64 +1854,6 @@ start_from_state(BI, Height, CustomDir) ->
 					self() ! {join_from_state, Height2, BI2, Blocks3, CustomDir},
 					ok
 			end
-	end.
-
-read_recent_blocks(BI, SearchDepth, CustomDir) ->
-	read_recent_blocks2(lists:sublist(BI, 2 * ar_block:get_max_tx_anchor_depth() + SearchDepth),
-			SearchDepth, 0, CustomDir).
-
-read_recent_blocks2(_BI, Depth, Skipped, _CustomDir) when Skipped > Depth orelse
-		(Skipped > 0 andalso Depth == Skipped) ->
-	not_found;
-read_recent_blocks2([], _SearchDepth, Skipped, _CustomDir) ->
-	{Skipped, []};
-read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped, CustomDir) ->
-	case ar_storage:read_block(BH, CustomDir) of
-		B = #block{} ->
-			TXs = ar_storage:read_tx(B#block.txs, CustomDir),
-			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
-				true ->
-					read_recent_blocks2(BI, SearchDepth, Skipped + 1, CustomDir);
-				false ->
-					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
-							B#block.height),
-					case read_recent_blocks3(BI, 2 * ar_block:get_max_tx_anchor_depth() - 1,
-							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }], CustomDir) of
-						not_found ->
-							not_found;
-						Blocks ->
-							{Skipped, Blocks}
-					end
-			end;
-		Error ->
-			ar:console("Skipping the block ~s, reason: ~p.~n", [ar_util:encode(BH),
-					io_lib:format("~p", [Error])]),
-			read_recent_blocks2(BI, SearchDepth, Skipped + 1, CustomDir)
-	end.
-
-read_recent_blocks3([], _BlocksToRead, Blocks, _CustomDir) ->
-	lists:reverse(Blocks);
-read_recent_blocks3(_BI, 0, Blocks, _CustomDir) ->
-	lists:reverse(Blocks);
-read_recent_blocks3([{BH, _, _} | BI], BlocksToRead, Blocks, CustomDir) ->
-	case ar_storage:read_block(BH, CustomDir) of
-		B = #block{} ->
-			TXs = ar_storage:read_tx(B#block.txs, CustomDir),
-			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
-				true ->
-					ar:console("Failed to find all transaction headers for the block ~s.~n",
-							[ar_util:encode(BH)]),
-					not_found;
-				false ->
-					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
-							B#block.height),
-					read_recent_blocks3(BI, BlocksToRead - 1,
-							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | Blocks], CustomDir)
-			end;
-		Error ->
-			ar:console("Failed to read block header ~s, reason: ~p.~n",
-					[ar_util:encode(BH), io_lib:format("~p", [Error])]),
-			not_found
 	end.
 
 set_poa_caches([]) ->
