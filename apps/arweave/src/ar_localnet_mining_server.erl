@@ -154,18 +154,37 @@ mine_block7(Stage1Data, Stage2Data, State, MiningAddr) ->
 	[{_, TipNonceLimiterInfo}] = ets:lookup(node_state, nonce_limiter_info),
 	PrevStepNumber = TipNonceLimiterInfo#nonce_limiter_info.global_step_number,
 	SessionKey = ar_nonce_limiter:session_key(TipNonceLimiterInfo),
-	Session =
-		case ar_nonce_limiter:get_session(SessionKey) of
-			not_found ->
-				?LOG_ERROR([
-					{event, localnet_nonce_limiter_session_not_found},
-					{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-					{prev_step_number, PrevStepNumber}
-				]),
-				error;
-			FoundSession ->
-				FoundSession
-		end,
+	case ar_nonce_limiter:get_session(SessionKey) of
+		not_found ->
+			?LOG_ERROR([
+				{event, localnet_nonce_limiter_session_not_found},
+				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+				{prev_step_number, PrevStepNumber}
+			]),
+			error;
+		#vdf_session{} = Session ->
+			mine_block7_with_session(
+				Session,
+				SessionKey,
+				PrevStepNumber,
+				TipNonceLimiterInfo,
+				Stage1Data,
+				Stage2Data,
+				State,
+				MiningAddr
+			)
+	end.
+
+mine_block7_with_session(
+	Session,
+	SessionKey,
+	PrevStepNumber,
+	TipNonceLimiterInfo,
+	Stage1Data,
+	Stage2Data,
+	State,
+	MiningAddr
+) ->
 	{NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
 	{StepNumber, Output, Seed, Checkpoints, Steps} =
 		case Session#vdf_session.step_number == PrevStepNumber of
@@ -188,7 +207,13 @@ mine_block7(Stage1Data, Stage2Data, State, MiningAddr) ->
 				}
 		end,
 	#{ recall_byte1 := RecallByte1, poa1 := PoA1, nonce := Nonce } = Stage1Data,
-	H0 = ar_block:compute_h0(Output, ar_node:get_partition_number(RecallByte1), Seed, MiningAddr, ?REPLICA_2_9_PACKING_DIFFICULTY),
+	H0 = ar_block:compute_h0(
+		Output,
+		ar_node:get_partition_number(RecallByte1),
+		Seed,
+		MiningAddr,
+		?REPLICA_2_9_PACKING_DIFFICULTY
+	),
 	{H1, _} = ar_block:compute_h1(H0, Nonce, PoA1#poa.chunk),
 	{RecallByte2, PoA2, SolutionHash} =
 		case Stage2Data of
