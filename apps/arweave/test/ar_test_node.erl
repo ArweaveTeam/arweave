@@ -668,7 +668,6 @@ start(B0, RewardAddr, Config, StorageModules) ->
 	clean_up_and_stop(),
 	prometheus:start(),
 	arweave_config:start(),
-	ok = arweave_limiter:start(),
 	write_genesis_files(Config#config.data_dir, B0),
 	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = true,
@@ -676,7 +675,6 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		peers = [],
 		cm_exit_peer = not_set,
 		cm_peers = [],
-		local_peers = [],
 		mining_addr = RewardAddr,
 		storage_modules = StorageModules,
 		disk_space_check_frequency = 1000,
@@ -691,6 +689,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		'http_client.http.keepalive' = ?TEST_HTTP_CLIENT_KEEPALIVE,
 		debug = true
 	}),
+	ok = arweave_limiter:start(),
 	ar:start_dependencies(),
 	wait_until_joined(),
 	wait_until_syncs_genesis_data().

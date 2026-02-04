@@ -59,9 +59,25 @@ reject(Req, _Reason, _Data) ->
 		Req
 	).
 
+-ifdef(AR_TEST).
+get_peer_key(Req) ->
+	{{A, B, C, D}, _Port} = cowboy_req:peer(Req),
+	case cowboy_req:header(<<"x-p2p-port">>, Req) of
+		undefined ->
+			{A, B, C, D};
+		PortBin ->
+			case catch binary_to_integer(PortBin) of
+				Port when is_integer(Port) ->
+					{A, B, C, D, Port};
+				_ ->
+					{A, B, C, D}
+			end
+	end.
+-else.
 get_peer_key(Req) ->
 	{{A, B, C, D}, _Port} = cowboy_req:peer(Req),
 	{A, B, C, D}.
+-endif.
 
 config_peer_to_ip_addr({{A, B, C, D}, _Port}) -> {A, B, C, D};
 config_peer_to_ip_addr({A, B, C, D, _Port}) -> {A, B, C, D};
