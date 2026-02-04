@@ -764,6 +764,10 @@ handle_info({'DOWN', Ref, process, _, Reason}, #state{ worker_monitor_ref = Ref 
 			{reason, io_lib:format("~p", [Reason])}]),
 	{noreply, start_worker(State)};
 
+handle_info({computed, _Args}, #state{ current_session_key = undefined } = State) ->
+	%% Practically, only happens in tests.
+	?LOG_WARNING([{event, computed_without_current_session}]),
+	{noreply, State};
 handle_info({computed, Args}, State) ->
 	#state{ current_session_key = CurrentSessionKey } = State,
 	{StepNumber, PrevOutput, Output, Checkpoints, SessionKey} = Args,

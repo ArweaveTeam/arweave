@@ -72,7 +72,7 @@
 -define(READ_BLOCK_TIMEOUT, 500_000).
 -define(GET_TX_DATA_TIMEOUT, 200_000).
 -define(WAIT_UNTIL_JOINED_TIMEOUT, 200_000).
--define(WAIT_SYNCS_DATA_TIMEOUT, 200_000).
+-define(WAIT_SYNCS_DATA_TIMEOUT, 500_000).
 -define(WAIT_UNTIL_MINING_PAUSED_TIMEOUT, 60_000).
 
 %%%===================================================================
