@@ -186,6 +186,8 @@ parse_peer("", _Opts) ->
 	throw(empty_peer_string);
 parse_peer(BitStr, Opts) when is_binary(BitStr) ->
 	parse_peer(binary_to_list(BitStr), Opts);
+parse_peer([{A,B,C,D,P}], _Opts) ->
+	[{A, B, C, D, parse_port(P)}];
 parse_peer(Str, Opts) when is_list(Str) ->
 	% useful to mock the resolver, instead of using
 	% inet, any other custom module can be used.
@@ -199,6 +201,8 @@ parse_peer(Str, Opts) when is_list(Str) ->
 		{error, Reason} ->
 			throw({invalid_peer_string, Str, Reason})
 	end;
+parse_peer({{A,B,C,D},P}, _Opts) ->
+	[{A, B, C, D, parse_port(P)}];
 parse_peer({IP, Port}, Opts) ->
 	{A, B, C, D} = parse_peer(IP, Opts),
 	[{A, B, C, D, parse_port(Port)}];
@@ -225,12 +229,12 @@ parse_peer_test() ->
 		parse_peer("single.record.local", Opts)
 	),
 	?assertEqual(
-		{ok, [
+		[
 			{127,0,0,2,1984},
 			{127,0,0,3,1984},
 			{127,0,0,4,1984},
 			{127,0,0,5,1984}
-		]},
+		],
 		parse_peer("multi.record.local", Opts)
 	),
 	?assertThrow(
