@@ -887,21 +887,6 @@ validate_wallet_root_from_blocks([B | Rest], SnapshotAccountTreeDb) ->
 			ok
 	end.
 
-read_block_local(BH) ->
-	case ar_storage:read_block(BH) of
-		#block{} = B ->
-			io:format("Snapshot: block ~s found in storage~n", [ar_util:encode(BH)]),
-			B;
-		unavailable ->
-			io:format("Snapshot: block ~s missing in storage, checking cache~n",
-				[ar_util:encode(BH)]),
-			read_block_from_cache(BH);
-		Error ->
-			io:format("Snapshot: block ~s read error ~p, checking cache~n",
-				[ar_util:encode(BH), Error]),
-			read_block_from_cache(BH)
-	end.
-
 read_tx_local(TXID) ->
 	case TXID of
 		#tx{} = TX ->
@@ -910,96 +895,11 @@ read_tx_local(TXID) ->
 			ar_storage:read_tx(TXID)
 	end.
 
-read_block_from_cache(BH) ->
-	case ar_block_cache:get(block_cache, BH) of
-		not_found ->
-			io:format("Snapshot: block ~s not in cache~n", [ar_util:encode(BH)]),
-			unavailable;
-		B ->
-			io:format("Snapshot: block ~s found in cache~n", [ar_util:encode(BH)]),
-			B
-	end.
-
 read_recent_blocks_local(BI, SearchDepth) ->
-	read_recent_blocks(
-		BI,
-		SearchDepth,
-		fun read_block_local/1,
-		fun(B) ->
-			lists:map(fun read_tx_local/1, B#block.txs)
-		end
-	).
+	ar_node:read_recent_blocks(BI, SearchDepth, not_set).
 
 read_recent_blocks_from_snapshot(BI, SearchDepth, SnapshotDir) ->
-	ReadBlockFun =
-		fun(BH) ->
-			ar_storage:read_block(BH, SnapshotDir)
-		end,
-	ReadTxsFun =
-		fun(B) ->
-			ar_storage:read_tx(B#block.txs, SnapshotDir)
-		end,
-	read_recent_blocks(BI, SearchDepth, ReadBlockFun, ReadTxsFun).
-
-read_recent_blocks(BI, SearchDepth, ReadBlockFun, ReadTxsFun) ->
-	read_recent_blocks2(
-		lists:sublist(BI, 2 * ar_block:get_max_tx_anchor_depth() + SearchDepth),
-		SearchDepth,
-		0,
-		ReadBlockFun,
-		ReadTxsFun
-	).
-
-read_recent_blocks2(_BI, Depth, Skipped, _ReadBlockFun, _ReadTxsFun) when Skipped > Depth orelse
-		(Skipped > 0 andalso Depth == Skipped) ->
-	not_found;
-read_recent_blocks2([], _SearchDepth, Skipped, _ReadBlockFun, _ReadTxsFun) ->
-	{Skipped, []};
-read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped, ReadBlockFun, ReadTxsFun) ->
-	case ReadBlockFun(BH) of
-		#block{} = B ->
-			TXs = ReadTxsFun(B),
-			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
-				true ->
-					read_recent_blocks2(BI, SearchDepth, Skipped + 1, ReadBlockFun, ReadTxsFun);
-				false ->
-					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
-					case read_recent_blocks3(BI,
-							2 * ar_block:get_max_tx_anchor_depth() - 1,
-							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }],
-							ReadBlockFun,
-							ReadTxsFun) of
-						not_found ->
-							not_found;
-						Blocks ->
-							{Skipped, Blocks}
-					end
-			end;
-		_ ->
-			read_recent_blocks2(BI, SearchDepth, Skipped + 1, ReadBlockFun, ReadTxsFun)
-	end.
-
-read_recent_blocks3([], _BlocksToRead, Blocks, _ReadBlockFun, _ReadTxsFun) ->
-	lists:reverse(Blocks);
-read_recent_blocks3(_BI, 0, Blocks, _ReadBlockFun, _ReadTxsFun) ->
-	lists:reverse(Blocks);
-read_recent_blocks3([{BH, _, _} | BI], BlocksToRead, Blocks, ReadBlockFun, ReadTxsFun) ->
-	case ReadBlockFun(BH) of
-		#block{} = B ->
-			TXs = ReadTxsFun(B),
-			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
-				true ->
-					not_found;
-				false ->
-					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
-					read_recent_blocks3(BI, BlocksToRead - 1,
-						[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | Blocks],
-						ReadBlockFun,
-						ReadTxsFun)
-			end;
-		_ ->
-			not_found
-	end.
+	ar_node:read_recent_blocks(BI, SearchDepth, SnapshotDir).
 
 
 store_snapshot_blocks_from_list(Blocks) ->
