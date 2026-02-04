@@ -59,6 +59,8 @@ handle_call(is_paused, _From, State) ->
 handle_call(_Request, _From, State) ->
 	{reply, ok, State}.
 
+handle_cast({start_mining, _Args}, #state{ paused = false } = State) ->
+	{noreply, State};
 handle_cast({start_mining, {DiffPair, RebaseThreshold, Height}}, State) ->
 	gen_server:cast(self(), mine),
 	{noreply, State#state{
