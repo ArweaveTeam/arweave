@@ -180,7 +180,6 @@ test_vdf_server_push_slow_block() ->
 
 	Seed0 = B0#block.nonce_limiter_info#nonce_limiter_info.next_seed,
 	Seed1 = B1#block.nonce_limiter_info#nonce_limiter_info.next_seed,
-	StepNumber1 = ar_block:vdf_step_number(B1),
 
 	[{Seed0, _, LatestStepNumber0}] = get_computed_output(Seed0),
 	[{Seed1, FirstStepNumber1, LatestStepNumber1}] = get_computed_output(Seed1),
@@ -278,7 +277,7 @@ test_vdf_client_fast_block_pull_interface() ->
 			nonce_limiter_server_trusted_peers = [
 				ar_util:format_peer(ar_test_node:peer_ip(main))
 			],
-			enable = [vdf_server_pull | PeerConfig#config.enable] 
+			enable = [vdf_server_pull | PeerConfig#config.enable]
 		}
 	),
 	%% Start the main as a VDF server
@@ -332,7 +331,7 @@ test_vdf_client_slow_block() ->
 		PeerConfig#config{ 
 			nonce_limiter_server_trusted_peers = [
 				"127.0.0.1:" ++ integer_to_list(Config#config.port)
-			] 
+			]
 		}
 	),
 	%% Start the main as a VDF server
@@ -377,7 +376,7 @@ test_vdf_client_slow_block_pull_interface() ->
 			nonce_limiter_server_trusted_peers = [
 				"127.0.0.1:" ++ integer_to_list(Config#config.port) 
 			],
-			enable = [vdf_server_pull | PeerConfig#config.enable] 
+			enable = [vdf_server_pull | PeerConfig#config.enable]
 		}
 	),
 	%% Start the main as a VDF server
