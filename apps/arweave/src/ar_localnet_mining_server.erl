@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_mining/1, pause/0, is_paused/0, set_difficulty/1,
-	set_merkle_rebase_threshold/1, set_height/1, prepare_and_post_solution/1]).
+	set_merkle_rebase_threshold/1, set_height/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -46,8 +46,6 @@ set_merkle_rebase_threshold(Threshold) ->
 set_height(Height) ->
 	gen_server:cast(?MODULE, {set_height, Height}).
 
-prepare_and_post_solution(_Solution) ->
-	ok.
 
 %%%===================================================================
 %%% Generic server callbacks.
