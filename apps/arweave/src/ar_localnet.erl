@@ -786,8 +786,8 @@ store_latest_wallet_list_from_blocks(Blocks, SnapshotAccountTreeDb, SearchDepth)
 				false ->
 					{error, {wallet_list_root_mismatch, RootHash, B#block.wallet_list}}
 			end;
-		{error, _} = Error ->
-			Error
+		not_found ->
+			{error, wallet_list_not_found}
 	end.
 
 find_wallet_tree_with_search([], _SearchDepth, _ReadWalletFun) ->
@@ -1193,8 +1193,8 @@ store_snapshot_wallet_list(Blocks, SnapshotDir, SearchDepth) ->
 				false ->
 					{error, {wallet_list_root_mismatch, RootHash, B#block.wallet_list}}
 			end;
-		{error, _} = Error ->
-			Error
+		not_found ->
+			{error, wallet_list_not_found}
 	end.
 
 
