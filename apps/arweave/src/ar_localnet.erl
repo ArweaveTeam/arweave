@@ -646,41 +646,7 @@ write_block_index_snapshot2(Height, PrevH, [{H, WeaveSize, TXRoot} | BI],
 store_snapshot_blocks_in_snapshot(Blocks, SnapshotDbs) ->
 	BlockDb = maps:get(block, SnapshotDbs),
 	TxConfirmationDb = maps:get(tx_confirmation, SnapshotDbs),
-	case lists:foldl(
-		fun(B, Acc) ->
-			case Acc of
-				{ok, TxIdSet} ->
-					io:format("Snapshot: block ~s height ~B~n",
-						[ar_util:encode(B#block.indep_hash), B#block.height]),
-					case store_block_snapshot(B, BlockDb) of
-						ok ->
-							TxIds = lists:map(fun tx_id/1, B#block.txs),
-							case copy_tx_confirmations(TxIds, B#block.height,
-									B#block.indep_hash, TxConfirmationDb) of
-								ok ->
-									{ok, sets:union(TxIdSet, sets:from_list(TxIds))};
-								{error, _} = Error ->
-									io:format("Snapshot: error confirmations for block ~s: ~p~n",
-										[ar_util:encode(B#block.indep_hash), Error]),
-									Error
-							end;
-						{error, _} = Error ->
-							io:format("Snapshot: error storing block ~s: ~p~n",
-								[ar_util:encode(B#block.indep_hash), Error]),
-							Error
-					end;
-				{error, _} = Error ->
-					Error
-			end
-		end,
-		{ok, sets:new()},
-		Blocks
-	) of
-		{ok, TxIdSet} ->
-			{ok, sets:to_list(TxIdSet)};
-		{error, _} = Error ->
-			Error
-	end.
+	store_snapshot_blocks_with_dbs(Blocks, BlockDb, TxConfirmationDb, "Snapshot").
 
 store_block_snapshot(B, SnapshotBlockDb) ->
 	TxIds = lists:map(fun tx_id/1, B#block.txs),
@@ -955,86 +921,54 @@ read_block_from_cache(BH) ->
 	end.
 
 read_recent_blocks_local(BI, SearchDepth) ->
-	read_recent_blocks_local2(
-		lists:sublist(BI, 2 * ar_block:get_max_tx_anchor_depth() + SearchDepth),
+	read_recent_blocks(
+		BI,
 		SearchDepth,
-		0
+		fun read_block_local/1,
+		fun(B) ->
+			lists:map(fun read_tx_local/1, B#block.txs)
+		end
 	).
 
-read_recent_blocks_local2(_BI, Depth, Skipped) when Skipped > Depth orelse
-		(Skipped > 0 andalso Depth == Skipped) ->
-	not_found;
-read_recent_blocks_local2([], _SearchDepth, Skipped) ->
-	{Skipped, []};
-read_recent_blocks_local2([{BH, _, _} | BI], SearchDepth, Skipped) ->
-	case read_block_local(BH) of
-		#block{} = B ->
-			TXs = lists:map(fun read_tx_local/1, B#block.txs),
-			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
-				true ->
-					read_recent_blocks_local2(BI, SearchDepth, Skipped + 1);
-				false ->
-					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
-					case read_recent_blocks_local3(BI,
-							2 * ar_block:get_max_tx_anchor_depth() - 1,
-							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }]) of
-						not_found ->
-							not_found;
-						Blocks ->
-							{Skipped, Blocks}
-					end
-			end;
-		_ ->
-			read_recent_blocks_local2(BI, SearchDepth, Skipped + 1)
-	end.
-
-read_recent_blocks_local3([], _BlocksToRead, Blocks) ->
-	lists:reverse(Blocks);
-read_recent_blocks_local3(_BI, 0, Blocks) ->
-	lists:reverse(Blocks);
-read_recent_blocks_local3([{BH, _, _} | BI], BlocksToRead, Blocks) ->
-	case read_block_local(BH) of
-		#block{} = B ->
-			TXs = lists:map(fun read_tx_local/1, B#block.txs),
-			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
-				true ->
-					not_found;
-				false ->
-					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
-					read_recent_blocks_local3(BI, BlocksToRead - 1,
-						[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | Blocks])
-			end;
-		_ ->
-			not_found
-	end.
-
 read_recent_blocks_from_snapshot(BI, SearchDepth, SnapshotDir) ->
-	read_recent_blocks_from_snapshot2(
+	ReadBlockFun =
+		fun(BH) ->
+			ar_storage:read_block(BH, SnapshotDir)
+		end,
+	ReadTxsFun =
+		fun(B) ->
+			ar_storage:read_tx(B#block.txs, SnapshotDir)
+		end,
+	read_recent_blocks(BI, SearchDepth, ReadBlockFun, ReadTxsFun).
+
+read_recent_blocks(BI, SearchDepth, ReadBlockFun, ReadTxsFun) ->
+	read_recent_blocks2(
 		lists:sublist(BI, 2 * ar_block:get_max_tx_anchor_depth() + SearchDepth),
 		SearchDepth,
 		0,
-		SnapshotDir
+		ReadBlockFun,
+		ReadTxsFun
 	).
 
-read_recent_blocks_from_snapshot2(_BI, Depth, Skipped, _SnapshotDir)
-		when Skipped > Depth orelse
+read_recent_blocks2(_BI, Depth, Skipped, _ReadBlockFun, _ReadTxsFun) when Skipped > Depth orelse
 		(Skipped > 0 andalso Depth == Skipped) ->
 	not_found;
-read_recent_blocks_from_snapshot2([], _SearchDepth, Skipped, _SnapshotDir) ->
+read_recent_blocks2([], _SearchDepth, Skipped, _ReadBlockFun, _ReadTxsFun) ->
 	{Skipped, []};
-read_recent_blocks_from_snapshot2([{BH, _, _} | BI], SearchDepth, Skipped, SnapshotDir) ->
-	case ar_storage:read_block(BH, SnapshotDir) of
+read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped, ReadBlockFun, ReadTxsFun) ->
+	case ReadBlockFun(BH) of
 		#block{} = B ->
-			TXs = ar_storage:read_tx(B#block.txs, SnapshotDir),
+			TXs = ReadTxsFun(B),
 			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
 				true ->
-					read_recent_blocks_from_snapshot2(BI, SearchDepth, Skipped + 1, SnapshotDir);
+					read_recent_blocks2(BI, SearchDepth, Skipped + 1, ReadBlockFun, ReadTxsFun);
 				false ->
 					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
-					case read_recent_blocks_from_snapshot3(BI,
+					case read_recent_blocks3(BI,
 							2 * ar_block:get_max_tx_anchor_depth() - 1,
 							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }],
-							SnapshotDir) of
+							ReadBlockFun,
+							ReadTxsFun) of
 						not_found ->
 							not_found;
 						Blocks ->
@@ -1042,25 +976,26 @@ read_recent_blocks_from_snapshot2([{BH, _, _} | BI], SearchDepth, Skipped, Snaps
 					end
 			end;
 		_ ->
-			read_recent_blocks_from_snapshot2(BI, SearchDepth, Skipped + 1, SnapshotDir)
+			read_recent_blocks2(BI, SearchDepth, Skipped + 1, ReadBlockFun, ReadTxsFun)
 	end.
 
-read_recent_blocks_from_snapshot3([], _BlocksToRead, Blocks, _SnapshotDir) ->
+read_recent_blocks3([], _BlocksToRead, Blocks, _ReadBlockFun, _ReadTxsFun) ->
 	lists:reverse(Blocks);
-read_recent_blocks_from_snapshot3(_BI, 0, Blocks, _SnapshotDir) ->
+read_recent_blocks3(_BI, 0, Blocks, _ReadBlockFun, _ReadTxsFun) ->
 	lists:reverse(Blocks);
-read_recent_blocks_from_snapshot3([{BH, _, _} | BI], BlocksToRead, Blocks, SnapshotDir) ->
-	case ar_storage:read_block(BH, SnapshotDir) of
+read_recent_blocks3([{BH, _, _} | BI], BlocksToRead, Blocks, ReadBlockFun, ReadTxsFun) ->
+	case ReadBlockFun(BH) of
 		#block{} = B ->
-			TXs = ar_storage:read_tx(B#block.txs, SnapshotDir),
+			TXs = ReadTxsFun(B),
 			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
 				true ->
 					not_found;
 				false ->
 					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, B#block.height),
-					read_recent_blocks_from_snapshot3(BI, BlocksToRead - 1,
+					read_recent_blocks3(BI, BlocksToRead - 1,
 						[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | Blocks],
-						SnapshotDir)
+						ReadBlockFun,
+						ReadTxsFun)
 			end;
 		_ ->
 			not_found
@@ -1068,27 +1003,30 @@ read_recent_blocks_from_snapshot3([{BH, _, _} | BI], BlocksToRead, Blocks, Snaps
 
 
 store_snapshot_blocks_from_list(Blocks) ->
+	store_snapshot_blocks_with_dbs(Blocks, block_db, tx_confirmation_db, "Startup copy").
+
+store_snapshot_blocks_with_dbs(Blocks, BlockDb, TxConfirmationDb, LogPrefix) ->
 	case lists:foldl(
 		fun(B, Acc) ->
 			case Acc of
 				{ok, TxIdSet} ->
-					io:format("Startup copy: block ~s height ~B~n",
-						[ar_util:encode(B#block.indep_hash), B#block.height]),
-					case store_block_snapshot(B, block_db) of
+					io:format("~s: block ~s height ~B~n",
+						[LogPrefix, ar_util:encode(B#block.indep_hash), B#block.height]),
+					case store_block_snapshot(B, BlockDb) of
 						ok ->
 							TxIds = lists:map(fun tx_id/1, B#block.txs),
 							case copy_tx_confirmations(TxIds, B#block.height,
-									B#block.indep_hash, tx_confirmation_db) of
+									B#block.indep_hash, TxConfirmationDb) of
 								ok ->
 									{ok, sets:union(TxIdSet, sets:from_list(TxIds))};
 								{error, _} = Error ->
-									io:format("Startup copy: error confirmations for block ~s: ~p~n",
-										[ar_util:encode(B#block.indep_hash), Error]),
+									io:format("~s: error confirmations for block ~s: ~p~n",
+										[LogPrefix, ar_util:encode(B#block.indep_hash), Error]),
 									Error
 							end;
 						{error, _} = Error ->
-							io:format("Startup copy: error storing block ~s: ~p~n",
-								[ar_util:encode(B#block.indep_hash), Error]),
+							io:format("~s: error storing block ~s: ~p~n",
+								[LogPrefix, ar_util:encode(B#block.indep_hash), Error]),
 							Error
 					end;
 				{error, _} = Error ->
