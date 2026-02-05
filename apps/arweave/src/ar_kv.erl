@@ -555,6 +555,9 @@ db_flush(#db{name = Name, db_handle = undefined}) ->
 	?LOG_ERROR([{event, db_operation_failed}, {op, db_flush}, {error, closed}, {name, io_lib:format("~p", [Name])}]),
 	{error, closed};
 
+db_flush(#db{readonly = true}) ->
+	ok;
+
 db_flush(#db{name = Name, db_handle = Db}) ->
 	case rocksdb:flush(Db, [{wait, true}, {allow_write_stall, false}]) of
 		{error, FlushError} ->
