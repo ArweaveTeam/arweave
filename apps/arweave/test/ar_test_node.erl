@@ -1440,12 +1440,22 @@ post_block(B, ExpectedResults) ->
 	post_block(B, ExpectedResults, peer_ip(main)).
 
 post_block(B, ExpectedResults, Peer) ->
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B)),
+	Result = send_new_block_with_retry(Peer, B, 2),
+	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, Result),
 	await_post_block(B, ExpectedResults, Peer).
 
 send_new_block(Peer, B) ->
 	ar_http_iface_client:send_block_binary(Peer, B#block.indep_hash,
 			ar_serialize:block_to_binary(B)).
+
+send_new_block_with_retry(Peer, B, RetriesLeft) ->
+	case send_new_block(Peer, B) of
+		{error, {stream_error, closed}} when RetriesLeft > 0 ->
+			timer:sleep(50),
+			send_new_block_with_retry(Peer, B, RetriesLeft - 1);
+		Result ->
+			Result
+	end.
 
 await_post_block(B, ExpectedResults) ->
 	await_post_block(B, ExpectedResults, peer_ip(main)).
