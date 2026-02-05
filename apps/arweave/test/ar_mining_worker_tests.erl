@@ -495,11 +495,10 @@ test_both_ranges_available_h1_solution(State) ->
 	[ValidH1 | RestH1s] = H1s = generate_hashes_for_recall_range(H1Prefix, Candidate3#mining_candidate.packing_difficulty),
 	handle_compute_h1s(H1s, State),
 	%% 8. Worker checks if H1s pass the diff check, rejecting all of them but the very first one
-	handle_passes_diff_checks(#{ValidH1 => true}, State),
+	Hashes1Map = maps:from_list([{ValidH1, true} | [{H1, false} || H1 <- RestH1s]]),
+	handle_passes_diff_checks(Hashes1Map, State),
 	%% 8.1. Worker posts the valid H1 solution
 	handle_prepare_and_post_solution_h1(ValidH1),
-	Passes1Map = maps:from_list([{H1, false} || H1 <- RestH1s]),
-	handle_passes_diff_checks(Passes1Map, State),
 	%% 9. Worker asks to compute H2s for the recall ranges.
 	%% The number of H2s is equal to the number of nonces in the recall range.
 	%% The very first H2 will never be called to be computed, because the
@@ -552,11 +551,9 @@ test_both_ranges_available_h2_solution(State) ->
 	[ValidH2 | RestH2s] = H2s = generate_hashes_for_recall_range(H2Prefix, Candidate3#mining_candidate.packing_difficulty),
 	handle_compute_h2s(H2s, State),
 	%% 9.1. Worker checks if H2s pass the diff check, rejecting all of them but the very first one
-	handle_passes_diff_checks(#{ValidH2 => true}, State),
+	Hashes2Map = maps:from_list([{ValidH2, true} | [{H2, false} || H2 <- RestH2s]]),
+	handle_passes_diff_checks(Hashes2Map, State),
 	%% 10. Worker posts the valid H2 solution
 	handle_prepare_and_post_solution_h2(ValidH2),
-	%% 11. Worker checks if H2s pass the diff check, rejecting all of them
-	Hashes2Map = maps:from_list([{H2, false} || H2 <- RestH2s]),
-	handle_passes_diff_checks(Hashes2Map, State),
 	%% 12. No more messages expected
 	assert_no_messages().
