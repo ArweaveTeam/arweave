@@ -1805,7 +1805,7 @@ start_from_state([#block{} = GenesisB]) ->
 	self() ! {join_from_state, 0, BI, [GenesisB#block{
 		reward_history = RewardHistory,
 		block_time_history = BlockTimeHistory
-	}]}.
+	}], not_set}.
 start_from_state(BI, Height) ->
 	{ok, Config} = arweave_config:get_env(),
 	start_from_state(BI, Height, Config#config.start_from_state).
