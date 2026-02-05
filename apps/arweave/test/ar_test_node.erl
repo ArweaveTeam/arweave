@@ -24,6 +24,7 @@
 		join/2, join/3, join_on/1, join_on/2, rejoin_on/1,
 		generate_join_config/0, generate_join_config/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
+		with_gossip_paused/2,
 
 		mine/0, get_tx_anchor/1, get_tx_confirmations/2, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
@@ -999,6 +1000,14 @@ disconnect_peers(Node, Peer) ->
 disconnect_from(Node) ->
 	ar_http:block_peer_connections(),
 	remote_call(Node, ar_http, block_peer_connections, []).
+
+with_gossip_paused(Node, Fun) when is_function(Fun, 0) ->
+	ok = remote_call(Node, ar_bridge, stop_gossip, []),
+	try
+		Fun()
+	after
+		ok = remote_call(Node, ar_bridge, start_gossip, [])
+	end.
 
 wait_until_syncs_genesis_data(Node) ->
 	ok = remote_call(Node, ar_test_node, wait_until_syncs_genesis_data, [], 100_000).
