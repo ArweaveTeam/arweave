@@ -370,10 +370,11 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 base_cm_config(Peers) ->
 	RewardAddr = ar_wallet:to_address(remote_call(peer1, ar_wallet, new_keyfile, [])),
 	#config{
-		mining_cache_size_mb = 16,
+		mining_cache_size_mb = 128,
 		start_from_latest_state = true,
 		auto_join = true,
 		mining_addr = RewardAddr,
+		hashing_threads = 1,
 		sync_jobs = 2,
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,
