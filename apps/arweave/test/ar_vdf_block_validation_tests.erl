@@ -55,29 +55,32 @@ test_fork_checkpoints_not_found() ->
 		}
 	}),
 
-	%% Still need to connect to make sure VDF is shared
-	ar_test_node:connect_to_peer(peer1),
+	H2 = ar_test_node:with_gossip_paused(main, fun() ->
+		%% Still need to connect to make sure VDF is shared
+		ar_test_node:connect_to_peer(peer1),
 
-	ar_test_node:mine(main),
-	[H1 | _] = ar_test_node:wait_until_height(main, 1),
-	send_block(H1, main, peer1),
-	ar_test_node:wait_until_height(peer1, 1),
-
-	ar_test_node:disconnect_from(peer1),
-	%% Make sure that we are deep into the new session before we try to mine.
-	%% Suspend peer1's nonce limiter so it cannot advance to the new session while isolated.
-	[H2 | _] = with_nonce_limiter_paused(peer1, fun() ->
-		wait_until_step_number(main, ?TEST_RESET_FREQUENCY + 101),
 		ar_test_node:mine(main),
-		ar_test_node:wait_until_height(main, 2)
-	end),
+		[H1 | _] = ar_test_node:wait_until_height(main, 1),
+		send_block(H1, main, peer1),
+		ar_test_node:wait_until_height(peer1, 1),
 
-	ar_test_node:connect_to_peer(peer1),
-	ar_test_node:mine(peer1),
-	%% Assert that peer1 is unable to mine a block
-	timer:sleep(10000),
-	BI = ar_test_node:remote_call(peer1, ar_node, get_blocks, []),
-	?assertEqual(2, length(BI)), %% block 0 and 1
+		ar_test_node:disconnect_from(peer1),
+		%% Make sure that we are deep into the new session before we try to mine.
+		%% Suspend peer1's nonce limiter so it cannot advance to the new session while isolated.
+		[H2Local | _] = with_nonce_limiter_paused(peer1, fun() ->
+			wait_until_step_number(main, ?TEST_RESET_FREQUENCY + 101),
+			ar_test_node:mine(main),
+			ar_test_node:wait_until_height(main, 2)
+		end),
+
+		ar_test_node:connect_to_peer(peer1),
+		ar_test_node:mine(peer1),
+		%% Assert that peer1 is unable to mine a block
+		timer:sleep(10000),
+		BI = ar_test_node:remote_call(peer1, ar_node, get_blocks, []),
+		?assertEqual(2, length(BI)), %% block 0 and 1
+		H2Local
+	end),
 
 	%% Get peer1 on the main chain
 	send_block(H2, main, peer1),
@@ -139,8 +142,9 @@ test_fork_refuse_validation() ->
 		}
 	}),
 
-	%% Still need to connect to make sure VDF is shared
-	ar_test_node:connect_to_peer(peer1),
+	ar_test_node:with_gossip_paused(main, fun() ->
+		%% Still need to connect to make sure VDF is shared
+		ar_test_node:connect_to_peer(peer1),
 
 	ar_test_node:mine(main),
 	[H1 | _] = ar_test_node:wait_until_height(main, 1),
@@ -160,9 +164,10 @@ test_fork_refuse_validation() ->
 	%% Just avoids some errors if the test finishes before the mining server is paused.
 	ar_test_node:wait_until_mining_paused(main),
 
-	ar_test_node:connect_to_peer(peer1),
-	ensure_block_applied(H2, main, peer1, 2),
-	ensure_block_applied(H3, main, peer1, 3),
+		ar_test_node:connect_to_peer(peer1),
+		ensure_block_applied(H2, main, peer1, 2),
+		ensure_block_applied(H3, main, peer1, 3)
+	end),
 	ar_test_node:wait_until_height(peer1, 3).
 
 mock_reset_frequency() ->
@@ -180,6 +185,7 @@ mock_block_propagation_parallelization() ->
 			0
 		end
 	}.
+
 
 send_block(H, FromNode, ToNode) ->
 	Block = ar_test_node:remote_call(FromNode, ar_storage, read_block, [H]),
