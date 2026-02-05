@@ -27,40 +27,41 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 execute(Req, Env) ->
-    LimiterRef = get_limiter_ref(Req),
-    PeerKey = get_peer_key(Req),
+	LimiterRef = get_limiter_ref(Req),
+	PeerKey = get_peer_key(Req),
 
-    case arweave_limiter:register_or_reject_call(LimiterRef, PeerKey) of
-        {reject, Reason, Data} ->
-            {stop, reject(Req, Reason, Data)};
-        _ ->
-            {ok, Req, Env}
-    end.
+	case arweave_limiter:register_or_reject_call(LimiterRef, PeerKey) of
+		{reject, Reason, Data} ->
+			?LOG_ERROR([{event, rate_limiter_reject}, {reason, Reason}, {data, Data}]),
+			{stop, reject(Req, Reason, Data)};
+		_ ->
+			{ok, Req, Env}
+	end.
 
 get_limiter_ref(Req) ->
-    {ok, Config} = arweave_config:get_env(),
-    LocalIPs = [config_peer_to_ip_addr(Peer) || Peer <- Config#config.local_peers],
-    PeerIP = config_peer_to_ip_addr(get_peer_key(Req)),
+	{ok, Config} = arweave_config:get_env(),
+	LocalIPs = [config_peer_to_ip_addr(Peer) || Peer <- Config#config.local_peers],
+	PeerIP = config_peer_to_ip_addr(get_peer_key(Req)),
 
-    case lists:member(PeerIP, LocalIPs) of
-        true ->
-            local_peers;
-        _ ->
-            Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-            path_to_limiter_ref(Path)
-    end.
+	case lists:member(PeerIP, LocalIPs) of
+		true ->
+			local_peers;
+		_ ->
+			Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
+			path_to_limiter_ref(Path)
+	end.
 
 reject(Req, _Reason, _Data) ->
-    cowboy_req:reply(
-      429,
-      #{},
-      <<"Too Many Requests">>,
-      Req
-     ).
+	cowboy_req:reply(
+		429,
+		#{},
+		<<"Too Many Requests">>,
+		Req
+	).
 
 get_peer_key(Req) ->
-    {{A, B, C, D}, _Port} = cowboy_req:peer(Req),
-    {A, B, C, D}.
+	{{A, B, C, D}, _Port} = cowboy_req:peer(Req),
+	{A, B, C, D}.
 
 config_peer_to_ip_addr({{A, B, C, D}, _Port}) -> {A, B, C, D};
 config_peer_to_ip_addr({A, B, C, D, _Port}) -> {A, B, C, D};
