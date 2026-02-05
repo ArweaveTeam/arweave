@@ -102,7 +102,7 @@ start_mining() ->
 %% candidates (happens often in tests). The localnet mining server only produces
 %% one candidate and one block.
 mine_one_block() ->
-	gen_server:cast(?MODULE, mine_one_block).
+	gen_server:call(?MODULE, mine_one_block).
 
 %% @doc Mine blocks until the given height is reached.
 mine_until_height(Height) ->
@@ -358,6 +358,14 @@ calculate_delay(Bytes) ->
 	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
 	BaseDelay + NetworkDelay.
 
+handle_call(mine_one_block, _From, State) ->
+	case maps:get(miner_state, State) of
+		undefined ->
+			State2 = start_mining(State),
+			{reply, ok, State2};
+		_ ->
+			{reply, {error, mining_server_running}, State}
+	end;
 handle_call({set_reward_addr, Addr}, _From, State) ->
 	{reply, ok, State#{ reward_addr => Addr }}.
 
@@ -716,9 +724,6 @@ handle_task({cache_missing_txs, BH, TXs}, State) ->
 			%% we were looking for previously missing transactions.
 			{noreply, State}
 	end;
-
-handle_task(mine_one_block, State) ->
-	{noreply, start_mining(State)};
 
 handle_task(start_mining, State) ->
 	{noreply, start_mining(State#{ automine => true })};
