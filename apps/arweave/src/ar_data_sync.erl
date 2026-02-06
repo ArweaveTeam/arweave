@@ -1050,7 +1050,9 @@ handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End,
 			disk_pool_threshold = DiskPoolThreshold,
 			sync_phase = SyncPhase,
-			migrations_index = MI } = State,
+			migrations_index = MI,
+			store_id = StoreID,
+			sync_intervals_queue = Q } = State,
 	CheckIsJoined =
 		case ar_node:is_joined() of
 			false ->
@@ -1090,8 +1092,9 @@ handle_cast(collect_peer_intervals, State) ->
 		end,
 	?LOG_DEBUG([{event, collect_peer_intervals_start},
 		{function, collect_peer_intervals},
-		{store_id, State#sync_data_state.store_id},
+		{store_id, StoreID},
 		{s, Start}, {e, End},
+		{queue_size, gb_sets:size(Q)},
 		{is_joined, CheckIsJoined}, 
 		{is_footprint_record_migrated, IsFootprintRecordMigrated},
 		{intersects_disk_pool, IntersectsDiskPool},
@@ -1204,13 +1207,6 @@ handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 				false ->
 					%% All checks have passed, find and enqueue intervals for one
 					%% sync bucket worth of chunks starting at offset Start.
-					Footprint =
-						case Type of
-							footprint ->
-								ar_footprint_record:get_footprint(Offset + ?DATA_CHUNK_SIZE);
-							_ ->
-								ignore
-						end,
 					ar_peer_intervals:fetch(Offset, Start, End2, StoreID, Type)
 			end
 	end,
