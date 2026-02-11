@@ -95,6 +95,7 @@ path_to_limiter_ref([<<"block">>, _Type, _ID, <<"hash_list">>]) -> block_index;
 path_to_limiter_ref([<<"wallet_list">>]) -> wallet_list;
 path_to_limiter_ref([<<"block">>, _Type, _ID, <<"wallet_list">>]) -> wallet_list;
 path_to_limiter_ref([<<"vdf">>]) -> get_vdf;
+path_to_limiter_ref([<<"vdf2">>]) -> get_vdf;
 path_to_limiter_ref([<<"vdf">>, <<"session">>]) -> get_vdf_session;
 path_to_limiter_ref([<<"vdf2">>, <<"session">>]) -> get_vdf_session;
 path_to_limiter_ref([<<"vdf3">>, <<"session">>]) -> get_vdf_session;
