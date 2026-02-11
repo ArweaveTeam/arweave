@@ -174,10 +174,9 @@ test_persisted_mempool() ->
 	ar_test_node:disconnect_from(peer1),
 	SignedTX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main) }),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(main, SignedTX, false),
-	Mempool = ar_mempool:get_map(),
 	true = ar_util:do_until(
 		fun() ->
-			maps:is_key(SignedTX#tx.id, Mempool)
+			maps:is_key(SignedTX#tx.id, ar_mempool:get_map())
 		end,
 		100,
 		30000
