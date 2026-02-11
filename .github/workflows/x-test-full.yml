@@ -217,3 +217,43 @@ jobs:
         run: scripts/setup_notebook_env.sh
       - name: Run pricing transition notebook headless
         run: scripts/run_notebook_headless.sh pricing_transition_localnet
+  notebook-autoredenomination-localnet:
+    runs-on:
+      - self-hosted
+      - build-runner
+      - ${{ inputs.os_arch }}
+      - ${{ inputs.os_name }}
+      - ${{ inputs.os_release }}
+    steps:
+      - name: cleanup
+        if: always()
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+          lfs: true
+      - name: Fetch Git LFS objects
+        run: |
+          git lfs install --local
+          git lfs pull
+          git lfs checkout
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.sha }}-${{ env.cache_key }}
+      # Both artifacts (_build and apps dir) are
+      # required.
+      - name: Extract artifact
+        run: |
+          tar zxfp _build.tar.gz
+          tar zxfp apps.tar.gz
+      - name: Setup notebook env
+        run: scripts/setup_notebook_env.sh
+      - name: Run autoredenomination notebook headless
+        run: scripts/run_notebook_headless.sh autoredenomination_localnet
+
