@@ -77,19 +77,28 @@ start(Config) ->
 		debug = true
 	}),
 	ar:start_dependencies(),
-	wait_until_joined(),
-	submit_snapshot_data(),
-	io:format("~n~nLocalnet node started~n"),
-	io:format("  Snapshot: ~s~n", [SnapshotDir]),
-	io:format("  Data dir: ~s~n", [DataDir]),
-	io:format("  Mining address: ~s~n", [ar_util:encode(MiningAddr)]),
-	io:format("  Storage modules:~n"),
-	lists:foreach(fun({Size, Partition, Packing}) ->
-		io:format("    - partition ~B, size ~B MB, packing ~s~n",
-			[Partition, Size div (1_000_000), format_packing(Packing)])
-	end, StorageModules),
-	io:format("~nMining is disabled. Call ar_localnet:mine_one_block/0 to mine a block.~n"
-			"Call ar_localnet:mine_until_height/1 to mine until the given height.~n~n").
+	case wait_until_joined() of
+		true ->
+			submit_snapshot_data(),
+			io:format("~n~nLocalnet node started~n"),
+			io:format("  Snapshot: ~s~n", [SnapshotDir]),
+			io:format("  Data dir: ~s~n", [DataDir]),
+			io:format("  Mining address: ~s~n", [ar_util:encode(MiningAddr)]),
+			io:format("  Storage modules:~n"),
+			lists:foreach(fun({Size, Partition, Packing}) ->
+				io:format("    - partition ~B, size ~B MB, packing ~s~n",
+					[Partition, Size div (1_000_000), format_packing(Packing)])
+			end, StorageModules),
+			io:format("~nMining is disabled. Call ar_localnet:mine_one_block/0 to mine a block.~n"
+					"Call ar_localnet:mine_until_height/1 to mine until the given height.~n~n");
+		{error, _} = Error ->
+			io:format(
+				"Localnet startup failed while waiting for node to join (~B ms): ~p~n",
+				[?WAIT_UNTIL_JOINED_TIMEOUT, Error]
+			),
+			ar:stop_dependencies(),
+			Error
+	end.
 
 %% @doc Mine one block.
 mine_one_block() ->
