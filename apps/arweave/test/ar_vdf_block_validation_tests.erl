@@ -74,11 +74,15 @@ test_fork_checkpoints_not_found() ->
 		end),
 
 		ar_test_node:connect_to_peer(peer1),
-		ar_test_node:mine(peer1),
-		%% Assert that peer1 is unable to mine a block
-		timer:sleep(10000),
-		BI = ar_test_node:remote_call(peer1, ar_node, get_blocks, []),
-		?assertEqual(2, length(BI)), %% block 0 and 1
+		%% Wait until peer1 has transitioned to the new VDF session.
+		wait_until_step_number(peer1, ?TEST_RESET_FREQUENCY + 1),
+		with_vdf_pull_and_push_disabled(peer1, fun() ->
+			ar_test_node:mine(peer1),
+			%% Assert that peer1 is unable to mine a block.
+			timer:sleep(10000),
+			BI = ar_test_node:remote_call(peer1, ar_node, get_blocks, []),
+			?assertEqual(2, length(BI))
+		end),
 		H2Local
 	end),
 
@@ -225,8 +229,34 @@ with_nonce_limiter_paused(Node, Fun) when is_function(Fun, 0) ->
 		resume_nonce_limiter(Node, Pid)
 	end.
 
+with_vdf_pull_and_push_disabled(Node, Fun) when is_function(Fun, 0) ->
+	{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
+	DisableFlags = Config#config.disable,
+	%% Update config so that ar_http_iface_middleware
+	%% responds to POST /vdf with #nonce_limiter_update_response {postpone = 120 }.
+	ok = ar_test_node:remote_call(
+		Node,
+		arweave_config,
+		set_env,
+		[Config#config{ disable = lists:delete(vdf_server_pull, DisableFlags) }]
+	),
+	%% Also suspend the pull loop so peer1 cannot fetch full sessions.
+	Pid = suspend_nonce_limiter_client(Node),
+	try
+		Fun()
+	after
+		ok = ar_test_node:remote_call(Node, arweave_config, set_env, [Config]),
+		resume_nonce_limiter_client(Node, Pid)
+	end.
+
 suspend_nonce_limiter(Node) ->
 	Pid = ar_test_node:remote_call(Node, erlang, whereis, [ar_nonce_limiter]),
+	?assert(is_pid(Pid)),
+	ok = ar_test_node:remote_call(Node, sys, suspend, [Pid]),
+	Pid.
+
+suspend_nonce_limiter_client(Node) ->
+	Pid = ar_test_node:remote_call(Node, erlang, whereis, [ar_nonce_limiter_client]),
 	?assert(is_pid(Pid)),
 	ok = ar_test_node:remote_call(Node, sys, suspend, [Pid]),
 	Pid.
@@ -234,6 +264,16 @@ suspend_nonce_limiter(Node) ->
 resume_nonce_limiter(_Node, undefined) ->
 	ok;
 resume_nonce_limiter(Node, Pid) ->
+	case ar_test_node:remote_call(Node, erlang, is_process_alive, [Pid]) of
+		true ->
+			ok = ar_test_node:remote_call(Node, sys, resume, [Pid]);
+		false ->
+			ok
+	end.
+
+resume_nonce_limiter_client(_Node, undefined) ->
+	ok;
+resume_nonce_limiter_client(Node, Pid) ->
 	case ar_test_node:remote_call(Node, erlang, is_process_alive, [Pid]) of
 		true ->
 			ok = ar_test_node:remote_call(Node, sys, resume, [Pid]);
