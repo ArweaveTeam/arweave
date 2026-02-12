@@ -419,9 +419,18 @@ wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, Re
 	
 mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	report_miners(Miners),
+	CurrentB = ar_test_node:remote_call(ValidatorNode, ar_node, get_current_block, []),
 	ar_util:pmap(fun(Node) -> ar_test_node:mine(Node) end, Miners),
-	?debugFmt("Waiting until the validator node (port ~B) advances to height ~B.",
-			[ar_test_node:peer_port(ValidatorNode), CurrentHeight + 1]),
+	?debugFmt(
+		"Waiting until the validator node (port ~B) advances to height ~B. "
+		"Current block hash: ~s, solution hash: ~s.",
+		[
+			ar_test_node:peer_port(ValidatorNode),
+			CurrentHeight + 1,
+			ar_util:encode(CurrentB#block.indep_hash),
+			ar_util:encode(CurrentB#block.hash)
+		]
+	),
 	BIValidator = ar_test_node:wait_until_height(
 		ValidatorNode, CurrentHeight + 1, false, ?COORDINATED_MINING_WAIT_TIMEOUT),
 	%% Since multiple nodes are mining in parallel it's possible that multiple blocks
