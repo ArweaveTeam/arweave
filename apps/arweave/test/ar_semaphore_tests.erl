@@ -13,61 +13,58 @@ wait_for_one_process_at_a_time_test_() ->
 	with_semaphore_(wait_for_one_process_at_a_time_sem, 1, fun() ->
 		TestPid = self(),
 		SleepMs = 500,
-		NoMessageMs = 300,
-		DoneTimeoutMs = 800,
-		spawn_link(fun() ->
-			ok = ar_semaphore:acquire(wait_for_one_process_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
-			timer:sleep(SleepMs),
-			TestPid ! p1_done
-		end),
-		spawn_link(fun() ->
-			ok = ar_semaphore:acquire(wait_for_one_process_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
-			timer:sleep(SleepMs),
-			TestPid ! p2_done
-		end),
-		spawn_link(fun() ->
-			ok = ar_semaphore:acquire(wait_for_one_process_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
-			timer:sleep(SleepMs),
-			TestPid ! p3_done
-		end),
+		NoMessageMs = 250,
+		DoneTimeoutMs = 3000,
+		spawn_worker(wait_for_one_process_at_a_time_sem, SleepMs, TestPid, p1),
+		spawn_worker(wait_for_one_process_at_a_time_sem, SleepMs, TestPid, p2),
+		spawn_worker(wait_for_one_process_at_a_time_sem, SleepMs, TestPid, p3),
 		?assert(receive _ -> false after NoMessageMs -> true end),
-		?assert(receive p1_done -> true after DoneTimeoutMs -> false end),
+		Done1 = receive_done(DoneTimeoutMs),
 		?assert(receive _ -> false after NoMessageMs -> true end),
-		?assert(receive p2_done -> true after DoneTimeoutMs -> false end),
+		Done2 = receive_done(DoneTimeoutMs),
+		?assertNotEqual(Done1, Done2),
 		?assert(receive _ -> false after NoMessageMs -> true end),
-		?assert(receive p3_done -> true after DoneTimeoutMs -> false end)
+		Done3 = receive_done(DoneTimeoutMs),
+		?assertNotEqual(Done1, Done3),
+		?assertNotEqual(Done2, Done3)
 	end).
 
 wait_for_two_processes_at_a_time_test_() ->
 	with_semaphore_(wait_for_two_processes_at_a_time_sem, 2, fun() ->
 		TestPid = self(),
-		spawn_link(fun() ->
-			ok = ar_semaphore:acquire(wait_for_two_processes_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
-			timer:sleep(400),
-			TestPid ! p1_done
-		end),
-		spawn_link(fun() ->
-			ok = ar_semaphore:acquire(wait_for_two_processes_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
-			timer:sleep(400),
-			TestPid ! p2_done
-		end),
-		spawn_link(fun() ->
-			ok = ar_semaphore:acquire(wait_for_two_processes_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
-			timer:sleep(400),
-			TestPid ! p3_done
-		end),
-		spawn_link(fun() ->
-			ok = ar_semaphore:acquire(wait_for_two_processes_at_a_time_sem, ?DEFAULT_CALL_TIMEOUT),
-			timer:sleep(400),
-			TestPid ! p4_done
-		end),
-		?assert(receive _ -> false after 360 -> true end),
-		?assert(receive p1_done -> true after 100 -> false end),
-		?assert(receive p2_done -> true after 100 -> false end),
-		?assert(receive _ -> false after 300 -> true end),
-		?assert(receive p3_done -> true after 200 -> false end),
-		?assert(receive p4_done -> true after 200 -> false end)
+		SleepMs = 400,
+		DoneTimeoutMs = 3000,
+		spawn_worker(wait_for_two_processes_at_a_time_sem, SleepMs, TestPid, p1),
+		spawn_worker(wait_for_two_processes_at_a_time_sem, SleepMs, TestPid, p2),
+		spawn_worker(wait_for_two_processes_at_a_time_sem, SleepMs, TestPid, p3),
+		spawn_worker(wait_for_two_processes_at_a_time_sem, SleepMs, TestPid, p4),
+		Done1 = receive_done(DoneTimeoutMs),
+		Done2 = receive_done(DoneTimeoutMs),
+		?assertNotEqual(Done1, Done2),
+		?assert(receive _ -> false after 250 -> true end),
+		Done3 = receive_done(DoneTimeoutMs),
+		?assertNotEqual(Done1, Done3),
+		?assertNotEqual(Done2, Done3),
+		Done4 = receive_done(DoneTimeoutMs),
+		?assertNotEqual(Done1, Done4),
+		?assertNotEqual(Done2, Done4),
+		?assertNotEqual(Done3, Done4)
 	end).
+
+spawn_worker(SemaphoreName, SleepMs, TestPid, WorkerID) ->
+	spawn_link(fun() ->
+		ok = ar_semaphore:acquire(SemaphoreName, ?DEFAULT_CALL_TIMEOUT),
+		timer:sleep(SleepMs),
+		TestPid ! {done, WorkerID}
+	end).
+
+receive_done(TimeoutMs) ->
+	receive
+		{done, WorkerID} ->
+			WorkerID
+	after TimeoutMs ->
+		?assert(false)
+	end.
 
 with_semaphore_(Name, Value, Fun) ->
 	{setup,
