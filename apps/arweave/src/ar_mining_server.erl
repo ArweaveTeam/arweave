@@ -1313,14 +1313,15 @@ validate_solution(Solution, DiffPair) ->
 					SubChunkIndex}, ChunkID},
 			case ar_node_utils:h1_passes_diff_check(H1, DiffPair, PackingDifficulty) of
 				true ->
-					%% validates solution_hash
 					case SolutionHash of
-						H1 -> ok;
+						H1 ->
+							{true, PoACache, undefined};
 						_ ->
-							?LOG_ERROR([{event, invalid_solution_hash}, {solution_hash, SolutionHash}, {h1, H1}])
-					end,
-					SolutionHash = H1,
-					{true, PoACache, undefined};
+							?LOG_ERROR([{event, invalid_solution_hash},
+									{solution_hash, ar_util:encode(SolutionHash)},
+									{h1, ar_util:encode(H1)}]),
+							error
+					end;
 				false ->
 					case is_one_chunk_solution(Solution) of
 						true ->
