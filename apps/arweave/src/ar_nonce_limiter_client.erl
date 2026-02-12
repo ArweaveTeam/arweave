@@ -53,14 +53,18 @@ maybe_request_sessions(SessionKey) ->
 %%%===================================================================
 
 init([]) ->
+	{ok, Config} = arweave_config:get_env(),
+	Peers = Config#config.nonce_limiter_server_trusted_peers,
 	case ar_config:use_remote_vdf_server() of
 		false ->
 			ok;
 		true ->
+			%% Resolve and cache all VDF server peers upfront so that pushes
+			%% (POST /vdf) may be accepted even when pulling is disabled.
+			resolve_server_peers(Peers),
 			gen_server:cast(?MODULE, pull)
 	end,
-	{ok, Config} = arweave_config:get_env(),
-	{ok, #state{ remote_servers = queue:from_list(Config#config.nonce_limiter_server_trusted_peers) }}.
+	{ok, #state{ remote_servers = queue:from_list(Peers) }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -77,6 +81,10 @@ handle_cast(pull, State = #state{ request_sessions = RequestSessions }) ->
 			ar_util:cast_after(Delay, ?MODULE, pull),
 			{noreply, State1};
 		false ->
+			%% Even when pulling is disabled, periodically re-resolve VDF server peers
+			%% so that pushes (POST /vdf) continue to work (e.g., after DNS changes).
+			{ok, Config} = arweave_config:get_env(),
+			resolve_server_peers(Config#config.nonce_limiter_server_trusted_peers),
 			ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
 			{noreply, State}
 	end;
@@ -123,6 +131,14 @@ terminate(Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+resolve_server_peers(RawPeers) ->
+	lists:foreach(
+		fun(RawPeer) ->
+			ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer)
+		end,
+		RawPeers
+	).
 
 do_pull(State) ->
 	#state{ remote_servers = Q } = State,
