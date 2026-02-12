@@ -279,9 +279,7 @@ random_id(Length, EncodedBase)
 	when is_integer(Length), Length>=1,
 	     is_integer(EncodedBase), EncodedBase>=2, EncodedBase=<37 ->
 	<<Binary:(Length*8)>> = crypto:strong_rand_bytes(Length),
-	integer_to_list(Binary, EncodedBase);
-random_id(_, _) ->
-	random_id(4, 36).
+	integer_to_list(Binary, EncodedBase).
 
 %%--------------------------------------------------------------------
 %% @doc To avoid collision with other node started on the system, a
