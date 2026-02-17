@@ -47,7 +47,7 @@ metrics() ->
     AllInfo = arweave_limiter_sup:all_info(),
     [
      {ar_limiter_tracked_items_total, gauge, "tracked requests, timestamps, leaky tokens", tracked_items(AllInfo)},
-     {ar_limiter_peers, gauge, "", peers(AllInfo)}
+     {ar_limiter_peers, gauge, "The number of peers the limiter is monitoring currently", peers(AllInfo)}
     ].
 
 tracked_items(AllInfo) ->
