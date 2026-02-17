@@ -18,7 +18,6 @@
 -include_lib("arweave/include/ar_header_sync.hrl").
 -include_lib("arweave/include/ar_inflation.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
--include_lib("arweave/include/ar_p3.hrl").
 -include_lib("arweave/include/ar_peers.hrl").
 -include_lib("arweave/include/ar_poa.hrl").
 -include_lib("arweave/include/ar_pool.hrl").

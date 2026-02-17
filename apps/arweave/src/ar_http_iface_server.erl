@@ -32,7 +32,7 @@
 		"chunk", "chunk2", "data_sync_record", "sync_buckets", "footprint_buckets",
 		"wallet", "unsigned_tx",
 		"peers", "hash_list", "block_index", "block_index2", "total_supply", "wallet_list",
-		"height", "metrics", "rates", "vdf", "vdf2", "partial_solution", "pool_cm_jobs"]).
+		"height", "metrics", "vdf", "vdf2", "partial_solution", "pool_cm_jobs"]).
 
 %%%===================================================================
 %%% Public interface.
@@ -281,11 +281,6 @@ name_route([<<"block">>, <<"height">>, _Height, <<"wallet">>, _Addr, <<"balance"
 	"/block/height/{height}/wallet/{addr}/balance";
 name_route([<<"block">>, <<"current">>]) ->
 	"/block/current";
-
-name_route([<<"balance">>, _Addr, _Network, _Token]) ->
-	"/balance/{address}/{network}/{token}";
-name_route([<<"rates">>]) ->
-	"/rates";
 
 name_route([<<"coordinated_mining">>, <<"h1">>]) ->
 	"/coordinated_mining/h1";
