@@ -37,3 +37,5 @@ screenlog.0
 _*
 *.swp
 *~
+localnet_snapshot/wallets/arweave_keyfile_*
+
