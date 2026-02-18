@@ -281,7 +281,7 @@ with_cached_value(Key, SessionKey, Cache0, Fun) ->
 %%%===================================================================
 
 %% Returns the size of the cached data in bytes.
-cached_value_size(#ar_mining_cache_value{chunk1 = Chunk1, chunk2 = Chunk2}) ->
+cached_value_size(#ar_mining_cache_value{ chunk1 = Chunk1, chunk2 = Chunk2 }) ->
   MaybeBinarySize = fun
 		(undefined) -> 0;
 		(Binary) -> byte_size(Binary)
@@ -352,9 +352,9 @@ maybe_search_for_anomalies_cache_values(SessionKey, MiningCache) when is_map(Min
 	OuterAcc0 = {_Anomalies = #{}, _ActualSize = 0},
 	{Anomalies, ActualSize} = maps:fold(fun(Key, Value, {Anomalies0, ActualSize0}) ->
 		Anomalies1 = lists:foldl(fun(Check, Anomalies) -> Check({Key, Value}, Anomalies) end, Anomalies0, [
-			fun maybe_search_for_anomalies_cache_values_chunk1_missing/2,
+			fun maybe_search_for_anomalies_cache_values_chunk1_failed/2,
 			fun maybe_search_for_anomalies_cache_values_chunk1_stale/2,
-			fun maybe_search_for_anomalies_cache_values_chunk2_missing/2,
+			fun maybe_search_for_anomalies_cache_values_chunk2_failed/2,
 			fun maybe_search_for_anomalies_cache_values_chunk2_stale/2,
 			fun maybe_search_for_anomalies_cache_values_h1_missing/2,
 			fun maybe_search_for_anomalies_cache_values_h2_missing/2,
@@ -375,36 +375,36 @@ maybe_search_for_anomalies_cache_values(SessionKey, _InvalidCache) ->
 		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
 	0.
 
-maybe_search_for_anomalies_cache_values_chunk1_missing({
+maybe_search_for_anomalies_cache_values_chunk1_failed({
 	Key,
-	#ar_mining_cache_value{chunk1 = undefined, chunk1_missing = false} = Value
+	#ar_mining_cache_value{ chunk1 = undefined, chunk1_failed = false } = Value
 }, Anomalies) ->
-	maps:update_with(chunk1_missing, fun(V) -> V + 1 end, 1,
-		maps:update_with(chunk1_missing_sample, fun(V) -> V end, {Key, Value}, Anomalies));
-maybe_search_for_anomalies_cache_values_chunk1_missing({_, _}, Anomalies) ->
+	maps:update_with(chunk1_failed, fun(V) -> V + 1 end, 1,
+		maps:update_with(chunk1_failed_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+maybe_search_for_anomalies_cache_values_chunk1_failed({_, _}, Anomalies) ->
 	Anomalies.
 
 maybe_search_for_anomalies_cache_values_chunk1_stale({
 	Key,
-	#ar_mining_cache_value{chunk1 = Chunk1, chunk1_missing = true} = Value
+	#ar_mining_cache_value{ chunk1 = Chunk1, chunk1_failed = true } = Value
 }, Anomalies) when undefined =/= Chunk1 ->
 	maps:update_with(chunk1_stale, fun(V) -> V + 1 end, 1,
 		maps:update_with(chunk1_stale_sample, fun(V) -> V end, {Key, Value}, Anomalies));
 maybe_search_for_anomalies_cache_values_chunk1_stale({_, _}, Anomalies) ->
 	Anomalies.
 
-maybe_search_for_anomalies_cache_values_chunk2_missing({
+maybe_search_for_anomalies_cache_values_chunk2_failed({
 	Key,
-	#ar_mining_cache_value{chunk2 = undefined, chunk2_missing = false} = Value
+	#ar_mining_cache_value{ chunk2 = undefined, chunk2_failed = false } = Value
 }, Anomalies) ->
-	maps:update_with(chunk2_missing, fun(V) -> V + 1 end, 1,
-		maps:update_with(chunk2_missing_sample, fun(V) -> V end, {Key, Value}, Anomalies));
-maybe_search_for_anomalies_cache_values_chunk2_missing({_, _}, Anomalies) ->
+	maps:update_with(chunk2_failed, fun(V) -> V + 1 end, 1,
+		maps:update_with(chunk2_failed_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+maybe_search_for_anomalies_cache_values_chunk2_failed({_, _}, Anomalies) ->
 	Anomalies.
 
 maybe_search_for_anomalies_cache_values_chunk2_stale({
 	Key,
-	#ar_mining_cache_value{chunk2 = Chunk2, chunk2_missing = true} = Value
+	#ar_mining_cache_value{ chunk2 = Chunk2, chunk2_failed = true } = Value
 }, Anomalies) when undefined =/= Chunk2 ->
 	maps:update_with(chunk2_stale, fun(V) -> V + 1 end, 1,
 		maps:update_with(chunk2_stale_sample, fun(V) -> V end, {Key, Value}, Anomalies));
@@ -413,7 +413,7 @@ maybe_search_for_anomalies_cache_values_chunk2_stale({_, _}, Anomalies) ->
 
 maybe_search_for_anomalies_cache_values_h1_missing({
 	Key,
-	#ar_mining_cache_value{h1 = undefined, chunk1 = Chunk1} = Value
+	#ar_mining_cache_value{ h1 = undefined, chunk1 = Chunk1 } = Value
 }, Anomalies)
 when undefined =/= Chunk1 ->
 	maps:update_with(h1_missing, fun(V) -> V + 1 end, 1,
@@ -423,7 +423,7 @@ maybe_search_for_anomalies_cache_values_h1_missing({_, _}, Anomalies) ->
 
 maybe_search_for_anomalies_cache_values_h2_missing({
 	Key,
-	#ar_mining_cache_value{h2 = undefined, chunk2 = Chunk2} = Value
+	#ar_mining_cache_value{ h2 = undefined, chunk2 = Chunk2 } = Value
 }, Anomalies)
 when undefined =/= Chunk2 ->
 	maps:update_with(h2_missing, fun(V) -> V + 1 end, 1,
@@ -433,7 +433,7 @@ maybe_search_for_anomalies_cache_values_h2_missing({_, _}, Anomalies) ->
 
 maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present({
 	Key,
-	#ar_mining_cache_value{h1_passes_diff_checks = true} = Value
+	#ar_mining_cache_value{ h1_passes_diff_checks = true } = Value
 }, Anomalies) ->
 	maps:update_with(h1_passes_diff_checks_present, fun(V) -> V + 1 end, 1,
 		maps:update_with(h1_passes_diff_checks_present_sample, fun(V) -> V end, {Key, Value}, Anomalies));
@@ -487,7 +487,7 @@ reserve_test() ->
 	?assertMatch({ok, ReservedSize}, reserved_size(SessionKey0, Cache2)),
 	%% Add chunk1
 	{ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
+		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
 	end),
 	?assertEqual(ReservedSize, cache_size(Cache3)),
 	?assertEqual(byte_size(Data), actual_cache_size(Cache3)),
@@ -513,7 +513,7 @@ release_test() ->
 	?assertMatch({ok, ReservedSize}, reserved_size(SessionKey0, Cache2)),
 	%% Add chunk1
 	{ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
+		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
 	end),
 	ExpectedReservedSize = ReservedSize - byte_size(Data),
 	?assertMatch({ok, ExpectedReservedSize}, reserved_size(SessionKey0, Cache3)),
@@ -536,12 +536,12 @@ with_cached_value_add_chunk_test() ->
 	Cache1 = add_session(SessionKey0, Cache0),
 	%% Add chunk1
 	{ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
+		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
 	end),
 	?assertEqual(byte_size(Data), cache_size(Cache2)),
 	%% Add chunk2
 	{ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{chunk2 = Data}}
+		{ok, Value#ar_mining_cache_value{ chunk2 = Data }}
 	end),
 	?assertEqual(byte_size(Data) * 2, cache_size(Cache3)).
 
@@ -554,12 +554,12 @@ with_cached_value_add_hash_test() ->
 	Cache1 = add_session(SessionKey0, Cache0),
 	%% Add h1
 	{ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{h1 = Hash}}
+		{ok, Value#ar_mining_cache_value{ h1 = Hash }}
 	end),
 	?assertEqual(0, cache_size(Cache2)),
 	%% Add h2
 	{ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{h2 = Hash}}
+		{ok, Value#ar_mining_cache_value{ h2 = Hash }}
 	end),
 	?assertEqual(0, cache_size(Cache3)).
 
@@ -572,7 +572,7 @@ with_cached_value_drop_test() ->
 	Cache1 = add_session(SessionKey0, Cache0),
 	%% Add chunk1
 	{ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
+		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
 	end),
 	?assertEqual(byte_size(Data), cache_size(Cache2)),
 	%% Drop
@@ -591,7 +591,7 @@ set_limit_test() ->
 	%% Add chunk1
 	ChunkId0 = chunk0,
 	{ok, Cache2} = with_cached_value(ChunkId0, SessionKey0, Cache1, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
+		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
 	end),
 	?assertEqual(byte_size(Data), cache_size(Cache2)),
 	%% Set limit
@@ -599,7 +599,7 @@ set_limit_test() ->
 	Cache3 = set_limit(5, Cache2),
 	%% Try to add chunk2
 	{error, cache_limit_exceeded} = with_cached_value(ChunkId1, SessionKey0, Cache3, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
+		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
 	end),
 	?assertEqual(byte_size(Data), cache_size(Cache3)).
 
@@ -612,7 +612,7 @@ drop_session_test() ->
 	Cache1 = add_session(SessionKey0, Cache0),
 	%% Add chunk1
 	{ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{chunk1 = Data}}
+		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
 	end),
 	?assertEqual(byte_size(Data), cache_size(Cache2)),
 	%% Drop session
