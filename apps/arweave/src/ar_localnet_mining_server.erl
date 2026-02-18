@@ -21,6 +21,8 @@
 	height = 0
 }).
 
+-define(RETRY_MINE_DELAY_MS, 1000).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -86,12 +88,20 @@ handle_cast({set_height, Height}, State) ->
 handle_cast(mine, #state{ paused = true } = State) ->
 	{noreply, State};
 handle_cast(mine, State) ->
-	mine_block(State),
-	{noreply, State#state{ paused = true }};
+	case mine_block(State) of
+		ok ->
+			{noreply, State#state{ paused = true }};
+		error ->
+			erlang:send_after(?RETRY_MINE_DELAY_MS, self(), retry_mine),
+			{noreply, State}
+	end;
 
 handle_cast(_Msg, State) ->
 	{noreply, State}.
 
+handle_info(retry_mine, State) ->
+	gen_server:cast(self(), mine),
+	{noreply, State};
 handle_info(_Info, State) ->
 	{noreply, State}.
 
