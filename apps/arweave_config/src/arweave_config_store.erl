@@ -258,7 +258,7 @@ from_map(Data) when is_map(Data) ->
 to_map() ->
 	Parameters = ets:tab2list(?MODULE),
 	ListOfMap = to_map(Parameters, []),
-	map_merge(ListOfMap).
+	arweave_config_serializer:map_merge(ListOfMap).
 
 to_map([], Buffer) -> Buffer;
 to_map([{#key{ id = Id }, #value{ value = Value }}|Rest], Buffer) ->
@@ -280,7 +280,6 @@ to_map_test() ->
 		to_map()
 	),
 	gen_server:stop(Pid).
-
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -304,82 +303,6 @@ map_path2_test() ->
 		},
 		map_path([1,2,3], data)
 	).
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-map_merge(ListOfMap) ->
-	lists:foldr(
-		fun(X, A) ->
-			map_merge(X, A)
-		end,
-		#{},
-		ListOfMap
-	).
-
-map_merge(A, B) when is_map(A), is_map(B) ->
-	I = maps:iterator(A),
-	map_merge2(I, B);
-map_merge(A, B) when is_map(A) ->
-	A#{ '_' => B }.
-
-map_merge2(none, B) -> B;
-map_merge2({K, V, I2}, B)
-	when is_map(V), is_map_key(K, B) ->
-		BV = maps:get(K, B, #{}),
-		Result = map_merge(V, BV),
-		map_merge2(I2, B#{ K => Result });
-map_merge2({K, V, I2}, B)
-	when is_map_key(K, B) ->
-		BV = maps:get(K, B),
-		case V =:= BV of
-			true ->
-				map_merge2(I2, B#{ K => V });
-			false ->
-				map_merge3(I2, B, K, BV, V)
-		end;
-map_merge2({K, V, I2}, B) ->
-	map_merge2(I2, B#{ K => V });
-map_merge2(I = [0|_], B) ->
-	I2 = maps:next(I),
-	map_merge2(I2, B).
-
-map_merge3(I2, B, K, BV, V) when is_map(BV) ->
-	case is_map_key('_', BV) of
-		true ->
-			OV = maps:get('_', BV),
-			?LOG_WARNING("overwrite root key '~p' (_) value '~p' with '~p'", [K, OV, V]),
-			map_merge2(I2, B#{ K => BV#{ '_' => V }});
-		false ->
-			map_merge2(I2, B#{ K => BV#{ '_' => V }})
-	end;
-map_merge3(I2, B, K, BV, V) ->
-	?LOG_WARNING("overwrite value: ~p", [K, V, BV]),
-	map_merge2(I2, B#{ K => V }).
-
-
-map_merge_test() ->
-	?assertEqual(
-		#{
-			1 => #{
-			       '_' => 1,
-				2 => test,
-				3 => data
-			},
-			t => #{
-			       1 => #{
-				      test => data
-				}
-			}
-		},
-		map_merge([
-			#{ 1 => 1 },
-			#{ 1 => #{ 2 => test } },
-			#{ 1 => #{ 3 => data } },
-			#{ t => #{ 1 => #{ test => data }}}
-		])
-	).
-
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -440,4 +363,3 @@ handle_cast(Msg, State) ->
 handle_info(Msg, State) ->
 	?LOG_ERROR([{message, Msg}, {module, ?MODULE}]),
 	{noreply, State}.
-

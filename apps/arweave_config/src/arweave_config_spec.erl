@@ -643,9 +643,9 @@ callbacks_check() -> [
 
 	% optional callbacks
 	{enabled, arweave_config_spec_enabled},
+	{default, arweave_config_spec_default},
 	{handle_get, arweave_config_spec_handle_get},
 	{handle_set, arweave_config_spec_handle_set},
-	{default, arweave_config_spec_default},
 	{type, arweave_config_spec_type},
 	{runtime, arweave_config_spec_runtime},
 	{deprecated, arweave_config_spec_deprecated},

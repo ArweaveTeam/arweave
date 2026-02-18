@@ -8,7 +8,9 @@
 		kernel,
 		stdlib,
 		sasl,
-		cowboy
+		cowboy,
+		tomerl,
+		yamerl
 	]},
 	{modules, [
 		arweave_config,
