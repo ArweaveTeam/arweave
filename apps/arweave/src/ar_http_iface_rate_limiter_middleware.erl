@@ -32,7 +32,7 @@ execute(Req, Env) ->
 
 	case arweave_limiter:register_or_reject_call(LimiterRef, PeerKey) of
 		{reject, Reason, Data} ->
-			?LOG_ERROR([{event, rate_limiter_reject}, {reason, Reason}, {data, Data}]),
+			?LOG_DEBUG([{event, rate_limiter_reject}, {reason, Reason}, {data, Data}]),
 			{stop, reject(Req, Reason, Data)};
 		_ ->
 			{ok, Req, Env}
