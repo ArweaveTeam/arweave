@@ -570,26 +570,17 @@ process_chunks(
 ) ->
 	%% No more ChunkOffsets means no more chunks have been read. Iterate through all the
 	%% remaining nonces and remove the full chunks from the cache.
+	%% mark_single_chunk*_missing_or_drop releases SubChunkSize per nonce via
+	%% ReservationSizeAdjustment, which sums to NoncesPerChunk * SubChunkSize =
+	%% DATA_CHUNK_SIZE per chunk — matching the reservation made in compute_h0.
 	State1 = case WhichChunk of
 		chunk1 -> mark_single_chunk1_missing_or_drop(Nonce, Candidate, State);
 		chunk2 -> mark_single_chunk2_missing_or_drop(Nonce, Candidate, State)
 	end,
-	%% Drop the reservation for the current nonce group (from Nonce to Nonce + NoncesPerChunk - 1).
-	State2 = case ar_mining_cache:release_for_session(
-		Candidate#mining_candidate.session_key,
-		?DATA_CHUNK_SIZE,
-		State1#state.chunk_cache
-	) of
-		{ok, ChunkCache1} -> State1#state{ chunk_cache = ChunkCache1 };
-		{error, Reason} ->
-			log_error(mining_worker_failed_to_release_reservation_for_session,
-				Candidate, State1, [{reason, Reason}]),
-			State1
-	end,
 	%% Process the next chunk.
 	process_chunks(
 		WhichChunk, Candidate, RangeStart, Nonce + NoncesPerChunk,
-		NoncesPerChunk, NoncesPerRecallRange, [], SubChunkSize, Count, State2
+		NoncesPerChunk, NoncesPerRecallRange, [], SubChunkSize, Count, State1
 	);
 process_chunks(
 	WhichChunk, Candidate, RangeStart, Nonce, NoncesPerChunk,
@@ -661,19 +652,45 @@ process_all_sub_chunks(WhichChunk, Rest, Candidate, Nonce, State) ->
 	State.
 
 process_sub_chunk(chunk1, Candidate, SubChunk, State) ->
-	%% Compute h1.
-	ar_mining_hash:compute_h1(self(), Candidate#mining_candidate{ chunk1 = SubChunk }),
-	%% Store the chunk1 in the cache.
+	%% Store the chunk1 in the cache first; only compute h1 if the store succeeds.
 	case ar_mining_cache:with_cached_value(
 		?CACHE_KEY(Candidate#mining_candidate.cache_ref, Candidate#mining_candidate.nonce),
 		Candidate#mining_candidate.session_key,
 		State#state.chunk_cache,
 		fun(CachedValue) -> {ok, CachedValue#ar_mining_cache_value{ chunk1 = SubChunk }} end
 	) of
-		{ok, ChunkCache2} -> State#state{ chunk_cache = ChunkCache2 };
+		{ok, ChunkCache2} ->
+			ar_mining_hash:compute_h1(self(), Candidate#mining_candidate{ chunk1 = SubChunk }),
+			State#state{ chunk_cache = ChunkCache2 };
 		{error, Reason} ->
 			log_error(mining_worker_failed_to_process_chunk1, Candidate, State, [{reason, Reason}]),
-			State
+			%% Mark chunk1 as missing for this nonce. This releases the sub-chunk reservation
+			%% (pre-allocated in compute_h0) and ensures that when chunk2 arrives, the entry
+			%% will be dropped immediately — preventing orphaned entries from filling the cache.
+			%% Marking as missing adds no binary data (size difference = 0), so it succeeds even
+			%% when the cache is full.
+			SubChunkSize = ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty),
+			case ar_mining_cache:with_cached_value(
+				?CACHE_KEY(Candidate#mining_candidate.cache_ref, Candidate#mining_candidate.nonce),
+				Candidate#mining_candidate.session_key,
+				State#state.chunk_cache,
+				fun
+					(#ar_mining_cache_value{ chunk2_missing = true }) ->
+						{ok, drop, -SubChunkSize};
+					(#ar_mining_cache_value{ chunk2 = Chunk2 }) when is_binary(Chunk2) ->
+						{ok, drop, -SubChunkSize};
+					(#ar_mining_cache_value{ chunk2 = undefined } = CachedValue) ->
+						{ok, CachedValue#ar_mining_cache_value{ chunk1_missing = true },
+							-SubChunkSize}
+				end
+			) of
+				{ok, ChunkCache3} ->
+					State#state{ chunk_cache = ChunkCache3 };
+				{error, Reason2} ->
+					log_error(mining_worker_failed_to_release_reservation_for_session,
+						Candidate, State, [{reason, Reason2}]),
+					State
+			end
 	end;
 process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 	Candidate1 = Candidate#mining_candidate{ chunk2 = SubChunk },
@@ -704,7 +721,34 @@ process_sub_chunk(chunk2, Candidate, SubChunk, State) ->
 		{ok, ChunkCache2} -> State#state{ chunk_cache = ChunkCache2 };
 		{error, Reason} ->
 			log_error(mining_worker_failed_to_process_chunk2, Candidate1, State, [{reason, Reason}]),
-			State
+			%% Mark chunk2 as missing for this nonce. This releases the sub-chunk reservation
+			%% and prevents orphaned cache entries from accumulating.
+			SubChunkSize = ar_block:get_sub_chunk_size(Candidate#mining_candidate.packing_difficulty),
+			case ar_mining_cache:with_cached_value(
+				?CACHE_KEY(Candidate1#mining_candidate.cache_ref, Candidate1#mining_candidate.nonce),
+				Candidate#mining_candidate.session_key,
+				State#state.chunk_cache,
+				fun
+					(#ar_mining_cache_value{ chunk1_missing = true }) ->
+						{ok, drop, -SubChunkSize};
+					(#ar_mining_cache_value{ chunk1 = Chunk1, h1 = undefined } = CachedValue)
+							when is_binary(Chunk1) ->
+						{ok, CachedValue#ar_mining_cache_value{ chunk2_missing = true },
+							-SubChunkSize};
+					(#ar_mining_cache_value{ h1 = H1 }) when is_binary(H1) ->
+						{ok, drop, -SubChunkSize};
+					(CachedValue) ->
+						{ok, CachedValue#ar_mining_cache_value{ chunk2_missing = true },
+							-SubChunkSize}
+				end
+			) of
+				{ok, ChunkCache3} ->
+					State#state{ chunk_cache = ChunkCache3 };
+				{error, Reason2} ->
+					log_error(mining_worker_failed_to_release_reservation_for_session,
+						Candidate1, State, [{reason, Reason2}]),
+					State
+			end
 	end.
 
 priority(computed_h2, StepNumber) -> {1, -StepNumber};
