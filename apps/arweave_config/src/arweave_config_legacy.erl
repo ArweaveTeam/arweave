@@ -76,7 +76,6 @@
 -include("arweave_config.hrl").
 -include_lib("kernel/include/logger.hrl").
 -include_lib("eunit/include/eunit.hrl").
--record(?MODULE, {proplist, record}).
 
 %%--------------------------------------------------------------------
 %% @doc Returns the complete list of all keys from configuration
@@ -95,21 +94,22 @@ keys() ->
 -spec has_key(atom()) -> boolean().
 
 has_key(Key) when is_atom(Key) ->
-	gen_server:call(?MODULE, {has_key, Key}, 1000).
+	case lookup(proplist) of
+		{ok, P} -> proplists:is_defined(Key, P);
+		_ -> undefined
+	end.
 
 %%--------------------------------------------------------------------
 %% @doc Returns process state configuration as `#config{}' record.
 %% @end
 %%--------------------------------------------------------------------
 -spec get() -> Return when
-	Return :: undefined | {ok, #config{}}.
+	Return :: undefined | #config{}.
 
 get() ->
-	try gen_server:call(?MODULE, get, 1000) of
-		{ok, Value} -> Value;
+	case lookup(record) of
+		{ok, C} -> C;
 		_Elsewise -> undefined
-	catch
-		_E:R:S -> throw({error, {R, S}})
 	end.
 
 %%--------------------------------------------------------------------
@@ -121,11 +121,9 @@ get() ->
 	Return :: undefined | term().
 
 get(Key) when is_atom(Key) ->
-	try gen_server:call(?MODULE, {get, Key}, 1000) of
-		{ok, Value} -> Value;
-		_Elsewise -> undefined
-	catch
-		_E:R:S -> throw({error, {R, S}})
+	case lookup(proplist) of
+		{ok, P} -> proplists:get_value(Key, P);
+		_ -> undefined
 	end.
 
 %%--------------------------------------------------------------------
@@ -200,7 +198,7 @@ reset() ->
 -spec get_env() -> {ok, #config{}}.
 
 get_env() ->
-	gen_server:call(?MODULE, get_env, 1000).
+	lookup(record).
 
 %%--------------------------------------------------------------------
 %% @doc merge a configuration file (set only modified values).
@@ -233,16 +231,14 @@ stop() ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-init(_) ->
+init(_Args) ->
 	?LOG_INFO("start ~p  process", [?MODULE]),
 	Proplist = config_to_proplist(#config{}),
-	?LOG_DEBUG([{configuration, Proplist}]),
+	Ets = ets:new(?MODULE, [named_table, protected]),
+	insert(record, #config{}),
+	insert(proplist, Proplist),
 	set_environment(Proplist),
-	{ok, #?MODULE{
-		proplist = Proplist,
-		record = #config{}
-	      }
-	}.
+	{ok, Ets}.
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -254,81 +250,72 @@ terminate(_, _) ->
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
-handle_call({merge, Config}, _From, State = #?MODULE{ proplist = P })
+handle_call({merge, Config}, _From, Ets)
 	when is_record(Config, config) ->
-		try
-			MergedProplist = config_merge(P, Config),
-			MergedConfig = proplist_to_config(MergedProplist),
-			NewState = State#?MODULE{
-				proplist = MergedProplist,
-				record = MergedConfig 
-			},
-			{reply, {ok, MergedConfig}, NewState}
+		try lookup(proplist) of
+			{ok, P} ->
+				MergedProplist = config_merge(P, Config),
+				MergedConfig = proplist_to_config(MergedProplist),
+				insert(proplist, MergedProplist),
+				insert(record, MergedConfig),
+				{reply, {ok, MergedConfig}, Ets}
 		catch
 			_Error:Reason ->
-				{reply, {error, Reason}, State}
+				{reply, {error, Reason}, Ets}
 		end;
-handle_call({has_key, Key}, _From, State = #?MODULE{ proplist = P }) ->
-	{reply, proplists:is_defined(Key, P), State};
-handle_call(keys, _From, State = #?MODULE{ proplist = P }) ->
-	{reply, [ K || {K,_} <- P ], State};
-handle_call(get, _From, State = #?MODULE{ record = R }) ->
-	{reply, {ok, R}, State};
-handle_call({get, Key}, _From, State = #?MODULE{ proplist = P })
-	when is_atom(Key) ->
-		Return = {ok, proplists:get_value(Key, P)},
-		{reply, Return, State};
-handle_call({set, Config}, _From, State)
+handle_call(keys, _From, Ets) ->
+	case lookup(proplist) of
+		{ok, P} ->
+			{reply, [ K || {K,_} <- P ], Ets};
+		{error,_ } ->
+			{reply, undefined, Ets}
+	end;
+handle_call({set, Config}, _From, Ets)
 	when is_record(Config, config) ->
 		try
 			Proplist = config_to_proplist(Config),
-			NewState = #?MODULE{
-				proplist = Proplist,
-				record = Config
-			},
+			insert(proplist, Proplist),
+			insert(record, Config),
 			set_environment(Config),
-			{reply, ok, NewState}
+			{reply, ok, Ets}
 		catch
 			_Error:Reason ->
-				{reply, {error, Reason}, State}
+				{reply, {error, Reason}, Ets}
 		end;
-handle_call({set, Key, Value, Opts}, _From, State = #?MODULE{ proplist = P })
+handle_call({set, Key, Value, Opts}, _From, Ets)
 	when is_atom(Key), is_map(Opts) ->
-		OldValue = proplists:get_value(Key, P),
-		NewP = lists:keyreplace(Key, 1, P, {Key, Value}),
-		set_environment(NewP),
-		Return = {ok, Value, OldValue},
-		NewState = State#?MODULE{
-			proplist = NewP,
-			record = proplist_to_config(NewP)
-		},
-		{reply, Return, NewState};
-handle_call(get_env, _From, State = #?MODULE{ record = R }) ->
-	{reply, {ok, R}, State};
-handle_call({set_env, Config}, _From, State) ->
+		case lookup(proplist) of
+			{ok, P} ->
+				OldValue = proplists:get_value(Key, P),
+				NewP = lists:keyreplace(Key, 1, P, {Key, Value}),
+				set_environment(NewP),
+				Return = {ok, Value, OldValue},
+				insert(proplist, NewP),
+				insert(record, proplist_to_config(NewP)),
+				{reply, Return, Ets};
+			{error, Reason} ->
+				{reply, {error, Reason}, Ets}
+		end;
+handle_call({set_env, Config}, _From, Ets) ->
 	case import_config(Config) of
 		{ok, NewP} ->
 			set_environment(NewP),
-			NewState = State#?MODULE{
-				proplist = NewP,
-				record = proplist_to_config(NewP)
-			},
-			{reply, ok, NewState};
+			insert(proplist, NewP),
+			insert(record, proplist_to_config(NewP)),
+			{reply, ok, Ets};
 		_ ->
-			{reply, error, State}
+			{reply, error, Ets}
 	end;
-handle_call(reset, _From, State) ->
+handle_call(reset, _From, Ets) ->
 	case reset_config() of
 		{ok, NewP} ->
-			NewState = State#?MODULE{
-				proplist = NewP,
-				record = proplist_to_config(NewP)
-			},
-			{reply, ok, NewState};
+			insert(proplist, NewP),
+			insert(record, proplist_to_config(NewP)),
+			{reply, ok, Ets};
 		_ ->
-			{reply, error, State}
+			{reply, error, Ets}
 	end;
-handle_call(Message, From, State) ->
+handle_call(Message, From, Ets) ->
 	Error = [
 		{from, From},
 		{message, Message},
@@ -336,7 +323,7 @@ handle_call(Message, From, State) ->
 		{pid, self()}
 	],
 	?LOG_ERROR(Error),
-	{reply, {error, Error}, State}.
+	{reply, {error, Error}, Ets}.
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -546,7 +533,7 @@ config_merge_test() ->
 			#config{ init = true }
 		)
 	),
-	#config{ init = Init1 } = Merged1, 
+	#config{ init = Init1 } = Merged1,
 	?assertEqual(true, Init1),
 
 	Merged2 = proplist_to_config(
@@ -555,5 +542,14 @@ config_merge_test() ->
 			#config{ init = true }
 		)
 	),
-	#config{ init = Init2 } = Merged2, 
+	#config{ init = Init2 } = Merged2,
 	?assertEqual(true, Init2).
+
+lookup(Key) ->
+	case ets:lookup(?MODULE, Key) of
+		[{Key, Value}] -> {ok, Value};
+		_ -> {error, undefined}
+	end.
+
+insert(Key, Value) ->
+	ets:insert(?MODULE, {Key, Value}).
