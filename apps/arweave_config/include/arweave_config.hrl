@@ -2,7 +2,6 @@
 -define(AR_CONFIG_HRL, true).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_p3.hrl").
 -include_lib("arweave/include/ar_verify_chunks.hrl").
 
 -record(config_webhook, {
@@ -367,7 +366,6 @@
 	tls_cert_file = not_set, %% required to enable TLS
 	tls_key_file = not_set,  %% required to enable TLS
 	http_api_transport_idle_timeout = ?DEFAULT_COWBOY_TCP_IDLE_TIMEOUT_SECOND*1000,
-	p3 = #p3_config{},
 	coordinated_mining = false,
 	cm_api_secret = not_set,
 	cm_exit_peer = not_set,

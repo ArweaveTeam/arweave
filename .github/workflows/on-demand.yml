@@ -61,9 +61,6 @@ on:
           - ar_node
           - ar_node_utils
           - ar_nonce_limiter
-          - ar_p3
-          - ar_p3_config
-          - ar_p3_db
           - ar_packing_server
           - ar_packing_tests
           - ar_patricia_tree

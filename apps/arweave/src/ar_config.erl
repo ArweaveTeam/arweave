@@ -27,7 +27,6 @@
 ]).
 -include("ar.hrl").
 -include("ar_consensus.hrl").
--include("ar_p3.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 %%%===================================================================
@@ -698,16 +697,6 @@ parse_options([{<<"defragment_modules">>, L} | Rest], Config) when is_list(L) ->
 	end;
 parse_options([{<<"defragment_modules">>, Bin} | _], _) ->
 	{error, {bad_type, defragment_modules, array}, Bin};
-
-parse_options([{<<"p3">>, {P3Config}} | Rest], Config) ->
-	try
-		P3 = ar_p3_config:parse_p3(P3Config, #p3_config{}),
-		parse_options(Rest, Config#config{ p3 = P3 })
-	catch error:Reason ->
-		{error,
-			{bad_format, p3, Reason},
-			P3Config}
-	end;
 
 parse_options([{<<"http_api.tcp.idle_timeout_seconds">>, D} | Rest], Config) when is_integer(D) ->
 	parse_options(Rest, Config#config{ http_api_transport_idle_timeout = D * 1000 });
