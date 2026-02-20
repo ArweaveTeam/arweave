@@ -63,7 +63,9 @@ init([]) ->
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([tx, disksup]),
 	{ok, Config} = arweave_config:get_env(),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "ar_header_sync_db"), ?MODULE),
+	ok = ar_kv:open(#{
+		path => filename:join([Config#config.data_dir, ?ROCKS_DB_DIR, "ar_header_sync_db"]),
+		name => ?MODULE}),
 	{SyncRecord, Height, CurrentBI} =
 		case ar_storage:read_term(header_sync_state) of
 			not_found ->

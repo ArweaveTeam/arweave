@@ -7,7 +7,7 @@
 
 -behaviour(gen_server).
 
--export([lookup_block_filename/1, lookup_tx_filename/1, write_block/1, write_block_shadow/1,
+-export([lookup_block_filename/1, lookup_block_filename/2, lookup_tx_filename/1, lookup_tx_filename/2, write_block/1, write_block_shadow/1,
 		reset/0, write_tx/1]).
 
 -export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -29,9 +29,14 @@
 %%% API
 %%%===================================================================
 
-lookup_block_filename(H) when is_binary(H)->
+lookup_block_filename(H) ->
+	lookup_block_filename(H, not_set).
+
+lookup_block_filename(H, CustomDir) when is_binary(H)->
 	%% Use the process dictionary to keep the path.
 	PathBlock =
+		case CustomDir of
+			not_set ->
 		case get(ar_disk_cache_path) of
 			undefined ->
 				{ok, Config} = arweave_config:get_env(),
@@ -40,6 +45,9 @@ lookup_block_filename(H) when is_binary(H)->
 				filename:join(Path, ?DISK_CACHE_BLOCK_DIR);
 			Path ->
 				filename:join(Path, ?DISK_CACHE_BLOCK_DIR)
+				end;
+			_ ->
+				filename:join([CustomDir, ?DISK_CACHE_DIR, ?DISK_CACHE_BLOCK_DIR])
 		end,
 	FileName = binary_to_list(ar_util:encode(H)),
 	FilePath = filename:join(PathBlock, FileName),
@@ -57,8 +65,14 @@ lookup_block_filename(H) when is_binary(H)->
 			end
 	end.
 
-lookup_tx_filename(Hash) when is_binary(Hash) ->
-	PathTX = case get(ar_disk_cache_path) of
+lookup_tx_filename(Hash) ->
+	lookup_tx_filename(Hash, not_set).
+
+lookup_tx_filename(Hash, CustomDir) when is_binary(Hash) ->
+	PathTX =
+		case CustomDir of
+			not_set ->
+				case get(ar_disk_cache_path) of
 		undefined ->
 			{ok, Config} = arweave_config:get_env(),
 			Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
@@ -66,6 +80,9 @@ lookup_tx_filename(Hash) when is_binary(Hash) ->
 			filename:join(Path, ?DISK_CACHE_TX_DIR);
 		Path ->
 			filename:join(Path, ?DISK_CACHE_TX_DIR)
+				end;
+			_ ->
+				filename:join([CustomDir, ?DISK_CACHE_DIR, ?DISK_CACHE_TX_DIR])
 	end,
 	FileName = binary_to_list(ar_util:encode(Hash)) ++ ".json",
 	File = filename:join(PathTX, FileName),
