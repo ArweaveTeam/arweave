@@ -36,16 +36,11 @@ add_metric_family({Name, Type, Help, Metrics}, Callback) ->
 	Callback(create_mf(?METRIC_NAME(Name), Help, Type, Metrics)).
 
 metrics() ->
+	RanchInfo = ranch:info(),
 	[
 	 {storage_blocks_stored, gauge,
 		"Blocks stored",
 		case ets:lookup(ar_header_sync, synced_blocks) of [] -> 0; [{_, N}] -> N end},
-	 {arnode_queue_len, gauge,
-		"Size of message queuee on ar_node_worker",
-		element(2, erlang:process_info(whereis(ar_node_worker), message_queue_len))},
-	 {arbridge_queue_len, gauge,
-		"Size of message queuee on ar_bridge",
-		element(2, erlang:process_info(whereis(ar_bridge), message_queue_len))},
 	 {ignored_ids_len, gauge,
 		"Size of table of Ignored/already seen IDs:",
 		ets:info(ignored_ids, size)},
@@ -56,7 +51,13 @@ metrics() ->
 	 {ar_header_sync_bytes_total, gauge, "ar_header_sync process memory",
 		get_process_memory(ar_header_sync)},
 	 {ar_wallets_bytes_total, gauge, "ar_wallets process memory",
-		get_process_memory(ar_wallets)}
+		get_process_memory(ar_wallets)},
+	 {ar_http_iface_listener_ranch_active_connections, gauge, "Currently active Ranch connections",
+		get_ranch_active_connections(RanchInfo, ar_http_iface_listener)},
+         {ar_http_iface_listener_ranch_all_connections, gauge, "Currently active Ranch connections",
+		get_ranch_all_connections(RanchInfo, ar_http_iface_listener)},
+         {ar_http_iface_listener_ranch_acceptors, gauge, "Currenly live Ranch acceptor processes",
+		get_ranch_acceptors(ar_http_iface_listener)}
 	].
 
 get_process_memory(Name) ->
@@ -67,3 +68,25 @@ get_process_memory(Name) ->
 			{memory, Memory} = erlang:process_info(PID, memory),
 			Memory
 	end.
+
+get_ranch_active_connections(RInfo, Name) ->
+    get_ranch_info_value(RInfo, Name, active_connections).
+
+get_ranch_all_connections(RInfo, Name) ->
+    get_ranch_info_value(RInfo, Name, all_connections).
+
+get_ranch_info_value(RInfo, Name, Key) ->
+    PoolDetails = proplists:get_value(Name, RInfo, []),
+    %% Signal error condition with -1
+    proplists:get_value(Key, PoolDetails, -1).
+
+get_ranch_acceptors(Name) ->
+    Sups = ranch_server:get_listener_sups(),
+    ListenerSup = proplists:get_value(Name, Sups), 
+    ListenerChildren = supervisor:which_children(ListenerSup),
+    case lists:keyfind(ranch_acceptors_sup, 1, ListenerChildren) of
+        {_, AcceptorsSup, _, _} when is_pid(AcceptorsSup) ->
+            length(supervisor:which_children(AcceptorsSup));
+        {_, _Atom, _, _} ->
+            -1
+    end.
