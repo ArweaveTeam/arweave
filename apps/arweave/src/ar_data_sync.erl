@@ -889,22 +889,8 @@ handle_cast({move_data_root_index, Cursor, N}, State) ->
 	{noreply, State};
 
 handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, Entries}, State) ->
-	#sync_data_state{ store_id = ?DEFAULT_MODULE } = State,
-	DataRootIndexKeySet = sets:from_list([
-		<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>
-		|| {DataRoot, TXSize, _TXStart, _TXPath} <- Entries
-	]),
-	BlockSize = BlockEnd - BlockStart,
-	lists:foreach(
-		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
-			ok = update_data_root_index(DataRoot, TXSize, TXStartOffset, TXPath, ?DEFAULT_MODULE)
-		end,
-		Entries
-	),
-	ok = ar_kv:put({data_root_offset_index, ?DEFAULT_MODULE},
-			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
-			term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})),
-	{noreply, State};
+	{_, State2} = handle_store_data_roots(BlockStart, BlockEnd, TXRoot, Entries, State),
+	{noreply, State2};
 
 handle_cast(process_store_chunk_queue, State) ->
 	ar_util:cast_after(200, self(), process_store_chunk_queue),
@@ -1530,9 +1516,31 @@ handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	{reply, add_block(B, SizeTaggedTXs, StoreID), State};
 
+handle_call({store_data_roots_sync, BlockStart, BlockEnd, TXRoot, Entries}, _From, State) ->
+	{Reply, State2} = handle_store_data_roots(BlockStart, BlockEnd, TXRoot, Entries, State),
+	{reply, Reply, State2};
+
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
 	{reply, ok, State}.
+
+handle_store_data_roots(BlockStart, BlockEnd, TXRoot, Entries, State) ->
+	#sync_data_state{ store_id = ?DEFAULT_MODULE } = State,
+	DataRootIndexKeySet = sets:from_list([
+		<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>
+		|| {DataRoot, TXSize, _TXStart, _TXPath} <- Entries
+	]),
+	BlockSize = BlockEnd - BlockStart,
+	lists:foreach(
+		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
+			ok = update_data_root_index(DataRoot, TXSize, TXStartOffset, TXPath, ?DEFAULT_MODULE)
+		end,
+		Entries
+	),
+	ok = ar_kv:put({data_root_offset_index, ?DEFAULT_MODULE},
+			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
+			term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})),
+	{ok, State}.
 
 handle_info({event, node_state, {initialized, B}}, State) ->
 	{noreply, State#sync_data_state{ weave_size = B#block.weave_size }};
@@ -2355,40 +2363,49 @@ init_kv(StoreID) ->
 		{"disk_pool_chunks_index", BasicOpts ++ BloomFilterOpts},
 		{"migrations_index", BasicOpts}
 	],
+	{ok, Config} = arweave_config:get_env(),
+	DataDir = Config#config.data_dir,
 	Dir =
 		case StoreID of
 			?DEFAULT_MODULE ->
-				?ROCKS_DB_DIR;
+				filename:join(DataDir, ?ROCKS_DB_DIR);
 			_ ->
-				filename:join(["storage_modules", StoreID, ?ROCKS_DB_DIR])
+				filename:join([DataDir, "storage_modules", StoreID, ?ROCKS_DB_DIR])
 		end,
-	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_db"), ColumnFamilyDescriptors, [],
-			[{ar_data_sync, StoreID}, {chunks_index, StoreID}, {data_root_index_old, StoreID},
+	ok = ar_kv:open(#{
+		path => filename:join(Dir, "ar_data_sync_db"),
+		cf_descriptors => ColumnFamilyDescriptors,
+		cf_names => [{ar_data_sync, StoreID}, {chunks_index, StoreID}, {data_root_index_old, StoreID},
 			{data_root_offset_index, StoreID}, {tx_index, StoreID}, {tx_offset_index, StoreID},
-			{disk_pool_chunks_index_old, StoreID}, {migrations_index, StoreID}]),
-	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_chunk_db"), [{max_open_files, 10000},
+			{disk_pool_chunks_index_old, StoreID}, {migrations_index, StoreID}]}),
+	ok = ar_kv:open(#{
+		path => filename:join(Dir, "ar_data_sync_chunk_db"),
+		name => {chunk_data_db, StoreID},
+		options => [{max_open_files, 10000},
 			{max_background_compactions, 8},
 			{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
 			{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
 			%% 10 files in L1 to make L1 == L0 as recommended by the
 			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-			{max_bytes_for_level_base, 10 * 256 * ?MiB}], {chunk_data_db, StoreID}),
-	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_disk_pool_chunks_index_db"), [
-			{max_open_files, 1000}, {max_background_compactions, 8},
+			{max_bytes_for_level_base, 10 * 256 * ?MiB}]}),
+	ok = ar_kv:open(#{
+		path => filename:join(Dir, "ar_data_sync_disk_pool_chunks_index_db"),
+		name => {disk_pool_chunks_index, StoreID},
+		options => [{max_open_files, 1000}, {max_background_compactions, 8},
 			{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
 			{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
 			%% 10 files in L1 to make L1 == L0 as recommended by the
 			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-			{max_bytes_for_level_base, 10 * 256 * ?MiB}] ++ BloomFilterOpts,
-			{disk_pool_chunks_index, StoreID}),
-	ok = ar_kv:open(filename:join(Dir, "ar_data_sync_data_root_index_db"), [
-			{max_open_files, 100}, {max_background_compactions, 8},
+			{max_bytes_for_level_base, 10 * 256 * ?MiB}] ++ BloomFilterOpts}),
+	ok = ar_kv:open(#{
+		path => filename:join(Dir, "ar_data_sync_data_root_index_db"),
+		name => {data_root_index, StoreID},
+		options => [{max_open_files, 100}, {max_background_compactions, 8},
 			{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
 			{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
 			%% 10 files in L1 to make L1 == L0 as recommended by the
 			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-			{max_bytes_for_level_base, 10 * 256 * ?MiB}] ++ BloomFilterOpts,
-			{data_root_index, StoreID}),
+			{max_bytes_for_level_base, 10 * 256 * ?MiB}] ++ BloomFilterOpts}),
 	#sync_data_state{
 		chunks_index = {chunks_index, StoreID},
 		data_root_index = {data_root_index, StoreID},
@@ -3994,7 +4011,7 @@ record_chunk_cache_size_metric() ->
 %% Return {ok, {TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath}, ...]}}
 %% or {error, Reason}.
 get_data_roots_for_offset(Offset) ->
-	case Offset > get_disk_pool_threshold() of
+	case Offset >= get_disk_pool_threshold() of
 		true ->
 			{error, not_found};
 		false ->

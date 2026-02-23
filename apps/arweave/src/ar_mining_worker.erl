@@ -305,7 +305,7 @@ handle_task({computed_h0, Candidate, _ExtraArgs}, State) ->
 	#mining_candidate{
 		h0 = H0, partition_number = Partition1, partition_upper_bound = PartitionUpperBound
 	} = Candidate,
-	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0, Partition1, PartitionUpperBound),
+	{RecallRange1Start, RecallRange2Start} = ar_mining_server:get_recall_range(H0, Partition1, PartitionUpperBound),
 	Partition2 = ar_node:get_partition_number(RecallRange2Start),
 	Candidate1 = generate_cache_ref(Candidate#mining_candidate{ partition_number2 = Partition2 }),
 	%% Check if the recall ranges are readable to avoid reserving cache space for non-existent data.
@@ -355,11 +355,11 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 	State1 = hash_computed(h1, Candidate, State),
 	H1PassesDiffChecks = h1_passes_diff_checks(H1, Candidate, State1),
 	case H1PassesDiffChecks of
-		false -> ok;
-		partial -> ar_mining_server:prepare_and_post_solution(Candidate);
+		false ->
+			ok;
+		partial ->
+			ar_mining_server:prepare_and_post_solution(Candidate);
 		true ->
-			%% H1 solution found, report it.
-			
 			log_info(found_h1_solution, Candidate, State1, [
 				{h1, ar_util:encode(H1)},
 				{difficulty, get_difficulty(State1, Candidate)}]),
@@ -469,7 +469,7 @@ handle_task({compute_h2_for_peer, Candidate, _ExtraArgs}, State) ->
 		cm_h1_list = H1List,
 		cm_lead_peer = Peer
 	} = Candidate,
-	{_, RecallRange2Start} = ar_block:get_recall_range(H0, Partition1, PartitionUpperBound),
+	{_, RecallRange2Start} = ar_mining_server:get_recall_range(H0, Partition1, PartitionUpperBound),
 	Candidate1 = generate_cache_ref(Candidate),
 	%% Clear the list so we aren't copying it around all over the place.
 	Candidate3 = Candidate1#mining_candidate{ cm_h1_list = [] },
@@ -777,7 +777,8 @@ passes_diff_checks(SolutionHash, IsPoA1, Candidate, State) ->
 	DiffPair = get_difficulty(State, Candidate),
 	#mining_candidate{ packing_difficulty = PackingDifficulty } = Candidate,
 	case ar_node_utils:passes_diff_check(SolutionHash, IsPoA1, DiffPair, PackingDifficulty) of
-		true -> true;
+		true ->
+			true;
 		false ->
 			case get_partial_difficulty(State, Candidate) of
 				not_set -> false;
@@ -1136,6 +1137,7 @@ log_warning(Event, Candidate, State, ExtraLogs) ->
 
 log_warning(Event, State, ExtraLogs) ->
 	log_warning(Event, undefined, State, ExtraLogs).
+
 
 %%%===================================================================
 %%% Public Test interface.

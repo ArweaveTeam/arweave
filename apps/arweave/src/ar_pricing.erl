@@ -3,7 +3,8 @@
 %% 2.6 exports.
 -export([get_price_per_gib_minute/2, get_tx_fee/1,
 		get_miner_reward_endowment_pool_debt_supply/1, recalculate_price_per_gib_minute/1,
-		redenominate/3, may_be_redenominate/1]).
+		redenominate/3, may_be_redenominate/1,
+		get_redenomination_threshold/0, get_redenomination_delay_blocks/0]).
 
 %% 2.5 exports.
 -export([get_tx_fee/4, get_miner_reward_and_endowment_pool/1,
@@ -302,6 +303,34 @@ redenominate(Amount, BaseDenomination, BaseDenomination) ->
 redenominate(Amount, BaseDenomination, Denomination) when Denomination > BaseDenomination ->
 	redenominate(Amount * 1000, BaseDenomination, Denomination - 1).
 
+%% @doc Return the threshold for scheduling redenomination.
+-ifdef(LOCALNET).
+get_redenomination_threshold() ->
+	case application:get_env(arweave, redenomination_threshold) of
+		{ok, Value} when is_integer(Value), Value > 0 ->
+			Value;
+		_ ->
+			?REDENOMINATION_THRESHOLD
+	end.
+-else.
+get_redenomination_threshold() ->
+	?REDENOMINATION_THRESHOLD.
+-endif.
+
+%% @doc Return the delay (in blocks) before redenomination takes effect.
+-ifdef(LOCALNET).
+get_redenomination_delay_blocks() ->
+	case application:get_env(arweave, redenomination_delay_blocks) of
+		{ok, Value} when is_integer(Value), Value > 0 ->
+			Value;
+		_ ->
+			?REDENOMINATION_DELAY_BLOCKS
+	end.
+-else.
+get_redenomination_delay_blocks() ->
+	?REDENOMINATION_DELAY_BLOCKS.
+-endif.
+
 %% @doc	Increase the amount of base currency units in the system if
 %% the available supply is too low.
 may_be_redenominate(B) ->
@@ -333,9 +362,10 @@ may_be_redenominate3(B) ->
 	#block{ height = Height, debt_supply = DebtSupply, reward_pool = EndowmentPool,
 			denomination = Denomination, redenomination_height = RedenominationHeight } = B,
 	TotalSupply = get_total_supply(Denomination),
-	case TotalSupply + DebtSupply - EndowmentPool < (?REDENOMINATION_THRESHOLD) of
+	Threshold = get_redenomination_threshold(),
+	case TotalSupply + DebtSupply - EndowmentPool < Threshold of
 		true ->
-			{Denomination, Height + (?REDENOMINATION_DELAY_BLOCKS)};
+			{Denomination, Height + get_redenomination_delay_blocks()};
 		false ->
 			{Denomination, RedenominationHeight}
 	end.

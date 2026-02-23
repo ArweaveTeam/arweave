@@ -1,12 +1,14 @@
 %%% @doc The 2.6 mining server.
 -module(ar_mining_server).
 
+-behaviour(ar_mining_server_behaviour).
 -behaviour(gen_server).
 
 -export([start_link/0,
 		start_mining/1, is_paused/0, set_difficulty/1, set_merkle_rebase_threshold/1, set_height/1,
 		compute_h2_for_peer/1, prepare_and_post_solution/1, prepare_poa/3,
-		get_recall_bytes/5, active_sessions/0, encode_sessions/1, add_pool_job/6,
+		get_recall_bytes/5, get_recall_range/3, get_recall_range/5,
+		active_sessions/0, encode_sessions/1, add_pool_job/6,
 		is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/5,
 		get_packing_difficulty/1, get_packing_type/1]).
 -export([pause/0]).
@@ -63,7 +65,7 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-%% @doc Start mining.
+%% @doc Start mining. Does nothing if the mining server is already running.
 start_mining(Args) ->
 	gen_server:cast(?MODULE, {start_mining, Args}).
 
@@ -174,10 +176,7 @@ get_packing_type(Packing) ->
 %%%===================================================================
 
 init([]) ->
-	%% Trap exit to avoid corrupting any open files on quit.
-	process_flag(trap_exit, true),
 	ok = ar_events:subscribe(nonce_limiter),
-	ar_chunk_storage:open_files(?DEFAULT_MODULE),
 
 	Partitions = ar_mining_io:get_partitions(infinity),
 	Packing = ar_mining_io:get_packing(),
@@ -221,6 +220,8 @@ handle_cast(pause, State) ->
 	State2 = set_difficulty({infinity, infinity}, State),
 	{noreply, State2#state{ paused = true }};
 
+handle_cast({start_mining, Args}, #state{ paused = false } = State) ->
+	{noreply, State};
 handle_cast({start_mining, Args}, State) ->
 	{DiffPair, RebaseThreshold, Height} = Args,
 	ar:console("Starting mining.~n"),
@@ -578,11 +579,18 @@ distribute_output([{Partition, MiningAddress, PackingDifficulty} | Partitions],
 	distribute_output(Partitions, Candidate, State).
 
 get_recall_bytes(H0, PartitionNumber, Nonce, PartitionUpperBound, PackingDifficulty) ->
-	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
+	{RecallRange1Start, RecallRange2Start} = get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
 	RecallByte1 = ar_block:get_recall_byte(RecallRange1Start, Nonce, PackingDifficulty),
 	RecallByte2 = ar_block:get_recall_byte(RecallRange2Start, Nonce, PackingDifficulty),
 	{RecallByte1, RecallByte2}.
+
+get_recall_range(H0, PartitionNumber, PartitionUpperBound) ->
+	ar_block:get_recall_range(H0, PartitionNumber, PartitionUpperBound).
+
+get_recall_range(H0, PartitionNumber, PartitionUpperBound, RecallRange1, RecallRange2) ->
+	ar_block:get_recall_range(H0, PartitionNumber, PartitionUpperBound,
+			RecallRange1, RecallRange2).
 
 prepare_and_post_solution(#mining_candidate{} = Candidate, State) ->
 	%% A solo miner builds a solution from a candidate here or a CM miner who received
@@ -749,9 +757,10 @@ prepare_solution(steps, Candidate, Solution) ->
 
 prepare_solution(proofs, Candidate, Solution) ->
 	#mining_candidate{
-		h0 = H0, h1 = H1, h2 = H2, nonce = Nonce, partition_number = PartitionNumber,
+		h0 = H0, h1 = H1, h2 = H2, partition_number = PartitionNumber,
 		partition_upper_bound = PartitionUpperBound,
 		packing_difficulty = PackingDifficulty,
+		nonce = Nonce,
 		seed = Seed,
 		mining_address = MiningAddress,
 		nonce_limiter_output = NonceLimiterOutput,
@@ -883,12 +892,13 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
 		packing_difficulty = PackingDifficulty,
 		replica_format = ReplicaFormat,
 		mining_address = MiningAddress,
-		h0 = H0, nonce = Nonce, partition_number = PartitionNumber,
+		nonce = Nonce, partition_number = PartitionNumber,
 		partition_upper_bound = PartitionUpperBound,
+		h0 = H0,
 		chunk1 = Chunk1, chunk2 = Chunk2
 	} = Candidate,
 	{RecallByte1, RecallByte2} = get_recall_bytes(H0, PartitionNumber, Nonce,
-		PartitionUpperBound, PackingDifficulty),
+			PartitionUpperBound, PackingDifficulty),
 
 	{RecallByte, Chunk} = case PoAType of
 		poa1 -> {RecallByte1, Chunk1};
@@ -1288,7 +1298,7 @@ validate_solution(Solution, DiffPair) ->
 	H0 = ar_block:compute_h0(NonceLimiterOutput, PartitionNumber, Seed, MiningAddress,
 			PackingDifficulty),
 	{H1, _Preimage1} = ar_block:compute_h1(H0, Nonce, PoA1#poa.chunk),
-	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
+	{RecallRange1Start, RecallRange2Start} = get_recall_range(H0,
 			PartitionNumber, PartitionUpperBound),
 	%% Assert recall_byte1 is computed correctly.
 	RecallByte1 = ar_block:get_recall_byte(RecallRange1Start, Nonce, PackingDifficulty),
@@ -1303,14 +1313,15 @@ validate_solution(Solution, DiffPair) ->
 					SubChunkIndex}, ChunkID},
 			case ar_node_utils:h1_passes_diff_check(H1, DiffPair, PackingDifficulty) of
 				true ->
-					%% validates solution_hash
 					case SolutionHash of
-						H1 -> ok;
+						H1 ->
+							{true, PoACache, undefined};
 						_ ->
-							?LOG_ERROR([{event, invalid_solution_hash}, {solution_hash, SolutionHash}, {h1, H1}])
-					end,
-					SolutionHash = H1,
-					{true, PoACache, undefined};
+							?LOG_ERROR([{event, invalid_solution_hash},
+									{solution_hash, ar_util:encode(SolutionHash)},
+									{h1, ar_util:encode(H1)}]),
+							error
+					end;
 				false ->
 					case is_one_chunk_solution(Solution) of
 						true ->

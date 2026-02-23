@@ -9,7 +9,8 @@
 -module(ar_node_worker).
 
 -export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1,
-		tx_id_prefix/1, found_solution/4]).
+		tx_id_prefix/1, found_solution/4, pause/0,
+		start_mining/0, mine_one_block/0, mine_until_height/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([set_reward_addr/1]).
@@ -23,12 +24,22 @@
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
+-ifdef(LOCALNET).
+-define(MINING_SERVER, ar_localnet_mining_server).
+-else.
+-define(MINING_SERVER, ar_mining_server).
+-endif.
+
 -include_lib("eunit/include/eunit.hrl").
 
 -ifdef(AR_TEST).
--define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 10).
+	-define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 10).
 -else.
--define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 200).
+	-ifdef(LOCALNET).
+		-define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 10).
+	-else.
+		-define(PROCESS_TASK_QUEUE_FREQUENCY_MS, 200).
+	-endif.
 -endif.
 
 -define(FILTER_MEMPOOL_CHUNK_SIZE, 100).
@@ -83,6 +94,24 @@ set_reward_addr(Addr) ->
 found_solution(Source, Solution, PoACache, PoA2Cache) ->
 	gen_server:cast(?MODULE, {found_solution, Source, Solution, PoACache, PoA2Cache}).
 
+%% @doc Start the mining server. It will be running indefinitely until paused.
+start_mining() ->
+	gen_server:cast(?MODULE, start_mining).
+
+%% @doc Mine until a block is found. The default server may produce several block
+%% candidates (happens often in tests). The localnet mining server only produces
+%% one candidate and one block.
+mine_one_block() ->
+	gen_server:call(?MODULE, mine_one_block).
+
+%% @doc Mine blocks until the given height is reached.
+mine_until_height(Height) ->
+	gen_server:cast(?MODULE, {mine_until_height, Height}).
+
+%% @doc Pause the mining server.
+pause() ->
+	gen_server:cast(?MODULE, pause).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -98,12 +127,12 @@ init([]) ->
 	{ok, Config} = arweave_config:get_env(),
 	validate_trusted_peers(Config),
 	StartFromLocalState = Config#config.start_from_latest_state orelse
-			Config#config.start_from_block /= undefined,
+			Config#config.start_from_block /= not_set,
 	case {StartFromLocalState, Config#config.init, Config#config.auto_join} of
 		{false, false, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
 		{true, _, _} ->
-			case ar_storage:read_block_index() of
+			case ar_storage:read_block_index(Config#config.start_from_state) of
 				not_found ->
 					block_index_not_found([]);
 				BI ->
@@ -150,7 +179,7 @@ init([]) ->
 	%% May be start mining.
 	case Config#config.mine of
 		true ->
-			gen_server:cast(?MODULE, automine);
+			gen_server:cast(?MODULE, start_mining);
 		_ ->
 			ok
 	end,
@@ -164,6 +193,7 @@ init([]) ->
 		miner_state => undefined,
 		io_threads => [],
 		automine => false,
+		mine_until_height => undefined,
 		tags => [],
 		blocks_missing_txs => sets:new(),
 		missing_txs_lookup_processes => #{},
@@ -328,6 +358,14 @@ calculate_delay(Bytes) ->
 	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
 	BaseDelay + NetworkDelay.
 
+handle_call(mine_one_block, _From, State) ->
+	case maps:get(miner_state, State) of
+		undefined ->
+			State2 = start_mining(State),
+			{reply, ok, State2};
+		_ ->
+			{reply, {error, mining_server_running}, State}
+	end;
 handle_call({set_reward_addr, Addr}, _From, State) ->
 	{reply, ok, State#{ reward_addr => Addr }}.
 
@@ -372,22 +410,29 @@ handle_cast(Message, #{ task_queue := TaskQueue } = State) ->
 			{noreply, State#{ task_queue => gb_sets:insert(Task, TaskQueue) }}
 	end.
 
-handle_info({join_from_state, Height, BI, Blocks}, State) ->
+handle_info({join_from_state, Height, BI, Blocks, CustomDir}, State) ->
 	{ok, _} = ar_wallets:start_link([{blocks, Blocks},
-			{from_state, ?START_FROM_STATE_SEARCH_DEPTH}]),
-	ets:insert(node_state, {join_state, {Height, Blocks, BI}}),
+			{from_state, ?START_FROM_STATE_SEARCH_DEPTH},
+			{custom_dir, CustomDir}]),
+	ets:insert(node_state, {join_state, {Height, Blocks, BI, CustomDir}}),
 	{noreply, State};
 
 handle_info({join, Height, BI, Blocks}, State) ->
 	Peers = ar_peers:get_trusted_peers(),
 	{ok, _} = ar_wallets:start_link([{blocks, Blocks}, {from_peers, Peers}]),
-	ets:insert(node_state, {join_state, {Height, Blocks, BI}}),
+	ets:insert(node_state, {join_state, {Height, Blocks, BI, not_set}}),
 	{noreply, State};
 
 handle_info({event, node_state, {account_tree_initialized, Height}}, State) ->
-	[{_, {Height2, Blocks, BI}}] = ets:lookup(node_state, join_state),
+	[{_, {Height2, Blocks, BI, CustomDir}}] = ets:lookup(node_state, join_state),
 	?LOG_INFO([{event, account_tree_initialized}, {height, Height}]),
 	ar:console("The account tree has been initialized at the block height ~B.~n", [Height]),
+	case CustomDir of
+		not_set ->
+			ok;
+		_ ->
+			ar_storage:close_start_from_state_databases()
+	end,
 	%% Take the latest block the account tree is stored for.
 	Blocks2 = lists:nthtail(Height2 - Height, Blocks),
 	BI2 = lists:nthtail(Height2 - Height, BI),
@@ -395,7 +440,7 @@ handle_info({event, node_state, {account_tree_initialized, Height}}, State) ->
 	Blocks3 = lists:sublist(Blocks2, ?SEARCH_SPACE_UPPER_BOUND_DEPTH),
 	Blocks4 = may_be_initialize_nonce_limiter(Blocks3, BI2),
 	Blocks5 = Blocks4 ++ lists:nthtail(length(Blocks3), Blocks2),
-	ets:insert(node_state, {join_state, {Height, Blocks5, BI2}}),
+	ets:insert(node_state, {join_state, {Height, Blocks5, BI2, CustomDir}}),
 	ar_nonce_limiter:account_tree_initialized(Blocks5),
 	{noreply, State};
 
@@ -403,7 +448,7 @@ handle_info({event, node_state, _Event}, State) ->
 	{noreply, State};
 
 handle_info({event, nonce_limiter, initialized}, State) ->
-	[{_, {Height, Blocks, BI}}] = ets:lookup(node_state, join_state),
+	[{_, {Height, Blocks, BI, _CustomDir}}] = ets:lookup(node_state, join_state),
 	ar_storage:store_block_index(BI),
 	RecentBI = lists:sublist(BI, ?BLOCK_INDEX_HEAD_LEN),
 	Current = element(1, hd(RecentBI)),
@@ -680,11 +725,21 @@ handle_task({cache_missing_txs, BH, TXs}, State) ->
 			{noreply, State}
 	end;
 
-handle_task(mine, State) ->
-	{noreply, start_mining(State)};
-
-handle_task(automine, State) ->
+handle_task(start_mining, State) ->
 	{noreply, start_mining(State#{ automine => true })};
+
+handle_task({mine_until_height, Height}, State) ->
+	{noreply, start_mining(State#{ mine_until_height => {height, Height}, automine => true })};
+
+handle_task(pause, State) ->
+	case maps:get(miner_state, State) of
+		undefined ->
+			ok;
+		_ ->
+			?MINING_SERVER:pause()
+	end,
+	{noreply, State#{ miner_state => undefined, automine => false,
+			mine_until_height => undefined }};
 
 handle_task({filter_mempool, Mempool}, State) ->
 	{ok, List, RemainingMempool} = ar_mempool:take_chunk(Mempool, ?FILTER_MEMPOOL_CHUNK_SIZE),
@@ -747,7 +802,7 @@ handle_task(compute_mining_difficulty, State) ->
 		undefined ->
 			ok;
 		_ ->
-			ar_mining_server:set_difficulty(Diff)
+			?MINING_SERVER:set_difficulty(Diff)
 	end,
 	ar_util:cast_after((?COMPUTE_MINING_DIFFICULTY_INTERVAL) * 1000, ?MODULE,
 			compute_mining_difficulty),
@@ -1640,12 +1695,19 @@ return_orphaned_txs_to_mempool(H, BaseH) ->
 
 %% @doc Stop the current mining session and optionally start a new one,
 %% depending on the automine setting.
+maybe_reset_miner(#{ mine_until_height := {height, TargetHeight} } = State) ->
+	case ar_node:get_height() >= TargetHeight of
+		true ->
+			maybe_reset_miner(State#{ mine_until_height => undefined, automine => false });
+		false ->
+			start_mining(State)
+	end;
 maybe_reset_miner(#{ miner_state := MinerState, automine := false } = State) ->
 	case MinerState of
 		undefined ->
 			ok;
 		_ ->
-			ar_mining_server:pause()
+			?MINING_SERVER:pause()
 	end,
 	State#{ miner_state => undefined };
 maybe_reset_miner(State) ->
@@ -1656,14 +1718,14 @@ start_mining(State) ->
 	[{_, MerkleRebaseThreshold}] = ets:lookup(node_state,
 			merkle_rebase_support_threshold),
 	[{_, Height}] = ets:lookup(node_state, height),
+	?MINING_SERVER:start_mining({DiffPair, MerkleRebaseThreshold, Height}),
 	case maps:get(miner_state, State) of
 		undefined ->
-			ar_mining_server:start_mining({DiffPair, MerkleRebaseThreshold, Height}),
 			State#{ miner_state => running };
-		_ ->
-			ar_mining_server:set_difficulty(DiffPair),
-			ar_mining_server:set_merkle_rebase_threshold(MerkleRebaseThreshold),
-			ar_mining_server:set_height(Height),
+		running ->
+			?MINING_SERVER:set_difficulty(DiffPair),
+			?MINING_SERVER:set_merkle_rebase_threshold(MerkleRebaseThreshold),
+			?MINING_SERVER:set_height(Height),
 			State
 	end.
 
@@ -1748,9 +1810,14 @@ start_from_state([#block{} = GenesisB]) ->
 	self() ! {join_from_state, 0, BI, [GenesisB#block{
 		reward_history = RewardHistory,
 		block_time_history = BlockTimeHistory
-	}]}.
+	}], not_set}.
 start_from_state(BI, Height) ->
-	case read_recent_blocks(BI, min(length(BI) - 1, ?START_FROM_STATE_SEARCH_DEPTH)) of
+	{ok, Config} = arweave_config:get_env(),
+	start_from_state(BI, Height, Config#config.start_from_state).
+
+start_from_state(BI, Height, CustomDir) ->
+	case ar_node:read_recent_blocks(BI,
+			min(length(BI) - 1, ?START_FROM_STATE_SEARCH_DEPTH), CustomDir) of
 		not_found ->
 			?LOG_ERROR([{event, start_from_state}, {reason, block_headers_not_found}]),
 			block_headers_not_found;
@@ -1770,8 +1837,8 @@ start_from_state(BI, Height) ->
 
 			BlockTimeHistoryBI = lists:sublist(BI2,
 					ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
-			case {ar_storage:read_reward_history(RewardHistoryBI),
-					ar_storage:read_block_time_history(Height2, BlockTimeHistoryBI)} of
+			case {ar_storage:read_reward_history(RewardHistoryBI, CustomDir),
+					ar_storage:read_block_time_history(Height2, BlockTimeHistoryBI, CustomDir)} of
 				{not_found, _} ->
 					?LOG_ERROR([{event, start_from_state_error},
 							{reason, reward_history_not_found},
@@ -1789,67 +1856,9 @@ start_from_state(BI, Height) ->
 				{RewardHistory, BlockTimeHistory} ->
 					Blocks2 = ar_rewards:set_reward_history(Blocks, RewardHistory),
 					Blocks3 = ar_block_time_history:set_history(Blocks2, BlockTimeHistory),
-					self() ! {join_from_state, Height2, BI2, Blocks3},
+					self() ! {join_from_state, Height2, BI2, Blocks3, CustomDir},
 					ok
 			end
-	end.
-
-read_recent_blocks(BI, SearchDepth) ->
-	read_recent_blocks2(lists:sublist(BI, 2 * ar_block:get_max_tx_anchor_depth() + SearchDepth),
-			SearchDepth, 0).
-
-read_recent_blocks2(_BI, Depth, Skipped) when Skipped > Depth orelse
-		(Skipped > 0 andalso Depth == Skipped) ->
-	not_found;
-read_recent_blocks2([], _SearchDepth, Skipped) ->
-	{Skipped, []};
-read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped) ->
-	case ar_storage:read_block(BH) of
-		B = #block{} ->
-			TXs = ar_storage:read_tx(B#block.txs),
-			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
-				true ->
-					read_recent_blocks2(BI, SearchDepth, Skipped + 1);
-				false ->
-					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
-							B#block.height),
-					case read_recent_blocks3(BI, 2 * ar_block:get_max_tx_anchor_depth() - 1,
-							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }]) of
-						not_found ->
-							not_found;
-						Blocks ->
-							{Skipped, Blocks}
-					end
-			end;
-		Error ->
-			ar:console("Skipping the block ~s, reason: ~p.~n", [ar_util:encode(BH),
-					io_lib:format("~p", [Error])]),
-			read_recent_blocks2(BI, SearchDepth, Skipped + 1)
-	end.
-
-read_recent_blocks3([], _BlocksToRead, Blocks) ->
-	lists:reverse(Blocks);
-read_recent_blocks3(_BI, 0, Blocks) ->
-	lists:reverse(Blocks);
-read_recent_blocks3([{BH, _, _} | BI], BlocksToRead, Blocks) ->
-	case ar_storage:read_block(BH) of
-		B = #block{} ->
-			TXs = ar_storage:read_tx(B#block.txs),
-			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
-				true ->
-					ar:console("Failed to find all transaction headers for the block ~s.~n",
-							[ar_util:encode(BH)]),
-					not_found;
-				false ->
-					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
-							B#block.height),
-					read_recent_blocks3(BI, BlocksToRead - 1,
-							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | Blocks])
-			end;
-		Error ->
-			ar:console("Failed to read block header ~s, reason: ~p.~n",
-					[ar_util:encode(BH), io_lib:format("~p", [Error])]),
-			not_found
 	end.
 
 set_poa_caches([]) ->

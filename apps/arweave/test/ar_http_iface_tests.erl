@@ -122,6 +122,7 @@ get_time_test() ->
 	?assert(Now < Max).
 
 test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
+	LocalHeight = ar_node:get_height(),
 	RemoteHeight = height(peer1),
 	Address19 = crypto:strong_rand_bytes(19),
 	Address65 = crypto:strong_rand_bytes(65),
@@ -169,10 +170,12 @@ test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
 		end,
 		ValidPayloads
 	),
+	ar_test_node:assert_wait_until_receives_txs(main, [TX, TX2]),
 	ar_test_node:assert_wait_until_receives_txs(peer1, [TX, TX2]),
 	ar_test_node:mine(),
-	[{H, _, _} | _] = ar_test_node:wait_until_height(peer1, RemoteHeight + 1),
-	B = read_block_when_stored(H),
+	[{H, _, _} | _] = ar_test_node:wait_until_height(main, LocalHeight + 1),
+	ar_test_node:assert_wait_until_height(peer1, RemoteHeight + 1),
+	B = read_block_when_stored(H, true),
 	ChecksumAddr = << (ar_util:encode(Address32))/binary, <<":">>/binary,
 			(ar_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary >>,
 	?assertEqual(2, length(B#block.txs)),

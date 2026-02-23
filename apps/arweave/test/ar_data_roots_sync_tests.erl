@@ -15,6 +15,13 @@ data_roots_syncs_from_peer_test_() ->
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
 		fun test_data_roots_syncs_from_peer/0).
 
+post_data_roots_test_() ->
+	ar_test_node:test_with_mocked_functions([
+			{ar_block, get_consensus_window_size, fun() -> 5 end},
+			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
+			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
+		fun test_post_data_roots/0).
+
 test_data_roots_syncs_from_peer() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
@@ -109,6 +116,92 @@ test_data_roots_syncs_from_peer() ->
 		end,
 		Blocks
 	).
+
+test_post_data_roots() ->
+	Wallet = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
+
+	ar_test_node:start_peer(peer1, B0),
+	ar_test_node:start_peer(main, B0),
+	ar_test_node:wait_until_joined(peer1),
+	ar_test_node:wait_until_joined(main),
+	ar_test_node:disconnect_from(peer1),
+
+	%% Mine blocks with transactions with data on peer1.
+	Data = lists:map(
+		fun(_) ->
+			TXData = generate_random_txs(Wallet),
+			TXs = [TX || {TX, _} <- TXData],
+			B = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 }, TXs),
+			{B, TXData}
+		end,
+		lists:seq(1, 5)
+	),
+
+	%% Mine some empty blocks to push the data blocks out of the recent window.
+	{LastB, _} = lists:last(Data),
+	lists:foldl(
+		fun(_, Height) ->
+			ar_test_node:mine(peer1),
+			ar_test_node:assert_wait_until_height(peer1, Height + 1),
+			Height + 1
+		end,
+		LastB#block.height,
+		lists:seq(1, 11)
+	),
+
+	%% Now re-join main (node A) with header syncing disabled.
+	{ok, BaseConfig} = arweave_config:get_env(),
+	MainConfig = BaseConfig#config{
+		mine = false,
+		header_sync_jobs = 0
+	},
+	ar_test_node:join_on(#{ node => main, join_on => peer1, config => MainConfig }, true),
+	ar_test_node:connect_to_peer(peer1),
+	ar_test_node:wait_until_joined(main),
+	ar_test_node:assert_wait_until_height(main, LastB#block.height + 11),
+	ar_test_node:disconnect_from(peer1),
+
+	%% Verify POST /data_roots and POST /chunk for each transaction.
+	lists:foreach(
+		fun({B, TXData}) ->
+			BlockStart = B#block.weave_size - B#block.block_size,
+			case {B#block.block_size > 0, BlockStart >= ar_data_sync:get_disk_pool_threshold()} of
+				{true, true} ->
+					assert_no_data_roots(BlockStart),
+
+					%% Fetch data roots from peer1 and POST to main.
+					Peer1 = ar_test_node:peer_ip(peer1),
+					Main = ar_test_node:peer_ip(main),
+					Path = "/data_roots/" ++ integer_to_list(BlockStart),
+					{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{ method => get, peer => Peer1, path => Path }),
+					{ok, {{<<"200">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => post, peer => Main, path => Path, body => Body }),
+
+					%% For each transaction with data, POST its chunks to main.
+					lists:foreach(
+						fun({TX, Chunks}) ->
+							case TX#tx.data_size > 0 of
+								true ->
+									Proofs = ar_test_data_sync:get_records_with_proofs(B, TX, Chunks),
+									lists:foreach(
+										fun({_, _, _, {_, Proof}}) ->
+											{ok, {{<<"200">>, _}, _, <<>>, _, _}} = ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
+										end,
+										Proofs
+									);
+								false ->
+									ok
+							end
+						end,
+						TXData
+					);
+				_ ->
+					ok
+			end
+		end,
+		Data
+	),
+	ok.
 
 generate_random_txs(Wallet) ->
 	Coin = rand:uniform(12),

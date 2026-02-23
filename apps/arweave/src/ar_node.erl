@@ -15,7 +15,8 @@
 		get_block_shadow_from_cache/1, get_recent_partition_upper_bound_by_prev_h/1,
 		get_block_txs_pairs/0, get_partition_upper_bound/1, get_nth_or_last/2,
 		get_partition_number/1, get_max_partition_number/1,
-		get_current_weave_size/0, get_recent_max_block_size/0]).
+		get_current_weave_size/0, get_recent_max_block_size/0,
+		read_recent_blocks/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -124,6 +125,64 @@ get_current_block_hash() ->
 			H;
 		[] ->
 			not_joined
+	end.
+
+read_recent_blocks(BI, SearchDepth, CustomDir) ->
+	read_recent_blocks2(lists:sublist(BI, 2 * ar_block:get_max_tx_anchor_depth() + SearchDepth),
+			SearchDepth, 0, CustomDir).
+
+read_recent_blocks2(_BI, Depth, Skipped, _CustomDir) when Skipped > Depth orelse
+		(Skipped > 0 andalso Depth == Skipped) ->
+	not_found;
+read_recent_blocks2([], _SearchDepth, Skipped, _CustomDir) ->
+	{Skipped, []};
+read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped, CustomDir) ->
+	case ar_storage:read_block(BH, CustomDir) of
+		B = #block{} ->
+			TXs = ar_storage:read_tx(B#block.txs, CustomDir),
+			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
+				true ->
+					read_recent_blocks2(BI, SearchDepth, Skipped + 1, CustomDir);
+				false ->
+					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
+							B#block.height),
+					case read_recent_blocks3(BI, 2 * ar_block:get_max_tx_anchor_depth() - 1,
+							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }], CustomDir) of
+						not_found ->
+							not_found;
+						Blocks ->
+							{Skipped, Blocks}
+					end
+			end;
+		Error ->
+			ar:console("Skipping the block ~s, reason: ~p.~n", [ar_util:encode(BH),
+					io_lib:format("~p", [Error])]),
+			read_recent_blocks2(BI, SearchDepth, Skipped + 1, CustomDir)
+	end.
+
+read_recent_blocks3([], _BlocksToRead, Blocks, _CustomDir) ->
+	lists:reverse(Blocks);
+read_recent_blocks3(_BI, 0, Blocks, _CustomDir) ->
+	lists:reverse(Blocks);
+read_recent_blocks3([{BH, _, _} | BI], BlocksToRead, Blocks, CustomDir) ->
+	case ar_storage:read_block(BH, CustomDir) of
+		B = #block{} ->
+			TXs = ar_storage:read_tx(B#block.txs, CustomDir),
+			case lists:any(fun(TX) -> TX == unavailable end, TXs) of
+				true ->
+					ar:console("Failed to find all transaction headers for the block ~s.~n",
+							[ar_util:encode(BH)]),
+					not_found;
+				false ->
+					SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
+							B#block.height),
+					read_recent_blocks3(BI, BlocksToRead - 1,
+							[B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | Blocks], CustomDir)
+			end;
+		Error ->
+			ar:console("Failed to read block header ~s, reason: ~p.~n",
+					[ar_util:encode(BH), io_lib:format("~p", [Error])]),
+			not_found
 	end.
 
 %% @doc Get the block index entry by height.

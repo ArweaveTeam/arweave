@@ -24,6 +24,7 @@
 		join/2, join/3, join_on/1, join_on/2, rejoin_on/1,
 		generate_join_config/0, generate_join_config/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
+		with_gossip_paused/2,
 
 		mine/0, get_tx_anchor/1, get_tx_confirmations/2, get_tx_price/2, get_tx_price/3,
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
@@ -72,12 +73,13 @@
 -define(READ_BLOCK_TIMEOUT, 500_000).
 -define(GET_TX_DATA_TIMEOUT, 200_000).
 -define(WAIT_UNTIL_JOINED_TIMEOUT, 200_000).
--define(WAIT_SYNCS_DATA_TIMEOUT, 200_000).
+-define(WAIT_SYNCS_DATA_TIMEOUT, 500_000).
 -define(WAIT_UNTIL_MINING_PAUSED_TIMEOUT, 60_000).
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
 all_peers(test) ->
 	[{test, peer1}, {test, peer2}, {test, peer3}, {test, peer4}];
 all_peers(e2e) ->
@@ -368,10 +370,11 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 base_cm_config(Peers) ->
 	RewardAddr = ar_wallet:to_address(remote_call(peer1, ar_wallet, new_keyfile, [])),
 	#config{
-		mining_cache_size_mb = 16,
+		mining_cache_size_mb = 128,
 		start_from_latest_state = true,
 		auto_join = true,
 		mining_addr = RewardAddr,
+		hashing_threads = 1,
 		sync_jobs = 2,
 		disk_pool_jobs = 2,
 		header_sync_jobs = 2,
@@ -388,7 +391,7 @@ base_cm_config(Peers) ->
 	}.
 
 mine() ->
-	gen_server:cast(ar_node_worker, mine).
+	ar_node_worker:mine_one_block().
 
 %% @doc Start mining on the given node. The node will be mining until it finds a block.
 mine(Node) ->
@@ -490,10 +493,15 @@ write_genesis_files(DataDir, B0) ->
 	),
 	_ = ar_kv:create_ets(),
 	{ok, _} = ar_kv:start_link(),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "reward_history_db"), reward_history_db),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_time_history_db"),
-			block_time_history_db),
-	ok = ar_kv:open(filename:join(?ROCKS_DB_DIR, "block_index_db"), block_index_db),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "reward_history_db"]),
+		name => reward_history_db}),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_time_history_db"]),
+		name => block_time_history_db}),
+	ok = ar_kv:open(#{
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_index_db"]),
+		name => block_index_db}),
 	H = B0#block.indep_hash,
 	WeaveSize = B0#block.weave_size,
 	TXRoot = B0#block.tx_root,
@@ -660,7 +668,6 @@ start(B0, RewardAddr, Config, StorageModules) ->
 	clean_up_and_stop(),
 	prometheus:start(),
 	arweave_config:start(),
-	ok = arweave_limiter:start(),
 	write_genesis_files(Config#config.data_dir, B0),
 	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = true,
@@ -668,7 +675,6 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		peers = [],
 		cm_exit_peer = not_set,
 		cm_peers = [],
-		local_peers = [],
 		mining_addr = RewardAddr,
 		storage_modules = StorageModules,
 		disk_space_check_frequency = 1000,
@@ -682,6 +688,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		allow_rebase = false,
 		debug = true
 	}),
+	ok = arweave_limiter:start(),
 	ar:start_dependencies(),
 	wait_until_joined(),
 	wait_until_syncs_genesis_data().
@@ -994,6 +1001,14 @@ disconnect_peers(Node, Peer) ->
 disconnect_from(Node) ->
 	ar_http:block_peer_connections(),
 	remote_call(Node, ar_http, block_peer_connections, []).
+
+with_gossip_paused(Node, Fun) when is_function(Fun, 0) ->
+	ok = remote_call(Node, ar_bridge, stop_gossip, []),
+	try
+		Fun()
+	after
+		ok = remote_call(Node, ar_bridge, start_gossip, [])
+	end.
 
 wait_until_syncs_genesis_data(Node) ->
 	ok = remote_call(Node, ar_test_node, wait_until_syncs_genesis_data, [], 100_000).
@@ -1425,12 +1440,22 @@ post_block(B, ExpectedResults) ->
 	post_block(B, ExpectedResults, peer_ip(main)).
 
 post_block(B, ExpectedResults, Peer) ->
-	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, send_new_block(Peer, B)),
+	Result = send_new_block_with_retry(Peer, B, 2),
+	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, Result),
 	await_post_block(B, ExpectedResults, Peer).
 
 send_new_block(Peer, B) ->
 	ar_http_iface_client:send_block_binary(Peer, B#block.indep_hash,
 			ar_serialize:block_to_binary(B)).
+
+send_new_block_with_retry(Peer, B, RetriesLeft) ->
+	case send_new_block(Peer, B) of
+		{error, {stream_error, closed}} when RetriesLeft > 0 ->
+			timer:sleep(50),
+			send_new_block_with_retry(Peer, B, RetriesLeft - 1);
+		Result ->
+			Result
+	end.
 
 await_post_block(B, ExpectedResults) ->
 	await_post_block(B, ExpectedResults, peer_ip(main)).

@@ -25,7 +25,7 @@ apply_tx(Accounts, Denomination, TX) ->
 		not_found ->
 			Accounts;
 		_ ->
-			apply_tx2(Accounts, Denomination, TX)
+			apply_tx2(Accounts, Denomination, Addr, TX)
 	end.
 
 %% @doc Update the given accounts by applying the given transactions.
@@ -99,6 +99,11 @@ block_passes_diff_check(SolutionHash, Block) ->
 	DiffPair = ar_difficulty:diff_pair(Block),
 	passes_diff_check(SolutionHash, IsPoA1, DiffPair, PackingDifficulty).
 
+-ifdef(LOCALNET).
+passes_diff_check(_SolutionHash, _IsPoA1, _DiffPair, _PackingDifficulty) ->
+	true.
+
+-else.
 passes_diff_check(SolutionHash, IsPoA1, not_set, _PackingDifficulty) ->
 	?LOG_ERROR([{event, diff_check_not_set}, {solution_hash, SolutionHash}, {is_poa1, IsPoA1}]),
 	false;
@@ -111,6 +116,7 @@ passes_diff_check(SolutionHash, IsPoA1, {PoA1Diff, Diff}, PackingDifficulty) ->
 				Diff
 		end,
 	binary:decode_unsigned(SolutionHash) > scaled_diff(Diff2, PackingDifficulty).
+-endif.
 
 scaled_diff(RawDiff, PackingDifficulty) ->
 	case PackingDifficulty of
@@ -147,18 +153,17 @@ is_account_banned(Addr, Accounts) ->
 %%% Private functions.
 %%%===================================================================
 
-apply_tx2(Accounts, Denomination, TX) ->
-	update_recipient_balance(update_sender_balance(Accounts, Denomination, TX), Denomination,
-			TX).
+apply_tx2(Accounts, Denomination, Addr, TX) ->
+	update_recipient_balance(
+			update_sender_balance(Accounts, Denomination, Addr, TX), Denomination, TX).
 
-update_sender_balance(Accounts, Denomination,
+update_sender_balance(Accounts, Denomination, Addr,
 		#tx{
 			id = ID,
 			quantity = Qty,
 			reward = Reward,
 			denomination = TXDenomination
-		} = TX) ->
-	Addr = ar_tx:get_owner_address(TX),
+		}) ->
 	case maps:get(Addr, Accounts, not_found) of
 		{Balance, _LastTX} ->
 			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),

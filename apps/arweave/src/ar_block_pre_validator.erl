@@ -539,10 +539,12 @@ pre_validate_nonce_limiter_global_step_number(B, PrevB, SolutionResigned, Peer) 
 			N ->
 				N
 		end,
-	IsAhead = ar_nonce_limiter:is_ahead_on_the_timeline(BlockInfo, PrevBlockInfo),
+	IsAhead = ar_nonce_limiter:is_ahead_on_the_timeline(
+			BlockInfo, PrevBlockInfo),
 	MaxDistance = ?NONCE_LIMITER_MAX_CHECKPOINTS_COUNT,
-	ExpectedStepCount = min(MaxDistance, StepNumber - PrevStepNumber),
 	Steps = BlockInfo#nonce_limiter_info.steps,
+	ExpectedStepCount =
+		get_expected_step_count(StepNumber, PrevStepNumber, MaxDistance, Steps),
 	PrevOutput = BlockInfo#nonce_limiter_info.prev_output,
 	case IsAhead andalso StepNumber - CurrentStepNumber =< MaxDistance
 			andalso length(Steps) == ExpectedStepCount
@@ -559,6 +561,19 @@ pre_validate_nonce_limiter_global_step_number(B, PrevB, SolutionResigned, Peer) 
 			prometheus_gauge:set(block_vdf_advance, StepNumber - CurrentStepNumber),
 			pre_validate_previous_solution_hash(B, PrevB, SolutionResigned, Peer)
 	end.
+
+-ifdef(LOCALNET).
+get_expected_step_count(StepNumber, PrevStepNumber, _MaxDistance, Steps) ->
+	case StepNumber - PrevStepNumber > 0 of
+		true ->
+			StepNumber - PrevStepNumber;
+		false ->
+			length(Steps)
+	end.
+-else.
+get_expected_step_count(StepNumber, PrevStepNumber, MaxDistance, _Steps) ->
+	min(MaxDistance, StepNumber - PrevStepNumber).
+-endif.
 
 pre_validate_previous_solution_hash(B, PrevB, SolutionResigned, Peer) ->
 	case B#block.previous_solution_hash == PrevB#block.hash of
@@ -717,9 +732,37 @@ pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
 			end
 	end.
 
+-ifdef(LOCALNET).
+get_precalculated_recall_range(B) ->
+	case B#block.packing_difficulty of
+		0 ->
+			{B#block.recall_byte - B#block.nonce * ?DATA_CHUNK_SIZE,
+				case B#block.recall_byte2 of
+					undefined ->
+						not_set;
+					_ ->
+						B#block.recall_byte2 - B#block.nonce * ?DATA_CHUNK_SIZE
+				end};
+		_ ->
+			ChunkNumber = B#block.nonce div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
+			{B#block.recall_byte - ChunkNumber * ?DATA_CHUNK_SIZE,
+				case B#block.recall_byte2 of
+					undefined ->
+						not_set;
+					_ ->
+						B#block.recall_byte2 - ChunkNumber * ?DATA_CHUNK_SIZE
+				end}
+	end.
+-else.
+get_precalculated_recall_range(_B) ->
+	{not_set, not_set}.
+-endif.
+
 pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
+	{PrecalculatedRecallRange1, PrecalculatedRecallRange2} = get_precalculated_recall_range(B),
 	{RecallRange1Start, RecallRange2Start} = ar_block:get_recall_range(H0,
-			B#block.partition_number, PartitionUpperBound),
+		B#block.partition_number, PartitionUpperBound,
+		PrecalculatedRecallRange1, PrecalculatedRecallRange2),
 	RecallByte1 = ar_block:get_recall_byte(RecallRange1Start, B#block.nonce,
 			B#block.packing_difficulty),
 	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),

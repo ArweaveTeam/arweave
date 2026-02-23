@@ -55,8 +55,16 @@ top_up_test_wallet(Accounts, _Height) ->
 	Accounts.
 -endif.
 
--ifdef(TESTNET).
 locked_rewards_blocks(Height) ->
+	case application:get_env(arweave, locked_rewards_blocks) of
+		{ok, Value} when is_integer(Value), Value > 0 ->
+			Value;
+		_ ->
+			locked_rewards_blocks2(Height)
+	end.
+
+-ifdef(TESTNET).
+locked_rewards_blocks2(Height) ->
 	case Height >= height_testnet_fork() of
 		true ->
 			?TESTNET_LOCKED_REWARDS_BLOCKS;
@@ -64,7 +72,7 @@ locked_rewards_blocks(Height) ->
 			?LOCKED_REWARDS_BLOCKS
 	end.
 -else.
-locked_rewards_blocks(_Height) ->
+locked_rewards_blocks2(_Height) ->
 	?LOCKED_REWARDS_BLOCKS.
 -endif.
 

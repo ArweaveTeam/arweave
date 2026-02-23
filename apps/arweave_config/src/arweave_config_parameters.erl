@@ -72,6 +72,21 @@ init() ->
 			handle_get => fun legacy_get/2,
 			handle_set => fun legacy_set/4
 		},
+		#{
+			parameter_key => [start,from,state],
+			default => not_set,
+			runtime => false,
+			type => path,
+			deprecated => false,
+			legacy => start_from_state,
+			required => false,
+			short_description => "",
+			long_description => "",
+			environment => <<"AR_START_FROM_STATE">>,
+			long_argument => <<"--start-from-state">>,
+			handle_get => fun legacy_get/2,
+			handle_set => fun legacy_set/4
+		},
 	 	#{
 			enabled => true,
 			parameter_key => [debug],
