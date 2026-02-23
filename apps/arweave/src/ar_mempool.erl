@@ -13,7 +13,9 @@ reset() ->
 		{tx_priority_set, gb_sets:new()},
 		{tx_propagation_queue, gb_sets:new()},
 		{last_tx_map, maps:new()},
-		{origin_tx_map, maps:new()}
+		{origin_tx_map, maps:new()},
+		{origin_spent_total_map, maps:new()},
+		{origin_spent_total_denomination, 0}
 	]).
 
 load_from_disk() ->
@@ -21,43 +23,57 @@ load_from_disk() ->
 		{ok, {SerializedTXs, _MempoolSize}} ->
 			TXs = maps:map(fun(_, {TX, St}) -> {deserialize_tx(TX), St} end, SerializedTXs),
 
-			{MempoolSize2, PrioritySet2, PropagationQueue2, LastTXMap2, OriginTXMap2} = 
-				maps:fold(
-					fun(TXID, {TX, Status}, {MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap}) ->
-						Metadata = {_, _, Timestamp} = init_tx_metadata(TX, Status),
-						ets:insert(node_state, {{tx, TXID}, Metadata}),
-						ets:insert(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID}),
-						Q = case Status of
-							ready_for_mining ->
-								PropagationQueue;
-							_ ->
-								add_to_propagation_queue(PropagationQueue, TX, Timestamp)
-						end,
-						{
-							increase_mempool_size(MempoolSize, TX),
-							add_to_priority_set(PrioritySet, TX, Status, Timestamp),
-							Q,
-							add_to_last_tx_map(LastTXMap, TX),
-							add_to_origin_tx_map(OriginTXMap, TX)
-						}
+		MaxDenomination = maps:fold(
+			fun(_TXID, {TX, _Status}, Acc) ->
+				max(Acc, TX#tx.denomination)
+			end,
+			0,
+			TXs
+		),
+
+		{MempoolSize2, PrioritySet2, PropagationQueue2, LastTXMap2, OriginTXMap2,
+				OriginSpentTotalMap2} =
+			maps:fold(
+				fun(TXID, {TX, Status}, {MempoolSize, PrioritySet, PropagationQueue,
+						LastTXMap, OriginTXMap, OriginSpentTotalMap}) ->
+					Metadata = {_, _, Timestamp} = init_tx_metadata(TX, Status),
+					ets:insert(node_state, {{tx, TXID}, Metadata}),
+					ets:insert(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID}),
+					Q = case Status of
+						ready_for_mining ->
+							PropagationQueue;
+						_ ->
+							add_to_propagation_queue(PropagationQueue, TX, Timestamp)
 					end,
 					{
-						{0, 0},
-						gb_sets:new(),
-						gb_sets:new(),
-						maps:new(),
-						maps:new()
-					},
-					TXs
-				),
+						increase_mempool_size(MempoolSize, TX),
+						add_to_priority_set(PrioritySet, TX, Status, Timestamp),
+						Q,
+						add_to_last_tx_map(LastTXMap, TX),
+						add_to_origin_tx_map(OriginTXMap, TX),
+						add_to_origin_spent_total_map(OriginSpentTotalMap, TX, MaxDenomination)
+					}
+				end,
+				{
+					{0, 0},
+					gb_sets:new(),
+					gb_sets:new(),
+					maps:new(),
+					maps:new(),
+					maps:new()
+				},
+				TXs
+			),
 
-			ets:insert(node_state, [
-				{mempool_size, MempoolSize2},
-				{tx_priority_set, PrioritySet2},
-				{tx_propagation_queue, PropagationQueue2},
-				{last_tx_map, LastTXMap2},
-				{origin_tx_map, OriginTXMap2}
-			]);
+		ets:insert(node_state, [
+			{mempool_size, MempoolSize2},
+			{tx_priority_set, PrioritySet2},
+			{tx_propagation_queue, PropagationQueue2},
+			{last_tx_map, LastTXMap2},
+			{origin_tx_map, OriginTXMap2},
+			{origin_spent_total_map, OriginSpentTotalMap2},
+			{origin_spent_total_denomination, MaxDenomination}
+		]);
 		not_found ->
 			reset();
 		{error, Error} ->
@@ -72,18 +88,21 @@ add_tx(TX, Status) ->
 		end).
 
 add_tx2(#tx{ id = TXID } = TX, Status) ->
+	Denomination = max(get_current_denomination(), get_origin_spent_total_denomination()),
 	CheckRequiresUpdate =
 		case get_tx_metadata(TXID) of
 			not_found ->
 				{_, _, Timestamp} = init_tx_metadata(TX, Status),
 				ets:insert(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID}),
+				OriginSpentTotalMap = get_redenominated_origin_spent_total_map(Denomination),
 				{
 					{TX, Status, Timestamp},
 					increase_mempool_size(get_mempool_size(), TX),
 					add_to_priority_set(get_priority_set(), TX, Status, Timestamp),
 					add_to_propagation_queue(get_propagation_queue(), TX, Timestamp),
 					add_to_last_tx_map(get_last_tx_map(), TX),
-					add_to_origin_tx_map(get_origin_tx_map(), TX)
+					add_to_origin_tx_map(get_origin_tx_map(), TX),
+					add_to_origin_spent_total_map(OriginSpentTotalMap, TX, Denomination)
 				};
 			{KnownTX, PrevStatus, Timestamp} ->
 				{TX2, IsDataUpdatedRequired} = assert_same_tx(TX, KnownTX),
@@ -94,17 +113,20 @@ add_tx2(#tx{ id = TXID } = TX, Status) ->
 						{
 							{TX2, Status, Timestamp},
 							get_mempool_size(),
-							add_to_priority_set(get_priority_set(), TX2, PrevStatus, Status, Timestamp),
+							add_to_priority_set(get_priority_set(), TX2, PrevStatus,
+									Status, Timestamp),
 							get_propagation_queue(),
 							get_last_tx_map(),
-							get_origin_tx_map()
+							get_origin_tx_map(),
+							get_redenominated_origin_spent_total_map(Denomination)
 						}
 				end
 		end,
 	case CheckRequiresUpdate of
 		does_not_require_update ->
 			ok;
-		{Metadata, MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap} ->
+		{Metadata, MempoolSize, PrioritySet, PropagationQueue, LastTXMap,
+				OriginTXMap, OriginSpentTotalMap2} ->
 			%% Insert all data at the same time to ensure atomicity
 			ets:insert(node_state, [
 				{{tx, TXID}, Metadata},
@@ -112,9 +134,10 @@ add_tx2(#tx{ id = TXID } = TX, Status) ->
 				{tx_priority_set, PrioritySet},
 				{tx_propagation_queue, PropagationQueue},
 				{last_tx_map, LastTXMap},
-				{origin_tx_map, OriginTXMap}
+				{origin_tx_map, OriginTXMap},
+				{origin_spent_total_map, OriginSpentTotalMap2},
+				{origin_spent_total_denomination, Denomination}
 			]),
-	
 			case ar_node:is_joined() of
 				true ->
 					%% 1. Drop unconfirmable transactions:
@@ -125,7 +148,7 @@ add_tx2(#tx{ id = TXID } = TX, Status) ->
 					%% To limit revalidation work, all of these checks assume
 					%% every TX in the mempool has previously been validated.
 					drop_txs(find_clashing_txs(TX)),
-					drop_txs(find_overspent_txs(TX)),
+					drop_txs(find_overspent_txs(TX, Denomination)),
 					drop_txs(find_low_priority_txs());
 				false ->
 					noop
@@ -154,19 +177,24 @@ drop_txs(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool) ->
 		end).
 
 drop_txs2(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool) ->
-	{MempoolSize2, PrioritySet2, PropagationQueue2, LastTXMap2, OriginTXMap2} =
+	Denomination = max(get_current_denomination(), get_origin_spent_total_denomination()),
+	OriginSpentTotalMap0 = get_redenominated_origin_spent_total_map(Denomination),
+	{MempoolSize2, PrioritySet2, PropagationQueue2, LastTXMap2, OriginTXMap2,
+			OriginSpentTotalMap2} =
 		lists:foldl(
-			fun(TX, {MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap}) ->
+			fun(TX, {MempoolSize, PrioritySet, PropagationQueue, LastTXMap,
+					OriginTXMap, OriginSpentTotalMap}) ->
 				TXID = TX#tx.id,
 				case get_tx_metadata(TXID) of
 					not_found ->
-						{MempoolSize, PrioritySet, PropagationQueue, LastTXMap, OriginTXMap};
-
+						{MempoolSize, PrioritySet, PropagationQueue, LastTXMap,
+								OriginTXMap, OriginSpentTotalMap};
 					{_, Status, Timestamp} ->
 						ets:delete(node_state, {tx, TXID}),
 						case RemoveTXPrefixes of
 							true ->
-								ets:delete_object(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID});
+								ets:delete_object(tx_prefixes,
+										{ar_node_worker:tx_id_prefix(TXID), TXID});
 							false ->
 								ok
 						end,
@@ -181,7 +209,8 @@ drop_txs2(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool) ->
 							del_from_priority_set(PrioritySet, TX, Status, Timestamp),
 							del_from_propagation_queue(PropagationQueue, TX, Timestamp),
 							del_from_last_tx_map(LastTXMap, TX),
-							del_from_origin_tx_map(OriginTXMap, TX)
+							del_from_origin_tx_map(OriginTXMap, TX),
+							del_from_origin_spent_total_map(OriginSpentTotalMap, TX, Denomination)
 						}
 				end
 			end,
@@ -190,7 +219,8 @@ drop_txs2(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool) ->
 				get_priority_set(),
 				get_propagation_queue(),
 				get_last_tx_map(),
-				get_origin_tx_map()
+				get_origin_tx_map(),
+				OriginSpentTotalMap0
 			},
 			DroppedTXs
 		),
@@ -199,7 +229,9 @@ drop_txs2(DroppedTXs, RemoveTXPrefixes, DropFromDiskPool) ->
 		{tx_priority_set, PrioritySet2},
 		{tx_propagation_queue, PropagationQueue2},
 		{last_tx_map, LastTXMap2},
-		{origin_tx_map, OriginTXMap2}
+		{origin_tx_map, OriginTXMap2},
+		{origin_spent_total_map, OriginSpentTotalMap2},
+		{origin_spent_total_denomination, Denomination}
 	]).
 
 get_map() ->
@@ -395,7 +427,7 @@ del_from_origin_tx_map(OriginTXMap, TX) ->
 
 unconfirmed_tx(TX = #tx{}) ->
 	{ar_tx:utility(TX), TX#tx.id}.
-	
+
 
 increase_mempool_size(
 	_MempoolSize = {MempoolHeaderSize, MempoolDataSize}, TX = #tx{}) ->
@@ -502,7 +534,7 @@ filter_clashing_txs(ClashingTXIDs) ->
 %% confirmed)
 %%
 %% Note: when doing the overspend calculation any unconfirmed deposit
-%% transactions are ignored. This is to prevent a second potentially 
+%% transactions are ignored. This is to prevent a second potentially
 %% malicious scenario like the following:
 %%
 %% Peer A: receives deposit TX and several spend TXs,
@@ -517,55 +549,117 @@ filter_clashing_txs(ClashingTXIDs) ->
 %% By ignoring unconfirmed deposit TXs, and ensuring a globally consistent
 %% sort order (e.g. (format, reward, TXID)) this malicious scenario is
 %% prevented.
-find_overspent_txs(<<>>) ->
+find_overspent_txs(<<>>, _Denomination) ->
 	[];
-find_overspent_txs(TX)
-		when TX#tx.reward > 0 orelse TX#tx.quantity > 0  ->
+find_overspent_txs(TX, Denomination)
+		when TX#tx.reward > 0 orelse TX#tx.quantity > 0 ->
 	Origin = ar_tx:get_owner_address(TX),
-	SpentTXIDs = maps:get(Origin, get_origin_tx_map(), gb_sets:new()),
-	% We only care about the origin wallet since we aren't tracking
-	% unconfirmed deposits
-	Wallet = ar_wallets:get(Origin),
-	B = ar_node:get_current_block(),
-	Denomination = B#block.denomination,
-	find_overspent_txs(Origin, SpentTXIDs, Wallet, Denomination);
-find_overspent_txs(_TX) ->
-	[].
-
-find_overspent_txs(Origin, SpentTXIDs, Wallet, Denomination) ->
-	case gb_sets:is_empty(SpentTXIDs) of
+	SpentTotal = get_origin_spent_total(Origin),
+	Balance = get_confirmed_balance(Origin, Denomination),
+	case SpentTotal =< Balance of
 		true ->
 			[];
 		false ->
-			{{_, TXID}, SpentTXIDs2} = gb_sets:take_largest(SpentTXIDs),
-			TX = get_tx(TXID),
-			Wallet2 = ar_node_utils:apply_tx(Wallet, Denomination, TX),
-			case is_overspent(Origin, Wallet2) of
-				false ->
-					find_overspent_txs(Origin, SpentTXIDs2, Wallet2, Denomination);
-				true ->
-					RemainingTXs = to_txs(SpentTXIDs2),
-					% TX and any remaining in SortedTXs2 overspend the account
-					[TX | RemainingTXs]
-			end
-	end.
+			SpentTXIDs = maps:get(Origin, get_origin_tx_map(), gb_sets:new()),
+			drop_lowest_until_solvent(SpentTXIDs, SpentTotal, Balance, Denomination)
+	end;
+find_overspent_txs(_TX, _Denomination) ->
+	[].
 
-is_overspent(Origin, Wallet) ->
-	% not_found should only occur when spending from an address that is not
-	% present in the blockchain. For example if a user tries to spend from
-	% an address before the initial deposit to that address has confirmed.
-	case maps:get(Origin, Wallet, not_found) of
-		not_found ->
-			true;
-		{Quantity, _} when Quantity < 0 ->
-			true;
-		{Quantity, _, _Denomination} when Quantity < 0 ->
-			true;
-		_ ->
-			false
+%% @doc Walk from lowest priority, dropping TXs until spent total =< balance.
+%% Only iterates over the TXs that need to be dropped (amortized O(1) per add_tx).
+drop_lowest_until_solvent(SpentTXIDs, SpentTotal, Balance, Denomination) ->
+	case SpentTotal =< Balance of
+		true ->
+			[];
+		false ->
+			case gb_sets:is_empty(SpentTXIDs) of
+				true ->
+					[];
+				false ->
+					{{_, TXID}, SpentTXIDs2} = gb_sets:take_smallest(SpentTXIDs),
+					TX = get_tx(TXID),
+					Amount = tx_spent_amount(TX, Denomination),
+					[TX | drop_lowest_until_solvent(
+							SpentTXIDs2, SpentTotal - Amount, Balance, Denomination)]
+			end
 	end.
 
 to_txs(TXIDs) when is_list(TXIDs) ->
 	[get_tx(TXID) || TXID <- TXIDs];
 to_txs(TXIDs) ->
 	to_txs([TXID || {_, TXID} <- gb_sets:to_list(TXIDs)]).
+
+tx_spent_amount(#tx{ reward = Reward, quantity = Quantity }, 0) ->
+	Reward + Quantity;
+tx_spent_amount(#tx{ reward = Reward, quantity = Quantity, denomination = TXDenom }, Denomination) ->
+	ar_pricing:redenominate(Reward + Quantity, TXDenom, Denomination).
+
+get_current_denomination() ->
+	case ar_node:get_current_block() of
+		not_joined ->
+			0;
+		B ->
+			B#block.denomination
+	end.
+
+get_origin_spent_total_map() ->
+	case ets:lookup(node_state, origin_spent_total_map) of
+		[{origin_spent_total_map, Map}] ->
+			Map;
+		_ ->
+			maps:new()
+	end.
+
+get_origin_spent_total_denomination() ->
+	case ets:lookup(node_state, origin_spent_total_denomination) of
+		[{origin_spent_total_denomination, D}] ->
+			D;
+		_ ->
+			0
+	end.
+
+add_to_origin_spent_total_map(SpentTotalMap, TX, Denomination) ->
+	Origin = ar_tx:get_owner_address(TX),
+	Amount = tx_spent_amount(TX, Denomination),
+	OldAmount = maps:get(Origin, SpentTotalMap, 0),
+	maps:put(Origin, OldAmount + Amount, SpentTotalMap).
+
+del_from_origin_spent_total_map(SpentTotalMap, TX, Denomination) ->
+	Origin = ar_tx:get_owner_address(TX),
+	Amount = tx_spent_amount(TX, Denomination),
+	OldAmount = maps:get(Origin, SpentTotalMap, 0),
+	maps:put(Origin, max(0, OldAmount - Amount), SpentTotalMap).
+
+get_origin_spent_total(Origin) ->
+	maps:get(Origin, get_origin_spent_total_map(), 0).
+
+%% @doc Return the origin address => spent total map in the given denomination. If the
+%% denomination has increased, redenominate all stored totals directly.
+%% This is O(number of origins) and only triggers on denomination change.
+get_redenominated_origin_spent_total_map(Denomination) ->
+	case get_origin_spent_total_denomination() of
+		Denomination ->
+			get_origin_spent_total_map();
+		OldDenomination ->
+			redenominate_origin_spent_total(get_origin_spent_total_map(), OldDenomination, Denomination)
+	end.
+
+redenominate_origin_spent_total(SpentTotalMap, OldDenomination, NewDenomination) ->
+	maps:map(
+		fun(_Origin, Total) ->
+			ar_pricing:redenominate(Total, OldDenomination, NewDenomination)
+		end,
+		SpentTotalMap
+	).
+
+get_confirmed_balance(Origin, Denomination) ->
+	Wallet = ar_wallets:get(Origin),
+	case maps:get(Origin, Wallet, not_found) of
+		not_found ->
+			0;
+		{Balance, _LastTX} ->
+			ar_pricing:redenominate(Balance, 1, Denomination);
+		{Balance, _LastTX, AccountDenomination, _MiningPermission} ->
+			ar_pricing:redenominate(Balance, AccountDenomination, Denomination)
+	end.

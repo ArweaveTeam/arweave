@@ -40,11 +40,12 @@ add_tx_test_() ->
 					{timeout, Timeout, {with, GenesisData, [fun test_mixed_deposit_spend_tx_old_address/1]}},
 					{timeout, Timeout, {with, GenesisData, [fun test_mixed_deposit_spend_tx_new_address/1]}},
 					{timeout, Timeout, {with, GenesisData, [fun test_clash_and_overspend_tx/1]}},
-					{timeout, Timeout, {with, GenesisData, [fun test_clash_and_low_priority_tx/1]}}
-				]
-			}
-		end
-	}.
+					{timeout, Timeout, {with, GenesisData, [fun test_clash_and_low_priority_tx/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_load_from_disk_denomination/1]}}
+			]
+		}
+	end
+}.
 
 %% @doc Test that mempool transactions are correctly sorted in priority order
 test_mempool_sorting({{_, {_, Owner}}, _LastTXID, _OtherKey, _B0}) ->
@@ -443,6 +444,35 @@ add_transactions(NumTransactions, Format, Owner, DataSize) ->
 		end,
 		TXs),
 	{ExpectedTXIDs, HighestReward, LowestReward}.
+
+%% @doc Test that load_from_disk computes origin_spent_total_map using the maximum
+%% denomination found among stored TXs, not denomination 0.
+%% TX1 has denomination 1, TX2 has denomination 2. The spent totals must
+%% be computed in denomination 2 (the max). With the bug (denomination 0),
+%% the denomination-1 TX cost is not scaled up by 1000x.
+test_load_from_disk_denomination({{_, {_, Owner}}, _LastTXID, _OtherKey, _B0}) ->
+	BaseID = crypto:strong_rand_bytes(31),
+	TX1 = (tx(2, Owner, 3000, <<>>, <<"a", BaseID/binary>>, <<>>))#tx{ denomination = 1 },
+	TX2 = (tx(2, Owner, 5, <<>>, <<"b", BaseID/binary>>, <<>>))#tx{ denomination = 2 },
+	SerializedTXs = #{
+		TX1#tx.id => {ar_serialize:tx_to_binary(TX1), waiting},
+		TX2#tx.id => {ar_serialize:tx_to_binary(TX2), waiting}
+	},
+	ar_storage:write_term(mempool, {SerializedTXs, {0, 0}}),
+	reset_node_state(),
+	ar_mempool:load_from_disk(),
+	[{origin_spent_total_denomination, LoadedDenomination}] =
+		ets:lookup(node_state, origin_spent_total_denomination),
+	?assertEqual(2, LoadedDenomination,
+		"load_from_disk should use the max TX denomination, not 0"),
+	[{origin_spent_total_map, SpentTotalMap}] =
+		ets:lookup(node_state, origin_spent_total_map),
+	Addr = ar_wallet:to_address(Owner, ?DEFAULT_KEY_TYPE),
+	TX1Cost = ar_pricing:redenominate(3000, 1, 2),
+	TX2Cost = ar_pricing:redenominate(5, 2, 2),
+	ExpectedTotal = TX1Cost + TX2Cost,
+	?assertEqual(ExpectedTotal, maps:get(Addr, SpentTotalMap),
+		"Spent totals should be redenominated to the max TX denomination").
 
 wallet({_, Pub}, Balance, LastTXID) ->
 	{ar_wallet:to_address(Pub), Balance, LastTXID}.
