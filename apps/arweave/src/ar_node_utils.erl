@@ -25,7 +25,7 @@ apply_tx(Accounts, Denomination, TX) ->
 		not_found ->
 			Accounts;
 		_ ->
-			apply_tx2(Accounts, Denomination, TX)
+			apply_tx2(Accounts, Denomination, Addr, TX)
 	end.
 
 %% @doc Update the given accounts by applying the given transactions.
@@ -147,18 +147,17 @@ is_account_banned(Addr, Accounts) ->
 %%% Private functions.
 %%%===================================================================
 
-apply_tx2(Accounts, Denomination, TX) ->
-	update_recipient_balance(update_sender_balance(Accounts, Denomination, TX), Denomination,
-			TX).
+apply_tx2(Accounts, Denomination, Addr, TX) ->
+	update_recipient_balance(
+			update_sender_balance(Accounts, Denomination, Addr, TX), Denomination, TX).
 
-update_sender_balance(Accounts, Denomination,
+update_sender_balance(Accounts, Denomination, Addr,
 		#tx{
 			id = ID,
 			quantity = Qty,
 			reward = Reward,
 			denomination = TXDenomination
-		} = TX) ->
-	Addr = ar_tx:get_owner_address(TX),
+		}) ->
 	case maps:get(Addr, Accounts, not_found) of
 		{Balance, _LastTX} ->
 			Balance2 = ar_pricing:redenominate(Balance, 1, Denomination),
