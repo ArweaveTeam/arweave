@@ -66,6 +66,11 @@ all() ->
 %% @end
 %%--------------------------------------------------------------------
 arweave_config_legacy(_Config) ->
+	ct:pal(test, 1, "simple unsupported handler test"),
+	_ = gen_server:call(arweave_config_legacy, unsupported),
+	_ = gen_server:cast(arweave_config_legacy, unsupported),
+	_ = erlang:send(arweave_config_legacy, unsupported),
+
 	ct:pal(test, 1, "config keys should be the same"),
 	Keys = arweave_config_legacy:keys(),
 	ConfigKeys = record_info(fields, config),
