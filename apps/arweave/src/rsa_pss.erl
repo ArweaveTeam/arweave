@@ -88,6 +88,7 @@ verify({digest, Digest}, DigestType, Signature, PublicKey=#'RSAPublicKey'{modulu
 	PrivateByteSize = (PublicBitSize + 7) div 8,
 	PublicByteSize = int_to_byte_size(N),
 	SignatureSize = byte_size(Signature),
+	case PublicByteSize < DigestLen + 2 of true -> false; false ->
 	case PublicByteSize =:= SignatureSize of
 		true ->
 			SignatureNumber = binary:decode_unsigned(Signature, big),
@@ -124,7 +125,7 @@ verify({digest, Digest}, DigestType, Signature, PublicKey=#'RSAPublicKey'{modulu
 			end;
 		false ->
 			false
-	end.
+	end end.
 
 verify_legacy(Message, DigestType, Signature, PublicKey) when is_binary(Message) ->
 	verify_legacy({digest, crypto:hash(DigestType, Message)}, DigestType, Signature, PublicKey);
@@ -134,6 +135,7 @@ verify_legacy({digest, Digest}, DigestType, Signature, PublicKey=#'RSAPublicKey'
 	PrivateByteSize = PublicBitSize div 8,
 	PublicByteSize = int_to_byte_size(N),
 	SignatureSize = byte_size(Signature),
+	case PublicByteSize < DigestLen + 2 of true -> false; false ->
 	case PublicByteSize =:= SignatureSize of
 		true ->
 			SignatureNumber = binary:decode_unsigned(Signature, big),
@@ -170,7 +172,7 @@ verify_legacy({digest, Digest}, DigestType, Signature, PublicKey=#'RSAPublicKey'
 			end;
 		false ->
 			false
-	end.
+	end end.
 
 %%%-------------------------------------------------------------------
 %%% Internal functions
