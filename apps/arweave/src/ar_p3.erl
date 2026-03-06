@@ -169,14 +169,25 @@ validate_header(Req, ServiceConfig) when is_record(ServiceConfig, p3_service) ->
 			{error, invalid_header}
 	end.
 
+%%--------------------------------------------------------------------
+%% @doc
+%% @end
+%%--------------------------------------------------------------------
 validate_mod_seq(Req, ServiceConfig) ->
-	validate_mod_seq(cowboy_req:header(?P3_MOD_SEQ_HEADER, Req), Req, ServiceConfig).
-validate_mod_seq(<<>>, _Req, _ServiceConfig) ->
-	{error, invalid_mod_seq};
-validate_mod_seq(undefined, _Req, _ServiceConfig) ->
-	{ok, undefined};
-validate_mod_seq(ModSeq, Req, ServiceConfig) when is_binary(ModSeq) ->
-	validate_mod_seq(binary_to_integer(ModSeq), Req, ServiceConfig);
+	SeqHeader = cowboy_req:header(?P3_MOD_SEQ_HEADER, Req),
+	case SeqHeader of
+		undefined ->
+			{ok, undefined};
+		_ when is_binary(SeqHeader) ->
+			validate_mod_seq(SeqHeader, Req, ServiceConfig);
+		_ ->
+			{error, invalid_mod_seq}
+	end.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @hidden
+%%--------------------------------------------------------------------
 validate_mod_seq(ModSeq, _Req, ServiceConfig) when is_integer(ModSeq) ->
 	case ModSeq == ServiceConfig#p3_service.mod_seq of
 		true ->
@@ -184,8 +195,14 @@ validate_mod_seq(ModSeq, _Req, ServiceConfig) when is_integer(ModSeq) ->
 		false ->
 			{error, stale_mod_seq}
 	end;
-validate_mod_seq(_ModSeq, _Req, _ServiceConfig) ->
-	{error, invalid_mod_seq}.
+validate_mod_seq(ModSeq, Req, ServiceConfig) ->
+	try
+		Integer = binary_to_integer(ModSeq),
+		validate_mod_seq(Integer, Req, ServiceConfig)
+	catch
+		_:_ ->
+			{error, invalid_mod_seq}
+	end.
 
 validate_endpoint(Req, ServiceConfig) ->
 	Endpoint = cowboy_req:header(?P3_ENDPOINT_HEADER, Req),
