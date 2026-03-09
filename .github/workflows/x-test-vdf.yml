@@ -81,6 +81,7 @@ jobs:
             ar_base64_compatibility_tests,
             ar_config_tests,
             ar_difficulty_tests,
+            ar_forced_validation_tests,
             ar_header_sync_tests,
             ar_http_iface_tests,
             ar_http_util_tests,
