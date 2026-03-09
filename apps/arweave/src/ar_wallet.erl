@@ -204,18 +204,44 @@ sign({{KeyAlg, KeyCrv}, Priv, _}, Data)
 		[Priv, KeyCrv]
 	).
 
+%%--------------------------------------------------------------------
 %% @doc Verify that a signature is correct.
+%% @end
+%%--------------------------------------------------------------------
+-spec verify(PublicKeyInfo, Data, Signature) -> Return when
+	PublicKeyInfo :: {{KeyAlgorithm, PublicExponent}, PublicKey},
+	KeyAlgorithm :: atom(),
+	PublicExponent :: pos_integer() | secp256k1 | ed25519,
+	PublicKey :: binary(),
+	Signature :: binary(),
+	Data :: binary(),
+	Return :: boolean().
+
 verify({{KeyAlg, PublicExpnt}, Pub}, Data, Sig)
 		when KeyAlg =:= ?RSA_SIGN_ALG andalso PublicExpnt =:= 65537 ->
-	rsa_pss:verify(
-		Data,
-		sha256,
-		Sig,
-		#'RSAPublicKey'{
-			publicExponent = PublicExpnt,
-			modulus = binary:decode_unsigned(Pub)
-		}
-	);
+	try
+		rsa_pss:verify(
+			Data,
+			sha256,
+			Sig,
+			#'RSAPublicKey'{
+				publicExponent = PublicExpnt,
+				modulus = binary:decode_unsigned(Pub)
+			}
+		)
+	catch
+		C:R:S ->
+			?LOG_ERROR([
+				{event, rsa_pss_verify_failed},
+				{class, C},
+				{reason, R},
+				{stacktrace, S},
+				{pub_size, byte_size(Pub)},
+				{signature_size, byte_size(Sig)}
+			]),
+		false
+	end;
+
 % NOTE. We will not write pubkey for ECDSA signature. So don't use verify function for ECDSA, use ecrecover
 % So this function will return always false if called with no Pub
 verify({{KeyAlg, KeyCrv}, Pub}, Data, Sig)
@@ -232,22 +258,48 @@ verify({{KeyAlg, KeyCrv}, Pub}, Data, Sig)
 		[Pub, KeyCrv]
 	).
 
-%% @doc Verify that a signature is correct. The function was used to verify
-%% transactions until the fork 2.4. It rejects a valid transaction when the
-%% key modulus bit size is less than 4096. The new method (verify/3) successfully
-%% verifies all the historical transactions so this function is not used anywhere
-%% after the fork 2.4.
+%%--------------------------------------------------------------------
+%% @doc Verify that  a signature is correct. The function  was used to
+%% verify  transactions  until  the  fork  2.4.  It  rejects  a  valid
+%% transaction when  the key modulus bit  size is less than  4096. The
+%% new  method (verify/3)  successfully  verifies  all the  historical
+%% transactions so this  function is not used anywhere  after the fork
+%% 2.4.
+%% @end
+%%--------------------------------------------------------------------
+-spec verify_pre_fork_2_4(PublicKeyInfo, Data, Signature) -> Return when
+	PublicKeyInfo :: {{KeyAlgorithm, PublicExponent}, PublicKey},
+	KeyAlgorithm :: atom(),
+	PublicExponent :: pos_integer(),
+	PublicKey :: binary(),
+	Signature :: binary(),
+	Data :: binary(),
+	Return :: boolean().
+
 verify_pre_fork_2_4({{KeyAlg, PublicExpnt}, Pub}, Data, Sig)
 		when KeyAlg =:= ?RSA_SIGN_ALG andalso PublicExpnt =:= 65537 ->
-	rsa_pss:verify_legacy(
-		Data,
-		sha256,
-		Sig,
-		#'RSAPublicKey'{
-			publicExponent = PublicExpnt,
-			modulus = binary:decode_unsigned(Pub)
-		}
-	).
+	try
+		rsa_pss:verify_legacy(
+			Data,
+			sha256,
+			Sig,
+			#'RSAPublicKey'{
+				publicExponent = PublicExpnt,
+				modulus = binary:decode_unsigned(Pub)
+			}
+		)
+	catch
+		C:R:S ->
+			?LOG_ERROR([
+				{event, rsa_pss_verify_legacy_failed},
+				{class, C},
+				{reason, R},
+				{stacktrace, S},
+				{pub_size, byte_size(Pub)},
+				{signature_size, byte_size(Sig)}
+			]),
+		false
+	end.
 
 %% @doc Generate an address from a public key.
 to_address({{SigType, _Priv, Pub}, {SigType, Pub}}) ->
