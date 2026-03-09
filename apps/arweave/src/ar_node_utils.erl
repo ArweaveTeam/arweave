@@ -55,14 +55,41 @@ update_accounts(B, PrevB, Accounts) ->
 	true = B#block.height >= ar_fork:height_2_6(),
 	update_accounts2(B, PrevB, Accounts2, Args).
 
-%% @doc Perform the last stage of block validation. The majority of the checks
-%% are made in ar_block_pre_validator.erl, ar_nonce_limiter.erl, and
-%% ar_node_utils:update_accounts/3.
+%%--------------------------------------------------------------------
+%% @doc Perform the last stage of block validation. The majority of
+%% the checks are made in `ar_block_pre_validator.erl',
+%% `ar_nonce_limiter.erl', and `ar_node_utils:update_accounts/3'.
+%% @end
+%%--------------------------------------------------------------------
+-spec validate(NewB, B, Wallets, BlocksAnchors, RecentTXMap, PartitionUpperBound) -> Return when
+	NewB :: #block{},
+	B :: #block{},
+	Wallets :: term(),
+	BlocksAnchors :: term(),
+	RecentTXMap :: term(),
+	PartitionUpperBound :: term(),
+	Return :: valid | {invalid, Reason},
+	Reason :: term().
+
 validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
 	?LOG_INFO([{event, validating_block}, {hash, ar_util:encode(NewB#block.indep_hash)}]),
 	case timer:tc(
 		fun() ->
-			do_validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound)
+			try
+				do_validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound)
+			catch
+				C:R:S ->
+					?LOG_ERROR([
+						{event, block_validation_exception},
+						{class, C},
+						{reason, R},
+						{stacktrace, S},
+						{hash, ar_util:encode(NewB#block.indep_hash)},
+						{height, NewB#block.height}
+					]),
+					{invalid, validation_exception}
+			end
+
 		end
 	) of
 		{TimeTaken, valid} ->
@@ -74,7 +101,18 @@ validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
 			?LOG_INFO([{event, block_validation_failed}, {reason, Reason},
 					{hash, ar_util:encode(NewB#block.indep_hash)},
 					{time_taken_us, TimeTaken}]),
-			{invalid, Reason}
+			{invalid, Reason};
+		{TimeTaken, {error, Reason}} ->
+			?LOG_INFO([{event, block_validation_failed}, {reason, Reason},
+					{hash, ar_util:encode(NewB#block.indep_hash)},
+					{time_taken_us, TimeTaken}]),
+			{invalid, Reason};
+		{TimeTaken, Else} ->
+			?LOG_ERROR([{event, block_validation_failed}, {reason, Else},
+					{hash, ar_util:encode(NewB#block.indep_hash)},
+					{time_taken_us, TimeTaken}]),
+			{invalid, Else}
+
 	end.
 
 h1_passes_diff_check(H1, DiffPair, PackingDifficulty) ->
@@ -523,7 +561,7 @@ validate_block(next_vdf_difficulty, {NewB, OldB, Wallets, BlockAnchors, RecentTX
 					RecentTXMap});
 		true ->
 			ExpectedNextVDFDifficulty = ar_block:compute_next_vdf_difficulty(OldB),
-			#nonce_limiter_info{ next_vdf_difficulty = NextVDFDifficulty } = 
+			#nonce_limiter_info{ next_vdf_difficulty = NextVDFDifficulty } =
 				NewB#block.nonce_limiter_info,
 			case ExpectedNextVDFDifficulty == NextVDFDifficulty of
 				false ->
@@ -720,6 +758,23 @@ test_block_validation() ->
 	?assertEqual({invalid, invalid_previous_block},
 			validate(B#block{ previous_block = B#block.indep_hash }, PrevB, Wallets,
 					BlockAnchors, RecentTXMap, PartitionUpperBound)),
+
+	% AVDE-2026-4: invalid block
+	?assertMatch(
+		{invalid, _},
+		validate(
+			B,
+			PrevB#block{
+				strict_data_split_threshold =
+					PrevB#block.strict_data_split_threshold + 1
+			},
+			Wallets,
+			BlockAnchors,
+			RecentTXMap,
+			PartitionUpperBound
+		)
+	),
+
 	InvLastRetargetB = B#block{ last_retarget = B#block.timestamp },
 	InvDataRootB = B#block{ tx_root = crypto:strong_rand_bytes(32) },
 	InvBlockIndexRootB = B#block{ hash_list_merkle = crypto:strong_rand_bytes(32) },
@@ -762,6 +817,7 @@ test_block_validation() ->
 		{invalid, invalid_cumulative_difficulty},
 		validate_block(cumulative_diff, {
 				InvCDiffB#block{ indep_hash = ar_block:indep_hash(InvCDiffB) }, PrevB})),
+
 	BI2 = ar_node:get_block_index(),
 	PartitionUpperBound2 = ar_node:get_partition_upper_bound(BI2),
 	BlockAnchors2 = ar_node:get_block_anchors(),
