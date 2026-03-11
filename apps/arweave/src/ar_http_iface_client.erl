@@ -1145,7 +1145,13 @@ get_height(Peer) ->
 			headers => p2p_headers()
 		}),
 	case Response of
-		{ok, {{<<"200">>, _}, _, Body, _, _}} -> binary_to_integer(Body);
+		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
+			case catch binary_to_integer(Body) of
+				{'EXIT', _} ->
+					{error, invalid_height};
+				Height ->
+					Height
+			end;
 		{ok, {{<<"500">>, _}, _, _, _, _}} -> not_joined
 	end.
 
@@ -1304,11 +1310,15 @@ get_time(Peer, Timeout) ->
 	case ar_http:req(#{method => get, peer => Peer, path => "/time",
 			headers => p2p_headers(), timeout => Timeout + 100}) of
 		{ok, {{<<"200">>, _}, _, Body, Start, End}} ->
-			Time = binary_to_integer(Body),
-			RequestTime = ceil((End - Start) / 1000000),
-			%% The timestamp returned by the HTTP daemon is floored second precision. Thus the
-			%% upper bound is increased by 1.
-			{ok, {Time - RequestTime, Time + RequestTime + 1}};
+			case catch binary_to_integer(Body) of
+				{'EXIT', _} ->
+					{error, invalid_time};
+				Time ->
+					RequestTime = ceil((End - Start) / 1000000),
+					%% The timestamp returned by the HTTP daemon is floored second precision.
+					%% Thus the upper bound is increased by 1.
+					{ok, {Time - RequestTime, Time + RequestTime + 1}}
+			end;
 		Other ->
 			{error, Other}
 	end.
