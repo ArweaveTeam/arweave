@@ -119,7 +119,7 @@ get_sync_records(DB) ->
 	Record = rocksdb:get(DB, <<"sync_records">>, []),
 	case Record of
 		{ok, Bin} ->
-			binary_to_term(Bin);
+			binary_to_term(Bin, [safe]);
 		_ ->
 			{#{}, #{}}
 	end.

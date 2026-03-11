@@ -906,7 +906,7 @@ read_chunks_sizes(DataDir) ->
 	SizesFile = filename:join(DataDir, "chunks_sizes"),
 	case file:read_file(SizesFile) of
 		{ok, Content} ->
-			erlang:binary_to_term(Content);
+			erlang:binary_to_term(Content, [safe]);
 		{error, enoent} ->
 			#{};
 		{error, Reason} ->

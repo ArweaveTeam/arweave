@@ -52,7 +52,7 @@ read_block_index_from_map(Map, Height, End, PrevH, BI) ->
 			ar:console("The stored block index is invalid. Height ~B not found.~n", [Height]),
 			not_found;
 		_ ->
-			case binary_to_term(V) of
+			case binary_to_term(V, [safe]) of
 				{H, WeaveSize, TXRoot, PrevH} ->
 					read_block_index_from_map(Map, Height + 1, End, H, [{H, WeaveSize, TXRoot} | BI]);
 				{_, _, _, PrevH2} ->
@@ -78,7 +78,7 @@ read_reward_history([{H, _WeaveSize, _TXRoot} | BI]) ->
 							{block, ar_util:encode(H)}]),
 					not_found;
 				{ok, Bin} ->
-					Element = binary_to_term(Bin),
+					Element = binary_to_term(Bin, [safe]),
 					[Element | History]
 			end
 	end.
@@ -99,7 +99,7 @@ read_block_time_history(Height, [{H, _WeaveSize, _TXRoot} | BI]) ->
 						not_found ->
 							not_found;
 						{ok, Bin} ->
-							Element = binary_to_term(Bin),
+							Element = binary_to_term(Bin, [safe]),
 							[Element | History]
 					end
 			end
@@ -121,11 +121,11 @@ store_block_index(BI) ->
 			RootHeight = max(0, min(StoredHeight, NewHeight) - ?STORE_BLOCKS_BEHIND_CURRENT),
 			{ok, V} = ar_kv:get(block_index_db, << RootHeight:256 >>),
 			{H, WeaveSize, TXRoot} = lists:nth(NewHeight - RootHeight + 1, BI),
-			case binary_to_term(V) of
-				{H, WeaveSize, TXRoot, _PrevH} ->
-					BI2 = lists:reverse(lists:sublist(BI, NewHeight - RootHeight)),
-					update_block_index(NewHeight, StoredHeight - RootHeight, BI2);
-				{H2, _, _, _} ->
+		case binary_to_term(V, [safe]) of
+			{H, WeaveSize, TXRoot, _PrevH} ->
+				BI2 = lists:reverse(lists:sublist(BI, NewHeight - RootHeight)),
+				update_block_index(NewHeight, StoredHeight - RootHeight, BI2);
+			{H2, _, _, _} ->
 					?LOG_ERROR([{event, failed_to_store_block_index},
 							{reason, no_intersection},
 							{height, RootHeight},
@@ -188,7 +188,7 @@ update_block_index2(IndexHeight, OrphanCount, BI) ->
 									{prev_height, IndexHeight - 1}]),
 							{error, not_found};
 						{ok, Bin} ->
-							{PrevH, _, _, _} = binary_to_term(Bin),
+							{PrevH, _, _, _} = binary_to_term(Bin, [safe]),
 							update_block_index3(IndexHeight, PrevH, BI)
 					end
 			end;
@@ -312,7 +312,7 @@ put_tx_confirmation_data(B) ->
 get_tx_confirmation_data(TXID) ->
 	case ar_kv:get(tx_confirmation_db, TXID) of
 		{ok, Binary} ->
-			{ok, binary_to_term(Binary)};
+			{ok, binary_to_term(Binary, [safe])};
 		not_found ->
 			not_found
 	end.
@@ -379,7 +379,7 @@ read_account(Addr, Key) ->
 read_account(Addr, Key, Prefix) ->
 	case get_account_tree_value(Key, Prefix) of
 		{ok, << Key:48/binary, _/binary >>, V} ->
-			case binary_to_term(V) of
+			case binary_to_term(V, [safe]) of
 				{K, Val} when K == Addr ->
 					Val;
 				{_, _} ->
@@ -554,7 +554,7 @@ parse_tx_kv_binary(Bin) ->
 		{ok, TX} ->
 			TX;
 		_ ->
-			migrate_tx_record(binary_to_term(Bin))
+			migrate_tx_record(binary_to_term(Bin, [safe]))
 	end.
 
 %% Convert the stored tx record to its latest state in the code
@@ -578,7 +578,7 @@ parse_block_kv_binary(Bin) ->
 		{ok, B} ->
 			B;
 		_ ->
-			migrate_block_record(binary_to_term(Bin))
+			migrate_block_record(binary_to_term(Bin, [safe]))
 	end.
 
 %% Convert the stored block record to its latest state in the code
@@ -892,7 +892,7 @@ read_wallet_list(WalletListHash) when is_binary(WalletListHash) ->
 			WalletListHash, WalletListHash).
 
 read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K) ->
-	case binary_to_term(Bin) of
+	case binary_to_term(Bin, [safe]) of
 		{Key, Value} ->
 			Tree2 = ar_patricia_tree:insert(Key, Value, Tree),
 			case Keys of
@@ -1092,7 +1092,7 @@ block_index_tip() ->
 		none ->
 			not_found;
 		{ok, << Height:256 >>, V} ->
-			{Height, binary_to_term(V)}
+			{Height, binary_to_term(V, [safe])}
 	end.
 
 write_block(B) ->
@@ -1261,7 +1261,7 @@ read_term(Dir, Name) when is_atom(Name) ->
 read_term(Dir, Name) ->
 	case file:read_file(filename:join(Dir, Name)) of
 		{ok, Binary} ->
-			{ok, binary_to_term(Binary)};
+			{ok, binary_to_term(Binary, [safe])};
 		{error, enoent} ->
 			not_found;
 		{error, Reason} = Error ->

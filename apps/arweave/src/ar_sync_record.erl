@@ -555,9 +555,9 @@ read_sync_records(StateDB, StoreID) ->
 		case ar_kv:get(StateDB, ?SYNC_RECORDS_KEY) of
 			not_found ->
 				{#{}, #{}};
-			{ok, V} ->
-				binary_to_term(V)
-		end,
+		{ok, V} ->
+			binary_to_term(V, [safe])
+	end,
 	{SyncRecordByID2, SyncRecordByIDType2, WAL} =
 		replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, StateDB, StoreID),
 	{SyncRecordByID2, SyncRecordByIDType2, WAL}.
@@ -586,7 +586,7 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, Stor
 			%% The VM crashed after recording the number.
 			{SyncRecordByID, SyncRecordByIDType, WAL};
 		{ok, V} ->
-			{Op, Params} = binary_to_term(V),
+			{Op, Params} = binary_to_term(V, [safe]),
 			case Op of
 				add ->
 					{End, Start, ID} = Params,

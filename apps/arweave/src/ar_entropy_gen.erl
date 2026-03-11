@@ -517,9 +517,9 @@ read_cursor(StoreID, ModuleStart) ->
 	Default = ModuleStart + 1,
 	case file:read_file(Filepath) of
 		{ok, Bin} ->
-			case catch binary_to_term(Bin) of
-				Cursor when is_integer(Cursor) ->
-					Cursor;
+		case catch binary_to_term(Bin, [safe]) of
+			Cursor when is_integer(Cursor) ->
+				Cursor;
 				_ ->
 					Default
 			end;
