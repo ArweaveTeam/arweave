@@ -316,7 +316,7 @@ put_chunk_metadata(AbsoluteEndOffset, StoreID,
 get_chunk_metadata(AbsoluteEndOffset, StoreID) ->
 	case ar_kv:get({chunks_index, StoreID}, << AbsoluteEndOffset:?OFFSET_KEY_BITSIZE >>) of
 		{ok, Value} ->
-			{ok, binary_to_term(Value)};
+			{ok, binary_to_term(Value, [safe])};
 		not_found ->
 			not_found
 	end.
@@ -336,7 +336,7 @@ get_chunk_metadata_range(Start, End, StoreID) ->
 			{ok, maps:fold(
 					fun(K, V, Acc) ->
 						<< Offset:?OFFSET_KEY_BITSIZE >> = K,
-						maps:put(Offset, binary_to_term(V), Acc)
+						maps:put(Offset, binary_to_term(V, [safe]), Acc)
 					end,
 					#{},
 					Map)};
@@ -585,7 +585,7 @@ request_tx_data_removal(TXID, Ref, ReplyTo) ->
 	TXIndex = {tx_index, ?DEFAULT_MODULE},
 	case ar_kv:get(TXIndex, TXID) of
 		{ok, Value} ->
-			{End, Size} = binary_to_term(Value),
+			{End, Size} = binary_to_term(Value, [safe]),
 			remove_range(End - Size, End, Ref, ReplyTo);
 		not_found ->
 			?LOG_WARNING([{event, tx_offset_not_found}, {tx, ar_util:encode(TXID)}]),
@@ -654,7 +654,7 @@ get_chunk_by_byte(Byte, StoreID) ->
 			<< AbsoluteEndOffset:?OFFSET_KEY_BITSIZE >> = Key,
 			{
 				ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize
-			} = binary_to_term(Metadata),
+			} = binary_to_term(Metadata, [safe]),
 			FullMetaData = {AbsoluteEndOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
 				RelativeOffset, ChunkSize},
 			{ok, Key, FullMetaData}
@@ -675,7 +675,7 @@ read_chunk(Offset, ChunkDataKey, StoreID) ->
 		not_found ->
 			not_found;
 		{ok, Value} ->
-			case binary_to_term(Value) of
+			case binary_to_term(Value, [safe]) of
 				{Chunk, DataPath} ->
 					{ok, {Chunk, DataPath}};
 				DataPath ->
@@ -706,7 +706,7 @@ read_data_path(_Offset, ChunkDataKey, StoreID) ->
 		not_found ->
 			not_found;
 		{ok, Value} ->
-			case binary_to_term(Value) of
+			case binary_to_term(Value, [safe]) of
 				{_Chunk, DataPath} ->
 					{ok, DataPath};
 				DataPath ->
@@ -2225,7 +2225,7 @@ validate_fetched_chunk(Args) ->
 get_tx_offset(TXIndex, TXID) ->
 	case ar_kv:get(TXIndex, TXID) of
 		{ok, Value} ->
-			{ok, binary_to_term(Value)};
+			{ok, binary_to_term(Value, [safe])};
 		not_found ->
 			{error, not_found};
 		{error, Reason} ->
@@ -2459,7 +2459,7 @@ move_data_root_index(Cursor, N, State) ->
 					ets:insert(ar_data_sync_state, {move_data_root_index_migration_complete}),
 					ok;
 				{ok, << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Value} ->
-					M = binary_to_term(Value),
+					M = binary_to_term(Value, [safe]),
 					move_data_root_index(DataRoot, TXSize, data_root_index_iterator(M), New),
 					PrevKey = << DataRoot:32/binary, (TXSize - 1):?OFFSET_KEY_BITSIZE >>,
 					move_data_root_index(PrevKey, N + 1, State);
@@ -2522,7 +2522,7 @@ recalculate_disk_pool_size(Index, DataRootMap, Cursor, Sum) ->
 					{DataRootKey, V}) end, DataRootMap),
 			ets:insert(ar_data_sync_state, {disk_pool_size, Sum});
 		{ok, Key, Value} ->
-			DecodedValue = binary_to_term(Value),
+			DecodedValue = binary_to_term(Value, [safe]),
 			ChunkSize = element(2, DecodedValue),
 			DataRoot = element(3, DecodedValue),
 			TXSize = element(4, DecodedValue),
@@ -2588,7 +2588,7 @@ remove_data_root_index_range(Start, End, State) ->
 					(_, _Value, {error, _} = Error) ->
 						Error;
 					(_, Value, {ok, RemovedDataRoots}) ->
-						{_TXRoot, _BlockSize, DataRootIndexKeySet} = binary_to_term(Value),
+						{_TXRoot, _BlockSize, DataRootIndexKeySet} = binary_to_term(Value, [safe]),
 						sets:fold(
 							fun (_Key, {error, _} = Error) ->
 									Error;
@@ -2663,7 +2663,7 @@ repair_data_root_offset_index(BI, Cursor, Height, ResyncBlocks, State) ->
 			ResyncBlocks;
 		{ok, Key, Value} ->
 			<< BlockStart:?OFFSET_KEY_BITSIZE >> = Key,
-			{TXRoot, BlockSize, _DataRootKeys} = binary_to_term(Value),
+			{TXRoot, BlockSize, _DataRootKeys} = binary_to_term(Value, [safe]),
 			BlockEnd = BlockStart + BlockSize,
 			case shift_block_index(TXRoot, BlockStart, BlockEnd, Height, ResyncBlocks, BI) of
 				{ok, {Height2, BI2}} ->
@@ -3577,7 +3577,7 @@ maybe_reset_disk_pool_full_scan_key(_Key, State) ->
 	State.
 
 parse_disk_pool_chunk(Bin) ->
-	case binary_to_term(Bin) of
+	case binary_to_term(Bin, [safe]) of
 		{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey} ->
 			{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey, true, false, false};
 		{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey, PassesStrict} ->

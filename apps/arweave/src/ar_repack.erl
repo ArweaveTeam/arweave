@@ -856,7 +856,7 @@ read_chunk_and_data_path(RepackChunk, #state{} = State) ->
 			RepackChunk#repack_chunk{ 
 				metadata = Metadata#chunk_metadata{ data_path = not_found } };
 		{ok, V} ->
-			case binary_to_term(V) of
+			case binary_to_term(V, [safe]) of
 				{Chunk, DataPath} ->
 					RepackChunk#repack_chunk{ 
 						metadata = Metadata#chunk_metadata{ data_path = DataPath },
@@ -987,9 +987,9 @@ read_cursor(StoreID, TargetPacking, ModuleStart) ->
 	end,
 	case file:read_file(Filepath) of
 		{ok, Bin} ->
-			case catch binary_to_term(Bin) of
-				{Cursor, TargetPacking} when is_integer(Cursor) ->
-					Cursor;
+		case catch binary_to_term(Bin, [safe]) of
+			{Cursor, TargetPacking} when is_integer(Cursor) ->
+				Cursor;
 				_ ->
 					DefaultCursor
 			end;

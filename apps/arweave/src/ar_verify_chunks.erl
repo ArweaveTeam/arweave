@@ -281,7 +281,7 @@ verify_chunk_storage(PaddedOffset, Metadata, {End, Start}, State)
 					not_found ->
 						false;
 					{ok, Value} ->
-						case binary_to_term(Value) of
+						case binary_to_term(Value, [safe]) of
 							{_Chunk, _DataPath} ->
 								true;
 							_ ->
@@ -329,7 +329,7 @@ verify_chunk_data(Metadata, State) ->
 		not_found ->
 			invalidate_chunk(chunk_data_not_found, AbsoluteOffset, ChunkSize, [], State);
 		{ok, Value} ->
-			case binary_to_term(Value) of
+			case binary_to_term(Value, [safe]) of
 				{_Chunk, _DataPath} ->
 					State;
 				_DataPath ->

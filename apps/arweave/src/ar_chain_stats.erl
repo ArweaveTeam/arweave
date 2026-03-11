@@ -51,7 +51,7 @@ handle_call({get_forks, StartTime}, _From, State) ->
 	%% Sort forks by their key (the timestamp when they were detected) - sorts in
 	%% chronological / ascending order (i.e. first element of the list is the oldest fork)
 	SortedForks = lists:sort(maps:to_list(ForksMap)),
-	Forks = [binary_to_term(Fork) || {_Timestamp, Fork} <- SortedForks],
+	Forks = [binary_to_term(Fork, [safe]) || {_Timestamp, Fork} <- SortedForks],
 	{reply, Forks, State};
 handle_call(_Request, _From, State) ->
 	{reply, ok, State}.
