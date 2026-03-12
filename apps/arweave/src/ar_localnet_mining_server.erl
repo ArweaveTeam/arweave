@@ -136,7 +136,7 @@ mine_block3({RecallByte1, _Chunk1, PoA1}, State, MiningAddr, StorageModules) ->
 		poa1 => PoA1#poa{ chunk = SubChunk1 },
 		nonce => Nonce
 	},
-	IsTwoChunk = rand:uniform(2) == 2,
+	IsTwoChunk = rand:uniform(?POA1_DIFF_MULTIPLIER + 1) > 1,
 	mine_block4(IsTwoChunk, Stage1Data, State, MiningAddr, StorageModules).
 
 mine_block4(false, Stage1Data, State, MiningAddr, _StorageModules) ->
