@@ -556,7 +556,7 @@ read_sync_records(StateDB, StoreID) ->
 			not_found ->
 				{#{}, #{}};
 		{ok, V} ->
-			binary_to_term(V, [safe])
+			binary_to_term(V)
 	end,
 	{SyncRecordByID2, SyncRecordByIDType2, WAL} =
 		replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, StateDB, StoreID),
