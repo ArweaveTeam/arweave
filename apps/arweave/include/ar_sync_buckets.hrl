@@ -8,3 +8,6 @@
 -else.
 -define(DEFAULT_SYNC_BUCKET_SIZE, 10_000_000_000). % 10 GB
 -endif.
+
+%% The maximum ratio between a peer's reported bucket size and the expected bucket size.
+-define(MAX_SYNC_BUCKET_SIZE_RATIO, 4096).
