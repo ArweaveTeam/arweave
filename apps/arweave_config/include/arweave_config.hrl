@@ -161,6 +161,16 @@
 -define(DEFAULT_GUN_TCP_SEND_TIMEOUT_CLOSE, true).
 -define(DEFAULT_GUN_TCP_SEND_TIMEOUT, 15_000).
 
+%% The time the cowboy loop handler waits before killing a request handler process.
+-define(DEFAULT_HTTP_HANDLER_TIMEOUT_MS, 55000).
+
+%% Per-chunk HTTP body read period passed to cowboy_req:read_body/2.
+-define(DEFAULT_HTTP_READ_BODY_PERIOD_MS, 15000).
+
+%% Total wall-clock limit for reading the complete request body.
+-define(DEFAULT_HTTP_MAX_BODY_READ_TIME_MS,
+	?DEFAULT_HTTP_HANDLER_TIMEOUT_MS - 2000).
+
 %% Default Cowboy HTTP/TCP parameters
 -define(DEFAULT_COWBOY_HTTP_ACTIVE_N, 100).
 -define(DEFAULT_COWBOY_HTTP_IDLE_TIMEOUT, 60_000).
