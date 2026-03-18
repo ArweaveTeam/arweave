@@ -82,7 +82,8 @@ empty_limiters_sanity_check_test_() ->
                          [{ar_limiter_tracked_items_total,gauge,
                            "tracked requests, timestamps, leaky tokens",
                            _},
-                          {ar_limiter_peers,gauge,[],_}], ?M:metrics())
+                          {ar_limiter_peers,gauge,
+                           "The number of peers the limiter is monitoring currently", _}], ?M:metrics())
               end]
      end
     }.
@@ -99,7 +100,8 @@ rate_limiter_happy_path_sanity_check_test_() ->
                          [{ar_limiter_tracked_items_total,gauge,
                            "tracked requests, timestamps, leaky tokens",
                            _},
-                          {ar_limiter_peers,gauge,[],_}], ?M:metrics()),
+                          {ar_limiter_peers,gauge,
+                           "The number of peers the limiter is monitoring currently", _}], ?M:metrics()),
 
                       Info = arweave_limiter_group:info(?GENERAL),
                       ?assertMatch(
