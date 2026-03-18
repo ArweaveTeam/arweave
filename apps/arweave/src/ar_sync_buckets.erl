@@ -99,7 +99,8 @@ serialize(Buckets, MaxSize, PrevSerializedSize) ->
 deserialize(SerializedBuckets, ExpectedBucketSize) ->
 	case catch binary_to_term(SerializedBuckets, [safe]) of
 		{BucketSize, Map} when is_map(Map), is_integer(BucketSize),
-				BucketSize >= ExpectedBucketSize ->
+				BucketSize >= ExpectedBucketSize,
+				BucketSize =< ExpectedBucketSize * ?MAX_SYNC_BUCKET_SIZE_RATIO ->
 			{ok, {BucketSize, maps:filter(
 				fun	(Bucket, Share) when
 							is_integer(Bucket), Bucket >= 0,
@@ -119,18 +120,22 @@ deserialize(SerializedBuckets, ExpectedBucketSize) ->
 %% @doc Apply the given function of two arguments (Bucket, Share) to each
 %% of the given buckets breaking them down according to the given size.
 foreach(Fun, BucketSize, {Size, Map}) when Size >= BucketSize, Size rem BucketSize == 0 ->
+	Ratio = Size div BucketSize,
 	maps:fold(
 		fun(Bucket, Share, ok) ->
-			lists:foreach(
-				fun(SubBucket) -> Fun(SubBucket, Share) end,
-				lists:seq(Bucket * Size div BucketSize, (Bucket + 1) * Size div BucketSize - 1)
-			)
+			foreach_range(Fun, Share, Bucket * Ratio, (Bucket + 1) * Ratio)
 		end,
 		ok,
 		Map
 	);
 foreach(_Fun, _BucketSize, _Buckets) ->
 	ok.
+
+foreach_range(_Fun, _Share, SubBucket, End) when SubBucket >= End ->
+	ok;
+foreach_range(Fun, Share, SubBucket, End) ->
+	Fun(SubBucket, Share),
+	foreach_range(Fun, Share, SubBucket + 1, End).
 
 %%%===================================================================
 %%% Private functions.
