@@ -61,6 +61,16 @@
 -define(DISK_SPACE_CHECK_FREQUENCY_MS, 30 * 1000).
 -endif.
 
+%% The time the cowboy loop handler waits before killing a request handler process.
+-define(DEFAULT_HTTP_HANDLER_TIMEOUT_MS, 55000).
+
+%% Per-chunk HTTP body read period passed to cowboy_req:read_body/2.
+-define(DEFAULT_HTTP_READ_BODY_PERIOD_MS, 15000).
+
+%% Total wall-clock limit for reading the complete request body.
+-define(DEFAULT_HTTP_MAX_BODY_READ_TIME_MS,
+	?DEFAULT_HTTP_HANDLER_TIMEOUT_MS - 2000).
+
 -define(NUM_HASHING_PROCESSES,
 	max(1, (erlang:system_info(schedulers_online) - 1))).
 

@@ -13,7 +13,7 @@
 -include("ar_pool.hrl").
 
 
--define(HANDLER_TIMEOUT, 55000).
+-define(HANDLER_TIMEOUT, ?DEFAULT_HTTP_HANDLER_TIMEOUT_MS).
 
 -define(MAX_SERIALIZED_RECENT_HASH_LIST_DIFF, 2400). % 50 * 48.
 -define(MAX_SERIALIZED_MISSING_TX_INDICES, 125). % Every byte encodes 8 positions.
@@ -428,20 +428,8 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 			true ->
 				ok
 		end,
-	Semaphore =
-		case Joined of
-			ok ->
-				case ar_semaphore:acquire(post_chunk, 5000) of
-					ok ->
-						ok;
-					{error, timeout} ->
-						{503, #{}, jiffy:encode(#{ error => timeout }), Req}
-				end;
-			Reply ->
-				Reply
-		end,
 	DataRootKnown =
-		case Semaphore of
+		case Joined of
 			ok ->
 				case get_data_root_from_headers(Req) of
 					not_set ->
@@ -455,21 +443,26 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 										Req}
 						end
 				end;
-			Reply2 ->
-				Reply2
+			Reply ->
+				Reply
 		end,
 	ParseChunk =
 		case DataRootKnown of
 			ok ->
 				parse_chunk(Req, Pid);
-			Reply3 ->
-				Reply3
+			Reply2 ->
+				Reply2
 		end,
 	case ParseChunk of
 		{ok, {Proof, Req2}} ->
-			handle_post_chunk(Proof, Req2);
-		Reply4 ->
-			Reply4
+			case ar_semaphore:acquire(post_chunk, 5000) of
+				ok ->
+					handle_post_chunk(Proof, Req2);
+				{error, timeout} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req2}
+			end;
+		Reply3 ->
+			Reply3
 	end;
 
 %% Accept an announcement of a block. Reply 412 (no previous block),
@@ -1909,25 +1902,26 @@ handle_post_tx({Req, Pid, Encoding}) ->
 		false ->
 			not_joined(Req);
 		true ->
-			{ok, Config} = arweave_config:get_env(),
-			case ar_semaphore:acquire(post_tx, Config#config.post_tx_timeout * 1000) of
+			case post_tx_parse_id({Req, Pid, Encoding}) of
+				{error, invalid_hash, Req2} ->
+					{400, #{}, <<"Invalid hash.">>, Req2};
+				{error, tx_already_processed, _TXID, Req2} ->
+					{208, #{}, <<"Transaction already processed.">>, Req2};
+				{error, invalid_signature_type, Req2} ->
+					{400, #{}, <<"Invalid signature type.">>, Req2};
+				{error, invalid_json, Req2} ->
+					{400, #{}, <<"Invalid JSON.">>, Req2};
+				{error, body_size_too_large, Req2} ->
+					{413, #{}, <<"Payload too large">>, Req2};
 				{error, timeout} ->
 					{503, #{}, <<>>, Req};
-				ok ->
-					case post_tx_parse_id({Req, Pid, Encoding}) of
-						{error, invalid_hash, Req2} ->
-							{400, #{}, <<"Invalid hash.">>, Req2};
-						{error, tx_already_processed, _TXID, Req2} ->
-							{208, #{}, <<"Transaction already processed.">>, Req2};
-						{error, invalid_signature_type, Req2} ->
-							{400, #{}, <<"Invalid signature type.">>, Req2};
-						{error, invalid_json, Req2} ->
-							{400, #{}, <<"Invalid JSON.">>, Req2};
-						{error, body_size_too_large, Req2} ->
-							{413, #{}, <<"Payload too large">>, Req2};
+				{ok, TX, Req2} ->
+					{ok, Config} = arweave_config:get_env(),
+					case ar_semaphore:acquire(post_tx,
+							Config#config.post_tx_timeout * 1000) of
 						{error, timeout} ->
-							{503, #{}, <<>>, Req};
-						{ok, TX, Req2} ->
+							{503, #{}, <<>>, Req2};
+						ok ->
 							Peer = ar_http_util:arweave_peer(Req),
 							case handle_post_tx(Req2, Peer, TX) of
 								ok ->
