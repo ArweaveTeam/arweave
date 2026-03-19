@@ -15,7 +15,8 @@
         generate_random_standard_split/0, generate_random_original_v1_split/0]).
 
 -define(SYNC_CHUNKS_CHECK, 1000).
--define(SYNC_CHUNKS_TIMEOUT, 60*1000).
+%% Chunk sync can exceed 60s on slow CI (fork recovery, composite packing, many peers).
+-define(SYNC_CHUNKS_TIMEOUT, 120_000).
 
 get_records_with_proofs(B, TX, Chunks) ->
 	[{B, TX, Chunks, Proof} || Proof <- build_proofs(B, TX, Chunks)].
