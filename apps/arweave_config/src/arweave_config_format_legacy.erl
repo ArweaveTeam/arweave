@@ -73,8 +73,8 @@ decode_data(_State = #{ data := Data }) ->
 	case ar_config:parse(Data) of
 		{ok, LegacyConfig} ->
 			{ok, LegacyConfig};
-		{error, Reason} ->
+		{error, Reason, _} ->
 			{error, Reason};
-		Else ->
-			Else
+		{error, Reason} ->
+			{error, Reason}
 	end.
