@@ -83,8 +83,7 @@ list_tests_json(Mods) ->
 default_modules(e2e) ->
 	[ar_sync_pack_mine_tests, ar_repack_mine_tests, ar_repack_in_place_mine_tests];
 default_modules(test) ->
-	%% For regular tests, we don't specify modules - EUnit discovers them
-	[].
+	load_default_modules("scripts/full_test_modules.txt").
 
 run_tests(TestType, TestSpec) ->
 	ensure_started(TestType),
@@ -137,6 +136,29 @@ spec_to_eunit({test, Mod, Test}) ->
 		false ->
 			%% Simple test function - run directly
 			{Mod, Test}
+	end.
+
+load_default_modules(Path) ->
+	case file:read_file(Path) of
+		{ok, Bin} ->
+			parse_default_modules(binary_to_list(Bin));
+		{error, Reason} ->
+			erlang:error({failed_to_load_test_modules, Path, Reason})
+	end.
+
+parse_default_modules(Content) ->
+	Lines = string:split(Content, "\n", all),
+	lists:filtermap(fun parse_default_module_line/1, Lines).
+
+parse_default_module_line(Line) ->
+	Trimmed = string:trim(Line),
+	case Trimmed of
+		"" ->
+			false;
+		[$# | _] ->
+			false;
+		_ ->
+			{true, list_to_atom(Trimmed)}
 	end.
 
 start_for_tests(TestType) ->
