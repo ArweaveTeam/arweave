@@ -164,7 +164,7 @@ test_fork_refuse_validation() ->
 		ar_test_node:mine(main),
 		[H1 | _] = ar_test_node:wait_until_height(main, 1),
 		send_block(H1, main, peer1),
-		ar_test_node:wait_until_height(peer1, 1),
+		ar_test_node:assert_wait_until_height(peer1, 1),
 		wait_until_step_number(peer1, ?TEST_RESET_FREQUENCY + 1),
 
 		ar_test_node:mine(peer1),
