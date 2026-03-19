@@ -138,6 +138,7 @@ block_passes_diff_check(SolutionHash, Block) ->
 	passes_diff_check(SolutionHash, IsPoA1, DiffPair, PackingDifficulty).
 
 -ifdef(LOCALNET).
+%% We skip difficulty checks on localnet for faster block production.
 passes_diff_check(_SolutionHash, _IsPoA1, _DiffPair, _PackingDifficulty) ->
 	true.
 
