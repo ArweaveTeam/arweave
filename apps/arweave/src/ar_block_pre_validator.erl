@@ -563,6 +563,8 @@ pre_validate_nonce_limiter_global_step_number(B, PrevB, SolutionResigned, Peer) 
 	end.
 
 -ifdef(LOCALNET).
+%% In localnet we allow same-step blocks for faster block production. Consequent
+%% blocks on the same steps have the same "steps" and "expected step count" values.
 get_expected_step_count(StepNumber, PrevStepNumber, _MaxDistance, Steps) ->
 	case StepNumber - PrevStepNumber > 0 of
 		true ->
@@ -733,6 +735,8 @@ pre_validate_pow_2_6(B, PrevB, PartitionUpperBound, Peer) ->
 	end.
 
 -ifdef(LOCALNET).
+%% On localnet we want to freely choose chunks, so we derive the recall range
+%% from the chosen chunk (recall_byte) rather than the other way around.
 get_precalculated_recall_range(B) ->
 	case B#block.packing_difficulty of
 		0 ->

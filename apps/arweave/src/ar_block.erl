@@ -613,8 +613,6 @@ generate_block_data_segment_base(B) ->
 
 %% @doc Return {RecallRange1Start, RecallRange2Start} - the start offsets
 %% of the two recall ranges.
-%% In LOCALNET mode, RecallRange1 and RecallRange2 are passed through directly.
-%% In normal mode, they are computed from H0 and PartitionNumber.
 -ifdef(LOCALNET).
 get_recall_range(H0, PartitionNumber, PartitionUpperBound, not_set, not_set) ->
 	RecallRange1Offset = binary:decode_unsigned(binary:part(H0, 0, 8), big),
@@ -623,6 +621,8 @@ get_recall_range(H0, PartitionNumber, PartitionUpperBound, not_set, not_set) ->
 	RecallRange2Start = binary:decode_unsigned(H0, big) rem PartitionUpperBound,
 	{RecallRange1Start, RecallRange2Start};
 
+%% In LOCALNET mode, RecallRange1 and RecallRange2 are passed through directly.
+%% In normal mode, they are computed from H0 and PartitionNumber.
 get_recall_range(_H0, _PartitionNumber, _PartitionUpperBound, RecallRange1, RecallRange2) ->
 	{RecallRange1, RecallRange2}.
 -else.
