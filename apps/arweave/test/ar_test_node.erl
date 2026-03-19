@@ -1375,13 +1375,18 @@ unmock_module(Module) ->
 unmock_module(_Module, 0) ->
 	ok;
 unmock_module(Module, Retries) ->
+	Pid = erlang:whereis(Module),
+	case is_pid(Pid) of
+		true ->
+			sys:suspend(Pid);
+		false ->
+			ok
+	end,
 	try
 		meck:unload(Module)
 	catch
-		%% If it's already not mocked, consider it a success
 		error:{not_mocked, Module} ->
 			ok;
-		%% Retry on other errors
 		error:E ->
 			?debugFmt("ar_test_node (retries left ~p): Error unloading mock for ~p: ~p",
 					[Retries - 1, Module, E]),
@@ -1392,6 +1397,13 @@ unmock_module(Module, Retries) ->
 					[Retries - 1, Module, E]),
 			timer:sleep(1000),
 			unmock_module(Module, Retries - 1)
+	after
+		case is_pid(Pid) andalso erlang:is_process_alive(Pid) of
+			true ->
+				sys:resume(Pid);
+			false ->
+				ok
+		end
 	end.
 
 mock_functions(Functions) ->
