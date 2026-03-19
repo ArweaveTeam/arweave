@@ -215,19 +215,29 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 						case DataRootOffsetReply of
 							not_found ->
 								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
-							{ok, {TXStartOffset, _}} ->
-								case chunk_offsets_synced(DataRootIndex, DataRootKey,
-										%% The same data may be uploaded several times.
-										%% Here we only accept the chunk if any of the
-										%% last 5 instances of this data is not filled in
-										%% yet.
-										EndOffset2, TXStartOffset, 5) of
-									true ->
-										synced;
-									false ->
-										{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}}
-								end
-						end;
+								{ok, {TXStartOffset, _}} ->
+									case chunk_offsets_synced(DataRootIndex, DataRootKey,
+											%% The same data may be uploaded several times.
+											%% Here we only accept the chunk if any of the
+											%% last 5 instances of this data is not filled in
+											%% yet.
+											EndOffset2, TXStartOffset, 5) of
+										true ->
+											?LOG_INFO([{event, post_chunk_skipped_as_already_synced},
+													{reason, duplicate_data_root_synced_match},
+													{disk_pool_inserted, false},
+													{duplicate_scan_depth, 5},
+													{data_root, ar_util:encode(DataRoot)},
+													{tx_size, TXSize},
+													{latest_tx_start_offset, TXStartOffset},
+													{relative_end_offset, EndOffset2},
+													{absolute_end_offset,
+														TXStartOffset + EndOffset2}]),
+											synced;
+										false ->
+											{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}}
+									end
+							end;
 					{error, Reason} ->
 						?LOG_WARNING([{event, failed_to_read_chunk_from_disk_pool},
 								{reason, io_lib:format("~p", [Reason])},
