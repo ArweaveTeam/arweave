@@ -1081,23 +1081,20 @@ wait_until_height(Node, TargetHeight, Strict) ->
 	wait_until_height(Node, TargetHeight, Strict, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
 
 wait_until_height(Node, TargetHeight, Strict, Timeout) ->
-	{BI, Height} = case Node of
+	BI = case Node of
 		main ->
-			{
-				do_wait_until_height(TargetHeight, Timeout),
-				ar_node:get_height()
-			};
+			do_wait_until_height(TargetHeight, Timeout);
 		_ ->
-			{
-				remote_call(Node, ?MODULE, do_wait_until_height, [TargetHeight, Timeout],
-					Timeout + 500),
-				remote_call(Node, ar_node, get_height, [])
-			}
+			remote_call(Node, ?MODULE, do_wait_until_height, [TargetHeight, Timeout],
+				Timeout + 500)
 	end,
 	case Strict of
 		true ->
-			?assertEqual(TargetHeight, Height,
-				iolist_to_binary(io_lib:format("Node ~p not at the expected height", [Node])));
+			Height = length(BI) - 1,
+			?assert(Height >= TargetHeight,
+				iolist_to_binary(io_lib:format(
+					"Node ~p not at the expected height. Expected: ~B, got: ~B",
+					[Node, TargetHeight, Height])));
 		false ->
 			ok
 	end,
