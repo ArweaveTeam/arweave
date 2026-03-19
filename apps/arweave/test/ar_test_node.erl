@@ -939,6 +939,8 @@ join(JoinOnNode, Rejoin, Config) ->
 		false ->
 			clean_up_and_stop()
 	end,
+	prometheus:start(),
+	arweave_config:start(),
 	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = false,
 		auto_join = true,
@@ -946,6 +948,7 @@ join(JoinOnNode, Rejoin, Config) ->
 		'http_client.http.keepalive' = ?TEST_HTTP_CLIENT_KEEPALIVE
 	}),
 	ar:start_dependencies(),
+	wait_until_joined(),
 	whereis(ar_node_worker).
 
 get_default_storage_module_packing(RewardAddr, Index) ->
