@@ -297,30 +297,31 @@ post_blocks(Wallet, BlockMap) ->
 				ar_test_node:mine(),
 				ar_test_node:assert_wait_until_height(peer1, Height),
 				Acc;
-			({TXMap, _Height}, Acc) ->
-				TXsWithChunks = lists:map(
-					fun
-						(v1) ->
-							{v1_tx(Wallet), v1};
-						(v2) ->
-							{tx(Wallet, original_split), v2};
-						(v2_no_data) -> % same as v2 but its data won't be submitted
-							{tx(Wallet, {custom_split, random}), v2_no_data};
-						(v2_standard_split) ->
-							{tx(Wallet, standard_split), v2_standard_split};
-						(empty_tx) ->
-							{tx(Wallet, {custom_split, 0}), empty_tx};
-						(fixed_data) ->
-							{tx(Wallet, {fixed_data, DataRoot, FixedChunks}), fixed_data}
-					end,
-					TXMap
-				),
-				B = ar_test_node:post_and_mine(
-					#{ miner => main, await_on => main },
-					[TX || {{TX, _}, _} <- TXsWithChunks]
-				),
-				Acc ++ [{B, TX, C} || {{TX, C}, Type} <- lists:sort(TXsWithChunks),
-						Type /= v2_no_data, Type /= empty_tx]
+		({TXMap, Height}, Acc) ->
+			TXsWithChunks = lists:map(
+				fun
+					(v1) ->
+						{v1_tx(Wallet), v1};
+					(v2) ->
+						{tx(Wallet, original_split), v2};
+					(v2_no_data) -> % same as v2 but its data won't be submitted
+						{tx(Wallet, {custom_split, random}), v2_no_data};
+					(v2_standard_split) ->
+						{tx(Wallet, standard_split), v2_standard_split};
+					(empty_tx) ->
+						{tx(Wallet, {custom_split, 0}), empty_tx};
+					(fixed_data) ->
+						{tx(Wallet, {fixed_data, DataRoot, FixedChunks}), fixed_data}
+				end,
+				TXMap
+			),
+			B = ar_test_node:post_and_mine(
+				#{ miner => main, await_on => main },
+				[TX || {{TX, _}, _} <- TXsWithChunks]
+			),
+			ar_test_node:assert_wait_until_height(peer1, Height),
+			Acc ++ [{B, TX, C} || {{TX, C}, Type} <- lists:sort(TXsWithChunks),
+					Type /= v2_no_data, Type /= empty_tx]
 		end,
 		[],
 		lists:zip(BlockMap, lists:seq(1, length(BlockMap)))
