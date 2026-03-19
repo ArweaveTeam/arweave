@@ -868,9 +868,36 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 
 stop() ->
 	{ok, Config} = arweave_config:get_env(),
-	application:stop(arweave),
+	case stop_application(arweave, 60000) of
+		ok ->
+			ok;
+		{error, timeout} ->
+			?LOG_WARNING([{event, application_stop_timeout}, {app, arweave}]),
+			force_stop_application(arweave)
+	end,
 	ar:stop_dependencies(),
 	Config.
+
+stop_application(App, Timeout) ->
+	Parent = self(),
+	Ref = make_ref(),
+	Pid = spawn(fun() -> Parent ! {Ref, application:stop(App)} end),
+	receive
+		{Ref, Result} ->
+			Result
+	after Timeout ->
+		exit(Pid, kill),
+		{error, timeout}
+	end.
+
+force_stop_application(App) ->
+	case application_controller:get_master(App) of
+		Master when is_pid(Master) ->
+			exit(Master, kill),
+			timer:sleep(1000);
+		_ ->
+			ok
+	end.
 
 stop(Node) ->
 	remote_call(Node, ar_test_node, stop, []).
