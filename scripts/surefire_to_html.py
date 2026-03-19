@@ -44,4 +44,4 @@ def convert(element):
     return 0
 
 if __name__ == '__main__':
-    return main()
+    sys.exit(main())
