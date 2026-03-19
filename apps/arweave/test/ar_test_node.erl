@@ -871,6 +871,8 @@ stop() ->
 	case stop_application(arweave, 60000) of
 		ok ->
 			ok;
+		{error, {not_started, arweave}} ->
+			ok;
 		{error, timeout} ->
 			?LOG_WARNING([{event, application_stop_timeout}, {app, arweave}]),
 			force_stop_application(arweave)
