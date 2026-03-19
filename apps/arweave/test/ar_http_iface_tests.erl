@@ -941,9 +941,9 @@ test_get_error_of_data_limit(_) ->
 	?assertEqual({error, too_much_data}, Resp).
 
 test_send_missing_tx_with_the_block({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
+	ar_test_node:disconnect_from(peer1),
 	LocalHeight = ar_node:get_height(),
 	RemoteHeight = height(peer1),
-	ar_test_node:disconnect_from(peer1),
 	TXs = [ar_test_node:sign_tx(Wallet1, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs),
 	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
@@ -958,9 +958,9 @@ test_send_missing_tx_with_the_block({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	assert_wait_until_height(peer1, RemoteHeight + 1).
 
 test_fallback_to_block_endpoint_if_cannot_send_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
+	ar_test_node:disconnect_from(peer1),
 	LocalHeight = ar_node:get_height(),
 	RemoteHeight = height(peer1),
-	ar_test_node:disconnect_from(peer1),
 	TXs = [ar_test_node:sign_tx(Wallet1, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs),
 	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
