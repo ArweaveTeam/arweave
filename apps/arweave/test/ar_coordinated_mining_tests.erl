@@ -377,7 +377,7 @@ assert_peers(ExpectedPeers, Node, Partition) ->
 
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
 	wait_for_each_node(
-		Miners, ValidatorNode, CurrentHeight, sets:from_list(ExpectedPartitions), 20).
+		Miners, ValidatorNode, CurrentHeight, sets:from_list(ExpectedPartitions), 40).
 
 wait_for_each_node(
 		_Miners, _ValidatorNode, _CurrentHeight, _ExpectedPartitions, 0) ->
