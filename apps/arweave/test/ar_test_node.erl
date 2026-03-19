@@ -312,7 +312,7 @@ start_node(B0, Config, WaitUntilSync) ->
 	{ok, BaseConfig} = arweave_config:get_env(),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
 	update_config(Config),
-	ar:start_dependencies(),
+	start_dependencies(),
 	wait_until_joined(),
 	case WaitUntilSync of
 		true ->
@@ -459,6 +459,11 @@ load_fixture(Fixture) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+start_dependencies() ->
+	ok = arweave_limiter:start(),
+	{ok, _} = application:ensure_all_started(arweave, temporary),
+	ok.
 
 clean_up_and_stop() ->
 	Config = stop(),
@@ -692,14 +697,14 @@ start(B0, RewardAddr, Config, StorageModules) ->
 		debug = true
 	}),
 	ok = arweave_limiter:start(),
-	ar:start_dependencies(),
+	start_dependencies(),
 	wait_until_joined(),
 	wait_until_syncs_genesis_data().
 
 restart() ->
 	?LOG_INFO("Restarting node"),
 	stop(),
-	ar:start_dependencies(),
+	start_dependencies(),
 	wait_until_joined().
 
 restart_with_config(Config) ->
@@ -708,7 +713,7 @@ restart_with_config(Config) ->
 
 	update_config(Config),
 
-	ar:start_dependencies(),
+	start_dependencies(),
 	wait_until_joined().
 
 restart(Node) ->
@@ -947,7 +952,7 @@ join(JoinOnNode, Rejoin, Config) ->
 		peers = [Peer],
 		'http_client.http.keepalive' = ?TEST_HTTP_CLIENT_KEEPALIVE
 	}),
-	ar:start_dependencies(),
+	start_dependencies(),
 	wait_until_joined(),
 	whereis(ar_node_worker).
 
