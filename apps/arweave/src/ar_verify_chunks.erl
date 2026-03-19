@@ -556,7 +556,13 @@ verify_chunk_storage_test_() ->
 			fun test_verify_chunk_storage_in_interval/0),
 		ar_test_node:test_with_mocked_functions(
 			[{ar_chunk_storage, read_offset,
-				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end}],
+				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
+			{ar_sync_record, is_recorded,
+				fun(_, _, _) -> false end},
+			{ar_entropy_storage, is_entropy_recorded,
+				fun(_, _, _) -> false end},
+			{ar_tx_blacklist, is_byte_blacklisted,
+				fun(_) -> false end}],
 			fun test_verify_chunk_storage_should_store/0),
 		ar_test_node:test_with_mocked_functions(
 			[{ar_chunk_storage, read_offset,
@@ -597,7 +603,9 @@ verify_chunk_test_() ->
 			{ar_chunk_storage, read_offset,
 				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
 			{ar_data_sync, get_chunk_data,
-				fun(_, _) -> {ok, term_to_binary({<<>>, <<>>})} end}
+				fun(_, _) -> {ok, term_to_binary({<<>>, <<>>})} end},
+			{ar_sync_record, is_recorded,
+				fun(_, _, _) -> false end}
 		],
 			fun test_verify_chunk/0
 		)

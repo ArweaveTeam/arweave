@@ -45,13 +45,25 @@ clear_error_codes(TXID) ->
 %%% Tests.
 %%%===================================================================
 
-read_write_test() ->
-	put_error_codes(mocked_txid1, mocked_error),
-	put_error_codes(mocked_txid2, mocked_error),
-	ensure_error(mocked_txid3),
-	assert_clear_error_codes(mocked_txid1),
-	assert_clear_error_codes(mocked_txid2),
-	assert_clear_error_codes(mocked_txid3).
+setup_ets() ->
+	case ets:info(?MODULE) of
+		undefined ->
+			ets:new(?MODULE, [set, public, named_table]),
+			fun() -> ets:delete(?MODULE) end;
+		_ ->
+			fun() -> ok end
+	end.
+
+read_write_test_() ->
+	{setup, fun setup_ets/0, fun(Cleanup) -> Cleanup() end,
+		fun(_) -> [fun() ->
+			put_error_codes(mocked_txid1, mocked_error),
+			put_error_codes(mocked_txid2, mocked_error),
+			ensure_error(mocked_txid3),
+			assert_clear_error_codes(mocked_txid1),
+			assert_clear_error_codes(mocked_txid2),
+			assert_clear_error_codes(mocked_txid3)
+		end] end}.
 
 assert_clear_error_codes(TXID) ->
 	Fetched = get_error_codes(TXID),
@@ -61,7 +73,8 @@ assert_clear_error_codes(TXID) ->
 	ok.
 
 tx_db_test_() ->
-	{timeout, 30, fun test_tx_db/0}.
+	{setup, fun setup_ets/0, fun(Cleanup) -> Cleanup() end,
+		fun(_) -> [{timeout, 30, fun test_tx_db/0}] end}.
 
 test_tx_db() ->
 	{_, Pub1 = {_, Owner1}} = ar_wallet:new(),
