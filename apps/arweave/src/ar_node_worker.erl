@@ -102,7 +102,7 @@ start_mining() ->
 %% candidates (happens often in tests). The localnet mining server only produces
 %% one candidate and one block.
 mine_one_block() ->
-	gen_server:call(?MODULE, mine_one_block).
+	gen_server:cast(?MODULE, mine_one_block).
 
 %% @doc Mine blocks until the given height is reached.
 mine_until_height(Height) ->
@@ -358,14 +358,6 @@ calculate_delay(Bytes) ->
 	NetworkDelay = Bytes * 8 div (?TX_PROPAGATION_BITS_PER_SECOND) * 1000,
 	BaseDelay + NetworkDelay.
 
-handle_call(mine_one_block, _From, State) ->
-	case maps:get(miner_state, State) of
-		undefined ->
-			State2 = start_mining(State),
-			{reply, ok, State2};
-		_ ->
-			{reply, {error, mining_server_running}, State}
-	end;
 handle_call({set_reward_addr, Addr}, _From, State) ->
 	{reply, ok, State#{ reward_addr => Addr }}.
 
@@ -728,6 +720,14 @@ handle_task({cache_missing_txs, BH, TXs}, State) ->
 handle_task(start_mining, State) ->
 	{noreply, start_mining(State#{ automine => true })};
 
+handle_task(mine_one_block, State) ->
+	case maps:get(miner_state, State) of
+		undefined ->
+			{noreply, start_mining(State)};
+		_ ->
+			{noreply, State}
+	end;
+
 handle_task({mine_until_height, Height}, State) ->
 	{noreply, start_mining(State#{ mine_until_height => {height, Height}, automine => true })};
 
@@ -794,7 +794,8 @@ handle_task(compute_mining_difficulty, State) ->
 	Diff = get_current_diff(),
 	case ar_node:get_height() of
 		Height when (Height + 1) rem 10 == 0 ->
-			?LOG_INFO([{event, current_mining_difficulty}, {height, Height}, {difficulty, Diff}]);
+			?LOG_INFO([{event, current_mining_difficulty},
+					{height, Height}, {difficulty, Diff}]);
 		_ ->
 			ok
 	end,
