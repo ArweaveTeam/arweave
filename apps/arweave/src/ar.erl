@@ -286,7 +286,7 @@ stop_dependencies() ->
 	?LOG_INFO("========== Stopping Arweave Node  =========="),
 	application:stop(arweave_limiter),
 	{ok, [_Kernel, _Stdlib, _SASL, _OSMon | Deps]} = application:get_key(arweave, applications),
-	lists:foreach(fun(Dep) -> application:stop(Dep) end, Deps).
+	lists:foreach(fun(Dep) -> application:stop(Dep) end, lists:reverse(Deps)).
 
 start_dependencies() ->
 	ok = arweave_limiter:start(),
