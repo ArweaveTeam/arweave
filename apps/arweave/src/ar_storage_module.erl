@@ -396,6 +396,12 @@ get_cover2(Start, End, [{BucketSize, Bucket, _Packing} = StorageModule | Storage
 
 label_test() ->
 	{ok, Config} = arweave_config:get_env(),
+	OldLabels = ets:match_object(?MODULE, {{label, '_'}, '_'}),
+	OldAddrLabels = ets:match_object(?MODULE, {{address_label, '_'}, '_'}),
+	OldLastLabel = ets:lookup(?MODULE, last_address_label),
+	ets:match_delete(?MODULE, {{label, '_'}, '_'}),
+	ets:match_delete(?MODULE, {{address_label, '_'}, '_'}),
+	ets:delete(?MODULE, last_address_label),
 	try
 		arweave_config:set_env(Config#config{storage_modules = [
 			{ar_block:partition_size(), 0, {spora_2_6, <<"a">>}},
@@ -431,6 +437,12 @@ label_test() ->
 		?assertEqual("storage_module_524288_3_composite_5",
 			label(id({524288, 3, {composite, <<"b">>, 2}})))
 	after
+		ets:match_delete(?MODULE, {{label, '_'}, '_'}),
+		ets:match_delete(?MODULE, {{address_label, '_'}, '_'}),
+		ets:delete(?MODULE, last_address_label),
+		ets:insert(?MODULE, OldLabels),
+		ets:insert(?MODULE, OldAddrLabels),
+		ets:insert(?MODULE, OldLastLabel),
 		arweave_config:set_env(Config)
 	end.
 
