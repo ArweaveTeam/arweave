@@ -173,6 +173,8 @@ get_active_partition_upper_bound(StepNumber, SessionKey) ->
 %% according to the protocol. Return not_found if the corresponding hash chain is not
 %% computed yet.
 -ifdef(LOCALNET).
+%% On localnet two blocks may be mined on the same step so this function may be called
+%% with the same StepNumber for both the StartStepNumber and EndStepNumber arguments.
 get_steps(StepNumber, StepNumber, _NextSeed, _NextVDFDifficulty) ->
 	not_found;
 get_steps(StartStepNumber, EndStepNumber, NextSeed, NextVDFDifficulty)
@@ -227,6 +229,8 @@ validate_last_step_checkpoints(_B, _PrevB, _PrevOutput) ->
 	false.
 
 -ifdef(LOCALNET).
+%% On localnet two blocks may be mined on the same step. In this case
+%% we validate the last step checkpoints come from the previous block.
 validate_last_step_checkpoints_same_step_number(
 		#block{
 			nonce_limiter_info = #nonce_limiter_info{
@@ -285,6 +289,8 @@ mix_seed2(PrevOutput, SeedH) ->
 %% according to the protocol.
 %% Emit {nonce_limiter, {invalid, H, ErrorCode}} or {nonce_limiter, {valid, H}}.
 -ifdef(LOCALNET).
+%% On localnet two blocks may be mined on the same step. In this case
+%% we validate steps come from the previous block.
 request_validation_same_step_number(H, #nonce_limiter_info{ steps = Steps },
 		#nonce_limiter_info{ steps = Steps }) ->
 	spawn(fun() -> ar_events:send(nonce_limiter, {valid, H}) end);
