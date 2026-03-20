@@ -38,6 +38,15 @@
 -include("ar_wallets.hrl").
 -include("ar_pool.hrl").
 
+-type ar_port() :: pos_integer().
+-type ar_peer() :: Peer :: {
+		pos_integer(),
+		pos_integer(),
+		pos_integer(),
+		pos_integer(),
+		ar_port()
+	}.
+
 %%--------------------------------------------------------------------
 %% @doc Send a JSON-encoded transaction to the given Peer with default
 %% parameters.
@@ -647,10 +656,33 @@ push_nonce_limiter_update(Peer, Update, Format) ->
 			Reply
 	end.
 
+%%--------------------------------------------------------------------
+%% @doc Returns a vdf update , returns `#nonce_limiter_update{}' record.
+%%
+%% == Examples ==
+%%
+%% ```
+%% {ok, NonceLimiterUpdate} = get_vdf_update({1,2,3,4,1984}).
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec get_vdf_update(Peer) -> Return when
+	Peer :: ar_peer(),
+	Return :: 
+		{ok, #nonce_limiter_update{}}
+		| {error, not_found}
+		| {error, term()}
+		| term().
+
 get_vdf_update(Peer) ->
-	case ar_http:req(#{ peer => Peer, method => get, path => "/vdf2",
+	case ar_http:req(#{ 
+			peer => Peer,
+			method => get,
+			path => "/vdf2",
 			timeout => 2000, headers => p2p_headers()
-			}) of
+		}) 
+	of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update(2, Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
@@ -660,6 +692,26 @@ get_vdf_update(Peer) ->
 		Reply ->
 			Reply
 	end.
+
+%%--------------------------------------------------------------------
+%% @doc Returns a vdf session, returns `#non_limiter_update{}' record.
+%%
+%% == Examples ==
+%%
+%% ```
+%% {ok, NonceLimiterUpdate} = get_vdf_session({1,2,3,4,1984}).
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec get_vdf_session(Peer) -> Return when
+	Peer :: {pos_integer(), pos_integer(), pos_integer(), pos_integer(), Port},
+	Port :: pos_integer(),
+	Return ::
+		{ok, #nonce_limiter_update{}}
+		| {error, not_found}
+		| {error, term()}
+		| term().
 
 get_vdf_session(Peer) ->
 	{Path, Format} =
@@ -672,8 +724,14 @@ get_vdf_session(Peer) ->
 			false ->
 				{"/vdf3/session", 3}
 		end,
-	case ar_http:req(#{ peer => Peer, method => get, path => Path,
-			timeout => 10000, headers => p2p_headers() }) of
+	case ar_http:req(#{
+			peer => Peer,
+			method => get,
+			path => Path,
+			timeout => 10000,
+			headers => p2p_headers()
+		})
+	of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update(Format, Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
@@ -683,6 +741,25 @@ get_vdf_session(Peer) ->
 		Reply ->
 			Reply
 	end.
+
+%%--------------------------------------------------------------------
+%% @doc retrieve a previous vdf session if present.
+%%
+%% == Examples ==
+%%
+%% ```
+%% {ok, NonceLimiterUpdate} = get_previous_vdf_session({1,2,3,4,1984}).
+%% '''
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec get_previous_vdf_session(Peer) -> Return when
+	Peer :: ar_peer(),
+	Return ::
+		{ok, #nonce_limiter_update{}}
+		| {error, not_found}
+		| {error, term()}
+		| term().
 
 get_previous_vdf_session(Peer) ->
 	{Path, Format} =
@@ -695,8 +772,14 @@ get_previous_vdf_session(Peer) ->
 			false ->
 				{"/vdf2/previous_session", 2}
 		end,
-	case ar_http:req(#{ peer => Peer, method => get, path => Path,
-			timeout => 10000, headers => p2p_headers() }) of
+	case ar_http:req(#{
+			peer => Peer,
+			method => get,
+			path => Path,
+			timeout => 10000,
+			headers => p2p_headers()
+		})
+	of
 		{ok, {{<<"200">>, _}, _, Bin, _, _}} ->
 			ar_serialize:binary_to_nonce_limiter_update(Format, Bin);
 		{ok, {{<<"404">>, _}, _, _, _, _}} ->
