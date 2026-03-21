@@ -2285,8 +2285,18 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 					{ReadPacking, CheckRecords} =
 						case ar_sync_record:is_recorded(Offset, ar_data_sync) of
 							false ->
+								?LOG_INFO([{event, get_chunk_sync_record_not_found},
+									{offset, Offset},
+									{requested_packing,
+										ar_serialize:encode_packing(RequestedPacking, false)},
+									{bucket_based_offset, IsBucketBasedOffset}]),
 								{none, {reply, {404, #{}, <<>>, Req}}};
 							{true, _} ->
+								?LOG_INFO([{event, get_chunk_sync_record_missing_packing},
+									{offset, Offset},
+									{requested_packing,
+										ar_serialize:encode_packing(RequestedPacking, false)},
+									{bucket_based_offset, IsBucketBasedOffset}]),
 								%% Chunk is recorded but packing is unknown.
 								{none, {reply, {404, #{}, <<>>, Req}}};
 							{{true, RequestedPacking}, _StoreID} ->
