@@ -155,13 +155,13 @@ sync_block_data_roots(#state{ store_id = StoreID, range_start = RangeStart,
 sync_block_data_roots(_StoreID, Cursor, RangeEnd) when Cursor >= RangeEnd ->
 	{ok, Cursor};
 sync_block_data_roots(StoreID, Cursor, RangeEnd) ->
-	{BlockStart, BlockEnd, _} = ar_block_index:get_block_bounds(Cursor),
+	{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Cursor),
 	Cursor2 =
 		case BlockStart >= RangeEnd of
 			true ->
 				RangeEnd;
 			false ->
-				case ar_sync_record:is_recorded(Cursor + 1, data_roots, ?DEFAULT_MODULE) of
+				case ar_data_sync:are_data_roots_synced(BlockStart, BlockEnd, TXRoot) of
 					true ->
 						BlockEnd;
 					false ->
