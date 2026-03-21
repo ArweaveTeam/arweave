@@ -195,6 +195,21 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							{reason, invalid_proof}, {offset, Offset}]),
 						{error, invalid_proof};
 					{true, PassesBase, PassesStrict, PassesRebase, EndOffset} ->
+						?LOG_INFO([{event, post_chunk_validated_for_disk_pool},
+							{data_root, ar_util:encode(DataRoot)},
+							{tx_size, TXSize},
+							{relative_offset, Offset},
+							{relative_end_offset, EndOffset},
+							{chunk_size, ChunkSize},
+							{passes_base, PassesBase},
+							{passes_strict, PassesStrict},
+							{passes_rebase, PassesRebase},
+							{data_root_index_reply,
+								io_lib:format("~p", [DataRootOffsetReply])},
+							{data_root_in_disk_pool,
+								io_lib:format("~p", [DataRootInDiskPool /= []])},
+							{disk_pool_data_root_value,
+								io_lib:format("~p", [DiskPoolDataRootValue])}]),
 						{ok, {EndOffset, PassesBase, PassesStrict, PassesRebase,
 								DiskPoolDataRootValue}}
 				end
@@ -288,7 +303,22 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							ets:update_counter(ar_data_sync_state, disk_pool_size,
 									{2, ChunkSize}),
 							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
-							case is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset3) of
+							IsEstimatedLongTermChunk =
+								is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset3),
+							?LOG_INFO([{event, post_chunk_stored_in_disk_pool},
+								{data_root, ar_util:encode(DataRoot)},
+								{tx_size, TXSize},
+								{relative_end_offset, EndOffset3},
+								{chunk_size, ChunkSize},
+								{chunk_data_key, ar_util:safe_encode(ChunkDataKey)},
+								{disk_pool_chunk_key, ar_util:safe_encode(DiskPoolChunkKey2)},
+								{passes_base, PassesBase3},
+								{passes_strict, PassesStrict3},
+								{passes_rebase, PassesRebase3},
+								{data_root_index_reply,
+									io_lib:format("~p", [DataRootOffsetReply])},
+								{estimated_long_term_chunk, IsEstimatedLongTermChunk}]),
+							case IsEstimatedLongTermChunk of
 								false ->
 									temporary;
 								true ->
@@ -3430,12 +3460,27 @@ store_chunk2(ChunkArgs, Args, State) ->
 			ProcessAlreadyStored =
 				case StoreIndex of
 					already_stored ->
-						case ar_sync_record:is_recorded(PaddedOffset, Packing, ar_data_sync, StoreID) of
+						SyncRecordPresent =
+							ar_sync_record:is_recorded(PaddedOffset, Packing, ar_data_sync, StoreID),
+						FootprintRecordPresent =
+							ar_footprint_record:is_recorded(PaddedOffset, StoreID),
+						?LOG_INFO([{event, chunk_already_stored_during_disk_pool_promotion},
+							{absolute_end_offset, AbsoluteEndOffset},
+							{relative_end_offset, Offset},
+							{chunk_size, ChunkSize},
+							{store_id, StoreID},
+							{origin_store_id, io_lib:format("~p", [OriginStoreID])},
+							{chunk_data_key, ar_util:safe_encode(ChunkDataKey)},
+							{data_root, ar_util:safe_encode(DataRoot)},
+							{sync_record_present, io_lib:format("~p", [SyncRecordPresent])},
+							{footprint_record_present,
+								io_lib:format("~p", [FootprintRecordPresent])}]),
+						case SyncRecordPresent of
 							false ->
 								invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize,
 										StoreID, chunk_already_stored_but_not_in_sync_record});
 							true ->
-								case ar_footprint_record:is_recorded(PaddedOffset, StoreID) of
+								case FootprintRecordPresent of
 									false ->
 										%% Repair the broken footprint record.
 										ar_footprint_record:add(PaddedOffset, Packing, StoreID);
@@ -3453,6 +3498,16 @@ store_chunk2(ChunkArgs, Args, State) ->
 					case update_chunks_index({AbsoluteEndOffset, Offset, ChunkDataKey, TXRoot,
 							DataRoot, TXPath, ChunkSize, Packing2}, UpdateFootprintRecord, State) of
 						ok ->
+							?LOG_INFO([{event, chunk_stored_and_indexed},
+								{absolute_end_offset, AbsoluteEndOffset},
+								{relative_end_offset, Offset},
+								{chunk_size, ChunkSize},
+								{store_id, StoreID},
+								{packing, ar_serialize:encode_packing(Packing2, true)},
+								{origin_store_id, io_lib:format("~p", [OriginStoreID])},
+								{chunk_data_key, ar_util:safe_encode(ChunkDataKey)},
+								{data_root, ar_util:safe_encode(DataRoot)},
+								{update_footprint_record, UpdateFootprintRecord}]),
 							ok;
 						{error, Reason} ->
 							log_failed_to_store_chunk(Reason, AbsoluteEndOffset, Offset, DataRoot,
@@ -3548,6 +3603,16 @@ process_disk_pool_item(State, Key, Value) ->
 			State2 = maybe_reset_disk_pool_full_scan_key(Key, State),
 			{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }};
 		{{ok, {TXStartOffset, _TXPath}}, _} ->
+			?LOG_INFO([{event, disk_pool_chunk_matched_data_root_index},
+				{store_id, StoreID},
+				{data_root, ar_util:encode(DataRoot)},
+				{tx_size, TXSize},
+				{relative_end_offset, Offset},
+				{absolute_end_offset, TXStartOffset + Offset},
+				{chunk_size, ChunkSize},
+				{chunk_data_key, ar_util:safe_encode(ChunkDataKey)},
+				{disk_pool_key, ar_util:safe_encode(Key)},
+				{data_root_in_disk_pool, InDiskPool}]),
 			DataRootIndexIterator = data_root_index_iterator_v2(DataRootKey, TXStartOffset + 1,
 					DataRootIndex),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
@@ -3714,6 +3779,11 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOff
 	#sync_data_state{ store_id = StoreID } = State,
 	case ar_sync_record:is_recorded(AbsoluteEndOffset, ar_data_sync, StoreID) of
 		{true, unpacked} ->
+			?LOG_INFO([{event, disk_pool_chunk_already_indexed_above_threshold},
+				{store_id, StoreID},
+				{absolute_end_offset, AbsoluteEndOffset},
+				{relative_end_offset, element(1, Args)},
+				{chunk_data_key, ar_util:safe_encode(element(6, Args))}]),
 			%% Pass MayConclude as false because we have encountered an offset
 			%% above the disk pool threshold => we need to keep the chunk in the
 			%% disk pool for now and not pack and move to the offset-based storage.
@@ -3725,6 +3795,14 @@ process_disk_pool_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOff
 			case update_chunks_index({AbsoluteEndOffset, Offset, ChunkDataKey,
 					TXRoot, DataRoot, TXPath, ChunkSize, unpacked}, false, State) of
 				ok ->
+					?LOG_INFO([{event, disk_pool_chunk_indexed_above_threshold},
+						{store_id, StoreID},
+						{absolute_end_offset, AbsoluteEndOffset},
+						{relative_end_offset, Offset},
+						{chunk_size, ChunkSize},
+						{data_root, ar_util:encode(DataRoot)},
+						{data_path_hash, ar_util:encode(DataPathHash)},
+						{chunk_data_key, ar_util:safe_encode(ChunkDataKey)}]),
 					gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, false,
 							Args}),
 					{noreply, State};
@@ -3753,6 +3831,13 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffs
 	FindStorageModules =
 		case ar_storage_module:get_all(AbsoluteEndOffset - ChunkSize, AbsoluteEndOffset) of
 			[] ->
+				?LOG_INFO([{event, disk_pool_chunk_matured_without_storage_module},
+					{absolute_end_offset, AbsoluteEndOffset},
+					{relative_end_offset, Offset},
+					{chunk_size, ChunkSize},
+					{data_root, ar_util:encode(DataRoot)},
+					{data_path_hash, ar_util:encode(DataPathHash)},
+					{chunk_data_key, ar_util:safe_encode(ChunkDataKey)}]),
 				gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 						MayConclude, Args}),
 				{noreply, State};
@@ -3766,6 +3851,12 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffs
 			StoreIDs ->
 				case ar_tx_blacklist:is_byte_blacklisted(AbsoluteEndOffset) of
 					true ->
+						?LOG_INFO([{event, disk_pool_chunk_matured_but_blacklisted},
+							{absolute_end_offset, AbsoluteEndOffset},
+							{relative_end_offset, Offset},
+							{chunk_size, ChunkSize},
+							{data_root, ar_util:encode(DataRoot)},
+							{store_ids, io_lib:format("~p", [StoreIDs])}]),
 						gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 								MayConclude, Args}),
 						{noreply, remove_recently_processed_disk_pool_offset(AbsoluteEndOffset,
@@ -3781,6 +3872,12 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffs
 			StoreIDs2 ->
 				case filter_storage_modules_by_synced_offset(AbsoluteEndOffset, StoreIDs2) of
 					[] ->
+						?LOG_INFO([{event, disk_pool_chunk_matured_already_synced},
+							{absolute_end_offset, AbsoluteEndOffset},
+							{relative_end_offset, Offset},
+							{chunk_size, ChunkSize},
+							{data_root, ar_util:encode(DataRoot)},
+							{store_ids, io_lib:format("~p", [StoreIDs2])}]),
 						gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator,
 								MayConclude, Args}),
 						{noreply, remove_recently_processed_disk_pool_offset(AbsoluteEndOffset,
@@ -3843,6 +3940,13 @@ process_disk_pool_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffs
 					gen_server:cast(self(), process_disk_pool_item),
 					{noreply, deregister_currently_processed_disk_pool_key(Key, State)};
 				{ok, {Chunk, DataPath}} ->
+					?LOG_INFO([{event, disk_pool_chunk_dispatching_to_storage_modules},
+						{absolute_end_offset, AbsoluteEndOffset},
+						{relative_end_offset, Offset},
+						{chunk_size, ChunkSize},
+						{data_root, ar_util:encode(DataRoot)},
+						{store_ids, io_lib:format("~p", [StoreIDs6])},
+						{chunk_data_key, ar_util:safe_encode(ChunkDataKey)}]),
 					increment_chunk_cache_size(),
 					Args2 = {DataRoot, AbsoluteEndOffset, TXPath, TXRoot, DataPath, unpacked,
 							Offset, ChunkSize, Chunk, Chunk, none, none},
