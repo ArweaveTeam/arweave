@@ -53,14 +53,18 @@ maybe_request_sessions(SessionKey) ->
 %%%===================================================================
 
 init([]) ->
+	{ok, Config} = arweave_config:get_env(),
+	Peers = Config#config.nonce_limiter_server_trusted_peers,
 	case ar_config:use_remote_vdf_server() of
 		false ->
 			ok;
 		true ->
+			%% Resolve and cache all VDF server peers upfront so that pushes
+			%% (POST /vdf) may be accepted even when pulling is disabled.
+			resolve_server_peers(Peers),
 			gen_server:cast(?MODULE, pull)
 	end,
-	{ok, Config} = arweave_config:get_env(),
-	{ok, #state{ remote_servers = queue:from_list(Config#config.nonce_limiter_server_trusted_peers) }}.
+	{ok, #state{ remote_servers = queue:from_list(Peers) }}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -77,6 +81,10 @@ handle_cast(pull, State = #state{ request_sessions = RequestSessions }) ->
 			ar_util:cast_after(Delay, ?MODULE, pull),
 			{noreply, State1};
 		false ->
+			%% Even when pulling is disabled, periodically re-resolve VDF server peers
+			%% so that pushes (POST /vdf) continue to work (e.g., after DNS changes).
+			{ok, Config} = arweave_config:get_env(),
+			resolve_server_peers(Config#config.nonce_limiter_server_trusted_peers),
 			ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
 			{noreply, State}
 	end;
@@ -124,6 +132,14 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
+resolve_server_peers(RawPeers) ->
+	lists:foreach(
+		fun(RawPeer) ->
+			ar_peers:resolve_and_cache_peer(RawPeer, vdf_server_peer)
+		end,
+		RawPeers
+	).
+
 do_pull(State) ->
 	#state{ remote_servers = Q } = State,
 	RotatedServers = rotate_servers(Q),
@@ -133,7 +149,7 @@ do_pull(State) ->
 			?LOG_WARNING([{event, failed_to_resolve_peer},
 					{raw_peer, io_lib:format("~p", [RawPeer])}]),
 			%% Push the peer to the back of the queue.
-			{0, State#state{ remote_servers = RotatedServers }};
+			{?PULL_THROTTLE_MS, State#state{ remote_servers = RotatedServers }};
 		{ok, Peer} ->
 			case ar_http_iface_client:get_vdf_update(Peer) of
 				{ok, Update} ->
@@ -159,7 +175,7 @@ do_pull(State) ->
 						true ->
 							case fetch_and_apply_session_and_previous_session(Peer) of
 								{error, _} ->
-									{0, State3#state{ 
+									{?PULL_THROTTLE_MS, State3#state{
 										remote_servers = RotatedServers }};
 								_ ->
 									{?PULL_FREQUENCY_MS, State3#state{
@@ -169,14 +185,14 @@ do_pull(State) ->
 							case UpdateResponse of
 								ok ->
 									{?PULL_FREQUENCY_MS, State3};
-								#nonce_limiter_update_response{ step_number = StepNumber }
+							#nonce_limiter_update_response{ step_number = StepNumber }
 										when StepNumber > SessionStepNumber ->
-									%% We are ahead of the server - may be, it is not
-									%% the fastest server in the list so try another one,
-									%% if there are more servers in the configuration
-									%% and they are not on timeout.
-									{0, State3#state{
-											remote_servers = RotatedServers }};
+								%% We are ahead of the server - may be, it is not
+								%% the fastest server in the list so try another one,
+								%% if there are more servers in the configuration
+								%% and they are not on timeout.
+								{0, State3#state{
+										remote_servers = RotatedServers }};
 								#nonce_limiter_update_response{ step_number = StepNumber }
 										when StepNumber == SessionStepNumber ->
 									%% We are in sync with the server. Re-try soon.
@@ -187,26 +203,26 @@ do_pull(State) ->
 									%% step 100, but our last seen step was 90.
 									case fetch_and_apply_session(Peer) of
 										{error, _} ->
-											{0, State3#state{
+											{?PULL_THROTTLE_MS, State3#state{
 													remote_servers = RotatedServers }};
 										_ ->
 											{?PULL_FREQUENCY_MS, State3}
 									end
 							end
 					end;
-				{error, not_found} ->
-					?LOG_WARNING([{event, failed_to_fetch_vdf_update},
-							{peer, ar_util:format_peer(Peer)},
-							{error, not_found}]),
-					%% The server might be restarting.
-					%% Try another one, if there are any.
-					{0, State#state{ remote_servers = RotatedServers }};
-				{error, Reason} ->
-					?LOG_WARNING([{event, failed_to_fetch_vdf_update},
-							{peer, ar_util:format_peer(Peer)},
-							{error, io_lib:format("~p", [Reason])}]),
-					%% Try another server, if there are any.
-					{0, State#state{ remote_servers = RotatedServers }}
+			{error, not_found} ->
+				?LOG_WARNING([{event, failed_to_fetch_vdf_update},
+						{peer, ar_util:format_peer(Peer)},
+						{error, not_found}]),
+				%% The server might be restarting.
+				%% Try another one, if there are any.
+				{?PULL_THROTTLE_MS, State#state{ remote_servers = RotatedServers }};
+			{error, Reason} ->
+				?LOG_WARNING([{event, failed_to_fetch_vdf_update},
+						{peer, ar_util:format_peer(Peer)},
+						{error, io_lib:format("~p", [Reason])}]),
+				%% Try another server, if there are any.
+				{?PULL_THROTTLE_MS, State#state{ remote_servers = RotatedServers }}
 			end
 	end.
 

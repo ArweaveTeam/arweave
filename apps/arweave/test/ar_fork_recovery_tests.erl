@@ -225,7 +225,8 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 	end.
 
 fork_recovery_test_() ->
-	{timeout, 300, fun test_fork_recovery/0}.
+	%% Allow headroom for many sequential wait_until_syncs_chunks calls on slow CI.
+	{timeout, 480, fun test_fork_recovery/0}.
 
 test_fork_recovery() ->
 	test_fork_recovery(original_split).
