@@ -198,6 +198,8 @@ show_help() ->
 					" and downloads it from peers.",
 					[?DEFAULT_HEADER_SYNC_JOBS]
 				)},
+			{"enable_data_roots_syncing [true|false]",
+				"Enable or disable background data roots syncing. Default: true."},
 			{"data_sync_request_packed_chunks",
 				"Enables requesting the packed chunks from peers."},
 			{"disk_pool_jobs (num)",
@@ -739,6 +741,10 @@ parse(["sync_jobs", Num | Rest], C) ->
 	parse(Rest, C#config{ sync_jobs = list_to_integer(Num) });
 parse(["header_sync_jobs", Num | Rest], C) ->
 	parse(Rest, C#config{ header_sync_jobs = list_to_integer(Num) });
+parse(["enable_data_roots_syncing", "true" | Rest], C) ->
+	parse(Rest, C#config{ enable_data_roots_syncing = true });
+parse(["enable_data_roots_syncing", "false" | Rest], C) ->
+	parse(Rest, C#config{ enable_data_roots_syncing = false });
 parse(["data_sync_request_packed_chunks" | Rest], C) ->
 	parse(Rest, C#config{ data_sync_request_packed_chunks = true });
 parse(["post_tx_timeout", Num | Rest], C) ->

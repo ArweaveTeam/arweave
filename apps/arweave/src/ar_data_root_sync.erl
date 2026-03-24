@@ -120,7 +120,14 @@ handle_cast(sync, State) ->
 			ar_util:cast_after(500, self(), sync),
 			{noreply, State};
 		true ->
-			{Delay, State2} = sync_block_data_roots(State),
+			{ok, Config} = arweave_config:get_env(),
+			{Delay, State2} =
+				case Config#config.enable_data_roots_syncing of
+					true ->
+						sync_block_data_roots(State);
+					false ->
+						{?DATA_ROOTS_SYNC_SCAN_INTERVAL_MS, State}
+				end,
 			ar_util:cast_after(Delay, self(), sync),
 			{noreply, State2}
 	end;

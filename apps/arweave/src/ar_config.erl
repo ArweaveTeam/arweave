@@ -487,6 +487,12 @@ parse_options([{<<"header_sync_jobs">>, Value} | Rest], Config)
 parse_options([{<<"header_sync_jobs">>, Value} | _], _) ->
 	{error, {bad_type, header_sync_jobs, number}, Value};
 
+parse_options([{<<"enable_data_roots_syncing">>, Value} | Rest], Config)
+		when is_boolean(Value) ->
+	parse_options(Rest, Config#config{ enable_data_roots_syncing = Value });
+parse_options([{<<"enable_data_roots_syncing">>, Value} | _], _) ->
+	{error, {bad_type, enable_data_roots_syncing, boolean}, Value};
+
 parse_options([{<<"disk_pool_jobs">>, Value} | Rest], Config)
 		when is_integer(Value) ->
 	parse_options(Rest, Config#config{ disk_pool_jobs = Value });
