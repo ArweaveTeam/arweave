@@ -31,26 +31,16 @@ data_roots_http_post_test_() ->
 
 %% HTTP share of roots then chunk roundtrip: per block, GET roots from miner, POST to main, POST/GET /chunk.
 chunk_after_data_roots_http_post_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_after_data_roots_http_post/0).
+	chunk_post_mode_tests("chunk_after_data_roots_http_post", fun test_chunk_after_data_roots_http_post/1).
 
 %% Background ar_data_root_sync + header_sync_jobs > 0; then POST/GET /chunk (regression: POST 200, GET 404).
 chunk_after_data_roots_background_sync_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_after_data_roots_background_sync/0).
+	chunk_post_mode_tests("chunk_after_data_roots_background_sync",
+		fun test_chunk_after_data_roots_background_sync/1).
 
 chunk_skipped_with_duplicate_data_root_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_skipped_with_duplicate_data_root/0).
+	chunk_post_mode_tests("chunk_skipped_with_duplicate_data_root",
+		fun test_chunk_skipped_with_duplicate_data_root/1).
 
 chunk_skipped_with_depth_exhaustion_test_() ->
 	ar_test_node:test_with_mocked_functions([
@@ -58,6 +48,23 @@ chunk_skipped_with_depth_exhaustion_test_() ->
 			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
 		fun test_chunk_skipped_with_depth_exhaustion/0).
+
+chunk_post_mode_tests(TestName, TestFun) ->
+	[
+		{TestName ++ " POST /chunk",
+			ar_test_node:test_with_mocked_functions(chunk_post_test_mocks(),
+				fun() -> TestFun(post_chunk) end)},
+		{TestName ++ " POST /chunk/OFFSET",
+			ar_test_node:test_with_mocked_functions(chunk_post_test_mocks(),
+				fun() -> TestFun(post_chunk_by_offset) end)}
+	].
+
+chunk_post_test_mocks() ->
+	[
+		{ar_block, get_consensus_window_size, fun() -> 5 end},
+		{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
+		{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}
+].
 
 test_data_roots_sync_from_peer() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
@@ -161,7 +168,7 @@ test_data_roots_http_post() ->
 	wait_for_data_roots(main, B),
 	ok.
 
-test_chunk_after_data_roots_http_post() ->
+test_chunk_after_data_roots_http_post(PostMode) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 
@@ -217,7 +224,7 @@ test_chunk_after_data_roots_http_post() ->
 						fun({TX, Chunks}) ->
 							case TX#tx.data_size > 0 of
 								true ->
-									post_then_get_chunks(main, B, TX, Chunks);
+									post_then_get_chunks(main, B, TX, Chunks, PostMode);
 								false ->
 									ok
 							end
@@ -232,7 +239,7 @@ test_chunk_after_data_roots_http_post() ->
 	),
 	ok.
 
-test_chunk_after_data_roots_background_sync() ->
+test_chunk_after_data_roots_background_sync(PostMode) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 	start_peers_then_disconnect(peer1, main, B0),
@@ -242,10 +249,10 @@ test_chunk_after_data_roots_background_sync() ->
 	true = B#block.block_size > 0,
 	wait_until_data_roots_synced(main, B),
 	ar_test_node:disconnect_from(peer1),
-	post_then_get_chunks(main, B, TX, Chunks),
+	post_then_get_chunks(main, B, TX, Chunks, PostMode),
 	ok.
 
-test_chunk_skipped_with_duplicate_data_root() ->
+test_chunk_skipped_with_duplicate_data_root(PostMode) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 	start_peers_then_disconnect(peer1, main, B0),
@@ -267,24 +274,34 @@ test_chunk_skipped_with_duplicate_data_root() ->
 	wait_for_data_roots(main, B2),
 	ar_test_node:disconnect_from(peer1),
 	[{AbsEnd2, Proof2}] = ar_test_data_sync:build_proofs(B2, TX2, Chunks2),
-	post_chunk(main, Proof2),
+	post_chunk(main, AbsEnd2, Proof2, PostMode),
 	wait_for_sync_record_update(main, AbsEnd2),
 	%% POST TX1's chunk. Since we've only synced one copy of the data_roots, and we've already
-	%% postd one chunk matching that data_root (TX2's chunk), we should get a 200 when
-	%% posting Chunk1 - *but* we will not see Chunk1 persisted. This is not ideal but it is
-	%% by design. 
+	%% posted one chunk matching that data_root (TX2's chunk), the legacy endpoint returns 200
+	%% but does not persist Chunk1. The offset endpoint rejects it until B1's exact data roots
+	%% entry is present.
 	%% For more context, and to track the state of any improvements to the process, see:
 	%% https://github.com/ArweaveTeam/arweave-dev/issues/1112
 	[{AbsEnd1, Proof1}] = ar_test_data_sync:build_proofs(B1, TX1, Chunks1),
-	post_chunk(main, Proof1),
-	%% Allow time for the chunk to be persisted (it shouldn't be)
-	timer:sleep(10_000),
+	case PostMode of
+		post_chunk ->
+			post_chunk(main, AbsEnd1, Proof1, PostMode),
+			%% Allow time for the chunk to be persisted (it shouldn't be)
+			timer:sleep(10_000);
+		post_chunk_by_offset ->
+			%% Although the data_root exists, it's indexed against a different chunk. Since
+			%% we are using the POST /chunk/OFFSET endpoint, the node will only accept the chunk
+			%% if it validates agains the data_root *and* it has a data_root for that offset.
+			?assertMatch(
+				{ok, {{<<"400">>, _}, _, <<"{\"error\":\"invalid_offset\"}">>, _, _}},
+				ar_test_node:post_chunk(main, AbsEnd1, ar_serialize:jsonify(Proof1)))
+	end,
 	?assertEqual(not_found, get_chunk(main, AbsEnd1)),
 	%% Now we post B1's data roots, which should allow Chunk1 to be persisted
 	post_data_roots(main, B1, Body1),
 	wait_for_data_roots(main, B1),
 	%% Re-POST the chunk — now B1's index entry exists so the chunk can be promoted.
-	post_chunk(main, Proof1),
+	post_chunk(main, AbsEnd1, Proof1, PostMode),
 	ok = wait_for_chunk_to_persist(main, AbsEnd1).
 
 test_chunk_skipped_with_depth_exhaustion() ->
@@ -569,12 +586,7 @@ post_chunk(Node, Proof) ->
 
 %% POST /chunk/OFFSET with a proof map. Asserts 200.
 post_chunk(Node, GlobalEndOffset, Proof) ->
-	case ar_http:req(#{
-		method => post,
-		peer => ar_test_node:peer_ip(Node),
-		path => "/chunk/" ++ integer_to_list(GlobalEndOffset),
-		body => ar_serialize:jsonify(Proof)
-	}) of
+	case ar_test_node:post_chunk(Node, GlobalEndOffset, ar_serialize:jsonify(Proof)) of
 		{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
 			ok;
 		Other ->
@@ -609,15 +621,20 @@ get_chunk(Node, GlobalEndOffset) ->
 
 %% POST /chunk for each proof from get_records_with_proofs/3, then poll GET /chunk until
 %% queryable (disk pool → sync_record promotion is asynchronous).
-post_then_get_chunks(Node, B, TX, Chunks) ->
+post_then_get_chunks(Node, B, TX, Chunks, PostMode) ->
 	Records = ar_test_data_sync:get_records_with_proofs(B, TX, Chunks),
 	lists:foreach(
 		fun({_, _, _, {GlobalChunkEndOffset, Proof}}) ->
-			post_chunk(Node, Proof),
+			post_chunk(Node, GlobalChunkEndOffset, Proof, PostMode),
 			ok = wait_for_chunk_to_persist(Node, GlobalChunkEndOffset)
 		end,
 		Records
 	).
+
+post_chunk(Node, _GlobalEndOffset, Proof, post_chunk) ->
+	post_chunk(Node, Proof);
+post_chunk(Node, GlobalEndOffset, Proof, post_chunk_by_offset) ->
+	post_chunk(Node, GlobalEndOffset, Proof).
 
 %% Poll GET /chunk until HTTP 200 (disk-pool → sync_record promotion is asynchronous).
 wait_for_chunk_to_persist(Node, GlobalEndOffset) ->

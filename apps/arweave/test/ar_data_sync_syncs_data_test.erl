@@ -9,9 +9,14 @@
 -import(ar_test_node, [assert_wait_until_height/2]).
 
 syncs_data_test_() ->
-	{timeout, 240, fun test_syncs_data/0}.
+	[
+		{"syncs_data POST /chunk",
+			{timeout, 240, fun() -> test_syncs_data(post_chunk) end}},
+		{"syncs_data POST /chunk/OFFSET",
+			{timeout, 240, fun() -> test_syncs_data(post_chunk_by_offset) end}}
+	].
 
-test_syncs_data() ->
+test_syncs_data(PostMode) ->
 	?LOG_DEBUG([{event, test_syncs_data_start}]),
 	Wallet = ar_test_data_sync:setup_nodes(),
 	Records = ar_test_data_sync:post_random_blocks(Wallet),
@@ -19,11 +24,11 @@ test_syncs_data() ->
 			fun({B, TX, Chunks}) -> 
 				ar_test_data_sync:get_records_with_proofs(B, TX, Chunks) end, Records),
 	lists:foreach(
-		fun({_, _, _, {_, Proof}}) ->
+		fun({_, _, _, {AbsoluteEndOffset, Proof}}) ->
 			?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-					ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))),
+					post_chunk(main, AbsoluteEndOffset, Proof, PostMode)),
 			?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-					ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof)))
+					post_chunk(main, AbsoluteEndOffset, Proof, PostMode))
 		end,
 		RecordsWithProofs
 	),
@@ -62,3 +67,8 @@ test_syncs_data() ->
 		end,
 		RecordsWithProofs
 	). 
+
+post_chunk(Node, _AbsoluteEndOffset, Proof, post_chunk) ->
+	ar_test_node:post_chunk(Node, ar_serialize:jsonify(Proof));
+post_chunk(Node, AbsoluteEndOffset, Proof, post_chunk_by_offset) ->
+	ar_test_node:post_chunk(Node, AbsoluteEndOffset, ar_serialize:jsonify(Proof)).

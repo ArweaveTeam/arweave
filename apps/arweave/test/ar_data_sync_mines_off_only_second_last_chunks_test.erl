@@ -9,13 +9,19 @@
 -import(ar_test_node, [test_with_mocked_functions/2]).
 
 mines_off_only_second_last_chunks_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
-			fun test_mines_off_only_second_last_chunks/0).
+	[
+		{"mines_off_only_second_last_chunks POST /chunk",
+			test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
+				fun() -> test_mines_off_only_second_last_chunks(post_chunk) end)},
+		{"mines_off_only_second_last_chunks POST /chunk/OFFSET",
+			test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
+				fun() -> test_mines_off_only_second_last_chunks(post_chunk_by_offset) end)}
+	].
 
 mock_reset_frequency() ->
 	{ar_nonce_limiter, get_reset_frequency, fun() -> 5 end}.
 
-test_mines_off_only_second_last_chunks() ->
+test_mines_off_only_second_last_chunks(PostMode) ->
 	?LOG_DEBUG([{event, test_mines_off_only_second_last_chunks_start}]),
 	Wallet = ar_test_data_sync:setup_nodes(),
 	%% Submit only the second last chunks (smaller than 256 KiB) of transactions.
@@ -30,15 +36,16 @@ test_mines_off_only_second_last_chunks() ->
 					{RandomID, DataSize}]),
 			TX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => DataSize,
 					data_root => DataRoot }),
-			ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX]),
+			B = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX]),
 			Offset = 0,
 			DataPath = ar_merkle:generate_path(DataRoot, Offset, DataTree),
 			Proof = #{ data_root => ar_util:encode(DataRoot),
 					data_path => ar_util:encode(DataPath), chunk => ar_util:encode(Chunk),
 					offset => integer_to_binary(Offset),
 					data_size => integer_to_binary(DataSize) },
+			AbsoluteEndOffset = B#block.weave_size - B#block.block_size + (?DATA_CHUNK_SIZE div 2),
 			?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
-					ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))),
+					post_chunk(main, AbsoluteEndOffset, Proof, PostMode)),
 			case Height - ?SEARCH_SPACE_UPPER_BOUND_DEPTH >= 0 of
 				true ->
 					%% Wait until the new chunks fall below the new upper bound and
@@ -61,3 +68,8 @@ test_mines_off_only_second_last_chunks() ->
 		end,
 		lists:seq(1, 6)
 	). 
+
+post_chunk(Node, _AbsoluteEndOffset, Proof, post_chunk) ->
+	ar_test_node:post_chunk(Node, ar_serialize:jsonify(Proof));
+post_chunk(Node, AbsoluteEndOffset, Proof, post_chunk_by_offset) ->
+	ar_test_node:post_chunk(Node, AbsoluteEndOffset, ar_serialize:jsonify(Proof)).

@@ -5,34 +5,54 @@
 -include_lib("arweave/include/ar.hrl").
 
 get_chunk_below_strict_threshold_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	get_chunk_post_mode_tests(
+		"get_chunk_below_strict_threshold",
 		[strict_data_split_threshold_mock(10 * ?DATA_CHUNK_SIZE)],
-		fun test_get_chunk_below_strict_threshold/0,
+		fun test_get_chunk_below_strict_threshold/1,
 		120
 	).
 
 get_chunk_below_strict_threshold_small_tail_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	get_chunk_post_mode_tests(
+		"get_chunk_below_strict_threshold_small_tail",
 		[strict_data_split_threshold_mock(10 * ?DATA_CHUNK_SIZE)],
-		fun test_get_chunk_below_strict_threshold_small_tail/0,
+		fun test_get_chunk_below_strict_threshold_small_tail/1,
 		120
 	).
 
 get_chunk_above_strict_threshold_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	get_chunk_post_mode_tests(
+		"get_chunk_above_strict_threshold",
 		[strict_data_split_threshold_mock(?DATA_CHUNK_SIZE)],
-		fun test_get_chunk_above_strict_threshold/0,
+		fun test_get_chunk_above_strict_threshold/1,
 		180
 	).
 
 get_chunk_above_strict_threshold_small_tail_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	get_chunk_post_mode_tests(
+		"get_chunk_above_strict_threshold_small_tail",
 		[strict_data_split_threshold_mock(?DATA_CHUNK_SIZE)],
-		fun test_get_chunk_above_strict_threshold_small_tail/0,
+		fun test_get_chunk_above_strict_threshold_small_tail/1,
 		180
 	).
 
-test_get_chunk_below_strict_threshold() ->
+get_chunk_post_mode_tests(TestName, Mocks, TestFun, Timeout) ->
+	[
+		{TestName ++ " POST /chunk",
+			ar_test_node:test_with_mocked_functions(
+				Mocks,
+				fun() -> TestFun(post_chunk) end,
+				Timeout
+			)},
+		{TestName ++ " POST /chunk/OFFSET",
+			ar_test_node:test_with_mocked_functions(
+				Mocks,
+				fun() -> TestFun(post_chunk_by_offset) end,
+				Timeout
+			)}
+	].
+
+test_get_chunk_below_strict_threshold(PostMode) ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	Chunks = [
 		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -41,11 +61,11 @@ test_get_chunk_below_strict_threshold() ->
 	{TX, _} = tx_with_chunks(Wallet, Chunks),
 	B = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [TX]),
 	[{AbsoluteEndOffset, Proof} | _] = ar_test_data_sync:build_proofs(B, TX, Chunks),
-	post_and_wait_for_chunks([{AbsoluteEndOffset, Proof}]),
+	post_and_wait_for_chunks([{AbsoluteEndOffset, Proof}], PostMode),
 	?assert(AbsoluteEndOffset =< ar_block:strict_data_split_threshold()),
 	assert_chunk_offsets_same(AbsoluteEndOffset, Proof).
 
-test_get_chunk_below_strict_threshold_small_tail() ->
+test_get_chunk_below_strict_threshold_small_tail(PostMode) ->
 	SmallChunkSize = 12345,
 	Wallet = ar_test_data_sync:setup_nodes(),
 	Chunks = [
@@ -55,12 +75,12 @@ test_get_chunk_below_strict_threshold_small_tail() ->
 	{TX, _} = tx_with_chunks(Wallet, Chunks),
 	B = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [TX]),
 	[{AbsoluteEndOffset, Proof} | _] = ar_test_data_sync:build_proofs(B, TX, Chunks),
-	post_and_wait_for_chunks([{AbsoluteEndOffset, Proof}]),
+	post_and_wait_for_chunks([{AbsoluteEndOffset, Proof}], PostMode),
 	?assert(byte_size(lists:last(Chunks)) < ?DATA_CHUNK_SIZE),
 	?assert(AbsoluteEndOffset =< ar_block:strict_data_split_threshold()),
 	assert_chunk_offsets_same(AbsoluteEndOffset, Proof).
 
-test_get_chunk_above_strict_threshold() ->
+test_get_chunk_above_strict_threshold(PostMode) ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	Chunks = [
 		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -70,7 +90,8 @@ test_get_chunk_above_strict_threshold() ->
 	B = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [TX]),
 	[{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}] =
 		ar_test_data_sync:build_proofs(B, TX, Chunks),
-	post_and_wait_for_chunks([{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}]),
+	post_and_wait_for_chunks([{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}],
+		PostMode),
 	Threshold = ar_block:strict_data_split_threshold(),
 	AboveThreshold = [{AbsoluteEndOffset, Proof} || {AbsoluteEndOffset, Proof}
 		<- [{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}],
@@ -83,7 +104,7 @@ test_get_chunk_above_strict_threshold() ->
 		AboveThreshold
 	).
 
-test_get_chunk_above_strict_threshold_small_tail() ->
+test_get_chunk_above_strict_threshold_small_tail(PostMode) ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	SmallChunkSize = 12345,
 	FirstChunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -94,7 +115,8 @@ test_get_chunk_above_strict_threshold_small_tail() ->
 	B = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [TX]),
 	[{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}] =
 		ar_test_data_sync:build_proofs(B, TX, Chunks),
-	post_and_wait_for_chunks([{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}]),
+	post_and_wait_for_chunks([{FirstEndOffset, FirstProof}, {SecondEndOffset, SecondProof}],
+		PostMode),
 	Threshold = ar_block:strict_data_split_threshold(),
 	?assert(FirstEndOffset > Threshold),
 	?assert(SecondEndOffset > Threshold),
@@ -144,12 +166,12 @@ tx_with_chunks(Wallet, Chunks) ->
 	),
 	ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}).
 
-post_and_wait_for_chunks(Proofs) ->
+post_and_wait_for_chunks(Proofs, PostMode) ->
 	lists:foreach(
-		fun({_EndOffset, Proof}) ->
+		fun({AbsoluteEndOffset, Proof}) ->
 			?assertMatch(
 				{ok, {{<<"200">>, _}, _, _, _, _}},
-				ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
+				post_chunk(main, AbsoluteEndOffset, Proof, PostMode)
 			)
 		end,
 		Proofs
@@ -165,6 +187,11 @@ post_and_wait_for_chunks(Proofs) ->
 		end,
 		Proofs
 	).
+
+post_chunk(Node, _AbsoluteEndOffset, Proof, post_chunk) ->
+	ar_test_node:post_chunk(Node, ar_serialize:jsonify(Proof));
+post_chunk(Node, AbsoluteEndOffset, Proof, post_chunk_by_offset) ->
+	ar_test_node:post_chunk(Node, AbsoluteEndOffset, ar_serialize:jsonify(Proof)).
 
 unique_offsets(Offsets, StartOffset) ->
 	lists:usort([Offset || Offset <- Offsets, Offset > StartOffset, Offset >= 0]).

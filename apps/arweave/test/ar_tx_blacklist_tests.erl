@@ -34,9 +34,14 @@ handle([<<"bad">>, <<"and">>, <<"good">>], Req, State) ->
 	{ok, cowboy_req:reply(200, #{}, Reply, Req), State}.
 
 uses_blacklists_test_() ->
-	{timeout, 300, fun test_uses_blacklists/0}.
+	[
+		{"uses_blacklists POST /chunk",
+			{timeout, 300, fun() -> test_uses_blacklists(post_chunk) end}},
+		{"uses_blacklists POST /chunk/OFFSET",
+			{timeout, 300, fun() -> test_uses_blacklists(post_chunk_by_offset) end}}
+	].
 
-test_uses_blacklists() ->
+test_uses_blacklists(PostMode) ->
 	{
 		BlacklistFiles,
 		B0,
@@ -86,7 +91,7 @@ test_uses_blacklists() ->
 						ok
 				end,
 				ar_test_node:mine(peer1),
-				upload_data([TX], DataTrees),
+				upload_data([TX], DataTrees, PostMode),
 				wait_until_height(main, Height)
 			end,
 			lists:zip(TXs, lists:seq(1, length(TXs)))
@@ -104,7 +109,7 @@ test_uses_blacklists() ->
 		?assert(lists:all(fun(BadOffset) ->
 			not lists:member(ar_block:get_chunk_padded_offset(BadOffset), ChunkOffsets)
 		end, lists:flatten(BadOffsets))),
-		assert_does_not_accept_offsets(BadOffsets),
+		assert_does_not_accept_offsets(BadOffsets, PostMode),
 		%% Add a new transaction to the blacklist, add a blacklisted transaction to whitelist.
 		ok = file:write_file(lists:nth(3, BlacklistFiles), <<>>),
 		ok = file:write_file(WhitelistFile, ar_util:encode(lists:nth(2, BadTXIDs))),
@@ -120,12 +125,12 @@ test_uses_blacklists() ->
 		%% Expect the freshly blacklisted transaction to be erased.
 		assert_present_txs([hd(GoodTXIDs)]), % V2 headers must not be removed.
 		assert_removed_offsets([hd(GoodOffsets)]),
-		assert_does_not_accept_offsets([hd(GoodOffsets)]),
+		assert_does_not_accept_offsets([hd(GoodOffsets)], PostMode),
 		%% Expect the previously blacklisted transactions to stay blacklisted.
 		assert_present_txs(BadTXIDs2), % V2 headers must not be removed.
 		assert_removed_txs(BadV1TXIDs),
 		assert_removed_offsets(BadOffsets3),
-		assert_does_not_accept_offsets(BadOffsets3),
+		assert_does_not_accept_offsets(BadOffsets3, PostMode),
 		%% Blacklist the last transaction. Fork the weave. Assert the blacklisted offsets are moved.
 		ar_test_node:disconnect_from(peer1),
 		TX = ar_test_node:sign_tx(Wallet, #{ data => crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -294,7 +299,7 @@ encode_chunk(Proof) ->
 		offset => integer_to_binary(maps:get(offset, Proof))
 	}).
 
-upload_data(TXs, DataTrees) ->
+upload_data(TXs, DataTrees, PostMode) ->
 	lists:foreach(
 		fun(TX) ->
 			#tx{
@@ -303,20 +308,22 @@ upload_data(TXs, DataTrees) ->
 				data_size = DataSize
 			} = TX,
 			{DataTree, Chunks} = maps:get(TXID, DataTrees),
+			{ok, {TXEndOffset, _}} = ar_test_node:remote_call(peer1, ar_data_sync, get_tx_offset, [TXID]),
 			ChunkOffsets = lists:zip(Chunks,
 					lists:seq(?DATA_CHUNK_SIZE, 10 * ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE)),
 			UploadChunks = ChunkOffsets,
 			lists:foreach(
 				fun({Chunk, Offset}) ->
 					DataPath = ar_merkle:generate_path(DataRoot, Offset - 1, DataTree),
+					AbsoluteEndOffset = TXEndOffset - DataSize + Offset,
 					{ok, {{<<"200">>, _}, _, _, _, _}} =
-						ar_test_node:post_chunk(peer1, encode_chunk(#{
+						post_chunk(peer1, AbsoluteEndOffset, encode_chunk(#{
 							data_root => DataRoot,
 							chunk => Chunk,
 							data_path => DataPath,
 							offset => Offset - 1,
 							data_size => DataSize
-						}))
+						}), PostMode)
 				end,
 				UploadChunks
 			)
@@ -413,7 +420,7 @@ assert_removed_offsets(BadOffsets) ->
 		60000
 	).
 
-assert_does_not_accept_offsets(BadOffsets) ->
+assert_does_not_accept_offsets(BadOffsets, PostMode) ->
 	true = ar_util:do_until(
 		fun() ->
 			lists:all(
@@ -433,7 +440,7 @@ assert_does_not_accept_offsets(BadOffsets) ->
 							},
 							EncodedProof2 = encode_chunk(Proof2),
 							%% The node returns 200 but does not store the chunk.
-							case ar_test_node:post_chunk(main, EncodedProof2) of
+							case post_chunk(main, Offset, EncodedProof2, PostMode) of
 								{ok, {{<<"200">>, _}, _, _, _, _}} ->
 									case ar_test_node:get_chunk(main, Offset) of
 										{ok, {{<<"404">>, _}, _, _, _, _}} ->
@@ -454,6 +461,11 @@ assert_does_not_accept_offsets(BadOffsets) ->
 		500,
 		60000
 	).
+
+post_chunk(Node, _AbsoluteEndOffset, EncodedProof, post_chunk) ->
+	ar_test_node:post_chunk(Node, EncodedProof);
+post_chunk(Node, AbsoluteEndOffset, EncodedProof, post_chunk_by_offset) ->
+	ar_test_node:post_chunk(Node, AbsoluteEndOffset, EncodedProof).
 
 decode_chunk(EncodedProof) ->
 	ar_serialize:json_map_to_poa_map(
