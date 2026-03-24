@@ -147,6 +147,7 @@ start_for_tests(TestType) ->
 		data_dir = ".tmp/data_" ++ atom_to_list(TestType) ++ "_main_" ++ UniqueName,
 		port = ar_test_node:get_unused_port(),
 		disable = [randomx_jit],
+		'http_client.http.keepalive' = 4_000,
 		auto_join = false
 	},
 	ar:start(TestConfig).

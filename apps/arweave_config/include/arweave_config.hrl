@@ -310,6 +310,7 @@
 	max_emitters = ?NUM_EMITTER_PROCESSES,
 	sync_jobs = ?DEFAULT_SYNC_JOBS,
 	header_sync_jobs = ?DEFAULT_HEADER_SYNC_JOBS,
+	enable_data_roots_syncing = true,
 	data_sync_request_packed_chunks = false,
 	disk_pool_jobs = ?DEFAULT_DISK_POOL_JOBS,
 	load_key = not_set,
