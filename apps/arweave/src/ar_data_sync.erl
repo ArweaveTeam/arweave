@@ -216,12 +216,13 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							not_found ->
 								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
 							{ok, {TXStartOffset, _}} ->
+								{ok, Config} = arweave_config:get_env(),
 								case chunk_offsets_synced(DataRootIndex, DataRootKey,
 										%% The same data may be uploaded several times.
 										%% Here we only accept the chunk if any of the
-										%% last 5 instances of this data is not filled in
-										%% yet.
-										EndOffset2, TXStartOffset, 5) of
+										%% last configured number of instances of this
+										%% data is not filled in yet.
+										EndOffset2, TXStartOffset, Config#config.max_duplicate_data_roots) of
 									true ->
 										synced;
 									false ->

@@ -288,20 +288,21 @@ test_chunk_skipped_with_duplicate_data_root() ->
 	ok = wait_for_chunk_to_persist(main, AbsEnd1).
 
 test_chunk_skipped_with_depth_exhaustion() ->
+	MaxDuplicateDataRoots = 3,
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 	start_peers_then_disconnect(peer1, main, B0),
-	%% Mine 6 blocks with identical data roots this will make sure the oldest chunk is will not
-	%% be persisted (we only persist the first 5 chunks with the same data root). 
+	%% Mine one more block than the configured duplicate-depth limit. This ensures the oldest
+	%% chunk falls outside the configured duplicate data-root window.
 	Blocks = lists:map(
 		fun(_) -> mine_block_with_small_fixed_data_tx(peer1, Wallet) end,
-		lists:seq(1, 6)
+		lists:seq(1, MaxDuplicateDataRoots + 1)
 	),
 	{LastB, _} = lists:last(Blocks),
-	%% Now we mine 10 empty blocks. This pushes the 6 chunks mined earlier out of the disk pool,
-	%% which will either promote them to storage (first 5) or purge it from memory (last 1).
+	%% Mine enough empty blocks to push the chunks out of the disk pool. The later duplicates
+	%% should still be persistable, but the oldest should now be outside the configured window.
 	mine_empty_blocks_on_peer_after(peer1, LastB, 10),
-	join_main_on_peer1(LastB#block.height + 10, false),
+	join_main_on_peer1(LastB#block.height + 10, false, MaxDuplicateDataRoots),
 	ar_test_node:disconnect_from(peer1),
 	[{B1, [{TX1, Chunks1}]} | HigherBlocks] = Blocks,
 	lists:foreach(
@@ -312,8 +313,9 @@ test_chunk_skipped_with_depth_exhaustion() ->
 		end,
 		HigherBlocks
 	),
-	%% POST chunks for blocks 2-6 and wait for promotion. The oldest block B1 is not among
-	%% the last 5 duplicate offsets, so it should not become queryable via duplicate fanout.
+	%% POST chunks for the later duplicate blocks and wait for promotion. The oldest block B1
+	%% is outside the configured duplicate-offset window, so it should not become queryable via
+	%% duplicate fanout.
 	HigherAbsEnds = lists:map(
 		fun({B, [{TX, Chunks}]}) ->
 			[{AbsEnd, Proof}] = ar_test_data_sync:build_proofs(B, TX, Chunks),
@@ -329,8 +331,8 @@ test_chunk_skipped_with_depth_exhaustion() ->
 		HigherAbsEnds
 	),
 	timer:sleep(10_000),
-	%% POST chunk for block 1 (lowest offset). chunk_offsets_synced/5 only checks the last
-	%% 5 synced duplicate offsets, so B1 is treated as already synced and skipped.
+	%% POST chunk for block 1 (lowest offset). chunk_offsets_synced/5 only checks the configured
+	%% number of synced duplicate offsets, so B1 is treated as already synced and skipped.
 	[{AbsEnd1, Proof1}] = ar_test_data_sync:build_proofs(B1, TX1, Chunks1),
 	post_chunk(main, Proof1),
 	timer:sleep(10_000),
@@ -376,8 +378,11 @@ mine_empty_blocks_on_peer_after(Peer, Block, Count) ->
 %% data_roots syncing. Does not disconnect — caller may call
 %% ar_test_node:remote_call(main, ar_test_node, disconnect_from, [peer1]) when needed.
 join_main_on_peer1(ExpectedHeight, EnableBackgroundSync) ->
+	join_main_on_peer1(ExpectedHeight, EnableBackgroundSync, undefined).
+
+join_main_on_peer1(ExpectedHeight, EnableBackgroundSync, MaxDuplicateDataRoots) ->
 	{ok, BaseConfig} = arweave_config:get_env(),
-	MainConfig = BaseConfig#config{
+	Config = BaseConfig#config{
 		mine = false,
 		sync_jobs = 0,
 		header_sync_jobs =
@@ -387,6 +392,12 @@ join_main_on_peer1(ExpectedHeight, EnableBackgroundSync) ->
 			end,
 		enable_data_roots_syncing = EnableBackgroundSync
 	},
+	MainConfig = case MaxDuplicateDataRoots of
+		undefined ->
+			Config;
+		Value ->
+			Config#config{ max_duplicate_data_roots = Value }
+	end,
 	ar_test_node:join_on(#{ node => main, join_on => peer1, config => MainConfig }, true),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:wait_until_joined(main),

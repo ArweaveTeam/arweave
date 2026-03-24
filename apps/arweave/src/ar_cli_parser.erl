@@ -254,6 +254,12 @@ show_help() ->
 			{"max_disk_pool_data_root_buffer_mb",
 				"The max size (in MiB) per data root of the pending chunks in the disk"
 				" pool. The default is 50."},
+			{"max_duplicate_data_roots",
+				io_lib:format(
+					"The maximum number of duplicate data roots to inspect when "
+					"checking whether a posted chunk is already synced. Default is ~B.",
+					[?DEFAULT_MAX_DUPLICATE_DATA_ROOTS]
+				)},
 			{"disk_cache_size_mb",
 				lists:flatten(io_lib:format(
 					"The maximum size (in MiB) of the disk space allocated for"
@@ -769,6 +775,8 @@ parse(["max_disk_pool_buffer_mb", Num | Rest], C) ->
 	parse(Rest, C#config{ max_disk_pool_buffer_mb = list_to_integer(Num) });
 parse(["max_disk_pool_data_root_buffer_mb", Num | Rest], C) ->
 	parse(Rest, C#config{ max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
+parse(["max_duplicate_data_roots", Num | Rest], C) ->
+	parse(Rest, C#config{ max_duplicate_data_roots = list_to_integer(Num) });
 parse(["disk_cache_size_mb", Num | Rest], C) ->
 	parse(Rest, C#config{ disk_cache_size = list_to_integer(Num) });
 parse(["packing_workers", Num | Rest], C) ->

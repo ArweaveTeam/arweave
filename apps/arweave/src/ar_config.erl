@@ -641,6 +641,10 @@ parse_options([{<<"max_disk_pool_data_root_buffer_mb">>, D} | Rest], Config)
 		when is_integer(D) ->
 	parse_options(Rest, Config#config{ max_disk_pool_data_root_buffer_mb = D });
 
+parse_options([{<<"max_duplicate_data_roots">>, D} | Rest], Config)
+		when is_integer(D) ->
+	parse_options(Rest, Config#config{ max_duplicate_data_roots = D });
+
 parse_options([{<<"disk_cache_size_mb">>, D} | Rest], Config) when is_integer(D) ->
 	parse_options(Rest, Config#config{ disk_cache_size = D });
 
