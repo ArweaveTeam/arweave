@@ -295,7 +295,7 @@ check_posted_chunk_synced(not_set, DataRootIndex, DataRootKey, DataRootOffsetRep
 					%% Here we only accept the chunk if any of the
 					%% last configured number of instances of this
 					%% data is not filled in yet.
-					EndOffset2, TXStartOffset, Config#config.max_duplicate_data_roots) of
+					EndOffset, TXStartOffset, Config#config.max_duplicate_data_roots) of
 				true ->
 					synced;
 				false ->
