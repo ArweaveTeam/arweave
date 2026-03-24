@@ -16,7 +16,7 @@
 		is_footprint_record_supported/3, get_data_roots_for_offset/1, are_data_roots_synced/3,
 		get_disk_pool_threshold/0]).
 
--export([add_chunk_to_disk_pool/5]).
+-export([add_chunk_to_disk_pool/5, add_chunk_to_disk_pool/6]).
 
 -export([debug_get_disk_pool_chunks/0]).
 
@@ -135,6 +135,9 @@ is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) ->
 %% The item is removed from the disk pool when the chunk's offset
 %% drops below the disk pool threshold.
 add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
+	add_chunk_to_disk_pool(not_set, DataRoot, DataPath, Chunk, Offset, TXSize).
+
+add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	DataRootIndex = {data_root_index, ?DEFAULT_MODULE},
 	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
 	DiskPoolChunksIndex = {disk_pool_chunks_index, ?DEFAULT_MODULE},
@@ -212,23 +215,9 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 						%% The chunk is already in disk pool.
 						{synced_disk_pool, EndOffset2};
 					not_found ->
-						case DataRootOffsetReply of
-							not_found ->
-								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
-							{ok, {TXStartOffset, _}} ->
-								{ok, Config} = arweave_config:get_env(),
-								case chunk_offsets_synced(DataRootIndex, DataRootKey,
-										%% The same data may be uploaded several times.
-										%% Here we only accept the chunk if any of the
-										%% last configured number of instances of this
-										%% data is not filled in yet.
-										EndOffset2, TXStartOffset, Config#config.max_duplicate_data_roots) of
-									true ->
-										synced;
-									false ->
-										{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}}
-								end
-						end;
+						check_posted_chunk_synced(GlobalOffset, DataRootIndex, DataRootKey,
+								DataRootOffsetReply, DataRoot, TXSize, EndOffset2,
+								DataPathHash, DiskPoolChunkKey, PassedState2);
 					{error, Reason} ->
 						?LOG_WARNING([{event, failed_to_read_chunk_from_disk_pool},
 								{reason, io_lib:format("~p", [Reason])},
@@ -242,7 +231,9 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 		synced ->
 			ok;
 		{synced_disk_pool, EndOffset4} ->
-			case is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset4) of
+			case is_estimated_long_term_chunk(
+					get_chunk_data_root_offset_reply(GlobalOffset, DataRootOffsetReply, EndOffset4),
+					EndOffset4) of
 				false ->
 					temporary;
 				true ->
@@ -279,7 +270,10 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							ets:update_counter(ar_data_sync_state, disk_pool_size,
 									{2, ChunkSize}),
 							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
-							case is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset3) of
+							case is_estimated_long_term_chunk(
+									get_chunk_data_root_offset_reply(
+										GlobalOffset, DataRootOffsetReply, EndOffset3),
+									EndOffset3) of
 								false ->
 									temporary;
 								true ->
@@ -288,6 +282,52 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 					end
 			end
 	end.
+
+check_posted_chunk_synced(not_set, DataRootIndex, DataRootKey, DataRootOffsetReply, _DataRoot,
+		_TXSize, EndOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
+	case DataRootOffsetReply of
+		not_found ->
+			{ok, {DataPathHash, DiskPoolChunkKey, PassedState}};
+		{ok, {TXStartOffset, _}} ->
+			{ok, Config} = arweave_config:get_env(),
+			case chunk_offsets_synced(DataRootIndex, DataRootKey,
+					%% The same data may be uploaded several times.
+					%% Here we only accept the chunk if any of the
+					%% last configured number of instances of this
+					%% data is not filled in yet.
+					EndOffset2, TXStartOffset, Config#config.max_duplicate_data_roots) of
+				true ->
+					synced;
+				false ->
+					{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}}
+			end
+	end;
+check_posted_chunk_synced(GlobalOffset, DataRootIndex, _DataRootKey, _DataRootOffsetReply,
+		DataRoot, TXSize, EndOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
+	TXStartOffset = GlobalOffset - EndOffset,
+	case TXStartOffset >= 0 of
+		false ->
+			{error, invalid_offset};
+		true ->
+			case ar_kv:get(DataRootIndex, data_root_key_v2(DataRoot, TXSize, TXStartOffset)) of
+				not_found ->
+					{error, invalid_offset};
+				{ok, _TXPath} ->
+					case ar_sync_record:is_recorded(GlobalOffset, ar_data_sync) of
+						{{true, _}, _StoreID} ->
+							synced;
+						false ->
+							{ok, {DataPathHash, DiskPoolChunkKey, PassedState}}
+					end;
+				{error, _} ->
+					{error, failed_to_store_chunk}
+			end
+	end.
+
+get_chunk_data_root_offset_reply(not_set, DataRootOffsetReply, _EndOffset) ->
+	DataRootOffsetReply;
+get_chunk_data_root_offset_reply(GlobalOffset, _DataRootOffsetReply, EndOffset) ->
+	{ok, {GlobalOffset - EndOffset, <<>>}}.
 
 %% @doc Store the given value in the chunk data DB.
 -spec put_chunk_data(

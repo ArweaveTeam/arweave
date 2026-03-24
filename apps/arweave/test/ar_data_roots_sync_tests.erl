@@ -348,7 +348,9 @@ test_chunk_skipped_with_depth_exhaustion() ->
 	post_chunk(main, Proof1),
 	timer:sleep(10_000),
 	?assertEqual(not_found, get_chunk(main, AbsEnd1)),
-	% ok = wait_for_chunk_to_persist(main, AbsEnd1),
+	%% POST /chunk/OFFSET disambiguates the duplicate data root and persists the exact chunk.
+	post_chunk(main, AbsEnd1, Proof1),
+	ok = wait_for_chunk_to_persist(main, AbsEnd1),
 	ok.
 
 %% Start PeerA and PeerB from the same genesis, wait until both joined, then have PeerA
@@ -563,6 +565,21 @@ post_chunk(Node, Proof) ->
 		Other ->
 			?assert(false, lists:flatten(io_lib:format(
 				"POST /chunk: expected 200, got ~p", [Other])))
+	end.
+
+%% POST /chunk/OFFSET with a proof map. Asserts 200.
+post_chunk(Node, GlobalEndOffset, Proof) ->
+	case ar_http:req(#{
+		method => post,
+		peer => ar_test_node:peer_ip(Node),
+		path => "/chunk/" ++ integer_to_list(GlobalEndOffset),
+		body => ar_serialize:jsonify(Proof)
+	}) of
+		{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
+			ok;
+		Other ->
+			?assert(false, lists:flatten(io_lib:format(
+				"POST /chunk/~B: expected 200, got ~p", [GlobalEndOffset, Other])))
 	end.
 
 %% Poll until AbsoluteEndOffset appears in the sync record for the given node.
