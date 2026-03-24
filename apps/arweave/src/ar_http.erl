@@ -468,7 +468,15 @@ should_retry_closed_connection({down, {shutdown, {error, einval}}}) ->
 	true;
 should_retry_closed_connection({stream_error, closed}) ->
 	true;
+should_retry_closed_connection({stream_error, closing}) ->
+	true;
+should_retry_closed_connection({stream_error, {closed, normal}}) ->
+	true;
 should_retry_closed_connection({shutdown, closed}) ->
+	true;
+should_retry_closed_connection(closed) ->
+	true;
+should_retry_closed_connection(closing) ->
 	true;
 should_retry_closed_connection(_) ->
 	false.

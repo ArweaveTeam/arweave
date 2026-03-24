@@ -74,6 +74,7 @@
 -define(WAIT_UNTIL_JOINED_TIMEOUT, 200_000).
 -define(WAIT_SYNCS_DATA_TIMEOUT, 200_000).
 -define(WAIT_UNTIL_MINING_PAUSED_TIMEOUT, 60_000).
+-define(TEST_HTTP_CLIENT_KEEPALIVE, 4_000).
 
 %%%===================================================================
 %%% Public interface.
@@ -286,7 +287,8 @@ update_config(Config) ->
 		mine = Config#config.mine,
 		storage_modules = Config#config.storage_modules,
 		repack_in_place_storage_modules = Config#config.repack_in_place_storage_modules,
-		allow_rebase = Config#config.allow_rebase
+		allow_rebase = Config#config.allow_rebase,
+		'http_client.http.keepalive' = ?TEST_HTTP_CLIENT_KEEPALIVE
 	},
 	ok = arweave_config:set_env(Config2),
 	?LOG_INFO("Updated Config:"),
@@ -680,6 +682,7 @@ start(B0, RewardAddr, Config, StorageModules) ->
 				double_check_nonce_limiter, serve_wallet_lists | Config#config.enable],
 		%% Disable rebasing by default to make the tests more reliable.
 		allow_rebase = false,
+		'http_client.http.keepalive' = ?TEST_HTTP_CLIENT_KEEPALIVE,
 		debug = true
 	}),
 	ar:start_dependencies(),
@@ -903,7 +906,8 @@ join(JoinOnNode, Rejoin, Config) ->
 	ok = arweave_config:set_env(Config#config{
 		start_from_latest_state = false,
 		auto_join = true,
-		peers = [Peer]
+		peers = [Peer],
+		'http_client.http.keepalive' = ?TEST_HTTP_CLIENT_KEEPALIVE
 	}),
 	ar:start_dependencies(),
 	whereis(ar_node_worker).
