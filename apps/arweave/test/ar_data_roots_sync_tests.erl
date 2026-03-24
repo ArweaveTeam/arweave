@@ -45,10 +45,6 @@ chunk_after_data_roots_background_sync_test_() ->
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
 		fun test_chunk_after_data_roots_background_sync/0).
 
-%% Two TXs with the same data root. B2's data roots are synced and its chunk is promoted;
-%% B1's data roots are NOT yet in the index (incomplete background sync). POST B1's chunk —
-%% chunk_offsets_synced must not skip it (none → false). The chunk enters the disk pool.
-%% After B1's data roots are synced, the disk pool scan promotes the chunk to B1's offset.
 chunk_skipped_with_duplicate_data_root_test_() ->
 	ar_test_node:test_with_mocked_functions([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
@@ -56,9 +52,6 @@ chunk_skipped_with_duplicate_data_root_test_() ->
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
 		fun test_chunk_skipped_with_duplicate_data_root/0).
 
-%% 6 TXs with the same data root: 5 highest-offset chunks synced, lowest not. POST the
-%% lowest chunk — chunk_offsets_synced exhausts its N=5 depth limit walking through the 5
-%% synced entries. Before fix the N=0 base case returned true (skip); after fix returns false.
 chunk_skipped_with_depth_exhaustion_test_() ->
 	ar_test_node:test_with_mocked_functions([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
