@@ -198,7 +198,9 @@ add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) 
 							{reason, invalid_proof}, {offset, Offset}]),
 						{error, invalid_proof};
 					{true, PassesBase, PassesStrict, PassesRebase, EndOffset} ->
-						{ok, {EndOffset, PassesBase, PassesStrict, PassesRebase,
+						NormalizedEndOffset =
+							normalize_posted_chunk_end_offset(GlobalOffset, EndOffset),
+						{ok, {NormalizedEndOffset, PassesBase, PassesStrict, PassesRebase,
 								DiskPoolDataRootValue}}
 				end
 		end,
@@ -216,7 +218,7 @@ add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) 
 						{synced_disk_pool, EndOffset2};
 					not_found ->
 						check_posted_chunk_synced(GlobalOffset, DataRootIndex, DataRootKey,
-								DataRootOffsetReply, DataRoot, TXSize, EndOffset2,
+								DataRootOffsetReply, DataRoot, TXSize, Offset, EndOffset2,
 								DataPathHash, DiskPoolChunkKey, PassedState2);
 					{error, Reason} ->
 						?LOG_WARNING([{event, failed_to_read_chunk_from_disk_pool},
@@ -232,7 +234,8 @@ add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) 
 			ok;
 		{synced_disk_pool, EndOffset4} ->
 			case is_estimated_long_term_chunk(
-					get_chunk_data_root_offset_reply(GlobalOffset, DataRootOffsetReply, EndOffset4),
+					get_chunk_data_root_offset_reply(
+						GlobalOffset, DataRootOffsetReply, Offset, EndOffset4),
 					EndOffset4) of
 				false ->
 					temporary;
@@ -272,7 +275,7 @@ add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) 
 							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
 							case is_estimated_long_term_chunk(
 									get_chunk_data_root_offset_reply(
-										GlobalOffset, DataRootOffsetReply, EndOffset3),
+										GlobalOffset, DataRootOffsetReply, Offset, EndOffset3),
 									EndOffset3) of
 								false ->
 									temporary;
@@ -284,7 +287,7 @@ add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) 
 	end.
 
 check_posted_chunk_synced(not_set, DataRootIndex, DataRootKey, DataRootOffsetReply, _DataRoot,
-		_TXSize, EndOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
+		_TXSize, _Offset, EndOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
 	case DataRootOffsetReply of
 		not_found ->
 			{ok, {DataPathHash, DiskPoolChunkKey, PassedState}};
@@ -303,8 +306,9 @@ check_posted_chunk_synced(not_set, DataRootIndex, DataRootKey, DataRootOffsetRep
 			end
 	end;
 check_posted_chunk_synced(GlobalOffset, DataRootIndex, _DataRootKey, _DataRootOffsetReply,
-		DataRoot, TXSize, EndOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
-	TXStartOffset = GlobalOffset - EndOffset,
+		DataRoot, TXSize, Offset, EndOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
+	TXStartOffset = GlobalOffset - Offset,
+	AbsoluteEndOffset = TXStartOffset + EndOffset,
 	case TXStartOffset >= 0 of
 		false ->
 			{error, invalid_offset};
@@ -313,7 +317,7 @@ check_posted_chunk_synced(GlobalOffset, DataRootIndex, _DataRootKey, _DataRootOf
 				not_found ->
 					{error, invalid_offset};
 				{ok, _TXPath} ->
-					case ar_sync_record:is_recorded(GlobalOffset, ar_data_sync) of
+					case ar_sync_record:is_recorded(AbsoluteEndOffset, ar_data_sync) of
 						{{true, _}, _StoreID} ->
 							synced;
 						false ->
@@ -324,10 +328,15 @@ check_posted_chunk_synced(GlobalOffset, DataRootIndex, _DataRootKey, _DataRootOf
 			end
 	end.
 
-get_chunk_data_root_offset_reply(not_set, DataRootOffsetReply, _EndOffset) ->
+get_chunk_data_root_offset_reply(not_set, DataRootOffsetReply, _Offset, _EndOffset) ->
 	DataRootOffsetReply;
-get_chunk_data_root_offset_reply(GlobalOffset, _DataRootOffsetReply, EndOffset) ->
-	{ok, {GlobalOffset - EndOffset, <<>>}}.
+get_chunk_data_root_offset_reply(GlobalOffset, _DataRootOffsetReply, Offset, _EndOffset) ->
+	{ok, {GlobalOffset - Offset, <<>>}}.
+
+normalize_posted_chunk_end_offset(not_set, EndOffset) ->
+	EndOffset;
+normalize_posted_chunk_end_offset(_GlobalOffset, EndOffset) ->
+	ar_block:get_chunk_padded_offset(EndOffset).
 
 %% @doc Store the given value in the chunk data DB.
 -spec put_chunk_data(
