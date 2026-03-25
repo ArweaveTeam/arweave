@@ -46,6 +46,9 @@
 -define(DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB, 10000).
 -endif.
 
+%% The default number of duplicate data roots checked for a posted chunk.
+-define(DEFAULT_MAX_DUPLICATE_DATA_ROOTS, 5).
+
 %% The default total size limit for unconfirmed and seeded chunks.
 -ifdef(AR_TEST).
 -define(DEFAULT_MAX_DISK_POOL_BUFFER_MB, 100).
@@ -336,6 +339,7 @@
 	disk_pool_data_root_expiration_time = ?DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S,
 	max_disk_pool_buffer_mb = ?DEFAULT_MAX_DISK_POOL_BUFFER_MB,
 	max_disk_pool_data_root_buffer_mb = ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
+	max_duplicate_data_roots = ?DEFAULT_MAX_DUPLICATE_DATA_ROOTS,
 	semaphores = #{
 		get_chunk => ?MAX_PARALLEL_GET_CHUNK_REQUESTS,
 		get_and_pack_chunk => ?MAX_PARALLEL_GET_AND_PACK_CHUNK_REQUESTS,

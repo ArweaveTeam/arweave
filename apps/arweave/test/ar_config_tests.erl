@@ -105,6 +105,7 @@ test_parse_config() ->
 		disk_pool_data_root_expiration_time = 10000,
 		max_disk_pool_buffer_mb = 100000,
 		max_disk_pool_data_root_buffer_mb = 100000000,
+		max_duplicate_data_roots = 7,
 		disk_cache_size = 1024,
 		semaphores = #{
 			get_chunk := 1,
