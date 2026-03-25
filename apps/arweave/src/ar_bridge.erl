@@ -8,7 +8,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/2]).
+-export([start_link/2, start_gossip/0, stop_gossip/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -19,7 +19,8 @@
 
 -record(state, {
 	block_propagation_queue = gb_sets:new(),
-	workers
+	workers,
+	gossip = true
 }).
 
 %%%===================================================================
@@ -37,6 +38,12 @@ block_propagation_parallelization() ->
 %%--------------------------------------------------------------------
 start_link(Name, Workers) ->
 	gen_server:start_link({local, Name}, ?MODULE, Workers, []).
+
+start_gossip() ->
+	gen_server:call(?MODULE, start_gossip).
+
+stop_gossip() ->
+	gen_server:call(?MODULE, stop_gossip).
 
 %%% gen_server callbacks
 %%%===================================================================
@@ -72,6 +79,10 @@ init(Workers) ->
 %%									 {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_call(start_gossip, _From, State) ->
+	{reply, ok, State#state{ gossip = true }};
+handle_call(stop_gossip, _From, State) ->
+	{reply, ok, State#state{ gossip = false, block_propagation_queue = gb_sets:new() }};
 handle_call(Request, _From, State) ->
 	?LOG_WARNING("unhandled call: ~p", [Request]),
 	{reply, ok, State}.
@@ -118,6 +129,8 @@ handle_cast(Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_info({event, block, {new, _B, #{ gossip := false }}}, State) ->
+	{noreply, State};
+handle_info({event, block, {new, _B, _}}, State = #state{ gossip = false }) ->
 	{noreply, State};
 handle_info({event, block, {new, B, _}}, State) ->
 	#state{ block_propagation_queue = Q, workers = Workers } = State,
