@@ -621,8 +621,8 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 
 handle(<<"POST">>, [<<"chunk">>, OffsetBin], Req, Pid) ->
 	case catch binary_to_integer(OffsetBin) of
-		GlobalOffset when is_integer(GlobalOffset), GlobalOffset >= 0 ->
-			post_chunk(Req, Pid, #{ global_offset => GlobalOffset });
+		AbsoluteOffset when is_integer(AbsoluteOffset), AbsoluteOffset >= 0 ->
+			post_chunk(Req, Pid, #{ absolute_offset => AbsoluteOffset });
 		_ ->
 			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
 	end;
@@ -2392,7 +2392,7 @@ get_data_root_from_headers(Req) ->
 			not_set
 	end.
 
-post_chunk(Req, Pid, ExtraProofFields) ->
+post_chunk(Req, Pid, ProofExtra) ->
 	Joined =
 		case ar_node:is_joined() of
 			false ->
@@ -2439,7 +2439,7 @@ post_chunk(Req, Pid, ExtraProofFields) ->
 		end,
 	case ParseChunk of
 		{ok, {Proof, Req2}} ->
-			handle_post_chunk(maps:merge(Proof, ExtraProofFields), Req2);
+			handle_post_chunk(maps:merge(Proof, ProofExtra), Req2);
 		Reply4 ->
 			Reply4
 	end.
@@ -2514,17 +2514,8 @@ handle_post_chunk(check_chunk_proof_ratio, Proof, Req) ->
 	end;
 handle_post_chunk(validate_proof, Proof, Req) ->
 	Parent = self(),
-	#{ chunk := Chunk, data_path := DataPath, data_size := TXSize, offset := Offset,
-			data_root := DataRoot } = Proof,
 	spawn(fun() ->
-			Parent ! case maps:get(global_offset, Proof, not_set) of
-				not_set ->
-					ar_data_sync:add_chunk_to_disk_pool(
-						DataRoot, DataPath, Chunk, Offset, TXSize);
-				GlobalOffset ->
-					ar_data_sync:add_chunk_to_disk_pool(
-						GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize)
-			end
+			Parent ! ar_data_sync:add_chunk_to_disk_pool(Proof)
 			end),
 	receive
 		ok ->

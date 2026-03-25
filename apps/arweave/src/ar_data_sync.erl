@@ -16,7 +16,7 @@
 		is_footprint_record_supported/3, get_data_roots_for_offset/1, are_data_roots_synced/3,
 		get_disk_pool_threshold/0]).
 
--export([add_chunk_to_disk_pool/5, add_chunk_to_disk_pool/6]).
+-export([add_chunk_to_disk_pool/1]).
 
 -export([debug_get_disk_pool_chunks/0]).
 
@@ -134,10 +134,13 @@ is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) ->
 %% scanning the disk pool will later record it as synced.
 %% The item is removed from the disk pool when the chunk's offset
 %% drops below the disk pool threshold.
-add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
-	add_chunk_to_disk_pool(not_set, DataRoot, DataPath, Chunk, Offset, TXSize).
-
-add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) ->
+add_chunk_to_disk_pool(#{ 
+		chunk := Chunk, 
+		data_path := DataPath, 
+		data_size := TXSize,
+		offset := Offset,
+		data_root := DataRoot } = Proof) ->
+	AbsoluteOffset = maps:get(absolute_offset, Proof, not_set),
 	DataRootIndex = {data_root_index, ?DEFAULT_MODULE},
 	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
 	DiskPoolChunksIndex = {disk_pool_chunks_index, ?DEFAULT_MODULE},
@@ -199,7 +202,7 @@ add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) 
 						{error, invalid_proof};
 					{true, PassesBase, PassesStrict, PassesRebase, EndOffset} ->
 						NormalizedEndOffset =
-							normalize_posted_chunk_end_offset(GlobalOffset, EndOffset),
+							normalize_posted_chunk_end_offset(AbsoluteOffset, EndOffset),
 						{ok, {NormalizedEndOffset, PassesBase, PassesStrict, PassesRebase,
 								DiskPoolDataRootValue}}
 				end
@@ -217,7 +220,7 @@ add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) 
 						%% The chunk is already in disk pool.
 						{synced_disk_pool, EndOffset2};
 					not_found ->
-						check_posted_chunk_synced(GlobalOffset, DataRootIndex, DataRootKey,
+						check_posted_chunk_synced(AbsoluteOffset, DataRootIndex, DataRootKey,
 								DataRootOffsetReply, DataRoot, TXSize, Offset, EndOffset2,
 								DataPathHash, DiskPoolChunkKey, PassedState2);
 					{error, Reason} ->
@@ -235,7 +238,7 @@ add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) 
 		{synced_disk_pool, EndOffset4} ->
 			case is_estimated_long_term_chunk(
 					get_chunk_data_root_offset_reply(
-						GlobalOffset, DataRootOffsetReply, Offset, EndOffset4),
+						AbsoluteOffset, DataRootOffsetReply, Offset, EndOffset4),
 					EndOffset4) of
 				false ->
 					temporary;
@@ -275,7 +278,7 @@ add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) 
 							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
 							case is_estimated_long_term_chunk(
 									get_chunk_data_root_offset_reply(
-										GlobalOffset, DataRootOffsetReply, Offset, EndOffset3),
+										AbsoluteOffset, DataRootOffsetReply, Offset, EndOffset3),
 									EndOffset3) of
 								false ->
 									temporary;
@@ -284,7 +287,10 @@ add_chunk_to_disk_pool(GlobalOffset, DataRoot, DataPath, Chunk, Offset, TXSize) 
 							end
 					end
 			end
-	end.
+	end;
+add_chunk_to_disk_pool(_Proof) ->
+	{error, invalid_proof}.
+
 
 check_posted_chunk_synced(not_set, DataRootIndex, DataRootKey, DataRootOffsetReply, _DataRoot,
 		_TXSize, _Offset, EndOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
@@ -302,7 +308,7 @@ check_posted_chunk_synced(not_set, DataRootIndex, DataRootKey, DataRootOffsetRep
 				true ->
 					synced;
 				false ->
-					{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}}
+					{ok, {DataPathHash, DiskPoolChunkKey, PassedState}}
 			end
 	end;
 check_posted_chunk_synced(GlobalOffset, DataRootIndex, _DataRootKey, _DataRootOffsetReply,
