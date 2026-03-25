@@ -16,7 +16,7 @@
 		is_footprint_record_supported/3,
 		get_disk_pool_threshold/0, migration_db/1]).
 
--export([add_chunk_to_disk_pool/5]).
+-export([add_chunk_to_disk_pool/5, get_unconfirmed_chunk/2]).
 
 -export([debug_get_disk_pool_chunks/0]).
 
@@ -276,6 +276,13 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							ets:update_counter(ar_data_sync_state, disk_pool_size,
 									{2, ChunkSize}),
 							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
+							case DiskPoolDataRootValue2 of
+								{_, _, not_set} ->
+									ok;
+								{_, _, TXIDSet2} ->
+									cache_disk_pool_chunk(TXIDSet2, EndOffset3,
+											DiskPoolChunkKey2, DataPathHash2)
+							end,
 							case is_estimated_long_term_chunk(DataRootEntry, EndOffset3) of
 								false ->
 									temporary;
@@ -418,6 +425,94 @@ maybe_drop_data_root_from_disk_pool(DataRoot, TXSize, TXID) ->
 			end
 	end,
 	ok.
+
+cache_disk_pool_chunk(TXIDSet, RelativeEndOffset, DiskPoolChunkKey, DataPathHash) ->
+	sets:fold(
+		fun(TXID, ok) ->
+			ets:insert(ar_disk_pool_chunks_cache,
+					{{TXID, RelativeEndOffset}, DiskPoolChunkKey}),
+			ets:insert(ar_disk_pool_chunks_cache_reverse,
+					{DataPathHash, {TXID, RelativeEndOffset}}),
+			ok
+		end,
+		ok,
+		TXIDSet
+	).
+
+remove_disk_pool_chunk_from_cache(DataPathHash) ->
+	Entries = ets:lookup(ar_disk_pool_chunks_cache_reverse, DataPathHash),
+	lists:foreach(
+		fun({_, {TXID, RelativeEndOffset}}) ->
+			ets:delete(ar_disk_pool_chunks_cache, {TXID, RelativeEndOffset})
+		end,
+		Entries
+	),
+	ets:delete(ar_disk_pool_chunks_cache_reverse, DataPathHash).
+
+get_unconfirmed_chunk(TXID, RelativeEndOffset) ->
+	case ets:lookup(ar_disk_pool_chunks_cache, {TXID, RelativeEndOffset}) of
+		[{_, DiskPoolChunkKey}] ->
+			get_unconfirmed_chunk_from_disk_pool(TXID, RelativeEndOffset,
+					DiskPoolChunkKey);
+		[] ->
+			get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset)
+	end.
+
+get_unconfirmed_chunk_from_disk_pool(TXID, RelativeEndOffset, DiskPoolChunkKey) ->
+	DiskPoolChunksIndex = {disk_pool_chunks_index, ?DEFAULT_MODULE},
+	case ar_kv:get(DiskPoolChunksIndex, DiskPoolChunkKey) of
+		not_found ->
+			get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset);
+		{error, _} = Error ->
+			Error;
+		{ok, Value} ->
+			DiskPoolChunk = parse_disk_pool_chunk(Value),
+			{RelEndOffset, _ChunkSize, DataRoot, TXSize, ChunkDataKey,
+					_PassesBase, _PassesStrict, _PassesRebase} = DiskPoolChunk,
+			case get_chunk_data(ChunkDataKey, ?DEFAULT_MODULE) of
+				not_found ->
+					get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset);
+				{error, _} = Error ->
+					Error;
+				{ok, Bin} ->
+					{Chunk, DataPath} = binary_to_term(Bin),
+					DataRootKey = << DataRoot/binary,
+							TXSize:?OFFSET_KEY_BITSIZE >>,
+					DataRootOffsetReply = get_data_root_offset(DataRootKey,
+							?DEFAULT_MODULE),
+					IsStoredLongTerm = is_estimated_long_term_chunk(
+							DataRootOffsetReply, RelEndOffset),
+					{ok, {Chunk, DataPath, IsStoredLongTerm}}
+			end
+	end.
+
+get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset) ->
+	TXIndex = {tx_index, ?DEFAULT_MODULE},
+	case get_tx_offset(TXIndex, TXID) of
+		{error, _} ->
+			{error, not_found};
+		{ok, {AbsTXEndOffset, TXSize}} ->
+			TXStartOffset = AbsTXEndOffset - TXSize,
+			AbsoluteChunkEndOffset = TXStartOffset + RelativeEndOffset,
+			case get_chunk_by_byte(AbsoluteChunkEndOffset, ?DEFAULT_MODULE) of
+				{error, _} ->
+					{error, not_found};
+				{ok, ChunkDataKey, TXRoot, _DataRoot, TXPath,
+						_RelativeOffset, _ChunkSize} ->
+					case get_chunk_data(ChunkDataKey, ?DEFAULT_MODULE) of
+						not_found ->
+							{error, not_found};
+						{error, _} = Error ->
+							Error;
+						{ok, Bin} ->
+							{Chunk, DataPath} = binary_to_term(Bin),
+							IsStoredLongTerm = is_estimated_long_term_chunk(
+									{ok, {TXStartOffset, TXPath}},
+									RelativeEndOffset),
+							{ok, {Chunk, DataPath, IsStoredLongTerm}}
+					end
+			end
+	end.
 
 %% @doc Fetch the chunk corresponding to Offset. When Offset is less than or equal to
 %% the strict split data threshold, the chunk returned contains the byte with the given
@@ -3296,6 +3391,7 @@ process_disk_pool_item(State, Key, Value) ->
 			%% The chunk was either orphaned or never made it to the chain.
 			ok = ar_kv:delete(DiskPoolChunksIndex, Key),
 			ok = delete_chunk_data(ChunkDataKey, StoreID),
+			remove_disk_pool_chunk_from_cache(DataPathHash),
 			decrease_occupied_disk_pool_size(ChunkSize, DataRootKey),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
 			gen_server:cast(self(), process_disk_pool_item),
@@ -3384,6 +3480,8 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 		_ ->
 			ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
 			ok = delete_chunk_data(ChunkDataKey, StoreID),
+			<< _Timestamp:256, DataPathHash2/binary >> = DiskPoolKey,
+			remove_disk_pool_chunk_from_cache(DataPathHash2),
 			DataRootKey = ar_data_roots:key(Iterator),
 			decrease_occupied_disk_pool_size(ChunkSize, DataRootKey)
 	end.

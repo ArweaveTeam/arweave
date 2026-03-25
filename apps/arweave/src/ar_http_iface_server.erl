@@ -186,6 +186,9 @@ name_route([<<"chunk">>, _Offset]) ->
 name_route([<<"chunk2">>, _Offset]) ->
 	"/chunk2/{offset}";
 
+name_route([<<"unconfirmed_chunk">>, _EncodedTXID, _Offset]) ->
+	"/unconfirmed_chunk/{txid}/{offset}";
+
 name_route([<<"data_roots">>, _Offset]) ->
 	"/data_roots/{offset}";
 

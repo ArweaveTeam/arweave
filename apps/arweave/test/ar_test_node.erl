@@ -37,6 +37,7 @@
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
 		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
 		read_block_when_stored/2, get_chunk/2, get_chunk/3, get_chunk_proof/2, post_chunk/2,
+		get_unconfirmed_chunk/3,
 		random_v1_data/1, assert_get_tx_data/3,
 		assert_data_not_found/2, post_tx_json/2,
 		wait_until_syncs_genesis_data/0, wait_until_syncs_genesis_data/1,
@@ -1702,6 +1703,14 @@ post_chunk(Node, Proof) ->
 		peer => Peer,
 		path => "/chunk",
 		body => Proof
+	}).
+
+get_unconfirmed_chunk(Node, EncodedTXID, RelativeEndOffset) ->
+	ar_http:req(#{
+		method => get,
+		peer => peer_ip(Node),
+		path => "/unconfirmed_chunk/" ++ binary_to_list(EncodedTXID)
+				++ "/" ++ integer_to_list(RelativeEndOffset)
 	}).
 
 random_v1_data(Size) ->

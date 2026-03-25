@@ -53,6 +53,8 @@ init([]) ->
 	ets:new(entropy_generation_stats, [ordered_set, public, named_table]),
 	ets:new(ar_global_sync_record, [set, public, named_table]),
 	ets:new(ar_disk_pool_data_roots, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_disk_pool_chunks_cache, [set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_disk_pool_chunks_cache_reverse, [bag, public, named_table]),
 	ets:new(ar_tx_blacklist, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_tx_blacklist_pending_headers,
 			[set, public, named_table, {read_concurrency, true}]),

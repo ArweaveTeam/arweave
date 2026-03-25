@@ -499,6 +499,9 @@ handle(<<"GET">>, [<<"chunk2">>, OffsetBinary], Req, _Pid) ->
 handle(<<"GET">>, [<<"chunk_proof2">>, OffsetBinary], Req, _Pid) ->
 	handle_get_chunk_proof(OffsetBinary, Req, binary);
 
+handle(<<"GET">>, [<<"unconfirmed_chunk">>, EncodedTXID, OffsetBinary], Req, _Pid) ->
+	handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req);
+
 handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 	case ar_node:is_joined() of
 		false ->
@@ -2350,6 +2353,42 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 			end;
 		_ ->
 			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
+	end.
+
+handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->
+	case ar_node:is_joined() of
+		false ->
+			not_joined(Req);
+		true ->
+			case ar_util:safe_decode(EncodedTXID) of
+				{error, invalid} ->
+					{400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
+				{ok, TXID} ->
+					case catch binary_to_integer(OffsetBinary) of
+						Offset when is_integer(Offset), Offset > 0 ->
+							case ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT) of
+								{error, timeout} ->
+									{503, #{}, jiffy:encode(#{ error => timeout }), Req};
+								ok ->
+									case ar_data_sync:get_unconfirmed_chunk(TXID, Offset) of
+										{ok, {Chunk, DataPath, IsStoredLongTerm}} ->
+											Body = jiffy:encode(#{
+												chunk => ar_util:encode(Chunk),
+												data_path => ar_util:encode(DataPath),
+												packing => <<"unpacked">>,
+												is_stored_long_term => IsStoredLongTerm
+											}),
+											{200, #{}, Body, Req};
+										{error, not_found} ->
+											{404, #{}, <<>>, Req};
+										{error, _} ->
+											{500, #{}, <<>>, Req}
+									end
+							end;
+						_ ->
+							{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
+					end
+			end
 	end.
 
 handle_get_chunk_proof(OffsetBinary, Req, Encoding) ->
