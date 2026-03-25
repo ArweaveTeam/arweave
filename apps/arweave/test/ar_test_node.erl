@@ -35,7 +35,8 @@
 		post_tx_to_peer/2, post_tx_to_peer/3, assert_post_tx_to_peer/2, assert_post_tx_to_peer/3,
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
 		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
-		read_block_when_stored/2, get_chunk/2, get_chunk/3, get_chunk_proof/2, post_chunk/2,
+		read_block_when_stored/2, get_chunk/2, get_chunk/3, get_chunk_proof/2,
+		post_chunk/2, post_chunk/3,
 		random_v1_data/1, assert_get_tx_data/3,
 		assert_data_not_found/2, post_tx_json/2,
 		wait_until_syncs_genesis_data/0, wait_until_syncs_genesis_data/1,
@@ -1562,6 +1563,15 @@ post_chunk(Node, Proof) ->
 		method => post,
 		peer => Peer,
 		path => "/chunk",
+		body => Proof
+	}).
+
+post_chunk(Node, Offset, Proof) ->
+	Peer = peer_ip(Node),
+	ar_http:req(#{
+		method => post,
+		peer => Peer,
+		path => "/chunk/" ++ integer_to_list(Offset),
 		body => Proof
 	}).
 

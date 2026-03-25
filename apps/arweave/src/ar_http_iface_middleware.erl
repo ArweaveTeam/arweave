@@ -617,55 +617,14 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 	end;
 
 handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
-	Joined =
-		case ar_node:is_joined() of
-			false ->
-				not_joined(Req);
-			true ->
-				ok
-		end,
-	Semaphore =
-		case Joined of
-			ok ->
-				case ar_semaphore:acquire(post_chunk, 5000) of
-					ok ->
-						ok;
-					{error, timeout} ->
-						{503, #{}, jiffy:encode(#{ error => timeout }), Req}
-				end;
-			Reply ->
-				Reply
-		end,
-	DataRootKnown =
-		case Semaphore of
-			ok ->
-				case get_data_root_from_headers(Req) of
-					not_set ->
-						ok;
-					{ok, {DataRoot, DataSize}} ->
-						case ar_data_sync:has_data_root(DataRoot, DataSize) of
-							true ->
-								ok;
-							false ->
-								{400, #{}, jiffy:encode(#{ error => data_root_not_found }),
-										Req}
-						end
-				end;
-			Reply2 ->
-				Reply2
-		end,
-	ParseChunk =
-		case DataRootKnown of
-			ok ->
-				parse_chunk(Req, Pid);
-			Reply3 ->
-				Reply3
-		end,
-	case ParseChunk of
-		{ok, {Proof, Req2}} ->
-			handle_post_chunk(Proof, Req2);
-		Reply4 ->
-			Reply4
+	post_chunk(Req, Pid, #{});
+
+handle(<<"POST">>, [<<"chunk">>, OffsetBin], Req, Pid) ->
+	case catch binary_to_integer(OffsetBin) of
+		AbsoluteOffset when is_integer(AbsoluteOffset), AbsoluteOffset >= 0 ->
+			post_chunk(Req, Pid, #{ absolute_offset => AbsoluteOffset });
+		_ ->
+			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
 	end;
 
 %% Accept an announcement of a block. Reply 412 (no previous block),
@@ -2410,27 +2369,38 @@ handle_get_chunk_proof2(Offset, Req, Encoding) ->
 			end
 	end.
 
-get_data_root_from_headers(Req) ->
-	case {cowboy_req:header(<<"arweave-data-root">>, Req, not_set),
-			cowboy_req:header(<<"arweave-data-size">>, Req, not_set)} of
-		{not_set, _} ->
-			not_set;
-		{_, not_set} ->
-			not_set;
-		{EncodedDataRoot, EncodedDataSize} when byte_size(EncodedDataRoot) == 43 ->
-			case catch binary_to_integer(EncodedDataSize) of
-				DataSize when is_integer(DataSize) ->
-					case ar_util:safe_decode(EncodedDataRoot) of
-						{ok, DataRoot} ->
-							{ok, {DataRoot, DataSize}};
-						_ ->
-							not_set
-					end;
-				_ ->
-					not_set
-			end;
-		_ ->
-			not_set
+post_chunk(Req, Pid, ProofExtra) ->
+	Joined =
+		case ar_node:is_joined() of
+			false ->
+				not_joined(Req);
+			true ->
+				ok
+		end,
+	Semaphore =
+		case Joined of
+			ok ->
+				case ar_semaphore:acquire(post_chunk, 5000) of
+					ok ->
+						ok;
+					{error, timeout} ->
+						{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+				end;
+			Reply ->
+				Reply
+		end,
+	ParseChunk =
+		case Semaphore of
+			ok ->
+				parse_chunk(Req, Pid);
+			Reply2 ->
+				Reply2
+		end,
+	case ParseChunk of
+		{ok, {Proof, Req2}} ->
+			handle_post_chunk(maps:merge(Proof, ProofExtra), Req2);
+		Reply3 ->
+			Reply3
 	end.
 
 parse_chunk(Req, Pid) ->
@@ -2503,11 +2473,8 @@ handle_post_chunk(check_chunk_proof_ratio, Proof, Req) ->
 	end;
 handle_post_chunk(validate_proof, Proof, Req) ->
 	Parent = self(),
-	#{ chunk := Chunk, data_path := DataPath, data_size := TXSize, offset := Offset,
-			data_root := DataRoot } = Proof,
 	spawn(fun() ->
-			Parent ! ar_data_sync:add_chunk_to_disk_pool(
-				DataRoot, DataPath, Chunk, Offset, TXSize)
+			Parent ! ar_data_sync:add_chunk_to_disk_pool(Proof)
 			end),
 	receive
 		ok ->
@@ -2523,7 +2490,9 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 		{error, failed_to_store_chunk} ->
 			{500, #{}, <<>>, Req};
 		{error, invalid_proof} ->
-			{400, #{}, jiffy:encode(#{ error => invalid_proof }), Req}
+			{400, #{}, jiffy:encode(#{ error => invalid_proof }), Req};
+		{error, invalid_offset} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
 	end.
 
 check_internal_api_secret(Req) ->
