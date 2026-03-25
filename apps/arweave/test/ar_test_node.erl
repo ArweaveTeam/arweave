@@ -223,8 +223,15 @@ peer_name(Node) ->
 	).
 
 peer_port(Node) ->
-	{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
-	Config#config.port.
+	case get({peer_port, Node}) of
+		undefined ->
+			{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
+			Port = Config#config.port,
+			put({peer_port, Node}, Port),
+			Port;
+		Port ->
+			Port
+	end.
 
 stop_peers([]) ->
 	ok;
