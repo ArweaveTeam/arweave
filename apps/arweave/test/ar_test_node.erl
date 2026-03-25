@@ -354,8 +354,12 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		cm_api_secret = not_set
 	},
 
+	%% Start the validator first so that its HTTP server is available when
+	%% other nodes validate it as a trusted peer during startup.
+	%% Use peers=[] here because the exit node isn't configured yet.
+	remote_call(main, ar_test_node, start_node,
+			[B0, ValidatorNodeConfig#config{ peers = [] }]),
 	remote_call(peer1, ar_test_node, start_node, [B0, ExitNodeConfig]), %% exit node
-	remote_call(main, ar_test_node, start_node, [B0, ValidatorNodeConfig]), %% validator node
 
 	lists:foreach(
 		fun(I) ->
