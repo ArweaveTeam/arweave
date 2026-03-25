@@ -56,16 +56,13 @@ read_complete_body(Req, SizeLimit, StartTime) ->
 
 accumulate_body(MonRef, Pid, Ref, Req, Acc, Size, SizeLimit, StartTime) ->
 	receive
+		{Ref, _OkOrMore, _Data, DataSize} when Size + DataSize > SizeLimit ->
+			exit(Pid, kill),
+			{error, body_size_too_large};
 		{Ref, more, Data, DataSize} ->
 			NewSize = Size + DataSize,
-			case NewSize > SizeLimit of
-				true ->
-					exit(Pid, kill),
-					{error, body_size_too_large};
-				false ->
-					accumulate_body(MonRef, Pid, Ref, Req, [Acc | Data],
-						NewSize, SizeLimit, StartTime)
-			end;
+			accumulate_body(MonRef, Pid, Ref, Req, [Acc | Data],
+				NewSize, SizeLimit, StartTime);
 		{Ref, ok, Data, _DataSize} ->
 			Body = iolist_to_binary([Acc | Data]),
 			BodyReadTime = erlang:monotonic_time() - StartTime,
