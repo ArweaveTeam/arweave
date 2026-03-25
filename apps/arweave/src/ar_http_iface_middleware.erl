@@ -2369,29 +2369,6 @@ handle_get_chunk_proof2(Offset, Req, Encoding) ->
 			end
 	end.
 
-get_data_root_from_headers(Req) ->
-	case {cowboy_req:header(<<"arweave-data-root">>, Req, not_set),
-			cowboy_req:header(<<"arweave-data-size">>, Req, not_set)} of
-		{not_set, _} ->
-			not_set;
-		{_, not_set} ->
-			not_set;
-		{EncodedDataRoot, EncodedDataSize} when byte_size(EncodedDataRoot) == 43 ->
-			case catch binary_to_integer(EncodedDataSize) of
-				DataSize when is_integer(DataSize) ->
-					case ar_util:safe_decode(EncodedDataRoot) of
-						{ok, DataRoot} ->
-							{ok, {DataRoot, DataSize}};
-						_ ->
-							not_set
-					end;
-				_ ->
-					not_set
-			end;
-		_ ->
-			not_set
-	end.
-
 post_chunk(Req, Pid, ProofExtra) ->
 	Joined =
 		case ar_node:is_joined() of
@@ -2412,36 +2389,18 @@ post_chunk(Req, Pid, ProofExtra) ->
 			Reply ->
 				Reply
 		end,
-	DataRootKnown =
+	ParseChunk =
 		case Semaphore of
 			ok ->
-				case get_data_root_from_headers(Req) of
-					not_set ->
-						ok;
-					{ok, {DataRoot, DataSize}} ->
-						case ar_data_sync:has_data_root(DataRoot, DataSize) of
-							true ->
-								ok;
-							false ->
-								{400, #{}, jiffy:encode(#{ error => data_root_not_found }),
-										Req}
-						end
-				end;
+				parse_chunk(Req, Pid);
 			Reply2 ->
 				Reply2
-		end,
-	ParseChunk =
-		case DataRootKnown of
-			ok ->
-				parse_chunk(Req, Pid);
-			Reply3 ->
-				Reply3
 		end,
 	case ParseChunk of
 		{ok, {Proof, Req2}} ->
 			handle_post_chunk(maps:merge(Proof, ProofExtra), Req2);
-		Reply4 ->
-			Reply4
+		Reply3 ->
+			Reply3
 	end.
 
 parse_chunk(Req, Pid) ->
