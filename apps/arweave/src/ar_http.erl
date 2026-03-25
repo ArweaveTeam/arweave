@@ -82,8 +82,10 @@ req(Args, ReestablishedConnection) ->
 					case {ReestablishedConnection, should_retry_closed_connection(Error)} of
 						{false, true} ->
 							req(Args, true);
-						{_, _} ->
-							{error, client_error}
+						{_, true} ->
+							{error, client_error};
+						{_, false} ->
+							{error, Error}
 					end;
 				Reply ->
 					Reply
