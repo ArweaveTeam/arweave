@@ -238,11 +238,18 @@ get_weave_size_increase(DataSize, Height) ->
 utility(TX = #tx{ data_size = DataSize }) ->
 	utility(TX, ?TX_SIZE_BASE + DataSize).
 
-utility(#tx{ format = 1, reward = Reward, data_size = DataSize }, _Size)
+utility(#tx{ format = 1, reward = Reward, data_size = DataSize,
+		denomination = Denomination }, _Size)
 		when DataSize > ?DEPRIORITIZE_V1_TX_SIZE_THRESHOLD ->
-	{1, Reward};
-utility(#tx{ reward = Reward }, _Size) ->
-	{2, Reward}.
+	%% For convenience, value higher denomination more.
+	%% If we normalize by dividing by denomination, higher-denomination amounts
+	%% may stop being distinguishable.
+	%% To use the current block denomination, we would need to update
+	%% comparators, which is somewhat cumbersome.
+	%% Therefore, we simply choose to prefer higher denominations.
+	{1, Denomination, Reward};
+utility(#tx{ reward = Reward, denomination = Denomination }, _Size) ->
+	{2, Denomination, Reward}.
 
 %% @doc Return the transaction's owner address. Take the cached value if available.
 get_owner_address(#tx{ owner = Owner, signature_type = KeyType, owner_address = not_set }) ->
