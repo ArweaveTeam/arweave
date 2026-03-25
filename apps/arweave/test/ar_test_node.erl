@@ -1658,11 +1658,11 @@ assert_get_tx_data(Node, TXID, ExpectedData) ->
 					true;
 				{ok, {{<<"404">>, _}, _, _, _, _}} ->
 					false;
-				{ok, {{<<"200">>, _}, _, OtherData, _, _}} ->
-					?debugFmt("Got unexpected tx data response. TXID: ~s. Peer: ~s. "
-							"Expected data size: ~B, got data size: ~B.~n",
-							[ar_util:encode(TXID), ar_util:format_peer(Peer),
-								byte_size(ExpectedData), byte_size(OtherData)]);
+			{ok, {{<<"200">>, _}, _, OtherData, _, _}} ->
+				?assertEqual(byte_size(ExpectedData), byte_size(OtherData),
+						lists:flatten(io_lib:format(
+							"TX data size mismatch. TXID: ~s. Peer: ~s.",
+							[ar_util:encode(TXID), ar_util:format_peer(Peer)])));
 				UnexpectedResponse ->
 					?debugFmt("Got unexpected tx data response. TXID: ~s. Peer: ~s. "
 							" response: ~p.~n",
