@@ -61,6 +61,12 @@
 -define(FOOTPRINT_MIGRATION_BATCH_SIZE, 200).
 -endif.
 
+-ifdef(AR_TEST).
+-define(MIN_CHUNK_PERSISTENCE_ESTIMATION_VICINITY, (1 * ?MiB)).
+-else.
+-define(MIN_CHUNK_PERSISTENCE_ESTIMATION_VICINITY, (10 * ?GiB)).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -375,7 +381,8 @@ is_estimated_long_term_chunk(DataRootEntry, EndOffset) ->
 	end.
 
 is_offset_vicinity_covered(Offset) ->
-	Size = ar_node:get_recent_max_block_size(),
+	Size = max(?MIN_CHUNK_PERSISTENCE_ESTIMATION_VICINITY,
+			ar_node:get_recent_max_block_size()),
 	ar_storage_module:has_range(max(0, Offset - Size * 2), Offset + Size * 2).
 
 %% @doc Notify the server about the new pending data root (added to mempool).
