@@ -3,7 +3,8 @@
 -export([reward_history_length/1, expected_hashes_length/1, buffered_reward_history_length/1, 
 		set_reward_history/2, get_locked_rewards/1,
 		trim_locked_rewards/2, trim_reward_history/2,
-		trim_buffered_reward_history/2, get_oldest_locked_address/1,
+		trim_buffered_reward_history/2, interim_reward_history_bi/2,
+		get_oldest_locked_address/1,
 		add_element/2, has_locked_reward/2,
 		reward_history_hash/3, validate_reward_history_hashes/3,
 		get_total_reward_for_address/2, get_reward_history_totals/1,
@@ -79,6 +80,14 @@ trim_reward_history(Height, RewardHistory) ->
 %% reward_history_length/1 and buffered_reward_history_length/1.
 trim_buffered_reward_history(Height, RewardHistory) ->
 	lists:sublist(RewardHistory, buffered_reward_history_length(Height)).
+
+%% @doc Return the portion of the block index needed for reading the reward history
+%% during startup. Until ~2 months post 2.8 hardfork, the reward history accumulated
+%% by any node will be shorter than the full expected length — specifically 21,600
+%% blocks plus the number of blocks elapsed since the 2.8 activation.
+interim_reward_history_bi(Height, BI) ->
+	InterimRewardHistoryLength = (Height - ar_fork:height_2_8()) + 21600,
+	lists:sublist(trim_buffered_reward_history(Height, BI), InterimRewardHistoryLength).
 
 get_oldest_locked_address(B) ->
 	LockedRewards = get_locked_rewards(B),

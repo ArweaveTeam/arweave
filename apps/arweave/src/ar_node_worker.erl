@@ -1826,15 +1826,7 @@ start_from_state(BI, Height, CustomDir) ->
 			BI2 = lists:nthtail(Skipped, BI),
 			Height2 = Height - Skipped,
 
-			%% Until we hit ~2 months post 2.8 hardfork, the reward history accumulated
-			%% by any node will be shorter than the full expected length. Specicifically
-			%% it will be 21,600 blocks plus the number of blocks that have elapsed since
-			%% the 2.8 HF activatin.
-			InterimRewardHistoryLength = (Height - ar_fork:height_2_8()) + 21600,
-			RewardHistoryBI = lists:sublist(
-					ar_rewards:trim_buffered_reward_history(Height, BI2),
-					InterimRewardHistoryLength
-			),
+			RewardHistoryBI = ar_rewards:interim_reward_history_bi(Height, BI2),
 
 			BlockTimeHistoryBI = lists:sublist(BI2,
 					ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),

@@ -1,6 +1,6 @@
 -module(ar_localnet).
 
--export([start/0, start/1, submit_snapshot_data/0, format_packing/1,
+-export([start/0, start/1, submit_snapshot_data/0,
 		mine_one_block/0, mine_until_height/1, create_snapshot/0]).
 
 -include("ar.hrl").
@@ -20,7 +20,8 @@
 
 %% @doc Start a node from the localnet_snapshot directory.
 %% Disable mining (can be triggered by request).
-%% Configure a single storage module with the first 20 MiB of partition 0.
+%% Configure a single storage module with the first 21 MiB of partition 0
+%% (enough to cover the seed data with some headroom).
 %% Seed the storage module with data.
 start() ->
 	start(#config{
@@ -87,7 +88,7 @@ start(Config) ->
 			io:format("  Storage modules:~n"),
 			lists:foreach(fun({Size, Partition, Packing}) ->
 				io:format("    - partition ~B, size ~B MB, packing ~s~n",
-					[Partition, Size div (1_000_000), format_packing(Packing)])
+					[Partition, Size div (1_000_000), ar_serialize:encode_packing(Packing, false)])
 			end, StorageModules),
 			io:format("~nMining is disabled. Call ar_localnet:mine_one_block/0 to mine a block.~n"
 					"Call ar_localnet:mine_until_height/1 to mine until the given height.~n~n");
@@ -147,7 +148,7 @@ wait_until_joined() ->
 %% @doc Read recent block heads, tx headers, block time history, and account tree data
 %% from the snapshot directory and store them in the data directory. Does not do anything
 %% if recent blocks are already available locally.
-store_snapshot_data2(SnapshotDir) ->
+store_snapshot_data(SnapshotDir) ->
 	case ar_node:get_block_index() of
 		[] ->
 			{error, empty_block_index};
@@ -175,7 +176,7 @@ store_snapshot_data3(BI, Height, SearchDepth, SnapshotDir) ->
 				[length(Blocks), Skipped]),
 			BI2 = lists:nthtail(Skipped, BI),
 			Height2 = Height - Skipped,
-			RewardHistoryBI = reward_history_bi(Height2, BI2),
+			RewardHistoryBI = ar_rewards:interim_reward_history_bi(Height2, BI2),
 			BlockTimeHistoryBI = block_time_history_bi(BI2),
 			io:format("  Reward history: ~B entries~n", [length(RewardHistoryBI)]),
 			io:format("  Block time history: ~B entries~n", [length(BlockTimeHistoryBI)]),
@@ -212,18 +213,6 @@ store_snapshot_data3(BI, Height, SearchDepth, SnapshotDir) ->
 					Error
 			end
 	end.
-
-%% @doc Format a packing type tuple into a human-readable string for logging.
-format_packing({spora_2_6, Addr}) ->
-	io_lib:format("spora_2_6(~s)", [ar_util:encode(Addr)]);
-format_packing({composite, Addr, Diff}) ->
-	io_lib:format("composite(~s, ~B)", [ar_util:encode(Addr), Diff]);
-format_packing({replica_2_9, Addr}) ->
-	io_lib:format("(replica_2_9, ~s)", [ar_util:encode(Addr)]);
-format_packing(unpacked) ->
-	"unpacked";
-format_packing(Other) ->
-	io_lib:format("~p", [Other]).
 
 %% @doc Read special hard-coded seed transactions from the snapshot directory and submit their data
 %% chunks to the node's storage.
@@ -504,7 +493,7 @@ create_snapshot(SnapshotDir, DataDir, NewSnapshotDir) ->
 maybe_backfill_snapshot_data(SnapshotDir) ->
 	case open_snapshot_databases(SnapshotDir) of
 		{ok, CloseSnapshotDbs} ->
-			Result = store_snapshot_data2(SnapshotDir),
+			Result = store_snapshot_data(SnapshotDir),
 			CloseSnapshotDbs(),
 			Result;
 		{error, _} = Error ->
@@ -559,7 +548,7 @@ create_snapshot_rocksdb3(BI, Height, SearchDepth, SnapshotDbs) ->
 				[length(Blocks), Skipped]),
 			BI2 = lists:nthtail(Skipped, BI),
 			Height2 = Height - Skipped,
-			RewardHistoryBI = reward_history_bi(Height2, BI2),
+			RewardHistoryBI = ar_rewards:interim_reward_history_bi(Height2, BI2),
 			BlockTimeHistoryBI = block_time_history_bi(BI2),
 			case store_snapshot_blocks_in_snapshot(Blocks, SnapshotDbs) of
 				{ok, TxIds} ->
@@ -656,21 +645,6 @@ open_snapshot_write_dbs([{Key, Name, DirName} | Rest], RocksDir, DbMap, Opened) 
 close_snapshot_dbs(SnapshotDbs) ->
 	Opened = maps:get(opened, SnapshotDbs, []),
 	lists:foreach(fun ar_kv:close/1, Opened).
-
-%% @doc Extract the portion of the block index needed for the reward history.
-%% The length covers from fork 2.8 through the current height, plus a 21600-block
-%% buffer, trimmed to the protocol's buffered reward history limit.
-reward_history_bi(Height, BI) ->
-	InterimRewardHistoryLength0 = (Height - ar_fork:height_2_8()) + 21600,
-	InterimRewardHistoryLength =
-		case InterimRewardHistoryLength0 > 0 of
-			true ->
-				InterimRewardHistoryLength0;
-			false ->
-				0
-		end,
-	RewardHistoryBI0 = ar_rewards:trim_buffered_reward_history(Height, BI),
-	lists:sublist(RewardHistoryBI0, InterimRewardHistoryLength).
 
 %% @doc Extract the portion of the block index needed for the block time history:
 %% history_length + consensus_window_size entries from the tip.
