@@ -18,7 +18,7 @@
 	scan_cursor
 }).
 
--define(DATA_ROOTS_SYNC_RELEASE_NUMBER, 89).
+-define(DATA_ROOTS_SYNC_RELEASE_NUMBER, 91).
 
 %% How long we wait before (re-)scanning our range for unsynced data roots.
 -ifdef(AR_TEST).

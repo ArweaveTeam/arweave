@@ -44,4 +44,4 @@
 %% The number of the release adding support for endpoints:
 %% GET /footprints/[partition]/[footprint] 
 %% GET /footprint_buckets
--define(GET_FOOTPRINT_SUPPORT_RELEASE, 89).
+-define(GET_FOOTPRINT_SUPPORT_RELEASE, 91).
