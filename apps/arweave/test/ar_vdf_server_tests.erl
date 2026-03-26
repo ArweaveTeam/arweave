@@ -39,10 +39,9 @@ cleanup({Config, PeerConfig}) ->
 %% a block that is ahead in the VDF chain: specifically:
 %%    When a block comes in that starts a new VDF session, the server should first post the
 %%    full previous session which should include all steps up to and including the
-%%    global_step_number of the block. The server should not post the new session until it has
-%%    computed a step in that session - which means the new session's first step will be 1
-%%    greater than the last step of the previous session and also 1 greater than the block's
-%%    global_step_number
+%%    global_step_number of the block (it may also include additional "overflow" steps that
+%%    were computed before the block arrived). The server should not post the new session
+%%    until it has computed a step in that session.
 %%
 %% test_vdf_server_push_slow_block tests that the VDF server can handle receiving
 %% a block that is behind in the VDF chain: specifically:
@@ -147,7 +146,7 @@ test_vdf_server_push_fast_block() ->
 	[{Seed0, _, LatestStepNumber0}] = get_computed_output(Seed0),
 	[{Seed1, _FirstStepNumber1, _}] = get_computed_output(Seed1),
 	?assertEqual(2, ets:info(computed_output, size), "VDF server did not post 2 sessions"),
-	?assertEqual(StepNumber1, LatestStepNumber0,
+	?assert(LatestStepNumber0 >= StepNumber1,
 		"VDF server did not post the full Session0 when starting Session1"),
 
 	cowboy:stop_listener(ar_vdf_server_test_listener).
