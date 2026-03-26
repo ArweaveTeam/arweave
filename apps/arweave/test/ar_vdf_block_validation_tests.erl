@@ -97,8 +97,7 @@ test_fork_checkpoints_not_found() ->
 		ar_test_node:wait_until_height(peer1, 3)
 	after
 		disable_mocks(main),
-		disable_mocks(peer1),
-		disable_mocks()
+		disable_mocks(peer1)
 	end.
 
 %% Scenario:
@@ -186,8 +185,7 @@ test_fork_refuse_validation() ->
 		ar_test_node:wait_until_height(peer1, 3)
 	after
 		disable_mocks(main),
-		disable_mocks(peer1),
-		disable_mocks()
+		disable_mocks(peer1)
 	end.
 
 mock_reset_frequency_and_block_propagation_parallelization() ->
@@ -195,10 +193,6 @@ mock_reset_frequency_and_block_propagation_parallelization() ->
 	ar_test_node:new_mock(ar_bridge, [passthrough]),
 	ar_test_node:mock_function(ar_nonce_limiter, get_reset_frequency, fun() -> ?TEST_RESET_FREQUENCY end),
 	ar_test_node:mock_function(ar_bridge, block_propagation_parallelization, fun() -> 0 end).
-
-disable_mocks() ->
-	ar_test_node:unmock_module(ar_bridge),
-	ar_test_node:unmock_module(ar_nonce_limiter).
 
 mock_reset_frequency_and_block_propagation_parallelization(Node) ->
 	ar_test_node:remote_call(Node, ar_test_node, new_mock, [ar_nonce_limiter, [passthrough]]),

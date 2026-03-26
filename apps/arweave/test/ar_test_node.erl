@@ -1393,33 +1393,90 @@ unmock_module(Module, Retries) ->
 	Pid = erlang:whereis(Module),
 	case is_pid(Pid) of
 		true ->
-			sys:suspend(Pid);
+			catch sys:suspend(Pid, 5000);
 		false ->
 			ok
 	end,
 	try
-		meck:unload(Module)
+		timed_meck_unload(Module, 10000)
 	catch
 		error:{not_mocked, Module} ->
 			ok;
 		error:E ->
 			?debugFmt("ar_test_node (retries left ~p): Error unloading mock for ~p: ~p",
 					[Retries - 1, Module, E]),
+			resume_if_alive(Pid),
 			timer:sleep(1000),
 			unmock_module(Module, Retries - 1);
 		exit:E ->
 			?debugFmt("ar_test_node (retries left ~p): Exit unloading mock for ~p: ~p",
 					[Retries - 1, Module, E]),
+			resume_if_alive(Pid),
 			timer:sleep(1000),
 			unmock_module(Module, Retries - 1)
 	after
-		case is_pid(Pid) andalso erlang:is_process_alive(Pid) of
-			true ->
-				sys:resume(Pid);
-			false ->
-				ok
-		end
+		resume_if_alive(Pid)
 	end.
+
+resume_if_alive(Pid) ->
+	case is_pid(Pid) andalso erlang:is_process_alive(Pid) of
+		true ->
+			catch sys:resume(Pid);
+		false ->
+			ok
+	end.
+
+%% meck:unload internally uses gen_server:call(..., infinity), so if the meck
+%% process is stuck handling a call from a blocked process, it will hang forever
+%% and the catch/retry logic above never fires. Wrap it with a finite timeout
+%% and kill the stuck meck process if needed.
+%%
+%% After killing the meck process we must restore the original module from the
+%% beam file on disk, because meck's terminate (which normally does this) did
+%% not run.
+timed_meck_unload(Module, Timeout) ->
+	Caller = self(),
+	Ref = make_ref(),
+	Worker = spawn(fun() ->
+		try
+			Result = meck:unload(Module),
+			Caller ! {Ref, {ok, Result}}
+		catch
+			Class:Reason ->
+				Caller ! {Ref, {Class, Reason}}
+		end
+	end),
+	receive
+		{Ref, {ok, Result}} ->
+			Result;
+		{Ref, {error, Reason}} ->
+			error(Reason);
+		{Ref, {exit, Reason}} ->
+			exit(Reason)
+	after Timeout ->
+		exit(Worker, kill),
+		MeckProcName = list_to_atom(atom_to_list(Module) ++ "_meck"),
+		case erlang:whereis(MeckProcName) of
+			undefined ->
+				ok;
+			MeckPid ->
+				exit(MeckPid, kill),
+				timer:sleep(100)
+		end,
+		force_restore_module(Module),
+		exit(timed_meck_unload_timeout)
+	end.
+
+%% After force-killing the meck process, the module is left with meck-generated
+%% stub code and no backing ETS tables. Restore the original beam from disk so
+%% processes don't crash in an infinite meck stub loop.
+force_restore_module(Module) ->
+	OrigName = list_to_atom(atom_to_list(Module) ++ "_meck_original"),
+	code:purge(Module),
+	code:delete(Module),
+	code:purge(OrigName),
+	code:delete(OrigName),
+	code:load_file(Module).
 
 mock_functions(Functions) ->
 	{
