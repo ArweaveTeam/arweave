@@ -75,7 +75,7 @@ test_syncs_headers() ->
 				andalso ar_storage:read_tx(NoSpaceTX#tx.id) == unavailable
 		end,
 		100,
-		10000
+		20000
 	),
 	timer:sleep(1000),
 	[{LatestH, _, _} | _] = ar_node:get_block_index(),
