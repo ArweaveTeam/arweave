@@ -2479,7 +2479,6 @@ remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	ok = remove_tx_index_range(BlockStartOffset, WeaveSize, State),
 	{ok, OrphanedDataRoots} =
 		ar_data_roots:remove_range(BlockStartOffset, WeaveSize, StoreID),
-	ok = ar_data_roots:delete_offset_range(BlockStartOffset, WeaveSize, StoreID),
 	ok = delete_chunk_metadata_range(BlockStartOffset, WeaveSize, State),
 	{ok, OrphanedDataRoots}.
 
@@ -2542,7 +2541,6 @@ repair_data_root_offset_index(BI, Cursor, Height, ResyncBlocks, State) ->
 					ok = remove_tx_index_range(BlockStart, BlockEnd, State),
 					{ok, _} =
 						ar_data_roots:remove_range(BlockStart, BlockEnd, StoreID),
-					ok = ar_data_roots:delete_offset_range(BlockStart, BlockEnd, StoreID),
 					repair_data_root_offset_index(BI, Cursor, Height, ResyncBlocks2, State)
 			end
 	end.

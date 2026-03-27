@@ -6,13 +6,10 @@
 	offset_column_family/1,
 	old_db/1,
 	offset_db/1,
-	key_v2/3,
-	get/4,
 	update/5,
 	get_offset/2,
 	get_offset_entry/2,
 	put_offset_entry/5,
-	delete_offset_range/3,
 	get_next_offset_entry/2,
 	get_prev_offset/3,
 	remove_range/3,
@@ -20,11 +17,8 @@
 	next_v2/2,
 	reset/1,
 	get_key/1,
-	iterator/1,
-	next/2,
 	get_for_offset/1,
 	are_synced/3,
-	read_entries/6,
 	start_old_data_root_index_migration/1,
 	continue_old_data_root_index_migration/3,
 	is_migration_complete/0
@@ -70,9 +64,6 @@ key_v2(DataRoot, TXSize, Offset) ->
 	<< DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary,
 			(ar_serialize:encode_int(Offset, 8))/binary >>.
 
-get(DataRoot, TXSize, TXStartOffset, StoreID) ->
-	ar_kv:get(index_db(StoreID), key_v2(DataRoot, TXSize, TXStartOffset)).
-
 update(DataRoot, TXSize, AbsoluteTXStartOffset, TXPath, StoreID) ->
 	ar_kv:put(index_db(StoreID),
 			key_v2(DataRoot, TXSize, AbsoluteTXStartOffset), TXPath).
@@ -101,10 +92,6 @@ put_offset_entry(BlockStart, TXRoot, BlockSize, DataRootIndexKeySet, StoreID) ->
 			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
 			term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})).
 
-delete_offset_range(Start, End, StoreID) ->
-	ar_kv:delete_range(offset_db(StoreID),
-			<< Start:?OFFSET_KEY_BITSIZE >>, << End:?OFFSET_KEY_BITSIZE >>).
-
 get_next_offset_entry(Cursor, StoreID) ->
 	ar_kv:get_next(offset_db(StoreID), Cursor).
 
@@ -114,52 +101,55 @@ get_prev_offset(DataRootKey, TXStartOffset, StoreID) ->
 	ar_kv:get_prev(index_db(StoreID), Key).
 
 remove_range(Start, End, StoreID) ->
-	case ar_kv:get_range(offset_db(StoreID), << Start:?OFFSET_KEY_BITSIZE >>,
-			<< (End - 1):?OFFSET_KEY_BITSIZE >>) of
-		{ok, EmptyMap} when map_size(EmptyMap) == 0 ->
-			{ok, sets:new()};
-		{ok, Map} ->
-			maps:fold(
-				fun
-					(_, _Value, {error, _} = Error) ->
-						Error;
-					(_, Value, {ok, RemovedDataRoots}) ->
-						{_TXRoot, _BlockSize, DataRootIndexKeySet} = binary_to_term(Value, [safe]),
-						sets:fold(
-							fun (_Key, {error, _} = Error) ->
-									Error;
-								(<< _DataRoot:32/binary, _TXSize:?OFFSET_KEY_BITSIZE >> = Key,
-										{ok, Removed}) ->
-									case remove(Key, Start, End, StoreID) of
-										removed ->
-											{ok, sets:add_element(Key, Removed)};
-										ok ->
-											{ok, Removed};
-										Error ->
-											Error
-									end;
-								(_, Acc) ->
-									Acc
-							end,
-							{ok, RemovedDataRoots},
-							DataRootIndexKeySet
-						)
-				end,
-				{ok, sets:new()},
-				Map
-			);
-		Error ->
-			Error
-	end.
+	{ok, RemovedDataRoots} =
+		case ar_kv:get_range(offset_db(StoreID), << Start:?OFFSET_KEY_BITSIZE >>,
+				<< (End - 1):?OFFSET_KEY_BITSIZE >>) of
+			{ok, EmptyMap} when map_size(EmptyMap) == 0 ->
+				{ok, sets:new()};
+			{ok, Map} ->
+				maps:fold(
+					fun
+						(_, _Value, {error, _} = Error) ->
+							Error;
+						(_, Value, {ok, RemovedDataRoots}) ->
+							{_TXRoot, _BlockSize, DataRootIndexKeySet} = binary_to_term(Value, [safe]),
+							sets:fold(
+								fun (_Key, {error, _} = Error) ->
+										Error;
+									(<< _DataRoot:32/binary, _TXSize:?OFFSET_KEY_BITSIZE >> = Key,
+											{ok, Removed}) ->
+										case remove(Key, Start, End, StoreID) of
+											removed ->
+												{ok, sets:add_element(Key, Removed)};
+											ok ->
+												{ok, Removed};
+											Error ->
+												Error
+										end;
+									(_, Acc) ->
+										Acc
+								end,
+								{ok, RemovedDataRoots},
+								DataRootIndexKeySet
+							)
+					end,
+					{ok, sets:new()},
+					Map
+				);
+			Error ->
+				Error
+		end,
+	ok = ar_kv:delete_range(offset_db(StoreID),
+		<< Start:?OFFSET_KEY_BITSIZE >>, << End:?OFFSET_KEY_BITSIZE >>),
+	{ok, RemovedDataRoots}.
 
 remove(DataRootKey, Start, End, StoreID) ->
-	DataRootIndex = index_db(StoreID),
 	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
 	StartKey = key_v2(DataRoot, TXSize, Start),
 	EndKey = key_v2(DataRoot, TXSize, End),
-	case ar_kv:delete_range(DataRootIndex, StartKey, EndKey) of
+	case ar_kv:delete_range(index_db(StoreID), StartKey, EndKey) of
 		ok ->
-			case ar_kv:get_prev(DataRootIndex, StartKey) of
+			case ar_kv:get_prev(index_db(StoreID), StartKey) of
 				{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
 						_Rest/binary >>, _} ->
 					ok;
