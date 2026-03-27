@@ -3,14 +3,13 @@
 -export([
 	open_index_db/3,
 	old_column_family/1,
-	offset_column_family/1,
+	keys_column_family/1,
+	index_db/1,
 	old_db/1,
-	offset_db/1,
-	update/5,
+	keys_db/1,
+	store_block/5,
 	get_offset/2,
-	get_offset_entry/2,
-	put_offset_entry/5,
-	get_next_offset_entry/2,
+	get_next_keys/2,
 	get_prev_offset/3,
 	remove_range/3,
 	iterator_v2/3,
@@ -18,7 +17,8 @@
 	reset/1,
 	get_key/1,
 	get_for_offset/1,
-	are_synced/3,
+	are_synced/2,
+	are_synced/4,
 	start_old_data_root_index_migration/1,
 	continue_old_data_root_index_migration/3,
 	is_migration_complete/0
@@ -45,16 +45,16 @@ index_db(StoreID) ->
 	{data_root_index, StoreID}.
 
 %% A reference to the on-disk key-value storage mapping
-%% AbsoluteBlockStartOffset => {TXRoot, BlockSize, DataRootIndexKeySet}.
-%% Each key in DataRootIndexKeySet is a << DataRoot/binary, TXSize:256 >> binary.
+%% AbsoluteBlockStartOffset => {TXRoot, BlockSize, DataRootKeys}.
+%% Each key in DataRootKeys is a << DataRoot/binary, TXSize:256 >> binary.
 %% Used to remove orphaned entries from DataRootIndex.
-offset_db(StoreID) ->
+keys_db(StoreID) ->
 	{data_root_offset_index, StoreID}.
 
 old_db(StoreID) ->
 	{data_root_index_old, StoreID}.
 
-offset_column_family(Opts) ->
+keys_column_family(Opts) ->
 	{"data_root_offset_index", Opts}.
 
 old_column_family(Opts) ->
@@ -64,14 +64,30 @@ key_v2(DataRoot, TXSize, Offset) ->
 	<< DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary,
 			(ar_serialize:encode_int(Offset, 8))/binary >>.
 
-update(DataRoot, TXSize, AbsoluteTXStartOffset, TXPath, StoreID) ->
-	ar_kv:put(index_db(StoreID),
-			key_v2(DataRoot, TXSize, AbsoluteTXStartOffset), TXPath).
+%% @doc Store all data roots for a given block. 
+%% DataRoots is a list of {DataRoot, TXSize, TXStartOffset, TXPath} tuples.
+store_block(BlockStart, BlockSize, TXRoot, DataRootTuples, StoreID) ->
+	% Update index_db
+	lists:foreach(
+		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
+			ok = ar_kv:put(index_db(StoreID),
+				key_v2(DataRoot, TXSize, TXStartOffset), TXPath)
+		end,
+		DataRootTuples
+	),
+	% Update keys_db
+	DataRootKeys = sets:from_list([
+		<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>
+		|| {DataRoot, TXSize, _TXStart, _TXPath} <- DataRootTuples
+	]),
+	ok = ar_kv:put(keys_db(StoreID),
+			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
+			term_to_binary({TXRoot, BlockSize, DataRootKeys})),
+	{ok, DataRootKeys}.
 
 get_offset(DataRootKey, StoreID) ->
 	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
-	DataRootIndex = index_db(StoreID),
-	case ar_kv:get_prev(DataRootIndex, << DataRoot:32/binary,
+	case ar_kv:get_prev(index_db(StoreID), << DataRoot:32/binary,
 			(ar_serialize:encode_int(TXSize, 8))/binary, <<"a">>/binary >>) of
 		none ->
 			not_found;
@@ -84,16 +100,11 @@ get_offset(DataRootKey, StoreID) ->
 			Error
 	end.
 
-get_offset_entry(BlockStart, StoreID) ->
-	ar_kv:get(offset_db(StoreID), << BlockStart:?OFFSET_KEY_BITSIZE >>).
+get_keys(BlockStart, StoreID) ->
+	ar_kv:get(keys_db(StoreID), << BlockStart:?OFFSET_KEY_BITSIZE >>).
 
-put_offset_entry(BlockStart, TXRoot, BlockSize, DataRootIndexKeySet, StoreID) ->
-	ar_kv:put(offset_db(StoreID),
-			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
-			term_to_binary({TXRoot, BlockSize, DataRootIndexKeySet})).
-
-get_next_offset_entry(Cursor, StoreID) ->
-	ar_kv:get_next(offset_db(StoreID), Cursor).
+get_next_keys(Cursor, StoreID) ->
+	ar_kv:get_next(keys_db(StoreID), Cursor).
 
 get_prev_offset(DataRootKey, TXStartOffset, StoreID) ->
 	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
@@ -102,7 +113,7 @@ get_prev_offset(DataRootKey, TXStartOffset, StoreID) ->
 
 remove_range(Start, End, StoreID) ->
 	{ok, RemovedDataRoots} =
-		case ar_kv:get_range(offset_db(StoreID), << Start:?OFFSET_KEY_BITSIZE >>,
+		case ar_kv:get_range(keys_db(StoreID), << Start:?OFFSET_KEY_BITSIZE >>,
 				<< (End - 1):?OFFSET_KEY_BITSIZE >>) of
 			{ok, EmptyMap} when map_size(EmptyMap) == 0 ->
 				{ok, sets:new()};
@@ -112,7 +123,7 @@ remove_range(Start, End, StoreID) ->
 						(_, _Value, {error, _} = Error) ->
 							Error;
 						(_, Value, {ok, RemovedDataRoots}) ->
-							{_TXRoot, _BlockSize, DataRootIndexKeySet} = binary_to_term(Value, [safe]),
+							{_TXRoot, _BlockSize, DataRootKeys} = binary_to_term(Value, [safe]),
 							sets:fold(
 								fun (_Key, {error, _} = Error) ->
 										Error;
@@ -130,7 +141,7 @@ remove_range(Start, End, StoreID) ->
 										Acc
 								end,
 								{ok, RemovedDataRoots},
-								DataRootIndexKeySet
+								DataRootKeys
 							)
 					end,
 					{ok, sets:new()},
@@ -139,7 +150,7 @@ remove_range(Start, End, StoreID) ->
 			Error ->
 				Error
 		end,
-	ok = ar_kv:delete_range(offset_db(StoreID),
+	ok = ar_kv:delete_range(keys_db(StoreID),
 		<< Start:?OFFSET_KEY_BITSIZE >>, << End:?OFFSET_KEY_BITSIZE >>),
 	{ok, RemovedDataRoots}.
 
@@ -220,6 +231,12 @@ next({Index, Count}, _Limit) ->
 			{Element, {Index2, Count + 1}}
 	end.
 
+%% @doc Get data roots for a given offset (>= BlockStartOffset, < BlockEndOffset) from local indices.
+%% Return only entries corresponding to non-empty transactions.
+%% Return the complete list of entries in the order they appear in the data root index,
+%% which corresponds to sorted #tx records in the block.
+%% Return {ok, {TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath}, ...]}}
+%% or {error, Reason}.
 get_for_offset(Offset) ->
 	case Offset >= ar_data_sync:get_disk_pool_threshold() of
 		true ->
@@ -228,11 +245,11 @@ get_for_offset(Offset) ->
 			{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Offset),
 			true = Offset >= BlockStart andalso Offset < BlockEnd,
 			StoreID = ?DEFAULT_MODULE,
-			case get_offset_entry(BlockStart, StoreID) of
+			case get_keys(BlockStart, StoreID) of
 				not_found ->
 					{error, not_found};
 				{ok, Bin} ->
-					{TXRoot2, BlockSize, DataRootIndexKeySet} = binary_to_term(Bin),
+					{TXRoot2, BlockSize, DataRootKeys} = binary_to_term(Bin),
 					true = TXRoot2 == TXRoot,
 					{ok, {TXRoot, BlockSize, lists:sort(
 						fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
@@ -244,17 +261,23 @@ get_for_offset(Offset) ->
 								read_entries(DataRoot, TXSize, BlockStart, BlockEnd, StoreID, Acc)
 							end,
 							[],
-							DataRootIndexKeySet
+							DataRootKeys
 						))}}
 			end
 	end.
 
-are_synced(BlockStart, BlockEnd, TXRoot) ->
-	case get_offset_entry(BlockStart, ?DEFAULT_MODULE) of
+%% @doc Return true if the data roots for the given block range are synced, false otherwise.
+%% Assert the given BlockEnd and TXRoot match the stored values.
+are_synced(B, StoreID) ->
+	BlockEnd = B#block.weave_size,
+	BlockStart = BlockEnd - B#block.block_size,
+	are_synced(BlockStart, BlockEnd, B#block.tx_root, StoreID).
+are_synced(BlockStart, BlockEnd, TXRoot, StoreID) ->
+	case get_keys(BlockStart, StoreID) of
 		not_found ->
 			false;
 		{ok, Bin} ->
-			{TXRoot2, BlockSize, _DataRootIndexKeySet} = binary_to_term(Bin),
+			{TXRoot2, BlockSize, _DataRootKeys} = binary_to_term(Bin),
 			true = TXRoot2 == TXRoot,
 			true = BlockSize == BlockEnd - BlockStart,
 			true

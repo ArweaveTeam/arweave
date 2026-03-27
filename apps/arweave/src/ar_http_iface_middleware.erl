@@ -574,7 +574,7 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 						{reply, {400, #{}, jiffy:encode(#{ error => negative_offset }), Req}};
 					Offset ->
 						{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
-						case ar_data_roots:are_synced(BlockStart, BlockEnd, ExpectedTXRoot) of
+						case ar_data_roots:are_synced(BlockStart, BlockEnd, ExpectedTXRoot, ?DEFAULT_MODULE) of
 							true ->
 								{reply, {200, #{}, <<>>, Req}};
 							false ->

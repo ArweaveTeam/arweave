@@ -13,7 +13,7 @@
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
-		is_footprint_record_supported/3, get_data_roots_for_offset/1, are_data_roots_synced/3,
+		is_footprint_record_supported/3,
 		get_disk_pool_threshold/0, migration_db/1, continue_old_data_root_index_migration/3]).
 
 -export([add_chunk_to_disk_pool/5]).
@@ -134,7 +134,6 @@ is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) ->
 %% The item is removed from the disk pool when the chunk's offset
 %% drops below the disk pool threshold.
 add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
-	DataRootIndex = {data_root_index, ?DEFAULT_MODULE},
 	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
 	DiskPoolChunksIndex = {disk_pool_chunks_index, ?DEFAULT_MODULE},
 	DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
@@ -216,7 +215,8 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
 							{ok, {TXStartOffset, _}} ->
 								{ok, Config} = arweave_config:get_env(),
-								case chunk_offsets_synced(DataRootIndex, DataRootKey,
+								case chunk_offsets_synced(ar_data_roots:index_db(?DEFAULT_MODULE), 
+										DataRootKey,
 										%% The same data may be uploaded several times.
 										%% Here we only accept the chunk if any of the
 										%% last configured number of instances of this
@@ -897,8 +897,10 @@ handle_cast(
 	{noreply, State};
 
 handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, Entries}, State) ->
-	{_, State2} = handle_store_data_roots(BlockStart, BlockEnd, TXRoot, Entries, State),
-	{noreply, State2};
+	#sync_data_state{ store_id = StoreID } = State,
+	BlockSize = BlockEnd - BlockStart,
+	ar_data_roots:store_block(BlockStart, BlockSize, TXRoot, Entries, StoreID),
+	{noreply, State};
 
 handle_cast(process_store_chunk_queue, State) ->
 	ar_util:cast_after(200, self(), process_store_chunk_queue),
@@ -976,11 +978,11 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	{WeaveSize, AddedDataRoots} = lists:foldl(
 		fun ({_BH, []}, Acc) ->
 				Acc;
-			({_BH, SizeTaggedTXs}, {StartOffset, CurrentAddedDataRoots}) ->
-				{ok, DataRoots} = add_block_data_roots(SizeTaggedTXs, StartOffset, StoreID),
+			({_BH, SizeTaggedTXs}, {StartOffset, DataRootKeysAcc}) ->
+				{ok, DataRootKeys} = add_block_data_roots(SizeTaggedTXs, StartOffset, StoreID),
 				ok = update_tx_index(SizeTaggedTXs, StartOffset, StoreID),
 				{StartOffset + element(2, lists:last(SizeTaggedTXs)),
-					sets:union(CurrentAddedDataRoots, DataRoots)}
+					sets:union(DataRootKeysAcc, DataRootKeys)}
 		end,
 		{BlockStartOffset, sets:new()},
 		Blocks
@@ -1524,29 +1526,14 @@ handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 	{reply, add_block(B, SizeTaggedTXs, StoreID), State};
 
 handle_call({store_data_roots_sync, BlockStart, BlockEnd, TXRoot, Entries}, _From, State) ->
-	{Reply, State2} = handle_store_data_roots(BlockStart, BlockEnd, TXRoot, Entries, State),
-	{reply, Reply, State2};
+	#sync_data_state{ store_id = StoreID } = State,
+	BlockSize = BlockEnd - BlockStart,
+	ar_data_roots:store_block(BlockStart, BlockSize, TXRoot, Entries, StoreID),
+	{reply, ok, State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
 	{reply, ok, State}.
-
-handle_store_data_roots(BlockStart, BlockEnd, TXRoot, Entries, State) ->
-	#sync_data_state{ store_id = ?DEFAULT_MODULE } = State,
-	DataRootIndexKeySet = sets:from_list([
-		<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>
-		|| {DataRoot, TXSize, _TXStart, _TXPath} <- Entries
-	]),
-	BlockSize = BlockEnd - BlockStart,
-	lists:foreach(
-		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
-			ok = ar_data_roots:update(DataRoot, TXSize, TXStartOffset, TXPath, ?DEFAULT_MODULE)
-		end,
-		Entries
-	),
-	ok = ar_data_roots:put_offset_entry(BlockStart, TXRoot, BlockSize,
-			DataRootIndexKeySet, ?DEFAULT_MODULE),
-	{ok, State}.
 
 handle_info({event, node_state, {initialized, B}}, State) ->
 	{noreply, State#sync_data_state{ weave_size = B#block.weave_size }};
@@ -2347,7 +2334,7 @@ init_kv(StoreID) ->
 		{"default", BasicOpts},
 		{"chunks_index", BasicOpts ++ PrefixBloomFilterOpts},
 		ar_data_roots:old_column_family(BasicOpts ++ BloomFilterOpts),
-		ar_data_roots:offset_column_family(BasicOpts),
+		ar_data_roots:keys_column_family(BasicOpts),
 		{"tx_index", BasicOpts ++ BloomFilterOpts},
 		{"tx_offset_index", BasicOpts},
 		{"disk_pool_chunks_index", BasicOpts ++ BloomFilterOpts},
@@ -2367,7 +2354,7 @@ init_kv(StoreID) ->
 		cf_descriptors => ColumnFamilyDescriptors,
 		cf_names => [{ar_data_sync, StoreID}, {chunks_index, StoreID},
 			ar_data_roots:old_db(StoreID),
-			ar_data_roots:offset_db(StoreID),
+			ar_data_roots:keys_db(StoreID),
 			{tx_index, StoreID}, {tx_offset_index, StoreID},
 			{disk_pool_chunks_index_old, StoreID}, migration_db(StoreID)]}),
 	ok = ar_kv:open(#{
@@ -2522,7 +2509,7 @@ repair_data_root_offset_index(BI, State) ->
 
 repair_data_root_offset_index(BI, Cursor, Height, ResyncBlocks, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	case ar_data_roots:get_next_offset_entry(Cursor, StoreID) of
+	case ar_data_roots:get_next_keys(Cursor, StoreID) of
 		none ->
 			ResyncBlocks;
 		{ok, Key, Value} ->
@@ -2562,9 +2549,9 @@ add_block(B, SizeTaggedTXs, StoreID) ->
 	#block{ indep_hash = H, weave_size = WeaveSize, tx_root = TXRoot } = B,
 	case ar_block_index:get_element_by_height(B#block.height) of
 		{H, WeaveSize, TXRoot} ->
-			BlockStart = B#block.weave_size - B#block.block_size,
-			case ar_data_roots:get_offset_entry(BlockStart, StoreID) of
+			case ar_data_roots:are_synced(B, StoreID) of
 				not_found ->
+					BlockStart = B#block.weave_size - B#block.block_size,
 					{ok, _} = add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID),
 					ok = update_tx_index(SizeTaggedTXs, BlockStart, StoreID),
 					ok;
@@ -2616,43 +2603,35 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
 	),
 	ok.
 
-add_block_data_roots([], _CurrentWeaveSize, _StoreID) ->
+add_block_data_roots([], _BlockStart, _StoreID) ->
 	{ok, sets:new()};
-add_block_data_roots(SizeTaggedTXs, CurrentWeaveSize, StoreID) ->
+add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID) ->
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
-	{BlockSize, DataRootIndexKeySet, Args} = lists:foldl(
-		fun ({_, Offset}, {Offset, _, _} = Acc) ->
+	{BlockSize, DataRootTuples} = lists:foldl(
+		fun ({_, Offset}, {Offset, _} = Acc) ->
 				Acc;
-			({{padding, _}, Offset}, {_, Acc1, Acc2}) ->
-				{Offset, Acc1, Acc2};
-			({{_, DataRoot}, Offset}, {_, Acc1, Acc2}) when byte_size(DataRoot) < 32 ->
-				{Offset, Acc1, Acc2};
-			({{_, DataRoot}, TXEndOffset}, {PrevOffset, CurrentDataRootSet, CurrentArgs}) ->
+			({{padding, _}, Offset}, {_, DataRootTuplesAcc}) ->
+				{Offset, DataRootTuplesAcc};
+			({{_, DataRoot}, Offset}, {_, DataRootTuplesAcc}) when byte_size(DataRoot) < 32 ->
+				{Offset, DataRootTuplesAcc};
+			({{_, DataRoot}, TXEndOffset}, {PrevOffset, DataRootTuplesAcc}) ->
 				TXPath = ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree),
-				TXOffset = CurrentWeaveSize + PrevOffset,
+				TXOffset = BlockStart + PrevOffset,
 				TXSize = TXEndOffset - PrevOffset,
-				DataRootKey = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-				{TXEndOffset, sets:add_element(DataRootKey, CurrentDataRootSet),
-						[{DataRoot, TXSize, TXOffset, TXPath} | CurrentArgs]}
+				{TXEndOffset,
+						[{DataRoot, TXSize, TXOffset, TXPath} | DataRootTuplesAcc]}
 		end,
-		{0, sets:new(), []},
+		{0, []},
 		SizeTaggedTXs
 	),
 	case BlockSize > 0 of
 		true ->
-			ok = ar_data_roots:put_offset_entry(CurrentWeaveSize, TXRoot, BlockSize,
-					DataRootIndexKeySet, StoreID),
-			lists:foreach(
-				fun({DataRoot, TXSize, TXOffset, TXPath}) ->
-					ok = ar_data_roots:update(DataRoot, TXSize, TXOffset, TXPath, StoreID)
-				end,
-				Args
-			);
+			ar_data_roots:store_block(
+				BlockStart, BlockSize, TXRoot, DataRootTuples, StoreID);
 		false ->
-			do_not_update_data_root_offset_index
-	end,
-	{ok, DataRootIndexKeySet}.
+			{ok, sets:new()}
+	end.
 
 add_block_data_roots_to_disk_pool(DataRootKeySet) ->
 	sets:fold(
@@ -3801,20 +3780,6 @@ record_chunk_cache_size_metric() ->
 		_ ->
 			ok
 	end.
-
-%% @doc Get data roots for a given offset (>= BlockStartOffset, < BlockEndOffset) from local indices.
-%% Return only entries corresponding to non-empty transactions.
-%% Return the complete list of entries in the order they appear in the data root index,
-%% which corresponds to sorted #tx records in the block.
-%% Return {ok, {TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath}, ...]}}
-%% or {error, Reason}.
-get_data_roots_for_offset(Offset) ->
-	ar_data_roots:get_for_offset(Offset).
-
-%% @doc Return true if the data roots for the given block range are synced, false otherwise.
-%% Assert the given BlockEnd and TXRoot match the stored values.
-are_data_roots_synced(BlockStart, BlockEnd, TXRoot) ->
-	ar_data_roots:are_synced(BlockStart, BlockEnd, TXRoot).
 
 maybe_run_footprint_record_initialization(State) ->
 	#sync_data_state{ store_id = StoreID } = State,
