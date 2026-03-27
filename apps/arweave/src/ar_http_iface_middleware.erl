@@ -540,7 +540,7 @@ handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
 				{'EXIT', _} ->
 					{400, #{}, <<>>, Req};
 				Offset ->
-					case ar_data_sync:get_data_roots_for_offset(Offset) of
+					case ar_data_roots:get_for_offset(Offset) of
 						{ok, {TXRoot, BlockSize, Entries}} ->
 							Payload = ar_serialize:data_roots_to_binary({TXRoot, BlockSize, Entries}),
 							{200, #{}, Payload, Req};
@@ -574,7 +574,7 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 						{reply, {400, #{}, jiffy:encode(#{ error => negative_offset }), Req}};
 					Offset ->
 						{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
-						case ar_data_sync:are_data_roots_synced(BlockStart, BlockEnd, ExpectedTXRoot) of
+						case ar_data_roots:are_synced(BlockStart, BlockEnd, ExpectedTXRoot) of
 							true ->
 								{reply, {200, #{}, <<>>, Req}};
 							false ->

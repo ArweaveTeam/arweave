@@ -173,7 +173,7 @@ sync_block_data_roots(StoreID, Cursor, RangeEnd) ->
 			true ->
 				RangeEnd;
 			false ->
-				case ar_data_sync:are_data_roots_synced(BlockStart, BlockEnd, TXRoot) of
+				case ar_data_roots:are_synced(BlockStart, BlockEnd, TXRoot) of
 					true ->
 						BlockEnd;
 					false ->

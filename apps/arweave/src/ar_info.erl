@@ -14,7 +14,6 @@ get_info() ->
 		timer:tc(fun() -> ar_node:get_current_block_hash() end),
 	{Time2, Height} =
 		timer:tc(fun() -> ar_node:get_height() end),
-	[{_, BlockCount}] = ets:lookup(ar_header_sync, synced_blocks),
     #{
         <<"network">> => list_to_binary(?NETWORK_NAME),
         <<"version">> => ?CLIENT_VERSION,
@@ -29,7 +28,7 @@ get_info() ->
                 true -> atom_to_binary(Current, utf8);
                 false -> ar_util:encode(Current)
             end,
-        <<"blocks">> => BlockCount,
+        <<"blocks">> => ar_header_sync:block_count(),
         <<"peers">> => prometheus_gauge:value(arweave_peer_count),
         <<"queue_length">> =>
             element(

@@ -192,7 +192,7 @@ test_chunk_after_data_roots_http_post() ->
 	ar_test_node:disconnect_from(peer1),
 
 	%% GET/POST /data_roots only apply below each peer's disk pool bound (see
-	%% ar_data_sync:get_data_roots_for_offset/1 and POST handler in ar_http_iface_middleware).
+	%% ar_data_roots:get_for_offset/1 and POST handler in ar_http_iface_middleware).
 	Peer1PoolBound = ar_test_node:remote_call(peer1, ar_data_sync, get_disk_pool_threshold, []),
 	MainPoolBound = ar_test_node:remote_call(main, ar_data_sync, get_disk_pool_threshold, []),
 
@@ -409,7 +409,7 @@ wait_until_data_roots_synced(Peer, B) ->
 	End = B#block.weave_size,
 	true = ar_util:do_until(
 		fun() ->
-			ar_test_node:remote_call(Peer, ar_data_sync, are_data_roots_synced,
+			ar_test_node:remote_call(Peer, ar_data_roots, are_synced,
 				[Start, End, B#block.tx_root])
 		end,
 		500,

@@ -111,13 +111,6 @@
 	%% very unnerving. The index is NOT consulted when serving random chunks therefore
 	%% it is possible to develop a lightweight client which would sync and serve random
 	%% portions of the weave without maintaining this index.
-	data_root_index,
-	data_root_index_old,
-	%% A reference to the on-disk key-value storage mapping
-	%% AbsoluteBlockStartOffset => {TXRoot, BlockSize, DataRootIndexKeySet}.
-	%% Each key in DataRootIndexKeySet is a << DataRoot/binary, TXSize:256 >> binary.
-	%% Used to remove orphaned entries from DataRootIndex.
-	data_root_offset_index,
 	%% A reference to the on-disk key value storage mapping
 	%% << DataRootTimestamp:256, ChunkDataIndexKey/binary >> =>
 	%%     {RelativeChunkEndOffset, ChunkSize, DataRoot, TXSize, ChunkDataKey, IsStrictSplit}.

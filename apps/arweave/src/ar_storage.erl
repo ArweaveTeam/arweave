@@ -1492,7 +1492,7 @@ test_store_and_retrieve_block() ->
 	ar_test_node:wait_until_height(main, 1),
 	ar_test_node:mine(),
 	BI1 = ar_test_node:wait_until_height(main, 2),
-	[{_, BlockCount}] = ets:lookup(ar_header_sync, synced_blocks),
+	BlockCount = ar_header_sync:block_count(),
 	ar_util:do_until(
 		fun() ->
 			3 == BlockCount

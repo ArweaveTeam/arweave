@@ -3,15 +3,13 @@
 -behaviour(gen_server).
 
 -export([start_link/0, join/3, add_tip_block/2, add_block/1, request_tx_removal/1,
-		remove_block/1]).
+		remove_block/1, block_count/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_header_sync.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_chunk_storage.hrl").
 
 %%% This module syncs block and transaction headers and maintains a persisted record of synced
 %%% headers. Headers are synced from latest to earliest.
@@ -52,6 +50,10 @@ request_tx_removal(TXID) ->
 %% will therefore re-sync it later (if there is available disk space).
 remove_block(Height) ->
 	gen_server:cast(?MODULE, {remove_block, Height}).
+
+block_count() ->
+	[{_, BlockCount}] = ets:lookup(ar_header_sync, synced_blocks),
+	BlockCount.
 
 %%%===================================================================
 %%% Generic server callbacks.
