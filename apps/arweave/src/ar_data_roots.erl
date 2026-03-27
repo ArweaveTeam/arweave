@@ -9,7 +9,6 @@
 	keys_db/1,
 	store_block/5,
 	get_offset/2,
-	get_next_keys/2,
 	get_prev_offset/3,
 	remove_range/3,
 	iterator_v2/3,
@@ -19,6 +18,7 @@
 	get_for_offset/1,
 	are_synced/2,
 	are_synced/4,
+	repair/3,
 	start_old_data_root_index_migration/1,
 	continue_old_data_root_index_migration/3,
 	is_migration_complete/0
@@ -102,9 +102,6 @@ get_offset(DataRootKey, StoreID) ->
 
 get_keys(BlockStart, StoreID) ->
 	ar_kv:get(keys_db(StoreID), << BlockStart:?OFFSET_KEY_BITSIZE >>).
-
-get_next_keys(Cursor, StoreID) ->
-	ar_kv:get_next(keys_db(StoreID), Cursor).
 
 get_prev_offset(DataRootKey, TXStartOffset, StoreID) ->
 	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
@@ -283,6 +280,59 @@ are_synced(BlockStart, BlockEnd, TXRoot, StoreID) ->
 			true
 	end.
 
+repair(BI, StoreID, RemoveTXRangeFun) ->
+	MigrationDB = ar_data_sync:migration_db(StoreID),
+	case ar_kv:get(MigrationDB, <<"repair_data_root_offset_index">>) of
+		not_found ->
+			?LOG_INFO([{event, starting_data_root_offset_index_scan}]),
+			ReverseBI = lists:reverse(BI),
+			ResyncBlocks = repair(ReverseBI, <<>>, 0, [], StoreID, RemoveTXRangeFun),
+			ok = ar_kv:put(MigrationDB, <<"repair_data_root_offset_index">>, <<>>),
+			?LOG_INFO([{event, data_root_offset_index_scan_complete}]),
+			{ok, ResyncBlocks};
+		_ ->
+			ok
+	end.
+
+repair(BI, Cursor, Height, ResyncBlocks, StoreID, RemoveTXRangeFun) ->
+	case ar_kv:get_next(keys_db(StoreID), Cursor) of
+		none ->
+			ResyncBlocks;
+		{ok, Key, Value} ->
+			<< BlockStart:?OFFSET_KEY_BITSIZE >> = Key,
+			{TXRoot, BlockSize, _DataRootKeys} = binary_to_term(Value, [safe]),
+			BlockEnd = BlockStart + BlockSize,
+			case shift_block_index(TXRoot, BlockStart, BlockEnd, Height, ResyncBlocks, BI) of
+				{ok, {Height2, BI2}} ->
+					Cursor2 = << (BlockStart + 1):?OFFSET_KEY_BITSIZE >>,
+					repair(BI2, Cursor2, Height2, ResyncBlocks, StoreID, RemoveTXRangeFun);
+				{bad_key, []} ->
+					ResyncBlocks;
+				{bad_key, ResyncBlocks2} ->
+					?LOG_INFO([{event, removing_data_root_index_range},
+							{range_start, BlockStart}, {range_end, BlockEnd}]),
+					ok = RemoveTXRangeFun(BlockStart, BlockEnd),
+					{ok, _} = remove_range(BlockStart, BlockEnd, StoreID),
+					repair(BI, Cursor, Height, ResyncBlocks2, StoreID, RemoveTXRangeFun)
+			end
+	end.
+
+shift_block_index(_TXRoot, _BlockStart, _BlockEnd, _Height, ResyncBlocks, []) ->
+	{bad_key, ResyncBlocks};
+shift_block_index(TXRoot, BlockStart, BlockEnd, Height, ResyncBlocks,
+		[{_H, WeaveSize, _TXRoot} | BI]) when BlockEnd > WeaveSize ->
+	ResyncBlocks2 =
+		case BlockStart < WeaveSize of
+			true -> [Height | ResyncBlocks];
+			false -> ResyncBlocks
+		end,
+	shift_block_index(TXRoot, BlockStart, BlockEnd, Height + 1, ResyncBlocks2, BI);
+shift_block_index(TXRoot, _BlockStart, WeaveSize, Height, _ResyncBlocks,
+		[{_H, WeaveSize, TXRoot} | BI]) ->
+	{ok, {Height + 1, BI}};
+shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) ->
+	{bad_key, [Height | ResyncBlocks]}.
+
 read_entries(_DataRoot, _TXSize, _BlockStart, 0, _StoreID, Acc) ->
 	Acc;
 read_entries(DataRoot, TXSize, BlockStart, Cursor, StoreID, Acc) ->
@@ -325,15 +375,13 @@ continue_old_data_root_index_migration(Cursor, N, StoreID) ->
 	end.
 
 start_migration(StoreID) ->
-	MigrationsIndex = ar_data_sync:migration_db(StoreID),
-	DataRootIndexOld = old_db(StoreID),
-	case ar_kv:get(MigrationsIndex, <<"move_data_root_index">>) of
+	case ar_kv:get(ar_data_sync:migration_db(StoreID), <<"move_data_root_index">>) of
 		{ok, <<"complete">>} ->
 			complete;
 		{ok, Cursor} ->
 			{continue, Cursor, 1};
 		not_found ->
-			case ar_kv:get_next(DataRootIndexOld, last) of
+			case ar_kv:get_next(old_db(StoreID), last) of
 				none ->
 					complete;
 				{ok, Key, _} ->
@@ -342,18 +390,16 @@ start_migration(StoreID) ->
 	end.
 
 migrate_batch(Cursor, N, StoreID) ->
-	Old = old_db(StoreID),
-	New = index_db(StoreID),
 	case N rem 50000 of
 		0 ->
 			{continue, Cursor, N + 1};
 		_ ->
-			case ar_kv:get_prev(Old, Cursor) of
+			case ar_kv:get_prev(old_db(StoreID), Cursor) of
 				none ->
 					complete;
 				{ok, << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Value} ->
 					M = binary_to_term(Value, [safe]),
-					migrate_entries(DataRoot, TXSize, iterator(M), New),
+					migrate_entries(DataRoot, TXSize, iterator(M), index_db(StoreID)),
 					PrevKey = << DataRoot:32/binary, (TXSize - 1):?OFFSET_KEY_BITSIZE >>,
 					migrate_batch(PrevKey, N + 1, StoreID);
 				{ok, Key, _} ->

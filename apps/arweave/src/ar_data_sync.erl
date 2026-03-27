@@ -2495,55 +2495,17 @@ remove_tx_index_range(Start, End, State) ->
 
 repair_data_root_offset_index(BI, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	case ar_kv:get(migration_db(StoreID), <<"repair_data_root_offset_index">>) of
-		not_found ->
-			?LOG_INFO([{event, starting_data_root_offset_index_scan}]),
-			ReverseBI = lists:reverse(BI),
-			ResyncBlocks = repair_data_root_offset_index(ReverseBI, <<>>, 0, [], State),
+	RemoveTXRange =
+		fun(BlockStart, BlockEnd) ->
+			remove_tx_index_range(BlockStart, BlockEnd, State)
+		end,
+	case ar_data_roots:repair(BI, StoreID, RemoveTXRange) of
+		{ok, ResyncBlocks} ->
 			[ar_header_sync:remove_block(Height) || Height <- ResyncBlocks],
-			ok = ar_kv:put(DB, <<"repair_data_root_offset_index">>, <<>>),
-			?LOG_INFO([{event, data_root_offset_index_scan_complete}]);
-		_ ->
+			ok;
+		ok ->
 			ok
 	end.
-
-repair_data_root_offset_index(BI, Cursor, Height, ResyncBlocks, State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	case ar_data_roots:get_next_keys(Cursor, StoreID) of
-		none ->
-			ResyncBlocks;
-		{ok, Key, Value} ->
-			<< BlockStart:?OFFSET_KEY_BITSIZE >> = Key,
-			{TXRoot, BlockSize, _DataRootKeys} = binary_to_term(Value, [safe]),
-			BlockEnd = BlockStart + BlockSize,
-			case shift_block_index(TXRoot, BlockStart, BlockEnd, Height, ResyncBlocks, BI) of
-				{ok, {Height2, BI2}} ->
-					Cursor2 = << (BlockStart + 1):?OFFSET_KEY_BITSIZE >>,
-					repair_data_root_offset_index(BI2, Cursor2, Height2, ResyncBlocks, State);
-				{bad_key, []} ->
-					ResyncBlocks;
-				{bad_key, ResyncBlocks2} ->
-					?LOG_INFO([{event, removing_data_root_index_range},
-							{range_start, BlockStart}, {range_end, BlockEnd}]),
-					ok = remove_tx_index_range(BlockStart, BlockEnd, State),
-					{ok, _} =
-						ar_data_roots:remove_range(BlockStart, BlockEnd, StoreID),
-					repair_data_root_offset_index(BI, Cursor, Height, ResyncBlocks2, State)
-			end
-	end.
-
-shift_block_index(_TXRoot, _BlockStart, _BlockEnd, _Height, ResyncBlocks, []) ->
-	{bad_key, ResyncBlocks};
-shift_block_index(TXRoot, BlockStart, BlockEnd, Height, ResyncBlocks,
-		[{_H, WeaveSize, _TXRoot} | BI]) when BlockEnd > WeaveSize ->
-	ResyncBlocks2 = case BlockStart < WeaveSize of true -> [Height | ResyncBlocks];
-			_ -> ResyncBlocks end,
-	shift_block_index(TXRoot, BlockStart, BlockEnd, Height + 1, ResyncBlocks2, BI);
-shift_block_index(TXRoot, _BlockStart, WeaveSize, Height, _ResyncBlocks,
-		[{_H, WeaveSize, TXRoot} | BI]) ->
-	{ok, {Height + 1, BI}};
-shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) ->
-	{bad_key, [Height | ResyncBlocks]}.
 
 add_block(B, SizeTaggedTXs, StoreID) ->
 	#block{ indep_hash = H, weave_size = WeaveSize, tx_root = TXRoot } = B,
@@ -3090,13 +3052,8 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 					true = AbsoluteEndOffset == AbsoluteTXStartOffset + ChunkEndOffset,
 					case AbsoluteEndOffset >= DiskPoolThreshold of
 						true ->
-							add_chunk_to_disk_pool(#{
-								data_root => DataRoot,
-								data_path => DataPath,
-								chunk => UnpackedChunk,
-								offset => ChunkEndOffset - 1,
-								data_size => TXSize
-							}),
+							add_chunk_to_disk_pool(DataRoot, DataPath, UnpackedChunk,
+									ChunkEndOffset - 1, TXSize),
 							decrement_chunk_cache_size(),
 							{noreply, State};
 						false ->
