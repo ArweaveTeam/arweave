@@ -92,6 +92,9 @@ post_2_8_test_() ->
 		]}
 	}.
 
+recall_byte_out_of_bounds_test_() ->
+	{timeout, 120, fun test_recall_byte_out_of_bounds/0}.
+
 %% ------------------------------------------------------------------------------------------
 %% post_2_7_test_
 %% ------------------------------------------------------------------------------------------
@@ -192,6 +195,82 @@ assert_banned(Peer) ->
 assert_not_banned(Peer) ->
 	timer:sleep(2000),
 	?assertEqual(not_banned, ar_blacklist_middleware:is_peer_banned(Peer)).
+
+test_recall_byte_out_of_bounds() ->
+	start_node(),
+	{Key, B, PrevB} = reset_node(),
+	{Setup, Cleanup} = ar_test_node:mock_functions([
+		{ar_block, get_recall_range_size,
+			fun
+				(0) -> ?LEGACY_RECALL_RANGE_SIZE;
+				(PackingDifficulty) -> (768 * 1024) div PackingDifficulty
+			end}
+	]),
+	Mocked = Setup(),
+	try
+		test_recall_byte_out_of_bounds({Key, B, PrevB})
+	after
+		Cleanup(Mocked)
+	end.
+
+test_recall_byte_out_of_bounds({Key, B, PrevB}) ->
+	%% Craft a block whose computed RecallByte exceeds the block index range.
+	%%
+	%% Uses replica 2.9 packing (packing_difficulty=REPLICA_2_9_PACKING_DIFFICULTY,
+	%% replica_format=1). Nonce 32 is the smallest nonce that produces ChunkNumber=1,
+	%% pushing the recall byte one DATA_CHUNK_SIZE beyond RecallRangeStart.
+	%%
+	%% The VDF output field is validated AFTER pre_validate_poa (in
+	%% pre_validate_nonce_limiter), so we can vary it freely to brute-force an H0
+	%% that produces RecallByte >= WeaveSize.
+	%%
+	%% We mock get_recall_range_size/1 so that nonce 32 is within the
+	%% allowed range (max_nonce = 47) while still producing an out-of-bounds recall byte.
+	ok = ar_events:subscribe(block),
+	PackingDifficulty = ?REPLICA_2_9_PACKING_DIFFICULTY,
+	B29 = B#block{ packing_difficulty = PackingDifficulty, replica_format = 1 },
+	WeaveSize = B29#block.weave_size,
+	PartitionUpperBound =
+		(B29#block.nonce_limiter_info)#nonce_limiter_info.partition_upper_bound,
+	Nonce = 32,
+	{Output, _H0, Chunk, H1, Preimage} =
+		find_oob_output(B29, PrevB, PartitionUpperBound, WeaveSize, Nonce),
+	UnpackedChunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+	Info = B29#block.nonce_limiter_info,
+	B2 = sign_block(B29#block{
+		nonce_limiter_info = Info#nonce_limiter_info{ output = Output },
+		nonce = Nonce,
+		recall_byte = 0,
+		recall_byte2 = undefined,
+		hash = H1,
+		hash_preimage = Preimage,
+		chunk_hash = crypto:hash(sha256, Chunk),
+		chunk2_hash = undefined,
+		unpacked_chunk_hash = crypto:hash(sha256, UnpackedChunk),
+		unpacked_chunk2_hash = undefined,
+		poa = #poa{ chunk = Chunk, unpacked_chunk = UnpackedChunk },
+		poa2 = #poa{}
+	}, PrevB, Key),
+	Pid = whereis(ar_block_pre_validator),
+	MonRef = monitor(process, Pid),
+	{ok, {{<<"200">>, _}, _, _, _, _}} =
+		send_new_block(ar_test_node:peer_ip(main), B2),
+	receive
+		{'DOWN', MonRef, process, Pid, Reason} ->
+			demonitor(MonRef, [flush]),
+			?assert(false, iolist_to_binary(io_lib:format(
+				"ar_block_pre_validator crashed: ~p", [Reason])));
+		{event, block, {rejected, invalid_recall_byte, _, _}} ->
+			demonitor(MonRef, [flush]),
+			ok;
+		{event, block, {rejected, UnexpectedReason, _, _}} ->
+			demonitor(MonRef, [flush]),
+			?assert(false, iolist_to_binary(io_lib:format(
+				"Block rejected for unexpected reason: ~p", [UnexpectedReason])))
+	after 10000 ->
+		demonitor(MonRef, [flush]),
+		?assert(false, "Timed out waiting for block validation result")
+	end.
 
 %% ------------------------------------------------------------------------------------------
 %% post_2_6_test_
@@ -816,3 +895,35 @@ tx_id(ID) ->
 
 height(Node) ->
 	ar_test_node:remote_call(Node, ar_node, get_height, []).
+
+find_oob_output(B, PrevB, PartitionUpperBound, WeaveSize, Nonce) ->
+	find_oob_output(B, PrevB, PartitionUpperBound, WeaveSize, Nonce, 1).
+
+find_oob_output(B, PrevB, PartitionUpperBound, WeaveSize, Nonce, Attempt) ->
+	Output = crypto:strong_rand_bytes(32),
+	Seed = (PrevB#block.nonce_limiter_info)#nonce_limiter_info.seed,
+	H0 = ar_block:compute_h0(Output, B#block.partition_number, Seed,
+		B#block.reward_addr, B#block.packing_difficulty),
+	{RecallRange1Start, _} = ar_block:get_recall_range(H0,
+		B#block.partition_number, PartitionUpperBound),
+	RecallByte = ar_block:get_recall_byte(RecallRange1Start, Nonce,
+		B#block.packing_difficulty),
+	Chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+	{H1, Preimage} = ar_block:compute_h1(H0, Nonce, Chunk),
+	SolutionHash = ar_block:compute_solution_h(H0, Preimage),
+	DiffPair = ar_difficulty:diff_pair(B),
+	PassesDiff = ar_node_utils:passes_diff_check(
+		SolutionHash, true, DiffPair, B#block.packing_difficulty),
+	?debugFmt("find_oob_output attempt ~B: partition_number=~B "
+		"partition_upper_bound=~B weave_size=~B "
+		"recall_range1_start=~B recall_byte=~B nonce=~B "
+		"passes_diff=~p (need >= ~B)~n",
+		[Attempt, B#block.partition_number, PartitionUpperBound,
+		 WeaveSize, RecallRange1Start, RecallByte, Nonce,
+		 PassesDiff, WeaveSize]),
+	case RecallByte >= WeaveSize andalso PassesDiff of
+		true ->
+			{Output, H0, Chunk, H1, Preimage};
+		false ->
+			find_oob_output(B, PrevB, PartitionUpperBound, WeaveSize, Nonce, Attempt + 1)
+	end.

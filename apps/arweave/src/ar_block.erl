@@ -696,7 +696,8 @@ get_nonces_per_chunk(_PackingDifficulty) ->
 	?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
 
 get_nonces_per_recall_range(PackingDifficulty) ->
-	max(1, get_recall_range_size(PackingDifficulty) div get_sub_chunk_size(PackingDifficulty)).
+	%% Call ar_block: here so that it is mockable in tests on all nodes.
+	max(1, ar_block:get_recall_range_size(PackingDifficulty) div get_sub_chunk_size(PackingDifficulty)).
 
 %% @doc For packing difficulty 0 (aka spora_2_6 packing), there is one nonce per chunk, so
 %% the max nonce is the same as the max chunk number. For packing difficulty >= 1 (aka

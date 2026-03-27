@@ -124,6 +124,8 @@
 	invalid_partition_number,
 	invalid_nonce,
 	invalid_pow,
+	invalid_recall_byte,
+	invalid_recall_byte2,
 	invalid_poa,
 	invalid_poa2,
 	invalid_nonce_limiter,

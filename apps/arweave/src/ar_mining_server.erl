@@ -1302,10 +1302,15 @@ validate_solution(Solution, DiffPair) ->
 			PartitionNumber, PartitionUpperBound),
 	%% Assert recall_byte1 is computed correctly.
 	RecallByte1 = ar_block:get_recall_byte(RecallRange1Start, Nonce, PackingDifficulty),
-	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(RecallByte1),
-	BlockSize1 = BlockEnd1 - BlockStart1,
 	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
 	SubChunkIndex = ar_block:get_sub_chunk_index(PackingDifficulty, Nonce),
+	case ar_block_index:get_block_bounds(RecallByte1) of
+		not_found ->
+			log_prepare_solution_failure(Solution, rejected, recall_byte1_out_of_bounds,
+					miner, []),
+			error;
+		{BlockStart1, BlockEnd1, TXRoot1} ->
+	BlockSize1 = BlockEnd1 - BlockStart1,
 	case ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
 			Packing, SubChunkIndex, not_set}) of
 		{true, ChunkID} ->
@@ -1354,8 +1359,13 @@ validate_solution(Solution, DiffPair) ->
 									SolutionHash = H2,
 									RecallByte2 = ar_block:get_recall_byte(RecallRange2Start,
 											Nonce, PackingDifficulty),
-									{BlockStart2, BlockEnd2, TXRoot2} =
-											ar_block_index:get_block_bounds(RecallByte2),
+									case ar_block_index:get_block_bounds(RecallByte2) of
+										not_found ->
+											log_prepare_solution_failure(Solution,
+												rejected, recall_byte2_out_of_bounds,
+												miner, []),
+											error;
+										{BlockStart2, BlockEnd2, TXRoot2} ->
 									BlockSize2 = BlockEnd2 - BlockStart2,
 									case ar_poa:validate({BlockStart2, RecallByte2, TXRoot2,
 											BlockSize2, PoA2,
@@ -1372,6 +1382,7 @@ validate_solution(Solution, DiffPair) ->
 										false ->
 											{false, poa2}
 									end
+									end
 							end
 					end
 			end;
@@ -1380,6 +1391,7 @@ validate_solution(Solution, DiffPair) ->
 			error;
 		false ->
 			{false, poa1}
+	end
 	end.
 
 reset_gc_timer(GarbageCollectionFrequency, State) ->

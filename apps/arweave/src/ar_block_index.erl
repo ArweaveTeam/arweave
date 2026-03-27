@@ -1,5 +1,7 @@
 -module(ar_block_index).
 
+-include("ar.hrl").
+
 -export([init/1, update/2, member/1, get_list/1, get_list_by_hash/1, get_element_by_height/1,
 		get_block_bounds/1, get_block_bounds_with_height/1, get_intersection/2, get_intersection/1, get_range/2, get_last/0]).
 
@@ -47,21 +49,31 @@ get_element_by_height(Height) ->
 	end.
 
 %% @doc Return {BlockStartOffset, BlockEndOffset, TXRoot} where Offset >= BlockStartOffset,
-%% Offset < BlockEndOffset.
+%% Offset < BlockEndOffset, or not_found if Offset is beyond the block index range.
 get_block_bounds(Offset) ->
-	{BlockStart, BlockEnd, TXRoot, _} = get_block_bounds_with_height(Offset),
-	{BlockStart, BlockEnd, TXRoot}.
+	case get_block_bounds_with_height(Offset) of
+		{BlockStart, BlockEnd, TXRoot, _} ->
+			{BlockStart, BlockEnd, TXRoot};
+		not_found ->
+			not_found
+	end.
 
 %% @doc Return {BlockStartOffset, BlockEndOffset, TXRoot, Height} where Offset >= BlockStartOffset,
 %% Offset < BlockEndOffset.
 get_block_bounds_with_height(Offset) ->
-	{WeaveSize, Height, _H, TXRoot} = Key = ets:next(block_index, {Offset, n, n, n}),
-	case Height of
-		0 ->
-			{0, WeaveSize, TXRoot, 0};
-		_ ->
-			{PrevWeaveSize, _, _, _} = ets:prev(block_index, Key),
-			{PrevWeaveSize, WeaveSize, TXRoot, Height}
+	case ets:next(block_index, {Offset, n, n, n}) of
+		'$end_of_table' ->
+			?LOG_ERROR([{event, get_block_bounds_offset_out_of_range},
+					{offset, Offset}]),
+			not_found;
+		{WeaveSize, Height, _H, TXRoot} = Key ->
+			case Height of
+				0 ->
+					{0, WeaveSize, TXRoot, 0};
+				_ ->
+					{PrevWeaveSize, _, _, _} = ets:prev(block_index, Key),
+					{PrevWeaveSize, WeaveSize, TXRoot, Height}
+			end
 	end.
 
 %% @doc Return {Height, {H, WeaveSize, TXRoot}} with the triplet present in both

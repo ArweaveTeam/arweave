@@ -508,10 +508,13 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 			PartitionNumber, PartitionUpperBound),
 	ComputedRecallByte1 = ar_block:get_recall_byte(RecallRange1Start, Nonce,
 			PackingDifficulty),
-	{BlockStart1, BlockEnd1, TXRoot1} = ar_block_index:get_block_bounds(ComputedRecallByte1),
-	BlockSize1 = BlockEnd1 - BlockStart1,
 	Packing = ar_block:get_packing(PackingDifficulty, MiningAddress, ReplicaFormat),
 	SubChunkIndex = ar_block:get_sub_chunk_index(PackingDifficulty, Nonce),
+	case ar_block_index:get_block_bounds(ComputedRecallByte1) of
+		not_found ->
+			#partial_solution_response{ status = <<"rejected_bad_poa">> };
+		{BlockStart1, BlockEnd1, TXRoot1} ->
+	BlockSize1 = BlockEnd1 - BlockStart1,
 	case RecallByte1 == ComputedRecallByte1 andalso
 			ar_poa:validate({BlockStart1, RecallByte1, TXRoot1, BlockSize1, PoA1,
 					Packing, SubChunkIndex, not_set}) of
@@ -527,8 +530,10 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 		{true, ChunkID} ->
 			ComputedRecallByte2 = ar_block:get_recall_byte(RecallRange2Start, Nonce,
 					PackingDifficulty),
-			{BlockStart2, BlockEnd2, TXRoot2} = ar_block_index:get_block_bounds(
-					ComputedRecallByte2),
+			case ar_block_index:get_block_bounds(ComputedRecallByte2) of
+				not_found ->
+					#partial_solution_response{ status = <<"rejected_bad_poa">> };
+				{BlockStart2, BlockEnd2, TXRoot2} ->
 			BlockSize2 = BlockEnd2 - BlockStart2,
 			case RecallByte2 == ComputedRecallByte2 andalso
 					ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2,
@@ -545,6 +550,8 @@ process_partial_solution_poa(Solution, Ref, H0, H1) ->
 							Packing}, ChunkID},
 					process_partial_solution_difficulty(Solution, Ref, PoACache, PoA2Cache)
 			end
+			end
+	end
 	end.
 
 process_partial_solution_difficulty(Solution, Ref, PoACache, PoA2Cache) ->
