@@ -14,7 +14,7 @@
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
 		is_footprint_record_supported/3, get_data_roots_for_offset/1, are_data_roots_synced/3,
-		get_disk_pool_threshold/0]).
+		get_disk_pool_threshold/0, migration_db/1, continue_old_data_root_index_migration/3]).
 
 -export([add_chunk_to_disk_pool/5]).
 
@@ -28,7 +28,6 @@
 
 -include("ar.hrl").
 -include("ar_sup.hrl").
--include("ar_consensus.hrl").
 -include("ar_poa.hrl").
 -include("ar_data_discovery.hrl").
 -include("ar_data_sync.hrl").
@@ -755,6 +754,12 @@ get_disk_pool_threshold() ->
 			DiskPoolThreshold
 	end.
 
+migration_db(StoreID) ->
+	{migrations_index, StoreID}.
+
+continue_old_data_root_index_migration(Cursor, N, StoreID) ->
+	gen_server:cast(name(StoreID), {continue_old_data_root_index_migration, Cursor, N}).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -766,7 +771,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
-	move_data_root_index(State),
+	ar_data_roots:start_old_data_root_index_migration(StoreID),
 	{ok, _} = ar_timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		ar_data_sync,
@@ -885,8 +890,10 @@ init({StoreID, RepackInPlacePacking}) ->
 			{ok, State3}
 	end.
 
-handle_cast({move_data_root_index, Cursor, N}, State) ->
-	move_data_root_index(Cursor, N, State),
+handle_cast(
+		{continue_old_data_root_index_migration, Cursor, N},
+		#sync_data_state{ store_id = StoreID } = State) ->
+	ar_data_roots:continue_old_data_root_index_migration(Cursor, N, StoreID),
 	{noreply, State};
 
 handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, Entries}, State) ->
@@ -1037,7 +1044,6 @@ handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End,
 			disk_pool_threshold = DiskPoolThreshold,
 			sync_phase = SyncPhase,
-			migrations_index = MI,
 			store_id = StoreID,
 			sync_intervals_queue = Q } = State,
 	CheckIsJoined =
@@ -1049,7 +1055,7 @@ handle_cast(collect_peer_intervals, State) ->
 				true
 		end,
 	IsFootprintRecordMigrated =
-		case ar_kv:get(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY) of
+		case ar_kv:get(migration_db(StoreID), ?FOOTPRINT_MIGRATION_CURSOR_KEY) of
 			{ok, <<"complete">>} ->
 				true;
 			_ ->
@@ -2363,7 +2369,7 @@ init_kv(StoreID) ->
 			ar_data_roots:old_db(StoreID),
 			ar_data_roots:offset_db(StoreID),
 			{tx_index, StoreID}, {tx_offset_index, StoreID},
-			{disk_pool_chunks_index_old, StoreID}, {migrations_index, StoreID}]}),
+			{disk_pool_chunks_index_old, StoreID}, migration_db(StoreID)]}),
 	ok = ar_kv:open(#{
 		path => filename:join(Dir, "ar_data_sync_chunk_db"),
 		name => {chunk_data_db, StoreID},
@@ -2391,8 +2397,7 @@ init_kv(StoreID) ->
 		tx_index = {tx_index, StoreID},
 		tx_offset_index = {tx_offset_index, StoreID},
 		disk_pool_chunks_index = {disk_pool_chunks_index, StoreID},
-		disk_pool_chunks_index_old = {disk_pool_chunks_index_old, StoreID},
-		migrations_index = {migrations_index, StoreID}
+		disk_pool_chunks_index_old = {disk_pool_chunks_index_old, StoreID}
 	}.
 
 move_disk_pool_index(State) ->
@@ -2408,29 +2413,6 @@ move_disk_pool_index(Cursor, State) ->
 			ok = ar_kv:put(New, Key, Value),
 			ok = ar_kv:delete(Old, Key),
 			move_disk_pool_index(Key, State)
-	end.
-
-move_data_root_index(#sync_data_state{ migrations_index = MI,
-		store_id = StoreID } = State) ->
-	case ar_data_roots:start_migration(MI, StoreID) of
-		complete ->
-			ets:insert(ar_data_sync_state, {move_data_root_index_migration_complete}),
-			ok;
-		{continue, Cursor, N} ->
-			move_data_root_index(Cursor, N, State)
-	end.
-
-move_data_root_index(Cursor, N, State) ->
-	#sync_data_state{ migrations_index = MI, store_id = StoreID } = State,
-	case ar_data_roots:migrate_batch(Cursor, N, StoreID) of
-		{continue, Cursor2, N2} ->
-			?LOG_DEBUG([{event, moving_data_root_index}, {moved_keys, N}]),
-			ok = ar_kv:put(MI, <<"move_data_root_index">>, Cursor2),
-			gen_server:cast(self(), {move_data_root_index, Cursor2, N2});
-		complete ->
-			ok = ar_kv:put(MI, <<"move_data_root_index">>, <<"complete">>),
-			ets:insert(ar_data_sync_state, {move_data_root_index_migration_complete}),
-			ok
 	end.
 
 record_disk_pool_chunks_count() ->
@@ -2526,8 +2508,8 @@ remove_tx_index_range(Start, End, State) ->
 			<< End:?OFFSET_KEY_BITSIZE >>).
 
 repair_data_root_offset_index(BI, State) ->
-	#sync_data_state{ migrations_index = DB } = State,
-	case ar_kv:get(DB, <<"repair_data_root_offset_index">>) of
+	#sync_data_state{ store_id = StoreID } = State,
+	case ar_kv:get(migration_db(StoreID), <<"repair_data_root_offset_index">>) of
 		not_found ->
 			?LOG_INFO([{event, starting_data_root_offset_index_scan}]),
 			ReverseBI = lists:reverse(BI),
@@ -3851,8 +3833,8 @@ maybe_run_footprint_record_initialization(State) ->
 	end.
 
 get_footprint_record_initialization_state(State) ->
-	#sync_data_state{ migrations_index = MI } = State,
-	case ar_kv:get(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY) of
+	#sync_data_state{ store_id = StoreID } = State,
+	case ar_kv:get(migration_db(StoreID), ?FOOTPRINT_MIGRATION_CURSOR_KEY) of
 		not_found ->
 			{0, false};
 		{ok, <<"complete">>} ->
@@ -3869,14 +3851,14 @@ initialize_footprint_record(complete, _Packing, State) ->
 initialize_footprint_record(Cursor, Packing, State) ->
 	#sync_data_state{
 		store_id = StoreID,
-		range_end = RangeEnd,
-		migrations_index = MI
+		range_end = RangeEnd
 	} = State,
 	BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
 
 	case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, ar_data_sync, StoreID) of
 		not_found ->
-			ok = ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
+			ok = ar_kv:put(migration_db(StoreID),
+				?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
 			?LOG_INFO([{event, footprint_record_initialized}, {store_id, StoreID}]),
 			State;
 		{IntervalEnd, IntervalStart} ->
@@ -3884,7 +3866,8 @@ initialize_footprint_record(Cursor, Packing, State) ->
 			EndPosition = min(Cursor2 + (BatchSize * ?DATA_CHUNK_SIZE), IntervalEnd),
 			initialize_footprint_range(Cursor2, EndPosition, Packing, StoreID),
 			NewCursor = EndPosition,
-			ok = ar_kv:put(MI, ?FOOTPRINT_MIGRATION_CURSOR_KEY, binary:encode_unsigned(NewCursor)),
+			ok = ar_kv:put(migration_db(StoreID),
+				?FOOTPRINT_MIGRATION_CURSOR_KEY, binary:encode_unsigned(NewCursor)),
 			ar_util:cast_after(1_000, self(), {initialize_footprint_record, NewCursor, Packing}),
 			State
 	end.

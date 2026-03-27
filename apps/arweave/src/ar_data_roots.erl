@@ -25,8 +25,8 @@
 	get_for_offset/1,
 	are_synced/3,
 	read_entries/6,
-	start_migration/2,
-	migrate_batch/3,
+	start_old_data_root_index_migration/1,
+	continue_old_data_root_index_migration/3,
 	is_migration_complete/0
 ]).
 
@@ -285,7 +285,34 @@ read_entries(DataRoot, TXSize, BlockStart, Cursor, StoreID, Acc) ->
 			Acc
 	end.
 
-start_migration(MigrationsIndex, StoreID) ->
+%%%===================================================================
+%%% Old data root index migration.
+%%%===================================================================
+start_old_data_root_index_migration(StoreID) ->
+	case start_migration(StoreID) of
+		complete ->
+			set_migration_complete(),
+			ok;
+		{continue, Cursor, N} ->
+			migrate_batch(Cursor, N, StoreID)
+	end.
+
+continue_old_data_root_index_migration(Cursor, N, StoreID) ->
+	case migrate_batch(Cursor, N, StoreID) of
+		{continue, Cursor2, N2} ->
+			?LOG_DEBUG([{event, moving_data_root_index}, {moved_keys, N}]),
+			ok = ar_kv:put(ar_data_sync:migration_db(StoreID),
+				<<"move_data_root_index">>, Cursor2),
+			ar_data_sync:continue_old_data_root_index_migration(Cursor2, N2, StoreID);
+		complete ->
+			ok = ar_kv:put(ar_data_sync:migration_db(StoreID),
+				<<"move_data_root_index">>, <<"complete">>),
+			set_migration_complete(),
+			ok
+	end.
+
+start_migration(StoreID) ->
+	MigrationsIndex = ar_data_sync:migration_db(StoreID),
 	DataRootIndexOld = old_db(StoreID),
 	case ar_kv:get(MigrationsIndex, <<"move_data_root_index">>) of
 		{ok, <<"complete">>} ->
@@ -333,6 +360,9 @@ migrate_entries(DataRoot, TXSize, Iterator, DB) ->
 			ok = ar_kv:put(DB, Key, TXPath),
 			migrate_entries(DataRoot, TXSize, Iterator2, DB)
 	end.
+
+set_migration_complete() ->
+	ets:insert(ar_data_sync_state, {move_data_root_index_migration_complete}).
 
 is_migration_complete() ->
 	ets:member(ar_data_sync_state, move_data_root_index_migration_complete).
