@@ -9,7 +9,8 @@
 		get_block_and_status/2, remove/2, get_checkpoint_block/1, prune/2,
 		get_by_solution_hash/5, is_known_solution_hash/2,
 		get_siblings/2, get_fork_blocks/2, update_timestamp/3,
-		get_blocks_by_miner/2]).
+		get_blocks_by_miner/2,
+		get_oldest_block_start/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -227,6 +228,19 @@ get_block_and_status(Tab, H) ->
 			not_found;
 		[{_, {B, Status, Timestamp, _Children}}] ->
 			{B, {Status, Timestamp}}
+	end.
+
+%% @doc Return the start offset of the oldest on-chain block still in the cache.
+get_oldest_block_start(Tab) ->
+	[{_, Set}] = ets:lookup(Tab, links),
+	{{_Height, H}, _Set2} = gb_sets:take_smallest(Set),
+	case ets:lookup(Tab, {block, H}) of
+		[] ->
+			%% The block cache should have been just updated - retry.
+			get_oldest_block_start(Tab);
+		%% The lowest block must be on-chain by construction.
+		[{_, {B, on_chain, _Timestamp, _Children}}] ->
+			B#block.weave_size - B#block.block_size
 	end.
 
 %% @doc Get a {block, previous blocks, status} tuple for the earliest block from
@@ -1083,6 +1097,7 @@ block_cache_test() ->
 	assert_max_cdiff({0, block_id(B1)}),
 	assert_is_valid_fork(true, on_chain, B1),
 	?assertEqual([], get_siblings(bcache_test, B1)),
+	?assertEqual(0, get_oldest_block_start(bcache_test)),
 
 	%% Re-adding B1 shouldn't change anything - i.e. nothing should be updated because the
 	%% block is already on chain
@@ -1097,6 +1112,7 @@ block_cache_test() ->
 	assert_longest_chain([B1], 0),
 	assert_max_cdiff({0, block_id(B1)}),
 	assert_is_valid_fork(true, on_chain, B1),
+	?assertEqual(0, get_oldest_block_start(bcache_test)),
 
 	%% Same as above.
 	%%
@@ -1769,11 +1785,15 @@ assert_tip(ExpectedTip) ->
 
 random_block(CDiff) ->
 	#block{ indep_hash = crypto:strong_rand_bytes(48), height = 0, cumulative_diff = CDiff,
-			hash = crypto:strong_rand_bytes(32) }.
+			hash = crypto:strong_rand_bytes(32),
+			weave_size = 0,
+			block_size = 0 }.
 
 random_block_after_repacking(CDiff) ->
 	#block{ indep_hash = crypto:strong_rand_bytes(48), height = 0, cumulative_diff = CDiff,
-			hash = crypto:strong_rand_bytes(32) }.
+			hash = crypto:strong_rand_bytes(32),
+			weave_size = 0,
+			block_size = 0 }.
 
 block_id(#block{ indep_hash = H }) ->
 	H.
@@ -1789,9 +1809,9 @@ get_blocks_by_miner_test() ->
 	Tab = bcache_test,
 	?assertEqual([], get_blocks_by_miner(Tab, <<"miner1">>)),
 	% Create some test blocks
-	B1 = #block{ indep_hash = <<"hash1">>, reward_addr = <<"miner1">> },
-	B2 = #block{ indep_hash = <<"hash2">>, reward_addr = <<"miner2">> },
-	B3 = #block{ indep_hash = <<"hash3">>, reward_addr = <<"miner1">> },
+	B1 = #block{ indep_hash = <<"hash1">>, reward_addr = <<"miner1">>, block_size = 0, weave_size = 0 },
+	B2 = #block{ indep_hash = <<"hash2">>, reward_addr = <<"miner2">>, block_size = 0, weave_size = 0 },
+	B3 = #block{ indep_hash = <<"hash3">>, reward_addr = <<"miner1">>, block_size = 0, weave_size = 0 },
 	% Add blocks to cache
 	add(Tab, on_top(B1, B0)),
 	add(Tab, on_top(B2, B0)),

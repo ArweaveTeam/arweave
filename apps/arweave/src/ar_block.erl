@@ -25,7 +25,8 @@
 		get_max_nonce/1, get_recall_range_size/1, get_recall_byte/3,
 		get_sub_chunk_size/1, get_nonces_per_chunk/1, get_nonces_per_recall_range/1,
 		get_sub_chunk_index/2,
-		get_chunk_padded_offset/1, get_double_signing_condition/4]).
+		get_chunk_padded_offset/1, get_double_signing_condition/4,
+		get_block_bounds/2]).
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
@@ -737,6 +738,41 @@ get_chunk_padded_offset(Offset) ->
 get_double_signing_condition(CDiff1, PrevCDiff1, CDiff2, PrevCDiff2) ->
 	CDiff1 == CDiff2 orelse (CDiff1 > PrevCDiff2 andalso CDiff2 > PrevCDiff1).
 
+%% @doc Return {BlockStart, BlockEnd, TXRoot} for the block containing RecallByte.
+%% If the recall byte is below the start offset of the oldest block in the block cache,
+%% consult ar_block_index. Otherwise walk the cache backward from PrevB; fall back
+%% to ar_block_index when the parent is not in cache.
+%% Return {error, invalid_recall_byte} if RecallByte is at or above the
+%% end offset of the given previous block.
+get_block_bounds(RecallByte, PrevB) ->
+	get_block_bounds(RecallByte, PrevB, block_cache).
+
+get_block_bounds(RecallByte, PrevB, CacheTab) when RecallByte < PrevB#block.weave_size ->
+	OldestStart = ar_block_cache:get_oldest_block_start(CacheTab),
+	case RecallByte < OldestStart of
+		true ->
+			ar_block_index:get_block_bounds(RecallByte);
+		false ->
+			get_block_bounds_from_cache(RecallByte, PrevB, CacheTab)
+	end;
+get_block_bounds(_RecallByte, _PrevB, _CacheTab) ->
+	{error, invalid_recall_byte}.
+
+get_block_bounds_from_cache(RecallByte, B, CacheTab) ->
+	BlockStart = B#block.weave_size - B#block.block_size,
+	case RecallByte >= BlockStart of
+		true ->
+			{BlockStart, B#block.weave_size, B#block.tx_root};
+		false ->
+			PrevH = B#block.previous_block,
+			case ar_block_cache:get(CacheTab, PrevH) of
+				not_found ->
+					ar_block_index:get_block_bounds(RecallByte);
+				PrevB ->
+					get_block_bounds_from_cache(RecallByte, PrevB, CacheTab)
+			end
+	end.
+
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -1149,3 +1185,117 @@ test_validate_replica_format() ->
 	?assertEqual(false, validate_replica_format(SporaExpiration, 1, 1)),
 	?assertEqual(false, validate_replica_format(SporaExpiration, 33, 1)),
 	?assertEqual(true, validate_replica_format(SporaExpiration, 2, 1)).
+
+get_block_bounds_test_() ->
+	{timeout, 30, fun test_get_block_bounds/0}.
+
+test_get_block_bounds() ->
+	ensure_ignore_registry_ets_table(),
+	Tab = ensure_block_cache_test_table(),
+	meck:new(ar_block_index, [passthrough]),
+	try
+		test_get_block_bounds_invalid_recall_byte(Tab),
+		test_get_block_bounds_falls_back_to_block_index_for_early_offsets(Tab),
+		test_get_block_bounds_falls_back_to_block_index_when_no_blocks_in_cache(Tab),
+		test_get_block_bounds_two_forks(Tab),
+		test_get_block_bounds_recall_recall_byte_equals_block_start(Tab)
+	after
+		ets:delete(Tab),
+		meck:unload(ar_block_index)
+	end.
+
+test_get_block_bounds_invalid_recall_byte(Tab) ->
+	H = crypto:strong_rand_bytes(48),
+	B = stub_block(0, H, <<>>, 1000, 400),
+	ar_block_cache:new(Tab, B),
+	?assertEqual({error, invalid_recall_byte}, get_block_bounds(1000, B, Tab)),
+	?assertEqual({error, invalid_recall_byte}, get_block_bounds(1001, B, Tab)),
+	?assertEqual({600, 1000, <<>>}, get_block_bounds(999, B, Tab)).
+
+test_get_block_bounds_falls_back_to_block_index_for_early_offsets(Tab) ->
+	H = crypto:strong_rand_bytes(48),
+	B = stub_block(3, H, <<>>, 8000, 500),
+	ar_block_cache:new(Tab, B),
+	meck:expect(ar_block_index, get_block_bounds, fun(O) -> {from_index, O} end),
+	OldestStart = 8000 - 500,
+	RecallByte = OldestStart - 1,
+	?assertEqual({from_index, RecallByte}, get_block_bounds(RecallByte, B, Tab)),
+	?assertEqual(1, meck:num_calls(ar_block_index, get_block_bounds, [RecallByte])).
+
+test_get_block_bounds_falls_back_to_block_index_when_no_blocks_in_cache(Tab) ->
+	meck:expect(ar_block_index, get_block_bounds, fun(O) -> {from_index, O} end),
+	H = crypto:strong_rand_bytes(48),
+	B = stub_block(0, H, <<>>, 1000, 899),
+	ar_block_cache:new(Tab, B),
+	?assertEqual({from_index, 100}, get_block_bounds(100, B, Tab)).
+
+test_get_block_bounds_two_forks(Tab) ->
+	meck:expect(ar_block_index, get_block_bounds, fun(_) ->
+		erlang:error(ar_block_index_should_not_be_called)
+	end),
+	H = crypto:strong_rand_bytes(48),
+	SolutionH = crypto:strong_rand_bytes(32),
+	TXRoot1 = crypto:strong_rand_bytes(32),
+	TXRoot2 = crypto:strong_rand_bytes(32),
+	RootB = stub_block(0, H, <<>>, 1000, 400, SolutionH, <<>>),
+	Fork1B = stub_block(1, crypto:strong_rand_bytes(48), H, 2000, 1000,
+		crypto:strong_rand_bytes(32), TXRoot1),
+	Fork2B = stub_block(1, crypto:strong_rand_bytes(48), H, 3000, 2000,
+		crypto:strong_rand_bytes(32), TXRoot2),
+	ar_block_cache:new(Tab, RootB),
+	ar_block_cache:add(Tab, Fork1B),
+	ar_block_cache:add(Tab, Fork2B),
+	?assertEqual({1000, 3000, TXRoot2}, get_block_bounds(2500, Fork2B, Tab)),
+	?assertEqual({1000, 3000, TXRoot2}, get_block_bounds(1500, Fork2B, Tab)),
+	?assertEqual({1000, 2000, TXRoot1}, get_block_bounds(1500, Fork1B, Tab)),
+	?assertEqual({1000, 3000, TXRoot2}, get_block_bounds(1000, Fork2B, Tab)),
+	?assertEqual({1000, 2000, TXRoot1}, get_block_bounds(1000, Fork1B, Tab)),
+	?assertEqual({600, 1000, <<>>}, get_block_bounds(999, RootB, Tab)).
+
+test_get_block_bounds_recall_recall_byte_equals_block_start(Tab) ->
+	meck:expect(ar_block_index, get_block_bounds, fun(_) ->
+		erlang:error(ar_block_index_should_not_be_called)
+	end),
+	H = crypto:strong_rand_bytes(48),
+	RootB = stub_block(0, H, <<>>, 1000, 400, crypto:strong_rand_bytes(32), <<>>),
+	B2 = stub_block(1, crypto:strong_rand_bytes(48), H, 2000, 1000,
+		crypto:strong_rand_bytes(32), crypto:strong_rand_bytes(32)),
+	ar_block_cache:new(Tab, RootB),
+	ar_block_cache:add(Tab, B2),
+	OldestStart = 1000 - 400,
+	?assertEqual(OldestStart, ar_block_cache:get_oldest_block_start(Tab)),
+	?assertEqual({OldestStart, 1000, <<>>}, get_block_bounds(OldestStart, B2, Tab)).
+
+ensure_ignore_registry_ets_table() ->
+	case ets:whereis(ignored_ids) of
+		undefined ->
+			ets:new(ignored_ids, [set, public, named_table]);
+		_ ->
+			true = ets:delete_all_objects(ignored_ids)
+	end.
+
+ensure_block_cache_test_table() ->
+	case ets:whereis(block_cache_test) of
+		undefined ->
+			ok;
+		_ ->
+			true = ets:delete(block_cache_test)
+	end,
+	block_cache_test = ets:new(block_cache_test, [set, public, named_table]),
+	block_cache_test.
+
+stub_block(Height, H, PrevH, WeaveSize, BlockSize) ->
+	stub_block(Height, H, PrevH, WeaveSize, BlockSize,
+		crypto:strong_rand_bytes(32), <<>>).
+
+stub_block(Height, H, PrevH, WeaveSize, BlockSize, SolutionH, TXRoot) ->
+	#block{
+		indep_hash = H,
+		hash = SolutionH,
+		cumulative_diff = Height + 1,
+		height = Height,
+		previous_block = PrevH,
+		weave_size = WeaveSize,
+		block_size = BlockSize,
+		tx_root = TXRoot
+	}.

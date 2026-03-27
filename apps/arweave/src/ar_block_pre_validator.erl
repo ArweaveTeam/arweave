@@ -769,25 +769,29 @@ pre_validate_poa(B, PrevB, PartitionUpperBound, H0, H1, Peer) ->
 		PrecalculatedRecallRange1, PrecalculatedRecallRange2),
 	RecallByte1 = ar_block:get_recall_byte(RecallRange1Start, B#block.nonce,
 			B#block.packing_difficulty),
-	WeaveSize = PrevB#block.weave_size,
-	case RecallByte1 >= WeaveSize of
-		true ->
+	%% Search the recent blocks in the block cache and take the correct fork into account.
+	%% The following cases are considered:
+	%% - the given recall byte exceeds the upper bound of the given fork - reject it;
+	%% - the given recall byte points to some fork-specific merkle range - pick it;
+	%% - the given recall byte is older than the oldest on-chain block in cache -
+	%%   fall back to searching ar_block_index.
+	case ar_block:get_block_bounds(RecallByte1, PrevB) of
+		{error, invalid_recall_byte} ->
 			post_block_reject_warn_and_error_dump(B, check_recall_byte, Peer),
 			ar_events:send(block, {rejected, invalid_recall_byte,
 					B#block.indep_hash, Peer}),
 			invalid;
-		false ->
-			case ar_block_index:get_block_bounds(RecallByte1) of
-				not_found ->
-					post_block_reject_warn_and_error_dump(B, check_poa, Peer),
-					ar_events:send(block, {rejected, invalid_poa, B#block.indep_hash, Peer}),
-					invalid;
-				{BlockStart1, BlockEnd1, TXRoot1} ->
-					pre_validate_poa_with_block_bounds(B, PrevB, PartitionUpperBound, H0, H1, Peer, RecallByte1, RecallRange2Start, WeaveSize, BlockStart1, BlockEnd1, TXRoot1)
-			end
+		not_found ->
+			post_block_reject_warn_and_error_dump(B, check_poa, Peer),
+			ar_events:send(block, {rejected, invalid_poa, B#block.indep_hash, Peer}),
+			invalid;
+		{BlockStart1, BlockEnd1, TXRoot1} ->
+			MerkleArgs = {RecallByte1, RecallRange2Start, BlockStart1, BlockEnd1, TXRoot1},
+			pre_validate_poa_with_block_bounds(B, PrevB, PartitionUpperBound, H0, H1, Peer, MerkleArgs)
 	end.
 
-pre_validate_poa_with_block_bounds(B, PrevB, PartitionUpperBound, H0, H1, Peer, RecallByte1, RecallRange2Start, WeaveSize, BlockStart1, BlockEnd1, TXRoot1) ->
+pre_validate_poa_with_block_bounds(B, PrevB, PartitionUpperBound, H0, H1, Peer, MerkleArgs) ->
+	{RecallByte1, RecallRange2Start, BlockStart1, BlockEnd1, TXRoot1} = MerkleArgs,
 	BlockSize1 = BlockEnd1 - BlockStart1,
 	PackingDifficulty = B#block.packing_difficulty,
 	Nonce = B#block.nonce,
@@ -821,44 +825,40 @@ pre_validate_poa_with_block_bounds(B, PrevB, PartitionUpperBound, H0, H1, Peer, 
 				false ->
 					RecallByte2 = ar_block:get_recall_byte(RecallRange2Start, B#block.nonce,
 							B#block.packing_difficulty),
-					case RecallByte2 >= WeaveSize of
-						true ->
-							post_block_reject_warn_and_error_dump(B, check_recall_byte2,
-									Peer),
+					case ar_block:get_block_bounds(RecallByte2, PrevB) of
+						{error, invalid_recall_byte} ->
+							post_block_reject_warn_and_error_dump(B, check_recall_byte2, Peer),
 							ar_events:send(block, {rejected, invalid_recall_byte2,
 									B#block.indep_hash, Peer}),
 							invalid;
-						false ->
-							case ar_block_index:get_block_bounds(RecallByte2) of
-								not_found ->
+						not_found ->
+							post_block_reject_warn_and_error_dump(B, check_poa2, Peer),
+							ar_events:send(block, {rejected, invalid_poa2,
+									B#block.indep_hash, Peer}),
+							invalid;
+						{BlockStart2, BlockEnd2, TXRoot2} ->
+							BlockSize2 = BlockEnd2 - BlockStart2,
+							ArgCache2 = {BlockStart2, RecallByte2, TXRoot2, BlockSize2, Packing,
+									SubChunkIndex},
+							case RecallByte2 == B#block.recall_byte2 andalso
+									ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2,
+											B#block.poa2, Packing, SubChunkIndex, not_set}) of
+								error ->
+									?LOG_ERROR([{event, failed_to_validate_proof_of_access},
+											{block, ar_util:encode(B#block.indep_hash)}]),
+									invalid;
+								false ->
 									post_block_reject_warn_and_error_dump(B, check_poa2, Peer),
 									ar_events:send(block, {rejected, invalid_poa2,
 											B#block.indep_hash, Peer}),
 									invalid;
-								{BlockStart2, BlockEnd2, TXRoot2} ->
-									BlockSize2 = BlockEnd2 - BlockStart2,
-									ArgCache2 = {BlockStart2, RecallByte2, TXRoot2, BlockSize2, Packing,
-											SubChunkIndex},
-									case RecallByte2 == B#block.recall_byte2 andalso
-											ar_poa:validate({BlockStart2, RecallByte2, TXRoot2, BlockSize2,
-													B#block.poa2, Packing, SubChunkIndex, not_set}) of
-										error ->
-											?LOG_ERROR([{event, failed_to_validate_proof_of_access},
-													{block, ar_util:encode(B#block.indep_hash)}]),
-											invalid;
-										false ->
-											post_block_reject_warn_and_error_dump(B, check_poa2, Peer),
-											ar_events:send(block, {rejected, invalid_poa2,
-													B#block.indep_hash, Peer}),
-											invalid;
-										{true, Chunk2ID} ->
-											%% Cache the proof so that in case the miner signs additional
-											%% blocks using the same solution, we can re-validate the
-											%% potentially new proofs quickly, without re-validating the
-											%% solution and re-unpacking the chunk.
-											B3 = B2#block{ poa2_cache = {ArgCache2, Chunk2ID} },
-											pre_validate_nonce_limiter(B3, PrevB, Peer)
-									end
+								{true, Chunk2ID} ->
+									%% Cache the proof so that in case the miner signs additional
+									%% blocks using the same solution, we can re-validate the
+									%% potentially new proofs quickly, without re-validating the
+									%% solution and re-unpacking the chunk.
+									B3 = B2#block{ poa2_cache = {ArgCache2, Chunk2ID} },
+									pre_validate_nonce_limiter(B3, PrevB, Peer)
 							end
 					end
 			end
