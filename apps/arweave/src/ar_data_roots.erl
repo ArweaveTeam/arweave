@@ -254,26 +254,41 @@ get_for_offset(Offset) ->
 		false ->
 			{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Offset),
 			true = Offset >= BlockStart andalso Offset < BlockEnd,
-			StoreID = ?DEFAULT_MODULE,
-			case get_keys(BlockStart, StoreID) of
+			case get_keys(BlockStart, ?DEFAULT_MODULE) of
 				not_found ->
 					{error, not_found};
 				{ok, Bin} ->
 					{TXRoot2, BlockSize, DataRootKeys} = binary_to_term(Bin),
 					true = TXRoot2 == TXRoot,
-					{ok, {TXRoot, BlockSize, lists:sort(
+					DataRootTuples = sets:fold(
+						fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
+							get_all_in_range(DataRoot, TXSize, BlockStart, BlockEnd, ?DEFAULT_MODULE, Acc)
+						end,
+						[],
+						DataRootKeys
+					),
+					SortedDataRootTuples = lists:sort(
 						fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
 								{_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
 							TXStart1 < TXStart2
 						end,
-						sets:fold(
-							fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
-								read_entries(DataRoot, TXSize, BlockStart, BlockEnd, StoreID, Acc)
-							end,
-							[],
-							DataRootKeys
-						))}}
+						DataRootTuples
+					),
+					{ok, {TXRoot, BlockSize, SortedDataRootTuples}}
 			end
+	end.
+
+%% @doc Get all the matching data root tuples matching DataRoom in the provided range
+get_all_in_range(_DataRoot, _TXSize, _Start, 0, _StoreID, Acc) ->
+	Acc;
+get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID, Acc) ->
+	Key = key_v2(DataRoot, TXSize, Cursor - 1),
+	case get_prev_tx(Key, StoreID) of
+		{ok, {TXStart, TXPath}} when TXStart >= Start ->
+			[{DataRoot, TXSize, TXStart, TXPath}
+				| get_all_in_range(DataRoot, TXSize, Start, TXStart, StoreID, Acc)];
+		_ ->
+			Acc
 	end.
 
 %% @doc Return true if the data roots for the given block range are synced, false otherwise.
@@ -302,19 +317,7 @@ is_synced(DataRootKey, StoreID) ->
 			false
 	end.
 
-read_entries(_DataRoot, _TXSize, _BlockStart, 0, _StoreID, Acc) ->
-	Acc;
-read_entries(DataRoot, TXSize, BlockStart, Cursor, StoreID, Acc) ->
-	Key = key_v2(DataRoot, TXSize, Cursor - 1),
-	case get_prev_tx(Key, StoreID) of
-		{ok, {TXStart, TXPath}} when TXStart >= BlockStart ->
-			[{DataRoot, TXSize, TXStart, TXPath}
-				| read_entries(DataRoot, TXSize, BlockStart, TXStart, StoreID, Acc)];
-		{ok, _, _} ->
-			Acc;
-		none ->
-			Acc
-	end.
+
 
 %%%===================================================================
 %%% Repair.
