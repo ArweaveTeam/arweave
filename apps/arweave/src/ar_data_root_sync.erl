@@ -52,54 +52,31 @@ store_data_roots_sync(BlockStart, BlockEnd, TXRoot, Entries) ->
 %% Also recompute the TXRoot from entries and verify Merkle paths.
 validate_data_roots(TXRoot, BlockSize, Entries, Offset) ->
 	{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
-	CheckBlockBounds =
-		case Offset >= BlockStart andalso Offset < BlockEnd of
-			false ->
-				{error, invalid_block_bounds};
-			true ->
-				ok
-		end,
-	CheckBlockSize =
-		case CheckBlockBounds of
-			ok ->
-				case BlockSize == BlockEnd - BlockStart of
-					false ->
-						{error, invalid_block_size};
-					true ->
-						ok
-				end;
-			Error ->
-				Error
-		end,
-	PrepareDataRootPairs =
-		case CheckBlockSize of
-			ok ->
-				prepare_data_root_pairs(Entries, BlockStart, BlockSize);
-			Error2 ->
-				Error2
-		end,
-	ValidateTXRoot =
-		case PrepareDataRootPairs of
-			{ok, Triplets} ->
-				case TXRoot == ExpectedTXRoot of
-					false ->
-						{error, invalid_tx_root};
-					true ->
-						{ok, Triplets}
-				end;
-			{error, _} = Error3 ->
-				Error3
-		end,
-	case ValidateTXRoot of
-		{ok, Triplets2} ->
-			case verify_tx_paths(Triplets2, TXRoot, BlockStart, BlockEnd, 0) of
-				ok ->
-					{ok, {TXRoot, BlockSize, Entries}};
-				Error4 ->
-					Error4
-			end;
-		Error5 ->
-			Error5
+	maybe
+		ok ?=
+			case Offset >= BlockStart andalso Offset < BlockEnd of
+				true ->
+					ok;
+				false ->
+					{error, invalid_block_bounds}
+			end,
+		ok ?=
+			case BlockSize == BlockEnd - BlockStart of
+				true ->
+					ok;
+				false ->
+					{error, invalid_block_size}
+			end,
+		{ok, Triplets} ?= prepare_data_root_pairs(Entries, BlockStart, BlockSize),
+		ok ?=
+			case TXRoot == ExpectedTXRoot of
+				true ->
+					ok;
+				false ->
+					{error, invalid_tx_root}
+			end,
+		ok ?= verify_tx_paths(Triplets, TXRoot, BlockStart, BlockEnd, 0),
+		{ok, {TXRoot, BlockSize, Entries}}
 	end.
 
 %%%===================================================================

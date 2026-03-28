@@ -288,7 +288,7 @@ are_synced(BlockStart, BlockEnd, TXRoot, StoreID) ->
 			false;
 		{ok, Bin} ->
 			{TXRoot2, BlockSize, _DataRootKeys} = binary_to_term(Bin),
-			true = TXRoot2 == TXRoot,`
+			true = TXRoot2 == TXRoot,
 			true = BlockSize == BlockEnd - BlockStart,
 			true
 	end.
