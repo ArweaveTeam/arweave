@@ -185,12 +185,13 @@ sync_block_data_roots(StoreID, Cursor, RangeEnd) ->
 
 maybe_fetch_and_store(BlockStart, BlockEnd) ->
 	Peers = ar_peers:get_peers(current),
-	Peers2 = lists:filter(
+	%% Shuffle eligible peers so repeated fetches do not always hit them in the same order.
+	Peers2 = ar_util:shuffle_list(lists:filter(
 		fun(Peer) ->
 			ar_peers:get_peer_release(Peer) >= ?DATA_ROOTS_SYNC_RELEASE_NUMBER
 		end,
 		Peers
-	),
+	)),
 	case fetch_data_roots_from_peers(Peers2, BlockStart) of
 		{ok, {TXRoot, BlockSize, Entries}} ->
 			BlockSize = BlockEnd - BlockStart,
