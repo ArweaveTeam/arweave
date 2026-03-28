@@ -8,8 +8,8 @@
 	old_db/1,
 	keys_db/1,
 	store_block/5,
-	get_offset/2,
-	get_prev_offset/3,
+	get_tx/2,
+	get_prev_tx/3,
 	remove_range/3,
 	iterator_v2/3,
 	next_v2/2,
@@ -18,6 +18,7 @@
 	get_for_offset/1,
 	are_synced/2,
 	are_synced/4,
+	is_synced/2,
 	repair/3,
 	start_old_data_root_index_migration/1,
 	continue_old_data_root_index_migration/3,
@@ -41,6 +42,8 @@ open_index_db(Dir, StoreID, BloomFilterOpts) ->
 		] ++ BloomFilterOpts
 	}).
 
+%% @doc Maintains a record of the data roots that have been synced and mapping of data roots
+%% to TX start offsets and paths.
 index_db(StoreID) ->
 	{data_root_index, StoreID}.
 
@@ -60,9 +63,14 @@ keys_column_family(Opts) ->
 old_column_family(Opts) ->
 	{"data_root_index", Opts}.
 
-key_v2(DataRoot, TXSize, Offset) ->
+key_v2(DataRoot, TXSize, TXStartOffset) ->
 	<< DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary,
-			(ar_serialize:encode_int(Offset, 8))/binary >>.
+			(ar_serialize:encode_int(TXStartOffset, 8))/binary >>.
+
+parse_key_v2(Key) ->
+	<< DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
+		TXStartOffsetSize:8, TXStartOffset:(TXStartOffsetSize * 8) >> = Key,
+	{DataRoot, TXSize, TXStartOffset}.
 
 %% @doc Store all data roots for a given block. 
 %% DataRoots is a list of {DataRoot, TXSize, TXStartOffset, TXPath} tuples.
@@ -85,15 +93,31 @@ store_block(BlockStart, BlockSize, TXRoot, DataRootTuples, StoreID) ->
 			term_to_binary({TXRoot, BlockSize, DataRootKeys})),
 	{ok, DataRootKeys}.
 
-get_offset(DataRootKey, StoreID) ->
+%% @doc Get the start offset of the TX containing the given data root.
+get_tx(DataRootKey, StoreID) ->
 	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
-	case ar_kv:get_prev(index_db(StoreID), << DataRoot:32/binary,
-			(ar_serialize:encode_int(TXSize, 8))/binary, <<"a">>/binary >>) of
+	% Since the index_db keys include the TX start offset, we have will stub in "a" (which is
+	% guaranteed to be alphanumerically greater than any TX offset) and then query the 
+	% previous key.
+	Key = << DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary, <<"a">>/binary >>,
+	get_prev_tx(Key, DataRoot, TXSize, StoreID).
+
+get_prev_tx(DataRootKey, TXStartOffset, StoreID) ->
+	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
+	Key = key_v2(DataRoot, TXSize, TXStartOffset - 1),
+	get_prev_tx(Key, StoreID).
+
+get_prev_tx(Key, StoreID) ->
+	{DataRoot, TXSize, _TXStartOffset} = parse_key_v2(Key),
+	get_prev_tx(Key, DataRoot, TXSize, StoreID).
+
+get_prev_tx(Key, DataRoot, TXSize, StoreID) ->
+	case ar_kv:get_prev(index_db(StoreID), Key) of
 		none ->
 			not_found;
 		{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
-				OffsetSize:8, Offset:(OffsetSize * 8) >>, TXPath} ->
-			{ok, {Offset, TXPath}};
+				OffsetSize:8, TXStartOffset:(OffsetSize * 8) >>, TXPath} ->
+			{ok, {TXStartOffset, TXPath}};
 		{ok, _, _} ->
 			not_found;
 		{error, _} = Error ->
@@ -102,11 +126,6 @@ get_offset(DataRootKey, StoreID) ->
 
 get_keys(BlockStart, StoreID) ->
 	ar_kv:get(keys_db(StoreID), << BlockStart:?OFFSET_KEY_BITSIZE >>).
-
-get_prev_offset(DataRootKey, TXStartOffset, StoreID) ->
-	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
-	Key = key_v2(DataRoot, TXSize, TXStartOffset - 1),
-	ar_kv:get_prev(index_db(StoreID), Key).
 
 remove_range(Start, End, StoreID) ->
 	{ok, RemovedDataRoots} =
@@ -157,13 +176,10 @@ remove(DataRootKey, Start, End, StoreID) ->
 	EndKey = key_v2(DataRoot, TXSize, End),
 	case ar_kv:delete_range(index_db(StoreID), StartKey, EndKey) of
 		ok ->
-			case ar_kv:get_prev(index_db(StoreID), StartKey) of
-				{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
-						_Rest/binary >>, _} ->
+			case get_prev_tx(StartKey, StoreID) of
+				{ok, _} ->
 					ok;
-				{ok, _, _} ->
-					removed;
-				none ->
+				not_found ->
 					removed;
 				{error, _} = Error ->
 					Error
@@ -181,18 +197,15 @@ next_v2({_, 0, _, _, _}, _Limit) ->
 	none;
 next_v2(Args, _Limit) ->
 	{DataRootKey, TXStartOffset, LatestTXStartOffset, StoreID, Count} = Args,
-	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
-	Key = key_v2(DataRoot, TXSize, TXStartOffset - 1),
-	case ar_kv:get_prev(index_db(StoreID), Key) of
-		none ->
+	case get_prev_tx(DataRootKey, TXStartOffset, StoreID) of
+		not_found ->
 			none;
-		{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
-				TXStartOffset2Size:8, TXStartOffset2:(TXStartOffset2Size * 8) >>, TXPath} ->
+		{ok, {TXStartOffset2, TXPath}} ->
 			{ok, TXRoot} = ar_merkle:extract_root(TXPath),
 			{{TXStartOffset2, TXRoot, TXPath},
 					{DataRootKey, TXStartOffset2, LatestTXStartOffset, StoreID,
 							Count + 1}};
-		{ok, _, _} ->
+		_ ->
 			none
 	end.
 
@@ -275,11 +288,37 @@ are_synced(BlockStart, BlockEnd, TXRoot, StoreID) ->
 			false;
 		{ok, Bin} ->
 			{TXRoot2, BlockSize, _DataRootKeys} = binary_to_term(Bin),
-			true = TXRoot2 == TXRoot,
+			true = TXRoot2 == TXRoot,`
 			true = BlockSize == BlockEnd - BlockStart,
 			true
 	end.
 
+%% @doc Returns true if the given data root key is in the data root index.
+is_synced(DataRootKey, StoreID) ->
+	case get_tx(DataRootKey, StoreID) of
+		{ok, _} ->
+			true;
+		_ ->
+			false
+	end.
+
+read_entries(_DataRoot, _TXSize, _BlockStart, 0, _StoreID, Acc) ->
+	Acc;
+read_entries(DataRoot, TXSize, BlockStart, Cursor, StoreID, Acc) ->
+	Key = key_v2(DataRoot, TXSize, Cursor - 1),
+	case get_prev_tx(Key, StoreID) of
+		{ok, {TXStart, TXPath}} when TXStart >= BlockStart ->
+			[{DataRoot, TXSize, TXStart, TXPath}
+				| read_entries(DataRoot, TXSize, BlockStart, TXStart, StoreID, Acc)];
+		{ok, _, _} ->
+			Acc;
+		none ->
+			Acc
+	end.
+
+%%%===================================================================
+%%% Repair.
+%%%===================================================================
 repair(BI, StoreID, RemoveTXRangeFun) ->
 	MigrationDB = ar_data_sync:migration_db(StoreID),
 	case ar_kv:get(MigrationDB, <<"repair_data_root_offset_index">>) of
@@ -332,21 +371,6 @@ shift_block_index(TXRoot, _BlockStart, WeaveSize, Height, _ResyncBlocks,
 	{ok, {Height + 1, BI}};
 shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) ->
 	{bad_key, [Height | ResyncBlocks]}.
-
-read_entries(_DataRoot, _TXSize, _BlockStart, 0, _StoreID, Acc) ->
-	Acc;
-read_entries(DataRoot, TXSize, BlockStart, Cursor, StoreID, Acc) ->
-	Key = key_v2(DataRoot, TXSize, Cursor - 1),
-	case ar_kv:get_prev(index_db(StoreID), Key) of
-		{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
-				TXStartSize:8, TXStart:(TXStartSize * 8) >>, TXPath} when TXStart >= BlockStart ->
-			[{DataRoot, TXSize, TXStart, TXPath}
-				| read_entries(DataRoot, TXSize, BlockStart, TXStart, StoreID, Acc)];
-		{ok, _, _} ->
-			Acc;
-		none ->
-			Acc
-	end.
 
 %%%===================================================================
 %%% Old data root index migration.

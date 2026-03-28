@@ -137,14 +137,14 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
 	DiskPoolChunksIndex = {disk_pool_chunks_index, ?DEFAULT_MODULE},
 	DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	DataRootOffsetReply = ar_data_roots:get_offset(DataRootKey, ?DEFAULT_MODULE),
+	DataRootOffset = ar_data_roots:get_tx(DataRootKey, ?DEFAULT_MODULE),
 	DataRootInDiskPool = ets:lookup(ar_disk_pool_data_roots, DataRootKey),
 	ChunkSize = byte_size(Chunk),
 	{ok, Config} = arweave_config:get_env(),
 	DataRootLimit = Config#config.max_disk_pool_data_root_buffer_mb * ?MiB,
 	DiskPoolLimit = Config#config.max_disk_pool_buffer_mb * ?MiB,
 	CheckDiskPool =
-		case {DataRootOffsetReply, DataRootInDiskPool} of
+		case {DataRootOffset, DataRootInDiskPool} of
 			{not_found, []} ->
 				?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 					{reason, data_root_not_found}, {offset, Offset},
@@ -210,13 +210,12 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 						%% The chunk is already in disk pool.
 						{synced_disk_pool, EndOffset2};
 					not_found ->
-						case DataRootOffsetReply of
+						case DataRootOffset of
 							not_found ->
 								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
-							{ok, {TXStartOffset, _}} ->
+							{ok, TXStartOffset} ->
 								{ok, Config} = arweave_config:get_env(),
-								case chunk_offsets_synced(ar_data_roots:index_db(?DEFAULT_MODULE), 
-										DataRootKey,
+								case chunk_offsets_synced(DataRootKey, 
 										%% The same data may be uploaded several times.
 										%% Here we only accept the chunk if any of the
 										%% last configured number of instances of this
@@ -241,7 +240,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 		synced ->
 			ok;
 		{synced_disk_pool, EndOffset4} ->
-			case is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset4) of
+			case is_estimated_long_term_chunk(DataRootOffset, EndOffset4) of
 				false ->
 					temporary;
 				true ->
@@ -278,7 +277,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							ets:update_counter(ar_data_sync_state, disk_pool_size,
 									{2, ChunkSize}),
 							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
-							case is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset3) of
+							case is_estimated_long_term_chunk(DataRootOffset, EndOffset3) of
 								false ->
 									temporary;
 								true ->
@@ -349,13 +348,13 @@ delete_chunk_metadata_range(Start, End, State) ->
 
 %% @doc Return true if we expect the chunk with the given data root index value and
 %% relative end offset to end up in one of the configured storage modules.
-is_estimated_long_term_chunk(DataRootOffsetReply, EndOffset) ->
+is_estimated_long_term_chunk(DataRootOffset, EndOffset) ->
 	WeaveSize = ar_node:get_current_weave_size(),
-	case DataRootOffsetReply of
+	case DataRootOffset of
 		not_found ->
 			%% A chunk from a pending transaction.
 			is_offset_vicinity_covered(WeaveSize);
-		{ok, {TXStartOffset, _}} ->
+		{ok, TXStartOffset} ->
 			WeaveSize = ar_node:get_current_weave_size(),
 			Size = ar_node:get_recent_max_block_size(),
 			AbsoluteEndOffset = TXStartOffset + EndOffset,
@@ -567,12 +566,7 @@ has_data_root(DataRoot, DataSize) ->
 		true ->
 			true;
 		false ->
-			case ar_data_roots:get_offset(DataRootKey, ?DEFAULT_MODULE) of
-				{ok, _} ->
-					true;
-				_ ->
-					false
-			end
+			ar_data_roots:is_synced(DataRootKey, ?DEFAULT_MODULE)
 	end.
 
 %% @doc Record the metadata of the given block.
@@ -2882,27 +2876,23 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 			end
 	end.
 
-chunk_offsets_synced(_, _, _, _, N) when N == 0 ->
+chunk_offsets_synced(_, _, _, N) when N == 0 ->
 	true;
-chunk_offsets_synced(DataRootIndex, DataRootKey, ChunkOffset, TXStartOffset, N) ->
+chunk_offsets_synced(DataRootKey, ChunkOffset, TXStartOffset, N) ->
 	case ar_sync_record:is_recorded(TXStartOffset + ChunkOffset, ar_data_sync) of
 		{{true, _}, _StoreID} ->
 			case TXStartOffset of
 				0 ->
 					true;
 				_ ->
-					case ar_data_roots:get_prev_offset(DataRootKey, TXStartOffset,
-							?DEFAULT_MODULE) of
-						none ->
-							true;
-						{ok, << _DataRoot:32/binary, TXSizeSize:8, _TXSize:(TXSizeSize * 8),
-								TXStartOffset2Size:8,
-								TXStartOffset2:(TXStartOffset2Size * 8) >>, _} ->
-							chunk_offsets_synced(DataRootIndex, DataRootKey, ChunkOffset,
+					case ar_data_roots:get_prev_tx(
+							DataRootKey, TXStartOffset, ?DEFAULT_MODULE) of
+						{ok, {TXStartOffset2, _TXPath}} ->
+							chunk_offsets_synced(DataRootKey, ChunkOffset,
 									TXStartOffset2, N - 1);
-						{ok, _, _} ->
+						not_found ->
 							true;
-						_ ->
+						{error, _} ->
 							false
 					end
 			end;
@@ -3316,9 +3306,9 @@ process_disk_pool_item(State, Key, Value) ->
 			PassedBaseValidation, PassedStrictValidation,
 			PassedRebaseValidation} = DiskPoolChunk,
 	DataRootKey = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	InDataRootIndex = ar_data_roots:get_offset(DataRootKey, StoreID),
+	DataRootOffset = ar_data_roots:get_tx(DataRootKey, StoreID),
 	InDiskPool = ets:member(ar_disk_pool_data_roots, DataRootKey),
-	case {InDataRootIndex, InDiskPool} of
+	case {DataRootOffset, InDiskPool} of
 		{not_found, true} ->
 			%% Increment the timestamp by one (microsecond), so that the new cursor is
 			%% a prefix of the first key of the next data root. We want to quickly skip
@@ -3344,7 +3334,7 @@ process_disk_pool_item(State, Key, Value) ->
 			gen_server:cast(self(), process_disk_pool_item),
 			State2 = maybe_reset_disk_pool_full_scan_key(Key, State),
 			{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }};
-		{{ok, {TXStartOffset, _TXPath}}, _} ->
+		{{ok, TXStartOffset}, _} ->
 			DataRootIndexIterator = ar_data_roots:iterator_v2(DataRootKey, TXStartOffset + 1,
 					StoreID),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
