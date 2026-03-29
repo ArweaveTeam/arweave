@@ -8,6 +8,10 @@
 	delete/2, delete_range/3, count/1
 ]).
 
+-ifdef(AR_TEST).
+-export([test_db_path/0, test_destroy/1, test_close/1]).
+-endif.
+
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -869,8 +873,7 @@ assert_iteration(Name, SmallerPrefix, BiggerPrefix, Suffixes) ->
 
 
 test_destroy(Name) ->
-	RocksDBDir = filename:join(test_get_data_dir(), ?ROCKS_DB_DIR),
-	Filename = filename:join(RocksDBDir, Name),
+	Filename = filename:join(test_db_path(), Name),
 	case filelib:is_dir(Filename) of
 		true ->
 			rocksdb:destroy(Filename, []);
@@ -878,7 +881,8 @@ test_destroy(Name) ->
 			ok
 	end.
 
-
+test_db_path() ->
+	filename:join([test_get_data_dir(), ?ROCKS_DB_DIR]).
 
 test_close(Name) ->
 	?WITH_DB(Name, fun(Db) ->

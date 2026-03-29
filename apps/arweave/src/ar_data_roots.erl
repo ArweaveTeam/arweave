@@ -2,6 +2,7 @@
 
 -export([
 	open_index_db/3,
+	open_index_db/4,
 	old_column_family/1,
 	keys_column_family/1,
 	index_db/1,
@@ -27,10 +28,14 @@
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 open_index_db(Dir, StoreID, BloomFilterOpts) ->
+	open_index_db(Dir, "ar_data_sync_data_root_index_db", StoreID, BloomFilterOpts).
+
+open_index_db(Dir, DBName, StoreID, BloomFilterOpts) ->
 	ar_kv:open(#{
-		path => filename:join(Dir, "ar_data_sync_data_root_index_db"),
+		path => filename:join(Dir, DBName),
 		name => index_db(StoreID),
 		options => [
 			{max_open_files, 100}, {max_background_compactions, 8},
@@ -452,3 +457,115 @@ set_migration_complete() ->
 
 is_migration_complete() ->
 	ets:member(ar_data_sync_state, move_data_root_index_migration_complete).
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+get_all_in_range_cursor_zero_returns_acc_test() ->
+	with_test_index_db(
+		fun(StoreID) ->
+			DataRoot = << 1:256 >>,
+			Acc = [sentinel],
+			?assertEqual(Acc, get_all_in_range(DataRoot, 100, 10, 0, StoreID, Acc))
+		end
+	).
+
+get_all_in_range_returns_multiple_matches_for_same_pair_test() ->
+	with_test_index_db(
+		fun(StoreID) ->
+			DataRoot = << 2:256 >>,
+			TXSize = 100,
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 20, <<"path-20">>),
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 30, <<"path-30">>),
+			?assertEqual(
+				[
+					{DataRoot, TXSize, 30, <<"path-30">>},
+					{DataRoot, TXSize, 20, <<"path-20">>},
+					{DataRoot, TXSize, 10, <<"path-10">>}
+				],
+				get_all_in_range(DataRoot, TXSize, 10, 40, StoreID, [])
+			)
+		end
+	).
+
+get_all_in_range_excludes_matches_outside_start_and_cursor_test() ->
+	with_test_index_db(
+		fun(StoreID) ->
+			DataRoot = << 3:256 >>,
+			TXSize = 100,
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 5, <<"path-5">>),
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 20, <<"path-20">>),
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 30, <<"path-30">>),
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 40, <<"path-40">>),
+			?assertEqual(
+				[
+					{DataRoot, TXSize, 30, <<"path-30">>},
+					{DataRoot, TXSize, 20, <<"path-20">>}
+				],
+				get_all_in_range(DataRoot, TXSize, 15, 35, StoreID, [])
+			)
+		end
+	).
+
+get_all_in_range_ignores_other_data_root_and_tx_size_test() ->
+	with_test_index_db(
+		fun(StoreID) ->
+			DataRoot = << 4:256 >>,
+			OtherDataRoot = << 5:256 >>,
+			TXSize = 100,
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
+			ok = put_test_tx(StoreID, DataRoot, TXSize + 1, 20, <<"wrong-size">>),
+			ok = put_test_tx(StoreID, OtherDataRoot, TXSize, 30, <<"wrong-root">>),
+			?assertEqual(
+				[{DataRoot, TXSize, 10, <<"path-10">>}],
+				get_all_in_range(DataRoot, TXSize, 0, 40, StoreID, [])
+			)
+		end
+	).
+
+get_all_in_range_preserves_accumulator_tail_test() ->
+	with_test_index_db(
+		fun(StoreID) ->
+			DataRoot = << 6:256 >>,
+			TXSize = 100,
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
+			ok = put_test_tx(StoreID, DataRoot, TXSize, 20, <<"path-20">>),
+			Acc = [sentinel],
+			?assertEqual(
+				[
+					{DataRoot, TXSize, 20, <<"path-20">>},
+					{DataRoot, TXSize, 10, <<"path-10">>},
+					sentinel
+				],
+				get_all_in_range(DataRoot, TXSize, 10, 30, StoreID, Acc)
+			)
+		end
+	).
+
+with_test_index_db(Fun) ->
+	ensure_test_kv_started(),
+	Unique = integer_to_list(erlang:unique_integer([positive])),
+	DBName = "ar_data_roots_test_" ++ Unique,
+	StoreID = {ar_data_roots_test, Unique},
+	ok = ar_kv:test_destroy(DBName),
+	ok = open_index_db(ar_kv:test_db_path(), DBName, StoreID, []),
+	try
+		Fun(StoreID)
+	after
+		_ = ar_kv:test_close(index_db(StoreID)),
+		ok = ar_kv:test_destroy(DBName)
+	end.
+
+ensure_test_kv_started() ->
+	case ar_kv_sup:start_link() of
+		{ok, _} ->
+			ok;
+		{error, {already_started, _}} ->
+			ok
+	end.
+
+put_test_tx(StoreID, DataRoot, TXSize, TXStartOffset, TXPath) ->
+	ar_kv:put(index_db(StoreID), key_v2(DataRoot, TXSize, TXStartOffset), TXPath).
