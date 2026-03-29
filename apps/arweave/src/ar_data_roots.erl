@@ -344,41 +344,8 @@ validate_data_roots(TXRoot, BlockSize, Entries, Offset) ->
 				false ->
 					{error, invalid_tx_root}
 			end,
-		{ok, Triplets} ?= prepare_data_root_pairs(Entries, BlockStart, BlockSize),
-		ok ?= verify_tx_paths(Triplets, TXRoot, BlockStart, BlockEnd, 0),
+		ok ?= verify_data_root_entries(Entries, TXRoot, BlockStart, BlockSize, 0, 0),
 		{ok, {TXRoot, BlockSize, Entries}}
-	end.
-
-prepare_data_root_pairs(Entries, BlockStart, BlockSize) ->
-	Result = lists:foldr(
-		fun
-			(_, {error, _} = Error) ->
-				Error;
-			({_DataRoot, 0, _TXStartOffset, _TXPath}, _Acc) ->
-				{error, invalid_zero_tx_size};
-			({DataRoot, TXSize, TXStartOffset, TXPath}, {ok, {Total, Acc}}) ->
-				MerkleLabel = TXStartOffset + TXSize - BlockStart,
-				case MerkleLabel >= 0 of
-					true ->
-						PaddedSize = get_padded_size(TXSize, BlockStart),
-						{ok, {Total + PaddedSize, [{DataRoot, MerkleLabel, TXPath} | Acc]}};
-					false ->
-						{error, invalid_entry_merkle_label}
-				end
-		end,
-		{ok, {0,[]}},
-		Entries
-	),
-	case Result of
-		{ok, {Total, Entries2}} ->
-			case Total == BlockSize of
-				true ->
-					{ok, Entries2};
-				false ->
-					{error, invalid_total_tx_size}
-			end;
-		Error ->
-			Error
 	end.
 
 get_padded_size(TXSize, BlockStart) ->
@@ -389,19 +356,38 @@ get_padded_size(TXSize, BlockStart) ->
 			TXSize
 	end.
 
-verify_tx_paths([], _TXRoot, _BlockStart, _BlockEnd, _TXStartOffset) ->
+verify_data_root_entries([], _TXRoot, _BlockStart, BlockSize, Total, Total)
+		when Total == BlockSize ->
 	ok;
-verify_tx_paths([Entry | Entries], TXRoot, BlockStart, BlockEnd, TXStartOffset) ->
-	{DataRoot, TXEndOffset, TXPath} = Entry,
-	BlockSize = BlockEnd - BlockStart,
-	case ar_merkle:validate_path(TXRoot, TXEndOffset - 1, BlockSize, TXPath) of
+verify_data_root_entries([], _TXRoot, _BlockStart, _BlockSize, _TXStartOffset, _Total) ->
+	{error, invalid_total_tx_size};
+verify_data_root_entries([{_DataRoot, 0, _TXStartOffset, _TXPath} | _], _TXRoot, _BlockStart,
+		_BlockSize, _ExpectedTXStartOffset, _Total) ->
+	{error, invalid_zero_tx_size};
+verify_data_root_entries([{DataRoot, TXSize, TXStartOffset, TXPath} | Entries], TXRoot,
+		BlockStart, BlockSize, ExpectedTXStartOffset, Total) ->
+	TXEndOffset = TXStartOffset + TXSize - BlockStart,
+	case TXEndOffset >= 0 of
 		false ->
-			{error, invalid_tx_path};
-		{DataRoot, TXStartOffset, TXEndOffset} ->
-			PaddedEndOffset = get_padded_size(TXEndOffset, BlockStart),
-			verify_tx_paths(Entries, TXRoot, BlockStart, BlockEnd, PaddedEndOffset);
-		_ ->
-			{error, invalid_tx_path}
+			{error, invalid_entry_merkle_label};
+		true ->
+			case ar_merkle:validate_path(TXRoot, TXEndOffset - 1, BlockSize, TXPath) of
+				false ->
+					{error, invalid_tx_path};
+				{DataRoot, ExpectedTXStartOffset, TXEndOffset} ->
+					PaddedTXSize = get_padded_size(TXSize, BlockStart),
+					PaddedEndOffset = get_padded_size(TXEndOffset, BlockStart),
+					verify_data_root_entries(
+						Entries,
+						TXRoot,
+						BlockStart,
+						BlockSize,
+						PaddedEndOffset,
+						Total + PaddedTXSize
+					);
+				_ ->
+					{error, invalid_tx_path}
+			end
 	end.
 
 %% @doc Return true if the data roots for the given block range are synced, false otherwise.
@@ -680,9 +666,9 @@ validate_data_roots_rejects_invalid_zero_tx_size_test() ->
 validate_data_roots_rejects_invalid_total_tx_size_test() ->
 	BlockStart = 0,
 	Offset = 1,
-	{TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath} | Rest]} =
+	{TXRoot, BlockSize, [Entry | _Rest]} =
 		make_valid_data_root_entries(BlockStart, [10, 20]),
-	InvalidEntries = [{DataRoot, TXSize + 1, TXStartOffset, TXPath} | Rest],
+	InvalidEntries = [Entry],
 	with_mocked_block_bounds(
 		BlockStart,
 		BlockStart + BlockSize,
