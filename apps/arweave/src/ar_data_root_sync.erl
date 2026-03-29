@@ -36,14 +36,14 @@ name(StoreID) ->
 	list_to_atom("ar_data_root_sync_" ++ ar_storage_module:label(StoreID)).
 
 %% @doc Store the given data roots.
-store_data_roots(BlockStart, BlockEnd, TXRoot, Entries) ->
+store_data_roots(BlockStart, BlockEnd, TXRoot, DataRootEntries) ->
 	gen_server:cast(ar_data_sync_default, {store_data_roots,
-		BlockStart, BlockEnd, TXRoot, Entries}).
+		BlockStart, BlockEnd, TXRoot, DataRootEntries}).
 
 %% @doc Store the given data roots synchronously.
-store_data_roots_sync(BlockStart, BlockEnd, TXRoot, Entries) ->
+store_data_roots_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries) ->
 	gen_server:call(ar_data_sync_default, {store_data_roots_sync,
-		BlockStart, BlockEnd, TXRoot, Entries}, 120000).
+		BlockStart, BlockEnd, TXRoot, DataRootEntries}, 120000).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -136,9 +136,9 @@ maybe_fetch_and_store(BlockStart, BlockEnd) ->
 		Peers
 	)),
 	case fetch_data_roots_from_peers(Peers2, BlockStart) of
-		{ok, {TXRoot, BlockSize, Entries}} ->
+		{ok, {TXRoot, BlockSize, DataRootEntries}} ->
 			BlockSize = BlockEnd - BlockStart,
-			store_data_roots(BlockStart, BlockEnd, TXRoot, Entries);
+			store_data_roots(BlockStart, BlockEnd, TXRoot, DataRootEntries);
 		_ ->
 			ok
 	end.

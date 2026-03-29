@@ -890,10 +890,10 @@ handle_cast(
 	ar_data_roots:continue_old_data_root_index_migration(Cursor, N, StoreID),
 	{noreply, State};
 
-handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, Entries}, State) ->
+handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, DataRootEntries}, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	BlockSize = BlockEnd - BlockStart,
-	ar_data_roots:store_block(BlockStart, BlockSize, TXRoot, Entries, StoreID),
+	ar_data_roots:store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID),
 	{noreply, State};
 
 handle_cast(process_store_chunk_queue, State) ->
@@ -1519,10 +1519,10 @@ handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	{reply, add_block(B, SizeTaggedTXs, StoreID), State};
 
-handle_call({store_data_roots_sync, BlockStart, BlockEnd, TXRoot, Entries}, _From, State) ->
+handle_call({store_data_roots_sync, BlockStart, BlockEnd, TXRoot, DataRootEntries}, _From, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	BlockSize = BlockEnd - BlockStart,
-	ar_data_roots:store_block(BlockStart, BlockSize, TXRoot, Entries, StoreID),
+	ar_data_roots:store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID),
 	{reply, ok, State};
 
 handle_call(Request, _From, State) ->
@@ -2564,19 +2564,19 @@ add_block_data_roots([], _BlockStart, _StoreID) ->
 add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID) ->
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
 	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
-	{BlockSize, DataRootTuples} = lists:foldl(
+	{BlockSize, DataRootEntries} = lists:foldl(
 		fun ({_, Offset}, {Offset, _} = Acc) ->
 				Acc;
-			({{padding, _}, Offset}, {_, DataRootTuplesAcc}) ->
-				{Offset, DataRootTuplesAcc};
-			({{_, DataRoot}, Offset}, {_, DataRootTuplesAcc}) when byte_size(DataRoot) < 32 ->
-				{Offset, DataRootTuplesAcc};
-			({{_, DataRoot}, TXEndOffset}, {PrevOffset, DataRootTuplesAcc}) ->
+			({{padding, _}, Offset}, {_, DataRootEntriesAcc}) ->
+				{Offset, DataRootEntriesAcc};
+			({{_, DataRoot}, Offset}, {_, DataRootEntriesAcc}) when byte_size(DataRoot) < 32 ->
+				{Offset, DataRootEntriesAcc};
+			({{_, DataRoot}, TXEndOffset}, {PrevOffset, DataRootEntriesAcc}) ->
 				TXPath = ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree),
 				TXOffset = BlockStart + PrevOffset,
 				TXSize = TXEndOffset - PrevOffset,
 				{TXEndOffset,
-						[{DataRoot, TXSize, TXOffset, TXPath} | DataRootTuplesAcc]}
+						[{DataRoot, TXSize, TXOffset, TXPath} | DataRootEntriesAcc]}
 		end,
 		{0, []},
 		SizeTaggedTXs
@@ -2584,7 +2584,7 @@ add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID) ->
 	case BlockSize > 0 of
 		true ->
 			ar_data_roots:store_block(
-				BlockStart, BlockSize, TXRoot, DataRootTuples, StoreID);
+				BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID);
 		false ->
 			{ok, sets:new()}
 	end.

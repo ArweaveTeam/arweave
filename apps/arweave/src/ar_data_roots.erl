@@ -26,10 +26,15 @@
 	continue_old_data_root_index_migration/3,
 	is_migration_complete/0
 ]).
+-export_type([data_root_entry/0, data_root_entries/0]).
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+-type data_root_entry() :: {DataRoot :: binary(), TXSize :: non_neg_integer(),
+		TXStartOffset :: non_neg_integer(), TXPath :: binary()}.
+-type data_root_entries() :: [data_root_entry()].
 
 open_index_db(Dir, StoreID, BloomFilterOpts) ->
 	open_index_db(Dir, "ar_data_sync_data_root_index_db", StoreID, BloomFilterOpts).
@@ -78,21 +83,21 @@ parse_key_v2(Key) ->
 		TXStartOffsetSize:8, TXStartOffset:(TXStartOffsetSize * 8) >> = Key,
 	{DataRoot, TXSize, TXStartOffset}.
 
-%% @doc Store all data roots for a given block. 
-%% DataRoots is a list of {DataRoot, TXSize, TXStartOffset, TXPath} tuples.
-store_block(BlockStart, BlockSize, TXRoot, DataRootTuples, StoreID) ->
+%% @doc Store all data roots for a given block.
+%% DataRootEntries is a list of `{DataRoot, TXSize, TXStartOffset, TXPath}` tuples.
+store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID) ->
 	% Update index_db
 	lists:foreach(
 		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
 			ok = ar_kv:put(index_db(StoreID),
 				key_v2(DataRoot, TXSize, TXStartOffset), TXPath)
 		end,
-		DataRootTuples
+		DataRootEntries
 	),
 	% Update keys_db
 	DataRootKeys = sets:from_list([
 		<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>
-		|| {DataRoot, TXSize, _TXStart, _TXPath} <- DataRootTuples
+		|| {DataRoot, TXSize, _TXStart, _TXPath} <- DataRootEntries
 	]),
 	ok = ar_kv:put(keys_db(StoreID),
 			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
@@ -251,7 +256,7 @@ next({Index, Count}, _Limit) ->
 %% Return only entries corresponding to non-empty transactions.
 %% Return the complete list of entries in the order they appear in the data root index,
 %% which corresponds to sorted #tx records in the block.
-%% Return {ok, {TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath}, ...]}}
+%% Return {ok, {TXRoot, BlockSize, DataRootEntries}}
 %% or {error, Reason}.
 get_for_offset(Offset) ->
 	case Offset >= ar_data_sync:get_disk_pool_threshold() of
@@ -266,7 +271,7 @@ get_for_offset(Offset) ->
 				{ok, Bin} ->
 					{TXRoot2, BlockSize, DataRootKeys} = binary_to_term(Bin),
 					true = TXRoot2 == TXRoot,
-					DataRootTupleLists = sets:fold(
+					DataRootEntriesLists = sets:fold(
 						fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
 							%% List of lists is intended. We'll keep one result list per key and
 							%% flatten once after the fold.
@@ -275,15 +280,15 @@ get_for_offset(Offset) ->
 						[],
 						DataRootKeys
 					),
-					DataRootTuples = lists:append(DataRootTupleLists),
-					SortedDataRootTuples = lists:sort(
+					DataRootEntries = lists:append(DataRootEntriesLists),
+					SortedDataRootEntries = lists:sort(
 						fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
 								{_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
 							TXStart1 < TXStart2
 						end,
-						DataRootTuples
+						DataRootEntries
 					),
-					{ok, {TXRoot, BlockSize, SortedDataRootTuples}}
+					{ok, {TXRoot, BlockSize, SortedDataRootEntries}}
 			end
 	end.
 
@@ -295,7 +300,7 @@ get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
 	EndKey = key_v2(DataRoot, TXSize, Cursor - 1),
 	case ar_kv:get_range(index_db(StoreID), StartKey, EndKey) of
 		{ok, Range} ->
-			Entries = maps:fold(
+			DataRootEntries = maps:fold(
 				fun(Key, TXPath, Acc) ->
 					case parse_key_v2(Key) of
 						{DataRoot, TXSize, TXStart} ->
@@ -312,7 +317,7 @@ get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
 						{_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
 					TXStart1 > TXStart2
 				end,
-				Entries
+				DataRootEntries
 			);
 		_ ->
 			[]
@@ -320,7 +325,7 @@ get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
 
 %% @doc Validate the given data roots against the local block index.
 %% Also recompute the TXRoot from entries and verify Merkle paths.
-validate_data_roots(TXRoot, BlockSize, Entries, Offset) ->
+validate_data_roots(TXRoot, BlockSize, DataRootEntries, Offset) ->
 	{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
 	maybe
 		ok ?=
@@ -344,8 +349,8 @@ validate_data_roots(TXRoot, BlockSize, Entries, Offset) ->
 				false ->
 					{error, invalid_tx_root}
 			end,
-		ok ?= verify_data_root_entries(Entries, TXRoot, BlockStart, BlockSize, 0, 0),
-		{ok, {TXRoot, BlockSize, Entries}}
+		ok ?= verify_data_root_entries(DataRootEntries, TXRoot, BlockStart, BlockSize, 0, 0),
+		{ok, {TXRoot, BlockSize, DataRootEntries}}
 	end.
 
 get_padded_size(TXSize, BlockStart) ->
@@ -364,7 +369,7 @@ verify_data_root_entries([], _TXRoot, _BlockStart, _BlockSize, _TXStartOffset, _
 verify_data_root_entries([{_DataRoot, 0, _TXStartOffset, _TXPath} | _], _TXRoot, _BlockStart,
 		_BlockSize, _ExpectedTXStartOffset, _Total) ->
 	{error, invalid_zero_tx_size};
-verify_data_root_entries([{DataRoot, TXSize, TXStartOffset, TXPath} | Entries], TXRoot,
+verify_data_root_entries([{DataRoot, TXSize, TXStartOffset, TXPath} | DataRootEntries], TXRoot,
 		BlockStart, BlockSize, ExpectedTXStartOffset, Total) ->
 	TXEndOffset = TXStartOffset + TXSize - BlockStart,
 	case TXEndOffset >= 0 of
@@ -378,7 +383,7 @@ verify_data_root_entries([{DataRoot, TXSize, TXStartOffset, TXPath} | Entries], 
 					PaddedTXSize = get_padded_size(TXSize, BlockStart),
 					PaddedEndOffset = get_padded_size(TXEndOffset, BlockStart),
 					verify_data_root_entries(
-						Entries,
+						DataRootEntries,
 						TXRoot,
 						BlockStart,
 						BlockSize,
@@ -614,15 +619,15 @@ get_all_in_range_ignores_other_data_root_and_tx_size_test() ->
 validate_data_roots_accepts_valid_entries_test() ->
 	BlockStart = 0,
 	Offset = 1,
-	{TXRoot, BlockSize, Entries} = make_valid_data_root_entries(BlockStart, [10, 20]),
+	{TXRoot, BlockSize, DataRootEntries} = make_valid_data_root_entries(BlockStart, [10, 20]),
 	with_mocked_block_bounds(
 		BlockStart,
 		BlockStart + BlockSize,
 		TXRoot,
 		fun() ->
 			?assertEqual(
-				{ok, {TXRoot, BlockSize, Entries}},
-				validate_data_roots(TXRoot, BlockSize, Entries, Offset)
+				{ok, {TXRoot, BlockSize, DataRootEntries}},
+				validate_data_roots(TXRoot, BlockSize, DataRootEntries, Offset)
 			)
 		end
 	).
@@ -684,7 +689,7 @@ validate_data_roots_rejects_invalid_total_tx_size_test() ->
 validate_data_roots_rejects_invalid_tx_root_test() ->
 	BlockStart = 0,
 	Offset = 1,
-	{TXRoot, BlockSize, Entries} = make_valid_data_root_entries(BlockStart, [10, 20]),
+	{TXRoot, BlockSize, DataRootEntries} = make_valid_data_root_entries(BlockStart, [10, 20]),
 	InvalidTXRoot = << 999:256 >>,
 	with_mocked_block_bounds(
 		BlockStart,
@@ -693,7 +698,7 @@ validate_data_roots_rejects_invalid_tx_root_test() ->
 		fun() ->
 			?assertEqual(
 				{error, invalid_tx_root},
-				validate_data_roots(InvalidTXRoot, BlockSize, Entries, Offset)
+				validate_data_roots(InvalidTXRoot, BlockSize, DataRootEntries, Offset)
 			)
 		end
 	).
@@ -748,9 +753,9 @@ make_valid_data_root_entries(BlockStart, TXSizes) ->
 	),
 	SizeTaggedDataRoots = [{DataRoot, TXEndOffset} || {DataRoot, _, _, TXEndOffset} <- EntrySpecs],
 	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
-	Entries = [
+	DataRootEntries = [
 		{DataRoot, TXSize, TXStartOffset,
 			ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree)}
 		|| {DataRoot, TXSize, TXStartOffset, TXEndOffset} <- EntrySpecs
 	],
-	{TXRoot, BlockSize, Entries}.
+	{TXRoot, BlockSize, DataRootEntries}.

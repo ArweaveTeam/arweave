@@ -268,13 +268,13 @@ submit_block_data(BlockStart, TXs) ->
 		|| {TX, {{_ID, DR}, _End}} <- lists:zip(SortedTXs, SizeTaggedTXsNoPadding)
 	],
 	{_, Tree} = ar_merkle:generate_tree([{DR, End} || {{_, DR}, End} <- SizeTaggedTXs]),
-	Entries = [
+	DataRootEntries = [
 		{DR, TX#tx.data_size, BlockStart + End - TX#tx.data_size,
 			ar_merkle:generate_path(TXRoot, End - 1, Tree)}
 		|| {TX, {{_ID, DR}, End}} <- lists:zip(TXs2, SizeTaggedTXsNoPadding),
 			TX#tx.data_size > 0
 	],
-	ar_data_root_sync:store_data_roots_sync(BlockStart, BlockEnd, TXRoot, Entries),
+	ar_data_root_sync:store_data_roots_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries),
 	lists:foreach(fun(TX) ->
 		case TX#tx.data_size > 0 of
 			true ->

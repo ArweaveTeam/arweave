@@ -541,8 +541,10 @@ handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
 					{400, #{}, <<>>, Req};
 				Offset ->
 					case ar_data_roots:get_for_offset(Offset) of
-						{ok, {TXRoot, BlockSize, Entries}} ->
-							Payload = ar_serialize:data_roots_to_binary({TXRoot, BlockSize, Entries}),
+						{ok, {TXRoot, BlockSize, DataRootEntries}} ->
+							Payload = ar_serialize:data_roots_to_binary(
+								{TXRoot, BlockSize, DataRootEntries}
+							),
 							{200, #{}, Payload, Req};
 						{error, not_found} ->
 							{404, #{}, jiffy:encode(#{ error => not_found }), Req};
@@ -588,11 +590,13 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 					case read_complete_body(Req, Pid) of
 						{ok, Body, Req2} ->
 							case ar_serialize:binary_to_data_roots(Body) of
-								{ok, {TXRoot, BlockSize, Entries}} ->
-									case ar_data_roots:validate_data_roots(TXRoot, BlockSize, Entries, Offset2) of
+								{ok, {TXRoot, BlockSize, DataRootEntries}} ->
+									case ar_data_roots:validate_data_roots(
+										TXRoot, BlockSize, DataRootEntries, Offset2
+									) of
 										{ok, _} ->
 											case catch ar_data_root_sync:store_data_roots_sync(
-													BlockStart2, BlockEnd2, TXRoot, Entries) of
+													BlockStart2, BlockEnd2, TXRoot, DataRootEntries) of
 												ok ->
 													{200, #{}, <<>>, Req2};
 												{'EXIT', {timeout, _}} ->

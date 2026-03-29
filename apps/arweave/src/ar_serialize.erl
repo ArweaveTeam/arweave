@@ -1271,7 +1271,7 @@ binary_to_block_index(<< BH:48/binary, WeaveSizeSize:16, WeaveSize:(WeaveSizeSiz
 binary_to_block_index(_Rest, _BI) ->
 	{error, invalid_input}.
 
-data_roots_to_binary({TXRoot, BlockSize, Entries}) when is_binary(TXRoot) ->
+data_roots_to_binary({TXRoot, BlockSize, DataRootEntries}) when is_binary(TXRoot) ->
 	EncodedEntries = lists:map(
 		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
 			<< DataRoot:32/binary,
@@ -1279,10 +1279,10 @@ data_roots_to_binary({TXRoot, BlockSize, Entries}) when is_binary(TXRoot) ->
 				(encode_int(TXStartOffset, 8))/binary,
                 (encode_bin(TXPath, 24))/binary >>
 		end,
-		Entries),
+		DataRootEntries),
 	<< (encode_bin(TXRoot, 8))/binary,
 		(encode_int(BlockSize, 16))/binary,
-		(length(Entries)):32,
+		(length(DataRootEntries)):32,
 		(iolist_to_binary(EncodedEntries))/binary >>.
 
 %% @doc Decode data_roots_to_binary/1 payload.
@@ -1290,8 +1290,8 @@ binary_to_data_roots(<< TXRootSize:8, TXRoot:TXRootSize/binary,
 		BlockSizeSize:16, BlockSize:(BlockSizeSize*8),
 		Count:32, Rest/binary >>) when TXRootSize == 0; TXRootSize == 32; Count =< ?BLOCK_TX_COUNT_LIMIT ->
 	case catch binary_to_data_root_entries(Count, Rest, []) of
-		{ok, Entries, <<>>} ->
-			{ok, {TXRoot, BlockSize, lists:reverse(Entries)}};
+		{ok, DataRootEntries, <<>>} ->
+			{ok, {TXRoot, BlockSize, lists:reverse(DataRootEntries)}};
 		{ok, _Entries, _Tail} ->
 			{error, invalid_input3};
 		{'EXIT', _} ->
