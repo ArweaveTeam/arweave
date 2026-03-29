@@ -795,7 +795,7 @@ get_data_roots(Peer, Offset) ->
 handle_get_data_roots_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Offset) ->
 	case ar_serialize:binary_to_data_roots(Body) of
 		{ok, {TXRoot, BlockSize, Entries}} ->
-			ar_data_root_sync:validate_data_roots(TXRoot, BlockSize, Entries, Offset);
+			ar_data_roots:validate_data_roots(TXRoot, BlockSize, Entries, Offset);
 		_ ->
 			{error, invalid_response}
 	end;

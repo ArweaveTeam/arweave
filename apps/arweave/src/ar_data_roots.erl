@@ -17,6 +17,7 @@
 	reset/1,
 	get_key/1,
 	get_for_offset/1,
+	validate_data_roots/4,
 	are_synced/2,
 	are_synced/4,
 	is_synced/2,
@@ -317,6 +318,92 @@ get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
 			[]
 	end.
 
+%% @doc Validate the given data roots against the local block index.
+%% Also recompute the TXRoot from entries and verify Merkle paths.
+validate_data_roots(TXRoot, BlockSize, Entries, Offset) ->
+	{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
+	maybe
+		ok ?=
+			case Offset >= BlockStart andalso Offset < BlockEnd of
+				true ->
+					ok;
+				false ->
+					{error, invalid_block_bounds}
+			end,
+		ok ?=
+			case BlockSize == BlockEnd - BlockStart of
+				true ->
+					ok;
+				false ->
+					{error, invalid_block_size}
+			end,
+		ok ?=
+			case TXRoot == ExpectedTXRoot of
+				true ->
+					ok;
+				false ->
+					{error, invalid_tx_root}
+			end,
+		{ok, Triplets} ?= prepare_data_root_pairs(Entries, BlockStart, BlockSize),
+		ok ?= verify_tx_paths(Triplets, TXRoot, BlockStart, BlockEnd, 0),
+		{ok, {TXRoot, BlockSize, Entries}}
+	end.
+
+prepare_data_root_pairs(Entries, BlockStart, BlockSize) ->
+	Result = lists:foldr(
+		fun
+			(_, {error, _} = Error) ->
+				Error;
+			({_DataRoot, 0, _TXStartOffset, _TXPath}, _Acc) ->
+				{error, invalid_zero_tx_size};
+			({DataRoot, TXSize, TXStartOffset, TXPath}, {ok, {Total, Acc}}) ->
+				MerkleLabel = TXStartOffset + TXSize - BlockStart,
+				case MerkleLabel >= 0 of
+					true ->
+						PaddedSize = get_padded_size(TXSize, BlockStart),
+						{ok, {Total + PaddedSize, [{DataRoot, MerkleLabel, TXPath} | Acc]}};
+					false ->
+						{error, invalid_entry_merkle_label}
+				end
+		end,
+		{ok, {0,[]}},
+		Entries
+	),
+	case Result of
+		{ok, {Total, Entries2}} ->
+			case Total == BlockSize of
+				true ->
+					{ok, Entries2};
+				false ->
+					{error, invalid_total_tx_size}
+			end;
+		Error ->
+			Error
+	end.
+
+get_padded_size(TXSize, BlockStart) ->
+	case BlockStart >= ar_block:strict_data_split_threshold() of
+		true ->
+			ar_poa:get_padded_offset(TXSize, 0);
+		false ->
+			TXSize
+	end.
+
+verify_tx_paths([], _TXRoot, _BlockStart, _BlockEnd, _TXStartOffset) ->
+	ok;
+verify_tx_paths([Entry | Entries], TXRoot, BlockStart, BlockEnd, TXStartOffset) ->
+	{DataRoot, TXEndOffset, TXPath} = Entry,
+	BlockSize = BlockEnd - BlockStart,
+	case ar_merkle:validate_path(TXRoot, TXEndOffset - 1, BlockSize, TXPath) of
+		false ->
+			{error, invalid_tx_path};
+		{DataRoot, TXStartOffset, TXEndOffset} ->
+			PaddedEndOffset = get_padded_size(TXEndOffset, BlockStart),
+			verify_tx_paths(Entries, TXRoot, BlockStart, BlockEnd, PaddedEndOffset);
+		_ ->
+			{error, invalid_tx_path}
+	end.
+
 %% @doc Return true if the data roots for the given block range are synced, false otherwise.
 %% Assert the given BlockEnd and TXRoot match the stored values.
 are_synced(B, StoreID) ->
@@ -538,6 +625,93 @@ get_all_in_range_ignores_other_data_root_and_tx_size_test() ->
 		end
 	).
 
+validate_data_roots_accepts_valid_entries_test() ->
+	BlockStart = 0,
+	Offset = 1,
+	{TXRoot, BlockSize, Entries} = make_valid_data_root_entries(BlockStart, [10, 20]),
+	with_mocked_block_bounds(
+		BlockStart,
+		BlockStart + BlockSize,
+		TXRoot,
+		fun() ->
+			?assertEqual(
+				{ok, {TXRoot, BlockSize, Entries}},
+				validate_data_roots(TXRoot, BlockSize, Entries, Offset)
+			)
+		end
+	).
+
+validate_data_roots_rejects_invalid_tx_path_test() ->
+	BlockStart = 0,
+	Offset = 1,
+	{TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath} | Rest]} =
+		make_valid_data_root_entries(BlockStart, [10, 20]),
+	InvalidEntries = [{DataRoot, TXSize, TXStartOffset, << TXPath/binary, 0 >>} | Rest],
+	with_mocked_block_bounds(
+		BlockStart,
+		BlockStart + BlockSize,
+		TXRoot,
+		fun() ->
+			?assertEqual(
+				{error, invalid_tx_path},
+				validate_data_roots(TXRoot, BlockSize, InvalidEntries, Offset)
+			)
+		end
+	).
+
+validate_data_roots_rejects_invalid_zero_tx_size_test() ->
+	BlockStart = 0,
+	Offset = 1,
+	{TXRoot, BlockSize, [{DataRoot, _TXSize, TXStartOffset, TXPath} | Rest]} =
+		make_valid_data_root_entries(BlockStart, [10, 20]),
+	InvalidEntries = [{DataRoot, 0, TXStartOffset, TXPath} | Rest],
+	with_mocked_block_bounds(
+		BlockStart,
+		BlockStart + BlockSize,
+		TXRoot,
+		fun() ->
+			?assertEqual(
+				{error, invalid_zero_tx_size},
+				validate_data_roots(TXRoot, BlockSize, InvalidEntries, Offset)
+			)
+		end
+	).
+
+validate_data_roots_rejects_invalid_total_tx_size_test() ->
+	BlockStart = 0,
+	Offset = 1,
+	{TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath} | Rest]} =
+		make_valid_data_root_entries(BlockStart, [10, 20]),
+	InvalidEntries = [{DataRoot, TXSize + 1, TXStartOffset, TXPath} | Rest],
+	with_mocked_block_bounds(
+		BlockStart,
+		BlockStart + BlockSize,
+		TXRoot,
+		fun() ->
+			?assertEqual(
+				{error, invalid_total_tx_size},
+				validate_data_roots(TXRoot, BlockSize, InvalidEntries, Offset)
+			)
+		end
+	).
+
+validate_data_roots_rejects_invalid_tx_root_test() ->
+	BlockStart = 0,
+	Offset = 1,
+	{TXRoot, BlockSize, Entries} = make_valid_data_root_entries(BlockStart, [10, 20]),
+	InvalidTXRoot = << 999:256 >>,
+	with_mocked_block_bounds(
+		BlockStart,
+		BlockStart + BlockSize,
+		TXRoot,
+		fun() ->
+			?assertEqual(
+				{error, invalid_tx_root},
+				validate_data_roots(InvalidTXRoot, BlockSize, Entries, Offset)
+			)
+		end
+	).
+
 with_test_index_db(Fun) ->
 	ensure_test_kv_started(),
 	Unique = integer_to_list(erlang:unique_integer([positive])),
@@ -562,3 +736,35 @@ ensure_test_kv_started() ->
 
 put_test_tx(StoreID, DataRoot, TXSize, TXStartOffset, TXPath) ->
 	ar_kv:put(index_db(StoreID), key_v2(DataRoot, TXSize, TXStartOffset), TXPath).
+
+with_mocked_block_bounds(BlockStart, BlockEnd, TXRoot, Fun) ->
+	meck:new(ar_block_index, [passthrough]),
+	meck:expect(
+		ar_block_index,
+		get_block_bounds,
+		fun(_) -> {BlockStart, BlockEnd, TXRoot} end
+	),
+	try
+		Fun()
+	after
+		ok = meck:unload(ar_block_index)
+	end.
+
+make_valid_data_root_entries(BlockStart, TXSizes) ->
+	{EntrySpecs, BlockSize} = lists:mapfoldl(
+		fun(TXSize, TXEndOffset) ->
+			DataRoot = << TXEndOffset:256 >>,
+			NextTXEndOffset = TXEndOffset + TXSize,
+			{{DataRoot, TXSize, BlockStart + TXEndOffset, NextTXEndOffset}, NextTXEndOffset}
+		end,
+		0,
+		TXSizes
+	),
+	SizeTaggedDataRoots = [{DataRoot, TXEndOffset} || {DataRoot, _, _, TXEndOffset} <- EntrySpecs],
+	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
+	Entries = [
+		{DataRoot, TXSize, TXStartOffset,
+			ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree)}
+		|| {DataRoot, TXSize, TXStartOffset, TXEndOffset} <- EntrySpecs
+	],
+	{TXRoot, BlockSize, Entries}.

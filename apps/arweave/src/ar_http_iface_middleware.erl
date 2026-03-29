@@ -589,7 +589,7 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 						{ok, Body, Req2} ->
 							case ar_serialize:binary_to_data_roots(Body) of
 								{ok, {TXRoot, BlockSize, Entries}} ->
-									case ar_data_root_sync:validate_data_roots(TXRoot, BlockSize, Entries, Offset2) of
+									case ar_data_roots:validate_data_roots(TXRoot, BlockSize, Entries, Offset2) of
 										{ok, _} ->
 											case catch ar_data_root_sync:store_data_roots_sync(
 													BlockStart2, BlockEnd2, TXRoot, Entries) of
