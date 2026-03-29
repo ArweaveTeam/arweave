@@ -265,13 +265,16 @@ get_for_offset(Offset) ->
 				{ok, Bin} ->
 					{TXRoot2, BlockSize, DataRootKeys} = binary_to_term(Bin),
 					true = TXRoot2 == TXRoot,
-					DataRootTuples = sets:fold(
+					DataRootTupleLists = sets:fold(
 						fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
-							get_all_in_range(DataRoot, TXSize, BlockStart, BlockEnd, ?DEFAULT_MODULE, Acc)
+							%% List of lists is intended. We'll keep one result list per key and
+							%% flatten once after the fold.
+							[get_all_in_range(DataRoot, TXSize, BlockStart, BlockEnd, ?DEFAULT_MODULE) | Acc]
 						end,
 						[],
 						DataRootKeys
 					),
+					DataRootTuples = lists:append(DataRootTupleLists),
 					SortedDataRootTuples = lists:sort(
 						fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
 								{_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
@@ -284,16 +287,34 @@ get_for_offset(Offset) ->
 	end.
 
 %% @doc Get all the matching data root tuples matching DataRoom in the provided range
-get_all_in_range(_DataRoot, _TXSize, _Start, 0, _StoreID, Acc) ->
-	Acc;
-get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID, Acc) ->
-	Key = key_v2(DataRoot, TXSize, Cursor - 1),
-	case get_prev_tx(Key, StoreID) of
-		{ok, {TXStart, TXPath}} when TXStart >= Start ->
-			[{DataRoot, TXSize, TXStart, TXPath}
-				| get_all_in_range(DataRoot, TXSize, Start, TXStart, StoreID, Acc)];
+get_all_in_range(_DataRoot, _TXSize, Start, Cursor, _StoreID) when Cursor =< Start ->
+	[];
+get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
+	StartKey = key_v2(DataRoot, TXSize, Start),
+	EndKey = key_v2(DataRoot, TXSize, Cursor - 1),
+	case ar_kv:get_range(index_db(StoreID), StartKey, EndKey) of
+		{ok, Range} ->
+			Entries = maps:fold(
+				fun(Key, TXPath, Acc) ->
+					case parse_key_v2(Key) of
+						{DataRoot, TXSize, TXStart} ->
+							[{DataRoot, TXSize, TXStart, TXPath} | Acc];
+						_ ->
+							Acc
+					end
+				end,
+				[],
+				Range
+			),
+			lists:sort(
+				fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
+						{_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
+					TXStart1 > TXStart2
+				end,
+				Entries
+			);
 		_ ->
-			Acc
+			[]
 	end.
 
 %% @doc Return true if the data roots for the given block range are synced, false otherwise.
@@ -462,19 +483,10 @@ is_migration_complete() ->
 %%% Tests.
 %%%===================================================================
 
-get_all_in_range_cursor_zero_returns_acc_test() ->
-	with_test_index_db(
-		fun(StoreID) ->
-			DataRoot = << 1:256 >>,
-			Acc = [sentinel],
-			?assertEqual(Acc, get_all_in_range(DataRoot, 100, 10, 0, StoreID, Acc))
-		end
-	).
-
 get_all_in_range_returns_multiple_matches_for_same_pair_test() ->
 	with_test_index_db(
 		fun(StoreID) ->
-			DataRoot = << 2:256 >>,
+			DataRoot = << 1:256 >>,
 			TXSize = 100,
 			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
 			ok = put_test_tx(StoreID, DataRoot, TXSize, 20, <<"path-20">>),
@@ -485,7 +497,7 @@ get_all_in_range_returns_multiple_matches_for_same_pair_test() ->
 					{DataRoot, TXSize, 20, <<"path-20">>},
 					{DataRoot, TXSize, 10, <<"path-10">>}
 				],
-				get_all_in_range(DataRoot, TXSize, 10, 40, StoreID, [])
+				get_all_in_range(DataRoot, TXSize, 10, 40, StoreID)
 			)
 		end
 	).
@@ -493,7 +505,7 @@ get_all_in_range_returns_multiple_matches_for_same_pair_test() ->
 get_all_in_range_excludes_matches_outside_start_and_cursor_test() ->
 	with_test_index_db(
 		fun(StoreID) ->
-			DataRoot = << 3:256 >>,
+			DataRoot = << 2:256 >>,
 			TXSize = 100,
 			ok = put_test_tx(StoreID, DataRoot, TXSize, 5, <<"path-5">>),
 			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
@@ -505,7 +517,7 @@ get_all_in_range_excludes_matches_outside_start_and_cursor_test() ->
 					{DataRoot, TXSize, 30, <<"path-30">>},
 					{DataRoot, TXSize, 20, <<"path-20">>}
 				],
-				get_all_in_range(DataRoot, TXSize, 15, 35, StoreID, [])
+				get_all_in_range(DataRoot, TXSize, 15, 35, StoreID)
 			)
 		end
 	).
@@ -513,34 +525,15 @@ get_all_in_range_excludes_matches_outside_start_and_cursor_test() ->
 get_all_in_range_ignores_other_data_root_and_tx_size_test() ->
 	with_test_index_db(
 		fun(StoreID) ->
-			DataRoot = << 4:256 >>,
-			OtherDataRoot = << 5:256 >>,
+			DataRoot = << 3:256 >>,
+			OtherDataRoot = << 4:256 >>,
 			TXSize = 100,
 			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
 			ok = put_test_tx(StoreID, DataRoot, TXSize + 1, 20, <<"wrong-size">>),
 			ok = put_test_tx(StoreID, OtherDataRoot, TXSize, 30, <<"wrong-root">>),
 			?assertEqual(
 				[{DataRoot, TXSize, 10, <<"path-10">>}],
-				get_all_in_range(DataRoot, TXSize, 0, 40, StoreID, [])
-			)
-		end
-	).
-
-get_all_in_range_preserves_accumulator_tail_test() ->
-	with_test_index_db(
-		fun(StoreID) ->
-			DataRoot = << 6:256 >>,
-			TXSize = 100,
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 20, <<"path-20">>),
-			Acc = [sentinel],
-			?assertEqual(
-				[
-					{DataRoot, TXSize, 20, <<"path-20">>},
-					{DataRoot, TXSize, 10, <<"path-10">>},
-					sentinel
-				],
-				get_all_in_range(DataRoot, TXSize, 10, 30, StoreID, Acc)
+				get_all_in_range(DataRoot, TXSize, 0, 40, StoreID)
 			)
 		end
 	).
