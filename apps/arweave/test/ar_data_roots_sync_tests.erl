@@ -45,6 +45,15 @@ chunk_after_data_roots_background_sync_test_() ->
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
 		fun test_chunk_after_data_roots_background_sync/0).
 
+%% Background sync completes, but a block in an unconfigured partition still requires a
+%% manual POST /data_roots before POST /chunk can be accepted temporarily into the disk pool.
+chunk_in_unconfigured_partition_requires_manual_data_roots_test_() ->
+	ar_test_node:test_with_mocked_functions([
+			{ar_block, get_consensus_window_size, fun() -> 5 end},
+			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
+			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
+		fun test_chunk_in_unconfigured_partition_requires_manual_data_roots/0).
+
 chunk_skipped_with_duplicate_data_root_test_() ->
 	ar_test_node:test_with_mocked_functions([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
@@ -150,7 +159,7 @@ test_data_roots_http_post() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 	start_peers_then_disconnect(peer1, main, B0),
-	{B, _} = mine_block_with_small_fixed_data_tx(peer1, Wallet),
+	{B, _} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
 	%% Mine some empty blocks to push the data block out of the recent window.
 	mine_empty_blocks_on_peer_after(peer1, B, 11),
 	join_main_on_peer1(B#block.height + 11, false),
@@ -172,7 +181,7 @@ test_chunk_after_data_roots_http_post() ->
 	%% is guaranteed to trigger a POST /data_roots in the test loop. The remaining random data
 	%% provides some good additional coverage, but aren't guaranteed to always
 	%% trigger a POST /data_roots.
-	Guaranteed = mine_block_with_small_fixed_data_tx(peer1, Wallet),
+	Guaranteed = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
 	Random = lists:map(
 		fun(_) ->
 			TXData0 = generate_random_txs(Wallet),
@@ -236,7 +245,7 @@ test_chunk_after_data_roots_background_sync() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 	start_peers_then_disconnect(peer1, main, B0),
-	{B, [{TX, Chunks}]} = mine_block_with_small_fixed_data_tx(peer1, Wallet),
+	{B, [{TX, Chunks}]} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
 	mine_empty_blocks_on_peer_after(peer1, B, 11),
 	join_main_on_peer1(B#block.height + 11, true),
 	true = B#block.block_size > 0,
@@ -245,13 +254,80 @@ test_chunk_after_data_roots_background_sync() ->
 	post_then_get_chunks(main, B, TX, Chunks),
 	ok.
 
+test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
+	Wallet = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
+	start_peers_then_disconnect(peer1, main, B0),
+	BlocksData = [
+		%% Use slightly different sizes so each block gets a distinct data root while still
+		%% advancing the weave quickly into the uncovered partition.
+		mine_block_with_fixed_data_tx(peer1, Wallet, 262140 + Tag)
+		|| Tag <- lists:seq(1, 10)
+	],
+	{LastB, _} = lists:last(BlocksData),
+	mine_empty_blocks_on_peer_after(peer1, LastB, 11),
+
+	{ok, BaseConfig} = arweave_config:get_env(),
+	MainConfig = BaseConfig#config{
+		mine = false,
+		sync_jobs = 0,
+		header_sync_jobs = 2,
+		enable_data_roots_syncing = true,
+		storage_modules = [
+			{?MiB, 0, unpacked},
+			{3 * ?MiB, 1, unpacked}
+		]
+	},
+	ar_test_node:join_on(#{ node => main, join_on => peer1, config => MainConfig }, true),
+	ar_test_node:connect_to_peer(peer1),
+	ar_test_node:wait_until_joined(main),
+	ar_test_node:assert_wait_until_height(main, LastB#block.height + 11),
+
+	ExpectedBackgroundSync = lists:takewhile(
+		fun({B, _TXData}) -> block_start(B) < ?MiB end,
+		BlocksData),
+	%% Background sync scans by block start offset within configured module ranges.
+	lists:foreach(
+		fun({B, _TXData}) ->
+			wait_for_data_roots(main, B)
+		end,
+		ExpectedBackgroundSync
+	),
+	%% Give the background sync pass time to complete before asserting the gap block stays absent.
+	timer:sleep(5_000),
+	[{TargetB, [{TargetTX, TargetChunks}]} | _] = lists:dropwhile(
+		fun({B, _}) ->
+			block_start(B) < ?MiB orelse B#block.weave_size > 3 * ?MiB
+		end,
+		BlocksData),
+	TargetStart = block_start(TargetB),
+	?assert(TargetStart >= ?MiB),
+	?assert(TargetB#block.weave_size =< 3 * ?MiB),
+	assert_no_data_roots(main, TargetB),
+
+	ar_test_node:disconnect_from(peer1),
+	[{_AbsEnd, Proof}] = ar_test_data_sync:build_proofs(TargetB, TargetTX, TargetChunks),
+	?assertMatch(
+		{ok, {{<<"400">>, _}, _, <<"{\"error\":\"data_root_not_found\"}">>, _, _}},
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
+	),
+
+	{ok, Body} = get_data_roots(peer1, TargetB),
+	post_data_roots(main, TargetB, Body),
+	wait_for_data_roots(main, TargetB),
+	?assertMatch(
+		{ok, {{<<"303">>, _}, _, <<>>, _, _}},
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
+	),
+	ok.
+
 test_chunk_skipped_with_duplicate_data_root() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 	start_peers_then_disconnect(peer1, main, B0),
 	%% Mine two consecutive blocks on peer1 with the SAME data root (identical chunk data).
-	{B1, [{TX1, Chunks1}]} = mine_block_with_small_fixed_data_tx(peer1, Wallet),
-	{B2, [{TX2, Chunks2}]} = mine_block_with_small_fixed_data_tx(peer1, Wallet),
+	{B1, [{TX1, Chunks1}]} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
+	{B2, [{TX2, Chunks2}]} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
 	?assertEqual(TX1#tx.data_root, TX2#tx.data_root),
 	%% Mine empty blocks to push the data blocks out of the recent window.
 	mine_empty_blocks_on_peer_after(peer1, B2, 11),
@@ -295,7 +371,7 @@ test_chunk_skipped_with_depth_exhaustion() ->
 	%% Mine one more block than the configured duplicate-depth limit. This ensures the oldest
 	%% chunk falls outside the configured duplicate data-root window.
 	Blocks = lists:map(
-		fun(_) -> mine_block_with_small_fixed_data_tx(peer1, Wallet) end,
+		fun(_) -> mine_block_with_fixed_data_tx(peer1, Wallet, 4096) end,
 		lists:seq(1, MaxDuplicateDataRoots + 1)
 	),
 	{LastB, _} = lists:last(Blocks),
@@ -416,9 +492,10 @@ wait_until_data_roots_synced(Peer, B) ->
 		120_000),
 	ok.
 
-%% Mine one block on peer1 with a single small v2 data tx. TXData matches generate_random_txs/1 entries.
-mine_block_with_small_fixed_data_tx(Peer, Wallet) ->
-	Chunks = [<< 0:(4096 * 8) >>],
+%% Mine one block on peer1 with a single fixed-size v2 data tx. TXData matches
+%% generate_random_txs/1 entries.
+mine_block_with_fixed_data_tx(Peer, Wallet, Size) ->
+	Chunks = [<< 0:(Size * 8) >>],
 	{DataRoot, _DataTree} = ar_merkle:generate_tree(
 		ar_tx:sized_chunks_to_sized_chunk_ids(
 			ar_tx:chunks_to_size_tagged_chunks(Chunks)

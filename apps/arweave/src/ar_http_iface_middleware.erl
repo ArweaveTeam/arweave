@@ -540,7 +540,7 @@ handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
 				{'EXIT', _} ->
 					{400, #{}, <<>>, Req};
 				Offset ->
-					case ar_data_roots:get_for_offset(Offset) of
+					case ar_data_roots:get_block(Offset) of
 						{ok, {TXRoot, BlockSize, DataRootEntries}} ->
 							Payload = ar_serialize:data_roots_to_binary(
 								{TXRoot, BlockSize, DataRootEntries}

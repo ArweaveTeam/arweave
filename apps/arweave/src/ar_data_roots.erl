@@ -8,6 +8,7 @@
 	index_db/1,
 	old_db/1,
 	keys_db/1,
+	build_block_data_root_entries/2,
 	store_block/5,
 	get_tx/2,
 	get_prev_tx/3,
@@ -16,7 +17,7 @@
 	next_v2/2,
 	reset/1,
 	get_key/1,
-	get_for_offset/1,
+	get_block/1,
 	validate_data_roots/4,
 	are_synced/2,
 	are_synced/4,
@@ -35,7 +36,6 @@
 -type data_root_entry() :: {DataRoot :: binary(), TXSize :: non_neg_integer(),
 		TXStartOffset :: non_neg_integer(), TXPath :: binary()}.
 -type data_root_entries() :: [data_root_entry()].
-
 open_index_db(Dir, StoreID, BloomFilterOpts) ->
 	open_index_db(Dir, "ar_data_sync_data_root_index_db", StoreID, BloomFilterOpts).
 
@@ -82,6 +82,29 @@ parse_key_v2(Key) ->
 	<< DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
 		TXStartOffsetSize:8, TXStartOffset:(TXStartOffsetSize * 8) >> = Key,
 	{DataRoot, TXSize, TXStartOffset}.
+
+%% @doc Build `{TXRoot, BlockSize, DataRootEntries}` for the given size-tagged txs.
+build_block_data_root_entries(BlockStart, SizeTaggedTXs) ->
+	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
+	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
+	{BlockSize, DataRootEntries} = lists:foldl(
+		fun ({_, Offset}, {Offset, _} = Acc) ->
+				Acc;
+			({{padding, _}, Offset}, {_, DataRootEntriesAcc}) ->
+				{Offset, DataRootEntriesAcc};
+			({{_, DataRoot}, Offset}, {_, DataRootEntriesAcc}) when byte_size(DataRoot) < 32 ->
+				{Offset, DataRootEntriesAcc};
+			({{_, DataRoot}, TXEndOffset}, {PrevOffset, DataRootEntriesAcc}) ->
+				TXPath = ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree),
+				TXOffset = BlockStart + PrevOffset,
+				TXSize = TXEndOffset - PrevOffset,
+				{TXEndOffset,
+						[{DataRoot, TXSize, TXOffset, TXPath} | DataRootEntriesAcc]}
+		end,
+		{0, []},
+		SizeTaggedTXs
+	),
+	{TXRoot, BlockSize, DataRootEntries}.
 
 %% @doc Store all data roots for a given block.
 %% DataRootEntries is a list of `{DataRoot, TXSize, TXStartOffset, TXPath}` tuples.
@@ -252,13 +275,13 @@ next({Index, Count}, _Limit) ->
 			{Element, {Index2, Count + 1}}
 	end.
 
-%% @doc Get data roots for a given offset (>= BlockStartOffset, < BlockEndOffset) from local indices.
+%% @doc Get the data roots for the block containing the given block offset.
 %% Return only entries corresponding to non-empty transactions.
 %% Return the complete list of entries in the order they appear in the data root index,
 %% which corresponds to sorted #tx records in the block.
 %% Return {ok, {TXRoot, BlockSize, DataRootEntries}}
 %% or {error, Reason}.
-get_for_offset(Offset) ->
+get_block(Offset) ->
 	case Offset >= ar_data_sync:get_disk_pool_threshold() of
 		true ->
 			{error, not_found};
@@ -742,20 +765,18 @@ with_mocked_block_bounds(BlockStart, BlockEnd, TXRoot, Fun) ->
 	end.
 
 make_valid_data_root_entries(BlockStart, TXSizes) ->
-	{EntrySpecs, BlockSize} = lists:mapfoldl(
-		fun(TXSize, TXEndOffset) ->
-			DataRoot = << TXEndOffset:256 >>,
-			NextTXEndOffset = TXEndOffset + TXSize,
-			{{DataRoot, TXSize, BlockStart + TXEndOffset, NextTXEndOffset}, NextTXEndOffset}
-		end,
-		0,
-		TXSizes
-	),
-	SizeTaggedDataRoots = [{DataRoot, TXEndOffset} || {DataRoot, _, _, TXEndOffset} <- EntrySpecs],
-	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
-	DataRootEntries = [
-		{DataRoot, TXSize, TXStartOffset,
-			ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree)}
-		|| {DataRoot, TXSize, TXStartOffset, TXEndOffset} <- EntrySpecs
-	],
+	SizeTaggedTXs =
+		lists:mapfoldl(
+			fun(TXSize, TXEndOffset) ->
+				DataRoot = << TXEndOffset:256 >>,
+				NextTXEndOffset = TXEndOffset + TXSize,
+				{{{dummy, DataRoot}, NextTXEndOffset}, NextTXEndOffset}
+			end,
+			0,
+			TXSizes
+		),
+	{SizeTaggedTXs2, _} = SizeTaggedTXs,
+	{TXRoot, BlockSize, DataRootEntriesReversed} =
+		build_block_data_root_entries(BlockStart, SizeTaggedTXs2),
+	DataRootEntries = lists:reverse(DataRootEntriesReversed),
 	{TXRoot, BlockSize, DataRootEntries}.

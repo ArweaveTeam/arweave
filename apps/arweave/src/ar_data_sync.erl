@@ -21,7 +21,7 @@
 -export([debug_get_disk_pool_chunks/0]).
 
 %% For data-doctor tools
--export([init_kv/1]).
+-export([init_kv/1, open_store_dbs/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([enqueue_intervals/3, remove_expired_disk_pool_data_roots/0]).
@@ -213,7 +213,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 						case DataRootOffset of
 							not_found ->
 								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
-							{ok, TXStartOffset} ->
+							{ok, {TXStartOffset, _TXPath}} ->
 								{ok, Config} = arweave_config:get_env(),
 								case chunk_offsets_synced(DataRootKey, 
 										%% The same data may be uploaded several times.
@@ -2313,6 +2313,19 @@ remove_range(Start, End, Ref, ReplyTo) ->
 	).
 
 init_kv(StoreID) ->
+	{ok, Config} = arweave_config:get_env(),
+	DataDir = Config#config.data_dir,
+	ok = open_store_dbs(DataDir, StoreID),
+	#sync_data_state{
+		chunks_index = {chunks_index, StoreID},
+		chunk_data_db = {chunk_data_db, StoreID},
+		tx_index = {tx_index, StoreID},
+		tx_offset_index = {tx_offset_index, StoreID},
+		disk_pool_chunks_index = {disk_pool_chunks_index, StoreID},
+		disk_pool_chunks_index_old = {disk_pool_chunks_index_old, StoreID}
+	}.
+
+open_store_dbs(DataDir, StoreID) ->
 	BasicOpts = [{max_open_files, 10000}],
 	BloomFilterOpts = [
 		{block_based_table_options, [
@@ -2334,8 +2347,6 @@ init_kv(StoreID) ->
 		{"disk_pool_chunks_index", BasicOpts ++ BloomFilterOpts},
 		{"migrations_index", BasicOpts}
 	],
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
 	Dir =
 		case StoreID of
 			?DEFAULT_MODULE ->
@@ -2371,15 +2382,7 @@ init_kv(StoreID) ->
 			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
 			{max_bytes_for_level_base, 10 * 256 * ?MiB}] ++ BloomFilterOpts
 	}),
-	ok = ar_data_roots:open_index_db(Dir, StoreID, BloomFilterOpts),
-	#sync_data_state{
-		chunks_index = {chunks_index, StoreID},
-		chunk_data_db = {chunk_data_db, StoreID},
-		tx_index = {tx_index, StoreID},
-		tx_offset_index = {tx_offset_index, StoreID},
-		disk_pool_chunks_index = {disk_pool_chunks_index, StoreID},
-		disk_pool_chunks_index_old = {disk_pool_chunks_index_old, StoreID}
-	}.
+	ok = ar_data_roots:open_index_db(Dir, StoreID, BloomFilterOpts).
 
 move_disk_pool_index(State) ->
 	move_disk_pool_index(first, State).
@@ -2562,25 +2565,8 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
 add_block_data_roots([], _BlockStart, _StoreID) ->
 	{ok, sets:new()};
 add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID) ->
-	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
-	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
-	{BlockSize, DataRootEntries} = lists:foldl(
-		fun ({_, Offset}, {Offset, _} = Acc) ->
-				Acc;
-			({{padding, _}, Offset}, {_, DataRootEntriesAcc}) ->
-				{Offset, DataRootEntriesAcc};
-			({{_, DataRoot}, Offset}, {_, DataRootEntriesAcc}) when byte_size(DataRoot) < 32 ->
-				{Offset, DataRootEntriesAcc};
-			({{_, DataRoot}, TXEndOffset}, {PrevOffset, DataRootEntriesAcc}) ->
-				TXPath = ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree),
-				TXOffset = BlockStart + PrevOffset,
-				TXSize = TXEndOffset - PrevOffset,
-				{TXEndOffset,
-						[{DataRoot, TXSize, TXOffset, TXPath} | DataRootEntriesAcc]}
-		end,
-		{0, []},
-		SizeTaggedTXs
-	),
+	{TXRoot, BlockSize, DataRootEntries} =
+		ar_data_roots:build_block_data_root_entries(BlockStart, SizeTaggedTXs),
 	case BlockSize > 0 of
 		true ->
 			ar_data_roots:store_block(
@@ -3334,7 +3320,7 @@ process_disk_pool_item(State, Key, Value) ->
 			gen_server:cast(self(), process_disk_pool_item),
 			State2 = maybe_reset_disk_pool_full_scan_key(Key, State),
 			{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }};
-		{{ok, TXStartOffset}, _} ->
+		{{ok, {TXStartOffset, _TXPath}}, _} ->
 			DataRootIndexIterator = ar_data_roots:iterator_v2(DataRootKey, TXStartOffset + 1,
 					StoreID),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
