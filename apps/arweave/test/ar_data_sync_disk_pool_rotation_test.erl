@@ -15,9 +15,9 @@ disk_pool_rotation_test_() ->
 test_disk_pool_rotation() ->
 	?LOG_DEBUG([{event, test_disk_pool_rotation_start}]),
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	%% Will store the three genesis chunks.
-	%% The third one falls inside the "overlap" (see ar_storage_module.erl)
-	StorageModules = [{2 * ?DATA_CHUNK_SIZE, 0,
+	%% Store the three genesis chunks + an extra chunk to cover the
+	%% long-term storage vicinity around the weave size at the time of posting.
+	StorageModules = [{4 * ?DATA_CHUNK_SIZE, 0,
 			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, storage_modules => StorageModules }),
@@ -45,8 +45,8 @@ test_disk_pool_rotation() ->
 	Options = #{ format => etf, random_subset => false },
 	{ok, Binary1} = ar_global_sync_record:get_serialized_sync_record(Options),
 	{ok, Global1} = ar_intervals:safe_from_etf(Binary1),
-	%% 3 genesis chunks are packed with the replica 2.9 format and therefore stored
-	%% in the footprint record and not here.
+	%% The genesis chunks are packed with replica 2.9 and stored in the footprint record.
+	%% The TX chunk from the disk pool has not been packed yet.
 	?assertEqual([{1048576, 786432}], ar_intervals:to_list(Global1)),
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 2),
@@ -57,7 +57,7 @@ test_disk_pool_rotation() ->
 	assert_wait_until_height(main, 3),
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 4),
-	%% The new chunk has been confirmed but there is not storage module to take it.
+	%% The new chunk has been confirmed and falls in the storage module's overlap range.
 	?assertEqual(3, ?SEARCH_SPACE_UPPER_BOUND_DEPTH),
 	true = ar_util:do_until(
 		fun() ->
