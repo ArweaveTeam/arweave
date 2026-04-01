@@ -354,8 +354,7 @@ is_estimated_long_term_chunk(DataRootOffset, EndOffset) ->
 		not_found ->
 			%% A chunk from a pending transaction.
 			is_offset_vicinity_covered(WeaveSize);
-		{ok, TXStartOffset} ->
-			WeaveSize = ar_node:get_current_weave_size(),
+		{ok, {TXStartOffset, _TXPath}} ->
 			Size = ar_node:get_recent_max_block_size(),
 			AbsoluteEndOffset = TXStartOffset + EndOffset,
 			case AbsoluteEndOffset > WeaveSize - Size * 4 of
