@@ -7,7 +7,7 @@
 		store_block_index/1, update_block_index/3,
 		store_reward_history_part/1, store_reward_history_part2/1,
 		store_block_time_history_part/2, store_block_time_history_part2/1,
-		write_full_block/2, read_block/1, read_block/2, read_block/3, write_tx/1,
+		block_count/0, write_full_block/2, read_block/1, read_block/2, read_block/3, write_tx/1,
 		read_tx/1, read_tx/2, read_tx_data/1, read_tx_data/2, update_confirmation_index/1, get_tx_confirmation_data/1,
 		read_wallet_list/1, read_wallet_list/2, write_wallet_list/2,
 		delete_blacklisted_tx/1, lookup_tx_filename/1, lookup_tx_filename/2, open_databases/0,
@@ -36,6 +36,13 @@
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+block_count() ->
+	try ar_kv:count(block_db)
+	catch
+		_:_ ->
+			0
+	end.
 
 %% @doc Read the entire stored block index.
 read_block_index() ->

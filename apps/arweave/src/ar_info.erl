@@ -28,7 +28,7 @@ get_info() ->
                 true -> atom_to_binary(Current, utf8);
                 false -> ar_util:encode(Current)
             end,
-        <<"blocks">> => ar_header_sync:block_count(),
+        <<"blocks">> => ar_storage:block_count(),
         <<"peers">> => prometheus_gauge:value(arweave_peer_count),
         <<"queue_length">> =>
             element(
