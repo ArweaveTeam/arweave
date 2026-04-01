@@ -233,9 +233,8 @@ handle_cast({remove_tx, TXID}, State) ->
 	{noreply, State};
 
 handle_cast({remove_block, Height}, State) ->
-	#state{ sync_record = Record } = State,
-	ok = ar_kv:delete(?MODULE, << Height:256 >>),
-	{noreply, State#state{ sync_record = ar_intervals:delete(Record, Height, Height - 1) }};
+	State2 = unsync_block(Height, State),
+	{noreply, State2};
 
 handle_cast(store_sync_state, State) ->
 	ar_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, self(), store_sync_state),
@@ -497,6 +496,7 @@ download_block(H, H2, TXRoot) ->
 		unavailable ->
 			download_block(Peers, H, H2, TXRoot);
 		B ->
+			log_download_source(B, local),
 			download_txs(Peers, B, TXRoot)
 	end.
 
@@ -523,9 +523,11 @@ download_block(Peers, H, H2, TXRoot) ->
 			case BH of
 				H when Height >= Fork_2_0 ->
 					ar_peers:rate_fetched_data(Peer, block, Time, BlockSize),
+					log_download_source(B, network),
 					download_txs(Peers, B, TXRoot);
 				H2 when Height < Fork_2_0 ->
 					ar_peers:rate_fetched_data(Peer, block, Time, BlockSize),
+					log_download_source(B, network),
 					download_txs(Peers, B, TXRoot);
 				_ ->
 					?LOG_WARNING([
@@ -572,3 +574,21 @@ download_txs(Peers, B, TXRoot) ->
 			]),
 			{error, tx_not_found}
 	end.
+
+log_download_source(B, BlockSource) ->
+	?LOG_DEBUG([
+		{event, header_sync_block_synced},
+		{height, B#block.height},
+		{block, ar_util:encode(B#block.indep_hash)},
+		{block_source, BlockSource},
+		{tx_count, length(B#block.txs)}
+	]).
+
+unsync_block(Height, #state{ sync_record = SyncRecord, retry_record = RetryRecord } = State) ->
+	State2 = State#state{
+		sync_record = ar_intervals:delete(SyncRecord, Height, Height - 1),
+		retry_record = ar_intervals:delete(RetryRecord, Height, Height - 1)
+	},
+	ok = store_sync_state(State2),
+	ok = ar_kv:delete(?MODULE, << Height:256 >>),
+	State2.
