@@ -14,7 +14,7 @@
 	get_prev_tx/3,
 	remove_range/3,
 	iterator_v2/3,
-	next_v2/2,
+	next_v2/1,
 	reset/1,
 	get_key/1,
 	get_block/1,
@@ -31,6 +31,7 @@
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -type data_root_entry() :: {DataRoot :: binary(), TXSize :: non_neg_integer(),
@@ -225,6 +226,10 @@ remove(DataRootKey, Start, End, StoreID) ->
 iterator_v2(DataRootKey, TXStartOffset, StoreID) ->
 	{DataRootKey, TXStartOffset, TXStartOffset, StoreID, 1}.
 
+next_v2(Args) ->
+	{ok, Config} = arweave_config:get_env(),
+	next_v2(Args, Config#config.max_duplicate_data_roots).
+
 next_v2({_, _, _, _, Count}, Limit) when Count > Limit ->
 	none;
 next_v2({_, 0, _, _, _}, _Limit) ->
@@ -236,11 +241,11 @@ next_v2(Args, _Limit) ->
 			none;
 		{ok, {TXStartOffset2, TXPath}} ->
 			{ok, TXRoot} = ar_merkle:extract_root(TXPath),
-			{{TXStartOffset2, TXRoot, TXPath},
+			{ok, {TXStartOffset2, TXRoot, TXPath},
 					{DataRootKey, TXStartOffset2, LatestTXStartOffset, StoreID,
 							Count + 1}};
-		_ ->
-			none
+		{error, _} = Error ->
+			Error
 	end.
 
 reset({DataRootKey, _, TXStartOffset, StoreID, _}) ->

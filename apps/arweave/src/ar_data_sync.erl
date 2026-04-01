@@ -214,13 +214,12 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							not_found ->
 								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
 							{ok, {TXStartOffset, _TXPath}} ->
-								{ok, Config} = arweave_config:get_env(),
-								case chunk_offsets_synced(DataRootKey, 
+								case chunk_offsets_synced(DataRootKey,
 										%% The same data may be uploaded several times.
 										%% Here we only accept the chunk if any of the
 										%% last configured number of instances of this
 										%% data is not filled in yet.
-										EndOffset2, TXStartOffset, Config#config.max_duplicate_data_roots) of
+										EndOffset2, TXStartOffset) of
 									true ->
 										synced;
 									false ->
@@ -1388,10 +1387,17 @@ handle_cast(resume_disk_pool_scan, State) ->
 
 handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, State) ->
 	{Offset, _, _, _, _, _, Key, _, _, _} = Args,
-	%% Place the chunk under its last 10 offsets in the weave (the same data
+	%% Place the chunk under its last configured offsets in the weave (the same data
 	%% may be uploaded several times).
-	case ar_data_roots:next_v2(Iterator, 10) of
-		none ->
+	Result = ar_data_roots:next_v2(Iterator),
+	case Result of
+		{ok, TXArgs, Iterator2} ->
+			State2 = register_currently_processed_disk_pool_key(Key, State),
+			{TXStartOffset, TXRoot, TXPath} = TXArgs,
+			AbsoluteEndOffset = TXStartOffset + Offset,
+			process_disk_pool_chunk_offset(Iterator2, TXRoot, TXPath, AbsoluteEndOffset,
+					MayConclude, Args, State2);
+		_ ->
 			State2 =
 				case MayConclude of
 					true ->
@@ -1402,13 +1408,7 @@ handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, Stat
 						State
 				end,
 			gen_server:cast(self(), process_disk_pool_item),
-			{noreply, deregister_currently_processed_disk_pool_key(Key, State2)};
-		{TXArgs, Iterator2} ->
-			State2 = register_currently_processed_disk_pool_key(Key, State),
-			{TXStartOffset, TXRoot, TXPath} = TXArgs,
-			AbsoluteEndOffset = TXStartOffset + Offset,
-			process_disk_pool_chunk_offset(Iterator2, TXRoot, TXPath, AbsoluteEndOffset,
-					MayConclude, Args, State2)
+			{noreply, deregister_currently_processed_disk_pool_key(Key, State2)}
 	end;
 
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
@@ -2861,28 +2861,28 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 			end
 	end.
 
-chunk_offsets_synced(_, _, _, N) when N == 0 ->
-	true;
-chunk_offsets_synced(DataRootKey, ChunkOffset, TXStartOffset, N) ->
+chunk_offsets_synced(DataRootKey, ChunkOffset, TXStartOffset) ->
 	case ar_sync_record:is_recorded(TXStartOffset + ChunkOffset, ar_data_sync) of
 		{{true, _}, _StoreID} ->
-			case TXStartOffset of
-				0 ->
-					true;
-				_ ->
-					case ar_data_roots:get_prev_tx(
-							DataRootKey, TXStartOffset, ?DEFAULT_MODULE) of
-						{ok, {TXStartOffset2, _TXPath}} ->
-							chunk_offsets_synced(DataRootKey, ChunkOffset,
-									TXStartOffset2, N - 1);
-						not_found ->
-							true;
-						{error, _} ->
-							false
-					end
-			end;
+			Iterator = ar_data_roots:iterator_v2(DataRootKey, TXStartOffset, ?DEFAULT_MODULE),
+			chunk_offsets_synced(ChunkOffset, Iterator);
 		false ->
 			false
+	end.
+
+chunk_offsets_synced(ChunkOffset, Iterator) ->
+	case ar_data_roots:next_v2(Iterator) of
+		{ok, {TXStartOffset, _TXRoot, _TXPath}, Iterator2} ->
+			case ar_sync_record:is_recorded(TXStartOffset + ChunkOffset, ar_data_sync) of
+				{{true, _}, _StoreID} ->
+					chunk_offsets_synced(ChunkOffset, Iterator2);
+				false ->
+					false
+			end;
+		{error, _} ->
+			false;
+		none ->
+			true
 	end.
 
 %% @doc Return a storage reference to the chunk proof (and possibly the chunk itself).
@@ -3363,13 +3363,9 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 	#sync_data_state{
 			disk_pool_chunks_index = DiskPoolChunksIndex, store_id = StoreID } = State,
 	{Offset, _, ChunkSize, _, _, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
-	case ar_data_roots:next_v2(Iterator, 10) of
-		none ->
-			ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
-			ok = delete_chunk_data(ChunkDataKey, StoreID),
-			DataRootKey = ar_data_roots:get_key(Iterator),
-			decrease_occupied_disk_pool_size(ChunkSize, DataRootKey);
-		{TXArgs, Iterator2} ->
+	Result = ar_data_roots:next_v2(Iterator),
+	case Result of
+		{ok, TXArgs, Iterator2} ->
 			{TXStartOffset, _TXRoot, _TXPath} = TXArgs,
 			AbsoluteEndOffset = TXStartOffset + Offset,
 			case get_chunk_metadata(AbsoluteEndOffset, StoreID) of
@@ -3403,7 +3399,12 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 							ok
 					end
 			end,
-			delete_disk_pool_chunk(Iterator2, Args, State)
+			delete_disk_pool_chunk(Iterator2, Args, State);
+		_ ->
+			ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
+			ok = delete_chunk_data(ChunkDataKey, StoreID),
+			DataRootKey = ar_data_roots:get_key(Iterator),
+			decrease_occupied_disk_pool_size(ChunkSize, DataRootKey)
 	end.
 
 register_currently_processed_disk_pool_key(Key, State) ->
