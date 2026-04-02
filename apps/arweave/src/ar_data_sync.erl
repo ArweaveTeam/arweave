@@ -1389,8 +1389,7 @@ handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, Stat
 	{Offset, _, _, _, _, _, Key, _, _, _} = Args,
 	%% Place the chunk under its last configured offsets in the weave (the same data
 	%% may be uploaded several times).
-	Result = ar_data_roots:next(Iterator),
-	case Result of
+	case ar_data_roots:next(Iterator) of
 		{ok, DataRootEntry, Iterator2} ->
 			State2 = register_currently_processed_disk_pool_key(Key, State),
 			{_DataRoot, _TXSize, TXStartOffset, TXPath} = DataRootEntry,
@@ -3364,8 +3363,7 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 	#sync_data_state{
 			disk_pool_chunks_index = DiskPoolChunksIndex, store_id = StoreID } = State,
 	{Offset, _, ChunkSize, _, _, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
-	Result = ar_data_roots:next(Iterator),
-	case Result of
+	case ar_data_roots:next(Iterator) of
 		{ok, DataRootEntry, Iterator2} ->
 			{_, _, TXStartOffset, _} = DataRootEntry,
 			AbsoluteEndOffset = TXStartOffset + Offset,
