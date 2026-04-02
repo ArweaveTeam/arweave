@@ -486,7 +486,7 @@ wait_until_data_roots_synced(Peer, B) ->
 	true = ar_util:do_until(
 		fun() ->
 			ar_test_node:remote_call(Peer, ar_data_roots, are_synced,
-				[Start, End, B#block.tx_root])
+				[Start, End, B#block.tx_root, ?DEFAULT_MODULE])
 		end,
 		500,
 		120_000),

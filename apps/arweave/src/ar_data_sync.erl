@@ -2508,7 +2508,7 @@ add_block(B, SizeTaggedTXs, StoreID) ->
 	case ar_block_index:get_element_by_height(B#block.height) of
 		{H, WeaveSize, TXRoot} ->
 			case ar_data_roots:are_synced(B, StoreID) of
-				not_found ->
+				false ->
 					BlockStart = B#block.weave_size - B#block.block_size,
 					{ok, _} = add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID),
 					ok = update_tx_index(SizeTaggedTXs, BlockStart, StoreID),

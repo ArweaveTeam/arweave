@@ -424,7 +424,6 @@ verify_data_root_entries([{DataRoot, TXSize, TXStartOffset, TXPath} | DataRootEn
 	end.
 
 %% @doc Return true if the data roots for the given block range are synced, false otherwise.
-%% Assert the given BlockEnd and TXRoot match the stored values.
 are_synced(B, StoreID) ->
 	BlockEnd = B#block.weave_size,
 	BlockStart = BlockEnd - B#block.block_size,
@@ -435,9 +434,7 @@ are_synced(BlockStart, BlockEnd, TXRoot, StoreID) ->
 			false;
 		{ok, Bin} ->
 			{TXRoot2, BlockSize, _DataRootKeys} = binary_to_term(Bin),
-			true = TXRoot2 == TXRoot,
-			true = BlockSize == BlockEnd - BlockStart,
-			true
+			TXRoot2 == TXRoot andalso BlockSize == BlockEnd - BlockStart
 	end.
 
 %% @doc Returns true if the given data root key is in the data root index.
