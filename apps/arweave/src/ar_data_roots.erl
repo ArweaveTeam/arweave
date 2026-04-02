@@ -3,9 +3,9 @@
 -export([
 	open_index_db/3,
 	open_index_db/4,
-	old_column_family/1,
+	legacy_column_family/1,
 	keys_column_family/1,
-	old_db/1,
+	legacy_db/1,
 	keys_db/1,
 	build_block_data_root_entries/2,
 	store_block/5,
@@ -21,8 +21,8 @@
 	are_synced/4,
 	is_synced/2,
 	repair/3,
-	start_old_data_root_index_migration/1,
-	continue_old_data_root_index_migration/3,
+	start_legacy_data_root_index_migration/1,
+	continue_legacy_data_root_index_migration/3,
 	is_migration_complete/0
 ]).
 -export_type([data_root_entry/0, data_root_entries/0]).
@@ -58,7 +58,7 @@ open_index_db(Dir, DBName, StoreID, BloomFilterOpts) ->
 keys_column_family(Opts) ->
 	{"data_root_offset_index", Opts}.
 
-old_column_family(Opts) ->
+legacy_column_family(Opts) ->
 	{"data_root_index", Opts}.
 
 %% A reference to the on-disk key-value storage mapping
@@ -68,7 +68,7 @@ old_column_family(Opts) ->
 keys_db(StoreID) ->
 	{data_root_offset_index, StoreID}.
 
-old_db(StoreID) ->
+legacy_db(StoreID) ->
 	{data_root_index_old, StoreID}.
 
 %%%===================================================================
@@ -319,9 +319,9 @@ repair(BI, StoreID, RemoveTXRangeFun) ->
 	end.
 
 %%%===================================================================
-%%% Public: Old data root index migration
+%%% Public: Legacy data root index migration
 %%%===================================================================
-start_old_data_root_index_migration(StoreID) ->
+start_legacy_data_root_index_migration(StoreID) ->
 	case start_migration(StoreID) of
 		complete ->
 			set_migration_complete(),
@@ -330,13 +330,13 @@ start_old_data_root_index_migration(StoreID) ->
 			migrate_batch(Cursor, N, StoreID)
 	end.
 
-continue_old_data_root_index_migration(Cursor, N, StoreID) ->
+continue_legacy_data_root_index_migration(Cursor, N, StoreID) ->
 	case migrate_batch(Cursor, N, StoreID) of
 		{continue, Cursor2, N2} ->
 			?LOG_DEBUG([{event, moving_data_root_index}, {moved_keys, N}]),
 			ok = ar_kv:put(ar_data_sync:migration_db(StoreID),
 				<<"move_data_root_index">>, Cursor2),
-			ar_data_sync:continue_old_data_root_index_migration(Cursor2, N2, StoreID);
+			ar_data_sync:continue_legacy_data_root_index_migration(Cursor2, N2, StoreID);
 		complete ->
 			ok = ar_kv:put(ar_data_sync:migration_db(StoreID),
 				<<"move_data_root_index">>, <<"complete">>),
@@ -529,7 +529,7 @@ shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) -
 	{bad_key, [Height | ResyncBlocks]}.
 
 %%%===================================================================
-%%% Private: Old data root index migration
+%%% Private: Legacy data root index migration
 %%%===================================================================
 start_migration(StoreID) ->
 	case ar_kv:get(ar_data_sync:migration_db(StoreID), <<"move_data_root_index">>) of
@@ -538,7 +538,7 @@ start_migration(StoreID) ->
 		{ok, Cursor} ->
 			{continue, Cursor, 1};
 		not_found ->
-			case ar_kv:get_next(old_db(StoreID), last) of
+			case ar_kv:get_next(legacy_db(StoreID), last) of
 				none ->
 					complete;
 				{ok, Key, _} ->
@@ -551,7 +551,7 @@ migrate_batch(Cursor, N, StoreID) ->
 		0 ->
 			{continue, Cursor, N + 1};
 		_ ->
-			case ar_kv:get_prev(old_db(StoreID), Cursor) of
+			case ar_kv:get_prev(legacy_db(StoreID), Cursor) of
 				none ->
 					complete;
 				{ok, << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Value} ->

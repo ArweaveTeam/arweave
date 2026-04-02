@@ -14,7 +14,7 @@
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
 		is_footprint_record_supported/3,
-		get_disk_pool_threshold/0, migration_db/1, continue_old_data_root_index_migration/3]).
+		get_disk_pool_threshold/0, migration_db/1, continue_legacy_data_root_index_migration/3]).
 
 -export([add_chunk_to_disk_pool/5]).
 
@@ -749,8 +749,8 @@ get_disk_pool_threshold() ->
 migration_db(StoreID) ->
 	{migrations_index, StoreID}.
 
-continue_old_data_root_index_migration(Cursor, N, StoreID) ->
-	gen_server:cast(name(StoreID), {continue_old_data_root_index_migration, Cursor, N}).
+continue_legacy_data_root_index_migration(Cursor, N, StoreID) ->
+	gen_server:cast(name(StoreID), {continue_legacy_data_root_index_migration, Cursor, N}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -763,7 +763,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
-	ar_data_roots:start_old_data_root_index_migration(StoreID),
+	ar_data_roots:start_legacy_data_root_index_migration(StoreID),
 	{ok, _} = ar_timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		ar_data_sync,
@@ -883,9 +883,9 @@ init({StoreID, RepackInPlacePacking}) ->
 	end.
 
 handle_cast(
-		{continue_old_data_root_index_migration, Cursor, N},
+		{continue_legacy_data_root_index_migration, Cursor, N},
 		#sync_data_state{ store_id = StoreID } = State) ->
-	ar_data_roots:continue_old_data_root_index_migration(Cursor, N, StoreID),
+	ar_data_roots:continue_legacy_data_root_index_migration(Cursor, N, StoreID),
 	{noreply, State};
 
 handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, DataRootEntries}, State) ->
@@ -2340,7 +2340,7 @@ open_store_dbs(DataDir, StoreID) ->
 	ColumnFamilyDescriptors = [
 		{"default", BasicOpts},
 		{"chunks_index", BasicOpts ++ PrefixBloomFilterOpts},
-		ar_data_roots:old_column_family(BasicOpts ++ BloomFilterOpts),
+		ar_data_roots:legacy_column_family(BasicOpts ++ BloomFilterOpts),
 		ar_data_roots:keys_column_family(BasicOpts),
 		{"tx_index", BasicOpts ++ BloomFilterOpts},
 		{"tx_offset_index", BasicOpts},
@@ -2358,7 +2358,7 @@ open_store_dbs(DataDir, StoreID) ->
 		path => filename:join(Dir, "ar_data_sync_db"),
 		cf_descriptors => ColumnFamilyDescriptors,
 		cf_names => [{ar_data_sync, StoreID}, {chunks_index, StoreID},
-			ar_data_roots:old_db(StoreID),
+			ar_data_roots:legacy_db(StoreID),
 			ar_data_roots:keys_db(StoreID),
 			{tx_index, StoreID}, {tx_offset_index, StoreID},
 			{disk_pool_chunks_index_old, StoreID}, migration_db(StoreID)]}),
