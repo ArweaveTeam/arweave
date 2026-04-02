@@ -1389,7 +1389,7 @@ handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, Stat
 	{Offset, _, _, _, _, _, Key, _, _, _} = Args,
 	%% Place the chunk under its last configured offsets in the weave (the same data
 	%% may be uploaded several times).
-	Result = ar_data_roots:next_v2(Iterator),
+	Result = ar_data_roots:next(Iterator),
 	case Result of
 		{ok, TXArgs, Iterator2} ->
 			State2 = register_currently_processed_disk_pool_key(Key, State),
@@ -2865,14 +2865,14 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 chunk_offsets_synced(DataRootKey, ChunkOffset, TXStartOffset) ->
 	case ar_sync_record:is_recorded(TXStartOffset + ChunkOffset, ar_data_sync) of
 		{{true, _}, _StoreID} ->
-			Iterator = ar_data_roots:iterator_v2(DataRootKey, TXStartOffset, ?DEFAULT_MODULE),
+			Iterator = ar_data_roots:iterator(DataRootKey, TXStartOffset, ?DEFAULT_MODULE),
 			chunk_offsets_synced(ChunkOffset, Iterator);
 		false ->
 			false
 	end.
 
 chunk_offsets_synced(ChunkOffset, Iterator) ->
-	case ar_data_roots:next_v2(Iterator) of
+	case ar_data_roots:next(Iterator) of
 		{ok, {_, _, TXStartOffset, _}, Iterator2} ->
 			case ar_sync_record:is_recorded(TXStartOffset + ChunkOffset, ar_data_sync) of
 				{{true, _}, _StoreID} ->
@@ -3321,7 +3321,7 @@ process_disk_pool_item(State, Key, Value) ->
 			State2 = maybe_reset_disk_pool_full_scan_key(Key, State),
 			{noreply, State2#sync_data_state{ disk_pool_cursor = NextCursor }};
 		{{ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}}, _} ->
-			DataRootIndexIterator = ar_data_roots:iterator_v2(DataRootKey, TXStartOffset + 1,
+			DataRootIndexIterator = ar_data_roots:iterator(DataRootKey, TXStartOffset + 1,
 					StoreID),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
 			State2 = State#sync_data_state{ disk_pool_cursor = NextCursor },
@@ -3364,7 +3364,7 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 	#sync_data_state{
 			disk_pool_chunks_index = DiskPoolChunksIndex, store_id = StoreID } = State,
 	{Offset, _, ChunkSize, _, _, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
-	Result = ar_data_roots:next_v2(Iterator),
+	Result = ar_data_roots:next(Iterator),
 	case Result of
 		{ok, TXArgs, Iterator2} ->
 			{_, _, TXStartOffset, _} = TXArgs,

@@ -13,8 +13,8 @@
 	get_tx/2,
 	get_prev_tx/3,
 	remove_range/3,
-	iterator_v2/3,
-	next_v2/1,
+	iterator/3,
+	next/1,
 	reset/1,
 	get_key/1,
 	get_block/1,
@@ -75,11 +75,11 @@ keys_column_family(Opts) ->
 old_column_family(Opts) ->
 	{"data_root_index", Opts}.
 
-key_v2(DataRoot, TXSize, TXStartOffset) ->
+key(DataRoot, TXSize, TXStartOffset) ->
 	<< DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary,
 			(ar_serialize:encode_int(TXStartOffset, 8))/binary >>.
 
-parse_key_v2(Key) ->
+parse_key(Key) ->
 	<< DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
 		TXStartOffsetSize:8, TXStartOffset:(TXStartOffsetSize * 8) >> = Key,
 	{DataRoot, TXSize, TXStartOffset}.
@@ -114,7 +114,7 @@ store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID) ->
 	lists:foreach(
 		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
 			ok = ar_kv:put(index_db(StoreID),
-				key_v2(DataRoot, TXSize, TXStartOffset), TXPath)
+				key(DataRoot, TXSize, TXStartOffset), TXPath)
 		end,
 		DataRootEntries
 	),
@@ -139,11 +139,11 @@ get_tx(DataRootKey, StoreID) ->
 
 get_prev_tx(DataRootKey, TXStartOffset, StoreID) ->
 	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
-	Key = key_v2(DataRoot, TXSize, TXStartOffset - 1),
+	Key = key(DataRoot, TXSize, TXStartOffset - 1),
 	get_prev_tx(Key, StoreID).
 
 get_prev_tx(Key, StoreID) ->
-	{DataRoot, TXSize, _TXStartOffset} = parse_key_v2(Key),
+	{DataRoot, TXSize, _TXStartOffset} = parse_key(Key),
 	get_prev_tx(Key, DataRoot, TXSize, StoreID).
 
 get_prev_tx(Key, DataRoot, TXSize, StoreID) ->
@@ -207,8 +207,8 @@ remove_range(Start, End, StoreID) ->
 
 remove(DataRootKey, Start, End, StoreID) ->
 	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
-	StartKey = key_v2(DataRoot, TXSize, Start),
-	EndKey = key_v2(DataRoot, TXSize, End),
+	StartKey = key(DataRoot, TXSize, Start),
+	EndKey = key(DataRoot, TXSize, End),
 	case ar_kv:delete_range(index_db(StoreID), StartKey, EndKey) of
 		ok ->
 			case get_prev_tx(StartKey, StoreID) of
@@ -223,18 +223,18 @@ remove(DataRootKey, Start, End, StoreID) ->
 			Error
 	end.
 
-iterator_v2(DataRootKey, TXStartOffset, StoreID) ->
+iterator(DataRootKey, TXStartOffset, StoreID) ->
 	{DataRootKey, TXStartOffset, TXStartOffset, StoreID, 1}.
 
-next_v2(Args) ->
+next(Args) ->
 	{ok, Config} = arweave_config:get_env(),
-	next_v2(Args, Config#config.max_duplicate_data_roots).
+	next(Args, Config#config.max_duplicate_data_roots).
 
-next_v2({_, _, _, _, Count}, Limit) when Count > Limit ->
+next({_, _, _, _, Count}, Limit) when Count > Limit ->
 	none;
-next_v2({_, 0, _, _, _}, _Limit) ->
+next({_, 0, _, _, _}, _Limit) ->
 	none;
-next_v2(Args, _Limit) ->
+next(Args, _Limit) ->
 	{DataRootKey, TXStartOffset, LatestTXStartOffset, StoreID, Count} = Args,
 	case get_prev_tx(DataRootKey, TXStartOffset, StoreID) of
 		not_found ->
@@ -253,7 +253,7 @@ reset({DataRootKey, _, TXStartOffset, StoreID, _}) ->
 get_key(Iterator) ->
 	element(1, Iterator).
 
-iterator(TXRootMap) ->
+legacy_iterator(TXRootMap) ->
 	{maps:fold(
 		fun(TXRoot, Map, Acc) ->
 			maps:fold(
@@ -268,9 +268,9 @@ iterator(TXRootMap) ->
 		TXRootMap
 	), 0}.
 
-next({_Index, Count}, Limit) when Count >= Limit ->
+legacy_next({_Index, Count}, Limit) when Count >= Limit ->
 	none;
-next({Index, Count}, _Limit) ->
+legacy_next({Index, Count}, _Limit) ->
 	case gb_sets:is_empty(Index) of
 		true ->
 			none;
@@ -323,13 +323,13 @@ get_block(Offset) ->
 get_all_in_range(_DataRoot, _TXSize, Start, Cursor, _StoreID) when Cursor =< Start ->
 	[];
 get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
-	StartKey = key_v2(DataRoot, TXSize, Start),
-	EndKey = key_v2(DataRoot, TXSize, Cursor - 1),
+	StartKey = key(DataRoot, TXSize, Start),
+	EndKey = key(DataRoot, TXSize, Cursor - 1),
 	case ar_kv:get_range(index_db(StoreID), StartKey, EndKey) of
 		{ok, Range} ->
 			DataRootEntries = maps:fold(
 				fun(Key, TXPath, Acc) ->
-					case parse_key_v2(Key) of
+					case parse_key(Key) of
 						{DataRoot, TXSize, TXStart} ->
 							[{DataRoot, TXSize, TXStart, TXPath} | Acc];
 						_ ->
@@ -445,8 +445,6 @@ is_synced(DataRootKey, StoreID) ->
 			false
 	end.
 
-
-
 %%%===================================================================
 %%% Repair.
 %%%===================================================================
@@ -554,7 +552,7 @@ migrate_batch(Cursor, N, StoreID) ->
 					complete;
 				{ok, << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Value} ->
 					M = binary_to_term(Value, [safe]),
-					migrate_entries(DataRoot, TXSize, iterator(M), index_db(StoreID)),
+					migrate_entries(DataRoot, TXSize, legacy_iterator(M), index_db(StoreID)),
 					PrevKey = << DataRoot:32/binary, (TXSize - 1):?OFFSET_KEY_BITSIZE >>,
 					migrate_batch(PrevKey, N + 1, StoreID);
 				{ok, Key, _} ->
@@ -566,11 +564,11 @@ migrate_batch(Cursor, N, StoreID) ->
 	end.
 
 migrate_entries(DataRoot, TXSize, Iterator, DB) ->
-	case next(Iterator, infinity) of
+	case legacy_next(Iterator, infinity) of
 		none ->
 			ok;
 		{{Offset, _TXRoot, TXPath}, Iterator2} ->
-			Key = key_v2(DataRoot, TXSize, Offset),
+			Key = key(DataRoot, TXSize, Offset),
 			ok = ar_kv:put(DB, Key, TXPath),
 			migrate_entries(DataRoot, TXSize, Iterator2, DB)
 	end.
@@ -750,7 +748,7 @@ ensure_test_kv_started() ->
 	end.
 
 put_test_tx(StoreID, DataRoot, TXSize, TXStartOffset, TXPath) ->
-	ar_kv:put(index_db(StoreID), key_v2(DataRoot, TXSize, TXStartOffset), TXPath).
+	ar_kv:put(index_db(StoreID), key(DataRoot, TXSize, TXStartOffset), TXPath).
 
 with_mocked_block_bounds(BlockStart, BlockEnd, TXRoot, Fun) ->
 	meck:new(ar_block_index, [passthrough]),
