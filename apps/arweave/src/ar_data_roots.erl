@@ -152,7 +152,7 @@ get_prev_tx(Key, DataRoot, TXSize, StoreID) ->
 			not_found;
 		{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
 				OffsetSize:8, TXStartOffset:(OffsetSize * 8) >>, TXPath} ->
-			{ok, {TXStartOffset, TXPath}};
+			{ok, {DataRoot, TXSize, TXStartOffset, TXPath}};
 		{ok, _, _} ->
 			not_found;
 		{error, _} = Error ->
@@ -239,9 +239,8 @@ next_v2(Args, _Limit) ->
 	case get_prev_tx(DataRootKey, TXStartOffset, StoreID) of
 		not_found ->
 			none;
-		{ok, {TXStartOffset2, TXPath}} ->
-			{ok, TXRoot} = ar_merkle:extract_root(TXPath),
-			{ok, {TXStartOffset2, TXRoot, TXPath},
+		{ok, {_DataRoot, _TXSize, TXStartOffset2, _TXPath} = Entry} ->
+			{ok, Entry,
 					{DataRootKey, TXStartOffset2, LatestTXStartOffset, StoreID,
 							Count + 1}};
 		{error, _} = Error ->
