@@ -137,14 +137,14 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
 	DiskPoolChunksIndex = {disk_pool_chunks_index, ?DEFAULT_MODULE},
 	DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	DataRootOffset = ar_data_roots:get_tx(DataRootKey, ?DEFAULT_MODULE),
+	DataRootEntry = ar_data_roots:get_entry(DataRootKey, ?DEFAULT_MODULE),
 	DataRootInDiskPool = ets:lookup(ar_disk_pool_data_roots, DataRootKey),
 	ChunkSize = byte_size(Chunk),
 	{ok, Config} = arweave_config:get_env(),
 	DataRootLimit = Config#config.max_disk_pool_data_root_buffer_mb * ?MiB,
 	DiskPoolLimit = Config#config.max_disk_pool_buffer_mb * ?MiB,
 	CheckDiskPool =
-		case {DataRootOffset, DataRootInDiskPool} of
+		case {DataRootEntry, DataRootInDiskPool} of
 			{not_found, []} ->
 				?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 					{reason, data_root_not_found}, {offset, Offset},
@@ -210,7 +210,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 						%% The chunk is already in disk pool.
 						{synced_disk_pool, EndOffset2};
 					not_found ->
-						case DataRootOffset of
+						case DataRootEntry of
 							not_found ->
 								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
 							{ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}} ->
@@ -239,7 +239,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 		synced ->
 			ok;
 		{synced_disk_pool, EndOffset4} ->
-			case is_estimated_long_term_chunk(DataRootOffset, EndOffset4) of
+			case is_estimated_long_term_chunk(DataRootEntry, EndOffset4) of
 				false ->
 					temporary;
 				true ->
@@ -276,7 +276,7 @@ add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							ets:update_counter(ar_data_sync_state, disk_pool_size,
 									{2, ChunkSize}),
 							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
-							case is_estimated_long_term_chunk(DataRootOffset, EndOffset3) of
+							case is_estimated_long_term_chunk(DataRootEntry, EndOffset3) of
 								false ->
 									temporary;
 								true ->
@@ -347,9 +347,9 @@ delete_chunk_metadata_range(Start, End, State) ->
 
 %% @doc Return true if we expect the chunk with the given data root index value and
 %% relative end offset to end up in one of the configured storage modules.
-is_estimated_long_term_chunk(DataRootOffset, EndOffset) ->
+is_estimated_long_term_chunk(DataRootEntry, EndOffset) ->
 	WeaveSize = ar_node:get_current_weave_size(),
-	case DataRootOffset of
+	case DataRootEntry of
 		not_found ->
 			%% A chunk from a pending transaction.
 			is_offset_vicinity_covered(WeaveSize);
@@ -1391,9 +1391,9 @@ handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, Stat
 	%% may be uploaded several times).
 	Result = ar_data_roots:next(Iterator),
 	case Result of
-		{ok, TXArgs, Iterator2} ->
+		{ok, DataRootEntry, Iterator2} ->
 			State2 = register_currently_processed_disk_pool_key(Key, State),
-			{_DataRoot, _TXSize, TXStartOffset, TXPath} = TXArgs,
+			{_DataRoot, _TXSize, TXStartOffset, TXPath} = DataRootEntry,
 			{ok, TXRoot} = ar_merkle:extract_root(TXPath),
 			AbsoluteEndOffset = TXStartOffset + Offset,
 			process_disk_pool_chunk_offset(Iterator2, TXRoot, TXPath, AbsoluteEndOffset,
@@ -3292,9 +3292,9 @@ process_disk_pool_item(State, Key, Value) ->
 			PassedBaseValidation, PassedStrictValidation,
 			PassedRebaseValidation} = DiskPoolChunk,
 	DataRootKey = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	DataRootOffset = ar_data_roots:get_tx(DataRootKey, StoreID),
+	DataRootEntry = ar_data_roots:get_entry(DataRootKey, StoreID),
 	InDiskPool = ets:member(ar_disk_pool_data_roots, DataRootKey),
-	case {DataRootOffset, InDiskPool} of
+	case {DataRootEntry, InDiskPool} of
 		{not_found, true} ->
 			%% Increment the timestamp by one (microsecond), so that the new cursor is
 			%% a prefix of the first key of the next data root. We want to quickly skip
@@ -3366,8 +3366,8 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 	{Offset, _, ChunkSize, _, _, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
 	Result = ar_data_roots:next(Iterator),
 	case Result of
-		{ok, TXArgs, Iterator2} ->
-			{_, _, TXStartOffset, _} = TXArgs,
+		{ok, DataRootEntry, Iterator2} ->
+			{_, _, TXStartOffset, _} = DataRootEntry,
 			AbsoluteEndOffset = TXStartOffset + Offset,
 			case get_chunk_metadata(AbsoluteEndOffset, StoreID) of
 				not_found ->
@@ -3404,7 +3404,7 @@ delete_disk_pool_chunk(Iterator, Args, State) ->
 		_ ->
 			ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
 			ok = delete_chunk_data(ChunkDataKey, StoreID),
-			DataRootKey = ar_data_roots:get_key(Iterator),
+			DataRootKey = ar_data_roots:key(Iterator),
 			decrease_occupied_disk_pool_size(ChunkSize, DataRootKey)
 	end.
 

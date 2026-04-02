@@ -10,13 +10,13 @@
 	keys_db/1,
 	build_block_data_root_entries/2,
 	store_block/5,
-	get_tx/2,
-	get_prev_tx/3,
+	get_entry/2,
+	prev_entry/3,
 	remove_range/3,
 	iterator/3,
 	next/1,
 	reset/1,
-	get_key/1,
+	key/1,
 	get_block/1,
 	validate_data_roots/4,
 	are_synced/2,
@@ -128,25 +128,25 @@ store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID) ->
 			term_to_binary({TXRoot, BlockSize, DataRootKeys})),
 	{ok, DataRootKeys}.
 
-%% @doc Get the start offset of the TX containing the given data root.
-get_tx(DataRootKey, StoreID) ->
+%% @doc Get the entry containing the given data root key.
+get_entry(DataRootKey, StoreID) ->
 	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
 	% Since the index_db keys include the TX start offset, we have will stub in "a" (which is
 	% guaranteed to be alphanumerically greater than any TX offset) and then query the 
 	% previous key.
 	Key = << DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary, <<"a">>/binary >>,
-	get_prev_tx(Key, DataRoot, TXSize, StoreID).
+	prev_entry(Key, DataRoot, TXSize, StoreID).
 
-get_prev_tx(DataRootKey, TXStartOffset, StoreID) ->
+prev_entry(DataRootKey, TXStartOffset, StoreID) ->
 	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootKey,
 	Key = key(DataRoot, TXSize, TXStartOffset - 1),
-	get_prev_tx(Key, StoreID).
+	prev_entry(Key, StoreID).
 
-get_prev_tx(Key, StoreID) ->
+prev_entry(Key, StoreID) ->
 	{DataRoot, TXSize, _TXStartOffset} = parse_key(Key),
-	get_prev_tx(Key, DataRoot, TXSize, StoreID).
+	prev_entry(Key, DataRoot, TXSize, StoreID).
 
-get_prev_tx(Key, DataRoot, TXSize, StoreID) ->
+prev_entry(Key, DataRoot, TXSize, StoreID) ->
 	case ar_kv:get_prev(index_db(StoreID), Key) of
 		none ->
 			not_found;
@@ -211,7 +211,7 @@ remove(DataRootKey, Start, End, StoreID) ->
 	EndKey = key(DataRoot, TXSize, End),
 	case ar_kv:delete_range(index_db(StoreID), StartKey, EndKey) of
 		ok ->
-			case get_prev_tx(StartKey, StoreID) of
+			case prev_entry(StartKey, StoreID) of
 				{ok, _} ->
 					ok;
 				not_found ->
@@ -236,7 +236,7 @@ next({_, 0, _, _, _}, _Limit) ->
 	none;
 next(Args, _Limit) ->
 	{DataRootKey, TXStartOffset, LatestTXStartOffset, StoreID, Count} = Args,
-	case get_prev_tx(DataRootKey, TXStartOffset, StoreID) of
+	case prev_entry(DataRootKey, TXStartOffset, StoreID) of
 		not_found ->
 			none;
 		{ok, {_DataRoot, _TXSize, TXStartOffset2, _TXPath} = Entry} ->
@@ -250,7 +250,7 @@ next(Args, _Limit) ->
 reset({DataRootKey, _, TXStartOffset, StoreID, _}) ->
 	{DataRootKey, TXStartOffset, TXStartOffset, StoreID, 1}.
 
-get_key(Iterator) ->
+key(Iterator) ->
 	element(1, Iterator).
 
 legacy_iterator(TXRootMap) ->
@@ -438,7 +438,7 @@ are_synced(BlockStart, BlockEnd, TXRoot, StoreID) ->
 
 %% @doc Returns true if the given data root key is in the data root index.
 is_synced(DataRootKey, StoreID) ->
-	case get_tx(DataRootKey, StoreID) of
+	case get_entry(DataRootKey, StoreID) of
 		{ok, _} ->
 			true;
 		_ ->
