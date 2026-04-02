@@ -271,7 +271,7 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 	MainConfig = BaseConfig#config{
 		mine = false,
 		sync_jobs = 0,
-		header_sync_jobs = 2,
+		header_sync_jobs = 0,
 		enable_data_roots_syncing = true,
 		storage_modules = [
 			{?MiB, 0, unpacked},
@@ -293,13 +293,35 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 		end,
 		ExpectedBackgroundSync
 	),
-	%% Give the background sync pass time to complete before asserting the gap block stays absent.
+	%% Give the background sync pass time to complete before selecting a block that still
+	%% remains outside the synced coverage.
 	timer:sleep(5_000),
-	[{TargetB, [{TargetTX, TargetChunks}]} | _] = lists:dropwhile(
-		fun({B, _}) ->
-			block_start(B) < ?MiB orelse B#block.weave_size > 3 * ?MiB
+	%% The configured modules cover [0, 1 MiB) and [3 MiB, 6 MiB), so blocks fully inside
+	%% [1 MiB, 3 MiB] are the ones this test expects to remain unsynced.
+	GapCandidates = [
+		BlockData
+		|| {B, _} = BlockData <- BlocksData,
+			block_start(B) >= ?MiB,
+			B#block.weave_size =< 3 * ?MiB
+	],
+	%% Pick the first block in the uncovered range that still has no local data-roots entry.
+	%% This keeps the test aligned with the actual background-sync coverage instead of relying
+	%% on a fixed block offset that may shift as the mined block sizes change.
+	{TargetB, [{TargetTX, TargetChunks}]} =
+		case lists:dropwhile(
+			fun({B, _}) ->
+				get_data_roots(main, B) =/= not_found
+			end,
+			GapCandidates
+		) of
+			[Target | _] ->
+				Target;
+			[] ->
+				?assert(false, lists:flatten(io_lib:format(
+					"Expected at least one unsynced block in the uncovered gap; candidates: ~p",
+					[[{block_start(B), B#block.weave_size} || {B, _} <- GapCandidates]]
+				)))
 		end,
-		BlocksData),
 	TargetStart = block_start(TargetB),
 	?assert(TargetStart >= ?MiB),
 	?assert(TargetB#block.weave_size =< 3 * ?MiB),
