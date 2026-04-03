@@ -8,6 +8,7 @@ ar_block_cache
 ar_chain_stats
 ar_chunk_copy
 ar_chunk_storage
+ar_data_roots
 ar_data_sync_coordinator
 ar_deep_hash
 ar_device_lock
