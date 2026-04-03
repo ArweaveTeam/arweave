@@ -3,7 +3,7 @@
 -export([
 	open_index_db/3,
 	open_index_db/4,
-	legacy_column_family/1,
+	column_family/1,
 	keys_column_family/1,
 	legacy_db/1,
 	keys_db/1,
@@ -20,10 +20,7 @@
 	are_synced/2,
 	are_synced/4,
 	is_synced/2,
-	repair/3,
-	start_legacy_data_root_index_migration/1,
-	continue_legacy_data_root_index_migration/3,
-	is_migration_complete/0
+	repair/3
 ]).
 -export_type([data_root_entry/0, data_root_entries/0]).
 
@@ -55,11 +52,14 @@ open_index_db(Dir, DBName, StoreID, BloomFilterOpts) ->
 		] ++ BloomFilterOpts
 	}).
 
+column_family(Opts) ->
+	{"data_root_index", Opts}.
+
 keys_column_family(Opts) ->
 	{"data_root_offset_index", Opts}.
 
-legacy_column_family(Opts) ->
-	{"data_root_index", Opts}.
+legacy_db(StoreID) ->
+	{data_root_index_old, StoreID}.
 
 %% A reference to the on-disk key-value storage mapping
 %% AbsoluteBlockStartOffset => {TXRoot, BlockSize, DataRootKeys}.
@@ -67,9 +67,6 @@ legacy_column_family(Opts) ->
 %% Used to remove orphaned entries from DataRootIndex.
 keys_db(StoreID) ->
 	{data_root_offset_index, StoreID}.
-
-legacy_db(StoreID) ->
-	{data_root_index_old, StoreID}.
 
 %%%===================================================================
 %%% Public: Block data root entries
@@ -319,35 +316,6 @@ repair(BI, StoreID, RemoveTXRangeFun) ->
 	end.
 
 %%%===================================================================
-%%% Public: Legacy data root index migration
-%%%===================================================================
-start_legacy_data_root_index_migration(StoreID) ->
-	case start_migration(StoreID) of
-		complete ->
-			set_migration_complete(),
-			ok;
-		{continue, Cursor, N} ->
-			migrate_batch(Cursor, N, StoreID)
-	end.
-
-continue_legacy_data_root_index_migration(Cursor, N, StoreID) ->
-	case migrate_batch(Cursor, N, StoreID) of
-		{continue, Cursor2, N2} ->
-			?LOG_DEBUG([{event, moving_data_root_index}, {moved_keys, N}]),
-			ok = ar_kv:put(ar_data_sync:migration_db(StoreID),
-				<<"move_data_root_index">>, Cursor2),
-			ar_data_sync:continue_legacy_data_root_index_migration(Cursor2, N2, StoreID);
-		complete ->
-			ok = ar_kv:put(ar_data_sync:migration_db(StoreID),
-				<<"move_data_root_index">>, <<"complete">>),
-			set_migration_complete(),
-			ok
-	end.
-
-is_migration_complete() ->
-	ets:member(ar_data_sync_state, move_data_root_index_migration_complete).
-
-%%%===================================================================
 %%% Private: DB internals
 %%%===================================================================
 %% @doc Maintains a record of the data roots that have been synced and mapping of data roots
@@ -527,84 +495,6 @@ shift_block_index(TXRoot, _BlockStart, WeaveSize, Height, _ResyncBlocks,
 	{ok, {Height + 1, BI}};
 shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) ->
 	{bad_key, [Height | ResyncBlocks]}.
-
-%%%===================================================================
-%%% Private: Legacy data root index migration
-%%%===================================================================
-start_migration(StoreID) ->
-	case ar_kv:get(ar_data_sync:migration_db(StoreID), <<"move_data_root_index">>) of
-		{ok, <<"complete">>} ->
-			complete;
-		{ok, Cursor} ->
-			{continue, Cursor, 1};
-		not_found ->
-			case ar_kv:get_next(legacy_db(StoreID), last) of
-				none ->
-					complete;
-				{ok, Key, _} ->
-					{continue, Key, 1}
-			end
-	end.
-
-migrate_batch(Cursor, N, StoreID) ->
-	case N rem 50000 of
-		0 ->
-			{continue, Cursor, N + 1};
-		_ ->
-			case ar_kv:get_prev(legacy_db(StoreID), Cursor) of
-				none ->
-					complete;
-				{ok, << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Value} ->
-					M = binary_to_term(Value, [safe]),
-					migrate_entries(DataRoot, TXSize, legacy_iterator(M), index_db(StoreID)),
-					PrevKey = << DataRoot:32/binary, (TXSize - 1):?OFFSET_KEY_BITSIZE >>,
-					migrate_batch(PrevKey, N + 1, StoreID);
-				{ok, Key, _} ->
-					%% The empty data root key (from transactions without data) was
-					%% unnecessarily recorded in the index.
-					PrevKey = binary:part(Key, 0, byte_size(Key) - 1),
-					migrate_batch(PrevKey, N + 1, StoreID)
-			end
-	end.
-
-migrate_entries(DataRoot, TXSize, Iterator, DB) ->
-	case legacy_next(Iterator, infinity) of
-		none ->
-			ok;
-		{{Offset, _TXRoot, TXPath}, Iterator2} ->
-			Key = key(DataRoot, TXSize, Offset),
-			ok = ar_kv:put(DB, Key, TXPath),
-			migrate_entries(DataRoot, TXSize, Iterator2, DB)
-	end.
-
-legacy_iterator(TXRootMap) ->
-	{maps:fold(
-		fun(TXRoot, Map, Acc) ->
-			maps:fold(
-				fun(Offset, TXPath, Acc2) ->
-					gb_sets:insert({Offset, TXRoot, TXPath}, Acc2)
-				end,
-				Acc,
-				Map
-			)
-		end,
-		gb_sets:new(),
-		TXRootMap
-	), 0}.
-
-legacy_next({_Index, Count}, Limit) when Count >= Limit ->
-	none;
-legacy_next({Index, Count}, _Limit) ->
-	case gb_sets:is_empty(Index) of
-		true ->
-			none;
-		false ->
-			{Element, Index2} = gb_sets:take_largest(Index),
-			{Element, {Index2, Count + 1}}
-	end.
-
-set_migration_complete() ->
-	ets:insert(ar_data_sync_state, {move_data_root_index_migration_complete}).
 
 %%%===================================================================
 %%% Tests.

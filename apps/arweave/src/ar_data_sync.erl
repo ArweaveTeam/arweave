@@ -14,7 +14,7 @@
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
 		is_footprint_record_supported/3,
-		get_disk_pool_threshold/0, migration_db/1, continue_legacy_data_root_index_migration/3]).
+		get_disk_pool_threshold/0, migration_db/1]).
 
 -export([add_chunk_to_disk_pool/5]).
 
@@ -749,9 +749,6 @@ get_disk_pool_threshold() ->
 migration_db(StoreID) ->
 	{migrations_index, StoreID}.
 
-continue_legacy_data_root_index_migration(Cursor, N, StoreID) ->
-	gen_server:cast(name(StoreID), {continue_legacy_data_root_index_migration, Cursor, N}).
-
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -763,7 +760,6 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
 	move_disk_pool_index(State),
-	ar_data_roots:start_legacy_data_root_index_migration(StoreID),
 	{ok, _} = ar_timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		ar_data_sync,
@@ -881,12 +877,6 @@ init({StoreID, RepackInPlacePacking}) ->
 			ar_device_lock:set_device_lock_metric(StoreID, sync, off),
 			{ok, State3}
 	end.
-
-handle_cast(
-		{continue_legacy_data_root_index_migration, Cursor, N},
-		#sync_data_state{ store_id = StoreID } = State) ->
-	ar_data_roots:continue_legacy_data_root_index_migration(Cursor, N, StoreID),
-	{noreply, State};
 
 handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, DataRootEntries}, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
@@ -2339,7 +2329,7 @@ open_store_dbs(DataDir, StoreID) ->
 	ColumnFamilyDescriptors = [
 		{"default", BasicOpts},
 		{"chunks_index", BasicOpts ++ PrefixBloomFilterOpts},
-		ar_data_roots:legacy_column_family(BasicOpts ++ BloomFilterOpts),
+		ar_data_roots:column_family(BasicOpts ++ BloomFilterOpts),
 		ar_data_roots:keys_column_family(BasicOpts),
 		{"tx_index", BasicOpts ++ BloomFilterOpts},
 		{"tx_offset_index", BasicOpts},
@@ -3304,17 +3294,9 @@ process_disk_pool_item(State, Key, Value) ->
 			{noreply, State#sync_data_state{ disk_pool_cursor = NextCursor }};
 		{not_found, false} ->
 			%% The chunk was either orphaned or never made it to the chain.
-			case ar_data_roots:is_migration_complete() of
-				true ->
-					ok = ar_kv:delete(DiskPoolChunksIndex, Key),
-					ok = delete_chunk_data(ChunkDataKey, StoreID),
-					decrease_occupied_disk_pool_size(ChunkSize, DataRootKey);
-				false ->
-					%% Do not remove the chunk from the disk pool until the data root index
-					%% migration is complete, because the data root might still exist in the
-					%% old index.
-					ok
-			end,
+			ok = ar_kv:delete(DiskPoolChunksIndex, Key),
+			ok = delete_chunk_data(ChunkDataKey, StoreID),
+			decrease_occupied_disk_pool_size(ChunkSize, DataRootKey),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
 			gen_server:cast(self(), process_disk_pool_item),
 			State2 = maybe_reset_disk_pool_full_scan_key(Key, State),
