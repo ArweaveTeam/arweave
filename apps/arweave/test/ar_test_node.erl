@@ -520,12 +520,10 @@ write_genesis_files(DataDir, B0) ->
 	ok = ar_kv:open(#{
 		path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_index_db"]),
 		name => block_index_db}),
-	ok = ar_data_sync:open_store_dbs(DataDir, ?DEFAULT_MODULE),
 	H = B0#block.indep_hash,
 	WeaveSize = B0#block.weave_size,
 	TXRoot = B0#block.tx_root,
 	ok = ar_kv:put(block_index_db, << 0:256 >>, term_to_binary({H, WeaveSize, TXRoot, <<>>})),
-	ok = store_genesis_data_roots(B0),
 	ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
 	case ar_fork:height_2_7() of
 		0 ->
@@ -547,18 +545,6 @@ write_genesis_files(DataDir, B0) ->
 					B0#block.account_tree)
 		),
 	ok = file:write_file(WalletListFilepath, WalletListJSON).
-
-store_genesis_data_roots(#block{ tx_root = TXRoot, size_tagged_txs = SizeTaggedTXs }) ->
-	{TXRoot, BlockSize, DataRootEntries} =
-		ar_data_roots:build_block_data_root_entries(0, SizeTaggedTXs),
-	case BlockSize > 0 of
-		true ->
-			{ok, _} = ar_data_roots:store_block(
-				0, BlockSize, TXRoot, DataRootEntries, ?DEFAULT_MODULE),
-			ok;
-		false ->
-			ok
-	end.
 
 wait_until_syncs_data(Left, Right, WeaveSize, _Packing)
   		when Left >= Right orelse
