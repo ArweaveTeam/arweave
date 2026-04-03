@@ -289,9 +289,7 @@ are_synced(BlockStart, BlockEnd, TXRoot, StoreID) ->
 			false;
 		{ok, Bin} ->
 			{TXRoot2, BlockSize, _DataRootKeys} = binary_to_term(Bin),
-			true = TXRoot2 == TXRoot,
-			true = BlockSize == BlockEnd - BlockStart,
-			true
+			TXRoot2 == TXRoot andalso BlockSize == BlockEnd - BlockStart
 	end.
 
 %% @doc Returns true if the given data root key is in the data root index.
