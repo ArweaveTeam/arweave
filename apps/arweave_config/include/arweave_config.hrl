@@ -383,8 +383,6 @@
 	defragmentation_modules = [],
 	block_throttle_by_ip_interval = ?DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS,
 	block_throttle_by_solution_interval = ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS,
-	tls_cert_file = not_set, %% required to enable TLS
-	tls_key_file = not_set,  %% required to enable TLS
 	http_api_transport_idle_timeout = ?DEFAULT_COWBOY_TCP_IDLE_TIMEOUT_SECOND*1000,
 	coordinated_mining = false,
 	cm_api_secret = not_set,

@@ -90,8 +90,6 @@ terminate(Reason, _State) ->
 %%%===================================================================
 start_http_iface_listener(Config) ->
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
-	TlsCertfilePath = Config#config.tls_cert_file,
-	TlsKeyfilePath = Config#config.tls_key_file,
 	TransportOpts = #{
 		% ranch_tcp parameters
 		backlog => Config#config.'http_api.tcp.backlog',
@@ -124,15 +122,7 @@ start_http_iface_listener(Config) ->
 		metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
 		stream_handlers => [cowboy_metrics_h, cowboy_stream_h]
 	},
-	case TlsCertfilePath of
-		not_set ->
-			cowboy:start_clear(ar_http_iface_listener, TransportOpts, ProtocolOpts);
-		_ ->
-			cowboy:start_tls(ar_http_iface_listener, TransportOpts ++ [
-				{certfile, TlsCertfilePath},
-				{keyfile, TlsKeyfilePath}
-			], ProtocolOpts)
-	end.
+	cowboy:start_clear(ar_http_iface_listener, TransportOpts, ProtocolOpts).
 
 name_route([]) ->
 	"/";

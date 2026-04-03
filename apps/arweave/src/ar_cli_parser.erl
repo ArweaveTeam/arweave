@@ -324,12 +324,6 @@ show_help() ->
 			{"defragment_module",
 				"Run defragmentation of the chunk storage files from the given storage module."
 				" Assumes the run_defragmentation flag is provided."},
-			{"tls_cert_file",
-				"Optional path to the TLS certificate file for TLS support, "
-				"depends on 'tls_key_file' being set as well."},
-			{"tls_key_file",
-				"The path to the TLS key file for TLS support, depends "
-				"on 'tls_cert_file' being set as well."},
 			{"coordinated_mining", "Enable coordinated mining. If you are a solo pool miner "
 					"coordinating on a replica with other pool miners, set this flag too. "
 					"To connect the internal nodes, set cm_api_secret, cm_peer, "
@@ -738,10 +732,6 @@ parse(["enable", Feature | Rest ], C = #config{ enable = Enabled }) ->
 	parse(Rest, C#config{ enable = [ list_to_atom(Feature) | Enabled ] });
 parse(["disable", Feature | Rest ], C = #config{ disable = Disabled }) ->
 	parse(Rest, C#config{ disable = [ list_to_atom(Feature) | Disabled ] });
-parse(["custom_domain", _ | Rest], C = #config{ }) ->
-	?LOG_WARNING("Deprecated option found 'custom_domain': "
-			" this option has been removed and is a no-op.", []),
-	parse(Rest, C#config{ });
 parse(["requests_per_minute_limit", Num | Rest], C) ->
 	parse(Rest, C#config{ requests_per_minute_limit = list_to_integer(Num) });
 parse(["max_propagation_peers", Num | Rest], C) ->
@@ -827,14 +817,6 @@ parse(["defragment_module", DefragModuleString | Rest], C) ->
 			{init, stop, [1]}
 		], C}
 	end;
-parse(["tls_cert_file", CertFilePath | Rest], C) ->
-    AbsCertFilePath = filename:absname(CertFilePath),
-    ar_util:assert_file_exists_and_readable(AbsCertFilePath),
-    parse(Rest, C#config{ tls_cert_file = AbsCertFilePath });
-parse(["tls_key_file", KeyFilePath | Rest], C) ->
-    AbsKeyFilePath = filename:absname(KeyFilePath),
-    ar_util:assert_file_exists_and_readable(AbsKeyFilePath),
-    parse(Rest, C#config{ tls_key_file = AbsKeyFilePath });
 parse(["http_api.tcp.idle_timeout_seconds", Num | Rest], C) ->
 	parse(Rest, C#config { http_api_transport_idle_timeout = list_to_integer(Num) * 1000 });
 parse(["coordinated_mining" | Rest], C) ->
