@@ -42,25 +42,33 @@ start_link() ->
 %% the processing is throttled by IP and solution hash.
 %% Returns: ok, invalid, skipped
 pre_validate(B, Peer, ReceiveTimestamp) ->
-	#block{ indep_hash = H } = B,
-	case ar_ignore_registry:member(H) of
-		true ->
-			skipped;
-		false ->
-			Ref = make_ref(),
-			ar_ignore_registry:add_ref(H, Ref),
-			erlang:put(ignore_registry_ref, Ref),
-			B2 = B#block{ receive_timestamp = ReceiveTimestamp },
-			case pre_validate_is_peer_banned(B2, Peer) of
-				enqueued ->
-					?LOG_DEBUG([{event, enqueued_block},
-							{hash, ar_util:encode(H)},
-							{peer, ar_util:format_peer(Peer)}]),
-					ok;
-				Other ->
-					ar_ignore_registry:remove_ref(H, Ref),
-					Other
-			end
+	try
+		#block{ indep_hash = H } = B,
+		case ar_ignore_registry:member(H) of
+			true ->
+				skipped;
+			false ->
+				Ref = make_ref(),
+				ar_ignore_registry:add_ref(H, Ref),
+				erlang:put(ignore_registry_ref, Ref),
+				B2 = B#block{ receive_timestamp = ReceiveTimestamp },
+				case pre_validate_is_peer_banned(B2, Peer) of
+					enqueued ->
+						?LOG_DEBUG([{event, enqueued_block},
+								{hash, ar_util:encode(H)},
+								{peer, ar_util:format_peer(Peer)}]),
+						ok;
+					Other ->
+						ar_ignore_registry:remove_ref(H, Ref),
+						Other
+				end
+		end
+	catch
+		Type:Reason:Stacktrace ->
+			?LOG_ERROR([{event, block_pre_validation_failed},
+					{type, Type}, {reason, Reason},
+					{stacktrace, Stacktrace}]),
+			invalid
 	end.
 
 %%%===================================================================
