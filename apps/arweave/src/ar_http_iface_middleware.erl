@@ -568,7 +568,7 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 			not_joined(Req);
 		true ->
 			ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
-			DiskPoolThreshold = ar_data_sync:get_disk_pool_threshold(),
+			DiskPoolThreshold = ar_disk_pool:get_threshold(),
 			ReadOffset =
 				case catch binary_to_integer(OffsetBin) of
 					{'EXIT', _} ->
@@ -638,7 +638,7 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 					not_set ->
 						ok;
 					{ok, {DataRoot, DataSize}} ->
-						case ar_data_sync:has_data_root(DataRoot, DataSize) of
+						case ar_disk_pool:has_data_root(DataRoot, DataSize) of
 							true ->
 								ok;
 							false ->
@@ -2142,7 +2142,7 @@ handle_post_tx(Req, Peer, TX) ->
 		{invalid, invalid_data_root_size} ->
 			handle_post_tx_invalid_data_root_response();
 		{valid, TX2} ->
-			ar_data_sync:add_data_root_to_disk_pool(TX2#tx.data_root, TX2#tx.data_size,
+			ar_disk_pool:add_data_root(TX2#tx.data_root, TX2#tx.data_size,
 					TX#tx.id),
 			handle_post_tx_accepted(Req, TX, Peer)
 	end.
@@ -2370,7 +2370,7 @@ handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->
 								{error, timeout} ->
 									{503, #{}, jiffy:encode(#{ error => timeout }), Req};
 								ok ->
-									case ar_data_sync:get_unconfirmed_chunk(TXID, Offset) of
+									case ar_disk_pool:get_unconfirmed_chunk(TXID, Offset) of
 										{ok, {Chunk, DataPath, IsStoredLongTerm}} ->
 											Body = jiffy:encode(#{
 												chunk => ar_util:encode(Chunk),
@@ -2546,7 +2546,7 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 	#{ chunk := Chunk, data_path := DataPath, data_size := TXSize, offset := Offset,
 			data_root := DataRoot } = Proof,
 	spawn(fun() ->
-			Parent ! ar_data_sync:add_chunk_to_disk_pool(
+			Parent ! ar_disk_pool:add_chunk(
 				DataRoot, DataPath, Chunk, Offset, TXSize)
 			end),
 	receive

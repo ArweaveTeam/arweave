@@ -122,7 +122,7 @@ store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID) ->
 %% Return {ok, {TXRoot, BlockSize, DataRootEntries}}
 %% or {error, Reason}.
 get_block(Offset) ->
-	case Offset >= ar_data_sync:get_disk_pool_threshold() of
+	case Offset >= ar_disk_pool:get_threshold() of
 		true ->
 			{error, not_found};
 		false ->

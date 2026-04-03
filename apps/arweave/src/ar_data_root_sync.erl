@@ -96,7 +96,7 @@ terminate(_Reason, _State) ->
 
 sync_block_data_roots(#state{ store_id = StoreID, range_start = RangeStart,
 	range_end = RangeEnd, scan_cursor = Cursor } = State) ->
-	End = min(RangeEnd, ar_data_sync:get_disk_pool_threshold()),
+	End = min(RangeEnd, ar_disk_pool:get_threshold()),
 	{ok, Cursor2} = sync_block_data_roots(StoreID, Cursor, End),
 	{Delay, Cursor3} =
 		case Cursor2 >= End of

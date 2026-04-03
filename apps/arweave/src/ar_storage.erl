@@ -741,7 +741,7 @@ write_tx_data(DataRoot, DataTree, Data, SizeTaggedChunks, TXID) ->
 			({Chunk, Offset}, Acc) ->
 				DataPath = ar_merkle:generate_path(DataRoot, Offset - 1, DataTree),
 				TXSize = byte_size(Data),
-				DiskPoolResult = ar_data_sync:add_chunk_to_disk_pool(
+				DiskPoolResult = ar_disk_pool:add_chunk(
 					DataRoot, DataPath, Chunk, Offset - 1, TXSize),
 				case DiskPoolResult of
 					ok ->

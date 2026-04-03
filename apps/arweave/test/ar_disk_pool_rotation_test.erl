@@ -1,4 +1,4 @@
--module(ar_data_sync_disk_pool_rotation_test).
+-module(ar_disk_pool_rotation_test).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -67,4 +67,4 @@ test_disk_pool_rotation() ->
 		end,
 		200,
 		5000
-	). 
+	).

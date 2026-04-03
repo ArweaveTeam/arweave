@@ -124,7 +124,7 @@ test_data_roots_sync_from_peer() ->
 				ok;
 			(B) ->
 				BlockStart = block_start(B),
-				case BlockStart >= ar_data_sync:get_disk_pool_threshold() of
+				case BlockStart >= ar_disk_pool:get_threshold() of
 					true ->
 						ok;
 					false ->
@@ -202,8 +202,8 @@ test_chunk_after_data_roots_http_post() ->
 
 	%% GET/POST /data_roots only apply below each peer's disk pool bound (see
 	%% ar_data_roots:get_for_offset/1 and POST handler in ar_http_iface_middleware).
-	Peer1PoolBound = ar_test_node:remote_call(peer1, ar_data_sync, get_disk_pool_threshold, []),
-	MainPoolBound = ar_test_node:remote_call(main, ar_data_sync, get_disk_pool_threshold, []),
+	Peer1PoolBound = ar_test_node:remote_call(peer1, ar_disk_pool, get_threshold, []),
+	MainPoolBound = ar_test_node:remote_call(main, ar_disk_pool, get_threshold, []),
 
 	%% Verify POST /data_roots and POST /chunk for each non-empty block in range on both peers.
 	lists:foreach(
