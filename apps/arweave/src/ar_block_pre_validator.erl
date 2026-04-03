@@ -377,6 +377,10 @@ pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer) ->
 		{ok, _DifferentH} ->
 			post_block_reject_warn(B, check_indep_hash, Peer),
 			ar_events:send(block, {rejected, invalid_hash, B#block.indep_hash, Peer}),
+			invalid;
+		{'EXIT', _} ->
+			post_block_reject_warn(B, check_invalid_payload, Peer),
+			ar_events:send(block, {rejected, invalid_payload, B#block.indep_hash, Peer}),
 			invalid
 	end.
 

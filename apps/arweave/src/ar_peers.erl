@@ -140,6 +140,7 @@
 	invalid_second_chunk,
 	invalid_poa2_recall_byte2_undefined,
 	invalid_hash,
+	invalid_payload,
 	invalid_timestamp,
 	invalid_resigned_solution_hash,
 	invalid_nonce_limiter_global_step_number,

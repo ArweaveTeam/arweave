@@ -121,19 +121,27 @@ binary_to_block(<< H:48/binary, PrevHSize:8, PrevH:PrevHSize/binary,
 			_ -> {RateDividend, RateDivisor} end,
 	ScheduledRate = case SchedRateDivisorSize of 0 -> undefined;
 			_ -> {SchedRateDividend, SchedRateDivisor} end,
-	Addr2 = case {AddrSize, Height >= ar_fork:height_2_6()} of
-			{0, false} -> unclaimed; _ -> Addr end,
-	B = #block{ indep_hash = H, previous_block = PrevH, timestamp = TS,
-			nonce = Nonce, height = Height, diff = Diff, cumulative_diff = CDiff,
-			last_retarget = LastRetarget, hash = Hash, block_size = BlockSize,
-			weave_size = WeaveSize, reward_addr = Addr2, tx_root = TXRoot,
-			wallet_list = WalletList, hash_list_merkle = HashListMerkle,
-			reward_pool = RewardPool, packing_2_5_threshold = Threshold2,
-			strict_data_split_threshold = StrictChunkThreshold2,
-			usd_to_ar_rate = Rate, scheduled_usd_to_ar_rate = ScheduledRate,
-			poa = #poa{ option = PoAOption, chunk = Chunk, data_path = DataPath,
-					tx_path = TXPath }},
-	parse_block_tags_transactions(Rest, B);
+	case Height >= ar_fork:height_2_5() andalso
+			(Rate == undefined orelse ScheduledRate == undefined) of
+		true ->
+			{error, invalid_block_input};
+		false ->
+			Addr2 = case {AddrSize, Height >= ar_fork:height_2_6()} of
+					{0, false} -> unclaimed; _ -> Addr end,
+			B = #block{ indep_hash = H, previous_block = PrevH, timestamp = TS,
+					nonce = Nonce, height = Height, diff = Diff,
+					cumulative_diff = CDiff,
+					last_retarget = LastRetarget, hash = Hash,
+					block_size = BlockSize,
+					weave_size = WeaveSize, reward_addr = Addr2, tx_root = TXRoot,
+					wallet_list = WalletList, hash_list_merkle = HashListMerkle,
+					reward_pool = RewardPool, packing_2_5_threshold = Threshold2,
+					strict_data_split_threshold = StrictChunkThreshold2,
+					usd_to_ar_rate = Rate, scheduled_usd_to_ar_rate = ScheduledRate,
+					poa = #poa{ option = PoAOption, chunk = Chunk, data_path = DataPath,
+							tx_path = TXPath }},
+			parse_block_tags_transactions(Rest, B)
+	end;
 binary_to_block(_Bin) ->
 	{error, invalid_block_input}.
 
