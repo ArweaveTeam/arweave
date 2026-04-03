@@ -39,7 +39,7 @@ read_complete_body(Req, SizeLimit, StartTime) ->
 	Ref = make_ref(),
 	{Pid, MonRef} = spawn_monitor(
 		fun() ->
-			do_read_body(Req, Parent, Ref)
+			do_read_body(Req, Parent, Ref, SizeLimit)
 		end),
 	TRef = erlang:send_after(?DEFAULT_HTTP_MAX_BODY_READ_TIME_MS, self(),
 		{body_timeout, Ref}),
@@ -79,9 +79,16 @@ accumulate_body(MonRef, Pid, Ref, Req, Acc, Size, SizeLimit, StartTime) ->
 		exit_timeout
 	end.
 
-do_read_body(Req, Parent, Ref) ->
+do_read_body(Req, Parent, Ref, SizeLimit) ->
+	do_read_body(Req, Parent, Ref, SizeLimit, 0).
+
+do_read_body(Req, Parent, Ref, SizeLimit, ReadSoFar) ->
+	%% Bound each read to the remaining allowance + 1 so Cowboy never pulls more
+	%% data from the wire than the size limit permits.
+	Length = SizeLimit - ReadSoFar + 1,
 	{MoreOrOk, Data, ReadReq} = cowboy_req:read_body(Req,
-		#{ period => ?DEFAULT_HTTP_READ_BODY_PERIOD_MS,
+		#{ length => Length,
+		   period => ?DEFAULT_HTTP_READ_BODY_PERIOD_MS,
 		   timeout => ?DEFAULT_HTTP_READ_BODY_PERIOD_MS + 1000 }),
 	DataSize = byte_size(Data),
 	prometheus_counter:inc(
@@ -93,7 +100,7 @@ do_read_body(Req, Parent, Ref) ->
 		ok ->
 			ok;
 		more ->
-			do_read_body(ReadReq, Parent, Ref)
+			do_read_body(ReadReq, Parent, Ref, SizeLimit, ReadSoFar + DataSize)
 	end.
 
 flush_messages(Ref) ->
