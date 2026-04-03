@@ -11,6 +11,12 @@
 -include_lib("arweave/include/ar_blacklist_middleware.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+-ifdef(AR_TEST).
+-define(CLEANUP_INTERVAL, 2000).
+-else.
+-define(CLEANUP_INTERVAL, 600000). % 10 minutes
+-endif.
+
 -record(state, {
 	traces,
 	off
@@ -89,6 +95,7 @@ set_cooldown(_Peer, _RPMKey, _Milliseconds) ->
 %%%===================================================================
 
 init([]) ->
+	erlang:send_after(?CLEANUP_INTERVAL, self(), cleanup),
 	{ok, #state{ traces = #{}, off = false }}.
 
 handle_call({throttle, _Peer, _Path}, _From, #state{ off = true } = State) ->
@@ -133,6 +140,16 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
+handle_info(cleanup, #state{ traces = Traces } = State) ->
+	erlang:send_after(?CLEANUP_INTERVAL, self(), cleanup),
+	Now = os:system_time(millisecond),
+	Traces2 = maps:filter(fun(_, {_N, Trace}) ->
+		{value, Latest} = queue:peek_r(Trace),
+		Latest >= Now - ?THROTTLE_PERIOD
+	end, Traces),
+	cleanup_cooldowns(Now),
+	{noreply, State#state{ traces = Traces2 }};
+
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
 	{noreply, State}.
@@ -144,6 +161,15 @@ terminate(Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+cleanup_cooldowns(Now) ->
+	ets:foldl(fun
+		({{cooldown, _, _} = Key, Until}, Acc) when Until < Now ->
+			ets:delete(?MODULE, Key),
+			Acc;
+		(_, Acc) ->
+			Acc
+	end, ok, ?MODULE).
 
 cut_trace(N, Trace, Now) ->
 	{{value, Timestamp}, Trace2} = queue:out(Trace),
