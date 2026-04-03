@@ -263,8 +263,8 @@ cleanup:
 }
 
 static ErlNifFunc nif_funcs[] = {
-	{"sign_recoverable", 2, sign_recoverable},
-	{"recover_pk_and_verify", 2, recover_pk_and_verify}
+	{"sign_recoverable", 2, sign_recoverable, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+	{"recover_pk_and_verify", 2, recover_pk_and_verify, ERL_NIF_DIRTY_JOB_CPU_BOUND}
 };
 
 ERL_NIF_INIT(secp256k1_nif, nif_funcs, secp256k1_load, NULL, NULL, NULL)
