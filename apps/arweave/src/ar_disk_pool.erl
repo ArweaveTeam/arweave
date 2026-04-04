@@ -40,9 +40,9 @@
 add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
 	DiskPoolChunksIndex = index_db(?DEFAULT_MODULE),
-	DataRootKey = << DataRoot/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	DataRootEntry = ar_data_roots:get_entry(DataRootKey, ?DEFAULT_MODULE),
-	DataRootInDiskPool = has_data_root(DataRootKey),
+	DataRootID = ar_data_roots:id(DataRoot, TXSize),
+	DataRootEntry = ar_data_roots:get_entry(DataRootID, ?DEFAULT_MODULE),
+	DataRootInDiskPool = has_data_root(DataRootID),
 	ChunkSize = byte_size(Chunk),
 	{ok, Config} = arweave_config:get_env(),
 	DataRootLimit = Config#config.max_disk_pool_data_root_buffer_mb * ?MiB,
@@ -117,7 +117,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 							not_found ->
 								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
 							{ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}} ->
-								case chunk_offsets_synced(DataRootKey,
+								case chunk_offsets_synced(DataRootID,
 										EndOffset2, TXStartOffset) of
 									true ->
 										synced;
@@ -171,7 +171,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 								{relative_offset, EndOffset3}]),
 							{error, failed_to_store_chunk};
 						ok ->
-							insert_data_root(DataRootKey, DiskPoolDataRootValue2),
+							insert_data_root(DataRootID, DiskPoolDataRootValue2),
 							ets:update_counter(ar_data_sync_state, disk_pool_size,
 									{2, ChunkSize}),
 							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
@@ -199,14 +199,15 @@ add_data_root(_, 0, _) ->
 add_data_root(DataRoot, _, _) when byte_size(DataRoot) < 32 ->
 	ok;
 add_data_root(DataRoot, TXSize, TXID) ->
-	Key = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	case has_data_root(Key) of
+	DataRootID = ar_data_roots:id(DataRoot, TXSize),
+	case has_data_root(DataRootID) of
 		[] ->
-			insert_data_root(Key, {0, os:system_time(microsecond), sets:from_list([TXID])});
+			insert_data_root(DataRootID,
+				{0, os:system_time(microsecond), sets:from_list([TXID])});
 		[{_, {_, _, not_set}}] ->
 			ok;
 		[{_, {Size, Timestamp, TXIDSet}}] ->
-			insert_data_root(Key, {Size, Timestamp, sets:add_element(TXID, TXIDSet)})
+			insert_data_root(DataRootID, {Size, Timestamp, sets:add_element(TXID, TXIDSet)})
 	end,
 	ok.
 
@@ -216,8 +217,8 @@ maybe_drop_data_root(_, 0, _) ->
 maybe_drop_data_root(DataRoot, _, _) when byte_size(DataRoot) < 32 ->
 	ok;
 maybe_drop_data_root(DataRoot, TXSize, TXID) ->
-	Key = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	case has_data_root(Key) of
+	DataRootID = ar_data_roots:id(DataRoot, TXSize),
+	case has_data_root(DataRootID) of
 		[] ->
 			ok;
 		[{_, {_, _, not_set}}] ->
@@ -229,9 +230,9 @@ maybe_drop_data_root(DataRoot, TXSize, TXID) ->
 				TXIDs2 ->
 					case sets:size(TXIDs2) of
 						0 ->
-							delete_data_root(Key);
+							delete_data_root(DataRootID);
 						_ ->
-							insert_data_root(Key, {Size, Timestamp, TXIDs2})
+							insert_data_root(DataRootID, {Size, Timestamp, TXIDs2})
 					end
 			end
 	end,
@@ -240,18 +241,18 @@ maybe_drop_data_root(DataRoot, TXSize, TXID) ->
 %% @doc Return true if the given {DataRoot, DataSize} is in the mempool
 %% or in the index.
 has_data_root(DataRoot, DataSize) ->
-	DataRootKey = << DataRoot:32/binary, DataSize:256 >>,
-	case ets:member(ar_disk_pool_data_roots, DataRootKey) of
+	DataRootID = ar_data_roots:id(DataRoot, DataSize),
+	case ets:member(ar_disk_pool_data_roots, DataRootID) of
 		true ->
 			true;
 		false ->
-			ar_data_roots:is_synced(DataRootKey, ?DEFAULT_MODULE)
+			ar_data_roots:is_synced(DataRootID, ?DEFAULT_MODULE)
 	end.
 
 get_data_roots() ->
 	ets:foldl(
-		fun({DataRootKey, Value}, Acc) ->
-			maps:put(DataRootKey, Value, Acc)
+		fun({DataRootID, Value}, Acc) ->
+			maps:put(DataRootID, Value, Acc)
 		end,
 		#{},
 		ar_disk_pool_data_roots
@@ -325,12 +326,12 @@ debug_get_chunks() ->
 
 recalculate_size(DataRootMap, StoreID) ->
 	Index = index_db(StoreID),
-	DataRootMap2 = maps:map(fun(_DataRootKey, {_Size, Timestamp, TXIDSet}) ->
+	DataRootMap2 = maps:map(fun(_DataRootID, {_Size, Timestamp, TXIDSet}) ->
 			{0, Timestamp, TXIDSet} end, DataRootMap),
 	recalculate_size2(Index, DataRootMap2, first, 0).
 
-add_block_data_roots(DataRootKeySet) ->
-	update_data_roots(DataRootKeySet,
+add_block_data_roots(DataRootIDSet) ->
+	update_data_roots(DataRootIDSet,
 		fun
 			(not_found, Timestamp) ->
 				{0, Timestamp, not_set};
@@ -338,8 +339,8 @@ add_block_data_roots(DataRootKeySet) ->
 				{Size, Timeout, not_set}
 		end).
 
-reset_orphaned_data_roots_timestamps(DataRootKeySet) ->
-	update_data_roots(DataRootKeySet,
+reset_orphaned_data_roots_timestamps(DataRootIDSet) ->
+	update_data_roots(DataRootIDSet,
 		fun
 			(not_found, Timestamp) ->
 				{0, Timestamp, not_set};
@@ -347,21 +348,21 @@ reset_orphaned_data_roots_timestamps(DataRootKeySet) ->
 				{Size, Timestamp, TXIDSet}
 		end).
 
-update_data_roots(DataRootKeySet, UpdateFun) ->
+update_data_roots(DataRootIDSet, UpdateFun) ->
 	sets:fold(
-		fun(DataRootKey, Timestamp) ->
+		fun(DataRootID, Timestamp) ->
 			Entry =
-				case has_data_root(DataRootKey) of
+				case has_data_root(DataRootID) of
 					[] ->
 						not_found;
 					[{_, Value}] ->
 						Value
 				end,
-			insert_data_root(DataRootKey, UpdateFun(Entry, Timestamp)),
+			insert_data_root(DataRootID, UpdateFun(Entry, Timestamp)),
 			Timestamp + 1
 		end,
 		os:system_time(microsecond),
-		DataRootKeySet
+		DataRootIDSet
 	).
 
 column_family(Opts) ->
@@ -444,9 +445,9 @@ process_chunk(DiskPool, StoreID, Key, Value) ->
 	{_Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey,
 			_PassedBaseValidation, _PassedStrictValidation,
 			_PassedRebaseValidation} = DiskPoolChunk,
-	DataRootKey = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	DataRootEntry = ar_data_roots:get_entry(DataRootKey, StoreID),
-	InDiskPool = ets:member(ar_disk_pool_data_roots, DataRootKey),
+	DataRootID = ar_data_roots:id(DataRoot, TXSize),
+	DataRootEntry = ar_data_roots:get_entry(DataRootID, StoreID),
+	InDiskPool = ets:member(ar_disk_pool_data_roots, DataRootID),
 	case {DataRootEntry, InDiskPool} of
 		{not_found, true} ->
 			%% Increment the timestamp by one (microsecond), so that the new cursor is
@@ -461,7 +462,7 @@ process_chunk(DiskPool, StoreID, Key, Value) ->
 			ok = ar_kv:delete(DiskPoolChunksIndex, Key),
 			ok = ar_data_sync:delete_chunk_data(ChunkDataKey, StoreID),
 			remove_chunk_from_cache(DataPathHash),
-			decrease_occupied_size(ChunkSize, DataRootKey),
+			decrease_occupied_size(ChunkSize, DataRootID),
 			NextCursor = << Key/binary, <<"a">>/binary >>,
 			DiskPool2 = maybe_reset_full_scan_key(Key, DiskPool),
 			{continue, DiskPool2#disk_pool_state{ cursor = NextCursor }};
@@ -478,10 +479,10 @@ process_chunk_offsets(Key, Value, TXStartOffset, StoreID, DiskPool)
 	{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey,
 			PassedBaseValidation, PassedStrictValidation,
 			PassedRebaseValidation} = DiskPoolChunk,
-	DataRootKey = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
-	DataRootIndexIterator = ar_data_roots:iterator(DataRootKey, TXStartOffset + 1,
+	DataRootID = ar_data_roots:id(DataRoot, TXSize),
+	DataRootIndexIterator = ar_data_roots:iterator(DataRootID, TXStartOffset + 1,
 			StoreID),
-	InDiskPool = ets:member(ar_disk_pool_data_roots, DataRootKey),
+	InDiskPool = ets:member(ar_disk_pool_data_roots, DataRootID),
 	Args = {Offset, InDiskPool, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key,
 			PassedBaseValidation, PassedStrictValidation, PassedRebaseValidation},
 	process_chunk_offsets(DataRootIndexIterator, true, Args, StoreID, DiskPool);
@@ -573,9 +574,8 @@ get_unconfirmed_chunk_from_disk_pool(TXID, RelativeEndOffset, DiskPoolChunkKey) 
 					Error;
 				{ok, Bin} ->
 					{Chunk, DataPath} = binary_to_term(Bin),
-					DataRootKey = << DataRoot/binary,
-							TXSize:?OFFSET_KEY_BITSIZE >>,
-					DataRootOffsetReply = ar_data_roots:get_entry(DataRootKey,
+					DataRootID = ar_data_roots:id(DataRoot, TXSize),
+					DataRootOffsetReply = ar_data_roots:get_entry(DataRootID,
 							?DEFAULT_MODULE),
 					IsStoredLongTerm = is_estimated_long_term_chunk(
 							DataRootOffsetReply, RelEndOffset),
@@ -673,10 +673,10 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 			end
 	end.
 
-chunk_offsets_synced(DataRootKey, ChunkOffset, TXStartOffset) ->
+chunk_offsets_synced(DataRootID, ChunkOffset, TXStartOffset) ->
 	case ar_sync_record:is_recorded(TXStartOffset + ChunkOffset, ar_data_sync) of
 		{{true, _}, _StoreID} ->
-			Iterator = ar_data_roots:iterator(DataRootKey, TXStartOffset, ?DEFAULT_MODULE),
+			Iterator = ar_data_roots:iterator(DataRootID, TXStartOffset, ?DEFAULT_MODULE),
 			chunk_offsets_synced2(ChunkOffset, Iterator);
 		false ->
 			false
@@ -720,20 +720,20 @@ recalculate_size2(Index, DataRootMap, Cursor, Sum) ->
 	case ar_kv:get_next(Index, Cursor) of
 		none ->
 			prometheus_gauge:set(pending_chunks_size, Sum),
-			maps:map(fun(DataRootKey, V) -> insert_data_root(DataRootKey, V) end, DataRootMap),
+			maps:map(fun(DataRootID, V) -> insert_data_root(DataRootID, V) end, DataRootMap),
 			ets:insert(ar_data_sync_state, {disk_pool_size, Sum});
 		{ok, Key, Value} ->
 			DecodedValue = binary_to_term(Value, [safe]),
 			ChunkSize = element(2, DecodedValue),
 			DataRoot = element(3, DecodedValue),
 			TXSize = element(4, DecodedValue),
-			DataRootKey = << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>,
+			DataRootID = ar_data_roots:id(DataRoot, TXSize),
 			DataRootMap2 =
-				case maps:get(DataRootKey, DataRootMap, not_found) of
+				case maps:get(DataRootID, DataRootMap, not_found) of
 					not_found ->
 						DataRootMap;
 					{Size, Timestamp, TXIDSet} ->
-						maps:put(DataRootKey, {Size + ChunkSize, Timestamp, TXIDSet},
+						maps:put(DataRootID, {Size + ChunkSize, Timestamp, TXIDSet},
 								DataRootMap)
 				end,
 			Cursor2 = << Key/binary, <<"a">>/binary >>,
@@ -786,25 +786,25 @@ parse_chunk(Bin) ->
 			R
 	end.
 
-decrease_occupied_size(Size, DataRootKey) ->
+decrease_occupied_size(Size, DataRootID) ->
 	ets:update_counter(ar_data_sync_state, disk_pool_size, {2, -Size}),
 	prometheus_gauge:dec(pending_chunks_size, Size),
-	case has_data_root(DataRootKey) of
+	case has_data_root(DataRootID) of
 		[] ->
 			ok;
 		[{_, {Size2, Timestamp, TXIDSet}}] ->
-			insert_data_root(DataRootKey, {Size2 - Size, Timestamp, TXIDSet}),
+			insert_data_root(DataRootID, {Size2 - Size, Timestamp, TXIDSet}),
 			ok
 	end.
 
-has_data_root(DataRootKey) ->
-	ets:lookup(ar_disk_pool_data_roots, DataRootKey).
+has_data_root(DataRootID) ->
+	ets:lookup(ar_disk_pool_data_roots, DataRootID).
 
-insert_data_root(DataRootKey, Value) ->
-	ets:insert(ar_disk_pool_data_roots, {DataRootKey, Value}).
+insert_data_root(DataRootID, Value) ->
+	ets:insert(ar_disk_pool_data_roots, {DataRootID, Value}).
 
-delete_data_root(DataRootKey) ->
-	ets:delete(ar_disk_pool_data_roots, DataRootKey).
+delete_data_root(DataRootID) ->
+	ets:delete(ar_disk_pool_data_roots, DataRootID).
 
 maybe_reset_full_scan_key(Key,
 		#disk_pool_state{ full_scan_start_key = Key } = DiskPool) ->
@@ -1080,6 +1080,6 @@ delete_chunk(Iterator, Args, StoreID, DiskPool) ->
 			ok = ar_data_sync:delete_chunk_data(ChunkDataKey, StoreID),
 			<< _Timestamp:256, DataPathHash2/binary >> = DiskPoolKey,
 			remove_chunk_from_cache(DataPathHash2),
-			DataRootKey = ar_data_roots:key(Iterator),
-			decrease_occupied_size(ChunkSize, DataRootKey)
+			DataRootID = ar_data_roots:id(Iterator),
+			decrease_occupied_size(ChunkSize, DataRootID)
 	end.

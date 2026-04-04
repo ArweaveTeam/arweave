@@ -682,12 +682,12 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	{WeaveSize, AddedDataRoots} = lists:foldl(
 		fun ({_BH, []}, Acc) ->
 				Acc;
-			({_BH, SizeTaggedTXs}, {StartOffset, DataRootKeysAcc}) ->
-				{ok, DataRootKeys} =
+			({_BH, SizeTaggedTXs}, {StartOffset, DataRootIDsAcc}) ->
+				{ok, DataRootIDs} =
 					ar_data_roots:add_block_data_roots(SizeTaggedTXs, StartOffset, StoreID),
 				ok = update_tx_index(SizeTaggedTXs, StartOffset, StoreID),
 				{StartOffset + element(2, lists:last(SizeTaggedTXs)),
-					sets:union(DataRootKeysAcc, DataRootKeys)}
+					sets:union(DataRootIDsAcc, DataRootIDs)}
 		end,
 		{BlockStartOffset, sets:new()},
 		Blocks
