@@ -648,10 +648,7 @@ handle_cast({join, RecentBI}, State) ->
 	State2 = store_sync_state(
 		State#sync_data_state{
 			weave_size = WeaveSize,
-			block_index = RecentBI,
-			disk_pool = ar_disk_pool:set_threshold(
-				State#sync_data_state.disk_pool,
-				ar_disk_pool:init_threshold(RecentBI))
+			block_index = RecentBI
 		}),
 	{noreply, State2};
 
@@ -706,9 +703,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	State2 = store_sync_state(
 		State#sync_data_state{
 			weave_size = WeaveSize,
-			block_index = BI,
-			disk_pool = ar_disk_pool:set_threshold(State#sync_data_state.disk_pool,
-				DiskPoolThreshold)
+			block_index = BI
 		}),
 	{noreply, State2};
 
@@ -754,11 +749,10 @@ handle_cast(sync_data2, State) ->
 %%       ar_data_sync_coordinator for syncing.
 handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End,
-			disk_pool = DiskPool,
 			sync_phase = SyncPhase,
 			store_id = StoreID,
 			sync_intervals_queue = Q } = State,
-	DiskPoolThreshold = ar_disk_pool:get_threshold(DiskPool),
+	DiskPoolThreshold = ar_disk_pool:get_threshold(),
 	CheckIsJoined =
 		case ar_node:is_joined() of
 			false ->
@@ -1181,10 +1175,8 @@ handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 	{noreply, State#sync_data_state{ weave_size = B#block.weave_size }};
 
 handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
-	{noreply, State#sync_data_state{
-		disk_pool = ar_disk_pool:set_threshold(
-			State#sync_data_state.disk_pool,
-			ar_disk_pool:set_threshold(Bound)) }};
+	ar_disk_pool:set_threshold(Bound),
+	{noreply, State};
 
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
@@ -1427,9 +1419,8 @@ do_sync_intervals(State) ->
 	end.
 
 do_sync_data(State) ->
-	#sync_data_state{ store_id = StoreID, range_start = RangeStart, range_end = RangeEnd,
-			disk_pool = DiskPool } = State,
-	DiskPoolThreshold = ar_disk_pool:get_threshold(DiskPool),
+	#sync_data_state{ store_id = StoreID, range_start = RangeStart, range_end = RangeEnd } = State,
+	DiskPoolThreshold = ar_disk_pool:get_threshold(),
 	%% See if any of StoreID's unsynced intervals can be found in the "default"
 	%% storage_module
 	Intervals = get_unsynced_intervals_from_other_storage_modules(
@@ -2454,8 +2445,8 @@ process_invalid_fetched_chunk(Peer, Byte, State, Event, ExtraLogs) ->
 	{noreply, State}.
 
 process_valid_fetched_chunk(ChunkArgs, Args, State) ->
-	#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State,
-	DiskPoolThreshold = ar_disk_pool:get_threshold(DiskPool),
+	#sync_data_state{ store_id = StoreID } = State,
+	DiskPoolThreshold = ar_disk_pool:get_threshold(),
 	{Packing, UnpackedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
 	{AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot, Chunk, _ChunkID,
 			ChunkEndOffset, Peer, Byte} = Args,
@@ -2500,8 +2491,8 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 	end.
 
 pack_and_store_chunk(Args = {_, AbsoluteEndOffset, _, _, _, _, _, _, _, _, _, _},
-		#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State) ->
-	case AbsoluteEndOffset > ar_disk_pool:get_threshold(DiskPool) of
+		#sync_data_state{ store_id = StoreID } = State) ->
+	case AbsoluteEndOffset > ar_disk_pool:get_threshold() of
 		true ->
 			%% We do not put data into storage modules unless it is well confirmed.
 			Reason = chunk_is_above_disk_pool_threshold,

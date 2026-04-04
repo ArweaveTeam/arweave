@@ -2,8 +2,6 @@
 -define(AR_DISK_POOL_HRL, true).
 
 -record(disk_pool_state, {
-	%% The weave offset for the disk pool - chunks above this offset are stored there.
-	threshold = 0,
 	%% One of the keys from disk_pool_chunks_index or the atom "first".
 	%% The disk pool is processed chunk by chunk going from the oldest entry to the newest,
 	%% trying not to block the syncing process if the disk pool accumulates a lot of orphaned
