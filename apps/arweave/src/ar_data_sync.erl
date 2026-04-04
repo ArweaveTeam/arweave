@@ -517,11 +517,10 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	%% the corresponding entry is removed from DiskPoolDataRoots. When a data root is
 	%% confirmed, TXIDSet is set to not_set - from this point on, the key is only dropped
 	%% after expiration.
-	DiskPool = ar_disk_pool:init_state(StateMap, StoreID),
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = maps:get(weave_size, StateMap),
-		disk_pool = DiskPool,
+		disk_pool = ar_disk_pool:init_state(StateMap, StoreID),
 		store_id = StoreID,
 		sync_status = init_sync_status(StoreID)
 	},
@@ -1034,9 +1033,8 @@ handle_cast(process_disk_pool_item,
 	{noreply, State#sync_data_state{ disk_pool = DiskPool2 }};
 
 handle_cast(resume_disk_pool_scan, State) ->
-	#sync_data_state{ disk_pool = DiskPool } = State,
 	{noreply, State#sync_data_state{
-		disk_pool = ar_disk_pool:resume_scan(DiskPool) }};
+		disk_pool = ar_disk_pool:resume_scan(State#sync_data_state.disk_pool) }};
 
 handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, State) ->
 	#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State,
@@ -1955,7 +1953,7 @@ open_store_dbs(DataDir, StoreID) ->
 		ar_data_roots:keys_column_family(BasicOpts),
 		{"tx_index", BasicOpts ++ BloomFilterOpts},
 		{"tx_offset_index", BasicOpts},
-		{"disk_pool_chunks_index", BasicOpts ++ BloomFilterOpts},
+		ar_disk_pool:column_family(BasicOpts ++ BloomFilterOpts),
 		{"migrations_index", BasicOpts}
 	],
 	Dir =
@@ -1972,7 +1970,7 @@ open_store_dbs(DataDir, StoreID) ->
 			ar_data_roots:legacy_db(StoreID),
 			ar_data_roots:keys_db(StoreID),
 			{tx_index, StoreID}, {tx_offset_index, StoreID},
-			{disk_pool_chunks_index_old, StoreID}, migration_db(StoreID)]}),
+			ar_disk_pool:old_index_db(StoreID), migration_db(StoreID)]}),
 	ok = ar_kv:open(#{
 		path => filename:join(Dir, "ar_data_sync_chunk_db"),
 		name => {chunk_data_db, StoreID},
@@ -1983,16 +1981,7 @@ open_store_dbs(DataDir, StoreID) ->
 			%% 10 files in L1 to make L1 == L0 as recommended by the
 			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
 			{max_bytes_for_level_base, 10 * 256 * ?MiB}]}),
-	ok = ar_kv:open(#{
-		path => filename:join(Dir, "ar_data_sync_disk_pool_chunks_index_db"),
-		name => {disk_pool_chunks_index, StoreID},
-		options => [{max_open_files, 1000}, {max_background_compactions, 8},
-			{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
-			{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
-			%% 10 files in L1 to make L1 == L0 as recommended by the
-			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-			{max_bytes_for_level_base, 10 * 256 * ?MiB}] ++ BloomFilterOpts
-	}),
+	ok = ar_disk_pool:open_index_db(Dir, StoreID, BloomFilterOpts),
 	ok = ar_data_roots:open_index_db(Dir, StoreID, BloomFilterOpts).
 
 read_data_sync_state() ->

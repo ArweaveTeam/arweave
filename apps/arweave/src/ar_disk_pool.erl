@@ -8,10 +8,12 @@
 
 -export([recalculate_size/2, add_block_data_roots/1,
 		reset_orphaned_data_roots_timestamps/1,
-		init_state/0, init_state/2, move_index/1]).
+		init_state/0, init_state/2, move_index/1,
+		column_family/1, open_index_db/3]).
 
 -export([process_next_item/2, process_chunk_offsets/5,
-		remove_recently_processed_offset/3, resume_scan/1]).
+		remove_recently_processed_offset/3, resume_scan/1,
+		index_db/1, old_index_db/1]).
 
 -include("ar.hrl").
 -include("ar_disk_pool.hrl").
@@ -356,6 +358,21 @@ update_data_roots(DataRootKeySet, UpdateFun) ->
 		os:system_time(microsecond),
 		DataRootKeySet
 	).
+
+column_family(Opts) ->
+	{"disk_pool_chunks_index", Opts}.
+
+open_index_db(Dir, StoreID, BloomFilterOpts) ->
+	ar_kv:open(#{
+		path => filename:join(Dir, "ar_data_sync_disk_pool_chunks_index_db"),
+		name => index_db(StoreID),
+		options => [{max_open_files, 1000}, {max_background_compactions, 8},
+			{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
+			{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
+			%% 10 files in L1 to make L1 == L0 as recommended by the
+			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
+			{max_bytes_for_level_base, 10 * 256 * ?MiB}] ++ BloomFilterOpts
+	}).
 
 init_state() ->
 	#disk_pool_state{}.
