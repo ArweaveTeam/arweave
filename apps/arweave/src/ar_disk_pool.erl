@@ -1,7 +1,7 @@
 -module(ar_disk_pool).
 
 -export([add_chunk/5, add_data_root/3, maybe_drop_data_root/3,
-		get_threshold/0, get_threshold/1,
+		get_threshold/0, set_threshold/1, init_threshold/1,
 		get_unconfirmed_chunk/2, has_data_root/2,
 		record_chunks_count/0, remove_expired_data_roots/0,
 		debug_get_chunks/0]).
@@ -270,10 +270,15 @@ get_threshold() ->
 			DiskPoolThreshold
 	end.
 
-get_threshold([]) ->
-	0;
-get_threshold(BI) ->
-	ar_node:get_partition_upper_bound(BI).
+set_threshold(DiskPoolThreshold) ->
+	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
+	DiskPoolThreshold.
+
+%% @doc Compute the current disk pool threshold from the block index,
+%% cache it in ETS, and return it.
+init_threshold(BI) ->
+	DiskPoolThreshold = ar_node:get_partition_upper_bound(BI),
+	set_threshold(DiskPoolThreshold).
 
 record_chunks_count() ->
 	DB = {disk_pool_chunks_index, ?DEFAULT_MODULE},

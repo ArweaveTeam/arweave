@@ -307,6 +307,8 @@ get_nth_or_last(N, BI) ->
 			lists:nth(N, BI)
 	end.
 
+get_partition_upper_bound([]) ->
+	0;
 get_partition_upper_bound(BI) ->
 	element(2, get_nth_or_last(?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI)).
 

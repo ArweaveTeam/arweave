@@ -520,8 +520,13 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	%% after expiration.
 	DiskPoolDataRoots = maps:get(disk_pool_data_roots, StateMap),
 	ar_disk_pool:recalculate_size(DiskPoolDataRoots, State),
-	DiskPoolThreshold = maps:get(disk_pool_threshold, StateMap),
-	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
+	DiskPoolThreshold = case StateMap of
+		#{ disk_pool_threshold := T } ->
+			ar_disk_pool:set_threshold(T),
+			T;
+		_ ->
+			ar_disk_pool:init_threshold(CurrentBI)
+	end,
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = maps:get(weave_size, StateMap),
@@ -651,8 +656,7 @@ handle_cast({join, RecentBI}, State) ->
 	end,
 	BI = ar_block_index:get_list_by_hash(element(1, lists:last(RecentBI))),
 	repair_data_root_offset_index(BI, State),
-	DiskPoolThreshold = ar_disk_pool:get_threshold(RecentBI),
-	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
+	DiskPoolThreshold = ar_disk_pool:init_threshold(RecentBI),
 	State2 = store_sync_state(
 		State#sync_data_state{
 			weave_size = WeaveSize,
@@ -707,8 +711,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	ok = ar_chunk_storage:cut(BlockStartOffset, StoreID),
 	ok = ar_sync_record:cut(BlockStartOffset, ar_data_sync, StoreID),
 	ar_events:send(sync_record, {global_cut, BlockStartOffset}),
-	DiskPoolThreshold = ar_disk_pool:get_threshold(BI),
-	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
+	DiskPoolThreshold = ar_disk_pool:init_threshold(BI),
 	State2 = store_sync_state(
 		State#sync_data_state{
 			weave_size = WeaveSize,
@@ -1768,17 +1771,11 @@ read_chunk_with_metadata(
 	end.
 
 invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
-	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
+	T = ar_disk_pool:get_threshold(),
 	case AbsoluteEndOffset > T of
 		true ->
-			[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
-			case AbsoluteEndOffset > T of
-				true ->
-					%% Do not invalidate fresh records - a reorg may be in progress.
-					ok;
-				false ->
-					invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type})
-			end;
+			%% Do not invalidate fresh records - a reorg may be in progress.
+			ok;
 		false ->
 			invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type})
 	end.
@@ -1851,7 +1848,7 @@ delete_invalid_metadata(AbsoluteEndOffset, StoreID) ->
 
 validate_fetched_chunk(Args) ->
 	{Offset, DataPath, TXPath, TXRoot, ChunkSize, StoreID, RequestOrigin} = Args,
-	[{_, T}] = ets:lookup(ar_data_sync_state, disk_pool_threshold),
+	T = ar_disk_pool:get_threshold(),
 	case Offset > T orelse not ar_node:is_joined() of
 		true ->
 			case RequestOrigin of
@@ -2069,14 +2066,12 @@ read_data_sync_state() ->
 	case ar_storage:read_term(data_sync_state) of
 		{ok, #{ block_index := RecentBI } = M} ->
 			maps:merge(M, #{
-				weave_size => case RecentBI of [] -> 0; _ -> element(2, hd(RecentBI)) end,
-				disk_pool_threshold => maps:get(disk_pool_threshold, M,
-						ar_disk_pool:get_threshold(RecentBI)) });
+				weave_size => case RecentBI of [] -> 0; _ -> element(2, hd(RecentBI)) end });
 		not_found ->
 			#{ block_index => [], disk_pool_data_roots => #{}, disk_pool_size => 0,
-					weave_size => 0, packing_2_5_threshold => infinity,
-					disk_pool_threshold => 0 }
+					weave_size => 0, packing_2_5_threshold => infinity }
 	end.
+
 
 remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	#sync_data_state{ store_id = StoreID } = State,
