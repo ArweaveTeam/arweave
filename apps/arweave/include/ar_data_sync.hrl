@@ -121,8 +121,6 @@
 	%% be removed from disk as orphaned, reincluded into the weave (by updating chunks_index),
 	%% or removed from disk_pool_chunks_index by expiration.
 	disk_pool = undefined,
-	%% The weave offset for the disk pool - chunks above this offset are stored there.
-	disk_pool_threshold = 0,
 	%% A reference to the on-disk key value storage mapping
 	%% TXID => {AbsoluteTXEndOffset, TXSize}.
 	%% Is used to serve transaction data by TXID.

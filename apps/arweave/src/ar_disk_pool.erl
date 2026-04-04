@@ -1,14 +1,14 @@
 -module(ar_disk_pool).
 
 -export([add_chunk/5, add_data_root/3, maybe_drop_data_root/3,
-		get_threshold/0, set_threshold/1, init_threshold/1,
+		get_threshold/0, get_threshold/1, set_threshold/1, set_threshold/2, init_threshold/1,
 		get_unconfirmed_chunk/2, has_data_root/2,
 		record_chunks_count/0, remove_expired_data_roots/0,
 		debug_get_chunks/0]).
 
 -export([recalculate_size/2, add_block_data_roots/1,
 		reset_orphaned_data_roots_timestamps/1,
-		init_state/0, move_index/1]).
+		init_state/0, init_state/2, move_index/1]).
 
 -export([process_next_item/2, process_chunk_offsets/5,
 		remove_recently_processed_offset/3, resume_scan/1]).
@@ -271,9 +271,15 @@ get_threshold() ->
 			DiskPoolThreshold
 	end.
 
+get_threshold(#disk_pool_state{ threshold = DiskPoolThreshold }) ->
+	DiskPoolThreshold.
+
 set_threshold(DiskPoolThreshold) ->
 	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),
 	DiskPoolThreshold.
+
+set_threshold(DiskPool, DiskPoolThreshold) ->
+	DiskPool#disk_pool_state{ threshold = DiskPoolThreshold }.
 
 %% @doc Compute the current disk pool threshold from the block index,
 %% cache it in ETS, and return it.
@@ -354,6 +360,19 @@ reset_orphaned_data_roots_timestamps(DataRootKeySet) ->
 
 init_state() ->
 	#disk_pool_state{}.
+
+init_state(StateMap, StoreID) ->
+	DiskPoolDataRoots = maps:get(disk_pool_data_roots, StateMap),
+	recalculate_size(DiskPoolDataRoots, StoreID),
+	DiskPoolThreshold =
+		case StateMap of
+			#{ disk_pool_threshold := T } ->
+				set_threshold(T),
+				T;
+			_ ->
+				init_threshold(maps:get(block_index, StateMap))
+		end,
+	set_threshold(init_state(), DiskPoolThreshold).
 
 move_index(StoreID) ->
 	move_index2(first, StoreID).

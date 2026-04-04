@@ -492,7 +492,6 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	{ok, Config} = arweave_config:get_env(),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
-	ar_disk_pool:move_index(StoreID),
 	{ok, _} = ar_timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		ar_disk_pool,
@@ -518,21 +517,11 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	%% the corresponding entry is removed from DiskPoolDataRoots. When a data root is
 	%% confirmed, TXIDSet is set to not_set - from this point on, the key is only dropped
 	%% after expiration.
-	DiskPoolDataRoots = maps:get(disk_pool_data_roots, StateMap),
-	DiskPool = State#sync_data_state.disk_pool,
-	ar_disk_pool:recalculate_size(DiskPoolDataRoots, StoreID),
-	DiskPoolThreshold = case StateMap of
-		#{ disk_pool_threshold := T } ->
-			ar_disk_pool:set_threshold(T),
-			T;
-		_ ->
-			ar_disk_pool:init_threshold(CurrentBI)
-	end,
+	DiskPool = ar_disk_pool:init_state(StateMap, StoreID),
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = maps:get(weave_size, StateMap),
 		disk_pool = DiskPool,
-		disk_pool_threshold = DiskPoolThreshold,
 		store_id = StoreID,
 		sync_status = init_sync_status(StoreID)
 	},
@@ -592,9 +581,8 @@ init({StoreID, RepackInPlacePacking}) ->
 		store_id = StoreID,
 		range_start = RangeStart2,
 		range_end = RangeEnd2,
-		%% weave_size and disk_pool_threshold will be set on join
-		weave_size = 0,
-		disk_pool_threshold = 0
+		%% weave_size will be set on join
+		weave_size = 0
 	},
 
 	case RepackInPlacePacking of
@@ -661,7 +649,9 @@ handle_cast({join, RecentBI}, State) ->
 		State#sync_data_state{
 			weave_size = WeaveSize,
 			block_index = RecentBI,
-			disk_pool_threshold = ar_disk_pool:init_threshold(RecentBI)
+			disk_pool = ar_disk_pool:set_threshold(
+				State#sync_data_state.disk_pool,
+				ar_disk_pool:init_threshold(RecentBI))
 		}),
 	{noreply, State2};
 
@@ -717,7 +707,8 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 		State#sync_data_state{
 			weave_size = WeaveSize,
 			block_index = BI,
-			disk_pool_threshold = DiskPoolThreshold
+			disk_pool = ar_disk_pool:set_threshold(State#sync_data_state.disk_pool,
+				DiskPoolThreshold)
 		}),
 	{noreply, State2};
 
@@ -763,10 +754,11 @@ handle_cast(sync_data2, State) ->
 %%       ar_data_sync_coordinator for syncing.
 handle_cast(collect_peer_intervals, State) ->
 	#sync_data_state{ range_start = Start, range_end = End,
-			disk_pool_threshold = DiskPoolThreshold,
+			disk_pool = DiskPool,
 			sync_phase = SyncPhase,
 			store_id = StoreID,
 			sync_intervals_queue = Q } = State,
+	DiskPoolThreshold = ar_disk_pool:get_threshold(DiskPool),
 	CheckIsJoined =
 		case ar_node:is_joined() of
 			false ->
@@ -1189,7 +1181,10 @@ handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 	{noreply, State#sync_data_state{ weave_size = B#block.weave_size }};
 
 handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
-	{noreply, State#sync_data_state{ disk_pool_threshold = Bound }};
+	{noreply, State#sync_data_state{
+		disk_pool = ar_disk_pool:set_threshold(
+			State#sync_data_state.disk_pool,
+			ar_disk_pool:set_threshold(Bound)) }};
 
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
@@ -1433,7 +1428,8 @@ do_sync_intervals(State) ->
 
 do_sync_data(State) ->
 	#sync_data_state{ store_id = StoreID, range_start = RangeStart, range_end = RangeEnd,
-			disk_pool_threshold = DiskPoolThreshold } = State,
+			disk_pool = DiskPool } = State,
+	DiskPoolThreshold = ar_disk_pool:get_threshold(DiskPool),
 	%% See if any of StoreID's unsynced intervals can be found in the "default"
 	%% storage_module
 	Intervals = get_unsynced_intervals_from_other_storage_modules(
@@ -1945,12 +1941,13 @@ init_kv(StoreID) ->
 	{ok, Config} = arweave_config:get_env(),
 	DataDir = Config#config.data_dir,
 	ok = open_store_dbs(DataDir, StoreID),
+	ar_disk_pool:move_index(StoreID),
 	#sync_data_state{
 		chunks_index = {chunks_index, StoreID},
+		disk_pool = ar_disk_pool:init_state(),
 		chunk_data_db = {chunk_data_db, StoreID},
 		tx_index = {tx_index, StoreID},
-		tx_offset_index = {tx_offset_index, StoreID},
-		disk_pool = ar_disk_pool:init_state()
+		tx_offset_index = {tx_offset_index, StoreID}
 	}.
 
 open_store_dbs(DataDir, StoreID) ->
@@ -2457,7 +2454,8 @@ process_invalid_fetched_chunk(Peer, Byte, State, Event, ExtraLogs) ->
 	{noreply, State}.
 
 process_valid_fetched_chunk(ChunkArgs, Args, State) ->
-	#sync_data_state{ store_id = StoreID, disk_pool_threshold = DiskPoolThreshold } = State,
+	#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State,
+	DiskPoolThreshold = ar_disk_pool:get_threshold(DiskPool),
 	{Packing, UnpackedChunk, AbsoluteEndOffset, TXRoot, ChunkSize} = ChunkArgs,
 	{AbsoluteTXStartOffset, TXSize, DataPath, TXPath, DataRoot, Chunk, _ChunkID,
 			ChunkEndOffset, Peer, Byte} = Args,
@@ -2501,19 +2499,24 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 			end
 	end.
 
-pack_and_store_chunk({_, AbsoluteEndOffset, _, _, _, _, _, _, _, _, _, _},
-		#sync_data_state{ store_id = StoreID, disk_pool_threshold = DiskPoolThreshold } = State)
-		when AbsoluteEndOffset > DiskPoolThreshold ->
-	%% We do not put data into storage modules unless it is well confirmed.
-	Reason = chunk_is_above_disk_pool_threshold,
-	prometheus_counter:inc(sync_chunks_skipped, [Reason]),
-	?LOG_DEBUG([{event, skipping_synced_chunk},
-		{reason, Reason},
-		{absolute_end_offset, AbsoluteEndOffset},
-		{store_id, StoreID}]),
-	decrement_chunk_cache_size(),
-	{noreply, State};
-pack_and_store_chunk(Args, State) ->
+pack_and_store_chunk(Args = {_, AbsoluteEndOffset, _, _, _, _, _, _, _, _, _, _},
+		#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State) ->
+	case AbsoluteEndOffset > ar_disk_pool:get_threshold(DiskPool) of
+		true ->
+			%% We do not put data into storage modules unless it is well confirmed.
+			Reason = chunk_is_above_disk_pool_threshold,
+			prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+			?LOG_DEBUG([{event, skipping_synced_chunk},
+				{reason, Reason},
+				{absolute_end_offset, AbsoluteEndOffset},
+				{store_id, StoreID}]),
+			decrement_chunk_cache_size(),
+			{noreply, State};
+		false ->
+			pack_and_store_chunk2(Args, State)
+	end.
+
+pack_and_store_chunk2(Args, State) ->
 	{DataRoot, AbsoluteEndOffset, TXPath, TXRoot, DataPath, Packing, Offset, ChunkSize, Chunk,
 			UnpackedChunk, OriginStoreID, OriginChunkDataKey} = Args,
 	#sync_data_state{ store_id = StoreID, packing_map = PackingMap } = State,
