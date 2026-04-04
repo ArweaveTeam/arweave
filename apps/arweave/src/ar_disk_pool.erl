@@ -1,7 +1,7 @@
 -module(ar_disk_pool).
 
 -export([add_chunk/5, add_data_root/3, maybe_drop_data_root/3,
-		get_threshold/0, set_threshold/1, init_threshold/1,
+		get_threshold/0, set_threshold/1, update_threshold/1,
 		get_unconfirmed_chunk/2, has_data_root/2,
 		record_chunks_count/0, remove_expired_data_roots/0,
 		debug_get_chunks/0]).
@@ -277,7 +277,7 @@ set_threshold(DiskPoolThreshold) ->
 
 %% @doc Compute the current disk pool threshold from the block index,
 %% cache it in ETS, and return it.
-init_threshold(BI) ->
+update_threshold(BI) ->
 	DiskPoolThreshold = ar_node:get_partition_upper_bound(BI),
 	set_threshold(DiskPoolThreshold).
 
@@ -323,30 +323,35 @@ recalculate_size(DataRootMap, StoreID) ->
 	recalculate_size2(Index, DataRootMap2, first, 0).
 
 add_block_data_roots(DataRootKeySet) ->
-	sets:fold(
-		fun(R, T) ->
-			case ets:lookup(ar_disk_pool_data_roots, R) of
-				[] ->
-					ets:insert(ar_disk_pool_data_roots, {R, {0, T, not_set}});
-				[{_, {Size, Timeout, _}}] ->
-					ets:insert(ar_disk_pool_data_roots, {R, {Size, Timeout, not_set}})
-			end,
-			T + 1
-		end,
-		os:system_time(microsecond),
-		DataRootKeySet
-	).
+	update_data_roots(DataRootKeySet,
+		fun
+			(not_found, Timestamp) ->
+				{0, Timestamp, not_set};
+			({Size, Timeout, _}, _Timestamp) ->
+				{Size, Timeout, not_set}
+		end).
 
 reset_orphaned_data_roots_timestamps(DataRootKeySet) ->
+	update_data_roots(DataRootKeySet,
+		fun
+			(not_found, Timestamp) ->
+				{0, Timestamp, not_set};
+			({Size, _Timeout, TXIDSet}, Timestamp) ->
+				{Size, Timestamp, TXIDSet}
+		end).
+
+update_data_roots(DataRootKeySet, UpdateFun) ->
 	sets:fold(
-		fun(R, T) ->
-			case ets:lookup(ar_disk_pool_data_roots, R) of
-				[] ->
-					ets:insert(ar_disk_pool_data_roots, {R, {0, T, not_set}});
-				[{_, {Size, _, TXIDSet}}] ->
-					ets:insert(ar_disk_pool_data_roots, {R, {Size, T, TXIDSet}})
-			end,
-			T + 1
+		fun(DataRootKey, Timestamp) ->
+			Entry =
+				case ets:lookup(ar_disk_pool_data_roots, DataRootKey) of
+					[] ->
+						not_found;
+					[{_, Value}] ->
+						Value
+				end,
+			ets:insert(ar_disk_pool_data_roots, {DataRootKey, UpdateFun(Entry, Timestamp)}),
+			Timestamp + 1
 		end,
 		os:system_time(microsecond),
 		DataRootKeySet
@@ -362,7 +367,7 @@ init_state(StateMap, StoreID) ->
 		#{ disk_pool_threshold := T } ->
 			set_threshold(T);
 		_ ->
-			init_threshold(maps:get(block_index, StateMap))
+			update_threshold(maps:get(block_index, StateMap))
 	end,
 	init_state().
 

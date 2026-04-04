@@ -634,14 +634,13 @@ handle_cast({join, RecentBI}, State) ->
 			init:stop(1);
 		{_, {_H, Offset, _TXRoot}} ->
 			PreviousWeaveSize = element(2, hd(CurrentBI)),
-			{ok, OrphanedDataRoots} = remove_orphaned_data(State, Offset, PreviousWeaveSize),
+			ok = remove_orphaned_data(State, Offset, PreviousWeaveSize),
 			{ok, Config} = arweave_config:get_env(),
-			[gen_server:cast(name(ar_storage_module:id(Module)),
-					{cut, Offset}) || Module <- Config#config.storage_modules],
-			ok = ar_chunk_storage:cut(Offset, StoreID),
-			ok = ar_sync_record:cut(Offset, ar_data_sync, StoreID),
-			ar_events:send(sync_record, {global_cut, Offset}),
-			ar_disk_pool:reset_orphaned_data_roots_timestamps(OrphanedDataRoots)
+			lists:foreach(
+				fun(Module) ->
+					gen_server:cast(name(ar_storage_module:id(Module)), {cut, Offset})
+				end,
+				Config#config.storage_modules)
 	end,
 	BI = ar_block_index:get_list_by_hash(element(1, lists:last(RecentBI))),
 	repair_data_root_offset_index(BI, State),
@@ -680,7 +679,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 	#sync_data_state{ store_id = StoreID, weave_size = CurrentWeaveSize,
 			block_index = CurrentBI } = State,
 	{BlockStartOffset, Blocks} = pick_missing_blocks(CurrentBI, BlockTXPairs),
-	{ok, OrphanedDataRoots} = remove_orphaned_data(State, BlockStartOffset, CurrentWeaveSize),
+	ok = remove_orphaned_data(State, BlockStartOffset, CurrentWeaveSize),
 	{WeaveSize, AddedDataRoots} = lists:foldl(
 		fun ({_BH, []}, Acc) ->
 				Acc;
@@ -695,11 +694,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 		Blocks
 	),
 	ar_disk_pool:add_block_data_roots(AddedDataRoots),
-	ar_disk_pool:reset_orphaned_data_roots_timestamps(OrphanedDataRoots),
-	ok = ar_chunk_storage:cut(BlockStartOffset, StoreID),
-	ok = ar_sync_record:cut(BlockStartOffset, ar_data_sync, StoreID),
-	ar_events:send(sync_record, {global_cut, BlockStartOffset}),
-	DiskPoolThreshold = ar_disk_pool:init_threshold(BI),
+	ar_disk_pool:update_threshold(BI),
 	State2 = store_sync_state(
 		State#sync_data_state{
 			weave_size = WeaveSize,
@@ -2017,7 +2012,11 @@ remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	{ok, OrphanedDataRoots} =
 		ar_data_roots:remove_range(BlockStartOffset, WeaveSize, StoreID),
 	ok = delete_chunk_metadata_range(BlockStartOffset, WeaveSize, State),
-	{ok, OrphanedDataRoots}.
+	ok = ar_chunk_storage:cut(BlockStartOffset, StoreID),
+	ok = ar_sync_record:cut(BlockStartOffset, ar_data_sync, StoreID),
+	ar_events:send(sync_record, {global_cut, BlockStartOffset}),
+	ar_disk_pool:reset_orphaned_data_roots_timestamps(OrphanedDataRoots),
+	ok.
 
 remove_tx_index_range(Start, End, State) ->
 	#sync_data_state{ tx_offset_index = TXOffsetIndex, tx_index = TXIndex } = State,
