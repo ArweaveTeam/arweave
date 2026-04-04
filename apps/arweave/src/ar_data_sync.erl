@@ -492,7 +492,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	{ok, Config} = arweave_config:get_env(),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
 	State = init_kv(StoreID),
-	ar_disk_pool:move_index(State),
+	ar_disk_pool:move_index(StoreID),
 	{ok, _} = ar_timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		ar_disk_pool,
@@ -519,7 +519,8 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	%% confirmed, TXIDSet is set to not_set - from this point on, the key is only dropped
 	%% after expiration.
 	DiskPoolDataRoots = maps:get(disk_pool_data_roots, StateMap),
-	ar_disk_pool:recalculate_size(DiskPoolDataRoots, State),
+	DiskPool = State#sync_data_state.disk_pool,
+	ar_disk_pool:recalculate_size(DiskPoolDataRoots, StoreID),
 	DiskPoolThreshold = case StateMap of
 		#{ disk_pool_threshold := T } ->
 			ar_disk_pool:set_threshold(T),
@@ -530,7 +531,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = maps:get(weave_size, StateMap),
-		disk_pool_cursor = first,
+		disk_pool = DiskPool,
 		disk_pool_threshold = DiskPoolThreshold,
 		store_id = StoreID,
 		sync_status = init_sync_status(StoreID)
@@ -1046,73 +1047,21 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 			process_valid_fetched_chunk(ChunkArgs, Args, State)
 	end;
 
-handle_cast(process_disk_pool_item, #sync_data_state{ disk_pool_scan_pause = true } = State) ->
-	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), process_disk_pool_item),
-	{noreply, State};
-handle_cast(process_disk_pool_item, State) ->
-	#sync_data_state{ disk_pool_cursor = Cursor, disk_pool_chunks_index = DiskPoolChunksIndex,
-			disk_pool_full_scan_start_key = FullScanStartKey,
-			disk_pool_full_scan_start_timestamp = Timestamp,
-			currently_processed_disk_pool_keys = CurrentlyProcessedDiskPoolKeys } = State,
-	NextKey =
-		case ar_kv:get_next(DiskPoolChunksIndex, Cursor) of
-			{ok, Key1, Value1} ->
-				case sets:is_element(Key1, CurrentlyProcessedDiskPoolKeys) of
-					true ->
-						none;
-					false ->
-						{ok, Key1, Value1}
-				end;
-			none ->
-				case ar_kv:get_next(DiskPoolChunksIndex, first) of
-					none ->
-						none;
-					{ok, Key2, Value2} ->
-						case sets:is_element(Key2, CurrentlyProcessedDiskPoolKeys) of
-							true ->
-								none;
-							false ->
-								{ok, Key2, Value2}
-						end
-				end
-		end,
-	case NextKey of
-		none ->
-			ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), resume_disk_pool_scan),
-			ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), process_disk_pool_item),
-			{noreply, State#sync_data_state{ disk_pool_cursor = first,
-					disk_pool_full_scan_start_key = none, disk_pool_scan_pause = true }};
-		{ok, Key3, Value3} ->
-			case FullScanStartKey of
-				none ->
-					ar_disk_pool:process_item(State#sync_data_state{
-							disk_pool_full_scan_start_key = Key3,
-							disk_pool_full_scan_start_timestamp = erlang:timestamp() },
-							Key3, Value3);
-				Key3 ->
-					TimePassed = timer:now_diff(erlang:timestamp(), Timestamp),
-					case TimePassed < (?DISK_POOL_SCAN_DELAY_MS) * 1000 of
-						true ->
-							ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(),
-									resume_disk_pool_scan),
-							ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(),
-									process_disk_pool_item),
-							{noreply, State#sync_data_state{ disk_pool_cursor = first,
-									disk_pool_full_scan_start_key = none,
-									disk_pool_scan_pause = true }};
-						false ->
-							ar_disk_pool:process_item(State, Key3, Value3)
-					end;
-				_ ->
-					ar_disk_pool:process_item(State, Key3, Value3)
-			end
-	end;
+handle_cast(process_disk_pool_item,
+		#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State) ->
+	DiskPool2 = ar_disk_pool:process_next_item(DiskPool, StoreID),
+	{noreply, State#sync_data_state{ disk_pool = DiskPool2 }};
 
 handle_cast(resume_disk_pool_scan, State) ->
-	{noreply, State#sync_data_state{ disk_pool_scan_pause = false }};
+	#sync_data_state{ disk_pool = DiskPool } = State,
+	{noreply, State#sync_data_state{
+		disk_pool = ar_disk_pool:resume_scan(DiskPool) }};
 
 handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, State) ->
-	ar_disk_pool:process_chunk_offsets(Iterator, MayConclude, Args, State);
+	#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State,
+	DiskPool2 = ar_disk_pool:process_chunk_offsets(
+		Iterator, MayConclude, Args, StoreID, DiskPool),
+	{noreply, State#sync_data_state{ disk_pool = DiskPool2 }};
 
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
 	PID ! {removed_range, Ref},
@@ -1211,7 +1160,9 @@ handle_cast(store_sync_state, State) ->
 	{noreply, State};
 
 handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, State) ->
-	{noreply, ar_disk_pool:remove_recently_processed_offset(Offset, ChunkDataKey, State)};
+	#sync_data_state{ disk_pool = DiskPool } = State,
+	DiskPool2 = ar_disk_pool:remove_recently_processed_offset(Offset, ChunkDataKey, DiskPool),
+	{noreply, State#sync_data_state{ disk_pool = DiskPool2 }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
@@ -1999,8 +1950,7 @@ init_kv(StoreID) ->
 		chunk_data_db = {chunk_data_db, StoreID},
 		tx_index = {tx_index, StoreID},
 		tx_offset_index = {tx_offset_index, StoreID},
-		disk_pool_chunks_index = {disk_pool_chunks_index, StoreID},
-		disk_pool_chunks_index_old = {disk_pool_chunks_index_old, StoreID}
+		disk_pool = ar_disk_pool:init_state()
 	}.
 
 open_store_dbs(DataDir, StoreID) ->
@@ -2448,19 +2398,18 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 			{error, invalid_data_path}
 	end.
 
-update_chunks_index(Args, UpdateFootprint, State) ->
+update_chunks_index(Args, UpdateFootprint, StoreID) ->
 	AbsoluteChunkOffset = element(1, Args),
 	case ar_tx_blacklist:is_byte_blacklisted(AbsoluteChunkOffset) of
 		true ->
 			ok;
 		false ->
-			update_chunks_index2(Args, UpdateFootprint, State)
+			update_chunks_index2(Args, UpdateFootprint, StoreID)
 	end.
 
-update_chunks_index2(Args, UpdateFootprint, State) ->
+update_chunks_index2(Args, UpdateFootprint, StoreID) ->
 	{AbsoluteEndOffset, Offset, ChunkDataKey, TXRoot, DataRoot, TXPath, ChunkSize,
 			Packing} = Args,
-	#sync_data_state{ store_id = StoreID } = State,
 	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, Offset, ChunkSize},
 	case put_chunk_metadata(AbsoluteEndOffset, StoreID, Metadata) of
 		ok ->
@@ -2736,7 +2685,7 @@ store_chunk2(ChunkArgs, Args, State) ->
 				{true, Packing2} ->
 					UpdateFootprintRecord = is_footprint_record_supported(AbsoluteEndOffset, ChunkSize, Packing2),
 					case update_chunks_index({AbsoluteEndOffset, Offset, ChunkDataKey, TXRoot,
-							DataRoot, TXPath, ChunkSize, Packing2}, UpdateFootprintRecord, State) of
+							DataRoot, TXPath, ChunkSize, Packing2}, UpdateFootprintRecord, StoreID) of
 						ok ->
 							ok;
 						{error, Reason} ->
