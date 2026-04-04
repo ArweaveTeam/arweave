@@ -1028,19 +1028,27 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	end;
 
 handle_cast(process_disk_pool_item,
+		#sync_data_state{ scan_pause = true } = State) ->
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), process_disk_pool_item),
+	{noreply, State};
+handle_cast(process_disk_pool_item,
 		#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State) ->
-	DiskPool2 = ar_disk_pool:process_next_item(DiskPool, StoreID),
-	{noreply, State#sync_data_state{ disk_pool = DiskPool2 }};
+	handle_disk_pool_actions(ar_disk_pool:process_next_chunk(DiskPool, StoreID), State);
 
 handle_cast(resume_disk_pool_scan, State) ->
-	{noreply, State#sync_data_state{
-		disk_pool = ar_disk_pool:resume_scan(State#sync_data_state.disk_pool) }};
+	{noreply, State#sync_data_state{ scan_pause = false }};
 
+handle_cast({process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}, State)
+		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
+	#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State,
+	handle_disk_pool_actions(
+		ar_disk_pool:process_chunk_offsets(Key, Value, TXStartOffset, StoreID, DiskPool),
+		State);
 handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, State) ->
 	#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State,
-	DiskPool2 = ar_disk_pool:process_chunk_offsets(
-		Iterator, MayConclude, Args, StoreID, DiskPool),
-	{noreply, State#sync_data_state{ disk_pool = DiskPool2 }};
+	handle_disk_pool_actions(
+		ar_disk_pool:process_chunk_offsets(Iterator, MayConclude, Args, StoreID, DiskPool),
+		State);
 
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
 	PID ! {removed_range, Ref},
@@ -1146,6 +1154,43 @@ handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
 	{noreply, State}.
+
+handle_disk_pool_actions({continue, DiskPool}, State) ->
+	gen_server:cast(self(), process_disk_pool_item),
+	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
+handle_disk_pool_actions({none, DiskPool}, State) ->
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), resume_disk_pool_scan),
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), process_disk_pool_item),
+	{noreply, State#sync_data_state{ disk_pool = DiskPool, scan_pause = true }};
+handle_disk_pool_actions({check_offsets, Key, Value, TXStartOffset, DiskPool}, State)
+		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
+	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}),
+	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
+handle_disk_pool_actions({check_offsets, Iterator, MayConclude, Args, DiskPool}, State) ->
+	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}),
+	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
+handle_disk_pool_actions(
+		{store_chunk, StoreIDs, PackArgs, Iterator, ContinueArgs, CacheHint, DiskPool},
+		State) ->
+	increment_chunk_cache_size(),
+	lists:foreach(
+		fun(StoreID) ->
+			gen_server:cast(name(StoreID), {pack_and_store_chunk, PackArgs})
+		end,
+		StoreIDs
+	),
+	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, false, ContinueArgs}),
+	case CacheHint of
+		{cache_offset, Offset, ChunkDataKey} ->
+			ar_util:cast_after(
+				?CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS,
+				self(),
+				{remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}
+			);
+		no_cache_update ->
+			ok
+	end,
+	{noreply, State#sync_data_state{ disk_pool = DiskPool }}.
 
 handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
@@ -2106,9 +2151,7 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
 
 store_sync_state(#sync_data_state{ store_id = ?DEFAULT_MODULE } = State) ->
 	#sync_data_state{ block_index = BI } = State,
-	DiskPoolDataRoots = ets:foldl(
-			fun({DataRootKey, V}, Acc) -> maps:put(DataRootKey, V, Acc) end, #{},
-			ar_disk_pool_data_roots),
+	DiskPoolDataRoots = ar_disk_pool:get_data_roots(),
 	StoredState = #{ block_index => BI, disk_pool_data_roots => DiskPoolDataRoots,
 			%% Storing it for backwards-compatibility.
 			strict_data_split_threshold => ar_block:strict_data_split_threshold() },

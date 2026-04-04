@@ -22,9 +22,7 @@
 	recently_processed_offsets = #{},
 	%% A registry of the currently processed disk pool chunks consulted by different
 	%% disk pool jobs to avoid double-processing.
-	currently_processed_keys = sets:new(),
-	%% A flag used to temporarily pause all disk pool jobs.
-	scan_pause = false
+	currently_processed_keys = sets:new()
 }).
 
 -endif.
