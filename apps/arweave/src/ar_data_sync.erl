@@ -656,12 +656,11 @@ handle_cast({join, RecentBI}, State) ->
 	end,
 	BI = ar_block_index:get_list_by_hash(element(1, lists:last(RecentBI))),
 	repair_data_root_offset_index(BI, State),
-	DiskPoolThreshold = ar_disk_pool:init_threshold(RecentBI),
 	State2 = store_sync_state(
 		State#sync_data_state{
 			weave_size = WeaveSize,
 			block_index = RecentBI,
-			disk_pool_threshold = DiskPoolThreshold
+			disk_pool_threshold = ar_disk_pool:init_threshold(RecentBI)
 		}),
 	{noreply, State2};
 
@@ -698,7 +697,8 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 		fun ({_BH, []}, Acc) ->
 				Acc;
 			({_BH, SizeTaggedTXs}, {StartOffset, DataRootKeysAcc}) ->
-				{ok, DataRootKeys} = add_block_data_roots(SizeTaggedTXs, StartOffset, StoreID),
+				{ok, DataRootKeys} =
+					ar_data_roots:add_block_data_roots(SizeTaggedTXs, StartOffset, StoreID),
 				ok = update_tx_index(SizeTaggedTXs, StartOffset, StoreID),
 				{StartOffset + element(2, lists:last(SizeTaggedTXs)),
 					sets:union(DataRootKeysAcc, DataRootKeys)}
@@ -2126,7 +2126,8 @@ add_block(B, SizeTaggedTXs, StoreID) ->
 			case ar_data_roots:are_synced(B, StoreID) of
 				false ->
 					BlockStart = B#block.weave_size - B#block.block_size,
-					{ok, _} = add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID),
+					{ok, _} =
+						ar_data_roots:add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID),
 					ok = update_tx_index(SizeTaggedTXs, BlockStart, StoreID),
 					ok;
 				_ ->
@@ -2176,19 +2177,6 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
 		SizeTaggedTXs
 	),
 	ok.
-
-add_block_data_roots([], _BlockStart, _StoreID) ->
-	{ok, sets:new()};
-add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID) ->
-	{TXRoot, BlockSize, DataRootEntries} =
-		ar_data_roots:build_block_data_root_entries(BlockStart, SizeTaggedTXs),
-	case BlockSize > 0 of
-		true ->
-			ar_data_roots:store_block(
-				BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID);
-		false ->
-			{ok, sets:new()}
-	end.
 
 store_sync_state(#sync_data_state{ store_id = ?DEFAULT_MODULE } = State) ->
 	#sync_data_state{ block_index = BI } = State,

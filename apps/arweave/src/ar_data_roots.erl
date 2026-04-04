@@ -7,7 +7,7 @@
 	keys_column_family/1,
 	legacy_db/1,
 	keys_db/1,
-	build_block_data_root_entries/2,
+	add_block_data_roots/3,
 	store_block/5,
 	get_entry/2,
 	remove_range/3,
@@ -71,6 +71,18 @@ keys_db(StoreID) ->
 %%%===================================================================
 %%% Public: Block data root entries
 %%%===================================================================
+add_block_data_roots([], _BlockStart, _StoreID) ->
+	{ok, sets:new()};
+add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID) ->
+	{TXRoot, BlockSize, DataRootEntries} =
+		build_block_data_root_entries(BlockStart, SizeTaggedTXs),
+	case BlockSize > 0 of
+		true ->
+			store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID);
+		false ->
+			{ok, sets:new()}
+	end.
+
 %% @doc Build `{TXRoot, BlockSize, DataRootEntries}` for the given size-tagged txs.
 build_block_data_root_entries(BlockStart, SizeTaggedTXs) ->
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
