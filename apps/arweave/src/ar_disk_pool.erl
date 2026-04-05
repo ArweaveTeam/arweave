@@ -38,159 +38,164 @@
 %% The item is removed from the disk pool when the chunk's offset
 %% drops below the disk pool threshold.
 add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
-	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
-	DiskPoolChunksIndex = index_db(?DEFAULT_MODULE),
+	Metadata = #chunk_metadata{
+		data_root = DataRoot,
+		data_path = DataPath,
+		chunk_size = byte_size(Chunk)
+	},
 	DataRootID = ar_data_roots:id(DataRoot, TXSize),
 	DataRootEntry = ar_data_roots:get_entry(DataRootID, ?DEFAULT_MODULE),
 	DataRootInDiskPool = get_data_root(DataRootID),
-	ChunkSize = byte_size(Chunk),
+	maybe
+		{ok, DiskPoolDataRootValue} ?=
+			check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool),
+		{ok, EndOffset, Validation} ?=
+			validate_proof(Metadata, Offset, TXSize, Chunk),
+		{ok, DataPathHash, DiskPoolChunkKey} ?=
+			check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
+					DiskPoolDataRootValue),
+		persist_chunk(Metadata, Chunk, TXSize, DataRootID, DataRootEntry, EndOffset,
+				Validation, DataPathHash, DiskPoolChunkKey, DiskPoolDataRootValue)
+	end.
+
+check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool) ->
+	#chunk_metadata{ data_root = DataRoot, chunk_size = ChunkSize } = Metadata,
+	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
 	{ok, Config} = arweave_config:get_env(),
 	DataRootLimit = Config#config.max_disk_pool_data_root_buffer_mb * ?MiB,
 	DiskPoolLimit = Config#config.max_disk_pool_buffer_mb * ?MiB,
-	CheckDiskPool =
-		case {DataRootEntry, DataRootInDiskPool} of
-			{not_found, []} ->
-				?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
-					{reason, data_root_not_found}, {offset, Offset},
-					{data_root, ar_util:encode(DataRoot)}]),
-				{error, data_root_not_found};
-			{not_found, [{_, {Size, Timestamp, TXIDSet}}]} ->
-				case Size + ChunkSize > DataRootLimit
-						orelse DiskPoolSize + ChunkSize > DiskPoolLimit of
-					true ->
-						?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
-							{reason, exceeds_disk_pool_size_limit1}, {offset, Offset},
-							{data_root_size, Size}, {chunk_size, ChunkSize},
-							{data_root_limit, DataRootLimit}, {disk_pool_size, DiskPoolSize},
-							{disk_pool_limit, DiskPoolLimit}]),
-						{error, exceeds_disk_pool_size_limit};
-					false ->
-						{ok, {Size + ChunkSize, Timestamp, TXIDSet}}
-				end;
-			_ ->
-				case DiskPoolSize + ChunkSize > DiskPoolLimit of
-					true ->
-						?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
-							{reason, exceeds_disk_pool_size_limit2}, {offset, Offset},
-							{chunk_size, ChunkSize}, {disk_pool_size, DiskPoolSize},
-							{disk_pool_limit, DiskPoolLimit}]),
-						{error, exceeds_disk_pool_size_limit};
-					false ->
-						Timestamp =
-							case DataRootInDiskPool of
-								[] ->
-									os:system_time(microsecond);
-								[{_, {_, Timestamp2, _}}] ->
-									Timestamp2
-							end,
-						{ok, {ChunkSize, Timestamp, not_set}}
-				end
-		end,
-	ValidateProof =
-		case CheckDiskPool of
-			{error, _} = Error ->
-				Error;
-			{ok, DiskPoolDataRootValue} ->
-				case ar_poa:validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
-					false ->
-						?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
-							{reason, invalid_proof}, {offset, Offset}]),
-						{error, invalid_proof};
-					{true, PassesBase, PassesStrict, PassesRebase, EndOffset} ->
-						{ok, {EndOffset, PassesBase, PassesStrict, PassesRebase,
-								DiskPoolDataRootValue}}
-				end
-		end,
-	CheckSynced =
-		case ValidateProof of
-			{error, _} = Error2 ->
-				Error2;
-			{ok, {EndOffset2, _PassesBase2, _PassesStrict2, _PassesRebase2,
-					{_, Timestamp3, _}} = PassedState2} ->
-				DataPathHash = crypto:hash(sha256, DataPath),
-				DiskPoolChunkKey = << Timestamp3:256, DataPathHash/binary >>,
-				case ar_kv:get(DiskPoolChunksIndex, DiskPoolChunkKey) of
-					{ok, _DiskPoolChunk} ->
-						{synced_disk_pool, EndOffset2};
-					not_found ->
-						case DataRootEntry of
-							not_found ->
-								{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}};
-							{ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}} ->
-								case chunk_offsets_synced(DataRootID,
-										EndOffset2, TXStartOffset) of
-									true ->
-										synced;
-									false ->
-										{ok, {DataPathHash, DiskPoolChunkKey, PassedState2}}
-								end
-						end;
-					{error, Reason} ->
-						?LOG_WARNING([{event, failed_to_read_chunk_from_disk_pool},
-								{reason, io_lib:format("~p", [Reason])},
-								{data_path_hash, ar_util:encode(DataPathHash)},
-								{data_root, ar_util:encode(DataRoot)},
-								{relative_offset, EndOffset2}]),
-						{error, failed_to_store_chunk}
-				end
-		end,
-	case CheckSynced of
-		synced ->
-			ok;
-		{synced_disk_pool, EndOffset4} ->
-			case is_estimated_long_term_chunk(DataRootEntry, EndOffset4) of
+	case {DataRootEntry, DataRootInDiskPool} of
+		{not_found, []} ->
+			?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
+				{reason, data_root_not_found}, {offset, Offset},
+				{data_root, ar_util:encode(DataRoot)}]),
+			{error, data_root_not_found};
+		{not_found, [{_, {Size, Timestamp, TXIDSet}}]} ->
+			case Size + ChunkSize > DataRootLimit
+					orelse DiskPoolSize + ChunkSize > DiskPoolLimit of
+				true ->
+					?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
+						{reason, exceeds_disk_pool_size_limit1}, {offset, Offset},
+						{data_root_size, Size}, {chunk_size, ChunkSize},
+						{data_root_limit, DataRootLimit}, {disk_pool_size, DiskPoolSize},
+						{disk_pool_limit, DiskPoolLimit}]),
+					{error, exceeds_disk_pool_size_limit};
+				false ->
+					{ok, {Size + ChunkSize, Timestamp, TXIDSet}}
+			end;
+		_ ->
+			case DiskPoolSize + ChunkSize > DiskPoolLimit of
+				true ->
+					?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
+						{reason, exceeds_disk_pool_size_limit2}, {offset, Offset},
+						{chunk_size, ChunkSize}, {disk_pool_size, DiskPoolSize},
+						{disk_pool_limit, DiskPoolLimit}]),
+					{error, exceeds_disk_pool_size_limit};
+				false ->
+					Timestamp =
+						case DataRootInDiskPool of
+							[] ->
+								os:system_time(microsecond);
+							[{_, {_, Timestamp2, _}}] ->
+								Timestamp2
+						end,
+					{ok, {ChunkSize, Timestamp, not_set}}
+			end
+	end.
+
+validate_proof(Metadata, Offset, TXSize, Chunk) ->
+	#chunk_metadata{ data_root = DataRoot, data_path = DataPath } = Metadata,
+	case ar_poa:validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
+		false ->
+			?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
+				{reason, invalid_proof}, {offset, Offset}]),
+			{error, invalid_proof};
+		{true, PassesBase, PassesStrict, PassesRebase, EndOffset} ->
+			{ok, EndOffset, {PassesBase, PassesStrict, PassesRebase}}
+	end.
+
+check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
+		{_, Timestamp, _}) ->
+	#chunk_metadata{ data_root = DataRoot, data_path = DataPath } = Metadata,
+	DataPathHash = crypto:hash(sha256, DataPath),
+	DiskPoolChunkKey = << Timestamp:256, DataPathHash/binary >>,
+	case ar_kv:get(index_db(?DEFAULT_MODULE), DiskPoolChunkKey) of
+		{ok, _DiskPoolChunk} ->
+			case is_estimated_long_term_chunk(DataRootEntry, EndOffset) of
 				false ->
 					temporary;
 				true ->
 					ok
 			end;
-		{error, _} = Error4 ->
-			Error4;
-		{ok, {DataPathHash2, DiskPoolChunkKey2, {EndOffset3, PassesBase3, PassesStrict3,
-				PassesRebase3, DiskPoolDataRootValue2}}} ->
-			ChunkDataKey = get_chunk_data_key(DataPathHash2),
-			case ar_data_sync:put_chunk_data(ChunkDataKey, ?DEFAULT_MODULE,
-					{Chunk, DataPath}) of
+		not_found ->
+			case DataRootEntry of
+				not_found ->
+					{ok, DataPathHash, DiskPoolChunkKey};
+				{ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}} ->
+					case chunk_offsets_synced(DataRootID, EndOffset, TXStartOffset) of
+						true ->
+							ok;
+						false ->
+							{ok, DataPathHash, DiskPoolChunkKey}
+					end
+			end;
+		{error, Reason} ->
+			?LOG_WARNING([{event, failed_to_read_chunk_from_disk_pool},
+					{reason, io_lib:format("~p", [Reason])},
+					{data_path_hash, ar_util:encode(DataPathHash)},
+					{data_root, ar_util:encode(DataRoot)},
+					{relative_offset, EndOffset}]),
+			{error, failed_to_store_chunk}
+	end.
+
+persist_chunk(Metadata, Chunk, TXSize, DataRootID, DataRootEntry, EndOffset, Validation,
+		DataPathHash, DiskPoolChunkKey, DiskPoolDataRootValue) ->
+	#chunk_metadata{
+		data_root = DataRoot,
+		data_path = DataPath,
+		chunk_size = ChunkSize
+	} = Metadata,
+	{PassesBase, PassesStrict, PassesRebase} = Validation,
+	ChunkDataKey = get_chunk_data_key(DataPathHash),
+	case ar_data_sync:put_chunk_data(ChunkDataKey, ?DEFAULT_MODULE, {Chunk, DataPath}) of
+		{error, Reason} ->
+			?LOG_WARNING([{event, failed_to_store_chunk_in_disk_pool},
+				{reason, io_lib:format("~p", [Reason])},
+				{data_path_hash, ar_util:encode(DataPathHash)},
+				{data_root, ar_util:encode(DataRoot)},
+				{relative_offset, EndOffset}]),
+			{error, failed_to_store_chunk};
+		ok ->
+			DiskPoolChunkValue = term_to_binary({EndOffset, ChunkSize, DataRoot, TXSize,
+					ChunkDataKey, PassesBase, PassesStrict, PassesRebase}),
+			case ar_kv:put(index_db(?DEFAULT_MODULE), DiskPoolChunkKey,
+					DiskPoolChunkValue) of
 				{error, Reason2} ->
-					?LOG_WARNING([{event, failed_to_store_chunk_in_disk_pool},
+					?LOG_WARNING([{event, failed_to_record_chunk_in_disk_pool},
 						{reason, io_lib:format("~p", [Reason2])},
-						{data_path_hash, ar_util:encode(DataPathHash2)},
+						{data_path_hash, ar_util:encode(DataPathHash)},
 						{data_root, ar_util:encode(DataRoot)},
-						{relative_offset, EndOffset3}]),
+						{relative_offset, EndOffset}]),
 					{error, failed_to_store_chunk};
 				ok ->
-					DiskPoolChunkValue = term_to_binary({EndOffset3, ChunkSize, DataRoot,
-							TXSize, ChunkDataKey, PassesBase3, PassesStrict3, PassesRebase3}),
-					case ar_kv:put(DiskPoolChunksIndex, DiskPoolChunkKey2,
-							DiskPoolChunkValue) of
-						{error, Reason3} ->
-							?LOG_WARNING([{event, failed_to_record_chunk_in_disk_pool},
-								{reason, io_lib:format("~p", [Reason3])},
-								{data_path_hash, ar_util:encode(DataPathHash2)},
-								{data_root, ar_util:encode(DataRoot)},
-								{relative_offset, EndOffset3}]),
-							{error, failed_to_store_chunk};
-						ok ->
-							insert_data_root(DataRootID, DiskPoolDataRootValue2),
-							ets:update_counter(ar_data_sync_state, disk_pool_size,
-									{2, ChunkSize}),
-							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
-							case DiskPoolDataRootValue2 of
-								{_, _, not_set} ->
-									ok;
-								{_, _, TXIDSet2} ->
-									cache_chunk(TXIDSet2, EndOffset3,
-											DiskPoolChunkKey2, DataPathHash2)
-							end,
-							case is_estimated_long_term_chunk(DataRootEntry, EndOffset3) of
-								false ->
-									temporary;
-								true ->
-									ok
-							end
+					insert_data_root(DataRootID, DiskPoolDataRootValue),
+					ets:update_counter(ar_data_sync_state, disk_pool_size, {2, ChunkSize}),
+					prometheus_gauge:inc(pending_chunks_size, ChunkSize),
+					maybe_cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey,
+							DataPathHash),
+					case is_estimated_long_term_chunk(DataRootEntry, EndOffset) of
+						false ->
+							temporary;
+						true ->
+							ok
 					end
 			end
 	end.
+
+maybe_cache_chunk({_, _, not_set}, _, _, _) ->
+	ok;
+maybe_cache_chunk({_, _, TXIDSet}, EndOffset, DiskPoolChunkKey, DataPathHash) ->
+	cache_chunk(TXIDSet, EndOffset, DiskPoolChunkKey, DataPathHash).
 
 %% @doc Notify the server about the new pending data root (added to mempool).
 %% The server may accept pending chunks and store them in the disk pool.
