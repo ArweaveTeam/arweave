@@ -197,6 +197,7 @@ persist_chunk(Metadata, Chunk, TXSize, DataRootID, DataRootEntry, EndOffset, Val
 	end.
 
 maybe_cache_chunk({_, _, not_set}, _, _, _) ->
+	%% Chunk is already on-chain so no need to cache it.
 	ok;
 maybe_cache_chunk({_, _, TXIDSet}, EndOffset, DiskPoolChunkKey, DataPathHash) ->
 	cache_chunk(TXIDSet, EndOffset, DiskPoolChunkKey, DataPathHash).
