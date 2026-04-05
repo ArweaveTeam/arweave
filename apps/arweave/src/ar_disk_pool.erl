@@ -402,10 +402,10 @@ process_next_chunk(
 			cursor = Cursor,
 			full_scan_start_key = FullScanStartKey,
 			full_scan_start_timestamp = Timestamp,
-			currently_processed_keys = CurrentlyProcessedDiskPoolKeys
+			keys_in_process = KeysInProcess
 		} = DiskPool,
 		StoreID) ->
-	NextDiskPoolEntry = get_next(StoreID, Cursor, CurrentlyProcessedDiskPoolKeys),
+	NextDiskPoolEntry = get_next(StoreID, Cursor, KeysInProcess),
 	case NextDiskPoolEntry of
 		none ->
 			{none, pause_scan(DiskPool)};
@@ -445,22 +445,21 @@ process_chunk(DiskPool, StoreID, DiskPoolKey, DiskPoolValue) ->
 			%% all chunks belonging to the same data root because the data root is not
 			%% yet on chain.
 			NextCursor = {seek, << (Timestamp + 1):256 >>},
-			{continue, DiskPool#disk_pool_state{ cursor = NextCursor }};
+			{next_chunk, DiskPool#disk_pool_state{ cursor = NextCursor }};
 		{not_found, false} ->
 			%% The chunk was either orphaned or never made it to the chain.
 			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize),
 			NextCursor = << DiskPoolKey/binary, <<"a">>/binary >>,
 			DiskPool2 = maybe_reset_full_scan_key(DiskPoolKey, DiskPool),
-			{continue, DiskPool2#disk_pool_state{ cursor = NextCursor }};
+			{next_chunk, DiskPool2#disk_pool_state{ cursor = NextCursor }};
 		{{ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}}, _} ->
 			NextCursor = << DiskPoolKey/binary, <<"a">>/binary >>,
 			DiskPool2 = DiskPool#disk_pool_state{ cursor = NextCursor },
-			{check_offsets, DiskPoolKey, DiskPoolValue, TXStartOffset, DiskPool2}
+			{next_offset, DiskPoolKey, DiskPoolValue, TXStartOffset, DiskPool2}
 	end.
 
 process_chunk_offsets(DiskPoolKey, DiskPoolValue, TXStartOffset, StoreID, DiskPool)
 		when is_binary(DiskPoolKey), is_binary(DiskPoolValue), is_integer(TXStartOffset) ->
-	<< _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
 	DiskPoolChunk = parse_chunk(DiskPoolValue),
 	{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey,
 			PassedBaseValidation, PassedStrictValidation,
@@ -469,25 +468,34 @@ process_chunk_offsets(DiskPoolKey, DiskPoolValue, TXStartOffset, StoreID, DiskPo
 	DataRootIndexIterator = ar_data_roots:iterator(DataRootID, TXStartOffset + 1,
 			StoreID),
 	InDiskPool = has_data_root(DataRootID),
-	Args = {Offset, InDiskPool, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey,
-			PassedBaseValidation, PassedStrictValidation, PassedRebaseValidation},
+	Metadata = #chunk_metadata{
+		chunk_data_key = ChunkDataKey,
+		data_root = DataRoot,
+		chunk_size = ChunkSize
+	},
+	Validation = {PassedBaseValidation, PassedStrictValidation,
+			PassedRebaseValidation},
+	Args = {Offset, InDiskPool, DiskPoolKey, Metadata, Validation},
 	process_chunk_offsets(DataRootIndexIterator, true, Args, StoreID, DiskPool);
 
-process_chunk_offsets(Iterator, MayConclude, Args, StoreID, DiskPool) ->
-	{Offset, _, _, _, _, _, DiskPoolKey, _, _, _} = Args,
+process_chunk_offsets(Iterator, CanRemoveFromDiskPool, Args, StoreID, DiskPool) ->
+	{Offset, InDiskPool, DiskPoolKey, Metadata, Validation} = Args,
 	%% Place the chunk under its last configured offsets in the weave (the same data
 	%% may be uploaded several times).
 	case ar_data_roots:next(Iterator) of
 		{ok, DataRootEntry, Iterator2} ->
-			DiskPool2 = register_currently_processed_key(DiskPoolKey, DiskPool),
+			DiskPool2 = mark_key_in_process(DiskPoolKey, DiskPool),
 			{_DataRoot, _TXSize, TXStartOffset, TXPath} = DataRootEntry,
 			{ok, TXRoot} = ar_merkle:extract_root(TXPath),
 			AbsoluteEndOffset = TXStartOffset + Offset,
-			process_chunk_offset(Iterator2, TXRoot, TXPath, AbsoluteEndOffset,
-					MayConclude, Args, StoreID, DiskPool2);
+			Metadata2 = Metadata#chunk_metadata{ tx_path = TXPath, tx_root = TXRoot },
+			route_chunk_by_maturity(Iterator2, AbsoluteEndOffset,
+					CanRemoveFromDiskPool,
+					{Offset, InDiskPool, DiskPoolKey, Metadata2, Validation},
+					StoreID, DiskPool2);
 		_ ->
 			DiskPool2 =
-				case MayConclude of
+				case CanRemoveFromDiskPool of
 					true ->
 						Iterator2 = ar_data_roots:reset(Iterator),
 						delete_chunk(Iterator2, Args, StoreID, DiskPool),
@@ -495,7 +503,7 @@ process_chunk_offsets(Iterator, MayConclude, Args, StoreID, DiskPool) ->
 					false ->
 						DiskPool
 				end,
-			{continue, deregister_currently_processed_key(DiskPoolKey, DiskPool2)}
+			{next_chunk, unmark_key_in_process(DiskPoolKey, DiskPool2)}
 	end.
 
 remove_recently_processed_offset(Offset, ChunkDataKey, DiskPool) ->
@@ -543,16 +551,14 @@ remove_chunk_from_cache(DataPathHash) ->
 	ets:delete(ar_disk_pool_chunks_cache_reverse, DataPathHash).
 
 remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize) ->
-	DiskPoolChunksIndex = index_db(StoreID),
-	ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
+	ok = ar_kv:delete(index_db(StoreID), DiskPoolKey),
 	ok = ar_data_sync:delete_chunk_data(ChunkDataKey, StoreID),
 	<< _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
 	remove_chunk_from_cache(DataPathHash),
 	decrease_occupied_size(ChunkSize, DataRootID).
 
 get_unconfirmed_chunk_from_disk_pool(TXID, RelativeEndOffset, DiskPoolChunkKey) ->
-	DiskPoolChunksIndex = index_db(?DEFAULT_MODULE),
-	case ar_kv:get(DiskPoolChunksIndex, DiskPoolChunkKey) of
+	case ar_kv:get(index_db(?DEFAULT_MODULE), DiskPoolChunkKey) of
 		not_found ->
 			get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset);
 		{error, _} = Error ->
@@ -709,7 +715,7 @@ move_index2(Cursor, StoreID) ->
 			move_index2(DiskPoolKey, StoreID)
 	end.
 
-get_next(StoreID, Cursor, CurrentlyProcessedDiskPoolKeys) ->
+get_next(StoreID, Cursor, KeysInProcess) ->
 	NextDiskPoolEntry =
 		case ar_kv:get_next(index_db(StoreID), Cursor) of
 			none ->
@@ -721,7 +727,7 @@ get_next(StoreID, Cursor, CurrentlyProcessedDiskPoolKeys) ->
 	case NextDiskPoolEntry of
 		{ok, DiskPoolKey, _DiskPoolValue} ->
 			%% Do not return an item that is already being processed.
-			case sets:is_element(DiskPoolKey, CurrentlyProcessedDiskPoolKeys) of
+			case sets:is_element(DiskPoolKey, KeysInProcess) of
 				true ->
 					none;
 				false ->
@@ -773,40 +779,26 @@ pause_scan(DiskPool) ->
 		full_scan_start_key = none
 	}.
 
-register_currently_processed_key(DiskPoolKey, DiskPool) ->
-	#disk_pool_state{ currently_processed_keys = Keys } = DiskPool,
+mark_key_in_process(DiskPoolKey, DiskPool) ->
+	#disk_pool_state{ keys_in_process = Keys } = DiskPool,
 	Keys2 = sets:add_element(DiskPoolKey, Keys),
-	DiskPool#disk_pool_state{ currently_processed_keys = Keys2 }.
+	DiskPool#disk_pool_state{ keys_in_process = Keys2 }.
 
-deregister_currently_processed_key(DiskPoolKey, DiskPool) ->
-	#disk_pool_state{ currently_processed_keys = Keys } = DiskPool,
+unmark_key_in_process(DiskPoolKey, DiskPool) ->
+	#disk_pool_state{ keys_in_process = Keys } = DiskPool,
 	Keys2 = sets:del_element(DiskPoolKey, Keys),
-	DiskPool#disk_pool_state{ currently_processed_keys = Keys2 }.
+	DiskPool#disk_pool_state{ keys_in_process = Keys2 }.
 
-process_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayConclude, Args,
+%% A chunk offset is "mature" when it belongs to a sufficiently confirmed part
+%% of the weave, so the chunk may be moved out of the disk pool into long-term
+%% storage. Otherwise it is still "immature" and remains tracked in the disk pool.
+route_chunk_by_maturity(Iterator, AbsoluteEndOffset, CanRemoveFromDiskPool, Args,
 		StoreID, DiskPool) ->
 	DiskPoolThreshold = get_threshold(),
-	{Offset, _, _, DataRoot, DataPathHash, _, _,
-			PassedBase, PassedStrictValidation, PassedRebaseValidation} = Args,
-	PassedValidation =
-		case {AbsoluteEndOffset >= ar_data_sync:get_merkle_rebase_threshold(),
-				AbsoluteEndOffset >= ar_block:strict_data_split_threshold(),
-				PassedBase, PassedStrictValidation, PassedRebaseValidation} of
-			%% At the rebase threshold we relax some of the validation rules so the strict
-			%% validation may fail.
-			{true, true, _, _, true} ->
-				true;
-			%% Between the "strict" and "rebase" thresholds the "base" and "strict split"
-			%% rules must be followed.
-			{false, true, true, true, _} ->
-				true;
-			%% Before the strict threshold only the base (most relaxed) validation must
-			%% pass.
-			{false, false, true, _, _} ->
-				true;
-			_ ->
-				false
-		end,
+	{Offset, _, DiskPoolKey, Metadata, ValidationTuple} = Args,
+	#chunk_metadata{ data_root = DataRoot } = Metadata,
+	<< _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
+	PassedValidation = validate_for_final_offset(AbsoluteEndOffset, ValidationTuple),
 	case PassedValidation of
 		false ->
 			%% When we accept chunks into the disk pool, we do not know where they will
@@ -819,41 +811,87 @@ process_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayConclude, A
 			%% offset.
 			?LOG_INFO([{event, disk_pool_chunk_from_bad_split},
 					{absolute_end_offset, AbsoluteEndOffset},
-					{merkle_rebase_threshold, ar_data_sync:get_merkle_rebase_threshold()},
-					{strict_data_split_threshold, ar_block:strict_data_split_threshold()},
-					{passed_base, PassedBase}, {passed_strict, PassedStrictValidation},
-					{passed_rebase, PassedRebaseValidation},
 					{relative_offset, Offset},
 					{data_path_hash, ar_util:encode(DataPathHash)},
-					{data_root, ar_util:encode(DataRoot)}]),
-			{check_offsets, Iterator, MayConclude, Args, DiskPool};
+					{data_root, ar_util:encode(DataRoot)}
+					| validation_logs(AbsoluteEndOffset, ValidationTuple)]),
+			{next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool};
 		true ->
 			case AbsoluteEndOffset > DiskPoolThreshold of
 				true ->
-					process_immature_chunk_offset(Iterator, TXRoot, TXPath,
-							AbsoluteEndOffset, Args, StoreID, DiskPool);
+					process_immature_chunk(Iterator, AbsoluteEndOffset, Args, StoreID,
+							DiskPool);
 				false ->
-					process_matured_chunk_offset(Iterator, TXRoot, TXPath,
-							AbsoluteEndOffset, MayConclude, Args, StoreID, DiskPool)
+					process_mature_chunk(Iterator,
+							AbsoluteEndOffset, CanRemoveFromDiskPool, Args, StoreID,
+							DiskPool)
 			end
 	end.
 
-process_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, Args,
+%% We have now determined the chunk's final global weave offset and now know
+%% which validation rules apply. Apply the appropriate ruleset to determine if
+%% the chunk passes validation.
+validate_for_final_offset(AbsoluteEndOffset, ValidationTuple) ->
+	ValidateDataPathRuleset = ar_poa:get_data_path_validation_ruleset(
+		AbsoluteEndOffset,
+		ar_data_sync:get_merkle_rebase_threshold(),
+		ar_block:strict_data_split_threshold()),
+	{PassedBase, PassedStrictValidation, PassedRebaseValidation} = ValidationTuple,
+	PassedValidation =
+		case {ValidateDataPathRuleset, PassedBase, PassedStrictValidation,
+				PassedRebaseValidation} of
+			%% At the rebase threshold we relax some of the validation rules so the strict
+			%% validation may fail.
+			{offset_rebase_support_ruleset, _, _, true} ->
+				true;
+			%% Between the "strict" and "rebase" thresholds the "base" and "strict split"
+			%% rules must be followed.
+			{strict_data_split_ruleset, true, true, _} ->
+				true;
+			%% Before the strict threshold only the base (most relaxed) validation must
+			%% pass.
+			{strict_borders_ruleset, true, _, _} ->
+				true;
+			_ ->
+				false
+		end,
+	PassedValidation.
+
+validation_logs(AbsoluteEndOffset, ValidationTuple) ->
+	{PassedBase, PassedStrictValidation, PassedRebaseValidation} = ValidationTuple,
+	[{merkle_rebase_threshold, ar_data_sync:get_merkle_rebase_threshold()},
+		{strict_data_split_threshold, ar_block:strict_data_split_threshold()},
+		{validation_ruleset, ar_poa:get_data_path_validation_ruleset(
+				AbsoluteEndOffset,
+				ar_data_sync:get_merkle_rebase_threshold(),
+				ar_block:strict_data_split_threshold())},
+		{passed_base, PassedBase},
+		{passed_strict, PassedStrictValidation},
+		{passed_rebase, PassedRebaseValidation}].
+
+process_immature_chunk(Iterator, AbsoluteEndOffset, Args,
 		StoreID, DiskPool) ->
 	case ar_sync_record:is_recorded(AbsoluteEndOffset, ar_data_sync, StoreID) of
 		{true, unpacked} ->
-			%% Pass MayConclude as false because we have encountered an offset
-			%% above the disk pool threshold => we need to keep the chunk in the
-			%% disk pool for now and not pack and move to the offset-based storage.
-			%% The motivation is to keep chain reorganisations cheap.
-			{check_offsets, Iterator, false, Args, DiskPool};
+			%% Set CanRemoveFromDiskPool to false because we have encountered an
+			%% offset above the disk pool threshold => we need to keep the chunk
+			%% in the disk pool for now and not pack and move to the offset-based
+			%% storage. The motivation is to keep chain reorganisations cheap.
+			{next_offset, Iterator, false, Args, DiskPool};
 		false ->
-			{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey,
-					_, _, _} = Args,
+			{Offset, _, DiskPoolKey, Metadata, _} = Args,
+			#chunk_metadata{
+				chunk_data_key = ChunkDataKey,
+				data_root = DataRoot,
+				chunk_size = ChunkSize,
+				tx_root = TXRoot,
+				tx_path = TXPath
+			} = Metadata,
+			<< _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
 			case ar_data_sync:update_chunks_index({AbsoluteEndOffset, Offset, ChunkDataKey,
 					TXRoot, DataRoot, TXPath, ChunkSize, unpacked}, false, StoreID) of
 				ok ->
-					{check_offsets, Iterator, false, Args, DiskPool};
+					{next_offset, Iterator, false, Args, DiskPool};
 				{error, Reason} ->
 					?LOG_WARNING([{event, failed_to_index_disk_pool_chunk},
 							{reason, io_lib:format("~p", [Reason])},
@@ -861,23 +899,30 @@ process_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, Args,
 							{data_root, ar_util:encode(DataRoot)},
 							{absolute_end_offset, AbsoluteEndOffset},
 							{relative_offset, Offset},
-							{chunk_data_key, ar_util:encode(element(5, Args))}]),
-					{continue, deregister_currently_processed_key(DiskPoolKey, DiskPool)}
+							{chunk_data_key, ar_util:encode(ChunkDataKey)}]),
+					{next_chunk, unmark_key_in_process(DiskPoolKey, DiskPool)}
 			end
 	end.
 
-process_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayConclude,
-		Args, DefaultStoreID, DiskPool) ->
+process_mature_chunk(Iterator, AbsoluteEndOffset, CanRemoveFromDiskPool, Args,
+		DefaultStoreID, DiskPool) ->
 	%% The chunk has received a decent number of confirmations so we put it in storage
 	%% module(s). If we have no storage modules configured covering this offset, proceed to
 	%% the next offset. If there are several suitable storage modules, send the chunk
 	%% to those modules who have not have it synced yet.
-	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey,
-			_PassedBaseValidation, _PassedStrictValidation, _PassedRebaseValidation} = Args,
+	{Offset, _, DiskPoolKey, Metadata, _} = Args,
+	#chunk_metadata{
+		chunk_data_key = ChunkDataKey,
+		data_root = DataRoot,
+		chunk_size = ChunkSize,
+		tx_root = TXRoot,
+		tx_path = TXPath
+	} = Metadata,
+	<< _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
 	FindStorageModules =
 		case ar_storage_module:get_all(AbsoluteEndOffset - ChunkSize, AbsoluteEndOffset) of
 			[] ->
-				{outcome, {check_offsets, Iterator, MayConclude, Args, DiskPool}};
+				{outcome, {next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool}};
 			Modules ->
 				{store_ids, [ar_storage_module:id(Module) || Module <- Modules]}
 		end,
@@ -889,7 +934,7 @@ process_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayCon
 				case ar_tx_blacklist:is_byte_blacklisted(AbsoluteEndOffset) of
 					true ->
 						{outcome,
-							{check_offsets, Iterator, MayConclude, Args,
+							{next_offset, Iterator, CanRemoveFromDiskPool, Args,
 								remove_recently_processed_offset(
 									AbsoluteEndOffset, ChunkDataKey, DiskPool)}};
 					false ->
@@ -904,7 +949,7 @@ process_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayCon
 				case filter_storage_modules_by_synced_offset(AbsoluteEndOffset, StoreIDs2) of
 					[] ->
 						{outcome,
-							{check_offsets, Iterator, MayConclude, Args,
+							{next_offset, Iterator, CanRemoveFromDiskPool, Args,
 								remove_recently_processed_offset(
 									AbsoluteEndOffset, ChunkDataKey, DiskPool)}};
 					StoreIDs3 ->
@@ -918,7 +963,7 @@ process_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayCon
 			{store_ids, StoreIDs4} ->
 				case is_recently_processed_offset(AbsoluteEndOffset, ChunkDataKey, DiskPool) of
 					true ->
-						{outcome, {check_offsets, Iterator, false, Args, DiskPool}};
+						{outcome, {next_offset, Iterator, false, Args, DiskPool}};
 					false ->
 						{store_ids, StoreIDs4}
 				end
@@ -930,7 +975,7 @@ process_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayCon
 			{store_ids, StoreIDs5} ->
 				case ar_data_sync:is_chunk_cache_full() of
 					true ->
-						{outcome, {check_offsets, Iterator, false, Args, DiskPool}};
+						{outcome, {next_offset, Iterator, false, Args, DiskPool}};
 					false ->
 						{store_ids, StoreIDs5}
 				end
@@ -946,8 +991,8 @@ process_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayCon
 							{data_root, ar_util:encode(DataRoot)},
 							{absolute_end_offset, AbsoluteEndOffset},
 							{relative_offset, Offset},
-							{chunk_data_key, ar_util:encode(element(5, Args))}]),
-					{check_offsets, Iterator, MayConclude, Args, DiskPool};
+							{chunk_data_key, ar_util:encode(ChunkDataKey)}]),
+					{next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool};
 				{error, Reason2} ->
 					?LOG_ERROR([{event, failed_to_read_disk_pool_chunk},
 							{reason, io_lib:format("~p", [Reason2])},
@@ -955,8 +1000,8 @@ process_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayCon
 							{data_root, ar_util:encode(DataRoot)},
 							{absolute_end_offset, AbsoluteEndOffset},
 							{relative_offset, Offset},
-							{chunk_data_key, ar_util:encode(element(5, Args))}]),
-					{continue, deregister_currently_processed_key(DiskPoolKey, DiskPool)};
+							{chunk_data_key, ar_util:encode(ChunkDataKey)}]),
+					{next_chunk, unmark_key_in_process(DiskPoolKey, DiskPool)};
 				{ok, {Chunk, DataPath}} ->
 					Args2 = {DataRoot, AbsoluteEndOffset, TXPath, TXRoot, DataPath, unpacked,
 							Offset, ChunkSize, Chunk, Chunk, none, none},
@@ -996,7 +1041,8 @@ filter_storage_modules_by_synced_offset(_, []) ->
 	[].
 
 delete_chunk(Iterator, Args, StoreID, DiskPool) ->
-	{Offset, _, ChunkSize, _, _, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
+	{Offset, _, DiskPoolKey, Metadata, _} = Args,
+	#chunk_metadata{ chunk_data_key = ChunkDataKey, chunk_size = ChunkSize } = Metadata,
 	case ar_data_roots:next(Iterator) of
 		{ok, DataRootEntry, Iterator2} ->
 			{_, _, TXStartOffset, _} = DataRootEntry,

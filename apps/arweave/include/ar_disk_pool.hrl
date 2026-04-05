@@ -20,9 +20,9 @@
 	%% in the disk pool is some of its offsets have not matured yet (the same data can be
 	%% submitted several times).
 	recently_processed_offsets = #{},
-	%% A registry of the currently processed disk pool chunks consulted by different
+	%% A registry of the disk pool chunks in process consulted by different
 	%% disk pool jobs to avoid double-processing.
-	currently_processed_keys = sets:new()
+	keys_in_process = sets:new()
 }).
 
 -endif.

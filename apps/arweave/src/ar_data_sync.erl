@@ -1165,7 +1165,7 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_disk_pool_actions({continue, DiskPool}, State) ->
+handle_disk_pool_actions({next_chunk, DiskPool}, State) ->
 	gen_server:cast(self(), process_disk_pool_item),
 	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
 handle_disk_pool_actions(
@@ -1185,11 +1185,11 @@ handle_disk_pool_actions({none, DiskPool}, State) ->
 	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), resume_disk_pool_scan),
 	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), process_disk_pool_item),
 	{noreply, State#sync_data_state{ disk_pool = DiskPool, scan_pause = true }};
-handle_disk_pool_actions({check_offsets, Key, Value, TXStartOffset, DiskPool}, State)
+handle_disk_pool_actions({next_offset, Key, Value, TXStartOffset, DiskPool}, State)
 		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
 	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}),
 	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
-handle_disk_pool_actions({check_offsets, Iterator, MayConclude, Args, DiskPool}, State) ->
+handle_disk_pool_actions({next_offset, Iterator, MayConclude, Args, DiskPool}, State) ->
 	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}),
 	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
 handle_disk_pool_actions(
