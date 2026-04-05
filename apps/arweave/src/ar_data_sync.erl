@@ -1054,10 +1054,10 @@ handle_cast({process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}, State)
 	handle_disk_pool_actions(
 		ar_disk_pool:process_chunk_offsets(Key, Value, TXStartOffset, StoreID, DiskPool),
 		State);
-handle_cast({process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}, State) ->
+handle_cast({process_disk_pool_chunk_offsets, Iterator, CanRemoveFromDiskPool, Args}, State) ->
 	#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State,
 	handle_disk_pool_actions(
-		ar_disk_pool:process_chunk_offsets(Iterator, MayConclude, Args, StoreID, DiskPool),
+		ar_disk_pool:process_chunk_offsets(Iterator, CanRemoveFromDiskPool, Args, StoreID, DiskPool),
 		State);
 
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
@@ -1189,8 +1189,8 @@ handle_disk_pool_actions({next_offset, Key, Value, TXStartOffset, DiskPool}, Sta
 		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
 	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}),
 	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
-handle_disk_pool_actions({next_offset, Iterator, MayConclude, Args, DiskPool}, State) ->
-	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, MayConclude, Args}),
+handle_disk_pool_actions({next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool}, State) ->
+	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, CanRemoveFromDiskPool, Args}),
 	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
 handle_disk_pool_actions(
 		{store_chunk, StoreIDs, PackArgs, Iterator, ContinueArgs, CacheHint, DiskPool},
