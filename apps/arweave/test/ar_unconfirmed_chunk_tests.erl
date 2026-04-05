@@ -51,6 +51,9 @@ get_unconfirmed_chunk_data_path_valid_test_() ->
 get_unconfirmed_chunk_concurrent_requests_test_() ->
 	{timeout, 120, fun test_get_unconfirmed_chunk_concurrent_requests/0}.
 
+discover_all_unconfirmed_chunks_test_() ->
+	{timeout, 120, fun test_discover_all_unconfirmed_chunks/0}.
+
 %% @doc Chunk is in the disk pool (not yet mined) and served via the ETS cache path.
 test_get_unconfirmed_chunk_from_disk_pool() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
@@ -603,3 +606,174 @@ test_get_unconfirmed_chunk_concurrent_requests() ->
 		end,
 		Rest
 	).
+
+%% @doc A client with zero prior knowledge can discover and retrieve all unconfirmed
+%% chunks across multiple transactions using only public API endpoints:
+%%   GET /tx/pending -> GET /unconfirmed_tx/{txid} -> GET /unconfirmed_chunk/{txid}/{offset}
+test_discover_all_unconfirmed_chunks() ->
+	Wallet = ar_test_data_sync:setup_nodes(),
+	Peer = ar_test_node:peer_ip(main),
+
+	%% --- TX1: 2 full-size chunks ---
+	TX1Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 2)],
+	TX1DataSize = 2 * ?DATA_CHUNK_SIZE,
+	{TX1DataRoot, TX1DataTree} = ar_merkle:generate_tree(
+		ar_tx:sized_chunks_to_sized_chunk_ids(
+			ar_tx:chunks_to_size_tagged_chunks(TX1Chunks)
+		)
+	),
+	{TX1, TX1Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, TX1DataRoot, TX1Chunks}),
+	ar_test_node:assert_post_tx_to_peer(main, TX1),
+	%% POST chunk proofs for TX1.
+	lists:foreach(
+		fun({Chunk, N}) ->
+			ChunkEndOffset = N * ?DATA_CHUNK_SIZE,
+			DataPath = ar_merkle:generate_path(TX1DataRoot, ChunkEndOffset - 1, TX1DataTree),
+			Proof = #{
+				data_root => ar_util:encode(TX1DataRoot),
+				data_path => ar_util:encode(DataPath),
+				chunk => ar_util:encode(Chunk),
+				offset => integer_to_binary(ChunkEndOffset - 1),
+				data_size => integer_to_binary(TX1DataSize)
+			},
+			?assertMatch(
+				{ok, {{<<"200">>, _}, _, _, _, _}},
+				ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
+			)
+		end,
+		lists:zip(TX1Chunks, lists:seq(1, 2))
+	),
+
+	%% --- TX2: 1 full chunk + 1 sub-chunk-size chunk ---
+	SmallChunkSize = 1000,
+	TX2Chunk1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
+	TX2Chunk2 = crypto:strong_rand_bytes(SmallChunkSize),
+	TX2Chunks = [TX2Chunk1, TX2Chunk2],
+	TX2DataSize = ?DATA_CHUNK_SIZE + SmallChunkSize,
+	{TX2DataRoot, TX2DataTree} = ar_merkle:generate_tree(
+		ar_tx:sized_chunks_to_sized_chunk_ids(
+			ar_tx:chunks_to_size_tagged_chunks(TX2Chunks)
+		)
+	),
+	{TX2, TX2Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, TX2DataRoot, TX2Chunks}),
+	ar_test_node:assert_post_tx_to_peer(main, TX2),
+	%% POST chunk proofs for TX2.
+	TX2ChunkEndOffset1 = ?DATA_CHUNK_SIZE,
+	TX2DataPath1 = ar_merkle:generate_path(TX2DataRoot, TX2ChunkEndOffset1 - 1, TX2DataTree),
+	TX2Proof1 = #{
+		data_root => ar_util:encode(TX2DataRoot),
+		data_path => ar_util:encode(TX2DataPath1),
+		chunk => ar_util:encode(TX2Chunk1),
+		offset => integer_to_binary(TX2ChunkEndOffset1 - 1),
+		data_size => integer_to_binary(TX2DataSize)
+	},
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(TX2Proof1))
+	),
+	TX2ChunkEndOffset2 = TX2DataSize,
+	TX2DataPath2 = ar_merkle:generate_path(TX2DataRoot, TX2ChunkEndOffset2 - 1, TX2DataTree),
+	TX2Proof2 = #{
+		data_root => ar_util:encode(TX2DataRoot),
+		data_path => ar_util:encode(TX2DataPath2),
+		chunk => ar_util:encode(TX2Chunk2),
+		offset => integer_to_binary(TX2ChunkEndOffset2 - 1),
+		data_size => integer_to_binary(TX2DataSize)
+	},
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(TX2Proof2))
+	),
+
+	%% ============================================================
+	%% DISCOVERY PHASE: simulate a client that knows nothing
+	%% ============================================================
+
+	%% Step 1: GET /tx/pending -> discover TXIDs in the mempool.
+	{ok, {{<<"200">>, _}, _, PendingBody, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => "/tx/pending"
+		}),
+	PendingTXIDs = jiffy:decode(PendingBody),
+	EncodedTX1ID = ar_util:encode(TX1#tx.id),
+	EncodedTX2ID = ar_util:encode(TX2#tx.id),
+	?assert(lists:member(EncodedTX1ID, PendingTXIDs)),
+	?assert(lists:member(EncodedTX2ID, PendingTXIDs)),
+
+	%% Step 2 & 3: For each discovered TXID, fetch the TX to learn data_size,
+	%% then compute chunk offsets and retrieve each chunk.
+	lists:foreach(
+		fun(DiscoveredTXID) ->
+			%% Step 2: GET /unconfirmed_tx/{txid} -> learn data_size and data_root.
+			{ok, {{<<"200">>, _}, _, TXBody, _, _}} =
+				ar_http:req(#{
+					method => get,
+					peer => Peer,
+					path => "/unconfirmed_tx/" ++ binary_to_list(DiscoveredTXID)
+				}),
+			TXJson = jiffy:decode(TXBody, [return_maps]),
+			DiscoveredDataSize = binary_to_integer(maps:get(<<"data_size">>, TXJson)),
+			{ok, DiscoveredDataRoot} = ar_util:safe_decode(
+				maps:get(<<"data_root">>, TXJson)
+			),
+
+			%% Compute chunk end offsets from data_size alone.
+			ChunkEndOffsets = compute_chunk_end_offsets(DiscoveredDataSize),
+			?assert(length(ChunkEndOffsets) > 0),
+
+			%% Step 3: GET /unconfirmed_chunk/{txid}/{offset} for each computed offset.
+			RetrievedSize = lists:foldl(
+				fun(EndOffset, AccSize) ->
+					{ok, {{<<"200">>, _}, _, ChunkBody, _, _}} =
+						ar_test_node:get_unconfirmed_chunk(main, DiscoveredTXID, EndOffset),
+					ChunkResponse = jiffy:decode(ChunkBody, [return_maps]),
+					{ok, ReturnedChunk} = ar_util:safe_decode(
+						maps:get(<<"chunk">>, ChunkResponse)
+					),
+					{ok, ReturnedDataPath} = ar_util:safe_decode(
+						maps:get(<<"data_path">>, ChunkResponse)
+					),
+					?assertEqual(<<"unpacked">>, maps:get(<<"packing">>, ChunkResponse)),
+					%% Validate the merkle proof.
+					?assertMatch(
+						{_, _, _},
+						ar_merkle:validate_path(DiscoveredDataRoot, EndOffset - 1,
+							DiscoveredDataSize, ReturnedDataPath)
+					),
+					%% Verify chunk ID matches the merkle proof.
+					{ChunkID, _, _} = ar_merkle:validate_path(
+						DiscoveredDataRoot, EndOffset - 1,
+						DiscoveredDataSize, ReturnedDataPath
+					),
+					?assertEqual(ar_tx:generate_chunk_id(ReturnedChunk), ChunkID),
+					AccSize + byte_size(ReturnedChunk)
+				end,
+				0,
+				ChunkEndOffsets
+			),
+			%% The total retrieved data equals the advertised data_size.
+			?assertEqual(DiscoveredDataSize, RetrievedSize)
+		end,
+		[EncodedTX1ID, EncodedTX2ID]
+	).
+
+%% @doc Given a total data size, compute the chunk end offsets a client would use.
+%% Chunks are DATA_CHUNK_SIZE bytes each; the last chunk gets the remainder.
+compute_chunk_end_offsets(DataSize) ->
+	compute_chunk_end_offsets(DataSize, ?DATA_CHUNK_SIZE, []).
+
+compute_chunk_end_offsets(DataSize, _ChunkSize, Acc) when DataSize =< 0 ->
+	lists:reverse(Acc);
+compute_chunk_end_offsets(DataSize, ChunkSize, Acc) ->
+	NextOffset = case Acc of
+		[] -> min(ChunkSize, DataSize);
+		[Prev | _] -> min(Prev + ChunkSize, DataSize)
+	end,
+	case NextOffset of
+		DataSize ->
+			lists:reverse([DataSize | Acc]);
+		_ ->
+			compute_chunk_end_offsets(DataSize, ChunkSize, [NextOffset | Acc])
+	end.
