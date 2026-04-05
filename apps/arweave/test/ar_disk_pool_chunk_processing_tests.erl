@@ -76,13 +76,10 @@ wait_until_disk_pool_not_empty(Timeout) ->
 	).
 
 %% -------------------------------------------------------------------
-%% Gap 1: Orphaned chunk cleanup
-%%
 %% When a chunk's data root is not on chain AND not in the disk pool
 %% data roots ETS table, the chunk should be deleted from the disk pool
 %% index during the scan.
 %% -------------------------------------------------------------------
-
 test_orphaned_chunk_cleanup() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	{DataRoot, DataTree, Chunks} = make_chunk(),
@@ -93,22 +90,18 @@ test_orphaned_chunk_cleanup() ->
 	true = wait_until_disk_pool_not_empty(10_000),
 	%% Simulate orphaning: remove the data root from the disk pool data roots ETS.
 	%% Since we haven't mined, the data root is NOT in the data root index either.
-	%% This puts us in the {not_found, false} branch of process_item.
-	DataRootKey = << DataRoot/binary, ?DATA_CHUNK_SIZE:?OFFSET_KEY_BITSIZE >>,
-	ets:delete(ar_disk_pool_data_roots, DataRootKey),
+	DataRootID = ar_data_roots:id(DataRoot, ?DATA_CHUNK_SIZE),
+	ar_disk_pool:delete_data_root(DataRootID),
 	%% The disk pool scan should pick up the orphaned chunk and delete it.
 	true = wait_until_disk_pool_empty(30_000),
 	?assertEqual([], ar_disk_pool:debug_get_chunks()).
 
 %% -------------------------------------------------------------------
-%% Gap 3: Immature chunk indexing
-%%
 %% A chunk whose data root is on chain but whose absolute offset is
 %% still above the disk pool threshold (fewer than
 %% SEARCH_SPACE_UPPER_BOUND_DEPTH confirmations) should be indexed as
 %% unpacked but remain in the disk pool.
 %% -------------------------------------------------------------------
-
 test_immature_chunk_indexing() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
@@ -126,7 +119,7 @@ test_immature_chunk_indexing() ->
 	timer:sleep(2_000),
 	%% The chunk should be indexed as unpacked at its immature offset
 	%% (process_immature_chunk_offset path) but remain in the disk pool
-	%% since MayConclude is forced to false for immature offsets.
+	%% since CanRemoveFromDiskPool is forced to false for immature offsets.
 	DiskPoolChunks = ar_disk_pool:debug_get_chunks(),
 	?assertNotEqual([], DiskPoolChunks),
 	%% Now mine enough blocks to push the chunk past the disk pool threshold.
@@ -143,14 +136,11 @@ test_immature_chunk_indexing() ->
 	true = wait_until_disk_pool_empty(30_000).
 
 %% -------------------------------------------------------------------
-%% Gap 4: Blacklisted byte skipped
-%%
 %% When a chunk's absolute offset is blacklisted, the matured chunk
 %% offset processing should skip that offset. The chunk should still
-%% be cleaned from the disk pool (MayConclude is preserved), but
+%% be cleaned from the disk pool (CanRemoveFromDiskPool is preserved), but
 %% should NOT appear in the sync record at the blacklisted offset.
 %% -------------------------------------------------------------------
-
 test_blacklisted_byte_skipped() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
@@ -180,7 +170,7 @@ test_blacklisted_byte_skipped() ->
 	assert_wait_until_height(main, 3),
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 4),
-	%% The chunk should be cleaned from the disk pool (MayConclude preserved
+	%% The chunk should be cleaned from the disk pool (CanRemoveFromDiskPool preserved
 	%% for blacklisted offsets) but NOT stored at the blacklisted offset.
 	true = wait_until_disk_pool_empty(30_000),
 	StoreID = ar_storage_module:id(hd(StorageModules)),
@@ -191,13 +181,10 @@ test_blacklisted_byte_skipped() ->
 		AbsoluteEndOffset - 1).
 
 %% -------------------------------------------------------------------
-%% Gap 6: Chunk cache full defers processing
-%%
 %% When the chunk cache is full, the matured chunk offset processing
-%% should defer (MayConclude set to false) and retry later. Once the
+%% should defer (CanRemoveFromDiskPool set to false) and retry later. Once the
 %% cache drains, the chunk should be processed normally.
 %% -------------------------------------------------------------------
-
 test_chunk_cache_full_defers_processing() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
@@ -230,13 +217,10 @@ test_chunk_cache_full_defers_processing() ->
 	true = wait_until_disk_pool_empty(30_000).
 
 %% -------------------------------------------------------------------
-%% Gap 7: Chunk data not found resilience
-%%
 %% When the chunk data file is missing from the default store during
 %% matured chunk processing, an error is logged but the scan continues
 %% without crashing. The chunk stays in the disk pool for retry.
 %% -------------------------------------------------------------------
-
 test_chunk_data_not_found_resilience() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
@@ -271,11 +255,11 @@ test_chunk_data_not_found_resilience() ->
 	?assert(is_process_alive(DefaultSyncPid)).
 
 %% -------------------------------------------------------------------
-%% Gap 8: MayConclude accumulation across multiple offsets
+%% Gap 8: CanRemoveFromDiskPool accumulation across multiple offsets
 %%
 %% When the same data root appears at multiple weave offsets (same
 %% data uploaded in different TXs), and one offset is immature while
-%% another is mature, MayConclude should be false. The chunk stays
+%% another is mature, CanRemoveFromDiskPool should be false. The chunk stays
 %% in the disk pool until all offsets are processed. After all offsets
 %% mature, the chunk should be cleaned from the disk pool.
 %% -------------------------------------------------------------------
@@ -310,7 +294,7 @@ test_may_conclude_accumulation() ->
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 4),
 	%% The chunk should still be in the disk pool because TX2's offset
-	%% is immature, forcing MayConclude = false.
+	%% is immature, forcing CanRemoveFromDiskPool = false.
 	timer:sleep(5_000),
 	DiskPoolChunks = ar_disk_pool:debug_get_chunks(),
 	?assertNotEqual([], DiskPoolChunks),
