@@ -18,10 +18,12 @@
 
 -export([index_db/1, old_index_db/1]).
 
--export([record_chunks_count/0, debug_get_chunks/0]).
+-export([record_chunks_count/0]).
+
+%% test-only exports
+-export([debug_get_chunks/0, debug_get_chunks/1, delete_data_root/1]).
 
 -include("ar.hrl").
--include("ar_disk_pool.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -30,6 +32,30 @@
 -else.
 -define(MIN_CHUNK_PERSISTENCE_ESTIMATION_VICINITY, (10 * ?GiB)).
 -endif.
+
+-record(disk_pool_state, {
+	%% One of the keys from disk_pool_chunks_index or the atom "first".
+	%% The disk pool is processed chunk by chunk going from the oldest entry to the newest,
+	%% trying not to block the syncing process if the disk pool accumulates a lot of orphaned
+	%% and pending chunks. The cursor remembers the key after the last processed on the
+	%% previous iteration. After reaching the last key in the storage, we go back to
+	%% the first one. Not stored.
+	cursor = first,
+	%% A key marking the beginning of a full disk pool scan.
+	full_scan_start_key = none,
+	%% The timestamp of the beginning of a full disk pool scan. Used to measure
+	%% the time it takes to scan the current disk pool - if it is too short, we postpone
+	%% the next scan to save some disk IO.
+	full_scan_start_timestamp,
+	%% A cache of the offsets of the recently "matured" chunks. We use it to quickly
+	%% skip matured chunks when scanning the disk pool. The reason the chunk is still
+	%% in the disk pool is some of its offsets have not matured yet (the same data can be
+	%% submitted several times).
+	recently_processed_offsets = #{},
+	%% A registry of the disk pool chunks in process consulted by different
+	%% disk pool jobs to avoid double-processing.
+	keys_in_process = sets:new()
+}).
 
 %%%===================================================================
 %%% Chunk ingestion (POST /chunk).
