@@ -8,7 +8,7 @@
 		get_tx_offset/1, get_tx_offset_data_in_range/2,
 		request_tx_data_removal/3, request_data_removal/4,
 		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
-		get_chunk_by_byte/2, advance_chunks_index_cursor/1,
+		get_chunk_by_byte/2, advance_chunks_index_cursor/1, has_data_root/2,
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
@@ -93,6 +93,16 @@ register_workers() ->
 		Config#config.repack_in_place_storage_modules
 	),
 	StorageModuleWorkers ++ [DefaultStorageModuleWorker] ++ RepackInPlaceWorkers.
+
+%% @doc Return true if the given {DataRoot, DataSize} is in the mempool or in the index.
+has_data_root(DataRoot, DataSize) ->
+	DataRootID = ar_data_roots:id(DataRoot, DataSize),
+	case ar_disk_pool:has_data_root(DataRootID) of
+		true ->
+			true;
+		false ->
+			ar_data_roots:is_synced(DataRootID, ?DEFAULT_MODULE)
+	end.
 
 %% @doc Notify the server the node has joined the network on the given block index.
 join(RecentBI) ->
@@ -619,7 +629,7 @@ handle_cast({initialize_footprint_record, Cursor, Packing}, State) ->
 	{noreply, State2};
 
 handle_cast({join, RecentBI}, State) ->
-	#sync_data_state{ block_index = CurrentBI, store_id = StoreID } = State,
+	#sync_data_state{ block_index = CurrentBI } = State,
 	[{_, WeaveSize, _} | _] = RecentBI,
 	case {CurrentBI, ar_block_index:get_intersection(CurrentBI)} of
 		{[], _} ->
@@ -679,7 +689,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 			block_index = CurrentBI } = State,
 	{BlockStartOffset, Blocks} = pick_missing_blocks(CurrentBI, BlockTXPairs),
 	ok = remove_orphaned_data(State, BlockStartOffset, CurrentWeaveSize),
-	{WeaveSize, AddedDataRoots} = lists:foldl(
+	{WeaveSize, AddedDataRootIDs} = lists:foldl(
 		fun ({_BH, []}, Acc) ->
 				Acc;
 			({_BH, SizeTaggedTXs}, {StartOffset, DataRootIDsAcc}) ->
@@ -692,7 +702,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 		{BlockStartOffset, sets:new()},
 		Blocks
 	),
-	ar_disk_pool:add_block_data_roots(AddedDataRoots),
+	ar_disk_pool:add_block_data_roots(AddedDataRootIDs),
 	ar_disk_pool:update_threshold(BI),
 	State2 = store_sync_state(
 		State#sync_data_state{
@@ -1158,6 +1168,19 @@ handle_cast(Cast, State) ->
 handle_disk_pool_actions({continue, DiskPool}, State) ->
 	gen_server:cast(self(), process_disk_pool_item),
 	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
+handle_disk_pool_actions(
+		{wrapped, Timestamp, Key, Value, DiskPool},
+		#sync_data_state{ store_id = StoreID } = State)
+		when is_binary(Key), is_binary(Value) ->
+	TimePassed = timer:now_diff(erlang:timestamp(), Timestamp),
+	case TimePassed < (?DISK_POOL_SCAN_DELAY_MS) * 1000 of
+		true ->
+			handle_disk_pool_actions({none, ar_disk_pool:pause_scan(DiskPool)}, State);
+		false ->
+			handle_disk_pool_actions(
+				ar_disk_pool:process_chunk(DiskPool, StoreID, Key, Value),
+				State)
+	end;
 handle_disk_pool_actions({none, DiskPool}, State) ->
 	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), resume_disk_pool_scan),
 	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), process_disk_pool_item),

@@ -638,7 +638,7 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 					not_set ->
 						ok;
 					{ok, {DataRoot, DataSize}} ->
-						case ar_disk_pool:has_data_root(DataRoot, DataSize) of
+						case ar_data_sync:has_data_root(DataRoot, DataSize) of
 							true ->
 								ok;
 							false ->

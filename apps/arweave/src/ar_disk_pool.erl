@@ -2,7 +2,7 @@
 
 -export([add_chunk/5, add_data_root/3, maybe_drop_data_root/3,
 		get_threshold/0, set_threshold/1, update_threshold/1,
-		get_unconfirmed_chunk/2, has_data_root/2, get_data_roots/0,
+		get_unconfirmed_chunk/2, has_data_root/1, get_data_roots/0,
 		record_chunks_count/0, remove_expired_data_roots/0,
 		debug_get_chunks/0]).
 
@@ -11,13 +11,13 @@
 		init_state/0, init_state/2, move_index/1,
 		column_family/1, open_index_db/3]).
 
--export([process_next_chunk/2, process_chunk_offsets/5,
+-export([process_next_chunk/2, process_chunk/4, process_chunk_offsets/5,
+		pause_scan/1,
 		remove_recently_processed_offset/3,
 		index_db/1, old_index_db/1]).
 
 -include("ar.hrl").
 -include("ar_disk_pool.hrl").
--include("ar_data_sync.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -42,7 +42,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	DiskPoolChunksIndex = index_db(?DEFAULT_MODULE),
 	DataRootID = ar_data_roots:id(DataRoot, TXSize),
 	DataRootEntry = ar_data_roots:get_entry(DataRootID, ?DEFAULT_MODULE),
-	DataRootInDiskPool = has_data_root(DataRootID),
+	DataRootInDiskPool = get_data_root(DataRootID),
 	ChunkSize = byte_size(Chunk),
 	{ok, Config} = arweave_config:get_env(),
 	DataRootLimit = Config#config.max_disk_pool_data_root_buffer_mb * ?MiB,
@@ -91,7 +91,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 			{error, _} = Error ->
 				Error;
 			{ok, DiskPoolDataRootValue} ->
-				case validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
+				case ar_poa:validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
 					false ->
 						?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 							{reason, invalid_proof}, {offset, Offset}]),
@@ -200,7 +200,7 @@ add_data_root(DataRoot, _, _) when byte_size(DataRoot) < 32 ->
 	ok;
 add_data_root(DataRoot, TXSize, TXID) ->
 	DataRootID = ar_data_roots:id(DataRoot, TXSize),
-	case has_data_root(DataRootID) of
+	case get_data_root(DataRootID) of
 		[] ->
 			insert_data_root(DataRootID,
 				{0, os:system_time(microsecond), sets:from_list([TXID])});
@@ -218,7 +218,7 @@ maybe_drop_data_root(DataRoot, _, _) when byte_size(DataRoot) < 32 ->
 	ok;
 maybe_drop_data_root(DataRoot, TXSize, TXID) ->
 	DataRootID = ar_data_roots:id(DataRoot, TXSize),
-	case has_data_root(DataRootID) of
+	case get_data_root(DataRootID) of
 		[] ->
 			ok;
 		[{_, {_, _, not_set}}] ->
@@ -238,16 +238,8 @@ maybe_drop_data_root(DataRoot, TXSize, TXID) ->
 	end,
 	ok.
 
-%% @doc Return true if the given {DataRoot, DataSize} is in the mempool
-%% or in the index.
-has_data_root(DataRoot, DataSize) ->
-	DataRootID = ar_data_roots:id(DataRoot, DataSize),
-	case ets:member(ar_disk_pool_data_roots, DataRootID) of
-		true ->
-			true;
-		false ->
-			ar_data_roots:is_synced(DataRootID, ?DEFAULT_MODULE)
-	end.
+has_data_root(DataRootID) ->
+	ets:member(ar_disk_pool_data_roots, DataRootID).
 
 get_data_roots() ->
 	ets:foldl(
@@ -352,7 +344,7 @@ update_data_roots(DataRootIDSet, UpdateFun) ->
 	sets:fold(
 		fun(DataRootID, Timestamp) ->
 			Entry =
-				case has_data_root(DataRootID) of
+				case get_data_root(DataRootID) of
 					[] ->
 						not_found;
 					[{_, Value}] ->
@@ -400,6 +392,10 @@ move_index(StoreID) ->
 %%%===================================================================
 %%% Disk pool scan functions (called from ar_data_sync handle_cast).
 %%%===================================================================
+%% `process_next_chunk/2` advances the scan and either pauses, selects the next
+%% chunk to inspect, or reports that the full scan wrapped.
+%% `process_chunk/4` then decides whether to skip the data root for now, remove
+%% the chunk as orphaned, or continue with offset checks.
 
 process_next_chunk(
 		#disk_pool_state{
@@ -409,45 +405,39 @@ process_next_chunk(
 			currently_processed_keys = CurrentlyProcessedDiskPoolKeys
 		} = DiskPool,
 		StoreID) ->
-	NextKey = get_next_item(StoreID, Cursor, CurrentlyProcessedDiskPoolKeys),
-	case NextKey of
+	NextDiskPoolEntry = get_next(StoreID, Cursor, CurrentlyProcessedDiskPoolKeys),
+	case NextDiskPoolEntry of
 		none ->
-			pause_scan(DiskPool);
-		{ok, Key, Value} ->
+			{none, pause_scan(DiskPool)};
+		{ok, DiskPoolKey, DiskPoolValue} ->
 			case FullScanStartKey of
 				none ->
 					process_chunk(
 						DiskPool#disk_pool_state{
-							full_scan_start_key = Key,
+							full_scan_start_key = DiskPoolKey,
 							full_scan_start_timestamp = erlang:timestamp()
 						},
 						StoreID,
-						Key,
-						Value
+						DiskPoolKey,
+						DiskPoolValue
 					);
-				Key ->
-					TimePassed = timer:now_diff(erlang:timestamp(), Timestamp),
-					case TimePassed < (?DISK_POOL_SCAN_DELAY_MS) * 1000 of
-						true ->
-							pause_scan(DiskPool);
-						false ->
-							process_chunk(DiskPool, StoreID, Key, Value)
-					end;
+				DiskPoolKey ->
+					{wrapped, Timestamp, DiskPoolKey, DiskPoolValue, DiskPool};
 				_ ->
-					process_chunk(DiskPool, StoreID, Key, Value)
+					process_chunk(DiskPool, StoreID, DiskPoolKey, DiskPoolValue)
 			end
 	end.
 
-process_chunk(DiskPool, StoreID, Key, Value) ->
+process_chunk(DiskPool, StoreID, DiskPoolKey, DiskPoolValue) ->
 	prometheus_counter:inc(disk_pool_processed_chunks),
-	<< Timestamp:256, DataPathHash/binary >> = Key,
-	DiskPoolChunk = parse_chunk(Value),
+	<< Timestamp:256, _DataPathHash/binary >> = DiskPoolKey,
+	DiskPoolChunk = parse_chunk(DiskPoolValue),
 	{_Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey,
 			_PassedBaseValidation, _PassedStrictValidation,
 			_PassedRebaseValidation} = DiskPoolChunk,
 	DataRootID = ar_data_roots:id(DataRoot, TXSize),
 	DataRootEntry = ar_data_roots:get_entry(DataRootID, StoreID),
-	InDiskPool = ets:member(ar_disk_pool_data_roots, DataRootID),
+	InDiskPool = has_data_root(DataRootID),
 	case {DataRootEntry, InDiskPool} of
 		{not_found, true} ->
 			%% Increment the timestamp by one (microsecond), so that the new cursor is
@@ -458,42 +448,38 @@ process_chunk(DiskPool, StoreID, Key, Value) ->
 			{continue, DiskPool#disk_pool_state{ cursor = NextCursor }};
 		{not_found, false} ->
 			%% The chunk was either orphaned or never made it to the chain.
-			DiskPoolChunksIndex = index_db(StoreID),
-			ok = ar_kv:delete(DiskPoolChunksIndex, Key),
-			ok = ar_data_sync:delete_chunk_data(ChunkDataKey, StoreID),
-			remove_chunk_from_cache(DataPathHash),
-			decrease_occupied_size(ChunkSize, DataRootID),
-			NextCursor = << Key/binary, <<"a">>/binary >>,
-			DiskPool2 = maybe_reset_full_scan_key(Key, DiskPool),
+			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize),
+			NextCursor = << DiskPoolKey/binary, <<"a">>/binary >>,
+			DiskPool2 = maybe_reset_full_scan_key(DiskPoolKey, DiskPool),
 			{continue, DiskPool2#disk_pool_state{ cursor = NextCursor }};
 		{{ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}}, _} ->
-			NextCursor = << Key/binary, <<"a">>/binary >>,
+			NextCursor = << DiskPoolKey/binary, <<"a">>/binary >>,
 			DiskPool2 = DiskPool#disk_pool_state{ cursor = NextCursor },
-			{check_offsets, Key, Value, TXStartOffset, DiskPool2}
+			{check_offsets, DiskPoolKey, DiskPoolValue, TXStartOffset, DiskPool2}
 	end.
 
-process_chunk_offsets(Key, Value, TXStartOffset, StoreID, DiskPool)
-		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
-	<< _Timestamp:256, DataPathHash/binary >> = Key,
-	DiskPoolChunk = parse_chunk(Value),
+process_chunk_offsets(DiskPoolKey, DiskPoolValue, TXStartOffset, StoreID, DiskPool)
+		when is_binary(DiskPoolKey), is_binary(DiskPoolValue), is_integer(TXStartOffset) ->
+	<< _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
+	DiskPoolChunk = parse_chunk(DiskPoolValue),
 	{Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey,
 			PassedBaseValidation, PassedStrictValidation,
 			PassedRebaseValidation} = DiskPoolChunk,
 	DataRootID = ar_data_roots:id(DataRoot, TXSize),
 	DataRootIndexIterator = ar_data_roots:iterator(DataRootID, TXStartOffset + 1,
 			StoreID),
-	InDiskPool = ets:member(ar_disk_pool_data_roots, DataRootID),
-	Args = {Offset, InDiskPool, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key,
+	InDiskPool = has_data_root(DataRootID),
+	Args = {Offset, InDiskPool, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey,
 			PassedBaseValidation, PassedStrictValidation, PassedRebaseValidation},
 	process_chunk_offsets(DataRootIndexIterator, true, Args, StoreID, DiskPool);
 
 process_chunk_offsets(Iterator, MayConclude, Args, StoreID, DiskPool) ->
-	{Offset, _, _, _, _, _, Key, _, _, _} = Args,
+	{Offset, _, _, _, _, _, DiskPoolKey, _, _, _} = Args,
 	%% Place the chunk under its last configured offsets in the weave (the same data
 	%% may be uploaded several times).
 	case ar_data_roots:next(Iterator) of
 		{ok, DataRootEntry, Iterator2} ->
-			DiskPool2 = register_currently_processed_key(Key, DiskPool),
+			DiskPool2 = register_currently_processed_key(DiskPoolKey, DiskPool),
 			{_DataRoot, _TXSize, TXStartOffset, TXPath} = DataRootEntry,
 			{ok, TXRoot} = ar_merkle:extract_root(TXPath),
 			AbsoluteEndOffset = TXStartOffset + Offset,
@@ -505,11 +491,11 @@ process_chunk_offsets(Iterator, MayConclude, Args, StoreID, DiskPool) ->
 					true ->
 						Iterator2 = ar_data_roots:reset(Iterator),
 						delete_chunk(Iterator2, Args, StoreID, DiskPool),
-						maybe_reset_full_scan_key(Key, DiskPool);
+						maybe_reset_full_scan_key(DiskPoolKey, DiskPool);
 					false ->
 						DiskPool
 				end,
-			{continue, deregister_currently_processed_key(Key, DiskPool2)}
+			{continue, deregister_currently_processed_key(DiskPoolKey, DiskPool2)}
 	end.
 
 remove_recently_processed_offset(Offset, ChunkDataKey, DiskPool) ->
@@ -556,6 +542,14 @@ remove_chunk_from_cache(DataPathHash) ->
 	),
 	ets:delete(ar_disk_pool_chunks_cache_reverse, DataPathHash).
 
+remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize) ->
+	DiskPoolChunksIndex = index_db(StoreID),
+	ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
+	ok = ar_data_sync:delete_chunk_data(ChunkDataKey, StoreID),
+	<< _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
+	remove_chunk_from_cache(DataPathHash),
+	decrease_occupied_size(ChunkSize, DataRootID).
+
 get_unconfirmed_chunk_from_disk_pool(TXID, RelativeEndOffset, DiskPoolChunkKey) ->
 	DiskPoolChunksIndex = index_db(?DEFAULT_MODULE),
 	case ar_kv:get(DiskPoolChunksIndex, DiskPoolChunkKey) of
@@ -563,8 +557,8 @@ get_unconfirmed_chunk_from_disk_pool(TXID, RelativeEndOffset, DiskPoolChunkKey) 
 			get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset);
 		{error, _} = Error ->
 			Error;
-		{ok, Value} ->
-			DiskPoolChunk = parse_chunk(Value),
+		{ok, DiskPoolValue} ->
+			DiskPoolChunk = parse_chunk(DiskPoolValue),
 			{RelEndOffset, _ChunkSize, DataRoot, TXSize, ChunkDataKey,
 					_PassesBase, _PassesStrict, _PassesRebase} = DiskPoolChunk,
 			case ar_data_sync:get_chunk_data(ChunkDataKey, ?DEFAULT_MODULE) of
@@ -636,43 +630,6 @@ is_offset_vicinity_covered(Offset) ->
 			ar_node:get_recent_max_block_size()),
 	ar_storage_module:has_range(max(0, Offset - Size * 2), Offset + Size * 2).
 
-validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
-	Base = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath, strict_borders_ruleset),
-	Strict = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath,
-			strict_data_split_ruleset),
-	Rebase = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath,
-			offset_rebase_support_ruleset),
-	Result =
-		case {Base, Strict, Rebase} of
-			{false, false, false} ->
-				false;
-			{_, {_, _, _} = StrictResult, _} ->
-				StrictResult;
-			{_, _, {_, _, _} = RebaseResult} ->
-				RebaseResult;
-			{{_, _, _} = BaseResult, _, _} ->
-				BaseResult
-		end,
-	case Result of
-		false ->
-			false;
-		{ChunkID, StartOffset, EndOffset} ->
-			case ar_tx:generate_chunk_id(Chunk) == ChunkID of
-				false ->
-					false;
-				true ->
-					case EndOffset - StartOffset == byte_size(Chunk) of
-						true ->
-							PassesBase = not (Base == false),
-							PassesStrict = not (Strict == false),
-							PassesRebase = not (Rebase == false),
-							{true, PassesBase, PassesStrict, PassesRebase, EndOffset};
-						false ->
-							false
-					end
-			end
-	end.
-
 chunk_offsets_synced(DataRootID, ChunkOffset, TXStartOffset) ->
 	case ar_sync_record:is_recorded(TXStartOffset + ChunkOffset, ar_data_sync) of
 		{{true, _}, _StoreID} ->
@@ -722,8 +679,8 @@ recalculate_size2(Index, DataRootMap, Cursor, Sum) ->
 			prometheus_gauge:set(pending_chunks_size, Sum),
 			maps:map(fun(DataRootID, V) -> insert_data_root(DataRootID, V) end, DataRootMap),
 			ets:insert(ar_data_sync_state, {disk_pool_size, Sum});
-		{ok, Key, Value} ->
-			DecodedValue = binary_to_term(Value, [safe]),
+		{ok, DiskPoolKey, DiskPoolValue} ->
+			DecodedValue = binary_to_term(DiskPoolValue, [safe]),
 			ChunkSize = element(2, DecodedValue),
 			DataRoot = element(3, DecodedValue),
 			TXSize = element(4, DecodedValue),
@@ -736,7 +693,7 @@ recalculate_size2(Index, DataRootMap, Cursor, Sum) ->
 						maps:put(DataRootID, {Size + ChunkSize, Timestamp, TXIDSet},
 								DataRootMap)
 				end,
-			Cursor2 = << Key/binary, <<"a">>/binary >>,
+			Cursor2 = << DiskPoolKey/binary, <<"a">>/binary >>,
 			recalculate_size2(Index, DataRootMap2, Cursor2, Sum + ChunkSize)
 	end.
 
@@ -746,34 +703,32 @@ move_index2(Cursor, StoreID) ->
 	case ar_kv:get_next(Old, Cursor) of
 		none ->
 			ok;
-		{ok, Key, Value} ->
-			ok = ar_kv:put(New, Key, Value),
-			ok = ar_kv:delete(Old, Key),
-			move_index2(Key, StoreID)
+		{ok, DiskPoolKey, DiskPoolValue} ->
+			ok = ar_kv:put(New, DiskPoolKey, DiskPoolValue),
+			ok = ar_kv:delete(Old, DiskPoolKey),
+			move_index2(DiskPoolKey, StoreID)
 	end.
 
-get_next_item(StoreID, Cursor, CurrentlyProcessedDiskPoolKeys) ->
-	DiskPoolChunksIndex = index_db(StoreID),
-	case ar_kv:get_next(DiskPoolChunksIndex, Cursor) of
-		{ok, Key, Value} ->
-			case sets:is_element(Key, CurrentlyProcessedDiskPoolKeys) of
+get_next(StoreID, Cursor, CurrentlyProcessedDiskPoolKeys) ->
+	NextDiskPoolEntry =
+		case ar_kv:get_next(index_db(StoreID), Cursor) of
+			none ->
+				%% Wrap around to the start when the cursor reaches the end of the index.
+				ar_kv:get_next(index_db(StoreID), first);
+			DiskPoolEntry ->
+				DiskPoolEntry
+		end,
+	case NextDiskPoolEntry of
+		{ok, DiskPoolKey, _DiskPoolValue} ->
+			%% Do not return an item that is already being processed.
+			case sets:is_element(DiskPoolKey, CurrentlyProcessedDiskPoolKeys) of
 				true ->
 					none;
 				false ->
-					{ok, Key, Value}
+					NextDiskPoolEntry
 			end;
 		none ->
-			case ar_kv:get_next(DiskPoolChunksIndex, first) of
-				{ok, Key, Value} ->
-					case sets:is_element(Key, CurrentlyProcessedDiskPoolKeys) of
-						true ->
-							none;
-						false ->
-							{ok, Key, Value}
-					end;
-				none ->
-					none
-			end
+			none
 	end.
 
 parse_chunk(Bin) ->
@@ -789,7 +744,7 @@ parse_chunk(Bin) ->
 decrease_occupied_size(Size, DataRootID) ->
 	ets:update_counter(ar_data_sync_state, disk_pool_size, {2, -Size}),
 	prometheus_gauge:dec(pending_chunks_size, Size),
-	case has_data_root(DataRootID) of
+	case get_data_root(DataRootID) of
 		[] ->
 			ok;
 		[{_, {Size2, Timestamp, TXIDSet}}] ->
@@ -797,7 +752,7 @@ decrease_occupied_size(Size, DataRootID) ->
 			ok
 	end.
 
-has_data_root(DataRootID) ->
+get_data_root(DataRootID) ->
 	ets:lookup(ar_disk_pool_data_roots, DataRootID).
 
 insert_data_root(DataRootID, Value) ->
@@ -806,27 +761,26 @@ insert_data_root(DataRootID, Value) ->
 delete_data_root(DataRootID) ->
 	ets:delete(ar_disk_pool_data_roots, DataRootID).
 
-maybe_reset_full_scan_key(Key,
-		#disk_pool_state{ full_scan_start_key = Key } = DiskPool) ->
+maybe_reset_full_scan_key(DiskPoolKey,
+		#disk_pool_state{ full_scan_start_key = DiskPoolKey } = DiskPool) ->
 	DiskPool#disk_pool_state{ full_scan_start_key = none };
-maybe_reset_full_scan_key(_Key, DiskPool) ->
+maybe_reset_full_scan_key(_DiskPoolKey, DiskPool) ->
 	DiskPool.
 
 pause_scan(DiskPool) ->
-	{none,
-		DiskPool#disk_pool_state{
-			cursor = first,
-			full_scan_start_key = none
-		}}.
+	DiskPool#disk_pool_state{
+		cursor = first,
+		full_scan_start_key = none
+	}.
 
-register_currently_processed_key(Key, DiskPool) ->
+register_currently_processed_key(DiskPoolKey, DiskPool) ->
 	#disk_pool_state{ currently_processed_keys = Keys } = DiskPool,
-	Keys2 = sets:add_element(Key, Keys),
+	Keys2 = sets:add_element(DiskPoolKey, Keys),
 	DiskPool#disk_pool_state{ currently_processed_keys = Keys2 }.
 
-deregister_currently_processed_key(Key, DiskPool) ->
+deregister_currently_processed_key(DiskPoolKey, DiskPool) ->
 	#disk_pool_state{ currently_processed_keys = Keys } = DiskPool,
-	Keys2 = sets:del_element(Key, Keys),
+	Keys2 = sets:del_element(DiskPoolKey, Keys),
 	DiskPool#disk_pool_state{ currently_processed_keys = Keys2 }.
 
 process_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayConclude, Args,
@@ -894,7 +848,8 @@ process_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, Args,
 			%% The motivation is to keep chain reorganisations cheap.
 			{check_offsets, Iterator, false, Args, DiskPool};
 		false ->
-			{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _, _, _} = Args,
+			{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey,
+					_, _, _} = Args,
 			case ar_data_sync:update_chunks_index({AbsoluteEndOffset, Offset, ChunkDataKey,
 					TXRoot, DataRoot, TXPath, ChunkSize, unpacked}, false, StoreID) of
 				ok ->
@@ -907,7 +862,7 @@ process_immature_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, Args,
 							{absolute_end_offset, AbsoluteEndOffset},
 							{relative_offset, Offset},
 							{chunk_data_key, ar_util:encode(element(5, Args))}]),
-					{continue, deregister_currently_processed_key(Key, DiskPool)}
+					{continue, deregister_currently_processed_key(DiskPoolKey, DiskPool)}
 			end
 	end.
 
@@ -917,8 +872,8 @@ process_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayCon
 	%% module(s). If we have no storage modules configured covering this offset, proceed to
 	%% the next offset. If there are several suitable storage modules, send the chunk
 	%% to those modules who have not have it synced yet.
-	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, Key, _PassedBaseValidation,
-			_PassedStrictValidation, _PassedRebaseValidation} = Args,
+	{Offset, _, ChunkSize, DataRoot, DataPathHash, ChunkDataKey, DiskPoolKey,
+			_PassedBaseValidation, _PassedStrictValidation, _PassedRebaseValidation} = Args,
 	FindStorageModules =
 		case ar_storage_module:get_all(AbsoluteEndOffset - ChunkSize, AbsoluteEndOffset) of
 			[] ->
@@ -1001,7 +956,7 @@ process_matured_chunk_offset(Iterator, TXRoot, TXPath, AbsoluteEndOffset, MayCon
 							{absolute_end_offset, AbsoluteEndOffset},
 							{relative_offset, Offset},
 							{chunk_data_key, ar_util:encode(element(5, Args))}]),
-					{continue, deregister_currently_processed_key(Key, DiskPool)};
+					{continue, deregister_currently_processed_key(DiskPoolKey, DiskPool)};
 				{ok, {Chunk, DataPath}} ->
 					Args2 = {DataRoot, AbsoluteEndOffset, TXPath, TXRoot, DataPath, unpacked,
 							Offset, ChunkSize, Chunk, Chunk, none, none},
@@ -1041,7 +996,6 @@ filter_storage_modules_by_synced_offset(_, []) ->
 	[].
 
 delete_chunk(Iterator, Args, StoreID, DiskPool) ->
-	DiskPoolChunksIndex = index_db(StoreID),
 	{Offset, _, ChunkSize, _, _, ChunkDataKey, DiskPoolKey, _, _, _} = Args,
 	case ar_data_roots:next(Iterator) of
 		{ok, DataRootEntry, Iterator2} ->
@@ -1076,10 +1030,6 @@ delete_chunk(Iterator, Args, StoreID, DiskPool) ->
 			end,
 			delete_chunk(Iterator2, Args, StoreID, DiskPool);
 		_ ->
-			ok = ar_kv:delete(DiskPoolChunksIndex, DiskPoolKey),
-			ok = ar_data_sync:delete_chunk_data(ChunkDataKey, StoreID),
-			<< _Timestamp:256, DataPathHash2/binary >> = DiskPoolKey,
-			remove_chunk_from_cache(DataPathHash2),
 			DataRootID = ar_data_roots:id(Iterator),
-			decrease_occupied_size(ChunkSize, DataRootID)
+			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize)
 	end.
