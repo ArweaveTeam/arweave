@@ -120,7 +120,7 @@ test_get_unconfirmed_chunk_tx_index_fallback() ->
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 4),
 	{ok, {TXOffset, _}} = ar_data_sync:get_tx_offset(TX#tx.id),
-	AbsoluteEndOffset = TXOffset + ?DATA_CHUNK_SIZE,
+	AbsoluteEndOffset = TXOffset,
 	ar_test_data_sync:wait_until_syncs_chunk(AbsoluteEndOffset, #{
 		chunk => maps:get(chunk, Proof),
 		data_path => maps:get(data_path, Proof)

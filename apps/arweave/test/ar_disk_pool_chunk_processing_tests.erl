@@ -164,9 +164,9 @@ test_blacklisted_byte_skipped() ->
 	%% Compute the absolute end offset of the chunk. The genesis weave is 3 chunks
 	%% (3 * DATA_CHUNK_SIZE = 786432 bytes). Our TX adds DATA_CHUNK_SIZE more.
 	%% The TX data starts at the weave size at the start of the block it was mined in.
-	%% Get the actual offset from the TX index.
+	%% Get the actual end offset from the TX index.
 	{ok, {TXOffset, _}} = ar_data_sync:get_tx_offset(TX#tx.id),
-	AbsoluteEndOffset = TXOffset + ?DATA_CHUNK_SIZE,
+	AbsoluteEndOffset = TXOffset,
 	%% Blacklist this byte offset before the chunk matures.
 	ar_ets_intervals:add(ar_tx_blacklist_offsets, AbsoluteEndOffset,
 		AbsoluteEndOffset - 1),
@@ -276,7 +276,7 @@ test_chunk_data_not_found_resilience() ->
 	%% The healthy chunk should still be processed even though the first one failed,
 	%% proving the scan keeps moving forward.
 	{ok, {HealthyTXOffset, _}} = ar_data_sync:get_tx_offset(HealthyTX#tx.id),
-	HealthyAbsoluteEndOffset = HealthyTXOffset + ?DATA_CHUNK_SIZE,
+	HealthyAbsoluteEndOffset = HealthyTXOffset,
 	ar_test_node:wait_until_syncs_offset(HealthyAbsoluteEndOffset, StoreID, 30_000),
 	%% The failed chunk should remain in the disk pool for retry, while the healthy one
 	%% should have been removed after successful processing.
@@ -330,7 +330,7 @@ test_may_conclude_accumulation() ->
 	%% Wait until the mature offset from TX1 is processed, then verify the
 	%% chunk still remains in the disk pool because TX2's offset is still immature.
 	{ok, {TX1Offset, _}} = ar_data_sync:get_tx_offset(TX1#tx.id),
-	TX1AbsoluteEndOffset = TX1Offset + ?DATA_CHUNK_SIZE,
+	TX1AbsoluteEndOffset = TX1Offset,
 	ar_test_node:wait_until_syncs_offset(TX1AbsoluteEndOffset, StoreID, 30_000),
 	DiskPoolChunks = ar_disk_pool:debug_get_chunks(),
 	?assert(
