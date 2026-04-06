@@ -54,26 +54,34 @@ get_unconfirmed_chunk_concurrent_requests_test_() ->
 discover_all_unconfirmed_chunks_test_() ->
 	{timeout, 120, fun test_discover_all_unconfirmed_chunks/0}.
 
+post_chunk_proofs(Proofs) ->
+	lists:foreach(
+		fun({_, Proof}) ->
+			?assertMatch(
+				{ok, {{<<"200">>, _}, _, _, _, _}},
+				ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
+			)
+		end,
+		Proofs
+	).
+
+assert_unconfirmed_chunk_response(Response, Proof, IsStoredLongTerm) ->
+	?assertEqual(maps:get(chunk, Proof), maps:get(<<"chunk">>, Response)),
+	?assertEqual(maps:get(data_path, Proof), maps:get(<<"data_path">>, Response)),
+	?assertEqual(<<"unpacked">>, maps:get(<<"packing">>, Response)),
+	?assertEqual(IsStoredLongTerm, maps:get(<<"is_stored_long_term">>, Response)).
+
 %% @doc Chunk is in the disk pool (not yet mined) and served via the ETS cache path.
 test_get_unconfirmed_chunk_from_disk_pool() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
-	ChunkEndOffset = ?DATA_CHUNK_SIZE,
-	DataPath = ar_merkle:generate_path(DataRoot, ChunkEndOffset, DataTree),
-	Proof = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath),
-		chunk => ar_util:encode(hd(Chunks)),
-		offset => integer_to_binary(ChunkEndOffset),
-		data_size => integer_to_binary(?DATA_CHUNK_SIZE)
-	},
+	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
@@ -82,10 +90,7 @@ test_get_unconfirmed_chunk_from_disk_pool() ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, ChunkEndOffset),
 	Response = jiffy:decode(Body, [return_maps]),
-	?assertEqual(ar_util:encode(hd(Chunks)), maps:get(<<"chunk">>, Response)),
-	?assert(byte_size(maps:get(<<"data_path">>, Response)) > 0),
-	?assertEqual(<<"unpacked">>, maps:get(<<"packing">>, Response)),
-	?assertEqual(true, maps:get(<<"is_stored_long_term">>, Response)).
+	assert_unconfirmed_chunk_response(Response, Proof, true).
 
 %% @doc Chunk was in the disk pool but has been confirmed; served via tx_index fallback.
 test_get_unconfirmed_chunk_tx_index_fallback() ->
@@ -94,23 +99,14 @@ test_get_unconfirmed_chunk_tx_index_fallback() ->
 			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, storage_modules => StorageModules }),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
-	ChunkEndOffset = ?DATA_CHUNK_SIZE,
-	DataPath = ar_merkle:generate_path(DataRoot, ChunkEndOffset, DataTree),
-	Proof = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath),
-		chunk => ar_util:encode(hd(Chunks)),
-		offset => integer_to_binary(ChunkEndOffset),
-		data_size => integer_to_binary(?DATA_CHUNK_SIZE)
-	},
+	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
@@ -123,6 +119,16 @@ test_get_unconfirmed_chunk_tx_index_fallback() ->
 	assert_wait_until_height(main, 3),
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 4),
+	{ok, {TXOffset, _}} = ar_data_sync:get_tx_offset(TX#tx.id),
+	AbsoluteEndOffset = TXOffset + ?DATA_CHUNK_SIZE,
+	ar_test_data_sync:wait_until_syncs_chunk(AbsoluteEndOffset, #{
+		chunk => maps:get(chunk, Proof),
+		data_path => maps:get(data_path, Proof)
+	}),
+	{ok, {{<<"200">>, _}, _, ChunkBody, _, _}} =
+		ar_test_node:get_chunk(main, AbsoluteEndOffset),
+	ChunkResponse = jiffy:decode(ChunkBody, [return_maps]),
+	?assertEqual(ar_util:encode(hd(Chunks)), maps:get(<<"chunk">>, ChunkResponse)),
 	EncodedTXID = ar_util:encode(TX#tx.id),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_util:do_until(
@@ -139,9 +145,7 @@ test_get_unconfirmed_chunk_tx_index_fallback() ->
 			30_000
 		),
 	Response = jiffy:decode(Body, [return_maps]),
-	?assertEqual(ar_util:encode(hd(Chunks)), maps:get(<<"chunk">>, Response)),
-	?assertEqual(<<"unpacked">>, maps:get(<<"packing">>, Response)),
-	?assertEqual(true, maps:get(<<"is_stored_long_term">>, Response)).
+	assert_unconfirmed_chunk_response(Response, Proof, true).
 
 %% @doc Unknown TXID returns 404.
 test_get_unconfirmed_chunk_not_found() ->
@@ -190,23 +194,14 @@ test_get_unconfirmed_chunk_not_stored_long_term() ->
 			ar_test_node:get_default_storage_module_packing(Addr, 5)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, storage_modules => StorageModules }),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
-	ChunkEndOffset = ?DATA_CHUNK_SIZE,
-	DataPath = ar_merkle:generate_path(DataRoot, ChunkEndOffset, DataTree),
-	Proof = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath),
-		chunk => ar_util:encode(hd(Chunks)),
-		offset => integer_to_binary(ChunkEndOffset),
-		data_size => integer_to_binary(?DATA_CHUNK_SIZE)
-	},
+	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
 	?assertMatch(
 		{ok, {{<<"303">>, _}, _, _, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
@@ -215,84 +210,38 @@ test_get_unconfirmed_chunk_not_stored_long_term() ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, ChunkEndOffset),
 	Response = jiffy:decode(Body, [return_maps]),
-	?assertEqual(ar_util:encode(hd(Chunks)), maps:get(<<"chunk">>, Response)),
-	?assertEqual(<<"unpacked">>, maps:get(<<"packing">>, Response)),
-	?assertEqual(false, maps:get(<<"is_stored_long_term">>, Response)).
+	assert_unconfirmed_chunk_response(Response, Proof, false).
 
 %% @doc Multiple chunks from the same TX can each be retrieved individually.
 test_get_unconfirmed_chunk_multi_chunk_tx() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 3)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 3)],
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
-	DataSize = 3 * ?DATA_CHUNK_SIZE,
-	lists:foreach(
-		fun({Chunk, N}) ->
-			ChunkEndOffset = N * ?DATA_CHUNK_SIZE,
-			DataPath = ar_merkle:generate_path(DataRoot, ChunkEndOffset - 1, DataTree),
-			Proof = #{
-				data_root => ar_util:encode(DataRoot),
-				data_path => ar_util:encode(DataPath),
-				chunk => ar_util:encode(Chunk),
-				offset => integer_to_binary(ChunkEndOffset - 1),
-				data_size => integer_to_binary(DataSize)
-			},
-			?assertMatch(
-				{ok, {{<<"200">>, _}, _, _, _, _}},
-				ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-			)
-		end,
-		lists:zip(Chunks, lists:seq(1, 3))
-	),
+	Proofs = ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => inclusive_end }),
+	post_chunk_proofs(Proofs),
 	EncodedTXID = ar_util:encode(TX#tx.id),
 	lists:foreach(
-		fun({Chunk, N}) ->
-			ChunkEndOffset = N * ?DATA_CHUNK_SIZE,
+		fun({ChunkEndOffset, Proof}) ->
 			{ok, {{<<"200">>, _}, _, Body, _, _}} =
 				ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, ChunkEndOffset),
 			Response = jiffy:decode(Body, [return_maps]),
-			?assertEqual(ar_util:encode(Chunk), maps:get(<<"chunk">>, Response)),
-			?assertEqual(<<"unpacked">>, maps:get(<<"packing">>, Response)),
-			?assertEqual(true, maps:get(<<"is_stored_long_term">>, Response))
+			assert_unconfirmed_chunk_response(Response, Proof, true)
 		end,
-		lists:zip(Chunks, lists:seq(1, 3))
+		Proofs
 	).
 
 %% @doc Querying with an offset that is not the exact chunk end offset returns 404.
 test_get_unconfirmed_chunk_offset_boundary() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 3)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 3)],
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
-	DataSize = 3 * ?DATA_CHUNK_SIZE,
-	lists:foreach(
-		fun({Chunk, N}) ->
-			ChunkEndOffset = N * ?DATA_CHUNK_SIZE,
-			DataPath = ar_merkle:generate_path(DataRoot, ChunkEndOffset - 1, DataTree),
-			Proof = #{
-				data_root => ar_util:encode(DataRoot),
-				data_path => ar_util:encode(DataPath),
-				chunk => ar_util:encode(Chunk),
-				offset => integer_to_binary(ChunkEndOffset - 1),
-				data_size => integer_to_binary(DataSize)
-			},
-			?assertMatch(
-				{ok, {{<<"200">>, _}, _, _, _, _}},
-				ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-			)
-		end,
-		lists:zip(Chunks, lists:seq(1, 3))
-	),
+	post_chunk_proofs(ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => inclusive_end })),
 	EncodedTXID = ar_util:encode(TX#tx.id),
 	%% The exact end offset works.
 	?assertMatch(
@@ -316,79 +265,41 @@ test_get_unconfirmed_chunk_sub_chunk_size() ->
 	SmallChunkSize = 1000,
 	Chunk1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	Chunk2 = crypto:strong_rand_bytes(SmallChunkSize),
-	Chunks = [Chunk1, Chunk2],
-	DataSize = ?DATA_CHUNK_SIZE + SmallChunkSize,
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	InputChunks = [Chunk1, Chunk2],
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
-	%% Post first chunk.
-	Chunk1EndOffset = ?DATA_CHUNK_SIZE,
-	DataPath1 = ar_merkle:generate_path(DataRoot, Chunk1EndOffset - 1, DataTree),
-	Proof1 = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath1),
-		chunk => ar_util:encode(Chunk1),
-		offset => integer_to_binary(Chunk1EndOffset - 1),
-		data_size => integer_to_binary(DataSize)
-	},
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof1))
-	),
-	%% Post second (small) chunk.
-	Chunk2EndOffset = DataSize,
-	DataPath2 = ar_merkle:generate_path(DataRoot, Chunk2EndOffset - 1, DataTree),
-	Proof2 = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath2),
-		chunk => ar_util:encode(Chunk2),
-		offset => integer_to_binary(Chunk2EndOffset - 1),
-		data_size => integer_to_binary(DataSize)
-	},
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof2))
-	),
+	[{Chunk1EndOffset, Proof1}, {Chunk2EndOffset, Proof2}] = Proofs =
+		ar_test_data_sync:build_proofs(
+			DataRoot, DataTree, Chunks, #{ proof_offset => inclusive_end }),
+	post_chunk_proofs(Proofs),
 	EncodedTXID = ar_util:encode(TX#tx.id),
 	%% Retrieve the full-size first chunk.
 	{ok, {{<<"200">>, _}, _, Body1, _, _}} =
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, Chunk1EndOffset),
 	Response1 = jiffy:decode(Body1, [return_maps]),
-	?assertEqual(ar_util:encode(Chunk1), maps:get(<<"chunk">>, Response1)),
+	assert_unconfirmed_chunk_response(Response1, Proof1, true),
 	%% Retrieve the sub-chunk-size second chunk.
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, Chunk2EndOffset),
 	Response2 = jiffy:decode(Body2, [return_maps]),
-	?assertEqual(ar_util:encode(Chunk2), maps:get(<<"chunk">>, Response2)),
-	?assertEqual(<<"unpacked">>, maps:get(<<"packing">>, Response2)).
+	assert_unconfirmed_chunk_response(Response2, Proof2, true).
 
 %% @doc Two TXs with identical data (same DataRoot) are independently retrievable.
 test_get_unconfirmed_chunk_same_data_different_txs() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX1, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
-	{TX2, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
+	#{ tx := TX1, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
+	#{ tx := TX2, data_root := DataRoot2, chunks := Chunks2 } =
+		ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
+	?assertEqual(DataRoot, DataRoot2),
+	?assertEqual(Chunks, Chunks2),
 	?assertNotEqual(TX1#tx.id, TX2#tx.id),
 	ar_test_node:assert_post_tx_to_peer(main, TX1),
 	ar_test_node:assert_post_tx_to_peer(main, TX2),
-	ChunkEndOffset = ?DATA_CHUNK_SIZE,
-	DataPath = ar_merkle:generate_path(DataRoot, ChunkEndOffset, DataTree),
-	Proof = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath),
-		chunk => ar_util:encode(hd(Chunks)),
-		offset => integer_to_binary(ChunkEndOffset),
-		data_size => integer_to_binary(?DATA_CHUNK_SIZE)
-	},
+	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
@@ -402,11 +313,8 @@ test_get_unconfirmed_chunk_same_data_different_txs() ->
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID2, ChunkEndOffset),
 	Response1 = jiffy:decode(Body1, [return_maps]),
 	Response2 = jiffy:decode(Body2, [return_maps]),
-	?assertEqual(
-		maps:get(<<"chunk">>, Response1),
-		maps:get(<<"chunk">>, Response2)
-	),
-	?assertEqual(ar_util:encode(hd(Chunks)), maps:get(<<"chunk">>, Response1)).
+	assert_unconfirmed_chunk_response(Response1, Proof, true),
+	assert_unconfirmed_chunk_response(Response2, Proof, true).
 
 %% @doc Negative offset returns 400.
 test_get_unconfirmed_chunk_negative_offset() ->
@@ -425,23 +333,14 @@ test_get_unconfirmed_chunk_negative_offset() ->
 %% @doc Offset far beyond the TX data size returns 404.
 test_get_unconfirmed_chunk_offset_beyond_data() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
-	ChunkEndOffset = ?DATA_CHUNK_SIZE,
-	DataPath = ar_merkle:generate_path(DataRoot, ChunkEndOffset, DataTree),
-	Proof = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath),
-		chunk => ar_util:encode(hd(Chunks)),
-		offset => integer_to_binary(ChunkEndOffset),
-		data_size => integer_to_binary(?DATA_CHUNK_SIZE)
-	},
+	[{_ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
@@ -455,23 +354,14 @@ test_get_unconfirmed_chunk_offset_beyond_data() ->
 %% @doc Chunk is still retrievable after mining only 1 block (partial confirmation).
 test_get_unconfirmed_chunk_partial_confirmation() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
-	ChunkEndOffset = ?DATA_CHUNK_SIZE,
-	DataPath = ar_merkle:generate_path(DataRoot, ChunkEndOffset, DataTree),
-	Proof = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath),
-		chunk => ar_util:encode(hd(Chunks)),
-		offset => integer_to_binary(ChunkEndOffset),
-		data_size => integer_to_binary(?DATA_CHUNK_SIZE)
-	},
+	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
@@ -495,29 +385,19 @@ test_get_unconfirmed_chunk_partial_confirmation() ->
 			30_000
 		),
 	Response = jiffy:decode(Body, [return_maps]),
-	?assertEqual(ar_util:encode(hd(Chunks)), maps:get(<<"chunk">>, Response)),
-	?assertEqual(<<"unpacked">>, maps:get(<<"packing">>, Response)).
+	assert_unconfirmed_chunk_response(Response, Proof, true).
 
 %% @doc The data_path returned by the endpoint is a valid merkle proof.
 test_get_unconfirmed_chunk_data_path_valid() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
-	ChunkEndOffset = ?DATA_CHUNK_SIZE,
-	DataPath = ar_merkle:generate_path(DataRoot, ChunkEndOffset, DataTree),
-	Proof = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath),
-		chunk => ar_util:encode(hd(Chunks)),
-		offset => integer_to_binary(ChunkEndOffset),
-		data_size => integer_to_binary(?DATA_CHUNK_SIZE)
-	},
+	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
@@ -526,6 +406,7 @@ test_get_unconfirmed_chunk_data_path_valid() ->
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, ChunkEndOffset),
 	Response = jiffy:decode(Body, [return_maps]),
+	assert_unconfirmed_chunk_response(Response, Proof, true),
 	{ok, ReturnedDataPath} = ar_util:safe_decode(maps:get(<<"data_path">>, Response)),
 	{ok, ReturnedChunk} = ar_util:safe_decode(maps:get(<<"chunk">>, Response)),
 	%% Validate the returned data_path is a valid merkle proof.
@@ -543,49 +424,26 @@ test_get_unconfirmed_chunk_data_path_valid() ->
 %% @doc Multiple concurrent requests for the same chunk all succeed with identical data.
 test_get_unconfirmed_chunk_concurrent_requests() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks)
-		)
-	),
-	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
-	ChunkEndOffset = ?DATA_CHUNK_SIZE,
-	DataPath = ar_merkle:generate_path(DataRoot, ChunkEndOffset, DataTree),
-	Proof = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath),
-		chunk => ar_util:encode(hd(Chunks)),
-		offset => integer_to_binary(ChunkEndOffset),
-		data_size => integer_to_binary(?DATA_CHUNK_SIZE)
-	},
+	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
 	),
 	EncodedTXID = ar_util:encode(TX#tx.id),
-	Self = self(),
 	NumRequests = 5,
-	lists:foreach(
+	Results = ar_util:pmap(
 		fun(_) ->
-			spawn(fun() ->
-				Result = ar_test_node:get_unconfirmed_chunk(main, EncodedTXID,
-						ChunkEndOffset),
-				Self ! {chunk_result, Result}
-			end)
+			ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, ChunkEndOffset)
 		end,
-		lists:seq(1, NumRequests)
-	),
-	Results = lists:map(
-		fun(_) ->
-			receive
-				{chunk_result, Result} -> Result
-			after 30_000 ->
-				error(timeout)
-			end
-		end,
-		lists:seq(1, NumRequests)
+		lists:seq(1, NumRequests),
+		30_000
 	),
 	%% All requests should succeed.
 	lists:foreach(
@@ -600,6 +458,8 @@ test_get_unconfirmed_chunk_concurrent_requests() ->
 		Results
 	),
 	[FirstBody | Rest] = Bodies,
+	FirstResponse = jiffy:decode(FirstBody, [return_maps]),
+	assert_unconfirmed_chunk_response(FirstResponse, Proof, true),
 	lists:foreach(
 		fun(Body) ->
 			?assertEqual(FirstBody, Body)
@@ -615,75 +475,25 @@ test_discover_all_unconfirmed_chunks() ->
 	Peer = ar_test_node:peer_ip(main),
 
 	%% --- TX1: 2 full-size chunks ---
-	TX1Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 2)],
-	TX1DataSize = 2 * ?DATA_CHUNK_SIZE,
-	{TX1DataRoot, TX1DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(TX1Chunks)
-		)
-	),
-	{TX1, TX1Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, TX1DataRoot, TX1Chunks}),
+	TX1InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 2)],
+	#{ tx := TX1, data_root := TX1DataRoot, data_tree := TX1DataTree, chunks := TX1Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(Wallet, TX1InputChunks),
 	ar_test_node:assert_post_tx_to_peer(main, TX1),
 	%% POST chunk proofs for TX1.
-	lists:foreach(
-		fun({Chunk, N}) ->
-			ChunkEndOffset = N * ?DATA_CHUNK_SIZE,
-			DataPath = ar_merkle:generate_path(TX1DataRoot, ChunkEndOffset - 1, TX1DataTree),
-			Proof = #{
-				data_root => ar_util:encode(TX1DataRoot),
-				data_path => ar_util:encode(DataPath),
-				chunk => ar_util:encode(Chunk),
-				offset => integer_to_binary(ChunkEndOffset - 1),
-				data_size => integer_to_binary(TX1DataSize)
-			},
-			?assertMatch(
-				{ok, {{<<"200">>, _}, _, _, _, _}},
-				ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-			)
-		end,
-		lists:zip(TX1Chunks, lists:seq(1, 2))
-	),
+	post_chunk_proofs(ar_test_data_sync:build_proofs(
+		TX1DataRoot, TX1DataTree, TX1Chunks, #{ proof_offset => inclusive_end })),
 
 	%% --- TX2: 1 full chunk + 1 sub-chunk-size chunk ---
 	SmallChunkSize = 1000,
 	TX2Chunk1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	TX2Chunk2 = crypto:strong_rand_bytes(SmallChunkSize),
-	TX2Chunks = [TX2Chunk1, TX2Chunk2],
-	TX2DataSize = ?DATA_CHUNK_SIZE + SmallChunkSize,
-	{TX2DataRoot, TX2DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(TX2Chunks)
-		)
-	),
-	{TX2, TX2Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, TX2DataRoot, TX2Chunks}),
+	TX2InputChunks = [TX2Chunk1, TX2Chunk2],
+	#{ tx := TX2, data_root := TX2DataRoot, data_tree := TX2DataTree, chunks := TX2Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(Wallet, TX2InputChunks),
 	ar_test_node:assert_post_tx_to_peer(main, TX2),
 	%% POST chunk proofs for TX2.
-	TX2ChunkEndOffset1 = ?DATA_CHUNK_SIZE,
-	TX2DataPath1 = ar_merkle:generate_path(TX2DataRoot, TX2ChunkEndOffset1 - 1, TX2DataTree),
-	TX2Proof1 = #{
-		data_root => ar_util:encode(TX2DataRoot),
-		data_path => ar_util:encode(TX2DataPath1),
-		chunk => ar_util:encode(TX2Chunk1),
-		offset => integer_to_binary(TX2ChunkEndOffset1 - 1),
-		data_size => integer_to_binary(TX2DataSize)
-	},
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(TX2Proof1))
-	),
-	TX2ChunkEndOffset2 = TX2DataSize,
-	TX2DataPath2 = ar_merkle:generate_path(TX2DataRoot, TX2ChunkEndOffset2 - 1, TX2DataTree),
-	TX2Proof2 = #{
-		data_root => ar_util:encode(TX2DataRoot),
-		data_path => ar_util:encode(TX2DataPath2),
-		chunk => ar_util:encode(TX2Chunk2),
-		offset => integer_to_binary(TX2ChunkEndOffset2 - 1),
-		data_size => integer_to_binary(TX2DataSize)
-	},
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(TX2Proof2))
-	),
+	post_chunk_proofs(ar_test_data_sync:build_proofs(
+		TX2DataRoot, TX2DataTree, TX2Chunks, #{ proof_offset => inclusive_end })),
 
 	%% ============================================================
 	%% DISCOVERY PHASE: simulate a client that knows nothing

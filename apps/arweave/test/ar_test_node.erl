@@ -41,6 +41,7 @@
 		random_v1_data/1, assert_get_tx_data/3,
 		assert_data_not_found/2, post_tx_json/2,
 		wait_until_syncs_genesis_data/0, wait_until_syncs_genesis_data/1,
+		wait_until_syncs_offset/2, wait_until_syncs_offset/3,
 
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3]).
 
@@ -577,6 +578,18 @@ wait_until_syncs_data(Left, Right, WeaveSize, Packing) ->
 		?WAIT_SYNCS_DATA_TIMEOUT
 	),
 	wait_until_syncs_data(Left + ?DATA_CHUNK_SIZE, Right, WeaveSize, Packing).
+
+wait_until_syncs_offset(Offset, StoreID) ->
+	wait_until_syncs_offset(Offset, StoreID, ?WAIT_SYNCS_DATA_TIMEOUT).
+
+wait_until_syncs_offset(Offset, StoreID, Timeout) ->
+	true = ar_util:do_until(
+		fun() ->
+			ar_sync_record:is_recorded(Offset, ar_data_sync, StoreID) =/= false
+		end,
+		200,
+		Timeout
+	).
 
 get_cm_storage_modules(RewardAddr, 1, 1) ->
 	%% When there's only 1 node it covers all 3 storage modules.

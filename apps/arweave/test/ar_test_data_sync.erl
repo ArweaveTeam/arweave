@@ -6,8 +6,9 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -export([setup_nodes/0, setup_nodes/1,
-		imperfect_split/1, build_proofs/3, build_proofs/5,
-        tx/1, tx/2, tx/3, tx/4, wait_until_syncs_chunk/2,
+		imperfect_split/1, build_proofs/3, build_proofs/4, build_proofs/5,
+        tx/1, tx/2, tx/3, tx/4, make_fixed_data_tx/2, make_fixed_data_tx/3,
+        wait_until_syncs_chunk/2,
         wait_until_syncs_chunks/1, wait_until_syncs_chunks/2, wait_until_syncs_chunks/3,
         get_tx_offset/2, get_tx_data/1,
         post_random_blocks/1, get_records_with_proofs/3, post_proofs/4, post_proofs/5,
@@ -32,6 +33,7 @@ setup_nodes(Options) ->
 
 setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
+	ok = quiesce_peer_connections(),
 	{B0, Options2} =
 		case maps:get(b0, Options, not_set) of
 			not_set ->
@@ -49,6 +51,36 @@ setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 		enable = Config#config.enable ++ [pack_served_chunks] }),
 	ar_test_node:connect_to_peer(peer1),
 	Wallet.
+
+quiesce_peer_connections() ->
+	_ = catch ar_http:block_peer_connections(),
+	_ = catch ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
+	timer:sleep(200),
+	ok.
+
+make_fixed_data_tx(Wallet, Chunks) ->
+	make_fixed_data_tx(Wallet, Chunks, #{}).
+
+make_fixed_data_tx(Wallet, Chunks, Options) when is_map(Options) ->
+	SizedChunkIDs = ar_tx:sized_chunks_to_sized_chunk_ids(
+			ar_tx:chunks_to_size_tagged_chunks(Chunks)),
+	{DataRoot, DataTree} = ar_merkle:generate_tree(SizedChunkIDs),
+	Format = maps:get(format, Options, v2),
+	Reward = maps:get(reward, Options, fetch),
+	BaseTXParams = maps:with([tx_anchor_peer, get_fee_peer], Options),
+	TXParams = BaseTXParams#{
+		wallet => Wallet,
+		split_type => {fixed_data, DataRoot, Chunks},
+		format => Format,
+		reward => Reward
+	},
+	{TX, Chunks2} = tx(TXParams),
+	#{
+		tx => TX,
+		data_root => DataRoot,
+		data_tree => DataTree,
+		chunks => Chunks2
+	}.
 
 tx(Wallet, SplitType) ->
 	tx(Wallet, SplitType, v2, fetch).
@@ -215,6 +247,11 @@ build_proofs(B, TX, Chunks) ->
 	build_proofs(TX, Chunks, B#block.txs, B#block.weave_size - B#block.block_size,
 			B#block.height).
 
+build_proofs(DataRoot, DataTree, Chunks, Options) when is_map(Options) ->
+	SizeTaggedChunks = ar_tx:chunks_to_size_tagged_chunks(Chunks),
+	DataSize = maps:get(data_size, Options, byte_size(binary:list_to_bin(Chunks))),
+	build_chunk_proofs(SizeTaggedChunks, DataRoot, DataTree, DataSize, Options).
+
 build_proofs(TX, Chunks, TXs, BlockStartOffset, Height) ->
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs, Height),
 	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
@@ -227,29 +264,49 @@ build_proofs(TX, Chunks, TXs, BlockStartOffset, Height) ->
 		ar_tx:sized_chunks_to_sized_chunk_ids(SizeTaggedChunks)
 	),
 	DataSize = byte_size(binary:list_to_bin(Chunks)),
-	lists:foldl(
-		fun
-			({<<>>, _}, Proofs) ->
-				Proofs;
-			({Chunk, ChunkOffset}, Proofs) ->
-				TXStartOffset = TXOffset - DataSize,
-				AbsoluteChunkEndOffset = BlockStartOffset + TXStartOffset + ChunkOffset,
-				Proof = #{
-					tx_path => ar_util:encode(TXPath),
-					data_root => ar_util:encode(DataRoot),
-					data_path =>
-						ar_util:encode(
-							ar_merkle:generate_path(DataRoot, ChunkOffset - 1, DataTree)
-						),
-					chunk => ar_util:encode(Chunk),
-					offset => integer_to_binary(ChunkOffset - 1),
-					data_size => integer_to_binary(DataSize)
-				},
-				Proofs ++ [{AbsoluteChunkEndOffset, Proof}]
-		end,
-		[],
-		SizeTaggedChunks
+	TXStartOffset = TXOffset - DataSize,
+	build_chunk_proofs(SizeTaggedChunks, DataRoot, DataTree, DataSize, #{
+		tx_path => TXPath,
+		result_offset_base => BlockStartOffset + TXStartOffset,
+		proof_offset => inclusive_end
+	}).
+
+build_chunk_proofs(SizeTaggedChunks, DataRoot, DataTree, DataSize, Options) ->
+	ResultOffsetBase = maps:get(result_offset_base, Options, 0),
+	ProofOffsetType = maps:get(proof_offset, Options, inclusive_end),
+	lists:reverse(
+		lists:foldl(
+			fun
+				({<<>>, _}, Proofs) ->
+					Proofs;
+				({Chunk, ChunkEndOffset}, Proofs) ->
+					ProofOffset = proof_offset(ChunkEndOffset, ProofOffsetType),
+					Proof = maybe_add_tx_path(#{
+						data_root => ar_util:encode(DataRoot),
+						data_path =>
+							ar_util:encode(
+								ar_merkle:generate_path(DataRoot, ProofOffset, DataTree)
+							),
+						chunk => ar_util:encode(Chunk),
+						offset => integer_to_binary(ProofOffset),
+						data_size => integer_to_binary(DataSize)
+					}, Options),
+					[{ResultOffsetBase + ChunkEndOffset, Proof} | Proofs]
+			end,
+			[],
+			SizeTaggedChunks
+		)
 	).
+
+proof_offset(ChunkEndOffset, end_offset) ->
+	ChunkEndOffset;
+proof_offset(ChunkEndOffset, inclusive_end) ->
+	ChunkEndOffset - 1.
+
+maybe_add_tx_path(Proof, #{ tx_path := TXPath }) ->
+	Proof#{ tx_path => ar_util:encode(TXPath) };
+maybe_add_tx_path(Proof, _Options) ->
+	Proof.
 
 get_tx_offset(Node, TXID) ->
 	Peer = ar_test_node:peer_ip(Node),

@@ -36,24 +36,13 @@ may_conclude_accumulation_test_() ->
 %% Helpers
 %% -------------------------------------------------------------------
 
-make_chunk() ->
-	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(
-			ar_tx:chunks_to_size_tagged_chunks(Chunks))),
-	{DataRoot, DataTree, Chunks}.
-
 post_chunk_proof(DataRoot, DataTree, Chunks) ->
-	Offset = ?DATA_CHUNK_SIZE,
-	DataSize = ?DATA_CHUNK_SIZE,
-	DataPath = ar_merkle:generate_path(DataRoot, Offset, DataTree),
-	Proof = #{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(DataPath),
-		chunk => ar_util:encode(hd(Chunks)),
-		offset => integer_to_binary(Offset),
-		data_size => integer_to_binary(DataSize)
-	},
+	[{_ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+		DataRoot,
+		DataTree,
+		Chunks,
+		#{ proof_offset => end_offset }
+	),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))).
 
@@ -75,6 +64,15 @@ wait_until_disk_pool_not_empty(Timeout) ->
 		Timeout
 	).
 
+wait_until_disk_pool_size(ExpectedSize, Timeout) ->
+	ar_util:do_until(
+		fun() ->
+			length(ar_disk_pool:debug_get_chunks()) == ExpectedSize
+		end,
+		200,
+		Timeout
+	).
+
 %% -------------------------------------------------------------------
 %% When a chunk's data root is not on chain AND not in the disk pool
 %% data roots ETS table, the chunk should be deleted from the disk pool
@@ -82,8 +80,11 @@ wait_until_disk_pool_not_empty(Timeout) ->
 %% -------------------------------------------------------------------
 test_orphaned_chunk_cleanup() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	{DataRoot, DataTree, Chunks} = make_chunk(),
-	{TX, _} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
 	post_chunk_proof(DataRoot, DataTree, Chunks),
 	%% Chunk should now be in the disk pool.
@@ -108,8 +109,11 @@ test_immature_chunk_indexing() ->
 		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 		#{ addr => Addr, storage_modules => StorageModules }),
-	{DataRoot, DataTree, Chunks} = make_chunk(),
-	{TX, _} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
 	post_chunk_proof(DataRoot, DataTree, Chunks),
 	%% Mine 1 block — the TX is now on chain but with only 1 confirmation,
@@ -147,8 +151,11 @@ test_blacklisted_byte_skipped() ->
 		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 		#{ addr => Addr, storage_modules => StorageModules }),
-	{DataRoot, DataTree, Chunks} = make_chunk(),
-	{TX, _} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
 	post_chunk_proof(DataRoot, DataTree, Chunks),
 	%% Mine and confirm the chunk.
@@ -191,8 +198,11 @@ test_chunk_cache_full_defers_processing() ->
 		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 		#{ addr => Addr, storage_modules => StorageModules }),
-	{DataRoot, DataTree, Chunks} = make_chunk(),
-	{TX, _} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
 	post_chunk_proof(DataRoot, DataTree, Chunks),
 	%% Mine blocks to confirm the chunk.
@@ -225,20 +235,36 @@ test_chunk_data_not_found_resilience() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
 		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+	StoreID = ar_storage_module:id(hd(StorageModules)),
 	Wallet = ar_test_data_sync:setup_nodes(
 		#{ addr => Addr, storage_modules => StorageModules }),
-	{DataRoot, DataTree, Chunks} = make_chunk(),
-	{TX, _} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
-	ar_test_node:assert_post_tx_to_peer(main, TX),
-	post_chunk_proof(DataRoot, DataTree, Chunks),
-	%% Wait for chunk to appear in disk pool.
-	true = wait_until_disk_pool_not_empty(10_000),
-	%% Get the chunk data key from the disk pool entry and delete the data.
-	[{_Key, Value}] = ar_disk_pool:debug_get_chunks(),
-	{_Offset, _ChunkSize, _DataRoot2, _TXSize, ChunkDataKey,
-		_PB, _PS, _PR} = parse_disk_pool_chunk(Value),
-	ok = ar_data_sync:delete_chunk_data(ChunkDataKey, "default"),
-	%% Mine blocks to confirm and mature the chunk.
+	#{ tx := MissingTX, data_root := MissingDataRoot,
+		data_tree := MissingDataTree, chunks := MissingChunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
+	ar_test_node:assert_post_tx_to_peer(main, MissingTX),
+	post_chunk_proof(MissingDataRoot, MissingDataTree, MissingChunks),
+	#{ tx := HealthyTX, data_root := HealthyDataRoot,
+		data_tree := HealthyDataTree, chunks := HealthyChunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
+	ar_test_node:assert_post_tx_to_peer(main, HealthyTX),
+	post_chunk_proof(HealthyDataRoot, HealthyDataTree, HealthyChunks),
+	%% Wait for both chunks to appear in the disk pool.
+	true = wait_until_disk_pool_size(2, 10_000),
+	%% Delete the chunk data for the missing-data chunk only.
+	{_MissingKey, MissingValue} =
+		hd([Entry || {_Key, Value} = Entry <- ar_disk_pool:debug_get_chunks(),
+				element(3, parse_disk_pool_chunk(Value)) == MissingDataRoot]),
+	{_MissingOffset, _MissingChunkSize, _MissingDataRoot2, _MissingTXSize,
+		MissingChunkDataKey, _MissingPB, _MissingPS, _MissingPR} =
+			parse_disk_pool_chunk(MissingValue),
+	ok = ar_data_sync:delete_chunk_data(MissingChunkDataKey, "default"),
+	%% Mine blocks to confirm and mature both chunks.
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 1),
 	ar_test_node:mine(main),
@@ -247,30 +273,38 @@ test_chunk_data_not_found_resilience() ->
 	assert_wait_until_height(main, 3),
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 4),
-	%% Give the disk pool scan time to encounter the missing chunk data.
-	%% The process should NOT crash — verify by checking it's still alive.
-	timer:sleep(5_000),
-	DefaultSyncPid = whereis(ar_data_sync:name("default")),
-	?assertNotEqual(undefined, DefaultSyncPid),
-	?assert(is_process_alive(DefaultSyncPid)).
+	%% The healthy chunk should still be processed even though the first one failed,
+	%% proving the scan keeps moving forward.
+	{ok, {HealthyTXOffset, _}} = ar_data_sync:get_tx_offset(HealthyTX#tx.id),
+	HealthyAbsoluteEndOffset = HealthyTXOffset + ?DATA_CHUNK_SIZE,
+	ar_test_node:wait_until_syncs_offset(HealthyAbsoluteEndOffset, StoreID, 30_000),
+	%% The failed chunk should remain in the disk pool for retry, while the healthy one
+	%% should have been removed after successful processing.
+	true = wait_until_disk_pool_size(1, 30_000),
+	[{_RemainingKey, RemainingValue}] = ar_disk_pool:debug_get_chunks(),
+	{_RemainingOffset, _RemainingChunkSize, RemainingDataRoot, _RemainingTXSize,
+		_RemainingChunkDataKey, _RemainingPB, _RemainingPS, _RemainingPR} =
+			parse_disk_pool_chunk(RemainingValue),
+	?assertEqual(MissingDataRoot, RemainingDataRoot).
 
 %% -------------------------------------------------------------------
-%% Gap 8: CanRemoveFromDiskPool accumulation across multiple offsets
-%%
 %% When the same data root appears at multiple weave offsets (same
 %% data uploaded in different TXs), and one offset is immature while
 %% another is mature, CanRemoveFromDiskPool should be false. The chunk stays
 %% in the disk pool until all offsets are processed. After all offsets
 %% mature, the chunk should be cleaned from the disk pool.
 %% -------------------------------------------------------------------
-
 test_may_conclude_accumulation() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
 		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+	StoreID = ar_storage_module:id(hd(StorageModules)),
 	Wallet = ar_test_data_sync:setup_nodes(
 		#{ addr => Addr, storage_modules => StorageModules }),
-	{DataRoot, DataTree, Chunks} = make_chunk(),
+	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
+	{DataRoot, DataTree} = ar_merkle:generate_tree(
+		ar_tx:sized_chunks_to_sized_chunk_ids(
+			ar_tx:chunks_to_size_tagged_chunks(Chunks))),
 	%% Post first TX with this data root — will mine in block 1.
 	{TX1, _} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
 	ar_test_node:assert_post_tx_to_peer(main, TX1),
@@ -293,11 +327,20 @@ test_may_conclude_accumulation() ->
 	%% - TX2 data starts at weave_size at height 2, ends within height 3 → immature
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 4),
-	%% The chunk should still be in the disk pool because TX2's offset
-	%% is immature, forcing CanRemoveFromDiskPool = false.
-	timer:sleep(5_000),
+	%% Wait until the mature offset from TX1 is processed, then verify the
+	%% chunk still remains in the disk pool because TX2's offset is still immature.
+	{ok, {TX1Offset, _}} = ar_data_sync:get_tx_offset(TX1#tx.id),
+	TX1AbsoluteEndOffset = TX1Offset + ?DATA_CHUNK_SIZE,
+	ar_test_node:wait_until_syncs_offset(TX1AbsoluteEndOffset, StoreID, 30_000),
 	DiskPoolChunks = ar_disk_pool:debug_get_chunks(),
-	?assertNotEqual([], DiskPoolChunks),
+	?assert(
+		lists:any(
+			fun({_Key, Value}) ->
+				element(3, parse_disk_pool_chunk(Value)) == DataRoot
+			end,
+			DiskPoolChunks
+		)
+	),
 	%% Mine more blocks so TX2's offset also matures.
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 5),
