@@ -20,9 +20,9 @@
 		delete_chunk_metadata/2, update_chunks_index/3, get_tx_offset/2]).
 
 %% For data-doctor tools
--export([init_kv/1, open_store_dbs/2]).
+-export([init_kv/2, open_store_dbs/2]).
 
--export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
+-export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([enqueue_intervals/3]).
 
 -include("ar.hrl").
@@ -501,7 +501,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	process_flag(trap_exit, true),
 	{ok, Config} = arweave_config:get_env(),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
-	State = init_kv(StoreID),
+	State = init_kv(#sync_data_state{}, StoreID),
 	{ok, _} = ar_timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		ar_disk_pool,
@@ -580,19 +580,23 @@ init({StoreID, RepackInPlacePacking}) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([node_state, disksup]),
-
-	State = init_kv(StoreID),
-
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 	RangeStart2 = max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
 	RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
-	State2 = State#sync_data_state{
+	State = #sync_data_state{
 		store_id = StoreID,
 		range_start = RangeStart2,
 		range_end = RangeEnd2,
 		%% weave_size will be set on join
 		weave_size = 0
 	},
+	{ok, State, {continue, {init, RepackInPlacePacking}}}.
+
+%% @doc Initialize the data syncing module. DB opens happen in handle_continue so that
+%% we don't block the rest of the node initialization process.
+handle_continue({init, RepackInPlacePacking},
+		#sync_data_state{ store_id = StoreID } = State0) ->
+	State2 = init_kv(State0, StoreID),
 
 	case RepackInPlacePacking of
 		none ->
@@ -605,13 +609,13 @@ init({StoreID, RepackInPlacePacking}) ->
 			gen_server:cast(self(), sync_intervals),
 			gen_server:cast(self(), sync_data),
 			maybe_run_footprint_record_initialization(State3),
-			{ok, State3};
+			{noreply, State3};
 		_ ->
 			State3 = State2#sync_data_state{
 				sync_status = off
 			},
 			ar_device_lock:set_device_lock_metric(StoreID, sync, off),
-			{ok, State3}
+			{noreply, State3}
 	end.
 
 handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, DataRootEntries}, State) ->
@@ -1987,12 +1991,12 @@ remove_range(Start, End, Ref, ReplyTo) ->
 		lists:zip(StoreIDs, RefL)
 	).
 
-init_kv(StoreID) ->
+init_kv(State, StoreID) ->
 	{ok, Config} = arweave_config:get_env(),
 	DataDir = Config#config.data_dir,
 	ok = open_store_dbs(DataDir, StoreID),
 	ar_disk_pool:move_index(StoreID),
-	#sync_data_state{
+	State#sync_data_state{
 		chunks_index = {chunks_index, StoreID},
 		disk_pool = ar_disk_pool:init_state(),
 		chunk_data_db = {chunk_data_db, StoreID},

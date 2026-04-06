@@ -232,7 +232,7 @@ bitmap(DataDir, StorageModuleConfig) ->
 	ar_kv_sup:start_link(),
 	ar_storage_sup:start_link(),
 	ar_sync_record_sup:start_link(),
-	ar_data_sync:init_kv(StoreID),
+	ar_data_sync:open_store_dbs(Config#config.data_dir, StoreID),
 	
 	{ModuleStart, ModuleEnd} = ar_storage_module:module_range(StorageModule),
 
