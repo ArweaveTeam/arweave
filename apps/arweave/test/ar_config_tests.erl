@@ -5,7 +5,10 @@
 -include_lib("eunit/include/eunit.hrl").
 
 parse_test_() ->
-	{timeout, 60, fun test_parse_config/0}.
+	[
+		{timeout, 60, fun test_parse_config/0},
+		{timeout, 60, fun test_parse_max_duplicate_data_roots_infinity/0}
+	].
 
 validate_test_() ->
 	[
@@ -136,6 +139,10 @@ test_parse_config() ->
 		block_throttle_by_solution_interval = 12_000,
 		http_api_transport_idle_timeout = 15_000
 	}, ParsedConfig).
+
+test_parse_max_duplicate_data_roots_infinity() ->
+	{ok, ParsedConfig} = ar_config:parse(<<"{\"max_duplicate_data_roots\":\"infinity\"}">>),
+	?assertEqual(infinity, ParsedConfig#config.max_duplicate_data_roots).
 
 config_fixture() ->
 	{ok, Cwd} = file:get_cwd(),

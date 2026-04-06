@@ -260,7 +260,8 @@ show_help() ->
 			{"max_duplicate_data_roots",
 				io_lib:format(
 					"The maximum number of duplicate data roots to inspect when "
-					"checking whether a posted chunk is already synced. Default is ~B.",
+					"checking whether a posted chunk is already synced. Set to "
+					"'infinity' to disable the limit. Default is ~B.",
 					[?DEFAULT_MAX_DUPLICATE_DATA_ROOTS]
 				)},
 			{"disk_cache_size_mb",
@@ -770,6 +771,8 @@ parse(["max_disk_pool_buffer_mb", Num | Rest], C) ->
 	parse(Rest, C#config{ max_disk_pool_buffer_mb = list_to_integer(Num) });
 parse(["max_disk_pool_data_root_buffer_mb", Num | Rest], C) ->
 	parse(Rest, C#config{ max_disk_pool_data_root_buffer_mb = list_to_integer(Num) });
+parse(["max_duplicate_data_roots", "infinity" | Rest], C) ->
+	parse(Rest, C#config{ max_duplicate_data_roots = infinity });
 parse(["max_duplicate_data_roots", Num | Rest], C) ->
 	parse(Rest, C#config{ max_duplicate_data_roots = list_to_integer(Num) });
 parse(["disk_cache_size_mb", Num | Rest], C) ->
@@ -1161,6 +1164,7 @@ commandline_parser_test_() ->
 				{"peer 1.2.3.4 peer 5.6.7.8:9", #config.peers, [{5,6,7,8,9},{1,2,3,4,1984}]},
 				{"mine", #config.mine, true},
 				{"port 22", #config.port, 22},
+				{"max_duplicate_data_roots infinity", #config.max_duplicate_data_roots, infinity},
 				{"mining_addr "
 					++ binary_to_list(ar_util:encode(Addr)), #config.mining_addr, Addr}
 			],

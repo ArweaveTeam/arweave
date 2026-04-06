@@ -68,6 +68,13 @@ chunk_skipped_with_depth_exhaustion_test_() ->
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
 		fun test_chunk_skipped_with_depth_exhaustion/0).
 
+chunk_persists_with_infinite_duplicate_data_root_depth_test_() ->
+	ar_test_node:test_with_mocked_functions([
+			{ar_block, get_consensus_window_size, fun() -> 5 end},
+			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
+			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
+		fun test_chunk_persists_with_infinite_duplicate_data_root_depth/0).
+
 test_data_roots_sync_from_peer() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
@@ -165,9 +172,7 @@ test_data_roots_http_post() ->
 	join_main_on_peer1(B#block.height + 11, false),
 	ar_test_node:disconnect_from(peer1),
 	assert_no_data_roots(main, B),
-	{ok, Body} = get_data_roots(peer1, B),
-	post_data_roots(main, B, Body),
-	wait_for_data_roots(main, B),
+	sync_data_roots_to_main(B),
 	ok.
 
 test_chunk_after_data_roots_http_post() ->
@@ -218,8 +223,7 @@ test_chunk_after_data_roots_http_post() ->
 					assert_no_data_roots(main, B),
 
 					%% Fetch data roots from peer1 and POST to main.
-					{ok, Body} = get_data_roots(peer1, B),
-					post_data_roots(main, B, Body),
+					sync_data_roots_to_main(B),
 
 					%% For each transaction with data, POST its chunks to main and verify GET /chunk.
 					lists:foreach(
@@ -334,9 +338,7 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
 	),
 
-	{ok, Body} = get_data_roots(peer1, TargetB),
-	post_data_roots(main, TargetB, Body),
-	wait_for_data_roots(main, TargetB),
+	sync_data_roots_to_main(TargetB),
 	?assertMatch(
 		{ok, {{<<"303">>, _}, _, <<>>, _, _}},
 		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
@@ -360,11 +362,9 @@ test_chunk_skipped_with_duplicate_data_root() ->
 	%% Pre-fetch B1's data roots while still connected to peer1. We'll post them to main
 	%% immediately after posting B1's chunk to beat the disk pool scan.
 	{ok, Body1} = get_data_roots(peer1, B1),
-	{ok, Body2} = get_data_roots(peer1, B2),
-	post_data_roots(main, B2, Body2),
-	wait_for_data_roots(main, B2),
+	sync_data_roots_to_main(B2),
 	ar_test_node:disconnect_from(peer1),
-	[{AbsEnd2, Proof2}] = ar_test_data_sync:build_proofs(B2, TX2, Chunks2),
+	{AbsEnd2, Proof2} = build_single_proof(B2, TX2, Chunks2),
 	post_chunk(main, Proof2),
 	wait_for_sync_record_update(main, AbsEnd2),
 	%% POST TX1's chunk. Since we've only synced one copy of the data_roots, and we've already
@@ -373,7 +373,7 @@ test_chunk_skipped_with_duplicate_data_root() ->
 	%% by design. 
 	%% For more context, and to track the state of any improvements to the process, see:
 	%% https://github.com/ArweaveTeam/arweave-dev/issues/1112
-	[{AbsEnd1, Proof1}] = ar_test_data_sync:build_proofs(B1, TX1, Chunks1),
+	{AbsEnd1, Proof1} = build_single_proof(B1, TX1, Chunks1),
 	post_chunk(main, Proof1),
 	%% Allow time for the chunk to be persisted (it shouldn't be)
 	timer:sleep(10_000),
@@ -386,68 +386,70 @@ test_chunk_skipped_with_duplicate_data_root() ->
 	ok = wait_for_chunk_to_persist(main, AbsEnd1).
 
 test_chunk_skipped_with_depth_exhaustion() ->
-	MaxDuplicateDataRoots = 3,
+	run_duplicate_depth_scenario(3).
+
+test_chunk_persists_with_infinite_duplicate_data_root_depth() ->
+	run_duplicate_depth_scenario(infinity).
+
+run_duplicate_depth_scenario(MaxDuplicateDataRoots) ->
+	DuplicateDepth = 3,
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 	start_peers_then_disconnect(peer1, main, B0),
-	%% Mine one more block than the configured duplicate-depth limit. This ensures the oldest
-	%% chunk falls outside the configured duplicate data-root window.
+	%% Mine one more block than the finite duplicate-depth limit so the oldest block only stays
+	%% reachable when max_duplicate_data_roots is treated as unbounded.
 	Blocks = lists:map(
 		fun(_) -> mine_block_with_fixed_data_tx(peer1, Wallet, 4096) end,
-		lists:seq(1, MaxDuplicateDataRoots + 1)
+		lists:seq(1, DuplicateDepth + 1)
 	),
 	{LastB, _} = lists:last(Blocks),
-	%% Mine enough empty blocks to push the chunks out of the disk pool. The later duplicates
-	%% should still be persistable, but the oldest should now be outside the configured window.
+	%% Mine enough empty blocks to push the chunks out of the disk pool.
 	mine_empty_blocks_on_peer_after(peer1, LastB, 10),
 	join_main_on_peer1(LastB#block.height + 10, false, MaxDuplicateDataRoots),
 	ar_test_node:disconnect_from(peer1),
 	[{B1, [{TX1, Chunks1}]} | HigherBlocks] = Blocks,
+	SyncBlocks = case MaxDuplicateDataRoots of
+		infinity ->
+			Blocks;
+		_ ->
+			HigherBlocks
+	end,
 	lists:foreach(
 		fun({B, _}) ->
-			{ok, Body} = get_data_roots(peer1, B),
-			post_data_roots(main, B, Body),
-			wait_for_data_roots(main, B)
+			sync_data_roots_to_main(B)
 		end,
-		HigherBlocks
-	),
-	%% POST chunks for the later duplicate blocks and wait for promotion. The oldest block B1
-	%% is outside the configured duplicate-offset window, so it should not become queryable via
-	%% duplicate fanout.
-	HigherAbsEnds = lists:map(
-		fun({B, [{TX, Chunks}]}) ->
-			[{AbsEnd, Proof}] = ar_test_data_sync:build_proofs(B, TX, Chunks),
-			post_chunk(main, Proof),
-			AbsEnd
-		end,
-		HigherBlocks
+		SyncBlocks
 	),
 	lists:foreach(
-		fun(AbsEnd) ->
-			wait_for_chunk_to_persist(main, AbsEnd)
+		fun({B, [{TX, Chunks}]}) ->
+			_ = post_single_proof_and_wait(main, B, TX, Chunks),
+			ok
 		end,
-		HigherAbsEnds
+		HigherBlocks
 	),
-	timer:sleep(10_000),
-	%% POST chunk for block 1 (lowest offset). chunk_offsets_synced/5 only checks the configured
-	%% number of synced duplicate offsets, so B1 is treated as already synced and skipped.
-	[{AbsEnd1, Proof1}] = ar_test_data_sync:build_proofs(B1, TX1, Chunks1),
-	post_chunk(main, Proof1),
-	timer:sleep(10_000),
-	?assertEqual(not_found, get_chunk(main, AbsEnd1)),
-	{ok, Body1} = get_data_roots(peer1, B1),
-	%% This test confirms that doign a POST /data_roots before posting a chunk is not a reliable
-	%% workaround to force the chunk to be persisted. We will either need to change the
-	%% duplicate data_roots logic, or implement a new endpoint. 
-	%% For more context, and to track the state of any improvements to the process, see:
-	%% https://github.com/ArweaveTeam/arweave-dev/issues/1112
-	post_data_roots(main, B1, Body1),
-	wait_for_data_roots(main, B1),
-	post_chunk(main, Proof1),
-	timer:sleep(10_000),
-	?assertEqual(not_found, get_chunk(main, AbsEnd1)),
-	% ok = wait_for_chunk_to_persist(main, AbsEnd1),
-	ok.
+	case MaxDuplicateDataRoots of
+		infinity ->
+			_ = post_single_proof_and_wait(main, B1, TX1, Chunks1),
+			ok;
+		_ ->
+			%% POST chunk for block 1 (lowest offset). chunk_offsets_synced/5 only checks the
+			%% configured number of synced duplicate offsets, so B1 is treated as already synced
+			%% and skipped.
+			{AbsEnd1, Proof1} = build_single_proof(B1, TX1, Chunks1),
+			post_chunk(main, Proof1),
+			timer:sleep(10_000),
+			?assertEqual(not_found, get_chunk(main, AbsEnd1)),
+			%% This test confirms that doing a POST /data_roots before posting a chunk is not a
+			%% reliable workaround to force the chunk to be persisted. We will either need to
+			%% change the duplicate data_roots logic, or implement a new endpoint.
+			%% For more context, and to track the state of any improvements to the process, see:
+			%% https://github.com/ArweaveTeam/arweave-dev/issues/1112
+			sync_data_roots_to_main(B1),
+			post_chunk(main, Proof1),
+			timer:sleep(10_000),
+			?assertEqual(not_found, get_chunk(main, AbsEnd1)),
+			ok
+	end.
 
 %% Start PeerA and PeerB from the same genesis, wait until both joined, then have PeerA
 %% disconnect from PeerB so they stop syncing while tests extend the chain on one side.
@@ -534,31 +536,14 @@ mine_block_with_fixed_data_tx(Peer, Wallet, Size) ->
 	{B, [{TX, Chunks}]}.
 
 generate_random_txs(Wallet) ->
+	BaseOpts = random_tx_base_opts(Wallet),
 	Coin = rand:uniform(12),
 	case Coin of
 		Val when Val =< 3 ->
 			%% Add three data txs with different data roots.
-			[ar_test_data_sync:tx(
-				#{ wallet => Wallet,
-					split_type => original_split,
-					format => v2,
-					reward => ?AR(10_000_000_000),
-					tx_anchor_peer => peer1,
-					get_fee_peer => peer1 }),
-				ar_test_data_sync:tx(
-					#{ wallet => Wallet,
-						split_type => original_split,
-						format => v2,
-						reward => ?AR(10_000_000_000),
-						tx_anchor_peer => peer1,
-						get_fee_peer => peer1 }),
-				ar_test_data_sync:tx(
-					#{ wallet => Wallet,
-						split_type => original_split,
-						format => v2,
-						reward => ?AR(10_000_000_000),
-						tx_anchor_peer => peer1,
-						get_fee_peer => peer1 })
+			[random_tx(BaseOpts, original_split),
+				random_tx(BaseOpts, original_split),
+				random_tx(BaseOpts, original_split)
 					| generate_random_txs(Wallet)];
 		Val when Val =< 6 ->
 			%% A bit smaller than 256 KiB to provoke padding.
@@ -569,43 +554,13 @@ generate_random_txs(Wallet) ->
 				)
 			),
 			%% Two transactions with the same data root.
-			[ar_test_data_sync:tx(
-				#{ wallet => Wallet,
-					split_type => {fixed_data, DataRoot, Chunks},
-					format => v2,
-					reward => ?AR(10_000_000_000),
-					tx_anchor_peer => peer1,
-					get_fee_peer => peer1 }),
-			ar_test_data_sync:tx(
-				#{ wallet => Wallet,
-					split_type => {fixed_data, DataRoot, Chunks},
-					format => v2,
-					reward => ?AR(10_000_000_000),
-					tx_anchor_peer => peer1,
-					get_fee_peer => peer1 }) | generate_random_txs(Wallet)];
+			[random_tx(BaseOpts, {fixed_data, DataRoot, Chunks}),
+			random_tx(BaseOpts, {fixed_data, DataRoot, Chunks}) | generate_random_txs(Wallet)];
 		Val when Val =< 9 ->
 			%% Add empty tx and two transactions with different data roots.
-			[ar_test_data_sync:tx(
-				#{ wallet => Wallet,
-					split_type => {fixed_data, <<>>, []},
-					format => v2,
-					reward => ?AR(10_000_000_000),
-					tx_anchor_peer => peer1,
-					get_fee_peer => peer1 }),
-				ar_test_data_sync:tx(
-				#{ wallet => Wallet,
-					split_type => original_split,
-					format => v2,
-					reward => ?AR(10_000_000_000),
-					tx_anchor_peer => peer1,
-					get_fee_peer => peer1 }),
-				ar_test_data_sync:tx(
-					#{ wallet => Wallet,
-						split_type => original_split,
-						format => v2,
-						reward => ?AR(10_000_000_000),
-						tx_anchor_peer => peer1,
-						get_fee_peer => peer1 })
+			[random_tx(BaseOpts, {fixed_data, <<>>, []}),
+				random_tx(BaseOpts, original_split),
+				random_tx(BaseOpts, original_split)
 			| generate_random_txs(Wallet)];
 		_ ->
 			[]
@@ -654,6 +609,11 @@ post_data_roots(Peer, B, Body) ->
 				"POST /data_roots/~B: expected 200, got ~p", [Start, Other])))
 	end.
 
+sync_data_roots_to_main(B) ->
+	{ok, Body} = get_data_roots(peer1, B),
+	post_data_roots(main, B, Body),
+	wait_for_data_roots(main, B).
+
 %% POST /chunk with a proof map. Asserts 200.
 post_chunk(Node, Proof) ->
 	case ar_test_node:post_chunk(Node, ar_serialize:jsonify(Proof)) of
@@ -663,6 +623,16 @@ post_chunk(Node, Proof) ->
 			?assert(false, lists:flatten(io_lib:format(
 				"POST /chunk: expected 200, got ~p", [Other])))
 	end.
+
+build_single_proof(B, TX, Chunks) ->
+	[{AbsEnd, Proof}] = ar_test_data_sync:build_proofs(B, TX, Chunks),
+	{AbsEnd, Proof}.
+
+post_single_proof_and_wait(Node, B, TX, Chunks) ->
+	{AbsEnd, Proof} = build_single_proof(B, TX, Chunks),
+	post_chunk(Node, Proof),
+	ok = wait_for_chunk_to_persist(Node, AbsEnd),
+	AbsEnd.
 
 %% Poll until AbsoluteEndOffset appears in the sync record for the given node.
 wait_for_sync_record_update(Node, AbsoluteEndOffset) ->
@@ -752,6 +722,18 @@ wait_for_data_roots(Peer, B) ->
 		120_000
 	),
 	ok.
+
+random_tx_base_opts(Wallet) ->
+	#{
+		wallet => Wallet,
+		format => v2,
+		reward => ?AR(10_000_000_000),
+		tx_anchor_peer => peer1,
+		get_fee_peer => peer1
+	}.
+
+random_tx(BaseOpts, SplitType) ->
+	ar_test_data_sync:tx(BaseOpts#{ split_type => SplitType }).
 
 assert_no_data_roots(Peer, B) ->
 	case get_data_roots(Peer, B) of
