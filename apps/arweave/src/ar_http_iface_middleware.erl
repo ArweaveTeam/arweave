@@ -166,22 +166,27 @@ handle(Req, Pid) ->
 	handle(Peer, Req, Pid).
 
 handle(Peer, Req, Pid) ->
-	Method = cowboy_req:method(Req),
-	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(http_logging, Config#config.enable) of
-		true ->
-			?LOG_INFO([
-				{event, http_request},
-				{method, Method},
-				{path, SplitPath},
-				{peer, ar_util:format_peer(Peer)}
-			]);
-		_ ->
-			do_nothing
-	end,
-	Response2 = handle4(Method, SplitPath, Req, Pid),
-	add_cors_headers(Req, Response2).
+	case ar_shutdown_manager:state() of
+		shutdown ->
+			{503, #{}, jiffy:encode(#{ error => shutdown }), Req};
+		running ->
+			Method = cowboy_req:method(Req),
+			SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
+			{ok, Config} = arweave_config:get_env(),
+			case lists:member(http_logging, Config#config.enable) of
+				true ->
+					?LOG_INFO([
+						{event, http_request},
+						{method, Method},
+						{path, SplitPath},
+						{peer, ar_util:format_peer(Peer)}
+					]);
+				_ ->
+					do_nothing
+			end,
+			Response2 = handle4(Method, SplitPath, Req, Pid),
+			add_cors_headers(Req, Response2)
+	end.
 
 add_cors_headers(Req, Response) ->
 	case Response of

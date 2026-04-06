@@ -33,7 +33,6 @@ setup_nodes(Options) ->
 
 setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 	Wallet = {_, Pub} = ar_wallet:new(),
-	ok = quiesce_peer_connections(),
 	{B0, Options2} =
 		case maps:get(b0, Options, not_set) of
 			not_set ->
@@ -51,12 +50,6 @@ setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 		enable = Config#config.enable ++ [pack_served_chunks] }),
 	ar_test_node:connect_to_peer(peer1),
 	Wallet.
-
-quiesce_peer_connections() ->
-	_ = catch ar_http:block_peer_connections(),
-	_ = catch ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
-	timer:sleep(200),
-	ok.
 
 make_fixed_data_tx(Wallet, Chunks) ->
 	make_fixed_data_tx(Wallet, Chunks, #{}).

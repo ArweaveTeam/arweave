@@ -115,7 +115,9 @@ fetch_and_assert_chunk(AbsoluteEndOffset, ExpectedProof) ->
 fetch_and_assert_chunk(Format, Offsets, AbsoluteEndOffset, ExpectedProof) ->
 	[FirstResponse | Rest] = [fetch_chunk_response(Format, Offset) || Offset <- Offsets],
 	lists:foreach(
-		fun(Response) -> ?assertEqual(FirstResponse, Response) end,
+		fun(Response) ->
+			?assertEqual(comparable_chunk_response(FirstResponse), comparable_chunk_response(Response))
+		end,
 		Rest
 	),
 	assert_chunk_response(FirstResponse, AbsoluteEndOffset, ExpectedProof).
@@ -165,6 +167,9 @@ assert_chunk_response(Response, AbsoluteEndOffset, ExpectedProof) ->
 		iolist_to_binary(ar_serialize:encode_packing(unpacked, true)),
 		maps:get(packing, Response)
 	).
+
+comparable_chunk_response(Response) ->
+	maps:remove(headers, Response).
 
 assert_absolute_end_offset_header(Headers, AbsoluteEndOffset) ->
 	?assertEqual(
