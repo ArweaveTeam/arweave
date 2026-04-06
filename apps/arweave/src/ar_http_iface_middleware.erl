@@ -2318,6 +2318,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								{ok, Proof} ->
 									Proof2 = maps:remove(unpacked_chunk,
 											Proof#{ packing => ReadPacking }),
+									Headers = get_chunk_response_headers(Proof2),
 									Reply =
 										case Encoding of
 											json ->
@@ -2327,7 +2328,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 											binary ->
 												ar_serialize:poa_map_to_binary(Proof2)
 										end,
-									{200, #{}, Reply, Req};
+									{200, Headers, Reply, Req};
 								{error, chunk_not_found} ->
 									{404, #{}, <<>>, Req};
 								{error, invalid_padding} ->
@@ -2353,6 +2354,14 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 			end;
 		_ ->
 			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
+	end.
+
+get_chunk_response_headers(Proof) ->
+	case maps:get(absolute_end_offset, Proof, not_found) of
+		not_found ->
+			#{};
+		AbsoluteEndOffset ->
+			#{ <<"arweave-absolute-end-offset">> => integer_to_binary(AbsoluteEndOffset) }
 	end.
 
 handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->

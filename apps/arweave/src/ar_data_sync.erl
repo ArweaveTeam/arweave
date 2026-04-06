@@ -1519,8 +1519,6 @@ do_sync_data2(#sync_data_state{
 			unsynced_intervals_from_other_storage_modules = [],
 			other_storage_modules_with_unsynced_intervals = [OtherStoreID | OtherStoreIDs]
 		} = State) ->
-	Packing = ar_storage_module:get_packing(StoreID),
-	OtherPacking = ar_storage_module:get_packing(OtherStoreID),
 	Intervals = get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
 			RangeStart, RangeEnd),
 	?LOG_INFO([{event, sync_data}, {stage, copy_from_other_storage_modules},
