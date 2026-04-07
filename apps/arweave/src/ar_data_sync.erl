@@ -957,11 +957,13 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	{Q2, QIntervals2} = enqueue_intervals(
 		ar_util:shuffle_list(Intervals), ChunksPerPeer, {Q, QIntervals}),
 
-	?LOG_DEBUG([{event, enqueue_intervals}, {pid, self()},
-		{queue_before, gb_sets:size(Q)}, {queue_after, gb_sets:size(Q2)},
-		{num_peers, NumPeers}, {chunks_per_peer, ChunksPerPeer},
-		{q_intervals_before, ar_intervals:sum(QIntervals)},
-		{q_intervals_after, ar_intervals:sum(QIntervals2)}]),
+	%% XXX: turning off logging to reduce noise, will re-enable when we support multiple log
+	%%      files.
+	% ?LOG_DEBUG([{event, enqueue_intervals}, {pid, self()},
+	% 	{queue_before, gb_sets:size(Q)}, {queue_after, gb_sets:size(Q2)},
+	% 	{num_peers, NumPeers}, {chunks_per_peer, ChunksPerPeer},
+	% 	{q_intervals_before, ar_intervals:sum(QIntervals)},
+	% 	{q_intervals_after, ar_intervals:sum(QIntervals2)}]),
 
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2 }};

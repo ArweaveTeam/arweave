@@ -437,16 +437,18 @@ deactivate_footprint(FootprintKey, Footprint, State) ->
 	#state{ footprints = Footprints, peer_formatted = PeerFormatted, 
 			active_footprints = ActiveFootprints } = State,
 	%% Log deactivation with duration
-	case Footprint#footprint.activation_time of
-		undefined -> ok;
-		ActivationTime ->
-			DurationMs = erlang:convert_time_unit(
-				erlang:monotonic_time() - ActivationTime, native, millisecond),
-			?LOG_DEBUG([{event, footprint_deactivated},
-				{peer, PeerFormatted},
-				{footprint_key, FootprintKey},
-				{duration_ms, DurationMs}])
-	end,
+	%% XXX: turning off logging to reduce noise, will re-enable when we support multiple log
+	%%      files.
+	% case Footprint#footprint.activation_time of
+	% 	undefined -> ok;
+	% 	ActivationTime ->
+	% 		DurationMs = erlang:convert_time_unit(
+	% 			erlang:monotonic_time() - ActivationTime, native, millisecond),
+	% 		?LOG_DEBUG([{event, footprint_deactivated},
+	% 			{peer, PeerFormatted},
+	% 			{footprint_key, FootprintKey},
+	% 			{duration_ms, DurationMs}])
+	% end,
 	increment_metrics(deactivate_footprint, State, 1),
 	notify_footprint_deactivated(State#state.peer),
 	State#state{ 
