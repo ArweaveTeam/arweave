@@ -609,12 +609,15 @@ handle_continue({init, RepackInPlacePacking},
 			gen_server:cast(self(), sync_intervals),
 			gen_server:cast(self(), sync_data),
 			maybe_run_footprint_record_initialization(State3),
+			?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID}]),
 			{noreply, State3};
 		_ ->
 			State3 = State2#sync_data_state{
 				sync_status = off
 			},
 			ar_device_lock:set_device_lock_metric(StoreID, sync, off),
+			?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID}, 
+				{repack_in_place_packing, ar_serialize:encode_packing(RepackInPlacePacking, false)}]),
 			{noreply, State3}
 	end.
 

@@ -101,6 +101,7 @@ handle_continue(init, State) ->
 	FootprintBuckets = cache_and_get_sync_buckets(FootprintRecord,
 			serialized_footprint_buckets,
 			ar_sync_buckets:new(?NETWORK_FOOTPRINT_BUCKET_SIZE)),
+	?LOG_INFO([{event, ar_global_sync_record_initialized}]),
 	{noreply, State#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets,
 			footprint_record = FootprintRecord, footprint_buckets = FootprintBuckets }}.
 

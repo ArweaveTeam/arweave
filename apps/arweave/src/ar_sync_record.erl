@@ -343,6 +343,7 @@ handle_continue({init, Dir}, #state{ state_db = StateDB, store_id = StoreID } = 
 	{SyncRecordByID, SyncRecordByIDType, WAL} = read_sync_records(StateDB, StoreID),
 	initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
 	initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
+	?LOG_INFO([{event, ar_sync_record_initialized}, {store_id, StoreID}]),
 	{noreply, State#state{
 		sync_record_by_id = SyncRecordByID,
 		sync_record_by_id_type = SyncRecordByIDType,

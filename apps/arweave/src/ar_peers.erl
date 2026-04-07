@@ -538,6 +538,7 @@ handle_continue(init, State) ->
 		[],
 		#{ skip_on_shutdown => true }
 	),
+	?LOG_INFO([{event, ar_peers_initialized}]),
 	{noreply, State}.
 
 handle_call(Request, _From, State) ->
