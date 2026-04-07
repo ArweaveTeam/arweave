@@ -87,6 +87,7 @@ batch_test_() ->
 				test_register(fun test_get_block_by_hash/1, GenesisData),
 				test_register(fun test_get_block_by_height/1, GenesisData),
 				test_register(fun test_get_non_existent_block/1, GenesisData),
+				test_register(fun test_price_endpoints/1, GenesisData),
 				%% ---------------------------------------------------------
 				%% The following tests are *not* read-only and may modify
 				%% state. They can *not* assume a fixed blockchain state.
@@ -223,6 +224,63 @@ get_price(EncodedAddr) ->
 			headers => [{<<"x-p2p-port">>, integer_to_binary(Port)}]
 		}),
 	binary_to_integer(Reply).
+
+test_price_endpoints({_B0, _Wallet1, _Wallet2, {_, StaticPub}}) ->
+	Peer = ar_test_node:peer_ip(main),
+	Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(StaticPub))),
+	ExpectedFee = ?AR(1),
+	ExpectedDenomination = 0,
+	assert_price_endpoint(Peer, "/price/100", [], binary,
+		ExpectedFee, ExpectedDenomination),
+	assert_price_endpoint(Peer, "/price/100/" ++ Addr, [], binary,
+		ExpectedFee, ExpectedDenomination),
+	assert_price_endpoint(Peer, "/price/100",
+		[{<<"accept">>, <<"application/json">>}], json,
+		ExpectedFee, ExpectedDenomination),
+	assert_price_endpoint(Peer, "/price/100/" ++ Addr,
+		[{<<"accept">>, <<"application/json">>}], json,
+		ExpectedFee, ExpectedDenomination),
+	assert_price_endpoint(Peer, "/price2/100", [], json,
+		ExpectedFee, ExpectedDenomination),
+	assert_price_endpoint(Peer, "/price2/100/" ++ Addr, [], json,
+		ExpectedFee, ExpectedDenomination),
+	assert_price_endpoint(Peer, "/optimistic_price/100", [], json,
+		ExpectedFee, ExpectedDenomination),
+	assert_price_endpoint(Peer, "/optimistic_price/100/" ++ Addr, [], json,
+		ExpectedFee, ExpectedDenomination).
+
+assert_price_endpoint(Peer, Path, Headers, binary, ExpectedFee, ExpectedDenomination) ->
+	{ok, {{<<"200">>, _}, ResponseHeaders, Body, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => Path,
+			headers => Headers
+		}),
+	?assertEqual(expected_denomination_header(ExpectedDenomination),
+		proplists:lookup_all(<<"arweave-denomination">>, ResponseHeaders)),
+	?assertEqual(ExpectedFee, binary_to_integer(Body)),
+	ok;
+assert_price_endpoint(Peer, Path, Headers, json, ExpectedFee, ExpectedDenomination) ->
+	{ok, {{<<"200">>, _}, ResponseHeaders, Body, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => Peer,
+			path => Path,
+			headers => Headers
+		}),
+	?assertEqual(expected_denomination_header(ExpectedDenomination),
+		proplists:lookup_all(<<"arweave-denomination">>, ResponseHeaders)),
+	Json = jiffy:decode(Body, [return_maps]),
+	?assertEqual(expected_price_json(ExpectedFee, ExpectedDenomination), Json),
+	ok.
+
+expected_denomination_header(ExpectedDenomination) ->
+	[{<<"arweave-denomination">>, integer_to_binary(ExpectedDenomination)}].
+
+expected_price_json(ExpectedFee, ExpectedDenomination) ->
+	#{<<"fee">> => integer_to_binary(ExpectedFee),
+		<<"denomination">> => ExpectedDenomination}.
 
 get_tx(ID) ->
 	Peer = ar_test_node:peer_ip(main),

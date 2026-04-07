@@ -359,15 +359,8 @@ handle(<<"GET">>, [<<"footprint_buckets">>], Req, _Pid) ->
 	end;
 
 handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
-	Format =
-		case cowboy_req:header(<<"content-type">>, Req) of
-			<<"application/json">> ->
-				json;
-			_ ->
-				etf
-		end,
 	ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
-	Options = #{ format => Format, random_subset => true },
+	Options = #{ format => content_type_format(Req), random_subset => true },
 	case ar_global_sync_record:get_serialized_sync_record(Options) of
 		{ok, Binary} ->
 			{200, #{}, Binary, Req};
@@ -833,98 +826,43 @@ handle(<<"GET">>, [<<"inflation">>, EncodedHeight], Req, _Pid) ->
 %% Return the estimated transaction fee not including a new wallet fee.
 %% GET request to endpoint /price/{bytes}.
 handle(<<"GET">>, [<<"price">>, SizeInBytesBinary], Req, _Pid) ->
-	case catch binary_to_integer(SizeInBytesBinary) of
-		{'EXIT', _} ->
-			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
-		Size ->
-			{Fee, _Denomination} = estimate_tx_fee(Size, <<>>),
-			{200, #{}, integer_to_binary(Fee), Req}
-	end;
+	handle_get_price(SizeInBytesBinary, Req,
+		fun(Size) -> estimate_tx_fee(Size, <<>>) end, maybe_json);
 
 %% Return the estimated transaction fee not (including a new wallet fee) along with the
 %% denomination code.
 %% GET request to endpoint /price2/{bytes}.
 handle(<<"GET">>, [<<"price2">>, SizeInBytesBinary], Req, _Pid) ->
-	case catch binary_to_integer(SizeInBytesBinary) of
-		{'EXIT', _} ->
-			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
-		Size ->
-			{Fee, Denomination} = estimate_tx_fee(Size, <<>>),
-			{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
-					denomination => Denomination }), Req}
-	end;
+	handle_get_price(SizeInBytesBinary, Req,
+		fun(Size) -> estimate_tx_fee(Size, <<>>) end, json);
 
 %% Return the optimistic transaction fee not (including a new wallet fee) along with the
 %% denomination code.
 %% GET request to endpoint /optimistic_price/{bytes}.
 handle(<<"GET">>, [<<"optimistic_price">>, SizeInBytesBinary], Req, _Pid) ->
-	case catch binary_to_integer(SizeInBytesBinary) of
-		{'EXIT', _} ->
-			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
-		Size ->
-			{Fee, Denomination} = estimate_tx_fee(Size, <<>>, optimistic),
-			{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
-					denomination => Denomination }), Req}
-	end;
+	handle_get_price(SizeInBytesBinary, Req,
+		fun(Size) -> estimate_tx_fee(Size, <<>>, optimistic) end, json);
 
 %% Return the estimated transaction fee (including a new wallet fee if the given address
 %% is not found in the account tree).
 %% GET request to endpoint /price/{bytes}/{address}.
 handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
-	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
-			EncodedAddr) of
-		{error, invalid} ->
-			{400, #{}, <<"Invalid address.">>, Req};
-		{ok, Addr} ->
-			case catch binary_to_integer(SizeInBytesBinary) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
-							Req};
-				Size ->
-					{Fee, _Denomination} = estimate_tx_fee(Size, Addr),
-					{200, #{}, integer_to_binary(Fee), Req}
-			end
-	end;
+	handle_get_price(SizeInBytesBinary, EncodedAddr, Req,
+		fun(Size, Addr) -> estimate_tx_fee(Size, Addr) end, maybe_json);
 
 %% Return the estimated transaction fee (including a new wallet fee if the given address
 %% is not found in the account tree) along with the denomination code.
 %% GET request to endpoint /price2/{bytes}/{address}.
 handle(<<"GET">>, [<<"price2">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
-	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
-			EncodedAddr) of
-		{error, invalid} ->
-			{400, #{}, <<"Invalid address.">>, Req};
-		{ok, Addr} ->
-			case catch binary_to_integer(SizeInBytesBinary) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
-							Req};
-				Size ->
-					{Fee, Denomination} = estimate_tx_fee(Size, Addr),
-					{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
-							denomination => Denomination }), Req}
-			end
-	end;
+	handle_get_price(SizeInBytesBinary, EncodedAddr, Req,
+		fun(Size, Addr) -> estimate_tx_fee(Size, Addr) end, json);
 
 %% Return the estimated transaction fee (including a new wallet fee if the given address
 %% is not found in the account tree) along with the denomination code.
 %% GET request to endpoint /optimistic_price/{bytes}/{address}.
 handle(<<"GET">>, [<<"optimistic_price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
-	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
-			EncodedAddr) of
-		{error, invalid} ->
-			{400, #{}, <<"Invalid address.">>, Req};
-		{ok, Addr} ->
-			case catch binary_to_integer(SizeInBytesBinary) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
-							Req};
-				Size ->
-					{Fee, Denomination} = estimate_tx_fee(Size, Addr, optimistic),
-					{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
-							denomination => Denomination }), Req}
-			end
-	end;
+	handle_get_price(SizeInBytesBinary, EncodedAddr, Req,
+		fun(Size, Addr) -> estimate_tx_fee(Size, Addr, optimistic) end, json);
 
 %% Return the estimated transaction fee not including a new wallet fee. The fee is estimated
 %% using the new pricing scheme.
@@ -1644,6 +1582,54 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 			end
 	end.
 
+denomination_header(Denomination) ->
+	#{<<"arweave-denomination">> => integer_to_binary(Denomination)}.
+
+accepts_json(Req) ->
+	case cowboy_req:header(<<"accept">>, Req, <<>>) of
+		<<"application/json">> -> true;
+		_ -> false
+	end.
+
+content_type_format(Req) ->
+	case cowboy_req:header(<<"content-type">>, Req) of
+		<<"application/json">> ->
+			json;
+		_ ->
+			etf
+	end.
+
+handle_get_price(SizeInBytesBinary, Req, EstimateFun, Format) ->
+	case catch binary_to_integer(SizeInBytesBinary) of
+		{'EXIT', _} ->
+			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+		Size ->
+			handle_get_price2(EstimateFun(Size), Req, Format)
+	end.
+
+handle_get_price(SizeInBytesBinary, EncodedAddr, Req, EstimateFun, Format) ->
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
+			EncodedAddr) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>, Req};
+		{ok, Addr} ->
+			handle_get_price(SizeInBytesBinary, Req,
+				fun(Size) -> EstimateFun(Size, Addr) end, Format)
+	end.
+
+handle_get_price2({Fee, Denomination}, Req, json) ->
+	{200, denomination_header(Denomination), price_response(Fee, Denomination), Req};
+handle_get_price2({Fee, Denomination}, Req, maybe_json) ->
+	case accepts_json(Req) of
+		true ->
+			handle_get_price2({Fee, Denomination}, Req, json);
+		false ->
+			{200, denomination_header(Denomination), integer_to_binary(Fee), Req}
+	end.
+
+price_response(Fee, Denomination) ->
+	jiffy:encode(#{ fee => integer_to_binary(Fee), denomination => Denomination }).
+
 estimate_tx_fee(Size, Addr) ->
 	estimate_tx_fee(Size, Addr, pessimistic).
 
@@ -1912,14 +1898,7 @@ handle_post_tx_invalid_data_root_response() ->
 	{error_response, {400, #{}, <<"The attached data is split in an unknown way.">>}}.
 
 handle_get_data_sync_record(Start, Limit, Req) ->
-	Format =
-		case cowboy_req:header(<<"content-type">>, Req) of
-			<<"application/json">> ->
-				json;
-			_ ->
-				etf
-		end,
-	Options = #{ start => Start, limit => Limit, format => Format },
+	Options = #{ start => Start, limit => Limit, format => content_type_format(Req) },
 	case ar_global_sync_record:get_serialized_sync_record(Options) of
 		{ok, Binary} ->
 			{200, #{}, Binary, Req};
@@ -1928,14 +1907,8 @@ handle_get_data_sync_record(Start, Limit, Req) ->
 	end.
 
 handle_get_data_sync_record(Start, End, Limit, Req) ->
-	Format =
-		case cowboy_req:header(<<"content-type">>, Req) of
-			<<"application/json">> ->
-				json;
-			_ ->
-				etf
-		end,
-	Options = #{ start => Start, right_bound => End, limit => Limit, format => Format },
+	Options = #{ start => Start, right_bound => End, limit => Limit,
+			format => content_type_format(Req) },
 	case ar_global_sync_record:get_serialized_sync_record(Options) of
 		{ok, Binary} ->
 			{200, #{}, Binary, Req};
