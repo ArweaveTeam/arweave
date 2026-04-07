@@ -128,10 +128,13 @@ start_http_iface_listener(Config) ->
 		not_set ->
 			cowboy:start_clear(ar_http_iface_listener, TransportOpts, ProtocolOpts);
 		_ ->
-			cowboy:start_tls(ar_http_iface_listener, TransportOpts ++ [
-				{certfile, TlsCertfilePath},
-				{keyfile, TlsKeyfilePath}
-			], ProtocolOpts)
+			cowboy:start_tls(ar_http_iface_listener,
+				TransportOpts#{socket_opts => [
+					{port, Config#config.port},
+					{certfile, TlsCertfilePath},
+					{keyfile, TlsKeyfilePath}
+				]},
+				ProtocolOpts)
 	end.
 
 name_route([]) ->
