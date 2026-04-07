@@ -155,6 +155,7 @@ loop(TimeoutRef) ->
 			unlink(HandlerPid),
 			exit(HandlerPid, handler_timeout),
 			?LOG_WARNING([{event, handler_timeout},
+					{peer, ar_http_util:arweave_peer(InitialReq)},
 					{method, cowboy_req:method(InitialReq)},
 					{path, cowboy_req:path(InitialReq)}]),
 			RepliedReq = cowboy_req:reply(500, #{}, <<"Handler timeout">>, InitialReq),
@@ -184,7 +185,13 @@ handle(Peer, Req, Pid) ->
 				_ ->
 					do_nothing
 			end,
-			Response2 = handle4(Method, SplitPath, Req, Pid),
+			Response2 =
+				case {ar_node:is_joined(), allow_before_join(Method, SplitPath)} of
+					{false, false} ->
+						not_joined(Req);
+					_ ->
+						handle4(Method, SplitPath, Req, Pid)
+				end,
 			add_cors_headers(Req, Response2)
 	end.
 
@@ -229,12 +236,7 @@ handle(<<"GET">>, [<<"info">>], Req, _Pid) ->
 	{200, #{}, ar_serialize:jsonify(ar_info:get_info()), Req};
 
 handle(<<"GET">>, [<<"recent">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			{200, #{}, ar_serialize:jsonify(ar_info:get_recent()), Req}
-	end;
+	{200, #{}, ar_serialize:jsonify(ar_info:get_recent()), Req};
 
 handle(<<"GET">>, [<<"is_tx_blacklisted">>, EncodedTXID], Req, _Pid) ->
 	case ar_util:safe_decode(EncodedTXID) of
@@ -271,20 +273,15 @@ handle(<<"GET">>, [<<"time">>], Req, _Pid) ->
 %% Return all mempool transactions.
 %% GET request to endpoint /tx/pending.
 handle(<<"GET">>, [<<"tx">>, <<"pending">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			{200, #{},
-					ar_serialize:jsonify(
-						%% Should encode
-						lists:map(
-							fun ar_util:encode/1,
-							ar_mempool:get_all_txids()
-						)
-					),
-			Req}
-	end;
+	{200, #{},
+			ar_serialize:jsonify(
+				%% Should encode
+				lists:map(
+					fun ar_util:encode/1,
+					ar_mempool:get_all_txids()
+				)
+			),
+	Req};
 
 %% Return outgoing transaction priority queue.
 %% GET request to endpoint /queue.
@@ -295,12 +292,7 @@ handle(<<"GET">>, [<<"queue">>], Req, _Pid) ->
 %% Return additional information about the transaction with the given identifier (hash).
 %% GET request to endpoint /tx/{hash}/status.
 handle(<<"GET">>, [<<"tx">>, Hash, <<"status">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_tx_status(Hash, Req)
-	end;
+	handle_get_tx_status(Hash, Req);
 
 %% Return a JSON-encoded transaction.
 %% GET request to endpoint /tx/{hash}.
@@ -345,57 +337,42 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 	end;
 
 handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
-			case ar_global_sync_record:get_serialized_sync_buckets() of
-				{ok, Binary} ->
-					{200, #{}, Binary, Req};
-				{error, not_initialized} ->
-					{500, #{}, jiffy:encode(#{ error => not_initialized }), Req};
-				{error, timeout} ->
-					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
-			end
+	ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
+	case ar_global_sync_record:get_serialized_sync_buckets() of
+		{ok, Binary} ->
+			{200, #{}, Binary, Req};
+		{error, not_initialized} ->
+			{500, #{}, jiffy:encode(#{ error => not_initialized }), Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end;
 
 handle(<<"GET">>, [<<"footprint_buckets">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
-			case ar_global_sync_record:get_serialized_footprint_buckets() of
-				{ok, Binary} ->
-					{200, #{}, Binary, Req};
-				{error, not_initialized} ->
-					{500, #{}, jiffy:encode(#{ error => not_initialized }), Req};
-				{error, timeout} ->
-					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
-			end
+	ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
+	case ar_global_sync_record:get_serialized_footprint_buckets() of
+		{ok, Binary} ->
+			{200, #{}, Binary, Req};
+		{error, not_initialized} ->
+			{500, #{}, jiffy:encode(#{ error => not_initialized }), Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end;
 
 handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			Format =
-				case cowboy_req:header(<<"content-type">>, Req) of
-					<<"application/json">> ->
-						json;
-					_ ->
-						etf
-			end,
-			ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
-			Options = #{ format => Format, random_subset => true },
-			case ar_global_sync_record:get_serialized_sync_record(Options) of
-				{ok, Binary} ->
-					{200, #{}, Binary, Req};
-				{error, timeout} ->
-					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
-			end
+	Format =
+		case cowboy_req:header(<<"content-type">>, Req) of
+			<<"application/json">> ->
+				json;
+			_ ->
+				etf
+		end,
+	ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
+	Options = #{ format => Format, random_subset => true },
+	case ar_global_sync_record:get_serialized_sync_record(Options) of
+		{ok, Binary} ->
+			{200, #{}, Binary, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end;
 
 handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pid) ->
@@ -508,28 +485,23 @@ handle(<<"GET">>, [<<"unconfirmed_chunk">>, EncodedTXID, OffsetBinary], Req, _Pi
 	handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req);
 
 handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_util:safe_decode(EncodedID) of
-				{error, invalid} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
-				{ok, ID} ->
-					case ar_data_sync:get_tx_offset(ID) of
-						{ok, {Offset, Size}} ->
-							ResponseBody = jiffy:encode(#{
-								offset => integer_to_binary(Offset),
-								size => integer_to_binary(Size)
-							}),
-							{200, #{}, ResponseBody, Req};
-						{error, not_found} ->
-							{404, #{}, <<>>, Req};
-						{error, failed_to_read_offset} ->
-							{500, #{}, <<>>, Req};
-						{error, timeout} ->
-							{503, #{}, jiffy:encode(#{ error => timeout }), Req}
-					end
+	case ar_util:safe_decode(EncodedID) of
+		{error, invalid} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
+		{ok, ID} ->
+			case ar_data_sync:get_tx_offset(ID) of
+				{ok, {Offset, Size}} ->
+					ResponseBody = jiffy:encode(#{
+						offset => integer_to_binary(Offset),
+						size => integer_to_binary(Size)
+					}),
+					{200, #{}, ResponseBody, Req};
+				{error, not_found} ->
+					{404, #{}, <<>>, Req};
+				{error, failed_to_read_offset} ->
+					{500, #{}, <<>>, Req};
+				{error, timeout} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
 	end;
 
@@ -539,26 +511,21 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 %% which corresponds to sorted #tx records in the block.
 %% GET /data_roots/{offset}
 handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
-			case catch binary_to_integer(OffsetBin) of
-				{'EXIT', _} ->
-					{400, #{}, <<>>, Req};
-				Offset ->
-					case ar_data_roots:get_block(Offset) of
-						{ok, {TXRoot, BlockSize, DataRootEntries}} ->
-							Payload = ar_serialize:data_roots_to_binary(
-								{TXRoot, BlockSize, DataRootEntries}
-							),
-							{200, #{}, Payload, Req};
-						{error, not_found} ->
-							{404, #{}, jiffy:encode(#{ error => not_found }), Req};
-						_ ->
-							{500, #{}, <<>>, Req}
-					end
+	ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
+	case catch binary_to_integer(OffsetBin) of
+		{'EXIT', _} ->
+			{400, #{}, <<>>, Req};
+		Offset ->
+			case ar_data_roots:get_block(Offset) of
+				{ok, {TXRoot, BlockSize, DataRootEntries}} ->
+					Payload = ar_serialize:data_roots_to_binary(
+						{TXRoot, BlockSize, DataRootEntries}
+					),
+					{200, #{}, Payload, Req};
+				{error, not_found} ->
+					{404, #{}, jiffy:encode(#{ error => not_found }), Req};
+				_ ->
+					{500, #{}, <<>>, Req}
 			end
 	end;
 
@@ -568,91 +535,74 @@ handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
 %% which corresponds to sorted #tx records in the block.
 %% POST /data_roots/{offset}
 handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
-			DiskPoolThreshold = ar_disk_pool:get_threshold(),
-			ReadOffset =
-				case catch binary_to_integer(OffsetBin) of
-					{'EXIT', _} ->
-						{reply, {400, #{}, <<>>, Req}};
-					Offset when Offset >= DiskPoolThreshold ->
-						{reply, {400, #{}, jiffy:encode(#{ error => offset_above_disk_pool_threshold }), Req}};
-					Offset when Offset < 0 ->
-						{reply, {400, #{}, jiffy:encode(#{ error => negative_offset }), Req}};
-					Offset ->
-						{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
-						case ar_data_roots:are_synced(BlockStart, BlockEnd, ExpectedTXRoot, ?DEFAULT_MODULE) of
-							true ->
-								{reply, {200, #{}, <<>>, Req}};
-							false ->
-								{Offset, BlockStart, BlockEnd}
-						end
-				end,
-			case ReadOffset of
-				{reply, Reply} ->
-					Reply;
-				{Offset2, BlockStart2, BlockEnd2} ->
-					case read_complete_body(Req, Pid) of
-						{ok, Body, Req2} ->
-							case ar_serialize:binary_to_data_roots(Body) of
-								{ok, {TXRoot, BlockSize, DataRootEntries}} ->
-									case ar_data_roots:validate_data_roots(
-										TXRoot, BlockSize, DataRootEntries, Offset2
-									) of
-										{ok, _} ->
-											case catch ar_data_root_sync:store_data_roots_sync(
-													BlockStart2, BlockEnd2, TXRoot, DataRootEntries) of
-												ok ->
-													{200, #{}, <<>>, Req2};
-												{'EXIT', {timeout, _}} ->
-													{503, #{}, jiffy:encode(#{ error => timeout }), Req2};
-												{'EXIT', _} ->
-													{503, #{}, jiffy:encode(#{ error => timeout }), Req2};
-												{error, Reason} ->
-													{503, #{}, jiffy:encode(#{ error => Reason }), Req2}
-											end;
+	ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
+	DiskPoolThreshold = ar_disk_pool:get_threshold(),
+	ReadOffset =
+		case catch binary_to_integer(OffsetBin) of
+			{'EXIT', _} ->
+				{reply, {400, #{}, <<>>, Req}};
+			Offset when Offset >= DiskPoolThreshold ->
+				{reply, {400, #{}, jiffy:encode(#{ error => offset_above_disk_pool_threshold }), Req}};
+			Offset when Offset < 0 ->
+				{reply, {400, #{}, jiffy:encode(#{ error => negative_offset }), Req}};
+			Offset ->
+				{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
+				case ar_data_roots:are_synced(BlockStart, BlockEnd, ExpectedTXRoot, ?DEFAULT_MODULE) of
+					true ->
+						{reply, {200, #{}, <<>>, Req}};
+					false ->
+						{Offset, BlockStart, BlockEnd}
+				end
+		end,
+	case ReadOffset of
+		{reply, Reply} ->
+			Reply;
+		{Offset2, BlockStart2, BlockEnd2} ->
+			case read_complete_body(Req, Pid) of
+				{ok, Body, Req2} ->
+					case ar_serialize:binary_to_data_roots(Body) of
+						{ok, {TXRoot, BlockSize, DataRootEntries}} ->
+							case ar_data_roots:validate_data_roots(
+								TXRoot, BlockSize, DataRootEntries, Offset2
+							) of
+								{ok, _} ->
+									case catch ar_data_root_sync:store_data_roots_sync(
+											BlockStart2, BlockEnd2, TXRoot, DataRootEntries) of
+										ok ->
+											{200, #{}, <<>>, Req2};
+										{'EXIT', {timeout, _}} ->
+											{503, #{}, jiffy:encode(#{ error => timeout }), Req2};
+										{'EXIT', _} ->
+											{503, #{}, jiffy:encode(#{ error => timeout }), Req2};
 										{error, Reason} ->
-											{400, #{}, jiffy:encode(#{ error => Reason }), Req2}
+											{503, #{}, jiffy:encode(#{ error => Reason }), Req2}
 									end;
-								_ ->
-									{400, #{}, jiffy:encode(#{ error => invalid_format }), Req2}
+								{error, Reason} ->
+									{400, #{}, jiffy:encode(#{ error => Reason }), Req2}
 							end;
-						{error, body_size_too_large} ->
-							{400, #{}, <<>>, Req};
-						{error, timeout} ->
-							{503, #{}, jiffy:encode(#{ error => timeout }), Req}
-					end
+						_ ->
+							{400, #{}, jiffy:encode(#{ error => invalid_format }), Req2}
+					end;
+				{error, body_size_too_large} ->
+					{400, #{}, <<>>, Req};
+				{error, timeout} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 			end
 	end;
 
 handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
-	Joined =
-		case ar_node:is_joined() of
-			false ->
-				not_joined(Req);
-			true ->
-				ok
-		end,
 	DataRootKnown =
-		case Joined of
-			ok ->
-				case get_data_root_from_headers(Req) of
-					not_set ->
+		case get_data_root_from_headers(Req) of
+			not_set ->
+				ok;
+			{ok, {DataRoot, DataSize}} ->
+				case ar_data_sync:has_data_root(DataRoot, DataSize) of
+					true ->
 						ok;
-					{ok, {DataRoot, DataSize}} ->
-						case ar_data_sync:has_data_root(DataRoot, DataSize) of
-							true ->
-								ok;
-							false ->
-								{400, #{}, jiffy:encode(#{ error => data_root_not_found }),
-										Req}
-						end
-				end;
-			Reply ->
-				Reply
+					false ->
+						{400, #{}, jiffy:encode(#{ error => data_root_not_found }),
+								Req}
+				end
 		end,
 	ParseChunk =
 		case DataRootKnown of
@@ -718,12 +668,7 @@ handle(<<"POST">>, [<<"block2">>], Req, Pid) ->
 %% "rejected_invalid_packing_difficulty".
 %% If the solution is partial, "indep_hash" string is empty.
 handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
-	case ar_node:is_joined() of
-		true ->
-			handle_post_partial_solution(Req, Pid);
-		false ->
-			not_joined(Req)
-	end;
+	handle_post_partial_solution(Req, Pid);
 
 %% Return the information about up to ?GET_JOBS_COUNT latest VDF steps and a difficulty.
 %%
@@ -751,33 +696,18 @@ handle(<<"POST">>, [<<"partial_solution">>], Req, Pid) ->
 %%   "next_vdf_difficulty": "..."
 %% }
 handle(<<"GET">>, [<<"jobs">>, EncodedPrevOutput], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_util:safe_decode(EncodedPrevOutput) of
-				{ok, PrevOutput} ->
-					handle_get_jobs(PrevOutput, Req);
-				{error, invalid} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_prev_output }), Req}
-			end
+	case ar_util:safe_decode(EncodedPrevOutput) of
+		{ok, PrevOutput} ->
+			handle_get_jobs(PrevOutput, Req);
+		{error, invalid} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_prev_output }), Req}
 	end;
 
 handle(<<"GET">>, [<<"jobs">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_jobs(<<>>, Req)
-	end;
+	handle_get_jobs(<<>>, Req);
 
 handle(<<"POST">>, [<<"pool_cm_jobs">>], Req, Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_post_pool_cm_jobs(Req, Pid)
-	end;
+	handle_post_pool_cm_jobs(Req, Pid);
 
 %% Generate a wallet and receive a secret key identifying it.
 %% Requires internal_api_secret startup option to be set.
@@ -817,10 +747,8 @@ handle(<<"POST">>, [<<"tx2">>], Req, Pid) ->
 %% Requires internal_api_secret startup option to be set.
 %% WARNING: only use it if you really really know what you are doing.
 handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
-	case {ar_node:is_joined(), check_internal_api_secret(Req)} of
-		{false, _} ->
-			not_joined(Req);
-		{true, pass} ->
+	case check_internal_api_secret(Req) of
+		pass ->
 			case read_complete_body(Req, Pid) of
 				{ok, Body, Req2} ->
 					{UnsignedTXProps} = ar_serialize:dejsonify(Body),
@@ -869,7 +797,7 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 				{error, timeout} ->
 					{500, #{}, <<"Handler timeout">>, Req}
 			end;
-		{true, {reject, {Status, Headers, Body}}} ->
+		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
 	end;
 
@@ -905,76 +833,56 @@ handle(<<"GET">>, [<<"inflation">>, EncodedHeight], Req, _Pid) ->
 %% Return the estimated transaction fee not including a new wallet fee.
 %% GET request to endpoint /price/{bytes}.
 handle(<<"GET">>, [<<"price">>, SizeInBytesBinary], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case catch binary_to_integer(SizeInBytesBinary) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
-				Size ->
-					{Fee, _Denomination} = estimate_tx_fee(Size, <<>>),
-					{200, #{}, integer_to_binary(Fee), Req}
-			end
+	case catch binary_to_integer(SizeInBytesBinary) of
+		{'EXIT', _} ->
+			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+		Size ->
+			{Fee, _Denomination} = estimate_tx_fee(Size, <<>>),
+			{200, #{}, integer_to_binary(Fee), Req}
 	end;
 
 %% Return the estimated transaction fee not (including a new wallet fee) along with the
 %% denomination code.
 %% GET request to endpoint /price2/{bytes}.
 handle(<<"GET">>, [<<"price2">>, SizeInBytesBinary], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case catch binary_to_integer(SizeInBytesBinary) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
-				Size ->
-					{Fee, Denomination} = estimate_tx_fee(Size, <<>>),
-					{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
-							denomination => Denomination }), Req}
-			end
+	case catch binary_to_integer(SizeInBytesBinary) of
+		{'EXIT', _} ->
+			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+		Size ->
+			{Fee, Denomination} = estimate_tx_fee(Size, <<>>),
+			{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
+					denomination => Denomination }), Req}
 	end;
 
 %% Return the optimistic transaction fee not (including a new wallet fee) along with the
 %% denomination code.
 %% GET request to endpoint /optimistic_price/{bytes}.
 handle(<<"GET">>, [<<"optimistic_price">>, SizeInBytesBinary], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case catch binary_to_integer(SizeInBytesBinary) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
-				Size ->
-					{Fee, Denomination} = estimate_tx_fee(Size, <<>>, optimistic),
-					{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
-							denomination => Denomination }), Req}
-			end
+	case catch binary_to_integer(SizeInBytesBinary) of
+		{'EXIT', _} ->
+			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+		Size ->
+			{Fee, Denomination} = estimate_tx_fee(Size, <<>>, optimistic),
+			{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
+					denomination => Denomination }), Req}
 	end;
 
 %% Return the estimated transaction fee (including a new wallet fee if the given address
 %% is not found in the account tree).
 %% GET request to endpoint /price/{bytes}/{address}.
 handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
-					EncodedAddr) of
-				{error, invalid} ->
-					{400, #{}, <<"Invalid address.">>, Req};
-				{ok, Addr} ->
-					case catch binary_to_integer(SizeInBytesBinary) of
-						{'EXIT', _} ->
-							{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
-									Req};
-						Size ->
-							{Fee, _Denomination} = estimate_tx_fee(Size, Addr),
-							{200, #{}, integer_to_binary(Fee), Req}
-					end
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
+			EncodedAddr) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>, Req};
+		{ok, Addr} ->
+			case catch binary_to_integer(SizeInBytesBinary) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
+							Req};
+				Size ->
+					{Fee, _Denomination} = estimate_tx_fee(Size, Addr),
+					{200, #{}, integer_to_binary(Fee), Req}
 			end
 	end;
 
@@ -982,24 +890,19 @@ handle(<<"GET">>, [<<"price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
 %% is not found in the account tree) along with the denomination code.
 %% GET request to endpoint /price2/{bytes}/{address}.
 handle(<<"GET">>, [<<"price2">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
-					EncodedAddr) of
-				{error, invalid} ->
-					{400, #{}, <<"Invalid address.">>, Req};
-				{ok, Addr} ->
-					case catch binary_to_integer(SizeInBytesBinary) of
-						{'EXIT', _} ->
-							{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
-									Req};
-						Size ->
-							{Fee, Denomination} = estimate_tx_fee(Size, Addr),
-							{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
-									denomination => Denomination }), Req}
-					end
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
+			EncodedAddr) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>, Req};
+		{ok, Addr} ->
+			case catch binary_to_integer(SizeInBytesBinary) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
+							Req};
+				Size ->
+					{Fee, Denomination} = estimate_tx_fee(Size, Addr),
+					{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
+							denomination => Denomination }), Req}
 			end
 	end;
 
@@ -1007,24 +910,19 @@ handle(<<"GET">>, [<<"price2">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
 %% is not found in the account tree) along with the denomination code.
 %% GET request to endpoint /optimistic_price/{bytes}/{address}.
 handle(<<"GET">>, [<<"optimistic_price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
-					EncodedAddr) of
-				{error, invalid} ->
-					{400, #{}, <<"Invalid address.">>, Req};
-				{ok, Addr} ->
-					case catch binary_to_integer(SizeInBytesBinary) of
-						{'EXIT', _} ->
-							{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
-									Req};
-						Size ->
-							{Fee, Denomination} = estimate_tx_fee(Size, Addr, optimistic),
-							{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
-									denomination => Denomination }), Req}
-					end
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
+			EncodedAddr) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>, Req};
+		{ok, Addr} ->
+			case catch binary_to_integer(SizeInBytesBinary) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
+							Req};
+				Size ->
+					{Fee, Denomination} = estimate_tx_fee(Size, Addr, optimistic),
+					{200, #{}, jiffy:encode(#{ fee => integer_to_binary(Fee),
+							denomination => Denomination }), Req}
 			end
 	end;
 
@@ -1032,89 +930,69 @@ handle(<<"GET">>, [<<"optimistic_price">>, SizeInBytesBinary, EncodedAddr], Req,
 %% using the new pricing scheme.
 %% GET request to endpoint /v2price/{bytes}.
 handle(<<"GET">>, [<<"v2price">>, SizeInBytesBinary], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case catch binary_to_integer(SizeInBytesBinary) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
-				Size ->
-					Fee = estimate_tx_fee_v2(Size, <<>>),
-					{200, #{}, integer_to_binary(Fee), Req}
-			end
+	case catch binary_to_integer(SizeInBytesBinary) of
+		{'EXIT', _} ->
+			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
+		Size ->
+			Fee = estimate_tx_fee_v2(Size, <<>>),
+			{200, #{}, integer_to_binary(Fee), Req}
 	end;
 
 %% Return the estimated transaction fee (including a new wallet fee if the given address
 %% is not found in the account tree). The fee is estimated using the new pricing scheme.
 %% GET request to endpoint /v2price/{bytes}/{address}.
 handle(<<"GET">>, [<<"v2price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
-					EncodedAddr) of
-				{error, invalid} ->
-					{400, #{}, <<"Invalid address.">>, Req};
-				{ok, Addr} ->
-					case catch binary_to_integer(SizeInBytesBinary) of
-						{'EXIT', _} ->
-							{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
-									Req};
-						Size ->
-							Fee = estimate_tx_fee_v2(Size, Addr),
-							{200, #{}, integer_to_binary(Fee), Req}
-					end
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(
+			EncodedAddr) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>, Req};
+		{ok, Addr} ->
+			case catch binary_to_integer(SizeInBytesBinary) of
+				{'EXIT', _} ->
+					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
+							Req};
+				Size ->
+					Fee = estimate_tx_fee_v2(Size, Addr),
+					{200, #{}, integer_to_binary(Fee), Req}
 			end
 	end;
 
 handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			ok = ar_semaphore:acquire(get_reward_history, ?DEFAULT_CALL_TIMEOUT),
-			case ar_util:safe_decode(EncodedBH) of
-				{ok, BH} ->
-					Fork_2_6 = ar_fork:height_2_6(),
-					case ar_block_cache:get_block_and_status(block_cache, BH) of
-						{#block{ height = Height, reward_history = RewardHistory }, {Status, _}}
-								when (Status == on_chain orelse Status == validated),
-									Height >= Fork_2_6 ->
-							RewardHistory2 = ar_rewards:trim_buffered_reward_history(Height,
-									RewardHistory),
-							{200, #{}, ar_serialize:reward_history_to_binary(RewardHistory2),
-									Req};
-						_ ->
-							{404, #{}, <<>>, Req}
-					end;
-				{error, invalid} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_block_hash }), Req}
-			end
+	ok = ar_semaphore:acquire(get_reward_history, ?DEFAULT_CALL_TIMEOUT),
+	case ar_util:safe_decode(EncodedBH) of
+		{ok, BH} ->
+			Fork_2_6 = ar_fork:height_2_6(),
+			case ar_block_cache:get_block_and_status(block_cache, BH) of
+				{#block{ height = Height, reward_history = RewardHistory }, {Status, _}}
+						when (Status == on_chain orelse Status == validated),
+							Height >= Fork_2_6 ->
+					RewardHistory2 = ar_rewards:trim_buffered_reward_history(Height,
+							RewardHistory),
+					{200, #{}, ar_serialize:reward_history_to_binary(RewardHistory2),
+							Req};
+				_ ->
+					{404, #{}, <<>>, Req}
+			end;
+		{error, invalid} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_block_hash }), Req}
 	end;
 
 handle(<<"GET">>, [<<"block_time_history">>, EncodedBH], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_util:safe_decode(EncodedBH) of
-				{ok, BH} ->
-					Fork_2_7 = ar_fork:height_2_7(),
-					case ar_block_cache:get_block_and_status(block_cache, BH) of
-						{#block{ height = Height,
-									block_time_history = BlockTimeHistory }, {Status, _}}
-								when (Status == on_chain orelse Status == validated),
-									Height >= Fork_2_7 ->
-							{200, #{}, ar_serialize:block_time_history_to_binary(
-									BlockTimeHistory), Req};
-						_ ->
-							{404, #{}, <<>>, Req}
-					end;
-				{error, invalid} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_block_hash }), Req}
-			end
+	case ar_util:safe_decode(EncodedBH) of
+		{ok, BH} ->
+			Fork_2_7 = ar_fork:height_2_7(),
+			case ar_block_cache:get_block_and_status(block_cache, BH) of
+				{#block{ height = Height,
+							block_time_history = BlockTimeHistory }, {Status, _}}
+						when (Status == on_chain orelse Status == validated),
+							Height >= Fork_2_7 ->
+					{200, #{}, ar_serialize:block_time_history_to_binary(
+							BlockTimeHistory), Req};
+				_ ->
+					{404, #{}, <<>>, Req}
+			end;
+		{error, invalid} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_block_hash }), Req}
 	end;
 
 %% Return the current JSON-encoded hash list held by the node.
@@ -1124,41 +1002,31 @@ handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 
 handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
 	ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
+	case ar_node:get_height() >= ar_fork:height_2_6() of
 		true ->
-			case ar_node:get_height() >= ar_fork:height_2_6() of
-				true ->
-					{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
-				false ->
-					BI = ar_node:get_block_index(),
-					{200, #{},
-						ar_serialize:jsonify(
-							ar_serialize:block_index_to_json_struct(
-								format_bi_for_peer(BI, Req)
-							)
-						),
-					Req}
-			end
+			{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
+		false ->
+			BI = ar_node:get_block_index(),
+			{200, #{},
+				ar_serialize:jsonify(
+					ar_serialize:block_index_to_json_struct(
+						format_bi_for_peer(BI, Req)
+					)
+				),
+			Req}
 	end;
 
 %% Return the current binary-encoded block index held by the node.
 %% GET request to endpoint /block_index2.
 handle(<<"GET">>, [<<"block_index2">>], Req, _Pid) ->
 	ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
+	case ar_node:get_height() >= ar_fork:height_2_6() of
 		true ->
-			case ar_node:get_height() >= ar_fork:height_2_6() of
-				true ->
-					{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
-				false ->
-					BI = ar_node:get_block_index(),
-					Bin = ar_serialize:block_index_to_binary(BI),
-					{200, #{}, Bin, Req}
-			end
+			{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
+		false ->
+			BI = ar_node:get_block_index(),
+			Bin = ar_serialize:block_index_to_binary(BI),
+			{200, #{}, Bin, Req}
 	end;
 
 handle(<<"GET">>, [<<"hash_list">>, From, To], Req, _Pid) ->
@@ -1173,138 +1041,98 @@ handle(<<"GET">>, [<<"block_index2">>, From, To], Req, _Pid) ->
 
 handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
 	ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			Props =
-				ets:select(
-					node_state,
-					[{{'$1', '$2'},
-						[{'or',
-							{'==', '$1', height},
-							{'==', '$1', recent_block_index}}], ['$_']}]
-				),
-			Height = proplists:get_value(height, Props),
-			RecentBI = proplists:get_value(recent_block_index, Props),
-			try
-				Start = binary_to_integer(From),
-				End = binary_to_integer(To),
-				Encoding = case erlang:get(encoding) of undefined -> json; Enc -> Enc end,
-				handle_get_block_index_range(Start, End, Height, RecentBI, Req, Encoding)
-			catch _:_ ->
-				{400, #{}, jiffy:encode(#{ error => invalid_range }), Req}
-			end
+	Props =
+		ets:select(
+			node_state,
+			[{{'$1', '$2'},
+				[{'or',
+					{'==', '$1', height},
+					{'==', '$1', recent_block_index}}], ['$_']}]
+		),
+	Height = proplists:get_value(height, Props),
+	RecentBI = proplists:get_value(recent_block_index, Props),
+	try
+		Start = binary_to_integer(From),
+		End = binary_to_integer(To),
+		Encoding = case erlang:get(encoding) of undefined -> json; Enc -> Enc end,
+		handle_get_block_index_range(Start, End, Height, RecentBI, Req, Encoding)
+	catch _:_ ->
+		{400, #{}, jiffy:encode(#{ error => invalid_range }), Req}
 	end;
 
 handle(<<"GET">>, [<<"recent_hash_list">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			Encoded = [ar_util:encode(H) || H <- ar_node:get_block_anchors()],
-			{200, #{}, ar_serialize:jsonify(Encoded), Req}
-	end;
+	Encoded = [ar_util:encode(H) || H <- ar_node:get_block_anchors()],
+	{200, #{}, ar_serialize:jsonify(Encoded), Req};
 
 %% Accept the list of independent block hashes ordered from oldest to newest
 %% and return the deviation of our hash list from the given one.
 %% Peers may use this endpoint to make sure they did not miss blocks or learn
 %% about the missed blocks and their transactions so that they can catch up quickly.
 handle(<<"GET">>, [<<"recent_hash_list_diff">>], Req, Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case read_complete_body(Req, Pid, ?MAX_SERIALIZED_RECENT_HASH_LIST_DIFF) of
-				{ok, Body, Req2} ->
-					case decode_recent_hash_list(Body) of
-						{ok, ReverseHL} ->
-							{BlockTXPairs, _}
-									= ar_block_cache:get_longest_chain_cache(block_cache),
-							case get_recent_hash_list_diff(ReverseHL,
-									lists:reverse(BlockTXPairs)) of
-								no_intersection ->
-									{404, #{}, <<>>, Req2};
-								Bin ->
-									{200, #{}, Bin, Req2}
-							end;
-						error ->
-							{400, #{}, <<>>, Req2}
+	case read_complete_body(Req, Pid, ?MAX_SERIALIZED_RECENT_HASH_LIST_DIFF) of
+		{ok, Body, Req2} ->
+			case decode_recent_hash_list(Body) of
+				{ok, ReverseHL} ->
+					{BlockTXPairs, _}
+							= ar_block_cache:get_longest_chain_cache(block_cache),
+					case get_recent_hash_list_diff(ReverseHL,
+							lists:reverse(BlockTXPairs)) of
+						no_intersection ->
+							{404, #{}, <<>>, Req2};
+						Bin ->
+							{200, #{}, Bin, Req2}
 					end;
-				{error, timeout} ->
-					{503, #{}, jiffy:encode(#{ error => timeout }), Req};
-				{error, body_size_too_large} ->
-					{413, #{}, <<"Payload too large">>, Req}
-			end
+				error ->
+					{400, #{}, <<>>, Req2}
+			end;
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req};
+		{error, body_size_too_large} ->
+			{413, #{}, <<"Payload too large">>, Req}
 	end;
 
 %% Return the sum of all the existing accounts in the latest state, in Winston.
 %% GET request to endpoint /total_supply.
 handle(<<"GET">>, [<<"total_supply">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			ok = ar_semaphore:acquire(get_wallet_list, ?DEFAULT_CALL_TIMEOUT),
-			B = ar_node:get_current_block(),
-			TotalSupply = get_total_supply(B#block.wallet_list, first, 0,
-					B#block.denomination),
-			{200, #{}, integer_to_binary(TotalSupply), Req}
-	end;
+	ok = ar_semaphore:acquire(get_wallet_list, ?DEFAULT_CALL_TIMEOUT),
+	B = ar_node:get_current_block(),
+	TotalSupply = get_total_supply(B#block.wallet_list, first, 0,
+			B#block.denomination),
+	{200, #{}, integer_to_binary(TotalSupply), Req};
 
 %% Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list.
 handle(<<"GET">>, [<<"wallet_list">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			H = ar_node:get_current_block_hash(),
-			process_request(get_block, [<<"hash">>, ar_util:encode(H), <<"wallet_list">>], Req)
-	end;
+	H = ar_node:get_current_block_hash(),
+	process_request(get_block, [<<"hash">>, ar_util:encode(H), <<"wallet_list">>], Req);
 
 %% Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
 %% the given root hash. The wallet addresses are picked in the ascending alphabetical order.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			process_get_wallet_list_chunk(EncodedRootHash, first, Req)
-	end;
+	process_get_wallet_list_chunk(EncodedRootHash, first, Req);
 
 %% Return a bunch of wallets, up to ?WALLET_LIST_CHUNK_SIZE, from the tree with
 %% the given root hash, starting with the provided cursor, taken the wallet addresses
 %% are picked in the ascending alphabetical order.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedCursor], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req)
-	end;
+	process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req);
 
 %% Return the balance of the given address from the wallet tree with the given root hash.
 handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">>], Req,
 		_Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case {ar_util:safe_decode(EncodedRootHash), ar_util:safe_decode(EncodedAddr)} of
-				{{error, invalid}, _} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_root_hash_encoding }), Req};
-				{_, {error, invalid}} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_address_encoding }), Req};
-				{{ok, RootHash}, {ok, Addr}} ->
-					case ar_wallets:get_balance(RootHash, Addr) of
-						{error, not_found} ->
-							{404, #{}, jiffy:encode(#{ error => root_hash_not_found }), Req};
-						Balance when is_integer(Balance) ->
-							{200, #{}, integer_to_binary(Balance), Req};
-						_Error ->
-							{500, #{}, <<>>, Req}
-					end
+	case {ar_util:safe_decode(EncodedRootHash), ar_util:safe_decode(EncodedAddr)} of
+		{{error, invalid}, _} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_root_hash_encoding }), Req};
+		{_, {error, invalid}} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_address_encoding }), Req};
+		{{ok, RootHash}, {ok, Addr}} ->
+			case ar_wallets:get_balance(RootHash, Addr) of
+				{error, not_found} ->
+					{404, #{}, jiffy:encode(#{ error => root_hash_not_found }), Req};
+				Balance when is_integer(Balance) ->
+					{200, #{}, integer_to_binary(Balance), Req};
+				_Error ->
+					{500, #{}, <<>>, Req}
 			end
 	end;
 
@@ -1316,69 +1144,49 @@ handle(<<"POST">>, [<<"peers">>], Req, _Pid) ->
 %% Return the balance of the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/balance.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"balance">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
-				{error, invalid} ->
-					{400, #{}, <<"Invalid address.">>, Req};
-				{ok, AddrOK} ->
-					case ar_node:get_balance(AddrOK) of
-						node_unavailable ->
-							{503, #{}, <<"Internal timeout.">>, Req};
-						Balance ->
-							{200, #{}, integer_to_binary(Balance), Req}
-					end
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>, Req};
+		{ok, AddrOK} ->
+			case ar_node:get_balance(AddrOK) of
+				node_unavailable ->
+					{503, #{}, <<"Internal timeout.">>, Req};
+				Balance ->
+					{200, #{}, integer_to_binary(Balance), Req}
 			end
 	end;
 
 %% Return the sum of reserved mining rewards of the given account.
 %% GET request to endpoint /wallet/{wallet_address}/reserved_rewards_total.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"reserved_rewards_total">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
-				{ok, AddrOK} when byte_size(AddrOK) == 32 ->
-					B = ar_node:get_current_block(),
-					Sum = ar_rewards:get_total_reward_for_address(AddrOK, B),
-					{200, #{}, integer_to_binary(Sum), Req};
-				_ ->
-					{400, #{}, <<"Invalid address.">>, Req}
-			end
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
+		{ok, AddrOK} when byte_size(AddrOK) == 32 ->
+			B = ar_node:get_current_block(),
+			Sum = ar_rewards:get_total_reward_for_address(AddrOK, B),
+			{200, #{}, integer_to_binary(Sum), Req};
+		_ ->
+			{400, #{}, <<"Invalid address.">>, Req}
 	end;
 
 %% Return the last transaction ID (hash) for the wallet specified via wallet_address.
 %% GET request to endpoint /wallet/{wallet_address}/last_tx.
 handle(<<"GET">>, [<<"wallet">>, Addr, <<"last_tx">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
-				{error, invalid} ->
-					{400, #{}, <<"Invalid address.">>, Req};
-				{ok, AddrOK} ->
-					{200, #{},
-						ar_util:encode(
-							?OK(ar_node:get_last_tx(AddrOK))
-						),
-					Req}
-			end
+	case ar_wallet:base64_address_with_optional_checksum_to_decoded_address_safe(Addr) of
+		{error, invalid} ->
+			{400, #{}, <<"Invalid address.">>, Req};
+		{ok, AddrOK} ->
+			{200, #{},
+				ar_util:encode(
+					?OK(ar_node:get_last_tx(AddrOK))
+				),
+			Req}
 	end;
 
 %% Return a block anchor to use for building transactions.
 handle(<<"GET">>, [<<"tx_anchor">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			List = ar_node:get_block_anchors(),
-			SuggestedAnchor = lists:nth(min(length(List), ?SUGGESTED_TX_ANCHOR_DEPTH), List),
-			{200, #{}, ar_util:encode(SuggestedAnchor), Req}
-	end;
+	List = ar_node:get_block_anchors(),
+	SuggestedAnchor = lists:nth(min(length(List), ?SUGGESTED_TX_ANCHOR_DEPTH), List),
+	{200, #{}, ar_util:encode(SuggestedAnchor), Req};
 
 %% Return the JSON-encoded block with the given height or hash.
 %% GET request to endpoint /block/{height|hash}/{height|hash}.
@@ -1402,12 +1210,7 @@ handle(<<"GET">>, [<<"block2">>, Type, ID], Req, Pid)
 %% Return block or block field.
 handle(<<"GET">>, [<<"block">>, Type, ID, Field], Req, _Pid)
 		when Type == <<"height">> orelse Type == <<"hash">> ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			process_request(get_block, [Type, ID, Field], Req)
-	end;
+	process_request(get_block, [Type, ID, Field], Req);
 
 %% Return the balance of the given wallet at the given block.
 handle(<<"GET">>, [<<"block">>, <<"height">>, Height, <<"wallet">>, Addr, <<"balance">>], Req,
@@ -1434,51 +1237,46 @@ handle(<<"GET">>, [<<"current_block">>], Req, Pid) ->
 %%
 %% {field} := { id | last_tx | owner | tags | target | quantity | data | signature | reward }
 handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			ReadTX =
-				case ar_util:safe_decode(Hash) of
-					{error, invalid} ->
-						{reply, {400, #{}, <<"Invalid hash.">>, Req}};
-					{ok, ID} ->
-						{ar_storage:read_tx(ID), ID}
-				end,
-			case ReadTX of
-				{unavailable, TXID} ->
-					case is_a_pending_tx(TXID) of
-						true ->
-							{202, #{}, <<"Pending">>, Req};
-						false ->
-							{404, #{}, <<"Not Found.">>, Req}
-					end;
-				{reply, Reply} ->
-					Reply;
-				{#tx{} = TX, _} ->
-					case Field of
-						<<"tags">> ->
-							{200, #{}, ar_serialize:jsonify(lists:map(
-									fun({Name, Value}) ->
-										{[{name, ar_util:encode(Name)},
-												{value, ar_util:encode(Value)}]}
-									end,
-									TX#tx.tags)), Req};
-						<<"data">> ->
-							serve_tx_data(Req, TX);
-						_ ->
-							case catch binary_to_existing_atom(Field) of
+	ReadTX =
+		case ar_util:safe_decode(Hash) of
+			{error, invalid} ->
+				{reply, {400, #{}, <<"Invalid hash.">>, Req}};
+			{ok, ID} ->
+				{ar_storage:read_tx(ID), ID}
+		end,
+	case ReadTX of
+		{unavailable, TXID} ->
+			case is_a_pending_tx(TXID) of
+				true ->
+					{202, #{}, <<"Pending">>, Req};
+				false ->
+					{404, #{}, <<"Not Found.">>, Req}
+			end;
+		{reply, Reply} ->
+			Reply;
+		{#tx{} = TX, _} ->
+			case Field of
+				<<"tags">> ->
+					{200, #{}, ar_serialize:jsonify(lists:map(
+							fun({Name, Value}) ->
+								{[{name, ar_util:encode(Name)},
+										{value, ar_util:encode(Value)}]}
+							end,
+							TX#tx.tags)), Req};
+				<<"data">> ->
+					serve_tx_data(Req, TX);
+				_ ->
+					case catch binary_to_existing_atom(Field) of
+						{'EXIT', _} ->
+							{400, #{}, jiffy:encode(#{ error => invalid_field }), Req};
+						FieldAtom ->
+							{TXJSON} = ar_serialize:tx_to_json_struct(TX),
+							case catch val_for_key(FieldAtom, TXJSON) of
 								{'EXIT', _} ->
-									{400, #{}, jiffy:encode(#{ error => invalid_field }), Req};
-								FieldAtom ->
-									{TXJSON} = ar_serialize:tx_to_json_struct(TX),
-									case catch val_for_key(FieldAtom, TXJSON) of
-										{'EXIT', _} ->
-											{400, #{}, jiffy:encode(#{ error => invalid_field }),
-													Req};
-										Val ->
-											{200, #{}, Val, Req}
-									end
+									{400, #{}, jiffy:encode(#{ error => invalid_field }),
+											Req};
+								Val ->
+									{200, #{}, Val, Req}
 							end
 					end
 			end
@@ -1487,13 +1285,8 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
 %% Return the current block hieght, or 500.
 handle(Method, [<<"height">>], Req, _Pid)
 		when (Method == <<"GET">>) or (Method == <<"HEAD">>) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			H = ar_node:get_height(),
-			{200, #{}, integer_to_binary(H), Req}
-	end;
+	H = ar_node:get_height(),
+	{200, #{}, integer_to_binary(H), Req};
 
 %% If we are given a hash with no specifier (block, tx, etc), assume that
 %% the user is requesting the data from the TX associated with that hash.
@@ -1504,126 +1297,71 @@ handle(<<"GET">>, [<<Hash:43/binary, MaybeExt/binary>>], Req, Pid) ->
 %% Accept a nonce limiter (VDF) update from a configured peer, if any.
 %% POST request to /vdf.
 handle(<<"POST">>, [<<"vdf">>], Req, Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_post_vdf(Req, Pid)
-	end;
+	handle_post_vdf(Req, Pid);
 
 %% Serve an VDF update to a configured VDF client.
 %% GET request to /vdf.
 handle(<<"GET">>, [<<"vdf">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_vdf(Req, get_update, 2)
-	end;
+	handle_get_vdf(Req, get_update, 2);
 
 %% Serve an VDF update to a configured VDF client.
 %% GET request to /vdf2.
 handle(<<"GET">>, [<<"vdf2">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_vdf(Req, get_update, 2)
-	end;
+	handle_get_vdf(Req, get_update, 2);
 
 %% Serve the current VDF session to a configured VDF client.
 %% GET request to /vdf/session.
 handle(<<"GET">>, [<<"vdf">>, <<"session">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_vdf(Req, get_session, 2)
-	end;
+	handle_get_vdf(Req, get_session, 2);
 
 %% Serve the current VDF session to a configured VDF client.
 %% GET request to /vdf2/session.
 handle(<<"GET">>, [<<"vdf2">>, <<"session">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_vdf(Req, get_session, 2)
-	end;
+	handle_get_vdf(Req, get_session, 2);
 
 %% Serve the current VDF session to a configured VDF client.
 %% GET request to /vdf3/session.
 handle(<<"GET">>, [<<"vdf3">>, <<"session">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_vdf(Req, get_session, 3)
-	end;
+	handle_get_vdf(Req, get_session, 3);
 
 %% Serve the current VDF session to a configured VDF client.
 %% GET request to /vdf3/session.
 handle(<<"GET">>, [<<"vdf4">>, <<"session">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_vdf(Req, get_session, 4)
-	end;
+	handle_get_vdf(Req, get_session, 4);
 
 %% Serve the previous VDF session to a configured VDF client.
 %% GET request to /vdf/previous_session.
 handle(<<"GET">>, [<<"vdf">>, <<"previous_session">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_vdf(Req, get_previous_session, 2)
-	end;
+	handle_get_vdf(Req, get_previous_session, 2);
 
 %% Serve the previous VDF session to a configured VDF client.
 %% GET request to /vdf2/previous_session.
 handle(<<"GET">>, [<<"vdf2">>, <<"previous_session">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_vdf(Req, get_previous_session, 2)
-	end;
+	handle_get_vdf(Req, get_previous_session, 2);
 
 %% Serve the previous VDF session to a configured VDF client.
 %% GET request to /vdf4/previous_session.
 handle(<<"GET">>, [<<"vdf4">>, <<"previous_session">>], Req, _Pid) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			handle_get_vdf(Req, get_previous_session, 4)
-	end;
+	handle_get_vdf(Req, get_previous_session, 4);
 
 handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) ->
 	case check_cm_api_secret(Req) of
 		pass ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					Partitions =
-						case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
-							{true, true} ->
-								%% When we work with a pool, the exit node shares
-								%% the information about external partitions with
-								%% every internal miner.
-								ar_coordination:get_self_plus_external_partitions_list();
-							_ ->
-								%% CM miners ask each other about their local
-								%% partitions. A CM exit node is not an exception - it
-								%% does NOT aggregate peer partitions in this case.
-								ar_coordination:get_unique_partitions_list()
-						end,
-					JSON = ar_serialize:jsonify(Partitions),
-					{200, #{}, JSON, Req}
-			end;
+			Partitions =
+				case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
+					{true, true} ->
+						%% When we work with a pool, the exit node shares
+						%% the information about external partitions with
+						%% every internal miner.
+						ar_coordination:get_self_plus_external_partitions_list();
+					_ ->
+						%% CM miners ask each other about their local
+						%% partitions. A CM exit node is not an exception - it
+						%% does NOT aggregate peer partitions in this case.
+						ar_coordination:get_unique_partitions_list()
+				end,
+			JSON = ar_serialize:jsonify(Partitions),
+			{200, #{}, JSON, Req};
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
 	end;
@@ -1632,33 +1370,28 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) 
 handle(<<"GET">>, [<<"coordinated_mining">>, <<"state">>], Req, _Pid) ->
 	case check_cm_api_secret(Req) of
 		pass ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					{ok, {LastPeerResponse}} = ar_coordination:get_public_state(),
-					Peers = maps:fold(fun(Peer, Value, Acc) ->
-						{AliveStatus, PartitionList} = Value,
-						Table = lists:map(
-							fun	(ListValue) ->
-								{Bucket, BucketSize, Addr, PackingDifficulty} = ListValue,
-								ar_serialize:partition_to_json_struct(Bucket, BucketSize,
-									Addr, PackingDifficulty)
-							end,
-							PartitionList
-						),
-						Val = {[
-							{peer, list_to_binary(ar_util:format_peer(Peer))},
-							{alive, AliveStatus},
-							{partition_table, Table}
-						]},
-						[Val | Acc]
-						end,
-						[],
-						LastPeerResponse
-					),
-				{200, #{}, ar_serialize:jsonify(Peers), Req}
-			end;
+			{ok, {LastPeerResponse}} = ar_coordination:get_public_state(),
+			Peers = maps:fold(fun(Peer, Value, Acc) ->
+				{AliveStatus, PartitionList} = Value,
+				Table = lists:map(
+					fun	(ListValue) ->
+						{Bucket, BucketSize, Addr, PackingDifficulty} = ListValue,
+						ar_serialize:partition_to_json_struct(Bucket, BucketSize,
+							Addr, PackingDifficulty)
+					end,
+					PartitionList
+				),
+				Val = {[
+					{peer, list_to_binary(ar_util:format_peer(Peer))},
+					{alive, AliveStatus},
+					{partition_table, Table}
+				]},
+				[Val | Acc]
+				end,
+				[],
+				LastPeerResponse
+			),
+			{200, #{}, ar_serialize:jsonify(Peers), Req};
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
 	end;
@@ -1667,12 +1400,7 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"state">>], Req, _Pid) ->
 handle(<<"POST">>, [<<"coordinated_mining">>, <<"h1">>], Req, Pid) ->
 	case check_cm_api_secret(Req) of
 		pass ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					handle_mining_h1(Req, Pid)
-			end;
+			handle_mining_h1(Req, Pid);
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
 	end;
@@ -1681,12 +1409,7 @@ handle(<<"POST">>, [<<"coordinated_mining">>, <<"h1">>], Req, Pid) ->
 handle(<<"POST">>, [<<"coordinated_mining">>, <<"h2">>], Req, Pid) ->
 	case check_cm_api_secret(Req) of
 		pass ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					handle_mining_h2(Req, Pid)
-			end;
+			handle_mining_h2(Req, Pid);
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
 	end;
@@ -1694,12 +1417,7 @@ handle(<<"POST">>, [<<"coordinated_mining">>, <<"h2">>], Req, Pid) ->
 handle(<<"POST">>, [<<"coordinated_mining">>, <<"publish">>], Req, Pid) ->
 	case check_cm_api_secret(Req) of
 		pass ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					handle_mining_cm_publish(Req, Pid)
-			end;
+			handle_mining_cm_publish(Req, Pid);
 		{reject, {Status, Headers, Body}} ->
 			{Status, Headers, Body, Req}
 	end;
@@ -1769,6 +1487,12 @@ not_found(Req) ->
 
 not_joined(Req) ->
 	{503, #{}, jiffy:encode(#{ error => not_joined }), Req}.
+
+allow_before_join(<<"OPTIONS">>, _) -> true;
+allow_before_join(<<"HEAD">>, _) -> true;
+allow_before_join(<<"GET">>, [<<"info">>]) -> true;
+allow_before_join(<<"GET">>, [<<"time">>]) -> true;
+allow_before_join(_, _) -> false.
 
 handle_get_tx_status(EncodedTXID, Req) ->
 	case ar_util:safe_decode(EncodedTXID) of
