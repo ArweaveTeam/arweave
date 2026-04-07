@@ -29,7 +29,7 @@
 	start_link/0,
 	stats/1
 ]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+-export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 %% The frequency in seconds of re-resolving DNS of peers configured by domain names.
 -define(STORE_RESOLVED_DOMAIN_S, 60).
@@ -520,24 +520,25 @@ init([]) ->
 	{ok, Config} = arweave_config:get_env(),
 	case Config#config.verify of
 		false ->
-			%% Trap exit to avoid corrupting any open files on quit.
 			process_flag(trap_exit, true),
 			ok = ar_events:subscribe(block),
-			load_peers(),
-			gen_server:cast(?MODULE, rank_peers),
-			gen_server:cast(?MODULE, ping_peers),
-			_ = ar_timer:apply_interval(
-				?GET_MORE_PEERS_FREQUENCY_MS,
-				?MODULE,
-				discover_peers,
-				[],
-				#{ skip_on_shutdown => true }
-			);
+			{ok, #state{}, {continue, init}};
 		_ ->
-			ok
-	end,
+			{ok, #state{}}
+	end.
 
-	{ok, #state{}}.
+handle_continue(init, State) ->
+	load_peers(),
+	gen_server:cast(?MODULE, rank_peers),
+	gen_server:cast(?MODULE, ping_peers),
+	_ = ar_timer:apply_interval(
+		?GET_MORE_PEERS_FREQUENCY_MS,
+		?MODULE,
+		discover_peers,
+		[],
+		#{ skip_on_shutdown => true }
+	),
+	{noreply, State}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),

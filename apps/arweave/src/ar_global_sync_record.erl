@@ -10,7 +10,7 @@
 -export([start_link/0, get_serialized_sync_record/1, get_serialized_sync_buckets/0,
 		get_serialized_footprint_buckets/0]).
 
--export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
+-export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 %% The frequency in seconds of updating serialized sync buckets.
 -ifdef(AR_TEST).
@@ -86,14 +86,22 @@ get_serialized_footprint_buckets() ->
 
 init([]) ->
 	ok = ar_events:subscribe(sync_record),
-	SyncRecord = get_sync_record(),
+	{ok, #state{
+		sync_record = ar_intervals:new(),
+		sync_buckets = ar_sync_buckets:new(),
+		footprint_record = ar_intervals:new(),
+		footprint_buckets = ar_sync_buckets:new(?NETWORK_FOOTPRINT_BUCKET_SIZE)
+	}, {continue, init}}.
+
+handle_continue(init, State) ->
+	SyncRecord = init_sync_record(),
 	SyncBuckets = cache_and_get_sync_buckets(SyncRecord, serialized_sync_buckets,
 			ar_sync_buckets:new()),
-	FootprintRecord = get_footprint_record(),
+	FootprintRecord = init_footprint_record(),
 	FootprintBuckets = cache_and_get_sync_buckets(FootprintRecord,
 			serialized_footprint_buckets,
 			ar_sync_buckets:new(?NETWORK_FOOTPRINT_BUCKET_SIZE)),
-	{ok, #state{ sync_record = SyncRecord, sync_buckets = SyncBuckets,
+	{noreply, State#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets,
 			footprint_record = FootprintRecord, footprint_buckets = FootprintBuckets }}.
 
 handle_call({get_serialized_sync_record, Args}, _From, State) ->
@@ -172,34 +180,45 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-get_sync_record() ->
+init_sync_record() ->
 	{ok, Config} = arweave_config:get_env(),
-	lists:foldl(
-		fun(Module, Acc) ->
-			case Module of
-				{_, _, {replica_2_9, _}} ->
-					%% Replica 2.9 data is recorded in the footprint record. It is synced
-					%% footprint by footprint (not left to right).
-					Acc;
-				_ ->
-					StoreID = ar_storage_module:id(Module),
-					ar_intervals:union(ar_sync_record:get(ar_data_sync, StoreID), Acc)
-			end
-		end,
-		ar_intervals:new(),
-		[?DEFAULT_MODULE | Config#config.storage_modules]
-	).
+	Modules = [M || M <- [?DEFAULT_MODULE | Config#config.storage_modules],
+			not is_replica_2_9(M)],
+	get_records_wait(ar_data_sync, Modules, ar_intervals:new()).
 
-get_footprint_record() ->
+init_footprint_record() ->
 	{ok, Config} = arweave_config:get_env(),
-	lists:foldl(
-		fun(Module, Acc) ->
-			StoreID = ar_storage_module:id(Module),
-			ar_intervals:union(ar_sync_record:get(ar_data_sync_footprints, StoreID), Acc)
-		end,
-		ar_intervals:new(),
-		Config#config.storage_modules
-	).
+	get_records_wait(ar_data_sync_footprints, Config#config.storage_modules,
+			ar_intervals:new()).
+
+%% @doc Handle potential race condition when ar_global_sync_record init is called before
+%% all of the ar_sync_record modules are initialized (can happen since the init process is
+%% partially asynchronous due to handle_continue).
+%% 
+%% ar_global_sync_record:get_records_wait/3 will wait up to 10 minutes trying to get the sync
+%% record, and will force a crash if it's unable to.
+get_records_wait(ID, Modules, Acc) ->
+	get_records_wait(ID, Modules, Acc, 600).
+
+get_records_wait(_ID, [], Acc, _Retries) ->
+	Acc;
+get_records_wait(ID, [Module | Rest], Acc, Retries) ->
+	StoreID = ar_storage_module:id(Module),
+	case ar_sync_record:get(ID, StoreID) of
+		{error, timeout} when Retries > 0 ->
+			?LOG_INFO([{event, waiting_for_sync_record},
+					{id, ID}, {store_id, StoreID},
+					{retries_remaining, Retries}]),
+			timer:sleep(1000),
+			get_records_wait(ID, [Module | Rest], Acc, Retries - 1);
+		{error, timeout} ->
+			error({sync_record_timeout, ID, StoreID});
+		SyncRecord ->
+			get_records_wait(ID, Rest, ar_intervals:union(SyncRecord, Acc), Retries)
+	end.
+
+is_replica_2_9({_, _, {replica_2_9, _}}) -> true;
+is_replica_2_9(_) -> false.
 
 cache_and_get_sync_buckets(SyncRecord, Key, SyncBuckets) ->
 	SyncBuckets2 = ar_sync_buckets:from_intervals(SyncRecord, SyncBuckets),
