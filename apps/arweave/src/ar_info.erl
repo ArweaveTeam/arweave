@@ -8,6 +8,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_chain_stats.hrl").
+-include("ar_git_info.hrl").
 
 get_info() ->
 	{Time, Current} =
@@ -18,6 +19,7 @@ get_info() ->
         <<"network">> => list_to_binary(?NETWORK_NAME),
         <<"version">> => ?CLIENT_VERSION,
         <<"release">> => ?RELEASE_NUMBER,
+        <<"git_hash">> => ?AR_GIT_HASH,
         <<"height">> =>
             case Height of
                 not_joined -> -1;
