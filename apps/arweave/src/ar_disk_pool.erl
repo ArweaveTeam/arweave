@@ -81,11 +81,21 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 			check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool),
 		{ok, EndOffset, Validation} ?=
 			validate_proof(Metadata, Offset, TXSize, Chunk),
-		{ok, DataPathHash, DiskPoolChunkKey} ?=
-			check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
-					DiskPoolDataRootValue),
-		persist_chunk(Metadata, Chunk, TXSize, DataRootID, DataRootEntry, EndOffset,
-				Validation, DataPathHash, DiskPoolChunkKey, DiskPoolDataRootValue)
+		ok ?= maybe
+			{ok, DataPathHash, DiskPoolChunkKey} ?=
+				check_not_already_synced(Metadata, DataRootID, DataRootEntry,
+						EndOffset, DiskPoolDataRootValue),
+			ok ?=
+				persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset,
+						Validation, DataPathHash, DiskPoolChunkKey,
+						DiskPoolDataRootValue)
+		end,
+		case is_estimated_long_term_chunk(DataRootEntry, EndOffset) of
+			false ->
+				temporary;
+			true ->
+				ok
+		end
 	end.
 
 check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool) ->
@@ -145,18 +155,15 @@ validate_proof(Metadata, Offset, TXSize, Chunk) ->
 	end.
 
 check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
-		{_, Timestamp, _}) ->
+		DiskPoolDataRootValue = {_, Timestamp, _}) ->
 	#chunk_metadata{ data_root = DataRoot, data_path = DataPath } = Metadata,
 	DataPathHash = crypto:hash(sha256, DataPath),
 	DiskPoolChunkKey = << Timestamp:256, DataPathHash/binary >>,
 	case ar_kv:get(index_db(?DEFAULT_MODULE), DiskPoolChunkKey) of
 		{ok, _DiskPoolChunk} ->
-			case is_estimated_long_term_chunk(DataRootEntry, EndOffset) of
-				false ->
-					temporary;
-				true ->
-					ok
-			end;
+			maybe_cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey,
+					DataPathHash),
+			ok;
 		not_found ->
 			case DataRootEntry of
 				not_found ->
@@ -178,8 +185,8 @@ check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
 			{error, failed_to_store_chunk}
 	end.
 
-persist_chunk(Metadata, Chunk, TXSize, DataRootID, DataRootEntry, EndOffset, Validation,
-		DataPathHash, DiskPoolChunkKey, DiskPoolDataRootValue) ->
+persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset, Validation, DataPathHash,
+		DiskPoolChunkKey, DiskPoolDataRootValue) ->
 	#chunk_metadata{
 		data_root = DataRoot,
 		data_path = DataPath,
@@ -213,12 +220,7 @@ persist_chunk(Metadata, Chunk, TXSize, DataRootID, DataRootEntry, EndOffset, Val
 					prometheus_gauge:inc(pending_chunks_size, ChunkSize),
 					maybe_cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey,
 							DataPathHash),
-					case is_estimated_long_term_chunk(DataRootEntry, EndOffset) of
-						false ->
-							temporary;
-						true ->
-							ok
-					end
+					ok
 			end
 	end.
 

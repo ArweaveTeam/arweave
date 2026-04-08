@@ -9,47 +9,50 @@
 
 -import(ar_test_node, [assert_wait_until_height/2]).
 
-get_unconfirmed_chunk_from_disk_pool_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_from_disk_pool/0}.
+from_disk_pool_test_() ->
+	{timeout, 120, fun test_from_disk_pool/0}.
 
-get_unconfirmed_chunk_tx_index_fallback_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_tx_index_fallback/0}.
+tx_index_fallback_test_() ->
+	{timeout, 120, fun test_tx_index_fallback/0}.
 
-get_unconfirmed_chunk_not_found_test_() ->
-	{timeout, 60, fun test_get_unconfirmed_chunk_not_found/0}.
+not_found_test_() ->
+	{timeout, 60, fun test_not_found/0}.
 
-get_unconfirmed_chunk_invalid_input_test_() ->
-	{timeout, 60, fun test_get_unconfirmed_chunk_invalid_input/0}.
+invalid_input_test_() ->
+	{timeout, 60, fun test_invalid_input/0}.
 
-get_unconfirmed_chunk_not_stored_long_term_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_not_stored_long_term/0}.
+not_stored_long_term_test_() ->
+	{timeout, 120, fun test_not_stored_long_term/0}.
 
-get_unconfirmed_chunk_multi_chunk_tx_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_multi_chunk_tx/0}.
+multi_chunk_tx_test_() ->
+	{timeout, 120, fun test_multi_chunk_tx/0}.
 
-get_unconfirmed_chunk_offset_boundary_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_offset_boundary/0}.
+offset_boundary_test_() ->
+	{timeout, 120, fun test_offset_boundary/0}.
 
-get_unconfirmed_chunk_sub_chunk_size_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_sub_chunk_size/0}.
+sub_chunk_size_test_() ->
+	{timeout, 120, fun test_sub_chunk_size/0}.
 
-get_unconfirmed_chunk_same_data_different_txs_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_same_data_different_txs/0}.
+same_data_different_txs_test_() ->
+	{timeout, 120, fun test_same_data_different_txs/0}.
 
-get_unconfirmed_chunk_negative_offset_test_() ->
-	{timeout, 60, fun test_get_unconfirmed_chunk_negative_offset/0}.
+same_data_second_tx_after_seed_test_() ->
+	{timeout, 120, fun test_same_data_second_tx_after_seed/0}.
 
-get_unconfirmed_chunk_offset_beyond_data_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_offset_beyond_data/0}.
+negative_offset_test_() ->
+	{timeout, 60, fun test_negative_offset/0}.
 
-get_unconfirmed_chunk_partial_confirmation_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_partial_confirmation/0}.
+offset_beyond_data_test_() ->
+	{timeout, 120, fun test_offset_beyond_data/0}.
 
-get_unconfirmed_chunk_data_path_valid_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_data_path_valid/0}.
+partial_confirmation_test_() ->
+	{timeout, 120, fun test_partial_confirmation/0}.
 
-get_unconfirmed_chunk_concurrent_requests_test_() ->
-	{timeout, 120, fun test_get_unconfirmed_chunk_concurrent_requests/0}.
+data_path_valid_test_() ->
+	{timeout, 120, fun test_data_path_valid/0}.
+
+concurrent_requests_test_() ->
+	{timeout, 120, fun test_concurrent_requests/0}.
 
 discover_all_unconfirmed_chunks_test_() ->
 	{timeout, 120, fun test_discover_all_unconfirmed_chunks/0}.
@@ -72,7 +75,7 @@ assert_unconfirmed_chunk_response(Response, Proof, IsStoredLongTerm) ->
 	?assertEqual(IsStoredLongTerm, maps:get(<<"is_stored_long_term">>, Response)).
 
 %% @doc Chunk is in the disk pool (not yet mined) and served via the ETS cache path.
-test_get_unconfirmed_chunk_from_disk_pool() ->
+test_from_disk_pool() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
 		ar_test_data_sync:make_fixed_data_tx(
@@ -93,7 +96,7 @@ test_get_unconfirmed_chunk_from_disk_pool() ->
 	assert_unconfirmed_chunk_response(Response, Proof, true).
 
 %% @doc Chunk was in the disk pool but has been confirmed; served via tx_index fallback.
-test_get_unconfirmed_chunk_tx_index_fallback() ->
+test_tx_index_fallback() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
 			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
@@ -150,7 +153,7 @@ test_get_unconfirmed_chunk_tx_index_fallback() ->
 	assert_unconfirmed_chunk_response(Response, Proof, true).
 
 %% @doc Unknown TXID returns 404.
-test_get_unconfirmed_chunk_not_found() ->
+test_not_found() ->
 	ar_test_data_sync:setup_nodes(),
 	RandomTXID = ar_util:encode(crypto:strong_rand_bytes(32)),
 	?assertMatch(
@@ -159,7 +162,7 @@ test_get_unconfirmed_chunk_not_found() ->
 	).
 
 %% @doc Invalid TXID encoding returns 400; invalid offset returns 400.
-test_get_unconfirmed_chunk_invalid_input() ->
+test_invalid_input() ->
 	ar_test_data_sync:setup_nodes(),
 	ValidTXID = ar_util:encode(crypto:strong_rand_bytes(32)),
 	Peer = ar_test_node:peer_ip(main),
@@ -190,7 +193,7 @@ test_get_unconfirmed_chunk_invalid_input() ->
 	).
 
 %% @doc When no storage module covers the vicinity, is_stored_long_term is false.
-test_get_unconfirmed_chunk_not_stored_long_term() ->
+test_not_stored_long_term() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = [{10 * ?PARTITION_SIZE, 5,
 			ar_test_node:get_default_storage_module_packing(Addr, 5)}],
@@ -215,7 +218,7 @@ test_get_unconfirmed_chunk_not_stored_long_term() ->
 	assert_unconfirmed_chunk_response(Response, Proof, false).
 
 %% @doc Multiple chunks from the same TX can each be retrieved individually.
-test_get_unconfirmed_chunk_multi_chunk_tx() ->
+test_multi_chunk_tx() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 3)],
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
@@ -236,7 +239,7 @@ test_get_unconfirmed_chunk_multi_chunk_tx() ->
 	).
 
 %% @doc Querying with an offset that is not the exact chunk end offset returns 404.
-test_get_unconfirmed_chunk_offset_boundary() ->
+test_offset_boundary() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 3)],
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
@@ -262,7 +265,7 @@ test_get_unconfirmed_chunk_offset_boundary() ->
 	).
 
 %% @doc A TX whose last chunk is smaller than DATA_CHUNK_SIZE can be retrieved.
-test_get_unconfirmed_chunk_sub_chunk_size() ->
+test_sub_chunk_size() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	SmallChunkSize = 1000,
 	Chunk1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -288,7 +291,16 @@ test_get_unconfirmed_chunk_sub_chunk_size() ->
 	assert_unconfirmed_chunk_response(Response2, Proof2, true).
 
 %% @doc Two TXs with identical data (same DataRoot) are independently retrievable.
-test_get_unconfirmed_chunk_same_data_different_txs() ->
+test_same_data_different_txs() ->
+	test_same_data_txs(both_before_seed).
+
+%% @doc A later TXID for already-seeded data should also resolve pre-confirmation.
+%% Existing duplicate-data coverage posts both TXs before the first seed, so it never
+%% exercises the path where a second TXID is added after the chunk is already in disk pool.
+test_same_data_second_tx_after_seed() ->
+	test_same_data_txs(second_after_seed).
+
+test_same_data_txs(Mode) ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
 	#{ tx := TX1, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
@@ -298,28 +310,44 @@ test_get_unconfirmed_chunk_same_data_different_txs() ->
 	?assertEqual(DataRoot, DataRoot2),
 	?assertEqual(Chunks, Chunks2),
 	?assertNotEqual(TX1#tx.id, TX2#tx.id),
-	ar_test_node:assert_post_tx_to_peer(main, TX1),
-	ar_test_node:assert_post_tx_to_peer(main, TX2),
 	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
 		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-	),
-	%% Both TXIDs should resolve to the same chunk data.
+	SeedChunk = fun() ->
+		?assertMatch(
+			{ok, {{<<"200">>, _}, _, _, _, _}},
+			ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
+		)
+	end,
+	case Mode of
+		both_before_seed ->
+			ar_test_node:assert_post_tx_to_peer(main, TX1),
+			ar_test_node:assert_post_tx_to_peer(main, TX2),
+			SeedChunk(),
+			SeedChunk();
+		second_after_seed ->
+			ar_test_node:assert_post_tx_to_peer(main, TX1),
+			SeedChunk()
+	end,
 	EncodedTXID1 = ar_util:encode(TX1#tx.id),
-	EncodedTXID2 = ar_util:encode(TX2#tx.id),
 	{ok, {{<<"200">>, _}, _, Body1, _, _}} =
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID1, ChunkEndOffset),
+	Response1 = jiffy:decode(Body1, [return_maps]),
+	assert_unconfirmed_chunk_response(Response1, Proof, true),
+	case Mode of
+		both_before_seed ->
+			ok;
+		second_after_seed ->
+			ar_test_node:assert_post_tx_to_peer(main, TX2),
+			SeedChunk()
+	end,
+	EncodedTXID2 = ar_util:encode(TX2#tx.id),
 	{ok, {{<<"200">>, _}, _, Body2, _, _}} =
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID2, ChunkEndOffset),
-	Response1 = jiffy:decode(Body1, [return_maps]),
 	Response2 = jiffy:decode(Body2, [return_maps]),
-	assert_unconfirmed_chunk_response(Response1, Proof, true),
 	assert_unconfirmed_chunk_response(Response2, Proof, true).
 
 %% @doc Negative offset returns 400.
-test_get_unconfirmed_chunk_negative_offset() ->
+test_negative_offset() ->
 	ar_test_data_sync:setup_nodes(),
 	ValidTXID = ar_util:encode(crypto:strong_rand_bytes(32)),
 	Peer = ar_test_node:peer_ip(main),
@@ -333,7 +361,7 @@ test_get_unconfirmed_chunk_negative_offset() ->
 	).
 
 %% @doc Offset far beyond the TX data size returns 404.
-test_get_unconfirmed_chunk_offset_beyond_data() ->
+test_offset_beyond_data() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
 		ar_test_data_sync:make_fixed_data_tx(
@@ -354,7 +382,7 @@ test_get_unconfirmed_chunk_offset_beyond_data() ->
 	).
 
 %% @doc Chunk is still retrievable after mining only 1 block (partial confirmation).
-test_get_unconfirmed_chunk_partial_confirmation() ->
+test_partial_confirmation() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
 		ar_test_data_sync:make_fixed_data_tx(
@@ -390,7 +418,7 @@ test_get_unconfirmed_chunk_partial_confirmation() ->
 	assert_unconfirmed_chunk_response(Response, Proof, true).
 
 %% @doc The data_path returned by the endpoint is a valid merkle proof.
-test_get_unconfirmed_chunk_data_path_valid() ->
+test_data_path_valid() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
 		ar_test_data_sync:make_fixed_data_tx(
@@ -424,7 +452,7 @@ test_get_unconfirmed_chunk_data_path_valid() ->
 	?assertEqual(ar_tx:generate_chunk_id(ReturnedChunk), ChunkID).
 
 %% @doc Multiple concurrent requests for the same chunk all succeed with identical data.
-test_get_unconfirmed_chunk_concurrent_requests() ->
+test_concurrent_requests() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
 		ar_test_data_sync:make_fixed_data_tx(
