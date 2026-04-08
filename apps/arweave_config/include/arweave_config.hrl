@@ -47,7 +47,7 @@
 -endif.
 
 %% The default number of duplicate data roots checked for a posted chunk.
--define(DEFAULT_MAX_DUPLICATE_DATA_ROOTS, 5).
+-define(DEFAULT_MAX_DUPLICATE_DATA_ROOTS, 20).
 
 %% The default total size limit for unconfirmed and seeded chunks.
 -ifdef(AR_TEST).
