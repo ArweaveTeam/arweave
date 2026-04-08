@@ -358,7 +358,7 @@ get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset) ->
 			case ar_data_sync:get_chunk_by_byte(AbsoluteChunkEndOffset, ?DEFAULT_MODULE) of
 				{error, _} ->
 					{error, not_found};
-				{ok, _Key, {_AbsEndOffset, ChunkDataKey, _TXRoot, _DataRoot, TXPath,
+				{ok, _Key, {_AbsEndOffset, ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
 						_RelativeOffset, _ChunkSize}} ->
 					case ar_data_sync:get_chunk_data(ChunkDataKey, ?DEFAULT_MODULE) of
 						not_found ->
@@ -367,9 +367,9 @@ get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset) ->
 							Error;
 						{ok, Bin} ->
 							{Chunk, DataPath} = binary_to_term(Bin),
+							WeaveSize = ar_node:get_current_weave_size(),
 							IsStoredLongTerm = is_estimated_long_term_chunk(
-									{ok, {TXStartOffset, TXPath}},
-									RelativeEndOffset),
+									TXStartOffset, RelativeEndOffset, WeaveSize),
 							{ok, {Chunk, DataPath, IsStoredLongTerm}}
 					end
 			end
@@ -382,17 +382,20 @@ is_estimated_long_term_chunk(DataRootEntry, EndOffset) ->
 			%% A chunk from a pending transaction.
 			is_offset_vicinity_covered(WeaveSize);
 		{ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}} ->
-			Size = ar_node:get_recent_max_block_size(),
-			AbsoluteEndOffset = TXStartOffset + EndOffset,
-			case AbsoluteEndOffset > WeaveSize - Size * 4 of
-				true ->
-					%% A relatively recent offset - do not expect this chunk to be
-					%% persisted unless we have some storage modules configured for
-					%% the space ahead (the data may be rearranged during after a reorg).
-					is_offset_vicinity_covered(AbsoluteEndOffset);
-				false ->
-					ar_storage_module:has_any(AbsoluteEndOffset)
-			end
+			is_estimated_long_term_chunk(TXStartOffset, EndOffset, WeaveSize)
+	end.
+
+is_estimated_long_term_chunk(TXStartOffset, EndOffset, WeaveSize) ->
+	Size = ar_node:get_recent_max_block_size(),
+	AbsoluteEndOffset = TXStartOffset + EndOffset,
+	case AbsoluteEndOffset > WeaveSize - Size * 4 of
+		true ->
+			%% A relatively recent offset - do not expect this chunk to be
+			%% persisted unless we have some storage modules configured for
+			%% the space ahead (the data may be rearranged during after a reorg).
+			is_offset_vicinity_covered(AbsoluteEndOffset);
+		false ->
+			ar_storage_module:has_any(AbsoluteEndOffset)
 	end.
 
 is_offset_vicinity_covered(Offset) ->

@@ -130,6 +130,8 @@ test_get_unconfirmed_chunk_tx_index_fallback() ->
 	ChunkResponse = jiffy:decode(ChunkBody, [return_maps]),
 	?assertEqual(ar_util:encode(hd(Chunks)), maps:get(<<"chunk">>, ChunkResponse)),
 	EncodedTXID = ar_util:encode(TX#tx.id),
+	%% Force the request down the tx_index path instead of the disk pool ETS cache path.
+	ets:delete(ar_disk_pool_chunks_cache, {TX#tx.id, ChunkEndOffset}),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_util:do_until(
 			fun() ->
