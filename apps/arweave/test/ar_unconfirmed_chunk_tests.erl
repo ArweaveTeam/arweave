@@ -39,6 +39,9 @@ same_data_different_txs_test_() ->
 same_data_second_tx_after_seed_test_() ->
 	{timeout, 120, fun test_same_data_second_tx_after_seed/0}.
 
+same_data_after_first_tx_confirmed_test_() ->
+	{timeout, 120, fun test_same_data_after_first_tx_confirmed/0}.
+
 negative_offset_test_() ->
 	{timeout, 60, fun test_negative_offset/0}.
 
@@ -58,10 +61,13 @@ discover_all_unconfirmed_chunks_test_() ->
 	{timeout, 120, fun test_discover_all_unconfirmed_chunks/0}.
 
 post_chunk_proofs(Proofs) ->
+	post_chunk_proofs(Proofs, <<"200">>).
+
+post_chunk_proofs(Proofs, ExpectedStatus) ->
 	lists:foreach(
 		fun({_, Proof}) ->
 			?assertMatch(
-				{ok, {{<<"200">>, _}, _, _, _, _}},
+				{ok, {{ExpectedStatus, _}, _, _, _, _}},
 				ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
 			)
 		end,
@@ -74,9 +80,10 @@ assert_unconfirmed_chunk_response(Response, Proof, IsStoredLongTerm) ->
 	?assertEqual(<<"unpacked">>, maps:get(<<"packing">>, Response)),
 	?assertEqual(IsStoredLongTerm, maps:get(<<"is_stored_long_term">>, Response)).
 
-%% @doc Chunk is in the disk pool (not yet mined) and served via the ETS cache path.
-test_from_disk_pool() ->
-	Wallet = ar_test_data_sync:setup_nodes(),
+post_single_chunk_tx(Wallet) ->
+	post_single_chunk_tx(Wallet, <<"200">>).
+
+post_single_chunk_tx(Wallet, ExpectedStatus) ->
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
 		ar_test_data_sync:make_fixed_data_tx(
 			Wallet,
@@ -85,10 +92,20 @@ test_from_disk_pool() ->
 	ar_test_node:assert_post_tx_to_peer(main, TX),
 	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
 		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-	),
+	post_chunk_proofs([{ChunkEndOffset, Proof}], ExpectedStatus),
+	#{
+		tx => TX,
+		data_root => DataRoot,
+		chunks => Chunks,
+		chunk_end_offset => ChunkEndOffset,
+		proof => Proof
+	}.
+
+%% @doc Chunk is in the disk pool (not yet mined) and served via the ETS cache path.
+test_from_disk_pool() ->
+	Wallet = ar_test_data_sync:setup_nodes(),
+	#{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
+		post_single_chunk_tx(Wallet),
 	EncodedTXID = ar_util:encode(TX#tx.id),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, ChunkEndOffset),
@@ -102,18 +119,8 @@ test_tx_index_fallback() ->
 			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, storage_modules => StorageModules }),
-	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
-		ar_test_data_sync:make_fixed_data_tx(
-			Wallet,
-			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
-		),
-	ar_test_node:assert_post_tx_to_peer(main, TX),
-	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
-		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-	),
+	#{ tx := TX, chunks := Chunks, chunk_end_offset := ChunkEndOffset, proof := Proof } =
+		post_single_chunk_tx(Wallet),
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 1),
 	ar_test_node:mine(main),
@@ -199,18 +206,8 @@ test_not_stored_long_term() ->
 			ar_test_node:get_default_storage_module_packing(Addr, 5)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, storage_modules => StorageModules }),
-	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
-		ar_test_data_sync:make_fixed_data_tx(
-			Wallet,
-			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
-		),
-	ar_test_node:assert_post_tx_to_peer(main, TX),
-	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
-		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
-	?assertMatch(
-		{ok, {{<<"303">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-	),
+	#{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
+		post_single_chunk_tx(Wallet, <<"303">>),
 	EncodedTXID = ar_util:encode(TX#tx.id),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, ChunkEndOffset),
@@ -300,16 +297,16 @@ test_same_data_different_txs() ->
 test_same_data_second_tx_after_seed() ->
 	test_same_data_txs(second_after_seed).
 
+%% @doc A pending duplicate TX should still resolve when the shared data root is already
+%% on-chain via an earlier confirmed TX.
+test_same_data_after_first_tx_confirmed() ->
+	test_same_data_txs(second_after_first_confirmed).
+
 test_same_data_txs(Mode) ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
 	#{ tx := TX1, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
 		ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
-	#{ tx := TX2, data_root := DataRoot2, chunks := Chunks2 } =
-		ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
-	?assertEqual(DataRoot, DataRoot2),
-	?assertEqual(Chunks, Chunks2),
-	?assertNotEqual(TX1#tx.id, TX2#tx.id),
 	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
 		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
 	SeedChunk = fun() ->
@@ -318,15 +315,49 @@ test_same_data_txs(Mode) ->
 			ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
 		)
 	end,
-	case Mode of
+	TX2 = case Mode of
 		both_before_seed ->
+			#{ tx := TX2a, data_root := DataRoot2a, chunks := Chunks2a } =
+				ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
+			?assertEqual(DataRoot, DataRoot2a),
+			?assertEqual(Chunks, Chunks2a),
+			?assertNotEqual(TX1#tx.id, TX2a#tx.id),
 			ar_test_node:assert_post_tx_to_peer(main, TX1),
-			ar_test_node:assert_post_tx_to_peer(main, TX2),
+			ar_test_node:assert_post_tx_to_peer(main, TX2a),
 			SeedChunk(),
-			SeedChunk();
+			SeedChunk(),
+			TX2a;
 		second_after_seed ->
 			ar_test_node:assert_post_tx_to_peer(main, TX1),
-			SeedChunk()
+			SeedChunk(),
+			#{ tx := TX2a, data_root := DataRoot2a, chunks := Chunks2a } =
+				ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
+			?assertEqual(DataRoot, DataRoot2a),
+			?assertEqual(Chunks, Chunks2a),
+			?assertNotEqual(TX1#tx.id, TX2a#tx.id),
+			TX2a;
+		second_after_first_confirmed ->
+			ar_test_node:assert_post_tx_to_peer(main, TX1),
+			SeedChunk(),
+			ar_test_node:mine(main),
+			assert_wait_until_height(main, 1),
+			ar_test_node:mine(main),
+			assert_wait_until_height(main, 2),
+			ar_test_node:mine(main),
+			assert_wait_until_height(main, 3),
+			ar_test_node:mine(main),
+			assert_wait_until_height(main, 4),
+			{ok, {TXOffset1, _}} = ar_data_sync:get_tx_offset(TX1#tx.id),
+			ar_test_data_sync:wait_until_syncs_chunk(TXOffset1, #{
+				chunk => maps:get(chunk, Proof),
+				data_path => maps:get(data_path, Proof)
+			}),
+			#{ tx := TX2a, data_root := DataRoot2a, chunks := Chunks2a } =
+				ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks, #{ reward => ?AR(10) }),
+			?assertEqual(DataRoot, DataRoot2a),
+			?assertEqual(Chunks, Chunks2a),
+			?assertNotEqual(TX1#tx.id, TX2a#tx.id),
+			TX2a
 	end,
 	EncodedTXID1 = ar_util:encode(TX1#tx.id),
 	{ok, {{<<"200">>, _}, _, Body1, _, _}} =
@@ -337,6 +368,9 @@ test_same_data_txs(Mode) ->
 		both_before_seed ->
 			ok;
 		second_after_seed ->
+			ar_test_node:assert_post_tx_to_peer(main, TX2),
+			SeedChunk();
+		second_after_first_confirmed ->
 			ar_test_node:assert_post_tx_to_peer(main, TX2),
 			SeedChunk()
 	end,
@@ -363,18 +397,7 @@ test_negative_offset() ->
 %% @doc Offset far beyond the TX data size returns 404.
 test_offset_beyond_data() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
-		ar_test_data_sync:make_fixed_data_tx(
-			Wallet,
-			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
-		),
-	ar_test_node:assert_post_tx_to_peer(main, TX),
-	[{_ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
-		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-	),
+	#{ tx := TX } = post_single_chunk_tx(Wallet),
 	EncodedTXID = ar_util:encode(TX#tx.id),
 	?assertMatch(
 		{ok, {{<<"404">>, _}, _, _, _, _}},
@@ -384,18 +407,8 @@ test_offset_beyond_data() ->
 %% @doc Chunk is still retrievable after mining only 1 block (partial confirmation).
 test_partial_confirmation() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
-		ar_test_data_sync:make_fixed_data_tx(
-			Wallet,
-			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
-		),
-	ar_test_node:assert_post_tx_to_peer(main, TX),
-	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
-		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-	),
+	#{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
+		post_single_chunk_tx(Wallet),
 	%% Mine one block — chunk is partially confirmed but not yet pruned from disk pool.
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 1),
@@ -420,18 +433,8 @@ test_partial_confirmation() ->
 %% @doc The data_path returned by the endpoint is a valid merkle proof.
 test_data_path_valid() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
-		ar_test_data_sync:make_fixed_data_tx(
-			Wallet,
-			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
-		),
-	ar_test_node:assert_post_tx_to_peer(main, TX),
-	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
-		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-	),
+	#{ tx := TX, data_root := DataRoot, chunk_end_offset := ChunkEndOffset, proof := Proof } =
+		post_single_chunk_tx(Wallet),
 	EncodedTXID = ar_util:encode(TX#tx.id),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, ChunkEndOffset),
@@ -454,18 +457,8 @@ test_data_path_valid() ->
 %% @doc Multiple concurrent requests for the same chunk all succeed with identical data.
 test_concurrent_requests() ->
 	Wallet = ar_test_data_sync:setup_nodes(),
-	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
-		ar_test_data_sync:make_fixed_data_tx(
-			Wallet,
-			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
-		),
-	ar_test_node:assert_post_tx_to_peer(main, TX),
-	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
-		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
-	?assertMatch(
-		{ok, {{<<"200">>, _}, _, _, _, _}},
-		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
-	),
+	#{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
+		post_single_chunk_tx(Wallet),
 	EncodedTXID = ar_util:encode(TX#tx.id),
 	NumRequests = 5,
 	Results = ar_util:pmap(
