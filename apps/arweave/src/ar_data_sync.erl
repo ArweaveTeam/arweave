@@ -524,9 +524,10 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	%% disk_pool_chunks_index and if they do not belong to any storage module - from storage.
 	%% TXIDSet keeps track of pending transaction identifiers - if all pending transactions
 	%% with the << DataRoot:32/binary, TXSize:256 >> key are dropped from the mempool,
-	%% the corresponding entry is removed from DiskPoolDataRoots. When a data root is
-	%% confirmed, TXIDSet is set to not_set - from this point on, the key is only dropped
-	%% after expiration.
+	%% the corresponding entry is removed from DiskPoolDataRoots once there are also no
+	%% disk-pool chunks left for that data root. When a data root is confirmed, pending
+	%% TXIDs remain tracked so unconfirmed duplicate transactions can still resolve their
+	%% chunks via the disk pool.
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = maps:get(weave_size, StateMap),

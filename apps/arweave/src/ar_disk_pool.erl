@@ -132,14 +132,14 @@ check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool) ->
 						{disk_pool_limit, DiskPoolLimit}]),
 					{error, exceeds_disk_pool_size_limit};
 				false ->
-					Timestamp =
+					{Size, Timestamp, TXIDSet} =
 						case DataRootInDiskPool of
 							not_found ->
-								os:system_time(microsecond);
-							{_, Timestamp2, _} ->
-								Timestamp2
+								{0, os:system_time(microsecond), sets:new()};
+							_ ->
+								DataRootInDiskPool
 						end,
-					{ok, {ChunkSize, Timestamp, not_set}}
+					{ok, {Size + ChunkSize, Timestamp, TXIDSet}}
 			end
 	end.
 
@@ -161,8 +161,7 @@ check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
 	DiskPoolChunkKey = << Timestamp:256, DataPathHash/binary >>,
 	case ar_kv:get(index_db(?DEFAULT_MODULE), DiskPoolChunkKey) of
 		{ok, _DiskPoolChunk} ->
-			maybe_cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey,
-					DataPathHash),
+			cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey, DataPathHash),
 			ok;
 		not_found ->
 			case DataRootEntry of
@@ -218,17 +217,10 @@ persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset, Validation, DataPa
 					put_data_root_state(DataRootID, DiskPoolDataRootValue),
 					ets:update_counter(ar_data_sync_state, disk_pool_size, {2, ChunkSize}),
 					prometheus_gauge:inc(pending_chunks_size, ChunkSize),
-					maybe_cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey,
-							DataPathHash),
+					cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey, DataPathHash),
 					ok
 			end
 	end.
-
-maybe_cache_chunk({_, _, not_set}, _, _, _) ->
-	%% Chunk is already on-chain so no need to cache it.
-	ok;
-maybe_cache_chunk({_, _, TXIDSet}, EndOffset, DiskPoolChunkKey, DataPathHash) ->
-	cache_chunk(TXIDSet, EndOffset, DiskPoolChunkKey, DataPathHash).
 
 %%%===================================================================
 %%% Data root lifecycle.
@@ -246,8 +238,6 @@ add_data_root(DataRoot, TXSize, TXID) ->
 		not_found ->
 			put_data_root_state(DataRootID,
 				{0, os:system_time(microsecond), sets:from_list([TXID])});
-		{_, _, not_set} ->
-			ok;
 		{Size, Timestamp, TXIDSet} ->
 			put_data_root_state(DataRootID, {Size, Timestamp, sets:add_element(TXID, TXIDSet)})
 	end,
@@ -263,19 +253,13 @@ maybe_drop_data_root(DataRoot, TXSize, TXID) ->
 	case get_data_root_state(DataRootID) of
 		not_found ->
 			ok;
-		{_, _, not_set} ->
-			ok;
 		{Size, Timestamp, TXIDs} ->
-			case sets:subtract(TXIDs, sets:from_list([TXID])) of
-				TXIDs ->
+			case sets:is_element(TXID, TXIDs) of
+				false ->
 					ok;
-				TXIDs2 ->
-					case sets:size(TXIDs2) of
-						0 ->
-							delete_data_root_state(DataRootID);
-						_ ->
-							put_data_root_state(DataRootID, {Size, Timestamp, TXIDs2})
-					end
+				true ->
+					update_data_root_state(DataRootID,
+						{Size, Timestamp, sets:del_element(TXID, TXIDs)})
 			end
 	end,
 	ok.
@@ -285,8 +269,8 @@ has_data_root(DataRootID) ->
 
 get_data_roots() ->
 	ets:foldl(
-		fun({DataRootID, Value}, Acc) ->
-			maps:put(DataRootID, Value, Acc)
+		fun({DataRootID, DataRootState}, Acc) ->
+			maps:put(DataRootID, DataRootState, Acc)
 		end,
 		#{},
 		ar_disk_pool_data_roots
@@ -512,17 +496,17 @@ add_block_data_roots(DataRootIDSet) ->
 	update_data_roots(DataRootIDSet,
 		fun
 			(not_found, Timestamp) ->
-				{0, Timestamp, not_set};
-			({Size, Timeout, _}, _Timestamp) ->
-				{Size, Timeout, not_set}
+				{0, Timestamp, sets:new()};
+			({Size, Timestamp2, TXIDSet}, _Timestamp) ->
+				{Size, Timestamp2, TXIDSet}
 		end).
 
 reset_orphaned_data_roots_timestamps(DataRootIDSet) ->
 	update_data_roots(DataRootIDSet,
 		fun
 			(not_found, Timestamp) ->
-				{0, Timestamp, not_set};
-			({Size, _Timeout, TXIDSet}, Timestamp) ->
+				{0, Timestamp, sets:new()};
+			({Size, _Timestamp, TXIDSet}, Timestamp) ->
 				{Size, Timestamp, TXIDSet}
 		end).
 
@@ -1051,7 +1035,7 @@ parse_chunk(Bin) ->
 			R
 	end.
 
-cache_chunk(TXIDSet, RelativeEndOffset, DiskPoolChunkKey, DataPathHash) ->
+cache_chunk({_, _, TXIDSet}, RelativeEndOffset, DiskPoolChunkKey, DataPathHash) ->
 	sets:fold(
 		fun(TXID, ok) ->
 			ets:insert(ar_disk_pool_chunks_cache,
@@ -1088,7 +1072,7 @@ decrease_occupied_size(Size, DataRootID) ->
 		not_found ->
 			ok;
 		{Size2, Timestamp, TXIDSet} ->
-			put_data_root_state(DataRootID, {Size2 - Size, Timestamp, TXIDSet}),
+			update_data_root_state(DataRootID, {Size2 - Size, Timestamp, TXIDSet}),
 			ok
 	end.
 
@@ -1105,6 +1089,19 @@ put_data_root_state(DataRootID, DataRootTuple = {_Size, _Timestamp, _TXIDSet}) -
 
 delete_data_root_state(DataRootID) ->
 	ets:delete(ar_disk_pool_data_roots, DataRootID).
+
+update_data_root_state(DataRootID, {0, _Timestamp, TXIDSet}) ->
+	case sets:is_empty(TXIDSet) of
+		true ->
+			%% No chunks (size = 0) or TXIDs (empty set) exist, so we can delete the state.
+			delete_data_root_state(DataRootID);
+		false ->
+			%% A TX is pending but no chunks for it are in the disk pool, so we stil need
+			%% to track the state.
+			put_data_root_state(DataRootID, {0, _Timestamp, TXIDSet})
+	end;
+update_data_root_state(DataRootID, DataRootState = {_Size, _Timestamp, _TXIDSet}) ->
+	put_data_root_state(DataRootID, DataRootState).
 
 %%%===================================================================
 %%% Debug and metrics.
