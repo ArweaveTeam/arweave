@@ -1,7 +1,7 @@
 # Arweave Server
 
 This is the repository for the official Erlang implementation of the Arweave
-protocol and a gateway implementation.
+protocol.
 
 Arweave is a distributed, cryptographically verified permanent archive built
 on a cryptocurrency that aims to, for the first time, provide feasible data

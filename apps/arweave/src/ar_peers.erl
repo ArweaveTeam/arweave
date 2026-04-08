@@ -140,6 +140,7 @@
 	invalid_second_chunk,
 	invalid_poa2_recall_byte2_undefined,
 	invalid_hash,
+	invalid_payload,
 	invalid_timestamp,
 	invalid_resigned_solution_hash,
 	invalid_nonce_limiter_global_step_number,
@@ -1054,8 +1055,12 @@ remove_peer(Reason, RemovedPeer) ->
 	set_total_rating(lifetime, TotalLifetimeRating - get_peer_rating(lifetime, Performance)),
 	set_total_rating(current, TotalCurrentRating - get_peer_rating(current, Performance)),
 	ets:delete(?MODULE, {peer, RemovedPeer}),
+	remove_peer_tags(RemovedPeer),
 	remove_peer_port(RemovedPeer),
 	ar_events:send(peer, {removed, RemovedPeer}).
+
+remove_peer_tags(Peer) ->
+	ets:match_delete(?MODULE, {{ar_tags, ?MODULE, Peer, '_'}, '_'}).
 
 remove_peer_port(Peer) ->
 	{IP, Port} = get_ip_port(Peer),

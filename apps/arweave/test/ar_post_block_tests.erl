@@ -77,6 +77,8 @@ post_2_7_test_() ->
 post_2_8_test_() ->
 	{setup, fun setup_all_post_2_8/0, fun cleanup_all_post_fork/1,
 		{foreach, fun reset_node/0, [
+			instantiator(fun test_malformed_usd_to_ar_rate/1),
+			instantiator(fun test_malformed_scheduled_usd_to_ar_rate/1),
 			instantiator(fun test_reject_block_invalid_packing_difficulty/1),
 			instantiator(fun test_reject_block_invalid_replica_format/1),
 			instantiator(fun test_reject_block_invalid_denomination/1),
@@ -173,6 +175,18 @@ test_cached_poa({Key, B, PrevB}) ->
 	post_block(B2, valid),
 	B3 = sign_block(B, PrevB, Key),
 	post_block(B3, valid).
+
+test_malformed_usd_to_ar_rate({_Key, B, _PrevB}) ->
+	assert_malformed_block_rejected(B#block{ usd_to_ar_rate = undefined }).
+
+test_malformed_scheduled_usd_to_ar_rate({_Key, B, _PrevB}) ->
+	assert_malformed_block_rejected(B#block{ scheduled_usd_to_ar_rate = undefined }).
+
+assert_malformed_block_rejected(B) ->
+	Peer = ar_test_node:peer_ip(main),
+	Bin = ar_serialize:block_to_binary(B),
+	?assertMatch({ok, {{<<"400">>, _}, _, <<"Invalid block.">>, _, _}},
+			ar_http_iface_client:send_block_binary(Peer, B#block.indep_hash, Bin)).
 
 %% The banning process is asynchronous now so we may have to wait a little until
 %% the peer gets banned.
