@@ -42,6 +42,9 @@ same_data_second_tx_after_seed_test_() ->
 same_data_after_first_tx_confirmed_test_() ->
 	{timeout, 120, fun test_same_data_after_first_tx_confirmed/0}.
 
+same_data_after_disk_pool_cleared_test_() ->
+	{timeout, 120, fun test_same_data_after_disk_pool_cleared/0}.
+
 negative_offset_test_() ->
 	{timeout, 60, fun test_negative_offset/0}.
 
@@ -302,6 +305,13 @@ test_same_data_second_tx_after_seed() ->
 test_same_data_after_first_tx_confirmed() ->
 	test_same_data_txs(second_after_first_confirmed).
 
+%% @doc Regression test: when a chunk's data root state has been fully cleared from the disk
+%% pool (chunk processed, TXID dropped), a new TX with the same data should still be
+%% serveable via GET /unconfirmed_chunk after re-seeding. This exercises the
+%% chunk_offsets_synced path in check_not_already_synced.
+test_same_data_after_disk_pool_cleared() ->
+	test_same_data_txs(second_after_disk_pool_cleared).
+
 test_same_data_txs(Mode) ->
 	Wallet = ar_test_data_sync:setup_nodes(),
 	InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
@@ -357,6 +367,34 @@ test_same_data_txs(Mode) ->
 			?assertEqual(DataRoot, DataRoot2a),
 			?assertEqual(Chunks, Chunks2a),
 			?assertNotEqual(TX1#tx.id, TX2a#tx.id),
+			TX2a;
+		second_after_disk_pool_cleared ->
+			DataRootID = ar_data_roots:id(DataRoot, TX1#tx.data_size),
+			ar_test_node:assert_post_tx_to_peer(main, TX1),
+			SeedChunk(),
+			ar_test_node:mine(main),
+			assert_wait_until_height(main, 1),
+			ar_test_node:mine(main),
+			assert_wait_until_height(main, 2),
+			ar_test_node:mine(main),
+			assert_wait_until_height(main, 3),
+			ar_test_node:mine(main),
+			assert_wait_until_height(main, 4),
+			{ok, {TXOffset1, _}} = ar_data_sync:get_tx_offset(TX1#tx.id),
+			ar_test_data_sync:wait_until_syncs_chunk(TXOffset1, #{
+				chunk => maps:get(chunk, Proof),
+				data_path => maps:get(data_path, Proof)
+			}),
+			%% Explicitly clear the data root state to simulate the disk pool having
+			%% fully processed the chunk. This ensures we exercise the
+			%% chunk_offsets_synced path in check_not_already_synced.
+			ar_disk_pool:delete_data_root_state(DataRootID),
+			?assertEqual(not_found, ar_disk_pool:get_data_root_state(DataRootID)),
+			#{ tx := TX2a, data_root := DataRoot2a, chunks := Chunks2a } =
+				ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks, #{ reward => ?AR(10) }),
+			?assertEqual(DataRoot, DataRoot2a),
+			?assertEqual(Chunks, Chunks2a),
+			?assertNotEqual(TX1#tx.id, TX2a#tx.id),
 			TX2a
 	end,
 	EncodedTXID1 = ar_util:encode(TX1#tx.id),
@@ -367,10 +405,7 @@ test_same_data_txs(Mode) ->
 	case Mode of
 		both_before_seed ->
 			ok;
-		second_after_seed ->
-			ar_test_node:assert_post_tx_to_peer(main, TX2),
-			SeedChunk();
-		second_after_first_confirmed ->
+		_ ->
 			ar_test_node:assert_post_tx_to_peer(main, TX2),
 			SeedChunk()
 	end,

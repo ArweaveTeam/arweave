@@ -21,7 +21,8 @@
 -export([record_chunks_count/0]).
 
 %% test-only exports
--export([debug_get_chunks/0, debug_get_chunks/1, delete_data_root_state/1]).
+-export([debug_get_chunks/0, debug_get_chunks/1,
+		get_data_root_state/1, delete_data_root_state/1]).
 
 -include("ar.hrl").
 
@@ -168,11 +169,15 @@ check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
 				not_found ->
 					{ok, DataPathHash, DiskPoolChunkKey};
 				{ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}} ->
-					case chunk_offsets_synced(DataRootID, EndOffset, TXStartOffset) of
+					{_, _, TXIDSet} = DiskPoolDataRootValue,
+					HasPendingTXs = not sets:is_empty(TXIDSet),
+					case HasPendingTXs
+							orelse not chunk_offsets_synced(
+								DataRootID, EndOffset, TXStartOffset) of
 						true ->
-							ok;
+							{ok, DataPathHash, DiskPoolChunkKey};
 						false ->
-							{ok, DataPathHash, DiskPoolChunkKey}
+							ok
 					end
 			end;
 		{error, Reason} ->
