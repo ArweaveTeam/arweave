@@ -278,14 +278,11 @@ test_chunk_data_not_found_resilience() ->
 	{ok, {HealthyTXOffset, _}} = ar_data_sync:get_tx_offset(HealthyTX#tx.id),
 	HealthyAbsoluteEndOffset = HealthyTXOffset,
 	ar_test_node:wait_until_syncs_offset(HealthyAbsoluteEndOffset, StoreID, 30_000),
-	%% The failed chunk should remain in the disk pool for retry, while the healthy one
-	%% should have been removed after successful processing.
-	true = wait_until_disk_pool_size(1, 30_000),
-	[{_RemainingKey, RemainingValue}] = ar_disk_pool:debug_get_chunks(),
-	{_RemainingOffset, _RemainingChunkSize, RemainingDataRoot, _RemainingTXSize,
-		_RemainingChunkDataKey, _RemainingPB, _RemainingPS, _RemainingPR} =
-			parse_disk_pool_chunk(RemainingValue),
-	?assertEqual(MissingDataRoot, RemainingDataRoot).
+	%% Both chunks should be removed from the disk pool: the healthy one because it was
+	%% successfully processed, and the missing one because its data is gone (keeping a
+	%% dead entry would block re-ingestion and cause repeated errors every scan cycle).
+	%% The data root is on-chain so normal peer sync can recover the missing chunk.
+	true = wait_until_disk_pool_empty(30_000).
 
 %% -------------------------------------------------------------------
 %% When the same data root appears at multiple weave offsets (same
