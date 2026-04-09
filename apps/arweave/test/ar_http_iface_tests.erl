@@ -229,7 +229,7 @@ test_price_endpoints({_B0, _Wallet1, _Wallet2, {_, StaticPub}}) ->
 	Peer = ar_test_node:peer_ip(main),
 	Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(StaticPub))),
 	ExpectedFee = ?AR(1),
-	ExpectedDenomination = 0,
+	ExpectedDenomination = 1,
 	assert_price_endpoint(Peer, "/price/100", [], binary,
 		ExpectedFee, ExpectedDenomination),
 	assert_price_endpoint(Peer, "/price/100/" ++ Addr, [], binary,

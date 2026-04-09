@@ -92,7 +92,7 @@ test_orphaned_chunk_cleanup() ->
 	%% Simulate orphaning: remove the data root from the disk pool data roots ETS.
 	%% Since we haven't mined, the data root is NOT in the data root index either.
 	DataRootID = ar_data_roots:id(DataRoot, ?DATA_CHUNK_SIZE),
-	ar_disk_pool:delete_data_root(DataRootID),
+	ar_disk_pool:delete_data_root_state(DataRootID),
 	%% The disk pool scan should pick up the orphaned chunk and delete it.
 	true = wait_until_disk_pool_empty(30_000),
 	?assertEqual([], ar_disk_pool:debug_get_chunks()).
