@@ -8,7 +8,7 @@
 		get_next_unsynced_interval/4, get_next_unsynced_interval/5,
 		get_interval/3, get_intersection_size/4, name/1]).
 
--export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
+-export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -297,7 +297,7 @@ get_intersection_size(End, Start, ID, StoreID) ->
 %%%===================================================================
 
 init(StoreID) ->
-	%% Trap exit to avoid corrupting any open files on quit.
+	?LOG_INFO([{event, ar_sync_record_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
 	StorageModule = ar_storage_module:get_by_id(StoreID),
 	{ok, Config} = arweave_config:get_env(),
@@ -316,28 +316,38 @@ init(StoreID) ->
 							ar_node:get_partition_number(Size * Index)}
 		end,
 	StateDB = {sync_record, StoreID},
-	{SyncRecordByID, SyncRecordByIDType, WAL} =
-		case Dir of
-			undefined ->
-				{#{}, #{}, undefined};
-			_ ->
-				ok = ar_kv:open(#{ path => Dir, name => StateDB }),
-				gen_server:cast(self(), store_state),
-				read_sync_records(StateDB, StoreID)
-		end,
-	initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
-	initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
-	{ok, #state{
+	State = #state{
 		state_db = StateDB,
 		store_id = StoreID,
 		storage_module = StorageModule,
 		partition_number = PartitionNumber,
 		storage_module_size = StorageModuleSize,
 		storage_module_index = StorageModuleIndex,
+		sync_record_by_id = #{},
+		sync_record_by_id_type = #{},
+		wal = undefined,
+		in_memory = Dir == undefined
+	},
+	case Dir of
+		undefined ->
+			initialize_sync_record_by_id_type_ets(#{}, StoreID),
+			initialize_sync_record_by_id_ets(#{}, StoreID),
+			{ok, State};
+		_ ->
+			{ok, State, {continue, {init, Dir}}}
+	end.
+
+handle_continue({init, Dir}, #state{ state_db = StateDB, store_id = StoreID } = State) ->
+	ok = ar_kv:open(#{ path => Dir, name => StateDB }),
+	gen_server:cast(self(), store_state),
+	{SyncRecordByID, SyncRecordByIDType, WAL} = read_sync_records(StateDB, StoreID),
+	initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
+	initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
+	?LOG_INFO([{event, ar_sync_record_initialized}, {store_id, StoreID}]),
+	{noreply, State#state{
 		sync_record_by_id = SyncRecordByID,
 		sync_record_by_id_type = SyncRecordByIDType,
-		wal = WAL,
-		in_memory = Dir == undefined
+		wal = WAL
 	}}.
 
 handle_call({get, ID}, _From, State) ->

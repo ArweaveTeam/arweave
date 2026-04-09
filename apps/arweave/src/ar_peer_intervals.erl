@@ -364,15 +364,17 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 						false ->
 							ByteIntervals = 
 								cut_peer_footprint_intervals(SoughtIntervals, Start, End),
-							?LOG_DEBUG([{event, fetch_peer_intervals},
-								{function, fetch_peer_footprint_intervals},
-								{peer, ar_util:format_peer(Peer)},
-								{partition, Partition},
-								{footprint, Footprint},
-								{unsynced_intervals, ar_intervals:sum(UnsyncedIntervals)},
-								{sought_intervals, ar_intervals:sum(SoughtIntervals)},
-								{intervals, length(Intervals)},
-								{byte_intervals, ar_intervals:sum(ByteIntervals)}]),
+							%% XXX: turning off logging to reduce noise, will re-enable when we
+							%%      support multiple log files. 
+							% ?LOG_DEBUG([{event, fetch_peer_intervals},
+							% 	{function, fetch_peer_footprint_intervals},
+							% 	{peer, ar_util:format_peer(Peer)},
+							% 	{partition, Partition},
+							% 	{footprint, Footprint},
+							% 	{unsynced_intervals, ar_intervals:sum(UnsyncedIntervals)},
+							% 	{sought_intervals, ar_intervals:sum(SoughtIntervals)},
+							% 	{intervals, length(Intervals)},
+							% 	{byte_intervals, ar_intervals:sum(ByteIntervals)}]),
 							FootprintKey = {Partition, Footprint, Peer},
 							[{Peer, ByteIntervals, FootprintKey} | IntervalsAcc]
 					end;

@@ -8,17 +8,18 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_chain_stats.hrl").
+-include("ar_git_info.hrl").
 
 get_info() ->
 	{Time, Current} =
 		timer:tc(fun() -> ar_node:get_current_block_hash() end),
 	{Time2, Height} =
 		timer:tc(fun() -> ar_node:get_height() end),
-	[{_, BlockCount}] = ets:lookup(ar_header_sync, synced_blocks),
     #{
         <<"network">> => list_to_binary(?NETWORK_NAME),
         <<"version">> => ?CLIENT_VERSION,
         <<"release">> => ?RELEASE_NUMBER,
+        <<"git_hash">> => ?AR_GIT_HASH,
         <<"height">> =>
             case Height of
                 not_joined -> -1;
@@ -29,7 +30,8 @@ get_info() ->
                 true -> atom_to_binary(Current, utf8);
                 false -> ar_util:encode(Current)
             end,
-        <<"blocks">> => BlockCount,
+        <<"blocks">> => ar_header_sync:block_count(),
+        <<"cached_blocks">> => ar_storage:block_count(),
         <<"peers">> => prometheus_gauge:value(arweave_peer_count),
         <<"queue_length">> =>
             element(

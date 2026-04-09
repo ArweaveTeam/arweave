@@ -37,9 +37,11 @@
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
 		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
 		read_block_when_stored/2, get_chunk/2, get_chunk/3, get_chunk_proof/2, post_chunk/2,
+		get_unconfirmed_chunk/3,
 		random_v1_data/1, assert_get_tx_data/3,
 		assert_data_not_found/2, post_tx_json/2,
 		wait_until_syncs_genesis_data/0, wait_until_syncs_genesis_data/1,
+		wait_until_syncs_offset/2, wait_until_syncs_offset/3,
 
 		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3]).
 
@@ -576,6 +578,18 @@ wait_until_syncs_data(Left, Right, WeaveSize, Packing) ->
 		?WAIT_SYNCS_DATA_TIMEOUT
 	),
 	wait_until_syncs_data(Left + ?DATA_CHUNK_SIZE, Right, WeaveSize, Packing).
+
+wait_until_syncs_offset(Offset, StoreID) ->
+	wait_until_syncs_offset(Offset, StoreID, ?WAIT_SYNCS_DATA_TIMEOUT).
+
+wait_until_syncs_offset(Offset, StoreID, Timeout) ->
+	true = ar_util:do_until(
+		fun() ->
+			ar_sync_record:is_recorded(Offset, ar_data_sync, StoreID) =/= false
+		end,
+		200,
+		Timeout
+	).
 
 get_cm_storage_modules(RewardAddr, 1, 1) ->
 	%% When there's only 1 node it covers all 3 storage modules.
@@ -1702,6 +1716,14 @@ post_chunk(Node, Proof) ->
 		peer => Peer,
 		path => "/chunk",
 		body => Proof
+	}).
+
+get_unconfirmed_chunk(Node, EncodedTXID, RelativeEndOffset) ->
+	ar_http:req(#{
+		method => get,
+		peer => peer_ip(Node),
+		path => "/unconfirmed_chunk/" ++ binary_to_list(EncodedTXID)
+				++ "/" ++ integer_to_list(RelativeEndOffset)
 	}).
 
 random_v1_data(Size) ->

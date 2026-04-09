@@ -157,7 +157,7 @@ download_and_verify_tx(TXID, TXIDPeer) ->
 					log_invalid_tx(Code, TXID, TX, Peer, TXIDPeer);
 				{valid, TX2} ->
 					ar_peers:rate_fetched_data(Peer, tx, Time, Size),
-					ar_data_sync:add_data_root_to_disk_pool(TX2#tx.data_root,
+					ar_disk_pool:add_data_root(TX2#tx.data_root,
 							TX2#tx.data_size, TX#tx.id),
 					ar_events:send(tx, {new, TX2, {pulled, Peer}}),
 					TXID = TX2#tx.id,

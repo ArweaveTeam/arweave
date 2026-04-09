@@ -280,6 +280,12 @@ with_cached_value(Key, SessionKey, Cache0, Fun) ->
 %%% Private functions.
 %%%===================================================================
 
+-ifdef(AR_TEST).
+log_anomaly_warning(_LogData) -> ok.
+-else.
+log_anomaly_warning(LogData) -> ?LOG_WARNING(LogData).
+-endif.
+
 %% Returns the size of the cached data in bytes.
 cached_value_size(#ar_mining_cache_value{ chunk1 = Chunk1, chunk2 = Chunk2 }) ->
   MaybeBinarySize = fun
@@ -327,18 +333,18 @@ maybe_search_for_anomalies(SessionKey, #ar_mining_cache_session{
 	ActualCacheSize = maybe_search_for_anomalies_cache_values(SessionKey, MiningCache),
 	case {ActualCacheSize, MiningCacheSize} of
 		{0, 0} -> ok;
-		{EqualSize, EqualSize} -> ?LOG_WARNING([
+		{EqualSize, EqualSize} -> log_anomaly_warning([
 			{event, mining_cache_anomaly}, {anomaly, cache_size_non_zero},
 			{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 			{actual_size, ActualCacheSize}, {reported_size, MiningCacheSize}]);
-		{_, _} -> ?LOG_WARNING([
+		{_, _} -> log_anomaly_warning([
 			{event, mining_cache_anomaly}, {anomaly, cache_size_mismatch},
 			{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 			{actual_size, ActualCacheSize}, {reported_size, MiningCacheSize}])
 	end,
 	case ReservedMiningCacheBytes of
 		0 -> ok;
-		_ -> ?LOG_WARNING([
+		_ -> log_anomaly_warning([
 			{event, mining_cache_anomaly}, {anomaly, reserved_size_non_zero},
 			{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 			{actual_size, ReservedMiningCacheBytes}, {expected_size, 0}])
@@ -363,7 +369,7 @@ maybe_search_for_anomalies_cache_values(SessionKey, MiningCache) when is_map(Min
 		{Anomalies1, ActualSize0 + cached_value_size(Value)}
 	end, OuterAcc0, MiningCache),
 	case maps:size(Anomalies) > 0 of
-		true -> ?LOG_WARNING([
+		true -> log_anomaly_warning([
 			{event, mining_cache_anomaly}, {anomaly, cached_values_anomalies},
 			{anomalies, Anomalies},
 			{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]);

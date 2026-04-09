@@ -4,7 +4,7 @@
 
 -export([get_data_path_validation_ruleset/2, get_data_path_validation_ruleset/3,
 		 validate_pre_fork_2_5/4, validate/1, chunk_proof/2, chunk_proof/3, chunk_proof/5,
-		 validate_paths/1, get_padded_offset/1, get_padded_offset/2]).
+	 validate_paths/1, validate_data_path/5, get_padded_offset/1, get_padded_offset/2]).
 
 -include_lib("arweave/include/ar_poa.hrl").
 -include_lib("arweave/include/ar.hrl").
@@ -46,6 +46,43 @@ get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold,
 get_data_path_validation_ruleset(BlockStartOffset) ->
 	get_data_path_validation_ruleset(BlockStartOffset, ?MERKLE_REBASE_SUPPORT_THRESHOLD,
 			ar_block:strict_data_split_threshold()).
+
+validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
+	Base = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath, strict_borders_ruleset),
+	Strict = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath,
+			strict_data_split_ruleset),
+	Rebase = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath,
+			offset_rebase_support_ruleset),
+	Result =
+		case {Base, Strict, Rebase} of
+			{false, false, false} ->
+				false;
+			{_, {_, _, _} = StrictResult, _} ->
+				StrictResult;
+			{_, _, {_, _, _} = RebaseResult} ->
+				RebaseResult;
+			{{_, _, _} = BaseResult, _, _} ->
+				BaseResult
+		end,
+	case Result of
+		false ->
+			false;
+		{ChunkID, StartOffset, EndOffset} ->
+			case ar_tx:generate_chunk_id(Chunk) == ChunkID of
+				false ->
+					false;
+				true ->
+					case EndOffset - StartOffset == byte_size(Chunk) of
+						true ->
+							PassesBase = not (Base == false),
+							PassesStrict = not (Strict == false),
+							PassesRebase = not (Rebase == false),
+							{true, PassesBase, PassesStrict, PassesRebase, EndOffset};
+						false ->
+							false
+					end
+			end
+	end.
 
 %% @doc Validate a proof of access.
 validate(Args) ->

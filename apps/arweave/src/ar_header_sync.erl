@@ -3,15 +3,13 @@
 -behaviour(gen_server).
 
 -export([start_link/0, join/3, add_tip_block/2, add_block/1, request_tx_removal/1,
-		remove_block/1]).
+		remove_block/1, block_count/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_header_sync.hrl").
--include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave/include/ar_chunk_storage.hrl").
 
 %%% This module syncs block and transaction headers and maintains a persisted record of synced
 %%% headers. Headers are synced from latest to earliest.
@@ -52,6 +50,10 @@ request_tx_removal(TXID) ->
 %% will therefore re-sync it later (if there is available disk space).
 remove_block(Height) ->
 	gen_server:cast(?MODULE, {remove_block, Height}).
+
+block_count() ->
+	[{_, BlockCount}] = ets:lookup(ar_header_sync, synced_blocks),
+	BlockCount.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -231,9 +233,8 @@ handle_cast({remove_tx, TXID}, State) ->
 	{noreply, State};
 
 handle_cast({remove_block, Height}, State) ->
-	#state{ sync_record = Record } = State,
-	ok = ar_kv:delete(?MODULE, << Height:256 >>),
-	{noreply, State#state{ sync_record = ar_intervals:delete(Record, Height, Height - 1) }};
+	State2 = unsync_block(Height, State),
+	{noreply, State2};
 
 handle_cast(store_sync_state, State) ->
 	ar_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, self(), store_sync_state),
@@ -495,6 +496,7 @@ download_block(H, H2, TXRoot) ->
 		unavailable ->
 			download_block(Peers, H, H2, TXRoot);
 		B ->
+			log_download_source(B, local),
 			download_txs(Peers, B, TXRoot)
 	end.
 
@@ -521,9 +523,11 @@ download_block(Peers, H, H2, TXRoot) ->
 			case BH of
 				H when Height >= Fork_2_0 ->
 					ar_peers:rate_fetched_data(Peer, block, Time, BlockSize),
+					log_download_source(B, network),
 					download_txs(Peers, B, TXRoot);
 				H2 when Height < Fork_2_0 ->
 					ar_peers:rate_fetched_data(Peer, block, Time, BlockSize),
+					log_download_source(B, network),
 					download_txs(Peers, B, TXRoot);
 				_ ->
 					?LOG_WARNING([
@@ -570,3 +574,21 @@ download_txs(Peers, B, TXRoot) ->
 			]),
 			{error, tx_not_found}
 	end.
+
+log_download_source(B, BlockSource) ->
+	?LOG_DEBUG([
+		{event, header_sync_block_synced},
+		{height, B#block.height},
+		{block, ar_util:encode(B#block.indep_hash)},
+		{block_source, BlockSource},
+		{tx_count, length(B#block.txs)}
+	]).
+
+unsync_block(Height, #state{ sync_record = SyncRecord, retry_record = RetryRecord } = State) ->
+	State2 = State#state{
+		sync_record = ar_intervals:delete(SyncRecord, Height, Height - 1),
+		retry_record = ar_intervals:delete(RetryRecord, Height, Height - 1)
+	},
+	ok = store_sync_state(State2),
+	ok = ar_kv:delete(?MODULE, << Height:256 >>),
+	State2.
