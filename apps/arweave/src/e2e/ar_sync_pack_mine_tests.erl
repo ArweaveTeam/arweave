@@ -252,6 +252,7 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 
 	%% 1. Run node with no sync jobs so that it only prepares entropy
 	Config2 = Config#config{
+		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		peers = [ar_test_node:peer_ip(SourceNode)],
 		start_from_latest_state = true,
 		storage_modules = StorageModules,
@@ -282,6 +283,7 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 
 	%% 2. Run node with sync jobs so that it syncs and packs data
 	ar_test_node:restart_with_config(SinkNode, Config2#config{
+		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		sync_jobs = 100
 	}),
 
@@ -314,6 +316,7 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 
 	%% 1. Run node with no replica_2_9 workers so that it only syncs chunks
 	Config2 = Config#config{
+		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		peers = [ar_test_node:peer_ip(SourceNode)],
 		start_from_latest_state = true,
 		storage_modules = StorageModules,
@@ -334,6 +337,7 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 
 	%% 2. Run node with sync jobs so that it syncs and packs data
 	ar_test_node:restart_with_config(SinkNode, Config2#config{
+		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		replica_2_9_workers = 8
 	}),
 
@@ -367,6 +371,7 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 
 	%% Sync the second half of partition 1
 	Config2 = Config#config{
+		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		peers = [ar_test_node:peer_ip(SourceNode)],
 		start_from_latest_state = true,
 		storage_modules = StorageModules,
@@ -418,6 +423,7 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 
 	%% Sync the second half of partition 1
 	Config2 = Config#config{
+		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		peers = [ar_test_node:peer_ip(SourceNode)],
 		start_from_latest_state = true,
 		storage_modules = StorageModules,
@@ -472,6 +478,7 @@ test_large_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 	StorageModules = [ Module ],
 
 	Config2 = Config#config{
+		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		peers = [ar_test_node:peer_ip(SourceNode)],
 		start_from_latest_state = true,
 		storage_modules = StorageModules,
@@ -527,6 +534,7 @@ test_large_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	StorageModules = [ Module ],
 
 	Config2 = Config#config{
+		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		peers = [ar_test_node:peer_ip(SourceNode)],
 		start_from_latest_state = true,
 		storage_modules = StorageModules,
@@ -637,6 +645,7 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
 	],
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, Config#config{
+			'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 			peers = [ar_test_node:peer_ip(SourceNode)],
 			start_from_latest_state = true,
 			storage_modules = StorageModules,
@@ -661,6 +670,7 @@ start_sink_node(Node, SourceNode, B0, PackingType1, PackingType2) ->
 
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, Config#config{
+			'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 			peers = [ar_test_node:peer_ip(SourceNode)],
 			start_from_latest_state = true,
 			storage_modules = StorageModules,
