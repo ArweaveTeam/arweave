@@ -277,6 +277,11 @@ prep_stop(State) ->
 
 	% all timers/intervals must be stopped.
 	ar_timer:terminate_timers(),
+
+	% Deregister from epmd early, before the slow RocksDB teardown.
+	% Otherwise, if the BEAM dies during shutdown, epmd retains a stale
+	% registration that blocks restarts.
+	catch net_kernel:stop(),
 	State.
 
 stop(_State) ->
