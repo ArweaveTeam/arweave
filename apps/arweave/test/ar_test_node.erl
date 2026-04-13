@@ -352,7 +352,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		local_peers = [peer_ip(Peer) || Peer <- MinerNodes]
 	},
 	ValidatorNodeConfig = BaseCMConfig#config{
-		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
+%		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		mine = false,
 		peers = [ExitPeer],
 		coordinated_mining = false,
@@ -373,7 +373,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 			MinerPeerIPs = [peer_ip(Peer) || Peer <- MinerPeers],
 
 			MinerConfig = BaseCMConfig#config{
-				'http_api.limiter.data_sync_record.leaky_limit' = 1000,
+%				'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 				cm_exit_peer = ExitPeer,
 				cm_peers = MinerPeerIPs,
 				local_peers = MinerPeerIPs ++ [ExitPeer],

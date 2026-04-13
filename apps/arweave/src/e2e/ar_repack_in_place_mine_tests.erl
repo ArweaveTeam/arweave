@@ -64,7 +64,7 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 		{Module, ToPacking} || Module <- Config#config.storage_modules ], NumModules),
 	
 	ar_test_node:restart_with_config(RepackerNode, Config#config{
-		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
+		local_peers = [{127,0,0,1}],
 		storage_modules = [],
 		repack_in_place_storage_modules = RepackInPlaceStorageModules,
 		mining_addr = undefined
@@ -92,7 +92,7 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 
 	ar_test_node:restart_with_config(RepackerNode, 
 		Config#config{
-			'http_api.limiter.data_sync_record.leaky_limit' = 1000,
+			local_peers = [{127,0,0,1}],
 			storage_modules = FinalStorageModules,
 			repack_in_place_storage_modules = [],
 			mining_addr = AddrB
@@ -111,7 +111,7 @@ start_validator_node(ValidatorNode, RepackerNode, B0) ->
 	{ok, Config} = ar_test_node:get_config(ValidatorNode),
 	?assertEqual(ar_test_node:peer_name(ValidatorNode),
 		ar_test_node:start_other_node(ValidatorNode, B0, Config#config{
-			'http_api.limiter.data_sync_record.leaky_limit' = 1000,
+			local_peers = [{127,0,0,1}],
 			peers = [ar_test_node:peer_ip(RepackerNode)],
 			start_from_latest_state = true,
 			auto_join = true
