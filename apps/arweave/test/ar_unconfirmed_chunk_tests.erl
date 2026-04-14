@@ -455,26 +455,19 @@ test_offset_beyond_data() ->
 	).
 
 %% @doc GET /unconfirmed_chunk/TXID/Offset where Offset is beyond the end of the
-%% TX should return 400. Currently the tx_index fallback path computes an
-%% absolute offset past TX1's end and returns 200 with the neighbouring TX's
-%% chunk — this test fails until the handler rejects RelativeEndOffset > TXSize.
+%% TX should return 400. 
 test_offset_beyond_tx_size() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
 			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, storage_modules => StorageModules }),
-	%% TX1: a single sub-chunk-size chunk (size between 20 and 700).
-	TX1Size = 500,
-	TX1Data = crypto:strong_rand_bytes(TX1Size),
-	#{ tx := TX1, proofs := [{TX1EndOffset, _Proof1}] } =
-		post_and_seed_tx(Wallet, [TX1Data], #{ proof_offset => end_offset }),
-	%% TX2: posted immediately after TX1 so its chunk occupies the byte range
-	%% directly past TX1's end.
-	TX2Data = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-	#{ proofs := [{_TX2EndOffset, _Proof2}] } = post_and_seed_tx(
-		Wallet, [TX2Data], #{ proof_offset => end_offset }),
-	%% Confirm both TXs so queries go through the tx_index fallback path.
+	%% A single sub-chunk-size TX (size between 20 and 700).
+	TXSize = 500,
+	TXData = crypto:strong_rand_bytes(TXSize),
+	#{ tx := TX, proofs := [{TXEndOffset, _Proof}] } =
+		post_and_seed_tx(Wallet, [TXData], #{ proof_offset => end_offset }),
+	%% Confirm the TX so the query goes through the tx_index fallback path.
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 1),
 	ar_test_node:mine(main),
@@ -483,12 +476,12 @@ test_offset_beyond_tx_size() ->
 	assert_wait_until_height(main, 3),
 	ar_test_node:mine(main),
 	assert_wait_until_height(main, 4),
-	%% Clear the disk-pool cache entry for TX1 so the query can't be served from
-	%% the ETS cache — forcing it down the tx_index fallback path.
-	ets:delete(ar_disk_pool_chunks_cache, {TX1#tx.id, TX1EndOffset}),
-	EncodedTX1 = ar_util:encode(TX1#tx.id),
-	%% Offset 700 is past TX1's size (500) and must be rejected.
-	wait_for_unconfirmed_chunk(EncodedTX1, 700, <<"400">>).
+	%% Clear the disk-pool cache entry so the query can't be served from the
+	%% ETS cache — forcing it down the tx_index fallback path.
+	ets:delete(ar_disk_pool_chunks_cache, {TX#tx.id, TXEndOffset}),
+	EncodedTXID = ar_util:encode(TX#tx.id),
+	%% Offset 700 is past the TX's size (500) and must be rejected.
+	wait_for_unconfirmed_chunk(EncodedTXID, 700, <<"400">>).
 
 %% @doc Chunk is still retrievable after mining only 1 block (partial confirmation).
 test_partial_confirmation() ->
