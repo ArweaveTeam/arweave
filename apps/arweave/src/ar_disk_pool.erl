@@ -80,18 +80,18 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 	maybe
 		{ok, DiskPoolDataRootValue} ?=
 			check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool),
-		{ok, EndOffset, Validation} ?=
+		{ok, RelativeEndOffset, Validation} ?=
 			validate_proof(Metadata, Offset, TXSize, Chunk),
 		ok ?= maybe
 			{ok, DataPathHash, DiskPoolChunkKey} ?=
 				check_not_already_synced(Metadata, DataRootID, DataRootEntry,
-						EndOffset, DiskPoolDataRootValue),
+				RelativeEndOffset, DiskPoolDataRootValue),
 			ok ?=
-				persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset,
+				persist_chunk(Metadata, Chunk, TXSize, DataRootID, RelativeEndOffset,
 						Validation, DataPathHash, DiskPoolChunkKey,
 						DiskPoolDataRootValue)
 		end,
-		case is_estimated_long_term_chunk(DataRootEntry, EndOffset) of
+		case is_estimated_long_term_chunk(DataRootEntry, RelativeEndOffset) of
 			false ->
 				temporary;
 			true ->
@@ -320,8 +320,9 @@ get_unconfirmed_chunk_from_disk_pool(TXID, RelativeEndOffset, DiskPoolChunkKey) 
 			Error;
 		{ok, DiskPoolValue} ->
 			DiskPoolChunk = parse_chunk(DiskPoolValue),
-			{RelEndOffset, _ChunkSize, DataRoot, TXSize, ChunkDataKey,
+			{RelativeEndOffset, _ChunkSize, DataRoot, TXSize, ChunkDataKey,
 					_PassesBase, _PassesStrict, _PassesRebase} = DiskPoolChunk,
+			RelativeEndOffset =< TXSize,
 			case ar_data_sync:get_chunk_data(ChunkDataKey, ?DEFAULT_MODULE) of
 				not_found ->
 					get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset);
@@ -333,7 +334,7 @@ get_unconfirmed_chunk_from_disk_pool(TXID, RelativeEndOffset, DiskPoolChunkKey) 
 					DataRootOffsetReply = ar_data_roots:get_entry(DataRootID,
 							?DEFAULT_MODULE),
 					IsStoredLongTerm = is_estimated_long_term_chunk(
-							DataRootOffsetReply, RelEndOffset),
+							DataRootOffsetReply, RelativeEndOffset),
 					{ok, {Chunk, DataPath, IsStoredLongTerm}}
 			end
 	end.
@@ -343,6 +344,8 @@ get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset) ->
 	case ar_data_sync:get_tx_offset(TXIndex, TXID) of
 		{error, _} ->
 			{error, not_found};
+		{ok, {_AbsTXEndOffset, TXSize}} when RelativeEndOffset > TXSize ->
+			{error, invalid_offset};
 		{ok, {AbsTXEndOffset, TXSize}} ->
 			TXStartOffset = AbsTXEndOffset - TXSize,
 			AbsoluteChunkEndOffset = TXStartOffset + RelativeEndOffset,
@@ -366,19 +369,19 @@ get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset) ->
 			end
 	end.
 
-is_estimated_long_term_chunk(DataRootEntry, EndOffset) ->
+is_estimated_long_term_chunk(DataRootEntry, RelativeEndOffset) ->
 	WeaveSize = ar_node:get_current_weave_size(),
 	case DataRootEntry of
 		not_found ->
 			%% A chunk from a pending transaction.
 			is_offset_vicinity_covered(WeaveSize);
 		{ok, {_DataRoot, _TXSize, TXStartOffset, _TXPath}} ->
-			is_estimated_long_term_chunk(TXStartOffset, EndOffset, WeaveSize)
+			is_estimated_long_term_chunk(TXStartOffset, RelativeEndOffset, WeaveSize)
 	end.
 
-is_estimated_long_term_chunk(TXStartOffset, EndOffset, WeaveSize) ->
+is_estimated_long_term_chunk(TXStartOffset, RelativeEndOffset, WeaveSize) ->
 	Size = ar_node:get_recent_max_block_size(),
-	AbsoluteEndOffset = TXStartOffset + EndOffset,
+	AbsoluteEndOffset = TXStartOffset + RelativeEndOffset,
 	case AbsoluteEndOffset > WeaveSize - Size * 4 of
 		true ->
 			%% A relatively recent offset - do not expect this chunk to be
