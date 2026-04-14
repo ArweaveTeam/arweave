@@ -243,13 +243,15 @@ initial_call([], Pid) ->
 	%% Fallback to proc_lib's initial_call which reads $initial_call from the
 	%% process dictionary - gives us the actual callback module instead of
 	%% gen_server:loop/7 or similar OTP internals.
-	case proc_lib:initial_call(Pid) of
+	try proc_lib:initial_call(Pid) of
 		false -> {unknown, unknown, 0};
 		{M, F, A} when is_integer(A) -> {M, F, A};
 		{M, F, Args} when is_list(Args) -> {M, F, length(Args)};
 		[M, F, A] when is_integer(A) -> {M, F, A};
 		[M, F, Args] when is_list(Args) -> {M, F, length(Args)};
 		_ -> {unknown, unknown, 0}
+	catch
+		_:_ -> {unknown, unknown, 0}
 	end;
 initial_call([{M, _F, _A, _Location} | Stack], Pid)
 		when M =:= proc_lib; M =:= gen_server; M =:= gen_statem; M =:= gen_event ->
