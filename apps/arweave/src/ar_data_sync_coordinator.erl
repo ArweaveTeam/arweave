@@ -222,7 +222,15 @@ handle_cast(rebalance_peers, State) ->
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	Targets = calculate_targets(PeerPids, AllPeerPerformances, State),
 	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State),
-	{noreply, State2};
+	%% Defensive drain: dispatch_tasks only fires on enqueue_task, task_completed,
+	%% and footprint activation. If any peer ends up with queued tasks but no pending
+	%% trigger to drain them, they'd orphan forever. Sweep all peers every rebalance
+	%% tick so a stall self-heals within ?REBALANCE_FREQUENCY_MS.
+	State3 = case queue:is_empty(State2#state.workers) of
+		true -> State2;
+		false -> process_all_peer_queues2(maps:values(State2#state.known_peers), State2)
+	end,
+	{noreply, State3};
 
 handle_cast({footprint_deactivated, _Peer}, State) ->
 	NewCount = max(0, State#state.total_active_footprints - 1),
@@ -441,23 +449,26 @@ cycle_workers(AverageLoad, State) ->
 notify_peers_capacity_available(#state{ known_peers = KnownPeers } = State) ->
 	%% Iterate through peers, stop when one activates a footprint to avoid over-activation
 	PeerList = maps:to_list(KnownPeers),
-	case try_activate_footprint(PeerList) of
-		true ->
-			State#state{ total_active_footprints = State#state.total_active_footprints + 1 };
-		false ->
-			State
+	case try_activate_footprint(PeerList, State) of
+		{true, State2} ->
+			State2#state{ total_active_footprints = State2#state.total_active_footprints + 1 };
+		{false, State2} ->
+			State2
 	end.
 
-try_activate_footprint([]) ->
-	false;
-try_activate_footprint([{_Peer, Pid} | Rest]) ->
-	case ar_peer_worker:try_activate_footprint(Pid) of
-		true ->
-			%% A footprint was activated, stop here
-			true;
-		false ->
+try_activate_footprint([], State) ->
+	{false, State};
+try_activate_footprint([{_Peer, Pid} | Rest], State) ->
+	WorkerCount = queue:len(State#state.workers),
+	case ar_peer_worker:try_activate_footprint(Pid, WorkerCount) of
+		{true, TasksToDispatch} ->
+			%% A footprint was activated — dispatch the newly-promoted tasks so
+			%% they don't orphan in task_queue, then stop.
+			State2 = dispatch_tasks(Pid, TasksToDispatch, State),
+			{true, State2};
+		{false, _} ->
 			%% No footprint activated, try next peer
-			try_activate_footprint(Rest)
+			try_activate_footprint(Rest, State)
 	end.
 
 %%%===================================================================
@@ -479,6 +490,7 @@ coordinator_test_() ->
 		{timeout, 30, fun test_dispatch_tasks_updates_counts/0},
 		{timeout, 30, fun test_try_activate_footprint_stops_on_success/0},
 		{timeout, 30, fun test_try_activate_footprint_tries_all/0},
+		{timeout, 30, fun test_try_activate_footprint_dispatches_tasks/0},
 		{timeout, 30, fun test_calculate_targets/0}
 	].
 
@@ -611,51 +623,51 @@ test_dispatch_tasks_updates_counts() ->
 test_try_activate_footprint_stops_on_success() ->
 	%% Create mock peer processes that track if they were called
 	Parent = self(),
-	
-	%% Peer1 returns false (no waiting footprint)
-	Pid1 = spawn(fun() -> mock_peer_worker(Parent, peer1, false) end),
-	%% Peer2 returns true (activates a footprint)
-	Pid2 = spawn(fun() -> mock_peer_worker(Parent, peer2, true) end),
+
+	%% Peer1 returns {false, []} (no waiting footprint)
+	Pid1 = spawn(fun() -> mock_peer_worker(Parent, peer1, {false, []}) end),
+	%% Peer2 returns {true, []} (activates a footprint, no tasks to dispatch in mock)
+	Pid2 = spawn(fun() -> mock_peer_worker(Parent, peer2, {true, []}) end),
 	%% Peer3 should NOT be called (iteration should stop at Peer2)
-	Pid3 = spawn(fun() -> mock_peer_worker(Parent, peer3, false) end),
-	
-	%% Register mock processes so ar_peer_worker:try_activate_footprint can find them
-	%% We need to call try_activate_footprint directly with our mock list
+	Pid3 = spawn(fun() -> mock_peer_worker(Parent, peer3, {false, []}) end),
+
 	PeerList = [{peer1, Pid1}, {peer2, Pid2}, {peer3, Pid3}],
-	
+	State0 = #state{ workers = queue:from_list([w1, w2, w3]) },
+
 	%% Call the function directly
-	true = try_activate_footprint(PeerList),
-	
+	{true, _State1} = try_activate_footprint(PeerList, State0),
+
 	%% Wait a bit for messages
 	timer:sleep(50),
-	
+
 	%% Check which peers were called
 	?assertEqual([peer1, peer2], collect_called_peers([])),
-	
+
 	%% Cleanup
 	exit(Pid1, kill),
 	exit(Pid2, kill),
 	exit(Pid3, kill).
 
 test_try_activate_footprint_tries_all() ->
-	%% Create mock peer processes that all return false
+	%% Create mock peer processes that all return {false, []}
 	Parent = self(),
-	
-	Pid1 = spawn(fun() -> mock_peer_worker(Parent, peer1, false) end),
-	Pid2 = spawn(fun() -> mock_peer_worker(Parent, peer2, false) end),
-	Pid3 = spawn(fun() -> mock_peer_worker(Parent, peer3, false) end),
-	
+
+	Pid1 = spawn(fun() -> mock_peer_worker(Parent, peer1, {false, []}) end),
+	Pid2 = spawn(fun() -> mock_peer_worker(Parent, peer2, {false, []}) end),
+	Pid3 = spawn(fun() -> mock_peer_worker(Parent, peer3, {false, []}) end),
+
 	PeerList = [{peer1, Pid1}, {peer2, Pid2}, {peer3, Pid3}],
-	
+	State0 = #state{ workers = queue:from_list([w1, w2, w3]) },
+
 	%% Call the function directly
-	false = try_activate_footprint(PeerList),
-	
+	{false, _State1} = try_activate_footprint(PeerList, State0),
+
 	%% Wait a bit for messages
 	timer:sleep(50),
-	
+
 	%% All three peers should have been called
 	?assertEqual([peer1, peer2, peer3], collect_called_peers([])),
-	
+
 	%% Cleanup
 	exit(Pid1, kill),
 	exit(Pid2, kill),
@@ -664,9 +676,56 @@ test_try_activate_footprint_tries_all() ->
 %% Mock peer worker that responds to try_activate_footprint calls
 mock_peer_worker(Parent, PeerName, ReturnValue) ->
 	receive
-		{'$gen_call', From, try_activate_footprint} ->
+		{'$gen_call', From, {try_activate_footprint, _WorkerCount}} ->
 			Parent ! {called, PeerName},
 			gen_server:reply(From, ReturnValue)
+	after 5000 ->
+		ok
+	end.
+
+%% Regression test for the orphaned-task-queue bug: when a peer worker activates a
+%% waiting footprint via try_activate_footprint, the tasks it promotes into its
+%% task_queue must be dispatched by the coordinator. Prior to the fix, activation
+%% returned only a bool and the coordinator never called dispatch_tasks, so the
+%% promoted tasks would sit in task_queue forever (no trigger would drain them
+%% since dispatched_count was already 0 and no further enqueues arrived).
+test_try_activate_footprint_dispatches_tasks() ->
+	Parent = self(),
+	%% Mock peer reports an activation with one promoted task ready to dispatch.
+	FootprintKey = {fp, 1, peer1},
+	Task = {0, 100, peer1, store1, FootprintKey},
+	PeerPid = spawn(fun() -> mock_peer_worker(Parent, peer1, {true, [Task]}) end),
+	%% Mock sync worker process — dispatch_tasks will gen_server:cast to it.
+	WorkerPid = spawn(fun() -> mock_sync_worker(Parent) end),
+
+	State0 = #state{
+		workers = queue:from_list([WorkerPid]),
+		total_queued_count = 1
+	},
+
+	{true, State1} = try_activate_footprint([{peer1, PeerPid}], State0),
+
+	%% Worker must have received the sync_range cast — this is what was missing
+	%% before the fix.
+	receive
+		{sync_range_received, WorkerPid, Task} -> ok
+	after 500 ->
+		?assert(false, "dispatch_tasks did not cast sync_range to the worker")
+	end,
+
+	%% Coordinator state should reflect the dispatch.
+	?assertEqual(1, maps:get(WorkerPid, State1#state.dispatched_count_per_worker)),
+	?assertEqual(1, State1#state.total_dispatched_count),
+	?assertEqual(0, State1#state.total_queued_count),
+
+	exit(PeerPid, kill),
+	exit(WorkerPid, kill).
+
+mock_sync_worker(Parent) ->
+	receive
+		{'$gen_cast', {sync_range, {Start, End, Peer, StoreID, _Retry, FPKey}}} ->
+			Parent ! {sync_range_received, self(),
+				{Start, End, Peer, StoreID, FPKey}}
 	after 5000 ->
 		ok
 	end.

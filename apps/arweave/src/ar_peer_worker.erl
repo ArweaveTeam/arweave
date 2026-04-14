@@ -38,7 +38,7 @@
 -export([start_link/1, get_or_start/1, stop/1]).
 %% Operations (all take Pid as first arg - coordinator caches Peer->Pid mapping)
 -export([enqueue_task/5, task_completed/5, process_queue/2,
-         get_max_dispatched/1, rebalance/3, try_activate_footprint/1]).
+         get_max_dispatched/1, rebalance/3, try_activate_footprint/2]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -129,13 +129,16 @@ enqueue_task(Pid, FootprintKey, Args, HasCapacity, WorkerCount) ->
 	end.
 
 %% @doc Try to activate a waiting footprint (called when global capacity becomes available).
-%% Returns true if a footprint was activated, false otherwise.
-try_activate_footprint(Pid) ->
+%% Returns {Activated, TasksToDispatch}. If a footprint was activated the newly-promoted
+%% tasks are also drained from the task_queue so the caller can dispatch them — activation
+%% alone does not trigger a dispatch, and without this the tasks would sit in task_queue
+%% until the next enqueue_task or task_completed for this peer.
+try_activate_footprint(Pid, WorkerCount) ->
 	try
-		gen_server:call(Pid, try_activate_footprint, ?CALL_TIMEOUT_MS)
+		gen_server:call(Pid, {try_activate_footprint, WorkerCount}, ?CALL_TIMEOUT_MS)
 	catch
-		exit:{timeout, _} -> false;
-		_:_ -> false
+		exit:{timeout, _} -> {false, []};
+		_:_ -> {false, []}
 	end.
 
 %% @doc Process the queue and return tasks ready for dispatch.
@@ -202,10 +205,16 @@ handle_call({process_queue, WorkerCount}, _From, State) ->
 	{TasksToDispatch, State2} = do_process_queue(State, WorkerCount),
 	{reply, TasksToDispatch, State2};
 
-handle_call(try_activate_footprint, _From, State) ->
-	%% Global capacity became available - try to activate a waiting footprint
+handle_call({try_activate_footprint, WorkerCount}, _From, State) ->
+	%% Global capacity became available - try to activate a waiting footprint.
+	%% Also drain task_queue so the caller can dispatch the newly-promoted tasks;
+	%% without this, activation leaves tasks orphaned in task_queue.
 	{Activated, State2} = try_activate_waiting_footprint(State),
-	{reply, Activated, State2};
+	{TasksToDispatch, State3} = case Activated of
+		true -> do_process_queue(State2, WorkerCount);
+		false -> {[], State2}
+	end,
+	{reply, {Activated, TasksToDispatch}, State3};
 
 handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	{QueueScalingFactor, TargetLatency, WorkersStarved} = RebalanceParams,
@@ -814,25 +823,26 @@ test_footprint_waiting_queue({Peer, Pid}) ->
 test_try_activate_footprint({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
-		%% First, no waiting footprints - should return false
-		Result1 = try_activate_footprint(Pid),
-		?assertEqual(false, Result1),
-		
+		%% First, no waiting footprints - should return {false, []}
+		{false, []} = try_activate_footprint(Pid, 10),
+
 		%% Enqueue task with HasCapacity=false - goes to waiting
 		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, false, 0),
 		{ok, _} = gen_server:call(Pid, get_state), %% sync
-		
-		%% Now try_activate_footprint should return true
-		Result2 = try_activate_footprint(Pid),
-		?assertEqual(true, Result2),
-		
-		%% Check state - task should now be in task_queue
+
+		%% Now try_activate_footprint should return {true, [Task]} — the activation
+		%% promotes the waiting task to task_queue and drains it in the same call.
+		{true, [_]} = try_activate_footprint(Pid, 10),
+
+		%% Check state - task was drained by the activation, so task_queue is empty
+		%% and dispatched_count reflects the drained task.
 		{ok, State} = gen_server:call(Pid, get_state),
-		?assertEqual(1, queue:len(State#state.task_queue)),
+		?assertEqual(0, queue:len(State#state.task_queue)),
+		?assertEqual(1, State#state.dispatched_count),
 		?assertEqual(0, State#state.waiting_count),
 		%% Footprint should be in active_footprints set
 		?assertEqual(true, sets:is_element(FootprintKey, State#state.active_footprints)),
-		%% Footprint should have active_count = 1
+		%% Footprint's active_count stays at 1 (one in-flight dispatched task)
 		Footprint = maps:get(FootprintKey, State#state.footprints),
 		?assertEqual(1, Footprint#footprint.active_count),
 		?assertEqual(0, queue:len(Footprint#footprint.waiting))
