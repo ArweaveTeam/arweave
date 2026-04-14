@@ -29,6 +29,12 @@
 -include("ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
+-ifdef(AR_TEST).
+-export([
+         parse_peers/2
+]).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -1859,7 +1865,7 @@ safe_map(Fun, List) ->
 parse_peers([Peer | Rest], ParsedPeers) ->
 	case ar_util:safe_parse_peer(Peer) of
 		{ok, ParsedPeer} -> parse_peers(Rest, ParsedPeer ++ ParsedPeers);
-		{error, _} ->
+		{error, _} -> 
 			?LOG_WARNING([{event, invalid_peer_in_config}, {peer, Peer}, {action, ignored}]),
 			parse_peers(Rest, ParsedPeers)
 	end;
