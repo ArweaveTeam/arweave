@@ -51,12 +51,7 @@ total_size() ->
 %%%===================================================================
 
 total_size(Table) ->
-	case ets:lookup(Table, total_size) of
-		[] ->
-			0;
-		[{_, Value}] ->
-			Value
-	end.
+	ets:lookup_element(Table, total_size, 2, 0).
 
 get(Key, Table) ->
 	case ets:lookup(Table, {key, Key}) of
@@ -90,12 +85,7 @@ clean_up_space(Size, MaxSize, Table, OrderedKeyTable) ->
 	end.
 
 get_fetched_key_count(Table, Key) ->
-	case ets:lookup(Table, {fetched_key_count, Key}) of
-		[] ->
-			0;
-		[{_, Count}] ->
-			Count
-	end.
+	ets:lookup_element(Table, {fetched_key_count, Key}, 2, 0).
 
 put(Key, Value, Size, Table, OrderedKeyTable) ->
 	ets:insert(Table, {{key, Key}, Value}),

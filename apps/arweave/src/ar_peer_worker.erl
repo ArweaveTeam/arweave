@@ -169,22 +169,21 @@ init([Peer]) ->
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {peer, PeerFormatted}]),
 	State = #state{ peer = Peer, peer_formatted = PeerFormatted,
 					last_task_time = erlang:monotonic_time() },
-	publish_metrics(State),
+	record_peer_load(State),
 	{ok, State}.
 
 %% @doc Phase 0 instrumentation: publish this peer worker's contribution to the
-%% global invariants into the sync_metrics ETS table. Call at the end of every
+%% aggregate load counters into the worker_load ETS table. Call at the end of every
 %% state-mutating handler.
 %% Phase 1 also publishes max_dispatched so coordinator can read it from ETS
 %% instead of a synchronous gen_server:call.
-publish_metrics(State) ->
-	ar_data_sync_coordinator:sync_metrics_put_peer(
+record_peer_load(State) ->
+	ar_data_sync_coordinator:record_peer_load(
 		State#state.peer,
 		State#state.dispatched_count,
 		queue:len(State#state.task_queue) + State#state.waiting_count,
-		sets:size(State#state.active_footprints)),
-	ar_data_sync_coordinator:sync_metrics_put_peer_max_dispatched(
-		State#state.peer, State#state.max_dispatched),
+		sets:size(State#state.active_footprints),
+		State#state.max_dispatched),
 	State.
 
 handle_call(get_state, _From, State) ->
@@ -221,7 +220,7 @@ handle_call({take_one, WorkerPid}, _From, State) ->
 							},
 							increment_metrics(dispatched, State3, 1),
 							increment_metrics(queued_out, State3, 1),
-							publish_metrics(State3),
+							record_peer_load(State3),
 							{reply, {task, Args}, State3};
 						no_slot ->
 							{reply, none, State}
@@ -287,7 +286,7 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 		true -> {shutdown, RemovedCount};
 		false -> {ok, RemovedCount}
 	end,
-	publish_metrics(State3),
+	record_peer_load(State3),
 	{reply, Result, State3};
 
 handle_call(Request, _From, State) ->
@@ -310,7 +309,7 @@ handle_cast({task_completed, FootprintKey, Result, ElapsedNative, DataSize}, Sta
 	%% Complete footprint task
 	State2 = do_complete_footprint_task(
 		FootprintKey, StateA#state{ dispatched_count = NewDispatchedCount }),
-	publish_metrics(State2),
+	record_peer_load(State2),
 	{noreply, State2};
 
 handle_cast({enqueue, Args}, State) ->
@@ -321,7 +320,7 @@ handle_cast({enqueue, Args}, State) ->
 	State1 = State#state{ last_task_time = erlang:monotonic_time() },
 	{_, State2} = do_enqueue_task(FootprintKey, Args, true, State1),
 	wake_one_idle_worker(),
-	publish_metrics(State2),
+	record_peer_load(State2),
 	{noreply, State2};
 
 handle_cast(Cast, State) ->
@@ -341,7 +340,7 @@ handle_info({'DOWN', MonRef, process, _Pid, _Reason}, State) ->
 					dispatched_count = NewDispatched,
 					outstanding = NewOutMap
 				}),
-			publish_metrics(State2),
+			record_peer_load(State2),
 			{noreply, State2};
 		error ->
 			{noreply, State}
@@ -360,9 +359,9 @@ handle_info(Info, State) ->
 terminate(_Reason, State) ->
 	%% Clean up ETS entry when process terminates
 	ets:delete(?MODULE, State#state.peer),
-	%% Remove this peer's contribution from the sync_metrics mirror so it
-	%% doesn't phantom-contribute to the cross-process invariant sum.
-	ar_data_sync_coordinator:sync_metrics_delete_peer(State#state.peer),
+	%% Remove this peer's contribution from the worker_load mirror so it
+	%% doesn't phantom-contribute to the cross-process anomaly sum.
+	ar_data_sync_coordinator:remove_peer(State#state.peer),
 	ok.
 
 %%%===================================================================
@@ -666,14 +665,14 @@ peer_worker_test_() ->
 
 setup() ->
 	Peer = {1, 2, 3, 4, 1984},
-	%% Phase 2: ensure the sync_metrics table exists with available slots so
+	%% Phase 2: ensure the worker_load table exists with available slots so
 	%% dequeue-time footprint claims can succeed during these unit tests.
-	case ets:info(sync_metrics) of
+	case ets:info(worker_load) of
 		undefined ->
-			ets:new(sync_metrics, [named_table, public, set]);
+			ets:new(worker_load, [named_table, public, set]);
 		_ -> ok
 	end,
-	ets:insert(sync_metrics,
+	ets:insert(worker_load,
 		[{footprint_slots_available, 1000}, {footprint_slots_max, 1000}]),
 	%% Start peer worker directly (not via supervisor, unnamed for test isolation)
 	{ok, Pid} = gen_server:start(?MODULE, [Peer], []),
@@ -813,7 +812,7 @@ test_footprint_waiting_queue({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
 		%% Exhaust the global slot counter so no admission can succeed.
-		ets:insert(sync_metrics, {footprint_slots_available, 0}),
+		ets:insert(worker_load, {footprint_slots_available, 0}),
 		try
 			enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, false, 0),
 			enqueue_task(Pid, FootprintKey, {100, 200, Peer, store1, FootprintKey}, false, 0),
@@ -828,7 +827,7 @@ test_footprint_waiting_queue({Peer, Pid}) ->
 			%% process_queue must not drain: head-of-line block on unavailable slot.
 			?assertEqual([], process_queue(Pid, 10))
 		after
-			ets:insert(sync_metrics, {footprint_slots_available, 1000})
+			ets:insert(worker_load, {footprint_slots_available, 1000})
 		end
 	end.
 
@@ -841,14 +840,14 @@ test_try_activate_footprint({Peer, Pid}) ->
 		{false, []} = try_activate_footprint(Pid, 10),
 
 		%% Exhaust slots, enqueue a task — it will sit in task_queue.
-		ets:insert(sync_metrics, {footprint_slots_available, 0}),
+		ets:insert(worker_load, {footprint_slots_available, 0}),
 		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, false, 0),
 		{ok, _} = gen_server:call(Pid, get_state),
 		%% No slot: drain returns empty.
 		{false, []} = try_activate_footprint(Pid, 10),
 
 		%% Restore slots and drain: task is admitted and dispatched.
-		ets:insert(sync_metrics, {footprint_slots_available, 1000}),
+		ets:insert(worker_load, {footprint_slots_available, 1000}),
 		{true, [_]} = try_activate_footprint(Pid, 10),
 
 		{ok, State} = gen_server:call(Pid, get_state),
@@ -954,7 +953,7 @@ test_footprint_deactivation_removes_from_map({Peer, Pid}) ->
 test_take_one_returns_task({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
-		ets:insert(sync_metrics, {footprint_slots_available, 5}),
+		ets:insert(worker_load, {footprint_slots_available, 5}),
 		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
 		%% Wait for the cast to land before pulling.
 		{ok, _} = gen_server:call(Pid, get_state),
@@ -963,7 +962,7 @@ test_take_one_returns_task({Peer, Pid}) ->
 		?assertEqual(1, State#state.dispatched_count),
 		?assertEqual(0, queue:len(State#state.task_queue)),
 		?assertEqual(true, sets:is_element(FootprintKey, State#state.active_footprints)),
-		?assertEqual(4, ets:lookup_element(sync_metrics, footprint_slots_available, 2))
+		?assertEqual(4, ets:lookup_element(worker_load, footprint_slots_available, 2))
 	end.
 
 %% Slow-peer protection: when dispatched_count reaches max_dispatched the
@@ -971,7 +970,7 @@ test_take_one_returns_task({Peer, Pid}) ->
 test_take_one_at_max_dispatched({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 2000, Peer},
-		ets:insert(sync_metrics, {footprint_slots_available, 1000}),
+		ets:insert(worker_load, {footprint_slots_available, 1000}),
 		%% Force max_dispatched to a small number via raw state update so we
 		%% can saturate it without triggering the rebalance machinery.
 		MaxDispatched = 2,
@@ -991,7 +990,7 @@ test_take_one_at_max_dispatched({Peer, Pid}) ->
 test_take_one_no_slot_returns_none({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 3000, Peer},
-		ets:insert(sync_metrics, {footprint_slots_available, 0}),
+		ets:insert(worker_load, {footprint_slots_available, 0}),
 		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
 		{ok, _} = gen_server:call(Pid, get_state),
 		?assertEqual(none, take_one(Pid))
@@ -1000,7 +999,7 @@ test_take_one_no_slot_returns_none({Peer, Pid}) ->
 %% Empty queue: take_one returns none.
 test_take_one_empty_queue_returns_none({_Peer, Pid}) ->
 	fun() ->
-		ets:insert(sync_metrics, {footprint_slots_available, 1000}),
+		ets:insert(worker_load, {footprint_slots_available, 1000}),
 		?assertEqual(none, take_one(Pid))
 	end.
 
@@ -1037,7 +1036,7 @@ test_enqueue_wakes_idle_worker({Peer, Pid}) ->
 test_worker_death_releases_slot({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 5000, Peer},
-		ets:insert(sync_metrics, {footprint_slots_available, 5}),
+		ets:insert(worker_load, {footprint_slots_available, 5}),
 		%% Put one task in the queue so the fake worker has something to take.
 		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
 		{ok, _} = gen_server:call(Pid, get_state),
@@ -1052,7 +1051,7 @@ test_worker_death_releases_slot({Peer, Pid}) ->
 		end,
 		{ok, State1} = gen_server:call(Pid, get_state),
 		?assertEqual(1, State1#state.dispatched_count),
-		?assertEqual(4, ets:lookup_element(sync_metrics, footprint_slots_available, 2)),
+		?assertEqual(4, ets:lookup_element(worker_load, footprint_slots_available, 2)),
 		FakeWorker ! die,
 		%% Wait for DOWN to be processed.
 		_ = lists:any(fun(_) ->
@@ -1062,7 +1061,7 @@ test_worker_death_releases_slot({Peer, Pid}) ->
 		end, lists:seq(1, 20)),
 		{ok, State2} = gen_server:call(Pid, get_state),
 		?assertEqual(0, State2#state.dispatched_count),
-		?assertEqual(5, ets:lookup_element(sync_metrics, footprint_slots_available, 2))
+		?assertEqual(5, ets:lookup_element(worker_load, footprint_slots_available, 2))
 	end.
 
 -endif.

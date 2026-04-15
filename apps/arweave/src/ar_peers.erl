@@ -631,23 +631,13 @@ get_peer_peers(Peer) ->
 	end.
 
 get_or_init_performance(Peer) ->
-	case ets:lookup(?MODULE, {peer, Peer}) of
-		[] ->
-			#performance{};
-		[{_, Performance}] ->
-			Performance
-	end.
+	ets:lookup_element(?MODULE, {peer, Peer}, 2, #performance{}).
 
 set_performance(Peer, Performance) ->
 	ets:insert(?MODULE, [{{peer, Peer}, Performance}]).
 
 get_total_rating(Rating) ->
-	case ets:lookup(?MODULE, {rating_total, Rating}) of
-		[] ->
-			0;
-		[{_, Total}] ->
-			Total
-	end.
+	ets:lookup_element(?MODULE, {rating_total, Rating}, 2, 0).
 
 set_total_rating(Rating, Total) ->
 	ets:insert(?MODULE, {{rating_total, Rating}, Total}).

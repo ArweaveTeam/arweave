@@ -57,16 +57,14 @@
 
 -export([start_link/1, register_workers/0, is_syncing_enabled/0, ready_for_work/0]).
 
-%% Phase 0 instrumentation: ETS mirror of counters, invariant checking helpers.
+%% Phase 0 instrumentation: ETS mirror of counters, anomaly detection helpers.
 %% Exported so ar_peer_worker can publish its own counters.
--export([sync_metrics_put_peer/4, sync_metrics_delete_peer/1,
-		 sync_metrics_put_peer_max_dispatched/2]).
+-export([record_peer_load/5, remove_peer/1]).
 
 %% Phase 2: atomic footprint slot claim/release via ETS. Replaces the
 %% coordinator-owned total_active_footprints counter and the dance of
 %% HasCapacity-at-enqueue + try_activate_waiting_footprint.
--export([claim_footprint_slot/0, release_footprint_slot/0,
-		 footprint_slots_available/0]).
+-export([claim_footprint_slot/0, release_footprint_slot/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -76,15 +74,15 @@
 -include_lib("arweave/include/ar_peers.hrl").
 
 -define(REBALANCE_FREQUENCY_MS, 10*1000).
--define(SYNC_METRICS_TABLE, sync_metrics).
+-define(WORKER_LOAD_TABLE, worker_load).
 
 %% Phase 4: coordinator state collapses to roster + config.
-%% Counters live in ETS (sync_metrics, footprint_slots_*) — see Phase 0–2.
+%% Counters live in ETS (worker_load, footprint_slots_*) — see Phase 0–2.
 %% The `workers` queue is gone with the push dispatcher; sync workers are
 %% looked up by name on demand and the count is published once at init.
 -record(state, {
 	known_peers = #{},     %% Peer => Pid — canonical peer worker roster
-	max_footprints = 0,    %% retained for periodic invariant logging
+	max_footprints = 0,    %% retained for periodic anomaly logging
 	worker_names = []      %% registered names of all sync workers (for reset_worker etc.)
 }).
 
@@ -137,7 +135,7 @@ is_syncing_enabled() ->
 %% O(N) in peer count; cheap with ~100 peers.
 ready_for_work() ->
 	try
-		WorkerCount = ets:lookup_element(?SYNC_METRICS_TABLE, workers_count, 2),
+		WorkerCount = ets:lookup_element(?WORKER_LOAD_TABLE, workers_count, 2),
 		case WorkerCount of
 			0 -> false;
 			_ ->
@@ -148,7 +146,7 @@ ready_for_work() ->
 		false
 	end.
 
-%% Sum {peer_queued, _} + {peer_dispatched, _} from the sync_metrics table.
+%% Sum {peer_queued, _} + {peer_dispatched, _} from the worker_load table.
 sum_peer_counters() ->
 	Q = sum_prefix(peer_queued),
 	D = sum_prefix(peer_dispatched),
@@ -161,35 +159,14 @@ sum_peer_counters() ->
 init(Workers) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 	MaxFootprints = calculate_max_footprints(),
-	%% Phase 0 instrumentation: ETS mirror of all mutable counters.
-	%% This table lets the invariant checker (run each rebalance tick) verify
-	%% that gen_server state, per-worker contributions, and per-peer contributions
-	%% all agree. The table also paves the way for Phase 1+ where reads will
-	%% migrate off the gen_server entirely.
-	case ets:info(?SYNC_METRICS_TABLE) of
-		undefined ->
-			ets:new(?SYNC_METRICS_TABLE,
-				[named_table, public, set,
-					{read_concurrency, true}, {write_concurrency, true}]);
-		_ -> ok
-	end,
-	sync_metrics_reset(),
-	ets:insert(?SYNC_METRICS_TABLE, {workers_count, length(Workers)}),
-	%% Phase 2: atomic footprint-slot gauge. Initialised to MaxFootprints
-	%% (slots_available). Claim decrements; release increments capped at max.
-	ets:insert(?SYNC_METRICS_TABLE,
+	%% worker_load and idle_workers ETS tables are created in ar_data_sync_sup.
+	%% Reset contents in case this is a coordinator restart.
+	worker_load_reset(),
+	ets:delete_all_objects(idle_workers),
+	ets:insert(?WORKER_LOAD_TABLE, {workers_count, length(Workers)}),
+	ets:insert(?WORKER_LOAD_TABLE,
 		[{footprint_slots_available, MaxFootprints},
 		 {footprint_slots_max, MaxFootprints}]),
-	%% Phase 3: shared idle-worker registry. Workers register themselves when
-	%% no peer has work; peer workers pop one and cast `work_available` when
-	%% an enqueue arrives. Ordered_set so ets:first/1 returns deterministically.
-	case ets:info(idle_workers) of
-		undefined ->
-			ets:new(idle_workers,
-				[named_table, public, ordered_set,
-					{read_concurrency, true}, {write_concurrency, true}]);
-		_ -> ok
-	end,
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers},
 		{max_footprints, MaxFootprints}]),
 	{ok, #state{
@@ -209,7 +186,7 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 %% Phase 4/5: thin forwarder. Look up (or create) the peer worker and cast
-%% the task. The peer worker's `publish_metrics` updates its own per-peer
+%% the task. The peer worker's `record_peer_load` updates its own per-peer
 %% ETS rows; `ready_for_work/0` derives the global total from the per-peer
 %% sum on demand. No coordinator-owned counter to maintain.
 handle_cast({sync_range, Args}, State) ->
@@ -231,7 +208,7 @@ handle_cast(rebalance_peers, State) ->
 	%% Backstop a possibly-lost `work_available` cast: pop one idle worker
 	%% and tell it to re-pull. Cheap, idempotent.
 	wake_one_idle_worker_safe(),
-	check_invariants(State2),
+	log_anomalies(State2),
 	{noreply, State2};
 
 handle_cast({peer_worker_started, Peer, Pid}, State) ->
@@ -300,13 +277,11 @@ calculate_targets(PeerPids, AllPeerPerformances, State) ->
 	end,
 	%% Phase 1: read each peer's max_dispatched from the ETS mirror instead of
 	%% calling into the peer worker synchronously. The peer publishes its cap
-	%% at every state transition via publish_metrics/1.
+	%% at every state transition via record_peer_load/1.
 	TotalMaxDispatched = maps:fold(
 		fun(Peer, _Pid, Acc) ->
-			case ets:lookup(?SYNC_METRICS_TABLE, {peer_max_dispatched, Peer}) of
-				[{_, MaxDispatched}] -> MaxDispatched + Acc;
-				_ -> Acc
-			end
+			ets:lookup_element(?WORKER_LOAD_TABLE,
+				{peer_max_dispatched, Peer}, 2, 0) + Acc
 		end,
 		0, PeerPids),
 	?LOG_DEBUG([{event, sync_performance_targets},
@@ -330,7 +305,7 @@ rebalance_peers2([{Peer, Pid} | Rest], AllPeerPerformances, Targets, State) ->
 	RebalanceParams = {QueueScalingFactor, TargetLatency, WorkersStarved},
 	Result = ar_peer_worker:rebalance(Pid, Performance, RebalanceParams),
 	%% Phase 4: cuts to total_queued go through the peer worker's
-	%% publish_metrics path; coordinator only tracks roster membership.
+	%% record_peer_load path; coordinator only tracks roster membership.
 	State2 = case Result of
 		{shutdown, _RemovedCount} ->
 			?LOG_INFO([{event, shutdown_idle_peer_worker},
@@ -356,28 +331,23 @@ queue_scaling_factor(TotalThroughput, WorkerCount) ->
 %%%===================================================================
 
 %% @doc Clear the mirror so a fresh coordinator init starts from zero.
-sync_metrics_reset() ->
+worker_load_reset() ->
 	try
-		ets:delete_all_objects(?SYNC_METRICS_TABLE),
-		ets:insert(?SYNC_METRICS_TABLE, {workers_count, 0})
+		ets:delete_all_objects(?WORKER_LOAD_TABLE),
+		ets:insert(?WORKER_LOAD_TABLE, {workers_count, 0})
 	catch _:_ -> ok
 	end.
 
-%% @doc Called from ar_peer_worker to publish its contribution to the
-%% cross-process invariants.
-sync_metrics_put_peer(Peer, Dispatched, Queued, ActiveFootprints) ->
+%% @doc Called from ar_peer_worker to publish its current load contribution
+%% (in-flight, queued, active footprints, slow-peer cap) to the worker_load
+%% ETS table. Consumed by dispatch/rebalance/anomaly logic.
+record_peer_load(Peer, Dispatched, Queued, ActiveFootprints, MaxDispatched) ->
 	try
-		ets:insert(?SYNC_METRICS_TABLE,
+		ets:insert(?WORKER_LOAD_TABLE,
 			[{{peer_dispatched, Peer}, Dispatched},
 			 {{peer_queued, Peer}, Queued},
-			 {{peer_active_footprints, Peer}, ActiveFootprints}])
-	catch _:_ -> ok
-	end.
-
-%% @doc Publish a peer's max_dispatched so coordinator can read it from ETS
-%% instead of a synchronous call into the peer worker.
-sync_metrics_put_peer_max_dispatched(Peer, MaxDispatched) ->
-	try ets:insert(?SYNC_METRICS_TABLE, {{peer_max_dispatched, Peer}, MaxDispatched})
+			 {{peer_active_footprints, Peer}, ActiveFootprints},
+			 {{peer_max_dispatched, Peer}, MaxDispatched}])
 	catch _:_ -> ok
 	end.
 
@@ -387,13 +357,13 @@ sync_metrics_put_peer_max_dispatched(Peer, MaxDispatched) ->
 %% If decrement leaves the counter negative, we over-drew and must put it back.
 claim_footprint_slot() ->
 	try
-		case ets:update_counter(?SYNC_METRICS_TABLE,
+		case ets:update_counter(?WORKER_LOAD_TABLE,
 				footprint_slots_available, {2, -1}) of
 			N when N >= 0 ->
 				true;
 			_Negative ->
 				%% Over-drew. Put it back.
-				ets:update_counter(?SYNC_METRICS_TABLE,
+				ets:update_counter(?WORKER_LOAD_TABLE,
 					footprint_slots_available, {2, +1}),
 				false
 		end
@@ -405,17 +375,11 @@ claim_footprint_slot() ->
 %% maximum so bugs (double-release) don't inflate capacity beyond intended.
 release_footprint_slot() ->
 	try
-		Max = ets:lookup_element(?SYNC_METRICS_TABLE, footprint_slots_max, 2),
-		ets:update_counter(?SYNC_METRICS_TABLE,
+		Max = ets:lookup_element(?WORKER_LOAD_TABLE, footprint_slots_max, 2),
+		ets:update_counter(?WORKER_LOAD_TABLE,
 			footprint_slots_available, {2, +1, Max, Max}),
 		ok
 	catch _:_ -> ok
-	end.
-
-%% @doc Current available slot count (for metrics/debug).
-footprint_slots_available() ->
-	try ets:lookup_element(?SYNC_METRICS_TABLE, footprint_slots_available, 2)
-	catch _:_ -> 0
 	end.
 
 %% @doc Phase 3: rebalance-tick safety backstop. Pop one idle worker (if any)
@@ -435,24 +399,26 @@ wake_one_idle_worker_safe() ->
 
 %% @doc Called from ar_peer_worker:terminate so a crashed/shutdown peer stops
 %% contributing phantom values to the sum.
-sync_metrics_delete_peer(Peer) ->
+remove_peer(Peer) ->
 	try
-		ets:delete(?SYNC_METRICS_TABLE, {peer_dispatched, Peer}),
-		ets:delete(?SYNC_METRICS_TABLE, {peer_queued, Peer}),
-		ets:delete(?SYNC_METRICS_TABLE, {peer_active_footprints, Peer}),
-		ets:delete(?SYNC_METRICS_TABLE, {peer_max_dispatched, Peer})
+		ets:delete(?WORKER_LOAD_TABLE, {peer_dispatched, Peer}),
+		ets:delete(?WORKER_LOAD_TABLE, {peer_queued, Peer}),
+		ets:delete(?WORKER_LOAD_TABLE, {peer_active_footprints, Peer}),
+		ets:delete(?WORKER_LOAD_TABLE, {peer_max_dispatched, Peer})
 	catch _:_ -> ok
 	end.
 
-%% @doc Phase 4: invariant checker now compares per-peer ETS sums against
+%% @doc Phase 4: anomaly checker now compares per-peer ETS sums against
 %% themselves (sanity check on the sole-writer ETS data) and against the
 %% authoritative footprint slot gauge. The old gen_server-vs-mirror checks
 %% are gone because the gen_server no longer caches counters.
-check_invariants(#state{} = _State) ->
+log_anomalies(#state{} = _State) ->
 	try
 		SumPeerFootprints = sum_prefix(peer_active_footprints),
-		SlotsAvailable = lookup(footprint_slots_available),
-		SlotsMax = lookup(footprint_slots_max),
+		SlotsAvailable = ets:lookup_element(?WORKER_LOAD_TABLE,
+			footprint_slots_available, 2, 0),
+		SlotsMax = ets:lookup_element(?WORKER_LOAD_TABLE,
+			footprint_slots_max, 2, 0),
 		SlotsClaimed = SlotsMax - SlotsAvailable,
 		Drift = [
 			{footprint_slot_accounting, SumPeerFootprints, SlotsClaimed}
@@ -461,24 +427,18 @@ check_invariants(#state{} = _State) ->
 		case Mismatches of
 			[] -> ok;
 			_ ->
-				?LOG_WARNING([{event, sync_metrics_invariant_drift},
+				?LOG_WARNING([{event, worker_load_anomaly_drift},
 					{mismatches, Mismatches}])
 		end
 	catch Class:Reason ->
-		?LOG_WARNING([{event, sync_metrics_invariant_check_failed},
+		?LOG_WARNING([{event, worker_load_anomaly_check_failed},
 			{class, Class}, {reason, io_lib:format("~p", [Reason])}])
-	end.
-
-lookup(Key) ->
-	case ets:lookup(?SYNC_METRICS_TABLE, Key) of
-		[{_, V}] -> V;
-		_ -> 0
 	end.
 
 sum_prefix(Tag) ->
 	%% Select all entries whose key is {Tag, _} and sum their values.
 	MatchSpec = [{ {{Tag, '_'}, '$1'}, [], ['$1'] }],
-	lists:sum(ets:select(?SYNC_METRICS_TABLE, MatchSpec)).
+	lists:sum(ets:select(?WORKER_LOAD_TABLE, MatchSpec)).
 
 %% @doc Add a peer to known_peers if not already present. Returns {Pid, State}.
 %% The Pid is cached so we don't have to do whereis + atom lookup on every call.
@@ -550,12 +510,12 @@ test_calculate_targets() ->
 	Peer1 = {1,2,3,4,1984},
 	Peer2 = {5,6,7,8,1985},
 	Peer3 = {9,10,11,12,1986},
-	case ets:info(?SYNC_METRICS_TABLE) of
+	case ets:info(?WORKER_LOAD_TABLE) of
 		undefined ->
-			ets:new(?SYNC_METRICS_TABLE, [named_table, public, set]);
+			ets:new(?WORKER_LOAD_TABLE, [named_table, public, set]);
 		_ -> ok
 	end,
-	ets:insert(?SYNC_METRICS_TABLE, [
+	ets:insert(?WORKER_LOAD_TABLE, [
 		{{peer_max_dispatched, Peer1}, 10},
 		{{peer_max_dispatched, Peer2}, 15},
 		{{peer_max_dispatched, Peer3}, 20}
@@ -597,8 +557,8 @@ test_calculate_targets() ->
 	exit(Pid1, kill),
 	exit(Pid2, kill),
 	exit(Pid3, kill),
-	ets:delete(?SYNC_METRICS_TABLE, {peer_max_dispatched, Peer1}),
-	ets:delete(?SYNC_METRICS_TABLE, {peer_max_dispatched, Peer2}),
-	ets:delete(?SYNC_METRICS_TABLE, {peer_max_dispatched, Peer3}).
+	ets:delete(?WORKER_LOAD_TABLE, {peer_max_dispatched, Peer1}),
+	ets:delete(?WORKER_LOAD_TABLE, {peer_max_dispatched, Peer2}),
+	ets:delete(?WORKER_LOAD_TABLE, {peer_max_dispatched, Peer3}).
 
 -endif.

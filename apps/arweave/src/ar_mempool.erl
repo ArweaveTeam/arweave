@@ -296,36 +296,16 @@ has_tx(TXID) ->
 	ets:member(node_state, {tx, TXID}).
 
 get_priority_set() ->
-	case ets:lookup(node_state, tx_priority_set) of
-		[{tx_priority_set, Set}] ->
-			Set;
-		_ ->
-			gb_sets:new()
-	end.
+	ets:lookup_element(node_state, tx_priority_set, 2, gb_sets:new()).
 
 get_propagation_queue() ->
-	case ets:lookup(node_state, tx_propagation_queue) of
-		[{tx_propagation_queue, Q}] ->
-			Q;
-		_ ->
-			gb_sets:new()
-	end.
+	ets:lookup_element(node_state, tx_propagation_queue, 2, gb_sets:new()).
 
 get_last_tx_map() ->
-	case ets:lookup(node_state, last_tx_map) of
-		[{last_tx_map, Map}] ->
-			Map;
-		_ ->
-			maps:new()
-	end.
+	ets:lookup_element(node_state, last_tx_map, 2, maps:new()).
 
 get_origin_tx_map() ->
-	case ets:lookup(node_state, origin_tx_map) of
-		[{origin_tx_map, Map}] ->
-			Map;
-		_ ->
-			maps:new()
-	end.
+	ets:lookup_element(node_state, origin_tx_map, 2, maps:new()).
 
 
 del_from_propagation_queue(Priority, TXID) ->
@@ -347,12 +327,7 @@ del_from_propagation_queue(PropagationQueue, Priority, TXID) when is_bitstring(T
 %% ------------------------------------------------------------------
 
 get_mempool_size() ->
-	case ets:lookup(node_state, mempool_size) of
-		[{mempool_size, MempoolSize}] ->
-			MempoolSize;
-		_ ->
-			{0, 0}
-	end.
+	ets:lookup_element(node_state, mempool_size, 2, {0, 0}).
 
 init_tx_metadata(TX, Status) ->
 	{TX, Status, -os:system_time(microsecond)}.
@@ -604,20 +579,10 @@ get_current_denomination() ->
 	end.
 
 get_origin_spent_total_map() ->
-	case ets:lookup(node_state, origin_spent_total_map) of
-		[{origin_spent_total_map, Map}] ->
-			Map;
-		_ ->
-			maps:new()
-	end.
+	ets:lookup_element(node_state, origin_spent_total_map, 2, maps:new()).
 
 get_origin_spent_total_denomination() ->
-	case ets:lookup(node_state, origin_spent_total_denomination) of
-		[{origin_spent_total_denomination, D}] ->
-			D;
-		_ ->
-			0
-	end.
+	ets:lookup_element(node_state, origin_spent_total_denomination, 2, 0).
 
 add_to_origin_spent_total_map(SpentTotalMap, TX, Denomination) ->
 	Origin = ar_tx:get_owner_address(TX),

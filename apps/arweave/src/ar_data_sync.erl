@@ -2806,12 +2806,7 @@ get_required_chunk_packing(Offset, ChunkSize, State) ->
 
 
 get_merkle_rebase_threshold() ->
-	case ets:lookup(node_state, merkle_rebase_support_threshold) of
-		[] ->
-			infinity;
-		[{_, Threshold}] ->
-			Threshold
-	end.
+	ets:lookup_element(node_state, merkle_rebase_support_threshold, 2, infinity).
 
 
 process_unpacked_chunk(ChunkArgs, Args, State) ->

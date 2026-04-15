@@ -375,12 +375,7 @@ handle_cast(process_task_queue, #{ task_queue := TaskQueue } = State) ->
 			true ->
 				false;
 			false ->
-				case ets:lookup(node_state, is_joined) of
-					[{_, true}] ->
-						true;
-					_ ->
-						false
-				end
+				ets:lookup_element(node_state, is_joined, 2, false)
 		end,
 	case RunTask of
 		true ->

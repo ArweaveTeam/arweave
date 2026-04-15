@@ -430,12 +430,7 @@ chunk_offsets_synced2(ChunkOffset, Iterator) ->
 %% to belong to the disk pool. For example, we do not store the
 %% disk pool data in the storage modules due to the risk of orphans.
 get_threshold() ->
-	case ets:lookup(ar_data_sync_state, disk_pool_threshold) of
-		[] ->
-			0;
-		[{_, DiskPoolThreshold}] ->
-			DiskPoolThreshold
-	end.
+	ets:lookup_element(ar_data_sync_state, disk_pool_threshold, 2, 0).
 
 set_threshold(DiskPoolThreshold) ->
 	ets:insert(ar_data_sync_state, {disk_pool_threshold, DiskPoolThreshold}),

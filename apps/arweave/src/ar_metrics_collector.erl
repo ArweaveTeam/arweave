@@ -40,7 +40,7 @@ metrics() ->
 	[
 	 {storage_blocks_stored, gauge,
 		"Blocks stored",
-		case ets:lookup(ar_header_sync, synced_blocks) of [] -> 0; [{_, N}] -> N end},
+		ets:lookup_element(ar_header_sync, synced_blocks, 2, 0)},
 	 {arnode_queue_len, gauge,
 		"Size of message queuee on ar_node_worker",
 		element(2, erlang:process_info(whereis(ar_node_worker), message_queue_len))},
