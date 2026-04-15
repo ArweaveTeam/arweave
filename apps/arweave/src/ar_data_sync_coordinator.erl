@@ -176,6 +176,16 @@ init(Workers) ->
 	ets:insert(?SYNC_METRICS_TABLE,
 		[{footprint_slots_available, MaxFootprints},
 		 {footprint_slots_max, MaxFootprints}]),
+	%% Phase 3: shared idle-worker registry. Workers register themselves when
+	%% no peer has work; peer workers pop one and cast `work_available` when
+	%% an enqueue arrives. Ordered_set so ets:first/1 returns deterministically.
+	case ets:info(idle_workers) of
+		undefined ->
+			ets:new(idle_workers,
+				[named_table, public, ordered_set,
+					{read_concurrency, true}, {write_concurrency, true}]);
+		_ -> ok
+	end,
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers},
 		{max_footprints, MaxFootprints}]),
 	{ok, #state{
@@ -211,51 +221,34 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 handle_cast({sync_range, Args}, State) ->
+	%% Phase 3: forward the task to the appropriate peer worker via a one-way
+	%% cast and let it wake an idle sync worker. The coordinator no longer
+	%% dispatches work — workers pull when they're free.
 	case queue:is_empty(State#state.workers) of
 		true ->
 			{noreply, State};
 		false ->
-			{_Start, _End, Peer, _TargetStoreID, FootprintKey} = Args,
-			%% Track this peer and get cached Pid
+			{_Start, _End, Peer, _TargetStoreID, _FootprintKey} = Args,
 			{Pid, State1} = maybe_add_peer(Peer, State),
 			case Pid of
 				undefined ->
 					{noreply, State1};
 				_ ->
-					%% Phase 2: HasCapacity is no longer decided at enqueue time;
-					%% passing true keeps the peer worker's call signature stable
-					%% during migration. Footprint admission is done atomically
-					%% in do_process_queue via claim_footprint_slot/0.
-					%% total_active_footprints is no longer kept on the coordinator
-					%% gen_server — the authoritative count is the ETS slot gauge.
-					WorkerCount = queue:len(State1#state.workers),
-					{_WasActivated, TasksToDispatch} = ar_peer_worker:enqueue_task(
-						Pid, FootprintKey, Args, true, WorkerCount),
+					ar_peer_worker:enqueue(Pid, Args),
 					State2 = State1#state{
 						total_queued_count = State1#state.total_queued_count + 1
 					},
-					State3 = dispatch_tasks(Pid, TasksToDispatch, State2),
-					sync_metrics_put_totals(State3),
-					{noreply, State3}
+					sync_metrics_put_totals(State2),
+					{noreply, State2}
 			end
 	end;
 
-handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}}, State) ->
-	{Start, End, Peer, _, _, FootprintKey} = Args,
-	DataSize = End - Start,
-	State2 = increment_dispatched_task_count(Worker, -1, State),
-	%% Notify peer worker (handles footprint completion, performance rating)
-	case maps:find(Peer, State2#state.known_peers) of
-		{ok, Pid} ->
-			ar_peer_worker:task_completed(Pid, FootprintKey, Result, ElapsedNative, DataSize);
-		error ->
-			%% Peer not in cache (shouldn't happen normally)
-			?LOG_WARNING([{event, task_completed_unknown_peer}, {peer, ar_util:format_peer(Peer)}])
-	end,
-	%% Process all peer queues, starting with the peer that just completed
-	State3 = process_all_peer_queues(Peer, State2),
-	sync_metrics_put_totals(State3),
-	{noreply, State3};
+handle_cast({task_completed, {sync_range, {_Worker, _Result, _Args, _ElapsedNative}}}, State) ->
+	%% Phase 3: sync workers report completion directly to the owning peer
+	%% worker. This handler is a no-op kept for backwards compat with any
+	%% in-flight casts during deployment; once those clear, this clause and
+	%% the supporting dispatch_tasks plumbing can be deleted entirely.
+	{noreply, State};
 
 handle_cast(rebalance_peers, State) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
@@ -265,17 +258,15 @@ handle_cast(rebalance_peers, State) ->
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	Targets = calculate_targets(PeerPids, AllPeerPerformances, State),
 	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State),
-	%% Defensive drain: dispatch_tasks only fires on enqueue_task, task_completed,
-	%% and footprint activation. If any peer ends up with queued tasks but no pending
-	%% trigger to drain them, they'd orphan forever. Sweep all peers every rebalance
-	%% tick so a stall self-heals within ?REBALANCE_FREQUENCY_MS.
-	State3 = case queue:is_empty(State2#state.workers) of
-		true -> State2;
-		false -> process_all_peer_queues2(maps:values(State2#state.known_peers), State2)
-	end,
-	sync_metrics_put_totals(State3),
-	check_invariants(State3),
-	{noreply, State3};
+	%% Phase 3: there is no defensive drain anymore — there are no dispatch
+	%% paths to defend. Instead, kick one idle worker (if any) so any peer
+	%% that has queued work can serve it even if a `work_available` cast was
+	%% lost (e.g., the targeted worker died between idle-registration and
+	%% the cast arriving). Cheap, safe, idempotent.
+	wake_one_idle_worker_safe(),
+	sync_metrics_put_totals(State2),
+	check_invariants(State2),
+	{noreply, State2};
 
 handle_cast({footprint_deactivated, _Peer}, State) ->
 	%% Phase 2: footprint accounting is fully in the ETS slot gauge now.
@@ -556,6 +547,21 @@ release_footprint_slot() ->
 footprint_slots_available() ->
 	try ets:lookup_element(?SYNC_METRICS_TABLE, footprint_slots_available, 2)
 	catch _:_ -> 0
+	end.
+
+%% @doc Phase 3: rebalance-tick safety backstop. Pop one idle worker (if any)
+%% and tell it to re-pull. Mirror of ar_peer_worker:wake_one_idle_worker/0.
+%% Keeping a separate copy here avoids the coordinator having to call into
+%% the peer worker module just to wake a worker.
+wake_one_idle_worker_safe() ->
+	try
+		case ets:first(idle_workers) of
+			'$end_of_table' -> ok;
+			Worker ->
+				ets:delete(idle_workers, Worker),
+				gen_server:cast(Worker, work_available)
+		end
+	catch _:_ -> ok
 	end.
 
 %% @doc Called from ar_peer_worker:terminate so a crashed/shutdown peer stops

@@ -16,7 +16,11 @@
 
 -record(state, {
 	name = undefined,
-	request_packed_chunks = false
+	request_packed_chunks = false,
+	%% Phase 3: rotating offset into the peer roster so concurrent workers
+	%% start their pull at different peers. Provides fairness equivalent to
+	%% the old coordinator-side round-robin.
+	peer_offset = 0
 }).
 
  %% # of messages to cast to ar_data_sync at once. Each message carries at least 1 chunk worth
@@ -38,15 +42,13 @@ start_link(Name, Mode) ->
 init({Name, Mode}) ->
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {name, Name}]),
 	{ok, Config} = arweave_config:get_env(),
-	%% In case there has been a restart we need to tell
-	%% ar_data_sync_coordinator to erase pending worker tasks.
-	%% We only want to do this for sync workers, not read workers.
-	case Mode  of
+	case Mode of
 		sync ->
-			%% Phase 1: cast instead of 30-second synchronous call.
-			%% The coordinator's reset_worker handler is idempotent and
-			%% purely accounting; there's no reply the worker needs.
-			gen_server:cast(ar_data_sync_coordinator, {reset_worker, Name});
+			%% Phase 1: clear stale per-worker accounting at the coordinator.
+			gen_server:cast(ar_data_sync_coordinator, {reset_worker, Name}),
+			%% Phase 3: kick the pull loop so this worker starts asking peer
+			%% workers for tasks instead of waiting for casts.
+			gen_server:cast(self(), pull);
 		_ ->
 			ok
 	end,
@@ -69,29 +71,55 @@ handle_cast({read_range, Args}, State) ->
 	end,
 	{noreply, State};
 
+%% Phase 3: pull loop. Try peers in round-robin order; on success run the
+%% sync_range and report completion directly to the owning peer worker.
+%% On total miss, register as idle and wait for a `work_available` cast.
+handle_cast(pull, State) ->
+	Peers = peer_list_starting_at(State#state.peer_offset),
+	case try_take_one(Peers) of
+		{ok, Args, PeerPid, NewOffset} ->
+			run_sync_range(Args, PeerPid, State),
+			%% Loop: immediately try to pull again.
+			gen_server:cast(self(), pull),
+			{noreply, State#state{ peer_offset = NewOffset }};
+		none ->
+			%% No peer has work right now. Register and wait for a wake.
+			try ets:insert(idle_workers, {self()})
+			catch _:_ -> ok
+			end,
+			{noreply, State}
+	end;
+
+handle_cast(work_available, State) ->
+	%% A peer worker has new work; deregister and re-pull.
+	try ets:delete(idle_workers, self())
+	catch _:_ -> ok
+	end,
+	gen_server:cast(self(), pull),
+	{noreply, State};
+
 handle_cast({sync_range, Args}, State) ->
-	{_, _, Peer, _, RetryCount, FootprintKey} = Args,
+	%% Phase 3: this clause now serves only the self-recast pathway —
+	%% sync_range/2 schedules `cast_after(_, self(), {sync_range, Args})`
+	%% on retryable errors (cache full, disk full, HTTP timeout). The
+	%% peer worker is still holding the slot and the dispatched_count for
+	%% this task from the original take_one; the recast must therefore
+	%% report completion to the same peer worker so the slot is released.
+	{Start, End, Peer, _TargetStoreID, _RetryCount, FootprintKey} = Args,
 	StartTime = erlang:monotonic_time(),
 	SyncResult = sync_range(Args, State),
 	EndTime = erlang:monotonic_time(),
 	case SyncResult of
-		recast ->
-			%% Only log at WARNING when retries are exhausted (RetryCount <= 1),
-			%% otherwise log at DEBUG to reduce noise
-			case RetryCount =< 1 of
-				true ->
-					?LOG_WARNING([{event, sync_range_recast_exhausted}, 
-						{peer, ar_util:format_peer(Peer)}, 
-						{footprint_key, FootprintKey},
-						{retry_count, RetryCount},
-						{worker, State#state.name}]);
-				false ->
-					ok
-			end,
-			ok;
+		recast -> ok;
 		_ ->
-			gen_server:cast(ar_data_sync_coordinator, {task_completed,
-				{sync_range, {State#state.name, SyncResult, Args, EndTime-StartTime}}})
+			case ar_peer_worker:lookup(Peer) of
+				{ok, PeerPid} ->
+					ar_peer_worker:task_completed(PeerPid, FootprintKey,
+						SyncResult, EndTime - StartTime, End - Start);
+				_ ->
+					?LOG_WARNING([{event, sync_range_recast_no_peer_worker},
+						{peer, ar_util:format_peer(Peer)}])
+			end
 	end,
 	{noreply, State};
 
@@ -99,10 +127,74 @@ handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
 
+%%%===================================================================
+%%% Phase 3: pull loop helpers
+%%%===================================================================
+
+%% @doc Build the peer list starting from a rotating offset for fairness.
+peer_list_starting_at(Offset) ->
+	try
+		All = ets:tab2list(ar_peer_worker),
+		case All of
+			[] -> [];
+			_ ->
+				N = length(All),
+				Start = (Offset rem N) + 1,
+				{Tail, Head} = lists:split(Start - 1, All),
+				Head ++ Tail
+		end
+	catch _:_ -> []
+	end.
+
+try_take_one([]) ->
+	none;
+try_take_one([{_Peer, PeerPid} | Rest]) ->
+	case ar_peer_worker:take_one(PeerPid) of
+		{task, Args} ->
+			{ok, Args, PeerPid, advance_offset()};
+		none ->
+			try_take_one(Rest)
+	end.
+
+advance_offset() ->
+	%% Use scheduler id as a seed for offset rotation. Keeps concurrent
+	%% workers landing on different peers without needing inter-worker
+	%% coordination.
+	erlang:system_time(microsecond) + erlang:phash2(self(), 1024).
+
+%% @doc Execute one sync_range task and report completion to the owning
+%% peer worker. On recast (cache full / disk full / retryable HTTP error)
+%% sync_range internally schedules a self-cast_after; we leave the slot
+%% claimed and dispatched_count incremented at the peer worker. The
+%% scheduled retry lands in the legacy `{sync_range, _}` cast handler,
+%% which will report completion when the retry succeeds (or definitively
+%% fails after exhausting retries — see sync_range/2 retry-zero clause
+%% which returns {error, timeout} directly, not recast).
+run_sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount, FootprintKey} = Args,
+		PeerPid, State) ->
+	StartTime = erlang:monotonic_time(),
+	SyncResult = sync_range(Args, State),
+	EndTime = erlang:monotonic_time(),
+	case SyncResult of
+		recast ->
+			%% Slot stays claimed; eventual retry will report completion.
+			ok;
+		_ ->
+			DataSize = End - Start,
+			ar_peer_worker:task_completed(PeerPid, FootprintKey, SyncResult,
+				EndTime - StartTime, DataSize)
+	end,
+	ok.
+
 handle_info(_Message, State) ->
 	{noreply, State}.
 
 terminate(Reason, _State) ->
+	%% Phase 3: drop our idle registration if present so peer workers
+	%% don't try to wake a dead pid.
+	try ets:delete(idle_workers, self())
+	catch _:_ -> ok
+	end,
 	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, io_lib:format("~p", [Reason])}]),
 	ok.
 

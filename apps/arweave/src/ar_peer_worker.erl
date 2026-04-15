@@ -38,7 +38,8 @@
 -export([start_link/1, get_or_start/1, stop/1]).
 %% Operations (all take Pid as first arg - coordinator caches Peer->Pid mapping)
 -export([enqueue_task/5, task_completed/5, process_queue/2,
-         get_max_dispatched/1, rebalance/3, try_activate_footprint/2]).
+         get_max_dispatched/1, rebalance/3, try_activate_footprint/2,
+         enqueue/2, take_one/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -73,7 +74,13 @@
 	max_dispatched = ?MIN_MAX_DISPATCHED,
 	last_task_time,                %% monotonic time when last task was received
 	footprints = #{},              %% FootprintKey => #footprint{}
-	active_footprints = sets:new() %% keys for which this peer currently holds a slot
+	active_footprints = sets:new(),%% keys for which this peer currently holds a slot
+	%% Phase 3: monitor refs for sync workers that are currently executing a
+	%% task we handed out via take_one. MonRef => {WorkerPid, FootprintKey}.
+	%% On 'DOWN' we roll back the dispatch (decrement dispatched_count and
+	%% release the footprint slot if the count went to zero) so a worker
+	%% crash mid-task doesn't leak capacity.
+	outstanding = #{}
 }).
 
 %%%===================================================================
@@ -144,6 +151,26 @@ try_activate_footprint(Pid, WorkerCount) ->
 	catch
 		exit:{timeout, _} -> {false, []};
 		_:_ -> {false, []}
+	end.
+
+%% @doc Phase 3: one-way enqueue. The peer worker appends the task to its
+%% queue and wakes one idle sync worker (if any). No reply needed; sync
+%% workers pull when they're free.
+enqueue(Pid, Args) ->
+	gen_server:cast(Pid, {enqueue, Args}).
+
+%% @doc Phase 3: a sync worker asks for one task. Returns {task, Args} on
+%% success or `none` if the peer is at its dispatch cap, the queue is empty,
+%% or the head task's footprint cannot claim a global slot.
+%%
+%% Short timeout (1s): if the peer worker is overloaded, the calling worker
+%% should rotate to the next peer rather than block.
+take_one(Pid) ->
+	try
+		gen_server:call(Pid, {take_one, self()}, 1000)
+	catch
+		exit:{timeout, _} -> none;
+		_:_ -> none
 	end.
 
 %% @doc Process the queue and return tasks ready for dispatch.
@@ -229,6 +256,44 @@ handle_call({process_queue, WorkerCount}, _From, State) ->
 	publish_metrics(State2),
 	{reply, TasksToDispatch, State2};
 
+%% Phase 3: hand a single task to a pulling sync worker. Returns `none` if
+%% the peer is at its dispatch cap, the queue is empty, or the head task's
+%% footprint cannot claim a global slot. The peer monitors the worker pid
+%% so dispatched_count and the slot can be reclaimed if the worker dies.
+handle_call({take_one, WorkerPid}, _From, State) ->
+	#state{ dispatched_count = D, max_dispatched = M, task_queue = Q } = State,
+	case D >= M of
+		true ->
+			{reply, none, State};
+		false ->
+			case queue:peek(Q) of
+				empty ->
+					{reply, none, State};
+				{value, Args} ->
+					FootprintKey = element(5, Args),
+					case try_admit(FootprintKey, State) of
+						{ok, State2} ->
+							{{value, Args}, NewQ} = queue:out(Q),
+							MonRef = erlang:monitor(process, WorkerPid),
+							OutMap = maps:put(MonRef,
+								{WorkerPid, FootprintKey},
+								State2#state.outstanding),
+							State3 = State2#state{
+								task_queue = NewQ,
+								dispatched_count = D + 1,
+								outstanding = OutMap,
+								last_task_time = erlang:monotonic_time()
+							},
+							increment_metrics(dispatched, State3, 1),
+							increment_metrics(queued_out, State3, 1),
+							publish_metrics(State3),
+							{reply, {task, Args}, State3};
+						no_slot ->
+							{reply, none, State}
+					end
+			end
+	end;
+
 handle_call({try_activate_footprint, WorkerCount}, _From, State) ->
 	%% Phase 2: activation is now a dequeue-time concept. There is no
 	%% "waiting footprint" to activate — all tasks are in task_queue and
@@ -313,15 +378,50 @@ handle_cast({task_completed, FootprintKey, Result, ElapsedNative, DataSize}, Sta
 	%% Rate the fetched data with ar_peers
 	ElapsedMicroseconds = erlang:convert_time_unit(ElapsedNative, native, microsecond),
 	ar_peers:rate_fetched_data(Peer, chunk, Result, ElapsedMicroseconds, DataSize, MaxDispatched),
+	%% Phase 3: drop the monitor we set up in take_one for this footprint.
+	%% Match by FootprintKey since the worker doesn't pass the MonRef back.
+	%% Pick any monitor for this footprint key (sync workers handle one task
+	%% at a time so there's at most one match at a time per (worker, key)).
+	StateA = drop_monitor_for_footprint(FootprintKey, State),
 	%% Complete footprint task
 	State2 = do_complete_footprint_task(
-		FootprintKey, State#state{ dispatched_count = NewDispatchedCount }),
+		FootprintKey, StateA#state{ dispatched_count = NewDispatchedCount }),
+	publish_metrics(State2),
+	{noreply, State2};
+
+handle_cast({enqueue, Args}, State) ->
+	%% Phase 3: one-way enqueue from the coordinator. Append to task_queue,
+	%% bump the footprint's outstanding count, then wake one idle sync
+	%% worker so it can pull the new task.
+	FootprintKey = element(5, Args),
+	State1 = State#state{ last_task_time = erlang:monotonic_time() },
+	{_, State2} = do_enqueue_task(FootprintKey, Args, true, State1),
+	wake_one_idle_worker(),
 	publish_metrics(State2),
 	{noreply, State2};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
+
+handle_info({'DOWN', MonRef, process, _Pid, _Reason}, State) ->
+	%% Phase 3: a sync worker that took a task from us died before reporting
+	%% completion. Roll back the dispatch so the footprint slot and the
+	%% dispatched_count don't leak.
+	case maps:take(MonRef, State#state.outstanding) of
+		{{_WorkerPid, FootprintKey}, NewOutMap} ->
+			NewDispatched = max(0, State#state.dispatched_count - 1),
+			State2 = do_complete_footprint_task(
+				FootprintKey,
+				State#state{
+					dispatched_count = NewDispatched,
+					outstanding = NewOutMap
+				}),
+			publish_metrics(State2),
+			{noreply, State2};
+		error ->
+			{noreply, State}
+	end;
 
 handle_info(check_long_running_footprints, State) ->
 	%% Schedule next check
@@ -543,6 +643,45 @@ log_long_running_footprints(State) ->
 	end.
 
 %%%===================================================================
+%%% Phase 3: pull-model helpers
+%%%===================================================================
+
+%% @doc Pop one idle worker from the global idle_workers ETS set and tell
+%% it that work is available. Best-effort: if no workers are idle, no-op.
+%% If the picked worker is dead, the cast is silently dropped — the
+%% rebalance tick will retry by calling wake_one_idle_worker again.
+wake_one_idle_worker() ->
+	try
+		case ets:first(idle_workers) of
+			'$end_of_table' -> ok;
+			Worker ->
+				ets:delete(idle_workers, Worker),
+				gen_server:cast(Worker, work_available)
+		end
+	catch _:_ -> ok
+	end.
+
+%% @doc Remove one outstanding monitor entry matching FootprintKey. The
+%% completing worker doesn't pass the MonRef back to us, so we look up by
+%% footprint key. There is at most one outstanding entry per (worker,
+%% footprint) pair because workers serialize tasks; picking the first
+%% match by FootprintKey is correct.
+drop_monitor_for_footprint(FootprintKey, State) ->
+	Outstanding = State#state.outstanding,
+	case find_monitor_by_footprint(maps:to_list(Outstanding), FootprintKey) of
+		none ->
+			State;
+		MonRef ->
+			erlang:demonitor(MonRef, [flush]),
+			State#state{ outstanding = maps:remove(MonRef, Outstanding) }
+	end.
+
+find_monitor_by_footprint([], _FootprintKey) -> none;
+find_monitor_by_footprint([{MonRef, {_Pid, FootprintKey}} | _], FootprintKey) -> MonRef;
+find_monitor_by_footprint([_ | Rest], FootprintKey) ->
+	find_monitor_by_footprint(Rest, FootprintKey).
+
+%%%===================================================================
 %%% Private functions - Metrics
 %%%===================================================================
 
@@ -609,7 +748,14 @@ peer_worker_test_() ->
 			fun test_footprint_task_cycling/1,
 			fun test_active_footprints_set/1,
 			fun test_add_task_to_active_footprint/1,
-			fun test_footprint_deactivation_removes_from_map/1
+			fun test_footprint_deactivation_removes_from_map/1,
+			%% Phase 3 pull-model tests
+			fun test_take_one_returns_task/1,
+			fun test_take_one_at_max_dispatched/1,
+			fun test_take_one_no_slot_returns_none/1,
+			fun test_take_one_empty_queue_returns_none/1,
+			fun test_enqueue_wakes_idle_worker/1,
+			fun test_worker_death_releases_slot/1
 		]
 	}.
 
@@ -897,6 +1043,126 @@ test_footprint_deactivation_removes_from_map({Peer, Pid}) ->
 		{ok, State2} = gen_server:call(Pid, get_state),
 		?assertEqual(false, maps:is_key(FootprintKey, State2#state.footprints)),
 		?assertEqual(false, sets:is_element(FootprintKey, State2#state.active_footprints))
+	end.
+
+%%%===================================================================
+%%% Phase 3 pull-model tests
+%%%===================================================================
+
+%% Smallest claim test: enqueue one task, take_one returns it, the
+%% peer worker tracks the dispatch and the global slot count drops.
+test_take_one_returns_task({Peer, Pid}) ->
+	fun() ->
+		FootprintKey = {store1, 1000, Peer},
+		ets:insert(sync_metrics, {footprint_slots_available, 5}),
+		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
+		%% Wait for the cast to land before pulling.
+		{ok, _} = gen_server:call(Pid, get_state),
+		{task, {0, 100, Peer, store1, FootprintKey}} = take_one(Pid),
+		{ok, State} = gen_server:call(Pid, get_state),
+		?assertEqual(1, State#state.dispatched_count),
+		?assertEqual(0, queue:len(State#state.task_queue)),
+		?assertEqual(true, sets:is_element(FootprintKey, State#state.active_footprints)),
+		?assertEqual(4, ets:lookup_element(sync_metrics, footprint_slots_available, 2))
+	end.
+
+%% Slow-peer protection: when dispatched_count reaches max_dispatched the
+%% peer refuses to hand out more tasks.
+test_take_one_at_max_dispatched({Peer, Pid}) ->
+	fun() ->
+		FootprintKey = {store1, 2000, Peer},
+		ets:insert(sync_metrics, {footprint_slots_available, 1000}),
+		%% Force max_dispatched to a small number via raw state update so we
+		%% can saturate it without triggering the rebalance machinery.
+		MaxDispatched = 2,
+		sys:replace_state(Pid, fun(S) -> S#state{ max_dispatched = MaxDispatched } end),
+		lists:foreach(fun(I) ->
+			enqueue(Pid, {I*100, (I+1)*100, Peer, store1, FootprintKey})
+		end, lists:seq(0, 4)),
+		{ok, _} = gen_server:call(Pid, get_state),
+		%% First two pulls succeed, third returns none even though queue has tasks.
+		{task, _} = take_one(Pid),
+		{task, _} = take_one(Pid),
+		?assertEqual(none, take_one(Pid))
+	end.
+
+%% Footprint admission failure: when the global slot gauge is exhausted,
+%% take_one returns none even with available worker capacity.
+test_take_one_no_slot_returns_none({Peer, Pid}) ->
+	fun() ->
+		FootprintKey = {store1, 3000, Peer},
+		ets:insert(sync_metrics, {footprint_slots_available, 0}),
+		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
+		{ok, _} = gen_server:call(Pid, get_state),
+		?assertEqual(none, take_one(Pid))
+	end.
+
+%% Empty queue: take_one returns none.
+test_take_one_empty_queue_returns_none({_Peer, Pid}) ->
+	fun() ->
+		ets:insert(sync_metrics, {footprint_slots_available, 1000}),
+		?assertEqual(none, take_one(Pid))
+	end.
+
+%% Enqueue must wake one idle worker so the pull loop kicks back into life.
+test_enqueue_wakes_idle_worker({Peer, Pid}) ->
+	fun() ->
+		FootprintKey = {store1, 4000, Peer},
+		case ets:info(idle_workers) of
+			undefined -> ets:new(idle_workers,
+				[named_table, public, ordered_set]);
+			_ -> ets:delete_all_objects(idle_workers)
+		end,
+		Self = self(),
+		FakeWorker = spawn_link(fun F() ->
+			receive
+				{'$gen_cast', work_available} ->
+					Self ! got_wake,
+					F();
+				stop -> ok
+			end
+		end),
+		ets:insert(idle_workers, {FakeWorker}),
+		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
+		receive got_wake -> ok
+		after 500 -> ?assert(false, "fake worker did not receive work_available")
+		end,
+		?assertEqual(false, ets:member(idle_workers, FakeWorker)),
+		FakeWorker ! stop
+	end.
+
+%% Worker crash recovery: peer worker monitors the worker that took a
+%% task; when that worker dies, the slot is released and dispatched_count
+%% rolls back to zero.
+test_worker_death_releases_slot({Peer, Pid}) ->
+	fun() ->
+		FootprintKey = {store1, 5000, Peer},
+		ets:insert(sync_metrics, {footprint_slots_available, 5}),
+		%% Put one task in the queue so the fake worker has something to take.
+		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
+		{ok, _} = gen_server:call(Pid, get_state),
+		Self = self(),
+		FakeWorker = spawn(fun() ->
+			Result = take_one(Pid),
+			Self ! {pulled, Result},
+			receive die -> exit(crashed) end
+		end),
+		receive {pulled, {task, _}} -> ok
+		after 1000 -> ?assert(false, "fake worker did not pull")
+		end,
+		{ok, State1} = gen_server:call(Pid, get_state),
+		?assertEqual(1, State1#state.dispatched_count),
+		?assertEqual(4, ets:lookup_element(sync_metrics, footprint_slots_available, 2)),
+		FakeWorker ! die,
+		%% Wait for DOWN to be processed.
+		_ = lists:any(fun(_) ->
+			timer:sleep(50),
+			{ok, S} = gen_server:call(Pid, get_state),
+			S#state.dispatched_count =:= 0
+		end, lists:seq(1, 20)),
+		{ok, State2} = gen_server:call(Pid, get_state),
+		?assertEqual(0, State2#state.dispatched_count),
+		?assertEqual(5, ets:lookup_element(sync_metrics, footprint_slots_available, 2))
 	end.
 
 -endif.
