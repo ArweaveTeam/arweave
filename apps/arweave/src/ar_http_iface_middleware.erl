@@ -2092,6 +2092,8 @@ handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->
 											{200, #{}, Body, Req};
 										{error, not_found} ->
 											{404, #{}, <<>>, Req};
+										{error, invalid_offset} ->
+											{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req};
 										{error, _} ->
 											{500, #{}, <<>>, Req}
 									end

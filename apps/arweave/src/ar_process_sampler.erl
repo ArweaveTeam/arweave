@@ -148,7 +148,7 @@ process_function(Pid) ->
 			{registered_name, Name}, {status, Status},
 			{memory, Memory}, {reductions, Reductions},
 			{message_queue_len, MsgQueueLen}, {messages, Messages}] ->
-		ProcessName = process_name(Name, Stack),
+		ProcessName = process_name(Name, Stack, Pid),
 		case MsgQueueLen > 1000 of
 			true ->
 				FormattedMessages =
@@ -228,22 +228,31 @@ log_binary_alloc_carrier(Id, Carrier) ->
 
 %% @doc Anonymous processes don't have a registered name. So we'll name them after their
 %% module, function and arity.
-process_name([], []) ->
+process_name([], [], _Pid) ->
 	"unknown";
-process_name([], Stack) ->
-	InitialCall = initial_call(lists:reverse(Stack)),
+process_name([], Stack, Pid) ->
+	InitialCall = initial_call(lists:reverse(Stack), Pid),
 	M = element(1, InitialCall),
 	F = element(2, InitialCall),
 	A = element(3, InitialCall),
 	atom_to_list(M) ++ ":" ++ atom_to_list(F) ++ "/" ++ integer_to_list(A);
-process_name(Name, _Stack) ->
+process_name(Name, _Stack, _Pid) ->
 	atom_to_list(Name).
 
-initial_call([]) ->
-	"unknown";
-initial_call([{proc_lib, init_p_do_apply, _A, _Location} | Stack]) ->
-	initial_call(Stack);
-initial_call([InitialCall | _Stack]) ->
+initial_call([], Pid) ->
+	%% Fallback to proc_lib's initial_call which reads $initial_call from the
+	%% process dictionary - gives us the actual callback module instead of
+	%% gen_server:loop/7 or similar OTP internals.
+	try proc_lib:initial_call(Pid) of
+		false -> {unknown, unknown, 0};
+		{M, F, Args} when is_list(Args) -> {M, F, length(Args)}
+	catch
+		_:_ -> {unknown, unknown, 0}
+	end;
+initial_call([{M, _F, _A, _Location} | Stack], Pid)
+		when M =:= proc_lib; M =:= gen_server; M =:= gen_statem; M =:= gen_event ->
+	initial_call(Stack, Pid);
+initial_call([InitialCall | _Stack], _Pid) ->
 	InitialCall.
 
 
