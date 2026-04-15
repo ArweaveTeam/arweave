@@ -245,11 +245,7 @@ initial_call([], Pid) ->
 	%% gen_server:loop/7 or similar OTP internals.
 	try proc_lib:initial_call(Pid) of
 		false -> {unknown, unknown, 0};
-		{M, F, A} when is_integer(A) -> {M, F, A};
-		{M, F, Args} when is_list(Args) -> {M, F, length(Args)};
-		[M, F, A] when is_integer(A) -> {M, F, A};
-		[M, F, Args] when is_list(Args) -> {M, F, length(Args)};
-		_ -> {unknown, unknown, 0}
+		{M, F, Args} when is_list(Args) -> {M, F, length(Args)}
 	catch
 		_:_ -> {unknown, unknown, 0}
 	end;
