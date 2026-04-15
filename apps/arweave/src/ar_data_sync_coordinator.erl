@@ -62,6 +62,12 @@
 -export([sync_metrics_put_peer/4, sync_metrics_delete_peer/1,
 		 sync_metrics_put_peer_max_dispatched/2]).
 
+%% Phase 2: atomic footprint slot claim/release via ETS. Replaces the
+%% coordinator-owned total_active_footprints counter and the dance of
+%% HasCapacity-at-enqueue + try_activate_waiting_footprint.
+-export([claim_footprint_slot/0, release_footprint_slot/0,
+		 footprint_slots_available/0]).
+
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -165,6 +171,11 @@ init(Workers) ->
 	end,
 	sync_metrics_reset(),
 	ets:insert(?SYNC_METRICS_TABLE, {workers_count, length(Workers)}),
+	%% Phase 2: atomic footprint-slot gauge. Initialised to MaxFootprints
+	%% (slots_available). Claim decrements; release increments capped at max.
+	ets:insert(?SYNC_METRICS_TABLE,
+		[{footprint_slots_available, MaxFootprints},
+		 {footprint_slots_max, MaxFootprints}]),
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers},
 		{max_footprints, MaxFootprints}]),
 	{ok, #state{
@@ -211,23 +222,18 @@ handle_cast({sync_range, Args}, State) ->
 				undefined ->
 					{noreply, State1};
 				_ ->
-					%% Check if there's global capacity for new footprints
-					HasCapacity = State1#state.total_active_footprints < State1#state.max_footprints,
+					%% Phase 2: HasCapacity is no longer decided at enqueue time;
+					%% passing true keeps the peer worker's call signature stable
+					%% during migration. Footprint admission is done atomically
+					%% in do_process_queue via claim_footprint_slot/0.
+					%% total_active_footprints is no longer kept on the coordinator
+					%% gen_server — the authoritative count is the ETS slot gauge.
 					WorkerCount = queue:len(State1#state.workers),
-					{WasActivated, TasksToDispatch} = ar_peer_worker:enqueue_task(
-						Pid, FootprintKey, Args, HasCapacity, WorkerCount),
-					State2 = case WasActivated of
-						true ->
-							State1#state{ 
-								total_active_footprints = State1#state.total_active_footprints + 1,
-								total_queued_count = State1#state.total_queued_count + 1
-							};
-						false ->
-							State1#state{
-								total_queued_count = State1#state.total_queued_count + 1
-							}
-					end,
-					%% Dispatch tasks to workers
+					{_WasActivated, TasksToDispatch} = ar_peer_worker:enqueue_task(
+						Pid, FootprintKey, Args, true, WorkerCount),
+					State2 = State1#state{
+						total_queued_count = State1#state.total_queued_count + 1
+					},
 					State3 = dispatch_tasks(Pid, TasksToDispatch, State2),
 					sync_metrics_put_totals(State3),
 					{noreply, State3}
@@ -272,17 +278,11 @@ handle_cast(rebalance_peers, State) ->
 	{noreply, State3};
 
 handle_cast({footprint_deactivated, _Peer}, State) ->
-	NewCount = max(0, State#state.total_active_footprints - 1),
-	State2 = State#state{ total_active_footprints = NewCount },
-	%% Notify all peers that capacity is available so they can activate waiting footprints
-	State3 = case NewCount < State2#state.max_footprints of
-		true ->
-			notify_peers_capacity_available(State2);
-		false ->
-			State2
-	end,
-	sync_metrics_put_totals(State3),
-	{noreply, State3};
+	%% Phase 2: footprint accounting is fully in the ETS slot gauge now.
+	%% ar_peer_worker releases the slot atomically on task completion.
+	%% We keep the handler for backwards compatibility with any stray
+	%% in-flight messages but treat it as a no-op.
+	{noreply, State};
 
 handle_cast({peer_worker_started, Peer, Pid}, State) ->
 	%% Peer worker (re)started - update cached PID
@@ -521,6 +521,43 @@ sync_metrics_put_peer_max_dispatched(Peer, MaxDispatched) ->
 	catch _:_ -> ok
 	end.
 
+%% @doc Atomically claim a footprint slot. Returns true on success, false if
+%% no slots are available. Race-free under concurrent callers.
+%% Implementation: unbounded decrement with post-hoc bounds check.
+%% If decrement leaves the counter negative, we over-drew and must put it back.
+claim_footprint_slot() ->
+	try
+		case ets:update_counter(?SYNC_METRICS_TABLE,
+				footprint_slots_available, {2, -1}) of
+			N when N >= 0 ->
+				true;
+			_Negative ->
+				%% Over-drew. Put it back.
+				ets:update_counter(?SYNC_METRICS_TABLE,
+					footprint_slots_available, {2, +1}),
+				false
+		end
+	catch _:_ ->
+		false
+	end.
+
+%% @doc Release a previously-claimed footprint slot. Capped at the configured
+%% maximum so bugs (double-release) don't inflate capacity beyond intended.
+release_footprint_slot() ->
+	try
+		Max = ets:lookup_element(?SYNC_METRICS_TABLE, footprint_slots_max, 2),
+		ets:update_counter(?SYNC_METRICS_TABLE,
+			footprint_slots_available, {2, +1, Max, Max}),
+		ok
+	catch _:_ -> ok
+	end.
+
+%% @doc Current available slot count (for metrics/debug).
+footprint_slots_available() ->
+	try ets:lookup_element(?SYNC_METRICS_TABLE, footprint_slots_available, 2)
+	catch _:_ -> 0
+	end.
+
 %% @doc Called from ar_peer_worker:terminate so a crashed/shutdown peer stops
 %% contributing phantom values to the sum.
 sync_metrics_delete_peer(Peer) ->
@@ -614,29 +651,25 @@ cycle_workers(AverageLoad, State) ->
 			cycle_workers(AverageLoad, State2)
 	end.
 
-%% Notify all known peers that global footprint capacity is available.
-notify_peers_capacity_available(#state{ known_peers = KnownPeers } = State) ->
-	%% Iterate through peers, stop when one activates a footprint to avoid over-activation
-	PeerList = maps:to_list(KnownPeers),
-	case try_activate_footprint(PeerList, State) of
-		{true, State2} ->
-			State2#state{ total_active_footprints = State2#state.total_active_footprints + 1 };
-		{false, State2} ->
-			State2
-	end.
-
+%% Phase 2: notify_peers_capacity_available is gone. The
+%% `footprint_deactivated` trigger no longer exists — slot release happens
+%% directly in the peer worker via ar_data_sync_coordinator:release_footprint_slot/0
+%% as part of task completion, and the rebalance-tick defensive drain plus
+%% per-enqueue drain are enough to pick up the freed slot.
+%%
+%% try_activate_footprint/2 is retained as a thin helper that iterates
+%% peers and calls ar_peer_worker:try_activate_footprint (which in Phase 2
+%% is just a drain call) — exists for test coverage and any future
+%% explicit wake-up pathway.
 try_activate_footprint([], State) ->
 	{false, State};
 try_activate_footprint([{_Peer, Pid} | Rest], State) ->
 	WorkerCount = queue:len(State#state.workers),
 	case ar_peer_worker:try_activate_footprint(Pid, WorkerCount) of
 		{true, TasksToDispatch} ->
-			%% A footprint was activated — dispatch the newly-promoted tasks so
-			%% they don't orphan in task_queue, then stop.
 			State2 = dispatch_tasks(Pid, TasksToDispatch, State),
 			{true, State2};
 		{false, _} ->
-			%% No footprint activated, try next peer
 			try_activate_footprint(Rest, State)
 	end.
 
@@ -715,16 +748,13 @@ test_queue_scaling_factor() ->
 	?assertEqual(50.0, queue_scaling_factor(10.0, 10)).
 
 test_footprint_deactivated() ->
+	%% Phase 2: footprint_deactivated is now a no-op handler kept for
+	%% backwards compat. Global capacity is tracked in the ETS slot gauge,
+	%% not in coordinator state. The handler must not crash and must not
+	%% mutate state.
 	State0 = #state{ total_active_footprints = 5, max_footprints = 10, known_peers = #{} },
-	
-	%% Simulate footprint_deactivated cast
 	{noreply, State1} = handle_cast({footprint_deactivated, {1,2,3,4,1984}}, State0),
-	?assertEqual(4, State1#state.total_active_footprints),
-	
-	%% Should not go below 0
-	State2 = State0#state{ total_active_footprints = 0 },
-	{noreply, State3} = handle_cast({footprint_deactivated, {1,2,3,4,1984}}, State2),
-	?assertEqual(0, State3#state.total_active_footprints).
+	?assertEqual(State0, State1).
 
 test_peer_worker_started_updates_cache() ->
 	Peer1 = {1,2,3,4,1984},
