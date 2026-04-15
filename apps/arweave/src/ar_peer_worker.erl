@@ -193,12 +193,16 @@ init([Peer]) ->
 %% @doc Phase 0 instrumentation: publish this peer worker's contribution to the
 %% global invariants into the sync_metrics ETS table. Call at the end of every
 %% state-mutating handler.
+%% Phase 1 also publishes max_dispatched so coordinator can read it from ETS
+%% instead of a synchronous gen_server:call.
 publish_metrics(State) ->
 	ar_data_sync_coordinator:sync_metrics_put_peer(
 		State#state.peer,
 		State#state.dispatched_count,
 		queue:len(State#state.task_queue) + State#state.waiting_count,
 		sets:size(State#state.active_footprints)),
+	ar_data_sync_coordinator:sync_metrics_put_peer_max_dispatched(
+		State#state.peer, State#state.max_dispatched),
 	State.
 
 handle_call(get_max_dispatched, _From, State) ->

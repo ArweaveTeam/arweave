@@ -43,7 +43,10 @@ init({Name, Mode}) ->
 	%% We only want to do this for sync workers, not read workers.
 	case Mode  of
 		sync ->
-			gen_server:call(ar_data_sync_coordinator, {reset_worker, Name}, 30_000);
+			%% Phase 1: cast instead of 30-second synchronous call.
+			%% The coordinator's reset_worker handler is idempotent and
+			%% purely accounting; there's no reply the worker needs.
+			gen_server:cast(ar_data_sync_coordinator, {reset_worker, Name});
 		_ ->
 			ok
 	end,

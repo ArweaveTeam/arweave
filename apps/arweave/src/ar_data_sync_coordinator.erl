@@ -59,7 +59,8 @@
 
 %% Phase 0 instrumentation: ETS mirror of counters, invariant checking helpers.
 %% Exported so ar_peer_worker can publish its own counters.
--export([sync_metrics_put_peer/4, sync_metrics_delete_peer/1]).
+-export([sync_metrics_put_peer/4, sync_metrics_delete_peer/1,
+		 sync_metrics_put_peer_max_dispatched/2]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -122,12 +123,25 @@ is_syncing_enabled() ->
 
 %% @doc Returns true if we can accept new tasks. Will always return false if syncing is
 %% disabled (i.e. sync_jobs = 0).
+%%
+%% Phase 1: reads the ETS mirror directly — no gen_server call, cannot block.
+%% The coordinator keeps the mirror in lockstep with its state at every
+%% transition; the worst case is a slightly-stale read that accepts one
+%% extra task or defers one. The coordinator's mailbox queue had this same
+%% eventual-consistency property.
 ready_for_work() ->
 	try
-		gen_server:call(?MODULE, ready_for_work, 1000)
-	catch
-		exit:{timeout,_} ->
-			false
+		WorkerCount = ets:lookup_element(?SYNC_METRICS_TABLE, workers_count, 2),
+		case WorkerCount of
+			0 -> false;
+			_ ->
+				TotalQueued = ets:lookup_element(?SYNC_METRICS_TABLE, total_queued, 2),
+				TotalDispatched = ets:lookup_element(?SYNC_METRICS_TABLE, total_dispatched, 2),
+				TotalQueued + TotalDispatched < max_tasks(WorkerCount)
+		end
+	catch _:_ ->
+		%% Table not yet created (coordinator starting) or syncing disabled.
+		false
 	end.
 
 %%%===================================================================
@@ -150,6 +164,7 @@ init(Workers) ->
 		_ -> ok
 	end,
 	sync_metrics_reset(),
+	ets:insert(?SYNC_METRICS_TABLE, {workers_count, length(Workers)}),
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers},
 		{max_footprints, MaxFootprints}]),
 	{ok, #state{
@@ -274,6 +289,18 @@ handle_cast({peer_worker_started, Peer, Pid}, State) ->
 	State2 = State#state{ known_peers = maps:put(Peer, Pid, State#state.known_peers) },
 	{noreply, State2};
 
+handle_cast({reset_worker, Worker}, State) ->
+	%% Phase 1: cast path for sync workers restarting. Reuses the same
+	%% accounting logic as the legacy call handler.
+	ActiveCount = maps:get(Worker, State#state.dispatched_count_per_worker, 0),
+	State2 = State#state{
+		total_dispatched_count = State#state.total_dispatched_count - ActiveCount,
+		dispatched_count_per_worker = maps:put(Worker, 0, State#state.dispatched_count_per_worker)
+	},
+	sync_metrics_put_worker(Worker, 0),
+	sync_metrics_put_totals(State2),
+	{noreply, State2};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -373,11 +400,14 @@ calculate_targets(PeerPids, AllPeerPerformances, State) ->
 		true -> TotalLatency / length(Peers);
 		false -> 0.0
 	end,
+	%% Phase 1: read each peer's max_dispatched from the ETS mirror instead of
+	%% calling into the peer worker synchronously. The peer publishes its cap
+	%% at every state transition via publish_metrics/1.
 	TotalMaxDispatched = maps:fold(
-		fun(_Peer, Pid, Acc) ->
-			case ar_peer_worker:get_max_dispatched(Pid) of
-				{error, _} -> Acc;
-				MaxDispatched -> MaxDispatched + Acc
+		fun(Peer, _Pid, Acc) ->
+			case ets:lookup(?SYNC_METRICS_TABLE, {peer_max_dispatched, Peer}) of
+				[{_, MaxDispatched}] -> MaxDispatched + Acc;
+				_ -> Acc
 			end
 		end,
 		0, PeerPids),
@@ -450,7 +480,8 @@ sync_metrics_reset() ->
 	try
 		ets:delete_all_objects(?SYNC_METRICS_TABLE),
 		ets:insert(?SYNC_METRICS_TABLE,
-			[{total_queued, 0}, {total_dispatched, 0}, {total_active_footprints, 0}])
+			[{total_queued, 0}, {total_dispatched, 0}, {total_active_footprints, 0},
+			 {workers_count, 0}])
 	catch _:_ -> ok
 	end.
 
@@ -483,13 +514,21 @@ sync_metrics_put_peer(Peer, Dispatched, Queued, ActiveFootprints) ->
 	catch _:_ -> ok
 	end.
 
+%% @doc Publish a peer's max_dispatched so coordinator can read it from ETS
+%% instead of a synchronous call into the peer worker.
+sync_metrics_put_peer_max_dispatched(Peer, MaxDispatched) ->
+	try ets:insert(?SYNC_METRICS_TABLE, {{peer_max_dispatched, Peer}, MaxDispatched})
+	catch _:_ -> ok
+	end.
+
 %% @doc Called from ar_peer_worker:terminate so a crashed/shutdown peer stops
 %% contributing phantom values to the sum.
 sync_metrics_delete_peer(Peer) ->
 	try
 		ets:delete(?SYNC_METRICS_TABLE, {peer_dispatched, Peer}),
 		ets:delete(?SYNC_METRICS_TABLE, {peer_queued, Peer}),
-		ets:delete(?SYNC_METRICS_TABLE, {peer_active_footprints, Peer})
+		ets:delete(?SYNC_METRICS_TABLE, {peer_active_footprints, Peer}),
+		ets:delete(?SYNC_METRICS_TABLE, {peer_max_dispatched, Peer})
 	catch _:_ -> ok
 	end.
 
@@ -870,15 +909,29 @@ collect_called_peers(Acc) ->
 	end.
 
 test_calculate_targets() ->
-	%% Create mock peer workers that respond to get_max_dispatched
-	Pid1 = spawn(fun() -> mock_peer_worker_max_dispatched(10) end),
-	Pid2 = spawn(fun() -> mock_peer_worker_max_dispatched(15) end),
-	Pid3 = spawn(fun() -> mock_peer_worker_max_dispatched(20) end),
-	
+	%% Phase 1: max_dispatched is now read from the ETS mirror, not via
+	%% gen_server call into peer worker. Ensure the mirror table exists
+	%% and populate it for the three mock peers.
 	Peer1 = {1,2,3,4,1984},
 	Peer2 = {5,6,7,8,1985},
 	Peer3 = {9,10,11,12,1986},
-	
+	case ets:info(?SYNC_METRICS_TABLE) of
+		undefined ->
+			ets:new(?SYNC_METRICS_TABLE, [named_table, public, set]);
+		_ -> ok
+	end,
+	ets:insert(?SYNC_METRICS_TABLE, [
+		{{peer_max_dispatched, Peer1}, 10},
+		{{peer_max_dispatched, Peer2}, 15},
+		{{peer_max_dispatched, Peer3}, 20}
+	]),
+
+	%% Pids no longer need to answer get_max_dispatched, but calculate_targets
+	%% still requires them in the PeerPids map. Use dummy pids.
+	Pid1 = spawn(fun() -> receive _ -> ok after 5000 -> ok end end),
+	Pid2 = spawn(fun() -> receive _ -> ok after 5000 -> ok end end),
+	Pid3 = spawn(fun() -> receive _ -> ok after 5000 -> ok end end),
+
 	PeerPids = #{Peer1 => Pid1, Peer2 => Pid2, Peer3 => Pid3},
 	
 	%% Create performance records
@@ -908,16 +961,9 @@ test_calculate_targets() ->
 	%% Cleanup
 	exit(Pid1, kill),
 	exit(Pid2, kill),
-	exit(Pid3, kill).
-
-%% Mock peer worker for get_max_dispatched
-mock_peer_worker_max_dispatched(MaxDispatched) ->
-	receive
-		{'$gen_call', From, get_max_dispatched} ->
-			gen_server:reply(From, MaxDispatched),
-			mock_peer_worker_max_dispatched(MaxDispatched)
-	after 5000 ->
-		ok
-	end.
+	exit(Pid3, kill),
+	ets:delete(?SYNC_METRICS_TABLE, {peer_max_dispatched, Peer1}),
+	ets:delete(?SYNC_METRICS_TABLE, {peer_max_dispatched, Peer2}),
+	ets:delete(?SYNC_METRICS_TABLE, {peer_max_dispatched, Peer3}).
 
 -endif.
