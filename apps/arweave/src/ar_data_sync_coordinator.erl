@@ -208,26 +208,18 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-%% Phase 4: thin forwarder. Look up (or create) the peer worker, cast the
-%% task, increment the global queued counter in ETS via Phase 0
-%% sync_metrics_put_totals path. ETS-backed `total_queued` is the
-%% authoritative count.
+%% Phase 4/5: thin forwarder. Look up (or create) the peer worker and cast
+%% the task. The peer worker's `publish_metrics` updates its own per-peer
+%% ETS rows; `ready_for_work/0` derives the global total from the per-peer
+%% sum on demand. No coordinator-owned counter to maintain.
 handle_cast({sync_range, Args}, State) ->
 	{_Start, _End, Peer, _TargetStoreID, _FootprintKey} = Args,
 	{Pid, State1} = maybe_add_peer(Peer, State),
 	case Pid of
-		undefined ->
-			{noreply, State1};
-		_ ->
-			ar_peer_worker:enqueue(Pid, Args),
-			%% Bump the global queued count atomically. Peer worker's
-			%% take_one path decrements via increment_metrics(queued_out, ...).
-			try
-				ets:update_counter(?SYNC_METRICS_TABLE, total_queued, {2, 1})
-			catch _:_ -> ok
-			end,
-			{noreply, State1}
-	end;
+		undefined -> ok;
+		_ -> ar_peer_worker:enqueue(Pid, Args)
+	end,
+	{noreply, State1};
 
 handle_cast(rebalance_peers, State) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),

@@ -37,9 +37,7 @@
 %% Lifecycle
 -export([start_link/1, get_or_start/1, stop/1]).
 %% Operations (all take Pid as first arg - coordinator caches Peer->Pid mapping)
--export([enqueue_task/5, task_completed/5, process_queue/2,
-         get_max_dispatched/1, rebalance/3, try_activate_footprint/2,
-         enqueue/2, take_one/1]).
+-export([task_completed/5, rebalance/3, enqueue/2, take_one/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -124,35 +122,6 @@ stop(Pid) ->
 %%% Coordinator caches Peer->Pid mapping to avoid lookup overhead.
 %%%===================================================================
 
-%% @doc Enqueue a task and process the queue synchronously.
-%% Returns {WasActivated, TasksToDispatch} where:
-%% - WasActivated: true if a new footprint was just activated, false otherwise
-%% - TasksToDispatch: list of tasks ready to dispatch
-%% HasCapacity indicates whether the global footprint limit allows activating new footprints.
-%% WorkerCount is used to calculate available dispatch slots.
-enqueue_task(Pid, FootprintKey, Args, HasCapacity, WorkerCount) ->
-	try
-		gen_server:call(Pid,
-			{enqueue_task, FootprintKey, Args, HasCapacity, WorkerCount},
-			?CALL_TIMEOUT_MS)
-	catch
-		exit:{timeout, _} -> {false, []};
-		_:_ -> {false, []}
-	end.
-
-%% @doc Try to activate a waiting footprint (called when global capacity becomes available).
-%% Returns {Activated, TasksToDispatch}. If a footprint was activated the newly-promoted
-%% tasks are also drained from the task_queue so the caller can dispatch them — activation
-%% alone does not trigger a dispatch, and without this the tasks would sit in task_queue
-%% until the next enqueue_task or task_completed for this peer.
-try_activate_footprint(Pid, WorkerCount) ->
-	try
-		gen_server:call(Pid, {try_activate_footprint, WorkerCount}, ?CALL_TIMEOUT_MS)
-	catch
-		exit:{timeout, _} -> {false, []};
-		_:_ -> {false, []}
-	end.
-
 %% @doc Phase 3: one-way enqueue. The peer worker appends the task to its
 %% queue and wakes one idle sync worker (if any). No reply needed; sync
 %% workers pull when they're free.
@@ -173,28 +142,9 @@ take_one(Pid) ->
 		_:_ -> none
 	end.
 
-%% @doc Process the queue and return tasks ready for dispatch.
-%% Used to drain queued tasks without enqueuing new ones (e.g., after task completion).
-process_queue(Pid, WorkerCount) ->
-	try
-		gen_server:call(Pid, {process_queue, WorkerCount}, ?CALL_TIMEOUT_MS)
-	catch
-		exit:{timeout, _} -> [];
-		_:_ -> []
-	end.
-
 %% @doc Notify task completed, update footprint accounting and rate data fetched.
 task_completed(Pid, FootprintKey, Result, ElapsedNative, DataSize) ->
 	gen_server:cast(Pid, {task_completed, FootprintKey, Result, ElapsedNative, DataSize}).
-
-%% @doc Get max_dispatched for this peer.
-get_max_dispatched(Pid) ->
-	try
-		gen_server:call(Pid, get_max_dispatched, ?CALL_TIMEOUT_MS)
-	catch
-		exit:{timeout, _} -> {error, timeout};
-		_:_ -> {error, error}
-	end.
 
 %% @doc Rebalance based on performance and targets.
 %% Returns RemovedCount (number of tasks cut from queue).
@@ -237,24 +187,9 @@ publish_metrics(State) ->
 		State#state.peer, State#state.max_dispatched),
 	State.
 
-handle_call(get_max_dispatched, _From, State) ->
-	{reply, State#state.max_dispatched, State};
-
 handle_call(get_state, _From, State) ->
 	%% Test-only: keep for tests to access raw state
 	{reply, {ok, State}, State};
-
-handle_call({enqueue_task, FootprintKey, Args, HasCapacity, WorkerCount}, _From, State) ->
-	State1 = State#state{ last_task_time = erlang:monotonic_time() },
-	{WasActivated, State2} = do_enqueue_task(FootprintKey, Args, HasCapacity, State1),
-	{TasksToDispatch, State3} = do_process_queue(State2, WorkerCount),
-	publish_metrics(State3),
-	{reply, {WasActivated, TasksToDispatch}, State3};
-
-handle_call({process_queue, WorkerCount}, _From, State) ->
-	{TasksToDispatch, State2} = do_process_queue(State, WorkerCount),
-	publish_metrics(State2),
-	{reply, TasksToDispatch, State2};
 
 %% Phase 3: hand a single task to a pulling sync worker. Returns `none` if
 %% the peer is at its dispatch cap, the queue is empty, or the head task's
@@ -293,17 +228,6 @@ handle_call({take_one, WorkerPid}, _From, State) ->
 					end
 			end
 	end;
-
-handle_call({try_activate_footprint, WorkerCount}, _From, State) ->
-	%% Phase 2: activation is now a dequeue-time concept. There is no
-	%% "waiting footprint" to activate — all tasks are in task_queue and
-	%% admission happens inside do_process_queue via the atomic slot claim.
-	%% We still honor the old call shape so coordinator and tests can call
-	%% it during migration; semantically this is just "drain what you can".
-	{TasksToDispatch, State2} = do_process_queue(State, WorkerCount),
-	publish_metrics(State2),
-	Activated = TasksToDispatch =/= [],
-	{reply, {Activated, TasksToDispatch}, State2};
 
 handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	{QueueScalingFactor, TargetLatency, WorkersStarved} = RebalanceParams,
@@ -457,54 +381,6 @@ max_queue_length(Performance, ScalingFactor) ->
 %%%===================================================================
 %%% Private functions - Task management
 %%%===================================================================
-
-%% @doc Process tasks from the head of the queue, dispatching those whose
-%% footprint is already claimed or can claim a global slot atomically.
-%%
-%% Phase 2 change: footprint admission happens here (dequeue time), not at
-%% enqueue. The `HasCapacity` bit is gone. When the task at the head of the
-%% queue belongs to a footprint this peer has not claimed, we attempt a
-%% single atomic `claim_footprint_slot/0`. On success we mark the footprint
-%% active locally and dispatch. On failure we stop — head-of-line blocks the
-%% rest of the queue until either the head's footprint activates (next tick)
-%% or a global slot opens (the rebalance defensive drain retries).
-do_process_queue(State, WorkerCount) ->
-	#state{ dispatched_count = Dispatched, max_dispatched = MaxDispatched } = State,
-	AvailableSlots = min(WorkerCount, MaxDispatched - Dispatched),
-	dispatch_up_to(AvailableSlots, [], State).
-
-dispatch_up_to(0, Acc, State) ->
-	finish_dispatch(Acc, State);
-dispatch_up_to(N, Acc, #state{ task_queue = Queue } = State) ->
-	case queue:out(Queue) of
-		{empty, _} ->
-			finish_dispatch(Acc, State);
-		{{value, Args}, NewQueue} ->
-			FootprintKey = element(5, Args),
-			case try_admit(FootprintKey, State) of
-				{ok, State2} ->
-					dispatch_up_to(N - 1, [Args | Acc],
-						State2#state{ task_queue = NewQueue });
-				no_slot ->
-					%% Head-of-line block: leave this task at the head and return
-					%% whatever we already accumulated. The rebalance tick or a
-					%% task completion in the claiming peer will release a slot
-					%% and a future drain will retry.
-					finish_dispatch(Acc, State)
-			end
-	end.
-
-finish_dispatch(AccReversed, State) ->
-	Tasks = lists:reverse(AccReversed),
-	TaskCount = length(Tasks),
-	case TaskCount > 0 of
-		true ->
-			increment_metrics(dispatched, State, TaskCount),
-			increment_metrics(queued_out, State, TaskCount);
-		false -> ok
-	end,
-	NewDispatched = State#state.dispatched_count + TaskCount,
-	{Tasks, State#state{ dispatched_count = NewDispatched }}.
 
 %% @doc Admit a task by either using this peer's existing footprint claim or
 %% attempting an atomic claim on the global slot counter. Returns {ok, State}
@@ -701,6 +577,35 @@ increment_metrics(Metric, #state{ peer_formatted = PeerFormatted }, Value) ->
 -ifdef(AR_TEST).
 -include_lib("eunit/include/eunit.hrl").
 
+%% @doc Test-only shim for the pre-Phase-3 API. The production paths use
+%% `enqueue/2` (one-way cast) and `take_one/1` (single-task pull); these
+%% wrappers preserve the older test ergonomics. The 4th and 5th args
+%% (HasCapacity, WorkerCount) are accepted for source compat but ignored:
+%% admission is now atomic at dequeue time, not at enqueue time.
+enqueue_task(Pid, _FootprintKey, Args, _HasCapacity, _WorkerCount) ->
+	enqueue(Pid, Args),
+	%% Sync so the cast has been applied before the test inspects state.
+	{ok, _} = gen_server:call(Pid, get_state),
+	{false, []}.
+
+%% @doc Test-only shim: drain up to N tasks via repeated take_one/1.
+process_queue(Pid, N) ->
+	process_queue_loop(Pid, N, []).
+
+process_queue_loop(_Pid, 0, Acc) -> lists:reverse(Acc);
+process_queue_loop(Pid, N, Acc) ->
+	case take_one(Pid) of
+		{task, Args} -> process_queue_loop(Pid, N - 1, [Args | Acc]);
+		none -> lists:reverse(Acc)
+	end.
+
+%% @doc Test-only shim: try_activate_footprint reduces to "drain what you can".
+try_activate_footprint(Pid, N) ->
+	case process_queue(Pid, N) of
+		[] -> {false, []};
+		Tasks -> {true, Tasks}
+	end.
+
 %% @doc Test-only helper to get footprint stats by calling get_state.
 get_footprint_stats(Pid) ->
 	case gen_server:call(Pid, get_state) of
@@ -782,22 +687,17 @@ cleanup({Peer, Pid}) ->
 
 test_enqueue_and_process({Peer, Pid}) ->
 	fun() ->
-		%% Enqueue some tasks (no footprint)
-		{false, []} = enqueue_task(Pid, none, {0, 100, Peer, store1, none}, true, 0),
-		{false, []} = enqueue_task(Pid, none, {100, 200, Peer, store1, none}, true, 0),
-		{false, []} = enqueue_task(Pid, none, {200, 300, Peer, store1, none}, true, 0),
+		enqueue_task(Pid, none, {0, 100, Peer, store1, none}, true, 0),
+		enqueue_task(Pid, none, {100, 200, Peer, store1, none}, true, 0),
+		enqueue_task(Pid, none, {200, 300, Peer, store1, none}, true, 0),
 
-		%% Sync to ensure casts processed
-		{ok, _} = gen_server:call(Pid, get_state),
-
-		%% Process queue - should get up to 2 tasks
 		Tasks = process_queue(Pid, 2),
 		?assertEqual(2, length(Tasks)),
 
-		{false, Tasks2} = enqueue_task(Pid, none, {300, 400, Peer, store1, none}, true, 1),
+		enqueue_task(Pid, none, {300, 400, Peer, store1, none}, true, 1),
+		Tasks2 = process_queue(Pid, 1),
 		?assertEqual(1, length(Tasks2)),
 
-		%% Check state
 		{ok, State} = gen_server:call(Pid, get_state),
 		?assertEqual(1, queue:len(State#state.task_queue)),
 		?assertEqual(3, State#state.dispatched_count)
