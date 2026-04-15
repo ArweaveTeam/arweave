@@ -57,6 +57,10 @@
 
 -export([start_link/1, register_workers/0, is_syncing_enabled/0, ready_for_work/0]).
 
+%% Phase 0 instrumentation: ETS mirror of counters, invariant checking helpers.
+%% Exported so ar_peer_worker can publish its own counters.
+-export([sync_metrics_put_peer/4, sync_metrics_delete_peer/1]).
+
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -65,6 +69,7 @@
 -include_lib("arweave/include/ar_peers.hrl").
 
 -define(REBALANCE_FREQUENCY_MS, 10*1000).
+-define(SYNC_METRICS_TABLE, sync_metrics).
 
 -record(state, {
 	total_queued_count = 0,       %% total count of non-dispatched tasks across all peers
@@ -132,7 +137,20 @@ ready_for_work() ->
 init(Workers) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 	MaxFootprints = calculate_max_footprints(),
-	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers}, 
+	%% Phase 0 instrumentation: ETS mirror of all mutable counters.
+	%% This table lets the invariant checker (run each rebalance tick) verify
+	%% that gen_server state, per-worker contributions, and per-peer contributions
+	%% all agree. The table also paves the way for Phase 1+ where reads will
+	%% migrate off the gen_server entirely.
+	case ets:info(?SYNC_METRICS_TABLE) of
+		undefined ->
+			ets:new(?SYNC_METRICS_TABLE,
+				[named_table, public, set,
+					{read_concurrency, true}, {write_concurrency, true}]);
+		_ -> ok
+	end,
+	sync_metrics_reset(),
+	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers},
 		{max_footprints, MaxFootprints}]),
 	{ok, #state{
 		workers = queue:from_list(Workers),
@@ -158,6 +176,8 @@ handle_call({reset_worker, Worker}, _From, State) ->
 		total_dispatched_count = State#state.total_dispatched_count - ActiveCount,
 		dispatched_count_per_worker = maps:put(Worker, 0, State#state.dispatched_count_per_worker)
 	},
+	sync_metrics_put_worker(Worker, 0),
+	sync_metrics_put_totals(State2),
 	{reply, ok, State2};
 
 handle_call(Request, _From, State) ->
@@ -194,6 +214,7 @@ handle_cast({sync_range, Args}, State) ->
 					end,
 					%% Dispatch tasks to workers
 					State3 = dispatch_tasks(Pid, TasksToDispatch, State2),
+					sync_metrics_put_totals(State3),
 					{noreply, State3}
 			end
 	end;
@@ -212,6 +233,7 @@ handle_cast({task_completed, {sync_range, {Worker, Result, Args, ElapsedNative}}
 	end,
 	%% Process all peer queues, starting with the peer that just completed
 	State3 = process_all_peer_queues(Peer, State2),
+	sync_metrics_put_totals(State3),
 	{noreply, State3};
 
 handle_cast(rebalance_peers, State) ->
@@ -230,6 +252,8 @@ handle_cast(rebalance_peers, State) ->
 		true -> State2;
 		false -> process_all_peer_queues2(maps:values(State2#state.known_peers), State2)
 	end,
+	sync_metrics_put_totals(State3),
+	check_invariants(State3),
 	{noreply, State3};
 
 handle_cast({footprint_deactivated, _Peer}, State) ->
@@ -242,6 +266,7 @@ handle_cast({footprint_deactivated, _Peer}, State) ->
 		false ->
 			State2
 	end,
+	sync_metrics_put_totals(State3),
 	{noreply, State3};
 
 handle_cast({peer_worker_started, Peer, Pid}, State) ->
@@ -408,10 +433,115 @@ queue_scaling_factor(TotalThroughput, WorkerCount) ->
 
 increment_dispatched_task_count(Worker, N, State) ->
 	ActiveCount = maps:get(Worker, State#state.dispatched_count_per_worker, 0) + N,
-	State#state{
+	NewState = State#state{
 		total_dispatched_count = State#state.total_dispatched_count + N,
-		dispatched_count_per_worker = maps:put(Worker, ActiveCount, State#state.dispatched_count_per_worker)
-	}.
+		dispatched_count_per_worker =
+			maps:put(Worker, ActiveCount, State#state.dispatched_count_per_worker)
+	},
+	sync_metrics_put_worker(Worker, ActiveCount),
+	NewState.
+
+%%%===================================================================
+%%% Phase 0 instrumentation helpers
+%%%===================================================================
+
+%% @doc Clear the mirror so a fresh coordinator init starts from zero.
+sync_metrics_reset() ->
+	try
+		ets:delete_all_objects(?SYNC_METRICS_TABLE),
+		ets:insert(?SYNC_METRICS_TABLE,
+			[{total_queued, 0}, {total_dispatched, 0}, {total_active_footprints, 0}])
+	catch _:_ -> ok
+	end.
+
+%% @doc Mirror the three global coordinator totals into ETS. Call after every
+%% state transition that touches any of them; it's cheap (3 inserts).
+sync_metrics_put_totals(#state{} = State) ->
+	try
+		ets:insert(?SYNC_METRICS_TABLE,
+			[{total_queued, State#state.total_queued_count},
+			 {total_dispatched, State#state.total_dispatched_count},
+			 {total_active_footprints, State#state.total_active_footprints}])
+	catch _:_ -> ok
+	end,
+	State.
+
+%% @doc Mirror per-worker dispatched count into ETS.
+sync_metrics_put_worker(Worker, Count) ->
+	try ets:insert(?SYNC_METRICS_TABLE, {{worker_dispatched, Worker}, Count})
+	catch _:_ -> ok
+	end.
+
+%% @doc Called from ar_peer_worker to publish its contribution to the
+%% cross-process invariants.
+sync_metrics_put_peer(Peer, Dispatched, Queued, ActiveFootprints) ->
+	try
+		ets:insert(?SYNC_METRICS_TABLE,
+			[{{peer_dispatched, Peer}, Dispatched},
+			 {{peer_queued, Peer}, Queued},
+			 {{peer_active_footprints, Peer}, ActiveFootprints}])
+	catch _:_ -> ok
+	end.
+
+%% @doc Called from ar_peer_worker:terminate so a crashed/shutdown peer stops
+%% contributing phantom values to the sum.
+sync_metrics_delete_peer(Peer) ->
+	try
+		ets:delete(?SYNC_METRICS_TABLE, {peer_dispatched, Peer}),
+		ets:delete(?SYNC_METRICS_TABLE, {peer_queued, Peer}),
+		ets:delete(?SYNC_METRICS_TABLE, {peer_active_footprints, Peer})
+	catch _:_ -> ok
+	end.
+
+%% @doc Invariant checker. Run each rebalance tick. Logs at WARNING on drift;
+%% never crashes, so a bug in the checker can't bring the node down.
+check_invariants(#state{} = State) ->
+	try
+		EtsQueued = lookup(total_queued),
+		EtsDispatched = lookup(total_dispatched),
+		EtsFootprints = lookup(total_active_footprints),
+		SumWorkerDispatched = sum_prefix(worker_dispatched),
+		SumPeerDispatched = sum_prefix(peer_dispatched),
+		SumPeerFootprints = sum_prefix(peer_active_footprints),
+		SumPeerQueued = sum_prefix(peer_queued),
+		Drift = [
+			{mirror_queued, State#state.total_queued_count, EtsQueued},
+			{mirror_dispatched, State#state.total_dispatched_count, EtsDispatched},
+			{mirror_footprints, State#state.total_active_footprints, EtsFootprints},
+			{workers_vs_total,
+				maps_values_sum(State#state.dispatched_count_per_worker),
+				State#state.total_dispatched_count},
+			{ets_workers_vs_total, SumWorkerDispatched, EtsDispatched},
+			{peers_dispatched_vs_total, SumPeerDispatched, EtsDispatched},
+			{peers_footprints_vs_total, SumPeerFootprints, EtsFootprints},
+			{peers_queued_vs_total, SumPeerQueued, EtsQueued}
+		],
+		Mismatches = [T || {_, A, B} = T <- Drift, A =/= B],
+		case Mismatches of
+			[] -> ok;
+			_ ->
+				?LOG_WARNING([{event, sync_metrics_invariant_drift},
+					{mismatches, Mismatches}])
+		end
+	catch Class:Reason ->
+		?LOG_WARNING([{event, sync_metrics_invariant_check_failed},
+			{class, Class}, {reason, io_lib:format("~p", [Reason])}])
+	end,
+	State.
+
+lookup(Key) ->
+	case ets:lookup(?SYNC_METRICS_TABLE, Key) of
+		[{_, V}] -> V;
+		_ -> 0
+	end.
+
+sum_prefix(Tag) ->
+	%% Select all entries whose key is {Tag, _} and sum their values.
+	MatchSpec = [{ {{Tag, '_'}, '$1'}, [], ['$1'] }],
+	lists:sum(ets:select(?SYNC_METRICS_TABLE, MatchSpec)).
+
+maps_values_sum(Map) ->
+	lists:sum(maps:values(Map)).
 
 %% @doc Add a peer to known_peers if not already present. Returns {Pid, State}.
 %% The Pid is cached so we don't have to do whereis + atom lookup on every call.

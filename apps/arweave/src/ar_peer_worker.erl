@@ -185,8 +185,21 @@ init([Peer]) ->
 	%% Notify coordinator of our PID (handles restarts updating stale cached PIDs)
 	gen_server:cast(ar_data_sync_coordinator, {peer_worker_started, Peer, self()}),
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {peer, PeerFormatted}]),
-	{ok, #state{ peer = Peer, peer_formatted = PeerFormatted, 
-				 last_task_time = erlang:monotonic_time() }}.
+	State = #state{ peer = Peer, peer_formatted = PeerFormatted,
+					last_task_time = erlang:monotonic_time() },
+	publish_metrics(State),
+	{ok, State}.
+
+%% @doc Phase 0 instrumentation: publish this peer worker's contribution to the
+%% global invariants into the sync_metrics ETS table. Call at the end of every
+%% state-mutating handler.
+publish_metrics(State) ->
+	ar_data_sync_coordinator:sync_metrics_put_peer(
+		State#state.peer,
+		State#state.dispatched_count,
+		queue:len(State#state.task_queue) + State#state.waiting_count,
+		sets:size(State#state.active_footprints)),
+	State.
 
 handle_call(get_max_dispatched, _From, State) ->
 	{reply, State#state.max_dispatched, State};
@@ -199,10 +212,12 @@ handle_call({enqueue_task, FootprintKey, Args, HasCapacity, WorkerCount}, _From,
 	State1 = State#state{ last_task_time = erlang:monotonic_time() },
 	{WasActivated, State2} = do_enqueue_task(FootprintKey, Args, HasCapacity, State1),
 	{TasksToDispatch, State3} = do_process_queue(State2, WorkerCount),
+	publish_metrics(State3),
 	{reply, {WasActivated, TasksToDispatch}, State3};
 
 handle_call({process_queue, WorkerCount}, _From, State) ->
 	{TasksToDispatch, State2} = do_process_queue(State, WorkerCount),
+	publish_metrics(State2),
 	{reply, TasksToDispatch, State2};
 
 handle_call({try_activate_footprint, WorkerCount}, _From, State) ->
@@ -214,6 +229,7 @@ handle_call({try_activate_footprint, WorkerCount}, _From, State) ->
 		true -> do_process_queue(State2, WorkerCount);
 		false -> {[], State2}
 	end,
+	publish_metrics(State3),
 	{reply, {Activated, TasksToDispatch}, State3};
 
 handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
@@ -274,6 +290,7 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 		true -> {shutdown, RemovedCount};
 		false -> {ok, RemovedCount}
 	end,
+	publish_metrics(State3),
 	{reply, Result, State3};
 
 handle_call(Request, _From, State) ->
@@ -281,7 +298,7 @@ handle_call(Request, _From, State) ->
 	{reply, {error, unhandled}, State}.
 
 handle_cast({task_completed, FootprintKey, Result, ElapsedNative, DataSize}, State) ->
-	#state{ dispatched_count = DispatchedCount, max_dispatched = MaxDispatched, 
+	#state{ dispatched_count = DispatchedCount, max_dispatched = MaxDispatched,
 			peer = Peer } = State,
 	NewDispatchedCount = max(0, DispatchedCount - 1),
 	increment_metrics(completed, State, 1),
@@ -291,6 +308,7 @@ handle_cast({task_completed, FootprintKey, Result, ElapsedNative, DataSize}, Sta
 	%% Complete footprint task
 	State2 = do_complete_footprint_task(
 		FootprintKey, State#state{ dispatched_count = NewDispatchedCount }),
+	publish_metrics(State2),
 	{noreply, State2};
 
 handle_cast(Cast, State) ->
@@ -310,6 +328,9 @@ handle_info(Info, State) ->
 terminate(_Reason, State) ->
 	%% Clean up ETS entry when process terminates
 	ets:delete(?MODULE, State#state.peer),
+	%% Remove this peer's contribution from the sync_metrics mirror so it
+	%% doesn't phantom-contribute to the cross-process invariant sum.
+	ar_data_sync_coordinator:sync_metrics_delete_peer(State#state.peer),
 	ok.
 
 %%%===================================================================
