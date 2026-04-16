@@ -2070,7 +2070,12 @@ read_data_sync_state() ->
 					weave_size => 0, packing_2_5_threshold => infinity }
 	end.
 
-
+remove_orphaned_data(_State, BlockStartOffset, WeaveSize)
+	when BlockStartOffset > WeaveSize ->
+	?LOG_WARNING([{event, skipping_invalid_orphan_range},
+		{block_start_offset, BlockStartOffset},
+		{weave_size, WeaveSize}]),
+	ok;
 remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	ok = remove_tx_index_range(BlockStartOffset, WeaveSize, State),
