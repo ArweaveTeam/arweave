@@ -42,7 +42,7 @@
 %%%           state contributes to the total_queued_count.
 %%% - dispatched: the task has been dispatched to an ar_data_sync_worker and is
 %%%            being processed. A task in the "dispatched" state contributes to the
-%%%            total_dispatched_count.
+%%%            total_in_flight_count.
 %%% 
 %%% Footprints can be in one of two states:
 %%% - active: All tasks belonging to an active footprint are moved to the
@@ -84,8 +84,7 @@
 %% looked up by name on demand and the count is published once at init.
 -record(state, {
 	known_peers = #{},     %% Peer => Pid — canonical peer worker roster
-	max_footprints = 0,    %% retained for periodic anomaly logging
-	worker_names = []      %% registered names of all sync workers (for reset_worker etc.)
+	max_footprints = 0     %% retained for periodic anomaly logging
 }).
 
 %%%===================================================================
@@ -141,9 +140,9 @@ ready_for_work() ->
 		case WorkerCount of
 			0 -> false;
 			_ ->
-				TotalQueuedTasks = sum_prefix(peer_queued),
-				TotalDispatchedTasks = sum_prefix(peer_dispatched),
-				TotalQueuedTasks + TotalDispatchedTasks < max_tasks(WorkerCount)
+				TotalQueuedTasks = sum_prefix(queued),
+				TotalInFlight = sum_prefix(in_flight),
+				TotalQueuedTasks + TotalInFlight < max_tasks(WorkerCount)
 		end
 	catch _:_ ->
 		false
@@ -166,8 +165,7 @@ init(Workers) ->
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers},
 		{max_footprints, MaxFootprints}]),
 	{ok, #state{
-		max_footprints = MaxFootprints,
-		worker_names = Workers
+		max_footprints = MaxFootprints
 	}}.
 
 calculate_max_footprints() ->
@@ -208,16 +206,6 @@ handle_cast({peer_worker_started, Peer, Pid}, State) ->
 	State2 = State#state{ known_peers = maps:put(Peer, Pid, State#state.known_peers) },
 	{noreply, State2};
 
-%% Phase 3+: legacy shims kept for in-flight messages during deploy. All
-%% no-ops now; deletion can wait until any queued casts in older binaries
-%% have drained.
-handle_cast({task_completed, {sync_range, _}}, State) ->
-	{noreply, State};
-handle_cast({footprint_deactivated, _Peer}, State) ->
-	{noreply, State};
-handle_cast({reset_worker, _Worker}, State) ->
-	{noreply, State};
-
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -248,9 +236,9 @@ max_tasks(WorkerCount) ->
 
 %% @doc Calculate rebalance parameters.
 %% PeerPids is #{Peer => Pid}
-%% Returns {WorkerCount, TargetLatency, TotalThroughput, TotalMaxDispatched}
-calculate_targets(PeerPids, AllPeerPerformances, State) ->
-	WorkerCount = length(State#state.worker_names),
+%% Returns {WorkerCount, TargetLatency, TotalThroughput, TotalMaxInFlight}
+calculate_targets(PeerPids, AllPeerPerformances, _State) ->
+	WorkerCount = ets:lookup_element(?WORKER_LOAD_TABLE, workers_count, 2, 0),
 	Peers = maps:keys(PeerPids),
 	TotalThroughput =
 		lists:foldl(
@@ -268,21 +256,21 @@ calculate_targets(PeerPids, AllPeerPerformances, State) ->
 		true -> TotalLatency / length(Peers);
 		false -> 0.0
 	end,
-	%% Phase 1: read each peer's max_dispatched from the ETS mirror instead of
+	%% Phase 1: read each peer's max_in_flight from the ETS mirror instead of
 	%% calling into the peer worker synchronously. The peer publishes its cap
 	%% at every state transition via record_peer_load/1.
-	TotalMaxDispatched = maps:fold(
+	TotalMaxInFlight = maps:fold(
 		fun(Peer, _Pid, Acc) ->
 			ets:lookup_element(?WORKER_LOAD_TABLE,
-				{peer_max_dispatched, Peer}, 2, 0) + Acc
+				{max_in_flight, Peer}, 2, 0) + Acc
 		end,
 		0, PeerPids),
 	?LOG_DEBUG([{event, sync_performance_targets},
 		{worker_count, WorkerCount},
 		{target_latency, TargetLatency},
 		{total_throughput, TotalThroughput},
-		{total_max_dispatched, TotalMaxDispatched}]),
-    {WorkerCount, TargetLatency, TotalThroughput, TotalMaxDispatched}.
+		{total_max_in_flight, TotalMaxInFlight}]),
+    {WorkerCount, TargetLatency, TotalThroughput, TotalMaxInFlight}.
 
 %% PeerPidsList is [{Peer, Pid}]
 rebalance_peers(PeerPids, AllPeerPerformances, Targets, State) ->
@@ -291,10 +279,10 @@ rebalance_peers(PeerPids, AllPeerPerformances, Targets, State) ->
 rebalance_peers2([], _AllPeerPerformances, _Targets, State) ->
 	State;
 rebalance_peers2([{Peer, Pid} | Rest], AllPeerPerformances, Targets, State) ->
-	{WorkerCount, TargetLatency, TotalThroughput, TotalMaxDispatched} = Targets,
+	{WorkerCount, TargetLatency, TotalThroughput, TotalMaxInFlight} = Targets,
 	Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 	QueueScalingFactor = queue_scaling_factor(TotalThroughput, WorkerCount),
-	WorkersStarved = TotalMaxDispatched < WorkerCount,
+	WorkersStarved = TotalMaxInFlight < WorkerCount,
 	RebalanceParams = {QueueScalingFactor, TargetLatency, WorkersStarved},
 	Result = ar_peer_worker:rebalance(Pid, Performance, RebalanceParams),
 	%% Phase 4: cuts to total_queued go through the peer worker's
@@ -326,13 +314,13 @@ queue_scaling_factor(TotalThroughput, WorkerCount) ->
 %% @doc Called from ar_peer_worker to publish its current load contribution
 %% (in-flight, queued, active footprints, slow-peer cap) to the worker_load
 %% ETS table. Consumed by dispatch/rebalance/anomaly logic.
-record_peer_load(Peer, Dispatched, Queued, ActiveFootprints, MaxDispatched) ->
+record_peer_load(Peer, InFlight, Queued, ActiveFootprints, MaxInFlight) ->
 	try
 		ets:insert(?WORKER_LOAD_TABLE,
-			[{{peer_dispatched, Peer}, Dispatched},
-			 {{peer_queued, Peer}, Queued},
-			 {{peer_active_footprints, Peer}, ActiveFootprints},
-			 {{peer_max_dispatched, Peer}, MaxDispatched}])
+			[{{in_flight, Peer}, InFlight},
+			 {{queued, Peer}, Queued},
+			 {{active_footprints, Peer}, ActiveFootprints},
+			 {{max_in_flight, Peer}, MaxInFlight}])
 	catch _:_ -> ok
 	end.
 
@@ -371,10 +359,10 @@ release_footprint_slot() ->
 %% contributing phantom values to the sum.
 remove_peer(Peer) ->
 	try
-		ets:delete(?WORKER_LOAD_TABLE, {peer_dispatched, Peer}),
-		ets:delete(?WORKER_LOAD_TABLE, {peer_queued, Peer}),
-		ets:delete(?WORKER_LOAD_TABLE, {peer_active_footprints, Peer}),
-		ets:delete(?WORKER_LOAD_TABLE, {peer_max_dispatched, Peer})
+		ets:delete(?WORKER_LOAD_TABLE, {in_flight, Peer}),
+		ets:delete(?WORKER_LOAD_TABLE, {queued, Peer}),
+		ets:delete(?WORKER_LOAD_TABLE, {active_footprints, Peer}),
+		ets:delete(?WORKER_LOAD_TABLE, {max_in_flight, Peer})
 	catch _:_ -> ok
 	end.
 
@@ -384,7 +372,7 @@ remove_peer(Peer) ->
 %% are gone because the gen_server no longer caches counters.
 log_anomalies(#state{} = _State) ->
 	try
-		SumPeerFootprints = sum_prefix(peer_active_footprints),
+		SumPeerFootprints = sum_prefix(active_footprints),
 		SlotsAvailable = ets:lookup_element(?WORKER_LOAD_TABLE,
 			footprint_slots_available, 2, 0),
 		SlotsMax = ets:lookup_element(?WORKER_LOAD_TABLE,
@@ -474,7 +462,7 @@ test_peer_worker_started_updates_cache() ->
 	?assertEqual(NewPid, maps:get(Peer1, State3#state.known_peers)).
 
 test_calculate_targets() ->
-	%% Phase 1: max_dispatched is now read from the ETS mirror, not via
+	%% Phase 1: max_in_flight is now read from the ETS mirror, not via
 	%% gen_server call into peer worker. Ensure the mirror table exists
 	%% and populate it for the three mock peers.
 	Peer1 = {1,2,3,4,1984},
@@ -486,12 +474,12 @@ test_calculate_targets() ->
 		_ -> ok
 	end,
 	ets:insert(?WORKER_LOAD_TABLE, [
-		{{peer_max_dispatched, Peer1}, 10},
-		{{peer_max_dispatched, Peer2}, 15},
-		{{peer_max_dispatched, Peer3}, 20}
+		{{max_in_flight, Peer1}, 10},
+		{{max_in_flight, Peer2}, 15},
+		{{max_in_flight, Peer3}, 20}
 	]),
 
-	%% Pids no longer need to answer get_max_dispatched, but calculate_targets
+	%% Pids no longer need to answer get_max_in_flight, but calculate_targets
 	%% still requires them in the PeerPids map. Use dummy pids.
 	Pid1 = spawn(fun() -> receive _ -> ok after 5000 -> ok end end),
 	Pid2 = spawn(fun() -> receive _ -> ok after 5000 -> ok end end),
@@ -506,9 +494,10 @@ test_calculate_targets() ->
 		Peer3 => #performance{ current_rating = 300.0, average_latency = 150.0 }
 	},
 	
-	State = #state{ worker_names = [w1, w2, w3, w4, w5] },
+	ets:insert(?WORKER_LOAD_TABLE, {workers_count, 5}),
+	State = #state{},
 
-	{WorkerCount, TargetLatency, TotalThroughput, TotalMaxDispatched} =
+	{WorkerCount, TargetLatency, TotalThroughput, TotalMaxInFlight} =
 		calculate_targets(PeerPids, AllPeerPerformances, State),
 	
 	%% WorkerCount = 5 (number of workers in queue)
@@ -520,15 +509,15 @@ test_calculate_targets() ->
 	%% TargetLatency = (50 + 100 + 150) / 3 = 100
 	?assertEqual(100.0, TargetLatency),
 	
-	%% TotalMaxDispatched = 10 + 15 + 20 = 45
-	?assertEqual(45, TotalMaxDispatched),
+	%% TotalMaxInFlight = 10 + 15 + 20 = 45
+	?assertEqual(45, TotalMaxInFlight),
 	
 	%% Cleanup
 	exit(Pid1, kill),
 	exit(Pid2, kill),
 	exit(Pid3, kill),
-	ets:delete(?WORKER_LOAD_TABLE, {peer_max_dispatched, Peer1}),
-	ets:delete(?WORKER_LOAD_TABLE, {peer_max_dispatched, Peer2}),
-	ets:delete(?WORKER_LOAD_TABLE, {peer_max_dispatched, Peer3}).
+	ets:delete(?WORKER_LOAD_TABLE, {max_in_flight, Peer1}),
+	ets:delete(?WORKER_LOAD_TABLE, {max_in_flight, Peer2}),
+	ets:delete(?WORKER_LOAD_TABLE, {max_in_flight, Peer3}).
 
 -endif.

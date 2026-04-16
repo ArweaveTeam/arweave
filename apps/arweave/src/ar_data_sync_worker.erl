@@ -40,10 +40,6 @@ init({Name, Mode}) ->
 	{ok, Config} = arweave_config:get_env(),
 	case Mode of
 		sync ->
-			%% Phase 1: clear stale per-worker accounting at the coordinator.
-			gen_server:cast(ar_data_sync_coordinator, {reset_worker, Name}),
-			%% Phase 3: kick the pull loop so this worker starts asking peer
-			%% workers for tasks instead of waiting for casts.
 			gen_server:cast(self(), pull);
 		_ ->
 			ok
@@ -102,7 +98,7 @@ handle_cast({sync_range, SyncTask}, State) ->
 		_ ->
 			case ar_peer_worker:get_pid(Peer) of
 				{ok, PeerPid} ->
-					ar_peer_worker:task_completed(PeerPid, FootprintKey,
+					ar_peer_worker:task_completed(PeerPid, self(), FootprintKey,
 						SyncResult, EndTime - StartTime, End - Start);
 				_ ->
 					?LOG_WARNING([{event, sync_range_recast_no_peer_worker},
@@ -149,7 +145,7 @@ run_sync_range(SyncTask, PeerPid, State) ->
 			ok;
 		_ ->
 			DataSize = End - Start,
-			ar_peer_worker:task_completed(PeerPid, FootprintKey, SyncResult,
+			ar_peer_worker:task_completed(PeerPid, self(), FootprintKey, SyncResult,
 				EndTime - StartTime, DataSize)
 	end,
 	ok.

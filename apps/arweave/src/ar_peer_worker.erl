@@ -5,8 +5,8 @@
 %%%
 %%% Peer Queue Management:
 %%% - Maintains a queue of tasks ready to be dispatched for this peer
-%%% - Tracks dispatched_count (number of tasks currently being processed)
-%%% - Maintains max_dispatched limit that controls how many tasks can be
+%%% - Tracks in_flight_count (number of tasks currently being processed)
+%%% - Maintains max_in_flight limit that controls how many tasks can be
 %%%   concurrently dispatched for this peer (adjusted via rebalancing)
 %%% - If too many requests are made to a peer, it can be blocked or throttled
 %%% - Peer performance varies over time; dispatch limits adapt to avoid getting
@@ -28,7 +28,7 @@
 %%%
 %%% Rebalancing:
 %%% - Responds to rebalance requests from the coordinator
-%%% - Adjusts max_dispatched based on peer performance vs target latency
+%%% - Adjusts max_in_flight based on peer performance vs target latency
 %%% - Cuts queue if it exceeds the calculated max_queue size
 -module(ar_peer_worker).
 
@@ -37,7 +37,7 @@
 %% Lifecycle
 -export([start_link/1, get_all_peers/0, get_pid/1, get_or_start/1, stop/1]).
 %% Operations (all take Pid as first arg - coordinator caches Peer->Pid mapping)
--export([task_completed/5, rebalance/3, enqueue/2, take_one/1]).
+-export([task_completed/6, rebalance/3, enqueue/2, take_one/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -45,20 +45,20 @@
 -include_lib("arweave/include/ar_peers.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--define(MIN_MAX_DISPATCHED, 8).
+-define(DEFAULT_IN_FLIGHT_LIMIT, 8).
 -define(MIN_PEER_QUEUE, 20).
 -define(CHECK_LONG_RUNNING_FOOTPRINTS_MS, 60000).  %% Check every 60 seconds
 -define(LONG_RUNNING_FOOTPRINT_THRESHOLD_S, 120).
 -define(IDLE_SHUTDOWN_THRESHOLD_S, 300).  %% Shutdown after 5 minutes of no tasks
 -define(CALL_TIMEOUT_MS, 30000).
 
-%% Phase 2: footprint tracking simplifies to just the outstanding task count
+%% Phase 2: footprint tracking simplifies to just the in_flight_workers task count
 %% per key. The old `waiting` queue is gone — tasks go straight to task_queue
 %% and admission to the global footprint cache is decided atomically at
 %% dequeue time via the ETS slot counter. `activation_time` is retained for
 %% the long-running-footprint diagnostic log.
 -record(footprint, {
-	active_count = 0,        %% count of outstanding tasks (queued + dispatched)
+	active_count = 0,        %% count of in_flight_workers tasks (queued + dispatched)
 	activation_time          %% set when this peer claims a global slot for this key
 }).
 
@@ -66,20 +66,14 @@
 	peer,
 	peer_formatted,                %% cached ar_util:format_peer(Peer) for metrics
 	task_queue = queue:new(),
-	dispatched_count = 0,
-	%% waiting_count retained for backwards-compat metric reporting; always 0
-	%% in Phase 2+ since there is no waiting queue.
-	waiting_count = 0,
-	max_dispatched = ?MIN_MAX_DISPATCHED,
+	in_flight_count = 0,
+	max_in_flight = ?DEFAULT_IN_FLIGHT_LIMIT,
 	last_task_time,                %% monotonic time when last task was received
 	footprints = #{},              %% FootprintKey => #footprint{}
 	active_footprints = sets:new(),%% keys for which this peer currently holds a slot
-	%% Phase 3: monitor refs for sync workers that are currently executing a
-	%% task we handed out via take_one. MonRef => {WorkerPid, FootprintKey}.
-	%% On 'DOWN' we roll back the dispatch (decrement dispatched_count and
-	%% release the footprint slot if the count went to zero) so a worker
-	%% crash mid-task doesn't leak capacity.
-	outstanding = #{}
+	%% WorkerPid => FootprintKey for tasks handed out via take_one.
+	%% Cleaned up on task_completed; dead workers are reaped on rebalance.
+	in_flight_workers = #{}
 }).
 
 %%%===================================================================
@@ -150,8 +144,8 @@ take_one(Pid) ->
 	end.
 
 %% @doc Notify task completed, update footprint accounting and rate data fetched.
-task_completed(Pid, FootprintKey, Result, ElapsedNative, DataSize) ->
-	gen_server:cast(Pid, {task_completed, FootprintKey, Result, ElapsedNative, DataSize}).
+task_completed(Pid, WorkerPid, FootprintKey, Result, ElapsedNative, DataSize) ->
+	gen_server:cast(Pid, {task_completed, WorkerPid, FootprintKey, Result, ElapsedNative, DataSize}).
 
 %% @doc Rebalance based on performance and targets.
 %% Returns RemovedCount (number of tasks cut from queue).
@@ -182,15 +176,15 @@ init([Peer]) ->
 %% @doc Phase 0 instrumentation: publish this peer worker's contribution to the
 %% aggregate load counters into the worker_load ETS table. Call at the end of every
 %% state-mutating handler.
-%% Phase 1 also publishes max_dispatched so coordinator can read it from ETS
+%% Phase 1 also publishes max_in_flight so coordinator can read it from ETS
 %% instead of a synchronous gen_server:call.
 record_peer_load(State) ->
 	ar_data_sync_coordinator:record_peer_load(
 		State#state.peer,
-		State#state.dispatched_count,
-		queue:len(State#state.task_queue) + State#state.waiting_count,
+		State#state.in_flight_count,
+		queue:len(State#state.task_queue),
 		sets:size(State#state.active_footprints),
-		State#state.max_dispatched),
+		State#state.max_in_flight),
 	State.
 
 handle_call(get_state, _From, State) ->
@@ -200,11 +194,10 @@ handle_call(get_state, _From, State) ->
 %% Phase 3: hand a single task to a pulling sync worker. Returns `none` if
 %% the peer is at its dispatch cap, the queue is empty, or the head task's
 %% footprint cannot claim a global slot. The peer monitors the worker pid
-%% so dispatched_count and the slot can be reclaimed if the worker dies.
 handle_call({take_one, WorkerPid}, _From, State) ->
-	#state{ dispatched_count = DispatchedCount, max_dispatched = MaxDispatched,
+	#state{ in_flight_count = InFlightCount, max_in_flight = MaxInFlight,
 			task_queue = TaskQueue } = State,
-	case DispatchedCount >= MaxDispatched of
+	case InFlightCount >= MaxInFlight of
 		true ->
 			{reply, none, State};
 		false ->
@@ -216,14 +209,11 @@ handle_call({take_one, WorkerPid}, _From, State) ->
 					case try_admit(FootprintKey, State) of
 						{ok, State2} ->
 							{{value, SyncTask}, NewTaskQueue} = queue:out(TaskQueue),
-							MonRef = erlang:monitor(process, WorkerPid),
-							OutstandingMap = maps:put(MonRef,
-								{WorkerPid, FootprintKey},
-								State2#state.outstanding),
 							State3 = State2#state{
 								task_queue = NewTaskQueue,
-								dispatched_count = DispatchedCount + 1,
-								outstanding = OutstandingMap,
+								in_flight_count = InFlightCount + 1,
+								in_flight_workers = maps:put(WorkerPid, FootprintKey,
+									State2#state.in_flight_workers),
 								last_task_time = erlang:monotonic_time()
 							},
 							increment_metrics(dispatched, State3, 1),
@@ -238,8 +228,8 @@ handle_call({take_one, WorkerPid}, _From, State) ->
 
 handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	{QueueScalingFactor, TargetLatency, WorkersStarved} = RebalanceParams,
-	#state{ task_queue = Queue, max_dispatched = MaxDispatched,
-			dispatched_count = Dispatched, waiting_count = Waiting,
+	#state{ task_queue = Queue, max_in_flight = MaxInFlight,
+			in_flight_count = InFlight,
 			peer_formatted = PeerFormatted, last_task_time = LastTaskTime } = State,
 	
 	%% 1. Cut queue if needed
@@ -257,35 +247,36 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 			{State, 0}
 	end,
 	
-	%% 2. Update max_dispatched
+	%% 2. Update max_in_flight
 	FasterThanTarget = Performance#performance.average_latency < TargetLatency,
 	TargetMax = case FasterThanTarget orelse WorkersStarved of
-		true -> MaxDispatched + 1;
-		false -> MaxDispatched - 1
+		true -> MaxInFlight + 1;
+		false -> MaxInFlight - 1
 	end,
-	MaxTasks = max(Dispatched, Waiting + queue:len(State2#state.task_queue)),
-	NewMaxDispatched = ar_util:between(TargetMax, ?MIN_MAX_DISPATCHED, max(MaxTasks, ?MIN_MAX_DISPATCHED)),
-	State3 = State2#state{ max_dispatched = NewMaxDispatched },
-	
-	%% 3. Check if we should shutdown (idle worker)
+	MaxTasks = max(InFlight, queue:len(State2#state.task_queue)),
+	NewMaxDispatched = ar_util:between(TargetMax, ?DEFAULT_IN_FLIGHT_LIMIT, max(MaxTasks, ?DEFAULT_IN_FLIGHT_LIMIT)),
+	State3A = State2#state{ max_in_flight = NewMaxDispatched },
+
+	%% 3. Reap dead workers — roll back leaked in_flight_count and footprint slots
+	State3 = reap_dead_workers(State3A),
+
+	%% 4. Check if we should shutdown (idle worker)
 	NewQueueLen = queue:len(State3#state.task_queue),
-	NewWaiting = State3#state.waiting_count,
-	NewDispatched = State3#state.dispatched_count,
+	NewInFlight = State3#state.in_flight_count,
 	IdleSeconds = erlang:convert_time_unit(
 		erlang:monotonic_time() - LastTaskTime, native, second),
-	ShouldShutdown = (NewDispatched == 0) andalso (NewQueueLen == 0) andalso 
-					 (NewWaiting == 0) andalso (IdleSeconds >= ?IDLE_SHUTDOWN_THRESHOLD_S),
-	
+	ShouldShutdown = (NewInFlight == 0) andalso (NewQueueLen == 0) andalso
+					 (IdleSeconds >= ?IDLE_SHUTDOWN_THRESHOLD_S),
+
 	%% 4. Log rebalance
 	?LOG_DEBUG([{event, rebalance_peer},
 		{peer, PeerFormatted},
-		{dispatched_count, NewDispatched},
+		{in_flight_count, NewInFlight},
 		{queued_count, NewQueueLen},
-		{waiting_count, NewWaiting},
 		{max_queue_len, MaxQueueLen},
 		{faster_than_target, FasterThanTarget},
 		{workers_starved, WorkersStarved},
-		{max_dispatched, NewMaxDispatched},
+		{max_in_flight, NewMaxDispatched},
 		{removed_count, RemovedCount},
 		{idle_seconds, IdleSeconds},
 		{should_shutdown, ShouldShutdown}]),
@@ -301,22 +292,18 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, {error, unhandled}, State}.
 
-handle_cast({task_completed, FootprintKey, Result, ElapsedNative, DataSize}, State) ->
-	#state{ dispatched_count = DispatchedCount, max_dispatched = MaxDispatched,
+handle_cast({task_completed, WorkerPid, FootprintKey, Result, ElapsedNative, DataSize}, State) ->
+	#state{ in_flight_count = InFlightCount, max_in_flight = MaxInFlight,
 			peer = Peer } = State,
-	NewDispatchedCount = max(0, DispatchedCount - 1),
+	NewDispatchedCount = max(0, InFlightCount - 1),
 	increment_metrics(completed, State, 1),
-	%% Rate the fetched data with ar_peers
 	ElapsedMicroseconds = erlang:convert_time_unit(ElapsedNative, native, microsecond),
-	ar_peers:rate_fetched_data(Peer, chunk, Result, ElapsedMicroseconds, DataSize, MaxDispatched),
-	%% Phase 3: drop the monitor we set up in take_one for this footprint.
-	%% Match by FootprintKey since the worker doesn't pass the MonRef back.
-	%% Pick any monitor for this footprint key (sync workers handle one task
-	%% at a time so there's at most one match at a time per (worker, key)).
-	StateA = drop_monitor_for_footprint(FootprintKey, State),
-	%% Complete footprint task
+	ar_peers:rate_fetched_data(Peer, chunk, Result, ElapsedMicroseconds, DataSize, MaxInFlight),
 	State2 = do_complete_footprint_task(
-		FootprintKey, StateA#state{ dispatched_count = NewDispatchedCount }),
+		FootprintKey, State#state{
+			in_flight_count = NewDispatchedCount,
+			in_flight_workers = maps:remove(WorkerPid, State#state.in_flight_workers)
+		}),
 	record_peer_load(State2),
 	{noreply, State2};
 
@@ -330,25 +317,6 @@ handle_cast({enqueue, SyncTask}, State) ->
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
-
-handle_info({'DOWN', MonRef, process, _Pid, _Reason}, State) ->
-	%% Phase 3: a sync worker that took a task from us died before reporting
-	%% completion. Roll back the dispatch so the footprint slot and the
-	%% dispatched_count don't leak.
-	case maps:take(MonRef, State#state.outstanding) of
-		{{_WorkerPid, FootprintKey}, NewOutMap} ->
-			NewDispatched = max(0, State#state.dispatched_count - 1),
-			State2 = do_complete_footprint_task(
-				FootprintKey,
-				State#state{
-					dispatched_count = NewDispatched,
-					outstanding = NewOutMap
-				}),
-			record_peer_load(State2),
-			{noreply, State2};
-		error ->
-			{noreply, State}
-	end;
 
 handle_info(check_long_running_footprints, State) ->
 	%% Schedule next check
@@ -451,7 +419,7 @@ do_complete_footprint_task(FootprintKey, State) ->
 			NewActiveCount = Footprint#footprint.active_count - 1,
 			case NewActiveCount =< 0 of
 				true ->
-					%% All outstanding tasks for this key are done. Drop the
+					%% All in_flight_workers tasks for this key are done. Drop the
 					%% footprint entry and release the global slot if held.
 					case sets:is_element(FootprintKey, Active) of
 						true ->
@@ -521,29 +489,24 @@ log_long_running_footprints(State) ->
 	end.
 
 %%%===================================================================
-%%% Phase 3: pull-model helpers
+%%% Private functions - Dead worker reaping
 %%%===================================================================
 
-
-%% @doc Remove one outstanding monitor entry matching FootprintKey. The
-%% completing worker doesn't pass the MonRef back to us, so we look up by
-%% footprint key. There is at most one outstanding entry per (worker,
-%% footprint) pair because workers serialize tasks; picking the first
-%% match by FootprintKey is correct.
-drop_monitor_for_footprint(FootprintKey, State) ->
-	Outstanding = State#state.outstanding,
-	case find_monitor_by_footprint(maps:to_list(Outstanding), FootprintKey) of
-		none ->
-			State;
-		MonRef ->
-			erlang:demonitor(MonRef, [flush]),
-			State#state{ outstanding = maps:remove(MonRef, Outstanding) }
-	end.
-
-find_monitor_by_footprint([], _FootprintKey) -> none;
-find_monitor_by_footprint([{MonRef, {_Pid, FootprintKey}} | _], FootprintKey) -> MonRef;
-find_monitor_by_footprint([_ | Rest], FootprintKey) ->
-	find_monitor_by_footprint(Rest, FootprintKey).
+reap_dead_workers(State) ->
+	maps:fold(
+		fun(WorkerPid, FootprintKey, Acc) ->
+			case is_process_alive(WorkerPid) of
+				true ->
+					Acc;
+				false ->
+					NewInFlight = max(0, Acc#state.in_flight_count - 1),
+					do_complete_footprint_task(FootprintKey,
+						Acc#state{
+							in_flight_count = NewInFlight,
+							in_flight_workers = maps:remove(WorkerPid, Acc#state.in_flight_workers)
+						})
+			end
+		end, State, State#state.in_flight_workers).
 
 %%%===================================================================
 %%% Private functions - Metrics
@@ -644,7 +607,7 @@ peer_worker_test_() ->
 			fun test_footprint_deactivation_removes_from_map/1,
 			%% Phase 3 pull-model tests
 			fun test_take_one_returns_task/1,
-			fun test_take_one_at_max_dispatched/1,
+			fun test_take_one_at_max_in_flight/1,
 			fun test_take_one_no_slot_returns_none/1,
 			fun test_take_one_empty_queue_returns_none/1,
 			fun test_worker_death_releases_slot/1
@@ -687,7 +650,7 @@ test_enqueue_and_process({Peer, Pid}) ->
 
 		{ok, State} = gen_server:call(Pid, get_state),
 		?assertEqual(1, queue:len(State#state.task_queue)),
-		?assertEqual(3, State#state.dispatched_count)
+		?assertEqual(3, State#state.in_flight_count)
 	end.
 
 test_task_completed({Peer, Pid}) ->
@@ -698,11 +661,11 @@ test_task_completed({Peer, Pid}) ->
 		[_Task] = process_queue(Pid, 1),
 
 		%% Complete the task (FootprintKey = none)
-		task_completed(Pid, none, ok, 0, 100),
+		task_completed(Pid, self(), none, ok, 0, 100),
 		
 		%% Wait for cast to be processed by doing a sync call
 		{ok, State} = gen_server:call(Pid, get_state),
-		?assertEqual(0, State#state.dispatched_count)
+		?assertEqual(0, State#state.in_flight_count)
 	end.
 
 test_cut_queue({Peer, Pid}) ->
@@ -743,7 +706,7 @@ test_footprint_basic({Peer, Pid}) ->
 		?assertEqual(1, maps:get(total_active_tasks, Stats)),
 
 		%% Complete the task
-		task_completed(Pid, FootprintKey, ok, 0, 100),
+		task_completed(Pid, self(), FootprintKey, ok, 0, 100),
 		
 		%% Footprint should be deactivated (get_footprint_stats will wait for cast to process)
 		Stats2 = get_footprint_stats(Pid),
@@ -779,13 +742,13 @@ test_footprint_completion({Peer, Pid}) ->
 		?assertEqual(3, maps:get(total_active_tasks, Stats1)),
 
 		%% Complete tasks one by one
-		task_completed(Pid, FootprintKey, ok, 0, 100),
+		task_completed(Pid, self(), FootprintKey, ok, 0, 100),
 		Stats2 = get_footprint_stats(Pid),  %% Wait for cast to process
 		?assertEqual(2, maps:get(total_active_tasks, Stats2)),
 		?assertEqual(1, maps:get(active_footprint_count, Stats2)),  %% Still active
 
-		task_completed(Pid, FootprintKey, ok, 0, 100),
-		task_completed(Pid, FootprintKey, ok, 0, 100),
+		task_completed(Pid, self(), FootprintKey, ok, 0, 100),
+		task_completed(Pid, self(), FootprintKey, ok, 0, 100),
 		
 		Stats3 = get_footprint_stats(Pid),  %% Wait for casts to process
 		?assertEqual(0, maps:get(total_active_tasks, Stats3)),
@@ -807,7 +770,6 @@ test_footprint_waiting_queue({Peer, Pid}) ->
 			{ok, State} = gen_server:call(Pid, get_state),
 			%% Both tasks are in task_queue (no separate waiting queue anymore).
 			?assertEqual(2, queue:len(State#state.task_queue)),
-			?assertEqual(0, State#state.waiting_count),
 			%% Footprint not yet claimed since there are no slots.
 			?assertEqual(false, sets:is_element(FootprintKey, State#state.active_footprints)),
 			Footprint = maps:get(FootprintKey, State#state.footprints),
@@ -840,7 +802,7 @@ test_try_activate_footprint({Peer, Pid}) ->
 
 		{ok, State} = gen_server:call(Pid, get_state),
 		?assertEqual(0, queue:len(State#state.task_queue)),
-		?assertEqual(1, State#state.dispatched_count),
+		?assertEqual(1, State#state.in_flight_count),
 		?assertEqual(true, sets:is_element(FootprintKey, State#state.active_footprints)),
 		Footprint = maps:get(FootprintKey, State#state.footprints),
 		?assertEqual(1, Footprint#footprint.active_count)
@@ -860,7 +822,7 @@ test_footprint_task_cycling({Peer, Pid}) ->
 		%% and has no waiting tasks, it deactivates.
 		
 		%% Complete the task
-		task_completed(Pid, FootprintKey, ok, 0, 100),
+		task_completed(Pid, self(), FootprintKey, ok, 0, 100),
 		{ok, State} = gen_server:call(Pid, get_state),
 		
 		%% Footprint should be removed (no waiting tasks)
@@ -891,7 +853,7 @@ test_active_footprints_set({Peer, Pid}) ->
 		?assertEqual(true, sets:is_element(FootprintKey3, State1#state.active_footprints)),
 
 		%% Completing a footprint's only task releases the slot.
-		task_completed(Pid, FootprintKey1, ok, 0, 100),
+		task_completed(Pid, self(), FootprintKey1, ok, 0, 100),
 		{ok, State2} = gen_server:call(Pid, get_state),
 		?assertEqual(2, sets:size(State2#state.active_footprints)),
 		?assertEqual(false, sets:is_element(FootprintKey1, State2#state.active_footprints)),
@@ -911,8 +873,7 @@ test_add_task_to_active_footprint({Peer, Pid}) ->
 		%% All three tasks accumulate against the same footprint's active_count
 		%% regardless of whether they've been dispatched yet.
 		?assertEqual(3, Footprint#footprint.active_count),
-		?assertEqual(3, queue:len(State#state.task_queue)),
-		?assertEqual(0, State#state.waiting_count)
+		?assertEqual(3, queue:len(State#state.task_queue))
 	end.
 
 test_footprint_deactivation_removes_from_map({Peer, Pid}) ->
@@ -926,7 +887,7 @@ test_footprint_deactivation_removes_from_map({Peer, Pid}) ->
 		?assertEqual(true, maps:is_key(FootprintKey, State1#state.footprints)),
 		?assertEqual(true, sets:is_element(FootprintKey, State1#state.active_footprints)),
 
-		task_completed(Pid, FootprintKey, ok, 0, 100),
+		task_completed(Pid, self(), FootprintKey, ok, 0, 100),
 		{ok, State2} = gen_server:call(Pid, get_state),
 		?assertEqual(false, maps:is_key(FootprintKey, State2#state.footprints)),
 		?assertEqual(false, sets:is_element(FootprintKey, State2#state.active_footprints))
@@ -947,22 +908,22 @@ test_take_one_returns_task({Peer, Pid}) ->
 		{ok, _} = gen_server:call(Pid, get_state),
 		{task, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }} = take_one(Pid),
 		{ok, State} = gen_server:call(Pid, get_state),
-		?assertEqual(1, State#state.dispatched_count),
+		?assertEqual(1, State#state.in_flight_count),
 		?assertEqual(0, queue:len(State#state.task_queue)),
 		?assertEqual(true, sets:is_element(FootprintKey, State#state.active_footprints)),
 		?assertEqual(4, ets:lookup_element(worker_load, footprint_slots_available, 2))
 	end.
 
-%% Slow-peer protection: when dispatched_count reaches max_dispatched the
+%% Slow-peer protection: when in_flight_count reaches max_in_flight the
 %% peer refuses to hand out more tasks.
-test_take_one_at_max_dispatched({Peer, Pid}) ->
+test_take_one_at_max_in_flight({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 2000, Peer},
 		ets:insert(worker_load, {footprint_slots_available, 1000}),
-		%% Force max_dispatched to a small number via raw state update so we
+		%% Force max_in_flight to a small number via raw state update so we
 		%% can saturate it without triggering the rebalance machinery.
-		MaxDispatched = 2,
-		sys:replace_state(Pid, fun(S) -> S#state{ max_dispatched = MaxDispatched } end),
+		MaxInFlight = 2,
+		sys:replace_state(Pid, fun(S) -> S#state{ max_in_flight = MaxInFlight } end),
 		lists:foreach(fun(I) ->
 			enqueue(Pid, #sync_task{ start_offset = I*100, end_offset = (I+1)*100, peer = Peer, store_id = store1, footprint_key = FootprintKey })
 		end, lists:seq(0, 4)),
@@ -991,14 +952,12 @@ test_take_one_empty_queue_returns_none({_Peer, Pid}) ->
 		?assertEqual(none, take_one(Pid))
 	end.
 
-%% Worker crash recovery: peer worker monitors the worker that took a
-%% task; when that worker dies, the slot is released and dispatched_count
-%% rolls back to zero.
+%% Worker crash recovery: rebalance reaps dead workers, releasing the
+%% in_flight_count and footprint slot they held.
 test_worker_death_releases_slot({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 5000, Peer},
 		ets:insert(worker_load, {footprint_slots_available, 5}),
-		%% Put one task in the queue so the fake worker has something to take.
 		enqueue(Pid, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }),
 		{ok, _} = gen_server:call(Pid, get_state),
 		Self = self(),
@@ -1011,17 +970,15 @@ test_worker_death_releases_slot({Peer, Pid}) ->
 		after 1000 -> ?assert(false, "fake worker did not pull")
 		end,
 		{ok, State1} = gen_server:call(Pid, get_state),
-		?assertEqual(1, State1#state.dispatched_count),
+		?assertEqual(1, State1#state.in_flight_count),
 		?assertEqual(4, ets:lookup_element(worker_load, footprint_slots_available, 2)),
+		%% Kill the fake worker, then trigger rebalance to reap it.
 		FakeWorker ! die,
-		%% Wait for DOWN to be processed.
-		_ = lists:any(fun(_) ->
-			timer:sleep(50),
-			{ok, S} = gen_server:call(Pid, get_state),
-			S#state.dispatched_count =:= 0
-		end, lists:seq(1, 20)),
+		timer:sleep(50),
+		Performance = #performance{ current_rating = 100.0, average_latency = 50.0 },
+		rebalance(Pid, Performance, {1.0, 100.0, false}),
 		{ok, State2} = gen_server:call(Pid, get_state),
-		?assertEqual(0, State2#state.dispatched_count),
+		?assertEqual(0, State2#state.in_flight_count),
 		?assertEqual(5, ets:lookup_element(worker_load, footprint_slots_available, 2))
 	end.
 
