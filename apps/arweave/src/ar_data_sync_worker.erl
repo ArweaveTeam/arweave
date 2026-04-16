@@ -70,8 +70,8 @@ handle_cast(pull, State) ->
 	%% Shuffle list to distribute peer load across workers.
 	Peers = ar_util:shuffle_list(ar_peer_worker:get_all_peers()),
 	case try_take_one(Peers) of
-		{ok, SyncTask, PeerPid} ->
-			run_sync_range(SyncTask, PeerPid, State),
+		{ok, SyncTask} ->
+			run_sync_range(SyncTask, State),
 			%% Loop: immediately try to pull again.
 			gen_server:cast(self(), pull),
 			{noreply, State};
@@ -85,7 +85,7 @@ handle_cast({sync_range, SyncTask}, State) ->
 	%% Phase 3: this clause now serves only the self-recast pathway —
 	%% sync_range/2 schedules `cast_after(_, self(), {sync_range, SyncTask})`
 	%% on retryable errors (cache full, disk full, HTTP timeout). The
-	%% peer worker is still holding the slot and the dispatched_count for
+	%% peer worker is still holding the slot and the in_flight_count for
 	%% this task from the original take_one; the recast must therefore
 	%% report completion to the same peer worker so the slot is released.
 	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
@@ -96,14 +96,8 @@ handle_cast({sync_range, SyncTask}, State) ->
 	case SyncResult of
 		recast -> ok;
 		_ ->
-			case ar_peer_worker:get_pid(Peer) of
-				{ok, PeerPid} ->
-					ar_peer_worker:task_completed(PeerPid, self(), FootprintKey,
-						SyncResult, EndTime - StartTime, End - Start);
-				_ ->
-					?LOG_WARNING([{event, sync_range_recast_no_peer_worker},
-						{peer, ar_util:format_peer(Peer)}])
-			end
+			ar_peer_worker:task_completed(Peer, self(), FootprintKey,
+				SyncResult, EndTime - StartTime, End - Start)
 	end,
 	{noreply, State};
 
@@ -120,7 +114,7 @@ try_take_one([]) ->
 try_take_one([{_Peer, PeerPid} | Rest]) ->
 	case ar_peer_worker:take_one(PeerPid) of
 		{task, SyncTask} ->
-			{ok, SyncTask, PeerPid};
+			{ok, SyncTask};
 		none ->
 			try_take_one(Rest)
 	end.
@@ -128,13 +122,13 @@ try_take_one([{_Peer, PeerPid} | Rest]) ->
 %% @doc Execute one sync_range task and report completion to the owning
 %% peer worker. On recast (cache full / disk full / retryable HTTP error)
 %% sync_range internally schedules a self-cast_after; we leave the slot
-%% claimed and dispatched_count incremented at the peer worker. The
+%% claimed and in_flight_count incremented at the peer worker. The
 %% scheduled retry lands in the legacy `{sync_range, _}` cast handler,
 %% which will report completion when the retry succeeds (or definitively
 %% fails after exhausting retries — see sync_range/2 retry-zero clause
 %% which returns {error, timeout} directly, not recast).
-run_sync_range(SyncTask, PeerPid, State) ->
-	#sync_task{ start_offset = Start, end_offset = End,
+run_sync_range(SyncTask, State) ->
+	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
 			footprint_key = FootprintKey } = SyncTask,
 	StartTime = erlang:monotonic_time(),
 	SyncResult = sync_range(SyncTask, State),
@@ -145,7 +139,7 @@ run_sync_range(SyncTask, PeerPid, State) ->
 			ok;
 		_ ->
 			DataSize = End - Start,
-			ar_peer_worker:task_completed(PeerPid, self(), FootprintKey, SyncResult,
+			ar_peer_worker:task_completed(Peer, self(), FootprintKey, SyncResult,
 				EndTime - StartTime, DataSize)
 	end,
 	ok.
@@ -301,7 +295,7 @@ sync_range(#sync_task{ start_offset = Start, end_offset = End }, _State) when St
 	ok;
 sync_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
 		retry_count = 0 }, _State) ->
-	?LOG_DEBUG([{event, sync_range_retries_exhausted},
+	?LOG_WARNING([{event, sync_range_retries_exhausted},
 				{peer, ar_util:format_peer(Peer)},
 				{start_offset, Start}, {end_offset, End}]),
 	{error, timeout};

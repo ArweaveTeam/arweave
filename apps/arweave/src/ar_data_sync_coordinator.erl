@@ -1,55 +1,21 @@
-%%% @doc Coordinates data sync tasks between worker processes and peer workers.
+%%% @doc Thin coordinator for the sync subsystem. Pull-model dispatch means
+%%% most of the logic lives elsewhere; this module holds the peer roster,
+%%% runs the periodic rebalance tick, and owns the global worker_load ETS
+%%% helpers.
 %%%
-%%% This module acts as a coordinator that:
-%%% - Dispatches sync tasks to ar_data_sync_worker processes
-%%% - Coordinates with ar_peer_worker processes (one per peer) that manage:
-%%%   - Peer task queues and dispatch limits
-%%%   - Footprint management (grouping tasks to limit entropy cache usage)
-%%%   - Peer performance tracking
-%%% - Performs periodic rebalancing based on peer performance metrics
+%%% Components:
+%%% - ar_peer_worker (one per peer): owns the per-peer task queue, in-flight
+%%%   count and limit, footprint state. Sole writer of its worker_load rows.
+%%% - ar_data_sync_worker (pool of N): pull loop. Each worker shuffles the
+%%%   peer roster and asks peer workers for tasks via take_one/1.
+%%% - this module: forwards sync_range casts into the right peer worker,
+%%%   runs the rebalance tick every ?REBALANCE_FREQUENCY_MS, and exposes
+%%%   ETS helpers (record_peer_load, claim/release_footprint_slot).
 %%%
-%%% Architecture:
-%%% - Each peer has its own ar_peer_worker process that manages peer-specific state
-%%%   (queues, footprints, dispatch limits, performance metrics)
-%%% - This coordinator manages the pool of ar_data_sync_worker processes and
-%%%   dispatches tasks from peer queues to available workers
-%%% - Worker selection uses round-robin with load balancing
-%%%
-%%% Task Flow:
-%%% 1. Tasks are enqueued to the appropriate ar_peer_worker
-%%% 2. Peer workers store those tasks in either
-%%%    - their task_queue (ready for dispatch) if they belong to an active footprint
-%%%    - or in a waiting queue (not ready for dispatch) if they don't belong to an
-%%%      active footprint
-%%% 3. Periodically the coordinator pulls tasks from peer queues and dispatches to workers.
-%%%    This is event based and happens in response to one of these events:
-%%%    - a new task is sent to the coordinator
-%%%    - a task is completed by an ar_data_sync_worker
-%%% 4. On task completion, peer workers update metrics and notify coordinator.
-%%% 5. When a footprint completes, a new footprint is activated. Footprint activation is
-%%%    handled both by the ar_peer_worker (if it has waiting tasks) or by the coordinator
-%%%    (if the ar_peer_worker does not have waiting tasks, coordinator will find another
-%%%    peer that does). Note: footprint activation does not immediately dispatch tasks.
-%%% 
-%%% Tasks can be in one of three states:
-%%% - waiting: the task belongs to an inactive footprint and is stored in a
-%%%            "waiting" queue on the ar_peer_worker. A task in the "waiting"
-%%%            state contributes to the total_queued_count, but can not be dispatched
-%%%            until its footprint becomes active.
-%%% - queued: the task belongs to an activae footprint and is stored in the
-%%%           ar_peer_worker's task queue. It will be dispatched as soon as
-%%%           an ar_data_sync_worker becomes available.  A task in the "queued"
-%%%           state contributes to the total_queued_count.
-%%% - dispatched: the task has been dispatched to an ar_data_sync_worker and is
-%%%            being processed. A task in the "dispatched" state contributes to the
-%%%            total_in_flight_count.
-%%% 
-%%% Footprints can be in one of two states:
-%%% - active: All tasks belonging to an active footprint are moved to the
-%%%           ar_peer_worker's task queue and are eligible to be dispatched.
-%%% - inactive: All tasks belonging to an inactive footprint are stored in the
-%%%             ar_peer_worker's "waiting" queue. They are not eligible to be 
-%%%             dispatched until their footprint becomes active.
+%%% Tasks are either queued (in a peer worker's task_queue) or in-flight
+%%% (held by a sync worker that called take_one). A task with a footprint
+%%% key cannot go in-flight unless its peer already holds a global footprint
+%%% slot or can claim one atomically (see claim_footprint_slot/0).
 %%%
 -module(ar_data_sync_coordinator).
 
@@ -69,6 +35,11 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
+-ifdef(AR_TEST).
+-export([init_worker_load_for_test/1, set_footprint_slots/1,
+		 set_footprint_slots_available/1, get_footprint_slots_available/0]).
+-endif.
+
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_sup.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -82,10 +53,7 @@
 %% Counters live in ETS (worker_load, footprint_slots_*) — see Phase 0–2.
 %% The `workers` queue is gone with the push dispatcher; sync workers are
 %% looked up by name on demand and the count is published once at init.
--record(state, {
-	known_peers = #{},     %% Peer => Pid — canonical peer worker roster
-	max_footprints = 0     %% retained for periodic anomaly logging
-}).
+-record(state, {}).
 
 %%%===================================================================
 %%% Public interface.
@@ -164,9 +132,7 @@ init(Workers) ->
 		 {footprint_slots_max, MaxFootprints}]),
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {workers, Workers},
 		{max_footprints, MaxFootprints}]),
-	{ok, #state{
-		max_footprints = MaxFootprints
-	}}.
+	{ok, #state{}}.
 
 calculate_max_footprints() ->
 	{ok, Config} = arweave_config:get_env(),
@@ -185,25 +151,20 @@ handle_call(Request, _From, State) ->
 %% sum on demand. No coordinator-owned counter to maintain.
 handle_cast({sync_range, SyncTask}, State) ->
 	#sync_task{ peer = Peer } = SyncTask,
-	{Pid, State1} = maybe_add_peer(Peer, State),
-	case Pid of
-		undefined -> ok;
-		_ -> ar_peer_worker:enqueue(Pid, SyncTask)
+	case ar_peer_worker:get_or_start(Peer) of
+		{ok, Pid} -> ar_peer_worker:enqueue(Pid, SyncTask);
+		{error, _} -> ok
 	end,
-	{noreply, State1};
+	{noreply, State};
 
 handle_cast(rebalance_peers, State) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
-	PeerPids = State#state.known_peers,
+	PeerPids = maps:from_list(ar_peer_worker:get_all_peers()),
 	Peers = maps:keys(PeerPids),
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	Targets = calculate_targets(PeerPids, AllPeerPerformances, State),
 	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State),
 	log_anomalies(State2),
-	{noreply, State2};
-
-handle_cast({peer_worker_started, Peer, Pid}, State) ->
-	State2 = State#state{ known_peers = maps:put(Peer, Pid, State#state.known_peers) },
 	{noreply, State2};
 
 handle_cast(Cast, State) ->
@@ -287,18 +248,15 @@ rebalance_peers2([{Peer, Pid} | Rest], AllPeerPerformances, Targets, State) ->
 	Result = ar_peer_worker:rebalance(Pid, Performance, RebalanceParams),
 	%% Phase 4: cuts to total_queued go through the peer worker's
 	%% record_peer_load path; coordinator only tracks roster membership.
-	State2 = case Result of
+	case Result of
 		{shutdown, _RemovedCount} ->
 			?LOG_INFO([{event, shutdown_idle_peer_worker},
 				{peer, ar_util:format_peer(Peer)}]),
-			ar_peer_worker:stop(Pid),
-			State#state{ known_peers = maps:remove(Peer, State#state.known_peers) };
-		{ok, _RemovedCount} ->
-			State;
-		{error, timeout} ->
-			State
+			ar_peer_worker:stop(Pid);
+		{ok, _RemovedCount} -> ok;
+		{error, timeout} -> ok
 	end,
-	rebalance_peers2(Rest, AllPeerPerformances, Targets, State2).
+	rebalance_peers2(Rest, AllPeerPerformances, Targets, State).
 
 %% @doc Scaling factor for calculating per-peer max queue size.
 %% Peer worker calculates: MaxQueue = max(PeerThroughput * ScalingFactor, MIN_PEER_QUEUE)
@@ -398,21 +356,6 @@ sum_prefix(Tag) ->
 	MatchSpec = [{ {{Tag, '_'}, '$1'}, [], ['$1'] }],
 	lists:sum(ets:select(?WORKER_LOAD_TABLE, MatchSpec)).
 
-%% @doc Add a peer to known_peers if not already present. Returns {Pid, State}.
-%% The Pid is cached so we don't have to do whereis + atom lookup on every call.
-maybe_add_peer(Peer, State) ->
-	case State#state.known_peers of
-		#{Peer := Pid} -> 
-			{Pid, State};
-		_ -> 
-			case ar_peer_worker:get_or_start(Peer) of
-				{ok, Pid} ->
-					{Pid, State#state{ known_peers = maps:put(Peer, Pid, State#state.known_peers) }};
-				{error, _} ->
-					{undefined, State}
-			end
-	end.
-
 %% Phase 4: get_worker / cycle_workers / try_activate_footprint are gone.
 %% Sync workers pull on their own in Phase 3+; the coordinator no longer
 %% selects workers or dispatches tasks.
@@ -424,11 +367,35 @@ maybe_add_peer(Peer, State) ->
 -ifdef(AR_TEST).
 -include_lib("eunit/include/eunit.hrl").
 
+%% @doc Test-only: create (if needed) and initialise the worker_load table
+%% with a footprint-slot gauge so dequeue-time claims can succeed.
+init_worker_load_for_test(Slots) ->
+	case ets:info(?WORKER_LOAD_TABLE) of
+		undefined ->
+			ets:new(?WORKER_LOAD_TABLE, [named_table, public, set]);
+		_ -> ok
+	end,
+	set_footprint_slots(Slots).
+
+%% @doc Test-only: override the footprint-slot gauge.
+set_footprint_slots(Slots) ->
+	ets:insert(?WORKER_LOAD_TABLE,
+		[{footprint_slots_available, Slots}, {footprint_slots_max, Slots}]),
+	ok.
+
+%% @doc Test-only: override only the available slot count (not the max).
+set_footprint_slots_available(Slots) ->
+	ets:insert(?WORKER_LOAD_TABLE, {footprint_slots_available, Slots}),
+	ok.
+
+%% @doc Test-only: current available slot count.
+get_footprint_slots_available() ->
+	ets:lookup_element(?WORKER_LOAD_TABLE, footprint_slots_available, 2).
+
 coordinator_test_() ->
 	[
 		{timeout, 30, fun test_max_tasks/0},
 		{timeout, 30, fun test_queue_scaling_factor/0},
-		{timeout, 30, fun test_peer_worker_started_updates_cache/0},
 		{timeout, 30, fun test_calculate_targets/0}
 	].
 
@@ -444,22 +411,6 @@ test_queue_scaling_factor() ->
 	?assertEqual(5.0, queue_scaling_factor(100.0, 10)),
 	?assertEqual(2.5, queue_scaling_factor(200.0, 10)),
 	?assertEqual(50.0, queue_scaling_factor(10.0, 10)).
-
-test_peer_worker_started_updates_cache() ->
-	Peer1 = {1,2,3,4,1984},
-	Peer2 = {5,6,7,8,1985},
-	Pid1 = self(),
-	Pid2 = self(),
-
-	State0 = #state{ known_peers = #{} },
-	{noreply, State1} = handle_cast({peer_worker_started, Peer1, Pid1}, State0),
-	?assertEqual(Pid1, maps:get(Peer1, State1#state.known_peers)),
-	{noreply, State2} = handle_cast({peer_worker_started, Peer2, Pid2}, State1),
-	?assertEqual(Pid1, maps:get(Peer1, State2#state.known_peers)),
-	?assertEqual(Pid2, maps:get(Peer2, State2#state.known_peers)),
-	NewPid = spawn(fun() -> ok end),
-	{noreply, State3} = handle_cast({peer_worker_started, Peer1, NewPid}, State2),
-	?assertEqual(NewPid, maps:get(Peer1, State3#state.known_peers)).
 
 test_calculate_targets() ->
 	%% Phase 1: max_in_flight is now read from the ETS mirror, not via
