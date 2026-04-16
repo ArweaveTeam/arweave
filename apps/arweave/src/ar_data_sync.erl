@@ -1484,7 +1484,13 @@ do_sync_intervals(State) ->
 			{{FootprintKey, Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
 			I2 = ar_intervals:delete(QIntervals, End, Start),
 			gen_server:cast(ar_data_sync_coordinator,
-					{sync_range, {Start, End, Peer, StoreID, FootprintKey}}),
+					{sync_range, #sync_task{
+						start_offset = Start,
+						end_offset = End,
+						peer = Peer,
+						store_id = StoreID,
+						footprint_key = FootprintKey
+					}}),
 			State#sync_data_state{ sync_intervals_queue = Q2,
 					sync_intervals_queue_intervals = I2 }
 	end.

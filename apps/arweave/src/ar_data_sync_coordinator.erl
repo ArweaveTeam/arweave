@@ -72,6 +72,7 @@
 -include_lib("arweave/include/ar_sup.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_peers.hrl").
+-include_lib("arweave/include/ar_data_sync.hrl").
 
 -define(REBALANCE_FREQUENCY_MS, 10*1000).
 -define(WORKER_LOAD_TABLE, worker_load).
@@ -139,18 +140,13 @@ ready_for_work() ->
 		case WorkerCount of
 			0 -> false;
 			_ ->
-				Sum = sum_peer_counters(),
-				Sum < max_tasks(WorkerCount)
+				TotalQueuedTasks = sum_prefix(peer_queued),
+				TotalDispatchedTasks = sum_prefix(peer_dispatched),
+				TotalQueuedTasks + TotalDispatchedTasks < max_tasks(WorkerCount)
 		end
 	catch _:_ ->
 		false
 	end.
-
-%% Sum {peer_queued, _} + {peer_dispatched, _} from the worker_load table.
-sum_peer_counters() ->
-	Q = sum_prefix(peer_queued),
-	D = sum_prefix(peer_dispatched),
-	Q + D.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -160,8 +156,9 @@ init(Workers) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 	MaxFootprints = calculate_max_footprints(),
 	%% worker_load and idle_workers ETS tables are created in ar_data_sync_sup.
-	%% Reset contents in case this is a coordinator restart.
-	worker_load_reset(),
+	%% Clear any stale entries from a previous coordinator incarnation before
+	%% republishing workers_count and the footprint slot gauge.
+	ets:delete_all_objects(?WORKER_LOAD_TABLE),
 	ets:delete_all_objects(idle_workers),
 	ets:insert(?WORKER_LOAD_TABLE, {workers_count, length(Workers)}),
 	ets:insert(?WORKER_LOAD_TABLE,
@@ -189,12 +186,12 @@ handle_call(Request, _From, State) ->
 %% the task. The peer worker's `record_peer_load` updates its own per-peer
 %% ETS rows; `ready_for_work/0` derives the global total from the per-peer
 %% sum on demand. No coordinator-owned counter to maintain.
-handle_cast({sync_range, Args}, State) ->
-	{_Start, _End, Peer, _TargetStoreID, _FootprintKey} = Args,
+handle_cast({sync_range, SyncTask}, State) ->
+	#sync_task{ peer = Peer } = SyncTask,
 	{Pid, State1} = maybe_add_peer(Peer, State),
 	case Pid of
 		undefined -> ok;
-		_ -> ar_peer_worker:enqueue(Pid, Args)
+		_ -> ar_peer_worker:enqueue(Pid, SyncTask)
 	end,
 	{noreply, State1};
 
@@ -329,14 +326,6 @@ queue_scaling_factor(TotalThroughput, WorkerCount) ->
 %%%===================================================================
 %%% Phase 0/4 ETS helpers
 %%%===================================================================
-
-%% @doc Clear the mirror so a fresh coordinator init starts from zero.
-worker_load_reset() ->
-	try
-		ets:delete_all_objects(?WORKER_LOAD_TABLE),
-		ets:insert(?WORKER_LOAD_TABLE, {workers_count, 0})
-	catch _:_ -> ok
-	end.
 
 %% @doc Called from ar_peer_worker to publish its current load contribution
 %% (in-flight, queued, active footprints, slow-peer cap) to the worker_load

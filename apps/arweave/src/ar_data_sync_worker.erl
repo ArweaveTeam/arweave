@@ -16,11 +16,7 @@
 
 -record(state, {
 	name = undefined,
-	request_packed_chunks = false,
-	%% Phase 3: rotating offset into the peer roster so concurrent workers
-	%% start their pull at different peers. Provides fairness equivalent to
-	%% the old coordinator-side round-robin.
-	peer_offset = 0
+	request_packed_chunks = false
 }).
 
  %% # of messages to cast to ar_data_sync at once. Each message carries at least 1 chunk worth
@@ -71,17 +67,16 @@ handle_cast({read_range, Args}, State) ->
 	end,
 	{noreply, State};
 
-%% Phase 3: pull loop. Try peers in round-robin order; on success run the
+%% Phase 3: pull loop. Try peers in shuffled order; on success run the
 %% sync_range and report completion directly to the owning peer worker.
 %% On total miss, register as idle and wait for a `work_available` cast.
 handle_cast(pull, State) ->
-	Peers = peer_list_starting_at(State#state.peer_offset),
-	case try_take_one(Peers) of
-		{ok, Args, PeerPid, NewOffset} ->
-			run_sync_range(Args, PeerPid, State),
+	case try_take_one(shuffled_peers()) of
+		{ok, SyncTask, PeerPid} ->
+			run_sync_range(SyncTask, PeerPid, State),
 			%% Loop: immediately try to pull again.
 			gen_server:cast(self(), pull),
-			{noreply, State#state{ peer_offset = NewOffset }};
+			{noreply, State};
 		none ->
 			%% No peer has work right now. Register and wait for a wake.
 			try ets:insert(idle_workers, {self()})
@@ -98,16 +93,17 @@ handle_cast(work_available, State) ->
 	gen_server:cast(self(), pull),
 	{noreply, State};
 
-handle_cast({sync_range, Args}, State) ->
+handle_cast({sync_range, SyncTask}, State) ->
 	%% Phase 3: this clause now serves only the self-recast pathway —
-	%% sync_range/2 schedules `cast_after(_, self(), {sync_range, Args})`
+	%% sync_range/2 schedules `cast_after(_, self(), {sync_range, SyncTask})`
 	%% on retryable errors (cache full, disk full, HTTP timeout). The
 	%% peer worker is still holding the slot and the dispatched_count for
 	%% this task from the original take_one; the recast must therefore
 	%% report completion to the same peer worker so the slot is released.
-	{Start, End, Peer, _TargetStoreID, _RetryCount, FootprintKey} = Args,
+	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
+			footprint_key = FootprintKey } = SyncTask,
 	StartTime = erlang:monotonic_time(),
-	SyncResult = sync_range(Args, State),
+	SyncResult = sync_range(SyncTask, State),
 	EndTime = erlang:monotonic_time(),
 	case SyncResult of
 		recast -> ok;
@@ -131,18 +127,10 @@ handle_cast(Cast, State) ->
 %%% Phase 3: pull loop helpers
 %%%===================================================================
 
-%% @doc Build the peer list starting from a rotating offset for fairness.
-peer_list_starting_at(Offset) ->
-	try
-		All = ets:tab2list(ar_peer_worker),
-		case All of
-			[] -> [];
-			_ ->
-				N = length(All),
-				Start = (Offset rem N) + 1,
-				{Tail, Head} = lists:split(Start - 1, All),
-				Head ++ Tail
-		end
+%% @doc Return the peer roster in randomised order. Per-worker shuffling
+%% spreads concurrent pulls across peers without shared coordination.
+shuffled_peers() ->
+	try ar_util:shuffle_list(ets:tab2list(ar_peer_worker))
 	catch _:_ -> []
 	end.
 
@@ -150,17 +138,11 @@ try_take_one([]) ->
 	none;
 try_take_one([{_Peer, PeerPid} | Rest]) ->
 	case ar_peer_worker:take_one(PeerPid) of
-		{task, Args} ->
-			{ok, Args, PeerPid, advance_offset()};
+		{task, SyncTask} ->
+			{ok, SyncTask, PeerPid};
 		none ->
 			try_take_one(Rest)
 	end.
-
-advance_offset() ->
-	%% Use scheduler id as a seed for offset rotation. Keeps concurrent
-	%% workers landing on different peers without needing inter-worker
-	%% coordination.
-	erlang:system_time(microsecond) + erlang:phash2(self(), 1024).
 
 %% @doc Execute one sync_range task and report completion to the owning
 %% peer worker. On recast (cache full / disk full / retryable HTTP error)
@@ -170,10 +152,11 @@ advance_offset() ->
 %% which will report completion when the retry succeeds (or definitively
 %% fails after exhausting retries — see sync_range/2 retry-zero clause
 %% which returns {error, timeout} directly, not recast).
-run_sync_range({Start, End, _Peer, _TargetStoreID, _RetryCount, FootprintKey} = Args,
-		PeerPid, State) ->
+run_sync_range(SyncTask, PeerPid, State) ->
+	#sync_task{ start_offset = Start, end_offset = End,
+			footprint_key = FootprintKey } = SyncTask,
 	StartTime = erlang:monotonic_time(),
-	SyncResult = sync_range(Args, State),
+	SyncResult = sync_range(SyncTask, State),
 	EndTime = erlang:monotonic_time(),
 	case SyncResult of
 		recast ->
@@ -338,18 +321,20 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
 			end
 	end.
 
-sync_range({Start, End, Peer, _TargetStoreID, _RetryCount, _FootprintKey} = Args, _State) when Start >= End ->
+sync_range(#sync_task{ start_offset = Start, end_offset = End }, _State) when Start >= End ->
 	ok;
-sync_range({Start, End, Peer, _TargetStoreID, 0, _FootprintKey}, _State) ->
+sync_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
+		retry_count = 0 }, _State) ->
 	?LOG_DEBUG([{event, sync_range_retries_exhausted},
 				{peer, ar_util:format_peer(Peer)},
 				{start_offset, Start}, {end_offset, End}]),
 	{error, timeout};
-sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, State) ->
+sync_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
+		store_id = TargetStoreID, retry_count = RetryCount } = SyncTask, State) ->
 	IsChunkCacheFull =
 		case ar_data_sync:is_chunk_cache_full() of
 			true ->
-				ar_util:cast_after(500, self(), {sync_range, Args}),
+				ar_util:cast_after(500, self(), {sync_range, SyncTask}),
 				true;
 			false ->
 				false
@@ -361,7 +346,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 					true ->
 						true;
 					_ ->
-						ar_util:cast_after(30000, self(), {sync_range, Args}),
+						ar_util:cast_after(30000, self(), {sync_range, SyncTask}),
 						false
 				end;
 			true ->
@@ -393,14 +378,15 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 									{store_fetched_chunk, Peer, Byte, Proof}),
 							ar_data_sync:increment_chunk_cache_size(),
 							sync_range(
-								{Start3, End, Peer, TargetStoreID, RetryCount, FootprintKey},
+								SyncTask#sync_task{ start_offset = Start3 },
 								State);
 						{error, timeout} ->
 							?LOG_DEBUG([{event, timeout_fetching_chunk},
 									{peer, ar_util:format_peer(Peer)},
 									{start_offset, Start2}, {end_offset, End}]),
-							Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1, FootprintKey},
-							ar_util:cast_after(1000, self(), {sync_range, Args2}),
+							SyncTask2 = SyncTask#sync_task{
+								retry_count = RetryCount - 1 },
+							ar_util:cast_after(1000, self(), {sync_range, SyncTask2}),
 							recast;
 						{error, {ok, {{<<"404">>, _}, _, _, _, _}} = Reason} ->
 							{error, Reason};

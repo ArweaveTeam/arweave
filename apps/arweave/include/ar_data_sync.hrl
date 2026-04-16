@@ -1,6 +1,20 @@
 %% The size in bits of the offset key in kv databases.
 -define(OFFSET_KEY_BITSIZE, 256).
 
+%% A single sync unit: fetch the byte range [start_offset, end_offset) from
+%% `peer` into storage module `store_id`. `footprint_key` groups chunks that
+%% share the same 256 MiB entropy (replica.2.9 mode) for admission control;
+%% `none` means the task has no footprint constraint. `retry_count` counts
+%% down on transient errors; the task is abandoned at 0.
+-record(sync_task, {
+	start_offset,
+	end_offset,
+	peer,
+	store_id,
+	retry_count = 3,
+	footprint_key = none
+}).
+
 %% The size in bits of the key prefix used in prefix bloom filter
 %% when looking up chunks by offsets from kv database.
 %% 29 bytes of the prefix correspond to the 16777216 (16 Mib) max distance

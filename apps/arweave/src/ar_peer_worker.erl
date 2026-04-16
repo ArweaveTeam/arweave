@@ -43,6 +43,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_peers.hrl").
+-include_lib("arweave/include/ar_data_sync.hrl").
 
 -define(MIN_MAX_DISPATCHED, 8).
 -define(MIN_PEER_QUEUE, 20).
@@ -195,33 +196,34 @@ handle_call(get_state, _From, State) ->
 %% footprint cannot claim a global slot. The peer monitors the worker pid
 %% so dispatched_count and the slot can be reclaimed if the worker dies.
 handle_call({take_one, WorkerPid}, _From, State) ->
-	#state{ dispatched_count = D, max_dispatched = M, task_queue = Q } = State,
-	case D >= M of
+	#state{ dispatched_count = DispatchedCount, max_dispatched = MaxDispatched,
+			task_queue = TaskQueue } = State,
+	case DispatchedCount >= MaxDispatched of
 		true ->
 			{reply, none, State};
 		false ->
-			case queue:peek(Q) of
+			case queue:peek(TaskQueue) of
 				empty ->
 					{reply, none, State};
-				{value, Args} ->
-					FootprintKey = element(5, Args),
+				{value, SyncTask} ->
+					#sync_task{ footprint_key = FootprintKey } = SyncTask,
 					case try_admit(FootprintKey, State) of
 						{ok, State2} ->
-							{{value, Args}, NewQ} = queue:out(Q),
+							{{value, SyncTask}, NewTaskQueue} = queue:out(TaskQueue),
 							MonRef = erlang:monitor(process, WorkerPid),
-							OutMap = maps:put(MonRef,
+							OutstandingMap = maps:put(MonRef,
 								{WorkerPid, FootprintKey},
 								State2#state.outstanding),
 							State3 = State2#state{
-								task_queue = NewQ,
-								dispatched_count = D + 1,
-								outstanding = OutMap,
+								task_queue = NewTaskQueue,
+								dispatched_count = DispatchedCount + 1,
+								outstanding = OutstandingMap,
 								last_task_time = erlang:monotonic_time()
 							},
 							increment_metrics(dispatched, State3, 1),
 							increment_metrics(queued_out, State3, 1),
 							record_peer_load(State3),
-							{reply, {task, Args}, State3};
+							{reply, {task, SyncTask}, State3};
 						no_slot ->
 							{reply, none, State}
 					end
@@ -312,13 +314,13 @@ handle_cast({task_completed, FootprintKey, Result, ElapsedNative, DataSize}, Sta
 	record_peer_load(State2),
 	{noreply, State2};
 
-handle_cast({enqueue, Args}, State) ->
+handle_cast({enqueue, SyncTask}, State) ->
 	%% Phase 3: one-way enqueue from the coordinator. Append to task_queue,
 	%% bump the footprint's outstanding count, then wake one idle sync
 	%% worker so it can pull the new task.
-	FootprintKey = element(5, Args),
+	#sync_task{ footprint_key = FootprintKey } = SyncTask,
 	State1 = State#state{ last_task_time = erlang:monotonic_time() },
-	{_, State2} = do_enqueue_task(FootprintKey, Args, true, State1),
+	{_, State2} = do_enqueue_task(FootprintKey, SyncTask, true, State1),
 	wake_one_idle_worker(),
 	record_peer_load(State2),
 	{noreply, State2};
@@ -475,8 +477,7 @@ do_complete_footprint_task(FootprintKey, State) ->
 %% slot-release path is shared.
 cut_footprint_task_counts([], State) ->
 	State;
-cut_footprint_task_counts([Args | Rest], State) ->
-	FootprintKey = element(5, Args),
+cut_footprint_task_counts([#sync_task{ footprint_key = FootprintKey } | Rest], State) ->
 	State2 = case FootprintKey of
 		none -> State;
 		_ -> do_complete_footprint_task(FootprintKey, State)
@@ -686,14 +687,14 @@ cleanup({Peer, Pid}) ->
 
 test_enqueue_and_process({Peer, Pid}) ->
 	fun() ->
-		enqueue_task(Pid, none, {0, 100, Peer, store1, none}, true, 0),
-		enqueue_task(Pid, none, {100, 200, Peer, store1, none}, true, 0),
-		enqueue_task(Pid, none, {200, 300, Peer, store1, none}, true, 0),
+		enqueue_task(Pid, none, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = none }, true, 0),
+		enqueue_task(Pid, none, #sync_task{ start_offset = 100, end_offset = 200, peer = Peer, store_id = store1, footprint_key = none }, true, 0),
+		enqueue_task(Pid, none, #sync_task{ start_offset = 200, end_offset = 300, peer = Peer, store_id = store1, footprint_key = none }, true, 0),
 
 		Tasks = process_queue(Pid, 2),
 		?assertEqual(2, length(Tasks)),
 
-		enqueue_task(Pid, none, {300, 400, Peer, store1, none}, true, 1),
+		enqueue_task(Pid, none, #sync_task{ start_offset = 300, end_offset = 400, peer = Peer, store_id = store1, footprint_key = none }, true, 1),
 		Tasks2 = process_queue(Pid, 1),
 		?assertEqual(1, length(Tasks2)),
 
@@ -705,7 +706,7 @@ test_enqueue_and_process({Peer, Pid}) ->
 test_task_completed({Peer, Pid}) ->
 	fun() ->
 		%% Enqueue and dispatch a task (no footprint)
-		enqueue_task(Pid, none, {0, 100, Peer, store1, none}, true, 0),
+		enqueue_task(Pid, none, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = none }, true, 0),
 		{ok, _} = gen_server:call(Pid, get_state), %% sync
 		[_Task] = process_queue(Pid, 1),
 
@@ -721,7 +722,7 @@ test_cut_queue({Peer, Pid}) ->
 	fun() ->
 		%% Enqueue 25 tasks (more than MIN_PEER_QUEUE = 20)
 		lists:foreach(fun(I) ->
-			enqueue_task(Pid, none, {I * 100, (I + 1) * 100, Peer, store1, none}, true, 0)
+			enqueue_task(Pid, none, #sync_task{ start_offset = I * 100, end_offset = (I + 1) * 100, peer = Peer, store_id = store1, footprint_key = none }, true, 0)
 		end, lists:seq(0, 24)),
 
 		%% Sync and check we have 25 tasks
@@ -747,7 +748,7 @@ test_footprint_basic({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
 		%% Enqueue task with footprint - should activate it (HasCapacity=true)
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true, 0),
+		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }, true, 0),
 		
 		%% Check footprint stats (get_footprint_stats syncs via call)
 		Stats = get_footprint_stats(Pid),
@@ -772,8 +773,8 @@ test_multiple_footprints({Peer, Pid}) ->
 		FootprintKey2 = {store1, 2000, Peer},
 		
 		%% Enqueue tasks for two footprints
-		enqueue_task(Pid, FootprintKey1, {0, 100, Peer, store1, FootprintKey1}, true, 0),
-		enqueue_task(Pid, FootprintKey2, {100, 200, Peer, store1, FootprintKey2}, true, 0),
+		enqueue_task(Pid, FootprintKey1, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey1 }, true, 0),
+		enqueue_task(Pid, FootprintKey2, #sync_task{ start_offset = 100, end_offset = 200, peer = Peer, store_id = store1, footprint_key = FootprintKey2 }, true, 0),
 		
 		Stats = get_footprint_stats(Pid),
 		?assertEqual(2, maps:get(active_footprint_count, Stats))
@@ -783,9 +784,9 @@ test_footprint_completion({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
 		%% Enqueue multiple tasks for same footprint (HasCapacity=true)
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true, 0),
-		enqueue_task(Pid, FootprintKey, {100, 200, Peer, store1, FootprintKey}, true, 0),
-		enqueue_task(Pid, FootprintKey, {200, 300, Peer, store1, FootprintKey}, true, 0),
+		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }, true, 0),
+		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 100, end_offset = 200, peer = Peer, store_id = store1, footprint_key = FootprintKey }, true, 0),
+		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 200, end_offset = 300, peer = Peer, store_id = store1, footprint_key = FootprintKey }, true, 0),
 		
 		Stats1 = get_footprint_stats(Pid),  %% Syncs via call
 		?assertEqual(3, maps:get(total_active_tasks, Stats1)),
@@ -814,8 +815,8 @@ test_footprint_waiting_queue({Peer, Pid}) ->
 		%% Exhaust the global slot counter so no admission can succeed.
 		ets:insert(worker_load, {footprint_slots_available, 0}),
 		try
-			enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, false, 0),
-			enqueue_task(Pid, FootprintKey, {100, 200, Peer, store1, FootprintKey}, false, 0),
+			enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }, false, 0),
+			enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 100, end_offset = 200, peer = Peer, store_id = store1, footprint_key = FootprintKey }, false, 0),
 			{ok, State} = gen_server:call(Pid, get_state),
 			%% Both tasks are in task_queue (no separate waiting queue anymore).
 			?assertEqual(2, queue:len(State#state.task_queue)),
@@ -841,7 +842,7 @@ test_try_activate_footprint({Peer, Pid}) ->
 
 		%% Exhaust slots, enqueue a task — it will sit in task_queue.
 		ets:insert(worker_load, {footprint_slots_available, 0}),
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, false, 0),
+		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }, false, 0),
 		{ok, _} = gen_server:call(Pid, get_state),
 		%% No slot: drain returns empty.
 		{false, []} = try_activate_footprint(Pid, 10),
@@ -862,7 +863,7 @@ test_footprint_task_cycling({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
 		%% Enqueue one task with HasCapacity=true (activates footprint)
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true, 0),
+		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }, true, 0),
 		{ok, _} = gen_server:call(Pid, get_state), %% sync
 		
 		%% Dispatch the task
@@ -891,9 +892,9 @@ test_active_footprints_set({Peer, Pid}) ->
 
 		%% Phase 2: enqueue + dispatch = claim. Three enqueues followed by a
 		%% drain will claim three slots (ample with the 1000 in the test setup).
-		enqueue_task(Pid, FootprintKey1, {0, 100, Peer, store1, FootprintKey1}, true, 0),
-		enqueue_task(Pid, FootprintKey2, {100, 200, Peer, store1, FootprintKey2}, true, 0),
-		enqueue_task(Pid, FootprintKey3, {200, 300, Peer, store1, FootprintKey3}, true, 0),
+		enqueue_task(Pid, FootprintKey1, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey1 }, true, 0),
+		enqueue_task(Pid, FootprintKey2, #sync_task{ start_offset = 100, end_offset = 200, peer = Peer, store_id = store1, footprint_key = FootprintKey2 }, true, 0),
+		enqueue_task(Pid, FootprintKey3, #sync_task{ start_offset = 200, end_offset = 300, peer = Peer, store_id = store1, footprint_key = FootprintKey3 }, true, 0),
 		_ = process_queue(Pid, 10),
 
 		{ok, State1} = gen_server:call(Pid, get_state),
@@ -914,9 +915,9 @@ test_add_task_to_active_footprint({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
 
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true, 0),
-		enqueue_task(Pid, FootprintKey, {100, 200, Peer, store1, FootprintKey}, true, 0),
-		enqueue_task(Pid, FootprintKey, {200, 300, Peer, store1, FootprintKey}, true, 0),
+		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }, true, 0),
+		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 100, end_offset = 200, peer = Peer, store_id = store1, footprint_key = FootprintKey }, true, 0),
+		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 200, end_offset = 300, peer = Peer, store_id = store1, footprint_key = FootprintKey }, true, 0),
 
 		{ok, State} = gen_server:call(Pid, get_state),
 		Footprint = maps:get(FootprintKey, State#state.footprints),
@@ -932,7 +933,7 @@ test_footprint_deactivation_removes_from_map({Peer, Pid}) ->
 		FootprintKey = {store1, 1000, Peer},
 
 		%% Enqueue then drain so the slot is claimed and the footprint is active.
-		enqueue_task(Pid, FootprintKey, {0, 100, Peer, store1, FootprintKey}, true, 0),
+		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }, true, 0),
 		_ = process_queue(Pid, 1),
 		{ok, State1} = gen_server:call(Pid, get_state),
 		?assertEqual(true, maps:is_key(FootprintKey, State1#state.footprints)),
@@ -954,10 +955,10 @@ test_take_one_returns_task({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 1000, Peer},
 		ets:insert(worker_load, {footprint_slots_available, 5}),
-		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
+		enqueue(Pid, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }),
 		%% Wait for the cast to land before pulling.
 		{ok, _} = gen_server:call(Pid, get_state),
-		{task, {0, 100, Peer, store1, FootprintKey}} = take_one(Pid),
+		{task, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }} = take_one(Pid),
 		{ok, State} = gen_server:call(Pid, get_state),
 		?assertEqual(1, State#state.dispatched_count),
 		?assertEqual(0, queue:len(State#state.task_queue)),
@@ -976,7 +977,7 @@ test_take_one_at_max_dispatched({Peer, Pid}) ->
 		MaxDispatched = 2,
 		sys:replace_state(Pid, fun(S) -> S#state{ max_dispatched = MaxDispatched } end),
 		lists:foreach(fun(I) ->
-			enqueue(Pid, {I*100, (I+1)*100, Peer, store1, FootprintKey})
+			enqueue(Pid, #sync_task{ start_offset = I*100, end_offset = (I+1)*100, peer = Peer, store_id = store1, footprint_key = FootprintKey })
 		end, lists:seq(0, 4)),
 		{ok, _} = gen_server:call(Pid, get_state),
 		%% First two pulls succeed, third returns none even though queue has tasks.
@@ -991,7 +992,7 @@ test_take_one_no_slot_returns_none({Peer, Pid}) ->
 	fun() ->
 		FootprintKey = {store1, 3000, Peer},
 		ets:insert(worker_load, {footprint_slots_available, 0}),
-		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
+		enqueue(Pid, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }),
 		{ok, _} = gen_server:call(Pid, get_state),
 		?assertEqual(none, take_one(Pid))
 	end.
@@ -1022,7 +1023,7 @@ test_enqueue_wakes_idle_worker({Peer, Pid}) ->
 			end
 		end),
 		ets:insert(idle_workers, {FakeWorker}),
-		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
+		enqueue(Pid, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }),
 		receive got_wake -> ok
 		after 500 -> ?assert(false, "fake worker did not receive work_available")
 		end,
@@ -1038,7 +1039,7 @@ test_worker_death_releases_slot({Peer, Pid}) ->
 		FootprintKey = {store1, 5000, Peer},
 		ets:insert(worker_load, {footprint_slots_available, 5}),
 		%% Put one task in the queue so the fake worker has something to take.
-		enqueue(Pid, {0, 100, Peer, store1, FootprintKey}),
+		enqueue(Pid, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }),
 		{ok, _} = gen_server:call(Pid, get_state),
 		Self = self(),
 		FakeWorker = spawn(fun() ->
