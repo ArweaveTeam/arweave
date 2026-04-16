@@ -94,6 +94,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 	[B0, _, {TX2, _} | _] = Blocks,
 	{ok, Config} = ar_test_node:get_config(Node),
 	ar_test_node:start_other_node(Node, B0, Config#config{
+		local_peers = [{127,0,0,1}],
 		peers = [ar_test_node:peer_ip(TempNode)],
 		storage_modules = StorageModules,
 		auto_join = true
@@ -110,6 +111,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 	ar_test_node:stop(TempNode),
 
 	ar_test_node:restart_with_config(Node, Config#config{
+		local_peers = [{127,0,0,1}],
 		peers = [],
 		start_from_latest_state = true,
 		storage_modules = StorageModules,
@@ -144,6 +146,7 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 	
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, Config#config{
+			local_peers = [{127,0,0,1}],
 			peers = [],
 			start_from_latest_state = true,
 			storage_modules = StorageModules,

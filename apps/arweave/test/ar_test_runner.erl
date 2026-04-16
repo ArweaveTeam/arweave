@@ -170,6 +170,9 @@ start_for_tests(TestType) ->
 		port = ar_test_node:get_unused_port(),
 		disable = [randomx_jit],
 		'http_client.http.keepalive' = 4_000,
+		%% Provide unreasonable high limit for data_sync_record rate limiter group
+		%% as tests run quite uneven, and unrealisticly high rate.
+		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		auto_join = false
 	},
 	ar:start(TestConfig).

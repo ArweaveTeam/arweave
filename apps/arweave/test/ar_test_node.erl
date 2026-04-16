@@ -189,7 +189,7 @@ try_boot_peer(TestType, Node, Retries) ->
 %%--------------------------------------------------------------------
 %% @doc run a command in asynchronous way using `spawn/1' instead of
 %% using `&' from shell feature.
-%% @end 
+%% @end
 %%--------------------------------------------------------------------
 run_command(Node, Command) ->
 	spawn(fun() -> run_command_init(Node, Command) end).
@@ -299,7 +299,9 @@ update_config(Config) ->
 		storage_modules = Config#config.storage_modules,
 		repack_in_place_storage_modules = Config#config.repack_in_place_storage_modules,
 		allow_rebase = Config#config.allow_rebase,
-		'http_client.http.keepalive' = ?TEST_HTTP_CLIENT_KEEPALIVE
+		'http_client.http.keepalive' = ?TEST_HTTP_CLIENT_KEEPALIVE,
+		'http_api.limiter.data_sync_record.leaky_limit' =
+			Config#config.'http_api.limiter.data_sync_record.leaky_limit'
 	},
 	ok = arweave_config:set_env(Config2),
 	?LOG_INFO("Updated Config:"),
@@ -350,6 +352,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 		local_peers = [peer_ip(Peer) || Peer <- MinerNodes]
 	},
 	ValidatorNodeConfig = BaseCMConfig#config{
+%		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 		mine = false,
 		peers = [ExitPeer],
 		coordinated_mining = false,
@@ -370,6 +373,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 			MinerPeerIPs = [peer_ip(Peer) || Peer <- MinerPeers],
 
 			MinerConfig = BaseCMConfig#config{
+%				'http_api.limiter.data_sync_record.leaky_limit' = 1000,
 				cm_exit_peer = ExitPeer,
 				cm_peers = MinerPeerIPs,
 				local_peers = MinerPeerIPs ++ [ExitPeer],
@@ -697,6 +701,7 @@ start(B0, RewardAddr, Config) ->
 %% but if you've modified any of the Config fields for your test, please restore the default
 %% Config after the test is done. Otherwise the tests that run after yours may fail.
 start(B0, RewardAddr, Config, StorageModules) ->
+io:fwrite(user, "STart node ~p with config: ~p~n", [node(), Config]),
 	clean_up_and_stop(),
 	prometheus:start(),
 	arweave_config:start(),
@@ -908,6 +913,7 @@ stop() ->
 			force_stop_application(arweave)
 	end,
 	ar:stop_dependencies(),
+	arweave_limiter:stop(),
 	Config.
 
 stop_application(App, Timeout) ->
@@ -1105,7 +1111,7 @@ wait_until_syncs_genesis_data() ->
 		gen_server:cast(
 			list_to_atom("ar_data_sync_" ++ ar_storage_module:label(ar_storage_module:id(M))),
 			sync_data
-		) 
+		)
 		|| M <- Config#config.storage_modules
 	],
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, Packing)
