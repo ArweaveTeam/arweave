@@ -4,7 +4,7 @@
 	write_chunk_fixture/3, load_chunk_fixture/2]).
 
 -export([delayed_print/2, packing_type_to_packing/2,
-	start_source_node/3, start_source_node/4, 
+	start_source_node/3, start_source_node/4,
 	source_node_storage_modules/3, source_node_storage_modules/4,
 	max_chunk_offset/1, aligned_partition_size/3,
 	assert_recall_byte/3,
@@ -12,7 +12,8 @@
 	assert_has_entropy/4, assert_no_entropy/4,
 	assert_chunks/3, assert_chunks/4, assert_no_chunks/2,
 	assert_partition_size/3, assert_partition_size/4, assert_empty_partition/3,
-	assert_mine_and_validate/3]).
+	assert_mine_and_validate/3,
+	wait_for_entropy_complete/1]).
 
 -include_lib("ar.hrl").
 -include_lib("ar_consensus.hrl").
@@ -94,7 +95,6 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 	[B0, _, {TX2, _} | _] = Blocks,
 	{ok, Config} = ar_test_node:get_config(Node),
 	ar_test_node:start_other_node(Node, B0, Config#config{
-		local_peers = [{127,0,0,1}],
 		peers = [ar_test_node:peer_ip(TempNode)],
 		storage_modules = StorageModules,
 		auto_join = true
@@ -111,7 +111,6 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 	ar_test_node:stop(TempNode),
 
 	ar_test_node:restart_with_config(Node, Config#config{
-		local_peers = [{127,0,0,1}],
 		peers = [],
 		start_from_latest_state = true,
 		storage_modules = StorageModules,
@@ -146,7 +145,6 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 	
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, Config#config{
-			local_peers = [{127,0,0,1}],
 			peers = [],
 			start_from_latest_state = true,
 			storage_modules = StorageModules,
@@ -154,6 +152,8 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 			mining_addr = RewardAddr
 		}, true)
 	),
+
+	wait_for_entropy_complete(Node),
 
 	?LOG_INFO("Source node ~p started.", [Node]),
 
@@ -195,17 +195,20 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 
 	SourcePacking = packing_type_to_packing(PackingType, RewardAddr),
 
+	assert_partition_size(Node, 0, SourcePacking),
+	assert_partition_size(Node, 1, SourcePacking),
 	assert_syncs_range(Node, SourcePacking, 0, 4*?ALIGNED_PARTITION_SIZE),
 	assert_chunks(Node, SourcePacking, Chunks),
 
 	%% Restart the node to allow it to copy chunks between storage modules.
 	ar_test_node:restart(Node),
+	wait_for_entropy_complete(Node),
 	?LOG_INFO("Source node ~p restarted.", [Node]),
 
-	assert_syncs_range(Node, SourcePacking, 0, 4*?ALIGNED_PARTITION_SIZE),
-	assert_chunks(Node, SourcePacking, Chunks),
 	assert_partition_size(Node, 0, SourcePacking),
 	assert_partition_size(Node, 1, SourcePacking),
+	assert_syncs_range(Node, SourcePacking, 0, 4*?ALIGNED_PARTITION_SIZE),
+	assert_chunks(Node, SourcePacking, Chunks),
 
 	%% pack_served_chunks is not enabled so we shouldn't return unpacked data
 	?assertMatch({ok, {{<<"404">>, _}, _, _, _, _}},
@@ -441,12 +444,12 @@ assert_partition_size(Node, PartitionNumber, Packing, Size) ->
 	?LOG_INFO("~p: Asserting partition ~p,~p is size ~p",
 		[Node, PartitionNumber, ar_serialize:encode_packing(Packing, true), Size]),
 	ar_util:do_until(
-		fun() -> 
-			ar_test_node:remote_call(Node, ar_mining_stats, get_partition_data_size, 
+		fun() ->
+			ar_test_node:remote_call(Node, ar_mining_stats, get_partition_data_size,
 				[PartitionNumber, Packing]) >= Size
 		end,
 		100,
-		120_000
+		300_000
 	),
 	?assertEqual(
 		Size,
@@ -510,7 +513,7 @@ has_range(Node, StartOffset, EndOffset) ->
 			interval_contains(AllIntervals, StartOffset, EndOffset);
 		Error ->
 			Intervals = get_intervals(NodeIP, StartOffset, EndOffset),
-			?assert(false, 
+			?assert(false,
 				iolist_to_binary(io_lib:format(
 					"Failed to get sync record from ~p: ~p; range: ~p - ~p; intervals managed to collect: ~p",
 						[Node, Error, StartOffset, EndOffset, ar_intervals:to_list(Intervals)]))),
@@ -574,17 +577,18 @@ assert_chunks(Node, RequestPacking, Packing, Chunks) ->
 assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize) ->
 	?LOG_INFO("Asserting chunk at offset ~p, size ~p", [EndOffset, ChunkSize]),
 
-	Result = ar_test_node:get_chunk(Node, EndOffset, RequestPacking),
-	{ok, {{StatusCode, _}, _, EncodedProof, _, _}} = Result,
-	?assertEqual(<<"200">>, StatusCode, iolist_to_binary(io_lib:format(
-		"Chunk not found. Node: ~p, Offset: ~p",
-		[Node, EndOffset]))),
-	Proof = ar_serialize:json_map_to_poa_map(
-		jiffy:decode(EncodedProof, [return_maps])
-	),
-	Proof = ar_serialize:json_map_to_poa_map(
-		jiffy:decode(EncodedProof, [return_maps])
-	),
+	{ok, ExpectedPackedChunk} = case ?UPDATE_CHUNK_FIXTURES of
+		true -> {ok, undefined};
+		false -> load_chunk_fixture(Packing, EndOffset)
+	end,
+
+	%% The node may briefly return the chunk in an intermediate packing (e.g.
+	%% unpacked_padded before entropy composition completes for replica_2_9) when
+	%% the request asks for `any`. Poll until the chunk matches the expected
+	%% packing or time out.
+	Proof = wait_for_matching_chunk(
+		Node, RequestPacking, EndOffset, ExpectedPackedChunk),
+
 	ChunkMetadata = #chunk_metadata{
 		tx_root = Block#block.tx_root,
 		tx_path = maps:get(tx_path, Proof),
@@ -597,7 +601,6 @@ assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize) ->
 
 	maybe_write_chunk_fixture(Packing, EndOffset, Chunk),
 
-	{ok, ExpectedPackedChunk} = load_chunk_fixture(Packing, EndOffset),
 	?assertEqual(byte_size(ExpectedPackedChunk), byte_size(Chunk),
 		iolist_to_binary(io_lib:format(
 			"~p: Chunk at offset ~p size mismatch expected ~p, got ~p",
@@ -617,10 +620,67 @@ assert_chunk(Node, RequestPacking, Packing, Block, EndOffset, ChunkSize) ->
 			"~p: Chunk at offset ~p, size ~p does not match unpacked chunk",
 			[Node, EndOffset, ChunkSize]))).
 
+wait_for_matching_chunk(Node, RequestPacking, EndOffset, ExpectedPackedChunk) ->
+	Deadline = erlang:monotonic_time(millisecond) + 120_000,
+	wait_for_matching_chunk(Node, RequestPacking, EndOffset, ExpectedPackedChunk, Deadline).
+
+wait_for_matching_chunk(Node, RequestPacking, EndOffset, ExpectedPackedChunk, Deadline) ->
+	Result = ar_test_node:get_chunk(Node, EndOffset, RequestPacking),
+	{ok, {{StatusCode, _}, _, EncodedProof, _, _}} = Result,
+	case StatusCode of
+		<<"200">> ->
+			Proof = ar_serialize:json_map_to_poa_map(
+				jiffy:decode(EncodedProof, [return_maps])
+			),
+			Chunk = maps:get(chunk, Proof),
+			Now = erlang:monotonic_time(millisecond),
+			%% Note: we don't fail explicitly if we exceed the deadline as we expect an assertion
+			%% later to fail. It's not the timeout that's a problem, rather the Proof that's
+			%% returned so the later failure is more informative.
+			case ExpectedPackedChunk =:= undefined
+					orelse Chunk =:= ExpectedPackedChunk
+					orelse Now >= Deadline of
+				true ->
+					Proof;
+				false ->
+					timer:sleep(500),
+					wait_for_matching_chunk(Node, RequestPacking, EndOffset,
+						ExpectedPackedChunk, Deadline)
+			end;
+		_ ->
+			?assertEqual(<<"200">>, StatusCode, iolist_to_binary(io_lib:format(
+				"Chunk not found. Node: ~p, Offset: ~p",
+				[Node, EndOffset])))
+	end.
+
 assert_no_chunks(Node, Chunks) ->
 	lists:foreach(fun({_Block, EndOffset, _ChunkSize}) ->
 		assert_no_chunk(Node, EndOffset)
 	end, Chunks).
+
+%% @doc Wait until every storage module configured on Node has finished preparing
+%% replica_2_9 entropy. For non-replica_2_9 modules this is instantaneous. While
+%% entropy is still being prepared, chunks are recorded under the unpacked_padded
+%% sync record rather than ar_chunk_storage's, so a concurrent cross-module read
+%% can see not_found for a valid chunk and cause read_range2 to invalidate it.
+wait_for_entropy_complete(Node) ->
+	{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
+	StoreIDs = [ar_storage_module:id(M) || M <- Config#config.storage_modules],
+	lists:foreach(fun(StoreID) -> wait_for_entropy_complete(Node, StoreID) end, StoreIDs).
+
+wait_for_entropy_complete(Node, StoreID) ->
+	Ready = ar_util:do_until(
+		fun() ->
+			ar_test_node:remote_call(
+				Node, ar_chunk_storage, is_entropy_complete, [StoreID, 1000])
+		end,
+		200,
+		120_000
+	),
+	?assertEqual(true, Ready,
+		iolist_to_binary(io_lib:format(
+			"~p: entropy composition did not complete for store ~p",
+			[Node, StoreID]))).
 
 assert_no_chunk(Node, EndOffset) ->
 	Result = ar_test_node:get_chunk(Node, EndOffset, any),

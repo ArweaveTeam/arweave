@@ -4,7 +4,7 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(REPACK_MINE_TEST_TIMEOUT, 600).
+-define(REPACK_MINE_TEST_TIMEOUT, 900).
 
 %% --------------------------------------------------------------------------------------------
 %% Test Registration
@@ -48,8 +48,25 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	end,
 	ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
 	{ok, Config} = ar_test_node:get_config(RepackerNode),
+	%% For replica_2_9 destinations, first mount both old and new modules with
+	%% sync_jobs=0 so the new modules prepare entropy without any concurrent
+	%% cross-module sync. Otherwise chunks copied from the old modules would
+	%% land briefly as unpacked_padded on a new module and a concurrent read
+	%% from another new module would observe the chunk as not_found and
+	%% invalidate it via read_range2. Once entropy is ready the second restart
+	%% re-enables sync and cross-module copies flow directly into replica_2_9.
+	case ToPackingType of
+		replica_2_9 ->
+			ar_test_node:restart_with_config(RepackerNode, Config#config{
+				storage_modules = Config#config.storage_modules ++ StorageModules,
+				mining_addr = AddrB,
+				sync_jobs = 0
+			}),
+			ar_e2e:wait_for_entropy_complete(RepackerNode);
+		_ ->
+			ok
+	end,
 	ar_test_node:restart_with_config(RepackerNode, Config#config{
-		local_peers = [{127,0,0,1}],
 		storage_modules = Config#config.storage_modules ++ StorageModules,
 		mining_addr = AddrB
 	}),
@@ -71,7 +88,6 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
 
 	ar_test_node:restart_with_config(RepackerNode, Config#config{
-		local_peers = [{127,0,0,1}],
 		storage_modules = StorageModules,
 		mining_addr = AddrB
 	}),
@@ -110,8 +126,7 @@ start_validator_node(ValidatorNode, RepackerNode, B0) ->
 	{ok, Config} = ar_test_node:get_config(ValidatorNode),
 	?assertEqual(ar_test_node:peer_name(ValidatorNode),
 		ar_test_node:start_other_node(ValidatorNode, B0, Config#config{
-			local_peers = [{127,0,0,1}],
-			peers = [ar_test_node:peer_ip(RepackerNode)],
+				peers = [ar_test_node:peer_ip(RepackerNode)],
 			start_from_latest_state = true,
 			auto_join = true,
 			storage_modules = []

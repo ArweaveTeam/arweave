@@ -6,11 +6,11 @@
 -export([start_link/2, name/1, register_workers/0, is_storage_supported/3, put/4,
 		open_files/1, get/2, get/3, locate_chunk_on_disk/2,
 		get_range/2, get_range/3, cut/2, delete/1, delete/2,
-		set_entropy_complete/1,
-		get_filepath/2, get_handle_by_filepath/1, close_file/2, close_files/1, 
+		set_entropy_complete/1, is_entropy_complete/2,
+		get_filepath/2, get_handle_by_filepath/1, close_file/2, close_files/1,
 		list_files/2, run_defragmentation/0, get_position_and_relative_chunk_offset/2,
 		get_storage_module_path/2, get_chunk_storage_path/2,
-		get_chunk_bucket_start/1, get_chunk_bucket_end/1, 
+		get_chunk_bucket_start/1, get_chunk_bucket_end/1,
 		get_chunk_byte_from_bucket_end/1, get_chunk_seek_offset/1,
 		get_chunk_file_start/1,
 		sync_record_id/1, write_chunk/4, record_chunk/5, read_offset/2]).
@@ -333,6 +333,16 @@ get_chunk_seek_offset(Offset) ->
 set_entropy_complete(StoreID) ->
 	gen_server:cast(name(StoreID), entropy_complete).
 
+%% @doc Return true when entropy preparation has completed for the given
+%% storage module. Returns false if the gen_server is unavailable or does not
+%% reply within Timeout. Non-replica_2_9 modules initialise entropy_context to
+%% {true, none}, so this always reports true for them.
+is_entropy_complete(StoreID, Timeout) ->
+	case catch gen_server:call(name(StoreID), is_entropy_complete, Timeout) of
+		{'EXIT', _} -> false;
+		Result -> Result
+	end.
+
 read_offset(PaddedOffset, StoreID) ->
 	{_ChunkFileStart, Filepath, Position, _ChunkOffset} =
 			ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
@@ -468,6 +478,9 @@ handle_call(reset, _, #state{ store_id = StoreID, file_index = FileIndex } = Sta
 	ok = ar_sync_record:cut(0, ar_chunk_storage, StoreID),
 	erlang:erase(),
 	{reply, ok, State#state{ file_index = #{} }};
+
+handle_call(is_entropy_complete, _From, #state{ entropy_context = {IsPrepared, _} } = State) ->
+	{reply, IsPrepared, State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),

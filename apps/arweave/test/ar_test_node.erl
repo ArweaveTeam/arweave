@@ -294,11 +294,15 @@ update_config(Config) ->
 		peers = Config#config.peers,
 		cm_exit_peer = Config#config.cm_exit_peer,
 		cm_peers = Config#config.cm_peers,
-		local_peers = Config#config.local_peers,
+		local_peers = case Config#config.local_peers of
+			[] -> [{127,0,0,1}];
+			Peers -> Peers
+		end,
 		mine = Config#config.mine,
 		storage_modules = Config#config.storage_modules,
 		repack_in_place_storage_modules = Config#config.repack_in_place_storage_modules,
 		allow_rebase = Config#config.allow_rebase,
+		disable_replica_2_9_device_limit = true,
 		'http_client.http.keepalive' = ?TEST_HTTP_CLIENT_KEEPALIVE,
 		'http_api.limiter.data_sync_record.leaky_limit' =
 			Config#config.'http_api.limiter.data_sync_record.leaky_limit'
@@ -319,10 +323,10 @@ start_node(B0, Config, WaitUntilSync) ->
 	clean_up_and_stop(),
 	prometheus:start(),
 	arweave_config:start(),
-	ok = arweave_limiter:start(),
 	{ok, BaseConfig} = arweave_config:get_env(),
 	write_genesis_files(BaseConfig#config.data_dir, B0),
 	update_config(Config),
+	ok = arweave_limiter:start(),
 	start_dependencies(),
 	wait_until_joined(),
 	case WaitUntilSync of

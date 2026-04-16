@@ -16,6 +16,7 @@
 -define(READ_RANGE_CHUNKS, 400).
 -define(MAX_ACTIVE_TASKS, 10).
 -define(MAX_QUEUED_TASKS, 50).
+-define(SYNC_RECORD_READY_TIMEOUT_MS, 900).
 
 -record(worker_tasks, {
 	worker,
@@ -143,7 +144,13 @@ do_ready_for_work(StoreID, State) ->
 				{store_id, StoreID}]),
 			false;
 		_ ->
-			queue:len(Worker#worker_tasks.task_queue) < ?MAX_QUEUED_TASKS
+			%% The origin store's ar_sync_record must have finished loading before
+			%% we try to read chunks from it. Otherwise ar_chunk_storage:get can return
+			%% not_found for a chunk whose metadata is present but whose chunk-storage
+			%% sync record has not yet been loaded, causing read_range2 to permanently
+			%% invalidate a valid record.
+			ar_sync_record:await_initialized(StoreID, ?SYNC_RECORD_READY_TIMEOUT_MS)
+				andalso queue:len(Worker#worker_tasks.task_queue) < ?MAX_QUEUED_TASKS
 	end.
 
 enqueue_read_range(Args, State) ->
@@ -235,16 +242,42 @@ helpers_test_() ->
 	].
 
 test_ready_for_work() ->
+	ReadySyncRecord = fun Loop() ->
+		receive
+			{'$gen_call', From, await_initialized} ->
+				gen_server:reply(From, initialized),
+				Loop()
+		end
+	end,
+	SyncRecords = lists:map(
+		fun(StoreID) ->
+			Name = ar_sync_record:name(StoreID),
+			Pid = spawn_link(ReadySyncRecord),
+			true = register(Name, Pid),
+			{Name, Pid}
+		end,
+		[store1, store2]
+	),
 	State = #state{
 		workers = #{
-			"store1" => #worker_tasks{
+			store1 => #worker_tasks{
 				task_queue = queue:from_list(lists:seq(1, ?MAX_QUEUED_TASKS - 1))},
-			"store2" => #worker_tasks{
+			store2 => #worker_tasks{
 				task_queue = queue:from_list(lists:seq(1, ?MAX_QUEUED_TASKS))}
 		}
 	},
-	?assertEqual(true, do_ready_for_work("store1", State)),
-	?assertEqual(false, do_ready_for_work("store2", State)).
+	try
+		?assertEqual(true, do_ready_for_work(store1, State)),
+		?assertEqual(false, do_ready_for_work(store2, State))
+	after
+		lists:foreach(
+			fun({Name, Pid}) ->
+				unregister(Name),
+				exit(Pid, normal)
+			end,
+			SyncRecords
+		)
+	end.
 
 test_enqueue_read_range() ->
 	ExpectedWorker = #worker_tasks{

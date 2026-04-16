@@ -6,7 +6,8 @@
 		is_recorded/2, is_recorded/3, is_recorded/4, is_recorded_any/3,
 		get_next_synced_interval/4, get_next_synced_interval/5,
 		get_next_unsynced_interval/4, get_next_unsynced_interval/5,
-		get_interval/3, get_intersection_size/4, name/1]).
+		get_interval/3, get_intersection_size/4, name/1,
+		await_initialized/2]).
 
 -export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -282,6 +283,20 @@ get_interval(Offset, ID, StoreID) ->
 			ar_ets_intervals:get_interval_with_byte(TID, Offset)
 	end.
 
+%% @doc Wait until the gen_server for the given StoreID has finished any deferred
+%% initialization work. Returns false if the server is unavailable or does not
+%% finish within Timeout.
+await_initialized(StoreID, Timeout) ->
+	GenServerID = name(StoreID),
+	case catch gen_server:call(GenServerID, await_initialized, Timeout) of
+		{'EXIT', {timeout, {gen_server, call, _}}} ->
+			false;
+		{'EXIT', {noproc, {gen_server, call, _}}} ->
+			false;
+		initialized ->
+			true
+	end.
+
 %% @doc Return the size of the intersection between the intervals and the given range.
 %% Return 0 if the given ID and StoreID are not found.
 get_intersection_size(End, Start, ID, StoreID) ->
@@ -357,6 +372,9 @@ handle_call({get, ID}, _From, State) ->
 handle_call({get, Packing, ID}, _From, State) ->
 	#state{ sync_record_by_id_type = SyncRecordByIDType } = State,
 	{reply, maps:get({ID, Packing}, SyncRecordByIDType, ar_intervals:new()), State};
+
+handle_call(await_initialized, _From, State) ->
+	{reply, initialized, State};
 
 handle_call({add, End, Start, ID}, _From, State) ->
 	{Reply, State2} = add2(End, Start, ID, State),
