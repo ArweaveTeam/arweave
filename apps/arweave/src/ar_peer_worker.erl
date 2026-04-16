@@ -35,7 +35,7 @@
 -behaviour(gen_server).
 
 %% Lifecycle
--export([start_link/1, get_or_start/1, stop/1]).
+-export([start_link/1, get_all_peers/0, get_pid/1, get_or_start/1, stop/1]).
 %% Operations (all take Pid as first arg - coordinator caches Peer->Pid mapping)
 -export([task_completed/5, rebalance/3, enqueue/2, take_one/1]).
 
@@ -95,16 +95,22 @@ start_link(Peer) ->
 			Error
 	end.
 
-%% @doc Lookup a peer worker pid by ETS registry.
-lookup(Peer) ->
+%% @doc Get a peer worker pid from the ETS registry.
+get_pid(Peer) ->
 	case ets:lookup(?MODULE, Peer) of
 		[] -> undefined;
 		[{_, Pid}] -> {ok, Pid}
 	end.
 
+%% @doc Return all peer worker registry entries.
+get_all_peers() ->
+	try ets:tab2list(?MODULE)
+	catch _:_ -> []
+	end.
+
 %% @doc Get the pid of an existing peer worker or start a new one.
 get_or_start(Peer) ->
-	case lookup(Peer) of
+	case get_pid(Peer) of
 		{ok, Pid} ->
 			{ok, Pid};
 		undefined ->
@@ -315,13 +321,9 @@ handle_cast({task_completed, FootprintKey, Result, ElapsedNative, DataSize}, Sta
 	{noreply, State2};
 
 handle_cast({enqueue, SyncTask}, State) ->
-	%% Phase 3: one-way enqueue from the coordinator. Append to task_queue,
-	%% bump the footprint's outstanding count, then wake one idle sync
-	%% worker so it can pull the new task.
 	#sync_task{ footprint_key = FootprintKey } = SyncTask,
 	State1 = State#state{ last_task_time = erlang:monotonic_time() },
 	{_, State2} = do_enqueue_task(FootprintKey, SyncTask, true, State1),
-	wake_one_idle_worker(),
 	record_peer_load(State2),
 	{noreply, State2};
 
@@ -522,20 +524,6 @@ log_long_running_footprints(State) ->
 %%% Phase 3: pull-model helpers
 %%%===================================================================
 
-%% @doc Pop one idle worker from the global idle_workers ETS set and tell
-%% it that work is available. Best-effort: if no workers are idle, no-op.
-%% If the picked worker is dead, the cast is silently dropped — the
-%% rebalance tick will retry by calling wake_one_idle_worker again.
-wake_one_idle_worker() ->
-	try
-		case ets:first(idle_workers) of
-			'$end_of_table' -> ok;
-			Worker ->
-				ets:delete(idle_workers, Worker),
-				gen_server:cast(Worker, work_available)
-		end
-	catch _:_ -> ok
-	end.
 
 %% @doc Remove one outstanding monitor entry matching FootprintKey. The
 %% completing worker doesn't pass the MonRef back to us, so we look up by
@@ -625,12 +613,12 @@ get_footprint_stats(Pid) ->
 
 lookup_test() ->
 	Peer1 = {10, 20, 30, 40, 9999},
-	?assertEqual(undefined, lookup(Peer1)),
+	?assertEqual(undefined, get_pid(Peer1)),
 	
 	Peer2 = {50, 60, 70, 80, 1234},
 	TestPid = spawn(fun() -> receive stop -> ok end end),
 	ets:insert(?MODULE, {Peer2, TestPid}),
-	?assertEqual({ok, TestPid}, lookup(Peer2)),
+	?assertEqual({ok, TestPid}, get_pid(Peer2)),
 	
 	%% Cleanup
 	TestPid ! stop,
@@ -659,7 +647,6 @@ peer_worker_test_() ->
 			fun test_take_one_at_max_dispatched/1,
 			fun test_take_one_no_slot_returns_none/1,
 			fun test_take_one_empty_queue_returns_none/1,
-			fun test_enqueue_wakes_idle_worker/1,
 			fun test_worker_death_releases_slot/1
 		]
 	}.
@@ -1002,33 +989,6 @@ test_take_one_empty_queue_returns_none({_Peer, Pid}) ->
 	fun() ->
 		ets:insert(worker_load, {footprint_slots_available, 1000}),
 		?assertEqual(none, take_one(Pid))
-	end.
-
-%% Enqueue must wake one idle worker so the pull loop kicks back into life.
-test_enqueue_wakes_idle_worker({Peer, Pid}) ->
-	fun() ->
-		FootprintKey = {store1, 4000, Peer},
-		case ets:info(idle_workers) of
-			undefined -> ets:new(idle_workers,
-				[named_table, public, ordered_set]);
-			_ -> ets:delete_all_objects(idle_workers)
-		end,
-		Self = self(),
-		FakeWorker = spawn_link(fun F() ->
-			receive
-				{'$gen_cast', work_available} ->
-					Self ! got_wake,
-					F();
-				stop -> ok
-			end
-		end),
-		ets:insert(idle_workers, {FakeWorker}),
-		enqueue(Pid, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }),
-		receive got_wake -> ok
-		after 500 -> ?assert(false, "fake worker did not receive work_available")
-		end,
-		?assertEqual(false, ets:member(idle_workers, FakeWorker)),
-		FakeWorker ! stop
 	end.
 
 %% Worker crash recovery: peer worker monitors the worker that took a

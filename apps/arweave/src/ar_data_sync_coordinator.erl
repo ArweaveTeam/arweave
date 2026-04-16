@@ -66,6 +66,7 @@
 %% HasCapacity-at-enqueue + try_activate_waiting_footprint.
 -export([claim_footprint_slot/0, release_footprint_slot/0]).
 
+
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -155,11 +156,9 @@ ready_for_work() ->
 init(Workers) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 	MaxFootprints = calculate_max_footprints(),
-	%% worker_load and idle_workers ETS tables are created in ar_data_sync_sup.
-	%% Clear any stale entries from a previous coordinator incarnation before
-	%% republishing workers_count and the footprint slot gauge.
+	%% worker_load ETS table is created in ar_data_sync_sup.
+	%% Clear stale entries from a previous coordinator incarnation.
 	ets:delete_all_objects(?WORKER_LOAD_TABLE),
-	ets:delete_all_objects(idle_workers),
 	ets:insert(?WORKER_LOAD_TABLE, {workers_count, length(Workers)}),
 	ets:insert(?WORKER_LOAD_TABLE,
 		[{footprint_slots_available, MaxFootprints},
@@ -202,9 +201,6 @@ handle_cast(rebalance_peers, State) ->
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	Targets = calculate_targets(PeerPids, AllPeerPerformances, State),
 	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State),
-	%% Backstop a possibly-lost `work_available` cast: pop one idle worker
-	%% and tell it to re-pull. Cheap, idempotent.
-	wake_one_idle_worker_safe(),
 	log_anomalies(State2),
 	{noreply, State2};
 
@@ -368,21 +364,6 @@ release_footprint_slot() ->
 		ets:update_counter(?WORKER_LOAD_TABLE,
 			footprint_slots_available, {2, +1, Max, Max}),
 		ok
-	catch _:_ -> ok
-	end.
-
-%% @doc Phase 3: rebalance-tick safety backstop. Pop one idle worker (if any)
-%% and tell it to re-pull. Mirror of ar_peer_worker:wake_one_idle_worker/0.
-%% Keeping a separate copy here avoids the coordinator having to call into
-%% the peer worker module just to wake a worker.
-wake_one_idle_worker_safe() ->
-	try
-		case ets:first(idle_workers) of
-			'$end_of_table' -> ok;
-			Worker ->
-				ets:delete(idle_workers, Worker),
-				gen_server:cast(Worker, work_available)
-		end
 	catch _:_ -> ok
 	end.
 

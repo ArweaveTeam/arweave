@@ -71,27 +71,19 @@ handle_cast({read_range, Args}, State) ->
 %% sync_range and report completion directly to the owning peer worker.
 %% On total miss, register as idle and wait for a `work_available` cast.
 handle_cast(pull, State) ->
-	case try_take_one(shuffled_peers()) of
+	%% Shuffle list to distribute peer load across workers.
+	Peers = ar_util:shuffle_list(ar_peer_worker:get_all_peers()),
+	case try_take_one(Peers) of
 		{ok, SyncTask, PeerPid} ->
 			run_sync_range(SyncTask, PeerPid, State),
 			%% Loop: immediately try to pull again.
 			gen_server:cast(self(), pull),
 			{noreply, State};
 		none ->
-			%% No peer has work right now. Register and wait for a wake.
-			try ets:insert(idle_workers, {self()})
-			catch _:_ -> ok
-			end,
+			%% No peer has work right now. Retry after a short delay.
+			ar_util:cast_after(5000, self(), pull),
 			{noreply, State}
 	end;
-
-handle_cast(work_available, State) ->
-	%% A peer worker has new work; deregister and re-pull.
-	try ets:delete(idle_workers, self())
-	catch _:_ -> ok
-	end,
-	gen_server:cast(self(), pull),
-	{noreply, State};
 
 handle_cast({sync_range, SyncTask}, State) ->
 	%% Phase 3: this clause now serves only the self-recast pathway —
@@ -108,7 +100,7 @@ handle_cast({sync_range, SyncTask}, State) ->
 	case SyncResult of
 		recast -> ok;
 		_ ->
-			case ar_peer_worker:lookup(Peer) of
+			case ar_peer_worker:get_pid(Peer) of
 				{ok, PeerPid} ->
 					ar_peer_worker:task_completed(PeerPid, FootprintKey,
 						SyncResult, EndTime - StartTime, End - Start);
@@ -126,13 +118,6 @@ handle_cast(Cast, State) ->
 %%%===================================================================
 %%% Phase 3: pull loop helpers
 %%%===================================================================
-
-%% @doc Return the peer roster in randomised order. Per-worker shuffling
-%% spreads concurrent pulls across peers without shared coordination.
-shuffled_peers() ->
-	try ar_util:shuffle_list(ets:tab2list(ar_peer_worker))
-	catch _:_ -> []
-	end.
 
 try_take_one([]) ->
 	none;
@@ -173,11 +158,6 @@ handle_info(_Message, State) ->
 	{noreply, State}.
 
 terminate(Reason, _State) ->
-	%% Phase 3: drop our idle registration if present so peer workers
-	%% don't try to wake a dead pid.
-	try ets:delete(idle_workers, self())
-	catch _:_ -> ok
-	end,
 	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, io_lib:format("~p", [Reason])}]),
 	ok.
 

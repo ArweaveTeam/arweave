@@ -26,9 +26,6 @@ init([]) ->
 	ets:new(worker_load,
 		[named_table, public, set,
 			{read_concurrency, true}, {write_concurrency, true}]),
-	ets:new(idle_workers,
-		[named_table, public, ordered_set,
-			{read_concurrency, true}, {write_concurrency, true}]),
 	%% Peer worker supervisor must start before worker master
 	PeerWorkerSup = #{
 		id => ar_peer_worker_sup,
