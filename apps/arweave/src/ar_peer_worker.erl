@@ -72,12 +72,14 @@
 -record(state, {
 	peer,
 	peer_formatted,                %% cached ar_util:format_peer(Peer) for metrics
-	task_queue = queue:new(),
+	%% Tasks ready to serve: no footprint, or footprint already active.
+	eligible_queue = queue:new(),
+	%% Tasks waiting for a footprint slot. Grouped naturally by enqueue order;
+	%% when a slot is claimed, matching-FK tasks migrate to eligible_queue.
+	blocked_queue = queue:new(),
 	in_flight_count = 0,
 	max_in_flight,
-	%% Rate-limited MaxQueueLen. Raw target tracks peer performance closely;
-	%% this value shrinks gradually so a sudden rating drop doesn't discard
-	%% most of the queue in one rebalance tick. Set in init from sync_jobs.
+	%% Rate-limited MaxQueueLen (eligible + blocked combined). Set in init.
 	max_queue_len,
 	last_task_time,                %% monotonic time when last task was received
 	footprints = #{},              %% FootprintKey => #footprint{}
@@ -198,44 +200,34 @@ publish_load(State) ->
 	ar_data_sync_coordinator:record_peer_load(
 		State#state.peer,
 		State#state.in_flight_count,
-		queue:len(State#state.task_queue),
+		total_queued(State),
 		sets:size(State#state.active_footprints),
 		State#state.max_in_flight),
 	State.
+
+total_queued(State) ->
+	queue:len(State#state.eligible_queue) + queue:len(State#state.blocked_queue).
 
 handle_call(get_state, _From, State) ->
 	%% Test-only: keep for tests to access raw state
 	{reply, {ok, State}, State};
 
 handle_call({take_one, WorkerPid}, _From, State) ->
-	#state{ in_flight_count = InFlightCount, max_in_flight = MaxInFlight,
-			task_queue = TaskQueue } = State,
+	#state{ in_flight_count = InFlightCount, max_in_flight = MaxInFlight } = State,
 	case InFlightCount >= MaxInFlight of
 		true ->
 			{reply, none, State};
 		false ->
-			case queue:peek(TaskQueue) of
+			case take_from_eligible(State) of
+				{ok, SyncTask, State2} ->
+					State3 = dispatch_task(SyncTask, WorkerPid, State2),
+					{reply, {task, SyncTask}, State3};
 				empty ->
-					{reply, none, State};
-				{value, SyncTask} ->
-					#sync_task{ footprint_key = FootprintKey } = SyncTask,
-					case try_claim_footprint(FootprintKey, State) of
-						{ok, State2} ->
-							{{value, SyncTask}, NewTaskQueue} = queue:out(TaskQueue),
-							Now = erlang:monotonic_time(),
-							State3 = State2#state{
-								task_queue = NewTaskQueue,
-								in_flight_count = InFlightCount + 1,
-								in_flight_workers = maps:put(WorkerPid,
-									{FootprintKey, Now},
-									State2#state.in_flight_workers),
-								last_task_time = Now
-							},
-							increment_metrics(dispatched, State3, 1),
-							increment_metrics(queued_out, State3, 1),
-							publish_load(State3),
+					case take_from_blocked(State) of
+						{ok, SyncTask, State2} ->
+							State3 = dispatch_task(SyncTask, WorkerPid, State2),
 							{reply, {task, SyncTask}, State3};
-						no_slot ->
+						none ->
 							{reply, none, State}
 					end
 			end
@@ -243,33 +235,28 @@ handle_call({take_one, WorkerPid}, _From, State) ->
 
 handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	{QueueScalingFactor, TargetLatency, WorkersStarved} = RebalanceParams,
-	#state{ task_queue = Queue, max_in_flight = MaxInFlight,
-			in_flight_count = InFlight,
+	#state{ max_in_flight = MaxInFlight, in_flight_count = InFlight,
 			peer_formatted = PeerFormatted, last_task_time = LastTaskTime } = State,
-	
-	%% 1. Cut queue if needed (using a rate-limited MaxQueueLen)
+
+	%% 1. Cut queue if needed (using a rate-limited MaxQueueLen).
+	%% Cut blocked queue first (grouped by FK), then eligible if more needed.
 	OldMaxQueueLen = State#state.max_queue_len,
 	RawMaxQueueLen = max_queue_length(Performance, QueueScalingFactor),
 	MaxQueueLen = smooth_max_queue_len(OldMaxQueueLen, RawMaxQueueLen),
 	State1 = State#state{ max_queue_len = MaxQueueLen },
-	QueueLen = queue:len(Queue),
+	QueueLen = total_queued(State1),
 	{State2, RemovedCount} = case QueueLen > MaxQueueLen of
 		true ->
-			{NewQueued, RemovedQueue} = queue:split(MaxQueueLen, Queue),
-			Removed = queue:len(RemovedQueue),
-			RemovedTasks = queue:to_list(RemovedQueue),
-			increment_metrics(queued_out, State1, Removed),
-			S2 = cut_footprint_task_counts(RemovedTasks, State1#state{ task_queue = NewQueued }),
-			{S2, Removed};
+			cut_queues(QueueLen - MaxQueueLen, State1);
 		false ->
 			{State1, 0}
 	end,
-	
+
 	%% 2. Update max_in_flight
 	FasterThanTarget = Performance#performance.average_latency < TargetLatency,
 	IdleSeconds = erlang:convert_time_unit(
 		erlang:monotonic_time() - LastTaskTime, native, second),
-	IsActive = InFlight > 0 orelse queue:len(State2#state.task_queue) > 0
+	IsActive = InFlight > 0 orelse total_queued(State2) > 0
 		orelse IdleSeconds < ?ACTIVE_THRESHOLD_S,
 	TargetMax = case IsActive of
 		false ->
@@ -287,7 +274,7 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	State3 = reap_dead_workers(State3A),
 
 	%% 4. Check if we should shutdown (idle peer worker)
-	NewQueueLen = queue:len(State3#state.task_queue),
+	NewQueueLen = total_queued(State3),
 	NewInFlight = State3#state.in_flight_count,
 	ShouldShutdown = (NewInFlight == 0) andalso (NewQueueLen == 0) andalso
 					 (IdleSeconds >= ?IDLE_SHUTDOWN_THRESHOLD_S),
@@ -340,7 +327,7 @@ handle_cast({task_completed, WorkerPid, FootprintKey, Result, ElapsedNative, Dat
 	{noreply, State2};
 
 handle_cast({enqueue, SyncTask}, State) ->
-	case queue:len(State#state.task_queue) >= State#state.max_queue_len of
+	case total_queued(State) >= State#state.max_queue_len of
 		true ->
 			{noreply, State};
 		false ->
@@ -394,6 +381,59 @@ smooth_max_queue_len(Old, Raw) ->
 %%% Private functions - Task management
 %%%===================================================================
 
+%% @doc Pop a task from the eligible queue. Always succeeds if non-empty.
+take_from_eligible(State) ->
+	case queue:out(State#state.eligible_queue) of
+		{empty, _} -> empty;
+		{{value, SyncTask}, NewQueue} ->
+			{ok, SyncTask, State#state{ eligible_queue = NewQueue }}
+	end.
+
+%% @doc Try to activate a blocked footprint. Peeks the blocked queue head,
+%% attempts to claim a slot. On success, pops the task, marks the footprint
+%% active, and migrates all other tasks with the same FK from blocked to
+%% eligible. Returns {ok, SyncTask, State} or none.
+take_from_blocked(State) ->
+	case queue:peek(State#state.blocked_queue) of
+		empty -> none;
+		{value, #sync_task{ footprint_key = FootprintKey }} ->
+			case try_claim_footprint(FootprintKey, State) of
+				{ok, State2} ->
+					{{value, SyncTask}, NewBlocked} = queue:out(State2#state.blocked_queue),
+					{Migrated, Remaining} = partition_blocked(FootprintKey, NewBlocked),
+					State3 = State2#state{
+						eligible_queue = queue:join(State2#state.eligible_queue, Migrated),
+						blocked_queue = Remaining
+					},
+					{ok, SyncTask, State3};
+				no_slot ->
+					none
+			end
+	end.
+
+%% @doc Split a queue into tasks matching FootprintKey and the rest.
+%% O(N) but only called when a new footprint slot is claimed (rare).
+partition_blocked(FootprintKey, Queue) ->
+	{MatchList, RestList} = lists:partition(
+		fun(#sync_task{ footprint_key = FK }) -> FK =:= FootprintKey end,
+		queue:to_list(Queue)),
+	{queue:from_list(MatchList), queue:from_list(RestList)}.
+
+%% @doc Common dispatch logic for take_one. Updates counters and monitors.
+dispatch_task(SyncTask, WorkerPid, State) ->
+	#sync_task{ footprint_key = FootprintKey } = SyncTask,
+	Now = erlang:monotonic_time(),
+	State2 = State#state{
+		in_flight_count = State#state.in_flight_count + 1,
+		in_flight_workers = maps:put(WorkerPid,
+			{FootprintKey, Now}, State#state.in_flight_workers),
+		last_task_time = Now
+	},
+	increment_metrics(dispatched, State2, 1),
+	increment_metrics(queued_out, State2, 1),
+	publish_load(State2),
+	State2.
+
 %% @doc Admit a task by either using this peer's existing footprint claim or
 %% attempting an atomic claim on the global slot counter. Returns {ok, State}
 %% on success or no_slot when the global cache is full.
@@ -424,20 +464,30 @@ mark_footprint_active(FootprintKey, State) ->
 	}.
 
 do_enqueue_task(none, Args, _HasCapacity, State) ->
-	NewQueue = queue:in(Args, State#state.task_queue),
 	increment_metrics(queued_in, State, 1),
-	{false, State#state{ task_queue = NewQueue }};
+	{false, State#state{
+		eligible_queue = queue:in(Args, State#state.eligible_queue)
+	}};
 do_enqueue_task(FootprintKey, Args, _HasCapacity, State) ->
-	#state{ footprints = Footprints, task_queue = Queue } = State,
+	#state{ footprints = Footprints, active_footprints = Active } = State,
 	Footprint = maps:get(FootprintKey, Footprints, #footprint{}),
 	Footprint2 = Footprint#footprint{
 		active_task_count = Footprint#footprint.active_task_count + 1
 	},
 	increment_metrics(queued_in, State, 1),
-	{false, State#state{
-		task_queue = queue:in(Args, Queue),
-		footprints = maps:put(FootprintKey, Footprint2, Footprints)
-	}}.
+	IsActive = sets:is_element(FootprintKey, Active),
+	case IsActive of
+		true ->
+			{false, State#state{
+				eligible_queue = queue:in(Args, State#state.eligible_queue),
+				footprints = maps:put(FootprintKey, Footprint2, Footprints)
+			}};
+		false ->
+			{false, State#state{
+				blocked_queue = queue:in(Args, State#state.blocked_queue),
+				footprints = maps:put(FootprintKey, Footprint2, Footprints)
+			}}
+	end.
 
 %% @doc Handle completion of a footprint task. Decrements active_task_count;
 %% when it reaches zero and this peer held the global slot, release it.
@@ -474,8 +524,66 @@ do_complete_footprint_task(FootprintKey, State) ->
 			State
 	end.
 
-%% @doc Decrement footprint bookkeeping for tasks cut from the queue during
-%% rebalance trimming.
+%% @doc Cut ToCut tasks from the queues. Blocked queue first (whole FK groups
+%% preferred), then eligible tail. Returns {State, RemovedCount}.
+cut_queues(ToCut, State) ->
+	{State2, BlockedCut} = cut_blocked_by_footprint(ToCut, State),
+	Remaining = ToCut - BlockedCut,
+	{State3, EligibleCut} = case Remaining > 0 of
+		true -> cut_eligible_tail(Remaining, State2);
+		false -> {State2, 0}
+	end,
+	TotalCut = BlockedCut + EligibleCut,
+	increment_metrics(queued_out, State3, TotalCut),
+	{State3, TotalCut}.
+
+%% @doc Cut whole FK groups from blocked queue until budget is met.
+cut_blocked_by_footprint(ToCut, State) ->
+	BlockedList = queue:to_list(State#state.blocked_queue),
+	Groups = group_by_footprint(BlockedList),
+	{KeptTasks, CutTasks, _} = lists:foldl(
+		fun({_FK, Tasks}, {KeptAcc, CutAcc, Budget}) ->
+			GroupSize = length(Tasks),
+			case Budget =< 0 of
+				true ->
+					{KeptAcc ++ Tasks, CutAcc, Budget};
+				false ->
+					case GroupSize =< Budget of
+						true ->
+							{KeptAcc, CutAcc ++ Tasks, Budget - GroupSize};
+						false ->
+							{KeptAcc ++ Tasks, CutAcc, Budget}
+					end
+			end
+		end, {[], [], ToCut}, Groups),
+	State2 = cut_footprint_task_counts(CutTasks, State#state{
+		blocked_queue = queue:from_list(KeptTasks)
+	}),
+	{State2, length(CutTasks)}.
+
+%% @doc Cut from the tail of the eligible queue.
+cut_eligible_tail(ToCut, State) ->
+	EligibleLen = queue:len(State#state.eligible_queue),
+	KeepCount = max(0, EligibleLen - ToCut),
+	{Kept, Removed} = queue:split(KeepCount, State#state.eligible_queue),
+	RemovedTasks = queue:to_list(Removed),
+	State2 = cut_footprint_task_counts(RemovedTasks, State#state{
+		eligible_queue = Kept
+	}),
+	{State2, length(RemovedTasks)}.
+
+group_by_footprint(Tasks) ->
+	lists:foldl(
+		fun(#sync_task{ footprint_key = FK } = Task, Acc) ->
+			Key = case FK of none -> make_ref(); _ -> FK end,
+			case lists:keyfind(Key, 1, Acc) of
+				false -> Acc ++ [{Key, [Task]}];
+				{Key, Existing} ->
+					lists:keyreplace(Key, 1, Acc, {Key, Existing ++ [Task]})
+			end
+		end, [], Tasks).
+
+%% @doc Decrement footprint bookkeeping for tasks cut from the queue.
 cut_footprint_task_counts([], State) ->
 	State;
 cut_footprint_task_counts([#sync_task{ footprint_key = FootprintKey } | Rest], State) ->
@@ -687,7 +795,7 @@ test_enqueue_and_process({Peer, Pid}) ->
 		?assertEqual(1, length(Tasks2)),
 
 		{ok, State} = gen_server:call(Pid, get_state),
-		?assertEqual(1, queue:len(State#state.task_queue)),
+		?assertEqual(1, total_queued(State)),
 		?assertEqual(3, State#state.in_flight_count)
 	end.
 
@@ -718,7 +826,7 @@ test_cut_queue({Peer, Pid}) ->
 		end, lists:seq(0, TaskCount - 1)),
 
 		{ok, State1} = gen_server:call(Pid, get_state),
-		?assertEqual(TaskCount, queue:len(State1#state.task_queue)),
+		?assertEqual(TaskCount, total_queued(State1)),
 
 		%% Rebalance with low scaling factor so raw target hits the floor.
 		%% Pre-set max_queue_len so smoothing doesn't dampen the first cut.
@@ -729,7 +837,7 @@ test_cut_queue({Peer, Pid}) ->
 		?assertEqual({ok, 10}, Result),
 
 		{ok, State2} = gen_server:call(Pid, get_state),
-		?assertEqual(MinPeerQueue, queue:len(State2#state.task_queue))
+		?assertEqual(MinPeerQueue, total_queued(State2))
 	end.
 
 test_footprint_basic({Peer, Pid}) ->
@@ -794,8 +902,8 @@ test_footprint_completion({Peer, Pid}) ->
 	end.
 
 %% Phase 2: there is no "waiting queue" anymore. Enqueued footprint tasks
-%% always land in task_queue regardless of capacity. This test now verifies
-%% the new behavior: tasks sit in task_queue until a slot is claimed at
+%% always land in blocked_queue regardless of capacity. This test now verifies
+%% the new behavior: tasks sit in blocked_queue until a slot is claimed at
 %% dequeue time.
 test_footprint_waiting_queue({Peer, Pid}) ->
 	fun() ->
@@ -806,8 +914,8 @@ test_footprint_waiting_queue({Peer, Pid}) ->
 			enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }, false, 0),
 			enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 100, end_offset = 200, peer = Peer, store_id = store1, footprint_key = FootprintKey }, false, 0),
 			{ok, State} = gen_server:call(Pid, get_state),
-			%% Both tasks are in task_queue (no separate waiting queue anymore).
-			?assertEqual(2, queue:len(State#state.task_queue)),
+			%% Both tasks are in blocked_queue (no separate waiting queue anymore).
+			?assertEqual(2, total_queued(State)),
 			%% Footprint not yet claimed since there are no slots.
 			?assertEqual(false, sets:is_element(FootprintKey, State#state.active_footprints)),
 			Footprint = maps:get(FootprintKey, State#state.footprints),
@@ -827,7 +935,7 @@ test_try_activate_footprint({Peer, Pid}) ->
 		%% Drain with an empty queue: {false, []}.
 		{false, []} = try_activate_footprint(Pid, 10),
 
-		%% Exhaust slots, enqueue a task — it will sit in task_queue.
+		%% Exhaust slots, enqueue a task — it will sit in blocked_queue.
 		ar_data_sync_coordinator:set_footprint_slots_available(0),
 		enqueue_task(Pid, FootprintKey, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }, false, 0),
 		{ok, _} = gen_server:call(Pid, get_state),
@@ -839,7 +947,7 @@ test_try_activate_footprint({Peer, Pid}) ->
 		{true, [_]} = try_activate_footprint(Pid, 10),
 
 		{ok, State} = gen_server:call(Pid, get_state),
-		?assertEqual(0, queue:len(State#state.task_queue)),
+		?assertEqual(0, total_queued(State)),
 		?assertEqual(1, State#state.in_flight_count),
 		?assertEqual(true, sets:is_element(FootprintKey, State#state.active_footprints)),
 		Footprint = maps:get(FootprintKey, State#state.footprints),
@@ -911,7 +1019,7 @@ test_add_task_to_active_footprint({Peer, Pid}) ->
 		%% All three tasks accumulate against the same footprint's active_task_count
 		%% regardless of whether they've been taken in-flight yet.
 		?assertEqual(3, Footprint#footprint.active_task_count),
-		?assertEqual(3, queue:len(State#state.task_queue))
+		?assertEqual(3, total_queued(State))
 	end.
 
 test_footprint_deactivation_removes_from_map({Peer, Pid}) ->
@@ -947,7 +1055,7 @@ test_take_one_returns_task({Peer, Pid}) ->
 		{task, #sync_task{ start_offset = 0, end_offset = 100, peer = Peer, store_id = store1, footprint_key = FootprintKey }} = take_one(Pid),
 		{ok, State} = gen_server:call(Pid, get_state),
 		?assertEqual(1, State#state.in_flight_count),
-		?assertEqual(0, queue:len(State#state.task_queue)),
+		?assertEqual(0, total_queued(State)),
 		?assertEqual(true, sets:is_element(FootprintKey, State#state.active_footprints)),
 		?assertEqual(4, ar_data_sync_coordinator:get_footprint_slots_available())
 	end.
