@@ -355,6 +355,8 @@ handle_info(Info, State) ->
 terminate(_Reason, State) ->
 	%% Clean up ETS entry when process terminates
 	ets:delete(?MODULE, State#state.peer),
+	%% Release any footprint slots this peer was holding.
+	release_active_footprints(State),
 	%% Remove this peer's contribution from the worker_load mirror so it
 	%% doesn't phantom-contribute to the cross-process anomaly sum.
 	ar_data_sync_coordinator:remove_peer(State#state.peer),
@@ -410,6 +412,18 @@ take_from_blocked(State) ->
 					none
 			end
 	end.
+
+%% @doc Release all footprint slots held by this peer. Called from terminate
+%% so shutdown doesn't leak global slots or leave metrics unbalanced.
+release_active_footprints(State) ->
+	sets:fold(
+		fun(FootprintKey, _Acc) ->
+			ar_data_sync_coordinator:release_footprint_slot(),
+			increment_metrics(deactivate_footprint, State, 1),
+			?LOG_DEBUG([{event, terminate_release_footprint},
+				{peer, State#state.peer_formatted},
+				{footprint_key, FootprintKey}])
+		end, ok, State#state.active_footprints).
 
 %% @doc Split a queue into tasks matching FootprintKey and the rest.
 %% O(N) but only called when a new footprint slot is claimed (rare).
