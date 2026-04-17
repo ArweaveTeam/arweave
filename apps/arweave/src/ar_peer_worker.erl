@@ -51,6 +51,7 @@
 -define(LONG_RUNNING_FOOTPRINT_THRESHOLD_S, 120).
 -define(IDLE_SHUTDOWN_THRESHOLD_S, 300).  %% Shutdown after 5 minutes of no tasks
 -define(CALL_TIMEOUT_MS, 30000).
+-define(ACTIVE_THRESHOLD_S, 30).
 %% Reap in-flight entries older than this, even if the worker pid is alive.
 %% Guards against "stranded" tasks where take_one reply was lost (caller
 %% timeout, etc.) so the worker never runs sync_range or calls task_completed.
@@ -281,11 +282,15 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 			{State1, 0}
 	end,
 	
-	%% 2. Update max_in_flight (only when peer has active work to measure)
+	%% 2. Update max_in_flight
 	FasterThanTarget = Performance#performance.average_latency < TargetLatency,
-	HasWork = InFlight > 0 orelse queue:len(State2#state.task_queue) > 0,
-	TargetMax = case HasWork of
-		false -> MaxInFlight;
+	IdleSeconds = erlang:convert_time_unit(
+		erlang:monotonic_time() - LastTaskTime, native, second),
+	IsActive = InFlight > 0 orelse queue:len(State2#state.task_queue) > 0
+		orelse IdleSeconds < ?ACTIVE_THRESHOLD_S,
+	TargetMax = case IsActive of
+		false ->
+			MaxInFlight - 1;
 		true ->
 			case FasterThanTarget orelse WorkersStarved of
 				true -> MaxInFlight + 1;
@@ -298,11 +303,9 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	%% 3. Reap dead workers — roll back leaked in_flight_count and footprint slots
 	State3 = reap_dead_workers(State3A),
 
-	%% 4. Check if we should shutdown (idle worker)
+	%% 4. Check if we should shutdown (idle peer worker)
 	NewQueueLen = queue:len(State3#state.task_queue),
 	NewInFlight = State3#state.in_flight_count,
-	IdleSeconds = erlang:convert_time_unit(
-		erlang:monotonic_time() - LastTaskTime, native, second),
 	ShouldShutdown = (NewInFlight == 0) andalso (NewQueueLen == 0) andalso
 					 (IdleSeconds >= ?IDLE_SHUTDOWN_THRESHOLD_S),
 
