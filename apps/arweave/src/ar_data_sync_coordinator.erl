@@ -53,7 +53,11 @@
 %% Counters live in ETS (worker_load, footprint_slots_*) — see Phase 0–2.
 %% The `workers` queue is gone with the push dispatcher; sync workers are
 %% looked up by name on demand and the count is published once at init.
--record(state, {}).
+-define(THROUGHPUT_SMOOTHING_ALPHA, 0.3).
+
+-record(state, {
+	total_throughput = undefined   %% EMA-smoothed sum of peer ratings
+}).
 
 %%%===================================================================
 %%% Public interface.
@@ -162,8 +166,8 @@ handle_cast(rebalance_peers, State) ->
 	PeerPids = maps:from_list(ar_peer_worker:get_all_peers()),
 	Peers = maps:keys(PeerPids),
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
-	Targets = calculate_targets(PeerPids, AllPeerPerformances, State),
-	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State),
+	{Targets, State1} = calculate_targets(PeerPids, AllPeerPerformances, State),
+	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State1),
 	log_anomalies(State2),
 	{noreply, State2};
 
@@ -196,20 +200,23 @@ max_tasks(WorkerCount) ->
 %%--------------------------------------------------------------------
 
 %% @doc Calculate rebalance parameters.
-%% PeerPids is #{Peer => Pid}
-%% Returns {WorkerCount, TargetLatency, TotalThroughput, TotalMaxInFlight}
-calculate_targets(PeerPids, AllPeerPerformances, _State) ->
+%% Returns {{WorkerCount, TargetLatency, TotalThroughput, TotalMaxInFlight}, State}
+calculate_targets(PeerPids, AllPeerPerformances, State) ->
 	WorkerCount = ets:lookup_element(?WORKER_LOAD_TABLE, workers_count, 2, 0),
 	Peers = maps:keys(PeerPids),
-	TotalThroughput =
+	RawTotalThroughput =
 		lists:foldl(
-			fun(Peer, Acc) -> 
+			fun(Peer, Acc) ->
 				Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 				Acc + Performance#performance.current_rating
 			end, 0.0, Peers),
-    TotalLatency = 
+	TotalThroughput = case State#state.total_throughput of
+		undefined -> RawTotalThroughput;
+		OldTotalThroughput -> ar_util:ema(OldTotalThroughput, RawTotalThroughput, ?THROUGHPUT_SMOOTHING_ALPHA)
+	end,
+	TotalLatency =
 		lists:foldl(
-			fun(Peer, Acc) -> 
+			fun(Peer, Acc) ->
 				Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 				Acc + Performance#performance.average_latency
 			end, 0.0, Peers),
@@ -217,9 +224,6 @@ calculate_targets(PeerPids, AllPeerPerformances, _State) ->
 		true -> TotalLatency / length(Peers);
 		false -> 0.0
 	end,
-	%% Phase 1: read each peer's max_in_flight from the ETS mirror instead of
-	%% calling into the peer worker synchronously. The peer publishes its cap
-	%% at every state transition via record_peer_load/1.
 	TotalMaxInFlight = maps:fold(
 		fun(Peer, _Pid, Acc) ->
 			ets:lookup_element(?WORKER_LOAD_TABLE,
@@ -229,9 +233,12 @@ calculate_targets(PeerPids, AllPeerPerformances, _State) ->
 	?LOG_DEBUG([{event, sync_performance_targets},
 		{worker_count, WorkerCount},
 		{target_latency, TargetLatency},
+		{raw_total_throughput, RawTotalThroughput},
+		{old_total_throughput, State#state.total_throughput},
 		{total_throughput, TotalThroughput},
 		{total_max_in_flight, TotalMaxInFlight}]),
-    {WorkerCount, TargetLatency, TotalThroughput, TotalMaxInFlight}.
+	State2 = State#state{ total_throughput = TotalThroughput },
+	{{WorkerCount, TargetLatency, TotalThroughput, TotalMaxInFlight}, State2}.
 
 %% PeerPidsList is [{Peer, Pid}]
 rebalance_peers(PeerPids, AllPeerPerformances, Targets, State) ->
@@ -260,8 +267,8 @@ rebalance_peers2([{Peer, Pid} | Rest], AllPeerPerformances, Targets, State) ->
 
 %% @doc Scaling factor for calculating per-peer max queue size.
 %% Peer worker calculates: MaxQueue = max(PeerThroughput * ScalingFactor, MIN_PEER_QUEUE)
-queue_scaling_factor(0, _WorkerCount) -> infinity;
-queue_scaling_factor(0.0, _WorkerCount) -> infinity;
+queue_scaling_factor(0, WorkerCount) -> float(max_tasks(WorkerCount));
+queue_scaling_factor(0.0, WorkerCount) -> float(max_tasks(WorkerCount));
 queue_scaling_factor(TotalThroughput, WorkerCount) ->
 	max_tasks(WorkerCount) / TotalThroughput.
 
@@ -406,8 +413,8 @@ test_max_tasks() ->
 	?assertEqual(5000, max_tasks(100)).
 
 test_queue_scaling_factor() ->
-	?assertEqual(infinity, queue_scaling_factor(0, 10)),
-	?assertEqual(infinity, queue_scaling_factor(0.0, 10)),
+	?assertEqual(500.0, queue_scaling_factor(0, 10)),
+	?assertEqual(500.0, queue_scaling_factor(0.0, 10)),
 	?assertEqual(5.0, queue_scaling_factor(100.0, 10)),
 	?assertEqual(2.5, queue_scaling_factor(200.0, 10)),
 	?assertEqual(50.0, queue_scaling_factor(10.0, 10)).
@@ -448,13 +455,13 @@ test_calculate_targets() ->
 	ets:insert(?WORKER_LOAD_TABLE, {workers_count, 5}),
 	State = #state{},
 
-	{WorkerCount, TargetLatency, TotalThroughput, TotalMaxInFlight} =
+	{{WorkerCount, TargetLatency, TotalThroughput, TotalMaxInFlight}, _State2} =
 		calculate_targets(PeerPids, AllPeerPerformances, State),
-	
+
 	%% WorkerCount = 5 (number of workers in queue)
 	?assertEqual(5, WorkerCount),
-	
-	%% TotalThroughput = 100 + 200 + 300 = 600
+
+	%% TotalThroughput = 100 + 200 + 300 = 600 (first call, no smoothing)
 	?assertEqual(600.0, TotalThroughput),
 	
 	%% TargetLatency = (50 + 100 + 150) / 3 = 100

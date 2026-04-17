@@ -51,6 +51,16 @@
 -define(LONG_RUNNING_FOOTPRINT_THRESHOLD_S, 120).
 -define(IDLE_SHUTDOWN_THRESHOLD_S, 300).  %% Shutdown after 5 minutes of no tasks
 -define(CALL_TIMEOUT_MS, 30000).
+%% Reap in-flight entries older than this, even if the worker pid is alive.
+%% Guards against "stranded" tasks where take_one reply was lost (caller
+%% timeout, etc.) so the worker never runs sync_range or calls task_completed.
+-define(IN_FLIGHT_STALE_THRESHOLD_S, 300).
+%% When the raw MaxQueueLen drops sharply, shrink the effective cap by at most
+%% this ratio per rebalance tick. Lets struggling peers keep committed work
+%% instead of getting it cut out from under them in a single tick. Recovery
+%% (raw target rising) applies immediately — no upward smoothing.
+-define(QUEUE_SHRINK_RATE, 0.9).
+-define(MAX_PEER_QUEUE, 1000000).
 
 %% Per-footprint state. Admission to the global footprint cache is decided
 %% atomically at dequeue time via the ETS slot counter. `activation_time`
@@ -66,11 +76,15 @@
 	task_queue = queue:new(),
 	in_flight_count = 0,
 	max_in_flight = ?DEFAULT_IN_FLIGHT_LIMIT,
+	%% Rate-limited MaxQueueLen. Raw target tracks peer performance closely;
+	%% this value shrinks gradually so a sudden rating drop doesn't discard
+	%% most of the queue in one rebalance tick.
+	max_queue_len = ?MAX_PEER_QUEUE,
 	last_task_time,                %% monotonic time when last task was received
 	footprints = #{},              %% FootprintKey => #footprint{}
 	active_footprints = sets:new(),%% keys for which this peer currently holds a slot
-	%% WorkerPid => FootprintKey for tasks handed out via take_one.
-	%% Cleaned up on task_completed; dead workers are reaped on rebalance.
+	%% WorkerPid => {FootprintKey, TakenAt} for tasks handed out via take_one.
+	%% Cleaned up on task_completed; dead or stale entries reaped on rebalance.
 	in_flight_workers = #{}
 }).
 
@@ -127,18 +141,25 @@ stop(Pid) ->
 enqueue(Pid, Args) ->
 	gen_server:cast(Pid, {enqueue, Args}).
 
-%% @doc Phase 3: a sync worker asks for one task. Returns {task, Args} on
-%% success or `none` if the peer is at its dispatch cap, the queue is empty,
-%% or the head task's footprint cannot claim a global slot.
+%% @doc A sync worker asks for one task. Returns {task, SyncTask} on success
+%% or `none` if the peer is at its dispatch cap, the queue is empty, or the
+%% head task's footprint cannot claim a global slot.
 %%
-%% Short timeout (1s): if the peer worker is overloaded, the calling worker
-%% should rotate to the next peer rather than block.
+%% On timeout the peer worker may still apply the state mutation (pop task,
+%% increment counters) before the reply arrives. That would strand the task
+%% — it's popped from the queue, counted in-flight, but no sync worker is
+%% running it. Use ?CALL_TIMEOUT_MS so we only fail on genuinely stuck peers.
 take_one(Pid) ->
 	try
-		gen_server:call(Pid, {take_one, self()}, 1000)
+		gen_server:call(Pid, {take_one, self()}, ?CALL_TIMEOUT_MS)
 	catch
-		exit:{timeout, _} -> none;
-		_:_ -> none
+		exit:{timeout, _} ->
+			?LOG_WARNING([{event, take_one_timeout}, {pid, Pid}]),
+			none;
+		Class:Reason ->
+			?LOG_WARNING([{event, take_one_failed}, {pid, Pid},
+				{class, Class}, {reason, io_lib:format("~p", [Reason])}]),
+			none
 	end.
 
 %% @doc Notify task completed, update footprint accounting and rate data fetched.
@@ -158,8 +179,13 @@ rebalance(Pid, Performance, RebalanceParams) ->
 	try
 		gen_server:call(Pid, {rebalance, Performance, RebalanceParams}, ?CALL_TIMEOUT_MS)
 	catch
-		exit:{timeout, _} -> {error, timeout};
-		_:_ -> {error, timeout}
+		exit:{timeout, _} ->
+			?LOG_WARNING([{event, rebalance_timeout}, {pid, Pid}]),
+			{error, timeout};
+		Class:Reason ->
+			?LOG_WARNING([{event, rebalance_failed}, {pid, Pid},
+				{class, Class}, {reason, io_lib:format("~p", [Reason])}]),
+			{error, timeout}
 	end.
 
 %%%===================================================================
@@ -212,12 +238,14 @@ handle_call({take_one, WorkerPid}, _From, State) ->
 					case try_claim_footprint(FootprintKey, State) of
 						{ok, State2} ->
 							{{value, SyncTask}, NewTaskQueue} = queue:out(TaskQueue),
+							Now = erlang:monotonic_time(),
 							State3 = State2#state{
 								task_queue = NewTaskQueue,
 								in_flight_count = InFlightCount + 1,
-								in_flight_workers = maps:put(WorkerPid, FootprintKey,
+								in_flight_workers = maps:put(WorkerPid,
+									{FootprintKey, Now},
 									State2#state.in_flight_workers),
-								last_task_time = erlang:monotonic_time()
+								last_task_time = Now
 							},
 							increment_metrics(dispatched, State3, 1),
 							increment_metrics(queued_out, State3, 1),
@@ -235,19 +263,22 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 			in_flight_count = InFlight,
 			peer_formatted = PeerFormatted, last_task_time = LastTaskTime } = State,
 	
-	%% 1. Cut queue if needed
-	MaxQueueLen = max_queue_length(Performance, QueueScalingFactor),
+	%% 1. Cut queue if needed (using a rate-limited MaxQueueLen)
+	OldMaxQueueLen = State#state.max_queue_len,
+	RawMaxQueueLen = max_queue_length(Performance, QueueScalingFactor),
+	MaxQueueLen = smooth_max_queue_len(OldMaxQueueLen, RawMaxQueueLen),
+	State1 = State#state{ max_queue_len = MaxQueueLen },
 	QueueLen = queue:len(Queue),
-	{State2, RemovedCount} = case MaxQueueLen =/= infinity andalso QueueLen > MaxQueueLen of
+	{State2, RemovedCount} = case QueueLen > MaxQueueLen of
 		true ->
 			{NewQueued, RemovedQueue} = queue:split(MaxQueueLen, Queue),
 			Removed = queue:len(RemovedQueue),
 			RemovedTasks = queue:to_list(RemovedQueue),
-			increment_metrics(queued_out, State, Removed),
-			S2 = cut_footprint_task_counts(RemovedTasks, State#state{ task_queue = NewQueued }),
+			increment_metrics(queued_out, State1, Removed),
+			S2 = cut_footprint_task_counts(RemovedTasks, State1#state{ task_queue = NewQueued }),
 			{S2, Removed};
 		false ->
-			{State, 0}
+			{State1, 0}
 	end,
 	
 	%% 2. Update max_in_flight
@@ -274,8 +305,12 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	%% 4. Log rebalance
 	?LOG_DEBUG([{event, rebalance_peer},
 		{peer, PeerFormatted},
+		{current_rating, Performance#performance.current_rating},
+		{queue_scaling_factor, QueueScalingFactor},
 		{in_flight_count, NewInFlight},
 		{queued_count, NewQueueLen},
+		{prev_max_queue_len, OldMaxQueueLen},
+		{target_max_queue_len, RawMaxQueueLen},
 		{max_queue_len, MaxQueueLen},
 		{faster_than_target, FasterThanTarget},
 		{workers_starved, WorkersStarved},
@@ -311,11 +346,16 @@ handle_cast({task_completed, WorkerPid, FootprintKey, Result, ElapsedNative, Dat
 	{noreply, State2};
 
 handle_cast({enqueue, SyncTask}, State) ->
-	#sync_task{ footprint_key = FootprintKey } = SyncTask,
-	State1 = State#state{ last_task_time = erlang:monotonic_time() },
-	{_, State2} = do_enqueue_task(FootprintKey, SyncTask, true, State1),
-	publish_load(State2),
-	{noreply, State2};
+	case queue:len(State#state.task_queue) >= State#state.max_queue_len of
+		true ->
+			{noreply, State};
+		false ->
+			#sync_task{ footprint_key = FootprintKey } = SyncTask,
+			State1 = State#state{ last_task_time = erlang:monotonic_time() },
+			{_, State2} = do_enqueue_task(FootprintKey, SyncTask, true, State1),
+			publish_load(State2),
+			{noreply, State2}
+	end;
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -345,12 +385,16 @@ terminate(_Reason, State) ->
 
 %% @doc Calculate max queue size for this peer.
 %% MaxQueue = max(PeerThroughput * ScalingFactor, MIN_PEER_QUEUE)
-max_queue_length(#performance{ current_rating = 0 }, _ScalingFactor) -> infinity;
-max_queue_length(#performance{ current_rating = 0.0 }, _ScalingFactor) -> infinity;
-max_queue_length(_Performance, infinity) -> infinity;
+max_queue_length(#performance{ current_rating = Rating }, _ScalingFactor)
+		when Rating == 0; Rating == 0.0 ->
+	?MAX_PEER_QUEUE;
 max_queue_length(Performance, ScalingFactor) ->
 	PeerThroughput = Performance#performance.current_rating,
-	max(trunc(PeerThroughput * ScalingFactor), ?MIN_PEER_QUEUE).
+	min(?MAX_PEER_QUEUE, max(trunc(PeerThroughput * ScalingFactor), ?MIN_PEER_QUEUE)).
+
+smooth_max_queue_len(Old, Raw) when Raw >= Old -> Raw;
+smooth_max_queue_len(Old, Raw) ->
+	max(Raw, round(Old * ?QUEUE_SHRINK_RATE)).
 
 %%%===================================================================
 %%% Private functions - Task management
@@ -418,7 +462,6 @@ do_complete_footprint_task(FootprintKey, State) ->
 			peer_formatted = PeerFormatted } = State,
 	case Footprints of
 		#{ FootprintKey := Footprint } ->
-			increment_metrics(deactivate_footprint_task, State, 1),
 			NewActiveCount = Footprint#footprint.active_task_count - 1,
 			case NewActiveCount =< 0 of
 				true ->
@@ -496,17 +539,31 @@ log_long_running_footprints(State) ->
 %%%===================================================================
 
 reap_dead_workers(State) ->
+	Now = erlang:monotonic_time(),
+	StaleThresholdNative = erlang:convert_time_unit(
+		?IN_FLIGHT_STALE_THRESHOLD_S, second, native),
 	maps:fold(
-		fun(WorkerPid, FootprintKey, Acc) ->
-			case is_process_alive(WorkerPid) of
-				true ->
-					Acc;
+		fun(WorkerPid, {FootprintKey, TakenAt}, Acc) ->
+			Dead = not is_process_alive(WorkerPid),
+			Stale = (Now - TakenAt) > StaleThresholdNative,
+			case Dead orelse Stale of
 				false ->
+					Acc;
+				true ->
+					AgeSecs = erlang:convert_time_unit(
+						Now - TakenAt, native, second),
+					?LOG_WARNING([{event, reaped_in_flight_task},
+						{peer, Acc#state.peer_formatted},
+						{worker, WorkerPid},
+						{footprint_key, FootprintKey},
+						{reason, case Dead of true -> dead; false -> stale end},
+						{age_s, AgeSecs}]),
 					NewInFlight = max(0, Acc#state.in_flight_count - 1),
 					do_complete_footprint_task(FootprintKey,
 						Acc#state{
 							in_flight_count = NewInFlight,
-							in_flight_workers = maps:remove(WorkerPid, Acc#state.in_flight_workers)
+							in_flight_workers = maps:remove(WorkerPid,
+								Acc#state.in_flight_workers)
 						})
 			end
 		end, State, State#state.in_flight_workers).
@@ -678,9 +735,9 @@ test_cut_queue({Peer, Pid}) ->
 		%% Rebalance with scaling factor that gives MaxQueue = 20 (MIN_PEER_QUEUE)
 		%% MaxQueue = max(PeerThroughput * ScalingFactor, MIN_PEER_QUEUE)
 		%% With PeerThroughput = 100, ScalingFactor = 0.1 => MaxQueue = max(10, 20) = 20
+		%% Pre-set max_queue_len so smoothing doesn't dampen the first cut.
+		sys:replace_state(Pid, fun(S) -> S#state{ max_queue_len = 20 } end),
 		Performance = #performance{ current_rating = 100.0, average_latency = 50.0 },
-		%% RebalanceParams = {QueueScalingFactor, TargetLatency, WorkersStarved}
-		%% FasterThanTarget = (50.0 < 100.0) = true
 		RebalanceParams = {0.1, 100.0, false},
 		Result = rebalance(Pid, Performance, RebalanceParams),
 		?assertEqual({ok, 5}, Result),

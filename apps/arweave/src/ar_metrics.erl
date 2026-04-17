@@ -495,7 +495,7 @@ register() ->
 
 	prometheus_counter:new([{name, sync_tasks},
 		{labels, [state, peer]},
-		{help, "The number of syncing tasks. 'state' can be 'waiting_in', 'waiting_out', "
+		{help, "The number of syncing tasks. 'state' can be "
 				"'queued_in', 'queued_out', 'dispatched', 'completed', "
 				"'activate_footprint', or 'deactivate_footprint'. "
 				" 'peer' is the peer the task is intended for."}]),
