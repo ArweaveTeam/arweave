@@ -64,7 +64,7 @@ fetch(Offset, Start, End, StoreID, Type) ->
 				%% Skipping ahead risks a death-loop: scan races through the
 				%% entire range (no HTTP calls), restarts, cooldown expires at
 				%% a random offset, repeat — never collecting all intervals.
-				?LOG_WARNING([{event, collect_peer_intervals_all_peers_on_cooldown},
+				?LOG_DEBUG([{event, collect_peer_intervals_all_peers_busy},
 					{store_id, StoreID},
 					{offset, Offset}, {type, Type}]),
 				ar_util:cast_after(1000, Parent,
@@ -195,8 +195,8 @@ get_peers2(Bucket, GetPeersFun, RPMKey, Path) ->
 	],
 	case length(AllPeers) > 0 andalso length(HotPeers) == 0 of
 		true ->
-			% There are peers for this Offset, but they are all on cooldown/throttled, so
-			% we'll give them time to recover.
+			%% All peers are either on cooldown (explicit 429) or throttled
+			%% (self-imposed rate limit). Wait for them to recover.
 			wait;
 		false ->
 			ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT)
