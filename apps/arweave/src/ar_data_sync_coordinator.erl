@@ -2,37 +2,42 @@
 %%% most of the logic lives elsewhere; this module holds the peer roster,
 %%% runs the periodic rebalance tick, and owns the global worker_load ETS
 %%% helpers.
+%%% 
+%%% Main objectives:
+%%% - Saturate ar_data_sync_worker processes so they always have work to do
+%%%   (fetching chunks from peers)
+%%% - Don't let ar_data_sync_workers get stuck working through a long queue of tasks for a slow
+%%%   peer. Historically this was a common cause of poor sync performance - node would "lock up"
+%%%   as it tried to work through 1000+ queued sync tasks for a peer with multi-second GET /chunk2
+%%%   latency.
+%%% - Limit the number of footprints that are being handled at once. All chunks in a footprint
+%%%   can be unpacked with the same 256MiB entropy. If the node tries to pull from too many
+%%%   different footprints concurrently it either overwhelms RAM with too many cached entropies or
+%%%   thrashes and ends up recomputing the same entropy multiple times (a very expensive operation)
 %%%
 %%% Components:
 %%% - ar_peer_worker (one per peer): owns the per-peer task queue, in-flight
-%%%   count and limit, footprint state. Sole writer of its worker_load rows.
+%%%   count and limit, footprint state. Sole writer of its worker_load rows (worker_load tracks
+%%%   how much work is assigned to this peer and is used to balance load and for backpressure)
 %%% - ar_data_sync_worker (pool of N): pull loop. Each worker shuffles the
 %%%   peer roster and asks peer workers for tasks via take_one/1.
 %%% - this module: forwards sync_range casts into the right peer worker,
-%%%   runs the rebalance tick every ?REBALANCE_FREQUENCY_MS, and exposes
-%%%   ETS helpers (record_peer_load, claim/release_footprint_slot).
+%%%   runs the rebalance tick every ?REBALANCE_FREQUENCY_MS, exposes
+%%%   ETS helpers (record_peer_load, claim/release_footprint_slot), provides backpressure to
+%%%   ar_data_sync via ready_for_work/0.
 %%%
 %%% Tasks are either queued (in a peer worker's task_queue) or in-flight
 %%% (held by a sync worker that called take_one). A task with a footprint
 %%% key cannot go in-flight unless its peer already holds a global footprint
 %%% slot or can claim one atomically (see claim_footprint_slot/0).
-%%%
+
 -module(ar_data_sync_coordinator).
 
 -behaviour(gen_server).
 
 -export([start_link/1, register_workers/0, is_syncing_enabled/0, ready_for_work/0]).
-
-%% Phase 0 instrumentation: ETS mirror of counters, anomaly detection helpers.
-%% Exported so ar_peer_worker can publish its own counters.
 -export([record_peer_load/5, remove_peer/1]).
-
-%% Phase 2: atomic footprint slot claim/release via ETS. Replaces the
-%% coordinator-owned total_active_footprints counter and the dance of
-%% HasCapacity-at-enqueue + try_activate_waiting_footprint.
 -export([claim_footprint_slot/0, release_footprint_slot/0]).
-
-
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -ifdef(AR_TEST).
@@ -46,15 +51,12 @@
 -include_lib("arweave/include/ar_peers.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--define(REBALANCE_FREQUENCY_MS, 10*1000).
+-define(REBALANCE_FREQUENCY_MS, 10_000).
 -define(WORKER_LOAD_TABLE, worker_load).
-
-%% Phase 4: coordinator state collapses to roster + config.
-%% Counters live in ETS (worker_load, footprint_slots_*) — see Phase 0–2.
-%% The `workers` queue is gone with the push dispatcher; sync workers are
-%% looked up by name on demand and the count is published once at init.
+%%% EMA smoothing factor for the total throughput calculation. Without this the throughput
+%%% calculation can be volatile which hurts sync performance (e.g. by triggering unnecssary
+%%% rebalancing).
 -define(THROUGHPUT_SMOOTHING_ALPHA, 0.3).
-
 -record(state, {
 	total_throughput = undefined   %% EMA-smoothed sum of peer ratings
 }).
@@ -63,7 +65,6 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Start the server.
 start_link(Workers) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Workers, []).
 
@@ -99,13 +100,6 @@ is_syncing_enabled() ->
 
 %% @doc Returns true if we can accept new tasks. Will always return false if
 %% syncing is disabled (i.e. sync_jobs = 0).
-%%
-%% Phase 4: derived from per-peer ETS rows. Each peer worker is the sole
-%% writer of its own counters, so summing them is race-free at the
-%% per-key level. The sum is non-atomic across keys, but ready_for_work
-%% is back-pressure — a slightly-stale read just accepts one extra task
-%% or defers one (the coordinator's mailbox already had this property).
-%% O(N) in peer count; cheap with ~100 peers.
 ready_for_work() ->
 	try
 		WorkerCount = ets:lookup_element(?WORKER_LOAD_TABLE, workers_count, 2),
@@ -127,8 +121,6 @@ ready_for_work() ->
 init(Workers) ->
 	ar_util:cast_after(?REBALANCE_FREQUENCY_MS, ?MODULE, rebalance_peers),
 	MaxFootprints = calculate_max_footprints(),
-	%% worker_load ETS table is created in ar_data_sync_sup.
-	%% Clear stale entries from a previous coordinator incarnation.
 	ets:delete_all_objects(?WORKER_LOAD_TABLE),
 	ets:insert(?WORKER_LOAD_TABLE, {workers_count, length(Workers)}),
 	ets:insert(?WORKER_LOAD_TABLE,
@@ -149,10 +141,6 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-%% Phase 4/5: thin forwarder. Look up (or create) the peer worker and cast
-%% the task. The peer worker's `record_peer_load` updates its own per-peer
-%% ETS rows; `ready_for_work/0` derives the global total from the per-peer
-%% sum on demand. No coordinator-owned counter to maintain.
 handle_cast({sync_range, SyncTask}, State) ->
 	#sync_task{ peer = Peer } = SyncTask,
 	case ar_peer_worker:get_or_start(Peer) of
@@ -204,15 +192,19 @@ max_tasks(WorkerCount) ->
 calculate_targets(PeerPids, AllPeerPerformances, State) ->
 	WorkerCount = ets:lookup_element(?WORKER_LOAD_TABLE, workers_count, 2, 0),
 	Peers = maps:keys(PeerPids),
+	%% Estimated (unsmoothed) throughput across all peers
 	RawTotalThroughput =
 		lists:foldl(
 			fun(Peer, Acc) ->
 				Performance = maps:get(Peer, AllPeerPerformances, #performance{}),
 				Acc + Performance#performance.current_rating
 			end, 0.0, Peers),
+	%% Smoothed throughput across all peers. Smoothing reduces volatilitity and unnesessary
+	%% rebalancing.
 	TotalThroughput = case State#state.total_throughput of
 		undefined -> RawTotalThroughput;
-		OldTotalThroughput -> ar_util:ema(OldTotalThroughput, RawTotalThroughput, ?THROUGHPUT_SMOOTHING_ALPHA)
+		OldTotalThroughput ->
+			ar_util:ema(OldTotalThroughput, RawTotalThroughput, ?THROUGHPUT_SMOOTHING_ALPHA)
 	end,
 	TotalLatency =
 		lists:foldl(
@@ -278,7 +270,7 @@ queue_scaling_factor(TotalThroughput, WorkerCount) ->
 
 %% @doc Called from ar_peer_worker to publish its current load contribution
 %% (in-flight, queued, active footprints, slow-peer cap) to the worker_load
-%% ETS table. Consumed by dispatch/rebalance/anomaly logic.
+%% ETS table.
 record_peer_load(Peer, InFlight, Queued, ActiveFootprints, MaxInFlight) ->
 	try
 		ets:insert(?WORKER_LOAD_TABLE,
@@ -290,9 +282,7 @@ record_peer_load(Peer, InFlight, Queued, ActiveFootprints, MaxInFlight) ->
 	end.
 
 %% @doc Atomically claim a footprint slot. Returns true on success, false if
-%% no slots are available. Race-free under concurrent callers.
-%% Implementation: unbounded decrement with post-hoc bounds check.
-%% If decrement leaves the counter negative, we over-drew and must put it back.
+%% no slots are available. 
 claim_footprint_slot() ->
 	try
 		case ets:update_counter(?WORKER_LOAD_TABLE,
@@ -309,8 +299,7 @@ claim_footprint_slot() ->
 		false
 	end.
 
-%% @doc Release a previously-claimed footprint slot. Capped at the configured
-%% maximum so bugs (double-release) don't inflate capacity beyond intended.
+%% @doc Release a previously-claimed footprint slot. 
 release_footprint_slot() ->
 	try
 		Max = ets:lookup_element(?WORKER_LOAD_TABLE, footprint_slots_max, 2),
@@ -331,10 +320,6 @@ remove_peer(Peer) ->
 	catch _:_ -> ok
 	end.
 
-%% @doc Phase 4: anomaly checker now compares per-peer ETS sums against
-%% themselves (sanity check on the sole-writer ETS data) and against the
-%% authoritative footprint slot gauge. The old gen_server-vs-mirror checks
-%% are gone because the gen_server no longer caches counters.
 log_anomalies(#state{} = _State) ->
 	try
 		SumPeerFootprints = sum_prefix(active_footprints),
@@ -362,10 +347,6 @@ sum_prefix(Tag) ->
 	%% Select all entries whose key is {Tag, _} and sum their values.
 	MatchSpec = [{ {{Tag, '_'}, '$1'}, [], ['$1'] }],
 	lists:sum(ets:select(?WORKER_LOAD_TABLE, MatchSpec)).
-
-%% Phase 4: get_worker / cycle_workers / try_activate_footprint are gone.
-%% Sync workers pull on their own in Phase 3+; the coordinator no longer
-%% selects workers or dispatches tasks.
 
 %%%===================================================================
 %%% Tests.

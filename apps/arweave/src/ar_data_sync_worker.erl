@@ -63,9 +63,6 @@ handle_cast({read_range, Args}, State) ->
 	end,
 	{noreply, State};
 
-%% Phase 3: pull loop. Try peers in shuffled order; on success run the
-%% sync_range and report completion directly to the owning peer worker.
-%% On total miss, register as idle and wait for a `work_available` cast.
 handle_cast(pull, State) ->
 	%% Shuffle list to distribute peer load across workers.
 	Peers = ar_util:shuffle_list(ar_peer_worker:get_all_peers()),
@@ -82,12 +79,6 @@ handle_cast(pull, State) ->
 	end;
 
 handle_cast({sync_range, SyncTask}, State) ->
-	%% Phase 3: this clause now serves only the self-recast pathway —
-	%% sync_range/2 schedules `cast_after(_, self(), {sync_range, SyncTask})`
-	%% on retryable errors (cache full, disk full, HTTP timeout). The
-	%% peer worker is still holding the slot and the in_flight_count for
-	%% this task from the original take_one; the recast must therefore
-	%% report completion to the same peer worker so the slot is released.
 	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
 			footprint_key = FootprintKey } = SyncTask,
 	StartTime = erlang:monotonic_time(),
@@ -104,10 +95,6 @@ handle_cast({sync_range, SyncTask}, State) ->
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
-
-%%%===================================================================
-%%% Phase 3: pull loop helpers
-%%%===================================================================
 
 try_take_one([]) ->
 	none;

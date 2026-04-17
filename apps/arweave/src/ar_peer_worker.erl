@@ -1,35 +1,39 @@
-%%% @doc Per-peer process managing the sync task queue, in-flight state, and footprints.
+%%% @doc Per-peer process managing the sync task queue, in-flight tracking, and
+%%% footprint admission. One process per peer, started on demand by the
+%%% coordinator when ar_data_sync first enqueues work for that peer.
 %%%
-%%% Each peer gets its own worker process to isolate state and prevent
-%%% stale-state bugs from interleaved updates. This process manages:
+%%% Task Queue:
+%%% - Holds #sync_task{} records waiting to be pulled by ar_data_sync_workers.
+%%% - Workers call take_one/1 to pop a task; enqueue is rejected if the queue
+%%%   is already at max_queue_len (prevents inflating the global backpressure
+%%%   signal between rebalance ticks).
 %%%
-%%% Peer Queue Management:
-%%% - Maintains a queue of tasks ready to be pulled by sync workers for this peer
-%%% - Tracks in_flight_count (number of tasks currently being processed)
-%%% - Maintains max_in_flight limit that controls how many tasks can be
-%%%   concurrently in flight for this peer (adjusted via rebalancing)
-%%% - If too many requests are made to a peer, it can be blocked or throttled
-%%% - Peer performance varies over time; in_flight limits adapt to avoid getting
-%%%   "stuck" syncing many chunks from a slow peer
+%%% In-Flight Tracking:
+%%% - in_flight_count tracks how many tasks have been handed out via take_one
+%%%   but not yet completed via task_completed.
+%%% - max_in_flight caps concurrency per peer. Adjusted +/-1 each rebalance
+%%%   tick based on the peer's latency vs the global target latency.
+%%% - in_flight_workers maps WorkerPid => {FootprintKey, TakenAt} for each
+%%%   outstanding task. Used to reap dead or stale workers on the rebalance
+%%%   tick (releases leaked in_flight_count and footprint slots).
 %%%
-%%% Footprint Management:
-%%% - Tasks with a FootprintKey are grouped by footprint to limit concurrent
-%%%   processing and avoid overloading the entropy cache
-%%% - Footprints can be active (tasks being processed) or waiting (task_queue for later)
-%%% - Each peer has a max_footprints limit to prevent overloading entropy cache
-%%% - When a footprint becomes active, waiting tasks are moved to the peer queue
-%%% - When all tasks in a footprint complete, it's deactivated and the next
-%%%   waiting footprint may be activated
-%%% - Long-running footprints are detected and logged per-peer
+%%% Footprint Admission:
+%%% - A task with a FootprintKey can only go in-flight if this peer already
+%%%   holds a global footprint slot for that key, or can claim one atomically
+%%%   via ar_data_sync_coordinator:claim_footprint_slot/0. If no slot is
+%%%   available, take_one returns none (head-of-line block; worker tries
+%%%   the next peer).
+%%% - When a footprint's active_task_count reaches 0, the global slot is
+%%%   released. Long-running footprints are logged periodically.
 %%%
-%%% Performance Tracking:
-%%% - Tracks task completion times and data sizes for performance metrics
-%%% - Integrates with ar_peers module for peer rating and performance tracking
-%%%
-%%% Rebalancing:
-%%% - Responds to rebalance requests from the coordinator
-%%% - Adjusts max_in_flight based on peer performance vs target latency
-%%% - Cuts queue if it exceeds the calculated max_queue size
+%%% Rebalancing (called by coordinator every 10s):
+%%% - Adjusts max_in_flight: +1 if peer is faster than target latency or
+%%%   workers are starved; -1 if slower; -1 if idle for > ACTIVE_THRESHOLD_S.
+%%% - Adjusts max_queue_len: raw target from peer rating * scaling factor,
+%%%   smoothed downward at QUEUE_SHRINK_RATE per tick to avoid mass cuts.
+%%% - Cuts queue tail if it exceeds (smoothed) max_queue_len.
+%%% - Reaps dead/stale entries from in_flight_workers.
+%%% - Shuts down the peer worker if idle for IDLE_SHUTDOWN_THRESHOLD_S.
 -module(ar_peer_worker).
 
 -behaviour(gen_server).
@@ -47,7 +51,7 @@
 
 -define(DEFAULT_IN_FLIGHT_LIMIT, 8).
 -define(MIN_PEER_QUEUE, 20).
--define(CHECK_LONG_RUNNING_FOOTPRINTS_MS, 60000).  %% Check every 60 seconds
+-define(CHECK_LONG_RUNNING_FOOTPRINTS_MS, 60000).
 -define(LONG_RUNNING_FOOTPRINT_THRESHOLD_S, 120).
 -define(IDLE_SHUTDOWN_THRESHOLD_S, 300).  %% Shutdown after 5 minutes of no tasks
 -define(CALL_TIMEOUT_MS, 30000).
@@ -62,10 +66,6 @@
 %% (raw target rising) applies immediately — no upward smoothing.
 -define(QUEUE_SHRINK_RATE, 0.9).
 -define(MAX_PEER_QUEUE, 1000000).
-
-%% Per-footprint state. Admission to the global footprint cache is decided
-%% atomically at dequeue time via the ETS slot counter. `activation_time`
-%% is retained for the long-running-footprint diagnostic log.
 -record(footprint, {
 	active_task_count = 0,        %% count of in-flight tasks (queued + in-flight)
 	activation_time          %% set when this peer claims a global slot for this key
@@ -133,23 +133,14 @@ stop(Pid) ->
 
 %%%===================================================================
 %%% Operations (all take Pid as first argument).
-%%% Coordinator caches Peer->Pid mapping to avoid lookup overhead.
 %%%===================================================================
 
-%% @doc Phase 3: one-way enqueue. The peer worker appends the task to its
-%% queue and wakes one idle sync worker (if any). No reply needed; sync
-%% workers pull when they're free.
 enqueue(Pid, Args) ->
 	gen_server:cast(Pid, {enqueue, Args}).
 
 %% @doc A sync worker asks for one task. Returns {task, SyncTask} on success
 %% or `none` if the peer is at its dispatch cap, the queue is empty, or the
 %% head task's footprint cannot claim a global slot.
-%%
-%% On timeout the peer worker may still apply the state mutation (pop task,
-%% increment counters) before the reply arrives. That would strand the task
-%% — it's popped from the queue, counted in-flight, but no sync worker is
-%% running it. Use ?CALL_TIMEOUT_MS so we only fail on genuinely stuck peers.
 take_one(Pid) ->
 	try
 		gen_server:call(Pid, {take_one, self()}, ?CALL_TIMEOUT_MS)
@@ -203,11 +194,6 @@ init([Peer]) ->
 	publish_load(State),
 	{ok, State}.
 
-%% @doc Phase 0 instrumentation: publish this peer worker's contribution to the
-%% aggregate load counters into the worker_load ETS table. Call at the end of every
-%% state-mutating handler.
-%% Phase 1 also publishes max_in_flight so coordinator can read it from ETS
-%% instead of a synchronous gen_server:call.
 publish_load(State) ->
 	ar_data_sync_coordinator:record_peer_load(
 		State#state.peer,
@@ -221,9 +207,6 @@ handle_call(get_state, _From, State) ->
 	%% Test-only: keep for tests to access raw state
 	{reply, {ok, State}, State};
 
-%% Phase 3: hand a single task to a pulling sync worker. Returns `none` if
-%% the peer is at its dispatch cap, the queue is empty, or the head task's
-%% footprint cannot claim a global slot. The peer monitors the worker pid
 handle_call({take_one, WorkerPid}, _From, State) ->
 	#state{ in_flight_count = InFlightCount, max_in_flight = MaxInFlight,
 			task_queue = TaskQueue } = State,
@@ -309,7 +292,7 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	ShouldShutdown = (NewInFlight == 0) andalso (NewQueueLen == 0) andalso
 					 (IdleSeconds >= ?IDLE_SHUTDOWN_THRESHOLD_S),
 
-	%% 4. Log rebalance
+	%% 5. Log rebalance metrics
 	?LOG_DEBUG([{event, rebalance_peer},
 		{peer, PeerFormatted},
 		{current_rating, Performance#performance.current_rating},
@@ -440,10 +423,6 @@ mark_footprint_active(FootprintKey, State) ->
 		active_footprints = sets:add_element(FootprintKey, Active)
 	}.
 
-%% @doc Enqueue a task — Phase 2 unifies the three old branches. Footprint
-%% slot claim is no longer decided here; any task with a footprint key simply
-%% bumps its active_task_count and goes into the task_queue. Tasks with no key
-%% (classic chunk sync) bypass all footprint bookkeeping.
 do_enqueue_task(none, Args, _HasCapacity, State) ->
 	NewQueue = queue:in(Args, State#state.task_queue),
 	increment_metrics(queued_in, State, 1),
@@ -455,10 +434,6 @@ do_enqueue_task(FootprintKey, Args, _HasCapacity, State) ->
 		active_task_count = Footprint#footprint.active_task_count + 1
 	},
 	increment_metrics(queued_in, State, 1),
-	%% Return false for WasActivated: activation is a dequeue-time concept now;
-	%% enqueue never claims a slot. Callers that still look at this flag get
-	%% consistent accounting (activation counter is only incremented in
-	%% mark_footprint_active at dequeue).
 	{false, State#state{
 		task_queue = queue:in(Args, Queue),
 		footprints = maps:put(FootprintKey, Footprint2, Footprints)
@@ -500,8 +475,7 @@ do_complete_footprint_task(FootprintKey, State) ->
 	end.
 
 %% @doc Decrement footprint bookkeeping for tasks cut from the queue during
-%% rebalance trimming. Routes through do_complete_footprint_task so the
-%% slot-release path is shared.
+%% rebalance trimming.
 cut_footprint_task_counts([], State) ->
 	State;
 cut_footprint_task_counts([#sync_task{ footprint_key = FootprintKey } | Rest], State) ->
