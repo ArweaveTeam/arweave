@@ -198,8 +198,10 @@
 	%% - normal: normal left-to-right syncing (normally, of the unpacked data).
 	%% - footprint: footprint-based syncing of replica 2.9 data.
 	sync_phase = undefined,
-	%% Monotonic time when the current scan phase started. Used to compute
-	%% scan duration — fast scans (near-full modules) get a longer restart
-	%% delay to reduce peer bandwidth pressure.
-	scan_start_time = undefined
+	%% Number of tasks produced by the current scan. Used for adaptive backoff:
+	%% scans that produce nothing get an exponentially growing delay.
+	scan_tasks_produced = 0,
+	%% Current backoff delay for unproductive scans (doubles each time,
+	%% capped at COLLECT_SYNC_INTERVALS_MAX_DELAY_MS).
+	scan_backoff_ms = 0
 }).
