@@ -524,74 +524,76 @@ do_complete_footprint_task(FootprintKey, State) ->
 			State
 	end.
 
-%% @doc Cut ToCut tasks from the queues. Blocked queue first (whole FK groups
-%% preferred), then eligible tail. Returns {State, RemovedCount}.
+%% @doc Cut tasks to bring total_queued under max_queue_len.
+%% Footprint tasks are all-or-nothing per FK (partial cut wastes entropy).
+%% Order: blocked footprint groups, eligible footprint groups, non-footprint.
+%% May overshoot budget to honour all-or-nothing.
 cut_queues(ToCut, State) ->
-	{State2, BlockedCut} = cut_blocked_by_footprint(ToCut, State),
-	Remaining = ToCut - BlockedCut,
-	{State3, EligibleCut} = case Remaining > 0 of
-		true -> cut_eligible_tail(Remaining, State2);
-		false -> {State2, 0}
+	%% 1. Cut whole footprint groups from blocked queue
+	BlockedFootprints = unique_footprint_keys(State#state.blocked_queue),
+	{State2, CutFromBlocked} = cut_footprint_list(BlockedFootprints, ToCut, State),
+	%% 2. Cut whole footprint groups from eligible queue
+	EligibleFootprints = unique_footprint_keys(State#state.eligible_queue),
+	{State3, CutFromEligible} = cut_footprint_list(EligibleFootprints, ToCut - CutFromBlocked, State2),
+	%% 3. Cut non-footprint tasks from eligible tail
+	RemainingBudget = ToCut - CutFromBlocked - CutFromEligible,
+	{State4, NonFootprintCut} = case RemainingBudget > 0 of
+		true -> cut_non_footprint_tail(RemainingBudget, State3);
+		false -> {State3, 0}
 	end,
-	TotalCut = BlockedCut + EligibleCut,
-	increment_metrics(queued_out, State3, TotalCut),
+	TotalCut = CutFromBlocked + CutFromEligible + NonFootprintCut,
+	increment_metrics(queued_out, State4, TotalCut),
+	{State4, TotalCut}.
+
+%% @doc Walk a list of FKs and cut each one entirely until budget is met.
+cut_footprint_list(_, Budget, State) when Budget =< 0 ->
+	{State, 0};
+cut_footprint_list([], _Budget, State) ->
+	{State, 0};
+cut_footprint_list([FootprintKey | Rest], Budget, State) ->
+	{State2, Removed} = remove_footprint_from_queues(FootprintKey, State),
+	{State3, MoreRemoved} = cut_footprint_list(Rest, Budget - Removed, State2),
+	{State3, Removed + MoreRemoved}.
+
+%% @doc Remove ALL tasks for a given FootprintKey from both queues.
+%% Updates footprint bookkeeping for each removed task.
+remove_footprint_from_queues(FootprintKey, State) ->
+	{NewEligible, EligibleCut} = remove_matching(FootprintKey, State#state.eligible_queue),
+	{NewBlocked, BlockedCut} = remove_matching(FootprintKey, State#state.blocked_queue),
+	TotalCut = EligibleCut + BlockedCut,
+	State2 = State#state{ eligible_queue = NewEligible, blocked_queue = NewBlocked },
+	State3 = lists:foldl(
+		fun(_, Acc) -> do_complete_footprint_task(FootprintKey, Acc) end,
+		State2, lists:seq(1, TotalCut)),
 	{State3, TotalCut}.
 
-%% @doc Cut whole FK groups from blocked queue until budget is met.
-cut_blocked_by_footprint(ToCut, State) ->
-	BlockedList = queue:to_list(State#state.blocked_queue),
-	Groups = group_by_footprint(BlockedList),
-	{KeptTasks, CutTasks, _} = lists:foldl(
-		fun({_FK, Tasks}, {KeptAcc, CutAcc, Budget}) ->
-			GroupSize = length(Tasks),
-			case Budget =< 0 of
-				true ->
-					{KeptAcc ++ Tasks, CutAcc, Budget};
-				false ->
-					case GroupSize =< Budget of
-						true ->
-							{KeptAcc, CutAcc ++ Tasks, Budget - GroupSize};
-						false ->
-							{KeptAcc ++ Tasks, CutAcc, Budget}
-					end
-			end
-		end, {[], [], ToCut}, Groups),
-	State2 = cut_footprint_task_counts(CutTasks, State#state{
-		blocked_queue = queue:from_list(KeptTasks)
-	}),
-	{State2, length(CutTasks)}.
+%% @doc Remove all tasks matching FootprintKey from a queue.
+%% Returns {NewQueue, RemovedCount}.
+remove_matching(FootprintKey, Queue) ->
+	TaskList = queue:to_list(Queue),
+	Kept = [T || #sync_task{ footprint_key = FK } = T <- TaskList, FK =/= FootprintKey],
+	{queue:from_list(Kept), length(TaskList) - length(Kept)}.
 
-%% @doc Cut from the tail of the eligible queue.
-cut_eligible_tail(ToCut, State) ->
-	EligibleLen = queue:len(State#state.eligible_queue),
-	KeepCount = max(0, EligibleLen - ToCut),
-	{Kept, Removed} = queue:split(KeepCount, State#state.eligible_queue),
-	RemovedTasks = queue:to_list(Removed),
-	State2 = cut_footprint_task_counts(RemovedTasks, State#state{
-		eligible_queue = Kept
-	}),
-	{State2, length(RemovedTasks)}.
+%% @doc Cut non-footprint tasks from the tail of the eligible queue.
+cut_non_footprint_tail(Budget, State) ->
+	TaskList = queue:to_list(State#state.eligible_queue),
+	FootprintTasks = [T || #sync_task{ footprint_key = FK } = T <- TaskList, FK =/= none],
+	NonFootprintTasks = [T || #sync_task{ footprint_key = none } = T <- TaskList],
+	KeepCount = max(0, length(NonFootprintTasks) - Budget),
+	{Kept, Cut} = lists:split(KeepCount, NonFootprintTasks),
+	NewQueue = queue:from_list(FootprintTasks ++ Kept),
+	{State#state{ eligible_queue = NewQueue }, length(Cut)}.
 
-group_by_footprint(Tasks) ->
+%% @doc Extract unique footprint keys from a queue (preserving first-seen order).
+unique_footprint_keys(Queue) ->
 	lists:foldl(
-		fun(#sync_task{ footprint_key = FK } = Task, Acc) ->
-			Key = case FK of none -> make_ref(); _ -> FK end,
-			case lists:keyfind(Key, 1, Acc) of
-				false -> Acc ++ [{Key, [Task]}];
-				{Key, Existing} ->
-					lists:keyreplace(Key, 1, Acc, {Key, Existing ++ [Task]})
+		fun(#sync_task{ footprint_key = none }, Acc) -> Acc;
+		   (#sync_task{ footprint_key = FK }, Acc) ->
+			case lists:member(FK, Acc) of
+				true -> Acc;
+				false -> Acc ++ [FK]
 			end
-		end, [], Tasks).
-
-%% @doc Decrement footprint bookkeeping for tasks cut from the queue.
-cut_footprint_task_counts([], State) ->
-	State;
-cut_footprint_task_counts([#sync_task{ footprint_key = FootprintKey } | Rest], State) ->
-	State2 = case FootprintKey of
-		none -> State;
-		_ -> do_complete_footprint_task(FootprintKey, State)
-	end,
-	cut_footprint_task_counts(Rest, State2).
+		end, [], queue:to_list(Queue)).
 
 %%%===================================================================
 %%% Private functions - Long-running footprint detection (debugging)
