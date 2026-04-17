@@ -255,7 +255,7 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals) ->
 	{EnqueueIntervals, MinRightBound} =
 		lists:foldl(
 			fun	({error, batch_pmap_timeout, Peer}, Acc) ->
-					?LOG_WARNING([{event, peer_sync_record_timeout},
+					?LOG_DEBUG([{event, peer_sync_record_timeout},
 						{parent, Parent},
 						{peer, ar_util:format_peer(Peer)}]),
 					ar_rate_limiter:set_cooldown(
@@ -360,7 +360,7 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 	EnqueueIntervals =
 		lists:foldl(
 			fun	({error, batch_pmap_timeout, Peer}, Acc) ->
-					?LOG_WARNING([{event, peer_footprint_record_timeout},
+					?LOG_DEBUG([{event, peer_footprint_record_timeout},
 						{parent, Parent},
 						{peer, ar_util:format_peer(Peer)}]),
 					ar_rate_limiter:set_cooldown(
