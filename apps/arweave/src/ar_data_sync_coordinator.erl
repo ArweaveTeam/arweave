@@ -40,7 +40,7 @@
 		 sync_range/1]).
 -export([record_peer_load/5, remove_peer/1]).
 -export([claim_footprint_slot/0, release_footprint_slot/0]).
--export([default_in_flight_limit/0, min_peer_queue/0, max_peer_queue/0]).
+-export([sync_jobs/0, default_in_flight_limit/0, min_peer_queue/0, max_peer_queue/0]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -ifdef(AR_TEST).
