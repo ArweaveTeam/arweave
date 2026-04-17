@@ -374,12 +374,16 @@ request_data_removal(Start, End, Ref, ReplyTo) ->
 %% @doc Return true if the in-memory data chunk cache is full. Return not_initialized
 %% if there is no information yet.
 %% @doc Adaptive restart delay based on scan productivity. Productive scans
-%% (found tasks to sync) restart at the minimum delay. Unproductive scans
-%% get exponential backoff — doubling each time, capped at the max delay.
-%% Resets to min on any productive scan.
-scan_restart_delay(TasksProduced, _PrevBackoff) when TasksProduced > 0 ->
+%% restart at the minimum delay. Scans with no peers (data discovery not
+%% populated yet) also restart at min delay — no point backing off when we
+%% haven't had a chance to query. Only scans that queried peers and found
+%% nothing get exponential backoff (module is likely near-full).
+scan_restart_delay(#sync_data_state{ scan_tasks_produced = TasksProduced })
+		when TasksProduced > 0 ->
 	{?COLLECT_SYNC_INTERVALS_MIN_DELAY_MS, 0};
-scan_restart_delay(_TasksProduced, PrevBackoff) ->
+scan_restart_delay(#sync_data_state{ scan_had_peers = false }) ->
+	{?COLLECT_SYNC_INTERVALS_MIN_DELAY_MS, 0};
+scan_restart_delay(#sync_data_state{ scan_backoff_ms = PrevBackoff }) ->
 	Backoff = ar_util:between(
 		max(PrevBackoff * 2, ?COLLECT_SYNC_INTERVALS_MIN_DELAY_MS),
 		?COLLECT_SYNC_INTERVALS_MIN_DELAY_MS,
@@ -860,16 +864,18 @@ handle_cast(collect_peer_intervals, State) ->
 	{noreply, State2};
 
 handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) when Offset >= End ->
-	TasksProduced = State#sync_data_state.scan_tasks_produced,
-	{RestartDelay, NewBackoff} = scan_restart_delay(
-		TasksProduced, State#sync_data_state.scan_backoff_ms),
+	{RestartDelay, NewBackoff} = scan_restart_delay(State),
 	?LOG_DEBUG([{event, collect_peer_intervals_done},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
 		{offset, Offset}, {s, Start}, {e, End}, {type, Type},
-		{tasks_produced, TasksProduced}, {restart_delay_ms, RestartDelay}]),
+		{tasks_produced, State#sync_data_state.scan_tasks_produced},
+		{had_peers, State#sync_data_state.scan_had_peers},
+		{restart_delay_ms, RestartDelay}]),
 	ar_util:cast_after(RestartDelay, self(), collect_peer_intervals),
-	{noreply, State#sync_data_state{ scan_tasks_produced = 0, scan_backoff_ms = NewBackoff }};
+	{noreply, State#sync_data_state{
+		scan_tasks_produced = 0, scan_had_peers = false,
+		scan_backoff_ms = NewBackoff }};
 handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			store_id = StoreID, weave_size = WeaveSize } = State,
@@ -955,9 +961,10 @@ handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 
 	{noreply, State};
 
-handle_cast({enqueue_intervals, []}, State) ->
-	{noreply, State};
-handle_cast({enqueue_intervals, Intervals}, State) ->
+handle_cast({enqueue_intervals, [], Peers}, State) ->
+	{noreply, State#sync_data_state{
+		scan_had_peers = State#sync_data_state.scan_had_peers orelse Peers =/= [] }};
+handle_cast({enqueue_intervals, Intervals, Peers}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
 	%% When enqueuing intervals, we want to distribute the intervals among many peers,
@@ -999,6 +1006,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	TasksProduced = gb_sets:size(Q2) - gb_sets:size(Q),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
 			sync_intervals_queue_intervals = QIntervals2,
+			scan_had_peers = State#sync_data_state.scan_had_peers orelse Peers =/= [],
 			scan_tasks_produced = State#sync_data_state.scan_tasks_produced
 				+ max(0, TasksProduced) }};
 

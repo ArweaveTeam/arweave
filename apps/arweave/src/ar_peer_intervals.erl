@@ -55,15 +55,13 @@ fetch(Offset, Start, End, StoreID, Type) ->
 	Parent = ar_data_sync:name(StoreID),
 	spawn_link(fun() ->
 		case do_fetch(Offset, Start, End, StoreID, Type) of
-			{End2, EnqueueIntervals} ->
-				gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals}),
+			{End2, EnqueueIntervals, Peers2} ->
+				gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals, Peers2}),
 				gen_server:cast(Parent, {collect_peer_intervals, End2, Start, End, Type});
 			wait ->
-				%% All peers on cooldown for this bucket. Wait and retry from
-				%% the same offset so we march methodically through the range.
-				%% Skipping ahead risks a death-loop: scan races through the
-				%% entire range (no HTTP calls), restarts, cooldown expires at
-				%% a random offset, repeat — never collecting all intervals.
+				%% All peers on cooldown/throttled for this bucket. Wait and
+				%% retry from the same offset so we march methodically through
+				%% the range.
 				?LOG_DEBUG([{event, collect_peer_intervals_all_peers_busy},
 					{store_id, StoreID},
 					{offset, Offset}, {type, Type}]),
@@ -85,11 +83,11 @@ do_fetch(Offset, Start, End, StoreID, normal) ->
 				%% if needed.
 				case ar_intervals:is_empty(UnsyncedIntervals) of
 					true ->
-						{End2, []};
+						{End2, [], Peers};
 					false ->
 						{End3, EnqueueIntervals2} =
 							fetch_peer_intervals(Parent, Offset, Peers, UnsyncedIntervals),
-						{min(End2, End3), EnqueueIntervals2}
+						{min(End2, End3), EnqueueIntervals2, Peers}
 				end
 		end
 	catch
@@ -103,7 +101,7 @@ do_fetch(Offset, Start, End, StoreID, normal) ->
 					{class, Class},
 					{reason, Reason},
 					{stacktrace, Stacktrace}]),
-			{Offset, []}
+			{Offset, [],  []}
 	end;
 
 do_fetch(Offset, Start, End, StoreID, footprint) ->
@@ -127,8 +125,7 @@ do_fetch(Offset, Start, End, StoreID, footprint) ->
 								Parent, Partition, Footprint, Offset, End, Peers, UnsyncedIntervals)
 					end,
 				Offset2 = get_next_fetch_offset(Offset, Start, End),
-				%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
-				{Offset2, EnqueueIntervals}
+				{Offset2, EnqueueIntervals, Peers}
 		end
 	catch
 		Class:Reason:Stacktrace ->
@@ -141,7 +138,7 @@ do_fetch(Offset, Start, End, StoreID, footprint) ->
 					{class, Class},
 					{reason, Reason},
 					{stacktrace, Stacktrace}]),
-			{Offset, []}
+			{Offset, [],  []}
 	end.
 
 %% @doc Calculate the next fetch start position after processing a sector.
@@ -195,10 +192,13 @@ get_peers2(Bucket, GetPeersFun, RPMKey, Path) ->
 	],
 	case length(AllPeers) > 0 andalso length(HotPeers) == 0 of
 		true ->
-			%% All peers are either on cooldown (explicit 429) or throttled
-			%% (self-imposed rate limit). Wait for them to recover.
+			%% Peers exist for this bucket but are all on cooldown/throttled.
+			%% Wait and retry from the same offset.
 			wait;
 		false ->
+			%% Either we have usable peers, or no peers are known for this
+			%% bucket at all (data discovery hasn't populated yet). In the
+			%% latter case the scan advances quickly with no peer queries.
 			ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT)
 	end.
 

@@ -199,8 +199,14 @@
 	%% - footprint: footprint-based syncing of replica 2.9 data.
 	sync_phase = undefined,
 	%% Number of tasks produced by the current scan. Used for adaptive backoff:
-	%% scans that produce nothing get an exponentially growing delay.
+	%% scans that complete a full range walk with 0 tasks get exponential
+	%% backoff (the module is likely near-full). Throttled scans never
+	%% complete — the wait-retry loop holds the offset until peers recover.
 	scan_tasks_produced = 0,
+	%% Whether this scan queried any peers (enqueue_intervals was called).
+	%% Scans that race through with no peers (data discovery not populated)
+	%% should not trigger backoff.
+	scan_had_peers = false,
 	%% Current backoff delay for unproductive scans (doubles each time,
 	%% capped at COLLECT_SYNC_INTERVALS_MAX_DELAY_MS).
 	scan_backoff_ms = 0
