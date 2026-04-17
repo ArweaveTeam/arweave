@@ -41,11 +41,6 @@
 %% The key for storing migration cursor in the migrations_index database.
 -define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
 
--ifdef(AR_TEST).
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 1_000).
--else.
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 10_000).
--endif.
 
 
 -ifdef(AR_TEST).
@@ -54,6 +49,19 @@
 -define(DEVICE_LOCK_WAIT, 5_000).
 -endif.
 
+
+%% Adaptive restart delay for collect_peer_intervals. Scan duration is a proxy
+%% for how much data the module still needs — fast scans (near-full) back off,
+%% slow scans (sparse) restart quickly. Linear interpolation between the bounds.
+-ifdef(AR_TEST).
+-define(COLLECT_SYNC_INTERVALS_MIN_DELAY_MS, 1_000).
+-define(COLLECT_SYNC_INTERVALS_MAX_DELAY_MS, 1_000).
+-else.
+-define(COLLECT_SYNC_INTERVALS_MIN_DELAY_MS, 10_000).
+-define(COLLECT_SYNC_INTERVALS_MAX_DELAY_MS, 120_000).
+-endif.
+-define(COLLECT_SYNC_INTERVALS_FAST_SCAN_MS, 5_000).
+-define(COLLECT_SYNC_INTERVALS_SLOW_SCAN_MS, 60_000).
 
 %% Multiplier on max_tasks() for the per-storage-module intervals queue.
 %% This gb_set buffer must be deep enough that the scan can refill before
@@ -367,6 +375,22 @@ request_data_removal(Start, End, Ref, ReplyTo) ->
 
 %% @doc Return true if the in-memory data chunk cache is full. Return not_initialized
 %% if there is no information yet.
+%% @doc Adaptive restart delay based on scan duration. Fast scans indicate a
+%% near-full module (most steps skip locally) — back off to conserve peer RPM.
+%% Slow scans indicate sparse data or throttled peers — rescan quickly.
+%% On slow networks the thundering herd problem is naturally weaker (fewer
+%% queries per minute), so the slightly shorter delays are acceptable.
+scan_restart_delay(undefined) ->
+	{0, ?COLLECT_SYNC_INTERVALS_MIN_DELAY_MS};
+scan_restart_delay(StartTime) ->
+	DurationMs = erlang:convert_time_unit(
+		erlang:monotonic_time() - StartTime, native, millisecond),
+	%% Fast scan → long delay (near-full, back off). Slow scan → short delay (sparse).
+	Delay = round(ar_util:lerp(DurationMs,
+		?COLLECT_SYNC_INTERVALS_FAST_SCAN_MS, ?COLLECT_SYNC_INTERVALS_SLOW_SCAN_MS,
+		?COLLECT_SYNC_INTERVALS_MAX_DELAY_MS, ?COLLECT_SYNC_INTERVALS_MIN_DELAY_MS)),
+	{DurationMs, Delay}.
+
 is_chunk_cache_full() ->
 	case ets:lookup(ar_data_sync_state, chunk_cache_size_limit) of
 		[{_, Limit}] ->
@@ -818,6 +842,7 @@ handle_cast(collect_peer_intervals, State) ->
 		{is_footprint_record_migrated, IsFootprintRecordMigrated},
 		{intersects_disk_pool, IntersectsDiskPool},
 		{sync_phase, SyncPhase2}]),
+	Now = erlang:monotonic_time(),
 	State2 =
 		case IntersectsDiskPool of
 			noop ->
@@ -828,27 +853,30 @@ handle_cast(collect_peer_intervals, State) ->
 						End2 = min(End, DiskPoolThreshold),
 						gen_server:cast(self(),
 							{collect_peer_intervals, Start, Start, End2, footprint}),
-						State#sync_data_state{ sync_phase = footprint };
+						State#sync_data_state{ sync_phase = footprint,
+							scan_start_time = Now };
 					_ ->
-						%% The disk pool is only synced during the "normal" phase.
 						gen_server:cast(self(),
 							{collect_peer_intervals, Start, Start, End, normal}),
-						State#sync_data_state{ sync_phase = normal }
+						State#sync_data_state{ sync_phase = normal,
+							scan_start_time = Now }
 				end;
 			false ->
 				gen_server:cast(self(), {collect_peer_intervals, Start, Start, End, SyncPhase2}),
-				State#sync_data_state{ sync_phase = SyncPhase2 }
+				State#sync_data_state{ sync_phase = SyncPhase2,
+					scan_start_time = Now }
 		end,
 	{noreply, State2};
 
 handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) when Offset >= End ->
-	%% We've finished collecting intervals for the whole storage_module range. Schedule
-	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS.
+	{ScanDurationMs, RestartDelay} = scan_restart_delay(
+		State#sync_data_state.scan_start_time),
 	?LOG_DEBUG([{event, collect_peer_intervals_done},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
-		{offset, Offset}, {s, Start}, {e, End}, {type, Type}]),
-	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
+		{offset, Offset}, {s, Start}, {e, End}, {type, Type},
+		{scan_duration_ms, ScanDurationMs}, {restart_delay_ms, RestartDelay}]),
+	ar_util:cast_after(RestartDelay, self(), collect_peer_intervals),
 	{noreply, State};
 handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,

@@ -41,6 +41,7 @@
 	safe_parse_peer/1,
 	safe_parse_peer/2,
 	ema/3,
+	lerp/5,
 	shuffle_list/1,
 	take_every_nth/2,
 	terminal_clear/0,
@@ -505,6 +506,13 @@ parse_list_indices(_BadInput, _N) ->
 
 ema(OldValue, NewValue, Alpha) ->
 	Alpha * NewValue + (1 - Alpha) * OldValue.
+
+%% @doc Linear interpolation. Maps Value from [InMin, InMax] to [OutMin, OutMax].
+%% Value is clamped to [InMin, InMax].
+lerp(Value, InMin, InMax, OutMin, OutMax) ->
+	Clamped = between(Value, InMin, InMax),
+	Fraction = (Clamped - InMin) / max(1, InMax - InMin),
+	OutMin + (OutMax - OutMin) * Fraction.
 
 shuffle_list(List) ->
 	lists:sort(fun(_,_) -> rand:uniform() < 0.5 end, List).

@@ -29,10 +29,12 @@
 
 %% The number of peers to fetch sync intervals from in parallel at a time.
 -define(GET_SYNC_RECORD_BATCH_SIZE, 2).
--define(GET_SYNC_RECORD_COOLDOWN_MS, 60 * 1000).
 -define(GET_SYNC_RECORD_RPM_KEY, data_sync_record).
 -define(GET_FOOTPRINT_RECORD_RPM_KEY, footprints).
--define(GET_FOOTPRINT_RECORD_COOLDOWN_MS, 60 * 1000).
+%% Cooldown after 429 or batch_pmap timeout. Timeouts use the same duration
+%% because they're typically caused by self-throttling (ar_rate_limiter:throttle)
+%% as we approach a peer's rate limit.
+-define(GET_SYNC_RECORD_COOLDOWN_MS, 60 * 1000).
 -define(GET_SYNC_RECORD_PATH, [<<"data_sync_record">>]).
 -define(GET_FOOTPRINT_RECORD_PATH, [<<"footprints">>]).
 
@@ -57,6 +59,14 @@ fetch(Offset, Start, End, StoreID, Type) ->
 				gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals}),
 				gen_server:cast(Parent, {collect_peer_intervals, End2, Start, End, Type});
 			wait ->
+				%% All peers on cooldown for this bucket. Wait and retry from
+				%% the same offset so we march methodically through the range.
+				%% Skipping ahead risks a death-loop: scan races through the
+				%% entire range (no HTTP calls), restarts, cooldown expires at
+				%% a random offset, repeat — never collecting all intervals.
+				?LOG_WARNING([{event, collect_peer_intervals_all_peers_on_cooldown},
+					{store_id, StoreID},
+					{offset, Offset}, {type, Type}]),
 				ar_util:cast_after(1000, Parent,
 					{collect_peer_intervals, Offset, Start, End, Type})
 		end
@@ -236,21 +246,21 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals) ->
 			end,
 			Peers,
 			?GET_SYNC_RECORD_BATCH_SIZE, % fetch sync intervals from so many peers at a time
-			%% We'll rely on the timeout to also flag when we are approaching a peer's RPM
-			%% limit. As we approach the limit we will self-throttle the requests. Eventually this
-			%% throttling will exceed 60s and we'll timout the batch_pmap and flag the peer for
-			%% cooldown.
-			60 * 1000 
+			%% Timeout for each batch of peer queries. Slow peers that exceed
+			%% this are skipped for this step but NOT put on cooldown — timeout
+			%% means "slow," not "overloaded." Only explicit 429 responses
+			%% trigger cooldown.
+			60 * 1000
 		),
 	{EnqueueIntervals, MinRightBound} =
 		lists:foldl(
 			fun	({error, batch_pmap_timeout, Peer}, Acc) ->
-					?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
+					?LOG_WARNING([{event, peer_sync_record_timeout},
 						{parent, Parent},
-						{peer, ar_util:format_peer(Peer)},
-						{reason, batch_pmap_timeout}]),
+						{peer, ar_util:format_peer(Peer)}]),
 					ar_rate_limiter:set_cooldown(
-						Peer, ?GET_SYNC_RECORD_RPM_KEY, ?GET_SYNC_RECORD_COOLDOWN_MS),
+						Peer, ?GET_SYNC_RECORD_RPM_KEY,
+						?GET_SYNC_RECORD_COOLDOWN_MS),
 					Acc;
 				({Peer, SoughtIntervals, RightBound}, {IntervalsAcc, RightBoundAcc}) ->
 					case ar_intervals:is_empty(SoughtIntervals) of
@@ -341,21 +351,21 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 			end,
 			Peers,
 			?GET_SYNC_RECORD_BATCH_SIZE, % fetch sync intervals from so many peers at a time
-			%% We'll rely on the timeout to also flag when we are approaching a peer's RPM
-			%% limit. As we approach the limit we will self-throttle the requests. Eventually this
-			%% throttling will exceed 60s and we'll timout the batch_pmap and flag the peer for
-			%% cooldown.
+			%% Timeout for each batch of peer queries. Slow peers that exceed
+			%% this are skipped for this step but NOT put on cooldown — timeout
+			%% means "slow," not "overloaded." Only explicit 429 responses
+			%% trigger cooldown.
 			60 * 1000
 		),
 	EnqueueIntervals =
 		lists:foldl(
 			fun	({error, batch_pmap_timeout, Peer}, Acc) ->
-					?LOG_DEBUG([{event, failed_to_fetch_peer_footprint_intervals},
+					?LOG_WARNING([{event, peer_footprint_record_timeout},
 						{parent, Parent},
-						{peer, ar_util:format_peer(Peer)},
-						{reason, batch_pmap_timeout}]),
+						{peer, ar_util:format_peer(Peer)}]),
 					ar_rate_limiter:set_cooldown(
-						Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY, ?GET_FOOTPRINT_RECORD_COOLDOWN_MS),
+						Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY,
+						?GET_SYNC_RECORD_COOLDOWN_MS),
 					Acc;
 				({Peer, SoughtIntervals}, IntervalsAcc) ->
 					case ar_intervals:is_empty(SoughtIntervals) of
@@ -417,7 +427,7 @@ get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 			{ok, ar_intervals:new()};
 		{error, too_many_requests} = Error ->
 			ar_rate_limiter:set_cooldown(Peer,
-				?GET_FOOTPRINT_RECORD_RPM_KEY, ?GET_FOOTPRINT_RECORD_COOLDOWN_MS),
+				?GET_FOOTPRINT_RECORD_RPM_KEY, ?GET_SYNC_RECORD_COOLDOWN_MS),
 			Error;
 		Error ->
 			Error

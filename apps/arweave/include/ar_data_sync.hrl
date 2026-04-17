@@ -197,5 +197,9 @@
 	%% The phases are:
 	%% - normal: normal left-to-right syncing (normally, of the unpacked data).
 	%% - footprint: footprint-based syncing of replica 2.9 data.
-	sync_phase = undefined
+	sync_phase = undefined,
+	%% Monotonic time when the current scan phase started. Used to compute
+	%% scan duration — fast scans (near-full modules) get a longer restart
+	%% delay to reduce peer bandwidth pressure.
+	scan_start_time = undefined
 }).
