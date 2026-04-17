@@ -79,7 +79,7 @@
 	%% Rate-limited MaxQueueLen. Raw target tracks peer performance closely;
 	%% this value shrinks gradually so a sudden rating drop doesn't discard
 	%% most of the queue in one rebalance tick.
-	max_queue_len = ?MAX_PEER_QUEUE,
+	max_queue_len = ?MIN_PEER_QUEUE,
 	last_task_time,                %% monotonic time when last task was received
 	footprints = #{},              %% FootprintKey => #footprint{}
 	active_footprints = sets:new(),%% keys for which this peer currently holds a slot
@@ -281,14 +281,18 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 			{State1, 0}
 	end,
 	
-	%% 2. Update max_in_flight
+	%% 2. Update max_in_flight (only when peer has active work to measure)
 	FasterThanTarget = Performance#performance.average_latency < TargetLatency,
-	TargetMax = case FasterThanTarget orelse WorkersStarved of
-		true -> MaxInFlight + 1;
-		false -> MaxInFlight - 1
+	HasWork = InFlight > 0 orelse queue:len(State2#state.task_queue) > 0,
+	TargetMax = case HasWork of
+		false -> MaxInFlight;
+		true ->
+			case FasterThanTarget orelse WorkersStarved of
+				true -> MaxInFlight + 1;
+				false -> MaxInFlight - 1
+			end
 	end,
-	MaxTasks = max(InFlight, queue:len(State2#state.task_queue)),
-	NewMaxInFlight = ar_util:between(TargetMax, ?DEFAULT_IN_FLIGHT_LIMIT, max(MaxTasks, ?DEFAULT_IN_FLIGHT_LIMIT)),
+	NewMaxInFlight = max(TargetMax, ?DEFAULT_IN_FLIGHT_LIMIT),
 	State3A = State2#state{ max_in_flight = NewMaxInFlight },
 
 	%% 3. Reap dead workers — roll back leaked in_flight_count and footprint slots
@@ -306,6 +310,8 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 	?LOG_DEBUG([{event, rebalance_peer},
 		{peer, PeerFormatted},
 		{current_rating, Performance#performance.current_rating},
+		{average_latency, Performance#performance.average_latency},
+		{target_latency, TargetLatency},
 		{queue_scaling_factor, QueueScalingFactor},
 		{in_flight_count, NewInFlight},
 		{queued_count, NewQueueLen},
@@ -314,6 +320,8 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 		{max_queue_len, MaxQueueLen},
 		{faster_than_target, FasterThanTarget},
 		{workers_starved, WorkersStarved},
+		{prev_max_in_flight, MaxInFlight},
+		{target_max_in_flight, TargetMax},
 		{max_in_flight, NewMaxInFlight},
 		{removed_count, RemovedCount},
 		{idle_seconds, IdleSeconds},
@@ -723,12 +731,12 @@ test_task_completed({Peer, Pid}) ->
 
 test_cut_queue({Peer, Pid}) ->
 	fun() ->
-		%% Enqueue 25 tasks (more than MIN_PEER_QUEUE = 20)
+		%% Allow enqueue of 25 tasks, then cut down to 20 via rebalance.
+		sys:replace_state(Pid, fun(S) -> S#state{ max_queue_len = 25 } end),
 		lists:foreach(fun(I) ->
 			enqueue_task(Pid, none, #sync_task{ start_offset = I * 100, end_offset = (I + 1) * 100, peer = Peer, store_id = store1, footprint_key = none }, true, 0)
 		end, lists:seq(0, 24)),
 
-		%% Sync and check we have 25 tasks
 		{ok, State1} = gen_server:call(Pid, get_state),
 		?assertEqual(25, queue:len(State1#state.task_queue)),
 
