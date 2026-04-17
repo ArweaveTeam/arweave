@@ -4,7 +4,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, register_workers/0, read_range/4]).
+-export([start_link/1, register_workers/0, read_range/4, task_completed/3]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -79,6 +79,10 @@ read_range(Start, End, OriginStoreID, TargetStoreID) ->
 		false ->
 			false
 	end.
+
+%% @doc Notify ar_chunk_copy that a read_range task has completed.
+task_completed(Worker, ReadResult, Args) ->
+	gen_server:cast(?MODULE, {task_completed, {read_range, {Worker, ReadResult, Args}}}).
 
 %%%===================================================================
 %%% Generic server callbacks.

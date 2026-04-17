@@ -4,9 +4,9 @@
 %%%
 %%% Task Queue:
 %%% - Holds #sync_task{} records waiting to be pulled by ar_data_sync_workers.
-%%% - Workers call take_one/1 to pop a task; enqueue is rejected if the queue
-%%%   is already at max_queue_len (prevents inflating the global backpressure
-%%%   signal between rebalance ticks).
+%%% - ar_data_sync_workers call take_one/1 to pop a task; enqueue is rejected
+%%%   if the queue is already at max_queue_len (prevents inflating the global
+%%%   backpressure signal between rebalance ticks).
 %%%
 %%% In-Flight Tracking:
 %%% - in_flight_count tracks how many tasks have been handed out via take_one
@@ -155,11 +155,11 @@ take_one(Pid) ->
 	end.
 
 %% @doc Notify task completed, update footprint accounting and rate data fetched.
-task_completed(Peer, WorkerPid, FootprintKey, Result, ElapsedNative, DataSize) ->
+task_completed(Peer, WorkerPid, FootprintKey, Result, ElapsedMicroseconds, DataSize) ->
 	case get_pid(Peer) of
 		{ok, Pid} ->
 			gen_server:cast(Pid,
-				{task_completed, WorkerPid, FootprintKey, Result, ElapsedNative, DataSize});
+				{task_completed, WorkerPid, FootprintKey, Result, ElapsedMicroseconds, DataSize});
 		_ ->
 			?LOG_WARNING([{event, task_completed_no_peer_worker},
 				{peer, ar_util:format_peer(Peer)}])
@@ -311,12 +311,11 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, {error, unhandled}, State}.
 
-handle_cast({task_completed, WorkerPid, FootprintKey, Result, ElapsedNative, DataSize}, State) ->
+handle_cast({task_completed, WorkerPid, FootprintKey, Result, ElapsedMicroseconds, DataSize}, State) ->
 	#state{ in_flight_count = InFlightCount, max_in_flight = MaxInFlight,
 			peer = Peer } = State,
 	NewInFlightCount = max(0, InFlightCount - 1),
 	increment_metrics(completed, State, 1),
-	ElapsedMicroseconds = erlang:convert_time_unit(ElapsedNative, native, microsecond),
 	ar_peers:rate_fetched_data(Peer, chunk, Result, ElapsedMicroseconds, DataSize, MaxInFlight),
 	State2 = do_complete_footprint_task(
 		FootprintKey, State#state{

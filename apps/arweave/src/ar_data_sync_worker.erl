@@ -58,8 +58,7 @@ handle_cast({read_range, Args}, State) ->
 		recast ->
 			ok;
 		ReadResult ->
-			gen_server:cast(ar_chunk_copy,
-				{task_completed, {read_range, {State#state.name, ReadResult, Args}}})
+			ar_chunk_copy:task_completed(State#state.name, ReadResult, Args)
 	end,
 	{noreply, State};
 
@@ -81,14 +80,12 @@ handle_cast(pull, State) ->
 handle_cast({sync_range, SyncTask}, State) ->
 	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
 			footprint_key = FootprintKey } = SyncTask,
-	StartTime = erlang:monotonic_time(),
-	SyncResult = sync_range(SyncTask, State),
-	EndTime = erlang:monotonic_time(),
+	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
 		recast -> ok;
 		_ ->
 			ar_peer_worker:task_completed(Peer, self(), FootprintKey,
-				SyncResult, EndTime - StartTime, End - Start)
+				SyncResult, ElapsedUs, End - Start)
 	end,
 	{noreply, State};
 
@@ -117,17 +114,14 @@ try_take_one([{_Peer, PeerPid} | Rest]) ->
 run_sync_range(SyncTask, State) ->
 	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
 			footprint_key = FootprintKey } = SyncTask,
-	StartTime = erlang:monotonic_time(),
-	SyncResult = sync_range(SyncTask, State),
-	EndTime = erlang:monotonic_time(),
+	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
 		recast ->
 			%% Slot stays claimed; eventual retry will report completion.
 			ok;
 		_ ->
-			DataSize = End - Start,
 			ar_peer_worker:task_completed(Peer, self(), FootprintKey, SyncResult,
-				EndTime - StartTime, DataSize)
+				ElapsedUs, End - Start)
 	end,
 	ok.
 
@@ -331,8 +325,8 @@ sync_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
 							%% chunks will be then requested later.
 							Start3 = ar_block:get_chunk_padded_offset(
 									Start2 + byte_size(Chunk)) + 1,
-							gen_server:cast(ar_data_sync:name(TargetStoreID),
-									{store_fetched_chunk, Peer, Byte, Proof}),
+							ar_data_sync:store_fetched_chunk(
+									TargetStoreID, Peer, Byte, Proof),
 							ar_data_sync:increment_chunk_cache_size(),
 							sync_range(
 								SyncTask#sync_task{ start_offset = Start3 },

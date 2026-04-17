@@ -36,10 +36,10 @@
 -behaviour(gen_server).
 
 -export([start_link/1, register_workers/0, is_syncing_enabled/0,
-		 ready_for_work/0, work_capacity/0, max_tasks/0]).
+		 ready_for_work/0, work_capacity/0, max_tasks/0,
+		 sync_range/1]).
 -export([record_peer_load/5, remove_peer/1]).
 -export([claim_footprint_slot/0, release_footprint_slot/0]).
-%% Derived capacity constants — all scale from sync_jobs.
 -export([default_in_flight_limit/0, min_peer_queue/0, max_peer_queue/0]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -55,11 +55,11 @@
 -include_lib("arweave/include/ar_data_sync.hrl").
 
 -define(REBALANCE_FREQUENCY_MS, 10_000).
--define(WORKER_LOAD_TABLE, worker_load).
+%% Smooth the total peer throughput estimate since it can be volatile.
 -define(THROUGHPUT_SMOOTHING_ALPHA, 0.3).
 
 %% Capacity constants — all derived from sync_jobs in the exported helpers.
-%% Queued tasks per worker in the coordinator pipeline.
+%% Queued tasks per worker in the coordinator pipeline (backpressure).
 -define(TASKS_PER_WORKER, 50).
 %% Starting per-peer in-flight limit (floor).
 -define(MIN_IN_FLIGHT_LIMIT, 8).
@@ -132,6 +132,10 @@ work_capacity() ->
 	catch _:_ ->
 		0
 	end.
+
+%% @doc Forward a sync task into the coordinator for dispatch to the right peer worker.
+sync_range(SyncTask) ->
+	gen_server:cast(?MODULE, {sync_range, SyncTask}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -216,6 +220,7 @@ min_peer_queue() -> max(?MIN_PEER_QUEUE_FLOOR, sync_jobs() div ?PEER_QUEUE_DIVIS
 
 max_peer_queue() -> sync_jobs() * ?PEER_QUEUE_MULTIPLIER.
 
+
 %%--------------------------------------------------------------------
 %% Rebalancing
 %%--------------------------------------------------------------------
@@ -278,8 +283,6 @@ rebalance_peers2([{Peer, Pid} | Rest], AllPeerPerformances, Targets, State) ->
 	WorkersStarved = TotalMaxInFlight < WorkerCount,
 	RebalanceParams = {QueueScalingFactor, TargetLatency, WorkersStarved},
 	Result = ar_peer_worker:rebalance(Pid, Performance, RebalanceParams),
-	%% Phase 4: cuts to total_queued go through the peer worker's
-	%% record_peer_load path; coordinator only tracks roster membership.
 	case Result of
 		{shutdown, _RemovedCount} ->
 			?LOG_INFO([{event, shutdown_idle_peer_worker},
@@ -298,7 +301,7 @@ queue_scaling_factor(TotalThroughput, WorkerCount) ->
 	max_tasks(WorkerCount) / TotalThroughput.
 
 %%%===================================================================
-%%% Phase 0/4 ETS helpers
+%%% Helpers
 %%%===================================================================
 
 %% @doc Called from ar_peer_worker to publish its current load contribution
@@ -435,9 +438,6 @@ test_queue_scaling_factor() ->
 	?assertEqual(50.0, queue_scaling_factor(10.0, 10)).
 
 test_calculate_targets() ->
-	%% Phase 1: max_in_flight is now read from the ETS mirror, not via
-	%% gen_server call into peer worker. Ensure the mirror table exists
-	%% and populate it for the three mock peers.
 	Peer1 = {1,2,3,4,1984},
 	Peer2 = {5,6,7,8,1985},
 	Peer3 = {9,10,11,12,1986},

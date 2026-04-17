@@ -274,7 +274,7 @@ submit_block_data(BlockStart, TXs) ->
 		|| {TX, {{_ID, DR}, End}} <- lists:zip(TXs2, SizeTaggedTXsNoPadding),
 			TX#tx.data_size > 0
 	],
-	ar_data_root_sync:store_data_roots_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries),
+	ar_data_sync:store_data_roots_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries),
 	lists:foreach(fun(TX) ->
 		case TX#tx.data_size > 0 of
 			true ->

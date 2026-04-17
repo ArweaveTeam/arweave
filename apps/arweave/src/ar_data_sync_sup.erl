@@ -6,8 +6,7 @@
 
 -export([init/1]).
 
--include_lib("ar_sup.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
+-include_lib("arweave/include/ar_data_sync.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -23,7 +22,7 @@ start_link() ->
 init([]) ->
 	%% ETS tables owned by this subtree. Created here (sup convention) so they
 	%% survive child restarts.
-	ets:new(worker_load,
+	ets:new(?WORKER_LOAD_TABLE,
 		[named_table, public, set,
 			{read_concurrency, true}, {write_concurrency, true}]),
 	%% Peer worker supervisor must start before worker master

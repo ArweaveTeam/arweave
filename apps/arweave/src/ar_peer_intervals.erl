@@ -49,15 +49,15 @@ fetch(Offset, Start, End, StoreID, Type) when Offset >= End ->
 			{range_start, Start},
 			{range_end, End},
 			{type, Type}]),
-	gen_server:cast(ar_data_sync:name(StoreID),
-		{collect_peer_intervals, Offset, Start, End, Type});
+	ar_data_sync:collect_peer_intervals(StoreID, Offset, Start, End, Type);
 fetch(Offset, Start, End, StoreID, Type) ->
-	Parent = ar_data_sync:name(StoreID),
 	spawn_link(fun() ->
 		case do_fetch(Offset, Start, End, StoreID, Type) of
 			{End2, EnqueueIntervals, Peers2} ->
-				gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals, Peers2}),
-				gen_server:cast(Parent, {collect_peer_intervals, End2, Start, End, Type});
+				ar_data_sync:enqueue_intervals(
+					StoreID, EnqueueIntervals, Peers2),
+				ar_data_sync:collect_peer_intervals(
+					StoreID, End2, Start, End, Type);
 			wait ->
 				%% All peers on cooldown/throttled for this bucket. Wait and
 				%% retry from the same offset so we march methodically through
@@ -65,8 +65,8 @@ fetch(Offset, Start, End, StoreID, Type) ->
 				?LOG_DEBUG([{event, collect_peer_intervals_all_peers_busy},
 					{store_id, StoreID},
 					{offset, Offset}, {type, Type}]),
-				ar_util:cast_after(1000, Parent,
-					{collect_peer_intervals, Offset, Start, End, Type})
+				ar_data_sync:schedule_collect_peer_intervals(
+					StoreID, 1000, Offset, Start, End, Type)
 		end
 	end).
 
