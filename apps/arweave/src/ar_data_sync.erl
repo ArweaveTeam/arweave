@@ -47,11 +47,18 @@
 -define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 10_000).
 -endif.
 
+
 -ifdef(AR_TEST).
 -define(DEVICE_LOCK_WAIT, 100).
 -else.
 -define(DEVICE_LOCK_WAIT, 5_000).
 -endif.
+
+
+%% Multiplier on max_tasks() for the per-storage-module intervals queue.
+%% This gb_set buffer must be deep enough that the scan can refill before
+%% workers drain it. 5x max_tasks with 400 workers = 100K chunks ≈ 23 MB.
+-define(SYNC_QUEUE_DEPTH_MULTIPLIER, 5).
 
 %% The number of chunks to migrate per batch during footprint migration.
 -ifdef(AR_TEST).
@@ -891,7 +898,10 @@ handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 				StoreIDLabel = ar_storage_module:label(StoreID),
 				prometheus_gauge:set(sync_intervals_queue_size,
 					[StoreIDLabel], IntervalsQueueSize),
-				case IntervalsQueueSize > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
+				MaxQueueSize = max(
+					?NETWORK_DATA_BUCKET_SIZE div ?DATA_CHUNK_SIZE,
+					ar_data_sync_coordinator:max_tasks() * ?SYNC_QUEUE_DEPTH_MULTIPLIER),
+				case IntervalsQueueSize > MaxQueueSize of
 					true ->
 						ar_util:cast_after(500, self(),
 							{collect_peer_intervals, Offset, Start, End, Type}),

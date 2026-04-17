@@ -35,9 +35,12 @@
 
 -behaviour(gen_server).
 
--export([start_link/1, register_workers/0, is_syncing_enabled/0, ready_for_work/0]).
+-export([start_link/1, register_workers/0, is_syncing_enabled/0,
+		 ready_for_work/0, work_capacity/0, max_tasks/0]).
 -export([record_peer_load/5, remove_peer/1]).
 -export([claim_footprint_slot/0, release_footprint_slot/0]).
+%% Derived capacity constants — all scale from sync_jobs.
+-export([default_in_flight_limit/0, min_peer_queue/0, max_peer_queue/0]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -ifdef(AR_TEST).
@@ -53,10 +56,21 @@
 
 -define(REBALANCE_FREQUENCY_MS, 10_000).
 -define(WORKER_LOAD_TABLE, worker_load).
-%%% EMA smoothing factor for the total throughput calculation. Without this the throughput
-%%% calculation can be volatile which hurts sync performance (e.g. by triggering unnecssary
-%%% rebalancing).
 -define(THROUGHPUT_SMOOTHING_ALPHA, 0.3).
+
+%% Capacity constants — all derived from sync_jobs in the exported helpers.
+%% Queued tasks per worker in the coordinator pipeline.
+-define(TASKS_PER_WORKER, 50).
+%% Starting per-peer in-flight limit (floor).
+-define(MIN_IN_FLIGHT_LIMIT, 8).
+%% sync_jobs divisor for scaling default_in_flight_limit above the floor.
+-define(IN_FLIGHT_LIMIT_DIVISOR, 50).
+%% Floor for per-peer queue length.
+-define(MIN_PEER_QUEUE_FLOOR, 20).
+%% sync_jobs divisor for scaling min_peer_queue above the floor.
+-define(PEER_QUEUE_DIVISOR, 10).
+%% sync_jobs multiplier for max_peer_queue ceiling.
+-define(PEER_QUEUE_MULTIPLIER, 1000).
 -record(state, {
 	total_throughput = undefined   %% EMA-smoothed sum of peer ratings
 }).
@@ -101,17 +115,22 @@ is_syncing_enabled() ->
 %% @doc Returns true if we can accept new tasks. Will always return false if
 %% syncing is disabled (i.e. sync_jobs = 0).
 ready_for_work() ->
+	work_capacity() > 0.
+
+%% @doc Returns how many more tasks the pipeline can absorb. Used by
+%% ar_data_sync to pace enqueue rate and size the intervals queue.
+work_capacity() ->
 	try
 		WorkerCount = ets:lookup_element(?WORKER_LOAD_TABLE, workers_count, 2),
 		case WorkerCount of
-			0 -> false;
+			0 -> 0;
 			_ ->
 				TotalQueuedTasks = sum_prefix(queued),
 				TotalInFlight = sum_prefix(in_flight),
-				TotalQueuedTasks + TotalInFlight < max_tasks(WorkerCount)
+				max(0, max_tasks(WorkerCount) - TotalQueuedTasks - TotalInFlight)
 		end
 	catch _:_ ->
-		false
+		0
 	end.
 
 %%%===================================================================
@@ -176,12 +195,26 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 %%--------------------------------------------------------------------
-%% Helpers
+%% Capacity constants derived from sync_jobs
+%%
+%% All capacity-related thresholds scale from a single operator knob:
+%% Config#config.sync_jobs. Higher sync_jobs = more workers = deeper
+%% buffers = higher per-peer limits. Timing constants (timeouts,
+%% check intervals, smoothing factors) are independent.
 %%--------------------------------------------------------------------
 
-%% @doc the maximum number of tasks we can have in process.
-max_tasks(WorkerCount) ->
-	WorkerCount * 50.
+sync_jobs() ->
+	{ok, Config} = arweave_config:get_env(),
+	Config#config.sync_jobs.
+
+max_tasks() -> max_tasks(sync_jobs()).
+max_tasks(WorkerCount) -> WorkerCount * ?TASKS_PER_WORKER.
+
+default_in_flight_limit() -> max(?MIN_IN_FLIGHT_LIMIT, sync_jobs() div ?IN_FLIGHT_LIMIT_DIVISOR).
+
+min_peer_queue() -> max(?MIN_PEER_QUEUE_FLOOR, sync_jobs() div ?PEER_QUEUE_DIVISOR).
+
+max_peer_queue() -> sync_jobs() * ?PEER_QUEUE_MULTIPLIER.
 
 %%--------------------------------------------------------------------
 %% Rebalancing
@@ -363,6 +396,7 @@ init_worker_load_for_test(Slots) ->
 			ets:new(?WORKER_LOAD_TABLE, [named_table, public, set]);
 		_ -> ok
 	end,
+	ets:insert(?WORKER_LOAD_TABLE, {workers_count, 400}),
 	set_footprint_slots(Slots).
 
 %% @doc Test-only: override the footprint-slot gauge.

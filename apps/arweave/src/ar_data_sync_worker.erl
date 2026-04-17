@@ -74,7 +74,7 @@ handle_cast(pull, State) ->
 			{noreply, State};
 		none ->
 			%% No peer has work right now. Retry after a short delay.
-			ar_util:cast_after(5000, self(), pull),
+			ar_util:cast_after(500 + rand:uniform(1000), self(), pull),
 			{noreply, State}
 	end;
 

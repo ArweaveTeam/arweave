@@ -49,12 +49,11 @@
 -include_lib("arweave/include/ar_peers.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--define(DEFAULT_IN_FLIGHT_LIMIT, 8).
--define(MIN_PEER_QUEUE, 20).
--define(CHECK_LONG_RUNNING_FOOTPRINTS_MS, 60000).
+%% Timing constants — independent of sync_jobs.
+-define(CHECK_LONG_RUNNING_FOOTPRINTS_MS, 60_000).
 -define(LONG_RUNNING_FOOTPRINT_THRESHOLD_S, 120).
--define(IDLE_SHUTDOWN_THRESHOLD_S, 300).  %% Shutdown after 5 minutes of no tasks
--define(CALL_TIMEOUT_MS, 30000).
+-define(IDLE_SHUTDOWN_THRESHOLD_S, 300).
+-define(CALL_TIMEOUT_MS, 30_000).
 -define(ACTIVE_THRESHOLD_S, 30).
 %% Reap in-flight entries older than this, even if the worker pid is alive.
 %% Guards against "stranded" tasks where take_one reply was lost (caller
@@ -65,7 +64,6 @@
 %% instead of getting it cut out from under them in a single tick. Recovery
 %% (raw target rising) applies immediately — no upward smoothing.
 -define(QUEUE_SHRINK_RATE, 0.9).
--define(MAX_PEER_QUEUE, 1000000).
 -record(footprint, {
 	active_task_count = 0,        %% count of in-flight tasks (queued + in-flight)
 	activation_time          %% set when this peer claims a global slot for this key
@@ -76,11 +74,11 @@
 	peer_formatted,                %% cached ar_util:format_peer(Peer) for metrics
 	task_queue = queue:new(),
 	in_flight_count = 0,
-	max_in_flight = ?DEFAULT_IN_FLIGHT_LIMIT,
+	max_in_flight,
 	%% Rate-limited MaxQueueLen. Raw target tracks peer performance closely;
 	%% this value shrinks gradually so a sudden rating drop doesn't discard
-	%% most of the queue in one rebalance tick.
-	max_queue_len = ?MIN_PEER_QUEUE,
+	%% most of the queue in one rebalance tick. Set in init from sync_jobs.
+	max_queue_len,
 	last_task_time,                %% monotonic time when last task was received
 	footprints = #{},              %% FootprintKey => #footprint{}
 	active_footprints = sets:new(),%% keys for which this peer currently holds a slot
@@ -190,6 +188,8 @@ init([Peer]) ->
 	PeerFormatted = ar_util:format_peer(Peer),
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {peer, PeerFormatted}]),
 	State = #state{ peer = Peer, peer_formatted = PeerFormatted,
+					max_in_flight = ar_data_sync_coordinator:default_in_flight_limit(),
+					max_queue_len = ar_data_sync_coordinator:min_peer_queue(),
 					last_task_time = erlang:monotonic_time() },
 	publish_load(State),
 	{ok, State}.
@@ -280,7 +280,7 @@ handle_call({rebalance, Performance, RebalanceParams}, _From, State) ->
 				false -> MaxInFlight - 1
 			end
 	end,
-	NewMaxInFlight = max(TargetMax, ?DEFAULT_IN_FLIGHT_LIMIT),
+	NewMaxInFlight = max(TargetMax, ar_data_sync_coordinator:default_in_flight_limit()),
 	State3A = State2#state{ max_in_flight = NewMaxInFlight },
 
 	%% 3. Reap dead workers — roll back leaked in_flight_count and footprint slots
@@ -381,10 +381,10 @@ terminate(_Reason, State) ->
 %% MaxQueue = max(PeerThroughput * ScalingFactor, MIN_PEER_QUEUE)
 max_queue_length(#performance{ current_rating = Rating }, _ScalingFactor)
 		when Rating == 0; Rating == 0.0 ->
-	?MAX_PEER_QUEUE;
+	ar_data_sync_coordinator:max_peer_queue();
 max_queue_length(Performance, ScalingFactor) ->
 	PeerThroughput = Performance#performance.current_rating,
-	min(?MAX_PEER_QUEUE, max(trunc(PeerThroughput * ScalingFactor), ?MIN_PEER_QUEUE)).
+	min(ar_data_sync_coordinator:max_peer_queue(), max(trunc(PeerThroughput * ScalingFactor), ar_data_sync_coordinator:min_peer_queue())).
 
 smooth_max_queue_len(Old, Raw) when Raw >= Old -> Raw;
 smooth_max_queue_len(Old, Raw) ->
@@ -708,28 +708,28 @@ test_task_completed({Peer, Pid}) ->
 
 test_cut_queue({Peer, Pid}) ->
 	fun() ->
-		%% Allow enqueue of 25 tasks, then cut down to 20 via rebalance.
-		sys:replace_state(Pid, fun(S) -> S#state{ max_queue_len = 25 } end),
+		%% Enqueue 50 tasks, then cut via rebalance.
+		%% min_peer_queue() = max(20, 400 div 10) = 40 with test workers_count=400.
+		MinPeerQueue = ar_data_sync_coordinator:min_peer_queue(),
+		TaskCount = MinPeerQueue + 10,
+		sys:replace_state(Pid, fun(S) -> S#state{ max_queue_len = TaskCount } end),
 		lists:foreach(fun(I) ->
 			enqueue_task(Pid, none, #sync_task{ start_offset = I * 100, end_offset = (I + 1) * 100, peer = Peer, store_id = store1, footprint_key = none }, true, 0)
-		end, lists:seq(0, 24)),
+		end, lists:seq(0, TaskCount - 1)),
 
 		{ok, State1} = gen_server:call(Pid, get_state),
-		?assertEqual(25, queue:len(State1#state.task_queue)),
+		?assertEqual(TaskCount, queue:len(State1#state.task_queue)),
 
-		%% Rebalance with scaling factor that gives MaxQueue = 20 (MIN_PEER_QUEUE)
-		%% MaxQueue = max(PeerThroughput * ScalingFactor, MIN_PEER_QUEUE)
-		%% With PeerThroughput = 100, ScalingFactor = 0.1 => MaxQueue = max(10, 20) = 20
+		%% Rebalance with low scaling factor so raw target hits the floor.
 		%% Pre-set max_queue_len so smoothing doesn't dampen the first cut.
-		sys:replace_state(Pid, fun(S) -> S#state{ max_queue_len = 20 } end),
+		sys:replace_state(Pid, fun(S) -> S#state{ max_queue_len = MinPeerQueue } end),
 		Performance = #performance{ current_rating = 100.0, average_latency = 50.0 },
 		RebalanceParams = {0.1, 100.0, false},
 		Result = rebalance(Pid, Performance, RebalanceParams),
-		?assertEqual({ok, 5}, Result),
+		?assertEqual({ok, 10}, Result),
 
-		%% Check we have 20 tasks left (MIN_PEER_QUEUE)
 		{ok, State2} = gen_server:call(Pid, get_state),
-		?assertEqual(20, queue:len(State2#state.task_queue))
+		?assertEqual(MinPeerQueue, queue:len(State2#state.task_queue))
 	end.
 
 test_footprint_basic({Peer, Pid}) ->
