@@ -631,23 +631,13 @@ get_peer_peers(Peer) ->
 	end.
 
 get_or_init_performance(Peer) ->
-	case ets:lookup(?MODULE, {peer, Peer}) of
-		[] ->
-			#performance{};
-		[{_, Performance}] ->
-			Performance
-	end.
+	ets:lookup_element(?MODULE, {peer, Peer}, 2, #performance{}).
 
 set_performance(Peer, Performance) ->
 	ets:insert(?MODULE, [{{peer, Peer}, Performance}]).
 
 get_total_rating(Rating) ->
-	case ets:lookup(?MODULE, {rating_total, Rating}) of
-		[] ->
-			0;
-		[{_, Total}] ->
-			Total
-	end.
+	ets:lookup_element(?MODULE, {rating_total, Rating}, 2, 0).
 
 set_total_rating(Rating, Total) ->
 	ets:insert(?MODULE, {{rating_total, Rating}, Total}).
@@ -968,14 +958,14 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
 	end,
 	AverageLatency2 = case LatencyMilliseconds of
 		undefined -> AverageLatency;
-		_ -> calculate_ema(AverageLatency, LatencyMilliseconds, ?THROUGHPUT_ALPHA)
+		_ -> ar_util:ema(AverageLatency, LatencyMilliseconds, ?THROUGHPUT_ALPHA)
 	end,
 	%% In order to approximate the impact of multiple concurrent requests we multiply
 	%% DataSize by the Concurrency value. We do this *only* when updating the AverageThroughput
 	%% value so that it doesn't distort the TotalThroughput.
 	AverageThroughput2 = case LatencyMilliseconds of
 		undefined -> AverageThroughput;
-		_ -> calculate_ema(
+		_ -> ar_util:ema(
 			AverageThroughput, (DataSize * Concurrency) / LatencyMilliseconds, ?THROUGHPUT_ALPHA)
 	end,
 	TotalThroughput2 = case LatencyMilliseconds of
@@ -986,7 +976,7 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
 		undefined -> TotalTransfers;
 		_ -> TotalTransfers + 1
 	end,
-	AverageSuccess2 = calculate_ema(AverageSuccess, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
+	AverageSuccess2 = ar_util:ema(AverageSuccess, ar_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
 	%% Rating is an estimate of the peer's effective throughput in bytes per millisecond.
 	%% 'lifetime' considers all data ever received from this peer
 	%% 'current' considers recently received data
@@ -1018,9 +1008,6 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
 	set_total_rating(lifetime, TotalLifetimeRating2),
 	set_total_rating(current, TotalCurrentRating2),
 	Performance2.
-
-calculate_ema(OldEMA, Value, Alpha) ->
-	Alpha * Value + (1 - Alpha) * OldEMA.
 
 maybe_add_peer(Peer, Release) ->
 	maybe_rotate_peer_ports(Peer),

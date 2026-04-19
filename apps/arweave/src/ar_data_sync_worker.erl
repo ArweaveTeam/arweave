@@ -38,12 +38,9 @@ start_link(Name, Mode) ->
 init({Name, Mode}) ->
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {name, Name}]),
 	{ok, Config} = arweave_config:get_env(),
-	%% In case there has been a restart we need to tell
-	%% ar_data_sync_coordinator to erase pending worker tasks.
-	%% We only want to do this for sync workers, not read workers.
-	case Mode  of
+	case Mode of
 		sync ->
-			gen_server:call(ar_data_sync_coordinator, {reset_worker, Name}, 30_000);
+			gen_server:cast(self(), pull);
 		_ ->
 			ok
 	end,
@@ -61,40 +58,72 @@ handle_cast({read_range, Args}, State) ->
 		recast ->
 			ok;
 		ReadResult ->
-			gen_server:cast(ar_chunk_copy,
-				{task_completed, {read_range, {State#state.name, ReadResult, Args}}})
+			ar_chunk_copy:task_completed(State#state.name, ReadResult, Args)
 	end,
 	{noreply, State};
 
-handle_cast({sync_range, Args}, State) ->
-	{_, _, Peer, _, RetryCount, FootprintKey} = Args,
-	StartTime = erlang:monotonic_time(),
-	SyncResult = sync_range(Args, State),
-	EndTime = erlang:monotonic_time(),
+handle_cast(pull, State) ->
+	%% Shuffle list to distribute peer load across workers.
+	Peers = ar_util:shuffle_list(ar_peer_worker:get_all_peers()),
+	case try_take_one(Peers) of
+		{ok, SyncTask} ->
+			run_sync_range(SyncTask, State),
+			%% Loop: immediately try to pull again.
+			gen_server:cast(self(), pull),
+			{noreply, State};
+		none ->
+			%% No peer has work right now. Retry after a short delay.
+			ar_util:cast_after(500 + rand:uniform(1000), self(), pull),
+			{noreply, State}
+	end;
+
+handle_cast({sync_range, SyncTask}, State) ->
+	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
+			footprint_key = FootprintKey } = SyncTask,
+	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
-		recast ->
-			%% Only log at WARNING when retries are exhausted (RetryCount <= 1),
-			%% otherwise log at DEBUG to reduce noise
-			case RetryCount =< 1 of
-				true ->
-					?LOG_WARNING([{event, sync_range_recast_exhausted}, 
-						{peer, ar_util:format_peer(Peer)}, 
-						{footprint_key, FootprintKey},
-						{retry_count, RetryCount},
-						{worker, State#state.name}]);
-				false ->
-					ok
-			end,
-			ok;
+		recast -> ok;
 		_ ->
-			gen_server:cast(ar_data_sync_coordinator, {task_completed,
-				{sync_range, {State#state.name, SyncResult, Args, EndTime-StartTime}}})
+			ar_peer_worker:task_completed(Peer, self(), FootprintKey,
+				SyncResult, ElapsedUs, End - Start)
 	end,
 	{noreply, State};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
+
+try_take_one([]) ->
+	none;
+try_take_one([{_Peer, PeerPid} | Rest]) ->
+	case ar_peer_worker:take_one(PeerPid) of
+		{task, SyncTask} ->
+			{ok, SyncTask};
+		none ->
+			try_take_one(Rest)
+	end.
+
+%% @doc Execute one sync_range task and report completion to the owning
+%% peer worker. On recast (cache full / disk full / retryable HTTP error)
+%% sync_range internally schedules a self-cast_after; we leave the slot
+%% claimed and in_flight_count incremented at the peer worker. The
+%% scheduled retry lands in the legacy `{sync_range, _}` cast handler,
+%% which will report completion when the retry succeeds (or definitively
+%% fails after exhausting retries — see sync_range/2 retry-zero clause
+%% which returns {error, timeout} directly, not recast).
+run_sync_range(SyncTask, State) ->
+	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
+			footprint_key = FootprintKey } = SyncTask,
+	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
+	case SyncResult of
+		recast ->
+			%% Slot stays claimed; eventual retry will report completion.
+			ok;
+		_ ->
+			ar_peer_worker:task_completed(Peer, self(), FootprintKey, SyncResult,
+				ElapsedUs, End - Start)
+	end,
+	ok.
 
 handle_info(_Message, State) ->
 	{noreply, State}.
@@ -243,18 +272,20 @@ read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
 			end
 	end.
 
-sync_range({Start, End, Peer, _TargetStoreID, _RetryCount, _FootprintKey} = Args, _State) when Start >= End ->
+sync_range(#sync_task{ start_offset = Start, end_offset = End }, _State) when Start >= End ->
 	ok;
-sync_range({Start, End, Peer, _TargetStoreID, 0, _FootprintKey}, _State) ->
-	?LOG_DEBUG([{event, sync_range_retries_exhausted},
+sync_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
+		retry_count = 0 }, _State) ->
+	?LOG_WARNING([{event, sync_range_retries_exhausted},
 				{peer, ar_util:format_peer(Peer)},
 				{start_offset, Start}, {end_offset, End}]),
 	{error, timeout};
-sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, State) ->
+sync_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
+		store_id = TargetStoreID, retry_count = RetryCount } = SyncTask, State) ->
 	IsChunkCacheFull =
 		case ar_data_sync:is_chunk_cache_full() of
 			true ->
-				ar_util:cast_after(500, self(), {sync_range, Args}),
+				ar_util:cast_after(500, self(), {sync_range, SyncTask}),
 				true;
 			false ->
 				false
@@ -266,7 +297,7 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 					true ->
 						true;
 					_ ->
-						ar_util:cast_after(30000, self(), {sync_range, Args}),
+						ar_util:cast_after(30000, self(), {sync_range, SyncTask}),
 						false
 				end;
 			true ->
@@ -294,18 +325,19 @@ sync_range({Start, End, Peer, TargetStoreID, RetryCount, FootprintKey} = Args, S
 							%% chunks will be then requested later.
 							Start3 = ar_block:get_chunk_padded_offset(
 									Start2 + byte_size(Chunk)) + 1,
-							gen_server:cast(ar_data_sync:name(TargetStoreID),
-									{store_fetched_chunk, Peer, Byte, Proof}),
+							ar_data_sync:store_fetched_chunk(
+									TargetStoreID, Peer, Byte, Proof),
 							ar_data_sync:increment_chunk_cache_size(),
 							sync_range(
-								{Start3, End, Peer, TargetStoreID, RetryCount, FootprintKey},
+								SyncTask#sync_task{ start_offset = Start3 },
 								State);
 						{error, timeout} ->
 							?LOG_DEBUG([{event, timeout_fetching_chunk},
 									{peer, ar_util:format_peer(Peer)},
 									{start_offset, Start2}, {end_offset, End}]),
-							Args2 = {Start, End, Peer, TargetStoreID, RetryCount - 1, FootprintKey},
-							ar_util:cast_after(1000, self(), {sync_range, Args2}),
+							SyncTask2 = SyncTask#sync_task{
+								retry_count = RetryCount - 1 },
+							ar_util:cast_after(1000, self(), {sync_range, SyncTask2}),
 							recast;
 						{error, {ok, {{<<"404">>, _}, _, _, _, _}} = Reason} ->
 							{error, Reason};

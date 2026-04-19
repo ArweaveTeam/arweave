@@ -29,10 +29,12 @@
 
 %% The number of peers to fetch sync intervals from in parallel at a time.
 -define(GET_SYNC_RECORD_BATCH_SIZE, 2).
--define(GET_SYNC_RECORD_COOLDOWN_MS, 60 * 1000).
 -define(GET_SYNC_RECORD_RPM_KEY, data_sync_record).
 -define(GET_FOOTPRINT_RECORD_RPM_KEY, footprints).
--define(GET_FOOTPRINT_RECORD_COOLDOWN_MS, 60 * 1000).
+%% Cooldown after 429 or batch_pmap timeout. Timeouts use the same duration
+%% because they're typically caused by self-throttling (ar_rate_limiter:throttle)
+%% as we approach a peer's rate limit.
+-define(GET_SYNC_RECORD_COOLDOWN_MS, 60 * 1000).
 -define(GET_SYNC_RECORD_PATH, [<<"data_sync_record">>]).
 -define(GET_FOOTPRINT_RECORD_PATH, [<<"footprints">>]).
 
@@ -47,18 +49,24 @@ fetch(Offset, Start, End, StoreID, Type) when Offset >= End ->
 			{range_start, Start},
 			{range_end, End},
 			{type, Type}]),
-	gen_server:cast(ar_data_sync:name(StoreID),
-		{collect_peer_intervals, Offset, Start, End, Type});
+	ar_data_sync:collect_peer_intervals(StoreID, Offset, Start, End, Type);
 fetch(Offset, Start, End, StoreID, Type) ->
-	Parent = ar_data_sync:name(StoreID),
 	spawn_link(fun() ->
 		case do_fetch(Offset, Start, End, StoreID, Type) of
-			{End2, EnqueueIntervals} ->
-				gen_server:cast(Parent, {enqueue_intervals, EnqueueIntervals}),
-				gen_server:cast(Parent, {collect_peer_intervals, End2, Start, End, Type});
+			{End2, EnqueueIntervals, Peers2} ->
+				ar_data_sync:enqueue_intervals(
+					StoreID, EnqueueIntervals, Peers2),
+				ar_data_sync:collect_peer_intervals(
+					StoreID, End2, Start, End, Type);
 			wait ->
-				ar_util:cast_after(1000, Parent,
-					{collect_peer_intervals, Offset, Start, End, Type})
+				%% All peers on cooldown/throttled for this bucket. Wait and
+				%% retry from the same offset so we march methodically through
+				%% the range.
+				?LOG_DEBUG([{event, collect_peer_intervals_all_peers_busy},
+					{store_id, StoreID},
+					{offset, Offset}, {type, Type}]),
+				ar_data_sync:schedule_collect_peer_intervals(
+					StoreID, 1000, Offset, Start, End, Type)
 		end
 	end).
 
@@ -75,11 +83,11 @@ do_fetch(Offset, Start, End, StoreID, normal) ->
 				%% if needed.
 				case ar_intervals:is_empty(UnsyncedIntervals) of
 					true ->
-						{End2, []};
+						{End2, [], Peers};
 					false ->
 						{End3, EnqueueIntervals2} =
 							fetch_peer_intervals(Parent, Offset, Peers, UnsyncedIntervals),
-						{min(End2, End3), EnqueueIntervals2}
+						{min(End2, End3), EnqueueIntervals2, Peers}
 				end
 		end
 	catch
@@ -93,7 +101,7 @@ do_fetch(Offset, Start, End, StoreID, normal) ->
 					{class, Class},
 					{reason, Reason},
 					{stacktrace, Stacktrace}]),
-			{Offset, []}
+			{Offset, [],  []}
 	end;
 
 do_fetch(Offset, Start, End, StoreID, footprint) ->
@@ -117,8 +125,7 @@ do_fetch(Offset, Start, End, StoreID, footprint) ->
 								Parent, Partition, Footprint, Offset, End, Peers, UnsyncedIntervals)
 					end,
 				Offset2 = get_next_fetch_offset(Offset, Start, End),
-				%% Schedule the next sync bucket. The cast handler logic will pause collection if needed.
-				{Offset2, EnqueueIntervals}
+				{Offset2, EnqueueIntervals, Peers}
 		end
 	catch
 		Class:Reason:Stacktrace ->
@@ -131,7 +138,7 @@ do_fetch(Offset, Start, End, StoreID, footprint) ->
 					{class, Class},
 					{reason, Reason},
 					{stacktrace, Stacktrace}]),
-			{Offset, []}
+			{Offset, [],  []}
 	end.
 
 %% @doc Calculate the next fetch start position after processing a sector.
@@ -185,10 +192,13 @@ get_peers2(Bucket, GetPeersFun, RPMKey, Path) ->
 	],
 	case length(AllPeers) > 0 andalso length(HotPeers) == 0 of
 		true ->
-			% There are peers for this Offset, but they are all on cooldown/throttled, so
-			% we'll give them time to recover.
+			%% Peers exist for this bucket but are all on cooldown/throttled.
+			%% Wait and retry from the same offset.
 			wait;
 		false ->
+			%% Either we have usable peers, or no peers are known for this
+			%% bucket at all (data discovery hasn't populated yet). In the
+			%% latter case the scan advances quickly with no peer queries.
 			ar_data_discovery:pick_peers(HotPeers, ?QUERY_BEST_PEERS_COUNT)
 	end.
 
@@ -236,21 +246,21 @@ fetch_peer_intervals(Parent, Start, Peers, UnsyncedIntervals) ->
 			end,
 			Peers,
 			?GET_SYNC_RECORD_BATCH_SIZE, % fetch sync intervals from so many peers at a time
-			%% We'll rely on the timeout to also flag when we are approaching a peer's RPM
-			%% limit. As we approach the limit we will self-throttle the requests. Eventually this
-			%% throttling will exceed 60s and we'll timout the batch_pmap and flag the peer for
-			%% cooldown.
-			60 * 1000 
+			%% Timeout for each batch of peer queries. Slow peers that exceed
+			%% this are skipped for this step but NOT put on cooldown — timeout
+			%% means "slow," not "overloaded." Only explicit 429 responses
+			%% trigger cooldown.
+			60 * 1000
 		),
 	{EnqueueIntervals, MinRightBound} =
 		lists:foldl(
 			fun	({error, batch_pmap_timeout, Peer}, Acc) ->
-					?LOG_DEBUG([{event, failed_to_fetch_peer_intervals},
+					?LOG_DEBUG([{event, peer_sync_record_timeout},
 						{parent, Parent},
-						{peer, ar_util:format_peer(Peer)},
-						{reason, batch_pmap_timeout}]),
+						{peer, ar_util:format_peer(Peer)}]),
 					ar_rate_limiter:set_cooldown(
-						Peer, ?GET_SYNC_RECORD_RPM_KEY, ?GET_SYNC_RECORD_COOLDOWN_MS),
+						Peer, ?GET_SYNC_RECORD_RPM_KEY,
+						?GET_SYNC_RECORD_COOLDOWN_MS),
 					Acc;
 				({Peer, SoughtIntervals, RightBound}, {IntervalsAcc, RightBoundAcc}) ->
 					case ar_intervals:is_empty(SoughtIntervals) of
@@ -341,21 +351,21 @@ fetch_peer_footprint_intervals(Parent, Partition, Footprint, Start, End, Peers, 
 			end,
 			Peers,
 			?GET_SYNC_RECORD_BATCH_SIZE, % fetch sync intervals from so many peers at a time
-			%% We'll rely on the timeout to also flag when we are approaching a peer's RPM
-			%% limit. As we approach the limit we will self-throttle the requests. Eventually this
-			%% throttling will exceed 60s and we'll timout the batch_pmap and flag the peer for
-			%% cooldown.
+			%% Timeout for each batch of peer queries. Slow peers that exceed
+			%% this are skipped for this step but NOT put on cooldown — timeout
+			%% means "slow," not "overloaded." Only explicit 429 responses
+			%% trigger cooldown.
 			60 * 1000
 		),
 	EnqueueIntervals =
 		lists:foldl(
 			fun	({error, batch_pmap_timeout, Peer}, Acc) ->
-					?LOG_DEBUG([{event, failed_to_fetch_peer_footprint_intervals},
+					?LOG_DEBUG([{event, peer_footprint_record_timeout},
 						{parent, Parent},
-						{peer, ar_util:format_peer(Peer)},
-						{reason, batch_pmap_timeout}]),
+						{peer, ar_util:format_peer(Peer)}]),
 					ar_rate_limiter:set_cooldown(
-						Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY, ?GET_FOOTPRINT_RECORD_COOLDOWN_MS),
+						Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY,
+						?GET_SYNC_RECORD_COOLDOWN_MS),
 					Acc;
 				({Peer, SoughtIntervals}, IntervalsAcc) ->
 					case ar_intervals:is_empty(SoughtIntervals) of
@@ -417,7 +427,7 @@ get_peer_footprint_intervals(Peer, Partition, Footprint, SoughtIntervals) ->
 			{ok, ar_intervals:new()};
 		{error, too_many_requests} = Error ->
 			ar_rate_limiter:set_cooldown(Peer,
-				?GET_FOOTPRINT_RECORD_RPM_KEY, ?GET_FOOTPRINT_RECORD_COOLDOWN_MS),
+				?GET_FOOTPRINT_RECORD_RPM_KEY, ?GET_SYNC_RECORD_COOLDOWN_MS),
 			Error;
 		Error ->
 			Error

@@ -1,6 +1,20 @@
 %% The size in bits of the offset key in kv databases.
 -define(OFFSET_KEY_BITSIZE, 256).
 
+%% A single sync unit: fetch the byte range [start_offset, end_offset) from
+%% `peer` into storage module `store_id`. `footprint_key` groups chunks that
+%% share the same 256 MiB entropy (replica.2.9 mode) for admission control;
+%% `none` means the task has no footprint constraint. `retry_count` counts
+%% down on transient errors; the task is abandoned at 0.
+-record(sync_task, {
+	start_offset,
+	end_offset,
+	peer,
+	store_id,
+	retry_count = 3,
+	footprint_key = none
+}).
+
 %% The size in bits of the key prefix used in prefix bloom filter
 %% when looking up chunks by offsets from kv database.
 %% 29 bytes of the prefix correspond to the 16777216 (16 Mib) max distance
@@ -80,6 +94,8 @@
 -else.
 -define(STORE_CHUNK_QUEUE_FLUSH_TIME_THRESHOLD, 2_000). % 2 seconds.
 -endif.
+
+-define(WORKER_LOAD_TABLE, worker_load).
 
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
@@ -183,5 +199,17 @@
 	%% The phases are:
 	%% - normal: normal left-to-right syncing (normally, of the unpacked data).
 	%% - footprint: footprint-based syncing of replica 2.9 data.
-	sync_phase = undefined
+	sync_phase = undefined,
+	%% Number of tasks produced by the current scan. Used for adaptive backoff:
+	%% scans that complete a full range walk with 0 tasks get exponential
+	%% backoff (the module is likely near-full). Throttled scans never
+	%% complete — the wait-retry loop holds the offset until peers recover.
+	scan_tasks_produced = 0,
+	%% Whether this scan queried any peers (enqueue_intervals was called).
+	%% Scans that race through with no peers (data discovery not populated)
+	%% should not trigger backoff.
+	scan_had_peers = false,
+	%% Current backoff delay for unproductive scans (doubles each time,
+	%% capped at COLLECT_SYNC_INTERVALS_MAX_DELAY_MS).
+	scan_backoff_ms = 0
 }).

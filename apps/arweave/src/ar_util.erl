@@ -40,6 +40,7 @@
 	safe_format/3,
 	safe_parse_peer/1,
 	safe_parse_peer/2,
+	ema/3,
 	shuffle_list/1,
 	take_every_nth/2,
 	terminal_clear/0,
@@ -501,6 +502,9 @@ parse_list_indices(<<>>, _N) ->
 	[];
 parse_list_indices(_BadInput, _N) ->
 	error.
+
+ema(OldValue, NewValue, Alpha) ->
+	Alpha * NewValue + (1 - Alpha) * OldValue.
 
 shuffle_list(List) ->
 	lists:sort(fun(_,_) -> rand:uniform() < 0.5 end, List).

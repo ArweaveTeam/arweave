@@ -23,7 +23,9 @@
 -export([init_kv/2, open_store_dbs/2]).
 
 -export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([enqueue_intervals/3]).
+-export([store_fetched_chunk/4, collect_peer_intervals/5,
+		schedule_collect_peer_intervals/6, enqueue_intervals/3,
+		store_data_roots/4, store_data_roots_sync/4]).
 
 -include("ar.hrl").
 -include("ar_sup.hrl").
@@ -36,21 +38,35 @@
 
 -ifdef(AR_TEST).
 -include_lib("eunit/include/eunit.hrl").
+-export([do_enqueue_intervals/3]).
 -endif.
 
 %% The key for storing migration cursor in the migrations_index database.
 -define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
 
--ifdef(AR_TEST).
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 1_000).
--else.
--define(COLLECT_SYNC_INTERVALS_FREQUENCY_MS, 10_000).
--endif.
+
 
 -ifdef(AR_TEST).
 -define(DEVICE_LOCK_WAIT, 100).
 -else.
 -define(DEVICE_LOCK_WAIT, 5_000).
+-endif.
+
+%% Max size of the per-storage-module intervals queue (gb_set). Must be deep
+%% enough that the scan can refill before workers drain it. Scales with
+%% sync_jobs: 400 workers × 250 = 100K chunks ≈ 23 MB per module.
+-define(INTERVALS_QUEUE_CHUNKS_PER_WORKER, 250).
+
+
+%% Adaptive restart delay for collect_peer_intervals. Scans that produce tasks
+%% restart at the min delay. Scans that produce nothing get exponential backoff
+%% (doubling each time) up to the max delay. Resets on any productive scan.
+-ifdef(AR_TEST).
+-define(COLLECT_SYNC_INTERVALS_MIN_DELAY_MS, 1_000).
+-define(COLLECT_SYNC_INTERVALS_MAX_DELAY_MS, 1_000).
+-else.
+-define(COLLECT_SYNC_INTERVALS_MIN_DELAY_MS, 10_000).
+-define(COLLECT_SYNC_INTERVALS_MAX_DELAY_MS, 120_000).
 -endif.
 
 %% The number of chunks to migrate per batch during footprint migration.
@@ -113,8 +129,36 @@ add_tip_block(BlockTXPairs, RecentBI) ->
 	gen_server:cast(ar_data_sync_default, {add_tip_block, BlockTXPairs, RecentBI}).
 
 invalidate_bad_data_record(AbsoluteEndOffset, ChunkSize, StoreID, Case) ->
-	gen_server:cast(name(StoreID), {invalidate_bad_data_record,
+	gen_server:cast(?MODULE:name(StoreID), {invalidate_bad_data_record,
 		{AbsoluteEndOffset, ChunkSize, StoreID, Case}}).
+
+%% @doc Store a chunk fetched from a peer.
+store_fetched_chunk(StoreID, Peer, Byte, Proof) ->
+	gen_server:cast(?MODULE:name(StoreID), {store_fetched_chunk, Peer, Byte, Proof}).
+
+%% @doc Notify the data sync process that a peer interval collection step completed.
+collect_peer_intervals(StoreID, Offset, Start, End, Type) ->
+	gen_server:cast(?MODULE:name(StoreID),
+		{collect_peer_intervals, Offset, Start, End, Type}).
+
+%% @doc Schedule a delayed collect_peer_intervals cast.
+schedule_collect_peer_intervals(StoreID, Delay, Offset, Start, End, Type) ->
+	ar_util:cast_after(Delay, ?MODULE:name(StoreID),
+		{collect_peer_intervals, Offset, Start, End, Type}).
+
+%% @doc Enqueue intervals fetched from peers for syncing.
+enqueue_intervals(StoreID, Intervals, Peers) ->
+	gen_server:cast(?MODULE:name(StoreID), {enqueue_intervals, Intervals, Peers}).
+
+%% @doc Store the given data roots asynchronously.
+store_data_roots(BlockStart, BlockEnd, TXRoot, DataRootEntries) ->
+	gen_server:cast(ar_data_sync_default,
+		{store_data_roots, BlockStart, BlockEnd, TXRoot, DataRootEntries}).
+
+%% @doc Store the given data roots synchronously.
+store_data_roots_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries) ->
+	gen_server:call(ar_data_sync_default,
+		{store_data_roots_sync, BlockStart, BlockEnd, TXRoot, DataRootEntries}, 120000).
 
 %% @doc The condition which is true if the chunk is too small compared to the proof.
 %% Small chunks make syncing slower and increase space amplification. A small chunk
@@ -357,6 +401,23 @@ request_tx_data_removal(TXID, Ref, ReplyTo) ->
 %% @doc Request the removal of the given byte range.
 request_data_removal(Start, End, Ref, ReplyTo) ->
 	remove_range(Start, End, Ref, ReplyTo).
+
+%% @doc Adaptive restart delay based on scan productivity. Productive scans
+%% restart at the minimum delay. Scans with no peers (data discovery not
+%% populated yet) also restart at min delay — no point backing off when we
+%% haven't had a chance to query. Only scans that queried peers and found
+%% nothing get exponential backoff (module is likely near-full).
+scan_restart_delay(#sync_data_state{ scan_tasks_produced = TasksProduced })
+		when TasksProduced > 0 ->
+	{?COLLECT_SYNC_INTERVALS_MIN_DELAY_MS, 0};
+scan_restart_delay(#sync_data_state{ scan_had_peers = false }) ->
+	{?COLLECT_SYNC_INTERVALS_MIN_DELAY_MS, 0};
+scan_restart_delay(#sync_data_state{ scan_backoff_ms = PrevBackoff }) ->
+	Backoff = ar_util:between(
+		max(PrevBackoff * 2, ?COLLECT_SYNC_INTERVALS_MIN_DELAY_MS),
+		?COLLECT_SYNC_INTERVALS_MIN_DELAY_MS,
+		?COLLECT_SYNC_INTERVALS_MAX_DELAY_MS),
+	{Backoff, Backoff}.
 
 %% @doc Return true if the in-memory data chunk cache is full. Return not_initialized
 %% if there is no information yet.
@@ -836,13 +897,19 @@ handle_cast(collect_peer_intervals, State) ->
 
 handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) when Offset >= End ->
 	%% We've finished collecting intervals for the whole storage_module range. Schedule
-	%% the collection process to restart in ?COLLECT_SYNC_INTERVALS_FREQUENCY_MS.
+	%% the collection process to restart after a delay.
+	{RestartDelay, NewBackoff} = scan_restart_delay(State),
 	?LOG_DEBUG([{event, collect_peer_intervals_done},
 		{function, collect_peer_intervals},
 		{store_id, State#sync_data_state.store_id},
-		{offset, Offset}, {s, Start}, {e, End}, {type, Type}]),
-	ar_util:cast_after(?COLLECT_SYNC_INTERVALS_FREQUENCY_MS, self(), collect_peer_intervals),
-	{noreply, State};
+		{offset, Offset}, {s, Start}, {e, End}, {type, Type},
+		{tasks_produced, State#sync_data_state.scan_tasks_produced},
+		{had_peers, State#sync_data_state.scan_had_peers},
+		{restart_delay_ms, RestartDelay}]),
+	ar_util:cast_after(RestartDelay, self(), collect_peer_intervals),
+	{noreply, State#sync_data_state{
+		scan_tasks_produced = 0, scan_had_peers = false,
+		scan_backoff_ms = NewBackoff }};
 handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			store_id = StoreID, weave_size = WeaveSize } = State,
@@ -891,7 +958,10 @@ handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 				StoreIDLabel = ar_storage_module:label(StoreID),
 				prometheus_gauge:set(sync_intervals_queue_size,
 					[StoreIDLabel], IntervalsQueueSize),
-				case IntervalsQueueSize > (?NETWORK_DATA_BUCKET_SIZE / ?DATA_CHUNK_SIZE) of
+				MaxQueueSize = max(
+					?NETWORK_DATA_BUCKET_SIZE div ?DATA_CHUNK_SIZE,
+					ar_data_sync_coordinator:sync_jobs() * ?INTERVALS_QUEUE_CHUNKS_PER_WORKER),
+				case IntervalsQueueSize > MaxQueueSize of
 					true ->
 						ar_util:cast_after(500, self(),
 							{collect_peer_intervals, Offset, Start, End, Type}),
@@ -925,9 +995,10 @@ handle_cast({collect_peer_intervals, Offset, Start, End, Type}, State) ->
 
 	{noreply, State};
 
-handle_cast({enqueue_intervals, []}, State) ->
-	{noreply, State};
-handle_cast({enqueue_intervals, Intervals}, State) ->
+handle_cast({enqueue_intervals, [], Peers}, State) ->
+	{noreply, State#sync_data_state{
+		scan_had_peers = State#sync_data_state.scan_had_peers orelse Peers =/= [] }};
+handle_cast({enqueue_intervals, Intervals, Peers}, State) ->
 	#sync_data_state{ sync_intervals_queue = Q,
 			sync_intervals_queue_intervals = QIntervals } = State,
 	%% When enqueuing intervals, we want to distribute the intervals among many peers,
@@ -955,7 +1026,7 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	ScalingFactor = 1.5,
 	ChunksPerPeer = trunc(((TotalChunksToEnqueue + NumPeers - 1) div NumPeers) * ScalingFactor),
 
-	{Q2, QIntervals2} = enqueue_intervals(
+	{Q2, QIntervals2} = do_enqueue_intervals(
 		ar_util:shuffle_list(Intervals), ChunksPerPeer, {Q, QIntervals}),
 
 	%% XXX: turning off logging to reduce noise, will re-enable when we support multiple log
@@ -966,8 +1037,12 @@ handle_cast({enqueue_intervals, Intervals}, State) ->
 	% 	{q_intervals_before, ar_intervals:sum(QIntervals)},
 	% 	{q_intervals_after, ar_intervals:sum(QIntervals2)}]),
 
+	TasksProduced = gb_sets:size(Q2) - gb_sets:size(Q),
 	{noreply, State#sync_data_state{ sync_intervals_queue = Q2,
-			sync_intervals_queue_intervals = QIntervals2 }};
+			sync_intervals_queue_intervals = QIntervals2,
+			scan_had_peers = State#sync_data_state.scan_had_peers orelse Peers =/= [],
+			scan_tasks_produced = State#sync_data_state.scan_tasks_produced
+				+ max(0, TasksProduced) }};
 
 handle_cast(sync_intervals, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
@@ -1483,8 +1558,13 @@ do_sync_intervals(State) ->
 			gen_server:cast(self(), sync_intervals),
 			{{FootprintKey, Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
 			I2 = ar_intervals:delete(QIntervals, End, Start),
-			gen_server:cast(ar_data_sync_coordinator,
-					{sync_range, {Start, End, Peer, StoreID, FootprintKey}}),
+			ar_data_sync_coordinator:sync_range(#sync_task{
+						start_offset = Start,
+						end_offset = End,
+						peer = Peer,
+						store_id = StoreID,
+						footprint_key = FootprintKey
+					}),
 			State#sync_data_state{ sync_intervals_queue = Q2,
 					sync_intervals_queue_intervals = I2 }
 	end.
@@ -2247,11 +2327,11 @@ get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeSt
 			end
 	end.
 
-enqueue_intervals([], _ChunksToEnqueue, {Q, QIntervals}) ->
+do_enqueue_intervals([], _ChunksToEnqueue, {Q, QIntervals}) ->
 	{Q, QIntervals};
-enqueue_intervals([{Peer, Intervals, FootprintKey} | Rest], ChunksToEnqueue, {Q, QIntervals}) ->
+do_enqueue_intervals([{Peer, Intervals, FootprintKey} | Rest], ChunksToEnqueue, {Q, QIntervals}) ->
 	{Q2, QIntervals2} = enqueue_peer_intervals(Peer, Intervals, FootprintKey, ChunksToEnqueue, {Q, QIntervals}),
-	enqueue_intervals(Rest, ChunksToEnqueue, {Q2, QIntervals2}).
+	do_enqueue_intervals(Rest, ChunksToEnqueue, {Q2, QIntervals2}).
 
 enqueue_peer_intervals(Peer, Intervals, FootprintKey, ChunksToEnqueue, {Q, QIntervals}) ->
 	%% Only keep unique intervals. We may get some duplicates for two
@@ -2806,12 +2886,7 @@ get_required_chunk_packing(Offset, ChunkSize, State) ->
 
 
 get_merkle_rebase_threshold() ->
-	case ets:lookup(node_state, merkle_rebase_support_threshold) of
-		[] ->
-			infinity;
-		[{_, Threshold}] ->
-			Threshold
-	end.
+	ets:lookup_element(node_state, merkle_rebase_support_threshold, 2, infinity).
 
 
 process_unpacked_chunk(ChunkArgs, Args, State) ->

@@ -59,10 +59,7 @@ start_link(Args) ->
 -spec state() -> shutdown | running.
 
 state() ->
-	case ets:lookup(?MODULE, state) of
-		[{state, shutdown}] -> shutdown;
-		_ -> running
-	end.
+	ets:lookup_element(?MODULE, state, 2, running).
 
 %%--------------------------------------------------------------------
 %% @doc set state value to shutdown.

@@ -58,30 +58,15 @@ make_full_nonce_limiter_update(SessionKey, Session) ->
 
 %% @doc Return the minimal VDF update, i.e., the latest computed output.
 get_update(Format) ->
-	case ets:lookup(?MODULE, {partial_update, Format}) of
-		[] ->
-			not_found;
-		[{_, PartialUpdate}] ->
-			PartialUpdate
-	end.
+	ets:lookup_element(?MODULE, {partial_update, Format}, 2, not_found).
 
 %% @doc Return the "full update" including the latest VDF session.
 get_full_update(Format) ->
-	case ets:lookup(?MODULE, {full_update, Format}) of
-		[] ->
-			not_found;
-		[{_, Session}] ->
-			Session
-	end.
+	ets:lookup_element(?MODULE, {full_update, Format}, 2, not_found).
 
 %% @doc Return the "full previous update" including the latest but one VDF session.
 get_full_prev_update(Format) ->
-	case ets:lookup(?MODULE, {full_prev_update, Format}) of
-		[] ->
-			not_found;
-		[{_, PrevSession}] ->
-			PrevSession
-	end.
+	ets:lookup_element(?MODULE, {full_prev_update, Format}, 2, not_found).
 
 %%%===================================================================
 %%% Generic server callbacks.
