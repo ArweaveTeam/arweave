@@ -701,7 +701,6 @@ start(B0, RewardAddr, Config) ->
 %% but if you've modified any of the Config fields for your test, please restore the default
 %% Config after the test is done. Otherwise the tests that run after yours may fail.
 start(B0, RewardAddr, Config, StorageModules) ->
-io:fwrite(user, "STart node ~p with config: ~p~n", [node(), Config]),
 	clean_up_and_stop(),
 	prometheus:start(),
 	arweave_config:start(),

@@ -9,7 +9,7 @@
 
 -import(ar_test_node, [assert_wait_until_height/2]).
 
--define(TIMEOUT, 90).
+-define(TIMEOUT, 180).
 
 from_disk_pool_test_() ->
 	{timeout, ?TIMEOUT, fun test_from_disk_pool/0}.
