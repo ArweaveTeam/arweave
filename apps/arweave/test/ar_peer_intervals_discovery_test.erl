@@ -54,6 +54,11 @@ test_interval_discovery(TestCase, Mode, Title) ->
 	setup_sync_record_servers(SyncedBytes, PeerBytesData),
 
 	ar_test_node:test_with_mocked_functions(Mocks, fun() ->
+		%% Register the test worker so the ar_data_sync:name/1 mock
+		%% (which fires in spawn_linked children) can route casts back
+		%% to this process.
+		catch unregister(ar_peer_intervals_discovery_test_worker),
+		register(ar_peer_intervals_discovery_test_worker, self()),
 		Start = 0,
 		End = TestRangeEnd,
 		StoreID = test_store_id,
@@ -64,7 +69,7 @@ test_interval_discovery(TestCase, Mode, Title) ->
 		case maps:size(ExpectedIntervals) == 0 of
 			true ->
 				receive
-					{'$gen_cast', {enqueue_intervals, []}} -> ok
+					{'$gen_cast', {enqueue_intervals, [], _Peers}} -> ok
 				after 100 -> ok
 				end;
 			false ->
@@ -77,7 +82,7 @@ test_interval_discovery(TestCase, Mode, Title) ->
 
 collect_enqueue_intervals(Acc, StoreID, Mode) ->
 	receive
-		{'$gen_cast', {enqueue_intervals, EnqueueIntervals}} ->
+		{'$gen_cast', {enqueue_intervals, EnqueueIntervals, _Peers}} ->
 			Acc2 = update_peer_intervals(EnqueueIntervals, Acc),
 			collect_enqueue_intervals(Acc2, StoreID, Mode);
 		{'$gen_cast', {collect_peer_intervals, Offset, _Start, End, _}} when Offset >= End ->
@@ -104,7 +109,9 @@ create_test_mocks(Peers) ->
 			Intervals = ar_footprint_record:get_intervals(Partition, Footprint, Peer),
 			{ok, Intervals}
 		end},
-		{ar_data_sync, name, fun(_StoreID) -> self() end},
+		{ar_data_sync, name, fun(_StoreID) ->
+			whereis(ar_peer_intervals_discovery_test_worker)
+		end},
 		{ar_peers, get_peer_release, fun(_Peer) -> ?GET_FOOTPRINT_SUPPORT_RELEASE end},
 		{ar_rate_limiter, is_on_cooldown, fun(_Peer, _Key) -> false end},
 		{ar_rate_limiter, is_throttled, fun(_Peer, _Path) -> false end}

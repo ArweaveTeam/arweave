@@ -38,6 +38,7 @@
 
 -ifdef(AR_TEST).
 -include_lib("eunit/include/eunit.hrl").
+-export([do_enqueue_intervals/3]).
 -endif.
 
 %% The key for storing migration cursor in the migrations_index database.
@@ -128,25 +129,26 @@ add_tip_block(BlockTXPairs, RecentBI) ->
 	gen_server:cast(ar_data_sync_default, {add_tip_block, BlockTXPairs, RecentBI}).
 
 invalidate_bad_data_record(AbsoluteEndOffset, ChunkSize, StoreID, Case) ->
-	gen_server:cast(name(StoreID), {invalidate_bad_data_record,
+	gen_server:cast(?MODULE:name(StoreID), {invalidate_bad_data_record,
 		{AbsoluteEndOffset, ChunkSize, StoreID, Case}}).
 
 %% @doc Store a chunk fetched from a peer.
 store_fetched_chunk(StoreID, Peer, Byte, Proof) ->
-	gen_server:cast(name(StoreID), {store_fetched_chunk, Peer, Byte, Proof}).
+	gen_server:cast(?MODULE:name(StoreID), {store_fetched_chunk, Peer, Byte, Proof}).
 
 %% @doc Notify the data sync process that a peer interval collection step completed.
 collect_peer_intervals(StoreID, Offset, Start, End, Type) ->
-	gen_server:cast(name(StoreID), {collect_peer_intervals, Offset, Start, End, Type}).
+	gen_server:cast(?MODULE:name(StoreID),
+		{collect_peer_intervals, Offset, Start, End, Type}).
 
 %% @doc Schedule a delayed collect_peer_intervals cast.
 schedule_collect_peer_intervals(StoreID, Delay, Offset, Start, End, Type) ->
-	ar_util:cast_after(Delay, name(StoreID),
+	ar_util:cast_after(Delay, ?MODULE:name(StoreID),
 		{collect_peer_intervals, Offset, Start, End, Type}).
 
 %% @doc Enqueue intervals fetched from peers for syncing.
 enqueue_intervals(StoreID, Intervals, Peers) ->
-	gen_server:cast(name(StoreID), {enqueue_intervals, Intervals, Peers}).
+	gen_server:cast(?MODULE:name(StoreID), {enqueue_intervals, Intervals, Peers}).
 
 %% @doc Store the given data roots asynchronously.
 store_data_roots(BlockStart, BlockEnd, TXRoot, DataRootEntries) ->

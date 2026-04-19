@@ -213,7 +213,7 @@ enqueue_intervals_test() ->
 test_enqueue_intervals(Intervals, ChunksPerPeer, QIntervalsRanges, ExpectedQIntervalRanges, ExpectedChunks, Label) ->
 	QIntervals = ar_intervals:from_list(QIntervalsRanges),
 	Q = gb_sets:new(),
-	{QResult, QIntervalsResult} = ar_data_sync:enqueue_intervals(Intervals, ChunksPerPeer, {Q, QIntervals}),
+	{QResult, QIntervalsResult} = ar_data_sync:do_enqueue_intervals(Intervals, ChunksPerPeer, {Q, QIntervals}),
 	ExpectedQIntervals = lists:foldl(fun({End, Start}, Acc) ->
 			ar_intervals:add(Acc, End, Start)
 		end, QIntervals, ExpectedQIntervalRanges),
