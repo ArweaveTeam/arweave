@@ -1037,6 +1037,36 @@ generate_and_validate_uneven_tree_path_test() ->
 	?assert(?UNEVEN_TEST_TARGET < EndOffset),
 	?assert(?UNEVEN_TEST_TARGET >= StartOffset).
 
+extract_root_test() ->
+	%% Generate and extract.
+	Leaf1 = crypto:strong_rand_bytes(?HASH_SIZE),
+	Leaf2 = crypto:strong_rand_bytes(?HASH_SIZE),
+	Leaf3 = crypto:strong_rand_bytes(?HASH_SIZE),
+	Leaf4 = crypto:strong_rand_bytes(?HASH_SIZE),
+	Leaf5 = crypto:strong_rand_bytes(?HASH_SIZE),
+	Tags = [
+				{Leaf1, ?DATA_CHUNK_SIZE},
+				[
+					{Leaf2, ?DATA_CHUNK_SIZE},
+					[
+						{Leaf3, ?DATA_CHUNK_SIZE},
+						{Leaf4, 2*?DATA_CHUNK_SIZE}
+					]
+				],
+				{Leaf5, 5*?DATA_CHUNK_SIZE}
+			],
+	{Root, Tree} = ar_merkle:generate_tree(Tags),
+	GoodPath = ar_merkle:generate_path(Root, 3*?DATA_CHUNK_SIZE, Tree),
+	?assertEqual({ok, Root}, extract_root(GoodPath)),
+
+	%% Some real values
+	?assertEqual(
+	{ok,<<156,185,187,254,168,115,165,100,57,68,150,212,
+		71,64,120,136,119,72,76,139,230,223,216,255,2,
+		190,8,6,207,95,142,72>>},
+	extract_root(<<"xq9sgKgCXuKDsuvWfvxXppFbyCIXLVMwsWdMmGZriUHxRvDm7t2Q3PVDEdTGOfZX7uN1IhBjhtDqXMNtKzhqIQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAa9A7mcQUkyuoaIo_qRduBL_p-XlU_dzIqVYcXMFasjf4OCRIyTw3csFFwYRKSgeyf7YNXx6n01o0FOMvlwla1NXxqdwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANJAAA3eRGTycNGG3Q4XLbM4x9ECqmes8Hd4ESCnTS8ZeP21cFJT1Rxl9vcjEPfiOrjuX3DI3TRG14QDfgkbhlm4h5zgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANcV6Imnwec2_eDdsgKp62wLWhxxel6X6MCZl5yS0rj_3QzGj-qV-sEuZ53LI89xsdU01jmW2QMbg35XmlzUSuoUycVgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANSAAA6NyGgTjcP-ZX9Ow1fbYjQ2zq1AZ1r9YsklRJM6lnGt-og-RPhF2n5yfly3_z-0Bv7xd0NIcRShH73k0BEW74RAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANVAI7fUMYNbs5OkT0SSzuOMGqJNquL6cAw9uU9IoG7c1J767Lq6Et3qS8-h2X0_Z4gS8qV_rdFTF7S0zMVDhiSQ0engAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANXKFkAOSmAhslJzNYlGrcRfM3K6OcrHI97ylEL1o3w9bBsNaORXPJWSCwIcxw785DdTUGFO9kdLojL_OEpQI86e3yngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANYC4cMmxvHLQUKiyEzl25B59PwaDjmX2aOuLYJUoSK8czahTn0VfpvdFyKvemVFtym9VakvjRzA1VZ5HuwJmTY1U_1gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANYAAAwdEhKYxHaxpumHVBkZefzfrsKEGXKGxKd8ej4eSrJacAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADWAuHA">>)),
+	ok.
+
 reject_invalid_tree_path_test_() ->
 	{timeout, 30, fun test_reject_invalid_tree_path/0}.
 
