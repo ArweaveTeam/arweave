@@ -1442,6 +1442,7 @@ allow_before_join(<<"OPTIONS">>, _) -> true;
 allow_before_join(<<"HEAD">>, _) -> true;
 allow_before_join(<<"GET">>, [<<"info">>]) -> true;
 allow_before_join(<<"GET">>, [<<"time">>]) -> true;
+allow_before_join(<<"GET">>, [<<"inflation">>, _Height]) -> true;
 allow_before_join(_, _) -> false.
 
 handle_get_tx_status(EncodedTXID, Req) ->
