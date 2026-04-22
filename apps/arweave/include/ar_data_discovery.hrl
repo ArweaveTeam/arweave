@@ -42,6 +42,37 @@
 -define(GET_SYNC_RECORD_RIGHT_BOUND_SUPPORT_RELEASE, 83).
 
 %% The number of the release adding support for endpoints:
-%% GET /footprints/[partition]/[footprint] 
+%% GET /footprints/[partition]/[footprint]
 %% GET /footprint_buckets
 -define(GET_FOOTPRINT_SUPPORT_RELEASE, 91).
+
+%% Fine-grained peer interval cache TTL. After this many milliseconds a
+%% cached peer response is considered stale and a fresh HTTP call is issued
+%% on the next read. Matches the rate-limit cooldown so refresh cadence
+%% aligns with the peer's tolerance.
+-define(PEER_INTERVAL_CACHE_TTL_MS, 60 * 1000).
+
+%% The size of the span of the weave we search at a time. The planner walks
+%% the unsynced range in increments of this size; the directory prefetches
+%% peer intervals at the same granularity so one peer response covers one
+%% scan step exactly.
+-ifdef(AR_TEST).
+-define(QUERY_RANGE_STEP_SIZE, 10_000_000). % 10 MB
+-else.
+-define(QUERY_RANGE_STEP_SIZE, 1_000_000_000). % 1 GB
+-endif.
+
+%% How many scan steps ahead of the planner cursor the directory prefetches
+%% in normal mode. Keep the cache warm for the planner's next few ticks.
+-define(PREFETCH_STEPS_AHEAD, 10).
+
+%% How many footprints ahead of the planner cursor the directory prefetches
+%% in footprint mode. Each prefetch is one `GET /footprints/{P}/{F}` call
+%% returning all intervals for that footprint from one peer.
+-define(PREFETCH_FOOTPRINTS_AHEAD, 10).
+
+%% Upper bound on the number of concurrent peer interval refresh HTTP calls
+%% across the directory's refresh worker pool. Distinct from the
+%% DATA_DISCOVERY_PARALLEL_PEER_REQUESTS pool that handles sync_buckets /
+%% footprint_buckets fetches so the two pools don't starve each other.
+-define(MAX_CONCURRENT_INTERVAL_REFRESHES, 10).
