@@ -372,10 +372,14 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pi
 	case catch binary_to_integer(EncodedStart) of
 		{'EXIT', _} ->
 			{400, #{}, jiffy:encode(#{ error => invalid_start_encoding }), Req};
+		Start when Start < 0 ->
+			{400, #{}, jiffy:encode(#{ error => invalid_start_value }), Req};
 		Start ->
 			case catch binary_to_integer(EncodedLimit) of
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_limit_encoding }), Req};
+				Limit when Limit =< 0 ->
+					{400, #{}, jiffy:encode(#{ error => invalid_limit_value }), Req};
 				Limit ->
 					case Limit > ?MAX_SHARED_SYNCED_INTERVALS_COUNT of
 						true ->
@@ -391,14 +395,20 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedEnd, EncodedLimi
 	case catch binary_to_integer(EncodedStart) of
 		{'EXIT', _} ->
 			{400, #{}, jiffy:encode(#{ error => invalid_start_encoding }), Req};
+		Start when Start < 0 ->
+			{400, #{}, jiffy:encode(#{ error => invalid_start_value }), Req};
 		Start ->
 			case catch binary_to_integer(EncodedEnd) of
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_end_encoding }), Req};
+				End when End =< Start ->
+					{400, #{}, jiffy:encode(#{ error => invalid_range }), Req};
 				End ->
 					case catch binary_to_integer(EncodedLimit) of
 						{'EXIT', _} ->
 							{400, #{}, jiffy:encode(#{ error => invalid_limit_encoding }), Req};
+						Limit when Limit =< 0 ->
+							{400, #{}, jiffy:encode(#{ error => invalid_limit_value }), Req};
 						Limit ->
 							case Limit > ?MAX_SHARED_SYNCED_INTERVALS_COUNT of
 								true ->
