@@ -7,7 +7,8 @@
 -include("ar.hrl").
 -include("ar_consensus.hrl").
 
--import(ar_test_node, [assert_wait_until_height/2]).
+-import(ar_test_node, [assert_wait_until_height/2, wait_until_height/2,
+		disconnect_from/1, connect_to_peer/1]).
 
 -define(TIMEOUT, 180).
 
@@ -67,6 +68,9 @@ concurrent_requests_test_() ->
 
 discover_all_unconfirmed_chunks_test_() ->
 	{timeout, ?TIMEOUT, fun test_discover_all_unconfirmed_chunks/0}.
+
+orphaned_chunk_test_() ->
+	{timeout, ?TIMEOUT, fun test_orphaned_chunk/0}.
 
 post_chunk_proofs(Proofs, ExpectedStatus) ->
 	lists:foreach(
@@ -648,6 +652,56 @@ test_discover_all_unconfirmed_chunks() ->
 		end,
 		[EncodedTX1ID, EncodedTX2ID]
 	).
+
+%% @doc Confirm a TX in a block, orphan that block via creating a longer fork, and verify that
+%% GET /unconfirmed_chunk still returns the chunk for the now-orphaned TX.
+test_orphaned_chunk() ->
+	Wallet = ar_test_data_sync:setup_nodes(),
+	%% Disconnect peer1 first so the TX never reaches it; peer1 will then build a
+	%% heavier chain that orphans main's TX-bearing block on reconnect.
+	disconnect_from(peer1),
+	InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
+	%% Overpay so the TX still passes filter_mempool re-verification at the new
+	%% tip after fork recovery (price_per_gib_minute can drift between heights and
+	%% a barely-sufficient reward computed at height 0 causes tx_too_cheap at
+	%% height 2).
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks,
+			#{ reward => ?AR(1) }),
+	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
+		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
+	ar_test_node:assert_post_tx_to_peer(main, TX),
+	?assertMatch(
+		{ok, {{<<"200">>, _}, _, _, _, _}},
+		ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
+	),
+	EncodedTXID = ar_util:encode(TX#tx.id),
+	%% Sanity check: the chunk is queryable while pending.
+	{ok, {{<<"200">>, _}, _, _, _, _}} =
+		wait_for_unconfirmed_chunk(EncodedTXID, ChunkEndOffset),
+	%% Confirm the TX on main.
+	ar_test_node:mine(main),
+	[{H1Main, _, _} | _] = assert_wait_until_height(main, 1),
+	%% Build a longer chain on peer1 with no TXs so its cumulative diff exceeds main's.
+	ar_test_node:mine(peer1),
+	ar_test_node:assert_wait_until_height(peer1, 1),
+	ar_test_node:mine(peer1),
+	[{H2Peer, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, 2),
+	%% Reconnect; main should fork-recover to peer1's chain, orphaning H1Main.
+	connect_to_peer(peer1),
+	[{H2Main, _, _} | _] = wait_until_height(main, 2),
+	?assertEqual(H2Peer, H2Main),
+	?assertNotEqual(H1Main, H2Main),
+	%% TX returns to main's mempool from the orphaned block.
+	ar_test_node:assert_wait_until_receives_txs([TX]),
+	%% The chunk should still resolve via the disk-pool cache: the orphan path leaves
+	%% ar_disk_pool_chunks_cache, disk_pool_chunks_index and chunk_data_db untouched,
+	%% and the data root state (with its TXIDSet) is preserved by
+	%% reset_orphaned_data_roots_timestamps/1.
+	{ok, {{<<"200">>, _}, _, Body, _, _}} =
+		wait_for_unconfirmed_chunk(EncodedTXID, ChunkEndOffset),
+	Response = jiffy:decode(Body, [return_maps]),
+	assert_unconfirmed_chunk_response(Response, Proof, true).
 
 %% @doc Given a total data size, compute the chunk end offsets a client would use.
 %% Chunks are DATA_CHUNK_SIZE bytes each; the last chunk gets the remainder.
