@@ -4,9 +4,7 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--ifdef(AR_TEST).
 -define(M, ar_config).
--endif.
 
 parse_test_() ->
 	[
