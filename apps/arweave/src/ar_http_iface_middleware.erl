@@ -1730,27 +1730,22 @@ handle_get_block(Type, ID, Req, Pid, Encoding) ->
 					handle_get_block(H, Req, Pid, Encoding)
 			end;
 		<<"height">> ->
-			case ar_node:is_joined() of
-				false ->
-					not_joined(Req);
-				true ->
-					CurrentHeight = ar_node:get_height(),
-					try binary_to_integer(ID) of
-						Height when Height < 0 ->
-							{400, #{}, <<"Invalid height.">>, Req};
-						Height when Height > CurrentHeight ->
+			CurrentHeight = ar_node:get_height(),
+			try binary_to_integer(ID) of
+				Height when Height < 0 ->
+					{400, #{}, <<"Invalid height.">>, Req};
+				Height when Height > CurrentHeight ->
+					{404, #{}, <<"Block not found.">>, Req};
+				Height ->
+					case ar_block_index:get_element_by_height(Height) of
+						not_found ->
 							{404, #{}, <<"Block not found.">>, Req};
-						Height ->
-							case ar_block_index:get_element_by_height(Height) of
-								not_found ->
-									{404, #{}, <<"Block not found.">>, Req};
-								{H, _, _} ->
-									handle_get_block(<<"hash">>, ar_util:encode(H), Req, Pid,
-											Encoding)
-							end
-					catch _:_ ->
-						{400, #{}, <<"Invalid height.">>, Req}
+						{H, _, _} ->
+							handle_get_block(<<"hash">>, ar_util:encode(H), Req, Pid,
+									Encoding)
 					end
+			catch _:_ ->
+				{400, #{}, <<"Invalid height.">>, Req}
 			end
 	end.
 
@@ -1815,39 +1810,34 @@ collect_missing_transactions([], _Indices, _N) ->
 	#{}.
 
 handle_post_tx({Req, Pid, Encoding}) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case post_tx_parse_id({Req, Pid, Encoding}) of
-				{error, invalid_hash, Req2} ->
-					{400, #{}, <<"Invalid hash.">>, Req2};
-				{error, tx_already_processed, _TXID, Req2} ->
-					{208, #{}, <<"Transaction already processed.">>, Req2};
-				{error, invalid_signature_type, Req2} ->
-					{400, #{}, <<"Invalid signature type.">>, Req2};
-				{error, invalid_json, Req2} ->
-					{400, #{}, <<"Invalid JSON.">>, Req2};
-				{error, body_size_too_large, Req2} ->
-					{413, #{}, <<"Payload too large">>, Req2};
+	case post_tx_parse_id({Req, Pid, Encoding}) of
+		{error, invalid_hash, Req2} ->
+			{400, #{}, <<"Invalid hash.">>, Req2};
+		{error, tx_already_processed, _TXID, Req2} ->
+			{208, #{}, <<"Transaction already processed.">>, Req2};
+		{error, invalid_signature_type, Req2} ->
+			{400, #{}, <<"Invalid signature type.">>, Req2};
+		{error, invalid_json, Req2} ->
+			{400, #{}, <<"Invalid JSON.">>, Req2};
+		{error, body_size_too_large, Req2} ->
+			{413, #{}, <<"Payload too large">>, Req2};
+		{error, timeout} ->
+			{503, #{}, <<>>, Req};
+		{ok, TX, Req2} ->
+			{ok, Config} = arweave_config:get_env(),
+			case ar_semaphore:acquire(post_tx,
+					Config#config.post_tx_timeout * 1000) of
 				{error, timeout} ->
-					{503, #{}, <<>>, Req};
-				{ok, TX, Req2} ->
-					{ok, Config} = arweave_config:get_env(),
-					case ar_semaphore:acquire(post_tx,
-							Config#config.post_tx_timeout * 1000) of
-						{error, timeout} ->
-							{503, #{}, <<>>, Req2};
+					{503, #{}, <<>>, Req2};
+				ok ->
+					Peer = ar_http_util:arweave_peer(Req),
+					case handle_post_tx(Req2, Peer, TX) of
 						ok ->
-							Peer = ar_http_util:arweave_peer(Req),
-							case handle_post_tx(Req2, Peer, TX) of
-								ok ->
-									{200, #{}, <<"OK">>, Req2};
-								{error_response, {Status, Headers, Body}} ->
-									Ref = erlang:get(tx_id_ref),
-									ar_ignore_registry:remove_ref(TX#tx.id, Ref),
-									{Status, Headers, Body, Req2}
-							end
+							{200, #{}, <<"OK">>, Req2};
+						{error_response, {Status, Headers, Body}} ->
+							Ref = erlang:get(tx_id_ref),
+							ar_ignore_registry:remove_ref(TX#tx.id, Ref),
+							{Status, Headers, Body, Req2}
 					end
 			end
 	end.
@@ -2079,40 +2069,35 @@ get_chunk_response_headers(Proof) ->
 	end.
 
 handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			case ar_util:safe_decode(EncodedTXID) of
-				{error, invalid} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
-				{ok, TXID} ->
-					case catch binary_to_integer(OffsetBinary) of
-						Offset when is_integer(Offset), Offset > 0 ->
-							case ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT) of
-								{error, timeout} ->
-									{503, #{}, jiffy:encode(#{ error => timeout }), Req};
-								ok ->
-									case ar_disk_pool:get_unconfirmed_chunk(TXID, Offset) of
-										{ok, {Chunk, DataPath, IsStoredLongTerm}} ->
-											Body = jiffy:encode(#{
-												chunk => ar_util:encode(Chunk),
-												data_path => ar_util:encode(DataPath),
-												packing => <<"unpacked">>,
-												is_stored_long_term => IsStoredLongTerm
-											}),
-											{200, #{}, Body, Req};
-										{error, not_found} ->
-											{404, #{}, <<>>, Req};
-										{error, invalid_offset} ->
-											{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req};
-										{error, _} ->
-											{500, #{}, <<>>, Req}
-									end
-							end;
-						_ ->
-							{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
-					end
+	case ar_util:safe_decode(EncodedTXID) of
+		{error, invalid} ->
+			{400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
+		{ok, TXID} ->
+			case catch binary_to_integer(OffsetBinary) of
+				Offset when is_integer(Offset), Offset > 0 ->
+					case ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT) of
+						{error, timeout} ->
+							{503, #{}, jiffy:encode(#{ error => timeout }), Req};
+						ok ->
+							case ar_disk_pool:get_unconfirmed_chunk(TXID, Offset) of
+								{ok, {Chunk, DataPath, IsStoredLongTerm}} ->
+									Body = jiffy:encode(#{
+										chunk => ar_util:encode(Chunk),
+										data_path => ar_util:encode(DataPath),
+										packing => <<"unpacked">>,
+										is_stored_long_term => IsStoredLongTerm
+									}),
+									{200, #{}, Body, Req};
+								{error, not_found} ->
+									{404, #{}, <<>>, Req};
+								{error, invalid_offset} ->
+									{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req};
+								{error, _} ->
+									{500, #{}, <<>>, Req}
+							end
+					end;
+				_ ->
+					{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
 			end
 	end.
 
@@ -2423,24 +2408,17 @@ post_block(request, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	end.
 
 post_block(check_joined, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
-	case ar_node:is_joined() of
-		true ->
-			ConfirmedHeight = ar_node:get_height() - ar_block:get_consensus_window_size(),
-			case {Encoding, ConfirmedHeight >= ar_fork:height_2_6()} of
-				{json, true} ->
-					%% We gesticulate it explicitly here that POST /block is not
-					%% supported after the 2.6 fork. However, this check is not strictly
-					%% necessary because ar_serialize:json_struct_to_block/1 fails
-					%% unless the block height is smaller than the fork 2.6 height.
-					{400, #{}, <<>>, Req};
-				_ ->
-					post_block(check_block_hash_header, Peer, {Req, Pid, Encoding},
-							ReceiveTimestamp)
-			end;
-		false ->
-			%% The node is not ready to validate and accept blocks.
-			%% If the network adopts this block, ar_poller will catch up.
-			{503, #{}, <<"Not joined.">>, Req}
+	ConfirmedHeight = ar_node:get_height() - ar_block:get_consensus_window_size(),
+	case {Encoding, ConfirmedHeight >= ar_fork:height_2_6()} of
+		{json, true} ->
+			%% We gesticulate it explicitly here that POST /block is not
+			%% supported after the 2.6 fork. However, this check is not strictly
+			%% necessary because ar_serialize:json_struct_to_block/1 fails
+			%% unless the block height is smaller than the fork 2.6 height.
+			{400, #{}, <<>>, Req};
+		_ ->
+			post_block(check_block_hash_header, Peer, {Req, Pid, Encoding},
+					ReceiveTimestamp)
 	end;
 post_block(check_block_hash_header, Peer, {Req, Pid, Encoding}, ReceiveTimestamp) ->
 	case cowboy_req:header(<<"arweave-block-hash">>, Req, not_set) of
@@ -2845,46 +2823,41 @@ process_request(get_block, [Type, ID, Field], Req) ->
 	end.
 
 handle_get_block_wallet_balance(EncodedHeight, EncodedAddr, Req) ->
-	case ar_node:is_joined() of
-		false ->
-			not_joined(Req);
-		true ->
-			CurrentHeight = ar_node:get_height(),
-			try binary_to_integer(EncodedHeight) of
-				Height when Height < 0 ->
-					{400, #{}, jiffy:encode(#{ error => invalid_height }), Req};
-				Height when Height > CurrentHeight ->
+	CurrentHeight = ar_node:get_height(),
+	try binary_to_integer(EncodedHeight) of
+		Height when Height < 0 ->
+			{400, #{}, jiffy:encode(#{ error => invalid_height }), Req};
+		Height when Height > CurrentHeight ->
+			{404, #{}, jiffy:encode(#{ error => block_not_found }), Req};
+		Height ->
+			case ar_block_index:get_element_by_height(Height) of
+				not_found ->
 					{404, #{}, jiffy:encode(#{ error => block_not_found }), Req};
-				Height ->
-					case ar_block_index:get_element_by_height(Height) of
-						not_found ->
-							{404, #{}, jiffy:encode(#{ error => block_not_found }), Req};
-						{H, _, _} ->
-							B =
-								case ar_block_cache:get(block_cache, H) of
-									not_found ->
-										ar_storage:read_block(H);
-									B2 ->
-										B2
-								end,
-							case B of
-								unavailable ->
-									{404, #{}, jiffy:encode(#{ error => block_not_found }),
-											Req};
-								#block{ wallet_list = RootHash } ->
-									case ar_util:safe_decode(EncodedAddr) of
-										{ok, Addr} ->
-											handle_get_block_wallet_balance2(Addr, RootHash,
-													Req);
-										{error, invalid} ->
-											{400, #{}, jiffy:encode(#{
-													error => invalid_address }), Req}
-									end
+				{H, _, _} ->
+					B =
+						case ar_block_cache:get(block_cache, H) of
+							not_found ->
+								ar_storage:read_block(H);
+							B2 ->
+								B2
+						end,
+					case B of
+						unavailable ->
+							{404, #{}, jiffy:encode(#{ error => block_not_found }),
+									Req};
+						#block{ wallet_list = RootHash } ->
+							case ar_util:safe_decode(EncodedAddr) of
+								{ok, Addr} ->
+									handle_get_block_wallet_balance2(Addr, RootHash,
+											Req);
+								{error, invalid} ->
+									{400, #{}, jiffy:encode(#{
+											error => invalid_address }), Req}
 							end
 					end
-			catch _:_ ->
-				{400, #{}, jiffy:encode(#{ error => invalid_height }), Req}
 			end
+	catch _:_ ->
+		{400, #{}, jiffy:encode(#{ error => invalid_height }), Req}
 	end.
 
 handle_get_block_wallet_balance2(Addr, RootHash, Req) ->
