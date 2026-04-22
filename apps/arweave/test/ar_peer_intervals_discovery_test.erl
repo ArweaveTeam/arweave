@@ -1,203 +1,144 @@
+%% Directory-level tests for the peer interval cache and cursor-driven
+%% prefetch. Exercises the `get_peer_intervals' / `get_peer_footprint_intervals'
+%% + `advance_cursor' + `invalidate' API that replaced the old synchronous
+%% fetch-and-cast flow in step 4 of the discovery refactor.
 -module(ar_peer_intervals_discovery_test).
 
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
--include("ar_data_discovery.hrl").
 
+-include("ar_data_discovery.hrl").
 -include("ar.hrl").
 
-no_unsynced_intervals_test_() ->
-	TestCase = #{
-		synced => [{0, 10}],
-		peer1 => [{0, 5}],
-		peer2 => [{3, 8}]
-	},
-	test_interval_discovery(TestCase, footprint, "No unsynced intervals").
+%% Helper to build a peer() tuple the ar_peers API accepts.
+-define(PEER(N), {10, 0, 0, N, 1984}).
 
-basic_interval_discovery_test_() ->
-	TestCase = #{
-		synced => [],
-		peer1 => [{0, 3}]
-	},
-	test_interval_discovery(TestCase, footprint, "Three chunks").
+%% ---- cache-only reads (no workers, no prefetch) -----------------------
 
-overlapping_intervals_test_() ->
-	TestCase = #{
-		synced => [{8, 12}],
-		peer1 => [{0, 1}],
-		peer2 => [{3, 10}],
-		peer3 => [{6, 13}]
-	},
-	test_interval_discovery(TestCase, footprint, "Overlapping intervals").
-
-test_interval_discovery(TestCase, Mode, Title) ->
-	SyncedChunks = maps:get(synced, TestCase, []),
-	PeerChunksData = maps:remove(synced, TestCase),
-
-	%% Convert to bytes
-	SyncedBytes = chunks_to_bytes(SyncedChunks),
-	PeerBytesData = maps:map(fun(_K, V) -> chunks_to_bytes(V) end, PeerChunksData),
-
-	TestRangeEnd = 50 * ?DATA_CHUNK_SIZE,
-	UnsyncedBytes = calculate_unsynced_from_synced(SyncedBytes, TestRangeEnd),
-
-	Peers = maps:keys(PeerBytesData),
-
-	ExpectedIntervals = calculate_expected_intervals(UnsyncedBytes, PeerBytesData),
-
-	Mocks = create_test_mocks(Peers),
-
-	TestConfig = #config{ sync_from_local_peers_only = false, local_peers = [] },
-	arweave_config:set_env(TestConfig),
-
-	setup_sync_record_servers(SyncedBytes, PeerBytesData),
-
+cache_miss_returns_cache_miss_test() ->
+	ar_data_discovery:clear_interval_cache(),
+	Peer = ?PEER(1),
+	Mocks = [
+		{ar_rate_limiter, is_on_cooldown, fun(_, _) -> false end}
+	],
 	ar_test_node:test_with_mocked_functions(Mocks, fun() ->
-		%% Register the test worker so the ar_data_sync:name/1 mock
-		%% (which fires in spawn_linked children) can route casts back
-		%% to this process.
-		catch unregister(ar_peer_intervals_discovery_test_worker),
-		register(ar_peer_intervals_discovery_test_worker, self()),
-		Start = 0,
-		End = TestRangeEnd,
-		StoreID = test_store_id,
-
-		ar_peer_intervals:fetch(Start, Start, End, StoreID, Mode),
-
-		%% Verify we get the expected intervals enqueued
-		case maps:size(ExpectedIntervals) == 0 of
-			true ->
-				receive
-					{'$gen_cast', {enqueue_intervals, [], _Peers}} -> ok
-				after 100 -> ok
-				end;
-			false ->
-				AllEnqueueIntervals = collect_enqueue_intervals(#{}, StoreID, Mode),
-
-				FlattenedIntervals = lists:flatten(AllEnqueueIntervals),
-				verify_enqueued_intervals(FlattenedIntervals, ExpectedIntervals, Title)
-		end
+		?assertEqual({error, cache_miss},
+			ar_data_discovery:get_peer_intervals(Peer, 0, infinity)),
+		?assertEqual({error, cache_miss},
+			ar_data_discovery:get_peer_footprint_intervals(Peer, 0, 0))
 	end).
 
-collect_enqueue_intervals(Acc, StoreID, Mode) ->
-	receive
-		{'$gen_cast', {enqueue_intervals, EnqueueIntervals, _Peers}} ->
-			Acc2 = update_peer_intervals(EnqueueIntervals, Acc),
-			collect_enqueue_intervals(Acc2, StoreID, Mode);
-		{'$gen_cast', {collect_peer_intervals, Offset, _Start, End, _}} when Offset >= End ->
-			maps:to_list(Acc);
-		{'$gen_cast', {collect_peer_intervals, Offset, Start, End, _}} ->
-			ar_peer_intervals:fetch(Offset, Start, End, StoreID, Mode),
-			collect_enqueue_intervals(Acc, StoreID, Mode)
-	after 10_000 ->
-		?assert(false, "No enqueue_intervals messages received")
-	end.
+cooldown_shortcircuits_read_test() ->
+	ar_data_discovery:clear_interval_cache(),
+	Peer = ?PEER(2),
+	Mocks = [
+		{ar_rate_limiter, is_on_cooldown, fun(_, _) -> true end}
+	],
+	ar_test_node:test_with_mocked_functions(Mocks, fun() ->
+		?assertEqual({error, cooldown},
+			ar_data_discovery:get_peer_intervals(Peer, 0, infinity)),
+		?assertEqual({error, cooldown},
+			ar_data_discovery:get_peer_footprint_intervals(Peer, 0, 0))
+	end).
 
-update_peer_intervals([], Acc) ->
-	Acc;
-update_peer_intervals([{Peer, Intervals, _FootprintKey} | Rest], Acc) ->
-	PeerIntervals = maps:get(Peer, Acc, ar_intervals:new()),
-	PeerIntervals2 = ar_intervals:union(PeerIntervals, Intervals),
-	update_peer_intervals(Rest, maps:put(Peer, PeerIntervals2, Acc)).
+%% ---- cursor-driven prefetch populates the cache -----------------------
 
-create_test_mocks(Peers) ->
-	[
-		{ar_data_discovery, get_footprint_bucket_peers, fun(_FootprintBucket) -> Peers end},
-		{ar_tx_blacklist, get_blacklisted_intervals, fun(_Start, _End) -> ar_intervals:new() end},
-		{ar_http_iface_client, get_footprints, fun(Peer, Partition, Footprint) ->
-			Intervals = ar_footprint_record:get_intervals(Partition, Footprint, Peer),
+prefetch_normal_populates_cache_test_() ->
+	{timeout, 15, fun prefetch_normal_populates_cache/0}.
+
+prefetch_normal_populates_cache() ->
+	ar_data_discovery:clear_interval_cache(),
+	Peer = ?PEER(3),
+	StoreID = test_store_normal,
+	Intervals = ar_intervals:from_list([
+		{?QUERY_RANGE_STEP_SIZE div 2, 0}
+	]),
+	Mocks = [
+		{ar_rate_limiter, is_on_cooldown, fun(_, _) -> false end},
+		{ar_peers, get_peer_release, fun(_) -> ?GET_SYNC_RECORD_RIGHT_BOUND_SUPPORT_RELEASE end},
+		{ar_http_iface_client, get_sync_record, fun(_Peer, _Left, _Right, _Limit) ->
 			{ok, Intervals}
 		end},
-		{ar_data_sync, name, fun(_StoreID) ->
-			whereis(ar_peer_intervals_discovery_test_worker)
-		end},
-		{ar_peers, get_peer_release, fun(_Peer) -> ?GET_FOOTPRINT_SUPPORT_RELEASE end},
-		{ar_rate_limiter, is_on_cooldown, fun(_Peer, _Key) -> false end},
-		{ar_rate_limiter, is_throttled, fun(_Peer, _Path) -> false end}
-	].
-
-verify_enqueued_intervals(EnqueueIntervals, ExpectedIntervals, Title) ->
-	?assert(is_list(EnqueueIntervals)),
-
-	EnqueuedByPeer = maps:from_list(EnqueueIntervals),
-
-	%% Verify each expected peer has intervals
-	maps:fold(fun(Peer, ExpectedPeerIntervals, _) ->
-		?assert(maps:is_key(Peer, EnqueuedByPeer),
-			lists:flatten(
-				io_lib:format("Expected peer ~p not found in enqueued intervals", [Peer]))),
-
-		ActualPeerIntervals = maps:get(Peer, EnqueuedByPeer),
-
-		?assertEqual(ar_intervals:to_list(ExpectedPeerIntervals), ar_intervals:to_list(ActualPeerIntervals), Title)
-	end, ok, ExpectedIntervals).
-
-chunks_to_bytes(ChunkIntervals) ->
-	lists:map(fun({Start, End}) ->
-		StartBytes = trunc(Start * ?DATA_CHUNK_SIZE),
-		EndBytes = trunc(End * ?DATA_CHUNK_SIZE),
-		{EndBytes, StartBytes}
-	end, ChunkIntervals).
-
-%% Calculate unsynced intervals as gaps in synced intervals within the test range
-calculate_unsynced_from_synced(SyncedBytes, TestRangeEnd) ->
-	case SyncedBytes of
-		[] ->
-			%% Nothing synced, everything is unsynced
-			[{TestRangeEnd, 0}];
-		_ ->
-			%% Find gaps in synced intervals
-			SyncedIntervals = ar_intervals:from_list(SyncedBytes),
-			TestRange = ar_intervals:from_list([{TestRangeEnd, 0}]),
-			UnsyncedIntervals = ar_intervals:outerjoin(SyncedIntervals, TestRange),
-			ar_intervals:to_list(UnsyncedIntervals)
+		{?MODULE, get_bucket_peers, fun(_Bucket) -> [Peer] end}
+	],
+	%% Bypass the get_bucket_peers mock by writing directly to the ETS
+	%% table the real function reads. (Mocking the directory from within
+	%% itself is painful; fake the bucket membership instead.)
+	ar_data_discovery:clear_interval_cache(),
+	Bucket = 0,
+	case ets:info(ar_data_discovery) of
+		undefined -> ok;
+		_ -> ets:insert(ar_data_discovery, {{Bucket, 1, Peer}})
+	end,
+	try
+		ar_test_node:test_with_mocked_functions(lists:keydelete(?MODULE, 1, Mocks), fun() ->
+			ar_data_discovery:advance_cursor(StoreID, 0, normal),
+			%% Poll for cache population with a 10s deadline.
+			ok = wait_for_cache_hit({Peer, 0, normal}, 10_000)
+		end)
+	after
+		case ets:info(ar_data_discovery) of
+			undefined -> ok;
+			_ -> ets:delete(ar_data_discovery, {Bucket, 1, Peer})
+		end
 	end.
 
-calculate_expected_intervals(UnsyncedBytes, PeerBytesData) ->
-	%% For each peer, calculate intersection with unsynced intervals
-	UnsyncedIntervals = ar_intervals:from_list(UnsyncedBytes),
-	ExpectedByPeer = maps:map(fun(_Peer, PeerIntervals) ->
-		PeerIntervalsObj = ar_intervals:from_list(PeerIntervals),
-		Intersection = ar_intervals:intersection(UnsyncedIntervals, PeerIntervalsObj),
-		Intersection
-	end, PeerBytesData),
-	maps:filter(fun(_Peer, Intervals) -> not ar_intervals:is_empty(Intervals) end, ExpectedByPeer).
+%% ---- invalidate drops cache rows -------------------------------------
 
-setup_sync_record_servers(SyncedBytes, PeerBytesData) ->
-	case ets:info(sync_records) of
-		undefined ->
-			ets:new(sync_records, [named_table, public, {read_concurrency, true}]);
-		_ ->
-			ets:delete_all_objects(sync_records)
-	end,
+invalidate_drops_row_test() ->
+	ar_data_discovery:clear_interval_cache(),
+	Peer = ?PEER(4),
+	%% Seed a row directly via fetch_peer_intervals_http's mocked success
+	%% path.
+	Mocks = [
+		{ar_rate_limiter, is_on_cooldown, fun(_, _) -> false end},
+		{ar_peers, get_peer_release, fun(_) -> ?GET_SYNC_RECORD_RIGHT_BOUND_SUPPORT_RELEASE end},
+		{ar_http_iface_client, get_sync_record, fun(_Peer, _Left, _Right, _Limit) ->
+			{ok, ar_intervals:from_list([{100, 0}])}
+		end}
+	],
+	ar_test_node:test_with_mocked_functions(Mocks, fun() ->
+		%% Trigger a prefetch that fills the cache for {Peer, 0, normal}.
+		_ = ets:insert(ar_data_discovery, {{0, 1, Peer}}),
+		ar_data_discovery:advance_cursor(test_store_invalidate, 0, normal),
+		ok = wait_for_cache_hit({Peer, 0, normal}, 5_000),
+		%% Now invalidate and confirm the row is gone.
+		ar_data_discovery:invalidate(Peer, {?QUERY_RANGE_STEP_SIZE, 0}),
+		ok = wait_for_cache_miss({Peer, 0, normal}, 2_000),
+		_ = ets:delete(ar_data_discovery, {0, 1, Peer})
+	end).
 
-	Packing = unpacked,
-	SyncedStoreID = test_store_id,
-	ProcessName = ar_sync_record:name(SyncedStoreID),
-	case whereis(ProcessName) of
-		undefined -> ar_sync_record:start_link(ProcessName, SyncedStoreID);
-		_ -> ok
-	end,
-	add_bytes_to_footprint(SyncedBytes, Packing, SyncedStoreID),
+%% ---- helpers ---------------------------------------------------------
 
-	maps:foreach(
-		fun(Peer, PeerBytes) ->
-			PeerProcessName = ar_sync_record:name(Peer),
-			case whereis(PeerProcessName) of
-				undefined -> ar_sync_record:start_link(PeerProcessName, Peer);
-				_ -> ok
-			end,
-			add_bytes_to_footprint(PeerBytes, Packing, Peer)
-		end,
-		PeerBytesData
-	).
+wait_for_cache_hit(Key, TimeoutMs) ->
+	wait_for(fun() ->
+		case ets:lookup(ar_data_discovery_intervals, Key) of
+			[_] -> true;
+			[] -> false
+		end
+	end, TimeoutMs).
 
-add_bytes_to_footprint([], _Packing, _StoreID) -> ok;
-add_bytes_to_footprint([{End, Start} | Rest], Packing, StoreID) ->
-	lists:foreach(
-		fun(Offset) ->
-			ar_footprint_record:add(Offset, Packing, StoreID) end,
-		lists:seq(Start + ?DATA_CHUNK_SIZE, End, ?DATA_CHUNK_SIZE)
-	),
-	add_bytes_to_footprint(Rest, Packing, StoreID).
+wait_for_cache_miss(Key, TimeoutMs) ->
+	wait_for(fun() ->
+		case ets:lookup(ar_data_discovery_intervals, Key) of
+			[] -> true;
+			_ -> false
+		end
+	end, TimeoutMs).
+
+wait_for(Pred, TimeoutMs) ->
+	Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+	wait_loop(Pred, Deadline).
+
+wait_loop(Pred, Deadline) ->
+	case Pred() of
+		true -> ok;
+		false ->
+			case erlang:monotonic_time(millisecond) >= Deadline of
+				true -> ?assert(false, "Timed out waiting for predicate");
+				false ->
+					timer:sleep(50),
+					wait_loop(Pred, Deadline)
+			end
+	end.

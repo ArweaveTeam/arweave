@@ -97,6 +97,30 @@
 
 -define(WORKER_LOAD_TABLE, worker_load).
 
+%% Explicit scan cursor for the planner. Replaces sync_phase / scan_tasks_produced /
+%% scan_had_peers / scan_backoff_ms flat fields - all the scan-pass state now
+%% lives in one record that moves through the state machine.
+-record(scan_cursor, {
+	%% Left bound of the scan range. For footprint mode, an inclusive boundary
+	%% the planner uses when cutting per-peer footprint intervals to the module.
+	start :: non_neg_integer(),
+	%% Right bound of the scan range (clamped to WeaveSize / DiskPoolThreshold
+	%% when the cursor is built).
+	end_ :: non_neg_integer(),
+	%% Current cursor position inside [start, end_). Advances on each step.
+	offset :: non_neg_integer(),
+	%% Which protocol we're querying peers with on this pass.
+	mode :: normal | footprint,
+	%% Count of tasks produced in the current scan pass. Resets each pass.
+	tasks_produced = 0 :: non_neg_integer(),
+	%% Whether any peer had data to enqueue this pass. Scans that never saw
+	%% peers don't trigger adaptive backoff - they probably just ran before
+	%% the directory warmed up.
+	had_peers = false :: boolean(),
+	%% Current unproductive-scan backoff (doubles each pass, capped).
+	backoff_ms = 0 :: non_neg_integer()
+}).
+
 %% @doc The state of the server managing data synchronization.
 -record(sync_data_state, {
 	%% The last entries of the block index.
@@ -163,13 +187,10 @@
 	%% The offsets of the chunks currently scheduled for (re-)packing (keys) and
 	%% some chunk metadata needed for storing the chunk once it is packed.
 	packing_map = #{},
-	%% The queue with unique {Start, End, Peer} triplets. Sync jobs are taking intervals
-	%% from this queue and syncing them.
-	sync_intervals_queue = gb_sets:new(),
-	%% A compact set of non-overlapping intervals containing all the intervals from the
-	%% sync intervals queue. We use it to quickly check which intervals have been queued
-	%% already and avoid syncing the same interval twice.
-	sync_intervals_queue_intervals = ar_intervals:new(),
+	%% The per-module task queue. Holds {FootprintKey, Start, End, Peer} entries
+	%% ordered for dispatch, plus a compact intervals overlay for O(log n) dedup.
+	%% See ar_sync_task_queue for the invariant it maintains.
+	sync_task_queue = ar_sync_task_queue:new(),
 	%% The mining address the chunks are packed with in 2.6.
 	mining_address,
 	%% The identifier of the storage module the process is responsible for.
@@ -195,21 +216,7 @@
 	%% the actual disk dump, to reduce the chance of out-of-order write causing disk
 	%% fragmentation.
 	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD,
-	%% The phase of the syncing process.
-	%% The phases are:
-	%% - normal: normal left-to-right syncing (normally, of the unpacked data).
-	%% - footprint: footprint-based syncing of replica 2.9 data.
-	sync_phase = undefined,
-	%% Number of tasks produced by the current scan. Used for adaptive backoff:
-	%% scans that complete a full range walk with 0 tasks get exponential
-	%% backoff (the module is likely near-full). Throttled scans never
-	%% complete — the wait-retry loop holds the offset until peers recover.
-	scan_tasks_produced = 0,
-	%% Whether this scan queried any peers (enqueue_intervals was called).
-	%% Scans that race through with no peers (data discovery not populated)
-	%% should not trigger backoff.
-	scan_had_peers = false,
-	%% Current backoff delay for unproductive scans (doubles each time,
-	%% capped at COLLECT_SYNC_INTERVALS_MAX_DELAY_MS).
-	scan_backoff_ms = 0
+	%% Explicit scan cursor for the planner. See #scan_cursor{}.
+	%% `undefined' means the planner loop hasn't started its first pass yet.
+	scan_cursor = undefined :: undefined | #scan_cursor{}
 }).

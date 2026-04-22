@@ -493,6 +493,20 @@ register() ->
 				"'type' is 'normal' or 'footprint'. "
 				"'stat' is 'num_peers', 'total_buckets', 'zero_peer_count', or 'healthy_peer_count'."}]),
 
+	prometheus_counter:new([{name, data_discovery_cache_events},
+		{labels, [mode, event]},
+		{help, "Peer interval cache activity in ar_data_discovery. "
+				"'mode' is 'normal' or 'footprint'. "
+				"'event' is 'hit', 'miss', 'cooldown', or 'invalidate'."}]),
+	prometheus_counter:new([{name, data_discovery_refresh_completed},
+		{labels, [mode, outcome]},
+		{help, "Background refresh HTTP outcomes. "
+				"'outcome' is 'ok', 'cooldown', 'http_error', or 'empty'."}]),
+	prometheus_gauge:new([{name, data_discovery_refresh_queue_depth},
+		{help, "Pending refresh jobs in the ar_data_discovery worker pool."}]),
+	prometheus_gauge:new([{name, data_discovery_refresh_in_flight},
+		{help, "In-flight refresh HTTP calls in the ar_data_discovery worker pool."}]),
+
 	prometheus_counter:new([{name, sync_tasks},
 		{labels, [state, peer]},
 		{help, "The number of syncing tasks. 'state' can be "
