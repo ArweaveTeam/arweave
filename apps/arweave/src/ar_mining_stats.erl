@@ -190,58 +190,61 @@ update_total_data_size() ->
 	},
 	Sizes = [Size || [Size] <- ets:match(?MODULE, Pattern)],
 	TotalDataSize = lists:sum(Sizes),
-	try
-		prometheus_gauge:set(v2_index_data_size, TotalDataSize),
-		ets:insert(?MODULE, {total_data_size, TotalDataSize})
-	catch
-		error:badarg ->
-			?LOG_WARNING([{event, set_total_data_size_failed},
-				{reason, prometheus_not_started}, {data_size, TotalDataSize}]);
-		Type:Reason ->
-			?LOG_ERROR([{event, set_total_data_size_failed},
-				{type, Type}, {reason, Reason}, {data_size, TotalDataSize}])
+	metric_set(v2_index_data_size, TotalDataSize),
+	ets:insert(?MODULE, {total_data_size, TotalDataSize}).
+
+update_tip_partition_data_size() ->
+	case ar_node:get_weave_size() of
+		WeaveSize when WeaveSize < 0 ->
+			ok;
+		WeaveSize ->
+			TipPartition = WeaveSize div ar_block:partition_size(),
+			Pattern = {
+				{partition, TipPartition, storage_module, '_', packing, '$1'}, '$2'
+			},
+			Matches = ets:match(?MODULE, Pattern),
+			PackingSums = lists:foldl(
+				fun([Packing, Size], Acc) ->
+					PackingLabel = ar_storage_module:packing_label(Packing),
+					maps:update_with(PackingLabel, fun(S) -> S + Size end, Size, Acc)
+				end,
+				#{},
+				Matches),
+			ExistingPackingLabels = lists:foldl(
+				fun({Labels, _Value}, Acc) ->
+					PackingLabel = proplists:get_value(packing, Labels),
+					Acc#{PackingLabel => true}
+				end,
+				#{},
+				metric_values(default, tip_partition_data_size_by_packing)),
+			RemovedPackingLabels =
+				maps:without(maps:keys(PackingSums), ExistingPackingLabels),
+			maps:foreach(
+				fun(PackingLabel, Size) ->
+					metric_set(tip_partition_data_size_by_packing, [PackingLabel], Size)
+				end,
+				PackingSums),
+			maps:foreach(
+				fun(PackingLabel, _Value) ->
+					metric_remove(tip_partition_data_size_by_packing, [PackingLabel])
+				end,
+				RemovedPackingLabels)
 	end.
 
 set_storage_module_data_size(
 		StoreID, Packing, PartitionNumber, StorageModuleSize, StorageModuleIndex, DataSize) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
 	PackingLabel = ar_storage_module:packing_label(Packing),
-	try	
-		PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
-		prometheus_gauge:set(v2_index_data_size_by_packing,
-			[StoreIDLabel, PackingLabel, PartitionNumber,
-			 StorageModuleSize, StorageModuleIndex,
-			 PackingDifficulty],
-			DataSize),
-		ets:insert(?MODULE, {
-			{partition, PartitionNumber, storage_module, StoreID, packing, Packing}, DataSize}),
-		update_total_data_size()
-	catch
-		error:badarg ->
-			?LOG_WARNING([{event, set_storage_module_data_size_failed},
-				{reason, prometheus_not_started},
-				{store_id, StoreID}, {store_id_label, StoreIDLabel},
-				{packing, ar_serialize:encode_packing(Packing, true)},
-				{packing_label, PackingLabel},
-				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
-				{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]);
-		error:{unknown_metric,default,v2_index_data_size_by_packing} ->
-			?LOG_WARNING([{event, set_storage_module_data_size_failed},
-				{reason, prometheus_not_started},
-				{store_id, StoreID}, {store_id_label, StoreIDLabel},
-				{packing, ar_serialize:encode_packing(Packing, true)},
-				{packing_label, PackingLabel},
-				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
-				{storage_module_index, StorageModuleIndex}, {data_size, DataSize}]);
-		Type:Reason ->
-			?LOG_ERROR([{event, set_storage_module_data_size_failed},
-				{type, Type}, {reason, Reason},
-				{store_id, StoreID}, {store_id_label, StoreIDLabel},
-				{packing, ar_serialize:encode_packing(Packing, true)},
-				{packing_label, PackingLabel},
-				{partition_number, PartitionNumber}, {storage_module_size, StorageModuleSize},
-				{storage_module_index, StorageModuleIndex}, {data_size, DataSize} ])
-	end.
+	PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
+	metric_set(v2_index_data_size_by_packing,
+		[StoreIDLabel, PackingLabel, PartitionNumber,
+		 StorageModuleSize, StorageModuleIndex,
+		 PackingDifficulty],
+		DataSize),
+	ets:insert(?MODULE, {
+		{partition, PartitionNumber, storage_module, StoreID, packing, Packing}, DataSize}),
+	update_total_data_size(),
+	update_tip_partition_data_size().
 
 mining_paused() ->
 	clear_metrics().
@@ -299,6 +302,26 @@ terminate(Reason, _State) ->
 
 reset_all_stats() ->
 	ets:delete_all_objects(?MODULE).
+
+metric_set(Name, Value) ->
+	try prometheus_gauge:set(Name, Value)
+	catch _:_ -> ok
+	end.
+
+metric_set(Name, Labels, Value) ->
+	try prometheus_gauge:set(Name, Labels, Value)
+	catch _:_ -> ok
+	end.
+
+metric_remove(Name, Labels) ->
+	try prometheus_gauge:remove(Name, Labels)
+	catch _:_ -> ok
+	end.
+
+metric_values(Registry, Name) ->
+	try prometheus_gauge:values(Registry, Name)
+	catch _:_ -> []
+	end.
 
 %% @doc Atomically increments the count for ETS records stored in the format:
 %% {Key, StartTimestamp, Count}
