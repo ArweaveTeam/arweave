@@ -260,6 +260,10 @@ handle_info({event, solution,
 			#partial_solution_response{ indep_hash = H, status = <<"accepted_block">> }),
 	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
 
+handle_info({event, solution, {rejected, #{ source := {pool, Ref} }}}, State) ->
+	#state{ request_pid_by_ref = Map } = State,
+	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
+
 handle_info({event, solution, _Event}, State) ->
 	{noreply, State};
 
