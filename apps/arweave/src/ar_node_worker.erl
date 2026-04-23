@@ -2099,6 +2099,8 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 			true ->
 				case check_no_double_signing(CDiff, PrevCDiff, MiningAddress, Height) of
 					false ->
+						ar_mining_server:log_prepare_solution_failure(Solution, rejected,
+								double_signing, Source, []),
 						{false, double_signing};
 					true ->
 						true

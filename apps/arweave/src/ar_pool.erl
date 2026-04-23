@@ -260,6 +260,13 @@ handle_info({event, solution,
 			#partial_solution_response{ indep_hash = H, status = <<"accepted_block">> }),
 	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
 
+handle_info({event, solution,
+		{rejected, #{ reason := double_signing, source := {pool, Ref} }}}, State) ->
+	#state{ request_pid_by_ref = Map } = State,
+	PID = maps:get(Ref, Map),
+	gen_server:reply(PID, #partial_solution_response{ status = <<"rejected_double_signing">> }),
+	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
+
 handle_info({event, solution, {rejected, #{ source := {pool, Ref} }}}, State) ->
 	#state{ request_pid_by_ref = Map } = State,
 	{noreply, State#state{ request_pid_by_ref = maps:remove(Ref, Map) }};
