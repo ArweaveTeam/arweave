@@ -181,6 +181,13 @@ register() ->
 				"store ID, packing, partition number, storage module size, "
 				"storage module index, and packing difficulty."}
 	]),
+	prometheus_gauge:new([
+		{name, tip_partition_data_size_by_packing},
+		{labels, [packing]},
+		{help, "The size (in bytes) of the data stored and indexed for the tip "
+				"partition (floor(weave_size / partition_size)), summed across "
+				"all storage modules covering that partition. Grouped by packing."}
+	]),
 
 	%% Disk pool.
 	prometheus_gauge:new([
