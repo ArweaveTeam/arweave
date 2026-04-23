@@ -514,11 +514,13 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 %% which corresponds to sorted #tx records in the block.
 %% GET /data_roots/{offset}
 handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
 	case catch binary_to_integer(OffsetBin) of
 		{'EXIT', _} ->
 			{400, #{}, <<>>, Req};
+		Offset when Offset < 0 ->
+			{400, #{}, jiffy:encode(#{ error => negative_offset }), Req};
 		Offset ->
+			ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
 			case ar_data_roots:get_block(Offset) of
 				{ok, {TXRoot, BlockSize, DataRootEntries}} ->
 					Payload = ar_serialize:data_roots_to_binary(
@@ -538,7 +540,6 @@ handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
 %% which corresponds to sorted #tx records in the block.
 %% POST /data_roots/{offset}
 handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
-	ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
 	DiskPoolThreshold = ar_disk_pool:get_threshold(),
 	ReadOffset =
 		case catch binary_to_integer(OffsetBin) of
@@ -549,6 +550,7 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 			Offset when Offset < 0 ->
 				{reply, {400, #{}, jiffy:encode(#{ error => negative_offset }), Req}};
 			Offset ->
+				ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
 				{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
 				case ar_data_roots:are_synced(BlockStart, BlockEnd, ExpectedTXRoot, ?DEFAULT_MODULE) of
 					true ->
