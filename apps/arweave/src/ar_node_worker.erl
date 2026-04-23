@@ -1679,15 +1679,23 @@ record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
 return_orphaned_txs_to_mempool(H, H) ->
 	ok;
 return_orphaned_txs_to_mempool(H, BaseH) ->
-	#block{ txs = TXs, previous_block = PrevH } = ar_block_cache:get(block_cache, H),
-	lists:foreach(fun(TX) ->
-		ar_events:send(tx, {orphaned, TX}),
-		ar_events:send(tx, {ready_for_mining, TX}),
-		%% Add it to the mempool here even though have triggered an event - processes
-		%% do not handle their own events.
-		ar_mempool:add_tx(TX, ready_for_mining)
-	end, TXs),
-	return_orphaned_txs_to_mempool(PrevH, BaseH).
+	maybe
+		#block{ txs = TXs, previous_block = PrevH } ?= ar_block_cache:get(block_cache, H),
+		lists:foreach(fun(TX) ->
+			ar_events:send(tx, {orphaned, TX}),
+			ar_events:send(tx, {ready_for_mining, TX}),
+			%% Add it to the mempool here even though have triggered an event - processes
+			%% do not handle their own events.
+			ar_mempool:add_tx(TX, ready_for_mining)
+		end, TXs),
+		return_orphaned_txs_to_mempool(PrevH, BaseH)
+	else
+		not_found ->
+			?LOG_WARNING([{event, orphaned_block_not_found_in_cache},
+					{block, ar_util:encode(H)},
+					{base_block, ar_util:encode(BaseH)}]),
+			ok
+	end.
 
 %% @doc Stop the current mining session and optionally start a new one,
 %% depending on the automine setting.
