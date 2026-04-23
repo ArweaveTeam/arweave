@@ -1076,9 +1076,14 @@ parse_tx(<< Format:8, TXID:32/binary,
 					case SigType of
 						{?ECDSA_SIGN_ALG, secp256k1} ->
 							DataSegment = ar_tx:generate_signature_data_segment(TX),
-							Owner2 = ar_wallet:recover_key(DataSegment, Signature, SigType),
-							{ok, TX#tx{ owner = Owner2,
-									owner_address = ar_wallet:to_address(Owner2, SigType) }};
+							case ar_wallet:recover_key(DataSegment, Signature, SigType) of
+								{ok, Owner2} ->
+									{ok, TX#tx{ owner = Owner2,
+											owner_address = ar_wallet:to_address(Owner2,
+													SigType) }};
+								{error, Reason2} ->
+									{error, Reason2}
+							end;
 						{?RSA_SIGN_ALG, 65537} ->
 							{ok, TX#tx{ owner_address = ar_wallet:to_address(Owner, SigType) }}
 					end;
@@ -1682,8 +1687,13 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 	case SigType of
 		?ECDSA_KEY_TYPE ->
 			DataSegment = ar_tx:generate_signature_data_segment(TX),
-			Owner2 = ar_wallet:recover_key(DataSegment, Sig, SigType),
-			TX#tx{ owner = Owner2, owner_address = ar_wallet:to_address(Owner2, SigType) };
+			case ar_wallet:recover_key(DataSegment, Sig, SigType) of
+				{ok, Owner2} ->
+					TX#tx{ owner = Owner2,
+							owner_address = ar_wallet:to_address(Owner2, SigType) };
+				{error, Reason} ->
+					throw({error, Reason})
+			end;
 		?RSA_KEY_TYPE ->
 			TX#tx{ owner_address = ar_wallet:to_address(Owner, SigType) }
 	end.

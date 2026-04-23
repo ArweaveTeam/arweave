@@ -1308,9 +1308,9 @@ post_tx_to_peer(Node, TX, Wait, Retries) ->
 				case TX#tx.owner of
 					<<>> ->
 						DataSegment = ar_tx:generate_signature_data_segment(TX),
-						ar_wallet:to_address(
-							ar_wallet:recover_key(DataSegment, TX#tx.signature, TX#tx.signature_type),
-							TX#tx.signature_type);
+						{ok, PubKey} = ar_wallet:recover_key(DataSegment,
+								TX#tx.signature, TX#tx.signature_type),
+						ar_wallet:to_address(PubKey, TX#tx.signature_type);
 					_ ->
 						ar_wallet:to_address(TX#tx.owner, TX#tx.signature_type)
 			end,
