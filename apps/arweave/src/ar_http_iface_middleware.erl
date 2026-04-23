@@ -3221,7 +3221,9 @@ handle_mining_h1(Req, Pid) ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 			end;
 		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req}
+			{413, #{}, <<"Payload too large">>, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
 handle_mining_h2(Req, Pid) ->
@@ -3256,7 +3258,9 @@ handle_mining_h2(Req, Pid) ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 			end;
 		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req}
+			{413, #{}, <<"Payload too large">>, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
 
 handle_mining_cm_publish(Req, Pid) ->
@@ -3282,5 +3286,7 @@ handle_mining_cm_publish(Req, Pid) ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 			end;
 		{error, body_size_too_large} ->
-			{413, #{}, <<"Payload too large">>, Req}
+			{413, #{}, <<"Payload too large">>, Req};
+		{error, timeout} ->
+			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
 	end.
