@@ -1558,6 +1558,10 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	]),
 	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
+	%% IMPORTANT! Always emit new_tip before checkpoint_block! For example,
+	%% ar_nonce_limiter.erl uses new_tip to update its representation of the
+	%% current state (including new VDF sessions) and the checkpoint_block handler
+	%% relies on the updated state when it cleans up outdated VDF sessions.
 	ar_events:send(node_state, {new_tip, B, PrevB}),
 	ar_events:send(node_state, {checkpoint_block,
 		ar_block_cache:get_checkpoint_block(RecentBI)}),
