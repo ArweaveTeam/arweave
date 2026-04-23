@@ -634,12 +634,13 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 handle(<<"POST">>, [<<"block_announcement">>], Req, Pid) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case catch ar_serialize:binary_to_block_announcement(Body) of
-				{ok, Announcement} ->
+			try ar_serialize:binary_to_block_announcement(Body) of
+				{ok, #block_announcement{} = Announcement} ->
 					handle_block_announcement(Announcement, Req2);
-				{'EXIT', _Reason} ->
-					{400, #{}, <<>>, Req2};
 				{error, _Reason} ->
+					{400, #{}, <<>>, Req2}
+			catch
+				_:_ ->
 					{400, #{}, <<>>, Req2}
 			end;
 		{error, body_size_too_large} ->
@@ -2189,11 +2190,12 @@ parse_chunk(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
-					case catch ar_serialize:json_map_to_poa_map(JSON) of
-						{'EXIT', _} ->
-							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-						Proof ->
+					try ar_serialize:json_map_to_poa_map(JSON) of
+						Proof when is_map(Proof) ->
 							{ok, {Proof, Req2}}
+					catch
+						_:_ ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 					end;
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
@@ -2540,14 +2542,15 @@ handle_post_partial_solution(Req, Pid) ->
 handle_post_partial_solution_pool_server(Req, Pid) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case catch ar_serialize:json_map_to_solution(
+			try ar_serialize:json_map_to_solution(
 					jiffy:decode(Body, [return_maps])) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-				Solution ->
+				#mining_solution{} = Solution ->
 					Response = ar_pool:process_partial_solution(Solution),
 					JSON = ar_serialize:partial_solution_response_to_json_struct(Response),
 					{200, #{}, ar_serialize:jsonify(JSON), Req2}
+			catch
+				_:_ ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req};
@@ -2644,13 +2647,14 @@ handle_post_pool_cm_jobs2(Req, Pid) ->
 	Peer = ar_http_util:arweave_peer(Req),
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
-			case catch ar_serialize:json_map_to_pool_cm_jobs(
+			try ar_serialize:json_map_to_pool_cm_jobs(
 					element(2, ar_serialize:json_decode(Body, [return_maps]))) of
-				{'EXIT', _} ->
-					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-				Jobs ->
+				#pool_cm_jobs{} = Jobs ->
 					ar_pool:process_cm_jobs(Jobs, Peer),
 					{200, #{}, <<>>, Req2}
+			catch
+				_:_ ->
+					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 			end;
 		{error, body_size_too_large} ->
 			{413, #{}, <<"Payload too large">>, Req};
@@ -2989,15 +2993,9 @@ post_tx_parse_id(read_body, {TXID, Req, Pid, Encoding}) ->
 	end;
 post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
 	Ref = erlang:get(tx_id_ref),
-	case catch ar_serialize:json_struct_to_tx(Body) of
-		{'EXIT', _} ->
-			case TXID of
-				not_set ->
-					noop;
-				_ ->
-					ar_ignore_registry:remove_ref(TXID, Ref)
-			end,
-			{error, invalid_json, Req};
+	try ar_serialize:json_struct_to_tx(Body) of
+		#tx{} = TX ->
+			post_tx_parse_id(verify_id_match, {TXID, Req, TX});
 		{error, invalid_signature_type} ->
             case TXID of
                 not_set ->
@@ -3014,21 +3012,22 @@ post_tx_parse_id(parse_json, {TXID, Req, Body}) ->
 				_ ->
 					ar_ignore_registry:remove_ref(TXID, Ref)
 			end,
-			{error, invalid_json, Req};
-		TX ->
-			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
-	end;
-post_tx_parse_id(parse_binary, {TXID, Req, Body}) ->
-	Ref = erlang:get(tx_id_ref),
-	case catch ar_serialize:binary_to_tx(Body) of
-		{'EXIT', _} ->
+			{error, invalid_json, Req}
+	catch
+		_:_ ->
 			case TXID of
 				not_set ->
 					noop;
 				_ ->
 					ar_ignore_registry:remove_ref(TXID, Ref)
 			end,
-			{error, invalid_json, Req};
+			{error, invalid_json, Req}
+	end;
+post_tx_parse_id(parse_binary, {TXID, Req, Body}) ->
+	Ref = erlang:get(tx_id_ref),
+	try ar_serialize:binary_to_tx(Body) of
+		{ok, #tx{} = TX} ->
+			post_tx_parse_id(verify_id_match, {TXID, Req, TX});
 		{error, _} ->
 			case TXID of
 				not_set ->
@@ -3036,9 +3035,16 @@ post_tx_parse_id(parse_binary, {TXID, Req, Body}) ->
 				_ ->
 					ar_ignore_registry:remove_ref(TXID, Ref)
 			end,
-			{error, invalid_json, Req};
-		{ok, TX} ->
-			post_tx_parse_id(verify_id_match, {TXID, Req, TX})
+			{error, invalid_json, Req}
+	catch
+		_:_ ->
+			case TXID of
+				not_set ->
+					noop;
+				_ ->
+					ar_ignore_registry:remove_ref(TXID, Ref)
+			end,
+			{error, invalid_json, Req}
 	end;
 post_tx_parse_id(verify_id_match, {MaybeTXID, Req, TX}) ->
 	TXID = TX#tx.id,
@@ -3198,10 +3204,8 @@ handle_mining_h1(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
-					case catch ar_serialize:json_map_to_candidate(JSON) of
-						{'EXIT', _} ->
-							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-						Candidate ->
+					try ar_serialize:json_map_to_candidate(JSON) of
+						#mining_candidate{} = Candidate ->
 							case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
 								{true, true} ->
 									PoolPeer = ar_pool:pool_peer(),
@@ -3216,6 +3220,9 @@ handle_mining_h1(Req, Pid) ->
 									ar_coordination:compute_h2_for_peer(Peer, Candidate),
 									{200, #{}, <<>>, Req}
 							end
+					catch
+						_:_ ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 					end;
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
@@ -3232,10 +3239,8 @@ handle_mining_h2(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
-					case catch ar_serialize:json_map_to_candidate(JSON) of
-						{'EXIT', _} ->
-							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-						Candidate ->
+					try ar_serialize:json_map_to_candidate(JSON) of
+						#mining_candidate{} = Candidate ->
 							?LOG_INFO([{event, h2_received},
 									{peer, ar_util:format_peer(Peer)}]),
 							case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
@@ -3253,6 +3258,9 @@ handle_mining_h2(Req, Pid) ->
 									ar_mining_stats:h2_received_from_peer(Peer),
 									{200, #{}, <<>>, Req}
 							end
+					catch
+						_:_ ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 					end;
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
@@ -3269,10 +3277,8 @@ handle_mining_cm_publish(Req, Pid) ->
 		{ok, Body, Req2} ->
 			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
-					case catch ar_serialize:json_map_to_solution(JSON) of
-						{'EXIT', _} ->
-							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
-						Solution ->
+					try ar_serialize:json_map_to_solution(JSON) of
+						#mining_solution{} = Solution ->
 							ar:console("Block candidate ~p from ~p ~n", [
 								ar_util:encode(Solution#mining_solution.solution_hash),
 								ar_util:format_peer(Peer)]),
@@ -3281,6 +3287,9 @@ handle_mining_cm_publish(Req, Pid) ->
 								ar_util:format_peer(Peer)]),
 							ar_mining_server:prepare_and_post_solution(Solution),
 							{200, #{}, <<>>, Req}
+					catch
+						_:_ ->
+							{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
 					end;
 				{error, _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
