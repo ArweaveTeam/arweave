@@ -1,5 +1,17 @@
 **This is an alpha update and may not be ready for production use. This software was prepared by the Digital History Association, in cooperation from the wider Arweave ecosystem.**
 
+## NASA Integration
+
+This release includes several updates required by the [Network Availability Stacking Alpha (NASA)](https://ao.arweave.net/#/blog/nasa). Please visit the [#nasa channel](https://discord.com/channels/829732720505520150/1494561608637091900) on the Arweave Miners discord for more information. If you are running a NASA node we recommend you upgrade to this release.
+
+### `absolute_end_offset` included in GET /chunk and GET /chunk2 responses
+
+Both `GET /chunk` and `GET /chunk2` now include a `arweave-absolute-end-offset` HTTP header in their response. `GET /chunk` also includes the `absolute_end_offset` JSON key in its HTTP body.
+
+### `GET /unconfirmed_chunk/{TXID}/{offset}` endpoint
+
+The new `GET /unconfirmed_chunk/{TXID}/{offset}` endpoint provides access to chunk data that has been recently received by the node, exists in its disk pool, but may not yet have been confirmed.
+
 ## Footprint-based replica 2.9 syncing
 
 This release introduces footprint-based syncing for replica 2.9 data. Instead of syncing chunk-by-chunk (which caused redundant entropy generation), the node now groups chunks by their entropy footprint and syncs them together.
@@ -20,17 +32,17 @@ The node limits the number of concurrently active footprints based on the config
 
 Both endpoints require release 89 or later. Footprint syncing gracefully falls back when communicating with older peers.
 
-## Sync record to footprint record migration
+### Sync record to footprint record migration
 
 On first startup after upgrade, the node automatically migrates its existing sync records into the new footprint record format. This is a one-time, non-destructive migration.
 
-### Migration details
+#### Migration detailsab
 
 - The migration runs in the background, processing 200 chunks per batch with a 1-second delay between batches.
 - Progress is checkpointed, so if the node restarts, migration resumes from where it left off.
 - **Footprint-based syncing is disabled until the migration completes.** Normal syncing proceeds as usual during the migration.
 
-### Implications for operators
+#### Implications for operators
 
 - No new configuration is required. The migration starts automatically.
 - Depending on the amount of synced data, the migration may take some time. Progress is logged (`initializing_footprint_record` / `footprint_record_initialized` events).
@@ -38,7 +50,7 @@ On first startup after upgrade, the node automatically migrates its existing syn
 
 ## Data root syncing
 
-This release introduces a background data root syncing process. Each storage module now runs a process that periodically scans its range (every 10 minutes) and ensures data roots are recorded for all blocks in that range. Missing data roots are fetched from peers via `GET /data_roots/{offset}`.
+This release introduces a background data root syncing process. Each storage module now runs a process that periodically scans its range (every 10 minutes) and ensures data roots are recorded for all blocks in that range. Missing data roots are fetched from peers via `GET /data_roots/{offset}`. You can disable this background process by setting `enable_data_roots_syncing false` (it is enabled by default).
 
 ### `POST /data_roots/{offset}`
 
@@ -122,7 +134,7 @@ https://docs.arweave.org/developers/mining/operations/rate-limiting
 
 ## P3 Removed
 
-All Pay-Per-Peer (P3) functionality has been removed.
+All Permaweb Payment Protocol (P3) functionality has been removed. Future support for decentralized payments will make use of [HyperBEAM](https://github.com/permaweb/HyperBEAM) integrations.
 
 ## EPMD leak improvement
 
@@ -137,8 +149,31 @@ Provided code change for graceful shutdown of Arweave to help `epmd` deregister 
 
 On startup, config validation now won't fail if peers (member of any configured peer list - trusted_peer, local_peer, peer) can't be validated. A warning message will be emmitted and the peer will be ignored.
 
+## arweave-denomination header
+
+All `price` endpoints now include an `arweave-denomination` HTTP header that states the denomination of the price value. To date and for the foreseeable future the Arweave denomination is 1. This is unlikely to change for many years or perhaps decades, if ever. For more information please see [the Denomination guide](https://docs.arweave.org/developers/development/overview/denomination).
+
 ## This release introduces various stability and validation enhancements.
 
 Several input validation steps could crash on invalid values, in some cases halting the arweave node.
 The patch includes graceful validation of certain inputs and defensive deserialization of local binaries.
 
+## Community involvement
+
+A huge thank you to all the Mining community members who contributed to this release by identifying and investigating bugs, sharing debug logs and node metrics, and providing guidance on performance tuning!
+
+Discord users (alphabetical order):
+- BerryCZ
+- Butcher_
+- doesn't stay up late
+- EvM
+- Evalcast
+- JF
+- JamJunJ
+- lawso2517
+- Niya
+- Qwinn
+- T777
+- timothynode
+- Vidiot
+- zip
