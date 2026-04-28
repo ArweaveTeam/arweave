@@ -203,6 +203,9 @@ update_tip_partition_data_size() ->
 				{partition, TipPartition, storage_module, '_', packing, '$1'}, '$2'
 			},
 			Matches = ets:match(?MODULE, Pattern),
+			%% 4 steps:
+			%% 1. Determine that total tip data size across each packing label (typically will
+			%%    just be a single packing)
 			PackingSums = lists:foldl(
 				fun([Packing, Size], Acc) ->
 					PackingLabel = ar_storage_module:packing_label(Packing),
@@ -210,6 +213,9 @@ update_tip_partition_data_size() ->
 				end,
 				#{},
 				Matches),
+			%% 2. Determine any change in packing labels (e.g. last update the tip partition
+			%%    was just unpacked, but now the tip has moved to a different storage module that
+			%%    is defined as replica.2.9)
 			ExistingPackingLabels = lists:foldl(
 				fun({Labels, _Value}, Acc) ->
 					PackingLabel = proplists:get_value(packing, Labels),
@@ -219,11 +225,13 @@ update_tip_partition_data_size() ->
 				metric_values(default, tip_partition_data_size_by_packing)),
 			RemovedPackingLabels =
 				maps:without(maps:keys(PackingSums), ExistingPackingLabels),
+			%% 3. Set the new sizes
 			maps:foreach(
 				fun(PackingLabel, Size) ->
 					metric_set(tip_partition_data_size_by_packing, [PackingLabel], Size)
 				end,
 				PackingSums),
+			%% 4. Remove the old packing labels
 			maps:foreach(
 				fun(PackingLabel, _Value) ->
 					metric_remove(tip_partition_data_size_by_packing, [PackingLabel])
