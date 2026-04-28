@@ -95,7 +95,7 @@ jobs:
       - name: Test arweave execution
         run: |
           cd _extract
-          ./bin/arweave foreground 2>&1 \
+          ./bin/arweave foreground dummy 2>&1 \
             | grep -Ee '^Usage: arweave-server' \
                    -e '^Compatible with network: arweave.N.1'
 
