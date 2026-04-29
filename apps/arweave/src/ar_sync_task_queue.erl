@@ -1,12 +1,12 @@
-%% @doc Per-storage-module queue of sync tasks produced by the broker's
-%% scan step and consumed by the sync dispatcher.
+%% @doc Per-storage-module queue of sync tasks produced by ar_peer_sync's
+%% discover loop and consumed by ar_peer_sync's sync loop.
 %%
 %% The queue has two complementary structures maintained as one invariant:
 %%
 %%   * `q'         - a gb_set of {FootprintKey, Start, End, Peer} tuples,
 %%                   ordered for dispatch. Tasks belonging to the same
-%%                   footprint sort together, so the dispatcher can drain
-%%                   one footprint's chunks before moving on - preserving
+%%                   footprint sort together, so the consumer pops one
+%%                   footprint's chunks before moving on - preserving
 %%                   entropy amortization in the 2.9 replica mode.
 %%   * `intervals' - a compact ar_intervals set holding the byte ranges
 %%                   already present in `q'. Used for O(log n) dedup so

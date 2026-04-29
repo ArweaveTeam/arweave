@@ -142,8 +142,8 @@ pick_peers(Peers, N) ->
 %% `Left'. `Right' is the requested upper bound (passed through to peers that
 %% support the right-bound endpoint; older peers ignore it). The result is
 %% intersection-free and per-peer; callers intersect with their own sought
-%% set. Reads from the interval cache when fresh, otherwise performs the
-%% same HTTP call ar_peer_intervals used to do and writes the response back.
+%% set. Reads from the interval cache when fresh, otherwise issues a
+%% `GET /data_sync_record' HTTP call and writes the response back.
 %%
 %% Returns `{error, cooldown}` without touching cache or HTTP when the peer
 %% is on the rate-limit cooldown for this endpoint.
@@ -194,10 +194,10 @@ get_peer_footprint_intervals(Peer, Partition, Footprint) ->
 			end
 	end.
 
-%% @doc Broker tells the directory where each storage module's scan cursor
-%% currently is. The directory uses this to enqueue prefetch refresh jobs
-%% for the next `?PREFETCH_STEPS_AHEAD'/`?PREFETCH_FOOTPRINTS_AHEAD' units
-%% ahead, so the cache is populated before the broker arrives at them.
+%% @doc ar_peer_sync calls this to publish where each storage module's
+%% discover cursor currently is. The directory enqueues prefetch refresh
+%% jobs for the next `?PREFETCH_STEPS_AHEAD'/`?PREFETCH_FOOTPRINTS_AHEAD'
+%% units ahead, so the cache is populated before discover reaches them.
 -spec advance_cursor(StoreID, Offset, Mode) -> ok when
 	StoreID :: term(),
 	Offset :: non_neg_integer(),
@@ -575,9 +575,9 @@ enqueue_prefetch_jobs(Offset, normal, State) ->
 		Starts
 	);
 enqueue_prefetch_jobs(Offset, footprint, State) ->
-	%% Walk ?PREFETCH_FOOTPRINTS_AHEAD footprints starting at Offset. Use the
-	%% same iteration rule the broker uses so the directory warms the rows
-	%% the broker will actually consume.
+	%% Walk ?PREFETCH_FOOTPRINTS_AHEAD footprints starting at Offset. Use
+	%% the same iteration rule ar_peer_sync's discover loop uses so the
+	%% directory warms the rows discover will actually consume.
 	case ar_footprint_record:get_footprint_bucket(Offset + ?DATA_CHUNK_SIZE) of
 		FootprintBucket when is_integer(FootprintBucket) ->
 			Peers = get_footprint_bucket_peers(FootprintBucket),

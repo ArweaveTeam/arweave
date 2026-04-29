@@ -36,7 +36,7 @@
 	are_synced/4,
 	is_synced/2,
 	repair/3,
-	%% Block lifecycle helpers (formerly private to ar_data_sync).
+	%% Block lifecycle helpers.
 	add_block/3,
 	update_tx_index/3,
 	repair_data_root_offset_index/2,
@@ -561,7 +561,7 @@ shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) -
 	{bad_key, [Height | ResyncBlocks]}.
 
 %%%===================================================================
-%%% Public: Block lifecycle helpers (formerly in ar_data_sync)
+%%% Public: Block lifecycle helpers.
 %%%===================================================================
 
 %% @doc If the block's data roots aren't already indexed for this StoreID,

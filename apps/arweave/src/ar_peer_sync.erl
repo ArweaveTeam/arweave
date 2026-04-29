@@ -55,11 +55,11 @@
 %% the min delay; unproductive scans double (capped at max). Resets on any
 %% productive scan.
 -ifdef(AR_TEST).
--define(BROKER_RESTART_MIN_DELAY_MS, 1_000).
--define(BROKER_RESTART_MAX_DELAY_MS, 1_000).
+-define(DISCOVER_RESTART_MIN_DELAY_MS, 1_000).
+-define(DISCOVER_RESTART_MAX_DELAY_MS, 1_000).
 -else.
--define(BROKER_RESTART_MIN_DELAY_MS, 10_000).
--define(BROKER_RESTART_MAX_DELAY_MS, 120_000).
+-define(DISCOVER_RESTART_MIN_DELAY_MS, 10_000).
+-define(DISCOVER_RESTART_MAX_DELAY_MS, 120_000).
 -endif.
 
 %%%===================================================================
@@ -102,11 +102,11 @@ discover(State) ->
 			do_discover(State)
 	end.
 
-%% @doc Consumer side: drain one task from sync_task_queue and dispatch
-%% it to ar_data_sync_coordinator. Self-perpetuating - on success
-%% schedules the next sync immediately; on backpressure or empty queue
-%% schedules a retry via cast_after. Called from ar_data_sync's mailbox,
-%% so `self()' refers to the calling ar_data_sync_<StoreID> process.
+%% @doc Consumer side: pop one task from sync_task_queue and dispatch it
+%% to ar_data_sync_coordinator. Self-perpetuating - on success schedules
+%% the next sync immediately; on backpressure or empty queue schedules a
+%% retry via cast_after. Called from ar_data_sync's mailbox, so `self()'
+%% refers to the calling ar_data_sync_<StoreID> process.
 sync(State) ->
 	#sync_data_state{ sync_task_queue = Q, store_id = StoreID } = State,
 	IsQueueEmpty =
@@ -374,9 +374,8 @@ collect_peer_intervals_footprint(Partition, Footprint, Start, End, Peers, Sought
 	),
 	{Entries, HadPeers}.
 
-%% Same distribution/capping logic ar_data_sync used to apply in the old
-%% {enqueue_intervals,...} cast: shuffle peers so no one peer dominates a
-%% scan pass, cap each peer at ~1.5x fair share of the bucket.
+%% Distribute work fairly across peers in a scan pass: shuffle so no one
+%% peer dominates, cap each peer at ~1.5x fair share of the bucket.
 enqueue([], Queue) ->
 	Queue;
 enqueue(PeerEntries, Queue) ->
@@ -388,7 +387,7 @@ enqueue(PeerEntries, Queue) ->
 		ar_util:shuffle_list(PeerEntries), ChunksPerPeer, Queue).
 
 %%%===================================================================
-%%% Peer picking (was ar_peer_intervals:get_peers2/4).
+%%% Peer picking.
 %%%===================================================================
 
 get_hot_peers(Offset, normal) ->
@@ -511,13 +510,13 @@ flip_mode(undefined) -> normal.
 %% that never saw peers reset to the minimum (data discovery just hadn't
 %% warmed yet - not an empty-module signal).
 scan_restart_delay(#scan_cursor{ tasks_produced = N }) when N > 0 ->
-	{?BROKER_RESTART_MIN_DELAY_MS, 0};
+	{?DISCOVER_RESTART_MIN_DELAY_MS, 0};
 scan_restart_delay(#scan_cursor{ had_peers = false }) ->
-	{?BROKER_RESTART_MIN_DELAY_MS, 0};
+	{?DISCOVER_RESTART_MIN_DELAY_MS, 0};
 scan_restart_delay(#scan_cursor{ backoff_ms = PrevBackoff }) ->
 	NewBackoff = min(
-		max(?BROKER_RESTART_MIN_DELAY_MS, PrevBackoff * 2),
-		?BROKER_RESTART_MAX_DELAY_MS),
+		max(?DISCOVER_RESTART_MIN_DELAY_MS, PrevBackoff * 2),
+		?DISCOVER_RESTART_MAX_DELAY_MS),
 	{NewBackoff, NewBackoff}.
 
 %%%===================================================================

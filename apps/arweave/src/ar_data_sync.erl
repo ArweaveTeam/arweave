@@ -1,31 +1,73 @@
-%%% @doc Per-storage-module sync engine. One gen_server is registered as
-%%% `ar_data_sync_<StoreIDLabel>' per configured storage module (plus a
-%%% `ar_data_sync_default' singleton for the default module).
+%%% @doc Per-storage-module sync engine and central state owner for the
+%%% chunk-sync subsystem.
 %%%
-%%% Owns:
+%%% === Process layout ===
+%%%
+%%% One gen_server is registered as `ar_data_sync_<StoreIDLabel>' per
+%%% configured storage module, plus a `ar_data_sync_default' singleton
+%%% for the default module. Each instance owns the #sync_data_state{}
+%%% for its StoreID and serializes all access to that state through its
+%%% mailbox.
+%%%
+%%% === Sync sources ===
+%%%
+%%% A storage module fills its unsynced gaps from two sources, in order:
+%%%
+%%%  1. **Local copy** (`ar_chunk_copy'): if another storage module on
+%%%     this node already has a needed range, copy it across modules
+%%%     instead of re-fetching from the network. Runs once per StoreID
+%%%     at startup and emits `{event, chunk_copy, {complete, StoreID}}'
+%%%     when its scan finishes.
+%%%
+%%%  2. **Network sync** (`ar_peer_sync'): on the chunk_copy completion
+%%%     event, this module starts the discover/sync cast chains that
+%%%     pull remaining chunks from network peers. ar_peer_sync is a
+%%%     stateless library — its discover (producer) and sync (consumer)
+%%%     entry points operate on this module's #sync_data_state{}.
+%%%
+%%% === Cast chain lifecycle ===
+%%%
+%%% ```
+%%%   init
+%%%     └─> ar_chunk_copy:start_copy(StoreID)
+%%%             └─> {event, chunk_copy, {complete, StoreID}}
+%%%                     ├─> cast_after(2s, discover) — producer loop
+%%%                     │     └─> ar_peer_sync:discover/1
+%%%                     │           └─> enqueues sync_task_queue
+%%%                     └─> cast(sync) — consumer loop
+%%%                           └─> ar_peer_sync:sync/1
+%%%                                 └─> dispatches to coordinator
+%%% '''
+%%%
+%%% === Supporting modules ===
+%%%
+%%% State + indexing:
+%%%   - `ar_data_roots'      — data-root index, tx_index/tx_offset_index,
+%%%                            store_block writes
+%%%   - `ar_disk_pool'       — pending-chunk scan loop and disk-pool
+%%%                            data-roots ETS; init runs after KV opens
+%%%   - `ar_sync_record'     — per-StoreID synced-interval records
+%%%   - `ar_data_discovery'  — peer interval directory (cache + prefetch);
+%%%                            ar_peer_sync reads it during discover
+%%%   - `ar_sync_task_queue' — per-StoreID gb_set queue connecting the
+%%%                            discover producer to the sync consumer
+%%%
+%%% Workers:
+%%%   - `ar_data_sync_coordinator' — routes a popped task to a peer worker
+%%%   - `ar_peer_worker'           — owns one peer's HTTP fetch slot
+%%%   - `ar_data_sync_worker'      — performs the chunk read/write
+%%%
+%%% === Responsibilities of this module ===
+%%%
 %%%   - per-module state in #sync_data_state{}: block_index, weave_size,
 %%%     sync_status, range_start/end, sync_task_queue, scan_cursor,
 %%%     packing_map, store_chunk_queue, KV handle refs
 %%%   - all RocksDB opens and closes (init_kv/2, terminate/2)
 %%%   - block lifecycle: join, cut, add_tip_block, store_sync_state
-%%%   - network sync casts (`discover' producer, `sync' consumer): both
-%%%     delegate logic to ar_peer_sync; this module owns the cast chains
-%%%     and the per-StoreID #sync_data_state{} they operate on
+%%%   - the discover/sync cast chains that drive ar_peer_sync
 %%%   - chunk write pipeline: pack_and_store_chunk, store_fetched_chunk,
 %%%     {chunk, packed/unpacked} info handlers, expire_repack_request,
 %%%     expire_unpack_request
-%%%
-%%% Subsystems extracted to their own modules:
-%%%   - ar_chunk_copy        — chunk-copy producer + executor; subscribes
-%%%                            to chunk_copy events for completion handoff
-%%%   - ar_peer_sync         — stateless network-sync subsystem (broker
-%%%                            matching + dispatch logic); called from
-%%%                            this module's discover/sync casts
-%%%   - ar_data_roots        — gen_server owning data-root indexing,
-%%%                            tx_index/tx_offset_index, store_block writes
-%%%   - ar_disk_pool         — gen_server owning the pending-chunk scan
-%%%                            loop, started last in ar_data_sync_sup so
-%%%                            its init runs after KV is open
 -module(ar_data_sync).
 
 -behaviour(gen_server).
@@ -70,19 +112,11 @@
 %% The key for storing migration cursor in the migrations_index database.
 -define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
 
-
-
--ifdef(AR_TEST).
--define(DEVICE_LOCK_WAIT, 100).
--else.
--define(DEVICE_LOCK_WAIT, 5_000).
--endif.
-
-%% Max size of the per-storage-module intervals queue (gb_set). Must be deep
-%% enough that the scan can refill before workers drain it. Scales with
-%% sync_jobs: 400 workers × 250 = 100K chunks ≈ 23 MB per module.
+%% Max size of the per-storage-module sync_task_queue (gb_set). Must be
+%% deep enough that ar_peer_sync's discover loop can refill it before
+%% sync consumers empty it. Scales with sync_jobs: 400 workers × 250 =
+%% 100K chunks ≈ 23 MB per module.
 -define(INTERVALS_QUEUE_CHUNKS_PER_WORKER, 250).
-
 
 %% The number of chunks to migrate per batch during footprint migration.
 -ifdef(AR_TEST).
@@ -1128,10 +1162,6 @@ log_chunk_error(verify, Event, ExtraLogData) ->
 	do_log_chunk_error(info, Event, [{request_origin, verify} | ExtraLogData]);
 log_chunk_error(RequestOrigin, Event, ExtraLogData) ->
 	do_log_chunk_error(error, Event, [{request_origin, RequestOrigin} | ExtraLogData]).
-
-%% Chunk-copy drain logic moved to ar_chunk_copy. ar_data_sync receives
-%% the {event, chunk_copy, {complete, StoreID}} event when the drain
-%% finishes (handled in handle_info below).
 
 get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrigin) ->
 	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID, true,

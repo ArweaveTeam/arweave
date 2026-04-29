@@ -8,15 +8,15 @@
 %%%     (called once per module from `ar_data_sync' at init). When a module's
 %%%     copy completes, publishes `{event, chunk_copy, {complete, StoreID}}'
 %%%     via `ar_events'; `ar_data_sync' subscribes and uses this as the
-%%%     handoff signal to start the network-sync broker.
+%%%     handoff signal to start network sync via `ar_peer_sync'.
 %%%
-%%%  2. **Executor** (per-StoreID worker pool): receive `read_range' tasks
-%%%     and dispatch them to `ar_data_sync_worker' instances. One worker
-%%%     per StoreID, queue per worker, capped active task count.
+%%%  2. **Worker pool** (per-StoreID): receive `read_range' tasks and
+%%%     dispatch them to `ar_data_sync_worker' instances. One worker per
+%%%     StoreID, queue per worker, capped active task count.
 %%%
-%%% The producer's copy steps and the executor's task admission both go
-%%% through this gen_server's mailbox so per-StoreID copy state and per-
-%%% worker queues are serialized in one place.
+%%% Producer copy steps and worker-pool task admission both go through this
+%%% gen_server's mailbox so per-StoreID copy state and per-worker queues are
+%%% serialized in one place.
 -module(ar_chunk_copy).
 
 -behaviour(gen_server).
@@ -27,6 +27,7 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_sup.hrl").
+-include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -34,12 +35,6 @@
 -define(MAX_ACTIVE_TASKS, 10).
 -define(MAX_QUEUED_TASKS, 50).
 -define(SYNC_RECORD_READY_TIMEOUT_MS, 900).
-
--ifdef(AR_TEST).
--define(DEVICE_LOCK_WAIT, 100).
--else.
--define(DEVICE_LOCK_WAIT, 5_000).
--endif.
 
 -record(worker_tasks, {
 	worker,
@@ -80,8 +75,8 @@ start_link(WorkerMap) ->
 
 register_workers() ->
 	{Workers, WorkerMap} = register_read_workers(),
-	LocalCopy = ?CHILD_WITH_ARGS(ar_chunk_copy, worker, ar_chunk_copy, [WorkerMap]),
-	Workers ++ [LocalCopy].
+	ChunkCopy = ?CHILD_WITH_ARGS(ar_chunk_copy, worker, ar_chunk_copy, [WorkerMap]),
+	Workers ++ [ChunkCopy].
 
 register_read_workers() ->
 	{ok, Config} = arweave_config:get_env(),
@@ -306,9 +301,9 @@ scan_neighbor_module(OtherStoreID, OtherStoreIDs, #copy_state{
 	gen_server:cast(?MODULE, {advance, StoreID}),
 	update_progress(CopyState2, State).
 
-%% Execution: issue the cross-module read for one pending interval.
-%% Submits to the executor pool if it's ready; otherwise holds the
-%% interval for retry on the next advance.
+%% Issue the cross-module read for one pending interval. Submits to the
+%% worker pool if it's ready; otherwise holds the interval for retry on
+%% the next advance.
 read_range(OtherStoreID, {Start, End}, Rest, #copy_state{
 		store_id = StoreID } = CopyState, State) ->
 	CopyState2 = case ready_for_work(OtherStoreID) of
@@ -378,7 +373,7 @@ get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeSt
 	end.
 
 %%%===================================================================
-%%% Private functions — executor (worker pool).
+%%% Private functions — worker pool.
 %%%===================================================================
 
 do_ready_for_work(StoreID, State) ->
