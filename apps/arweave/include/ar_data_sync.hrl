@@ -155,14 +155,6 @@
 	%% << DataRootTimestamp:256, ChunkDataIndexKey/binary >> =>
 	%%     {RelativeChunkEndOffset, ChunkSize, DataRoot, TXSize, ChunkDataKey, IsStrictSplit}.
 	%%
-	%% The index is used to keep track of pending, orphaned, and recent chunks.
-	%% A periodic process iterates over chunks from earliest to latest, consults
-	%% DiskPoolDataRoots and data_root_index to decide whether each chunk needs to
-	%% be removed from disk as orphaned, reincluded into the weave (by updating chunks_index),
-	%% or removed from disk_pool_chunks_index by expiration.
-	disk_pool = undefined,
-	%% A flag used to temporarily pause disk pool scanning.
-	scan_pause = false,
 	%% A reference to the on-disk key value storage mapping
 	%% TXID => {AbsoluteTXEndOffset, TXSize}.
 	%% Is used to serve transaction data by TXID.

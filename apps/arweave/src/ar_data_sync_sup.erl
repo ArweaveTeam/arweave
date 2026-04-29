@@ -39,9 +39,14 @@ init([]) ->
 	%% so the cast/call API is available when ar_data_sync's join/cut/
 	%% add_tip_block handlers fire during early init.
 	DataRoots = ?CHILD(ar_data_roots, worker),
+	%% ar_disk_pool starts LAST so the disk-pool KV (opened by
+	%% ar_data_sync_default's init_kv) is available for ar_disk_pool's
+	%% init_state recalculation pass and the scan-loop bootstrap.
+	DiskPool = ?CHILD(ar_disk_pool, worker),
 	Children =
 		[PeerWorkerSup, DataRoots] ++
 		ar_data_sync_coordinator:register_workers() ++
 		ar_local_copy:register_workers() ++
-		ar_data_sync:register_workers(),
+		ar_data_sync:register_workers() ++
+		[DiskPool],
 	{ok, {{one_for_one, 5, 10}, Children}}.
