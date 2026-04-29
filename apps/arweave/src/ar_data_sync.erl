@@ -47,8 +47,8 @@
 %%%   - `ar_disk_pool'       — pending-chunk scan loop and disk-pool
 %%%                            data-roots ETS; init runs after KV opens
 %%%   - `ar_sync_record'     — per-StoreID synced-interval records
-%%%   - `ar_data_discovery'  — peer interval directory (cache + prefetch);
-%%%                            ar_peer_sync reads it during discover
+%%%   - `ar_data_discovery'  — peer interval cache + prefetch worker
+%%%                            pool; ar_peer_sync reads it during discover
 %%%   - `ar_sync_task_queue' — per-StoreID gb_set queue connecting the
 %%%                            discover producer to the sync consumer
 %%%
@@ -978,7 +978,7 @@ handle_info({event, node_state, _}, State) ->
 %% ar_chunk_copy publishes this event when its copy pass finishes for a
 %% storage module. Use it as the handoff signal to start network sync:
 %% both the `discover' producer and the `sync' consumer kick off here.
-%% The 2s delay primes the directory cache before the first discover;
+%% The 2s delay primes ar_data_discovery's cache before the first discover;
 %% sync starts immediately and self-throttles on the empty queue until
 %% discover begins enqueueing tasks.
 handle_info({event, chunk_copy, {complete, StoreID}},

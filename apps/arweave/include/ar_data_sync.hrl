@@ -102,7 +102,7 @@
 	tasks_produced = 0 :: non_neg_integer(),
 	%% Whether any peer had data to enqueue this pass. Scans that never saw
 	%% peers don't trigger adaptive backoff - they probably just ran before
-	%% the directory warmed up.
+	%% ar_data_discovery's cache warmed up.
 	had_peers = false :: boolean(),
 	%% Current unproductive-scan backoff (doubles each pass, capped).
 	backoff_ms = 0 :: non_neg_integer()

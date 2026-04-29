@@ -9,8 +9,8 @@
 %%    ar_sync_record), enqueue per-chunk tasks into sync_task_queue,
 %%    advance scan_cursor. Returns `{State', cast_now}' (run another
 %%    discover immediately) or `{State', {cast_after, Ms}}' (pause).
-%%    No HTTP happens here - peer query latency lives in the directory's
-%%    background refresh pool instead.
+%%    No HTTP happens here - peer query latency lives in
+%%    ar_data_discovery's background refresh pool instead.
 %%
 %%  - `sync/1' (consumer): pop one task from sync_task_queue, dispatch
 %%    it to ar_data_sync_coordinator (which routes through peer_worker
@@ -69,10 +69,10 @@
 discover(#sync_data_state{ scan_cursor = undefined } = State) ->
 	case init_cursor(State, normal) of
 		{ok, Cursor} ->
-			%% Cold start: init_cursor has primed the directory's prefetch,
-			%% but the HTTP calls haven't landed yet. Pause before the first
-			%% real discover so it reads a warm cache instead of racing
-			%% through an empty one.
+			%% Cold start: init_cursor has primed ar_data_discovery's
+			%% prefetch, but the HTTP calls haven't landed yet. Pause
+			%% before the first real discover so it reads a warm cache
+			%% instead of racing through an empty one.
 			{State#sync_data_state{ scan_cursor = Cursor }, {cast_after, ?COLD_START_DELAY_MS}};
 		not_ready ->
 			%% Node not joined yet, or footprint migration in flight.
@@ -190,9 +190,9 @@ init_cursor(#sync_data_state{ store_id = StoreID } = State, Mode, Backoff) ->
 				normal ->
 					End
 			end,
-			%% Prime the directory's prefetch at the cursor's starting point
-			%% so the first discover call has a warm cache instead of reading
-			%% misses for a full pass while prefetch catches up.
+			%% Prime ar_data_discovery's prefetch at the cursor's starting
+			%% point so the first discover call has a warm cache instead
+			%% of reading misses for a full pass while prefetch catches up.
 			ar_data_discovery:advance_cursor(StoreID, Start, Mode),
 			?LOG_INFO([{event, sync_network}, {stage, discovery_started},
 				{store_id, StoreID}, {mode, Mode},
@@ -316,9 +316,9 @@ do_discover_footprint(State) ->
 	end.
 
 %% Log once per scan pass, on the transition from "no tasks produced yet"
-%% to "first tasks enqueued". The dispatch side (sync/1) picks up tasks
-%% off the queue continuously, so there's no clean per-task log; this
-%% fires exactly when a pass first hands work to the dispatch loop.
+%% to "first tasks enqueued". The consumer side (sync/1) pops tasks off
+%% the queue continuously, so there's no clean per-task log; this fires
+%% exactly when a pass first hands work to sync/1.
 maybe_log_chunk_sync_started(StoreID, Mode,
 		#scan_cursor{ tasks_produced = 0 }, Produced) when Produced > 0 ->
 	?LOG_INFO([{event, sync_network}, {stage, chunk_sync_started},
@@ -327,7 +327,7 @@ maybe_log_chunk_sync_started(_StoreID, _Mode, _Cursor, _Produced) ->
 	ok.
 
 %%%===================================================================
-%%% Per-peer gather from the directory cache.
+%%% Per-peer gather from the ar_data_discovery cache.
 %%%===================================================================
 
 collect_peer_intervals_normal(Left, Peers, SoughtIntervals) ->
