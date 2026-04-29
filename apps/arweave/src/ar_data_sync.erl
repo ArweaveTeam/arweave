@@ -44,7 +44,7 @@
 		delete_chunk_metadata/2, update_chunks_index/3, get_tx_offset/2]).
 
 %% For data-doctor tools
--export([init_kv/2, open_store_dbs/2]).
+-export([init_kv/2, open_store_dbs/2, read_data_sync_state/0]).
 
 -export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([store_fetched_chunk/4, store_data_roots/4, store_data_roots_sync/4]).
@@ -545,57 +545,19 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	{ok, Config} = arweave_config:get_env(),
 	[ok, ok, ok] = ar_events:subscribe([node_state, disksup, local_copy]),
 	State = init_kv(#sync_data_state{}, StoreID),
-	{ok, _} = ar_timer:apply_interval(
-		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
-		ar_disk_pool,
-		record_chunks_count,
-		[],
-		#{ skip_on_shutdown => false }
-	),
 
 	StateMap = read_data_sync_state(),
 	CurrentBI = maps:get(block_index, StateMap),
-	%% Maintain a map of pending, recently uploaded, and orphaned data roots.
-	%% << DataRoot:32/binary, TXSize:256 >> => {Size, Timestamp, TXIDSet}.
-	%%
-	%% Unconfirmed chunks can be accepted only after their data roots end up in this set.
-	%% New chunks for these data roots are accepted until the corresponding size reaches
-	%% #config.max_disk_pool_data_root_buffer_mb or the total size of added pending and
-	%% seeded chunks reaches #config.max_disk_pool_buffer_mb. When a data root is orphaned,
-	%% its timestamp is refreshed so that the chunks have chance to be reincluded later.
-	%% After a data root expires, the corresponding chunks are removed from
-	%% disk_pool_chunks_index and if they do not belong to any storage module - from storage.
-	%% TXIDSet keeps track of pending transaction identifiers - if all pending transactions
-	%% with the << DataRoot:32/binary, TXSize:256 >> key are dropped from the mempool,
-	%% the corresponding entry is removed from DiskPoolDataRoots once there are also no
-	%% disk-pool chunks left for that data root. When a data root is confirmed, pending
-	%% TXIDs remain tracked so unconfirmed duplicate transactions can still resolve their
-	%% chunks via the disk pool.
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = maps:get(weave_size, StateMap),
-		disk_pool = ar_disk_pool:init_state(StateMap, StoreID),
 		store_id = StoreID,
 		sync_status = init_sync_status(StoreID)
 	},
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID},
 		{range_start, State2#sync_data_state.range_start},
 		{range_end, State2#sync_data_state.range_end}]),
-	{ok, _} = ar_timer:apply_interval(
-		?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS,
-		ar_disk_pool,
-		remove_expired_data_roots,
-		[],
-		#{ skip_on_shutdown => false }
-	),
-	lists:foreach(
-		fun(_DiskPoolJobNumber) ->
-			gen_server:cast(self(), process_disk_pool_item)
-		end,
-		lists:seq(1, Config#config.disk_pool_jobs)
-	),
 	gen_server:cast(self(), store_sync_state),
-	{ok, Config} = arweave_config:get_env(),
 	Limit =
 		case Config#config.data_cache_size_limit of
 			undefined ->
@@ -852,29 +814,6 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 			process_valid_fetched_chunk(ChunkArgs, Args, State)
 	end;
 
-handle_cast(process_disk_pool_item,
-		#sync_data_state{ scan_pause = true } = State) ->
-	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), process_disk_pool_item),
-	{noreply, State};
-handle_cast(process_disk_pool_item,
-		#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State) ->
-	handle_disk_pool_actions(ar_disk_pool:process_next_chunk(DiskPool, StoreID), State);
-
-handle_cast(resume_disk_pool_scan, State) ->
-	{noreply, State#sync_data_state{ scan_pause = false }};
-
-handle_cast({process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}, State)
-		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
-	#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State,
-	handle_disk_pool_actions(
-		ar_disk_pool:process_chunk_offsets(Key, Value, TXStartOffset, StoreID, DiskPool),
-		State);
-handle_cast({process_disk_pool_chunk_offsets, Iterator, CanRemoveFromDiskPool, Args}, State) ->
-	#sync_data_state{ store_id = StoreID, disk_pool = DiskPool } = State,
-	handle_disk_pool_actions(
-		ar_disk_pool:process_chunk_offsets(Iterator, CanRemoveFromDiskPool, Args, StoreID, DiskPool),
-		State);
-
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
 	PID ! {removed_range, Ref},
 	{noreply, State};
@@ -971,64 +910,9 @@ handle_cast(store_sync_state, State) ->
 	ar_util:cast_after(?STORE_STATE_FREQUENCY_MS, self(), store_sync_state),
 	{noreply, State};
 
-handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, State) ->
-	#sync_data_state{ disk_pool = DiskPool } = State,
-	DiskPool2 = ar_disk_pool:remove_recently_processed_offset(Offset, ChunkDataKey, DiskPool),
-	{noreply, State#sync_data_state{ disk_pool = DiskPool2 }};
-
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
 	{noreply, State}.
-
-handle_disk_pool_actions({next_chunk, DiskPool}, State) ->
-	gen_server:cast(self(), process_disk_pool_item),
-	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
-handle_disk_pool_actions(
-		{wrapped, Timestamp, Key, Value, DiskPool},
-		#sync_data_state{ store_id = StoreID } = State)
-		when is_binary(Key), is_binary(Value) ->
-	TimePassed = timer:now_diff(erlang:timestamp(), Timestamp),
-	case TimePassed < (?DISK_POOL_SCAN_DELAY_MS) * 1000 of
-		true ->
-			handle_disk_pool_actions({none, ar_disk_pool:pause_scan(DiskPool)}, State);
-		false ->
-			handle_disk_pool_actions(
-				ar_disk_pool:process_chunk(DiskPool, StoreID, Key, Value),
-				State)
-	end;
-handle_disk_pool_actions({none, DiskPool}, State) ->
-	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), resume_disk_pool_scan),
-	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, self(), process_disk_pool_item),
-	{noreply, State#sync_data_state{ disk_pool = DiskPool, scan_pause = true }};
-handle_disk_pool_actions({next_offset, Key, Value, TXStartOffset, DiskPool}, State)
-		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
-	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}),
-	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
-handle_disk_pool_actions({next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool}, State) ->
-	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, CanRemoveFromDiskPool, Args}),
-	{noreply, State#sync_data_state{ disk_pool = DiskPool }};
-handle_disk_pool_actions(
-		{store_chunk, StoreIDs, PackArgs, Iterator, ContinueArgs, CacheHint, DiskPool},
-		State) ->
-	increment_chunk_cache_size(),
-	lists:foreach(
-		fun(StoreID) ->
-			gen_server:cast(name(StoreID), {pack_and_store_chunk, PackArgs})
-		end,
-		StoreIDs
-	),
-	gen_server:cast(self(), {process_disk_pool_chunk_offsets, Iterator, false, ContinueArgs}),
-	case CacheHint of
-		{cache_offset, Offset, ChunkDataKey} ->
-			ar_util:cast_after(
-				?CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS,
-				self(),
-				{remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}
-			);
-		no_cache_update ->
-			ok
-	end,
-	{noreply, State#sync_data_state{ disk_pool = DiskPool }}.
 
 handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
@@ -1043,10 +927,6 @@ handle_info({event, node_state, {initialized, B}}, State) ->
 
 handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 	{noreply, State#sync_data_state{ weave_size = B#block.weave_size }};
-
-handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
-	ar_disk_pool:set_threshold(Bound),
-	{noreply, State};
 
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
@@ -1751,7 +1631,6 @@ init_kv(State, StoreID) ->
 	ar_disk_pool:move_index(StoreID),
 	State#sync_data_state{
 		chunks_index = {chunks_index, StoreID},
-		disk_pool = ar_disk_pool:init_state(),
 		chunk_data_db = {chunk_data_db, StoreID},
 		tx_index = {tx_index, StoreID},
 		tx_offset_index = {tx_offset_index, StoreID}

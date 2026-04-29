@@ -1,4 +1,26 @@
+%%% @doc Singleton disk-pool subsystem. Owns the pending-chunk queue, the
+%%% periodic scan/admission loop, and the bridge to per-module storage via
+%%% pack_and_store_chunk casts.
+%%%
+%%% Hosts both:
+%%%   1. A gen_server (`ar_disk_pool') that owns the scan cursor / pause
+%%%      flag / recently-processed-offsets cache, runs the periodic scan
+%%%      job loop, and listens for node_state threshold updates.
+%%%   2. A library of stateless functions (chunk admission, data-root
+%%%      bookkeeping, KV helpers) callable from any process.
+%%%
+%%% The scan-loop work used to live inside ar_data_sync_default's mailbox;
+%%% it now runs inside this gen_server. The disk pool is single-instance —
+%%% only the default storage module participates in pending-chunk processing.
+%%%
+%%% Supervision ordering: ar_disk_pool is started LAST in ar_data_sync_sup
+%%% so that ar_data_sync_default has already opened the disk-pool KV
+%%% (`disk_pool_chunks_index` DB) by the time ar_disk_pool's init runs.
 -module(ar_disk_pool).
+
+-behaviour(gen_server).
+
+-export([start_link/0]).
 
 -export([add_chunk/5]).
 
@@ -24,7 +46,10 @@
 -export([debug_get_chunks/0, debug_get_chunks/1,
 		get_data_root_state/1, delete_data_root_state/1]).
 
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+
 -include("ar.hrl").
+-include("ar_data_sync.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -55,7 +80,10 @@
 	recently_processed_offsets = #{},
 	%% A registry of the disk pool chunks in process consulted by different
 	%% disk pool jobs to avoid double-processing.
-	keys_in_process = sets:new()
+	keys_in_process = sets:new(),
+	%% Pause flag toggled by the wrapped/none scan-action: when true,
+	%% process_disk_pool_item casts no-op until resume_disk_pool_scan fires.
+	scan_pause = false
 }).
 
 %%%===================================================================
@@ -1131,3 +1159,141 @@ debug_get_chunks(Cursor) ->
 			K2 = << K/binary, <<"a">>/binary >>,
 			[{K, V} | debug_get_chunks(K2)]
 	end.
+
+%%%===================================================================
+%%% gen_server lifecycle.
+%%%===================================================================
+
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% ar_disk_pool is started last in ar_data_sync_sup, after
+%% ar_data_sync_default has opened the disk-pool KV. So we can do the
+%% full state load + scan-loop bootstrap synchronously here.
+init([]) ->
+	?LOG_INFO([{event, ar_disk_pool_start}]),
+	{ok, Config} = arweave_config:get_env(),
+	[ok] = ar_events:subscribe([node_state]),
+	StateMap = ar_data_sync:read_data_sync_state(),
+	DiskPool = init_state(StateMap, ?DEFAULT_MODULE),
+	{ok, _} = ar_timer:apply_interval(
+		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
+		?MODULE, record_chunks_count, [],
+		#{ skip_on_shutdown => false }
+	),
+	{ok, _} = ar_timer:apply_interval(
+		?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS,
+		?MODULE, remove_expired_data_roots, [],
+		#{ skip_on_shutdown => false }
+	),
+	%% Fire one process_disk_pool_item per configured job. Each cast
+	%% drives one slot of the scan loop; they self-perpetuate forever.
+	lists:foreach(
+		fun(_) -> gen_server:cast(?MODULE, process_disk_pool_item) end,
+		lists:seq(1, Config#config.disk_pool_jobs)
+	),
+	{ok, DiskPool}.
+
+handle_call(Request, _From, State) ->
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+	{reply, ok, State}.
+
+%%%===================================================================
+%%% Scan-loop cast handlers (formerly in ar_data_sync).
+%%%===================================================================
+
+handle_cast(process_disk_pool_item, #disk_pool_state{ scan_pause = true } = State) ->
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
+	{noreply, State};
+handle_cast(process_disk_pool_item, State) ->
+	handle_disk_pool_actions(process_next_chunk(State, ?DEFAULT_MODULE), State);
+
+handle_cast(resume_disk_pool_scan, State) ->
+	{noreply, State#disk_pool_state{ scan_pause = false }};
+
+handle_cast({process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}, State)
+		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
+	handle_disk_pool_actions(
+		process_chunk_offsets(Key, Value, TXStartOffset, ?DEFAULT_MODULE, State),
+		State);
+handle_cast({process_disk_pool_chunk_offsets, Iterator, CanRemoveFromDiskPool, Args}, State) ->
+	handle_disk_pool_actions(
+		process_chunk_offsets(Iterator, CanRemoveFromDiskPool, Args, ?DEFAULT_MODULE, State),
+		State);
+
+handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, State) ->
+	{noreply, remove_recently_processed_offset(Offset, ChunkDataKey, State)};
+
+handle_cast(Cast, State) ->
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+	{noreply, State}.
+
+handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
+	set_threshold(Bound),
+	{noreply, State};
+handle_info({event, node_state, _}, State) ->
+	{noreply, State};
+handle_info(Message, State) ->
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
+	{noreply, State}.
+
+terminate(Reason, _State) ->
+	?LOG_DEBUG([{event, terminate}, {module, ?MODULE},
+		{reason, io_lib:format("~p", [Reason])}]),
+	ok.
+
+%%%===================================================================
+%%% Scan action dispatcher (formerly in ar_data_sync).
+%%%===================================================================
+
+handle_disk_pool_actions({next_chunk, DiskPool}, _OldState) ->
+	gen_server:cast(?MODULE, process_disk_pool_item),
+	{noreply, DiskPool};
+handle_disk_pool_actions({wrapped, Timestamp, Key, Value, DiskPool}, _OldState)
+		when is_binary(Key), is_binary(Value) ->
+	TimePassed = timer:now_diff(erlang:timestamp(), Timestamp),
+	case TimePassed < (?DISK_POOL_SCAN_DELAY_MS) * 1000 of
+		true ->
+			handle_disk_pool_actions({none, pause_scan(DiskPool)}, DiskPool);
+		false ->
+			handle_disk_pool_actions(
+				process_chunk(DiskPool, ?DEFAULT_MODULE, Key, Value), DiskPool)
+	end;
+handle_disk_pool_actions({none, DiskPool}, _OldState) ->
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, resume_disk_pool_scan),
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
+	{noreply, DiskPool#disk_pool_state{ scan_pause = true }};
+handle_disk_pool_actions({next_offset, Key, Value, TXStartOffset, DiskPool}, _OldState)
+		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
+	gen_server:cast(?MODULE,
+		{process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}),
+	{noreply, DiskPool};
+handle_disk_pool_actions({next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool},
+		_OldState) ->
+	gen_server:cast(?MODULE,
+		{process_disk_pool_chunk_offsets, Iterator, CanRemoveFromDiskPool, Args}),
+	{noreply, DiskPool};
+handle_disk_pool_actions(
+		{store_chunk, StoreIDs, PackArgs, Iterator, ContinueArgs, CacheHint, DiskPool},
+		_OldState) ->
+	ar_data_sync:increment_chunk_cache_size(),
+	lists:foreach(
+		fun(StoreID) ->
+			gen_server:cast(ar_data_sync:name(StoreID),
+				{pack_and_store_chunk, PackArgs})
+		end,
+		StoreIDs
+	),
+	gen_server:cast(?MODULE,
+		{process_disk_pool_chunk_offsets, Iterator, false, ContinueArgs}),
+	case CacheHint of
+		{cache_offset, Offset, ChunkDataKey} ->
+			ar_util:cast_after(
+				?CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS,
+				?MODULE,
+				{remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}
+			);
+		no_cache_update ->
+			ok
+	end,
+	{noreply, DiskPool}.
