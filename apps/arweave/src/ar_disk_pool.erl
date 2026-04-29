@@ -20,33 +20,25 @@
 
 -behaviour(gen_server).
 
--export([start_link/0]).
+-export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2,
+		terminate/2]).
 
--export([add_chunk/5]).
-
--export([add_data_root/3, maybe_drop_data_root/3,
-		has_data_root/1, get_data_roots/0, remove_expired_data_roots/0]).
-
--export([get_unconfirmed_chunk/2]).
-
--export([get_threshold/0, set_threshold/1, update_threshold/1]).
+-export([add_chunk/5, get_unconfirmed_chunk/2,
+		add_data_root/3, maybe_drop_data_root/3, has_data_root/1,
+		get_data_roots/0, remove_expired_data_roots/0,
+		get_threshold/0, set_threshold/1, update_threshold/1]).
 
 -export([init_state/0, init_state/2, recalculate_size/2,
 		add_block_data_roots/1, reset_orphaned_data_roots_timestamps/1,
-		move_index/1, column_family/1, open_index_db/3]).
+		move_index/1, column_family/1, open_index_db/3,
+		process_next_chunk/2, process_chunk/4, process_chunk_offsets/5,
+		pause_scan/1, remove_recently_processed_offset/3,
+		index_db/1, old_index_db/1, record_chunks_count/0]).
 
--export([process_next_chunk/2, process_chunk/4, process_chunk_offsets/5,
-		pause_scan/1, remove_recently_processed_offset/3]).
-
--export([index_db/1, old_index_db/1]).
-
--export([record_chunks_count/0]).
-
-%% test-only exports
+-ifdef(AR_TEST).
 -export([debug_get_chunks/0, debug_get_chunks/1,
 		get_data_root_state/1, delete_data_root_state/1]).
-
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+-endif.
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
@@ -1194,8 +1186,10 @@ init([]) ->
 	?LOG_INFO([{event, ar_disk_pool_start}]),
 	{ok, Config} = arweave_config:get_env(),
 	[ok] = ar_events:subscribe([node_state]),
-	StateMap = ar_data_sync:read_data_sync_state(),
-	DiskPool = init_state(StateMap, ?DEFAULT_MODULE),
+	%% The shared ETS state (ar_disk_pool_data_roots, disk_pool_threshold)
+	%% has already been populated by ar_data_sync_default's init via
+	%% init_state(StateMap, ?DEFAULT_MODULE). This gen_server only owns
+	%% the per-process scan cursor / pause flag in #disk_pool_state{}.
 	{ok, _} = ar_timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		?MODULE, record_chunks_count, [],
@@ -1212,7 +1206,7 @@ init([]) ->
 		fun(_) -> gen_server:cast(?MODULE, process_disk_pool_item) end,
 		lists:seq(1, Config#config.disk_pool_jobs)
 	),
-	{ok, DiskPool}.
+	{ok, init_state()}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
