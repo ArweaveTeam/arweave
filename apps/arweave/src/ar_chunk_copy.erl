@@ -194,11 +194,7 @@ do_start(StoreID, State) ->
 	%% Match ar_data_sync's range adjustment.
 	RangeStart2 = max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
 	RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
-	SyncStatus = case ar_data_sync_coordinator:is_syncing_enabled() of
-		true -> paused;
-		false -> off
-	end,
-	ar_device_lock:set_device_lock_metric(StoreID, sync, SyncStatus),
+	SyncStatus = ar_data_sync:init_sync_status(StoreID),
 	CopyState = #copy_state{
 		store_id = StoreID,
 		range_start = RangeStart2,

@@ -36,6 +36,7 @@
 		get_tx_offset/1, get_tx_offset_data_in_range/2,
 		request_tx_data_removal/3, request_data_removal/4,
 		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
+		init_sync_status/1,
 		get_chunk_by_byte/2, advance_chunks_index_cursor/1, has_data_root/2,
 		read_chunk/3, write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
@@ -616,12 +617,12 @@ handle_continue({init, RepackInPlacePacking},
 			State3 = State2#sync_data_state{
 				sync_status = init_sync_status(StoreID)
 			},
-			%% Start syncing immediately. For replica_2_9 packing, chunks will be
-			%% written as unpacked_padded first and upgraded once entropy arrives.
-			gen_server:cast(self(), sync),
-			%% Chunk-copy drain runs in ar_chunk_copy and publishes
+			%% Chunk-copy runs in ar_chunk_copy and publishes
 			%% {event, chunk_copy, {complete, StoreID}} when done. The
-			%% handle_info clause for that event kicks off the discover loop.
+			%% handle_info clause for that event kicks off both the
+			%% discover producer and the sync consumer; until then the
+			%% sync_task_queue is necessarily empty (only discover fills
+			%% it), so there's nothing for sync to do.
 			ar_chunk_copy:start_copy(StoreID),
 			maybe_run_footprint_record_initialization(State3),
 			?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID}]),
@@ -940,12 +941,16 @@ handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
 
-%% ar_chunk_copy publishes this event when its drain pass finishes for a
-%% storage module. Use it as the handoff signal to start the network-sync
-%% broker. The 2s delay primes the directory cache before the first scan.
+%% ar_chunk_copy publishes this event when its copy pass finishes for a
+%% storage module. Use it as the handoff signal to start network sync:
+%% both the `discover' producer and the `sync' consumer kick off here.
+%% The 2s delay primes the directory cache before the first discover;
+%% sync starts immediately and self-throttles on the empty queue until
+%% discover begins enqueueing tasks.
 handle_info({event, chunk_copy, {complete, StoreID}},
 		#sync_data_state{ store_id = StoreID } = State) ->
 	ar_util:cast_after(2000, self(), discover),
+	gen_server:cast(self(), sync),
 	{noreply, State};
 handle_info({event, chunk_copy, _}, State) ->
 	{noreply, State};
