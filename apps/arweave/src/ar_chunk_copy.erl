@@ -166,8 +166,8 @@ handle_cast({start_copy, StoreID}, State) ->
 handle_cast({start_scan, StoreID}, State) ->
 	{noreply, do_start_scan(StoreID, State)};
 
-handle_cast({step, StoreID}, State) ->
-	{noreply, step2(StoreID, State)};
+handle_cast({advance, StoreID}, State) ->
+	{noreply, advance(StoreID, State)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -205,27 +205,27 @@ do_start(StoreID, State) ->
 		range_end = RangeEnd2,
 		sync_status = SyncStatus
 	},
-	%% Cast do_start_scan (not step2) so the device-lock check happens
+	%% Cast do_start_scan (not advance) so the device-lock check happens
 	%% before the initial discovery pass, mirroring ar_data_sync's old flow.
 	gen_server:cast(?MODULE, {start_scan, StoreID}),
 	State#state{ in_progress = maps:put(StoreID, CopyState, InProgress) }.
 
 %% Run the initial discovery pass once the device lock is held. Sets up
 %% pending_intervals (from default module) and pending_modules (other
-%% neighboring modules), then transitions to step2.
+%% neighboring modules), then transitions to advance.
 do_start_scan(StoreID, State) ->
 	with_lock(StoreID, State, fun scan_default_module/2,
 		fun(StoreID2) ->
 			ar_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE, {start_scan, StoreID2})
 		end).
 
-step2(StoreID, State) ->
-	with_lock(StoreID, State, fun do_step/2,
+advance(StoreID, State) ->
+	with_lock(StoreID, State, fun do_advance/2,
 		fun(StoreID2) ->
-			ar_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE, {step, StoreID2})
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE, {advance, StoreID2})
 		end).
 
-%% Common device-lock pattern shared by do_start_scan and step2. Acquires
+%% Common device-lock pattern shared by do_start_scan and advance. Acquires
 %% the lock, dispatches Active on success, schedules Retry on pause, and
 %% finishes the copy on any other status (off / complete).
 with_lock(StoreID, State, Active, Retry) ->
@@ -251,15 +251,15 @@ with_lock(StoreID, State, Active, Retry) ->
 %%   - finish:           both work-lists empty → emit completion event
 %%   - scan_neighbor_module:  no pending intervals, pop next module to scan
 %%   - read_range:            pending interval, issue the cross-module read
-do_step(#copy_state{
+do_advance(#copy_state{
 		pending_intervals = [],
 		pending_modules = [] } = CopyState, State) ->
 	finish(CopyState, State);
-do_step(#copy_state{
+do_advance(#copy_state{
 		pending_intervals = [],
 		pending_modules = [OtherStoreID | OtherStoreIDs] } = CopyState, State) ->
 	scan_neighbor_module(OtherStoreID, OtherStoreIDs, CopyState, State);
-do_step(#copy_state{
+do_advance(#copy_state{
 		pending_intervals = [{OtherStoreID, Range} | Rest] } = CopyState, State) ->
 	read_range(OtherStoreID, Range, Rest, CopyState, State).
 
@@ -288,7 +288,7 @@ scan_default_module(#copy_state{
 		pending_intervals = Intervals,
 		pending_modules = OtherStorageModules
 	},
-	gen_server:cast(?MODULE, {step, StoreID}),
+	gen_server:cast(?MODULE, {advance, StoreID}),
 	update_progress(CopyState2, State).
 
 %% Discovery: pop the next neighboring storage_module and scan it for
@@ -307,12 +307,12 @@ scan_neighbor_module(OtherStoreID, OtherStoreIDs, #copy_state{
 		pending_intervals = Intervals,
 		pending_modules = OtherStoreIDs
 	},
-	gen_server:cast(?MODULE, {step, StoreID}),
+	gen_server:cast(?MODULE, {advance, StoreID}),
 	update_progress(CopyState2, State).
 
 %% Execution: issue the cross-module read for one pending interval.
 %% Submits to the executor pool if it's ready; otherwise holds the
-%% interval for retry on the next step2.
+%% interval for retry on the next advance.
 read_range(OtherStoreID, {Start, End}, Rest, #copy_state{
 		store_id = StoreID } = CopyState, State) ->
 	CopyState2 = case ready_for_work(OtherStoreID) of
@@ -323,7 +323,7 @@ read_range(OtherStoreID, {Start, End}, Rest, #copy_state{
 		false ->
 			CopyState
 	end,
-	ar_util:cast_after(50, ?MODULE, {step, StoreID}),
+	ar_util:cast_after(50, ?MODULE, {advance, StoreID}),
 	update_progress(CopyState2, State).
 
 finish(#copy_state{
