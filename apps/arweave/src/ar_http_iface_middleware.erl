@@ -571,8 +571,9 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 								TXRoot, BlockSize, DataRootEntries, Offset2
 							) of
 								{ok, _} ->
-									case catch ar_data_sync:store_data_roots_sync(
-											BlockStart2, BlockEnd2, TXRoot, DataRootEntries) of
+									case catch ar_data_roots:store_block_sync(
+											BlockStart2, BlockEnd2, TXRoot, DataRootEntries,
+											?DEFAULT_MODULE) of
 										ok ->
 											{200, #{}, <<>>, Req2};
 										{'EXIT', {timeout, _}} ->

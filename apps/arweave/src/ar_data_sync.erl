@@ -49,7 +49,7 @@
 -export([init_kv/2, open_store_dbs/2, read_data_sync_state/0]).
 
 -export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([store_fetched_chunk/4, store_data_roots/4, store_data_roots_sync/4]).
+-export([store_fetched_chunk/4]).
 
 -include("ar.hrl").
 -include("ar_sup.hrl").
@@ -147,19 +147,6 @@ invalidate_bad_data_record(AbsoluteEndOffset, ChunkSize, StoreID, Case) ->
 %% @doc Store a chunk fetched from a peer.
 store_fetched_chunk(StoreID, Peer, Byte, Proof) ->
 	gen_server:cast(?MODULE:name(StoreID), {store_fetched_chunk, Peer, Byte, Proof}).
-
-%% @doc Store the given data roots asynchronously. Thin proxy: forwards to
-%% ar_data_roots, which owns the data root indexes. Kept as ar_data_sync's
-%% public API for backwards compatibility with existing call sites; new
-%% code should call ar_data_roots:store_block_async/5 directly.
-store_data_roots(BlockStart, BlockEnd, TXRoot, DataRootEntries) ->
-	ar_data_roots:store_block_async(
-		BlockStart, BlockEnd, TXRoot, DataRootEntries, ?DEFAULT_MODULE).
-
-%% @doc Store the given data roots synchronously. Thin proxy.
-store_data_roots_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries) ->
-	ar_data_roots:store_block_sync(
-		BlockStart, BlockEnd, TXRoot, DataRootEntries, ?DEFAULT_MODULE).
 
 %% @doc The condition which is true if the chunk is too small compared to the proof.
 %% Small chunks make syncing slower and increase space amplification. A small chunk
