@@ -13,7 +13,6 @@
 %%%   - chunk write pipeline: pack_and_store_chunk, store_fetched_chunk,
 %%%     {chunk, packed/unpacked} info handlers, expire_repack_request,
 %%%     expire_unpack_request
-%%%   - disk-pool job loop on the default module instance
 %%%
 %%% Subsystems extracted to their own modules:
 %%%   - ar_local_copy        — local-copy producer + executor; subscribes
@@ -22,6 +21,9 @@
 %%%                            broker_step; produces per-chunk tasks
 %%%   - ar_data_roots        — gen_server owning data-root indexing,
 %%%                            tx_index/tx_offset_index, store_block writes
+%%%   - ar_disk_pool         — gen_server owning the pending-chunk scan
+%%%                            loop, started last in ar_data_sync_sup so
+%%%                            its init runs after KV is open
 -module(ar_data_sync).
 
 -behaviour(gen_server).
