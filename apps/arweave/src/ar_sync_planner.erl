@@ -71,8 +71,14 @@ step(#sync_data_state{ scan_cursor = undefined } = State) ->
 	end;
 step(#sync_data_state{ scan_cursor = #scan_cursor{ offset = O, end_ = E } } = State)
 		when O >= E ->
+	#sync_data_state{ store_id = StoreID,
+			scan_cursor = #scan_cursor{ mode = Mode, tasks_produced = TasksProduced,
+					had_peers = HadPeers } } = State,
 	{Delay, Backoff2} = scan_restart_delay(State#sync_data_state.scan_cursor),
-	NextMode = flip_mode((State#sync_data_state.scan_cursor)#scan_cursor.mode),
+	NextMode = flip_mode(Mode),
+	?LOG_INFO([{event, sync_network}, {stage, discovery_complete},
+		{store_id, StoreID}, {mode, Mode}, {tasks_produced, TasksProduced},
+		{had_peers, HadPeers}, {next_mode, NextMode}, {restart_delay_ms, Delay}]),
 	case init_cursor(State, NextMode, Backoff2) of
 		{ok, Cursor2} ->
 			{State#sync_data_state{ scan_cursor = Cursor2 }, {cast_after, Delay}};
@@ -109,6 +115,9 @@ init_cursor(#sync_data_state{ store_id = StoreID } = State, Mode, Backoff) ->
 			%% so the first planner step has a warm cache instead of reading
 			%% misses for a full pass while prefetch catches up.
 			ar_data_discovery:advance_cursor(StoreID, Start, Mode),
+			?LOG_INFO([{event, sync_network}, {stage, discovery_started},
+				{store_id, StoreID}, {mode, Mode},
+				{start, Start}, {end_, End2}, {backoff_ms, Backoff}]),
 			{ok, #scan_cursor{
 				start = Start, end_ = End2, offset = Start, mode = Mode,
 				backoff_ms = Backoff }}
@@ -182,6 +191,7 @@ do_step_normal(State) ->
 						collect_peer_intervals_normal(Offset, Peers, UnsyncedIntervals),
 					NewQ = enqueue(EnqueueIntervals, Q),
 					Produced = ar_sync_task_queue:size(NewQ) - ar_sync_task_queue:size(Q),
+					maybe_log_chunk_sync_started(StoreID, normal, Cursor, Produced),
 					NewCursor = Cursor#scan_cursor{
 						offset = min(End2, EndReached),
 						had_peers = Cursor#scan_cursor.had_peers orelse HadPeers,
@@ -214,6 +224,7 @@ do_step_footprint(State) ->
 							Partition, Footprint, Start, End, Peers, UnsyncedIntervals),
 					NewQ = enqueue(EnqueueIntervals, Q),
 					Produced = ar_sync_task_queue:size(NewQ) - ar_sync_task_queue:size(Q),
+					maybe_log_chunk_sync_started(StoreID, footprint, Cursor, Produced),
 					Offset2 = get_next_fetch_offset(Offset, Start, End),
 					NewCursor = Cursor#scan_cursor{
 						offset = Offset2,
@@ -224,6 +235,17 @@ do_step_footprint(State) ->
 							scan_cursor = NewCursor }, cast_now}
 			end
 	end.
+
+%% Log once per scan pass, on the transition from "no tasks produced yet"
+%% to "first tasks enqueued". The dispatch side (do_sync_intervals) picks
+%% up tasks off the queue continuously, so there's no clean per-task log;
+%% this fires exactly when a pass first hands work to the dispatch loop.
+maybe_log_chunk_sync_started(StoreID, Mode,
+		#scan_cursor{ tasks_produced = 0 }, Produced) when Produced > 0 ->
+	?LOG_INFO([{event, sync_network}, {stage, chunk_sync_started},
+		{store_id, StoreID}, {mode, Mode}, {tasks_enqueued, Produced}]);
+maybe_log_chunk_sync_started(_StoreID, _Mode, _Cursor, _Produced) ->
+	ok.
 
 %%%===================================================================
 %%% Per-peer gather from the directory cache.

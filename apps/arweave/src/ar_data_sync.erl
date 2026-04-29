@@ -1314,9 +1314,9 @@ do_sync_data(State) ->
 	OtherStorageModules = [ar_storage_module:id(Module)
 			|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
 			ar_storage_module:id(Module) /= StoreID],
-	?LOG_INFO([{event, sync_data}, {stage, copy_from_default_storage_module},
+	?LOG_INFO([{event, sync_local}, {stage, copy_from_default},
 		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd},
-		{range_end, RangeEnd}, {disk_pool_threshold, DiskPoolThreshold},
+		{disk_pool_threshold, DiskPoolThreshold},
 		{default_intervals, length(Intervals)},
 		{other_storage_modules, length(OtherStorageModules)}]),
 	State#sync_data_state{
@@ -1330,8 +1330,9 @@ do_sync_data2(#sync_data_state{
 		other_storage_modules_with_unsynced_intervals = [] } = State) ->
 	#sync_data_state{ store_id = StoreID,
 		range_start = RangeStart, range_end = RangeEnd } = State,
-	?LOG_INFO([{event, sync_data}, {stage, complete},
-		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd}]),
+	?LOG_INFO([{event, sync_local}, {stage, complete},
+		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd},
+		{next, network_sync}]),
 	ar_util:cast_after(2000, self(), planner_step),
 	State;
 %% @doc Check to see if a neighboring storage_module may have already synced one of our
@@ -1343,8 +1344,8 @@ do_sync_data2(#sync_data_state{
 		} = State) ->
 	Intervals = get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
 			RangeStart, RangeEnd),
-	?LOG_INFO([{event, sync_data}, {stage, copy_from_other_storage_modules},
-		{store_id, StoreID}, {other_store_id, OtherStoreID}, 
+	?LOG_INFO([{event, sync_local}, {stage, copy_from_other_module},
+		{store_id, StoreID}, {other_store_id, OtherStoreID},
 		{range_start, RangeStart}, {range_end, RangeEnd},
 		{found_intervals, length(Intervals)}]),
 	gen_server:cast(self(), sync_data2),
