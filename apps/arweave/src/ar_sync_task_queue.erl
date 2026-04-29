@@ -1,5 +1,5 @@
-%% @doc Per-storage-module queue of sync tasks produced by the scan/planner
-%% step and consumed by the sync dispatcher.
+%% @doc Per-storage-module queue of sync tasks produced by the broker's
+%% scan step and consumed by the sync dispatcher.
 %%
 %% The queue has two complementary structures maintained as one invariant:
 %%
