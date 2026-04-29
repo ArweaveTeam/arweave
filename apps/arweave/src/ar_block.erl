@@ -5,6 +5,7 @@
 		get_replica_2_9_entropy_sector_size/0, get_replica_2_9_entropy_partition_size/0,
 		get_sub_chunks_per_replica_2_9_entropy/0, get_replica_2_9_entropy_count/0,
 		get_replica_2_9_footprint_size/0, strict_data_split_threshold/0,
+		get_merkle_rebase_support_threshold/0,
 		block_field_size_limit/1, verify_timestamp/2, get_max_timestamp_deviation/0, verify_last_retarget/2,
 		verify_weave_size/3, verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
 		compute_hash_list_merkle/1, compute_h0/2, compute_h0/5, compute_h0/6,
@@ -52,6 +53,7 @@ get_max_tx_anchor_depth() ->
 %% @doc Expose constants through a function to allow mocking/injection in tests.
 partition_size() -> ?PARTITION_SIZE.
 strict_data_split_threshold() -> ?STRICT_DATA_SPLIT_THRESHOLD.
+get_merkle_rebase_support_threshold() -> ?MERKLE_REBASE_SUPPORT_THRESHOLD.
 
 %% @doc Return the 2.9 entropy sector size - the largest total size in bytes of the contiguous
 %% area where the 2.9 entropy of every chunk is unique.

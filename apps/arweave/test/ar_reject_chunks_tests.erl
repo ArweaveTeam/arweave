@@ -82,7 +82,16 @@ test_rejects_invalid_chunks() ->
 	).
 
 does_not_store_small_chunks_after_2_5_test_() ->
-	{timeout, 600, fun test_does_not_store_small_chunks_after_2_5/0}.
+	%% The test was designed for the strict_data_split_ruleset (in effect between the
+	%% strict_data_split_threshold and the merkle_rebase_support_threshold). Push the
+	%% rebase threshold above the chunk offsets used in the test so the chunks are
+	%% validated under that ruleset rather than the more permissive
+	%% offset_rebase_support_ruleset.
+	ar_test_node:test_with_mocked_functions(
+		[{ar_block, get_merkle_rebase_support_threshold,
+				fun() -> 2 * ar_block:strict_data_split_threshold() end}],
+		fun test_does_not_store_small_chunks_after_2_5/0,
+		600).
 
 test_does_not_store_small_chunks_after_2_5() ->
 	Size = ?DATA_CHUNK_SIZE,

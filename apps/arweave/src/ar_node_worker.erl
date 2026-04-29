@@ -1939,7 +1939,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 		replica_format = ReplicaFormat
 	} = Solution,
 	?LOG_INFO([{event, handle_found_solution}, {solution, ar_util:encode(SolutionH)}]),
-	MerkleRebaseThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
+	MerkleRebaseThreshold = ar_block:get_merkle_rebase_support_threshold(),
 
 	#block{ indep_hash = PrevH, timestamp = PrevTimestamp,
 			wallet_list = WalletList,

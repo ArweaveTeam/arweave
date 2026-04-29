@@ -99,7 +99,8 @@ init(WalletList, Diff, GenesisDataSize) ->
 			false ->
 				InitialHistory = get_initial_block_time_history(),
 				B1#block{
-					merkle_rebase_support_threshold = ar_block:strict_data_split_threshold() * 2,
+					merkle_rebase_support_threshold =
+							ar_block:get_merkle_rebase_support_threshold(),
 					chunk_hash = crypto:strong_rand_bytes(32),
 					block_time_history = InitialHistory,
 					block_time_history_hash = ar_block_time_history:hash(InitialHistory)

@@ -44,10 +44,21 @@ get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold,
 	end.
 
 get_data_path_validation_ruleset(BlockStartOffset) ->
-	get_data_path_validation_ruleset(BlockStartOffset, ?MERKLE_REBASE_SUPPORT_THRESHOLD,
+	get_data_path_validation_ruleset(BlockStartOffset,
+			ar_block:get_merkle_rebase_support_threshold(),
 			ar_block:strict_data_split_threshold()).
 
 validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
+	case has_redundant_rebase_marker(DataRoot, Offset, TXSize, DataPath, Chunk) of
+		true ->
+			%% Conservatively reject paths with redundant rebase markers as there's no
+			%% productive case for their use.
+			false;
+		false ->
+			validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk)
+	end.
+
+validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 	Base = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath, strict_borders_ruleset),
 	Strict = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath,
 			strict_data_split_ruleset),
@@ -72,7 +83,8 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 				false ->
 					false;
 				true ->
-					case EndOffset - StartOffset == byte_size(Chunk) of
+					case EndOffset - StartOffset == byte_size(Chunk)
+							andalso ar_merkle:has_positive_leaf_size(Offset, TXSize, DataPath) of
 						true ->
 							PassesBase = not (Base == false),
 							PassesStrict = not (Strict == false),
@@ -83,6 +95,14 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 					end
 			end
 	end.
+
+%%% @doc Return true if we recognize there is at least one redundant rebase marker.
+%%% Strip all rebase markers from the proof and return true if the resulting
+%% proof *still* validates.
+has_redundant_rebase_marker(DataRoot, Offset, TXSize, DataPath, Chunk) ->
+	StrippedDataPath = ar_merkle:strip_rebase_markers(DataPath),
+	StrippedDataPath =/= DataPath andalso
+		validate_data_path2(DataRoot, Offset, TXSize, StrippedDataPath, Chunk) =/= false.
 
 %% @doc Validate a proof of access.
 validate(Args) ->
@@ -123,7 +143,7 @@ validate(Args) ->
 	end.
 
 chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte) ->
-	chunk_proof(ChunkMetadata, SeekByte, ?MERKLE_REBASE_SUPPORT_THRESHOLD).
+	chunk_proof(ChunkMetadata, SeekByte, ar_block:get_merkle_rebase_support_threshold()).
 
 chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte, MerkleRebaseSupportThreshold) ->
 	{BlockStartOffset, BlockEndOffset, TXRoot} = ar_block_index:get_block_bounds(SeekByte),
