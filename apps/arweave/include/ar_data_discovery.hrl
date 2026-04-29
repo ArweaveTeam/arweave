@@ -53,28 +53,30 @@
 -define(PEER_INTERVAL_CACHE_TTL_MS, 60 * 1000).
 
 %% The size of the span of the weave we search at a time. ar_peer_sync's
-%% discover loop walks the unsynced range in increments of this size; the
-%% directory prefetches peer intervals at the same granularity so one peer
-%% response covers one scan step exactly.
+%% discover loop walks the unsynced range in increments of this size;
+%% ar_data_discovery prefetches peer intervals at the same granularity so
+%% one peer response covers one scan step exactly.
 -ifdef(AR_TEST).
 -define(QUERY_RANGE_STEP_SIZE, 10_000_000). % 10 MB
 -else.
 -define(QUERY_RANGE_STEP_SIZE, 1_000_000_000). % 1 GB
 -endif.
 
-%% How many scan steps ahead of the discover cursor the directory
-%% prefetches in normal mode. Keeps the cache warm for the next few
-%% discover iterations.
+%% Normal-mode prefetch depth: when discover publishes its cursor,
+%% ar_data_discovery issues peer interval refreshes for this many
+%% ?QUERY_RANGE_STEP_SIZE windows starting at the cursor. Sized so the
+%% cache stays warm for the next N discover iterations, since each
+%% iteration consumes one window.
 -define(PREFETCH_STEPS_AHEAD, 10).
 
-%% How many footprints ahead of the discover cursor the directory
+%% How many footprints ahead of the discover cursor ar_data_discovery
 %% prefetches in footprint mode. Each prefetch is one
 %% `GET /footprints/{P}/{F}' call returning all intervals for that
 %% footprint from one peer.
 -define(PREFETCH_FOOTPRINTS_AHEAD, 10).
 
 %% Upper bound on the number of concurrent peer interval refresh HTTP calls
-%% across the directory's refresh worker pool. Distinct from the
+%% across ar_data_discovery's refresh worker pool. Distinct from the
 %% DATA_DISCOVERY_PARALLEL_PEER_REQUESTS pool that handles sync_buckets /
 %% footprint_buckets fetches so the two pools don't starve each other.
 -define(MAX_CONCURRENT_INTERVAL_REFRESHES, 10).

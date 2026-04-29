@@ -195,9 +195,10 @@ get_peer_footprint_intervals(Peer, Partition, Footprint) ->
 	end.
 
 %% @doc ar_peer_sync calls this to publish where each storage module's
-%% discover cursor currently is. The directory enqueues prefetch refresh
-%% jobs for the next `?PREFETCH_STEPS_AHEAD'/`?PREFETCH_FOOTPRINTS_AHEAD'
-%% units ahead, so the cache is populated before discover reaches them.
+%% discover cursor currently is. ar_data_discovery enqueues prefetch
+%% refresh jobs for the next
+%% `?PREFETCH_STEPS_AHEAD'/`?PREFETCH_FOOTPRINTS_AHEAD' units ahead, so
+%% the cache is populated before discover reaches them.
 -spec advance_cursor(StoreID, Offset, Mode) -> ok when
 	StoreID :: term(),
 	Offset :: non_neg_integer(),
@@ -576,8 +577,8 @@ enqueue_prefetch_jobs(Offset, normal, State) ->
 	);
 enqueue_prefetch_jobs(Offset, footprint, State) ->
 	%% Walk ?PREFETCH_FOOTPRINTS_AHEAD footprints starting at Offset. Use
-	%% the same iteration rule ar_peer_sync's discover loop uses so the
-	%% directory warms the rows discover will actually consume.
+	%% the same iteration rule ar_peer_sync's discover loop uses so we
+	%% warm the rows discover will actually consume.
 	case ar_footprint_record:get_footprint_bucket(Offset + ?DATA_CHUNK_SIZE) of
 		FootprintBucket when is_integer(FootprintBucket) ->
 			Peers = get_footprint_bucket_peers(FootprintBucket),

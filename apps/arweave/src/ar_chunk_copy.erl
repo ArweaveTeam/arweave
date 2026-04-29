@@ -112,9 +112,9 @@ ready_for_work(StoreID) ->
 task_completed(Worker, ReadResult, Args) ->
 	gen_server:cast(?MODULE, {task_completed, {read_range, {Worker, ReadResult, Args}}}).
 
-%% @doc Start (or restart) a chunk-copy copy pass for the given storage
-%% module. Scans neighboring on-disk modules for unsynced intervals and
-%% enqueues cross-module copy tasks. When the copy completes, an
+%% @doc Start (or restart) a copy pass for the given storage module.
+%% Scans neighboring on-disk modules for unsynced intervals and enqueues
+%% cross-module copy tasks. When the pass completes, an
 %% `{event, chunk_copy, {complete, StoreID}}' message is published via
 %% `ar_events'.
 start_copy(StoreID) ->
@@ -197,7 +197,7 @@ do_start(StoreID, State) ->
 		sync_status = SyncStatus
 	},
 	%% Cast do_start_scan (not advance) so the device-lock check happens
-	%% before the initial discovery pass, mirroring ar_data_sync's old flow.
+	%% before the initial discovery pass.
 	gen_server:cast(?MODULE, {start_scan, StoreID}),
 	State#state{ in_progress = maps:put(StoreID, CopyState, InProgress) }.
 
