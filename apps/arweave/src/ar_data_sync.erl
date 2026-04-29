@@ -1,3 +1,27 @@
+%%% @doc Per-storage-module sync engine. One gen_server is registered as
+%%% `ar_data_sync_<StoreIDLabel>' per configured storage module (plus a
+%%% `ar_data_sync_default' singleton for the default module).
+%%%
+%%% Owns:
+%%%   - per-module state in #sync_data_state{}: block_index, weave_size,
+%%%     sync_status, range_start/end, sync_task_queue, scan_cursor,
+%%%     packing_map, store_chunk_queue, KV handle refs
+%%%   - all RocksDB opens and closes (init_kv/2, terminate/2)
+%%%   - block lifecycle: join, cut, add_tip_block, store_sync_state
+%%%   - network sync: broker_step (drives ar_sync_broker), sync_intervals
+%%%     (dispatch loop draining sync_task_queue into ar_data_sync_coordinator)
+%%%   - chunk write pipeline: pack_and_store_chunk, store_fetched_chunk,
+%%%     {chunk, packed/unpacked} info handlers, expire_repack_request,
+%%%     expire_unpack_request
+%%%   - disk-pool job loop on the default module instance
+%%%
+%%% Subsystems extracted to their own modules:
+%%%   - ar_local_copy        — local-copy producer + executor; subscribes
+%%%                            to local_copy events for completion handoff
+%%%   - ar_sync_broker       — stateless matching engine called from
+%%%                            broker_step; produces per-chunk tasks
+%%%   - ar_data_roots        — gen_server owning data-root indexing,
+%%%                            tx_index/tx_offset_index, store_block writes
 -module(ar_data_sync).
 
 -behaviour(gen_server).
