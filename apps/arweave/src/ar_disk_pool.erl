@@ -9,9 +9,8 @@
 %%%   2. A library of stateless functions (chunk admission, data-root
 %%%      bookkeeping, KV helpers) callable from any process.
 %%%
-%%% The scan-loop work used to live inside ar_data_sync_default's mailbox;
-%%% it now runs inside this gen_server. The disk pool is single-instance —
-%%% only the default storage module participates in pending-chunk processing.
+%%% The disk pool is single-instance — only the default storage module
+%%% participates in pending-chunk processing.
 %%%
 %%% Supervision ordering: ar_disk_pool is started LAST in ar_data_sync_sup
 %%% so that ar_data_sync_default has already opened the disk-pool KV
@@ -1230,7 +1229,7 @@ handle_call(Request, _From, State) ->
 	{reply, ok, State}.
 
 %%%===================================================================
-%%% Scan-loop cast handlers (formerly in ar_data_sync).
+%%% Scan-loop cast handlers.
 %%%===================================================================
 
 handle_cast(process_disk_pool_item, #disk_pool_state{ scan_pause = true } = State) ->
@@ -1274,7 +1273,7 @@ terminate(Reason, _State) ->
 	ok.
 
 %%%===================================================================
-%%% Scan action dispatcher (formerly in ar_data_sync).
+%%% Scan action dispatcher.
 %%%===================================================================
 
 handle_disk_pool_actions({next_chunk, DiskPool}, _OldState) ->

@@ -1,6 +1,15 @@
 %% The size in bits of the offset key in kv databases.
 -define(OFFSET_KEY_BITSIZE, 256).
 
+%% Polling interval for ar_device_lock cooperative locking. Sync workers
+%% that fail to acquire (or are paused on) a device lock re-cast themselves
+%% after this delay to retry without busy-spinning.
+-ifdef(AR_TEST).
+-define(DEVICE_LOCK_WAIT, 100).
+-else.
+-define(DEVICE_LOCK_WAIT, 5_000).
+-endif.
+
 %% A single sync unit: fetch the byte range [start_offset, end_offset) from
 %% `peer` into storage module `store_id`. `footprint_key` groups chunks that
 %% share the same 256 MiB entropy (replica.2.9 mode) for admission control;
@@ -76,12 +85,11 @@
 
 -define(WORKER_LOAD_TABLE, worker_load).
 
-%% Explicit scan cursor for the broker. Replaces sync_phase / scan_tasks_produced /
-%% scan_had_peers / scan_backoff_ms flat fields - all the scan-pass state now
-%% lives in one record that moves through the state machine.
+%% Explicit scan cursor for ar_peer_sync's discover loop. All scan-pass
+%% state lives in one record that moves through the discover state machine.
 -record(scan_cursor, {
 	%% Left bound of the scan range. For footprint mode, an inclusive boundary
-	%% the broker uses when cutting per-peer footprint intervals to the module.
+	%% used when cutting per-peer footprint intervals to the module.
 	start :: non_neg_integer(),
 	%% Right bound of the scan range (clamped to WeaveSize / DiskPoolThreshold
 	%% when the cursor is built).
@@ -180,7 +188,8 @@
 	%% the actual disk dump, to reduce the chance of out-of-order write causing disk
 	%% fragmentation.
 	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD,
-	%% Explicit scan cursor for the broker. See #scan_cursor{}.
-	%% `undefined' means the broker loop hasn't started its first pass yet.
+	%% Explicit scan cursor for ar_peer_sync's discover loop. See
+	%% #scan_cursor{}. `undefined' means discover hasn't started its
+	%% first pass yet.
 	scan_cursor = undefined :: undefined | #scan_cursor{}
 }).
