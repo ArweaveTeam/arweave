@@ -52,7 +52,7 @@
 %% aligns with the peer's tolerance.
 -define(PEER_INTERVAL_CACHE_TTL_MS, 60 * 1000).
 
-%% The size of the span of the weave we search at a time. The planner walks
+%% The size of the span of the weave we search at a time. The broker walks
 %% the unsynced range in increments of this size; the directory prefetches
 %% peer intervals at the same granularity so one peer response covers one
 %% scan step exactly.
@@ -62,11 +62,11 @@
 -define(QUERY_RANGE_STEP_SIZE, 1_000_000_000). % 1 GB
 -endif.
 
-%% How many scan steps ahead of the planner cursor the directory prefetches
-%% in normal mode. Keep the cache warm for the planner's next few ticks.
+%% How many scan steps ahead of the broker cursor the directory prefetches
+%% in normal mode. Keep the cache warm for the broker's next few ticks.
 -define(PREFETCH_STEPS_AHEAD, 10).
 
-%% How many footprints ahead of the planner cursor the directory prefetches
+%% How many footprints ahead of the broker cursor the directory prefetches
 %% in footprint mode. Each prefetch is one `GET /footprints/{P}/{F}` call
 %% returning all intervals for that footprint from one peer.
 -define(PREFETCH_FOOTPRINTS_AHEAD, 10).

@@ -765,17 +765,18 @@ handle_cast(sync_data2, State) ->
 	end,
 	{noreply, State3};
 
-%% One planner step: read cached peer intervals from ar_data_discovery,
-%% insert tasks into sync_task_queue, advance scan_cursor. See
-%% ar_sync_planner:step/1 for the scan loop. Dispatching to the coordinator
-%% happens in the separate sync_intervals cast below.
-handle_cast(planner_step, State) ->
-	case ar_sync_planner:step(State) of
+%% One broker step: match cached peer intervals from ar_data_discovery
+%% against this module's unsynced range and insert per-chunk tasks into
+%% sync_task_queue, advancing scan_cursor. See ar_sync_broker:step/1.
+%% Dispatching to the coordinator happens in the separate sync_intervals
+%% cast below.
+handle_cast(broker_step, State) ->
+	case ar_sync_broker:step(State) of
 		{State2, cast_now} ->
-			gen_server:cast(self(), planner_step),
+			gen_server:cast(self(), broker_step),
 			{noreply, State2};
 		{State2, {cast_after, Ms}} ->
-			ar_util:cast_after(Ms, self(), planner_step),
+			ar_util:cast_after(Ms, self(), broker_step),
 			{noreply, State2}
 	end;
 
@@ -1333,7 +1334,7 @@ do_sync_data2(#sync_data_state{
 	?LOG_INFO([{event, sync_local}, {stage, complete},
 		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd},
 		{next, network_sync}]),
-	ar_util:cast_after(2000, self(), planner_step),
+	ar_util:cast_after(2000, self(), broker_step),
 	State;
 %% @doc Check to see if a neighboring storage_module may have already synced one of our
 %% unsynced intervals

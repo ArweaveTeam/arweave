@@ -1,13 +1,16 @@
-%% @doc One planner step of the scan loop. The planner reads cached peer
-%% intervals from ar_data_discovery, intersects them with the storage
-%% module's unsynced range, and inserts tasks into the per-module
-%% ar_sync_task_queue. No HTTP happens here - peer query latency lives in
-%% the directory's background refresh pool instead.
+%% @doc Brokers per-chunk fetch assignments between the supply side
+%% (peers offering byte ranges, surfaced through ar_data_discovery's cache)
+%% and the demand side (this storage module's unsynced intervals, tracked
+%% in ar_sync_record). One step reads cached peer intervals, intersects
+%% them with the module's unsynced range, and inserts {Peer, Start, End}
+%% chunk-sized tasks into the per-module ar_sync_task_queue. No HTTP
+%% happens here - peer query latency lives in the directory's background
+%% refresh pool instead.
 %%
 %% Entry point: `step/1' takes the ar_data_sync state and returns either
 %% `{State2, cast_now}' (run another step immediately) or
 %% `{State2, {cast_after, Ms}}' (pause and retry after Ms).
--module(ar_sync_planner).
+-module(ar_sync_broker).
 
 -export([step/1, init_cursor/2, init_cursor/3, scan_ready/1]).
 
@@ -34,7 +37,7 @@
 -define(INTERVALS_QUEUE_CHUNKS_PER_WORKER, 250).
 
 %% How long to pause after init_cursor primes prefetch but before the first
-%% planner step reads the cache. Small enough that startup lag is negligible,
+%% broker step reads the cache. Small enough that startup lag is negligible,
 %% big enough that refresh workers can land at least one HTTP response.
 -ifdef(AR_TEST).
 -define(COLD_START_DELAY_MS, 200).
@@ -42,15 +45,15 @@
 -define(COLD_START_DELAY_MS, 2000).
 -endif.
 
-%% Adaptive restart delay for the planner loop. Productive scans restart at
+%% Adaptive restart delay for the broker loop. Productive scans restart at
 %% the min delay; unproductive scans double (capped at max). Resets on any
 %% productive scan.
 -ifdef(AR_TEST).
--define(PLANNER_RESTART_MIN_DELAY_MS, 1_000).
--define(PLANNER_RESTART_MAX_DELAY_MS, 1_000).
+-define(BROKER_RESTART_MIN_DELAY_MS, 1_000).
+-define(BROKER_RESTART_MAX_DELAY_MS, 1_000).
 -else.
--define(PLANNER_RESTART_MIN_DELAY_MS, 10_000).
--define(PLANNER_RESTART_MAX_DELAY_MS, 120_000).
+-define(BROKER_RESTART_MIN_DELAY_MS, 10_000).
+-define(BROKER_RESTART_MAX_DELAY_MS, 120_000).
 -endif.
 
 %%%===================================================================
@@ -62,7 +65,7 @@ step(#sync_data_state{ scan_cursor = undefined } = State) ->
 		{ok, Cursor} ->
 			%% Cold start: init_cursor has primed the directory's prefetch,
 			%% but the HTTP calls haven't landed yet. Pause before the first
-			%% real step so the planner reads a warm cache instead of racing
+			%% real step so the broker reads a warm cache instead of racing
 			%% through an empty one.
 			{State#sync_data_state{ scan_cursor = Cursor }, {cast_after, ?COLD_START_DELAY_MS}};
 		not_ready ->
@@ -112,7 +115,7 @@ init_cursor(#sync_data_state{ store_id = StoreID } = State, Mode, Backoff) ->
 					End
 			end,
 			%% Prime the directory's prefetch at the cursor's starting point
-			%% so the first planner step has a warm cache instead of reading
+			%% so the first broker step has a warm cache instead of reading
 			%% misses for a full pass while prefetch catches up.
 			ar_data_discovery:advance_cursor(StoreID, Start, Mode),
 			?LOG_INFO([{event, sync_network}, {stage, discovery_started},
@@ -123,7 +126,7 @@ init_cursor(#sync_data_state{ store_id = StoreID } = State, Mode, Backoff) ->
 				backoff_ms = Backoff }}
 	end.
 
-%% @doc Can the planner take a productive step right now? Consolidates every
+%% @doc Can the broker take a productive step right now? Consolidates every
 %% "no, wait" case: disk space, queue fullness, cursor bounds.
 scan_ready(#sync_data_state{ scan_cursor = undefined }) ->
 	ready;
@@ -432,13 +435,13 @@ flip_mode(undefined) -> normal.
 %% that never saw peers reset to the minimum (data discovery just hadn't
 %% warmed yet - not an empty-module signal).
 scan_restart_delay(#scan_cursor{ tasks_produced = N }) when N > 0 ->
-	{?PLANNER_RESTART_MIN_DELAY_MS, 0};
+	{?BROKER_RESTART_MIN_DELAY_MS, 0};
 scan_restart_delay(#scan_cursor{ had_peers = false }) ->
-	{?PLANNER_RESTART_MIN_DELAY_MS, 0};
+	{?BROKER_RESTART_MIN_DELAY_MS, 0};
 scan_restart_delay(#scan_cursor{ backoff_ms = PrevBackoff }) ->
 	NewBackoff = min(
-		max(?PLANNER_RESTART_MIN_DELAY_MS, PrevBackoff * 2),
-		?PLANNER_RESTART_MAX_DELAY_MS),
+		max(?BROKER_RESTART_MIN_DELAY_MS, PrevBackoff * 2),
+		?BROKER_RESTART_MAX_DELAY_MS),
 	{NewBackoff, NewBackoff}.
 
 %%%===================================================================

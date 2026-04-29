@@ -97,12 +97,12 @@
 
 -define(WORKER_LOAD_TABLE, worker_load).
 
-%% Explicit scan cursor for the planner. Replaces sync_phase / scan_tasks_produced /
+%% Explicit scan cursor for the broker. Replaces sync_phase / scan_tasks_produced /
 %% scan_had_peers / scan_backoff_ms flat fields - all the scan-pass state now
 %% lives in one record that moves through the state machine.
 -record(scan_cursor, {
 	%% Left bound of the scan range. For footprint mode, an inclusive boundary
-	%% the planner uses when cutting per-peer footprint intervals to the module.
+	%% the broker uses when cutting per-peer footprint intervals to the module.
 	start :: non_neg_integer(),
 	%% Right bound of the scan range (clamped to WeaveSize / DiskPoolThreshold
 	%% when the cursor is built).
@@ -216,7 +216,7 @@
 	%% the actual disk dump, to reduce the chance of out-of-order write causing disk
 	%% fragmentation.
 	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD,
-	%% Explicit scan cursor for the planner. See #scan_cursor{}.
-	%% `undefined' means the planner loop hasn't started its first pass yet.
+	%% Explicit scan cursor for the broker. See #scan_cursor{}.
+	%% `undefined' means the broker loop hasn't started its first pass yet.
 	scan_cursor = undefined :: undefined | #scan_cursor{}
 }).
