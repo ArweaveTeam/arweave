@@ -1111,10 +1111,7 @@ wait_until_syncs_genesis_data() ->
 	%% copy the missing data over from each other. This procedure is executed on startup
 	%% but the disk pool did not have any data at the time.
 	[
-		gen_server:cast(
-			list_to_atom("ar_data_sync_" ++ ar_storage_module:label(ar_storage_module:id(M))),
-			local_copy_start
-		)
+		ar_local_copy:start_drain(ar_storage_module:id(M))
 		|| M <- Config#config.storage_modules
 	],
 	[wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, Packing)

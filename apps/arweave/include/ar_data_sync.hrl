@@ -199,13 +199,6 @@
 	range_start = -1,
 	%% The end offset of the range the module is responsible for.
 	range_end = -1,
-	%% The list of {StoreID, {Start, End}} - the ranges we want to copy
-	%% from the other storage modules (possibly, (re)packing the data in the process).
-	unsynced_intervals_from_other_storage_modules = [],
-	%% The list of identifiers of the non-default storage modules intersecting with the given
-	%% storage module to be searched for missing data before attempting to sync the data
-	%% from the network.
-	other_storage_modules_with_unsynced_intervals = [],
 	%% The priority queue of chunks sorted by offset. The motivation is to have chunks
 	%% stack up, per storage module, before writing them on disk so that we can write
 	%% them in the ascending order and reduce out-of-order disk writes causing fragmentation.
