@@ -537,12 +537,21 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 
 	StateMap = read_data_sync_state(),
 	CurrentBI = maps:get(block_index, StateMap),
-	%% Populate ar_disk_pool's shared ETS state (data-root map + threshold)
-	%% before the periodic store_sync_state cast can fire and overwrite the
-	%% on-disk blob with an empty disk_pool_data_roots map. ar_disk_pool's
-	%% own gen_server starts later in the supervisor; this side-effect call
-	%% bridges the gap.
-	ar_disk_pool:init_state(StateMap, StoreID),
+	%% Bootstrap the disk-pool ETS state. ar_local_copy reads
+	%% ar_disk_pool:get_threshold/0 and starts before ar_disk_pool's
+	%% gen_server, and the periodic store_sync_state cast (scheduled
+	%% below) reads ar_disk_pool:get_data_roots/0 - so both have to be
+	%% in place before either fires. Otherwise we'd persist an empty
+	%% disk_pool_data_roots map and lose pending data roots on the
+	%% next restart.
+	case StateMap of
+		#{ disk_pool_threshold := DPT } ->
+			ar_disk_pool:set_threshold(DPT);
+		_ ->
+			ar_disk_pool:update_threshold(CurrentBI)
+	end,
+	ar_disk_pool:populate_data_roots(
+		maps:get(disk_pool_data_roots, StateMap), StoreID),
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = maps:get(weave_size, StateMap),

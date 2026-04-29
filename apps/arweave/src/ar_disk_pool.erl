@@ -28,7 +28,7 @@
 		get_data_roots/0, remove_expired_data_roots/0,
 		get_threshold/0, set_threshold/1, update_threshold/1]).
 
--export([init_state/0, init_state/2, recalculate_size/2,
+-export([init_state/0, populate_data_roots/2, recalculate_size/2,
 		add_block_data_roots/1, reset_orphaned_data_roots_timestamps/1,
 		move_index/1, column_family/1, open_index_db/3,
 		process_next_chunk/2, process_chunk/4, process_chunk_offsets/5,
@@ -73,8 +73,8 @@
 	%% A registry of the disk pool chunks in process consulted by different
 	%% disk pool jobs to avoid double-processing.
 	keys_in_process = sets:new(),
-	%% Pause flag toggled by the wrapped/none scan-action: when true,
-	%% process_disk_pool_item casts no-op until resume_disk_pool_scan fires.
+	%% Temporarily pauses scan jobs after a full pass finishes too quickly.
+	%% While true, process_disk_pool_item waits for resume_disk_pool_scan.
 	scan_pause = false
 }).
 
@@ -468,16 +468,13 @@ update_threshold(BI) ->
 init_state() ->
 	#disk_pool_state{}.
 
-init_state(StateMap, StoreID) ->
-	DiskPoolDataRoots = maps:get(disk_pool_data_roots, StateMap),
-	recalculate_size(DiskPoolDataRoots, StoreID),
-	case StateMap of
-		#{ disk_pool_threshold := T } ->
-			set_threshold(T);
-		_ ->
-			update_threshold(maps:get(block_index, StateMap))
-	end,
-	init_state().
+%% @doc Rebuild the in-memory ar_disk_pool_data_roots map from a
+%% persisted disk_pool_data_roots map and the on-disk
+%% disk_pool_chunks_index. Walks the index to recompute per-data-root
+%% sizes; entries in the index whose data root isn't in the persisted
+%% map are skipped. Called from ar_disk_pool's gen_server init.
+populate_data_roots(DataRootMap, StoreID) ->
+	recalculate_size(DataRootMap, StoreID).
 
 recalculate_size(DataRootMap, StoreID) ->
 	Index = index_db(StoreID),
@@ -1186,10 +1183,10 @@ init([]) ->
 	?LOG_INFO([{event, ar_disk_pool_start}]),
 	{ok, Config} = arweave_config:get_env(),
 	[ok] = ar_events:subscribe([node_state]),
-	%% The shared ETS state (ar_disk_pool_data_roots, disk_pool_threshold)
-	%% has already been populated by ar_data_sync_default's init via
-	%% init_state(StateMap, ?DEFAULT_MODULE). This gen_server only owns
-	%% the per-process scan cursor / pause flag in #disk_pool_state{}.
+	%% Shared ETS state (ar_disk_pool_data_roots, disk_pool_threshold)
+	%% was bootstrapped by ar_data_sync_default's init - this gen_server
+	%% only owns the per-process #disk_pool_state{} (scan cursor, pause
+	%% flag, recently-processed offsets cache).
 	{ok, _} = ar_timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		?MODULE, record_chunks_count, [],
