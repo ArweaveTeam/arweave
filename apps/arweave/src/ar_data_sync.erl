@@ -46,7 +46,7 @@
 		delete_chunk_metadata/2, update_chunks_index/3, get_tx_offset/2]).
 
 %% For data-doctor tools
--export([init_kv/2, open_store_dbs/2, read_data_sync_state/0]).
+-export([init_kv/2, open_store_dbs/2]).
 
 -export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([store_fetched_chunk/4]).
@@ -537,6 +537,12 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 
 	StateMap = read_data_sync_state(),
 	CurrentBI = maps:get(block_index, StateMap),
+	%% Populate ar_disk_pool's shared ETS state (data-root map + threshold)
+	%% before the periodic store_sync_state cast can fire and overwrite the
+	%% on-disk blob with an empty disk_pool_data_roots map. ar_disk_pool's
+	%% own gen_server starts later in the supervisor; this side-effect call
+	%% bridges the gap.
+	ar_disk_pool:init_state(StateMap, StoreID),
 	State2 = State#sync_data_state{
 		block_index = CurrentBI,
 		weave_size = maps:get(weave_size, StateMap),
