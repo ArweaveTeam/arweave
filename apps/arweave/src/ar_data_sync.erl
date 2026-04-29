@@ -122,15 +122,18 @@ invalidate_bad_data_record(AbsoluteEndOffset, ChunkSize, StoreID, Case) ->
 store_fetched_chunk(StoreID, Peer, Byte, Proof) ->
 	gen_server:cast(?MODULE:name(StoreID), {store_fetched_chunk, Peer, Byte, Proof}).
 
-%% @doc Store the given data roots asynchronously.
+%% @doc Store the given data roots asynchronously. Thin proxy: forwards to
+%% ar_data_roots, which owns the data root indexes. Kept as ar_data_sync's
+%% public API for backwards compatibility with existing call sites; new
+%% code should call ar_data_roots:store_block_async/5 directly.
 store_data_roots(BlockStart, BlockEnd, TXRoot, DataRootEntries) ->
-	gen_server:cast(ar_data_sync_default,
-		{store_data_roots, BlockStart, BlockEnd, TXRoot, DataRootEntries}).
+	ar_data_roots:store_block_async(
+		BlockStart, BlockEnd, TXRoot, DataRootEntries, ?DEFAULT_MODULE).
 
-%% @doc Store the given data roots synchronously.
+%% @doc Store the given data roots synchronously. Thin proxy.
 store_data_roots_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries) ->
-	gen_server:call(ar_data_sync_default,
-		{store_data_roots_sync, BlockStart, BlockEnd, TXRoot, DataRootEntries}, 120000).
+	ar_data_roots:store_block_sync(
+		BlockStart, BlockEnd, TXRoot, DataRootEntries, ?DEFAULT_MODULE).
 
 %% @doc The condition which is true if the chunk is too small compared to the proof.
 %% Small chunks make syncing slower and increase space amplification. A small chunk
@@ -641,12 +644,6 @@ handle_continue({init, RepackInPlacePacking},
 			{noreply, State3}
 	end.
 
-handle_cast({store_data_roots, BlockStart, BlockEnd, TXRoot, DataRootEntries}, State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	BlockSize = BlockEnd - BlockStart,
-	ar_data_roots:store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID),
-	{noreply, State};
-
 handle_cast(process_store_chunk_queue, State) ->
 	ar_util:cast_after(200, self(), process_store_chunk_queue),
 	{noreply, process_store_chunk_queue(State)};
@@ -656,7 +653,7 @@ handle_cast({initialize_footprint_record, Cursor, Packing}, State) ->
 	{noreply, State2};
 
 handle_cast({join, RecentBI}, State) ->
-	#sync_data_state{ block_index = CurrentBI } = State,
+	#sync_data_state{ block_index = CurrentBI, store_id = StoreID } = State,
 	[{_, WeaveSize, _} | _] = RecentBI,
 	case {CurrentBI, ar_block_index:get_intersection(CurrentBI)} of
 		{[], _} ->
@@ -679,7 +676,7 @@ handle_cast({join, RecentBI}, State) ->
 				Config#config.storage_modules)
 	end,
 	BI = ar_block_index:get_list_by_hash(element(1, lists:last(RecentBI))),
-	repair_data_root_offset_index(BI, State),
+	ar_data_roots:repair_data_root_offset_index(BI, StoreID),
 	State2 = store_sync_state(
 		State#sync_data_state{
 			weave_size = WeaveSize,
@@ -722,7 +719,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 			({_BH, SizeTaggedTXs}, {StartOffset, DataRootIDsAcc}) ->
 				{ok, DataRootIDs} =
 					ar_data_roots:add_block_data_roots(SizeTaggedTXs, StartOffset, StoreID),
-				ok = update_tx_index(SizeTaggedTXs, StartOffset, StoreID),
+				ok = ar_data_roots:update_tx_index(SizeTaggedTXs, StartOffset, StoreID),
 				{StartOffset + element(2, lists:last(SizeTaggedTXs)),
 					sets:union(DataRootIDsAcc, DataRootIDs)}
 		end,
@@ -1011,13 +1008,7 @@ handle_disk_pool_actions(
 
 handle_call({add_block, B, SizeTaggedTXs}, _From, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	{reply, add_block(B, SizeTaggedTXs, StoreID), State};
-
-handle_call({store_data_roots_sync, BlockStart, BlockEnd, TXRoot, DataRootEntries}, _From, State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	BlockSize = BlockEnd - BlockStart,
-	ar_data_roots:store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID),
-	{reply, ok, State};
+	{reply, ar_data_roots:add_block(B, SizeTaggedTXs, StoreID), State};
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
@@ -1810,7 +1801,7 @@ remove_orphaned_data(_State, BlockStartOffset, WeaveSize)
 	ok;
 remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	#sync_data_state{ store_id = StoreID } = State,
-	ok = remove_tx_index_range(BlockStartOffset, WeaveSize, State),
+	ok = ar_data_roots:remove_tx_index_range(BlockStartOffset, WeaveSize, StoreID),
 	{ok, OrphanedDataRoots} =
 		ar_data_roots:remove_range(BlockStartOffset, WeaveSize, StoreID),
 	ok = delete_chunk_metadata_range(BlockStartOffset, WeaveSize, State),
@@ -1818,103 +1809,6 @@ remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	ok = ar_sync_record:cut(BlockStartOffset, ar_data_sync, StoreID),
 	ar_events:send(sync_record, {global_cut, BlockStartOffset}),
 	ar_disk_pool:reset_orphaned_data_roots_timestamps(OrphanedDataRoots),
-	ok.
-
-remove_tx_index_range(Start, End, State) ->
-	#sync_data_state{ tx_offset_index = TXOffsetIndex, tx_index = TXIndex } = State,
-	ok = case ar_kv:get_range(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>,
-			<< (End - 1):?OFFSET_KEY_BITSIZE >>) of
-		{ok, EmptyMap} when map_size(EmptyMap) == 0 ->
-			ok;
-		{ok, Map} ->
-			maps:fold(
-				fun
-					(_, _Value, {error, _} = Error) ->
-						Error;
-					(_, TXID, ok) ->
-						ar_kv:delete(TXIndex, TXID),
-						ar_tx_blacklist:norify_about_orphaned_tx(TXID)
-				end,
-				ok,
-				Map
-			);
-		Error ->
-			Error
-	end,
-	ar_kv:delete_range(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>,
-			<< End:?OFFSET_KEY_BITSIZE >>).
-
-repair_data_root_offset_index(BI, State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	RemoveTXRange =
-		fun(BlockStart, BlockEnd) ->
-			remove_tx_index_range(BlockStart, BlockEnd, State)
-		end,
-	case ar_data_roots:repair(BI, StoreID, RemoveTXRange) of
-		{ok, ResyncBlocks} ->
-			[ar_header_sync:remove_block(Height) || Height <- ResyncBlocks],
-			ok;
-		ok ->
-			ok
-	end.
-
-add_block(B, SizeTaggedTXs, StoreID) ->
-	#block{ indep_hash = H, weave_size = WeaveSize, tx_root = TXRoot } = B,
-	case ar_block_index:get_element_by_height(B#block.height) of
-		{H, WeaveSize, TXRoot} ->
-			case ar_data_roots:are_synced(B, StoreID) of
-				false ->
-					BlockStart = B#block.weave_size - B#block.block_size,
-					{ok, _} =
-						ar_data_roots:add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID),
-					ok = update_tx_index(SizeTaggedTXs, BlockStart, StoreID),
-					ok;
-				_ ->
-					ok
-			end;
-		_ ->
-			ok
-	end.
-
-update_tx_index([], _BlockStartOffset, _StoreID) ->
-	ok;
-update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
-	lists:foldl(
-		fun ({_, Offset}, Offset) ->
-				Offset;
-			({{padding, _}, Offset}, _) ->
-				Offset;
-			({{TXID, _}, TXEndOffset}, PreviousOffset) ->
-				AbsoluteEndOffset = BlockStartOffset + TXEndOffset,
-				TXSize = TXEndOffset - PreviousOffset,
-				AbsoluteStartOffset = AbsoluteEndOffset - TXSize,
-				case ar_kv:put({tx_offset_index, StoreID},
-						<< AbsoluteStartOffset:?OFFSET_KEY_BITSIZE >>, TXID) of
-					ok ->
-						case ar_kv:put({tx_index, StoreID}, TXID,
-								term_to_binary({AbsoluteEndOffset, TXSize})) of
-							ok ->
-								ar_events:send(tx, {registered_offset, TXID, AbsoluteEndOffset,
-										TXSize}),
-								ar_tx_blacklist:notify_about_added_tx(TXID, AbsoluteEndOffset,
-										AbsoluteStartOffset),
-								TXEndOffset;
-							{error, Reason} ->
-								?LOG_ERROR([{event, failed_to_update_tx_index},
-										{reason, io_lib:format("~p", [Reason])},
-										{tx, ar_util:encode(TXID)}]),
-								TXEndOffset
-						end;
-					{error, Reason} ->
-						?LOG_ERROR([{event, failed_to_update_tx_offset_index},
-								{reason, io_lib:format("~p", [Reason])},
-								{tx, ar_util:encode(TXID)}]),
-						TXEndOffset
-				end
-		end,
-		0,
-		SizeTaggedTXs
-	),
 	ok.
 
 store_sync_state(#sync_data_state{ store_id = ?DEFAULT_MODULE } = State) ->
