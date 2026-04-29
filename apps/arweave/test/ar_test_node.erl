@@ -1113,7 +1113,7 @@ wait_until_syncs_genesis_data() ->
 	[
 		gen_server:cast(
 			list_to_atom("ar_data_sync_" ++ ar_storage_module:label(ar_storage_module:id(M))),
-			sync_data
+			local_copy_start
 		)
 		|| M <- Config#config.storage_modules
 	],

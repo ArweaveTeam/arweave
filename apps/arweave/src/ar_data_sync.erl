@@ -624,7 +624,7 @@ handle_continue({init, RepackInPlacePacking},
 			%% Start syncing immediately. For replica_2_9 packing, chunks will be
 			%% written as unpacked_padded first and upgraded once entropy arrives.
 			gen_server:cast(self(), sync_intervals),
-			gen_server:cast(self(), sync_data),
+			gen_server:cast(self(), local_copy_start),
 			maybe_run_footprint_record_initialization(State3),
 			?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID}]),
 			{noreply, State3};
@@ -735,30 +735,30 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 		}),
 	{noreply, State2};
 
-handle_cast(sync_data, State) ->
+handle_cast(local_copy_start, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
 	State3 = case Status of
 		active ->
-			do_sync_data(State2);
+			do_local_copy_start(State2);
 		paused ->
-			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync_data),
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), local_copy_start),
 			State2;
 		_ ->
 			State2
 	end,
 	{noreply, State3};
 
-handle_cast(sync_data2, State) ->
+handle_cast(local_copy_step, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
 	State3 = case Status of
 		active ->
-			do_sync_data2(State2);
+			do_local_copy_step(State2);
 		paused ->
-			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync_data2),
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), local_copy_step),
 			State2;
 		_ ->
 			State2
@@ -1302,14 +1302,14 @@ do_sync_intervals(State) ->
 			State#sync_data_state{ sync_task_queue = Q2 }
 	end.
 
-do_sync_data(State) ->
+do_local_copy_start(State) ->
 	#sync_data_state{ store_id = StoreID, range_start = RangeStart, range_end = RangeEnd } = State,
 	DiskPoolThreshold = ar_disk_pool:get_threshold(),
 	%% See if any of StoreID's unsynced intervals can be found in the "default"
 	%% storage_module
 	Intervals = get_unsynced_intervals_from_other_storage_modules(
 		StoreID, ?DEFAULT_MODULE, RangeStart, min(RangeEnd, DiskPoolThreshold)),
-	gen_server:cast(self(), sync_data2),
+	gen_server:cast(self(), local_copy_step),
 	%% Find all storage_modules that might include the target chunks (e.g. neighboring
 	%% storage_modules with an overlap, or unpacked copies used for packing, etc...)
 	OtherStorageModules = [ar_storage_module:id(Module)
@@ -1326,7 +1326,7 @@ do_sync_data(State) ->
 	}.
 
 %% @doc No unsynced overlap intervals, proceed with syncing
-do_sync_data2(#sync_data_state{
+do_local_copy_step(#sync_data_state{
 		unsynced_intervals_from_other_storage_modules = [],
 		other_storage_modules_with_unsynced_intervals = [] } = State) ->
 	#sync_data_state{ store_id = StoreID,
@@ -1338,7 +1338,7 @@ do_sync_data2(#sync_data_state{
 	State;
 %% @doc Check to see if a neighboring storage_module may have already synced one of our
 %% unsynced intervals
-do_sync_data2(#sync_data_state{
+do_local_copy_step(#sync_data_state{
 			store_id = StoreID, range_start = RangeStart, range_end = RangeEnd,
 			unsynced_intervals_from_other_storage_modules = [],
 			other_storage_modules_with_unsynced_intervals = [OtherStoreID | OtherStoreIDs]
@@ -1349,13 +1349,13 @@ do_sync_data2(#sync_data_state{
 		{store_id, StoreID}, {other_store_id, OtherStoreID},
 		{range_start, RangeStart}, {range_end, RangeEnd},
 		{found_intervals, length(Intervals)}]),
-	gen_server:cast(self(), sync_data2),
+	gen_server:cast(self(), local_copy_step),
 	State#sync_data_state{
 		unsynced_intervals_from_other_storage_modules = Intervals,
 		other_storage_modules_with_unsynced_intervals = OtherStoreIDs
 	};
 %% @doc Read an unsynced interval from the disk of a neighboring storage_module
-do_sync_data2(#sync_data_state{
+do_local_copy_step(#sync_data_state{
 		store_id = StoreID,
 		unsynced_intervals_from_other_storage_modules =
 			[{OtherStoreID, {Start, End}} | Intervals]
@@ -1368,7 +1368,7 @@ do_sync_data2(#sync_data_state{
 			false ->
 				State
 		end,
-	ar_util:cast_after(50, self(), sync_data2),
+	ar_util:cast_after(50, self(), local_copy_step),
 	State2.
 
 get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrigin) ->
