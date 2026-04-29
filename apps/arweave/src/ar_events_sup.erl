@@ -55,6 +55,8 @@ init([]) ->
 		?CHILD(ar_events, sync_record, worker),
 		%% Events: rejected, stale, partial, accepted, confirmed, orphaned.
 		?CHILD(ar_events, solution, worker),
+		%% Events: complete (per-StoreID local-copy drain finished).
+		?CHILD(ar_events, local_copy, worker),
 		%% Used for the testing purposes.
 		?CHILD(ar_events, testing, worker)
 	]}}.

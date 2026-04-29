@@ -516,7 +516,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	{ok, Config} = arweave_config:get_env(),
-	[ok, ok] = ar_events:subscribe([node_state, disksup]),
+	[ok, ok, ok] = ar_events:subscribe([node_state, disksup, local_copy]),
 	State = init_kv(#sync_data_state{}, StoreID),
 	{ok, _} = ar_timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
@@ -596,7 +596,7 @@ init({StoreID, RepackInPlacePacking}) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
-	[ok, ok] = ar_events:subscribe([node_state, disksup]),
+	[ok, ok, ok] = ar_events:subscribe([node_state, disksup, local_copy]),
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 	RangeStart2 = max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
 	RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
@@ -624,7 +624,10 @@ handle_continue({init, RepackInPlacePacking},
 			%% Start syncing immediately. For replica_2_9 packing, chunks will be
 			%% written as unpacked_padded first and upgraded once entropy arrives.
 			gen_server:cast(self(), sync_intervals),
-			gen_server:cast(self(), local_copy_start),
+			%% Local-copy drain runs in ar_local_copy and publishes
+			%% {event, local_copy, {complete, StoreID}} when done. The
+			%% handle_info clause for that event kicks off broker_step.
+			ar_local_copy:start_drain(StoreID),
 			maybe_run_footprint_record_initialization(State3),
 			?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID}]),
 			{noreply, State3};
@@ -734,36 +737,6 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 			block_index = BI
 		}),
 	{noreply, State2};
-
-handle_cast(local_copy_start, State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
-	State2 = State#sync_data_state{ sync_status = Status },
-	State3 = case Status of
-		active ->
-			do_local_copy_start(State2);
-		paused ->
-			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), local_copy_start),
-			State2;
-		_ ->
-			State2
-	end,
-	{noreply, State3};
-
-handle_cast(local_copy_step, State) ->
-	#sync_data_state{ store_id = StoreID } = State,
-	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
-	State2 = State#sync_data_state{ sync_status = Status },
-	State3 = case Status of
-		active ->
-			do_local_copy_step(State2);
-		paused ->
-			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), local_copy_step),
-			State2;
-		_ ->
-			State2
-	end,
-	{noreply, State3};
 
 %% One broker step: match cached peer intervals from ar_data_discovery
 %% against this module's unsynced range and insert per-chunk tasks into
@@ -1063,6 +1036,16 @@ handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
 
+%% ar_local_copy publishes this event when its drain pass finishes for a
+%% storage module. Use it as the handoff signal to start the network-sync
+%% broker. The 2s delay primes the directory cache before the first scan.
+handle_info({event, local_copy, {complete, StoreID}},
+		#sync_data_state{ store_id = StoreID } = State) ->
+	ar_util:cast_after(2000, self(), broker_step),
+	{noreply, State};
+handle_info({event, local_copy, _}, State) ->
+	{noreply, State};
+
 handle_info({chunk, {unpacked, Key, ChunkArgs}}, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	case maps:get(Key, PackingMap, not_found) of
@@ -1302,74 +1285,9 @@ do_sync_intervals(State) ->
 			State#sync_data_state{ sync_task_queue = Q2 }
 	end.
 
-do_local_copy_start(State) ->
-	#sync_data_state{ store_id = StoreID, range_start = RangeStart, range_end = RangeEnd } = State,
-	DiskPoolThreshold = ar_disk_pool:get_threshold(),
-	%% See if any of StoreID's unsynced intervals can be found in the "default"
-	%% storage_module
-	Intervals = get_unsynced_intervals_from_other_storage_modules(
-		StoreID, ?DEFAULT_MODULE, RangeStart, min(RangeEnd, DiskPoolThreshold)),
-	gen_server:cast(self(), local_copy_step),
-	%% Find all storage_modules that might include the target chunks (e.g. neighboring
-	%% storage_modules with an overlap, or unpacked copies used for packing, etc...)
-	OtherStorageModules = [ar_storage_module:id(Module)
-			|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
-			ar_storage_module:id(Module) /= StoreID],
-	?LOG_INFO([{event, sync_local}, {stage, copy_from_default},
-		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd},
-		{disk_pool_threshold, DiskPoolThreshold},
-		{default_intervals, length(Intervals)},
-		{other_storage_modules, length(OtherStorageModules)}]),
-	State#sync_data_state{
-		unsynced_intervals_from_other_storage_modules = Intervals,
-		other_storage_modules_with_unsynced_intervals = OtherStorageModules
-	}.
-
-%% @doc No unsynced overlap intervals, proceed with syncing
-do_local_copy_step(#sync_data_state{
-		unsynced_intervals_from_other_storage_modules = [],
-		other_storage_modules_with_unsynced_intervals = [] } = State) ->
-	#sync_data_state{ store_id = StoreID,
-		range_start = RangeStart, range_end = RangeEnd } = State,
-	?LOG_INFO([{event, sync_local}, {stage, complete},
-		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd},
-		{next, network_sync}]),
-	ar_util:cast_after(2000, self(), broker_step),
-	State;
-%% @doc Check to see if a neighboring storage_module may have already synced one of our
-%% unsynced intervals
-do_local_copy_step(#sync_data_state{
-			store_id = StoreID, range_start = RangeStart, range_end = RangeEnd,
-			unsynced_intervals_from_other_storage_modules = [],
-			other_storage_modules_with_unsynced_intervals = [OtherStoreID | OtherStoreIDs]
-		} = State) ->
-	Intervals = get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
-			RangeStart, RangeEnd),
-	?LOG_INFO([{event, sync_local}, {stage, copy_from_other_module},
-		{store_id, StoreID}, {other_store_id, OtherStoreID},
-		{range_start, RangeStart}, {range_end, RangeEnd},
-		{found_intervals, length(Intervals)}]),
-	gen_server:cast(self(), local_copy_step),
-	State#sync_data_state{
-		unsynced_intervals_from_other_storage_modules = Intervals,
-		other_storage_modules_with_unsynced_intervals = OtherStoreIDs
-	};
-%% @doc Read an unsynced interval from the disk of a neighboring storage_module
-do_local_copy_step(#sync_data_state{
-		store_id = StoreID,
-		unsynced_intervals_from_other_storage_modules =
-			[{OtherStoreID, {Start, End}} | Intervals]
-		} = State) ->
-	State2 =
-		case ar_chunk_copy:read_range(Start, End, OtherStoreID, StoreID) of
-			true ->
-				State#sync_data_state{
-					unsynced_intervals_from_other_storage_modules = Intervals };
-			false ->
-				State
-		end,
-	ar_util:cast_after(50, self(), local_copy_step),
-	State2.
+%% Local-copy drain logic moved to ar_local_copy. ar_data_sync receives
+%% the {event, local_copy, {complete, StoreID}} event when the drain
+%% finishes (handled in handle_info below).
 
 get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrigin) ->
 	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID, true,
@@ -2023,45 +1941,6 @@ store_sync_state(State) ->
 %%   OtherStoreID - The ID of the storage module to sync from (this module might have the data)
 %%   RangeStart - The start offset of the range to check
 %%   RangeEnd - The end offset of the range to check
-get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
-		RangeEnd) ->
-	get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
-			RangeEnd, []).
-
-get_unsynced_intervals_from_other_storage_modules(_StoreID, _OtherStoreID, RangeStart,
-		RangeEnd, Intervals) when RangeStart >= RangeEnd ->
-	Intervals;
-get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
-		RangeEnd, Intervals) ->
-	FindNextMissing =
-		case ar_sync_record:get_next_synced_interval(RangeStart, RangeEnd, ar_data_sync,
-		StoreID) of
-			not_found ->
-				{request, {RangeStart, RangeEnd}};
-			{End, Start} when Start =< RangeStart ->
-				{skip, End};
-			{_End, Start} ->
-				{request, {RangeStart, Start}}
-		end,
-	case FindNextMissing of
-		{skip, End2} ->
-			get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, End2,
-					RangeEnd, Intervals);
-		{request, {Cursor, RightBound}} ->
-			case ar_sync_record:get_next_synced_interval(Cursor, RightBound, ar_data_sync,
-					OtherStoreID) of
-				not_found ->
-					get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
-							RightBound, RangeEnd, Intervals);
-				{End2, Start2} ->
-					Start3 = max(Start2, Cursor),
-					Intervals2 = [{OtherStoreID, {Start3, End2}} | Intervals],
-					get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
-							End2, RangeEnd, Intervals2)
-			end
-	end.
-
-
 unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, State) ->
 	#sync_data_state{ packing_map = PackingMap } = State,
 	case maps:is_key({AbsoluteEndOffset, unpacked}, PackingMap) of

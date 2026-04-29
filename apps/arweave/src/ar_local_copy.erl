@@ -1,10 +1,28 @@
-%%% @doc The module maintains a queue of processes fetching data from the network
-%%% and from the local storage modules.
--module(ar_chunk_copy).
+%%% @doc Local-copy subsystem.
+%%%
+%%% Two responsibilities, one gen_server:
+%%%
+%%%  1. **Producer** (per-StoreID drain loop): scan for unsynced byte ranges
+%%%     that already exist on this node's disk under another storage module's
+%%%     ID, and enqueue cross-module copy tasks. Driven by `start_drain/1'
+%%%     (called once per module from `ar_data_sync' at init). When a module's
+%%%     drain completes, publishes `{event, local_copy, {complete, StoreID}}'
+%%%     via `ar_events'; `ar_data_sync' subscribes and uses this as the
+%%%     handoff signal to start the network-sync broker.
+%%%
+%%%  2. **Executor** (per-StoreID worker pool): receive `read_range' tasks
+%%%     and dispatch them to `ar_data_sync_worker' instances. One worker
+%%%     per StoreID, queue per worker, capped active task count.
+%%%
+%%% The producer's drain steps and the executor's task admission both go
+%%% through this gen_server's mailbox so per-StoreID drain state and per-
+%%% worker queues are serialized in one place.
+-module(ar_local_copy).
 
 -behaviour(gen_server).
 
--export([start_link/1, register_workers/0, read_range/4, task_completed/3]).
+-export([start_link/1, register_workers/0, read_range/4, task_completed/3,
+	start_drain/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -18,14 +36,36 @@
 -define(MAX_QUEUED_TASKS, 50).
 -define(SYNC_RECORD_READY_TIMEOUT_MS, 900).
 
+-ifdef(AR_TEST).
+-define(DEVICE_LOCK_WAIT, 100).
+-else.
+-define(DEVICE_LOCK_WAIT, 5_000).
+-endif.
+
 -record(worker_tasks, {
 	worker,
 	task_queue = queue:new(),
 	active_count = 0
 }).
 
+%% Producer-side state for one storage module's drain pass.
+-record(drain_state, {
+	store_id,
+	range_start,
+	range_end,
+	%% Intervals discovered in another storage module that should be copied
+	%% into this module. Element shape: {OtherStoreID, {Start, End}}.
+	pending_intervals = [],
+	%% Other storage modules still to scan for shared intervals.
+	pending_modules = [],
+	%% Mirror of ar_device_lock's view of this module's sync-mode lock.
+	sync_status = off
+}).
+
 -record(state, {
-	workers = #{}
+	workers = #{},
+	%% StoreID => #drain_state{}.
+	drains = #{}
 }).
 
 %%%===================================================================
@@ -38,8 +78,8 @@ start_link(WorkerMap) ->
 
 register_workers() ->
 	{Workers, WorkerMap} = register_read_workers(),
-	ChunkCopy = ?CHILD_WITH_ARGS(ar_chunk_copy, worker, ar_chunk_copy, [WorkerMap]),
-	Workers ++ [ChunkCopy].
+	LocalCopy = ?CHILD_WITH_ARGS(ar_local_copy, worker, ar_local_copy, [WorkerMap]),
+	Workers ++ [LocalCopy].
 
 register_read_workers() ->
 	{ok, Config} = arweave_config:get_env(),
@@ -81,9 +121,17 @@ read_range(Start, End, OriginStoreID, TargetStoreID) ->
 			false
 	end.
 
-%% @doc Notify ar_chunk_copy that a read_range task has completed.
+%% @doc Notify ar_local_copy that a read_range task has completed.
 task_completed(Worker, ReadResult, Args) ->
 	gen_server:cast(?MODULE, {task_completed, {read_range, {Worker, ReadResult, Args}}}).
+
+%% @doc Start (or restart) a local-copy drain pass for the given storage
+%% module. Scans neighboring on-disk modules for unsynced intervals and
+%% enqueues cross-module copy tasks. When the drain completes, an
+%% `{event, local_copy, {complete, StoreID}}' message is published via
+%% `ar_events'.
+start_drain(StoreID) ->
+	gen_server:cast(?MODULE, {start_drain, StoreID}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -120,6 +168,15 @@ handle_cast(process_queues, State) ->
 handle_cast({task_completed, {read_range, {Worker, _, Args}}}, State) ->
 	{noreply, task_completed(Args, State)};
 
+handle_cast({start_drain, StoreID}, State) ->
+	{noreply, start_drain_internal(StoreID, State)};
+
+handle_cast({drain_init, StoreID}, State) ->
+	{noreply, drain_init(StoreID, State)};
+
+handle_cast({drain_step, StoreID}, State) ->
+	{noreply, drain_step(StoreID, State)};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
@@ -133,7 +190,198 @@ terminate(Reason, _State) ->
 	ok.
 
 %%%===================================================================
-%%% Private functions.
+%%% Private functions — drain (producer side).
+%%%===================================================================
+
+%% @doc Initialize drain state for a storage module and kick off the loop.
+%% Idempotent: re-calling for a module already in flight restarts the drain
+%% (callers may use this to re-trigger after disk-pool flushes etc.).
+start_drain_internal(StoreID, State) ->
+	Drains = State#state.drains,
+	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
+	%% Match ar_data_sync's range adjustment.
+	RangeStart2 = max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
+	RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
+	Drain = #drain_state{
+		store_id = StoreID,
+		range_start = RangeStart2,
+		range_end = RangeEnd2,
+		sync_status = init_sync_status(StoreID)
+	},
+	%% Cast drain_init (not drain_step) so the device-lock check happens
+	%% before the initial discovery pass, mirroring ar_data_sync's old flow.
+	gen_server:cast(?MODULE, {drain_init, StoreID}),
+	State#state{ drains = maps:put(StoreID, Drain, Drains) }.
+
+init_sync_status(StoreID) ->
+	SyncStatus = case ar_data_sync_coordinator:is_syncing_enabled() of
+		true -> paused;
+		false -> off
+	end,
+	ar_device_lock:set_device_lock_metric(StoreID, sync, SyncStatus),
+	SyncStatus.
+
+%% Run the initial discovery pass once the device lock is held. Mirrors
+%% ar_data_sync:do_local_copy_start. Sets up pending_intervals (from default
+%% module) and pending_modules (other neighboring modules), then transitions
+%% to drain_step.
+drain_init(StoreID, State) ->
+	with_drain_lock(StoreID, State, fun do_drain_init/2,
+		fun(StoreID2) ->
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE, {drain_init, StoreID2})
+		end).
+
+do_drain_init(#drain_state{
+		store_id = StoreID,
+		range_start = RangeStart,
+		range_end = RangeEnd } = Drain, State) ->
+	DiskPoolThreshold = ar_disk_pool:get_threshold(),
+	Intervals = get_unsynced_intervals_from_other_storage_modules(
+		StoreID, ?DEFAULT_MODULE, RangeStart,
+		min(RangeEnd, DiskPoolThreshold)),
+	OtherStorageModules = [ar_storage_module:id(Module)
+		|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
+		ar_storage_module:id(Module) /= StoreID],
+	?LOG_INFO([{event, sync_local}, {stage, copy_from_default},
+		{store_id, StoreID}, {range_start, RangeStart},
+		{range_end, RangeEnd},
+		{disk_pool_threshold, DiskPoolThreshold},
+		{default_intervals, length(Intervals)},
+		{other_storage_modules, length(OtherStorageModules)}]),
+	Drain2 = Drain#drain_state{
+		pending_intervals = Intervals,
+		pending_modules = OtherStorageModules
+	},
+	gen_server:cast(?MODULE, {drain_step, StoreID}),
+	update_drain(Drain2, State).
+
+drain_step(StoreID, State) ->
+	with_drain_lock(StoreID, State, fun do_drain/2,
+		fun(StoreID2) ->
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE, {drain_step, StoreID2})
+		end).
+
+%% Common device-lock pattern shared by drain_init and drain_step. Acquires
+%% the lock, dispatches Active on success, schedules Retry on pause, and
+%% finishes the drain on any other status (off / complete).
+with_drain_lock(StoreID, State, Active, Retry) ->
+	case maps:get(StoreID, State#state.drains, undefined) of
+		undefined ->
+			State;
+		#drain_state{} = Drain ->
+			Status = ar_device_lock:acquire_lock(sync, StoreID, Drain#drain_state.sync_status),
+			Drain2 = Drain#drain_state{ sync_status = Status },
+			case Status of
+				active ->
+					Active(Drain2, State);
+				paused ->
+					Retry(StoreID),
+					update_drain(Drain2, State);
+				_ ->
+					finish_drain(Drain2, State)
+			end
+	end.
+
+%% Drain step: drain_init has already populated pending_intervals /
+%% pending_modules. This dispatches based on what's left.
+do_drain(#drain_state{
+		pending_intervals = [],
+		pending_modules = [] } = Drain, State) ->
+	finish_drain(Drain, State);
+do_drain(#drain_state{
+		store_id = StoreID,
+		pending_intervals = [],
+		pending_modules = [OtherStoreID | OtherStoreIDs],
+		range_start = RangeStart,
+		range_end = RangeEnd
+		} = Drain, State) ->
+	%% Pop the next neighboring module and scan for shared intervals.
+	Intervals = get_unsynced_intervals_from_other_storage_modules(
+		StoreID, OtherStoreID, RangeStart, RangeEnd),
+	?LOG_INFO([{event, sync_local}, {stage, copy_from_other_module},
+		{store_id, StoreID}, {other_store_id, OtherStoreID},
+		{range_start, RangeStart}, {range_end, RangeEnd},
+		{found_intervals, length(Intervals)}]),
+	Drain2 = Drain#drain_state{
+		pending_intervals = Intervals,
+		pending_modules = OtherStoreIDs
+	},
+	gen_server:cast(?MODULE, {drain_step, StoreID}),
+	update_drain(Drain2, State);
+do_drain(#drain_state{
+		store_id = StoreID,
+		pending_intervals = [{OtherStoreID, {Start, End}} | Intervals]
+		} = Drain, State) ->
+	%% Issue the actual cross-module read. read_range/4 is non-blocking; it
+	%% returns true if accepted. If the executor isn't ready, hold the
+	%% interval and retry on the next step.
+	Drain2 =
+		case read_range(Start, End, OtherStoreID, StoreID) of
+			true ->
+				Drain#drain_state{ pending_intervals = Intervals };
+			false ->
+				Drain
+		end,
+	ar_util:cast_after(50, ?MODULE, {drain_step, StoreID}),
+	update_drain(Drain2, State).
+
+finish_drain(#drain_state{
+		store_id = StoreID,
+		range_start = RangeStart,
+		range_end = RangeEnd } = _Drain, State) ->
+	?LOG_INFO([{event, sync_local}, {stage, complete},
+		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd},
+		{next, network_sync}]),
+	ar_events:send(local_copy, {complete, StoreID}),
+	State#state{ drains = maps:remove(StoreID, State#state.drains) }.
+
+update_drain(#drain_state{ store_id = StoreID } = Drain, State) ->
+	State#state{ drains = maps:put(StoreID, Drain, State#state.drains) }.
+
+%% @doc Find unsynced intervals belonging to StoreID that are already
+%% present in OriginStoreID's sync record. Returns a list of
+%% {OriginStoreID, {Start, End}} tuples ready for cross-module copy.
+%% Lifted verbatim from ar_data_sync to preserve behavior.
+get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
+		RangeEnd) ->
+	get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
+			RangeEnd, []).
+
+get_unsynced_intervals_from_other_storage_modules(_StoreID, _OtherStoreID, RangeStart,
+		RangeEnd, Intervals) when RangeStart >= RangeEnd ->
+	Intervals;
+get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
+		RangeEnd, Intervals) ->
+	FindNextMissing =
+		case ar_sync_record:get_next_synced_interval(RangeStart, RangeEnd, ar_data_sync,
+		StoreID) of
+			not_found ->
+				{request, {RangeStart, RangeEnd}};
+			{End, Start} when Start =< RangeStart ->
+				{skip, End};
+			{_End, Start} ->
+				{request, {RangeStart, Start}}
+		end,
+	case FindNextMissing of
+		{skip, End2} ->
+			get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, End2,
+					RangeEnd, Intervals);
+		{request, {Cursor, RightBound}} ->
+			case ar_sync_record:get_next_synced_interval(Cursor, RightBound, ar_data_sync,
+					OtherStoreID) of
+				not_found ->
+					get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
+							RightBound, RangeEnd, Intervals);
+				{End2, Start2} ->
+					Start3 = max(Start2, Cursor),
+					Intervals2 = [{OtherStoreID, {Start3, End2}} | Intervals],
+					get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID,
+							End2, RangeEnd, Intervals2)
+			end
+	end.
+
+%%%===================================================================
+%%% Private functions — executor (worker pool).
 %%%===================================================================
 
 do_ready_for_work(StoreID, State) ->
