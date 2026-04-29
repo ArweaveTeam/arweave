@@ -1,6 +1,17 @@
+%%% @doc Per-StoreID data-root and tx-index owner. Wraps the data_root_index
+%%% / data_root_offset_index / tx_index / tx_offset_index column families.
+%%%
+%%% Process model: one singleton gen_server (`ar_data_roots') registered
+%%% globally. The gen_server serializes the multi-step writes performed by
+%%% `store_block/5' so that two concurrent block confirmations can't race
+%%% on the data_root_index keys for the same offset. Read-only library
+%%% functions remain callable from any process via direct `ar_kv' lookups.
 -module(ar_data_roots).
 
+-behaviour(gen_server).
+
 -export([
+	start_link/0,
 	open_index_db/3,
 	open_index_db/4,
 	column_family/1,
@@ -9,6 +20,8 @@
 	keys_db/1,
 	add_block_data_roots/3,
 	store_block/5,
+	store_block_async/5,
+	store_block_sync/5,
 	get_entry/2,
 	remove_range/3,
 	iterator/3,
@@ -22,18 +35,52 @@
 	are_synced/2,
 	are_synced/4,
 	is_synced/2,
-	repair/3
+	repair/3,
+	%% Block lifecycle helpers (formerly private to ar_data_sync).
+	add_block/3,
+	update_tx_index/3,
+	repair_data_root_offset_index/2,
+	remove_tx_index_range/3
 ]).
+
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+
 -export_type([data_root_entry/0, data_root_entries/0]).
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
+-include("ar_sup.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+-record(state, {}).
 
 -type data_root_entry() :: {DataRoot :: binary(), TXSize :: non_neg_integer(),
 		TXStartOffset :: non_neg_integer(), TXPath :: binary()}.
 -type data_root_entries() :: [data_root_entry()].
+%%%===================================================================
+%%% Public: gen_server lifecycle
+%%%===================================================================
+
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% @doc Asynchronously store a block's data roots into StoreID's index.
+%% Serialized through the ar_data_roots gen_server so concurrent block
+%% confirmations can't race on the same offset.
+store_block_async(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID) ->
+	BlockSize = BlockEnd - BlockStart,
+	gen_server:cast(?MODULE,
+		{store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID}).
+
+%% @doc Synchronous variant of store_block_async/5. Blocks until the write
+%% completes. Used by callers that need to observe the new state immediately
+%% (e.g. test harnesses).
+store_block_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID) ->
+	BlockSize = BlockEnd - BlockStart,
+	gen_server:call(?MODULE,
+		{store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID}, 120000).
+
 %%%===================================================================
 %%% Public: DB configuration
 %%%===================================================================
@@ -512,6 +559,147 @@ shift_block_index(TXRoot, _BlockStart, WeaveSize, Height, _ResyncBlocks,
 	{ok, {Height + 1, BI}};
 shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) ->
 	{bad_key, [Height | ResyncBlocks]}.
+
+%%%===================================================================
+%%% Public: Block lifecycle helpers (formerly in ar_data_sync)
+%%%===================================================================
+
+%% @doc If the block's data roots aren't already indexed for this StoreID,
+%% record them and update the per-tx offset/index. Idempotent.
+add_block(B, SizeTaggedTXs, StoreID) ->
+	#block{ indep_hash = H, weave_size = WeaveSize, tx_root = TXRoot } = B,
+	case ar_block_index:get_element_by_height(B#block.height) of
+		{H, WeaveSize, TXRoot} ->
+			case are_synced(B, StoreID) of
+				false ->
+					BlockStart = B#block.weave_size - B#block.block_size,
+					{ok, _} =
+						add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID),
+					ok = update_tx_index(SizeTaggedTXs, BlockStart, StoreID),
+					ok;
+				_ ->
+					ok
+			end;
+		_ ->
+			ok
+	end.
+
+%% @doc Update tx_index and tx_offset_index for the given block's transactions.
+update_tx_index([], _BlockStartOffset, _StoreID) ->
+	ok;
+update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
+	lists:foldl(
+		fun ({_, Offset}, Offset) ->
+				Offset;
+			({{padding, _}, Offset}, _) ->
+				Offset;
+			({{TXID, _}, TXEndOffset}, PreviousOffset) ->
+				AbsoluteEndOffset = BlockStartOffset + TXEndOffset,
+				TXSize = TXEndOffset - PreviousOffset,
+				AbsoluteStartOffset = AbsoluteEndOffset - TXSize,
+				case ar_kv:put({tx_offset_index, StoreID},
+						<< AbsoluteStartOffset:?OFFSET_KEY_BITSIZE >>, TXID) of
+					ok ->
+						case ar_kv:put({tx_index, StoreID}, TXID,
+								term_to_binary({AbsoluteEndOffset, TXSize})) of
+							ok ->
+								ar_events:send(tx, {registered_offset, TXID, AbsoluteEndOffset,
+										TXSize}),
+								ar_tx_blacklist:notify_about_added_tx(TXID, AbsoluteEndOffset,
+										AbsoluteStartOffset),
+								TXEndOffset;
+							{error, Reason} ->
+								?LOG_ERROR([{event, failed_to_update_tx_index},
+										{reason, io_lib:format("~p", [Reason])},
+										{tx, ar_util:encode(TXID)}]),
+								TXEndOffset
+						end;
+					{error, Reason} ->
+						?LOG_ERROR([{event, failed_to_update_tx_offset_index},
+								{reason, io_lib:format("~p", [Reason])},
+								{tx, ar_util:encode(TXID)}]),
+						TXEndOffset
+				end
+		end,
+		0,
+		SizeTaggedTXs
+	),
+	ok.
+
+%% @doc Run the data_root_offset_index repair scan. Hooked into ar_data_sync's
+%% join handler. The closure that knows how to remove tx-index ranges is
+%% supplied by ar_data_sync (it touches chunks_index too, so it's a multi-
+%% subsystem orchestrator that stays there).
+repair_data_root_offset_index(BI, StoreID) ->
+	RemoveTXRange = fun(BlockStart, BlockEnd) ->
+		remove_tx_index_range(BlockStart, BlockEnd, StoreID)
+	end,
+	case repair(BI, StoreID, RemoveTXRange) of
+		{ok, ResyncBlocks} ->
+			[ar_header_sync:remove_block(Height) || Height <- ResyncBlocks],
+			ok;
+		ok ->
+			ok
+	end.
+
+%% @doc Remove tx_index / tx_offset_index entries for the given byte range.
+%% Used during reorgs and on-startup orphan cleanup.
+remove_tx_index_range(Start, End, StoreID) ->
+	TXOffsetIndex = {tx_offset_index, StoreID},
+	TXIndex = {tx_index, StoreID},
+	ok = case ar_kv:get_range(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>,
+			<< (End - 1):?OFFSET_KEY_BITSIZE >>) of
+		{ok, EmptyMap} when map_size(EmptyMap) == 0 ->
+			ok;
+		{ok, Map} ->
+			maps:fold(
+				fun
+					(_, _Value, {error, _} = Error) ->
+						Error;
+					(_, TXID, ok) ->
+						ar_kv:delete(TXIndex, TXID),
+						ar_tx_blacklist:norify_about_orphaned_tx(TXID)
+				end,
+				ok,
+				Map
+			);
+		Error ->
+			Error
+	end,
+	ar_kv:delete_range(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>,
+			<< End:?OFFSET_KEY_BITSIZE >>).
+
+%%%===================================================================
+%%% gen_server callbacks
+%%%===================================================================
+
+init([]) ->
+	?LOG_INFO([{event, ar_data_roots_start}]),
+	{ok, #state{}}.
+
+handle_call({store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID},
+		_From, State) ->
+	{ok, _} = store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID),
+	{reply, ok, State};
+handle_call(Request, _From, State) ->
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+	{reply, ok, State}.
+
+handle_cast({store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID}, State) ->
+	{ok, _} = store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID),
+	{noreply, State};
+handle_cast(Cast, State) ->
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+	{noreply, State}.
+
+handle_info(Message, State) ->
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
+	{noreply, State}.
+
+terminate(Reason, _State) ->
+	?LOG_DEBUG([{event, terminate}, {module, ?MODULE},
+		{reason, io_lib:format("~p", [Reason])}]),
+	ok.
 
 %%%===================================================================
 %%% Tests.

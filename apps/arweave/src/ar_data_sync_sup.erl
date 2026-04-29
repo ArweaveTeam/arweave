@@ -7,6 +7,7 @@
 -export([init/1]).
 
 -include_lib("arweave/include/ar_data_sync.hrl").
+-include_lib("arweave/include/ar_sup.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -34,8 +35,12 @@ init([]) ->
 		type => supervisor,
 		modules => [ar_peer_worker_sup]
 	},
-	Children = 
-		[PeerWorkerSup] ++
+	%% ar_data_roots must start before any ar_data_sync_<StoreID> instance
+	%% so the cast/call API is available when ar_data_sync's join/cut/
+	%% add_tip_block handlers fire during early init.
+	DataRoots = ?CHILD(ar_data_roots, worker),
+	Children =
+		[PeerWorkerSup, DataRoots] ++
 		ar_data_sync_coordinator:register_workers() ++
 		ar_local_copy:register_workers() ++
 		ar_data_sync:register_workers(),
