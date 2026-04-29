@@ -41,7 +41,6 @@
 -endif.
 
 -include("ar.hrl").
--include("ar_data_sync.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -50,6 +49,27 @@
 -else.
 -define(MIN_CHUNK_PERSISTENCE_ESTIMATION_VICINITY, (10 * ?GiB)).
 -endif.
+
+%% The time to wait until the next full disk pool scan.
+-ifdef(AR_TEST).
+-define(DISK_POOL_SCAN_DELAY_MS, 2000).
+-else.
+-define(DISK_POOL_SCAN_DELAY_MS, 10000).
+-endif.
+
+%% How often to measure the number of chunks in the disk pool index.
+-ifdef(AR_TEST).
+-define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 1000).
+-else.
+-define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 5000).
+-endif.
+
+%% How long to keep the offsets of the recently processed "matured" chunks in a cache.
+%% We use the cache to quickly skip matured chunks when scanning the disk pool.
+-define(CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS, 30 * 60 * 1000).
+
+%% The frequency of removing expired data roots from the disk pool.
+-define(REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, 60000).
 
 -record(disk_pool_state, {
 	%% One of the keys from disk_pool_chunks_index or the atom "first".
