@@ -39,27 +39,6 @@
 %% such data should fetch it chunk by chunk.
 -define(MAX_SERVED_TX_DATA_SIZE, 12 * 1024 * 1024).
 
-%% The time to wait until the next full disk pool scan.
--ifdef(AR_TEST).
--define(DISK_POOL_SCAN_DELAY_MS, 2000).
--else.
--define(DISK_POOL_SCAN_DELAY_MS, 10000).
--endif.
-
-%% How often to measure the number of chunks in the disk pool index.
--ifdef(AR_TEST).
--define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 1000).
--else.
--define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 5000).
--endif.
-
-%% How long to keep the offsets of the recently processed "matured" chunks in a cache.
-%% We use the cache to quickly skip matured chunks when scanning the disk pool.
--define(CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS, 30 * 60 * 1000).
-
-%% The frequency of removing expired data roots from the disk pool.
--define(REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, 60000).
-
 %% The frequency of storing the server state on disk.
 -define(STORE_STATE_FREQUENCY_MS, 30000).
 

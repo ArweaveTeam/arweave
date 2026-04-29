@@ -58,7 +58,7 @@ handle_cast({read_range, Args}, State) ->
 		recast ->
 			ok;
 		ReadResult ->
-			ar_local_copy:task_completed(State#state.name, ReadResult, Args)
+			ar_chunk_copy:task_completed(State#state.name, ReadResult, Args)
 	end,
 	{noreply, State};
 

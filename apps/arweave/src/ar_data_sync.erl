@@ -15,8 +15,8 @@
 %%%     expire_unpack_request
 %%%
 %%% Subsystems extracted to their own modules:
-%%%   - ar_local_copy        — local-copy producer + executor; subscribes
-%%%                            to local_copy events for completion handoff
+%%%   - ar_chunk_copy        — chunk-copy producer + executor; subscribes
+%%%                            to chunk_copy events for completion handoff
 %%%   - ar_sync_broker       — stateless matching engine called from
 %%%                            broker_step; produces per-chunk tasks
 %%%   - ar_data_roots        — gen_server owning data-root indexing,
@@ -532,12 +532,12 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	{ok, Config} = arweave_config:get_env(),
-	[ok, ok, ok] = ar_events:subscribe([node_state, disksup, local_copy]),
+	[ok, ok, ok] = ar_events:subscribe([node_state, disksup, chunk_copy]),
 	State = init_kv(#sync_data_state{}, StoreID),
 
 	StateMap = read_data_sync_state(),
 	CurrentBI = maps:get(block_index, StateMap),
-	%% Bootstrap the disk-pool ETS state. ar_local_copy reads
+	%% Bootstrap the disk-pool ETS state. ar_chunk_copy reads
 	%% ar_disk_pool:get_threshold/0 and starts before ar_disk_pool's
 	%% gen_server, and the periodic store_sync_state cast (scheduled
 	%% below) reads ar_disk_pool:get_data_roots/0 - so both have to be
@@ -589,7 +589,7 @@ init({StoreID, RepackInPlacePacking}) ->
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID}]),
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
-	[ok, ok, ok] = ar_events:subscribe([node_state, disksup, local_copy]),
+	[ok, ok, ok] = ar_events:subscribe([node_state, disksup, chunk_copy]),
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 	RangeStart2 = max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
 	RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
@@ -617,10 +617,10 @@ handle_continue({init, RepackInPlacePacking},
 			%% Start syncing immediately. For replica_2_9 packing, chunks will be
 			%% written as unpacked_padded first and upgraded once entropy arrives.
 			gen_server:cast(self(), sync_intervals),
-			%% Local-copy drain runs in ar_local_copy and publishes
-			%% {event, local_copy, {complete, StoreID}} when done. The
+			%% Chunk-copy drain runs in ar_chunk_copy and publishes
+			%% {event, chunk_copy, {complete, StoreID}} when done. The
 			%% handle_info clause for that event kicks off broker_step.
-			ar_local_copy:start_drain(StoreID),
+			ar_chunk_copy:start_copy(StoreID),
 			maybe_run_footprint_record_initialization(State3),
 			?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID}]),
 			{noreply, State3};
@@ -935,14 +935,14 @@ handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
 
-%% ar_local_copy publishes this event when its drain pass finishes for a
+%% ar_chunk_copy publishes this event when its drain pass finishes for a
 %% storage module. Use it as the handoff signal to start the network-sync
 %% broker. The 2s delay primes the directory cache before the first scan.
-handle_info({event, local_copy, {complete, StoreID}},
+handle_info({event, chunk_copy, {complete, StoreID}},
 		#sync_data_state{ store_id = StoreID } = State) ->
 	ar_util:cast_after(2000, self(), broker_step),
 	{noreply, State};
-handle_info({event, local_copy, _}, State) ->
+handle_info({event, chunk_copy, _}, State) ->
 	{noreply, State};
 
 handle_info({chunk, {unpacked, Key, ChunkArgs}}, State) ->
@@ -1184,8 +1184,8 @@ do_sync_intervals(State) ->
 			State#sync_data_state{ sync_task_queue = Q2 }
 	end.
 
-%% Local-copy drain logic moved to ar_local_copy. ar_data_sync receives
-%% the {event, local_copy, {complete, StoreID}} event when the drain
+%% Chunk-copy drain logic moved to ar_chunk_copy. ar_data_sync receives
+%% the {event, chunk_copy, {complete, StoreID}} event when the drain
 %% finishes (handled in handle_info below).
 
 get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrigin) ->

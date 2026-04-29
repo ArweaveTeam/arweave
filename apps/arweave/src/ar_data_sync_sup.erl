@@ -46,7 +46,7 @@ init([]) ->
 	Children =
 		[PeerWorkerSup, DataRoots] ++
 		ar_data_sync_coordinator:register_workers() ++
-		ar_local_copy:register_workers() ++
+		ar_chunk_copy:register_workers() ++
 		ar_data_sync:register_workers() ++
 		[DiskPool],
 	{ok, {{one_for_one, 5, 10}, Children}}.
