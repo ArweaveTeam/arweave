@@ -8,8 +8,9 @@
 %%%     packing_map, store_chunk_queue, KV handle refs
 %%%   - all RocksDB opens and closes (init_kv/2, terminate/2)
 %%%   - block lifecycle: join, cut, add_tip_block, store_sync_state
-%%%   - network sync: broker_step (drives ar_sync_broker), sync_intervals
-%%%     (dispatch loop draining sync_task_queue into ar_data_sync_coordinator)
+%%%   - network sync casts (`discover' producer, `sync' consumer): both
+%%%     delegate logic to ar_peer_sync; this module owns the cast chains
+%%%     and the per-StoreID #sync_data_state{} they operate on
 %%%   - chunk write pipeline: pack_and_store_chunk, store_fetched_chunk,
 %%%     {chunk, packed/unpacked} info handlers, expire_repack_request,
 %%%     expire_unpack_request
@@ -17,8 +18,9 @@
 %%% Subsystems extracted to their own modules:
 %%%   - ar_chunk_copy        — chunk-copy producer + executor; subscribes
 %%%                            to chunk_copy events for completion handoff
-%%%   - ar_sync_broker       — stateless matching engine called from
-%%%                            broker_step; produces per-chunk tasks
+%%%   - ar_peer_sync         — stateless network-sync subsystem (broker
+%%%                            matching + dispatch logic); called from
+%%%                            this module's discover/sync casts
 %%%   - ar_data_roots        — gen_server owning data-root indexing,
 %%%                            tx_index/tx_offset_index, store_block writes
 %%%   - ar_disk_pool         — gen_server owning the pending-chunk scan
@@ -616,10 +618,10 @@ handle_continue({init, RepackInPlacePacking},
 			},
 			%% Start syncing immediately. For replica_2_9 packing, chunks will be
 			%% written as unpacked_padded first and upgraded once entropy arrives.
-			gen_server:cast(self(), sync_intervals),
+			gen_server:cast(self(), sync),
 			%% Chunk-copy drain runs in ar_chunk_copy and publishes
 			%% {event, chunk_copy, {complete, StoreID}} when done. The
-			%% handle_info clause for that event kicks off broker_step.
+			%% handle_info clause for that event kicks off the discover loop.
 			ar_chunk_copy:start_copy(StoreID),
 			maybe_run_footprint_record_initialization(State3),
 			?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID}]),
@@ -725,30 +727,33 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 		}),
 	{noreply, State2};
 
-%% One broker step: match cached peer intervals from ar_data_discovery
-%% against this module's unsynced range and insert per-chunk tasks into
-%% sync_task_queue, advancing scan_cursor. See ar_sync_broker:step/1.
-%% Dispatching to the coordinator happens in the separate sync_intervals
-%% cast below.
-handle_cast(broker_step, State) ->
-	case ar_sync_broker:step(State) of
+%% Network sync (peer-source). Two cast chains, both delegating their
+%% logic to ar_peer_sync:
+%%   - `discover': producer side. Match cached peer offers against this
+%%     module's unsynced range, insert per-chunk tasks into
+%%     sync_task_queue, advance scan_cursor.
+%%   - `sync':     consumer side. Pop one task from sync_task_queue and
+%%     hand it to ar_data_sync_coordinator (which routes to the right
+%%     peer_worker for HTTP fetch).
+handle_cast(discover, State) ->
+	case ar_peer_sync:discover(State) of
 		{State2, cast_now} ->
-			gen_server:cast(self(), broker_step),
+			gen_server:cast(self(), discover),
 			{noreply, State2};
 		{State2, {cast_after, Ms}} ->
-			ar_util:cast_after(Ms, self(), broker_step),
+			ar_util:cast_after(Ms, self(), discover),
 			{noreply, State2}
 	end;
 
-handle_cast(sync_intervals, State) ->
+handle_cast(sync, State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	Status = ar_device_lock:acquire_lock(sync, StoreID, State#sync_data_state.sync_status),
 	State2 = State#sync_data_state{ sync_status = Status },
 	State3 = case Status of
 		active ->
-			do_sync_intervals(State2);
+			ar_peer_sync:sync(State2);
 		paused ->
-			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync_intervals),
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync),
 			State2;
 		_ ->
 			State2
@@ -940,7 +945,7 @@ handle_info({event, node_state, _}, State) ->
 %% broker. The 2s delay primes the directory cache before the first scan.
 handle_info({event, chunk_copy, {complete, StoreID}},
 		#sync_data_state{ store_id = StoreID } = State) ->
-	ar_util:cast_after(2000, self(), broker_step),
+	ar_util:cast_after(2000, self(), discover),
 	{noreply, State};
 handle_info({event, chunk_copy, _}, State) ->
 	{noreply, State};
@@ -1118,71 +1123,6 @@ log_chunk_error(verify, Event, ExtraLogData) ->
 	do_log_chunk_error(info, Event, [{request_origin, verify} | ExtraLogData]);
 log_chunk_error(RequestOrigin, Event, ExtraLogData) ->
 	do_log_chunk_error(error, Event, [{request_origin, RequestOrigin} | ExtraLogData]).
-
-do_sync_intervals(State) ->
-	#sync_data_state{ sync_task_queue = Q, store_id = StoreID } = State,
-	IsQueueEmpty =
-		case ar_sync_task_queue:is_empty(Q) of
-			true ->
-				ar_util:cast_after(500, self(), sync_intervals),
-				true;
-			false ->
-				false
-		end,
-	IsDiskSpaceSufficient =
-		case IsQueueEmpty of
-			true ->
-				false;
-			false ->
-				case is_disk_space_sufficient(StoreID) of
-					true ->
-						true;
-					_ ->
-						ar_util:cast_after(30000, self(), sync_intervals),
-						false
-				end
-		end,
-	IsChunkCacheFull =
-		case IsDiskSpaceSufficient of
-			false ->
-				true;
-			true ->
-				case is_chunk_cache_full() of
-					true ->
-						ar_util:cast_after(1000, self(), sync_intervals),
-						true;
-					false ->
-						false
-				end
-		end,
-	AreSyncWorkersBusy =
-		case IsChunkCacheFull of
-			true ->
-				true;
-			false ->
-				case ar_data_sync_coordinator:ready_for_work() of
-					false ->
-						ar_util:cast_after(200, self(), sync_intervals),
-						true;
-					true ->
-						false
-				end
-		end,
-	case AreSyncWorkersBusy of
-		true ->
-			State;
-		false ->
-			gen_server:cast(self(), sync_intervals),
-			{{FootprintKey, Start, End, Peer}, Q2} = ar_sync_task_queue:take_smallest(Q),
-			ar_data_sync_coordinator:sync_range(#sync_task{
-						start_offset = Start,
-						end_offset = End,
-						peer = Peer,
-						store_id = StoreID,
-						footprint_key = FootprintKey
-					}),
-			State#sync_data_state{ sync_task_queue = Q2 }
-	end.
 
 %% Chunk-copy drain logic moved to ar_chunk_copy. ar_data_sync receives
 %% the {event, chunk_copy, {complete, StoreID}} event when the drain

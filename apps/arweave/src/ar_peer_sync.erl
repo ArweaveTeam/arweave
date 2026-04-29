@@ -1,18 +1,24 @@
-%% @doc Brokers per-chunk fetch assignments between the supply side
-%% (peers offering byte ranges, surfaced through ar_data_discovery's cache)
-%% and the demand side (this storage module's unsynced intervals, tracked
-%% in ar_sync_record). One step reads cached peer intervals, intersects
-%% them with the module's unsynced range, and inserts {Peer, Start, End}
-%% chunk-sized tasks into the per-module ar_sync_task_queue. No HTTP
-%% happens here - peer query latency lives in the directory's background
-%% refresh pool instead.
+%% @doc Network chunk-sync subsystem. Mirror of ar_chunk_copy: where
+%% ar_chunk_copy fetches chunks from local sibling storage modules,
+%% ar_peer_sync fetches them from network peers.
 %%
-%% Entry point: `step/1' takes the ar_data_sync state and returns either
-%% `{State2, cast_now}' (run another step immediately) or
-%% `{State2, {cast_after, Ms}}' (pause and retry after Ms).
--module(ar_sync_broker).
+%% Two stateless entry points, both called from ar_data_sync's mailbox:
+%%
+%%  - `discover/1' (producer): match cached peer offers (from
+%%    ar_data_discovery) against this module's unsynced gaps (from
+%%    ar_sync_record), enqueue per-chunk tasks into sync_task_queue,
+%%    advance scan_cursor. Returns `{State', cast_now}' (run another
+%%    discover immediately) or `{State', {cast_after, Ms}}' (pause).
+%%    No HTTP happens here - peer query latency lives in the directory's
+%%    background refresh pool instead.
+%%
+%%  - `sync/1' (consumer): pop one task from sync_task_queue, dispatch
+%%    it to ar_data_sync_coordinator (which routes through peer_worker
+%%    to a sync_worker that performs the HTTP fetch). Returns updated
+%%    State'.
+-module(ar_peer_sync).
 
--export([step/1, init_cursor/2, init_cursor/3, scan_ready/1]).
+-export([discover/1, sync/1]).
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
@@ -37,7 +43,7 @@
 -define(INTERVALS_QUEUE_CHUNKS_PER_WORKER, 250).
 
 %% How long to pause after init_cursor primes prefetch but before the first
-%% broker step reads the cache. Small enough that startup lag is negligible,
+%% discover call reads the cache. Small enough that startup lag is negligible,
 %% big enough that refresh workers can land at least one HTTP response.
 -ifdef(AR_TEST).
 -define(COLD_START_DELAY_MS, 200).
@@ -45,7 +51,7 @@
 -define(COLD_START_DELAY_MS, 2000).
 -endif.
 
-%% Adaptive restart delay for the broker loop. Productive scans restart at
+%% Adaptive restart delay for the discover loop. Productive scans restart at
 %% the min delay; unproductive scans double (capped at max). Resets on any
 %% productive scan.
 -ifdef(AR_TEST).
@@ -60,19 +66,19 @@
 %%% Public interface.
 %%%===================================================================
 
-step(#sync_data_state{ scan_cursor = undefined } = State) ->
+discover(#sync_data_state{ scan_cursor = undefined } = State) ->
 	case init_cursor(State, normal) of
 		{ok, Cursor} ->
 			%% Cold start: init_cursor has primed the directory's prefetch,
 			%% but the HTTP calls haven't landed yet. Pause before the first
-			%% real step so the broker reads a warm cache instead of racing
+			%% real discover so it reads a warm cache instead of racing
 			%% through an empty one.
 			{State#sync_data_state{ scan_cursor = Cursor }, {cast_after, ?COLD_START_DELAY_MS}};
 		not_ready ->
 			%% Node not joined yet, or footprint migration in flight.
 			{State, {cast_after, 1000}}
 	end;
-step(#sync_data_state{ scan_cursor = #scan_cursor{ offset = O, end_ = E } } = State)
+discover(#sync_data_state{ scan_cursor = #scan_cursor{ offset = O, end_ = E } } = State)
 		when O >= E ->
 	#sync_data_state{ store_id = StoreID,
 			scan_cursor = #scan_cursor{ mode = Mode, tasks_produced = TasksProduced,
@@ -88,12 +94,82 @@ step(#sync_data_state{ scan_cursor = #scan_cursor{ offset = O, end_ = E } } = St
 		not_ready ->
 			{State, {cast_after, 1000}}
 	end;
-step(State) ->
+discover(State) ->
 	case scan_ready(State) of
 		{wait, _Reason, Delay} ->
 			{State, {cast_after, Delay}};
 		ready ->
-			do_step(State)
+			do_discover(State)
+	end.
+
+%% @doc Consumer side: drain one task from sync_task_queue and dispatch
+%% it to ar_data_sync_coordinator. Self-perpetuating - on success
+%% schedules the next sync immediately; on backpressure or empty queue
+%% schedules a retry via cast_after. Called from ar_data_sync's mailbox,
+%% so `self()' refers to the calling ar_data_sync_<StoreID> process.
+sync(State) ->
+	#sync_data_state{ sync_task_queue = Q, store_id = StoreID } = State,
+	IsQueueEmpty =
+		case ar_sync_task_queue:is_empty(Q) of
+			true ->
+				ar_util:cast_after(500, self(), sync),
+				true;
+			false ->
+				false
+		end,
+	IsDiskSpaceSufficient =
+		case IsQueueEmpty of
+			true ->
+				false;
+			false ->
+				case ar_data_sync:is_disk_space_sufficient(StoreID) of
+					true ->
+						true;
+					_ ->
+						ar_util:cast_after(30000, self(), sync),
+						false
+				end
+		end,
+	IsChunkCacheFull =
+		case IsDiskSpaceSufficient of
+			false ->
+				true;
+			true ->
+				case ar_data_sync:is_chunk_cache_full() of
+					true ->
+						ar_util:cast_after(1000, self(), sync),
+						true;
+					false ->
+						false
+				end
+		end,
+	AreSyncWorkersBusy =
+		case IsChunkCacheFull of
+			true ->
+				true;
+			false ->
+				case ar_data_sync_coordinator:ready_for_work() of
+					false ->
+						ar_util:cast_after(200, self(), sync),
+						true;
+					true ->
+						false
+				end
+		end,
+	case AreSyncWorkersBusy of
+		true ->
+			State;
+		false ->
+			gen_server:cast(self(), sync),
+			{{FootprintKey, Start, End, Peer}, Q2} = ar_sync_task_queue:take_smallest(Q),
+			ar_data_sync_coordinator:sync_range(#sync_task{
+						start_offset = Start,
+						end_offset = End,
+						peer = Peer,
+						store_id = StoreID,
+						footprint_key = FootprintKey
+					}),
+			State#sync_data_state{ sync_task_queue = Q2 }
 	end.
 
 %% @doc Build a cursor for a scan pass in the given mode. Clamps `end' by
@@ -115,7 +191,7 @@ init_cursor(#sync_data_state{ store_id = StoreID } = State, Mode, Backoff) ->
 					End
 			end,
 			%% Prime the directory's prefetch at the cursor's starting point
-			%% so the first broker step has a warm cache instead of reading
+			%% so the first discover call has a warm cache instead of reading
 			%% misses for a full pass while prefetch catches up.
 			ar_data_discovery:advance_cursor(StoreID, Start, Mode),
 			?LOG_INFO([{event, sync_network}, {stage, discovery_started},
@@ -126,7 +202,7 @@ init_cursor(#sync_data_state{ store_id = StoreID } = State, Mode, Backoff) ->
 				backoff_ms = Backoff }}
 	end.
 
-%% @doc Can the broker take a productive step right now? Consolidates every
+%% @doc Can the discover side take a productive advance right now? Consolidates every
 %% "no, wait" case: disk space, queue fullness, cursor bounds.
 scan_ready(#sync_data_state{ scan_cursor = undefined }) ->
 	ready;
@@ -164,15 +240,15 @@ scan_ready(#sync_data_state{ store_id = StoreID,
 %%% Step implementation.
 %%%===================================================================
 
-do_step(#sync_data_state{ scan_cursor = #scan_cursor{ mode = Mode, offset = Offset } } = State) ->
+do_discover(#sync_data_state{ scan_cursor = #scan_cursor{ mode = Mode, offset = Offset } } = State) ->
 	#sync_data_state{ store_id = StoreID } = State,
 	ar_data_discovery:advance_cursor(StoreID, Offset, Mode),
 	case Mode of
-		normal -> do_step_normal(State);
-		footprint -> do_step_footprint(State)
+		normal -> do_discover_normal(State);
+		footprint -> do_discover_footprint(State)
 	end.
 
-do_step_normal(State) ->
+do_discover_normal(State) ->
 	#sync_data_state{ store_id = StoreID, sync_task_queue = Q,
 			weave_size = WeaveSize,
 			scan_cursor = #scan_cursor{ offset = Offset, end_ = End } = Cursor } = State,
@@ -205,7 +281,7 @@ do_step_normal(State) ->
 			end
 	end.
 
-do_step_footprint(State) ->
+do_discover_footprint(State) ->
 	#sync_data_state{ store_id = StoreID, sync_task_queue = Q,
 			scan_cursor = #scan_cursor{ start = Start, end_ = End, offset = Offset }
 					= Cursor } = State,
@@ -240,9 +316,9 @@ do_step_footprint(State) ->
 	end.
 
 %% Log once per scan pass, on the transition from "no tasks produced yet"
-%% to "first tasks enqueued". The dispatch side (do_sync_intervals) picks
-%% up tasks off the queue continuously, so there's no clean per-task log;
-%% this fires exactly when a pass first hands work to the dispatch loop.
+%% to "first tasks enqueued". The dispatch side (sync/1) picks up tasks
+%% off the queue continuously, so there's no clean per-task log; this
+%% fires exactly when a pass first hands work to the dispatch loop.
 maybe_log_chunk_sync_started(StoreID, Mode,
 		#scan_cursor{ tasks_produced = 0 }, Produced) when Produced > 0 ->
 	?LOG_INFO([{event, sync_network}, {stage, chunk_sync_started},
