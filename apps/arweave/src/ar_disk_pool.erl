@@ -350,7 +350,6 @@ get_unconfirmed_chunk_from_disk_pool(TXID, RelativeEndOffset, DiskPoolChunkKey) 
 			DiskPoolChunk = parse_chunk(DiskPoolValue),
 			{RelativeEndOffset, _ChunkSize, DataRoot, TXSize, ChunkDataKey,
 					_PassesBase, _PassesStrict, _PassesRebase} = DiskPoolChunk,
-			RelativeEndOffset =< TXSize,
 			case ar_data_sync:get_chunk_data(ChunkDataKey, ?DEFAULT_MODULE) of
 				not_found ->
 					get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset);
@@ -1107,6 +1106,27 @@ decrease_occupied_size(Size, DataRootID) ->
 			ok
 	end.
 
+%% @doc The `ar_disk_pool_data_roots' ETS table maps each pending /
+%% recently-uploaded / orphaned data root to a {Size, Timestamp, TXIDSet}
+%% tuple, keyed by `<< DataRoot:32/binary, TXSize:256 >>'.
+%%
+%% Unconfirmed chunks can be accepted only after their data roots end up
+%% in this set. New chunks for these data roots are accepted until the
+%% corresponding size reaches `#config.max_disk_pool_data_root_buffer_mb'
+%% or the total size of added pending and seeded chunks reaches
+%% `#config.max_disk_pool_buffer_mb'. When a data root is orphaned, its
+%% timestamp is refreshed so that the chunks have a chance to be
+%% reincluded later. After a data root expires, the corresponding chunks
+%% are removed from `disk_pool_chunks_index' and - if they do not belong
+%% to any storage module - from storage.
+%%
+%% TXIDSet keeps track of pending transaction identifiers - if all
+%% pending transactions with the `<< DataRoot:32/binary, TXSize:256 >>'
+%% key are dropped from the mempool, the corresponding entry is removed
+%% from the table once there are also no disk-pool chunks left for that
+%% data root. When a data root is confirmed, pending TXIDs remain
+%% tracked so unconfirmed duplicate transactions can still resolve their
+%% chunks via the disk pool.
 get_data_root_state(DataRootID) ->
 	case ets:lookup(ar_disk_pool_data_roots, DataRootID) of
 		[] ->

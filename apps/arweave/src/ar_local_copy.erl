@@ -236,9 +236,14 @@ do_drain_init(#drain_state{
 		range_start = RangeStart,
 		range_end = RangeEnd } = Drain, State) ->
 	DiskPoolThreshold = ar_disk_pool:get_threshold(),
+	%% See if any of StoreID's unsynced intervals can be found in the
+	%% "default" storage_module.
 	Intervals = get_unsynced_intervals_from_other_storage_modules(
 		StoreID, ?DEFAULT_MODULE, RangeStart,
 		min(RangeEnd, DiskPoolThreshold)),
+	%% Find all storage_modules that might include the target chunks
+	%% (e.g. neighboring storage_modules with an overlap, or unpacked
+	%% copies used for packing, etc...)
 	OtherStorageModules = [ar_storage_module:id(Module)
 		|| Module <- ar_storage_module:get_all(RangeStart, RangeEnd),
 		ar_storage_module:id(Module) /= StoreID],

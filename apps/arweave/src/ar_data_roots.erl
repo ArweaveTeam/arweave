@@ -626,10 +626,9 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
 	),
 	ok.
 
-%% @doc Run the data_root_offset_index repair scan. Hooked into ar_data_sync's
-%% join handler. The closure that knows how to remove tx-index ranges is
-%% supplied by ar_data_sync (it touches chunks_index too, so it's a multi-
-%% subsystem orchestrator that stays there).
+%% @doc Run the data_root_offset_index repair scan for the given block
+%% index and storage module. Removes tx_index ranges for any
+%% inconsistent blocks discovered during the scan.
 repair_data_root_offset_index(BI, StoreID) ->
 	RemoveTXRange = fun(BlockStart, BlockEnd) ->
 		remove_tx_index_range(BlockStart, BlockEnd, StoreID)
