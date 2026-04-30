@@ -27,7 +27,7 @@
 		get_data_roots/0, remove_expired_data_roots/0,
 		get_threshold/0, set_threshold/1, update_threshold/1]).
 
--export([init_state/0, populate_data_roots/2, recalculate_size/2,
+-export([init_state/0, populate_data_roots/2, 
 		add_block_data_roots/1, reset_orphaned_data_roots_timestamps/1,
 		move_index/1, column_family/1, open_index_db/3,
 		process_next_chunk/2, process_chunk/4, process_chunk_offsets/5,
@@ -487,21 +487,14 @@ update_threshold(BI) ->
 init_state() ->
 	#disk_pool_state{}.
 
-%% @doc Rebuild the in-memory ar_disk_pool_data_roots map from a
-%% persisted disk_pool_data_roots map and the on-disk
-%% disk_pool_chunks_index. Walks the index to recompute per-data-root
-%% sizes; entries in the index whose data root isn't in the persisted
-%% map are skipped. Called from ar_disk_pool's gen_server init.
+%% @doc Rebuild the ar_disk_pool_data_roots map.
 populate_data_roots(DataRootMap, StoreID) ->
-	recalculate_size(DataRootMap, StoreID).
-
-recalculate_size(DataRootMap, StoreID) ->
 	Index = index_db(StoreID),
 	DataRootMap2 = maps:map(fun(_DataRootID, {_Size, Timestamp, TXIDSet}) ->
 			{0, Timestamp, TXIDSet} end, DataRootMap),
-	recalculate_size2(Index, DataRootMap2, first, 0).
+	populate_data_roots2(Index, DataRootMap2, first, 0).
 
-recalculate_size2(Index, DataRootMap, Cursor, Sum) ->
+populate_data_roots2(Index, DataRootMap, Cursor, Sum) ->
 	case ar_kv:get_next(Index, Cursor) of
 		none ->
 			prometheus_gauge:set(pending_chunks_size, Sum),
@@ -527,7 +520,7 @@ recalculate_size2(Index, DataRootMap, Cursor, Sum) ->
 								DataRootMap)
 				end,
 			Cursor2 = << DiskPoolKey/binary, <<"a">>/binary >>,
-			recalculate_size2(Index, DataRootMap2, Cursor2, Sum + ChunkSize)
+			populate_data_roots2(Index, DataRootMap2, Cursor2, Sum + ChunkSize)
 	end.
 
 add_block_data_roots(DataRootIDSet) ->
@@ -1114,27 +1107,6 @@ decrease_occupied_size(Size, DataRootID) ->
 			ok
 	end.
 
-%% @doc The `ar_disk_pool_data_roots' ETS table maps each pending /
-%% recently-uploaded / orphaned data root to a {Size, Timestamp, TXIDSet}
-%% tuple, keyed by `<< DataRoot:32/binary, TXSize:256 >>'.
-%%
-%% Unconfirmed chunks can be accepted only after their data roots end up
-%% in this set. New chunks for these data roots are accepted until the
-%% corresponding size reaches `#config.max_disk_pool_data_root_buffer_mb'
-%% or the total size of added pending and seeded chunks reaches
-%% `#config.max_disk_pool_buffer_mb'. When a data root is orphaned, its
-%% timestamp is refreshed so that the chunks have a chance to be
-%% reincluded later. After a data root expires, the corresponding chunks
-%% are removed from `disk_pool_chunks_index' and - if they do not belong
-%% to any storage module - from storage.
-%%
-%% TXIDSet keeps track of pending transaction identifiers - if all
-%% pending transactions with the `<< DataRoot:32/binary, TXSize:256 >>'
-%% key are dropped from the mempool, the corresponding entry is removed
-%% from the table once there are also no disk-pool chunks left for that
-%% data root. When a data root is confirmed, pending TXIDs remain
-%% tracked so unconfirmed duplicate transactions can still resolve their
-%% chunks via the disk pool.
 get_data_root_state(DataRootID) ->
 	case ets:lookup(ar_disk_pool_data_roots, DataRootID) of
 		[] ->
@@ -1195,17 +1167,15 @@ debug_get_chunks(Cursor) ->
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-%% ar_disk_pool is started last in ar_data_sync_sup, after
-%% ar_data_sync_default has opened the disk-pool KV. So we can do the
-%% full state load + scan-loop bootstrap synchronously here.
+%% ar_disk_pool must be started last in ar_data_sync_sup, after
+%% ar_data_sync_default has opened the disk-pool rocksdb tables.
 init([]) ->
 	?LOG_INFO([{event, ar_disk_pool_start}]),
 	{ok, Config} = arweave_config:get_env(),
 	[ok] = ar_events:subscribe([node_state]),
-	%% Shared ETS state (ar_disk_pool_data_roots, disk_pool_threshold)
-	%% was bootstrapped by ar_data_sync_default's init - this gen_server
-	%% only owns the per-process #disk_pool_state{} (scan cursor, pause
-	%% flag, recently-processed offsets cache).
+	%% Shared ETS state (ar_disk_pool_data_roots, disk_pool_threshold) is owned by
+	%% ar_data_sync_default. ar_disk_pool manipulates them, but they have to be initialized
+	%% by ar_data_sync_default.
 	{ok, _} = ar_timer:apply_interval(
 		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
 		?MODULE, record_chunks_count, [],
@@ -1216,8 +1186,6 @@ init([]) ->
 		?MODULE, remove_expired_data_roots, [],
 		#{ skip_on_shutdown => false }
 	),
-	%% Fire one process_disk_pool_item per configured job. Each cast
-	%% drives one slot of the scan loop; they self-perpetuate forever.
 	lists:foreach(
 		fun(_) -> gen_server:cast(?MODULE, process_disk_pool_item) end,
 		lists:seq(1, Config#config.disk_pool_jobs)

@@ -85,8 +85,8 @@
 
 -define(WORKER_LOAD_TABLE, worker_load).
 
-%% Explicit scan cursor for ar_peer_sync's discover loop. All scan-pass
-%% state lives in one record that moves through the discover state machine.
+%% Scan cursor for ar_peer_sync's discover loop. All scan state lives in one record that moves
+%% through the discover state machine.
 -record(scan_cursor, {
 	%% Left bound of the scan range. For footprint mode, an inclusive boundary
 	%% used when cutting per-peer footprint intervals to the module.
@@ -96,6 +96,10 @@
 	end_ :: non_neg_integer(),
 	%% Current cursor position inside [start, end_). Advances on each step.
 	offset :: non_neg_integer(),
+	%% Last offset published to ar_data_discovery:advance_cursor/3. Used
+	%% to throttle advance_cursor casts to one per prefetch-window
+	%% transition rather than one per discover iteration.
+	last_advance_offset = undefined :: undefined | non_neg_integer(),
 	%% Which protocol we're querying peers with on this pass.
 	mode :: normal | footprint,
 	%% Count of tasks produced in the current scan pass. Resets each pass.

@@ -4,19 +4,11 @@
 %%%
 %%%  1. **Producer** (per-StoreID copy loop): scan for unsynced byte ranges
 %%%     that already exist on this node's disk under another storage module's
-%%%     ID, and enqueue cross-module copy tasks. Driven by `start_copy/1'
-%%%     (called once per module from `ar_data_sync' at init). When a module's
-%%%     copy completes, publishes `{event, chunk_copy, {complete, StoreID}}'
-%%%     via `ar_events'; `ar_data_sync' subscribes and uses this as the
-%%%     handoff signal to start network sync via `ar_peer_sync'.
+%%%     ID, and enqueue cross-module copy tasks. 
 %%%
 %%%  2. **Worker pool** (per-StoreID): receive `read_range' tasks and
-%%%     dispatch them to `ar_data_sync_worker' instances. One worker per
-%%%     StoreID, queue per worker, capped active task count.
+%%%     dispatch them to `ar_data_sync_worker' instances.
 %%%
-%%% Producer copy steps and worker-pool task admission both go through this
-%%% gen_server's mailbox so per-StoreID copy state and per-worker queues are
-%%% serialized in one place.
 -module(ar_chunk_copy).
 
 -behaviour(gen_server).
@@ -181,8 +173,6 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 %% @doc Initialize copy state for a storage module and kick off the loop.
-%% Idempotent: re-calling for a module already in flight restarts the copy
-%% (callers may use this to re-trigger after disk-pool flushes etc.).
 do_start(StoreID, State) ->
 	InProgress = State#state.in_progress,
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
@@ -196,14 +186,10 @@ do_start(StoreID, State) ->
 		range_end = RangeEnd2,
 		sync_status = SyncStatus
 	},
-	%% Cast do_start_scan (not advance) so the device-lock check happens
-	%% before the initial discovery pass.
 	gen_server:cast(?MODULE, {start_scan, StoreID}),
 	State#state{ in_progress = maps:put(StoreID, CopyState, InProgress) }.
 
-%% Run the initial discovery pass once the device lock is held. Sets up
-%% pending_intervals (from default module) and pending_modules (other
-%% neighboring modules), then transitions to advance.
+%% Run the initial discovery pass once the device lock is held. 
 do_start_scan(StoreID, State) ->
 	with_lock(StoreID, State, fun scan_default_module/2,
 		fun(StoreID2) ->
@@ -216,9 +202,6 @@ advance(StoreID, State) ->
 			ar_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE, {advance, StoreID2})
 		end).
 
-%% Common device-lock pattern shared by do_start_scan and advance. Acquires
-%% the lock, dispatches Active on success, schedules Retry on pause, and
-%% finishes the copy on any other status (off / complete).
 with_lock(StoreID, State, Active, Retry) ->
 	case maps:get(StoreID, State#state.in_progress, undefined) of
 		undefined ->
@@ -255,9 +238,7 @@ do_advance(#copy_state{
 	read_range(OtherStoreID, Range, Rest, CopyState, State).
 
 %% Discovery: scan the default storage module for unsynced intervals
-%% belonging to this StoreID. Also enumerate neighboring storage_modules
-%% (overlapping ranges, unpacked copies for packing, etc) to scan in
-%% subsequent steps.
+%% belonging to this StoreID.
 scan_default_module(#copy_state{
 		store_id = StoreID,
 		range_start = RangeStart,
@@ -301,9 +282,7 @@ scan_neighbor_module(OtherStoreID, OtherStoreIDs, #copy_state{
 	gen_server:cast(?MODULE, {advance, StoreID}),
 	update_progress(CopyState2, State).
 
-%% Issue the cross-module read for one pending interval. Submits to the
-%% worker pool if it's ready; otherwise holds the interval for retry on
-%% the next advance.
+%% Issue the cross-module read for one pending interval.
 read_range(OtherStoreID, {Start, End}, Rest, #copy_state{
 		store_id = StoreID } = CopyState, State) ->
 	CopyState2 = case ready_for_work(OtherStoreID) of
@@ -333,7 +312,6 @@ update_progress(#copy_state{ store_id = StoreID } = CopyState, State) ->
 %% @doc Find unsynced intervals belonging to StoreID that are already
 %% present in OriginStoreID's sync record. Returns a list of
 %% {OriginStoreID, {Start, End}} tuples ready for cross-module copy.
-%% Lifted verbatim from ar_data_sync to preserve behavior.
 get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
 		RangeEnd) ->
 	get_unsynced_intervals_from_other_storage_modules(StoreID, OtherStoreID, RangeStart,
