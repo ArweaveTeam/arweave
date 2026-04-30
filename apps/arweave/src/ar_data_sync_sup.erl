@@ -40,8 +40,7 @@ init([]) ->
 	%% add_tip_block handlers fire during early init.
 	DataRoots = ?CHILD(ar_data_roots, worker),
 	%% ar_disk_pool starts LAST so the disk-pool KV (opened by
-	%% ar_data_sync_default's init_kv) is available for ar_disk_pool's
-	%% init_state recalculation pass and the scan-loop bootstrap.
+	%% ar_data_sync_default's init_kv) is available during ar_disk_pool's init.
 	DiskPool = ?CHILD(ar_disk_pool, worker),
 	Children =
 		[PeerWorkerSup, DataRoots] ++

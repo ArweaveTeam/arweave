@@ -1,5 +1,5 @@
 %%% @doc Per-storage-module sync engine and central state owner for the
-%%% chunk-sync subsystem.
+%%% chunk syncing subsystem.
 %%%
 %%% === Process layout ===
 %%%
@@ -25,49 +25,32 @@
 %%%     stateless library — its discover (producer) and sync (consumer)
 %%%     entry points operate on this module's #sync_data_state{}.
 %%%
-%%% === Cast chain lifecycle ===
-%%%
-%%% ```
-%%%   init
-%%%     └─> ar_chunk_copy:start_copy(StoreID)
-%%%             └─> {event, chunk_copy, {complete, StoreID}}
-%%%                     ├─> cast_after(2s, discover) — producer loop
-%%%                     │     └─> ar_peer_sync:discover/1
-%%%                     │           └─> enqueues sync_task_queue
-%%%                     └─> cast(sync) — consumer loop
-%%%                           └─> ar_peer_sync:sync/1
-%%%                                 └─> dispatches to coordinator
-%%% '''
-%%%
 %%% === Supporting modules ===
 %%%
 %%% State + indexing:
 %%%   - `ar_data_roots'      — data-root index, tx_index/tx_offset_index,
 %%%                            store_block writes
-%%%   - `ar_disk_pool'       — pending-chunk scan loop and disk-pool
-%%%                            data-roots ETS; init runs after KV opens
+%%%   - `ar_disk_pool'       — singleton pending-chunk subsystem: admits
+%%%                            unconfirmed chunks and drains them to storage
 %%%   - `ar_sync_record'     — per-StoreID synced-interval records
-%%%   - `ar_data_discovery'  — peer interval cache + prefetch worker
-%%%                            pool; ar_peer_sync reads it during discover
-%%%   - `ar_sync_task_queue' — per-StoreID gb_set queue connecting the
+%%%   - `ar_data_discovery'  — determines peer chunk coverage and feeds
+%%%                            network-sync discovery with candidate ranges
+%%%   - `ar_sync_task_queue' — per-StoreID queue connecting the
 %%%                            discover producer to the sync consumer
 %%%
 %%% Workers:
-%%%   - `ar_data_sync_coordinator' — routes a popped task to a peer worker
+%%%   - `ar_data_sync_coordinator' — routes a task to a peer worker
 %%%   - `ar_peer_worker'           — owns one peer's HTTP fetch slot
-%%%   - `ar_data_sync_worker'      — performs the chunk read/write
+%%%   - `ar_data_sync_worker'      — fetches chunks and hands them back
+%%%                                  to ar_data_sync for storage
 %%%
 %%% === Responsibilities of this module ===
 %%%
-%%%   - per-module state in #sync_data_state{}: block_index, weave_size,
-%%%     sync_status, range_start/end, sync_task_queue, scan_cursor,
-%%%     packing_map, store_chunk_queue, KV handle refs
+%%%   - per-module state in #sync_data_state{}
 %%%   - all RocksDB opens and closes (init_kv/2, terminate/2)
 %%%   - block lifecycle: join, cut, add_tip_block, store_sync_state
-%%%   - the discover/sync cast chains that drive ar_peer_sync
-%%%   - chunk write pipeline: pack_and_store_chunk, store_fetched_chunk,
-%%%     {chunk, packed/unpacked} info handlers, expire_repack_request,
-%%%     expire_unpack_request
+%%%   - orchestrating the various chunk copy/sync subsystems
+%%%   - chunk write pipeline
 -module(ar_data_sync).
 
 -behaviour(gen_server).
@@ -99,9 +82,7 @@
 -include("ar.hrl").
 -include("ar_sup.hrl").
 -include("ar_poa.hrl").
--include("ar_data_discovery.hrl").
 -include("ar_data_sync.hrl").
--include("ar_sync_buckets.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -111,12 +92,6 @@
 
 %% The key for storing migration cursor in the migrations_index database.
 -define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
-
-%% Max size of the per-storage-module sync_task_queue (gb_set). Must be
-%% deep enough that ar_peer_sync's discover loop can refill it before
-%% sync consumers empty it. Scales with sync_jobs: 400 workers × 250 =
-%% 100K chunks ≈ 23 MB per module.
--define(INTERVALS_QUEUE_CHUNKS_PER_WORKER, 250).
 
 %% The number of chunks to migrate per batch during footprint migration.
 -ifdef(AR_TEST).
@@ -574,13 +549,6 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 
 	StateMap = read_data_sync_state(),
 	CurrentBI = maps:get(block_index, StateMap),
-	%% Bootstrap the disk-pool ETS state. ar_chunk_copy reads
-	%% ar_disk_pool:get_threshold/0 and starts before ar_disk_pool's
-	%% gen_server, and the periodic store_sync_state cast (scheduled
-	%% below) reads ar_disk_pool:get_data_roots/0 - so both have to be
-	%% in place before either fires. Otherwise we'd persist an empty
-	%% disk_pool_data_roots map and lose pending data roots on the
-	%% next restart.
 	case StateMap of
 		#{ disk_pool_threshold := DPT } ->
 			ar_disk_pool:set_threshold(DPT);
@@ -651,12 +619,6 @@ handle_continue({init, RepackInPlacePacking},
 			State3 = State2#sync_data_state{
 				sync_status = init_sync_status(StoreID)
 			},
-			%% Chunk-copy runs in ar_chunk_copy and publishes
-			%% {event, chunk_copy, {complete, StoreID}} when done. The
-			%% handle_info clause for that event kicks off both the
-			%% discover producer and the sync consumer; until then the
-			%% sync_task_queue is necessarily empty (only discover fills
-			%% it), so there's nothing for sync to do.
 			ar_chunk_copy:start_copy(StoreID),
 			maybe_run_footprint_record_initialization(State3),
 			?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID}]),
@@ -762,14 +724,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 		}),
 	{noreply, State2};
 
-%% Network sync (peer-source). Two cast chains, both delegating their
-%% logic to ar_peer_sync:
-%%   - `discover': producer side. Match cached peer offers against this
-%%     module's unsynced range, insert per-chunk tasks into
-%%     sync_task_queue, advance scan_cursor.
-%%   - `sync':     consumer side. Pop one task from sync_task_queue and
-%%     hand it to ar_data_sync_coordinator (which routes to the right
-%%     peer_worker for HTTP fetch).
+%% Network sync. "Discover" which chunk ranges are advertised by which peers, and then "sync" them.
 handle_cast(discover, State) ->
 	case ar_peer_sync:discover(State) of
 		{State2, cast_now} ->
@@ -975,12 +930,7 @@ handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
 
-%% ar_chunk_copy publishes this event when its copy pass finishes for a
-%% storage module. Use it as the handoff signal to start network sync:
-%% both the `discover' producer and the `sync' consumer kick off here.
-%% The 2s delay primes ar_data_discovery's cache before the first discover;
-%% sync starts immediately and self-throttles on the empty queue until
-%% discover begins enqueueing tasks.
+%% ar_chunk_copy has finished, now we start network sync.
 handle_info({event, chunk_copy, {complete, StoreID}},
 		#sync_data_state{ store_id = StoreID } = State) ->
 	ar_util:cast_after(2000, self(), discover),
