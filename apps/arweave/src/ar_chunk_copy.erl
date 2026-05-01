@@ -285,7 +285,10 @@ scan_neighbor_module(OtherStoreID, OtherStoreIDs, #copy_state{
 %% Issue the cross-module read for one pending interval.
 read_range(OtherStoreID, {Start, End}, Rest, #copy_state{
 		store_id = StoreID } = CopyState, State) ->
-	CopyState2 = case ready_for_work(OtherStoreID) of
+	%% Direct private call - we're already inside the gen_server, so the
+	%% public ready_for_work/1 (which does gen_server:call self) would
+	%% throw `calling_self'.
+	CopyState2 = case do_ready_for_work(OtherStoreID, State) of
 		true ->
 			gen_server:cast(?MODULE,
 				{read_range, {Start, End, OtherStoreID, StoreID}}),
