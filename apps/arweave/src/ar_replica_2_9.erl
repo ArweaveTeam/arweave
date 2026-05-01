@@ -1,7 +1,8 @@
 -module(ar_replica_2_9).
 
 -export([get_entropy_partition/1, get_entropy_partition_range/1, get_entropy_key/3,
-    get_slice_index/1, get_partition_offset/1, get_entropy_index/2]).
+    get_slice_index/1, get_partition_offset/1, get_entropy_index/2,
+    get_next_fetch_offset/3]).
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
@@ -97,6 +98,34 @@
 get_entropy_partition(AbsoluteChunkEndOffset) ->
     BucketStart = get_entropy_bucket_start(AbsoluteChunkEndOffset),
     ar_node:get_partition_number(BucketStart).
+
+%% @doc Walk a chunk-by-chunk cursor through the storage module range
+%% [Start, End), advancing one chunk at a time within a sector and then
+%% jumping to the next partition once we've covered every footprint in
+%% the current partition. Within one sector each chunk has a unique
+%% replica.2.9 entropy (and therefore a unique footprint), so one sector's
+%% worth of chunks is enough to touch every footprint in the partition;
+%% continuing past the sector would re-fetch footprints we've already
+%% covered.
+-spec get_next_fetch_offset(
+        Offset :: non_neg_integer(),
+        Start :: non_neg_integer(),
+        End :: non_neg_integer()
+) -> non_neg_integer().
+get_next_fetch_offset(Offset, Start, End) ->
+    SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
+    Partition = get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
+    {PartitionStart, PartitionEnd} = get_entropy_partition_range(Partition),
+    SectorStart = max(Start, PartitionStart),
+    SectorEnd = min(PartitionEnd, SectorStart + SectorSize),
+    Offset2 =
+        case Offset + 2 * ?DATA_CHUNK_SIZE > SectorEnd of
+            true ->
+                PartitionEnd;
+            false ->
+                Offset + ?DATA_CHUNK_SIZE
+        end,
+    min(Offset2, End).
 
 get_entropy_partition_range(PartitionNumber) ->
     %% The goal of this function is to return the minimum and maximum byte offsets that, when
@@ -622,3 +651,26 @@ walk_sub_chunks(ExpectedIndex, AbsoluteChunkByteOffset, SubChunkStartOffset) ->
             [AbsoluteChunkByteOffset,  SubChunkStartOffset+8192-1]))
     ),
     walk_sub_chunks(ExpectedIndex+1, AbsoluteChunkByteOffset, SubChunkStartOffset+8192).
+
+get_next_fetch_offset_test() ->
+    SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
+    {P0Start, P0End} = get_entropy_partition_range(0),
+    Chunk = ?DATA_CHUNK_SIZE,
+
+    ?assertEqual(P0Start + Chunk,
+        get_next_fetch_offset(P0Start, P0Start, P0End),
+        "simple advance"),
+
+    ?assertEqual(P0Start + 1000,
+        get_next_fetch_offset(P0Start, P0Start, P0Start + 1000),
+        "simple advance, limited by End"),
+
+    ?assertEqual(P0End,
+        get_next_fetch_offset(P0Start + SectorSize - 1, P0Start, P0End),
+        "jump to PartitionEnd"),
+
+    ?assertEqual(P0Start + SectorSize,
+        get_next_fetch_offset(P0Start + SectorSize - 1, P0Start, P0Start + SectorSize),
+        "jump to PartitionEnd, limited by End"),
+
+    ok.

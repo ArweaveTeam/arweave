@@ -79,13 +79,15 @@ handle_cast(pull, State) ->
 
 handle_cast({sync_range, SyncTask}, State) ->
 	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
-			footprint_key = FootprintKey } = SyncTask,
+			store_id = StoreID, footprint_key = FootprintKey } = SyncTask,
 	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
 		recast -> ok;
 		_ ->
 			ar_peer_worker:task_completed(Peer, self(), FootprintKey,
-				SyncResult, ElapsedUs, End - Start)
+				SyncResult, ElapsedUs, End - Start),
+			gen_server:cast(ar_data_sync:name(StoreID),
+				{sync_task_completed, Start, End})
 	end,
 	{noreply, State};
 
@@ -113,7 +115,7 @@ try_take_one([{_Peer, PeerPid} | Rest]) ->
 %% which returns {error, timeout} directly, not recast).
 run_sync_range(SyncTask, State) ->
 	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
-			footprint_key = FootprintKey } = SyncTask,
+			store_id = StoreID, footprint_key = FootprintKey } = SyncTask,
 	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
 		recast ->
@@ -121,7 +123,9 @@ run_sync_range(SyncTask, State) ->
 			ok;
 		_ ->
 			ar_peer_worker:task_completed(Peer, self(), FootprintKey, SyncResult,
-				ElapsedUs, End - Start)
+				ElapsedUs, End - Start),
+			gen_server:cast(ar_data_sync:name(StoreID),
+				{sync_task_completed, Start, End})
 	end,
 	ok.
 
@@ -276,7 +280,7 @@ sync_range(#sync_task{ start_offset = Start, end_offset = End }, _State) when St
 	ok;
 sync_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
 		retry_count = 0 }, _State) ->
-	?LOG_WARNING([{event, sync_range_retries_exhausted},
+	?LOG_INFO([{event, sync_range_retries_exhausted},
 				{peer, ar_util:format_peer(Peer)},
 				{start_offset, Start}, {end_offset, End}]),
 	{error, timeout};

@@ -172,8 +172,13 @@ handle_call(Request, _From, State) ->
 handle_cast({sync_range, SyncTask}, State) ->
 	#sync_task{ peer = Peer } = SyncTask,
 	case ar_peer_worker:get_or_start(Peer) of
-		{ok, Pid} -> ar_peer_worker:enqueue(Pid, SyncTask);
-		{error, _} -> ok
+		{ok, Pid} ->
+			ar_peer_worker:enqueue(Pid, SyncTask);
+		{error, _} ->
+			%% No peer worker available - release the byte range so it
+			%% can be re-enqueued; otherwise it stays phantom-in-flight
+			%% in sync_task_queue's dedup overlay.
+			ar_peer_worker:release_dropped_task(SyncTask)
 	end,
 	{noreply, State};
 

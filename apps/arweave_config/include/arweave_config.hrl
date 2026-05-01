@@ -36,6 +36,12 @@
 %% block header and downloads it from peers.
 -define(DEFAULT_HEADER_SYNC_JOBS, 1).
 
+%% Maximum concurrent peer-discovery scanners across all (Peer, Mode) pairs.
+%% Each scanner walks one peer's advertised buckets and refreshes the
+%% per-peer interval cache; per-peer rate limiting is enforced separately by
+%% ar_rate_limiter, so this knob just caps total parallelism.
+-define(DEFAULT_DATA_DISCOVERY_MAX_CONCURRENT_PEER_SCANS, 100).
+
 %% The default expiration time for a data root in the disk pool.
 -define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 30 * 60).
 
@@ -327,6 +333,8 @@
 	max_emitters = ?NUM_EMITTER_PROCESSES,
 	sync_jobs = ?DEFAULT_SYNC_JOBS,
 	header_sync_jobs = ?DEFAULT_HEADER_SYNC_JOBS,
+	data_discovery_max_concurrent_peer_scans =
+			?DEFAULT_DATA_DISCOVERY_MAX_CONCURRENT_PEER_SCANS,
 	enable_data_roots_syncing = true,
 	data_sync_request_packed_chunks = false,
 	disk_pool_jobs = ?DEFAULT_DISK_POOL_JOBS,
