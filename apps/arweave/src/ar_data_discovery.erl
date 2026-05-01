@@ -21,20 +21,20 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
-%% Rate-limit keys used when talking to peers. Kept here rather than inside
-%% ar_peer_intervals so the cache layer and the rate limiter share one source.
--define(GET_SYNC_RECORD_RPM_KEY, data_sync_record).
--define(GET_FOOTPRINT_RECORD_RPM_KEY, footprints).
-
 %% Per-peer cache of byte intervals reported by each peer over the
 %% network (via /data_sync_record for normal mode, /footprints for
 %% footprint mode). Populated by the scanner pool in this module;
 %% read by ar_peer_sync to compute fetchable intervals.
 %%
-%% Rows keyed by `{Peer, CacheKey, Mode}':
+%% Rows keyed by `{Peer, CacheKey, Mode}'. The MonotonicMs slot records
+%% the time of the cache_store/3 that wrote the row; the periodic
+%% expiration check uses ets:select to find each peer's most recent
+%% write and evicts peers that haven't been written for too long. This
+%% piggybacks liveness tracking on the writes that already happen,
+%% avoiding a separate ETS table or per-fetch heartbeat casts.
 %%
-%%   normal:    {Key, Intervals, PeerRightBound}
-%%   footprint: {Key, Intervals, none}
+%%   normal:    {Key, Intervals, PeerRightBound, MonotonicMs}
+%%   footprint: {Key, Intervals, none,           MonotonicMs}
 -define(PEER_INTERVAL_CACHE_TABLE, ar_data_discovery_peer_intervals).
 
 %% Fetch at most this many sync intervals from a peer at a time.
@@ -51,20 +51,16 @@
 %% sizes and the bucket-map peer counts, plus ar_peers' rated pool size.
 -define(STATE_SNAPSHOT_INTERVAL_MS, 60_000).
 
-%% Throttle for the scanner's "peer is still alive" cast back to
-%% ar_data_discovery. Scanners refresh the peer's expiration timer at
-%% most this often, so a long fine-grained walk doesn't let the
-%% expiration fire mid-scan.
--define(PEER_ALIVE_REFRESH_INTERVAL_MS, 60_000).
-
 %% Minimum interval between successive scan starts for the same
 %% (Peer, Mode). A scanner that finishes faster than this is requeued via
-%% cast_after for the remaining delay.
+%% cast_after for the remaining delay. A peer is auto-evicted if its
+%% last_seen entry doesn't get touched within 2x this interval.
 -ifdef(AR_TEST).
 -define(MIN_SCAN_INTERVAL_MS, 200).
 -else.
 -define(MIN_SCAN_INTERVAL_MS, 60 * 60 * 1000). %% 1 hour
 -endif.
+
 
 %% Per-(Peer, Mode) scan stats, accumulated across the fine-grained walk
 %% and reported on completion. Indicates how productive the peer is.
@@ -88,9 +84,6 @@
 	%% scanner at the top of each (Peer, footprint) cycle; drives the
 	%% ar_data_discovery_footprint_buckets ETS index.
 	footprint_map = #{},
-	%% Peer => cast_after timer ref. Auto-evicts stale peers if no bucket
-	%% updates land for ?PEER_EXPIRATION_TIME_MS.
-	expiration_map = #{},
 	%% Per-(Peer, Mode) scan loop. Scanners run one at a time per
 	%% {Peer, Mode}; each scanner refreshes that peer's buckets first, then
 	%% walks the fine-grained units (byte windows for normal,
@@ -125,13 +118,6 @@
 -else.
 -define(REPORT_BUCKET_STATS_FREQUENCY_MS, 60 * 1000).
 -endif.
-
-%% A peer's bucket entries are expired this long after its last successful
-%% bucket fetch. Set to 2x the scan interval so a healthy peer's
-%% expiration timer is always refreshed by the next successful scan,
-%% even when bucket fetches take measurable time.
--define(PEER_EXPIRATION_TIME_MS, (?MIN_SCAN_INTERVAL_MS * 2)).
-
 
 %% The number of peers from the top of the rating to schedule for inclusion
 %% into the peer map every DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS milliseconds.
@@ -268,13 +254,30 @@ handle_call(Request, _From, State) ->
 handle_cast({add_peer, Peer}, State) ->
 	{noreply, maybe_start_scanners(enqueue_peer_scans(Peer, State))};
 
-handle_cast({refresh_peer_alive, Peer}, State) ->
-	%% Throttled "peer is still online" signal from a running scanner;
-	%% only refreshes the expiration timer, doesn't touch bucket maps.
-	%% Without this, a scanner whose fine-grained walk takes longer than
-	%% ?PEER_EXPIRATION_TIME_MS would have its peer's buckets expire
-	%% mid-scan, orphaning the scanner.
-	{noreply, refresh_expiration_timer(Peer, State)};
+handle_cast({check_expiration, Peer}, State) ->
+	%% Per-peer periodic expiration check. Reads the most recent
+	%% cache_store timestamp for this peer from the cache table - the
+	%% scanner writes there on every successful bucket / fine-grained
+	%% fetch, so it doubles as the liveness signal. No heartbeat cast
+	%% from the scanner is needed.
+	case peer_last_cache_write(Peer) of
+		none ->
+			%% No cache rows for this peer (already evicted or never
+			%% successfully scanned); drop the polling loop.
+			gen_server:cast(?MODULE, {remove_peer, Peer}),
+			{noreply, State};
+		LastSeen ->
+			Age = erlang:monotonic_time(millisecond) - LastSeen,
+			case Age >= (?MIN_SCAN_INTERVAL_MS) * 2 of
+				true ->
+					gen_server:cast(?MODULE, {remove_peer, Peer}),
+					{noreply, State};
+				false ->
+					ar_util:cast_after((?MIN_SCAN_INTERVAL_MS) * 2 - Age,
+						?MODULE, {check_expiration, Peer}),
+					{noreply, State}
+			end
+	end;
 
 handle_cast({requeue_scan, Peer, Mode}, State) ->
 	%% Delayed requeue from a recently-finished scan. Re-add to scan_waiting
@@ -290,8 +293,8 @@ handle_cast({requeue_scan, Peer, Mode}, State) ->
 	{noreply, maybe_start_scanners(State2)};
 
 handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
-	#state{ network_map = Map } = State,
-	State2 = refresh_expiration_timer(Peer, State),
+	#state{ network_map = Map, footprint_map = FootprintMap } = State,
+	maybe_schedule_expiration_check(Peer, Map, FootprintMap),
 	Map2 = maps:put(Peer, SyncBuckets, Map),
 	ar_sync_buckets:foreach(
 		fun(Bucket, Share) ->
@@ -300,11 +303,11 @@ handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
 		?NETWORK_DATA_BUCKET_SIZE,
 		SyncBuckets
 	),
-	{noreply, State2#state{ network_map = Map2 }};
+	{noreply, State#state{ network_map = Map2 }};
 
 handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
-	#state{ footprint_map = Map } = State,
-	State2 = refresh_expiration_timer(Peer, State),
+	#state{ network_map = NetworkMap, footprint_map = Map } = State,
+	maybe_schedule_expiration_check(Peer, NetworkMap, Map),
 	Map2 = maps:put(Peer, FootprintBuckets, Map),
 	ar_sync_buckets:foreach(
 		fun(Bucket, Share) ->
@@ -313,10 +316,10 @@ handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
 		?NETWORK_FOOTPRINT_BUCKET_SIZE,
 		FootprintBuckets
 	),
-	{noreply, State2#state{ footprint_map = Map2 }};
+	{noreply, State#state{ footprint_map = Map2 }};
 
 handle_cast({remove_peer, Peer}, State) ->
-	#state{ network_map = Map, footprint_map = FootprintMap, expiration_map = E,
+	#state{ network_map = Map, footprint_map = FootprintMap,
 			scan_waiting = Waiting, scan_jobs = Jobs } = State,
 	Map2 =
 		case maps:take(Peer, Map) of
@@ -346,7 +349,6 @@ handle_cast({remove_peer, Peer}, State) ->
 				),
 				Map4
 		end,
-	E2 = maps:remove(Peer, E),
 	%% Drop waiting {Peer, _} entries.
 	Waiting2 = queue:filter(fun({P, _Mode}) -> P =/= Peer end, Waiting),
 	Jobs2 = sets:filter(fun({P, _Mode}) -> P =/= Peer end, Jobs),
@@ -370,7 +372,7 @@ handle_cast({remove_peer, Peer}, State) ->
 			{remaining_known_peers,
 				maps:size(Map2) + maps:size(FootprintMap2)}]),
 	{noreply, State#state{ network_map = Map2, footprint_map = FootprintMap2,
-			expiration_map = E2, scan_waiting = Waiting2, scan_jobs = Jobs2,
+			scan_waiting = Waiting2, scan_jobs = Jobs2,
 			scan_inflight = Inflight2,
 			scan_started_at = StartedAt2 }};
 
@@ -548,16 +550,20 @@ set_bucket_stats_metrics(StoreID, Type, AllPeers, TotalBuckets, ZeroCount, Healt
 	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, zero_peer_count], ZeroCount),
 	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, healthy_peer_count], HealthyCount).
 
-refresh_expiration_timer(Peer, State) ->
-	#state{ expiration_map = Map } = State,
-	case maps:get(Peer, Map, not_found) of
-		not_found ->
+%% On the peer's first appearance in either bucket map, schedule the
+%% periodic expiration check. Subsequent bucket-fetch responses see
+%% the peer is already known and skip the schedule. The check
+%% reschedules itself via {check_expiration, Peer} until the peer is
+%% removed.
+maybe_schedule_expiration_check(Peer, NetworkMap, FootprintMap) ->
+	case maps:is_key(Peer, NetworkMap) orelse maps:is_key(Peer, FootprintMap) of
+		true ->
 			ok;
-		Timer ->
-			erlang:cancel_timer(Timer)
-	end,
-	Timer2 = ar_util:cast_after(?PEER_EXPIRATION_TIME_MS, ?MODULE, {remove_peer, Peer}),
-	State#state{ expiration_map = maps:put(Peer, Timer2, Map) }.
+		false ->
+			ar_util:cast_after((?MIN_SCAN_INTERVAL_MS) * 2, ?MODULE,
+				{check_expiration, Peer}),
+			ok
+	end.
 
 %%%===================================================================
 %%% Per-peer scanner pool.
@@ -909,20 +915,8 @@ fetch_footprint_buckets(Peer) ->
 	end.
 
 wipe_peer_cache_rows(Peer) ->
-	ToDelete = lists:foldl(
-		fun({Key, _Intervals, _Meta}, Acc) ->
-			case key_belongs_to_peer(Key, Peer) of
-				true -> [Key | Acc];
-				false -> Acc
-			end
-		end,
-		[],
-		ets:tab2list(?PEER_INTERVAL_CACHE_TABLE)
-	),
-	lists:foreach(fun(K) -> ets:delete(?PEER_INTERVAL_CACHE_TABLE, K) end, ToDelete).
-
-key_belongs_to_peer({KPeer, _CacheKey, _Mode}, Peer) -> KPeer =:= Peer;
-key_belongs_to_peer(_, _) -> false.
+	ets:select_delete(?PEER_INTERVAL_CACHE_TABLE,
+		[{ {{Peer, '_', '_'}, '_', '_', '_'}, [], [true] }]).
 
 metric_inc(Name, Labels) ->
 	try prometheus_counter:inc(Name, Labels)
@@ -944,29 +938,23 @@ metric_set(Name, Labels, Value) ->
 
 cache_lookup(Key) ->
 	case ets:lookup(?PEER_INTERVAL_CACHE_TABLE, Key) of
-		[{_, Intervals, Meta}] -> {hit, Intervals, Meta};
+		[{_, Intervals, Meta, _MonotonicMs}] -> {hit, Intervals, Meta};
 		[] -> miss
 	end.
 
 cache_store(Key, Intervals, Meta) ->
-	ets:insert(?PEER_INTERVAL_CACHE_TABLE, {Key, Intervals, Meta}),
+	ets:insert(?PEER_INTERVAL_CACHE_TABLE,
+		{Key, Intervals, Meta, erlang:monotonic_time(millisecond)}),
 	ok.
 
-%% Cast a `refresh_peer_alive' to ar_data_discovery, but at most once
-%% per ?PEER_ALIVE_REFRESH_INTERVAL_MS per peer per scanner process.
-%% Throttled via the scanner's process dictionary so we don't flood the
-%% gen_server with one cast per HTTP fetch.
-maybe_refresh_peer_alive(Peer) ->
-	Key = {peer_alive_last, Peer},
-	Now = erlang:monotonic_time(millisecond),
-	case erlang:get(Key) of
-		Last when is_integer(Last),
-				Now - Last < ?PEER_ALIVE_REFRESH_INTERVAL_MS ->
-			ok;
-		_ ->
-			erlang:put(Key, Now),
-			gen_server:cast(?MODULE, {refresh_peer_alive, Peer}),
-			ok
+%% Most recent cache_store timestamp across all of Peer's rows, or
+%% `none' if the peer has no cache rows. Used by the periodic
+%% expiration check as the liveness signal.
+peer_last_cache_write(Peer) ->
+	case ets:select(?PEER_INTERVAL_CACHE_TABLE,
+			[{ {{Peer, '_', '_'}, '_', '_', '$1'}, [], ['$1'] }]) of
+		[] -> none;
+		Timestamps -> lists:max(Timestamps)
 	end.
 
 fetch_peer_intervals_http(Peer, Left, Right, Key) ->
@@ -986,7 +974,6 @@ fetch_peer_intervals_http(Peer, Left, Right, Key) ->
 					false -> element(1, ar_intervals:largest(PeerIntervals))
 				end,
 			cache_store(Key, PeerIntervals, PeerRightBound),
-			maybe_refresh_peer_alive(Peer),
 			Outcome = case ar_intervals:is_empty(PeerIntervals) of
 				true -> empty;
 				false -> ok
@@ -1012,7 +999,6 @@ fetch_peer_footprint_intervals_http(Peer, Partition, Footprint, Key) ->
 	case PeerReply of
 		{ok, Intervals} ->
 			cache_store(Key, Intervals, none),
-			maybe_refresh_peer_alive(Peer),
 			Outcome = case ar_intervals:is_empty(Intervals) of
 				true -> empty;
 				false -> ok
@@ -1022,7 +1008,6 @@ fetch_peer_footprint_intervals_http(Peer, Partition, Footprint, Key) ->
 		not_found ->
 			Empty = ar_intervals:new(),
 			cache_store(Key, Empty, none),
-			maybe_refresh_peer_alive(Peer),
 			metric_inc(data_discovery_refresh_completed, [footprint, empty]),
 			{ok, Empty};
 		Error ->
