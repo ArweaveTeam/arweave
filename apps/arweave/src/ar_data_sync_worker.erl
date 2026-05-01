@@ -78,16 +78,10 @@ handle_cast(pull, State) ->
 	end;
 
 handle_cast({sync_range, SyncTask}, State) ->
-	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
-			store_id = StoreID, footprint_key = FootprintKey } = SyncTask,
 	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
 		recast -> ok;
-		_ ->
-			ar_peer_worker:task_completed(Peer, self(), FootprintKey,
-				SyncResult, ElapsedUs, End - Start),
-			gen_server:cast(ar_data_sync:name(StoreID),
-				{sync_task_completed, Start, End})
+		_ -> ar_data_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs)
 	end,
 	{noreply, State};
 
@@ -114,18 +108,13 @@ try_take_one([{_Peer, PeerPid} | Rest]) ->
 %% fails after exhausting retries — see sync_range/2 retry-zero clause
 %% which returns {error, timeout} directly, not recast).
 run_sync_range(SyncTask, State) ->
-	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
-			store_id = StoreID, footprint_key = FootprintKey } = SyncTask,
 	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
 		recast ->
 			%% Slot stays claimed; eventual retry will report completion.
 			ok;
 		_ ->
-			ar_peer_worker:task_completed(Peer, self(), FootprintKey, SyncResult,
-				ElapsedUs, End - Start),
-			gen_server:cast(ar_data_sync:name(StoreID),
-				{sync_task_completed, Start, End})
+			ar_data_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs)
 	end,
 	ok.
 
