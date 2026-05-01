@@ -72,7 +72,12 @@
 %% sync_jobs multiplier for max_peer_queue ceiling.
 -define(PEER_QUEUE_MULTIPLIER, 1000).
 -record(state, {
-	total_throughput = undefined   %% EMA-smoothed sum of peer ratings
+	total_throughput = undefined,  %% EMA-smoothed sum of peer ratings
+	%% Footprint-slot accounting drift observed on the previous rebalance
+	%% tick. We only emit a warning when the same drift is seen on two
+	%% consecutive ticks; single-tick drift is just the natural race
+	%% between claim/release and the per-peer record_peer_load publish.
+	prev_drift = []
 }).
 
 %%%===================================================================
@@ -179,8 +184,8 @@ handle_cast(rebalance_peers, State) ->
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	{Targets, State1} = calculate_targets(PeerPids, AllPeerPerformances, State),
 	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State1),
-	log_anomalies(State2),
-	{noreply, State2};
+	State3 = log_anomalies(State2),
+	{noreply, State3};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -356,7 +361,7 @@ remove_peer(Peer) ->
 	catch _:_ -> ok
 	end.
 
-log_anomalies(#state{} = _State) ->
+log_anomalies(#state{ prev_drift = PrevDrift } = State) ->
 	try
 		SumPeerFootprints = sum_prefix(active_footprints),
 		SlotsAvailable = ets:lookup_element(?WORKER_LOAD_TABLE,
@@ -368,15 +373,18 @@ log_anomalies(#state{} = _State) ->
 			{footprint_slot_accounting, SumPeerFootprints, SlotsClaimed}
 		],
 		Mismatches = [T || {_, A, B} = T <- Drift, A =/= B],
-		case Mismatches of
-			[] -> ok;
-			_ ->
+		case Mismatches =/= [] andalso Mismatches =:= PrevDrift of
+			true ->
 				?LOG_WARNING([{event, worker_load_anomaly_drift},
-					{mismatches, Mismatches}])
-		end
+					{mismatches, Mismatches}]);
+			false ->
+				ok
+		end,
+		State#state{ prev_drift = Mismatches }
 	catch Class:Reason ->
 		?LOG_WARNING([{event, worker_load_anomaly_check_failed},
-			{class, Class}, {reason, io_lib:format("~p", [Reason])}])
+			{class, Class}, {reason, io_lib:format("~p", [Reason])}]),
+		State
 	end.
 
 sum_prefix(Tag) ->
