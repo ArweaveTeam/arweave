@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, get_bucket_peers/1, get_footprint_bucket_peers/1,
-		collect_peers/0, pick_peers/2, report_bucket_stats/0,
+		collect_peers/0, pick_peers/2,
 		get_peer_intervals/3, get_peer_footprint_intervals/3]).
 
 -ifdef(AR_TEST).
@@ -47,9 +47,14 @@
 %% Emit a peer_scan progress log every N fine-grained fetches.
 -define(PROGRESS_LOG_INTERVAL, 1000).
 
-%% Periodic state snapshot interval. One log line summarising scan-pool
-%% sizes and the bucket-map peer counts, plus ar_peers' rated pool size.
--define(STATE_SNAPSHOT_INTERVAL_MS, 60_000).
+%% Periodic telemetry tick. On each fire the gen_server emits a
+%% state-snapshot log line and the per-bucket coverage Prometheus
+%% gauges. Single timer + handler covers both.
+-ifdef(AR_TEST).
+-define(TELEMETRY_TICK_MS, 10_000).
+-else.
+-define(TELEMETRY_TICK_MS, 60_000).
+-endif.
 
 %% Minimum interval between successive scan starts for the same
 %% (Peer, Mode). A scanner that finishes faster than this is requeued via
@@ -110,13 +115,6 @@
 -define(DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, 2 * 1000).
 -else.
 -define(DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS, 4 * 60 * 1000).
--endif.
-
-%% The frequency of logging bucket stats.
--ifdef(AR_TEST).
--define(REPORT_BUCKET_STATS_FREQUENCY_MS, 10 * 1000).
--else.
--define(REPORT_BUCKET_STATS_FREQUENCY_MS, 60 * 1000).
 -endif.
 
 %% The number of peers from the top of the rating to schedule for inclusion
@@ -233,17 +231,10 @@ init([]) ->
 		[],
 		#{ skip_on_shutdown => false }
 	),
-	{ok, _} = ar_timer:apply_interval(
-		?REPORT_BUCKET_STATS_FREQUENCY_MS,
-		?MODULE,
-		report_bucket_stats,
-		[],
-		#{ skip_on_shutdown => true }
-	),
-	%% Periodic snapshot of the gen_server's scan-pool/peer-map state,
-	%% used to diagnose flatlines (peer count stays at 0). Fires from
-	%% inside the gen_server so it has direct access to State.
-	erlang:send_after(?STATE_SNAPSHOT_INTERVAL_MS, self(), snapshot_state),
+	%% Single periodic telemetry tick: emits the state-snapshot log and
+	%% the per-bucket coverage Prometheus gauges. Fires from inside the
+	%% gen_server so it has direct access to State.
+	erlang:send_after(?TELEMETRY_TICK_MS, self(), telemetry_tick),
 	ok = ar_events:subscribe(peer),
 	{ok, #state{}}.
 
@@ -408,24 +399,10 @@ handle_info({event, peer, {removed, Peer}}, State) ->
 handle_info({event, peer, _}, State) ->
 	{noreply, State};
 
-handle_info(snapshot_state, State) ->
-	erlang:send_after(?STATE_SNAPSHOT_INTERVAL_MS, self(), snapshot_state),
-	#state{ network_map = NMap, footprint_map = FMap,
-			scan_waiting = Waiting, scan_inflight = Inflight,
-			scan_jobs = Jobs } = State,
-	ArPeersCount = try
-			length(ar_peers:get_peers(current))
-		catch _:_ -> -1
-		end,
-	{_, MailboxLen} = erlang:process_info(self(), message_queue_len),
-	?LOG_INFO([{event, data_discovery_state_snapshot},
-			{network_map_size, maps:size(NMap)},
-			{footprint_map_size, maps:size(FMap)},
-			{scan_waiting, queue:len(Waiting)},
-			{scan_inflight, maps:size(Inflight)},
-			{scan_jobs, sets:size(Jobs)},
-			{ar_peers_current_pool, ArPeersCount},
-			{mailbox_len, MailboxLen}]),
+handle_info(telemetry_tick, State) ->
+	erlang:send_after(?TELEMETRY_TICK_MS, self(), telemetry_tick),
+	emit_state_snapshot(State),
+	emit_bucket_stats(),
 	{noreply, State};
 
 handle_info(Message, State) ->
@@ -479,8 +456,27 @@ collect_peers([Peer | Peers]) ->
 collect_peers([]) ->
 	ok.
 
-%% @doc Log bucket statistics for each configured storage module.
-report_bucket_stats() ->
+%% Periodic state-snapshot log emitted by the telemetry tick. Used to
+%% diagnose flatlines (e.g., peer count stuck at 0).
+emit_state_snapshot(#state{ network_map = NMap, footprint_map = FMap,
+		scan_waiting = Waiting, scan_inflight = Inflight, scan_jobs = Jobs }) ->
+	ArPeersCount = try
+			length(ar_peers:get_peers(current))
+		catch _:_ -> -1
+		end,
+	{_, MailboxLen} = erlang:process_info(self(), message_queue_len),
+	?LOG_INFO([{event, data_discovery_state_snapshot},
+			{network_map_size, maps:size(NMap)},
+			{footprint_map_size, maps:size(FMap)},
+			{scan_waiting, queue:len(Waiting)},
+			{scan_inflight, maps:size(Inflight)},
+			{scan_jobs, sets:size(Jobs)},
+			{ar_peers_current_pool, ArPeersCount},
+			{mailbox_len, MailboxLen}]).
+
+%% Per-storage-module per-mode bucket coverage Prometheus gauges,
+%% emitted by the telemetry tick.
+emit_bucket_stats() ->
 	StartTime = erlang:monotonic_time(millisecond),
 	{ok, Config} = arweave_config:get_env(),
 	StorageModules = Config#config.storage_modules,
