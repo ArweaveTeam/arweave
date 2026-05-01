@@ -250,7 +250,12 @@ initial_call([], Pid) ->
 		_:_ -> {unknown, unknown, 0}
 	end;
 initial_call([{M, _F, _A, _Location} | Stack], Pid)
-		when M =:= proc_lib; M =:= gen_server; M =:= gen_statem; M =:= gen_event ->
+		when M =:= proc_lib; M =:= gen_server; M =:= gen_statem; M =:= gen_event;
+				%% Skip stdlib higher-order helpers so the reported name lands
+				%% on the caller's spawned-fun frame (typically the actual
+				%% application code) instead of the generic library entry.
+				M =:= lists; M =:= maps; M =:= sets; M =:= dict; M =:= queue;
+				M =:= gb_sets; M =:= gb_trees; M =:= orddict; M =:= ordsets ->
 	initial_call(Stack, Pid);
 initial_call([InitialCall | _Stack], _Pid) ->
 	InitialCall.
