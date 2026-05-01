@@ -85,35 +85,14 @@
 
 -define(WORKER_LOAD_TABLE, worker_load).
 
-%% Scan cursor for ar_peer_sync's discover loop. All scan state lives in one record that moves
-%% through the discover state machine.
--record(scan_cursor, {
-	%% Left bound of the scan range. For footprint mode, an inclusive boundary
-	%% used when cutting per-peer footprint intervals to the module.
-	start :: non_neg_integer(),
-	%% Right bound of the scan range (clamped to WeaveSize / DiskPoolThreshold
-	%% when the cursor is built).
-	end_ :: non_neg_integer(),
-	%% Current cursor position inside [start, end_). Advances on each step.
-	offset :: non_neg_integer(),
-	%% Last offset published to ar_data_discovery:advance_cursor/3. Used
-	%% to throttle advance_cursor casts to one per prefetch-window
-	%% transition rather than one per discover iteration.
-	last_advance_offset = undefined :: undefined | non_neg_integer(),
-	%% Which protocol we're querying peers with on this pass.
-	mode :: normal | footprint,
-	%% Count of tasks produced in the current scan pass. Resets each pass.
-	tasks_produced = 0 :: non_neg_integer(),
-	%% Whether any peer had data to enqueue this pass. Scans that never saw
-	%% peers don't trigger adaptive backoff - they probably just ran before
-	%% ar_data_discovery's cache warmed up.
-	had_peers = false :: boolean(),
-	%% Current unproductive-scan backoff (doubles each pass, capped).
-	backoff_ms = 0 :: non_neg_integer()
-}).
+%% ar_peer_sync's state is opaque to ar_data_sync. It is constructed
+%% via `ar_peer_sync:new/3' at module init and threaded through
+%% `enqueue/1', `sync/1', `task_completed/3', and
+%% `set_weave_size/2'. Treat it as an unstructured term outside
+%% ar_peer_sync.
 
 %% @doc The state of the server managing data synchronization.
--record(sync_data_state, {
+-record(data_sync_state, {
 	%% The last entries of the block index.
 	%% Used to determine orphaned data upon startup or chain reorg.
 	block_index,
@@ -170,10 +149,11 @@
 	%% The offsets of the chunks currently scheduled for (re-)packing (keys) and
 	%% some chunk metadata needed for storing the chunk once it is packed.
 	packing_map = #{},
-	%% The per-module task queue. Holds {FootprintKey, Start, End, Peer} entries
-	%% ordered for dispatch, plus a compact intervals overlay for O(log n) dedup.
-	%% See ar_sync_task_queue for the invariant it maintains.
-	sync_task_queue = ar_sync_task_queue:new(),
+	%% Opaque ar_peer_sync state (task queue + in-progress enqueue pass
+	%% + range bookkeeping). Built via ar_peer_sync:new/3 at init and
+	%% threaded through ar_peer_sync's API. Do not inspect outside
+	%% ar_peer_sync.
+	peer_sync = undefined,
 	%% The mining address the chunks are packed with in 2.6.
 	mining_address,
 	%% The identifier of the storage module the process is responsible for.
@@ -191,9 +171,5 @@
 	%% The threshold controlling the brief accumuluation of the chunks in the queue before
 	%% the actual disk dump, to reduce the chance of out-of-order write causing disk
 	%% fragmentation.
-	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD,
-	%% Explicit scan cursor for ar_peer_sync's discover loop. See
-	%% #scan_cursor{}. `undefined' means discover hasn't started its
-	%% first pass yet.
-	scan_cursor = undefined :: undefined | #scan_cursor{}
+	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
 }).

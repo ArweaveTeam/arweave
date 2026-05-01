@@ -635,6 +635,8 @@ get_status_class({error, {down,_}}) ->
 	"down";
 get_status_class({error, {stream_error,_}}) ->
 	"stream_error";
+get_status_class({error, client_error}) ->
+	"client_error";
 get_status_class(Data) when is_integer(Data), Data > 0 ->
 	integer_to_list(Data);
 get_status_class(Data) when is_binary(Data) ->

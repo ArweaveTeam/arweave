@@ -46,12 +46,6 @@
 %% GET /footprint_buckets
 -define(GET_FOOTPRINT_SUPPORT_RELEASE, 91).
 
-%% Fine-grained peer interval cache TTL. After this many milliseconds a
-%% cached peer response is considered stale and a fresh HTTP call is issued
-%% on the next read. Matches the rate-limit cooldown so refresh cadence
-%% aligns with the peer's tolerance.
--define(PEER_INTERVAL_CACHE_TTL_MS, 60 * 1000).
-
 %% The size of the span of the weave we search at a time. ar_peer_sync's
 %% discover loop walks the unsynced range in increments of this size;
 %% ar_data_discovery prefetches peer intervals at the same granularity so

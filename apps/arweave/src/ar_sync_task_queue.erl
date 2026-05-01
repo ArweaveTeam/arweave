@@ -3,7 +3,7 @@
 -module(ar_sync_task_queue).
 
 -export([new/0, size/1, is_empty/1, intervals/1,
-		insert_batch/3, take_smallest/1]).
+		insert_batch/3, take_smallest/1, task_completed/3]).
 
 -include("ar.hrl").
 
@@ -51,14 +51,21 @@ insert_batch(PeerEntries, ChunksPerPeer, Queue) ->
 		PeerEntries
 	).
 
-%% @doc Remove the smallest task from the queue. Also removes the task's
-%% byte range from the dedup intervals so future inserts may re-enqueue
-%% the range if discovery re-surfaces it.
-take_smallest(#sync_task_queue{ q = Q, intervals = QIntervals } = Queue) ->
+%% @doc Remove the smallest task from the queue. The task's byte range
+%% stays in `intervals' so subsequent insert_batch/3 calls dedup against
+%% the still-in-flight range. Caller must invoke task_completed/3 once
+%% the sync_range definitively finishes to release the dedup.
+take_smallest(#sync_task_queue{ q = Q } = Queue) ->
 	{{FootprintKey, Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
-	QIntervals2 = ar_intervals:delete(QIntervals, End, Start),
 	Task = {FootprintKey, Start, End, Peer},
-	{Task, Queue#sync_task_queue{ q = Q2, intervals = QIntervals2 }}.
+	{Task, Queue#sync_task_queue{ q = Q2 }}.
+
+%% @doc Release the dedup overlay for a byte range whose sync_range has
+%% definitively completed (success or non-recast failure). Future
+%% insert_batch/3 calls covering [Start, End) may enqueue tasks for it
+%% again.
+task_completed(End, Start, #sync_task_queue{ intervals = QIntervals } = Queue) ->
+	Queue#sync_task_queue{ intervals = ar_intervals:delete(QIntervals, End, Start) }.
 
 %%%===================================================================
 %%% Private helpers.

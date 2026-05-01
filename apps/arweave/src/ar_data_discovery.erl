@@ -4,8 +4,7 @@
 
 -export([start_link/0, get_bucket_peers/1, get_footprint_bucket_peers/1,
 		collect_peers/0, pick_peers/2, report_bucket_stats/0,
-		get_peer_intervals/3, get_peer_footprint_intervals/3,
-		advance_cursor/3, invalidate/2]).
+		get_peer_intervals/3, get_peer_footprint_intervals/3]).
 
 -ifdef(AR_TEST).
 -export([clear_interval_cache/0]).
@@ -18,19 +17,20 @@
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
+-ifdef(AR_TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% Rate-limit keys used when talking to peers. Kept here rather than inside
 %% ar_peer_intervals so the cache layer and the rate limiter share one source.
 -define(GET_SYNC_RECORD_RPM_KEY, data_sync_record).
 -define(GET_FOOTPRINT_RECORD_RPM_KEY, footprints).
 -define(GET_SYNC_RECORD_COOLDOWN_MS, 60 * 1000).
 
-%% The peer interval cache. Entries take two shapes, both keyed by
-%% `{Peer, CacheKey, Mode}':
+%% Per-peer interval cache. Rows keyed by `{Peer, CacheKey, Mode}':
 %%
-%%   normal:    Value = {Intervals, PeerRightBound, FetchedAtMs}
-%%   footprint: Value = {Intervals, none,          FetchedAtMs}
-%%
-%% Value format is uniform so readers can branch on Mode alone.
+%%   normal:    {Key, Intervals, PeerRightBound}
+%%   footprint: {Key, Intervals, none}
 -define(INTERVAL_CACHE_TABLE, ar_data_discovery_intervals).
 
 %% Fetch at most this many sync intervals from a peer at a time.
@@ -40,24 +40,72 @@
 -define(QUERY_SYNC_INTERVALS_COUNT_LIMIT, 1000).
 -endif.
 
+%% Emit a peer_scan progress log every N fine-grained fetches.
+-define(PROGRESS_LOG_INTERVAL, 1000).
+
+%% Periodic state snapshot interval. One log line summarising scan-pool
+%% sizes and the bucket-map peer counts, plus ar_peers' rated pool size.
+-define(STATE_SNAPSHOT_INTERVAL_MS, 60_000).
+
+%% Throttle for the scanner's "peer is still alive" cast back to
+%% ar_data_discovery. Scanners refresh the peer's expiration timer at
+%% most this often, so a long fine-grained walk doesn't let the
+%% expiration fire mid-scan.
+-define(PEER_ALIVE_REFRESH_INTERVAL_MS, 60_000).
+
+%% Minimum interval between successive scan starts for the same
+%% (Peer, Mode). A scanner that finishes faster than this is requeued via
+%% cast_after for the remaining delay.
+-ifdef(AR_TEST).
+-define(MIN_SCAN_INTERVAL_MS, 200).
+-else.
+-define(MIN_SCAN_INTERVAL_MS, 60 * 60 * 1000). %% 1 hour
+-endif.
+
+%% Per-(Peer, Mode) scan stats, accumulated across the fine-grained walk
+%% and reported on completion. Indicates how productive the peer is.
+%% peer/mode/start_ms are carried so the accumulator can emit periodic
+%% progress logs without restructuring its callers.
+-record(scan_stats, {
+	peer,                  %% target peer for this scan
+	mode,                  %% normal | footprint
+	start_ms,              %% monotonic ms at scan start; used for elapsed
+	fetches = 0,           %% number of fine-grained HTTP calls issued
+	fetches_with_data = 0, %% subset that returned non-empty intervals
+	advertised_bytes = 0   %% sum of byte ranges across all returned intervals
+}).
+
 -record(state, {
-	peer_queue,
-	peers_pending,
-	network_map,
-	footprint_map,
-	expiration_map,
-	%% Refresh pool (distinct from the sync_buckets pool above) that fills
-	%% the fine-grained peer interval cache. Driven by cursor prefetch and
-	%% invalidation casts.
-	refresh_queue = queue:new(),
-	refresh_pending = 0,
-	%% pid() => job_key(). Tracks spawn_link'd refresh workers so the DOWN
-	%% handler can distinguish them from the sync_buckets pool's workers
-	%% and remove the job_key from `refresh_inflight'.
-	refresh_pids = #{},
-	%% job_key() in {Peer, CacheKey, Mode} form. Used to dedupe enqueues:
-	%% if a prefetch already covers this key we don't enqueue it again.
-	refresh_inflight = sets:new()
+	%% Peer => latest sync_buckets advertised by Peer. Updated by the scanner
+	%% at the top of each (Peer, normal) cycle; also drives the per-bucket
+	%% peer index in the ?MODULE ETS table.
+	network_map = #{},
+	%% Peer => latest footprint_buckets advertised by Peer. Updated by the
+	%% scanner at the top of each (Peer, footprint) cycle; drives the
+	%% ar_data_discovery_footprint_buckets ETS index.
+	footprint_map = #{},
+	%% Peer => cast_after timer ref. Auto-evicts stale peers if no bucket
+	%% updates land for ?PEER_EXPIRATION_TIME_MS.
+	expiration_map = #{},
+	%% Per-(Peer, Mode) scan loop. Scanners run one at a time per
+	%% {Peer, Mode}; each scanner refreshes that peer's buckets first, then
+	%% walks the fine-grained units (byte windows for normal,
+	%% (Partition, Footprint) coordinates for footprint) intersected with
+	%% the union of configured storage modules' unsynced ranges.
+	%%
+	%% scan_waiting: FIFO of {Peer, Mode} awaiting a scanner slot.
+	%% scan_inflight: Pid => {Peer, Mode}; bounded by ?MAX_CONCURRENT_PEER_SCANS.
+	%% scan_jobs: set({Peer, Mode}) - all live jobs (waiting + inflight +
+	%% cooling-down between scans). Dedups add_peer re-enqueues and acts
+	%% as a tombstone so delayed requeues / DOWN handlers can no-op when
+	%% a peer was removed mid-cycle.
+	%% scan_started_at: {Peer, Mode} => MonotonicMs of the last scan start.
+	%% Used to enforce ?MIN_SCAN_INTERVAL_MS between successive scan starts
+	%% for the same (Peer, Mode).
+	scan_waiting = queue:new(),
+	scan_inflight = #{},
+	scan_jobs = sets:new(),
+	scan_started_at = #{}
 }).
 
 %% The frequency of asking peers about their data.
@@ -74,13 +122,12 @@
 -define(REPORT_BUCKET_STATS_FREQUENCY_MS, 60 * 1000).
 -endif.
 
-%% The expiration time of peer's buckets. If a peer is found in the list of
-%% the first best ?DATA_DISCOVERY_COLLECT_PEERS_COUNT peers (checked every
-%% ?DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS milliseconds), the timer is refreshed.
--define(PEER_EXPIRATION_TIME_MS, 60 * 60 * 1000).
+%% A peer's bucket entries are expired this long after its last successful
+%% bucket fetch. Set to 2x the scan interval so a healthy peer's
+%% expiration timer is always refreshed by the next successful scan,
+%% even when bucket fetches take measurable time.
+-define(PEER_EXPIRATION_TIME_MS, (?MIN_SCAN_INTERVAL_MS * 2)).
 
-%% The maximum number of requests running at any time.
--define(DATA_DISCOVERY_PARALLEL_PEER_REQUESTS, 10).
 
 %% The number of peers from the top of the rating to schedule for inclusion
 %% into the peer map every DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS milliseconds.
@@ -138,82 +185,48 @@ get_footprint_bucket_peers(Bucket, Cursor, Peers) ->
 pick_peers(Peers, N) ->
 	pick_peers(Peers, length(Peers), N).
 
-%% @doc Return the peer's raw sync-record intervals starting at byte offset
-%% `Left'. `Right' is the requested upper bound (passed through to peers that
-%% support the right-bound endpoint; older peers ignore it). The result is
-%% intersection-free and per-peer; callers intersect with their own sought
-%% set. Reads from the interval cache when fresh, otherwise issues a
-%% `GET /data_sync_record' HTTP call and writes the response back.
-%%
-%% Returns `{error, cooldown}` without touching cache or HTTP when the peer
-%% is on the rate-limit cooldown for this endpoint.
+%% @doc Return the peer's most recently fetched sync-record intervals
+%% starting at byte offset `Left'. The result is intersection-free and
+%% per-peer; callers intersect with their own sought set. Pure ETS read -
+%% the cache is populated by the per-peer scanner loop.
 -spec get_peer_intervals(Peer, Left, Right) ->
 		{ok, ar_intervals:intervals(), non_neg_integer() | infinity}
-		| {error, cooldown | term()} when
+		| {error, cache_miss} when
 	Peer :: term(),
 	Left :: non_neg_integer(),
 	Right :: non_neg_integer() | infinity.
 get_peer_intervals(Peer, Left, _Right) ->
-	case ar_rate_limiter:is_on_cooldown(Peer, ?GET_SYNC_RECORD_RPM_KEY) of
-		true ->
-			metric_inc(data_discovery_cache_events, [normal, cooldown]),
-			{error, cooldown};
-		false ->
-			case cache_lookup({Peer, Left, normal}) of
-				{hit, Intervals, PeerRightBound} ->
-					metric_inc(data_discovery_cache_events, [normal, hit]),
-					{ok, Intervals, PeerRightBound};
-				miss ->
-					metric_inc(data_discovery_cache_events, [normal, miss]),
-					{error, cache_miss}
-			end
+	%% Cache rows are written by the per-peer scanner at
+	%% ?QUERY_RANGE_STEP_SIZE-aligned offsets. The caller's Left can be
+	%% any byte offset (the discover cursor advances by EndReached, which
+	%% is a peer-bound byte position, not aligned). Align down to the
+	%% scanner's grid so the key matches what was written.
+	Aligned = (Left div ?QUERY_RANGE_STEP_SIZE) * ?QUERY_RANGE_STEP_SIZE,
+	case cache_lookup({Peer, Aligned, normal}) of
+		{hit, Intervals, PeerRightBound} ->
+			metric_inc(data_discovery_cache_events, [normal, hit]),
+			{ok, Intervals, PeerRightBound};
+		miss ->
+			metric_inc(data_discovery_cache_events, [normal, miss]),
+			{error, cache_miss}
 	end.
 
-%% @doc Return the peer's raw footprint intervals for the given
-%% {Partition, Footprint} coordinate. One HTTP call returns all 1024
-%% chunk-sized intervals for the footprint, scattered across the partition.
-%% Cached under `{Peer, {Partition, Footprint}, footprint}'.
+%% @doc Return the peer's most recently fetched footprint intervals for
+%% the given {Partition, Footprint} coordinate.
 -spec get_peer_footprint_intervals(Peer, Partition, Footprint) ->
-		{ok, ar_intervals:intervals()} | {error, cooldown | term()} when
+		{ok, ar_intervals:intervals()} | {error, cache_miss} when
 	Peer :: term(),
 	Partition :: non_neg_integer(),
 	Footprint :: non_neg_integer().
 get_peer_footprint_intervals(Peer, Partition, Footprint) ->
-	case ar_rate_limiter:is_on_cooldown(Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY) of
-		true ->
-			metric_inc(data_discovery_cache_events, [footprint, cooldown]),
-			{error, cooldown};
-		false ->
-			case cache_lookup({Peer, {Partition, Footprint}, footprint}) of
-				{hit, Intervals, _Meta} ->
-					metric_inc(data_discovery_cache_events, [footprint, hit]),
-					{ok, Intervals};
-				miss ->
-					metric_inc(data_discovery_cache_events, [footprint, miss]),
-					{error, cache_miss}
-			end
+	case cache_lookup({Peer, {Partition, Footprint}, footprint}) of
+		{hit, Intervals, _Meta} ->
+			metric_inc(data_discovery_cache_events, [footprint, hit]),
+			{ok, Intervals};
+		miss ->
+			metric_inc(data_discovery_cache_events, [footprint, miss]),
+			{error, cache_miss}
 	end.
-
-%% @doc ar_peer_sync calls this to publish where each storage module's
-%% discover cursor currently is. ar_data_discovery enqueues prefetch
-%% refresh jobs for the next
-%% `?PREFETCH_STEPS_AHEAD'/`?PREFETCH_FOOTPRINTS_AHEAD' units ahead, so
-%% the cache is populated before discover reaches them.
--spec advance_cursor(StoreID, Offset, Mode) -> ok when
-	StoreID :: term(),
-	Offset :: non_neg_integer(),
-	Mode :: normal | footprint.
-advance_cursor(StoreID, Offset, Mode) ->
-	gen_server:cast(?MODULE, {advance_cursor, StoreID, Offset, Mode}).
-
-%% @doc A fetch from `Peer' for byte range `Range' failed; mark the
-%% corresponding cache rows stale so the next prefetch cycle re-issues the
-%% HTTP call. `Range' is a {EndByte, StartByte} tuple matching ar_intervals.
--spec invalidate(Peer, Range) -> ok when
-	Peer :: term(),
-	Range :: {non_neg_integer(), non_neg_integer()}.
-invalidate(Peer, Range) ->
-	gen_server:cast(?MODULE, {invalidate, Peer, Range}).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -237,46 +250,40 @@ init([]) ->
 		[],
 		#{ skip_on_shutdown => true }
 	),
-	gen_server:cast(?MODULE, update_network_data_map),
+	%% Periodic snapshot of the gen_server's scan-pool/peer-map state,
+	%% used to diagnose flatlines (peer count stays at 0). Fires from
+	%% inside the gen_server so it has direct access to State.
+	erlang:send_after(?STATE_SNAPSHOT_INTERVAL_MS, self(), snapshot_state),
 	ok = ar_events:subscribe(peer),
-	{ok, #state{
-		peer_queue = queue:new(),
-		peers_pending = 0,
-		network_map = #{},
-		footprint_map = #{},
-		expiration_map = #{},
-		refresh_queue = queue:new(),
-		refresh_pending = 0,
-		refresh_pids = #{},
-		refresh_inflight = sets:new()
-	}}.
+	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({add_peer, Peer}, #state{ peer_queue = Queue } = State) ->
-	{noreply, State#state{ peer_queue = queue:in(Peer, Queue) }};
+handle_cast({add_peer, Peer}, State) ->
+	{noreply, maybe_start_scanners(enqueue_peer_scans(Peer, State))};
 
-handle_cast(update_network_data_map, #state{ peers_pending = N } = State)
-		when N < ?DATA_DISCOVERY_PARALLEL_PEER_REQUESTS ->
-	case queue:out(State#state.peer_queue) of
-		{empty, _} ->
-			ar_util:cast_after(200, ?MODULE, update_network_data_map),
-			{noreply, State};
-		{{value, Peer}, Queue} ->
-			monitor(process, spawn_link(
-				fun() ->
-					fetch_sync_buckets(Peer),
-					fetch_footprint_buckets(Peer)
-				end
-			)),
-			gen_server:cast(?MODULE, update_network_data_map),
-			{noreply, State#state{ peers_pending = N + 1, peer_queue = Queue }}
-	end;
-handle_cast(update_network_data_map, State) ->
-	ar_util:cast_after(200, ?MODULE, update_network_data_map),
-	{noreply, State};
+handle_cast({refresh_peer_alive, Peer}, State) ->
+	%% Throttled "peer is still online" signal from a running scanner;
+	%% only refreshes the expiration timer, doesn't touch bucket maps.
+	%% Without this, a scanner whose fine-grained walk takes longer than
+	%% ?PEER_EXPIRATION_TIME_MS would have its peer's buckets expire
+	%% mid-scan, orphaning the scanner.
+	{noreply, refresh_expiration_timer(Peer, State)};
+
+handle_cast({requeue_scan, Peer, Mode}, State) ->
+	%% Delayed requeue from a recently-finished scan. Re-add to scan_waiting
+	%% only if the (Peer, Mode) is still active - a remove_peer in the
+	%% meantime drops it.
+	State2 = case sets:is_element({Peer, Mode}, State#state.scan_jobs) of
+		true ->
+			State#state{ scan_waiting =
+					queue:in({Peer, Mode}, State#state.scan_waiting) };
+		false ->
+			State
+	end,
+	{noreply, maybe_start_scanners(State2)};
 
 handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
 	#state{ network_map = Map } = State,
@@ -305,7 +312,8 @@ handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
 	{noreply, State2#state{ footprint_map = Map2 }};
 
 handle_cast({remove_peer, Peer}, State) ->
-	#state{ network_map = Map, footprint_map = FootprintMap, expiration_map = E } = State,
+	#state{ network_map = Map, footprint_map = FootprintMap, expiration_map = E,
+			scan_waiting = Waiting, scan_jobs = Jobs } = State,
 	Map2 =
 		case maps:take(Peer, Map) of
 			error ->
@@ -335,37 +343,56 @@ handle_cast({remove_peer, Peer}, State) ->
 				Map4
 		end,
 	E2 = maps:remove(Peer, E),
-	{noreply, State#state{ network_map = Map2, footprint_map = FootprintMap2, expiration_map = E2 }};
-
-handle_cast({advance_cursor, _StoreID, Offset, Mode}, State) ->
-	State2 = enqueue_prefetch_jobs(Offset, Mode, State),
-	maybe_cast_refresh_step(State2),
-	{noreply, State2};
-
-handle_cast({invalidate, Peer, Range}, State) ->
-	State2 = invalidate_range(Peer, Range, State),
-	maybe_cast_refresh_step(State2),
-	{noreply, State2};
-
-handle_cast(refresh_step, State) ->
-	{noreply, drain_refresh_queue(State)};
+	%% Drop waiting {Peer, _} entries.
+	Waiting2 = queue:filter(fun({P, _Mode}) -> P =/= Peer end, Waiting),
+	Jobs2 = sets:filter(fun({P, _Mode}) -> P =/= Peer end, Jobs),
+	StartedAt2 = maps:filter(
+			fun({P, _Mode}, _T) -> P =/= Peer end,
+			State#state.scan_started_at),
+	%% Kill any in-flight scanners for this peer; their {Peer, Mode} is
+	%% no longer in scan_jobs so on exit the DOWN handler won't requeue,
+	%% but leaving them alive holds a slot for the entire fine-grained
+	%% walk (hours). The DOWN handler still fires after exit(Pid, kill)
+	%% and decrements scan_inflight there.
+	{Inflight2, KilledScanners} = take_peer_inflight(
+			Peer, State#state.scan_inflight),
+	lists:foreach(fun(Pid) -> exit(Pid, kill) end, KilledScanners),
+	wipe_peer_cache_rows(Peer),
+	?LOG_INFO([{event, peer_removed_from_discovery},
+			{peer, ar_util:format_peer(Peer)},
+			{had_sync_buckets, maps:is_key(Peer, Map)},
+			{had_footprint_buckets, maps:is_key(Peer, FootprintMap)},
+			{killed_scanners, length(KilledScanners)},
+			{remaining_known_peers,
+				maps:size(Map2) + maps:size(FootprintMap2)}]),
+	{noreply, State#state{ network_map = Map2, footprint_map = FootprintMap2,
+			expiration_map = E2, scan_waiting = Waiting2, scan_jobs = Jobs2,
+			scan_inflight = Inflight2,
+			scan_started_at = StartedAt2 }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
 	{noreply, State}.
 
-handle_info({'DOWN', _,  process, Pid, _}, State) ->
-	case maps:take(Pid, State#state.refresh_pids) of
-		{JobKey, Pids2} ->
-			Inflight2 = sets:del_element(JobKey, State#state.refresh_inflight),
-			State2 = State#state{
-				refresh_pids = Pids2,
-				refresh_inflight = Inflight2,
-				refresh_pending = State#state.refresh_pending - 1 },
-			maybe_cast_refresh_step(State2),
-			{noreply, State2};
+handle_info({'DOWN', _, process, Pid, _Reason}, State) ->
+	case maps:take(Pid, State#state.scan_inflight) of
+		{{Peer, Mode}, Inflight2} ->
+			State2 = State#state{ scan_inflight = Inflight2 },
+			%% Requeue only if the (Peer, Mode) is still active (peer not
+			%% removed, scan still wanted). Honor ?MIN_SCAN_INTERVAL_MS:
+			%% if the previous scan started < interval ago, defer the
+			%% requeue via cast_after; otherwise enqueue immediately.
+			State3 = case sets:is_element({Peer, Mode}, State2#state.scan_jobs) of
+				true ->
+					schedule_requeue({Peer, Mode}, State2);
+				false ->
+					State2#state{ scan_started_at =
+							maps:remove({Peer, Mode},
+									State2#state.scan_started_at) }
+			end,
+			{noreply, maybe_start_scanners(State3)};
 		error ->
-			{noreply, State#state{ peers_pending = State#state.peers_pending - 1 }}
+			{noreply, State}
 	end;
 
 handle_info({event, peer, {removed, Peer}}, State) ->
@@ -373,6 +400,26 @@ handle_info({event, peer, {removed, Peer}}, State) ->
 	{noreply, State};
 
 handle_info({event, peer, _}, State) ->
+	{noreply, State};
+
+handle_info(snapshot_state, State) ->
+	erlang:send_after(?STATE_SNAPSHOT_INTERVAL_MS, self(), snapshot_state),
+	#state{ network_map = NMap, footprint_map = FMap,
+			scan_waiting = Waiting, scan_inflight = Inflight,
+			scan_jobs = Jobs } = State,
+	ArPeersCount = try
+			length(ar_peers:get_peers(current))
+		catch _:_ -> -1
+		end,
+	{_, MailboxLen} = erlang:process_info(self(), message_queue_len),
+	?LOG_INFO([{event, data_discovery_state_snapshot},
+			{network_map_size, maps:size(NMap)},
+			{footprint_map_size, maps:size(FMap)},
+			{scan_waiting, queue:len(Waiting)},
+			{scan_inflight, maps:size(Inflight)},
+			{scan_jobs, sets:size(Jobs)},
+			{ar_peers_current_pool, ArPeersCount},
+			{mailbox_len, MailboxLen}]),
 	{noreply, State};
 
 handle_info(Message, State) ->
@@ -497,139 +544,371 @@ set_bucket_stats_metrics(StoreID, Type, AllPeers, TotalBuckets, ZeroCount, Healt
 	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, zero_peer_count], ZeroCount),
 	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, healthy_peer_count], HealthyCount).
 
-fetch_sync_buckets(Peer) ->
-	case ar_http_iface_client:get_sync_buckets(Peer) of
-		{ok, SyncBuckets} ->
-			gen_server:cast(?MODULE, {add_peer_sync_buckets, Peer, SyncBuckets});
-		{error, request_type_not_found} ->
-			?LOG_DEBUG([{event, sync_buckets_request_type_not_found},
-					{peer, ar_util:format_peer(Peer)}]);
-		{error, Reason} ->
-			ar_http_iface_client:log_failed_request(Reason,
-				[{event, failed_to_fetch_sync_buckets},
-				{peer, ar_util:format_peer(Peer)},
-				{reason, io_lib:format("~p", [Reason])}]);
-		Error ->
-			?LOG_DEBUG([{event, failed_to_fetch_sync_buckets},
-				{peer, ar_util:format_peer(Peer)},
-				{reason, io_lib:format("~p", [Error])}])
-	end.
-
-fetch_footprint_buckets(Peer) ->
-	case ar_peers:get_peer_release(Peer) >= ?GET_FOOTPRINT_SUPPORT_RELEASE of
-		true ->
-			fetch_footprint_buckets2(Peer);
-		false ->
-			ok
-	end.
-
-fetch_footprint_buckets2(Peer) ->
-	case ar_http_iface_client:get_footprint_buckets(Peer) of
-		{ok, SyncBuckets} ->
-			gen_server:cast(?MODULE, {add_peer_footprint_buckets, Peer, SyncBuckets});
-		{error, request_type_not_found} ->
-			?LOG_DEBUG([{event, footprint_buckets_request_type_not_found},
-					{peer, ar_util:format_peer(Peer)}]);
-		{error, Reason} ->
-			ar_http_iface_client:log_failed_request(Reason,
-				[{event, failed_to_fetch_footprint_buckets},
-				{peer, ar_util:format_peer(Peer)},
-				{reason, io_lib:format("~p", [Reason])}]);
-		Error ->
-			?LOG_DEBUG([{event, failed_to_fetch_footprint_buckets},
-				{peer, ar_util:format_peer(Peer)},
-				{reason, io_lib:format("~p", [Error])}])
-	end.
-
 refresh_expiration_timer(Peer, State) ->
 	#state{ expiration_map = Map } = State,
 	case maps:get(Peer, Map, not_found) of
 		not_found ->
 			ok;
 		Timer ->
-			timer:cancel(Timer)
+			erlang:cancel_timer(Timer)
 	end,
 	Timer2 = ar_util:cast_after(?PEER_EXPIRATION_TIME_MS, ?MODULE, {remove_peer, Peer}),
 	State#state{ expiration_map = maps:put(Peer, Timer2, Map) }.
 
 %%%===================================================================
-%%% Prefetch / refresh worker pool.
+%%% Per-peer scanner pool.
 %%%===================================================================
 
-%% Build the list of (Peer, CacheKey, Mode) jobs ahead of Offset in this Mode
-%% and enqueue the ones not already fresh or inflight.
-enqueue_prefetch_jobs(Offset, normal, State) ->
-	Starts = [Offset + N * ?QUERY_RANGE_STEP_SIZE || N <- lists:seq(0, ?PREFETCH_STEPS_AHEAD - 1)],
-	lists:foldl(
-		fun(Left, Acc) ->
-			Bucket = Left div ?NETWORK_DATA_BUCKET_SIZE,
-			Peers = get_bucket_peers(Bucket),
-			lists:foldl(
-				fun(Peer, Acc1) ->
-					maybe_enqueue_refresh({Peer, Left, normal}, Acc1)
-				end,
-				Acc,
-				Peers
-			)
-		end,
-		State,
-		Starts
-	);
-enqueue_prefetch_jobs(Offset, footprint, State) ->
-	%% Walk ?PREFETCH_FOOTPRINTS_AHEAD footprints starting at Offset. Use
-	%% the same iteration rule ar_peer_sync's discover loop uses so we
-	%% warm the rows discover will actually consume.
-	case ar_footprint_record:get_footprint_bucket(Offset + ?DATA_CHUNK_SIZE) of
-		FootprintBucket when is_integer(FootprintBucket) ->
-			Peers = get_footprint_bucket_peers(FootprintBucket),
-			Partition = ar_replica_2_9:get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
-			StartFootprint = ar_footprint_record:get_footprint(Offset + ?DATA_CHUNK_SIZE),
-			Footprints = [StartFootprint + N || N <- lists:seq(0, ?PREFETCH_FOOTPRINTS_AHEAD - 1)],
-			lists:foldl(
-				fun(Footprint, Acc) ->
-					lists:foldl(
-						fun(Peer, Acc1) ->
-							Key = {Peer, {Partition, Footprint}, footprint},
-							maybe_enqueue_refresh(Key, Acc1)
-						end,
-						Acc,
-						Peers
-					)
-				end,
-				State,
-				Footprints
-			);
-		_ ->
-			State
+%% Enqueue scan jobs for a peer's two modes (footprint only if the peer's
+%% release supports it). Caller must drive maybe_start_scanners/1 after.
+enqueue_peer_scans(Peer, State) ->
+	State2 = enqueue_scan({Peer, normal}, State),
+	case ar_peers:get_peer_release(Peer) >= ?GET_FOOTPRINT_SUPPORT_RELEASE of
+		true -> enqueue_scan({Peer, footprint}, State2);
+		false -> State2
 	end.
 
-maybe_enqueue_refresh(JobKey, #state{ refresh_inflight = Inflight,
-		refresh_queue = Q } = State) ->
-	case sets:is_element(JobKey, Inflight) of
+%% Remove all entries from Inflight whose value is {Peer, _}, returning
+%% the trimmed map and the list of pids that were dropped (so the caller
+%% can exit them).
+take_peer_inflight(Peer, Inflight) ->
+	maps:fold(
+		fun(Pid, {P, _Mode}, {Acc, Killed}) when P =:= Peer ->
+				{Acc, [Pid | Killed]};
+			(Pid, V, {Acc, Killed}) ->
+				{maps:put(Pid, V, Acc), Killed}
+		end,
+		{#{}, []},
+		Inflight
+	).
+
+enqueue_scan(Job, #state{ scan_waiting = Q, scan_jobs = Jobs } = State) ->
+	case sets:is_element(Job, Jobs) of
 		true ->
 			State;
 		false ->
-			case cache_is_fresh(JobKey) of
-				true ->
+			State#state{
+				scan_waiting = queue:in(Job, Q),
+				scan_jobs = sets:add_element(Job, Jobs) }
+	end.
+
+%% Decide how to requeue a just-finished (Peer, Mode) honoring the
+%% ?MIN_SCAN_INTERVAL_MS minimum spacing between scan starts.
+schedule_requeue({Peer, Mode}, State) ->
+	#state{ scan_started_at = Started } = State,
+	Now = erlang:monotonic_time(millisecond),
+	StartedAt = maps:get({Peer, Mode}, Started, undefined),
+	Elapsed = case StartedAt of
+		undefined -> ?MIN_SCAN_INTERVAL_MS;
+		_ -> Now - StartedAt
+	end,
+	Started2 = maps:remove({Peer, Mode}, Started),
+	State2 = State#state{ scan_started_at = Started2 },
+	case Elapsed >= ?MIN_SCAN_INTERVAL_MS of
+		true ->
+			State2#state{ scan_waiting =
+					queue:in({Peer, Mode}, State2#state.scan_waiting) };
+		false ->
+			Delay = ?MIN_SCAN_INTERVAL_MS - Elapsed,
+			ar_util:cast_after(Delay, ?MODULE, {requeue_scan, Peer, Mode}),
+			State2
+	end.
+
+%% Spawn scanners up to ?MAX_CONCURRENT_PEER_SCANS, draining scan_waiting.
+maybe_start_scanners(#state{ scan_inflight = Inflight,
+		scan_waiting = Waiting } = State) ->
+	report_scan_metrics(Inflight, Waiting),
+	case maps:size(Inflight) >= max_concurrent_peer_scans() of
+		true ->
+			State;
+		false ->
+			case queue:out(Waiting) of
+				{empty, _} ->
 					State;
-				false ->
-					State#state{
-						refresh_queue = queue:in(JobKey, Q),
-						refresh_inflight = sets:add_element(JobKey, Inflight) }
+				{{value, {Peer, Mode}}, Waiting2} ->
+					Pid = spawn_link(fun() -> run_peer_scan(Peer, Mode) end),
+					_ = monitor(process, Pid),
+					State2 = State#state{
+						scan_waiting = Waiting2,
+						scan_inflight =
+							maps:put(Pid, {Peer, Mode}, Inflight),
+						scan_started_at =
+							maps:put({Peer, Mode},
+								erlang:monotonic_time(millisecond),
+								State#state.scan_started_at) },
+					maybe_start_scanners(State2)
 			end
 	end.
 
-cache_is_fresh(Key) ->
-	case cache_lookup(Key) of
-		{hit, _, _} -> true;
-		miss -> false
+max_concurrent_peer_scans() ->
+	{ok, Config} = arweave_config:get_env(),
+	Config#config.data_discovery_max_concurrent_peer_scans.
+
+report_scan_metrics(Inflight, Waiting) ->
+	metric_set(data_discovery_refresh_in_flight, [], maps:size(Inflight)),
+	metric_set(data_discovery_refresh_queue_depth, [], queue:len(Waiting)).
+
+%% Scanner body. Refreshes the peer's bucket map for this mode, then walks
+%% the union of configured storage modules' unsynced ranges, fetching only
+%% windows that fall in buckets the peer advertises. Blocks (sleeps) on
+%% rate-limit cooldowns rather than skipping; non-cooldown HTTP failures
+%% are logged and the unit is skipped.
+run_peer_scan(Peer, Mode) ->
+	StartMs = erlang:monotonic_time(millisecond),
+	?LOG_INFO([{event, peer_scan}, {stage, started},
+			{peer, ar_util:format_peer(Peer)}, {mode, Mode}]),
+	Init = #scan_stats{ peer = Peer, mode = Mode, start_ms = StartMs },
+	Stats = case Mode of
+		normal ->
+			case fetch_sync_buckets(Peer) of
+				{ok, SyncBuckets} -> scan_normal_for_peer(Peer, SyncBuckets, Init);
+				_ -> Init
+			end;
+		footprint ->
+			case fetch_footprint_buckets(Peer) of
+				{ok, FootprintBuckets} ->
+					scan_footprint_for_peer(Peer, FootprintBuckets, Init);
+				_ -> Init
+			end
+	end,
+	?LOG_INFO([{event, peer_scan}, {stage, completed},
+			{peer, ar_util:format_peer(Peer)}, {mode, Mode},
+			{elapsed_ms, erlang:monotonic_time(millisecond) - StartMs},
+			{fetches, Stats#scan_stats.fetches},
+			{fetches_with_data, Stats#scan_stats.fetches_with_data},
+			{advertised_mib, Stats#scan_stats.advertised_bytes div (1024 * 1024)}]).
+
+scan_normal_for_peer(Peer, SyncBuckets, Init) ->
+	{ok, Config} = arweave_config:get_env(),
+	%% Shuffle modules so concurrent scanners don't all hammer the same
+	%% module first - spreads load across the configured range.
+	Modules = ar_util:shuffle_list(Config#config.storage_modules),
+	lists:foldl(
+		fun(StorageModule, Acc) ->
+			StoreID = ar_storage_module:id(StorageModule),
+			{Start, End} = ar_storage_module:get_range(StoreID),
+			scan_normal_module(Peer, SyncBuckets, Start, End, StoreID, Acc)
+		end,
+		Init,
+		Modules
+	).
+
+scan_normal_module(Peer, SyncBuckets, RangeStart, RangeEnd, StoreID, Acc) ->
+	%% Shuffle window offsets so each scan pass visits the module's range
+	%% in a different order. Restarts and concurrent scanners spread
+	%% coverage across the partition rather than always walking from the
+	%% lowest offset.
+	Offsets = ar_util:shuffle_list(
+			lists:seq(RangeStart, RangeEnd - 1, ?QUERY_RANGE_STEP_SIZE)),
+	lists:foldl(
+		fun(Offset, Acc1) ->
+			scan_normal_window(Peer, SyncBuckets, Offset, RangeEnd, StoreID, Acc1)
+		end,
+		Acc,
+		Offsets
+	).
+
+scan_normal_window(Peer, SyncBuckets, Start, RangeEnd, StoreID, Acc) ->
+	StepEnd = min(Start + ?QUERY_RANGE_STEP_SIZE, RangeEnd),
+	Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
+	case ar_sync_buckets:get(Bucket, ?NETWORK_DATA_BUCKET_SIZE, SyncBuckets) > 0 of
+		true ->
+			Unsynced = unsynced_intervals_in_window(Start, StepEnd, StoreID),
+			case ar_intervals:is_empty(Unsynced) of
+				true ->
+					Acc;
+				false ->
+					Key = {Peer, Start, normal},
+					accumulate_fetch_normal(
+							fetch_peer_intervals_http(Peer, Start, StepEnd, Key),
+							Acc)
+			end;
+		false ->
+			Acc
 	end.
 
-invalidate_range(Peer, {End, Start}, State) ->
-	%% Drop any cache rows for this peer whose key intersects [Start, End).
+unsynced_intervals_in_window(Start, End, StoreID) ->
+	unsynced_intervals_in_window(Start, End, ar_intervals:new(), StoreID).
+
+unsynced_intervals_in_window(Start, End, Acc, _StoreID) when Start >= End ->
+	Acc;
+unsynced_intervals_in_window(Start, End, Acc, StoreID) ->
+	case ar_sync_record:get_next_synced_interval(Start, End, ar_data_sync, StoreID) of
+		not_found ->
+			ar_intervals:add(Acc, End, Start);
+		{End2, Start2} ->
+			case Start2 > Start of
+				true ->
+					End3 = min(Start2, End),
+					unsynced_intervals_in_window(End2, End,
+							ar_intervals:add(Acc, End3, Start), StoreID);
+				_ ->
+					unsynced_intervals_in_window(End2, End, Acc, StoreID)
+			end
+	end.
+
+scan_footprint_for_peer(Peer, FootprintBuckets, Init) ->
+	{ok, Config} = arweave_config:get_env(),
+	Modules = ar_util:shuffle_list(Config#config.storage_modules),
+	lists:foldl(
+		fun(StorageModule, Acc) ->
+			StoreID = ar_storage_module:id(StorageModule),
+			{Start, End} = ar_storage_module:get_range(StoreID),
+			scan_footprint_module(Peer, FootprintBuckets,
+					Start, Start, End, StoreID, Acc)
+		end,
+		Init,
+		Modules
+	).
+
+scan_footprint_module(Peer, FootprintBuckets, _Cursor, RangeStart, RangeEnd, StoreID, Acc) ->
+	%% Shuffle the per-chunk offsets that map to unique footprints so each
+	%% scan pass visits them in a different order. ar_replica_2_9's
+	%% get_next_fetch_offset/3 defines the canonical iteration: walk
+	%% chunk-by-chunk inside one sector, then jump to the next partition.
+	Offsets = ar_util:shuffle_list(
+			footprint_offsets(RangeStart, RangeEnd)),
+	lists:foldl(
+		fun(Cursor, Acc1) ->
+			scan_footprint_offset(Peer, FootprintBuckets, Cursor, StoreID, Acc1)
+		end,
+		Acc,
+		Offsets
+	).
+
+footprint_offsets(RangeStart, RangeEnd) ->
+	footprint_offsets(RangeStart, RangeStart, RangeEnd, []).
+
+footprint_offsets(Cursor, _RangeStart, RangeEnd, Acc) when Cursor >= RangeEnd ->
+	lists:reverse(Acc);
+footprint_offsets(Cursor, RangeStart, RangeEnd, Acc) ->
+	Acc2 = [Cursor | Acc],
+	Next = ar_replica_2_9:get_next_fetch_offset(Cursor, RangeStart, RangeEnd),
+	case Next =< Cursor of
+		true -> lists:reverse(Acc2);
+		false -> footprint_offsets(Next, RangeStart, RangeEnd, Acc2)
+	end.
+
+scan_footprint_offset(Peer, FootprintBuckets, Cursor, StoreID, Acc) ->
+	Partition = ar_replica_2_9:get_entropy_partition(Cursor + ?DATA_CHUNK_SIZE),
+	Footprint = ar_footprint_record:get_footprint(Cursor + ?DATA_CHUNK_SIZE),
+	FootprintBucket = ar_footprint_record:get_footprint_bucket(Cursor + ?DATA_CHUNK_SIZE),
+	case is_integer(FootprintBucket)
+			andalso ar_sync_buckets:get(FootprintBucket,
+					?NETWORK_FOOTPRINT_BUCKET_SIZE, FootprintBuckets) > 0 of
+		true ->
+			Unsynced = ar_footprint_record:get_unsynced_intervals(
+					Partition, Footprint, StoreID),
+			case ar_intervals:is_empty(Unsynced) of
+				true ->
+					Acc;
+				false ->
+					Key = {Peer, {Partition, Footprint}, footprint},
+					accumulate_fetch_footprint(
+							fetch_peer_footprint_intervals_http(
+									Peer, Partition, Footprint, Key),
+							Acc)
+			end;
+		false ->
+			Acc
+	end.
+
+%% Update scan_stats from the result of one fine-grained fetch. Errors
+%% leave the byte count unchanged but bump fetch count so we can see
+%% activity even when the peer returns nothing useful.
+%%
+%% Normal mode returns byte intervals - sum directly.
+accumulate_fetch_normal({ok, Intervals, _PeerRightBound}, Acc) ->
+	bump(ar_intervals:sum(Intervals), Acc);
+accumulate_fetch_normal(_Other, Acc) ->
+	bump(0, Acc).
+
+%% Footprint mode returns intervals in footprint-offset units where one
+%% unit = one chunk = ?DATA_CHUNK_SIZE bytes.
+accumulate_fetch_footprint({ok, Intervals}, Acc) ->
+	bump(ar_intervals:sum(Intervals) * ?DATA_CHUNK_SIZE, Acc);
+accumulate_fetch_footprint(_Other, Acc) ->
+	bump(0, Acc).
+
+bump(Bytes, Acc) ->
+	WithData = case Bytes of
+		0 -> 0;
+		_ -> 1
+	end,
+	Acc2 = Acc#scan_stats{
+		fetches = Acc#scan_stats.fetches + 1,
+		fetches_with_data = Acc#scan_stats.fetches_with_data + WithData,
+		advertised_bytes = Acc#scan_stats.advertised_bytes + Bytes },
+	maybe_log_progress(Acc2),
+	Acc2.
+
+maybe_log_progress(#scan_stats{ fetches = N } = Stats)
+		when N rem ?PROGRESS_LOG_INTERVAL =:= 0 ->
+	?LOG_INFO([{event, peer_scan}, {stage, progress},
+			{peer, ar_util:format_peer(Stats#scan_stats.peer)},
+			{mode, Stats#scan_stats.mode},
+			{elapsed_ms,
+				erlang:monotonic_time(millisecond) - Stats#scan_stats.start_ms},
+			{fetches, N},
+			{fetches_with_data, Stats#scan_stats.fetches_with_data},
+			{advertised_mib, Stats#scan_stats.advertised_bytes div (1024 * 1024)}]);
+maybe_log_progress(_Stats) ->
+	ok.
+
+fetch_sync_buckets(Peer) ->
+	case ar_http_iface_client:get_sync_buckets(Peer) of
+		{ok, SyncBuckets} ->
+			gen_server:cast(?MODULE, {add_peer_sync_buckets, Peer, SyncBuckets}),
+			{ok, SyncBuckets};
+		{error, request_type_not_found} ->
+			?LOG_DEBUG([{event, sync_buckets_request_type_not_found},
+					{peer, ar_util:format_peer(Peer)}]),
+			error;
+		{error, Reason} ->
+			ar_http_iface_client:log_failed_request(Reason,
+				[{event, failed_to_fetch_sync_buckets},
+				{peer, ar_util:format_peer(Peer)},
+				{reason, io_lib:format("~p", [Reason])}]),
+			error;
+		Other ->
+			?LOG_DEBUG([{event, failed_to_fetch_sync_buckets},
+				{peer, ar_util:format_peer(Peer)},
+				{reason, io_lib:format("~p", [Other])}]),
+			error
+	end.
+
+fetch_footprint_buckets(Peer) ->
+	case ar_peers:get_peer_release(Peer) >= ?GET_FOOTPRINT_SUPPORT_RELEASE of
+		false ->
+			error;
+		true ->
+			case ar_http_iface_client:get_footprint_buckets(Peer) of
+				{ok, FootprintBuckets} ->
+					gen_server:cast(?MODULE,
+							{add_peer_footprint_buckets, Peer, FootprintBuckets}),
+					{ok, FootprintBuckets};
+				{error, request_type_not_found} ->
+					?LOG_DEBUG([{event, footprint_buckets_request_type_not_found},
+							{peer, ar_util:format_peer(Peer)}]),
+					error;
+				{error, Reason} ->
+					ar_http_iface_client:log_failed_request(Reason,
+						[{event, failed_to_fetch_footprint_buckets},
+						{peer, ar_util:format_peer(Peer)},
+						{reason, io_lib:format("~p", [Reason])}]),
+					error;
+				Other ->
+					?LOG_DEBUG([{event, failed_to_fetch_footprint_buckets},
+						{peer, ar_util:format_peer(Peer)},
+						{reason, io_lib:format("~p", [Other])}]),
+					error
+			end
+	end.
+
+wipe_peer_cache_rows(Peer) ->
 	ToDelete = lists:foldl(
-		fun({Key, _Intervals, _Meta, _FetchedAt}, Acc) ->
-			case key_intersects(Key, Peer, Start, End) of
+		fun({Key, _Intervals, _Meta}, Acc) ->
+			case key_belongs_to_peer(Key, Peer) of
 				true -> [Key | Acc];
 				false -> Acc
 			end
@@ -637,35 +916,10 @@ invalidate_range(Peer, {End, Start}, State) ->
 		[],
 		ets:tab2list(?INTERVAL_CACHE_TABLE)
 	),
-	lists:foreach(
-		fun(K) -> ets:delete(?INTERVAL_CACHE_TABLE, K) end,
-		ToDelete
-	),
-	State.
+	lists:foreach(fun(K) -> ets:delete(?INTERVAL_CACHE_TABLE, K) end, ToDelete).
 
-key_intersects({KPeer, Left, normal}, Peer, Start, End)
-		when KPeer =:= Peer ->
-	not (Left >= End orelse Left + ?QUERY_RANGE_STEP_SIZE =< Start);
-key_intersects({KPeer, {_Partition, _Footprint}, footprint}, Peer, _Start, _End)
-		when KPeer =:= Peer ->
-	true;
-key_intersects(_, _, _, _) ->
-	false.
-
-maybe_cast_refresh_step(#state{ refresh_pending = P, refresh_queue = Q })
-		when P < ?MAX_CONCURRENT_INTERVAL_REFRESHES ->
-	report_refresh_metrics(P, Q),
-	case queue:is_empty(Q) of
-		true -> ok;
-		false -> gen_server:cast(?MODULE, refresh_step)
-	end;
-maybe_cast_refresh_step(#state{ refresh_pending = P, refresh_queue = Q }) ->
-	report_refresh_metrics(P, Q),
-	ok.
-
-report_refresh_metrics(Pending, Queue) ->
-	metric_set(data_discovery_refresh_queue_depth, [], queue:len(Queue)),
-	metric_set(data_discovery_refresh_in_flight, [], Pending).
+key_belongs_to_peer({KPeer, _CacheKey, _Mode}, Peer) -> KPeer =:= Peer;
+key_belongs_to_peer(_, _) -> false.
 
 metric_inc(Name, Labels) ->
 	try prometheus_counter:inc(Name, Labels)
@@ -681,73 +935,36 @@ metric_set(Name, Labels, Value) ->
 	catch _:_ -> ok
 	end.
 
-drain_refresh_queue(#state{ refresh_pending = P } = State)
-		when P >= ?MAX_CONCURRENT_INTERVAL_REFRESHES ->
-	State;
-drain_refresh_queue(#state{ refresh_queue = Q, refresh_pending = P,
-		refresh_pids = Pids } = State) ->
-	case queue:out(Q) of
-		{empty, _} ->
-			State;
-		{{value, JobKey}, Q2} ->
-			Pid = spawn_link(fun() -> run_refresh_job(JobKey) end),
-			_ = monitor(process, Pid),
-			State2 = State#state{
-				refresh_queue = Q2,
-				refresh_pending = P + 1,
-				refresh_pids = maps:put(Pid, JobKey, Pids) },
-			maybe_cast_refresh_step(State2),
-			State2
-	end.
-
-run_refresh_job({Peer, Left, normal}) ->
-	case ar_rate_limiter:is_on_cooldown(Peer, ?GET_SYNC_RECORD_RPM_KEY) of
-		true ->
-			ok;
-		false ->
-			Right = Left + ?QUERY_RANGE_STEP_SIZE,
-			_ = fetch_peer_intervals_http(Peer, Left, Right, {Peer, Left, normal}),
-			ok
-	end;
-run_refresh_job({Peer, {Partition, Footprint}, footprint}) ->
-	case ar_rate_limiter:is_on_cooldown(Peer, ?GET_FOOTPRINT_RECORD_RPM_KEY) of
-		true ->
-			ok;
-		false ->
-			Key = {Peer, {Partition, Footprint}, footprint},
-			_ = fetch_peer_footprint_intervals_http(Peer, Partition, Footprint, Key),
-			ok
-	end.
-
 %%%===================================================================
 %%% Peer interval cache.
 %%%===================================================================
 
 cache_lookup(Key) ->
 	case ets:lookup(?INTERVAL_CACHE_TABLE, Key) of
-		[{_, Intervals, Meta, FetchedAtMs}] ->
-			case erlang:system_time(millisecond) - FetchedAtMs
-					=< ?PEER_INTERVAL_CACHE_TTL_MS of
-				true -> {hit, Intervals, Meta};
-				false -> miss
-			end;
-		[] ->
-			miss
+		[{_, Intervals, Meta}] -> {hit, Intervals, Meta};
+		[] -> miss
 	end.
 
 cache_store(Key, Intervals, Meta) ->
-	ets:insert(?INTERVAL_CACHE_TABLE,
-		{Key, Intervals, Meta, erlang:system_time(millisecond)}),
+	ets:insert(?INTERVAL_CACHE_TABLE, {Key, Intervals, Meta}),
 	ok.
 
--ifdef(AR_TEST).
-%% @doc Drop all cached peer intervals. Intended for test setup so entries
-%% from a previous test case don't bleed into the next one (peer identifiers
-%% are reused across cases).
-clear_interval_cache() ->
-	ets:delete_all_objects(?INTERVAL_CACHE_TABLE),
-	ok.
--endif.
+%% Cast a `refresh_peer_alive' to ar_data_discovery, but at most once
+%% per ?PEER_ALIVE_REFRESH_INTERVAL_MS per peer per scanner process.
+%% Throttled via the scanner's process dictionary so we don't flood the
+%% gen_server with one cast per HTTP fetch.
+maybe_refresh_peer_alive(Peer) ->
+	Key = {peer_alive_last, Peer},
+	Now = erlang:monotonic_time(millisecond),
+	case erlang:get(Key) of
+		Last when is_integer(Last),
+				Now - Last < ?PEER_ALIVE_REFRESH_INTERVAL_MS ->
+			ok;
+		_ ->
+			erlang:put(Key, Now),
+			gen_server:cast(?MODULE, {refresh_peer_alive, Peer}),
+			ok
+	end.
 
 fetch_peer_intervals_http(Peer, Left, Right, Key) ->
 	Limit = ?QUERY_SYNC_INTERVALS_COUNT_LIMIT,
@@ -766,6 +983,7 @@ fetch_peer_intervals_http(Peer, Left, Right, Key) ->
 					false -> element(1, ar_intervals:largest(PeerIntervals))
 				end,
 			cache_store(Key, PeerIntervals, PeerRightBound),
+			maybe_refresh_peer_alive(Peer),
 			Outcome = case ar_intervals:is_empty(PeerIntervals) of
 				true -> empty;
 				false -> ok
@@ -796,6 +1014,7 @@ fetch_peer_footprint_intervals_http(Peer, Partition, Footprint, Key) ->
 	case PeerReply of
 		{ok, Intervals} ->
 			cache_store(Key, Intervals, none),
+			maybe_refresh_peer_alive(Peer),
 			Outcome = case ar_intervals:is_empty(Intervals) of
 				true -> empty;
 				false -> ok
@@ -805,6 +1024,7 @@ fetch_peer_footprint_intervals_http(Peer, Partition, Footprint, Key) ->
 		not_found ->
 			Empty = ar_intervals:new(),
 			cache_store(Key, Empty, none),
+			maybe_refresh_peer_alive(Peer),
 			metric_inc(data_discovery_refresh_completed, [footprint, empty]),
 			{ok, Empty};
 		{error, too_many_requests} = Error ->
@@ -816,3 +1036,24 @@ fetch_peer_footprint_intervals_http(Peer, Partition, Footprint, Key) ->
 			metric_inc(data_discovery_refresh_completed, [footprint, http_error]),
 			Error
 	end.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+-ifdef(AR_TEST).
+%% @doc Drop all cached peer intervals. Intended for test setup so entries
+%% from a previous test case don't bleed into the next one (peer identifiers
+%% are reused across cases).
+clear_interval_cache() ->
+	ets:delete_all_objects(?INTERVAL_CACHE_TABLE),
+	ok.
+
+cache_miss_returns_cache_miss_test() ->
+	clear_interval_cache(),
+	Peer = {10, 0, 0, 1, 1984},
+	?assertEqual({error, cache_miss},
+		get_peer_intervals(Peer, 0, infinity)),
+	?assertEqual({error, cache_miss},
+		get_peer_footprint_intervals(Peer, 0, 0)).
+-endif.

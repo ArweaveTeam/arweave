@@ -41,7 +41,8 @@
 %% Lifecycle
 -export([start_link/1, get_all_peers/0, get_or_start/1, stop/1]).
 %% Operations (all take Pid as first arg - coordinator caches Peer->Pid mapping)
--export([task_completed/6, rebalance/3, enqueue/2, take_one/1]).
+-export([task_completed/6, rebalance/3, enqueue/2, take_one/1,
+		release_dropped_task/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -161,7 +162,7 @@ task_completed(Peer, WorkerPid, FootprintKey, Result, ElapsedMicroseconds, DataS
 			gen_server:cast(Pid,
 				{task_completed, WorkerPid, FootprintKey, Result, ElapsedMicroseconds, DataSize});
 		_ ->
-			?LOG_WARNING([{event, task_completed_no_peer_worker},
+			?LOG_DEBUG([{event, task_completed_no_peer_worker},
 				{peer, ar_util:format_peer(Peer)}])
 	end.
 
@@ -207,6 +208,16 @@ publish_load(State) ->
 
 total_queued(State) ->
 	queue:len(State#state.eligible_queue) + queue:len(State#state.blocked_queue).
+
+%% @doc Release a task's byte range from the StoreID's sync_task_queue
+%% dedup overlay. Used when the task gets dropped here (queue full) or
+%% by the coordinator (peer worker can't be started); without this, the
+%% range stays in `intervals' forever and discover treats it as
+%% in-flight, never re-enqueueing.
+release_dropped_task(#sync_task{ store_id = StoreID,
+		start_offset = Start, end_offset = End }) ->
+	gen_server:cast(ar_data_sync:name(StoreID),
+		{sync_task_completed, Start, End}).
 
 handle_call(get_state, _From, State) ->
 	%% Test-only: keep for tests to access raw state
@@ -328,6 +339,11 @@ handle_cast({task_completed, WorkerPid, FootprintKey, Result, ElapsedMicrosecond
 handle_cast({enqueue, SyncTask}, State) ->
 	case total_queued(State) >= State#state.max_queue_len of
 		true ->
+			%% Per-peer queue is full. Release the byte range from the
+			%% StoreID's sync_task_queue dedup overlay so discover can
+			%% re-enqueue it later; otherwise the range stays "in flight"
+			%% forever and silently shrinks the producible task pool.
+			release_dropped_task(SyncTask),
 			{noreply, State};
 		false ->
 			#sync_task{ footprint_key = FootprintKey } = SyncTask,
@@ -636,7 +652,7 @@ log_long_running_footprints(State) ->
 	case LongRunning of
 		[] -> ok;
 		_ ->
-			?LOG_WARNING([{event, long_running_footprints},
+			?LOG_INFO([{event, long_running_footprints},
 				{peer, PeerFormatted},
 				{count, length(LongRunning)},
 				{footprints, LongRunning}])
