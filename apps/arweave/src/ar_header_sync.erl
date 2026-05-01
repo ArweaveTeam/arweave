@@ -289,14 +289,18 @@ handle_info({event, disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, _Perc
 		true ->
 			case State#state.is_disk_space_sufficient of
 				true ->
-					Msg = "~nThe node has stopped syncing headers. Add more disk space "
-							"if you wish to store more block and transaction headers. "
-							"The node will keep recording account tree updates and "
-							"transaction confirmations - they do not take up a lot of "
-							"space but you need to make sure the remaining disk space "
-							"stays available for the node.~n~n"
-							"The mining performance is not affected.~n",
-					ar:console(Msg, []),
+					Msg = "~nwarning: Available disk space on 'data_dir' is below "
+							"the reserve threshold for the configured "
+							"'max_disk_pool_buffer_mb' ~Bmb and 'disk_cache_size_mb' ~Bmb. "
+							"The node has paused syncing block and transaction headers "
+							"to preserve space for the disk pool and cache. The node will "
+							"keep recording account tree updates and transaction confirmations, "
+							"and data syncing into storage modules can continue. "
+							"Mining performance is not affected. Available: ~Bmb, "
+							"pause threshold including safety buffer: ~Bmb.~n",
+					ar:console(Msg, [Config#config.max_disk_pool_buffer_mb,
+							Config#config.disk_cache_size, Bytes div ?MiB,
+							(DiskPoolSize + DiskCacheSize + BufferSize div 2) div ?MiB]),
 					?LOG_INFO([{event, ar_header_sync_stopped_syncing},
 							{reason, insufficient_disk_space}]);
 				false ->

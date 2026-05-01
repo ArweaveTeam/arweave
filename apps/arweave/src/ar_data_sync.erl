@@ -1028,13 +1028,13 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * ?MiB,
 	DiskCacheSize = Config#config.disk_cache_size * ?MiB,
 	BufferSize = 10_000_000_000,
-	case Bytes < DiskPoolSize + DiskCacheSize + (BufferSize div 2) of
+	RequiredDiskSpace = DiskPoolSize + DiskCacheSize,
+	StopThreshold = RequiredDiskSpace + (BufferSize div 2),
+	ResumeThreshold = RequiredDiskSpace + BufferSize,
+	CurrentStatus = is_disk_space_sufficient(StoreID),
+	case Bytes < StopThreshold of
 		true ->
-			ar:console("error: Not enough disk space left on 'data_dir' disk for "
-				"the requested 'max_disk_pool_buffer_mb' ~Bmb and 'disk_cache_size_mb' ~Bmb "
-				"either lower these values or add more disk space.~n",
-			[Config#config.max_disk_pool_buffer_mb, Config#config.disk_cache_size]),
-			case is_disk_space_sufficient(StoreID) of
+			case CurrentStatus of
 				false ->
 					ok;
 				_ ->
@@ -1042,18 +1042,19 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, 
 			end,
 			ets:insert(ar_data_sync_state, {{is_disk_space_sufficient, StoreID}, false});
 		false ->
-			case Bytes > DiskPoolSize + DiskCacheSize + BufferSize of
+			case Bytes > ResumeThreshold orelse CurrentStatus =/= false of
 				true ->
-					case is_disk_space_sufficient(StoreID) of
+					case CurrentStatus of
 						false ->
 							log_sufficient_disk_space(StoreID);
 						_ ->
 							ok
-					end;
+					end,
+					ets:insert(ar_data_sync_state,
+							{{is_disk_space_sufficient, StoreID}, true});
 				false ->
 					ok
-			end,
-			ets:insert(ar_data_sync_state, {{is_disk_space_sufficient, StoreID}, true})
+			end
 	end,
 	{noreply, State};
 
@@ -2212,8 +2213,6 @@ log_sufficient_disk_space(StoreID) ->
 	?LOG_INFO([{event, storage_module_resumed_syncing}, {storage_module, StoreID}]).
 
 log_insufficient_disk_space(StoreID) ->
-	ar:console("~nThe node has stopped syncing data into the storage module ~s due to "
-			"the insufficient disk space.~n", [StoreID]),
 	?LOG_INFO([{event, storage_module_stopped_syncing},
 			{reason, insufficient_disk_space}, {storage_module, StoreID}]).
 
