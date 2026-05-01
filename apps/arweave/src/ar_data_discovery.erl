@@ -25,13 +25,17 @@
 %% ar_peer_intervals so the cache layer and the rate limiter share one source.
 -define(GET_SYNC_RECORD_RPM_KEY, data_sync_record).
 -define(GET_FOOTPRINT_RECORD_RPM_KEY, footprints).
--define(GET_SYNC_RECORD_COOLDOWN_MS, 60 * 1000).
 
-%% Per-peer interval cache. Rows keyed by `{Peer, CacheKey, Mode}':
+%% Per-peer cache of byte intervals reported by each peer over the
+%% network (via /data_sync_record for normal mode, /footprints for
+%% footprint mode). Populated by the scanner pool in this module;
+%% read by ar_peer_sync to compute fetchable intervals.
+%%
+%% Rows keyed by `{Peer, CacheKey, Mode}':
 %%
 %%   normal:    {Key, Intervals, PeerRightBound}
 %%   footprint: {Key, Intervals, none}
--define(INTERVAL_CACHE_TABLE, ar_data_discovery_intervals).
+-define(PEER_INTERVAL_CACHE_TABLE, ar_data_discovery_peer_intervals).
 
 %% Fetch at most this many sync intervals from a peer at a time.
 -ifdef(AR_TEST).
@@ -233,7 +237,7 @@ get_peer_footprint_intervals(Peer, Partition, Footprint) ->
 %%%===================================================================
 
 init([]) ->
-	%% ar_data_discovery_intervals is created in ar_sup alongside the
+	%% ar_data_discovery_peer_intervals is created in ar_sup alongside the
 	%% ar_data_discovery / ar_data_discovery_footprint_buckets tables so
 	%% the gen_server crashing or restarting doesn't wipe the cache.
 	{ok, _} = ar_timer:apply_interval(
@@ -913,9 +917,9 @@ wipe_peer_cache_rows(Peer) ->
 			end
 		end,
 		[],
-		ets:tab2list(?INTERVAL_CACHE_TABLE)
+		ets:tab2list(?PEER_INTERVAL_CACHE_TABLE)
 	),
-	lists:foreach(fun(K) -> ets:delete(?INTERVAL_CACHE_TABLE, K) end, ToDelete).
+	lists:foreach(fun(K) -> ets:delete(?PEER_INTERVAL_CACHE_TABLE, K) end, ToDelete).
 
 key_belongs_to_peer({KPeer, _CacheKey, _Mode}, Peer) -> KPeer =:= Peer;
 key_belongs_to_peer(_, _) -> false.
@@ -939,13 +943,13 @@ metric_set(Name, Labels, Value) ->
 %%%===================================================================
 
 cache_lookup(Key) ->
-	case ets:lookup(?INTERVAL_CACHE_TABLE, Key) of
+	case ets:lookup(?PEER_INTERVAL_CACHE_TABLE, Key) of
 		[{_, Intervals, Meta}] -> {hit, Intervals, Meta};
 		[] -> miss
 	end.
 
 cache_store(Key, Intervals, Meta) ->
-	ets:insert(?INTERVAL_CACHE_TABLE, {Key, Intervals, Meta}),
+	ets:insert(?PEER_INTERVAL_CACHE_TABLE, {Key, Intervals, Meta}),
 	ok.
 
 %% Cast a `refresh_peer_alive' to ar_data_discovery, but at most once
@@ -989,11 +993,6 @@ fetch_peer_intervals_http(Peer, Left, Right, Key) ->
 			end,
 			metric_inc(data_discovery_refresh_completed, [normal, Outcome]),
 			{ok, PeerIntervals, PeerRightBound};
-		{error, too_many_requests} = Error ->
-			ar_rate_limiter:set_cooldown(Peer,
-				?GET_SYNC_RECORD_RPM_KEY, ?GET_SYNC_RECORD_COOLDOWN_MS),
-			metric_inc(data_discovery_refresh_completed, [normal, cooldown]),
-			Error;
 		Error ->
 			metric_inc(data_discovery_refresh_completed, [normal, http_error]),
 			Error
@@ -1026,11 +1025,6 @@ fetch_peer_footprint_intervals_http(Peer, Partition, Footprint, Key) ->
 			maybe_refresh_peer_alive(Peer),
 			metric_inc(data_discovery_refresh_completed, [footprint, empty]),
 			{ok, Empty};
-		{error, too_many_requests} = Error ->
-			ar_rate_limiter:set_cooldown(Peer,
-				?GET_FOOTPRINT_RECORD_RPM_KEY, ?GET_SYNC_RECORD_COOLDOWN_MS),
-			metric_inc(data_discovery_refresh_completed, [footprint, cooldown]),
-			Error;
 		Error ->
 			metric_inc(data_discovery_refresh_completed, [footprint, http_error]),
 			Error
@@ -1045,7 +1039,7 @@ fetch_peer_footprint_intervals_http(Peer, Partition, Footprint, Key) ->
 %% from a previous test case don't bleed into the next one (peer identifiers
 %% are reused across cases).
 clear_interval_cache() ->
-	ets:delete_all_objects(?INTERVAL_CACHE_TABLE),
+	ets:delete_all_objects(?PEER_INTERVAL_CACHE_TABLE),
 	ok.
 
 cache_miss_returns_cache_miss_test() ->
