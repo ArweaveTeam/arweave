@@ -1,8 +1,8 @@
 %% @doc Per-storage-module queue of sync tasks produced by ar_peer_sync's
-%% discover loop and consumed by ar_peer_sync's sync loop.
+%% enqueue loop and consumed by ar_peer_sync's sync loop.
 -module(ar_sync_task_queue).
 
--export([new/0, size/1, is_empty/1, intervals/1,
+-export([new/0, size/1, is_empty/1, in_flight_intervals/1,
 		insert_batch/3, take_smallest/1, task_completed/3]).
 
 -include("ar.hrl").
@@ -17,10 +17,12 @@
 	%% one footprint's chunks before moving on, preserving entropy amortization
 	%% in the 2.9 replica mode.
 	q = gb_sets:new(),
-	%% A compact ar_intervals set holding byte ranges already present in `q'.
-	%% Used for O(log n) dedup so two peers seeding the same range do not each
-	%% get enqueued for that range.
-	intervals = ar_intervals:new()
+	%% A compact ar_intervals set holding byte ranges currently in the
+	%% pipeline (queued or being fetched). Used for O(log n) dedup so two
+	%% peers seeding the same range do not each get enqueued for it. The
+	%% range stays here from insert_batch/3 until task_completed/3 - i.e.,
+	%% across the entire in-flight lifetime.
+	in_flight_intervals = ar_intervals:new()
 }).
 
 %%%===================================================================
@@ -36,12 +38,12 @@ size(#sync_task_queue{ q = Q }) ->
 is_empty(#sync_task_queue{ q = Q }) ->
 	gb_sets:is_empty(Q).
 
-intervals(#sync_task_queue{ intervals = I }) ->
+in_flight_intervals(#sync_task_queue{ in_flight_intervals = I }) ->
 	I.
 
 %% @doc Insert a list of {Peer, Intervals, FootprintKey} entries into the
 %% queue, capping each peer at ChunksPerPeer chunk-sized slices. Byte ranges
-%% already present in the queue are skipped (dedup via `intervals' overlay).
+%% already in flight are skipped (dedup via `in_flight_intervals' overlay).
 insert_batch(PeerEntries, ChunksPerPeer, Queue) ->
 	lists:foldl(
 		fun({Peer, Intervals, FootprintKey}, Acc) ->
@@ -52,9 +54,10 @@ insert_batch(PeerEntries, ChunksPerPeer, Queue) ->
 	).
 
 %% @doc Remove the smallest task from the queue. The task's byte range
-%% stays in `intervals' so subsequent insert_batch/3 calls dedup against
-%% the still-in-flight range. Caller must invoke task_completed/3 once
-%% the sync_range definitively finishes to release the dedup.
+%% stays in `in_flight_intervals' so subsequent insert_batch/3 calls
+%% dedup against the still-in-flight range. Caller must invoke
+%% task_completed/3 once the sync_range definitively finishes to release
+%% the dedup.
 take_smallest(#sync_task_queue{ q = Q } = Queue) ->
 	{{FootprintKey, Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
 	Task = {FootprintKey, Start, End, Peer},
@@ -64,35 +67,39 @@ take_smallest(#sync_task_queue{ q = Q } = Queue) ->
 %% definitively completed (success or non-recast failure). Future
 %% insert_batch/3 calls covering [Start, End) may enqueue tasks for it
 %% again.
-task_completed(End, Start, #sync_task_queue{ intervals = QIntervals } = Queue) ->
-	Queue#sync_task_queue{ intervals = ar_intervals:delete(QIntervals, End, Start) }.
+task_completed(End, Start,
+		#sync_task_queue{ in_flight_intervals = InFlightIntervals } = Queue) ->
+	Queue#sync_task_queue{
+		in_flight_intervals = ar_intervals:delete(InFlightIntervals, End, Start) }.
 
 %%%===================================================================
 %%% Private helpers.
 %%%===================================================================
 
 insert_peer(Peer, Intervals, FootprintKey, ChunksToEnqueue,
-		#sync_task_queue{ q = Q, intervals = QIntervals } = Queue) ->
-	%% Drop intervals already present in the queue so two peers seeding the
-	%% same range do not each get enqueued for it.
-	OuterJoin = ar_intervals:outerjoin(QIntervals, Intervals),
-	{_, {Q2, QIntervals2}} = ar_intervals:fold(
+		#sync_task_queue{ q = Q,
+				in_flight_intervals = InFlightIntervals } = Queue) ->
+	%% Drop intervals already in flight so two peers seeding the same range
+	%% do not each get enqueued for it.
+	OuterJoin = ar_intervals:outerjoin(InFlightIntervals, Intervals),
+	{_, {Q2, InFlightIntervals2}} = ar_intervals:fold(
 		fun	(_, {0, Acc}) ->
 				{0, Acc};
-			({End, Start}, {Remaining, {QAcc, QIAcc}}) ->
+			({End, Start}, {Remaining, {QAcc, IFAcc}}) ->
 				RangeEnd = min(End, Start + (Remaining * ?DATA_CHUNK_SIZE)),
 				ChunkOffsets = lists:seq(Start, RangeEnd - 1, ?DATA_CHUNK_SIZE),
 				ChunksEnqueued = length(ChunkOffsets),
 				{Remaining - ChunksEnqueued,
 					insert_range(Peer, FootprintKey, Start, RangeEnd, ChunkOffsets,
-							{QAcc, QIAcc})}
+							{QAcc, IFAcc})}
 		end,
-		{ChunksToEnqueue, {Q, QIntervals}},
+		{ChunksToEnqueue, {Q, InFlightIntervals}},
 		OuterJoin
 	),
-	Queue#sync_task_queue{ q = Q2, intervals = QIntervals2 }.
+	Queue#sync_task_queue{ q = Q2, in_flight_intervals = InFlightIntervals2 }.
 
-insert_range(Peer, FootprintKey, RangeStart, RangeEnd, ChunkOffsets, {Q, QIntervals}) ->
+insert_range(Peer, FootprintKey, RangeStart, RangeEnd, ChunkOffsets,
+		{Q, InFlightIntervals}) ->
 	Q2 = lists:foldl(
 		fun(ChunkStart, QAcc) ->
 			gb_sets:add_element(
@@ -103,8 +110,8 @@ insert_range(Peer, FootprintKey, RangeStart, RangeEnd, ChunkOffsets, {Q, QInterv
 		Q,
 		ChunkOffsets
 	),
-	QIntervals2 = ar_intervals:add(QIntervals, RangeEnd, RangeStart),
-	{Q2, QIntervals2}.
+	InFlightIntervals2 = ar_intervals:add(InFlightIntervals, RangeEnd, RangeStart),
+	{Q2, InFlightIntervals2}.
 
 -ifdef(AR_TEST).
 enqueue_intervals_test() ->
@@ -311,14 +318,17 @@ enqueue_intervals_test() ->
 		],
 		"Multiple peers, overlapping, full intervals, 2 chunks. Overlapping QIntervals.").
 
-test_enqueue_intervals(Intervals, ChunksPerPeer, QIntervalsRanges, ExpectedQIntervalRanges, ExpectedChunks, Label) ->
-	QIntervals = ar_intervals:from_list(QIntervalsRanges),
-	Seeded = #sync_task_queue{ intervals = QIntervals },
+test_enqueue_intervals(Intervals, ChunksPerPeer, SeedRanges, ExpectedAddedRanges,
+		ExpectedChunks, Label) ->
+	SeedInFlight = ar_intervals:from_list(SeedRanges),
+	Seeded = #sync_task_queue{ in_flight_intervals = SeedInFlight },
 	Result = insert_batch(Intervals, ChunksPerPeer, Seeded),
-	#sync_task_queue{ q = QResult, intervals = QIntervalsResult } = Result,
-	ExpectedQIntervals = lists:foldl(fun({End, Start}, Acc) ->
+	#sync_task_queue{ q = QResult,
+			in_flight_intervals = ResultInFlight } = Result,
+	ExpectedInFlight = lists:foldl(fun({End, Start}, Acc) ->
 			ar_intervals:add(Acc, End, Start)
-		end, QIntervals, ExpectedQIntervalRanges),
-	?assertEqual(ar_intervals:to_list(ExpectedQIntervals), ar_intervals:to_list(QIntervalsResult), Label),
+		end, SeedInFlight, ExpectedAddedRanges),
+	?assertEqual(ar_intervals:to_list(ExpectedInFlight),
+		ar_intervals:to_list(ResultInFlight), Label),
 	?assertEqual(ExpectedChunks, gb_sets:to_list(QResult), Label).
 -endif.
