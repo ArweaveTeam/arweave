@@ -445,7 +445,7 @@ get_hot_peers(Offset, footprint) ->
 		?GET_FOOTPRINT_RECORD_RPM_KEY,
 		?GET_FOOTPRINT_RECORD_PATH).
 
-get_hot_peers_for_bucket(GetAllFun, RPMKey, Path) ->
+get_hot_peers_for_bucket(GetAllFun, _RPMKey, Path) ->
 	{ok, Config} = arweave_config:get_env(),
 	AllPeers =
 		case Config#config.sync_from_local_peers_only of
@@ -453,9 +453,7 @@ get_hot_peers_for_bucket(GetAllFun, RPMKey, Path) ->
 			false -> GetAllFun()
 		end,
 	HotPeers = [
-		Peer || Peer <- AllPeers,
-			not ar_rate_limiter:is_on_cooldown(Peer, RPMKey) andalso
-			not ar_rate_limiter:is_throttled(Peer, Path)
+		Peer || Peer <- AllPeers, not ar_rate_limiter:is_throttled(Peer, Path)
 	],
 	case length(AllPeers) > 0 andalso length(HotPeers) == 0 of
 		true ->

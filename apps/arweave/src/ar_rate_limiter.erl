@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, throttle/2, off/0, on/0, is_on_cooldown/2, set_cooldown/3]).
+-export([start_link/0, throttle/2, off/0, on/0]).
 -export([is_throttled/2]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -73,23 +73,6 @@ is_throttled(Peer, Path) ->
 		Bool when is_boolean(Bool) -> Bool
 	end.
 
-%% @doc Return true if Peer is on cooldown for the given Path.
-is_on_cooldown(Peer, RPMKey) ->
-	Now = os:system_time(millisecond),
-	case ets:lookup(?MODULE, {cooldown, Peer, RPMKey}) of
-		[{_, Until}] when Until > Now -> true;
-		_ -> false
-	end.
-
-%% @doc Put Peer on cooldown for the given RPMKey for Milliseconds.
-set_cooldown(Peer, RPMKey, Milliseconds) when Milliseconds > 0 ->
-	?LOG_DEBUG([{event, set_cooldown}, {peer, ar_util:format_peer(Peer)}, {rpm_key, RPMKey}, {milliseconds, Milliseconds}]),
-	Until = os:system_time(millisecond) + Milliseconds,
-	ets:insert(?MODULE, {{cooldown, Peer, RPMKey}, Until}),
-	ok;
-set_cooldown(_Peer, _RPMKey, _Milliseconds) ->
-	ok.
-
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -147,7 +130,6 @@ handle_info(cleanup, #state{ traces = Traces } = State) ->
 		{value, Latest} = queue:peek_r(Trace),
 		Latest >= Now - ?THROTTLE_PERIOD
 	end, Traces),
-	cleanup_cooldowns(Now),
 	{noreply, State#state{ traces = Traces2 }};
 
 handle_info(Message, State) ->
@@ -161,15 +143,6 @@ terminate(Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-
-cleanup_cooldowns(Now) ->
-	ets:foldl(fun
-		({{cooldown, _, _} = Key, Until}, Acc) when Until < Now ->
-			ets:delete(?MODULE, Key),
-			Acc;
-		(_, Acc) ->
-			Acc
-	end, ok, ?MODULE).
 
 cut_trace(N, Trace, Now) ->
 	{{value, Timestamp}, Trace2} = queue:out(Trace),
