@@ -209,15 +209,15 @@ publish_load(State) ->
 total_queued(State) ->
 	queue:len(State#state.eligible_queue) + queue:len(State#state.blocked_queue).
 
-%% @doc Release a task's byte range from the StoreID's sync_task_queue
-%% dedup overlay. Used when the task gets dropped here (queue full) or
-%% by the coordinator (peer worker can't be started); without this, the
-%% range stays in `intervals' forever and discover treats it as
-%% in-flight, never re-enqueueing.
+%% @doc Release a task's byte range from the StoreID's task queue dedup
+%% overlay. Used when the task gets dropped here (queue full) or by the
+%% coordinator (peer worker can't be started); without this, the range
+%% stays in `intervals' forever and ar_peer_sync treats it as in-flight,
+%% never re-enqueueing.
 release_dropped_task(#sync_task{ store_id = StoreID,
 		start_offset = Start, end_offset = End }) ->
 	gen_server:cast(ar_data_sync:name(StoreID),
-		{sync_task_completed, Start, End}).
+		{task_completed, Start, End}).
 
 handle_call(get_state, _From, State) ->
 	%% Test-only: keep for tests to access raw state

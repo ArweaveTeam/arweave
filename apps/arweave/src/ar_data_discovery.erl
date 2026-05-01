@@ -626,8 +626,7 @@ maybe_start_scanners(#state{ scan_inflight = Inflight,
 				{empty, _} ->
 					State;
 				{{value, {Peer, Mode}}, Waiting2} ->
-					Pid = spawn_link(fun() -> run_peer_scan(Peer, Mode) end),
-					_ = monitor(process, Pid),
+					{Pid, _Ref} = spawn_monitor(fun() -> run_peer_scan(Peer, Mode) end),
 					State2 = State#state{
 						scan_waiting = Waiting2,
 						scan_inflight =

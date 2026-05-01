@@ -78,7 +78,7 @@
 -export([init_kv/2, open_store_dbs/2]).
 
 -export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([store_fetched_chunk/4]).
+-export([store_fetched_chunk/4, task_completed/4]).
 
 -include("ar.hrl").
 -include("ar_sup.hrl").
@@ -537,6 +537,18 @@ is_footprint_record_supported(_AbsoluteOffset, _ChunkSize, _Packing) ->
 migration_db(StoreID) ->
 	{migrations_index, StoreID}.
 
+%% @doc Report a peer-fetch task complete. Fans out to ar_peer_worker
+%% (per-peer slot release + stats) and to the per-StoreID gen_server
+%% (queue dedup overlay release via ar_peer_sync). Called by
+%% ar_data_sync_worker on definitive completion (success or non-recast
+%% failure).
+task_completed(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
+		store_id = StoreID, footprint_key = FootprintKey },
+		WorkerPid, Result, ElapsedUs) ->
+	ar_peer_worker:task_completed(Peer, WorkerPid, FootprintKey, Result, ElapsedUs,
+		End - Start),
+	gen_server:cast(name(StoreID), {task_completed, Start, End}).
+
 %% @doc Update the weave-size snapshot in both #data_sync_state{} and
 %% the opaque ar_peer_sync state in lockstep.
 set_weave_size(WeaveSize, #data_sync_state{ peer_sync = PS } = State) ->
@@ -760,12 +772,12 @@ handle_cast(sync, State) ->
 	end,
 	{noreply, State3};
 
-%% Released by ar_data_sync_worker when a sync_range definitively
-%% completes (success or non-recast failure). Delegates to ar_peer_sync,
-%% which drops the byte range from the per-StoreID task queue's dedup
-%% overlay so subsequent enqueue passes can re-enqueue the chunk if it
-%% remains unsynced.
-handle_cast({sync_task_completed, Start, End}, State) ->
+%% Released via task_completed/4 when a sync_range definitively completes
+%% (success or non-recast failure). Delegates to ar_peer_sync, which drops
+%% the byte range from the per-StoreID task queue's dedup overlay so
+%% subsequent enqueue passes can re-enqueue the chunk if it remains
+%% unsynced.
+handle_cast({task_completed, Start, End}, State) ->
 	NewPS = ar_peer_sync:task_completed(Start, End, State#data_sync_state.peer_sync),
 	{noreply, State#data_sync_state{ peer_sync = NewPS }};
 

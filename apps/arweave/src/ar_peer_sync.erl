@@ -61,13 +61,9 @@
 	%% Which protocol we're querying peers with on this pass.
 	mode :: normal | footprint,
 	%% Count of tasks produced in the current pass. Resets each pass.
-	tasks_produced = 0 :: non_neg_integer(),
-	%% Whether any peer had data to enqueue this pass. Passes that never
-	%% saw peers don't trigger adaptive backoff - they probably just ran
-	%% before ar_data_discovery's cache warmed up.
-	had_peers = false :: boolean(),
-	%% Current unproductive-pass backoff (doubles each pass, capped).
-	backoff_ms = 0 :: non_neg_integer()
+	%% Logged at pass_complete and used to gate the chunk_sync_started
+	%% log to fire only on the first productive step.
+	tasks_produced = 0 :: non_neg_integer()
 }).
 
 %% Opaque per-StoreID state. Holds the task queue, the in-progress
@@ -106,15 +102,14 @@
 %% Max queued chunks per sync worker.
 -define(SYNC_TASK_QUEUE_CHUNKS_PER_WORKER, 250).
 
-%% Adaptive restart delay between passes. Productive passes restart at
-%% the min delay; unproductive passes double (capped at max). Resets on
-%% any productive pass.
+%% Fixed delay between passes. Producer no longer issues HTTP (that
+%% lives in ar_data_discovery's per-peer scanner pool, which has its
+%% own pacing), so this only prevents tight-loop log spam and CPU spin
+%% on fully-synced modules.
 -ifdef(AR_TEST).
--define(PASS_RESTART_MIN_DELAY_MS, 1_000).
--define(PASS_RESTART_MAX_DELAY_MS, 1_000).
+-define(PASS_RESTART_DELAY_MS, 1_000).
 -else.
--define(PASS_RESTART_MIN_DELAY_MS, 10_000).
--define(PASS_RESTART_MAX_DELAY_MS, 120_000).
+-define(PASS_RESTART_DELAY_MS, 10_000).
 -endif.
 
 %%%===================================================================
@@ -141,21 +136,20 @@ enqueue(#peer_sync_state{ pass = undefined } = State) ->
 	end;
 enqueue(#peer_sync_state{ store_id = StoreID,
 		pass = #enqueue_pass{ offset = O, end_ = E, mode = Mode,
-			tasks_produced = TasksProduced, had_peers = HadPeers } = Pass } = State)
+			tasks_produced = TasksProduced } } = State)
 		when O >= E ->
-	{Delay, Backoff2} = pass_restart_delay(Pass),
 	NextMode = flip_mode(Mode),
 	?LOG_INFO([{event, sync_network}, {stage, pass_complete},
 		{store_id, StoreID}, {mode, Mode}, {tasks_produced, TasksProduced},
-		{had_peers, HadPeers}, {next_mode, NextMode}, {restart_delay_ms, Delay}]),
-	case init_pass(State, NextMode, Backoff2) of
+		{next_mode, NextMode}]),
+	case init_pass(State, NextMode) of
 		{ok, Pass2} ->
-			{State#peer_sync_state{ pass = Pass2 }, {cast_after, Delay}};
+			{State#peer_sync_state{ pass = Pass2 }, {cast_after, ?PASS_RESTART_DELAY_MS}};
 		not_ready ->
 			{State, {cast_after, 1000}}
 	end;
 enqueue(State) ->
-	case step_ready(State) of
+	case can_enqueue(State) of
 		{wait, _Reason, Delay} ->
 			{State, {cast_after, Delay}};
 		ready ->
@@ -239,11 +233,8 @@ task_completed(Start, End, #peer_sync_state{ queue = Q } = State) ->
 	State#peer_sync_state{ queue = ar_sync_task_queue:task_completed(End, Start, Q) }.
 
 %% @doc Build a new pass in the given mode.
-init_pass(State, Mode) ->
-	init_pass(State, Mode, 0).
-
 init_pass(#peer_sync_state{ store_id = StoreID, range_start = Start, range_end = End },
-		Mode, Backoff) ->
+		Mode) ->
 	case ready_to_start(StoreID) of
 		false ->
 			not_ready;
@@ -256,17 +247,16 @@ init_pass(#peer_sync_state{ store_id = StoreID, range_start = Start, range_end =
 			end,
 			?LOG_INFO([{event, sync_network}, {stage, pass_started},
 				{store_id, StoreID}, {mode, Mode},
-				{start, Start}, {end_, End2}, {backoff_ms, Backoff}]),
+				{start, Start}, {end_, End2}]),
 			{ok, #enqueue_pass{
-				start = Start, end_ = End2, offset = Start, mode = Mode,
-				backoff_ms = Backoff }}
+				start = Start, end_ = End2, offset = Start, mode = Mode }}
 	end.
 
-%% @doc Can the current pass take another step right now? Consolidates
-%% every "no, wait" case: disk space, queue fullness, position bounds.
-step_ready(#peer_sync_state{ pass = undefined }) ->
+%% @doc Can we run the next enqueue step right now? Consolidates every
+%% "no, wait" case: disk space, queue fullness, position bounds.
+can_enqueue(#peer_sync_state{ pass = undefined }) ->
 	ready;
-step_ready(#peer_sync_state{ queue = Q, store_id = StoreID, weave_size = WeaveSize,
+can_enqueue(#peer_sync_state{ queue = Q, store_id = StoreID, weave_size = WeaveSize,
 		pass = #enqueue_pass{ offset = Offset, end_ = End } }) ->
 	case ar_data_sync:is_disk_space_sufficient(StoreID) of
 		false ->
@@ -320,14 +310,13 @@ do_enqueue_normal(State) ->
 					%% the offset and retry.
 					{State, {cast_after, 1000}};
 				Peers ->
-				{EndReached, EnqueueIntervals, HadPeers} =
+				{EndReached, EnqueueIntervals} =
 					collect_peer_intervals_normal(Offset, Peers, UnsyncedIntervals),
 				NewQ = add_to_queue(EnqueueIntervals, Q),
 				Produced = ar_sync_task_queue:size(NewQ) - ar_sync_task_queue:size(Q),
 				maybe_log_chunk_sync_started(StoreID, normal, Pass, Produced),
 				NewPass = Pass#enqueue_pass{
 					offset = min(End2, EndReached),
-					had_peers = Pass#enqueue_pass.had_peers orelse HadPeers,
 					tasks_produced = Pass#enqueue_pass.tasks_produced + max(0, Produced)
 				},
 				{State#peer_sync_state{ queue = NewQ, pass = NewPass }, cast_now}
@@ -352,7 +341,7 @@ do_enqueue_footprint(State) ->
 				wait ->
 					{State, {cast_after, 1000}};
 				Peers ->
-				{EnqueueIntervals, HadPeers} = collect_peer_intervals_footprint(
+				EnqueueIntervals = collect_peer_intervals_footprint(
 						Partition, Footprint, Start, End, Peers, UnsyncedIntervals),
 				NewQ = add_to_queue(EnqueueIntervals, Q),
 				Produced = ar_sync_task_queue:size(NewQ) - ar_sync_task_queue:size(Q),
@@ -360,7 +349,6 @@ do_enqueue_footprint(State) ->
 				Offset2 = ar_replica_2_9:get_next_fetch_offset(Offset, Start, End),
 				NewPass = Pass#enqueue_pass{
 					offset = Offset2,
-					had_peers = Pass#enqueue_pass.had_peers orelse HadPeers,
 					tasks_produced = Pass#enqueue_pass.tasks_produced + max(0, Produced)
 				},
 				{State#peer_sync_state{ queue = NewQ, pass = NewPass }, cast_now}
@@ -380,48 +368,46 @@ maybe_log_chunk_sync_started(_StoreID, _Mode, _Pass, _Produced) ->
 %%%===================================================================
 
 collect_peer_intervals_normal(Left, Peers, SoughtIntervals) ->
-	{MinRightBound, Entries, HadPeers} = lists:foldl(
-		fun(Peer, {RightAcc, Acc, HadAcc}) ->
+	lists:foldl(
+		fun(Peer, {RightAcc, Acc}) ->
 			case ar_data_discovery:get_peer_intervals(Peer, Left, infinity) of
 				{ok, PeerIntervals, PeerRight} ->
 					Intersected = ar_intervals:intersection(PeerIntervals, SoughtIntervals),
 					case ar_intervals:is_empty(Intersected) of
-						true -> {min(RightAcc, PeerRight), Acc, true};
+						true -> {min(RightAcc, PeerRight), Acc};
 						false ->
 							{min(RightAcc, PeerRight),
-								[{Peer, Intersected, none} | Acc], true}
+								[{Peer, Intersected, none} | Acc]}
 					end;
 				{error, _} ->
-					{RightAcc, Acc, HadAcc}
+					{RightAcc, Acc}
 			end
 		end,
-		{infinity, [], false},
+		{infinity, []},
 		Peers
-	),
-	{MinRightBound, Entries, HadPeers}.
+	).
 
 collect_peer_intervals_footprint(Partition, Footprint, Start, End, Peers, SoughtIntervals) ->
-	{Entries, HadPeers} = lists:foldl(
-		fun(Peer, {Acc, HadAcc}) ->
+	lists:foldl(
+		fun(Peer, Acc) ->
 			case ar_data_discovery:get_peer_footprint_intervals(Peer, Partition, Footprint) of
 				{ok, PeerIntervals} ->
 					Intersected = ar_intervals:intersection(PeerIntervals, SoughtIntervals),
 					case ar_intervals:is_empty(Intersected) of
-						true -> {Acc, true};
+						true -> Acc;
 						false ->
 							ByteIntervals = cut_peer_footprint_intervals(
 								Intersected, Start, End),
 							FootprintKey = {Partition, Footprint, Peer},
-							{[{Peer, ByteIntervals, FootprintKey} | Acc], true}
+							[{Peer, ByteIntervals, FootprintKey} | Acc]
 					end;
 				{error, _} ->
-					{Acc, HadAcc}
+					Acc
 			end
 		end,
-		{[], false},
+		[],
 		Peers
-	),
-	{Entries, HadPeers}.
+	).
 
 %% Distribute work fairly across peers in a pass: shuffle so no one
 %% peer dominates, cap each peer at ~1.5x fair share of the bucket.
@@ -531,20 +517,6 @@ ready_to_start(StoreID) ->
 flip_mode(normal) -> footprint;
 flip_mode(footprint) -> normal;
 flip_mode(undefined) -> normal.
-
-%% Adaptive restart delay. Passes that produced tasks reset to the
-%% minimum; passes that touched peers but produced nothing double the
-%% backoff; passes that never saw peers reset to the minimum (data
-%% discovery just hadn't warmed yet - not an empty-module signal).
-pass_restart_delay(#enqueue_pass{ tasks_produced = N }) when N > 0 ->
-	{?PASS_RESTART_MIN_DELAY_MS, 0};
-pass_restart_delay(#enqueue_pass{ had_peers = false }) ->
-	{?PASS_RESTART_MIN_DELAY_MS, 0};
-pass_restart_delay(#enqueue_pass{ backoff_ms = PrevBackoff }) ->
-	NewBackoff = min(
-		max(?PASS_RESTART_MIN_DELAY_MS, PrevBackoff * 2),
-		?PASS_RESTART_MAX_DELAY_MS),
-	{NewBackoff, NewBackoff}.
 
 %%%===================================================================
 %%% Tests.
