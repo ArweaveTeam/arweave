@@ -9,6 +9,7 @@
 -define(SAMPLE_PROCESSES_INTERVAL, 15000).
 -define(SAMPLE_SCHEDULERS_INTERVAL, 30000).
 -define(SAMPLE_SCHEDULERS_DURATION, 5000).
+-define(LONG_MESSAGE_QUEUE_THRESHOLD, 1000).
 
 -record(state, {
 	scheduler_samples = undefined
@@ -45,16 +46,26 @@ handle_info(sample_processes, State) ->
 	ProcessData = lists:filtermap(fun(Pid) -> process_function(Pid) end, Processes),
 
 	ProcessMetrics =
-		lists:foldl(fun({_Status, ProcessName, Memory, Reductions, MsgQueueLen}, Acc) ->
+		lists:foldl(fun(Process, Acc) ->
 			%% Sum the data for each process. This is a compromise for handling unregistered
 			%% processes. It has the effect of summing the memory and message queue length across all unregistered processes running off the
 			%% same function. In general this is what we want (e.g. for the io threads within
 			%% ar_mining_io and the hashing threads within ar_mining_hashing, we wand to
 			%% see if, in aggregate, their memory or message queue length has spiked).
-			{MemoryTotal, ReductionsTotal, MsgQueueLenTotal} =
-				maps:get(ProcessName, Acc, {0, 0, 0}),
-			Metrics = {
-				MemoryTotal + Memory, ReductionsTotal + Reductions, MsgQueueLenTotal + MsgQueueLen},
+			ProcessName = maps:get(process_name, Process),
+			Metrics0 = maps:get(ProcessName, Acc, #{
+					memory => 0,
+					reductions => 0,
+					message_queue_len => 0,
+					processes => []
+				}),
+			Metrics = Metrics0#{
+				memory := maps:get(memory, Metrics0) + maps:get(memory, Process),
+				reductions := maps:get(reductions, Metrics0) + maps:get(reductions, Process),
+				message_queue_len :=
+					maps:get(message_queue_len, Metrics0)
+							+ maps:get(message_queue_len, Process),
+				processes := [Process | maps:get(processes, Metrics0)]},
 			maps:put(ProcessName, Metrics, Acc)
 		end,
 		#{},
@@ -69,10 +80,13 @@ handle_info(sample_processes, State) ->
 		{help, "Sampling info about active processes. Only set when debug=true."}]),
 
 	maps:foreach(fun(ProcessName, Metrics) ->
-		{Memory, Reductions, MsgQueueLen} = Metrics,
+		Memory = maps:get(memory, Metrics),
+		Reductions = maps:get(reductions, Metrics),
+		MsgQueueLen = maps:get(message_queue_len, Metrics),
 		prometheus_gauge:set(process_info, [ProcessName, memory], Memory),
 		prometheus_gauge:set(process_info, [ProcessName, reductions], Reductions),
-		prometheus_gauge:set(process_info, [ProcessName, message_queue], MsgQueueLen)
+		prometheus_gauge:set(process_info, [ProcessName, message_queue], MsgQueueLen),
+		log_long_message_queues(ProcessName, MsgQueueLen, maps:get(processes, Metrics))
 	end, ProcessMetrics),
 
 	prometheus_gauge:set(process_info, [total, memory], erlang:memory(total)),
@@ -141,30 +155,63 @@ average_utilization(Util) ->
 
 process_function(Pid) ->
 	case process_info(Pid, [current_function, current_stacktrace, registered_name,
-		status, memory, reductions, message_queue_len, messages]) of
-	[{current_function, {erlang, process_info, _A}}, _, _, _, _, _, _, _] ->
+		status, memory, reductions, message_queue_len]) of
+	[{current_function, {erlang, process_info, _A}}, _, _, _, _, _, _] ->
 		false;
 	[{current_function, CurrentFunction}, {current_stacktrace, Stack},
 			{registered_name, Name}, {status, Status},
 			{memory, Memory}, {reductions, Reductions},
-			{message_queue_len, MsgQueueLen}, {messages, Messages}] ->
+			{message_queue_len, MsgQueueLen}] ->
 		ProcessName = process_name(Name, Stack, Pid),
-		case MsgQueueLen > 1000 of
-			true ->
-				FormattedMessages =
-					[format_message(Msg) || Msg <- lists:sublist(Messages, 10)],
-				?LOG_DEBUG([{event, process_long_message_queue}, {pid, Pid},
-					{process_name, ProcessName}, {current_function, CurrentFunction},
-					{current_stacktrace, Stack}, {memory, Memory},
-					{reductions, Reductions}, {message_queue_len, MsgQueueLen},
-					{head_messages, FormattedMessages}]);
-			false ->
-				ok
-		end,
-		{true, {Status, ProcessName, Memory, Reductions, MsgQueueLen}};
+		{true, #{
+				status => Status,
+				process_name => ProcessName,
+				memory => Memory,
+				reductions => Reductions,
+				message_queue_len => MsgQueueLen,
+				pid => Pid,
+				current_function => CurrentFunction,
+				current_stacktrace => Stack
+			}};
 	_ ->
 		false
 	end.
+
+format_head_messages(0, _Messages) ->
+	[];
+format_head_messages(_MsgQueueLen, Messages) ->
+	[format_message(Msg) || Msg <- lists:sublist(Messages, 10)].
+
+log_long_message_queues(ProcessName, AggregateMsgQueueLen, ProcessesForName)
+		when AggregateMsgQueueLen > ?LONG_MESSAGE_QUEUE_THRESHOLD ->
+	SortedProcesses = lists:sort(
+		fun(Process1, Process2) ->
+			maps:get(message_queue_len, Process1) >= maps:get(message_queue_len, Process2)
+		end,
+		ProcessesForName),
+	TopProcesses = lists:sublist(SortedProcesses, 3),
+	lists:foreach(
+		fun(Process) ->
+			Pid = maps:get(pid, Process),
+			HeadMessages = case process_info(Pid, messages) of
+				{messages, Messages} ->
+					format_head_messages(maps:get(message_queue_len, Process), Messages);
+				undefined ->
+					[]
+			end,
+			?LOG_DEBUG([{event, process_long_message_queue}, {pid, Pid},
+				{process_name, ProcessName},
+				{current_function, maps:get(current_function, Process)},
+				{current_stacktrace, maps:get(current_stacktrace, Process)},
+				{memory, maps:get(memory, Process)},
+				{reductions, maps:get(reductions, Process)},
+				{message_queue_len, maps:get(message_queue_len, Process)},
+				{aggregate_message_queue_len, AggregateMsgQueueLen},
+				{head_messages, HeadMessages}])
+		end,
+		TopProcesses);
+log_long_message_queues(_ProcessName, _AggregateMsgQueueLen, _ProcessesForName) ->
+	ok.
 
 log_binary_alloc() ->
 	[Instance0 | _Rest] = erlang:system_info({allocator, binary_alloc}),
