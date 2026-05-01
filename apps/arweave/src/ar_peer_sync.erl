@@ -310,9 +310,9 @@ do_enqueue_normal(State) ->
 					%% the offset and retry.
 					{State, {cast_after, 1000}};
 				Peers ->
-				{EndReached, EnqueueIntervals} =
-					collect_peer_intervals_normal(Offset, Peers, UnsyncedIntervals),
-				NewQ = add_to_queue(EnqueueIntervals, Q),
+				{EndReached, FetchableEntries} =
+					determine_fetchable_intervals_normal(Offset, Peers, UnsyncedIntervals),
+				NewQ = add_to_queue(FetchableEntries, Q),
 				Produced = ar_sync_task_queue:size(NewQ) - ar_sync_task_queue:size(Q),
 				maybe_log_chunk_sync_started(StoreID, normal, Pass, Produced),
 				NewPass = Pass#enqueue_pass{
@@ -341,9 +341,9 @@ do_enqueue_footprint(State) ->
 				wait ->
 					{State, {cast_after, 1000}};
 				Peers ->
-				EnqueueIntervals = collect_peer_intervals_footprint(
+				FetchableEntries = determine_fetchable_intervals_footprint(
 						Partition, Footprint, Start, End, Peers, UnsyncedIntervals),
-				NewQ = add_to_queue(EnqueueIntervals, Q),
+				NewQ = add_to_queue(FetchableEntries, Q),
 				Produced = ar_sync_task_queue:size(NewQ) - ar_sync_task_queue:size(Q),
 				maybe_log_chunk_sync_started(StoreID, footprint, Pass, Produced),
 				Offset2 = ar_replica_2_9:get_next_fetch_offset(Offset, Start, End),
@@ -364,20 +364,25 @@ maybe_log_chunk_sync_started(_StoreID, _Mode, _Pass, _Produced) ->
 	ok.
 
 %%%===================================================================
-%%% Per-peer gather from the ar_data_discovery cache.
+%%% Per-peer fetchable-interval computation from the ar_data_discovery cache.
 %%%===================================================================
 
-collect_peer_intervals_normal(Left, Peers, SoughtIntervals) ->
+%% @doc For each peer, intersect its cached advertised intervals with
+%% our UnsyncedIntervals to determine what we can fetch. Returns the
+%% min right bound across peers (used to bound cursor advance) and a
+%% list of {Peer, FetchableIntervals, FootprintKey} entries.
+determine_fetchable_intervals_normal(Left, Peers, UnsyncedIntervals) ->
 	lists:foldl(
 		fun(Peer, {RightAcc, Acc}) ->
 			case ar_data_discovery:get_peer_intervals(Peer, Left, infinity) of
 				{ok, PeerIntervals, PeerRight} ->
-					Intersected = ar_intervals:intersection(PeerIntervals, SoughtIntervals),
-					case ar_intervals:is_empty(Intersected) of
+					FetchableIntervals = ar_intervals:intersection(
+						PeerIntervals, UnsyncedIntervals),
+					case ar_intervals:is_empty(FetchableIntervals) of
 						true -> {min(RightAcc, PeerRight), Acc};
 						false ->
 							{min(RightAcc, PeerRight),
-								[{Peer, Intersected, none} | Acc]}
+								[{Peer, FetchableIntervals, none} | Acc]}
 					end;
 				{error, _} ->
 					{RightAcc, Acc}
@@ -387,17 +392,19 @@ collect_peer_intervals_normal(Left, Peers, SoughtIntervals) ->
 		Peers
 	).
 
-collect_peer_intervals_footprint(Partition, Footprint, Start, End, Peers, SoughtIntervals) ->
+determine_fetchable_intervals_footprint(
+		Partition, Footprint, Start, End, Peers, UnsyncedIntervals) ->
 	lists:foldl(
 		fun(Peer, Acc) ->
 			case ar_data_discovery:get_peer_footprint_intervals(Peer, Partition, Footprint) of
 				{ok, PeerIntervals} ->
-					Intersected = ar_intervals:intersection(PeerIntervals, SoughtIntervals),
-					case ar_intervals:is_empty(Intersected) of
+					FetchableIntervals = ar_intervals:intersection(
+						PeerIntervals, UnsyncedIntervals),
+					case ar_intervals:is_empty(FetchableIntervals) of
 						true -> Acc;
 						false ->
 							ByteIntervals = cut_peer_footprint_intervals(
-								Intersected, Start, End),
+								FetchableIntervals, Start, End),
 							FootprintKey = {Partition, Footprint, Peer},
 							[{Peer, ByteIntervals, FootprintKey} | Acc]
 					end;
