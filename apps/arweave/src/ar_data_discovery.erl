@@ -495,56 +495,95 @@ emit_bucket_stats() ->
 report_bucket_stats(StoreID, RangeStart, RangeEnd, normal) ->
 	StartBucket = RangeStart div ?NETWORK_DATA_BUCKET_SIZE,
 	EndBucket = (RangeEnd - 1) div ?NETWORK_DATA_BUCKET_SIZE,
-	TotalBuckets = EndBucket - StartBucket + 1,
-	{AllPeers, ZeroCount, HealthyCount} =
-		bucket_stats(StartBucket, EndBucket, ?MODULE, sets:new()),
-	set_bucket_stats_metrics(StoreID, normal, AllPeers, TotalBuckets, ZeroCount, HealthyCount);
+	AllPeers = collect_bucket_peers(StartBucket, EndBucket, ?MODULE, sets:new()),
+	CoverageBytes = coverage_bytes_normal(AllPeers, RangeStart, RangeEnd),
+	set_data_discovery_metrics(StoreID, normal, AllPeers, CoverageBytes);
 report_bucket_stats(StoreID, RangeStart, RangeEnd, footprint) ->
 	StartBucket = ar_footprint_record:get_footprint_bucket(RangeStart + ?DATA_CHUNK_SIZE),
 	EndBucket = ar_footprint_record:get_footprint_bucket(RangeEnd),
-	TotalBuckets = max(0, EndBucket - StartBucket + 1),
-	{AllPeers, ZeroCount, HealthyCount} =
-		bucket_stats(StartBucket, EndBucket, ar_data_discovery_footprint_buckets, sets:new()),
-	set_bucket_stats_metrics(StoreID, footprint, AllPeers, TotalBuckets, ZeroCount, HealthyCount).
+	AllPeers = collect_bucket_peers(StartBucket, EndBucket,
+			ar_data_discovery_footprint_buckets, sets:new()),
+	CoverageBytes = coverage_bytes_footprint(AllPeers, RangeStart, RangeEnd),
+	set_data_discovery_metrics(StoreID, footprint, AllPeers, CoverageBytes).
 
-bucket_stats(StartBucket, EndBucket, _Table, AllPeers) when StartBucket > EndBucket ->
-	{AllPeers, 0, 0};
-bucket_stats(StartBucket, EndBucket, Table, AllPeers) ->
-	bucket_stats(StartBucket, EndBucket, Table, AllPeers, 0, 0).
+%% Walk [StartBucket, EndBucket] in `Table` and return the union of peers
+%% advertising any bucket in the range.
+collect_bucket_peers(StartBucket, EndBucket, _Table, Peers)
+		when StartBucket > EndBucket ->
+	Peers;
+collect_bucket_peers(Bucket, EndBucket, Table, Peers) ->
+	Peers2 = collect_peers_for_bucket(Bucket, Table, Peers,
+			{Bucket, 0, no_peer}),
+	collect_bucket_peers(Bucket + 1, EndBucket, Table, Peers2).
 
-bucket_stats(Bucket, EndBucket, _Table, AllPeers, ZeroCount, HealthyCount)
-		when Bucket > EndBucket ->
-	{AllPeers, ZeroCount, HealthyCount};
-bucket_stats(Bucket, EndBucket, Table, AllPeers, ZeroCount, HealthyCount) ->
-	{BucketPeers, AllPeers2} = get_bucket_peers_and_collect(Bucket, Table, AllPeers),
-	PeerCount = length(BucketPeers),
-	{ZeroCount2, HealthyCount2} =
-		case PeerCount of
-			0 -> {ZeroCount + 1, HealthyCount};
-			N when N >= 3 -> {ZeroCount, HealthyCount + 1};
-			_ -> {ZeroCount, HealthyCount}
-		end,
-	bucket_stats(Bucket + 1, EndBucket, Table, AllPeers2, ZeroCount2, HealthyCount2).
-
-get_bucket_peers_and_collect(Bucket, Table, AllPeers) ->
-	get_bucket_peers_and_collect(Bucket, Table, {Bucket, 0, no_peer}, [], AllPeers).
-
-get_bucket_peers_and_collect(Bucket, Table, Cursor, BucketPeers, AllPeers) ->
+collect_peers_for_bucket(Bucket, Table, Peers, Cursor) ->
 	case ets:next(Table, Cursor) of
 		{Bucket, _Share, Peer} = Key ->
-			get_bucket_peers_and_collect(Bucket, Table, Key,
-				[Peer | BucketPeers], sets:add_element(Peer, AllPeers));
+			collect_peers_for_bucket(Bucket, Table,
+					sets:add_element(Peer, Peers), Key);
 		_ ->
-			{ar_util:unique(BucketPeers), AllPeers}
+			Peers
 	end.
 
-set_bucket_stats_metrics(StoreID, Type, AllPeers, TotalBuckets, ZeroCount, HealthyCount) ->
-	NumPeers = sets:size(AllPeers),
+%% Bytes covered by ≥1 peer (union, deduplicated) within [RangeStart, RangeEnd].
+%% Iterates each peer's normal-mode cache rows (byte ranges in absolute weave
+%% space), unions them, then restricts to the storage module's range and sums.
+coverage_bytes_normal(Peers, RangeStart, RangeEnd) ->
+	Union = sets:fold(
+		fun(Peer, Acc) ->
+			Rows = ets:select(?PEER_INTERVAL_CACHE_TABLE,
+					[{ {{Peer, '_', normal}, '$1', '_', '_'}, [], ['$1'] }]),
+			lists:foldl(fun ar_intervals:union/2, Acc, Rows)
+		end,
+		ar_intervals:new(),
+		Peers
+	),
+	%% Restrict to [RangeStart, RangeEnd]: cut to right bound, then drop the
+	%% left tail [0, RangeStart) via outerjoin.
+	Cut = ar_intervals:cut(Union, RangeEnd),
+	Restricted = ar_intervals:outerjoin(
+			ar_intervals:from_list([{RangeStart, -1}]), Cut),
+	ar_intervals:sum(Restricted).
+
+%% Bytes covered by ≥1 peer in footprint mode, restricted to the storage
+%% module's partition range. Cache rows are keyed by {Peer, {Partition,
+%% Footprint}, footprint} and store footprint chunk indices; chunk indices
+%% are namespaced by (Partition, Footprint), so we union per key (across
+%% peers) before counting. Result is total distinct chunks × ?DATA_CHUNK_SIZE.
+coverage_bytes_footprint(Peers, RangeStart, RangeEnd) ->
+	StartPartition = ar_replica_2_9:get_entropy_partition(RangeStart + ?DATA_CHUNK_SIZE),
+	EndPartition = ar_replica_2_9:get_entropy_partition(RangeEnd),
+	%% Group cache rows by (Partition, Footprint), union intervals across peers
+	%% per key, then sum the union sizes.
+	ByKey = sets:fold(
+		fun(Peer, Acc) ->
+			Rows = ets:select(?PEER_INTERVAL_CACHE_TABLE,
+					[{ {{Peer, '$1', footprint}, '$2', '_', '_'},
+						[], [{{'$1', '$2'}}] }]),
+			lists:foldl(
+				fun({{Partition, _Footprint} = Key, Intervals}, A)
+						when Partition >= StartPartition,
+							Partition =< EndPartition ->
+					Existing = maps:get(Key, A, ar_intervals:new()),
+					maps:put(Key, ar_intervals:union(Existing, Intervals), A);
+				   ({_Key, _Intervals}, A) ->
+					A
+				end, Acc, Rows)
+		end,
+		#{},
+		Peers
+	),
+	TotalChunks = maps:fold(
+			fun(_K, Intervals, Acc) -> Acc + ar_intervals:sum(Intervals) end,
+			0, ByKey),
+	TotalChunks * ?DATA_CHUNK_SIZE.
+
+set_data_discovery_metrics(StoreID, Type, AllPeers, CoverageBytes) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
-	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, num_peers], NumPeers),
-	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, total_buckets], TotalBuckets),
-	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, zero_peer_count], ZeroCount),
-	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, healthy_peer_count], HealthyCount).
+	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, num_peers],
+			sets:size(AllPeers)),
+	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, coverage_bytes],
+			CoverageBytes).
 
 %% On the peer's first appearance in either bucket map, schedule the
 %% periodic expiration check. Subsequent bucket-fetch responses see
