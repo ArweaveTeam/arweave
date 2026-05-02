@@ -67,7 +67,7 @@ handle_cast({sync_range, SyncTask}, State) ->
 	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
 		recast -> ok;
-		_ -> ar_data_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs)
+		_ -> ar_peer_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs)
 	end,
 	{noreply, State};
 
@@ -85,14 +85,16 @@ try_take_one([{_Peer, PeerPid} | Rest]) ->
 			try_take_one(Rest)
 	end.
 
-%% @doc Execute one sync_range task and report completion to the owning
-%% peer worker. On recast (cache full / disk full / retryable HTTP error)
-%% sync_range internally schedules a self-cast_after; we leave the slot
-%% claimed and in_flight_count incremented at the peer worker. The
-%% scheduled retry lands in the legacy `{sync_range, _}` cast handler,
-%% which will report completion when the retry succeeds (or definitively
-%% fails after exhausting retries — see sync_range/2 retry-zero clause
-%% which returns {error, timeout} directly, not recast).
+%% @doc Execute one sync_range task and report completion through
+%% ar_peer_sync (which fans out to the per-peer accounting and releases
+%% the StoreID's queue dedup overlay). On recast (cache full / disk full
+%% / retryable HTTP error) sync_range internally schedules a
+%% self-cast_after; we leave the slot claimed and in_flight_count
+%% incremented at the peer worker. The scheduled retry lands in the
+%% `{sync_range, _}` cast handler, which will report completion when
+%% the retry succeeds (or definitively fails after exhausting retries —
+%% see sync_range/2 retry-zero clause which returns {error, timeout}
+%% directly, not recast).
 run_sync_range(SyncTask, State) ->
 	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
@@ -100,7 +102,7 @@ run_sync_range(SyncTask, State) ->
 			%% Slot stays claimed; eventual retry will report completion.
 			ok;
 		_ ->
-			ar_data_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs)
+			ar_peer_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs)
 	end,
 	ok.
 
