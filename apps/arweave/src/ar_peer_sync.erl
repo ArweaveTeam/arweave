@@ -45,9 +45,16 @@
 %% it moves through the enqueue state machine and is replaced when the
 %% pass completes and a new one starts.
 -record(enqueue_pass, {
+	%% Left bound of the pass range. For footprint mode, an inclusive
+	%% boundary used when cutting per-peer footprint intervals to the
+	%% module.
 	start :: non_neg_integer(),
+	%% Right bound of the pass range (clamped to WeaveSize /
+	%% DiskPoolThreshold when the pass is built).
 	end_ :: non_neg_integer(),
+	%% Current position inside [start, end_). Advances on each step.
 	offset :: non_neg_integer(),
+	%% Which protocol we're querying peers with on this pass.
 	mode :: normal | footprint,
 	%% Count of tasks produced in the current pass. Resets each pass.
 	%% Logged at pass_complete and used to gate the chunk_sync_started
@@ -56,9 +63,13 @@
 }).
 
 -record(state, {
+	%% Storage module identifier this state belongs to.
 	store_id,
+	%% Start offset of the storage module's range.
 	range_start = -1 :: integer(),
+	%% End offset of the storage module's range.
 	range_end = -1 :: integer(),
+	%% Latest known weave size (chain tip). Updated via set_weave_size/2.
 	weave_size :: undefined | non_neg_integer(),
 	%% Mirror of ar_device_lock's view of this module's sync-mode lock.
 	sync_status = undefined,
