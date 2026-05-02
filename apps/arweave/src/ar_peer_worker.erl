@@ -1,39 +1,13 @@
-%%% @doc Per-peer process managing the sync task queue, in-flight tracking, and
-%%% footprint admission. One process per peer, started on demand by the
-%%% coordinator when ar_data_sync first enqueues work for that peer.
+%%% @doc Per-peer admission controller for network sync tasks.
 %%%
-%%% Task Queue:
-%%% - Holds #sync_task{} records waiting to be pulled by ar_data_sync_workers.
-%%% - ar_data_sync_workers call take_one/1 to pop a task; enqueue is rejected
-%%%   if the queue is already at max_queue_len (prevents inflating the global
-%%%   backpressure signal between rebalance ticks).
+%%% ar_data_sync_coordinator starts one worker per peer on demand and forwards
+%%% that peer's #sync_task{} records here. ar_data_sync_worker processes pull
+%%% tasks from peer workers rather than receiving pushed work, which keeps slow
+%%% peers from monopolizing the worker pool.
 %%%
-%%% In-Flight Tracking:
-%%% - in_flight_count tracks how many tasks have been handed out via take_one
-%%%   but not yet completed via task_completed.
-%%% - max_in_flight caps concurrency per peer. Adjusted +/-1 each rebalance
-%%%   tick based on the peer's latency vs the global target latency.
-%%% - in_flight_workers maps WorkerPid => {FootprintKey, TakenAt} for each
-%%%   outstanding task. Used to reap dead or stale workers on the rebalance
-%%%   tick (releases leaked in_flight_count and footprint slots).
-%%%
-%%% Footprint Admission:
-%%% - A task with a FootprintKey can only go in-flight if this peer already
-%%%   holds a global footprint slot for that key, or can claim one atomically
-%%%   via ar_data_sync_coordinator:claim_footprint_slot/0. If no slot is
-%%%   available, take_one returns none (head-of-line block; worker tries
-%%%   the next peer).
-%%% - When a footprint's active_task_count reaches 0, the global slot is
-%%%   released. Long-running footprints are logged periodically.
-%%%
-%%% Rebalancing (called by coordinator every 10s):
-%%% - Adjusts max_in_flight: +1 if peer is faster than target latency or
-%%%   workers are starved; -1 if slower; -1 if idle for > ACTIVE_THRESHOLD_S.
-%%% - Adjusts max_queue_len: raw target from peer rating * scaling factor,
-%%%   smoothed downward at QUEUE_SHRINK_RATE per tick to avoid mass cuts.
-%%% - Cuts queue tail if it exceeds (smoothed) max_queue_len.
-%%% - Reaps dead/stale entries from in_flight_workers.
-%%% - Shuts down the peer worker if idle for IDLE_SHUTDOWN_THRESHOLD_S.
+%%% This process owns per-peer queue limits, in-flight accounting, and
+%%% footprint admission. The coordinator periodically rebalances those limits
+%%% from peer latency/rating and owns the global footprint-slot counter.
 -module(ar_peer_worker).
 
 -behaviour(gen_server).

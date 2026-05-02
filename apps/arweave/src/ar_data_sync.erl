@@ -1,57 +1,21 @@
-%%% @doc Per-storage-module sync engine and central state owner for the
-%%% chunk syncing subsystem.
+%%% @doc Per-storage-module owner for chunk sync state and writes.
 %%%
-%%% === Process layout ===
+%%% Responsibilities:
+%%% - Own the module's sync record, chunk indexes, RocksDB handles, disk-space
+%%%   state, and final chunk write path.
+%%% - Coordinate local copy first: ar_chunk_copy fills gaps from sibling
+%%%   storage modules when possible.
+%%% - Coordinate network sync next:
+%%%   - ar_data_discovery keeps a cache of what peers can serve.
+%%%   - ar_peer_sync compares that cache with this module's unsynced intervals
+%%%     and fills ar_sync_task_queue.
+%%%   - ar_data_sync_coordinator, ar_peer_worker, and ar_data_sync_worker fetch
+%%%     chunks from peers.
+%%% - Accept completed tasks back here to release dedup state and store
+%%%   validated chunks.
 %%%
-%%% One gen_server is registered as `ar_data_sync_<StoreIDLabel>' per
-%%% configured storage module, plus a `ar_data_sync_default' singleton
-%%% for the default module. Each instance owns the #data_sync_state{}
-%%% for its StoreID and serializes all access to that state through its
-%%% mailbox.
-%%%
-%%% === Sync sources ===
-%%%
-%%% A storage module fills its unsynced gaps from two sources, in order:
-%%%
-%%%  1. **Local copy** (`ar_chunk_copy'): if another storage module on
-%%%     this node already has a needed range, copy it across modules
-%%%     instead of re-fetching from the network. Runs once per StoreID
-%%%     at startup and emits `{event, chunk_copy, {complete, StoreID}}'
-%%%     when its scan finishes.
-%%%
-%%%  2. **Network sync** (`ar_peer_sync'): on the chunk_copy completion
-%%%     event, this module starts the enqueue/sync cast chains that
-%%%     pull remaining chunks from network peers. ar_peer_sync is a
-%%%     stateless library — its enqueue (producer) and sync (consumer)
-%%%     entry points operate on this module's #data_sync_state{}.
-%%%
-%%% === Supporting modules ===
-%%%
-%%% State + indexing:
-%%%   - `ar_data_roots'      — data-root index, tx_index/tx_offset_index,
-%%%                            store_block writes
-%%%   - `ar_disk_pool'       — singleton pending-chunk subsystem: admits
-%%%                            unconfirmed chunks and drains them to storage
-%%%   - `ar_sync_record'     — per-StoreID synced-interval records
-%%%   - `ar_data_discovery'  — determines peer chunk coverage and feeds
-%%%                            ar_peer_sync's enqueue loop with candidate
-%%%                            ranges
-%%%   - `ar_sync_task_queue' — per-StoreID queue connecting the
-%%%                            enqueue producer to the sync consumer
-%%%
-%%% Workers:
-%%%   - `ar_data_sync_coordinator' — routes a task to a peer worker
-%%%   - `ar_peer_worker'           — owns one peer's HTTP fetch slot
-%%%   - `ar_data_sync_worker'      — fetches chunks and hands them back
-%%%                                  to ar_data_sync for storage
-%%%
-%%% === Responsibilities of this module ===
-%%%
-%%%   - per-module state in #data_sync_state{}
-%%%   - all RocksDB opens and closes (init_kv/2, terminate/2)
-%%%   - block lifecycle: join, cut, add_tip_block, store_sync_state
-%%%   - orchestrating the various chunk copy/sync subsystems
-%%%   - chunk write pipeline
+%%% The default module also owns chain-tip/header-facing state used by the rest
+%%% of the node; configured storage modules own their local data range only.
 -module(ar_data_sync).
 
 -behaviour(gen_server).

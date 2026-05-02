@@ -85,12 +85,6 @@
 
 -define(WORKER_LOAD_TABLE, worker_load).
 
-%% ar_peer_sync's state is opaque to ar_data_sync. It is constructed
-%% via `ar_peer_sync:new/3' at module init and threaded through
-%% `enqueue/1', `sync/1', `task_completed/3', and
-%% `set_weave_size/2'. Treat it as an unstructured term outside
-%% ar_peer_sync.
-
 %% @doc The state of the server managing data synchronization.
 -record(data_sync_state, {
 	%% The last entries of the block index.

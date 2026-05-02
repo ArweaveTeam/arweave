@@ -1,3 +1,10 @@
+%%% @doc Maintains a cache of the data ranges served by each peer.
+%%%
+%%% Scanner jobs ask peers for byte ranges and replica-2.9 footprints, then
+%%% store the answers in ETS.
+%%%
+%%% ar_peer_sync reads this cache when deciding what which chunks to fetch from
+%%% which peers.
 -module(ar_data_discovery).
 
 -behaviour(gen_server).
@@ -21,17 +28,14 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
-%% Per-peer cache of byte intervals reported by each peer over the
-%% network (via /data_sync_record for normal mode, /footprints for
+%% Per-peer cache of byte intervals reported by each peer
+%% (via /data_sync_record for normal mode and /footprints for
 %% footprint mode). Populated by the scanner pool in this module;
 %% read by ar_peer_sync to compute fetchable intervals.
 %%
 %% Rows keyed by `{Peer, CacheKey, Mode}'. The MonotonicMs slot records
-%% the time of the cache_store/3 that wrote the row; the periodic
-%% expiration check uses ets:select to find each peer's most recent
-%% write and evicts peers that haven't been written for too long. This
-%% piggybacks liveness tracking on the writes that already happen,
-%% avoiding a separate ETS table or per-fetch heartbeat casts.
+%% the time of the cache_store/3 that wrote the row - used by the periodic
+%% expiration to determine if a peer is non-responsive and should be removed.
 %%
 %%   normal:    {Key, Intervals, PeerRightBound, MonotonicMs}
 %%   footprint: {Key, Intervals, none,           MonotonicMs}

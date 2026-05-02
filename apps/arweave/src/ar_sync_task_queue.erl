@@ -1,5 +1,10 @@
-%% @doc Per-storage-module queue of sync tasks produced by ar_peer_sync's
-%% enqueue loop and consumed by ar_peer_sync's sync loop.
+%% @doc Per-storage-module queue between peer coverage and fetch dispatch.
+%%
+%% ar_peer_sync inserts chunk-sized tasks after matching ar_data_discovery's
+%% peer offers with local sync-record gaps. The queue orders tasks by
+%% {FootprintKey, Start, End, Peer} so replica-2.9 footprint work stays grouped,
+%% and keeps an in-flight interval overlay to deduplicate queued and currently
+%% fetching ranges until ar_data_sync reports task completion.
 -module(ar_sync_task_queue).
 
 -export([new/0, size/1, is_empty/1, in_flight_intervals/1,
