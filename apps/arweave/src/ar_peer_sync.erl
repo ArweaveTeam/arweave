@@ -1,41 +1,14 @@
-%% @doc Network chunk-sync subsystem. Mirror of ar_chunk_copy: where
-%% ar_chunk_copy fetches chunks from local sibling storage modules,
-%% ar_peer_sync fetches them from network peers.
+%% @doc Per-storage-module network sync state machine.
 %%
-%% This module owns an opaque per-StoreID state (task queue + the
-%% in-progress enqueue pass + range bookkeeping). Callers build it via
-%% `new/3' at init, thread it through the API below, and update it on
-%% chain-tip moves via `set_weave_size/2'. The state record is private;
-%% outside this module, treat the term as opaque.
+%% ar_data_sync owns this module's opaque state and calls it as a library.
+%% enqueue/1 walks the module range in normal and footprint modes, intersects
+%% ar_data_discovery's cached peer offers with ar_sync_record gaps, and inserts
+%% chunk-sized tasks into ar_sync_task_queue. sync/1 drains that queue into
+%% ar_data_sync_coordinator.
 %%
-%% An "enqueue pass" is one walk of `[range_start, range_end)' in a
-%% given mode (normal or footprint). Each call to `enqueue/1' advances
-%% the pass by one step (one ?QUERY_RANGE_STEP_SIZE window for normal
-%% mode, one footprint for footprint mode); when the pass reaches its
-%% end the mode flips and a new pass starts after an adaptive
-%% restart delay.
-%%
-%%  - `new/3' (constructor): build the initial opaque state.
-%%
-%%  - `enqueue/1' (producer): match cached peer offers (from
-%%    ar_data_discovery) against this module's unsynced gaps (from
-%%    ar_sync_record), enqueue per-chunk tasks into the task queue,
-%%    advance the current pass. Returns `{State', cast_now}' (run the
-%%    next step immediately) or `{State', {cast_after, Ms}}' (pause).
-%%    No HTTP happens here - peer query latency lives in
-%%    ar_data_discovery's background scanner pool instead.
-%%
-%%  - `sync/1' (consumer): pop one task from the queue, dispatch it
-%%    to ar_data_sync_coordinator (which routes through peer_worker
-%%    to a sync_worker that performs the HTTP fetch). Returns updated
-%%    State'.
-%%
-%%  - `task_completed/3': release a finished task's byte range from
-%%    the queue's dedup overlay so subsequent passes can re-enqueue
-%%    if the chunk remains unsynced.
-%%
-%%  - `set_weave_size/2': update the weave-size snapshot that the
-%%    enqueue loop consults to clamp the pass against the current tip.
+%% No peer HTTP discovery happens here; that latency is isolated in
+%% ar_data_discovery's scanner pool. This module is the bridge between cached
+%% peer coverage and executable sync tasks.
 -module(ar_peer_sync).
 
 -export([new/3, enqueue/1, sync/1, task_completed/3, set_weave_size/2]).

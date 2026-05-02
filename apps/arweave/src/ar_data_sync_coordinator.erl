@@ -1,35 +1,13 @@
-%%% @doc Thin coordinator for the sync subsystem. Pull-model dispatch means
-%%% most of the logic lives elsewhere; this module holds the peer roster,
-%%% runs the periodic rebalance tick, and owns the global worker_load ETS
-%%% helpers.
-%%% 
-%%% Main objectives:
-%%% - Saturate ar_data_sync_worker processes so they always have work to do
-%%%   (fetching chunks from peers)
-%%% - Don't let ar_data_sync_workers get stuck working through a long queue of tasks for a slow
-%%%   peer. Historically this was a common cause of poor sync performance - node would "lock up"
-%%%   as it tried to work through 1000+ queued sync tasks for a peer with multi-second GET /chunk2
-%%%   latency.
-%%% - Limit the number of footprints that are being handled at once. All chunks in a footprint
-%%%   can be unpacked with the same 256MiB entropy. If the node tries to pull from too many
-%%%   different footprints concurrently it either overwhelms RAM with too many cached entropies or
-%%%   thrashes and ends up recomputing the same entropy multiple times (a very expensive operation)
+%%% @doc Coordinator for the network sync worker pool.
 %%%
-%%% Components:
-%%% - ar_peer_worker (one per peer): owns the per-peer task queue, in-flight
-%%%   count and limit, footprint state. Sole writer of its worker_load rows (worker_load tracks
-%%%   how much work is assigned to this peer and is used to balance load and for backpressure)
-%%% - ar_data_sync_worker (pool of N): pull loop. Each worker shuffles the
-%%%   peer roster and asks peer workers for tasks via take_one/1.
-%%% - this module: forwards sync_range casts into the right peer worker,
-%%%   runs the rebalance tick every ?REBALANCE_FREQUENCY_MS, exposes
-%%%   ETS helpers (record_peer_load, claim/release_footprint_slot), provides backpressure to
-%%%   ar_data_sync via ready_for_work/0.
+%%% ar_peer_sync submits tasks here; the coordinator forwards each task to the
+%%% corresponding ar_peer_worker. ar_data_sync_worker processes then pull work
+%%% from peer workers, so dispatch adapts to available workers instead of
+%%% pushing long batches at slow peers.
 %%%
-%%% Tasks are either queued (in a peer worker's task_queue) or in-flight
-%%% (held by a sync worker that called take_one). A task with a footprint
-%%% key cannot go in-flight unless its peer already holds a global footprint
-%%% slot or can claim one atomically (see claim_footprint_slot/0).
+%%% This module owns global backpressure and footprint-slot accounting. Peer
+%%% workers publish their queue/in-flight load here, and the rebalance tick uses
+%%% that load plus peer ratings to resize per-peer queues and concurrency.
 
 -module(ar_data_sync_coordinator).
 
@@ -104,7 +82,7 @@ register_sync_workers() ->
 	{Workers, WorkerNames} = lists:foldl(
 		fun(Number, {AccWorkers, AccWorkerNames}) ->
 			Name = list_to_atom("ar_data_sync_worker_" ++ integer_to_list(Number)),
-			Worker = ?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name, sync]),
+			Worker = ?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name]),
 			{[Worker | AccWorkers], [Name | AccWorkerNames]}
 		end,
 		{[], []},

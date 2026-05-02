@@ -49,11 +49,8 @@
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
--include("ar_sup.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
--record(state, {}).
 
 -type data_root_entry() :: {DataRoot :: binary(), TXSize :: non_neg_integer(),
 		TXStartOffset :: non_neg_integer(), TXPath :: binary()}.
@@ -674,7 +671,7 @@ remove_tx_index_range(Start, End, StoreID) ->
 
 init([]) ->
 	?LOG_INFO([{event, ar_data_roots_start}]),
-	{ok, #state{}}.
+	{ok, undefined}.
 
 handle_call({store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID},
 		_From, State) ->
