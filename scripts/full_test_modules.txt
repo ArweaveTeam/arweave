@@ -34,8 +34,8 @@ ar_node_utils
 ar_nonce_limiter
 ar_packing_server
 ar_patricia_tree
+ar_peer_sync
 ar_peers
-ar_peer_intervals
 ar_data_discovery
 ar_peer_worker
 ar_pricing
