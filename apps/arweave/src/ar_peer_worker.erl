@@ -332,6 +332,7 @@ handle_cast({enqueue, SyncTask}, State) ->
 			%% StoreID's sync_task_queue dedup overlay so discover can
 			%% re-enqueue it later; otherwise the range stays "in flight"
 			%% forever and silently shrinks the producible task pool.
+			increment_metrics(dropped_full, State, 1),
 			release_dropped_task(SyncTask),
 			{noreply, State};
 		false ->
@@ -560,7 +561,11 @@ cut_queues(ToCut, State) ->
 		false -> {State3, 0}
 	end,
 	TotalCut = CutFromBlocked + CutFromEligible + NonFootprintCut,
-	increment_metrics(queued_out, State4, TotalCut),
+	%% Rebalance trim is its own state — separate from `queued_out` (normal
+	%% pop-for-dispatch) so the dropped-task signature stays distinguishable
+	%% from the success path. Pairs with the `release_dropped_task/1` calls
+	%% in remove_footprint_from_queues/2 and cut_non_footprint_tail/2.
+	increment_metrics(rebalance_cut, State4, TotalCut),
 	{State4, TotalCut}.
 
 %% @doc Walk a list of FKs and cut each one entirely until budget is met.
@@ -688,6 +693,7 @@ reap_dead_workers(State) ->
 					%% range is still claimed in the StoreID's task queue
 					%% dedup overlay. Release it so the producer can
 					%% re-enqueue.
+					increment_metrics(reaped, Acc, 1),
 					release_dropped_task(SyncTask),
 					NewInFlight = max(0, Acc#state.in_flight_count - 1),
 					do_complete_footprint_task(FootprintKey,
