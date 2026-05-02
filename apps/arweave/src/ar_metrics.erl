@@ -496,9 +496,12 @@ register() ->
 
 	prometheus_gauge:new([{name, data_discovery},
 		{labels, [type, store_id, stat]},
-		{help, "Tracks peer availability statistics from data discovery across buckets. "
+		{help, "Tracks peer availability statistics from data discovery. "
 				"'type' is 'normal' or 'footprint'. "
-				"'stat' is 'num_peers', 'total_buckets', 'zero_peer_count', or 'healthy_peer_count'."}]),
+				"'stat' is 'num_peers' (distinct peers offering data anywhere "
+				"in this store_id's range) or 'coverage_bytes' (bytes covered "
+				"by at least one peer, union-deduplicated, within this "
+				"store_id's range)."}]),
 
 	prometheus_counter:new([{name, sync_tasks},
 		{labels, [state, peer]},
