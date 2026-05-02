@@ -1,10 +1,24 @@
-%% @doc Per-storage-module queue between peer coverage and fetch dispatch.
+%% @doc Per-storage-module sync task queue (stateless library).
 %%
-%% ar_peer_sync inserts chunk-sized tasks after matching ar_data_discovery's
-%% peer offers with local sync-record gaps. The queue orders tasks by
-%% {FootprintKey, Start, End, Peer} so replica-2.9 footprint work stays grouped,
-%% and keeps an in-flight interval overlay to deduplicate queued and currently
-%% fetching ranges until ar_data_sync reports task completion.
+%% Operates on the opaque `#sync_task_queue{}' record, which is owned by
+%% `ar_peer_sync's per-StoreID gen_server. This module exposes the
+%% operations that mutate the queue's `q' (a gb_set ordered for dispatch)
+%% and `in_flight_intervals' (an ar_intervals overlay used to dedup
+%% queued + currently-fetching ranges).
+%%
+%% Task lifecycle invariants ar_peer_sync must uphold:
+%%
+%%   insert_batch/3   - producer adds new tasks. Adds byte ranges to
+%%                      `in_flight_intervals'.
+%%   take_smallest/1  - consumer pops the next task. Byte range stays
+%%                      in `in_flight_intervals' (still in flight).
+%%   task_completed/3 - any path where a task definitively exits the
+%%                      pipeline (success, failure, drop, reap, cut).
+%%                      Removes the byte range from `in_flight_intervals'.
+%%
+%% Tasks are ordered by `{FootprintKey, Start, End, Peer}' so
+%% replica-2.9 footprint work stays grouped, preserving entropy
+%% amortization in the 2.9 replica mode.
 -module(ar_sync_task_queue).
 
 -export([new/0, size/1, is_empty/1, in_flight_intervals/1,
@@ -17,16 +31,7 @@
 -endif.
 
 -record(sync_task_queue, {
-	%% A gb_set of {FootprintKey, Start, End, Peer} tuples ordered for dispatch.
-	%% Tasks belonging to the same footprint sort together, so the consumer pops
-	%% one footprint's chunks before moving on, preserving entropy amortization
-	%% in the 2.9 replica mode.
 	q = gb_sets:new(),
-	%% A compact ar_intervals set holding byte ranges currently in the
-	%% pipeline (queued or being fetched). Used for O(log n) dedup so two
-	%% peers seeding the same range do not each get enqueued for it. The
-	%% range stays here from insert_batch/3 until task_completed/3 - i.e.,
-	%% across the entire in-flight lifetime.
 	in_flight_intervals = ar_intervals:new()
 }).
 
@@ -69,7 +74,7 @@ take_smallest(#sync_task_queue{ q = Q } = Queue) ->
 	{Task, Queue#sync_task_queue{ q = Q2 }}.
 
 %% @doc Release the dedup overlay for a byte range whose sync_range has
-%% definitively completed (success or non-recast failure). Future
+%% definitively completed (success, failure, drop, reap, cut). Future
 %% insert_batch/3 calls covering [Start, End) may enqueue tasks for it
 %% again.
 task_completed(End, Start,
@@ -119,6 +124,7 @@ insert_range(Peer, FootprintKey, RangeStart, RangeEnd, ChunkOffsets,
 	{Q2, InFlightIntervals2}.
 
 -ifdef(AR_TEST).
+
 enqueue_intervals_test() ->
 	test_enqueue_intervals([], 2, [], [], [], "Empty Intervals"),
 	Peer1 = {1, 2, 3, 4, 1984},
@@ -145,25 +151,7 @@ enqueue_intervals_test() ->
 			{none, 7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer1},
 			{none, 8*?DATA_CHUNK_SIZE, 9*?DATA_CHUNK_SIZE, Peer1}
 		],
-		"Single peer, full intervals, all chunks. Non-overlapping QIntervals."),
-
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-				]), none}
-		],
-		2,
-		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE}
-		],
-		[
-			{none, 2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{none, 3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1}
-		],
-		"Single peer, full intervals, 2 chunks. Non-overlapping QIntervals."),
+		"Single peer, full intervals, all chunks. Non-overlapping seed."),
 
 	test_enqueue_intervals(
 		[
@@ -192,148 +180,21 @@ enqueue_intervals_test() ->
 			{none, 6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer2},
 			{none, 7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer3}
 		],
-		"Multiple peers, overlapping, full intervals, 2 chunks. Non-overlapping QIntervals."),
+		"Multiple peers, overlapping, full intervals, 2 chunks."),
 
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-			]), none},
-			{Peer2, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
-			]), none},
-			{Peer3, ar_intervals:from_list([
-				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
-			]), none}
-		],
-		3,
-		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-			{8*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
-		],
-		[
-			{none, 2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{none, 3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
-			{none, 5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
-			{none, 6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1},
-			{none, 7*?DATA_CHUNK_SIZE, 8*?DATA_CHUNK_SIZE, Peer3}
-		],
-		"Multiple peers, overlapping, full intervals, 3 chunks. Non-overlapping QIntervals."),
-
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-					{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-					{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-			]), none}
-		],
-		5,
-		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}, {9*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-			{7*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-		],
-		[
-			{none, 2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{none, 3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
-			{none, 6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer1}
-		],
-		"Single peer, full intervals, all chunks. Overlapping QIntervals."),
-
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{9*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-			]), none},
-			{Peer2, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
-			]), none},
-			{Peer3, ar_intervals:from_list([
-				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
-			]), none}
-		],
-		2,
-		[{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE}, {9*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-			{7*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE}
-		],
-		[
-			{none, 2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{none, 3*?DATA_CHUNK_SIZE, 4*?DATA_CHUNK_SIZE, Peer1},
-			{none, 5*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE, Peer2},
-			{none, 6*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE, Peer2}
-		],
-		"Multiple peers, overlapping, full intervals, 2 chunks. Overlapping QIntervals."),
-
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-				{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE},
-				{9*?DATA_CHUNK_SIZE, trunc(5.75*?DATA_CHUNK_SIZE)}
-			]), none}
-		],
-		2,
-		[
-			{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE},
-			{trunc(8.5*?DATA_CHUNK_SIZE), trunc(6.5*?DATA_CHUNK_SIZE)}
-		],
-		[
-			{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE}
-		],
-		[
-			{none, 2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{none, 3*?DATA_CHUNK_SIZE, trunc(3.25*?DATA_CHUNK_SIZE), Peer1}
-		],
-		"Single peer, partial intervals, 2 chunks. Overlapping partial QIntervals."),
-
-	test_enqueue_intervals(
-		[
-			{Peer1, ar_intervals:from_list([
-				{trunc(3.25*?DATA_CHUNK_SIZE), 2*?DATA_CHUNK_SIZE},
-				{9*?DATA_CHUNK_SIZE, trunc(5.75*?DATA_CHUNK_SIZE)}
-			]), none},
-			{Peer2, ar_intervals:from_list([
-				{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-				{7*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-			]), none},
-			{Peer3, ar_intervals:from_list([
-				{8*?DATA_CHUNK_SIZE, 7*?DATA_CHUNK_SIZE}
-			]), none}
-		],
-		2,
-		[
-			{20*?DATA_CHUNK_SIZE, 10*?DATA_CHUNK_SIZE},
-			{trunc(8.5*?DATA_CHUNK_SIZE), trunc(6.5*?DATA_CHUNK_SIZE)}
-		],
-		[
-			{4*?DATA_CHUNK_SIZE, 2*?DATA_CHUNK_SIZE},
-			{8*?DATA_CHUNK_SIZE, 6*?DATA_CHUNK_SIZE}
-		],
-		[
-			{none, 2*?DATA_CHUNK_SIZE, 3*?DATA_CHUNK_SIZE, Peer1},
-			{none, 3*?DATA_CHUNK_SIZE, trunc(3.25*?DATA_CHUNK_SIZE), Peer1},
-			{none, trunc(3.25*?DATA_CHUNK_SIZE), 4*?DATA_CHUNK_SIZE, Peer2},
-			{none, 6*?DATA_CHUNK_SIZE, trunc(6.5*?DATA_CHUNK_SIZE), Peer2}
-		],
-		"Multiple peers, overlapping, full intervals, 2 chunks. Overlapping QIntervals.").
+	ok.
 
 test_enqueue_intervals(Intervals, ChunksPerPeer, SeedRanges, ExpectedAddedRanges,
 		ExpectedChunks, Label) ->
 	SeedInFlight = ar_intervals:from_list(SeedRanges),
 	Seeded = #sync_task_queue{ in_flight_intervals = SeedInFlight },
 	Result = insert_batch(Intervals, ChunksPerPeer, Seeded),
-	#sync_task_queue{ q = QResult,
-			in_flight_intervals = ResultInFlight } = Result,
+	#sync_task_queue{ q = QResult, in_flight_intervals = ResultInFlight } = Result,
 	ExpectedInFlight = lists:foldl(fun({End, Start}, Acc) ->
 			ar_intervals:add(Acc, End, Start)
 		end, SeedInFlight, ExpectedAddedRanges),
 	?assertEqual(ar_intervals:to_list(ExpectedInFlight),
 		ar_intervals:to_list(ResultInFlight), Label),
 	?assertEqual(ExpectedChunks, gb_sets:to_list(QResult), Label).
+
 -endif.

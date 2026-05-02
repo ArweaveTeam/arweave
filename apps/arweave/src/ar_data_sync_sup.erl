@@ -46,6 +46,12 @@ init([]) ->
 		[PeerWorkerSup, DataRoots] ++
 		ar_data_sync_coordinator:register_workers() ++
 		ar_chunk_copy:register_workers() ++
+		%% ar_peer_sync is the per-StoreID network-sync gen_server (owns
+		%% the task queue, the enqueue pass state, and the device lock).
+		%% Must start BEFORE ar_data_sync's per-StoreID gen_servers so
+		%% the API is callable from their init and from the chunk_copy
+		%% completion handler.
+		ar_peer_sync:register_workers() ++
 		ar_data_sync:register_workers() ++
 		[DiskPool],
 	{ok, {{one_for_one, 5, 10}, Children}}.

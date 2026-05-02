@@ -42,7 +42,7 @@
 -export([init_kv/2, open_store_dbs/2]).
 
 -export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
--export([store_fetched_chunk/4, task_completed/4]).
+-export([store_fetched_chunk/4]).
 
 -include("ar.hrl").
 -include("ar_sup.hrl").
@@ -501,23 +501,12 @@ is_footprint_record_supported(_AbsoluteOffset, _ChunkSize, _Packing) ->
 migration_db(StoreID) ->
 	{migrations_index, StoreID}.
 
-%% @doc Report a peer-fetch task complete. Fans out to ar_peer_worker
-%% (per-peer slot release + stats) and to the per-StoreID gen_server
-%% (queue dedup overlay release via ar_peer_sync). Called by
-%% ar_data_sync_worker on definitive completion (success or non-recast
-%% failure).
-task_completed(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
-		store_id = StoreID, footprint_key = FootprintKey },
-		WorkerPid, Result, ElapsedUs) ->
-	ar_peer_worker:task_completed(Peer, WorkerPid, FootprintKey, Result, ElapsedUs,
-		End - Start),
-	gen_server:cast(name(StoreID), {task_completed, Start, End}).
-
-%% @doc Update the weave-size snapshot in both #data_sync_state{} and
-%% the opaque ar_peer_sync state in lockstep.
-set_weave_size(WeaveSize, #data_sync_state{ peer_sync = PS } = State) ->
-	State#data_sync_state{ weave_size = WeaveSize,
-		peer_sync = ar_peer_sync:set_weave_size(WeaveSize, PS) }.
+%% @doc Update the weave-size snapshot in #data_sync_state{} and forward
+%% to the matching ar_peer_sync gen_server so its enqueue loop's range
+%% clamp follows the chain tip.
+set_weave_size(WeaveSize, #data_sync_state{ store_id = StoreID } = State) ->
+	ar_peer_sync:set_weave_size(StoreID, WeaveSize),
+	State#data_sync_state{ weave_size = WeaveSize }.
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -541,13 +530,15 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 	ar_disk_pool:populate_data_roots(
 		maps:get(disk_pool_data_roots, StateMap), StoreID),
 	WeaveSize = maps:get(weave_size, StateMap),
+	%% Push the loaded weave_size into ar_peer_sync (already started by
+	%% the supervisor before us); its init's range/sync_status are set
+	%% locally, but it has no chain context until we forward it.
+	ar_peer_sync:set_weave_size(StoreID, WeaveSize),
 	State2 = State#data_sync_state{
 		block_index = CurrentBI,
 		weave_size = WeaveSize,
 		store_id = StoreID,
-		sync_status = init_sync_status(StoreID),
-		peer_sync = ar_peer_sync:set_weave_size(WeaveSize,
-			ar_peer_sync:new(StoreID, -1, -1))
+		sync_status = init_sync_status(StoreID)
 	},
 	?LOG_INFO([{event, ar_data_sync_start}, {store_id, StoreID},
 		{range_start, State2#data_sync_state.range_start},
@@ -588,10 +579,9 @@ init({StoreID, RepackInPlacePacking}) ->
 		store_id = StoreID,
 		range_start = RangeStart2,
 		range_end = RangeEnd2,
-		%% weave_size will be set on join
-		weave_size = 0,
-		peer_sync = ar_peer_sync:set_weave_size(0,
-			ar_peer_sync:new(StoreID, RangeStart2, RangeEnd2))
+		%% weave_size will be set on join (and forwarded to ar_peer_sync
+		%% by set_weave_size/2).
+		weave_size = 0
 	},
 	{ok, State, {continue, {init, RepackInPlacePacking}}}.
 
@@ -707,43 +697,6 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 		set_weave_size(WeaveSize,
 			State#data_sync_state{ block_index = BI })),
 	{noreply, State2};
-
-%% Network sync. "Discover" which chunk ranges are advertised by which peers, and then "sync" them.
-handle_cast(enqueue, State) ->
-	{NewPS, Action} = ar_peer_sync:enqueue(State#data_sync_state.peer_sync),
-	State2 = State#data_sync_state{ peer_sync = NewPS },
-	case Action of
-		cast_now ->
-			gen_server:cast(self(), enqueue);
-		{cast_after, Ms} ->
-			ar_util:cast_after(Ms, self(), enqueue)
-	end,
-	{noreply, State2};
-
-handle_cast(sync, State) ->
-	#data_sync_state{ store_id = StoreID } = State,
-	Status = ar_device_lock:acquire_lock(sync, StoreID, State#data_sync_state.sync_status),
-	State2 = State#data_sync_state{ sync_status = Status },
-	State3 = case Status of
-		active ->
-			NewPS = ar_peer_sync:sync(State2#data_sync_state.peer_sync),
-			State2#data_sync_state{ peer_sync = NewPS };
-		paused ->
-			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync),
-			State2;
-		_ ->
-			State2
-	end,
-	{noreply, State3};
-
-%% Released via task_completed/4 when a sync_range definitively completes
-%% (success or non-recast failure). Delegates to ar_peer_sync, which drops
-%% the byte range from the per-StoreID task queue's dedup overlay so
-%% subsequent enqueue passes can re-enqueue the chunk if it remains
-%% unsynced.
-handle_cast({task_completed, Start, End}, State) ->
-	NewPS = ar_peer_sync:task_completed(Start, End, State#data_sync_state.peer_sync),
-	{noreply, State#data_sync_state{ peer_sync = NewPS }};
 
 handle_cast({invalidate_bad_data_record, Args}, State) ->
 	invalidate_bad_data_record(Args),
@@ -925,11 +878,12 @@ handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
 
-%% ar_chunk_copy has finished, now we start network sync.
+%% ar_chunk_copy has finished. Kick the per-StoreID ar_peer_sync gen_server
+%% to start the network-sync producer/consumer loops.
 handle_info({event, chunk_copy, {complete, StoreID}},
 		#data_sync_state{ store_id = StoreID } = State) ->
-	ar_util:cast_after(2000, self(), enqueue),
-	gen_server:cast(self(), sync),
+	ar_util:cast_after(2000, ar_peer_sync:name(StoreID), enqueue),
+	ar_peer_sync:sync(StoreID),
 	{noreply, State};
 handle_info({event, chunk_copy, _}, State) ->
 	{noreply, State};

@@ -143,11 +143,6 @@
 	%% The offsets of the chunks currently scheduled for (re-)packing (keys) and
 	%% some chunk metadata needed for storing the chunk once it is packed.
 	packing_map = #{},
-	%% Opaque ar_peer_sync state (task queue + in-progress enqueue pass
-	%% + range bookkeeping). Built via ar_peer_sync:new/3 at init and
-	%% threaded through ar_peer_sync's API. Do not inspect outside
-	%% ar_peer_sync.
-	peer_sync = undefined,
 	%% The mining address the chunks are packed with in 2.6.
 	mining_address,
 	%% The identifier of the storage module the process is responsible for.
