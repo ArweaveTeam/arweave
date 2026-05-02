@@ -156,6 +156,12 @@ handle_cast({sync_range, SyncTask}, State) ->
 			%% No peer worker available - release the byte range so it
 			%% can be re-enqueued; otherwise it stays phantom-in-flight
 			%% in sync_task_queue's dedup overlay.
+			try
+				prometheus_counter:inc(sync_tasks,
+					[dropped_unavailable, ar_util:format_peer(Peer)], 1)
+			catch
+				_:_ -> ok
+			end,
 			ar_peer_worker:release_dropped_task(SyncTask)
 	end,
 	{noreply, State};
