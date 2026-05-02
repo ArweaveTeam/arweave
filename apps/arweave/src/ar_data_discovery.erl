@@ -196,10 +196,8 @@ get_peer_intervals(Peer, Left, _Right) ->
 	Aligned = (Left div ?QUERY_RANGE_STEP_SIZE) * ?QUERY_RANGE_STEP_SIZE,
 	case cache_lookup({Peer, Aligned, normal}) of
 		{hit, Intervals, PeerRightBound} ->
-			metric_inc(data_discovery_cache_events, [normal, hit]),
 			{ok, Intervals, PeerRightBound};
 		miss ->
-			metric_inc(data_discovery_cache_events, [normal, miss]),
 			{error, cache_miss}
 	end.
 
@@ -213,10 +211,8 @@ get_peer_intervals(Peer, Left, _Right) ->
 get_peer_footprint_intervals(Peer, Partition, Footprint) ->
 	case cache_lookup({Peer, {Partition, Footprint}, footprint}) of
 		{hit, Intervals, _Meta} ->
-			metric_inc(data_discovery_cache_events, [footprint, hit]),
 			{ok, Intervals};
 		miss ->
-			metric_inc(data_discovery_cache_events, [footprint, miss]),
 			{error, cache_miss}
 	end.
 
@@ -627,7 +623,6 @@ schedule_requeue({Peer, Mode}, State) ->
 %% Spawn scanners up to ?MAX_CONCURRENT_PEER_SCANS, draining scan_waiting.
 maybe_start_scanners(#state{ scan_inflight = Inflight,
 		scan_waiting = Waiting } = State) ->
-	report_scan_metrics(Inflight, Waiting),
 	case maps:size(Inflight) >= max_concurrent_peer_scans() of
 		true ->
 			State;
@@ -652,10 +647,6 @@ maybe_start_scanners(#state{ scan_inflight = Inflight,
 max_concurrent_peer_scans() ->
 	{ok, Config} = arweave_config:get_env(),
 	Config#config.data_discovery_max_concurrent_peer_scans.
-
-report_scan_metrics(Inflight, Waiting) ->
-	metric_set(data_discovery_refresh_in_flight, [], maps:size(Inflight)),
-	metric_set(data_discovery_refresh_queue_depth, [], queue:len(Waiting)).
 
 %% Scanner body. Refreshes the peer's bucket map for this mode, then walks
 %% the union of configured storage modules' unsynced ranges, fetching only
@@ -918,20 +909,6 @@ wipe_peer_cache_rows(Peer) ->
 	ets:select_delete(?PEER_INTERVAL_CACHE_TABLE,
 		[{ {{Peer, '_', '_'}, '_', '_', '_'}, [], [true] }]).
 
-metric_inc(Name, Labels) ->
-	try prometheus_counter:inc(Name, Labels)
-	catch _:_ -> ok
-	end.
-
-metric_set(Name, [], Value) ->
-	try prometheus_gauge:set(Name, Value)
-	catch _:_ -> ok
-	end;
-metric_set(Name, Labels, Value) ->
-	try prometheus_gauge:set(Name, Labels, Value)
-	catch _:_ -> ok
-	end.
-
 %%%===================================================================
 %%% Peer interval cache.
 %%%===================================================================
@@ -974,14 +951,8 @@ fetch_peer_intervals_http(Peer, Left, Right, Key) ->
 					false -> element(1, ar_intervals:largest(PeerIntervals))
 				end,
 			cache_store(Key, PeerIntervals, PeerRightBound),
-			Outcome = case ar_intervals:is_empty(PeerIntervals) of
-				true -> empty;
-				false -> ok
-			end,
-			metric_inc(data_discovery_refresh_completed, [normal, Outcome]),
 			{ok, PeerIntervals, PeerRightBound};
 		Error ->
-			metric_inc(data_discovery_refresh_completed, [normal, http_error]),
 			Error
 	end.
 
@@ -999,19 +970,12 @@ fetch_peer_footprint_intervals_http(Peer, Partition, Footprint, Key) ->
 	case PeerReply of
 		{ok, Intervals} ->
 			cache_store(Key, Intervals, none),
-			Outcome = case ar_intervals:is_empty(Intervals) of
-				true -> empty;
-				false -> ok
-			end,
-			metric_inc(data_discovery_refresh_completed, [footprint, Outcome]),
 			{ok, Intervals};
 		not_found ->
 			Empty = ar_intervals:new(),
 			cache_store(Key, Empty, none),
-			metric_inc(data_discovery_refresh_completed, [footprint, empty]),
 			{ok, Empty};
 		Error ->
-			metric_inc(data_discovery_refresh_completed, [footprint, http_error]),
 			Error
 	end.
 
