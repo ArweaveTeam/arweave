@@ -337,13 +337,20 @@ do_enqueue_normal(State) ->
 				wait ->
 					{{cast_after, 1000}, State};
 				Peers ->
-					{EndReached, FetchableEntries} =
+					{PeerCoverageEnd, FetchableEntries} =
 						determine_fetchable_intervals_normal(
 							Offset, Peers, UnsyncedIntervals),
 					{NewQ, Produced} = add_to_queue(FetchableEntries, Q),
 					maybe_log_chunk_sync_started(StoreID, normal, Pass, Produced),
+					%% If peers don't advertise data past Offset for this window,
+					%% skip the whole window to avoid spinning at the same cursor.
+					NewOffset =
+						case PeerCoverageEnd > Offset of
+							true -> min(End2, PeerCoverageEnd);
+							false -> End2
+						end,
 					NewPass = Pass#enqueue_pass{
-						offset = min(End2, EndReached),
+						offset = NewOffset,
 						tasks_produced = Pass#enqueue_pass.tasks_produced
 								+ max(0, Produced)
 					},
@@ -445,6 +452,11 @@ init_pass(#state{ store_id = StoreID, range_start = Start, range_end = End },
 %%% Per-peer fetchable-interval computation from the ar_data_discovery cache.
 %%%===================================================================
 
+%% @doc For each peer, intersect its cached advertised intervals with
+%% our UnsyncedIntervals to determine what we can fetch. Returns
+%% {PeerCoverageEnd, FetchableEntries}, where PeerCoverageEnd is the min right
+%% bound across peers (used to bound cursor advance) and FetchableEntries
+%% is a list of {Peer, FetchableIntervals, FootprintKey} entries.
 determine_fetchable_intervals_normal(Left, Peers, UnsyncedIntervals) ->
 	lists:foldl(
 		fun(Peer, {RightAcc, Acc}) ->
