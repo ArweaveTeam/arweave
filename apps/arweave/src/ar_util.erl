@@ -26,6 +26,7 @@
 	parse_peer/1,
 	parse_peer/2,
 	parse_port/1,
+	peer_to_ip/1,
 	peer_to_str/1,
 	pfilter/2,
 	pick_random/1,
@@ -262,6 +263,19 @@ peer_to_str({A, B, C, D, Port}) ->
 	integer_to_list(C) ++ "_" ++
 	integer_to_list(D) ++ "_" ++
 	integer_to_list(Port).
+
+%% @doc Reduce a peer tuple to its 4-tuple IP. Rate limiting is
+%% IP-only by convention, but local_peers entries may arrive as 4-tuples
+%% (`{A,B,C,D}`, e.g. when a user lists just an IP or when the
+%% `ar_test_node:update_config' default fires) or 5-tuples
+%% (`{A,B,C,D,Port}`, what the CLI/config parsers and `peer_ip/1' return).
+%% Incoming Peers from `ar_http' are always 5-tuples. Normalize both
+%% sides to the 4-tuple before comparing — see `ar_rate_limiter:throttle/2'
+%% (client side) and `ar_http_iface_rate_limiter_middleware' (server side).
+peer_to_ip({A, B, C, D}) -> {A, B, C, D};
+peer_to_ip({A, B, C, D, _Port}) -> {A, B, C, D};
+peer_to_ip({{A, B, C, D}, _Port}) -> {A, B, C, D};
+peer_to_ip(Other) -> Other.
 
 %% @doc Parses a port string into an integer.
 parse_port(Int) when is_integer(Int) -> Int;
