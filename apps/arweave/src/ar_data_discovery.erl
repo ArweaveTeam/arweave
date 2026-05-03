@@ -551,8 +551,13 @@ coverage_bytes_normal(Peers, RangeStart, RangeEnd) ->
 %% are namespaced by (Partition, Footprint), so we union per key (across
 %% peers) before counting. Result is total distinct chunks × ?DATA_CHUNK_SIZE.
 coverage_bytes_footprint(Peers, RangeStart, RangeEnd) ->
-	StartPartition = ar_replica_2_9:get_entropy_partition(RangeStart + ?DATA_CHUNK_SIZE),
-	EndPartition = ar_replica_2_9:get_entropy_partition(RangeEnd),
+	StartPartition = ar_replica_2_9:get_entropy_partition(
+			RangeStart + ?DATA_CHUNK_SIZE),
+	%% RangeEnd is exclusive (one past the last byte). Subtract DATA_CHUNK_SIZE
+	%% so an aligned RangeEnd = N * PARTITION_SIZE doesn't overshoot into
+	%% partition N and double-count.
+	EndPartition = ar_replica_2_9:get_entropy_partition(
+			RangeEnd - ?DATA_CHUNK_SIZE),
 	%% Group cache rows by (Partition, Footprint), union intervals across peers
 	%% per key, then sum the union sizes.
 	ByKey = sets:fold(
