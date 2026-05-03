@@ -753,18 +753,27 @@ scan_normal_module(Peer, SyncBuckets, RangeStart, RangeEnd, StoreID, Acc) ->
 	%% in a different order. Restarts and concurrent scanners spread
 	%% coverage across the partition rather than always walking from the
 	%% lowest offset.
+	%%
+	%% Walk on the step-size grid (align RangeStart down). The cache key
+	%% written here MUST match what `get_peer_intervals/3` looks up — that
+	%% function aligns the caller's `Left` down to a step boundary, so the
+	%% scan key has to be on the same grid. Storage modules whose RangeStart
+	%% is not on a step boundary (common in tests where step=10MB and
+	%% partitions are 2MB) used to write keys the discover loop never
+	%% read, leaving sync stuck above the first window.
+	StepStart = (RangeStart div ?QUERY_RANGE_STEP_SIZE) * ?QUERY_RANGE_STEP_SIZE,
 	Offsets = ar_util:shuffle_list(
-			lists:seq(RangeStart, RangeEnd - 1, ?QUERY_RANGE_STEP_SIZE)),
+			lists:seq(StepStart, RangeEnd - 1, ?QUERY_RANGE_STEP_SIZE)),
 	lists:foldl(
 		fun(Offset, Acc1) ->
-			scan_normal_window(Peer, SyncBuckets, Offset, RangeEnd, StoreID, Acc1)
+			scan_normal_window(Peer, SyncBuckets, Offset, StoreID, Acc1)
 		end,
 		Acc,
 		Offsets
 	).
 
-scan_normal_window(Peer, SyncBuckets, Start, RangeEnd, StoreID, Acc) ->
-	StepEnd = min(Start + ?QUERY_RANGE_STEP_SIZE, RangeEnd),
+scan_normal_window(Peer, SyncBuckets, Start, StoreID, Acc) ->
+	StepEnd = Start + ?QUERY_RANGE_STEP_SIZE,
 	Bucket = Start div ?NETWORK_DATA_BUCKET_SIZE,
 	case ar_sync_buckets:get(Bucket, ?NETWORK_DATA_BUCKET_SIZE, SyncBuckets) > 0 of
 		true ->
