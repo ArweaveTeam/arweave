@@ -33,12 +33,20 @@ start_link() ->
 %% The limits are configured in include/ar_blacklist_middleware.hrl.
 throttle(Peer, Path) ->
 	{ok, Config} = arweave_config:get_env(),
-	case lists:member(Peer, Config#config.local_peers) of
+	case is_local_peer(Peer, Config#config.local_peers) of
 		true ->
 			ok;
 		false ->
 			throttle2(Peer, Path)
 	end.
+
+%% Match Peer against local_peers by IP only — local_peers entries
+%% may be 4-tuples or 5-tuples depending on how the user / test
+%% configured them, while Peer from ar_http is always a 5-tuple.
+%% Same convention as ar_http_iface_rate_limiter_middleware server-side.
+is_local_peer(Peer, LocalPeers) ->
+	PeerIP = ar_util:peer_to_ip(Peer),
+	lists:any(fun(LP) -> ar_util:peer_to_ip(LP) =:= PeerIP end, LocalPeers).
 
 throttle2(Peer, Path) ->
 	P = ar_http_iface_server:split_path(iolist_to_binary(Path)),
