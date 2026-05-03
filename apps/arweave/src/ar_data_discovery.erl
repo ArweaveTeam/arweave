@@ -255,13 +255,14 @@ handle_cast({check_expiration, Peer}, State) ->
 		none ->
 			%% No cache rows for this peer (already evicted or never
 			%% successfully scanned); drop the polling loop.
-			gen_server:cast(?MODULE, {remove_peer, Peer}),
+			gen_server:cast(?MODULE, {remove_peer, Peer, no_cache_rows}),
 			{noreply, State};
 		LastSeen ->
 			Age = erlang:monotonic_time(millisecond) - LastSeen,
 			case Age >= (?MIN_SCAN_INTERVAL_MS) * 2 of
 				true ->
-					gen_server:cast(?MODULE, {remove_peer, Peer}),
+					gen_server:cast(?MODULE,
+							{remove_peer, Peer, {cache_stale, Age}}),
 					{noreply, State};
 				false ->
 					ar_util:cast_after((?MIN_SCAN_INTERVAL_MS) * 2 - Age,
@@ -310,6 +311,11 @@ handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
 	{noreply, State#state{ footprint_map = Map2 }};
 
 handle_cast({remove_peer, Peer}, State) ->
+	%% Legacy callers without a reason — keep working but flag it so we
+	%% know to update them.
+	handle_cast({remove_peer, Peer, unspecified}, State);
+
+handle_cast({remove_peer, Peer, Reason}, State) ->
 	#state{ network_map = Map, footprint_map = FootprintMap,
 			scan_waiting = Waiting, scan_jobs = Jobs } = State,
 	Map2 =
@@ -357,6 +363,11 @@ handle_cast({remove_peer, Peer}, State) ->
 	wipe_peer_cache_rows(Peer),
 	?LOG_INFO([{event, peer_removed_from_discovery},
 			{peer, ar_util:format_peer(Peer)},
+			%% peer_event_removed comes from ar_peers:remove_peer/2
+			%% (low_success | banned | rotated) - grep ar_peers for the
+			%% upstream reason. cache_stale / no_cache_rows mean the
+			%% peer's scans stopped landing data on time.
+			{reason, Reason},
 			{had_sync_buckets, maps:is_key(Peer, Map)},
 			{had_footprint_buckets, maps:is_key(Peer, FootprintMap)},
 			{killed_scanners, length(KilledScanners)},
@@ -393,7 +404,7 @@ handle_info({'DOWN', _, process, Pid, _Reason}, State) ->
 	end;
 
 handle_info({event, peer, {removed, Peer}}, State) ->
-	gen_server:cast(?MODULE, {remove_peer, Peer}),
+	gen_server:cast(?MODULE, {remove_peer, Peer, peer_event_removed}),
 	{noreply, State};
 
 handle_info({event, peer, _}, State) ->
