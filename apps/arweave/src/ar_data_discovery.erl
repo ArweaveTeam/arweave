@@ -85,14 +85,6 @@
 }).
 
 -record(state, {
-	%% Peer => latest sync_buckets advertised by Peer. Updated by the scanner
-	%% at the top of each (Peer, normal) cycle; also drives the per-bucket
-	%% peer index in the ?MODULE ETS table.
-	network_map = #{},
-	%% Peer => latest footprint_buckets advertised by Peer. Updated by the
-	%% scanner at the top of each (Peer, footprint) cycle; drives the
-	%% ar_data_discovery_footprint_buckets ETS index.
-	footprint_map = #{},
 	%% Per-(Peer, Mode) scan loop. Scanners run one at a time per
 	%% {Peer, Mode}; each scanner refreshes that peer's buckets first, then
 	%% walks the fine-grained units (byte windows for normal,
@@ -285,9 +277,6 @@ handle_cast({requeue_scan, Peer, Mode}, State) ->
 	{noreply, maybe_start_scanners(State2)};
 
 handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
-	#state{ network_map = Map, footprint_map = FootprintMap } = State,
-	maybe_schedule_expiration_check(Peer, Map, FootprintMap),
-	Map2 = maps:put(Peer, SyncBuckets, Map),
 	ar_sync_buckets:foreach(
 		fun(Bucket, Share) ->
 			ets:insert(?MODULE, {{Bucket, Share, Peer}})
@@ -295,12 +284,9 @@ handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
 		?NETWORK_DATA_BUCKET_SIZE,
 		SyncBuckets
 	),
-	{noreply, State#state{ network_map = Map2 }};
+	{noreply, State};
 
 handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
-	#state{ network_map = NetworkMap, footprint_map = Map } = State,
-	maybe_schedule_expiration_check(Peer, NetworkMap, Map),
-	Map2 = maps:put(Peer, FootprintBuckets, Map),
 	ar_sync_buckets:foreach(
 		fun(Bucket, Share) ->
 			ets:insert(ar_data_discovery_footprint_buckets, {{Bucket, Share, Peer}})
@@ -308,7 +294,7 @@ handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
 		?NETWORK_FOOTPRINT_BUCKET_SIZE,
 		FootprintBuckets
 	),
-	{noreply, State#state{ footprint_map = Map2 }};
+	{noreply, State};
 
 handle_cast({remove_peer, Peer}, State) ->
 	%% Legacy callers without a reason — keep working but flag it so we
@@ -316,36 +302,15 @@ handle_cast({remove_peer, Peer}, State) ->
 	handle_cast({remove_peer, Peer, unspecified}, State);
 
 handle_cast({remove_peer, Peer, Reason}, State) ->
-	#state{ network_map = Map, footprint_map = FootprintMap,
-			scan_waiting = Waiting, scan_jobs = Jobs } = State,
-	Map2 =
-		case maps:take(Peer, Map) of
-			error ->
-				Map;
-			{SyncBuckets, Map3} ->
-				ar_sync_buckets:foreach(
-					fun(Bucket, Share) ->
-						ets:delete(?MODULE, {Bucket, Share, Peer})
-					end,
-					?NETWORK_DATA_BUCKET_SIZE,
-					SyncBuckets
-				),
-				Map3
-		end,
-	FootprintMap2 =
-		case maps:take(Peer, FootprintMap) of
-			error ->
-				FootprintMap;
-			{FootprintBuckets, Map4} ->
-				ar_sync_buckets:foreach(
-					fun(Bucket, Share) ->
-						ets:delete(ar_data_discovery_footprint_buckets, {Bucket, Share, Peer})
-					end,
-					?NETWORK_FOOTPRINT_BUCKET_SIZE,
-					FootprintBuckets
-				),
-				Map4
-		end,
+	#state{ scan_waiting = Waiting, scan_jobs = Jobs } = State,
+	%% Wipe Peer's rows from the bucket tables directly. Match-spec scan
+	%% over the table is bounded (?NETWORK_*_BUCKET_SIZE = 10 GB → typical
+	%% tables stay well under a million rows). Returns deletion counts so
+	%% we can keep the had_*_buckets log signal.
+	NumSync = ets:select_delete(?MODULE,
+			[{ {{'_', '_', Peer}}, [], [true] }]),
+	NumFootprint = ets:select_delete(ar_data_discovery_footprint_buckets,
+			[{ {{'_', '_', Peer}}, [], [true] }]),
 	%% Drop waiting {Peer, _} entries.
 	Waiting2 = queue:filter(fun({P, _Mode}) -> P =/= Peer end, Waiting),
 	Jobs2 = sets:filter(fun({P, _Mode}) -> P =/= Peer end, Jobs),
@@ -368,13 +333,13 @@ handle_cast({remove_peer, Peer, Reason}, State) ->
 			%% upstream reason. cache_stale / no_cache_rows mean the
 			%% peer's scans stopped landing data on time.
 			{reason, Reason},
-			{had_sync_buckets, maps:is_key(Peer, Map)},
-			{had_footprint_buckets, maps:is_key(Peer, FootprintMap)},
+			{had_sync_buckets, NumSync > 0},
+			{had_footprint_buckets, NumFootprint > 0},
 			{killed_scanners, length(KilledScanners)},
-			{remaining_known_peers,
-				maps:size(Map2) + maps:size(FootprintMap2)}]),
-	{noreply, State#state{ network_map = Map2, footprint_map = FootprintMap2,
-			scan_waiting = Waiting2, scan_jobs = Jobs2,
+			{remaining_buckets_rows,
+				ets:info(?MODULE, size)
+				+ ets:info(ar_data_discovery_footprint_buckets, size)}]),
+	{noreply, State#state{ scan_waiting = Waiting2, scan_jobs = Jobs2,
 			scan_inflight = Inflight2,
 			scan_started_at = StartedAt2 }};
 
@@ -468,17 +433,20 @@ collect_peers([]) ->
 	ok.
 
 %% Periodic state-snapshot log emitted by the telemetry tick. Used to
-%% diagnose flatlines (e.g., peer count stuck at 0).
-emit_state_snapshot(#state{ network_map = NMap, footprint_map = FMap,
-		scan_waiting = Waiting, scan_inflight = Inflight, scan_jobs = Jobs }) ->
+%% diagnose flatlines (e.g., peer count stuck at 0). The bucket-row
+%% counts pair with `scan_jobs' to distinguish "no peers in rotation"
+%% from "peers in rotation but no scans landing data."
+emit_state_snapshot(#state{ scan_waiting = Waiting, scan_inflight = Inflight,
+		scan_jobs = Jobs }) ->
 	ArPeersCount = try
 			length(ar_peers:get_peers(current))
 		catch _:_ -> -1
 		end,
 	{_, MailboxLen} = erlang:process_info(self(), message_queue_len),
 	?LOG_INFO([{event, data_discovery_state_snapshot},
-			{network_map_size, maps:size(NMap)},
-			{footprint_map_size, maps:size(FMap)},
+			{network_buckets_rows, ets:info(?MODULE, size)},
+			{footprint_buckets_rows,
+					ets:info(ar_data_discovery_footprint_buckets, size)},
 			{scan_waiting, queue:len(Waiting)},
 			{scan_inflight, maps:size(Inflight)},
 			{scan_jobs, sets:size(Jobs)},
@@ -601,32 +569,34 @@ set_data_discovery_metrics(StoreID, Type, AllPeers, CoverageBytes) ->
 	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, coverage_bytes],
 			CoverageBytes).
 
-%% On the peer's first appearance in either bucket map, schedule the
-%% periodic expiration check. Subsequent bucket-fetch responses see
-%% the peer is already known and skip the schedule. The check
-%% reschedules itself via {check_expiration, Peer} until the peer is
-%% removed.
-maybe_schedule_expiration_check(Peer, NetworkMap, FootprintMap) ->
-	case maps:is_key(Peer, NetworkMap) orelse maps:is_key(Peer, FootprintMap) of
-		true ->
-			ok;
-		false ->
-			ar_util:cast_after((?MIN_SCAN_INTERVAL_MS) * 2, ?MODULE,
-				{check_expiration, Peer}),
-			ok
-	end.
-
 %%%===================================================================
 %%% Per-peer scanner pool.
 %%%===================================================================
 
 %% Enqueue scan jobs for a peer's two modes (footprint only if the peer's
 %% release supports it). Caller must drive maybe_start_scanners/1 after.
+%%
+%% The first time a peer enters scan_jobs we kick off its periodic
+%% {check_expiration, Peer} loop. The check reschedules itself until
+%% remove_peer drops the peer; by gating on scan_jobs membership we
+%% schedule it exactly once per peer-lifetime.
 enqueue_peer_scans(Peer, State) ->
+	maybe_schedule_expiration_check(Peer, State#state.scan_jobs),
 	State2 = enqueue_scan({Peer, normal}, State),
 	case ar_peers:get_peer_release(Peer) >= ?GET_FOOTPRINT_SUPPORT_RELEASE of
 		true -> enqueue_scan({Peer, footprint}, State2);
 		false -> State2
+	end.
+
+maybe_schedule_expiration_check(Peer, ScanJobs) ->
+	case sets:is_element({Peer, normal}, ScanJobs)
+			orelse sets:is_element({Peer, footprint}, ScanJobs) of
+		true ->
+			ok;
+		false ->
+			ar_util:cast_after((?MIN_SCAN_INTERVAL_MS) * 2, ?MODULE,
+				{check_expiration, Peer}),
+			ok
 	end.
 
 %% Remove all entries from Inflight whose value is {Peer, _}, returning
