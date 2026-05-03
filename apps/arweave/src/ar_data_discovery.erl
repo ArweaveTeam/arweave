@@ -410,18 +410,25 @@ pick_peers(Peers, PeerLen, N) ->
 	Part1 ++ Part2.
 
 collect_peers() ->
-	N = ?DATA_DISCOVERY_COLLECT_PEERS_COUNT,
-	{ok, Config} = arweave_config:get_env(),
-	Peers =
-		case Config#config.sync_from_local_peers_only of
-			true ->
-				Config#config.local_peers;
-			false ->
-				%% rank peers by current rating since we care about their recent
-				%% throughput performance
-				ar_peers:get_peers(current)
-		end,
-	collect_peers(lists:sublist(Peers, N)).
+	%% Wait until join. This prevents all the data_discovery traffic from slowing down the join
+	%% process.
+	case ar_node:is_joined() of
+		false ->
+			ok;
+		true ->
+			N = ?DATA_DISCOVERY_COLLECT_PEERS_COUNT,
+			{ok, Config} = arweave_config:get_env(),
+			Peers =
+				case Config#config.sync_from_local_peers_only of
+					true ->
+						Config#config.local_peers;
+					false ->
+						%% rank peers by current rating since we care about their
+						%% recent throughput performance
+						ar_peers:get_peers(current)
+				end,
+			collect_peers(lists:sublist(Peers, N))
+	end.
 
 collect_peers([Peer | Peers]) ->
 	gen_server:cast(?MODULE, {add_peer, Peer}),

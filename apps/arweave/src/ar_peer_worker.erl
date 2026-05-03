@@ -127,6 +127,11 @@ take_one(Pid) ->
 		exit:{timeout, _} ->
 			?LOG_WARNING([{event, take_one_timeout}, {pid, Pid}]),
 			none;
+		exit:{noproc, _} ->
+			%% Peer worker terminated (idle eviction or crash) between
+			%% the caller's ETS lookup of this Pid and our gen_server
+			%% call. Benign — caller rotates to the next peer.
+			none;
 		Class:Reason ->
 			?LOG_WARNING([{event, take_one_failed}, {pid, Pid},
 				{class, Class}, {reason, io_lib:format("~p", [Reason])}]),
