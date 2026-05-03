@@ -446,17 +446,24 @@ can_enqueue(#state{ store_id = StoreID, weave_size = WeaveSize, queue = Q,
 	end.
 
 %% Build a new pass in the given mode.
-init_pass(#state{ store_id = StoreID, range_start = Start, range_end = End },
-		Mode) ->
-	case ready_to_start(StoreID) of
+init_pass(#state{ store_id = StoreID, range_start = Start, range_end = End,
+		weave_size = WeaveSize }, Mode) ->
+	case ready_to_start(StoreID, WeaveSize) of
 		false ->
 			not_ready;
 		true ->
+			%% Cap pass end at the current weave tip — discover/can_enqueue
+			%% blocks once Offset reaches min(End, WeaveSize), so if the
+			%% pass end stays at the (larger) range_end, Offset can never
+			%% reach it and pass_complete never fires. That strands the
+			%% loop in normal mode forever and footprint mode never runs.
+			%% A fresh pass on the next mode-flip picks up the new WeaveSize.
+			%% ready_to_start guarantees WeaveSize is bound here.
 			End2 = case Mode of
 				footprint ->
-					min(End, ar_disk_pool:get_threshold());
+					lists:min([End, WeaveSize, ar_disk_pool:get_threshold()]);
 				normal ->
-					End
+					min(End, WeaveSize)
 			end,
 			?LOG_INFO([{event, sync_network}, {stage, pass_started},
 				{store_id, StoreID}, {mode, Mode},
@@ -613,7 +620,9 @@ cut_peer_footprint_intervals(FootprintIntervals, Start, End) ->
 	ar_intervals:outerjoin(
 		ar_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2).
 
-ready_to_start(StoreID) ->
+ready_to_start(_StoreID, undefined) ->
+	false;
+ready_to_start(StoreID, _WeaveSize) ->
 	case ar_node:is_joined() of
 		false -> false;
 		true ->
