@@ -13,17 +13,33 @@
 -define(setTsMock(Ts), ets:insert(?TABLE, {?KEY, Ts})).
 
 -define(assertHandlerRegisterOrRejectCall(LimiterRef, Pattern, Peer, Now),
- 	((fun () ->
-                  ?assert(?setTsMock(Now)),
-                  spawn_link(fun() ->
-                                     ?assertMatch(
-                                        Pattern,
-                                        ?M:register_or_reject_call(LimiterRef, Peer)),
-                                     receive
-                                         done -> ok
-                                     end
-                             end)
-	  end)())).
+        begin
+            ((fun () ->
+                      Parent = self(),
+                      ?assert(?setTsMock(Now)),
+                      Pid = spawn_link(fun() ->
+                                               ?assertMatch(
+                                                  Pattern,
+                                                  ?M:register_or_reject_call(LimiterRef, Peer)),
+                                               Parent ! call_done,
+                                               receive
+                                                   done -> ok
+                                               end
+                                       end),
+                      receive
+                          call_done ->
+                              ok
+                      after
+                          1000 ->
+                              %% This should never really happen.
+                              %% The call shouldn't take like a second. And if it crashes,
+                              %% we expect to spawn_link to take down the test process as well
+                              erlang:error({timeout, register_or_reject_call_test})
+                      end,
+                      Pid
+              end)())
+        end
+).
 
 expire_test() ->
     IP = {1,2,3,4},
@@ -64,6 +80,57 @@ cleanup_timestamps_map_test() ->
                  IP2 => [500]}, 1000, 2100),
     %% Now it's empty
     ?assertEqual(0, maps:size(Empty)),
+    ok.
+
+build_headers_info_sliding_test() ->
+    Policies = #{sliding_window => #{limit => 987}},
+
+    %% Empty
+    ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 0,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, [], 0, Policies)),
+
+    ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 0,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, [], 0, Policies)),
+
+    ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 0,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, [], 0, Policies)),
+
+    ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 0,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, [], 1000, Policies)),
+
+    %% single one equal to current time (not very likely edge case)
+    ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 0,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, [1000], 1000, Policies)),
+
+    %% single one in the past
+    ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 0,
+                   reset_seconds  := 1,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, [500], 1000, Policies)),
+
+    %% single one in the future
+    ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 0,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, [1500], 1000, Policies)),
+
     ok.
 
 noproc_test() ->
@@ -241,7 +308,7 @@ rate_limiter_process_test_() ->
          concurrency_limit => 10,
          sliding_window_limit => 0,
          sliding_window_duration => 1000,
-         timestamp_cleanup_expiry => 1000,
+         timestamp_cleanup_expiry => 1000000,
          leaky_tick_ms => 100000},
        fun leaky_manual_reduction_disabled/2}
      ]}.
@@ -249,7 +316,7 @@ rate_limiter_process_test_() ->
 simple_sliding_happy() ->
     IP = {1,2,3,4},
 
-    Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding}, IP, 1),
+    Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding, _}, IP, 1),
     Caller1 ! done,
 
     timer:sleep(100),
@@ -258,7 +325,7 @@ simple_sliding_happy() ->
     #{concurrent_requests := ConcurrentReqs1} = Info1,
     ?assertEqual(0, maps:size(ConcurrentReqs1)),
 
-    Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding}, IP, 500),
+    Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding, _}, IP, 500),
     Caller2 ! done,
 
     timer:sleep(100),
@@ -267,13 +334,13 @@ simple_sliding_happy() ->
     #{concurrent_requests := ConcurrentReqs2} = Info2,
     ?assertEqual(0, maps:size(ConcurrentReqs2)),
 
-    Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding}, IP, 2000),
+    Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding, _}, IP, 2000),
     Caller3 ! done,
     timer:sleep(100),
     %% 2 previous ts expired due to the time elapsed.
     ?assertMatch(#{sliding_timestamps := #{IP := [2000]}}, ?M:info(?TEST_LIMITER)),
 
-    Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding}, IP, 2001),
+    Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding, _}, IP, 2001),
     Caller4 ! done,
     timer:sleep(100),
     ?assertMatch(#{sliding_timestamps := #{IP := [2000, 2001]}}, ?M:info(?TEST_LIMITER)),
@@ -290,9 +357,9 @@ simple_leaky_happy_path(_Config, LimiterPid) ->
      fun() ->
              IP = {1,2,3,4},
              %% init state, the ip is not blocked
-             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 0),
+             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 0),
              timer:sleep(20),
-             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 2),
+             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 2),
 
              %% wait a bit so they are surely started.
              timer:sleep(100),
@@ -345,9 +412,9 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
-             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, -1),
+             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, -1),
              timer:sleep(120),
-             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 10),
+             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 10),
              timer:sleep(120),
              Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {reject, concurrency, _Data}, IP, 10),
 
@@ -376,7 +443,7 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
                             leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
 
              %% Concurrency reduced, one handler terminated, will register again
-             Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 0),
+             Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 0),
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              Caller4 ! done,
@@ -411,9 +478,9 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
-             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 1),
+             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 1),
              timer:sleep(20),
-             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 2),
+             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 2),
              timer:sleep(20),
              Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {reject, rate_limit, _Data}, IP, 3),
 
@@ -432,7 +499,7 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
                             leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
 
              %% Tokens reduced, will register again
-             Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 10),
+             Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 10),
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% 3 concurrent, 2 tokens
@@ -472,7 +539,7 @@ both_exhausted(_Config, LimiterPid) ->
      fun() ->
              IP = {1,2,3,4},
 
-             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding}, IP, -1),
+             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding, _}, IP, -1),
 
              %% wait a bit so they are surely started.
              timer:sleep(100),
@@ -481,7 +548,7 @@ both_exhausted(_Config, LimiterPid) ->
                             sliding_timestamps := #{IP := [_]},
                             leaky_tokens := #{}}, ?M:info(?TEST_LIMITER)),
 
-             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 20),
+             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 20),
 
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
@@ -527,7 +594,7 @@ peer_cleanup(_Config, LimiterPid) ->
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
-             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding}, IP, 1),
+             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding, _}, IP, 1),
 
              %% wait a bit so they are surely started.
              timer:sleep(100),
@@ -536,7 +603,7 @@ peer_cleanup(_Config, LimiterPid) ->
                             sliding_timestamps := #{IP := [_]},
                             leaky_tokens := #{}}, ?M:info(?TEST_LIMITER)),
 
-             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 20),
+             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 20),
 
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
@@ -601,10 +668,10 @@ leaky_manual_reduction(_Config, _LimiterPid) ->
              IP = {1,2,3,4},
              NonRecordedIP = {2,3,4,5,1984},
 
-             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 1),
-             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 20),
-             Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 40),
-             Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 60),
+             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 1),
+             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 20),
+             Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 40),
+             Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 60),
              %% wait a bit so they are surely started.
              timer:sleep(100),
              %% 2 concurrent, 2 token
@@ -643,19 +710,48 @@ leaky_manual_reduction(_Config, _LimiterPid) ->
              ok
      end}.
 
-leaky_manual_reduction_disabled(_Config, _LimiterPid) ->
+leaky_manual_reduction_disabled(Config, _LimiterPid) ->
     {"Leaky tokens manual peer reduction",
      fun() ->
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
-             Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 1),
-             Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 20),
-             Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 40),
-             Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 60),
-             %% wait a bit so they are surely started.
-             timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{IP := 4},
+             Policies = ?M:generate_policy(Config),
+
+             Caller1 = ?assertHandlerRegisterOrRejectCall(
+                          ?TEST_LIMITER, {register, leaky,
+                                          #{expiring_limit := 5,
+                                            remaining      := 4,
+                                            reset_seconds  := 99,
+                                            policies       := Policies}
+                                         }, IP, 1),
+             ?assertEqual(1, arweave_limiter_time:ts_now()),
+             Caller2 = ?assertHandlerRegisterOrRejectCall(
+                          ?TEST_LIMITER, {register, leaky,
+                                          #{expiring_limit := 5,
+                                            remaining      := 3,
+                                            reset_seconds  := 99,
+                                            policies       := Policies}
+                                         }, IP, 20),
+             ?assertEqual(20, arweave_limiter_time:ts_now()),
+             Caller3 = ?assertHandlerRegisterOrRejectCall(
+                          ?TEST_LIMITER, {register, leaky,
+                                          #{expiring_limit := 5,
+                                            remaining      := 2,
+                                            reset_seconds  := 95,
+                                            policies       := Policies}
+                                          }, IP, 4001),
+             ?assertEqual(4001, arweave_limiter_time:ts_now()),
+             Caller4 = ?assertHandlerRegisterOrRejectCall(
+                          ?TEST_LIMITER, {register, leaky,
+                                          #{expiring_limit := 5,
+                                            remaining      := 1,
+                                            reset_seconds  := 89,
+                                            policies       := Policies}
+                                         }, IP, 10001),
+             ?assertEqual(10001, arweave_limiter_time:ts_now()),
+
+             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
                             leaky_tokens := #{IP := 4}}, ?M:info(?TEST_LIMITER)),
 
              ?assertEqual(disabled, ?M:reduce_for_peer(?TEST_LIMITER, IP)),

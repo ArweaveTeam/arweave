@@ -33,7 +33,9 @@
          expire_and_get_requests/4,
          drop_expired/3,
          add_and_order_timestamps/2,
-         cleanup_expired_sliding_peers/3]).
+         cleanup_expired_sliding_peers/3,
+         generate_policy/1,
+         build_headers_info_sliding/4]).
 -endif.
 
 -include_lib("arweave/include/ar.hrl").
@@ -60,13 +62,12 @@ register_or_reject_call(LimiterRef, Peer) ->
     Value.
 
 do_register_or_reject_call(LimiterRef, Peer) ->
-    %% Since we are summing
     prometheus_counter:inc(ar_limiter_requests_total, [atom_to_list(LimiterRef)]),
     LimiterWorkerRef = ref_to_worker_ref(LimiterRef, Peer),
     try gen_server:call(LimiterWorkerRef,
                         {register_or_reject, Peer},
                         ?DEFAULT_ARWEAVE_LIMITER_CALL_TIMEOUT) of
-        {reject, Reason, _Data} = Rejection ->
+        {reject, Reason, _HeadersInfo} = Rejection ->
             prometheus_counter:inc(ar_limiter_rejected_total,
                                    [atom_to_list(LimiterRef), atom_to_list(Reason)]),
             Rejection;
@@ -127,6 +128,8 @@ init([Config] = _Args) ->
     SlidingWindowLimit = maps:get(sliding_window_limit, Config,
                                   ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT),
 
+    Now = arweave_limiter_time:ts_now(),
+    NextLBTickTS = Now + LeakyTickMs,
     {ok, LeakyRef} = timer:send_interval(LeakyTickMs, self(), {tick, leaky_bucket_reduction}),
     {ok, TsRef} = timer:send_interval(TimestampCleanupTickMs, self(), {tick, sliding_window_timestamp_cleanup}),
     {ok, #{
@@ -136,6 +139,7 @@ init([Config] = _Args) ->
            leaky_tick_timer_ref => LeakyRef,
            timestamp_cleanup_timer_ref => TsRef,
            leaky_tick_ms => LeakyTickMs,
+           next_leaky_tick_ts => NextLBTickTS,
            timestamp_cleanup_tick_ms => TimestampCleanupTickMs,
            timestamp_cleanup_expiry => TimestampCleanupExpiry,
            tick_reduction => TickReduction,
@@ -154,16 +158,16 @@ handle_call(reset_all, _From, State) ->
                        concurrent_monitors => #{},
                        leaky_tokens => #{},
                        sliding_timestamps => #{}}};
-
 handle_call({register_or_reject, _Peer}, {_FromPid, _},
-            State = #{id := _Id,
-                      is_disabled := true}) ->
-    {reply, {register, no_limiting_applied}, State};
-
+            State = #{id := _Id, is_disabled := true}) ->
+    LimiterHeaders = #{policies => generate_policy(State)},
+    {reply, {register, no_limiting_applied, LimiterHeaders}, State};
 handle_call({register_or_reject, Peer}, {FromPid, _},
             State = #{id := Id,
+                      is_disabled := false,
                       leaky_rate_limit := LeakyRateLimit,
                       leaky_tokens := LeakyTokens,
+                      next_leaky_tick_ts := NextLeakyTickTs,
                       concurrency_limit := ConcurrencyLimit,
                       concurrent_requests := ConcurrentRequests,
                       concurrent_monitors := ConcurrentMonitors,
@@ -177,12 +181,20 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
 
     SlidingTimestampsForPeer0 =
         expire_and_get_requests(Peer, SlidingTimestamps, SlidingWindowDuration, Now),
+
+    Policies = generate_policy(State),
+
     case Concurrency > ConcurrencyLimit of
         true ->
             %% Concurrency Hard Limit
             ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, concurrency},
                         {peer, Peer}, {id, Id}]),
-            {reply, {reject, concurrency, data}, State};
+
+            HeadersInfo = #{expiring_limit => ConcurrencyLimit,
+                            remaining      => 0,
+                            reset_seconds  => 1,
+                            policies       => Policies},
+            {reply, {reject, concurrency, HeadersInfo}, State};
         _ ->
             case length(SlidingTimestampsForPeer0) + 1 > SlidingWindowLimit of
                 true ->
@@ -194,13 +206,22 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                                         {sliding_window_limit, SlidingWindowLimit},
                                         {leaky_rate_limit, LeakyRateLimit},
                                         {peer, Peer}, {id, Id}]),
-                            {reply, {reject, rate_limit, data}, State};
+                            HeadersInfo = build_headers_info_leaky(
+                                            0, LeakyRateLimit, NextLeakyTickTs,
+                                            SlidingTimestampsForPeer0, Now,
+                                            Policies),
+                            {reply, {reject, rate_limit, HeadersInfo}, State};
                         false ->
                             NewLeakyTokens = update_token(Peer, Tokens, LeakyTokens),
                             {NewRequests, NewMonitors} =
                                 register_concurrent(
                                   Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
-                            {reply, {register, leaky},
+                            LbRemaining = LeakyRateLimit - Tokens,
+                            HeadersInfo = build_headers_info_leaky(
+                                            LbRemaining, LeakyRateLimit, NextLeakyTickTs,
+                                            SlidingTimestampsForPeer0, Now,
+                                            Policies),
+                            {reply, {register, leaky, HeadersInfo},
                              State#{leaky_tokens => NewLeakyTokens,
                                     concurrent_requests => NewRequests,
                                     concurrent_monitors => NewMonitors}}
@@ -211,9 +232,14 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                           Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
                     SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
                     NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
-                    {reply, {register, sliding}, State#{sliding_timestamps => NewSlidingTimestamps,
-                                                        concurrent_requests => NewRequests,
-                                                        concurrent_monitors => NewMonitors}}
+                    SwRemaining = max(0, SlidingWindowLimit
+                                      - length(SlidingTimestampsForPeer1)),
+                    HeadersInfo = build_headers_info_sliding(SwRemaining, SlidingTimestampsForPeer1,
+                                                             Now, Policies),
+                    {reply, {register, sliding, HeadersInfo},
+                     State#{sliding_timestamps => NewSlidingTimestamps,
+                            concurrent_requests => NewRequests,
+                            concurrent_monitors => NewMonitors}}
             end
     end;
 handle_call({reduce_for_peer, Peer}, _From, State =
@@ -244,17 +270,26 @@ handle_cast(_Request, State) ->
 
 handle_info({tick, sliding_window_timestamp_cleanup},
             State = #{id := Id, sliding_timestamps := SlidingTimestamps,
+                      timestamp_cleanup_tick_ms := CleanupTickMs,
                       timestamp_cleanup_expiry := CleanupExpiry}) ->
     Now = arweave_limiter_time:ts_now(),
+    NextSWTickTs = Now + CleanupTickMs,
     NewSlidingTimestamps = cleanup_expired_sliding_peers(SlidingTimestamps, CleanupExpiry, Now),
     Deleted = maps:size(SlidingTimestamps) - maps:size(NewSlidingTimestamps),
     prometheus_counter:inc(ar_limiter_cleanup_tick_expired_sliding_peers_deleted_total, [Id], Deleted),
-    {noreply, State#{sliding_timestamps => NewSlidingTimestamps}};
+    {noreply, State#{sliding_timestamps => NewSlidingTimestamps, next_timestamp_clean_ts => NextSWTickTs}};
 handle_info({tick, leaky_bucket_reduction},
-            State = #{id := Id, tick_reduction := TickReduction, leaky_tokens := LeakyTokens}) ->
-    %% This is going to be more precise than ar_limiter_leaky_ticks*ar_limiter_peers
+            State = #{id := Id,
+                      tick_reduction := TickReduction,
+                      leaky_tick_ms := LeakyTickMs,
+                      leaky_tokens := LeakyTokens}) ->
+    Now = arweave_limiter_time:ts_now(),
+    %% NextLBTickTs is an approximate value for rate-limiting headers to use.
+    %%
+    NextLBTickTs = Now + LeakyTickMs,
     prometheus_counter:inc(ar_limiter_leaky_ticks, [Id]),
     SizeBefore = maps:size(LeakyTokens),
+    %% This is going to be more precise than ar_limiter_leaky_ticks*ar_limiter_peers
     prometheus_counter:inc(ar_limiter_leaky_tick_reductions_peer, [Id], SizeBefore),
     NewTokens =
         maps:fold(fun(Key, Value, AccIn) ->
@@ -262,7 +297,7 @@ handle_info({tick, leaky_bucket_reduction},
                   end, #{}, LeakyTokens),
     prometheus_counter:inc(
       ar_limiter_leaky_tick_delete_peer_total, [Id], SizeBefore - maps:size(NewTokens)),
-    {noreply, State#{leaky_tokens => NewTokens}};
+    {noreply, State#{leaky_tokens => NewTokens, next_leaky_tick_ts => NextLBTickTs}};
 handle_info({'DOWN', MonitorRef, process, Pid, Reason},
             State = #{concurrent_requests := ConcurrentRequests,
                       concurrent_monitors := ConcurrentMonitors}) ->
@@ -427,3 +462,51 @@ merge_info_maps(LimiterRef, N, #{concurrent_requests := AccReq,
 ref_to_worker_ref(LimiterRef, Peer) ->
     WorkersNum = arweave_limiter_config:get_number_of_workers(LimiterRef),
     arweave_limiter_util:worker_ref(LimiterRef, Peer, WorkersNum).
+
+generate_policy(#{concurrency_limit := ConcurrencyLimit,
+                  sliding_window_duration := SlidingWindowDuration,
+                  sliding_window_limit := SlidingWindowLimit,
+                  leaky_rate_limit := LeakyRateLimit,
+                  leaky_tick_ms := LeakyTickMs,
+                  tick_reduction := TickReduction}) ->
+    #{concurrency => #{limit => ConcurrencyLimit},
+      sliding_window => #{limit => SlidingWindowLimit,
+                          window_seconds => SlidingWindowDuration},
+      leaky_bucket   => #{burst => LeakyRateLimit,
+                          tick_ms => LeakyTickMs,
+                          tick_reduction => TickReduction}
+     }.
+
+
+build_headers_info_sliding(Remaining, SwTimestamps, Now, Policies) ->
+    SwReset = sliding_window_reset_seconds(SwTimestamps, Now),
+    Sw = maps:get(sliding_window, Policies),
+    ExpiringLimit = maps:get(limit, Sw),
+    #{expiring_limit => ExpiringLimit,
+      remaining      => Remaining,
+      reset_seconds  => SwReset,
+      policies       => Policies}.
+
+build_headers_info_leaky(Remaining, LbCapacity, NextLeakyTickTs, SwTimestamps, Now, Policies) ->
+    LbReset = max(1, (NextLeakyTickTs - Now) div 1000), %% This should be never negative really
+    SwReset = sliding_window_reset_seconds(SwTimestamps, Now),
+
+    %% This is pretty much a short circuit for
+    Reset = if SwReset > 0 -> min(SwReset, LbReset);
+               true -> LbReset
+            end,
+
+    ExpiringLimit = LbCapacity,
+    #{expiring_limit => ExpiringLimit,
+      remaining      => Remaining,
+      reset_seconds  => Reset,
+      policies       => Policies}.
+
+%% Seconds until the oldest in-window timestamp ages out. 0 when the window
+%% has spare capacity (no meaningful "reset" to advertise).
+sliding_window_reset_seconds([], _Now) -> 0;
+sliding_window_reset_seconds([Oldest | _], Now) when Oldest >= Now -> 0;
+sliding_window_reset_seconds([Oldest | _], Now) ->
+    %% Timestamps are monotonic ms
+    max(1, (Now - Oldest) div 1000).
+
