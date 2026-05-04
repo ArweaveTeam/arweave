@@ -275,6 +275,11 @@ log_binary_alloc_carrier(Id, Carrier) ->
 
 %% @doc Anonymous processes don't have a registered name. So we'll name them after their
 %% module, function and arity.
+%%
+%% A gen_server's spawn frame is always `Module:init/1', which is rarely
+%% useful as a function-level label (the process spends almost no time
+%% there) — collapse those to module-only so peer workers etc. show up as
+%% `ar_peer_worker' rather than `ar_peer_worker:init/1'.
 process_name([], [], _Pid) ->
 	"unknown";
 process_name([], Stack, Pid) ->
@@ -282,7 +287,12 @@ process_name([], Stack, Pid) ->
 	M = element(1, InitialCall),
 	F = element(2, InitialCall),
 	A = element(3, InitialCall),
-	atom_to_list(M) ++ ":" ++ atom_to_list(F) ++ "/" ++ integer_to_list(A);
+	case F of
+		init when A =:= 1 ->
+			atom_to_list(M);
+		_ ->
+			atom_to_list(M) ++ ":" ++ atom_to_list(F) ++ "/" ++ integer_to_list(A)
+	end;
 process_name(Name, _Stack, _Pid) ->
 	atom_to_list(Name).
 
