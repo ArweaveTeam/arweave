@@ -478,19 +478,20 @@ emit_bucket_stats() ->
 report_bucket_stats(StoreID, RangeStart, RangeEnd, normal) ->
 	StartBucket = RangeStart div ?NETWORK_DATA_BUCKET_SIZE,
 	EndBucket = (RangeEnd - 1) div ?NETWORK_DATA_BUCKET_SIZE,
-	AllPeers = collect_bucket_peers(StartBucket, EndBucket, ?MODULE, sets:new()),
-	CoverageBytes = coverage_bytes_normal(AllPeers, RangeStart, RangeEnd),
-	set_data_discovery_metrics(StoreID, normal, AllPeers, CoverageBytes);
+	NumPeers = count_bucket_peers(StartBucket, EndBucket, ?MODULE),
+	set_num_peers_metric(StoreID, normal, NumPeers);
 report_bucket_stats(StoreID, RangeStart, RangeEnd, footprint) ->
 	StartBucket = ar_footprint_record:get_footprint_bucket(RangeStart + ?DATA_CHUNK_SIZE),
 	EndBucket = ar_footprint_record:get_footprint_bucket(RangeEnd),
-	AllPeers = collect_bucket_peers(StartBucket, EndBucket,
-			ar_data_discovery_footprint_buckets, sets:new()),
-	CoverageBytes = coverage_bytes_footprint(AllPeers, RangeStart, RangeEnd),
-	set_data_discovery_metrics(StoreID, footprint, AllPeers, CoverageBytes).
+	NumPeers = count_bucket_peers(StartBucket, EndBucket,
+			ar_data_discovery_footprint_buckets),
+	set_num_peers_metric(StoreID, footprint, NumPeers).
 
-%% Walk [StartBucket, EndBucket] in `Table` and return the union of peers
+%% Walk [StartBucket, EndBucket] in `Table` and count distinct peers
 %% advertising any bucket in the range.
+count_bucket_peers(StartBucket, EndBucket, Table) ->
+	sets:size(collect_bucket_peers(StartBucket, EndBucket, Table, sets:new())).
+
 collect_bucket_peers(StartBucket, EndBucket, _Table, Peers)
 		when StartBucket > EndBucket ->
 	Peers;
@@ -508,90 +509,10 @@ collect_peers_for_bucket(Bucket, Table, Peers, Cursor) ->
 			Peers
 	end.
 
-%% Bytes covered by ≥1 peer (union, deduplicated) within [RangeStart, RangeEnd].
-%% Iterates each peer's normal-mode cache rows (byte ranges in absolute weave
-%% space), unions them, then restricts to the storage module's range and sums.
-coverage_bytes_normal(Peers, RangeStart, RangeEnd) ->
-	Union = sets:fold(
-		fun(Peer, Acc) ->
-			Rows = ets:select(?PEER_INTERVAL_CACHE_TABLE,
-					[{ {{Peer, '_', normal}, '$1', '_', '_'}, [], ['$1'] }]),
-			lists:foldl(fun ar_intervals:union/2, Acc, Rows)
-		end,
-		ar_intervals:new(),
-		Peers
-	),
-	%% Restrict to [RangeStart, RangeEnd]: cut to right bound, then drop the
-	%% left tail [0, RangeStart) via outerjoin.
-	Cut = ar_intervals:cut(Union, RangeEnd),
-	Restricted = ar_intervals:outerjoin(
-			ar_intervals:from_list([{RangeStart, -1}]), Cut),
-	ar_intervals:sum(Restricted).
-
-%% Bytes covered by ≥1 peer in footprint mode. Storage modules are sized
-%% in `ENTROPY_PARTITION_SIZE' (~3.6 TB + 256 MB) but partitions are sized
-%% in `PARTITION_SIZE' (3.6 TB), so a module's byte range typically spans
-%% TWO partitions — almost all of partition N and a small sliver of N+1.
-%%
-%% Cache rows are keyed by {Peer, {Partition, Footprint}, footprint} and
-%% store footprint chunk indices; indices are namespaced per
-%% (Partition, Footprint). We union indices across peers per key, then
-%% weight each key's chunk count by the fraction of its partition's bytes
-%% that overlap the storage module's range. Relies on the entropy
-%% interleaving spreading each footprint's chunks uniformly across the
-%% partition's bytes, so chunk_count × overlap_fraction approximates the
-%% bytes those chunks contribute to the module's range.
-coverage_bytes_footprint(Peers, RangeStart, RangeEnd) ->
-	PartitionSize = ar_block:partition_size(),
-	ByFootprint = footprint_coverage_by_key(Peers),
-	Bytes = maps:fold(
-		fun({Partition, _Footprint}, Intervals, Acc) ->
-			Acc + footprint_coverage_bytes(
-					Partition, Intervals, PartitionSize, RangeStart, RangeEnd)
-		end,
-		0,
-		ByFootprint
-	),
-	round(Bytes).
-
-%% Group cache rows by (Partition, Footprint), unioning chunk indices across
-%% peers for each key.
-footprint_coverage_by_key(Peers) ->
-	sets:fold(
-		fun(Peer, Acc) ->
-			Rows = ets:select(?PEER_INTERVAL_CACHE_TABLE,
-					[{ {{Peer, '$1', footprint}, '$2', '_', '_'},
-						[], [{{'$1', '$2'}}] }]),
-			lists:foldl(fun merge_footprint_coverage_row/2, Acc, Rows)
-		end,
-		#{},
-		Peers
-	).
-
-merge_footprint_coverage_row({Key, Intervals}, Acc) ->
-	maps:update_with(
-		Key,
-		fun(Existing) -> ar_intervals:union(Existing, Intervals) end,
-		Intervals,
-		Acc
-	).
-
-footprint_coverage_bytes(Partition, Intervals, PartitionSize, RangeStart, RangeEnd) ->
-	Fraction = partition_overlap_fraction(Partition, PartitionSize, RangeStart, RangeEnd),
-	ar_intervals:sum(Intervals) * ?DATA_CHUNK_SIZE * Fraction.
-
-partition_overlap_fraction(Partition, PartitionSize, RangeStart, RangeEnd) ->
-	PStart = Partition * PartitionSize,
-	PEnd = PStart + PartitionSize,
-	Overlap = max(0, min(RangeEnd, PEnd) - max(RangeStart, PStart)),
-	Overlap / PartitionSize.
-
-set_data_discovery_metrics(StoreID, Type, AllPeers, CoverageBytes) ->
+set_num_peers_metric(StoreID, Type, NumPeers) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
 	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, num_peers],
-			sets:size(AllPeers)),
-	prometheus_gauge:set(data_discovery, [Type, StoreIDLabel, coverage_bytes],
-			CoverageBytes).
+			NumPeers).
 
 %%%===================================================================
 %%% Per-peer scanner pool.
@@ -1056,131 +977,4 @@ cache_miss_returns_cache_miss_test() ->
 		get_peer_intervals(Peer, 0, infinity)),
 	?assertEqual({error, cache_miss},
 		get_peer_footprint_intervals(Peer, 0, 0)).
-
-partition_overlap_fraction_test() ->
-	PS = 1000,
-
-	%% Module entirely inside one partition.
-	?assertEqual(0.1, partition_overlap_fraction(0, PS, 100, 200)),
-
-	%% Module exactly matches a partition.
-	?assertEqual(1.0, partition_overlap_fraction(0, PS, 0, 1000)),
-	?assertEqual(1.0, partition_overlap_fraction(2, PS, 2000, 3000)),
-
-	%% Sub-partition module covering half a partition.
-	?assertEqual(0.5, partition_overlap_fraction(0, PS, 0, 500)),
-
-	%% Module straddling a partition boundary contributes to both
-	%% partitions in proportion to its overlap with each.
-	?assertEqual(0.2, partition_overlap_fraction(0, PS, 800, 1200)),
-	?assertEqual(0.2, partition_overlap_fraction(1, PS, 800, 1200)),
-
-	%% Super-partition module fully covering some partitions and partially
-	%% covering one at the right edge.
-	?assertEqual(1.0, partition_overlap_fraction(0, PS, 0, 2500)),
-	?assertEqual(1.0, partition_overlap_fraction(1, PS, 0, 2500)),
-	?assertEqual(0.5, partition_overlap_fraction(2, PS, 0, 2500)),
-
-	%% Partitions outside the module's range contribute nothing.
-	?assertEqual(0.0, partition_overlap_fraction(5, PS, 0, 1000)),
-	?assertEqual(0.0, partition_overlap_fraction(0, PS, 5000, 6000)),
-
-	%% Degenerate range (start >= end) clamps to 0.
-	?assertEqual(0.0, partition_overlap_fraction(0, PS, 500, 500)),
-	?assertEqual(0.0, partition_overlap_fraction(0, PS, 700, 500)),
-
-	ok.
-
-coverage_bytes_normal_test() ->
-	clear_interval_cache(),
-	Peer1 = {10, 0, 0, 1, 1984},
-	Peer2 = {10, 0, 0, 2, 1984},
-
-	%% Peer 1: bytes [0, 100 GB)
-	Peer1Intervals = ar_intervals:from_list([{100_000_000_000, 0}]),
-	ets:insert(?PEER_INTERVAL_CACHE_TABLE,
-			{{Peer1, 0, normal}, Peer1Intervals, 100_000_000_000, 0}),
-
-	%% Peer 2: bytes [50 GB, 150 GB)
-	Peer2Intervals = ar_intervals:from_list([{150_000_000_000, 50_000_000_000}]),
-	ets:insert(?PEER_INTERVAL_CACHE_TABLE,
-			{{Peer2, 0, normal}, Peer2Intervals, 150_000_000_000, 0}),
-
-	Peers = sets:from_list([Peer1, Peer2]),
-
-	%% Module spanning both peers' coverage: union = [0, 150 GB)
-	?assertEqual(150_000_000_000,
-			coverage_bytes_normal(Peers, 0, 200_000_000_000)),
-
-	%% Sub-range of the coverage: restrict to [0, 50 GB)
-	?assertEqual(50_000_000_000,
-			coverage_bytes_normal(Peers, 0, 50_000_000_000)),
-
-	%% Module range entirely outside peer coverage: 0 bytes.
-	?assertEqual(0,
-			coverage_bytes_normal(Peers, 200_000_000_000, 300_000_000_000)),
-
-	clear_interval_cache(),
-	ok.
-
-%% End-to-end footprint coverage test exercising the partition fraction
-%% math across all module-size shapes (sub-partition, single-partition,
-%% multi-partition, partition-straddling). Uses a single peer with full
-%% coverage of a few partitions; checks the reported bytes match the
-%% module's actual byte size.
-coverage_bytes_footprint_test() ->
-	clear_interval_cache(),
-	PS = ar_block:partition_size(),
-	ChunkSize = ?DATA_CHUNK_SIZE,
-	%% Use a chunk count whose `ChunksPerPartition × ChunkSize' divides PS
-	%% evenly so the test arithmetic is exact. PS / ChunkSize = exact
-	%% number of chunks per partition; we use 1000 chunks per partition
-	%% (a deliberately small fraction) and rely on the formula treating
-	%% them as uniformly spread.
-	ChunksPerPartition = 1000,
-	Peer = {10, 0, 0, 1, 1984},
-	%% Populate three partitions' worth of footprint coverage. Single
-	%% footprint per partition simplifies the test; the math doesn't
-	%% care about footprint count.
-	lists:foreach(
-		fun(P) ->
-			Intervals = ar_intervals:from_list(
-					[{ChunksPerPartition, 0}]),
-			ets:insert(?PEER_INTERVAL_CACHE_TABLE,
-					{{Peer, {P, 0}, footprint}, Intervals, none, 0})
-		end,
-		[0, 1, 2]
-	),
-	Peers = sets:from_list([Peer]),
-	FullPartitionBytes = ChunksPerPartition * ChunkSize,
-
-	%% Sub-partition module: half of partition 0.
-	?assertEqual(round(FullPartitionBytes * 0.5),
-			coverage_bytes_footprint(Peers, 0, PS div 2)),
-
-	%% Single-partition module: all of partition 0.
-	?assertEqual(FullPartitionBytes,
-			coverage_bytes_footprint(Peers, 0, PS)),
-
-	%% Multi-partition module: all of partitions 0 and 1, half of
-	%% partition 2. Expected = 1.0 + 1.0 + 0.5 partition-equivalents.
-	?assertEqual(round(FullPartitionBytes * 2.5),
-			coverage_bytes_footprint(Peers, 0, 2 * PS + PS div 2)),
-
-	%% Super-partition module fully covering partitions 0..2.
-	?assertEqual(FullPartitionBytes * 3,
-			coverage_bytes_footprint(Peers, 0, 3 * PS)),
-
-	%% Partition-straddling module: half of partition 0 and half of
-	%% partition 1. Both contribute 0.5, sum = 1.0 partition-equivalent.
-	?assertEqual(FullPartitionBytes,
-			coverage_bytes_footprint(
-					Peers, PS div 2, PS + PS div 2)),
-
-	%% Range entirely outside cached partitions: no contribution.
-	?assertEqual(0,
-			coverage_bytes_footprint(Peers, 10 * PS, 11 * PS)),
-
-	clear_interval_cache(),
-	ok.
 -endif.

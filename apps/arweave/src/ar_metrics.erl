@@ -498,20 +498,25 @@ register() ->
 		{labels, [type, store_id, stat]},
 		{help, "Tracks peer availability statistics from data discovery. "
 				"'type' is 'normal' or 'footprint'. "
-				"'stat' is 'num_peers' (distinct peers offering data anywhere "
-				"in this store_id's range) or 'coverage_bytes' (bytes covered "
-				"by at least one peer, union-deduplicated, within this "
-				"store_id's range)."}]),
+				"'stat' is 'num_peers' — distinct peers offering data "
+				"anywhere in this store_id's range."}]),
 
 	prometheus_counter:new([{name, sync_tasks},
 		{labels, [state, peer]},
-		{help, "The number of syncing tasks. 'state' can be "
-				"'queued_in', 'queued_out', 'dispatched', 'completed', "
-				"'activate_footprint', 'deactivate_footprint', "
-				"'dropped_full' (peer worker queue full), "
-				"'dropped_unavailable' (coordinator could not start a peer "
-				"worker), 'rebalance_cut' (trimmed during rebalance), or "
-				"'reaped' (stale or dead worker reaped). "
+		{help, "The number of syncing tasks. "
+				"`queued_in' / `queued_out' are the authoritative "
+				"queue-state pair: every queue add bumps queued_in, every "
+				"queue removal bumps queued_out (regardless of reason). "
+				"Queue depth = queued_in - queued_out. "
+				"Other states are reason/lifecycle flavor: 'dispatched' "
+				"(popped for dispatch — also bumps queued_out), "
+				"'completed' (task finished), 'activate_footprint' / "
+				"'deactivate_footprint' (footprint slot lifecycle), "
+				"'rebalance_cut' (trimmed during rebalance — also bumps "
+				"queued_out), 'reaped' (stale or dead worker reaped — "
+				"task was already past queued_out at dispatch time), "
+				"'dropped_full' / 'dropped_unavailable' (task never "
+				"entered queue, no queued_in/queued_out bump). "
 				"'peer' is the peer the task is intended for."}]),
 
 	prometheus_counter:new([{name, sync_chunks_skipped},

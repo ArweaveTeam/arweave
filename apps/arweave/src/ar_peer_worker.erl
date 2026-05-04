@@ -566,10 +566,13 @@ cut_queues(ToCut, State) ->
 		false -> {State3, 0}
 	end,
 	TotalCut = CutFromBlocked + CutFromEligible + NonFootprintCut,
-	%% Rebalance trim is its own state — separate from `queued_out` (normal
-	%% pop-for-dispatch) so the dropped-task signature stays distinguishable
-	%% from the success path. Pairs with the `release_dropped_task/1` calls
+	%% Bump both: `queued_out' is the authoritative queue-removal counter
+	%% (every removal regardless of reason), so `queued_in - queued_out'
+	%% reliably reports current queue depth. `rebalance_cut' is the
+	%% reason label so the cause is distinguishable from a normal
+	%% pop-for-dispatch. Pairs with the `release_dropped_task/1' calls
 	%% in remove_footprint_from_queues/2 and cut_non_footprint_tail/2.
+	increment_metrics(queued_out, State4, TotalCut),
 	increment_metrics(rebalance_cut, State4, TotalCut),
 	{State4, TotalCut}.
 
