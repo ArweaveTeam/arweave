@@ -2,21 +2,21 @@
 %%% @doc Cowboy handler to manage server-side rate limiting.
 %%%
 %%% This module provides a routing layer, mapping incoming requests
-%%% to respective rate limiter groups (RLG). 
-%%% The mapping logic can be extended in a quite complex manner if 
+%%% to respective rate limiter groups (RLG).
+%%% The mapping logic can be extended in a quite complex manner if
 %%% required, however it should be  considered that the execute function will be
 %%% called for each HTTP request.
-%%% 
+%%%
 %%% Also, there is nothing limiting the developer from calling multiple RLGs
 %%% for a single request, if necessary.
 %%%
 %%% The LimiterRef reference  in the arweave_limiter:register_or_reject_call/2
 %%% call must match one of the RLGs started by the arweave_limiter application,
 %%% otherwise a noproc error will be raised.
-%%% 
-%%% We currency use IP addresses and ports as Keys for the calling peers. 
+%%%
+%%% We currency use IP addresses and ports as Keys for the calling peers.
 %%% However, any Erlang term might be used as a key in an RLG.
-%%% 
+%%%
 -module(ar_http_iface_rate_limiter_middleware).
 
 -behaviour(cowboy_middleware).
@@ -26,14 +26,19 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
-execute(Req, Env) ->
-	LimiterRef = get_limiter_ref(Req),
-	PeerKey = get_peer_key(Req),
+execute(Req0, Env) ->
+	LimiterRef = get_limiter_ref(Req0),
+	PeerKey = get_peer_key(Req0),
 
 	case arweave_limiter:register_or_reject_call(LimiterRef, PeerKey) of
-		{reject, Reason, Data} ->
+		{reject, Reason, Data} = Reject ->
+			?LOG_DEBUG([{event, rate_limiter_reject}, {reason, Reason}, {data, Data}]),
+				Headers = arweave_limiter_http_headers:to_http_headers(Reject),
+				Req = cowboy_req:set_resp_headers(Headers, Req0),
 			{stop, reject(Req, Reason, Data)};
-		_ ->
+		Accept ->
+			Headers = arweave_limiter_http_headers:to_http_headers(Accept),
+			Req = cowboy_req:set_resp_headers(Headers, Req0),
 			{ok, Req, Env}
 	end.
 
