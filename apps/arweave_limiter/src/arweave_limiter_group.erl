@@ -59,13 +59,20 @@ register_or_reject_call(LimiterRef, Peer) ->
 do_register_or_reject_call(LimiterRef, Peer) ->
     prometheus_counter:inc(ar_limiter_requests_total,
                            [atom_to_list(LimiterRef)]),
-    case gen_server:call(LimiterRef, {register_or_reject, Peer}) of
+    try gen_server:call(LimiterRef, {register_or_reject, Peer}, 1000) of
         {reject, Reason, _Data} = Rejection ->
             prometheus_counter:inc(ar_limiter_rejected_total,
                                    [atom_to_list(LimiterRef), atom_to_list(Reason)]),
             Rejection;
         Accept ->
             Accept
+    catch E:R ->
+            ?LOG_WARNING([{event, rate_limiter_group_error},
+                          {limiter_ref, LimiterRef},
+                          {peer, Peer},
+                          {class, E},
+                          {reason, R}]),
+            {reject, error, #{}}
     end.
 
 %% This function is called when a transaction is accepted. This is how the previous
@@ -85,6 +92,8 @@ stop(LimiterRef) ->
 
 %% gen_server callbacks
 init([Config] = _Args) ->
+    process_flag(priority, high),
+
     Id = maps:get(id, Config),
 
     IsDisabled = maps:get(no_limit, Config, false),

@@ -64,6 +64,47 @@ cleanup_timestamps_map_test() ->
     ?assertEqual(0, maps:size(Empty)),
     ok.
 
+timeout_test_() ->
+    Config = #{id => ?TEST_LIMITER,
+               tick_reduction => 1,
+               leaky_rate_limit => 0,
+               concurrency_limit => 5,
+               sliding_window_limit => 2,
+               sliding_window_duration => 1000,
+               timestamp_cleanup_expiry => 1000,
+               leaky_tick_ms => 100000},
+    {setup,
+     fun() -> timeout_setup(Config) end,
+     fun(LimiterPid) -> cleanup(Config, LimiterPid) end,
+     [{"Timeout test",
+       fun() ->
+               ?assertEqual({reject, error, #{}}, ?M:register_or_reject_call(?TEST_LIMITER, {1,2,3,4})),
+               ok
+       end}]
+    }.
+
+timeout_setup(Config) ->
+    ?TABLE = ets:new(?TABLE, [named_table, public]), %% This is not used, but I don't
+                                                     %% want to complicate cleanup
+    {module, arweave_limiter_time} = code:ensure_loaded(arweave_limiter_time),
+
+    ok = meck:new(prometheus_counter, [passthrough]),
+    ok = meck:expect(prometheus_counter, inc, 2, ok),
+    ok = meck:expect(prometheus_counter, inc, 3, ok),
+
+    ok = meck:new(arweave_limiter_time, []),
+    %% ts_now() is called in each register_or_reject call, we are
+    %% going to delaying it beyond the gen_server:call timeout.
+    ok = meck:expect(arweave_limiter_time, ts_now,
+                     fun() ->
+                             timer:sleep(2000),
+                             0
+                     end),
+    0 = arweave_limiter_time:ts_now(),
+    {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER, Config),
+    LimiterPid.
+
+
 setup(Config) ->
     ?TABLE = ets:new(?TABLE, [named_table, public]),
     ?setTsMock(0),
