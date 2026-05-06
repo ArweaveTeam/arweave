@@ -66,9 +66,18 @@ start_link(WorkerMap) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, WorkerMap, []).
 
 register_workers() ->
-	{Workers, WorkerMap} = register_read_workers(),
-	ChunkCopy = ?CHILD_WITH_ARGS(ar_chunk_copy, worker, ar_chunk_copy, [WorkerMap]),
-	Workers ++ [ChunkCopy].
+	%% Local chunk-copy is a pre-network-sync optimization — skip the entire
+	%% subsystem when sync_jobs=0. Same pattern as
+	%% ar_data_sync_coordinator:register_workers/0.
+	case ar_data_sync_coordinator:is_syncing_enabled() of
+		false ->
+			[];
+		true ->
+			{Workers, WorkerMap} = register_read_workers(),
+			ChunkCopy = ?CHILD_WITH_ARGS(ar_chunk_copy, worker, ar_chunk_copy,
+					[WorkerMap]),
+			Workers ++ [ChunkCopy]
+	end.
 
 register_read_workers() ->
 	{ok, Config} = arweave_config:get_env(),
@@ -108,7 +117,14 @@ task_completed(Worker, ReadResult, Args) ->
 %% `{event, chunk_copy, {complete, StoreID}}' message is published via
 %% `ar_events'.
 start_copy(StoreID) ->
-	gen_server:cast(?MODULE, {start_copy, StoreID}).
+	%% If syncing is not enabled, the ar_chunk_copy processes have not been
+	%% started.
+	case whereis(?MODULE) of
+		undefined ->
+			ok;
+		_Pid ->
+			gen_server:cast(?MODULE, {start_copy, StoreID})
+	end.
 
 %%%===================================================================
 %%% Generic server callbacks.

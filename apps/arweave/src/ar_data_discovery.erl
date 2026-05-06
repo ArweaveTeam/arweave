@@ -213,22 +213,30 @@ get_peer_footprint_intervals(Peer, Partition, Footprint) ->
 %%%===================================================================
 
 init([]) ->
-	%% ar_data_discovery_peer_intervals is created in ar_sup alongside the
-	%% ar_data_discovery / ar_data_discovery_footprint_buckets tables so
-	%% the gen_server crashing or restarting doesn't wipe the cache.
-	{ok, _} = ar_timer:apply_interval(
-		?DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS,
-		?MODULE,
-		collect_peers,
-		[],
-		#{ skip_on_shutdown => false }
-	),
-	%% Single periodic telemetry tick: emits the state-snapshot log and
-	%% the per-bucket coverage Prometheus gauges. Fires from inside the
-	%% gen_server so it has direct access to State.
-	erlang:send_after(?TELEMETRY_TICK_MS, self(), telemetry_tick),
-	ok = ar_events:subscribe(peer),
-	{ok, #state{}}.
+	%% Peer-coverage scanning is purely a sync helper; opt out entirely
+	%% when sync_jobs=0. Returning `ignore' from a gen_server init is the
+	%% supervisor-friendly way to say "don't start me" — the parent sup
+	%% logs and proceeds.
+	case ar_data_sync_coordinator:is_syncing_enabled() of
+		false ->
+			ignore;
+		true ->
+			%% ar_data_discovery* tables are created in ar_data_sync_sup so
+			%% the gen_server crashing or restarting doesn't wipe the cache.
+			{ok, _} = ar_timer:apply_interval(
+				?DATA_DISCOVERY_COLLECT_PEERS_FREQUENCY_MS,
+				?MODULE,
+				collect_peers,
+				[],
+				#{ skip_on_shutdown => false }
+			),
+			%% Single periodic telemetry tick: emits the state-snapshot log
+			%% and the per-bucket coverage Prometheus gauges. Fires from
+			%% inside the gen_server so it has direct access to State.
+			erlang:send_after(?TELEMETRY_TICK_MS, self(), telemetry_tick),
+			ok = ar_events:subscribe(peer),
+			{ok, #state{}}
+	end.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {request, Request}]),
@@ -410,8 +418,8 @@ pick_peers(Peers, PeerLen, N) ->
 	Part1 ++ Part2.
 
 collect_peers() ->
-	%% Wait until join. This prevents all the data_discovery traffic from slowing down the join
-	%% process.
+	%% Wait until join. This prevents all the data_discovery traffic from
+	%% slowing down the join process.
 	case ar_node:is_joined() of
 		false ->
 			ok;

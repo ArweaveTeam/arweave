@@ -42,10 +42,8 @@ init([]) ->
 	ets:new(ar_nonce_limiter, [set, public, named_table]),
 	ets:new(ar_nonce_limiter_server, [set, public, named_table]),
 	ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_data_discovery, [ordered_set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_data_discovery_footprint_buckets, [ordered_set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_data_discovery_peer_intervals, [set, public, named_table,
-		{read_concurrency, true}, {write_concurrency, true}]),
+	%% ar_data_discovery* tables moved to ar_data_sync_sup (the sup that
+	%% owns the gen_server that uses them).
 	ets:new(ar_data_sync_coordinator, [set, public, named_table]),
 	ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_chunk_storage, [set, public, named_table]),
@@ -85,7 +83,6 @@ init([]) ->
 		?CHILD_SUP(ar_bridge_sup, supervisor),
 		?CHILD_SUP(ar_packing_sup, supervisor),
 		?CHILD_SUP(ar_sync_record_sup, supervisor),
-		?CHILD(ar_data_discovery, worker),
 		?CHILD(ar_header_sync, worker),
 		?CHILD_SUP(ar_chunk_storage_sup, supervisor),
 		?CHILD_SUP(ar_data_sync_sup, supervisor),

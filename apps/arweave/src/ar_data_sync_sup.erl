@@ -26,6 +26,16 @@ init([]) ->
 	ets:new(?WORKER_LOAD_TABLE,
 		[named_table, public, set,
 			{read_concurrency, true}, {write_concurrency, true}]),
+	%% ar_data_discovery's tables. Created unconditionally so callers
+	%% that read them (e.g. ar_peer_sync's get_bucket_peers) don't crash
+	%% on missing-table when sync_jobs=0 — they'll just see empty tables.
+	ets:new(ar_data_discovery,
+		[ordered_set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_data_discovery_footprint_buckets,
+		[ordered_set, public, named_table, {read_concurrency, true}]),
+	ets:new(ar_data_discovery_peer_intervals,
+		[set, public, named_table,
+			{read_concurrency, true}, {write_concurrency, true}]),
 	%% Peer worker supervisor must start before worker master
 	PeerWorkerSup = #{
 		id => ar_peer_worker_sup,
@@ -42,8 +52,12 @@ init([]) ->
 	%% ar_disk_pool starts LAST so the disk-pool KV (opened by
 	%% ar_data_sync_default's init_kv) is available during ar_disk_pool's init.
 	DiskPool = ?CHILD(ar_disk_pool, worker),
+	%% ar_data_discovery is the peer-coverage scanner that feeds
+	%% ar_peer_sync's enqueue decisions. Self-opts-out via `ignore' from
+	%% init/1 when sync_jobs=0. Must start BEFORE ar_peer_sync.
+	DataDiscovery = ?CHILD(ar_data_discovery, worker),
 	Children =
-		[PeerWorkerSup, DataRoots] ++
+		[PeerWorkerSup, DataRoots, DataDiscovery] ++
 		ar_data_sync_coordinator:register_workers() ++
 		ar_chunk_copy:register_workers() ++
 		%% ar_peer_sync is the per-StoreID network-sync gen_server (owns

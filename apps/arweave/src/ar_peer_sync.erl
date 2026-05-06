@@ -110,11 +110,19 @@ name(StoreID) ->
 	list_to_atom("ar_peer_sync_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
-	{ok, Config} = arweave_config:get_env(),
-	StoreIDs = [
-		ar_storage_module:id(SM) || SM <- Config#config.storage_modules
-	] ++ [?DEFAULT_MODULE],
-	[?CHILD_WITH_ARGS(?MODULE, worker, name(SID), [SID]) || SID <- StoreIDs].
+	%% Network sync (producer + consumer per StoreID) — skip the entire
+	%% subsystem when sync_jobs=0. Same pattern as
+	%% ar_data_sync_coordinator:register_workers/0.
+	case ar_data_sync_coordinator:is_syncing_enabled() of
+		false ->
+			[];
+		true ->
+			{ok, Config} = arweave_config:get_env(),
+			StoreIDs = [
+				ar_storage_module:id(SM) || SM <- Config#config.storage_modules
+			] ++ [?DEFAULT_MODULE],
+			[?CHILD_WITH_ARGS(?MODULE, worker, name(SID), [SID]) || SID <- StoreIDs]
+	end.
 
 start_link(StoreID) ->
 	gen_server:start_link({local, name(StoreID)}, ?MODULE, StoreID, []).
