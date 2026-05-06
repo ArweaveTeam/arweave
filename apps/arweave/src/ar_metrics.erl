@@ -501,6 +501,21 @@ register() ->
 				"'stat' is 'num_peers' - distinct peers offering data "
 				"anywhere in this store_id's range."}]),
 
+	prometheus_gauge:new([{name, peer_interval_cache_size},
+		{labels, [unit]},
+		{help, "Size of ar_data_discovery's peer interval cache "
+				"(per-(peer, window, mode) entries). 'unit' is 'rows' "
+				"(row count, capped by ?MAX_INTERVAL_CACHE_ROWS) or "
+				"'bytes' (ets:info memory * wordsize). Sustained pressure "
+				"near the row cap indicates the cap should be raised or "
+				"peer scanning is thrashing."}]),
+
+	prometheus_counter:new([{name, peer_interval_cache_evictions},
+		{labels, [reason]},
+		{help, "Cumulative rows evicted from ar_data_discovery's peer "
+				"interval cache. 'reason' is 'trim' (LRU cap fired) or "
+				"'peer_removed' (whole-peer wipe on remove_peer)."}]),
+
 	prometheus_counter:new([{name, sync_tasks},
 		{labels, [state, peer]},
 		{help, "Sync task counters per peer. queued_in/queued_out track "

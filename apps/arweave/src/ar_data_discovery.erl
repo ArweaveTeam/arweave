@@ -41,6 +41,23 @@
 %%   footprint: {Key, Intervals, none,           MonotonicMs}
 -define(PEER_INTERVAL_CACHE_TABLE, ar_data_discovery_peer_intervals).
 
+%% Safety-net cap on the peer interval cache. Handles cleanup for peers that
+%% remain active (and aren't reaped entirely) and for whom we have cached
+%% data_sync_record intervals taht are no longer needed (e.g. because they
+%% were syncing from a different peer). 
+%% 
+%% When the cap fires the oldest entries in the cache are removed.
+%% 
+%% The size of each row varies by number of intervals cached. 500B to 80KB.
+%% At 100,000 rows cache size will cap out at 50MB to 8GB
+%% With the lower end of the range being far more likely. If each row has on
+%% average 10 intervals, the cache size will be about 100MB.
+%% 
+%% Trim fires when size exceeds MAX + HEADROOM and removes down to
+%% MAX - HEADROOM, so the O(N) sort to find oldest isn't paid every store.
+-define(MAX_INTERVAL_CACHE_ROWS, 100_000).
+-define(INTERVAL_CACHE_TRIM_HEADROOM, 10_000).
+
 %% Fetch at most this many sync intervals from a peer at a time.
 -ifdef(AR_TEST).
 -define(QUERY_SYNC_INTERVALS_COUNT_LIMIT, 10).
@@ -383,6 +400,11 @@ handle_info(telemetry_tick, State) ->
 	erlang:send_after(?TELEMETRY_TICK_MS, self(), telemetry_tick),
 	emit_state_snapshot(State),
 	emit_bucket_stats(),
+	prometheus_gauge:set(peer_interval_cache_size, [rows],
+			ets:info(?PEER_INTERVAL_CACHE_TABLE, size)),
+	prometheus_gauge:set(peer_interval_cache_size, [bytes],
+			ets:info(?PEER_INTERVAL_CACHE_TABLE, memory)
+					* erlang:system_info(wordsize)),
 	{noreply, State};
 
 handle_info(Message, State) ->
@@ -459,6 +481,11 @@ emit_state_snapshot(#state{ scan_waiting = Waiting, scan_inflight = Inflight,
 			{network_buckets_rows, ets:info(?MODULE, size)},
 			{footprint_buckets_rows,
 					ets:info(ar_data_discovery_footprint_buckets, size)},
+			{peer_interval_cache_rows,
+					ets:info(?PEER_INTERVAL_CACHE_TABLE, size)},
+			{peer_interval_cache_mb,
+					ets:info(?PEER_INTERVAL_CACHE_TABLE, memory)
+							* erlang:system_info(wordsize) div ?MiB},
 			{scan_waiting, queue:len(Waiting)},
 			{scan_inflight, maps:size(Inflight)},
 			{scan_jobs, sets:size(Jobs)},
@@ -904,8 +931,16 @@ fetch_footprint_buckets(Peer) ->
 	end.
 
 wipe_peer_cache_rows(Peer) ->
-	ets:select_delete(?PEER_INTERVAL_CACHE_TABLE,
-		[{ {{Peer, '_', '_'}, '_', '_', '_'}, [], [true] }]).
+	Deleted = ets:select_delete(?PEER_INTERVAL_CACHE_TABLE,
+			[{ {{Peer, '_', '_'}, '_', '_', '_'}, [], [true] }]),
+	case Deleted > 0 of
+		true ->
+			prometheus_counter:inc(peer_interval_cache_evictions,
+					[peer_removed], Deleted);
+		false ->
+			ok
+	end,
+	Deleted.
 
 %%%===================================================================
 %%% Peer interval cache.
@@ -920,7 +955,35 @@ cache_lookup(Key) ->
 cache_store(Key, Intervals, Meta) ->
 	ets:insert(?PEER_INTERVAL_CACHE_TABLE,
 		{Key, Intervals, Meta, erlang:monotonic_time(millisecond)}),
+	maybe_trim_interval_cache(),
 	ok.
+
+maybe_trim_interval_cache() ->
+	case ets:info(?PEER_INTERVAL_CACHE_TABLE, size) of
+		Size when is_integer(Size),
+				Size > ?MAX_INTERVAL_CACHE_ROWS + ?INTERVAL_CACHE_TRIM_HEADROOM ->
+			Target = ?MAX_INTERVAL_CACHE_ROWS - ?INTERVAL_CACHE_TRIM_HEADROOM,
+			ToDelete = Size - Target,
+			Timestamps = ets:select(?PEER_INTERVAL_CACHE_TABLE,
+					[{ {'_', '_', '_', '$1'}, [], ['$1'] }]),
+			Sorted = lists:sort(Timestamps),
+			Threshold = lists:nth(min(ToDelete, length(Sorted)), Sorted),
+			Deleted = ets:select_delete(?PEER_INTERVAL_CACHE_TABLE,
+					[{ {'_', '_', '_', '$1'},
+							[{'=<', '$1', Threshold}], [true] }]),
+			prometheus_counter:inc(peer_interval_cache_evictions,
+					[trim], Deleted),
+			MbAfter = ets:info(?PEER_INTERVAL_CACHE_TABLE, memory)
+					* erlang:system_info(wordsize) div 1048576,
+			?LOG_INFO([{event, peer_interval_cache_trimmed},
+					{rows_before, Size},
+					{rows_deleted, Deleted},
+					{rows_after, Size - Deleted},
+					{mb_after, MbAfter},
+					{cap, ?MAX_INTERVAL_CACHE_ROWS}]);
+		_ ->
+			ok
+	end.
 
 %% Most recent cache_store timestamp across all of Peer's rows, or
 %% `none' if the peer has no cache rows. Used by the periodic
