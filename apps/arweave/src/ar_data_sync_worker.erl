@@ -21,7 +21,8 @@
 
 -record(state, {
 	name = undefined,
-	request_packed_chunks = false
+	request_packed_chunks = false,
+	sync_in_progress = false
 }).
 
 %%%===================================================================
@@ -48,15 +49,22 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
+
+handle_cast(pull, #state{ sync_in_progress = true } = State) ->
+	{noreply, State};
 handle_cast(pull, State) ->
 	%% Shuffle list to distribute peer load across workers.
 	Peers = ar_util:shuffle_list(ar_peer_worker:get_all_peers()),
 	case try_take_one(Peers) of
 		{ok, SyncTask} ->
-			run_sync_range(SyncTask, State),
-			%% Loop: immediately try to pull again.
-			gen_server:cast(self(), pull),
-			{noreply, State};
+			case run_sync_range(SyncTask, State) of
+				done ->
+					%% Loop: immediately try to pull again.
+					gen_server:cast(self(), pull),
+					{noreply, State#state{ sync_in_progress = false }};
+				recast ->
+					{noreply, State#state{ sync_in_progress = true }}
+			end;
 		none ->
 			%% No peer has work right now. Retry after a short delay.
 			ar_util:cast_after(500 + rand:uniform(1000), self(), pull),
@@ -66,10 +74,13 @@ handle_cast(pull, State) ->
 handle_cast({sync_range, SyncTask}, State) ->
 	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
-		recast -> ok;
-		_ -> ar_peer_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs)
-	end,
-	{noreply, State};
+		recast ->
+			{noreply, State#state{ sync_in_progress = true }};
+		_ ->
+			ar_peer_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs),
+			gen_server:cast(self(), pull),
+			{noreply, State#state{ sync_in_progress = false }}
+	end;
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -100,11 +111,11 @@ run_sync_range(SyncTask, State) ->
 	case SyncResult of
 		recast ->
 			%% Slot stays claimed; eventual retry will report completion.
-			ok;
+			recast;
 		_ ->
-			ar_peer_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs)
-	end,
-	ok.
+			ar_peer_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs),
+			done
+	end.
 
 handle_info(_Message, State) ->
 	{noreply, State}.
