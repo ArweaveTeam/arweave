@@ -601,7 +601,7 @@ maybe_start_scanners(#state{ scan_inflight = Inflight,
 				{empty, _} ->
 					State;
 				{{value, {Peer, Mode}}, Waiting2} ->
-					{Pid, _Ref} = spawn_monitor(fun() -> run_peer_scan(Peer, Mode) end),
+					{Pid, _Ref} = spawn_monitor(fun() -> safe_run_peer_scan(Peer, Mode) end),
 					State2 = State#state{
 						scan_waiting = Waiting2,
 						scan_inflight =
@@ -623,6 +623,17 @@ max_concurrent_peer_scans() ->
 %% windows that fall in buckets the peer advertises. Blocks (sleeps) on
 %% rate-limit cooldowns rather than skipping; non-cooldown HTTP failures
 %% are logged and the unit is skipped.
+safe_run_peer_scan(Peer, Mode) ->
+	try
+		run_peer_scan(Peer, Mode)
+	catch Class:Reason:Stacktrace ->
+		?LOG_WARNING([{event, data_discovery_peer_scan_failed},
+			{peer, ar_util:format_peer(Peer)},
+			{mode, Mode},
+			{class, Class},
+			{reason, io_lib:format("~p", [Reason])},
+			{stacktrace, Stacktrace}])
+	end.
 run_peer_scan(Peer, Mode) ->
 	StartMs = erlang:monotonic_time(millisecond),
 	?LOG_INFO([{event, peer_scan}, {stage, started},
