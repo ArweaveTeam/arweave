@@ -49,14 +49,15 @@
 %% When the cap fires the oldest entries in the cache are removed.
 %% 
 %% The size of each row varies by number of intervals cached. 500B to 80KB.
-%% At 100,000 rows cache size will cap out at 50MB to 8GB
-%% With the lower end of the range being far more likely. If each row has on
-%% average 10 intervals, the cache size will be about 100MB.
+%% At 200,000 rows cache size will cap out at 100MB to 16GB
+%% With the lower end of the range being far more likely (initial real-world
+%% tests have the average row size at 750B, so at 200,000 rows cache size will
+%% be about 150MB). 
 %% 
 %% Trim fires when size exceeds MAX + HEADROOM and removes down to
 %% MAX - HEADROOM, so the O(N) sort to find oldest isn't paid every store.
--define(MAX_INTERVAL_CACHE_ROWS, 100_000).
--define(INTERVAL_CACHE_TRIM_HEADROOM, 10_000).
+-define(MAX_INTERVAL_CACHE_ROWS, 200_000).
+-define(INTERVAL_CACHE_TRIM_HEADROOM, 20_000).
 
 %% Fetch at most this many sync intervals from a peer at a time.
 -ifdef(AR_TEST).
