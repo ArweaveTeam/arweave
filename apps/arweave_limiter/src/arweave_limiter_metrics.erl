@@ -14,12 +14,14 @@ register() ->
                                    %% buckets might be reduced for production
                                    {buckets, [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50]},
                                    {labels, [limiter_id]}]),
-
-    ok = prometheus_counter:new([
-                                 {name, ar_limiter_requests_total},
+    ok = prometheus_counter:new([{name, ar_limiter_requests_total},
                                  {help, "The number of requests the limiter has processed"},
                                  {labels, [limiter_id]}]),
     ok = prometheus_counter:new([{name, ar_limiter_rejected_total},
+                                 {help, "The number of request were rejected by the limiter"},
+                                 {labels, [limiter_id, reason]}
+                                ]),
+    ok = prometheus_counter:new([{name, ar_limiter_requests_error},
                                  {help, "The number of request were rejected by the limiter"},
                                  {labels, [limiter_id, reason]}
                                 ]),

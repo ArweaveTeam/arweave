@@ -67,6 +67,7 @@ do_register_or_reject_call(LimiterRef, Peer) ->
         Accept ->
             Accept
     catch E:R ->
+            prometheus_counter:inc(ar_limiter_requests_error, [atom_to_list(LimiterRef), reason_to_list(R)]),
             ?LOG_WARNING([{event, rate_limiter_group_error},
                           {limiter_ref, LimiterRef},
                           {peer, Peer},
@@ -384,3 +385,12 @@ filter_state_for_config(#{id := Id,
       concurrency_limit => ConcurrencyLimit,
       sliding_window_duration => SlidingWindowDuration,
       sliding_window_limit => SlidingWindowLimit}.
+
+%% Convert reasons into strings/Prometheus labels.
+%% We don't really expect anything other than timeouts sometime.
+reason_to_list({timeout, _}) ->
+    "timeout";
+reason_to_list({noproc, _}) ->
+    "noproc";
+reason_to_list(_) ->
+    "other".

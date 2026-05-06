@@ -64,6 +64,11 @@ cleanup_timestamps_map_test() ->
     ?assertEqual(0, maps:size(Empty)),
     ok.
 
+noproc_test() ->
+    %% process shouldn't be running
+    ?assertEqual({reject, error, #{}}, ?M:register_or_reject_call(?TEST_LIMITER, {1,2,3,4})),
+    ok.
+
 timeout_test_() ->
     Config = #{id => ?TEST_LIMITER,
                tick_reduction => 1,
