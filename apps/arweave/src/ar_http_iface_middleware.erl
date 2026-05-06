@@ -16,6 +16,7 @@
 
 
 -define(HANDLER_TIMEOUT, ?DEFAULT_HTTP_HANDLER_TIMEOUT_MS).
+-define(GET_DATA_ROOTS_SEMAPHORE_TIMEOUT, 5 * 1000).
 
 -define(MAX_SERIALIZED_RECENT_HASH_LIST_DIFF, 2400). % 50 * 48.
 -define(MAX_SERIALIZED_MISSING_TX_INDICES, 125). % Every byte encodes 8 positions.
@@ -203,6 +204,16 @@ add_cors_headers(Req, Response) ->
 			{Status, ?CORS_HEADERS, Body, HandledReq};
 		{error, timeout} ->
 			{503, ?CORS_HEADERS, jiffy:encode(#{ error => timeout }), Req}
+	end.
+
+acquire_get_data_roots_semaphore() ->
+	case ar_semaphore:acquire(get_data_roots, ?GET_DATA_ROOTS_SEMAPHORE_TIMEOUT) of
+		ok ->
+			ok;
+		{error, timeout} ->
+			{error, timeout};
+		_ ->
+			{error, timeout}
 	end.
 
 -ifdef(TESTNET).
@@ -520,13 +531,16 @@ handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
 		Offset when Offset < 0 ->
 			{400, #{}, jiffy:encode(#{ error => negative_offset }), Req};
 		Offset ->
-			ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
-			case ar_data_roots:get_block(Offset) of
-				{ok, {TXRoot, BlockSize, DataRootEntries}} ->
-					Payload = ar_serialize:data_roots_to_binary(
-						{TXRoot, BlockSize, DataRootEntries}
-					),
-					{200, #{}, Payload, Req};
+			maybe
+				ok ?= acquire_get_data_roots_semaphore(),
+				{ok, {TXRoot, BlockSize, DataRootEntries}} ?= ar_data_roots:get_block(Offset),
+				Payload = ar_serialize:data_roots_to_binary(
+					{TXRoot, BlockSize, DataRootEntries}
+				),
+				{200, #{}, Payload, Req}
+			else
+				{error, timeout} ->
+					{503, #{}, jiffy:encode(#{ error => timeout }), Req};
 				{error, not_found} ->
 					{404, #{}, jiffy:encode(#{ error => not_found }), Req};
 				_ ->
@@ -550,13 +564,19 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 			Offset when Offset < 0 ->
 				{reply, {400, #{}, jiffy:encode(#{ error => negative_offset }), Req}};
 			Offset ->
-				ok = ar_semaphore:acquire(get_data_roots, ?DEFAULT_CALL_TIMEOUT),
-				{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
-				case ar_data_roots:are_synced(BlockStart, BlockEnd, ExpectedTXRoot, ?DEFAULT_MODULE) of
+				maybe
+					ok ?= acquire_get_data_roots_semaphore(),
+					{BlockStart, BlockEnd, ExpectedTXRoot} =
+						ar_block_index:get_block_bounds(Offset),
+					false ?= ar_data_roots:are_synced(
+						BlockStart, BlockEnd, ExpectedTXRoot, ?DEFAULT_MODULE
+					),
+					{Offset, BlockStart, BlockEnd}
+				else
+					{error, timeout} ->
+						{reply, {503, #{}, jiffy:encode(#{ error => timeout }), Req}};
 					true ->
-						{reply, {200, #{}, <<>>, Req}};
-					false ->
-						{Offset, BlockStart, BlockEnd}
+						{reply, {200, #{}, <<>>, Req}}
 				end
 		end,
 	case ReadOffset of
