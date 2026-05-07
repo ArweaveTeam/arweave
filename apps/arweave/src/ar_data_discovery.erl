@@ -43,21 +43,12 @@
 
 %% Safety-net cap on the peer interval cache. Handles cleanup for peers that
 %% remain active (and aren't reaped entirely) and for whom we have cached
-%% data_sync_record intervals taht are no longer needed (e.g. because they
-%% were syncing from a different peer). 
+%% data_sync_record intervals that are no longer needed (e.g. because they
+%% were synced from a different peer). 
 %% 
-%% When the cap fires the oldest entries in the cache are removed.
-%% 
-%% The size of each row varies by number of intervals cached. 500B to 80KB.
-%% At 200,000 rows cache size will cap out at 100MB to 16GB
-%% With the lower end of the range being far more likely (initial real-world
-%% tests have the average row size at 750B, so at 200,000 rows cache size will
-%% be about 150MB). 
-%% 
-%% Trim fires when size exceeds MAX + HEADROOM and removes down to
-%% MAX - HEADROOM, so the O(N) sort to find oldest isn't paid every store.
--define(MAX_INTERVAL_CACHE_ROWS, 200_000).
--define(INTERVAL_CACHE_TRIM_HEADROOM, 20_000).
+%% Capped by ETS memory footprint. When the cap
+%% fires we drop the oldest 10% of rows in a single pass.
+-define(MAX_INTERVAL_CACHE_BYTES, 1024 * 1024 * 512). %% 512 MiB
 
 %% Fetch at most this many sync intervals from a peer at a time.
 -ifdef(AR_TEST).
@@ -960,11 +951,13 @@ cache_store(Key, Intervals, Meta) ->
 	ok.
 
 maybe_trim_interval_cache() ->
-	case ets:info(?PEER_INTERVAL_CACHE_TABLE, size) of
-		Size when is_integer(Size),
-				Size > ?MAX_INTERVAL_CACHE_ROWS + ?INTERVAL_CACHE_TRIM_HEADROOM ->
-			Target = ?MAX_INTERVAL_CACHE_ROWS - ?INTERVAL_CACHE_TRIM_HEADROOM,
-			ToDelete = Size - Target,
+	Bytes = ets:info(?PEER_INTERVAL_CACHE_TABLE, memory)
+			* erlang:system_info(wordsize),
+	case Bytes > ?MAX_INTERVAL_CACHE_BYTES of
+		true ->
+			Size = ets:info(?PEER_INTERVAL_CACHE_TABLE, size),
+			%% Drop the oldest 10% of rows.
+			ToDelete = max(1, Size div 10),
 			Timestamps = ets:select(?PEER_INTERVAL_CACHE_TABLE,
 					[{ {'_', '_', '_', '$1'}, [], ['$1'] }]),
 			Sorted = lists:sort(Timestamps),
@@ -975,14 +968,15 @@ maybe_trim_interval_cache() ->
 			prometheus_counter:inc(peer_interval_cache_evictions,
 					[trim], Deleted),
 			MbAfter = ets:info(?PEER_INTERVAL_CACHE_TABLE, memory)
-					* erlang:system_info(wordsize) div 1048576,
+					* erlang:system_info(wordsize) div ?MiB,
 			?LOG_INFO([{event, peer_interval_cache_trimmed},
 					{rows_before, Size},
 					{rows_deleted, Deleted},
 					{rows_after, Size - Deleted},
+					{mb_before, Bytes div ?MiB},
 					{mb_after, MbAfter},
-					{cap, ?MAX_INTERVAL_CACHE_ROWS}]);
-		_ ->
+					{cap_mb, ?MAX_INTERVAL_CACHE_BYTES div ?MiB}]);
+		false ->
 			ok
 	end.
 

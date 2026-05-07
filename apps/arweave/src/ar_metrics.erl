@@ -505,9 +505,9 @@ register() ->
 		{labels, [unit]},
 		{help, "Size of ar_data_discovery's peer interval cache "
 				"(per-(peer, window, mode) entries). 'unit' is 'rows' "
-				"(row count, capped by ?MAX_INTERVAL_CACHE_ROWS) or "
-				"'bytes' (ets:info memory * wordsize). Sustained pressure "
-				"near the row cap indicates the cap should be raised or "
+				"(row count) or 'bytes' (ets:info memory * wordsize, "
+				"capped by ?MAX_INTERVAL_CACHE_BYTES). Sustained pressure "
+				"near the byte cap indicates the cap should be raised or "
 				"peer scanning is thrashing."}]),
 
 	prometheus_counter:new([{name, peer_interval_cache_evictions},
