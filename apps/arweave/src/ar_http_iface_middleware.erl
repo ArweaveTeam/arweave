@@ -207,7 +207,13 @@ add_cors_headers(Req, Response) ->
 	end.
 
 acquire_get_data_roots_semaphore() ->
-	case ar_semaphore:acquire(get_data_roots, ?GET_DATA_ROOTS_SEMAPHORE_TIMEOUT) of
+	acquire_http_semaphore(get_data_roots, ?GET_DATA_ROOTS_SEMAPHORE_TIMEOUT).
+
+acquire_http_semaphore(Name) ->
+	acquire_http_semaphore(Name, ?DEFAULT_HTTP_SEMAPHORE_TIMEOUT_MS).
+
+acquire_http_semaphore(Name, Timeout) ->
+	case ar_semaphore:acquire(Name, Timeout) of
 		ok ->
 			ok;
 		{error, timeout} ->
@@ -215,6 +221,9 @@ acquire_get_data_roots_semaphore() ->
 		_ ->
 			{error, timeout}
 	end.
+
+timeout_response(Req) ->
+	{503, #{}, jiffy:encode(#{ error => timeout }), Req}.
 
 -ifdef(TESTNET).
 handle4(<<"POST">>, [<<"mine">>], Req, _Pid) ->
@@ -348,35 +357,38 @@ handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
 	end;
 
 handle(<<"GET">>, [<<"sync_buckets">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
-	case ar_global_sync_record:get_serialized_sync_buckets() of
-		{ok, Binary} ->
-			{200, #{}, Binary, Req};
+	maybe
+		ok ?= acquire_http_semaphore(get_sync_record),
+		{ok, Binary} ?= ar_global_sync_record:get_serialized_sync_buckets(),
+		{200, #{}, Binary, Req}
+	else
 		{error, not_initialized} ->
 			{500, #{}, jiffy:encode(#{ error => not_initialized }), Req};
 		{error, timeout} ->
-			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			timeout_response(Req)
 	end;
 
 handle(<<"GET">>, [<<"footprint_buckets">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
-	case ar_global_sync_record:get_serialized_footprint_buckets() of
-		{ok, Binary} ->
-			{200, #{}, Binary, Req};
+	maybe
+		ok ?= acquire_http_semaphore(get_sync_record),
+		{ok, Binary} ?= ar_global_sync_record:get_serialized_footprint_buckets(),
+		{200, #{}, Binary, Req}
+	else
 		{error, not_initialized} ->
 			{500, #{}, jiffy:encode(#{ error => not_initialized }), Req};
 		{error, timeout} ->
-			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			timeout_response(Req)
 	end;
 
 handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
 	Options = #{ format => content_type_format(Req), random_subset => true },
-	case ar_global_sync_record:get_serialized_sync_record(Options) of
-		{ok, Binary} ->
-			{200, #{}, Binary, Req};
+	maybe
+		ok ?= acquire_http_semaphore(get_sync_record),
+		{ok, Binary} ?= ar_global_sync_record:get_serialized_sync_record(Options),
+		{200, #{}, Binary, Req}
+	else
 		{error, timeout} ->
-			{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+			timeout_response(Req)
 	end;
 
 handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pid) ->
@@ -396,8 +408,13 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pi
 						true ->
 							{400, #{}, jiffy:encode(#{ error => limit_too_big }), Req};
 						false ->
-							ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
-							handle_get_data_sync_record(Start, Limit, Req)
+							maybe
+								ok ?= acquire_http_semaphore(get_sync_record),
+								handle_get_data_sync_record(Start, Limit, Req)
+							else
+								{error, timeout} ->
+									timeout_response(Req)
+							end
 					end
 			end
 	end;
@@ -425,8 +442,13 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedEnd, EncodedLimi
 								true ->
 									{400, #{}, jiffy:encode(#{ error => limit_too_big }), Req};
 								false ->
-									ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
-									handle_get_data_sync_record(Start, End, Limit, Req)
+									maybe
+										ok ?= acquire_http_semaphore(get_sync_record),
+										handle_get_data_sync_record(Start, End, Limit, Req)
+									else
+										{error, timeout} ->
+											timeout_response(Req)
+									end
 							end
 					end
 			end
@@ -474,8 +496,13 @@ handle(<<"GET">>, [<<"footprints">>, EncodedPartition, EncodedFootprintNumber], 
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_footprint_number_encoding }), Req};
 				FootprintNumber when FootprintNumber >= 0 ->
-					ok = ar_semaphore:acquire(get_sync_record, ?DEFAULT_CALL_TIMEOUT),
-					handle_get_footprints(Partition, FootprintNumber, Req);
+					maybe
+						ok ?= acquire_http_semaphore(get_sync_record),
+						handle_get_footprints(Partition, FootprintNumber, Req)
+					else
+						{error, timeout} ->
+							timeout_response(Req)
+					end;
 				_ ->
 					{400, #{}, jiffy:encode(#{ error => negative_footprint_number }), Req}
 			end;
@@ -639,11 +666,11 @@ handle(<<"POST">>, [<<"chunk">>], Req, Pid) ->
 		end,
 	case ParseChunk of
 		{ok, {Proof, Req2}} ->
-			case ar_semaphore:acquire(post_chunk, 5000) of
+			case acquire_http_semaphore(post_chunk, 5000) of
 				ok ->
 					handle_post_chunk(Proof, Req2);
 				{error, timeout} ->
-					{503, #{}, jiffy:encode(#{ error => timeout }), Req2}
+					timeout_response(Req2)
 			end;
 		Reply3 ->
 			Reply3
@@ -930,23 +957,26 @@ handle(<<"GET">>, [<<"v2price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
 	end;
 
 handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_reward_history, ?DEFAULT_CALL_TIMEOUT),
-	case ar_util:safe_decode(EncodedBH) of
-		{ok, BH} ->
-			Fork_2_6 = ar_fork:height_2_6(),
-			case ar_block_cache:get_block_and_status(block_cache, BH) of
-				{#block{ height = Height, reward_history = RewardHistory }, {Status, _}}
-						when (Status == on_chain orelse Status == validated),
-							Height >= Fork_2_6 ->
-					RewardHistory2 = ar_rewards:trim_buffered_reward_history(Height,
-							RewardHistory),
-					{200, #{}, ar_serialize:reward_history_to_binary(RewardHistory2),
-							Req};
-				_ ->
-					{404, #{}, <<>>, Req}
-			end;
+	maybe
+		ok ?= acquire_http_semaphore(get_reward_history),
+		{ok, BH} ?= ar_util:safe_decode(EncodedBH),
+		Fork_2_6 = ar_fork:height_2_6(),
+		case ar_block_cache:get_block_and_status(block_cache, BH) of
+			{#block{ height = Height, reward_history = RewardHistory }, {Status, _}}
+					when (Status == on_chain orelse Status == validated),
+						Height >= Fork_2_6 ->
+				RewardHistory2 = ar_rewards:trim_buffered_reward_history(Height,
+						RewardHistory),
+				{200, #{}, ar_serialize:reward_history_to_binary(RewardHistory2),
+						Req};
+			_ ->
+				{404, #{}, <<>>, Req}
+		end
+	else
 		{error, invalid} ->
-			{400, #{}, jiffy:encode(#{ error => invalid_block_hash }), Req}
+			{400, #{}, jiffy:encode(#{ error => invalid_block_hash }), Req};
+		{error, timeout} ->
+			timeout_response(Req)
 	end;
 
 handle(<<"GET">>, [<<"block_time_history">>, EncodedBH], Req, _Pid) ->
@@ -973,32 +1003,38 @@ handle(<<"GET">>, [<<"hash_list">>], Req, _Pid) ->
 	handle(<<"GET">>, [<<"block_index">>], Req, _Pid);
 
 handle(<<"GET">>, [<<"block_index">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
-	case ar_node:get_height() >= ar_fork:height_2_6() of
+	maybe
+		ok ?= acquire_http_semaphore(get_block_index),
+		false ?= ar_node:get_height() >= ar_fork:height_2_6(),
+		BI = ar_node:get_block_index(),
+		{200, #{},
+			ar_serialize:jsonify(
+				ar_serialize:block_index_to_json_struct(
+					format_bi_for_peer(BI, Req)
+				)
+			),
+		Req}
+	else
 		true ->
 			{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
-		false ->
-			BI = ar_node:get_block_index(),
-			{200, #{},
-				ar_serialize:jsonify(
-					ar_serialize:block_index_to_json_struct(
-						format_bi_for_peer(BI, Req)
-					)
-				),
-			Req}
+		{error, timeout} ->
+			timeout_response(Req)
 	end;
 
 %% Return the current binary-encoded block index held by the node.
 %% GET request to endpoint /block_index2.
 handle(<<"GET">>, [<<"block_index2">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
-	case ar_node:get_height() >= ar_fork:height_2_6() of
+	maybe
+		ok ?= acquire_http_semaphore(get_block_index),
+		false ?= ar_node:get_height() >= ar_fork:height_2_6(),
+		BI = ar_node:get_block_index(),
+		Bin = ar_serialize:block_index_to_binary(BI),
+		{200, #{}, Bin, Req}
+	else
 		true ->
 			{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
-		false ->
-			BI = ar_node:get_block_index(),
-			Bin = ar_serialize:block_index_to_binary(BI),
-			{200, #{}, Bin, Req}
+		{error, timeout} ->
+			timeout_response(Req)
 	end;
 
 handle(<<"GET">>, [<<"hash_list">>, From, To], Req, _Pid) ->
@@ -1012,24 +1048,29 @@ handle(<<"GET">>, [<<"block_index2">>, From, To], Req, _Pid) ->
 	handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid);
 
 handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
-	Props =
-		ets:select(
-			node_state,
-			[{{'$1', '$2'},
-				[{'or',
-					{'==', '$1', height},
-					{'==', '$1', recent_block_index}}], ['$_']}]
-		),
-	Height = proplists:get_value(height, Props),
-	RecentBI = proplists:get_value(recent_block_index, Props),
-	try
-		Start = binary_to_integer(From),
-		End = binary_to_integer(To),
-		Encoding = case erlang:get(encoding) of undefined -> json; Enc -> Enc end,
-		handle_get_block_index_range(Start, End, Height, RecentBI, Req, Encoding)
-	catch _:_ ->
-		{400, #{}, jiffy:encode(#{ error => invalid_range }), Req}
+	maybe
+		ok ?= acquire_http_semaphore(get_block_index),
+		Props =
+			ets:select(
+				node_state,
+				[{{'$1', '$2'},
+					[{'or',
+						{'==', '$1', height},
+						{'==', '$1', recent_block_index}}], ['$_']}]
+			),
+		Height = proplists:get_value(height, Props),
+		RecentBI = proplists:get_value(recent_block_index, Props),
+		try
+			Start = binary_to_integer(From),
+			End = binary_to_integer(To),
+			Encoding = case erlang:get(encoding) of undefined -> json; Enc -> Enc end,
+			handle_get_block_index_range(Start, End, Height, RecentBI, Req, Encoding)
+		catch _:_ ->
+			{400, #{}, jiffy:encode(#{ error => invalid_range }), Req}
+		end
+	else
+		{error, timeout} ->
+			timeout_response(Req)
 	end;
 
 handle(<<"GET">>, [<<"recent_hash_list">>], Req, _Pid) ->
@@ -1066,11 +1107,16 @@ handle(<<"GET">>, [<<"recent_hash_list_diff">>], Req, Pid) ->
 %% Return the sum of all the existing accounts in the latest state, in Winston.
 %% GET request to endpoint /total_supply.
 handle(<<"GET">>, [<<"total_supply">>], Req, _Pid) ->
-	ok = ar_semaphore:acquire(get_wallet_list, ?DEFAULT_CALL_TIMEOUT),
-	B = ar_node:get_current_block(),
-	TotalSupply = get_total_supply(B#block.wallet_list, first, 0,
-			B#block.denomination),
-	{200, #{}, integer_to_binary(TotalSupply), Req};
+	maybe
+		ok ?= acquire_http_semaphore(get_wallet_list),
+		B = ar_node:get_current_block(),
+		TotalSupply = get_total_supply(B#block.wallet_list, first, 0,
+				B#block.denomination),
+		{200, #{}, integer_to_binary(TotalSupply), Req}
+	else
+		{error, timeout} ->
+			timeout_response(Req)
+	end;
 
 %% Return the current wallet list held by the node.
 %% GET request to endpoint /wallet_list.
@@ -1187,8 +1233,13 @@ handle(<<"GET">>, [<<"block">>, Type, ID, Field], Req, _Pid)
 %% Return the balance of the given wallet at the given block.
 handle(<<"GET">>, [<<"block">>, <<"height">>, Height, <<"wallet">>, Addr, <<"balance">>], Req,
 		_Pid) ->
-	ok = ar_semaphore:acquire(get_wallet_list, ?DEFAULT_CALL_TIMEOUT),
-	handle_get_block_wallet_balance(Height, Addr, Req);
+	maybe
+		ok ?= acquire_http_semaphore(get_wallet_list),
+		handle_get_block_wallet_balance(Height, Addr, Req)
+	else
+		{error, timeout} ->
+			timeout_response(Req)
+	end;
 
 %% Return the current block.
 %% GET request to endpoint /block/current.
@@ -1510,19 +1561,24 @@ handle_get_tx(Hash, Req, Encoding) ->
 		{error, invalid} ->
 			{400, #{}, <<"Invalid hash.">>, Req};
 		{ok, ID} ->
-			ok = ar_semaphore:acquire(get_tx, ?DEFAULT_CALL_TIMEOUT),
-			case ar_storage:read_tx(ID) of
-				unavailable ->
-					maybe_tx_is_pending_response(ID, Req);
-				#tx{} = TX ->
-					Body =
-						case Encoding of
-							json ->
-								ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX));
-							binary ->
-								ar_serialize:tx_to_binary(TX)
-						end,
-					{200, #{}, Body, Req}
+			maybe
+				ok ?= acquire_http_semaphore(get_tx),
+				case ar_storage:read_tx(ID) of
+					unavailable ->
+						maybe_tx_is_pending_response(ID, Req);
+					#tx{} = TX ->
+						Body =
+							case Encoding of
+								json ->
+									ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX));
+								binary ->
+									ar_serialize:tx_to_binary(TX)
+							end,
+						{200, #{}, Body, Req}
+				end
+			else
+				{error, timeout} ->
+					timeout_response(Req)
 			end
 	end.
 
@@ -1568,18 +1624,23 @@ serve_tx_data(Req, #tx{ format = 2, id = ID, data_size = DataSize } = TX) ->
 		true ->
 			{200, #{}, sendfile(DataFilename), Req};
 		false ->
-			ok = ar_semaphore:acquire(get_tx_data, ?DEFAULT_CALL_TIMEOUT),
-			case ar_data_sync:get_tx_data(ID) of
-				{ok, Data} ->
-					{200, #{}, ar_util:encode(Data), Req};
-				{error, tx_data_too_big} ->
-					{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
-				{error, not_found} when DataSize == 0 ->
-        	{200, #{}, <<>>, Req};
-				{error, not_found} ->
-					{404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("genesis_data/not_found.html"), Req};
+			maybe
+				ok ?= acquire_http_semaphore(get_tx_data),
+				case ar_data_sync:get_tx_data(ID) of
+					{ok, Data} ->
+						{200, #{}, ar_util:encode(Data), Req};
+					{error, tx_data_too_big} ->
+						{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
+					{error, not_found} when DataSize == 0 ->
+						{200, #{}, <<>>, Req};
+					{error, not_found} ->
+						{404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("genesis_data/not_found.html"), Req};
+					{error, timeout} ->
+						timeout_response(Req)
+				end
+			else
 				{error, timeout} ->
-					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+					timeout_response(Req)
 			end
 	end.
 
@@ -1602,18 +1663,23 @@ serve_format_2_html_data(Req, ContentType, TX) ->
 		{ok, Data} ->
 			{200, #{ <<"content-type">> => ContentType }, Data, Req};
 		{error, enoent} ->
-			ok = ar_semaphore:acquire(get_tx_data, ?DEFAULT_CALL_TIMEOUT),
-			case ar_data_sync:get_tx_data(TX#tx.id) of
-				{ok, Data} ->
-					{200, #{ <<"content-type">> => ContentType }, Data, Req};
-				{error, tx_data_too_big} ->
-					{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
-				{error, not_found} when TX#tx.data_size == 0 ->
-        	{200, #{ <<"content-type">> => ContentType }, <<>>, Req};
-				{error, not_found} ->
-					{404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("genesis_data/not_found.html"), Req};
+			maybe
+				ok ?= acquire_http_semaphore(get_tx_data),
+				case ar_data_sync:get_tx_data(TX#tx.id) of
+					{ok, Data} ->
+						{200, #{ <<"content-type">> => ContentType }, Data, Req};
+					{error, tx_data_too_big} ->
+						{400, #{}, jiffy:encode(#{ error => tx_data_too_big }), Req};
+					{error, not_found} when TX#tx.data_size == 0 ->
+						{200, #{ <<"content-type">> => ContentType }, <<>>, Req};
+					{error, not_found} ->
+						{404, #{ <<"content-type">> => <<"text/html; charset=utf-8">> }, sendfile("genesis_data/not_found.html"), Req};
+					{error, timeout} ->
+						timeout_response(Req)
+				end
+			else
 				{error, timeout} ->
-					{503, #{}, jiffy:encode(#{ error => timeout }), Req}
+					timeout_response(Req)
 			end
 	end.
 
@@ -1848,7 +1914,7 @@ handle_post_tx({Req, Pid, Encoding}) ->
 			{503, #{}, <<>>, Req};
 		{ok, TX, Req2} ->
 			{ok, Config} = arweave_config:get_env(),
-			case ar_semaphore:acquire(post_tx,
+			case acquire_http_semaphore(post_tx,
 					Config#config.post_tx_timeout * 1000) of
 				{error, timeout} ->
 					{503, #{}, <<>>, Req2};
@@ -2018,20 +2084,16 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 								%% Chunk is recorded but packing is unknown.
 								{none, {reply, {404, #{}, <<>>, Req}}};
 							{{true, RequestedPacking}, _StoreID} ->
-								ok = ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT),
-								{RequestedPacking, ok};
+								acquire_chunk_semaphore(get_chunk, RequestedPacking, Req);
 							{{true, Packing}, _StoreID} when RequestedPacking == any ->
-								ok = ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT),
-								{Packing, ok};
+								acquire_chunk_semaphore(get_chunk, Packing, Req);
 							{{true, _}, _StoreID} ->
 								{ok, Config} = arweave_config:get_env(),
 								case lists:member(pack_served_chunks, Config#config.enable) of
 									false ->
 										{none, {reply, {404, #{}, <<>>, Req}}};
 									true ->
-										ok = ar_semaphore:acquire(get_and_pack_chunk,
-												?DEFAULT_CALL_TIMEOUT),
-										{RequestedPacking, ok}
+										acquire_chunk_semaphore(get_and_pack_chunk, RequestedPacking, Req)
 								end
 						end,
 					case CheckRecords of
@@ -2083,6 +2145,15 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 			{400, #{}, jiffy:encode(#{ error => invalid_offset }), Req}
 	end.
 
+acquire_chunk_semaphore(Semaphore, Packing, Req) ->
+	maybe
+		ok ?= acquire_http_semaphore(Semaphore),
+		{Packing, ok}
+	else
+		{error, timeout} ->
+			{none, {reply, timeout_response(Req)}}
+	end.
+
 get_chunk_response_headers(Proof) ->
 	case maps:get(absolute_end_offset, Proof, not_found) of
 		not_found ->
@@ -2098,9 +2169,9 @@ handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->
 		{ok, TXID} ->
 			case catch binary_to_integer(OffsetBinary) of
 				Offset when is_integer(Offset), Offset > 0 ->
-					case ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT) of
+					case acquire_http_semaphore(get_chunk) of
 						{error, timeout} ->
-							{503, #{}, jiffy:encode(#{ error => timeout }), Req};
+							timeout_response(Req);
 						ok ->
 							case ar_disk_pool:get_unconfirmed_chunk(TXID, Offset) of
 								{ok, {Chunk, DataPath, IsStoredLongTerm}} ->
@@ -2146,41 +2217,46 @@ handle_get_chunk_proof2(Offset, Req, Encoding) ->
 			_ ->
 				true
 		end,
-	ok = ar_semaphore:acquire(get_chunk, ?DEFAULT_CALL_TIMEOUT),
-	CheckRecords =
-		case ar_sync_record:is_recorded(Offset, ar_data_sync) of
-			false ->
-				{reply, {404, #{}, <<>>, Req}};
-			{true, _StoreID} ->
-				%% Chunk is recorded but packing is unknown.
-				{reply, {404, #{}, <<>>, Req}};
-			{{true, _Packing}, _StoreID} ->
-				ok
-		end,
-	case CheckRecords of
-		{reply, Reply} ->
-			Reply;
-		ok ->
-			Args = #{ bucket_based_offset => IsBucketBasedOffset },
-			case ar_data_sync:get_chunk_proof(Offset, Args) of
-				{ok, Proof} ->
-					Reply =
-						case Encoding of
-							json ->
-								jiffy:encode(
-									ar_serialize:poa_no_chunk_map_to_json_map(
-											Proof));
-							binary ->
-								ar_serialize:poa_no_chunk_map_to_binary(Proof)
-						end,
-					{200, #{}, Reply, Req};
-				{error, chunk_not_found} ->
-					{404, #{}, <<>>, Req};
-				{error, not_joined} ->
-					not_joined(Req);
-				{error, failed_to_read_chunk} ->
-					{500, #{}, <<>>, Req}
+	maybe
+		ok ?= acquire_http_semaphore(get_chunk),
+		CheckRecords =
+			case ar_sync_record:is_recorded(Offset, ar_data_sync) of
+				false ->
+					{reply, {404, #{}, <<>>, Req}};
+				{true, _StoreID} ->
+					%% Chunk is recorded but packing is unknown.
+					{reply, {404, #{}, <<>>, Req}};
+				{{true, _Packing}, _StoreID} ->
+					ok
+			end,
+		case CheckRecords of
+			{reply, Reply} ->
+				Reply;
+			ok ->
+				Args = #{ bucket_based_offset => IsBucketBasedOffset },
+				case ar_data_sync:get_chunk_proof(Offset, Args) of
+					{ok, Proof} ->
+						Reply =
+							case Encoding of
+								json ->
+									jiffy:encode(
+										ar_serialize:poa_no_chunk_map_to_json_map(
+												Proof));
+								binary ->
+									ar_serialize:poa_no_chunk_map_to_binary(Proof)
+							end,
+						{200, #{}, Reply, Req};
+					{error, chunk_not_found} ->
+						{404, #{}, <<>>, Req};
+					{error, not_joined} ->
+						not_joined(Req);
+					{error, failed_to_read_chunk} ->
+						{500, #{}, <<>>, Req}
+				end
 			end
+	else
+		{error, timeout} ->
+			timeout_response(Req)
 	end.
 
 get_data_root_from_headers(Req) ->
@@ -2768,14 +2844,17 @@ process_request(get_block, [Type, ID, <<"hash_list">>], Req) ->
 		unavailable ->
 			{404, #{}, <<"Not Found.">>, Req};
 		B ->
-			ok = ar_semaphore:acquire(get_block_index, ?DEFAULT_CALL_TIMEOUT),
-			case ar_node:get_height() >= ar_fork:height_2_6() of
+			maybe
+				ok ?= acquire_http_semaphore(get_block_index),
+				false ?= ar_node:get_height() >= ar_fork:height_2_6(),
+				CurrentBI = ar_node:get_block_index(),
+				HL = ar_block:generate_hash_list_for_block(B#block.indep_hash, CurrentBI),
+				{200, #{}, ar_serialize:jsonify(lists:map(fun ar_util:encode/1, HL)), Req}
+			else
 				true ->
 					{400, #{}, jiffy:encode(#{ error => not_supported_since_fork_2_6 }), Req};
-				false ->
-					CurrentBI = ar_node:get_block_index(),
-					HL = ar_block:generate_hash_list_for_block(B#block.indep_hash, CurrentBI),
-					{200, #{}, ar_serialize:jsonify(lists:map(fun ar_util:encode/1, HL)), Req}
+				{error, timeout} ->
+					timeout_response(Req)
 			end
 	end;
 %% @doc Return the wallet list associated with a block.
@@ -2794,15 +2873,20 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 						jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
 						Req};
 				{true, _} ->
-					ok = ar_semaphore:acquire(get_wallet_list, ?DEFAULT_CALL_TIMEOUT),
-					case ar_storage:read_wallet_list(B#block.wallet_list) of
-						{ok, Tree} ->
-							{200, #{}, ar_serialize:jsonify(
-								ar_serialize:wallet_list_to_json_struct(
-									B#block.reward_addr, false, Tree
-								)), Req};
-						_ ->
-							{404, #{}, <<"Block not found.">>, Req}
+					maybe
+						ok ?= acquire_http_semaphore(get_wallet_list),
+						case ar_storage:read_wallet_list(B#block.wallet_list) of
+							{ok, Tree} ->
+								{200, #{}, ar_serialize:jsonify(
+									ar_serialize:wallet_list_to_json_struct(
+										B#block.reward_addr, false, Tree
+									)), Req};
+							_ ->
+								{404, #{}, <<"Block not found.">>, Req}
+						end
+					else
+						{error, timeout} ->
+							timeout_response(Req)
 					end;
 				_ ->
 					WLFilepath = ar_storage:wallet_list_filepath(B#block.wallet_list),

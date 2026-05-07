@@ -170,6 +170,9 @@
 %% The time the cowboy loop handler waits before killing a request handler process.
 -define(DEFAULT_HTTP_HANDLER_TIMEOUT_MS, 55000).
 
+%% The default time an HTTP request waits for an endpoint semaphore.
+-define(DEFAULT_HTTP_SEMAPHORE_TIMEOUT_MS, 30000).
+
 %% Per-chunk HTTP body read period passed to cowboy_req:read_body/2.
 -define(DEFAULT_HTTP_READ_BODY_PERIOD_MS, 15000).
 
