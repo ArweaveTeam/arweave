@@ -212,7 +212,7 @@ handle_cast(enqueue, #state{ store_id = StoreID,
 			tasks_produced = TasksProduced } } = State)
 		when O >= E ->
 	NextMode = flip_mode(Mode),
-	?LOG_INFO([{event, sync_network}, {stage, pass_complete},
+	?LOG_DEBUG([{event, sync_network}, {stage, pass_complete},
 		{store_id, StoreID}, {mode, Mode}, {tasks_produced, TasksProduced},
 		{next_mode, NextMode}]),
 	case init_pass(State, NextMode) of
@@ -426,7 +426,7 @@ do_enqueue_footprint(State) ->
 %% Log once per pass.
 maybe_log_chunk_sync_started(StoreID, Mode,
 		#enqueue_pass{ tasks_produced = 0 }, Produced) when Produced > 0 ->
-	?LOG_INFO([{event, sync_network}, {stage, chunk_sync_started},
+	?LOG_DEBUG([{event, sync_network}, {stage, chunk_sync_started},
 		{store_id, StoreID}, {mode, Mode}, {tasks_enqueued, Produced}]);
 maybe_log_chunk_sync_started(_StoreID, _Mode, _Pass, _Produced) ->
 	ok.
@@ -487,7 +487,7 @@ init_pass(#state{ store_id = StoreID, range_start = Start, range_end = End,
 				normal ->
 					min(End, WeaveSize)
 			end,
-			?LOG_INFO([{event, sync_network}, {stage, pass_started},
+			?LOG_DEBUG([{event, sync_network}, {stage, pass_started},
 				{store_id, StoreID}, {mode, Mode},
 				{start, Start}, {end_, End2}]),
 			{ok, #enqueue_pass{

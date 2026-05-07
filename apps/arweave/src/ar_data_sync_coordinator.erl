@@ -279,7 +279,7 @@ rebalance_peers2([{Peer, Pid} | Rest], AllPeerPerformances, Targets, State) ->
 	Result = ar_peer_worker:rebalance(Pid, Performance, RebalanceParams),
 	case Result of
 		{shutdown, _RemovedCount} ->
-			?LOG_INFO([{event, shutdown_idle_peer_worker},
+			?LOG_DEBUG([{event, shutdown_idle_peer_worker},
 				{peer, ar_util:format_peer(Peer)}]),
 			ar_peer_worker:stop(Pid);
 		{ok, _RemovedCount} -> ok;

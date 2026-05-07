@@ -340,7 +340,7 @@ handle_cast({remove_peer, Peer, Reason}, State) ->
 			Peer, State#state.scan_inflight),
 	lists:foreach(fun(Pid) -> exit(Pid, kill) end, KilledScanners),
 	wipe_peer_cache_rows(Peer),
-	?LOG_INFO([{event, peer_removed_from_discovery},
+	?LOG_DEBUG([{event, peer_removed_from_discovery},
 			{peer, ar_util:format_peer(Peer)},
 			{reason, Reason},
 			{had_sync_buckets, NumSync > 0},
@@ -466,7 +466,7 @@ emit_state_snapshot(#state{ scan_waiting = Waiting, scan_inflight = Inflight,
 		catch _:_ -> -1
 		end,
 	{_, MailboxLen} = erlang:process_info(self(), message_queue_len),
-	?LOG_INFO([{event, data_discovery_state_snapshot},
+	?LOG_DEBUG([{event, data_discovery_state_snapshot},
 			{network_buckets_rows, ets:info(?MODULE, size)},
 			{footprint_buckets_rows,
 					ets:info(ar_data_discovery_footprint_buckets, size)},
@@ -660,7 +660,7 @@ safe_run_peer_scan(Peer, Mode) ->
 	end.
 run_peer_scan(Peer, Mode) ->
 	StartMs = erlang:monotonic_time(millisecond),
-	?LOG_INFO([{event, peer_scan}, {stage, started},
+	?LOG_DEBUG([{event, peer_scan}, {stage, started},
 			{peer, ar_util:format_peer(Peer)}, {mode, Mode}]),
 	Init = #scan_stats{ peer = Peer, mode = Mode, start_ms = StartMs },
 	Stats = case Mode of
@@ -676,7 +676,7 @@ run_peer_scan(Peer, Mode) ->
 				_ -> Init
 			end
 	end,
-	?LOG_INFO([{event, peer_scan}, {stage, completed},
+	?LOG_DEBUG([{event, peer_scan}, {stage, completed},
 			{peer, ar_util:format_peer(Peer)}, {mode, Mode},
 			{elapsed_ms, erlang:monotonic_time(millisecond) - StartMs},
 			{fetches, Stats#scan_stats.fetches},
@@ -858,7 +858,7 @@ bump(Bytes, Acc) ->
 
 maybe_log_progress(#scan_stats{ fetches = N } = Stats)
 		when N rem ?PROGRESS_LOG_INTERVAL =:= 0 ->
-	?LOG_INFO([{event, peer_scan}, {stage, progress},
+	?LOG_DEBUG([{event, peer_scan}, {stage, progress},
 			{peer, ar_util:format_peer(Stats#scan_stats.peer)},
 			{mode, Stats#scan_stats.mode},
 			{elapsed_ms,
@@ -966,7 +966,7 @@ maybe_trim_interval_cache() ->
 					[trim], Deleted),
 			MbAfter = ets:info(?PEER_INTERVAL_CACHE_TABLE, memory)
 					* erlang:system_info(wordsize) div ?MiB,
-			?LOG_INFO([{event, peer_interval_cache_trimmed},
+			?LOG_DEBUG([{event, peer_interval_cache_trimmed},
 					{rows_before, Size},
 					{rows_deleted, Deleted},
 					{rows_after, Size - Deleted},

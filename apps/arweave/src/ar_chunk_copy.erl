@@ -263,7 +263,7 @@ scan_module(SourceStoreID, OtherStoreIDs, #copy_state{
 	end,
 	Intervals = determine_intervals_to_copy_from_module(
 		StoreID, SourceStoreID, RangeStart, ScanEnd),
-	?LOG_INFO([{event, sync_local}, {stage, scan},
+	?LOG_DEBUG([{event, sync_local}, {stage, scan},
 		{store_id, StoreID}, {source_store_id, SourceStoreID},
 		{range_start, RangeStart}, {range_end, ScanEnd},
 		{found_intervals, length(Intervals)}]),
@@ -295,7 +295,7 @@ finish(#copy_state{
 		store_id = StoreID,
 		range_start = RangeStart,
 		range_end = RangeEnd } = _CopyState, State) ->
-	?LOG_INFO([{event, sync_local}, {stage, complete},
+	?LOG_DEBUG([{event, sync_local}, {stage, complete},
 		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd},
 		{next, network_sync}]),
 	ar_events:send(chunk_copy, {complete, StoreID}),
