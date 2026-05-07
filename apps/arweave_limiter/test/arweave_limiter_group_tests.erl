@@ -268,13 +268,13 @@ simple_leaky_happy_path(_Config, LimiterPid) ->
 
              %% wait a bit so they are surely started.
              timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 2},
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
              Caller1 ! done,
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{IP := [_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 1},
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
              Caller2 ! done,
@@ -327,7 +327,7 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
              %% wait a bit so they are surely started.
              timer:sleep(100),
 
-             ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 2},
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
 
@@ -394,7 +394,7 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
              %% wait a bit so they are surely started.
              timer:sleep(100),
              %% 2 concurrent, 2 token
-             ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 2},
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
              %% Simulate a tick
@@ -402,7 +402,7 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% 2 concurrent, but tokens reduced.
-             ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 2},
                             leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
 
              %% Tokens reduced, will register again
@@ -410,7 +410,7 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% 3 concurrent, 2 tokens
-             ?assertMatch(#{concurrent_requests := #{IP := [_,_,_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 3},
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger two ticks.
@@ -419,7 +419,7 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
 
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{IP := [_,_,_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 3},
                             leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
 
              %% Clean up
@@ -452,7 +452,7 @@ both_exhausted(_Config, LimiterPid) ->
              %% wait a bit so they are surely started.
              timer:sleep(100),
              %% 1 concurrent, 0 token
-             ?assertMatch(#{concurrent_requests := #{IP := [_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 1},
                             sliding_timestamps := #{IP := [_]},
                             leaky_tokens := #{}}, ?M:info(?TEST_LIMITER)),
 
@@ -462,7 +462,7 @@ both_exhausted(_Config, LimiterPid) ->
              timer:sleep(100),
              %% 2 concurrent, but tokens reduced.
              Info = ?M:info(?TEST_LIMITER),
-             ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 2},
                             sliding_timestamps := #{IP := [_]},
                             leaky_tokens := #{IP := 1}}, Info),
 
@@ -473,7 +473,7 @@ both_exhausted(_Config, LimiterPid) ->
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% 2 concurrent, 1 token
-             ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 2},
                             sliding_timestamps := #{IP := [_]},
                             leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
 
@@ -508,7 +508,7 @@ peer_cleanup(_Config, LimiterPid) ->
              %% wait a bit so they are surely started.
              timer:sleep(100),
              %% 2 concurrent, 2 token
-             ?assertMatch(#{concurrent_requests := #{IP := [_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 1},
                             sliding_timestamps := #{IP := [_]},
                             leaky_tokens := #{}}, ?M:info(?TEST_LIMITER)),
 
@@ -517,7 +517,7 @@ peer_cleanup(_Config, LimiterPid) ->
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% 2 concurrent, but tokens reduced.
-             ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 2},
                             sliding_timestamps := #{IP := [_]},
                             leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
 
@@ -529,7 +529,7 @@ peer_cleanup(_Config, LimiterPid) ->
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% 2 concurrent, 1 token
-             ?assertMatch(#{concurrent_requests := #{IP := [_,_]},
+             ?assertMatch(#{concurrent_requests := #{IP := 2},
                             sliding_timestamps := #{IP := [_]},
                             leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
 
@@ -585,7 +585,7 @@ leaky_manual_reduction(_Config, _LimiterPid) ->
              %% wait a bit so they are surely started.
              timer:sleep(100),
              %% 2 concurrent, 2 token
-             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+             ?assertMatch(#{concurrent_requests := #{IP := 4},
                             leaky_tokens := #{IP := 4}}, ?M:info(?TEST_LIMITER)),
 
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
@@ -595,20 +595,20 @@ leaky_manual_reduction(_Config, _LimiterPid) ->
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, NonRecordedIP)),
 
              %% 2 concurrent, but tokens reduced.
-             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+             ?assertMatch(#{concurrent_requests := #{IP := 4},
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
 
              %% 4 concurrent, but tokens reduced.
-             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+             ?assertMatch(#{concurrent_requests := #{IP := 4},
                             leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
 
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
 
              %% 4 concurrent, no change, there is nothing to reduce beyond 0
-             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+             ?assertMatch(#{concurrent_requests := #{IP := 4},
                             leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
 
              %% Clean up
@@ -633,13 +633,13 @@ leaky_manual_reduction_disabled(_Config, _LimiterPid) ->
              Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 60),
              %% wait a bit so they are surely started.
              timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+             ?assertMatch(#{concurrent_requests := #{IP := 4},
                             leaky_tokens := #{IP := 4}}, ?M:info(?TEST_LIMITER)),
 
              ?assertEqual(disabled, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
 
              %% Didn't reduce anything
-             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
+             ?assertMatch(#{concurrent_requests := #{IP := 4},
                             leaky_tokens := #{IP := 4}}, ?M:info(?TEST_LIMITER)),
 
              %% We can repeat this, but still disabled

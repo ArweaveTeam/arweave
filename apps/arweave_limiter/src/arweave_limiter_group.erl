@@ -155,7 +155,7 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                      }) ->
     Now = arweave_limiter_time:ts_now(),
     Tokens = maps:get(Peer, LeakyTokens, 0) + 1,
-    Concurrency = length(maps:get(Peer, ConcurrentRequests, [])) + 1,
+    Concurrency = maps:get(Peer, ConcurrentRequests, 0) + 1,
 
     SlidingTimestampsForPeer0 =
         expire_and_get_requests(Peer, SlidingTimestamps, SlidingWindowDuration, Now),
@@ -335,8 +335,8 @@ fold_decrease_rate(Id, Key, Counter, Acc, TickReduction) ->
 %% Concurrency magic
 register_concurrent(Peer, Pid, ConcurrentRequests, ConcurrentMonitors) ->
     MonitorRef = erlang:monitor(process, Pid),
-    Processes = maps:get(Peer, ConcurrentRequests, []),
-    NewConcurrentRequests = maps:put(Peer, [{MonitorRef, Pid} | Processes], ConcurrentRequests),
+    Processes = maps:get(Peer, ConcurrentRequests, 0),
+    NewConcurrentRequests = maps:put(Peer, Processes + 1, ConcurrentRequests),
     NewConcurrentMonitors = maps:put(MonitorRef, Peer, ConcurrentMonitors),
     {NewConcurrentRequests, NewConcurrentMonitors}.
 
@@ -350,14 +350,12 @@ remove_concurrent(MonitorRef, _Pid, _Reason, ConcurrentRequests, ConcurrentMonit
             %% Nothing to do, just return the current state.
             {ConcurrentRequests, ConcurrentMonitors};
         Peer ->
-            ConcurrentForPeer = maps:get(Peer, ConcurrentRequests),
-            NewConcurrentForPeer = proplists:delete(MonitorRef, ConcurrentForPeer),
             NewConcurrentRequests =
-                case NewConcurrentForPeer of
-                    [] ->
+                case maps:get(Peer, ConcurrentRequests, 0) of
+                    Last when Last =< 1 ->
                         maps:remove(Peer, ConcurrentRequests);
-                    _ ->
-                        ConcurrentRequests#{Peer => NewConcurrentForPeer}
+                    Last ->
+                        ConcurrentRequests#{Peer => Last - 1}
                 end,
             NewConcurrentMonitors = maps:remove(MonitorRef, ConcurrentMonitors),
             {NewConcurrentRequests, NewConcurrentMonitors}
