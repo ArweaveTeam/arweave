@@ -133,9 +133,8 @@
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-%% @doc Return the list of ?QUERY_BEST_PEERS_COUNT peers who have at least one byte of
-%% data synced in the given Bucket of size ?NETWORK_DATA_BUCKET_SIZE. 80% of the peers
-%% are chosen from the 20% of peers with the biggest share in the given bucket.
+%% @doc Return the list of peers who have at least one byte of
+%% data synced in the given Bucket of size ?NETWORK_DATA_BUCKET_SIZE.
 get_bucket_peers(Bucket) ->
 	case ets:member(ar_peers, block_connections) of
 		true ->
@@ -152,10 +151,8 @@ get_bucket_peers(Bucket, Cursor, Peers) ->
 			ar_util:unique(Peers)
 	end.
 
-%% @doc Return the list of ?QUERY_BEST_PEERS_COUNT peers who have at least one byte of
+%% @doc Return the list of peers who have at least one byte of
 %% data synced in the given footprint bucket of size ?NETWORK_FOOTPRINT_BUCKET_SIZE.
-%% 80% of the peers are chosen from the 20% of peers with the biggest share
-%% in the given bucket.
 get_footprint_bucket_peers(Bucket) ->
 	case ets:member(ar_peers, block_connections) of
 		true ->
