@@ -1,39 +1,13 @@
-%%% @doc Per-peer process managing the sync task queue, in-flight tracking, and
-%%% footprint admission. One process per peer, started on demand by the
-%%% coordinator when ar_data_sync first enqueues work for that peer.
+%%% @doc Per-peer admission controller for network sync tasks.
 %%%
-%%% Task Queue:
-%%% - Holds #sync_task{} records waiting to be pulled by ar_data_sync_workers.
-%%% - ar_data_sync_workers call take_one/1 to pop a task; enqueue is rejected
-%%%   if the queue is already at max_queue_len (prevents inflating the global
-%%%   backpressure signal between rebalance ticks).
+%%% ar_data_sync_coordinator starts one worker per peer on demand and forwards
+%%% that peer's #sync_task{} records here. ar_data_sync_worker processes pull
+%%% tasks from peer workers rather than receiving pushed work, which keeps slow
+%%% peers from monopolizing the worker pool.
 %%%
-%%% In-Flight Tracking:
-%%% - in_flight_count tracks how many tasks have been handed out via take_one
-%%%   but not yet completed via task_completed.
-%%% - max_in_flight caps concurrency per peer. Adjusted +/-1 each rebalance
-%%%   tick based on the peer's latency vs the global target latency.
-%%% - in_flight_workers maps WorkerPid => {FootprintKey, TakenAt} for each
-%%%   outstanding task. Used to reap dead or stale workers on the rebalance
-%%%   tick (releases leaked in_flight_count and footprint slots).
-%%%
-%%% Footprint Admission:
-%%% - A task with a FootprintKey can only go in-flight if this peer already
-%%%   holds a global footprint slot for that key, or can claim one atomically
-%%%   via ar_data_sync_coordinator:claim_footprint_slot/0. If no slot is
-%%%   available, take_one returns none (head-of-line block; worker tries
-%%%   the next peer).
-%%% - When a footprint's active_task_count reaches 0, the global slot is
-%%%   released. Long-running footprints are logged periodically.
-%%%
-%%% Rebalancing (called by coordinator every 10s):
-%%% - Adjusts max_in_flight: +1 if peer is faster than target latency or
-%%%   workers are starved; -1 if slower; -1 if idle for > ACTIVE_THRESHOLD_S.
-%%% - Adjusts max_queue_len: raw target from peer rating * scaling factor,
-%%%   smoothed downward at QUEUE_SHRINK_RATE per tick to avoid mass cuts.
-%%% - Cuts queue tail if it exceeds (smoothed) max_queue_len.
-%%% - Reaps dead/stale entries from in_flight_workers.
-%%% - Shuts down the peer worker if idle for IDLE_SHUTDOWN_THRESHOLD_S.
+%%% This process owns per-peer queue limits, in-flight accounting, and
+%%% footprint admission. The coordinator periodically rebalances those limits
+%%% from peer latency/rating and owns the global footprint-slot counter.
 -module(ar_peer_worker).
 
 -behaviour(gen_server).
@@ -57,7 +31,8 @@
 -define(ACTIVE_THRESHOLD_S, 30).
 %% Reap in-flight entries older than this, even if the worker pid is alive.
 %% Guards against "stranded" tasks where take_one reply was lost (caller
-%% timeout, etc.) so the worker never runs sync_range or calls task_completed.
+%% timeout, etc.) so the worker never runs sync_range or fires the
+%% success-path completion.
 -define(IN_FLIGHT_STALE_THRESHOLD_S, 300).
 %% When the raw MaxQueueLen drops sharply, shrink the effective cap by at most
 %% this ratio per rebalance tick. Lets struggling peers keep committed work
@@ -84,8 +59,10 @@
 	last_task_time,                %% monotonic time when last task was received
 	footprints = #{},              %% FootprintKey => #footprint{}
 	active_footprints = sets:new(),%% keys for which this peer currently holds a slot
-	%% WorkerPid => {FootprintKey, TakenAt} for tasks handed out via take_one.
-	%% Cleaned up on task_completed; dead or stale entries reaped on rebalance.
+	%% WorkerPid => {FootprintKey, TakenAt, SyncTask} for tasks handed out
+	%% via take_one. Cleaned up on the success-path task_completed/6;
+	%% dead or stale entries reaped on rebalance, which also releases the
+	%% byte range from the StoreID's task queue dedup overlay.
 	in_flight_workers = #{}
 }).
 
@@ -148,20 +125,31 @@ take_one(Pid) ->
 		exit:{timeout, _} ->
 			?LOG_WARNING([{event, take_one_timeout}, {pid, Pid}]),
 			none;
+		exit:{noproc, _} ->
+			%% Peer worker terminated (idle eviction or crash) between
+			%% the caller's ETS lookup of this Pid and our gen_server
+			%% call. Benign — caller rotates to the next peer.
+			none;
 		Class:Reason ->
 			?LOG_WARNING([{event, take_one_failed}, {pid, Pid},
 				{class, Class}, {reason, io_lib:format("~p", [Reason])}]),
 			none
 	end.
 
-%% @doc Notify task completed, update footprint accounting and rate data fetched.
+%% @doc Per-peer completion accounting: decrement in-flight count, release
+%% the footprint slot, update peer rating. Invoked by ar_sync_task_queue
+%% as part of its task_completed/4 fan-out (the success path). Drop paths
+%% call ar_peer_sync:task_dropped/1 directly to release the byte range
+%% without touching per-peer state (the relevant drop sites maintain their
+%% own per-peer accounting).
 task_completed(Peer, WorkerPid, FootprintKey, Result, ElapsedMicroseconds, DataSize) ->
 	case get_pid(Peer) of
 		{ok, Pid} ->
 			gen_server:cast(Pid,
-				{task_completed, WorkerPid, FootprintKey, Result, ElapsedMicroseconds, DataSize});
+				{task_completed, WorkerPid, FootprintKey, Result,
+					ElapsedMicroseconds, DataSize});
 		_ ->
-			?LOG_WARNING([{event, task_completed_no_peer_worker},
+			?LOG_DEBUG([{event, task_completed_no_peer_worker},
 				{peer, ar_util:format_peer(Peer)}])
 	end.
 
@@ -202,7 +190,8 @@ publish_load(State) ->
 		State#state.in_flight_count,
 		total_queued(State),
 		sets:size(State#state.active_footprints),
-		State#state.max_in_flight),
+		State#state.max_in_flight,
+		State#state.max_queue_len),
 	State.
 
 total_queued(State) ->
@@ -326,16 +315,11 @@ handle_cast({task_completed, WorkerPid, FootprintKey, Result, ElapsedMicrosecond
 	{noreply, State2};
 
 handle_cast({enqueue, SyncTask}, State) ->
-	case total_queued(State) >= State#state.max_queue_len of
-		true ->
-			{noreply, State};
-		false ->
-			#sync_task{ footprint_key = FootprintKey } = SyncTask,
-			State1 = State#state{ last_task_time = erlang:monotonic_time() },
-			{_, State2} = do_enqueue_task(FootprintKey, SyncTask, true, State1),
-			publish_load(State2),
-			{noreply, State2}
-	end;
+	#sync_task{ footprint_key = FootprintKey } = SyncTask,
+	State1 = State#state{ last_task_time = erlang:monotonic_time() },
+	{_, State2} = do_enqueue_task(FootprintKey, SyncTask, true, State1),
+	publish_load(State2),
+	{noreply, State2};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -439,7 +423,7 @@ dispatch_task(SyncTask, WorkerPid, State) ->
 	State2 = State#state{
 		in_flight_count = State#state.in_flight_count + 1,
 		in_flight_workers = maps:put(WorkerPid,
-			{FootprintKey, Now}, State#state.in_flight_workers),
+			{FootprintKey, Now, SyncTask}, State#state.in_flight_workers),
 		last_task_time = Now
 	},
 	increment_metrics(dispatched, State2, 1),
@@ -555,7 +539,14 @@ cut_queues(ToCut, State) ->
 		false -> {State3, 0}
 	end,
 	TotalCut = CutFromBlocked + CutFromEligible + NonFootprintCut,
+	%% Bump both: `queued_out' is the authoritative queue-removal counter
+	%% (every removal regardless of reason), so `queued_in - queued_out'
+	%% reliably reports current queue depth. `rebalance_cut' is the
+	%% reason label so the cause is distinguishable from a normal
+	%% pop-for-dispatch. Pairs with the ar_peer_sync:task_dropped/1 calls
+	%% in remove_footprint_from_queues/2 and cut_non_footprint_tail/2.
 	increment_metrics(queued_out, State4, TotalCut),
+	increment_metrics(rebalance_cut, State4, TotalCut),
 	{State4, TotalCut}.
 
 %% @doc Walk a list of FKs and cut each one entirely until budget is met.
@@ -569,11 +560,18 @@ cut_footprint_list([FootprintKey | Rest], Budget, State) ->
 	{State3, Removed + MoreRemoved}.
 
 %% @doc Remove ALL tasks for a given FootprintKey from both queues.
-%% Updates footprint bookkeeping for each removed task.
+%% Updates footprint bookkeeping AND releases each task's byte range from
+%% the StoreID's task queue dedup overlay; without the release, the range
+%% would stay phantom-in-flight in `ar_sync_task_queue.in_flight_intervals'
+%% and the producer would dedup against it forever.
 remove_footprint_from_queues(FootprintKey, State) ->
-	{NewEligible, EligibleCut} = remove_matching(FootprintKey, State#state.eligible_queue),
-	{NewBlocked, BlockedCut} = remove_matching(FootprintKey, State#state.blocked_queue),
-	TotalCut = EligibleCut + BlockedCut,
+	{NewEligible, EligibleCutTasks} =
+		remove_matching(FootprintKey, State#state.eligible_queue),
+	{NewBlocked, BlockedCutTasks} =
+		remove_matching(FootprintKey, State#state.blocked_queue),
+	CutTasks = EligibleCutTasks ++ BlockedCutTasks,
+	TotalCut = length(CutTasks),
+	lists:foreach(fun ar_peer_sync:task_dropped/1, CutTasks),
 	State2 = State#state{ eligible_queue = NewEligible, blocked_queue = NewBlocked },
 	State3 = lists:foldl(
 		fun(_, Acc) -> do_complete_footprint_task(FootprintKey, Acc) end,
@@ -581,19 +579,24 @@ remove_footprint_from_queues(FootprintKey, State) ->
 	{State3, TotalCut}.
 
 %% @doc Remove all tasks matching FootprintKey from a queue.
-%% Returns {NewQueue, RemovedCount}.
+%% Returns {NewQueue, RemovedTasks}.
 remove_matching(FootprintKey, Queue) ->
 	TaskList = queue:to_list(Queue),
-	Kept = [T || #sync_task{ footprint_key = FK } = T <- TaskList, FK =/= FootprintKey],
-	{queue:from_list(Kept), length(TaskList) - length(Kept)}.
+	{Cut, Kept} = lists:partition(
+		fun(#sync_task{ footprint_key = FK }) -> FK =:= FootprintKey end,
+		TaskList),
+	{queue:from_list(Kept), Cut}.
 
-%% @doc Cut non-footprint tasks from the tail of the eligible queue.
+%% @doc Cut non-footprint tasks from the tail of the eligible queue. Each
+%% cut task's byte range is released from the StoreID's task queue dedup
+%% overlay (same reasoning as remove_footprint_from_queues/2).
 cut_non_footprint_tail(Budget, State) ->
 	TaskList = queue:to_list(State#state.eligible_queue),
 	FootprintTasks = [T || #sync_task{ footprint_key = FK } = T <- TaskList, FK =/= none],
 	NonFootprintTasks = [T || #sync_task{ footprint_key = none } = T <- TaskList],
 	KeepCount = max(0, length(NonFootprintTasks) - Budget),
 	{Kept, Cut} = lists:split(KeepCount, NonFootprintTasks),
+	lists:foreach(fun ar_peer_sync:task_dropped/1, Cut),
 	NewQueue = queue:from_list(FootprintTasks ++ Kept),
 	{State#state{ eligible_queue = NewQueue }, length(Cut)}.
 
@@ -636,7 +639,7 @@ log_long_running_footprints(State) ->
 	case LongRunning of
 		[] -> ok;
 		_ ->
-			?LOG_WARNING([{event, long_running_footprints},
+			?LOG_INFO([{event, long_running_footprints},
 				{peer, PeerFormatted},
 				{count, length(LongRunning)},
 				{footprints, LongRunning}])
@@ -651,7 +654,7 @@ reap_dead_workers(State) ->
 	StaleThresholdNative = erlang:convert_time_unit(
 		?IN_FLIGHT_STALE_THRESHOLD_S, second, native),
 	maps:fold(
-		fun(WorkerPid, {FootprintKey, TakenAt}, Acc) ->
+		fun(WorkerPid, {FootprintKey, TakenAt, SyncTask}, Acc) ->
 			Dead = not is_process_alive(WorkerPid),
 			Stale = (Now - TakenAt) > StaleThresholdNative,
 			case Dead orelse Stale of
@@ -666,6 +669,13 @@ reap_dead_workers(State) ->
 						{footprint_key, FootprintKey},
 						{reason, case Dead of true -> dead; false -> stale end},
 						{age_s, AgeSecs}]),
+					%% The worker took the task via take_one but never fired
+					%% task_completed (the success path), so the byte
+					%% range is still claimed in the StoreID's task queue
+					%% dedup overlay. Release it so the producer can
+					%% re-enqueue.
+					increment_metrics(reaped, Acc, 1),
+					ar_peer_sync:task_dropped(SyncTask),
 					NewInFlight = max(0, Acc#state.in_flight_count - 1),
 					do_complete_footprint_task(FootprintKey,
 						Acc#state{
@@ -785,6 +795,15 @@ peer_worker_test_() ->
 setup() ->
 	Peer = {1, 2, 3, 4, 1984},
 	ar_data_sync_coordinator:init_worker_load_for_test(1000),
+	%% Pre-register a label for the dummy store_id used in tests so
+	%% ar_peer_sync:task_dropped/1 doesn't crash on the test's stub store_id.
+	%% The cast targets a name that no gen_server is registered for, which
+	%% gen_server:cast silently drops.
+	case ets:whereis(ar_storage_module) of
+		undefined -> ets:new(ar_storage_module, [set, public, named_table]);
+		_ -> ok
+	end,
+	ets:insert(ar_storage_module, {{label, store1}, "store1"}),
 	%% Start peer worker directly (not via supervisor, unnamed for test isolation).
 	{ok, Pid} = gen_server:start(?MODULE, [Peer], []),
 	ets:insert(?MODULE, {Peer, Pid}),

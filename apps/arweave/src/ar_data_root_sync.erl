@@ -128,7 +128,8 @@ maybe_fetch_and_store(BlockStart, BlockEnd) ->
 	case fetch_data_roots_from_peers(Peers2, BlockStart) of
 		{ok, {TXRoot, BlockSize, DataRootEntries}} ->
 			BlockSize = BlockEnd - BlockStart,
-			ar_data_sync:store_data_roots(BlockStart, BlockEnd, TXRoot, DataRootEntries);
+			ar_data_roots:store_block_async(
+				BlockStart, BlockEnd, TXRoot, DataRootEntries, ?DEFAULT_MODULE);
 		_ ->
 			ok
 	end.

@@ -42,6 +42,16 @@
 -define(GET_SYNC_RECORD_RIGHT_BOUND_SUPPORT_RELEASE, 83).
 
 %% The number of the release adding support for endpoints:
-%% GET /footprints/[partition]/[footprint] 
+%% GET /footprints/[partition]/[footprint]
 %% GET /footprint_buckets
 -define(GET_FOOTPRINT_SUPPORT_RELEASE, 91).
+
+%% The size of the span of the weave we search at a time. ar_peer_sync's
+%% discover loop walks the unsynced range in increments of this size;
+%% ar_data_discovery prefetches peer intervals at the same granularity so
+%% one peer response covers one scan step exactly.
+-ifdef(AR_TEST).
+-define(QUERY_RANGE_STEP_SIZE, 10_000_000). % 10 MB
+-else.
+-define(QUERY_RANGE_STEP_SIZE, 1_000_000_000). % 1 GB
+-endif.

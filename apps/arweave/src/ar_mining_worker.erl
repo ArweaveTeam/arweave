@@ -878,7 +878,7 @@ try_to_reserve_cache_range_space(Multiplier, SessionKey, #state{
 			State1 = State#state{ chunk_cache = ChunkCache1 },
 			{true, State1};
 		{error, Reason} ->
-			log_warning(mining_worker_failed_to_reserve_cache_space, State, [
+			log_info(mining_worker_failed_to_reserve_cache_space, State, [
 				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
 				{cache_size, ar_mining_cache:cache_size(ChunkCache0)},
 				{cache_limit, ar_mining_cache:get_limit(ChunkCache0)},

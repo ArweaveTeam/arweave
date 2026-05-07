@@ -40,8 +40,8 @@ execute(Req, Env) ->
 
 get_limiter_ref(Req) ->
 	{ok, Config} = arweave_config:get_env(),
-	LocalIPs = [config_peer_to_ip_addr(Peer) || Peer <- Config#config.local_peers],
-	PeerIP = config_peer_to_ip_addr(get_peer_key(Req)),
+	LocalIPs = [ar_util:peer_to_ip(Peer) || Peer <- Config#config.local_peers],
+	PeerIP = ar_util:peer_to_ip(get_peer_key(Req)),
 
 	case lists:member(PeerIP, LocalIPs) of
 		true ->
@@ -78,10 +78,6 @@ get_peer_key(Req) ->
 	{{A, B, C, D}, _Port} = cowboy_req:peer(Req),
 	{A, B, C, D}.
 -endif.
-
-config_peer_to_ip_addr({{A, B, C, D}, _Port}) -> {A, B, C, D};
-config_peer_to_ip_addr({A, B, C, D, _Port}) -> {A, B, C, D};
-config_peer_to_ip_addr({A, B, C, D}) -> {A, B, C, D}.
 
 path_to_limiter_ref([<<"chunk">> | _]) -> chunk;
 path_to_limiter_ref([<<"chunk2">> | _]) -> chunk;

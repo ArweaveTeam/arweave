@@ -55,6 +55,9 @@ handle_cast(Msg, State) ->
 handle_info({event, tx, _}, State) ->
 	{noreply, State};
 
+handle_info({gun_error, _ConnPid, _StreamRef, {badstate, _Reason}}, State) ->
+	{noreply, State};
+
 handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
 	{noreply, State}.

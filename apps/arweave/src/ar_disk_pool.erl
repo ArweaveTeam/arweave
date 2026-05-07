@@ -1,28 +1,43 @@
+%%% @doc Singleton disk-pool subsystem. Owns the pending-chunk queue, the
+%%% periodic scan/admission loop, and the bridge to per-module storage via
+%%% pack_and_store_chunk casts.
+%%%
+%%% Hosts both:
+%%%   1. A gen_server (`ar_disk_pool') that owns the scan cursor / pause
+%%%      flag / recently-processed-offsets cache, runs the periodic scan
+%%%      job loop, and listens for node_state threshold updates.
+%%%   2. A library of stateless functions (chunk admission, data-root
+%%%      bookkeeping, KV helpers) callable from any process.
+%%%
+%%% The disk pool is single-instance — only the default storage module
+%%% participates in pending-chunk processing.
+%%%
+%%% Supervision ordering: ar_disk_pool is started LAST in ar_data_sync_sup
+%%% so that ar_data_sync_default has already opened the disk-pool KV
+%%% (`disk_pool_chunks_index` DB) by the time ar_disk_pool's init runs.
 -module(ar_disk_pool).
 
--export([add_chunk/5]).
+-behaviour(gen_server).
 
--export([add_data_root/3, maybe_drop_data_root/3,
-		has_data_root/1, get_data_roots/0, remove_expired_data_roots/0]).
+-export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2,
+		terminate/2]).
 
--export([get_unconfirmed_chunk/2]).
+-export([add_chunk/5, get_unconfirmed_chunk/2,
+		add_data_root/3, maybe_drop_data_root/3, has_data_root/1,
+		get_data_roots/0, remove_expired_data_roots/0,
+		get_threshold/0, set_threshold/1, update_threshold/1]).
 
--export([get_threshold/0, set_threshold/1, update_threshold/1]).
-
--export([init_state/0, init_state/2, recalculate_size/2,
+-export([init_state/0, populate_data_roots/2, 
 		add_block_data_roots/1, reset_orphaned_data_roots_timestamps/1,
-		move_index/1, column_family/1, open_index_db/3]).
+		move_index/1, column_family/1, open_index_db/3,
+		process_next_chunk/2, process_chunk/4, process_chunk_offsets/5,
+		pause_scan/1, remove_recently_processed_offset/3,
+		index_db/1, old_index_db/1, record_chunks_count/0]).
 
--export([process_next_chunk/2, process_chunk/4, process_chunk_offsets/5,
-		pause_scan/1, remove_recently_processed_offset/3]).
-
--export([index_db/1, old_index_db/1]).
-
--export([record_chunks_count/0]).
-
-%% test-only exports
+-ifdef(AR_TEST).
 -export([debug_get_chunks/0, debug_get_chunks/1,
 		get_data_root_state/1, delete_data_root_state/1]).
+-endif.
 
 -include("ar.hrl").
 
@@ -33,6 +48,27 @@
 -else.
 -define(MIN_CHUNK_PERSISTENCE_ESTIMATION_VICINITY, (10 * ?GiB)).
 -endif.
+
+%% The time to wait until the next full disk pool scan.
+-ifdef(AR_TEST).
+-define(DISK_POOL_SCAN_DELAY_MS, 2000).
+-else.
+-define(DISK_POOL_SCAN_DELAY_MS, 10000).
+-endif.
+
+%% How often to measure the number of chunks in the disk pool index.
+-ifdef(AR_TEST).
+-define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 1000).
+-else.
+-define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 5000).
+-endif.
+
+%% How long to keep the offsets of the recently processed "matured" chunks in a cache.
+%% We use the cache to quickly skip matured chunks when scanning the disk pool.
+-define(CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS, 30 * 60 * 1000).
+
+%% The frequency of removing expired data roots from the disk pool.
+-define(REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, 60000).
 
 -record(disk_pool_state, {
 	%% One of the keys from disk_pool_chunks_index or the atom "first".
@@ -55,7 +91,10 @@
 	recently_processed_offsets = #{},
 	%% A registry of the disk pool chunks in process consulted by different
 	%% disk pool jobs to avoid double-processing.
-	keys_in_process = sets:new()
+	keys_in_process = sets:new(),
+	%% Temporarily pauses scan jobs after a full pass finishes too quickly.
+	%% While true, process_disk_pool_item waits for resume_disk_pool_scan.
+	scan_pause = false
 }).
 
 %%%===================================================================
@@ -322,7 +361,6 @@ get_unconfirmed_chunk_from_disk_pool(TXID, RelativeEndOffset, DiskPoolChunkKey) 
 			DiskPoolChunk = parse_chunk(DiskPoolValue),
 			{RelativeEndOffset, _ChunkSize, DataRoot, TXSize, ChunkDataKey,
 					_PassesBase, _PassesStrict, _PassesRebase} = DiskPoolChunk,
-			RelativeEndOffset =< TXSize,
 			case ar_data_sync:get_chunk_data(ChunkDataKey, ?DEFAULT_MODULE) of
 				not_found ->
 					get_unconfirmed_chunk_from_tx_index(TXID, RelativeEndOffset);
@@ -449,24 +487,14 @@ update_threshold(BI) ->
 init_state() ->
 	#disk_pool_state{}.
 
-init_state(StateMap, StoreID) ->
-	DiskPoolDataRoots = maps:get(disk_pool_data_roots, StateMap),
-	recalculate_size(DiskPoolDataRoots, StoreID),
-	case StateMap of
-		#{ disk_pool_threshold := T } ->
-			set_threshold(T);
-		_ ->
-			update_threshold(maps:get(block_index, StateMap))
-	end,
-	init_state().
-
-recalculate_size(DataRootMap, StoreID) ->
+%% @doc Rebuild the ar_disk_pool_data_roots map.
+populate_data_roots(DataRootMap, StoreID) ->
 	Index = index_db(StoreID),
 	DataRootMap2 = maps:map(fun(_DataRootID, {_Size, Timestamp, TXIDSet}) ->
 			{0, Timestamp, TXIDSet} end, DataRootMap),
-	recalculate_size2(Index, DataRootMap2, first, 0).
+	populate_data_roots2(Index, DataRootMap2, first, 0).
 
-recalculate_size2(Index, DataRootMap, Cursor, Sum) ->
+populate_data_roots2(Index, DataRootMap, Cursor, Sum) ->
 	case ar_kv:get_next(Index, Cursor) of
 		none ->
 			prometheus_gauge:set(pending_chunks_size, Sum),
@@ -492,7 +520,7 @@ recalculate_size2(Index, DataRootMap, Cursor, Sum) ->
 								DataRootMap)
 				end,
 			Cursor2 = << DiskPoolKey/binary, <<"a">>/binary >>,
-			recalculate_size2(Index, DataRootMap2, Cursor2, Sum + ChunkSize)
+			populate_data_roots2(Index, DataRootMap2, Cursor2, Sum + ChunkSize)
 	end.
 
 add_block_data_roots(DataRootIDSet) ->
@@ -1131,3 +1159,139 @@ debug_get_chunks(Cursor) ->
 			K2 = << K/binary, <<"a">>/binary >>,
 			[{K, V} | debug_get_chunks(K2)]
 	end.
+
+%%%===================================================================
+%%% gen_server lifecycle.
+%%%===================================================================
+
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% ar_disk_pool must be started last in ar_data_sync_sup, after
+%% ar_data_sync_default has opened the disk-pool rocksdb tables.
+init([]) ->
+	?LOG_INFO([{event, ar_disk_pool_start}]),
+	{ok, Config} = arweave_config:get_env(),
+	[ok] = ar_events:subscribe([node_state]),
+	%% Shared ETS state (ar_disk_pool_data_roots, disk_pool_threshold) is owned by
+	%% ar_data_sync_default. ar_disk_pool manipulates them, but they have to be initialized
+	%% by ar_data_sync_default.
+	{ok, _} = ar_timer:apply_interval(
+		?RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS,
+		?MODULE, record_chunks_count, [],
+		#{ skip_on_shutdown => false }
+	),
+	{ok, _} = ar_timer:apply_interval(
+		?REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS,
+		?MODULE, remove_expired_data_roots, [],
+		#{ skip_on_shutdown => false }
+	),
+	lists:foreach(
+		fun(_) -> gen_server:cast(?MODULE, process_disk_pool_item) end,
+		lists:seq(1, Config#config.disk_pool_jobs)
+	),
+	{ok, init_state()}.
+
+handle_call(Request, _From, State) ->
+	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+	{reply, ok, State}.
+
+%%%===================================================================
+%%% Scan-loop cast handlers.
+%%%===================================================================
+
+handle_cast(process_disk_pool_item, #disk_pool_state{ scan_pause = true } = State) ->
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
+	{noreply, State};
+handle_cast(process_disk_pool_item, State) ->
+	handle_disk_pool_actions(process_next_chunk(State, ?DEFAULT_MODULE), State);
+
+handle_cast(resume_disk_pool_scan, State) ->
+	{noreply, State#disk_pool_state{ scan_pause = false }};
+
+handle_cast({process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}, State)
+		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
+	handle_disk_pool_actions(
+		process_chunk_offsets(Key, Value, TXStartOffset, ?DEFAULT_MODULE, State),
+		State);
+handle_cast({process_disk_pool_chunk_offsets, Iterator, CanRemoveFromDiskPool, Args}, State) ->
+	handle_disk_pool_actions(
+		process_chunk_offsets(Iterator, CanRemoveFromDiskPool, Args, ?DEFAULT_MODULE, State),
+		State);
+
+handle_cast({remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}, State) ->
+	{noreply, remove_recently_processed_offset(Offset, ChunkDataKey, State)};
+
+handle_cast(Cast, State) ->
+	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+	{noreply, State}.
+
+handle_info({event, node_state, {search_space_upper_bound, Bound}}, State) ->
+	set_threshold(Bound),
+	{noreply, State};
+handle_info({event, node_state, _}, State) ->
+	{noreply, State};
+handle_info(Message, State) ->
+	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
+	{noreply, State}.
+
+terminate(Reason, _State) ->
+	?LOG_DEBUG([{event, terminate}, {module, ?MODULE},
+		{reason, io_lib:format("~p", [Reason])}]),
+	ok.
+
+%%%===================================================================
+%%% Scan action dispatcher.
+%%%===================================================================
+
+handle_disk_pool_actions({next_chunk, DiskPool}, _OldState) ->
+	gen_server:cast(?MODULE, process_disk_pool_item),
+	{noreply, DiskPool};
+handle_disk_pool_actions({wrapped, Timestamp, Key, Value, DiskPool}, _OldState)
+		when is_binary(Key), is_binary(Value) ->
+	TimePassed = timer:now_diff(erlang:timestamp(), Timestamp),
+	case TimePassed < (?DISK_POOL_SCAN_DELAY_MS) * 1000 of
+		true ->
+			handle_disk_pool_actions({none, pause_scan(DiskPool)}, DiskPool);
+		false ->
+			handle_disk_pool_actions(
+				process_chunk(DiskPool, ?DEFAULT_MODULE, Key, Value), DiskPool)
+	end;
+handle_disk_pool_actions({none, DiskPool}, _OldState) ->
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, resume_disk_pool_scan),
+	ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
+	{noreply, DiskPool#disk_pool_state{ scan_pause = true }};
+handle_disk_pool_actions({next_offset, Key, Value, TXStartOffset, DiskPool}, _OldState)
+		when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
+	gen_server:cast(?MODULE,
+		{process_disk_pool_chunk_offsets, Key, Value, TXStartOffset}),
+	{noreply, DiskPool};
+handle_disk_pool_actions({next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool},
+		_OldState) ->
+	gen_server:cast(?MODULE,
+		{process_disk_pool_chunk_offsets, Iterator, CanRemoveFromDiskPool, Args}),
+	{noreply, DiskPool};
+handle_disk_pool_actions(
+		{store_chunk, StoreIDs, PackArgs, Iterator, ContinueArgs, CacheHint, DiskPool},
+		_OldState) ->
+	ar_data_sync:increment_chunk_cache_size(),
+	lists:foreach(
+		fun(StoreID) ->
+			gen_server:cast(ar_data_sync:name(StoreID),
+				{pack_and_store_chunk, PackArgs})
+		end,
+		StoreIDs
+	),
+	gen_server:cast(?MODULE,
+		{process_disk_pool_chunk_offsets, Iterator, false, ContinueArgs}),
+	case CacheHint of
+		{cache_offset, Offset, ChunkDataKey} ->
+			ar_util:cast_after(
+				?CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS,
+				?MODULE,
+				{remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}
+			);
+		no_cache_update ->
+			ok
+	end,
+	{noreply, DiskPool}.

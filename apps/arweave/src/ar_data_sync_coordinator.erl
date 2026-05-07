@@ -1,35 +1,13 @@
-%%% @doc Thin coordinator for the sync subsystem. Pull-model dispatch means
-%%% most of the logic lives elsewhere; this module holds the peer roster,
-%%% runs the periodic rebalance tick, and owns the global worker_load ETS
-%%% helpers.
-%%% 
-%%% Main objectives:
-%%% - Saturate ar_data_sync_worker processes so they always have work to do
-%%%   (fetching chunks from peers)
-%%% - Don't let ar_data_sync_workers get stuck working through a long queue of tasks for a slow
-%%%   peer. Historically this was a common cause of poor sync performance - node would "lock up"
-%%%   as it tried to work through 1000+ queued sync tasks for a peer with multi-second GET /chunk2
-%%%   latency.
-%%% - Limit the number of footprints that are being handled at once. All chunks in a footprint
-%%%   can be unpacked with the same 256MiB entropy. If the node tries to pull from too many
-%%%   different footprints concurrently it either overwhelms RAM with too many cached entropies or
-%%%   thrashes and ends up recomputing the same entropy multiple times (a very expensive operation)
+%%% @doc Coordinator for the network sync worker pool.
 %%%
-%%% Components:
-%%% - ar_peer_worker (one per peer): owns the per-peer task queue, in-flight
-%%%   count and limit, footprint state. Sole writer of its worker_load rows (worker_load tracks
-%%%   how much work is assigned to this peer and is used to balance load and for backpressure)
-%%% - ar_data_sync_worker (pool of N): pull loop. Each worker shuffles the
-%%%   peer roster and asks peer workers for tasks via take_one/1.
-%%% - this module: forwards sync_range casts into the right peer worker,
-%%%   runs the rebalance tick every ?REBALANCE_FREQUENCY_MS, exposes
-%%%   ETS helpers (record_peer_load, claim/release_footprint_slot), provides backpressure to
-%%%   ar_data_sync via ready_for_work/0.
+%%% ar_peer_sync submits tasks here; the coordinator forwards each task to the
+%%% corresponding ar_peer_worker. ar_data_sync_worker processes then pull work
+%%% from peer workers, so dispatch adapts to available workers instead of
+%%% pushing long batches at slow peers.
 %%%
-%%% Tasks are either queued (in a peer worker's task_queue) or in-flight
-%%% (held by a sync worker that called take_one). A task with a footprint
-%%% key cannot go in-flight unless its peer already holds a global footprint
-%%% slot or can claim one atomically (see claim_footprint_slot/0).
+%%% This module owns global backpressure and footprint-slot accounting. Peer
+%%% workers publish their queue/in-flight load here, and the rebalance tick uses
+%%% that load plus peer ratings to resize per-peer queues and concurrency.
 
 -module(ar_data_sync_coordinator).
 
@@ -38,7 +16,7 @@
 -export([start_link/1, register_workers/0, is_syncing_enabled/0,
 		 ready_for_work/0, work_capacity/0, max_tasks/0,
 		 sync_range/1]).
--export([record_peer_load/5, remove_peer/1]).
+-export([record_peer_load/6, remove_peer/1, peer_ready_for_work/1]).
 -export([claim_footprint_slot/0, release_footprint_slot/0]).
 -export([sync_jobs/0, default_in_flight_limit/0, min_peer_queue/0, max_peer_queue/0]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -72,7 +50,12 @@
 %% sync_jobs multiplier for max_peer_queue ceiling.
 -define(PEER_QUEUE_MULTIPLIER, 1000).
 -record(state, {
-	total_throughput = undefined   %% EMA-smoothed sum of peer ratings
+	total_throughput = undefined,  %% EMA-smoothed sum of peer ratings
+	%% Footprint-slot accounting drift observed on the previous rebalance
+	%% tick. We only emit a warning when the same drift is seen on two
+	%% consecutive ticks; single-tick drift is just the natural race
+	%% between claim/release and the per-peer record_peer_load publish.
+	prev_drift = []
 }).
 
 %%%===================================================================
@@ -99,7 +82,7 @@ register_sync_workers() ->
 	{Workers, WorkerNames} = lists:foldl(
 		fun(Number, {AccWorkers, AccWorkerNames}) ->
 			Name = list_to_atom("ar_data_sync_worker_" ++ integer_to_list(Number)),
-			Worker = ?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name, sync]),
+			Worker = ?CHILD_WITH_ARGS(ar_data_sync_worker, worker, Name, [Name]),
 			{[Worker | AccWorkers], [Name | AccWorkerNames]}
 		end,
 		{[], []},
@@ -167,8 +150,19 @@ handle_call(Request, _From, State) ->
 handle_cast({sync_range, SyncTask}, State) ->
 	#sync_task{ peer = Peer } = SyncTask,
 	case ar_peer_worker:get_or_start(Peer) of
-		{ok, Pid} -> ar_peer_worker:enqueue(Pid, SyncTask);
-		{error, _} -> ok
+		{ok, Pid} ->
+			ar_peer_worker:enqueue(Pid, SyncTask);
+		{error, _} ->
+			%% No peer worker available - release the byte range so it
+			%% can be re-enqueued; otherwise it stays phantom-in-flight
+			%% in sync_task_queue's dedup overlay.
+			try
+				prometheus_counter:inc(sync_tasks,
+					[dropped_unavailable, ar_util:format_peer(Peer)], 1)
+			catch
+				_:_ -> ok
+			end,
+			ar_peer_sync:task_dropped(SyncTask)
 	end,
 	{noreply, State};
 
@@ -179,8 +173,8 @@ handle_cast(rebalance_peers, State) ->
 	AllPeerPerformances = ar_peers:get_peer_performances(Peers),
 	{Targets, State1} = calculate_targets(PeerPids, AllPeerPerformances, State),
 	State2 = rebalance_peers(PeerPids, AllPeerPerformances, Targets, State1),
-	log_anomalies(State2),
-	{noreply, State2};
+	State3 = log_anomalies(State2),
+	{noreply, State3};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -285,7 +279,7 @@ rebalance_peers2([{Peer, Pid} | Rest], AllPeerPerformances, Targets, State) ->
 	Result = ar_peer_worker:rebalance(Pid, Performance, RebalanceParams),
 	case Result of
 		{shutdown, _RemovedCount} ->
-			?LOG_INFO([{event, shutdown_idle_peer_worker},
+			?LOG_DEBUG([{event, shutdown_idle_peer_worker},
 				{peer, ar_util:format_peer(Peer)}]),
 			ar_peer_worker:stop(Pid);
 		{ok, _RemovedCount} -> ok;
@@ -305,16 +299,32 @@ queue_scaling_factor(TotalThroughput, WorkerCount) ->
 %%%===================================================================
 
 %% @doc Called from ar_peer_worker to publish its current load contribution
-%% (in-flight, queued, active footprints, slow-peer cap) to the worker_load
-%% ETS table.
-record_peer_load(Peer, InFlight, Queued, ActiveFootprints, MaxInFlight) ->
+%% (in-flight, queued, active footprints, in-flight cap, queue cap) to the
+%% worker_load ETS table.
+record_peer_load(Peer, InFlight, Queued, ActiveFootprints, MaxInFlight, MaxQueueLen) ->
 	try
 		ets:insert(?WORKER_LOAD_TABLE,
 			[{{in_flight, Peer}, InFlight},
 			 {{queued, Peer}, Queued},
 			 {{active_footprints, Peer}, ActiveFootprints},
-			 {{max_in_flight, Peer}, MaxInFlight}])
+			 {{max_in_flight, Peer}, MaxInFlight},
+			 {{max_queue_len, Peer}, MaxQueueLen}])
 	catch _:_ -> ok
+	end.
+
+%% @doc Returns true if Peer's worker has room in its queue. Used by
+%% ar_peer_sync's consumer loop to skip dispatching to a peer whose
+%% ar_peer_worker is already at its dynamic queue cap. If the
+%% peer hasn't published a load entry yet (worker not started), returns
+%% true so the worker gets a chance to start fresh.
+peer_ready_for_work(Peer) ->
+	try
+		Queued = ets:lookup_element(?WORKER_LOAD_TABLE, {queued, Peer}, 2),
+		MaxQueueLen = ets:lookup_element(?WORKER_LOAD_TABLE,
+				{max_queue_len, Peer}, 2),
+		Queued < MaxQueueLen
+	catch _:_ ->
+		true
 	end.
 
 %% @doc Atomically claim a footprint slot. Returns true on success, false if
@@ -352,11 +362,12 @@ remove_peer(Peer) ->
 		ets:delete(?WORKER_LOAD_TABLE, {in_flight, Peer}),
 		ets:delete(?WORKER_LOAD_TABLE, {queued, Peer}),
 		ets:delete(?WORKER_LOAD_TABLE, {active_footprints, Peer}),
-		ets:delete(?WORKER_LOAD_TABLE, {max_in_flight, Peer})
+		ets:delete(?WORKER_LOAD_TABLE, {max_in_flight, Peer}),
+		ets:delete(?WORKER_LOAD_TABLE, {max_queue_len, Peer})
 	catch _:_ -> ok
 	end.
 
-log_anomalies(#state{} = _State) ->
+log_anomalies(#state{ prev_drift = PrevDrift } = State) ->
 	try
 		SumPeerFootprints = sum_prefix(active_footprints),
 		SlotsAvailable = ets:lookup_element(?WORKER_LOAD_TABLE,
@@ -368,15 +379,18 @@ log_anomalies(#state{} = _State) ->
 			{footprint_slot_accounting, SumPeerFootprints, SlotsClaimed}
 		],
 		Mismatches = [T || {_, A, B} = T <- Drift, A =/= B],
-		case Mismatches of
-			[] -> ok;
-			_ ->
+		case Mismatches =/= [] andalso Mismatches =:= PrevDrift of
+			true ->
 				?LOG_WARNING([{event, worker_load_anomaly_drift},
-					{mismatches, Mismatches}])
-		end
+					{mismatches, Mismatches}]);
+			false ->
+				ok
+		end,
+		State#state{ prev_drift = Mismatches }
 	catch Class:Reason ->
 		?LOG_WARNING([{event, worker_load_anomaly_check_failed},
-			{class, Class}, {reason, io_lib:format("~p", [Reason])}])
+			{class, Class}, {reason, io_lib:format("~p", [Reason])}]),
+		State
 	end.
 
 sum_prefix(Tag) ->

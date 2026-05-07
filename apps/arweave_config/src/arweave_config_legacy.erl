@@ -200,7 +200,7 @@ reset() ->
 -spec get_env() -> {ok, #config{}}.
 
 get_env() ->
-	gen_server:call(?MODULE, get_env, 1000).
+	gen_server:call(?MODULE, get_env, 10000).
 
 %%--------------------------------------------------------------------
 %% @doc merge a configuration file (set only modified values).

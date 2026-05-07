@@ -34,9 +34,9 @@ ar_node_utils
 ar_nonce_limiter
 ar_packing_server
 ar_patricia_tree
+ar_peer_sync
 ar_peers
-ar_peer_intervals
-ar_peer_intervals_discovery_test
+ar_data_discovery
 ar_peer_worker
 ar_pricing
 ar_repack
@@ -90,7 +90,7 @@ ar_data_sync_mines_off_only_second_last_chunks_test
 ar_disk_pool_chunk_processing_tests
 ar_disk_pool_rotation_test
 ar_unconfirmed_chunk_tests
-ar_data_sync_enqueue_intervals_test
+ar_sync_task_queue
 ar_forced_validation_tests
 ar_fork_recovery_tests
 ar_tx

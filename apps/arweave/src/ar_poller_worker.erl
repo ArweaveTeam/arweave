@@ -161,6 +161,9 @@ handle_info({gun_down, _, http, closed, _, _}, State) ->
 handle_info({gun_up, _, http}, State) ->
 	{noreply, State};
 
+handle_info({gun_error, _ConnPid, _StreamRef, {badstate, _Reason}}, State) ->
+	{noreply, State};
+
 handle_info(Info, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {info, Info}]),
 	{noreply, State}.

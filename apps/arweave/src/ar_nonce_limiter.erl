@@ -36,6 +36,8 @@
 	emit_initialized_event = true
 }).
 
+-define(EXTERNAL_VDF_SERVER_WARNING_TIMEOUT_MS, 5000).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -647,7 +649,7 @@ handle_cast(check_external_vdf_server_input,
 handle_cast(check_external_vdf_server_input,
 		#state{ last_external_update = {_, Time} } = State) ->
 	Now = os:system_time(millisecond),
-	case Now - Time > 2000 of
+	case Now - Time > ?EXTERNAL_VDF_SERVER_WARNING_TIMEOUT_MS of
 		true ->
 			?LOG_WARNING([{event, no_message_from_any_vdf_servers},
 					{last_message_seconds_ago, (Now - Time) div 1000}]),

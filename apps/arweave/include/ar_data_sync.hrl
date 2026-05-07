@@ -1,6 +1,15 @@
 %% The size in bits of the offset key in kv databases.
 -define(OFFSET_KEY_BITSIZE, 256).
 
+%% Polling interval for ar_device_lock cooperative locking. Sync workers
+%% that fail to acquire (or are paused on) a device lock re-cast themselves
+%% after this delay to retry without busy-spinning.
+-ifdef(AR_TEST).
+-define(DEVICE_LOCK_WAIT, 100).
+-else.
+-define(DEVICE_LOCK_WAIT, 5_000).
+-endif.
+
 %% A single sync unit: fetch the byte range [start_offset, end_offset) from
 %% `peer` into storage module `store_id`. `footprint_key` groups chunks that
 %% share the same 256 MiB entropy (replica.2.9 mode) for admission control;
@@ -38,27 +47,6 @@
 %% GET /tx/<id>/data endpoint. Clients interested in downloading
 %% such data should fetch it chunk by chunk.
 -define(MAX_SERVED_TX_DATA_SIZE, 12 * 1024 * 1024).
-
-%% The time to wait until the next full disk pool scan.
--ifdef(AR_TEST).
--define(DISK_POOL_SCAN_DELAY_MS, 2000).
--else.
--define(DISK_POOL_SCAN_DELAY_MS, 10000).
--endif.
-
-%% How often to measure the number of chunks in the disk pool index.
--ifdef(AR_TEST).
--define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 1000).
--else.
--define(RECORD_DISK_POOL_CHUNKS_COUNT_FREQUENCY_MS, 5000).
--endif.
-
-%% How long to keep the offsets of the recently processed "matured" chunks in a cache.
-%% We use the cache to quickly skip matured chunks when scanning the disk pool.
--define(CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS, 30 * 60 * 1000).
-
-%% The frequency of removing expired data roots from the disk pool.
--define(REMOVE_EXPIRED_DATA_ROOTS_FREQUENCY_MS, 60000).
 
 %% The frequency of storing the server state on disk.
 -define(STORE_STATE_FREQUENCY_MS, 30000).
@@ -98,7 +86,7 @@
 -define(WORKER_LOAD_TABLE, worker_load).
 
 %% @doc The state of the server managing data synchronization.
--record(sync_data_state, {
+-record(data_sync_state, {
 	%% The last entries of the block index.
 	%% Used to determine orphaned data upon startup or chain reorg.
 	block_index,
@@ -131,14 +119,6 @@
 	%% << DataRootTimestamp:256, ChunkDataIndexKey/binary >> =>
 	%%     {RelativeChunkEndOffset, ChunkSize, DataRoot, TXSize, ChunkDataKey, IsStrictSplit}.
 	%%
-	%% The index is used to keep track of pending, orphaned, and recent chunks.
-	%% A periodic process iterates over chunks from earliest to latest, consults
-	%% DiskPoolDataRoots and data_root_index to decide whether each chunk needs to
-	%% be removed from disk as orphaned, reincluded into the weave (by updating chunks_index),
-	%% or removed from disk_pool_chunks_index by expiration.
-	disk_pool = undefined,
-	%% A flag used to temporarily pause disk pool scanning.
-	scan_pause = false,
 	%% A reference to the on-disk key value storage mapping
 	%% TXID => {AbsoluteTXEndOffset, TXSize}.
 	%% Is used to serve transaction data by TXID.
@@ -163,13 +143,6 @@
 	%% The offsets of the chunks currently scheduled for (re-)packing (keys) and
 	%% some chunk metadata needed for storing the chunk once it is packed.
 	packing_map = #{},
-	%% The queue with unique {Start, End, Peer} triplets. Sync jobs are taking intervals
-	%% from this queue and syncing them.
-	sync_intervals_queue = gb_sets:new(),
-	%% A compact set of non-overlapping intervals containing all the intervals from the
-	%% sync intervals queue. We use it to quickly check which intervals have been queued
-	%% already and avoid syncing the same interval twice.
-	sync_intervals_queue_intervals = ar_intervals:new(),
 	%% The mining address the chunks are packed with in 2.6.
 	mining_address,
 	%% The identifier of the storage module the process is responsible for.
@@ -178,13 +151,6 @@
 	range_start = -1,
 	%% The end offset of the range the module is responsible for.
 	range_end = -1,
-	%% The list of {StoreID, {Start, End}} - the ranges we want to copy
-	%% from the other storage modules (possibly, (re)packing the data in the process).
-	unsynced_intervals_from_other_storage_modules = [],
-	%% The list of identifiers of the non-default storage modules intersecting with the given
-	%% storage module to be searched for missing data before attempting to sync the data
-	%% from the network.
-	other_storage_modules_with_unsynced_intervals = [],
 	%% The priority queue of chunks sorted by offset. The motivation is to have chunks
 	%% stack up, per storage module, before writing them on disk so that we can write
 	%% them in the ascending order and reduce out-of-order disk writes causing fragmentation.
@@ -194,22 +160,5 @@
 	%% The threshold controlling the brief accumuluation of the chunks in the queue before
 	%% the actual disk dump, to reduce the chance of out-of-order write causing disk
 	%% fragmentation.
-	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD,
-	%% The phase of the syncing process.
-	%% The phases are:
-	%% - normal: normal left-to-right syncing (normally, of the unpacked data).
-	%% - footprint: footprint-based syncing of replica 2.9 data.
-	sync_phase = undefined,
-	%% Number of tasks produced by the current scan. Used for adaptive backoff:
-	%% scans that complete a full range walk with 0 tasks get exponential
-	%% backoff (the module is likely near-full). Throttled scans never
-	%% complete — the wait-retry loop holds the offset until peers recover.
-	scan_tasks_produced = 0,
-	%% Whether this scan queried any peers (enqueue_intervals was called).
-	%% Scans that race through with no peers (data discovery not populated)
-	%% should not trigger backoff.
-	scan_had_peers = false,
-	%% Current backoff delay for unproductive scans (doubles each time,
-	%% capped at COLLECT_SYNC_INTERVALS_MAX_DELAY_MS).
-	scan_backoff_ms = 0
+	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
 }).

@@ -181,6 +181,13 @@ register() ->
 				"store ID, packing, partition number, storage module size, "
 				"storage module index, and packing difficulty."}
 	]),
+	prometheus_gauge:new([
+		{name, tip_partition_data_size_by_packing},
+		{labels, [packing]},
+		{help, "The size (in bytes) of the data stored and indexed for the tip "
+				"partition (floor(weave_size / partition_size)), summed across "
+				"all storage modules covering that partition. Grouped by packing."}
+	]),
 
 	%% Disk pool.
 	prometheus_gauge:new([
@@ -489,16 +496,33 @@ register() ->
 
 	prometheus_gauge:new([{name, data_discovery},
 		{labels, [type, store_id, stat]},
-		{help, "Tracks peer availability statistics from data discovery across buckets. "
+		{help, "Tracks peer availability statistics from data discovery. "
 				"'type' is 'normal' or 'footprint'. "
-				"'stat' is 'num_peers', 'total_buckets', 'zero_peer_count', or 'healthy_peer_count'."}]),
+				"'stat' is 'num_peers' - distinct peers offering data "
+				"anywhere in this store_id's range."}]),
+
+	prometheus_gauge:new([{name, peer_interval_cache_size},
+		{labels, [unit]},
+		{help, "Size of ar_data_discovery's peer interval cache "
+				"(per-(peer, window, mode) entries). 'unit' is 'rows' "
+				"(row count) or 'bytes' (ets:info memory * wordsize, "
+				"capped by ?MAX_INTERVAL_CACHE_BYTES). Sustained pressure "
+				"near the byte cap indicates the cap should be raised or "
+				"peer scanning is thrashing."}]),
+
+	prometheus_counter:new([{name, peer_interval_cache_evictions},
+		{labels, [reason]},
+		{help, "Cumulative rows evicted from ar_data_discovery's peer "
+				"interval cache. 'reason' is 'trim' (LRU cap fired) or "
+				"'peer_removed' (whole-peer wipe on remove_peer)."}]),
 
 	prometheus_counter:new([{name, sync_tasks},
 		{labels, [state, peer]},
-		{help, "The number of syncing tasks. 'state' can be "
-				"'queued_in', 'queued_out', 'dispatched', 'completed', "
-				"'activate_footprint', or 'deactivate_footprint'. "
-				" 'peer' is the peer the task is intended for."}]),
+		{help, "Sync task counters per peer. queued_in/queued_out track "
+				"every queue add/remove (queue depth = queued_in - "
+				"queued_out). Other states are flavor: dispatched, "
+				"completed, activate_footprint, deactivate_footprint, "
+				"rebalance_cut, reaped, dropped_unavailable."}]),
 
 	prometheus_counter:new([{name, sync_chunks_skipped},
 		{labels, [reason]},
@@ -508,9 +532,18 @@ register() ->
 		{labels, [store_id, mode]},
 		{help, "The device lock status of the storage module. "
 				"-1: off, 0: paused, 1: active, 2: complete -2: unknown"}]),
-	prometheus_gauge:new([{name, sync_intervals_queue_size},
+	prometheus_gauge:new([{name, sync_task_queue_size},
+		{labels, [store_id, mode]},
+		{help, "Per-mode count of tasks in the per-StoreID sync_task_queue "
+				"ready for dispatch. 'mode' is 'normal' or 'footprint' "
+				"(derived from each task's footprint_key)."}]),
+	prometheus_gauge:new([{name, sync_task_queue_inflight_bytes},
 		{labels, [store_id]},
-		{help, "The size of the syncing intervals queue."}]),
+		{help, "Total bytes in the per-StoreID sync_task_queue's "
+				"in_flight_intervals overlay (queued + currently-fetching "
+				"ranges, used by the producer's dedup gate). When this "
+				"climbs while sync_task_queue_size stays at 0 the dedup "
+				"overlay is leaking."}]),
 
 	prometheus_gauge:new([{name, repack_chunk_states},
 		{labels, [store_id, type, state]},
@@ -614,6 +647,8 @@ get_status_class({error, {down,_}}) ->
 	"down";
 get_status_class({error, {stream_error,_}}) ->
 	"stream_error";
+get_status_class({error, client_error}) ->
+	"client_error";
 get_status_class(Data) when is_integer(Data), Data > 0 ->
 	integer_to_list(Data);
 get_status_class(Data) when is_binary(Data) ->

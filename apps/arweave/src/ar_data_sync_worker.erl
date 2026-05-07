@@ -1,12 +1,17 @@
-%%% @doc A process fetching the weave data from the network and from the local
-%%% storage modules, one chunk (or a range of chunks) at a time. The workers
-%%% are coordinated by ar_data_sync_coordinator. The workers do not update the
-%%% storage - updates are handled by ar_data_sync_* processes.
+%%% @doc Network sync worker for ar_data_sync.
+%%%
+%%% Each worker repeatedly shuffles the active peer-worker roster and pulls
+%%% one task via ar_peer_worker:take_one/1. It performs the chunk HTTP
+%%% request, then reports completion back through ar_data_sync so the owning
+%%% storage module can store the chunk and release queue dedup state.
+%%%
+%%% Local-disk chunk-copy work runs in ar_chunk_copy_worker, not here.
+%%% Storage writes are deliberately left to ar_data_sync processes.
 -module(ar_data_sync_worker).
 
 -behaviour(gen_server).
 
--export([start_link/2]).
+-export([start_link/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -16,34 +21,25 @@
 
 -record(state, {
 	name = undefined,
-	request_packed_chunks = false
+	request_packed_chunks = false,
+	sync_in_progress = false
 }).
-
- %% # of messages to cast to ar_data_sync at once. Each message carries at least 1 chunk worth
- %% of data (256 KiB). Since there are dozens or hundreds of workers, if each one posts too
- %% many messages at once it can overload the available memory.
--define(READ_RANGE_MESSAGES_PER_BATCH, 40).
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
-start_link(Name, Mode) ->
-	gen_server:start_link({local, Name}, ?MODULE, {Name, Mode}, []).
+start_link(Name) ->
+	gen_server:start_link({local, Name}, ?MODULE, Name, []).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
-init({Name, Mode}) ->
+init(Name) ->
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {name, Name}]),
 	{ok, Config} = arweave_config:get_env(),
-	case Mode of
-		sync ->
-			gen_server:cast(self(), pull);
-		_ ->
-			ok
-	end,
+	gen_server:cast(self(), pull),
 	{ok, #state{
 		name = Name,
 		request_packed_chunks = Config#config.data_sync_request_packed_chunks
@@ -53,24 +49,22 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({read_range, Args}, State) ->
-	case read_range(Args) of
-		recast ->
-			ok;
-		ReadResult ->
-			ar_chunk_copy:task_completed(State#state.name, ReadResult, Args)
-	end,
-	{noreply, State};
 
+handle_cast(pull, #state{ sync_in_progress = true } = State) ->
+	{noreply, State};
 handle_cast(pull, State) ->
 	%% Shuffle list to distribute peer load across workers.
 	Peers = ar_util:shuffle_list(ar_peer_worker:get_all_peers()),
 	case try_take_one(Peers) of
 		{ok, SyncTask} ->
-			run_sync_range(SyncTask, State),
-			%% Loop: immediately try to pull again.
-			gen_server:cast(self(), pull),
-			{noreply, State};
+			case run_sync_range(SyncTask, State) of
+				done ->
+					%% Loop: immediately try to pull again.
+					gen_server:cast(self(), pull),
+					{noreply, State#state{ sync_in_progress = false }};
+				recast ->
+					{noreply, State#state{ sync_in_progress = true }}
+			end;
 		none ->
 			%% No peer has work right now. Retry after a short delay.
 			ar_util:cast_after(500 + rand:uniform(1000), self(), pull),
@@ -78,16 +72,15 @@ handle_cast(pull, State) ->
 	end;
 
 handle_cast({sync_range, SyncTask}, State) ->
-	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
-			footprint_key = FootprintKey } = SyncTask,
 	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
-		recast -> ok;
+		recast ->
+			{noreply, State#state{ sync_in_progress = true }};
 		_ ->
-			ar_peer_worker:task_completed(Peer, self(), FootprintKey,
-				SyncResult, ElapsedUs, End - Start)
-	end,
-	{noreply, State};
+			ar_peer_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs),
+			gen_server:cast(self(), pull),
+			{noreply, State#state{ sync_in_progress = false }}
+	end;
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -103,27 +96,26 @@ try_take_one([{_Peer, PeerPid} | Rest]) ->
 			try_take_one(Rest)
 	end.
 
-%% @doc Execute one sync_range task and report completion to the owning
-%% peer worker. On recast (cache full / disk full / retryable HTTP error)
-%% sync_range internally schedules a self-cast_after; we leave the slot
-%% claimed and in_flight_count incremented at the peer worker. The
-%% scheduled retry lands in the legacy `{sync_range, _}` cast handler,
-%% which will report completion when the retry succeeds (or definitively
-%% fails after exhausting retries — see sync_range/2 retry-zero clause
-%% which returns {error, timeout} directly, not recast).
+%% @doc Execute one sync_range task and report completion through
+%% ar_peer_sync (which fans out to the per-peer accounting and releases
+%% the StoreID's queue dedup overlay). On recast (cache full / disk full
+%% / retryable HTTP error) sync_range internally schedules a
+%% self-cast_after; we leave the slot claimed and in_flight_count
+%% incremented at the peer worker. The scheduled retry lands in the
+%% `{sync_range, _}` cast handler, which will report completion when
+%% the retry succeeds (or definitively fails after exhausting retries —
+%% see sync_range/2 retry-zero clause which returns {error, timeout}
+%% directly, not recast).
 run_sync_range(SyncTask, State) ->
-	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
-			footprint_key = FootprintKey } = SyncTask,
 	{ElapsedUs, SyncResult} = timer:tc(fun() -> sync_range(SyncTask, State) end),
 	case SyncResult of
 		recast ->
 			%% Slot stays claimed; eventual retry will report completion.
-			ok;
+			recast;
 		_ ->
-			ar_peer_worker:task_completed(Peer, self(), FootprintKey, SyncResult,
-				ElapsedUs, End - Start)
-	end,
-	ok.
+			ar_peer_sync:task_completed(SyncTask, self(), SyncResult, ElapsedUs),
+			done
+	end.
 
 handle_info(_Message, State) ->
 	{noreply, State}.
@@ -136,147 +128,11 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-read_range({Start, End, _OriginStoreID, _TargetStoreID})
-		when Start >= End ->
-	ok;
-read_range({Start, End, _OriginStoreID, TargetStoreID} = Args) ->
-	case ar_data_sync:is_chunk_cache_full() of
-		false ->
-			case ar_data_sync:is_disk_space_sufficient(TargetStoreID) of
-				true ->
-					?LOG_DEBUG([{event, read_range}, {pid, self()},
-						{size_mb, (End - Start) / ?MiB}, {args, Args}]),
-					read_range2(?READ_RANGE_MESSAGES_PER_BATCH, Args);
-				_ ->
-					ar_util:cast_after(30000, self(), {read_range, Args}),
-					recast
-			end;
-		_ ->
-			ar_util:cast_after(200, self(), {read_range, Args}),
-			recast
-	end.
-
-read_range2(0, Args) ->
-	ar_util:cast_after(1000, self(), {read_range, Args}),
-	recast;
-read_range2(_MessagesRemaining,
-		{Start, End, _OriginStoreID, _TargetStoreID})
-		when Start >= End ->
-	ok;
-read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
-	CheckIsRecordedAlready =
-		case ar_sync_record:is_recorded(Start + 1, ar_data_sync, TargetStoreID) of
-			{true, _} ->
-				case ar_sync_record:get_next_unsynced_interval(Start, End, ar_data_sync,
-						TargetStoreID) of
-					not_found ->
-						ok;
-					{_, Start2} ->
-						read_range2(MessagesRemaining,
-								{Start2, End, OriginStoreID, TargetStoreID})
-				end;
-			_ ->
-				false
-		end,
-	IsRecordedInTheSource =
-		case CheckIsRecordedAlready of
-			ok ->
-				ok;
-			recast ->
-				ok;
-			false ->
-				case ar_sync_record:is_recorded(Start + 1, ar_data_sync, OriginStoreID) of
-					{true, Packing} ->
-						{true, Packing};
-					SyncRecordReply ->
-						?LOG_ERROR([{event, cannot_read_requested_range},
-								{origin_store_id, OriginStoreID},
-								{missing_start_offset, Start + 1},
-								{end_offset, End},
-								{target_store_id, TargetStoreID},
-								{sync_record_reply, io_lib:format("~p", [SyncRecordReply])}])
-				end
-		end,
-	ReadChunkMetadata =
-		case IsRecordedInTheSource of
-			ok ->
-				ok;
-			{true, Packing2} ->
-				{Packing2, ar_data_sync:get_chunk_by_byte(Start + 1, OriginStoreID)}
-		end,
-	PaddedEnd = ar_block:get_chunk_padded_offset(End),
-	case ReadChunkMetadata of
-		ok ->
-			ok;
-		{_, {error, invalid_iterator}} ->
-			%% get_chunk_by_byte looks for a key with the same prefix or the next
-			%% prefix. Therefore, if there is no such key, it does not make sense to
-			%% look for any key smaller than the prefix + 2 in the next iteration.
-			PrefixSpaceSize = trunc(math:pow(2,
-					?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
-			Start3 = ((Start div PrefixSpaceSize) + 2) * PrefixSpaceSize,
-			read_range2(MessagesRemaining,
-					{Start3, End, OriginStoreID, TargetStoreID});
-		{_, {error, Reason}} ->
-			?LOG_ERROR([{event, failed_to_query_chunk_metadata}, {offset, Start + 1},
-					{reason, io_lib:format("~p", [Reason])}]);
-		{_, {ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}}} when AbsoluteOffset > PaddedEnd ->
-			ok;
-		{Packing3, {ok, _Key, {AbsoluteOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
-				RelativeOffset, ChunkSize}}} ->
-			ReadChunk = ar_data_sync:read_chunk(AbsoluteOffset, ChunkDataKey, OriginStoreID),
-			case ReadChunk of
-				not_found ->
-					ar_data_sync:invalidate_bad_data_record(
-						AbsoluteOffset, ChunkSize, OriginStoreID, read_range_chunk_not_found),
-					read_range2(MessagesRemaining-1,
-							{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
-				{error, Error} ->
-					?LOG_ERROR([{event, failed_to_read_chunk},
-							{absolute_end_offset, AbsoluteOffset},
-							{chunk_data_key, ar_util:encode(ChunkDataKey)},
-							{reason, io_lib:format("~p", [Error])}]),
-					read_range2(MessagesRemaining,
-							{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
-				{ok, {Chunk, DataPath}} ->
-					case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
-							OriginStoreID) of
-						{true, Packing3} ->
-							ar_data_sync:increment_chunk_cache_size(),
-							UnpackedChunk =
-								case Packing3 of
-									unpacked ->
-										Chunk;
-									_ ->
-										none
-								end,
-							Args = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
-									Packing3, RelativeOffset, ChunkSize, Chunk,
-									UnpackedChunk, TargetStoreID, ChunkDataKey},
-							gen_server:cast(ar_data_sync:name(TargetStoreID),
-									{pack_and_store_chunk, Args}),
-							read_range2(MessagesRemaining-1,
-								{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
-						{true, _DifferentPacking} ->
-							%% Unlucky timing - the chunk should have been repacked
-							%% in the meantime.
-							read_range2(MessagesRemaining,
-									{Start, End, OriginStoreID, TargetStoreID});
-						Reply ->
-							?LOG_ERROR([{event, chunk_record_not_found},
-									{absolute_end_offset, AbsoluteOffset},
-									{ar_sync_record_reply, io_lib:format("~p", [Reply])}]),
-							read_range2(MessagesRemaining,
-									{Start + ChunkSize, End, OriginStoreID, TargetStoreID})
-					end
-			end
-	end.
-
 sync_range(#sync_task{ start_offset = Start, end_offset = End }, _State) when Start >= End ->
 	ok;
 sync_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
 		retry_count = 0 }, _State) ->
-	?LOG_WARNING([{event, sync_range_retries_exhausted},
+	?LOG_INFO([{event, sync_range_retries_exhausted},
 				{peer, ar_util:format_peer(Peer)},
 				{start_offset, Start}, {end_offset, End}]),
 	{error, timeout};

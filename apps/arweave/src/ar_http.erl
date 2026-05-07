@@ -72,6 +72,23 @@ req(Args) ->
 -endif.
 
 req(Args, ReestablishedConnection) ->
+	%% Drop stale gun_* messages from the calling process's mailbox before
+	%% issuing a new request. Each gun stream can leave straggler messages
+	%% (e.g. {gun_error, _, _, {badstate, "The stream cannot be found."}})
+	%% after gun:await returns - the connection died asynchronously after
+	%% we moved past that stream. Without draining, those accumulate in
+	%% callers' mailboxes; gun:await's selective receive then scans the
+	%% entire mailbox each iteration looking for its own ref, slowing
+	%% scanners over time.
+	%%
+	%% ar_http is the only production Gun client. Callers that also own Gun
+	%% messages can pass `drain_gun => false'. Only drain on the top-level
+	%% call, not on the recursive retry that needs to keep messages from
+	%% the just-issued in-flight request.
+	case {ReestablishedConnection, maps:get(drain_gun, Args, true)} of
+		{false, true} -> drain_stale_gun_messages();
+		_ -> ok
+	end,
 	StartTime = erlang:monotonic_time(),
 	#{ peer := Peer, path := Path, method := Method } = Args,
 	ok = ar_rate_limiter:throttle(Peer, Path),
@@ -459,6 +476,25 @@ upload_metric(#{method := post, path := Path, body := Body}) ->
 	);
 upload_metric(_) ->
 	ok.
+
+%% Non-blocking drain of any gun_* messages currently sitting in the caller's
+%% mailbox. Late messages can still arrive after this returns; worker processes
+%% that sit idle after ar_http:req may still need local handle_info ignore
+%% clauses for those stragglers.
+drain_stale_gun_messages() ->
+	receive
+		{gun_error, _, _, _} -> drain_stale_gun_messages();
+		{gun_error, _, _} -> drain_stale_gun_messages();
+		{gun_response, _, _, _, _, _} -> drain_stale_gun_messages();
+		{gun_data, _, _, _, _} -> drain_stale_gun_messages();
+		{gun_trailers, _, _, _} -> drain_stale_gun_messages();
+		{gun_inform, _, _, _, _} -> drain_stale_gun_messages();
+		{gun_push, _, _, _, _, _, _} -> drain_stale_gun_messages();
+		{gun_down, _, _, _, _} -> drain_stale_gun_messages();
+		{gun_down, _, _, _, _, _} -> drain_stale_gun_messages();
+		{gun_up, _, _} -> drain_stale_gun_messages()
+	after 0 -> ok
+	end.
 
 should_retry_closed_connection({shutdown, normal}) ->
 	true;
