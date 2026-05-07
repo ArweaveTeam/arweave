@@ -291,21 +291,33 @@ handle_cast({requeue_scan, Peer, Mode}, State) ->
 	{noreply, maybe_start_scanners(State2)};
 
 handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
+	?LOG_DEBUG([{event, processing_peer_sync_buckets},
+		{peer, ar_util:format_peer(Peer)}]),
+	%% Bound iteration by the current weave size — sub-buckets beyond it would
+	%% never be queried and a peer with a coarse bucket size can otherwise
+	%% expand into millions of useless rows.
+	WeaveSize = ar_node:get_weave_size(),
 	ar_sync_buckets:foreach(
 		fun(Bucket, Share) ->
 			ets:insert(?MODULE, {{Bucket, Share, Peer}})
 		end,
-		?NETWORK_DATA_BUCKET_SIZE,
+		ar_sync_buckets:get_network_data_bucket_size(),
+		WeaveSize,
 		SyncBuckets
 	),
+	?LOG_DEBUG([{event, processed_peer_sync_buckets},
+		{peer, ar_util:format_peer(Peer)}]),
 	{noreply, State};
 
 handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
+	WeaveSize = ar_node:get_weave_size(),
+	MaxFootprintOffset = ar_footprint_record:max_offset(WeaveSize),
 	ar_sync_buckets:foreach(
 		fun(Bucket, Share) ->
 			ets:insert(ar_data_discovery_footprint_buckets, {{Bucket, Share, Peer}})
 		end,
-		?NETWORK_FOOTPRINT_BUCKET_SIZE,
+		ar_sync_buckets:get_network_footprint_bucket_size(),
+		MaxFootprintOffset,
 		FootprintBuckets
 	),
 	{noreply, State};

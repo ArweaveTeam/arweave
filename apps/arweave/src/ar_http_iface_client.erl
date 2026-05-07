@@ -485,7 +485,7 @@ get_sync_buckets(Peer) ->
 		connect_timeout => 2000,
 		limit => ?MAX_SYNC_BUCKETS_SIZE,
 		headers => p2p_headers()
-	}), ?DEFAULT_SYNC_BUCKET_SIZE).
+	}), ar_sync_buckets:get_default_sync_bucket_size()).
 
 get_footprint_buckets(Peer) ->
 	handle_get_sync_buckets_response(ar_http:req(#{
@@ -496,7 +496,7 @@ get_footprint_buckets(Peer) ->
 		connect_timeout => 2000,
 		limit => ?MAX_SYNC_BUCKETS_SIZE,
 		headers => p2p_headers()
-	}), ?NETWORK_FOOTPRINT_BUCKET_SIZE).
+	}), ar_sync_buckets:get_network_footprint_bucket_size()).
 
 get_recent_hash_list(Peer) ->
 	handle_get_recent_hash_list_response(ar_http:req(#{
