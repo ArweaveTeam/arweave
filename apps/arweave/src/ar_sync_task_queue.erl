@@ -12,7 +12,7 @@
 %%                      `in_flight_intervals'.
 %%   take_smallest/1  - consumer pops the next task. Byte range stays
 %%                      in `in_flight_intervals' (still in flight).
-%%   task_completed/3 - any path where a task definitively exits the
+%%   release_task_range/3 - any path where a task definitively exits the
 %%                      pipeline (success, failure, drop, reap, cut).
 %%                      Removes the byte range from `in_flight_intervals'.
 %%
@@ -22,7 +22,8 @@
 -module(ar_sync_task_queue).
 
 -export([new/0, size/1, size_by_mode/1, inflight_bytes/1, is_empty/1,
-		in_flight_intervals/1, insert_batch/3, take_smallest/1, task_completed/3]).
+		in_flight_intervals/1, insert_batch/3, peek_smallest/1, take_smallest/1,
+		release_task_range/3, skip_peer/2]).
 
 -include("ar.hrl").
 
@@ -79,11 +80,14 @@ insert_batch(PeerEntries, ChunksPerPeer, Queue) ->
 		PeerEntries
 	).
 
+peek_smallest(#sync_task_queue{ q = Q }) ->
+	gb_sets:smallest(Q).
+
 %% @doc Remove the smallest task from the queue. The task's byte range
 %% stays in `in_flight_intervals' so subsequent insert_batch/3 calls
 %% dedup against the still-in-flight range. Caller must invoke
-%% task_completed/3 once the sync_range definitively finishes to release
-%% the dedup.
+%% release_task_range/3 once the sync_range definitively finishes to
+%% release the dedup.
 take_smallest(#sync_task_queue{ q = Q,
 		normal_count = N, footprint_count = F } = Queue) ->
 	{{FootprintKey, Start, End, Peer}, Q2} = gb_sets:take_smallest(Q),
@@ -92,14 +96,31 @@ take_smallest(#sync_task_queue{ q = Q,
 	{Task, Queue#sync_task_queue{ q = Q2,
 			normal_count = N2, footprint_count = F2 }}.
 
-%% @doc Release the dedup overlay for a byte range whose sync_range has
-%% definitively completed (success, failure, drop, reap, cut). Future
-%% insert_batch/3 calls covering [Start, End) may enqueue tasks for it
-%% again.
-task_completed(End, Start,
+%% Release the dedup overlay for a terminal task range. Future insert_batch/3
+%% calls covering [Start, End) may enqueue tasks for it again.
+release_task_range(Start, End,
 		#sync_task_queue{ in_flight_intervals = InFlightIntervals } = Queue) ->
 	Queue#sync_task_queue{
 		in_flight_intervals = ar_intervals:delete(InFlightIntervals, End, Start) }.
+
+%% @doc Drop Peer's contiguous head-block tasks: take_smallest each one
+%% AND release its byte range from `in_flight_intervals' so the producer
+%% can re-discover and re-enqueue it on the next pass. Stops at the first
+%% task whose peer doesn't match. Caller has no per-task work to do.
+skip_peer(Peer, Queue) ->
+	case is_empty(Queue) of
+		true ->
+			Queue;
+		false ->
+			case peek_smallest(Queue) of
+				{_FootprintKey, Start, End, Peer} ->
+					{_Task, Queue2} = take_smallest(Queue),
+					Queue3 = release_task_range(Start, End, Queue2),
+					skip_peer(Peer, Queue3);
+				_ ->
+					Queue
+			end
+	end.
 
 %%%===================================================================
 %%% Private helpers.

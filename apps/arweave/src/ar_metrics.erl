@@ -522,7 +522,7 @@ register() ->
 				"every queue add/remove (queue depth = queued_in - "
 				"queued_out). Other states are flavor: dispatched, "
 				"completed, activate_footprint, deactivate_footprint, "
-				"rebalance_cut, reaped, dropped_full, dropped_unavailable."}]),
+				"rebalance_cut, reaped, dropped_unavailable."}]),
 
 	prometheus_counter:new([{name, sync_chunks_skipped},
 		{labels, [reason]},

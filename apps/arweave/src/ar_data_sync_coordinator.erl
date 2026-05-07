@@ -16,7 +16,7 @@
 -export([start_link/1, register_workers/0, is_syncing_enabled/0,
 		 ready_for_work/0, work_capacity/0, max_tasks/0,
 		 sync_range/1]).
--export([record_peer_load/5, remove_peer/1]).
+-export([record_peer_load/6, remove_peer/1, peer_ready_for_work/1]).
 -export([claim_footprint_slot/0, release_footprint_slot/0]).
 -export([sync_jobs/0, default_in_flight_limit/0, min_peer_queue/0, max_peer_queue/0]).
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -162,7 +162,7 @@ handle_cast({sync_range, SyncTask}, State) ->
 			catch
 				_:_ -> ok
 			end,
-			ar_peer_worker:release_dropped_task(SyncTask)
+			ar_peer_sync:task_dropped(SyncTask)
 	end,
 	{noreply, State};
 
@@ -299,16 +299,32 @@ queue_scaling_factor(TotalThroughput, WorkerCount) ->
 %%%===================================================================
 
 %% @doc Called from ar_peer_worker to publish its current load contribution
-%% (in-flight, queued, active footprints, slow-peer cap) to the worker_load
-%% ETS table.
-record_peer_load(Peer, InFlight, Queued, ActiveFootprints, MaxInFlight) ->
+%% (in-flight, queued, active footprints, in-flight cap, queue cap) to the
+%% worker_load ETS table.
+record_peer_load(Peer, InFlight, Queued, ActiveFootprints, MaxInFlight, MaxQueueLen) ->
 	try
 		ets:insert(?WORKER_LOAD_TABLE,
 			[{{in_flight, Peer}, InFlight},
 			 {{queued, Peer}, Queued},
 			 {{active_footprints, Peer}, ActiveFootprints},
-			 {{max_in_flight, Peer}, MaxInFlight}])
+			 {{max_in_flight, Peer}, MaxInFlight},
+			 {{max_queue_len, Peer}, MaxQueueLen}])
 	catch _:_ -> ok
+	end.
+
+%% @doc Returns true if Peer's worker has room in its queue. Used by
+%% ar_peer_sync's consumer loop to skip dispatching to a peer whose
+%% ar_peer_worker is already at its dynamic queue cap. If the
+%% peer hasn't published a load entry yet (worker not started), returns
+%% true so the worker gets a chance to start fresh.
+peer_ready_for_work(Peer) ->
+	try
+		Queued = ets:lookup_element(?WORKER_LOAD_TABLE, {queued, Peer}, 2),
+		MaxQueueLen = ets:lookup_element(?WORKER_LOAD_TABLE,
+				{max_queue_len, Peer}, 2),
+		Queued < MaxQueueLen
+	catch _:_ ->
+		true
 	end.
 
 %% @doc Atomically claim a footprint slot. Returns true on success, false if
@@ -346,7 +362,8 @@ remove_peer(Peer) ->
 		ets:delete(?WORKER_LOAD_TABLE, {in_flight, Peer}),
 		ets:delete(?WORKER_LOAD_TABLE, {queued, Peer}),
 		ets:delete(?WORKER_LOAD_TABLE, {active_footprints, Peer}),
-		ets:delete(?WORKER_LOAD_TABLE, {max_in_flight, Peer})
+		ets:delete(?WORKER_LOAD_TABLE, {max_in_flight, Peer}),
+		ets:delete(?WORKER_LOAD_TABLE, {max_queue_len, Peer})
 	catch _:_ -> ok
 	end.
 

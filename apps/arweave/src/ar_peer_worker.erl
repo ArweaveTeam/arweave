@@ -15,8 +15,7 @@
 %% Lifecycle
 -export([start_link/1, get_all_peers/0, get_or_start/1, stop/1]).
 %% Operations (all take Pid as first arg - coordinator caches Peer->Pid mapping)
--export([task_completed/6, rebalance/3, enqueue/2, take_one/1,
-		release_dropped_task/1]).
+-export([task_completed/6, rebalance/3, enqueue/2, take_one/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -63,8 +62,7 @@
 	%% WorkerPid => {FootprintKey, TakenAt, SyncTask} for tasks handed out
 	%% via take_one. Cleaned up on the success-path task_completed/6;
 	%% dead or stale entries reaped on rebalance, which also releases the
-	%% byte range from the StoreID's task queue dedup overlay via
-	%% release_dropped_task/1.
+	%% byte range from the StoreID's task queue dedup overlay.
 	in_flight_workers = #{}
 }).
 
@@ -141,9 +139,9 @@ take_one(Pid) ->
 %% @doc Per-peer completion accounting: decrement in-flight count, release
 %% the footprint slot, update peer rating. Invoked by ar_sync_task_queue
 %% as part of its task_completed/4 fan-out (the success path). Drop paths
-%% don't go through here; they go through release_dropped_task/1, which
-%% releases the byte range without touching per-peer state (the relevant
-%% drop sites maintain their own per-peer accounting).
+%% call ar_peer_sync:task_dropped/1 directly to release the byte range
+%% without touching per-peer state (the relevant drop sites maintain their
+%% own per-peer accounting).
 task_completed(Peer, WorkerPid, FootprintKey, Result, ElapsedMicroseconds, DataSize) ->
 	case get_pid(Peer) of
 		{ok, Pid} ->
@@ -192,26 +190,12 @@ publish_load(State) ->
 		State#state.in_flight_count,
 		total_queued(State),
 		sets:size(State#state.active_footprints),
-		State#state.max_in_flight),
+		State#state.max_in_flight,
+		State#state.max_queue_len),
 	State.
 
 total_queued(State) ->
 	queue:len(State#state.eligible_queue) + queue:len(State#state.blocked_queue).
-
-%% @doc Release a task's byte range from the StoreID's task queue dedup
-%% overlay. Used when the task gets dropped here (queue full / rebalance
-%% cut / reaped stale or dead worker) or by the coordinator (peer worker
-%% can't be started); without this, the range stays phantom-in-flight in
-%% `ar_sync_task_queue.in_flight_intervals' forever and the producer
-%% would dedup against it, never re-enqueueing.
-%%
-%% This is the canonical drop API for tasks that exit the pipeline
-%% without firing the success path's task_completed/6. ar_peer_sync
-%% (the per-StoreID gen_server) owns the dedup overlay; this function
-%% is the bridge.
-release_dropped_task(#sync_task{ store_id = StoreID,
-		start_offset = Start, end_offset = End }) ->
-	ar_peer_sync:task_completed(StoreID, Start, End).
 
 handle_call(get_state, _From, State) ->
 	%% Test-only: keep for tests to access raw state
@@ -331,22 +315,11 @@ handle_cast({task_completed, WorkerPid, FootprintKey, Result, ElapsedMicrosecond
 	{noreply, State2};
 
 handle_cast({enqueue, SyncTask}, State) ->
-	case total_queued(State) >= State#state.max_queue_len of
-		true ->
-			%% Per-peer queue is full. Release the byte range from the
-			%% StoreID's sync_task_queue dedup overlay so discover can
-			%% re-enqueue it later; otherwise the range stays "in flight"
-			%% forever and silently shrinks the producible task pool.
-			increment_metrics(dropped_full, State, 1),
-			release_dropped_task(SyncTask),
-			{noreply, State};
-		false ->
-			#sync_task{ footprint_key = FootprintKey } = SyncTask,
-			State1 = State#state{ last_task_time = erlang:monotonic_time() },
-			{_, State2} = do_enqueue_task(FootprintKey, SyncTask, true, State1),
-			publish_load(State2),
-			{noreply, State2}
-	end;
+	#sync_task{ footprint_key = FootprintKey } = SyncTask,
+	State1 = State#state{ last_task_time = erlang:monotonic_time() },
+	{_, State2} = do_enqueue_task(FootprintKey, SyncTask, true, State1),
+	publish_load(State2),
+	{noreply, State2};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -570,7 +543,7 @@ cut_queues(ToCut, State) ->
 	%% (every removal regardless of reason), so `queued_in - queued_out'
 	%% reliably reports current queue depth. `rebalance_cut' is the
 	%% reason label so the cause is distinguishable from a normal
-	%% pop-for-dispatch. Pairs with the `release_dropped_task/1' calls
+	%% pop-for-dispatch. Pairs with the ar_peer_sync:task_dropped/1 calls
 	%% in remove_footprint_from_queues/2 and cut_non_footprint_tail/2.
 	increment_metrics(queued_out, State4, TotalCut),
 	increment_metrics(rebalance_cut, State4, TotalCut),
@@ -598,7 +571,7 @@ remove_footprint_from_queues(FootprintKey, State) ->
 		remove_matching(FootprintKey, State#state.blocked_queue),
 	CutTasks = EligibleCutTasks ++ BlockedCutTasks,
 	TotalCut = length(CutTasks),
-	lists:foreach(fun release_dropped_task/1, CutTasks),
+	lists:foreach(fun ar_peer_sync:task_dropped/1, CutTasks),
 	State2 = State#state{ eligible_queue = NewEligible, blocked_queue = NewBlocked },
 	State3 = lists:foldl(
 		fun(_, Acc) -> do_complete_footprint_task(FootprintKey, Acc) end,
@@ -623,7 +596,7 @@ cut_non_footprint_tail(Budget, State) ->
 	NonFootprintTasks = [T || #sync_task{ footprint_key = none } = T <- TaskList],
 	KeepCount = max(0, length(NonFootprintTasks) - Budget),
 	{Kept, Cut} = lists:split(KeepCount, NonFootprintTasks),
-	lists:foreach(fun release_dropped_task/1, Cut),
+	lists:foreach(fun ar_peer_sync:task_dropped/1, Cut),
 	NewQueue = queue:from_list(FootprintTasks ++ Kept),
 	{State#state{ eligible_queue = NewQueue }, length(Cut)}.
 
@@ -702,7 +675,7 @@ reap_dead_workers(State) ->
 					%% dedup overlay. Release it so the producer can
 					%% re-enqueue.
 					increment_metrics(reaped, Acc, 1),
-					release_dropped_task(SyncTask),
+					ar_peer_sync:task_dropped(SyncTask),
 					NewInFlight = max(0, Acc#state.in_flight_count - 1),
 					do_complete_footprint_task(FootprintKey,
 						Acc#state{
@@ -823,10 +796,9 @@ setup() ->
 	Peer = {1, 2, 3, 4, 1984},
 	ar_data_sync_coordinator:init_worker_load_for_test(1000),
 	%% Pre-register a label for the dummy store_id used in tests so
-	%% release_dropped_task/1 (which calls ar_peer_sync:name/1 →
-	%% ar_storage_module:label/1) doesn't crash on the test's stub store_id.
-	%% The cast fired by release_dropped_task targets a name that no
-	%% gen_server is registered for, which gen_server:cast silently drops.
+	%% ar_peer_sync:task_dropped/1 doesn't crash on the test's stub store_id.
+	%% The cast targets a name that no gen_server is registered for, which
+	%% gen_server:cast silently drops.
 	case ets:whereis(ar_storage_module) of
 		undefined -> ets:new(ar_storage_module, [set, public, named_table]);
 		_ -> ok

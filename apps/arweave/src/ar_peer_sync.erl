@@ -17,16 +17,17 @@
 %%% cached peer coverage and executable sync tasks.
 %%%
 %%% **Sole owner of the queue's `in_flight_intervals' overlay.** Drop
-%%% paths (peer worker queue-full, rebalance cut, reaper, coordinator
-%%% worker-unavailable) all funnel through `task_completed/3' to release
-%%% byte ranges. The success path uses `task_completed/4' which also
-%%% fans out per-peer accounting via ar_peer_worker.
+%%% paths (rebalance cut, reaper, coordinator worker-unavailable, consumer-
+%%% side peer-saturation skip) all funnel through `task_dropped/1' to
+%%% release byte ranges. The success path uses `task_completed/4' which
+%%% also fans out per-peer accounting via ar_peer_worker.
 -module(ar_peer_sync).
 
 -behaviour(gen_server).
 
 -export([start_link/1, name/1, register_workers/0]).
--export([enqueue/1, sync/1, task_completed/3, task_completed/4, set_weave_size/2]).
+-export([enqueue/1, sync/1, task_dropped/1, task_completed/4,
+		set_weave_size/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
@@ -142,10 +143,11 @@ sync(StoreID) ->
 	gen_server:cast(name(StoreID), sync).
 
 %% @doc Drop path - release a byte range from the dedup overlay without
-%% touching per-peer accounting. Used by ar_peer_worker:release_dropped_task/1
-%% and any other "task left the pipeline without completing" site.
-task_completed(StoreID, Start, End) ->
-	gen_server:cast(name(StoreID), {task_completed, Start, End}).
+%% touching per-peer accounting. Used when a task leaves the pipeline without
+%% completing.
+task_dropped(#sync_task{ store_id = StoreID, start_offset = Start,
+		end_offset = End }) ->
+	release_task_range(StoreID, Start, End).
 
 %% @doc Success path - fans out per-peer completion accounting (via
 %% ar_peer_worker:task_completed/6) and the byte-range release. Called by
@@ -155,7 +157,10 @@ task_completed(SyncTask, WorkerPid, Result, ElapsedUs) ->
 			store_id = StoreID, footprint_key = FootprintKey } = SyncTask,
 	ar_peer_worker:task_completed(Peer, WorkerPid, FootprintKey, Result,
 		ElapsedUs, End - Start),
-	task_completed(StoreID, Start, End).
+	release_task_range(StoreID, Start, End).
+
+release_task_range(StoreID, Start, End) ->
+	gen_server:cast(name(StoreID), {release_task_range, Start, End}).
 
 %% @doc Update the weave-size snapshot. Called by ar_data_sync on chain-tip
 %% moves so the enqueue loop's range clamp follows the tip.
@@ -247,9 +252,9 @@ handle_cast(sync, State) ->
 			{noreply, State2}
 	end;
 
-%% Drop-path byte-range release (called from any drop site).
-handle_cast({task_completed, Start, End}, State) ->
-	NewQ = ar_sync_task_queue:task_completed(End, Start, State#state.queue),
+%% Byte-range release from any terminal task path.
+handle_cast({release_task_range, Start, End}, State) ->
+	NewQ = ar_sync_task_queue:release_task_range(Start, End, State#state.queue),
 	{noreply, State#state{ queue = NewQ }};
 
 %% Chain-tip update from ar_data_sync.
@@ -325,16 +330,25 @@ do_sync(#state{ store_id = StoreID, queue = Q } = State) ->
 		true ->
 			State;
 		false ->
-			gen_server:cast(self(), sync),
-			{{FootprintKey, Start, End, Peer}, Q2} = ar_sync_task_queue:take_smallest(Q),
-			ar_data_sync_coordinator:sync_range(#sync_task{
-						start_offset = Start,
-						end_offset = End,
-						peer = Peer,
-						store_id = StoreID,
-						footprint_key = FootprintKey
-					}),
-			State#state{ queue = Q2 }
+			{FootprintKey, Start, End, Peer} =
+					ar_sync_task_queue:peek_smallest(Q),
+			case ar_data_sync_coordinator:peer_ready_for_work(Peer) of
+				true ->
+					{_, Q2} = ar_sync_task_queue:take_smallest(Q),
+					gen_server:cast(self(), sync),
+					ar_data_sync_coordinator:sync_range(#sync_task{
+								start_offset = Start,
+								end_offset = End,
+								peer = Peer,
+								store_id = StoreID,
+								footprint_key = FootprintKey
+							}),
+					State#state{ queue = Q2 };
+				false ->
+					Q2 = ar_sync_task_queue:skip_peer(Peer, Q),
+					gen_server:cast(self(), sync),
+					State#state{ queue = Q2 }
+			end
 	end.
 
 do_enqueue(#state{ pass = #enqueue_pass{ mode = normal } } = State) ->
