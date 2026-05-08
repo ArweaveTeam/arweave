@@ -389,6 +389,7 @@ handle_info(telemetry_tick, State) ->
 	erlang:send_after(?TELEMETRY_TICK_MS, self(), telemetry_tick),
 	emit_state_snapshot(State),
 	emit_bucket_stats(),
+	maybe_trim_interval_cache(),
 	prometheus_gauge:set(peer_interval_cache_size, [rows],
 			ets:info(?PEER_INTERVAL_CACHE_TABLE, size)),
 	prometheus_gauge:set(peer_interval_cache_size, [bytes],
@@ -944,13 +945,29 @@ cache_lookup(Key) ->
 cache_store(Key, Intervals, Meta) ->
 	ets:insert(?PEER_INTERVAL_CACHE_TABLE,
 		{Key, Intervals, Meta, erlang:monotonic_time(millisecond)}),
-	maybe_trim_interval_cache(),
 	ok.
 
+%% Trim runs from the gen_server's periodic telemetry tick, not from
+%% cache_store. Two reasons:
+%%
+%%   1. cache_store fires from spawned scanner workers; concurrent calls
+%%      racing into the trim caused compounded deletes (each saw the same
+%%      pre-trim Size, picked the same 10% threshold, and the deletes
+%%      multiplied).
+%%
+%%   2. ets:info(_, memory) is decentralized for write_concurrency tables
+%%      and lags actual deletions by some interval. Triggering on every
+%%      cache_store would re-fire on stale "still over cap" readings,
+%%      ratcheting rows down even after enough had already been removed.
+%%
+%% The periodic timer cadence gives ETS time to settle between checks,
+%% and the gen_server's mailbox makes calls naturally serial.
 maybe_trim_interval_cache() ->
 	Bytes = ets:info(?PEER_INTERVAL_CACHE_TABLE, memory)
 			* erlang:system_info(wordsize),
 	case Bytes > ?MAX_INTERVAL_CACHE_BYTES of
+		false ->
+			ok;
 		true ->
 			Size = ets:info(?PEER_INTERVAL_CACHE_TABLE, size),
 			%% Drop the oldest 10% of rows.
@@ -972,9 +989,7 @@ maybe_trim_interval_cache() ->
 					{rows_after, Size - Deleted},
 					{mb_before, Bytes div ?MiB},
 					{mb_after, MbAfter},
-					{cap_mb, ?MAX_INTERVAL_CACHE_BYTES div ?MiB}]);
-		false ->
-			ok
+					{cap_mb, ?MAX_INTERVAL_CACHE_BYTES div ?MiB}])
 	end.
 
 %% Most recent cache_store timestamp across all of Peer's rows, or
