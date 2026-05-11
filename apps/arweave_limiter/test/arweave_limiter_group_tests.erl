@@ -2,11 +2,13 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 -define(M, arweave_limiter_group).
 -define(TABLE, eunit_arweave_limiter_tests_mock).
 -define(KEY, ts_now).
--define(TEST_LIMITER, test_limiter).
+-define(TEST_LIMITER, 'test_limiter').
+-define(TEST_LIMITER_0, 'arweave_limiter_test_limiter_0').
 
 -define(setTsMock(Ts), ets:insert(?TABLE, {?KEY, Ts})).
 
@@ -66,7 +68,14 @@ cleanup_timestamps_map_test() ->
 
 noproc_test() ->
     %% process shouldn't be running
+    ok = meck:new([prometheus_counter, prometheus_histogram, arweave_limiter_config], [passthrough]),
+    ok = meck:expect(prometheus_counter, inc, 2, ok),
+    ok = meck:expect(prometheus_histogram, observe, 3, ok),
+    ok = meck:expect(arweave_limiter_config, get_config, 0,
+                     [#{id => ?TEST_LIMITER,
+                        number_of_workers => 1}]),
     ?assertEqual({reject, error, #{}}, ?M:register_or_reject_call(?TEST_LIMITER, {1,2,3,4})),
+    meck:unload([prometheus_counter, prometheus_histogram, arweave_limiter_config]),
     ok.
 
 timeout_test_() ->
@@ -92,6 +101,10 @@ timeout_setup(Config) ->
     ?TABLE = ets:new(?TABLE, [named_table, public]), %% This is not used, but I don't
                                                      %% want to complicate cleanup
     {module, arweave_limiter_time} = code:ensure_loaded(arweave_limiter_time),
+    {module, arweave_limiter_config} = code:ensure_loaded(arweave_limiter_config),
+
+    ok = meck:new(arweave_limiter_config, [passthrough]),
+    ok = meck:expect(arweave_limiter_config, get_number_of_workers, 1, 1),
 
     ok = meck:new(prometheus_counter, [passthrough]),
     ok = meck:expect(prometheus_counter, inc, 2, ok),
@@ -102,18 +115,22 @@ timeout_setup(Config) ->
     %% going to delaying it beyond the gen_server:call timeout.
     ok = meck:expect(arweave_limiter_time, ts_now,
                      fun() ->
-                             timer:sleep(2000),
+                             timer:sleep(?DEFAULT_ARWEAVE_LIMITER_CALL_TIMEOUT + 1000),
                              0
                      end),
     0 = arweave_limiter_time:ts_now(),
-    {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER, Config),
+    1 = arweave_limiter_config:get_number_of_workers(?TEST_LIMITER),
+    {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER_0, Config),
     LimiterPid.
-
 
 setup(Config) ->
     ?TABLE = ets:new(?TABLE, [named_table, public]),
     ?setTsMock(0),
     {module, arweave_limiter_time} = code:ensure_loaded(arweave_limiter_time),
+    {module, arweave_limiter_config} = code:ensure_loaded(arweave_limiter_config),
+
+    ok = meck:new(arweave_limiter_config, [passthrough]),
+    ok = meck:expect(arweave_limiter_config, get_number_of_workers, 1, 1),
 
     ok = meck:new(prometheus_counter, [passthrough]),
     ok = meck:expect(prometheus_counter, inc, 2, ok),
@@ -126,14 +143,19 @@ setup(Config) ->
                              Value
                      end),
     0 = arweave_limiter_time:ts_now(),
-    {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER, Config),
+    1 = arweave_limiter_config:get_number_of_workers(?TEST_LIMITER),
+    {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER_0, Config),
     LimiterPid.
 
 cleanup(_Config, _LimiterPid) ->
-    true = meck:validate(arweave_limiter_time),
+    true = meck:validate(arweave_limiter_config),
     true = meck:validate(prometheus_counter),
-    ok = meck:unload([prometheus_counter, arweave_limiter_time]),
-    ?M:stop(?TEST_LIMITER),
+    true = meck:validate(arweave_limiter_time),
+    true = meck:validate(arweave_limiter_config),
+    ok = meck:unload([prometheus_counter,
+                      arweave_limiter_time,
+                      arweave_limiter_config]),
+    ?M:stop(?TEST_LIMITER_0),
     true = ets:delete(?TABLE),
     ok.
 
@@ -151,6 +173,7 @@ rate_limiter_process_test_() ->
          leaky_tick_ms => 100000},
        fun(_Config, _LimiterPid) -> {"sliding test", fun simple_sliding_happy/0} end},
       {#{id => ?TEST_LIMITER,
+         number_of_workers => 5,
          tick_reduction => 1,
          leaky_rate_limit => 5,
          concurrency_limit => 2,
@@ -160,6 +183,7 @@ rate_limiter_process_test_() ->
          leaky_tick_ms => 100000},
        fun simple_leaky_happy_path/2},
       {#{id => ?TEST_LIMITER,
+         number_of_workers => 5,
          tick_reduction => 1,
          leaky_rate_limit=> 5,
          concurrency_limit => 2,
@@ -169,6 +193,7 @@ rate_limiter_process_test_() ->
          leaky_tick_ms => 100000},
        fun rate_limiter_rejected_due_concurrency/2},
       {#{id => ?TEST_LIMITER,
+         number_of_workers => 5,
          tick_reduction => 1,
          leaky_rate_limit => 2,
          concurrency_limit => 5,
@@ -178,6 +203,7 @@ rate_limiter_process_test_() ->
          leaky_tick_ms => 100000},
        fun rejected_due_leaky_rate/2},
       {#{id => ?TEST_LIMITER,
+         number_of_workers => 5,
          tick_reduction => 1,
          leaky_rate_limit => 1,
          concurrency_limit => 10,
@@ -188,6 +214,7 @@ rate_limiter_process_test_() ->
          timestamp_cleanup_tick_ms => 1000000},
        fun both_exhausted/2},
       {#{id => ?TEST_LIMITER,
+         number_of_workers => 5,
          tick_reduction => 1,
          leaky_rate_limit => 1,
          concurrency_limit => 2,
@@ -197,6 +224,7 @@ rate_limiter_process_test_() ->
          leaky_tick_ms => 100000},
        fun peer_cleanup/2},
       {#{id => ?TEST_LIMITER,
+         number_of_workers => 5,
          tick_reduction => 1,
          leaky_rate_limit => 5,
          concurrency_limit => 10,
@@ -206,6 +234,7 @@ rate_limiter_process_test_() ->
          leaky_tick_ms => 100000},
        fun leaky_manual_reduction/2},
       {#{id => ?TEST_LIMITER,
+         number_of_workers => 5,
          is_manual_reduction_disabled => true,
          tick_reduction => 1,
          leaky_rate_limit => 5,
@@ -259,7 +288,6 @@ simple_sliding_happy() ->
 simple_leaky_happy_path(_Config, LimiterPid) ->
     {"Leaky happy path",
      fun() ->
-             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              IP = {1,2,3,4},
              %% init state, the ip is not blocked
              Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky}, IP, 0),
@@ -314,7 +342,6 @@ simple_leaky_happy_path(_Config, LimiterPid) ->
 rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
     {"rejected due concurrency",
      fun() ->
-             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
@@ -381,7 +408,6 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
 rejected_due_leaky_rate(_Config, LimiterPid) ->
     {"rejected due leaky rate",
      fun() ->
-             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
@@ -444,7 +470,6 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
 both_exhausted(_Config, LimiterPid) ->
     {"Both exhausted",
      fun() ->
-             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              IP = {1,2,3,4},
 
              Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding}, IP, -1),
@@ -499,7 +524,6 @@ both_exhausted(_Config, LimiterPid) ->
 peer_cleanup(_Config, LimiterPid) ->
     {"Peer cleanup",
      fun() ->
-             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 
@@ -573,7 +597,6 @@ peer_cleanup(_Config, LimiterPid) ->
 leaky_manual_reduction(_Config, _LimiterPid) ->
     {"Leaky tokens manual peer reduction",
      fun() ->
-             ?assertMatch(#{is_manual_reduction_disabled := false}, ?M:config(?TEST_LIMITER)),
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
              NonRecordedIP = {2,3,4,5,1984},
@@ -623,7 +646,6 @@ leaky_manual_reduction(_Config, _LimiterPid) ->
 leaky_manual_reduction_disabled(_Config, _LimiterPid) ->
     {"Leaky tokens manual peer reduction",
      fun() ->
-             ?assertMatch(#{is_manual_reduction_disabled := true}, ?M:config(?TEST_LIMITER)),
              %% init state, the ip is not blocked
              IP = {1,2,3,4},
 

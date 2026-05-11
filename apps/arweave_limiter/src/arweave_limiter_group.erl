@@ -18,7 +18,6 @@
 -export([
          start_link/2,
          info/1,
-         config/1,
          register_or_reject_call/2,
          reduce_for_peer/2,
          reset_all/1,
@@ -37,19 +36,23 @@
          cleanup_expired_sliding_peers/3]).
 -endif.
 
-
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
+
+-define(UNEXPECTED_ERROR_STR, "unexpected").
 
 %%% API
 start_link(LimiterRef, Config) ->
     gen_server:start_link({local, LimiterRef}, ?MODULE, [Config], []).
 
 info(LimiterRef) ->
-    gen_server:call(LimiterRef, get_info).
-
-config(LimiterRef) ->
-    gen_server:call(LimiterRef, get_config).
+    WorkersNum = arweave_limiter_config:get_number_of_workers(LimiterRef),
+    lists:foldl(fun(N, Acc) -> merge_info_maps(LimiterRef, N, Acc) end,
+                #{sliding_timestamps => #{},
+                  leaky_tokens => #{},
+                  concurrent_requests => #{},
+                  concurrent_monitors => #{}},
+                lists:seq(0, WorkersNum - 1)).
 
 register_or_reject_call(LimiterRef, Peer) ->
     {Time, Value} = timer:tc(fun do_register_or_reject_call/2, [LimiterRef, Peer]),
@@ -57,9 +60,12 @@ register_or_reject_call(LimiterRef, Peer) ->
     Value.
 
 do_register_or_reject_call(LimiterRef, Peer) ->
-    prometheus_counter:inc(ar_limiter_requests_total,
-                           [atom_to_list(LimiterRef)]),
-    try gen_server:call(LimiterRef, {register_or_reject, Peer}, 1000) of
+    %% Since we are summing
+    prometheus_counter:inc(ar_limiter_requests_total, [atom_to_list(LimiterRef)]),
+    LimiterWorkerRef = ref_to_worker_ref(LimiterRef, Peer),
+    try gen_server:call(LimiterWorkerRef,
+                        {register_or_reject, Peer},
+                        ?DEFAULT_ARWEAVE_LIMITER_CALL_TIMEOUT) of
         {reject, Reason, _Data} = Rejection ->
             prometheus_counter:inc(ar_limiter_rejected_total,
                                    [atom_to_list(LimiterRef), atom_to_list(Reason)]),
@@ -67,12 +73,18 @@ do_register_or_reject_call(LimiterRef, Peer) ->
         Accept ->
             Accept
     catch E:R ->
-            prometheus_counter:inc(ar_limiter_requests_error, [atom_to_list(LimiterRef), reason_to_list(R)]),
-            ?LOG_WARNING([{event, rate_limiter_group_error},
-                          {limiter_ref, LimiterRef},
-                          {peer, Peer},
-                          {class, E},
-                          {reason, R}]),
+            ReasonStr = reason_to_list(R),
+            prometheus_counter:inc(ar_limiter_requests_error, [atom_to_list(LimiterRef), ReasonStr]),
+            %% Only log unexpected errors, others can be read from metrics.
+            if ReasonStr == ?UNEXPECTED_ERROR_STR ->
+                    ?LOG_WARNING([{event, rate_limiter_group_error},
+                                  {limiter_ref, LimiterRef},
+                                  {peer, Peer},
+                                  {class, E},
+                                  {reason, R}]);
+               true ->
+                    ok
+            end,
             {reject, error, #{}}
     end.
 
@@ -80,7 +92,8 @@ do_register_or_reject_call(LimiterRef, Peer) ->
 %% solution dealt with high loads. This will perform double reduction. (as the periodic
 %% reduction is still occurring).
 reduce_for_peer(LimiterRef, Peer) ->
-    Result = gen_server:call(LimiterRef, {reduce_for_peer, Peer}),
+    LimiterWorkerRef = ref_to_worker_ref(LimiterRef, Peer),
+    Result = gen_server:call(LimiterWorkerRef, {reduce_for_peer, Peer}),
     Result == ok andalso prometheus_counter:inc(ar_limiter_reduce_requests_total,
                                                 [atom_to_list(LimiterRef)]),
     Result.
@@ -95,7 +108,7 @@ stop(LimiterRef) ->
 init([Config] = _Args) ->
     process_flag(priority, high),
 
-    Id = maps:get(id, Config),
+    Id = atom_to_list(maps:get(id, Config)),
 
     IsDisabled = maps:get(no_limit, Config, false),
     IsManualReductionDisabled = maps:get(is_manual_reduction_disabled, Config, false),
@@ -117,7 +130,7 @@ init([Config] = _Args) ->
     {ok, LeakyRef} = timer:send_interval(LeakyTickMs, self(), {tick, leaky_bucket_reduction}),
     {ok, TsRef} = timer:send_interval(TimestampCleanupTickMs, self(), {tick, sliding_window_timestamp_cleanup}),
     {ok, #{
-           id => atom_to_list(Id),
+           id => Id,
            is_disabled => IsDisabled,
            is_manual_reduction_disabled => IsManualReductionDisabled,
            leaky_tick_timer_ref => LeakyRef,
@@ -128,7 +141,7 @@ init([Config] = _Args) ->
            tick_reduction => TickReduction,
            leaky_rate_limit => LeakyRateLimit,
            concurrency_limit => ConcurrencyLimit,
-           concurrent_requests => #{}, %% Peer -> List of {MonitorRef, Pid}
+           concurrent_requests => #{}, %% Peer -> Number of request being processed
            concurrent_monitors => #{}, %% MonitorRef -> Peer
            leaky_tokens => #{}, %% Peer -> Leaky Bucket tokens
            sliding_window_duration => SlidingWindowDuration,
@@ -141,9 +154,14 @@ handle_call(reset_all, _From, State) ->
                        concurrent_monitors => #{},
                        leaky_tokens => #{},
                        sliding_timestamps => #{}}};
+
+handle_call({register_or_reject, _Peer}, {_FromPid, _},
+            State = #{id := _Id,
+                      is_disabled := true}) ->
+    {reply, {register, no_limiting_applied}, State};
+
 handle_call({register_or_reject, Peer}, {FromPid, _},
             State = #{id := Id,
-                      is_disabled := IsDisabled,
                       leaky_rate_limit := LeakyRateLimit,
                       leaky_tokens := LeakyTokens,
                       concurrency_limit := ConcurrencyLimit,
@@ -159,48 +177,43 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
 
     SlidingTimestampsForPeer0 =
         expire_and_get_requests(Peer, SlidingTimestamps, SlidingWindowDuration, Now),
-    case IsDisabled of
+    case Concurrency > ConcurrencyLimit of
         true ->
-            {reply, {register, no_limiting_applied}, State};
+            %% Concurrency Hard Limit
+            ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, concurrency},
+                        {peer, Peer}, {id, Id}]),
+            {reply, {reject, concurrency, data}, State};
         _ ->
-            case Concurrency > ConcurrencyLimit of
+            case length(SlidingTimestampsForPeer0) + 1 > SlidingWindowLimit of
                 true ->
-                    %% Concurrency Hard Limit
-                    ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, concurrency},
-                                  {peer, Peer}, {id, Id}]),
-                    {reply, {reject, concurrency, data}, State};
-                _ ->
-                    case length(SlidingTimestampsForPeer0) + 1 > SlidingWindowLimit of
+                    %% Sliding Window limited, check Leaky Bucket Tokens
+                    case Tokens > LeakyRateLimit of
                         true ->
-                            %% Sliding Window limited, check Leaky Bucket Tokens
-                            case Tokens > LeakyRateLimit of
-                                true ->
-                                    %% Burst exhausted with the Leaky Tokens
-                                    ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, rate_limit},
-                                                  {sliding_window_limit, SlidingWindowLimit},
-                                                  {leaky_rate_limit, LeakyRateLimit},
-                                                  {peer, Peer}, {id, Id}]),
-                                    {reply, {reject, rate_limit, data}, State};
-                                false ->
-                                    NewLeakyTokens = update_token(Peer, Tokens, LeakyTokens),
-                                    {NewRequests, NewMonitors} =
-                                        register_concurrent(
-                                          Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
-                                    {reply, {register, leaky},
-                                     State#{leaky_tokens => NewLeakyTokens,
-                                            concurrent_requests => NewRequests,
-                                            concurrent_monitors => NewMonitors}}
-                            end;
-                        _ ->
+                            %% Burst exhausted with the Leaky Tokens
+                            ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, rate_limit},
+                                        {sliding_window_limit, SlidingWindowLimit},
+                                        {leaky_rate_limit, LeakyRateLimit},
+                                        {peer, Peer}, {id, Id}]),
+                            {reply, {reject, rate_limit, data}, State};
+                        false ->
+                            NewLeakyTokens = update_token(Peer, Tokens, LeakyTokens),
                             {NewRequests, NewMonitors} =
                                 register_concurrent(
                                   Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
-                            SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
-                            NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
-                            {reply, {register, sliding}, State#{sliding_timestamps => NewSlidingTimestamps,
-                                                                concurrent_requests => NewRequests,
-                                                                concurrent_monitors => NewMonitors}}
-                    end
+                            {reply, {register, leaky},
+                             State#{leaky_tokens => NewLeakyTokens,
+                                    concurrent_requests => NewRequests,
+                                    concurrent_monitors => NewMonitors}}
+                    end;
+                _ ->
+                    {NewRequests, NewMonitors} =
+                        register_concurrent(
+                          Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
+                    SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
+                    NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
+                    {reply, {register, sliding}, State#{sliding_timestamps => NewSlidingTimestamps,
+                                                        concurrent_requests => NewRequests,
+                                                        concurrent_monitors => NewMonitors}}
             end
     end;
 handle_call({reduce_for_peer, Peer}, _From, State =
@@ -220,8 +233,6 @@ handle_call(get_info, _From, State =
               leaky_tokens => LeakyTokens,
               concurrent_requests => ConcurrentRequests,
               concurrent_monitors => ConcurrentMonitors}, State};
-handle_call(get_config, _From, State) ->
-    {reply, filter_state_for_config(State), State};
 handle_call(Request, From, State = #{id := Id}) ->
     ?LOG_WARNING([{event, unhandled_call}, {id, Id}, {module, ?MODULE},
                   {request, Request}, {from, From},
@@ -264,7 +275,8 @@ handle_info(Info, State = #{id := Id}) ->
     ?LOG_WARNING([{event, unhandled_info}, {id, Id}, {module, ?MODULE}, {info, Info}]),
     {noreply, State}.
 
-terminate(_Reason, #{leaky_tick_timer_ref := _LeakyRef,
+terminate(_Reason, #{id := _Id,
+                     leaky_tick_timer_ref := _LeakyRef,
                      timestamp_cleanup_timer_ref := _TsRef} = _State) ->
     ok.
 
@@ -335,8 +347,8 @@ fold_decrease_rate(Id, Key, Counter, Acc, TickReduction) ->
 %% Concurrency magic
 register_concurrent(Peer, Pid, ConcurrentRequests, ConcurrentMonitors) ->
     MonitorRef = erlang:monitor(process, Pid),
-    Processes = maps:get(Peer, ConcurrentRequests, 0),
-    NewConcurrentRequests = maps:put(Peer, Processes + 1, ConcurrentRequests),
+    NumProcesses = maps:get(Peer, ConcurrentRequests, 0),
+    NewConcurrentRequests = maps:put(Peer, NumProcesses + 1, ConcurrentRequests),
     NewConcurrentMonitors = maps:put(MonitorRef, Peer, ConcurrentMonitors),
     {NewConcurrentRequests, NewConcurrentMonitors}.
 
@@ -391,4 +403,27 @@ reason_to_list({timeout, _}) ->
 reason_to_list({noproc, _}) ->
     "noproc";
 reason_to_list(_) ->
-    "other".
+    ?UNEXPECTED_ERROR_STR.
+
+merge_info_maps(LimiterRef, N, #{concurrent_requests := AccReq,
+                                 concurrent_monitors := AccMon,
+                                 leaky_tokens := AccTokens,
+                                 sliding_timestamps := AccInfoTS}) ->
+    LimiterWorkerRef = arweave_limiter_util:worker_name(LimiterRef, N),
+    %% We could do a pmap to do the gen_server calls, but the latency of this
+    %% function is irrevelant, and perhaps we don't need to lock all workers at the same time.
+    #{concurrent_requests := InfoReq,
+      concurrent_monitors := InfoMon,
+      leaky_tokens := InfoTokens,
+      sliding_timestamps := InfoTS} = gen_server:call(LimiterWorkerRef, get_info),
+
+    %% The keys are either: Process disjuct sets of monitor references, or
+    %% disjoint sets of peers.
+    #{concurrent_requests => maps:merge(InfoReq, AccReq),
+      concurrent_monitors => maps:merge(InfoMon, AccMon),
+      leaky_tokens => maps:merge(InfoTokens, AccTokens),
+      sliding_timestamps => maps:merge(InfoTS, AccInfoTS)}.
+
+ref_to_worker_ref(LimiterRef, Peer) ->
+    WorkersNum = arweave_limiter_config:get_number_of_workers(LimiterRef),
+    arweave_limiter_util:worker_ref(LimiterRef, Peer, WorkersNum).

@@ -2,38 +2,42 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 
 -define(M, arweave_limiter_group).
 -define(TEST_LIMITER, test_limiter).
 
 %% SETUP & CLEANUP
 setup(Config) ->
-    %?TABLE = ets:new(?TABLE, [named_table, public]),
-    %?setTsMock(0),
-    %{module, arweave_limiter_time} = code:ensure_loaded(arweave_limiter_time),
+    ok = meck:new(arweave_limiter_config, [passthrough]),
+    ok = meck:expect(arweave_limiter_config, get_config, 0,
+                     [#{id => ?TEST_LIMITER,
+                        number_of_workers => 1}]),
 
     ok = meck:new(prometheus_counter, [passthrough]),
     ok = meck:expect(prometheus_counter, inc, 2, ok),
     ok = meck:expect(prometheus_counter, inc, 3, ok),
 
-    %% ok = meck:new(arweave_limiter_time, []),
-    %% ok = meck:expect(arweave_limiter_time, ts_now,
-    %%                  fun() ->
-    %%                          [{?KEY, Value}] = ets:lookup(?TABLE, ?KEY),
-    %%                          Value
-    %%                  end),
-    %% 0 = arweave_limiter_time:ts_now(),
-    {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER, Config),
+    {ok, _LimiterPid0} = ?M:start_link(arweave_limiter_test_limiter_0, Config),
+    {ok, _LimiterPid1} = ?M:start_link(arweave_limiter_test_limiter_1, Config),
+    {ok, _LimiterPid2} = ?M:start_link(arweave_limiter_test_limiter_2, Config),
+    {ok, _LimiterPid3} = ?M:start_link(arweave_limiter_test_limiter_3, Config),
+    {ok, _LimiterPid4} = ?M:start_link(arweave_limiter_test_limiter_4, Config),
     ok, CounterPid = spawn_link(fun() -> counter_loop(0, 0, 0) end),
-    {LimiterPid, CounterPid}.
+    CounterPid.
 
-cleanup(_Config, {_LimiterPid, CounterPid}) ->
-    %true = meck:validate(arweave_limiter_time),
-    true = meck:validate(prometheus_counter),
-    ok = meck:unload([prometheus_counter]),% arweave_limiter_time]),
-    ?M:stop(?TEST_LIMITER),
+cleanup(_Config, CounterPid) ->
+    ?M:stop(arweave_limiter_test_limiter_0),
+    ?M:stop(arweave_limiter_test_limiter_1),
+    ?M:stop(arweave_limiter_test_limiter_2),
+    ?M:stop(arweave_limiter_test_limiter_3),
+    ?M:stop(arweave_limiter_test_limiter_4),
     CounterPid ! done,
-%    true = ets:delete(?TABLE),
+
+    true = meck:validate(prometheus_counter),
+    true = meck:validate(arweave_limiter_config),
+    ok = meck:unload([prometheus_counter, arweave_limiter_config]),
+
     ok.
 
 %% Counter
@@ -58,6 +62,7 @@ rate_limiter_process_test_() ->
      fun setup/1,
      fun cleanup/2,
      [{#{id => ?TEST_LIMITER,
+         number_of_workers => ?DEFAULT_ARWEAVE_LIMITER_GROUP_WORKERS,
          tick_reduction => 450,
          leaky_rate_limit => 450,
          concurrency_limit => 500,
@@ -67,6 +72,7 @@ rate_limiter_process_test_() ->
          leaky_tick_ms => 30000},
        fun leaky_only_single_peer/2},
       {#{id => ?TEST_LIMITER,
+         number_of_workers => ?DEFAULT_ARWEAVE_LIMITER_GROUP_WORKERS,
          tick_reduction => 450,
          leaky_rate_limit => 450,
          concurrency_limit => 500,
@@ -76,30 +82,31 @@ rate_limiter_process_test_() ->
          leaky_tick_ms => 30000},
        fun leaky_only_multi_peer/2},
       {#{id => ?TEST_LIMITER,
+         number_of_workers => ?DEFAULT_ARWEAVE_LIMITER_GROUP_WORKERS,
          tick_reduction => 450,
          leaky_rate_limit => 450,
          concurrency_limit => 500,
          sliding_window_limit => 0,
          sliding_window_duration => 1000,
          timestamp_cleanup_expiry => 2000,
-        leaky_tick_ms => 300000},
+        leaky_tick_ms => 30000},
        fun leaky_only_lot_of_peer_lot_of_calls_each/2}
      ]}.
 
 
-leaky_only_single_peer(_Config, {_LimiterPid, CounterPid}) ->
+leaky_only_single_peer(_Config, CounterPid) ->
     {"Test with only Leaky bucket enabled, Single peer",
      fun () ->
              Peer = {1,2,3,4},
-             TotalCalls = 2000, 
+             TotalCalls = 2000,
              %% Spawning 2000 calls, means pretty much 2000 concurrent cowboy processes
              %% we operate at lower numbers.
              {Time, Result} = timer:tc(fun() -> spawn_n_calls(CounterPid, Peer, TotalCalls) end),
              ?assert(Result),
              ?debugFmt(">>>> Raised requests in ~p microseconds", [Time]),
-             timer:sleep(1000),
+             timer:sleep(?DEFAULT_ARWEAVE_LIMITER_CALL_TIMEOUT + 1000),
              CounterPid ! {get, self()},
-             receive 
+             receive
                  {Reg, Rej, Err} ->
                      ?assertEqual(TotalCalls, Reg+Rej+Err),
                      ?assertEqual(450, Reg), %% Since all separate
@@ -110,20 +117,19 @@ leaky_only_single_peer(_Config, {_LimiterPid, CounterPid}) ->
              ok
      end}.
 
-
-leaky_only_multi_peer(_Config, {_LimiterPid, CounterPid}) ->
+leaky_only_multi_peer(_Config, CounterPid) ->
     {"Test with only Leaky bucket enabled, 2000 Peer, each sending a single call",
      fun () ->
              Peer = {1,2,3,1},
-             TotalCalls = 2000, 
+             TotalCalls = 2000,
              %% Spawning 2000 calls, means pretty much 2000 concurrent cowboy processes
              %% we operate at lower numbers.
              {Time, Result} = timer:tc(fun() -> spawn_n_calls_n_peers(CounterPid, Peer, TotalCalls) end),
              ?assert(Result),
              ?debugFmt(">>>> Raised requests in ~p microseconds", [Time]),
-             timer:sleep(1000),
+             timer:sleep(?DEFAULT_ARWEAVE_LIMITER_CALL_TIMEOUT + 1000),
              CounterPid ! {get, self()},
-             receive 
+             receive
                  {Reg, Rej, Err} ->
                      ?assertEqual(TotalCalls, Reg+Rej+Err),
                      %% All different peers, they all send a single request, it's all allowed.
@@ -135,34 +141,35 @@ leaky_only_multi_peer(_Config, {_LimiterPid, CounterPid}) ->
              ok
      end}.
 
-leaky_only_lot_of_peer_lot_of_calls_each(_Config, {_LimiterPid, CounterPid}) ->
+leaky_only_lot_of_peer_lot_of_calls_each(_Config, CounterPid) ->
     {timeout, 300,
      {"Test with only Leaky bucket enabled, Many peers send many calls",
       fun () ->
-              Peer = {1,2,3,1},
-              TotalPeers = 2000,
-              CallsPeer = 200,
+              Peer = {1,2,3,0},
+              TotalPeers = 150,
+              CallsPeer = 600,
+              ?debugFmt("Sending ~p request for each of the ~p peers~n", [CallsPeer, TotalPeers]),
               %% Spawning 2000 calls, means pretty much 2000 concurrent cowboy processes
               %% we operate at lower numbers.
-              {Time, Result} = 
-                  timer:tc(fun() -> 
+              {Time, Result} =
+                  timer:tc(fun() ->
                                    spawn_n_calls_per_peers(CounterPid, Peer, TotalPeers, CallsPeer)
                            end),
               ?assert(Result),
-              timer:sleep(2000), 
-              %% Don't need to wait more than 2seconds. If there were blocked processes, they would have timed
-              %% out already.
+              %% Wait a bit more than the timeout value, so surely all processes finish
+              timer:sleep(?DEFAULT_ARWEAVE_LIMITER_CALL_TIMEOUT + 2000),
+
               ?debugFmt(">>>> Raised requests in ~p microseconds >>> Waiting to finish spamming", [Time]),
               CounterPid ! {get, self()},
-              receive 
+              receive
                   {Reg, Rej, Err} ->
                       ?assertEqual(TotalPeers * CallsPeer, Reg+Rej+Err),
-                      ?assertEqual(400000, Reg),
+                      ?assertEqual({450*TotalPeers, TotalPeers*(CallsPeer - 450), 0}, {Reg, Rej, Err}),
                       ?assertEqual(0, Err)
               after 200 ->
                       exit(timeout)
               end,
-              Red = process_info(whereis(?TEST_LIMITER), [reductions]),
+              Red = process_info(whereis(arweave_limiter_test_limiter_0), [reductions]),
               ?debugFmt("red: ~p", [Red]),
               ok
       end}}.
@@ -180,12 +187,13 @@ spawn_n_calls_n_peers(CounterPid, {A, B, C, D} = Peer, N) ->
     spawn_call(CounterPid, Peer),
     spawn_n_calls_n_peers(CounterPid, {A, B, C, D + 1}, N-1).
 
-spawn_n_calls_per_peers(CounterPid, Peer, N, CallsPeer) when N =< 0 ->
+spawn_n_calls_per_peers(_CounterPid, _Peer, N, _CallsPeer) when N =< 0 ->
     true;
 spawn_n_calls_per_peers(CounterPid, {A, B, C, D} = Peer, N, CallsPeer) ->
+    (D rem 50) == 0 andalso ?debugFmt("~p clients spawned", [D]),
     spawn_n_calls(CounterPid, Peer, CallsPeer),
     spawn_n_calls_per_peers(CounterPid, {A, B, C, D + 1}, N-1, CallsPeer).
-    
+
 
 spawn_call(CounterPid, Peer) ->
     spawn_link(fun() ->
