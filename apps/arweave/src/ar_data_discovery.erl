@@ -316,6 +316,25 @@ handle_cast({remove_peer, Peer}, State) ->
 	handle_cast({remove_peer, Peer, unspecified}, State);
 
 handle_cast({remove_peer, Peer, Reason}, State) ->
+	#state{ scan_jobs = Jobs } = State,
+	case sets:is_element({Peer, normal}, Jobs)
+			orelse sets:is_element({Peer, footprint}, Jobs) of
+		false ->
+			%% Peer was never accepted into discovery (or already removed).
+			%% No bucket or cache rows exist, and no need for cleanup.
+			?LOG_DEBUG([{event, peer_remove_skipped},
+					{peer, ar_util:format_peer(Peer)},
+					{reason, Reason}]),
+			{noreply, State};
+		true ->
+			do_remove_peer(Peer, Reason, State)
+	end;
+
+handle_cast(Cast, State) ->
+	?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
+	{noreply, State}.
+
+do_remove_peer(Peer, Reason, State) ->
 	#state{ scan_waiting = Waiting, scan_jobs = Jobs } = State,
 	%% Wipe Peer's rows from the bucket tables directly. Match-spec scan
 	%% over the table is bounded (?NETWORK_*_BUCKET_SIZE = 10 GB → typical
@@ -351,11 +370,7 @@ handle_cast({remove_peer, Peer, Reason}, State) ->
 				+ ets:info(ar_data_discovery_footprint_buckets, size)}]),
 	{noreply, State#state{ scan_waiting = Waiting2, scan_jobs = Jobs2,
 			scan_inflight = Inflight2,
-			scan_started_at = StartedAt2 }};
-
-handle_cast(Cast, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {cast, Cast}]),
-	{noreply, State}.
+			scan_started_at = StartedAt2 }}.
 
 handle_info({'DOWN', _, process, Pid, _Reason}, State) ->
 	case maps:take(Pid, State#state.scan_inflight) of

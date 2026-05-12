@@ -33,8 +33,12 @@ init([]) ->
 		[ordered_set, public, named_table, {read_concurrency, true}]),
 	ets:new(ar_data_discovery_footprint_buckets,
 		[ordered_set, public, named_table, {read_concurrency, true}]),
+	%% ordered_set (not set) so wipe_peer_cache_rows/1 and
+	%% peer_last_cache_write/1 can range-scan by Peer prefix instead of
+	%% scanning the whole table. The compound key is {Peer, CacheKey, Mode},
+	%% Peer leading, so {Peer, '_', '_'} match-specs get O(log N + k).
 	ets:new(ar_data_discovery_peer_intervals,
-		[set, public, named_table,
+		[ordered_set, public, named_table,
 			{read_concurrency, true}, {write_concurrency, true}]),
 	%% Peer worker supervisor must start before worker master
 	PeerWorkerSup = #{

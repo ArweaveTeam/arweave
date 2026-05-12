@@ -220,8 +220,11 @@ handle_cast(enqueue, #state{ store_id = StoreID,
 			ar_util:cast_after(?PASS_RESTART_DELAY_MS, self(), enqueue),
 			{noreply, State#state{ pass = Pass2 }};
 		not_ready ->
+			%% Clear pass so subsequent enqueue casts hit the pass=undefined
+			%% clause (silent retry) instead of re-entering this branch and
+			%% re-logging pass_complete every second.
 			ar_util:cast_after(1000, self(), enqueue),
-			{noreply, State}
+			{noreply, State#state{ pass = undefined }}
 	end;
 handle_cast(enqueue, State) ->
 	case can_enqueue(State) of
@@ -487,11 +490,21 @@ init_pass(#state{ store_id = StoreID, range_start = Start, range_end = End,
 				normal ->
 					min(End, WeaveSize)
 			end,
-			?LOG_DEBUG([{event, sync_network}, {stage, pass_started},
-				{store_id, StoreID}, {mode, Mode},
-				{start, Start}, {end_, End2}]),
-			{ok, #enqueue_pass{
-				start = Start, end_ = End2, offset = Start, mode = Mode }}
+			case Start >= End2 of
+				true ->
+					%% Storage module's range is entirely above the current
+					%% weave tip (or disk-pool threshold for footprint mode).
+					%% No data to sync yet; back off and re-check when
+					%% WeaveSize advances. Caller cast_afters on not_ready.
+					not_ready;
+				false ->
+					?LOG_DEBUG([{event, sync_network}, {stage, pass_started},
+						{store_id, StoreID}, {mode, Mode},
+						{start, Start}, {end_, End2}]),
+					{ok, #enqueue_pass{
+						start = Start, end_ = End2,
+						offset = Start, mode = Mode }}
+			end
 	end.
 
 %%%===================================================================
