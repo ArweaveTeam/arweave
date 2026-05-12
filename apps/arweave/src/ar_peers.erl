@@ -573,12 +573,24 @@ handle_cast({invalid_data, Peer, _DataType}, State) ->
 	{noreply, State};
 
 handle_cast({warning, Peer}, State) ->
-	Performance = update_rating(Peer, false),
-	case Performance#performance.average_success < ?MINIMUM_SUCCESS of
-		true ->
-			remove_peer(low_success, Peer);
+	%% Discard warnings for peers that are no longer registered. Without
+	%% this gate, update_rating's set_performance would re-create the
+	%% removed peer's entry with a fresh #performance{} (average_success =
+	%% 0), the threshold check would then trip, and remove_peer would fire
+	%% again — repeating the resurrection-then-removal cycle for every
+	%% stale in-flight warning. Each cycle emits another `{event, peer,
+	%% {removed, _}}' event downstream.
+	case is_registered(Peer) of
 		false ->
-			ok
+			ok;
+		true ->
+			Performance = update_rating(Peer, false),
+			case Performance#performance.average_success < ?MINIMUM_SUCCESS of
+				true ->
+					remove_peer(low_success, Peer);
+				false ->
+					ok
+			end
 	end,
 	{noreply, State};
 
@@ -630,6 +642,12 @@ get_peer_peers(Peer) ->
 		Peers -> Peers
 	end.
 
+%% @doc True iff Peer has a `{peer, Peer}` registry entry — i.e. it is
+%% currently tracked by ar_peers. Use this to gate operations that would
+%% otherwise resurrect an already-removed peer's entry.
+is_registered(Peer) ->
+	ets:member(?MODULE, {peer, Peer}).
+
 get_or_init_performance(Peer) ->
 	ets:lookup_element(?MODULE, {peer, Peer}, 2, #performance{}).
 
@@ -665,7 +683,7 @@ get_peer_rating(Rating, Performance) ->
 discover_peers([]) ->
 	ok;
 discover_peers([Peer | Peers]) ->
-	case ets:member(?MODULE, {peer, Peer}) of
+	case is_registered(Peer) of
 		true ->
 			ok;
 		false ->
