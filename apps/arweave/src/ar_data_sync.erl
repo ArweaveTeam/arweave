@@ -716,7 +716,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	{store_fetched_chunk, Peer, Byte, Proof} = Cast,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	SeekByte = ar_chunk_storage:get_chunk_seek_offset(Byte + 1) - 1,
-	case validate_proof(SeekByte, Proof) of
+	case validate_proof(SeekByte, Proof, Peer) of
 		{need_unpacking, AbsoluteEndOffset, ChunkProof2} ->
 			#chunk_proof{
 				block_start_offset = BlockStartOffset,
@@ -1637,7 +1637,7 @@ unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, State) ->
 			end
 	end.
 
-validate_proof(SeekByte, Proof) ->
+validate_proof(SeekByte, Proof, Peer) ->
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 
 	ChunkMetadata = #chunk_metadata{
@@ -1650,34 +1650,77 @@ validate_proof(SeekByte, Proof) ->
 		{false, _} ->
 			false;
 		{true, ChunkProof2} ->
-			#chunk_proof{
-				metadata = Metadata,
-				chunk_id = ChunkID,
-				block_start_offset = BlockStartOffset,
-				chunk_end_offset = ChunkEndOffset,
-				tx_start_offset = TXStartOffset
-			} = ChunkProof2,
-			#chunk_metadata{
-				chunk_size = ChunkSize
-			} = Metadata,
-			AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
-			case Packing of
-				unpacked ->
-					case ar_tx:generate_chunk_id(Chunk) == ChunkID of
-						false ->
-							false;
-						true ->
-							case ChunkSize == byte_size(Chunk) of
-								true ->
-									{true, ChunkProof2};
+			case do_additional_validation(ChunkProof2, DataPath, Peer) of
+				false ->
+					false;
+				true ->
+					#chunk_proof{
+						metadata = Metadata,
+						chunk_id = ChunkID,
+						block_start_offset = BlockStartOffset,
+						chunk_end_offset = ChunkEndOffset,
+						tx_start_offset = TXStartOffset
+					} = ChunkProof2,
+					#chunk_metadata{
+						chunk_size = ChunkSize
+					} = Metadata,
+					AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
+					case Packing of
+						unpacked ->
+							case ar_tx:generate_chunk_id(Chunk) == ChunkID of
 								false ->
-									false
-							end
-					end;
-				_ ->
-					{need_unpacking, AbsoluteEndOffset, ChunkProof2}
+									false;
+								true ->
+									case ChunkSize == byte_size(Chunk) of
+										true ->
+											{true, ChunkProof2};
+										false ->
+											false
+									end
+							end;
+						_ ->
+							{need_unpacking, AbsoluteEndOffset, ChunkProof2}
+					end
 			end
 	end.
+
+do_additional_validation(ChunkProof, DataPath, Peer) ->
+	#chunk_proof{
+		seek_byte = SeekByte,
+		block_start_offset = BlockStartOffset,
+		tx_start_offset = TXStartOffset,
+		tx_end_offset = TXEndOffset,
+		chunk_start_offset = ChunkStartOffset,
+		chunk_end_offset = ChunkEndOffset,
+		validate_data_path_ruleset = Ruleset,
+		metadata = #chunk_metadata{ data_root = DataRoot }
+	} = ChunkProof,
+	TXSize = TXEndOffset - TXStartOffset,
+	TXRelativeOffset = SeekByte - BlockStartOffset - TXStartOffset,
+	case ar_merkle:has_redundant_rebase_marker(
+			DataRoot, TXRelativeOffset, TXSize, DataPath, Ruleset) of
+		true ->
+			log_invalid_fetched_data_path(redundant_rebase_marker, Peer,
+					[{data_root, ar_util:encode(DataRoot)},
+					{offset, TXRelativeOffset}, {tx_size, TXSize}]),
+			false;
+		false ->
+			case ar_merkle:has_positive_leaf_size(TXRelativeOffset, TXSize, DataPath) of
+				true ->
+					true;
+				false ->
+					log_invalid_fetched_data_path(negative_leaf_size, Peer,
+							[{data_root, ar_util:encode(DataRoot)},
+							{offset, TXRelativeOffset}, {tx_size, TXSize},
+							{chunk_start_offset, ChunkStartOffset},
+							{chunk_end_offset, ChunkEndOffset}]),
+					false
+			end
+	end.
+
+log_invalid_fetched_data_path(Reason, Peer, Logs) ->
+	?LOG_ERROR([{event, invalid_fetched_data_path}, {reason, Reason},
+			{peer, ar_util:format_peer(Peer)} | Logs]).
 
 validate_proof2(
 		TXRoot, TXPath, DataPath, BlockStartOffset, BlockEndOffset, BlockRelativeOffset,
@@ -1873,7 +1916,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 					case AbsoluteEndOffset >= DiskPoolThreshold of
 						true ->
 							ar_disk_pool:add_chunk(DataRoot, DataPath, UnpackedChunk,
-									ChunkEndOffset - 1, TXSize),
+									ChunkEndOffset - 1, TXSize, Peer),
 							decrement_chunk_cache_size(),
 							{noreply, State};
 						false ->

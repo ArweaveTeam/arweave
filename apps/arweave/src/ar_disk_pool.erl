@@ -22,7 +22,7 @@
 -export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2,
 		terminate/2]).
 
--export([add_chunk/5, get_unconfirmed_chunk/2,
+-export([add_chunk/5, add_chunk/6, get_unconfirmed_chunk/2,
 		add_data_root/3, maybe_drop_data_root/3, has_data_root/1,
 		get_data_roots/0, remove_expired_data_roots/0,
 		get_threshold/0, set_threshold/1, update_threshold/1]).
@@ -108,6 +108,9 @@
 %% The item is removed from the disk pool when the chunk's offset
 %% drops below the disk pool threshold.
 add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
+	add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, not_set).
+
+add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, Peer) ->
 	Metadata = #chunk_metadata{
 		data_root = DataRoot,
 		data_path = DataPath,
@@ -120,7 +123,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
 		{ok, DiskPoolDataRootValue} ?=
 			check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool),
 		{ok, RelativeEndOffset, Validation} ?=
-			validate_proof(Metadata, Offset, TXSize, Chunk),
+			validate_proof(Metadata, Offset, TXSize, Chunk, Peer),
 		ok ?= maybe
 			{ok, DataPathHash, DiskPoolChunkKey} ?=
 				check_not_already_synced(Metadata, DataRootID, DataRootEntry,
@@ -185,9 +188,9 @@ check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool) ->
 			end
 	end.
 
-validate_proof(Metadata, Offset, TXSize, Chunk) ->
+validate_proof(Metadata, Offset, TXSize, Chunk, Peer) ->
 	#chunk_metadata{ data_root = DataRoot, data_path = DataPath } = Metadata,
-	case ar_poa:validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
+	case ar_poa:validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk, Peer) of
 		false ->
 			?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 				{reason, invalid_proof}, {offset, Offset}]),

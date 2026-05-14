@@ -3,7 +3,8 @@
 -module(ar_merkle).
 
 -export([generate_tree/1, generate_path/3, has_leading_rebase_marker/1,
-		has_positive_leaf_size/3, strip_rebase_markers/1,
+		has_positive_leaf_size/3, has_redundant_rebase_marker/2,
+		has_redundant_rebase_marker/5, strip_rebase_markers/1,
 		validate_path/4, validate_path/5, extract_note/1, extract_root/1]).
 
 -export([get/2, get_branch_id/3, get_leaf_id/2, hash/1, note_to_binary/1]).
@@ -77,6 +78,17 @@ strip_rebase_markers(
 	<< L/binary, R/binary, TreeMidpointOffset/binary, StrippedRest/binary >>;
 strip_rebase_markers(InvalidLeftover) ->
 	InvalidLeftover.
+
+has_redundant_rebase_marker(DataPath, ValidateStrippedPath) ->
+	StrippedDataPath = strip_rebase_markers(DataPath),
+	StrippedDataPath =/= DataPath andalso ValidateStrippedPath(StrippedDataPath).
+
+has_redundant_rebase_marker(DataRoot, Offset, TXSize, DataPath, Ruleset) ->
+	has_redundant_rebase_marker(
+		DataPath,
+		fun(StrippedDataPath) ->
+			validate_path(DataRoot, Offset, TXSize, StrippedDataPath, Ruleset) =/= false
+		end).
 
 validate_path(ID, Dest, LeftBound, RightBound, Path, basic_ruleset) ->
 	CheckBorders = false,
