@@ -277,10 +277,12 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 		end,
 		Proofs2
 	),
+	%% Each chunk occupies ?DATA_CHUNK_SIZE bytes in the disk pool regardless of its
+	%% actual size, so account for the disk pool occupancy in terms of full chunks.
 	Left =
 		?DEFAULT_MAX_DISK_POOL_BUFFER_MB * ?MiB -
-		lists:sum([byte_size(Chunk) || Chunk <- tl(Chunks1)]) -
-		byte_size(Data2),
+		(length(Chunks1) - 1) * ?DATA_CHUNK_SIZE -
+		length(Chunks2) * ?DATA_CHUNK_SIZE,
 	?assert(Left < ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * ?MiB),
 	Data3 = crypto:strong_rand_bytes(Left + 1),
 	Chunks3 = ar_test_data_sync:imperfect_split(Data3),

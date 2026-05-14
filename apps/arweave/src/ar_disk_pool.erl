@@ -151,24 +151,26 @@ check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool) ->
 				{data_root, ar_util:encode(DataRoot)}]),
 			{error, data_root_not_found};
 		{not_found, {Size, Timestamp, TXIDSet}} ->
-			case Size + ChunkSize > DataRootLimit
-					orelse DiskPoolSize + ChunkSize > DiskPoolLimit of
+			case Size + ?DATA_CHUNK_SIZE > DataRootLimit
+					orelse DiskPoolSize + ?DATA_CHUNK_SIZE > DiskPoolLimit of
 				true ->
 					?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 						{reason, exceeds_disk_pool_size_limit1}, {offset, Offset},
 						{data_root_size, Size}, {chunk_size, ChunkSize},
+						{accounted_size, ?DATA_CHUNK_SIZE},
 						{data_root_limit, DataRootLimit}, {disk_pool_size, DiskPoolSize},
 						{disk_pool_limit, DiskPoolLimit}]),
 					{error, exceeds_disk_pool_size_limit};
 				false ->
-					{ok, {Size + ChunkSize, Timestamp, TXIDSet}}
+					{ok, {Size + ?DATA_CHUNK_SIZE, Timestamp, TXIDSet}}
 			end;
 		_ ->
-			case DiskPoolSize + ChunkSize > DiskPoolLimit of
+			case DiskPoolSize + ?DATA_CHUNK_SIZE > DiskPoolLimit of
 				true ->
 					?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 						{reason, exceeds_disk_pool_size_limit2}, {offset, Offset},
-						{chunk_size, ChunkSize}, {disk_pool_size, DiskPoolSize},
+						{chunk_size, ChunkSize}, {accounted_size, ?DATA_CHUNK_SIZE},
+						{disk_pool_size, DiskPoolSize},
 						{disk_pool_limit, DiskPoolLimit}]),
 					{error, exceeds_disk_pool_size_limit};
 				false ->
@@ -179,7 +181,7 @@ check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool) ->
 							_ ->
 								DataRootInDiskPool
 						end,
-					{ok, {Size + ChunkSize, Timestamp, TXIDSet}}
+					{ok, {Size + ?DATA_CHUNK_SIZE, Timestamp, TXIDSet}}
 			end
 	end.
 
@@ -259,8 +261,8 @@ persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset, Validation, DataPa
 					{error, failed_to_store_chunk};
 				ok ->
 					put_data_root_state(DataRootID, DiskPoolDataRootValue),
-					ets:update_counter(ar_data_sync_state, disk_pool_size, {2, ChunkSize}),
-					prometheus_gauge:inc(pending_chunks_size, ChunkSize),
+					ets:update_counter(ar_data_sync_state, disk_pool_size, {2, ?DATA_CHUNK_SIZE}),
+					prometheus_gauge:inc(pending_chunks_size, ?DATA_CHUNK_SIZE),
 					cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey, DataPathHash),
 					ok
 			end
@@ -507,7 +509,6 @@ populate_data_roots2(Index, DataRootMap, Cursor, Sum) ->
 			ets:insert(ar_data_sync_state, {disk_pool_size, Sum});
 		{ok, DiskPoolKey, DiskPoolValue} ->
 			DecodedValue = binary_to_term(DiskPoolValue, [safe]),
-			ChunkSize = element(2, DecodedValue),
 			DataRoot = element(3, DecodedValue),
 			TXSize = element(4, DecodedValue),
 			DataRootID = ar_data_roots:id(DataRoot, TXSize),
@@ -516,11 +517,11 @@ populate_data_roots2(Index, DataRootMap, Cursor, Sum) ->
 					not_found ->
 						DataRootMap;
 					{Size, Timestamp, TXIDSet} ->
-						maps:put(DataRootID, {Size + ChunkSize, Timestamp, TXIDSet},
+						maps:put(DataRootID, {Size + ?DATA_CHUNK_SIZE, Timestamp, TXIDSet},
 								DataRootMap)
 				end,
 			Cursor2 = << DiskPoolKey/binary, <<"a">>/binary >>,
-			populate_data_roots2(Index, DataRootMap2, Cursor2, Sum + ChunkSize)
+			populate_data_roots2(Index, DataRootMap2, Cursor2, Sum + ?DATA_CHUNK_SIZE)
 	end.
 
 add_block_data_roots(DataRootIDSet) ->
@@ -1089,12 +1090,12 @@ remove_chunk_from_cache(DataPathHash) ->
 	),
 	ets:delete(ar_disk_pool_chunks_cache_reverse, DataPathHash).
 
-remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize) ->
+remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, _ChunkSize) ->
 	ok = ar_kv:delete(index_db(StoreID), DiskPoolKey),
 	ok = ar_data_sync:delete_chunk_data(ChunkDataKey, StoreID),
 	<< _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
 	remove_chunk_from_cache(DataPathHash),
-	decrease_occupied_size(ChunkSize, DataRootID).
+	decrease_occupied_size(?DATA_CHUNK_SIZE, DataRootID).
 
 decrease_occupied_size(Size, DataRootID) ->
 	ets:update_counter(ar_data_sync_state, disk_pool_size, {2, -Size}),
