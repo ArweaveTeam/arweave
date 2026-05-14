@@ -109,7 +109,7 @@ stop(LimiterRef) ->
 init([Config] = _Args) ->
     process_flag(priority, high),
 
-    Id = atom_to_list(maps:get(id, Config)),
+    ID = atom_to_list(maps:get(id, Config)),
 
     IsDisabled = maps:get(no_limit, Config, false),
     IsManualReductionDisabled = maps:get(is_manual_reduction_disabled, Config, false),
@@ -131,13 +131,13 @@ init([Config] = _Args) ->
     Now = arweave_limiter_time:ts_now(),
     NextLBTickTS = Now + LeakyTickMs,
     {ok, LeakyRef} = timer:send_interval(LeakyTickMs, self(), {tick, leaky_bucket_reduction}),
-    {ok, TsRef} = timer:send_interval(TimestampCleanupTickMs, self(), {tick, sliding_window_timestamp_cleanup}),
+    {ok, TSRef} = timer:send_interval(TimestampCleanupTickMs, self(), {tick, sliding_window_timestamp_cleanup}),
     {ok, #{
-           id => Id,
+           id => ID,
            is_disabled => IsDisabled,
            is_manual_reduction_disabled => IsManualReductionDisabled,
            leaky_tick_timer_ref => LeakyRef,
-           timestamp_cleanup_timer_ref => TsRef,
+           timestamp_cleanup_timer_ref => TSRef,
            leaky_tick_ms => LeakyTickMs,
            next_leaky_tick_ts => NextLBTickTS,
            timestamp_cleanup_tick_ms => TimestampCleanupTickMs,
@@ -159,15 +159,15 @@ handle_call(reset_all, _From, State) ->
                        leaky_tokens => #{},
                        sliding_timestamps => #{}}};
 handle_call({register_or_reject, _Peer}, {_FromPid, _},
-            State = #{id := _Id, is_disabled := true}) ->
+            State = #{id := _ID, is_disabled := true}) ->
     LimiterHeaders = #{policies => generate_policy(State)},
     {reply, {register, no_limiting_applied, LimiterHeaders}, State};
 handle_call({register_or_reject, Peer}, {FromPid, _},
-            State = #{id := Id,
+            State = #{id := ID,
                       is_disabled := false,
                       leaky_rate_limit := LeakyRateLimit,
                       leaky_tokens := LeakyTokens,
-                      next_leaky_tick_ts := NextLeakyTickTs,
+                      next_leaky_tick_ts := NextLeakyTickTS,
                       concurrency_limit := ConcurrencyLimit,
                       concurrent_requests := ConcurrentRequests,
                       concurrent_monitors := ConcurrentMonitors,
@@ -188,7 +188,7 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
         true ->
             %% Concurrency Hard Limit
             ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, concurrency},
-                        {peer, Peer}, {id, Id}]),
+                        {peer, Peer}, {id, ID}]),
 
             HeadersInfo = #{expiring_limit => ConcurrencyLimit,
                             remaining      => 0,
@@ -205,9 +205,9 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                             ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, rate_limit},
                                         {sliding_window_limit, SlidingWindowLimit},
                                         {leaky_rate_limit, LeakyRateLimit},
-                                        {peer, Peer}, {id, Id}]),
+                                        {peer, Peer}, {id, ID}]),
                             HeadersInfo = build_headers_info_leaky(
-                                            0, LeakyRateLimit, NextLeakyTickTs,
+                                            0, LeakyRateLimit, NextLeakyTickTS,
                                             SlidingTimestampsForPeer0, Now,
                                             Policies),
                             {reply, {reject, rate_limit, HeadersInfo}, State};
@@ -218,7 +218,7 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                                   Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
                             LbRemaining = LeakyRateLimit - Tokens,
                             HeadersInfo = build_headers_info_leaky(
-                                            LbRemaining, LeakyRateLimit, NextLeakyTickTs,
+                                            LbRemaining, LeakyRateLimit, NextLeakyTickTS,
                                             SlidingTimestampsForPeer0, Now,
                                             Policies),
                             {reply, {register, leaky, HeadersInfo},
@@ -232,9 +232,9 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                           Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
                     SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
                     NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
-                    SwRemaining = max(0, SlidingWindowLimit
+                    SWRemaining = max(0, SlidingWindowLimit
                                       - length(SlidingTimestampsForPeer1)),
-                    HeadersInfo = build_headers_info_sliding(SwRemaining, SlidingTimestampsForPeer1,
+                    HeadersInfo = build_headers_info_sliding(SWRemaining, SlidingTimestampsForPeer1,
                                                              Now, Policies),
                     {reply, {register, sliding, HeadersInfo},
                      State#{sliding_timestamps => NewSlidingTimestamps,
@@ -259,8 +259,8 @@ handle_call(get_info, _From, State =
               leaky_tokens => LeakyTokens,
               concurrent_requests => ConcurrentRequests,
               concurrent_monitors => ConcurrentMonitors}, State};
-handle_call(Request, From, State = #{id := Id}) ->
-    ?LOG_WARNING([{event, unhandled_call}, {id, Id}, {module, ?MODULE},
+handle_call(Request, From, State = #{id := ID}) ->
+    ?LOG_WARNING([{event, unhandled_call}, {id, ID}, {module, ?MODULE},
                   {request, Request}, {from, From},
                   {config, filter_state_for_config(State)}]),
     {reply, ok, State}.
@@ -269,35 +269,35 @@ handle_cast(_Request, State) ->
     {noreply, State}.
 
 handle_info({tick, sliding_window_timestamp_cleanup},
-            State = #{id := Id, sliding_timestamps := SlidingTimestamps,
+            State = #{id := ID, sliding_timestamps := SlidingTimestamps,
                       timestamp_cleanup_tick_ms := CleanupTickMs,
                       timestamp_cleanup_expiry := CleanupExpiry}) ->
     Now = arweave_limiter_time:ts_now(),
-    NextSWTickTs = Now + CleanupTickMs,
+    NextSWTickTS = Now + CleanupTickMs,
     NewSlidingTimestamps = cleanup_expired_sliding_peers(SlidingTimestamps, CleanupExpiry, Now),
     Deleted = maps:size(SlidingTimestamps) - maps:size(NewSlidingTimestamps),
-    prometheus_counter:inc(ar_limiter_cleanup_tick_expired_sliding_peers_deleted_total, [Id], Deleted),
-    {noreply, State#{sliding_timestamps => NewSlidingTimestamps, next_timestamp_clean_ts => NextSWTickTs}};
+    prometheus_counter:inc(ar_limiter_cleanup_tick_expired_sliding_peers_deleted_total, [ID], Deleted),
+    {noreply, State#{sliding_timestamps => NewSlidingTimestamps, next_timestamp_clean_ts => NextSWTickTS}};
 handle_info({tick, leaky_bucket_reduction},
-            State = #{id := Id,
+            State = #{id := ID,
                       tick_reduction := TickReduction,
                       leaky_tick_ms := LeakyTickMs,
                       leaky_tokens := LeakyTokens}) ->
     Now = arweave_limiter_time:ts_now(),
-    %% NextLBTickTs is an approximate value for rate-limiting headers to use.
+    %% NextLBTickTS is an approximate value for rate-limiting headers to use.
     %%
-    NextLBTickTs = Now + LeakyTickMs,
-    prometheus_counter:inc(ar_limiter_leaky_ticks, [Id]),
+    NextLBTickTS = Now + LeakyTickMs,
+    prometheus_counter:inc(ar_limiter_leaky_ticks, [ID]),
     SizeBefore = maps:size(LeakyTokens),
     %% This is going to be more precise than ar_limiter_leaky_ticks*ar_limiter_peers
-    prometheus_counter:inc(ar_limiter_leaky_tick_reductions_peer, [Id], SizeBefore),
+    prometheus_counter:inc(ar_limiter_leaky_tick_reductions_peer, [ID], SizeBefore),
     NewTokens =
         maps:fold(fun(Key, Value, AccIn) ->
-                          fold_decrease_rate(Id, Key, Value, AccIn, TickReduction)
+                          fold_decrease_rate(ID, Key, Value, AccIn, TickReduction)
                   end, #{}, LeakyTokens),
     prometheus_counter:inc(
-      ar_limiter_leaky_tick_delete_peer_total, [Id], SizeBefore - maps:size(NewTokens)),
-    {noreply, State#{leaky_tokens => NewTokens, next_leaky_tick_ts => NextLBTickTs}};
+      ar_limiter_leaky_tick_delete_peer_total, [ID], SizeBefore - maps:size(NewTokens)),
+    {noreply, State#{leaky_tokens => NewTokens, next_leaky_tick_ts => NextLBTickTS}};
 handle_info({'DOWN', MonitorRef, process, Pid, Reason},
             State = #{concurrent_requests := ConcurrentRequests,
                       concurrent_monitors := ConcurrentMonitors}) ->
@@ -306,13 +306,13 @@ handle_info({'DOWN', MonitorRef, process, Pid, Reason},
           MonitorRef, Pid, Reason, ConcurrentRequests, ConcurrentMonitors),
     {noreply, State#{concurrent_requests => NewConcurrentRequests,
                      concurrent_monitors => NewConcurrentMonitors}};
-handle_info(Info, State = #{id := Id}) ->
-    ?LOG_WARNING([{event, unhandled_info}, {id, Id}, {module, ?MODULE}, {info, Info}]),
+handle_info(Info, State = #{id := ID}) ->
+    ?LOG_WARNING([{event, unhandled_info}, {id, ID}, {module, ?MODULE}, {info, Info}]),
     {noreply, State}.
 
-terminate(_Reason, #{id := _Id,
+terminate(_Reason, #{id := _ID,
                      leaky_tick_timer_ref := _LeakyRef,
-                     timestamp_cleanup_timer_ref := _TsRef} = _State) ->
+                     timestamp_cleanup_timer_ref := _TSRef} = _State) ->
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -335,21 +335,21 @@ drop_expired(Timestamps, _WindowDuration, _Now) ->
 
 %% There is no idomatic way of adding an element to the end of a list in Erlang.
 %% So, we reverse the list add it to the beginning and reverse it again.
-add_and_order_timestamps(Ts, Timestamps) ->
-    lists:reverse(do_add_and_order_timestamps(Ts, lists:reverse(Timestamps))).
+add_and_order_timestamps(TS, Timestamps) ->
+    lists:reverse(do_add_and_order_timestamps(TS, lists:reverse(Timestamps))).
 
-do_add_and_order_timestamps(Ts, []) ->
-    [Ts];
-do_add_and_order_timestamps(Ts, [Head | _Rest] = Timestamps) when Ts >= Head ->
-    [Ts | Timestamps];
-do_add_and_order_timestamps(Ts, [Head | Rest])  ->
+do_add_and_order_timestamps(TS, []) ->
+    [TS];
+do_add_and_order_timestamps(TS, [Head | _Rest] = Timestamps) when TS >= Head ->
+    [TS | Timestamps];
+do_add_and_order_timestamps(TS, [Head | Rest])  ->
     %% This clause shouldn't really reached, because we use monotonic time
     %% for timestamps.
-    [Head | do_add_and_order_timestamps(Ts, Rest)].
+    [Head | do_add_and_order_timestamps(TS, Rest)].
 
 cleanup_expired_sliding_peers(SlidingTimestamps, WindowDuration, Now) ->
-    maps:fold(fun(Peer, TsList, AccIn) ->
-                      case drop_expired(TsList, WindowDuration, Now) of
+    maps:fold(fun(Peer, TSList, AccIn) ->
+                      case drop_expired(TSList, WindowDuration, Now) of
                           [] ->
                               AccIn;
                           ValidTimestamps ->
@@ -369,14 +369,14 @@ do_reduce_for_peer(Peer, LeakyTokens) ->
             LeakyTokens#{Peer => Tokens - 1}
     end.
 
-fold_decrease_rate(_Id, _Key, Counter, Acc, _TickReduction)
+fold_decrease_rate(_ID, _Key, Counter, Acc, _TickReduction)
   when is_integer(Counter), Counter =< 0 ->
     Acc;
-fold_decrease_rate(Id, Key, Counter, Acc, TickReduction) when Counter < TickReduction ->
-    prometheus_counter:inc(ar_limiter_leaky_tick_token_reductions_total, [Id], Counter),
+fold_decrease_rate(ID, Key, Counter, Acc, TickReduction) when Counter < TickReduction ->
+    prometheus_counter:inc(ar_limiter_leaky_tick_token_reductions_total, [ID], Counter),
     maps:put(Key, 0, Acc);
-fold_decrease_rate(Id, Key, Counter, Acc, TickReduction) ->
-    prometheus_counter:inc(ar_limiter_leaky_tick_token_reductions_total, [Id], TickReduction),
+fold_decrease_rate(ID, Key, Counter, Acc, TickReduction) ->
+    prometheus_counter:inc(ar_limiter_leaky_tick_token_reductions_total, [ID], TickReduction),
     maps:put(Key, Counter-TickReduction, Acc).
 
 %% Concurrency magic
@@ -408,7 +408,7 @@ remove_concurrent(MonitorRef, _Pid, _Reason, ConcurrentRequests, ConcurrentMonit
             {NewConcurrentRequests, NewConcurrentMonitors}
     end.
 
-filter_state_for_config(#{id := Id,
+filter_state_for_config(#{id := ID,
                           is_disabled := IsDisabled,
                           is_manual_reduction_disabled := IsManualReductionDisabled,
                           leaky_tick_ms := LeakyTickMs,
@@ -419,7 +419,7 @@ filter_state_for_config(#{id := Id,
                           concurrency_limit := ConcurrencyLimit,
                           sliding_window_duration := SlidingWindowDuration,
                           sliding_window_limit := SlidingWindowLimit}) ->
-    #{id => Id,
+    #{id => ID,
       is_disabled => IsDisabled,
       is_manual_reduction_disabled => IsManualReductionDisabled,
       leaky_tick_ms => LeakyTickMs,
@@ -478,21 +478,21 @@ generate_policy(#{concurrency_limit := ConcurrencyLimit,
      }.
 
 
-build_headers_info_sliding(Remaining, SwTimestamps, Now, Policies) ->
-    SwReset = sliding_window_reset_seconds(SwTimestamps, Now),
-    Sw = maps:get(sliding_window, Policies),
-    ExpiringLimit = maps:get(limit, Sw),
+build_headers_info_sliding(Remaining, SWTimestamps, Now, Policies) ->
+    SWReset = sliding_window_reset_seconds(SWTimestamps, Now),
+    SW = maps:get(sliding_window, Policies),
+    ExpiringLimit = maps:get(limit, SW),
     #{expiring_limit => ExpiringLimit,
       remaining      => Remaining,
-      reset_seconds  => SwReset,
+      reset_seconds  => SWReset,
       policies       => Policies}.
 
-build_headers_info_leaky(Remaining, LbCapacity, NextLeakyTickTs, SwTimestamps, Now, Policies) ->
-    LbReset = max(1, (NextLeakyTickTs - Now) div 1000), %% This should be never negative really
-    SwReset = sliding_window_reset_seconds(SwTimestamps, Now),
+build_headers_info_leaky(Remaining, LbCapacity, NextLeakyTickTS, SWTimestamps, Now, Policies) ->
+    LbReset = max(1, (NextLeakyTickTS - Now) div 1000), %% This should be never negative really
+    SWReset = sliding_window_reset_seconds(SWTimestamps, Now),
 
     %% This is pretty much a short circuit for
-    Reset = if SwReset > 0 -> min(SwReset, LbReset);
+    Reset = if SWReset > 0 -> min(SWReset, LbReset);
                true -> LbReset
             end,
 

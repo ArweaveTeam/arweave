@@ -10,14 +10,14 @@
 -define(TEST_LIMITER, 'test_limiter').
 -define(TEST_LIMITER_0, 'arweave_limiter_test_limiter_0').
 
--define(setTsMock(Ts), ets:insert(?TABLE, {?KEY, Ts})).
+-define(setTSMock(TS), ets:insert(?TABLE, {?KEY, TS})).
 
 -define(assertHandlerRegisterOrRejectCall(LimiterRef, Pattern, Peer, Now),
         begin
             ((fun () ->
                       Parent = self(),
-                      ?assert(?setTsMock(Now)),
-                      Pid = spawn_link(fun() ->
+                      ?assert(?setTSMock(Now)),
+                      PID = spawn_link(fun() ->
                                                ?assertMatch(
                                                   Pattern,
                                                   ?M:register_or_reject_call(LimiterRef, Peer)),
@@ -36,7 +36,7 @@
                               %% we expect to spawn_link to take down the test process as well
                               erlang:error({timeout, register_or_reject_call_test})
                       end,
-                      Pid
+                      PID
               end)())
         end
 ).
@@ -156,7 +156,7 @@ timeout_test_() ->
                leaky_tick_ms => 100000},
     {setup,
      fun() -> timeout_setup(Config) end,
-     fun(LimiterPid) -> cleanup(Config, LimiterPid) end,
+     fun(LimiterPID) -> cleanup(Config, LimiterPID) end,
      [{"Timeout test",
        fun() ->
                ?assertEqual({reject, error, #{}}, ?M:register_or_reject_call(?TEST_LIMITER, {1,2,3,4})),
@@ -187,12 +187,12 @@ timeout_setup(Config) ->
                      end),
     0 = arweave_limiter_time:ts_now(),
     1 = arweave_limiter_config:get_number_of_workers(?TEST_LIMITER),
-    {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER_0, Config),
-    LimiterPid.
+    {ok, LimiterPID} = ?M:start_link(?TEST_LIMITER_0, Config),
+    LimiterPID.
 
 setup(Config) ->
     ?TABLE = ets:new(?TABLE, [named_table, public]),
-    ?setTsMock(0),
+    ?setTSMock(0),
     {module, arweave_limiter_time} = code:ensure_loaded(arweave_limiter_time),
     {module, arweave_limiter_config} = code:ensure_loaded(arweave_limiter_config),
 
@@ -211,10 +211,10 @@ setup(Config) ->
                      end),
     0 = arweave_limiter_time:ts_now(),
     1 = arweave_limiter_config:get_number_of_workers(?TEST_LIMITER),
-    {ok, LimiterPid} = ?M:start_link(?TEST_LIMITER_0, Config),
-    LimiterPid.
+    {ok, LimiterPID} = ?M:start_link(?TEST_LIMITER_0, Config),
+    LimiterPID.
 
-cleanup(_Config, _LimiterPid) ->
+cleanup(_Config, _LimiterPID) ->
     true = meck:validate(arweave_limiter_config),
     true = meck:validate(prometheus_counter),
     true = meck:validate(arweave_limiter_time),
@@ -238,7 +238,7 @@ rate_limiter_process_test_() ->
          sliding_window_duration => 1000,
          timestamp_cleanup_expiry => 1000,
          leaky_tick_ms => 100000},
-       fun(_Config, _LimiterPid) -> {"sliding test", fun simple_sliding_happy/0} end},
+       fun(_Config, _LimiterPID) -> {"sliding test", fun simple_sliding_happy/0} end},
       {#{id => ?TEST_LIMITER,
          number_of_workers => 5,
          tick_reduction => 1,
@@ -352,7 +352,7 @@ simple_sliding_happy() ->
     ?assertMatch(#{sliding_timestamps := #{IP := [2000, 2001]}}, ?M:info(?TEST_LIMITER)),
     ok.
 
-simple_leaky_happy_path(_Config, LimiterPid) ->
+simple_leaky_happy_path(_Config, LimiterPID) ->
     {"Leaky happy path",
      fun() ->
              IP = {1,2,3,4},
@@ -380,7 +380,7 @@ simple_leaky_happy_path(_Config, LimiterPid) ->
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger a tick.
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
 
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
@@ -388,14 +388,14 @@ simple_leaky_happy_path(_Config, LimiterPid) ->
                             leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger a tick.
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
              ?assertMatch(#{concurrent_requests := #{},
                             leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger a tick.
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
              %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
@@ -406,7 +406,7 @@ simple_leaky_happy_path(_Config, LimiterPid) ->
              ok
      end}.
 
-rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
+rate_limiter_rejected_due_concurrency(_Config, LimiterPID) ->
     {"rejected due concurrency",
      fun() ->
              %% init state, the ip is not blocked
@@ -436,7 +436,7 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger a tick.
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
              ?assertMatch(#{concurrent_requests := #{},
@@ -453,15 +453,15 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
 
 
              %% manually trigger two ticks.
-             LimiterPid ! {tick, leaky_bucket_reduction},
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
              ?assertMatch(#{concurrent_requests := #{},
                             leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger a tick.
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
              %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
@@ -472,7 +472,7 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPid) ->
              ok
      end}.
 
-rejected_due_leaky_rate(_Config, LimiterPid) ->
+rejected_due_leaky_rate(_Config, LimiterPID) ->
     {"rejected due leaky rate",
      fun() ->
              %% init state, the ip is not blocked
@@ -491,7 +491,7 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
              %% Simulate a tick
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% 2 concurrent, but tokens reduced.
@@ -507,8 +507,8 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger two ticks.
-             LimiterPid ! {tick, leaky_bucket_reduction},
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
 
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
@@ -521,9 +521,9 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
              Caller3 ! done,
              Caller4 ! done,
 
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
              %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
 
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
@@ -534,7 +534,7 @@ rejected_due_leaky_rate(_Config, LimiterPid) ->
              ok
      end}.
 
-both_exhausted(_Config, LimiterPid) ->
+both_exhausted(_Config, LimiterPID) ->
     {"Both exhausted",
      fun() ->
              IP = {1,2,3,4},
@@ -574,9 +574,9 @@ both_exhausted(_Config, LimiterPid) ->
              Caller2 ! done,
              Caller3 ! done,
 
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
              %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
 
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
@@ -588,7 +588,7 @@ both_exhausted(_Config, LimiterPid) ->
              ok
      end}.
 
-peer_cleanup(_Config, LimiterPid) ->
+peer_cleanup(_Config, LimiterPID) ->
     {"Peer cleanup",
      fun() ->
              %% init state, the ip is not blocked
@@ -628,9 +628,9 @@ peer_cleanup(_Config, LimiterPid) ->
              Caller1 ! done,
              Caller2 ! done,
              Caller3 ! done,
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
              %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
-             LimiterPid ! {tick, leaky_bucket_reduction},
+             LimiterPID ! {tick, leaky_bucket_reduction},
 
              %% wait a tiny bit so the tick logic surely runs.
              %% Now we still have timestamps for IP1 in the state.
@@ -642,11 +642,11 @@ peer_cleanup(_Config, LimiterPid) ->
              ?assertEqual(1, maps:size(SlidingTimestamps)),
              ?assertEqual(0, maps:size(LeakyTokens)),
 
-             ?setTsMock(20000),
+             ?setTSMock(20000),
 
              timer:sleep(500),
              %% Trigger timestamp cleanup.
-             LimiterPid ! {tick, sliding_window_timestamp_cleanup},
+             LimiterPID ! {tick, sliding_window_timestamp_cleanup},
 
              %% wait a tiny bit so the tick logic surely runs.
              %% Now we should have all cleaned up.
@@ -661,7 +661,7 @@ peer_cleanup(_Config, LimiterPid) ->
              ok
      end}.
 
-leaky_manual_reduction(_Config, _LimiterPid) ->
+leaky_manual_reduction(_Config, _LimiterPID) ->
     {"Leaky tokens manual peer reduction",
      fun() ->
              %% init state, the ip is not blocked
@@ -710,7 +710,7 @@ leaky_manual_reduction(_Config, _LimiterPid) ->
              ok
      end}.
 
-leaky_manual_reduction_disabled(Config, _LimiterPid) ->
+leaky_manual_reduction_disabled(Config, _LimiterPID) ->
     {"Leaky tokens manual peer reduction",
      fun() ->
              %% init state, the ip is not blocked

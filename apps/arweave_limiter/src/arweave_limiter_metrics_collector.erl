@@ -53,14 +53,14 @@ metrics() ->
 tracked_items(AllInfo) ->
     lists:foldl(fun tracked_items_info/2, [], AllInfo).
 
-tracked_items_info({Id, Info}, Acc) ->
+tracked_items_info({ID, Info}, Acc) ->
     SlidingTimestamps = count_sliding_timestamps(Info),
     Monitors = maps:get(concurrent_monitors, Info),
     LeakyPeers = maps:get(leaky_tokens, Info),
     Items = [
-             {[{limiter_id, Id}, {limiting_type, concurrency}], maps:size(Monitors)},
-             {[{limiter_id, Id}, {limiting_type, leaky_bucket_tokens}], maps:size(LeakyPeers)},
-             {[{limiter_id, Id}, {limiting_type, sliding_window_timestamps}], SlidingTimestamps}
+             {[{limiter_id, ID}, {limiting_type, concurrency}], maps:size(Monitors)},
+             {[{limiter_id, ID}, {limiting_type, leaky_bucket_tokens}], maps:size(LeakyPeers)},
+             {[{limiter_id, ID}, {limiting_type, sliding_window_timestamps}], SlidingTimestamps}
             ],
     Items ++ Acc.
 
@@ -73,13 +73,13 @@ count_sliding_timestamps(Info) ->
 peers(AllInfo) ->
     lists:foldl(fun peers_info/2, [], AllInfo).
 
-peers_info({Id, Info}, Acc) ->
+peers_info({ID, Info}, Acc) ->
     ConcurrentRequests = maps:get(concurrent_requests, Info),
     LeakyPeers = maps:get(leaky_tokens, Info),
     SlidingPeers = maps:get(sliding_timestamps, Info),
     Items = [
-             {[{limiter_id, Id}, {limiting_type, concurrency}], maps:size(ConcurrentRequests)},
-             {[{limiter_id, Id}, {limiting_type, leaky_bucket_tokens}], maps:size(LeakyPeers)},
-             {[{limiter_id, Id}, {limiting_type, sliding_window_timestamps}], maps:size(SlidingPeers)}
+             {[{limiter_id, ID}, {limiting_type, concurrency}], maps:size(ConcurrentRequests)},
+             {[{limiter_id, ID}, {limiting_type, leaky_bucket_tokens}], maps:size(LeakyPeers)},
+             {[{limiter_id, ID}, {limiting_type, sliding_window_timestamps}], maps:size(SlidingPeers)}
             ],
     Items ++ Acc.
