@@ -274,7 +274,7 @@ validate3(Packing, Args) ->
 	{ChunkID, ChunkStartOffset, ChunkEndOffset, BlockStartOffset, TXStartOffset,
 			TXRoot, Chunk, UnpackedChunk, SubChunkIndex} = Args,
 	AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	SubChunkSize = ?SUB_CHUNK_SIZE,
 	SubChunkStartOffset = SubChunkIndex * SubChunkSize,
 	%% We always expect the provided unpacked chunks to be padded (if necessary)
 	%% to 256 KiB.

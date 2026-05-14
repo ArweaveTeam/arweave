@@ -759,7 +759,7 @@ get_precalculated_recall_range(B) ->
 						B#block.recall_byte2 - B#block.nonce * ?DATA_CHUNK_SIZE
 				end};
 		_ ->
-			ChunkNumber = B#block.nonce div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
+			ChunkNumber = B#block.nonce div ?SUB_CHUNK_COUNT,
 			{B#block.recall_byte - ChunkNumber * ?DATA_CHUNK_SIZE,
 				case B#block.recall_byte2 of
 					undefined ->
@@ -807,8 +807,7 @@ pre_validate_poa_with_block_bounds(B, PrevB, PartitionUpperBound, H0, H1, Peer, 
 	PackingDifficulty = B#block.packing_difficulty,
 	Nonce = B#block.nonce,
 	%% The packing difficulty >0 is only allowed after the 2.8 hard fork (validated earlier
-	%% here), and the composite packing is only possible for packing difficulty >= 1.
-	%% The new shared entropy format is supported starting from 2.9.
+	%% here). The new shared entropy format is supported starting from 2.9.
 	Packing = ar_block:get_packing(PackingDifficulty, B#block.reward_addr,
 			B#block.replica_format),
 	SubChunkIndex = ar_block:get_sub_chunk_index(PackingDifficulty, Nonce),

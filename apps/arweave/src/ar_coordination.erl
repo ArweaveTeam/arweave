@@ -124,7 +124,7 @@ is_coordinated_miner() ->
 %%   {addr, EncodedMiningAddress}
 %% ]}
 %%
-%% A single partition with the composite packing is in the following format:
+%% A single partition with replica_2_9 packing is in the following format:
 %% {[
 %%   {bucket, PartitionID},
 %%   {bucketsize, ar_block:partition_size()},
@@ -147,7 +147,7 @@ get_self_plus_external_partitions_list() ->
 %%   {addr, EncodedMiningAddress}
 %% ]}
 %%
-%% A single partition with the composite packing is in the following format:
+%% A single partition with replica_2_9 packing is in the following format:
 %% {[
 %%   {bucket, PartitionID},
 %%   {bucketsize, ar_block:partition_size()},

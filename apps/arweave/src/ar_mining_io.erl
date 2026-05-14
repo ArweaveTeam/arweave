@@ -346,10 +346,6 @@ get_packed_intervals(Start, End, MiningAddress, PackingDifficulty, ?DEFAULT_MODU
 get_packed_intervals(_Start, _End, _MiningAddr, _PackingDifficulty, _StoreID, _Intervals) ->
 	no_interval_check_implemented_for_non_default_store.
 
-%% The protocol allows composite packing with the packing difficulty 25 for now,
-%% but it is not practical and it is convenient to exlude it from the range of
-%% supported storage module configurations and treat it as the 2.9 replication format
-%% in the mining process.
 get_replica_format_from_packing_difficulty(?REPLICA_2_9_PACKING_DIFFICULTY) ->
 	1;
 get_replica_format_from_packing_difficulty(_PackingDifficulty) ->

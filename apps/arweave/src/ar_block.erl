@@ -60,7 +60,7 @@ get_merkle_rebase_support_threshold() -> ?MERKLE_REBASE_SUPPORT_THRESHOLD.
 %% area where the 2.9 entropy of every chunk is unique.
 -spec get_replica_2_9_entropy_sector_size() -> pos_integer().
 get_replica_2_9_entropy_sector_size() ->
-	?REPLICA_2_9_ENTROPY_COUNT * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+	?REPLICA_2_9_ENTROPY_COUNT * ?SUB_CHUNK_SIZE.
 
 %% @doc Return the size of the 2.9 entropy partition.
 -spec get_replica_2_9_entropy_partition_size() -> pos_integer().
@@ -71,17 +71,17 @@ get_replica_2_9_entropy_partition_size() ->
 %% in order to fully encipher this many chunks.
 -spec get_sub_chunks_per_replica_2_9_entropy() -> pos_integer().
 get_sub_chunks_per_replica_2_9_entropy() ->
-	?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+	?REPLICA_2_9_ENTROPY_SIZE div ?SUB_CHUNK_SIZE.
 
 %% @doc Return the total size in bytes for a full footprint of entropy.
 -spec get_replica_2_9_footprint_size() -> pos_integer().
 get_replica_2_9_footprint_size() ->
-	?REPLICA_2_9_ENTROPY_SIZE * ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
+	?REPLICA_2_9_ENTROPY_SIZE * ?SUB_CHUNK_COUNT.
 
 %% @doc Return the number of entropies per partition.
 -spec get_replica_2_9_entropy_count() -> pos_integer().
 get_replica_2_9_entropy_count() ->
-	?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
+	?REPLICA_2_9_ENTROPY_COUNT div ?SUB_CHUNK_COUNT.
 
 %% @doc Check whether the block fields conform to the specified size limits.
 block_field_size_limit(B = #block{ reward_addr = unclaimed }) ->
@@ -645,13 +645,8 @@ get_recall_range(H0, PartitionNumber, PartitionUpperBound) ->
 vdf_step_number(#block{ nonce_limiter_info = Info }) ->
 	Info#nonce_limiter_info.global_step_number.
 
-get_packing(PackingDifficulty, MiningAddress, 0) ->
-	case PackingDifficulty >= 1 of
-		true ->
-			{composite, MiningAddress, PackingDifficulty};
-		false ->
-			{spora_2_6, MiningAddress}
-	end;
+get_packing(_PackingDifficulty, MiningAddress, 0) ->
+	{spora_2_6, MiningAddress};
 get_packing(_PackingDifficulty, MiningAddress, 1) ->
 	{replica_2_9, MiningAddress}.
 
@@ -662,16 +657,6 @@ validate_replica_format(Height, 0, 0) ->
 	%% Support for spora_2_6 discontinued at
 	%% ar_fork:height_2_8() + ?SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS.
 	Height - ?SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS < ar_fork:height_2_8();
-validate_replica_format(Height, CompositePackingDifficulty, 0) ->
-	case Height - ?COMPOSITE_PACKING_EXPIRATION_PERIOD_BLOCKS < ar_fork:height_2_9() of
-		true ->
-			%% Composite is still supported - difficulty 1 through 32
-			Height >= ar_fork:height_2_8()
-				andalso CompositePackingDifficulty =< ?MAX_PACKING_DIFFICULTY;
-		false ->
-			%% Composite packing is no longer supported.
-			false
-	end;
 validate_replica_format(_, _, _) ->
 	false.
 
@@ -683,7 +668,7 @@ get_recall_range_size(PackingDifficulty) ->
 get_recall_byte(RecallRangeStart, Nonce, 0) ->
 	RecallRangeStart + Nonce * ?DATA_CHUNK_SIZE;
 get_recall_byte(RecallRangeStart, Nonce, _PackingDifficulty) ->
-	ChunkNumber = Nonce div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT,
+	ChunkNumber = Nonce div ?SUB_CHUNK_COUNT,
 	RecallRangeStart + ChunkNumber * ?DATA_CHUNK_SIZE.
 
 %% @doc Return the number of bytes per sub-chunk. This also drives how far each mining nonce
@@ -691,13 +676,13 @@ get_recall_byte(RecallRangeStart, Nonce, _PackingDifficulty) ->
 get_sub_chunk_size(0) ->
 	?DATA_CHUNK_SIZE;
 get_sub_chunk_size(_PackingDifficulty) ->
-	?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+	?SUB_CHUNK_SIZE.
 
 %% @doc Return the number of mining nonces contained in each data chunk.
 get_nonces_per_chunk(0) ->
 	1;
 get_nonces_per_chunk(_PackingDifficulty) ->
-	?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
+	?SUB_CHUNK_COUNT.
 
 get_nonces_per_recall_range(PackingDifficulty) ->
 	%% Call ar_block: here so that it is mockable in tests on all nodes.
@@ -705,7 +690,7 @@ get_nonces_per_recall_range(PackingDifficulty) ->
 
 %% @doc For packing difficulty 0 (aka spora_2_6 packing), there is one nonce per chunk, so
 %% the max nonce is the same as the max chunk number. For packing difficulty >= 1 (aka
-%% composite packing and the 2.9 replication), there are ?COMPOSITE_PACKING_SUB_CHUNK_COUNT
+%% the 2.9 replication), there are ?SUB_CHUNK_COUNT
 %% nonces per chunk.
 get_max_nonce(PackingDifficulty) ->
 	%% The max(...) is included mostly for testing, where the recall range can be less than
@@ -717,7 +702,7 @@ get_max_nonce(PackingDifficulty) ->
 get_sub_chunk_index(0, _Nonce) ->
 	-1;
 get_sub_chunk_index(_PackingDifficulty, Nonce) ->
-	Nonce rem ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
+	Nonce rem ?SUB_CHUNK_COUNT.
 
 %% @doc Return Offset if it is smaller than or equal to ar_block:strict_data_split_threshold().
 %% Otherwise, return the offset of the last byte of the chunk + the size of the padding.
@@ -1150,34 +1135,24 @@ test_validate_replica_format() ->
 	?assertEqual(false, validate_replica_format(0, 1, 1)),
 	?assertEqual(false, validate_replica_format(0, 33, 1)),
 	?assertEqual(false, validate_replica_format(0, 25, 1)),
-	%% post-2.8, pre-2.9, spora_2_6 and composite are supported
+	%% post-2.8, pre-2.9, only spora_2_6 is supported
 	?assertEqual(true, validate_replica_format(15, 0, 0)),
-	?assertEqual(true, validate_replica_format(15, 1, 0)),
+	?assertEqual(false, validate_replica_format(15, 1, 0)),
 	?assertEqual(false, validate_replica_format(15, 33, 0)),
 	?assertEqual(false, validate_replica_format(15, 100, 0)),
 	?assertEqual(false, validate_replica_format(15, 0, 1)),
 	?assertEqual(false, validate_replica_format(15, 1, 1)),
 	?assertEqual(false, validate_replica_format(15, 33, 1)),
 	?assertEqual(false, validate_replica_format(15, 25, 1)),
-	%% post-2.9, pre-composite expiration
+	%% post-2.9, spora_2_6 and replica_2_9 supported
 	?assertEqual(true, validate_replica_format(25, 0, 0)),
-	?assertEqual(true, validate_replica_format(25, 1, 0)),
+	?assertEqual(false, validate_replica_format(25, 1, 0)),
 	?assertEqual(false, validate_replica_format(25, 33, 0)),
 	?assertEqual(false, validate_replica_format(25, 100, 0)),
 	?assertEqual(false, validate_replica_format(25, 0, 1)),
 	?assertEqual(false, validate_replica_format(25, 1, 1)),
 	?assertEqual(false, validate_replica_format(25, 33, 1)),
 	?assertEqual(true, validate_replica_format(25, 2, 1)), %% 2 in tests.
-	%% post-2.9, post-composite expiration
-	CompositeExpiration = ar_fork:height_2_9() + ?COMPOSITE_PACKING_EXPIRATION_PERIOD_BLOCKS,
-	?assertEqual(true, validate_replica_format(CompositeExpiration, 0, 0)),
-	?assertEqual(false, validate_replica_format(CompositeExpiration, 1, 0)),
-	?assertEqual(false, validate_replica_format(CompositeExpiration, 33, 0)),
-	?assertEqual(false, validate_replica_format(CompositeExpiration, 25, 0)),
-	?assertEqual(false, validate_replica_format(CompositeExpiration, 0, 1)),
-	?assertEqual(false, validate_replica_format(CompositeExpiration, 1, 1)),
-	?assertEqual(false, validate_replica_format(CompositeExpiration, 33, 1)),
-	?assertEqual(true, validate_replica_format(CompositeExpiration, 2, 1)),
 	%% post-2.9, post-spora expiration
 	SporaExpiration = ar_fork:height_2_8() + ?SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS,
 	?assertEqual(false, validate_replica_format(SporaExpiration, 0, 0)),

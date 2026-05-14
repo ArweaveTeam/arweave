@@ -716,7 +716,7 @@ test_verify_chunk_storage_should_store() ->
 			#state{ packing = unpacked })),
 	?assertEqual(
 		#state{
-			packing = {composite, Addr, 1},
+			packing = {spora_2_6, Addr},
 			verify_report = #verify_report{
 				total_error_bytes = ?DATA_CHUNK_SIZE div 2,
 				total_error_chunks = 1,
@@ -729,7 +729,7 @@ test_verify_chunk_storage_should_store() ->
 			#chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE div 2 },
 			#chunk_offsets{ absolute_offset = ar_block:strict_data_split_threshold() + 1 },
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
-			#state{ packing = {composite, Addr, 1} })),
+			#state{ packing = {spora_2_6, Addr} })),
 	ok.
 
 test_verify_chunk_storage_should_not_store() ->

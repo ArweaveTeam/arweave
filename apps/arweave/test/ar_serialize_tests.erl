@@ -158,10 +158,7 @@ test_poa_map(Serialize, Deserialize, BaseProof) ->
 			Deserialize(Serialize(Proof3))),
 	Proof4 = Proof3#{ packing => {spora_2_6, crypto:strong_rand_bytes(33)} },
 	?assertEqual({ok, Proof4},
-			Deserialize(Serialize(Proof4))),
-	Proof5 = Proof3#{ packing => {composite, crypto:strong_rand_bytes(33), 2} },
-	?assertEqual({ok, Proof5},
-			Deserialize(Serialize(Proof5))).
+			Deserialize(Serialize(Proof4))).
 
 poa_no_chunk_map_test() ->
 	test_poa_no_chunk_map(fun ar_serialize:poa_no_chunk_map_to_binary/1, fun ar_serialize:binary_to_no_chunk_map/1).
@@ -510,7 +507,6 @@ jobs_to_json_struct_test() ->
 	).
 
 footprint_to_json_map_test() ->
-	Addr = crypto:strong_rand_bytes(32),
 	TestCases = [
 		{ar_intervals:new()},
 		{ar_intervals:from_list([{3, 0}, {2048, 1024}])},

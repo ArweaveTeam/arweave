@@ -374,11 +374,11 @@ assert_chunk_sizes(Solution) ->
 	U1Size = byte_size(U1),
 	U2Size = byte_size(U2),
 	IsC1FullSize = C1Size == ?DATA_CHUNK_SIZE,
-	IsC1SubChunkSize = C1Size == ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	IsC1SubChunkSize = C1Size == ?SUB_CHUNK_SIZE,
 	IsC2Empty = C2Size == 0,
 	IsC2FullSize = C2Size == ?DATA_CHUNK_SIZE,
-	IsC2SubChunkSize = C2Size == ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-	%% When the packing is composite (packing_difficulty >= 1), The unpacked chunk is
+	IsC2SubChunkSize = C2Size == ?SUB_CHUNK_SIZE,
+	%% When packing_difficulty >= 1, the unpacked chunk is
 	%% expected to be 0-padded when smaller than ?DATA_CHUNK_SIZE.
 	IsU1FullSize = U1Size == ?DATA_CHUNK_SIZE,
 	IsU2FullSize = U2Size == ?DATA_CHUNK_SIZE,
@@ -735,8 +735,6 @@ process_partial_solution_test_() ->
 				case Args of
 					{10, _, << 1:256 >>, 100, PoA2, {spora_2_6, << 0:256 >>}, -1, not_set} ->
 						{true, << 2:256 >>};
-					{10, _, << 1:256 >>, 100, CPoA, {composite, << 0:256 >>, 1}, 30, not_set} ->
-						{true, << 2:256 >>};
 					_ ->
 						false
 				end
@@ -759,15 +757,6 @@ test_process_partial_solution() ->
 	{H2, Preimage2} = ar_block:compute_h2(H1, C, H0),
 	RecallByte2 = RecallRange2Start + 1 * ?DATA_CHUNK_SIZE,
 	PoA = #poa{ chunk = C },
-	CompositeSubChunk = << 0:(8192 * 8) >>,
-	CPoA = #poa{ chunk = CompositeSubChunk },
-	CH0 = ar_block:compute_h0(Zero, 0, Zero48, Zero, 1),
-	{CH1, CPreimage1} = ar_block:compute_h1(CH0, 30, CompositeSubChunk),
-	CSolutionH = ar_block:compute_solution_h(CH0, CPreimage1),
-	{CRecallRange1Start, CRecallRange2Start} = ar_block:get_recall_range(CH0, 0, 1),
-	CRecallByte1 = CRecallRange1Start,
-	{CH2, CPreimage2} = ar_block:compute_h2(CH1, CompositeSubChunk, CH0),
-	CRecallByte2 = CRecallRange2Start,
 	TestCases = [
 		{"Bad proof size 0",
 			#mining_solution{ poa1 = #poa{} }, % Empty chunk.
@@ -900,46 +889,6 @@ test_process_partial_solution() ->
 						data_path = << 0:(349504 * 8) >> },
 					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"accepted">> }},
-
-		{"No unpacked chunk",
-			#mining_solution{ nonce = 30, solution_hash = CSolutionH,
-					preimage = CPreimage1, partition_upper_bound = 1,
-					recall_byte1 = CRecallByte1,
-					packing_difficulty = 1,
-					poa1 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
-						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
-		{"Accepted packing difficulty=1",
-			#mining_solution{ nonce = 30, solution_hash = CSolutionH,
-					preimage = CPreimage1, partition_upper_bound = 1,
-					recall_byte1 = CRecallByte1,
-					packing_difficulty = 1,
-					poa1 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
-						data_path = << 0:(349504 * 8) >>,
-						unpacked_chunk = << 1:(262144 * 8) >> }},
-			#partial_solution_response{ status = <<"accepted">> }},
-		{"No second unpacked chunk",
-			#mining_solution{ nonce = 30, solution_hash = CH2,
-					preimage = CPreimage2, partition_upper_bound = 1,
-					recall_byte1 = CRecallByte1, recall_byte2 = CRecallByte2,
-					packing_difficulty = 1,
-					poa2 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
-						data_path = << 0:(349504 * 8) >> },
-					poa1 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
-						data_path = << 0:(349504 * 8) >> }},
-			#partial_solution_response{ status = <<"rejected_bad_poa">> }},
-		{"Accepted two-chunk packing difficulty=1",
-			#mining_solution{ nonce = 30, solution_hash = CH2,
-					preimage = CPreimage2, partition_upper_bound = 1,
-					recall_byte1 = CRecallByte1, recall_byte2 = CRecallByte2,
-					packing_difficulty = 1,
-					poa2 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
-						data_path = << 0:(349504 * 8) >>,
-						unpacked_chunk = << 1:(262144 * 8) >> },
-					poa1 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
-						data_path = << 0:(349504 * 8) >>,
-						unpacked_chunk = << 1:(262144 * 8) >>}},
 			#partial_solution_response{ status = <<"accepted">> }}
 	],
 	lists:foreach(
@@ -967,8 +916,6 @@ process_solution_test_() ->
 						unpacked_chunk = << 1:(262144 * 8) >> },
 				case Args of
 					{10, _, << 1:256 >>, 100, PoA2, {spora_2_6, << 0:256 >>}, -1, not_set} ->
-						{true, << 2:256 >>};
-					{10, _, << 1:256 >>, 100, CPoA, {composite, << 0:256 >>, 2}, 31, not_set} ->
 						{true, << 2:256 >>};
 					_ ->
 						false
@@ -1030,13 +977,6 @@ test_process_solution() ->
 	{RecallRange1Start, _RecallRange2Start} = ar_block:get_recall_range(H0, 0, 1),
 	RecallByte1 = RecallRange1Start + 1 * ?DATA_CHUNK_SIZE,
 	PoA = #poa{ chunk = C },
-	CompositeSubChunk = << 0:(8192 * 8) >>,
-	CPoA = #poa{ chunk = CompositeSubChunk },
-	CH0 = ar_block:compute_h0(Zero, 0, Zero48, Zero, 2),
-	{_CH1, CPreimage1} = ar_block:compute_h1(CH0, 31, CompositeSubChunk),
-	CSolutionH = ar_block:compute_solution_h(CH0, CPreimage1),
-	{CRecallRange1Start, _CRecallRange2Start} = ar_block:get_recall_range(CH0, 0, 1),
-	CRecallByte1 = CRecallRange1Start,
 	TestCases = [
 		{"VDF not found",
 			#mining_solution{ next_seed = << 10:(48*8) >>, nonce = 1, solution_hash = SolutionH,
@@ -1086,20 +1026,6 @@ test_process_solution() ->
 					recall_byte1 = RecallByte1,
 					poa1 = PoA#poa{ tx_path = << 0:(2176 * 8) >>,
 						data_path = << 0:(349504 * 8) >> }},
-			noreply},
-		{"Accepted packing diff=2",
-			#mining_solution{ next_seed = << 4:(48*8) >>, nonce = 31,
-					solution_hash = CSolutionH,
-					preimage = CPreimage1, partition_upper_bound = 1,
-					recall_byte1 = CRecallByte1,
-					packing_difficulty = 2,
-					poa1 = CPoA#poa{ tx_path = << 0:(2176 * 8) >>,
-						data_path = << 0:(349504 * 8) >>,
-						unpacked_chunk = << 1:(262144 * 8) >> }},
-			%% The difficulty is about 32 times higher now (because we can try 32x nonces).
-			%% However, the recall range reduction (1 / (4 (base) * 2 (packing diff)))
-			%% make it only about 4 times higher.
-			%% The inputs are deterministic.
 			noreply}
 	],
 	lists:foreach(

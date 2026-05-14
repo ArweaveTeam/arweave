@@ -37,8 +37,6 @@ packing_atom(Packing) when is_atom(Packing) ->
 	Packing;
 packing_atom({spora_2_6, _Addr}) ->
 	spora_2_6;
-packing_atom({composite, _Addr, _Diff}) ->
-	composite;
 packing_atom({replica_2_9, _Addr}) ->
 	replica_2_9.
 
@@ -96,32 +94,12 @@ unpack(Packing, ChunkOffset, TXRoot, Chunk, ChunkSize) ->
 			Reply
 	end.
 
-%% @doc Unpack the packed sub-chunk of a composite packing or shared entropy replica.
+%% @doc Unpack the packed sub-chunk of a shared entropy replica.
 %%
 %% Return {ok, UnpackedSubChunk} or {error, invalid_packed_size}.
-unpack_sub_chunk({composite, _, _} = Packing,
-		AbsoluteEndOffset, TXRoot, Chunk, SubChunkStartOffset) ->
-	case byte_size(Chunk) == ?COMPOSITE_PACKING_SUB_CHUNK_SIZE of
-		false ->
-			{error, invalid_packed_size};
-		true ->
-			PackingState = get_packing_state(),
-			record_packing_request(unpack_sub_chunk, not_set, Packing),
-			{PackingAtom, Key} = chunk_key(Packing, AbsoluteEndOffset, TXRoot),
-			RandomXState = get_randomx_state_by_packing(Packing, PackingState),
-			case prometheus_histogram:observe_duration(packing_duration_milliseconds,
-					[unpack_sub_chunk, PackingAtom, external], fun() ->
-						ar_mine_randomx:randomx_decrypt_sub_chunk(Packing, RandomXState,
-									Key, Chunk, SubChunkStartOffset) end) of
-				{ok, UnpackedSubChunk} ->
-					{ok, UnpackedSubChunk};
-				Error ->
-					Error
-			end
-	end;
 unpack_sub_chunk({replica_2_9, RewardAddr} = Packing,
 		AbsoluteEndOffset, _TXRoot, Chunk, SubChunkStartOffset) ->
-	case byte_size(Chunk) == ?COMPOSITE_PACKING_SUB_CHUNK_SIZE of
+	case byte_size(Chunk) == ?SUB_CHUNK_SIZE of
 		false ->
 			{error, invalid_packed_size};
 		true ->
@@ -182,8 +160,6 @@ pad_chunk(Chunk, ChunkSize) ->
 unpad_chunk(spora_2_5, Unpacked, ChunkSize, _PackedSize) ->
 	binary:part(Unpacked, 0, ChunkSize);
 unpad_chunk({spora_2_6, _Addr}, Unpacked, ChunkSize, PackedSize) ->
-	unpad_chunk(Unpacked, ChunkSize, PackedSize);
-unpad_chunk({composite, _Addr, _PackingDifficulty}, Unpacked, ChunkSize, PackedSize) ->
 	unpad_chunk(Unpacked, ChunkSize, PackedSize);
 unpad_chunk({replica_2_9, _Addr}, Unpacked, ChunkSize, PackedSize) ->
 	unpad_chunk(Unpacked, ChunkSize, PackedSize);
@@ -462,8 +438,6 @@ build_packing_state() ->
 			?RANDOMX_PACKING_KEY, Schedulers),
 	{RandomXState512, RandomXState4096, RandomXStateSharedEntropy}.
 
-get_randomx_state_by_packing({composite, _, _}, {_, RandomXState, _}) ->
-	RandomXState;
 get_randomx_state_by_packing({replica_2_9, _}, {_, _, RandomXState}) ->
 	RandomXState;
 get_randomx_state_by_packing({spora_2_6, _}, {RandomXState, _, _}) ->
@@ -567,14 +541,6 @@ chunk_key({spora_2_6, RewardAddr}, ChunkOffset, TXRoot) ->
 	{
 		spora_2_6,
 		crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary, RewardAddr/binary >>)
-	};
-chunk_key({composite, RewardAddr, PackingDiff}, ChunkOffset, TXRoot) ->
-	%% This is only a part of the packing key. Each sub-chunk is packed using a different
-	%% key composed from the key returned by this function and the relative sub-chunk offset.
-	{
-		composite,
-		crypto:hash(sha256, << ChunkOffset:256, TXRoot:32/binary, PackingDiff:8,
-				RewardAddr/binary >>)
 	}.
 
 pack(unpacked, _ChunkOffset, _TXRoot, Chunk, _PackingState, _External) ->
@@ -618,7 +584,7 @@ pack(Packing, ChunkOffset, TXRoot, Chunk, PackingState, External) ->
 			end
 	end.
 
-get_sub_chunks(<< SubChunk:(?COMPOSITE_PACKING_SUB_CHUNK_SIZE)/binary, Rest/binary >>) ->
+get_sub_chunks(<< SubChunk:(?SUB_CHUNK_SIZE)/binary, Rest/binary >>) ->
 	[SubChunk | get_sub_chunks(Rest)];
 get_sub_chunks(<<>>) ->
 	[].
@@ -640,10 +606,10 @@ pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
 					ar_mine_randomx:randomx_encrypt_replica_2_9_sub_chunk({RandomXState,
 							Entropy, SubChunk, EntropySubChunkIndex}) end) of
 		{ok, PackedSubChunk} ->
-			SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+			SubChunkSize = ?SUB_CHUNK_SIZE,
 			EntropyPart = binary:part(Entropy,
-					EntropySubChunkIndex * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-					?COMPOSITE_PACKING_SUB_CHUNK_SIZE),
+					EntropySubChunkIndex * ?SUB_CHUNK_SIZE,
+					?SUB_CHUNK_SIZE),
 			pack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
 				SubChunkStartOffset + SubChunkSize, SubChunks,
 				[PackedSubChunk | PackedSubChunks], [EntropyPart | EntropyParts]);
@@ -667,7 +633,7 @@ unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
 					ar_mine_randomx:randomx_decrypt_replica_2_9_sub_chunk({RandomXState,
 							Entropy, SubChunk, EntropySubChunkIndex}) end) of
 		{ok, UnpackedSubChunk} ->
-			SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+			SubChunkSize = ?SUB_CHUNK_SIZE,
 			unpack_replica_2_9_sub_chunks(RewardAddr, AbsoluteEndOffset, RandomXState,
 					SubChunkStartOffset + SubChunkSize, SubChunks,
 					[UnpackedSubChunk | UnpackedSubChunks]);
@@ -789,32 +755,6 @@ repack(RequestedPacking, {replica_2_9, _} = StoredPacking,
 	repack_no_nif({RequestedPacking, StoredPacking, ChunkOffset, TXRoot, Chunk,
 			ChunkSize, PackingState, External});
 
-repack({composite, RequestedAddr, RequestedPackingDifficulty} = RequestedPacking,
-		{composite, StoredAddr, StoredPackingDifficulty} = StoredPacking,
-			ChunkOffset, TXRoot, Chunk, ChunkSize, PackingState, External)
-		when RequestedAddr == StoredAddr,
-			StoredPackingDifficulty > RequestedPackingDifficulty ->
-	repack_no_nif({RequestedPacking, StoredPacking, ChunkOffset, TXRoot, Chunk,
-			ChunkSize, PackingState, External});
-
-repack({composite, _Addr, _PackingDifficulty} = RequestedPacking,
-		{spora_2_6, _StoredAddr} = StoredPacking,
-			ChunkOffset, TXRoot, Chunk, ChunkSize, PackingState, External) ->
-	repack_no_nif({RequestedPacking, StoredPacking, ChunkOffset, TXRoot, Chunk,
-			ChunkSize, PackingState, External});
-
-repack({spora_2_6, _StoredAddr} = RequestedPacking,
-		{composite, _Addr, _PackingDifficulty} = StoredPacking,
-			ChunkOffset, TXRoot, Chunk, ChunkSize, PackingState, External) ->
-	repack_no_nif({RequestedPacking, StoredPacking, ChunkOffset, TXRoot, Chunk,
-			ChunkSize, PackingState, External});
-
-repack({composite, _Addr, _PackingDifficulty} = RequestedPacking,
-		spora_2_5 = StoredPacking,
-			ChunkOffset, TXRoot, Chunk, ChunkSize, PackingState, External) ->
-	repack_no_nif({RequestedPacking, StoredPacking, ChunkOffset, TXRoot, Chunk,
-			ChunkSize, PackingState, External});
-
 repack(RequestedPacking, StoredPacking,
 		ChunkOffset, TXRoot, Chunk, ChunkSize, PackingState, External) ->
 	{SourcePackingAtom, UnpackKey} = chunk_key(StoredPacking, ChunkOffset, TXRoot),
@@ -824,8 +764,7 @@ repack(RequestedPacking, StoredPacking,
 			PrometheusLabel = atom_to_list(SourcePackingAtom) ++ "_to_"
 					++ atom_to_list(TargetPackingAtom),
 			%% By the time we hit this branch both RequestedPacking and StoredPacking should
-			%% use the same RandomX state (i.e. both are either spora_2_5/spora_2_6 or both
-			%% composite).
+			%% use the same RandomX state (i.e. both are either spora_2_5/spora_2_6).
 			RandomXState = get_randomx_state_by_packing(RequestedPacking, PackingState),
 			prometheus_histogram:observe_duration(packing_duration_milliseconds,
 				[repack, PrometheusLabel, External], fun() ->
@@ -867,8 +806,6 @@ validate_chunk_size(spora_2_5, Chunk, ChunkSize) ->
 			{ok, PackedSize}
 	end;
 validate_chunk_size({spora_2_6, _Addr}, Chunk, ChunkSize) ->
-	validate_chunk_size(Chunk, ChunkSize);
-validate_chunk_size({composite, _Addr, _PackingDifficulty}, Chunk, ChunkSize) ->
 	validate_chunk_size(Chunk, ChunkSize);
 validate_chunk_size({replica_2_9, _Addr}, Chunk, ChunkSize) ->
 	validate_chunk_size(Chunk, ChunkSize).
@@ -926,8 +863,8 @@ exor_replica_2_9_chunk(Chunk, Entropy) ->
 exor_replica_2_9_sub_chunks(<<>>, <<>>) ->
 	[];
 exor_replica_2_9_sub_chunks(
-		<< SubChunk:(?COMPOSITE_PACKING_SUB_CHUNK_SIZE)/binary, ChunkRest/binary >>,
-		<< EntropyPart:(?COMPOSITE_PACKING_SUB_CHUNK_SIZE)/binary, EntropyRest/binary >>) ->
+		<< SubChunk:(?SUB_CHUNK_SIZE)/binary, ChunkRest/binary >>,
+		<< EntropyPart:(?SUB_CHUNK_SIZE)/binary, EntropyRest/binary >>) ->
 	[ar_mine_randomx:exor_sub_chunk(SubChunk, EntropyPart)
 			| exor_replica_2_9_sub_chunks(ChunkRest, EntropyRest)].
 
@@ -1017,21 +954,9 @@ pack_test() ->
 					Chunk, PackingState, external),
 			{ok, Packed3, was_not_already_packed} = pack({spora_2_6, EDDSA}, Offset, TXRoot,
 					Chunk, PackingState, external),
-			{ok, Packed4, was_not_already_packed} = pack({composite, ECDSA, 1}, Offset, TXRoot,
-					Chunk, PackingState, external),
-			{ok, Packed5, was_not_already_packed} = pack({composite, EDDSA, 1}, Offset, TXRoot,
-					Chunk, PackingState, external),
-			{ok, Packed6, was_not_already_packed} = pack({composite, ECDSA, 2}, Offset, TXRoot,
-					Chunk, PackingState, external),
-			{ok, Packed7, was_not_already_packed} = pack({composite, EDDSA, 2}, Offset, TXRoot,
-					Chunk, PackingState, external),
 			?assertNotEqual(Packed, Chunk),
 			?assertNotEqual(Packed2, Chunk),
 			?assertNotEqual(Packed3, Chunk),
-			?assertNotEqual(Packed4, Chunk),
-			?assertNotEqual(Packed5, Chunk),
-			?assertNotEqual(Packed6, Chunk),
-			?assertNotEqual(Packed7, Chunk),
 			?assertEqual({ok, Packed, already_unpacked},
 					unpack(unpacked, Offset, TXRoot, Packed, byte_size(Chunk), PackingState,
 							internal)),
@@ -1044,19 +969,7 @@ pack_test() ->
 			?assertEqual({ok, Chunk, was_not_already_unpacked},
 					unpack({spora_2_6, EDDSA}, Offset, TXRoot, Packed3, byte_size(Chunk),
 							PackingState, internal)),
-			?assertEqual({ok, Chunk, was_not_already_unpacked},
-					unpack({composite, ECDSA, 1}, Offset, TXRoot, Packed4, byte_size(Chunk),
-							PackingState, internal)),
-			?assertEqual({ok, Chunk, was_not_already_unpacked},
-					unpack({composite, EDDSA, 1}, Offset, TXRoot, Packed5, byte_size(Chunk),
-							PackingState, internal)),
-			?assertEqual({ok, Chunk, was_not_already_unpacked},
-					unpack({composite, ECDSA, 2}, Offset, TXRoot, Packed6, byte_size(Chunk),
-							PackingState, internal)),
-			?assertEqual({ok, Chunk, was_not_already_unpacked},
-					unpack({composite, EDDSA, 2}, Offset, TXRoot, Packed7, byte_size(Chunk),
-							PackingState, internal)),
-			[Packed, Packed2, Packed3, Packed4, Packed5, Packed6, Packed7]
+			[Packed, Packed2, Packed3]
 		end,
 		Cases
 	)),

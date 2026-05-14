@@ -34,16 +34,13 @@
 	gc_process_ref				= undefined,
 	merkle_rebase_threshold		= infinity,
 	is_pool_client				= false,
-	allow_composite_packing		= false,
 	allow_replica_2_9_mining	= false,
 	packing_difficulty			= 0
 }).
 
 -ifdef(AR_TEST).
--define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 0).
 -define(MINIMUM_CACHE_LIMIT_BYTES, 100 * ?MiB).
 -else.
--define(POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS, 10).
 -define(MINIMUM_CACHE_LIMIT_BYTES, 1).
 -endif.
 
@@ -153,8 +150,6 @@ log_prepare_solution_failure2(Solution, FailureType, FailureReason, Source, Addi
 
 -spec get_packing_difficulty(Packing :: ar_storage_module:packing()) ->
 	PackingDifficulty :: non_neg_integer().
-get_packing_difficulty({composite, _, Difficulty}) ->
-	Difficulty;
 get_packing_difficulty({replica_2_9, _}) ->
 	?REPLICA_2_9_PACKING_DIFFICULTY;
 get_packing_difficulty(_) ->
@@ -162,8 +157,6 @@ get_packing_difficulty(_) ->
 
 -spec get_packing_type(Packing :: ar_storage_module:packing()) ->
 	PackingType :: atom().
-get_packing_type({composite, _, _}) ->
-	composite;
 get_packing_type({replica_2_9, _}) ->
 	replica_2_9;
 get_packing_type({spora_2_6, _}) ->
@@ -241,7 +234,6 @@ handle_cast({start_mining, Args}, State) ->
 		active_sessions	= sets:new(),
 		diff_pair = DiffPair,
 		merkle_rebase_threshold = RebaseThreshold,
-		allow_composite_packing = allow_composite_packing(Height),
 		allow_replica_2_9_mining = allow_replica_2_9_mining(Height) }};
 
 handle_cast({set_difficulty, DiffPair}, State) ->
@@ -252,8 +244,7 @@ handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
 	{noreply, State#state{ merkle_rebase_threshold = Threshold }};
 
 handle_cast({set_height, Height}, State) ->
-	{noreply, State#state{ allow_composite_packing = allow_composite_packing(Height),
-			allow_replica_2_9_mining = allow_replica_2_9_mining(Height) }};
+	{noreply, State#state{ allow_replica_2_9_mining = allow_replica_2_9_mining(Height) }};
 
 handle_cast({add_pool_job, Args}, State) ->
 	{SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff} = Args,
@@ -364,10 +355,6 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-
-allow_composite_packing(Height) ->
-	Height - ?POST_2_8_COMPOSITE_PACKING_DELAY_BLOCKS >= ar_fork:height_2_8()
-		andalso Height - ?COMPOSITE_PACKING_EXPIRATION_PERIOD_BLOCKS < ar_fork:height_2_9().
 
 allow_replica_2_9_mining(Height) ->
 	Height >= ar_fork:height_2_9().
@@ -554,11 +541,6 @@ distribute_output(Candidate, State) ->
 	distribute_output(ar_mining_io:get_partitions(), Candidate, State).
 
 distribute_output([], _Candidate, _State) ->
-	ok;
-distribute_output([{_Partition, _MiningAddress, PackingDifficulty} | _Partitions],
-		_Candidate, #state{ allow_composite_packing = false })
-		when PackingDifficulty >= 1, PackingDifficulty /= ?REPLICA_2_9_PACKING_DIFFICULTY ->
-	%% Only mine with composite packing until some time after the fork 2.9.
 	ok;
 distribute_output([{Partition, MiningAddress, PackingDifficulty} | Partitions],
 		Candidate, State) ->
@@ -1192,21 +1174,7 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing, Nonce) ->
 			PackingDifficulty = ?REPLICA_2_9_PACKING_DIFFICULTY,
 			SubChunk = get_sub_chunk(Chunk, PackingDifficulty, Nonce),
 			{ok, PoA#poa{ chunk = SubChunk }};
-		{not_set, {ok, #poa{ chunk = Chunk } = PoA}, {composite, _, PackingDifficulty}} ->
-			SubChunk = get_sub_chunk(Chunk, PackingDifficulty, Nonce),
-			{ok, PoA#poa{ chunk = SubChunk }};
 		{_ChunkOrSubChunk, {ok, #poa{ chunk = Chunk } = PoA}, {replica_2_9, _}} ->
-			case sub_chunk_belongs_to_chunk(ChunkOrSubChunk, Chunk) of
-				true ->
-					{ok, PoA#poa{ chunk = ChunkOrSubChunk }};
-				false ->
-					dump_invalid_solution_data({sub_chunk_mismatch, RecallByte,
-							ChunkOrSubChunk, PoA, Packing, PoAReply, Nonce}),
-					{error, sub_chunk_mismatch};
-				Error2 ->
-					Error2
-			end;
-		{_ChunkOrSubChunk, {ok, #poa{ chunk = Chunk } = PoA}, {composite, _, _}} ->
 			case sub_chunk_belongs_to_chunk(ChunkOrSubChunk, Chunk) of
 				true ->
 					{ok, PoA#poa{ chunk = ChunkOrSubChunk }};
@@ -1238,16 +1206,16 @@ dump_invalid_solution_data(Data) ->
 get_sub_chunk(Chunk, 0, _Nonce) ->
 	Chunk;
 get_sub_chunk(Chunk, PackingDifficulty, Nonce) ->
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	SubChunkSize = ?SUB_CHUNK_SIZE,
 	SubChunkIndex = ar_block:get_sub_chunk_index(PackingDifficulty, Nonce),
 	SubChunkStartOffset = SubChunkSize * SubChunkIndex,
 	binary:part(Chunk, SubChunkStartOffset, SubChunkSize).
 
 sub_chunk_belongs_to_chunk(SubChunk,
-		<< SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, _Rest/binary >>) ->
+		<< SubChunk:?SUB_CHUNK_SIZE/binary, _Rest/binary >>) ->
 	true;
 sub_chunk_belongs_to_chunk(SubChunk,
-		<< _SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, Rest/binary >>) ->
+		<< _SubChunk:?SUB_CHUNK_SIZE/binary, Rest/binary >>) ->
 	sub_chunk_belongs_to_chunk(SubChunk, Rest);
 sub_chunk_belongs_to_chunk(_SubChunk, <<>>) ->
 	false;
@@ -1260,7 +1228,7 @@ read_poa(RecallByte, Packing) ->
 		{ok, Proof} ->
 			#{ chunk := Chunk, tx_path := TXPath, data_path := DataPath } = Proof,
 			case get_packing_type(Packing) of
-				Type when Type == replica_2_9; Type == composite ->
+				replica_2_9 ->
 					case maps:get(unpacked_chunk, Proof, not_found) of
 						not_found ->
 							read_unpacked_chunk(RecallByte, Proof);

@@ -521,7 +521,7 @@ test_packs_chunks_depending_on_packing_threshold() ->
 							= ar_data_sync:get_chunk(RecallByte + 1,
 								#{ packing => unpacked, pack => true, origin => test }),
 						UnpackedChunk2 = ar_packing_server:pad_chunk(UnpackedChunk),
-						{{composite, B#block.reward_addr, B#block.packing_difficulty},
+						{{spora_2_6, B#block.reward_addr},
 								PoA#poa{ unpacked_chunk = UnpackedChunk2 }}
 				end,
 			?assertMatch({true, _}, ar_poa:validate({BlockStart, RecallByte, TXRoot,

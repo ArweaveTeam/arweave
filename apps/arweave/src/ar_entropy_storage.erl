@@ -412,7 +412,7 @@ take_combined_entropy_by_index(Entropies, Index) ->
 take_combined_entropy_by_index([], _Index, Acc) ->
 	iolist_to_binary(Acc);
 take_combined_entropy_by_index([Entropy | Entropies], Index, Acc) ->
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	SubChunkSize = ?SUB_CHUNK_SIZE,
 	take_combined_entropy_by_index(
 		Entropies,
 		Index,

@@ -190,8 +190,6 @@ packing_color(replica_2_9) ->
 	{0, 0, 255}; %% blue
 packing_color(spora_2_6) ->
 	{0, 255, 0}; %% green
-packing_color(composite) ->
-	{255, 255, 0}; %% yellow
 packing_color(_) ->
 	{255, 0, 0}. %% red for unknown packings
 

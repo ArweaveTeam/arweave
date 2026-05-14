@@ -425,7 +425,7 @@ do_prepare_entropy(State) ->
 
 
 do_generate_entropies(RewardAddr, BucketEndOffset, CacheEntropy) ->
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	SubChunkSize = ?SUB_CHUNK_SIZE,
 	EntropyTasks =
 		lists:map(
 			fun(Offset) ->
@@ -450,7 +450,7 @@ do_generate_entropies(RewardAddr, BucketEndOffset, CacheEntropy) ->
 										 {ChunkEntropy :: binary(),
 										  RemainingSlicesOfEachEntropy :: [binary()]}.
 take_and_combine_entropy_slices(Entropies) ->
-	true = ?COMPOSITE_PACKING_SUB_CHUNK_COUNT == length(Entropies),
+	true = ?SUB_CHUNK_COUNT == length(Entropies),
 	take_and_combine_entropy_slices(Entropies, [], []).
 
 take_and_combine_entropy_slices([], Acc, RestAcc) ->
@@ -458,7 +458,7 @@ take_and_combine_entropy_slices([], Acc, RestAcc) ->
 take_and_combine_entropy_slices([<<>> | Entropies], _Acc, _RestAcc) ->
 	true = lists:all(fun(Entropy) -> Entropy == <<>> end, Entropies),
 	{<<>>, []};
-take_and_combine_entropy_slices([<<EntropySlice:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary,
+take_and_combine_entropy_slices([<<EntropySlice:?SUB_CHUNK_SIZE/binary,
 								   Rest/binary>>
 								 | Entropies],
 								Acc,
@@ -474,7 +474,7 @@ sanity_check_replica_2_9_entropy_keys(
 sanity_check_replica_2_9_entropy_keys(
 		PaddedEndOffset, RewardAddr, SubChunkStartOffset, [Key | Keys]) ->
 		Key = ar_replica_2_9:get_entropy_key(RewardAddr, PaddedEndOffset, SubChunkStartOffset),
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	SubChunkSize = ?SUB_CHUNK_SIZE,
 	sanity_check_replica_2_9_entropy_keys(PaddedEndOffset,
 										RewardAddr,
 										SubChunkStartOffset + SubChunkSize,
@@ -495,7 +495,7 @@ generate_entropy_keys(_RewardAddr, _Offset, SubChunkStart)
 	when SubChunkStart == ?DATA_CHUNK_SIZE ->
 	[];
 generate_entropy_keys(RewardAddr, Offset, SubChunkStart) ->
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	SubChunkSize = ?SUB_CHUNK_SIZE,
 	[ar_replica_2_9:get_entropy_key(RewardAddr, Offset, SubChunkStart)
 	 | generate_entropy_keys(RewardAddr, Offset, SubChunkStart + SubChunkSize)].
 

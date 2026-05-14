@@ -635,7 +635,7 @@ process_all_sub_chunks(WhichChunk, Chunk, Candidate, Nonce, State)
 	process_sub_chunk(WhichChunk, Candidate1, Chunk, State);
 process_all_sub_chunks(
 	WhichChunk,
-	<< SubChunk:?COMPOSITE_PACKING_SUB_CHUNK_SIZE/binary, Rest/binary >>,
+	<< SubChunk:?SUB_CHUNK_SIZE/binary, Rest/binary >>,
 	Candidate, Nonce, State
 ) ->
 	%% Composite packing / replica packing (aka difficulty 1+).

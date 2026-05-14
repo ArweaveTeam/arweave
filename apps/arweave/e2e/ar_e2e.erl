@@ -75,8 +75,6 @@ packing_type_to_packing(PackingType, Address) ->
 	case PackingType of
 		replica_2_9 -> {replica_2_9, Address};
 		spora_2_6 -> {spora_2_6, Address};
-		composite_1 -> {composite, Address, 1};
-		composite_2 -> {composite, Address, 2};
 		unpacked -> unpacked
 	end.
 
@@ -394,14 +392,11 @@ assert_recall_byte(Node, RangeStart, RangeEnd) ->
 						{error, Error}])
 	end.
 assert_block({spora_2_6, Address}, MinedBlock) ->
-	Address = MinedBlock#block.reward_addr,
-	0 = MinedBlock#block.packing_difficulty;
-assert_block({composite, Address, PackingDifficulty}, MinedBlock) ->
-	Address = MinedBlock#block.reward_addr,
-	PackingDifficulty = MinedBlock#block.packing_difficulty;
+	?assertEqual(Address, MinedBlock#block.reward_addr),
+	?assertEqual(0, MinedBlock#block.packing_difficulty);
 assert_block({replica_2_9, Address}, MinedBlock) ->
-	Address = MinedBlock#block.reward_addr,
-	?REPLICA_2_9_PACKING_DIFFICULTY = MinedBlock#block.packing_difficulty.
+	?assertEqual(Address, MinedBlock#block.reward_addr),
+	?assertEqual(?REPLICA_2_9_PACKING_DIFFICULTY, MinedBlock#block.packing_difficulty).
 	
 
 %% @doc Compute the expected aligned size of `PartitionNumber' on `Node'
