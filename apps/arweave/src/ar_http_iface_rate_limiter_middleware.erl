@@ -32,7 +32,6 @@ execute(Req, Env) ->
 
 	case arweave_limiter:register_or_reject_call(LimiterRef, PeerKey) of
 		{reject, Reason, Data} ->
-			?LOG_DEBUG([{event, rate_limiter_reject}, {reason, Reason}, {data, Data}]),
 			{stop, reject(Req, Reason, Data)};
 		_ ->
 			{ok, Req, Env}
@@ -51,6 +50,9 @@ get_limiter_ref(Req) ->
 			path_to_limiter_ref(Path)
 	end.
 
+reject(Req, error, _Data) ->
+	%% On errors, we don't have reasonable data to form Polli headers
+	cowboy_req:reply(503, #{}, <<"Service Unavailable">>, Req);
 reject(Req, _Reason, _Data) ->
 	cowboy_req:reply(
 		429,

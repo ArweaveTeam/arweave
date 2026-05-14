@@ -76,7 +76,7 @@ peers(AllInfo) ->
 peers_info({Id, Info}, Acc) ->
     ConcurrentRequests = maps:get(concurrent_requests, Info),
     LeakyPeers = maps:get(leaky_tokens, Info),
-    SlidingPeers = maps:get(sliding_timestamps, Info),       
+    SlidingPeers = maps:get(sliding_timestamps, Info),
     Items = [
              {[{limiter_id, Id}, {limiting_type, concurrency}], maps:size(ConcurrentRequests)},
              {[{limiter_id, Id}, {limiting_type, leaky_bucket_tokens}], maps:size(LeakyPeers)},
