@@ -18,10 +18,10 @@
 	id,
 	type = branch,	% root | branch | leaf
 	data,			% The value (for leaves).
-	note,			% The offset, a number less than 2^256.
+	tree_midpoint_offset,	% Branch split offset or leaf end offset.
 	left,			% The (optional) ID of a node to the left.
 	right,			% The (optional) ID of a node to the right.
-	max,			% The maximum observed note at this point.
+	max,			% The maximum observed offset at this point.
 	is_rebased = false
 }).
 
@@ -201,22 +201,22 @@ validate_path(ID, Dest, LeftBound, RightBound,
 		DataSize, IsRightMostInItsSubTree, LeftBoundShift, CheckBorders, CheckSplit, false).
 
 validate_rebased_path(ID, Dest, LeftBound, RightBound,
-		<< _Marker:?HASH_SIZE/binary, L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
-			Note:(?NOTE_SIZE*8), Rest/binary >>,
+		<< 0:(?HASH_SIZE * 8), L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
+			TreeMidpointOffset:(?NOTE_SIZE*8), Rest/binary >>,
 		DataSize, LeftBoundShift, CheckBorders, CheckSplit) ->
-	case get_branch_id(L, R, Note) of
+	case get_branch_id(L, R, TreeMidpointOffset) of
 		ID ->
 			{Path, NextLeftBound, NextRightBound, Dest2, NextLeftBoundShift} =
-				case Dest < Note of
+				case Dest < TreeMidpointOffset of
 					true ->
-						Note2 = min(RightBound, Note),
-						{L, 0, Note2 - LeftBound, Dest - LeftBound,
+						NextTreeMidpointOffset = min(RightBound, TreeMidpointOffset),
+						{L, 0, NextTreeMidpointOffset - LeftBound, Dest - LeftBound,
 								LeftBoundShift + LeftBound};
 					false ->
-						Note2 = max(LeftBound, Note),
-						{R, 0, RightBound - Note2,
-								Dest - Note2,
-								LeftBoundShift + Note2}
+						NextTreeMidpointOffset = max(LeftBound, TreeMidpointOffset),
+						{R, 0, RightBound - NextTreeMidpointOffset,
+								Dest - NextTreeMidpointOffset,
+								LeftBoundShift + NextTreeMidpointOffset}
 				end,
 			validate_path(Path, Dest2, NextLeftBound, NextRightBound, Rest, DataSize,
 				undefined, NextLeftBoundShift, CheckBorders, CheckSplit, true);
@@ -228,9 +228,10 @@ validate_rebased_path(_, _, _, _, _, _, _, _, _) ->
 	false.
 
 validate_node_path(ID, Dest, LeftBound, RightBound,
-		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>,
+		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
+			TreeMidpointOffset:(?NOTE_SIZE*8), Rest/binary >>,
 		DataSize, IsRightMostInItsSubTree, LeftBoundShift, CheckBorders, CheckSplit, AllowRebase) ->
-	validate_node(ID, Dest, LeftBound, RightBound, L, R, Note, Rest,
+	validate_node(ID, Dest, LeftBound, RightBound, L, R, TreeMidpointOffset, Rest,
 		DataSize, IsRightMostInItsSubTree, LeftBoundShift,
 		CheckBorders, CheckSplit, AllowRebase);
 
@@ -238,20 +239,20 @@ validate_node_path(ID, Dest, LeftBound, RightBound,
 validate_node_path(_, _, _, _, _, _, _, _, _, _, _) ->
 	false.
 
-validate_node(ID, Dest, LeftBound, RightBound, L, R, Note, RemainingPath,
+validate_node(ID, Dest, LeftBound, RightBound, L, R, TreeMidpointOffset, RemainingPath,
 		DataSize, IsRightMostInItsSubTree, LeftBoundShift,
 		CheckBorders, CheckSplit, AllowRebase) ->
-	case get_branch_id(L, R, Note) of
+	case get_branch_id(L, R, TreeMidpointOffset) of
 		ID ->
 			{BranchID, NextLeftBound, NextRightBound, IsRightMostInItsSubTree2} =
-				case Dest < Note of
+				case Dest < TreeMidpointOffset of
 					true ->
 						%% Traverse left branch (at this point we know the leaf chunk will never
 						%% be the right most in the subtree)
-						{L, LeftBound, min(RightBound, Note), false};
+						{L, LeftBound, min(RightBound, TreeMidpointOffset), false};
 					false ->
 						%% Traverse right branch
-						{R, max(LeftBound, Note), RightBound,
+						{R, max(LeftBound, TreeMidpointOffset), RightBound,
 								case IsRightMostInItsSubTree of undefined -> true;
 										_ -> IsRightMostInItsSubTree end}
 				end,
@@ -280,8 +281,9 @@ extract_note(Path) ->
 %% @doc Get the Merkle root from a path.
 extract_root(<< Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>) ->
 	{ok, get_leaf_id(Data, EndOffset)};
-extract_root(<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), _/binary >>) ->
-	{ok, get_branch_id(L, R, Note)};
+extract_root(<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
+		TreeMidpointOffset:(?NOTE_SIZE*8), _/binary >>) ->
+	{ok, get_branch_id(L, R, TreeMidpointOffset)};
 extract_root(_) ->
 	{error, invalid_proof}.
 
@@ -307,29 +309,29 @@ has_positive_leaf_size(_Dest, LeftBound, _RightBound,
 	EndOffset > LeftBound;
 has_positive_leaf_size(Dest, LeftBound, RightBound,
 		<< 0:(?HASH_SIZE * 8), _L:?HASH_SIZE/binary, _R:?HASH_SIZE/binary,
-			Note:(?NOTE_SIZE*8), Rest/binary >>) ->
+			TreeMidpointOffset:(?NOTE_SIZE*8), Rest/binary >>) ->
 	%% Update offset bounds according to the selected sub-tree.
 	%% A rebase marker means the selected child subtree restarts its offsets at 0.
 	{NextLeftBound, NextRightBound, Dest2} =
-		case Dest < Note of
+		case Dest < TreeMidpointOffset of
 			true ->
-				Note2 = min(RightBound, Note),
-				{0, Note2 - LeftBound, Dest - LeftBound};
+				NextTreeMidpointOffset = min(RightBound, TreeMidpointOffset),
+				{0, NextTreeMidpointOffset - LeftBound, Dest - LeftBound};
 			false ->
-				Note2 = max(LeftBound, Note),
-				{0, RightBound - Note2, Dest - Note2}
+				NextTreeMidpointOffset = max(LeftBound, TreeMidpointOffset),
+				{0, RightBound - NextTreeMidpointOffset, Dest - NextTreeMidpointOffset}
 		end,
 	has_positive_leaf_size(Dest2, NextLeftBound, NextRightBound, Rest);
 has_positive_leaf_size(Dest, LeftBound, RightBound,
 		<< _L:?HASH_SIZE/binary, _R:?HASH_SIZE/binary,
-			Note:(?NOTE_SIZE*8), Rest/binary >>) ->
+			TreeMidpointOffset:(?NOTE_SIZE*8), Rest/binary >>) ->
 	%% Update offset bounds according to the selected sub-tree.
 	{NextLeftBound, NextRightBound} =
-		case Dest < Note of
+		case Dest < TreeMidpointOffset of
 			true ->
-				{LeftBound, min(RightBound, Note)};
+				{LeftBound, min(RightBound, TreeMidpointOffset)};
 			false ->
-				{max(LeftBound, Note), RightBound}
+				{max(LeftBound, TreeMidpointOffset), RightBound}
 		end,
 	has_positive_leaf_size(Dest, NextLeftBound, NextRightBound, Rest);
 has_positive_leaf_size(_, _, _, _) ->
@@ -360,14 +362,14 @@ mark_rebased(#node{ id = RootID } = Node, RootID) ->
 mark_rebased(Node, _RootID) ->
 	Node.
 
-generate_leaf({Data, Note}) ->
-	Hash = get_leaf_id(Data, Note),
+generate_leaf({Data, EndOffset}) ->
+	Hash = get_leaf_id(Data, EndOffset),
 	#node{
 		id = Hash,
 		type = leaf,
 		data = Data,
-		note = Note,
-		max = Note
+		tree_midpoint_offset = EndOffset,
+		max = EndOffset
 	}.
 
 %% Note: This implementation leaves some duplicates in the tree structure.
@@ -398,18 +400,18 @@ generate_node(L, R, Shift) ->
 		type = branch,
 		left = L#node.id,
 		right = R#node.id,
-		note = LMax2,
+		tree_midpoint_offset = LMax2,
 		max = RMax2
 	}, RMax2}.
 
-generate_path_parts(ID, Dest, Tree, PrevNote) ->
+generate_path_parts(ID, Dest, Tree, PrevTreeMidpointOffset) ->
 	case get(ID, Tree) of
 		N when N#node.type == leaf ->
-			[N#node.data, note_to_binary(N#node.note)];
+			[N#node.data, note_to_binary(N#node.tree_midpoint_offset)];
 		N when N#node.type == branch ->
-			Note = N#node.note,
+			TreeMidpointOffset = N#node.tree_midpoint_offset,
 			{Direction, NextID} =
-				case Dest < Note of
+				case Dest < TreeMidpointOffset of
 					true ->
 						{left, N#node.left};
 					false ->
@@ -421,12 +423,12 @@ generate_path_parts(ID, Dest, Tree, PrevNote) ->
 					{false, _} ->
 						{<<>>, Dest};
 					{true, right} ->
-						{<< 0:(?HASH_SIZE * 8) >>, Dest - Note};
+						{<< 0:(?HASH_SIZE * 8) >>, Dest - TreeMidpointOffset};
 					{true, left} ->
-						{<< 0:(?HASH_SIZE * 8) >>, Dest - PrevNote}
+						{<< 0:(?HASH_SIZE * 8) >>, Dest - PrevTreeMidpointOffset}
 				end,
-			[RebaseMark, N#node.left, N#node.right, note_to_binary(Note)
-					| generate_path_parts(NextID, Dest2, Tree, Note)]
+			[RebaseMark, N#node.left, N#node.right, note_to_binary(TreeMidpointOffset)
+					| generate_path_parts(NextID, Dest2, Tree, TreeMidpointOffset)]
 	end.
 
 get(ID, Map) ->
@@ -435,14 +437,14 @@ get(ID, Map) ->
 		Node -> Node
 	end.
 
-get_branch_id(LeftID, RightID, Note) ->
-	hash([hash(LeftID), hash(RightID), hash(note_to_binary(Note))]).
+get_branch_id(LeftID, RightID, TreeMidpointOffset) ->
+	hash([hash(LeftID), hash(RightID), hash(note_to_binary(TreeMidpointOffset))]).
 
-get_leaf_id(Data, Note) ->
-	hash([hash(Data), hash(note_to_binary(Note))]).
+get_leaf_id(Data, EndOffset) ->
+	hash([hash(Data), hash(note_to_binary(EndOffset))]).
 
-note_to_binary(Note) ->
-	<< Note:(?NOTE_SIZE * 8) >>.
+note_to_binary(Offset) ->
+	<< Offset:(?NOTE_SIZE * 8) >>.
 
 hash(Parts) when is_list(Parts) ->
 	crypto:hash(sha256, binary:list_to_bin(Parts));
@@ -1180,13 +1182,13 @@ test_reject_invalid_tree_path() ->
 		)
 	).
 
-assert_node({Id, Type, Data, Note, IsRebased}, Node) ->
+assert_node({Id, Type, Data, ExpectedOffset, IsRebased}, Node) ->
 	?assertEqual(Id, Node#node.id),
-	assert_node({Type, Data, Note, IsRebased}, Node);
-assert_node({Type, Data, Note, IsRebased}, Node) ->
+	assert_node({Type, Data, ExpectedOffset, IsRebased}, Node);
+assert_node({Type, Data, ExpectedOffset, IsRebased}, Node) ->
 	?assertEqual(Type, Node#node.type),
 	?assertEqual(Data, Node#node.data),
-	?assertEqual(Note, Node#node.note),
+	?assertEqual(ExpectedOffset, Node#node.tree_midpoint_offset),
 	?assertEqual(IsRebased, Node#node.is_rebased).
 
 assert_tree([], []) ->
