@@ -4,7 +4,8 @@
 
 -export([get_data_path_validation_ruleset/2, get_data_path_validation_ruleset/3,
 		 validate_pre_fork_2_5/4, validate/1, chunk_proof/2, chunk_proof/3, chunk_proof/5,
-	 validate_paths/1, validate_data_path/5, get_padded_offset/1, get_padded_offset/2]).
+	 validate_paths/1, validate_data_path/5, validate_data_path/6,
+	 get_padded_offset/1, get_padded_offset/2]).
 
 -include_lib("arweave/include/ar_poa.hrl").
 -include_lib("arweave/include/ar.hrl").
@@ -49,16 +50,25 @@ get_data_path_validation_ruleset(BlockStartOffset) ->
 			ar_block:strict_data_split_threshold()).
 
 validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
-	case has_redundant_rebase_marker(DataRoot, Offset, TXSize, DataPath, Chunk) of
+	validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk, not_set).
+
+%% @doc Validate a data path for local chunk admission. This is NOT used in block validation.
+validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk, Peer) ->
+	case has_redundant_rebase_marker_for_chunk(DataRoot, Offset, TXSize, DataPath, Chunk) of
 		true ->
+			log_invalid_data_path(redundant_rebase_marker, Peer,
+					[{data_root, ar_util:encode(DataRoot)}, {offset, Offset}, {tx_size, TXSize}]),
 			%% Conservatively reject paths with redundant rebase markers as there's no
 			%% productive case for their use.
 			false;
 		false ->
-			validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk)
+			validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk, Peer)
 	end.
 
 validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk) ->
+	validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk, not_set).
+
+validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk, Peer) ->
 	Base = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath, strict_borders_ruleset),
 	Strict = ar_merkle:validate_path(DataRoot, Offset, TXSize, DataPath,
 			strict_data_split_ruleset),
@@ -83,15 +93,24 @@ validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 				false ->
 					false;
 				true ->
-					case EndOffset - StartOffset == byte_size(Chunk)
-							andalso ar_merkle:has_positive_leaf_size(Offset, TXSize, DataPath) of
-						true ->
-							PassesBase = not (Base == false),
-							PassesStrict = not (Strict == false),
-							PassesRebase = not (Rebase == false),
-							{true, PassesBase, PassesStrict, PassesRebase, EndOffset};
+					case EndOffset - StartOffset == byte_size(Chunk) of
 						false ->
-							false
+							false;
+						true ->
+							case ar_merkle:has_positive_leaf_size(Offset, TXSize, DataPath) of
+								true ->
+									PassesBase = not (Base == false),
+									PassesStrict = not (Strict == false),
+									PassesRebase = not (Rebase == false),
+									{true, PassesBase, PassesStrict, PassesRebase, EndOffset};
+								false ->
+									log_invalid_data_path(negative_leaf_size, Peer,
+											[{data_root, ar_util:encode(DataRoot)},
+											{offset, Offset}, {tx_size, TXSize},
+											{chunk_start_offset, StartOffset},
+											{chunk_end_offset, EndOffset}]),
+									false
+							end
 					end
 			end
 	end.
@@ -99,10 +118,18 @@ validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 %%% @doc Return true if we recognize there is at least one redundant rebase marker.
 %%% Strip all rebase markers from the proof and return true if the resulting
 %% proof *still* validates.
-has_redundant_rebase_marker(DataRoot, Offset, TXSize, DataPath, Chunk) ->
-	StrippedDataPath = ar_merkle:strip_rebase_markers(DataPath),
-	StrippedDataPath =/= DataPath andalso
-		validate_data_path2(DataRoot, Offset, TXSize, StrippedDataPath, Chunk) =/= false.
+has_redundant_rebase_marker_for_chunk(DataRoot, Offset, TXSize, DataPath, Chunk) ->
+	ar_merkle:has_redundant_rebase_marker(
+		DataPath,
+		fun(StrippedDataPath) ->
+			validate_data_path2(DataRoot, Offset, TXSize, StrippedDataPath, Chunk) =/= false
+		end).
+
+log_invalid_data_path(_Reason, not_set, _Logs) ->
+	ok;
+log_invalid_data_path(Reason, Peer, Logs) ->
+	?LOG_ERROR([{event, invalid_data_path}, {reason, Reason},
+			{peer, ar_util:format_peer(Peer)} | Logs]).
 
 %% @doc Validate a proof of access.
 validate(Args) ->
@@ -190,8 +217,7 @@ chunk_proof(#chunk_metadata{} = ChunkMetadata,
 		validate_data_path_ruleset = ValidateDataPathRuleset
 	}.
 
-%% @doc Validate the TXPath and DataPath for a chunk. This will return the ChunkID but won't
-%% validate that the ChunkID is correct.
+%% @doc Validate the TXPath and DataPath for a chunk. This function is used in block validation.
 -spec validate_paths(#chunk_proof{}) -> {boolean(), #chunk_proof{}}.
 validate_paths(Proof) ->
 	#chunk_proof{
