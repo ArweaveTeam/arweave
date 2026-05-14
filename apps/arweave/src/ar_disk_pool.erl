@@ -632,7 +632,7 @@ process_chunk(DiskPool, StoreID, DiskPoolKey, DiskPoolValue) ->
 	prometheus_counter:inc(disk_pool_processed_chunks),
 	<< Timestamp:256, _DataPathHash/binary >> = DiskPoolKey,
 	DiskPoolChunk = parse_chunk(DiskPoolValue),
-	{_Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey,
+	{_Offset, _ChunkSize, DataRoot, TXSize, ChunkDataKey,
 			_PassedBaseValidation, _PassedStrictValidation,
 			_PassedRebaseValidation} = DiskPoolChunk,
 	DataRootID = ar_data_roots:id(DataRoot, TXSize),
@@ -651,7 +651,7 @@ process_chunk(DiskPool, StoreID, DiskPoolKey, DiskPoolValue) ->
 			{next_chunk, DiskPool#disk_pool_state{ cursor = NextCursor }};
 		{not_found, false} ->
 			%% The chunk was either orphaned or never made it to the chain.
-			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize),
+			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID),
 			NextCursor = << DiskPoolKey/binary, <<"a">>/binary >>,
 			DiskPool2 = maybe_reset_full_scan_key(DiskPoolKey, DiskPool),
 			{next_chunk, DiskPool2#disk_pool_state{ cursor = NextCursor }};
@@ -960,7 +960,7 @@ delete_chunk(Iterator, Args, StoreID, DiskPool) ->
 			delete_chunk(Iterator2, Args, StoreID, DiskPool);
 		_ ->
 			DataRootID = ar_data_roots:id(Iterator),
-			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize)
+			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID)
 	end.
 
 pause_scan(DiskPool) ->
@@ -1090,7 +1090,7 @@ remove_chunk_from_cache(DataPathHash) ->
 	),
 	ets:delete(ar_disk_pool_chunks_cache_reverse, DataPathHash).
 
-remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, _ChunkSize) ->
+remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID) ->
 	ok = ar_kv:delete(index_db(StoreID), DiskPoolKey),
 	ok = ar_data_sync:delete_chunk_data(ChunkDataKey, StoreID),
 	<< _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
