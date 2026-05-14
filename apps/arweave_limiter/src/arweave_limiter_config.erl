@@ -65,7 +65,6 @@ get_config() ->
        is_manual_reduction_disabled => Config#config.'http_api.limiter.block_index.is_manual_reduction_disabled'},
 
      #{id => wallet_list,
-       number_of_workers => ?DEFAULT_ARWEAVE_LIMITER_GROUP_WORKERS,
        sliding_window_limit => Config#config.'http_api.limiter.wallet_list.sliding_window_limit',
        sliding_window_duration => Config#config.'http_api.limiter.wallet_list.sliding_window_duration',
        timestamp_cleanup_tick_ms =>
@@ -92,7 +91,6 @@ get_config() ->
        is_manual_reduction_disabled => Config#config.'http_api.limiter.get_vdf.is_manual_reduction_disabled'},
 
      #{id => get_vdf_session,
-       number_of_workers => ?DEFAULT_ARWEAVE_LIMITER_GROUP_WORKERS,
        sliding_window_limit => Config#config.'http_api.limiter.get_vdf_session.sliding_window_limit',
        sliding_window_duration => Config#config.'http_api.limiter.get_vdf_session.sliding_window_duration',
        timestamp_cleanup_tick_ms =>
@@ -146,7 +144,6 @@ get_config() ->
        is_manual_reduction_disabled => Config#config.'http_api.limiter.metrics.is_manual_reduction_disabled'},
      %% Local peers
      #{id => local_peers,
-       number_of_workers => ?LOCAL_PEER_WORKERS,
        no_limit => true}
     ].
 
