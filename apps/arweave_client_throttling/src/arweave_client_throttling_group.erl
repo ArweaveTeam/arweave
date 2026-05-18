@@ -10,35 +10,54 @@
 %%% @doc Per-group client throttler.
 %%%
 %%% One `arweave_client_throttling_group' process exists per limiting
-%%% group. It maintains, per peer, a "remaining budget" integer and a
-%%% FIFO queue of waiting caller pids.
+%%% group. It maintains, per peer, a quota state and a FIFO queue of
+%%% waiting caller pids.
+%%%
+%%% == Quota state ==
+%%%
+%%% For each peer the group keeps:
+%%%
+%%% <ul>
+%%%   <li>`total' — the size of the quota window as reported by the
+%%%       remote (e.g. "200 requests per minute" => 200).</li>
+%%%   <li>`remaining' — how many calls are still allowed before the
+%%%       remote will start rejecting us.</li>
+%%%   <li>`reset_seconds' — when the quota is exhausted, how many
+%%%       seconds the remote says it will take before the budget
+%%%       refills. Meaningful only when `remaining =:= 0'.</li>
+%%% </ul>
 %%%
 %%% Behaviour summary:
 %%%
 %%% <ul>
 %%%   <li>`throttle/2' is a synchronous `gen_server:call' with timeout
 %%%       `infinity'. If the peer's current `remaining' is positive,
-%%%       the call returns `ok' immediately and the budget is
+%%%       the call returns `ok' immediately and `remaining' is
 %%%       decremented. Otherwise the caller's `From' reference is
 %%%       enqueued and the gen_server does not reply, blocking the
 %%%       caller until budget becomes available.</li>
-%%%   <li>`update_remaining/3' is a `gen_server:cast'. It refreshes
-%%%       the budget from a value reported by a remote host, drains as
-%%%       many waiters as the new budget allows, and never blocks the
-%%%       caller.</li>
+%%%   <li>`update_quota/3' is a `gen_server:cast'. It takes a map
+%%%       `#{total := T, remaining := R, reset_seconds := S}'
+%%%       reflecting the latest state advertised by the remote, drains
+%%%       as many waiters as the new `remaining' allows, and never
+%%%       blocks the caller. When `remaining' is 0 and `reset_seconds'
+%%%       is positive, a timer is scheduled so the budget is refilled
+%%%       to `total' once the remote window expires, even if no
+%%%       further response arrives.</li>
 %%% </ul>
 %%%
-%%% == Handling concurrent `update_remaining' messages ==
+%%% == Handling concurrent `update_quota' messages ==
 %%%
 %%% Several in-flight requests can complete around the same time and
 %%% each report a different `remaining' value. Without timestamps from
 %%% the remote, the safest assumption is that the smallest of two
 %%% values reported close together is the most recent (each subsequent
 %%% request consumed one slot on the server side). We therefore take
-%%% the minimum of the old and the new value as long as they fall
-%%% within `concurrency_window_ms'. Outside that window we trust the
-%%% new value, which lets the budget grow back when the remote rate
-%%% window resets.
+%%% the minimum of the old and the new `remaining' as long as they
+%%% fall within `concurrency_window_ms'. Outside that window we trust
+%%% the new value, which lets the budget grow back when the remote
+%%% rate window resets. `total' and `reset_seconds' are always
+%%% replaced with the value from the most recent update.
 %%% @end
 %%%===================================================================
 -module(arweave_client_throttling_group).
@@ -48,7 +67,7 @@
 -export([
 	start_link/1,
 	throttle/2,
-	update_remaining/3,
+	update_quota/3,
 	status/2,
 	reset/1,
 	pending/2,
@@ -67,10 +86,18 @@
 -include("arweave_client_throttling.hrl").
 -include_lib("kernel/include/logger.hrl").
 
+%% `reset_timer' is `undefined' when no refill is pending, or
+%% `{TimerRef, Tag}' where `TimerRef' is the value returned by
+%% `erlang:send_after/3' (so we can cancel it) and `Tag' is a unique
+%% reference embedded in the scheduled message (so stragglers
+%% delivered after cancellation can be discarded on receipt).
 -record(peer_state, {
-	remaining       :: non_neg_integer(),
-	waiters         :: queue:queue({gen_server:from(), reference()}),
-	last_update_ts  :: integer() | undefined
+	total          :: non_neg_integer(),
+	remaining      :: non_neg_integer(),
+	reset_seconds  :: non_neg_integer(),
+	reset_timer    :: {reference(), reference()} | undefined,
+	waiters        :: queue:queue({gen_server:from(), reference()}),
+	last_update_ts :: integer() | undefined
 }).
 
 %%--------------------------------------------------------------------
@@ -88,8 +115,8 @@ start_link(#{id := Id} = Spec) ->
 
 %%--------------------------------------------------------------------
 %% @doc Blocking throttle call. Returns `ok' once the caller is
-%% allowed to proceed, or `{error, queue_full}' if the per-peer queue
-%% is already saturated.
+%% allowed to issue an outgoing request, or `{error, queue_full}' if
+%% the per-peer queue is already saturated.
 %% @end
 %%--------------------------------------------------------------------
 -spec throttle(atom(), tuple()) -> ok | {error, term()}.
@@ -97,16 +124,31 @@ throttle(GroupId, Peer) ->
 	gen_server:call(registered_name(GroupId), {throttle, Peer}, infinity).
 
 %%--------------------------------------------------------------------
-%% @doc Non-blocking budget refresh. `Remaining' is the budget the
-%% remote host most recently advertised for `Peer'.
+%% @doc Non-blocking quota refresh.
+%%
+%% `Quota' is a map with the following keys, typically extracted from
+%% the rate-limit headers of a response coming back from `Peer':
+%%
+%% <ul>
+%%   <li>`total' — full size of the quota window.</li>
+%%   <li>`remaining' — how many calls are still allowed.</li>
+%%   <li>`reset_seconds' — seconds until the quota refills. Used only
+%%       when the quota is exhausted; pass `0' (or any non-negative
+%%       integer) when not exhausted.</li>
+%% </ul>
 %% @end
 %%--------------------------------------------------------------------
--spec update_remaining(atom(), tuple(), non_neg_integer()) -> ok.
-update_remaining(GroupId, Peer, Remaining)
-		when is_integer(Remaining), Remaining >= 0 ->
+-spec update_quota(atom(), tuple(), map()) -> ok.
+update_quota(GroupId, Peer, #{
+		total := Total,
+		remaining := Remaining,
+		reset_seconds := ResetSeconds})
+		when is_integer(Total), Total >= 0,
+			is_integer(Remaining), Remaining >= 0,
+			is_integer(ResetSeconds), ResetSeconds >= 0 ->
 	ReceivedAt = monotonic_ms(),
 	gen_server:cast(registered_name(GroupId),
-		{update_remaining, Peer, Remaining, ReceivedAt}).
+		{update_quota, Peer, Total, Remaining, ResetSeconds, ReceivedAt}).
 
 %%--------------------------------------------------------------------
 %% @doc Return a snapshot of the per-peer state. Synchronous but
@@ -174,14 +216,12 @@ handle_call({status, Peer}, _From, State) ->
 	#{spec := Spec, peers := Peers} = State,
 	Reply = case maps:find(Peer, Peers) of
 		{ok, PS} ->
-			{ok, #{
-				remaining      => PS#peer_state.remaining,
-				queue_length   => queue:len(PS#peer_state.waiters),
-				last_update_ts => PS#peer_state.last_update_ts
-			}};
+			{ok, peer_state_to_map(PS)};
 		error ->
 			{ok, #{
+				total          => maps:get(initial_remaining, Spec),
 				remaining      => maps:get(initial_remaining, Spec),
+				reset_seconds  => 0,
 				queue_length   => 0,
 				last_update_ts => undefined
 			}}
@@ -190,8 +230,9 @@ handle_call({status, Peer}, _From, State) ->
 
 handle_call(reset, _From, State) ->
 	#{peers := Peers, monitors := Monitors} = State,
-	maps:fold(fun(_Peer, #peer_state{waiters = Q}, _) ->
-		drain_for_reset(Q)
+	maps:fold(fun(_Peer, PS, _) ->
+		cancel_reset_timer(PS#peer_state.reset_timer),
+		drain_for_reset(PS#peer_state.waiters)
 	end, ok, Peers),
 	maps:fold(fun(MRef, _Peer, _) ->
 		erlang:demonitor(MRef, [flush])
@@ -203,19 +244,23 @@ handle_call(Msg, From, State) ->
 		{msg, Msg}, {from, From}]),
 	{reply, {error, unsupported}, State}.
 
-handle_cast({update_remaining, Peer, NewRemaining, ReceivedAt}, State) ->
+handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
+		State) ->
 	#{spec := Spec, peers := Peers, monitors := Monitors} = State,
 	PS0 = get_or_init_peer(Peer, Peers, Spec),
 	Window = maps:get(concurrency_window_ms, Spec),
-	Merged = merge_remaining(PS0#peer_state.remaining,
+	MergedRemaining = merge_remaining(PS0#peer_state.remaining,
 		PS0#peer_state.last_update_ts, NewRemaining, ReceivedAt, Window),
 	PS1 = PS0#peer_state{
-		remaining = Merged,
+		total = Total,
+		remaining = MergedRemaining,
+		reset_seconds = ResetSeconds,
 		last_update_ts = ReceivedAt
 	},
 	{PS2, Monitors1} = drain_waiters(PS1, Monitors),
+	PS3 = arm_or_clear_reset_timer(Peer, PS2, ResetSeconds),
 	{noreply, State#{
-		peers := Peers#{Peer => PS2},
+		peers := Peers#{Peer => PS3},
 		monitors := Monitors1
 	}};
 
@@ -223,6 +268,25 @@ handle_cast(Msg, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE},
 		{msg, Msg}]),
 	{noreply, State}.
+
+handle_info({reset_quota, Peer, Tag}, State) ->
+	#{peers := Peers, monitors := Monitors} = State,
+	case maps:find(Peer, Peers) of
+		{ok, #peer_state{reset_timer = {_TRef, Tag}} = PS0} ->
+			PS1 = PS0#peer_state{
+				remaining = PS0#peer_state.total,
+				reset_seconds = 0,
+				reset_timer = undefined
+			},
+			{PS2, Monitors1} = drain_waiters(PS1, Monitors),
+			{noreply, State#{
+				peers := Peers#{Peer => PS2},
+				monitors := Monitors1
+			}};
+		_ ->
+			%% Stale timer (cancelled or already replaced).
+			{noreply, State}
+	end;
 
 handle_info({'DOWN', MRef, process, _Pid, _Reason}, State) ->
 	#{peers := Peers, monitors := Monitors} = State,
@@ -279,8 +343,12 @@ get_or_init_peer(Peer, Peers, Spec) ->
 	case maps:find(Peer, Peers) of
 		{ok, PS} -> PS;
 		error ->
+			Initial = maps:get(initial_remaining, Spec),
 			#peer_state{
-				remaining = maps:get(initial_remaining, Spec),
+				total = Initial,
+				remaining = Initial,
+				reset_seconds = 0,
+				reset_timer = undefined,
 				waiters = queue:new(),
 				last_update_ts = undefined
 			}
@@ -312,6 +380,33 @@ drain_waiters(#peer_state{remaining = R, waiters = Q} = PS, Monitors)
 			drain_waiters(PS1, maps:remove(MRef, Monitors))
 	end.
 
+%% Arm a refresh timer when remaining is 0 and we have a positive
+%% reset_seconds. Cancel any previous timer; do nothing (and cancel)
+%% if no timer is needed.
+arm_or_clear_reset_timer(_Peer,
+		#peer_state{remaining = R, reset_timer = OldTimer} = PS, _ResetSeconds)
+		when R > 0 ->
+	cancel_reset_timer(OldTimer),
+	PS#peer_state{reset_timer = undefined};
+arm_or_clear_reset_timer(_Peer,
+		#peer_state{reset_timer = OldTimer} = PS, 0) ->
+	cancel_reset_timer(OldTimer),
+	PS#peer_state{reset_timer = undefined};
+arm_or_clear_reset_timer(Peer,
+		#peer_state{reset_timer = OldTimer} = PS, ResetSeconds)
+		when ResetSeconds > 0 ->
+	cancel_reset_timer(OldTimer),
+	Tag = make_ref(),
+	TRef = erlang:send_after(ResetSeconds * 1000, self(),
+		{reset_quota, Peer, Tag}),
+	PS#peer_state{reset_timer = {TRef, Tag}}.
+
+cancel_reset_timer(undefined) ->
+	ok;
+cancel_reset_timer({TRef, _Tag}) ->
+	_ = erlang:cancel_timer(TRef),
+	ok.
+
 drop_waiter(MRef, Q) ->
 	queue:filter(fun({_From, M}) -> M =/= MRef end, Q).
 
@@ -323,6 +418,20 @@ drain_for_reset(Q) ->
 			gen_server:reply(From, ok),
 			drain_for_reset(Q1)
 	end.
+
+peer_state_to_map(#peer_state{
+		total = Total,
+		remaining = Remaining,
+		reset_seconds = ResetSeconds,
+		waiters = Waiters,
+		last_update_ts = LastTs}) ->
+	#{
+		total          => Total,
+		remaining      => Remaining,
+		reset_seconds  => ResetSeconds,
+		queue_length   => queue:len(Waiters),
+		last_update_ts => LastTs
+	}.
 
 monotonic_ms() ->
 	erlang:monotonic_time(millisecond).

@@ -17,7 +17,7 @@
 -export([all/0]).
 -export([
 	default_groups_started/1,
-	throttle_and_update_remaining/1,
+	throttle_and_update_quota/1,
 	blocking_call_is_released_by_update/1,
 	fifo_ordering/1,
 	concurrent_remaining_updates_take_min/1,
@@ -25,7 +25,9 @@
 	queue_full_returns_error/1,
 	dead_caller_is_dropped_from_queue/1,
 	reset_releases_waiters/1,
-	peer_4_and_5_tuple_keys/1
+	peer_4_and_5_tuple_keys/1,
+	exhausted_quota_refills_after_reset_seconds/1,
+	update_quota_cancels_reset_timer/1
 ]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -43,8 +45,6 @@ init_per_suite(Config) -> Config.
 end_per_suite(_Config) -> ok.
 
 init_per_testcase(_TestCase, Config) ->
-	%% Force a tight concurrency window so the corresponding test cases
-	%% finish quickly. The other defaults remain unchanged.
 	application:set_env(arweave_client_throttling, groups, [
 		#{id => general,
 		  initial_remaining => 2,
@@ -68,7 +68,7 @@ end_per_testcase(_TestCase, _Config) ->
 all() ->
 	[
 		default_groups_started,
-		throttle_and_update_remaining,
+		throttle_and_update_quota,
 		blocking_call_is_released_by_update,
 		fifo_ordering,
 		concurrent_remaining_updates_take_min,
@@ -76,18 +76,15 @@ all() ->
 		queue_full_returns_error,
 		dead_caller_is_dropped_from_queue,
 		reset_releases_waiters,
-		peer_4_and_5_tuple_keys
+		peer_4_and_5_tuple_keys,
+		exhausted_quota_refills_after_reset_seconds,
+		update_quota_cancels_reset_timer
 	].
 
 %%--------------------------------------------------------------------
 %% Tests
 %%--------------------------------------------------------------------
 
-%%--------------------------------------------------------------------
-%% @doc The supervisor must start one worker per group spec, and the
-%% public `groups/0' accessor must return them.
-%% @end
-%%--------------------------------------------------------------------
 default_groups_started(_Config) ->
 	ct:pal(test, 1, "check supervisor is alive"),
 	true = is_pid(whereis(arweave_client_throttling_sup)),
@@ -102,40 +99,34 @@ default_groups_started(_Config) ->
 	true = is_pid(whereis(arweave_client_throttling_group_data_sync_record)),
 	ok.
 
-%%--------------------------------------------------------------------
-%% @doc Calls succeed up to `initial_remaining', then `update_remaining'
-%% refreshes the budget and lets more requests through.
-%% @end
-%%--------------------------------------------------------------------
-throttle_and_update_remaining(_Config) ->
+throttle_and_update_quota(_Config) ->
 	Peer = {127, 0, 0, 1, 1984},
 
 	ct:pal(test, 1, "initial budget is consumed in order"),
 	ok = arweave_client_throttling:throttle(general, Peer),
 	ok = arweave_client_throttling:throttle(general, Peer),
-	{ok, #{remaining := 0}} =
-		arweave_client_throttling:status(general, Peer),
+	ok = wait_status(general, Peer, fun(S) ->
+		maps:get(remaining, S) =:= 0
+	end),
 
-	ct:pal(test, 1, "refresh budget non-blockingly"),
-	ok = arweave_client_throttling:update_remaining(general, Peer, 3),
-	ok = wait_until(fun() ->
-		{ok, #{remaining := 3}} =:=
-			arweave_client_throttling:status(general, Peer)
+	ct:pal(test, 1, "refresh quota non-blockingly"),
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(10, 3, 0)),
+	ok = wait_status(general, Peer, fun(S) ->
+		(maps:get(remaining, S) =:= 3)
+		andalso (maps:get(total, S) =:= 10)
+		andalso (maps:get(reset_seconds, S) =:= 0)
 	end),
 
 	ct:pal(test, 1, "the new budget is honored"),
 	ok = arweave_client_throttling:throttle(general, Peer),
 	ok = arweave_client_throttling:throttle(general, Peer),
 	ok = arweave_client_throttling:throttle(general, Peer),
-	{ok, #{remaining := 0}} =
-		arweave_client_throttling:status(general, Peer),
+	ok = wait_status(general, Peer, fun(S) ->
+		maps:get(remaining, S) =:= 0
+	end),
 	ok.
 
-%%--------------------------------------------------------------------
-%% @doc A caller that hits an empty budget blocks until an
-%% `update_remaining' announces capacity.
-%% @end
-%%--------------------------------------------------------------------
 blocking_call_is_released_by_update(_Config) ->
 	Peer = {10, 0, 0, 1, 1984},
 
@@ -150,15 +141,14 @@ blocking_call_is_released_by_update(_Config) ->
 		Parent ! {done, self(), Reply}
 	end),
 
-	ct:pal(test, 1, "ensure caller is queued and still blocked"),
-	ok = wait_until(fun() ->
-		{ok, #{queue_length := 1}} =:=
-			arweave_client_throttling:status(general, Peer)
+	ok = wait_status(general, Peer, fun(S) ->
+		maps:get(queue_length, S) =:= 1
 	end),
 	false = receive {done, Pid, _} -> true after 100 -> false end,
 
-	ct:pal(test, 1, "an update_remaining releases the waiter"),
-	ok = arweave_client_throttling:update_remaining(general, Peer, 1),
+	ct:pal(test, 1, "an update_quota releases the waiter"),
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(10, 1, 0)),
 
 	receive
 		{done, Pid, ok} -> ok
@@ -167,10 +157,6 @@ blocking_call_is_released_by_update(_Config) ->
 	end,
 	ok.
 
-%%--------------------------------------------------------------------
-%% @doc Multiple blocked callers must be released in FIFO order.
-%% @end
-%%--------------------------------------------------------------------
 fifo_ordering(_Config) ->
 	Peer = {172, 16, 0, 1, 1984},
 	Parent = self(),
@@ -185,21 +171,20 @@ fifo_ordering(_Config) ->
 			ok = arweave_client_throttling:throttle(general, Peer),
 			Parent ! {released, N, self()}
 		end),
-		ok = wait_until(fun() ->
-			{ok, #{queue_length := QL}} =
-				arweave_client_throttling:status(general, Peer),
-			QL =:= N
+		ok = wait_status(general, Peer, fun(S) ->
+			maps:get(queue_length, S) =:= N
 		end),
 		Pid
 	end, [1, 2, 3]),
 
 	ct:pal(test, 1, "release them one at a time, spacing past the window"),
 	%% concurrency_window_ms is 50 in init_per_testcase, so 80ms ensures
-	%% each update_remaining is treated as a fresh observation rather
-	%% than merged with the previous one.
+	%% each update is treated as a fresh observation rather than merged
+	%% with the previous one.
 	Order = lists:map(fun(_) ->
 		timer:sleep(80),
-		ok = arweave_client_throttling:update_remaining(general, Peer, 1),
+		ok = arweave_client_throttling:update_quota(general, Peer,
+			quota(10, 1, 0)),
 		receive {released, N, _} -> N after 1000 ->
 			ct:fail("a waiter was never released")
 		end
@@ -208,59 +193,42 @@ fifo_ordering(_Config) ->
 	[1, 2, 3] = Order,
 	ok.
 
-%%--------------------------------------------------------------------
-%% @doc Two concurrent `update_remaining' values within the
-%% concurrency window must collapse to the minimum.
-%% @end
-%%--------------------------------------------------------------------
 concurrent_remaining_updates_take_min(_Config) ->
 	Peer = {192, 168, 1, 1, 1984},
 
-	ok = arweave_client_throttling:update_remaining(general, Peer, 10),
-	ok = arweave_client_throttling:update_remaining(general, Peer, 3),
-	ok = arweave_client_throttling:update_remaining(general, Peer, 7),
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(20, 10, 0)),
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(20, 3, 0)),
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(20, 7, 0)),
 
-	ok = wait_until(fun() ->
-		case arweave_client_throttling:status(general, Peer) of
-			{ok, #{remaining := R, last_update_ts := T}}
-					when T =/= undefined ->
-				R =:= 3;
-			_ ->
-				false
-		end
+	ok = wait_status(general, Peer, fun(S) ->
+		(maps:get(remaining, S) =:= 3)
+		andalso (maps:get(total, S) =:= 20)
+		andalso (maps:get(last_update_ts, S) =/= undefined)
 	end),
 	ok.
 
-%%--------------------------------------------------------------------
-%% @doc An update arriving outside `concurrency_window_ms' should
-%% replace the previous value, even if it is larger (so budgets can
-%% grow back after a remote reset).
-%% @end
-%%--------------------------------------------------------------------
 stale_update_outside_window_overrides(_Config) ->
 	Peer = {192, 168, 1, 2, 1984},
 
-	ok = arweave_client_throttling:update_remaining(general, Peer, 2),
-	ok = wait_until(fun() ->
-		{ok, #{remaining := 2}} =:=
-			arweave_client_throttling:status(general, Peer)
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(10, 2, 0)),
+	ok = wait_status(general, Peer, fun(S) ->
+		maps:get(remaining, S) =:= 2
 	end),
 
 	ct:pal(test, 1, "sleep past the concurrency window"),
 	timer:sleep(150),
 
-	ok = arweave_client_throttling:update_remaining(general, Peer, 9),
-	ok = wait_until(fun() ->
-		{ok, #{remaining := 9}} =:=
-			arweave_client_throttling:status(general, Peer)
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(10, 9, 0)),
+	ok = wait_status(general, Peer, fun(S) ->
+		maps:get(remaining, S) =:= 9
 	end),
 	ok.
 
-%%--------------------------------------------------------------------
-%% @doc Once the queue cap is reached, further `throttle/2' calls
-%% return `{error, queue_full}' instead of blocking forever.
-%% @end
-%%--------------------------------------------------------------------
 queue_full_returns_error(_Config) ->
 	Peer = {10, 1, 1, 1, 1984},
 	Parent = self(),
@@ -274,10 +242,8 @@ queue_full_returns_error(_Config) ->
 			Reply = arweave_client_throttling:throttle(data_sync_record, Peer),
 			Parent ! {n, N, Reply}
 		end),
-		ok = wait_until(fun() ->
-			{ok, #{queue_length := QL}} =
-				arweave_client_throttling:status(data_sync_record, Peer),
-			QL =:= N
+		ok = wait_status(data_sync_record, Peer, fun(S) ->
+			maps:get(queue_length, S) =:= N
 		end)
 	end, [1, 2]),
 
@@ -286,17 +252,12 @@ queue_full_returns_error(_Config) ->
 		arweave_client_throttling:throttle(data_sync_record, Peer),
 
 	ct:pal(test, 1, "release the queued waiters"),
-	ok = arweave_client_throttling:update_remaining(data_sync_record, Peer, 5),
+	ok = arweave_client_throttling:update_quota(data_sync_record, Peer,
+		quota(10, 5, 0)),
 	receive {n, 1, ok} -> ok after 1000 -> ct:fail(timeout_1) end,
 	receive {n, 2, ok} -> ok after 1000 -> ct:fail(timeout_2) end,
 	ok.
 
-%%--------------------------------------------------------------------
-%% @doc If a caller exits while it is waiting in the queue, the
-%% throttler must drop it so it does not consume budget on the next
-%% `update_remaining'.
-%% @end
-%%--------------------------------------------------------------------
 dead_caller_is_dropped_from_queue(_Config) ->
 	Peer = {10, 2, 2, 2, 1984},
 	Parent = self(),
@@ -309,16 +270,14 @@ dead_caller_is_dropped_from_queue(_Config) ->
 		_ = (catch arweave_client_throttling:throttle(general, Peer)),
 		Parent ! {done, self()}
 	end),
-	ok = wait_until(fun() ->
-		{ok, #{queue_length := 1}} =:=
-			arweave_client_throttling:status(general, Peer)
+	ok = wait_status(general, Peer, fun(S) ->
+		maps:get(queue_length, S) =:= 1
 	end),
 
 	ct:pal(test, 1, "kill the doomed caller"),
 	exit(Doomed, kill),
-	ok = wait_until(fun() ->
-		{ok, #{queue_length := 0}} =:=
-			arweave_client_throttling:status(general, Peer)
+	ok = wait_status(general, Peer, fun(S) ->
+		maps:get(queue_length, S) =:= 0
 	end),
 
 	ct:pal(test, 1, "a fresh waiter must be the one to receive the slot"),
@@ -326,22 +285,17 @@ dead_caller_is_dropped_from_queue(_Config) ->
 		ok = arweave_client_throttling:throttle(general, Peer),
 		Parent ! {live_done, self()}
 	end),
-	ok = wait_until(fun() ->
-		{ok, #{queue_length := 1}} =:=
-			arweave_client_throttling:status(general, Peer)
+	ok = wait_status(general, Peer, fun(S) ->
+		maps:get(queue_length, S) =:= 1
 	end),
 
-	ok = arweave_client_throttling:update_remaining(general, Peer, 1),
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(10, 1, 0)),
 	receive {live_done, Live} -> ok after 1000 ->
 		ct:fail("live waiter was not released")
 	end,
 	ok.
 
-%%--------------------------------------------------------------------
-%% @doc `reset/1' must drop all peer state and unblock every queued
-%% waiter with `ok'.
-%% @end
-%%--------------------------------------------------------------------
 reset_releases_waiters(_Config) ->
 	Peer = {10, 3, 3, 3, 1984},
 	Parent = self(),
@@ -353,9 +307,8 @@ reset_releases_waiters(_Config) ->
 		Reply = arweave_client_throttling:throttle(general, Peer),
 		Parent ! {released, self(), Reply}
 	end) || _ <- lists:seq(1, 2)],
-	ok = wait_until(fun() ->
-		{ok, #{queue_length := 2}} =:=
-			arweave_client_throttling:status(general, Peer)
+	ok = wait_status(general, Peer, fun(S) ->
+		maps:get(queue_length, S) =:= 2
 	end),
 
 	ct:pal(test, 1, "reset the group"),
@@ -367,15 +320,11 @@ reset_releases_waiters(_Config) ->
 	end || _ <- lists:seq(1, 2)],
 
 	ct:pal(test, 1, "state is empty after reset"),
-	{ok, #{remaining := 2, queue_length := 0}} =
-		arweave_client_throttling:status(general, Peer),
+	{ok, Status} = arweave_client_throttling:status(general, Peer),
+	2 = maps:get(remaining, Status),
+	0 = maps:get(queue_length, Status),
 	ok.
 
-%%--------------------------------------------------------------------
-%% @doc Both 4-tuple and 5-tuple peer keys must work and remain
-%% distinct from each other.
-%% @end
-%%--------------------------------------------------------------------
 peer_4_and_5_tuple_keys(_Config) ->
 	Peer4 = {127, 0, 0, 1},
 	Peer5 = {127, 0, 0, 1, 1984},
@@ -383,15 +332,93 @@ peer_4_and_5_tuple_keys(_Config) ->
 	ok = arweave_client_throttling:throttle(general, Peer4),
 	ok = arweave_client_throttling:throttle(general, Peer5),
 
-	{ok, #{remaining := R4}} = arweave_client_throttling:status(general, Peer4),
-	{ok, #{remaining := R5}} = arweave_client_throttling:status(general, Peer5),
-	1 = R4,
-	1 = R5,
+	{ok, S4} = arweave_client_throttling:status(general, Peer4),
+	{ok, S5} = arweave_client_throttling:status(general, Peer5),
+	1 = maps:get(remaining, S4),
+	1 = maps:get(remaining, S5),
+	ok.
+
+%%--------------------------------------------------------------------
+%% @doc When `update_quota' reports an exhausted quota together with
+%% `reset_seconds > 0', a timer must refill `remaining' to `total'
+%% once that many seconds elapse, releasing any blocked waiters.
+%% @end
+%%--------------------------------------------------------------------
+exhausted_quota_refills_after_reset_seconds(_Config) ->
+	Peer = {10, 4, 4, 4, 1984},
+	Parent = self(),
+
+	ct:pal(test, 1, "report an exhausted quota with a 1s reset"),
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(5, 0, 1)),
+	ok = wait_status(general, Peer, fun(S) ->
+		(maps:get(remaining, S) =:= 0)
+		andalso (maps:get(total, S) =:= 5)
+		andalso (maps:get(reset_seconds, S) =:= 1)
+	end),
+
+	ct:pal(test, 1, "queue a waiter while the quota is exhausted"),
+	spawn(fun() ->
+		ok = arweave_client_throttling:throttle(general, Peer),
+		Parent ! refilled
+	end),
+	ok = wait_status(general, Peer, fun(S) ->
+		maps:get(queue_length, S) =:= 1
+	end),
+
+	ct:pal(test, 1,
+		"after the reset interval the waiter must be released"),
+	receive
+		refilled -> ok
+	after 3000 ->
+		ct:fail("reset_seconds timer did not refill the quota")
+	end,
+
+	{ok, AfterStatus} = arweave_client_throttling:status(general, Peer),
+	0 = maps:get(reset_seconds, AfterStatus),
+	true = maps:get(remaining, AfterStatus) >= 4, %% total=5, one consumed
+	ok.
+
+%%--------------------------------------------------------------------
+%% @doc A subsequent `update_quota' must cancel any pending reset
+%% timer so we do not over-refill the budget later on.
+%% @end
+%%--------------------------------------------------------------------
+update_quota_cancels_reset_timer(_Config) ->
+	Peer = {10, 5, 5, 5, 1984},
+
+	ct:pal(test, 1, "report exhausted quota with a long reset window"),
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(5, 0, 30)),
+	ok = wait_status(general, Peer, fun(S) ->
+		(maps:get(reset_seconds, S) =:= 30)
+		andalso (maps:get(remaining, S) =:= 0)
+	end),
+
+	ct:pal(test, 1, "a non-exhausted update should clear the timer"),
+	timer:sleep(80), %% past the concurrency window
+	ok = arweave_client_throttling:update_quota(general, Peer,
+		quota(5, 4, 0)),
+	ok = wait_status(general, Peer, fun(S) ->
+		(maps:get(remaining, S) =:= 4)
+		andalso (maps:get(reset_seconds, S) =:= 0)
+	end),
 	ok.
 
 %%--------------------------------------------------------------------
 %% Helpers
 %%--------------------------------------------------------------------
+
+quota(Total, Remaining, ResetSeconds) ->
+	#{total => Total, remaining => Remaining, reset_seconds => ResetSeconds}.
+
+wait_status(Group, Peer, Pred) ->
+	wait_until(fun() ->
+		case arweave_client_throttling:status(Group, Peer) of
+			{ok, Status} -> Pred(Status);
+			_ -> false
+		end
+	end).
 
 wait_until(Fun) -> wait_until(Fun, 50).
 

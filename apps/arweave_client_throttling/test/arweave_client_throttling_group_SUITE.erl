@@ -77,10 +77,11 @@ independent_peer_state(_Config) ->
 
 	ok = arweave_client_throttling_group:throttle(general, PeerA),
 
-	{ok, #{remaining := 0}} =
-		arweave_client_throttling_group:status(general, PeerA),
-	{ok, #{remaining := 1, queue_length := 0}} =
-		arweave_client_throttling_group:status(general, PeerB),
+	{ok, SA} = arweave_client_throttling_group:status(general, PeerA),
+	{ok, SB} = arweave_client_throttling_group:status(general, PeerB),
+	0 = maps:get(remaining, SA),
+	1 = maps:get(remaining, SB),
+	0 = maps:get(queue_length, SB),
 	ok.
 
 %%--------------------------------------------------------------------
@@ -102,23 +103,30 @@ pending_helper(_Config) ->
 		arweave_client_throttling_group:pending(general, Peer) =:= 1
 	end),
 
-	ok = arweave_client_throttling_group:update_remaining(general, Peer, 1),
+	ok = arweave_client_throttling_group:update_quota(general, Peer,
+		#{total => 10, remaining => 1, reset_seconds => 0}),
 	receive done -> ok after 1000 -> ct:fail(not_released) end,
 	0 = arweave_client_throttling_group:pending(general, Peer),
 	ok.
 
 %%--------------------------------------------------------------------
 %% @doc An update arriving before any throttle/2 must initialise the
-%% peer state with the reported value (not the spec default).
+%% peer state with the reported quota values.
 %% @end
 %%--------------------------------------------------------------------
 update_before_first_throttle(_Config) ->
 	Peer = {4, 4, 4, 4, 80},
 
-	ok = arweave_client_throttling_group:update_remaining(general, Peer, 7),
+	ok = arweave_client_throttling_group:update_quota(general, Peer,
+		#{total => 50, remaining => 7, reset_seconds => 0}),
 	ok = wait_until(fun() ->
-		{ok, #{remaining := 7}} =:=
-			arweave_client_throttling_group:status(general, Peer)
+		case arweave_client_throttling_group:status(general, Peer) of
+			{ok, S} ->
+				(maps:get(remaining, S) =:= 7)
+				andalso (maps:get(total, S) =:= 50);
+			_ ->
+				false
+		end
 	end),
 	ok.
 

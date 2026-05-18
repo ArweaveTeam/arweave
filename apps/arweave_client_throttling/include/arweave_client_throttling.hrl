@@ -2,7 +2,8 @@
 -define(ARWEAVE_CLIENT_THROTTLING_HRL, true).
 
 %% Default budget assumed for a peer the first time it is seen, before any
-%% remote response refreshes the value.
+%% remote response refreshes the value. The same value is used as the
+%% initial `total' quota.
 -define(ARWEAVE_CLIENT_THROTTLING_DEFAULT_INITIAL_REMAINING, 10).
 
 %% Hard cap on the number of waiting callers we are willing to queue per
@@ -10,7 +11,7 @@
 %% {error, queue_full}.
 -define(ARWEAVE_CLIENT_THROTTLING_DEFAULT_MAX_QUEUE_LENGTH, 1000).
 
-%% Window during which two `update_remaining' messages are considered to
+%% Window during which two `update_quota' messages are considered to
 %% describe the same logical batch of concurrent in-flight requests. Inside
 %% the window we take the minimum of the reported `remaining' values
 %% (because the smallest one is the most recent server-side view). Outside

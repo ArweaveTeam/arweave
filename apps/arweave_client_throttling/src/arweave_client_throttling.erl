@@ -30,8 +30,12 @@
 %%% ok = arweave_client_throttling:start(),
 %%% Peer = {127, 0, 0, 1, 1984},
 %%% ok = arweave_client_throttling:throttle(general, Peer),
-%%% %% ... issue HTTP request ...
-%%% ok = arweave_client_throttling:update_remaining(general, Peer, 42).
+%%% %% ... issue HTTP request and read rate-limit headers ...
+%%% ok = arweave_client_throttling:update_quota(general, Peer, #{
+%%%     total => 200,
+%%%     remaining => 42,
+%%%     reset_seconds => 0
+%%% }).
 %%% '''
 %%% @end
 %%%===================================================================
@@ -43,7 +47,8 @@
 	start/0,
 	stop/0,
 	throttle/2,
-	update_remaining/3,
+	update_quota/3,
+	update_quota/5,
 	status/2,
 	groups/0,
 	reset/1
@@ -95,22 +100,43 @@ throttle(GroupId, Peer) when is_atom(GroupId), is_tuple(Peer) ->
 	arweave_client_throttling_group:throttle(GroupId, Peer).
 
 %%--------------------------------------------------------------------
-%% @doc Non-blocking refresh of the peer's remaining budget. The
-%% provided value typically originates from a rate-limit response
-%% header returned by the remote host. The call is implemented as a
-%% `gen_server:cast' and therefore never blocks the caller.
+%% @doc Non-blocking refresh of the peer's quota state.
 %%
-%% The throttler accepts multiple updates per peer arriving from
-%% concurrent in-flight requests. When two updates fall within the
-%% configured `concurrency_window_ms', the conservative minimum is
-%% kept.
+%% `Quota' is a map carrying the values typically extracted from the
+%% rate-limit headers of a response coming back from `Peer':
+%%
+%% <ul>
+%%   <li>`total' — full size of the quota window.</li>
+%%   <li>`remaining' — how many calls are still allowed.</li>
+%%   <li>`reset_seconds' — seconds until the quota refills. Used only
+%%       when the quota is exhausted; pass `0' otherwise.</li>
+%% </ul>
+%%
+%% Implemented as a `gen_server:cast' and therefore never blocks the
+%% caller. The throttler accepts multiple updates per peer arriving
+%% from concurrent in-flight requests; when two updates fall within
+%% the configured `concurrency_window_ms', the conservative minimum
+%% of the reported `remaining' is kept. `total' and `reset_seconds'
+%% always take the value from the most recent update.
 %% @end
 %%--------------------------------------------------------------------
--spec update_remaining(atom(), tuple(), non_neg_integer()) -> ok.
-update_remaining(GroupId, Peer, Remaining)
-		when is_atom(GroupId), is_tuple(Peer),
-			is_integer(Remaining), Remaining >= 0 ->
-	arweave_client_throttling_group:update_remaining(GroupId, Peer, Remaining).
+-spec update_quota(atom(), tuple(), map()) -> ok.
+update_quota(GroupId, Peer, Quota) when is_atom(GroupId), is_tuple(Peer),
+		is_map(Quota) ->
+	arweave_client_throttling_group:update_quota(GroupId, Peer, Quota).
+
+%%--------------------------------------------------------------------
+%% @doc Convenience flat-argument variant of `update_quota/3'.
+%% @end
+%%--------------------------------------------------------------------
+-spec update_quota(atom(), tuple(), non_neg_integer(),
+		non_neg_integer(), non_neg_integer()) -> ok.
+update_quota(GroupId, Peer, Total, Remaining, ResetSeconds) ->
+	update_quota(GroupId, Peer, #{
+		total => Total,
+		remaining => Remaining,
+		reset_seconds => ResetSeconds
+	}).
 
 %%--------------------------------------------------------------------
 %% @doc Return a snapshot of the throttler state for `Peer' in
