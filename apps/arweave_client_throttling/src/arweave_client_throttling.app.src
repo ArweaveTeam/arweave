@@ -1,0 +1,21 @@
+{application, arweave_client_throttling, [
+	{id, "arweave_client_throttling"},
+	{description, "Arweave client-side request throttling"},
+	{vsn, "0.0.1"},
+	{mod, {arweave_client_throttling, []}},
+	{env, []},
+	{applications, [
+		kernel,
+		stdlib,
+		sasl
+	]},
+	{modules, [
+		arweave_client_throttling,
+		arweave_client_throttling_config,
+		arweave_client_throttling_group,
+		arweave_client_throttling_sup
+	]},
+	{registered, [
+		arweave_client_throttling_sup
+	]}
+]}.
