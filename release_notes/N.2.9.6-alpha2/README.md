@@ -3,9 +3,11 @@
 
 ## Data Sync
 
+General data sync performance improvements resulting in more stable download throughput.
+
 ### The problem
 
-Set of candidate peers periodically drops low or to zero while sycning
+Set of candidate peers periodically drops low or to zero while syncing
 
 ### The fix
 
@@ -25,7 +27,7 @@ Rate-limiting timeout has been lowered to 1000ms, if this is breached requests w
 
 ### Quota headers
 
-Additional headers are present in the responses of the HTTP API. These headers provide information on the current quota for the calling endpoint, and will be utilised to optimise the client throttling in future releases.
+Additional headers are present in the responses of the HTTP API. These headers provide information on the current quota for the calling endpoint, and will be used to optimise the client throttling in future releases.
 
 Please see [this link](https://www.ietf.org/archive/id/draft-polli-ratelimit-headers-02.html) for documentation and further information on the headers.
 
@@ -33,3 +35,14 @@ Please see [this link](https://www.ietf.org/archive/id/draft-polli-ratelimit-hea
 
 * Optimised data table use for ar_data_discovery, as it previously could get bogged down removing empty peers.
 * Several logging optimisations have been made to reduce repetive messages.
+
+## Community involvement
+
+A huge thank you to all the Mining community members who contributed to this release by testing the alpha releases, providing feedback, and helping us debug issues!
+
+Discord users (alphabetical order):
+- Butcher_
+- doesn't stay up late
+- Evalcast
+- lawso2517
+- timothynode
