@@ -140,15 +140,15 @@ get_bucket_peers(Bucket) ->
 		true ->
 			[];
 		false ->
-			get_bucket_peers(Bucket, {Bucket, 0, no_peer}, [])
+			get_bucket_peers(Bucket, {Bucket, no_peer}, [])
 	end.
 
 get_bucket_peers(Bucket, Cursor, Peers) ->
 	case ets:next(?MODULE, Cursor) of
-		{Bucket, _Share, Peer} = Key ->
+		{Bucket, Peer} = Key ->
 			get_bucket_peers(Bucket, Key, [Peer | Peers]);
 		_ -> % matches `end_of_table` or an unexpected value
-			ar_util:unique(Peers)
+			Peers
 	end.
 
 %% @doc Return the list of peers who have at least one byte of
@@ -158,15 +158,15 @@ get_footprint_bucket_peers(Bucket) ->
 		true ->
 			[];
 		false ->
-			get_footprint_bucket_peers(Bucket, {Bucket, 0, no_peer}, [])
+			get_footprint_bucket_peers(Bucket, {Bucket, no_peer}, [])
 	end.
 
 get_footprint_bucket_peers(Bucket, Cursor, Peers) ->
 	case ets:next(ar_data_discovery_footprint_buckets, Cursor) of
-		{Bucket, _Share, Peer} = Key ->
+		{Bucket, Peer} = Key ->
 			get_footprint_bucket_peers(Bucket, Key, [Peer | Peers]);
 		_ ->
-			ar_util:unique(Peers)
+			Peers
 	end.
 
 %% @doc Return a list of peers where 80% of the peers are randomly chosen
@@ -299,7 +299,7 @@ handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
 	WeaveSize = ar_node:get_weave_size(),
 	ar_sync_buckets:foreach(
 		fun(Bucket, Share) ->
-			ets:insert(?MODULE, {{Bucket, Share, Peer}})
+			ets:insert(?MODULE, {{Bucket, Peer}, Share})
 		end,
 		ar_sync_buckets:get_network_data_bucket_size(),
 		WeaveSize,
@@ -314,7 +314,8 @@ handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->
 	MaxFootprintOffset = ar_footprint_record:max_offset(WeaveSize),
 	ar_sync_buckets:foreach(
 		fun(Bucket, Share) ->
-			ets:insert(ar_data_discovery_footprint_buckets, {{Bucket, Share, Peer}})
+			ets:insert(ar_data_discovery_footprint_buckets,
+					{{Bucket, Peer}, Share})
 		end,
 		ar_sync_buckets:get_network_footprint_bucket_size(),
 		MaxFootprintOffset,
@@ -352,10 +353,8 @@ do_remove_peer(Peer, Reason, State) ->
 	%% over the table is bounded (?NETWORK_*_BUCKET_SIZE = 10 GB → typical
 	%% tables stay well under a million rows). Returns deletion counts so
 	%% we can keep the had_*_buckets log signal.
-	NumSync = ets:select_delete(?MODULE,
-			[{ {{'_', '_', Peer}}, [], [true] }]),
-	NumFootprint = ets:select_delete(ar_data_discovery_footprint_buckets,
-			[{ {{'_', '_', Peer}}, [], [true] }]),
+	NumSync = delete_peer_bucket_rows(Peer, ?MODULE),
+	NumFootprint = delete_peer_bucket_rows(Peer, ar_data_discovery_footprint_buckets),
 	%% Drop waiting {Peer, _} entries.
 	Waiting2 = queue:filter(fun({P, _Mode}) -> P =/= Peer end, Waiting),
 	Jobs2 = sets:filter(fun({P, _Mode}) -> P =/= Peer end, Jobs),
@@ -383,6 +382,9 @@ do_remove_peer(Peer, Reason, State) ->
 	{noreply, State#state{ scan_waiting = Waiting2, scan_jobs = Jobs2,
 			scan_inflight = Inflight2,
 			scan_started_at = StartedAt2 }}.
+
+delete_peer_bucket_rows(Peer, Table) ->
+	ets:select_delete(Table, [{ {{'_', Peer}, '_'}, [], [true] }]).
 
 handle_info({'DOWN', _, process, Pid, _Reason}, State) ->
 	case maps:take(Pid, State#state.scan_inflight) of
@@ -548,12 +550,12 @@ collect_bucket_peers(StartBucket, EndBucket, _Table, Peers)
 	Peers;
 collect_bucket_peers(Bucket, EndBucket, Table, Peers) ->
 	Peers2 = collect_peers_for_bucket(Bucket, Table, Peers,
-			{Bucket, 0, no_peer}),
+			{Bucket, no_peer}),
 	collect_bucket_peers(Bucket + 1, EndBucket, Table, Peers2).
 
 collect_peers_for_bucket(Bucket, Table, Peers, Cursor) ->
 	case ets:next(Table, Cursor) of
-		{Bucket, _Share, Peer} = Key ->
+		{Bucket, Peer} = Key ->
 			collect_peers_for_bucket(Bucket, Table,
 					sets:add_element(Peer, Peers), Key);
 		_ ->
