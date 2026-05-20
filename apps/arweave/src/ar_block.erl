@@ -1126,43 +1126,22 @@ validate_replica_format_test_() ->
 			fun test_validate_replica_format/0, 30)
 	].
 test_validate_replica_format() ->
-	%% pre 2.8, only spora_2_6 is supported
-	?assertEqual(true, validate_replica_format(0, 0, 0)),
-	?assertEqual(false, validate_replica_format(0, 1, 0)),
-	?assertEqual(false, validate_replica_format(0, 33, 0)),
-	?assertEqual(false, validate_replica_format(0, 25, 0)),
-	?assertEqual(false, validate_replica_format(0, 0, 1)),
-	?assertEqual(false, validate_replica_format(0, 1, 1)),
-	?assertEqual(false, validate_replica_format(0, 33, 1)),
-	?assertEqual(false, validate_replica_format(0, 25, 1)),
-	%% post-2.8, pre-2.9, only spora_2_6 is supported
-	?assertEqual(true, validate_replica_format(15, 0, 0)),
-	?assertEqual(false, validate_replica_format(15, 1, 0)),
-	?assertEqual(false, validate_replica_format(15, 33, 0)),
-	?assertEqual(false, validate_replica_format(15, 100, 0)),
-	?assertEqual(false, validate_replica_format(15, 0, 1)),
-	?assertEqual(false, validate_replica_format(15, 1, 1)),
-	?assertEqual(false, validate_replica_format(15, 33, 1)),
-	?assertEqual(false, validate_replica_format(15, 25, 1)),
-	%% post-2.9, spora_2_6 and replica_2_9 supported
-	?assertEqual(true, validate_replica_format(25, 0, 0)),
-	?assertEqual(false, validate_replica_format(25, 1, 0)),
-	?assertEqual(false, validate_replica_format(25, 33, 0)),
-	?assertEqual(false, validate_replica_format(25, 100, 0)),
-	?assertEqual(false, validate_replica_format(25, 0, 1)),
-	?assertEqual(false, validate_replica_format(25, 1, 1)),
-	?assertEqual(false, validate_replica_format(25, 33, 1)),
-	?assertEqual(true, validate_replica_format(25, 2, 1)), %% 2 in tests.
-	%% post-2.9, post-spora expiration
+	Post29Height = ar_fork:height_2_9() + 5,
+	%% post-2.9, before spora expiration: spora_2_6 and replica_2_9
+	?assertEqual(true, validate_replica_format(Post29Height, 0, 0)),
+	?assertEqual(true, validate_replica_format(Post29Height,
+			?REPLICA_2_9_PACKING_DIFFICULTY, 1)),
+	?assertEqual(false, validate_replica_format(Post29Height, 1, 0)),
+	?assertEqual(false, validate_replica_format(Post29Height, 33, 0)),
+	?assertEqual(false, validate_replica_format(Post29Height, 0, 1)),
+	?assertEqual(false, validate_replica_format(Post29Height, 1, 1)),
+	%% post-2.9, post-spora expiration: replica_2_9 only
 	SporaExpiration = ar_fork:height_2_8() + ?SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS,
 	?assertEqual(false, validate_replica_format(SporaExpiration, 0, 0)),
 	?assertEqual(false, validate_replica_format(SporaExpiration, 1, 0)),
-	?assertEqual(false, validate_replica_format(SporaExpiration, 33, 0)),
-	?assertEqual(false, validate_replica_format(SporaExpiration, 25, 0)),
 	?assertEqual(false, validate_replica_format(SporaExpiration, 0, 1)),
-	?assertEqual(false, validate_replica_format(SporaExpiration, 1, 1)),
-	?assertEqual(false, validate_replica_format(SporaExpiration, 33, 1)),
-	?assertEqual(true, validate_replica_format(SporaExpiration, 2, 1)).
+	?assertEqual(true, validate_replica_format(SporaExpiration,
+			?REPLICA_2_9_PACKING_DIFFICULTY, 1)).
 
 get_block_bounds_test_() ->
 	{timeout, 30, fun test_get_block_bounds/0}.
