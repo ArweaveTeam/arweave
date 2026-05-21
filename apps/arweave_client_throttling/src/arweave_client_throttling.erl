@@ -90,9 +90,11 @@ stop() ->
 %% @doc Blocking call: returns `ok' when the caller is allowed to
 %% issue an outgoing request to `Peer' inside group `GroupId'.
 %%
-%% The call blocks via `gen_server:call(_, _, infinity)'. Callers that
-%% need a timeout should wrap this function in their own bounded
-%% mechanism (e.g. `proc_lib:spawn'/`receive after').
+%% The gen_server itself never blocks: it replies immediately with
+%% `accepted', `{queued, Ref}' or `{error, queue_full}'. In the
+%% queued case `throttle/2' waits in the caller's own mailbox for a
+%% `{request_ready, Ref}' notification, with a 60s ceiling — on
+%% expiry it cancels the queued entry and returns `{error, timeout}'.
 %% @end
 %%--------------------------------------------------------------------
 -spec throttle(atom(), tuple()) -> ok | {error, term()}.

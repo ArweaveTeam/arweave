@@ -29,7 +29,9 @@
 
 -define(M, arweave_client_throttling_group).
 
-suite() -> [{userdata, [description()]}, {timetrap, {seconds, 15}}].
+%% Note: `blocking_call' waits for an exhausted-quota reset of 29s
+%% plus client-side overhead, so the timetrap has to clear that.
+suite() -> [{userdata, [description()]}, {timetrap, {seconds, 90}}].
 
 description() ->
     {description, "arweave_client_throttling_group gen_server"}.

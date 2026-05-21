@@ -91,14 +91,25 @@
 %% `erlang:send_after/3' (so we can cancel it) and `Tag' is a unique
 %% reference embedded in the scheduled message (so stragglers
 %% delivered after cancellation can be discarded on receipt).
+%%
+%% `waiters' entries are `{Ref, Pid, MRef}' tuples: a unique
+%% reference handed back to the caller, the caller pid we will send
+%% the `{request_ready, Ref}' notification to, and the monitor
+%% reference we use to remove the entry if the caller dies.
 -record(peer_state, {
 	total          :: non_neg_integer(),
 	remaining      :: non_neg_integer(),
 	reset_seconds  :: non_neg_integer(),
 	reset_timer    :: {reference(), reference()} | undefined,
-	waiters        :: queue:queue({gen_server:from(), reference()}),
+	waiters        :: queue:queue({reference(), pid(), reference()}),
 	last_update_ts :: integer() | undefined
 }).
+
+%% How long throttle/2 waits for a `{request_ready, Ref}' message
+%% after the gen_server replies with `{queued, Ref}'. On expiry the
+%% caller sends a `cancel_request' cast so the entry can be evicted
+%% from the queue and returns `{error, timeout}'.
+-define(THROTTLE_RECEIVE_TIMEOUT_MS, 60000).
 
 %%--------------------------------------------------------------------
 %% API
@@ -114,14 +125,40 @@ start_link(#{id := Id} = Spec) ->
 	gen_server:start_link({local, registered_name(Id)}, ?MODULE, Spec, []).
 
 %%--------------------------------------------------------------------
-%% @doc Blocking throttle call. Returns `ok' once the caller is
-%% allowed to issue an outgoing request, or `{error, queue_full}' if
-%% the per-peer queue is already saturated.
+%% @doc Blocking throttle call.
+%%
+%% The synchronous part of this function — the `gen_server:call' —
+%% never blocks on quota: the group replies with `accepted' when
+%% there is budget available, with `{queued, Ref}' when the caller
+%% has been enqueued, or with `{error, queue_full}' when the per-peer
+%% queue is already saturated.
+%%
+%% In the `accepted' case `throttle/2' returns `ok' immediately.
+%%
+%% In the `{queued, Ref}' case the caller waits — in its own mailbox,
+%% outside the gen_server — for a `{request_ready, Ref}' notification
+%% sent by the group when budget becomes available. The wait has a
+%% 60s ceiling; on expiry the caller sends a `cancel_request' cast
+%% to evict the entry from the queue and returns `{error, timeout}'.
 %% @end
 %%--------------------------------------------------------------------
 -spec throttle(atom(), tuple()) -> ok | {error, term()}.
 throttle(GroupId, Peer) ->
-	gen_server:call(registered_name(GroupId), {throttle, Peer}, infinity).
+	Name = registered_name(GroupId),
+	case gen_server:call(Name, {throttle, Peer}) of
+		accepted ->
+			ok;
+		{queued, Ref} ->
+			receive
+				{request_ready, Ref} ->
+					ok
+			after ?THROTTLE_RECEIVE_TIMEOUT_MS ->
+				gen_server:cast(Name, {cancel_request, Peer, Ref}),
+				{error, timeout}
+			end;
+		{error, _} = Error ->
+			Error
+	end.
 
 %%--------------------------------------------------------------------
 %% @doc Non-blocking quota refresh.
@@ -207,7 +244,7 @@ handle_call({throttle, Peer}, From, State) ->
 			PS1 = PS0#peer_state{
 				remaining = PS0#peer_state.remaining - 1
 			},
-			{reply, ok, State#{peers := Peers#{Peer => PS1}}};
+			{reply, accepted, State#{peers := Peers#{Peer => PS1}}};
 		false ->
 			enqueue_caller(Peer, From, PS0, State)
 	end;
@@ -264,6 +301,21 @@ handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
 		monitors := Monitors1
 	}};
 
+handle_cast({cancel_request, Peer, Ref}, State) ->
+	#{peers := Peers, monitors := Monitors} = State,
+	case maps:find(Peer, Peers) of
+		{ok, PS0} ->
+			{Q1, Monitors1} = drop_waiter_by_ref(Ref,
+				PS0#peer_state.waiters, Monitors),
+			PS1 = PS0#peer_state{waiters = Q1},
+			{noreply, State#{
+				peers := Peers#{Peer => PS1},
+				monitors := Monitors1
+			}};
+		error ->
+			{noreply, State}
+	end;
+
 handle_cast(Msg, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE},
 		{msg, Msg}]),
@@ -294,7 +346,8 @@ handle_info({'DOWN', MRef, process, _Pid, _Reason}, State) ->
 		{Peer, Monitors1} ->
 			PS0 = maps:get(Peer, Peers),
 			PS1 = PS0#peer_state{
-				waiters = drop_waiter(MRef, PS0#peer_state.waiters)
+				waiters = drop_waiter_by_mref(MRef,
+					PS0#peer_state.waiters)
 			},
 			{noreply, State#{
 				peers := Peers#{Peer => PS1},
@@ -330,10 +383,12 @@ enqueue_caller(Peer, From, PS0, State) ->
 		false ->
 			{FromPid, _Tag} = From,
 			MRef = erlang:monitor(process, FromPid),
+			Ref = make_ref(),
 			PS1 = PS0#peer_state{
-				waiters = queue:in({From, MRef}, PS0#peer_state.waiters)
+				waiters = queue:in({Ref, FromPid, MRef},
+					PS0#peer_state.waiters)
 			},
-			{noreply, State#{
+			{reply, {queued, Ref}, State#{
 				peers := Peers#{Peer => PS1},
 				monitors := Monitors#{MRef => Peer}
 			}}
@@ -370,9 +425,9 @@ drain_waiters(#peer_state{remaining = R, waiters = Q} = PS, Monitors)
 	case queue:out(Q) of
 		{empty, _} ->
 			{PS, Monitors};
-		{{value, {From, MRef}}, Q1} ->
+		{{value, {Ref, Pid, MRef}}, Q1} ->
 			erlang:demonitor(MRef, [flush]),
-			gen_server:reply(From, ok),
+			Pid ! {request_ready, Ref},
 			PS1 = PS#peer_state{
 				remaining = R - 1,
 				waiters = Q1
@@ -407,15 +462,25 @@ cancel_reset_timer({TRef, _Tag}) ->
 	_ = erlang:cancel_timer(TRef),
 	ok.
 
-drop_waiter(MRef, Q) ->
-	queue:filter(fun({_From, M}) -> M =/= MRef end, Q).
+drop_waiter_by_mref(MRef, Q) ->
+	queue:filter(fun({_Ref, _Pid, M}) -> M =/= MRef end, Q).
+
+drop_waiter_by_ref(Ref, Q, Monitors) ->
+	L0 = queue:to_list(Q),
+	case lists:keytake(Ref, 1, L0) of
+		{value, {Ref, _Pid, MRef}, L1} ->
+			erlang:demonitor(MRef, [flush]),
+			{queue:from_list(L1), maps:remove(MRef, Monitors)};
+		false ->
+			{Q, Monitors}
+	end.
 
 drain_for_reset(Q) ->
 	case queue:out(Q) of
 		{empty, _} -> ok;
-		{{value, {From, MRef}}, Q1} ->
+		{{value, {Ref, Pid, MRef}}, Q1} ->
 			erlang:demonitor(MRef, [flush]),
-			gen_server:reply(From, ok),
+			Pid ! {request_ready, Ref},
 			drain_for_reset(Q1)
 	end.
 
