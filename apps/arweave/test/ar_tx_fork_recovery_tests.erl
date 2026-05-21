@@ -12,6 +12,9 @@
 recovers_from_forks_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun() -> recovers_from_forks(7) end}.
 
+re_admits_orphaned_tx_after_fork_recovery_test_() ->
+	{timeout, ?TEST_NODE_TIMEOUT, fun re_admits_orphaned_tx_after_fork_recovery/0}.
+
 recovers_from_forks(ForkHeight) ->
 	%% peer1 and main mine in sync, then diverge; an extra block on peer1 makes
 	%% main fork-recover onto it. Afterwards, replaying any past TX on main is
@@ -119,6 +122,67 @@ recovers_from_forks(ForkHeight) ->
 		end,
 		MainPostForkTXs
 	).
+
+re_admits_orphaned_tx_after_fork_recovery() ->
+	%% recovers_from_forks_test_ asserts that orphaned TXs come back as 208
+	%% on resubmission (i.e. they are back in the mempool / ignored set), but
+	%% never mines a block to prove RecentTXMap and BlockAnchors were actually
+	%% updated. This test pushes one step further: it orphans a block
+	%% carrying a TX whose anchor is on the shared prefix (so the anchor
+	%% survives recovery), then mines on the winning chain and asserts the
+	%% TX makes it back in. That requires update_block_txs_pairs2 in
+	%% ar_node_worker.erl to have dropped the orphaned block's pair, so
+	%% verify_block_txs no longer rejects the resubmission as
+	%% tx_already_in_weave.
+	Key = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([
+		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
+	]),
+	_ = ar_test_node:start(B0),
+	_ = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
+	%% Build a one-block shared prefix so both chains agree on the anchor.
+	ar_test_node:mine(peer1),
+	{ok, [{SharedBH, _, _} | _]} = ar_test_await:node_height(main, 1),
+	ar_test_node:disconnect_from(peer1),
+	%% On main, mine a block containing OrphanedTX. This block becomes the
+	%% orphan when peer1's chain wins.
+	OrphanedTX = ar_test_node:sign_tx(main, Key, #{
+		last_tx => SharedBH,
+		tags => [{<<"nonce">>, <<"orphaned">>}],
+		reward => ?AR(1)
+	}),
+	ar_test_node:assert_post_tx_to_peer(main, OrphanedTX),
+	ar_test_node:mine(),
+	{ok, MainBI} = ar_test_await:node_height(main, 2),
+	[{OrphanedBH, _, _} | _] = MainBI,
+	assert_block_txs(main, [OrphanedTX], MainBI),
+	%% Build a longer chain on peer1 so reconnect triggers fork recovery
+	%% on main.
+	ar_test_node:mine(peer1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2)),
+	ar_test_node:mine(peer1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 3)),
+	ar_test_node:connect_to_peer(peer1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
+	%% A new TX anchored to the orphaned block must not be accepted after
+	%% recovery. This covers the BlockAnchors side of the same cache rebuild.
+	OrphanedBlockAnchorTX = ar_test_node:sign_tx(main, Key, #{
+		last_tx => OrphanedBH,
+		tags => [{<<"nonce">>, <<"orphaned_block_anchor">>}],
+		reward => ?AR(1)
+	}),
+	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
+		ar_tx_test_utils:post_tx_to_peer_once(main, OrphanedBlockAnchorTX),
+	%% After fork recovery, the orphaned TX should be back in main's
+	%% mempool. Wait for it to be ready for mining, mine, and assert the
+	%% TX lands in the new chain - if RecentTXMap still held the TX's id
+	%% from the orphaned block, verify_block_txs would reject it as
+	%% tx_already_in_weave and the block would mine empty.
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [OrphanedTX])),
+	ar_test_node:mine(),
+	{ok, NewBI} = ar_test_await:node_height(main, 4),
+	assert_block_txs(main, [OrphanedTX], NewBI).
 
 forget_txs(TXs) ->
 	lists:foreach(

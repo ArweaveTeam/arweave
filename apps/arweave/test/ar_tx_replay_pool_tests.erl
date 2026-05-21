@@ -53,6 +53,21 @@ test_verify_block_txs() ->
 			expected_result => invalid
 		},
 		#{
+			title => "After fork height 2.0 rejects outdated block anchors",
+			txs => [
+				tx(
+					Key1,
+					fee(ar_fork:height_2_0() + 1),
+					crypto:strong_rand_bytes(32)
+				)
+			],
+			block_anchors => RandomBlockAnchors,
+			recent_txs_map => #{},
+			height => ar_fork:height_2_0() + 1,
+			wallet_list => [wallet(Key1, fee(ar_fork:height_2_0() + 1))],
+			expected_result => invalid
+		},
+		#{
 			title => "Fork height 2.0 accepts wallet list anchors",
 			txs => [
 				tx(Key1, fee(ar_fork:height_2_0()), <<>>),
@@ -130,6 +145,28 @@ test_verify_block_txs() ->
 			txs => [BlockAnchorTXAfterForkHeight, BlockAnchorTXAfterForkHeight],
 			height => ar_fork:height_2_0() + 1,
 			block_anchors => [],
+			recent_txs_map => #{},
+			wallet_list => [wallet(Key1, 2 * fee(ar_fork:height_2_0() + 1))],
+			expected_result => invalid
+		},
+		%% The duplicate cases above set block_anchors=[], so both copies fail
+		%% at tx_bad_anchor. The cases below make the first copy genuinely
+		%% valid (matching block anchor) so the second copy is the one that
+		%% trips verify_tx_in_mempool → tx_already_in_mempool.
+		#{
+			title => "Fork height 2.0 rejects duplicate already in mempool",
+			txs => [BlockAnchorTXAtForkHeight, BlockAnchorTXAtForkHeight],
+			height => ar_fork:height_2_0(),
+			block_anchors => [<<"hash">>],
+			recent_txs_map => #{},
+			wallet_list => [wallet(Key1, 2 * fee(ar_fork:height_2_0()))],
+			expected_result => invalid
+		},
+		#{
+			title => "After fork height 2.0 rejects duplicate already in mempool",
+			txs => [BlockAnchorTXAfterForkHeight, BlockAnchorTXAfterForkHeight],
+			height => ar_fork:height_2_0() + 1,
+			block_anchors => [<<"hash">>],
 			recent_txs_map => #{},
 			wallet_list => [wallet(Key1, 2 * fee(ar_fork:height_2_0() + 1))],
 			expected_result => invalid

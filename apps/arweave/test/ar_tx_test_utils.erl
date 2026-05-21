@@ -7,7 +7,8 @@
 	block_anchor_txs_spending_balance_plus_one_more/2,
 	mixed_anchor_txs_spending_balance_plus_one_more/2,
 	grouped_txs/0,
-	mine_blocks/2
+	mine_blocks/2,
+	post_tx_to_peer_once/2
 ]).
 
 -include("ar.hrl").
@@ -111,3 +112,12 @@ mine_blocks(Node, Height, TargetHeight) ->
 	ar_test_node:mine(Node),
 	?assertMatch({ok, _}, ar_test_await:node_height(Node, Height)),
 	mine_blocks(Node, Height + 1, TargetHeight).
+
+%% @doc Post TX to Node via a single raw HTTP request, with no retries or assertions.
+post_tx_to_peer_once(Node, TX) ->
+	ar_http:req(#{
+		method => post,
+		peer => ar_test_node:peer_ip(Node),
+		path => "/tx",
+		body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))
+	}).
