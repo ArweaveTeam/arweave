@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#
+# Thin shim for the workspace manager, which lives at bin/dev/ws.
+#
+# Lets you run `./bin/ws ...` — or just `ws ...` if bin/ is on your PATH, or a
+# symlink to this file is. All arguments are passed straight through; see
+# `ws help` and doc/workspaces.md.
+#
+# Resolve our own location, following symlinks, so the shim works wherever it
+# is invoked from or linked to.
+src=${BASH_SOURCE[0]}
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+  src=$(readlink "$src")
+  [ "${src#/}" = "$src" ] && src=$dir/$src
+done
+dir=$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)
+
+exec "$dir/dev/ws" "$@"

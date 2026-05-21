@@ -2,6 +2,7 @@
 *.log
 *.dat
 .vscode
+.envrc
 *.out
 *.code-workspace
 .arweave.plt
