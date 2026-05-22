@@ -147,15 +147,15 @@ get_config() ->
        no_limit => true}
     ].
 
-get_config(Id) when is_atom(Id) ->
+get_config(ID) when is_atom(ID) ->
     %% Removing the ?MODULE macro will break some tests.
-    case lists:search(fun(#{id := ConfigId}) -> Id == ConfigId end, ?MODULE:get_config()) of
+    case lists:search(fun(#{id := ConfigID}) -> ID == ConfigID end, ?MODULE:get_config()) of
         {value, Config} -> Config;
-        false -> {error, {limiter_config, not_found, Id}}
+        false -> {error, {limiter_config, not_found, ID}}
     end.
 
-get_config(Id, Key) ->
-    case get_config(Id) of 
+get_config(ID, Key) ->
+    case get_config(ID) of
         {error, _} = E ->
             E;
         Config ->
@@ -164,7 +164,7 @@ get_config(Id, Key) ->
                     Value
             catch _E:_R ->
                     %% Config is always a map, we construct it above.
-                    {error, {limiter_config, key_not_found, Id, Key}}
+                    {error, {limiter_config, key_not_found, ID, Key}}
             end
     end.
 

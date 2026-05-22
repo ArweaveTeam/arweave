@@ -43,14 +43,14 @@ supervisor_spec(_Config) ->
 children_spec(Configs) ->
     lists:flatten([children_spec_per_group(Config) || Config <- Configs]).
 
-children_spec_per_group(#{id := Id} = Config) ->
-    NumberOfWorkers = arweave_limiter_config:get_number_of_workers(Id),
+children_spec_per_group(#{id := ID} = Config) ->
+    NumberOfWorkers = arweave_limiter_config:get_number_of_workers(ID),
     n_child_spec(Config, NumberOfWorkers).
 
-n_child_spec(#{id := Id} = Config, NumberOfWorkers) ->
+n_child_spec(#{id := ID} = Config, NumberOfWorkers) ->
     lists:foldl(
       fun(N, Acc) ->
-              Name = arweave_limiter_util:worker_name(Id, N),
+              Name = arweave_limiter_util:worker_name(ID, N),
               [single_child_spec(Name, Config)|Acc]
       end, [], lists:seq(0, NumberOfWorkers-1)).
 
@@ -62,8 +62,8 @@ single_child_spec(Name, Config) ->
 
 all_info() ->
     Config = arweave_limiter_config:get_config(),
-    [{Id, arweave_limiter_group:info(Id)}  || #{id := Id} <- Config].
+    [{ID, arweave_limiter_group:info(ID)}  || #{id := ID} <- Config].
 
 reset_all() ->
     Children = supervisor:which_children(?MODULE),
-    [{Id, arweave_limiter_group:reset_all(Id)}  || {Id, _Child, _Type, _Modules} <- Children].
+    [{ID, arweave_limiter_group:reset_all(ID)}  || {ID, _Child, _Type, _Modules} <- Children].
