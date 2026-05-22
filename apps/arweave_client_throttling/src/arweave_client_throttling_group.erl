@@ -210,8 +210,7 @@ init(Spec) ->
         monitors => #{}
     }}.
 
-handle_call({throttle, Peer}, From, State) ->
-    #{spec := Spec, peers := Peers} = State,
+handle_call({throttle, Peer}, From, #{spec := Spec, peers := Peers} = State) ->
     PS0 = get_or_init_peer(Peer, Peers, Spec),
     case PS0#peer_state.remaining > 0 of
         true ->
@@ -222,8 +221,7 @@ handle_call({throttle, Peer}, From, State) ->
         false ->
             enqueue_caller(Peer, From, PS0, State)
     end;
-handle_call({status, Peer}, _From, State) ->
-    #{spec := Spec, peers := Peers} = State,
+handle_call({status, Peer}, _From, #{spec := Spec, peers := Peers} = State) ->
     Reply = case maps:find(Peer, Peers) of
                 {ok, PS} ->
                     {ok, peer_state_to_map(PS)};
@@ -237,8 +235,7 @@ handle_call({status, Peer}, _From, State) ->
                     }}
             end,
     {reply, Reply, State};
-handle_call(reset, _From, State) ->
-    #{peers := Peers, monitors := Monitors} = State,
+handle_call(reset, _From, #{peers := Peers, monitors := Monitors} = State) ->
     maps:fold(fun(_Peer, PS, _) ->
                       cancel_reset_timer(PS#peer_state.reset_timer),
                       drain_for_reset(PS#peer_state.waiters)
@@ -253,8 +250,7 @@ handle_call(Msg, From, State) ->
     {reply, {error, unsupported}, State}.
 
 handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
-            State) ->
-    #{spec := Spec, peers := Peers, monitors := Monitors} = State,
+            #{spec := Spec, peers := Peers, monitors := Monitors} = State) ->
     PS0 = get_or_init_peer(Peer, Peers, Spec),
     InitialRemaining = maps:get(initial_remaining, Spec),
     NewTotal = case Total =/= InitialRemaining of
@@ -283,8 +279,7 @@ handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
         peers := Peers#{Peer => PS3},
         monitors := Monitors1
     }};
-handle_cast({cancel_request, Peer, Ref}, State) ->
-    #{peers := Peers, monitors := Monitors} = State,
+handle_cast({cancel_request, Peer, Ref}, #{peers := Peers, monitors := Monitors} = State) ->
     case maps:find(Peer, Peers) of
         {ok, PS0} ->
             {Q1, Monitors1} = drop_waiter_by_ref(Ref,
@@ -303,8 +298,7 @@ handle_cast(Msg, State) ->
                   {msg, Msg}]),
     {noreply, State}.
 
-handle_info({reset_quota, Peer, Tag}, State) ->
-    #{peers := Peers, monitors := Monitors} = State,
+handle_info({reset_quota, Peer, Tag}, #{peers := Peers, monitors := Monitors} = State) ->
     case maps:find(Peer, Peers) of
         {ok, #peer_state{reset_timer = {_TRef, Tag}} = PS0} ->
             PS1 = PS0#peer_state{
@@ -321,8 +315,7 @@ handle_info({reset_quota, Peer, Tag}, State) ->
             %% Stale timer (cancelled or already replaced).
             {noreply, State}
     end;
-handle_info({'DOWN', MRef, process, _Pid, _Reason}, State) ->
-    #{peers := Peers, monitors := Monitors} = State,
+handle_info({'DOWN', MRef, process, _Pid, _Reason}, #{peers := Peers, monitors := Monitors} = State) ->
     case maps:take(MRef, Monitors) of
         {Peer, Monitors1} ->
             PS0 = maps:get(Peer, Peers),
