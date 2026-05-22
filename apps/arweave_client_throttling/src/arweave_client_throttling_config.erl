@@ -29,79 +29,64 @@
 -module(arweave_client_throttling_config).
 -vsn(1).
 -export([
-	get_groups/0,
-	get_group/1,
-	get_value/2,
-	default_groups/0,
-	normalize_group/1
+    get_groups/0,
+    get_group/1,
+    get_value/2,
+    default_groups/0,
+    normalize_group/1
 ]).
 
 -include("arweave_client_throttling.hrl").
 
-%%--------------------------------------------------------------------
 %% @doc Return the configured list of group specs, normalized so that
 %% every spec is a map containing every supported key.
-%% @end
-%%--------------------------------------------------------------------
 -spec get_groups() -> [map()].
 get_groups() ->
-	Raw = case application:get_env(arweave_client_throttling, groups) of
-		{ok, L} when is_list(L) -> L;
-		_ -> default_groups()
-	end,
-	[normalize_group(G) || G <- Raw].
+    Raw = case application:get_env(arweave_client_throttling, groups) of
+              {ok, L} when is_list(L) -> L;
+              _ -> default_groups()
+          end,
+    [normalize_group(G) || G <- Raw].
 
-%%--------------------------------------------------------------------
 %% @doc Return the normalized spec for a single group, or
 %% `{error, not_found}'.
-%% @end
-%%--------------------------------------------------------------------
 -spec get_group(atom()) -> {ok, map()} | {error, not_found}.
 get_group(Id) when is_atom(Id) ->
-	case lists:search(fun(#{id := X}) -> X =:= Id end, get_groups()) of
-		{value, G} -> {ok, G};
-		false -> {error, not_found}
-	end.
+    case lists:search(fun(#{id := X}) -> X =:= Id end, get_groups()) of
+        {value, G} -> {ok, G};
+        false -> {error, not_found}
+    end.
 
-%%--------------------------------------------------------------------
 %% @doc Return a single value from a group spec.
-%% @end
-%%--------------------------------------------------------------------
 -spec get_value(atom(), atom()) -> {ok, term()} | {error, term()}.
 get_value(Id, Key) ->
-	case get_group(Id) of
-		{ok, Group} ->
-			case maps:find(Key, Group) of
-				{ok, V} -> {ok, V};
-				error -> {error, {key_not_found, Id, Key}}
-			end;
-		Error -> Error
-	end.
+    case get_group(Id) of
+        {ok, Group} ->
+            case maps:find(Key, Group) of
+                {ok, V} -> {ok, V};
+                error -> {error, {key_not_found, Id, Key}}
+            end;
+        Error -> Error
+    end.
 
-%%--------------------------------------------------------------------
 %% @doc Return the built-in default list of group specs.
-%% @end
-%%--------------------------------------------------------------------
 -spec default_groups() -> [map()].
 default_groups() ->
-	?ARWEAVE_CLIENT_THROTTLING_DEFAULT_GROUPS.
+    ?ARWEAVE_CLIENT_THROTTLING_DEFAULT_GROUPS.
 
-%%--------------------------------------------------------------------
 %% @doc Return a normalized version of `Group', filling in all
 %% optional keys with their defaults.
-%% @end
-%%--------------------------------------------------------------------
 -spec normalize_group(map()) -> map().
 normalize_group(#{id := Id} = Group) when is_atom(Id) ->
-	maps:merge(defaults(Id), Group).
+    maps:merge(defaults(Id), Group).
 
 defaults(Id) ->
-	#{
-		id => Id,
-		initial_remaining =>
-			?ARWEAVE_CLIENT_THROTTLING_DEFAULT_INITIAL_REMAINING,
-		max_queue_length =>
-			?ARWEAVE_CLIENT_THROTTLING_DEFAULT_MAX_QUEUE_LENGTH,
-		concurrency_window_ms =>
-			?ARWEAVE_CLIENT_THROTTLING_DEFAULT_CONCURRENCY_WINDOW_MS
-	}.
+    #{
+        id => Id,
+        initial_remaining =>
+            ?ARWEAVE_CLIENT_THROTTLING_DEFAULT_INITIAL_REMAINING,
+        max_queue_length =>
+            ?ARWEAVE_CLIENT_THROTTLING_DEFAULT_MAX_QUEUE_LENGTH,
+        concurrency_window_ms =>
+            ?ARWEAVE_CLIENT_THROTTLING_DEFAULT_CONCURRENCY_WINDOW_MS
+    }.

@@ -21,8 +21,8 @@
 %% The initial set of throttling groups. Callers can override the list by
 %% setting the `groups' application environment key.
 -define(ARWEAVE_CLIENT_THROTTLING_DEFAULT_GROUPS, [
-	#{id => general},
-	#{id => data_sync_record}
+    #{id => general},
+    #{id => data_sync_record}
 ]).
 
 -endif.
