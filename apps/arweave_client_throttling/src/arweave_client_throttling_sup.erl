@@ -1,23 +1,13 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @copyright 2026 (c) Arweave
-%%% @author Arweave Team
 %%% @doc Supervisor for `arweave_client_throttling'.
 %%%
 %%% Starts one `arweave_client_throttling_group' worker per group
 %%% spec returned by `arweave_client_throttling_config:get_groups/0'.
 %%% @end
-%%%===================================================================
 -module(arweave_client_throttling_sup).
 -behaviour(supervisor).
 
 -export([start_link/0, start_link/1]).
--export([init/1]).
+-export([init/1, all_info/0]).
 
 start_link() ->
     start_link(arweave_client_throttling_config:get_groups()).
@@ -44,3 +34,7 @@ child_spec(#{id := Id} = Group) ->
         shutdown => 5000,
         modules => [arweave_client_throttling_group]
     }.
+
+all_info() ->
+    Config = arweave_limiter_config:get_config(),
+    [{Id, arweave_limiter_group:info(Id)}  || #{id := Id} <- Config].

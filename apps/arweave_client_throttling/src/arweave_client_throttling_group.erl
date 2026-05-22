@@ -67,6 +67,7 @@
 -export([
     start_link/1,
     throttle/2,
+    info/1,
     update_quota/3,
     status/2,
     reset/1,
@@ -175,6 +176,10 @@ update_quota(GroupId, Peer, #{
                     {update_quota, Peer, Total, Remaining,
                      ResetSeconds, ReceivedAt}).
 
+%% @doc Get all info
+info(GroupId) ->
+    gen_server:call(registered_name(GroupId), get_info).
+
 %% @doc Return a snapshot of the per-peer state.
 -spec status(atom(), tuple()) -> {ok, map()} | {error, term()}.
 status(GroupId, Peer) ->
@@ -201,7 +206,6 @@ stop(GroupId) ->
     gen_server:stop(registered_name(GroupId)).
 
 %% gen_server callbacks
-
 init(Spec) ->
     process_flag(trap_exit, true),
     {ok, #{
@@ -221,6 +225,9 @@ handle_call({throttle, Peer}, From, #{spec := Spec, peers := Peers} = State) ->
         false ->
             enqueue_caller(Peer, From, PS0, State)
     end;
+handle_call(get_info, _From, #{peers := Peers} = State) ->
+    Reply = #{peers => map_size(Peers)},
+    {reply, Reply, State};
 handle_call({status, Peer}, _From, #{spec := Spec, peers := Peers} = State) ->
     Reply = case maps:find(Peer, Peers) of
                 {ok, PS} ->
