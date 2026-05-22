@@ -18,6 +18,13 @@
 %% the window we trust the new value.
 -define(ARWEAVE_CLIENT_THROTTLING_DEFAULT_CONCURRENCY_WINDOW_MS, 1000).
 
+%% Fraction of the configured `initial_remaining' that the new
+%% `remaining' reported by a remote response must differ by, relative
+%% to the value already stored for the peer, before we bother to
+%% update the peer state. Updates reporting `remaining = 0' are always
+%% applied regardless of this ratio.
+-define(SIGNIFICANTLY_DIFFERENT_RATIO, 0.1).
+
 %% The initial set of throttling groups. Callers can override the list by
 %% setting the `groups' application environment key.
 -define(ARWEAVE_CLIENT_THROTTLING_DEFAULT_GROUPS, [
