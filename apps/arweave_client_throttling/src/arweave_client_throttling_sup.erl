@@ -36,5 +36,5 @@ child_spec(#{id := Id} = Group) ->
     }.
 
 all_info() ->
-    Config = arweave_limiter_config:get_config(),
-    [{Id, arweave_limiter_group:info(Id)}  || #{id := Id} <- Config].
+    Config = arweave_client_throttling_config:get_groups(),
+    [{Id, arweave_client_throttling_group:info(Id)}  || #{id := Id} <- Config].
