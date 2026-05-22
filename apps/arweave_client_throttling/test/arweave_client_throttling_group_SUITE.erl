@@ -1,16 +1,6 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @author Arweave Team
-%%% @copyright 2026 (c) Arweave
 %%% @doc Direct tests for the `arweave_client_throttling_group'
 %%% gen_server, exercised without the supervisor.
 %%% @end
-%%%===================================================================
 -module(arweave_client_throttling_group_SUITE).
 -export([suite/0, description/0]).
 -export([init_per_suite/1, end_per_suite/1]).
@@ -64,20 +54,15 @@ all() ->
      blocking_call
     ].
 
-%%--------------------------------------------------------------------
+
 %% @doc Verify the worker is registered under the expected name.
-%% @end
-%%--------------------------------------------------------------------
 start_stop(Config) ->
     Pid = proplists:get_value(group_pid, Config),
     Pid = whereis(arweave_client_throttling_group_general),
     true = is_process_alive(Pid),
     ok.
 
-%%--------------------------------------------------------------------
 %% @doc State is maintained independently per peer.
-%% @end
-%%--------------------------------------------------------------------
 independent_peer_state(_Config) ->
     PeerA = {1, 1, 1, 1, 1984},
     PeerB = {2, 2, 2, 2, 1984},
@@ -91,10 +76,7 @@ independent_peer_state(_Config) ->
     0 = maps:get(queue_length, SB),
     ok.
 
-%%--------------------------------------------------------------------
 %% @doc The `pending/2' helper reports the queue length.
-%% @end
-%%--------------------------------------------------------------------
 pending_helper(_Config) ->
     Peer = {3, 3, 3, 3, 1984},
     Parent = self(),
@@ -116,11 +98,9 @@ pending_helper(_Config) ->
     0 = ?M:pending(general, Peer),
     ok.
 
-%%--------------------------------------------------------------------
 %% @doc An update arriving before any throttle/2 must initialise the
 %% peer state with the reported quota values.
 %% @end
-%%--------------------------------------------------------------------
 update_before_first_throttle(_Config) ->
     Peer = {4, 4, 4, 4, 1984},
 
@@ -138,6 +118,8 @@ update_before_first_throttle(_Config) ->
     ok.
 
 
+%%% @doc This is a long test, making sure that a potentially extreme wait can
+%%% work.
 blocking_call(_Config) ->
     Peer = {5, 5, 5, 5, 1984},
     ok = ?M:update_quota(general, Peer,
@@ -149,9 +131,7 @@ blocking_call(_Config) ->
     ?assert(Time > 29000000),
     ok.
 
-%%--------------------------------------------------------------------
 %% Helpers
-%%--------------------------------------------------------------------
 wait_until(Fun) -> wait_until(Fun, 50).
 
 wait_until(_Fun, 0) -> {error, timeout};
