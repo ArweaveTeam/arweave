@@ -24,6 +24,20 @@ esac
 export ERL_EPMD_ADDRESS="${ERL_EPMD_ADDRESS:=127.0.0.1,::1}"
 export ERL_EPMD_PORT="${ERL_EPMD_PORT:=4369}"
 
+######################################################################
+# Workspace isolation. When ARWEAVE_NAMESPACE is set, give this node a
+# unique name so several checkouts can run side by side on one host
+# without colliding on EPMD / node names. Without it, behaviour is
+# unchanged. An explicit ARNODE / NODE_NAME always wins.
+# See doc/workspaces.md and bin/dev/ws.
+######################################################################
+if [ -f "$(dirname "$0")/dev/lib-namespace.sh" ]; then
+    . "$(dirname "$0")/dev/lib-namespace.sh"
+fi
+if [ -n "${ARWEAVE_NS_SUFFIX:-}" ]; then
+    export ARNODE="${ARNODE:-arweave${ARWEAVE_NS_SUFFIX}@127.0.0.1}"
+fi
+
 # http://erlang.org/doc/man/run_erl.html
 # If defined, disables input and output flow control for the pty
 # opend by run_erl. Useful if you want to remove any risk of accidentally
@@ -508,7 +522,7 @@ arweave_version_help() {
 arweave_test() {
     TEST_CONFIG="./config/sys.config"
     TEST_PROFILE="test"
-    TEST_NODE_NAME="${NODE_NAME:-main-localtest}"
+    TEST_NODE_NAME="${NODE_NAME:-main-localtest${ARWEAVE_NS_SUFFIX:-}}"
     TEST_NODE_HOST="${NODE_HOST:-127.0.0.1}"
     TEST_COOKIE="${COOKIE:-test}"
     TEST_MODULE="tests"
@@ -528,7 +542,7 @@ arweave_test_help() {
 arweave_e2e() {
     TEST_CONFIG="./config/sys.config"
     TEST_PROFILE="e2e"
-    TEST_NODE_NAME="${NODE_NAME:-main-e2e}"
+    TEST_NODE_NAME="${NODE_NAME:-main-e2e${ARWEAVE_NS_SUFFIX:-}}"
     TEST_NODE_HOST="${NODE_HOST:-127.0.0.1}"
     TEST_COOKIE="${COOKIE:-e2e}"
     TEST_MODULE="e2e"

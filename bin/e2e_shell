@@ -3,6 +3,9 @@
 SCRIPT_DIR="$(dirname "$0")"
 cd "$SCRIPT_DIR/.."
 
+# Honour ARWEAVE_NAMESPACE so several checkouts can run side by side.
+[ -f "$SCRIPT_DIR/dev/lib-namespace.sh" ] && . "$SCRIPT_DIR/dev/lib-namespace.sh"
+
 ./ar-rebar3 e2e compile
 
 if [ "$(uname -s)" == "Darwin" ]; then
@@ -16,10 +19,13 @@ export ERL_EPMD_ADDRESS=127.0.0.1
 ERL_E2E_OPTS="-pa $(./rebar3 as e2e path) $(./rebar3 as e2e path --base)/lib/arweave/test -config config/sys.config"
 echo -e "\033[0;32m===> Running e2e shell...\033[0m"
 
-if pgrep -f "beam.smp" > /dev/null; then
-    echo "BEAM is already running. Exiting."
+NODE="main-e2e${ARWEAVE_NS_SUFFIX:-}@127.0.0.1"
+# Refuse only if a node with *this* name is already running; nodes in other
+# namespaces (e.g. other workspaces) are allowed to run concurrently.
+if pgrep -f -- "-name ${NODE}" > /dev/null; then
+    echo "A node named ${NODE} is already running. Exiting."
     exit 1
 else
-    erl $ERL_E2E_OPTS -name main-e2e@127.0.0.1 -setcookie e2e -run ar shell_e2e 2>&1
+    erl $ERL_E2E_OPTS -name "${NODE}" -setcookie e2e -run ar shell_e2e 2>&1
 fi
 kill 0
