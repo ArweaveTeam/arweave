@@ -52,7 +52,6 @@ info(LimiterRef) ->
     lists:foldl(fun(N, Acc) -> merge_info_maps(LimiterRef, N, Acc) end,
                 #{sliding_timestamps => #{},
                   leaky_tokens => #{},
-                  concurrent_requests => #{},
                   concurrent_monitors => #{}},
                 lists:seq(0, WorkersNum - 1)).
 
@@ -145,7 +144,6 @@ init([Config] = _Args) ->
            tick_reduction => TickReduction,
            leaky_rate_limit => LeakyRateLimit,
            concurrency_limit => ConcurrencyLimit,
-           concurrent_requests => #{}, %% Peer -> Number of request being processed
            concurrent_monitors => #{}, %% MonitorRef -> Peer
            leaky_tokens => #{}, %% Peer -> Leaky Bucket tokens
            sliding_window_duration => SlidingWindowDuration,
@@ -154,22 +152,32 @@ init([Config] = _Args) ->
           }}.
 
 handle_call(reset_all, _From, State) ->
-    {reply, ok, State#{concurrent_requests => #{},
-                       concurrent_monitors => #{},
+    {reply, ok, State#{concurrent_monitors => #{},
                        leaky_tokens => #{},
                        sliding_timestamps => #{}}};
 handle_call({register_or_reject, _Peer}, {_FromPid, _},
             State = #{id := _ID, is_disabled := true}) ->
     LimiterHeaders = #{policies => generate_policy(State)},
     {reply, {register, no_limiting_applied, LimiterHeaders}, State};
+handle_call({register_or_reject, _Peer}, {_FromPid, _},
+            State = #{id := _Id,
+                      concurrency_limit := ConcurrencyLimit,
+                      concurrent_monitors := ConcurrentMonitors})
+  when map_size(ConcurrentMonitors) >= ConcurrencyLimit ->
+    %% Concurrency Hard Limit
+    Policies = generate_policy(State),
+    HeadersInfo = #{expiring_limit => ConcurrencyLimit,
+                    remaining      => 0,
+                    reset_seconds  => 1,
+                    policies       => Policies},
+    {reply, {reject, concurrency, HeadersInfo}, State};
+
 handle_call({register_or_reject, Peer}, {FromPid, _},
             State = #{id := ID,
                       is_disabled := false,
                       leaky_rate_limit := LeakyRateLimit,
                       leaky_tokens := LeakyTokens,
                       next_leaky_tick_ts := NextLeakyTickTS,
-                      concurrency_limit := ConcurrencyLimit,
-                      concurrent_requests := ConcurrentRequests,
                       concurrent_monitors := ConcurrentMonitors,
                       sliding_window_duration := SlidingWindowDuration,
                       sliding_window_limit := SlidingWindowLimit,
@@ -177,70 +185,50 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                      }) ->
     Now = arweave_limiter_time:ts_now(),
     Tokens = maps:get(Peer, LeakyTokens, 0) + 1,
-    Concurrency = maps:get(Peer, ConcurrentRequests, 0) + 1,
 
     SlidingTimestampsForPeer0 =
         expire_and_get_requests(Peer, SlidingTimestamps, SlidingWindowDuration, Now),
 
     Policies = generate_policy(State),
 
-    case Concurrency > ConcurrencyLimit of
+    case length(SlidingTimestampsForPeer0) + 1 > SlidingWindowLimit of
         true ->
-            %% Concurrency Hard Limit
-            ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, concurrency},
-                        {peer, Peer}, {id, ID}]),
-
-            HeadersInfo = #{expiring_limit => ConcurrencyLimit,
-                            remaining      => 0,
-                            reset_seconds  => 1,
-                            policies       => Policies},
-            {reply, {reject, concurrency, HeadersInfo}, State};
-        _ ->
-            case length(SlidingTimestampsForPeer0) + 1 > SlidingWindowLimit of
+            %% Sliding Window limited, check Leaky Bucket Tokens
+            case Tokens > LeakyRateLimit of
                 true ->
-                    %% Sliding Window limited, check Leaky Bucket Tokens
-                    case Tokens > LeakyRateLimit of
-                        true ->
-                            %% Burst exhausted with the Leaky Tokens
-                            ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, rate_limit},
-                                        {sliding_window_limit, SlidingWindowLimit},
-                                        {leaky_rate_limit, LeakyRateLimit},
-                                        {peer, Peer}, {id, ID}]),
-                            HeadersInfo = build_headers_info_leaky(
-                                            0, LeakyRateLimit, NextLeakyTickTS,
-                                            SlidingTimestampsForPeer0, Now,
-                                            Policies),
-                            {reply, {reject, rate_limit, HeadersInfo}, State};
-                        false ->
-                            NewLeakyTokens = update_token(Peer, Tokens, LeakyTokens),
-                            {NewRequests, NewMonitors} =
-                                register_concurrent(
-                                  Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
-                            LbRemaining = LeakyRateLimit - Tokens,
-                            HeadersInfo = build_headers_info_leaky(
-                                            LbRemaining, LeakyRateLimit, NextLeakyTickTS,
-                                            SlidingTimestampsForPeer0, Now,
-                                            Policies),
-                            {reply, {register, leaky, HeadersInfo},
-                             State#{leaky_tokens => NewLeakyTokens,
-                                    concurrent_requests => NewRequests,
-                                    concurrent_monitors => NewMonitors}}
-                    end;
-                _ ->
-                    {NewRequests, NewMonitors} =
-                        register_concurrent(
-                          Peer, FromPid, ConcurrentRequests, ConcurrentMonitors),
-                    SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
-                    NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
-                    SWRemaining = max(0, SlidingWindowLimit
-                                      - length(SlidingTimestampsForPeer1)),
-                    HeadersInfo = build_headers_info_sliding(SWRemaining, SlidingTimestampsForPeer1,
-                                                             Now, Policies),
-                    {reply, {register, sliding, HeadersInfo},
-                     State#{sliding_timestamps => NewSlidingTimestamps,
-                            concurrent_requests => NewRequests,
+                    %% Burst exhausted with the Leaky Tokens
+                    ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, rate_limit},
+                                {sliding_window_limit, SlidingWindowLimit},
+                                {leaky_rate_limit, LeakyRateLimit},
+                                {peer, Peer}, {id, ID}]),
+                    HeadersInfo = build_headers_info_leaky(
+                                    0, LeakyRateLimit, NextLeakyTickTS,
+                                    SlidingTimestampsForPeer0, Now,
+                                    Policies),
+                    {reply, {reject, rate_limit, HeadersInfo}, State};
+                false ->
+                    NewLeakyTokens = update_token(Peer, Tokens, LeakyTokens),
+                    NewMonitors = register_concurrent(FromPid, ConcurrentMonitors),
+                    LbRemaining = LeakyRateLimit - Tokens,
+                    HeadersInfo = build_headers_info_leaky(
+                                    LbRemaining, LeakyRateLimit, NextLeakyTickTS,
+                                    SlidingTimestampsForPeer0, Now,
+                                    Policies),
+                    {reply, {register, leaky, HeadersInfo},
+                     State#{leaky_tokens => NewLeakyTokens,
                             concurrent_monitors => NewMonitors}}
-            end
+            end;
+        _ ->
+            NewMonitors = register_concurrent(FromPid, ConcurrentMonitors),
+            SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
+            NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
+            SwRemaining = max(0, SlidingWindowLimit
+                              - length(SlidingTimestampsForPeer1)),
+            HeadersInfo = build_headers_info_sliding(SwRemaining, SlidingTimestampsForPeer1,
+                                                     Now, Policies),
+            {reply, {register, sliding, HeadersInfo},
+             State#{sliding_timestamps => NewSlidingTimestamps,
+                    concurrent_monitors => NewMonitors}}
     end;
 handle_call({reduce_for_peer, Peer}, _From, State =
                 #{is_manual_reduction_disabled := false,
@@ -253,11 +241,9 @@ handle_call({reduce_for_peer, _Peer}, _From, State =
 handle_call(get_info, _From, State =
                 #{sliding_timestamps := SlidingTimestamps,
                   leaky_tokens := LeakyTokens,
-                  concurrent_requests := ConcurrentRequests,
                   concurrent_monitors := ConcurrentMonitors}) ->
     {reply, #{sliding_timestamps => SlidingTimestamps,
               leaky_tokens => LeakyTokens,
-              concurrent_requests => ConcurrentRequests,
               concurrent_monitors => ConcurrentMonitors}, State};
 handle_call(Request, From, State = #{id := ID}) ->
     ?LOG_WARNING([{event, unhandled_call}, {id, ID}, {module, ?MODULE},
@@ -299,13 +285,9 @@ handle_info({tick, leaky_bucket_reduction},
       ar_limiter_leaky_tick_delete_peer_total, [ID], SizeBefore - maps:size(NewTokens)),
     {noreply, State#{leaky_tokens => NewTokens, next_leaky_tick_ts => NextLBTickTS}};
 handle_info({'DOWN', MonitorRef, process, Pid, Reason},
-            State = #{concurrent_requests := ConcurrentRequests,
-                      concurrent_monitors := ConcurrentMonitors}) ->
-    {NewConcurrentRequests, NewConcurrentMonitors} =
-        remove_concurrent(
-          MonitorRef, Pid, Reason, ConcurrentRequests, ConcurrentMonitors),
-    {noreply, State#{concurrent_requests => NewConcurrentRequests,
-                     concurrent_monitors => NewConcurrentMonitors}};
+            State = #{concurrent_monitors := ConcurrentMonitors}) ->
+    NewConcurrentMonitors = remove_concurrent(MonitorRef, Pid, Reason, ConcurrentMonitors),
+    {noreply, State#{concurrent_monitors => NewConcurrentMonitors}};
 handle_info(Info, State = #{id := ID}) ->
     ?LOG_WARNING([{event, unhandled_info}, {id, ID}, {module, ?MODULE}, {info, Info}]),
     {noreply, State}.
@@ -380,33 +362,14 @@ fold_decrease_rate(ID, Key, Counter, Acc, TickReduction) ->
     maps:put(Key, Counter-TickReduction, Acc).
 
 %% Concurrency magic
-register_concurrent(Peer, Pid, ConcurrentRequests, ConcurrentMonitors) ->
+register_concurrent(Pid, ConcurrentMonitors) ->
     MonitorRef = erlang:monitor(process, Pid),
-    NumProcesses = maps:get(Peer, ConcurrentRequests, 0),
-    NewConcurrentRequests = maps:put(Peer, NumProcesses + 1, ConcurrentRequests),
-    NewConcurrentMonitors = maps:put(MonitorRef, Peer, ConcurrentMonitors),
-    {NewConcurrentRequests, NewConcurrentMonitors}.
+    NewConcurrentMonitors = maps:put(MonitorRef, true, ConcurrentMonitors),
+    NewConcurrentMonitors.
 
-remove_concurrent(MonitorRef, _Pid, _Reason, ConcurrentRequests, ConcurrentMonitors) ->
-    %% Peer for a MonitorRef shouldn't be undefined, because we started to
-    %% monitor the process as a first thing when register was called.
-    case maps:get(MonitorRef, ConcurrentMonitors, not_found) of
-        not_found ->
-            %% MonitorRef not found. This happens when we reset all the peers
-            %% manually. This also means everything else has been deleted as well.
-            %% Nothing to do, just return the current state.
-            {ConcurrentRequests, ConcurrentMonitors};
-        Peer ->
-            NewConcurrentRequests =
-                case maps:get(Peer, ConcurrentRequests, 0) of
-                    Last when Last =< 1 ->
-                        maps:remove(Peer, ConcurrentRequests);
-                    Last ->
-                        ConcurrentRequests#{Peer => Last - 1}
-                end,
-            NewConcurrentMonitors = maps:remove(MonitorRef, ConcurrentMonitors),
-            {NewConcurrentRequests, NewConcurrentMonitors}
-    end.
+remove_concurrent(MonitorRef, _Pid, _Reason, ConcurrentMonitors) ->
+    NewConcurrentMonitors = maps:remove(MonitorRef, ConcurrentMonitors),
+    NewConcurrentMonitors.
 
 filter_state_for_config(#{id := ID,
                           is_disabled := IsDisabled,
@@ -440,22 +403,19 @@ reason_to_list({noproc, _}) ->
 reason_to_list(_) ->
     ?UNEXPECTED_ERROR_STR.
 
-merge_info_maps(LimiterRef, N, #{concurrent_requests := AccReq,
-                                 concurrent_monitors := AccMon,
+merge_info_maps(LimiterRef, N, #{concurrent_monitors := AccMon,
                                  leaky_tokens := AccTokens,
                                  sliding_timestamps := AccInfoTS}) ->
     LimiterWorkerRef = arweave_limiter_util:worker_name(LimiterRef, N),
     %% We could do a pmap to do the gen_server calls, but the latency of this
     %% function is irrevelant, and perhaps we don't need to lock all workers at the same time.
-    #{concurrent_requests := InfoReq,
-      concurrent_monitors := InfoMon,
+    #{concurrent_monitors := InfoMon,
       leaky_tokens := InfoTokens,
       sliding_timestamps := InfoTS} = gen_server:call(LimiterWorkerRef, get_info),
 
     %% The keys are either: Process disjuct sets of monitor references, or
     %% disjoint sets of peers.
-    #{concurrent_requests => maps:merge(InfoReq, AccReq),
-      concurrent_monitors => maps:merge(InfoMon, AccMon),
+    #{concurrent_monitors => maps:merge(InfoMon, AccMon),
       leaky_tokens => maps:merge(InfoTokens, AccTokens),
       sliding_timestamps => maps:merge(InfoTS, AccInfoTS)}.
 
@@ -509,4 +469,3 @@ sliding_window_reset_seconds([Oldest | _], Now) when Oldest >= Now -> 0;
 sliding_window_reset_seconds([Oldest | _], Now) ->
     %% Timestamps are monotonic ms
     max(1, (Now - Oldest) div 1000).
-

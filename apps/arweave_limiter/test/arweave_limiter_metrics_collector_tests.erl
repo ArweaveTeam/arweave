@@ -33,13 +33,13 @@ do_setup() ->
     Configs = [#{id => ?GENERAL,
                  number_of_workers => ?DEFAULT_ARWEAVE_LIMITER_GROUP_WORKERS,
                  leaky_rate_limit => 50,
-                 concurrency_limit => 150,
+                 concurrency_limit => 150000,
                  sliding_window_limit => 100,
                  leaky_tick_interval_ms => 1000000},
                #{id => ?METRICS,
                  number_of_workers => ?DEFAULT_ARWEAVE_LIMITER_GROUP_WORKERS,
                  leaky_rate_limit => 50,
-                 concurrency_limit => 150,
+                 concurrency_limit => 150000,
                  sliding_window_limit => 100,
                  leaky_tick_interval_ms => 1000000}
                ],
@@ -64,7 +64,7 @@ do_setup_with_data() ->
     IPs = [{1,2,X div 128, X rem 128, Port} || X <- lists:seq(1, 1000)],
 
     Callers = lists:foldl(fun(IP, Acc) ->
-                                  Acc ++ [?assertHandlerRegisterOrRejectCall(?GENERAL, {register, _}, IP) ||
+                                  Acc ++ [?assertHandlerRegisterOrRejectCall(?GENERAL, {register, _, _}, IP) ||
                                              _ <- lists:seq(1,150)]
                           end, [], IPs),
     timer:sleep(500),
@@ -126,7 +126,6 @@ rate_limiter_happy_path_sanity_check_test_() ->
                          ], ?M:tracked_items([{?GENERAL, Info}])),
                       ?assertMatch(
                          [
-                          {[{limiter_id, ?GENERAL}, {limiting_type, concurrency}], 1000},
                           {[{limiter_id, ?GENERAL}, {limiting_type, leaky_bucket_tokens}], 1000},
                           {[{limiter_id, ?GENERAL}, {limiting_type, sliding_window_timestamps}], 1000}
                          ], ?M:peers([{?GENERAL, Info}]))

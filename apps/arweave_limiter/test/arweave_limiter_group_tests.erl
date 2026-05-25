@@ -322,8 +322,8 @@ simple_sliding_happy() ->
     timer:sleep(100),
     Info1 = ?M:info(?TEST_LIMITER),
     ?assertMatch(#{sliding_timestamps := #{IP := [1]}}, Info1),
-    #{concurrent_requests := ConcurrentReqs1} = Info1,
-    ?assertEqual(0, maps:size(ConcurrentReqs1)),
+    #{concurrent_monitors := ConcurrentMonitors1} = Info1,
+    ?assertEqual(0, maps:size(ConcurrentMonitors1)),
 
     Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding, _}, IP, 500),
     Caller2 ! done,
@@ -331,8 +331,8 @@ simple_sliding_happy() ->
     timer:sleep(100),
     Info2 = ?M:info(?TEST_LIMITER),
     ?assertMatch(#{sliding_timestamps := #{IP := [1,500]}}, Info2),
-    #{concurrent_requests := ConcurrentReqs2} = Info2,
-    ?assertEqual(0, maps:size(ConcurrentReqs2)),
+    #{concurrent_monitors := ConcurrentMonitors2} = Info2,
+    ?assertEqual(0, maps:size(ConcurrentMonitors2)),
 
     Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding, _}, IP, 2000),
     Caller3 ! done,
@@ -358,51 +358,49 @@ simple_leaky_happy_path(_Config, LimiterPID) ->
              IP = {1,2,3,4},
              %% init state, the ip is not blocked
              Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 0),
-             timer:sleep(20),
              Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 2),
 
-             %% wait a bit so they are surely started.
-             timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{IP := 2},
-                            leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 2}} when map_size(Monitors) == 2, ?M:info(?TEST_LIMITER)),
 
              Caller1 ! done,
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{IP := 1},
-                            leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
-
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 2}} when map_size(Monitors) == 1, ?M:info(?TEST_LIMITER)),
+             
              Caller2 ! done,
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% Keys deleted
-             ?assertMatch(#{concurrent_requests := #{},
-                            leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 2}} when map_size(Monitors) == 0, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger a tick.
              LimiterPID ! {tick, leaky_bucket_reduction},
 
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{},
-                            leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 1}} when map_size(Monitors) == 0, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger a tick.
              LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{},
-                            leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 0}} when map_size(Monitors) == 0, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger a tick.
              LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
              %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
-             #{concurrent_requests := ConcurrentReqs,
-               leaky_tokens := LeakyTokens} = ?M:info(?TEST_LIMITER),
-             ?assertEqual(0, maps:size(ConcurrentReqs)),
-             ?assertMatch(0, maps:size(LeakyTokens)),
+             ?assertMatch(
+                #{concurrent_monitors := Monitors,
+                  leaky_tokens := LeakyTokens} 
+                when map_size(Monitors) == 0 andalso map_size(LeakyTokens) == 0,
+                     ?M:info(?TEST_LIMITER)),
              ok
      end}.
 
@@ -416,14 +414,15 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPID) ->
              timer:sleep(120),
              Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 10),
              timer:sleep(120),
-             Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {reject, concurrency, _Data}, IP, 10),
+             Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {reject, concurrency, _Data}, IP, 20),
 
              %% wait a bit so they are surely started.
              timer:sleep(100),
 
-             ?assertMatch(#{concurrent_requests := #{IP := 2},
-                            leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
-
+             #{concurrent_monitors := Monitors0,
+               leaky_tokens := Leaky0} = ?M:info(?TEST_LIMITER),
+             ?assertEqual(2, maps:size(Monitors0)),
+             ?assertMatch(#{IP := 2}, Leaky0),
 
              Caller1 ! done,
              Caller2 ! done,
@@ -431,16 +430,16 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPID) ->
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% Keys deleted
-             %% NOTE: concurrent_requests := #{} matches to any map, so we don't what's in there.
-             ?assertMatch(#{concurrent_requests := #{},
-                            leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
+             %% NOTE: concurrent_monitors := #{} matches to any map, so we don't what's in there.
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 2}} when map_size(Monitors) == 0, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger a tick.
              LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{},
-                            leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 1}} when map_size(Monitors) == 0, ?M:info(?TEST_LIMITER)),
 
              %% Concurrency reduced, one handler terminated, will register again
              Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 0),
@@ -448,7 +447,7 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPID) ->
              timer:sleep(100),
              Caller4 ! done,
              %% Keys deleted
-             ?assertMatch(#{concurrent_requests := #{},
+             ?assertMatch(#{concurrent_monitors := #{},
                             leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
 
 
@@ -457,7 +456,7 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPID) ->
              LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{},
+             ?assertMatch(#{concurrent_monitors := #{},
                             leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger a tick.
@@ -465,9 +464,9 @@ rate_limiter_rejected_due_concurrency(_Config, LimiterPID) ->
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
              %% Key only deleted from leaky_tokens map, when it reached 0 in the previous tick
-             #{concurrent_requests := ConcurrentReqs,
+             #{concurrent_monitors := ConcurrentMonitors,
                leaky_tokens := LeakyTokens} = ?M:info(?TEST_LIMITER),
-             ?assertEqual(0, maps:size(ConcurrentReqs)),
+             ?assertEqual(0, maps:size(ConcurrentMonitors)),
              ?assertEqual(0, maps:size(LeakyTokens)),
              ok
      end}.
@@ -479,32 +478,28 @@ rejected_due_leaky_rate(_Config, LimiterPID) ->
              IP = {1,2,3,4},
 
              Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 1),
-             timer:sleep(20),
              Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 2),
-             timer:sleep(20),
              Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {reject, rate_limit, _Data}, IP, 3),
 
-             %% wait a bit so they are surely started.
-             timer:sleep(100),
+
              %% 2 concurrent, 2 token
-             ?assertMatch(#{concurrent_requests := #{IP := 2},
-                            leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 2}} when map_size(Monitors) == 2, ?M:info(?TEST_LIMITER)),
 
              %% Simulate a tick
              LimiterPID ! {tick, leaky_bucket_reduction},
              %% wait a tiny bit so the logic surely runs.
-             timer:sleep(100),
+
              %% 2 concurrent, but tokens reduced.
-             ?assertMatch(#{concurrent_requests := #{IP := 2},
-                            leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 1}} when map_size(Monitors) == 2, ?M:info(?TEST_LIMITER)),
 
              %% Tokens reduced, will register again
              Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 10),
-             %% wait a tiny bit so the logic surely runs.
-             timer:sleep(100),
+
              %% 3 concurrent, 2 tokens
-             ?assertMatch(#{concurrent_requests := #{IP := 3},
-                            leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 2}} when map_size(Monitors) == 3, ?M:info(?TEST_LIMITER)),
 
              %% manually trigger two ticks.
              LimiterPID ! {tick, leaky_bucket_reduction},
@@ -512,8 +507,8 @@ rejected_due_leaky_rate(_Config, LimiterPID) ->
 
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
-             ?assertMatch(#{concurrent_requests := #{IP := 3},
-                            leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 0}} when map_size(Monitors) == 3, ?M:info(?TEST_LIMITER)),
 
              %% Clean up
              Caller1 ! done,
@@ -527,9 +522,9 @@ rejected_due_leaky_rate(_Config, LimiterPID) ->
 
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
-             #{concurrent_requests := ConcurrentReqs,
+             #{concurrent_monitors := ConcurrentMonitors,
                leaky_tokens := LeakyTokens} = ?M:info(?TEST_LIMITER),
-             ?assertEqual(0, maps:size(ConcurrentReqs)),
+             ?assertEqual(0, maps:size(ConcurrentMonitors)),
              ?assertEqual(0, maps:size(LeakyTokens)),
              ok
      end}.
@@ -544,9 +539,9 @@ both_exhausted(_Config, LimiterPID) ->
              %% wait a bit so they are surely started.
              timer:sleep(100),
              %% 1 concurrent, 0 token
-             ?assertMatch(#{concurrent_requests := #{IP := 1},
+             ?assertMatch(#{concurrent_monitors := Monitors,
                             sliding_timestamps := #{IP := [_]},
-                            leaky_tokens := #{}}, ?M:info(?TEST_LIMITER)),
+                            leaky_tokens := #{}} when map_size(Monitors) == 1, ?M:info(?TEST_LIMITER)),
 
              Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 20),
 
@@ -554,9 +549,9 @@ both_exhausted(_Config, LimiterPID) ->
              timer:sleep(100),
              %% 2 concurrent, but tokens reduced.
              Info = ?M:info(?TEST_LIMITER),
-             ?assertMatch(#{concurrent_requests := #{IP := 2},
+             ?assertMatch(#{concurrent_monitors := Monitors,
                             sliding_timestamps := #{IP := [_]},
-                            leaky_tokens := #{IP := 1}}, Info),
+                            leaky_tokens := #{IP := 1}} when map_size(Monitors) == 2, Info),
 
              Caller3 = ?assertHandlerRegisterOrRejectCall(
                           ?TEST_LIMITER, {reject, rate_limit, _Data}, IP, 130),
@@ -565,9 +560,9 @@ both_exhausted(_Config, LimiterPID) ->
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% 2 concurrent, 1 token
-             ?assertMatch(#{concurrent_requests := #{IP := 2},
+             ?assertMatch(#{concurrent_monitors := Monitors,
                             sliding_timestamps := #{IP := [_]},
-                            leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
+                            leaky_tokens := #{IP := 1}} when map_size(Monitors) == 2, ?M:info(?TEST_LIMITER)),
 
              %% Clean up
              Caller1 ! done,
@@ -580,9 +575,9 @@ both_exhausted(_Config, LimiterPID) ->
 
              %% wait a tiny bit so the tick logic surely runs.
              timer:sleep(100),
-             #{concurrent_requests := ConcurrentReqs,
+             #{concurrent_monitors := ConcurrentMonitors,
                leaky_tokens := LeakyTokens} = ?M:info(?TEST_LIMITER),
-             ?assertEqual(0, maps:size(ConcurrentReqs)),
+             ?assertEqual(0, maps:size(ConcurrentMonitors)),
              ?assertEqual(0, maps:size(LeakyTokens)),
 
              ok
@@ -599,18 +594,18 @@ peer_cleanup(_Config, LimiterPID) ->
              %% wait a bit so they are surely started.
              timer:sleep(100),
              %% 2 concurrent, 2 token
-             ?assertMatch(#{concurrent_requests := #{IP := 1},
+             ?assertMatch(#{concurrent_monitors := Monitors,
                             sliding_timestamps := #{IP := [_]},
-                            leaky_tokens := #{}}, ?M:info(?TEST_LIMITER)),
+                            leaky_tokens := #{}} when map_size(Monitors) == 1, ?M:info(?TEST_LIMITER)),
 
              Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 20),
 
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% 2 concurrent, but tokens reduced.
-             ?assertMatch(#{concurrent_requests := #{IP := 2},
+             ?assertMatch(#{concurrent_monitors := Monitors,
                             sliding_timestamps := #{IP := [_]},
-                            leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
+                            leaky_tokens := #{IP := 1}} when map_size(Monitors) == 2, ?M:info(?TEST_LIMITER)),
 
              %% further requests are rejected
              Caller3 = ?assertHandlerRegisterOrRejectCall(
@@ -620,9 +615,9 @@ peer_cleanup(_Config, LimiterPID) ->
              %% wait a tiny bit so the logic surely runs.
              timer:sleep(100),
              %% 2 concurrent, 1 token
-             ?assertMatch(#{concurrent_requests := #{IP := 2},
+             ?assertMatch(#{concurrent_monitors := Monitors,
                             sliding_timestamps := #{IP := [_]},
-                            leaky_tokens := #{IP := 1}}, ?M:info(?TEST_LIMITER)),
+                            leaky_tokens := #{IP := 1}} when map_size(Monitors) == 2, ?M:info(?TEST_LIMITER)),
 
              %% Clean up
              Caller1 ! done,
@@ -635,10 +630,10 @@ peer_cleanup(_Config, LimiterPID) ->
              %% wait a tiny bit so the tick logic surely runs.
              %% Now we still have timestamps for IP1 in the state.
              timer:sleep(100),
-             #{concurrent_requests := ConcurrentReqs,
+             #{concurrent_monitors := ConcurrentMonitors,
                sliding_timestamps := SlidingTimestamps,
                leaky_tokens := LeakyTokens} = ?M:info(?TEST_LIMITER),
-             ?assertEqual(0, maps:size(ConcurrentReqs)),
+             ?assertEqual(0, maps:size(ConcurrentMonitors)),
              ?assertEqual(1, maps:size(SlidingTimestamps)),
              ?assertEqual(0, maps:size(LeakyTokens)),
 
@@ -651,10 +646,10 @@ peer_cleanup(_Config, LimiterPID) ->
              %% wait a tiny bit so the tick logic surely runs.
              %% Now we should have all cleaned up.
              timer:sleep(100),
-             #{concurrent_requests := ConcurrentReqs,
+             #{concurrent_monitors := ConcurrentMonitors,
                sliding_timestamps := SlidingTimestamps2,
                leaky_tokens := LeakyTokens} = ?M:info(?TEST_LIMITER),
-             ?assertEqual(0, maps:size(ConcurrentReqs)),
+             ?assertEqual(0, maps:size(ConcurrentMonitors)),
              ?assertEqual(0, maps:size(SlidingTimestamps2)),
              ?assertEqual(0, maps:size(LeakyTokens)),
 
@@ -675,8 +670,8 @@ leaky_manual_reduction(_Config, _LimiterPID) ->
              %% wait a bit so they are surely started.
              timer:sleep(100),
              %% 2 concurrent, 2 token
-             ?assertMatch(#{concurrent_requests := #{IP := 4},
-                            leaky_tokens := #{IP := 4}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 4}} when map_size(Monitors) == 4, ?M:info(?TEST_LIMITER)),
 
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
@@ -685,21 +680,21 @@ leaky_manual_reduction(_Config, _LimiterPID) ->
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, NonRecordedIP)),
 
              %% 2 concurrent, but tokens reduced.
-             ?assertMatch(#{concurrent_requests := #{IP := 4},
-                            leaky_tokens := #{IP := 2}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 2}} when map_size(Monitors) == 4, ?M:info(?TEST_LIMITER)),
 
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
 
              %% 4 concurrent, but tokens reduced.
-             ?assertMatch(#{concurrent_requests := #{IP := 4},
-                            leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 0}} when map_size(Monitors) == 4 , ?M:info(?TEST_LIMITER)),
 
              ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
 
              %% 4 concurrent, no change, there is nothing to reduce beyond 0
-             ?assertMatch(#{concurrent_requests := #{IP := 4},
-                            leaky_tokens := #{IP := 0}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors,
+                            leaky_tokens := #{IP := 0}} when map_size(Monitors) == 4, ?M:info(?TEST_LIMITER)),
 
              %% Clean up
              Caller1 ! done,
@@ -751,14 +746,14 @@ leaky_manual_reduction_disabled(Config, _LimiterPID) ->
                                          }, IP, 10001),
              ?assertEqual(10001, arweave_limiter_time:ts_now()),
 
-             ?assertMatch(#{concurrent_requests := #{IP := [_, _, _, _]},
-                            leaky_tokens := #{IP := 4}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors0,
+                            leaky_tokens := #{IP := 4}} when map_size(Monitors0) == 4, ?M:info(?TEST_LIMITER)),
 
              ?assertEqual(disabled, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
 
              %% Didn't reduce anything
-             ?assertMatch(#{concurrent_requests := #{IP := 4},
-                            leaky_tokens := #{IP := 4}}, ?M:info(?TEST_LIMITER)),
+             ?assertMatch(#{concurrent_monitors := Monitors1,
+                            leaky_tokens := #{IP := 4}} when map_size(Monitors1) == 4, ?M:info(?TEST_LIMITER)),
 
              %% We can repeat this, but still disabled
              ?assertEqual(disabled, ?M:reduce_for_peer(?TEST_LIMITER, IP)),

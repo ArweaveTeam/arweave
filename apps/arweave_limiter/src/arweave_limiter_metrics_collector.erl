@@ -74,11 +74,9 @@ peers(AllInfo) ->
     lists:foldl(fun peers_info/2, [], AllInfo).
 
 peers_info({ID, Info}, Acc) ->
-    ConcurrentRequests = maps:get(concurrent_requests, Info),
     LeakyPeers = maps:get(leaky_tokens, Info),
     SlidingPeers = maps:get(sliding_timestamps, Info),
     Items = [
-             {[{limiter_id, ID}, {limiting_type, concurrency}], maps:size(ConcurrentRequests)},
              {[{limiter_id, ID}, {limiting_type, leaky_bucket_tokens}], maps:size(LeakyPeers)},
              {[{limiter_id, ID}, {limiting_type, sliding_window_timestamps}], maps:size(SlidingPeers)}
             ],
