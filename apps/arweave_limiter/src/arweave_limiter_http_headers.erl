@@ -34,7 +34,8 @@ to_http_headers({RegOrRej, _Mode, #{expiring_limit := _ExpiringLimit,
 %% the `policy=` quota-comment, so clients aware of multiple policies can
 %% see both the sliding window and the leaky bucket.
 ratelimit_limit_value(#{expiring_limit := Expiring,
-                        policies := #{concurrency := #{limit := ConcurrencyLimit},
+                        policies := #{id := ID,
+                                      concurrency := #{limit := ConcurrencyLimit},
                                       sliding_window := SW,
                                       leaky_bucket   := LB}}) ->
     SWLimit  = maps:get(limit, SW),
@@ -42,10 +43,10 @@ ratelimit_limit_value(#{expiring_limit := Expiring,
     LBBurst  = maps:get(burst, LB),
     iolist_to_binary(
       io_lib:format(
-        "~B, ~B;w=~B;policy=\"sliding window\", "
-        "~B;w=~B;burst=~B;policy=\"leaky bucket\" "
-        "~B;w=~B;policy=\"concurrency\" ",
-        [Expiring, SWLimit, SWWindow, LBBurst, SWWindow, LBBurst, ConcurrencyLimit, 1])).
+        "~B, ~B;w=~B;policy=\"~s sliding window\", "
+        "~B;w=~B;burst=~B;policy=\"~s leaky bucket\" "
+        "~B;w=~B;policy=\"~s concurrency\" ",
+        [Expiring, SWLimit, SWWindow, ID, LBBurst, SWWindow, LBBurst, ID, ConcurrencyLimit, 1, ID])).
 
 %% When both Retry-After and RateLimit-Reset are present they
 %% should reference the same instant. We add Retry-After only on rejects

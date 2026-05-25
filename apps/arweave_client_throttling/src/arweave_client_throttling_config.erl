@@ -73,8 +73,17 @@ get_value(Id, Key) ->
 -spec default_groups() -> [map()].
 default_groups() ->
     [
-     #{id => general},
-     #{id => data_sync_record}
+     #{id => chunk},
+     #{id => data_sync_record},
+     #{id => recent_hash_list_diff},
+     #{id => block_index},
+     #{id => wallet_list},
+     #{id => get_vdf},
+     #{id => get_vdf_session},
+     #{id => get_previous_vdf_session},
+     #{id => recent_hash_list_diff},
+     #{id => general}
+     %% NOTE: opposed to server-side limiting there is no need for metrics group.
     ].
 
 %% @doc Return a normalized version of `Group', filling in all
@@ -83,6 +92,9 @@ default_groups() ->
 normalize_group(#{id := Id} = Group) when is_atom(Id) ->
     maps:merge(defaults(Id), Group).
 
+
+%% TODO: after arweave_config refactor, we might want to adopt the default group settings
+%%       from local defaults.
 defaults(Id) ->
     #{
         id => Id,
