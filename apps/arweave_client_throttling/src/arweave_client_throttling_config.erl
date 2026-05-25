@@ -72,7 +72,10 @@ get_value(Id, Key) ->
 %% @doc Return the built-in default list of group specs.
 -spec default_groups() -> [map()].
 default_groups() ->
-    ?ARWEAVE_CLIENT_THROTTLING_DEFAULT_GROUPS.
+    [
+     #{id => general},
+     #{id => data_sync_record}
+    ].
 
 %% @doc Return a normalized version of `Group', filling in all
 %% optional keys with their defaults.
