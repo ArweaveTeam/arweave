@@ -7,6 +7,13 @@
 	collect_mf/2
 ]).
 
+-ifdef(AR_TEST).
+-export([
+         metrics/0,
+         peers/1
+        ]).
+-endif.
+
 -import(prometheus_model_helpers, [create_mf/4]).
 
 -include_lib("prometheus/include/prometheus.hrl").
