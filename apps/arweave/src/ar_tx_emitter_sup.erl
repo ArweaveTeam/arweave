@@ -7,7 +7,6 @@
 -export([init/1]).
 
 -include_lib("arweave/include/ar_sup.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -21,8 +20,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	{ok, Config} = arweave_config:get_env(),
-	MaxEmitters = Config#config.max_emitters,
+	MaxEmitters = arweave_config:get([gossip, tx, max_emitters]),
 	Workers = lists:map(fun tx_workers/1, lists:seq(1, MaxEmitters)),
 	WorkerNames = [ Name || #{ id := Name } <- Workers],
 	Emitter = tx_emitter([ar_tx_emitter, WorkerNames]),

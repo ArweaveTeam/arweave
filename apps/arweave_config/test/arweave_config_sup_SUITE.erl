@@ -70,7 +70,6 @@ one_for_all_restart(_Config) ->
 %% it lists them.
 child_names() ->
 	[
-		arweave_config,
 		arweave_config_store,
 		arweave_config_options_registry,
 		arweave_config_signal_handler

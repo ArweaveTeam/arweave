@@ -181,14 +181,13 @@ test_persisted_mempool() ->
 		100,
 		30000
 	),
-	Config = ar_test_node:stop(),
-	try
+	arweave_config:with_test_config(fun() ->
+		ar_test_node:stop(),
 		%% Rejoin the network.
 		%% Expect the pending transactions to be picked up and distributed.
-		ok = arweave_config:set_env(Config#config{
-			start_from_latest_state = false,
-			peers = [ar_test_node:peer_ip(peer1)]
-		}),
+		_ = arweave_config:set([join, start_from_latest_state], false),
+		ok = arweave_config:replace_peers(trusted,
+			[ar_test_node:peer_ip(peer1)]),
 		ar:start_dependencies(),
 		ar_test_node:wait_until_joined(),
 		ar_test_node:connect_to_peer(peer1),
@@ -197,6 +196,4 @@ test_persisted_mempool() ->
 		[{H, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, 1),
 		B = read_block_when_stored(H),
 		?assertEqual([SignedTX#tx.id], B#block.txs)
-	after
-		ok = arweave_config:set_env(Config)
-	end.
+	end).

@@ -14,7 +14,6 @@
 		code_change/3]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_wallets.hrl").
 
 %% Internal state definition.
@@ -39,8 +38,8 @@ lookup_block_filename(H, CustomDir) when is_binary(H)->
 			not_set ->
 		case get(ar_disk_cache_path) of
 			undefined ->
-				{ok, Config} = arweave_config:get_env(),
-				Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
+				DataDir = arweave_config:get([data_dir]),
+				Path = filename:join(DataDir, ?DISK_CACHE_DIR),
 				put(ar_disk_cache_path, Path),
 				filename:join(Path, ?DISK_CACHE_BLOCK_DIR);
 			Path ->
@@ -74,8 +73,8 @@ lookup_tx_filename(Hash, CustomDir) when is_binary(Hash) ->
 			not_set ->
 				case get(ar_disk_cache_path) of
 		undefined ->
-			{ok, Config} = arweave_config:get_env(),
-			Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
+			DataDir = arweave_config:get([data_dir]),
+			Path = filename:join(DataDir, ?DISK_CACHE_DIR),
 			put(ar_disk_cache_path, Path),
 			filename:join(Path, ?DISK_CACHE_TX_DIR);
 		Path ->
@@ -159,8 +158,9 @@ start_link() ->
 init([]) ->
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
-	{ok, Config} = arweave_config:get_env(),
-	Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
+	DataDir = arweave_config:get([data_dir]),
+	DiskCacheSize = arweave_config:get([gossip, header_cache_size]),
+	Path = filename:join(DataDir, ?DISK_CACHE_DIR),
 	BlockPath = filename:join(Path, ?DISK_CACHE_BLOCK_DIR),
 	TXPath = filename:join(Path, ?DISK_CACHE_TX_DIR),
 	ok = filelib:ensure_dir(BlockPath ++ "/"),
@@ -173,7 +173,7 @@ init([]) ->
 			fun(F,Acc) -> filelib:file_size(F) + Acc end,
 			0
 		),
-	LimitMax = Config#config.disk_cache_size * 1048576, % MB to Bytes.
+	LimitMax = DiskCacheSize * 1048576, % MB to Bytes.
 	LimitMin = trunc(LimitMax * (100 - ?DISK_CACHE_CLEAN_PERCENT_MAX) / 100),
 	State = #state{
 		limit_max = LimitMax,
@@ -299,13 +299,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 
 get_block_path() ->
-	{ok, Config} = arweave_config:get_env(),
-	Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
+	DataDir = arweave_config:get([data_dir]),
+	Path = filename:join(DataDir, ?DISK_CACHE_DIR),
 	filename:join(Path, ?DISK_CACHE_BLOCK_DIR).
 
 get_tx_path() ->
-	{ok, Config} = arweave_config:get_env(),
-	Path = filename:join(Config#config.data_dir, ?DISK_CACHE_DIR),
+	DataDir = arweave_config:get([data_dir]),
+	Path = filename:join(DataDir, ?DISK_CACHE_DIR),
 	filename:join(Path, ?DISK_CACHE_TX_DIR).
 
 write_tx(TX) ->

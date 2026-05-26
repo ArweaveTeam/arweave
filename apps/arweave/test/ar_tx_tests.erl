@@ -232,13 +232,13 @@ polls_for_transactions_and_gossips_and_mines(B0, TXFuns) ->
 	%% Expect them to be accepted, fetched by the peer we did not push them to
 	%% and included into the block.
 	%% Expect the block to be accepted by the peer.
-	{ok, MainConfig} = arweave_config:get_env(),
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
+	MainConfig = arweave_config:snapshot(),
+	PeerConfig = ar_test_node:remote_call(peer1, arweave_config, snapshot, []),
 	try
-		MainConfig2 = MainConfig#config{ max_propagation_peers = 0 },
-		_ = ar_test_node:start(#{ b0 => B0, config => MainConfig2 }),
-		PeerConfig2 = PeerConfig#config{ max_propagation_peers = 0 },
-		_ = ar_test_node:start_peer(peer1, #{ b0 => B0, config => PeerConfig2 }),
+		_ = ar_test_node:start(#{ b0 => B0,
+				config => #{ [gossip, tx, max_peers] => 0 } }),
+		_ = ar_test_node:start_peer(peer1, #{ b0 => B0,
+				config => #{ [gossip, tx, max_peers] => 0 } }),
 		%% Sign here after the node has started to get the correct price
 		%% estimation from it.
 		TXs = lists:map(fun(TXFun) -> TXFun() end, TXFuns),
@@ -280,8 +280,8 @@ polls_for_transactions_and_gossips_and_mines(B0, TXFuns) ->
 			TXs
 		)
 	after
-		arweave_config:set_env(MainConfig),
-		ar_test_node:set_config(peer1, PeerConfig)
+		arweave_config:restore(MainConfig),
+		ar_test_node:remote_call(peer1, arweave_config, restore, [PeerConfig])
 	end.
 
 
@@ -294,14 +294,14 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 	%% Expect the block to be accepted.
 	%% Expect transactions from the difference between the two sets to be kept in the mempool.
 	%% Mine a block on the first node, expect the difference to be included into the block.
-	{ok, MainConfig} = arweave_config:get_env(),
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
+	MainConfig = arweave_config:snapshot(),
+	PeerConfig = ar_test_node:remote_call(peer1, arweave_config, snapshot, []),
 
 	try
-		MainConfig2 = MainConfig#config{ disable = [tx_poller | MainConfig#config.disable] },
-		_ = ar_test_node:start(#{ b0 => B0, config => MainConfig2 }),
-		PeerConfig2 = PeerConfig#config{ disable = [tx_poller | PeerConfig#config.disable] },
-		_ = ar_test_node:start_peer(peer1, #{ b0 => B0, config => PeerConfig2 }),
+		_ = ar_test_node:start(#{ b0 => B0,
+				config => #{ [gossip, tx, polling_enabled] => false } }),
+		_ = ar_test_node:start_peer(peer1, #{ b0 => B0,
+				config => #{ [gossip, tx, polling_enabled] => false } }),
 		%% Sign here after the node has started to get the correct price
 		%% estimation from it.
 		FirstTXSet = lists:map(fun(TXFun) -> TXFun() end, FirstTXSetFuns),
@@ -344,8 +344,8 @@ keeps_txs_after_new_block(B0, FirstTXSetFuns, SecondTXSetFuns) ->
 			lists:sort((read_block_when_stored(hd(BI2)))#block.txs)
 		)
 	after
-		arweave_config:set_env(MainConfig),
-		ar_test_node:set_config(peer1, PeerConfig)
+		arweave_config:restore(MainConfig),
+		ar_test_node:remote_call(peer1, arweave_config, restore, [PeerConfig])
 	end.
 
 returns_error_when_txs_exceed_balance(BuildTXSetFun) ->
@@ -863,8 +863,7 @@ recovers_from_forks(ForkHeight) ->
 	_ = ar_test_node:start(B0),
 	_ = ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
-	{ok, Config} = arweave_config:get_env(),
-	MainPort = Config#config.port,
+	MainPort = arweave_config:get([port]),
 	PreForkTXs = lists:foldl(
 		fun(Height, TXs) ->
 			TX = ar_test_node:sign_v1_tx(Key, #{ last_tx => ar_test_node:get_tx_anchor(peer1),

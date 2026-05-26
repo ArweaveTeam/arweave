@@ -21,7 +21,6 @@ all() ->
 		force_config_runtime_guard,
 		clear_aggregate,
 		replace_aggregate,
-		parse_storage_modules,
 		with_test_config_isolation,
 		runtime_rejects_on_validator_error
 	].
@@ -34,10 +33,6 @@ arweave_config(_Config) ->
 	_ = arweave_config:get([debug]),
 
 	undefined = arweave_config:get([missing, option]),
-
-	_ = arweave_config:get([debug], true),
-
-	1 = arweave_config:get([missing, option], 1),
 
 	{ok, DebugValue1} = arweave_config:set([debug], true),
 	DebugValue1 = arweave_config:get([debug]),
@@ -52,7 +47,7 @@ load(_Config) ->
 		[port] => 1985,
 		[debug] => true
 	}),
-	<<"/tmp/test_load">> = arweave_config:get([data_dir]),
+	"/tmp/test_load" = arweave_config:get([data_dir]),
 	1985 = arweave_config:get([port]),
 	true = arweave_config:get([debug]),
 
@@ -62,10 +57,10 @@ load(_Config) ->
 	2048 = arweave_config:get([network, server, tcp, backlog]),
 
 	ok = arweave_config:load(#{
-		[log_dir] => <<"/tmp/test_logs">>,
+		[log_dir] => "/tmp/test_logs",
 		[network, server, tcp, max_connections] => 1234
 	}),
-	<<"/tmp/test_logs">> = arweave_config:get([log_dir]),
+	"/tmp/test_logs" = arweave_config:get([log_dir]),
 	1234 = arweave_config:get(
 		[network, server, tcp, max_connections]),
 
@@ -78,13 +73,13 @@ force_config_runtime_guard(_Config) ->
 	ok = arweave_config:runtime(),
 	true = arweave_config:is_runtime(),
 
-	%% `[config, http, enabled]` is a `runtime => false` spec (the
-	%% default). Without `force_config/1` it would be rejected because
-	%% the lifecycle is in runtime mode.
+	%% `[data_dir]` is a `runtime => false` spec. Without
+	%% `force_config/1` it would be rejected because the lifecycle is
+	%% in runtime mode.
 	ok = arweave_config:force_config(#{
-		[config, http, enabled] => true
+		[data_dir] => <<"/tmp/test_force_config">>
 	}),
-	true = arweave_config:get([config, http, enabled]),
+	"/tmp/test_force_config" = arweave_config:get([data_dir]),
 
 	true = arweave_config:is_runtime(),
 
@@ -117,28 +112,6 @@ replace_aggregate(_Config) ->
 	end),
 	ok.
 
-parse_storage_modules(_Config) ->
-	PartitionSize = ar_block:partition_size(),
-	Addr = <<"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB">>,
-	Tuples = [
-		{PartitionSize, 0, unpacked},
-		{PartitionSize, 2, {spora_2_6, Addr}}
-	],
-	EntryMap = arweave_config:parse_storage_modules(Tuples),
-	true = is_map(EntryMap),
-	true = map_size(EntryMap) >= 3,
-
-	maps:fold(fun(K, _V, _) ->
-		[storage_modules | _] = K,
-		ok
-	end, ok, EntryMap),
-
-	arweave_config:with_test_config(fun() ->
-		ok = arweave_config:load(EntryMap)
-	end),
-
-	ok.
-
 with_test_config_isolation(_Config) ->
 	OriginalDebug = arweave_config:get([debug]),
 
@@ -156,7 +129,7 @@ runtime_rejects_on_validator_error(_Config) ->
 
 	{ok, true} = arweave_config:set([cm, enabled], true),
 	%% Sanity check: api_secret is not_set by default.
-	not_set = arweave_config:get([cm, api_secret], not_set),
+	not_set = arweave_config:get([cm, api_secret]),
 
 	{error, _} = arweave_config:runtime(),
 	false = arweave_config:is_runtime(),

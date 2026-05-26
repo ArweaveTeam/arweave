@@ -106,22 +106,23 @@ test_data_roots_sync_from_peer() ->
 		),
 
 	%% Now start main (node A) with header syncing disabled and storage modules covering PART of the range.
-	{ok, BaseConfig} = arweave_config:get_env(),
 	MainRewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	%% Cover only the first partition and half of the second one to ensure partial coverage.
-	MainConfig = BaseConfig#config{
-		mine = false,
-		header_sync_jobs = 0,
-		storage_modules = [
-			%% The first MB of the weave.
-			{?MiB, 0, {replica_2_9, MainRewardAddr}},
-			%% The second 3 MB of the weave (skipping 1-2 MB).
-			{3 * ?MiB, 1, {replica_2_9, MainRewardAddr}}
-		]
+	MainConfig = #{
+		[mining, enabled] => false,
+		[gossip, header_sync_jobs] => 0
 	},
+	MainStorageModules = [
+		%% The first MB of the weave.
+		{?MiB, 0, {replica_2_9, MainRewardAddr}},
+		%% The second 3 MB of the weave (skipping 1-2 MB).
+		{3 * ?MiB, 1, {replica_2_9, MainRewardAddr}}
+	],
     ConfiguredRanges = ar_intervals:from_list([{?MiB, 0}, {6 * ?MiB, 3 * ?MiB}]),
 
-	ar_test_node:join_on(#{ node => main, join_on => peer1, config => MainConfig }, true),
+	ar_test_node:join_on(#{ node => main, join_on => peer1,
+		config => MainConfig,
+		storage_modules => MainStorageModules }, true),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:wait_until_joined(main),
 
@@ -271,18 +272,19 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 	{LastB, _} = lists:last(BlocksData),
 	mine_empty_blocks_on_peer_after(peer1, LastB, 11),
 
-	{ok, BaseConfig} = arweave_config:get_env(),
-	MainConfig = BaseConfig#config{
-		mine = false,
-		sync_jobs = 0,
-		header_sync_jobs = 0,
-		enable_data_roots_syncing = true,
-		storage_modules = [
-			{?MiB, 0, unpacked},
-			{3 * ?MiB, 1, unpacked}
-		]
+	MainConfig = #{
+		[mining, enabled] => false,
+		[sync, jobs] => 0,
+		[gossip, header_sync_jobs] => 0,
+		[gossip, data_roots, syncing_enabled] => true
 	},
-	ar_test_node:join_on(#{ node => main, join_on => peer1, config => MainConfig }, true),
+	MainStorageModules = [
+		{?MiB, 0, unpacked},
+		{3 * ?MiB, 1, unpacked}
+	],
+	ar_test_node:join_on(#{ node => main, join_on => peer1,
+		config => MainConfig,
+		storage_modules => MainStorageModules }, true),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:wait_until_joined(main),
 	ar_test_node:assert_wait_until_height(main, LastB#block.height + 11),
@@ -481,22 +483,22 @@ join_main_on_peer1(ExpectedHeight, EnableBackgroundSync) ->
 	join_main_on_peer1(ExpectedHeight, EnableBackgroundSync, undefined).
 
 join_main_on_peer1(ExpectedHeight, EnableBackgroundSync, MaxDuplicateDataRoots) ->
-	{ok, BaseConfig} = arweave_config:get_env(),
-	Config = BaseConfig#config{
-		mine = false,
-		sync_jobs = 0,
-		header_sync_jobs =
+	BaseOverrides = #{
+		[mining, enabled] => false,
+		[sync, jobs] => 0,
+		[gossip, header_sync_jobs] =>
 			case EnableBackgroundSync of
 				true -> 2;
 				false -> 0
 			end,
-		enable_data_roots_syncing = EnableBackgroundSync
+		[gossip, data_roots, syncing_enabled] => EnableBackgroundSync
 	},
 	MainConfig = case MaxDuplicateDataRoots of
 		undefined ->
-			Config;
+			BaseOverrides;
 		Value ->
-			Config#config{ max_duplicate_data_roots = Value }
+			ar_test_node:merge_overrides(BaseOverrides,
+				#{ [gossip, data_roots, max_duplicates] => Value })
 	end,
 	ar_test_node:join_on(#{ node => main, join_on => peer1, config => MainConfig }, true),
 	ar_test_node:connect_to_peer(peer1),

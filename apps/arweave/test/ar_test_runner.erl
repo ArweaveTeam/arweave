@@ -9,7 +9,6 @@
 -export([list_tests/1, list_tests_json/1]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 %% @doc Run all tests for a given test type.
 %% TestType is 'test' or 'e2e'.
@@ -87,14 +86,9 @@ default_modules(test) ->
 
 run_tests(TestType, TestSpec) ->
 	ensure_started(TestType),
-	TotalTimeout = case TestType of
-		e2e -> ?E2E_TEST_SUITE_TIMEOUT;
-		_ -> ?TEST_SUITE_TIMEOUT
-	end,
 	Result =
 		try
-			EunitSpec = build_eunit_spec(TotalTimeout, TestSpec),
-			eunit:test(EunitSpec, [verbose, {print_depth, 100}])
+			eunit:test(build_eunit_spec(TestSpec), [verbose, {print_depth, 100}])
 		after
 			ar_test_node:stop_peers(TestType)
 		end,
@@ -116,13 +110,16 @@ ensure_started(TestType) ->
 			init:stop(1)
 	end.
 
-build_eunit_spec(Timeout, {modules, []}) ->
-	{timeout, Timeout, []};
-build_eunit_spec(Timeout, {modules, Mods}) ->
-	{timeout, Timeout, Mods};
-build_eunit_spec(Timeout, {mixed, Specs}) ->
-	EunitSpecs = lists:map(fun spec_to_eunit/1, Specs),
-	{timeout, Timeout, EunitSpecs}.
+build_eunit_spec({modules, Mods}) ->
+	%% Hand eunit the bare list (no outer `{timeout, _, [...]}'
+	%% wrapper). When the list itself is wrapped in a timeout, eunit
+	%% treats it as one test set and a cancellation in any element
+	%% aborts the remaining siblings. Each module already contains its
+	%% own per-test `{timeout, ?TEST_NODE_TIMEOUT, fun}' generators,
+	%% so we don't need an additional outer guard.
+	Mods;
+build_eunit_spec({mixed, Specs}) ->
+	[spec_to_eunit(S) || S <- Specs].
 
 spec_to_eunit({module, Mod}) ->
 	Mod;
@@ -163,16 +160,17 @@ parse_default_module_line(Line) ->
 
 start_for_tests(TestType) ->
 	UniqueName = ar_test_node:get_node_namespace(),
-	TestConfig = #config{
-		debug = true,
-		peers = [],
-		data_dir = ".tmp/data_" ++ atom_to_list(TestType) ++ "_main_" ++ UniqueName,
-		port = ar_test_node:get_unused_port(),
-		disable = [randomx_jit],
-		'http_client.http.keepalive' = 4_000,
-		%% Provide unreasonable high limit for data_sync_record rate limiter group
-		%% as tests run quite uneven, and unrealisticly high rate.
-		'http_api.limiter.data_sync_record.leaky_limit' = 1000,
-		auto_join = false
-	},
-	ar:start(TestConfig).
+	DataDir = ".tmp/data_" ++ atom_to_list(TestType) ++ "_main_" ++ UniqueName,
+	Port = ar_test_node:get_unused_port(),
+	%% Park the boot-time scaffolding in env vars and let
+	%% `arweave_config:bootstrap/1' apply it. The same env mirror is
+	%% what `ar_test_node:clean_up_and_stop/0' replays after each
+	%% `arweave_config:reset/0' — no test-only config code paths.
+	true = os:putenv("AR_DATA_DIR", DataDir),
+	true = os:putenv("AR_PORT", integer_to_list(Port)),
+	true = os:putenv("AR_DEBUG", "true"),
+	true = os:putenv("AR_RANDOMX_JIT", "false"),
+	true = os:putenv("AR_NETWORK_CLIENT_HTTP_KEEPALIVE", "4000"),
+	true = os:putenv("AR_JOIN_AUTO", "false"),
+	ok = arweave_config:bootstrap([]),
+	ar:start_dependencies().

@@ -219,8 +219,8 @@ path_relative(Path) ->
 %% strings as binaries).
 -spec string(String) -> Return when
 	String :: list() | binary(),
-	Return :: {ok, list() | binary()} | {error, term()}.
-string(Binary) when is_binary(Binary) -> {ok, Binary};
+	Return :: {ok, list()} | {error, term()}.
+string(Binary) when is_binary(Binary) -> string(binary_to_list(Binary));
 string(String) when is_list(String) -> string(String, String);
 string(Other) -> {error, Other}.
 

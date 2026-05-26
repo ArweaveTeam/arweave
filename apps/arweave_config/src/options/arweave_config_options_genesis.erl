@@ -33,7 +33,7 @@ specs() ->
 	].
 
 validate() ->
-	case arweave_config:get([genesis, init], false) of
+	case arweave_config:get([genesis, init]) of
 		true ->
 			case ?NETWORK_NAME of
 				"arweave.N.1" ->

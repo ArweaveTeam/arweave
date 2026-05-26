@@ -9,7 +9,6 @@
 		wallet_filepath/1, wallet_filepath/3,
 		get_or_create_wallet/1, recover_key/3]).
 
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -include("ar.hrl").
 
@@ -50,8 +49,8 @@ new_keyfile(KeyType) ->
 %% @doc Generate a new wallet public and private key, with a corresponding keyfile.
 %% The provided key is used as part of the file name.
 new_keyfile(KeyType, WalletName) ->
-	{ok, Config} = arweave_config:get_env(),
-	new_keyfile(KeyType, WalletName, Config#config.data_dir).
+	DataDir = arweave_config:get([data_dir]),
+	new_keyfile(KeyType, WalletName, DataDir).
 
 new_keyfile(KeyType, WalletName, DataDir) ->
 	{Pub, Priv, Key} =
@@ -125,17 +124,17 @@ new_keyfile(KeyType, WalletName, DataDir) ->
 	end.
 
 wallet_filepath(Wallet) ->
-	{ok, Config} = arweave_config:get_env(),
-	wallet_filepath(Wallet, Config#config.data_dir).
+	DataDir = arweave_config:get([data_dir]),
+	wallet_filepath(Wallet, DataDir).
 
 wallet_filepath(Wallet, DataDir) ->
 	Filename = lists:flatten(["arweave_keyfile_", binary_to_list(Wallet), ".json"]),
 	filename:join([DataDir, ?WALLET_DIR, Filename]).
 
 wallet_filepath2(Wallet) ->
-	{ok, Config} = arweave_config:get_env(),
+	DataDir = arweave_config:get([data_dir]),
 	Filename = lists:flatten([binary_to_list(Wallet), ".json"]),
-	filename:join([Config#config.data_dir, ?WALLET_DIR, Filename]).
+	filename:join([DataDir, ?WALLET_DIR, Filename]).
 
 %% @doc Read the keyfile for the key with the given address from disk.
 %% Return not_found if arweave_keyfile_[addr].json or [addr].json is not found
@@ -367,8 +366,8 @@ base64_address_with_optional_checksum_to_decoded_address_safe(AddrBase64)->
 %% @doc Read a wallet of one of the given types from disk. Files modified later are prefered.
 %% If no file is found, create one of the type standing first in the list.
 get_or_create_wallet(Types) ->
-	{ok, Config} = arweave_config:get_env(),
-	WalletDir = filename:join(Config#config.data_dir, ?WALLET_DIR),
+	DataDir = arweave_config:get([data_dir]),
+	WalletDir = filename:join(DataDir, ?WALLET_DIR),
 	Entries =
 		lists:reverse(lists:sort(filelib:fold_files(
 			WalletDir,
@@ -407,8 +406,8 @@ recover_key(Data, Signature, ?ECDSA_KEY_TYPE) ->
 %%%===================================================================
 
 wallet_filepath(WalletName, PubKey, KeyType) ->
-	{ok, Config} = arweave_config:get_env(),
-	wallet_filepath(WalletName, PubKey, KeyType, Config#config.data_dir).
+	DataDir = arweave_config:get([data_dir]),
+	wallet_filepath(WalletName, PubKey, KeyType, DataDir).
 
 wallet_filepath(WalletName, PubKey, KeyType, DataDir) ->
 	wallet_filepath(wallet_name(WalletName, PubKey, KeyType), DataDir).

@@ -7,7 +7,6 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -record(state, {
 	remote_servers,
@@ -53,9 +52,8 @@ maybe_request_sessions(SessionKey) ->
 %%%===================================================================
 
 init([]) ->
-	{ok, Config} = arweave_config:get_env(),
-	Peers = Config#config.nonce_limiter_server_trusted_peers,
-	case ar_config:use_remote_vdf_server() of
+	Peers = arweave_config:get_peers(vdf_server),
+	case ar_nonce_limiter:use_remote_vdf_server() of
 		false ->
 			ok;
 		true ->
@@ -72,7 +70,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast(pull, State = #state{ request_sessions = RequestSessions }) ->
 	DoPull = (
-		ar_config:pull_from_remote_vdf_server() orelse
+		arweave_config:get([vdf, pull]) orelse
 		RequestSessions == true
 	),
 	case DoPull of
@@ -83,8 +81,8 @@ handle_cast(pull, State = #state{ request_sessions = RequestSessions }) ->
 		false ->
 			%% Even when pulling is disabled, periodically re-resolve VDF server peers
 			%% so that pushes (POST /vdf) continue to work (e.g., after DNS changes).
-			{ok, Config} = arweave_config:get_env(),
-			resolve_server_peers(Config#config.nonce_limiter_server_trusted_peers),
+			resolve_server_peers(
+				arweave_config:get_peers(vdf_server)),
 			ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
 			{noreply, State}
 	end;

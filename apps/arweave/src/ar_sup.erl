@@ -15,7 +15,6 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_sup.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 %% ===================================================================
 %% API functions
@@ -103,8 +102,8 @@ init([]) ->
 		?CHILD(ar_chain_stats, worker),
 		?CHILD_SUP(ar_node_sup, supervisor)
 	],
-	{ok, Config} = arweave_config:get_env(),
-	DebugChildren = case Config#config.debug of
+	Debug = arweave_config:get([debug]),
+	DebugChildren = case Debug of
 		true -> [?CHILD(ar_process_sampler, worker)];
 		false -> []
 	end,

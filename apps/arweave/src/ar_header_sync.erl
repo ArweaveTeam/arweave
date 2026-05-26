@@ -8,7 +8,6 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_header_sync.hrl").
 
 %%% This module syncs block and transaction headers and maintains a persisted record of synced
@@ -64,9 +63,10 @@ init([]) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
 	[ok, ok] = ar_events:subscribe([tx, disksup]),
-	{ok, Config} = arweave_config:get_env(),
+	DataDir = arweave_config:get([data_dir]),
+	HeaderSyncJobs = arweave_config:get([gossip, header_sync_jobs]),
 	ok = ar_kv:open(#{
-		path => filename:join([Config#config.data_dir, ?ROCKS_DB_DIR, "ar_header_sync_db"]),
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "ar_header_sync_db"]),
 		name => ?MODULE}),
 	{SyncRecord, Height, CurrentBI} =
 		case ar_storage:read_term(header_sync_state) of
@@ -79,7 +79,7 @@ init([]) ->
 		fun(_) ->
 			gen_server:cast(self(), process_item)
 		end,
-		lists:seq(1, Config#config.header_sync_jobs)
+		lists:seq(1, HeaderSyncJobs)
 	),
 	gen_server:cast(self(), store_sync_state),
 	ets:insert(?MODULE, {synced_blocks, ar_intervals:sum(SyncRecord)}),
@@ -281,9 +281,11 @@ handle_info({event, tx, _}, State) ->
 
 handle_info({event, disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, _Percentage, Bytes}},
 		State) ->
-	{ok, Config} = arweave_config:get_env(),
-	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * ?MiB,
-	DiskCacheSize = Config#config.disk_cache_size * 1048576,
+	MaxDiskPoolBufferMb = arweave_config:get(
+		[disk_pool, max_buffer_size]),
+	DiskCacheSizeMb = arweave_config:get([gossip, header_cache_size]),
+	DiskPoolSize = MaxDiskPoolBufferMb * ?MiB,
+	DiskCacheSize = DiskCacheSizeMb * 1048576,
 	BufferSize = 10_000_000_000,
 	case Bytes < DiskPoolSize + DiskCacheSize + BufferSize div 2 of
 		true ->
@@ -298,8 +300,8 @@ handle_info({event, disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, _Perc
 							"and data syncing into storage modules can continue. "
 							"Mining performance is not affected. Available: ~Bmb, "
 							"pause threshold including safety buffer: ~Bmb.~n",
-					ar:console(Msg, [Config#config.max_disk_pool_buffer_mb,
-							Config#config.disk_cache_size, Bytes div ?MiB,
+					ar:console(Msg, [MaxDiskPoolBufferMb,
+							DiskCacheSizeMb, Bytes div ?MiB,
 							(DiskPoolSize + DiskCacheSize + BufferSize div 2) div ?MiB]),
 					?LOG_INFO([{event, ar_header_sync_stopped_syncing},
 							{reason, insufficient_disk_space}]);

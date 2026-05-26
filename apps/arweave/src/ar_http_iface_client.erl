@@ -663,7 +663,7 @@ get_vdf_update(Peer) ->
 
 get_vdf_session(Peer) ->
 	{Path, Format} =
-		case ar_config:compute_own_vdf() of
+		case ar_nonce_limiter:compute_own_vdf() of
 			true ->
 				%% If we compute our own VDF, we need to know the VDF difficulties
 				%% so that we can continue extending the new session. The VDF difficulties
@@ -686,7 +686,7 @@ get_vdf_session(Peer) ->
 
 get_previous_vdf_session(Peer) ->
 	{Path, Format} =
-		case ar_config:compute_own_vdf() of
+		case ar_nonce_limiter:compute_own_vdf() of
 			true ->
 				%% If we compute our own VDF, we need to know the VDF difficulties
 				%% so that we can continue extending the new session. The VDF difficulties
@@ -1508,22 +1508,23 @@ handle_cm_noop_response(Response) ->
 	{error, Response}.
 
 p2p_headers() ->
-	{ok, Config} = arweave_config:get_env(),
-	[{<<"x-p2p-port">>, integer_to_binary(Config#config.port)},
+	Port = arweave_config:get([port]),
+	[{<<"x-p2p-port">>, integer_to_binary(Port)},
 			{<<"x-release">>, integer_to_binary(?RELEASE_NUMBER)}].
 
 cm_p2p_headers() ->
-	{ok, Config} = arweave_config:get_env(),
-	add_header(<<"x-cm-api-secret">>, Config#config.cm_api_secret, p2p_headers()).
+	ApiSecret = arweave_config:get([cm, api_secret]),
+	add_header(<<"x-cm-api-secret">>, ApiSecret, p2p_headers()).
 
 pool_client_headers() ->
-	{ok, Config} = arweave_config:get_env(),
-	Headers = add_header(<<"x-pool-api-key">>, Config#config.pool_api_key, p2p_headers()),
-	case Config#config.pool_worker_name of
+	ApiKey = arweave_config:get([pool, api_key]),
+	WorkerName = arweave_config:get([pool, worker_name]),
+	Headers = add_header(<<"x-pool-api-key">>, ApiKey, p2p_headers()),
+	case WorkerName of
 		not_set ->
 			Headers;
-		WorkerName ->
-			add_header(<<"worker">>, WorkerName, Headers)
+		Name ->
+			add_header(<<"worker">>, Name, Headers)
 	end.
 
 add_header(Name, Value, Headers) when is_binary(Name) andalso is_binary(Value) ->

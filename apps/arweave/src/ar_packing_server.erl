@@ -14,7 +14,6 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
@@ -279,8 +278,8 @@ generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, t
 			prometheus_counter:inc(replica_2_9_entropy_stats, [Partition, cache_miss]),
 			Entropy = do_generate_entropy(RewardAddr, Key),
 			update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
-			{ok, Config} = arweave_config:get_env(),
-			MaxSize = Config#config.replica_2_9_entropy_cache_size_mb * ?MiB,
+			EntropyCacheSizeMb = arweave_config:get([packing, entropy, cache_size]),
+			MaxSize = EntropyCacheSizeMb * ?MiB,
 			ar_entropy_cache:clean_up_space(?REPLICA_2_9_ENTROPY_SIZE, MaxSize),
 			ar_entropy_cache:put(Key, Entropy, ?REPLICA_2_9_ENTROPY_SIZE),
 			entropy_generation_release(Key),
@@ -314,8 +313,6 @@ pack_replica_2_9_chunk(RewardAddr, AbsoluteEndOffset, Chunk) ->
 %%%===================================================================
 
 init([]) ->
-	{ok, Config} = arweave_config:get_env(),
-
 	ar:console("~nInitialising RandomX datasets. Keys: ~p, ~p. "
 			"The process may take several minutes.~n",
 			[ar_util:encode(?RANDOMX_PACKING_KEY),
@@ -328,15 +325,16 @@ init([]) ->
 	H1String = io_lib:format("~.3f", [H1 / 1000]),
 	ar:console("Hashing benchmark~nH0: ~s ms~nH1/H2: ~s ms~n", [H0String, H1String]),
 	?LOG_INFO([{event, hash_benchmark}, {h0_ms, H0String}, {h1_ms, H1String}]),
-	NumWorkers = Config#config.packing_workers,
+	NumWorkers = arweave_config:get([packing, workers]),
 	ar:console("~nStarting ~B packing threads.~n", [NumWorkers]),
 	?LOG_INFO([{event, starting_packing_threads}, {num_threads, NumWorkers}]),
 	Workers = queue:from_list(
 		[spawn_link(fun() -> worker(PackingState) end) || _ <- lists:seq(1, NumWorkers)]),
 	ets:insert(?MODULE, {buffer_size, 0}),
 
+	PackingCacheSizeLimit = arweave_config:get([packing, cache_size]),
 	MaxSize =
-		case Config#config.packing_cache_size_limit of
+		case PackingCacheSizeLimit of
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),

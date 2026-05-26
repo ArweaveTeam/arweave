@@ -25,7 +25,9 @@
 	get_local/1,
 	get_all_with_prefix/1,
 	set/2,
-	set_local/2
+	set_local/2,
+	is_runtime/0,
+	set_runtime/1
 ]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
@@ -33,6 +35,10 @@
 -export([get_long_argument/1]).
 -endif.
 -include_lib("kernel/include/logger.hrl").
+
+%% Dedicated ETS table that holds the load-vs-runtime lifecycle flag.
+%% Kept separate from the spec table so the schemas don't mix.
+-define(RUNTIME_TABLE, arweave_config_options_registry_runtime).
 
 %% @doc Start the registry process with the default spec set.
 -spec start_link() -> Return when
@@ -243,6 +249,24 @@ set_local(Option, Value) ->
 get_local(Option) ->
 	do_get(Option).
 
+%% @doc Whether the registry is in runtime mode. Lock-free ETS read so
+%% callers (including the registry process itself) can check without
+%% deadlocking through the gen_server.
+-spec is_runtime() -> boolean().
+is_runtime() ->
+	case ets:lookup(?RUNTIME_TABLE, runtime) of
+		[{runtime, true}] -> true;
+		_ -> false
+	end.
+
+%% @doc Set the lifecycle flag. The facade flips it one-way at
+%% `arweave_config:runtime/0`; tests flip it both directions through
+%% `arweave_config:with_test_config/1`.
+-spec set_runtime(boolean()) -> ok.
+set_runtime(Bool) when is_boolean(Bool) ->
+	_ = gen_server:call(?MODULE, {set_runtime, Bool}, 10_000),
+	ok.
+
 -spec init(Specs) -> Return when
 	Specs :: [atom() | map()],
 	Return :: {ok, NamedEts},
@@ -267,6 +291,12 @@ init_ets(Specs) ->
 		named_table,
 		protected
 	]),
+	ets:new(?RUNTIME_TABLE, [
+		named_table,
+		protected
+	]),
+	%% Boot in load mode; `arweave_config:runtime/0` flips this later.
+	ets:insert(?RUNTIME_TABLE, {runtime, false}),
 	case arweave_config_options_spec:normalize_specs(Specs) of
 		{ok, MapSpec} ->
 			init_state(MapSpec);
@@ -299,6 +329,9 @@ handle_call({get, Option}, _From, State) ->
 	end;
 handle_call({set, Option, Value}, _From, State) ->
 	{reply, do_set(Option, Value), State};
+handle_call({set_runtime, Bool}, _From, State) when is_boolean(Bool) ->
+	ets:insert(?RUNTIME_TABLE, {runtime, Bool}),
+	{reply, ok, State};
 handle_call(Msg, From, State) ->
 	?LOG_WARNING([
 		{message, Msg},
@@ -411,7 +444,7 @@ do_set(Option, Value) ->
 %% accepts sets; once in runtime mode only `runtime => true` specs do.
 do_set_runtime(Option, Value, Spec, Bindings) ->
 	RuntimeWritable = maps:get(runtime, Spec, false),
-	InRuntime = arweave_config:is_runtime(),
+	InRuntime = is_runtime(),
 	case {InRuntime, RuntimeWritable} of
 		{false, _} ->
 			do_set_parameter(Option, Value, Spec, Bindings);
@@ -474,7 +507,7 @@ do_set_value(Option, Value, Spec, _Bindings) ->
 %% is deferred to `arweave_config:runtime/0`.
 do_set_store_with_validation(Option, NewValue, OldValue, Spec) ->
 	Result = do_set_store(Option, NewValue, OldValue, Spec),
-	case {Result, arweave_config:is_runtime()} of
+	case {Result, is_runtime()} of
 		{{ok, _, _}, true} ->
 			case arweave_config_validate:run() of
 				ok ->

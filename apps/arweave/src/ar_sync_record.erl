@@ -12,7 +12,6 @@
 -export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 %% The kv storage key to the sync records.
 -define(SYNC_RECORDS_KEY, <<"sync_records">>).
@@ -315,8 +314,7 @@ init(StoreID) ->
 	?LOG_INFO([{event, ar_sync_record_start}, {store_id, StoreID}]),
 	process_flag(trap_exit, true),
 	StorageModule = ar_storage_module:get_by_id(StoreID),
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get([data_dir]),
 	{Dir, StorageModuleSize, StorageModuleIndex, PartitionNumber} =
 		case StorageModule of
 			?DEFAULT_MODULE ->

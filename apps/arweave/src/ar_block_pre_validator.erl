@@ -9,7 +9,6 @@
 -include("ar.hrl").
 -include("ar_consensus.hrl").
 
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -record(state, {
 	%% The priority queue storing the validation requests.
@@ -78,9 +77,10 @@ pre_validate(B, Peer, ReceiveTimestamp) ->
 init([]) ->
 	gen_server:cast(?MODULE, pre_validate),
 	ok = ar_events:subscribe(block),
-	{ok, Config} = arweave_config:get_env(),
-	ThrottleBySolutionInterval = Config#config.block_throttle_by_solution_interval,
-	ThrottleByIPInterval = Config#config.block_throttle_by_ip_interval,
+	ThrottleBySolutionInterval = arweave_config:get(
+		[gossip, block, throttle_by_solution_interval]),
+	ThrottleByIPInterval = arweave_config:get(
+		[gossip, block, throttle_by_ip_interval]),
 	{ok, #state{ throttle_by_ip_interval = ThrottleByIPInterval,
 			throttle_by_solution_interval = ThrottleBySolutionInterval }}.
 
@@ -489,8 +489,7 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 			pre_validate_nonce_limiter_global_step_number(B, PrevB, false, Peer);
 		{invalid, ExtraData2} ->
 			Code = maps:get(code, ExtraData2, check_resigned_solution_hash),
-			{ok, Config} = arweave_config:get_env(),
-			case lists:member(extended_block_validation_trace, Config#config.enable) of
+			case arweave_config:feature_enabled(extended_block_validation_trace) of
 				true ->
 					post_block_reject_warn_and_error_dump(B, Code, Peer, ExtraData2);
 				false ->
@@ -918,9 +917,9 @@ post_block_reject_warn_and_error_dump(B, Step, Peer) ->
 	post_block_reject_warn_and_error_dump(B, Step, Peer, #{}).
 
 post_block_reject_warn_and_error_dump(B, Step, Peer, ExtraData) ->
-	{ok, Config} = arweave_config:get_env(),
+	DataDir = arweave_config:get([data_dir]),
 	ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
-	File = filename:join(Config#config.data_dir, "invalid_block_dump_" ++ ID),
+	File = filename:join(DataDir, "invalid_block_dump_" ++ ID),
 	file:write_file(File, term_to_binary({B, ExtraData})),
 	post_block_reject_warn(B, Step, Peer),
 	?LOG_WARNING([{event, post_block_rejected},

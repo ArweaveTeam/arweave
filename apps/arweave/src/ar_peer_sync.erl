@@ -35,7 +35,6 @@
 -include("ar_data_discovery.hrl").
 -include("ar_sync_buckets.hrl").
 -include_lib("arweave/include/ar_sup.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -ifdef(AR_TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -118,9 +117,9 @@ register_workers() ->
 		false ->
 			[];
 		true ->
-			{ok, Config} = arweave_config:get_env(),
+			StorageModules = arweave_config:storage_modules(),
 			StoreIDs = [
-				ar_storage_module:id(SM) || SM <- Config#config.storage_modules
+				ar_storage_module:id(SM) || SM <- StorageModules
 			] ++ [?DEFAULT_MODULE],
 			[?CHILD_WITH_ARGS(?MODULE, worker, name(SID), [SID]) || SID <- StoreIDs]
 	end.
@@ -593,10 +592,10 @@ get_hot_peers(Offset, footprint) ->
 		?GET_FOOTPRINT_RECORD_PATH).
 
 get_hot_peers_for_bucket(GetAllFun, _RPMKey, Path) ->
-	{ok, Config} = arweave_config:get_env(),
+	LocalOnly = arweave_config:get([sync, local_peers_only]),
 	AllPeers =
-		case Config#config.sync_from_local_peers_only of
-			true -> Config#config.local_peers;
+		case LocalOnly of
+			true -> arweave_config:get_peers(local);
 			false -> GetAllFun()
 		end,
 	HotPeers = [

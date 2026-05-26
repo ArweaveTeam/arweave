@@ -8,7 +8,6 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_consensus.hrl").
 -include("ar_mining.hrl").
 
@@ -44,11 +43,11 @@ garbage_collect() ->
 %%%===================================================================
 
 init([]) ->
-	{ok, Config} = arweave_config:get_env(),
+	HashingThreads = arweave_config:get([mining, hashing_threads]),
 	State = lists:foldl(
 		fun(_, Acc) -> start_hashing_thread(Acc) end,
 		#state{},
-		lists:seq(1, Config#config.hashing_threads)
+		lists:seq(1, HashingThreads)
 	),
 	{ok, State}.
 

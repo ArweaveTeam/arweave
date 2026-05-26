@@ -38,7 +38,6 @@
 	derived_id/1,
 	list/0,
 	defrags/0,
-	to_entry_map/1,
 	write_list/1,
 	write_defrags/1
 ]).
@@ -215,42 +214,6 @@ defrags() ->
 %% suitable for `arweave_config:load/1`. Keys are
 %% `[storage_modules, <id>, ...]` option_keys; values are the leaf
 %% scalars. Pure — no side effects.
--spec to_entry_map([term()]) -> #{[term()] => term()}.
-to_entry_map(L) when is_list(L) ->
-	lists:foldl(fun(T, Acc) ->
-		maps:merge(Acc, tuple_to_entries(T))
-	end, #{}, L).
-
-tuple_to_entries({BucketSize, Bucket, Packing} = Tuple) ->
-	ID = derived_id(Tuple),
-	maps:merge(
-		range_entries(ID, BucketSize, Bucket),
-		packing_entries(ID, Packing)).
-
-range_entries(ID, BucketSize, Bucket) when BucketSize =:= ?PARTITION_SIZE ->
-	#{ [storage_modules, ID, partition] => Bucket };
-range_entries(ID, BucketSize, Bucket) ->
-	Start = Bucket * BucketSize,
-	#{
-		[storage_modules, ID, range, start] => Start,
-		[storage_modules, ID, range, 'end'] => Start + BucketSize
-	}.
-
-packing_entries(ID, unpacked) ->
-	#{ [storage_modules, ID, packing, format] => unpacked };
-packing_entries(ID, {Format, Addr})
-		when Format =:= spora_2_6; Format =:= replica_2_9 ->
-	#{
-		[storage_modules, ID, packing, format] => Format,
-		[storage_modules, ID, packing, address] => Addr
-	};
-packing_entries(ID, {composite, Addr, PackingDifficulty}) ->
-	#{
-		[storage_modules, ID, packing, format] => composite,
-		[storage_modules, ID, packing, address] => Addr,
-		[storage_modules, ID, packing, difficulty] => PackingDifficulty
-	}.
-
 %% @doc Take the legacy tuple list and write each entry's attributes
 %% into `[storage_modules, <id>, ...]`.
 -spec write_list([term()]) -> ok.
@@ -408,9 +371,9 @@ validate_no_duplicates() ->
 
 %% @doc Cross-cutting: also reads [mining, enabled] and [mining, address].
 validate_unique_replication_type() ->
-	case arweave_config:get([mining, enabled], false) of
+	case arweave_config:get([mining, enabled]) of
 		true ->
-			MiningAddr = arweave_config:get([mining, address], not_set),
+			MiningAddr = arweave_config:get([mining, address]),
 			Unique = lists:foldl(
 				fun({_, _, {composite, Addr, Difficulty}}, Acc)
 						when Addr =:= MiningAddr ->

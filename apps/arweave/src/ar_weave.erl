@@ -99,8 +99,7 @@ init(WalletList, Diff, GenesisDataSize) ->
 			false ->
 				InitialHistory = get_initial_block_time_history(),
 				B1#block{
-					merkle_rebase_support_threshold =
-							ar_block:get_merkle_rebase_support_threshold(),
+					merkle_rebase_support_threshold = ar_block:strict_data_split_threshold() * 2,
 					chunk_hash = crypto:strong_rand_bytes(32),
 					block_time_history = InitialHistory,
 					block_time_history_hash = ar_block_time_history:hash(InitialHistory)
@@ -163,11 +162,11 @@ add_mainnet_v1_genesis_txs() ->
 	case filelib:is_dir("genesis_data/genesis_txs") of
 		true ->
 			{ok, Files} = file:list_dir("genesis_data/genesis_txs"),
-			{ok, Config} = arweave_config:get_env(),
+			DataDir = arweave_config:get([data_dir]),
 			lists:foldl(
 				fun(F, Acc) ->
 					SourcePath = "genesis_data/genesis_txs/" ++ F,
-					TargetPath = Config#config.data_dir ++ "/" ++ ?TX_DIR ++ "/" ++ F,
+					TargetPath = DataDir ++ "/" ++ ?TX_DIR ++ "/" ++ F,
 					file:copy(SourcePath, TargetPath),
 					[ar_util:decode(hd(string:split(F, ".")))|Acc]
 				end,

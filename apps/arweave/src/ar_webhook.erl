@@ -95,11 +95,11 @@ init(Hook) ->
 				Acc
 		end,
 		#state{},
-		Hook#config_webhook.events
+		maps:get(events, Hook, [])
 	),
 	State2 = State#state{
-		url = Hook#config_webhook.url,
-		headers = Hook#config_webhook.headers
+		url = maps:get(url, Hook, undefined),
+		headers = maps:get(headers, Hook, [])
 	},
 	{ok, State2}.
 

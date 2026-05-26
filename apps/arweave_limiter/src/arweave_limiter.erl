@@ -1,20 +1,8 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @copyright 2025 (c) Arweave
-%%% @author Arweave Team
-%%% @author Kristof Hetzl
 %%% @doc Arweave Rate Limiter.
 %%%
 %%% `arweave_limiter' module is an interface to the Arweave
 %%% Rate Limiter functionality.
 %%%
-%%% @end
-%%%===================================================================
 -module(arweave_limiter).
 -vsn(1).
 -behavior(application).
@@ -41,8 +29,8 @@ start() ->
         {ok, Dependencies} ->
             ?LOG_DEBUG("arweave_limiter started dependencies: ~p", [Dependencies]),
             ok;
-        Elsewise ->
-            Elsewise
+        Else ->
+            Else
     end.
 
 %%--------------------------------------------------------------------

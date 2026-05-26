@@ -21,9 +21,7 @@ main(Args) ->
 			true;
 		["chunks", Dir, StartStr, EndStr | AddrListStr] when length(AddrListStr) >= 1 ->
 			Addresses = [ar_util:decode(AddrStr) || AddrStr <- AddrListStr],
-			arweave_config:set_env(#config{
-				disable = [], enable  = [randomx_large_pages]
-			}),
+			ok = arweave_config:load(#{ [randomx, large_pages] => true }),
 			ar_metrics:register(),
 			ar_packing_sup:start_link(),
 			Start = ar_block:get_chunk_padded_offset(list_to_integer(StartStr)),
@@ -220,19 +218,17 @@ print_match(no_match) ->
 %% the color is determined by the packing format of the chunk. Each row of the bitmap
 %% is a replica.2.9 sector (so the bitmap is 1024 rows high).
 bitmap(DataDir, StorageModuleConfig) ->
-	{ok, StorageModule} = ar_config:parse_storage_module(StorageModuleConfig),
-	
-	Config = #config{
-		data_dir = DataDir,
-		storage_modules = [StorageModule]},
-	arweave_config:set_env(Config),
+	{ok, StorageModule} = arweave_config:parse_storage_module(StorageModuleConfig),
+
+	ok = arweave_config:replace_storage_modules([StorageModule]),
+	ok = arweave_config:load(#{ [data_dir] => DataDir }),
 
 	StoreID = ar_storage_module:id(StorageModule),
-	
+
 	ar_kv_sup:start_link(),
 	ar_storage_sup:start_link(),
 	ar_sync_record_sup:start_link(),
-	ar_data_sync:open_store_dbs(Config#config.data_dir, StoreID),
+	ar_data_sync:open_store_dbs(DataDir, StoreID),
 	
 	{ModuleStart, ModuleEnd} = ar_storage_module:module_range(StorageModule),
 

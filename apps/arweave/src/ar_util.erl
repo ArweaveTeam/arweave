@@ -190,6 +190,9 @@ parse_peer(BitStr, Opts) when is_binary(BitStr) ->
 	parse_peer(binary_to_list(BitStr), Opts);
 parse_peer([{A,B,C,D,P}], _Opts) ->
 	[{A, B, C, D, parse_port(P)}];
+parse_peer({A,B,C,D,P}, _Opts)
+		when is_integer(A), is_integer(B), is_integer(C), is_integer(D) ->
+	[{A, B, C, D, parse_port(P)}];
 parse_peer(Str, Opts) when is_list(Str) ->
 	% useful to mock the resolver, instead of using
 	% inet, any other custom module can be used.
@@ -319,24 +322,25 @@ safe_parse_peer(Peer, Opts) ->
 		_:_ -> {error, invalid}
 	end.
 
-%% @doc Take a remote host ID in various formats, return a HTTP-friendly string.
+%% @doc Take a remote host ID in various formats, return its canonical
+%% `<<"host:port">>' binary form. 
+-spec format_peer(term()) -> binary().
 format_peer([{Host, Port}|_]) ->
 	format_peer({Host, Port});
 format_peer([{A, B, C, D, Port}|_]) ->
 	format_peer({A, B, C, D, Port});
 format_peer(Host) when is_list(Host) ->
-	format_peer({Host, ?DEFAULT_HTTP_IFACE_PORT});
+	case lists:member($:, Host) of
+		true -> list_to_binary(Host);
+		false -> format_peer({Host, ?DEFAULT_HTTP_IFACE_PORT})
+	end;
 format_peer({A, B, C, D}) ->
 	format_peer({A, B, C, D, ?DEFAULT_HTTP_IFACE_PORT});
 format_peer({A, B, C, D, Port}) ->
-	lists:flatten(
-		io_lib:format("~w.~w.~w.~w:~w", [A, B, C, D, Port])
-	);
+	iolist_to_binary(io_lib:format("~w.~w.~w.~w:~w", [A, B, C, D, Port]));
 format_peer({Host, Port}) ->
-	lists:flatten(
-		io_lib:format("~s:~w", [Host, Port])
-	);
-format_peer(Peer) ->
+	iolist_to_binary(io_lib:format("~s:~w", [Host, Port]));
+format_peer(Peer) when is_binary(Peer) ->
 	Peer.
 
 %% @doc Count occurences of element within list.
@@ -548,9 +552,8 @@ basic_unique_test() ->
 	[a, b, c] = unique([a, a, b, b, b, c, c]),
 	[a, b, c] = unique([a, b, c, c, b, a]).
 
-%% @doc Ensure that hosts are formatted as lists correctly.
 basic_peer_format_test() ->
-	"127.0.0.1:9001" = format_peer({127,0,0,1,9001}).
+	<<"127.0.0.1:9001">> = format_peer({127,0,0,1,9001}).
 
 %% @doc Ensure that pick_random's are actually in the starting list.
 pick_random_test() ->

@@ -52,24 +52,25 @@ test_uses_blacklists() ->
 	WhitelistFile = random_filename(),
 	ok = file:write_file(WhitelistFile, <<>>),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = arweave_config:get_env(),
 	StorageModule = {30 * ?MiB, 0, {composite, RewardAddr, 1}},
+	Config = arweave_config:snapshot(),
 	try
 		ar_test_node:start(#{ b0 => B0, addr => RewardAddr,
-				config => Config#config{
-			transaction_blacklist_files = BlacklistFiles,
-			transaction_whitelist_files = [WhitelistFile],
-			sync_jobs = 10,
-			transaction_blacklist_urls = [
-				%% Serves empty body.
-				"http://localhost:1985/empty",
-				%% Serves a valid TX ID (one from the BadTXIDs list).
-				"http://localhost:1985/good",
-				%% Serves some valid TX IDs (from the BadTXIDs list) and a line
-				%% with invalid Base64URL.
-				"http://localhost:1985/bad/and/good"
-			],
-			enable = [pack_served_chunks | Config#config.enable]},
+			config => #{
+				[transactions, blocklist, files] => BlacklistFiles,
+				[transactions, allowlist, files] => [WhitelistFile],
+				[sync, jobs] => 10,
+				[transactions, blocklist, urls] => [
+					%% Serves empty body.
+					"http://localhost:1985/empty",
+					%% Serves a valid TX ID (one from the BadTXIDs list).
+					"http://localhost:1985/good",
+					%% Serves some valid TX IDs (from the BadTXIDs list) and a line
+					%% with invalid Base64URL.
+					"http://localhost:1985/bad/and/good"
+				],
+				[features, pack_served_chunks] => true
+			},
 			storage_modules => [StorageModule]
 		}),
 		ar_test_node:connect_to_peer(peer1),
@@ -222,12 +223,11 @@ setup() ->
 	}.
 
 setup(Node) ->
-	{ok, Config} = ar_test_node:get_config(Node),
 	Wallet = {_, Pub} = ar_test_node:remote_call(Node, ar_wallet, new_keyfile, []),
 	RewardAddr = ar_wallet:to_address(Pub),
 	[B0] = ar_weave:init([{RewardAddr, ?AR(100000000), <<>>}]),
-	ar_test_node:start_peer(Node, B0, RewardAddr, Config#config{
-		enable = [pack_served_chunks | Config#config.enable]
+	ar_test_node:start_peer(Node, B0, RewardAddr, #{
+		[features, pack_served_chunks] => true
 	}),
 	{B0, Wallet}.
 
@@ -279,8 +279,9 @@ create_files(BadTXIDs, [{Start1, End1}, {Start2, End2}, {Start3, End3}]) ->
 	[Filename || {Filename, _} <- Files].
 
 random_filename() ->
-	{ok, Config} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
-	filename:join(Config#config.data_dir,
+	DataDir = ar_test_node:remote_call(
+		peer1, arweave_config, get, [[data_dir]]),
+	filename:join(DataDir,
 		"ar-tx-blacklist-tests-transaction-blacklist-"
 		++
 		binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32)))).
@@ -462,4 +463,4 @@ decode_chunk(EncodedProof) ->
 
 teardown(Config) ->
 	ok = ar_test_node:remote_call(peer1, cowboy, stop_listener, [ar_tx_blacklist_test_listener]),
-	arweave_config:set_env(Config).
+	arweave_config:restore(Config).

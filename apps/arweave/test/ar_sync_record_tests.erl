@@ -18,12 +18,11 @@ test_sync_record() ->
 	WeaveSize = 4 * ?DATA_CHUNK_SIZE,
 	[B0] = ar_weave:init([], 1, WeaveSize),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = arweave_config:get_env(),
-	try
+	arweave_config:with_test_config(fun() ->
 		Partition = {ar_block:partition_size(), 0, {composite, RewardAddr, 1}},
 		PartitionID = ar_storage_module:id(Partition),
 		StorageModules = [Partition],
-		ar_test_node:start(B0, RewardAddr, Config, StorageModules),
+		ar_test_node:start(B0, RewardAddr, #{}, StorageModules),
 		Options = #{ format => etf, random_subset => false },
 
 		%% Genesis data only
@@ -136,6 +135,4 @@ test_sync_record() ->
 			ar_sync_record:get_interval(PartitionStart+1, ar_data_sync, PartitionID)),
 
 		ar_test_node:stop()
-	after
-		ok = arweave_config:set_env(Config)
-	end.
+	end).

@@ -315,6 +315,18 @@ specs() ->
 		},
 		#{
 			enabled => true,
+			option_key => [logging,handlers,debug,compress_on_rotate],
+			default => ?LOG_COMPRESS_ON_ROTATE,
+			type => boolean,
+			runtime => true,
+			short_description => ?LOG_DESC_COMPRESS_ON_ROTATE,
+			handle_set => {
+				fun logger_set/4,
+				[arweave_debug,config,compress_on_rotate]
+			}
+		},
+		#{
+			enabled => true,
 			option_key => [logging,handlers,debug,max_no_files],
 			default => ?LOG_MAX_NO_FILES,
 			type => pos_integer,
@@ -523,6 +535,18 @@ specs() ->
 					ar_logger:stop_handler(arweave_http_api),
 					{store, false}
 			end
+		},
+		#{
+			enabled => true,
+			option_key => [logging,handlers,http,api,compress_on_rotate],
+			default => ?LOG_COMPRESS_ON_ROTATE,
+			type => boolean,
+			runtime => true,
+			short_description => ?LOG_DESC_COMPRESS_ON_ROTATE,
+			handle_set => {
+				fun logger_set/4,
+				[arweave_http_api,config,compress_on_rotate]
+			}
 		},
 		#{
 			enabled => true,

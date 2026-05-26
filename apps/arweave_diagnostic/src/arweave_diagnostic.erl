@@ -1,13 +1,3 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @copyright 2025 (c) Arweave
-%%% @author Arweave Team
-%%% @author Mathieu Kerjouan
 %%% @doc Arweave Diagnostic Module.
 %%%
 %%% This module has been created to display detailed information about
@@ -16,8 +6,6 @@
 %%%
 %%% @todo create diagnostic for epmd
 %%% @todo create diagnostic for timers
-%%% @end
-%%%===================================================================
 -module(arweave_diagnostic).
 -compose(warnings_as_errors).
 -compile({no_auto_import,[processes/0]}).

@@ -2,12 +2,10 @@
 %%% as verification of those proofs.
 -module(ar_merkle).
 
--export([generate_tree/1, generate_path/3, has_leading_rebase_marker/1,
-		has_positive_leaf_size/3, has_redundant_rebase_marker/2,
-		has_redundant_rebase_marker/5, strip_rebase_markers/1,
-		validate_path/4, validate_path/5, extract_note/1, extract_root/1]).
+-export([generate_tree/1, generate_path/3, validate_path/4, validate_path/5,
+		extract_note/1, extract_root/1]).
 
--export([get/2, get_branch_id/3, get_leaf_id/2, hash/1, note_to_binary/1]).
+-export([get/2, hash/1, note_to_binary/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -19,10 +17,10 @@
 	id,
 	type = branch,	% root | branch | leaf
 	data,			% The value (for leaves).
-	tree_midpoint_offset,	% Branch split offset or leaf end offset.
+	note,			% The offset, a number less than 2^256.
 	left,			% The (optional) ID of a node to the left.
 	right,			% The (optional) ID of a node to the right.
-	max,			% The maximum observed offset at this point.
+	max,			% The maximum observed note at this point.
 	is_rebased = false
 }).
 
@@ -58,37 +56,6 @@ validate_path(ID, Dest, RightBound, Path, Ruleset) when Dest < 0 ->
 	validate_path(ID, 0, RightBound, Path, Ruleset);
 validate_path(ID, Dest, RightBound, Path, Ruleset) ->
 	validate_path(ID, Dest, 0, RightBound, Path, Ruleset).
-
-has_leading_rebase_marker(<< 0:(?HASH_SIZE * 8), _/binary >>) ->
-	true;
-has_leading_rebase_marker(_) ->
-	false.
-
-strip_rebase_markers(<< Data:?HASH_SIZE/binary, EndOffset:?NOTE_SIZE/binary >>) ->
-	<< Data/binary, EndOffset/binary >>;
-strip_rebase_markers(
-		<< 0:(?HASH_SIZE * 8), L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
-			TreeMidpointOffset:?NOTE_SIZE/binary, Rest/binary >>) ->
-	StrippedRest = strip_rebase_markers(Rest),
-	<< L/binary, R/binary, TreeMidpointOffset/binary, StrippedRest/binary >>;
-strip_rebase_markers(
-		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, TreeMidpointOffset:?NOTE_SIZE/binary,
-			Rest/binary >>) ->
-	StrippedRest = strip_rebase_markers(Rest),
-	<< L/binary, R/binary, TreeMidpointOffset/binary, StrippedRest/binary >>;
-strip_rebase_markers(InvalidLeftover) ->
-	InvalidLeftover.
-
-has_redundant_rebase_marker(DataPath, ValidateStrippedPath) ->
-	StrippedDataPath = strip_rebase_markers(DataPath),
-	StrippedDataPath =/= DataPath andalso ValidateStrippedPath(StrippedDataPath).
-
-has_redundant_rebase_marker(DataRoot, Offset, TXSize, DataPath, Ruleset) ->
-	has_redundant_rebase_marker(
-		DataPath,
-		fun(StrippedDataPath) ->
-			validate_path(DataRoot, Offset, TXSize, StrippedDataPath, Ruleset) =/= false
-		end).
 
 validate_path(ID, Dest, LeftBound, RightBound, Path, basic_ruleset) ->
 	CheckBorders = false,
@@ -193,78 +160,58 @@ validate_path(ID, _Dest, LeftBound, RightBound,
 	end;
 
 %% Validate the given merkle path where any subtrees may have 0-based offset.
-validate_path(ID, Dest, LeftBound, RightBound, Path,
-		DataSize, IsRightMostInItsSubTree, LeftBoundShift,
-		CheckBorders, CheckSplit, true) ->
-	case has_leading_rebase_marker(Path) of
-		true ->
-			validate_rebased_path(ID, Dest, LeftBound, RightBound, Path,
-				DataSize, LeftBoundShift, CheckBorders, CheckSplit);
-		false ->
-			validate_node_path(ID, Dest, LeftBound, RightBound, Path,
-				DataSize, IsRightMostInItsSubTree, LeftBoundShift, CheckBorders, CheckSplit, true)
-	end;
-
-%% Validate a non-leaf node in the merkle path
 validate_path(ID, Dest, LeftBound, RightBound,
-		Path, DataSize, IsRightMostInItsSubTree, LeftBoundShift,
-		CheckBorders, CheckSplit, false) ->
-	validate_node_path(ID, Dest, LeftBound, RightBound, Path,
-		DataSize, IsRightMostInItsSubTree, LeftBoundShift, CheckBorders, CheckSplit, false).
-
-validate_rebased_path(ID, Dest, LeftBound, RightBound,
-		<< 0:(?HASH_SIZE * 8), L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
-			TreeMidpointOffset:(?NOTE_SIZE*8), Rest/binary >>,
-		DataSize, LeftBoundShift, CheckBorders, CheckSplit) ->
-	case get_branch_id(L, R, TreeMidpointOffset) of
+		<< 0:(?HASH_SIZE*8), L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
+			Note:(?NOTE_SIZE*8), Rest/binary >>,
+		DataSize, _IsRightMostInItsSubTree, LeftBoundShift,
+		CheckBorders, CheckSplit, true) ->
+	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
 		ID ->
 			{Path, NextLeftBound, NextRightBound, Dest2, NextLeftBoundShift} =
-				case Dest < TreeMidpointOffset of
+				case Dest < Note of
 					true ->
-						NextTreeMidpointOffset = min(RightBound, TreeMidpointOffset),
-						{L, 0, NextTreeMidpointOffset - LeftBound, Dest - LeftBound,
+						Note2 = min(RightBound, Note),
+						{L, 0, Note2 - LeftBound, Dest - LeftBound,
 								LeftBoundShift + LeftBound};
 					false ->
-						NextTreeMidpointOffset = max(LeftBound, TreeMidpointOffset),
-						{R, 0, RightBound - NextTreeMidpointOffset,
-								Dest - NextTreeMidpointOffset,
-								LeftBoundShift + NextTreeMidpointOffset}
+						Note2 = max(LeftBound, Note),
+						{R, 0, RightBound - Note2,
+								Dest - Note2,
+								LeftBoundShift + Note2}
 				end,
 			validate_path(Path, Dest2, NextLeftBound, NextRightBound, Rest, DataSize,
 				undefined, NextLeftBoundShift, CheckBorders, CheckSplit, true);
 		_ ->
 			false
 	end;
-%% Invalid merkle path
-validate_rebased_path(_, _, _, _, _, _, _, _, _) ->
-	false.
 
-validate_node_path(ID, Dest, LeftBound, RightBound,
-		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
-			TreeMidpointOffset:(?NOTE_SIZE*8), Rest/binary >>,
-		DataSize, IsRightMostInItsSubTree, LeftBoundShift, CheckBorders, CheckSplit, AllowRebase) ->
-	validate_node(ID, Dest, LeftBound, RightBound, L, R, TreeMidpointOffset, Rest,
+%% Validate a non-leaf node in the merkle path
+validate_path(ID, Dest, LeftBound, RightBound,
+		<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), Rest/binary >>,
+		DataSize, IsRightMostInItsSubTree, LeftBoundShift,
+		CheckBorders, CheckSplit, AllowRebase) ->
+	validate_node(ID, Dest, LeftBound, RightBound, L, R, Note, Rest,
 		DataSize, IsRightMostInItsSubTree, LeftBoundShift,
 		CheckBorders, CheckSplit, AllowRebase);
 
 %% Invalid merkle path
-validate_node_path(_, _, _, _, _, _, _, _, _, _, _) ->
+validate_path(_, _, _, _, _, _, _, _, _, _, _) ->
 	false.
 
-validate_node(ID, Dest, LeftBound, RightBound, L, R, TreeMidpointOffset, RemainingPath,
+validate_node(ID, Dest, LeftBound, RightBound, L, R, Note, RemainingPath,
 		DataSize, IsRightMostInItsSubTree, LeftBoundShift,
 		CheckBorders, CheckSplit, AllowRebase) ->
-	case get_branch_id(L, R, TreeMidpointOffset) of
+	case hash([hash(L), hash(R), hash(note_to_binary(Note))]) of
 		ID ->
 			{BranchID, NextLeftBound, NextRightBound, IsRightMostInItsSubTree2} =
-				case Dest < TreeMidpointOffset of
+				case Dest < Note of
 					true ->
 						%% Traverse left branch (at this point we know the leaf chunk will never
 						%% be the right most in the subtree)
-						{L, LeftBound, min(RightBound, TreeMidpointOffset), false};
+						{L, LeftBound, min(RightBound, Note), false};
 					false ->
 						%% Traverse right branch
-						{R, max(LeftBound, TreeMidpointOffset), RightBound,
+						{R, max(LeftBound, Note), RightBound,
 								case IsRightMostInItsSubTree of undefined -> true;
 										_ -> IsRightMostInItsSubTree end}
 				end,
@@ -276,7 +223,7 @@ validate_node(ID, Dest, LeftBound, RightBound, L, R, TreeMidpointOffset, Remaini
 	end.
 
 validate_leaf(ID, Data, EndOffset, LeftBound, RightBound, LeftBoundShift) ->
-	case get_leaf_id(Data, EndOffset) of
+	case hash([hash(Data), hash(note_to_binary(EndOffset))]) of
 		ID ->
 			{Data, LeftBoundShift + LeftBound,
 				LeftBoundShift + max(min(RightBound, EndOffset), LeftBound + 1)};
@@ -292,62 +239,11 @@ extract_note(Path) ->
 
 %% @doc Get the Merkle root from a path.
 extract_root(<< Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>) ->
-	{ok, get_leaf_id(Data, EndOffset)};
-extract_root(<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary,
-		TreeMidpointOffset:(?NOTE_SIZE*8), _/binary >>) ->
-	{ok, get_branch_id(L, R, TreeMidpointOffset)};
+	{ok, hash([hash(Data), hash(note_to_binary(EndOffset))])};
+extract_root(<< L:?HASH_SIZE/binary, R:?HASH_SIZE/binary, Note:(?NOTE_SIZE*8), _/binary >>) ->
+	{ok, hash([hash(L), hash(R), hash(note_to_binary(Note))])};
 extract_root(_) ->
 	{error, invalid_proof}.
-
-%% @doc Return true when the leaf selected by Dest has a positive size.
-%% This follows the same path traversal as validate_path/5, including offset
-%% rebasing, but only checks the reached leaf's local end offset against the
-%% expected left bound.
-has_positive_leaf_size(_Dest, RightBound, _Path) when RightBound =< 0 ->
-	false;
-has_positive_leaf_size(Dest, RightBound, Path) when Dest >= RightBound ->
-	%% Clamp the proof offset to [0, RightBound - 1].
-	has_positive_leaf_size(RightBound - 1, RightBound, Path);
-has_positive_leaf_size(Dest, RightBound, Path) when Dest < 0 ->
-	%% Clamp the proof offset to [0, RightBound - 1].
-	has_positive_leaf_size(0, RightBound, Path);
-has_positive_leaf_size(Dest, RightBound, Path) ->
-	has_positive_leaf_size(Dest, 0, RightBound, Path).
-
-has_positive_leaf_size(_Dest, LeftBound, _RightBound,
-		<< _Data:?HASH_SIZE/binary, EndOffset:(?NOTE_SIZE*8) >>) ->
-	%% We have reached the leaf. The chunk end offset specified in the proof
-	%% is expected to be greater than the left bound of its merkle branch.
-	EndOffset > LeftBound;
-has_positive_leaf_size(Dest, LeftBound, RightBound,
-		<< 0:(?HASH_SIZE * 8), _L:?HASH_SIZE/binary, _R:?HASH_SIZE/binary,
-			TreeMidpointOffset:(?NOTE_SIZE*8), Rest/binary >>) ->
-	%% Update offset bounds according to the selected sub-tree.
-	%% A rebase marker means the selected child subtree restarts its offsets at 0.
-	{NextLeftBound, NextRightBound, Dest2} =
-		case Dest < TreeMidpointOffset of
-			true ->
-				NextTreeMidpointOffset = min(RightBound, TreeMidpointOffset),
-				{0, NextTreeMidpointOffset - LeftBound, Dest - LeftBound};
-			false ->
-				NextTreeMidpointOffset = max(LeftBound, TreeMidpointOffset),
-				{0, RightBound - NextTreeMidpointOffset, Dest - NextTreeMidpointOffset}
-		end,
-	has_positive_leaf_size(Dest2, NextLeftBound, NextRightBound, Rest);
-has_positive_leaf_size(Dest, LeftBound, RightBound,
-		<< _L:?HASH_SIZE/binary, _R:?HASH_SIZE/binary,
-			TreeMidpointOffset:(?NOTE_SIZE*8), Rest/binary >>) ->
-	%% Update offset bounds according to the selected sub-tree.
-	{NextLeftBound, NextRightBound} =
-		case Dest < TreeMidpointOffset of
-			true ->
-				{LeftBound, min(RightBound, TreeMidpointOffset)};
-			false ->
-				{max(LeftBound, TreeMidpointOffset), RightBound}
-		end,
-	has_positive_leaf_size(Dest, NextLeftBound, NextRightBound, Rest);
-has_positive_leaf_size(_, _, _, _) ->
-	false.
 
 %%%===================================================================
 %%% Private functions.
@@ -374,14 +270,14 @@ mark_rebased(#node{ id = RootID } = Node, RootID) ->
 mark_rebased(Node, _RootID) ->
 	Node.
 
-generate_leaf({Data, EndOffset}) ->
-	Hash = get_leaf_id(Data, EndOffset),
+generate_leaf({Data, Note}) ->
+	Hash = hash([hash(Data), hash(note_to_binary(Note))]),
 	#node{
 		id = Hash,
 		type = leaf,
 		data = Data,
-		tree_midpoint_offset = EndOffset,
-		max = EndOffset
+		note = Note,
+		max = Note
 	}.
 
 %% Note: This implementation leaves some duplicates in the tree structure.
@@ -408,22 +304,22 @@ generate_node(L, R, Shift) ->
 	RMax = R#node.max,
 	RMax2 = case R#node.is_rebased of true -> LMax2 + RMax; _ -> RMax end,
 	{#node{
-		id = get_branch_id(L#node.id, R#node.id, LMax2),
+		id = hash([hash(L#node.id), hash(R#node.id), hash(note_to_binary(LMax2))]),
 		type = branch,
 		left = L#node.id,
 		right = R#node.id,
-		tree_midpoint_offset = LMax2,
+		note = LMax2,
 		max = RMax2
 	}, RMax2}.
 
-generate_path_parts(ID, Dest, Tree, PrevTreeMidpointOffset) ->
+generate_path_parts(ID, Dest, Tree, PrevNote) ->
 	case get(ID, Tree) of
 		N when N#node.type == leaf ->
-			[N#node.data, note_to_binary(N#node.tree_midpoint_offset)];
+			[N#node.data, note_to_binary(N#node.note)];
 		N when N#node.type == branch ->
-			TreeMidpointOffset = N#node.tree_midpoint_offset,
+			Note = N#node.note,
 			{Direction, NextID} =
-				case Dest < TreeMidpointOffset of
+				case Dest < Note of
 					true ->
 						{left, N#node.left};
 					false ->
@@ -435,12 +331,12 @@ generate_path_parts(ID, Dest, Tree, PrevTreeMidpointOffset) ->
 					{false, _} ->
 						{<<>>, Dest};
 					{true, right} ->
-						{<< 0:(?HASH_SIZE * 8) >>, Dest - TreeMidpointOffset};
+						{<< 0:(?HASH_SIZE * 8) >>, Dest - Note};
 					{true, left} ->
-						{<< 0:(?HASH_SIZE * 8) >>, Dest - PrevTreeMidpointOffset}
+						{<< 0:(?HASH_SIZE * 8) >>, Dest - PrevNote}
 				end,
-			[RebaseMark, N#node.left, N#node.right, note_to_binary(TreeMidpointOffset)
-					| generate_path_parts(NextID, Dest2, Tree, TreeMidpointOffset)]
+			[RebaseMark, N#node.left, N#node.right, note_to_binary(Note)
+					| generate_path_parts(NextID, Dest2, Tree, Note)]
 	end.
 
 get(ID, Map) ->
@@ -449,14 +345,8 @@ get(ID, Map) ->
 		Node -> Node
 	end.
 
-get_branch_id(LeftID, RightID, TreeMidpointOffset) ->
-	hash([hash(LeftID), hash(RightID), hash(note_to_binary(TreeMidpointOffset))]).
-
-get_leaf_id(Data, EndOffset) ->
-	hash([hash(Data), hash(note_to_binary(EndOffset))]).
-
-note_to_binary(Offset) ->
-	<< Offset:(?NOTE_SIZE * 8) >>.
+note_to_binary(Note) ->
+	<< Note:(?NOTE_SIZE * 8) >>.
 
 hash(Parts) when is_list(Parts) ->
 	crypto:hash(sha256, binary:list_to_bin(Parts));
@@ -1194,13 +1084,13 @@ test_reject_invalid_tree_path() ->
 		)
 	).
 
-assert_node({Id, Type, Data, ExpectedOffset, IsRebased}, Node) ->
+assert_node({Id, Type, Data, Note, IsRebased}, Node) ->
 	?assertEqual(Id, Node#node.id),
-	assert_node({Type, Data, ExpectedOffset, IsRebased}, Node);
-assert_node({Type, Data, ExpectedOffset, IsRebased}, Node) ->
+	assert_node({Type, Data, Note, IsRebased}, Node);
+assert_node({Type, Data, Note, IsRebased}, Node) ->
 	?assertEqual(Type, Node#node.type),
 	?assertEqual(Data, Node#node.data),
-	?assertEqual(ExpectedOffset, Node#node.tree_midpoint_offset),
+	?assertEqual(Note, Node#node.note),
 	?assertEqual(IsRebased, Node#node.is_rebased).
 
 assert_tree([], []) ->

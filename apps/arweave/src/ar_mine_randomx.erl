@@ -16,7 +16,6 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -174,30 +173,24 @@ packing_rounds({spora_2_6, _Addr}) ->
 	?RANDOMX_PACKING_ROUNDS_2_6.
 
 jit() ->
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(randomx_jit, Config#config.disable) of
-		true ->
-			0;
-		_ ->
-			1
+	V = arweave_config:get([randomx, jit]),
+	case V of
+		true  -> 1;
+		false -> 0
 	end.
 
 large_pages() ->
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(randomx_large_pages, Config#config.enable) of
-		true ->
-			1;
-		_ ->
-			0
+	V = arweave_config:get([randomx, large_pages]),
+	case V of
+		true  -> 1;
+		false -> 0
 	end.
 
 hardware_aes() ->
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(randomx_hardware_aes, Config#config.disable) of
-		true ->
-			0;
-		_ ->
-			1
+	V = arweave_config:get([randomx, hardware_aes]),
+	case V of
+		true  -> 1;
+		false -> 0
 	end.
 
 split_into_sub_chunks(Chunk) ->

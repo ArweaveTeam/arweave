@@ -14,7 +14,6 @@ init_per_suite(Config) -> Config.
 end_per_suite(_Config) -> ok.
 
 init_per_testcase(TestCase, Config) ->
-	{ok, _} = arweave_config:start_link(),
 	{ok, PidStore} = arweave_config_store:start_link(),
 	{ok, PidSpec} = arweave_config_options_registry:start_link(specs(TestCase)),
 	[
@@ -25,8 +24,7 @@ init_per_testcase(TestCase, Config) ->
 
 end_per_testcase(_TestCase, _Config) ->
 	ok = arweave_config_options_registry:stop(),
-	ok = arweave_config_store:stop(),
-	ok = gen_server:stop(arweave_config).
+	ok = arweave_config_store:stop().
 
 all() ->
 	[
@@ -116,13 +114,23 @@ default_runtime(_Config) ->
 	{ok, 1, undefined} = arweave_config_options_registry:set([default], 1),
 	{ok, 1, undefined} = arweave_config_options_registry:set([dynamic], 1),
 	{ok, 1, undefined} = arweave_config_options_registry:set([explicitly_static], 1),
-	ok = arweave_config:runtime(),
+	%% Flip the lifecycle directly so we don't have to satisfy the
+	%% real validators against this minimal hand-rolled spec set.
+	ok = arweave_config_options_registry:set_runtime(true),
 	true = arweave_config:is_runtime(),
-	%% Default `runtime' is false, so sets are rejected after the
-	%% lifecycle transition.
-	{error, _} = arweave_config_options_registry:set([default], 2),
-	{ok, 2, 1} = arweave_config_options_registry:set([dynamic], 2),
-	{error, _} = arweave_config_options_registry:set([explicitly_static], 2).
+	%% Each runtime set re-runs validation; stub it to a no-op so the
+	%% real validators don't fire against the minimal spec set.
+	ok = meck:new(arweave_config_validate, [passthrough]),
+	try
+		meck:expect(arweave_config_validate, run, fun() -> ok end),
+		%% Default `runtime' is false, so sets are rejected after the
+		%% lifecycle transition.
+		{error, _} = arweave_config_options_registry:set([default], 2),
+		{ok, 2, 1} = arweave_config_options_registry:set([dynamic], 2),
+		{error, _} = arweave_config_options_registry:set([explicitly_static], 2)
+	after
+		meck:unload(arweave_config_validate)
+	end.
 
 default_multi_types(_Config) ->
 	{ok, true, undefined} =
@@ -279,7 +287,7 @@ validation_rollback_restores_old_value(_Config) ->
 
 	%% Flip the lifecycle flag without going through `runtime/0' so we
 	%% don't have to satisfy the real validators.
-	_ = gen_server:call(arweave_config, {set_runtime, true}, 1000),
+	ok = arweave_config_options_registry:set_runtime(true),
 	true = arweave_config:is_runtime(),
 
 	ok = meck:new(arweave_config_validate, [passthrough]),
@@ -294,7 +302,7 @@ validation_rollback_restores_old_value(_Config) ->
 			arweave_config_store:get([rolled_back]))
 	after
 		meck:unload(arweave_config_validate),
-		_ = gen_server:call(arweave_config, {set_runtime, false}, 1000)
+		ok = arweave_config_options_registry:set_runtime(false)
 	end,
 	ok.
 
@@ -302,7 +310,7 @@ validation_rollback_restores_old_value(_Config) ->
 %% previously stored, the rollback deletes the just-written key
 %% rather than restoring anything.
 validation_rollback_deletes_when_no_previous_value(_Config) ->
-	_ = gen_server:call(arweave_config, {set_runtime, true}, 1000),
+	ok = arweave_config_options_registry:set_runtime(true),
 	true = arweave_config:is_runtime(),
 
 	ok = meck:new(arweave_config_validate, [passthrough]),
@@ -317,7 +325,7 @@ validation_rollback_deletes_when_no_previous_value(_Config) ->
 			arweave_config_store:get([rolled_back_no_default]))
 	after
 		meck:unload(arweave_config_validate),
-		_ = gen_server:call(arweave_config, {set_runtime, false}, 1000)
+		ok = arweave_config_options_registry:set_runtime(false)
 	end,
 	ok.
 

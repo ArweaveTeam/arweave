@@ -6,7 +6,7 @@
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
--include_lib("arweave_config/include/arweave_config.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pool.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
@@ -73,8 +73,7 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 push_cm_jobs_to_cm_peers(Jobs) ->
-	{ok, Config} = arweave_config:get_env(),
-	Peers = Config#config.cm_peers,
+	Peers = arweave_config:get_peers(cm_peer),
 	Payload = ar_serialize:jsonify(ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
 	push_cm_jobs_to_cm_peers(Payload, Peers).
 

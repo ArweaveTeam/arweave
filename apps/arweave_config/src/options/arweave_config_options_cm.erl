@@ -72,10 +72,10 @@ validate() ->
 
 %% @doc Cross-cutting: also reads [pool, is_server], [pool, is_client], [mining, enabled].
 validate_cm_pool() ->
-	CM = arweave_config:get([cm, enabled], false),
-	PoolSrv = arweave_config:get([pool, is_server], false),
-	PoolCli = arweave_config:get([pool, is_client], false),
-	Mine = arweave_config:get([mining, enabled], false),
+	CM = arweave_config:get([cm, enabled]),
+	PoolSrv = arweave_config:get([pool, is_server]),
+	PoolCli = arweave_config:get([pool, is_client]),
+	Mine = arweave_config:get([mining, enabled]),
 	case {CM, PoolSrv} of
 		{true, true} ->
 			{error, <<"The pool server node cannot participate "
@@ -98,10 +98,10 @@ validate_cm_pool() ->
 
 %% @doc Cross-cutting: also reads [mining, enabled].
 validate_cm_requirements() ->
-	case arweave_config:get([cm, enabled], false) of
+	case arweave_config:get([cm, enabled]) of
 		true ->
-			Secret = arweave_config:get([cm, api_secret], not_set),
-			Mine = arweave_config:get([mining, enabled], false),
+			Secret = arweave_config:get([cm, api_secret]),
+			Mine = arweave_config:get([mining, enabled]),
 			case Secret of
 				not_set ->
 					{error, <<"The cm_api_secret must be set when "

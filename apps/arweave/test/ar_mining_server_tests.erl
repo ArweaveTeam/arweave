@@ -23,40 +23,43 @@
 setup_all() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = arweave_config:get_env(),
+	Config = arweave_config:snapshot(),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
 		{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}},
 		{ar_block:partition_size(), 2, {spora_2_6, RewardAddr}}
 	],
-	ar_test_node:start(B0, RewardAddr, Config, StorageModules),
+	ar_test_node:start(B0, RewardAddr, #{}, StorageModules),
 	Config.
 
 cleanup_all(Config) ->
-	ok = arweave_config:set_env(Config).
+	ok = arweave_config:restore(Config).
 
 %% @doc Setup the environment so we can control VDF step generation.
 setup_pool_client() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = arweave_config:get_env(),
+	Config = arweave_config:snapshot(),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
 		{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}},
 		{ar_block:partition_size(), 2, {spora_2_6, RewardAddr}}
 	],
 	ar_test_node:start(B0, RewardAddr,
-		Config#config{
-			nonce_limiter_server_trusted_peers = [ ar_util:format_peer(vdf_server()) ],
-			is_pool_client=true,
-			pool_server_address= <<"http://localhost:2002">>,
-			pool_api_key = <<"pool_secret">>
+		#{
+			[peers, ar_util:format_peer(vdf_server()), vdf_server] => true,
+			[pool, is_client] => true,
+			[pool, server_address] => <<"http://localhost:2002">>,
+			[pool, api_key] => <<"pool_secret">>,
+			%% The cm validator requires mining.enabled when
+			%% pool.is_client is true.
+			[mining, enabled] => true
 		},
 		StorageModules),
 	Config.
 
 cleanup_pool_client(Config) ->
-	ok = arweave_config:set_env(Config).
+	ok = arweave_config:restore(Config).
 
 setup_one() ->
 	ets:new(mock_counter, [set, public, named_table]),

@@ -42,6 +42,7 @@ logging:
       overload_kill_qlen: 20002
       overload_kill_mem_size: 3000002
       overload_kill_restart_after: 5002
+      compress_on_rotate: false
       formatter:
         chars_limit: 4097
         depth: 129

@@ -22,7 +22,7 @@
 -export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2,
 		terminate/2]).
 
--export([add_chunk/5, add_chunk/6, get_unconfirmed_chunk/2,
+-export([add_chunk/5, get_unconfirmed_chunk/2,
 		add_data_root/3, maybe_drop_data_root/3, has_data_root/1,
 		get_data_roots/0, remove_expired_data_roots/0,
 		get_threshold/0, set_threshold/1, update_threshold/1]).
@@ -108,9 +108,6 @@
 %% The item is removed from the disk pool when the chunk's offset
 %% drops below the disk pool threshold.
 add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize) ->
-	add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, not_set).
-
-add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, Peer) ->
 	Metadata = #chunk_metadata{
 		data_root = DataRoot,
 		data_path = DataPath,
@@ -123,7 +120,7 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, Peer) ->
 		{ok, DiskPoolDataRootValue} ?=
 			check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool),
 		{ok, RelativeEndOffset, Validation} ?=
-			validate_proof(Metadata, Offset, TXSize, Chunk, Peer),
+			validate_proof(Metadata, Offset, TXSize, Chunk),
 		ok ?= maybe
 			{ok, DataPathHash, DiskPoolChunkKey} ?=
 				check_not_already_synced(Metadata, DataRootID, DataRootEntry,
@@ -144,9 +141,11 @@ add_chunk(DataRoot, DataPath, Chunk, Offset, TXSize, Peer) ->
 check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool) ->
 	#chunk_metadata{ data_root = DataRoot, chunk_size = ChunkSize } = Metadata,
 	[{_, DiskPoolSize}] = ets:lookup(ar_data_sync_state, disk_pool_size),
-	{ok, Config} = arweave_config:get_env(),
-	DataRootLimit = Config#config.max_disk_pool_data_root_buffer_mb * ?MiB,
-	DiskPoolLimit = Config#config.max_disk_pool_buffer_mb * ?MiB,
+	MaxDataRootBufferMb = arweave_config:get(
+		[disk_pool, max_data_root_buffer_size]),
+	MaxBufferMb = arweave_config:get([disk_pool, max_buffer_size]),
+	DataRootLimit = MaxDataRootBufferMb * ?MiB,
+	DiskPoolLimit = MaxBufferMb * ?MiB,
 	case {DataRootEntry, DataRootInDiskPool} of
 		{not_found, not_found} ->
 			?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
@@ -154,26 +153,24 @@ check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool) ->
 				{data_root, ar_util:encode(DataRoot)}]),
 			{error, data_root_not_found};
 		{not_found, {Size, Timestamp, TXIDSet}} ->
-			case Size + ?DATA_CHUNK_SIZE > DataRootLimit
-					orelse DiskPoolSize + ?DATA_CHUNK_SIZE > DiskPoolLimit of
+			case Size + ChunkSize > DataRootLimit
+					orelse DiskPoolSize + ChunkSize > DiskPoolLimit of
 				true ->
 					?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 						{reason, exceeds_disk_pool_size_limit1}, {offset, Offset},
 						{data_root_size, Size}, {chunk_size, ChunkSize},
-						{accounted_size, ?DATA_CHUNK_SIZE},
 						{data_root_limit, DataRootLimit}, {disk_pool_size, DiskPoolSize},
 						{disk_pool_limit, DiskPoolLimit}]),
 					{error, exceeds_disk_pool_size_limit};
 				false ->
-					{ok, {Size + ?DATA_CHUNK_SIZE, Timestamp, TXIDSet}}
+					{ok, {Size + ChunkSize, Timestamp, TXIDSet}}
 			end;
 		_ ->
-			case DiskPoolSize + ?DATA_CHUNK_SIZE > DiskPoolLimit of
+			case DiskPoolSize + ChunkSize > DiskPoolLimit of
 				true ->
 					?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 						{reason, exceeds_disk_pool_size_limit2}, {offset, Offset},
-						{chunk_size, ChunkSize}, {accounted_size, ?DATA_CHUNK_SIZE},
-						{disk_pool_size, DiskPoolSize},
+						{chunk_size, ChunkSize}, {disk_pool_size, DiskPoolSize},
 						{disk_pool_limit, DiskPoolLimit}]),
 					{error, exceeds_disk_pool_size_limit};
 				false ->
@@ -184,13 +181,13 @@ check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool) ->
 							_ ->
 								DataRootInDiskPool
 						end,
-					{ok, {Size + ?DATA_CHUNK_SIZE, Timestamp, TXIDSet}}
+					{ok, {Size + ChunkSize, Timestamp, TXIDSet}}
 			end
 	end.
 
-validate_proof(Metadata, Offset, TXSize, Chunk, Peer) ->
+validate_proof(Metadata, Offset, TXSize, Chunk) ->
 	#chunk_metadata{ data_root = DataRoot, data_path = DataPath } = Metadata,
-	case ar_poa:validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk, Peer) of
+	case ar_poa:validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) of
 		false ->
 			?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
 				{reason, invalid_proof}, {offset, Offset}]),
@@ -264,8 +261,8 @@ persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset, Validation, DataPa
 					{error, failed_to_store_chunk};
 				ok ->
 					put_data_root_state(DataRootID, DiskPoolDataRootValue),
-					ets:update_counter(ar_data_sync_state, disk_pool_size, {2, ?DATA_CHUNK_SIZE}),
-					prometheus_gauge:inc(pending_chunks_size, ?DATA_CHUNK_SIZE),
+					ets:update_counter(ar_data_sync_state, disk_pool_size, {2, ChunkSize}),
+					prometheus_gauge:inc(pending_chunks_size, ChunkSize),
 					cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey, DataPathHash),
 					ok
 			end
@@ -327,8 +324,9 @@ get_data_roots() ->
 
 remove_expired_data_roots() ->
 	Now = os:system_time(microsecond),
-	{ok, Config} = arweave_config:get_env(),
-	ExpirationTime = Config#config.disk_pool_data_root_expiration_time * 1000000,
+	ExpirationSeconds = arweave_config:get(
+		[disk_pool, data_root_expiration_time]),
+	ExpirationTime = ExpirationSeconds * 1000000,
 	ets:foldl(
 		fun({Key, {_Size, Timestamp, _TXIDSet}}, _Acc) ->
 			case Timestamp + ExpirationTime > Now of
@@ -512,6 +510,7 @@ populate_data_roots2(Index, DataRootMap, Cursor, Sum) ->
 			ets:insert(ar_data_sync_state, {disk_pool_size, Sum});
 		{ok, DiskPoolKey, DiskPoolValue} ->
 			DecodedValue = binary_to_term(DiskPoolValue, [safe]),
+			ChunkSize = element(2, DecodedValue),
 			DataRoot = element(3, DecodedValue),
 			TXSize = element(4, DecodedValue),
 			DataRootID = ar_data_roots:id(DataRoot, TXSize),
@@ -520,11 +519,11 @@ populate_data_roots2(Index, DataRootMap, Cursor, Sum) ->
 					not_found ->
 						DataRootMap;
 					{Size, Timestamp, TXIDSet} ->
-						maps:put(DataRootID, {Size + ?DATA_CHUNK_SIZE, Timestamp, TXIDSet},
+						maps:put(DataRootID, {Size + ChunkSize, Timestamp, TXIDSet},
 								DataRootMap)
 				end,
 			Cursor2 = << DiskPoolKey/binary, <<"a">>/binary >>,
-			populate_data_roots2(Index, DataRootMap2, Cursor2, Sum + ?DATA_CHUNK_SIZE)
+			populate_data_roots2(Index, DataRootMap2, Cursor2, Sum + ChunkSize)
 	end.
 
 add_block_data_roots(DataRootIDSet) ->
@@ -635,7 +634,7 @@ process_chunk(DiskPool, StoreID, DiskPoolKey, DiskPoolValue) ->
 	prometheus_counter:inc(disk_pool_processed_chunks),
 	<< Timestamp:256, _DataPathHash/binary >> = DiskPoolKey,
 	DiskPoolChunk = parse_chunk(DiskPoolValue),
-	{_Offset, _ChunkSize, DataRoot, TXSize, ChunkDataKey,
+	{_Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey,
 			_PassedBaseValidation, _PassedStrictValidation,
 			_PassedRebaseValidation} = DiskPoolChunk,
 	DataRootID = ar_data_roots:id(DataRoot, TXSize),
@@ -654,7 +653,7 @@ process_chunk(DiskPool, StoreID, DiskPoolKey, DiskPoolValue) ->
 			{next_chunk, DiskPool#disk_pool_state{ cursor = NextCursor }};
 		{not_found, false} ->
 			%% The chunk was either orphaned or never made it to the chain.
-			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID),
+			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize),
 			NextCursor = << DiskPoolKey/binary, <<"a">>/binary >>,
 			DiskPool2 = maybe_reset_full_scan_key(DiskPoolKey, DiskPool),
 			{next_chunk, DiskPool2#disk_pool_state{ cursor = NextCursor }};
@@ -963,7 +962,7 @@ delete_chunk(Iterator, Args, StoreID, DiskPool) ->
 			delete_chunk(Iterator2, Args, StoreID, DiskPool);
 		_ ->
 			DataRootID = ar_data_roots:id(Iterator),
-			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID)
+			remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize)
 	end.
 
 pause_scan(DiskPool) ->
@@ -1093,12 +1092,12 @@ remove_chunk_from_cache(DataPathHash) ->
 	),
 	ets:delete(ar_disk_pool_chunks_cache_reverse, DataPathHash).
 
-remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID) ->
+remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize) ->
 	ok = ar_kv:delete(index_db(StoreID), DiskPoolKey),
 	ok = ar_data_sync:delete_chunk_data(ChunkDataKey, StoreID),
 	<< _Timestamp:256, DataPathHash/binary >> = DiskPoolKey,
 	remove_chunk_from_cache(DataPathHash),
-	decrease_occupied_size(?DATA_CHUNK_SIZE, DataRootID).
+	decrease_occupied_size(ChunkSize, DataRootID).
 
 decrease_occupied_size(Size, DataRootID) ->
 	ets:update_counter(ar_data_sync_state, disk_pool_size, {2, -Size}),
@@ -1175,7 +1174,7 @@ start_link() ->
 %% ar_data_sync_default has opened the disk-pool rocksdb tables.
 init([]) ->
 	?LOG_INFO([{event, ar_disk_pool_start}]),
-	{ok, Config} = arweave_config:get_env(),
+	DiskPoolJobs = arweave_config:get([disk_pool, jobs]),
 	[ok] = ar_events:subscribe([node_state]),
 	%% Shared ETS state (ar_disk_pool_data_roots, disk_pool_threshold) is owned by
 	%% ar_data_sync_default. ar_disk_pool manipulates them, but they have to be initialized
@@ -1192,7 +1191,7 @@ init([]) ->
 	),
 	lists:foreach(
 		fun(_) -> gen_server:cast(?MODULE, process_disk_pool_item) end,
-		lists:seq(1, Config#config.disk_pool_jobs)
+		lists:seq(1, DiskPoolJobs)
 	),
 	{ok, init_state()}.
 

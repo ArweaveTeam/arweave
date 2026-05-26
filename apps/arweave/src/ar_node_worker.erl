@@ -124,19 +124,24 @@ init([]) ->
 	%% Read persisted mempool.
 	ar_mempool:load_from_disk(),
 	%% Join the network.
-	{ok, Config} = arweave_config:get_env(),
-	validate_trusted_peers(Config),
-	StartFromLocalState = Config#config.start_from_latest_state orelse
-			Config#config.start_from_block /= not_set,
-	case {StartFromLocalState, Config#config.init, Config#config.auto_join} of
+	validate_trusted_peers(),
+	StartFromLatestState = arweave_config:get([join, start_from_latest_state]),
+	StartFromBlock = arweave_config:get([join, start_from_block]),
+	StartFromState = arweave_config:get([join, start_from_state]),
+	Init = arweave_config:get([genesis, init]),
+	AutoJoin = arweave_config:get([join, auto]),
+	MiningEnabled = arweave_config:get([mining, enabled]),
+	StartFromLocalState = StartFromLatestState orelse StartFromBlock /= not_set,
+	case {StartFromLocalState, Init, AutoJoin} of
 		{false, false, true} ->
 			ar_join:start(ar_peers:get_trusted_peers());
 		{true, _, _} ->
-			case ar_storage:read_block_index(Config#config.start_from_state) of
+			case ar_storage:read_block_index(StartFromState) of
 				not_found ->
 					block_index_not_found([]);
 				BI ->
-					case get_block_index_at_state(BI, Config) of
+					case get_block_index_at_state(BI,
+							StartFromLatestState, StartFromBlock) of
 						not_found ->
 							block_index_not_found(BI);
 						BI2 ->
@@ -155,11 +160,12 @@ init([]) ->
 					end
 			end;
 		{false, true, _} ->
-			Config2 = Config#config{ init = false },
-			arweave_config:set_env(Config2),
+			arweave_config:set([genesis, init], false),
+			MiningAddr = arweave_config:get([mining, address]),
+			Diff = arweave_config:get([genesis, difficulty]),
 			InitialBalance = ?AR(?LOCALNET_BALANCE),
-			[B0] = ar_weave:init([{Config#config.mining_addr, InitialBalance, <<>>}],
-					ar_retarget:switch_to_linear_diff(Config#config.diff)),
+			[B0] = ar_weave:init([{MiningAddr, InitialBalance, <<>>}],
+					ar_retarget:switch_to_linear_diff(Diff)),
 			RootHash0 = B0#block.wallet_list,
 			RootHash0 = ar_storage:write_wallet_list(0, B0#block.account_tree),
 			start_from_state([B0]);
@@ -177,7 +183,7 @@ init([]) ->
 		ar_mempool:get_priority_set()
 	),
 	%% May be start mining.
-	case Config#config.mine of
+	case MiningEnabled of
 		true ->
 			gen_server:cast(?MODULE, start_mining);
 		_ ->
@@ -202,13 +208,12 @@ init([]) ->
 		solution_cache_records => queue:new()
 	}}.
 
-get_block_index_at_state(BI, Config) ->
-	case Config#config.start_from_latest_state of
+get_block_index_at_state(BI, StartFromLatestState, StartFromBlock) ->
+	case StartFromLatestState of
 		true ->
 			BI;
 		false ->
-			H = Config#config.start_from_block,
-			get_block_index_at_state2(BI, H)
+			get_block_index_at_state2(BI, StartFromBlock)
 	end.
 
 get_block_index_at_state2([], _H) ->
@@ -235,10 +240,15 @@ block_index_not_found(BI) ->
 	init:stop(1).
 
 
-validate_trusted_peers(#config{ peers = [] }) ->
-	ok;
-validate_trusted_peers(Config) ->
-	Peers = Config#config.peers,
+validate_trusted_peers() ->
+	case arweave_config:get_peers(trusted) of
+		[] ->
+			ok;
+		Peers ->
+			validate_trusted_peers(Peers)
+	end.
+
+validate_trusted_peers(Peers) ->
 	ValidPeers = filter_valid_peers(Peers),
 	case ValidPeers of
 		[] ->
@@ -247,11 +257,15 @@ validate_trusted_peers(Config) ->
 			timer:sleep(2000),
 			init:stop(1);
 		_ ->
-			arweave_config:set_env(Config#config{ peers = ValidPeers }),
-			case lists:member(time_syncing, Config#config.disable) of
-				false ->
-					validate_clock_sync(ValidPeers);
+			%% Wholesale-replace the trusted-peer list so unreachable
+			%% or wrong-network peers are evicted. Runs during sup
+			%% tree boot, before `arweave_config:runtime/0' freezes
+			%% static specs.
+			ok = arweave_config:replace_peers(trusted, ValidPeers),
+			case arweave_config:feature_enabled(time_syncing) of
 				true ->
+					validate_clock_sync(ValidPeers);
+				false ->
 					ok
 			end
 	end.
@@ -841,8 +855,7 @@ get_max_block_size([{_BH, PrevWeaveSize, _TXRoot} | BI], WeaveSize, Max) ->
 	get_max_block_size(BI, PrevWeaveSize, Max2).
 
 apply_block(State) ->
-	{ok, Config} = arweave_config:get_env(),
-	AllowRebase = Config#config.allow_rebase,
+	AllowRebase = ?ALLOW_REBASE,
 	case ar_block_cache:get_earliest_not_validated_from_longest_chain(block_cache) of
 		not_found when AllowRebase == true ->
 			maybe_rebase(State);
@@ -903,8 +916,8 @@ maybe_rebase(#{ pending_rebase := {PrevH, H} } = State) ->
 maybe_rebase(State) ->
 	[{_, H}] = ets:lookup(node_state, current),
 	B = ar_block_cache:get(block_cache, H),
-	{ok, Config} = arweave_config:get_env(),
-	case B#block.reward_addr == Config#config.mining_addr of
+	MiningAddr = arweave_config:get([mining, address]),
+	case B#block.reward_addr == MiningAddr of
 		false ->
 			{noreply, State};
 		true ->
@@ -1820,8 +1833,8 @@ start_from_state([#block{} = GenesisB]) ->
 		block_time_history = BlockTimeHistory
 	}], not_set}.
 start_from_state(BI, Height) ->
-	{ok, Config} = arweave_config:get_env(),
-	start_from_state(BI, Height, Config#config.start_from_state).
+	StartFromState = arweave_config:get([join, start_from_state]),
+	start_from_state(BI, Height, StartFromState).
 
 start_from_state(BI, Height, CustomDir) ->
 	case ar_node:read_recent_blocks(BI,
@@ -1939,7 +1952,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 		replica_format = ReplicaFormat
 	} = Solution,
 	?LOG_INFO([{event, handle_found_solution}, {solution, ar_util:encode(SolutionH)}]),
-	MerkleRebaseThreshold = ar_block:get_merkle_rebase_support_threshold(),
+	MerkleRebaseThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
 
 	#block{ indep_hash = PrevH, timestamp = PrevTimestamp,
 			wallet_list = WalletList,

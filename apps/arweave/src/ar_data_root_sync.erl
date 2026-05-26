@@ -6,7 +6,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -record(state, {
 	store_id,
@@ -53,9 +52,10 @@ handle_cast(sync, State) ->
 			ar_util:cast_after(500, self(), sync),
 			{noreply, State};
 		true ->
-			{ok, Config} = arweave_config:get_env(),
+			SyncingEnabled = arweave_config:get(
+				[gossip, data_roots, syncing_enabled]),
 			{Delay, State2} =
-				case Config#config.enable_data_roots_syncing of
+				case SyncingEnabled of
 					true ->
 						sync_block_data_roots(State);
 					false ->

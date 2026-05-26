@@ -6,15 +6,14 @@
 %%% == Process topology ==
 %%%
 %%% Starting the application brings up a one-for-all supervisor with
-%%% four long-lived pieces:
-%%% - this facade process (arweave_config)
+%%% three long-lived pieces:
 %%% - the value store (arweave_config_store)
 %%% - the option-spec registry (arweave_config_options_registry)
 %%% - the signal handler (arweave_config_signal_handler)
-%%% 
-%%% This module's gen_server owns only the load/runtime lifecycle flag.
-%%% The registry owns spec lookup and mutation semantics, and the store
-%%% owns the actual values.
+%%%
+%%% This module is a pure public facade plus the OTP `application`
+%%% callback. The registry owns spec lookup, mutation semantics, and
+%%% the load/runtime lifecycle flag; the store owns the actual values.
 %%%
 %%% Configuration options are declared as maps in the
 %%% `arweave_config_options_*` modules. These spec maps define the option
@@ -55,10 +54,8 @@
 -compile(warnings_as_errors).
 -vsn(1).
 -behavior(application).
--behavior(gen_server).
 -export([
 	get/1,
-	get/2,
 	get_all_with_prefix/1,
 	is_runtime/0,
 	runtime/0,
@@ -68,7 +65,6 @@
 	snapshot/0,
 	restore/1,
 	start/0,
-	start_link/0,
 	stop/0
 ]).
 %% Public API: peers
@@ -83,11 +79,13 @@
 	storage_modules/0,
 	repack_modules/0,
 	defrag_modules/0,
-	parse_storage_modules/1
+	replace_storage_modules/1,
+	replace_repack_modules/1
 ]).
 %% Public API: webhooks, semaphores, features
 -export([
 	webhooks/0,
+	replace_webhooks/1,
 	semaphores/0,
 	feature_enabled/1
 ]).
@@ -104,10 +102,8 @@
 ]).
 % application behavior callbacks.
 -export([start/2, stop/1]).
-% gen_server behavior callbacks
--export([init/1, terminate/2, handle_call/3, handle_cast/2, handle_info/2]).
 -ifdef(AR_TEST).
--export([force_config/1]).
+-export([force_config/1, reset/0]).
 -endif.
 -compile({no_auto_import,[get/1]}).
 -include_lib("kernel/include/logger.hrl").
@@ -128,71 +124,27 @@ start() ->
 stop() ->
 	application:stop(?MODULE).
 
-%% @doc Get a value from the configuration.
+%% @doc Read a configuration value by its canonical option_key.
 %%
-%% Accepts canonical new-style option_key spellings:
-%%
-%% ```
-%% > get('rocksdb.flush_interval').
-%% {ok, 1800}
-%%
-%% > get(<<"rocksdb.flush_interval">>).
-%% {ok, 1800}
-%%
-%% > get([rocksdb, flush_interval]).
-%% {ok, 1800}
-%%
-%% > get([test]).
-%% {error, #{ reason => not_found }}.
-%% '''
-%%
-%% Defaults declared in the option spec are returned automatically
-%% when the underlying store has no value, so callers don't need to
-%% pass a default.
-%%
-%% Returns the raw value, or `undefined` when the option is unknown
-%% or has no value set.
--spec get(OptionKey) -> Return when
-	OptionKey :: atom() | string() | binary() | list(),
-	Return :: term() | undefined.
-get(Key) ->
-	case arweave_config_parser:key(Key) of
-		{ok, Option} ->
-			spec_get(Option);
-		_ ->
-			undefined
-	end.
-
-%% Unwrap `{ok, Value} | {error, _}` into `Value | undefined`.
-spec_get(Option) ->
-	case arweave_config_options_registry:get(Option) of
-		{ok, Value} -> Value;
-		_ -> undefined
-	end.
-
-%% @doc Get a value from the configuration; return `Default` if not
-%% set.
+%% Returns the raw value, or the spec's `default` if the store has no
+%% entry, or `undefined` if the key is not registered.
 %%
 %% == Examples ==
 %%
 %% ```
-%% > get(<<"global.debug">>, true).
-%% false
+%% > arweave_config:get([rocksdb, flush_interval]).
+%% 1800
 %%
-%% > get([global, debug], true).
-%% false
-%%
-%% > get([test], true).
-%% true
+%% > arweave_config:get([does, not, exist]).
+%% undefined
 %% '''
--spec get(OptionKey, Default) -> Return when
-	OptionKey :: atom() | string() | binary() | list(),
-	Default :: term(),
-	Return :: term().
-get(Key, Default) ->
-	case get(Key) of
-		undefined -> Default;
-		Value -> Value
+-spec get(OptionKey) -> Return when
+	OptionKey :: [atom() | integer() | binary()],
+	Return :: term() | undefined.
+get(Option) when is_list(Option) ->
+	case arweave_config_options_registry:get(Option) of
+		{ok, Value} -> Value;
+		_ -> undefined
 	end.
 
 %% @doc Set a configuration value using a key.
@@ -283,7 +235,7 @@ restore(Snapshot) ->
 %% Example:
 %% ```
 %% arweave_config:with_test_config(fun() ->
-%%     arweave_config:load(arweave_config:parse_storage_modules([...])),
+%%     arweave_config:replace_storage_modules([...]),
 %%     %% test body
 %% end).
 %% '''
@@ -292,7 +244,7 @@ with_test_config(Fun) when is_function(Fun, 0) ->
 	StoreSnap = arweave_config_store:snapshot(),
 	WasRuntime = is_runtime(),
 	case WasRuntime of
-		true -> _ = gen_server:call(?MODULE, {set_runtime, false}, 1000);
+		true -> ok = arweave_config_options_registry:set_runtime(false);
 		false -> ok
 	end,
 	try
@@ -300,14 +252,10 @@ with_test_config(Fun) when is_function(Fun, 0) ->
 	after
 		arweave_config_store:restore(StoreSnap),
 		case WasRuntime of
-			true -> _ = gen_server:call(?MODULE, {set_runtime, true}, 1000);
+			true -> ok = arweave_config_options_registry:set_runtime(true);
 			false -> ok
 		end
 	end.
-
-%% @doc Start arweave_config process.
-start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Switch to runtime mode. Validators run against the assembled
 %% config first; if any rejects, the transition is refused and the
@@ -317,7 +265,7 @@ start_link() ->
 runtime() ->
 	case arweave_config_validate:run() of
 		ok ->
-			gen_server:call(?MODULE, runtime, 10_000);
+			arweave_config_options_registry:set_runtime(true);
 		{error, _} = Err ->
 			Err
 	end.
@@ -325,49 +273,7 @@ runtime() ->
 %% @doc Whether arweave_config is in runtime mode.
 -spec is_runtime() -> boolean().
 is_runtime() ->
-	case ets:lookup(?MODULE, runtime) of
-		[{runtime, true}] -> true;
-		_Else -> false
-	end.
-
-%% @doc `gen_server` callback.
-init(_) ->
-	ets:new(?MODULE, [named_table, protected]),
-	{ok, ?MODULE}.
-
-%% @doc `gen_server` callback.
-terminate(_, _) ->
-	?LOG_INFO("arweave_config process stopped").
-
-%% @doc `gen_server` callback.
-handle_call(runtime, _From, State) ->
-	try
-		ets:insert(?MODULE, {runtime, true})
-	of
-		true -> ok;
-		_ -> ok
-	catch
-		_:_ -> ok
-	end,
-	{reply, ok, State};
-handle_call({set_runtime, Bool}, _From, State) when is_boolean(Bool) ->
-	try
-		ets:insert(?MODULE, {runtime, Bool})
-	of
-		true -> ok;
-		_ -> ok
-	catch
-		_:_ -> ok
-	end,
-	{reply, ok, State};
-handle_call(_, _, State) -> {noreply, State}.
-
-%% @doc `gen_server` callback.
-handle_cast(_, State) ->
-	{noreply, State}.
-
-%% @doc `gen_server` callback.
-handle_info(_, State) -> {noreply, State}.
+	arweave_config_options_registry:is_runtime().
 
 %%====================================================================
 %% Public wrappers for indexed namespaces. Callers outside
@@ -439,6 +345,32 @@ with_runtime_guard(Role, Fun) ->
 storage_modules() ->
 	arweave_config_options_storage_modules:list().
 
+%% @doc Replace the storage_modules wholesale: clear existing entries
+%% then apply the new value. Mirrors `replace_peers/2' for the
+%% storage_modules aggregate — per-leaf writes are accumulate-only and
+%% can't express "delete everything else first" on their own.
+%%
+%% Each entry is the legacy `{BucketSize, Bucket, Packing}' tuple;
+%% the writer fans the tuple out into `[storage_modules, <id>, ...]'
+%% leaves.
+-spec replace_storage_modules([term()]) -> ok | {error, map()}.
+replace_storage_modules(StorageModules) when is_list(StorageModules) ->
+	with_runtime_guard(storage_modules, fun() ->
+		arweave_config_options_storage_modules:write_list(StorageModules)
+	end).
+
+%% @doc Replace the repack_modules wholesale: clear existing entries
+%% then apply the new value. Companion to `replace_storage_modules/1'
+%% for the repack-in-place aggregate.
+%%
+%% Each entry is the legacy `{StorageModule, ToPacking}' tuple; the
+%% writer fans the tuple out into `[repack_modules, <id>, ...]' leaves.
+-spec replace_repack_modules([term()]) -> ok | {error, map()}.
+replace_repack_modules(RepackModules) when is_list(RepackModules) ->
+	with_runtime_guard(repack_modules, fun() ->
+		arweave_config_options_repack_modules:write_list(RepackModules)
+	end).
+
 %% @doc Return the legacy-shaped repack-in-place tuple list.
 -spec repack_modules() -> [term()].
 repack_modules() ->
@@ -449,27 +381,21 @@ repack_modules() ->
 defrag_modules() ->
 	arweave_config_options_storage_modules:defrags().
 
-%% @doc Convert a list of legacy storage_module tuples into a flat
-%% per-leaf entry map suitable for merging into an
-%% `arweave_config:load/1` map. Each tuple expands to entries under
-%% `[storage_modules, <id>, ...]` covering range/partition + packing
-%% attributes.
-%%
-%% Example:
-%% ```
-%% arweave_config:load(maps:merge(
-%%     arweave_config:parse_storage_modules(StorageModules),
-%%     #{ [data_dir] => DataDir, [mining, address] => Addr })).
-%% '''
--spec parse_storage_modules([term()]) -> #{[term()] => term()}.
-parse_storage_modules(StorageModules) ->
-	arweave_config_options_storage_modules:to_entry_map(StorageModules).
-
 %% @doc Return the configured webhook list. See
 %% `arweave_config_options_webhooks:list/0' for the value shape.
 -spec webhooks() -> [map()].
 webhooks() ->
 	arweave_config_options_webhooks:list().
+
+%% @doc Replace the webhooks wholesale: clear existing legacy entries
+%% and apply the new value. Each entry is a `#{url, events, headers}'
+%% map; the writer synthesizes IDs (`legacy_1', `legacy_2', ...) and
+%% fans the map out into `[webhooks, <id>, ...]' leaves.
+-spec replace_webhooks([map()]) -> ok | {error, map()}.
+replace_webhooks(Webhooks) when is_list(Webhooks) ->
+	with_runtime_guard(webhooks, fun() ->
+		arweave_config_options_webhooks:write_legacy_list(Webhooks)
+	end).
 
 %% @doc Return the per-semaphore concurrency limits as a
 %% `#{atom() => pos_integer()}` map. Defaults fill in for unset
@@ -548,29 +474,45 @@ stop(_Args) ->
 %% @doc Apply overrides via `load/1` with the runtime guard
 %% temporarily disabled. The flag is snapshotted, flipped to `false`
 %% for the duration of the load, then restored (even on raise).
-%% Returns whatever `load/1` returns.
+%%
+%% Map must contain per-leaf option_keys only (lists of segments).
+%% Legacy aggregate shorthands (`storage_modules => [...]`,
+%% `{peers, Role} => [...]`, etc.) are NOT accepted — callers should
+%% use the dedicated aggregate APIs
+%% (`arweave_config:replace_peers/2`,
+%% `arweave_config:replace_storage_modules/1`).
 %%
 %% Use `with_test_config/1` when the store contents must also be
 %% snapshotted and restored.
 -spec force_config(Map) -> Return when
 	Map :: #{[term()] => term()},
-	Return :: ok | {error, [{[term()], term()}]}.
+	Return :: ok | {error, term()}.
 force_config(Map) when is_map(Map) ->
 	WasRuntime = is_runtime(),
 	case WasRuntime of
-		true -> ok = set_runtime_local(false);
+		true -> ok = arweave_config_options_registry:set_runtime(false);
 		false -> ok
 	end,
 	try
 		load(Map)
 	after
 		case WasRuntime of
-			true -> ok = set_runtime_local(true);
+			true -> ok = arweave_config_options_registry:set_runtime(true);
 			false -> ok
 		end
 	end.
 
-set_runtime_local(Bool) when is_boolean(Bool) ->
-	_ = gen_server:call(?MODULE, {set_runtime, Bool}, 1000),
-	ok.
+%% @doc Test-only: reset the entire config to its post-bootstrap,
+%% pre-runtime state. Drops every user-written value (scalars and
+%% aggregates alike), then flips the runtime guard back to `false'.
+%% After this call, every option returns its spec default.
+%%
+%% Use this between test cycles in the shared-VM test runner where
+%% `arweave_config' survives across tests — without it, both
+%% scalar overrides and accumulated aggregate entries (peers,
+%% storage_modules, ...) leak from one test into the next.
+-spec reset() -> ok.
+reset() ->
+	ok = restore([]),
+	ok = arweave_config_options_registry:set_runtime(false).
 -endif.

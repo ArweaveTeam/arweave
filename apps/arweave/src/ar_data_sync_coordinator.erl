@@ -28,7 +28,6 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_sup.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_peers.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
@@ -78,7 +77,7 @@ register_workers() ->
 	end.
 
 register_sync_workers() ->
-	{ok, Config} = arweave_config:get_env(),
+	SyncJobs = arweave_config:get([sync, jobs]),
 	{Workers, WorkerNames} = lists:foldl(
 		fun(Number, {AccWorkers, AccWorkerNames}) ->
 			Name = list_to_atom("ar_data_sync_worker_" ++ integer_to_list(Number)),
@@ -86,14 +85,14 @@ register_sync_workers() ->
 			{[Worker | AccWorkers], [Name | AccWorkerNames]}
 		end,
 		{[], []},
-		lists:seq(1, Config#config.sync_jobs)
+		lists:seq(1, SyncJobs)
 	),
 	{Workers, WorkerNames}.
 
 %% @doc Returns true if syncing is enabled (i.e. sync_jobs > 0).
 is_syncing_enabled() ->
-	{ok, Config} = arweave_config:get_env(),
-	Config#config.sync_jobs > 0.
+	SyncJobs = arweave_config:get([sync, jobs]),
+	SyncJobs > 0.
 
 %% @doc Returns true if we can accept new tasks. Will always return false if
 %% syncing is disabled (i.e. sync_jobs = 0).
@@ -137,10 +136,11 @@ init(Workers) ->
 	{ok, #state{}}.
 
 calculate_max_footprints() ->
-	{ok, Config} = arweave_config:get_env(),
+	EntropyCacheSizeMb = arweave_config:get(
+		[packing, entropy, cache_size]),
 	%% Calculate global max footprints based on entropy cache size
 	FootprintSize = ar_block:get_replica_2_9_footprint_size(),
-	max(1, (Config#config.replica_2_9_entropy_cache_size_mb * ?MiB) div FootprintSize).
+	max(1, (EntropyCacheSizeMb * ?MiB) div FootprintSize).
 
 
 handle_call(Request, _From, State) ->
@@ -196,14 +196,13 @@ terminate(Reason, _State) ->
 %% Capacity constants derived from sync_jobs
 %%
 %% All capacity-related thresholds scale from a single operator knob:
-%% Config#config.sync_jobs. Higher sync_jobs = more workers = deeper
-%% buffers = higher per-peer limits. Timing constants (timeouts,
-%% check intervals, smoothing factors) are independent.
+%% [sync, jobs]. Higher sync_jobs = more workers = deeper buffers =
+%% higher per-peer limits. Timing constants (timeouts, check
+%% intervals, smoothing factors) are independent.
 %%--------------------------------------------------------------------
 
 sync_jobs() ->
-	{ok, Config} = arweave_config:get_env(),
-	Config#config.sync_jobs.
+	arweave_config:get([sync, jobs]).
 
 max_tasks() -> max_tasks(sync_jobs()).
 max_tasks(WorkerCount) -> WorkerCount * ?TASKS_PER_WORKER.

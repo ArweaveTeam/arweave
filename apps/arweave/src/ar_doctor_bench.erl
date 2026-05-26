@@ -43,11 +43,11 @@ bench_read(Args) ->
 
 	{StorageModules, Address} = parse_storage_modules(StorageModuleConfigs, [], undefined),
 	ar:console("Assuming mining address: ~p~n", [ar_util:safe_encode(Address)]),
-	Config = #config{
-		data_dir = DataDir,
-		storage_modules = StorageModules,
-		mining_addr = Address},
-	arweave_config:set_env(Config),
+	ok = arweave_config:replace_storage_modules(StorageModules),
+	ok = arweave_config:load(#{
+		[data_dir]        => DataDir,
+		[mining, address] => Address
+	}),
 
 	ar_kv_sup:start_link(),
 	ar_storage_sup:start_link(),
@@ -82,7 +82,7 @@ bench_read(Args) ->
 parse_storage_modules([], StorageModules, Address) ->
 	{StorageModules, Address};
 parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModules, Address) ->
-	{ok, StorageModule} = ar_config:parse_storage_module(StorageModuleConfig),
+	{ok, StorageModule} = arweave_config:parse_storage_module(StorageModuleConfig),
 	Address2 = ar_storage_module:module_address(StorageModule),
 	case Address2 == Address orelse Address == undefined of
 		true ->

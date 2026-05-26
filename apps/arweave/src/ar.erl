@@ -1,15 +1,4 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @copyright 2025 (c) Arweave
-%%% @author Arweave Team
 %%% @doc Arweave server entrypoint and basic utilities.
-%%% @end
-%%%===================================================================
 -module(ar).
 -behaviour(application).
 -compile(warnings_as_errors).
@@ -29,6 +18,7 @@
 	docs/0,
 	e2e/0,
 	e2e/1,
+	main/0,
 	main/1,
 	prep_stop/1,
 	shell/0,
@@ -36,7 +26,6 @@
 	shell_localnet/0,
 	shell_localnet/1,
 	shutdown/1,
-	start/1,
 	start/2,
 	start_dependencies/0,
 	stop/1,
@@ -66,90 +55,58 @@
 %% @doc Command line program entrypoint. Takes a list of arguments.
 %% @end
 %%--------------------------------------------------------------------
-main("") ->
-	ar_cli_parser:show_help(),
-	init:stop(1);
+%% No CLI args — boot purely from `AR_*' env vars (and the config
+%% file if one is configured).
+main() ->
+	main([]).
+
 main(Args) ->
 	% arweave_config must be the first application started, it
 	% will keep the configuration for all other arweave
 	% applications or processes.
 	arweave_config:start(),
 
-	% let parse the arguments and initialize arweave_config. The
-	% idea here is to let full control over the configuration to
-	% arweave_config and then return the correct configuration
-	% file. In case of error, the application is stopped.
-	case arweave_config_bootstrap:start(Args) of
-		{ok, Config} ->
-			start(Config);
+	%% Parse arguments into the options registry. arweave_config:bootstrap
+	%% writes every input into the store directly; consumers read it
+	%% back through arweave_config:get/1.
+	case arweave_config:bootstrap(Args) of
+		ok ->
+			start_dependencies();
 		Else ->
-			ar_cli_parser:show_help(),
+			arweave_config:show_cli_help(),
 			init:stop(1),
 			{error, Else}
 	end.
 
 %%--------------------------------------------------------------------
-%% @doc Start an Arweave node on this BEAM.
-%% @end
-%%--------------------------------------------------------------------
-start(Port) when is_integer(Port) ->
-	start(#config{ port = Port });
-start(Config) ->
-	%% Start the logging system.
-	case os:getenv("TERM") of
-		"dumb" ->
-			% Set logger to output all levels of logs to the console
-			% when running in a dumb terminal.
-			logger:add_handler(console, logger_std_h, #{level => all});
-		_->
-			ok
-	end,
-	case ar_config:validate_config(Config) of
-		true ->
-			ok;
-		false ->
-			timer:sleep(2000),
-			init:stop(1)
-	end,
-	Config2 = ar_config:set_dependent_flags(Config),
-	ok = arweave_config:set_env(Config2),
-	filelib:ensure_dir(Config2#config.log_dir ++ "/"),
-	warn_if_single_scheduler(),
-	case Config2#config.nonce_limiter_server_trusted_peers of
-		[] ->
-			VDFSpeed = ar_bench_vdf:run_benchmark(),
-			?LOG_INFO([{event, vdf_benchmark}, {vdf_s, VDFSpeed / 1000000}]);
-		_ ->
-			ok
-	end,
-	start_dependencies().
-
-%%--------------------------------------------------------------------
 %% @hidden
-%% @doc application `start/2' callback. function used to start arweave
-%% application using `application:start/1' or while using OTP.
+%% @doc application `start/2' callback. Owns the full Arweave node
+%% boot sequence. Triggered by `application:ensure_all_started(arweave)`
+%% from `start_dependencies/0` once `arweave_config` is populated.
 %% @end
 %%--------------------------------------------------------------------
 start(normal, _Args) ->
-	% Load configuration from environment variable, it will
-	% impact only feature supporting arweave_config.
-	arweave_config_environment:load(),
+	%% Post-parse fixups on the loaded config (drains legacy
+	%% enable/disable feature lists, promotes start_from_state, etc.).
+	ok = arweave_config:normalize(),
 
-	% Load the old configuration from arweave_config.
-	{ok, Config} = arweave_config:get_env(),
-
-	% arweave_config can now switch in runtime mode. Setting
-	% parameters without "runtime" flag set to true will fail now.
-	arweave_config:runtime(),
+	%% Boot-time prerequisites that must be in place before any
+	%% supervisor child starts reading config.
+	LogDir = arweave_config:get([log_dir]),
+	filelib:ensure_dir(LogDir ++ "/"),
+	warn_if_single_scheduler(),
+	maybe_run_vdf_benchmark(),
+	maybe_install_dumb_term_logger(),
 
 	%% Set erlang socket backend
-	persistent_term:put({kernel, inet_backend}, Config#config.'socket.backend'),
+	SocketBackend = arweave_config:get([network, server, socket_backend]),
+	persistent_term:put({kernel, inet_backend}, SocketBackend),
 
 	%% Configure logger
-	ar_logger:init(Config),
+	ar_logger:init(),
 
 	?LOG_INFO("========== Starting Arweave Node  =========="),
-	ar_config:log_config(Config),
+	arweave_config:log(),
 
 	%% Start the Prometheus metrics subsystem.
 	prometheus_registry:register_collector(prometheus_process_collector),
@@ -159,32 +116,59 @@ start(normal, _Args) ->
 	ar_metrics:register(),
 
 	%% Start other apps which we depend on.
-	set_mining_address(Config),
+	set_mining_address(),
 	ar_chunk_storage:run_defragmentation(),
 
-	%% Start Arweave.
-	ar_sup:start_link().
+	%% Start Arweave. Supervisor children may run boot-time validators
+	%% in their init/1 callbacks that mutate static config (e.g.,
+	%% ar_node_worker filters and rewrites the trusted-peer list). The
+	%% supervisor tree's child order guarantees those validators run
+	%% before any downstream consumer reads the config.
+	Result = ar_sup:start_link(),
 
-set_mining_address(#config{ mining_addr = not_set } = C) ->
-	case ar_wallet:get_or_create_wallet([{?RSA_SIGN_ALG, 65537}]) of
+	%% All boot-time mutations are done. Flip to runtime mode so any
+	%% subsequent write to a static spec is rejected.
+	case arweave_config:runtime() of
+		ok ->
+			ok;
 		{error, Reason} ->
-			ar:console("~nFailed to create a wallet, reason: ~p.~n",
-				[io_lib:format("~p", [Reason])]),
-			timer:sleep(500),
-			init:stop(1);
-		W ->
-			Addr = ar_wallet:to_address(W),
-			ar:console("~nSetting the mining address to ~s.~n", [ar_util:encode(Addr)]),
-			C2 = C#config{ mining_addr = Addr },
-			arweave_config:set_env(C2),
-			set_mining_address(C2)
-	end;
-set_mining_address(#config{ mine = false }) ->
-	ok;
-set_mining_address(#config{ mining_addr = Addr, cm_exit_peer = CmExitPeer,
-		is_pool_client = PoolClient }) ->
+			io:format("~nConfiguration validation failed: ~p~n~n", [Reason]),
+			timer:sleep(2000),
+			init:stop(1)
+	end,
+
+	Result.
+
+set_mining_address() ->
+	MiningAddr = arweave_config:get([mining, address]),
+	case MiningAddr of
+		not_set ->
+			case ar_wallet:get_or_create_wallet([{?RSA_SIGN_ALG, 65537}]) of
+				{error, Reason} ->
+					ar:console("~nFailed to create a wallet, reason: ~p.~n",
+						[io_lib:format("~p", [Reason])]),
+					timer:sleep(500),
+					init:stop(1);
+				W ->
+					Addr = ar_wallet:to_address(W),
+					ar:console("~nSetting the mining address to ~s.~n",
+						[ar_util:encode(Addr)]),
+					_ = arweave_config:set([mining, address], Addr),
+					verify_mining_keyfile(Addr)
+			end;
+		Addr ->
+			Mine = arweave_config:get([mining, enabled]),
+			case Mine of
+				false -> ok;
+				true  -> verify_mining_keyfile(Addr)
+			end
+	end.
+
+verify_mining_keyfile(Addr) ->
 	case ar_wallet:load_key(Addr) of
 		not_found ->
+			CmExitPeer = arweave_config:get_peer(cm_exit),
+			PoolClient = arweave_config:get([pool, is_client]),
 			case {CmExitPeer, PoolClient} of
 				{not_set, false} ->
 					ar:console("~nThe mining key for the address ~s was not found."
@@ -219,7 +203,7 @@ create_wallet(DataDir, KeyType) ->
 		false ->
 			create_wallet_fail(KeyType);
 		true ->
-			ok = arweave_config:set_env(#config{ data_dir = DataDir }),
+			_ = arweave_config:set([data_dir], DataDir),
 			case ar_wallet:new_keyfile(KeyType) of
 				{error, Reason} ->
 					ar:console("Failed to create a wallet, reason: ~p.~n~n",
@@ -246,7 +230,6 @@ create_wallet_fail(?ECDSA_KEY_TYPE) ->
 benchmark_vdf() ->
 	benchmark_vdf([]).
 benchmark_vdf(Args) ->
-	ok = arweave_config:set_env(#config{}),
 	ar_bench_vdf:run_benchmark_from_cli(Args),
 	init:stop(1).
 
@@ -306,6 +289,28 @@ warn_if_single_scheduler() ->
 		1 ->
 			?LOG_WARNING(
 				"WARNING: Running only one CPU core / Erlang scheduler may cause issues.");
+		_ ->
+			ok
+	end.
+
+%% Run the VDF benchmark when no trusted VDF peers are configured so
+%% the node has a local speed estimate before joining.
+maybe_run_vdf_benchmark() ->
+	case arweave_config:get_peers(vdf_server) of
+		[] ->
+			VDFSpeed = ar_bench_vdf:run_benchmark(),
+			?LOG_INFO([{event, vdf_benchmark}, {vdf_s, VDFSpeed / 1000000}]);
+		_ ->
+			ok
+	end.
+
+%% In a dumb terminal (no TTY capabilities) the default logger handler
+%% suppresses output; install a console handler so the operator still
+%% sees node logs.
+maybe_install_dumb_term_logger() ->
+	case os:getenv("TERM") of
+		"dumb" ->
+			logger:add_handler(console, logger_std_h, #{level => all});
 		_ ->
 			ok
 	end.

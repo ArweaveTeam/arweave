@@ -75,11 +75,11 @@ specs() ->
 
 %% @doc Cross-cutting: also reads [data_dir].
 validate() ->
-	case arweave_config:get([join, start_from_state], not_set) of
+	case arweave_config:get([join, start_from_state]) of
 		not_set ->
 			ok;
 		Folder ->
-			DataDir = arweave_config:get([data_dir], <<>>),
+			DataDir = arweave_config:get([data_dir]),
 			%% Coerce both sides to strings since `path` specs return
 			%% binaries, while the legacy field was a string.
 			FolderS = to_string(Folder),

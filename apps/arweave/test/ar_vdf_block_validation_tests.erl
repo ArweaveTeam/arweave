@@ -33,26 +33,22 @@ test_fork_checkpoints_not_found() ->
 		%% Start nodes in such way that they will not gossip blocks to
 		%% each other. This lets us control when blocks are shared.
 		%% Note: also relies on `mock_block_propagation_parallelization()`.
-		{ok, Config} = arweave_config:get_env(),
 		ar_test_node:start(#{
 			b0 => B0,
-			config => Config#config{
-				nonce_limiter_client_peers = [
-					ar_util:format_peer(ar_test_node:peer_ip(peer1))
-				],
-				block_pollers = 0
+			config => #{
+				[peers, ar_util:format_peer(ar_test_node:peer_ip(peer1)),
+					vdf_client] => true,
+				[gossip, block, pollers] => 0
 			}
 		}),
 		mock_reset_frequency_and_block_propagation_parallelization(main),
 
-		{ok, PeerConfig} = ar_test_node:get_config(peer1),
 		ar_test_node:start_peer(peer1, #{
 			b0 => B0,
-			config => PeerConfig#config{
-				nonce_limiter_server_trusted_peers = [
-					ar_util:format_peer(ar_test_node:peer_ip(main))
-				],
-				block_pollers = 0
+			config => #{
+				[peers, ar_util:format_peer(ar_test_node:peer_ip(main)),
+					vdf_server] => true,
+				[gossip, block, pollers] => 0
 			}
 		}),
 		mock_reset_frequency_and_block_propagation_parallelization(peer1),
@@ -131,27 +127,23 @@ test_fork_refuse_validation() ->
 		%% Start nodes in such way that they will not gossip blocks to
 		%% each other. This lets us control when blocks are shared.
 		%% Note: also relies on `mock_block_propagation_parallelization()`.
-		{ok, Config} = arweave_config:get_env(),
 		ar_test_node:start(#{
 			b0 => B0,
-			config => Config#config{
-				nonce_limiter_client_peers = [
-					ar_util:format_peer(ar_test_node:peer_ip(peer1))
-				],
-				block_pollers = 0
+			config => #{
+				[peers, ar_util:format_peer(ar_test_node:peer_ip(peer1)),
+					vdf_client] => true,
+				[gossip, block, pollers] => 0
 			}
 		}),
 		mock_reset_frequency_and_block_propagation_parallelization(main),
 
-		{ok, PeerConfig} = ar_test_node:get_config(peer1),
 		ar_test_node:start_peer(peer1, #{
 			b0 => B0,
-			config => PeerConfig#config{
-				nonce_limiter_server_trusted_peers = [
-					ar_util:format_peer(ar_test_node:peer_ip(main))
-				],
-				block_pollers = 0,
-				disable = [vdf_server_pull | PeerConfig#config.disable]
+			config => #{
+				[peers, ar_util:format_peer(ar_test_node:peer_ip(main)),
+					vdf_server] => true,
+				[gossip, block, pollers] => 0,
+				[vdf, pull] => false
 			}
 		}),
 		mock_reset_frequency_and_block_propagation_parallelization(peer1),
@@ -251,22 +243,20 @@ with_nonce_limiter_paused(Node, Fun) when is_function(Fun, 0) ->
 	end.
 
 with_vdf_pull_and_push_disabled(Node, Fun) when is_function(Fun, 0) ->
-	{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
-	DisableFlags = Config#config.disable,
-	%% Update config so that ar_http_iface_middleware
-	%% responds to POST /vdf with #nonce_limiter_update_response {postpone = 120 }.
-	ok = ar_test_node:remote_call(
-		Node,
-		arweave_config,
-		set_env,
-		[Config#config{ disable = lists:delete(vdf_server_pull, DisableFlags) }]
-	),
+	%% Disable `[vdf, pull]' so `ar_http_iface_middleware' responds to
+	%% POST /vdf with `#nonce_limiter_update_response{postpone = 120}'.
+	%% (In the legacy config this was the `vdf_server_pull' bit of
+	%% `disable'; in the per-leaf store it's the dedicated boolean.)
+	Prior = ar_test_node:remote_call(Node, arweave_config, get, [[vdf, pull]]),
+	ok = ar_test_node:remote_call(Node, arweave_config, force_config,
+		[#{[vdf, pull] => false}]),
 	%% Also suspend the pull loop so peer1 cannot fetch full sessions.
 	Pid = suspend_nonce_limiter_client(Node),
 	try
 		Fun()
 	after
-		ok = ar_test_node:remote_call(Node, arweave_config, set_env, [Config]),
+		ok = ar_test_node:remote_call(Node, arweave_config, force_config,
+			[#{[vdf, pull] => Prior}]),
 		resume_nonce_limiter_client(Node, Pid)
 	end.
 

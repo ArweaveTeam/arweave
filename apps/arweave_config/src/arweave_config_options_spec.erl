@@ -46,8 +46,8 @@ option_modules() ->
 		arweave_config_options_logging,
 		arweave_config_options_verify,
 		arweave_config_options_defragmentation,
-		arweave_config_options_genesis
-		% arweave_config_options_config
+		arweave_config_options_genesis,
+		arweave_config_options_config
 	].
 
 %% @doc Group atoms in the order their contributor modules appear in

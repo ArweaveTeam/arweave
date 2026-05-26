@@ -8,7 +8,6 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_mining.hrl").
 -include("ar_mining_cache.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -377,8 +376,8 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 				%% This node does not store chunk2. If we're part of a coordinated
 				%% mining set, we can try one of our peers, but this node is done with
 				%% this VDF step.
-				{ok, Config} = arweave_config:get_env(),
-				case Config#config.coordinated_mining of
+				CmEnabled = arweave_config:get([cm, enabled]),
+				case CmEnabled of
 					false -> ok;
 					true ->
 						DiffPair = case get_partial_difficulty(State1, Candidate) of

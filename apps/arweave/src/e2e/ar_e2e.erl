@@ -93,28 +93,27 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 	{Blocks, _SourceAddr, Chunks} = start_source_node(TempNode, spora_2_6, wallet_a),
 	{_, StorageModules} = source_node_storage_modules(Node, unpacked, wallet_a, ModuleSize),
 	[B0, _, {TX2, _} | _] = Blocks,
-	{ok, Config} = ar_test_node:get_config(Node),
-	ar_test_node:start_other_node(Node, B0, Config#config{
-		peers = [ar_test_node:peer_ip(TempNode)],
-		storage_modules = StorageModules,
-		auto_join = true
+	ar_test_node:start_other_node(Node, B0, #{
+		{peers, trusted} => [ar_test_node:peer_ip(TempNode)],
+		storage_modules => StorageModules,
+		[join, auto] => true
 	}, true),
 
 	?LOG_INFO("Source node ~p started.", [Node]),
-	
+
 	assert_syncs_range(Node, 0, 4*?ALIGNED_PARTITION_SIZE),
-	
+
 	assert_chunks(Node, unpacked, Chunks),
 
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
 
 	ar_test_node:stop(TempNode),
 
-	ar_test_node:restart_with_config(Node, Config#config{
-		peers = [],
-		start_from_latest_state = true,
-		storage_modules = StorageModules,
-		auto_join = true
+	ar_test_node:restart_with_config(Node, #{
+		{peers, trusted} => [],
+		[join, start_from_latest_state] => true,
+		storage_modules => StorageModules,
+		[join, auto] => true
 	}),
 
 	%% pack_served_chunks is not enabled but the data is stored unpacked, so we should
@@ -141,15 +140,13 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
 
 	[B0] = ar_weave:init([{RewardAddr, ?AR(200), <<>>}], 0, ?ALIGNED_PARTITION_SIZE),
 
-	{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
-	
 	?assertEqual(ar_test_node:peer_name(Node),
-		ar_test_node:start_other_node(Node, B0, Config#config{
-			peers = [],
-			start_from_latest_state = true,
-			storage_modules = StorageModules,
-			auto_join = true,
-			mining_addr = RewardAddr
+		ar_test_node:start_other_node(Node, B0, #{
+			{peers, trusted} => [],
+			[join, start_from_latest_state] => true,
+			storage_modules => StorageModules,
+			[join, auto] => true,
+			[mining, address] => RewardAddr
 		}, true)
 	),
 
@@ -226,12 +223,15 @@ max_chunk_offset(Chunks) ->
 	lists:foldl(fun({_, EndOffset, _}, Acc) -> max(Acc, EndOffset) end, 0, Chunks).
 
 aligned_partition_size(Node, Partition, Packing) ->
-	{ok, Config} = ar_test_node:get_config(Node),
+	StorageModulesList = ar_test_node:remote_call(
+		Node, arweave_config, storage_modules, []),
+	RepackInPlaceList = ar_test_node:remote_call(
+		Node, arweave_config, repack_modules, []),
 	%% Include both regular storage modules and repack_in_place modules.
 	%% For repack_in_place modules, use the target packing.
 	RepackInPlaceModules = [{BucketSize, Bucket, TargetPacking}
-		|| {{BucketSize, Bucket, _FromPacking}, TargetPacking} <- Config#config.repack_in_place_storage_modules],
-	AllStorageModules = Config#config.storage_modules ++ RepackInPlaceModules,
+		|| {{BucketSize, Bucket, _FromPacking}, TargetPacking} <- RepackInPlaceList],
+	AllStorageModules = StorageModulesList ++ RepackInPlaceModules,
 	PartitionStart = Partition * ar_block:partition_size(),
 	PartitionEnd = (Partition + 1) * ar_block:partition_size(),
 	StorageModules = filter_storage_modules_by_partition(
@@ -664,8 +664,9 @@ assert_no_chunks(Node, Chunks) ->
 %% sync record rather than ar_chunk_storage's, so a concurrent cross-module read
 %% can see not_found for a valid chunk and cause read_range2 to invalidate it.
 wait_for_entropy_complete(Node) ->
-	{ok, Config} = ar_test_node:remote_call(Node, arweave_config, get_env, []),
-	StoreIDs = [ar_storage_module:id(M) || M <- Config#config.storage_modules],
+	StorageModules = ar_test_node:remote_call(
+		Node, arweave_config, storage_modules, []),
+	StoreIDs = [ar_storage_module:id(M) || M <- StorageModules],
 	lists:foreach(fun(StoreID) -> wait_for_entropy_complete(Node, StoreID) end, StoreIDs).
 
 wait_for_entropy_complete(Node, StoreID) ->

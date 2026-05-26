@@ -58,7 +58,6 @@ ar_pool
 
 # standard
 ar_base64_compatibility_tests
-ar_config_tests
 ar_difficulty_tests
 ar_get_chunk_tests
 ar_header_sync_tests
@@ -79,7 +78,6 @@ ar_tx_replay_pool_tests
 ar_vdf_tests
 
 # long running
-ar_coordinated_mining_tests
 ar_data_roots_sync_tests
 ar_data_sync_records_footprints_test
 ar_data_sync_recovers_from_corruption_test
@@ -101,4 +99,7 @@ ar_vdf_server_tests
 ar_vdf_external_update_tests
 ar_post_block_tests
 ar_reject_chunks_tests
-ar_cli_parser
+
+# These tests can be slow/flaky in coordinated mining setup;
+# kept at the end so they don't block the rest of the suite on cancellation.
+ar_coordinated_mining_tests

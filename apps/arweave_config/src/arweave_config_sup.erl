@@ -18,14 +18,6 @@ supervisor() ->
 children() ->
 	[
 		#{
-			id => arweave_config,
-			start => {
-				arweave_config,
-				start_link,
-				[]
-			}
-		},
-		#{
 			id => arweave_config_store,
 			start => {
 				arweave_config_store,

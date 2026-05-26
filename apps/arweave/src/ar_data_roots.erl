@@ -49,7 +49,6 @@
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -type data_root_entry() :: {DataRoot :: binary(), TXSize :: non_neg_integer(),
@@ -261,8 +260,8 @@ iterator(DataRootID, TXStartOffset, StoreID) ->
 	{DataRootID, TXStartOffset, TXStartOffset, StoreID, 1}.
 
 next(Args) ->
-	{ok, Config} = arweave_config:get_env(),
-	next(Args, Config#config.max_duplicate_data_roots).
+	MaxDuplicates = arweave_config:get([gossip, data_roots, max_duplicates]),
+	next(Args, MaxDuplicates).
 
 next({_, _, _, _, Count}, Limit) when Count > Limit ->
 	none;

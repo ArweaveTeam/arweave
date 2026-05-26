@@ -15,6 +15,7 @@
 	{modules, [
 		arweave_config,
 		arweave_config_bootstrap,
+		arweave_config_cli,
 		arweave_config_features,
 		arweave_config_file,
 		arweave_config_format_cli,

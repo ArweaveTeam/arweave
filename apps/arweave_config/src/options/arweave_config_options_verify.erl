@@ -44,11 +44,11 @@ specs() ->
 
 %% @doc Cross-cutting: also reads [mining, enabled] and the repack-modules list.
 validate() ->
-	case arweave_config:get([verify, mode], false) of
+	case arweave_config:get([verify, mode]) of
 		false ->
 			ok;
 		_ ->
-			case arweave_config:get([mining, enabled], false) of
+			case arweave_config:get([mining, enabled]) of
 				true ->
 					{error, <<"The verify flag cannot be set together with "
 							"the mine flag.">>};

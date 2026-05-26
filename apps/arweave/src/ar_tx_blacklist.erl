@@ -16,7 +16,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 %% The frequency of refreshing the blacklist.
 -ifdef(AR_TEST).
@@ -332,8 +331,7 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 initialize_state() ->
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get([data_dir]),
 	Dir = filename:join(DataDir, "ar_tx_blacklist"),
 	ok = filelib:ensure_dir(Dir ++ "/"),
 	Names = [
@@ -353,13 +351,13 @@ initialize_state() ->
 	).
 
 refresh_blacklist() ->
-	{ok, Config} = arweave_config:get_env(),
-	WhitelistFiles = Config#config.transaction_whitelist_files,
+	WhitelistFiles = arweave_config:get([transactions, allowlist, files]),
 	case load_from_files(WhitelistFiles) of
 		error ->
 			error;
 		{ok, Whitelist} ->
-			WhitelistURLs = Config#config.transaction_whitelist_urls,
+			WhitelistURLs = arweave_config:get(
+				[transactions, allowlist, urls]),
 			case load_from_urls(WhitelistURLs) of
 				error ->
 					error;
@@ -369,13 +367,13 @@ refresh_blacklist() ->
 	end.
 
 refresh_blacklist(Whitelist) ->
-	{ok, Config} = arweave_config:get_env(),
-	BlacklistFiles = Config#config.transaction_blacklist_files,
+	BlacklistFiles = arweave_config:get([transactions, blocklist, files]),
 	case load_from_files(BlacklistFiles) of
 		error ->
 			error;
 		{ok, Blacklist} ->
-			BlacklistURLs = Config#config.transaction_blacklist_urls,
+			BlacklistURLs = arweave_config:get(
+				[transactions, blocklist, urls]),
 			case load_from_urls(BlacklistURLs) of
 				error ->
 					error;
@@ -545,7 +543,7 @@ load_from_urls(URLs) ->
 load_from_url(URL) ->
 	try
 		#{ host := Host, path := RawPath, scheme := Scheme } = M = uri_string:parse(URL),
-		Path = case RawPath of "" -> "/"; Elsewise -> Elsewise end,
+		Path = case RawPath of "" -> "/"; Else -> Else end,
 		Query = case maps:get(query, M, not_found) of not_found -> <<>>; Q -> [<<"?">>, Q] end,
 		Port = maps:get(port, M, case Scheme of "http" -> 80; "https" -> 443 end),
 		Reply =

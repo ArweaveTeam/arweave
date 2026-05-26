@@ -45,8 +45,8 @@ reset_node() ->
 	[{H, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, Height + 1),
 	B = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, H]),
 	PrevB = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, PrevH]),
-	{ok, Config} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
-	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr]),
+	MiningAddr = ar_test_node:remote_call(peer1, arweave_config, get, [[mining, address]]),
+	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [MiningAddr]),
 	{Key, B, PrevB}.
 
 setup_all_post_2_8() ->
@@ -158,8 +158,8 @@ poc07_tx() ->
 
 
 p2p_headers() ->
-    {ok, Config} = arweave_config:get_env(),
-    [{<<"x-p2p-port">>, integer_to_binary(Config#config.port)},
+    Port = arweave_config:get([port]),
+    [{<<"x-p2p-port">>, integer_to_binary(Port)},
      {<<"x-release">>, integer_to_binary(?RELEASE_NUMBER)}].
 
 

@@ -9,7 +9,6 @@
 
 -include("ar.hrl").
 
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -104,11 +103,12 @@ start_link() ->
 
 init([]) ->
 	gen_server:cast(self(), initialize_state),
-	{ok, Config} = arweave_config:get_env(),
+	NumWorkers = arweave_config:get([packing, entropy, workers]),
+	DisableLimit = arweave_config:get([disable_device_limit]),
 
 	State = #state{
-		num_replica_2_9_workers = Config#config.replica_2_9_workers,
-		device_limit = not Config#config.disable_replica_2_9_device_limit
+		num_replica_2_9_workers = NumWorkers,
+		device_limit = not DisableLimit
 	},
 	?LOG_INFO([{event, starting_device_lock_server},
 		{num_replica_2_9_workers, State#state.num_replica_2_9_workers},
@@ -171,10 +171,9 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 initialize_state(State) ->
-	{ok, Config} = arweave_config:get_env(),
-	StorageModules = Config#config.storage_modules,
-	RepackInPlaceModules = [element(1, El)
-			|| El <- Config#config.repack_in_place_storage_modules],
+	StorageModules = arweave_config:storage_modules(),
+	RepackInPlace = arweave_config:repack_modules(),
+	RepackInPlaceModules = [element(1, El) || El <- RepackInPlace],
 	StoreIDToDevice = lists:foldl(
 		fun(Module, Acc) ->
 			StoreID = ar_storage_module:id(Module),
@@ -197,9 +196,9 @@ initialize_state(State) ->
 	State2.
 
 get_system_device(StorageModule) ->
-	{ok, Config} = arweave_config:get_env(),
+	DataDir = arweave_config:get([data_dir]),
 	StoreID = ar_storage_module:id(StorageModule),
-	Path = ar_chunk_storage:get_chunk_storage_path(Config#config.data_dir, StoreID),
+	Path = ar_chunk_storage:get_chunk_storage_path(DataDir, StoreID),
 	Device = ar_util:get_system_device(Path),
 	case Device of
 		"" -> StoreID;  % If the command fails or returns an empty string, return StoreID

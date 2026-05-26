@@ -13,7 +13,6 @@
 	terminate/2
 ]).
 
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -include("ar.hrl").
 
@@ -82,12 +81,12 @@ handle_info({event, node_state, {initialized, _}}, State) ->
 	%% Send a check_for_received_txs cast periodically to check for externally submitted
 	%% transactions. If there have not been any for longer than 30 seconds, request the
 	%% mempool from a peer and download the transactions.
-    {ok, Config} = arweave_config:get_env(),
-    case lists:member(tx_poller, Config#config.disable) of
+    PollingEnabled = arweave_config:get([gossip, tx, polling_enabled]),
+    case PollingEnabled of
         true ->
-            ok;
+            gen_server:cast(self(), check_for_received_txs);
         false ->
-            gen_server:cast(self(), check_for_received_txs)
+            ok
     end,
     {noreply, State};
 

@@ -28,17 +28,17 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	{ok, Config} = arweave_config:get_env(),
+	Webhooks = arweave_config:webhooks(),
 	Children = lists:map(
 		fun
-			(Hook) when is_record(Hook, config_webhook) ->
-				Handler = {ar_webhook, Hook#config_webhook.url},
+			(Hook) when is_map(Hook) ->
+				Handler = {ar_webhook, maps:get(url, Hook)},
 				{Handler, {ar_webhook, start_link, [Hook]},
 					permanent, ?SHUTDOWN_TIMEOUT, worker, [ar_webhook]};
 			(Hook) ->
 				?LOG_ERROR([{event, failed_to_parse_webhook_config},
 					{webhook_config, io_lib:format("~p", [Hook])}])
 		end,
-		Config#config.webhooks
+		Webhooks
 	),
 	{ok, {{one_for_one, 5, 10}, Children}}.

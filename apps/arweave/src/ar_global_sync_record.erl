@@ -3,7 +3,6 @@
 -behaviour(gen_server).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_data_discovery.hrl").
 -include("ar_sync_buckets.hrl").
 
@@ -182,14 +181,14 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 init_sync_record() ->
-	{ok, Config} = arweave_config:get_env(),
-	Modules = [M || M <- [?DEFAULT_MODULE | Config#config.storage_modules],
+	StorageModules = arweave_config:storage_modules(),
+	Modules = [M || M <- [?DEFAULT_MODULE | StorageModules],
 			not is_replica_2_9(M)],
 	get_records_wait(ar_data_sync, Modules, ar_intervals:new()).
 
 init_footprint_record() ->
-	{ok, Config} = arweave_config:get_env(),
-	get_records_wait(ar_data_sync_footprints, Config#config.storage_modules,
+	StorageModules = arweave_config:storage_modules(),
+	get_records_wait(ar_data_sync_footprints, StorageModules,
 			ar_intervals:new()).
 
 %% @doc Handle potential race condition when ar_global_sync_record init is called before

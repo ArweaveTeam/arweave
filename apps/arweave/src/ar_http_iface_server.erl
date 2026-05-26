@@ -11,7 +11,6 @@
 -export([split_path/1, label_http_path/1, label_req/1]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(HTTP_IFACE_MIDDLEWARES, [
@@ -46,10 +45,9 @@ init(_) ->
 	% if something goes wrong, the connections must
 	% be cleaned before leaving.
 	erlang:process_flag(trap_exit, true),
-	{ok, Config} = arweave_config:get_env(),
-	case start_http_iface_listener(Config) of
+	case start_http_iface_listener() of
 		{ok, Pid} -> {ok, Pid};
-		Elsewise -> {error, Elsewise}
+		Else -> {error, Else}
 	end.
 
 split_path(Path) ->
@@ -88,33 +86,47 @@ terminate(Reason, _State) ->
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
-start_http_iface_listener(Config) ->
+start_http_iface_listener() ->
 	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
+	Backlog = arweave_config:get([network, server, tcp, backlog]),
+	DelaySend = arweave_config:get([network, server, tcp, delay_send]),
+	Keepalive = arweave_config:get([network, server, tcp, keepalive]),
+	Linger = arweave_config:get([network, server, tcp, linger]),
+	LingerTimeout = arweave_config:get([network, server, tcp, linger_timeout]),
+	MaxConnections = arweave_config:get([network, server, tcp, max_connections]),
+	Nodelay = arweave_config:get([network, server, tcp, nodelay]),
+	NumAcceptors = arweave_config:get([network, server, tcp, num_acceptors]),
+	SendTimeoutClose = arweave_config:get([network, server, tcp, send_timeout_close]),
+	SendTimeout = arweave_config:get([network, server, tcp, send_timeout]),
+	ListenerShutdown = arweave_config:get([network, server, tcp, listener_shutdown]),
+	Port = arweave_config:get([port]),
+	ActiveN = arweave_config:get([network, server, http, active_n]),
+	InactivityTimeout = arweave_config:get([network, server, http, inactivity_timeout]),
+	HttpLingerTimeout = arweave_config:get([network, server, http, linger_timeout]),
+	RequestTimeout = arweave_config:get([network, server, http, request_timeout]),
+	IdleTimeout = arweave_config:get([network, server, transport, idle_timeout]),
 	TransportOpts = #{
 		% ranch_tcp parameters
-		backlog => Config#config.'http_api.tcp.backlog',
-		delay_send => Config#config.'http_api.tcp.delay_send',
-		keepalive => Config#config.'http_api.tcp.keepalive',
-		linger => {
-				Config#config.'http_api.tcp.linger',
-				Config#config.'http_api.tcp.linger_timeout'
-		},
-		max_connections => Config#config.'http_api.tcp.max_connections',
-		nodelay => Config#config.'http_api.tcp.nodelay',
-		num_acceptors => Config#config.'http_api.tcp.num_acceptors',
-		send_timeout_close => Config#config.'http_api.tcp.send_timeout_close',
-		send_timeout => Config#config.'http_api.tcp.send_timeout',
-		shutdown => Config#config.'http_api.tcp.listener_shutdown',
+		backlog => Backlog,
+		delay_send => DelaySend,
+		keepalive => Keepalive,
+		linger => {Linger, LingerTimeout},
+		max_connections => MaxConnections,
+		nodelay => Nodelay,
+		num_acceptors => NumAcceptors,
+		send_timeout_close => SendTimeoutClose,
+		send_timeout => SendTimeout,
+		shutdown => ListenerShutdown,
 		socket_opts => [
-			{port, Config#config.port}
+			{port, Port}
 		]
 	},
 	ProtocolOpts = #{
-		active_n => Config#config.'http_api.http.active_n',
-		inactivity_timeout => Config#config.'http_api.http.inactivity_timeout',
-		linger_timeout => Config#config.'http_api.http.linger_timeout',
-		request_timeout => Config#config.'http_api.http.request_timeout',
-		idle_timeout => Config#config.http_api_transport_idle_timeout,
+		active_n => ActiveN,
+		inactivity_timeout => InactivityTimeout,
+		linger_timeout => HttpLingerTimeout,
+		request_timeout => RequestTimeout,
+		idle_timeout => IdleTimeout,
 		middlewares => ?HTTP_IFACE_MIDDLEWARES,
 		env => #{
 			dispatch => Dispatch

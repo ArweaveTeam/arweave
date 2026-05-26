@@ -7,7 +7,6 @@
 
 -include("ar.hrl").
 -include("ar_poa.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_consensus.hrl").
 -include("ar_chunk_storage.hrl").
 -include("ar_verify_chunks.hrl").
@@ -43,21 +42,22 @@ name(StoreID) ->
 %%%===================================================================
 
 init(StoreID) ->
-	{ok, Config} = arweave_config:get_env(),
+	VerifyMode = arweave_config:get([verify, mode]),
+	ChunkSamples = arweave_config:get([verify, samples]),
 	?LOG_INFO([{event, verify_chunk_storage_started},
-		{store_id, StoreID}, {mode, Config#config.verify},
-		{chunk_samples, Config#config.verify_samples}]),
+		{store_id, StoreID}, {mode, VerifyMode},
+		{chunk_samples, ChunkSamples}]),
 	{StartOffset, EndOffset} = ar_storage_module:get_range(StoreID),
 	gen_server:cast(self(), sample),
 	{ok, #state{
-		mode = Config#config.verify,
+		mode = VerifyMode,
 		store_id = StoreID,
 		packing = ar_storage_module:get_packing(StoreID),
 		start_offset = StartOffset,
 		end_offset = EndOffset,
 		cursor = StartOffset,
 		ready = is_ready(EndOffset),
-		chunk_samples = Config#config.verify_samples,
+		chunk_samples = ChunkSamples,
 		verify_report = #verify_report{
 			start_time = erlang:system_time(millisecond)
 		}

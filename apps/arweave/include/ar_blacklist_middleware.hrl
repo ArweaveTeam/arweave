@@ -7,8 +7,8 @@
 end).
 
 -define(RPM_BY_PATH(Path, LimitByIP), fun() ->
-	{ok, Config} = arweave_config:get_env(),
-	?RPM_BY_PATH(Path, LimitByIP, Config#config.requests_per_minute_limit)()
+	Limit = arweave_config:get([requests_per_minute_limit]),
+	?RPM_BY_PATH(Path, LimitByIP, Limit)()
 end).
 
 -ifdef(AR_TEST).

@@ -11,7 +11,6 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -53,7 +52,7 @@ is_recall_range_readable(Candidate, RecallRangeStart) ->
 			{is_recall_range_readable, Candidate, RecallRangeStart}, 60000).
 
 get_packing() ->
-	%% ar_config:validate_storage_modules/1 ensures that we only mine against a single
+	%% arweave_config:validate/0 ensures that we only mine against a single
 	%% packing format. So we can grab any partition.
 	case get_minable_storage_modules() of
 		[] -> undefined;
@@ -91,12 +90,13 @@ get_partitions(PartitionUpperBound) ->
     lists:sort(sets:to_list(FilteredPartitions)).
 
 get_minable_storage_modules() ->
-	{ok, Config} = arweave_config:get_env(),
+	MiningAddr = arweave_config:get([mining, address]),
+	StorageModules = arweave_config:storage_modules(),
 	lists:filter(
 		fun	(Module) ->
-				ar_storage_module:module_address(Module) == Config#config.mining_addr
+				ar_storage_module:module_address(Module) == MiningAddr
 		end,
-		Config#config.storage_modules
+		StorageModules
 	).
 
 
