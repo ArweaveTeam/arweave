@@ -14,11 +14,11 @@ init_per_suite(Config) -> Config.
 end_per_suite(_Config) -> ok.
 
 init_per_testcase(TestCase, Config) ->
-	{ok, PidStore} = arweave_config_store:start_link(),
-	{ok, PidSpec} = arweave_config_options_registry:start_link(specs(TestCase)),
+	{ok, PIDStore} = arweave_config_store:start_link(),
+	{ok, PIDSpec} = arweave_config_options_registry:start_link(specs(TestCase)),
 	[
-		{arweave_config_store, PidStore},
-		{arweave_config_options_registry, PidSpec}
+		{arweave_config_store, PIDStore},
+		{arweave_config_options_registry, PIDSpec}
 		| Config
 	].
 

@@ -376,8 +376,8 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
 				%% This node does not store chunk2. If we're part of a coordinated
 				%% mining set, we can try one of our peers, but this node is done with
 				%% this VDF step.
-				CmEnabled = arweave_config:get([cm, enabled]),
-				case CmEnabled of
+				CMEnabled = arweave_config:get([cm, enabled]),
+				case CMEnabled of
 					false -> ok;
 					true ->
 						DiffPair = case get_partial_difficulty(State1, Candidate) of

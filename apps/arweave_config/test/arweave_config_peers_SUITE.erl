@@ -255,10 +255,10 @@ by_role_unknown_role_binary_crashes(_Config) ->
 %% A peer that appears in the store with every role set to `false' is
 %% rejected by `validate_at_least_one_role/2' at runtime transition.
 validator_rejects_peer_with_no_active_roles(_Config) ->
-	PeerId = <<"1.2.3.4:1984">>,
-	{ok, _} = arweave_config:set([peers, PeerId, trusted], false),
+	PeerID = <<"1.2.3.4:1984">>,
+	{ok, _} = arweave_config:set([peers, PeerID, trusted], false),
 	?assertMatch(
-		{error, {peer_with_no_roles, [PeerId]}},
+		{error, {peer_with_no_roles, [PeerID]}},
 		arweave_config:runtime()),
 	?assertEqual(false, arweave_config:is_runtime()),
 	ok.

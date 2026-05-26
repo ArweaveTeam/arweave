@@ -125,7 +125,7 @@ roles() ->
 
 %% @doc Write a legacy list value (e.g. the parsed `peers` list) into
 %% the peer_id store. Each entry in the list becomes a
-%% `[peers, PeerId, Role] = true` write. Existing per-peer entries
+%% `[peers, PeerID, Role] = true` write. Existing per-peer entries
 %% under the same role are cleared first — this is a replace, not an
 %% append.
 -spec write_legacy_list(atom(), [tuple() | binary() | string()]) -> ok.
@@ -147,19 +147,19 @@ write_legacy_singleton(Role, Peer) ->
 
 %% @doc Delete every `[peers, _, Role]` leaf currently set to `true`.
 clear_role(Role) ->
-	[arweave_config_store:delete([peers, PeerId, Role])
-		|| PeerId <- peers_with_role(Role)],
+	[arweave_config_store:delete([peers, PeerID, Role])
+		|| PeerID <- peers_with_role(Role)],
 	ok.
 
 write_one(Role, Peer) ->
 	case arweave_config_type:peer_id(Peer) of
-		{ok, PeerId} ->
+		{ok, PeerID} ->
 			%% set_local bypasses the gen_server — required because
 			%% this code runs from inside the spec gen_server's
 			%% handle_set callback, where a normal set/2 would
 			%% deadlock.
 			_ = arweave_config_options_registry:set_local(
-				[peers, PeerId, Role], true),
+				[peers, PeerID, Role], true),
 			ok;
 		{error, _Reason} ->
 			%% Skip malformed entries silently.
@@ -179,7 +179,7 @@ write_one(Role, Peer) ->
 by_role(Role) when is_binary(Role) ->
 	by_role(binary_to_existing_atom(Role));
 by_role(Role) when is_atom(Role) ->
-	[peer_id_to_legacy(PeerId) || PeerId <- peers_with_role(Role)].
+	[peer_id_to_legacy(PeerID) || PeerID <- peers_with_role(Role)].
 
 %% @doc Read the peer_id store and return a single peer carrying
 %% `Role`, or `not_set` if none does. The role may be passed as an
@@ -191,31 +191,31 @@ singleton_by_role(Role) when is_binary(Role) ->
 singleton_by_role(Role) when is_atom(Role) ->
 	case peers_with_role(Role) of
 		[] -> not_set;
-		[PeerId | _] -> peer_id_to_legacy(PeerId)
+		[PeerID | _] -> peer_id_to_legacy(PeerID)
 	end.
 
 %% @doc Return the list of peer_ids that have `Role = true` in the
 %% store.
 peers_with_role(Role) ->
 	Items = arweave_config:get_all_with_prefix([peers]),
-	[PeerId
-		|| {[peers, PeerId, R], true} <- Items, R =:= Role].
+	[PeerID
+		|| {[peers, PeerID, R], true} <- Items, R =:= Role].
 
 %% @doc Convert a normalized `<<"host:port">>` peer_id back into the
 %% legacy `{A, B, C, D, Port}` tuple shape. Bare IPv4 (no port) is
 %% promoted to the default port. Hostnames pass through unchanged.
-peer_id_to_legacy(PeerId) when is_binary(PeerId) ->
-	case binary:split(PeerId, <<":">>, [global]) of
+peer_id_to_legacy(PeerID) when is_binary(PeerID) ->
+	case binary:split(PeerID, <<":">>, [global]) of
 		[Host, PortBin] ->
 			Port = binary_to_integer(PortBin),
 			case parse_ipv4(Host) of
 				{ok, {A, B, C, D}} -> {A, B, C, D, Port};
-				error -> PeerId
+				error -> PeerID
 			end;
 		[Host] ->
 			case parse_ipv4(Host) of
 				{ok, {A, B, C, D}} -> {A, B, C, D, ?DEFAULT_PEER_PORT};
-				error -> PeerId
+				error -> PeerID
 			end
 	end.
 
@@ -244,8 +244,8 @@ validate() ->
 	%% Group items by peer_id.
 	ByPeer = lists:foldl(
 		fun
-			({[peers, PeerId, Role], true}, Acc) ->
-				maps:update_with(PeerId,
+			({[peers, PeerID, Role], true}, Acc) ->
+				maps:update_with(PeerID,
 					fun(Roles) -> [Role | Roles] end,
 					[Role],
 					Acc);
@@ -267,15 +267,15 @@ validate() ->
 	end.
 
 validate_cm_exit_singleton(ByPeer) ->
-	WithCmExit = [Id || {Id, Roles} <- maps:to_list(ByPeer),
+	WithCMExit = [ID || {ID, Roles} <- maps:to_list(ByPeer),
 		lists:member(cm_exit, Roles)],
-	case length(WithCmExit) of
+	case length(WithCMExit) of
 		N when N =< 1 -> ok;
-		_ -> {error, {multiple_cm_exit_peers, WithCmExit}}
+		_ -> {error, {multiple_cm_exit_peers, WithCMExit}}
 	end.
 
 validate_vdf_exclusivity(ByPeer) ->
-	Conflicts = [Id || {Id, Roles} <- maps:to_list(ByPeer),
+	Conflicts = [ID || {ID, Roles} <- maps:to_list(ByPeer),
 		lists:member(vdf_client, Roles),
 		lists:member(vdf_server, Roles)],
 	case Conflicts of
@@ -286,10 +286,10 @@ validate_vdf_exclusivity(ByPeer) ->
 validate_at_least_one_role(ByPeer, AllItems) ->
 	%% A peer with only `false` leaves is present in the store but
 	%% has no active role — reject it.
-	AllPeerIds = lists:usort(
-		[Id || {[peers, Id, _], _V} <- AllItems]),
-	Empty = [Id || Id <- AllPeerIds,
-		not maps:is_key(Id, ByPeer)],
+	AllPeerIDs = lists:usort(
+		[ID || {[peers, ID, _], _V} <- AllItems]),
+	Empty = [ID || ID <- AllPeerIDs,
+		not maps:is_key(ID, ByPeer)],
 	case Empty of
 		[] -> ok;
 		_ -> {error, {peer_with_no_roles, Empty}}

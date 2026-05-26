@@ -102,7 +102,7 @@ start_http_iface_listener() ->
 	Port = arweave_config:get([port]),
 	ActiveN = arweave_config:get([network, server, http, active_n]),
 	InactivityTimeout = arweave_config:get([network, server, http, inactivity_timeout]),
-	HttpLingerTimeout = arweave_config:get([network, server, http, linger_timeout]),
+	HTTPLingerTimeout = arweave_config:get([network, server, http, linger_timeout]),
 	RequestTimeout = arweave_config:get([network, server, http, request_timeout]),
 	IdleTimeout = arweave_config:get([network, server, transport, idle_timeout]),
 	TransportOpts = #{
@@ -124,7 +124,7 @@ start_http_iface_listener() ->
 	ProtocolOpts = #{
 		active_n => ActiveN,
 		inactivity_timeout => InactivityTimeout,
-		linger_timeout => HttpLingerTimeout,
+		linger_timeout => HTTPLingerTimeout,
 		request_timeout => RequestTimeout,
 		idle_timeout => IdleTimeout,
 		middlewares => ?HTTP_IFACE_MIDDLEWARES,

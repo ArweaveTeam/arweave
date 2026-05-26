@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -e
+
+# Ensure test artifacts are rebuilt before running Common Test suites.
+./ar-rebar3 test compile
+./rebar3 as test ct "$@"

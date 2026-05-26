@@ -269,8 +269,8 @@ set_runtime(Bool) when is_boolean(Bool) ->
 
 -spec init(Specs) -> Return when
 	Specs :: [atom() | map()],
-	Return :: {ok, NamedEts},
-	NamedEts :: ?MODULE.
+	Return :: {ok, NamedETS},
+	NamedETS :: ?MODULE.
 init([]) ->
 	Specs = arweave_config_options_spec:all(),
 	init_process(Specs);

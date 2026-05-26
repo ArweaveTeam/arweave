@@ -104,15 +104,15 @@ garbage_collect() ->
 
 %% Return true if we are an exit peer in the coordinated mining setup.
 is_exit_peer() ->
-	CmEnabled = arweave_config:get([cm, enabled]),
-	CmEnabled == true
+	CMEnabled = arweave_config:get([cm, enabled]),
+	CMEnabled == true
 			andalso arweave_config:get_peer(cm_exit) == not_set.
 
 %% Return true if we are a CM miner in the coordinated mining setup.
 %% A CM miner may be but does not have to be an exit node.
 is_coordinated_miner() ->
-	CmEnabled = arweave_config:get([cm, enabled]),
-	CmEnabled == true.
+	CMEnabled = arweave_config:get([cm, enabled]),
+	CMEnabled == true.
 
 %% @doc Return a list of unique partitions including local partitions and all of
 %% external (relevant pool peers') partitions.
@@ -162,19 +162,19 @@ get_cluster_partitions_list() ->
 %%%===================================================================
 
 init([]) ->
-	CmEnabled = arweave_config:get([cm, enabled]),
+	CMEnabled = arweave_config:get([cm, enabled]),
 	OutBatchTimeout = arweave_config:get([cm, out_batch_timeout]),
-	CmExitPeer = arweave_config:get_peer(cm_exit),
+	CMExitPeer = arweave_config:get_peer(cm_exit),
 
 	ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
 	State = #state{
 		last_peer_response = #{}
 	},
-	State2 = case CmEnabled of
+	State2 = case CMEnabled of
 		false ->
 			State;
 		true ->
-			case CmExitPeer of
+			case CMExitPeer of
 				not_set ->
 					ar:console(
 						"This node is configured as a Coordinated Mining Exit Node. If this is "
@@ -281,16 +281,16 @@ handle_cast({computed_h2_for_peer, Candidate}, State) ->
 
 handle_cast(refetch_peer_partitions, State) ->
 	Peers = arweave_config:get_peers(cm_peer),
-	CmExitPeer = arweave_config:get_peer(cm_exit),
+	CMExitPeer = arweave_config:get_peer(cm_exit),
 	PollInterval = arweave_config:get([cm, poll_interval]),
 	Peers2 =
-		case CmExitPeer == not_set orelse lists:member(CmExitPeer, Peers) of
+		case CMExitPeer == not_set orelse lists:member(CMExitPeer, Peers) of
 			true ->
 				%% Either we are the exit node or the exit node
 				%% is already configured as yet another mining peer.
 				Peers;
 			false ->
-				[CmExitPeer | Peers]
+				[CMExitPeer | Peers]
 		end,
 	ar_util:cast_after(PollInterval, ?MODULE, refetch_peer_partitions),
 	refetch_peer_partitions(Peers2),

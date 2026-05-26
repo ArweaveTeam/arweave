@@ -1513,13 +1513,13 @@ p2p_headers() ->
 			{<<"x-release">>, integer_to_binary(?RELEASE_NUMBER)}].
 
 cm_p2p_headers() ->
-	ApiSecret = arweave_config:get([cm, api_secret]),
-	add_header(<<"x-cm-api-secret">>, ApiSecret, p2p_headers()).
+	APISecret = arweave_config:get([cm, api_secret]),
+	add_header(<<"x-cm-api-secret">>, APISecret, p2p_headers()).
 
 pool_client_headers() ->
-	ApiKey = arweave_config:get([pool, api_key]),
+	APIKey = arweave_config:get([pool, api_key]),
 	WorkerName = arweave_config:get([pool, worker_name]),
-	Headers = add_header(<<"x-pool-api-key">>, ApiKey, p2p_headers()),
+	Headers = add_header(<<"x-pool-api-key">>, APIKey, p2p_headers()),
 	case WorkerName of
 		not_set ->
 			Headers;

@@ -183,9 +183,9 @@ validate_one(Id, Attrs) ->
 	end.
 
 format_error(Id, Reason) ->
-	IdBin = if
+	IDBin = if
 		is_atom(Id) -> atom_to_binary(Id);
 		is_binary(Id) -> Id;
 		true -> list_to_binary(io_lib:format("~p", [Id]))
 	end,
-	<<"webhook ", IdBin/binary, ": ", Reason/binary>>.
+	<<"webhook ", IDBin/binary, ": ", Reason/binary>>.

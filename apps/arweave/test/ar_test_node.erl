@@ -418,8 +418,8 @@ merge_overrides(Base, Extra) when is_map(Base), is_map(Extra) ->
 	maps:merge(Base, Extra).
 
 %% @doc Build the per-leaf override map that membership of `Peers' in
-%% `Role' produces. Each peer expands to a `[peers, PeerId, Role] =>
-%% true' entry, where `PeerId' is the canonical binary returned by
+%% `Role' produces. Each peer expands to a `[peers, PeerID, Role] =>
+%% true' entry, where `PeerID' is the canonical binary returned by
 %% `arweave_config_type:peer_id/1' — matching the keys produced by
 %% `arweave_config:replace_peers/2'. Useful when a test needs to
 %% express the same intent as the old aggregate shorthand

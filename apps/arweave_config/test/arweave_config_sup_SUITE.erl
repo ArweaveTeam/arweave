@@ -32,25 +32,25 @@ all() ->
 supervisor_starts_all_children(_Config) ->
 	lists:foreach(
 		fun(Name) ->
-			Pid = whereis(Name),
-			case is_pid(Pid) andalso is_process_alive(Pid) of
+			PID = whereis(Name),
+			case is_pid(PID) andalso is_process_alive(PID) of
 				true -> ok;
-				false -> ct:fail({child_not_alive, Name, Pid})
+				false -> ct:fail({child_not_alive, Name, PID})
 			end
 		end,
 		child_names()),
 	ok.
 
 one_for_all_restart(_Config) ->
-	OriginalPids = [{Name, whereis(Name)} || Name <- child_names()],
+	OriginalPIDs = [{Name, whereis(Name)} || Name <- child_names()],
 	%% Kill a non-supervisor leaf child. Picking `arweave_config_store'
 	%% avoids hitting the registered supervisor name itself.
 	Victim = arweave_config_store,
 	exit(whereis(Victim), kill),
 	%% Wait for the supervisor to restart the tree. The new PIDs must
 	%% appear under all child names. Bounded polling — no fixed sleep.
-	wait_for_restart(OriginalPids, 50),
-	NewPids = [{Name, whereis(Name)} || Name <- child_names()],
+	wait_for_restart(OriginalPIDs, 50),
+	NewPIDs = [{Name, whereis(Name)} || Name <- child_names()],
 	lists:foreach(
 		fun({{Name, Old}, {Name, New}}) ->
 			case is_pid(New) andalso is_process_alive(New) of
@@ -59,7 +59,7 @@ one_for_all_restart(_Config) ->
 			end,
 			?assertNotEqual(Old, New)
 		end,
-		lists:zip(OriginalPids, NewPids)),
+		lists:zip(OriginalPIDs, NewPIDs)),
 	ok.
 
 %%====================================================================

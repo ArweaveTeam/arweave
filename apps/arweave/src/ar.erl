@@ -167,9 +167,9 @@ set_mining_address() ->
 verify_mining_keyfile(Addr) ->
 	case ar_wallet:load_key(Addr) of
 		not_found ->
-			CmExitPeer = arweave_config:get_peer(cm_exit),
+			CMExitPeer = arweave_config:get_peer(cm_exit),
 			PoolClient = arweave_config:get([pool, is_client]),
-			case {CmExitPeer, PoolClient} of
+			case {CMExitPeer, PoolClient} of
 				{not_set, false} ->
 					ar:console("~nThe mining key for the address ~s was not found."
 						" Make sure you placed the file in [data_dir]/~s (the node is looking for"

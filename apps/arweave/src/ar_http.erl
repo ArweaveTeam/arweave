@@ -285,36 +285,36 @@ open_connection(#{ peer := Peer } = Args) ->
 			maps:get(timeout, Args, ?HTTP_REQUEST_CONNECT_TIMEOUT)),
 	ClosingTimeout = arweave_config:get(
 		[network, client, http, closing_timeout]),
-	HttpKeepalive = arweave_config:get(
+	HTTPKeepalive = arweave_config:get(
 		[network, client, http, keepalive]),
-	TcpDelaySend = arweave_config:get(
+	TCPDelaySend = arweave_config:get(
 		[network, client, tcp, delay_send]),
-	TcpKeepalive = arweave_config:get(
+	TCPKeepalive = arweave_config:get(
 		[network, client, tcp, keepalive]),
-	TcpLinger = arweave_config:get(
+	TCPLinger = arweave_config:get(
 		[network, client, tcp, linger]),
-	TcpLingerTimeout = arweave_config:get(
+	TCPLingerTimeout = arweave_config:get(
 		[network, client, tcp, linger_timeout]),
-	TcpNodelay = arweave_config:get(
+	TCPNodelay = arweave_config:get(
 		[network, client, tcp, nodelay]),
-	TcpSendTimeoutClose = arweave_config:get(
+	TCPSendTimeoutClose = arweave_config:get(
 		[network, client, tcp, send_timeout_close]),
-	TcpSendTimeout = arweave_config:get(
+	TCPSendTimeout = arweave_config:get(
 		[network, client, tcp, send_timeout]),
 	GunOpts = #{
 		retry => 0,
 		connect_timeout => ConnectTimeout,
 		http_opts => #{
 			closing_timeout => ClosingTimeout,
-			keepalive => HttpKeepalive
+			keepalive => HTTPKeepalive
 		},
 		tcp_opts => [
-			{delay_send, TcpDelaySend},
-			{keepalive, TcpKeepalive},
-			{linger, {TcpLinger, TcpLingerTimeout}},
-			{nodelay, TcpNodelay},
-			{send_timeout_close, TcpSendTimeoutClose},
-			{send_timeout, TcpSendTimeout}
+			{delay_send, TCPDelaySend},
+			{keepalive, TCPKeepalive},
+			{linger, {TCPLinger, TCPLingerTimeout}},
+			{nodelay, TCPNodelay},
+			{send_timeout_close, TCPSendTimeoutClose},
+			{send_timeout, TCPSendTimeout}
 		]
 	},
 	gun:open(IPOrHost, Port, GunOpts).

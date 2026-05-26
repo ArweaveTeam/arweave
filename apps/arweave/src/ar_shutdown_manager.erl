@@ -239,7 +239,7 @@ killers_connections_loop([]) -> ok;
 killers_connections_loop(Killers) ->
 	ConnectionTimeout = arweave_config:get(
 		[network, server, shutdown_connection_timeout]),
-	TcpTimeout = 1000 * ConnectionTimeout,
+	TCPTimeout = 1000 * ConnectionTimeout,
 	receive
 		{'EXIT', Pid, _} ->
 			Filter = fun
@@ -252,7 +252,7 @@ killers_connections_loop(Killers) ->
 			?LOG_WARNING([{received, Msg}]),
 			killers_connections_loop(Killers)
 	after
-		TcpTimeout ->
+		TCPTimeout ->
 			?LOG_WARNING([{error, timeout}]),
 			{error, timeout}
 	end.

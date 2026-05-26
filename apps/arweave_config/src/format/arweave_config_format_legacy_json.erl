@@ -70,8 +70,8 @@ read_config_from_file(Path) ->
 
 parse(Config) when is_binary(Config) ->
 	case ar_serialize:json_decode(Config) of
-		{ok, JsonValue} ->
-			case parse_options(JsonValue) of
+		{ok, JSONValue} ->
+			case parse_options(JSONValue) of
 				ok -> {ok, ok};
 				{error, _} = E -> E;
 				{error, _, _} = E -> E
@@ -113,8 +113,8 @@ parse_storage_module(IOList) ->
 %% `{error, ...}' on the first failure.
 parse_options({KVPairs}) when is_list(KVPairs) ->
 	parse_options(KVPairs);
-parse_options(JsonValue) when not is_list(JsonValue) ->
-	{error, root_not_object, JsonValue};
+parse_options(JSONValue) when not is_list(JSONValue) ->
+	{error, root_not_object, JSONValue};
 parse_options([{_, null} | Rest]) ->
 	parse_options(Rest);
 

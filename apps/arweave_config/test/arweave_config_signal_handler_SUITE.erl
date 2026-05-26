@@ -70,9 +70,9 @@ signals_list(_Config) ->
 	ok.
 
 gen_event_registered(_Config) ->
-	Pid = whereis(?MOD),
-	?assert(is_pid(Pid)),
-	?assert(is_process_alive(Pid)),
+	PID = whereis(?MOD),
+	?assert(is_pid(PID)),
+	?assert(is_process_alive(PID)),
 	ok.
 
 %% --------------------------------------------------------------------

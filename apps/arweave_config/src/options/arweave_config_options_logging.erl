@@ -749,14 +749,14 @@ group_description() ->
 	<<"Route and tune node logging behavior.">>.
 
 %% @doc Dynamically apply a leaf value to a logger handler's config.
-logger_set(_I, Value, _S, [HandlerId, formatter, Key]) ->
-	case logger:get_handler_config(HandlerId) of
+logger_set(_I, Value, _S, [HandlerID, formatter, Key]) ->
+	case logger:get_handler_config(HandlerID) of
 		{ok, #{formatter := {logger_formatter, Config}}} ->
 			NewConfig = Config#{
 				Key => Value
 			},
 			logger:update_handler_config(
-				HandlerId,
+				HandlerID,
 				formatter,
 				{logger_formatter, NewConfig}
 			),
@@ -764,13 +764,13 @@ logger_set(_I, Value, _S, [HandlerId, formatter, Key]) ->
 		_Else ->
 			{store, Value}
 	end;
-logger_set(_K, Value, _S, [HandlerId, OptionKey, Key]) ->
-	case logger:get_handler_config(HandlerId) of
+logger_set(_K, Value, _S, [HandlerID, OptionKey, Key]) ->
+	case logger:get_handler_config(HandlerID) of
 		{ok, HandlerConfig} ->
 			case maps:get(OptionKey, HandlerConfig, #{}) of
 				C when is_map(C) ->
 					logger:update_handler_config(
-						HandlerId,
+						HandlerID,
 						OptionKey,
 						C#{ Key => Value }
 					),

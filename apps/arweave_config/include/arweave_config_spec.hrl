@@ -1,1 +1,1 @@
--import(arweave_config_spec, [is_function_exported/3]).
+-import(arweave_config_options_spec, [is_function_exported/3]).
