@@ -1,89 +1,47 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @copyright 2025 (c) Arweave
-%%% @author Arweave Team
-%%% @author Mathieu Kerjouan
 %%% @doc Configuration HTTP Server Interface.
 %%%
-%%% This module is using cowboy to handle configuration requests. The
-%%% goal is to configure dynamically some values using a web
-%%% interface. The default TCP port used is `4891'.
-%%%
-%%% The interface is using a RESTful like module, where a path is
-%%% representing an object.
-%%%
-%%% A configuration path is converted to a parameter:
-%%%
-%%% ```
-%%% v1/config/debug
-%%%
-%%% % becomes
-%%%
-%%% [debug]
-%%% '''
-%%%
-%%% This API is also versionned, the `v0' version is mostly a draft to
-%%% see how the different methods are behaving.
-%%%
-%%% JSON data returned try to follow jsend format.
-%%%
-%%% see: https://github.com/omniti-labs/jsend
+%%% Cowboy-based REST API that reads and writes configuration options
+%%% at runtime. Default TCP port is `4891`. URL paths map to option
+%%% keys (`/v1/config/debug` -> `[debug]`). Responses follow the
+%%% jsend format (see https://github.com/omniti-labs/jsend).
 %%%
 %%% == Examples ==
 %%%
-%%% By default, the values being used and returned are raw:
-%%%
 %%% ```
-%%% # get the value of global.debug parameter
+%%% # get the value of global.debug option
 %%% $ curl localhost:4891/v1/config/debug
 %%% {"status":"success","data":true}
 %%%
-%%% # set the value of global.debug parameter
+%%% # set the value of global.debug option
 %%% $ curl localhost:4891/v1/config/global/debug -d false
 %%% {"status":"success","data":false}
 %%% '''
 %%%
 %%% === Unix Socket Support ===
 %%%
-%%% Arweave Configuration HTTP API can listen to an unix socket
-%%% instead of an IP address. If a valid path is given instead of an
-%%% IP address, cowboy will listen on this file. When the server is
-%%% stopped, this file should be removed.
-%%%
-%%% One can then use an HTTP client (e.g. curl) to send HTTP requests,
-%%% here an example
+%%% When the configured listen address is a filesystem path instead of
+%%% an IP, cowboy listens on a unix socket. This restricts the attack
+%%% surface and limits access to users with read/write permission on
+%%% the socket file.
 %%%
 %%% ```
 %%% curl \
 %%%   --unix-socket ${WORKDIR}/arweave.sock \
 %%%   http://localhost/v1/config/...
 %%% '''
-%%%
-%%% Enabling the usage of an unix socket restrict the surface attack,
-%%% and limit the configuration access to only the user with
-%%% read/write access to it. The "authentication" is then based on
-%%% UNIX credentials.
-%%%
-%%% Note: it can also be a good way to offer an interface for a GUI.
-%%%
-%%% @end
-%%%===================================================================
 -module(arweave_config_http_server).
 -export([start_link/0, stop/0]).
 -export([start_as_child/0, stop_as_child/0]).
 -export([init/2]).
 -include_lib("kernel/include/logger.hrl").
--include_lib("eunit/include/eunit.hrl").
 
-%%--------------------------------------------------------------------
-%% @doc start cowboy as `arweave_config_sup' child.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Start cowboy as a child of `arweave_config_sup`.
+%%
+%% The body is gated behind `-ifdef(AR_TEST)' so production builds
+%% cannot launch the configuration HTTP server. Re-enable by removing
+%% the guard (and flipping the `[config, http, ...]` specs in
+%% `arweave_config_options_config' back to `enabled => true').
+-ifdef(AR_TEST).
 start_as_child() ->
 	Spec = #{
 			id => ?MODULE,
@@ -92,23 +50,29 @@ start_as_child() ->
 			restart => temporary
 	},
 	supervisor:start_child(arweave_config_sup, Spec).
+-else.
+start_as_child() ->
+	?LOG_WARNING(
+		"config HTTP server is not production-ready; "
+		"refusing to start (arweave_config_http_server:start_as_child/0)"),
+	{error, not_ready_for_launch}.
+-endif.
 
-%%--------------------------------------------------------------------
-%% @doc stop cowboy from `arweave_config_sup'.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Stop cowboy and remove it from `arweave_config_sup`.
 stop_as_child() ->
 	stop(),
 	supervisor:terminate_child(arweave_config_sup, ?MODULE),
 	supervisor:delete_child(arweave_config_sup, ?MODULE).
 
-%%--------------------------------------------------------------------
-%% @doc start arweave config http api interface.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Start the arweave config HTTP API.
+%%
+%% Gated alongside `start_as_child/0' — see the note above. Production
+%% callers (including any future static supervisor child_spec wiring
+%% via `{?MODULE, start_link, []}') get refused with a log warning.
+-ifdef(AR_TEST).
 start_link() ->
-	{ok, DefaultHost} = arweave_config:get([config,http,api,listen,address]),
-	{ok, DefaultPort} = arweave_config:get([config,http,api,listen,port]),
+	DefaultHost = arweave_config:get([config,http,listen,address]),
+	DefaultPort = arweave_config:get([config,http,listen,port]),
 	TransportOpts =
 		case inet:parse_address(binary_to_list(DefaultHost)) of
 			{ok, Address} ->
@@ -117,8 +81,7 @@ start_link() ->
 					{ip, Address}
 				];
 			{error, _} ->
-				% if it's not an ip address, this is
-				% an unix socket.
+				%% Non-IP address — treat as a unix socket path.
 				[
 					{ip, {local, DefaultHost}}
 				]
@@ -127,11 +90,15 @@ start_link() ->
 		env => #{ dispatch => dispatch() }
 	},
 	cowboy:start_clear(?MODULE, TransportOpts, ProtocolOpts).
+-else.
+start_link() ->
+	?LOG_WARNING(
+		"config HTTP server is not production-ready; "
+		"refusing to start (arweave_config_http_server:start_link/0)"),
+	{error, not_ready_for_launch}.
+-endif.
 
-%%--------------------------------------------------------------------
-%% @doc
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Stop the cowboy listener and remove the unix socket if used.
 stop() ->
 	ListenAddress = ranch:get_addr(?MODULE),
 	cowboy:stop_listener(?MODULE),
@@ -144,23 +111,14 @@ stop() ->
 			ok
 	end.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 dispatch() ->
 	cowboy_router:compile([
 		{'_', router()}
 	]).
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 headers() ->
 	#{ <<"content-type">> => <<"application/json">> }.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 router() ->
 	[
 		{"/v0", ?MODULE, #{}},
@@ -169,30 +127,21 @@ router() ->
 		{"/v0/environment", ?MODULE, #{}}
 	].
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-% @todo returns API specifications
-% init(Req = #{ path := <<"/v0">> }, State) ->
-% 	Reply = cowboy_req:reply(200, #{}, <<>>, Req),
-% 	{ok, Reply, State};
-% @todo returns arweave and beam arguments
-% init(Req = #{ path := <<"/v0/arguments">> }, State) -> ok;
 init(Req = #{ path := <<"/v0/environment">>, method := <<"GET">> }, State) ->
-	Environment = arweave_config_environment:get(),
-	AsMap = maps:from_list(Environment),
+	AsMap = lists:foldl(
+		fun(E, Acc) ->
+			case re:split(E, "=", [{parts, 2}, {return, binary}]) of
+				[K, V] -> Acc#{K => V};
+				_ -> Acc
+			end
+		end,
+		#{},
+		os:getenv()),
 	Headers = headers(),
-	Body = encode(
-		jsend(
-			success,
-			AsMap
-		)
-	),
+	Body = encode(jsend(success, AsMap)),
 	Reply = cowboy_req:reply(200, Headers, Body, Req),
 	{ok, Reply, State};
 init(Req = #{ path := <<"/v0/config">> }, State) ->
-	% @todo: add the configuration from spec (with default value)
-	% should return the full configuration using different format.
 	Config = arweave_config_store:to_map(),
 	Headers = headers(),
 	Body = encode(
@@ -220,9 +169,6 @@ init(Req, State) ->
 	Reply = cowboy_req:reply(404, Headers, Body, Req),
 	{ok, Reply, State}.
 
-%%--------------------------------------------------------------------
-%%
-%%--------------------------------------------------------------------
 apply_config(Key, Req, State) ->
 	case config(Key, Req, State) of
 		{ok, #{
@@ -252,10 +198,7 @@ apply_config(Key, Req, State) ->
 			{ok, Reply, State}
 	end.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%% config end-point
-%%--------------------------------------------------------------------
+%% @doc Config endpoint.
 config(Key, Req, State) ->
 	io:format("~p~n", [{Key, Req, State}]),
 	Key2 = re:replace(Key, <<"/">>, <<".">>, [global]),
@@ -264,8 +207,8 @@ config(Key, Req, State) ->
 		_ when is_binary(Key2) -> Key2
 	end,
 	case arweave_config_parser:key(Key3) of
-		{ok, Parameter} ->
-			config1(Parameter, Req, State);
+		{ok, Option} ->
+			config1(Option, Req, State);
 		_ ->
 			NewState = #{
 				status => 400,
@@ -279,20 +222,9 @@ config(Key, Req, State) ->
 			{ok, NewState}
 	end.
 
-config1(Parameter, Req = #{ method := <<"GET">> }, State) ->
-	case arweave_config:get(Parameter) of
-		{ok, Value} ->
-			NewState = State#{
-				status => 200,
-				headers => headers(),
-				body => jsend(
-					success,
-					Value
-				),
-				req => Req
-			},
-			{ok, NewState};
-		_ ->
+config1(Option, Req = #{ method := <<"GET">> }, State) ->
+	case arweave_config:get(Option) of
+		undefined ->
 			NewState = State#{
 				status => 404,
 				headers => headers(),
@@ -302,12 +234,23 @@ config1(Parameter, Req = #{ method := <<"GET">> }, State) ->
 				),
 				req => Req
 			},
+			{ok, NewState};
+		Value ->
+			NewState = State#{
+				status => 200,
+				headers => headers(),
+				body => jsend(
+					success,
+					Value
+				),
+				req => Req
+			},
 			{ok, NewState}
 	end;
-config1(Parameter, Req = #{ method := <<"POST">> }, State) ->
+config1(Option, Req = #{ method := <<"POST">> }, State) ->
 	case cowboy_req:has_body(Req) of
 		true ->
-			config_post(Parameter, Req, State);
+			config_post(Option, Req, State);
 		false ->
 			NewState = State#{
 				status => 400,
@@ -321,13 +264,10 @@ config1(Parameter, Req = #{ method := <<"POST">> }, State) ->
 			{ok, NewState}
 	end.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-config_post(Parameter, Req, State) ->
+config_post(Option, Req, State) ->
 	case cowboy_req:read_body(Req) of
 		{ok, Data, Req0} ->
-			config_post1(Data, Parameter, Req0, State);
+			config_post1(Data, Option, Req0, State);
 		_ ->
 			NewState = State#{
 				status => 400,
@@ -341,8 +281,8 @@ config_post(Parameter, Req, State) ->
 			{ok, NewState}
 	end.
 
-config_post1(Data, Parameter, Req, State) ->
-	case arweave_config_spec:set(Parameter, Data) of
+config_post1(Data, Option, Req, State) ->
+	case arweave_config_options_registry:set(Option, Data) of
 		{ok, NewValue, OldValue} ->
 			NewState = State#{
 				status => 200,
@@ -370,9 +310,6 @@ config_post1(Data, Parameter, Req, State) ->
 			{ok, NewState}
 	end.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 -spec jsend(Status, Data) -> Return when
 	Status :: success | fail | error,
 	Data :: binary() | map() | list() | integer(),
@@ -381,7 +318,6 @@ config_post1(Data, Parameter, Req, State) ->
 		data => Data,
 		message => Data
 	}.
-
 jsend(success, Data) ->
 	#{
 		status => success,
@@ -398,9 +334,6 @@ jsend(error, Message) ->
 		message => Message
 	}.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 encode(Data) ->
 	jiffy:encode(Data).
 

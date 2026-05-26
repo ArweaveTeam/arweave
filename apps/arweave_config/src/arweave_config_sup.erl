@@ -1,44 +1,20 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @copyright 2025 (c) Arweave
-%%% @author Arweave Team
-%%% @author Mathieu Kerjouan
 %%% @doc Arweave Configuration Application Supervisor.
-%%% @end
-%%%===================================================================
 -module(arweave_config_sup).
 -export([start_link/0]).
 -export([init/1]).
 
-%%--------------------------------------------------------------------
-%% @doc
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Start the arweave_config supervisor.
 start_link() ->
 	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 init(_Args) ->
 	{ok, {supervisor(), children()}}.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 supervisor() ->
 	#{
 		strategy => one_for_all
 	 }.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 children() ->
 	[
 		#{
@@ -49,48 +25,6 @@ children() ->
 				[]
 			}
 		},
-	 	#{
-			id => arweave_config_environment,
-			start => {
-				arweave_config_environment,
-				start_link,
-				[]
-			}
-		},
-		#{
-			id => arweave_config_arguments,
-			start => {
-				arweave_config_arguments,
-				start_link,
-				[]
-			}
-		},
-		#{
-			id => arweave_config_file,
-			start => {
-				arweave_config_file,
-				start_link,
-				[]
-			}
-		},
-		#{
-			id => arweave_config_arguments_legacy,
-			start => {
-				arweave_config_arguments_legacy,
-				start_link,
-				[]
-			}
-		},
-		% @TODO at this time, this process/feature is not
-		% stable enough to be started.
-		% #{
-		% 	id => arweave_config_file_legacy,
-		% 	start => {
-		% 		arweave_config_file_legacy,
-		% 		start_link,
-		% 		[]
-		% 	}
-		% },
 		#{
 			id => arweave_config_store,
 			start => {
@@ -100,17 +34,9 @@ children() ->
 			}
 		},
 		#{
-			id => arweave_config_spec,
+			id => arweave_config_options_registry,
 			start => {
-				arweave_config_spec,
-				start_link,
-				[]
-			}
-		},
-		#{
-			id => arweave_config_legacy,
-			start => {
-				arweave_config_legacy,
+				arweave_config_options_registry,
 				start_link,
 				[]
 			}

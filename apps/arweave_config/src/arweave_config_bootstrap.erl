@@ -1,215 +1,112 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @copyright 2026 (c) Arweave
-%%% @author Mathieu Kerjouan
-%%% @author Arweave Team
 %%% @doc Arweave Configuration Bootstrap module.
 %%%
-%%% This module is in charge to configure arweave parameters from
-%%% different sources and in specific order. The only public interface
-%%% is `start/1' function. All function prefixed by `init' are
-%%% internal function callbacks.
+%%% Drives the load sequence that populates `arweave_config` from the
+%%% OS environment, a config file, and CLI args before the node
+%%% transitions to runtime mode.
 %%%
-%%% == Legacy Mode ==
+%%% Both current and legacy CLI dialects are supported. The dialect
+%%% is determined by sniffing `Args`. A long-form CLI flag indicates
+%%% the current dialect.
 %%%
-%%% The legacy mode has been created to be compatible with the old
-%%% static configuration format. The procedure has been a bit
-%%% modified, but the execution path is globally the same.
+%%% Neither parser tolerates tokens from the other dialect, so we
+%%% can't run both on the same arg list. Mixed-dialect arg lists
+%%% aren't supported by either upstream parser.
 %%%
-%%% 1. load environment
+%%% Pipeline:
 %%%
-%%% 2. find config_file parameter from arguments and load legacy
-%%% configuration file
+%%%   1. Inspect `Args` once: determine dialect AND locate the
+%%%      config_file directive (at most one source — env's
+%%%      `AR_CONFIG_FILE`, current `--config_file`, or legacy
+%%%      `config_file`).
+%%%   2. Apply the config file (if any).
+%%%   3. Apply the env map, overriding file values.
+%%%   4. Apply the CLI args, overriding both file and env values.
 %%%
-%%% 3. parse arguments and load them
-%%%
-%%% 4. switch to runtime mode.
-%%%
-%%% 5. start arweave
-%%%
-%%% == New Mode ==
-%%%
-%%% In the new configuration mode, every steps are modifying the
-%%% stored configuration file in `arweave_config' step by step. The
-%%% final step is to start arweave based on the final parsed
-%%% configuration and in runtime mode.
-%%%
-%%% 1. set environment
-%%%
-%%% 2. set arguments
-%%%
-%%% 3. set configuration files if present in arguments
-%%%
-%%% 4. load configuration into arweave_config
-%%%
-%%% 5. switch to runtime mode
-%%%
-%%% 6. start arweave application and features.
-%%%
-%%% @end
-%%%===================================================================
 -module(arweave_config_bootstrap).
 -compile(warnings_as_errors).
--export([
-	start/1,
-	init_environment/1,
-	init_config_file/1,
-	init_arguments/1,
-	init_load/1,
-	init_runtime/1,
-	init_final/1
-]).
--include_lib("arweave_config/include/arweave_config.hrl").
+-export([start/1]).
 
-%%--------------------------------------------------------------------
-%% @doc Configure Arweave parameters from different sources.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Configure Arweave options from the OS environment, config file
+%% (if any), and CLI args. The assembled state lives in the options
+%% registry; callers read it back through `arweave_config:get/1`.
 -spec start(Args) -> Return when
 	Args :: [string() | binary()],
-	Return :: {ok, #config{}} | {error, term()}.
-
+	Return :: ok | {error, term()}.
 start(Args) ->
-	% to ensure the compatibility with the legacy parsers, an
-	% environment variable called AR_CONFIG_MODE can be set.
-	% By default, the legacy format is used for now, but if an
-	% user wants to switch to the new mode, this environment
-	% variable needs to be set to "new".
-	% @todo remove this environment variable when arweave_config
-	% is fully operational.
-	ArweaveConfigMode = os:getenv("AR_CONFIG_MODE"),
-	Config = arweave_config_legacy:get(),
-	State = #{
-		mode => ArweaveConfigMode,
-		config => Config,
-		args => Args
-	},
-
-	% Let call the fsm loop.
-	arweave_config_fsm:init(?MODULE, init_environment, State).
-
-%%--------------------------------------------------------------------
-%% @hidden
-%% @private
-%% @doc init arweave configuration with environment variable.
-%% @end
-%%--------------------------------------------------------------------
-init_environment(State = #{ mode := "new" }) ->
-	arweave_config_environment:reset(),
-	{next, init_arguments, State};
-init_environment(State) ->
-	arweave_config_environment:reset(),
-	arweave_config_environment:load(),
-	{next, init_config_file, State}.
-
-%%--------------------------------------------------------------------
-%% @hidden
-%% @private
-%% @doc init arweave configuration from configuration file.
-%% @end
-%%--------------------------------------------------------------------
-init_config_file(State = #{ mode := "new" }) ->
-	% the configuration file is directly loaded when it has been
-	% found in the arguments.
-	?LOG_WARNING("arweave_config will use new configuration format."),
-	{next, init_load, State};
-init_config_file(State = #{ args := Args, config := Config }) ->
-	% @todo enable arweave_config_file_legacy.
-	case ar_config:parse_config_file(Args, Config) of
-		{ok, NewConfig} when is_record(NewConfig, config)  ->
-			arweave_config_legacy:merge(Config),
-			NewState = State#{
-				config => NewConfig
-			},
-			{next, init_arguments, NewState};
-		{error, Reason} ->
-			{error, Reason}
+	Env = arweave_config_format_env:parse(),
+	%% current or legacy
+	Dialect = dialect(Args),
+	maybe
+		{ok, ConfigFile} ?= find_config_file(Dialect, Args, Env),
+		ok ?= apply_config_file(ConfigFile),
+		ok ?= arweave_config:load(maps:remove([config_file], Env)),
+		apply_cli(Dialect, Args)
 	end.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%% @private
-%% @doc init arweave configuration from command line arguments.
-%% @end
-%%--------------------------------------------------------------------
-init_arguments(State = #{ args := Args, mode := "new" }) ->
-	?LOG_WARNING("arweave_config will use new argument format."),
-	case arweave_config_arguments:set(Args) of
-		{ok, _} ->
-			{next, init_config_file, State};
-		Else ->
-			{error, Else}
+%% Sniff `Args' to determine which CLI dialect is in play. The legacy
+%% pipeline kicks in only when no `--'-prefixed token is present.
+dialect(Args) ->
+	case arweave_config_format_cli:has_long_flag(Args) of
+		true -> current;
+		false -> legacy
+	end.
+
+%% Locate at most one config_file across env and the dialect-
+%% appropriate CLI parser. Returns the path (legacy paths tagged
+%% `{legacy, Path}'), `none' when no source provides one, or
+%% `{error, _}' when more than one source provides one (or a parser
+%% reports a problem). Env's `AR_CONFIG_FILE' is always treated as a
+%% current-format file regardless of CLI dialect.
+find_config_file(Dialect, Args, Env) ->
+	EnvConfigFile = arweave_config_format_env:find_config_file(Env),
+	CLIConfigFile = cli_find_config_file(Dialect, Args),
+	case {EnvConfigFile, CLIConfigFile} of
+		{none, none} -> {ok, none};
+		{{ok, Path}, none} -> {ok, Path};
+		{none, {ok, Path}} -> {ok, Path};
+		{{ok, _}, {ok, _}} -> {error, multiple_config_files};
+		{{error, _} = Err, _} -> Err;
+		{_, {error, _} = Err} -> Err
+	end.
+
+cli_find_config_file(current, Args) ->
+	arweave_config_format_cli:find_config_file(Args);
+cli_find_config_file(legacy, Args) ->
+	case arweave_config_format_legacy_cli:find_config_file(Args) of
+		{ok, Path} -> {ok, {legacy, Path}};
+		Other -> Other
+	end.
+
+apply_config_file(none) -> ok;
+apply_config_file({legacy, Path}) -> load_legacy_config_file(Path);
+apply_config_file(Path) -> load_config_file(Path).
+
+apply_cli(current, Args) ->
+	case arweave_config_format_cli:parse(Args) of
+		{ok, Map} -> arweave_config:load(Map);
+		{error, _} = Err -> Err
 	end;
-init_arguments(State = #{ config := Config, args := Args }) ->
-	case ar_cli_parser:parse(Args, Config) of
-		{ok, NewConfig} ->
-			arweave_config_legacy:set(NewConfig),
-			NewState = State#{ config => NewConfig },
-			{next, init_load, NewState};
-		{error, Reason} ->
-			{error, Reason};
-		Else ->
-			Else
+apply_cli(legacy, Args) ->
+	arweave_config_format_legacy_cli:parse(Args).
+
+load_config_file(Path) ->
+	case arweave_config_file:parse(Path) of
+		{ok, {AbsPath, Config}} ->
+			case arweave_config:load(Config) of
+				ok ->
+					arweave_config:set([config_file], AbsPath),
+					ok;
+				{error, _} = Err ->
+					Err
+			end;
+		{error, _} = Err ->
+			Err
 	end.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-init_load(State = #{ mode := "new" }) ->
-	% in the new mode, this is where we defines which part of the
-	% configuration is loaded before, between, environment,
-	% arguments and configuration. Indeed, every part of the
-	% configuration are being stored in individual processes. We
-	% can merge them now
-	arweave_config_environment:load(),
-	arweave_config_file:load(),
-	arweave_config_arguments:load(),
-	{next, init_runtime, State};
-init_load(State) ->
-	{next, init_runtime, State}.
-
-%%--------------------------------------------------------------------
-%% @hidden
-%% @private
-%% @doc set arweave configuration in runtime mode to avoid setting
-%% static parameters. Only dynamic parameters will be allowed to be
-%% configured in this mode.
-%% @end
-%%--------------------------------------------------------------------
-init_runtime(State) ->
-	case arweave_config:runtime() of
-		ok ->
-			{next, init_final, State}
+load_legacy_config_file(Path) ->
+	case arweave_config_format_legacy_json:parse_config_file(["config_file", Path]) of
+		ok -> ok;
+		{error, Reason} -> {error, Reason};
+		{error, Reason, _} -> {error, Reason}
 	end.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%% @private
-%% @doc finalize arweave configuration initialization.
-%% @end
-%%--------------------------------------------------------------------
-init_final(_State = #{ mode := "new" })->
-	% @todo this part of the code should not work like that.
-	% there, we should retrieve all configuration using
-	% Module:get/0 using the same format and them merging them
-	% based on a specific order. The problem though, is to deal
-	% with complex variable (like list).
-	ok = arweave_config_environment:load(),
-	ok = arweave_config_file:load(),
-	ok = arweave_config_arguments:load(),
-	LegacyConfig = arweave_config_legacy:get(),
-	{ok, LegacyConfig};
-init_final(_State = #{ config := Config }) ->
-	% parse the arguments from command line and check if a
-	% configuration file is defined, returns #config{} record.
-	% Note: this function will halt the node and print helps if
-	% the arguments or configuration file are wrong.
-	% @todo: re-enable legacy parser
-	% Config = ar_cli_parser:parse_config_file(Args)
-	arweave_config_legacy:set(Config),
-	{ok, Config}.

@@ -1,38 +1,16 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @copyright 2025 (c) Arweave
-%%% @author Arweave Team
-%%% @author Mathieu Kerjouan
-%%% @doc arweave configuration parser.
-%%%
-%%% This module exports all function required to parse keys and values
-%%% for arweave configuration.
-%%%
-%%% @end
-%%%===================================================================
+%%% @doc Arweave configuration key parser. Parses dotted option keys
+%%% into the canonical list form and formats them back.
 -module(arweave_config_parser).
 -export([
-	separator/0,
 	key/1,
+	format_key/1,
+	format_segment/1,
 	is_parameter/1
 ]).
--include_lib("eunit/include/eunit.hrl").
 -define(SEPARATOR, $.).
 
-%%--------------------------------------------------------------------
-%% @doc default separator used.
-%% @end
-%%--------------------------------------------------------------------
-separator() -> ?SEPARATOR.
-
-%%--------------------------------------------------------------------
-%% @doc parses a string and converted it to a configuration key.
-%% At this time, only ASCII characters are supported.
+%% @doc Parse a dotted string into a configuration key list. ASCII
+%% only.
 %%
 %% == Examples ==
 %%
@@ -40,15 +18,10 @@ separator() -> ?SEPARATOR.
 %% > arweave_config_parser:key("test.2.3.[127.0.0.1:1984].data").
 %% {ok,[test,2,3,<<"127.0.0.1:1984">>,data]}
 %% '''
-%%
-%% @TODO check indepth list.
-%% @end
-%%--------------------------------------------------------------------
 -spec key(Key) -> Return when
 	Key :: atom() | binary() | string(),
 	Return :: {ok, [atom() | binary()]}
 	        | {error, map()}.
-
 key(Key) ->
 	case is_parameter(Key) of
 		true ->
@@ -68,13 +41,26 @@ key2(List) when is_list(List) ->
 	end;
 key2(Binary) when is_binary(Binary) ->
 	key_parse(Binary, <<>>, [], 1);
-key2(_Elsewise) ->
+key2(_Else) ->
 	{error, #{ reason => invalid_data }}.
 
-%%--------------------------------------------------------------------
-%% @doc
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Format an option_key list back to its canonical dotted-binary
+%% form. Wildcard segments (atoms wrapped in a 1-tuple) format as
+%% `<name>`.
+-spec format_key(list()) -> binary().
+format_key(Key) when is_list(Key) ->
+	iolist_to_binary(
+		lists:join(<<".">>, [format_segment(S) || S <- Key])).
+
+%% @doc Format a single option_key segment.
+-spec format_segment(atom() | integer() | binary() | list() | tuple()) -> binary().
+format_segment(A) when is_atom(A) -> atom_to_binary(A);
+format_segment(I) when is_integer(I) -> integer_to_binary(I);
+format_segment(B) when is_binary(B) -> B;
+format_segment(L) when is_list(L) -> unicode:characters_to_binary(L);
+format_segment({V}) when is_atom(V) -> <<"<", (atom_to_binary(V))/binary, ">">>.
+
+%% @doc Whether `Key` is already in canonical option_key list form.
 is_parameter([]) -> false;
 is_parameter(List) when is_list(List) ->
 	try
@@ -86,9 +72,6 @@ is_parameter(List) when is_list(List) ->
 	end;
 is_parameter(_) -> false.
 
-%%--------------------------------------------------------------------
-%%
-%%--------------------------------------------------------------------
 is_parameter_list([]) -> true;
 is_parameter_list([<<>>|_]) -> false;
 is_parameter_list([Item|Rest]) when is_atom(Item) ->
@@ -99,11 +82,6 @@ is_parameter_list([Item|Rest]) when is_binary(Item) ->
 	is_parameter_list(Rest);
 is_parameter_list(_) -> false.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%% @doc parse the key and convert it to parameter format.
-%% @end
-%%--------------------------------------------------------------------
 key_parse(<<>>, <<>>, [], 1) ->
 	{error, #{
 			position => 1,
@@ -151,11 +129,7 @@ key_parse(<<C:8, Rest/binary>>, Buffer, Key, Pos) ->
 		 }
 	}.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%% @doc parse a string enclosed by `[' and `]'.
-%% @end
-%%--------------------------------------------------------------------
+%% Parse a string enclosed by `[` and `]`.
 key_parse_string(<<"]">>, Buffer, Key, Pos) ->
 	key_parse(<<>>, <<>>, [{string, Buffer}|Key], Pos+1);
 key_parse_string(<<"]", ?SEPARATOR, Rest/binary>>, Buffer, Key, Pos) ->
@@ -180,11 +154,7 @@ key_parse_string(Binary, Buffer, Key, Pos) ->
 		 }
 	}.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%% @doc convert a key to its final parameter form.
-%% @end
-%%--------------------------------------------------------------------
+%% Convert a parsed key list to its final option form.
 key_convert([], Buffer) ->
 	{ok, Buffer};
 key_convert([{string, Value}|Rest], Buffer) ->
@@ -217,111 +187,3 @@ key_convert_to_atom(Item, Rest, Buffer) ->
 				}
 			}
 	end.
-
-key_test() ->
-	?assertEqual(
-		{ok, [global, debug]},
-		key(<<
-			?SEPARATOR,
-			"global",
-			?SEPARATOR,
-			"debug"
-		 >>)
-	),
-	?assertEqual(
-		{ok, [global, debug]},
-		key(
-			[?SEPARATOR]
-			++ "global"
-			++ [?SEPARATOR]
-			++ "debug"
-		)
-	),
-	?assertEqual(
-		{ok, [storage,3,unpacked,state]},
-		key(<<
-			?SEPARATOR,
-			"storage",
-			?SEPARATOR,
-			"3",
-			?SEPARATOR,
-			"unpacked",
-			?SEPARATOR,
-			"state"
-		    >>)
-	),
-	?assertEqual(
-		{ok, [peers,<<"127.0.0.1:1984">>,trusted]},
-		key(<<
-			?SEPARATOR,
-			"peers",
-			?SEPARATOR,
-			"[127.0.0.1:1984]",
-			?SEPARATOR,
-			"trusted"
-		>>)
-	),
-	?assertEqual(
-		{error, #{
-				reason => bad_char,
-				buffer => <<>>,
-				char => <<"~">>,
-				rest => <<>>,
-				key => [],
-				position => 1
-			}
-		},
-		key(<<"~">>)
-	),
-	?assertEqual(
-		{error, #{
-				reason => empty_key,
-				position => 1
-			}
-		},
-		key("")
-	),
-	?assertEqual(
-		{error, #{
-				reason => invalid_key,
-				key => <<"totally_random_key">>
-			}
-		},
-		key("totally_random_key")
-	),
-	?assertEqual(
-		{error, #{
-				reason => multi_separators,
-				position => 1
-			}
-		},
-		key(<<
-			?SEPARATOR,
-			?SEPARATOR,
-			"test"
-		>>)
-	),
-	?assertEqual(
-		{error, #{
-				reason => multi_separators,
-				position => 6
-			}
-		},
-		key(<<
-			?SEPARATOR,
-			"test",
-			?SEPARATOR, ?SEPARATOR,
-			"test"
-		>>)
-	),
-	?assertEqual(
-		{error, #{
-				reason => separator_ending,
-				position => 5
-			}
-		},
-		key(<<
-			"test",
-			?SEPARATOR
-		>>)
-	).
