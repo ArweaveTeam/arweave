@@ -36,6 +36,7 @@
 		arweave_config_options_genesis,
 		arweave_config_options_gossip,
 		arweave_config_options_join,
+		arweave_config_options_limiter,
 		arweave_config_options_logging,
 		arweave_config_options_mining,
 		arweave_config_options_misc,

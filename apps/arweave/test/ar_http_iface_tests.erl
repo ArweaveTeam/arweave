@@ -1,6 +1,6 @@
 -module(ar_http_iface_tests).
 
--include_lib("arweave_config/include/arweave_config.hrl").
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [wait_until_height/2, wait_until_receives_txs/1,
@@ -342,8 +342,8 @@ test_single_regossip(_) ->
 
 test_node_blacklisting_get_spammer() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
-	LimitWithBursts = ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT
-		+ ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT,
+	LimitWithBursts = arweave_config:get([limiter, general, sliding_window_limit])
+		+ arweave_config:get([limiter, general, leaky_rate_limit]),
 	node_blacklisting_test_frame(
 		RequestFun,
 		ErrorResponse,
@@ -352,8 +352,8 @@ test_node_blacklisting_get_spammer() ->
 	).
 
 test_node_blacklisting_post_spammer() ->
-	LimitWithBursts = ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT
-		+ ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT,
+	LimitWithBursts = arweave_config:get([limiter, general, sliding_window_limit])
+		+ arweave_config:get([limiter, general, leaky_rate_limit]),
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_tx_binary),
 	NErrors = 11,
 	NRequests = LimitWithBursts + NErrors,

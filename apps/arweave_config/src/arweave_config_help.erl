@@ -84,11 +84,31 @@ do_print_group(GroupAtom) ->
 
 print_option_detail(Option) ->
 	Runtime = atom_to_binary(maps:get(runtime, Option, false)),
+	Indent = <<"    ">>,
+	Short = maps:get(short_description, Option, undefined),
+	Long = maps:get(long_description, Option, undefined),
 	io:format("  ~ts~n", [key_string(Option)]),
-	io:format("    ~ts~n", [long_desc(Option)]),
-	io:format("    default: ~ts~n", [default_string(Option)]),
-	io:format("    runtime: ~ts~n", [Runtime]),
+	print_indented(Indent, Short),
+	%% Skip long_description when it just duplicates short_description.
+	case Long =:= Short of
+		true -> ok;
+		false -> print_indented(Indent, Long)
+	end,
+	io:format("~tsdefault: ~ts~n", [Indent, default_string(Option)]),
+	io:format("~tsruntime: ~ts~n", [Indent, Runtime]),
 	io:nl().
+
+%% Print `Text` with `Indent` prepended to every line, so multi-line
+%% descriptions (or a stacked short + long pair) all line up. Empty
+%% or absent text is skipped.
+print_indented(_Indent, undefined) -> ok;
+print_indented(_Indent, <<>>) -> ok;
+print_indented(_Indent, "") -> ok;
+print_indented(Indent, Text) ->
+	Lines = binary:split(iolist_to_binary(Text), <<"\n">>, [global]),
+	lists:foreach(
+		fun(Line) -> io:format("~ts~ts~n", [Indent, Line]) end,
+		Lines).
 
 unknown_group(GroupName) ->
 	io:format("Unknown group: ~s~n~n", [GroupName]),
@@ -157,17 +177,6 @@ short_desc(Option) ->
 		{ok, V} -> V;
 		none ->
 			case nonempty(maps:get(long_description, Option, undefined)) of
-				{ok, V} -> V;
-				none -> <<"No description available.">>
-			end
-	end.
-
-%% Prefer long_description; fall back to short_description.
-long_desc(Option) ->
-	case nonempty(maps:get(long_description, Option, undefined)) of
-		{ok, V} -> V;
-		none ->
-			case nonempty(maps:get(short_description, Option, undefined)) of
 				{ok, V} -> V;
 				none -> <<"No description available.">>
 			end

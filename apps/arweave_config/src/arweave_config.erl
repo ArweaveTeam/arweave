@@ -82,12 +82,13 @@
 	replace_storage_modules/1,
 	replace_repack_modules/1
 ]).
-%% Public API: webhooks, semaphores, features
+%% Public API: webhooks, semaphores, features, limiter
 -export([
 	webhooks/0,
 	replace_webhooks/1,
 	semaphores/0,
-	feature_enabled/1
+	feature_enabled/1,
+	limiter_groups/0
 ]).
 %% Public API: serialization / logging
 -export([
@@ -420,6 +421,14 @@ get_all_with_prefix(Prefix) ->
 -spec feature_enabled(atom()) -> boolean().
 feature_enabled(Flag) ->
 	arweave_config_features:enabled(Flag).
+
+%% @doc Return the list of rate-limiter group IDs used by
+%% `arweave_limiter_sup` to build one supervisor branch per group.
+%% Per-field values for a given group are read via
+%% `arweave_config:get([limiter, GroupID, Field])'.
+-spec limiter_groups() -> [atom()].
+limiter_groups() ->
+	arweave_config_options_limiter:group_ids().
 
 %% @doc Log the current configuration to `?LOG_INFO`.
 -spec log() -> ok.

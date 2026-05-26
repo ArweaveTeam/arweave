@@ -297,3 +297,25 @@ vdf:
   pull: false
   max_validation_threads: 2
   max_last_step_validation_threads: 3
+limiter:
+  chunk: &limiter_full
+    sliding_window_limit: 50
+    sliding_window_duration: 500
+    leaky_rate_limit: 7000
+    leaky_tick_ms: 60000
+    tick_reduction: 25
+    concurrency_limit: 250
+    timestamp_cleanup_tick_ms: 60000
+    timestamp_cleanup_expiry: 90000
+    is_manual_reduction_disabled: true
+    no_limit: false
+  data_sync_record: *limiter_full
+  recent_hash_list_diff: *limiter_full
+  block_index: *limiter_full
+  wallet_list: *limiter_full
+  get_vdf: *limiter_full
+  get_vdf_session: *limiter_full
+  get_previous_vdf_session: *limiter_full
+  general: *limiter_full
+  metrics: *limiter_full
+  local_peers: *limiter_full

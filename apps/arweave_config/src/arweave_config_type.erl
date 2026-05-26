@@ -83,10 +83,18 @@ integer(Integer) when is_integer(Integer) ->
 integer(V) ->
 	{error, V}.
 
-%% @doc Validate as a positive integer.
+%% @doc Validate as a positive integer, or the atom `infinity'.
+%% `infinity' is accepted so options can carry a sentinel meaning
+%% "no bound" without giving up the type's positivity guarantee.
 -spec pos_integer(Integer) -> Return when
-	Integer :: list() | binary() | pos_integer(),
-	Return :: {ok, pos_integer()} | {error, term()}.
+	Integer :: list() | binary() | pos_integer() | infinity,
+	Return :: {ok, pos_integer() | infinity} | {error, term()}.
+pos_integer(infinity) ->
+	{ok, infinity};
+pos_integer(<<"infinity">>) ->
+	{ok, infinity};
+pos_integer("infinity") ->
+	{ok, infinity};
 pos_integer(Data) ->
 	case integer(Data) of
 		{ok, Integer} when Integer >= 0 ->
