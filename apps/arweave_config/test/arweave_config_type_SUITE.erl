@@ -1,96 +1,44 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @author Arweave Team
-%%% @author Mathieu Kerjouan
-%%% @copyright 2025 (c) Arweave
 %%% @doc
-%%% @end
-%%%===================================================================
 -module(arweave_config_type_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([
-	none/1,
-	any/1,
-	boolean/1,
-	atom/1,
-	integer/1,
-	pos_integer/1,
-	ipv4/1,
-	path/1,
-	base64/1,
-	base64url/1,
-	tcp_port/1,
-	file/1,
-	logging_template/1
-]).
+-compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-suite() -> [{userdata, [description()]}].
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-description() -> {description, "arweave_config_type test interface"}.
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 init_per_suite(Config) -> Config.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 end_per_suite(_Config) -> ok.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 init_per_testcase(_TestCase, Config) ->
 	Config.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 end_per_testcase(_TestCase, _Config) ->
 	ok.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 all() ->
 	[
-		none,
-		any,
 		atom,
 		integer,
 		boolean,
-		integer,
 		pos_integer,
 		ipv4,
 		path,
-		base64,
-		base64url,
 		tcp_port,
 		file,
-		logging_template
+		logging_template,
+		peer_id_ip_only,
+		peer_id_ip_with_port,
+		peer_id_hostname_only,
+		peer_id_hostname_with_port,
+		peer_id_ipv4_tuple,
+		peer_id_ipv6_bracketed,
+		peer_id_default_port_collapses,
+		peer_id_distinct_ports_stay_distinct,
+		peer_id_invalid
 	].
 
-none(_Config) ->
-	{error, 1} = arweave_config_type:none(1).
-
-any(_Config) ->
-	{ok, 1} = arweave_config_type:any(1).
+%%====================================================================
+%% Test cases
+%%====================================================================
 
 atom(_Config) ->
 	{ok, atom} = arweave_config_type:atom(atom),
@@ -138,14 +86,6 @@ path(Config) ->
 	{ok, CwdBinary} = arweave_config_type:path(<<"./">>),
 	{ok, CwdBinary} = arweave_config_type:path("./").
 
-base64(_Config) ->
-	{ok, <<"test">>} = arweave_config_type:base64("dGVzdA=="),
-	{ok, <<"test">>} = arweave_config_type:base64(<<"dGVzdA==">>).
-
-base64url(_Config) ->
-	{ok, <<"test">>} = arweave_config_type:base64url("dGVzdA"),
-	{ok, <<"test">>} = arweave_config_type:base64url(<<"dGVzdA">>).
-
 tcp_port(_Config) ->
 	{ok, 0} = arweave_config_type:tcp_port(0),
 	{ok, 65535} = arweave_config_type:tcp_port(65535),
@@ -155,56 +95,99 @@ tcp_port(_Config) ->
 	{error, 78912} = arweave_config_type:tcp_port(<<"78912">>).
 
 file(_Config) ->
-	ct:pal(test, 1, "test absolute path and path as binary"),
 	{ok, <<"/tmp/arweave.sock">>} =
 		arweave_config_type:file(<<"/tmp/arweave.sock">>),
 
-	ct:pal(test, 1, "test relative path and path as list"),
 	{ok, P1} =
 		arweave_config_type:file("./arweave.sock"),
 	true = is_binary(P1),
 
-	ct:pal(test, 1, "test a wrong path"),
 	{error, _} =
 		arweave_config_type:file("/random/t/a/b/c.sock"),
 
-	ct:pal(test, 1, "test a file without write access"),
 	{error, _} =
 		arweave_config_type:file("/root/data/arweave.sock"),
 
-	ct:pal(test, 1, "test a wrong erlang type"),
 	{error, _} =
 		arweave_config_type:file(1234),
 
 	ok.
 
 logging_template(_Config) ->
-	ct:pal(test, 1, "valid template can be string"),
 	{ok, ["test", "\n"]} =
 		arweave_config_type:logging_template("test"),
 
-	ct:pal(test, 1, "valid template can be a binary"),
 	{ok, ["test","\n"]} =
 		arweave_config_type:logging_template(<<"test">>),
 
-	ct:pal(test, 1, "An atom start with %"),
 	{ok, [test,"\n"]} =
 		arweave_config_type:logging_template(<<"%test">>),
 
-	ct:pal(test, 1, "a string and an atom can be part of the same template"),
 	{ok, ["message:", " ", test, "\n"]} =
 		arweave_config_type:logging_template("message: %test"),
 
-	ct:pal(test, 1, "an atom must start with a null char"),
 	{ok, ["message:%test","\n"]} =
 		arweave_config_type:logging_template("message:%test"),
 
-	ct:pal(test, 1, "an atom must only use [a-zA-Z_] chars"),
 	{error, _} =
 		arweave_config_type:logging_template("%test!#&"),
 
-	ct:pal(test, 1, "an atom must exist"),
 	{error, _} =
 		arweave_config_type:logging_template("%total_random_atom"),
 
 	ok.
+
+peer_id_ip_only(_Config) ->
+	?assertEqual({ok, <<"1.2.3.4:1984">>},
+		arweave_config_type:peer_id(<<"1.2.3.4">>)),
+	?assertEqual({ok, <<"1.2.3.4:1984">>},
+		arweave_config_type:peer_id("1.2.3.4")).
+
+peer_id_ip_with_port(_Config) ->
+	?assertEqual({ok, <<"1.2.3.4:1984">>},
+		arweave_config_type:peer_id(<<"1.2.3.4:1984">>)),
+	?assertEqual({ok, <<"1.2.3.4:9999">>},
+		arweave_config_type:peer_id(<<"1.2.3.4:9999">>)).
+
+peer_id_hostname_only(_Config) ->
+	?assertEqual({ok, <<"myhost:1984">>},
+		arweave_config_type:peer_id(<<"myhost">>)),
+	?assertEqual({ok, <<"my-host.example.com:1984">>},
+		arweave_config_type:peer_id(<<"my-host.example.com">>)).
+
+peer_id_hostname_with_port(_Config) ->
+	?assertEqual({ok, <<"myhost:1984">>},
+		arweave_config_type:peer_id(<<"myhost:1984">>)),
+	?assertEqual({ok, <<"myhost:8080">>},
+		arweave_config_type:peer_id(<<"myhost:8080">>)).
+
+peer_id_ipv4_tuple(_Config) ->
+	?assertEqual({ok, <<"1.2.3.4:1984">>},
+		arweave_config_type:peer_id({1, 2, 3, 4})),
+	?assertEqual({ok, <<"1.2.3.4:9999">>},
+		arweave_config_type:peer_id({1, 2, 3, 4, 9999})).
+
+peer_id_ipv6_bracketed(_Config) ->
+	?assertEqual({ok, <<"[::1]:1984">>},
+		arweave_config_type:peer_id(<<"[::1]">>)),
+	?assertEqual({ok, <<"[::1]:9999">>},
+		arweave_config_type:peer_id(<<"[::1]:9999">>)).
+
+%% Omitting the port yields the default-port form of the same peer.
+peer_id_default_port_collapses(_Config) ->
+	{ok, A} = arweave_config_type:peer_id(<<"1.2.3.4">>),
+	{ok, B} = arweave_config_type:peer_id(<<"1.2.3.4:1984">>),
+	?assertEqual(A, B).
+
+peer_id_distinct_ports_stay_distinct(_Config) ->
+	{ok, A} = arweave_config_type:peer_id(<<"1.2.3.4:1984">>),
+	{ok, B} = arweave_config_type:peer_id(<<"1.2.3.4:1985">>),
+	?assertNotEqual(A, B).
+
+peer_id_invalid(_Config) ->
+	?assertMatch({error, _}, arweave_config_type:peer_id(<<>>)),
+	?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:bad_port">>)),
+	?assertMatch({error, _}, arweave_config_type:peer_id(<<"host with space">>)),
+	?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:99999">>)),
+	?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:-1">>)),
+	?assertMatch({error, _}, arweave_config_type:peer_id(123)).

@@ -1,90 +1,94 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @author Arweave Team
-%%% @author Mathieu Kerjouan
-%%% @copyright 2025 (c) Arweave
 %%% @doc
-%%% @end
-%%%===================================================================
 -module(arweave_config_store_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([arweave_config_store/1]).
+-compile([export_all, nowarn_export_all]).
 -include("arweave_config.hrl").
 -include_lib("common_test/include/ct.hrl").
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-suite() -> [{userdata, [description()]}].
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-description() -> {description, "arweave configuration store interface"}.
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 init_per_suite(Config) -> Config.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 end_per_suite(_Config) -> ok.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 init_per_testcase(_TestCase, Config) ->
-	ct:pal(info, 1, "start arweave_config_store"),
 	{ok, Pid} = arweave_config_store:start_link(),
 	[{arweave_config_store, Pid}|Config].
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 end_per_testcase(_TestCase, _Config) ->
-	ct:pal(info, 1, "stop arweave_config_store"),
 	ok = arweave_config_store:stop().
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 all() ->
-	[ arweave_config_store ].
+	[
+		arweave_config_store,
+		snapshot_restore_roundtrip,
+		items_with_prefix_filter,
+		to_map_nested,
+		log_smoke
+	].
 
-%%--------------------------------------------------------------------
-%% @doc test `arweave_config_store' storage interface.
-%% @end
-%%--------------------------------------------------------------------
+%%====================================================================
+%% Test cases
+%%====================================================================
+
 arweave_config_store(_Config) ->
-	ct:pal(test, 1, "check undefined parameter"),
 	{error, undefined} = arweave_config_store:get("test"),
 
-	ct:pal(test, 1, "try to delete an undefined parameter"),
 	{error, undefined} = arweave_config_store:delete("test"),
 
-	ct:pal(test, 1, "ensure default parameter is working"),
 	default = arweave_config_store:get("test", default),
 
-	ct:pal(test, 1, "set a new parameter"),
 	{ok, {[test], data}} = arweave_config_store:set("test", data),
 
-	ct:pal(test, 1, "get an existing parameter"),
 	{ok, data} = arweave_config_store:get("test"),
 
-	ct:pal(test, 1, "delete an existing parameter"),
 	{ok, {[test], data}} = arweave_config_store:delete("test"),
 
-	ct:pal(test, 1, "ensure the paramater was removed"),
 	{error, undefined} = arweave_config_store:get("test"),
 
-	{comment, "arweave_config_store process tested"}.
+	ok.
+
+snapshot_restore_roundtrip(_Config) ->
+	{ok, _} = arweave_config_store:set([snap, a], 1),
+	{ok, _} = arweave_config_store:set([snap, b], 2),
+
+	Snap = arweave_config_store:snapshot(),
+
+	{ok, _} = arweave_config_store:set([snap, a], 99),
+	{ok, _} = arweave_config_store:set([snap, c], 3),
+	{ok, 99} = arweave_config_store:get([snap, a]),
+	{ok, 3} = arweave_config_store:get([snap, c]),
+
+	ok = arweave_config_store:restore(Snap),
+	{ok, 1} = arweave_config_store:get([snap, a]),
+	{ok, 2} = arweave_config_store:get([snap, b]),
+	{error, undefined} = arweave_config_store:get([snap, c]),
+
+	ok.
+
+items_with_prefix_filter(_Config) ->
+	{ok, _} = arweave_config_store:set([foo, a], 1),
+	{ok, _} = arweave_config_store:set([foo, b], 2),
+	{ok, _} = arweave_config_store:set([bar, c], 3),
+
+	FooItems = arweave_config_store:items_with_prefix([foo]),
+	2 = length(FooItems),
+	true = lists:member({[foo, a], 1}, FooItems),
+	true = lists:member({[foo, b], 2}, FooItems),
+	false = lists:member({[bar, c], 3}, FooItems),
+
+	[] = arweave_config_store:items_with_prefix([baz]),
+
+	ok.
+
+to_map_nested(_Config) ->
+	{ok, _} = arweave_config_store:set([deep, x, y], 1),
+	{ok, _} = arweave_config_store:set([deep, x, z], 2),
+
+	Map = arweave_config_store:to_map(),
+	true = is_map(Map),
+	#{deep := #{x := #{y := 1, z := 2}}} = Map,
+
+	ok.
+
+log_smoke(_Config) ->
+	{ok, _} = arweave_config_store:set([log_smoke, key], <<"value">>),
+	ok = arweave_config_store:log(),
+	ok.
