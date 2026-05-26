@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_forced_validation_tests).
 
 -include_lib("eunit/include/eunit.hrl").

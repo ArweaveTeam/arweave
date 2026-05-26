@@ -31,6 +31,7 @@
 %%% 2. Coordinated Mining
 %%%
 %%%   CM Miner Pool Client -> CM Exit Node Pool Client -> Pool Proxy -> Pool Server
+%% @ar_test: isolated
 -module(ar_pool).
 
 -behaviour(gen_server).

@@ -6,6 +6,7 @@
 %%% `store_block/5' so that two concurrent block confirmations can't race
 %%% on the data_root_index keys for the same offset. Read-only library
 %%% functions remain callable from any process via direct `ar_kv' lookups.
+%% @ar_test: fast
 -module(ar_data_roots).
 
 -behaviour(gen_server).

@@ -1,6 +1,7 @@
 %%% @doc Database for storing error codes for failed transactions, so that a user
 %%% can get the error reason when polling the status of a transaction. The entries
 %%% have a TTL. The DB is a singleton.
+%% @ar_test: fast
 -module(ar_tx_db).
 
 -export([get_error_codes/1, put_error_codes/2, ensure_error/1, clear_error_codes/1]).

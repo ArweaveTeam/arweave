@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_kv).
 
 -behaviour(gen_server).

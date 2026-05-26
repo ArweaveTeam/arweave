@@ -1,4 +1,5 @@
 %%% @doc Utilities for manipulating wallets.
+%% @ar_test: fast
 -module(ar_wallet).
 
 -export([new/0, new_ecdsa/0, new/1, sign/2, verify/3, verify_pre_fork_2_4/3,

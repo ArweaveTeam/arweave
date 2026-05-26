@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_wallet_tests).
 
 -include_lib("eunit/include/eunit.hrl").

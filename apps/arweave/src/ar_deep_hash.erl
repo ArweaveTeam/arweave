@@ -1,3 +1,4 @@
+%% @ar_test: fast, vdf
 -module(ar_deep_hash).
 -export([hash/1]).
 

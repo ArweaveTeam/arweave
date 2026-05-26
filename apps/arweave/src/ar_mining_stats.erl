@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_mining_stats).
 -behaviour(gen_server).
 

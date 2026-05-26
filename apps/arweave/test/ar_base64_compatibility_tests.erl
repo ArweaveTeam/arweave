@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_base64_compatibility_tests).
 
 %%% The compatibility tests to assert the used

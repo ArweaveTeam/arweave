@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(arweave_limiter_group_tests).
 
 -include_lib("eunit/include/eunit.hrl").

@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_http_util).
 
 -export([get_tx_content_type/1, arweave_peer/1]).

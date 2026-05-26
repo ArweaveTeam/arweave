@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_device_lock).
 
 -behaviour(gen_server).

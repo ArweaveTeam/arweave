@@ -8,6 +8,7 @@
 %%% This process owns per-peer queue limits, in-flight accounting, and
 %%% footprint admission. The coordinator periodically rebalances those limits
 %%% from peer latency/rating and owns the global footprint-slot counter.
+%% @ar_test: isolated
 -module(ar_peer_worker).
 
 -behaviour(gen_server).

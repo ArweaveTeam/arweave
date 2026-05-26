@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_tx_replay_pool_tests).
 
 -include_lib("arweave/include/ar.hrl").

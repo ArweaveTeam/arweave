@@ -27,8 +27,10 @@ run(TestType, Args) when is_list(Args) ->
 	run_tests(TestType, {mixed, Specs}).
 
 %% @doc Start the test environment for interactive shell use (without running tests).
+%% Interactive shells always get the full peer cluster — we don't know
+%% which modules will be touched at the REPL.
 start_shell(TestType) ->
-	ensure_started(TestType).
+	ensure_started(TestType, {modules, [no_skip_marker]}).
 
 %% @doc Stop the test environment started by start_shell/1.
 stop_shell(TestType) ->
@@ -82,10 +84,31 @@ list_tests_json(Mods) ->
 default_modules(e2e) ->
 	[ar_sync_pack_mine_tests, ar_repack_mine_tests, ar_repack_in_place_mine_tests];
 default_modules(test) ->
-	load_default_modules("scripts/full_test_modules.txt").
+	%% Discovery is driven by scripts/list_test_modules.sh — modules
+	%% that have eunit tests are picked up automatically. Categories
+	%% (fast / vdf / canary) come from `%% @ar_test:` annotations in
+	%% the module source. Here we want every eunit-bearing module.
+	discover_modules("all").
+
+%% @doc Run `scripts/list_test_modules.sh CATEGORY plain` and parse
+%% the output into a list of module atoms.
+discover_modules(Category) ->
+	Cmd = "bash scripts/list_test_modules.sh " ++ Category ++ " plain",
+	Output = os:cmd(Cmd),
+	parse_module_names(Output).
+
+parse_module_names(Output) ->
+	Lines = string:split(Output, "\n", all),
+	lists:filtermap(fun parse_module_line/1, Lines).
+
+parse_module_line(Line) ->
+	case string:trim(Line) of
+		"" -> false;
+		Name -> {true, list_to_atom(Name)}
+	end.
 
 run_tests(TestType, TestSpec) ->
-	ensure_started(TestType),
+	ensure_started(TestType, TestSpec),
 	Result =
 		try
 			eunit:test(build_eunit_spec(TestSpec), [verbose, {print_depth, 100}])
@@ -97,17 +120,54 @@ run_tests(TestType, TestSpec) ->
 		_ -> init:stop(1)
 	end.
 
-ensure_started(TestType) ->
+%% @doc Set up the test environment. For `test' runs whose modules are
+%% all tagged `@ar_test: fast', the peer cluster is skipped — those
+%% tests don't touch peers and the boot costs ~1-2 minutes that we'd
+%% pay for nothing. Any non-fast module in the spec forces the full
+%% boot, since one slow test mixed in would need the peers.
+ensure_started(TestType, TestSpec) ->
+	SkipPeers = TestType =:= test andalso all_modules_are_fast(TestSpec),
 	try
 		arweave_config:start(),
 		ok = arweave_limiter:start(),
 		start_for_tests(TestType),
-		ar_test_node:boot_peers(TestType),
-		ar_test_node:wait_for_peers(TestType)
+		case SkipPeers of
+			true ->
+				io:format(
+					"All requested modules are tagged `@ar_test: fast' — "
+					"skipping peer cluster boot~n");
+			false ->
+				ar_test_node:boot_peers(TestType),
+				ar_test_node:wait_for_peers(TestType)
+		end
 	catch
 		Type:Reason:S ->
 			io:format("Failed to start the peers due to ~p:~p:~p~n", [Type, Reason, S]),
 			init:stop(1)
+	end.
+
+%% @doc Returns true only when every module in TestSpec is tagged
+%% `@ar_test: fast'. False on any non-fast module or an empty spec.
+%% Conservative: if the discovery script fails for any reason, returns
+%% false (boot peers — the safe default).
+all_modules_are_fast({modules, []}) ->
+	false;
+all_modules_are_fast({modules, Mods}) ->
+	all_in_fast_set(Mods);
+all_modules_are_fast({mixed, []}) ->
+	false;
+all_modules_are_fast({mixed, Specs}) ->
+	all_in_fast_set([spec_module(S) || S <- Specs]).
+
+spec_module({module, M}) -> M;
+spec_module({test, M, _}) -> M.
+
+all_in_fast_set(Mods) ->
+	try
+		FastSet = sets:from_list(discover_modules("fast")),
+		lists:all(fun(M) -> sets:is_element(M, FastSet) end, Mods)
+	catch
+		_:_ -> false
 	end.
 
 build_eunit_spec({modules, Mods}) ->
@@ -133,29 +193,6 @@ spec_to_eunit({test, Mod, Test}) ->
 		false ->
 			%% Simple test function - run directly
 			{Mod, Test}
-	end.
-
-load_default_modules(Path) ->
-	case file:read_file(Path) of
-		{ok, Bin} ->
-			parse_default_modules(binary_to_list(Bin));
-		{error, Reason} ->
-			erlang:error({failed_to_load_test_modules, Path, Reason})
-	end.
-
-parse_default_modules(Content) ->
-	Lines = string:split(Content, "\n", all),
-	lists:filtermap(fun parse_default_module_line/1, Lines).
-
-parse_default_module_line(Line) ->
-	Trimmed = string:trim(Line),
-	case Trimmed of
-		"" ->
-			false;
-		[$# | _] ->
-			false;
-		_ ->
-			{true, list_to_atom(Trimmed)}
 	end.
 
 start_for_tests(TestType) ->

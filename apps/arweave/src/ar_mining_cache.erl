@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_mining_cache).
 -include_lib("arweave/include/ar_mining_cache.hrl").
 -include_lib("arweave/include/ar.hrl").

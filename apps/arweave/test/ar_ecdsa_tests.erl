@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_ecdsa_tests).
 
 -include("ar.hrl").

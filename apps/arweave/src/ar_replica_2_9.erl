@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_replica_2_9).
 
 -export([get_entropy_partition/1, get_entropy_partition_range/1, get_entropy_key/3,
@@ -259,7 +260,7 @@ get_entropy_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
 %%%===================================================================
 
 get_entropy_key_test_() ->
-    ar_test_node:test_with_mocked_functions([
+    ar_test_util:with_mocked([
         {ar_block, partition_size, fun() -> 2_000_000 end},
         {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
         {ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
@@ -342,11 +343,11 @@ test_get_entropy_key() ->
 
 get_entropy_partition_range_test_() ->
     [
-        ar_test_node:test_with_mocked_functions([
+        ar_test_util:with_mocked([
                 {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
             ],
             fun test_get_entropy_partition_range_after_strict/0, 30),
-        ar_test_node:test_with_mocked_functions([
+        ar_test_util:with_mocked([
                 {ar_block, strict_data_split_threshold, fun() -> 5_000_000 end}
             ],
             fun test_get_entropy_partition_range_before_strict/0, 30)
@@ -396,7 +397,7 @@ test_get_entropy_partition_range_before_strict() ->
 %% @doc Walk sequentially through all chunks in a couple partitions and verify their slice
 %% indices
 slice_index_walk_test_() ->
-    ar_test_node:test_with_mocked_functions([
+    ar_test_util:with_mocked([
         {ar_block, partition_size, fun() -> 8 * 262144 end},
         {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
         {ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
@@ -515,7 +516,7 @@ assert_slice_index(ExpectedIndex, [AbsoluteChunkByteOffset | Rest]) ->
 %% @doc Walk through every sub-chunk of each chunk and verify its entropy index and
 %% entropy sub-chunk index.
 entropy_index_walk_test_() ->
-    ar_test_node:test_with_mocked_functions([
+    ar_test_util:with_mocked([
         {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
         {ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
         {ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end}

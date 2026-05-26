@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_storage_module).
 
 -export([get_overlap/1, id/1, label/1, address_label/2, module_address/1,

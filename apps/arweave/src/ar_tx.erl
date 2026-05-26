@@ -1,4 +1,5 @@
 %%% @doc The module with utilities for transaction creation, signing and verification.
+%% @ar_test: fast
 -module(ar_tx).
 
 -export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, sign_v1/2, sign_v1/3, verify/2,
@@ -807,7 +808,8 @@ sign_and_verify_chunked_test_() ->
 	{timeout, 60, fun test_sign_and_verify_chunked/0}.
 
 sign_and_verify_chunked_pre_fork_2_5_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> infinity end}],
+	ar_test_util:with_mocked(
+		[{ar_fork, height_2_5, fun() -> infinity end}],
 		fun test_sign_and_verify_chunked/0, 120).
 
 test_sign_and_verify_chunked() ->
@@ -868,7 +870,8 @@ check_last_tx_test_() ->
 	{timeout, 60, fun test_check_last_tx/0}.
 
 check_last_tx_pre_fork_2_5_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_4, fun() -> infinity end}],
+	ar_test_util:with_mocked(
+		[{ar_fork, height_2_4, fun() -> infinity end}],
 		fun test_sign_and_verify_chunked/0, 120).
 
 test_check_last_tx() ->

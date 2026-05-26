@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_storage).
 
 -behaviour(gen_server).

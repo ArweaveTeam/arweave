@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_entropy_gen).
 
 -behaviour(gen_server).

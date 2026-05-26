@@ -1,3 +1,4 @@
+%% @ar_test: fast, vdf
 -module(ar_difficulty_tests).
 
 -include_lib("eunit/include/eunit.hrl").

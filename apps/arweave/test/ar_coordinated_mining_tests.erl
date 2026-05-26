@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_coordinated_mining_tests).
 
 -include_lib("arweave/include/ar.hrl").

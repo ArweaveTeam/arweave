@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_repack).
 
 -behaviour(gen_server).

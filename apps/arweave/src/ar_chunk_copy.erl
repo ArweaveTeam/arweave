@@ -9,6 +9,7 @@
 %%%  2. **Worker pool** (per-StoreID): receive `read_range' tasks and
 %%%     dispatch them to `ar_chunk_copy_worker' instances.
 %%%
+%% @ar_test: fast
 -module(ar_chunk_copy).
 
 -behaviour(gen_server).

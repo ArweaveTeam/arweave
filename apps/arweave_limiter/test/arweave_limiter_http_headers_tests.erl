@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(arweave_limiter_http_headers_tests).
 
 -include_lib("eunit/include/eunit.hrl").

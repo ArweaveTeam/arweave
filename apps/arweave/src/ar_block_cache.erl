@@ -1,5 +1,6 @@
 %%% @doc The module maintains a DAG of blocks that have passed the PoW validation, in ETS.
 %%% NOTE It is not safe to call functions which modify the state from different processes.
+%% @ar_test: vdf, fast
 -module(ar_block_cache).
 
 -export([new/2, initialize_from_list/2, add/2, mark_nonce_limiter_validated/2,

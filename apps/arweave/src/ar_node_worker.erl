@@ -6,6 +6,7 @@
 
 %%% @doc The server responsible for processing blocks and transactions and
 %%% maintaining the node state. Blocks are prioritized over transactions.
+%% @ar_test: isolated
 -module(ar_node_worker).
 
 -export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1,

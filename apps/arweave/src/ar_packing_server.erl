@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_packing_server).
 
 -behaviour(gen_server).

@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_data_roots_sync_tests).
 
 -include("ar.hrl").

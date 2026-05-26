@@ -33,6 +33,7 @@ metrics_*
 release/output
 .DS_Store
 .tmp
+tmp
 node_modules
 screenlog.0
 _*

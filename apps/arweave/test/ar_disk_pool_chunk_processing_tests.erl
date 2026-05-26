@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_disk_pool_chunk_processing_tests).
 
 -include_lib("eunit/include/eunit.hrl").

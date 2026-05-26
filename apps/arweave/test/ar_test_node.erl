@@ -541,11 +541,10 @@ get_difficulty_for_invalid_hash() ->
 	%% us selectively disable one- or two-chunk mining in tests.
 	binary:decode_unsigned(invalid_solution(), big) + 1.
 
+%% Thin proxy — actual implementation in ar_test_util. Kept here for
+%% back-compat with existing callers (e.g. ar_packing_tests).
 load_fixture(Fixture) ->
-	Dir = filename:dirname(?FILE),
-	FixtureFilename = filename:join([Dir, "fixtures", Fixture]),
-	{ok, Data} = file:read_file(FixtureFilename),
-	Data.
+	ar_test_util:load_fixture(Fixture).
 
 %%%===================================================================
 %%% Private functions.
@@ -1546,147 +1545,28 @@ get_tx_confirmations(Node, TXID) ->
 			-1
 	end.
 
+%% The robust local-meck primitives live in `ar_test_util'. These
+%% thin proxies preserve the historical ar_test_node API for callers
+%% that already invoke `ar_test_node:new_mock/2', `:mock_function/3',
+%% `:unmock_module/1' directly. New code should call `ar_test_util'
+%% directly.
 new_mock(Module, Options) ->
-	new_mock(Module, Options, 5).
-
-new_mock(_Module, _Options, 0) ->
-	ok;
-new_mock(Module, Options, Retries) ->
-	Options2 = lists:usort([no_link | Options]),
-	try
-		meck:new(Module, Options2)
-	catch
-		%% If the mock is already started, treat as success
-		error:{already_started, _Pid} ->
-			ok;
-		%% Retry on other errors
-		error:E ->
-			?debugFmt("ar_test_node (retries left ~p): Error creating mock for ~p: ~p",
-					[Retries - 1, Module, E]),
-			timer:sleep(1000),
-			new_mock(Module, Options, Retries - 1);
-		exit:E ->
-			?debugFmt("ar_test_node (retries left ~p): Exit creating mock for ~p: ~p",
-					[Retries - 1, Module, E]),
-			timer:sleep(1000),
-			new_mock(Module, Options, Retries - 1)
-	end.
+	ar_test_util:new_mock(Module, Options).
 
 mock_function(Module, Fun, Mock) ->
-	mock_function(Module, Fun, Mock, 5).
-
-mock_function(_Module, _Fun, _Mock, 0) ->
-	ok;
-mock_function(Module, Fun, Mock, Retries) ->
-	try
-		meck:expect(Module, Fun, Mock)
-	catch
-		error:E ->
-			?debugFmt("ar_test_node (retries left ~p): Error setting mock for ~p: ~p",
-					[Retries - 1, Module, E]),
-			timer:sleep(1000),
-			mock_function(Module, Fun, Mock, Retries - 1);
-		exit:E ->
-			?debugFmt("ar_test_node (retries left ~p): Exit setting mock for ~p: ~p",
-					[Retries - 1, Module, E]),
-			timer:sleep(1000),
-			mock_function(Module, Fun, Mock, Retries - 1)
-	end.
+	ar_test_util:mock_function(Module, Fun, Mock).
 
 unmock_module(Module) ->
-	unmock_module(Module, 5).
+	ar_test_util:unmock_module(Module).
 
-unmock_module(_Module, 0) ->
-	ok;
-unmock_module(Module, Retries) ->
-	Pid = erlang:whereis(Module),
-	case is_pid(Pid) of
-		true ->
-			catch sys:suspend(Pid, 5000);
-		false ->
-			ok
-	end,
-	try
-		timed_meck_unload(Module, 10000)
-	catch
-		error:{not_mocked, Module} ->
-			ok;
-		error:E ->
-			?debugFmt("ar_test_node (retries left ~p): Error unloading mock for ~p: ~p",
-					[Retries - 1, Module, E]),
-			resume_if_alive(Pid),
-			timer:sleep(1000),
-			unmock_module(Module, Retries - 1);
-		exit:E ->
-			?debugFmt("ar_test_node (retries left ~p): Exit unloading mock for ~p: ~p",
-					[Retries - 1, Module, E]),
-			resume_if_alive(Pid),
-			timer:sleep(1000),
-			unmock_module(Module, Retries - 1)
-	after
-		resume_if_alive(Pid)
-	end.
-
-resume_if_alive(Pid) ->
-	case is_pid(Pid) andalso erlang:is_process_alive(Pid) of
-		true ->
-			catch sys:resume(Pid);
-		false ->
-			ok
-	end.
-
-%% meck:unload internally uses gen_server:call(..., infinity), so if the meck
-%% process is stuck handling a call from a blocked process, it will hang forever
-%% and the catch/retry logic above never fires. Wrap it with a finite timeout
-%% and kill the stuck meck process if needed.
-%%
-%% After killing the meck process we must restore the original module from the
-%% beam file on disk, because meck's terminate (which normally does this) did
-%% not run.
-timed_meck_unload(Module, Timeout) ->
-	Caller = self(),
-	Ref = make_ref(),
-	Worker = spawn(fun() ->
-		try
-			Result = meck:unload(Module),
-			Caller ! {Ref, {ok, Result}}
-		catch
-			Class:Reason ->
-				Caller ! {Ref, {Class, Reason}}
-		end
-	end),
-	receive
-		{Ref, {ok, Result}} ->
-			Result;
-		{Ref, {error, Reason}} ->
-			error(Reason);
-		{Ref, {exit, Reason}} ->
-			exit(Reason)
-	after Timeout ->
-		exit(Worker, kill),
-		MeckProcName = list_to_atom(atom_to_list(Module) ++ "_meck"),
-		case erlang:whereis(MeckProcName) of
-			undefined ->
-				ok;
-			MeckPid ->
-				exit(MeckPid, kill),
-				timer:sleep(100)
-		end,
-		force_restore_module(Module),
-		exit(timed_meck_unload_timeout)
-	end.
-
-%% After force-killing the meck process, the module is left with meck-generated
-%% stub code and no backing ETS tables. Restore the original beam from disk so
-%% processes don't crash in an infinite meck stub loop.
-force_restore_module(Module) ->
-	OrigName = list_to_atom(atom_to_list(Module) ++ "_meck_original"),
-	code:purge(Module),
-	code:delete(Module),
-	code:purge(OrigName),
-	code:delete(OrigName),
-	code:load_file(Module).
-
+%% Returns a {Setup, Cleanup} pair for use as an eunit fixture. The
+%% local side delegates to `ar_test_util' (which is also what local-only
+%% `ar_test_util:with_mocked/2,3' uses); on top of that, this function
+%% broadcasts each mock to every peer node via `remote_call'. That
+%% peer-side broadcast is the reason `test_with_mocked_functions'
+%% requires the slow path — fast-tagged modules whose mocks don't need
+%% to be visible on peers should use `ar_test_util:with_mocked/2,3'
+%% instead.
 mock_functions(Functions) ->
 	{
 		fun() ->
@@ -1695,10 +1575,10 @@ mock_functions(Functions) ->
 					fun({Module, Fun, Mock}, Mocked) ->
 						NewMocked = case maps:get(Module, Mocked, false) of
 							false ->
-								new_mock(Module, [passthrough]),
+								ar_test_util:new_mock(Module, [passthrough]),
 								lists:foreach(
 									fun({_TestType, Node}) ->
-										remote_call(Node, ar_test_node, new_mock,
+										remote_call(Node, ar_test_util, new_mock,
 												[Module, [no_link, passthrough]])
 									end,
 									all_peers(test)),
@@ -1706,10 +1586,10 @@ mock_functions(Functions) ->
 							true ->
 								Mocked
 							end,
-							mock_function(Module, Fun, Mock),
+							ar_test_util:mock_function(Module, Fun, Mock),
 							lists:foreach(
 								fun({_TestType, Node}) ->
-									remote_call(Node, ar_test_node, mock_function,
+									remote_call(Node, ar_test_util, mock_function,
 											[Module, Fun, Mock])
 								end,
 								all_peers(test)),
@@ -1724,10 +1604,10 @@ mock_functions(Functions) ->
 			with_meck_lock(fun() ->
 				maps:fold(
 					fun(Module, _, _) ->
-						unmock_module(Module),
+						ar_test_util:unmock_module(Module),
 						lists:foreach(
 							fun({_TestType, Node}) ->
-								remote_call(Node, ar_test_node, unmock_module, [Module])
+								remote_call(Node, ar_test_util, unmock_module, [Module])
 							end,
 							all_peers(test))
 					end,

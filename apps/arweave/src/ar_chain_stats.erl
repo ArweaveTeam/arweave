@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_chain_stats).
 
 -behaviour(gen_server).

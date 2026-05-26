@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_get_chunk_tests).
 
 -include_lib("eunit/include/eunit.hrl").

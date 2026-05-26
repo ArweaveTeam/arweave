@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_rate_limiter).
 
 -behaviour(gen_server).

@@ -1,3 +1,4 @@
+%% @ar_test: vdf
 -module(ar_vdf_external_update_tests).
 
 -export([init/2]).

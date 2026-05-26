@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_verify_chunks).
 
 -behaviour(gen_server).
@@ -550,11 +551,11 @@ intervals_test_() ->
 
 verify_chunk_storage_test_() ->
 	[
-		ar_test_node:test_with_mocked_functions(
+		ar_test_util:with_mocked(
 			[{ar_chunk_storage, read_offset,
 				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end}],
 			fun test_verify_chunk_storage_in_interval/0),
-		ar_test_node:test_with_mocked_functions(
+		ar_test_util:with_mocked(
 			[{ar_chunk_storage, read_offset,
 				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
 			{ar_sync_record, is_recorded,
@@ -564,7 +565,7 @@ verify_chunk_storage_test_() ->
 			{ar_tx_blacklist, is_byte_blacklisted,
 				fun(_) -> false end}],
 			fun test_verify_chunk_storage_should_store/0),
-		ar_test_node:test_with_mocked_functions(
+		ar_test_util:with_mocked(
 			[{ar_chunk_storage, read_offset,
 				fun(_Offset, _StoreID) -> {ok, << ?DATA_CHUNK_SIZE:24 >>} end},
 			{ar_data_sync, get_chunk_data,
@@ -574,18 +575,18 @@ verify_chunk_storage_test_() ->
 
 verify_proof_test_() ->
 	[
-		ar_test_node:test_with_mocked_functions([
+		ar_test_util:with_mocked([
 			{ar_data_sync, read_data_path, fun(_, _) -> not_found end}],
 			fun test_verify_proof_no_datapath/0
 		),
-		ar_test_node:test_with_mocked_functions([
+		ar_test_util:with_mocked([
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
 			{ar_poa, chunk_proof, fun(_, _) -> #chunk_proof{} end},
 			{ar_poa, validate_paths, fun(_) -> {true, <<>>} end}
 		],
 			fun test_verify_proof_valid_paths/0
 		),
-		ar_test_node:test_with_mocked_functions([
+		ar_test_util:with_mocked([
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
 			{ar_poa, chunk_proof, fun(_, _) -> #chunk_proof{} end},
 			{ar_poa, validate_paths, fun(_) -> {false, <<>>} end}
@@ -596,7 +597,7 @@ verify_proof_test_() ->
 
 verify_chunk_test_() ->
 	[
-		ar_test_node:test_with_mocked_functions([
+		ar_test_util:with_mocked([
 			{ar_data_sync, read_data_path, fun(_, _) -> {ok, <<>>} end},
 			{ar_poa, validate_paths, fun(_) -> {true, <<>>} end},
 			{ar_poa, chunk_proof, fun(_, _) -> #chunk_proof{} end},
@@ -924,7 +925,7 @@ sample_offsets_without_replacement_test() ->
 %% Note: Using atoms for partition borders triggers the fallback in generate_sample_offsets/3.
 sample_random_chunks_test_() ->
 	[
-		ar_test_node:test_with_mocked_functions(
+		ar_test_util:with_mocked(
 			[{ar_data_sync, get_chunk, fun(_Offset, _Opts) ->
 				%% Use process dictionary to simulate sequential responses.
 				Counter = case erlang:get(sample_counter) of

@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_repack_fsm).
 
 -export([crank_state/1]).
@@ -448,12 +449,10 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 %%%===================================================================
 
 state_transition_test_() ->
-	[
-		ar_test_node:test_with_mocked_functions([
-			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
-		],
-		fun test_state_transitions/0, 30)
-	].
+	ar_test_util:with_mocked([
+		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+	],
+	fun test_state_transitions/0, 30).
 
 test_state_transitions() ->
 	Addr1 = crypto:strong_rand_bytes(32),

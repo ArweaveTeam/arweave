@@ -1,3 +1,4 @@
+%% @ar_test: vdf
 -module(ar_vdf_server_tests).
 
 -export([init/2]).

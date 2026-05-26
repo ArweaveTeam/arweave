@@ -19,6 +19,7 @@
 %%%
 %%% @end
 %%%===================================================================
+%% @ar_test: fast
 -module(ar_shutdown_manager).
 -export([start_link/0]).
 -export([init/1, terminate/2]).

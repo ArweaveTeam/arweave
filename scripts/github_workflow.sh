@@ -1,40 +1,56 @@
 #!/bin/bash
 ######################################################################
-# This script has been extracted from the github workflow and can
-# then be reused locally outside of a runner.
+# Run eunit / e2e tests for one or more modules. Each module runs in
+# its own fresh BEAM (clean isolation). When more than one module is
+# passed, this script loops through them — useful for batched fast
+# shards that share an artifact download but still get per-module
+# BEAM separation.
 #
 # Usage:
-#   ./github_workflow.sh NAMESPACE
+#   github_workflow.sh MODE NAMESPACE [MODULE ...]
+#
+# - MODE: "tests" or "e2e".
+# - NAMESPACE: identifier used in failure artifact filenames. Pass
+#   the matrix slot name (e.g. "fast_shard_0") or, for back-compat
+#   with the per-shard matrix, the single module name.
+# - MODULE: one or more module names. Each module gets its own
+#   erl invocation. If omitted, NAMESPACE is treated as the single
+#   module to run.
 ######################################################################
 
-# print the logs if tests fail
 _print_peer_logs() {
-	peer=${1}
-	if ls ${peer}-*.out 2>&1 >/dev/null
+	local peer=${1}
+	local module=${2}
+	if ls "${peer}-${module}.out" 2>/dev/null
 	then
 		echo -e "\033[0;31m===> Test failed, printing the ${peer} node's output...\033[0m"
-		cat ${peer}-*.out
+		cat "${peer}-${module}.out"
 	else
 		echo -e "\033[0;31m===> Test failed without ${peer} output...\033[0m"
 	fi
 }
 
-# check if test can be restarted
+# Check whether the just-failed erl run hit a known-retryable error.
+# Sets RETRYABLE=1 if so. Looks at this module's specific output
+# files so siblings in a batched shard don't contaminate the signal.
 _check_retry() {
-	local first_line_peer1
-	echo -e "\033[0;32m===> Checking for retry\033[0m"
+	local module=${1}
+	local first_line_peer1=""
+	local first_line_main=""
 
-	# For debugging purposes, print the peer1 output if the tests failed
-	if ls peer1-*.out 2>&1 >/dev/null
+	if ls "peer1-${module}.out" 2>/dev/null
 	then
-		first_line_peer1=$(head -n 1 peer1-*.out)
+		first_line_peer1=$(head -n 1 "peer1-${module}.out")
+	fi
+	if [ -f "main-${module}.out" ]
+	then
+		first_line_main=$(head -n 1 "main-${module}.out")
 	fi
 
-	first_line_main=$(head -n 1 main.out)
+	echo -e "\033[0;32m===> Checking for retry (module=${module})\033[0m"
 	echo -e "\033[0;31m===> First line of peer1 node's output: $first_line_peer1\033[0m"
 	echo -e "\033[0;31m===> First line of main node's output: $first_line_main\033[0m"
 
-	# Check if it is a retryable error
 	if [[ "$first_line_peer1" == "Protocol 'inet_tcp': register/listen error: "* ]]
 	then
 		echo "Retrying test because of inet_tcp error..."
@@ -51,14 +67,13 @@ _check_retry() {
 		RETRYABLE=1
 		sleep 1
 	else
-		_print_peer_logs peer1
-		_print_peer_logs peer2
-		_print_peer_logs peer3
-		_print_peer_logs peer4
+		_print_peer_logs peer1 "${module}"
+		_print_peer_logs peer2 "${module}"
+		_print_peer_logs peer3 "${module}"
+		_print_peer_logs peer4 "${module}"
 	fi
 }
 
-# set github environment
 _set_github_env() {
 	if test -z "${GITHUB_ENV}"
 	then
@@ -67,21 +82,25 @@ _set_github_env() {
 	fi
 
 	local exit_code=${1}
-	# Set the exit_code output variable using Environment Files
-	echo "exit_code=${exit_code}" >> ${GITHUB_ENV}
+	echo "exit_code=${exit_code}" >> "${GITHUB_ENV}"
 	return 0
 }
 
 ######################################################################
-# main script
+# Main
 ######################################################################
 MODE="${1}"
 NAMESPACE_FLAG="${2}"
+shift 2
+MODULES_TO_RUN=("$@")
+if [ ${#MODULES_TO_RUN[@]} -eq 0 ]; then
+	MODULES_TO_RUN=("${NAMESPACE_FLAG}")
+fi
+
 PWD=$(pwd)
-EXIT_CODE=0
+OVERALL_EXIT_CODE=0
 export PATH="${PWD}/_build/erts/bin:${PATH}"
 export ERL_EPMD_ADDRESS="127.0.0.1"
-export NAMESPACE="${NAMESPACE_FLAG}"
 
 if test "${MODE}" = "e2e"
 then
@@ -95,30 +114,49 @@ fi
 export ERL_PATH_CONF="${PWD}/config/sys.config"
 export ERL_TEST_OPTS="-pa ${ERL_PATH_ADD} ${ERL_PATH_TEST} -config ${ERL_PATH_CONF}"
 
-RETRYABLE=1
-while [[ $RETRYABLE -eq 1 ]]
-do
-	RETRYABLE=0
-	set +e
-	set -x
-	NODE_NAME="main-${NAMESPACE}@127.0.0.1"
-	COOKIE=${NAMESPACE}
-	erl +S 4:4 $ERL_TEST_OPTS \
-		-noshell \
-		-name "${NODE_NAME}" \
-		-setcookie "${COOKIE}" \
-		-run ar ${MODE} "${NAMESPACE}" \
-		-s init stop 2>&1 | tee main.out
-	EXIT_CODE=${PIPESTATUS[0]}
-	set +x
-	set -e
+for MODULE in "${MODULES_TO_RUN[@]}"; do
+	echo "============================================================"
+	echo "=== Running ${MODE} for module: ${MODULE} ==="
+	echo "============================================================"
+
+	# Each module's BEAM uses the module name as namespace so node
+	# names, cookies, and *.out files don't collide with sibling
+	# modules running in the same shard.
+	export NAMESPACE="${MODULE}"
+	NODE_NAME="main-${MODULE}@127.0.0.1"
+	COOKIE="${MODULE}"
+
+	RETRYABLE=1
+	EXIT_CODE=0
+	while [[ $RETRYABLE -eq 1 ]]
+	do
+		RETRYABLE=0
+		set +e
+		set -x
+		erl +S 4:4 $ERL_TEST_OPTS \
+			-noshell \
+			-name "${NODE_NAME}" \
+			-setcookie "${COOKIE}" \
+			-run ar ${MODE} "${MODULE}" \
+			-s init stop 2>&1 | tee "main-${MODULE}.out"
+		EXIT_CODE=${PIPESTATUS[0]}
+		set +x
+		set -e
+
+		if [[ ${EXIT_CODE} -ne 0 ]]
+		then
+			_check_retry "${MODULE}"
+		fi
+	done
 
 	if [[ ${EXIT_CODE} -ne 0 ]]
 	then
-		_check_retry
+		echo "=== Module ${MODULE} FAILED with exit ${EXIT_CODE} ==="
+		OVERALL_EXIT_CODE=${EXIT_CODE}
+	else
+		echo "=== Module ${MODULE} passed ==="
 	fi
 done
 
-# exit with the exit code of the tests
-_set_github_env ${EXIT_CODE}
-exit ${EXIT_CODE}
+_set_github_env ${OVERALL_EXIT_CODE}
+exit ${OVERALL_EXIT_CODE}

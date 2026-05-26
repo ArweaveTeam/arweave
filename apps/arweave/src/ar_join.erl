@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_join).
 
 -export([start/1]).

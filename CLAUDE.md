@@ -1,5 +1,17 @@
 # Arweave Development
 
+## Workspace conventions
+
+- **`scripts/`** is for scripts intended to be committed to the repo
+  (CI helpers, release tooling, etc.). Treat anything you put there as
+  part of the codebase — name it clearly, give it a header comment,
+  make it work for everyone.
+- **`tmp/`** is for throwaway scratch — one-off diagnostic scripts,
+  experiments, ad-hoc data dumps. Put anything you don't intend to
+  commit here. Files under `tmp/` are gitignored.
+- When in doubt, start in `tmp/` and graduate to `scripts/` only once
+  the script's role is permanent.
+
 ## Building
 
 Use `./ar-rebar3` instead of `./rebar3` for building:
@@ -36,6 +48,91 @@ goes through the EUnit path.
 # Run multiple Common Test suites
 ./bin/ct --suite apps/arweave_config/test/arweave_config_full_load_SUITE.erl --suite apps/arweave_config/test/arweave_config_format_SUITE.erl
 ```
+
+## CI test categories
+
+CI discovers eunit test modules by scanning `apps/*/{src,test}/*.erl` for
+files containing a `*_test/0` or `*_test_/0` function head — no
+maintained list of modules. See `scripts/list_test_modules.sh`.
+
+To opt a module into a non-default category, add a `%% @ar_test:`
+annotation directly above the `-module(...)` declaration:
+
+```erlang
+%%% @doc Pure utility module — safe to batch with siblings.
+%% @ar_test: fast
+-module(ar_util).
+```
+
+Multiple categories can be comma-separated:
+
+```erlang
+%% @ar_test: fast, vdf
+-module(ar_merkle).
+```
+
+### Categories
+
+| Category | Effect |
+|---|---|
+| (none — the default) | Module runs in its own shard in the main CI matrix (the `slow` path). Safe default for tests that need a fresh BEAM / peer cluster. |
+| `fast` | Module runs in one of a small number of batched fast shards. Tests still get their own BEAM per module, but multiple modules share an artifact download. Use only when the module's tests don't share global state with siblings. |
+| `vdf` | Module is part of the macOS VDF workflow's subset (see `x-test-vdf.yml`). Use for tests whose correctness matters to a VDF deployment. Orthogonal to `fast`/`slow`. |
+| `canary` | Module is run only by `x-test-canary.yml` (the always-fails canary check). Excluded from the main matrices. |
+
+### Disabling a test
+
+There's no `skip` annotation. To disable:
+
+- **Single test:** comment out the function with a reason (preferred —
+  keeps the reason colocated, easy to re-enable).
+  ```erlang
+  %% Disabled — see issue #1234. Re-enable once <thing> is fixed.
+  %% my_broken_test() ->
+  %%     ?assertEqual(...).
+  ```
+- **Whole module:** comment out all tests, or rename so the function
+  no longer matches `*_test/0` / `*_test_/0`. Prefer commenting out.
+
+Note: renaming to `disabled_my_test()` (prefix) still matches the
+discovery pattern. Use a suffix like `my_test_disabled()`, or just
+comment the function out.
+
+### Adding a new test
+
+Just write it. The discovery script picks up any new file with eunit
+test exports on the next CI run. New tests default to `slow` — their
+own shard, full peer isolation. If the tests are pure and would be
+safe to batch, add `%% @ar_test: fast` to the module.
+
+### Test helpers: `ar_test_node` vs `ar_test_util`
+
+Two helper modules; the difference governs whether your module can
+be tagged `fast`:
+
+| Module | What it is | When to use |
+|---|---|---|
+| `ar_test_node` | Distributed test infrastructure: spawns peer nodes, propagates mocks across peers via `remote_call`, runs queries against peer state, etc. | Tests that need the peer cluster — keep them as default `slow`. |
+| `ar_test_util` | Local-only helpers (e.g. `with_mocked/2,3`) that run inside a single BEAM. | Tests tagged `@ar_test: fast`. |
+
+If a fast-tagged module needs to mock a function, use
+`ar_test_util:with_mocked/3` — it's the batch-safe equivalent of
+`ar_test_node:test_with_mocked_functions/2,3`. Using the
+`ar_test_node` version from a fast module is a bug: it tries to
+broadcast the mock to peer nodes that aren't booted.
+
+```erlang
+%% In a `@ar_test: fast' module:
+state_transition_test_() ->
+    ar_test_util:with_mocked([
+        {ar_block, strict_data_split_threshold, fun() -> 700_000 end}
+    ], fun test_state_transitions/0, 30).
+```
+
+If you find yourself reaching for an `ar_test_node:*` helper from a
+fast module, that's a signal — either move the test back to slow, or
+add a local equivalent to `ar_test_util` (only when the operation
+really doesn't need peers).
 
 ## Erlang style
 

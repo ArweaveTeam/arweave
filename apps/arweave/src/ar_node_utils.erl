@@ -1,4 +1,5 @@
 %%% @doc Different utility functions for node and node worker.
+%% @ar_test: isolated
 -module(ar_node_utils).
 
 -export([apply_tx/3, apply_txs/3, update_accounts/3, validate/6,

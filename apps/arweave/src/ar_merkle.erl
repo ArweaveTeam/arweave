@@ -1,5 +1,6 @@
 %%% @doc Generates annotated merkle trees, paths inside those trees, as well
 %%% as verification of those proofs.
+%% @ar_test: fast, vdf
 -module(ar_merkle).
 
 -export([generate_tree/1, generate_path/3, validate_path/4, validate_path/5,

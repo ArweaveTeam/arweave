@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(arweave_limiter_util).
  
 -export([worker_name/2,

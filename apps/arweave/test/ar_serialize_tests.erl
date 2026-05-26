@@ -1,3 +1,4 @@
+%% @ar_test: vdf
 -module(ar_serialize_tests).
 
 -include_lib("arweave/include/ar.hrl").

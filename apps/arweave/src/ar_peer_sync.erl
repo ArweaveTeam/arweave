@@ -21,6 +21,7 @@
 %%% side peer-saturation skip) all funnel through `task_dropped/1' to
 %%% release byte ranges. The success path uses `task_completed/4' which
 %%% also fans out per-peer accounting via ar_peer_worker.
+%% @ar_test: fast
 -module(ar_peer_sync).
 
 -behaviour(gen_server).

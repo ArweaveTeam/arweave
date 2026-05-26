@@ -1,3 +1,4 @@
+%% @ar_test: vdf
 -module(ar_nonce_limiter).
 
 -behaviour(gen_server).
