@@ -2,6 +2,10 @@
 
 -export([register/0]).
 
+-ifdef(AR_TEST).
+-export([cleanup/0]).
+-endif.
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -63,4 +67,22 @@ register() ->
                                  {name, ar_limiter_leaky_tick_reductions_peer},
                                  {help, "The times a leaky bucket token reduction had have to be performed for a peer"},
                                  {labels, [limiter_id]}]),
+    ok.
+
+cleanup() ->
+    prometheus_histogram:deregister(ar_limiter_response_time_microseconds),
+    
+    prometheus_counter:deregister(ar_limiter_requests_total),
+    prometheus_counter:deregister(ar_limiter_rejected_total),
+    prometheus_counter:deregister(ar_limiter_requests_error),
+    prometheus_counter:deregister(ar_limiter_reduce_requests_total),
+    prometheus_counter:deregister(ar_limiter_leaky_ticks),
+    prometheus_counter:deregister(ar_limiter_leaky_tick_delete_peer_total),
+    prometheus_counter:deregister(ar_limiter_cleanup_tick_expired_sliding_peers_deleted_total),
+    prometheus_counter:deregister(ar_limiter_leaky_tick_token_reductions_total),
+    prometheus_counter:deregister(ar_limiter_leaky_tick_reductions_peer),
+
+    prometheus_gauge:deregister(ar_limiter_peers),
+    prometheus_gauge:deregister(ar_limiter_tracked_items_total),
+
     ok.
