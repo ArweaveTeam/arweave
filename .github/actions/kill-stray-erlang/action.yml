@@ -1,0 +1,20 @@
+name: 'Kill stray erlang processes'
+description: |
+  Kill leftover BEAM processes from prior CI jobs that ran as this
+  same user. Releases the connections those BEAMs hold to the
+  system-wide epmd so their name registrations clear, letting the
+  new test BEAMs register cleanly.
+
+  -u "$USER" scopes the kill to this runner's own processes —
+  siblings on other macOS dev-N user accounts or on other Incus
+  containers (Linux) are untouched.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        pkill -9 -u "$USER" -f beam.smp || true
+        pkill -9 -u "$USER" -f erl_child_setup || true
+        rm -rf /tmp/erl_pipes/* /tmp/erl_crash.dump 2>/dev/null || true
+        sleep 1

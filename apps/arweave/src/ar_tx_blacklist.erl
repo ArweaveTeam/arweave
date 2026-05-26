@@ -11,18 +11,14 @@
 -export([start_link/0, start_taking_down/0, is_tx_blacklisted/1, is_byte_blacklisted/1,
 		get_blacklisted_intervals/2, get_next_not_blacklisted_byte/1,
 		notify_about_removed_tx/1, norify_about_orphaned_tx/1, notify_about_added_tx/3,
-		store_state/0]).
+		store_state/0, refresh_interval_ms/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 
 %% The frequency of refreshing the blacklist.
--ifdef(AR_TEST).
--define(REFRESH_BLACKLISTS_FREQUENCY_MS, 2000).
--else.
 -define(REFRESH_BLACKLISTS_FREQUENCY_MS, 10 * 60 * 1000).
--endif.
 
 %% How long to wait before retrying to compose a blacklist from local and external
 %% sources after a failed attempt.
@@ -136,6 +132,10 @@ norify_about_orphaned_tx(TXID) ->
 notify_about_added_tx(TXID, End, Start) ->
 	gen_server:cast(?MODULE, {added_tx, TXID, End, Start}).
 
+%% @doc Interval between blacklist refresh cycles. 
+-spec refresh_interval_ms() -> non_neg_integer().
+refresh_interval_ms() -> ?REFRESH_BLACKLISTS_FREQUENCY_MS.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -178,7 +178,7 @@ handle_cast(refresh_blacklist, State) ->
 			);
 		ok ->
 			_ = ar_timer:apply_after(
-				?REFRESH_BLACKLISTS_FREQUENCY_MS,
+				?MODULE:refresh_interval_ms(),
 				gen_server,
 				cast,
 				[self(), refresh_blacklist],

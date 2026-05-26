@@ -33,8 +33,17 @@ handle([<<"bad">>, <<"and">>, <<"good">>], Req, State) ->
 		),
 	{ok, cowboy_req:reply(200, #{}, Reply, Req), State}.
 
+%% Use `test_with_mocked_functions/3' so the blacklist refresh interval
+%% is mecked on every peer (and the local node) before the fixture's
+%% TestFun runs. The blacklist gen_server reschedules itself on its
+%% first `handle_cast' using `?MODULE:refresh_interval_ms()', so the
+%% mock has to be live before any peer's arweave app starts.
 uses_blacklists_test_() ->
-	{timeout, 300, fun test_uses_blacklists/0}.
+	ar_test_node:test_with_mocked_functions(
+		[{ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
+		fun test_uses_blacklists/0,
+		300_000
+	).
 
 test_uses_blacklists() ->
 	{

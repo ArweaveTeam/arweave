@@ -3338,7 +3338,13 @@ handle_mining_h2(Req, Pid) ->
 			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
 					try ar_serialize:json_map_to_candidate(JSON) of
-						#mining_candidate{} = Candidate ->
+						#mining_candidate{} = Candidate0 ->
+							%% Restore cm_lead_peer (not serialized) so downstream
+							%% callers can tell this candidate arrived via cm_h2_send.
+							%% Mirrors the H1 receive path in
+							%% `ar_coordination:compute_h2_for_peer/2'.
+							Candidate = Candidate0#mining_candidate{
+								cm_lead_peer = Peer },
 							?LOG_INFO([{event, h2_received},
 									{peer, ar_util:format_peer(Peer)}]),
 							case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of

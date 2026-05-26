@@ -38,7 +38,7 @@ all() ->
 		hostname_peer_round_trip,
 		by_role_and_singleton_accept_binary_role,
 		by_role_unknown_role_binary_crashes,
-		validator_rejects_peer_with_no_active_roles,
+		validator_ignores_peer_with_no_active_roles,
 		clear_and_replace_pre_runtime,
 		clear_and_replace_rejected_at_runtime
 	].
@@ -253,14 +253,14 @@ by_role_unknown_role_binary_crashes(_Config) ->
 	ok.
 
 %% A peer that appears in the store with every role set to `false' is
-%% rejected by `validate_at_least_one_role/2' at runtime transition.
-validator_rejects_peer_with_no_active_roles(_Config) ->
+%% silently treated as inactive — callers may use that shape to negate
+%% a role inherited from a shared base config without removing the keys.
+validator_ignores_peer_with_no_active_roles(_Config) ->
 	PeerID = <<"1.2.3.4:1984">>,
 	{ok, _} = arweave_config:set([peers, PeerID, trusted], false),
-	?assertMatch(
-		{error, {peer_with_no_roles, [PeerID]}},
-		arweave_config:runtime()),
-	?assertEqual(false, arweave_config:is_runtime()),
+	ok = arweave_config:runtime(),
+	?assertEqual(true, arweave_config:is_runtime()),
+	?assertEqual([], arweave_config:get_peers(trusted)),
 	ok.
 
 clear_and_replace_pre_runtime(_Config) ->

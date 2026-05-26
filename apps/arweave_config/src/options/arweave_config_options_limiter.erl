@@ -48,16 +48,22 @@
 %% data_sync_record
 -define(LIMITER_DATA_SYNC_RECORD_SLIDING_WINDOW_LIMIT, 0).
 -define(LIMITER_DATA_SYNC_RECORD_SLIDING_WINDOW_DURATION, 1000).
-%% Test build runs unevenly high request rates against this group, so
-%% the leaky-bucket cap is much higher under AR_TEST.
+%% Test build runs unevenly high request rates against this group:
+%% e2e suites poll `/data_sync_record' from both the test driver and
+%% from the in-cluster sync workers. Upstream commit a7f43d57e also
+%% made concurrency group-wide rather than per-peer, so what used to
+%% be effectively 40-per-peer is now 40 total. Raise both caps under
+%% AR_TEST so the bucket and concurrency budget don't bottleneck.
 -ifdef(AR_TEST).
--define(LIMITER_DATA_SYNC_RECORD_LEAKY_LIMIT, 1000).
+-define(LIMITER_DATA_SYNC_RECORD_LEAKY_LIMIT, 10000).
+-define(LIMITER_DATA_SYNC_RECORD_CONCURRENCY_LIMIT, 200).
+-define(LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_REDUCTION, 200).
 -else.
 -define(LIMITER_DATA_SYNC_RECORD_LEAKY_LIMIT, 20).
+-define(LIMITER_DATA_SYNC_RECORD_CONCURRENCY_LIMIT, 40).
+-define(LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_REDUCTION, 20).
 -endif.
 -define(LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_INTERVAL, 30000).
--define(LIMITER_DATA_SYNC_RECORD_LEAKY_TICK_REDUCTION, 20).
--define(LIMITER_DATA_SYNC_RECORD_CONCURRENCY_LIMIT, 40).
 
 %% recent_hash_list_diff
 -define(LIMITER_RECENT_HASH_LIST_DIFF_SLIDING_WINDOW_LIMIT, 0).

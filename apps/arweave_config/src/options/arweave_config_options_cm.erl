@@ -30,6 +30,7 @@ specs() ->
 			enabled => true,
 			option_key => [cm, api_secret],
 			default => not_set,
+			runtime => true,
 			legacy => cm_api_secret,
 			short_description =>
 				<<"Coordinated-mining secret used to authenticate "
@@ -96,24 +97,19 @@ validate_cm_pool() ->
 			end
 	end.
 
-%% @doc Cross-cutting: also reads [mining, enabled].
+%% @doc Cross-cutting: also reads [cm, api_secret]. Coordinated mining
+%% requires a shared API secret; the operator may keep mining off (e.g.,
+%% an exit node or a not-yet-armed miner) and turn it on later, so
+%% [mining, enabled] is not enforced here.
 validate_cm_requirements() ->
 	case arweave_config:get([cm, enabled]) of
 		true ->
-			Secret = arweave_config:get([cm, api_secret]),
-			Mine = arweave_config:get([mining, enabled]),
-			case Secret of
+			case arweave_config:get([cm, api_secret]) of
 				not_set ->
 					{error, <<"The cm_api_secret must be set when "
 							"coordinated_mining is set.">>};
 				_ ->
-					case Mine of
-						false ->
-							{error, <<"The mine flag must be set when "
-									"coordinated_mining is set.">>};
-						true ->
-							ok
-					end
+					ok
 			end;
 		_ ->
 			ok

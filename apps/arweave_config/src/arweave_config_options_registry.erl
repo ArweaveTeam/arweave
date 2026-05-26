@@ -174,21 +174,31 @@ get_legacy(Key) ->
 %% namespace shape produced each entry.
 -spec get_all_with_prefix(list()) -> [{list(), term()}].
 get_all_with_prefix(Prefix) ->
-	ConcreteSpecEntries = [
-		{Key, V}
-		|| {Key, _Spec} <- ets:tab2list(?MODULE),
-		   is_list(Key),
-		   lists:prefix(Prefix, Key),
-		   not is_wildcard(Key),
-		   {ok, V} <- [?MODULE:get(Key)]
-	],
-	StoreEntries = arweave_config_store:items_with_prefix(Prefix),
-	ConcreteKeys = sets:from_list([K || {K, _} <- ConcreteSpecEntries]),
-	InstanceEntries = [
-		E || {K, _} = E <- StoreEntries,
-		     not sets:is_element(K, ConcreteKeys)
-	],
-	ConcreteSpecEntries ++ InstanceEntries.
+	%% Return `[]` when the registry's ETS table is gone — that happens
+	%% transiently during app shutdown if a late-arriving gen_server
+	%% cast (e.g., `ar_poller`'s periodic `collect_peers') races with
+	%% `application:stop(arweave_config)' from `ar:stop_dependencies/0'.
+	%% Without this guard the cast crashes and takes its supervisor
+	%% subtree with it.
+	case ets:info(?MODULE, name) of
+		undefined -> [];
+		_ ->
+			ConcreteSpecEntries = [
+				{Key, V}
+				|| {Key, _Spec} <- ets:tab2list(?MODULE),
+				   is_list(Key),
+				   lists:prefix(Prefix, Key),
+				   not is_wildcard(Key),
+				   {ok, V} <- [?MODULE:get(Key)]
+			],
+			StoreEntries = arweave_config_store:items_with_prefix(Prefix),
+			ConcreteKeys = sets:from_list([K || {K, _} <- ConcreteSpecEntries]),
+			InstanceEntries = [
+				E || {K, _} = E <- StoreEntries,
+				     not sets:is_element(K, ConcreteKeys)
+			],
+			ConcreteSpecEntries ++ InstanceEntries
+	end.
 
 is_wildcard(Key) ->
 	lists:any(fun({_}) -> true; (_) -> false end, Key).

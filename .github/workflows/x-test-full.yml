@@ -76,6 +76,9 @@ jobs:
           submodules: "recursive"
           lfs: false
 
+      - uses: ./.github/actions/kill-stray-erlang
+        if: always()
+
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
@@ -119,6 +122,7 @@ jobs:
         if: always()
         run: |
           rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
@@ -128,6 +132,8 @@ jobs:
           git lfs install --local
           git lfs pull
           git lfs checkout
+      - uses: ./.github/actions/kill-stray-erlang
+        if: always()
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -143,6 +149,8 @@ jobs:
           tar zxfp _build.tar.gz
           tar zxfp apps.tar.gz
       - name: Setup notebook env
+        env:
+          PYTHON: python3.11
         run: scripts/setup_notebook_env.sh
       - name: Run pricing transition notebook headless
         run: scripts/run_notebook_headless.sh pricing_transition_localnet
@@ -158,6 +166,7 @@ jobs:
         if: always()
         run: |
           rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
@@ -167,6 +176,8 @@ jobs:
           git lfs install --local
           git lfs pull
           git lfs checkout
+      - uses: ./.github/actions/kill-stray-erlang
+        if: always()
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -182,6 +193,8 @@ jobs:
           tar zxfp _build.tar.gz
           tar zxfp apps.tar.gz
       - name: Setup notebook env
+        env:
+          PYTHON: python3.11
         run: scripts/setup_notebook_env.sh
       - name: Run autoredenomination notebook headless
         run: scripts/run_notebook_headless.sh autoredenomination_localnet

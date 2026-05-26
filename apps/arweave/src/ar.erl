@@ -263,12 +263,26 @@ prep_stop(State) ->
 
 	% Deregister from epmd early, before the slow RocksDB teardown.
 	% Otherwise, if the BEAM dies during shutdown, epmd retains a stale
-	% registration that blocks restarts.
-	catch net_kernel:stop(),
+	% registration that blocks restarts. Skipped in test builds —
+	% see `maybe_stop_net_kernel/0'.
+	maybe_stop_net_kernel(),
 	State.
 
 stop(_State) ->
 	?LOG_INFO([{stop, ?MODULE}]).
+
+%% Production builds tear down distribution so a stale epmd entry
+%% can't block a restart after a BEAM death. Tests do not — between
+%% tests `ar_test_node` only stops the `arweave` app and expects to
+%% drive the same BEAM via subsequent `remote_call's; stopping
+%% distribution here turns those into `{badrpc, nodedown}'.
+-ifdef(AR_TEST).
+maybe_stop_net_kernel() -> ok.
+-else.
+maybe_stop_net_kernel() ->
+	catch net_kernel:stop(),
+	ok.
+-endif.
 
 stop_dependencies() ->
 	?LOG_INFO("========== Stopping Arweave Node  =========="),

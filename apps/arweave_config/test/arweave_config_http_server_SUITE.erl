@@ -21,16 +21,21 @@ end_per_testcase(_TestCase, _Config) ->
 	cleanup_config_http_server(),
 	ok = arweave_config:stop().
 
+%% The config HTTP server feature is paused — testcases are kept for when
+%% it's revived. To re-enable, replace this with the testcase list below:
+%%
+%% all() ->
+%%     [
+%%         default,
+%%         unix_socket,
+%%         socket_cleanup_on_stop,
+%%         router_root_path,
+%%         router_unknown_path_404,
+%%         post_with_invalid_json,
+%%         config_http_enabled_starts_server
+%%     ].
 all() ->
-	[
-		default,
-		unix_socket,
-		socket_cleanup_on_stop,
-		router_root_path,
-		router_unknown_path_404,
-		post_with_invalid_json,
-		config_http_enabled_starts_server
-	].
+	{skip, "config HTTP server feature is paused; testcases retained for future revival"}.
 
 %%====================================================================
 %% Test cases

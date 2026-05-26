@@ -41,11 +41,12 @@ known_group_ids_are_registered(_Config) ->
 %% reachable via the canonical key. Picks one field as a smoke check
 %% for the round-trip; per-field validation is the spec module's job.
 %% Bypass groups (`no_limit => true') sentinel their per-limit fields
-%% with `-1', so the round-trip only asserts the value is an integer.
+%% with `infinity', so the round-trip accepts either a non-negative
+%% integer or the `infinity' atom.
 spec_default_round_trip(_Config) ->
     [begin
         Value = arweave_config:get([limiter, ID, concurrency_limit]),
-        ?assert(is_integer(Value))
+        ?assert(Value =:= infinity orelse is_integer(Value))
      end || ID <- arweave_config:limiter_groups()].
 
 local_peers_no_limit_default_is_true(_Config) ->

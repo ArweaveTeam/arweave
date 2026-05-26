@@ -236,8 +236,11 @@ parse_ipv4(Host) ->
 %% @doc Peer-set validator. Enforces:
 %%
 %%   - at most one `cm_exit` peer;
-%%   - `vdf_client` and `vdf_server` mutually exclusive per peer;
-%%   - every peer carries at least one `true` role.
+%%   - `vdf_client` and `vdf_server` mutually exclusive per peer.
+%%
+%% A peer whose every leaf is `false` is treated as inactive (no roles)
+%% and silently ignored — callers may use that shape to negate a role
+%% inherited from a shared base config without having to remove the keys.
 -spec validate() -> ok | {error, term()}.
 validate() ->
 	Items = arweave_config:get_all_with_prefix([peers]),
@@ -258,12 +261,7 @@ validate() ->
 
 	case validate_cm_exit_singleton(ByPeer) of
 		{error, _} = Err -> Err;
-		ok ->
-			case validate_vdf_exclusivity(ByPeer) of
-				{error, _} = Err -> Err;
-				ok ->
-					validate_at_least_one_role(ByPeer, Items)
-			end
+		ok -> validate_vdf_exclusivity(ByPeer)
 	end.
 
 validate_cm_exit_singleton(ByPeer) ->
@@ -281,17 +279,5 @@ validate_vdf_exclusivity(ByPeer) ->
 	case Conflicts of
 		[] -> ok;
 		_ -> {error, {vdf_client_and_server_on_same_peer, Conflicts}}
-	end.
-
-validate_at_least_one_role(ByPeer, AllItems) ->
-	%% A peer with only `false` leaves is present in the store but
-	%% has no active role — reject it.
-	AllPeerIDs = lists:usort(
-		[ID || {[peers, ID, _], _V} <- AllItems]),
-	Empty = [ID || ID <- AllPeerIDs,
-		not maps:is_key(ID, ByPeer)],
-	case Empty of
-		[] -> ok;
-		_ -> {error, {peer_with_no_roles, Empty}}
 	end.
 

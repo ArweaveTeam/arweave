@@ -11,7 +11,8 @@
 		do_wait_until_height/2,
 		assert_wait_until_height/2,
 		wait_until_mining_paused/1, http_get_block/2, get_blocks/1,
-		mock_to_force_invalid_h1/0, mainnet_packing_mocks/0,
+		mock_to_force_invalid_h1/0, mock_to_force_cross_node_h2/0,
+		mainnet_packing_mocks/0,
 		get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, new_mock/2, mock_function/3, unmock_module/1, remote_call/4,
 		load_fixture/1,
@@ -49,6 +50,7 @@
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
+-include("ar_mining.hrl").
 
 
 -include_lib("eunit/include/eunit.hrl").
@@ -76,6 +78,12 @@
 -define(READ_BLOCK_TIMEOUT, 500_000).
 -define(GET_TX_DATA_TIMEOUT, 200_000).
 -define(WAIT_UNTIL_JOINED_TIMEOUT, 200_000).
+%% Wrapper for `restart_with_config/2' (a remote_call into the peer):
+%% must comfortably exceed `WAIT_UNTIL_JOINED_TIMEOUT' plus the cold
+%% start of `ar_packing_server' (re-inits RandomX datasets on every
+%% application restart in the e2e profile — ~36s for rx512/rx4096/
+%% rxsquared combined) plus the start of all sup-tree children.
+-define(RESTART_WITH_CONFIG_TIMEOUT, 300_000).
 -define(WAIT_SYNCS_DATA_TIMEOUT, 500_000).
 -define(WAIT_UNTIL_MINING_PAUSED_TIMEOUT, 60_000).
 -define(TEST_HTTP_CLIENT_KEEPALIVE, 4_000).
@@ -298,7 +306,29 @@ update_config(Overrides) when is_map(Overrides) ->
 	end.
 
 start_other_node(Node, B0, Overrides, WaitUntilSync) when is_map(Overrides) ->
-	remote_call(Node, ar_test_node, start_node, [B0, Overrides, WaitUntilSync], 90000).
+	remote_call(Node, ar_test_node, start_node, [B0, Overrides, WaitUntilSync],
+		?RESTART_WITH_CONFIG_TIMEOUT).
+
+%% Extract `{peers, Role} => Peers' entries from the override map for
+%% dispatch through `arweave_config:replace_peers/2'. Returns
+%% `{[{Role, Peers}], OverridesWithoutThem}'.
+take_peer_aggregates(Overrides) ->
+	Peers = [{Role, P} || {{peers, Role}, P} <- maps:to_list(Overrides),
+			      is_atom(Role)],
+	Without = maps:filter(
+		fun({peers, Role}, _) when is_atom(Role) -> false;
+		   (_, _) -> true
+		end, Overrides),
+	{Peers, Without}.
+
+%% Extract a legacy `storage_modules => List' entry from the override
+%% map. Returns `{List, OverridesWithoutIt}'; `List' defaults to `[]'
+%% when the entry is absent.
+take_storage_modules(Overrides) ->
+	case maps:take(storage_modules, Overrides) of
+		error -> {[], Overrides};
+		{List, Without} when is_list(List) -> {List, Without}
+	end.
 
 %% @doc Start a node with the given genesis block, applying the given
 %% override map via the options registry before starting the application.
@@ -314,11 +344,22 @@ start_node(B0, Overrides, WaitUntilSync, StorageModules)
 	arweave_config:start(),
 	DataDir = arweave_config:get([data_dir]),
 	write_genesis_files(DataDir, B0),
-	update_config(Overrides),
-	%% Apply storage modules after update_config (which leaves
-	%% runtime=false). `replace_storage_modules' is clear-before-write,
-	%% making the `StorageModules' arg authoritative.
-	ok = arweave_config:replace_storage_modules(StorageModules),
+	%% Pull aggregate-shaped entries out of `Overrides' so they reach
+	%% the dedicated writers (the registry's per-leaf `set/2' rejects
+	%% them). The remaining per-leaf entries flow through
+	%% `update_config/1' as usual.
+	{Peers, Overrides1} = take_peer_aggregates(Overrides),
+	{StorageModulesFromMap, Overrides2} =
+		take_storage_modules(Overrides1),
+	update_config(Overrides2),
+	[ok = arweave_config:replace_peers(Role, P) || {Role, P} <- Peers],
+	%% Explicit arg wins over an entry in the override map.
+	EffectiveStorageModules =
+		case {StorageModules, StorageModulesFromMap} of
+			{[], FromMap} -> FromMap;
+			{Explicit, _} -> Explicit
+		end,
+	ok = arweave_config:replace_storage_modules(EffectiveStorageModules),
 	ok = arweave_limiter:start(),
 	start_dependencies(),
 	wait_until_joined(),
@@ -375,7 +416,9 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 			MinerPeerIPs = [peer_ip(Peer) || Peer <- MinerPeers],
 			MinerOverrides = merge_overrides(BaseCMConfig, lists:foldl(
 				fun maps:merge/2,
-				#{[peers, ar_util:format_peer(ExitPeer), cm_exit] => true},
+				#{
+					[peers, ar_util:format_peer(ExitPeer), cm_exit] => true
+				},
 				[peer_leaves(cm_peer, MinerPeerIPs),
 				 peer_leaves(local, MinerPeerIPs ++ [ExitPeer])])),
 			MinerStorageModules =
@@ -468,6 +511,18 @@ mock_to_force_invalid_h1() ->
 			meck:passthrough([H0, Nonce, Chunk1]),
 			%% Then return invalid solutions
 			{invalid_solution(), invalid_solution()}
+		end
+	}.
+
+%% @doc Suppress single-partition H2 wins so cross-node coordination tests
+%% are deterministic. 
+mock_to_force_cross_node_h2() ->
+	{
+		ar_mining_server, prepare_and_post_solution,
+		fun(#mining_candidate{ cm_lead_peer = not_set }) ->
+				ok;
+			(CandidateOrSolution) ->
+				meck:passthrough([CandidateOrSolution])
 		end
 	}.
 
@@ -793,16 +848,42 @@ restart() ->
 restart_with_config(Overrides) when is_map(Overrides) ->
 	?LOG_INFO("Restarting node with new config"),
 	stop(),
-	update_config(Overrides),
+	%% `stop()` brings down the `arweave` app but leaves `arweave_config'
+	%% running with `runtime=true' (it was flipped by `ar:start/2' during
+	%% the previous boot). Writes guarded by `with_runtime_guard/2'
+	%% (notably `replace_storage_modules/1') would silently fail with
+	%% `{error, parameter_not_runtime_writable}', producing a `badmatch'
+	%% partway through this function and leaving the peer stopped.
+	%% Flip back to load mode for the rewrites; `start_dependencies/0' →
+	%% `ar:start/2' → `arweave_config:runtime/0' flips it back to true.
+	ok = arweave_config_options_registry:set_runtime(false),
+	%% Same aggregate-key dispatch as `start_node/4'. Tests still pass
+	%% mixed-shape override maps (e.g. `{peers, trusted}` and
+	%% `storage_modules` alongside per-leaf keys); pull those out for
+	%% the dedicated writers so they don't fall through `update_config'
+	%% and get rejected as unknown spec keys.
+	{Peers, Overrides1} = take_peer_aggregates(Overrides),
+	HasModules = maps:is_key(storage_modules, Overrides1),
+	{StorageModules, Overrides2} = take_storage_modules(Overrides1),
+	update_config(Overrides2),
+	[ok = arweave_config:replace_peers(Role, P) || {Role, P} <- Peers],
+	%% Only touch storage modules when the caller asked to; a bare
+	%% `restart_with_config(#{[X] => Y})' must not wipe whatever modules
+	%% the running node already has.
+	case HasModules of
+		true -> ok = arweave_config:replace_storage_modules(StorageModules);
+		false -> ok
+	end,
 	start_dependencies(),
 	wait_until_joined(),
 	ok.
 
 restart(Node) ->
-	remote_call(Node, ?MODULE, restart, [], 90000).
+	remote_call(Node, ?MODULE, restart, [], ?RESTART_WITH_CONFIG_TIMEOUT).
 
 restart_with_config(Node, Overrides) when is_map(Overrides) ->
-	remote_call(Node, ?MODULE, restart_with_config, [Overrides], 90000).
+	remote_call(Node, ?MODULE, restart_with_config, [Overrides],
+		?RESTART_WITH_CONFIG_TIMEOUT).
 
 start_peer(Node, Args) when is_map(Args) ->
 	?LOG_DEBUG([{event, start_peer}, {peer, Node}]),

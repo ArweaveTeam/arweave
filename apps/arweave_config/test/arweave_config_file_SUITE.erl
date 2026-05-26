@@ -49,4 +49,10 @@ parse(Config, Name, Content, Mode) ->
 	Path = filename:join(?config(priv_dir, Config), Name),
 	ok = file:write_file(Path, Content),
 	ok = file:change_mode(Path, Mode),
-	arweave_config_file:parse(Path).
+	%% Restore readable mode after parsing so the artifact-upload
+	%% step in CI can zip the priv_dir even when the parse throws.
+	try
+		arweave_config_file:parse(Path)
+	after
+		file:change_mode(Path, 8#600)
+	end.

@@ -108,6 +108,9 @@ jobs:
           submodules: "recursive"
           lfs: false
 
+      - uses: ./.github/actions/kill-stray-erlang
+        if: always()
+
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
