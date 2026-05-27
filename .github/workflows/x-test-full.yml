@@ -72,7 +72,14 @@ jobs:
   # Each module still runs in its own clean BEAM (no cross-module
   # state leakage) — github_workflow.sh loops through the modules
   # passed to it.
+  #
+  # `needs: discover-tests` is for ordering only — fast-tests doesn't
+  # consume discover-tests' JSON output (it slices its own list inside
+  # the run step). The dependency is there so (a) the CI graph reads
+  # linearly and (b) a broken discovery script halts the test stage
+  # cleanly instead of letting fast-tests run with stale assumptions.
   fast-tests:
+    needs: discover-tests
     runs-on:
       - self-hosted
       - build-runner

@@ -105,10 +105,15 @@ export ERL_EPMD_ADDRESS="127.0.0.1"
 if test "${MODE}" = "e2e"
 then
 	export ERL_PATH_ADD="$(echo ${PWD}/_build/e2e/lib/*/ebin)"
-	export ERL_PATH_TEST="${PWD}/_build/e2e/lib/arweave/e2e"
+	export ERL_PATH_TEST="$(echo ${PWD}/_build/e2e/lib/*/e2e)"
 else
 	export ERL_PATH_ADD="$(echo ${PWD}/_build/test/lib/*/ebin)"
-	export ERL_PATH_TEST="${PWD}/_build/test/lib/arweave/test"
+	# All apps' compiled eunit test modules, not just arweave's. The
+	# pre-discovery matrix only listed modules from apps/arweave/test/,
+	# so this single hard-coded path used to be sufficient; with
+	# auto-discovery picking up apps/arweave_limiter/test/ (and any
+	# future app's test dir), we need every app's test/ on the path.
+	export ERL_PATH_TEST="$(echo ${PWD}/_build/test/lib/*/test)"
 fi
 
 export ERL_PATH_CONF="${PWD}/config/sys.config"

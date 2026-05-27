@@ -46,14 +46,14 @@ parse_arg(Arg) when is_list(Arg) ->
 		[Mod]       -> {module, list_to_atom(Mod)}
 	end.
 
-%% @doc List all tests in a module.
-%% Returns a list of {Module, Test} tuples.
+%% @doc List all eunit tests defined in a module. Matches both
+%% simple `*_test/0' and generator `*_test_/0' exports — the same
+%% naming convention eunit uses for auto-discovery.
 list_tests(Mod) when is_atom(Mod) ->
 	Exports = Mod:module_info(exports),
 	Tests = lists:filtermap(
 		fun({Name, 0}) ->
-			NameStr = atom_to_list(Name),
-			case lists:suffix("_test_", NameStr) of
+			case is_eunit_test_export(atom_to_list(Name)) of
 				true -> {true, {Mod, Name}};
 				false -> false
 			end;
@@ -64,6 +64,11 @@ list_tests(Mod) when is_atom(Mod) ->
 	lists:sort(Tests);
 list_tests(Mods) when is_list(Mods) ->
 	lists:flatmap(fun list_tests/1, Mods).
+
+is_eunit_test_export(Name) ->
+	%% Order matters: `_test_' has to be checked before `_test'
+	%% because the former is a strict superset suffix.
+	lists:suffix("_test_", Name) orelse lists:suffix("_test", Name).
 
 %% @doc Output tests as JSON for CI systems.
 list_tests_json(Mods) ->
@@ -171,18 +176,26 @@ all_in_fast_set(Mods) ->
 	end.
 
 build_eunit_spec({modules, Mods}) ->
-	%% Hand eunit the bare list (no outer `{timeout, _, [...]}'
-	%% wrapper). When the list itself is wrapped in a timeout, eunit
-	%% treats it as one test set and a cancellation in any element
-	%% aborts the remaining siblings. Each module already contains its
-	%% own per-test `{timeout, ?TEST_NODE_TIMEOUT, fun}' generators,
-	%% so we don't need an additional outer guard.
-	Mods;
+	%% Enumerate each module's individual test functions rather than
+	%% passing the bare module list to eunit. Passing the bare module
+	%% triggers eunit's auto-discovery which also runs `<Mod>_tests'
+	%% if it exists — so running e.g. `ar_tx' would also run
+	%% `ar_tx_tests', and then `ar_tx_tests' would run a second time
+	%% in its own matrix shard. Per-function enumeration sidesteps
+	%% that.
+	%%
+	%% No outer `{timeout, _, [...]}' wrapper: each module's tests
+	%% already declare their own per-test `{timeout, _, fun}'
+	%% generators, and wrapping the whole list would cause a single
+	%% cancellation to abort all siblings.
+	lists:flatmap(fun(Mod) -> spec_to_eunit({module, Mod}) end, Mods);
 build_eunit_spec({mixed, Specs}) ->
 	[spec_to_eunit(S) || S <- Specs].
 
 spec_to_eunit({module, Mod}) ->
-	Mod;
+	%% Same rationale as build_eunit_spec({modules, _}) — enumerate
+	%% to avoid eunit's auto-discovery of `Mod_tests'.
+	[spec_to_eunit({test, Mod, Test}) || {_, Test} <- list_tests(Mod)];
 spec_to_eunit({test, Mod, Test}) ->
 	%% Check if it's a generator (_test_) or simple test (_test)
 	TestName = atom_to_list(Test),
