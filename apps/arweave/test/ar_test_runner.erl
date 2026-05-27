@@ -116,7 +116,14 @@ run_tests(TestType, TestSpec) ->
 	ensure_started(TestType, TestSpec),
 	Result =
 		try
-			eunit:test(build_eunit_spec(TestSpec), [verbose, {print_depth, 100}])
+			%% `exact_execution' tells eunit NOT to auto-run the
+			%% sibling `Mod_tests' module when given `Mod'. Without
+			%% it, eunit's default convenience pulls in both, which
+			%% causes `Mod_tests' to run twice (once via `Mod' and
+			%% once via its own matrix shard) and surfaces confusing
+			%% cross-module failures in the stack trace.
+			eunit:test(build_eunit_spec(TestSpec),
+				[verbose, {print_depth, 100}, {exact_execution, true}])
 		after
 			ar_test_node:stop_peers(TestType)
 		end,

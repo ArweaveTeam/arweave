@@ -1,4 +1,4 @@
-%% @ar_test: isolated
+%% @ar_test: vdf
 -module(ar_join).
 
 -export([start/1]).

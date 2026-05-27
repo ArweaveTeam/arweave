@@ -150,7 +150,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      max-parallel: 12
+      max-parallel: 24
       matrix:
         core_test_mod: ${{ fromJson(needs.discover-tests.outputs.slow_modules) }}
     steps:

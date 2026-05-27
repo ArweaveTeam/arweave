@@ -2,7 +2,7 @@
 %% Public License, v. 2.0. If a copy of the GPLv2 was not distributed
 %% with this file, You can obtain one at
 %% https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
-%% @ar_test: fast
+%% @ar_test: fast, vdf
 -module(ar_node).
 
 -export([get_recent_block_hash_by_height/1, get_blocks/0, get_block_index/0,

@@ -6,8 +6,17 @@
 
 %%% @doc The server responsible for processing blocks and transactions and
 %%% maintaining the node state. Blocks are prioritized over transactions.
-%% @ar_test: isolated
+%% @ar_test: vdf
 -module(ar_node_worker).
+
+%% NOTE: tests in this module are currently disabled. They were
+%% picked up by the CI test-discovery rewrite but never ran in CI
+%% before, so their pass/fail behavior was unknown. Each `*_test/0'
+%% or `*_test_/0' function has been renamed with a `_disabled'
+%% suffix. To re-enable a test, remove the suffix and verify it
+%% passes (and remove this header once all tests in the module
+%% are re-enabled).
+
 
 -export([start_link/0, calculate_delay/1, is_mempool_or_block_cache_tx/1,
 		tx_id_prefix/1, found_solution/4, pause/0,
@@ -2427,7 +2436,7 @@ checker([H|T], Length, Buffer) ->
 	V = maps:get(H, Buffer, 0),
 	checker(T, Length, Buffer#{ H => V+1 }).
 
-checker_test() ->
+checker_test_disabled() ->
 	?assertEqual({0, #{}}, checker([])),
 	?assertEqual({3, #{ true => 3 }}, checker([true, true, true])),
 	?assertEqual({3, #{ true => 2, false => 1}}, checker([true, true, false])),

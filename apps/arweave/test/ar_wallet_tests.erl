@@ -1,5 +1,6 @@
-%% @ar_test: fast
+%% @ar_test: fast, vdf
 -module(ar_wallet_tests).
+
 
 -include_lib("eunit/include/eunit.hrl").
 

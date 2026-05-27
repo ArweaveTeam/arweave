@@ -1,5 +1,6 @@
 -module(ar_sync_record_tests).
 
+
 -include("ar.hrl").
 -include("ar_consensus.hrl").
 

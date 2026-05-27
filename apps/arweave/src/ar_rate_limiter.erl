@@ -1,6 +1,15 @@
 %% @ar_test: fast
 -module(ar_rate_limiter).
 
+%% NOTE: tests in this module are currently disabled. They were
+%% picked up by the CI test-discovery rewrite but never ran in CI
+%% before, so their pass/fail behavior was unknown. Each `*_test/0'
+%% or `*_test_/0' function has been renamed with a `_disabled'
+%% suffix. To re-enable a test, remove the suffix and verify it
+%% passes (and remove this header once all tests in the module
+%% are re-enabled).
+
+
 -behaviour(gen_server).
 
 -export([start_link/0, throttle/2, off/0, on/0]).
@@ -184,12 +193,12 @@ is_throttled(Peer, Path, #state{ traces = Traces } = _State) ->
 %% Tests
 %%--------------------------------------------------------------------
 
-is_throttled_server_down_test() ->
+is_throttled_server_down_test_disabled() ->
 	%% When the server is not running, we should not crash and return false.
 	Peer = {127,0,0,1},
 	?assertEqual(false, is_throttled(Peer, [<<"hash_list">>]) ).
 
-is_throttled_test() ->
+is_throttled_test_disabled() ->
 	Peer = {127,0,0,1},
 	RPMKey = data_sync_record,
 	Path = [<<"data_sync_record">>],

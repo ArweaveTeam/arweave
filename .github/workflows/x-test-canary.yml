@@ -61,16 +61,20 @@ jobs:
           tar zxfp _build.tar.gz
           tar zxfp apps.tar.gz
 
-      - id: canary
-        name: ar_canary.erl
-        continue-on-error: true
-        run: bash scripts/github_workflow.sh "tests" "ar_canary"
-
-      - name: should fail
+      # The canary's whole purpose is to fail — we run it to verify
+      # that the test harness can detect a failing test. We absorb its
+      # failure inside this single step (no continue-on-error) so the
+      # green job doesn't carry a misleading "completed with exit
+      # code 1" annotation. The step succeeds iff the canary failed.
+      - name: ar_canary.erl (expected to fail)
         run: |
-          if test "${{ steps.canary.outcome }}" = "failure"
-          then
-            exit 0
-          else
+          set +e
+          bash scripts/github_workflow.sh "tests" "ar_canary"
+          ec=$?
+          if [ $ec -eq 0 ]; then
+            echo "ERROR: ar_canary unexpectedly passed."
+            echo "The canary harness is broken — investigate before"
+            echo "trusting the rest of the CI run."
             exit 1
           fi
+          echo "ar_canary failed as expected (exit code $ec)."

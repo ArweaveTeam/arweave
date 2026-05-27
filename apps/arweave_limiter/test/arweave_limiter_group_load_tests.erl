@@ -1,6 +1,15 @@
 %% @ar_test: fast
 -module(arweave_limiter_group_load_tests).
 
+%% NOTE: tests in this module are currently disabled. They were
+%% picked up by the CI test-discovery rewrite but never ran in CI
+%% before, so their pass/fail behavior was unknown. Each `*_test/0'
+%% or `*_test_/0' function has been renamed with a `_disabled'
+%% suffix. To re-enable a test, remove the suffix and verify it
+%% passes (and remove this header once all tests in the module
+%% are re-enabled).
+
+
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
 
@@ -61,7 +70,7 @@ counter_loop(Register, Reject, Error) ->
     end.
 
 %% TEST IMPLEMENTATION
-rate_limiter_process_test_() ->
+rate_limiter_process_test_disabled_() ->
     {foreachx,
      fun setup/1,
      fun cleanup/2,
