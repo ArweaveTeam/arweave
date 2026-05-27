@@ -101,13 +101,18 @@ jobs:
       - name: Build arweave e2e test sources
         run: ./ar-rebar3 e2e compile
 
+      - uses: ./.github/actions/ensure-zstd
+
       # some artifacts are compiled and only available
       # in arweave directy (libraries)
       - name: Prepare artifacts
         run: |
           chmod -R u+w ./_build
-          tar czfp _build.tar.gz ./_build ./bin/arweave
-          tar czfp apps.tar.gz ./apps
+          tar --use-compress-program='zstd -T0 -3' \
+              --exclude='_build/default/plugins' \
+              -cf _build.tar.zst ./_build ./bin/arweave
+          tar --use-compress-program='zstd -T0 -3' \
+              -cf apps.tar.zst ./apps
 
       # to avoid reusing artifacts from someone else
       # and generating issues, an unique artifact is
@@ -121,8 +126,8 @@ jobs:
           retention-days: 7
           overwrite: true
           path: |
-            _build.tar.gz
-            apps.tar.gz
+            _build.tar.zst
+            apps.tar.zst
 
   e2e-tests:
     needs: build
@@ -141,6 +146,9 @@ jobs:
           submodules: "recursive"
           lfs: false
 
+      - uses: ./.github/actions/kill-stray-erlang
+        if: always()
+
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
@@ -148,10 +156,12 @@ jobs:
 
       # Both artifacts (_build and apps dir) are
       # required.
+      - uses: ./.github/actions/ensure-zstd
+
       - name: Extract artifact
         run: |
-          tar zxfp _build.tar.gz
-          tar zxfp apps.tar.gz
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
 
       - name: ${{ matrix.core_test_mod }}.erl
         id: tests

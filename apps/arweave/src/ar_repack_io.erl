@@ -34,8 +34,7 @@ name(StoreID) ->
 	list_to_atom("ar_repack_io_" ++ ar_storage_module:label(StoreID)).
 
 init(StoreID) ->
-	{ok, Config} = arweave_config:get_env(),
-	ReadBatchSize = Config#config.repack_batch_size,
+	ReadBatchSize = arweave_config:get([packing, repack, batch_size]),
 	State = #state{ 
 		store_id = StoreID,
 		read_batch_size = ReadBatchSize

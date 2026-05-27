@@ -37,7 +37,7 @@ start_link(Name, RawPeer) ->
 init(RawPeer) ->
 	?LOG_INFO([{event, nonce_limiter_server_worker_init}, {raw_peer, RawPeer}]),
 	ok = ar_events:subscribe(nonce_limiter),
-	case ar_config:is_public_vdf_server() of
+	case arweave_config:get([vdf, is_public_server]) of
 		false ->
 			gen_server:cast(self(), re_resolve_peer_domain);
 		true ->

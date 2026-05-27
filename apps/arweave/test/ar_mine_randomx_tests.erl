@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_mine_randomx_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -200,9 +201,9 @@ test_regression({FastState512, LightState512, FastState4096, LightState4096}) ->
 	ok.
 
 test_regression(State, Fixture, JIT, ExtraArgs, EncryptFun, DecryptFun) ->
-	Key = ar_test_node:load_fixture("ar_mine_randomx_tests/key.bin"),
-	UnpackedFixture = ar_test_node:load_fixture("ar_mine_randomx_tests/unpacked.bin"),
-	PackedFixture = ar_test_node:load_fixture(Fixture),
+	Key = ar_test_util:load_fixture("ar_mine_randomx_tests/key.bin"),
+	UnpackedFixture = ar_test_util:load_fixture("ar_mine_randomx_tests/unpacked.bin"),
+	PackedFixture = ar_test_util:load_fixture(Fixture),
 
 	{ok, Packed} = EncryptFun(State, Key, UnpackedFixture, 8, JIT, 0, 0, ExtraArgs),
 	?assertEqual(PackedFixture, Packed, Fixture),

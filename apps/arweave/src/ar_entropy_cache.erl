@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_entropy_cache).
 
 -export([get/1, clean_up_space/2, put/3, total_size/0]).

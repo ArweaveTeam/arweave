@@ -6,7 +6,6 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -include("ar.hrl").
 
@@ -149,8 +148,7 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 max_propagation_peers() ->
-	{ok, Config} = arweave_config:get_env(),
-	Config#config.max_propagation_peers.
+	arweave_config:get([gossip, tx, max_peers]).
 
 emit(_Set, _Peers, _MaxPeers, N, State) when N =< 0 ->
 	State;

@@ -1,3 +1,4 @@
+%% @ar_test: vdf
 -module(ar_fork_recovery_tests).
 
 -include_lib("arweave/include/ar.hrl").

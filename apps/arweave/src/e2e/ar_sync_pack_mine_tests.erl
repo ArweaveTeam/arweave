@@ -243,24 +243,23 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 	Wallet = ar_test_node:remote_call(SinkNode, ar_e2e, load_wallet_fixture, [wallet_b]),
 	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
-	{ok, Config} = ar_test_node:get_config(SinkNode),
-	
+
 	Module = {ar_block:partition_size(), 1, SinkPacking},
 	StoreID = ar_storage_module:id(Module),
 	StorageModules = [ Module ],
 
 
 	%% 1. Run node with no sync jobs so that it only prepares entropy
-	Config2 = Config#config{
-		peers = [ar_test_node:peer_ip(SourceNode)],
-		start_from_latest_state = true,
-		storage_modules = StorageModules,
-		auto_join = true,
-		mining_addr = SinkAddr,
-		sync_jobs = 0
+	BaseOverrides = #{
+		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[join, start_from_latest_state] => true,
+		storage_modules => StorageModules,
+		[join, auto] => true,
+		[mining, address] => SinkAddr,
+		[sync, jobs] => 0
 	},
 	?assertEqual(ar_test_node:peer_name(SinkNode),
-		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
+		ar_test_node:start_other_node(SinkNode, B0, BaseOverrides, true)
 	),
 
 	RangeStart = ar_block:partition_size(),
@@ -281,9 +280,8 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 		[DeleteOffset2, StoreID]),
 
 	%% 2. Run node with sync jobs so that it syncs and packs data
-	ar_test_node:restart_with_config(SinkNode, Config2#config{
-		sync_jobs = 100
-	}),
+	ar_test_node:restart_with_config(SinkNode,
+		ar_test_node:merge_overrides(BaseOverrides, #{ [sync, jobs] => 100 })),
 
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
 	ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
@@ -306,23 +304,22 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 	Wallet = ar_test_node:remote_call(SinkNode, ar_e2e, load_wallet_fixture, [wallet_b]),
 	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
-	{ok, Config} = ar_test_node:get_config(SinkNode),
-	
+
 	Module = {ar_block:partition_size(), 1, SinkPacking},
 	StoreID = ar_storage_module:id(Module),
 	StorageModules = [ Module ],
 
 	%% 1. Run node with no replica_2_9 workers so that it only syncs chunks
-	Config2 = Config#config{
-		peers = [ar_test_node:peer_ip(SourceNode)],
-		start_from_latest_state = true,
-		storage_modules = StorageModules,
-		auto_join = true,
-		mining_addr = SinkAddr,
-		replica_2_9_workers = 0
+	BaseOverrides = #{
+		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[join, start_from_latest_state] => true,
+		storage_modules => StorageModules,
+		[join, auto] => true,
+		[mining, address] => SinkAddr,
+		[packing, entropy, workers] => 0
 	},
 	?assertEqual(ar_test_node:peer_name(SinkNode),
-		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
+		ar_test_node:start_other_node(SinkNode, B0, BaseOverrides, true)
 	),
 
 	RangeStart = ar_block:partition_size(),
@@ -333,9 +330,8 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 
 	%% 2. Run node with sync jobs so that it syncs and packs data
-	ar_test_node:restart_with_config(SinkNode, Config2#config{
-		replica_2_9_workers = 8
-	}),
+	ar_test_node:restart_with_config(SinkNode,
+		ar_test_node:merge_overrides(BaseOverrides, #{ [packing, entropy, workers] => 8 })),
 
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
@@ -359,22 +355,21 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 	Wallet = ar_test_node:remote_call(SinkNode, ar_e2e, load_wallet_fixture, [wallet_b]),
 	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
-	{ok, Config} = ar_test_node:get_config(SinkNode),
 
 	Module = {floor(0.5 * ar_block:partition_size()), 2, SinkPacking},
 	StoreID = ar_storage_module:id(Module),
 	StorageModules = [ Module ],
 
 	%% Sync the second half of partition 1
-	Config2 = Config#config{
-		peers = [ar_test_node:peer_ip(SourceNode)],
-		start_from_latest_state = true,
-		storage_modules = StorageModules,
-		auto_join = true,
-		mining_addr = SinkAddr
+	Overrides = #{
+		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[join, start_from_latest_state] => true,
+		storage_modules => StorageModules,
+		[join, auto] => true,
+		[mining, address] => SinkAddr
 	},
 	?assertEqual(ar_test_node:peer_name(SinkNode),
-		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
+		ar_test_node:start_other_node(SinkNode, B0, Overrides, true)
 	),
 
 	RangeStart = floor(ar_block:partition_size()),
@@ -410,22 +405,21 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	Wallet = ar_test_node:remote_call(SinkNode, ar_e2e, load_wallet_fixture, [wallet_b]),
 	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
-	{ok, Config} = ar_test_node:get_config(SinkNode),
 
 	Module = {floor(0.5 * ar_block:partition_size()), 3, SinkPacking},
 	StoreID = ar_storage_module:id(Module),
 	StorageModules = [ Module ],
 
 	%% Sync the second half of partition 1
-	Config2 = Config#config{
-		peers = [ar_test_node:peer_ip(SourceNode)],
-		start_from_latest_state = true,
-		storage_modules = StorageModules,
-		auto_join = true,
-		mining_addr = SinkAddr
+	Overrides = #{
+		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[join, start_from_latest_state] => true,
+		storage_modules => StorageModules,
+		[join, auto] => true,
+		[mining, address] => SinkAddr
 	},
 	?assertEqual(ar_test_node:peer_name(SinkNode),
-		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
+		ar_test_node:start_other_node(SinkNode, B0, Overrides, true)
 	),
 
 	RangeStart = floor(1.5 * ar_block:partition_size()),
@@ -464,22 +458,21 @@ test_large_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 	Wallet = ar_test_node:remote_call(SinkNode, ar_e2e, load_wallet_fixture, [wallet_b]),
 	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
-	{ok, Config} = ar_test_node:get_config(SinkNode),
 
 	ModuleSize = floor(2 * ar_block:partition_size()),
 	Module = {ModuleSize, 0, SinkPacking},
 	StoreID = ar_storage_module:id(Module),
 	StorageModules = [ Module ],
 
-	Config2 = Config#config{
-		peers = [ar_test_node:peer_ip(SourceNode)],
-		start_from_latest_state = true,
-		storage_modules = StorageModules,
-		auto_join = true,
-		mining_addr = SinkAddr
+	Overrides = #{
+		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[join, start_from_latest_state] => true,
+		storage_modules => StorageModules,
+		[join, auto] => true,
+		[mining, address] => SinkAddr
 	},
 	?assertEqual(ar_test_node:peer_name(SinkNode),
-		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
+		ar_test_node:start_other_node(SinkNode, B0, Overrides, true)
 	),
 
 	RangeStart = 0,
@@ -519,22 +512,21 @@ test_large_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	Wallet = ar_test_node:remote_call(SinkNode, ar_e2e, load_wallet_fixture, [wallet_b]),
 	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
-	{ok, Config} = ar_test_node:get_config(SinkNode),
 
 	ModuleSize = floor(1.5 * ar_block:partition_size()),
 	Module = {ModuleSize, 1, SinkPacking},
 	StoreID = ar_storage_module:id(Module),
 	StorageModules = [ Module ],
 
-	Config2 = Config#config{
-		peers = [ar_test_node:peer_ip(SourceNode)],
-		start_from_latest_state = true,
-		storage_modules = StorageModules,
-		auto_join = true,
-		mining_addr = SinkAddr
+	Overrides = #{
+		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[join, start_from_latest_state] => true,
+		storage_modules => StorageModules,
+		[join, auto] => true,
+		[mining, address] => SinkAddr
 	},
 	?assertEqual(ar_test_node:peer_name(SinkNode),
-		ar_test_node:start_other_node(SinkNode, B0, Config2, true)
+		ar_test_node:start_other_node(SinkNode, B0, Overrides, true)
 	),
 
 	RangeStart = ModuleSize,
@@ -624,8 +616,7 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
 	Wallet = ar_test_node:remote_call(Node, ar_e2e, load_wallet_fixture, [wallet_b]),
 	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking = ar_e2e:packing_type_to_packing(PackingType, SinkAddr),
-	{ok, Config} = ar_test_node:get_config(Node),
-	
+
 	StorageModules = [
 		{ar_block:partition_size(), 1, SinkPacking},
 		{ar_block:partition_size(), 2, SinkPacking},
@@ -636,12 +627,12 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
 		{ar_block:partition_size(), 10, SinkPacking}
 	],
 	?assertEqual(ar_test_node:peer_name(Node),
-		ar_test_node:start_other_node(Node, B0, Config#config{
-				peers = [ar_test_node:peer_ip(SourceNode)],
-			start_from_latest_state = true,
-			storage_modules = StorageModules,
-			auto_join = true,
-			mining_addr = SinkAddr
+		ar_test_node:start_other_node(Node, B0, #{
+			{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+			[join, start_from_latest_state] => true,
+			storage_modules => StorageModules,
+			[join, auto] => true,
+			[mining, address] => SinkAddr
 		}, true)
 	),
 
@@ -652,20 +643,19 @@ start_sink_node(Node, SourceNode, B0, PackingType1, PackingType2) ->
 	SinkAddr = ar_wallet:to_address(Wallet),
 	SinkPacking1 = ar_e2e:packing_type_to_packing(PackingType1, SinkAddr),
 	SinkPacking2 = ar_e2e:packing_type_to_packing(PackingType2, SinkAddr),
-	{ok, Config} = ar_test_node:get_config(Node),
-	
+
 	StorageModules = [
 		{ar_block:partition_size(), 1, SinkPacking1},
 		{ar_block:partition_size(), 1, SinkPacking2}
 	],
 
 	?assertEqual(ar_test_node:peer_name(Node),
-		ar_test_node:start_other_node(Node, B0, Config#config{
-				peers = [ar_test_node:peer_ip(SourceNode)],
-			start_from_latest_state = true,
-			storage_modules = StorageModules,
-			auto_join = true,
-			mining_addr = SinkAddr
+		ar_test_node:start_other_node(Node, B0, #{
+			{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+			[join, start_from_latest_state] => true,
+			storage_modules => StorageModules,
+			[join, auto] => true,
+			[mining, address] => SinkAddr
 		}, true)
 	),
 	{SinkPacking1, SinkPacking2}.

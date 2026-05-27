@@ -1,4 +1,5 @@
 %%% @doc The 2.6 mining server.
+%% @ar_test: isolated
 -module(ar_mining_server).
 
 -behaviour(ar_mining_server_behaviour).
@@ -490,8 +491,8 @@ calculate_cache_limits(NumActivePartitions, PackingDifficulty) ->
 		(?IDEAL_STEPS_PER_PARTITION * IdealRangesPerStep * RecallRangeSize * NumActivePartitions)
 	),
 
-	{ok, Config} = arweave_config:get_env(),
-	OverallCacheLimitBytes = case Config#config.mining_cache_size_mb of
+	MiningCacheSizeMb = arweave_config:get([mining, cache_size]),
+	OverallCacheLimitBytes = case MiningCacheSizeMb of
 		undefined ->
 			MinimumCacheLimitBytes;
 		N ->
@@ -999,8 +1000,8 @@ post_solution(error, _State) ->
 	?LOG_WARNING([{event, found_solution_but_could_not_build_a_block}]),
 	error;
 post_solution(Solution, State) ->
-	{ok, Config} = arweave_config:get_env(),
-	post_solution(Config#config.cm_exit_peer, Solution, State).
+	post_solution(arweave_config:get_peer(cm_exit), Solution,
+		State).
 
 post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
 	%% When posting a partial solution the pool client will skip many of the validation steps
@@ -1229,9 +1230,9 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing, Nonce) ->
 	end.
 
 dump_invalid_solution_data(Data) ->
-	{ok, Config} = arweave_config:get_env(),
+	DataDir = arweave_config:get([data_dir]),
 	ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
-	File = filename:join(Config#config.data_dir, "invalid_solution_data_dump_" ++ ID),
+	File = filename:join(DataDir, "invalid_solution_data_dump_" ++ ID),
 	file:write_file(File, term_to_binary(Data)).
 
 get_sub_chunk(Chunk, 0, _Nonce) ->
@@ -1415,240 +1416,228 @@ maybe_cancel_gc_timer(State) ->
 pause() ->
 	gen_server:cast(?MODULE, pause).
 
-setup() ->
-	{ok, Config} = arweave_config:get_env(),
-	Config.
-
-cleanup(Config) ->
-	arweave_config:set_env(Config).
-
 calculate_cache_limits_test_() ->
-	{setup, fun setup/0, fun cleanup/1,
-		[
-			{timeout, 30, fun test_calculate_cache_limits_default/0},
-			{timeout, 30, fun test_calculate_cache_limits_custom_low/0},
-			{timeout, 30, fun test_calculate_cache_limits_custom_high/0}
-		]
-	}.
+	[
+		{timeout, 30, fun test_calculate_cache_limits_default/0},
+		{timeout, 30, fun test_calculate_cache_limits_custom_low/0},
+		{timeout, 30, fun test_calculate_cache_limits_custom_high/0}
+	].
 
 test_calculate_cache_limits_default() ->
-	{ok, Config} = arweave_config:get_env(),
-	arweave_config:set_env(Config#config{
-		mining_cache_size_mb = undefined
-	}),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(100, 0)
-	),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 200 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 200 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(200, 0)
-	),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(1000, 0)
-	),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 256 * ?KiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(100, 1)
-	),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 256 * ?KiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(200, 1)
-	),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 256 * ?KiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(1000, 1)
-	),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 128 * ?KiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(200, 2)
-	),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 128 * ?KiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(400, 2)
-	),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 125 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 125 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 128 * ?KiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(1000, 2)
-	),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 8 * ?KiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(6_400, 32)
-	),
-	?assertEqual(
-		{
-			?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
-			?IDEAL_STEPS_PER_PARTITION * 8 * ?KiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(12_800, 32)
-	),
-	?assertEqual(
-		{
-			trunc(?IDEAL_STEPS_PER_PARTITION * 156.25 * ?MiB),
-			trunc(?IDEAL_STEPS_PER_PARTITION * 156.25 * ?MiB),
-			?IDEAL_STEPS_PER_PARTITION * 8 * ?KiB,
-			?IDEAL_STEPS_PER_PARTITION,
-			?IDEAL_STEPS_PER_PARTITION * 4000},
-		calculate_cache_limits(20_000, 32)
-	).
+	arweave_config:with_test_config(fun() ->
+		_ = arweave_config:set([mining, cache_size], undefined),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(100, 0)
+		),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 200 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 200 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(200, 0)
+		),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(1000, 0)
+		),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 256 * ?KiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(100, 1)
+		),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 256 * ?KiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(200, 1)
+		),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 256 * ?KiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(1000, 1)
+		),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 25 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 128 * ?KiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(200, 2)
+		),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 128 * ?KiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(400, 2)
+		),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 125 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 125 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 128 * ?KiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(1000, 2)
+		),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 50 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 8 * ?KiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(6_400, 32)
+		),
+		?assertEqual(
+			{
+				?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
+				?IDEAL_STEPS_PER_PARTITION * 8 * ?KiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(12_800, 32)
+		),
+		?assertEqual(
+			{
+				trunc(?IDEAL_STEPS_PER_PARTITION * 156.25 * ?MiB),
+				trunc(?IDEAL_STEPS_PER_PARTITION * 156.25 * ?MiB),
+				?IDEAL_STEPS_PER_PARTITION * 8 * ?KiB,
+				?IDEAL_STEPS_PER_PARTITION,
+				?IDEAL_STEPS_PER_PARTITION * 4000},
+			calculate_cache_limits(20_000, 32)
+		)
+	end).
 
 test_calculate_cache_limits_custom_low() ->
-	{ok, Config} = arweave_config:get_env(),
-	arweave_config:set_env(Config#config{
-		mining_cache_size_mb = 1
-	}),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 1, 4_000},
-		calculate_cache_limits(1, 0)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 512 * ?KiB, 1, 4_000},
-		calculate_cache_limits(2, 0)
-	),
-	?assertEqual(
-		{?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
-		calculate_cache_limits(1000, 0)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 4, 16_000},
-		calculate_cache_limits(1, 1)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 512 * ?KiB, 2, 8_000},
-		calculate_cache_limits(2, 1)
-	),
-	?assertEqual(
-		{?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
-		calculate_cache_limits(1000, 1)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 8, 32_000},
-		calculate_cache_limits(1, 2)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 512 * ?KiB, 4, 16_000},
-		calculate_cache_limits(2, 2)
-	),
-	?assertEqual(
-		{?IDEAL_STEPS_PER_PARTITION * 128_000 * ?KiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
-		calculate_cache_limits(1000, 2)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 128, 512_000},
-		calculate_cache_limits(1, 32)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 512 * ?KiB, 64, 256_000},
-		calculate_cache_limits(2, 32)
-	),
-	?assertEqual(
-		{?IDEAL_STEPS_PER_PARTITION * 500 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 64_000, 1, 4_000},
-		calculate_cache_limits(64_000, 32)
-	).
+	arweave_config:with_test_config(fun() ->
+	_ = arweave_config:set([mining, cache_size], 1),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 1, 4_000},
+			calculate_cache_limits(1, 0)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 512 * ?KiB, 1, 4_000},
+			calculate_cache_limits(2, 0)
+		),
+		?assertEqual(
+			{?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
+			calculate_cache_limits(1000, 0)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 4, 16_000},
+			calculate_cache_limits(1, 1)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 512 * ?KiB, 2, 8_000},
+			calculate_cache_limits(2, 1)
+		),
+		?assertEqual(
+			{?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
+			calculate_cache_limits(1000, 1)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 8, 32_000},
+			calculate_cache_limits(1, 2)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 512 * ?KiB, 4, 16_000},
+			calculate_cache_limits(2, 2)
+		),
+		?assertEqual(
+			{?IDEAL_STEPS_PER_PARTITION * 128_000 * ?KiB, 1 * ?MiB, (1 * ?MiB) div 1_000, 1, 4_000},
+			calculate_cache_limits(1000, 2)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 128, 512_000},
+			calculate_cache_limits(1, 32)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 512 * ?KiB, 64, 256_000},
+			calculate_cache_limits(2, 32)
+		),
+		?assertEqual(
+			{?IDEAL_STEPS_PER_PARTITION * 500 * ?MiB, 1 * ?MiB, (1 * ?MiB) div 64_000, 1, 4_000},
+			calculate_cache_limits(64_000, 32)
+		)
+	end).
 
 test_calculate_cache_limits_custom_high() ->
-	{ok, Config} = arweave_config:get_env(),
-	arweave_config:set_env(Config#config{
-		mining_cache_size_mb = 500_000
-	}),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 500_000, 2_000_000_000},
-		calculate_cache_limits(1, 0)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 250_000, 1_000_000_000},
-		calculate_cache_limits(2, 0)
-	),
-	?assertEqual(
-		{?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 500, 2_000_000},
-		calculate_cache_limits(1000, 0)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 2_000_000, 8_000_000_000},
-		calculate_cache_limits(1, 1)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 1_000_000, 4_000_000_000},
-		calculate_cache_limits(2, 1)
-	),
-	?assertEqual(
-		{?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 2_000, 8_000_000},
-		calculate_cache_limits(1000, 1)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 4_000_000, 16_000_000_000},
-		calculate_cache_limits(1, 2)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 2_000_000, 8_000_000_000},
-		calculate_cache_limits(2, 2)
-	),
-	?assertEqual(
-		{?IDEAL_STEPS_PER_PARTITION * 128_000 * ?KiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 4_000, 16_000_000},
-		calculate_cache_limits(1000, 2)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 64_000_000, 256_000_000_000},
-		calculate_cache_limits(1, 32)
-	),
-	?assertEqual(
-		{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 32_000_000, 128_000_000_000},
-		calculate_cache_limits(2, 32)
-	),
-	?assertEqual(
-		{(?IDEAL_STEPS_PER_PARTITION * 2 * (?RECALL_RANGE_SIZE div 32) * 1000), 512_000_000 * ?KiB, 512_000 * ?KiB, 64_000, 256_000_000},
-		calculate_cache_limits(1000, 32)
-	).
+	arweave_config:with_test_config(fun() ->
+		_ = arweave_config:set([mining, cache_size], 500_000),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 500_000, 2_000_000_000},
+			calculate_cache_limits(1, 0)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 250_000, 1_000_000_000},
+			calculate_cache_limits(2, 0)
+		),
+		?assertEqual(
+			{?IDEAL_STEPS_PER_PARTITION * 1000 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 500, 2_000_000},
+			calculate_cache_limits(1000, 0)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 2_000_000, 8_000_000_000},
+			calculate_cache_limits(1, 1)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 1_000_000, 4_000_000_000},
+			calculate_cache_limits(2, 1)
+		),
+		?assertEqual(
+			{?IDEAL_STEPS_PER_PARTITION * 250 * ?MiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 2_000, 8_000_000},
+			calculate_cache_limits(1000, 1)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 4_000_000, 16_000_000_000},
+			calculate_cache_limits(1, 2)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 2_000_000, 8_000_000_000},
+			calculate_cache_limits(2, 2)
+		),
+		?assertEqual(
+			{?IDEAL_STEPS_PER_PARTITION * 128_000 * ?KiB, 512_000_000 * ?KiB, 512_000 * ?KiB, 4_000, 16_000_000},
+			calculate_cache_limits(1000, 2)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 64_000_000, 256_000_000_000},
+			calculate_cache_limits(1, 32)
+		),
+		?assertEqual(
+			{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 256_000_000 * ?KiB, 32_000_000, 128_000_000_000},
+			calculate_cache_limits(2, 32)
+		),
+		?assertEqual(
+			{(?IDEAL_STEPS_PER_PARTITION * 2 * (?RECALL_RANGE_SIZE div 32) * 1000), 512_000_000 * ?KiB, 512_000 * ?KiB, 64_000, 256_000_000},
+			calculate_cache_limits(1000, 32)
+		)
+	end).

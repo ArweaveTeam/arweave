@@ -1,21 +1,7 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @author Arweave Team
-%%% @author Mathieu Kerjouan
-%%% @copyright 2025 (c) Arweave
 %%% @doc Arweave Configuration Type Definition.
-%%% @end
-%%%===================================================================
 -module(arweave_config_type).
 -compile(warnings_as_errors).
 -export([
-	none/1,
-	any/1,
 	boolean/1,
 	integer/1,
 	pos_integer/1,
@@ -25,37 +11,22 @@
 	path/1,
 	atom/1,
 	string/1,
-	base64/1,
-	base64url/1,
-	logging_template/1
+	logging_template/1,
+	peer_id/1,
+	address/1
 ]).
 -include_lib("kernel/include/file.hrl").
 
-%%--------------------------------------------------------------------
-%% @doc always returns an error.
-%% @end
-%%--------------------------------------------------------------------
--spec none(V) -> {error, V}.
+-define(DEFAULT_PORT, 1984).
+-define(is_octet(X), (is_integer(X) andalso X >= 0 andalso X =< 255)).
 
-none(V) -> {error, V}.
+-type peer_id() :: binary().
 
-%%--------------------------------------------------------------------
-%% @doc always returns the value.
-%% @end
-%%--------------------------------------------------------------------
--spec any(V) -> {ok, V}.
-
-any(V) -> {ok, V}.
-
-%%--------------------------------------------------------------------
-%% @doc check if the data is an atom and convert list/binary to
-%% existing atoms.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Validate as an atom, converting list/binary inputs through
+%% `binary_to_existing_atom/1` / `list_to_existing_atom/1`.
 -spec atom(Input) -> Return when
 	Input :: string() | binary() | atom(),
 	Return :: {ok, atom()} | {error, Input}.
-
 atom(List) when is_list(List) ->
 	try {ok, list_to_existing_atom(List)}
 	catch _:_ -> {error, List}
@@ -67,10 +38,8 @@ atom(Binary) when is_binary(Binary) ->
 atom(V) when is_atom(V) -> {ok, V};
 atom(V) -> {error, V}.
 
-%%--------------------------------------------------------------------
-%% @doc check booleans from binary, list, integer and atoms. When a
-%% string is used, a regexp is being used and ignore the case of the
-%% word.
+%% @doc Validate as a boolean. Strings are matched case-insensitively
+%% against `true` / `false` / `on` / `off`.
 %%
 %% == Examples ==
 %%
@@ -82,12 +51,9 @@ atom(V) -> {error, V}.
 %% {ok, true} = boolean(<<"TruE">>).
 %% '''
 %%
-%% @end
-%%--------------------------------------------------------------------
 -spec boolean(Input) -> Return when
 	Input :: string() | binary() | boolean(),
 	Return :: {ok, boolean()} | {error, Input}.
-
 boolean(true) -> {ok, true};
 boolean(on) -> {ok, true};
 boolean(false) -> {ok, false};
@@ -102,14 +68,10 @@ boolean(String) when is_list(String); is_binary(String) ->
 	end;
 boolean(V) -> {error, V}.
 
-%%--------------------------------------------------------------------
-%% @doc check integers.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Validate as an integer.
 -spec integer(Integer) -> Return when
 	Integer :: list() | binary() | integer(),
 	Return :: {ok, integer()} | {error, term()}.
-
 integer(List) when is_list(List) ->
 	try integer(list_to_integer(List))
 	catch _:_ -> {error, List} end;
@@ -121,14 +83,18 @@ integer(Integer) when is_integer(Integer) ->
 integer(V) ->
 	{error, V}.
 
-%%--------------------------------------------------------------------
-%% @doc check positive integers.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Validate as a positive integer, or the atom `infinity'.
+%% `infinity' is accepted so options can carry a sentinel meaning
+%% "no bound" without giving up the type's positivity guarantee.
 -spec pos_integer(Integer) -> Return when
-	Integer :: list() | binary() | pos_integer(),
-	Return :: {ok, pos_integer()} | {error, term()}.
-
+	Integer :: list() | binary() | pos_integer() | infinity,
+	Return :: {ok, pos_integer() | infinity} | {error, term()}.
+pos_integer(infinity) ->
+	{ok, infinity};
+pos_integer(<<"infinity">>) ->
+	{ok, infinity};
+pos_integer("infinity") ->
+	{ok, infinity};
 pos_integer(Data) ->
 	case integer(Data) of
 		{ok, Integer} when Integer >= 0 ->
@@ -137,14 +103,10 @@ pos_integer(Data) ->
 			{error, Data}
 	end.
 
-%%--------------------------------------------------------------------
-%% @doc check ipv4 addresses.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Validate as an IPv4 address.
 -spec ipv4(IPv4) -> Return when
 	IPv4 :: inet:ip4_address() | binary() | list(),
 	Return :: {ok, list()} | {error, term()}.
-
 ipv4(Tuple = {_, _, _, _}) ->
 	case inet:is_ipv4_address(Tuple) of
 		true ->
@@ -158,22 +120,17 @@ ipv4(List) when is_list(List) ->
 	case inet:parse_strict_address(List, inet) of
 		{ok, _} ->
 			{ok, list_to_binary(List)};
-		_Elsewise ->
+		_Else ->
 			{error, List}
 	end;
-ipv4(Elsewise) ->
-	{error, Elsewise}.
+ipv4(Else) ->
+	{error, Else}.
 
-%%--------------------------------------------------------------------
-%% @doc Defines file type.
-%% @todo if an unix socket path length is > 108, it will fail, needs
-%% to be fixed.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc File path type. Note: unix socket paths longer than 108 bytes
+%% will fail kernel-side; this validator does not catch that.
 -spec file(File) -> Return when
 	File :: binary() | list(),
 	Return :: {ok, binary()} | {error, term()}.
-
 file(List) when is_list(List) ->
 	file(list_to_binary(List));
 file(Binary) when is_binary(Binary) ->
@@ -192,8 +149,7 @@ file(Path) ->
 		#{ path => Path }
 	 ).
 
-% check if the directory is present, arweave_config should not
-% be in charge of creating it.
+%% arweave_config does not create the parent directory.
 file2(Path) ->
 	Split = filename:split(Path),
 	[_Filename|Reverse] = lists:reverse(Split),
@@ -212,7 +168,6 @@ file2(Path) ->
 			)
 	end.
 
-% check if the directory has a read/write access.
 file3(Path, Directory) ->
 	Split = filename:split(Path),
 	[_Filename|_] = lists:reverse(Split),
@@ -227,21 +182,15 @@ file3(Path, Directory) ->
 			)
 	end.
 
-% convert a list into path. It should not be the case there, but it's
-% to avoid having different type format.
 file4(Path) when is_list(Path) ->
 	{ok, list_to_binary(Path)};
 file4(Path) ->
 	{ok, Path}.
 
-%%--------------------------------------------------------------------
-%% @doc check tcp port.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Validate as a TCP port (0..65535).
 -spec tcp_port(Port) -> Return when
 	Port :: pos_integer(),
 	Return :: {ok, pos_integer()} | {error, term()}.
-
 tcp_port(Binary) when is_binary(Binary) ->
 	tcp_port(binary_to_integer(Binary));
 tcp_port(List) when is_list(List) ->
@@ -254,10 +203,7 @@ tcp_port(Integer) when is_integer(Integer) ->
 			{error, Integer}
 	end.
 
-%%--------------------------------------------------------------------
-%% @doc check unix path.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc Validate as a filesystem path.
 path(List) when is_list(List) ->
 	path(list_to_binary(List));
 path(Binary) when is_binary(Binary) ->
@@ -276,58 +222,23 @@ path_relative(Path) ->
 			{ok, Path}
 	end.
 
-%%--------------------------------------------------------------------
-%% @doc a string type.
-%% @todo to be defined correctly.
-%% @end
-%%--------------------------------------------------------------------
+%% @doc String type validator. Accepts proper character lists and
+%% binaries (the latter for JSON/YAML inputs, which deserialize
+%% strings as binaries).
 -spec string(String) -> Return when
-	String :: list(),
+	String :: list() | binary(),
 	Return :: {ok, list()} | {error, term()}.
+string(Binary) when is_binary(Binary) -> string(binary_to_list(Binary));
+string(String) when is_list(String) -> string(String, String);
+string(Other) -> {error, Other}.
 
-string(String) -> string(String, String).
 string([], String) -> {ok, String};
 string([H|T], String) when is_integer(H) -> string(T, String);
 string(_, String) -> {error, String}.
 
-%%--------------------------------------------------------------------
-%% @doc check base64 type.
-%% @end
-%%--------------------------------------------------------------------
--spec base64(String) -> Return when
-	String :: binary() | list(),
-	Return :: {ok, binary()} | {error, term()}.
-
-base64(List) when is_list(List) ->
-	base64(list_to_binary(List));
-base64(Binary) ->
-	try {ok, base64:decode(Binary)}
-	catch _:_ -> {error, Binary}
-	end.
-
-%%--------------------------------------------------------------------
-%% @doc check base64url
-%% @end
-%%--------------------------------------------------------------------
--spec base64url(String) -> Return when
-	String :: binary() | list(),
-	Return :: {ok, binary()} | {error, term()}.
-
-base64url(List) when is_list(List) ->
-	base64url(list_to_binary(List));
-base64url(Binary) ->
-	try {ok, b64fast:decode(Binary)}
-	catch _:_ -> {error, Binary}
-	end.
-
-%%--------------------------------------------------------------------
-%% @doc Check, parse and convert a logging template from custom
-%% parser.
-%%
-%% The rules are strict, only tab and space as separator, only ASCII
-%% printable chars as word, only a limited list of chars for
-%% existing atoms (`[a-zA-Z_]'). An atom is a word starting with a
-%% null char and '%' symbol. All templates are terminated with "\n".
+%% @doc Parse a logging template. Tab/space are the only separators;
+%% words are ASCII printable; atoms (words prefixed with `%`) accept
+%% `[a-zA-Z_]`. Templates are terminated with "\n".
 %%
 %% @see logger_formatter:template/0
 %%
@@ -339,12 +250,9 @@ base64url(Binary) ->
 %% {ok, ["message:", msg, "\n"]} = logging_template("message: %msg").
 %% '''
 %%
-%% @end
-%%--------------------------------------------------------------------
 -spec logging_template(String) -> Return when
 	String :: binary() | list(),
 	Return :: {ok, [atom()|list()]} | {error, term()}.
-
 logging_template(List) when is_list(List) ->
 	logging_template_parse(list_to_binary(List));
 logging_template(Binary) when is_binary(Binary) ->
@@ -426,9 +334,31 @@ logging_template_parser([{word, Word}|Rest], Buffer) ->
 	NewBuffer = [binary_to_list(Word)|Buffer],
 	logging_template_parser(Rest, NewBuffer).
 
-%%--------------------------------------------------------------------
-%% common format for all errors
-%%--------------------------------------------------------------------
+%% @doc Mining / wallet address. Accepts either a 32-byte binary
+%% verbatim or a URL-safe Base64 string that decodes to exactly 32
+%% bytes (43 base64 characters). Anything else is rejected.
+-spec address(Input) -> Return when
+	Input :: binary() | list(),
+	Return :: {ok, binary()} | {error, term()}.
+address(B) when is_binary(B), byte_size(B) =:= 32 ->
+	{ok, B};
+address(B) when is_binary(B) ->
+	try b64fast:decode(B) of
+		Decoded when byte_size(Decoded) =:= 32 -> {ok, Decoded};
+		_ -> {error, {invalid_address_size, B}}
+	catch
+		_:_ -> {error, {invalid_address_base64, B}}
+	end;
+address(L) when is_list(L) ->
+	try
+		address(list_to_binary(L))
+	catch
+		_:_ -> {error, {invalid_address, L}}
+	end;
+address(V) ->
+	{error, {invalid_address, V}}.
+
+%% Common error shape for type validators.
 type_error(Name, Reason, Data) ->
 	{error, #{
 			status => error,
@@ -439,3 +369,109 @@ type_error(Name, Reason, Data) ->
 			}
 		 }
 	}.
+
+%%% --------------------------------------------------------------------
+%%% Peer-id canonicalization
+%%% --------------------------------------------------------------------
+
+%% @doc Normalize a peer spelling to its canonical `<<"host:port">>`
+%% form. Accepts strings, binaries, and IPv4 tuples (with or without
+%% port). Returns `{ok, Binary}` or `{error, Reason}`.
+-spec peer_id(Input) -> Return when
+	Input :: binary() | string() | tuple(),
+	Return :: {ok, peer_id()} | {error, term()}.
+peer_id(Input) when is_binary(Input) ->
+	peer_id_binary(Input);
+peer_id(Input) when is_list(Input) ->
+	try
+		peer_id_binary(list_to_binary(Input))
+	catch
+		_:_ ->
+			{error, {invalid_peer, Input}}
+	end;
+peer_id({A, B, C, D}) when ?is_octet(A), ?is_octet(B), ?is_octet(C), ?is_octet(D) ->
+	{ok, format_ipv4_port({A, B, C, D, ?DEFAULT_PORT})};
+peer_id({A, B, C, D, Port}) when ?is_octet(A), ?is_octet(B), ?is_octet(C),
+		?is_octet(D), is_integer(Port), Port >= 0, Port =< 65535 ->
+	{ok, format_ipv4_port({A, B, C, D, Port})};
+peer_id(Input) ->
+	{error, {invalid_peer, Input}}.
+
+peer_id_binary(<<>>) ->
+	{error, empty_peer};
+peer_id_binary(<<"[", Rest/binary>>) ->
+	%% Bracketed IPv6: `[::1]:1984` or `[::1]`.
+	case binary:split(Rest, <<"]">>) of
+		[Host, <<>>] ->
+			case validate_host(Host) of
+				ok ->
+					{ok, iolist_to_binary([
+						<<"[">>, Host, <<"]:">>,
+						integer_to_binary(?DEFAULT_PORT)
+					])};
+				Error ->
+					Error
+			end;
+		[Host, <<":", PortBin/binary>>] ->
+			case {validate_host(Host), parse_port(PortBin)} of
+				{ok, {ok, Port}} ->
+					{ok, iolist_to_binary([
+						<<"[">>, Host, <<"]:">>,
+						integer_to_binary(Port)
+					])};
+				{{error, R}, _} -> {error, R};
+				{_, {error, R}} -> {error, R}
+			end;
+		_ ->
+			{error, {invalid_peer, <<"[", Rest/binary>>}}
+	end;
+peer_id_binary(Bin) ->
+	%% Split on `:`: covers IPv4 with optional port and bare
+	%% hostnames. Unbracketed IPv6 is ambiguous and rejected.
+	case binary:split(Bin, <<":">>, [global]) of
+		[Bin] ->
+			%% Bare host: append default port.
+			case validate_host(Bin) of
+				ok -> {ok, <<Bin/binary, ":", (integer_to_binary(?DEFAULT_PORT))/binary>>};
+				Error -> Error
+			end;
+		[Host, PortBin] ->
+			case {validate_host(Host), parse_port(PortBin)} of
+				{ok, {ok, Port}} ->
+					{ok, <<Host/binary, ":", (integer_to_binary(Port))/binary>>};
+				{{error, R}, _} -> {error, R};
+				{_, {error, R}} -> {error, R}
+			end;
+		_ ->
+			{error, {ambiguous_peer, Bin}}
+	end.
+
+validate_host(<<>>) ->
+	{error, empty_host};
+validate_host(Host) when is_binary(Host) ->
+	case re:run(Host, <<"^[A-Za-z0-9._:-]+$">>, [{capture, none}]) of
+		match -> ok;
+		nomatch -> {error, {invalid_host, Host}}
+	end.
+
+parse_port(<<>>) ->
+	{error, empty_port};
+parse_port(PortBin) ->
+	try
+		Port = binary_to_integer(PortBin),
+		case Port of
+			_ when Port >= 0, Port =< 65535 -> {ok, Port};
+			_ -> {error, {port_out_of_range, Port}}
+		end
+	catch
+		_:_ -> {error, {invalid_port, PortBin}}
+	end.
+
+format_ipv4_port({A, B, C, D, Port}) ->
+	iolist_to_binary([
+		integer_to_binary(A), <<".">>,
+		integer_to_binary(B), <<".">>,
+		integer_to_binary(C), <<".">>,
+		integer_to_binary(D), <<":">>,
+		integer_to_binary(Port)
+	]).

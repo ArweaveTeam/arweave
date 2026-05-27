@@ -1,3 +1,4 @@
+%% @ar_test: vdf
 -module(ar_nonce_limiter).
 
 -behaviour(gen_server).
@@ -13,13 +14,13 @@
 		apply_external_update/2, get_session/1, get_current_session/0,
 		get_current_sessions/0,
 		compute/3,
-		maybe_add_entropy/4, mix_seed/2]).
+		maybe_add_entropy/4, mix_seed/2,
+		compute_own_vdf/0, use_remote_vdf_server/0, is_vdf_server/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
 -include("ar_vdf.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_consensus.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
@@ -45,6 +46,36 @@
 %% @doc Start the server.
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% @doc Whether this node should compute its own VDF chain. The
+%% [vdf, compute] option may be set to `auto' (the default), in which
+%% case the answer flips to `true' iff no trusted VDF-server peer is
+%% configured.
+-spec compute_own_vdf() -> boolean().
+compute_own_vdf() ->
+	case arweave_config:get([vdf, compute]) of
+		auto ->
+			arweave_config:get_peers(vdf_server) =:= [];
+		Bool ->
+			Bool
+	end.
+
+%% @doc Whether at least one trusted VDF-server peer is configured.
+-spec use_remote_vdf_server() -> boolean().
+use_remote_vdf_server() ->
+	arweave_config:get_peers(vdf_server) =/= [].
+
+%% @doc Whether this node is acting as a VDF server. Returns `true' if
+%% any VDF-client peer is configured, otherwise the value of
+%% [vdf, is_public_server].
+-spec is_vdf_server() -> boolean().
+is_vdf_server() ->
+	case arweave_config:get_peers(vdf_client) of
+		[] ->
+			arweave_config:get([vdf, is_public_server]);
+		_ ->
+			true
+	end.
 
 account_tree_initialized(Blocks) ->
 	gen_server:cast(?MODULE, {account_tree_initialized, Blocks}).
@@ -215,8 +246,8 @@ validate_last_step_checkpoints(#block{
 			PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
 				PrevOutput, PrevBStepNumber, StepNumber, Seed),
 			PrevStepNumber = StepNumber - 1,
-			{ok, Config} = arweave_config:get_env(),
-			ThreadCount = Config#config.max_nonce_limiter_last_step_validation_thread_count,
+			ThreadCount = arweave_config:get(
+				[vdf, max_last_step_validation_threads]),
 			case verify_no_reset(PrevStepNumber, PrevOutput2, 1,
 					lists:reverse(LastStepCheckpoints), ThreadCount, VDFDifficulty) of
 				{true, _Steps} ->
@@ -376,7 +407,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 			spawn(fun() -> ar_events:send(nonce_limiter, {invalid, H, 2}) end);
 		{RemainingStepsToValidate, NumAlreadyComputed}
 		  		when StartStepNumber + NumAlreadyComputed < StepNumber ->
-			case ar_config:use_remote_vdf_server() and not ar_config:compute_own_vdf() of
+			case use_remote_vdf_server() and not compute_own_vdf() of
 				true ->
 					%% Wait for our VDF server(s) to validate the remaining steps.
 					%% Alternatively, the network may abandon this block.
@@ -390,8 +421,8 @@ request_validation(H, #nonce_limiter_info{ output = Output,
 					end,
 					spawn(fun() ->
 						StartStepNumber2 = StartStepNumber + NumAlreadyComputed,
-						{ok, Config} = arweave_config:get_env(),
-						ThreadCount = Config#config.max_nonce_limiter_validation_thread_count,
+						ThreadCount = arweave_config:get(
+							[vdf, max_validation_threads]),
 						Result =
 							case is_integer(EntropyResetPoint) andalso
 									EntropyResetPoint > StartStepNumber2 of
@@ -491,13 +522,13 @@ init([]) ->
 			_ ->
 				#state{}
 		end,
-	case ar_config:use_remote_vdf_server() and not ar_config:compute_own_vdf() of
+	case use_remote_vdf_server() and not compute_own_vdf() of
 		true ->
 			gen_server:cast(?MODULE, check_external_vdf_server_input);
 		false ->
 			ok
 	end,
-	{ok, start_worker(State#state{ autocompute = ar_config:compute_own_vdf() })}.
+	{ok, start_worker(State#state{ autocompute = compute_own_vdf() })}.
 
 get_blocks() ->
 	B = ar_node:get_current_block(),
@@ -791,7 +822,7 @@ handle_info({computed, Args}, State) ->
 			?LOG_INFO([{event, received_computed_output_for_different_session_key}]),
 			{noreply, State};
 		{false, _} ->
-			case ar_config:use_remote_vdf_server() of
+			case use_remote_vdf_server() of
 				true ->
 					ok;
 				false ->
@@ -876,9 +907,9 @@ send_output(SessionKey, Session) ->
 	ar_events:send(nonce_limiter, {computed_output, {SessionKey, StepNumber, Output, UpperBound}}).
 
 dump_error(Data) ->
-	{ok, Config} = arweave_config:get_env(),
+	DataDir = arweave_config:get([data_dir]),
 	ErrorID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(8))),
-	ErrorDumpFile = filename:join(Config#config.data_dir, "error_dump_" ++ ErrorID),
+	ErrorDumpFile = filename:join(DataDir, "error_dump_" ++ ErrorID),
 	file:write_file(ErrorDumpFile, term_to_binary(Data)),
 	ErrorID.
 
@@ -1442,8 +1473,7 @@ send_events_for_external_update(SessionKey, Session) ->
 		Session#vdf_session{ step_number = StepNumber-1, steps = RemainingSteps }).
 
 debug_double_check(Label, Result, Func, Args) ->
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(double_check_nonce_limiter, Config#config.enable) of
+	case arweave_config:feature_enabled(double_check_nonce_limiter) of
 		false ->
 			Result;
 		true ->

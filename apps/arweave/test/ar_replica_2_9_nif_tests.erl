@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_replica_2_9_nif_tests).
 
 -include_lib("eunit/include/eunit.hrl").

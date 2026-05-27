@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_data_sync_syncs_after_joining_test).
 
 -include_lib("eunit/include/eunit.hrl").

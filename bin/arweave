@@ -461,6 +461,67 @@ arweave_doctor_help() {
 }
 
 ######################################################################
+# Arweave Config Section
+######################################################################
+arweave_config_help() {
+    echo "Usage: ${REL_NAME} config <command>"
+    echo "Manage Arweave configuration. Commands:"
+    echo "  ${REL_NAME} config help"
+    echo "  ${REL_NAME} config convert <input-file> [output-file]"
+    echo "  ${REL_NAME} config get <parameter>"
+    echo "  ${REL_NAME} config set <parameter> <value>"
+    exit 1
+}
+
+arweave_config_get_help() {
+    echo "Usage: ${REL_NAME} config get <parameter>"
+    echo "Get a configuration value from a running Arweave node."
+    exit 1
+}
+
+arweave_config_set_help() {
+    echo "Usage: ${REL_NAME} config set <parameter> <value>"
+    echo "Set a runtime configuration value on a running Arweave node."
+    exit 1
+}
+
+escape_for_erl_string() {
+    local value="${1}"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '%s' "${value}"
+}
+
+arweave_config_get() {
+    local key="${1}"
+    if [ -z "${key}" ] || [ -n "${2}" ]; then
+        arweave_config_get_help
+    fi
+
+    ping_or_exit
+
+    local escaped_key
+    escaped_key="$(escape_for_erl_string "${key}")"
+    erl_rpc arweave_config_cli get "\"${escaped_key}\""
+}
+
+arweave_config_set() {
+    local key="${1}"
+    shift
+    local value="${*}"
+    if [ -z "${key}" ] || [ -z "${value}" ]; then
+        arweave_config_set_help
+    fi
+
+    ping_or_exit
+
+    local escaped_key escaped_value
+    escaped_key="$(escape_for_erl_string "${key}")"
+    escaped_value="$(escape_for_erl_string "${value}")"
+    erl_rpc arweave_config_cli set "\"${escaped_key}\"" "\"${escaped_value}\""
+}
+
+######################################################################
 # Arweave Developer mode Section
 ######################################################################
 # when ARWEAVE_DEV environment variable is set, the release is rebuild
@@ -613,6 +674,9 @@ relx_usage() {
 	check)
 	    arweave_check_help
 	    ;;
+	config)
+	    arweave_config_help
+	    ;;
 	doctor)
 	    arweave_doctor_help
 	    ;;
@@ -718,6 +782,7 @@ relx_usage() {
 		echo ""
 		echo "  benchmark               Run Arweave Benchmarks"
 		echo "  check                   Check system parameters for Arweave"
+		echo "  config                  Manage Arweave configuration"
 		echo "  console                 Start Arweave with an interactive Erlang shell"
 		echo "  console_clean           Start an interactive Erlang shell without the Arweave release's applications"
 		echo "  daemon                  Start Arweave in the background with run_erl (named pipes)"
@@ -1431,6 +1496,91 @@ case "$1" in
     check)
 	shift
 	arweave_check ${*}
+	;;
+
+    config)
+	shift
+	case "$1" in
+	    help|"")
+		shift
+		subcommand="config"
+		BOOTFILE="$REL_DIR/start"
+		if [ -f "$REL_DIR/$REL_NAME.boot" ]; then
+		  BOOTFILE="$REL_DIR/$REL_NAME"
+		fi
+		FOREGROUNDOPTIONS="-noinput +Bd"
+		ARWEAVE_OPTS="-run arweave_config_help main"
+		ARGS=${*}
+		;;
+	    convert)
+		shift
+		subcommand="config"
+		BOOTFILE="$REL_DIR/start"
+		if [ -f "$REL_DIR/$REL_NAME.boot" ]; then
+		  BOOTFILE="$REL_DIR/$REL_NAME"
+		fi
+		FOREGROUNDOPTIONS="-noinput +Bd"
+		ARWEAVE_OPTS="-run arweave_config_convert main"
+		ARGS=${*}
+		;;
+	    get)
+		shift
+		arweave_config_get "$@"
+		exit $?
+		;;
+	    set)
+		shift
+		arweave_config_set "$@"
+		exit $?
+		;;
+	    *)
+		arweave_config_help
+		;;
+	esac
+
+	parse_args ${ARGS}
+	ARGS=${LOCAL_PARAMS}
+	CODE_LOADING_MODE="${CODE_LOADING_MODE:-embedded}"
+	EMU="beam"
+	PROGNAME="${0#*/}"
+
+	export EMU
+	export PROGNAME
+
+	echo "Exec: $BINDIR/erlexec" \
+	    ${VM_PARAMS} \
+	    ${EXTRA_DIST_ARGS} \
+	    ${FOREGROUNDOPTIONS} \
+	    -boot "$BOOTFILE" \
+	    -mode "$CODE_LOADING_MODE" \
+	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
+	    -config "$RELX_CONFIG_PATH" \
+	    -args_file "$VMARGS_PATH" \
+	    -- ${ARWEAVE_OPTS} ${ARGS}
+	echo "Root: $ROOTDIR"
+
+	echo "$RELEASE_ROOT_DIR"
+	if ! command -v logger > /dev/null 2>&1
+	then
+	    echo "${REL_NAME}[$$] Starting up"
+	else
+	    logger -t "${REL_NAME}[$$]" "Starting up"
+	fi
+
+	relx_run_hooks "$PRE_START_HOOKS"
+	arweave_check
+	schedule_symlink_cleanup
+
+	exec "$BINDIR/erlexec" \
+	    ${VM_PARAMS} \
+	    ${EXTRA_DIST_ARGS} \
+	    ${FOREGROUNDOPTIONS} \
+	    -boot "$BOOTFILE" \
+	    -mode "$CODE_LOADING_MODE" \
+	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
+	    -config "$RELX_CONFIG_PATH" \
+	    -args_file "$VMARGS_PATH" \
+	    -- ${ARWEAVE_OPTS} ${ARGS}
 	;;
 
     version)

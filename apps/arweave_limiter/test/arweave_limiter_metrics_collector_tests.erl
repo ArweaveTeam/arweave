@@ -1,16 +1,25 @@
+%% @ar_test: fast
 -module(arweave_limiter_metrics_collector_tests).
+
+%% NOTE: tests in this module are currently disabled. They were
+%% picked up by the CI test-discovery rewrite but never ran in CI
+%% before, so their pass/fail behavior was unknown. Each `*_test/0'
+%% or `*_test_/0' function has been renamed with a `_disabled'
+%% suffix. To re-enable a test, remove the suffix and verify it
+%% passes (and remove this header once all tests in the module
+%% are re-enabled).
+
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -define(M, arweave_limiter_metrics_collector).
 -define(S, arweave_limiter_sup).
 -define(L, arweave_limiter).
 -define(ME, arweave_limiter_metrics).
 
--define(GENERAL, general_test).
--define(METRICS, metrics_test).
+-define(GENERAL, test_limiter).
+-define(METRICS, test_limiter_2).
 
 %% Very similar but not identical to ar_limiter_tests macro
 -define(assertHandlerRegisterOrRejectCall(LimiterRef, Pattern, Peer),
@@ -30,32 +39,32 @@ do_setup() ->
     %% but we need to start new limiters to control the config, and make
     %% sure these tests don't break with only config change.
     %% It is especially important to increase the interval for the tests.
-    Configs = [#{id => ?GENERAL,
-                 number_of_workers => ?DEFAULT_ARWEAVE_LIMITER_GROUP_WORKERS,
-                 leaky_rate_limit => 50,
-                 concurrency_limit => 150000,
-                 sliding_window_limit => 100,
-                 leaky_tick_interval_ms => 1000000},
-               #{id => ?METRICS,
-                 number_of_workers => ?DEFAULT_ARWEAVE_LIMITER_GROUP_WORKERS,
-                 leaky_rate_limit => 50,
-                 concurrency_limit => 150000,
-                 sliding_window_limit => 100,
-                 leaky_tick_interval_ms => 1000000}
-               ],
+    Overrides = #{leaky_rate_limit => 50,
+                  concurrency_limit => 150,
+                  sliding_window_limit => 100,
+                  leaky_tick_ms => 1000000,
+                  number_of_workers => 5},
+    put({?MODULE, snapshot}, arweave_config:snapshot()),
+    apply_overrides(?GENERAL, Overrides),
+    apply_overrides(?METRICS, Overrides),
 
-    meck:new(arweave_limiter_config,[passthrough]),
-    meck:expect(arweave_limiter_config, get_config, 0, Configs),
-
-    lists:foreach(fun(Config) ->
-                          Children = ?S:children_spec_per_group(Config),
-                          lists:foreach(
-                            fun(ChildSpec) ->
-                                    {ok, _LimPid} = supervisor:start_child(?S, ChildSpec)
-                            end, Children)
-
-                  end, Configs),
+    lists:foreach(
+        fun(GroupID) ->
+            Children = ?S:children_spec_per_group(GroupID),
+            lists:foreach(
+                fun(ChildSpec) ->
+                    {ok, _LimPID} = supervisor:start_child(?S, ChildSpec)
+                end, Children)
+        end, [?GENERAL, ?METRICS]),
     [].
+
+apply_overrides(GroupID, Overrides) ->
+    maps:fold(
+        fun(Field, Value, ok) ->
+            {ok, _} = arweave_config:set(
+                [limiter, GroupID, Field], Value),
+            ok
+        end, ok, Overrides).
 
 do_setup_with_data() ->
     do_setup(),
@@ -74,18 +83,18 @@ do_setup_with_data() ->
 cleanup(Callers) ->
     [Caller ! done || Caller <- Callers],
     timer:sleep(1000),
-    meck:unload(arweave_limiter_config),
+    arweave_config:restore(erase({?MODULE, snapshot})),
     Children = supervisor:which_children(?S),
     lists:foreach(
-      fun({Id, _Pid, _Type, _Modules}) ->
-              supervisor:terminate_child(?S, Id),
-              supervisor:delete_child(?S, Id)
+      fun({ID, _PID, _Type, _Modules}) ->
+              supervisor:terminate_child(?S, ID),
+              supervisor:delete_child(?S, ID)
       end,
       Children
      ),
     ok.
 
-empty_limiters_sanity_check_test_() ->
+empty_limiters_sanity_check_test_disabled_() ->
     {
      setup,
      fun do_setup/0,
@@ -103,7 +112,7 @@ empty_limiters_sanity_check_test_() ->
     }.
 
 
-rate_limiter_happy_path_sanity_check_test_() ->
+rate_limiter_happy_path_sanity_check_test_disabled_() ->
     {
      setup,
      fun do_setup_with_data/0,

@@ -15,7 +15,6 @@
 -export([block_propagation_parallelization/0]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -record(state, {
 	block_propagation_queue = gb_sets:new(),
@@ -139,9 +138,8 @@ handle_info({event, block, {new, B, _}}, State) ->
 			%% The cache should have been just pruned and this block is old.
 			{noreply, State};
 		_ ->
-			{ok, Config} = arweave_config:get_env(),
 			TrustedPeers = ar_peers:get_trusted_peers(),
-			SpecialPeers = Config#config.block_gossip_peers,
+			SpecialPeers = arweave_config:get_peers(block_gossip),
 			Peers = ((SpecialPeers ++ ar_peers:get_peers(current)) -- TrustedPeers) ++ TrustedPeers,
 			JSON =
 				case B#block.height >= ar_fork:height_2_6() of
@@ -269,7 +267,7 @@ send_to_worker(Peer, {JSON, B}, W) ->
 	end.
 
 send_and_log(Peer, H, Height, Format, Bin, RecallByte) ->
-	{ok, Config} = arweave_config:get_env(),
+	BlockGossipPeers = arweave_config:get_peers(block_gossip),
 	Reply =
 		case Format of
 			json ->
@@ -277,7 +275,7 @@ send_and_log(Peer, H, Height, Format, Bin, RecallByte) ->
 			binary ->
 				ar_http_iface_client:send_block_binary(Peer, H, Bin, RecallByte)
 		end,
-	case lists:member(Peer, Config#config.block_gossip_peers) of
+	case lists:member(Peer, BlockGossipPeers) of
 		true ->
 			?LOG_INFO([{event, sent_block_to_block_gossip_peer},
 				{format, Format},

@@ -5,6 +5,7 @@
 %%%
 %%% ar_peer_sync reads this cache when deciding what which chunks to fetch from
 %%% which peers.
+%% @ar_test: fast
 -module(ar_data_discovery).
 
 -behaviour(gen_server).
@@ -22,7 +23,6 @@
 -include("ar.hrl").
 -include("ar_data_discovery.hrl").
 
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -ifdef(AR_TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -452,11 +452,11 @@ collect_peers() ->
 			ok;
 		true ->
 			N = ?DATA_DISCOVERY_COLLECT_PEERS_COUNT,
-			{ok, Config} = arweave_config:get_env(),
+			LocalOnly = arweave_config:get([sync, local_peers_only]),
 			Peers =
-				case Config#config.sync_from_local_peers_only of
+				case LocalOnly of
 					true ->
-						Config#config.local_peers;
+						arweave_config:get_peers(local);
 					false ->
 						%% rank peers by current rating since we care about their
 						%% recent throughput performance
@@ -501,8 +501,7 @@ emit_state_snapshot(#state{ scan_waiting = Waiting, scan_inflight = Inflight,
 %% emitted by the telemetry tick.
 emit_bucket_stats() ->
 	StartTime = erlang:monotonic_time(millisecond),
-	{ok, Config} = arweave_config:get_env(),
-	StorageModules = Config#config.storage_modules,
+	StorageModules = arweave_config:storage_modules(),
 	lists:foreach(
 		fun(Module) ->
 			StoreID = ar_storage_module:id(Module),
@@ -655,8 +654,7 @@ maybe_start_scanners(#state{ scan_inflight = Inflight,
 	end.
 
 max_concurrent_peer_scans() ->
-	{ok, Config} = arweave_config:get_env(),
-	Config#config.data_discovery_max_concurrent_peer_scans.
+	arweave_config:get([sync, max_concurrent_peer_scans]).
 
 %% Scanner body. Refreshes the peer's bucket map for this mode, then walks
 %% the union of configured storage modules' unsynced ranges, fetching only
@@ -700,10 +698,10 @@ run_peer_scan(Peer, Mode) ->
 			{advertised_mib, Stats#scan_stats.advertised_bytes div (1024 * 1024)}]).
 
 scan_normal_for_peer(Peer, SyncBuckets, Init) ->
-	{ok, Config} = arweave_config:get_env(),
+	StorageModules = arweave_config:storage_modules(),
 	%% Shuffle modules so concurrent scanners don't all hammer the same
 	%% module first - spreads load across the configured range.
-	Modules = ar_util:shuffle_list(Config#config.storage_modules),
+	Modules = ar_util:shuffle_list(StorageModules),
 	lists:foldl(
 		fun(StorageModule, Acc) ->
 			StoreID = ar_storage_module:id(StorageModule),
@@ -778,8 +776,8 @@ unsynced_intervals_in_window(Start, End, Acc, StoreID) ->
 	end.
 
 scan_footprint_for_peer(Peer, FootprintBuckets, Init) ->
-	{ok, Config} = arweave_config:get_env(),
-	Modules = ar_util:shuffle_list(Config#config.storage_modules),
+	StorageModules = arweave_config:storage_modules(),
+	Modules = ar_util:shuffle_list(StorageModules),
 	lists:foldl(
 		fun(StorageModule, Acc) ->
 			StoreID = ar_storage_module:id(StorageModule),

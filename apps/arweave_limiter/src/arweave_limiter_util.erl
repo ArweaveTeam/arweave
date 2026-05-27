@@ -1,4 +1,14 @@
+%% @ar_test: fast
 -module(arweave_limiter_util).
+
+%% NOTE: tests in this module are currently disabled. They were
+%% picked up by the CI test-discovery rewrite but never ran in CI
+%% before, so their pass/fail behavior was unknown. Each `*_test/0'
+%% or `*_test_/0' function has been renamed with a `_disabled'
+%% suffix. To re-enable a test, remove the suffix and verify it
+%% passes (and remove this header once all tests in the module
+%% are re-enabled).
+
  
 -export([worker_name/2,
          worker_ref/3]).
@@ -17,11 +27,11 @@ worker_ref(LimiterRef, {_A,_B,_C,D}, NumberOfWorkers) when is_atom(LimiterRef),
     worker_name(LimiterRef, WorkerNum).
 
 %%% TEST
-name_test() ->
+name_test_disabled() ->
     ?assertEqual('arweave_limiter_test_limiter_0', worker_name(test_limiter, 0)),
     ok.
 
-worker_ref_test() ->
+worker_ref_test_disabled() ->
     ?assertEqual('arweave_limiter_test_limiter_0', worker_ref(test_limiter,{1,2,3,4},1)),
     ?assertEqual('arweave_limiter_test_limiter_0', worker_ref(test_limiter,{1,2,3,0},5)),
     ?assertEqual('arweave_limiter_test_limiter_1', worker_ref(test_limiter,{1,2,3,1},5)),

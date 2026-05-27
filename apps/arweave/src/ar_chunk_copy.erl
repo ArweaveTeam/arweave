@@ -9,6 +9,7 @@
 %%%  2. **Worker pool** (per-StoreID): receive `read_range' tasks and
 %%%     dispatch them to `ar_chunk_copy_worker' instances.
 %%%
+%% @ar_test: fast
 -module(ar_chunk_copy).
 
 -behaviour(gen_server).
@@ -20,7 +21,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_sup.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(READ_RANGE_CHUNKS, 400).
@@ -80,9 +80,9 @@ register_workers() ->
 	end.
 
 register_read_workers() ->
-	{ok, Config} = arweave_config:get_env(),
+	StorageModules = arweave_config:storage_modules(),
 	StoreIDs = [
-		ar_storage_module:id(StorageModule) || StorageModule <- Config#config.storage_modules
+		ar_storage_module:id(StorageModule) || StorageModule <- StorageModules
 	] ++ [?DEFAULT_MODULE],
 	{Workers, WorkerMap} =
 		lists:foldl(
@@ -561,9 +561,9 @@ test_process_queue() ->
 		queue:to_list(Worker3#worker_tasks.task_queue)).
 
 test_register_workers() ->
-	{ok, Config} = arweave_config:get_env(),
+	StorageModules = arweave_config:storage_modules(),
 	StoreIDs = [
-		ar_storage_module:id(StorageModule) || StorageModule <- Config#config.storage_modules],
+		ar_storage_module:id(StorageModule) || StorageModule <- StorageModules],
 	lists:foreach(
 		fun(StoreID) ->
 			?assertEqual(true, ready_for_work(StoreID))

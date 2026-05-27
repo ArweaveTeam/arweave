@@ -1,3 +1,4 @@
+%% @ar_test: fast, vdf
 -module(ar_unbalanced_merkle).
 
 -export([

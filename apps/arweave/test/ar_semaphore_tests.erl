@@ -1,3 +1,4 @@
+%% @ar_test: fast, vdf
 -module(ar_semaphore_tests).
 
 -include_lib("arweave/include/ar.hrl").

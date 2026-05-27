@@ -12,7 +12,6 @@
 -include("ar_consensus.hrl").
 -include("ar_mining.hrl").
 -include("ar_vdf.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -record(state, {
 	paused = true,
@@ -113,9 +112,8 @@ terminate(_Reason, _State) ->
 %%%===================================================================
 
 mine_block(State) ->
-	{ok, Config} = arweave_config:get_env(),
-	MiningAddr = Config#config.mining_addr,
-	StorageModules = Config#config.storage_modules,
+	MiningAddr = arweave_config:get([mining, address]),
+	StorageModules = arweave_config:storage_modules(),
 	mine_block2(pick_random_storage_module(StorageModules), State, MiningAddr, StorageModules).
 
 mine_block2(error, _State, _MiningAddr, _StorageModules) ->

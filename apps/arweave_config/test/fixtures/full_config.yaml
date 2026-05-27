@@ -1,0 +1,324 @@
+config_file: apps/arweave_config/test/fixtures/empty_config.json
+data_dir: "/tmp/arweave-data-full"
+log_dir: "/tmp/arweave-log-full"
+debug: false
+disable_device_limit: true
+chunk_storage_file_size: 1048576
+port: 1985
+requests_per_minute_limit: 2500
+internal_api_secret: "full-secret"
+disk_space_check_frequency: 10000
+logging:
+  formatter:
+    template: "%level %msg"
+    max_size: 9001
+    depth: 128
+    chars_limit: 4096
+  path: "/tmp/arweave-logs-full"
+  max_no_files: 25
+  max_no_bytes: 1048576
+  compress_on_rotate: true
+  sync_mode_qlen: 11
+  drop_mode_qlen: 201
+  flush_qlen: 1001
+  burst_limit_enable: false
+  burst_limit_max_count: 501
+  burst_limit_window_time: 1001
+  overload_kill_enable: false
+  overload_kill_qlen: 20001
+  overload_kill_mem_size: 3000001
+  overload_kill_restart_after: 5001
+  handlers:
+    debug:
+      max_no_files: 26
+      max_no_bytes: 1048577
+      sync_mode_qlen: 12
+      drop_mode_qlen: 202
+      flush_qlen: 1002
+      burst_limit_enable: true
+      burst_limit_max_count: 502
+      burst_limit_window_time: 1002
+      overload_kill_enable: true
+      overload_kill_qlen: 20002
+      overload_kill_mem_size: 3000002
+      overload_kill_restart_after: 5002
+      compress_on_rotate: false
+      formatter:
+        chars_limit: 4097
+        depth: 129
+        max_size: 9002
+        template: "%level %msg"
+    http:
+      api:
+        max_no_files: 27
+        max_no_bytes: 1048578
+        sync_mode_qlen: 13
+        drop_mode_qlen: 203
+        flush_qlen: 1003
+        burst_limit_enable: true
+        burst_limit_max_count: 503
+        burst_limit_window_time: 1003
+        overload_kill_enable: true
+        overload_kill_qlen: 20003
+        overload_kill_mem_size: 3000003
+        overload_kill_restart_after: 5003
+        compress_on_rotate: false
+        formatter:
+          chars_limit: 4098
+          max_size: 9003
+          depth: 130
+cm:
+  enabled: false
+  api_secret: "cm-secret"
+  out_batch_timeout: 21
+  poll_interval: 60001
+config:
+  http:
+    enabled: false
+    listen:
+      port: 4892
+      address: 127.0.0.1
+defrag:
+  enabled: true
+  threshold: 1000
+disk_pool:
+  data_root_expiration_time: 10000
+  jobs: 2
+  max_buffer_size: 100000
+  max_data_root_buffer_size: 100000000
+genesis:
+  init: true
+  difficulty: 42
+mining:
+  enabled: true
+  address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+  cache_size: 3
+  hashing_threads: 4
+network:
+  server:
+    http:
+      active_n: 101
+      inactivity_timeout: 300001
+      linger_timeout: 1001
+      request_timeout: 5001
+    tcp:
+      backlog: 1025
+      delay_send: true
+      keepalive: false
+      linger: true
+      linger_timeout: 1
+      listener_shutdown: 5001
+      max_connections: 512
+      nodelay: false
+      num_acceptors: 501
+      send_timeout: 15001
+      send_timeout_close: false
+    transport:
+      idle_timeout: 10001
+    shutdown_connection_timeout: 31
+    shutdown_mode: shutdown
+    socket_backend: inet
+  client:
+    http:
+      closing_timeout: 15001
+      keepalive: 60001
+    tcp:
+      delay_send: true
+      keepalive: false
+      linger: true
+      linger_timeout: 1
+      nodelay: false
+      send_timeout: 15001
+      send_timeout_close: false
+packing:
+  workers: 25
+  cache_size: 20000
+  repack:
+    batch_size: 200
+    cache_size: 2048
+  entropy:
+    cache_size: 2000
+    workers: 16
+peers:
+  1.2.3.4:
+    trusted: true
+  5.6.7.8:1985:
+    block_gossip: true
+  192.168.1.2:
+    local: true
+  6.6.6.6:
+    cm_peer: true
+  7.7.7.7:
+    cm_exit: true
+  9.9.9.9:
+    vdf_client: true
+  10.10.10.10:
+    vdf_server: true
+pool:
+  is_client: true
+  is_server: false
+  api_key: "pool-key"
+  server_address: "http://pool.local"
+  worker_name: "worker-a"
+randomx:
+  jit: false
+  hardware_aes: false
+  large_pages: true
+rocksdb:
+  flush_interval: 1801
+  wal_sync_interval: 61
+transactions:
+  blocklist:
+    files:
+      - "blacklist-a.txt"
+      - "blacklist-b.txt"
+    urls:
+      - "http://blocklist.local/list.txt"
+  allowlist:
+    files:
+      - "allowlist-a.txt"
+    urls:
+      - "http://allowlist.local/list.txt"
+verify:
+  mode: log
+  samples: 10
+webhooks:
+  hook_a:
+    enabled: true
+    url: "https://example.com/hook"
+    events:
+      - transaction
+      - block
+    headers:
+      - ["Authorization", "Bearer 123"]
+semaphores:
+  get_chunk:
+    limit: 999
+  get_and_pack_chunk:
+    limit: 100
+  get_tx_data:
+    limit: 101
+  post_chunk:
+    limit: 102
+  get_block_index:
+    limit: 103
+  get_wallet_list:
+    limit: 104
+  get_sync_record:
+    limit: 105
+  post_tx:
+    limit: 106
+  get_reward_history:
+    limit: 107
+  get_tx:
+    limit: 108
+  get_data_roots:
+    limit: 109
+features:
+  disk_logging: true
+  double_check_nonce_limiter: true
+  extended_block_validation_trace: true
+  http_logging: true
+  miner_logging: false
+  pack_served_chunks: true
+  remove_orphaned_storage_module_data: true
+  serve_html_data: false
+  serve_tx_data_without_limits: true
+  serve_wallet_lists: true
+  subfield_queries: true
+  time_syncing: false
+gossip:
+  block:
+    poll_interval: 10
+    pollers: 100
+    max_peers: 60
+    throttle_by_ip_interval: 11
+    throttle_by_solution_interval: 12
+  tx:
+    max_emitters: 4
+    max_peers: 8
+    polling_enabled: false
+    post_timeout: 50
+  data_roots:
+    syncing_enabled: false
+    max_duplicates: 7
+  header_sync_jobs: 1
+  header_cache_size: 1024
+join:
+  auto: false
+  workers: 2
+  start_from_latest_state: true
+  start_from_state: /tmp/state.bin
+  start_from_block: lfoR_PyKV6t7Z6Xi2QJZlZ0JWThh0Ke7Zc5Q82CSshUhFGcjiYufP234ph1mVofX
+storage_modules:
+  - partition: 0
+    packing:
+      format: unpacked
+    defrag: true
+  - range:
+      start: 1
+      end: 1000
+    packing:
+      format: composite
+      address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+      difficulty: 7
+    defrag: false
+  - partition: 3
+    packing:
+      format: unpacked
+    defrag: false
+repack_modules:
+  - partition: 4
+    from:
+      format: unpacked
+      address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+    to:
+      format: replica_2_9
+      address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+  - range:
+      start: 1000
+      end: 2000
+    from:
+      format: spora_2_6
+      address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+    to:
+      format: unpacked
+      address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+sync:
+  cache_size_limit: 10000
+  max_concurrent_peer_scans: 101
+  request_packed_chunks: true
+  local_peers_only: true
+  jobs: 3
+vdf:
+  algorithm: hiopt_m4
+  compute: auto
+  is_public_server: true
+  pull: false
+  max_validation_threads: 2
+  max_last_step_validation_threads: 3
+limiter:
+  chunk: &limiter_full
+    sliding_window_limit: 50
+    sliding_window_duration: 500
+    leaky_rate_limit: 7000
+    leaky_tick_ms: 60000
+    tick_reduction: 25
+    concurrency_limit: 250
+    timestamp_cleanup_tick_ms: 60000
+    timestamp_cleanup_expiry: 90000
+    is_manual_reduction_disabled: true
+    no_limit: false
+    number_of_workers: 8
+  data_sync_record: *limiter_full
+  recent_hash_list_diff: *limiter_full
+  block_index: *limiter_full
+  wallet_list: *limiter_full
+  get_vdf: *limiter_full
+  get_vdf_session: *limiter_full
+  get_previous_vdf_session: *limiter_full
+  general: *limiter_full
+  metrics: *limiter_full
+  local_peers: *limiter_full
+  test_limiter: *limiter_full
+  test_limiter_2: *limiter_full

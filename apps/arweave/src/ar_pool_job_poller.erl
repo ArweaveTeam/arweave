@@ -39,9 +39,10 @@ handle_call(Request, _From, State) ->
 
 handle_cast(fetch_jobs, State) ->
 	PrevOutput = (ar_pool:get_latest_job())#job.output,
-	{ok, Config} = arweave_config:get_env(),
+	CMEnabled = arweave_config:get([cm, enabled]),
+	CMExitPeer = arweave_config:get_peer(cm_exit),
 	Peer =
-		case {Config#config.coordinated_mining, Config#config.cm_exit_peer} of
+		case {CMEnabled, CMExitPeer} of
 			{true, not_set} ->
 				%% We are a CM exit node.
 				ar_pool:pool_peer();

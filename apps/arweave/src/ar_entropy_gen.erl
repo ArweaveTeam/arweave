@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_entropy_gen).
 
 -behaviour(gen_server).
@@ -13,7 +14,6 @@
 -include("ar_sup.hrl").
 -include("ar_consensus.hrl").
 
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -45,7 +45,8 @@ name(StoreID) ->
 	list_to_atom("ar_entropy_gen_" ++ ar_storage_module:label(StoreID)).
 
 register_workers(Module) ->
-	{ok, Config} = arweave_config:get_env(),
+	StorageModules = arweave_config:storage_modules(),
+	RepackInPlaceModules = arweave_config:repack_modules(),
 	ConfiguredWorkers = lists:filtermap(
 		fun(StorageModule) ->
 				StoreID = ar_storage_module:id(StorageModule),
@@ -61,9 +62,9 @@ register_workers(Module) ->
 						false
 				end
 		end,
-		Config#config.storage_modules
+		StorageModules
 	),
-	 
+
 	RepackInPlaceWorkers = lists:filtermap(
 		fun({StorageModule, ToPacking}) ->
 				StoreID = ar_storage_module:id(StorageModule),
@@ -84,7 +85,7 @@ register_workers(Module) ->
 						false
 				end
 		end,
-		Config#config.repack_in_place_storage_modules
+		RepackInPlaceModules
 	),
 
 	ConfiguredWorkers ++ RepackInPlaceWorkers.

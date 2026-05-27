@@ -1,4 +1,5 @@
 %%% @doc A set of non-overlapping intervals.
+%% @ar_test: fast
 -module(ar_intervals).
 
 -export([new/0, from_list/1, add/3, delete/3, cut/2, is_inside/2, sum/1, union/2, serialize/2,

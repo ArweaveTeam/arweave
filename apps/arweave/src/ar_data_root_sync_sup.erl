@@ -10,8 +10,6 @@
 
 -include("ar_sup.hrl").
 
--include_lib("arweave_config/include/arweave_config.hrl").
-
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -28,12 +26,12 @@ init([]) ->
 	{ok, {{one_for_one, 5, 10}, Workers}}.
 
 register_workers() ->
-	{ok, Config} = arweave_config:get_env(),
+	StorageModules = arweave_config:storage_modules(),
 	lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
 			Name = ar_data_root_sync:name(StoreID),
 			?CHILD_WITH_ARGS(ar_data_root_sync, worker, Name, [StoreID])
 		end,
-		Config#config.storage_modules
+		StorageModules
 	).

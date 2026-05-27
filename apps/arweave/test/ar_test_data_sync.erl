@@ -41,13 +41,10 @@ setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 			Value ->
 				{Value, Options}
 		end,
-	{ok, Config} = arweave_config:get_env(),
-	Options3 = Options2#{ config => Config#config{ 
-		enable = Config#config.enable ++ [pack_served_chunks] } },
+	Options3 = Options2#{ config => #{ [features, pack_served_chunks] => true } },
 	ar_test_node:start(Options3),
-	{ok, PeerConfig} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
-	ar_test_node:start_peer(peer1, B0, PeerAddr, PeerConfig#config{ 
-		enable = Config#config.enable ++ [pack_served_chunks] }),
+	ar_test_node:start_peer(peer1, B0, PeerAddr,
+		#{ [features, pack_served_chunks] => true }),
 	ar_test_node:connect_to_peer(peer1),
 	Wallet.
 
@@ -310,10 +307,10 @@ get_tx_offset(Node, TXID) ->
 	}).
 
 get_tx_data(TXID) ->
-  {ok, Config} = arweave_config:get_env(),
+	Port = arweave_config:get([port]),
 	ar_http:req(#{
 		method => get,
-		peer => {127, 0, 0, 1, Config#config.port},
+		peer => {127, 0, 0, 1, Port},
 		path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data"
 	}).
 

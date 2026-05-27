@@ -39,16 +39,23 @@
 -endif.
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -define(UNEXPECTED_ERROR_STR, "unexpected").
 
+%% Wall-clock limit on a `register_or_reject_call/2' gen_server hop.
+%% Calls that exceed it are treated as `{reject, error, _}'.
+-define(CALL_TIMEOUT, 1000).
+
 %%% API
-start_link(LimiterRef, Config) ->
-    gen_server:start_link({local, LimiterRef}, ?MODULE, [Config], []).
+%% `LimiterRef' is the registered worker name (one of several per
+%% group when sharded); `GroupID' is the limiter group atom (e.g.
+%% `chunk', `general'). Both are needed because the worker reads its
+%% config via `arweave_config:get([limiter, GroupID, _])'.
+start_link(LimiterRef, GroupID) when is_atom(GroupID) ->
+    gen_server:start_link({local, LimiterRef}, ?MODULE, [GroupID], []).
 
 info(LimiterRef) ->
-    WorkersNum = arweave_limiter_config:get_number_of_workers(LimiterRef),
+    WorkersNum = arweave_config:get([limiter, LimiterRef, number_of_workers]),
     lists:foldl(fun(N, Acc) -> merge_info_maps(LimiterRef, N, Acc) end,
                 #{sliding_timestamps => #{},
                   leaky_tokens => #{},
@@ -65,7 +72,7 @@ do_register_or_reject_call(LimiterRef, Peer) ->
     LimiterWorkerRef = ref_to_worker_ref(LimiterRef, Peer),
     try gen_server:call(LimiterWorkerRef,
                         {register_or_reject, Peer},
-                        ?DEFAULT_ARWEAVE_LIMITER_CALL_TIMEOUT) of
+                        ?CALL_TIMEOUT) of
         {reject, Reason, _HeadersInfo} = Rejection ->
             prometheus_counter:inc(ar_limiter_rejected_total,
                                    [atom_to_list(LimiterRef), atom_to_list(Reason)]),
@@ -105,32 +112,33 @@ stop(LimiterRef) ->
     gen_server:stop(LimiterRef).
 
 %% gen_server callbacks
-init([Config] = _Args) ->
+%%
+%% Every field is read from `arweave_config:get/1' against the canonical
+%% `[limiter, GroupID, Field]' key. Defaults live exclusively in
+%% `arweave_config_options_limiter'; tests that need non-default values
+%% call `arweave_config:set/2' on the same keys before `start_link/2'.
+init([GroupID]) when is_atom(GroupID) ->
     process_flag(priority, high),
 
-    ID = atom_to_list(maps:get(id, Config)),
+    ID = atom_to_list(GroupID),
 
-    IsDisabled = maps:get(no_limit, Config, false),
-    IsManualReductionDisabled = maps:get(is_manual_reduction_disabled, Config, false),
-
-    LeakyTickMs = maps:get(leaky_tick_ms, Config, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_INTERVAL),
-    TimestampCleanupTickMs = maps:get(timestamp_cleanup_tick_ms, Config,
-                                      ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_INTERVAL),
-    TimestampCleanupExpiry = maps:get(timestamp_cleanup_expiry, Config,
-                                      ?DEFAULT_HTTP_API_LIMITER_TIMESTAMP_CLEANUP_EXPIRY),
-    LeakyRateLimit = maps:get(leaky_rate_limit, Config, ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_LIMIT),
-    ConcurrencyLimit = maps:get(concurrency_limit, Config, ?DEFAULT_HTTP_API_LIMITER_GENERAL_CONCURRENCY_LIMIT),
-    TickReduction = maps:get(tick_reduction, Config,
-                             ?DEFAULT_HTTP_API_LIMITER_GENERAL_LEAKY_TICK_REDUCTION),
-    SlidingWindowDuration = maps:get(sliding_window_duration, Config,
-                                     ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_DURATION),
-    SlidingWindowLimit = maps:get(sliding_window_limit, Config,
-                                  ?DEFAULT_HTTP_API_LIMITER_GENERAL_SLIDING_WINDOW_LIMIT),
+    IsDisabled = arweave_config:get([limiter, GroupID, no_limit]),
+    IsManualReductionDisabled = arweave_config:get([limiter, GroupID, is_manual_reduction_disabled]),
+    LeakyTickMs = arweave_config:get([limiter, GroupID, leaky_tick_ms]),
+    TimestampCleanupTickMs = arweave_config:get([limiter, GroupID, timestamp_cleanup_tick_ms]),
+    TimestampCleanupExpiry = arweave_config:get([limiter, GroupID, timestamp_cleanup_expiry]),
+    LeakyRateLimit = arweave_config:get([limiter, GroupID, leaky_rate_limit]),
+    ConcurrencyLimit = arweave_config:get([limiter, GroupID, concurrency_limit]),
+    TickReduction = arweave_config:get([limiter, GroupID, tick_reduction]),
+    SlidingWindowDuration = arweave_config:get([limiter, GroupID, sliding_window_duration]),
+    SlidingWindowLimit = arweave_config:get([limiter, GroupID, sliding_window_limit]),
 
     Now = arweave_limiter_time:ts_now(),
-    NextLBTickTS = Now + LeakyTickMs,
-    {ok, LeakyRef} = timer:send_interval(LeakyTickMs, self(), {tick, leaky_bucket_reduction}),
-    {ok, TSRef} = timer:send_interval(TimestampCleanupTickMs, self(), {tick, sliding_window_timestamp_cleanup}),
+    %% Bypass groups (`no_limit => true') carry `infinity' for every
+    %% timer interval and never need ticks; skip timer creation so
+    %% `timer:send_interval/3' isn't handed a non-integer.
+    {LeakyRef, TSRef, NextLBTickTS} = start_tick_timers(
+        IsDisabled, LeakyTickMs, TimestampCleanupTickMs, Now),
     {ok, #{
            id => ID,
            is_disabled => IsDisabled,
@@ -151,6 +159,15 @@ init([Config] = _Args) ->
            sliding_timestamps => #{} %% Peer -> Ordered list of timestamps
           }}.
 
+start_tick_timers(true, _LeakyTickMs, _TimestampCleanupTickMs, _Now) ->
+    {undefined, undefined, infinity};
+start_tick_timers(false, LeakyTickMs, TimestampCleanupTickMs, Now) ->
+    {ok, LeakyRef} = timer:send_interval(LeakyTickMs, self(),
+                                         {tick, leaky_bucket_reduction}),
+    {ok, TSRef} = timer:send_interval(TimestampCleanupTickMs, self(),
+                                      {tick, sliding_window_timestamp_cleanup}),
+    {LeakyRef, TSRef, Now + LeakyTickMs}.
+
 handle_call(reset_all, _From, State) ->
     {reply, ok, State#{concurrent_monitors => #{},
                        leaky_tokens => #{},
@@ -160,18 +177,16 @@ handle_call({register_or_reject, _Peer}, {_FromPid, _},
     LimiterHeaders = #{policies => generate_policy(State)},
     {reply, {register, no_limiting_applied, LimiterHeaders}, State};
 handle_call({register_or_reject, _Peer}, {_FromPid, _},
-            State = #{id := _Id,
-                      concurrency_limit := ConcurrencyLimit,
+            State = #{concurrency_limit := ConcurrencyLimit,
                       concurrent_monitors := ConcurrentMonitors})
   when map_size(ConcurrentMonitors) >= ConcurrencyLimit ->
-    %% Concurrency Hard Limit
+    %% Concurrency Hard Limit — group-wide, not per-peer.
     Policies = generate_policy(State),
     HeadersInfo = #{expiring_limit => ConcurrencyLimit,
                     remaining      => 0,
                     reset_seconds  => 1,
                     policies       => Policies},
     {reply, {reject, concurrency, HeadersInfo}, State};
-
 handle_call({register_or_reject, Peer}, {FromPid, _},
             State = #{id := ID,
                       is_disabled := false,
@@ -222,9 +237,9 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
             NewMonitors = register_concurrent(FromPid, ConcurrentMonitors),
             SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
             NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
-            SwRemaining = max(0, SlidingWindowLimit
+            SWRemaining = max(0, SlidingWindowLimit
                               - length(SlidingTimestampsForPeer1)),
-            HeadersInfo = build_headers_info_sliding(SwRemaining, SlidingTimestampsForPeer1,
+            HeadersInfo = build_headers_info_sliding(SWRemaining, SlidingTimestampsForPeer1,
                                                      Now, Policies),
             {reply, {register, sliding, HeadersInfo},
              State#{sliding_timestamps => NewSlidingTimestamps,
@@ -286,7 +301,8 @@ handle_info({tick, leaky_bucket_reduction},
     {noreply, State#{leaky_tokens => NewTokens, next_leaky_tick_ts => NextLBTickTS}};
 handle_info({'DOWN', MonitorRef, process, Pid, Reason},
             State = #{concurrent_monitors := ConcurrentMonitors}) ->
-    NewConcurrentMonitors = remove_concurrent(MonitorRef, Pid, Reason, ConcurrentMonitors),
+    NewConcurrentMonitors =
+        remove_concurrent(MonitorRef, Pid, Reason, ConcurrentMonitors),
     {noreply, State#{concurrent_monitors => NewConcurrentMonitors}};
 handle_info(Info, State = #{id := ID}) ->
     ?LOG_WARNING([{event, unhandled_info}, {id, ID}, {module, ?MODULE}, {info, Info}]),
@@ -361,15 +377,15 @@ fold_decrease_rate(ID, Key, Counter, Acc, TickReduction) ->
     prometheus_counter:inc(ar_limiter_leaky_tick_token_reductions_total, [ID], TickReduction),
     maps:put(Key, Counter-TickReduction, Acc).
 
-%% Concurrency magic
+%% Concurrency tracking — group-wide (one slot per in-flight call,
+%% regardless of peer). The map's key is the monitor ref, value is
+%% unused; we keep it as a map so concurrency size is `map_size/1'.
 register_concurrent(Pid, ConcurrentMonitors) ->
     MonitorRef = erlang:monitor(process, Pid),
-    NewConcurrentMonitors = maps:put(MonitorRef, true, ConcurrentMonitors),
-    NewConcurrentMonitors.
+    maps:put(MonitorRef, true, ConcurrentMonitors).
 
 remove_concurrent(MonitorRef, _Pid, _Reason, ConcurrentMonitors) ->
-    NewConcurrentMonitors = maps:remove(MonitorRef, ConcurrentMonitors),
-    NewConcurrentMonitors.
+    maps:remove(MonitorRef, ConcurrentMonitors).
 
 filter_state_for_config(#{id := ID,
                           is_disabled := IsDisabled,
@@ -413,14 +429,14 @@ merge_info_maps(LimiterRef, N, #{concurrent_monitors := AccMon,
       leaky_tokens := InfoTokens,
       sliding_timestamps := InfoTS} = gen_server:call(LimiterWorkerRef, get_info),
 
-    %% The keys are either: Process disjuct sets of monitor references, or
-    %% disjoint sets of peers.
+    %% The keys are either: process disjoint sets of monitor references,
+    %% or disjoint sets of peers.
     #{concurrent_monitors => maps:merge(InfoMon, AccMon),
       leaky_tokens => maps:merge(InfoTokens, AccTokens),
       sliding_timestamps => maps:merge(InfoTS, AccInfoTS)}.
 
 ref_to_worker_ref(LimiterRef, Peer) ->
-    WorkersNum = arweave_limiter_config:get_number_of_workers(LimiterRef),
+    WorkersNum = arweave_config:get([limiter, LimiterRef, number_of_workers]),
     arweave_limiter_util:worker_ref(LimiterRef, Peer, WorkersNum).
 
 generate_policy(#{concurrency_limit := ConcurrencyLimit,
@@ -469,3 +485,4 @@ sliding_window_reset_seconds([Oldest | _], Now) when Oldest >= Now -> 0;
 sliding_window_reset_seconds([Oldest | _], Now) ->
     %% Timestamps are monotonic ms
     max(1, (Now - Oldest) div 1000).
+

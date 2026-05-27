@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_data_sync_records_footprints_test).
 
 -include_lib("eunit/include/eunit.hrl").

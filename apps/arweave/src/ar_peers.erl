@@ -1,9 +1,10 @@
 %%% @doc Tracks the availability and performance of the network peers.
+%% @ar_test: isolated
 -module(ar_peers).
 -behaviour(gen_server).
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_peers.hrl").
+-include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -export([
 	add_peer/2,
@@ -229,8 +230,7 @@ resolve_peers([RawPeer | Peers]) ->
 	end.
 
 get_trusted_peers() ->
-	{ok, Config} = arweave_config:get_env(),
-	case Config#config.peers of
+	case arweave_config:get_peers(trusted) of
 		[] ->
 			ArweavePeers = [
 				"asia.peers.arweave.xyz",
@@ -245,8 +245,7 @@ get_trusted_peers() ->
 	end.
 -else.
 get_trusted_peers() ->
-	{ok, Config} = arweave_config:get_env(),
-	Config#config.peers.
+	arweave_config:get_peers(trusted).
 -endif.
 
 %% @doc Return true if the given peer has a public IPv4 address.
@@ -517,8 +516,8 @@ cache_update_peers([Peer|Rest], Buffer, State) ->
 %%%===================================================================
 
 init([]) ->
-	{ok, Config} = arweave_config:get_env(),
-	case Config#config.verify of
+	VerifyMode = arweave_config:get([verify, mode]),
+	case VerifyMode of
 		false ->
 			process_flag(trap_exit, true),
 			ok = ar_events:subscribe(block),
@@ -866,8 +865,8 @@ ping_peers(Peers) ->
 %% Do not filter out loopback IP addresses with custom port in the debug mode
 %% to allow multiple local VMs to peer with each other.
 is_loopback_ip({127, _, _, _, Port}) ->
-	{ok, Config} = arweave_config:get_env(),
-	Port == Config#config.port;
+	ConfigPort = arweave_config:get([port]),
+	Port == ConfigPort;
 is_loopback_ip({_, _, _, _, _}) ->
 	false.
 -else.

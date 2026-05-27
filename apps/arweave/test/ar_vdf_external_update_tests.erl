@@ -1,3 +1,4 @@
+%% @ar_test: vdf
 -module(ar_vdf_external_update_tests).
 
 -export([init/2]).
@@ -18,19 +19,19 @@
 %% -------------------------------------------------------------------------------------------------
 
 setup_external_update() ->
-	{ok, Config} = arweave_config:get_env(),
+	Config = arweave_config:snapshot(),
 	[B0] = ar_weave:init(),
 	%% Start the testnode with a configured VDF server so that it doesn't compute its own VDF -
 	%% this is necessary so that we can test the behavior of apply_external_update without any
 	%% auto-computed VDF steps getting in the way.
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
-		Config#config{ 
-			nonce_limiter_server_trusted_peers = [
-				ar_util:format_peer(vdf_server_1()),
-				ar_util:format_peer(vdf_server_2()) 
-			],
-			mine = true
+		#{
+			[peers, ar_util:format_peer(vdf_server_1()),
+				vdf_server] => true,
+			[peers, ar_util:format_peer(vdf_server_2()),
+				vdf_server] => true,
+			[mining, enabled] => true
 		}
 	),
 	ets:new(computed_output, [named_table, ordered_set, public]),
@@ -45,7 +46,7 @@ setup_external_update() ->
 
 cleanup_external_update({Pid, Config}) ->
 	exit(Pid, kill),
-	ok = arweave_config:set_env(Config),
+	ok = arweave_config:restore(Config),
 	ets:delete(add_task),
 	ets:delete(computed_output).
 

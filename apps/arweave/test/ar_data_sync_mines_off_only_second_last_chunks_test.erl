@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_data_sync_mines_off_only_second_last_chunks_test).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -6,11 +7,10 @@
 -include("ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--import(ar_test_node, [test_with_mocked_functions/2]).
-
 mines_off_only_second_last_chunks_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
-			fun test_mines_off_only_second_last_chunks/0).
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
+			fun test_mines_off_only_second_last_chunks/0, 900).
 
 mock_reset_frequency() ->
 	{ar_nonce_limiter, get_reset_frequency, fun() -> 5 end}.
@@ -46,11 +46,11 @@ test_mines_off_only_second_last_chunks() ->
 					%% bound based on the nonce limiter entropy reset, but ar_data_sync waits
 					%% for ?SEARCH_SPACE_UPPER_BOUND_DEPTH confirmations before packing the
 					%% chunks.
-					{ok, Config} = arweave_config:get_env(),
+					StorageModules = arweave_config:storage_modules(),
 					lists:foreach(
 						fun(O) ->
 							[ar_chunk_storage:delete(O, ar_storage_module:id(Module))
-									|| Module <- Config#config.storage_modules]
+									|| Module <- StorageModules]
 						end,
 						lists:seq(?DATA_CHUNK_SIZE, ar_block:strict_data_split_threshold(),
 								?DATA_CHUNK_SIZE)

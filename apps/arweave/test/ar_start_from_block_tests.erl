@@ -109,13 +109,11 @@ test_start_from_block() ->
 
 
 restart_from_block(Peer, BH) ->
-    {ok, Config} = ar_test_node:get_config(Peer),
-    ok = ar_test_node:set_config(Peer, Config#config{
-        start_from_latest_state = false,
-        start_from_block = BH,
-        block_pollers = 0
+    ok = ar_test_node:restart_with_config(Peer, #{
+        [join, start_from_latest_state] => false,
+        [join, start_from_block] => BH,
+        [gossip, block, pollers] => 0
     }),
-    ar_test_node:restart(Peer),
     ar_test_node:remote_call(Peer, ar_test_node, wait_until_syncs_genesis_data, []).
 
 assert_start_from(ExpectedPeer, Peer, Height) ->

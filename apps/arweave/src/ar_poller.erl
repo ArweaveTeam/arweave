@@ -18,7 +18,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 %% The frequency of choosing the peers to poll.
 -ifdef(AR_TEST).
@@ -61,11 +60,11 @@ init(Workers) ->
 		false ->
 			ok
 	end,
-	{ok, Config} = arweave_config:get_env(),
-	{ok, #state{ 
+	TrustedPeers = arweave_config:get_peers(trusted),
+	{ok, #state{
 		workers = Workers,
 		worker_count = length(Workers),
-		in_sync_trusted_peers = sets:from_list(Config#config.peers) 
+		in_sync_trusted_peers = sets:from_list(TrustedPeers)
 	}}.
 
 handle_call(Request, _From, State) ->
@@ -97,8 +96,8 @@ handle_cast(collect_peers, State) ->
 
 handle_cast({peer_out_of_sync_timeout, Peer}, State) ->
 	#state{ in_sync_trusted_peers = Set } = State,
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(Peer, Config#config.peers) of
+	TrustedPeers = arweave_config:get_peers(trusted),
+	case lists:member(Peer, TrustedPeers) of
 		false ->
 			{noreply, State};
 		true ->
@@ -107,8 +106,8 @@ handle_cast({peer_out_of_sync_timeout, Peer}, State) ->
 
 handle_cast({peer_out_of_sync, Peer}, State) ->
 	#state{ in_sync_trusted_peers = Set } = State,
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(Peer, Config#config.peers) of
+	TrustedPeers = arweave_config:get_peers(trusted),
+	case lists:member(Peer, TrustedPeers) of
 		false ->
 			{noreply, State};
 		true ->
@@ -118,8 +117,8 @@ handle_cast({peer_out_of_sync, Peer}, State) ->
 				{false, true} ->
 					ar_mining_stats:pause_performance_reports(60000),
 					ar_util:terminal_clear(),
-					TrustedPeersStr = string:join([ar_util:format_peer(Peer2)
-							|| Peer2 <- Config#config.peers], ", "),
+					TrustedPeersStr = lists:join(<<", ">>,
+							[ar_util:format_peer(Peer2) || Peer2 <- TrustedPeers]),
 					?LOG_INFO([{event, node_out_of_sync}, {peer, ar_util:format_peer(Peer)},
 						{trusted_peers, TrustedPeersStr}]),
 					ar:console("WARNING: The node is out of sync with all of the specified "

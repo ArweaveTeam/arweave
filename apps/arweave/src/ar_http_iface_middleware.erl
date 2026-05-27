@@ -174,8 +174,7 @@ handle(Peer, Req, Pid) ->
 		running ->
 			Method = cowboy_req:method(Req),
 			SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-			{ok, Config} = arweave_config:get_env(),
-			case lists:member(http_logging, Config#config.enable) of
+			case arweave_config:feature_enabled(http_logging) of
 				true ->
 					?LOG_INFO([
 						{event, http_request},
@@ -338,11 +337,10 @@ handle(<<"GET">>, [<<"unconfirmed_tx2">>, Hash], Req, _Pid) ->
 %% served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(serve_html_data, Config#config.disable) of
-		true ->
+	case arweave_config:feature_enabled(serve_html_data) of
+		false ->
 			{421, #{}, <<"Serving HTML data is disabled on this node.">>, Req};
-		_ ->
+		true ->
 			case ar_util:safe_decode(Hash) of
 				{error, invalid} ->
 					{400, #{}, <<"Invalid hash.">>, Req};
@@ -861,7 +859,7 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 	{200, #{},
 		ar_serialize:jsonify(
 			[
-				list_to_binary(ar_util:format_peer(P))
+				ar_util:format_peer(P)
 			||
 				P <- ar_peers:get_peers(current),
 				P /= ar_http_util:arweave_peer(Req),
@@ -1405,7 +1403,7 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"state">>], Req, _Pid) ->
 					PartitionList
 				),
 				Val = {[
-					{peer, list_to_binary(ar_util:format_peer(Peer))},
+					{peer, ar_util:format_peer(Peer)},
 					{alive, AliveStatus},
 					{partition_table, Table}
 				]},
@@ -1913,9 +1911,8 @@ handle_post_tx({Req, Pid, Encoding}) ->
 		{error, timeout} ->
 			{503, #{}, <<>>, Req};
 		{ok, TX, Req2} ->
-			{ok, Config} = arweave_config:get_env(),
-			case acquire_http_semaphore(post_tx,
-					Config#config.post_tx_timeout * 1000) of
+			PostTxTimeout = arweave_config:get([gossip, tx, post_timeout]),
+			case acquire_http_semaphore(post_tx, PostTxTimeout * 1000) of
 				{error, timeout} ->
 					{503, #{}, <<>>, Req2};
 				ok ->
@@ -2088,8 +2085,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 							{{true, Packing}, _StoreID} when RequestedPacking == any ->
 								acquire_chunk_semaphore(get_chunk, Packing, Req);
 							{{true, _}, _StoreID} ->
-								{ok, Config} = arweave_config:get_env(),
-								case lists:member(pack_served_chunks, Config#config.enable) of
+								case arweave_config:feature_enabled(pack_served_chunks) of
 									false ->
 										{none, {reply, {404, #{}, <<>>, Req}}};
 									true ->
@@ -2355,10 +2351,9 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 	Parent = self(),
 	#{ chunk := Chunk, data_path := DataPath, data_size := TXSize, offset := Offset,
 			data_root := DataRoot } = Proof,
-	Peer = ar_http_util:arweave_peer(Req),
 	spawn(fun() ->
 			Parent ! ar_disk_pool:add_chunk(
-				DataRoot, DataPath, Chunk, Offset, TXSize, Peer)
+				DataRoot, DataPath, Chunk, Offset, TXSize)
 			end),
 	receive
 		ok ->
@@ -2378,13 +2373,13 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 	end.
 
 check_internal_api_secret(Req) ->
-	{ok, Config} = arweave_config:get_env(),
+	Secret = arweave_config:get([internal_api_secret]),
 	check_api_secret(
-		<<"x-internal-api-secret">>, Config#config.internal_api_secret, <<"Internal API">>, Req).
+		<<"x-internal-api-secret">>, Secret, <<"Internal API">>, Req).
 
 check_cm_api_secret(Req) ->
-	{ok, Config} = arweave_config:get_env(),
-	check_api_secret(<<"x-cm-api-secret">>, Config#config.cm_api_secret, <<"CM API">>, Req).
+	Secret = arweave_config:get([cm, api_secret]),
+	check_api_secret(<<"x-cm-api-secret">>, Secret, <<"CM API">>, Req).
 
 check_api_secret(Header, Secret, APIName, Req) ->
 	Reject = fun(Msg) ->
@@ -2616,9 +2611,9 @@ check_block_receive_timestamp(H) ->
 	end.
 
 handle_post_partial_solution(Req, Pid) ->
-	{ok, Config} = arweave_config:get_env(),
+	IsPoolServer = arweave_config:get([pool, is_server]),
 	CMExitNode = ar_coordination:is_exit_peer() andalso ar_pool:is_client(),
-	case {Config#config.is_pool_server, CMExitNode} of
+	case {IsPoolServer, CMExitNode} of
 		{false, false} ->
 			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
 		{true, _} ->
@@ -2668,9 +2663,9 @@ handle_post_partial_solution_cm_exit_peer_pool_client(Req, Pid) ->
 	end.
 
 handle_get_jobs(PrevOutput, Req) ->
-	{ok, Config} = arweave_config:get_env(),
+	IsPoolServer = arweave_config:get([pool, is_server]),
 	CMExitNode = ar_coordination:is_exit_peer() andalso ar_pool:is_client(),
-	case {Config#config.is_pool_server, CMExitNode} of
+	case {IsPoolServer, CMExitNode} of
 		{false, false} ->
 			{501, #{}, jiffy:encode(#{ error => configuration }), Req};
 		{true, _} ->
@@ -2866,9 +2861,8 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 		unavailable ->
 			{404, #{}, <<"Not Found.">>, Req};
 		B ->
-			{ok, Config} = arweave_config:get_env(),
 			case {B#block.height >= ar_fork:height_2_2(),
-					lists:member(serve_wallet_lists, Config#config.enable)} of
+					arweave_config:feature_enabled(serve_wallet_lists)} of
 				{true, false} ->
 					{400, #{},
 						jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
@@ -2906,8 +2900,7 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 %% field :: nonce | previous_block | timestamp | last_retarget | diff | height | hash |
 %%			indep_hash | txs | hash_list | wallet_list | reward_addr | tags | reward_pool
 process_request(get_block, [Type, ID, Field], Req) ->
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(subfield_queries, Config#config.enable) of
+	case arweave_config:feature_enabled(subfield_queries) of
 		true ->
 			case find_block(Type, ID) of
 				{error, height_not_integer} ->
@@ -3197,7 +3190,7 @@ handle_post_vdf(Req, Pid) ->
 	end.
 
 handle_post_vdf2(Req, Pid, Peer) ->
-	case ar_config:pull_from_remote_vdf_server() of
+	case arweave_config:get([vdf, pull]) of
 		true ->
 			%% We are pulling the updates - tell the server not to push them.
 			Response = #nonce_limiter_update_response{ postpone = 120 },
@@ -3211,7 +3204,7 @@ handle_post_vdf3(Req, Pid, Peer) ->
 	case read_complete_body(Req, Pid) of
 		{ok, Body, Req2} ->
 			Format =
-				case ar_config:compute_own_vdf() of
+				case ar_nonce_limiter:compute_own_vdf() of
 					true ->
 						%% If we compute our own VDF, we need to know the VDF difficulties
 						%% so that we can continue extending the new session.
@@ -3242,8 +3235,7 @@ handle_post_vdf3(Req, Pid, Peer) ->
 	end.
 
 handle_get_vdf(Req, Call, Format) ->
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(public_vdf_server, Config#config.enable) of
+	case arweave_config:get([vdf, is_public_server]) of
 		true ->
 			handle_get_vdf2(Req, Call, Format);
 		false ->
@@ -3346,7 +3338,13 @@ handle_mining_h2(Req, Pid) ->
 			case ar_serialize:json_decode(Body, [return_maps]) of
 				{ok, JSON} ->
 					try ar_serialize:json_map_to_candidate(JSON) of
-						#mining_candidate{} = Candidate ->
+						#mining_candidate{} = Candidate0 ->
+							%% Restore cm_lead_peer (not serialized) so downstream
+							%% callers can tell this candidate arrived via cm_h2_send.
+							%% Mirrors the H1 receive path in
+							%% `ar_coordination:compute_h2_for_peer/2'.
+							Candidate = Candidate0#mining_candidate{
+								cm_lead_peer = Peer },
 							?LOG_INFO([{event, h2_received},
 									{peer, ar_util:format_peer(Peer)}]),
 							case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of

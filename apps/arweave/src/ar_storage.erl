@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_storage).
 
 -behaviour(gen_server).
@@ -22,7 +23,6 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include("ar_wallets.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
@@ -1102,12 +1102,13 @@ read_block_from_file(Filename, Encoding) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	{ok, Config} = arweave_config:get_env(),
-	ensure_directories(Config#config.data_dir),
+	DataDir = arweave_config:get([data_dir]),
+	StartFromState = arweave_config:get([join, start_from_state]),
+	ensure_directories(DataDir),
 	%% Copy genesis transactions (snapshotted in the repo) into data_dir/txs
 	ar_weave:add_mainnet_v1_genesis_txs(),
 	open_databases(),
-	case Config#config.start_from_state of
+	case StartFromState of
 		not_set ->
 			ok;
 		CustomDir ->
@@ -1118,8 +1119,7 @@ init([]) ->
 	{ok, #state{}}.
 
 open_databases() ->
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get([data_dir]),
 	ok = ar_kv:open(#{
 		path => filename:join([DataDir, ?ROCKS_DB_DIR, "ar_storage_tx_confirmation_db"]),
 		name => tx_confirmation_db}),
@@ -1143,8 +1143,8 @@ open_databases() ->
 		name => account_tree_db}).
 
 open_start_from_state_databases(CustomDir) ->
-	{ok, Config} = arweave_config:get_env(),
-	LogFilepath = filename:join([Config#config.log_dir, "rocksdb", "start_from_state"]),
+	LogDir = arweave_config:get([log_dir]),
+	LogFilepath = filename:join([LogDir, "rocksdb", "start_from_state"]),
 	ok = ar_kv:open_readonly(#{
 		path => filename:join([CustomDir, ?ROCKS_DB_DIR, "ar_storage_tx_confirmation_db"]),
 		name => start_from_state_tx_confirmation_db,
@@ -1208,8 +1208,7 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 get_data_dir() ->
-	{ok, Config} = arweave_config:get_env(),
-	Config#config.data_dir.
+	arweave_config:get([data_dir]).
 
 block_index_tip() ->
 	block_index_tip(not_set).
@@ -1225,8 +1224,7 @@ block_index_tip(CustomDir) ->
 	end.
 
 write_block(B) ->
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(disk_logging, Config#config.enable) of
+	case arweave_config:feature_enabled(disk_logging) of
 		true ->
 			?LOG_INFO([{event, writing_block_to_disk},
 					{block, ar_util:encode(B#block.indep_hash)}]);
@@ -1307,11 +1305,11 @@ get_db_name(DBName, _CustomDir) ->
 	list_to_atom("start_from_state_" ++ atom_to_list(DBName)).
 
 get_same_disk_storage_modules_total_size() ->
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get([data_dir]),
+	StorageModules = arweave_config:storage_modules(),
 	{ok, Info} = file:read_file_info(DataDir),
 	Device = Info#file_info.major_device,
-	get_same_disk_storage_modules_total_size(0, Config#config.storage_modules, DataDir,
+	get_same_disk_storage_modules_total_size(0, StorageModules, DataDir,
 			Device).
 
 get_same_disk_storage_modules_total_size(TotalSize, [], _DataDir, _Device) ->
@@ -1378,8 +1376,7 @@ write_file_atomic(Filename, Data) ->
 	end.
 
 write_term(Name, Term) ->
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get([data_dir]),
 	write_term(DataDir, Name, Term, override).
 
 write_term(Dir, Name, Term) when is_atom(Name) ->
@@ -1404,8 +1401,7 @@ write_term(Dir, Name, Term, Override) ->
 	end.
 
 read_term(Name) ->
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get([data_dir]),
 	read_term(DataDir, Name).
 
 read_term(Dir, Name) when is_atom(Name) ->
@@ -1422,8 +1418,7 @@ read_term(Dir, Name) ->
 	end.
 
 delete_term(Name) ->
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get([data_dir]),
 	file:delete(filename:join(DataDir, atom_to_list(Name))).
 
 store_account_tree_update(Height, RootHash, Map) ->

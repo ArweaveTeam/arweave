@@ -1,5 +1,6 @@
 -module(ar_pricing_tests).
 
+
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -316,10 +317,10 @@ test_auto_redenomination_and_endowment_debt() ->
 	?assert(?REWARD_HISTORY_BLOCKS == 3),
 	?assert(?DOUBLE_SIGNING_REWARD_SAMPLE_SIZE == 2),
 	?assertEqual(262144 * 3, B0#block.weave_size),
-	{ok, Config} = arweave_config:get_env(),
-	{_, MinerPub} = ar_wallet:load_key(Config#config.mining_addr),
+	MiningAddr = arweave_config:get([mining, address]),
+	{_, MinerPub} = ar_wallet:load_key(MiningAddr),
 	?assertEqual(0, get_balance(MinerPub)),
-	?assertEqual(0, get_reserved_balance(Config#config.mining_addr)),
+	?assertEqual(0, get_reserved_balance(MiningAddr)),
 	ar_test_node:mine(),
 	ar_test_node:assert_wait_until_height(main, 1),
 	ar_test_node:assert_wait_until_height(peer1, 1),

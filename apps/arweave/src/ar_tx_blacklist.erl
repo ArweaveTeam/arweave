@@ -11,19 +11,14 @@
 -export([start_link/0, start_taking_down/0, is_tx_blacklisted/1, is_byte_blacklisted/1,
 		get_blacklisted_intervals/2, get_next_not_blacklisted_byte/1,
 		notify_about_removed_tx/1, norify_about_orphaned_tx/1, notify_about_added_tx/3,
-		store_state/0]).
+		store_state/0, refresh_interval_ms/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 %% The frequency of refreshing the blacklist.
--ifdef(AR_TEST).
--define(REFRESH_BLACKLISTS_FREQUENCY_MS, 2000).
--else.
 -define(REFRESH_BLACKLISTS_FREQUENCY_MS, 10 * 60 * 1000).
--endif.
 
 %% How long to wait before retrying to compose a blacklist from local and external
 %% sources after a failed attempt.
@@ -137,6 +132,10 @@ norify_about_orphaned_tx(TXID) ->
 notify_about_added_tx(TXID, End, Start) ->
 	gen_server:cast(?MODULE, {added_tx, TXID, End, Start}).
 
+%% @doc Interval between blacklist refresh cycles. 
+-spec refresh_interval_ms() -> non_neg_integer().
+refresh_interval_ms() -> ?REFRESH_BLACKLISTS_FREQUENCY_MS.
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -179,7 +178,7 @@ handle_cast(refresh_blacklist, State) ->
 			);
 		ok ->
 			_ = ar_timer:apply_after(
-				?REFRESH_BLACKLISTS_FREQUENCY_MS,
+				?MODULE:refresh_interval_ms(),
 				gen_server,
 				cast,
 				[self(), refresh_blacklist],
@@ -332,8 +331,7 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 initialize_state() ->
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get([data_dir]),
 	Dir = filename:join(DataDir, "ar_tx_blacklist"),
 	ok = filelib:ensure_dir(Dir ++ "/"),
 	Names = [
@@ -353,13 +351,13 @@ initialize_state() ->
 	).
 
 refresh_blacklist() ->
-	{ok, Config} = arweave_config:get_env(),
-	WhitelistFiles = Config#config.transaction_whitelist_files,
+	WhitelistFiles = arweave_config:get([transactions, allowlist, files]),
 	case load_from_files(WhitelistFiles) of
 		error ->
 			error;
 		{ok, Whitelist} ->
-			WhitelistURLs = Config#config.transaction_whitelist_urls,
+			WhitelistURLs = arweave_config:get(
+				[transactions, allowlist, urls]),
 			case load_from_urls(WhitelistURLs) of
 				error ->
 					error;
@@ -369,13 +367,13 @@ refresh_blacklist() ->
 	end.
 
 refresh_blacklist(Whitelist) ->
-	{ok, Config} = arweave_config:get_env(),
-	BlacklistFiles = Config#config.transaction_blacklist_files,
+	BlacklistFiles = arweave_config:get([transactions, blocklist, files]),
 	case load_from_files(BlacklistFiles) of
 		error ->
 			error;
 		{ok, Blacklist} ->
-			BlacklistURLs = Config#config.transaction_blacklist_urls,
+			BlacklistURLs = arweave_config:get(
+				[transactions, blocklist, urls]),
 			case load_from_urls(BlacklistURLs) of
 				error ->
 					error;
@@ -545,7 +543,7 @@ load_from_urls(URLs) ->
 load_from_url(URL) ->
 	try
 		#{ host := Host, path := RawPath, scheme := Scheme } = M = uri_string:parse(URL),
-		Path = case RawPath of "" -> "/"; Elsewise -> Elsewise end,
+		Path = case RawPath of "" -> "/"; Else -> Else end,
 		Query = case maps:get(query, M, not_found) of not_found -> <<>>; Q -> [<<"?">>, Q] end,
 		Port = maps:get(port, M, case Scheme of "http" -> 80; "https" -> 443 end),
 		Reply =

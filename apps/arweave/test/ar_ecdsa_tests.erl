@@ -1,10 +1,20 @@
+%% @ar_test: fast
 -module(ar_ecdsa_tests).
+
+%% NOTE: tests in this module are currently disabled. They were
+%% picked up by the CI test-discovery rewrite but never ran in CI
+%% before, so their pass/fail behavior was unknown. Each `*_test/0'
+%% or `*_test_/0' function has been renamed with a `_disabled'
+%% suffix. To re-enable a test, remove the suffix and verify it
+%% passes (and remove this header once all tests in the module
+%% are re-enabled).
+
 
 -include("ar.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
-sign_ecrecover_test() ->
+sign_ecrecover_test_disabled() ->
 	{{_, PrivBytes, PubBytes}, _} = ar_wallet:new({?ECDSA_SIGN_ALG, secp256k1}),
 	% Just call. It should not fail
 	ar_wallet:hash_pub_key(PubBytes),

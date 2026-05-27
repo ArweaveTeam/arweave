@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_sync_buckets).
 
 -export([new/0, new/1, from_intervals/1, from_intervals/2,

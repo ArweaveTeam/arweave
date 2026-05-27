@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_data_sync_mines_off_only_last_chunks_test).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -59,11 +60,11 @@ test_mines_off_only_last_chunks() ->
 					%% bound based on the nonce limiter entropy reset, but ar_data_sync waits
 					%% for ?SEARCH_SPACE_UPPER_BOUND_DEPTH confirmations before packing the
 					%% chunks.
-					{ok, Config} = arweave_config:get_env(),
+					StorageModules = arweave_config:storage_modules(),
 					lists:foreach(
 						fun(O) ->
 							[ar_chunk_storage:delete(O, ar_storage_module:id(Module))
-									|| Module <- Config#config.storage_modules]
+									|| Module <- StorageModules]
 						end,
 						lists:seq(?DATA_CHUNK_SIZE, ar_block:strict_data_split_threshold(),
 								?DATA_CHUNK_SIZE)

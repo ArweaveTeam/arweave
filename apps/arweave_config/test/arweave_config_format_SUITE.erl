@@ -1,101 +1,44 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @copyright 2026 (c) Arweave
-%%% @author Arweave Team
-%%% @author Mathieu Kerjouan
 %%% @doc Arweave Config Format Test Suite.
-%%% @end
-%%%===================================================================
 -module(arweave_config_format_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([
-	json/1,
-	toml/1,
-	yaml/1,
-	legacy/1
-]).
--include("arweave_config.hrl").
+-compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-suite() -> [{userdata, [description()]}].
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-description() -> {description, "arweave_config format"}.
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 init_per_suite(Config) -> Config.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 end_per_suite(_Config) -> ok.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 init_per_testcase(_TestCase, Config) ->
-	ct:pal(info, 1, "start arweave_config"),
 	ok = arweave_config:start(),
 	Config.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 end_per_testcase(_TestCase, _Config) ->
-	ct:pal(info, 1, "stop arweave_config"),
 	ok = arweave_config:stop().
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 all() ->
 	[
 		json,
-		toml,
 		yaml,
-		legacy
+		dotted_keys,
+		dotted_key_with_map_value_rejected,
+		dotted_key_with_list_of_maps_value_rejected,
+		nested_dotted_key_kept_literal,
+		bracketed_peer_id_segment_parses,
+		yaml_encode
 	].
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
+%%====================================================================
+%% Test cases
+%%====================================================================
+
 json(_Config) ->
 	{ok, #{}} = arweave_config_format_json:parse(""),
 	{ok, #{}} = arweave_config_format_json:parse(<<"">>),
 	{ok, #{}} = arweave_config_format_json:parse(<<"{}">>),
 	{ok, #{}} = arweave_config_format_json:parse("{}"),
 	{error, _} = arweave_config_format_json:parse("--"),
-	{comment, "tested json format"}.
+	ok.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-toml(_Config) ->
-	{ok, #{}} = arweave_config_format_toml:parse(""),
-	{ok, #{}} = arweave_config_format_toml:parse(<<"">>),
-	{ok, #{}} = arweave_config_format_toml:parse(<<"test = 1">>),
-	{ok, #{}} = arweave_config_format_toml:parse("test = 1"),
-	{error, _} = arweave_config_format_toml:parse("--[]"),
-	{comment, "tested toml format"}.
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 yaml(_Config) ->
 	{ok, #{}} = arweave_config_format_yaml:parse(""),
 	{ok, #{}} = arweave_config_format_yaml:parse(<<"">>),
@@ -103,15 +46,147 @@ yaml(_Config) ->
 	{ok, _} = arweave_config_format_yaml:parse("test: 1\n"),
 	{error, _} = arweave_config_format_yaml:parse("--[]"),
 	{error, _} = arweave_config_format_yaml:parse(<<"---\n---\n">>),
-	{comment, "tested yaml format"}.
+	ok.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-legacy(_Config) ->
-	{ok, _} = arweave_config_format_legacy:parse(""),
-	{ok, _} = arweave_config_format_legacy:parse(<<"">>),
-	{ok, _} = arweave_config_format_legacy:parse(<<"{}">>),
-	{ok, _} = arweave_config_format_legacy:parse("{}"),
-	{error, _} = arweave_config_format_legacy:parse("--"),
-	{comment, "tested legacy format"}.
+%% Test the basic dotted key normalization.  Exhaustive config-file
+%% format coverage lives in `arweave_config_full_load_SUITE`.
+dotted_keys(_Config) ->
+	Expected = #{
+		[mining, enabled] => true,
+		[mining, hashing_threads] => 4,
+		[port] => 1985
+	},
+	?assertEqual(Expected, parse_json(#{
+		<<"mining.enabled">> => true,
+		<<"mining.hashing_threads">> => 4,
+		<<"port">> => 1985
+	})),
+	?assertEqual(Expected, parse_yaml(<<"
+\"mining.enabled\": true
+\"mining.hashing_threads\": 4
+port: 1985
+">>)),
+
+	MixedExpected = #{
+		[mining, enabled] => true,
+		[mining, hashing_threads] => 4,
+		[port] => 1985
+	},
+	?assertEqual(MixedExpected, parse_json(#{
+		<<"mining.enabled">> => true,
+		<<"mining">> => #{ <<"hashing_threads">> => 4 },
+		<<"port">> => 1985
+	})),
+	?assertEqual(MixedExpected, parse_yaml(<<"
+\"mining.enabled\": true
+mining:
+  hashing_threads: 4
+port: 1985
+">>)),
+
+	?assertEqual(#{ [mining, enabled] => true }, parse_json(#{
+		<<"mining.enabled">> => true,
+		<<"mining">> => #{ <<"enabled">> => true }
+	})),
+	?assertMatch(
+		{error, #{ reason := conflicting_config_key }},
+		arweave_config_format_json:parse(json_encode(#{
+			<<"mining.enabled">> => true,
+			<<"mining">> => #{ <<"enabled">> => false }
+		}))),
+	?assertMatch(
+		{error, #{ reason := conflicting_config_key }},
+		arweave_config_format_yaml:parse(<<"
+\"mining.enabled\": true
+mining:
+  enabled: false
+">>)),
+	?assertMatch(
+		{error, #{ reason := invalid_dotted_config_key }},
+		arweave_config_format_json:parse(json_encode(#{
+			<<"mining..enabled">> => true
+		}))),
+	ok.
+
+%% Top-level dotted key must have a scalar (or list-of-scalars)
+%% value. Nesting under it is the operator using the wrong shape.
+dotted_key_with_map_value_rejected(_Config) ->
+	?assertMatch(
+		{error, #{ reason := dotted_config_key_has_nested_value }},
+		arweave_config_format_json:parse(json_encode(#{
+			<<"mining.enabled">> => #{ <<"foo">> => <<"bar">> }
+		}))),
+	ok.
+
+dotted_key_with_list_of_maps_value_rejected(_Config) ->
+	?assertMatch(
+		{error, #{ reason := dotted_config_key_has_nested_value }},
+		arweave_config_format_json:parse(json_encode(#{
+			<<"webhooks.list">> => [
+				#{ <<"url">> => <<"http://x">> },
+				#{ <<"url">> => <<"http://y">> }
+			]
+		}))),
+	ok.
+
+%% Nested dotted-looking keys aren't expanded. The dotted form is
+%% only available at the root. A nested key like "1.2.3.4" (a peer
+%% ID) flows through as a literal binary segment so the registry's
+%% wildcard template can pick it up.
+nested_dotted_key_kept_literal(_Config) ->
+	?assertEqual(
+		#{[peers, <<"1.2.3.4">>, trusted] => true},
+		parse_json(#{
+			<<"peers">> => #{
+				<<"1.2.3.4">> => #{ <<"trusted">> => true }
+			}
+		})),
+	ok.
+
+%% Bracketed segments inside a root dotted key carry the literal
+%% verbatim (handled by arweave_config_parser:key/1).
+bracketed_peer_id_segment_parses(_Config) ->
+	?assertEqual(
+		#{[peers, <<"1.2.3.4:1984">>, trusted] => true},
+		parse_json(#{
+			<<"peers.[1.2.3.4:1984].trusted">> => true
+		})),
+	ok.
+
+yaml_encode(_Config) ->
+	Input = #{
+		enabled => true,
+		nullable => null,
+		with_number_string => <<"123">>,
+		with_specials => <<"a:b#c">>,
+		with_newline => <<"line1\nline2">>,
+		peers => [
+			#{ host => <<"1.2.3.4:1984">>, trusted => true }
+		]
+	},
+	{ok, Yaml} = arweave_config_format_yaml:encode(Input),
+	?assertEqual(nomatch, binary:match(Yaml, <<"\r">>)),
+	?assertMatch({_, _}, binary:match(Yaml, <<"enabled: true\n">>)),
+	?assertMatch({_, _}, binary:match(Yaml, <<"nullable: null\n">>)),
+	?assertMatch({_, _}, binary:match(Yaml, <<"with_number_string: \"123\"\n">>)),
+	?assertMatch({_, _}, binary:match(Yaml, <<"with_specials: \"a:b#c\"\n">>)),
+	?assertMatch({_, _}, binary:match(Yaml, <<"with_newline: \"line1\\nline2\"\n">>)),
+	?assertMatch({_, _}, binary:match(Yaml, <<"- host: \"1.2.3.4:1984\"\n">>)),
+	?assertMatch({_, _}, binary:match(Yaml, <<"trusted: true\n">>)),
+	ok.
+
+%%====================================================================
+%% Helpers
+%%====================================================================
+
+parse_json(Map) ->
+	{ok, Parsed} = arweave_config_format_json:parse(json_encode(Map)),
+	Parsed.
+
+parse_yaml(Yaml) ->
+	{ok, Parsed} = arweave_config_format_yaml:parse(Yaml),
+	Parsed.
+
+json_encode(Map) ->
+	iolist_to_binary(jiffy:encode(Map)).
+

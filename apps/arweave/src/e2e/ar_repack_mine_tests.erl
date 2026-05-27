@@ -47,7 +47,8 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 		_ -> ar_wallet:to_address(WalletB)
 	end,
 	ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
-	{ok, Config} = ar_test_node:get_config(RepackerNode),
+	ExistingStorageModules = ar_test_node:remote_call(
+		RepackerNode, arweave_config, storage_modules, []),
 	%% For replica_2_9 destinations, first mount both old and new modules with
 	%% sync_jobs=0 so the new modules prepare entropy without any concurrent
 	%% cross-module sync. Otherwise chunks copied from the old modules would
@@ -57,18 +58,18 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	%% re-enables sync and cross-module copies flow directly into replica_2_9.
 	case ToPackingType of
 		replica_2_9 ->
-			ar_test_node:restart_with_config(RepackerNode, Config#config{
-				storage_modules = Config#config.storage_modules ++ StorageModules,
-				mining_addr = AddrB,
-				sync_jobs = 0
+			ar_test_node:restart_with_config(RepackerNode, #{
+				storage_modules => ExistingStorageModules ++ StorageModules,
+				[mining, address] => AddrB,
+				[sync, jobs] => 0
 			}),
 			ar_e2e:wait_for_entropy_complete(RepackerNode);
 		_ ->
 			ok
 	end,
-	ar_test_node:restart_with_config(RepackerNode, Config#config{
-		storage_modules = Config#config.storage_modules ++ StorageModules,
-		mining_addr = AddrB
+	ar_test_node:restart_with_config(RepackerNode, #{
+		storage_modules => ExistingStorageModules ++ StorageModules,
+		[mining, address] => AddrB
 	}),
 
 	ar_e2e:assert_syncs_range(RepackerNode, 0, 4*ar_block:partition_size()),
@@ -87,9 +88,9 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	%% ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
 	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
 
-	ar_test_node:restart_with_config(RepackerNode, Config#config{
-		storage_modules = StorageModules,
-		mining_addr = AddrB
+	ar_test_node:restart_with_config(RepackerNode, #{
+		storage_modules => StorageModules,
+		[mining, address] => AddrB
 	}),
 	ar_e2e:assert_syncs_range(RepackerNode, ToPacking, 0, 4*ar_block:partition_size()),
 	ar_e2e:assert_partition_size(RepackerNode, 0, ToPacking),
@@ -123,13 +124,12 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	end.
 
 start_validator_node(ValidatorNode, RepackerNode, B0) ->
-	{ok, Config} = ar_test_node:get_config(ValidatorNode),
 	?assertEqual(ar_test_node:peer_name(ValidatorNode),
-		ar_test_node:start_other_node(ValidatorNode, B0, Config#config{
-				peers = [ar_test_node:peer_ip(RepackerNode)],
-			start_from_latest_state = true,
-			auto_join = true,
-			storage_modules = []
+		ar_test_node:start_other_node(ValidatorNode, B0, #{
+			{peers, trusted} => [ar_test_node:peer_ip(RepackerNode)],
+			[join, start_from_latest_state] => true,
+			[join, auto] => true,
+			storage_modules => []
 		}, true)
 	),
 	ok.

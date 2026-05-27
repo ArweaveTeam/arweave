@@ -1,9 +1,9 @@
+%% @ar_test: vdf
 -module(ar_join).
 
 -export([start/1]).
 
 -include("ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%% Represents a process that handles downloading the block index and the latest
@@ -71,9 +71,9 @@ start2(Peers) ->
 		ExpectedBIMerkleH ->
 			do_join(Peers, B, BI);
 		_ ->
-			{ok, Config} = arweave_config:get_env(),
+			DataDir = arweave_config:get([data_dir]),
 			ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
-			File = filename:join(Config#config.data_dir,
+			File = filename:join(DataDir,
 					"inconsistent_joining_data_dump_" ++ ID),
 			file:write_file(File, term_to_binary({B, Peers, BI})),
 			ar:console("Inconsistent head block and block index. Error dump: ~s.", [File]),
@@ -229,9 +229,9 @@ get_block(Peers, BShadow, [TXID | TXIDs], TXs, Retries) ->
 %% @doc Perform the joining process.
 do_join(Peers, B, BI) ->
 	ar:console("Downloading the block trail.~n", []),
-	{ok, Config} = arweave_config:get_env(),
+	JoinWorkers = arweave_config:get([join, workers]),
 	WorkerQ = queue:from_list([spawn(fun() -> worker() end)
-			|| _ <- lists:seq(1, Config#config.join_workers)]),
+			|| _ <- lists:seq(1, JoinWorkers)]),
 	PeerQ = queue:from_list(Peers),
 	Trail = lists:sublist(tl(BI), 2 * ar_block:get_max_tx_anchor_depth()),
 	SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(B#block.txs, B#block.height),

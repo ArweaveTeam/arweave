@@ -7,7 +7,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -record(state, {
 	peer,
@@ -28,9 +27,9 @@ start_link(Name) ->
 %%%===================================================================
 
 init([]) ->
-	{ok, Config} = arweave_config:get_env(),
+	PollIntervalSeconds = arweave_config:get([gossip, block, poll_interval]),
 	[ok] = ar_events:subscribe([node_state]),
-	State = #state{ polling_frequency_ms = Config#config.polling * 1000 },
+	State = #state{ polling_frequency_ms = PollIntervalSeconds * 1000 },
 	case ar_node:is_joined() of
 		true ->
 			{ok, handle_node_state_initialized(State)};
@@ -204,8 +203,8 @@ slow_block_application_warning(N) ->
 			"paused.~n~n", [N]).
 
 warning(Peer, Event) ->
-	{ok, Config} = arweave_config:get_env(),
-	case lists:member(Peer, Config#config.peers) of
+	TrustedPeers = arweave_config:get_peers(trusted),
+	case lists:member(Peer, TrustedPeers) of
 		false ->
 			ok;
 		true ->

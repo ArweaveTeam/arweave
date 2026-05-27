@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_mining_worker_tests).
 
 -include_lib("arweave_config/include/arweave_config.hrl").

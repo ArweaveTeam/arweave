@@ -49,7 +49,6 @@
 -include("ar_poa.hrl").
 -include("ar_data_sync.hrl").
 
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -ifdef(AR_TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -77,7 +76,8 @@ start_link(Name, Args) ->
 
 %% @doc Register the workers that will be monitored by ar_data_sync_sup.erl.
 register_workers() ->
-	{ok, Config} = arweave_config:get_env(),
+	StorageModules = arweave_config:storage_modules(),
+	RepackInPlaceModules = arweave_config:repack_modules(),
 	StorageModuleWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
@@ -85,7 +85,7 @@ register_workers() ->
 			Name = list_to_atom("ar_data_sync_" ++ StoreLabel),
 			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, none}])
 		end,
-		Config#config.storage_modules
+		StorageModules
 	),
 	DefaultStorageModuleWorker = ?CHILD_WITH_ARGS(ar_data_sync, worker,
 		ar_data_sync_default, [ar_data_sync_default, {?DEFAULT_MODULE, none}]),
@@ -95,7 +95,7 @@ register_workers() ->
 			Name = ar_data_sync:name(StoreID),
 			?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, TargetPacking}])
 		end,
-		Config#config.repack_in_place_storage_modules
+		RepackInPlaceModules
 	),
 	StorageModuleWorkers ++ [DefaultStorageModuleWorker] ++ RepackInPlaceWorkers.
 
@@ -301,9 +301,8 @@ get_chunk_proof(Offset, Options) ->
 %% the size is bigger than ?MAX_SERVED_TX_DATA_SIZE, unless the limitation
 %% is disabled in the configuration.
 get_tx_data(TXID) ->
-	{ok, Config} = arweave_config:get_env(),
 	SizeLimit =
-		case lists:member(serve_tx_data_without_limits, Config#config.enable) of
+		case arweave_config:feature_enabled(serve_tx_data_without_limits) of
 			true ->
 				infinity;
 			false ->
@@ -324,8 +323,7 @@ get_tx_data(TXID, SizeLimit) ->
 				true ->
 					{error, tx_data_too_big};
 				false ->
-					{ok, Config} = arweave_config:get_env(),
-					Pack = lists:member(pack_served_chunks, Config#config.enable),
+					Pack = arweave_config:feature_enabled(pack_served_chunks),
 					get_tx_data(Offset - Size, Offset, [], Pack)
 			end
 	end.
@@ -515,7 +513,7 @@ set_weave_size(WeaveSize, #data_sync_state{ store_id = StoreID } = State) ->
 init({?DEFAULT_MODULE = StoreID, _}) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
-	{ok, Config} = arweave_config:get_env(),
+	DataCacheSizeLimit = arweave_config:get([sync, cache_size_limit]),
 	[ok, ok, ok] = ar_events:subscribe([node_state, disksup, chunk_copy]),
 	State = init_kv(#data_sync_state{}, StoreID),
 
@@ -545,7 +543,7 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 		{range_end, State2#data_sync_state.range_end}]),
 	gen_server:cast(self(), store_sync_state),
 	Limit =
-		case Config#config.data_cache_size_limit of
+		case DataCacheSizeLimit of
 			undefined ->
 				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
 						2000000000),
@@ -635,12 +633,12 @@ handle_cast({join, RecentBI}, State) ->
 		{_, {_H, Offset, _TXRoot}} ->
 			PreviousWeaveSize = element(2, hd(CurrentBI)),
 			ok = remove_orphaned_data(State, Offset, PreviousWeaveSize),
-			{ok, Config} = arweave_config:get_env(),
+			StorageModules = arweave_config:storage_modules(),
 			lists:foreach(
 				fun(Module) ->
 					gen_server:cast(name(ar_storage_module:id(Module)), {cut, Offset})
 				end,
-				Config#config.storage_modules)
+				StorageModules)
 	end,
 	BI = ar_block_index:get_list_by_hash(element(1, lists:last(RecentBI))),
 	ar_data_roots:repair_data_root_offset_index(BI, StoreID),
@@ -655,13 +653,13 @@ handle_cast({cut, Start}, #data_sync_state{ store_id = StoreID,
 		not_found ->
 			ok;
 		_Interval ->
-			{ok, Config} = arweave_config:get_env(),
-			case lists:member(remove_orphaned_storage_module_data, Config#config.enable) of
+			case arweave_config:feature_enabled(remove_orphaned_storage_module_data) of
 				false ->
 					ar:console("The storage module ~s contains some orphaned data above the "
 							"weave offset ~B. Make sure you are joining the network through "
 							"trusted in-sync peers and restart with "
-							"`enable remove_orphaned_storage_module_data`.~n",
+							"`features.remove_orphaned_storage_module_data = true` "
+							"(or the legacy `enable remove_orphaned_storage_module_data`).~n",
 							[StoreID, Start]),
 					timer:sleep(2000),
 					init:stop(1);
@@ -716,7 +714,7 @@ handle_cast({store_fetched_chunk, Peer, Byte, Proof} = Cast, State) ->
 	{store_fetched_chunk, Peer, Byte, Proof} = Cast,
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 	SeekByte = ar_chunk_storage:get_chunk_seek_offset(Byte + 1) - 1,
-	case validate_proof(SeekByte, Proof, Peer) of
+	case validate_proof(SeekByte, Proof) of
 		{need_unpacking, AbsoluteEndOffset, ChunkProof2} ->
 			#chunk_proof{
 				block_start_offset = BlockStartOffset,
@@ -967,15 +965,16 @@ handle_info({event, disksup, {remaining_disk_space, StoreID, false, Percentage, 
 	{noreply, State};
 handle_info({event, disksup, {remaining_disk_space, StoreID, true, _Percentage, Bytes}},
 		#data_sync_state{ store_id = StoreID } = State) ->
-	{ok, Config} = arweave_config:get_env(),
+	MaxDiskPoolBufferMb = arweave_config:get([disk_pool, max_buffer_size]),
+	DiskCacheSizeMb = arweave_config:get([gossip, header_cache_size]),
 	%% Default values:
 	%% max_disk_pool_buffer_mb = ?DEFAULT_MAX_DISK_POOL_BUFFER_MB = 100_000
 	%% disk_cache_size = ?DISK_CACHE_SIZE = 5_120
 	%% DiskPoolSize = ~100GB
 	%% DisckCacheSize = ~5GB
 	%% BufferSize = ~10GB
-	DiskPoolSize = Config#config.max_disk_pool_buffer_mb * ?MiB,
-	DiskCacheSize = Config#config.disk_cache_size * ?MiB,
+	DiskPoolSize = MaxDiskPoolBufferMb * ?MiB,
+	DiskCacheSize = DiskCacheSizeMb * ?MiB,
 	BufferSize = 10_000_000_000,
 	RequiredDiskSpace = DiskPoolSize + DiskCacheSize,
 	StopThreshold = RequiredDiskSpace + (BufferSize div 2),
@@ -1504,8 +1503,7 @@ remove_range(Start, End, Ref, ReplyTo) ->
 	).
 
 init_kv(State, StoreID) ->
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get([data_dir]),
 	ok = open_store_dbs(DataDir, StoreID),
 	ar_disk_pool:move_index(StoreID),
 	State#data_sync_state{
@@ -1637,7 +1635,7 @@ unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, State) ->
 			end
 	end.
 
-validate_proof(SeekByte, Proof, Peer) ->
+validate_proof(SeekByte, Proof) ->
 	#{ data_path := DataPath, tx_path := TXPath, chunk := Chunk, packing := Packing } = Proof,
 
 	ChunkMetadata = #chunk_metadata{
@@ -1650,77 +1648,34 @@ validate_proof(SeekByte, Proof, Peer) ->
 		{false, _} ->
 			false;
 		{true, ChunkProof2} ->
-			case do_additional_validation(ChunkProof2, DataPath, Peer) of
-				false ->
-					false;
-				true ->
-					#chunk_proof{
-						metadata = Metadata,
-						chunk_id = ChunkID,
-						block_start_offset = BlockStartOffset,
-						chunk_end_offset = ChunkEndOffset,
-						tx_start_offset = TXStartOffset
-					} = ChunkProof2,
-					#chunk_metadata{
-						chunk_size = ChunkSize
-					} = Metadata,
-					AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
-					case Packing of
-						unpacked ->
-							case ar_tx:generate_chunk_id(Chunk) == ChunkID of
-								false ->
-									false;
+			#chunk_proof{
+				metadata = Metadata,
+				chunk_id = ChunkID,
+				block_start_offset = BlockStartOffset,
+				chunk_end_offset = ChunkEndOffset,
+				tx_start_offset = TXStartOffset
+			} = ChunkProof2,
+			#chunk_metadata{
+				chunk_size = ChunkSize
+			} = Metadata,
+			AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
+			case Packing of
+				unpacked ->
+					case ar_tx:generate_chunk_id(Chunk) == ChunkID of
+						false ->
+							false;
+						true ->
+							case ChunkSize == byte_size(Chunk) of
 								true ->
-									case ChunkSize == byte_size(Chunk) of
-										true ->
-											{true, ChunkProof2};
-										false ->
-											false
-									end
-							end;
-						_ ->
-							{need_unpacking, AbsoluteEndOffset, ChunkProof2}
-					end
+									{true, ChunkProof2};
+								false ->
+									false
+							end
+					end;
+				_ ->
+					{need_unpacking, AbsoluteEndOffset, ChunkProof2}
 			end
 	end.
-
-do_additional_validation(ChunkProof, DataPath, Peer) ->
-	#chunk_proof{
-		seek_byte = SeekByte,
-		block_start_offset = BlockStartOffset,
-		tx_start_offset = TXStartOffset,
-		tx_end_offset = TXEndOffset,
-		chunk_start_offset = ChunkStartOffset,
-		chunk_end_offset = ChunkEndOffset,
-		validate_data_path_ruleset = Ruleset,
-		metadata = #chunk_metadata{ data_root = DataRoot }
-	} = ChunkProof,
-	TXSize = TXEndOffset - TXStartOffset,
-	TXRelativeOffset = SeekByte - BlockStartOffset - TXStartOffset,
-	case ar_merkle:has_redundant_rebase_marker(
-			DataRoot, TXRelativeOffset, TXSize, DataPath, Ruleset) of
-		true ->
-			log_invalid_fetched_data_path(redundant_rebase_marker, Peer,
-					[{data_root, ar_util:encode(DataRoot)},
-					{offset, TXRelativeOffset}, {tx_size, TXSize}]),
-			false;
-		false ->
-			case ar_merkle:has_positive_leaf_size(TXRelativeOffset, TXSize, DataPath) of
-				true ->
-					true;
-				false ->
-					log_invalid_fetched_data_path(negative_leaf_size, Peer,
-							[{data_root, ar_util:encode(DataRoot)},
-							{offset, TXRelativeOffset}, {tx_size, TXSize},
-							{chunk_start_offset, ChunkStartOffset},
-							{chunk_end_offset, ChunkEndOffset}]),
-					false
-			end
-	end.
-
-log_invalid_fetched_data_path(Reason, Peer, Logs) ->
-	?LOG_ERROR([{event, invalid_fetched_data_path}, {reason, Reason},
-			{peer, ar_util:format_peer(Peer)} | Logs]).
 
 validate_proof2(
 		TXRoot, TXPath, DataPath, BlockStartOffset, BlockEndOffset, BlockRelativeOffset,
@@ -1916,7 +1871,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 					case AbsoluteEndOffset >= DiskPoolThreshold of
 						true ->
 							ar_disk_pool:add_chunk(DataRoot, DataPath, UnpackedChunk,
-									ChunkEndOffset - 1, TXSize, Peer),
+									ChunkEndOffset - 1, TXSize),
 							decrement_chunk_cache_size(),
 							{noreply, State};
 						false ->

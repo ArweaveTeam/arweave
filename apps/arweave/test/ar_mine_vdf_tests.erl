@@ -1,3 +1,4 @@
+%% @ar_test: vdf, fast
 -module(ar_mine_vdf_tests).
 
 -include_lib("eunit/include/eunit.hrl").

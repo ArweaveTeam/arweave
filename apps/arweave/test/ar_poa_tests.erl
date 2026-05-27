@@ -1,5 +1,6 @@
 -module(ar_poa_tests).
 
+
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 

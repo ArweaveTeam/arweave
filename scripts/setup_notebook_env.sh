@@ -12,18 +12,70 @@ JUPYTER_DATA_DIR="${JUPYTER_DATA_DIR:-$REPO_ROOT/.tmp/jupyter}"
 
 cd "$REPO_ROOT"
 
-mkdir -p "$REPO_ROOT/.tmp"
-mkdir -p "$JUPYTER_DATA_DIR"
+if ! command -v git-lfs >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+git-lfs is not installed or not on PATH.
+The localnet notebooks need Git LFS to materialise localnet_snapshot/:
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is not installed or not on PATH."
+  sudo apt install git-lfs           # if git-lfs is not installed
+  git lfs install
+  git lfs pull
+EOF
   exit 1
 fi
 
-if [ -d "$REPO_ROOT/.venv" ]; then
+LFS_POINTER_FILES="$(git lfs ls-files | sed -n 's/^[^ ]* - //p')"
+if [ -n "$LFS_POINTER_FILES" ]; then
+  cat >&2 <<'EOF'
+The repository contains Git LFS pointer files instead of real content.
+The localnet notebooks need Git LFS content to be materialised:
+
+  git lfs pull
+  git lfs checkout
+
+Pointer files found:
+EOF
+  printf '%s\n' "$LFS_POINTER_FILES" | sed 's/^/  /' >&2
+  exit 1
+fi
+
+mkdir -p "$REPO_ROOT/.tmp"
+mkdir -p "$JUPYTER_DATA_DIR"
+
+PYTHON_BIN=${PYTHON:-python3}
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  echo "$PYTHON_BIN is not installed or not on PATH." >&2
+  exit 1
+fi
+
+# `python -m venv` needs `ensurepip` and `venv` in the interpreter's
+# stdlib. On Debian/Ubuntu those modules are split into a separate
+# package (e.g. python3.10-venv); without them venv creation aborts
+# with "ensurepip is not available", leaving a half-built .venv that
+# then errors as "No module named pip". Surface the install hint up
+# front instead.
+if ! "$PYTHON_BIN" -c 'import ensurepip, venv' >/dev/null 2>&1; then
+  PY_VER=$("$PYTHON_BIN" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "X.Y")
+  cat >&2 <<EOF
+$PYTHON_BIN ($PY_VER) is missing the venv stdlib package.
+
+On Debian/Ubuntu install it with:
+  sudo apt install python${PY_VER}-venv
+
+Or point \$PYTHON at a full Python install:
+  PYTHON=/usr/bin/python3.11 scripts/setup_notebook_env.sh
+EOF
+  exit 1
+fi
+
+# A .venv without pip means an earlier `python -m venv` aborted before
+# ensurepip ran; wipe and rebuild so the next `pip install` doesn't
+# bail with the cryptic "No module named pip".
+if [ -d "$REPO_ROOT/.venv" ] && [ -x "$REPO_ROOT/.venv/bin/pip" ]; then
   echo "Using existing virtual environment at: $REPO_ROOT/.venv"
 else
-  python3 -m venv "$REPO_ROOT/.venv"
+  rm -rf "$REPO_ROOT/.venv"
+  "$PYTHON_BIN" -m venv "$REPO_ROOT/.venv"
 fi
 "$REPO_ROOT/.venv/bin/python" -m pip install --upgrade pip
 "$REPO_ROOT/.venv/bin/python" -m pip install jupyter pandas

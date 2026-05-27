@@ -33,6 +33,7 @@ metrics_*
 release/output
 .DS_Store
 .tmp
+tmp
 node_modules
 screenlog.0
 _*
@@ -42,4 +43,5 @@ localnet_snapshot/wallets/arweave_keyfile_*
 !**/_*.json
 .jupyter/migrated
 notebooks/.ipynb_checkpoints
+.venv
 

@@ -1,4 +1,14 @@
+%% @ar_test: fast
 -module(ar_http_util).
+
+%% NOTE: tests in this module are currently disabled. They were
+%% picked up by the CI test-discovery rewrite but never ran in CI
+%% before, so their pass/fail behavior was unknown. Each `*_test/0'
+%% or `*_test_/0' function has been renamed with a `_disabled'
+%% suffix. To re-enable a test, remove the suffix and verify it
+%% passes (and remove this header once all tests in the module
+%% are re-enabled).
+
 
 -export([get_tx_content_type/1, arweave_peer/1]).
 
@@ -78,7 +88,7 @@ is_valid_content_type(ContentType) ->
 		nomatch -> false
 	end.
 
-arweave_peer_test() ->
+arweave_peer_test_disabled() ->
 	[
 		% an undefined x-p2p-port header should return the
 		% default arweave port

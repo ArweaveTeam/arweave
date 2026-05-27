@@ -24,59 +24,57 @@
 %% (enough to cover the seed data with some headroom).
 %% Seed the storage module with data.
 start() ->
-	start(#config{
-		data_dir = ?LOCALNET_DATA_DIR
-	}).
+	start_with_snapshot(?DEFAULT_SNAPSHOT_DIR).
 
 start(SnapshotDir) when is_list(SnapshotDir) ->
-	start(#config{
-		data_dir = ?LOCALNET_DATA_DIR,
-		start_from_state = SnapshotDir
-	});
+	start_with_snapshot(SnapshotDir);
 start(SnapshotDir) when is_atom(SnapshotDir) ->
-	start(#config{
-		data_dir = ?LOCALNET_DATA_DIR,
-		start_from_state = atom_to_list(SnapshotDir)
-	});
-start(Config) ->
-	SnapshotDir = snapshot_dir(Config),
-	DataDir = Config#config.data_dir,
+	start_with_snapshot(atom_to_list(SnapshotDir)).
+
+start_with_snapshot(SnapshotDir) ->
 	arweave_config:start(),
+	DataDir = ?LOCALNET_DATA_DIR,
 	ok = filelib:ensure_dir(DataDir ++ "/"),
 	MiningAddr =
-		case Config#config.mining_addr of
+		case arweave_config:get([mining, address]) of
 			not_set ->
-				ar_wallet:to_address(ar_wallet:new_keyfile({?ECDSA_SIGN_ALG, secp256k1}, wallet_address, DataDir));
+				ar_wallet:to_address(ar_wallet:new_keyfile(
+					{?ECDSA_SIGN_ALG, secp256k1}, wallet_address, DataDir));
 			Addr ->
 				Addr
 		end,
 	StorageModules =
-		case Config#config.storage_modules of
+		case arweave_config:storage_modules() of
 			[] ->
 				[{21 * ?MiB, 0, {replica_2_9, MiningAddr}}];
 			ConfiguredStorageModules ->
 				ConfiguredStorageModules
 		end,
-	ok = arweave_config:set_env(Config#config{
-		mining_addr = MiningAddr,
-		storage_modules = StorageModules,
-		start_from_latest_state = true,
-		start_from_state = SnapshotDir,
-		disk_cache_size = 128,
-		max_disk_pool_buffer_mb = 128,
-		max_disk_pool_data_root_buffer_mb = 128,
-		auto_join = true,
-		peers = [],
-		cm_exit_peer = not_set,
-		cm_peers = [],
-		local_peers = [],
-		mine = false,
-		disk_space_check_frequency = 1000,
-		sync_jobs = 0,
-		disk_pool_jobs = 1,
-		header_sync_jobs = 0,
-		debug = true
-	}),
+	%% Clear stale per-role peer entries from any earlier session .
+	ok = arweave_config:clear_peers(trusted),
+	ok = arweave_config:clear_peers(cm_exit),
+	ok = arweave_config:clear_peers(cm_peer),
+	ok = arweave_config:clear_peers(local),
+	%% Localnet defaults: tight disk caps, no syncing, mining disabled
+	%% (the test driver mines on demand via mine_one_block/0).
+	ok = arweave_config:replace_storage_modules(StorageModules),
+	ok = arweave_config:load(
+		#{
+			[data_dir]                              => DataDir,
+			[join, start_from_state]                => SnapshotDir,
+			[mining, address]                       => MiningAddr,
+			[join, start_from_latest_state]         => true,
+			[gossip, header_cache_size]             => 128,
+			[disk_pool, max_buffer_size]            => 128,
+			[disk_pool, max_data_root_buffer_size]  => 128,
+			[join, auto]                            => true,
+			[mining, enabled]                       => false,
+			[disk_space_check_frequency]            => 1000,
+			[sync, jobs]                            => 0,
+			[disk_pool, jobs]                       => 1,
+			[gossip, header_sync_jobs]              => 0,
+			[debug]                                 => true
+		}),
 	ar:start_dependencies(),
 	case wait_until_joined() of
 		true ->
@@ -111,12 +109,12 @@ mine_until_height(Height) ->
 
 %% @doc Create a reproducible snapshot in localnet_snapshot_[mainnet_starting_height]_[localnet_end_height].
 create_snapshot() ->
-	{ok, Config} = arweave_config:get_env(),
 	case ar_node:is_joined() of
 		false ->
 			{error, node_not_joined};
 		true ->
-			SnapshotDir = snapshot_dir(Config),
+			SnapshotDir = snapshot_dir(),
+			DataDir = arweave_config:get([data_dir]),
 			case open_snapshot_databases(SnapshotDir) of
 				{ok, CloseSnapshotDbs} ->
 					SnapshotResult =
@@ -127,7 +125,7 @@ create_snapshot() ->
 								MainnetStartHeight = length(BI) - 1,
 								LocalnetEndHeight = ar_node:get_height(),
 								NewSnapshotDir = snapshot_dir_name(MainnetStartHeight, LocalnetEndHeight),
-								create_snapshot(SnapshotDir, Config#config.data_dir, NewSnapshotDir)
+								create_snapshot(SnapshotDir, DataDir, NewSnapshotDir)
 						end,
 					CloseSnapshotDbs(),
 					SnapshotResult;
@@ -218,8 +216,7 @@ store_snapshot_data3(BI, Height, SearchDepth, SnapshotDir) ->
 %% chunks to the node's storage.
 %% Return {TotalBigChunkBytes, TotalSmallChunkBytes}.
 submit_snapshot_data() ->
-	{ok, Config} = arweave_config:get_env(),
-	SnapshotDir = snapshot_dir(Config),
+	SnapshotDir = snapshot_dir(),
 	io:format("Seeding data from snapshot...~n"),
 	SnapshotTXs = snapshot_txs(),
 	BlockStarts = lists:sort(maps:keys(SnapshotTXs)),
@@ -437,12 +434,10 @@ snapshot_txs() ->
 
 %% @doc Return the configured snapshot directory. Fall back to
 %% DEFAULT_SNAPSHOT_DIR ("localnet_snapshot") when start_from_state is not set.
-snapshot_dir(Config) ->
-	case Config#config.start_from_state of
-		not_set ->
-			?DEFAULT_SNAPSHOT_DIR;
-		Dir ->
-			Dir
+snapshot_dir() ->
+	case arweave_config:get([join, start_from_state]) of
+		not_set -> ?DEFAULT_SNAPSHOT_DIR;
+		Dir     -> Dir
 	end.
 
 %% @doc Generate a snapshot directory name encoding both the mainnet starting

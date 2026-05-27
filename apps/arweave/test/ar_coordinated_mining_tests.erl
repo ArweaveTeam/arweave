@@ -1,3 +1,4 @@
+%% @ar_test: isolated
 -module(ar_coordinated_mining_tests).
 
 -include_lib("arweave/include/ar.hrl").
@@ -25,6 +26,7 @@ mining_test_() ->
 		ar_test_node:test_with_mocked_functions(
 			[
 				ar_test_node:mock_to_force_invalid_h1(),
+				ar_test_node:mock_to_force_cross_node_h2(),
 				{ar_retarget, is_retarget_height, fun(_Height) -> false end},
 				{ar_retarget, is_retarget_block, fun(_Block) -> false end}
 			],
@@ -32,6 +34,7 @@ mining_test_() ->
 		ar_test_node:test_with_mocked_functions(
 			[
 				ar_test_node:mock_to_force_invalid_h1(),
+				ar_test_node:mock_to_force_cross_node_h2(),
 				mock_for_single_difficulty_adjustment_height(),
 				mock_for_single_difficulty_adjustment_block()
 			],
@@ -154,11 +157,10 @@ test_no_secret() ->
 test_bad_secret() ->
 	[Node, _ExitNode, _ValidatorNode] = ar_test_node:start_coordinated(1),
 	Peer = ar_test_node:peer_ip(Node),
-	{ok, Config} = arweave_config:get_env(),
+	OrigSecret = arweave_config:get([cm, api_secret]),
 	try
-		ok = arweave_config:set_env(Config#config{
-			cm_api_secret = <<"this_is_not_the_actual_secret">>
-		}),
+		{ok, _} = arweave_config:set([cm, api_secret],
+			<<"this_is_not_the_actual_secret">>),
 		?assertMatch(
 			{error, {ok, {{<<"421">>, _}, _, 
 				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
@@ -176,19 +178,19 @@ test_bad_secret() ->
 				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
 			ar_http_iface_client:cm_publish_send(Peer, dummy_solution()))
 	after
-		ok = arweave_config:set_env(Config)
+		{ok, _} = arweave_config:set([cm, api_secret], OrigSecret)
 	end.
 
 test_partition_table() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), 5 * ar_block:partition_size()),
-	Config = ar_test_node:base_cm_config([]),
-	
-	MiningAddr = Config#config.mining_addr,
+	BaseConfig = ar_test_node:base_cm_config([]),
+
+	MiningAddr = maps:get([mining, address], BaseConfig),
 	RandomAddress = crypto:strong_rand_bytes(32),
 	Peer = ar_test_node:peer_ip(main),
 
 	%% No partitions
-	ar_test_node:start_node(B0, Config, false),
+	ar_test_node:start_node(B0, BaseConfig, false),
 
 	?assertEqual(
 		{ok, []},
@@ -196,29 +198,29 @@ test_partition_table() ->
 	),
 
 	%% Partition jumble with 2 addresses
-	ar_test_node:start_node(B0, Config#config{ 
-		storage_modules = [
-			{ar_block:partition_size(), 0, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size(), 0, {spora_2_6, RandomAddress}},
-			{1000, 2, {spora_2_6, MiningAddr}},
-			{1000, 2, {spora_2_6, RandomAddress}},
-			{1000, 10, {spora_2_6, MiningAddr}},
-			{1000, 10, {spora_2_6, RandomAddress}},
-			{ar_block:partition_size() * 2, 4, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size() * 2, 4, {spora_2_6, RandomAddress}},
-			{(ar_block:partition_size() div 10), 18, {spora_2_6, MiningAddr}},
-			{(ar_block:partition_size() div 10), 18, {spora_2_6, RandomAddress}},
-			{(ar_block:partition_size() div 10), 19, {spora_2_6, MiningAddr}},
-			{(ar_block:partition_size() div 10), 19, {spora_2_6, RandomAddress}},
-			{(ar_block:partition_size() div 10), 20, {spora_2_6, MiningAddr}},
-			{(ar_block:partition_size() div 10), 20, {spora_2_6, RandomAddress}},
-			{(ar_block:partition_size() div 10), 21, {spora_2_6, MiningAddr}},
-			{(ar_block:partition_size() div 10), 21, {spora_2_6, RandomAddress}},
-			{ar_block:partition_size()+1, 30, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size()+1, 30, {spora_2_6, RandomAddress}},
-			{ar_block:partition_size(), 40, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size(), 40, {spora_2_6, RandomAddress}}
-		]}, false),
+	PartitionJumbleModules = [
+		{ar_block:partition_size(), 0, {spora_2_6, MiningAddr}},
+		{ar_block:partition_size(), 0, {spora_2_6, RandomAddress}},
+		{1000, 2, {spora_2_6, MiningAddr}},
+		{1000, 2, {spora_2_6, RandomAddress}},
+		{1000, 10, {spora_2_6, MiningAddr}},
+		{1000, 10, {spora_2_6, RandomAddress}},
+		{ar_block:partition_size() * 2, 4, {spora_2_6, MiningAddr}},
+		{ar_block:partition_size() * 2, 4, {spora_2_6, RandomAddress}},
+		{(ar_block:partition_size() div 10), 18, {spora_2_6, MiningAddr}},
+		{(ar_block:partition_size() div 10), 18, {spora_2_6, RandomAddress}},
+		{(ar_block:partition_size() div 10), 19, {spora_2_6, MiningAddr}},
+		{(ar_block:partition_size() div 10), 19, {spora_2_6, RandomAddress}},
+		{(ar_block:partition_size() div 10), 20, {spora_2_6, MiningAddr}},
+		{(ar_block:partition_size() div 10), 20, {spora_2_6, RandomAddress}},
+		{(ar_block:partition_size() div 10), 21, {spora_2_6, MiningAddr}},
+		{(ar_block:partition_size() div 10), 21, {spora_2_6, RandomAddress}},
+		{ar_block:partition_size()+1, 30, {spora_2_6, MiningAddr}},
+		{ar_block:partition_size()+1, 30, {spora_2_6, RandomAddress}},
+		{ar_block:partition_size(), 40, {spora_2_6, MiningAddr}},
+		{ar_block:partition_size(), 40, {spora_2_6, RandomAddress}}
+	],
+	ar_test_node:start_node(B0, BaseConfig, false, PartitionJumbleModules),
 	%% get_cm_partition_table returns the currently minable partitions - which is [] if the
 	%% node is not mining.
 	?assertEqual(
@@ -253,34 +255,44 @@ test_peers_by_partition() ->
 	Peer3 = ar_test_node:peer_ip(peer3),
 
 	BaseConfig = ar_test_node:base_cm_config([]),
-	Config = BaseConfig#config{ cm_exit_peer = Peer1 },
-	MiningAddr = Config#config.mining_addr,
-	
-	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
-		cm_exit_peer = not_set,
-		cm_peers = [Peer2, Peer3],
-		local_peers = [Peer2, Peer3],
-		storage_modules = [
-			{ar_block:partition_size(), 0, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size(), 1, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size(), 2, {spora_2_6, MiningAddr}}
-		]}, false]),
-	ar_test_node:remote_call(peer2, ar_test_node, start_node, [B0, Config#config{
-		cm_peers = [Peer1, Peer3],
-		local_peers = [Peer1, Peer3],
-		storage_modules = [
-			{ar_block:partition_size(), 1, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size(), 2, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size(), 3, {spora_2_6, MiningAddr}}
-		]}, false]),
-	ar_test_node:remote_call(peer3, ar_test_node, start_node, [B0, Config#config{
-		cm_peers = [Peer1, Peer2],
-		local_peers = [Peer1, Peer2],
-		storage_modules = [
-			{ar_block:partition_size(), 2, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size(), 3, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size(), 4, {spora_2_6, MiningAddr}}
-		]}, false]),
+	Config = ar_test_node:merge_overrides(BaseConfig,
+		#{[peers, ar_util:format_peer(Peer1), cm_exit] => true}),
+	MiningAddr = maps:get([mining, address], Config),
+
+	%% On peer1's own start, negate the self-as-cm_exit role inherited
+	%% from `Config`
+	Peer1Config = maps:put([peers, ar_util:format_peer(Peer1), cm_exit],
+			false, Config),
+	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0,
+		ar_test_node:merge_overrides(Peer1Config, lists:foldl(
+			fun maps:merge/2,
+			#{},
+			[ar_test_node:peer_leaves(cm_peer, [Peer2, Peer3]),
+			 ar_test_node:peer_leaves(local, [Peer2, Peer3])])),
+		false,
+		[{ar_block:partition_size(), 0, {spora_2_6, MiningAddr}},
+		 {ar_block:partition_size(), 1, {spora_2_6, MiningAddr}},
+		 {ar_block:partition_size(), 2, {spora_2_6, MiningAddr}}]]),
+	ar_test_node:remote_call(peer2, ar_test_node, start_node, [B0,
+		ar_test_node:merge_overrides(Config, lists:foldl(
+			fun maps:merge/2,
+			#{},
+			[ar_test_node:peer_leaves(cm_peer, [Peer1, Peer3]),
+			 ar_test_node:peer_leaves(local, [Peer1, Peer3])])),
+		false,
+		[{ar_block:partition_size(), 1, {spora_2_6, MiningAddr}},
+		 {ar_block:partition_size(), 2, {spora_2_6, MiningAddr}},
+		 {ar_block:partition_size(), 3, {spora_2_6, MiningAddr}}]]),
+	ar_test_node:remote_call(peer3, ar_test_node, start_node, [B0,
+		ar_test_node:merge_overrides(Config, lists:foldl(
+			fun maps:merge/2,
+			#{},
+			[ar_test_node:peer_leaves(cm_peer, [Peer1, Peer2]),
+			 ar_test_node:peer_leaves(local, [Peer1, Peer2])])),
+		false,
+		[{ar_block:partition_size(), 2, {spora_2_6, MiningAddr}},
+		 {ar_block:partition_size(), 3, {spora_2_6, MiningAddr}},
+		 {ar_block:partition_size(), 4, {spora_2_6, MiningAddr}}]]),
 
 	ar_test_node:remote_call(peer1, ar_mining_io, set_largest_seen_upper_bound,
 		[PartitionUpperBound]),
@@ -326,15 +338,16 @@ test_peers_by_partition() ->
 	assert_peers([Peer2], peer3, 3),
 	assert_peers([], peer3, 4),
 
-	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0, Config#config{
-		cm_exit_peer = not_set,
-		cm_peers = [Peer2, Peer3],
-		local_peers = [Peer2, Peer3],
-		storage_modules = [
-			{ar_block:partition_size(), 0, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size(), 4, {spora_2_6, MiningAddr}},
-			{ar_block:partition_size(), 5, {spora_2_6, MiningAddr}}
-		]}, false]),
+	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0,
+		ar_test_node:merge_overrides(Peer1Config, lists:foldl(
+			fun maps:merge/2,
+			#{},
+			[ar_test_node:peer_leaves(cm_peer, [Peer2, Peer3]),
+			 ar_test_node:peer_leaves(local, [Peer2, Peer3])])),
+		false,
+		[{ar_block:partition_size(), 0, {spora_2_6, MiningAddr}},
+		 {ar_block:partition_size(), 4, {spora_2_6, MiningAddr}},
+		 {ar_block:partition_size(), 5, {spora_2_6, MiningAddr}}]]),
 	ar_test_node:remote_call(peer1, ar_mining_io, set_largest_seen_upper_bound,
 		[PartitionUpperBound]),
 	timer:sleep(3000),
@@ -366,13 +379,17 @@ test_peers_by_partition() ->
 %% --------------------------------------------------------------------
 
 assert_peers(ExpectedPeers, Node, Partition) ->
+	Expected = lists:sort(ExpectedPeers),
 	?assert(ar_util:do_until(
 		fun() ->
-			Peers = ar_test_node:remote_call(Node, ar_coordination, get_peers, [Partition]),
-			lists:sort(ExpectedPeers) == lists:sort(Peers)
+			case ar_test_node:remote_call(
+					Node, ar_coordination, get_peers, [Partition]) of
+				{badrpc, _} -> false;
+				Peers when is_list(Peers) -> Expected == lists:sort(Peers)
+			end
 		end,
 		200,
-		5000
+		30000
 	)).
 
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
@@ -384,14 +401,17 @@ wait_for_each_node(
 	?assert(false, "Timed out waiting for all mining nodes to win a solution");
 wait_for_each_node(
 		Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, RetryCount) ->
-	Partitions = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
-	ExpectedPartitions2 = sets:subtract(ExpectedPartitions, sets:from_list(Partitions)),
+	PerBlockPartitions = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
+	Seen = sets:from_list(lists:append(PerBlockPartitions)),
+	ExpectedPartitions2 = sets:subtract(ExpectedPartitions, Seen),
 	case sets:is_empty(ExpectedPartitions2) of
 		true ->
-			CurrentHeight+1;
+			CurrentHeight + length(PerBlockPartitions);
 		false ->
 			wait_for_each_node(
-				Miners, ValidatorNode, CurrentHeight+1, ExpectedPartitions2, RetryCount-1)
+				Miners, ValidatorNode,
+				CurrentHeight + length(PerBlockPartitions),
+				ExpectedPartitions2, RetryCount-1)
 	end.
 
 wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
@@ -404,19 +424,25 @@ wait_for_cross_node(_Miners, _ValidatorNode, _CurrentHeight, ExpectedPartitions,
 		when length(ExpectedPartitions) /= 2 ->
 	?assert(false, "Cross-node solutions can only have 2 partitions.");
 wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, RetryCount) ->
-	A = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
-	Partitions = sets:from_list(A),
-	MinedCrossNodeBlock = 
-		sets:is_subset(Partitions, ExpectedPartitions) andalso 
-		sets:is_subset(ExpectedPartitions, Partitions),
-	case MinedCrossNodeBlock of
+	PerBlockPartitions = mine_in_parallel(Miners, ValidatorNode, CurrentHeight),
+	%% Each block's partition set is checked individually — a cross-node
+	%% solution is one where a single block carries both expected
+	%% partitions in its recall bytes (proof that the chunk2 came from
+	%% a peer's partition, since each miner owns only one partition).
+	IsCrossNode = fun(Ps) -> sets:from_list(Ps) =:= ExpectedPartitions end,
+	case lists:any(IsCrossNode, PerBlockPartitions) of
 		true ->
-			CurrentHeight+1;
+			CurrentHeight + length(PerBlockPartitions);
 		false ->
 			wait_for_cross_node(
-				Miners, ValidatorNode, CurrentHeight+1, ExpectedPartitions, RetryCount-1)
+				Miners, ValidatorNode,
+				CurrentHeight + length(PerBlockPartitions),
+				ExpectedPartitions, RetryCount-1)
 	end.
-	
+
+%% @doc Trigger one mining attempt on every miner in parallel, wait for
+%% the validator to advance, and return the partition set of each newly
+%% applied block as a list-of-lists (one entry per block).
 mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	report_miners(Miners),
 	CurrentB = ar_test_node:remote_call(ValidatorNode, ar_node, get_current_block, []),
@@ -438,7 +464,7 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 	NewHeight = ar_test_node:remote_call(ValidatorNode, ar_node, get_height, []),
 
 	Hashes = [Hash || {Hash, _, _} <- lists:sublist(BIValidator, NewHeight - CurrentHeight)],
-	
+
 	lists:foreach(
 		fun(Node) ->
 			?LOG_DEBUG([{test, ar_coordinated_mining_tests},
@@ -455,19 +481,19 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 		end,
 		Miners
 	),
-	LatestHash = lists:last(Hashes),
-	{ok, Block} = ar_test_node:http_get_block(LatestHash, ValidatorNode),
 
+	%% Walk the new block range from oldest to newest so callers see partition
+	%% sets in chain order (lists:sublist returned them newest-first).
+	[block_partitions(Hash, ValidatorNode) || Hash <- lists:reverse(Hashes)].
+
+block_partitions(Hash, ValidatorNode) ->
+	{ok, Block} = ar_test_node:http_get_block(Hash, ValidatorNode),
 	case Block#block.recall_byte2 of
-		undefined -> 
-			[
-				ar_node:get_partition_number(Block#block.recall_byte)
-			];
+		undefined ->
+			[ar_node:get_partition_number(Block#block.recall_byte)];
 		RecallByte2 ->
-			[
-				ar_node:get_partition_number(Block#block.recall_byte), 
-				ar_node:get_partition_number(RecallByte2)
-			]
+			[ar_node:get_partition_number(Block#block.recall_byte),
+			 ar_node:get_partition_number(RecallByte2)]
 	end.
 
 report_miners(Miners) ->

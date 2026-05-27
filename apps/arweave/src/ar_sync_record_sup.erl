@@ -6,8 +6,8 @@
 
 -export([init/1]).
 
+-include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_sup.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 %%%===================================================================
 %%% Public interface.
@@ -22,7 +22,8 @@ start_link() ->
 
 init([]) ->
 	ets:new(sync_records, [set, public, named_table, {read_concurrency, true}]),
-	{ok, Config} = arweave_config:get_env(),
+	StorageModules = arweave_config:storage_modules(),
+	RepackInPlaceModules = arweave_config:repack_modules(),
 	ConfiguredWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
@@ -30,7 +31,7 @@ init([]) ->
 			Name = list_to_atom("ar_sync_record_" ++ Label),
 			?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
 		end,
-		Config#config.storage_modules
+		StorageModules
 	),
 	DefaultSyncRecordWorker = ?CHILD_WITH_ARGS(ar_sync_record, worker, ar_sync_record_default,
 		[ar_sync_record_default, ?DEFAULT_MODULE]),
@@ -41,7 +42,7 @@ init([]) ->
 			Name = list_to_atom("ar_sync_record_" ++ Label),
 			?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
 		end,
-		Config#config.repack_in_place_storage_modules
+		RepackInPlaceModules
 	),
 	Workers = [DefaultSyncRecordWorker] ++ ConfiguredWorkers ++ RepackInPlaceWorkers,
 	{ok, {{one_for_one, 5, 10}, Workers}}.

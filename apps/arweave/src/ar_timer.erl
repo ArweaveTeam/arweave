@@ -128,7 +128,7 @@ apply_after(Time, Module, Function, Arguments, Opts) ->
 	A = [Time, Module, Function, Arguments],
 	case ar_shutdown_manager:apply(M, F, A, Opts) of
 		{ok, TimerRef} -> {ok, TimerRef};
-		Elsewise -> Elsewise
+		Else -> Else
 	end.
 
 %%--------------------------------------------------------------------
@@ -174,8 +174,8 @@ apply_interval(Time, Module, Function, Arguments, Opts) ->
 				time => Time
 			}),
 			{ok, TimerRef};
-		Elsewise ->
-			Elsewise
+		Else ->
+			Else
 	end.
 
 %%--------------------------------------------------------------------
@@ -223,7 +223,7 @@ send_after(Time, Pid, Message, Opts) ->
 	A = [Time, Pid, Message],
 	case ar_shutdown_manager:apply(M, F, A, Opts) of
 		{ok, TimerRef} -> {ok, TimerRef};
-		Elsewise -> Elsewise
+		Else -> Else
 	end.
 
 %%--------------------------------------------------------------------
@@ -276,8 +276,8 @@ send_interval(Time, Pid, Message, Opts) ->
 				time => Time
 			}),
 			{ok, TimerRef};
-		Elsewise ->
-			Elsewise
+		Else ->
+			Else
 	end.
 
 %%--------------------------------------------------------------------
@@ -295,8 +295,8 @@ cancel(TimerRef) ->
 				{action, cancel}
 			]),
 			Reply;
-		Elsewise ->
-			Elsewise
+		Else ->
+			Else
 	end.
 
 %%--------------------------------------------------------------------

@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_chain_stats).
 
 -behaviour(gen_server).
@@ -5,7 +6,6 @@
 -include("ar.hrl").
 -include("ar_chain_stats.hrl").
 
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -46,9 +46,9 @@ get_forks(StartTime) ->
 init([]) ->
 	%% Trap exit to avoid corrupting any open files on quit..
 	process_flag(trap_exit, true),
-	{ok, Config} = arweave_config:get_env(),
+	DataDir = arweave_config:get([data_dir]),
 	ok = ar_kv:open(#{
-		path => filename:join([Config#config.data_dir, ?ROCKS_DB_DIR, "forks_db"]),
+		path => filename:join([DataDir, ?ROCKS_DB_DIR, "forks_db"]),
 		name => forks_db}),
 	{ok, #{}}.
 

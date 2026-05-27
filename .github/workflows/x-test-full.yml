@@ -1,5 +1,17 @@
 ######################################################################
 # Full Arweave Test Suite. Mostly used on Linux like systems.
+#
+# Categorisation:
+#   - fast tests:  modules tagged `%% @ar_test: fast` (and the
+#                  module has eunit tests). Run in a small number
+#                  of sharded jobs that each loop through their
+#                  slice, one BEAM per module. Shares the artifact
+#                  download across many modules — that's the win.
+#   - slow tests:  every other eunit-bearing module. Each gets its
+#                  own matrix shard for full parallelism.
+#
+# Discovery is via scripts/list_test_modules.sh which scans the
+# source tree for eunit tests + reads `@ar_test:` annotations.
 ######################################################################
 name: "arweave-test-suite-full"
 
@@ -22,12 +34,17 @@ on:
 env:
   cache_key: ${{ inputs.os_arch }}-${{ inputs.os_name }}-${{ inputs.os_release }}
 
-####################################################################
-# Test modules (note: that _tests are implicitly run by a matching
-# prefix name
-####################################################################
 jobs:
-  full-test-modules:
+  # Single cheap job that scans the source tree and emits the slow
+  # module list as JSON for the slow-tests matrix to consume.
+  #
+  # Only `slow_modules` is exposed as an output because that's the
+  # only category whose membership drives a downstream matrix
+  # dimension (one shard per module). The `fast` matrix is sharded
+  # by index, and each fast shard re-runs `list_test_modules.sh
+  # fast plain` to compute its own slice — same SHA, same result,
+  # no need to plumb it through outputs.
+  discover-tests:
     runs-on:
       - self-hosted
       - build-runner
@@ -35,7 +52,7 @@ jobs:
       - ${{ inputs.os_name }}
       - ${{ inputs.os_release }}
     outputs:
-      core_test_mods: ${{ steps.core-test-mods.outputs.core_test_mods }}
+      slow_modules: ${{ steps.discover.outputs.slow_modules }}
     steps:
       - name: cleanup
         if: always()
@@ -46,25 +63,33 @@ jobs:
         with:
           submodules: "recursive"
 
-      - name: load full test modules
-        id: core-test-mods
+      - name: discover slow modules
+        id: discover
         run: |
-          echo "core_test_mods=$(bash scripts/list_test_modules.sh json)" >> "$GITHUB_OUTPUT"
+          echo "slow_modules=$(bash scripts/list_test_modules.sh slow json)" >> "$GITHUB_OUTPUT"
 
-  eunit-tests-suite:
-    needs: full-test-modules
+  # Fast tests share artifact downloads across ~5-6 modules each.
+  # Each module still runs in its own clean BEAM (no cross-module
+  # state leakage) — github_workflow.sh loops through the modules
+  # passed to it.
+  #
+  # `needs: discover-tests` is for ordering only — fast-tests doesn't
+  # consume discover-tests' JSON output (it slices its own list inside
+  # the run step). The dependency is there so (a) the CI graph reads
+  # linearly and (b) a broken discovery script halts the test stage
+  # cleanly instead of letting fast-tests run with stale assumptions.
+  fast-tests:
+    needs: discover-tests
     runs-on:
       - self-hosted
       - build-runner
       - ${{ inputs.os_arch }}
       - ${{ inputs.os_name }}
       - ${{ inputs.os_release }}
-
     strategy:
       fail-fast: false
-      max-parallel: 12
       matrix:
-        core_test_mod: ${{ fromJson(needs.full-test-modules.outputs.core_test_mods) }}
+        shard: [0, 1, 2]
     steps:
       - name: cleanup
         if: always()
@@ -76,6 +101,74 @@ jobs:
           submodules: "recursive"
           lfs: false
 
+      - uses: ./.github/actions/kill-stray-erlang
+        if: always()
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.sha }}-${{ env.cache_key }}
+
+      - uses: ./.github/actions/ensure-zstd
+
+      - name: Extract artifact
+        run: |
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
+
+      - name: run fast shard ${{ matrix.shard }}
+        id: tests
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: |
+          # Take this shard's slice of fast modules (every Nth line,
+          # where N is the shard count from the strategy.matrix above).
+          modules=$(bash scripts/list_test_modules.sh fast plain \
+                    | awk -v s="$SHARD_INDEX" -v t=3 'NR % t == s')
+          # shellcheck disable=SC2086
+          bash scripts/github_workflow.sh "tests" "fast_shard_$SHARD_INDEX" $modules
+
+      - name: upload artifacts in case of failure
+        uses: actions/upload-artifact@v4
+        if: always() && failure()
+        with:
+          name: "logs-fast_shard_${{ matrix.shard }}-${{ github.run_attempt }}-${{ job.status }}-${{ runner.name }}-${{ github.sha }}"
+          retention-days: 7
+          overwrite: true
+          include-hidden-files: true
+          path: |
+            ./logs
+            *.out
+            *.dump
+
+  slow-tests:
+    needs: discover-tests
+    runs-on:
+      - self-hosted
+      - build-runner
+      - ${{ inputs.os_arch }}
+      - ${{ inputs.os_name }}
+      - ${{ inputs.os_release }}
+
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        core_test_mod: ${{ fromJson(needs.discover-tests.outputs.slow_modules) }}
+    steps:
+      - name: cleanup
+        if: always()
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+          lfs: false
+
+      - uses: ./.github/actions/kill-stray-erlang
+        if: always()
+
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
@@ -83,10 +176,12 @@ jobs:
 
       # Both artifacts (_build and apps dir) are
       # required.
+      - uses: ./.github/actions/ensure-zstd
+
       - name: Extract artifact
         run: |
-          tar zxfp _build.tar.gz
-          tar zxfp apps.tar.gz
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
 
       - name: ${{ matrix.core_test_mod }}.erl
         id: tests
@@ -107,6 +202,7 @@ jobs:
             ./logs
             *.out
             *.dump
+
   notebook-pricing-localnet:
     runs-on:
       - self-hosted
@@ -119,6 +215,7 @@ jobs:
         if: always()
         run: |
           rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
@@ -128,6 +225,8 @@ jobs:
           git lfs install --local
           git lfs pull
           git lfs checkout
+      - uses: ./.github/actions/kill-stray-erlang
+        if: always()
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -138,14 +237,19 @@ jobs:
           name: build-${{ github.sha }}-${{ env.cache_key }}
       # Both artifacts (_build and apps dir) are
       # required.
+      - uses: ./.github/actions/ensure-zstd
+
       - name: Extract artifact
         run: |
-          tar zxfp _build.tar.gz
-          tar zxfp apps.tar.gz
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
       - name: Setup notebook env
+        env:
+          PYTHON: python3.11
         run: scripts/setup_notebook_env.sh
       - name: Run pricing transition notebook headless
         run: scripts/run_notebook_headless.sh pricing_transition_localnet
+
   notebook-autoredenomination-localnet:
     runs-on:
       - self-hosted
@@ -158,6 +262,7 @@ jobs:
         if: always()
         run: |
           rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
       - uses: actions/checkout@v4
         with:
           submodules: "recursive"
@@ -167,6 +272,8 @@ jobs:
           git lfs install --local
           git lfs pull
           git lfs checkout
+      - uses: ./.github/actions/kill-stray-erlang
+        if: always()
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -177,12 +284,15 @@ jobs:
           name: build-${{ github.sha }}-${{ env.cache_key }}
       # Both artifacts (_build and apps dir) are
       # required.
+      - uses: ./.github/actions/ensure-zstd
+
       - name: Extract artifact
         run: |
-          tar zxfp _build.tar.gz
-          tar zxfp apps.tar.gz
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
       - name: Setup notebook env
+        env:
+          PYTHON: python3.11
         run: scripts/setup_notebook_env.sh
       - name: Run autoredenomination notebook headless
         run: scripts/run_notebook_headless.sh autoredenomination_localnet
-

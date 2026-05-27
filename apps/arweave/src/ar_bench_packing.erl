@@ -112,8 +112,8 @@ run_benchmark({Dir, Threads, TargetSamples, LargePages, RatedSpeedMB, ReadLoadTh
 
 configure_randomx(LargePages) ->
 	case LargePages of
-		1 -> arweave_config:set_env(#config{disable = [], enable = [randomx_large_pages]});
-		0 -> arweave_config:set_env(#config{disable = [randomx_large_pages], enable = []})
+		1 -> _ = arweave_config:set([randomx, large_pages], true), ok;
+		0 -> _ = arweave_config:set([randomx, large_pages], false), ok
 	end.
 
 calculate_mib_per_iteration() ->

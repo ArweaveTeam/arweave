@@ -58,15 +58,18 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 	end,
 	FinalStorageModules = lists:sublist(SourceStorageModules, NumModules),
 	ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
-	{ok, Config} = ar_test_node:get_config(RepackerNode),
+	ExistingStorageModules = ar_test_node:remote_call(
+		RepackerNode, arweave_config, storage_modules, []),
 
-	RepackInPlaceStorageModules = lists:sublist([ 
-		{Module, ToPacking} || Module <- Config#config.storage_modules ], NumModules),
-	
-	ar_test_node:restart_with_config(RepackerNode, Config#config{
-		storage_modules = [],
-		repack_in_place_storage_modules = RepackInPlaceStorageModules,
-		mining_addr = undefined
+	RepackInPlaceStorageModules = lists:sublist([
+		{Module, ToPacking} || Module <- ExistingStorageModules ], NumModules),
+
+	ar_test_node:remote_call(RepackerNode, arweave_config,
+		replace_storage_modules, [[]]),
+	ar_test_node:remote_call(RepackerNode, arweave_config,
+		replace_repack_modules, [RepackInPlaceStorageModules]),
+	ar_test_node:restart_with_config(RepackerNode, #{
+		[mining, address] => undefined
 	}),
 
 	ExpectedSize0 = ar_e2e:aligned_partition_size(RepackerNode, 0, ToPacking),
@@ -77,7 +80,8 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 	ar_test_node:stop(RepackerNode),
 
 	%% Rename storage_modules
-	DataDir = Config#config.data_dir,
+	DataDir = ar_test_node:remote_call(
+		RepackerNode, arweave_config, get, [[data_dir]]),
 	lists:foreach(fun({SourceModule, Packing}) ->
 		{BucketSize, Bucket, _Packing} = SourceModule,
 		SourceID = ar_storage_module:id(SourceModule),
@@ -89,11 +93,12 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 		file:rename(SourcePath, TargetPath)
 	end, RepackInPlaceStorageModules),
 
-	ar_test_node:restart_with_config(RepackerNode, 
-		Config#config{
-				storage_modules = FinalStorageModules,
-			repack_in_place_storage_modules = [],
-			mining_addr = AddrB
+	ar_test_node:remote_call(RepackerNode, arweave_config,
+		replace_storage_modules, [FinalStorageModules]),
+	ar_test_node:remote_call(RepackerNode, arweave_config,
+		replace_repack_modules, [[]]),
+	ar_test_node:restart_with_config(RepackerNode, #{
+		[mining, address] => AddrB
 	}),
 
 	ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
@@ -106,12 +111,11 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 	end.
 
 start_validator_node(ValidatorNode, RepackerNode, B0) ->
-	{ok, Config} = ar_test_node:get_config(ValidatorNode),
 	?assertEqual(ar_test_node:peer_name(ValidatorNode),
-		ar_test_node:start_other_node(ValidatorNode, B0, Config#config{
-				peers = [ar_test_node:peer_ip(RepackerNode)],
-			start_from_latest_state = true,
-			auto_join = true
+		ar_test_node:start_other_node(ValidatorNode, B0, #{
+			{peers, trusted} => [ar_test_node:peer_ip(RepackerNode)],
+			[join, start_from_latest_state] => true,
+			[join, auto] => true
 		}, true)
 	),
 	ok.

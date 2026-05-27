@@ -1,3 +1,4 @@
+%% @ar_test: fast
 -module(ar_kv).
 
 -behaviour(gen_server).
@@ -286,10 +287,11 @@ count(Name) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	{ok, Config} = arweave_config:get_env(),
+	FlushInterval = arweave_config:get([rocksdb, flush_interval]),
+	WalSyncInterval = arweave_config:get([rocksdb, wal_sync_interval]),
 	S0 = #state{
-		db_flush_timer = #timer{interval_ms = Config#config.rocksdb_flush_interval_s * 1000},
-		wal_sync_timer = #timer{interval_ms = Config#config.rocksdb_wal_sync_interval_s * 1000}
+		db_flush_timer = #timer{interval_ms = FlushInterval * 1000},
+		wal_sync_timer = #timer{interval_ms = WalSyncInterval * 1000}
 	},
 	S1 = init_db_flush_timer(S0),
 	S2 = init_wal_sync_timer(S1),
@@ -658,8 +660,8 @@ with_each_db(Callback) ->
 get_base_log_dir(LogFilepath) ->
 	case LogFilepath of
 		not_set ->
-			{ok, Config} = arweave_config:get_env(),
-			Config#config.log_dir;
+			LogDir = arweave_config:get([log_dir]),
+			LogDir;
 		_ ->
 			LogFilepath
 	end.
@@ -667,8 +669,8 @@ get_base_log_dir(LogFilepath) ->
 
 
 test_get_data_dir() ->
-	{ok, Config} = arweave_config:get_env(),
-	Config#config.data_dir.
+	DataDir = arweave_config:get([data_dir]),
+	DataDir.
 
 
 
@@ -816,6 +818,7 @@ test_delete_range() ->
 	?assertEqual(not_found, ar_kv:get(test_db, << 3:256 >>)),
 	?assertEqual(not_found, ar_kv:get(test_db, << 4:256 >>)),
 
+	test_close(test_db),
 	test_destroy("test_db").
 
 

@@ -14,10 +14,9 @@ chunks_read(_Worker, WhichChunk, Candidate, RangeStart, ChunkOffsets) ->
 setup_all() ->
 	[B0] = ar_weave:init([], 1, ?WEAVE_SIZE),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	{ok, Config} = arweave_config:get_env(),
 	StorageModules = lists:flatten(
 		[[{8 * 262144, N, {spora_2_6, RewardAddr}}] || N <- lists:seq(0, 8)]),
-	ar_test_node:start(B0, RewardAddr, Config, StorageModules),
+	ar_test_node:start(B0, RewardAddr, #{}, StorageModules),
 	{Setup, Cleanup} = ar_test_node:mock_functions([
 		{ar_mining_worker, chunks_read, fun chunks_read/5},
 		{ar_block, partition_size, fun() -> 8 * 262144 end}
@@ -134,9 +133,8 @@ test_partitions() ->
 		ar_mining_io:get_partitions(trunc(5 * ar_block:partition_size()))).
 
 get_minable_storge_modules_test() ->
-	{ok, Config} = arweave_config:get_env(),
-	Addr = Config#config.mining_addr,
-	try
+	Addr = arweave_config:get([mining, address]),
+	arweave_config:with_test_config(fun() ->
 		Input = [
 			{100, 0, {spora_2_6, Addr}},
 			{200, 0, unpacked},
@@ -146,31 +144,25 @@ get_minable_storge_modules_test() ->
 			{100, 0, {spora_2_6, Addr}},
 			{300, 0, {replica_2_9, Addr}}
 		],
-		arweave_config:set_env(Config#config{storage_modules = Input}),
+		ok = arweave_config:replace_storage_modules(Input),
 		?assertEqual(Expected, ar_mining_io:get_minable_storage_modules())
-	after
-		arweave_config:set_env(Config)
-	end.
+	end).
 
 get_packing_test() ->
-	{ok, Config} = arweave_config:get_env(),
-	Addr = Config#config.mining_addr,
-	try
+	Addr = arweave_config:get([mining, address]),
+	arweave_config:with_test_config(fun() ->
 		Input = [
 			{100, 0, unpacked},
 			{200, 0, {spora_2_6, Addr}},
 			{300, 0, {replica_2_9, Addr}}
 		],
 		Expected = {spora_2_6, Addr},
-		arweave_config:set_env(Config#config{storage_modules = Input}),
+		ok = arweave_config:replace_storage_modules(Input),
 		?assertEqual(Expected, ar_mining_io:get_packing())
-	after
-		arweave_config:set_env(Config)
-	end.
+	end).
 
 default_candidate() ->
-	{ok, Config} = arweave_config:get_env(),
-	MiningAddr = Config#config.mining_addr,
+	MiningAddr = arweave_config:get([mining, address]),
 	#mining_candidate{
 		mining_address = MiningAddr
 	}.

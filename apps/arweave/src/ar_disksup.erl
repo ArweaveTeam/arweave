@@ -30,7 +30,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 
 -record(state, {
 	timeout,
@@ -48,8 +47,7 @@ start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 get_disk_space_check_frequency() ->
-	{ok, Config} = arweave_config:get_env(),
-	Config#config.disk_space_check_frequency.
+	arweave_config:get([disk_space_check_frequency]).
 
 get_disk_data() ->
 	gen_server:call(?MODULE, get_disk_data, ?DEFAULT_CALL_TIMEOUT).
@@ -419,14 +417,14 @@ skip_to_eol([_ | T]) ->
 	skip_to_eol(T).
 
 get_storage_modules_paths() ->
-	{ok, Config} = arweave_config:get_env(),
-	DataDir = Config#config.data_dir,
+	DataDir = arweave_config:get([data_dir]),
+	StorageModules = arweave_config:storage_modules(),
 	SMDirs = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
 			{StoreID, filename:join([DataDir, "storage_modules", StoreID])}
 		end,
-		Config#config.storage_modules
+		StorageModules
 	),
 	[{?DEFAULT_MODULE, DataDir} | SMDirs].
 

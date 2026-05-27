@@ -31,8 +31,8 @@ reset_node() ->
 	[{H, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, Height + 1),
 	B = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, H]),
 	PrevB = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, PrevH]),
-	{ok, Config} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
-	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr]),
+	MiningAddr = ar_test_node:remote_call(peer1, arweave_config, get, [[mining, address]]),
+	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [MiningAddr]),
 	{Key, B, PrevB}.
 
 setup_all_post_2_7() ->
@@ -431,8 +431,8 @@ test_rejects_invalid_blocks() ->
 	post_block(B2, invalid_signature),
 	%% Nonce limiter output too far in the future.
 	Info1 = B1#block.nonce_limiter_info,
-	{ok, Config} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
-	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr]),
+	MiningAddr = ar_test_node:remote_call(peer1, arweave_config, get, [[mining, address]]),
+	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [MiningAddr]),
 	B3 = sign_block(B1#block{
 			%% Change the solution hash so that the validator does not go down
 			%% the comparing the resigned solution with the cached solution path.
@@ -657,8 +657,8 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 	post_block(B3, invalid_double_signing_proof_same_address),
 	ar_test_node:mine(peer1),
 	BI2 = ar_test_node:assert_wait_until_height(peer1, 2),
-	{ok, MainConfig} = arweave_config:get_env(),
-	Key2 = element(1, ar_wallet:load_key(MainConfig#config.mining_addr)),
+	MainMiningAddr = arweave_config:get([mining, address]),
+	Key2 = element(1, ar_wallet:load_key(MainMiningAddr)),
 	Preimage3 = << (B0#block.hash)/binary, (crypto:strong_rand_bytes(32))/binary >>,
 	Preimage4 = << (B0#block.hash)/binary, (crypto:strong_rand_bytes(32))/binary >>,
 	SignaturePreimage3 = ar_block:get_block_signature_preimage(CDiff, PrevCDiff,
@@ -857,8 +857,8 @@ test_resigned_solution() ->
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
 	B = ar_node:get_current_block(),
-	{ok, Config} = ar_test_node:remote_call(peer1, arweave_config, get_env, []),
-	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [Config#config.mining_addr]),
+	MiningAddr = ar_test_node:remote_call(peer1, arweave_config, get, [[mining, address]]),
+	Key = ar_test_node:remote_call(peer1, ar_wallet, load_key, [MiningAddr]),
 	ok = ar_events:subscribe(block),
 	B2 = sign_block(B#block{ tags = [<<"tag1">>] }, B0, Key),
 	post_block(B2, [valid]),

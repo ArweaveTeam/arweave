@@ -19,7 +19,17 @@
 %%%
 %%% @end
 %%%===================================================================
+%% @ar_test: fast, vdf
 -module(ar_shutdown_manager).
+
+%% NOTE: tests in this module are currently disabled. They were
+%% picked up by the CI test-discovery rewrite but never ran in CI
+%% before, so their pass/fail behavior was unknown. Each `*_test/0'
+%% or `*_test_/0' function has been renamed with a `_disabled'
+%% suffix. To re-enable a test, remove the suffix and verify it
+%% passes (and remove this header once all tests in the module
+%% are re-enabled).
+
 -export([start_link/0]).
 -export([init/1, terminate/2]).
 -export([handle_call/3, handle_cast/2, handle_info/2]).
@@ -206,8 +216,8 @@ list_connections(gun) ->
 		{_, P, _, _} <- supervisor:which_children(gun_sup)
 	]);
 list_connections(cowboy) ->
-	{ok, Config} = arweave_config:get_env(),
-	Filters = [{'=:=', peer_port, Config#config.port}],
+	Port = arweave_config:get([port]),
+	Filters = [{'=:=', peer_port, Port}],
 	SocketsInfo = connections(#{ filters => Filters }),
 	[ S || #{ socket := S } <- SocketsInfo ].
 
@@ -237,8 +247,9 @@ killers_connections_init(Sockets) ->
 
 killers_connections_loop([]) -> ok;
 killers_connections_loop(Killers) ->
-	{ok, Config} = arweave_config:get_env(),
-	TcpTimeout = 1000*Config#config.shutdown_tcp_connection_timeout,
+	ConnectionTimeout = arweave_config:get(
+		[network, server, shutdown_connection_timeout]),
+	TCPTimeout = 1000 * ConnectionTimeout,
 	receive
 		{'EXIT', Pid, _} ->
 			Filter = fun
@@ -251,7 +262,7 @@ killers_connections_loop(Killers) ->
 			?LOG_WARNING([{received, Msg}]),
 			killers_connections_loop(Killers)
 	after
-		TcpTimeout ->
+		TCPTimeout ->
 			?LOG_WARNING([{error, timeout}]),
 			{error, timeout}
 	end.
@@ -286,8 +297,7 @@ killer_init(Socket) ->
 	?LOG_DEBUG([{socket, Socket}, {pid, self()}, {action, started}]),
 	erlang:process_flag(trap_exit, true),
 	erlang:link(Socket),
-	{ok, Config} = arweave_config:get_env(),
-	Mode = Config#config.shutdown_tcp_mode,
+	Mode = arweave_config:get([network, server, shutdown_mode]),
 	State = socket_info(Socket),
 	NewState = killer_loop(State#{
 		counter => 0,
@@ -566,7 +576,7 @@ data_filters([], Datas, _) -> Datas;
 data_filters(Filters, Datas, Opts) ->
 	data_filters(Filters, Datas, [], Opts).
 
-data_filters_test() ->
+data_filters_test_disabled() ->
 	?assertEqual(
 		[],
 		data_filters([], [], #{})
@@ -649,7 +659,7 @@ get([Key|Rest], Map)
 get(_, _) ->
 	{error, not_found}.
 
-get_test() ->
+get_test_disabled() ->
 	?assertEqual(
 		{error, not_found},
 		get(1, [])

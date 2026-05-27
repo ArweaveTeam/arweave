@@ -19,12 +19,18 @@ jobs:
     uses: ./.github/workflows/x-test-canary.yml
     secrets: inherit
 
+  # test-canary, common-test, and test all need only the build artifact.
+  # We don't gate test/common-test on test-canary because canary is a
+  # sanity check on the test harness itself, and serializing them adds
+  # ~5-7 min of artifact-download cost on every push to defend against
+  # a near-zero-probability condition. If canary fails the PR's
+  # required-checks reflects that; test runs in parallel anyway.
   common-test:
-    needs: [test-canary]
+    needs: [build]
     uses: ./.github/workflows/x-common-test.yml
     secrets: inherit
 
   test:
-    needs: [test-canary]
+    needs: [build]
     uses: ./.github/workflows/x-test-full.yml
     secrets: inherit

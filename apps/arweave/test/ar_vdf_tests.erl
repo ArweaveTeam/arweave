@@ -1,3 +1,4 @@
+%% @ar_test: vdf
 -module(ar_vdf_tests).
 
 -include_lib("eunit/include/eunit.hrl").

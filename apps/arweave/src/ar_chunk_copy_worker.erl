@@ -17,7 +17,6 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
 -record(state, {
@@ -44,10 +43,10 @@ start_link(Name) ->
 
 init(Name) ->
 	?LOG_INFO([{event, init}, {module, ?MODULE}, {name, Name}]),
-	{ok, Config} = arweave_config:get_env(),
+	RequestPackedChunks = arweave_config:get([sync, request_packed_chunks]),
 	{ok, #state{
 		name = Name,
-		request_packed_chunks = Config#config.data_sync_request_packed_chunks
+		request_packed_chunks = RequestPackedChunks
 	}}.
 
 handle_call(Request, _From, State) ->

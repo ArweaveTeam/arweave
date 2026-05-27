@@ -1,103 +1,65 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @author Arweave Team
-%%% @author Mathieu Kerjouan
-%%% @copyright 2025 (c) Arweave
 %%% @doc
-%%% @end
-%%%===================================================================
 -module(arweave_config_http_server_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([
-	default/1,
-	unix_socket/1
-]).
+-compile([export_all, nowarn_export_all]).
 -include("arweave_config.hrl").
 -include_lib("common_test/include/ct.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-suite() -> [{userdata, [description()]}].
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
-description() -> {description, "arweave_config http api interface"}.
-
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 init_per_suite(Config) ->
 	application:ensure_all_started(gun),
 	Config.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 end_per_suite(_Config) ->
 	application:stop(gun),
 	ok.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 init_per_testcase(_TestCase, Config) ->
-	ct:pal(info, 1, "start arweave_config"),
 	ok = arweave_config:start(),
 	Config.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
 end_per_testcase(_TestCase, _Config) ->
-	ct:pal(info, 1, "stop arweave_config"),
+	cleanup_config_http_server(),
 	ok = arweave_config:stop().
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
+%% The config HTTP server feature is paused — testcases are kept for when
+%% it's revived. To re-enable, replace this with the testcase list below:
+%%
+%% all() ->
+%%     [
+%%         default,
+%%         unix_socket,
+%%         socket_cleanup_on_stop,
+%%         router_root_path,
+%%         router_unknown_path_404,
+%%         post_with_invalid_json,
+%%         config_http_enabled_starts_server
+%%     ].
 all() ->
-	[
-		default,
-		unix_socket
-	].
+	{skip, "config HTTP server feature is paused; testcases retained for future revival"}.
 
-%%--------------------------------------------------------------------
-%% @doc test `arweave_config' main interface.
-%% @end
-%%--------------------------------------------------------------------
+%%====================================================================
+%% Test cases
+%%====================================================================
+
 default(_Config) ->
 	% the server can be started as child (under
 	% arweave_config_sup). The goal is to enable it on demand only
-	% if a specific parameter or environment variable is present.
-	ct:pal(test, 1, "start arweave config http server"),
+	% if a specific option or environment variable is present.
 	arweave_config_http_server:start_as_child(),
 
 	% the whole configuration can be seen using /v0/config
 	% end-point
-	ct:pal(test, 1, "fetch the whole configuration"),
 	{ok, 200, D1} = get_path("/v0/config"),
 	{true, {success, _}} = is_jsend(D1),
 
-	% any parameters can be fetched using /v0/config/${parameter},
+	% any options can be fetched using /v0/config/${option},
 	% they are separated by '/'
-	ct:pal(test, 1, "fetch debug parameter"),
 	{ok, 200, D2} = get_path("/v0/config/debug"),
 	{true, {success, false}} = is_jsend(D2),
 
-	% parameters can be set using a POST method and following the
+	% options can be set using a POST method and following the
 	% same pattern. At this time, the data sent is untyped (no
 	% json support)
-	ct:pal(test, 1, "set debug parameter"),
 	{ok, 200, D3} = post_path("/v0/config/debug", <<"true">>),
 	{true,
 		{success, #{
@@ -107,54 +69,103 @@ default(_Config) ->
 		}
 	} = is_jsend(D3),
 
-	% when a parameter was set, the new value should be present.
-	ct:pal(test, 1, "fetch debug parameter"),
+	% when a option was set, the new value should be present.
 	{ok, 200, D4} = get_path("/v0/config/debug"),
 	{true, {success, true}} = is_jsend(D4),
 
 	% if a bad value is given by the client, an error must be
 	% returned, if possible with a message containing the reason.
-	ct:pal(test, 1, "set bad value on parameter"),
 	{ok, 400, D5} = post_path("/v0/config/debug", <<"random">>),
 	{true, {error, _}} = is_jsend(D5),
 
-	% if a parameter is not present, an error should be returned
+	% if a option is not present, an error should be returned
 	% with the reason
-	ct:pal(test, 1, "check unknown parameter"),
-	{ok, 404, D6} = get_path("/v0/config/parameter/not/found"),
+	{ok, 404, D6} = get_path("/v0/config/option/not/found"),
 	{true, {error, _}} = is_jsend(D6),
 
 	% arweave environment should be available to the client, at
 	% this time, all environment variables are displayed.
-	ct:pal(test, 1, "fetch arweave config environment"),
 	{ok, 200, D7} = get_path("/v0/environment"),
 	{true, {success, _}} = is_jsend(D7),
 
-	ct:pal(test, 1, "stop config http server"),
 	arweave_config_http_server:stop_as_child(),
 
-	{comment, "arweave_config_http_server tested "}.
+	ok.
 
-unix_socket(Config) ->
+unix_socket(_Config) ->
 	SocketPath = filename:join("/tmp", "./arweave.sock"),
-	ct:pal(test, 1, "set socket to ~p", [SocketPath]),
-	arweave_config:set([config,http,api,listen,address], SocketPath),
+	arweave_config:set([config,http,listen,address], SocketPath),
 
-	ct:pal(test, 1, "start arweave config http server"),
 	arweave_config_http_server:start_link(),
 	timer:sleep(500),
 	{ok, _} = file:read_file_info(SocketPath),
 
-	ct:pal(test, 1, "stop arweave config http server"),
 	arweave_config_http_server:stop(),
 	timer:sleep(500),
 	{error, enoent} = file:read_file_info(SocketPath),
 
 	{command, "unix socket feature tested"}.
 
-%%--------------------------------------------------------------------
-%% simple http client for get request.
-%%--------------------------------------------------------------------
+socket_cleanup_on_stop(_Config) ->
+	SocketPath = filename:join("/tmp", "arweave_cleanup.sock"),
+	%% Make sure no stale file is lying around from a prior run.
+	_ = file:delete(SocketPath),
+
+	arweave_config:set([config,http,listen,address], SocketPath),
+
+	{ok, _Pid} = arweave_config_http_server:start_link(),
+	timer:sleep(500),
+	{ok, _} = file:read_file_info(SocketPath),
+
+	ok = arweave_config_http_server:stop(),
+	timer:sleep(500),
+	{error, enoent} = file:read_file_info(SocketPath),
+
+	ok.
+
+router_root_path(_Config) ->
+	{ok, _Pid} = arweave_config_http_server:start_as_child(),
+	Result = get_path("/v0"),
+	{ok, Status, _Body} = Result,
+	true = (Status =:= 200 orelse Status =:= 404),
+	arweave_config_http_server:stop_as_child(),
+	ok.
+
+router_unknown_path_404(_Config) ->
+	{ok, _Pid} = arweave_config_http_server:start_as_child(),
+	{ok, 404, _Body} = get_path("/v0/some/unknown/path"),
+	arweave_config_http_server:stop_as_child(),
+	ok.
+
+post_with_invalid_json(_Config) ->
+	{ok, _Pid} = arweave_config_http_server:start_as_child(),
+	{ok, 400, Body} = post_path("/v0/config/debug", <<"{not valid json">>),
+	{true, {error, _}} = is_jsend(Body),
+	arweave_config_http_server:stop_as_child(),
+	ok.
+
+%% Exercises the operator-facing input path end-to-end: bootstrap
+%% parses the `--config.http.*' CLI flags, writes them through the
+%% options registry, then `runtime/0' flips the lifecycle. The supervisor
+%% child registration is explicit because no production code wires
+%% the spec value to a running server today — see
+%% `arweave_config_http_server:start_as_child/0'.
+config_http_enabled_starts_server(_Config) ->
+	ok = arweave_config_bootstrap:start([
+		"--config.http.listen.port", "0",
+		"--config.http.enabled"
+	]),
+	ok = arweave_config:runtime(),
+	{ok, _Pid} = arweave_config_http_server:start_as_child(),
+	Children = supervisor:which_children(arweave_config_sup),
+	?assertMatch(
+		{arweave_config_http_server, _, _, _},
+		lists:keyfind(arweave_config_http_server, 1, Children)).
+
+%%====================================================================
+%% Helpers
+%%====================================================================
+
 get_path(Path) ->
 	get_path(Path, #{}).
 
@@ -166,9 +177,6 @@ get_path(Path, Opts) ->
 	StreamRef = gun:get(Pid, Path),
 	body(Pid, StreamRef).
 
-%%--------------------------------------------------------------------
-%% simple http client for post request.
-%%--------------------------------------------------------------------
 post_path(Path, Data) ->
 	post_path(Path, Data, #{}).
 
@@ -180,9 +188,6 @@ post_path(Path, Data, Opts) ->
 	StreamRef = gun:post(Pid, Path, #{}, Data),
 	body(Pid, StreamRef).
 
-%%--------------------------------------------------------------------
-%% from https://ninenines.eu/docs/en/gun/2.1/guide/http/
-%%--------------------------------------------------------------------
 body(ConnPid, MRef) ->
 	receive
 		{gun_response, ConnPid, StreamRef, fin, Status, Headers} ->
@@ -201,9 +206,6 @@ body(ConnPid, MRef) ->
 		timeout
 	end.
 
-%%--------------------------------------------------------------------
-%% from https://ninenines.eu/docs/en/gun/2.1/guide/http/
-%%--------------------------------------------------------------------
 receive_data(ConnPid, MRef, Status, StreamRef, Buffer) ->
 	receive
 		{gun_data, ConnPid, StreamRef, nofin, Data} ->
@@ -222,9 +224,21 @@ receive_data(ConnPid, MRef, Status, StreamRef, Buffer) ->
 		timeout
 	end.
 
-%%--------------------------------------------------------------------
-%% @hidden
-%%--------------------------------------------------------------------
+cleanup_config_http_server() ->
+	case catch supervisor:which_children(arweave_config_sup) of
+		Children when is_list(Children) ->
+			case lists:keyfind(arweave_config_http_server, 1, Children) of
+				false ->
+					ok;
+				_ ->
+					_ = catch arweave_config_http_server:stop_as_child(),
+					ok
+			end;
+		_ ->
+			ok
+	end,
+	ok.
+
 is_jsend(Data) ->
 	try
 		jiffy:decode(Data, [return_maps])
