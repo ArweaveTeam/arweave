@@ -47,8 +47,16 @@ handle([<<"solution">>], Req, State) ->
 	end,
 	{ok, cowboy_req:reply(200, #{}, <<>>, Req), State}.
 
+%% Mock `ar_tx_blacklist:refresh_interval_ms/0' so blacklist refreshes
+%% on a test-friendly cadence — the second-chunk blacklisting step
+%% relies on a refresh firing within the assertion's 60s window, and
+%% the production interval is 10 minutes.
 webhooks_test_() ->
-	{timeout, 120, fun test_webhooks/0}.
+	ar_test_node:test_with_mocked_functions(
+		[{ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
+		fun test_webhooks/0,
+		120_000
+	).
 
 test_webhooks() ->
 	{_, Pub} = Wallet = ar_wallet:new(),
