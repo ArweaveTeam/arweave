@@ -1,4 +1,4 @@
-%% @ar_test: fast, vdf
+%% @ar_test: fast
 -module(ar_kv).
 
 -behaviour(gen_server).
@@ -818,6 +818,7 @@ test_delete_range() ->
 	?assertEqual(not_found, ar_kv:get(test_db, << 3:256 >>)),
 	?assertEqual(not_found, ar_kv:get(test_db, << 4:256 >>)),
 
+	test_close(test_db),
 	test_destroy("test_db").
 
 

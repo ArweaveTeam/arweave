@@ -1,4 +1,4 @@
-%% @ar_test: vdf
+%% @ar_test: isolated
 -module(ar_vdf_block_validation_tests).
 
 -include_lib("eunit/include/eunit.hrl").

@@ -1,0 +1,25 @@
+name: 'Ensure zstd installed'
+description: |
+  Installs zstd if not already present. macOS runners have it via
+  Homebrew; Linux Incus runner images currently don't, so this
+  step provisions it via apt-get on first use.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        if command -v zstd >/dev/null 2>&1; then
+          echo "zstd already installed: $(zstd --version 2>&1 | head -1)"
+          exit 0
+        fi
+        if command -v apt-get >/dev/null 2>&1; then
+          echo "Installing zstd via apt-get..."
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends zstd
+          echo "Installed: $(zstd --version 2>&1 | head -1)"
+        else
+          echo "ERROR: zstd not present and no apt-get available." >&2
+          echo "Install zstd manually and retry." >&2
+          exit 1
+        fi

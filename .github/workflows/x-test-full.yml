@@ -109,10 +109,12 @@ jobs:
         with:
           name: build-${{ github.sha }}-${{ env.cache_key }}
 
+      - uses: ./.github/actions/ensure-zstd
+
       - name: Extract artifact
         run: |
-          tar zxfp _build.tar.gz
-          tar zxfp apps.tar.gz
+          tar --use-compress-program='zstd -T0 -d' -xfp _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xfp apps.tar.zst
 
       - name: run fast shard ${{ matrix.shard }}
         id: tests
@@ -174,10 +176,12 @@ jobs:
 
       # Both artifacts (_build and apps dir) are
       # required.
+      - uses: ./.github/actions/ensure-zstd
+
       - name: Extract artifact
         run: |
-          tar zxfp _build.tar.gz
-          tar zxfp apps.tar.gz
+          tar --use-compress-program='zstd -T0 -d' -xfp _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xfp apps.tar.zst
 
       - name: ${{ matrix.core_test_mod }}.erl
         id: tests
@@ -233,10 +237,12 @@ jobs:
           name: build-${{ github.sha }}-${{ env.cache_key }}
       # Both artifacts (_build and apps dir) are
       # required.
+      - uses: ./.github/actions/ensure-zstd
+
       - name: Extract artifact
         run: |
-          tar zxfp _build.tar.gz
-          tar zxfp apps.tar.gz
+          tar --use-compress-program='zstd -T0 -d' -xfp _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xfp apps.tar.zst
       - name: Setup notebook env
         env:
           PYTHON: python3.11
@@ -278,10 +284,12 @@ jobs:
           name: build-${{ github.sha }}-${{ env.cache_key }}
       # Both artifacts (_build and apps dir) are
       # required.
+      - uses: ./.github/actions/ensure-zstd
+
       - name: Extract artifact
         run: |
-          tar zxfp _build.tar.gz
-          tar zxfp apps.tar.gz
+          tar --use-compress-program='zstd -T0 -d' -xfp _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xfp apps.tar.zst
       - name: Setup notebook env
         env:
           PYTHON: python3.11

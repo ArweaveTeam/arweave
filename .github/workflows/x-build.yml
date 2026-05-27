@@ -144,18 +144,29 @@ jobs:
       - name: Build arweave test sources
         run: ./ar-rebar3 test release
 
+      - uses: ./.github/actions/ensure-zstd
+
       # some artifacts are compiled and only available
       # in arweave directory (libraries).
       - name: Prepare artifacts
         run: |
           chmod -R u+w ./_build
 
-          # rebar is using a lot of absolute symlink,
-          # this can generate issue on standalone worker
-          # to avoid this problem, links must be
-          # deferenced with -h flag.
-          tar czfhp _build.tar.gz ./_build ./bin/arweave
-          tar czfhp apps.tar.gz ./apps
+          # zstd -T0 -3 is a noticeably better speed/ratio tradeoff
+          # than gzip for BEAM trees + binary deps — roughly 2× smaller
+          # output and 5-10× faster decompression on the test shards.
+          # `--use-compress-program' is the cross-platform spelling
+          # (works on both GNU tar and macOS bsdtar; `-I' is GNU-only).
+          # The `-h' flag dereferences symlinks — rebar makes a lot of
+          # absolute symlinks that don't survive transport between
+          # standalone runners. `_build/default/plugins' is build-time
+          # only (rebar3 plugins like hex_core), never needed by the
+          # test BEAMs.
+          tar --use-compress-program='zstd -T0 -3' \
+              --exclude='_build/default/plugins' \
+              -cfh _build.tar.zst ./_build ./bin/arweave
+          tar --use-compress-program='zstd -T0 -3' \
+              -cfh apps.tar.zst ./apps
 
       # to avoid reusing artifacts from someone else
       # and generating issues, an unique artifact is
@@ -169,5 +180,5 @@ jobs:
           overwrite: true
           path: |
             _version.yaml
-            _build.tar.gz
-            apps.tar.gz
+            _build.tar.zst
+            apps.tar.zst
