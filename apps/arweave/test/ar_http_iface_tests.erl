@@ -402,7 +402,8 @@ send_tx_binary(Index, InvalidTX) ->
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
 	ar_blacklist_middleware:reset(),
 	arweave_limiter_sup:reset_all(),
-	ar_rate_limiter:off(),
+	%ar_rate_limiter:off(),
+	arweave_client_throttling_sup:all_off(),
 	Responses = ar_util:batch_pmap(
 		RequestFun,
 		lists:seq(1, NRequests),
@@ -419,10 +420,12 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
 	{MinErrors, MaxErrors} = expected_error_range(ExpectedErrors, Tolerance),
 	?debugFmt("Requests sent: ~p, ExpectedErrors: ~p, Tolerance: ~p, Got: ~p~n",
 		[NRequests, ExpectedErrors, Tolerance, ErrorResponses]),
-	?assert(ErrorResponses =< MaxErrors),
-	?assert(ErrorResponses >= MinErrors),
+	?assert(ErrorResponses =< ExpectedErrors + Tolerance),
+	?assert(ErrorResponses >= ExpectedErrors - Tolerance),
 	?assertEqual(NRequests - ErrorResponses, maps:get(ok_responses, Got, 0)),
-	ar_rate_limiter:on().
+	%%ar_rate_limiter:on().
+	arweave_client_throttling_sup:all_on(),
+	ok.
 
 expected_error_range(ExpectedErrors, Tolerance) when is_integer(ExpectedErrors) ->
 	{max(0, ExpectedErrors - Tolerance), ExpectedErrors + Tolerance};

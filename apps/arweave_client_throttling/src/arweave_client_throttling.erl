@@ -81,7 +81,8 @@ stop() ->
 %% `{request_ready, Ref}' notification, with a 60s ceiling - on
 %% expiry it cancels the queued entry and returns `{error, timeout}'.
 -spec throttle(atom(), tuple()) -> ok | {error, term()}.
-throttle(GroupId, Peer) when is_atom(GroupId), is_tuple(Peer) ->
+throttle(Peer, Path) when is_tuple(Peer) ->
+    GroupId = arweave_client_throttling_path:path_to_group_id(Path),
     arweave_client_throttling_group:throttle(GroupId, Peer).
 
 %% @doc Non-blocking refresh of the peer's quota state.

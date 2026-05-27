@@ -33,6 +33,7 @@
 
 -define(M, arweave_client_throttling_metrics_collector).
 -define(GROUP, general).
+-define(PATH, <<"some/path/that/lead/to/general">>).
 
 suite() -> [{userdata, [description()]}, {timetrap, {seconds, 30}}].
 
@@ -90,7 +91,7 @@ no_peers_reported(_Config) ->
 one_peer_reported(_Config) ->
     Peer = {127, 0, 0, 1, 1984},
     _ = spawn(fun() ->
-                      arweave_client_throttling:throttle(?GROUP, Peer)
+                      arweave_client_throttling:throttle(Peer, ?PATH)
               end),
     ok = wait_peer_count(?GROUP, 1),
     [{arweave_client_throttling_peers, gauge, _Help, MetricsList}] =
@@ -105,7 +106,7 @@ one_peer_reported(_Config) ->
 two_hundred_peers_reported(_Config) ->
     Peers = [{10, 0, X div 256, X rem 256, 1984}
              || X <- lists:seq(1, 200)],
-    [spawn(fun() -> arweave_client_throttling:throttle(?GROUP, P) end)
+    [spawn(fun() -> arweave_client_throttling:throttle(P, ?PATH) end)
      || P <- Peers],
     ok = wait_peer_count(?GROUP, 200),
     [{arweave_client_throttling_peers, gauge, _Help, MetricsList}] =

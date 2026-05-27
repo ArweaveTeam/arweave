@@ -66,6 +66,7 @@
 
 -export([
     start_link/1,
+    registered_name/1,
     throttle/2,
     info/1,
     update_quota/3,
@@ -83,6 +84,10 @@
     terminate/2,
     code_change/3
 ]).
+
+-ifdef(AR_TEST).
+-export([turn_off/1, turn_on/1]).
+-endif.
 
 -include("arweave_client_throttling.hrl").
 -include_lib("kernel/include/logger.hrl").
@@ -106,6 +111,7 @@
     last_update_ts :: integer() | undefined
 }).
 
+-define(CALL_TIMEOUT, 1000).
 %% How long throttle/2 waits for a `{request_ready, Ref}' message
 %% after the gen_server replies with `{queued, Ref}'. On expiry the
 %% caller sends a `cancel_request' cast so the entry can be evicted
@@ -115,8 +121,12 @@
 %% @doc Start a group process. `Spec' must be a normalized map (see
 %% `arweave_client_throttling_config:normalize_group/1').
 -spec start_link(map()) -> {ok, pid()} | {error, term()}.
-start_link(#{id := Id} = Spec) ->
-    gen_server:start_link({local, registered_name(Id)}, ?MODULE, Spec, []).
+start_link(#{id := ID} = Spec) ->
+    gen_server:start_link({local, registered_name(ID)}, ?MODULE, Spec, []).
+
+
+registered_name(ID) when is_atom(ID) ->
+    list_to_atom("arweave_client_throttling_group_" ++ atom_to_list(ID)).
 
 %% @doc Blocking throttle call.
 %%
@@ -134,20 +144,38 @@ start_link(#{id := Id} = Spec) ->
 %% 60s ceiling; on expiry the caller sends a `cancel_request' cast
 %% to evict the entry from the queue and returns `{error, timeout}'.
 -spec throttle(atom(), tuple()) -> ok | {error, term()}.
-throttle(GroupId, Peer) ->
-    Name = registered_name(GroupId),
-    case gen_server:call(Name, {throttle, Peer}) of
+throttle(GroupID, Peer) ->
+    {Time, Value} = timer:tc(fun do_throttle/2, [GroupID, Peer]),
+    prometheus_histogram:observe(arweave_client_throttling_request_response_time_microseconds,
+                                 [atom_to_list(GroupID)], Time),
+    Value.
+
+-spec do_throttle(atom(), tuple()) -> ok | {error, term()}.
+do_throttle(GroupID, Peer) ->
+    prometheus_counter:inc(arweave_client_throttling_requests_total, [atom_to_list(GroupID)]),
+    Name = registered_name(GroupID),
+    {Time, WorkerReturn} = 
+        timer:tc(gen_server, call, [Name, {throttle, Peer}, ?CALL_TIMEOUT]),
+    prometheus_histogram:observe(arweave_client_throttling_worker_response_time_microseconds,
+                                 [atom_to_list(GroupID)], Time),
+    case WorkerReturn of
         accepted ->
             ok;
         {queued, Ref} ->
+            prometheus_counter:inc(arweave_client_throttling_queued_total, [atom_to_list(GroupID)]),
             receive
                 {request_ready, Ref} ->
                     ok
             after ?THROTTLE_RECEIVE_TIMEOUT_MS ->
-                gen_server:cast(Name, {cancel_request, Peer, Ref}),
-                {error, timeout}
+                    gen_server:cast(Name, {cancel_request, Peer, Ref}),
+                    prometheus_counter:inc(arweave_client_throttling_requests_error,
+                                           [atom_to_list(GroupID), "throttle_receive_timeout"]),
+                {error, throttle_receive_timeout}
             end;
         {error, _} = Error ->
+            %% TODO: extract error reason
+            prometheus_counter:inc(arweave_client_throttling_requests_error,
+                                   [atom_to_list(GroupID), "unknown"]),
             Error
     end.
 
@@ -164,7 +192,7 @@ throttle(GroupId, Peer) ->
 %%       integer) when not exhausted.</li>
 %% </ul>
 -spec update_quota(atom(), tuple(), map()) -> ok.
-update_quota(GroupId, Peer, #{
+update_quota(GroupID, Peer, #{
         total := Total,
         remaining := Remaining,
         reset_seconds := ResetSeconds})
@@ -172,23 +200,23 @@ update_quota(GroupId, Peer, #{
        is_integer(Remaining), Remaining >= 0,
        is_integer(ResetSeconds), ResetSeconds >= 0 ->
     ReceivedAt = monotonic_ms(),
-    gen_server:cast(registered_name(GroupId),
+    gen_server:cast(registered_name(GroupID),
                     {update_quota, Peer, Total, Remaining,
                      ResetSeconds, ReceivedAt}).
 
 %% @doc Get all info
-info(GroupId) ->
-    gen_server:call(registered_name(GroupId), get_info).
+info(GroupID) ->
+    gen_server:call(registered_name(GroupID), get_info).
 
 %% @doc Return a snapshot of the per-peer state.
 -spec status(atom(), tuple()) -> {ok, map()} | {error, term()}.
-status(GroupId, Peer) ->
-    gen_server:call(registered_name(GroupId), {status, Peer}).
+status(GroupID, Peer) ->
+    gen_server:call(registered_name(GroupID), {status, Peer}).
 
 %% @doc Number of waiting callers currently queued for `Peer'.
 -spec pending(atom(), tuple()) -> non_neg_integer().
-pending(GroupId, Peer) ->
-    case status(GroupId, Peer) of
+pending(GroupID, Peer) ->
+    case status(GroupID, Peer) of
         {ok, #{queue_length := N}} -> N;
         _ -> 0
     end.
@@ -197,23 +225,36 @@ pending(GroupId, Peer) ->
 %% `{request_ready, Ref}' notification so their `throttle/2' returns
 %% `ok' rather than staying blocked.
 -spec reset(atom()) -> ok.
-reset(GroupId) ->
-    gen_server:call(registered_name(GroupId), reset).
+reset(GroupID) ->
+    gen_server:call(registered_name(GroupID), reset).
+
+
+-spec turn_off(atom()) -> ok.
+turn_off(WorkerRef) ->
+    gen_server:call(WorkerRef, turn_off).
+
+-spec turn_on(atom()) -> ok.
+turn_on(WorkerRef) ->
+    gen_server:call(WorkerRef, turn_on).
+
 
 %% @doc Stop the group process.
 -spec stop(atom()) -> ok.
-stop(GroupId) ->
-    gen_server:stop(registered_name(GroupId)).
+stop(GroupID) ->
+    gen_server:stop(registered_name(GroupID)).
 
 %% gen_server callbacks
 init(Spec) ->
     process_flag(trap_exit, true),
     {ok, #{
+        is_enabled => true,
         spec => Spec,
         peers => #{},
         monitors => #{}
     }}.
 
+handle_call({throttle, _Peer}, _From, #{is_enabled := false} = State) ->
+    {reply, accepted, State};
 handle_call({throttle, Peer}, From, #{spec := Spec, peers := Peers} = State) ->
     PS0 = get_or_init_peer(Peer, Peers, Spec),
     case PS0#peer_state.remaining > 0 of
@@ -251,6 +292,10 @@ handle_call(reset, _From, #{peers := Peers, monitors := Monitors} = State) ->
                       erlang:demonitor(MRef, [flush])
               end, ok, Monitors),
     {reply, ok, State#{peers := #{}, monitors := #{}}};
+handle_call(turn_off, _From, State) ->
+    {reply, ok, State#{is_enabled => false}};
+handle_call(turn_on, _From, State) ->
+    {reply, ok, State#{is_enabled => true}};
 handle_call(Msg, From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE},
                   {msg, Msg}, {from, From}]),
@@ -348,10 +393,6 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% Internals
-
-registered_name(Id) when is_atom(Id) ->
-    list_to_atom("arweave_client_throttling_group_" ++ atom_to_list(Id)).
-
 enqueue_caller(Peer, From, PS0, State) ->
     #{spec := Spec, peers := Peers, monitors := Monitors} = State,
     MaxLen = maps:get(max_queue_length, Spec),

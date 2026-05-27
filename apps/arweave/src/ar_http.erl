@@ -90,7 +90,9 @@ req(Args, ReestablishedConnection) ->
 	end,
 	StartTime = erlang:monotonic_time(),
 	#{ peer := Peer, path := Path, method := Method } = Args,
-	ok = ar_rate_limiter:throttle(Peer, Path),
+
+	ok = arweave_client_throttling:throttle(Peer, Path),
+
 	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, 15000) of
 		{ok, PID} ->
 			case request(PID, Args) of

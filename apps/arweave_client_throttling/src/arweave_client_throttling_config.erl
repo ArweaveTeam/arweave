@@ -81,7 +81,6 @@ default_groups() ->
      #{id => get_vdf},
      #{id => get_vdf_session},
      #{id => get_previous_vdf_session},
-     #{id => recent_hash_list_diff},
      #{id => general}
      %% NOTE: opposed to server-side limiting there is no need for metrics group.
     ].
