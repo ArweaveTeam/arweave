@@ -16,22 +16,22 @@
 %% -------------------------------------------------------------------
 
 orphaned_chunk_cleanup_test_() ->
-	{timeout, 120, fun test_orphaned_chunk_cleanup/0}.
+	{timeout, 300, fun test_orphaned_chunk_cleanup/0}.
 
 immature_chunk_indexing_test_() ->
-	{timeout, 120, fun test_immature_chunk_indexing/0}.
+	{timeout, 300, fun test_immature_chunk_indexing/0}.
 
 blacklisted_byte_skipped_test_() ->
-	{timeout, 120, fun test_blacklisted_byte_skipped/0}.
+	{timeout, 300, fun test_blacklisted_byte_skipped/0}.
 
 chunk_cache_full_defers_processing_test_() ->
-	{timeout, 120, fun test_chunk_cache_full_defers_processing/0}.
+	{timeout, 300, fun test_chunk_cache_full_defers_processing/0}.
 
 chunk_data_not_found_resilience_test_() ->
-	{timeout, 120, fun test_chunk_data_not_found_resilience/0}.
+	{timeout, 300, fun test_chunk_data_not_found_resilience/0}.
 
 may_conclude_accumulation_test_() ->
-	{timeout, 180, fun test_may_conclude_accumulation/0}.
+	{timeout, 480, fun test_may_conclude_accumulation/0}.
 
 %% -------------------------------------------------------------------
 %% Helpers

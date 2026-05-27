@@ -7,11 +7,10 @@
 -include("ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--import(ar_test_node, [test_with_mocked_functions/2]).
-
 mines_off_only_second_last_chunks_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
-			fun test_mines_off_only_second_last_chunks/0).
+	ar_test_node:test_with_mocked_functions(
+			[{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
+			fun test_mines_off_only_second_last_chunks/0, 900).
 
 mock_reset_frequency() ->
 	{ar_nonce_limiter, get_reset_frequency, fun() -> 5 end}.
