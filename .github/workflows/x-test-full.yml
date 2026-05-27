@@ -113,8 +113,8 @@ jobs:
 
       - name: Extract artifact
         run: |
-          tar --use-compress-program='zstd -T0 -d' -xfp _build.tar.zst
-          tar --use-compress-program='zstd -T0 -d' -xfp apps.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
 
       - name: run fast shard ${{ matrix.shard }}
         id: tests
@@ -180,8 +180,8 @@ jobs:
 
       - name: Extract artifact
         run: |
-          tar --use-compress-program='zstd -T0 -d' -xfp _build.tar.zst
-          tar --use-compress-program='zstd -T0 -d' -xfp apps.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
 
       - name: ${{ matrix.core_test_mod }}.erl
         id: tests
@@ -241,8 +241,8 @@ jobs:
 
       - name: Extract artifact
         run: |
-          tar --use-compress-program='zstd -T0 -d' -xfp _build.tar.zst
-          tar --use-compress-program='zstd -T0 -d' -xfp apps.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
       - name: Setup notebook env
         env:
           PYTHON: python3.11
@@ -288,8 +288,8 @@ jobs:
 
       - name: Extract artifact
         run: |
-          tar --use-compress-program='zstd -T0 -d' -xfp _build.tar.zst
-          tar --use-compress-program='zstd -T0 -d' -xfp apps.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
       - name: Setup notebook env
         env:
           PYTHON: python3.11

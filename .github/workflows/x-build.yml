@@ -164,9 +164,9 @@ jobs:
           # test BEAMs.
           tar --use-compress-program='zstd -T0 -3' \
               --exclude='_build/default/plugins' \
-              -cfh _build.tar.zst ./_build ./bin/arweave
+              -chf _build.tar.zst ./_build ./bin/arweave
           tar --use-compress-program='zstd -T0 -3' \
-              -cfh apps.tar.zst ./apps
+              -chf apps.tar.zst ./apps
 
       # to avoid reusing artifacts from someone else
       # and generating issues, an unique artifact is

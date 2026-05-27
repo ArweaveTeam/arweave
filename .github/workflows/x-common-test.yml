@@ -59,8 +59,8 @@ jobs:
 
       - name: Extract artifact
         run: |
-          tar --use-compress-program='zstd -T0 -d' -xfp _build.tar.zst
-          tar --use-compress-program='zstd -T0 -d' -xfp apps.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
 
       # This is a temporary fix to prevent test failures when
       # executing the test suite on a system like MacOS. The libraries

@@ -60,8 +60,8 @@ jobs:
 
       - name: Extract artifact
         run: |
-          tar --use-compress-program='zstd -T0 -d' -xfp _build.tar.zst
-          tar --use-compress-program='zstd -T0 -d' -xfp apps.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
 
       # The canary's whole purpose is to fail — we run it to verify
       # that the test harness can detect a failing test. We absorb its
