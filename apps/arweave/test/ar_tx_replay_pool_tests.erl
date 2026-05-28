@@ -12,189 +12,118 @@ verify_block_txs_test_() ->
 test_verify_block_txs() ->
 	Key1 = ar_wallet:new(),
 	Key2 = ar_wallet:new(),
+	CurrentHeight = 0,
 	RandomBlockAnchors =
 		[crypto:strong_rand_bytes(32) || _ <- lists:seq(1, ar_block:get_max_tx_anchor_depth())],
-	BlockAnchorTXAtForkHeight = tx(Key1, fee(ar_fork:height_2_0()), <<"hash">>),
-	BlockAnchorTXAfterForkHeight =
-		tx(Key1, fee(ar_fork:height_2_0() + 1), <<"hash">>),
+	BlockAnchorTX = tx(Key1, fee(CurrentHeight), <<"hash">>),
 	Timestamp = os:system_time(second),
 	TestCases = [
 		#{
-			title => "Fork height 2.0 accepts block anchors",
-			txs => [tx(Key1, fee(ar_fork:height_2_0()), <<"hash">>)],
-			height => ar_fork:height_2_0(),
+			title => "Accepts block anchors",
+			txs => [tx(Key1, fee(CurrentHeight), <<"hash">>)],
+			height => CurrentHeight,
 			block_anchors => [<<"hash">>],
 			recent_txs_map => #{},
-			wallet_list => [wallet(Key1, fee(ar_fork:height_2_0()))],
+			wallet_list => [wallet(Key1, fee(CurrentHeight))],
 			expected_result => valid
 		},
 		#{
-			title => "After fork height 2.0 accepts block anchors",
-			txs => [tx(Key1, fee(ar_fork:height_2_0() + 1), <<"hash">>)],
-			height => ar_fork:height_2_0() + 1,
-			block_anchors => [<<"hash">>],
-			recent_txs_map => #{},
-			wallet_list => [wallet(Key1, fee(ar_fork:height_2_0() + 1))],
-			expected_result => valid
-		},
-		#{
-			title => "Fork height 2.0 rejects outdated block anchors",
+			title => "Rejects outdated block anchors",
 			txs => [
 				tx(
 					Key1,
-					fee(ar_fork:height_2_0()),
+					fee(CurrentHeight),
 					crypto:strong_rand_bytes(32)
 				)
 			],
 			block_anchors => RandomBlockAnchors,
 			recent_txs_map => #{},
-			height => ar_fork:height_2_0(),
-			wallet_list => [wallet(Key1, fee(ar_fork:height_2_0()))],
+			height => CurrentHeight,
+			wallet_list => [wallet(Key1, fee(CurrentHeight))],
 			expected_result => invalid
 		},
 		#{
-			title => "After fork height 2.0 rejects outdated block anchors",
+			title => "Accepts wallet list anchors",
 			txs => [
-				tx(
-					Key1,
-					fee(ar_fork:height_2_0() + 1),
-					crypto:strong_rand_bytes(32)
-				)
+				tx(Key1, fee(CurrentHeight), <<>>),
+				tx(Key2, fee(CurrentHeight), <<>>)
 			],
-			block_anchors => RandomBlockAnchors,
-			recent_txs_map => #{},
-			height => ar_fork:height_2_0() + 1,
-			wallet_list => [wallet(Key1, fee(ar_fork:height_2_0() + 1))],
-			expected_result => invalid
-		},
-		#{
-			title => "Fork height 2.0 accepts wallet list anchors",
-			txs => [
-				tx(Key1, fee(ar_fork:height_2_0()), <<>>),
-				tx(Key2, fee(ar_fork:height_2_0()), <<>>)
-			],
-			height => ar_fork:height_2_0(),
+			height => CurrentHeight,
 			wallet_list => [
-				wallet(Key1, fee(ar_fork:height_2_0())),
-				wallet(Key2, fee(ar_fork:height_2_0()))
+				wallet(Key1, fee(CurrentHeight)),
+				wallet(Key2, fee(CurrentHeight))
 			],
 			block_anchors => [],
 			recent_txs_map => #{},
 			expected_result => valid
 		},
 		#{
-			title => "After fork height 2.0 accepts wallet list anchors",
+			title => "Rejects conflicting wallet list anchors",
 			txs => [
-				tx(Key1, fee(ar_fork:height_2_0() + 1), <<>>),
-				tx(Key2, fee(ar_fork:height_2_0() + 1), <<>>)
+				tx(Key1, fee(CurrentHeight), <<>>),
+				tx(Key1, fee(CurrentHeight), <<>>)
 			],
-			height => ar_fork:height_2_0() + 1,
-			wallet_list => [
-				wallet(Key1, fee(ar_fork:height_2_0() + 1)),
-				wallet(Key2, fee(ar_fork:height_2_0() + 1))
-			],
+			height => CurrentHeight,
 			block_anchors => [],
 			recent_txs_map => #{},
-			expected_result => valid
-		},
-		#{
-			title => "Fork height 2.0 rejects conflicting wallet list anchors",
-			txs => [
-				tx(Key1, fee(ar_fork:height_2_0()), <<>>),
-				tx(Key1, fee(ar_fork:height_2_0()), <<>>)
-			],
-			height => ar_fork:height_2_0(),
-			block_anchors => [],
-			recent_txs_map => #{},
-			wallet_list => [wallet(Key1, 2 * fee(ar_fork:height_2_0()))],
+			wallet_list => [wallet(Key1, 2 * fee(CurrentHeight))],
 			expected_result => invalid
 		},
 		#{
-			title => "Fork height 2.0 rejects chained wallet list anchors",
-			txs => make_tx_chain(Key1, ar_fork:height_2_0()),
-			height => ar_fork:height_2_0(),
+			title => "Rejects chained wallet list anchors",
+			txs => make_tx_chain(Key1, CurrentHeight),
+			height => CurrentHeight,
 			block_anchors => [],
 			recent_txs_map => #{},
-			wallet_list => [wallet(Key1, 2 * fee(ar_fork:height_2_0()))],
+			wallet_list => [wallet(Key1, 2 * fee(CurrentHeight))],
 			expected_result => invalid
 		},
 		#{
-			title => "Fork height 2.0 rejects conflicting balances",
+			title => "Rejects conflicting balances",
 			txs => [
-				tx(Key1, fee(ar_fork:height_2_0()), <<>>),
-				tx(Key1, fee(ar_fork:height_2_0()), <<>>)
+				tx(Key1, fee(CurrentHeight), <<>>),
+				tx(Key1, fee(CurrentHeight), <<>>)
 			],
-			height => ar_fork:height_2_0(),
+			height => CurrentHeight,
 			wallet_list =>
-				[wallet(Key1, erlang:trunc(1.5 * fee(ar_fork:height_2_0())))],
+				[wallet(Key1, erlang:trunc(1.5 * fee(CurrentHeight)))],
 			block_anchors => [],
 			recent_txs_map => #{},
 			expected_result => invalid
 		},
 		#{
-			title => "Fork height 2.0 rejects duplicates",
-			txs => [BlockAnchorTXAtForkHeight, BlockAnchorTXAtForkHeight],
-			height => ar_fork:height_2_0(),
+			title => "Rejects duplicates",
+			txs => [BlockAnchorTX, BlockAnchorTX],
+			height => CurrentHeight,
 			block_anchors => [],
 			recent_txs_map => #{},
-			wallet_list => [wallet(Key1, 2 * fee(ar_fork:height_2_0()))],
+			wallet_list => [wallet(Key1, 2 * fee(CurrentHeight))],
 			expected_result => invalid
 		},
-		#{
-			title => "After fork height 2.0 rejects duplicates",
-			txs => [BlockAnchorTXAfterForkHeight, BlockAnchorTXAfterForkHeight],
-			height => ar_fork:height_2_0() + 1,
-			block_anchors => [],
-			recent_txs_map => #{},
-			wallet_list => [wallet(Key1, 2 * fee(ar_fork:height_2_0() + 1))],
-			expected_result => invalid
-		},
-		%% The duplicate cases above set block_anchors=[], so both copies fail
-		%% at tx_bad_anchor. The cases below make the first copy genuinely
+		%% The duplicate case above sets block_anchors=[], so both copies fail
+		%% at tx_bad_anchor. The case below makes the first copy genuinely
 		%% valid (matching block anchor) so the second copy is the one that
 		%% trips verify_tx_in_mempool → tx_already_in_mempool.
 		#{
-			title => "Fork height 2.0 rejects duplicate already in mempool",
-			txs => [BlockAnchorTXAtForkHeight, BlockAnchorTXAtForkHeight],
-			height => ar_fork:height_2_0(),
+			title => "Rejects duplicate already in mempool",
+			txs => [BlockAnchorTX, BlockAnchorTX],
+			height => CurrentHeight,
 			block_anchors => [<<"hash">>],
 			recent_txs_map => #{},
-			wallet_list => [wallet(Key1, 2 * fee(ar_fork:height_2_0()))],
+			wallet_list => [wallet(Key1, 2 * fee(CurrentHeight))],
 			expected_result => invalid
 		},
 		#{
-			title => "After fork height 2.0 rejects duplicate already in mempool",
-			txs => [BlockAnchorTXAfterForkHeight, BlockAnchorTXAfterForkHeight],
-			height => ar_fork:height_2_0() + 1,
-			block_anchors => [<<"hash">>],
-			recent_txs_map => #{},
-			wallet_list => [wallet(Key1, 2 * fee(ar_fork:height_2_0() + 1))],
-			expected_result => invalid
-		},
-		#{
-			title => "Fork height 2.0 rejects txs from the weave",
-			txs => [BlockAnchorTXAtForkHeight],
-			height => ar_fork:height_2_0(),
+			title => "Rejects txs from the weave",
+			txs => [BlockAnchorTX],
+			height => CurrentHeight,
 			block_anchors => [<<"hash">>, <<"otherhash">>],
 			recent_txs_map => #{
 				<<"txid">> => ok,
 				<<"txid2">> => ok,
-				BlockAnchorTXAtForkHeight#tx.id => ok
+				BlockAnchorTX#tx.id => ok
 			},
-			wallet_list => [wallet(Key1, fee(ar_fork:height_2_0()))],
-			expected_result => invalid
-		},
-		#{
-			title => "After fork height 2.0 rejects txs from the weave",
-			txs => [BlockAnchorTXAfterForkHeight],
-			height => ar_fork:height_2_0() + 1,
-			block_anchors => [<<"hash">>, <<"otherhash">>],
-			recent_txs_map => #{
-				<<"txid">> => ok,
-				<<"txid2">> => ok,
-				BlockAnchorTXAfterForkHeight#tx.id => ok
-			},
-			wallet_list => [wallet(Key1, fee(ar_fork:height_2_0() + 1))],
+			wallet_list => [wallet(Key1, fee(CurrentHeight))],
 			expected_result => invalid
 		}
 	],
