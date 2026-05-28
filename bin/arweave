@@ -350,10 +350,6 @@ arweave_benchmark() {
 	    shift
 	    arweave_benchmark_vdf ${*}
 	    ;;
-	vdf_exp)
-	    shift
-	    arweave_benchmark_vdf_exp ${*}
-	    ;;
 	*)
 	    arweave_benchmark_help
 	    ;;
@@ -381,11 +377,6 @@ arweave_benchmark_packing() {
 
 arweave_benchmark_vdf() {
     ARWEAVE_OPTS="-run ar benchmark_vdf"
-    echo ${*}
-}
-
-arweave_benchmark_vdf_exp() {
-    ARWEAVE_OPTS="-run ar benchmark_vdf_exp"
     echo ${*}
 }
 
@@ -467,7 +458,6 @@ arweave_config_help() {
     echo "Usage: ${REL_NAME} config <command>"
     echo "Manage Arweave configuration. Commands:"
     echo "  ${REL_NAME} config help"
-    echo "  ${REL_NAME} config convert <input-file> [output-file]"
     echo "  ${REL_NAME} config get <parameter>"
     echo "  ${REL_NAME} config set <parameter> <value>"
     exit 1
@@ -504,7 +494,7 @@ arweave_config_get() {
     escaped_key="$(escape_for_erl_string "${key}")"
     # erl_call -a parses the trailing token as Erlang. Args must be a
     # list, otherwise a bare string "debug" is interpreted as a
-    # 5-element charlist and apply tries the config CLI get/5.
+    # 5-element charlist and apply tries arweave_config_cli:get/5.
     erl_rpc arweave_config_cli get "[\"${escaped_key}\"]"
 }
 
@@ -521,7 +511,7 @@ arweave_config_set() {
     local escaped_key escaped_value
     escaped_key="$(escape_for_erl_string "${key}")"
     escaped_value="$(escape_for_erl_string "${value}")"
-    erl_rpc arweave_config_cli set "\"${escaped_key}\"" "\"${escaped_value}\""
+    erl_rpc arweave_config_cli set "[\"${escaped_key}\", \"${escaped_value}\"]"
 }
 
 ######################################################################
@@ -1513,17 +1503,6 @@ case "$1" in
 		fi
 		FOREGROUNDOPTIONS="-noinput +Bd"
 		ARWEAVE_OPTS="-run arweave_config_help main"
-		ARGS=${*}
-		;;
-	    convert)
-		shift
-		subcommand="config"
-		BOOTFILE="$REL_DIR/start"
-		if [ -f "$REL_DIR/$REL_NAME.boot" ]; then
-		  BOOTFILE="$REL_DIR/$REL_NAME"
-		fi
-		FOREGROUNDOPTIONS="-noinput +Bd"
-		ARWEAVE_OPTS="-run arweave_config_convert main"
 		ARGS=${*}
 		;;
 	    get)

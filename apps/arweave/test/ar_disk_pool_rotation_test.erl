@@ -11,7 +11,7 @@
 -import(ar_test_node, [assert_wait_until_height/2]).
 
 disk_pool_rotation_test_() ->
-	{timeout, 480, fun test_disk_pool_rotation/0}.
+	{timeout, 120, fun test_disk_pool_rotation/0}.
 
 test_disk_pool_rotation() ->
 	?LOG_DEBUG([{event, test_disk_pool_rotation_start}]),

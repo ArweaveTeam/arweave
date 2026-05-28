@@ -14,7 +14,7 @@
 		mock_to_force_invalid_h1/0, mock_to_force_cross_node_h2/0,
 		mainnet_packing_mocks/0,
 		get_difficulty_for_invalid_hash/0, invalid_solution/0,
-		valid_solution/0, new_mock/2, mock_function/3, unmock_module/1, remote_call/4,
+		valid_solution/0, remote_call/4,
 		get_default_storage_module_packing/2, get_genesis_chunk/1,
 		all_nodes/1, new_custom_size_rsa_wallet/1]).
 

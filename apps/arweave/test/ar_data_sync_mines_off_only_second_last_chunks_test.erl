@@ -10,7 +10,7 @@
 mines_off_only_second_last_chunks_test_() ->
 	ar_test_node:test_with_all_nodes_mocked(
 			[{ar_fork, height_2_6, fun() -> 0 end}, mock_reset_frequency()],
-			fun test_mines_off_only_second_last_chunks/0, 900).
+			fun test_mines_off_only_second_last_chunks/0).
 
 mock_reset_frequency() ->
 	{ar_nonce_limiter, get_reset_frequency, fun() -> 5 end}.
