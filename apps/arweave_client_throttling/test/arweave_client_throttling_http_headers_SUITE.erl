@@ -21,14 +21,15 @@
 -export([init_per_testcase/2, end_per_testcase/2]).
 -export([all/0]).
 -export([
-    parse_well_formed/1,
-    parse_case_insensitive_names/1,
-    parse_accepts_map/1,
-    parse_missing_header/1,
-    parse_malformed_limit/1,
-    update_applies_quota_on_match/1,
-    update_rejects_group_mismatch/1
-]).
+         parse_well_formed/1,
+         parse_case_insensitive_names/1,
+         parse_accepts_map/1,
+         parse_missing_header/1,
+         parse_malformed_limit/1,
+         update_applies_quota_on_match/1,
+         update_rejects_group_mismatch/1,
+         old_headers/1
+        ]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -53,13 +54,14 @@ end_per_testcase(_TestCase, _Config) ->
 
 all() ->
     [
-        parse_well_formed,
-        parse_case_insensitive_names,
-        parse_accepts_map,
-        parse_missing_header,
-        parse_malformed_limit,
-        update_applies_quota_on_match,
-        update_rejects_group_mismatch
+     parse_well_formed,
+     parse_case_insensitive_names,
+     parse_accepts_map,
+     parse_missing_header,
+     parse_malformed_limit,
+     update_applies_quota_on_match,
+     update_rejects_group_mismatch,
+     old_headers
     ].
 
 %% @doc A well-formed header set parses into the expected components,
@@ -130,6 +132,18 @@ update_applies_quota_on_match(_Config) ->
 update_rejects_group_mismatch(_Config) ->
     Headers = headers(<<"data_sync_record">>, 200, 42, 0),
     ?assertEqual({error, {group_mismatch, ?GROUP, <<"data_sync_record">>}},
+                 ?M:quota_from_headers(?GROUP, Headers)),
+
+    ok.
+
+old_headers(_Config) ->
+    Headers = [
+               {<<"access-control-allow-origin">>,<<"*">>},
+               {<<"content-length">>,<<"212">>},
+               {<<"date">>,<<"Thu, 28 May 2026 16:08:50 GMT">>},
+               {<<"server">>,<<"Cowboy">>}
+              ],
+    ?assertEqual({error,{missing_header,<<"ratelimit-limit">>}},
                  ?M:quota_from_headers(?GROUP, Headers)),
 
     ok.

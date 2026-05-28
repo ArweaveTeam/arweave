@@ -109,8 +109,12 @@ throttle(Peer, Path) when is_tuple(Peer), is_list(Path) ->
 update_quota(Peer, Path, Headers) when is_tuple(Peer), is_list(Path),
                                        is_map(Headers) ->
     GroupID = arweave_client_throttling_path:path_to_group_id(Path),
-    Quota = arweave_client_throttling_http_headers:quota_from_headers(GroupID, Headers),
-    arweave_client_throttling_group:update_quota(GroupID, Peer, Quota).
+    case arweave_client_throttling_http_headers:quota_from_headers(GroupID, Headers) of
+        {error, _} ->
+            ok;
+        Quota ->
+            arweave_client_throttling_group:update_quota(GroupID, Peer, Quota)
+    end.    
 
 %% @doc Return a snapshot of the throttler state for `Peer' in
 %% `GroupId': `total', `remaining', `reset_seconds', `queue_length',
