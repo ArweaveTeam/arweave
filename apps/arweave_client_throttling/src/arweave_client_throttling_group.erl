@@ -199,6 +199,8 @@ update_quota(GroupID, Peer, #{
   when is_integer(Total), Total >= 0,
        is_integer(Remaining), Remaining >= 0,
        is_integer(ResetSeconds), ResetSeconds >= 0 ->
+    prometheus_counter:inc(arweave_client_throttling_quota_update_requests,
+                           [atom_to_list(GroupID)]),
     ReceivedAt = monotonic_ms(),
     gen_server:cast(registered_name(GroupID),
                     {update_quota, Peer, Total, Remaining,

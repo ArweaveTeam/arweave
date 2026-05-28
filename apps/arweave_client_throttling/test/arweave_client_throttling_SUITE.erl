@@ -407,9 +407,9 @@ update_quota_cancels_reset_timer(_Config) ->
 
 quota(GroupId, Total, Remaining, ResetSeconds) ->
     TotalLine = io_lib:format("~p, 10;w=1;policy=\"~p sliding window\", 450;w=1;burst=450;policy=\"~p leaky bucket\" 500;w=1;policy=\"~p concurrency\" ", [Total, GroupId, GroupId, GroupId]),
-    #{<<"RateLimit-Limit">> => list_to_binary(TotalLine),
-      <<"RateLimit-Remaining">> => integer_to_binary(Remaining),
-      <<"RateLimit-Reset">> => integer_to_binary(ResetSeconds)}.
+    [{<<"RateLimit-Limit">> , list_to_binary(TotalLine)},
+     {<<"RateLimit-Remaining">>, integer_to_binary(Remaining)},
+     {<<"RateLimit-Reset">>, integer_to_binary(ResetSeconds)}].
 
 wait_status(Group, Peer, Pred) ->
     wait_until(fun() ->

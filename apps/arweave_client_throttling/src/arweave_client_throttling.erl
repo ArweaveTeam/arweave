@@ -107,10 +107,13 @@ throttle(Peer, Path) when is_tuple(Peer), is_list(Path) ->
 %% always take the value from the most recent update.
 -spec update_quota(atom(), tuple(), map()) -> ok.
 update_quota(Peer, Path, Headers) when is_tuple(Peer), is_list(Path),
-                                       is_map(Headers) ->
+                                       is_list(Headers) ->
     GroupID = arweave_client_throttling_path:path_to_group_id(Path),
     case arweave_client_throttling_http_headers:quota_from_headers(GroupID, Headers) of
-        {error, _} ->
+        {error, Reason} ->
+            Reason = get_quota_error_reason(Reason),
+            prometheus_counter:inc(arweave_client_throttling_quota_update_error,
+                                   [atom_to_list(GroupID), Reason]),
             ok;
         Quota ->
             arweave_client_throttling_group:update_quota(GroupID, Peer, Quota)
@@ -135,7 +138,6 @@ reset(GroupId) when is_atom(GroupId) ->
     arweave_client_throttling_group:reset(GroupId).
 
 %% application behaviour callbacks
-
 start(_StartType, _StartArgs) ->
     ?LOG_INFO("arweave_client_throttling application starting"),
     arweave_client_throttling_sup:start_link().
@@ -143,3 +145,13 @@ start(_StartType, _StartArgs) ->
 stop(_State) ->
     ?LOG_INFO("arweave_client_throttling application stopped"),
     ok.
+
+%% Private
+get_quota_error_reason(Reason) when is_atom(Reason) ->
+    atom_to_list(Reason);
+get_quota_error_reason({group_mismatch, _GroupID, _HeaderGroupID}) ->
+    "group_mismatch";
+get_quota_error_reason({missing_header, _HeaderKey}) ->
+    "missing_header";
+get_quota_error_reason(_) ->
+    "unexpected".

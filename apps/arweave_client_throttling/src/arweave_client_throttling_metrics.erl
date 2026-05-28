@@ -38,6 +38,17 @@ register() ->
             {labels, [group_id, reason]}
            ]),
 
+    ok = prometheus_counter:new(
+           [{name, arweave_client_throttling_quota_update_error},
+            {help, "The number of request were rejected by the limiter"},
+            {labels, [group_id, reason]}
+           ]),
+    ok = prometheus_counter:new(
+           [{name, arweave_client_throttling_quota_update_requests},
+            {help, "The number of request were rejected by the limiter"},
+            {labels, [group_id]}
+           ]),
+
     ok = prometheus_gauge:new(
            [{name, arweave_client_throttling_peers},
             {help, "The number of peers the limiter is monitoring currently"},
@@ -52,5 +63,7 @@ cleanup() ->
     prometheus_counter:deregister(arweave_client_throttling_requests_total),
     prometheus_counter:deregister(arweave_client_throttling_queued_total),
     prometheus_counter:deregister(arweave_client_throttling_requests_error),
+    prometheus_counter:deregister(arweave_client_throttling_quota_update_error),
+    prometheus_counter:deregister(arweave_client_throttling_quota_update_requests),
     prometheus_gauge:deregister(arweave_client_throttling_peers),
     ok.
