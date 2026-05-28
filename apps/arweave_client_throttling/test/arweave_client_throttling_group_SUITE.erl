@@ -26,9 +26,11 @@ suite() -> [{userdata, [description()]}, {timetrap, {seconds, 90}}].
 description() ->
     {description, "arweave_client_throttling_group gen_server"}.
 
-init_per_suite(Config) -> Config.
+init_per_suite(Config) ->
+    Config.
 
-end_per_suite(_Config) -> ok.
+end_per_suite(_Config) ->
+    ok.
 
 init_per_testcase(_TestCase, Config) ->
     Spec = arweave_client_throttling_config:normalize_group(
@@ -36,6 +38,11 @@ init_per_testcase(_TestCase, Config) ->
                initial_remaining => 1,
                max_queue_length => 4,
                concurrency_window_ms => 50}),
+
+    ok = meck:new([prometheus_counter, prometheus_histogram], [passthrough]),
+    ok = meck:expect(prometheus_counter, inc, 2, ok),
+    ok = meck:expect(prometheus_histogram, observe, 3, ok),
+
     {ok, Pid} = ?M:start_link(Spec),
     [{group_pid, Pid}, {spec, Spec} | Config].
 
@@ -43,7 +50,9 @@ end_per_testcase(_TestCase, _Config) ->
     case whereis(arweave_client_throttling_group_general) of
         undefined -> ok;
         _ -> ok = ?M:stop(general)
-    end.
+    end,
+    ok = meck:unload([prometheus_counter, prometheus_histogram]),
+    ok.
 
 all() ->
     [

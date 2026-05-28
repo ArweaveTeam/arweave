@@ -17,7 +17,7 @@ start_link() ->
     start_link(arweave_client_throttling_config:get_groups()).
 
 start_link(Groups) when is_list(Groups) ->
-    arweave_client_throttling_metrics:register(),
+    ok = arweave_client_throttling_metrics:register(),
     supervisor:start_link({local, ?MODULE}, ?MODULE, [Groups]).
 
 init([Groups]) ->

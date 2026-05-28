@@ -2,6 +2,10 @@
 
 -export([register/0]).
 
+-ifdef(AR_TEST).
+-export([cleanup/0]).
+-endif.
+
 %%% Public interface.
 
 %% @doc Declare Arweave Client Throttling metrics.
@@ -40,4 +44,13 @@ register() ->
             %% limiting type:
             %% sliding_window -> baseline, leaky_bucket -> burst, concurrency -> concurrency
             {labels, [group_id]}]),
+    ok.
+
+cleanup() ->
+    prometheus_histogram:deregister(arweave_client_throttling_request_response_time_microseconds),
+    prometheus_histogram:deregister(arweave_client_throttling_worker_response_time_microseconds),
+    prometheus_counter:deregister(arweave_client_throttling_requests_total),
+    prometheus_counter:deregister(arweave_client_throttling_queued_total),
+    prometheus_counter:deregister(arweave_client_throttling_requests_error),
+    prometheus_gauge:deregister(arweave_client_throttling_peers),
     ok.

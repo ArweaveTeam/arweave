@@ -33,7 +33,7 @@
 
 -define(M, arweave_client_throttling_metrics_collector).
 -define(GROUP, general).
--define(PATH, <<"some/path/that/lead/to/general">>).
+-define(PATH, "some/path/that/lead/to/general").
 
 suite() -> [{userdata, [description()]}, {timetrap, {seconds, 30}}].
 
@@ -67,6 +67,7 @@ end_per_testcase(_TestCase, _Config) ->
     %% exit cleanly without leaking.
     _ = catch arweave_client_throttling:reset(?GROUP),
     ok = arweave_client_throttling:stop(),
+    arweave_client_throttling_metrics:cleanup(),
     application:unset_env(arweave_client_throttling, groups),
     ok.
 

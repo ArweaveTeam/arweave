@@ -46,21 +46,9 @@ init_per_suite(Config) -> Config.
 end_per_suite(_Config) -> ok.
 
 init_per_testcase(_TestCase, Config) ->
-    %% A single group with a small initial budget so the integration
-    %% test can observe `total' and `remaining' move to the values
-    %% reported by the headers.
-    application:set_env(arweave_client_throttling, groups, [
-        #{id => ?GROUP,
-          initial_remaining => 5,
-          max_queue_length => 100,
-          concurrency_window_ms => 50}
-    ]),
-    ok = arweave_client_throttling:start(),
     Config.
 
 end_per_testcase(_TestCase, _Config) ->
-    ok = arweave_client_throttling:stop(),
-    application:unset_env(arweave_client_throttling, groups),
     ok.
 
 all() ->
@@ -125,33 +113,25 @@ parse_malformed_limit(_Config) ->
     ?assertEqual({error, malformed_headers}, ?M:parse(Headers)),
     ok.
 
-%% @doc When the header group matches the expected group, the quota
-%% is applied to the running group.
+%% @doc How the headers are parsed into an internal quota map.
 update_applies_quota_on_match(_Config) ->
-    Peer = {127, 0, 0, 1, 1984},
     Headers = headers(<<"general">>, 200, 42, 0),
 
-    ok = ?M:update_quota_from_headers(?GROUP, Peer, Headers),
+    ?assertMatch(
+       #{total := 200,
+         remaining := 42,
+         reset_seconds := 0},
+       ?M:quota_from_headers(?GROUP, Headers)),
 
-    {ok, Status} = arweave_client_throttling_group:status(?GROUP, Peer),
-    ?assertEqual(200, maps:get(total, Status)),
-    ?assertEqual(42, maps:get(remaining, Status)),
-    ?assertEqual(0, maps:get(reset_seconds, Status)),
     ok.
 
 %% @doc When the remote accounted the request under a different group
-%% than expected, the mismatch is reported and no quota is applied.
+%% than expected, the mismatch is reported.
 update_rejects_group_mismatch(_Config) ->
-    Peer = {127, 0, 0, 1, 1984},
     Headers = headers(<<"data_sync_record">>, 200, 42, 0),
-
     ?assertEqual({error, {group_mismatch, ?GROUP, <<"data_sync_record">>}},
-                 ?M:update_quota_from_headers(?GROUP, Peer, Headers)),
+                 ?M:quota_from_headers(?GROUP, Headers)),
 
-    %% The peer state must be untouched: it should still read the
-    %% configured initial budget.
-    {ok, Status} = arweave_client_throttling_group:status(?GROUP, Peer),
-    ?assertEqual(5, maps:get(remaining, Status)),
     ok.
 
 %% Helpers

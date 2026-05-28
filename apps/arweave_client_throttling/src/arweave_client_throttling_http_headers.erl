@@ -27,7 +27,7 @@
 %%% @end
 -module(arweave_client_throttling_http_headers).
 
--export([parse/1, update_quota_from_headers/3]).
+-export([parse/1, quota_from_headers/2]).
 
 -type headers() :: #{binary() | string() => binary() | string()}
                  | [{binary() | string(), binary() | string()}].
@@ -66,9 +66,9 @@ parse(Headers) ->
 %% Returns `{error, {group_mismatch, Expected, Got}}' when the remote
 %% accounted the request under a different group than the caller
 %% expected, or `{error, Reason}' when the headers cannot be parsed.
--spec update_quota_from_headers(atom(), tuple(), headers()) ->
+-spec quota_from_headers(atom(), headers()) ->
           ok | {error, term()}.
-update_quota_from_headers(GroupId, Peer, Headers) when is_atom(GroupId) ->
+quota_from_headers(GroupId, Headers) when is_atom(GroupId) ->
     case parse(Headers) of
         {ok, #{group_id := HeaderGroup,
                total := Total,
@@ -76,11 +76,9 @@ update_quota_from_headers(GroupId, Peer, Headers) when is_atom(GroupId) ->
                reset_seconds := Reset}} ->
             case atom_to_binary(GroupId, utf8) =:= HeaderGroup of
                 true ->
-                    arweave_client_throttling_group:update_quota(
-                      GroupId, Peer,
-                      #{total => Total,
-                        remaining => Remaining,
-                        reset_seconds => Reset});
+                    #{total => Total,
+                      remaining => Remaining,
+                      reset_seconds => Reset};
                 false ->
                     {error, {group_mismatch, GroupId, HeaderGroup}}
             end;

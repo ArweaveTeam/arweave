@@ -48,7 +48,6 @@
     stop/0,
     throttle/2,
     update_quota/3,
-    update_quota/5,
     status/2,
     groups/0,
     reset/1
@@ -64,7 +63,10 @@
 start() ->
     case application:ensure_all_started(?MODULE, permanent) of
         {ok, _Deps} -> ok;
-        Error -> Error
+        Error ->
+            ?LOG_DEBUG([{event, arweave_client_throttling_start_error},
+                        {error, Error}]),
+            Error
     end.
 
 %% @doc Stop the application.
@@ -81,7 +83,7 @@ stop() ->
 %% `{request_ready, Ref}' notification, with a 60s ceiling - on
 %% expiry it cancels the queued entry and returns `{error, timeout}'.
 -spec throttle(atom(), tuple()) -> ok | {error, term()}.
-throttle(Peer, Path) when is_tuple(Peer) ->
+throttle(Peer, Path) when is_tuple(Peer), is_list(Path) ->
     GroupId = arweave_client_throttling_path:path_to_group_id(Path),
     arweave_client_throttling_group:throttle(GroupId, Peer).
 
@@ -104,19 +106,11 @@ throttle(Peer, Path) when is_tuple(Peer) ->
 %% of the reported `remaining' is kept. `total' and `reset_seconds'
 %% always take the value from the most recent update.
 -spec update_quota(atom(), tuple(), map()) -> ok.
-update_quota(GroupId, Peer, Quota) when is_atom(GroupId), is_tuple(Peer),
-                                        is_map(Quota) ->
-    arweave_client_throttling_group:update_quota(GroupId, Peer, Quota).
-
-%% @doc Convenience flat-argument variant of `update_quota/3'.
--spec update_quota(atom(), tuple(), non_neg_integer(),
-                   non_neg_integer(), non_neg_integer()) -> ok.
-update_quota(GroupId, Peer, Total, Remaining, ResetSeconds) ->
-    update_quota(GroupId, Peer, #{
-        total => Total,
-        remaining => Remaining,
-        reset_seconds => ResetSeconds
-    }).
+update_quota(Peer, Path, Headers) when is_tuple(Peer), is_list(Path),
+                                       is_map(Headers) ->
+    GroupID = arweave_client_throttling_path:path_to_group_id(Path),
+    Quota = arweave_client_throttling_http_headers:quota_from_headers(GroupID, Headers),
+    arweave_client_throttling_group:update_quota(GroupID, Peer, Quota).
 
 %% @doc Return a snapshot of the throttler state for `Peer' in
 %% `GroupId': `total', `remaining', `reset_seconds', `queue_length',
