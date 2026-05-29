@@ -10,7 +10,7 @@
 -export([init/1, all_info/0]).
 
 -ifdef(AR_TEST).
--export([all_off/0, all_on/0]).
+-export([reset_all/0, all_off/0, all_on/0]).
 -endif.
 
 start_link() ->
@@ -39,6 +39,9 @@ child_spec(#{id := ID} = Group) ->
         shutdown => 5000,
         modules => [arweave_client_throttling_group]
     }.
+
+reset_all() ->
+    [{ID, arweave_client_throttling_group:reset(ID)}  || #{id := ID} <- arweave_client_throttling_config:get_groups()].
 
 all_info() ->
     Config = arweave_client_throttling_config:get_groups(),

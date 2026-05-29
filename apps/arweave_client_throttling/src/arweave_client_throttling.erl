@@ -84,8 +84,16 @@ stop() ->
 %% expiry it cancels the queued entry and returns `{error, timeout}'.
 -spec throttle(atom(), tuple()) -> ok | {error, term()}.
 throttle(Peer, Path) when is_tuple(Peer), is_list(Path) ->
-    GroupId = arweave_client_throttling_path:path_to_group_id(Path),
-    arweave_client_throttling_group:throttle(GroupId, Peer).
+    case  arweave_client_throttling_path:path_to_group_id(Path) of
+        skip ->
+            ok;
+        GroupId ->
+            arweave_client_throttling_group:throttle(GroupId, Peer)
+    end.
+
+-spec is_throttled(atom(), tuple()) -> bool().
+is_throttled(Peer, Path) when is_tuple(Peer), is_list(Path) ->
+    false.
 
 %% @doc Non-blocking refresh of the peer's quota state.
 %%
@@ -111,13 +119,13 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer), is_list(Path),
     GroupID = arweave_client_throttling_path:path_to_group_id(Path),
     case arweave_client_throttling_http_headers:quota_from_headers(GroupID, Headers) of
         {error, Reason} ->
-            Reason = get_quota_error_reason(Reason),
+            ReasonStr = get_quota_error_reason(Reason),
             prometheus_counter:inc(arweave_client_throttling_quota_update_error,
-                                   [atom_to_list(GroupID), Reason]),
+                                   [atom_to_list(GroupID), ReasonStr]),
             ok;
         Quota ->
             arweave_client_throttling_group:update_quota(GroupID, Peer, Quota)
-    end.    
+    end.
 
 %% @doc Return a snapshot of the throttler state for `Peer' in
 %% `GroupId': `total', `remaining', `reset_seconds', `queue_length',

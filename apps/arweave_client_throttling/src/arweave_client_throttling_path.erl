@@ -14,6 +14,7 @@ split_path(Path) ->
             NotEmpty
     end.
 
+split_path_to_group_id(["tx"|_]) -> skip;
 split_path_to_group_id(["chunk" | _]) -> chunk;
 split_path_to_group_id(["chunk2" | _]) -> chunk;
 split_path_to_group_id(["data_sync_record" | _]) -> data_sync_record;
