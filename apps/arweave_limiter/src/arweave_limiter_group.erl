@@ -472,10 +472,16 @@ generate_policy(#{id := GroupID,
                   leaky_rate_limit := LeakyRateLimit,
                   leaky_tick_ms := LeakyTickMs,
                   tick_reduction := TickReduction}) ->
+    WS = case SlidingWindowDuration of
+             infinity ->
+                 infinity;
+             SlidingWindowDuration ->
+                 SlidingWindowDuration div 1000
+         end,
     #{id => GroupID,
       concurrency => #{limit => ConcurrencyLimit},
       sliding_window => #{limit => SlidingWindowLimit,
-                          window_seconds => SlidingWindowDuration div 1000},
+                          window_seconds => WS},
       leaky_bucket => #{burst => LeakyRateLimit,
                         tick_ms => LeakyTickMs,
                         tick_reduction => TickReduction}
