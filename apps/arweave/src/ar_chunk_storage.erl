@@ -1,6 +1,6 @@
 %% The blob storage optimized for fast reads.
-%% @ar_test: fast
 -module(ar_chunk_storage).
+-test_category([fast]).
 
 -behaviour(gen_server).
 

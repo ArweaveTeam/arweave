@@ -2,7 +2,7 @@
 # Full Arweave Test Suite. Mostly used on Linux like systems.
 #
 # Categorisation:
-#   - fast tests:  modules tagged `%% @ar_test: fast` (and the
+#   - fast tests:  modules tagged `-test_category([fast])` (and the
 #                  module has eunit tests). Run in a small number
 #                  of sharded jobs that each loop through their
 #                  slice, one BEAM per module. Shares the artifact
@@ -11,7 +11,8 @@
 #                  own matrix shard for full parallelism.
 #
 # Discovery is via scripts/list_test_modules.sh which scans the
-# source tree for eunit tests + reads `@ar_test:` annotations.
+# source tree for eunit tests + reads `-test_category([...])`
+# attributes.
 ######################################################################
 name: "arweave-test-suite-full"
 

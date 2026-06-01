@@ -1,5 +1,4 @@
 %%% @doc Tracks the availability and performance of the network peers.
-%% @ar_test: isolated
 -module(ar_peers).
 -behaviour(gen_server).
 -include_lib("arweave/include/ar.hrl").

@@ -16,7 +16,7 @@
 		get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, remote_call/4,
 		get_default_storage_module_packing/2, get_genesis_chunk/1,
-		all_nodes/1, new_custom_size_rsa_wallet/1]).
+		all_nodes/1, all_peers/1, new_custom_size_rsa_wallet/1]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3,

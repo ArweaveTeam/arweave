@@ -5,15 +5,14 @@ set -euo pipefail
 #   CATEGORY: fast | slow | vdf | all  (default: all)
 #   FORMAT:   plain | json              (default: plain)
 #
-# CATEGORY semantics — derived from a `@ar_test: <cat>[, <cat>...]`
-# annotation in the test file's leading doc comments. Annotations look
-# like:
+# CATEGORY semantics — derived from a `-test_category([<cat>[, <cat>...]])`
+# module attribute in the test source. Attributes look like:
 #
-#     %%% @ar_test: fast
-#     %% @ar_test: fast, vdf
+#     -test_category([fast]).
+#     -test_category([fast, vdf]).
 #
-# Single or triple `%`; categories comma-separated. Absence of the
-# annotation = default behavior:
+# Categories comma-separated; keep the attribute on a single line.
+# Absence of the attribute = default behavior:
 #   - `fast`  = matches modules annotated with `fast`. These can run
 #               in batched CI shards (each module still gets its own
 #               BEAM, but multiple modules share one artifact download).
@@ -55,17 +54,21 @@ list_modules_with_eunit_tests() {
         | sort -u
 }
 
-# Output: module name per file that declares the given @ar_test category.
+# Output: module name per file that declares the given -test_category.
 list_modules_with_category() {
     local target="$1"
     candidate_files \
         | while read -r f; do
-            # awk extracts categories from @ar_test: lines, splits on
-            # comma, trims whitespace, prints one per line.
+            # awk extracts categories from the -test_category([...])
+            # attribute: grab the contents between [ and ], split on
+            # comma, trim whitespace, print one per line. Anchoring on
+            # `^-test_category(' ignores commented-out lines.
             cats=$(awk '
-                /^%+[[:space:]]+@ar_test:/ {
-                    sub(/^%+[[:space:]]+@ar_test:[[:space:]]*/, "")
-                    n = split($0, parts, /[[:space:]]*,[[:space:]]*/)
+                /^-test_category\(\[/ {
+                    line = $0
+                    sub(/^-test_category\(\[[[:space:]]*/, "", line)
+                    sub(/[[:space:]]*\]\).*/, "", line)
+                    n = split(line, parts, /[[:space:]]*,[[:space:]]*/)
                     for (i = 1; i <= n; i++) {
                         cat = parts[i]
                         sub(/[[:space:]]+$/, "", cat)

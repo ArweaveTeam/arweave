@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_data_roots_sync_tests).
+-test_peers([peer1]).
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").

@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_mining_stats).
+-test_peers([peer1, peer2, peer3]).
 -behaviour(gen_server).
 
 -export([start_link/0, start_performance_reports/0, pause_performance_reports/1, mining_paused/0,

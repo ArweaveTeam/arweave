@@ -19,8 +19,8 @@
 %%%
 %%% @end
 %%%===================================================================
-%% @ar_test: fast, vdf
 -module(ar_shutdown_manager).
+-test_category([fast, vdf]).
 
 %% NOTE: tests in this module are currently disabled. They were
 %% picked up by the CI test-discovery rewrite but never ran in CI

@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_rate_limiter).
+-test_category([fast]).
 
 %% NOTE: tests in this module are currently disabled. They were
 %% picked up by the CI test-discovery rewrite but never ran in CI

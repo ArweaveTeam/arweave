@@ -1,4 +1,3 @@
-%% @ar_test: isolated
 -module(ar_entropy_storage).
 
 -behaviour(gen_server).

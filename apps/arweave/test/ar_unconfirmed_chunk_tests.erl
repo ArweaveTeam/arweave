@@ -1,4 +1,5 @@
 -module(ar_unconfirmed_chunk_tests).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 

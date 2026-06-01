@@ -1,4 +1,3 @@
-%% @ar_test: isolated
 -module(ar_webhook_tests).
 
 

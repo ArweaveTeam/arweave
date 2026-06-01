@@ -2,7 +2,7 @@
 # Arweave Test Suite dedicated for VDF testing.
 #
 # Used by the macOS workflow (test-arm64-macos-26.yml). Runs only
-# tests tagged `%% @ar_test: vdf` — modules whose correctness matters
+# tests tagged `-test_category([vdf])` — modules whose correctness matters
 # for a VDF deployment. Mining, chunk sync, repacking, P2P, etc. are
 # excluded; we don't need to verify those work on macOS because
 # macOS isn't a production target for them.

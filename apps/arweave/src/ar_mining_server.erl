@@ -1,5 +1,4 @@
 %%% @doc The 2.6 mining server.
-%% @ar_test: isolated
 -module(ar_mining_server).
 
 -behaviour(ar_mining_server_behaviour).

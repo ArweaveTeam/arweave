@@ -1,7 +1,7 @@
 %%%===================================================================
 %%% @doc Local (non-distributed) test utilities. Unlike `ar_test_node',
 %%% these helpers don't require the peer cluster, so they're safe to
-%%% use in modules tagged `@ar_test: fast'.
+%%% use in modules tagged `-test_category([fast])'.
 %%%
 %%% When adding new helpers here, the rule is: it must work in a
 %%% single BEAM with no peer nodes booted. If it needs `remote_call'

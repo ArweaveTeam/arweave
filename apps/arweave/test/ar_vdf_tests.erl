@@ -1,5 +1,5 @@
-%% @ar_test: vdf
 -module(ar_vdf_tests).
+-test_category([vdf]).
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").

@@ -19,8 +19,8 @@
 %% Tasks are ordered by `{FootprintKey, Start, End, Peer}' so
 %% replica-2.9 footprint work stays grouped, preserving entropy
 %% amortization in the 2.9 replica mode.
-%% @ar_test: fast
 -module(ar_sync_task_queue).
+-test_category([fast]).
 
 -export([new/0, size/1, size_by_mode/1, inflight_bytes/1, is_empty/1,
 		in_flight_intervals/1, insert_batch/3, peek_smallest/1, take_smallest/1,

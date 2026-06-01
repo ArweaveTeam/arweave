@@ -1,5 +1,6 @@
-%% @ar_test: vdf
 -module(ar_nonce_limiter).
+-test_category([vdf]).
+-test_peers([peer1]).
 
 -behaviour(gen_server).
 

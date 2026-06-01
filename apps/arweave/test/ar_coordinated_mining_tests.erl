@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_coordinated_mining_tests).
+-test_peers([peer1, peer2, peer3, peer4]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").

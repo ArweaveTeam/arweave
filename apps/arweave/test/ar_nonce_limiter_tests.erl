@@ -1,5 +1,5 @@
-%% @ar_test: vdf
 -module(ar_nonce_limiter_tests).
+-test_category([vdf]).
 
 
 -include_lib("arweave/include/ar.hrl").

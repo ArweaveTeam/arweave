@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_data_sync_mines_off_only_second_last_chunks_test).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 

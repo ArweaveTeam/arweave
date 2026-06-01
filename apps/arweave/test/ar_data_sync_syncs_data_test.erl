@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_data_sync_syncs_data_test).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 

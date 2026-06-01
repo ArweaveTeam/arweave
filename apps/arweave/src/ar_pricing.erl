@@ -1,4 +1,3 @@
-%% @ar_test: isolated
 -module(ar_pricing).
 
 %% 2.6 exports.
