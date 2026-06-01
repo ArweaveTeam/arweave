@@ -62,6 +62,32 @@
 	start/0,
 	stop/0
 ]).
+
+%% Public API: peers
+-export([
+	get_peers/1,
+	get_peer/1,
+	clear_peers/1,
+	replace_peers/2
+]).
+%% Public API: storage / repack / defrag modules
+-export([
+	storage_modules/0,
+	repack_modules/0,
+	defrag_modules/0,
+	replace_storage_modules/1,
+	replace_repack_modules/1
+]).
+%% Public API: webhooks, semaphores, features, limiter
+-export([
+	webhooks/0,
+	replace_webhooks/1,
+	semaphores/0,
+	feature_enabled/1,
+	limiter_groups/0,
+	client_throttling_groups/0
+]).
+
 %% Public API: serialization / logging
 -export([
 	log/0
@@ -214,6 +240,29 @@ is_runtime() ->
 -spec get_all_with_prefix(list()) -> [{list(), term()}].
 get_all_with_prefix(Prefix) ->
 	arweave_config_options_registry:get_all_with_prefix(Prefix).
+
+%% @doc Whether `Flag` is enabled. Reads `[features, Flag]` from the
+%% options registry with fallback to the catalog default for the flag.
+%% Unknown flags return `false`.
+-spec feature_enabled(atom()) -> boolean().
+feature_enabled(Flag) ->
+	arweave_config_features:enabled(Flag).
+
+%% @doc Return the list of rate-limiter group IDs used by
+%% `arweave_limiter_sup` to build one supervisor branch per group.
+%% Per-field values for a given group are read via
+%% `arweave_config:get([limiter, GroupID, Field])'.
+-spec limiter_groups() -> [atom()].
+limiter_groups() ->
+	arweave_config_options_limiter:group_ids().
+
+%% @doc Return the list of client throttling group IDs used by
+%% `arweave_limiter_sup` to build one supervisor branch per group.
+%% Per-field values for a given group are read via
+%% `arweave_config:get([limiter, GroupID, Field])'.
+-spec client_throttling_groups() -> [atom()].
+client_throttling_groups() ->
+	areave_config_options_client_throttling:group_id().
 
 %% @doc Log the current configuration to `?LOG_INFO`.
 -spec log() -> ok.

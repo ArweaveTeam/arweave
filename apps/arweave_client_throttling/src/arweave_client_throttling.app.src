@@ -9,16 +9,15 @@
                   kernel,
                   stdlib,
                   sasl,
-                  arweave_config,
                   prometheus,
                   prometheus_cowboy,
                   prometheus_process_collector,
                   prometheus_httpd,
-                  runtime_tools
+                  runtime_tools,
+                  arweave_config
                  ]},
   {modules, [
              arweave_client_throttling,
-             arweave_client_throttling_config,
              arweave_client_throttling_group,
              arweave_client_throttling_sup
             ]},

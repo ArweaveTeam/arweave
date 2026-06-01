@@ -109,28 +109,29 @@ defaults(Id) ->
 %% Start with defaults for the server side.
 %% FIXME: Perhaps find a better way to extract this from arweave_config
 -ifdef(AR_TEST).
-default_remaining(general) ->
-    450;
-default_remaining(chunk) ->
-    6000;
-default_remaining(data_sync_record) ->
-    10000;
-default_remaining(recent_hash_list_diff) ->
-    120;
-default_remaining(block_index) ->
-    10;
-default_remaining(wallet_list) ->
-    10;
-default_remaining(get_vdf) ->
-    4500;
-default_remaining(get_vdf_session) ->
-    50000;
-default_remaining(get_previous_vdf_session) ->
-    50000;
-default_remaining(metrics) ->
-    2;
-default_remaining(_Id) ->
-    ?ARWEAVE_CLIENT_THROTTLING_DEFAULT_INITIAL_REMAINING.
+default_remaining(_) -> 9000.
+%% default_remaining(general) ->
+%%     450;
+%% default_remaining(chunk) ->
+%%     6000;
+%% default_remaining(data_sync_record) ->
+%%     10000;
+%% default_remaining(recent_hash_list_diff) ->
+%%     120;
+%% default_remaining(block_index) ->
+%%     10;
+%% default_remaining(wallet_list) ->
+%%     10;
+%% default_remaining(get_vdf) ->
+%%     4500;
+%% default_remaining(get_vdf_session) ->
+%%     50000;
+%% default_remaining(get_previous_vdf_session) ->
+%%     50000;
+%% default_remaining(metrics) ->
+%%     2;
+%% default_remaining(_Id) ->
+%%     ?ARWEAVE_CLIENT_THROTTLING_DEFAULT_INITIAL_REMAINING.
 -else.
 default_remaining(general) ->
     45000;
