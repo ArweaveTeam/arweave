@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_mining_worker_tests).
+-test_category([fast]).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_mining.hrl").

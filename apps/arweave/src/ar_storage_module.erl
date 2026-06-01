@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_storage_module).
+-test_category([fast]).
 
 -export([get_overlap/1, id/1, label/1, address_label/2, module_address/1,
 		module_packing_difficulty/1, packing_label/1, get_by_id/1,

@@ -1,4 +1,5 @@
 -module(ar_header_sync_tests).
+-test_peers([peer1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").

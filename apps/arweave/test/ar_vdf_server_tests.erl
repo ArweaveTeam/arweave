@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_vdf_server_tests).
+-test_peers([peer1]).
 
 -export([init/2]).
 

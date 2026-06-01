@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_replica_2_9_nif_tests).
+-test_category([fast]).
 
 -include_lib("eunit/include/eunit.hrl").
 

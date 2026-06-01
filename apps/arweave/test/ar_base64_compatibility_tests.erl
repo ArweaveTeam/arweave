@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_base64_compatibility_tests).
+-test_category([fast]).
 
 %%% The compatibility tests to assert the used
 %%% Base64URL encoding and decoding functions are

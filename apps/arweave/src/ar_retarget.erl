@@ -2,7 +2,6 @@
 %%% blocks, that is those in which change the current mining difficulty
 %%% on the weave to maintain a constant block time.
 %%% @end
-%% @ar_test: isolated
 -module(ar_retarget).
 
 -export([is_retarget_height/1, is_retarget_block/1, maybe_retarget/5,

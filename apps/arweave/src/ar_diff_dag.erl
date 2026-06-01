@@ -3,8 +3,8 @@
 %%% diffs. To compute a representation of the entity corresponding to a particular vertice,
 %%% one needs to walk from this vertice down to the sink node, collect all the diffs, and
 %%% apply them in the reverse order.
-%% @ar_test: fast
 -module(ar_diff_dag).
+-test_category([fast]).
 
 -export([new/3, get_sink/1, is_sink/2, is_node/2, add_node/5, update_leaf_source/3,
 		update_sink/3, get_metadata/2, get_sink_metadata/1, reconstruct/3, move_sink/4,

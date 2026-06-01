@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_vdf_block_validation_tests).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 

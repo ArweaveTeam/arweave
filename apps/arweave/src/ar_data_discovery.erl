@@ -5,8 +5,8 @@
 %%%
 %%% ar_peer_sync reads this cache when deciding what which chunks to fetch from
 %%% which peers.
-%% @ar_test: fast
 -module(ar_data_discovery).
+-test_category([fast]).
 
 -behaviour(gen_server).
 

@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_footprint_record).
+-test_category([fast]).
 
 -export([add/3, add_async/4, delete/2, get_offset/1, get_padded_offset_from_footprint_offset/1,
 		get_footprint/1, get_footprint_bucket/1, get_intervals/3,

@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_mine_randomx_tests).
+-test_category([fast]).
 
 -include_lib("eunit/include/eunit.hrl").
 

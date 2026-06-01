@@ -1,5 +1,5 @@
-%% @ar_test: fast, vdf
 -module(ar_serialize_tests).
+-test_category([fast, vdf]).
 
 
 -include_lib("arweave/include/ar.hrl").

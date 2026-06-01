@@ -1,5 +1,5 @@
-%% @ar_test: vdf, fast
 -module(ar_mine_vdf_tests).
+-test_category([vdf, fast]).
 
 -include_lib("eunit/include/eunit.hrl").
 

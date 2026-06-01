@@ -1,4 +1,5 @@
 -module(ar_packing_tests).
+-test_peers([peer1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").

@@ -1,5 +1,6 @@
-%% @ar_test: vdf
 -module(ar_forced_validation_tests).
+-test_category([vdf]).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 

@@ -1,6 +1,6 @@
 %%% @doc A set of non-overlapping intervals.
-%% @ar_test: fast
 -module(ar_intervals).
+-test_category([fast]).
 
 -export([new/0, from_list/1, add/3, delete/3, cut/2, is_inside/2, sum/1, union/2, serialize/2,
 		safe_from_etf/1, count/1, is_empty/1, take_smallest/1, take_largest/1, largest/1,

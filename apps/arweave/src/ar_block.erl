@@ -1,5 +1,5 @@
-%% @ar_test: vdf
 -module(ar_block).
+-test_category([vdf]).
 
 -export([get_consensus_window_size/0, get_max_tx_anchor_depth/0,
 		partition_size/0,

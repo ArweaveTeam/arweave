@@ -1,4 +1,5 @@
 -module(ar_start_from_block_tests).
+-test_peers([peer1, peer2]).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("eunit/include/eunit.hrl").

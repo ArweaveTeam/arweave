@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_kv).
+-test_category([fast]).
 
 -behaviour(gen_server).
 

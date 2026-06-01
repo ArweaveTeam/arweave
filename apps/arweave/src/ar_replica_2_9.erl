@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_replica_2_9).
+-test_category([fast]).
 
 -export([get_entropy_partition/1, get_entropy_partition_range/1, get_entropy_key/3,
     get_slice_index/1, get_partition_offset/1, get_entropy_index/2,

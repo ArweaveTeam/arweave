@@ -1,5 +1,6 @@
-%% @ar_test: vdf
 -module(ar_join).
+-test_category([vdf]).
+-test_peers([peer1]).
 
 -export([start/1]).
 

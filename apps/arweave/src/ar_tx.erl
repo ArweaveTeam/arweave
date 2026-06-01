@@ -1,6 +1,6 @@
 %%% @doc The module with utilities for transaction creation, signing and verification.
-%% @ar_test: fast
 -module(ar_tx).
+-test_category([fast]).
 
 -export([new/0, new/1, new/2, new/3, new/4, sign/2, sign/3, sign_v1/2, sign_v1/3, verify/2,
 		verify/3, verify_tx_id/2, generate_signature_data_segment/1,

@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_sync_buckets).
+-test_category([fast]).
 
 -export([new/0, new/1, from_intervals/1, from_intervals/2,
 		add/3, delete/3, cut/2, get/3, serialize/2,

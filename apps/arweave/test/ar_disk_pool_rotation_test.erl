@@ -1,4 +1,3 @@
-%% @ar_test: isolated
 -module(ar_disk_pool_rotation_test).
 
 -include_lib("eunit/include/eunit.hrl").

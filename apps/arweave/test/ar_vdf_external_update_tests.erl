@@ -1,5 +1,5 @@
-%% @ar_test: vdf
 -module(ar_vdf_external_update_tests).
+-test_category([vdf]).
 
 -export([init/2]).
 

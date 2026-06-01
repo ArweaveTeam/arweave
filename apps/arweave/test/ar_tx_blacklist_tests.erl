@@ -1,4 +1,5 @@
 -module(ar_tx_blacklist_tests).
+-test_peers([peer1]).
 
 -export([init/2]).
 

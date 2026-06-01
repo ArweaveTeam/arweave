@@ -8,8 +8,8 @@
 %%% This module owns global backpressure and footprint-slot accounting. Peer
 %%% workers publish their queue/in-flight load here, and the rebalance tick uses
 %%% that load plus peer ratings to resize per-peer queues and concurrency.
-%% @ar_test: fast
 -module(ar_data_sync_coordinator).
+-test_category([fast]).
 
 -behaviour(gen_server).
 

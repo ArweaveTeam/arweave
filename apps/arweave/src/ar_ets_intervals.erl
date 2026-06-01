@@ -5,8 +5,8 @@
 %%% for manipulating multiple sets of intervals, e.g. the syncing process uses it to look for
 %%% the intersections between our data and peers' data.
 %%% @end
-%% @ar_test: fast
 -module(ar_ets_intervals).
+-test_category([fast]).
 
 -export([init_from_gb_set/2, add/3, delete/3, cut/2, is_inside/2, get_interval_with_byte/2,
 		get_next_interval_outside/3, get_next_interval/3, get_intersection_size/3]).
