@@ -22,8 +22,8 @@ test_sync_record() ->
 	arweave_config:with_test_config(fun() ->
 		Partition = {ar_block:partition_size(), 0, {composite, RewardAddr, 1}},
 		PartitionID = ar_storage_module:id(Partition),
-		StorageModules = [Partition],
-		ar_test_node:start(B0, RewardAddr, #{}, StorageModules),
+		StorageModules = [arweave_config:storage_module_to_config(Partition)],
+		ar_test_node:start(B0, RewardAddr, #{[storage_modules] => StorageModules}),
 		Options = #{ format => etf, random_subset => false },
 
 		%% Genesis data only

@@ -66,7 +66,7 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
 	process_flag(trap_exit, true),
-	MinerLogging = arweave_config:feature_enabled(miner_logging),
+	MinerLogging = arweave_config:get([features, miner_logging]),
 	State = #state{ mined_blocks = maps:new(), miner_logging = MinerLogging },
 	{ok, State}.
 

@@ -106,7 +106,7 @@ garbage_collect() ->
 is_exit_peer() ->
 	CMEnabled = arweave_config:get([cm, enabled]),
 	CMEnabled == true
-			andalso arweave_config:get_peer(cm_exit) == not_set.
+			andalso arweave_config:get([peers, cm_exit]) == not_set.
 
 %% Return true if we are a CM miner in the coordinated mining setup.
 %% A CM miner may be but does not have to be an exit node.
@@ -164,7 +164,7 @@ get_cluster_partitions_list() ->
 init([]) ->
 	CMEnabled = arweave_config:get([cm, enabled]),
 	OutBatchTimeout = arweave_config:get([cm, out_batch_timeout]),
-	CMExitPeer = arweave_config:get_peer(cm_exit),
+	CMExitPeer = arweave_config:get([peers, cm_exit]),
 
 	ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
 	State = #state{
@@ -280,8 +280,8 @@ handle_cast({computed_h2_for_peer, Candidate}, State) ->
 	{noreply, State};
 
 handle_cast(refetch_peer_partitions, State) ->
-	Peers = arweave_config:get_peers(cm_peer),
-	CMExitPeer = arweave_config:get_peer(cm_exit),
+	Peers = arweave_config:get([peers, cm_peer]),
+	CMExitPeer = arweave_config:get([peers, cm_exit]),
 	PollInterval = arweave_config:get([cm, poll_interval]),
 	Peers2 =
 		case CMExitPeer == not_set orelse lists:member(CMExitPeer, Peers) of

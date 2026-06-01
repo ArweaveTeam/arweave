@@ -60,7 +60,7 @@ init(Workers) ->
 		false ->
 			ok
 	end,
-	TrustedPeers = arweave_config:get_peers(trusted),
+	TrustedPeers = arweave_config:get([peers, trusted]),
 	{ok, #state{
 		workers = Workers,
 		worker_count = length(Workers),
@@ -96,7 +96,7 @@ handle_cast(collect_peers, State) ->
 
 handle_cast({peer_out_of_sync_timeout, Peer}, State) ->
 	#state{ in_sync_trusted_peers = Set } = State,
-	TrustedPeers = arweave_config:get_peers(trusted),
+	TrustedPeers = arweave_config:get([peers, trusted]),
 	case lists:member(Peer, TrustedPeers) of
 		false ->
 			{noreply, State};
@@ -106,7 +106,7 @@ handle_cast({peer_out_of_sync_timeout, Peer}, State) ->
 
 handle_cast({peer_out_of_sync, Peer}, State) ->
 	#state{ in_sync_trusted_peers = Set } = State,
-	TrustedPeers = arweave_config:get_peers(trusted),
+	TrustedPeers = arweave_config:get([peers, trusted]),
 	case lists:member(Peer, TrustedPeers) of
 		false ->
 			{noreply, State};

@@ -282,8 +282,12 @@ config_post(Option, Req, State) ->
 	end.
 
 config_post1(Data, Option, Req, State) ->
+	OldValue = case arweave_config_options_registry:get(Option) of
+		{ok, Value} -> Value;
+		_ -> undefined
+	end,
 	case arweave_config_options_registry:set(Option, Data) of
-		{ok, NewValue, OldValue} ->
+		{ok, NewValue} ->
 			NewState = State#{
 				status => 200,
 				headers => headers(),
@@ -336,4 +340,3 @@ jsend(error, Message) ->
 
 encode(Data) ->
 	jiffy:encode(Data).
-

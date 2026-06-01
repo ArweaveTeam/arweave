@@ -230,7 +230,7 @@ resolve_peers([RawPeer | Peers]) ->
 	end.
 
 get_trusted_peers() ->
-	case arweave_config:get_peers(trusted) of
+	case arweave_config:get([peers, trusted]) of
 		[] ->
 			ArweavePeers = [
 				"asia.peers.arweave.xyz",
@@ -245,7 +245,7 @@ get_trusted_peers() ->
 	end.
 -else.
 get_trusted_peers() ->
-	arweave_config:get_peers(trusted).
+	arweave_config:get([peers, trusted]).
 -endif.
 
 %% @doc Return true if the given peer has a public IPv4 address.

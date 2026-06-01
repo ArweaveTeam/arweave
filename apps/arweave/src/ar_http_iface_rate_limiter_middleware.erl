@@ -40,7 +40,7 @@ execute(Req, Env) ->
 get_limiter_ref(Req) ->
 	LocalIPs = [
 		ar_util:peer_to_ip(Peer)
-		|| Peer <- arweave_config:get_peers(local)
+		|| Peer <- arweave_config:get([peers, local])
 	],
 	PeerIP = ar_util:peer_to_ip(get_peer_key(Req)),
 

@@ -1000,7 +1000,7 @@ post_solution(error, _State) ->
 	?LOG_WARNING([{event, found_solution_but_could_not_build_a_block}]),
 	error;
 post_solution(Solution, State) ->
-	post_solution(arweave_config:get_peer(cm_exit), Solution,
+	post_solution(arweave_config:get([peers, cm_exit]), Solution,
 		State).
 
 post_solution(not_set, Solution, #state{ is_pool_client = true }) ->
@@ -1425,7 +1425,7 @@ calculate_cache_limits_test_() ->
 
 test_calculate_cache_limits_default() ->
 	arweave_config:with_test_config(fun() ->
-		_ = arweave_config:set([mining, cache_size], undefined),
+		ok = arweave_config:force_config(#{[mining, cache_size] => undefined}),
 		?assertEqual(
 			{
 				?IDEAL_STEPS_PER_PARTITION * 100 * ?MiB,
@@ -1538,7 +1538,7 @@ test_calculate_cache_limits_default() ->
 
 test_calculate_cache_limits_custom_low() ->
 	arweave_config:with_test_config(fun() ->
-	_ = arweave_config:set([mining, cache_size], 1),
+		ok = arweave_config:force_config(#{[mining, cache_size] => 1}),
 		?assertEqual(
 			{?MINIMUM_CACHE_LIMIT_BYTES, 1 * ?MiB, 1 * ?MiB, 1, 4_000},
 			calculate_cache_limits(1, 0)
@@ -1591,7 +1591,7 @@ test_calculate_cache_limits_custom_low() ->
 
 test_calculate_cache_limits_custom_high() ->
 	arweave_config:with_test_config(fun() ->
-		_ = arweave_config:set([mining, cache_size], 500_000),
+		ok = arweave_config:force_config(#{[mining, cache_size] => 500_000}),
 		?assertEqual(
 			{?MINIMUM_CACHE_LIMIT_BYTES, 512_000_000 * ?KiB, 512_000_000 * ?KiB, 500_000, 2_000_000_000},
 			calculate_cache_limits(1, 0)

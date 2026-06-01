@@ -61,7 +61,7 @@ do_setup() ->
 apply_overrides(GroupID, Overrides) ->
     maps:fold(
         fun(Field, Value, ok) ->
-            {ok, _} = arweave_config:set(
+            ok = arweave_config:set(
                 [limiter, GroupID, Field], Value),
             ok
         end, ok, Overrides).

@@ -502,7 +502,10 @@ arweave_config_get() {
 
     local escaped_key
     escaped_key="$(escape_for_erl_string "${key}")"
-    erl_rpc arweave_config_cli get "\"${escaped_key}\""
+    # erl_call -a parses the trailing token as Erlang. Args must be a
+    # list, otherwise a bare string "debug" is interpreted as a
+    # 5-element charlist and apply tries the config CLI get/5.
+    erl_rpc arweave_config_cli get "[\"${escaped_key}\"]"
 }
 
 arweave_config_set() {

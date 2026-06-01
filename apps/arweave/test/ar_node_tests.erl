@@ -58,7 +58,7 @@ test_mining_reward() ->
 
 % @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun test_multi_node_mining_reward/0, 120).
 
 test_multi_node_mining_reward() ->
@@ -109,7 +109,7 @@ replay_attack_test_() ->
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
 wallet_transaction_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun test_wallet_transaction/0, 120).
 
 test_wallet_transaction() ->
@@ -164,7 +164,7 @@ persisted_mempool_test_() ->
 	%% Make the propagation delay noticeable so that the submitted transactions do not
 	%% become ready for mining before the node is restarted and we assert that waiting
 	%% transactions found in the persisted mempool are (re-)submitted to peers.
-	ar_test_node:test_with_mocked_functions([{ar_node_worker, calculate_delay,
+	ar_test_node:test_with_all_nodes_mocked([{ar_node_worker, calculate_delay,
 			fun(_Size) -> 5000 end}], fun test_persisted_mempool/0).
 
 test_persisted_mempool() ->
@@ -186,9 +186,10 @@ test_persisted_mempool() ->
 		ar_test_node:stop(),
 		%% Rejoin the network.
 		%% Expect the pending transactions to be picked up and distributed.
-		_ = arweave_config:set([join, start_from_latest_state], false),
-		ok = arweave_config:replace_peers(trusted,
-			[ar_test_node:peer_ip(peer1)]),
+		ok = arweave_config:force_config(#{
+			[join, start_from_latest_state] => false,
+			[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))]
+		}),
 		ar:start_dependencies(),
 		ar_test_node:wait_until_joined(),
 		ar_test_node:connect_to_peer(peer1),

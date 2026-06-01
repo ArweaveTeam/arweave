@@ -14,12 +14,13 @@ test_records_footprints() ->
 	Addr = ar_wallet:to_address(Wallet),
 	[B0] = ar_weave:init([{Addr, ?AR(1000), <<>>}]),
 	ar_test_node:start(#{
-		b0 => B0,
-		addr => Addr,
-		storage_modules => [
-			{262144 * 3, 0, {replica_2_9, Addr}}
-		]
-	}),
+			b0 => B0,
+			addr => Addr,
+			[storage_modules] => [
+				arweave_config:storage_module_to_config(
+					{262144 * 3, 0, {replica_2_9, Addr}})
+			]
+		}),
 	Peer = ar_test_node:peer_ip(main),
 	%% The partition 1 is not configured.
 	?assertEqual(not_found, ar_http_iface_client:get_footprints(Peer, 1, 0)),

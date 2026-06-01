@@ -42,28 +42,27 @@ all() ->
 
 debug_toggle_updates_store_and_handler(_Config) ->
 	?assertEqual(false, arweave_config:get([debug])),
-	{ok, true} = arweave_config:set([debug], true),
+	ok = arweave_config:set([debug], true),
 	?assertEqual(true, arweave_config:get([debug])),
 	?assertMatch({ok, _}, logger:get_handler_config(arweave_debug)),
-	{ok, false} = arweave_config:set([debug], false),
+	ok = arweave_config:set([debug], false),
 	?assertEqual(false, arweave_config:get([debug])),
 	?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
 	ok.
 
 logging_path_coerces_to_list(_Config) ->
-	{ok, "/tmp/arweave-logs"} =
-		arweave_config:set([logging, path], <<"/tmp/arweave-logs">>),
+	ok = arweave_config:set([logging, path], <<"/tmp/arweave-logs">>),
 	?assertEqual("/tmp/arweave-logs", arweave_config:get([logging, path])),
 	ok.
 
 logging_formatter_and_limits_update(_Config) ->
 	%% Create handler so logger_set/4 updates live logger config.
 	ok = ar_logger:start_handler(arweave_info),
-	{ok, 9001} = arweave_config:set([logging, formatter, max_size], 9001),
-	{ok, 128} = arweave_config:set([logging, formatter, depth], 128),
-	{ok, 4096} = arweave_config:set([logging, formatter, chars_limit], 4096),
-	{ok, 25} = arweave_config:set([logging, max_no_files], 25),
-	{ok, 1048576} = arweave_config:set([logging, max_no_bytes], 1048576),
+	ok = arweave_config:set([logging, formatter, max_size], 9001),
+	ok = arweave_config:set([logging, formatter, depth], 128),
+	ok = arweave_config:set([logging, formatter, chars_limit], 4096),
+	ok = arweave_config:set([logging, max_no_files], 25),
+	ok = arweave_config:set([logging, max_no_bytes], 1048576),
 	?assertEqual(9001, arweave_config:get([logging, formatter, max_size])),
 	?assertEqual(128, arweave_config:get([logging, formatter, depth])),
 	?assertEqual(4096, arweave_config:get([logging, formatter, chars_limit])),
@@ -79,7 +78,7 @@ logging_formatter_and_limits_update(_Config) ->
 %% handler isn't running — the option is recorded for when it does.
 logger_set_with_no_live_handler_stores_anyway(_Config) ->
 	?assertMatch({error, _}, logger:get_handler_config(arweave_info)),
-	{ok, 250} = arweave_config:set([logging, drop_mode_qlen], 250),
+	ok = arweave_config:set([logging, drop_mode_qlen], 250),
 	?assertEqual(250, arweave_config:get([logging, drop_mode_qlen])),
 	ok.
 
@@ -88,9 +87,9 @@ logger_set_with_no_live_handler_stores_anyway(_Config) ->
 %% in arweave_config_options_misc (see debug_options_collision).
 debug_handler_toggle_via_logging_spec(_Config) ->
 	?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
-	{ok, true} = arweave_config:set([logging, handlers, debug], true),
+	ok = arweave_config:set([logging, handlers, debug], true),
 	?assertMatch({ok, _}, logger:get_handler_config(arweave_debug)),
-	{ok, false} = arweave_config:set([logging, handlers, debug], false),
+	ok = arweave_config:set([logging, handlers, debug], false),
 	?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
 	ok.
 
@@ -98,19 +97,19 @@ debug_handler_toggle_via_logging_spec(_Config) ->
 %% same arweave_debug handler. Toggling one to false stops the handler
 %% even when the other is stored as true — they share no state.
 debug_options_collision(_Config) ->
-	{ok, true} = arweave_config:set([debug], true),
+	ok = arweave_config:set([debug], true),
 	?assertMatch({ok, _}, logger:get_handler_config(arweave_debug)),
-	{ok, true} = arweave_config:set([logging, handlers, debug], true),
-	{ok, false} = arweave_config:set([logging, handlers, debug], false),
+	ok = arweave_config:set([logging, handlers, debug], true),
+	ok = arweave_config:set([logging, handlers, debug], false),
 	?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
 	?assertEqual(true, arweave_config:get([debug])),
 	ok.
 
 http_api_handler_toggle(_Config) ->
 	?assertMatch({error, _}, logger:get_handler_config(arweave_http_api)),
-	{ok, true} = arweave_config:set([logging, handlers, http, api], true),
+	ok = arweave_config:set([logging, handlers, http, api], true),
 	?assertMatch({ok, _}, logger:get_handler_config(arweave_http_api)),
-	{ok, false} = arweave_config:set([logging, handlers, http, api], false),
+	ok = arweave_config:set([logging, handlers, http, api], false),
 	?assertMatch({error, _}, logger:get_handler_config(arweave_http_api)),
 	ok.
 

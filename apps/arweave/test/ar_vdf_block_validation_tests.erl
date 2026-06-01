@@ -37,8 +37,7 @@ test_fork_checkpoints_not_found() ->
 		ar_test_node:start(#{
 			b0 => B0,
 			config => #{
-				[peers, ar_util:format_peer(ar_test_node:peer_ip(peer1)),
-					vdf_client] => true,
+				[peers, vdf_client] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))],
 				[gossip, block, pollers] => 0
 			}
 		}),
@@ -47,8 +46,7 @@ test_fork_checkpoints_not_found() ->
 		ar_test_node:start_peer(peer1, #{
 			b0 => B0,
 			config => #{
-				[peers, ar_util:format_peer(ar_test_node:peer_ip(main)),
-					vdf_server] => true,
+				[peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(main))],
 				[gossip, block, pollers] => 0
 			}
 		}),
@@ -131,8 +129,7 @@ test_fork_refuse_validation() ->
 		ar_test_node:start(#{
 			b0 => B0,
 			config => #{
-				[peers, ar_util:format_peer(ar_test_node:peer_ip(peer1)),
-					vdf_client] => true,
+				[peers, vdf_client] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))],
 				[gossip, block, pollers] => 0
 			}
 		}),
@@ -141,8 +138,7 @@ test_fork_refuse_validation() ->
 		ar_test_node:start_peer(peer1, #{
 			b0 => B0,
 			config => #{
-				[peers, ar_util:format_peer(ar_test_node:peer_ip(main)),
-					vdf_server] => true,
+				[peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(main))],
 				[gossip, block, pollers] => 0,
 				[vdf, pull] => false
 			}
@@ -182,20 +178,20 @@ test_fork_refuse_validation() ->
 	end.
 
 mock_reset_frequency_and_block_propagation_parallelization() ->
-	ar_test_node:new_mock(ar_nonce_limiter, [passthrough]),
-	ar_test_node:new_mock(ar_bridge, [passthrough]),
-	ar_test_node:mock_function(ar_nonce_limiter, get_reset_frequency, fun() -> ?TEST_RESET_FREQUENCY end),
-	ar_test_node:mock_function(ar_bridge, block_propagation_parallelization, fun() -> 0 end).
+	ar_test_util:new_mock(ar_nonce_limiter, [passthrough]),
+	ar_test_util:new_mock(ar_bridge, [passthrough]),
+	ar_test_util:mock_function(ar_nonce_limiter, get_reset_frequency, fun() -> ?TEST_RESET_FREQUENCY end),
+	ar_test_util:mock_function(ar_bridge, block_propagation_parallelization, fun() -> 0 end).
 
 mock_reset_frequency_and_block_propagation_parallelization(Node) ->
-	ar_test_node:remote_call(Node, ar_test_node, new_mock, [ar_nonce_limiter, [passthrough]]),
-	ar_test_node:remote_call(Node, ar_test_node, new_mock, [ar_bridge, [passthrough]]),
-	ar_test_node:remote_call(Node, ar_test_node, mock_function, [ar_nonce_limiter, get_reset_frequency, fun() -> ?TEST_RESET_FREQUENCY end]),
-	ar_test_node:remote_call(Node, ar_test_node, mock_function, [ar_bridge, block_propagation_parallelization, fun() -> 0 end]).
+	ar_test_node:remote_call(Node, ar_test_util, new_mock, [ar_nonce_limiter, [passthrough]]),
+	ar_test_node:remote_call(Node, ar_test_util, new_mock, [ar_bridge, [passthrough]]),
+	ar_test_node:remote_call(Node, ar_test_util, mock_function, [ar_nonce_limiter, get_reset_frequency, fun() -> ?TEST_RESET_FREQUENCY end]),
+	ar_test_node:remote_call(Node, ar_test_util, mock_function, [ar_bridge, block_propagation_parallelization, fun() -> 0 end]).
 
 disable_mocks(Node) ->
-	ok = ar_test_node:remote_call(Node, ar_test_node, unmock_module, [ar_bridge]),
-	ok = ar_test_node:remote_call(Node, ar_test_node, unmock_module, [ar_nonce_limiter]).
+	ok = ar_test_node:remote_call(Node, ar_test_util, unmock_module, [ar_bridge]),
+	ok = ar_test_node:remote_call(Node, ar_test_util, unmock_module, [ar_nonce_limiter]).
 
 send_block(H, FromNode, ToNode) ->
 	Block = ar_test_node:remote_call(FromNode, ar_storage, read_block, [H]),

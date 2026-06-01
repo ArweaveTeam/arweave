@@ -168,7 +168,7 @@ test_tx_index_fallback() ->
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
 			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
-			#{ addr => Addr, storage_modules => StorageModules }),
+			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, chunks := Chunks, chunk_end_offset := ChunkEndOffset, proof := Proof } =
 		post_single_chunk_tx(Wallet),
 	ar_test_node:mine(main),
@@ -243,7 +243,7 @@ test_not_stored_long_term() ->
 	StorageModules = [{10 * ?PARTITION_SIZE, 5,
 			ar_test_node:get_default_storage_module_packing(Addr, 5)}],
 	Wallet = ar_test_data_sync:setup_nodes(
-			#{ addr => Addr, storage_modules => StorageModules }),
+			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
 		post_single_chunk_tx(Wallet, <<"303">>),
 	EncodedTXID = ar_util:encode(TX#tx.id),
@@ -465,7 +465,7 @@ test_offset_beyond_tx_size() ->
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
 			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
-			#{ addr => Addr, storage_modules => StorageModules }),
+			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	%% A single sub-chunk-size TX (size between 20 and 700).
 	TXSize = 500,
 	TXData = crypto:strong_rand_bytes(TXSize),

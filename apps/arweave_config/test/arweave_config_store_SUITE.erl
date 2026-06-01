@@ -20,6 +20,7 @@ all() ->
 		arweave_config_store,
 		snapshot_restore_roundtrip,
 		items_with_prefix_filter,
+		delete_prefix,
 		to_map_nested,
 		log_smoke
 	].
@@ -75,6 +76,18 @@ items_with_prefix_filter(_Config) ->
 	false = lists:member({[bar, c], 3}, FooItems),
 
 	[] = arweave_config_store:items_with_prefix([baz]),
+
+	ok.
+
+delete_prefix(_Config) ->
+	{ok, _} = arweave_config_store:set([foo, a], 1),
+	{ok, _} = arweave_config_store:set([foo, b], 2),
+	{ok, _} = arweave_config_store:set([bar, c], 3),
+
+	ok = arweave_config_store:delete_prefix([foo]),
+	{error, undefined} = arweave_config_store:get([foo, a]),
+	{error, undefined} = arweave_config_store:get([foo, b]),
+	{ok, 3} = arweave_config_store:get([bar, c]),
 
 	ok.
 

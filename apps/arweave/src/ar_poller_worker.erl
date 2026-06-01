@@ -203,7 +203,7 @@ slow_block_application_warning(N) ->
 			"paused.~n~n", [N]).
 
 warning(Peer, Event) ->
-	TrustedPeers = arweave_config:get_peers(trusted),
+	TrustedPeers = arweave_config:get([peers, trusted]),
 	case lists:member(Peer, TrustedPeers) of
 		false ->
 			ok;

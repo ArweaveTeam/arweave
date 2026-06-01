@@ -84,7 +84,7 @@ load_json_and_yaml(_Config) ->
 				ok = arweave_config:load(ParsedLeafMap),
 				assert_all_options_are_covered(Tag, ParsedLeafMap),
 				assert_loaded_values(Expected),
-				assert_aggregates(Tag)
+				assert_list_values(Tag)
 			end)
 		end,
 		config_formats(ConfigLeafMap)),
@@ -284,21 +284,21 @@ defaulted_non_wildcard_specs() ->
 		   not is_wildcard_option(maps:get(option_key, Spec))
 	].
 
-assert_aggregates(_Tag) ->
-	?assertEqual([{1, 2, 3, 4, 1984}],
-		arweave_config:get_peers(trusted)),
-	?assertEqual([{5, 6, 7, 8, 1985}],
-		arweave_config:get_peers(block_gossip)),
-	?assertEqual([{192, 168, 1, 2, 1984}],
-		arweave_config:get_peers(local)),
-	?assertEqual([{9, 9, 9, 9, 1984}],
-		arweave_config:get_peers(vdf_client)),
-	?assertEqual([{10, 10, 10, 10, 1984}],
-		arweave_config:get_peers(vdf_server)),
-	?assertEqual([{6, 6, 6, 6, 1984}],
-		arweave_config:get_peers(cm_peer)),
-	?assertEqual({7, 7, 7, 7, 1984},
-		arweave_config:get_peer(cm_exit)).
+assert_list_values(_Tag) ->
+	?assertEqual([{1,2,3,4,1984}],
+		arweave_config:get([peers, trusted])),
+	?assertEqual([{5,6,7,8,1985}],
+		arweave_config:get([peers, block_gossip])),
+	?assertEqual([{192,168,1,2,1984}],
+		arweave_config:get([peers, local])),
+	?assertEqual([{9,9,9,9,1984}],
+		arweave_config:get([peers, vdf_client])),
+	?assertEqual([{10,10,10,10,1984}],
+		arweave_config:get([peers, vdf_server])),
+	?assertEqual([{6,6,6,6,1984}],
+		arweave_config:get([peers, cm_peer])),
+	?assertEqual({7,7,7,7,1984},
+		arweave_config:get([peers, cm_exit])).
 
 contains_config_syntax(Bin) ->
 	binary:match(Bin, [<<"{">>, <<"}">>, <<": ">>]) =/= nomatch.
@@ -325,69 +325,46 @@ assert_wildcard_option_covered(Tag, WildcardOption, Parsed) ->
 		io_lib:format("~p fixture missing wildcard option ~p", [Tag, WildcardOption])).
 
 %% Returns true the option has a templated/placeholder sgement
-%% (e.g. {peer_id}, {id})
+%% (e.g. {list_item})
 is_wildcard_option(Key) ->
 	lists:any(fun({_}) -> true; (_) -> false end, Key).
 
 wildcard_option_concrete_keys() ->
 	#{
-		[peers, {peer_id}, trusted] =>
-			[[peers, <<"1.2.3.4">>, trusted]],
-		[peers, {peer_id}, block_gossip] =>
-			[[peers, <<"5.6.7.8:1985">>, block_gossip]],
-		[peers, {peer_id}, local] =>
-			[[peers, <<"192.168.1.2">>, local]],
-		[peers, {peer_id}, cm_peer] =>
-			[[peers, <<"6.6.6.6">>, cm_peer]],
-		[peers, {peer_id}, cm_exit] =>
-			[[peers, <<"7.7.7.7">>, cm_exit]],
-		[peers, {peer_id}, vdf_client] =>
-			[[peers, <<"9.9.9.9">>, vdf_client]],
-		[peers, {peer_id}, vdf_server] =>
-			[[peers, <<"10.10.10.10">>, vdf_server]],
-		[webhooks, {webhook_id}, enabled] =>
-			[[webhooks, hook_a, enabled]],
-		[webhooks, {webhook_id}, url] =>
-			[[webhooks, hook_a, url]],
-		[webhooks, {webhook_id}, events] =>
-			[[webhooks, hook_a, events]],
-		[webhooks, {webhook_id}, headers] =>
-			[[webhooks, hook_a, headers]],
-		[storage_modules, {id}, partition] =>
-			[[storage_modules, 1, partition]],
-		[storage_modules, {id}, range, start] =>
-			[[storage_modules, 2, range, start]],
-		[storage_modules, {id}, range, 'end'] =>
-			[[storage_modules, 2, range, 'end']],
-		[storage_modules, {id}, packing, format] =>
-			[[storage_modules, 1, packing, format],
-			 [storage_modules, 2, packing, format]],
-		[storage_modules, {id}, packing, address] =>
-			[[storage_modules, 2, packing, address]],
-		[storage_modules, {id}, packing, difficulty] =>
-			[[storage_modules, 2, packing, difficulty]],
-		[storage_modules, {id}, defrag] =>
-			[[storage_modules, 1, defrag],
-			 [storage_modules, 2, defrag],
-			 [storage_modules, 3, defrag]],
-		[repack_modules, {id}, partition] =>
-			[[repack_modules, 1, partition]],
-		[repack_modules, {id}, range, start] =>
-			[[repack_modules, 2, range, start]],
-		[repack_modules, {id}, range, 'end'] =>
-			[[repack_modules, 2, range, 'end']],
-		[repack_modules, {id}, from, format] =>
-			[[repack_modules, 1, from, format],
-			 [repack_modules, 2, from, format]],
-		[repack_modules, {id}, from, address] =>
-			[[repack_modules, 1, from, address],
-			 [repack_modules, 2, from, address]],
-		[repack_modules, {id}, to, format] =>
-			[[repack_modules, 1, to, format],
-			 [repack_modules, 2, to, format]],
-		[repack_modules, {id}, to, address] =>
-			[[repack_modules, 1, to, address],
-			 [repack_modules, 2, to, address]]
+		[webhooks, {list_item}, enabled] =>
+			[[webhooks]],
+		[webhooks, {list_item}, url] =>
+			[[webhooks]],
+		[webhooks, {list_item}, events] =>
+			[[webhooks]],
+		[webhooks, {list_item}, headers] =>
+			[[webhooks]],
+		[storage_modules, {list_item}, partition] =>
+			[[storage_modules]],
+		[storage_modules, {list_item}, range_start] =>
+			[[storage_modules]],
+		[storage_modules, {list_item}, range_end] =>
+			[[storage_modules]],
+		[storage_modules, {list_item}, packing_format] =>
+			[[storage_modules]],
+		[storage_modules, {list_item}, packing_address] =>
+			[[storage_modules]],
+		[storage_modules, {list_item}, defrag] =>
+			[[storage_modules]],
+		[repack_modules, {list_item}, partition] =>
+			[[repack_modules]],
+		[repack_modules, {list_item}, range_start] =>
+			[[repack_modules]],
+		[repack_modules, {list_item}, range_end] =>
+			[[repack_modules]],
+		[repack_modules, {list_item}, from_format] =>
+			[[repack_modules]],
+		[repack_modules, {list_item}, from_address] =>
+			[[repack_modules]],
+		[repack_modules, {list_item}, to_format] =>
+			[[repack_modules]],
+		[repack_modules, {list_item}, to_address] =>
+			[[repack_modules]]
 	}.
 
 assert_values_present(Keys) ->
@@ -422,18 +399,18 @@ assert_legacy_json_subset() ->
 	?assertEqual(false, arweave_config:get([join, auto])),
 	?assertEqual(9, arweave_config:get([join, workers])),
 	?assertEqual(lists:sort([{192,168,2,3,1984}, {172,16,10,11,1985}]),
-		lists:sort(arweave_config:get_peers(local))),
+		lists:sort(arweave_config:get([peers, local]))),
 	?assertEqual(lists:sort([{159,203,158,108,1984}, {150,150,150,150,1983}]),
-		lists:sort(arweave_config:get_peers(block_gossip))),
+		lists:sort(arweave_config:get([peers, block_gossip]))),
 	?assertEqual(lists:sort([
 			{127,0,0,1,1984},
 			{2,3,4,5,1984},
 			{6,7,8,9,1982}
 		]),
-		lists:sort(arweave_config:get_peers(vdf_server))),
+		lists:sort(arweave_config:get([peers, vdf_server]))),
 	?assertEqual(hiopt_m4, arweave_config:get([vdf, algorithm])),
 	?assertEqual(lists:sort(legacy_storage_modules()),
-		lists:sort(arweave_config:storage_modules())),
+		lists:sort(arweave_config_options_storage_modules:legacy_list())),
 	assert_legacy_json_fixture_coverage(),
 	assert_values_present(legacy_json_supported_keys()).
 
@@ -514,7 +491,12 @@ fixture_structural_exclusions() ->
 		%% booleans are covered by CLI/env and read their defaults in
 		%% the full fixture.
 		[logging, handlers, debug],
-		[logging, handlers, http, api]
+		[logging, handlers, http, api],
+		%% List-of-map roots are represented in config files
+		%% by their `{list_item}` leaf specs.
+		[storage_modules],
+		[repack_modules],
+		[webhooks]
 	].
 
 %% ------------------------------------------------------------------
@@ -557,6 +539,10 @@ cli_args(ConfigLeafMap) ->
 cli_unsupported(#{ option_key := [config_file] }) ->
 	true;
 cli_unsupported(#{ option_key := [config, http, listen, address] }) ->
+	true;
+cli_unsupported(#{ type := list }) ->
+	true;
+cli_unsupported(#{ type := list_map }) ->
 	true;
 cli_unsupported(#{ type := logging_template }) ->
 	true;
@@ -607,6 +593,8 @@ spec_to_env_var(#{ option_key := Key }, ConfigLeafMap) ->
 
 %% AR_CONFIG_FILE is tested in the bootstrap suite.
 env_unsupported(#{ option_key := [config_file] }) ->
+	true;
+env_unsupported(#{ type := list_map }) ->
 	true;
 env_unsupported(#{ type := logging_template }) ->
 	true;
@@ -668,17 +656,17 @@ assert_eq(Key, Expected) ->
 	?assertEqual(Expected, arweave_config:get(Key)).
 
 assert_peers_eq_unordered(Role, Expected) ->
-	Got = arweave_config:get_peers(Role),
+	Got = arweave_config:get([peers, Role]),
 	?assertEqual(lists:sort(Expected), lists:sort(Got)).
 
 assert_peer_eq(Role, Expected) ->
-	?assertEqual(Expected, arweave_config:get_peer(Role)).
+	?assertEqual(Expected, arweave_config:get([peers, Role])).
 
 assert_storage_modules_eq(Expected) ->
-	?assertEqual(Expected, arweave_config:storage_modules()).
+	?assertEqual(Expected, arweave_config_options_storage_modules:legacy_list()).
 
 assert_defrag_modules_eq(Expected) ->
-	?assertEqual(Expected, arweave_config:defrag_modules()).
+	?assertEqual(Expected, arweave_config_options_storage_modules:legacy_defrags()).
 
 boolean_flag_cases() ->
 	[

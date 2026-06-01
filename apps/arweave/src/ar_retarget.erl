@@ -304,7 +304,7 @@ simple_retarget_test_() ->
 	end}.
 
 calculate_difficulty_linear_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_5, fun() -> 0 end}],
 		fun test_calculate_difficulty_linear/0, 120).
 
 test_calculate_difficulty_linear() ->

@@ -556,7 +556,7 @@ node_join_test_() ->
 %% @doc Ensure that get_tx works with a single peer and a list of peers.
 get_tx_test_() ->
 	[
-		ar_test_node:test_with_mocked_functions(
+		ar_test_node:test_with_all_nodes_mocked(
 			[{ar_http_iface_client, get_tx_from_remote_peer,
 				fun(_, _, _) -> {error,{closed,"The connection was lost."}} end}],
 			fun test_get_tx/0)

@@ -134,21 +134,7 @@ encode_list(List, Indent) ->
 	Prefix = indent(Indent),
 	lists:map(
 		fun(Item) when is_map(Item) ->
-			%% Inline the first map entry onto the dash line so the
-			%% sequence item and the mapping share a row.
-			[{FirstK, FirstV}|Rest] = lists:sort(maps:to_list(Item)),
-			FirstLine = [Prefix, <<"- ">>,
-				arweave_config_parser:format_segment(FirstK), <<": ">>,
-				encode_scalar(FirstV), <<"\n">>],
-			RestLines = lists:map(
-				fun({K, V}) ->
-					[Prefix, <<"  ">>,
-						arweave_config_parser:format_segment(K), <<": ">>,
-						encode_scalar(V), <<"\n">>]
-				end,
-				lists:sort(Rest)
-			),
-			[FirstLine|RestLines];
+			[Prefix, <<"-\n">>, encode_map(Item, Indent + 1)];
 		(Item) ->
 			[Prefix, <<"- ">>, encode_scalar(Item), <<"\n">>]
 		end,

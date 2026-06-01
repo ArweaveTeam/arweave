@@ -115,7 +115,7 @@ stop(LimiterRef) ->
 %%
 %% Every field is read from `arweave_config:get/1' against the canonical
 %% `[limiter, GroupID, Field]' key. Defaults live exclusively in
-%% `arweave_config_options_limiter'; tests that need non-default values
+%% the arweave_config app; tests that need non-default values
 %% call `arweave_config:set/2' on the same keys before `start_link/2'.
 init([GroupID]) when is_atom(GroupID) ->
     process_flag(priority, high),
@@ -485,4 +485,3 @@ sliding_window_reset_seconds([Oldest | _], Now) when Oldest >= Now -> 0;
 sliding_window_reset_seconds([Oldest | _], Now) ->
     %% Timestamps are monotonic ms
     max(1, (Now - Oldest) div 1000).
-

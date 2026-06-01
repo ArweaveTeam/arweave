@@ -22,7 +22,7 @@ setup(Config) ->
     maps:fold(
         fun(id, _, ok) -> ok;
            (Field, Value, ok) ->
-                {ok, _} = arweave_config:set(
+                ok = arweave_config:set(
                     [limiter, ?TEST_LIMITER, Field], Value),
                 ok
         end, ok, Config),

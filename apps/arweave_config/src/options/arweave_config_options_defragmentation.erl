@@ -19,7 +19,8 @@ specs() ->
 			long_description =>
 				<<"Master switch for the defragmentation pass. "
 				  "Modules to defrag are picked up from "
-				  "`storage_modules.<id>.defrag = true` (legacy: the "
+				  "`storage_modules.[list_item].defrag = true` "
+				  "(legacy: the "
 				  "`defragment_module` / `defragmentation_modules` "
 				  "list).">>
 		},

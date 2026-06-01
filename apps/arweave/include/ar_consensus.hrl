@@ -114,11 +114,7 @@
 -endif.
 
 -ifdef(FORKS_RESET).
-	-ifdef(AR_TEST).
-		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, (ar_block:strict_data_split_threshold() * 2)).
-	-else.
-		-define(MERKLE_REBASE_SUPPORT_THRESHOLD, 0).
-	-endif.
+	-define(MERKLE_REBASE_SUPPORT_THRESHOLD, 0).
 -else.
 %% The threshold was determined on the mainnet at the 2.7 fork block. The chunks
 %% submitted after the threshold must adhere to a different set of validation rules.

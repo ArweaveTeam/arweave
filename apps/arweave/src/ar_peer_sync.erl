@@ -118,7 +118,7 @@ register_workers() ->
 		false ->
 			[];
 		true ->
-			StorageModules = arweave_config:storage_modules(),
+			StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 			StoreIDs = [
 				ar_storage_module:id(SM) || SM <- StorageModules
 			] ++ [?DEFAULT_MODULE],
@@ -596,7 +596,7 @@ get_hot_peers_for_bucket(GetAllFun, _RPMKey, Path) ->
 	LocalOnly = arweave_config:get([sync, local_peers_only]),
 	AllPeers =
 		case LocalOnly of
-			true -> arweave_config:get_peers(local);
+			true -> arweave_config:get([peers, local]);
 			false -> GetAllFun()
 		end,
 	HotPeers = [

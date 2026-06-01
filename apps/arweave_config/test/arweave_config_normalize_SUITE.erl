@@ -43,7 +43,7 @@ join_normalize_promotes_latest_state(_Config) ->
 		?assertEqual(false,
 			arweave_config:get([join, start_from_latest_state])),
 		%% Write a non-default value for start_from_state.
-		{ok, _} = arweave_config:set([join, start_from_state], "/tmp/state"),
+		ok = arweave_config:set([join, start_from_state], "/tmp/state"),
 		?assertEqual(ok, arweave_config_normalize:run()),
 		?assertEqual(true,
 			arweave_config:get([join, start_from_latest_state]))
@@ -56,9 +56,9 @@ verify_normalize_noop_when_disabled(_Config) ->
 	arweave_config:with_test_config(fun() ->
 		%% Pre-set a couple of flags to non-default values that the
 		%% active-verify path would otherwise clobber.
-		{ok, _} = arweave_config:set([join, auto], false),
-		{ok, _} = arweave_config:set([sync, jobs], 7),
-		{ok, _} = arweave_config:set([cm, enabled], true),
+		ok = arweave_config:set([join, auto], false),
+		ok = arweave_config:set([sync, jobs], 7),
+		ok = arweave_config:set([cm, enabled], true),
 		?assertEqual(ok, arweave_config_normalize:run()),
 		?assertEqual(false, arweave_config:get([join, auto])),
 		?assertEqual(7, arweave_config:get([sync, jobs])),
@@ -108,7 +108,7 @@ classify_legacy_flag_promotes_dedicated_fields(_Config) ->
 %% Helpers
 %%====================================================================
 
-%% Pre-seeds every leaf and aggregate verify normalize writes to the
+%% Pre-seeds every leaf and list value verify normalize writes to the
 %% opposite of the forced value, runs normalize with `[verify, mode]'
 %% set to `Mode', and asserts every write took effect. Both `purge'
 %% and `log' trigger the same fan-out, so this is shared.
@@ -117,30 +117,30 @@ assert_verify_normalize_forces_all_flags(Mode) ->
 		%% Leaf pre-seeds: each value is chosen so the asserted
 		%% forced value differs, ensuring every assertion proves a
 		%% write happened.
-		{ok, _} = arweave_config:set([join, auto], true),
-		{ok, _} = arweave_config:set([join, start_from_latest_state], false),
-		{ok, _} = arweave_config:set([sync, jobs], 7),
-		{ok, _} = arweave_config:set([gossip, block, pollers], 7),
-		{ok, _} = arweave_config:set([gossip, header_sync_jobs], 7),
-		{ok, _} = arweave_config:set([gossip, tx, polling_enabled], true),
-		{ok, _} = arweave_config:set([packing, entropy, workers], 7),
-		{ok, _} = arweave_config:set([cm, enabled], true),
-		{ok, _} = arweave_config:set([gossip, tx, max_peers], 7),
-		{ok, _} = arweave_config:set([gossip, block, max_peers], 7),
-		{ok, _} = arweave_config:set([vdf, compute], true),
-		{ok, _} = arweave_config:set([vdf, is_public_server], true),
-		%% Aggregate pre-seeds: cm_peer, cm_exit (singleton),
-		%% vdf_client, vdf_server. Distinct peers so the cm_exit
-		%% singleton doesn't collide with cm_peer.
-		ok = arweave_config:replace_peers(cm_peer, [<<"127.0.0.1:1984">>]),
-		ok = arweave_config:replace_peers(cm_exit, <<"127.0.0.2:1984">>),
-		ok = arweave_config:replace_peers(vdf_client, [<<"127.0.0.3:1984">>]),
-		ok = arweave_config:replace_peers(vdf_server, [<<"127.0.0.4:1984">>]),
+		ok = arweave_config:set([join, auto], true),
+		ok = arweave_config:set([join, start_from_latest_state], false),
+		ok = arweave_config:set([sync, jobs], 7),
+		ok = arweave_config:set([gossip, block, pollers], 7),
+		ok = arweave_config:set([gossip, header_sync_jobs], 7),
+		ok = arweave_config:set([gossip, tx, polling_enabled], true),
+		ok = arweave_config:set([packing, entropy, workers], 7),
+		ok = arweave_config:set([cm, enabled], true),
+		ok = arweave_config:set([gossip, tx, max_peers], 7),
+		ok = arweave_config:set([gossip, block, max_peers], 7),
+		ok = arweave_config:set([vdf, compute], true),
+		ok = arweave_config:set([vdf, is_public_server], true),
+		%% List pre-seeds: cm_peer, cm_exit, vdf_client,
+		%% vdf_server. Distinct peers so cm_exit doesn't collide
+		%% with cm_peer.
+		ok = arweave_config:set([peers, cm_peer], [<<"127.0.0.1:1984">>]),
+		ok = arweave_config:set([peers, cm_exit], <<"127.0.0.2:1984">>),
+		ok = arweave_config:set([peers, vdf_client], [<<"127.0.0.3:1984">>]),
+		ok = arweave_config:set([peers, vdf_server], [<<"127.0.0.4:1984">>]),
 
 		%% Flip verify mode on and run normalize. The fan-out emits
 		%% WARNING lines via io:format/1; sink them so CT logs stay
 		%% clean.
-		{ok, _} = arweave_config:set([verify, mode], Mode),
+		ok = arweave_config:set([verify, mode], Mode),
 		discard_io(fun() ->
 			?assertEqual(ok, arweave_config_normalize:run())
 		end),
@@ -159,10 +159,9 @@ assert_verify_normalize_forces_all_flags(Mode) ->
 		?assertEqual(false, arweave_config:get([vdf, compute])),
 		?assertEqual(false, arweave_config:get([vdf, is_public_server])),
 
-		%% Every aggregate replace took effect.
+		%% Every list replace took effect.
 		?assertEqual([], arweave_config_options_peers:by_role(cm_peer)),
-		?assertEqual(not_set,
-			arweave_config_options_peers:singleton_by_role(cm_exit)),
+			?assertEqual(not_set, arweave_config:get([peers, cm_exit])),
 		?assertEqual([], arweave_config_options_peers:by_role(vdf_client)),
 		?assertEqual([], arweave_config_options_peers:by_role(vdf_server))
 	end),

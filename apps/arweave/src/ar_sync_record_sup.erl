@@ -22,8 +22,8 @@ start_link() ->
 
 init([]) ->
 	ets:new(sync_records, [set, public, named_table, {read_concurrency, true}]),
-	StorageModules = arweave_config:storage_modules(),
-	RepackInPlaceModules = arweave_config:repack_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
+	RepackInPlaceModules = [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
 	ConfiguredWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),

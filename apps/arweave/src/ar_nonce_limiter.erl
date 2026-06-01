@@ -55,7 +55,7 @@ start_link() ->
 compute_own_vdf() ->
 	case arweave_config:get([vdf, compute]) of
 		auto ->
-			arweave_config:get_peers(vdf_server) =:= [];
+			arweave_config:get([peers, vdf_server]) =:= [];
 		Bool ->
 			Bool
 	end.
@@ -63,14 +63,14 @@ compute_own_vdf() ->
 %% @doc Whether at least one trusted VDF-server peer is configured.
 -spec use_remote_vdf_server() -> boolean().
 use_remote_vdf_server() ->
-	arweave_config:get_peers(vdf_server) =/= [].
+	arweave_config:get([peers, vdf_server]) =/= [].
 
 %% @doc Whether this node is acting as a VDF server. Returns `true' if
 %% any VDF-client peer is configured, otherwise the value of
 %% [vdf, is_public_server].
 -spec is_vdf_server() -> boolean().
 is_vdf_server() ->
-	case arweave_config:get_peers(vdf_client) of
+	case arweave_config:get([peers, vdf_client]) of
 		[] ->
 			arweave_config:get([vdf, is_public_server]);
 		_ ->
@@ -1473,7 +1473,7 @@ send_events_for_external_update(SessionKey, Session) ->
 		Session#vdf_session{ step_number = StepNumber-1, steps = RemainingSteps }).
 
 debug_double_check(Label, Result, Func, Args) ->
-	case arweave_config:feature_enabled(double_check_nonce_limiter) of
+	case arweave_config:get([features, double_check_nonce_limiter]) of
 		false ->
 			Result;
 		true ->

@@ -36,20 +36,20 @@ parser(_Config) ->
 	assert_parse_sets(["--mining.hashing_threads", 4],
 		[mining, hashing_threads], 4),
 	assert_parse_sets(
-		[<<"--integer">>, <<"-65535">>],
+		[<<"--integer">>, <<"7">>],
 		#{ long_arguments => #{ <<"--integer">> => #{
-			type => integer,
-			option_key => [storage_modules, <<"test">>, packing, difficulty]
+			type => tcp_port,
+			option_key => [port]
 		}}},
-		[storage_modules, <<"test">>, packing, difficulty],
-		-65535),
+		[port],
+		7),
 	assert_parse_sets(
 		[<<"--integer=7">>],
 		#{ long_arguments => #{ <<"--integer">> => #{
-			type => integer,
-			option_key => [storage_modules, <<"test">>, packing, difficulty]
+			type => tcp_port,
+			option_key => [port]
 		}}},
-		[storage_modules, <<"test">>, packing, difficulty],
+		[port],
 		7),
 
 	{error, #{ reason := <<"bad_argument">> }} =

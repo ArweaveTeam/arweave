@@ -181,13 +181,13 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 init_sync_record() ->
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	Modules = [M || M <- [?DEFAULT_MODULE | StorageModules],
 			not is_replica_2_9(M)],
 	get_records_wait(ar_data_sync, Modules, ar_intervals:new()).
 
 init_footprint_record() ->
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	get_records_wait(ar_data_sync_footprints, StorageModules,
 			ar_intervals:new()).
 

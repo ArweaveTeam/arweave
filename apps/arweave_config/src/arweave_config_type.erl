@@ -4,6 +4,8 @@
 -export([
 	boolean/1,
 	integer/1,
+	list/1,
+	list_map/1,
 	pos_integer/1,
 	ipv4/1,
 	file/1,
@@ -13,6 +15,7 @@
 	string/1,
 	logging_template/1,
 	peer_id/1,
+	peers_list/1,
 	address/1
 ]).
 -include_lib("kernel/include/file.hrl").
@@ -20,7 +23,7 @@
 -define(DEFAULT_PORT, 1984).
 -define(is_octet(X), (is_integer(X) andalso X >= 0 andalso X =< 255)).
 
--type peer_id() :: binary().
+-type peer_id() :: {byte(), byte(), byte(), byte(), 0..65535} | binary().
 
 %% @doc Validate as an atom, converting list/binary inputs through
 %% `binary_to_existing_atom/1` / `list_to_existing_atom/1`.
@@ -67,6 +70,64 @@ boolean(String) when is_list(String); is_binary(String) ->
 		_ -> {error, String}
 	end;
 boolean(V) -> {error, V}.
+
+%% @doc Validate as a list of binaries. This intentionally stays
+%% narrow: callers that need richer list validation should do it
+%% in the owning option module's validator.
+-spec list(Input) -> Return when
+	Input :: [binary()],
+	Return :: {ok, [binary()]} | {error, Input}.
+list(Values) when is_list(Values) ->
+	case lists:all(fun is_binary/1, Values) of
+		true -> {ok, Values};
+		false -> {error, Values}
+	end;
+list(Value) ->
+	{error, Value}.
+
+%% @doc Validate and normalize a list of peer IDs. Each element runs
+%% through `peer_id/1', so callers may supply mixed binaries / strings
+%% / tuples; IPv4 entries come back as `{A, B, C, D, Port}' tuples,
+%% hostnames stay as binaries.
+-spec peers_list(Input) -> Return when
+	Input :: [binary() | string() | tuple()],
+	Return :: {ok, [peer_id()]} | {error, term()}.
+peers_list(Values) when is_list(Values) ->
+	case io_lib:printable_unicode_list(Values) of
+		true ->
+			%% Bare CLI/env string for a single peer (`--peers.trusted
+			%% 1.2.3.4:1984') — wrap into a singleton list so the rest
+			%% of the validator runs unchanged.
+			peers_list([Values], []);
+		false ->
+			peers_list(Values, [])
+	end;
+peers_list(Value) when is_binary(Value); is_tuple(Value) ->
+	%% Same single-peer case as above for binary or tuple input.
+	peers_list([Value], []);
+peers_list(Value) ->
+	{error, Value}.
+
+peers_list([], Acc) ->
+	{ok, lists:reverse(Acc)};
+peers_list([Peer | Rest], Acc) ->
+	case peer_id(Peer) of
+		{ok, PeerID} -> peers_list(Rest, [PeerID | Acc]);
+		{error, _} = Err -> Err
+	end.
+
+%% @doc Validate the outer shape of a list of maps. The owning
+%% list root spec validates fields using its `{list_item}` schema.
+-spec list_map(Input) -> Return when
+	Input :: [map()],
+	Return :: {ok, [map()]} | {error, Input}.
+list_map(Values) when is_list(Values) ->
+	case lists:all(fun is_map/1, Values) of
+		true -> {ok, Values};
+		false -> {error, Values}
+	end;
+list_map(Value) ->
+	{error, Value}.
 
 %% @doc Validate as an integer.
 -spec integer(Integer) -> Return when
@@ -374,9 +435,12 @@ type_error(Name, Reason, Data) ->
 %%% Peer-id canonicalization
 %%% --------------------------------------------------------------------
 
-%% @doc Normalize a peer spelling to its canonical `<<"host:port">>`
-%% form. Accepts strings, binaries, and IPv4 tuples (with or without
-%% port). Returns `{ok, Binary}` or `{error, Reason}`.
+%% @doc Normalize a peer spelling to canonical form. IPv4 peers become
+%% `{A, B, C, D, Port}' 5-tuples — the same shape ar_http and the rest
+%% of the node already use. Hostnames and bracketed IPv6 stay as
+%% `<<"host:port">>' binaries (they aren't tuple-shaped without DNS
+%% resolution). Accepts strings, binaries, 4-tuples (default port
+%% applied), and 5-tuples.
 -spec peer_id(Input) -> Return when
 	Input :: binary() | string() | tuple(),
 	Return :: {ok, peer_id()} | {error, term()}.
@@ -390,10 +454,10 @@ peer_id(Input) when is_list(Input) ->
 			{error, {invalid_peer, Input}}
 	end;
 peer_id({A, B, C, D}) when ?is_octet(A), ?is_octet(B), ?is_octet(C), ?is_octet(D) ->
-	{ok, format_ipv4_port({A, B, C, D, ?DEFAULT_PORT})};
+	{ok, {A, B, C, D, ?DEFAULT_PORT}};
 peer_id({A, B, C, D, Port}) when ?is_octet(A), ?is_octet(B), ?is_octet(C),
 		?is_octet(D), is_integer(Port), Port >= 0, Port =< 65535 ->
-	{ok, format_ipv4_port({A, B, C, D, Port})};
+	{ok, {A, B, C, D, Port}};
 peer_id(Input) ->
 	{error, {invalid_peer, Input}}.
 
@@ -432,18 +496,42 @@ peer_id_binary(Bin) ->
 		[Bin] ->
 			%% Bare host: append default port.
 			case validate_host(Bin) of
-				ok -> {ok, <<Bin/binary, ":", (integer_to_binary(?DEFAULT_PORT))/binary>>};
+				ok -> finalize_peer(Bin, ?DEFAULT_PORT);
 				Error -> Error
 			end;
 		[Host, PortBin] ->
 			case {validate_host(Host), parse_port(PortBin)} of
 				{ok, {ok, Port}} ->
-					{ok, <<Host/binary, ":", (integer_to_binary(Port))/binary>>};
+					finalize_peer(Host, Port);
 				{{error, R}, _} -> {error, R};
 				{_, {error, R}} -> {error, R}
 			end;
 		_ ->
 			{error, {ambiguous_peer, Bin}}
+	end.
+
+%% @doc IPv4 hosts return as 5-tuples; hostnames stay as
+%% `<<"host:port">>' binaries.
+finalize_peer(Host, Port) ->
+	case parse_ipv4_octets(Host) of
+		{ok, {A, B, C, D}} ->
+			{ok, {A, B, C, D, Port}};
+		error ->
+			{ok, <<Host/binary, ":", (integer_to_binary(Port))/binary>>}
+	end.
+
+parse_ipv4_octets(Host) when is_binary(Host) ->
+	try
+		Parts = binary:split(Host, <<".">>, [global]),
+		case [binary_to_integer(P) || P <- Parts] of
+			[A, B, C, D] when ?is_octet(A), ?is_octet(B),
+					?is_octet(C), ?is_octet(D) ->
+				{ok, {A, B, C, D}};
+			_ ->
+				error
+		end
+	catch
+		_:_ -> error
 	end.
 
 validate_host(<<>>) ->
@@ -466,12 +554,3 @@ parse_port(PortBin) ->
 	catch
 		_:_ -> {error, {invalid_port, PortBin}}
 	end.
-
-format_ipv4_port({A, B, C, D, Port}) ->
-	iolist_to_binary([
-		integer_to_binary(A), <<".">>,
-		integer_to_binary(B), <<".">>,
-		integer_to_binary(C), <<".">>,
-		integer_to_binary(D), <<":">>,
-		integer_to_binary(Port)
-	]).

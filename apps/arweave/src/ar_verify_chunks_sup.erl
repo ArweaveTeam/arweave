@@ -25,7 +25,7 @@ init([]) ->
 		false ->
 			ignore;
 		_ ->
-			StorageModules = arweave_config:storage_modules(),
+			StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 			Workers = lists:map(
 				fun(StorageModule) ->
 					StoreID = ar_storage_module:id(StorageModule),

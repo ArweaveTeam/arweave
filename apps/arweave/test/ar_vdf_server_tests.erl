@@ -52,9 +52,9 @@ vdf_server_push_test_() ->
 		fun setup/0,
      	fun cleanup/1,
 		[
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_reset_frequency()],
 				fun test_vdf_server_push_fast_block/0, ?TEST_NODE_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_reset_frequency()],
 				fun test_vdf_server_push_slow_block/0, ?TEST_NODE_TIMEOUT)
 		]
     }.
@@ -67,13 +67,13 @@ vdf_client_test_() ->
 		fun setup/0,
 		fun cleanup/1,
 		[
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_reset_frequency()],
 				fun test_vdf_client_fast_block/0, ?TEST_NODE_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_reset_frequency()],
 				fun test_vdf_client_fast_block_pull_interface/0, ?TEST_NODE_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_reset_frequency()],
 				fun test_vdf_client_slow_block/0, ?TEST_NODE_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_reset_frequency()],
 				fun test_vdf_client_slow_block_pull_interface/0, ?TEST_NODE_TIMEOUT)
 		]
     }.
@@ -107,8 +107,8 @@ test_vdf_server_push_fast_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(VDFPort)),
-				vdf_client] => true
+			[peers, vdf_client] => [
+				list_to_binary("127.0.0.1:" ++ integer_to_list(VDFPort))]
 		}
 	),
 	%% Setup a server to listen for VDF pushes
@@ -160,8 +160,8 @@ test_vdf_server_push_slow_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(VDFPort)),
-				vdf_client] => true
+			[peers, vdf_client] => [
+				list_to_binary("127.0.0.1:" ++ integer_to_list(VDFPort))]
 		}
 	),
 	%% Let main get ahead of peer1 in the VDF chain
@@ -231,8 +231,7 @@ test_vdf_client_fast_block() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		#{
-			[peers, ar_util:format_peer(ar_test_node:peer_ip(main)),
-				vdf_server] => true
+			[peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(main))]
 		}),
 	%% Isolate the client-path assertion below: when B1 is posted directly to peer1,
 	%% peer1 must not relay it to main before we explicitly post it to main.
@@ -242,8 +241,7 @@ test_vdf_client_fast_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, ar_util:format_peer(ar_test_node:peer_ip(peer1)),
-				vdf_client] => true
+			[peers, vdf_client] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))]
 		}),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
@@ -288,8 +286,7 @@ test_vdf_client_fast_block_pull_interface() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		#{
-			[peers, ar_util:format_peer(ar_test_node:peer_ip(main)),
-				vdf_server] => true,
+			[peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(main))],
 			[vdf, pull] => true
 		}
 	),
@@ -297,8 +294,7 @@ test_vdf_client_fast_block_pull_interface() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, ar_util:format_peer(ar_test_node:peer_ip(peer1)),
-				vdf_client] => true
+			[peers, vdf_client] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))]
 		}
 	),
 	ar_test_node:connect_to_peer(peer1),
@@ -340,16 +336,17 @@ test_vdf_client_slow_block() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(MainPort)),
-				vdf_server] => true
+			[peers, vdf_server] => [
+				list_to_binary("127.0.0.1:" ++ integer_to_list(MainPort))]
 		}
 	),
 	%% Start the main as a VDF server
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))),
-				vdf_client] => true
+			[peers, vdf_client] => [
+				list_to_binary("127.0.0.1:" ++
+					integer_to_list(ar_test_node:peer_port(peer1)))]
 		}
 	),
 	ar_test_node:connect_to_peer(peer1),
@@ -381,8 +378,8 @@ test_vdf_client_slow_block_pull_interface() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(MainPort)),
-				vdf_server] => true,
+			[peers, vdf_server] => [
+				list_to_binary("127.0.0.1:" ++ integer_to_list(MainPort))],
 			[vdf, pull] => true
 		}
 	),
@@ -390,8 +387,9 @@ test_vdf_client_slow_block_pull_interface() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))),
-				vdf_client] => true
+			[peers, vdf_client] => [
+				list_to_binary("127.0.0.1:" ++
+					integer_to_list(ar_test_node:peer_port(peer1)))]
 		}
 	),
 	ar_test_node:connect_to_peer(peer1),
