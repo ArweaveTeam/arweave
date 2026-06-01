@@ -42,7 +42,7 @@ uses_blacklists_test_() ->
 	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
 		fun test_uses_blacklists/0,
-		300_000
+		300
 	).
 
 test_uses_blacklists() ->

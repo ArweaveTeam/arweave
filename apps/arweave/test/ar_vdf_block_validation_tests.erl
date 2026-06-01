@@ -10,8 +10,8 @@
 
 fork_at_entropy_reset_point_test_() ->
 	[
-		{timeout, 600, fun test_fork_checkpoints_not_found/0},
-		{timeout, 900, fun test_fork_refuse_validation/0}
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_fork_checkpoints_not_found/0},
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_fork_refuse_validation/0}
 	].
 
 %% Scenario:
