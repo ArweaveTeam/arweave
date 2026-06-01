@@ -269,8 +269,8 @@ parse_options([{<<"storage_modules">>, L} | Rest]) when is_list(L) ->
 				{[], []},
 				L
 			),
-		_ = arweave_config_options_storage_modules:write_list(StorageModules),
-		_ = arweave_config_options_repack_modules:write_list(RepackInPlaceStorageModules),
+		_ = arweave_config_options_storage_modules:write_legacy_list(StorageModules),
+		_ = arweave_config_options_repack_modules:write_legacy_list(RepackInPlaceStorageModules),
 		parse_options(Rest)
 	catch Error:Reason ->
 		?LOG_ERROR([{event, parse_failure}, {option, storage_modules},
@@ -562,7 +562,7 @@ parse_options([{<<"webhooks">>, Webhooks} | _]) ->
 	{error, {bad_type, webhooks, array}, Webhooks};
 
 parse_options([{<<"semaphores">>, Semaphores} | Rest]) when is_tuple(Semaphores) ->
-	Existing = arweave_config:semaphores(),
+	Existing = arweave_config_options_semaphores:legacy_map(),
 	case parse_atom_number_map(Semaphores, Existing) of
 		{ok, ParsedSemaphores} ->
 			_ = arweave_config_options_semaphores:write_legacy_map(ParsedSemaphores),
@@ -666,7 +666,7 @@ parse_options([{<<"defragment_modules">>, L} | Rest]) when is_list(L) ->
 				[],
 				L
 			),
-		_ = arweave_config_options_storage_modules:write_defrags(DefragModules),
+		_ = arweave_config_options_storage_modules:write_legacy_defrags(DefragModules),
 		parse_options(Rest)
 	catch _:_ ->
 		{error, {bad_format, defragment_modules, "an array of \"{number},{address}\""}, L}
@@ -1037,12 +1037,6 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
 				unpacked;
 			<< MiningAddr:43/binary, ".replica.2.9" >> ->
 				{replica_2_9, ar_util:decode(MiningAddr)};
-			<< MiningAddr:43/binary, ".", PackingDifficultyBin/binary >> ->
-				PackingDifficulty = binary_to_integer(PackingDifficultyBin),
-				true = PackingDifficulty >= 1
-						andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY
-						andalso PackingDifficulty /= ?REPLICA_2_9_PACKING_DIFFICULTY,
-				{composite, ar_util:decode(MiningAddr), PackingDifficulty};
 			MiningAddr when byte_size(MiningAddr) == 43 ->
 				{spora_2_6, ar_util:decode(MiningAddr)}
 		end,
@@ -1149,5 +1143,4 @@ add_vdf_server_trusted_peer(Peer) ->
 	Peers = arweave_config_options_peers:by_role(vdf_server),
 	_ = arweave_config_options_peers:write_legacy_list(vdf_server, Peers ++ [Peer]),
 	ok.
-
 

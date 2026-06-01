@@ -470,7 +470,7 @@ collect_peers() ->
 			Peers =
 				case LocalOnly of
 					true ->
-						arweave_config:get_peers(local);
+						arweave_config:get([peers, local]);
 					false ->
 						%% rank peers by current rating since we care about their
 						%% recent throughput performance
@@ -515,7 +515,7 @@ emit_state_snapshot(#state{ scan_waiting = Waiting, scan_inflight = Inflight,
 %% emitted by the telemetry tick.
 emit_bucket_stats() ->
 	StartTime = erlang:monotonic_time(millisecond),
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	lists:foreach(
 		fun(Module) ->
 			StoreID = ar_storage_module:id(Module),
@@ -712,7 +712,7 @@ run_peer_scan(Peer, Mode) ->
 			{advertised_mib, Stats#scan_stats.advertised_bytes div (1024 * 1024)}]).
 
 scan_normal_for_peer(Peer, SyncBuckets, Init) ->
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	%% Shuffle modules so concurrent scanners don't all hammer the same
 	%% module first - spreads load across the configured range.
 	Modules = ar_util:shuffle_list(StorageModules),
@@ -790,7 +790,7 @@ unsynced_intervals_in_window(Start, End, Acc, StoreID) ->
 	end.
 
 scan_footprint_for_peer(Peer, FootprintBuckets, Init) ->
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	Modules = ar_util:shuffle_list(StorageModules),
 	lists:foldl(
 		fun(StorageModule, Acc) ->

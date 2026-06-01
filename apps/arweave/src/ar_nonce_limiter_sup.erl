@@ -21,7 +21,7 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	ClientPeers = arweave_config:get_peers(vdf_client),
+	ClientPeers = arweave_config:get([peers, vdf_client]),
 	ServerWorkers = lists:map(
 		fun(Peer) ->
 			Name = list_to_atom("ar_nonce_limiter_server_worker_"

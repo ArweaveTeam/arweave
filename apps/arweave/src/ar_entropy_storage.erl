@@ -431,7 +431,11 @@ test_replica_2_9() ->
 			{ar_block:partition_size(), 1, Packing}
 	],
 	arweave_config:with_test_config(fun() ->
-		ar_test_node:start(#{ reward_addr => RewardAddr, storage_modules => StorageModules }),
+		ar_test_node:start(#{
+			reward_addr => RewardAddr,
+			[storage_modules] =>
+				[arweave_config:storage_module_to_config(Module) || Module <- StorageModules]
+		}),
 		StoreID1 = ar_storage_module:id(lists:nth(1, StorageModules)),
 		StoreID2 = ar_storage_module:id(lists:nth(2, StorageModules)),
 		C1 = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),

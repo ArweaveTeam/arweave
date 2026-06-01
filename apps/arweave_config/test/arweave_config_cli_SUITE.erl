@@ -40,12 +40,12 @@ all() ->
 
 get_canonical_single_segment(_Config) ->
     false = arweave_config_cli:get("debug"),
-    {ok, true} = arweave_config:set([debug], true),
+    ok = arweave_config:set([debug], true),
     true = arweave_config_cli:get("debug").
 
 get_canonical_dotted(_Config) ->
     false = arweave_config_cli:get("mining.enabled"),
-    {ok, true} = arweave_config:set([mining, enabled], true),
+    ok = arweave_config:set([mining, enabled], true),
     true = arweave_config_cli:get("mining.enabled").
 
 %% The CLI accepts canonical keys only — `mine` and `mining_addr` are
@@ -76,7 +76,7 @@ get_malformed_key_returns_error(_Config) ->
 
 set_canonical_dotted_coerces_value(_Config) ->
     %% String value flows through the spec's type coercion.
-    {ok, 1985} = arweave_config_cli:set("port", "1985"),
+    ok = arweave_config_cli:set("port", "1985"),
     1985 = arweave_config:get([port]).
 
 set_legacy_alias_not_translated(_Config) ->

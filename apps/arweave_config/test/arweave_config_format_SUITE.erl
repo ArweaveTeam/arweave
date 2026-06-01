@@ -23,7 +23,7 @@ all() ->
 		dotted_key_with_map_value_rejected,
 		dotted_key_with_list_of_maps_value_rejected,
 		nested_dotted_key_kept_literal,
-		bracketed_peer_id_segment_parses,
+		dotted_peer_role_list_parses,
 		yaml_encode
 	].
 
@@ -130,26 +130,24 @@ dotted_key_with_list_of_maps_value_rejected(_Config) ->
 	ok.
 
 %% Nested dotted-looking keys aren't expanded. The dotted form is
-%% only available at the root. A nested key like "1.2.3.4" (a peer
-%% ID) flows through as a literal binary segment so the registry's
-%% wildcard template can pick it up.
+%% only available at the root.
 nested_dotted_key_kept_literal(_Config) ->
 	?assertEqual(
-		#{[peers, <<"1.2.3.4">>, trusted] => true},
+		#{[peers, trusted] => [<<"1.2.3.4:1984">>]},
 		parse_json(#{
 			<<"peers">> => #{
-				<<"1.2.3.4">> => #{ <<"trusted">> => true }
+				<<"trusted">> => [<<"1.2.3.4:1984">>]
 			}
 		})),
 	ok.
 
-%% Bracketed segments inside a root dotted key carry the literal
-%% verbatim (handled by arweave_config_parser:key/1).
-bracketed_peer_id_segment_parses(_Config) ->
+%% Peer roles are list-valued options, so root dotted keys can set a
+%% whole role list directly.
+dotted_peer_role_list_parses(_Config) ->
 	?assertEqual(
-		#{[peers, <<"1.2.3.4:1984">>, trusted] => true},
+		#{[peers, trusted] => [<<"1.2.3.4:1984">>]},
 		parse_json(#{
-			<<"peers.[1.2.3.4:1984].trusted">> => true
+			<<"peers.trusted">> => [<<"1.2.3.4:1984">>]
 		})),
 	ok.
 
@@ -171,7 +169,8 @@ yaml_encode(_Config) ->
 	?assertMatch({_, _}, binary:match(Yaml, <<"with_number_string: \"123\"\n">>)),
 	?assertMatch({_, _}, binary:match(Yaml, <<"with_specials: \"a:b#c\"\n">>)),
 	?assertMatch({_, _}, binary:match(Yaml, <<"with_newline: \"line1\\nline2\"\n">>)),
-	?assertMatch({_, _}, binary:match(Yaml, <<"- host: \"1.2.3.4:1984\"\n">>)),
+	?assertMatch({_, _}, binary:match(Yaml, <<"-\n">>)),
+	?assertMatch({_, _}, binary:match(Yaml, <<"host: \"1.2.3.4:1984\"\n">>)),
 	?assertMatch({_, _}, binary:match(Yaml, <<"trusted: true\n">>)),
 	ok.
 
@@ -189,4 +188,3 @@ parse_yaml(Yaml) ->
 
 json_encode(Map) ->
 	iolist_to_binary(jiffy:encode(Map)).
-

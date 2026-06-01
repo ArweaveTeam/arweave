@@ -13,7 +13,7 @@
 
 %% Data roots sync from a peer via ar_data_root_sync when main joins with partial storage (not header sync).
 data_roots_sync_from_peer_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
 			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
@@ -21,7 +21,7 @@ data_roots_sync_from_peer_test_() ->
 
 %% Data roots pushed with HTTP: GET /data_roots from miner, POST /data_roots to peer; assert metadata via GET.
 data_roots_http_post_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
 			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
@@ -32,7 +32,7 @@ data_roots_http_post_test_() ->
 
 %% HTTP share of roots then chunk roundtrip: per block, GET roots from miner, POST to main, POST/GET /chunk.
 chunk_after_data_roots_http_post_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
 			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
@@ -40,7 +40,7 @@ chunk_after_data_roots_http_post_test_() ->
 
 %% Background ar_data_root_sync + header_sync_jobs > 0; then POST/GET /chunk (regression: POST 200, GET 404).
 chunk_after_data_roots_background_sync_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
 			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
@@ -49,28 +49,28 @@ chunk_after_data_roots_background_sync_test_() ->
 %% Background sync completes, but a block in an unconfigured partition still requires a
 %% manual POST /data_roots before POST /chunk can be accepted temporarily into the disk pool.
 chunk_in_unconfigured_partition_requires_manual_data_roots_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
 			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
 		fun test_chunk_in_unconfigured_partition_requires_manual_data_roots/0).
 
 chunk_skipped_with_duplicate_data_root_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
 			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
 		fun test_chunk_skipped_with_duplicate_data_root/0).
 
 chunk_skipped_with_depth_exhaustion_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
 			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
 		fun test_chunk_skipped_with_depth_exhaustion/0).
 
 chunk_persists_with_infinite_duplicate_data_root_depth_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_consensus_window_size, fun() -> 5 end},
 			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
 			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
@@ -123,7 +123,7 @@ test_data_roots_sync_from_peer() ->
 
 	ar_test_node:join_on(#{ node => main, join_on => peer1,
 		config => MainConfig,
-		storage_modules => MainStorageModules }, true),
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- MainStorageModules] }, true),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:wait_until_joined(main),
 
@@ -285,7 +285,7 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 	],
 	ar_test_node:join_on(#{ node => main, join_on => peer1,
 		config => MainConfig,
-		storage_modules => MainStorageModules }, true),
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- MainStorageModules] }, true),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:wait_until_joined(main),
 	ar_test_node:assert_wait_until_height(main, LastB#block.height + 11),

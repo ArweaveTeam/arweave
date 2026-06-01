@@ -53,7 +53,7 @@ validate() ->
 					{error, <<"The verify flag cannot be set together with "
 							"the mine flag.">>};
 				_ ->
-					case arweave_config_options_repack_modules:list() of
+					case arweave_config_options_repack_modules:legacy_list() of
 						[] ->
 							ok;
 						_ ->
@@ -92,7 +92,7 @@ force_verify_flags() ->
 	io:format("~n  - [gossip, tx, max_peers] 0"),
 	io:format("~n  - [gossip, block, max_peers] 0"),
 	io:format("~n  - [cm, enabled] false"),
-	io:format("~n  - cm_peer and cm_exit peer aggregates cleared"),
+	io:format("~n  - cm_peer and cm_exit peer lists cleared"),
 	io:format("~n  - all VDF features disabled"),
 	disable_vdf(),
 	_ = arweave_config:set([join, auto], false),
@@ -103,15 +103,15 @@ force_verify_flags() ->
 	_ = arweave_config:set([gossip, tx, polling_enabled], false),
 	_ = arweave_config:set([packing, entropy, workers], 0),
 	_ = arweave_config:set([cm, enabled], false),
-	_ = arweave_config:replace_peers(cm_peer, []),
-	_ = arweave_config:replace_peers(cm_exit, not_set),
+	_ = arweave_config:set([peers, cm_peer], []),
+	_ = arweave_config:set([peers, cm_exit], not_set),
 	_ = arweave_config:set([gossip, tx, max_peers], 0),
 	_ = arweave_config:set([gossip, block, max_peers], 0),
 	ok.
 
 disable_vdf() ->
-	_ = arweave_config:replace_peers(vdf_client, []),
-	_ = arweave_config:replace_peers(vdf_server, []),
+	_ = arweave_config:set([peers, vdf_client], []),
+	_ = arweave_config:set([peers, vdf_server], []),
 	_ = arweave_config:set([vdf, compute], false),
 	_ = arweave_config:set([vdf, is_public_server], false),
 	ok.

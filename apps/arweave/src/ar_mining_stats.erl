@@ -487,7 +487,7 @@ generate_report() ->
 		Height,
 		Packing,
 		Partitions,
-		arweave_config:get_peers(cm_peer),
+		arweave_config:get([peers, cm_peer]),
 		ar_node:get_weave_size(),
 		erlang:monotonic_time(millisecond)
 	).
@@ -857,62 +857,62 @@ format_vdf_speed(VDFSpeed) ->
 -define(TEST_PACKING_ADDR, <<"packing-test-address-0000000000a">>).
 
 mining_stats_test_() ->
-	[ar_test_node:test_with_mocked_functions(
+	[ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_read_stats/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_h1_stats/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_h2_stats/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_vdf_stats/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_data_size_stats/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_h1_sent_to_peer_stats/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_h1_received_from_peer_stats/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_h2_peer_stats/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_optimal_stats_poa1_multiple_1/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_optimal_stats_poa1_multiple_2/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[
 			{ar_block, partition_size, fun() -> 2097152 end}
 		],
 		fun test_report_poa1_multiple_1/0),
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 			[
 				{ar_block, partition_size, fun() -> 2097152 end},
 				{ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
@@ -1056,7 +1056,7 @@ test_vdf_stats() ->
 
 test_data_size_stats() ->
 	arweave_config:with_test_config(fun() ->
-		_ = arweave_config:set([mining, address], ?TEST_MINING_ADDR),
+		ok = arweave_config:force_config(#{[mining, address] => ?TEST_MINING_ADDR}),
 
 		WeaveSize = floor(2 * ar_block:partition_size()),
 		ets:insert(node_state, [{weave_size, WeaveSize}]),
@@ -1068,7 +1068,7 @@ test_data_size_stats() ->
 	end).
 
 do_test_data_size_stats(Mining, Packing) ->
-	ok = arweave_config:replace_storage_modules([
+	StorageModules = [
 		{floor(0.1 * ar_block:partition_size()), 10, unpacked},
 		{floor(0.1 * ar_block:partition_size()), 10, Mining},
 		{floor(0.1 * ar_block:partition_size()), 10, Packing},
@@ -1081,7 +1081,12 @@ do_test_data_size_stats(Mining, Packing) ->
 		{ar_block:partition_size(), 2, unpacked},
 		{ar_block:partition_size(), 2, Mining},
 		{ar_block:partition_size(), 2, Packing}
-	]),
+	],
+	ok = arweave_config:force_config(#{
+		[storage_modules] =>
+			[arweave_config:storage_module_to_config(M)
+				|| M <- StorageModules]
+	}),
 
 	reset_all_stats(),
 	?assertEqual(0, get_total_minable_data_size(Mining)),
@@ -1434,8 +1439,12 @@ do_test_report(Mining, Packing, PoA1Multiplier) ->
 		{ar_block:partition_size(), 2, Packing}
 	],
 	
-	ok = arweave_config:replace_storage_modules(StorageModules),
-	ok = arweave_config:load(#{ [mining, address] => MiningAddress }),
+	ok = arweave_config:force_config(#{
+		[storage_modules] =>
+			[arweave_config:storage_module_to_config(M)
+				|| M <- StorageModules],
+		[mining, address] => MiningAddress
+	}),
 	ar_mining_stats:pause_performance_reports(120000),
 	reset_all_stats(),
 	Partitions = [

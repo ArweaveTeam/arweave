@@ -224,7 +224,7 @@ compute_next_vdf_difficulty_test_block() ->
 	}.
 
 compute_next_vdf_difficulty_2_7_test_()->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_fork, height_2_6, fun() -> -1 end},
 		{ar_fork, height_2_7, fun() -> -1 end},
 		{ar_fork, height_2_7_1, fun() -> infinity end}],
@@ -235,7 +235,7 @@ compute_next_vdf_difficulty_2_7_test_()->
 		end).
 
 compute_next_vdf_difficulty_2_7_1_test_()->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_fork, height_2_6, fun() -> -1 end},
 		{ar_fork, height_2_7, fun() -> -1 end},
 		{ar_fork, height_2_7_1, fun() -> -1 end}],

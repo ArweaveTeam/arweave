@@ -110,7 +110,7 @@ mock_reset_frequency() ->
 	{ar_nonce_limiter, get_reset_frequency, fun() -> 5 end}.
 
 applies_validated_steps_test_() ->
-	ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
+	ar_test_node:test_with_all_nodes_mocked([mock_reset_frequency()],
 		fun test_applies_validated_steps/0, 60).
 
 test_applies_validated_steps() ->

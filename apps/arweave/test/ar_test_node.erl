@@ -3,10 +3,10 @@
 %% The new, more flexible, and more user-friendly interface.
 -export([boot_peers/1, wait_for_peers/1,
 		wait_until_joined/0, wait_until_joined/1,
-		restart/0, restart/1, restart_with_config/1, restart_with_config/2,
-		start_other_node/4, start_node/2, start_node/3, start_node/4,
+		restart/0, restart/1,
+		start_other_node/4, start_node/2, start_node/3,
 		start_coordinated/1,
-		base_cm_config/1, merge_overrides/2, peer_leaves/2, mine/1,
+		base_cm_config/1, merge_overrides/2, mine/1,
 		wait_until_height/1, wait_until_height/2, wait_until_height/3, wait_until_height/4,
 		do_wait_until_height/2,
 		assert_wait_until_height/2,
@@ -15,16 +15,15 @@
 		mainnet_packing_mocks/0,
 		get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, new_mock/2, mock_function/3, unmock_module/1, remote_call/4,
-		load_fixture/1,
 		get_default_storage_module_packing/2, get_genesis_chunk/1,
 		all_nodes/1, new_custom_size_rsa_wallet/1]).
 
 %% The "legacy" interface.
--export([start/0, start/1, start/2, start/3, start/4,
+-export([start/0, start/1, start/2, start/3,
 		stop/0, stop/1, start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1,
 		stop_peers/1, stop_peer/1, connect_peers/2, connect_to_peer/1,
 		disconnect_peers/2, disconnect_from/1,
-		join/2, join/3, join/4, join_on/1, join_on/2, rejoin_on/1,
+		join/2, join/3, join_on/1, join_on/2, rejoin_on/1,
 		generate_join_config/0, generate_join_config/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
 		with_gossip_paused/2,
@@ -46,7 +45,9 @@
 		wait_until_syncs_genesis_data/0, wait_until_syncs_genesis_data/1,
 		wait_until_syncs_offset/2, wait_until_syncs_offset/3,
 
-		mock_functions/1, test_with_mocked_functions/2, test_with_mocked_functions/3]).
+		mock_all_nodes/1,
+		test_with_all_nodes_mocked/2,
+		test_with_all_nodes_mocked/3]).
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
@@ -78,12 +79,12 @@
 -define(READ_BLOCK_TIMEOUT, 500_000).
 -define(GET_TX_DATA_TIMEOUT, 200_000).
 -define(WAIT_UNTIL_JOINED_TIMEOUT, 200_000).
-%% Wrapper for `restart_with_config/2' (a remote_call into the peer):
+%% Wrapper for restart remote calls:
 %% must comfortably exceed `WAIT_UNTIL_JOINED_TIMEOUT' plus the cold
 %% start of `ar_packing_server' (re-inits RandomX datasets on every
 %% application restart in the e2e profile — ~36s for rx512/rx4096/
 %% rxsquared combined) plus the start of all sup-tree children.
--define(RESTART_WITH_CONFIG_TIMEOUT, 300_000).
+-define(RESTART_TIMEOUT, 300_000).
 -define(WAIT_SYNCS_DATA_TIMEOUT, 500_000).
 -define(WAIT_UNTIL_MINING_PAUSED_TIMEOUT, 60_000).
 -define(TEST_HTTP_CLIENT_KEEPALIVE, 4_000).
@@ -286,10 +287,7 @@ wait_until_joined() ->
 %% overrides — they cannot be disabled by a caller's map.
 %%
 %% Overrides must be a map of `[option_key_segment, ...] => Value'.
-%% For aggregate writes use the dedicated public APIs
-%% (`arweave_config:replace_peers/2',
-%% `arweave_config:replace_storage_modules/1') before calling
-%% `update_config/1'.
+%% List values must already be in canonical config form.
 update_config(Overrides) when is_map(Overrides) ->
 	Final = maps:merge(Overrides, #{
 		[disable_device_limit]                  => true,
@@ -307,59 +305,20 @@ update_config(Overrides) when is_map(Overrides) ->
 
 start_other_node(Node, B0, Overrides, WaitUntilSync) when is_map(Overrides) ->
 	remote_call(Node, ar_test_node, start_node, [B0, Overrides, WaitUntilSync],
-		?RESTART_WITH_CONFIG_TIMEOUT).
-
-%% Extract `{peers, Role} => Peers' entries from the override map for
-%% dispatch through `arweave_config:replace_peers/2'. Returns
-%% `{[{Role, Peers}], OverridesWithoutThem}'.
-take_peer_aggregates(Overrides) ->
-	Peers = [{Role, P} || {{peers, Role}, P} <- maps:to_list(Overrides),
-			      is_atom(Role)],
-	Without = maps:filter(
-		fun({peers, Role}, _) when is_atom(Role) -> false;
-		   (_, _) -> true
-		end, Overrides),
-	{Peers, Without}.
-
-%% Extract a legacy `storage_modules => List' entry from the override
-%% map. Returns `{List, OverridesWithoutIt}'; `List' defaults to `[]'
-%% when the entry is absent.
-take_storage_modules(Overrides) ->
-	case maps:take(storage_modules, Overrides) of
-		error -> {[], Overrides};
-		{List, Without} when is_list(List) -> {List, Without}
-	end.
+		?RESTART_TIMEOUT).
 
 %% @doc Start a node with the given genesis block, applying the given
 %% override map via the options registry before starting the application.
 start_node(B0, Overrides) when is_map(Overrides) ->
-	start_node(B0, Overrides, true, []).
+	start_node(B0, Overrides, true).
 start_node(B0, Overrides, WaitUntilSync) when is_map(Overrides) ->
-	start_node(B0, Overrides, WaitUntilSync, []).
-start_node(B0, Overrides, WaitUntilSync, StorageModules)
-		when is_map(Overrides), is_list(StorageModules) ->
 	?LOG_INFO("Starting node"),
 	clean_up_and_stop(),
 	prometheus:start(),
 	arweave_config:start(),
 	DataDir = arweave_config:get([data_dir]),
 	write_genesis_files(DataDir, B0),
-	%% Pull aggregate-shaped entries out of `Overrides' so they reach
-	%% the dedicated writers (the registry's per-leaf `set/2' rejects
-	%% them). The remaining per-leaf entries flow through
-	%% `update_config/1' as usual.
-	{Peers, Overrides1} = take_peer_aggregates(Overrides),
-	{StorageModulesFromMap, Overrides2} =
-		take_storage_modules(Overrides1),
-	update_config(Overrides2),
-	[ok = arweave_config:replace_peers(Role, P) || {Role, P} <- Peers],
-	%% Explicit arg wins over an entry in the override map.
-	EffectiveStorageModules =
-		case {StorageModules, StorageModulesFromMap} of
-			{[], FromMap} -> FromMap;
-			{Explicit, _} -> Explicit
-		end,
-	ok = arweave_config:replace_storage_modules(EffectiveStorageModules),
+	update_config(Overrides),
 	ok = arweave_limiter:start(),
 	start_dependencies(),
 	wait_until_joined(),
@@ -387,7 +346,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 	RewardAddr = maps:get([mining, address], BaseCMConfig),
 	ExitNodeOverrides = merge_overrides(BaseCMConfig, maps:merge(
 		#{[mining, enabled] => true},
-		peer_leaves(local, [peer_ip(P) || P <- MinerNodes])
+		#{[peers, local] => [ar_util:format_peer(peer_ip(P)) || P <- MinerNodes]}
 	)),
 	%% Validator boots WITHOUT any trusted peers — `validate_trusted_peers/0'
 	%% would otherwise try to GET each peer's network info during init,
@@ -396,7 +355,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 	%% trigger `init:stop(1)'. We strip the `[peers, *, trusted]'
 	%% entries from the base by building the override from scratch.
 	ValidatorBase = maps:without(
-		[K || K = [peers, _, trusted] <- maps:keys(BaseCMConfig)],
+		[[peers, trusted]],
 		BaseCMConfig),
 	ValidatorNodeOverrides = merge_overrides(ValidatorBase, #{
 		[mining, enabled] => false,
@@ -417,10 +376,14 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 			MinerOverrides = merge_overrides(BaseCMConfig, lists:foldl(
 				fun maps:merge/2,
 				#{
-					[peers, ar_util:format_peer(ExitPeer), cm_exit] => true
+					[peers, cm_exit] => ar_util:format_peer(ExitPeer)
 				},
-				[peer_leaves(cm_peer, MinerPeerIPs),
-				 peer_leaves(local, MinerPeerIPs ++ [ExitPeer])])),
+				[
+					#{[peers, cm_peer] =>
+						[ar_util:format_peer(Peer) || Peer <- MinerPeerIPs]},
+					#{[peers, local] =>
+						[ar_util:format_peer(Peer) || Peer <- MinerPeerIPs ++ [ExitPeer]]}
+				])),
 			MinerStorageModules =
 				get_cm_storage_modules(RewardAddr, I, MiningNodeCount),
 			remote_call(MinerNode, ar_test_node, start_node,
@@ -435,7 +398,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 %% node. Callers layer additional entries on top via `merge_overrides/2'.
 base_cm_config(Peers) ->
 	RewardAddr = ar_wallet:to_address(remote_call(peer1, ar_wallet, new_keyfile, [])),
-	maps:merge(peer_leaves(trusted, Peers), #{
+	maps:merge(#{[peers, trusted] => [ar_util:format_peer(Peer) || Peer <- Peers]}, #{
 		[mining, cache_size]                    => 128,
 		[join, start_from_latest_state]         => true,
 		[join, auto]                            => true,
@@ -459,18 +422,6 @@ base_cm_config(Peers) ->
 %% entries with the same key — matches map merge semantics.
 merge_overrides(Base, Extra) when is_map(Base), is_map(Extra) ->
 	maps:merge(Base, Extra).
-
-%% @doc Build the per-leaf override map that membership of `Peers' in
-%% `Role' produces. Each peer expands to a `[peers, PeerID, Role] =>
-%% true' entry, where `PeerID' is the canonical binary returned by
-%% `arweave_config_type:peer_id/1' — matching the keys produced by
-%% `arweave_config:replace_peers/2'. Useful when a test needs to
-%% express the same intent as the old aggregate shorthand
-%% `{peers, Role} => Peers'.
--spec peer_leaves(atom(), [term()]) -> map().
-peer_leaves(Role, Peers) when is_atom(Role), is_list(Peers) ->
-	maps:from_list(
-		[{[peers, ar_util:format_peer(P), Role], true} || P <- Peers]).
 
 mine() ->
 	ar_node_worker:mine_one_block().
@@ -541,11 +492,6 @@ get_difficulty_for_invalid_hash() ->
 	%% us selectively disable one- or two-chunk mining in tests.
 	binary:decode_unsigned(invalid_solution(), big) + 1.
 
-%% Thin proxy — actual implementation in ar_test_util. Kept here for
-%% back-compat with existing callers (e.g. ar_packing_tests).
-load_fixture(Fixture) ->
-	ar_test_util:load_fixture(Fixture).
-
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
@@ -571,13 +517,13 @@ clean_up_and_stop() ->
 		end,
 		Entries
 	),
-	%% Wipe the entire arweave_config store and flip runtime back to
-	%% `false', then re-run the standard bootstrap. Bootstrap re-reads
+	%% Wipe the entire arweave_config store and return to load mode,
+	%% then re-run the standard bootstrap. Bootstrap re-reads
 	%% the `AR_*' env vars set by `ar_test_runner:start_for_tests/1'
 	%% (main) or `try_boot_peer/3' (peers), so per-VM scaffolding
 	%% (`[data_dir]', `[port]', ...) survives reset via the same path
 	%% the node uses at first boot. No test-only env handling.
-	ok = arweave_config:reset(),
+	ok = arweave_config:restore(#{store => [], runtime => false}),
 	ok = arweave_config:bootstrap([]),
 	ok.
 
@@ -751,7 +697,7 @@ start(Options) when is_map(Options) ->
 		end,
 	%% `config' is an override map `#{Key => Value}'. An empty map
 	%% means "use whatever's currently in the options registry + the test
-	%% defaults applied by `start/4'".
+	%% defaults applied by `start/3'".
 	Overrides =
 		case maps:get(config, Options, not_set) of
 			not_set ->
@@ -759,20 +705,21 @@ start(Options) when is_map(Options) ->
 			Value2 when is_map(Value2) ->
 				Value2
 		end,
-	StorageModules =
-		case maps:get(storage_modules, Options, not_set) of
-			not_set ->
-				[{10 * ar_block:partition_size(), N,
-						get_default_storage_module_packing(RewardAddr, N, Options)}
-					|| N <- lists:seq(0, 8)];
-			Value3 ->
-				Value3
+	InlineOverrides = maps:filter(fun(Key, _Value) -> is_list(Key) end, Options),
+	AllOverrides = maps:merge(InlineOverrides, Overrides),
+	StorageOverrides =
+		case maps:is_key([storage_modules], AllOverrides) of
+			true ->
+				#{};
+			false ->
+				#{[storage_modules] => [
+					arweave_config:storage_module_to_config({
+						10 * ar_block:partition_size(), N,
+						get_default_storage_module_packing(RewardAddr, N, Options)})
+					|| N <- lists:seq(0, 8)
+				]}
 		end,
-	%% Optional `webhooks => [...]' param: apply the legacy aggregate
-	%% before the arweave app boots (and flips runtime to true), since
-	%% `replace_webhooks/1' guards against runtime writes.
-	Webhooks = maps:get(webhooks, Options, []),
-	start(B0, RewardAddr, Overrides, StorageModules, Webhooks);
+	start(B0, RewardAddr, maps:merge(StorageOverrides, AllOverrides));
 start(B0) ->
 	start(#{ b0 => B0 }).
 start(B0, RewardAddr) ->
@@ -782,22 +729,21 @@ start(B0, RewardAddr) ->
 %% caller overrides (`#{Key => Value}' — see `update_config/1' for the
 %% key shape).
 start(B0, RewardAddr, Overrides) when is_map(Overrides) ->
-	StorageModules = [{10 * ar_block:partition_size(), N, get_default_storage_module_packing(RewardAddr, N)}
-			|| N <- lists:seq(0, 8)],
-	start(B0, RewardAddr, Overrides, StorageModules).
+	StorageOverrides =
+		case maps:is_key([storage_modules], Overrides) of
+			true ->
+				#{};
+			false ->
+				#{[storage_modules] => [
+					arweave_config:storage_module_to_config({
+						10 * ar_block:partition_size(), N,
+						get_default_storage_module_packing(RewardAddr, N)})
+					|| N <- lists:seq(0, 8)
+				]}
+		end,
+	start_with_overrides(B0, RewardAddr, maps:merge(StorageOverrides, Overrides)).
 
-%% @doc Start a fresh node with the given genesis block, mining address, caller
-%% overrides (`#{Key => Value}'), and storage modules.
-%%
-%% Note: the resulting config is written to disk. This is fine for the default
-%% Config, but if you've modified any of the Config fields for your test,
-%% please restore the default Config after the test is done. Otherwise the
-%% tests that run after yours may fail.
-start(B0, RewardAddr, Overrides, StorageModules) when is_map(Overrides) ->
-	start(B0, RewardAddr, Overrides, StorageModules, []).
-
-start(B0, RewardAddr, Overrides, StorageModules, Webhooks)
-		when is_map(Overrides), is_list(StorageModules), is_list(Webhooks) ->
+start_with_overrides(B0, RewardAddr, Overrides) when is_map(Overrides) ->
 	clean_up_and_stop(),
 	prometheus:start(),
 	arweave_config:start(),
@@ -821,18 +767,6 @@ start(B0, RewardAddr, Overrides, StorageModules, Webhooks)
 		[debug]                                 => true
 	},
 	update_config(maps:merge(TestDefaults, Overrides)),
-	%% Apply storage modules + webhooks after update_config (which
-	%% leaves runtime=false) but before `start_dependencies/0' boots
-	%% the arweave app and flips runtime to `true' (after which the
-	%% aggregate writers would be rejected). The explicit
-	%% `StorageModules' arg is authoritative; any per-leaf
-	%% `[storage_modules, ...]' entries in `Overrides' get overwritten
-	%% by the clear-before-write semantic.
-	ok = arweave_config:replace_storage_modules(StorageModules),
-	case Webhooks of
-		[] -> ok;
-		_ -> ok = arweave_config:replace_webhooks(Webhooks)
-	end,
 	ok = arweave_limiter:start(),
 	start_dependencies(),
 	wait_until_joined(),
@@ -844,45 +778,8 @@ restart() ->
 	start_dependencies(),
 	wait_until_joined().
 
-restart_with_config(Overrides) when is_map(Overrides) ->
-	?LOG_INFO("Restarting node with new config"),
-	stop(),
-	%% `stop()` brings down the `arweave` app but leaves `arweave_config'
-	%% running with `runtime=true' (it was flipped by `ar:start/2' during
-	%% the previous boot). Writes guarded by `with_runtime_guard/2'
-	%% (notably `replace_storage_modules/1') would silently fail with
-	%% `{error, parameter_not_runtime_writable}', producing a `badmatch'
-	%% partway through this function and leaving the peer stopped.
-	%% Flip back to load mode for the rewrites; `start_dependencies/0' →
-	%% `ar:start/2' → `arweave_config:runtime/0' flips it back to true.
-	ok = arweave_config_options_registry:set_runtime(false),
-	%% Same aggregate-key dispatch as `start_node/4'. Tests still pass
-	%% mixed-shape override maps (e.g. `{peers, trusted}` and
-	%% `storage_modules` alongside per-leaf keys); pull those out for
-	%% the dedicated writers so they don't fall through `update_config'
-	%% and get rejected as unknown spec keys.
-	{Peers, Overrides1} = take_peer_aggregates(Overrides),
-	HasModules = maps:is_key(storage_modules, Overrides1),
-	{StorageModules, Overrides2} = take_storage_modules(Overrides1),
-	update_config(Overrides2),
-	[ok = arweave_config:replace_peers(Role, P) || {Role, P} <- Peers],
-	%% Only touch storage modules when the caller asked to; a bare
-	%% `restart_with_config(#{[X] => Y})' must not wipe whatever modules
-	%% the running node already has.
-	case HasModules of
-		true -> ok = arweave_config:replace_storage_modules(StorageModules);
-		false -> ok
-	end,
-	start_dependencies(),
-	wait_until_joined(),
-	ok.
-
 restart(Node) ->
-	remote_call(Node, ?MODULE, restart, [], ?RESTART_WITH_CONFIG_TIMEOUT).
-
-restart_with_config(Node, Overrides) when is_map(Overrides) ->
-	remote_call(Node, ?MODULE, restart_with_config, [Overrides],
-		?RESTART_WITH_CONFIG_TIMEOUT).
+	remote_call(Node, ?MODULE, restart, [], ?RESTART_TIMEOUT).
 
 start_peer(Node, Args) when is_map(Args) ->
 	?LOG_DEBUG([{event, start_peer}, {peer, Node}]),
@@ -1103,9 +1000,11 @@ join_on(Params) ->
 	join_on(Params, false).
 
 join_on(#{ node := Node, join_on := JoinOnNode } = Params, Rejoin) ->
-	Overrides = maps:get(config, Params, generate_join_config(Node)),
+	BaseOverrides = maps:get(config, Params, generate_join_config(Node)),
+	InlineOverrides = maps:filter(fun(Key, _Value) -> is_list(Key) end, Params),
+	Overrides = maps:merge(InlineOverrides, BaseOverrides),
 	%% Storage modules in priority order:
-	%%   1. caller-supplied `storage_modules' wins;
+	%%   1. caller-supplied `[storage_modules]' override wins;
 	%%   2. `Overrides' carries a `[mining, address]' → regenerate to
 	%%      match the new address (`rejoin_on/1' takes this path —
 	%%      `generate_join_config/0' minted a fresh address and the old
@@ -1114,44 +1013,45 @@ join_on(#{ node := Node, join_on := JoinOnNode } = Params, Rejoin) ->
 	%%      The caller is supplying a narrow override (e.g. flipping
 	%%      `[mining, enabled]'); replacing modules here would strand
 	%%      on-disk chunks already keyed off the existing modules.
-	StorageModules =
-		case maps:is_key(storage_modules, Params) of
+	StorageOverrides =
+		case maps:is_key([storage_modules], Overrides) of
 			true ->
-				maps:get(storage_modules, Params);
+				#{};
 			false ->
 				case maps:is_key([mining, address], Overrides) of
-					true -> generate_join_storage_modules(Overrides);
-					false -> not_set
+					true ->
+						#{[storage_modules] => [
+							arweave_config:storage_module_to_config(Module)
+							|| Module <- generate_join_storage_modules(Overrides)
+						]};
+					false ->
+						#{}
 				end
 		end,
 	remote_call(Node, ar_test_node, join,
-		[JoinOnNode, Rejoin, Overrides, StorageModules],
+		[JoinOnNode, Rejoin, maps:merge(StorageOverrides, Overrides)],
 		?REMOTE_CALL_TIMEOUT).
 
 join(JoinOnNode, Rejoin) ->
 	JoinConfig = generate_join_config(),
-	join(JoinOnNode, Rejoin, JoinConfig,
-		generate_join_storage_modules(JoinConfig)).
+	join(JoinOnNode, Rejoin, JoinConfig#{[storage_modules] => [
+		arweave_config:storage_module_to_config(Module)
+		|| Module <- generate_join_storage_modules(JoinConfig)
+	]}).
 
 join(JoinOnNode, Rejoin, Overrides) when is_map(Overrides) ->
-	join(JoinOnNode, Rejoin, Overrides,
-		generate_join_storage_modules(Overrides)).
-
-join(JoinOnNode, Rejoin, Overrides, StorageModules)
-		when is_map(Overrides), (is_list(StorageModules) orelse
-			StorageModules =:= not_set) ->
 	Peer = peer_ip(JoinOnNode),
 	case Rejoin of
 		true ->
 			stop(),
-			%% Flip runtime back to load mode. `update_config/1' handles
-			%% its own guard via `force_config/1', but the boot validators
-			%% downstream (ar_node_worker:validate_trusted_peers/1 →
-			%% `arweave_config:replace_peers/2') run during ar_sup init
-			%% with the lifecycle expected to be load mode — leaving it
-			%% in runtime makes those writes fail with
-			%% `parameter_not_runtime_writable'.
-			ok = arweave_config_options_registry:set_runtime(false);
+			%% Preserve current config values but return the lifecycle to
+			%% load mode. `update_config/1' handles its own guard via
+			%% `force_config/1', but boot validators downstream
+			%% (ar_node_worker:validate_trusted_peers/1 →
+			%% trusted-peer validation runs during ar_sup init
+			%% with the lifecycle expected to be load mode.
+			Snapshot = arweave_config:snapshot(),
+			ok = arweave_config:restore(Snapshot#{runtime => false});
 		false ->
 			clean_up_and_stop()
 	end,
@@ -1164,16 +1064,9 @@ join(JoinOnNode, Rejoin, Overrides, StorageModules)
 	JoinDefaults = #{
 		[join, start_from_latest_state] => false,
 		[join, auto]                    => true,
-		[peers, ar_util:format_peer(Peer), trusted] => true
+		[peers, trusted]                => [ar_util:format_peer(Peer)]
 	},
 	update_config(maps:merge(JoinDefaults, Overrides)),
-	%% `not_set' keeps the prior store entries intact (the running
-	%% `arweave_config' app survived `stop/0'). Used by narrow-override
-	%% rejoins that must not strand on-disk chunks. See `join_on/2'.
-	case StorageModules of
-		not_set -> ok;
-		_ -> ok = arweave_config:replace_storage_modules(StorageModules)
-	end,
 	start_dependencies(),
 	wait_until_joined(),
 	whereis(ar_node_worker).
@@ -1277,7 +1170,7 @@ wait_until_syncs_genesis_data(Node) ->
 	ok = remote_call(Node, ar_test_node, wait_until_syncs_genesis_data, [], 100_000).
 
 wait_until_syncs_genesis_data() ->
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	ar_util:do_until(
 		fun() ->
 			case ar_node:get_current_block() of
@@ -1545,29 +1438,15 @@ get_tx_confirmations(Node, TXID) ->
 			-1
 	end.
 
-%% The robust local-meck primitives live in `ar_test_util'. These
-%% thin proxies preserve the historical ar_test_node API for callers
-%% that already invoke `ar_test_node:new_mock/2', `:mock_function/3',
-%% `:unmock_module/1' directly. New code should call `ar_test_util'
-%% directly.
-new_mock(Module, Options) ->
-	ar_test_util:new_mock(Module, Options).
-
-mock_function(Module, Fun, Mock) ->
-	ar_test_util:mock_function(Module, Fun, Mock).
-
-unmock_module(Module) ->
-	ar_test_util:unmock_module(Module).
-
 %% Returns a {Setup, Cleanup} pair for use as an eunit fixture. The
 %% local side delegates to `ar_test_util' (which is also what local-only
 %% `ar_test_util:with_mocked/2,3' uses); on top of that, this function
 %% broadcasts each mock to every peer node via `remote_call'. That
-%% peer-side broadcast is the reason `test_with_mocked_functions'
+%% peer-side broadcast is the reason `test_with_all_nodes_mocked'
 %% requires the slow path — fast-tagged modules whose mocks don't need
 %% to be visible on peers should use `ar_test_util:with_mocked/2,3'
 %% instead.
-mock_functions(Functions) ->
+mock_all_nodes(Functions) ->
 	{
 		fun() ->
 			with_meck_lock(fun() ->
@@ -1622,11 +1501,11 @@ mock_functions(Functions) ->
 with_meck_lock(Fun) when is_function(Fun, 0) ->
 	global:trans({arweave, meck_lock}, Fun).
 
-test_with_mocked_functions(Functions, TestFun) ->
-	test_with_mocked_functions(Functions, TestFun, ?TEST_MOCKED_FUNCTIONS_TIMEOUT).
+test_with_all_nodes_mocked(Functions, TestFun) ->
+	test_with_all_nodes_mocked(Functions, TestFun, ?TEST_MOCKED_FUNCTIONS_TIMEOUT).
 
-test_with_mocked_functions(Functions, TestFun, Timeout) ->
-	{Setup, Cleanup} = mock_functions(Functions),
+test_with_all_nodes_mocked(Functions, TestFun, Timeout) ->
+	{Setup, Cleanup} = mock_all_nodes(Functions),
 	{
 		foreach,
 		Setup, Cleanup,

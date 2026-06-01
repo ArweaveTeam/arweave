@@ -109,12 +109,23 @@ test_start_from_block() ->
 
 
 restart_from_block(Peer, BH) ->
-    ok = ar_test_node:restart_with_config(Peer, #{
+    Snapshot = ar_test_node:remote_call(Peer, arweave_config, snapshot, []),
+    ok = restart_peer_with_overrides(Peer, Snapshot, #{
         [join, start_from_latest_state] => false,
         [join, start_from_block] => BH,
         [gossip, block, pollers] => 0
     }),
     ar_test_node:remote_call(Peer, ar_test_node, wait_until_syncs_genesis_data, []).
+
+restart_peer_with_overrides(Peer, Snapshot, Overrides) ->
+    ar_test_node:stop(Peer),
+    ok = ar_test_node:remote_call(Peer, arweave_config, restore,
+        [Snapshot#{runtime => false}]),
+    ok = ar_test_node:remote_call(Peer, arweave_config, force_config,
+        [Overrides]),
+    ok = ar_test_node:remote_call(Peer, ar, start_dependencies, []),
+    ar_test_node:wait_until_joined(Peer),
+    ok.
 
 assert_start_from(ExpectedPeer, Peer, Height) ->
     BI = get_block_index(Peer),

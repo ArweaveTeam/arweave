@@ -109,7 +109,7 @@ test_immature_chunk_indexing() ->
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
 		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
-		#{ addr => Addr, storage_modules => StorageModules }),
+		#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
 		ar_test_data_sync:make_fixed_data_tx(
 			Wallet,
@@ -151,7 +151,7 @@ test_blacklisted_byte_skipped() ->
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
 		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
-		#{ addr => Addr, storage_modules => StorageModules }),
+		#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
 		ar_test_data_sync:make_fixed_data_tx(
 			Wallet,
@@ -198,7 +198,7 @@ test_chunk_cache_full_defers_processing() ->
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
 		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
-		#{ addr => Addr, storage_modules => StorageModules }),
+		#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
 		ar_test_data_sync:make_fixed_data_tx(
 			Wallet,
@@ -238,7 +238,7 @@ test_chunk_data_not_found_resilience() ->
 		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	StoreID = ar_storage_module:id(hd(StorageModules)),
 	Wallet = ar_test_data_sync:setup_nodes(
-		#{ addr => Addr, storage_modules => StorageModules }),
+		#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := MissingTX, data_root := MissingDataRoot,
 		data_tree := MissingDataTree, chunks := MissingChunks } =
 		ar_test_data_sync:make_fixed_data_tx(
@@ -298,7 +298,7 @@ test_may_conclude_accumulation() ->
 		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	StoreID = ar_storage_module:id(hd(StorageModules)),
 	Wallet = ar_test_data_sync:setup_nodes(
-		#{ addr => Addr, storage_modules => StorageModules }),
+		#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
 	{DataRoot, DataTree} = ar_merkle:generate_tree(
 		ar_tx:sized_chunks_to_sized_chunk_ids(

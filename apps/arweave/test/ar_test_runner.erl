@@ -222,7 +222,7 @@ start_for_tests(TestType) ->
 	%% Park the boot-time scaffolding in env vars and let
 	%% `arweave_config:bootstrap/1' apply it. The same env mirror is
 	%% what `ar_test_node:clean_up_and_stop/0' replays after each
-	%% `arweave_config:reset/0' — no test-only config code paths.
+	%% config store restore — no test-only config code paths.
 	true = os:putenv("AR_DATA_DIR", DataDir),
 	true = os:putenv("AR_PORT", integer_to_list(Port)),
 	true = os:putenv("AR_DEBUG", "true"),

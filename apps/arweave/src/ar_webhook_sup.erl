@@ -28,7 +28,11 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-	Webhooks = arweave_config:webhooks(),
+	Webhooks = [
+		maps:without([enabled], Hook)
+		|| Hook <- arweave_config:get([webhooks]),
+		   maps:get(enabled, Hook, true) =:= true
+	],
 	Children = lists:map(
 		fun
 			(Hook) when is_map(Hook) ->

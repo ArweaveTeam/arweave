@@ -140,20 +140,19 @@ packing:
     cache_size: 2000
     workers: 16
 peers:
-  1.2.3.4:
-    trusted: true
-  5.6.7.8:1985:
-    block_gossip: true
-  192.168.1.2:
-    local: true
-  6.6.6.6:
-    cm_peer: true
-  7.7.7.7:
-    cm_exit: true
-  9.9.9.9:
-    vdf_client: true
-  10.10.10.10:
-    vdf_server: true
+  trusted:
+    - 1.2.3.4:1984
+  block_gossip:
+    - 5.6.7.8:1985
+  local:
+    - 192.168.1.2:1984
+  cm_peer:
+    - 6.6.6.6:1984
+  cm_exit: 7.7.7.7:1984
+  vdf_client:
+    - 9.9.9.9:1984
+  vdf_server:
+    - 10.10.10.10:1984
 pool:
   is_client: true
   is_server: false
@@ -183,8 +182,7 @@ verify:
   mode: log
   samples: 10
 webhooks:
-  hook_a:
-    enabled: true
+  - enabled: true
     url: "https://example.com/hook"
     events:
       - transaction
@@ -252,38 +250,28 @@ join:
   start_from_block: lfoR_PyKV6t7Z6Xi2QJZlZ0JWThh0Ke7Zc5Q82CSshUhFGcjiYufP234ph1mVofX
 storage_modules:
   - partition: 0
-    packing:
-      format: unpacked
+    packing_format: unpacked
     defrag: true
-  - range:
-      start: 1
-      end: 1000
-    packing:
-      format: composite
-      address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
-      difficulty: 7
+  - range_start: 1
+    range_end: 1000
+    packing_format: replica_2_9
+    packing_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
     defrag: false
   - partition: 3
-    packing:
-      format: unpacked
+    packing_format: unpacked
     defrag: false
 repack_modules:
   - partition: 4
-    from:
-      format: unpacked
-      address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
-    to:
-      format: replica_2_9
-      address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
-  - range:
-      start: 1000
-      end: 2000
-    from:
-      format: spora_2_6
-      address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
-    to:
-      format: unpacked
-      address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+    from_format: unpacked
+    from_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+    to_format: replica_2_9
+    to_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+  - range_start: 1000
+    range_end: 2000
+    from_format: spora_2_6
+    from_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
+    to_format: unpacked
+    to_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
 sync:
   cache_size_limit: 10000
   max_concurrent_peer_scans: 101

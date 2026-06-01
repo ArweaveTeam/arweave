@@ -1,5 +1,5 @@
 %%% @doc Specs for the `limiter` option group. Each entry in the
-%%% aggregate corresponds to one HTTP API rate-limiter group started
+%%% Each list entry corresponds to one HTTP API rate-limiter group started
 %%% by `arweave_limiter_sup`. A group combines a sliding-window
 %%% limiter, a leaky-bucket limiter, and a concurrency cap.
 %%%

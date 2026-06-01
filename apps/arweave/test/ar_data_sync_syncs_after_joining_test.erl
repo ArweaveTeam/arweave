@@ -7,10 +7,10 @@
 -include("ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--import(ar_test_node, [assert_wait_until_height/2, test_with_mocked_functions/2]).
+-import(ar_test_node, [assert_wait_until_height/2, test_with_all_nodes_mocked/2]).
 
 syncs_after_joining_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_5, fun() -> 0 end}],
 		fun test_syncs_after_joining/0, 240).
 
 test_syncs_after_joining() ->

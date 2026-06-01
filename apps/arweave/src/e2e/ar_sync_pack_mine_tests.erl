@@ -12,7 +12,8 @@ setup_source_node(PackingType) ->
 	SinkNode = peer2,
 	ar_test_node:stop(SinkNode),
 	ar_test_node:stop(SourceNode),
-	{Blocks, _SourceAddr, Chunks} = ar_e2e:start_source_node(SourceNode, PackingType, wallet_a),
+	{Blocks, _SourceAddr, Chunks} =
+		ar_e2e:start_source_node(SourceNode, PackingType, wallet_a),
 
 	{Blocks, Chunks, PackingType}.
 
@@ -251,9 +252,9 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 
 	%% 1. Run node with no sync jobs so that it only prepares entropy
 	BaseOverrides = #{
-		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
 		[join, start_from_latest_state] => true,
-		storage_modules => StorageModules,
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
 		[join, auto] => true,
 		[mining, address] => SinkAddr,
 		[sync, jobs] => 0
@@ -261,6 +262,8 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 	?assertEqual(ar_test_node:peer_name(SinkNode),
 		ar_test_node:start_other_node(SinkNode, B0, BaseOverrides, true)
 	),
+	SinkSnapshot = ar_test_node:remote_call(
+		SinkNode, arweave_config, snapshot, []),
 
 	RangeStart = ar_block:partition_size(),
 	RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
@@ -280,7 +283,7 @@ test_entropy_first_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPack
 		[DeleteOffset2, StoreID]),
 
 	%% 2. Run node with sync jobs so that it syncs and packs data
-	ar_test_node:restart_with_config(SinkNode,
+	ar_e2e:restart_node(SinkNode, SinkSnapshot,
 		ar_test_node:merge_overrides(BaseOverrides, #{ [sync, jobs] => 100 })),
 
 	ar_e2e:assert_syncs_range(SinkNode, SinkPacking, RangeStart, RangeEnd),
@@ -311,9 +314,9 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 
 	%% 1. Run node with no replica_2_9 workers so that it only syncs chunks
 	BaseOverrides = #{
-		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
 		[join, start_from_latest_state] => true,
-		storage_modules => StorageModules,
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
 		[join, auto] => true,
 		[mining, address] => SinkAddr,
 		[packing, entropy, workers] => 0
@@ -321,6 +324,8 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 	?assertEqual(ar_test_node:peer_name(SinkNode),
 		ar_test_node:start_other_node(SinkNode, B0, BaseOverrides, true)
 	),
+	SinkSnapshot = ar_test_node:remote_call(
+		SinkNode, arweave_config, snapshot, []),
 
 	RangeStart = ar_block:partition_size(),
 	RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
@@ -330,7 +335,7 @@ test_entropy_last_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, SinkPacki
 	ar_e2e:assert_empty_partition(SinkNode, 1, unpacked),
 
 	%% 2. Run node with sync jobs so that it syncs and packs data
-	ar_test_node:restart_with_config(SinkNode,
+	ar_e2e:restart_node(SinkNode, SinkSnapshot,
 		ar_test_node:merge_overrides(BaseOverrides, #{ [packing, entropy, workers] => 8 })),
 
 	ar_e2e:assert_has_entropy(SinkNode, RangeStart, RangeEnd, StoreID),
@@ -362,9 +367,9 @@ test_small_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 
 	%% Sync the second half of partition 1
 	Overrides = #{
-		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
 		[join, start_from_latest_state] => true,
-		storage_modules => StorageModules,
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
 		[join, auto] => true,
 		[mining, address] => SinkAddr
 	},
@@ -412,9 +417,9 @@ test_small_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 
 	%% Sync the second half of partition 1
 	Overrides = #{
-		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
 		[join, start_from_latest_state] => true,
-		storage_modules => StorageModules,
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
 		[join, auto] => true,
 		[mining, address] => SinkAddr
 	},
@@ -465,9 +470,9 @@ test_large_module_aligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType}, S
 	StorageModules = [ Module ],
 
 	Overrides = #{
-		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
 		[join, start_from_latest_state] => true,
-		storage_modules => StorageModules,
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
 		[join, auto] => true,
 		[mining, address] => SinkAddr
 	},
@@ -519,9 +524,9 @@ test_large_module_unaligned_sync_pack_mine({{Blocks, Chunks, SourcePackingType},
 	StorageModules = [ Module ],
 
 	Overrides = #{
-		{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+		[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
 		[join, start_from_latest_state] => true,
-		storage_modules => StorageModules,
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
 		[join, auto] => true,
 		[mining, address] => SinkAddr
 	},
@@ -628,9 +633,9 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
 	],
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, #{
-			{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+			[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
 			[join, start_from_latest_state] => true,
-			storage_modules => StorageModules,
+			[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
 			[join, auto] => true,
 			[mining, address] => SinkAddr
 		}, true)
@@ -651,9 +656,9 @@ start_sink_node(Node, SourceNode, B0, PackingType1, PackingType2) ->
 
 	?assertEqual(ar_test_node:peer_name(Node),
 		ar_test_node:start_other_node(Node, B0, #{
-			{peers, trusted} => [ar_test_node:peer_ip(SourceNode)],
+			[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
 			[join, start_from_latest_state] => true,
-			storage_modules => StorageModules,
+			[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
 			[join, auto] => true,
 			[mining, address] => SinkAddr
 		}, true)

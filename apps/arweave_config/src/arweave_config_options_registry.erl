@@ -69,14 +69,7 @@ spec(ParameterSpec) ->
 			{error, not_found}
 	end.
 
-%% @doc Resolve a runtime option to a spec, with `{Variable}`
-%% wildcard segments matched against concrete values. Exact matches
-%% are preferred over wildcard-option matches.
-%%
-%% Returns `{ok, Option, Spec, Bindings}` on hit, where `Bindings`
-%% is a map from variable name to the matched segment value.
-%% Returns `{error, not_found}` or `{error, ambiguous_wildcard_option}` on
-%% miss / collision.
+%% @doc Resolve a runtime option to its exact spec.
 -spec resolve(Option) -> Return when
 	Option :: list(),
 	Return :: {ok, list(), map(), map()}
@@ -86,39 +79,8 @@ resolve(Option) ->
 		{ok, _, Spec} ->
 			{ok, Option, Spec, #{}};
 		_ ->
-			resolve_wildcard_option(Option)
+			{error, not_found}
 	end.
-
-resolve_wildcard_option(Option) ->
-	All = ets:tab2list(?MODULE),
-	Matches = lists:filtermap(
-		fun({WildcardOption, Spec}) ->
-			case match_wildcard_option(WildcardOption, Option, #{}) of
-				{ok, Bindings} -> {true, {WildcardOption, Spec, Bindings}};
-				nomatch -> false
-			end
-		end,
-		All
-	),
-	case Matches of
-		[] ->
-			{error, not_found};
-		[{_WildcardOption, Spec, Bindings}] ->
-			{ok, Option, Spec, Bindings};
-		Many ->
-			{error, {ambiguous_wildcard_option, Option,
-				[T || {T, _, _} <- Many]}}
-	end.
-
-match_wildcard_option([], [], Bindings) ->
-	{ok, Bindings};
-match_wildcard_option([{VarName} | T1], [Value | T2], Bindings)
-		when is_atom(VarName) ->
-	match_wildcard_option(T1, T2, Bindings#{ VarName => Value });
-match_wildcard_option([H | T1], [H | T2], Bindings) ->
-	match_wildcard_option(T1, T2, Bindings);
-match_wildcard_option(_, _, _) ->
-	nomatch.
 
 %% @doc List of supported environment variables.
 get_environments() ->
@@ -162,16 +124,8 @@ get_legacy(Key) ->
 	end.
 
 %% @doc Every live config entry whose key starts with `Prefix'.
-%% Covers two sources:
-%%   1. Concrete-spec options (e.g. `[debug]', `[semaphores, get_chunk,
-%%      limit]'): name lives in the registry as a literal spec; value
-%%      comes from the store, or from the spec's `default' if unset.
-%%   2. Wildcard-instance entries (e.g. `[peers, <<"1.2.3.4">>,
-%%      trusted]'): the registry has only a template spec
-%%      (`[peers, {peer_id}, trusted]') — the concrete instance keys
-%%      exist solely in the store, written by user config.
-%% Callers see a single merged list and don't need to know which
-%% namespace shape produced each entry.
+%% Concrete specs come from the registry; additional runtime-only
+%% entries come directly from the store.
 -spec get_all_with_prefix(list()) -> [{list(), term()}].
 get_all_with_prefix(Prefix) ->
 	%% Return `[]` when the registry's ETS table is gone — that happens
@@ -188,7 +142,7 @@ get_all_with_prefix(Prefix) ->
 				|| {Key, _Spec} <- ets:tab2list(?MODULE),
 				   is_list(Key),
 				   lists:prefix(Prefix, Key),
-				   not is_wildcard(Key),
+				   not is_schema_key(Key),
 				   {ok, V} <- [?MODULE:get(Key)]
 			],
 			StoreEntries = arweave_config_store:items_with_prefix(Prefix),
@@ -200,7 +154,7 @@ get_all_with_prefix(Prefix) ->
 			ConcreteSpecEntries ++ InstanceEntries
 	end.
 
-is_wildcard(Key) ->
+is_schema_key(Key) ->
 	lists:any(fun({_}) -> true; (_) -> false end, Key).
 
 %% @doc Read a value via the registry.
@@ -222,14 +176,12 @@ get(Option) ->
 %% == Examples ==
 %%
 %% ```
-%% {ok, NewValue = true, OldValue = false} =
-%%   set([global, debug], <<"true">>).
+%% {ok, NewValue = true} = set([global, debug], <<"true">>).
 %% '''
 -spec set(Option, Value) -> Return when
 	Option :: [atom() | iolist()],
 	Value :: term(),
-	Return :: {ok, term(), term()}
-		| {error, term()}.
+	Return :: {ok, term()} | {error, term()}.
 set(Option, Value) ->
 	%% Same self-call protection as `get/1`.
 	case whereis(?MODULE) of
@@ -246,7 +198,7 @@ set(Option, Value) ->
 -spec set_local(Option, Value) -> Return when
 	Option :: list(),
 	Value :: term(),
-	Return :: {ok, term(), term()} | {error, term()}.
+	Return :: {ok, term()} | {error, term()}.
 set_local(Option, Value) ->
 	do_set(Option, Value).
 
@@ -271,7 +223,7 @@ is_runtime() ->
 
 %% @doc Set the lifecycle flag. The facade flips it one-way at
 %% `arweave_config:runtime/0`; tests flip it both directions through
-%% `arweave_config:with_test_config/1`.
+%% `arweave_config:force_config/1` and `arweave_config:restore/1`.
 -spec set_runtime(boolean()) -> ok.
 set_runtime(Bool) when is_boolean(Bool) ->
 	_ = gen_server:call(?MODULE, {set_runtime, Bool}, 10_000),
@@ -373,6 +325,15 @@ check(Option, Value, Spec) ->
 
 %% Dispatch to the type function in `arweave_config_type`. Expected
 %% return is `ok`, `{ok, ConvertedValue}`, or `{error, Term}`.
+check_type(Option, Value, Spec = #{ type := list_map }, Buffer) ->
+	case check_list_map(Option, Value) of
+		{ok, V} ->
+			NewBuffer = Buffer#{ type => ok },
+			check_final(Option, V, Spec, NewBuffer);
+		Error ->
+			NewBuffer = Buffer#{ type => Error },
+			check_final(Option, Value, Spec, NewBuffer)
+	end;
 check_type(Option, Value, Spec = #{ type := Type }, Buffer) ->
 	case
 		check_type(Value, Type)
@@ -445,7 +406,15 @@ check_final(Option, Value, _, Buffer) ->
 do_set(Option, Value) ->
 	case resolve(Option) of
 		{ok, Option, Spec, Bindings} ->
-			do_set_runtime(Option, Value, Spec, Bindings);
+			case is_list_item_schema_key(Option) of
+				true ->
+					{error, #{
+						option => Option,
+						reason => not_canonical_option
+					}};
+				false ->
+					do_set_runtime(Option, Value, Spec, Bindings)
+			end;
 		Else ->
 			Else
 	end.
@@ -493,9 +462,9 @@ do_set_value(Option, Value, Spec = #{ set := Set }, Bindings) ->
 		Set(Option, Value, State, Args)
 	of
 		ignore ->
-			{ok, OldValue, OldValue};
+			{ok, OldValue};
 		{ok, NewValue} ->
-			{ok, NewValue, OldValue};
+			{ok, NewValue};
 		{store, NewValue} ->
 			do_set_store_with_validation(
 				Option, NewValue, OldValue, Spec);
@@ -518,7 +487,7 @@ do_set_value(Option, Value, Spec, _Bindings) ->
 do_set_store_with_validation(Option, NewValue, OldValue, Spec) ->
 	Result = do_set_store(Option, NewValue, OldValue, Spec),
 	case {Result, is_runtime()} of
-		{{ok, _, _}, true} ->
+		{{ok, _}, true} ->
 			case arweave_config_validate:run() of
 				ok ->
 					Result;
@@ -535,10 +504,10 @@ rollback(Option, _NewValue, undefined, _Spec) ->
 rollback(Option, NewValue, OldValue, Spec) ->
 	catch do_set_store(Option, OldValue, NewValue, Spec).
 
-do_set_store(Option, NewValue, OldValue, _Spec) ->
+do_set_store(Option, NewValue, _OldValue, _Spec) ->
 	try arweave_config_store:set(Option, NewValue) of
 		{ok, {_, _}} ->
-			{ok, NewValue, OldValue};
+			{ok, NewValue};
 		Else ->
 			Else
 	catch
@@ -549,7 +518,10 @@ do_set_store(Option, NewValue, OldValue, _Spec) ->
 do_get(Option) ->
 	case resolve(Option) of
 		{ok, Option, Spec, _Bindings} ->
-			do_get2(Option, Spec);
+			case is_list_item_schema_key(Option) of
+				true -> {error, not_canonical_option};
+				false -> do_get2(Option, Spec)
+			end;
 		Else ->
 			Else
 	end.
@@ -571,10 +543,115 @@ do_get2(Option, Spec = #{ get := Get }) ->
 			{error, Else}
 	end;
 do_get2(Option, _Spec = #{ default := Default }) ->
-	Value = arweave_config_store:get(Option, Default),
-	{ok, Value};
+	case arweave_config_store:get(Option) of
+		{ok, Value} ->
+			{ok, Value};
+		_ ->
+			{ok, Default}
+	end;
 do_get2(Option, _Spec) ->
 	arweave_config_store:get(Option).
+
+strip_prefix([], Rest) ->
+	Rest;
+strip_prefix([H | Prefix], [H | Key]) ->
+	strip_prefix(Prefix, Key);
+strip_prefix(_Prefix, _Key) ->
+	false.
+
+is_list_item_schema_key(Key) ->
+	lists:member({list_item}, Key).
+
+check_list_map(Option, Values) when is_list(Values) ->
+	FieldSpecs = list_item_field_specs(Option),
+	case FieldSpecs of
+		[] ->
+			{error, no_list_item_specs};
+		_ ->
+			check_list_map_items(Option, Values, maps:from_list(FieldSpecs), [])
+	end;
+check_list_map(_Option, Value) ->
+	{error, Value}.
+
+list_item_field_specs(Prefix) ->
+	[
+		{Field, Spec}
+		|| {Key, Spec} <- ets:tab2list(?MODULE),
+		   {list_item_field, Field} <- [list_item_field(Prefix, Key)]
+	].
+
+list_item_field(Prefix, Key) when is_list(Key) ->
+	case strip_prefix(Prefix, Key) of
+		[{list_item}, Field] when is_atom(Field) ->
+			{list_item_field, Field};
+		_ ->
+			false
+	end;
+list_item_field(_Prefix, _Key) ->
+	false.
+
+check_list_map_items(_Option, [], _FieldSpecs, Acc) ->
+	{ok, lists:reverse(Acc)};
+check_list_map_items(Option, [Item | Rest], FieldSpecs, Acc)
+		when is_map(Item) ->
+	case check_list_map_item(Option, Item, FieldSpecs) of
+		{ok, Checked} ->
+			check_list_map_items(Option, Rest, FieldSpecs, [Checked | Acc]);
+		{error, _} = Err ->
+			Err
+	end;
+check_list_map_items(_Option, [Item | _Rest], _FieldSpecs, _Acc) ->
+	{error, #{ reason => item_not_map, item => Item }}.
+
+check_list_map_item(Option, Item, FieldSpecs) ->
+	NormalizedItem = normalize_list_map_item_keys(Item),
+	case unknown_list_map_fields(NormalizedItem, FieldSpecs) of
+		[] ->
+			check_list_map_fields(
+				Option, maps:to_list(FieldSpecs), NormalizedItem, #{});
+		Unknown ->
+			{error, #{ reason => unknown_fields, fields => Unknown }}
+	end.
+
+normalize_list_map_item_keys(Item) ->
+	maps:from_list([
+		{arweave_config_leaf_map:convert_key(Key), Value}
+		|| {Key, Value} <- maps:to_list(Item)
+	]).
+
+unknown_list_map_fields(Item, FieldSpecs) ->
+	[Key || Key <- maps:keys(Item), not maps:is_key(Key, FieldSpecs)].
+
+check_list_map_fields(_Option, [], _Item, Acc) ->
+	{ok, Acc};
+check_list_map_fields(Option, [{Field, Spec} | Rest], Item, Acc) ->
+	case maps:find(Field, Item) of
+		{ok, Value} ->
+			check_list_map_field(Option, Field, Value, Spec, Rest, Item, Acc);
+		error ->
+			case maps:find(default, Spec) of
+				{ok, Default} ->
+					check_list_map_field(
+						Option, Field, Default, Spec, Rest, Item, Acc);
+				error ->
+					check_list_map_fields(Option, Rest, Item, Acc)
+			end
+	end.
+
+check_list_map_field(Option, Field, Value, Spec, Rest, Item, Acc) ->
+	FieldOption = Option ++ [{list_item}, Field],
+	case check(FieldOption, Value, Spec) of
+		{ok, Checked, _} ->
+			check_list_map_fields(
+				Option, Rest, Item, Acc#{ Field => Checked });
+		{error, Reason} ->
+			{error, #{
+				reason => field_check_failed,
+				field => Field,
+				value => Value,
+				details => Reason
+			}}
+	end.
 
 local_state(Map) ->
 	maps:merge(Map, #{config => arweave_config_store:to_map()}).

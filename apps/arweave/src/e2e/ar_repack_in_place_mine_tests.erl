@@ -41,6 +41,8 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 	ar_test_node:stop(RepackerNode),
 	{Blocks, _AddrA, Chunks} = ar_e2e:start_source_node(
 		RepackerNode, FromPackingType, wallet_a, ModuleSize),
+	RepackerSnapshot = ar_test_node:remote_call(
+		RepackerNode, arweave_config, snapshot, []),
 
 	[B0 | _] = Blocks,
 	start_validator_node(ValidatorNode, RepackerNode, B0),
@@ -58,18 +60,20 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 	end,
 	FinalStorageModules = lists:sublist(SourceStorageModules, NumModules),
 	ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
-	ExistingStorageModules = ar_test_node:remote_call(
-		RepackerNode, arweave_config, storage_modules, []),
-
+	%% Query the storage module list from ar_e2e rather than by asking
+	%% the node itself to ensure deterministic ordering.
+	{_, ExistingStorageModules} = ar_e2e:source_node_storage_modules(
+		RepackerNode, FromPackingType, wallet_a, ModuleSize),
 	RepackInPlaceStorageModules = lists:sublist([
 		{Module, ToPacking} || Module <- ExistingStorageModules ], NumModules),
 
-	ar_test_node:remote_call(RepackerNode, arweave_config,
-		replace_storage_modules, [[]]),
-	ar_test_node:remote_call(RepackerNode, arweave_config,
-		replace_repack_modules, [RepackInPlaceStorageModules]),
-	ar_test_node:restart_with_config(RepackerNode, #{
-		[mining, address] => undefined
+	ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
+		[storage_modules] => [],
+		[repack_modules] => [
+			arweave_config:repack_module_to_config(ConfigModule)
+			|| ConfigModule <- RepackInPlaceStorageModules
+		],
+		[mining, address] => not_set
 	}),
 
 	ExpectedSize0 = ar_e2e:aligned_partition_size(RepackerNode, 0, ToPacking),
@@ -93,11 +97,9 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 		file:rename(SourcePath, TargetPath)
 	end, RepackInPlaceStorageModules),
 
-	ar_test_node:remote_call(RepackerNode, arweave_config,
-		replace_storage_modules, [FinalStorageModules]),
-	ar_test_node:remote_call(RepackerNode, arweave_config,
-		replace_repack_modules, [[]]),
-	ar_test_node:restart_with_config(RepackerNode, #{
+	ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- FinalStorageModules],
+		[repack_modules] => [],
 		[mining, address] => AddrB
 	}),
 
@@ -113,7 +115,7 @@ test_repack_in_place_mine({FromPackingType, ToPackingType, ModuleSize}) ->
 start_validator_node(ValidatorNode, RepackerNode, B0) ->
 	?assertEqual(ar_test_node:peer_name(ValidatorNode),
 		ar_test_node:start_other_node(ValidatorNode, B0, #{
-			{peers, trusted} => [ar_test_node:peer_ip(RepackerNode)],
+			[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(RepackerNode))],
 			[join, start_from_latest_state] => true,
 			[join, auto] => true
 		}, true)

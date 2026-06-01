@@ -90,7 +90,10 @@ ar_blacklist_middleware_spec() ->
 %% configuration.
 %%--------------------------------------------------------------------
 ar_semaphores_spec() ->
-	Semaphores = arweave_config:semaphores(),
+	Semaphores = maps:from_list(
+		[{Name, Limit}
+		 || {[semaphores, Name, limit], Limit} <-
+			arweave_config:get_all_with_prefix([semaphores])]),
 	[ ar_semaphore_spec(Name, N) || {Name, N} <- maps:to_list(Semaphores) ].
 
 ar_semaphore_spec(Name, N) ->

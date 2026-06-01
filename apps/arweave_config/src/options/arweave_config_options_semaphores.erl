@@ -6,14 +6,14 @@
 %%% `default_limits/0' — unknown names are rejected by the registry
 %%% at set time because no spec matches.
 %%%
-%%% The aggregate `arweave_config:semaphores/0' reconstructs the
-%%% legacy `#{atom() => integer()}' map shape via
-%%% `arweave_config:get_all_with_prefix/1'.
+%%% `legacy_map/0' reconstructs the legacy `#{atom() => integer()}' map
+%%% shape via `arweave_config:get_all_with_prefix/1'.
 -module(arweave_config_options_semaphores).
 -behaviour(arweave_config_options).
 -export([
 	specs/0,
 	group_description/0,
+	legacy_map/0,
 	write_legacy_map/1,
 	validate/0
 ]).
@@ -39,6 +39,12 @@ group_description() ->
 
 validate() ->
 	ok.
+
+legacy_map() ->
+	maps:from_list(
+		[{Name, Value}
+		 || {[semaphores, Name, limit], Value} <-
+			arweave_config:get_all_with_prefix([semaphores])]).
 
 %% @doc Compile-time default limit per semaphore name. Single source
 %% of truth — `specs/0' and the legacy bridges derive everything else

@@ -11,7 +11,7 @@
 		send_new_block/2, sign_block/3,
 		read_block_when_stored/2,
 		assert_wait_until_height/2,
-		test_with_mocked_functions/2]).
+		test_with_all_nodes_mocked/2]).
 
 start_node() ->
 	[B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
@@ -36,7 +36,7 @@ reset_node() ->
 	{Key, B, PrevB}.
 
 setup_all_post_2_7() ->
-	{Setup, Cleanup} = ar_test_node:mock_functions([
+	{Setup, Cleanup} = ar_test_node:mock_all_nodes([
 		{ar_fork, height_2_7, fun() -> 0 end}
 		]),
 	Functions = Setup(),
@@ -44,7 +44,7 @@ setup_all_post_2_7() ->
 	{Cleanup, Functions}.
 
 setup_all_post_2_8() ->
-	{Setup, Cleanup} = ar_test_node:mock_functions([
+	{Setup, Cleanup} = ar_test_node:mock_all_nodes([
 		{ar_fork, height_2_8, fun() -> 0 end}
 		]),
 	Functions = Setup(),
@@ -213,7 +213,7 @@ assert_not_banned(Peer) ->
 test_recall_byte_out_of_bounds() ->
 	start_node(),
 	{Key, B, PrevB} = reset_node(),
-	{Setup, Cleanup} = ar_test_node:mock_functions([
+	{Setup, Cleanup} = ar_test_node:mock_all_nodes([
 		{ar_block, get_recall_range_size,
 			fun
 				(0) -> ?LEGACY_RECALL_RANGE_SIZE;
@@ -376,7 +376,7 @@ test_reject_block_invalid_replica_format({Key, B, PrevB}) ->
 %% ------------------------------------------------------------------------------------------
 
 add_external_block_with_invalid_timestamp_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_7, fun() -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_7, fun() -> 0 end}],
 		fun test_add_external_block_with_invalid_timestamp/0).
 
 test_add_external_block_with_invalid_timestamp() ->
@@ -587,7 +587,7 @@ test_rejects_invalid_blocks() ->
 	ar_blacklist_middleware:reset().
 
 rejects_blocks_with_invalid_double_signing_proof_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_9, fun() -> 0 end}],
+	test_with_all_nodes_mocked([{ar_fork, height_2_9, fun() -> 0 end}],
 		fun test_reject_block_invalid_double_signing_proof/0).
 
 rejects_blocks_with_small_rsa_keys_test_() ->
@@ -712,7 +712,7 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 	?assertMatch(#{ Target := {1, <<>>}, BannedAddr := {_, TXID, 1, false} }, Accounts2).
 
 send_block2_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun() -> test_send_block2() end).
 
 test_send_block2() ->
@@ -844,7 +844,7 @@ test_send_block2() ->
 			ar_serialize:binary_to_block_announcement_response(Body6)).
 
 resigned_solution_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun() -> test_resigned_solution() end).
 
 test_resigned_solution() ->

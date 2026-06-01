@@ -36,6 +36,8 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	ar_test_node:stop(RepackerNode),
 	{Blocks, _AddrA, Chunks} = ar_e2e:start_source_node(
 		RepackerNode, FromPackingType, wallet_a),
+	RepackerSnapshot = ar_test_node:remote_call(
+		RepackerNode, arweave_config, snapshot, []),
 
 	[B0 | _] = Blocks,
 	start_validator_node(ValidatorNode, RepackerNode, B0),
@@ -47,8 +49,12 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 		_ -> ar_wallet:to_address(WalletB)
 	end,
 	ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
-	ExistingStorageModules = ar_test_node:remote_call(
-		RepackerNode, arweave_config, storage_modules, []),
+	ExistingStorageModuleConfigs = ar_test_node:remote_call(
+		RepackerNode, arweave_config, get, [[storage_modules]]),
+	ExistingStorageModules = [
+		arweave_config:config_to_storage_module(M)
+		|| M <- ExistingStorageModuleConfigs
+	],
 	%% For replica_2_9 destinations, first mount both old and new modules with
 	%% sync_jobs=0 so the new modules prepare entropy without any concurrent
 	%% cross-module sync. Otherwise chunks copied from the old modules would
@@ -58,8 +64,8 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	%% re-enables sync and cross-module copies flow directly into replica_2_9.
 	case ToPackingType of
 		replica_2_9 ->
-			ar_test_node:restart_with_config(RepackerNode, #{
-				storage_modules => ExistingStorageModules ++ StorageModules,
+			ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
+				[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- ExistingStorageModules ++ StorageModules],
 				[mining, address] => AddrB,
 				[sync, jobs] => 0
 			}),
@@ -67,8 +73,8 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 		_ ->
 			ok
 	end,
-	ar_test_node:restart_with_config(RepackerNode, #{
-		storage_modules => ExistingStorageModules ++ StorageModules,
+	ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- ExistingStorageModules ++ StorageModules],
 		[mining, address] => AddrB
 	}),
 
@@ -88,8 +94,8 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 	%% ar_e2e:assert_chunks(RepackerNode, ToPacking, Chunks),
 	ar_e2e:assert_empty_partition(RepackerNode, 3, ToPacking),
 
-	ar_test_node:restart_with_config(RepackerNode, #{
-		storage_modules => StorageModules,
+	ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
 		[mining, address] => AddrB
 	}),
 	ar_e2e:assert_syncs_range(RepackerNode, ToPacking, 0, 4*ar_block:partition_size()),
@@ -126,10 +132,10 @@ test_repack_mine({FromPackingType, ToPackingType}) ->
 start_validator_node(ValidatorNode, RepackerNode, B0) ->
 	?assertEqual(ar_test_node:peer_name(ValidatorNode),
 		ar_test_node:start_other_node(ValidatorNode, B0, #{
-			{peers, trusted} => [ar_test_node:peer_ip(RepackerNode)],
+			[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(RepackerNode))],
 			[join, start_from_latest_state] => true,
 			[join, auto] => true,
-			storage_modules => []
+			[storage_modules] => []
 		}, true)
 	),
 	ok.

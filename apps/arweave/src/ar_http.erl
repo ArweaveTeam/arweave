@@ -451,7 +451,7 @@ await_response( #{ pid := PID, stream_ref := Ref, timeout := Timeout
 	end.
 
 log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
-	case arweave_config:feature_enabled(http_logging) of
+	case arweave_config:get([features, http_logging]) of
 		true when Type == warn ->
 			?LOG_WARNING([
 				{event, Event},

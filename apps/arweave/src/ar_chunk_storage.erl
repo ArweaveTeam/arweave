@@ -52,8 +52,8 @@ name(StoreID) ->
 	list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
-	StorageModules = arweave_config:storage_modules(),
-	RepackInPlaceModules = arweave_config:repack_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
+	RepackInPlaceModules = [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
 	ConfiguredWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
@@ -929,17 +929,17 @@ read_chunks_sizes(DataDir) ->
 	end.
 
 modules_to_defrag() ->
-	case arweave_config:defrag_modules() of
-		[_ | _] = Modules -> Modules;
-		_ -> arweave_config:storage_modules()
-	end.
+	Modules = arweave_config:get([storage_modules]),
+	[arweave_config:config_to_storage_module(Module)
+		|| Module <- Modules,
+		   maps:get(defrag, Module, false)].
 
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
 
 chunk_bucket_test() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 	],
 	fun test_chunk_bucket/0, 30).
@@ -1015,7 +1015,7 @@ test_chunk_bucket() ->
 	?assertEqual(1048576, get_chunk_bucket_start(5 * ?DATA_CHUNK_SIZE + 1)).
 
 get_chunk_byte_from_bucket_end_test() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 	],
 	fun test_get_chunk_byte_from_bucket_end/0, 30).

@@ -11,7 +11,7 @@
 -define(REQUEST_UNPACK_TIMEOUT, 50_000).
 
 % request_test() ->
-% 	RewardAddress = ar_test_node:load_fixture("ar_packing_tests/address.bin"),
+% 	RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
 % 	[B0] = ar_weave:init(),
 % 	ar_test_node:start(B0, RewardAddress),
@@ -38,7 +38,7 @@ packing_test_() ->
       fun test_request_unpack/0]}.
 
 setup() ->
-    RewardAddress = ar_test_node:load_fixture("ar_packing_tests/address.bin"),
+    RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
     [B0] = ar_weave:init(),
     ar_test_node:start(B0, RewardAddress),
     RewardAddress.
@@ -72,13 +72,13 @@ test_feistel()->
 	ok.
 
 test_full_chunk() ->
-	UnpackedData = ar_test_node:load_fixture("ar_packing_tests/unpacked.256kb"),
-	Spora25Data = ar_test_node:load_fixture("ar_packing_tests/spora25.256kb"),
-	Spora26Data = ar_test_node:load_fixture("ar_packing_tests/spora26.256kb"),
+	UnpackedData = ar_test_util:load_fixture("ar_packing_tests/unpacked.256kb"),
+	Spora25Data = ar_test_util:load_fixture("ar_packing_tests/spora25.256kb"),
+	Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
 	ChunkSize = 256*1024,
 	TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
-	RewardAddress = ar_test_node:load_fixture("ar_packing_tests/address.bin"),
+	RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
 	?assertEqual(
 		{ok, UnpackedData},
@@ -107,13 +107,13 @@ test_full_chunk() ->
 			{spora_2_6, RewardAddress}, ?CHUNK_OFFSET, TXRoot, Spora26Data, ChunkSize)).
 
 test_partial_chunk() ->
-	UnpackedData = ar_test_node:load_fixture("ar_packing_tests/unpacked.100kb"),
-	Spora25Data = ar_test_node:load_fixture("ar_packing_tests/spora25.100kb"),
-	Spora26Data = ar_test_node:load_fixture("ar_packing_tests/spora26.100kb"),
+	UnpackedData = ar_test_util:load_fixture("ar_packing_tests/unpacked.100kb"),
+	Spora25Data = ar_test_util:load_fixture("ar_packing_tests/spora25.100kb"),
+	Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.100kb"),
 
 	ChunkSize = 100*1024,
 	TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
-	RewardAddress = ar_test_node:load_fixture("ar_packing_tests/address.bin"),
+	RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
 	?assertEqual(
 		{ok, UnpackedData},
@@ -142,13 +142,13 @@ test_partial_chunk() ->
 			{spora_2_6, RewardAddress}, ?CHUNK_OFFSET, TXRoot, Spora26Data, ChunkSize)).
 
 test_full_chunk_repack() ->
-	UnpackedData = ar_test_node:load_fixture("ar_packing_tests/unpacked.256kb"),
-	Spora25Data = ar_test_node:load_fixture("ar_packing_tests/spora25.256kb"),
-	Spora26Data = ar_test_node:load_fixture("ar_packing_tests/spora26.256kb"),
+	UnpackedData = ar_test_util:load_fixture("ar_packing_tests/unpacked.256kb"),
+	Spora25Data = ar_test_util:load_fixture("ar_packing_tests/spora25.256kb"),
+	Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
 	ChunkSize = 256*1024,
 	TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
-	RewardAddress = ar_test_node:load_fixture("ar_packing_tests/address.bin"),
+	RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
 	?assertEqual(
 		{ok, UnpackedData, UnpackedData},
@@ -190,13 +190,13 @@ test_full_chunk_repack() ->
 			?CHUNK_OFFSET, TXRoot, Spora26Data, ChunkSize)).
 
 test_partial_chunk_repack() ->
-	UnpackedData = ar_test_node:load_fixture("ar_packing_tests/unpacked.100kb"),
-	Spora25Data = ar_test_node:load_fixture("ar_packing_tests/spora25.100kb"),
-	Spora26Data = ar_test_node:load_fixture("ar_packing_tests/spora26.100kb"),
+	UnpackedData = ar_test_util:load_fixture("ar_packing_tests/unpacked.100kb"),
+	Spora25Data = ar_test_util:load_fixture("ar_packing_tests/spora25.100kb"),
+	Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.100kb"),
 
 	ChunkSize = 100*1024,
 	TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
-	RewardAddress = ar_test_node:load_fixture("ar_packing_tests/address.bin"),
+	RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
 	?assertEqual(
 		{ok, UnpackedData, UnpackedData},
@@ -239,14 +239,14 @@ test_partial_chunk_repack() ->
 test_invalid_pad() ->
 	ChunkSize = 100*1024,
 
-	UnpackedData = ar_test_node:load_fixture("ar_packing_tests/unpacked.256kb"),
-	Spora25Data = ar_test_node:load_fixture("ar_packing_tests/spora25.256kb"),
-	Spora26Data = ar_test_node:load_fixture("ar_packing_tests/spora26.256kb"),
+	UnpackedData = ar_test_util:load_fixture("ar_packing_tests/unpacked.256kb"),
+	Spora25Data = ar_test_util:load_fixture("ar_packing_tests/spora25.256kb"),
+	Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
 	ShortUnpackedData = binary:part(UnpackedData, 0, ChunkSize),
 
 	TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
-	RewardAddress = ar_test_node:load_fixture("ar_packing_tests/address.bin"),
+	RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
 	?assertEqual(
 		{ok, ShortUnpackedData},
@@ -280,12 +280,12 @@ test_invalid_pad() ->
 			"We do check the pad when repacking from SPoRA 2.6").
 
 test_request_repack() ->
-	UnpackedData = ar_test_node:load_fixture("ar_packing_tests/unpacked.256kb"),
-	Spora26Data = ar_test_node:load_fixture("ar_packing_tests/spora26.256kb"),
+	UnpackedData = ar_test_util:load_fixture("ar_packing_tests/unpacked.256kb"),
+	Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
 	ChunkSize = 256*1024,
 	TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
-	RewardAddress = ar_test_node:load_fixture("ar_packing_tests/address.bin"),
+	RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
 	%% unpacked -> unpacked
 	ar_packing_server:request_repack(?CHUNK_OFFSET, {
@@ -333,12 +333,12 @@ test_request_repack() ->
     end.
 
 test_request_unpack() ->
-	UnpackedData = ar_test_node:load_fixture("ar_packing_tests/unpacked.256kb"),
-	Spora26Data = ar_test_node:load_fixture("ar_packing_tests/spora26.256kb"),
+	UnpackedData = ar_test_util:load_fixture("ar_packing_tests/unpacked.256kb"),
+	Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
 	ChunkSize = 256*1024,
 	TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
-	RewardAddress = ar_test_node:load_fixture("ar_packing_tests/address.bin"),
+	RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
 	%% unpacked -> unpacked
 	ar_packing_server:request_unpack(?CHUNK_OFFSET, {
@@ -373,7 +373,7 @@ test_request_unpack() ->
 	end.
 
 packs_chunks_depending_on_packing_threshold_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_fork, height_2_9, fun() -> 10 end},
 			{ar_retarget, is_retarget_height, fun(_Height) -> false end},
 			{ar_retarget, is_retarget_block, fun(_Block) -> false end}],

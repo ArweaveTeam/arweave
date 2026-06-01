@@ -113,7 +113,7 @@ terminate(_Reason, _State) ->
 
 mine_block(State) ->
 	MiningAddr = arweave_config:get([mining, address]),
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	mine_block2(pick_random_storage_module(StorageModules), State, MiningAddr, StorageModules).
 
 mine_block2(error, _State, _MiningAddr, _StorageModules) ->

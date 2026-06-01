@@ -24,7 +24,7 @@
 %% configured `[limiter, GroupID, number_of_workers]'. The list of groups and
 %% per-group worker count come from `arweave_config'.
 start_link() ->
-    start_link(arweave_config:limiter_groups()).
+    start_link(group_ids()).
 
 %% @doc Test entry point — start with an explicit list of group IDs.
 start_link(GroupIDs) when is_list(GroupIDs) ->
@@ -61,9 +61,16 @@ single_child_spec(Name, GroupID) ->
 
 all_info() ->
     [{ID, arweave_limiter_group:info(ID)}
-        || ID <- arweave_config:limiter_groups()].
+        || ID <- group_ids()].
 
 reset_all() ->
     Children = supervisor:which_children(?MODULE),
     [{ID, arweave_limiter_group:reset_all(ID)}
         || {ID, _Child, _Type, _Modules} <- Children].
+
+group_ids() ->
+    lists:usort([
+        GroupID
+        || {[limiter, GroupID, _Field], _Value} <-
+            arweave_config:get_all_with_prefix([limiter])
+    ]).

@@ -9,7 +9,7 @@
 
 block_to_binary_test_() ->
 	%% Set the mainnet values here because we are using the mainnet fixtures.
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_fork, height_1_6, fun() -> 95000 end},
 			{ar_fork, height_1_7, fun() -> 235200 end},
 			{ar_fork, height_1_8, fun() -> 269510 end},
@@ -186,7 +186,7 @@ block_index_to_binary_test() ->
 
 %% @doc Convert a new block into JSON and back, ensure the result is the same.
 block_roundtrip_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_fork, height_2_6, fun() -> infinity end},
 			{ar_fork, height_2_6_8, fun() -> infinity end},
 			{ar_fork, height_2_7, fun() -> infinity end}],

@@ -80,7 +80,7 @@ register_workers() ->
 	end.
 
 register_read_workers() ->
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	StoreIDs = [
 		ar_storage_module:id(StorageModule) || StorageModule <- StorageModules
 	] ++ [?DEFAULT_MODULE],
@@ -561,7 +561,7 @@ test_process_queue() ->
 		queue:to_list(Worker3#worker_tasks.task_queue)).
 
 test_register_workers() ->
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	StoreIDs = [
 		ar_storage_module:id(StorageModule) || StorageModule <- StorageModules],
 	lists:foreach(

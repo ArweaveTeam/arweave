@@ -155,14 +155,14 @@ parse(["storage_module", StorageModuleString | Rest]) ->
 	try
 		case arweave_config_format_legacy_json:parse_storage_module(StorageModuleString) of
 			{ok, StorageModule} ->
-				StorageModules = arweave_config_options_storage_modules:list(),
+				StorageModules = arweave_config_options_storage_modules:legacy_list(),
 				NewModules = [StorageModule | StorageModules],
-				_ = arweave_config_options_storage_modules:write_list(NewModules),
+				_ = arweave_config_options_storage_modules:write_legacy_list(NewModules),
 				parse(Rest);
 			{repack_in_place, StorageModule} ->
-				StorageModules = arweave_config_options_repack_modules:list(),
+				StorageModules = arweave_config_options_repack_modules:legacy_list(),
 				NewModules = [StorageModule | StorageModules],
-				_ = arweave_config_options_repack_modules:write_list(NewModules),
+				_ = arweave_config_options_repack_modules:write_legacy_list(NewModules),
 				parse(Rest)
 		end
 	catch _:_ ->
@@ -406,11 +406,11 @@ parse(["block_throttle_by_solution_interval", Num | Rest]) ->
 	_ = arweave_config:set([gossip, block, throttle_by_solution_interval], V),
 	parse(Rest);
 parse(["defragment_module", DefragModuleString | Rest]) ->
-	DefragModules = arweave_config_options_storage_modules:defrags(),
+	DefragModules = arweave_config_options_storage_modules:legacy_defrags(),
 	try
 		{ok, DefragModule} = arweave_config_format_legacy_json:parse_storage_module(DefragModuleString),
 		DefragModules2 = [DefragModule | DefragModules],
-		_ = arweave_config_options_storage_modules:write_defrags(DefragModules2),
+		_ = arweave_config_options_storage_modules:write_legacy_defrags(DefragModules2),
 		parse(Rest)
 	catch _:_ ->
 		io:format("~ndefragment_module value must be in the {number},{address} format.~n~n"),
