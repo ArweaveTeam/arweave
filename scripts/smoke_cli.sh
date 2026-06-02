@@ -302,6 +302,7 @@ fi
 log "$(bold '=== Phase 1: no-node tools ===')"
 
 WALLET_DIR=$(mktmp wallet)
+ECDSA_WALLET_DIR=$(mktmp ecdsa-wallet)
 
 run_check "arweave check" 0 "" -- \
 	./bin/arweave check
@@ -332,6 +333,24 @@ if ! ls "$WALLET_DIR"/wallets/*.json >/dev/null 2>&1; then
 	FAILED_NAMES+=("create-wallet-keyfile-present")
 else
 	log "  $(green PASS) create-wallet keyfile present"
+	PASS=$((PASS + 1))
+fi
+
+# create-ecdsa-wallet: no args → usage + exit 1
+run_check "create-ecdsa-wallet (no args)" 1 "Usage: ./bin/create-ecdsa-wallet" -- \
+	./bin/create-ecdsa-wallet
+
+# create-ecdsa-wallet: positive path — writes a keyfile. ar:create_wallet/2
+# calls init:stop(1) on success too, so exit code is 1 regardless.
+run_check "create-ecdsa-wallet (writes keyfile)" 1 "Created a wallet" -- \
+	./bin/create-ecdsa-wallet "$ECDSA_WALLET_DIR"
+
+if ! ls "$ECDSA_WALLET_DIR"/wallets/*.json >/dev/null 2>&1; then
+	log "  $(red FAIL) create-ecdsa-wallet did not produce a keyfile in $ECDSA_WALLET_DIR/wallets/"
+	FAIL=$((FAIL + 1))
+	FAILED_NAMES+=("create-ecdsa-wallet-keyfile-present")
+else
+	log "  $(green PASS) create-ecdsa-wallet keyfile present"
 	PASS=$((PASS + 1))
 fi
 
