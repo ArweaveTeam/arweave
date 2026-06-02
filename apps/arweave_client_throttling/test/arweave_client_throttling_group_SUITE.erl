@@ -33,11 +33,10 @@ end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(_TestCase, Config) ->
-    Spec = arweave_client_throttling_config:normalize_group(
-             #{id => general,
-               initial_remaining => 1,
-               max_queue_length => 4,
-               concurrency_window_ms => 50}),
+    Spec = #{id => general,
+             initial_remaining => 1,
+             max_queue_length => 4,
+             concurrency_window_ms => 50},
 
     ok = meck:new([prometheus_counter, prometheus_histogram], [passthrough]),
     ok = meck:expect(prometheus_counter, inc, 2, ok),

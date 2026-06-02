@@ -42,34 +42,44 @@ init_per_suite(Config) -> Config.
 end_per_suite(_Config) -> ok.
 
 init_per_testcase(_TestCase, Config) ->
-    application:set_env(arweave_client_throttling, groups, [
-        #{id => general,
-          initial_remaining => 2,
-          max_queue_length => 4,
-          concurrency_window_ms => 50},
-        #{id => data_sync_record,
-          initial_remaining => 1,
-          max_queue_length => 2,
-          concurrency_window_ms => 50}
-    ]),
+    AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
 
-    ok = meck:new([prometheus_counter, prometheus_histogram], [passthrough]),
-    ok = meck:expect(prometheus_counter, inc, 2, ok),
-    ok = meck:expect(prometheus_histogram, observe, 3, ok),
+    application:ensure_all_started(arweave_config),
+    apply_overrides(general, #{id => general,
+                              initial_remaining => 2,
+                              max_queue_length => 4,
+                              concurrency_window_ms => 50}),
+    apply_overrides(data_sync_record,
+                    #{id => data_sync_record,
+                      initial_remaining => 1,
+                      max_queue_length => 2,
+                      concurrency_window_ms => 50}),
 
     ct:pal(info, 1, "start arweave_client_throttling"),
     ok = arweave_client_throttling:start(),
-    Config.
+    [{apps_before,AppsBefore},
+     {config, Config}].
 
-end_per_testcase(_TestCase, _Config) ->
+end_per_testcase(_TestCase, Config) ->
     ct:pal(info, 1, "stop arweave_client_throttling"),
     ok = arweave_client_throttling:stop(),
 
-    ok = meck:unload([prometheus_counter, prometheus_histogram]),
-
     arweave_client_throttling_metrics:cleanup(),
-    application:unset_env(arweave_client_throttling, groups),
+
+    AppsBefore = proplists:get_value(apps_before, Config),
+    AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
+    AppsStartedForTest = AppsNow -- AppsBefore,
+    lists:foreach(fun application:stop/1, AppsStartedForTest),
+
     ok.
+
+apply_overrides(GroupID, Overrides) ->
+    maps:fold(
+        fun(Field, Value, ok) ->
+            {ok, _} = arweave_config:set(
+                [client_throttling, GroupID, Field], Value),
+            ok
+        end, ok, Overrides).
 
 all() ->
     [
@@ -92,7 +102,7 @@ default_groups_started(_Config) ->
     true = is_pid(whereis(arweave_client_throttling_sup)),
 
     ct:pal(test, 1, "list configured groups"),
-    Groups = arweave_client_throttling:groups(),
+    Groups = arweave_config_options_client_throttling:group_ids(),
     true = lists:member(general, Groups),
     true = lists:member(data_sync_record, Groups),
 

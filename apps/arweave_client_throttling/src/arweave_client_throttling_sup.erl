@@ -1,7 +1,6 @@
 %%% @doc Supervisor for `arweave_client_throttling'.
 %%%
 %%% Starts one `arweave_client_throttling_group' worker per group
-%%% spec returned by `arweave_client_throttling_config:get_groups/0'.
 %%% @end
 -module(arweave_client_throttling_sup).
 -behaviour(supervisor).
@@ -13,39 +12,54 @@
 -export([reset_all/0, all_off/0, all_on/0]).
 -endif.
 
+-include_lib("arweave/include/ar_sup.hrl").
+
+%% API
 start_link() ->
-    start_link(arweave_client_throttling_config:get_groups()).
+    start_link(arweave_config:client_throttling_groups()).
 
-start_link(Groups) when is_list(Groups) ->
-    ok = arweave_client_throttling_metrics:register(),
-    supervisor:start_link({local, ?MODULE}, ?MODULE, [Groups]).
-
-init([Groups]) ->
-    SupFlags = #{
-        strategy => one_for_one,
-        intensity => 5,
-        period => 10
-    },
-    Children = [child_spec(G) || G <- Groups],
-    {ok, {SupFlags, Children}}.
-
-child_spec(#{id := ID} = Group) ->
-    Normalized = arweave_client_throttling_config:normalize_group(Group),
-    #{
-        id => arweave_client_throttling_group:registered_name(ID),
-        start => {arweave_client_throttling_group, start_link, [Normalized]},
-        type => worker,
-        restart => permanent,
-        shutdown => 5000,
-        modules => [arweave_client_throttling_group]
-    }.
-
-reset_all() ->
-    [{ID, arweave_client_throttling_group:reset(ID)}  || #{id := ID} <- arweave_client_throttling_config:get_groups()].
+start_link(GroupIDs) when is_list(GroupIDs) ->
+    supervisor:start_link({local, ?MODULE}, ?MODULE, [GroupIDs]).
 
 all_info() ->
-    Config = arweave_client_throttling_config:get_groups(),
-    [{ID, arweave_client_throttling_group:info(ID)}  || #{id := ID} <- Config].
+    [{ID, arweave_client_throttling_group:info(ID)}  ||
+        ID <- arweave_config:client_throttling_groups()].
+
+%% Supervisor callbacks
+init([GroupIDs]) ->
+    ok = arweave_client_throttling_metrics:register(),
+    {ok, {supervisor_spec(), children_spec(GroupIDs)}}.
+
+supervisor_spec() ->
+    #{ strategy => one_for_all,
+       intensity => 5,
+       period => 10 }.
+
+%% Child spec
+children_spec(GroupIDs) ->
+    lists:flatten([children_spec_per_group(ID) || ID <- GroupIDs]).
+
+children_spec_per_group(GroupID) ->
+    Initial = arweave_config:get([client_throttling, GroupID, initial_remaining]),
+    MaxQueueLength = arweave_config:get([client_throttling, GroupID, max_queue_length]),
+    ConcurrencyWindowMS = arweave_config:get([client_throttling, GroupID, concurrency_window_ms]),
+    Spec = #{id => GroupID,
+             initial_remaining => Initial,
+             max_queue_length => MaxQueueLength,
+             concurrency_window_ms => ConcurrencyWindowMS
+            },
+    [#{
+       id => arweave_client_throttling_group:registered_name(GroupID),
+       start => {arweave_client_throttling_group, start_link, [Spec]},
+       type => worker,
+       shutdown => ?SHUTDOWN_TIMEOUT
+%       modules => [arweave_client_throttling_group]
+      }].
+
+%% Only used in tests
+-ifdef(AR_TEST).
+reset_all() ->
+    [{ID, arweave_client_throttling_group:reset(ID)}  || ID <- arweave_config:client_throttling_groups()].
 
 all_off() ->
     Children = supervisor:which_children(?MODULE),
@@ -54,3 +68,4 @@ all_off() ->
 all_on() ->
     Children = supervisor:which_children(?MODULE),
     [{ID, arweave_client_throttling_group:turn_on(ID)}  || {ID, _Child, _Type, _Modules} <- Children].
+-endif.

@@ -262,7 +262,7 @@ limiter_groups() ->
 %% `arweave_config:get([limiter, GroupID, Field])'.
 -spec client_throttling_groups() -> [atom()].
 client_throttling_groups() ->
-	areave_config_options_client_throttling:group_id().
+	arweave_config_options_client_throttling:group_ids().
 
 %% @doc Log the current configuration to `?LOG_INFO`.
 -spec log() -> ok.

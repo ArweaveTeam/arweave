@@ -49,7 +49,6 @@
     throttle/2,
     update_quota/3,
     status/2,
-    groups/0,
     reset/1
 ]).
 
@@ -133,11 +132,6 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer), is_list(Path),
 -spec status(atom(), tuple()) -> {ok, map()} | {error, term()}.
 status(GroupId, Peer) when is_atom(GroupId), is_tuple(Peer) ->
     arweave_client_throttling_group:status(GroupId, Peer).
-
-%% @doc Return the list of configured group ids.
--spec groups() -> [atom()].
-groups() ->
-    [Id || #{id := Id} <- arweave_client_throttling_config:get_groups()].
 
 %% @doc Drop the per-peer state for `GroupId' and release any blocked
 %% callers with `ok'. Intended for tests and operational recovery.

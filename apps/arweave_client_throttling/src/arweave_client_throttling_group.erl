@@ -118,12 +118,13 @@
 %% from the queue and returns `{error, timeout}'.
 -define(THROTTLE_RECEIVE_TIMEOUT_MS, 60000).
 
-%% @doc Start a group process. `Spec' must be a normalized map (see
-%% `arweave_client_throttling_config:normalize_group/1').
+%% @doc Start a group process.
 -spec start_link(map()) -> {ok, pid()} | {error, term()}.
-start_link(#{id := ID} = Spec) ->
+start_link(#{id := ID,
+             initial_remaining := _,
+             max_queue_length := _,
+             concurrency_window_ms := _} = Spec) ->
     gen_server:start_link({local, registered_name(ID)}, ?MODULE, Spec, []).
-
 
 registered_name(ID) when is_atom(ID) ->
     list_to_atom("arweave_client_throttling_group_" ++ atom_to_list(ID)).
@@ -246,7 +247,10 @@ stop(GroupID) ->
     gen_server:stop(registered_name(GroupID)).
 
 %% gen_server callbacks
-init(Spec) ->
+init(#{id := _ID,
+       initial_remaining := _,
+       max_queue_length := _,
+       concurrency_window_ms := _} = Spec) ->
     process_flag(trap_exit, true),
     {ok, #{
         is_enabled => true,
