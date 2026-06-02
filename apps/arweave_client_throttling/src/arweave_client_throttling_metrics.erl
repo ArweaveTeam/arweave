@@ -23,6 +23,13 @@ register() ->
             {buckets, [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000]},
             {labels, [group_id]}]),
 
+    ok = prometheus_histogram:new(
+           [{name, arweave_client_throttling_is_throttled_response_time_microseconds},
+            {help, "Time it took for the limiter to respond to requests"},
+            %% buckets might be reduced for production
+            {buckets, [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000]},
+            {labels, [group_id]}]),
+
     ok = prometheus_counter:new(
            [{name, arweave_client_throttling_requests_total},
             {help, "The number of requests the limiter has processed"},
@@ -60,6 +67,7 @@ register() ->
 cleanup() ->
     prometheus_histogram:deregister(arweave_client_throttling_request_response_time_microseconds),
     prometheus_histogram:deregister(arweave_client_throttling_worker_response_time_microseconds),
+    prometheus_histogram:deregister(arweave_client_throttling_is_throttled_response_time_microseconds),
     prometheus_counter:deregister(arweave_client_throttling_requests_total),
     prometheus_counter:deregister(arweave_client_throttling_queued_total),
     prometheus_counter:deregister(arweave_client_throttling_requests_error),

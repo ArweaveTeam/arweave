@@ -68,6 +68,7 @@
     start_link/1,
     registered_name/1,
     throttle/2,
+    is_throttled/2,
     info/1,
     update_quota/3,
     status/2,
@@ -87,6 +88,8 @@
 
 -ifdef(AR_TEST).
 -export([turn_off/1, turn_on/1]).
+-else.
+-compile({nowarn_unused_function, [{turn_off, 1}, {turn_on, 1}]}).
 -endif.
 
 -include("arweave_client_throttling.hrl").
@@ -117,6 +120,12 @@
 %% caller sends a `cancel_request' cast so the entry can be evicted
 %% from the queue and returns `{error, timeout}'.
 -define(THROTTLE_RECEIVE_TIMEOUT_MS, 60000).
+
+%% NOTE: this threshold doesn't reflect when the peer is actually throttled,
+%%       just a threshold to consider approaching throttling limit.
+%%       It is implemented to replicate previous behaviour, and might/should
+%%       be tweaked later.
+-define(IS_THROTTLED_THRESHOLD, 0.8).
 
 %% @doc Start a group process.
 -spec start_link(map()) -> {ok, pid()} | {error, term()}.
@@ -155,7 +164,7 @@ throttle(GroupID, Peer) ->
 do_throttle(GroupID, Peer) ->
     prometheus_counter:inc(arweave_client_throttling_requests_total, [atom_to_list(GroupID)]),
     Name = registered_name(GroupID),
-    {Time, WorkerReturn} = 
+    {Time, WorkerReturn} =
         timer:tc(gen_server, call, [Name, {throttle, Peer}, ?CALL_TIMEOUT]),
     prometheus_histogram:observe(arweave_client_throttling_worker_response_time_microseconds,
                                  [atom_to_list(GroupID)], Time),
@@ -206,6 +215,31 @@ update_quota(GroupID, Peer, #{
     gen_server:cast(registered_name(GroupID),
                     {update_quota, Peer, Total, Remaining,
                      ResetSeconds, ReceivedAt}).
+
+%% @doc Return true if Peer is being throttled for the given path
+-spec is_throttled(atom(), tuple()) -> boolean().
+is_throttled(GroupID, Peer) when is_atom(GroupID), is_tuple(Peer) ->
+    {Time, Value} = timer:tc(fun do_is_throttled/2, [GroupID, Peer]),
+    prometheus_histogram:observe(arweave_client_throttling_is_throttled_response_time_microseconds,
+                                 [atom_to_list(GroupID)], Time),
+    Value.
+
+-spec do_is_throttled(atom(), tuple()) -> boolean().
+do_is_throttled(GroupID, Peer) when is_atom(GroupID), is_tuple(Peer) ->
+    try
+        {ok, IsThrottled} = gen_server:call(registered_name(GroupID), {is_throttled, Peer}, ?CALL_TIMEOUT),
+        IsThrottled
+    catch
+        {'EXIT', {noproc, {gen_server, call, _}}} -> false;
+        {'EXIT', Reason} -> exit(Reason);
+        E:R:Stack ->
+            ?LOG_ERROR([{event, client_throttling_is_throttled_error},
+                        {class, E},
+                        {reason, R},
+                        {stacktrace, Stack}]),
+            %% previous solution
+            false
+    end.
 
 %% @doc Get all info
 info(GroupID) ->
@@ -272,6 +306,10 @@ handle_call({throttle, Peer}, From, #{spec := Spec, peers := Peers} = State) ->
         false ->
             enqueue_caller(Peer, From, PS0, State)
     end;
+handle_call({is_throttled, Peer}, _From, #{spec := Spec, peers := Peers} = State) ->
+    PS0 = get_or_init_peer(Peer, Peers, Spec),
+    IsThrottled = PS0#peer_state.remaining / PS0#peer_state.total > ?IS_THROTTLED_THRESHOLD,
+    {reply, {ok, IsThrottled}, State};
 handle_call(get_info, _From, #{peers := Peers} = State) ->
     Reply = #{peers => map_size(Peers)},
     {reply, Reply, State};
