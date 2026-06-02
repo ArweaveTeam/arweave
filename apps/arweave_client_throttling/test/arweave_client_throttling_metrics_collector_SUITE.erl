@@ -112,10 +112,10 @@ no_peers_reported(_Config) ->
 one_peer_reported(_Config) ->
     try
         Peer = {127, 0, 0, 1, 1984},
-        %_ = spawn(fun() ->
-        %arweave_client_throttling:throttle(Peer, ?PATH),
-        %          end),
-        %ok = wait_peer_count(?GROUP, 1),
+        _ = spawn(fun() ->
+                          arweave_client_throttling:throttle(Peer, ?PATH)
+                  end),
+        ok = wait_peer_count(?GROUP, 1),
         [{arweave_client_throttling_peers, gauge, _Help, MetricsList}] =
             ?M:metrics(),
         ?assertEqual([{[{group_id,block_index}],0},
@@ -138,22 +138,22 @@ one_peer_reported(_Config) ->
 %% caller stays parked on `{request_ready, _}' until
 %% `end_per_testcase' resets the group.
 two_hundred_peers_reported(_Config) ->
-    %% Peers = [{10, 0, X div 256, X rem 256, 1984}
-    %%          || X <- lists:seq(1, 200)],
-    %% [spawn(fun() -> arweave_client_throttling:throttle(P, ?PATH) end)
-    %%  || P <- Peers],
-    %% ok = wait_peer_count(?GROUP, 200),
-    %% [{arweave_client_throttling_peers, gauge, _Help, MetricsList}] =
-    %%     ?M:metrics(),
-    %% ?assertEqual([{[{group_id,block_index}],0},
-    %%               {[{group_id,chunk}],0},
-    %%               {[{group_id,data_sync_record}],0},
-    %%               {[{group_id,general}],200},
-    %%               {[{group_id,get_previous_vdf_session}],0},
-    %%               {[{group_id,get_vdf}],0},
-    %%               {[{group_id,get_vdf_session}],0},
-    %%               {[{group_id,recent_hash_list_diff}],0},
-    %%               {[{group_id,wallet_list}],0}], lists:sort(MetricsList)),
+    Peers = [{10, 0, X div 256, X rem 256, 1984}
+             || X <- lists:seq(1, 200)],
+    [spawn(fun() -> arweave_client_throttling:throttle(P, ?PATH) end)
+     || P <- Peers],
+    ok = wait_peer_count(?GROUP, 200),
+    [{arweave_client_throttling_peers, gauge, _Help, MetricsList}] =
+        ?M:metrics(),
+    ?assertEqual([{[{group_id,block_index}],0},
+                  {[{group_id,chunk}],0},
+                  {[{group_id,data_sync_record}],0},
+                  {[{group_id,general}],200},
+                  {[{group_id,get_previous_vdf_session}],0},
+                  {[{group_id,get_vdf}],0},
+                  {[{group_id,get_vdf_session}],0},
+                  {[{group_id,recent_hash_list_diff}],0},
+                  {[{group_id,wallet_list}],0}], lists:sort(MetricsList)),
     ok.
 
 %% Helpers
