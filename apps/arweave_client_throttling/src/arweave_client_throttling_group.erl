@@ -164,8 +164,7 @@ throttle(GroupID, Peer) ->
 do_throttle(GroupID, Peer) ->
     prometheus_counter:inc(arweave_client_throttling_requests_total, [atom_to_list(GroupID)]),
     Name = registered_name(GroupID),
-    {Time, WorkerReturn} =
-        timer:tc(gen_server, call, [Name, {throttle, Peer}, ?CALL_TIMEOUT]),
+    {Time, WorkerReturn} = timer:tc(fun try_throttle_call/2, [Name, Peer]),
     prometheus_histogram:observe(arweave_client_throttling_worker_response_time_microseconds,
                                  [atom_to_list(GroupID)], Time),
     case WorkerReturn of
@@ -182,11 +181,20 @@ do_throttle(GroupID, Peer) ->
                                            [atom_to_list(GroupID), "throttle_receive_timeout"]),
                 {error, throttle_receive_timeout}
             end;
-        {error, _} = Error ->
+        {error, Reason} = Error ->
             %% TODO: extract error reason
+            ?LOG_ERROR([{event, client_throttling_throttle_error}, {reason, Reason}]),
             prometheus_counter:inc(arweave_client_throttling_requests_error,
                                    [atom_to_list(GroupID), "unknown"]),
             Error
+    end.
+
+try_throttle_call(Name, Peer) ->
+    try
+        gen_server:call(Name, {throttle, Peer}, ?CALL_TIMEOUT)
+    catch
+        E:R:Stack ->
+            {error, {E,R,Stack}}
     end.
 
 %% @doc Non-blocking quota refresh.

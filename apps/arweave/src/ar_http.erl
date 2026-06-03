@@ -91,9 +91,18 @@ req(Args, ReestablishedConnection) ->
 	StartTime = erlang:monotonic_time(),
 	#{ peer := Peer, path := Path, method := Method } = Args,
 
-	%% This call blocks until timeout, or until we think it's a good time to
-	%% call the endpoint
-	arweave_client_throttling:throttle(Peer, Path),
+	LocalIPs = [
+		ar_util:peer_to_ip(LocalPeer)
+		|| LocalPeer <- arweave_config:get_peers(local)
+	],
+	case lists:member(ar_util:peer_to_ip(Peer), LocalIPs) of
+		true ->
+			ok;
+		false ->
+			%% This call blocks until timeout, or until we think it's a good time to
+			%% call the endpoint
+			arweave_client_throttling:throttle(Peer, Path)
+	end,
 
 	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, 15000) of
 		{ok, PID} ->
