@@ -67,6 +67,7 @@ init([]) ->
     ets:new(node_state, [set, public, named_table]),
     ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
     ets:new(ar_total_supply_cache, [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_patricia_tree, [set, public, named_table]),
     Children = [
         ?CHILD(ar_shutdown_manager, worker),
         ?CHILD(ar_disksup, worker),

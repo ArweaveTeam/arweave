@@ -1147,7 +1147,7 @@ handle(<<"GET">>, [<<"wallet_list">>, EncodedRootHash, EncodedAddr, <<"balance">
         {_, {error, invalid}} ->
             {400, #{}, jiffy:encode(#{ error => invalid_address_encoding }), Req};
         {{ok, RootHash}, {ok, Addr}} ->
-            case ar_wallets:get_balance(RootHash, Addr) of
+            case ar_account_tree:get_balance(RootHash, Addr) of
                 {error, not_found} ->
                     {404, #{}, jiffy:encode(#{ error => root_hash_not_found }), Req};
                 Balance when is_integer(Balance) ->
@@ -1770,7 +1770,7 @@ estimate_tx_fee(Size, Addr, Type) ->
             <<>> ->
                 #{};
             _ ->
-                ar_wallets:get(RootHash, Addr)
+                ar_account_tree:get(RootHash, Addr)
         end,
     Size2 = ar_tx:get_weave_size_increase(Size, Height + 1),
     Args = {Size2, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height + 1},
@@ -1806,7 +1806,7 @@ estimate_tx_fee_v2(Size, Addr) ->
             <<>> ->
                 #{};
             _ ->
-                ar_wallets:get(RootHash, Addr)
+                ar_account_tree:get(RootHash, Addr)
         end,
     Size2 = ar_tx:get_weave_size_increase(Size, Height + 1),
     Args = {Size2, PricePerGiBMinute, KryderPlusRateMultiplier, Addr, Accounts, Height + 1},
@@ -2843,7 +2843,7 @@ get_total_supply_cached(RootHash, Denomination) ->
     end.
 
 get_total_supply(RootHash, Cursor, Sum, Denomination) ->
-    {ok, {NextCursor, Range}} = ar_wallets:get_chunk(RootHash, Cursor),
+    {ok, {NextCursor, Range}} = ar_account_tree:get_chunk(RootHash, Cursor),
     RangeSum = get_balance_sum(Range, Denomination),
     case NextCursor of
         last ->
@@ -2995,7 +2995,7 @@ handle_get_block_wallet_balance(EncodedHeight, EncodedAddr, Req) ->
     end.
 
 handle_get_block_wallet_balance2(Addr, RootHash, Req) ->
-    case ar_wallets:get_balance(RootHash, Addr) of
+    case ar_account_tree:get_balance(RootHash, Addr) of
         {error, not_found} ->
             handle_get_block_wallet_balance3(Addr, RootHash, Req);
         Balance when is_integer(Balance) ->
@@ -3028,7 +3028,7 @@ process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
         {_, {error, invalid}} ->
             {400, #{}, <<"Invalid root hash.">>, Req};
         {{ok, RootHash}, {ok, Cursor}} ->
-            case ar_wallets:get_chunk(RootHash, Cursor) of
+            case ar_account_tree:get_chunk(RootHash, Cursor) of
                 {ok, {NextCursor, Wallets}} ->
                     SerializeFn = case cowboy_req:header(<<"content-type">>, Req) of
                                       <<"application/json">> -> fun wallet_list_chunk_to_json/1;

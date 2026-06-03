@@ -393,3 +393,172 @@ diff_dag_test() ->
     ?assertEqual(0, reconstruct(DAG15, "node-1", fun(Diff, E) -> E + Diff end)),
     ?assertException(error, {badkey, "node-2"}, add_node(DAG15, "node-2", "node-1", 1, meta_1)),
     ?assertException(error, {badkey, "node-1"}, add_node(DAG15, "node-1", "node-2", 1, meta_2)).
+
+is_sink_test() ->
+    %% node-1 (sink) <- node-2: {1, meta_2}
+    DAG1 = new("node-1", 0, meta_1),
+    ?assert(is_sink(DAG1, "node-1")),
+    ?assert(not is_sink(DAG1, "node-2")),
+    DAG2 = add_node(DAG1, "node-2", "node-1", 1, meta_2),
+    ?assert(is_sink(DAG2, "node-1")),
+    ?assert(not is_sink(DAG2, "node-2")),
+    %% After moving the sink to node-2, is_sink follows the sink.
+    DAG3 = move_sink(DAG2, "node-2", fun(Diff, E) -> E + Diff end, fun(Diff, _E) -> -Diff end),
+    ?assert(is_sink(DAG3, "node-2")),
+    ?assert(not is_sink(DAG3, "node-1")).
+
+is_node_test() ->
+    %% node-1 (sink) <- node-2: {1, meta_2}
+    DAG1 = new("node-1", 0, meta_1),
+    ?assert(is_node(DAG1, "node-1")),
+    ?assert(not is_node(DAG1, "node-2")),
+    ?assert(not is_node(DAG1, "never-existed")),
+    DAG2 = add_node(DAG1, "node-2", "node-1", 1, meta_2),
+    ?assert(is_node(DAG2, "node-1")),
+    ?assert(is_node(DAG2, "node-2")),
+    ?assert(not is_node(DAG2, "node-3")),
+    %% A node removed via update_leaf_source is no longer a node under its old identifier.
+    DAG3 = update_leaf_source(DAG2, "node-2", fun(D, M) -> {"node-2-renamed", D, M} end),
+    ?assert(not is_node(DAG3, "node-2")),
+    ?assert(is_node(DAG3, "node-2-renamed")).
+
+get_sink_metadata_test() ->
+    %% Sink metadata is readable right after new/3.
+    DAG1 = new("node-1", 0, meta_1),
+    ?assertEqual(meta_1, get_sink_metadata(DAG1)),
+    ?assertEqual(get_metadata(DAG1, "node-1"), get_sink_metadata(DAG1)),
+    %% Adding a non-sink node does not change which metadata get_sink_metadata returns.
+    DAG2 = add_node(DAG1, "node-2", "node-1", 1, meta_2),
+    ?assertEqual(meta_1, get_sink_metadata(DAG2)),
+    %% Moving the sink makes get_sink_metadata return the new sink's metadata.
+    DAG3 = move_sink(DAG2, "node-2", fun(Diff, E) -> E + Diff end, fun(Diff, _E) -> -Diff end),
+    ?assertEqual(meta_2, get_sink_metadata(DAG3)),
+    %% update_sink replaces the sink metadata.
+    DAG4 = update_sink(DAG3, "node-2", fun(E, _M) -> {"node-2", E, meta_2_updated} end),
+    ?assertEqual(meta_2_updated, get_sink_metadata(DAG4)).
+
+update_sink_errors_test() ->
+    %% node-1 (sink) <- node-2: {1, meta_2}
+    DAG = add_node(new("node-1", 0, meta_1), "node-2", "node-1", 1, meta_2),
+    %% Calling update_sink on a non-sink source fails with badkey.
+    ?assertException(error, {badkey, "node-2"}, update_sink(DAG, "node-2", no_function)),
+    %% Calling update_sink on a non-existent node fails with badkey.
+    ?assertException(error, {badkey, "node-3"}, update_sink(DAG, "node-3", no_function)),
+    %% The successful clause keeps the same counter and rewires sources to the new sink id.
+    DAG2 = update_sink(DAG, "node-1", fun(E, _M) -> {"node-1-renamed", E, meta_1_new} end),
+    ?assert(is_sink(DAG2, "node-1-renamed")),
+    ?assertEqual(meta_1_new, get_sink_metadata(DAG2)),
+    ?assertEqual(0, get_sink(DAG2)),
+    ?assertEqual(1, reconstruct(DAG2, "node-2", fun(Diff, E) -> E + Diff end)).
+
+reconstruct_errors_test() ->
+    DAG = add_node(new("node-1", 0, meta_1), "node-2", "node-1", 5, meta_2),
+    %% Unknown identifier returns {error, not_found} without applying any diff.
+    ?assertEqual(
+       {error, not_found},
+       reconstruct(DAG, "missing", fun(_Diff, _E) -> not_called end)
+      ),
+    %% Reconstructing the sink itself returns the entity untouched (no diffs applied).
+    ?assertEqual(0, reconstruct(DAG, "node-1", fun(_Diff, _E) -> not_called end)),
+    ?assertEqual(5, reconstruct(DAG, "node-2", fun(Diff, E) -> E + Diff end)).
+
+update_leaf_source_non_leaf_test() ->
+    %% node-1 (sink) <- node-2: {1, meta_2} <- node-3: {2, meta_3}
+    DAG0 = add_node(new("node-1", 0, meta_1), "node-2", "node-1", 1, meta_2),
+    DAG = add_node(DAG0, "node-3", "node-2", 2, meta_3),
+    %% node-2 is a source but not a leaf (node-3 points at it) -> badkey.
+    ?assertException(error, {badkey, "node-2"}, update_leaf_source(DAG, "node-2", no_function)),
+    %% node-1 is the sink (not a source) -> badkey.
+    ?assertException(error, {badkey, "node-1"}, update_leaf_source(DAG, "node-1", no_function)),
+    %% A non-existent node -> badkey.
+    ?assertException(error, {badkey, "node-4"}, update_leaf_source(DAG, "node-4", no_function)),
+    %% node-3 is a leaf source -> succeeds.
+    DAG2 = update_leaf_source(DAG, "node-3", fun(D, M) -> {"node-3", D + 10, M} end),
+    ?assertEqual(13, reconstruct(DAG2, "node-3", fun(Diff, E) -> E + Diff end)),
+    ?assertEqual(meta_3, get_metadata(DAG2, "node-3")).
+
+filter_multi_branch_test() ->
+    %% node-1 (sink, counter 0)
+    %%   <- node-a1: {c1} <- node-a2: {c2} <- node-a3: {c3}
+    %%   <- node-b1: {c1}
+    DAG0 = new("node-1", 0, meta_1),
+    DAGa1 = add_node(DAG0, "node-a1", "node-1", 1, meta_a1),
+    DAGa2 = add_node(DAGa1, "node-a2", "node-a1", 2, meta_a2),
+    DAGa3 = add_node(DAGa2, "node-a3", "node-a2", 3, meta_a3),
+    DAG = add_node(DAGa3, "node-b1", "node-1", 9, meta_b1),
+    %% Depth 0 keeps only the sink.
+    F0 = filter(DAG, 0),
+    ?assert(is_node(F0, "node-1")),
+    ?assert(not is_node(F0, "node-a1")),
+    ?assert(not is_node(F0, "node-a2")),
+    ?assert(not is_node(F0, "node-a3")),
+    ?assert(not is_node(F0, "node-b1")),
+    %% Depth 1 keeps the sink and its immediate sources (counter distance 1).
+    F1 = filter(DAG, 1),
+    ?assert(is_node(F1, "node-1")),
+    ?assert(is_node(F1, "node-a1")),
+    ?assert(is_node(F1, "node-b1")),
+    ?assert(not is_node(F1, "node-a2")),
+    ?assert(not is_node(F1, "node-a3")),
+    %% Depth 2 reaches node-a2 along the a-branch; node-a3 (distance 3) is pruned.
+    F2 = filter(DAG, 2),
+    ?assert(is_node(F2, "node-a2")),
+    ?assert(not is_node(F2, "node-a3")),
+    %% Depth 3 keeps the entire DAG unchanged.
+    ?assertEqual(DAG, filter(DAG, 3)),
+    ?assertEqual(DAG, filter(DAG, 4)).
+
+filter_prunes_subtree_test() ->
+    %% Pruning node-a1 (the closer node) must also drop the whole subtree below it,
+    %% exercising extend_with_subtree_identifiers.
+    DAG0 = new("node-1", 0, meta_1),
+    DAGa1 = add_node(DAG0, "node-a1", "node-1", 1, meta_a1),
+    DAGa2 = add_node(DAGa1, "node-a2", "node-a1", 2, meta_a2),
+    DAG = add_node(DAGa2, "node-a3", "node-a2", 3, meta_a3),
+    F0 = filter(DAG, 0),
+    ?assert(not is_node(F0, "node-a1")),
+    ?assert(not is_node(F0, "node-a2")),
+    ?assert(not is_node(F0, "node-a3")),
+    %% The sink's source set no longer references the pruned child.
+    ?assertException(error, {badkey, "node-a1"}, get_metadata(F0, "node-a1")),
+    %% Re-adding the pruned identifiers must succeed (source set was cleaned up).
+    F0b = add_node(F0, "node-a1", "node-1", 7, meta_a1b),
+    ?assertEqual(7, reconstruct(F0b, "node-a1", fun(Diff, E) -> E + Diff end)).
+
+move_sink_multi_hop_test() ->
+    %% node-1 (sink) <- node-2: {1, meta_2} <- node-3: {2, meta_3} <- node-4: {4, meta_4}
+    DAG0 = add_node(new("node-1", 0, meta_1), "node-2", "node-1", 1, meta_2),
+    DAG1 = add_node(DAG0, "node-3", "node-2", 2, meta_3),
+    DAG = add_node(DAG1, "node-4", "node-3", 4, meta_4),
+    ?assertEqual(7, reconstruct(DAG, "node-4", fun(Diff, E) -> E + Diff end)),
+    %% Move the sink three hops to node-4.
+    DAG2 = move_sink(DAG, "node-4", fun(Diff, E) -> E + Diff end, fun(Diff, _E) -> -Diff end),
+    ?assert(is_sink(DAG2, "node-4")),
+    ?assertEqual(7, get_sink(DAG2)),
+    %% Every original node is still reachable with its original reconstructed value...
+    ?assertEqual(0, reconstruct(DAG2, "node-1", fun(Diff, E) -> E + Diff end)),
+    ?assertEqual(1, reconstruct(DAG2, "node-2", fun(Diff, E) -> E + Diff end)),
+    ?assertEqual(3, reconstruct(DAG2, "node-3", fun(Diff, E) -> E + Diff end)),
+    ?assertEqual(7, reconstruct(DAG2, "node-4", fun(Diff, E) -> E + Diff end)),
+    %% ...and metadata is preserved across the move.
+    ?assertEqual(meta_1, get_metadata(DAG2, "node-1")),
+    ?assertEqual(meta_2, get_metadata(DAG2, "node-2")),
+    ?assertEqual(meta_3, get_metadata(DAG2, "node-3")),
+    ?assertEqual(meta_4, get_metadata(DAG2, "node-4")),
+    %% Counters (and therefore filter depth) are preserved: filtering with depth 3
+    %% keeps the whole DAG, depth 0 keeps only the new sink.
+    ?assertEqual(DAG2, filter(DAG2, 3)),
+    F0 = filter(DAG2, 0),
+    ?assert(is_node(F0, "node-4")),
+    ?assert(not is_node(F0, "node-1")),
+    ?assert(not is_node(F0, "node-2")),
+    ?assert(not is_node(F0, "node-3")).
+
+new_sink_metadata_test() ->
+    %% new/3 stores the sink entity and metadata; get_metadata on the sink returns it.
+    DAG = new("node-1", entity_0, meta_1),
+    ?assertEqual(entity_0, get_sink(DAG)),
+    ?assertEqual(meta_1, get_metadata(DAG, "node-1")),
+    ?assertEqual(meta_1, get_sink_metadata(DAG)),
+    ?assert(is_sink(DAG, "node-1")),
+    ?assert(is_node(DAG, "node-1")).

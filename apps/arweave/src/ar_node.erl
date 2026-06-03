@@ -277,9 +277,9 @@ get_balance({SigType, PubKey}) ->
     get_balance(ar_wallet:to_address(PubKey, SigType));
 get_balance(MaybeRSAPub) when byte_size(MaybeRSAPub) == 512 ->
     %% A legacy feature where we may search the public key instead of address.
-    ar_wallets:get_balance(ar_wallet:hash_pub_key(MaybeRSAPub));
+    ar_account_tree:get_balance(ar_wallet:hash_pub_key(MaybeRSAPub));
 get_balance(Addr) ->
-    ar_wallets:get_balance(Addr).
+    ar_account_tree:get_balance(Addr).
 
 %% @doc Get the last tx id associated with a given wallet address.
 %% Should the wallet not have made a tx the empty binary will be returned.
@@ -289,7 +289,7 @@ get_last_tx(MaybeRSAPub) when byte_size(MaybeRSAPub) == 512 ->
     %% A legacy feature where we may search the public key instead of address.
     get_last_tx(ar_wallet:hash_pub_key(MaybeRSAPub));
 get_last_tx(Addr) ->
-    {ok, ar_wallets:get_last_tx(Addr)}.
+    {ok, ar_account_tree:get_last_tx(Addr)}.
 
 get_recent_partition_upper_bound_by_prev_h(H) ->
     get_recent_partition_upper_bound_by_prev_h(H, 0).

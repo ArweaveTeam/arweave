@@ -2,10 +2,13 @@
 -module(ar_patricia_tree).
 -test_category([fast]).
 
--export([new/0, insert/3, get/2, size/1, compute_hash/2, foldr/3, is_empty/1, from_proplist/1,
-         delete/2, get_range/2, get_range/3]).
+-export([new/0, insert/3, get/2, size/1, compute_hash/2, compute_hash/3,
+         foldr/3, is_empty/1, from_proplist/1, delete/2, get_range/2, get_range/3]).
 
 -include_lib("eunit/include/eunit.hrl").
+
+%% Diagnostic: log a progress line every this many leaves hashed (see progress_* below).
+-define(PROGRESS_CHUNK, 1000000).
 
 %%%===================================================================
 %%% Public interface.
@@ -34,13 +37,26 @@ get(_Key, _Tree) ->
 size(Tree) ->
     maps:get(size, Tree).
 
-%% @doc Compute the root hash by recursively hashing the tree values.
-%% Each key value pair is hashed via the provided hash function. The hashes of the siblings
-%% are combined using ar_deep_hash:hash/1. The keys are traversed in the alphabetical order.
-compute_hash(#{ size := 0 } = Tree, _HashFun) ->
-    {<<>>, Tree, #{}};
+%% HashFun has two clauses: HashFun(leaf, {Key, Value}) hashes a leaf, HashFun(node,
+%% ChildHashes) combines sibling hashes. Returns {RootHash, Tree, UpdateMap}; UpdateMap is
+%% populated only when PersistOpts has return_update_map => true (the default for /2).
+-spec compute_hash(map(), fun()) -> {binary(), map(), map()}.
 compute_hash(Tree, HashFun) ->
-    compute_hash(Tree, HashFun, root, #{}).
+    compute_hash(Tree, HashFun, #{ return_update_map => true }).
+
+-spec compute_hash(map(), fun(), map()) -> {binary(), map(), map()}.
+compute_hash(#{ size := 0 } = Tree, _HashFun, _PersistOpts) ->
+    {<<>>, Tree, #{}};
+compute_hash(Tree, HashFun, PersistOpts) ->
+    Persist =
+        case maps:get(return_update_map, PersistOpts, false) of
+            true -> return_update_map;
+            false -> false
+        end,
+    progress_init(),
+    Result = do_compute_hash(Tree, HashFun, Persist, root, #{}),
+    progress_finish(),
+    Result.
 
 %% @doc Traverse the keys in the reversed alphabetical order iteratively applying
 %% the given function of a key, a value, and an accumulator.
@@ -214,7 +230,7 @@ get(Key, Tree, Level) ->
             end
     end.
 
-compute_hash(Tree, HashFun, KeyPrefix, UpdateMap) ->
+do_compute_hash(Tree, HashFun, Persist, KeyPrefix, UpdateMap) ->
     {Parent, Children, Hash, Suffix, MaybeValue} = maps:get(KeyPrefix, Tree),
     case Hash of
         no_hash ->
@@ -222,17 +238,19 @@ compute_hash(Tree, HashFun, KeyPrefix, UpdateMap) ->
                 true ->
                     {v, Value} = MaybeValue,
                     Key = << KeyPrefix/binary, Suffix/binary >>,
-                    NewHash = HashFun(Key, Value),
+                    NewHash = HashFun(leaf, {Key, Value}),
+                    progress_tick(),
                     NewTree = Tree#{
                                     KeyPrefix => {Parent, gb_sets:new(), NewHash, Suffix, {v, Value}}
                                    },
-                    UpdateMap2 = maps:put({NewHash, KeyPrefix}, {Key, Value}, UpdateMap),
+                    UpdateMap2 = accumulate(Persist, {NewHash, KeyPrefix}, {Key, Value},
+                                            UpdateMap),
                     {NewHash, NewTree, UpdateMap2};
                 false ->
                     {Hashes, UpdatedTree, UpdateMap2} = gb_sets_foldr(
                                                           fun(Child, {HashesAcc, TreeAcc, UpdateMapAcc}) ->
-                                                                  {ChildHash, TreeAcc2, UpdateMapAcc2} = compute_hash(TreeAcc,
-                                                                                                                      HashFun, Child, UpdateMapAcc),
+                                                                  {ChildHash, TreeAcc2, UpdateMapAcc2} = do_compute_hash(TreeAcc,
+                                                                                                                         HashFun, Persist, Child, UpdateMapAcc),
                                                                   {[{ChildHash, Child} | HashesAcc], TreeAcc2, UpdateMapAcc2}
                                                           end,
                                                           {[], Tree, UpdateMap},
@@ -242,22 +260,24 @@ compute_hash(Tree, HashFun, KeyPrefix, UpdateMap) ->
                         case MaybeValue of
                             {v, Value} ->
                                 Key = << KeyPrefix/binary, Suffix/binary >>,
-                                NewHash2 = HashFun(Key, Value),
+                                NewHash2 = HashFun(leaf, {Key, Value}),
                                 Hashes2 = [H || {H, _} <- Hashes],
-                                NewHash3 = ar_deep_hash:hash([NewHash2 | Hashes2]),
-                                {NewHash3, UpdateMap2#{ {NewHash2, KeyPrefix} => {Key, Value},
-                                                        {NewHash3, KeyPrefix} => [{NewHash2, KeyPrefix}
-                                                                                 | Hashes] }};
+                                NewHash3 = HashFun(node, [NewHash2 | Hashes2]),
+                                UpdateMapA = accumulate(Persist, {NewHash2, KeyPrefix},
+                                                        {Key, Value}, UpdateMap2),
+                                UpdateMapB = accumulate(Persist, {NewHash3, KeyPrefix},
+                                                        [{NewHash2, KeyPrefix} | Hashes], UpdateMapA),
+                                {NewHash3, UpdateMapB};
                             no_value ->
                                 case Hashes of
                                     [{SingleHash, _}] ->
-                                        {SingleHash, UpdateMap2#{
-                                                                 {SingleHash, KeyPrefix} => Hashes }};
+                                        {SingleHash, accumulate(Persist, {SingleHash, KeyPrefix},
+                                                                Hashes, UpdateMap2)};
                                     _ ->
                                         Hashes2 = [H || {H, _} <- Hashes],
-                                        NewHash2 = ar_deep_hash:hash(Hashes2),
-                                        {NewHash2, UpdateMap2#{
-                                                               {NewHash2, KeyPrefix} => Hashes }}
+                                        NewHash2 = HashFun(node, Hashes2),
+                                        {NewHash2, accumulate(Persist, {NewHash2, KeyPrefix},
+                                                              Hashes, UpdateMap2)}
                                 end
                         end,
                     {NewHash, UpdatedTree#{
@@ -266,6 +286,68 @@ compute_hash(Tree, HashFun, KeyPrefix, UpdateMap) ->
             end;
         _ ->
             {Hash, Tree, UpdateMap}
+    end.
+
+%% @doc Record one node's {Hash, KeyPrefix} => Value update into the UpdateMap, or skip it.
+accumulate(return_update_map, Key, Value, Map) ->
+    Map#{ Key => Value };
+accumulate(false, _Key, _Value, Map) ->
+    Map.
+
+%% @doc Diagnostic progress logging for compute_hash, gated by the AR_PATRICIA_PROGRESS
+%% environment variable (off by default). When enabled, logs a line every ?PROGRESS_CHUNK
+%% leaves with elapsed/throughput plus total heap memory and the number of GCs since start
+%% - intended to pinpoint the non-linear slowdown on large trees. Uses the process
+%% dictionary; compute_hash runs in a single process.
+progress_init() ->
+    case os:getenv("AR_PATRICIA_PROGRESS") of
+        V when V == false; V == ""; V == "0"; V == "false" ->
+            erlang:erase(pt_progress),
+            erlang:erase(pt_progress_gc0);
+        _ ->
+            Now = erlang:monotonic_time(millisecond),
+            {GCs, _, _} = erlang:statistics(garbage_collection),
+            erlang:put(pt_progress, {0, Now, Now}),
+            erlang:put(pt_progress_gc0, GCs),
+            io:format("[ar_patricia_tree progress] start mem=~BMB~n",
+                      [erlang:memory(total) div (1024 * 1024)])
+    end.
+
+progress_tick() ->
+    case erlang:get(pt_progress) of
+        undefined ->
+            ok;
+        {Count, T0, TLast} ->
+            Count2 = Count + 1,
+            case Count2 rem ?PROGRESS_CHUNK of
+                0 ->
+                    Now = erlang:monotonic_time(millisecond),
+                    {GCs, _, _} = erlang:statistics(garbage_collection),
+                    GC0 = erlang:get(pt_progress_gc0),
+                    ChunkMs = max(1, Now - TLast),
+                    io:format("[ar_patricia_tree progress] leaves=~B total=~Bms chunk=~Bms "
+                              "rate=~B/s mem=~BMB gcs=~B~n",
+                              [Count2, Now - T0, Now - TLast,
+                               (?PROGRESS_CHUNK * 1000) div ChunkMs,
+                               erlang:memory(total) div (1024 * 1024), GCs - GC0]),
+                    erlang:put(pt_progress, {Count2, T0, Now});
+                _ ->
+                    erlang:put(pt_progress, {Count2, T0, TLast})
+            end
+    end.
+
+progress_finish() ->
+    case erlang:get(pt_progress) of
+        undefined ->
+            ok;
+        {Count, T0, _} ->
+            Now = erlang:monotonic_time(millisecond),
+            {GCs, _, _} = erlang:statistics(garbage_collection),
+            GC0 = erlang:get(pt_progress_gc0),
+            io:format("[ar_patricia_tree progress] done leaves=~B total=~Bms mem=~BMB gcs=~B~n",
+                      [Count, Now - T0, erlang:memory(total) div (1024 * 1024), GCs - GC0]),
+            erlang:erase(pt_progress),
+            erlang:erase(pt_progress_gc0)
     end.
 
 foldr(Fun, Acc, Tree, KeyPrefix) ->
@@ -293,13 +375,7 @@ foldr(Fun, Acc, Tree, KeyPrefix) ->
     end.
 
 gb_sets_foldr(Fun, Acc, G) ->
-    case gb_sets:is_empty(G) of
-        true ->
-            Acc;
-        false ->
-            {Largest, G2} = gb_sets:take_largest(G),
-            gb_sets_foldr(Fun, Fun(Largest, Acc), G2)
-    end.
+    lists:foldr(Fun, Acc, gb_sets:to_list(G)).
 
 delete(Key, Tree, Level) ->
     {KeyPrefix, KeySuffix} = split_by_pos(Key, Level),
@@ -449,7 +525,10 @@ trie_test() ->
     T1 = new(),
     ?assertEqual(not_found, get(<<"aaa">>, T1)),
     ?assertEqual(true, is_empty(T1)),
-    HashFun = fun(K, V) -> crypto:hash(sha256, << K/binary, (term_to_binary(V))/binary >>) end,
+    HashFun = fun
+            (leaf, {K, V}) -> crypto:hash(sha256, << K/binary, (term_to_binary(V))/binary >>);
+            (node, Hashes) -> ar_deep_hash:hash(Hashes)
+        end,
     ?assertEqual(<<>>, element(1, compute_hash(T1, HashFun))),
     ?assertEqual(true, is_empty(delete(<<"a">>, T1))),
     ?assertEqual(0, ar_patricia_tree:size(T1)),
@@ -856,8 +935,10 @@ stochastic_test() ->
                         Map = maps:from_list(Permutation),
                         compare_with_map(Tree, Map),
                         SHA256Fun =
-                            fun(K, V) ->
-                                    crypto:hash(sha256, << K/binary, (term_to_binary(V))/binary >>)
+                            fun (leaf, {K, V}) ->
+                                    crypto:hash(sha256, << K/binary, (term_to_binary(V))/binary >>);
+                                (node, Hashes) ->
+                                    ar_deep_hash:hash(Hashes)
                             end,
                         lists:foreach(
                           fun({K, V}) ->

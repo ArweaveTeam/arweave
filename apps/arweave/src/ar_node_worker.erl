@@ -422,15 +422,15 @@ handle_cast(Message, #{ task_queue := TaskQueue } = State) ->
     end.
 
 handle_info({join_from_state, Height, BI, Blocks, CustomDir}, State) ->
-    {ok, _} = ar_wallets:start_link([{blocks, Blocks},
-                                     {from_state, ?START_FROM_STATE_SEARCH_DEPTH},
-                                     {custom_dir, CustomDir}]),
+    {ok, _} = ar_account_tree:start_link([{blocks, Blocks},
+                                          {from_state, ?START_FROM_STATE_SEARCH_DEPTH},
+                                          {custom_dir, CustomDir}]),
     ets:insert(node_state, {join_state, {Height, Blocks, BI, CustomDir}}),
     {noreply, State};
 
 handle_info({join, Height, BI, Blocks}, State) ->
     Peers = ar_peers:get_trusted_peers(),
-    {ok, _} = ar_wallets:start_link([{blocks, Blocks}, {from_peers, Peers}]),
+    {ok, _} = ar_account_tree:start_link([{blocks, Blocks}, {from_peers, Peers}]),
     ets:insert(node_state, {join_state, {Height, Blocks, BI, not_set}}),
     {noreply, State};
 
@@ -785,7 +785,7 @@ handle_task({filter_mempool, Mempool}, State) ->
                                                                          redenomination_height),
             [{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
             [{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
-            Wallets = ar_wallets:get(WalletList, ar_tx:get_addresses(List)),
+            Wallets = ar_account_tree:get(WalletList, ar_tx:get_addresses(List)),
             InvalidTXs =
                 prometheus_histogram:observe_duration(
                   reverify_mempool_chunk_duration_milliseconds,
@@ -1027,7 +1027,7 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
     [{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
     RootHash = PrevB#block.wallet_list,
     TXs = B#block.txs,
-    Accounts = ar_wallets:get(RootHash, [B#block.reward_addr | ar_tx:get_addresses(TXs)]),
+    Accounts = ar_account_tree:get(RootHash, [B#block.reward_addr | ar_tx:get_addresses(TXs)]),
     {Orphans, RecentBI2} = update_block_index(B, PrevBlocks, RecentBI),
     BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
     BlockTXPairs3 = tl(BlockTXPairs2),
@@ -1191,7 +1191,7 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
                     may_be_get_double_signing_proof2(Iterator2,
                                                      RootHash, LockedRewards, Height);
                 true ->
-                    Accounts = ar_wallets:get(RootHash, [Addr]),
+                    Accounts = ar_account_tree:get(RootHash, [Addr]),
                     case ar_node_utils:is_account_banned(Addr, Accounts) of
                         true ->
                             may_be_get_double_signing_proof2(Iterator2,
@@ -1248,7 +1248,7 @@ pack_block_with_transactions(B, PrevB) ->
             Proof ->
                 [ar_wallet:hash_pub_key(element(1, Proof)) | Addresses2]
         end,
-    Accounts = ar_wallets:get(PrevB#block.wallet_list, Addresses3),
+    Accounts = ar_account_tree:get(PrevB#block.wallet_list, Addresses3),
     [{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
     PrevBlocks = ar_block_cache:get_fork_blocks(block_cache, B),
     BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
@@ -1275,8 +1275,8 @@ pack_block_with_transactions(B, PrevB) ->
     Reward2 = ar_pricing:redenominate(Reward, PrevDenomination, Denomination),
     EndowmentPool2 = ar_pricing:redenominate(EndowmentPool, PrevDenomination, Denomination),
     DebtSupply2 = ar_pricing:redenominate(DebtSupply, PrevDenomination, Denomination),
-    {ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts2, Height,
-                                            Denomination),
+    {ok, RootHash} = ar_account_tree:add_wallets(PrevB#block.wallet_list, Accounts2, Height,
+                                                 Denomination),
     RewardHistory2 = ar_rewards:add_element(B2#block{ reward = Reward2 }, RewardHistory),
     %% Pre-2.8: slice the reward history to compute the hash
     %% Post-2.8: use the previous reward history hash and the head of the history to compute
@@ -1340,7 +1340,7 @@ block_txs_pair(B) ->
     {B#block.indep_hash, B#block.size_tagged_txs}.
 
 validate_wallet_list(#block{ indep_hash = H } = B, PrevB) ->
-    case ar_wallets:apply_block(B, PrevB) of
+    case ar_account_tree:apply_block(B, PrevB) of
         {error, invalid_denomination} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, invalid_denomination}, {h, ar_util:encode(H)}]),
@@ -1540,7 +1540,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
               Wallets = CurrentB#block.wallet_list,
               %% Use a twice bigger depth than the depth requested on join to serve
               %% the wallet trees to the joining nodes.
-              ok = ar_wallets:set_current(
+              ok = ar_account_tree:set_current(
                      Wallets, CurrentB#block.height, ar_block:get_consensus_window_size() * 2),
               CurrentB
       end,
@@ -2009,7 +2009,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
                 Now
         end,
     IsBanned = ar_node_utils:is_account_banned(MiningAddress,
-                                               ar_wallets:get(WalletList, MiningAddress)),
+                                               ar_account_tree:get(WalletList, MiningAddress)),
     %% Check the solution is ahead of the previous solution on the timeline.
     NonceLimiterInfo = #nonce_limiter_info{ global_step_number = StepNumber,
                                             output = NonceLimiterOutput,

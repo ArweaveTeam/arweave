@@ -1,0 +1,401 @@
+%%% @doc Impl-to-impl equivalence tests for the ETS-based and the map-based account
+%%% tree implementations. Every scenario runs against a matrix of account sets (varying counts,
+%%% prefix-sharing keys, and 4-tuple/denominated values) so the same logic is exercised over a
+%%% wide range of tree shapes.
+-module(ar_wallets_impl_tests).
+
+-include_lib("eunit/include/eunit.hrl").
+
+%%%===================================================================
+%%% Test generator
+%%%===================================================================
+
+ar_wallets_impl_test_() ->
+	{foreach, fun setup/0, fun cleanup/1,
+		[instantiator(Name, Scenario, Set)
+			|| {Name, Scenario} <- scenarios(), Set <- account_sets()]}.
+
+scenarios() ->
+	[
+		{tip_and_fork_reads, fun scenario_tip_and_fork_reads/2},
+		{reorg_and_uncle, fun scenario_reorg_and_uncle/2},
+		{removals, fun scenario_removals/2},
+		{denomination, fun scenario_denomination/2},
+		{chunk_pagination, fun scenario_chunk_pagination/2},
+		{unknown_and_pruned, fun scenario_unknown_and_pruned/2},
+		{step_equivalence, fun scenario_step_equivalence/2},
+		{chunked_build, fun scenario_chunked_build/2},
+		{excursions_leave_tip_clean, fun scenario_excursions_leave_tip_clean/2}
+	].
+
+%% The account sets the matrix iterates over. Each is {Name, Accounts, Denomination}, where
+%% Accounts is a list of {Address, WalletValue} with distinct keys, and every account's base
+%% denomination is =< Denomination.
+%% The empty-address account exists on mainnet, so most sets include a {<<>>, _} account. It is
+%% placed first, so the position-based diffs below update and remove it as well.
+account_sets() ->
+	[
+		{tiny, [empty_account(short) | simple_accounts(1, 3)], 1},
+		{many, [empty_account(short) | simple_accounts(1, 60)], 1},
+		{large, simple_accounts(1, 200), 1},
+		{shared_prefix, [empty_account(short) | prefix_accounts()], 1},
+		{four_tuple, [empty_account(full) | four_tuple_accounts()], 3}
+	].
+
+empty_account(short) ->
+	{<<>>, {77, tx(0)}};
+empty_account(full) ->
+	{<<>>, {77, tx(0), 1, true}}.
+
+instantiator(Name, Scenario, {SetName, _, _} = Set) ->
+	fun(Ctx) ->
+		Label = atom_to_list(Name) ++ " / " ++ atom_to_list(SetName),
+		{timeout, 60, {Label, Scenario(Ctx, Set)}}
+	end.
+
+%%%===================================================================
+%%% Scenarios
+%%%===================================================================
+
+%% Build a tip, fork it two ways, and assert tip and non-tip query results agree.
+scenario_tip_and_fork_reads({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		Addrs = addrs(Accounts),
+		{ok, R1} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = cmp(New, Legacy, {set_current, R1, 10, 20}),
+		%% Tip reads.
+		cmp(New, Legacy, {get, [unknown_addr() | Addrs]}),
+		cmp(New, Legacy, {get_balance, hd(Addrs)}),
+		cmp(New, Legacy, {get_balance, unknown_addr()}),
+		cmp(New, Legacy, {get_last_tx, hd(Addrs)}),
+		cmp(New, Legacy, {get_last_tx, unknown_addr()}),
+		cmp(New, Legacy, get_size),
+		%% Two forks off R1.
+		Fork2 = maps:merge(update_range(Accounts, 0, 2), add_fresh(2, Denom)),
+		Fork3 = update_range(Accounts, 2, 3),
+		{ok, R2} = cmp(New, Legacy, {add_wallets, R1, Fork2, 11, Denom}),
+		{ok, R3} = cmp(New, Legacy, {add_wallets, R1, Fork3, 11, Denom}),
+		Query = Addrs ++ fresh_addrs(2),
+		reads_at_all(New, Legacy, [R1, R2, R3, <<>>], Query)
+	end.
+
+%% Switch the tip across forks and confirm queries of the tip, the previous tip (now an uncle)
+%% and the fork base all agree after each move.
+scenario_reorg_and_uncle({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		Addrs = addrs(Accounts),
+		{ok, R1} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = cmp(New, Legacy, {set_current, R1, 10, 20}),
+		{ok, R2} = cmp(New, Legacy, {add_wallets, R1, update_range(Accounts, 0, 1), 11, Denom}),
+		{ok, R3} = cmp(New, Legacy, {add_wallets, R1,
+				maps:merge(update_range(Accounts, 1, 2), add_fresh(1, Denom)), 11, Denom}),
+		Query = Addrs ++ fresh_addrs(1),
+		ok = cmp(New, Legacy, {set_current, R2, 11, 20}),
+		%% R2 bumped the LastTX (and balance) of the updated accounts. get_last_tx reflects it.
+		[cmp(New, Legacy, {get_last_tx, A}) || A <- Addrs],
+		reads_at_all(New, Legacy, [R1, R2, R3, <<>>], Query),
+		%% Reorg to the sibling fork.
+		ok = cmp(New, Legacy, {set_current, R3, 11, 20}),
+		reads_at_all(New, Legacy, [R1, R2, R3, <<>>], Query),
+		%% Extend R3 and reorg forward again.
+		{ok, R4} = cmp(New, Legacy, {add_wallets, R3, update_range(Accounts, 0, 1), 12, Denom}),
+		ok = cmp(New, Legacy, {set_current, R4, 12, 20}),
+		reads_at_all(New, Legacy, [R1, R2, R3, R4], Query)
+	end.
+
+%% A diff that removes existing accounts must reconstruct identically in both impls.
+scenario_removals({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		Addrs = addrs(Accounts),
+		{ok, R1} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = cmp(New, Legacy, {set_current, R1, 10, 20}),
+		{ok, R2} = cmp(New, Legacy, {add_wallets, R1, remove_range(Accounts, 0, 1), 11, Denom}),
+		{ok, R3} = cmp(New, Legacy, {add_wallets, R1,
+				maps:merge(remove_range(Accounts, 1, 2), update_range(Accounts, 2, 3)), 11,
+				Denom}),
+		reads_at_all(New, Legacy, [R1, R2, R3], Addrs),
+		ok = cmp(New, Legacy, {set_current, R2, 11, 20}),
+		reads_at_all(New, Legacy, [R1, R2, R3], Addrs),
+		cmp(New, Legacy, get_size)
+	end.
+
+%% Advance the denomination on a fork and confirm balances redenominate identically.
+scenario_denomination({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		Addrs = addrs(Accounts),
+		{ok, R1} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = cmp(New, Legacy, {set_current, R1, 10, 20}),
+		[cmp(New, Legacy, {get_balance, A}) || A <- Addrs],
+		%% A fork advancing the denomination by one, also touching one account.
+		{ok, R2} = cmp(New, Legacy, {add_wallets, R1, update_range(Accounts, 0, 1), 11,
+				Denom + 1}),
+		[cmp(New, Legacy, {get_balance, R2, A}) || A <- Addrs],
+		cmp(New, Legacy, {get, R2, Addrs}),
+		ok = cmp(New, Legacy, {set_current, R2, 11, 20}),
+		[cmp(New, Legacy, {get_balance, A}) || A <- Addrs],
+		[cmp(New, Legacy, {get_balance, R1, A}) || A <- Addrs]
+	end.
+
+%% With ?WALLET_LIST_CHUNK_SIZE == 2 under test, more than two accounts paginate. Walk the
+%% cursor over the tip and over a non-tip root.
+scenario_chunk_pagination({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		{ok, R1} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = cmp(New, Legacy, {set_current, R1, 10, 20}),
+		walk_chunks(New, Legacy, R1),
+		{ok, R2} = cmp(New, Legacy, {add_wallets, R1,
+				maps:merge(add_fresh(2, Denom), remove_range(Accounts, 0, 1)), 11, Denom}),
+		walk_chunks(New, Legacy, R2),
+		walk_chunks(New, Legacy, R1)
+	end.
+
+%% Unknown roots return the same error in both impls. A chain deeper than the prune depth drops
+%% the base off both DAGs together.
+scenario_unknown_and_pruned({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		Addrs = addrs(Accounts),
+		Bogus = unknown_addr(),
+		?assertEqual(gen_server:call(Legacy, {get, Bogus, Addrs}),
+				gen_server:call(New, {get, Bogus, Addrs})),
+		?assertEqual(gen_server:call(Legacy, {get_chunk, Bogus, first}),
+				gen_server:call(New, {get_chunk, Bogus, first})),
+		{ok, R1} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = cmp(New, Legacy, {set_current, R1, 10, 1}),
+		{ok, R2} = cmp(New, Legacy, {add_wallets, R1, update_range(Accounts, 0, 1), 11, Denom}),
+		ok = cmp(New, Legacy, {set_current, R2, 11, 1}),
+		{ok, R3} = cmp(New, Legacy, {add_wallets, R2, update_range(Accounts, 1, 2), 12, Denom}),
+		ok = cmp(New, Legacy, {set_current, R3, 12, 1}),
+		%% With prune depth 1 the empty base root is now beyond the window in both.
+		?assertEqual(gen_server:call(Legacy, {get, <<>>, Addrs}),
+				gen_server:call(New, {get, <<>>, Addrs})),
+		reads_at_all(New, Legacy, [R3], Addrs)
+	end.
+
+%% Reaching a state one-shot, in several steps, and in several steps with a rollback in the
+%% middle must all produce the same tip root (and so the same balances) in both impls. This pins
+%% canonicity and the move_sink/snapshot round trips through the public API.
+scenario_step_equivalence({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		%% Disjoint batches so the merged one-shot diff equals applying them in sequence.
+		Batch1 = update_range(Accounts, 0, 2),
+		Batch2 = maps:merge(update_range(Accounts, 2, 4), add_fresh(2, Denom)),
+		Batch3 = remove_range(Accounts, 4, 6),
+		Merged = maps:merge(maps:merge(Batch1, Batch2), Batch3),
+		{ok, R0} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = cmp(New, Legacy, {set_current, R0, 10, 20}),
+		%% One-shot.
+		{ok, OneShot} = cmp(New, Legacy, {add_wallets, R0, Merged, 11, Denom}),
+		%% Multi-step: apply the batches as a chain, set_current after each.
+		MultiStep = apply_steps(New, Legacy, R0, [Batch1, Batch2, Batch3], Denom, 11),
+		?assertEqual(OneShot, MultiStep, multi_step),
+		%% Rollback: apply two steps, reorg back to the first, then re-apply forward.
+		{ok, S1} = cmp(New, Legacy, {add_wallets, R0, Batch1, 11, Denom}),
+		ok = cmp(New, Legacy, {set_current, S1, 11, 20}),
+		{ok, S2} = cmp(New, Legacy, {add_wallets, S1, Batch2, 12, Denom}),
+		ok = cmp(New, Legacy, {set_current, S2, 12, 20}),
+		ok = cmp(New, Legacy, {set_current, S1, 11, 20}),
+		Rolled = apply_steps(New, Legacy, S1, [Batch2, Batch3], Denom, 12),
+		?assertEqual(OneShot, Rolled, rollback),
+		%% Balances at the (shared) final root agree across impls.
+		ok = cmp(New, Legacy, {set_current, OneShot, 13, 20}),
+		[cmp(New, Legacy, {get_balance, A}) || A <- addrs(Accounts)]
+	end.
+
+%% The tree is canonical: the same accounts reach the same tip root no matter the order they are
+%% added in. This matters across forks, where competing chains can apply the same updates in
+%% different orders. Build the set one-shot and as disjoint chunks added forward and reversed,
+%% and assert all reach the same root in both impls.
+scenario_chunked_build({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		{ok, OneShot} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		Chunks = chunkify(Accounts, 3),
+		Forward = build_chunks(New, Legacy, Chunks, Denom),
+		Reverse = build_chunks(New, Legacy, lists:reverse(Chunks), Denom),
+		?assertEqual(OneShot, Forward, forward),
+		?assertEqual(OneShot, Reverse, reverse)
+	end.
+
+%% Hashing or traversing a non-tip representation moves the shared ETS working tree off the tip
+%% and back. With snapshot-restore that round trip must leave the tip's ETS table byte-identical
+%% (cached hashes included), so the next tip operation re-hashes nothing extra.
+scenario_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		Addrs = addrs(Accounts),
+		{ok, R1} = gen_server:call(New, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = gen_server:call(New, {set_current, R1, 10, 20}),
+		Before = table_dump(),
+		{ok, R2} = gen_server:call(New, {add_wallets, R1, update_range(Accounts, 0, 1), 11,
+				Denom}),
+		{ok, _R3} = gen_server:call(New, {add_wallets, R1,
+				maps:merge(remove_range(Accounts, 1, 2), add_fresh(2, Denom)), 11, Denom}),
+		gen_server:call(New, {get_chunk, R2, first}),
+		gen_server:call(New, {get, R2, Addrs}),
+		[gen_server:call(New, {get_balance, R2, A}) || A <- Addrs],
+		?assertEqual(Before, table_dump())
+	end.
+
+%%%===================================================================
+%%% Helpers
+%%%===================================================================
+
+setup() ->
+	Stubs = [ensure_stub(N) || N <- [ar_node_worker, ar_storage]],
+	{ok, New} = gen_server:start_link(ar_account_tree, [{blocks, []}], []),
+	{ok, Legacy} = gen_server:start_link(ar_wallets_legacy, [{blocks, []}], []),
+	{New, Legacy, [S || S <- Stubs, S /= existing]}.
+
+cleanup({New, Legacy, Stubs}) ->
+	gen_server:stop(New),
+	gen_server:stop(Legacy),
+	[begin unregister_safe(Name), exit(Pid, kill) end || {stub, Name, Pid} <- Stubs],
+	ok.
+
+ensure_stub(Name) ->
+	case whereis(Name) of
+		undefined ->
+			Pid = spawn(fun drain/0),
+			register(Name, Pid),
+			{stub, Name, Pid};
+		_ ->
+			existing
+	end.
+
+unregister_safe(Name) ->
+	catch unregister(Name).
+
+drain() ->
+	receive _ -> drain() end.
+
+%% @doc Issue the same raw request to both gen_servers and assert identical replies.
+cmp(New, Legacy, Request) ->
+	NewReply = gen_server:call(New, Request),
+	LegacyReply = gen_server:call(Legacy, Request),
+	?assertEqual(LegacyReply, NewReply, {request, Request}),
+	NewReply.
+
+%% @doc Apply a list of diffs as a chain off Root (add_wallets then set_current for each) and
+%% return the final root. Heights increase from StartHeight.
+apply_steps(New, Legacy, Root, Diffs, Denom, StartHeight) ->
+	{Final, _} = lists:foldl(
+		fun(Diff, {Base, Height}) ->
+			{ok, Next} = cmp(New, Legacy, {add_wallets, Base, Diff, Height, Denom}),
+			ok = cmp(New, Legacy, {set_current, Next, Height, 20}),
+			{Next, Height + 1}
+		end,
+		{Root, StartHeight},
+		Diffs
+	),
+	Final.
+
+%% Add each disjoint chunk on top of the previous tip, returning the final root.
+build_chunks(New, Legacy, Chunks, Denom) ->
+	{Root, _} = lists:foldl(
+		fun(Chunk, {Base, Height}) ->
+			{ok, Next} = cmp(New, Legacy, {add_wallets, Base, maps:from_list(Chunk), Height,
+					Denom}),
+			ok = cmp(New, Legacy, {set_current, Next, Height, 20}),
+			{Next, Height + 1}
+		end,
+		{<<>>, 10},
+		Chunks
+	),
+	Root.
+
+%% Split a list into N (or fewer) disjoint contiguous chunks.
+chunkify(List, N) ->
+	Size = max(1, (length(List) + N - 1) div N),
+	chunk_by(List, Size).
+
+chunk_by([], _Size) ->
+	[];
+chunk_by(List, Size) ->
+	{Head, Tail} = lists:split(min(Size, length(List)), List),
+	[Head | chunk_by(Tail, Size)].
+
+reads_at_all(New, Legacy, Roots, Addresses) ->
+	cmp(New, Legacy, {get, Addresses}),
+	cmp(New, Legacy, get_size),
+	[cmp(New, Legacy, {get, Root, Addresses}) || Root <- Roots],
+	[cmp(New, Legacy, {get_balance, Root, Addr}) || Root <- Roots, Addr <- Addresses],
+	ok.
+
+walk_chunks(New, Legacy, Root) ->
+	walk_chunks(New, Legacy, Root, first).
+
+walk_chunks(New, Legacy, Root, Cursor) ->
+	{ok, {NextCursor, _Range}} = cmp(New, Legacy, {get_chunk, Root, Cursor}),
+	case NextCursor of
+		last ->
+			ok;
+		_ ->
+			walk_chunks(New, Legacy, Root, NextCursor)
+	end.
+
+table_dump() ->
+	lists:sort(ets:tab2list(ar_patricia_tree)).
+
+%%%===================================================================
+%%% Account set builders and diff derivation.
+%%%===================================================================
+
+addrs(Accounts) ->
+	[Addr || {Addr, _} <- Accounts].
+
+base_map(Accounts) ->
+	maps:from_list(Accounts).
+
+simple_accounts(From, To) ->
+	[{addr(I), {I * 100, tx(I)}} || I <- lists:seq(From, To)].
+
+%% Distinct 32-byte keys sharing leading bytes to varying degrees, to exercise the radix tree's
+%% splitting and merging.
+prefix_accounts() ->
+	Keys = lists:usort([pad32(<< (I rem 3):8, (I rem 5):8, I:8 >>) || I <- lists:seq(1, 40)]),
+	[{Key, {erlang:phash2(Key, 1000000000), crypto:hash(sha256, Key)}} || Key <- Keys].
+
+%% 4-tuple accounts {Balance, LastTX, BaseDenomination, MiningPermission} with base
+%% denominations 1..3, used with a tree denomination of 3.
+four_tuple_accounts() ->
+	[{addr(1000 + I), {I * 1000, tx(1000 + I), 1 + (I rem 3), I rem 2 == 0}}
+			|| I <- lists:seq(1, 20)].
+
+%% A diff updating the accounts at 0-indexed positions From..To-1 to bumped values.
+update_range(Accounts, From, To) ->
+	maps:from_list([{Addr, bump(Value)} || {Addr, Value} <- slice(Accounts, From, To)]).
+
+%% A diff removing the accounts at 0-indexed positions From..To-1.
+remove_range(Accounts, From, To) ->
+	maps:from_list([{Addr, remove} || {Addr, _} <- slice(Accounts, From, To)]).
+
+slice(Accounts, From, To) ->
+	lists:sublist(Accounts, From + 1, max(0, To - From)).
+
+%% A diff adding N fresh accounts (keys disjoint from every account set).
+add_fresh(N, _Denom) ->
+	maps:from_list([{Addr, {900000 + I, tx_bin(Addr)}} || {I, Addr} <- enum(fresh_addrs(N))]).
+
+fresh_addrs(N) ->
+	[addr(900000 + I) || I <- lists:seq(1, N)].
+
+enum(List) ->
+	lists:zip(lists:seq(1, length(List)), List).
+
+bump({Balance, _LastTX}) ->
+	{Balance + 1, crypto:hash(sha256, <<Balance:64>>)};
+bump({Balance, _LastTX, BaseDenomination, MiningPermission}) ->
+	{Balance + 1, crypto:hash(sha256, <<Balance:64>>), BaseDenomination, not MiningPermission}.
+
+unknown_addr() ->
+	addr(7777777).
+
+addr(I) ->
+	crypto:hash(sha256, <<I:32>>).
+
+tx(I) ->
+	crypto:hash(sha256, <<I:64>>).
+
+tx_bin(Addr) ->
+	crypto:hash(sha256, <<Addr/binary, 0>>).
+
+pad32(Prefix) when byte_size(Prefix) =< 32 ->
+	<< Prefix/binary, 0:((32 - byte_size(Prefix)) * 8) >>.

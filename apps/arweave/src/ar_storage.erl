@@ -440,7 +440,7 @@ read_account2(Addr, RootHash, CustomDir) ->
     %% Unfortunately, we do not have an easy access to the information about how many
     %% accounts there were in the given tree so we perform the binary search starting
     %% from the number in the latest block.
-    Size = ar_wallets:get_size(),
+    Size = ar_account_tree:get_size(),
     MaxFileCount = Size div ?WALLET_LIST_CHUNK_SIZE + 1,
     Dir =
         case CustomDir of
@@ -1194,6 +1194,22 @@ handle_cast({store_account_tree_update, Height, RootHash, Map}, State) ->
 handle_cast(Cast, State) ->
     ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
     {noreply, State}.
+
+%% @doc Receive a batch of account tree node updates streamed by
+%% ar_patricia_tree_ets:compute_hash/3 (with #{ sink => PID }) and persist them to
+%% account_tree_db. Nodes are content-addressed (the key embeds the node hash), so the
+%% write is idempotent.
+handle_info({account_tree_node_batch, Batch}, State) ->
+    case ar_kv:write_batch(account_tree_db,
+                           [{Key, term_to_binary(Value)} || {Key, Value} <- Batch]) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            ?LOG_ERROR([{event, failed_to_store_account_tree_node_batch},
+                        {batch_size, length(Batch)},
+                        {reason, io_lib:format("~p", [Reason])}])
+    end,
+    {noreply, State};
 
 handle_info(Message, State) ->
     ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),

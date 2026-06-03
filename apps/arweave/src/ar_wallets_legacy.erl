@@ -1,8 +1,10 @@
-%%% @doc The module manages the states of wallets (their balances and last transactions)
+%%% @doc The pre-ETS, map-based account-tree manager, kept verbatim (module/registered name
+%%% aside) so the ETS-based ar_wallets can be compared against it head-to-head in tests.
+%%% The module manages the states of wallets (their balances and last transactions)
 %%% in different blocks. Since wallet lists are huge, only one copy is stored at any time,
 %%% along with the small "diffs", which allow to reconstruct the wallet lists of the previous,
 %%% following, and uncle blocks.
--module(ar_wallets).
+-module(ar_wallets_legacy).
 
 -export([start_link/1, get/1, get/2, get_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,
         apply_block/2, add_wallets/4, set_current/3, get_size/0]).
@@ -22,7 +24,7 @@ start_link(Args) ->
 %% @doc Return the map mapping the given addresses to the corresponding wallets
 %% from the latest wallet tree.
 get(Address) when is_binary(Address) ->
-    ar_wallets:get([Address]);
+    ?MODULE:get([Address]);
 get(Addresses) ->
     gen_server:call(?MODULE, {get, Addresses}, ?DEFAULT_CALL_TIMEOUT).
 

@@ -7,8 +7,10 @@
          get_sub_chunks_per_replica_2_9_entropy/0, get_replica_2_9_entropy_count/0,
          get_replica_2_9_footprint_size/0, strict_data_split_threshold/0,
          get_merkle_rebase_support_threshold/0,
-         block_field_size_limit/1, verify_timestamp/2, get_max_timestamp_deviation/0, verify_last_retarget/2,
-         verify_weave_size/3, verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
+         block_field_size_limit/1, verify_timestamp/2, get_max_timestamp_deviation/0,
+         verify_last_retarget/2, verify_weave_size/3,
+         verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
+         wallet_list_hash_fun/0,
          compute_hash_list_merkle/1, compute_h0/2, compute_h0/5, compute_h0/6,
          compute_h1/3, compute_h2/3, compute_solution_h/2,
          indep_hash/1, indep_hash/2, indep_hash2/2, get_block_signature_preimage/4,
@@ -18,8 +20,8 @@
          hash_wallet_list/1, generate_hash_list_for_block/2,
          generate_tx_root_for_block/1, generate_tx_root_for_block/2,
          generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
-         test_wallet_list_performance/0, test_wallet_list_performance/1,
-         test_wallet_list_performance/2, test_wallet_list_performance/3,
+         test_account_tree_performance/1, test_account_tree_performance/2,
+         bench_account_tree_matrix/0, bench_account_tree_matrix/1, bench_account_tree_matrix/4,
          poa_to_list/1, shift_packing_2_5_threshold/1,
          get_packing_threshold/2, compute_next_vdf_difficulty/1,
          validate_proof_size/1, vdf_step_number/1, get_packing/3,
@@ -786,26 +788,30 @@ encode_bin(N, S) -> ar_serialize:encode_bin(N, S).
 encode_bin_list(L, LS, ES) -> ar_serialize:encode_bin_list(L, LS, ES).
 
 hash_wallet_list(WalletList) ->
-    ar_patricia_tree:compute_hash(WalletList,
-                                  fun   (Addr, {Balance, LastTX}) ->
-                                          EncodedBalance = binary:encode_unsigned(Balance),
-                                          ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
-                                        (Addr, {Balance, LastTX, Denomination, MiningPermission}) ->
-                                          MiningPermissionBin =
-                                              case MiningPermission of
-                                                  true ->
-                                                      <<1>>;
-                                                  false ->
-                                                      <<0>>
-                                              end,
-                                          Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
-                                                        (ar_serialize:encode_int(Balance, 8))/binary,
-                                                        (ar_serialize:encode_bin(LastTX, 8))/binary,
-                                                        (ar_serialize:encode_int(Denomination, 8))/binary,
-                                                        MiningPermissionBin/binary >>,
-                                          crypto:hash(sha384, Preimage)
-                                  end
-                                 ).
+    ar_patricia_tree:compute_hash(WalletList, wallet_list_hash_fun()).
+
+%% @doc Hash the leaf or node of the account tree.
+wallet_list_hash_fun() ->
+    fun (leaf, {Addr, {Balance, LastTX}}) ->
+            EncodedBalance = binary:encode_unsigned(Balance),
+            ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
+        (leaf, {Addr, {Balance, LastTX, Denomination, MiningPermission}}) ->
+            MiningPermissionBin =
+                case MiningPermission of
+                    true ->
+                        <<1>>;
+                    false ->
+                        <<0>>
+                end,
+            Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
+                          (ar_serialize:encode_int(Balance, 8))/binary,
+                          (ar_serialize:encode_bin(LastTX, 8))/binary,
+                          (ar_serialize:encode_int(Denomination, 8))/binary,
+                          MiningPermissionBin/binary >>,
+            crypto:hash(sha384, Preimage);
+        (node, Hashes) ->
+            ar_deep_hash:hash(Hashes)
+    end.
 
 %% @doc Generate the TX tree and set the TX root for a block.
 generate_tx_tree(B) ->
@@ -972,143 +978,206 @@ generate_size_tagged_list_from_txs_test() ->
                                                      #tx{ id = <<"5">>, format = 2 },
                                                      #tx{ id = <<"6">>, format = 2, data_size = 262144 }], Fork_2_5)).
 
-test_wallet_list_performance() ->
-    test_wallet_list_performance(250_000, ar_deep_hash, mixed).
+%% @doc Benchmark account-tree build and hashing. Opts (all optional):
+%%   hash            => ar_deep_hash (default) | sha256 - leaf and node hashing
+%%   tree_repr       => in_memory (default) | legacy | ets
+%%                            - ar_patricia_tree | ar_patricia_tree_legacy | ar_patricia_tree_ets
+%%   persist_updates => true (default) | false          - in_memory/legacy: return the UpdateMap;
+%%                                                         ets: stream node updates to given PID
+%% Denominations are always mixed (~50/50 old/new account format).
+test_account_tree_performance(NumAccounts) ->
+    test_account_tree_performance(NumAccounts, #{}).
 
-test_wallet_list_performance(Length) ->
-    test_wallet_list_performance(Length, ar_deep_hash, mixed).
+test_account_tree_performance(NumAccounts, Opts) ->
+    Hash = maps:get(hash, Opts, ar_deep_hash),
+    TreeRepr = maps:get(tree_repr, Opts, in_memory),
+    PersistUpdates = maps:get(persist_updates, Opts, true),
+    %% gc_before => true (default) runs erlang:garbage_collect/0 before every timed step.
+    %% Set it to false to measure on a warm heap (no pre-step collection).
+    GCBefore = maps:get(gc_before, Opts, true),
+    case run_account_tree_bench(NumAccounts, Hash, TreeRepr, PersistUpdates, GCBefore) of
+        {error, Msg} ->
+            io:format("~s~n", [Msg]);
+        {ok, Metrics} ->
+            print_account_tree_metrics(Metrics)
+    end.
 
-test_wallet_list_performance(Length, Algo) ->
-    test_wallet_list_performance(Length, Algo, mixed).
-
-test_wallet_list_performance(Length, Algo, Denominations) ->
-    SupportedAlgos = [ar_deep_hash, no_ar_deep_hash_sha384, sha256],
-    case lists:member(Algo, SupportedAlgos) of
-        false ->
-            io:format("Supported Algo: ~p~n", [SupportedAlgos]);
-        true ->
-            SupportedDenominations = [old, new, mixed],
-            case lists:member(Denominations, SupportedDenominations) of
-                false ->
-                    io:format("Supported Algo: ~p~n", [SupportedDenominations]);
-                true ->
-                    test_wallet_list_performance2(Length, Algo, Denominations)
+%% @doc Run one account-tree benchmark in an isolated process (heap isolation + GC on exit)
+%% and return its metrics map, or {error, Msg} on invalid options or a crash.
+%% When GCBefore is true, call erlang:garbage_collect/0 before every step.
+run_account_tree_bench(NumAccounts, Hash, TreeRepr, PersistUpdates, GCBefore) ->
+    case validate_account_tree_bench_opts(Hash, TreeRepr, PersistUpdates) of
+        {error, _} = Error ->
+            Error;
+        ok ->
+            PersistOpts = account_tree_persist_opts(TreeRepr, PersistUpdates),
+            Parent = self(),
+            {Pid, Ref} = spawn_opt(
+                           fun() ->
+                                   Metrics = measure_account_tree(NumAccounts, Hash, TreeRepr,
+                                                                  PersistUpdates, PersistOpts, GCBefore),
+                                   Parent ! {account_tree_metrics, self(), Metrics}
+                           end,
+                           [monitor]
+                          ),
+            receive
+                {account_tree_metrics, Pid, Metrics} ->
+                    erlang:demonitor(Ref, [flush]),
+                    {ok, Metrics};
+                {'DOWN', Ref, process, Pid, Reason} ->
+                    {error, io_lib:format("benchmark crashed: ~p", [Reason])}
             end
     end.
 
-test_wallet_list_performance2(Length, Algo, Denominations) ->
+validate_account_tree_bench_opts(Hash, TreeRepr, PersistUpdates) ->
+    Hashes = [ar_deep_hash, sha256],
+    Reprs = [in_memory, legacy, ets],
+    Bools = [true, false],
+    case {lists:member(Hash, Hashes), lists:member(TreeRepr, Reprs),
+          lists:member(PersistUpdates, Bools)} of
+        {false, _, _} -> {error, io_lib:format("Supported hash: ~p", [Hashes])};
+        {_, false, _} -> {error, io_lib:format("Supported tree_repr: ~p", [Reprs])};
+        {_, _, false} -> {error, io_lib:format("Supported persist_updates: ~p", [Bools])};
+        _ -> ok
+    end.
 
-    io:format("# ~B wallets, denominations: ~p, algo: ~p~n", [Length, Denominations, Algo]),
-    io:format("============~n"),
-    WL = [random_wallet() || _ <- lists:seq(1, Length)],
-    {Time1, T1} =
-        timer:tc(
-          fun() ->
-                  lists:foldl(
-                    fun({A, B, LastTX}, Acc) ->
-                            case Denominations of
-                                old ->
-                                    ar_patricia_tree:insert(A, {B, LastTX}, Acc);
-                                new ->
-                                    ar_patricia_tree:insert(A, {B, LastTX,
-                                                                1 + rand:uniform(10), true}, Acc);
-                                mixed ->
-                                    case rand:uniform(2) == 1 of
-                                        true ->
-                                            ar_patricia_tree:insert(A, {B, LastTX}, Acc);
-                                        false ->
-                                            ar_patricia_tree:insert(A, {B, LastTX,
-                                                                        1 + rand:uniform(10), true}, Acc)
-                                    end
-                            end
-                    end,
-                    ar_patricia_tree:new(),
-                    WL
-                   )
-          end
-         ),
-    io:format("tree buildup                    | ~f seconds~n", [Time1 / 1000000]),
-    {Time2, Binary} =
-        timer:tc(
-          fun() ->
-                  ar_serialize:jsonify(
-                    ar_serialize:wallet_list_to_json_struct(unclaimed, false, T1)
-                   )
-          end
-         ),
-    io:format("serialization                   | ~f seconds~n", [Time2 / 1000000]),
-    io:format("                                | ~B bytes~n", [byte_size(Binary)]),
-    ComputeHashFun =
-        fun (Addr, {Balance, LastTX}) ->
-                case Algo of
-                    ar_deep_hash ->
-                        EncodedBalance = binary:encode_unsigned(Balance),
-                        ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
-                    _ ->
-                        Denomination = 0,
-                        MiningPermissionBin = <<1>>,
-                        Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
-                                      (ar_serialize:encode_int(Balance, 8))/binary,
-                                      (ar_serialize:encode_bin(LastTX, 8))/binary,
-                                      (ar_serialize:encode_int(Denomination, 8))/binary,
-                                      MiningPermissionBin/binary >>,
-                        case Algo of
-                            no_ar_deep_hash_sha384 ->
-                                crypto:hash(sha384, Preimage);
-                            sha256 ->
-                                crypto:hash(sha256, Preimage)
-                        end
-                end;
-            (Addr, {Balance, LastTX, Denomination, MiningPermission}) ->
-                MiningPermissionBin =
-                    case MiningPermission of
-                        true ->
-                            <<1>>;
-                        false ->
-                            <<0>>
-                    end,
-                Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
-                              (ar_serialize:encode_int(Balance, 8))/binary,
-                              (ar_serialize:encode_bin(LastTX, 8))/binary,
-                              (ar_serialize:encode_int(Denomination, 8))/binary,
-                              MiningPermissionBin/binary >>,
-                case Algo of
-                    sha256 ->
-                        crypto:hash(sha256, Preimage);
-                    _ ->
-                        crypto:hash(sha384, Preimage)
-                end
+repr_module(in_memory) -> ar_patricia_tree;
+repr_module(legacy) -> ar_patricia_tree_legacy;
+repr_module(ets) -> ar_patricia_tree_ets.
+
+%% @doc Map the persist_updates flag to the impl-specific compute_hash/3 PersistOpts. For ets,
+%% the #{ sink => Pid } entry is added by measure_account_tree/6.
+account_tree_persist_opts(in_memory, true) -> #{ return_update_map => true };
+account_tree_persist_opts(in_memory, false) -> #{};
+account_tree_persist_opts(legacy, true) -> #{ return_update_map => true };
+account_tree_persist_opts(legacy, false) -> #{};
+account_tree_persist_opts(ets, _PersistUpdates) -> #{}.
+
+%% @doc Run the build/hash/rehash measurements and return a metrics map (all times in seconds,
+%% footprints in MB; serialization is skipped for the ets repr). When GCBefore is true,
+%% erlang:garbage_collect/0 runs before each timed step.
+%% Meant to run inside an isolated worker (see run_account_tree_bench/5).
+measure_account_tree(NumAccounts, Hash, TreeRepr, PersistUpdates, PersistOpts, GCBefore) ->
+    Mod = repr_module(TreeRepr),
+    HashFun = bench_hash_fun(Hash),
+    %% ets persistence streams node-update batches to a sink process. The bench drains and
+    %% discards them, so compute_hash measures hashing + batch shipping but not storage I/O -
+    %% a fair head-to-head with the in-memory impls (which only build the UpdateMap on the heap).
+    {PersistOpts2, Sink} =
+        case {TreeRepr, PersistUpdates} of
+            {ets, true} -> S = spawn_discard_sink(), {PersistOpts#{ sink => S }, S};
+            _ -> {PersistOpts, undefined}
         end,
-    {Time3, {_, T2, _}} =
-        timer:tc(fun() -> ar_patricia_tree:compute_hash(T1, ComputeHashFun) end),
-    io:format("root hash from scratch          | ~f seconds~n", [Time3 / 1000000]),
-    {Time4, T3} =
-        timer:tc(
-          fun() ->
-                  lists:foldl(
-                    fun({A, B, LastTX}, Acc) ->
-                            ar_patricia_tree:insert(A, {B, LastTX}, Acc)
-                    end,
-                    T2,
-                    [random_wallet() || _ <- lists:seq(1, 2000)]
-                   )
-          end
-         ),
-    io:format("2000 inserts                    | ~f seconds~n", [Time4 / 1000000]),
-    {Time5, _} =
-        timer:tc(fun() -> ar_patricia_tree:compute_hash(T3, ComputeHashFun) end),
-    io:format("recompute hash after 2k inserts | ~f seconds~n", [Time5 / 1000000]),
-    {Time6, T4} =
-        timer:tc(
-          fun() ->
-                  {A, B, LastTX} = random_wallet(),
-                  ar_patricia_tree:insert(A, {B, LastTX}, T2)
-          end
-         ),
-    io:format("1 insert                        | ~f seconds~n", [Time6 / 1000000]),
-    {Time7, _} =
-        timer:tc(fun() -> ar_patricia_tree:compute_hash(T4, ComputeHashFun) end),
-    io:format("recompute hash after 1 insert   | ~f seconds~n", [Time7 / 1000000]).
+    %% Stream-build: each account is generated and inserted immediately, to save memory.
+    maybe_gc(GCBefore),
+    {Time1, T1} = timer:tc(fun() -> bench_stream_build(Mod, NumAccounts) end),
+    FootBuild = account_tree_footprint(TreeRepr, T1, GCBefore),
+    %% Serialization applies only to the in-memory impls: ar_serialize:wallet_list_to_json_struct/3
+    %% traverses the ar_patricia_tree map and does not support the ets store.
+    {SerS, SerBytes} =
+        case TreeRepr of
+            ets ->
+                {na, na};
+            _ ->
+                maybe_gc(GCBefore),
+                {Time2, Binary} = timer:tc(fun() ->
+                                                   ar_serialize:jsonify(
+                                                     ar_serialize:wallet_list_to_json_struct(unclaimed, false, T1)) end),
+                {Time2 / 1000000, byte_size(Binary)}
+        end,
+    maybe_gc(GCBefore),
+    {Time3, {_, T2, _}} = timer:tc(fun() -> Mod:compute_hash(T1, HashFun, PersistOpts2) end),
+    FootHash = account_tree_footprint(TreeRepr, T2, GCBefore),
+    maybe_gc(GCBefore),
+    {Time4, T3} = timer:tc(fun() -> bench_stream_insert(Mod, 2000, T2) end),
+    maybe_gc(GCBefore),
+    {Time5, _} = timer:tc(fun() -> Mod:compute_hash(T3, HashFun, PersistOpts2) end),
+    {A, B, LastTX} = random_wallet(),
+    maybe_gc(GCBefore),
+    {Time6, T4} = timer:tc(fun() ->
+                                   Mod:insert(A, bench_wallet_value(mixed, B, LastTX), T2) end),
+    maybe_gc(GCBefore),
+    {Time7, _} = timer:tc(fun() -> Mod:compute_hash(T4, HashFun, PersistOpts2) end),
+    stop_sink(Sink),
+    case TreeRepr of
+        ets -> ar_patricia_tree_ets:delete_table(T4);
+        _ -> ok
+    end,
+    #{
+      num_accounts => NumAccounts,
+      hash => Hash,
+      tree_repr => TreeRepr,
+      persist_updates => PersistUpdates,
+      gc_before => GCBefore,
+      buildup_s => Time1 / 1000000,
+      footprint_build_mb => FootBuild,
+      serialization_s => SerS,
+      serialization_bytes => SerBytes,
+      scratch_hash_s => Time3 / 1000000,
+      footprint_hash_mb => FootHash,
+      inserts_2k_s => Time4 / 1000000,
+      recompute_2k_s => Time5 / 1000000,
+      insert_1_s => Time6 / 1000000,
+      recompute_1_s => Time7 / 1000000
+     }.
+
+%% @doc Print one metrics map in the human-readable form.
+print_account_tree_metrics(M) ->
+    io:format("# ~B accounts, hash: ~p, tree_repr: ~p, persist_updates: ~p, gc_before: ~p~n",
+              [maps:get(num_accounts, M), maps:get(hash, M), maps:get(tree_repr, M),
+               maps:get(persist_updates, M), maps:get(gc_before, M)]),
+    io:format("============~n"),
+    io:format("tree buildup                    | ~f seconds~n", [maps:get(buildup_s, M)]),
+    io:format("footprint after build           | ~B MB~n", [maps:get(footprint_build_mb, M)]),
+    case maps:get(serialization_s, M) of
+        na ->
+            ok;
+        SerS ->
+            io:format("serialization                   | ~f seconds~n", [SerS]),
+            io:format("                                | ~B bytes~n",
+                      [maps:get(serialization_bytes, M)])
+    end,
+    io:format("root hash from scratch          | ~f seconds~n", [maps:get(scratch_hash_s, M)]),
+    io:format("footprint after hash            | ~B MB~n", [maps:get(footprint_hash_mb, M)]),
+    io:format("2000 inserts                    | ~f seconds~n", [maps:get(inserts_2k_s, M)]),
+    io:format("recompute hash after 2k inserts | ~f seconds~n", [maps:get(recompute_2k_s, M)]),
+    io:format("1 insert                        | ~f seconds~n", [maps:get(insert_1_s, M)]),
+    io:format("recompute hash after 1 insert   | ~f seconds~n", [maps:get(recompute_1_s, M)]),
+    ok.
+
+%% @doc A test sink for the ets persistence stream: drains node-update batches and
+%% discards them.
+spawn_discard_sink() ->
+    spawn_link(fun discard_sink_loop/0).
+
+discard_sink_loop() ->
+    receive
+        {account_tree_node_batch, _Batch} ->
+            discard_sink_loop();
+        stop ->
+            ok
+    end.
+
+stop_sink(undefined) ->
+    ok;
+stop_sink(Sink) ->
+    unlink(Sink),
+    exit(Sink, kill),
+    ok.
+
+maybe_gc(true) -> erlang:garbage_collect();
+maybe_gc(false) -> ok.
+
+%% O(1) footprint: the ets tree lives off the process heap (read ets:info/2); the in-memory
+%% tree (and its UpdateMap) live on the process heap, so GC first (when GCBefore) and read live
+%% process memory. With GCBefore=false the heap footprint includes uncollected garbage, so it is
+%% only an upper bound - but skipping the collection is what keeps the next recompute warm.
+account_tree_footprint(ets, Tree, _GCBefore) ->
+    ets_table_mb(Tree);
+account_tree_footprint(_Repr, _Tree, GCBefore) ->
+    maybe_gc(GCBefore),
+    {memory, Bytes} = erlang:process_info(self(), memory),
+    Bytes div (1024 * 1024).
 
 random_wallet() ->
     {
@@ -1116,6 +1185,178 @@ random_wallet() ->
      rand:uniform(1000000000000000000),
      crypto:strong_rand_bytes(32)
     }.
+
+%% @doc Build the unified hash function for the benchmarks (Algo is used for both leaf and
+%% node): HashFun(leaf, {Addr, Value}) hashes a leaf, HashFun(node, Hashes) combines siblings.
+bench_hash_fun(Algo) ->
+    fun (leaf, {Addr, {Balance, LastTX}}) ->
+            case Algo of
+                ar_deep_hash ->
+                    EncodedBalance = binary:encode_unsigned(Balance),
+                    ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
+                _ ->
+                    Denomination = 0,
+                    MiningPermissionBin = <<1>>,
+                    Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
+                                  (ar_serialize:encode_int(Balance, 8))/binary,
+                                  (ar_serialize:encode_bin(LastTX, 8))/binary,
+                                  (ar_serialize:encode_int(Denomination, 8))/binary,
+                                  MiningPermissionBin/binary >>,
+                    case Algo of
+                        no_ar_deep_hash_sha384 ->
+                            crypto:hash(sha384, Preimage);
+                        sha256 ->
+                            crypto:hash(sha256, Preimage)
+                    end
+            end;
+        (leaf, {Addr, {Balance, LastTX, Denomination, MiningPermission}}) ->
+            MiningPermissionBin =
+                case MiningPermission of
+                    true ->
+                        <<1>>;
+                    false ->
+                        <<0>>
+                end,
+            Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
+                          (ar_serialize:encode_int(Balance, 8))/binary,
+                          (ar_serialize:encode_bin(LastTX, 8))/binary,
+                          (ar_serialize:encode_int(Denomination, 8))/binary,
+                          MiningPermissionBin/binary >>,
+            case Algo of
+                sha256 ->
+                    crypto:hash(sha256, Preimage);
+                _ ->
+                    crypto:hash(sha384, Preimage)
+            end;
+        (node, Hashes) ->
+            case Algo of
+                ar_deep_hash ->
+                    ar_deep_hash:hash(Hashes);
+                _ ->
+                    crypto:hash(sha256, iolist_to_binary(Hashes))
+            end
+    end.
+
+bench_wallet_value(Denominations, Balance, LastTX) ->
+    case Denominations of
+        old ->
+            {Balance, LastTX};
+        new ->
+            {Balance, LastTX, 1 + rand:uniform(10), true};
+        mixed ->
+            case rand:uniform(2) == 1 of
+                true -> {Balance, LastTX};
+                false -> {Balance, LastTX, 1 + rand:uniform(10), true}
+            end
+    end.
+
+ets_table_mb(Tree) ->
+    (ets:info(Tree, memory) * erlang:system_info(wordsize)) div (1024 * 1024).
+
+%% @doc Run the account-tree benchmark over Sizes * Configs ({Hash, TreeRepr}), averaging Reps
+%% runs per cell, and stream one CSV row per cell to File as it completes. persist_updates is
+%% set to true. Serialization is skipped for the ets repr. Each row is flushed as written, so
+%% partial results survive an early stop.
+bench_account_tree_matrix() ->
+    bench_account_tree_matrix("account_tree_bench.csv").
+
+bench_account_tree_matrix(File) ->
+    Sizes = lists:seq(200000, 3000000, 200000),
+    Configs = [{Hash, Repr} || Hash <- [ar_deep_hash, sha256],
+                               Repr <- [in_memory, legacy, ets]],
+    bench_account_tree_matrix(File, Sizes, Configs, 2).
+
+bench_account_tree_matrix(File, Sizes, Configs, Reps) ->
+    {ok, Fd} = file:open(File, [write]),
+    ok = file:write(Fd, bench_csv_header()),
+    ok = file:datasync(Fd),
+    lists:foreach(
+      fun(Size) ->
+              lists:foreach(
+                fun({Hash, TreeRepr}) ->
+                        lists:foreach(
+                          fun(GCBefore) ->
+                                  Row = bench_csv_cell(Size, Hash, TreeRepr, GCBefore, Reps),
+                                  ok = file:write(Fd, Row),
+                                  ok = file:datasync(Fd),
+                                  io:format("wrote ~Bk ~p/~p gc_before=~p~n",
+                                            [Size div 1000, Hash, TreeRepr, GCBefore])
+                          end,
+                          [true, false]
+                         )
+                end,
+                Configs
+               )
+      end,
+      Sizes
+     ),
+    ok = file:close(Fd),
+    io:format("done; wrote ~s~n", [File]).
+
+%% @doc Run Reps benchmarks for one cell, average the metrics across the runs that succeeded,
+%% and format a CSV row. A cell whose every run crashed yields a row with empty metric columns.
+bench_csv_cell(Size, Hash, TreeRepr, GCBefore, Reps) ->
+    Runs = [run_account_tree_bench(Size, Hash, TreeRepr, true, GCBefore)
+            || _ <- lists:seq(1, Reps)],
+    Metrics = average_metrics([M || {ok, M} <- Runs]),
+    bench_csv_row(Size, Hash, TreeRepr, GCBefore, Metrics).
+
+%% @doc Average each numeric metric over the given maps, ignoring na entries (serialization on
+%% the ets repr); a metric with no numeric samples stays na.
+average_metrics(Maps) ->
+    Keys = [buildup_s, footprint_build_mb, serialization_s, serialization_bytes,
+            scratch_hash_s, footprint_hash_mb, inserts_2k_s, recompute_2k_s,
+            insert_1_s, recompute_1_s],
+    lists:foldl(
+      fun(Key, Acc) ->
+              Present = [V || M <- Maps, V <- [maps:get(Key, M, na)], V =/= na],
+              case Present of
+                  [] -> Acc#{ Key => na };
+                  _ -> Acc#{ Key => lists:sum(Present) / length(Present) }
+              end
+      end,
+      #{},
+      Keys
+     ).
+
+bench_csv_header() ->
+    "accounts,hash,tree_repr,persist_updates,gc_before,buildup_s,footprint_build_mb,"
+        "serialization_s,serialization_bytes,scratch_hash_s,footprint_hash_mb,"
+        "inserts_2k_s,recompute_2k_s,insert_1_s,recompute_1_s\n".
+
+bench_csv_row(Size, Hash, TreeRepr, GCBefore, M) ->
+    Cols = [integer_to_list(Size), atom_to_list(Hash), atom_to_list(TreeRepr), "true",
+            atom_to_list(GCBefore),
+            fmt_num(maps:get(buildup_s, M, na)),
+            fmt_num(maps:get(footprint_build_mb, M, na)),
+            fmt_num(maps:get(serialization_s, M, na)),
+            fmt_num(maps:get(serialization_bytes, M, na)),
+            fmt_num(maps:get(scratch_hash_s, M, na)),
+            fmt_num(maps:get(footprint_hash_mb, M, na)),
+            fmt_num(maps:get(inserts_2k_s, M, na)),
+            fmt_num(maps:get(recompute_2k_s, M, na)),
+            fmt_num(maps:get(insert_1_s, M, na)),
+            fmt_num(maps:get(recompute_1_s, M, na))],
+    [lists:join(",", Cols), "\n"].
+
+fmt_num(na) -> "";
+fmt_num(N) when is_integer(N) -> integer_to_list(N);
+fmt_num(N) when is_float(N) -> io_lib:format("~.6f", [N]).
+
+bench_stream_build(Mod, Total) ->
+    do_bench_stream_build(Mod, Total, Mod:new()).
+
+do_bench_stream_build(_Mod, 0, Tree) ->
+    Tree;
+do_bench_stream_build(Mod, N, Tree) ->
+    {A, B, LastTX} = random_wallet(),
+    do_bench_stream_build(Mod, N - 1, Mod:insert(A, bench_wallet_value(mixed, B, LastTX), Tree)).
+
+bench_stream_insert(_Mod, 0, Tree) ->
+    Tree;
+bench_stream_insert(Mod, N, Tree) ->
+    {A, B, LastTX} = random_wallet(),
+    bench_stream_insert(Mod, N - 1, Mod:insert(A, bench_wallet_value(mixed, B, LastTX), Tree)).
 
 validate_replica_format_test_() ->
     [
