@@ -15,6 +15,10 @@
 %% response. Returns [] in disabled mode (no headers advertised).
 to_http_headers({register, no_limiting_applied, _Info}) ->
     #{};
+to_http_headers({reject, error, _Info}) ->
+    #{};
+to_http_headers({_RegOrRej, _Mode, Info}) when map_size(Info) == 0 ->
+    #{};
 to_http_headers({RegOrRej, _Mode, #{expiring_limit := _ExpiringLimit,
                                     remaining      := Remaining,
                                     reset_seconds  := Reset} = HeadersInfo}) ->
