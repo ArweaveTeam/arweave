@@ -92,7 +92,6 @@
 -compile({nowarn_unused_function, [{turn_off, 1}, {turn_on, 1}]}).
 -endif.
 
--include("arweave_client_throttling.hrl").
 -include_lib("kernel/include/logger.hrl").
 
 %% `reset_timer' is `undefined' when no refill is pending, or
@@ -354,23 +353,20 @@ handle_call(Msg, From, State) ->
     {reply, {error, unsupported}, State}.
 
 handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
-            #{spec := Spec, peers := Peers, monitors := Monitors} = State) ->
+            #{spec := #{initial_remaining := InitialRemaining,
+                        concurrency_window_ms := Window} = Spec,
+              peers := Peers, monitors := Monitors} = State) ->
     PS0 = get_or_init_peer(Peer, Peers, Spec),
-    InitialRemaining = maps:get(initial_remaining, Spec),
+
     NewTotal = case Total =/= InitialRemaining of
                    true  -> Total;
                    false -> PS0#peer_state.total
                end,
-    UpdatedRemaining =
-        case is_significantly_different(Total, NewRemaining, Peer, State) of
-            true ->
-                Window = maps:get(concurrency_window_ms, Spec),
-                merge_remaining(PS0#peer_state.remaining,
-                                PS0#peer_state.last_update_ts,
-                                NewRemaining, ReceivedAt, Window);
-            false ->
-                PS0#peer_state.remaining
-        end,
+
+    UpdatedRemaining = merge_remaining(PS0#peer_state.remaining,
+                                       PS0#peer_state.last_update_ts,
+                                       NewRemaining, ReceivedAt, Window),
+
     PS1 = PS0#peer_state{
         total = NewTotal,
         remaining = UpdatedRemaining,
@@ -488,22 +484,6 @@ merge_remaining(Old, LastTs, New, Now, Window) when Now - LastTs =< Window ->
     min(Old, New);
 merge_remaining(_Old, _LastTs, New, _Now, _Window) ->
     New.
-
-%% Decide whether a freshly-reported `remaining' is worth committing
-%% to the peer state. An update is significant when the remote
-%% reports an exhausted quota (`NewRemaining =:= 0') or when the
-%% absolute change relative to what we have stored exceeds
-%% `?SIGNIFICANTLY_DIFFERENT_RATIO' of the spec's `initial_remaining'.
-%% Insignificant updates are dropped so we don't churn the state on
-%% every response.
-is_significantly_different(_Total, 0, _Peer, _State) ->
-    true;
-is_significantly_different(_Total, NewRemaining, Peer, State) ->
-    #{spec := Spec, peers := Peers} = State,
-    PS = get_or_init_peer(Peer, Peers, Spec),
-    InitialRemaining = maps:get(initial_remaining, Spec),
-    Threshold = ?SIGNIFICANTLY_DIFFERENT_RATIO * InitialRemaining,
-    abs(PS#peer_state.remaining - NewRemaining) > Threshold.
 
 drain_waiters(#peer_state{remaining = 0} = PS, Monitors) ->
     {PS, Monitors};
