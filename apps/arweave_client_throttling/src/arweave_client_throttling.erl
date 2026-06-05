@@ -131,7 +131,7 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer), is_list(Path),
                     ReasonStr = get_quota_error_reason(Reason),
                     prometheus_counter:inc(arweave_client_throttling_quota_update_error,
                                            [atom_to_list(GroupID), ReasonStr]),
-                    log_unknown_reason(Reason, GroupID, Peer),
+                    log_unknown_reason(ReasonStr, Reason, GroupID, Peer),
                     ok;
                 Quota ->
                     arweave_client_throttling_group:update_quota(GroupID, Peer, Quota)
@@ -170,8 +170,10 @@ get_quota_error_reason({missing_header, _HeaderKey}) ->
 get_quota_error_reason(_) ->
     "unexpected".
 
-log_unknown_reason(Reason, GroupID, Peer) ->
+log_unknown_reason("unexpected", Reason, GroupID, Peer) ->
     ?LOG_ERROR([{event, update_quota_unexpected_error},
                 {reason, Reason},
                 {peer, Peer},
-                {group_id, GroupID}]).
+                {group_id, GroupID}]);
+log_unknown_reason(_, _, _, _) ->
+    ok.
