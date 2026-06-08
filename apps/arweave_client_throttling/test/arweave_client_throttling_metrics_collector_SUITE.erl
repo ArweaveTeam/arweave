@@ -94,8 +94,9 @@ all() ->
 %% returned by the collector reports zero peers for the configured
 %% group.
 no_peers_reported(_Config) ->
-    [{arweave_client_throttling_peers, gauge, _Help, MetricsList}] =
-       ?M:metrics(),
+    [{arweave_client_throttling_peers, gauge, _Help, MetricsListP},
+     {arweave_client_throttling_queued_requests, gauge, _Help2, MetricsListQ}] =
+        lists:sort(?M:metrics()),
     ?assertEqual([{[{group_id,block_index}],0},
                   {[{group_id,chunk}],0},
                   {[{group_id,data_sync_record}],0},
@@ -104,32 +105,47 @@ no_peers_reported(_Config) ->
                   {[{group_id,get_vdf}],0},
                   {[{group_id,get_vdf_session}],0},
                   {[{group_id,recent_hash_list_diff}],0},
-                  {[{group_id,wallet_list}],0}], lists:sort(MetricsList)),
+                  {[{group_id,wallet_list}],0}], lists:sort(MetricsListP)),
+    ?assertEqual([{[{group_id,block_index}],0},
+                  {[{group_id,chunk}],0},
+                  {[{group_id,data_sync_record}],0},
+                  {[{group_id,general}],0},
+                  {[{group_id,get_previous_vdf_session}],0},
+                  {[{group_id,get_vdf}],0},
+                  {[{group_id,get_vdf_session}],0},
+                  {[{group_id,recent_hash_list_diff}],0},
+                  {[{group_id,wallet_list}],0}], lists:sort(MetricsListQ)),
     ok.
 
 %% @doc After a single `throttle/2' call against a single peer the
 %% collector reports exactly one peer for the group.
 one_peer_reported(_Config) ->
-    try
-        Peer = {127, 0, 0, 1, 1984},
-        _ = spawn(fun() ->
-                          arweave_client_throttling:throttle(Peer, ?PATH)
-                  end),
-        ok = wait_peer_count(?GROUP, 1),
-        [{arweave_client_throttling_peers, gauge, _Help, MetricsList}] =
-            ?M:metrics(),
-        ?assertEqual([{[{group_id,block_index}],0},
-                      {[{group_id,chunk}],0},
-                      {[{group_id,data_sync_record}],0},
-                      {[{group_id,general}],1},
-                      {[{group_id,get_previous_vdf_session}],0},
-                      {[{group_id,get_vdf}],0},
-                      {[{group_id,get_vdf_session}],0},
-                      {[{group_id,recent_hash_list_diff}],0},
-                      {[{group_id,wallet_list}],0}], lists:sort(MetricsList))
-    catch E:R:Stack ->
-            ct:pal("error: ~p:~p  ---> stack:~p", [E,R, Stack])
-    end,
+    Peer = {127, 0, 0, 1, 1984},
+    _ = spawn(fun() ->
+                      arweave_client_throttling:throttle(Peer, ?PATH)
+              end),
+    ok = wait_peer_count(?GROUP, 1),
+    [{arweave_client_throttling_peers, gauge, _Help, MetricsListP},
+     {arweave_client_throttling_queued_requests, gauge, _Help2, MetricsListQ}] =
+        lists:sort(?M:metrics()),
+    ?assertEqual([{[{group_id,block_index}],0},
+                  {[{group_id,chunk}],0},
+                  {[{group_id,data_sync_record}],0},
+                  {[{group_id,general}],1},
+                  {[{group_id,get_previous_vdf_session}],0},
+                  {[{group_id,get_vdf}],0},
+                  {[{group_id,get_vdf_session}],0},
+                  {[{group_id,recent_hash_list_diff}],0},
+                  {[{group_id,wallet_list}],0}], lists:sort(MetricsListP)),
+    ?assertEqual([{[{group_id,block_index}],0},
+                  {[{group_id,chunk}],0},
+                  {[{group_id,data_sync_record}],0},
+                  {[{group_id,general}],0},
+                  {[{group_id,get_previous_vdf_session}],0},
+                  {[{group_id,get_vdf}],0},
+                  {[{group_id,get_vdf_session}],0},
+                  {[{group_id,recent_hash_list_diff}],0},
+                  {[{group_id,wallet_list}],0}], lists:sort(MetricsListQ)),
     ok.
 
 
@@ -143,7 +159,8 @@ two_hundred_peers_reported(_Config) ->
     [spawn(fun() -> arweave_client_throttling:throttle(P, ?PATH) end)
      || P <- Peers],
     ok = wait_peer_count(?GROUP, 200),
-    [{arweave_client_throttling_peers, gauge, _Help, MetricsList}] =
+    [{arweave_client_throttling_peers, gauge, _Help, MetricsListP},
+     {arweave_client_throttling_queued_requests, gauge, _Help2, MetricsListQ}] =
         ?M:metrics(),
     ?assertEqual([{[{group_id,block_index}],0},
                   {[{group_id,chunk}],0},
@@ -153,7 +170,16 @@ two_hundred_peers_reported(_Config) ->
                   {[{group_id,get_vdf}],0},
                   {[{group_id,get_vdf_session}],0},
                   {[{group_id,recent_hash_list_diff}],0},
-                  {[{group_id,wallet_list}],0}], lists:sort(MetricsList)),
+                  {[{group_id,wallet_list}],0}], lists:sort(MetricsListP)),
+    ?assertEqual([{[{group_id,block_index}],0},
+                  {[{group_id,chunk}],0},
+                  {[{group_id,data_sync_record}],0},
+                  {[{group_id,general}],0},
+                  {[{group_id,get_previous_vdf_session}],0},
+                  {[{group_id,get_vdf}],0},
+                  {[{group_id,get_vdf_session}],0},
+                  {[{group_id,recent_hash_list_diff}],0},
+                  {[{group_id,wallet_list}],0}], lists:sort(MetricsListQ)),
     ok.
 
 %% Helpers

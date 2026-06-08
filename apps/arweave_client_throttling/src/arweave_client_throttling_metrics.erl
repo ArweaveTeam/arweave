@@ -27,7 +27,10 @@ register() ->
            [{name, arweave_client_throttling_is_throttled_response_time_microseconds},
             {help, "Time it took for the limiter to respond to requests"},
             %% buckets might be reduced for production
-            {buckets, [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000]},
+            {buckets, [100_000, 500_000,
+                       1_000_000, 5_000_000,
+                       10_000_000, 50_000_000,
+                       100_000_000, 500_000_000, 1000_000_000]},
             {labels, [group_id]}]),
 
     ok = prometheus_counter:new(
@@ -58,7 +61,13 @@ register() ->
 
     ok = prometheus_gauge:new(
            [{name, arweave_client_throttling_peers},
-            {help, "The number of peers the limiter is monitoring currently"},
+            {help, "The number of peers the throttling is monitoring currently"},
+            %% limiting type:
+            %% sliding_window -> baseline, leaky_bucket -> burst, concurrency -> concurrency
+            {labels, [group_id]}]),
+    ok = prometheus_gauge:new(
+           [{name, arweave_client_throttling_queued_requests},
+            {help, "The number of requests throttling groups have queued currently"},
             %% limiting type:
             %% sliding_window -> baseline, leaky_bucket -> burst, concurrency -> concurrency
             {labels, [group_id]}]),
@@ -74,4 +83,5 @@ cleanup() ->
     prometheus_counter:deregister(arweave_client_throttling_quota_update_error),
     prometheus_counter:deregister(arweave_client_throttling_quota_update_requests),
     prometheus_gauge:deregister(arweave_client_throttling_peers),
+    prometheus_gauge:deregister(arweave_client_throttling_queued_requests),
     ok.

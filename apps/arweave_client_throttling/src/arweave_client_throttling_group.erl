@@ -318,7 +318,12 @@ handle_call({is_throttled, Peer}, _From, #{spec := Spec, peers := Peers} = State
     IsThrottled = PS0#peer_state.remaining / PS0#peer_state.total > ?IS_THROTTLED_THRESHOLD,
     {reply, {ok, IsThrottled}, State};
 handle_call(get_info, _From, #{peers := Peers} = State) ->
-    Reply = #{peers => map_size(Peers)},
+    NumOfRequestsQueued =
+        maps:fold(fun(_Peer, #peer_state{waiters = Waiters}, Acc) ->
+                          queue:len(Waiters) + Acc
+                  end, 0, Peers),
+    Reply = #{peers => map_size(Peers),
+              queued => NumOfRequestsQueued},
     {reply, Reply, State};
 handle_call({status, Peer}, _From, #{spec := Spec, peers := Peers} = State) ->
     Reply = case maps:find(Peer, Peers) of
@@ -441,8 +446,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% Internals
-enqueue_caller(Peer, From, PS0, State) ->
-    #{spec := Spec, peers := Peers, monitors := Monitors} = State,
+enqueue_caller(Peer, From, PS0, #{spec := Spec, peers := Peers, monitors := Monitors} = State) ->
     MaxLen = maps:get(max_queue_length, Spec),
     case queue:len(PS0#peer_state.waiters) >= MaxLen of
         true ->

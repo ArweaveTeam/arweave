@@ -40,7 +40,8 @@ add_metric_family({Name, Type, Help, Metrics}, Callback) ->
 metrics() ->
     AllInfo = arweave_client_throttling_sup:all_info(),
     [
-     {arweave_client_throttling_peers, gauge, "The number of peers the limiter is monitoring currently", peers(AllInfo)}
+     {arweave_client_throttling_peers, gauge, "The number of peers the limiter is monitoring currently", peers(AllInfo)},
+     {arweave_client_throttling_queued_requests, gauge, "The number of peers the limiter is monitoring currently", queued_requests(AllInfo)}
     ].
 
 peers(AllInfo) ->
@@ -49,3 +50,11 @@ peers(AllInfo) ->
 peers_info({Id, Info}, Acc) ->
     Peers = maps:get(peers, Info),
     [{[{group_id, Id}], Peers} | Acc].
+
+
+queued_requests(AllInfo) ->
+    lists:foldl(fun queued_requests_info/2, [], AllInfo).
+
+queued_requests_info({Id, Info}, Acc) ->
+    QueuedRequests = maps:get(queued, Info),
+    [{[{group_id, Id}], QueuedRequests} | Acc].
