@@ -467,12 +467,12 @@ test_packs_chunks_depending_on_packing_threshold() ->
 		lists:seq(1, 5)
 	),
 	BILast = ar_node:get_block_index(),
-	LastB = ar_test_node:read_block_when_stored(
+	LastB = ar_test_await:block_stored(
 			element(1, lists:nth(10, lists:reverse(BILast)))),
 	lists:foldl(
 		fun(Height, PrevB) ->
 			H = element(1, lists:nth(Height + 1, lists:reverse(BILast))),
-			B = ar_test_node:read_block_when_stored(H),
+			B = ar_test_await:block_stored(H),
 			PoA = B#block.poa,
 			NonceLimiterInfo = B#block.nonce_limiter_info,
 			PartitionUpperBound =
@@ -526,23 +526,9 @@ test_packs_chunks_depending_on_packing_threshold() ->
 		lists:seq(10, 20)
 	),
 	?debugMsg("Asserting synced data with the strict splits."),
-	maps:map(
-		fun(TXID, [{_, _, Chunks, _} | _]) ->
-			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
-			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
-			ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
-		end,
-		StrictProofs
-	),
+	assert_synced_data(StrictProofs),
 	?debugMsg("Asserting synced v1 data."),
-	maps:map(
-		fun(TXID, [{_, _, Chunks, _} | _]) ->
-			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
-			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
-			ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
-		end,
-		V1Proofs
-	),
+	assert_synced_data(V1Proofs),
 	?debugMsg("Asserting synced chunks."),
 	ar_test_data_sync:wait_until_syncs_chunks([P || {_, _, _, P} <- lists:flatten(maps:values(StrictProofs))]),
 	ar_test_data_sync:wait_until_syncs_chunks([P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))]),
@@ -550,4 +536,14 @@ test_packs_chunks_depending_on_packing_threshold() ->
 			maps:values(StrictProofs))], infinity),
 	ar_test_data_sync:wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))],
 			infinity).
+
+%% @doc Assert main and peer1 both serve each tx's data, matching its chunks.
+assert_synced_data(Proofs) ->
+	maps:map(
+		fun(TXID, [{_, _, Chunks, _} | _]) ->
+			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
+			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
+			ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
+		end,
+		Proofs).
 

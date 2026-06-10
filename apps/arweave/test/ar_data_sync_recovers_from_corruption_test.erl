@@ -8,8 +8,6 @@
 -include("ar.hrl").
 -include("ar_consensus.hrl").
 
--import(ar_test_node, [assert_wait_until_height/2]).
-
 recovers_from_corruption_test_() ->
 	{timeout, 300, fun test_recovers_from_corruption/0}.
 
@@ -21,4 +19,4 @@ test_recovers_from_corruption() ->
 	[ar_chunk_storage:write_chunk(PaddedEndOffset, << 0:(262144*8) >>, #{}, StoreID)
 			|| PaddedEndOffset <- lists:seq(262144, 262144 * 3, 262144)],
 	ar_test_node:mine(),
-	ar_test_node:assert_wait_until_height(main, 1). 
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)).

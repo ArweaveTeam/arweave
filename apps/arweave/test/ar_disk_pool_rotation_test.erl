@@ -8,10 +8,8 @@
 -include("ar.hrl").
 -include("ar_consensus.hrl").
 
--import(ar_test_node, [assert_wait_until_height/2]).
-
 disk_pool_rotation_test_() ->
-	{timeout, 480, fun test_disk_pool_rotation/0}.
+	{timeout, 240, fun test_disk_pool_rotation/0}.
 
 test_disk_pool_rotation() ->
 	?LOG_DEBUG([{event, test_disk_pool_rotation_start}]),
@@ -41,31 +39,23 @@ test_disk_pool_rotation() ->
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
 			ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
 	timer:sleep(2_000),
 	Options = #{ format => etf, random_subset => false },
-	{ok, Binary1} = ar_global_sync_record:get_serialized_sync_record(Options),
-	{ok, Global1} = ar_intervals:safe_from_etf(Binary1),
-	%% The genesis chunks are packed with replica 2.9 and stored in the footprint record.
-	%% The TX chunk from the disk pool has not been packed yet.
-	?assertEqual([{1048576, 786432}], ar_intervals:to_list(Global1)),
+	Global1 = get_global_sync_record(Options),
+	?assertEqual(Expected, ar_intervals:intersection(Global1, Expected)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 2),
-	{ok, Binary2} = ar_global_sync_record:get_serialized_sync_record(Options),
-	{ok, Global2} = ar_intervals:safe_from_etf(Binary2),
-	?assertEqual([{1048576, 786432}], ar_intervals:to_list(Global2)),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
+	Global2 = get_global_sync_record(Options),
+	?assertEqual(Expected, ar_intervals:intersection(Global2, Expected)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 4),
-	%% The new chunk has been confirmed and falls in the storage module's overlap range.
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 4)),
 	?assertEqual(3, ?SEARCH_SPACE_UPPER_BOUND_DEPTH),
-	true = ar_util:do_until(
-		fun() ->
-			{ok, Binary3} = ar_global_sync_record:get_serialized_sync_record(Options),
-			{ok, Global3} = ar_intervals:safe_from_etf(Binary3),
-			[] == ar_intervals:to_list(Global3)
-		end,
-		200,
-		5000
-	).
+	ok = ar_test_await:global_sync_record_excludes(Options, Expected).
+
+get_global_sync_record(Options) ->
+	{ok, Binary} = ar_global_sync_record:get_serialized_sync_record(Options),
+	{ok, Global} = ar_intervals:safe_from_etf(Binary),
+	Global.

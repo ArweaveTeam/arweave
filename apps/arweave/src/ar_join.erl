@@ -1,5 +1,6 @@
-%% @ar_test: vdf
 -module(ar_join).
+-test_category([vdf]).
+-test_peers([peer1]).
 
 -export([start/1]).
 
@@ -531,11 +532,11 @@ basic_node_join_test_() ->
 		[B0] = ar_weave:init(),
 		ar_test_node:start(B0),
 		ar_test_node:mine(),
-		ar_test_node:wait_until_height(main, 1),
+		?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
 		ar_test_node:mine(),
-		ar_test_node:wait_until_height(main, 2),
+		?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
 		ar_test_node:join_on(#{ node => peer1, join_on => main }),
-		ar_test_node:assert_wait_until_height(peer1, 2)
+		?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2))
 	end}.
 
 %% @doc Ensure that both nodes can mine after a join.

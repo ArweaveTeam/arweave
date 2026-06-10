@@ -1,6 +1,6 @@
 %%% @doc Different utility functions for node and node worker.
-%% @ar_test: vdf
 -module(ar_node_utils).
+-test_category([vdf]).
 
 -export([apply_tx/3, apply_txs/3, update_accounts/3, validate/6,
 	h1_passes_diff_check/3, h2_passes_diff_check/3, solution_passes_diff_check/2,

@@ -1,11 +1,9 @@
-%% @ar_test: vdf
 -module(ar_fork_recovery_tests).
+-test_category([vdf]).
+-test_peers([peer1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
--import(ar_test_node, [
-		assert_wait_until_height/2, wait_until_height/2, read_block_when_stored/1]).
 
 height_plus_one_fork_recovery_test_() ->
 	{timeout, 240, fun test_height_plus_one_fork_recovery/0}.
@@ -19,22 +17,22 @@ test_height_plus_one_fork_recovery() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:mine(),
-	wait_until_height(main, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
 	ar_test_node:mine(),
-	MainBI = wait_until_height(main, 2),
+	{ok, MainBI} = ar_test_await:node_height(main, 2),
 	ar_test_node:connect_to_peer(peer1),
-	?assertEqual(MainBI, ar_test_node:wait_until_height(peer1, 2)),
+	?assertEqual({ok, MainBI}, ar_test_await:node_height(peer1, 2)),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(),
-	wait_until_height(main, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
 	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 3)),
 	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
 	ar_test_node:mine(peer1),
-	PeerBI = ar_test_node:wait_until_height(peer1, 4),
-	?assertEqual(PeerBI, wait_until_height(main, 4)).
+	{ok, PeerBI} = ar_test_await:node_height(peer1, 4),
+	?assertEqual({ok, PeerBI}, ar_test_await:node_height(main, 4)).
 
 height_plus_three_fork_recovery_test_() ->
 	{timeout, 240, fun test_height_plus_three_fork_recovery/0}.
@@ -48,21 +46,21 @@ test_height_plus_three_fork_recovery() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:mine(),
-	wait_until_height(main, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
 	ar_test_node:mine(),
-	wait_until_height(main, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
 	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2)),
 	ar_test_node:mine(),
-	wait_until_height(main, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
 	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 3)),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
-	MainBI = wait_until_height(main, 4),
-	?assertEqual(MainBI, ar_test_node:wait_until_height(peer1, 4)).
+	{ok, MainBI} = ar_test_await:node_height(main, 4),
+	?assertEqual({ok, MainBI}, ar_test_await:node_height(peer1, 4)).
 
 missing_txs_fork_recovery_test_() ->
 	{timeout, 240, fun test_missing_txs_fork_recovery/0}.
@@ -83,8 +81,8 @@ test_missing_txs_fork_recovery() ->
 	ar_test_node:rejoin_on(#{ node => main, join_on => peer1 }),
 	?assertEqual([], ar_mempool:get_all_txids()),
 	ar_test_node:mine(peer1),
-	[{H1, _, _} | _] = wait_until_height(main, 1),
-	?assertEqual(1, length((read_block_when_stored(H1))#block.txs)).
+	{ok, [{H1, _, _} | _]} = ar_test_await:node_height(main, 1),
+	?assertEqual(1, length((ar_test_await:block_stored(H1))#block.txs)).
 
 orphaned_txs_are_remined_after_fork_recovery_test_() ->
 	{timeout, 240, fun test_orphaned_txs_are_remined_after_fork_recovery/0}.
@@ -136,12 +134,12 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	ar_test_node:start_peer(peer1, B0, RewardAddr),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
-	[{H1, _, _} | _] = ar_test_node:wait_until_height(peer1, 1),
+	{ok, [{H1, _, _} | _]} = ar_test_await:node_height(peer1, 1),
 	ar_test_node:mine(),
-	[{H2, _, _} | _] = wait_until_height(main, 1),
+	{ok, [{H2, _, _} | _]} = ar_test_await:node_height(main, 1),
 	ar_test_node:connect_to_peer(peer1),
 	?assertNotEqual(H2, H1),
-	B1 = read_block_when_stored(H2),
+	B1 = ar_test_await:block_stored(H2),
 	B2 = fake_block_with_strong_cumulative_difficulty(B1, B0, 10000000000000000),
 	B2H = B2#block.indep_hash,
 	?debugFmt("Fake block: ~s.", [ar_util:encode(B2H)]),
@@ -149,22 +147,13 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
 			ar_http_iface_client:send_block_binary(ar_test_node:peer_ip(main), B2#block.indep_hash,
 					ar_serialize:block_to_binary(B2))),
-	receive
-		{event, block, {rejected, invalid_cumulative_difficulty, B2H, _Peer2}} ->
-			ok;
-		{event, block, {new, #block{ indep_hash = B2H }, _Peer3}} ->
-			?assert(false, "Unexpected block acceptance");
-		{event, block, Other} ->
-			?debugFmt("Unexpected block event: ~p", [Other]),
-			?assert(false, "Unexpected block event")
-	after 60_000 ->
-		?assert(false, "Timed out waiting for the node to pre-validate the fake "
-				"block.")
-	end,
-	[{H1, _, _} | _] = ar_test_node:wait_until_height(peer1, 1),
+	%% The block event stream is global, so unrelated peer gossip can arrive
+	%% before the fake block's verdict; wait specifically for that verdict.
+	wait_until_fake_block_rejected(B2H, erlang:monotonic_time(millisecond) + 60_000),
+	{ok, [{H1, _, _} | _]} = ar_test_await:node_height(peer1, 1),
 	ar_test_node:mine(),
 	%% Assert the nodes have continued building on the original fork.
-	[{H3, _, _} | _] = ar_test_node:wait_until_height(peer1, 2),
+	{ok, [{H3, _, _} | _]} = ar_test_await:node_height(peer1, 2),
 	?assertNotEqual(B2#block.indep_hash, H3),
 	{_Peer, B3, _Time, _Size} =
 	ar_http_iface_client:get_block_shadow(1,
@@ -224,77 +213,3 @@ fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 		false ->
 			fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff)
 	end.
-
-fork_recovery_test_() ->
-	%% Allow headroom for many sequential wait_until_syncs_chunks calls on slow CI.
-	{timeout, 480, fun test_fork_recovery/0}.
-
-test_fork_recovery() ->
-	test_fork_recovery(original_split).
-
-test_fork_recovery(Split) ->
-	Wallet = ar_test_data_sync:setup_nodes(#{ packing => {composite, 1} }),
-	{TX1, Chunks1} = ar_test_data_sync:tx(Wallet, {Split, 3}, v2, ?AR(10)),
-	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(TX1#tx.id)]),
-	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(B1#block.indep_hash),
-			B1#block.height]),
-	Proofs1 = ar_test_data_sync:post_proofs(main, B1, TX1, Chunks1),
-	ar_test_data_sync:wait_until_syncs_chunks(Proofs1),
-	UpperBound = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
-	ar_test_data_sync:wait_until_syncs_chunks(peer1, Proofs1, UpperBound),
-	ar_test_node:disconnect_from(peer1),
-	{PeerTX2, PeerChunks2} = ar_test_data_sync:tx(Wallet, {Split, 5}, v2, ?AR(10)),
-	{PeerTX3, PeerChunks3} = ar_test_data_sync:tx(Wallet, {Split, 2}, v2, ?AR(10)),
-	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(PeerTX2#tx.id)]),
-	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(PeerTX3#tx.id)]),
-	PeerB2 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
-			[PeerTX2, PeerTX3]),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(PeerB2#block.indep_hash),
-			PeerB2#block.height]),
-	{MainTX2, MainChunks2} = ar_test_data_sync:tx(Wallet, {Split, 1}, v2, ?AR(10)),
-	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(MainTX2#tx.id)]),
-	MainB2 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
-			[MainTX2]),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MainB2#block.indep_hash),
-			MainB2#block.height]),
-	_PeerProofs2 = ar_test_data_sync:post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2),
-	_PeerProofs3 = ar_test_data_sync:post_proofs(peer1, PeerB2, PeerTX3, PeerChunks3),
-	{PeerTX4, PeerChunks4} = ar_test_data_sync:tx(Wallet, {Split, 2}, v2, ?AR(10)),
-	?debugFmt("Posting tx to peer1 ~s.~n", [ar_util:encode(PeerTX4#tx.id)]),
-	PeerB3 = ar_test_node:post_and_mine(#{ miner => peer1, await_on => peer1 },
-			[PeerTX4]),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(PeerB3#block.indep_hash),
-			PeerB3#block.height]),
-	_PeerProofs4 = ar_test_data_sync:post_proofs(peer1, PeerB3, PeerTX4, PeerChunks4),
-	ar_test_node:post_and_mine(#{ miner => main, await_on => main }, []),
-	MainProofs2 = ar_test_data_sync:post_proofs(main, MainB2, MainTX2, MainChunks2),
-	{MainTX3, MainChunks3} = ar_test_data_sync:tx(Wallet, {Split, 1}, v2, ?AR(10)),
-	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(MainTX3#tx.id)]),
-	MainB3 = ar_test_node:post_and_mine(#{ miner => main, await_on => main },
-			[MainTX3]),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MainB3#block.indep_hash),
-			MainB3#block.height]),
-	ar_test_node:connect_to_peer(peer1),
-	MainProofs3 = ar_test_data_sync:post_proofs(main, MainB3, MainTX3, MainChunks3),
-	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
-	ar_test_data_sync:wait_until_syncs_chunks(peer1, MainProofs2, UpperBound2),
-	ar_test_data_sync:wait_until_syncs_chunks(peer1, MainProofs3, UpperBound2),
-	ar_test_data_sync:wait_until_syncs_chunks(peer1, Proofs1, infinity),
-	%% The peer1 node will return the orphaned transactions to the mempool
-	%% and gossip them.
-	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(PeerTX2#tx.id)]),
-	?debugFmt("Posting tx to main ~s.~n", [ar_util:encode(PeerTX4#tx.id)]),
-	ar_test_node:post_tx_to_peer(main, PeerTX2),
-	ar_test_node:post_tx_to_peer(main, PeerTX4),
-	ar_test_node:assert_wait_until_receives_txs([PeerTX2, PeerTX4]),
-	MainB4 = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, []),
-	?debugFmt("Mined block ~s, height ~B.~n", [ar_util:encode(MainB4#block.indep_hash),
-			MainB4#block.height]),
-	Proofs4 = ar_test_data_sync:post_proofs(main, MainB4, PeerTX4, PeerChunks4),
-	%% We did not submit proofs for PeerTX4 to main - they are supposed to be still stored
-	%% in the disk pool.
-	ar_test_data_sync:wait_until_syncs_chunks(peer1, Proofs4, infinity),
-	UpperBound3 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
-	ar_test_data_sync:wait_until_syncs_chunks(Proofs4, UpperBound3),
-	ar_test_data_sync:post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2).

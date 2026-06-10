@@ -37,9 +37,10 @@ test_syncs_after_joining(Split) ->
 	PeerProofs2 = ar_test_data_sync:post_proofs(peer1, PeerB2, PeerTX2, PeerChunks2),
 	ar_test_data_sync:wait_until_syncs_chunks(peer1, PeerProofs2, infinity),
 	_Peer2 = ar_test_node:rejoin_on(#{ node => peer1, join_on => main }),
-	assert_wait_until_height(peer1, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 3)),
 	ar_test_node:connect_to_peer(peer1),
-	UpperBound2 = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
+	{Height2, BI2} = ar_node:get_block_index_and_height(),
+	UpperBound2 = ar_node:get_partition_upper_bound(Height2, BI2),
 	ar_test_data_sync:wait_until_syncs_chunks(peer1, MainProofs2, UpperBound2),
 	ar_test_data_sync:wait_until_syncs_chunks(peer1, MainProofs3, UpperBound2),
 	ar_test_data_sync:wait_until_syncs_chunks(peer1, Proofs1, infinity). 

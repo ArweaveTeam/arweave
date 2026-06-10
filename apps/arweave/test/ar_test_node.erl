@@ -908,7 +908,9 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 	).
 
 stop() ->
-	case stop_application(arweave, 60000) of
+	%% Match the ar_kv supervisor shutdown window so RocksDB can close before
+	%% the next test wipes or reuses the data directory.
+	case stop_application(arweave, 300_000) of
 		ok ->
 			ok;
 		{error, {not_started, arweave}} ->
@@ -923,8 +925,11 @@ stop() ->
 stop_application(App, Timeout) ->
 	Parent = self(),
 	Ref = make_ref(),
+	Start = erlang:monotonic_time(millisecond),
 	Pid = spawn(fun() -> Parent ! {Ref, application:stop(App)} end),
 	receive
+		{Ref, ok} ->
+			ar_test_await:application_stopped(App, remaining_timeout(Start, Timeout));
 		{Ref, Result} ->
 			Result
 	after Timeout ->
@@ -932,11 +937,16 @@ stop_application(App, Timeout) ->
 		{error, timeout}
 	end.
 
+remaining_timeout(Start, Timeout) ->
+	max(0, Timeout - (erlang:monotonic_time(millisecond) - Start)).
+
 force_stop_application(App) ->
 	case application_controller:get_master(App) of
 		Master when is_pid(Master) ->
 			exit(Master, kill),
-			timer:sleep(1000);
+			_ = ar_test_await:application_stopped(App, 10_000),
+			_ = ar_test_await:ar_kv_stopped(10_000),
+			ok;
 		_ ->
 			ok
 	end.

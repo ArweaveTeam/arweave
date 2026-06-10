@@ -9,7 +9,7 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 
--import(ar_test_node, [assert_wait_until_height/2, post_block/2, send_new_block/2]).
+-import(ar_test_node, [post_block/2, send_new_block/2]).
 
 %% we have to wait to let the ar_events get processed whenever we apply a VDF step
 -define(WAIT_TIME, 1000).

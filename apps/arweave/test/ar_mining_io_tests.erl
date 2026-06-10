@@ -178,13 +178,13 @@ default_candidate() ->
 	}.
 
 wait_for_io(NumChunks) ->
-	Result = ar_util:do_until(
-		fun() ->
-			NumChunks == length(ets:tab2list(?MODULE))
-		end,
-		100,
-		60000),
-	?assertEqual(true, Result, "Timeout while waiting to read chunks").
+	?assertEqual(ok,
+		ar_test_await:until(io_recall_chunks_loaded,
+			fun() ->
+				NumChunks == length(ets:tab2list(?MODULE))
+			end,
+			60000),
+		"Timeout while waiting to read chunks").
 
 get_recall_chunks() ->
 	case ets:tab2list(?MODULE) of

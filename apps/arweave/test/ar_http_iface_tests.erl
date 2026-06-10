@@ -1,10 +1,8 @@
 -module(ar_http_iface_tests).
+-test_peers([peer1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
--import(ar_test_node, [wait_until_height/2, wait_until_receives_txs/1,
-		read_block_when_stored/1, read_block_when_stored/2, assert_wait_until_height/2]).
 
 start_node() ->
 	%% Starting a node is slow so we'll run it once for the whole test module
@@ -171,12 +169,12 @@ test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
 		end,
 		ValidPayloads
 	),
-	ar_test_node:assert_wait_until_receives_txs(main, [TX, TX2]),
-	ar_test_node:assert_wait_until_receives_txs(peer1, [TX, TX2]),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX, TX2])),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(peer1, [TX, TX2])),
 	ar_test_node:mine(),
-	[{H, _, _} | _] = ar_test_node:wait_until_height(main, LocalHeight + 1),
-	ar_test_node:assert_wait_until_height(peer1, RemoteHeight + 1),
-	B = read_block_when_stored(H, true),
+	{ok, [{H, _, _} | _]} = ar_test_await:node_height(main, LocalHeight + 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, RemoteHeight + 1)),
+	B = ar_test_await:block_stored(H, true),
 	ChecksumAddr = << (ar_util:encode(Address32))/binary, <<":">>/binary,
 			(ar_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary >>,
 	?assertEqual(2, length(B#block.txs)),
@@ -306,12 +304,14 @@ test_get_info(_) ->
 		?CLIENT_VERSION,
 		ar_http_iface_client:get_info(ar_test_node:peer_ip(main), version)),
 	?assertEqual(1, ar_http_iface_client:get_info(ar_test_node:peer_ip(main), peers)),
-	ar_util:do_until(
+	ok = ar_test_await:until(http_info_blocks_count,
 		fun() ->
-			1 == ar_http_iface_client:get_info(ar_test_node:peer_ip(main), blocks)
+			case ar_http_iface_client:get_info(ar_test_node:peer_ip(main), blocks) of
+				Blocks when is_integer(Blocks), Blocks >= 1 -> true;
+				_ -> false
+			end
 		end,
-		100,
-		2000
+		30000
 	),
 	?assertEqual(1, ar_http_iface_client:get_info(ar_test_node:peer_ip(main), height)).
 
@@ -463,7 +463,7 @@ test_get_balance({B0, _, _, {_, Pub1}}) ->
 			path => "/wallet_list/" ++ RootHash ++ "/" ++ Addr ++ "/balance"
 		}),
 	ar_test_node:mine(),
-	wait_until_height(main, LocalHeight + 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -520,7 +520,7 @@ test_get_wallet_list_in_chunks({B0, {_, Pub1}, {_, Pub2}, {_, StaticPub}}) ->
 test_get_height(_) ->
 	0 = ar_http_iface_client:get_height(ar_test_node:peer_ip(main)),
 	ar_test_node:mine(),
-	wait_until_height(main, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
 	1 = ar_http_iface_client:get_height(ar_test_node:peer_ip(main)).
 
 %% @doc Test that last tx associated with a wallet can be fetched.
@@ -613,9 +613,9 @@ test_get_format_2_tx(_) ->
 			ar_serialize:tx_to_binary(InvalidDataRootTX#tx{ data = <<>> })),
 	ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), EmptyTX#tx.id,
 			ar_serialize:tx_to_binary(EmptyTX)),
-	wait_until_receives_txs([ValidTX, EmptyTX, InvalidDataRootTX]),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [ValidTX, EmptyTX, InvalidDataRootTX])),
 	ar_test_node:mine(),
-	wait_until_height(main, LocalHeight + 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
 	%% Ensure format=2 transactions can be retrieved over the HTTP
 	%% interface with no populated data, while retaining info on all other fields.
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
@@ -629,7 +629,7 @@ test_get_format_2_tx(_) ->
 			data_size = 4
 		}, (ar_serialize:json_struct_to_tx(Body))#tx{ owner_address = not_set }),
 	%% Ensure data can be fetched for format=2 transactions via /tx/[ID]/data.
-	{ok, Data} = wait_until_syncs_tx_data(TXID),
+	{ok, Data} = ar_test_await:http_tx_data(main, TXID),
 	?assertEqual(ar_util:encode(<<"DATA">>), Data),
 	{ok, {{<<"404">>, _}, _, _, _, _}} =
 		ar_http:req(#{
@@ -663,26 +663,27 @@ test_get_format_1_tx(_) ->
 	EncodedTXID = binary_to_list(ar_util:encode(TXID)),
 	ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), TX#tx.id,
 			ar_serialize:tx_to_binary(TX)),
-	wait_until_receives_txs([TX]),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
 	ar_test_node:mine(),
-	wait_until_height(main, LocalHeight + 1),
-	{ok, Body} =
-		ar_util:do_until(
-			fun() ->
-				case ar_http:req(#{
-					method => get,
-					peer => ar_test_node:peer_ip(main),
-					path => "/tx/" ++ EncodedTXID
-				}) of
-					{ok, {{<<"404">>, _}, _, _, _, _}} ->
-						false;
-					{ok, {{<<"200">>, _}, _, Payload, _, _}} ->
-						{ok, Payload}
-				end
-			end,
-			100,
-			2000
-		),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
+	ok = ar_test_await:until(http_tx_available,
+		fun() ->
+			case ar_http:req(#{
+				method => get,
+				peer => ar_test_node:peer_ip(main),
+				path => "/tx/" ++ EncodedTXID
+			}) of
+				{ok, {{<<"200">>, _}, _, _, _, _}} -> true;
+				_ -> false
+			end
+		end,
+		2000
+	),
+	{ok, {{<<"200">>, _}, _, Body, _, _}} = ar_http:req(#{
+		method => get,
+		peer => ar_test_node:peer_ip(main),
+		path => "/tx/" ++ EncodedTXID
+	}),
 	?assertEqual(TX, (ar_serialize:json_struct_to_tx(Body))#tx{ owner_address = not_set }).
 
 %% @doc Test adding transactions to a block.
@@ -699,11 +700,11 @@ test_add_external_tx_with_tags(_) ->
 		},
 	ar_http_iface_client:send_tx_json(ar_test_node:peer_ip(main), TaggedTX#tx.id,
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TaggedTX))),
-	wait_until_receives_txs([TaggedTX]),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TaggedTX])),
 	ar_test_node:mine(),
-	wait_until_height(main, LocalHeight + 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
 	[B1Hash | _] = ar_node:get_blocks(),
-	B1 = read_block_when_stored(B1Hash, true),
+	B1 = ar_test_await:block_stored(B1Hash, true),
 	TXID = TaggedTX#tx.id,
 	?assertEqual([TXID], [TX2#tx.id || TX2 <- B1#block.txs]),
 	?assertEqual(TaggedTX, (ar_storage:read_tx(hd(B1#block.txs)))#tx{ owner_address = not_set }).
@@ -714,28 +715,20 @@ test_find_external_tx(_) ->
 	TX = ar_tx:new(<<"DATA">>),
 	ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), TX#tx.id,
 			ar_serialize:tx_to_binary(TX)),
-	wait_until_receives_txs([TX]),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
 	ar_test_node:mine(),
-	wait_until_height(main, LocalHeight + 1),
-	{ok, FoundTXID} =
-		ar_util:do_until(
-			fun() ->
-				case ar_http_iface_client:get_tx(ar_test_node:peer_ip(main), TX#tx.id) of
-					not_found ->
-						false;
-					TX2 ->
-						case TX2#tx.id == TX#tx.id of
-							true ->
-								{ok, TX#tx.id};
-							false ->
-								false
-						end
-				end
-			end,
-			100,
-			5000
-		),
-	?assertEqual(FoundTXID, TX#tx.id).
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
+	ok = ar_test_await:until(http_find_external_tx,
+		fun() ->
+			case ar_http_iface_client:get_tx(ar_test_node:peer_ip(main), TX#tx.id) of
+				not_found -> false;
+				TX2 -> TX2#tx.id == TX#tx.id
+			end
+		end,
+		5000
+	),
+	FoundTX = ar_http_iface_client:get_tx(ar_test_node:peer_ip(main), TX#tx.id),
+	?assertEqual(TX#tx.id, FoundTX#tx.id).
 
 %% @doc Post a tx to the network and ensure that last_tx call returns the ID of last tx.
 test_add_tx_and_get_last({_B0, Wallet1, Wallet2, _StaticWallet}) ->
@@ -750,9 +743,9 @@ test_add_tx_and_get_last({_B0, Wallet1, Wallet2, _StaticWallet}) ->
 	ID = SignedTX#tx.id,
 	ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), SignedTX#tx.id,
 			ar_serialize:tx_to_binary(SignedTX)),
-	wait_until_receives_txs([SignedTX]),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [SignedTX])),
 	ar_test_node:mine(),
-	wait_until_height(main, LocalHeight + 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -769,10 +762,10 @@ test_get_subfields_of_tx(_) ->
 	TX = ar_tx:new(<<"DATA">>),
 	ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), TX#tx.id,
 			ar_serialize:tx_to_binary(TX)),
-	wait_until_receives_txs([TX]),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
 	ar_test_node:mine(),
-	wait_until_height(main, LocalHeight + 1),
-	{ok, Body} = wait_until_syncs_tx_data(TX#tx.id),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
+	{ok, Body} = ar_test_await:http_tx_data(main, TX#tx.id),
 	Orig = TX#tx.data,
 	?assertEqual(Orig, ar_util:decode(Body)).
 
@@ -781,7 +774,7 @@ test_get_pending_tx(_) ->
 	TX = ar_tx:new(<<"DATA1">>),
 	ar_http_iface_client:send_tx_json(ar_test_node:peer_ip(main), TX#tx.id,
 			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
-	wait_until_receives_txs([TX]),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
 	{ok, {{<<"202">>, _}, _, Body, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -790,6 +783,24 @@ test_get_pending_tx(_) ->
 		}),
 	?assertEqual(<<"Pending">>, Body).
 
+%% @doc Ensure that get_tx works with a single peer and a list of peers.
+get_tx_test_() ->
+	[
+		ar_test_node:test_with_all_nodes_mocked(
+			[{ar_http_iface_client, get_tx_from_remote_peer,
+				fun(_, _, _) -> {error, {closed, "The connection was lost."}} end}],
+			fun test_get_tx/0)
+	].
+
+test_get_tx() ->
+	?assertEqual(not_found,
+		ar_http_iface_client:get_tx({127, 0, 0, 1, 1984}, <<"123">>)),
+	?assertEqual(not_found,
+		ar_http_iface_client:get_tx([{127, 0, 0, 1, 1984}], <<"123">>)),
+	?assertEqual(not_found,
+		ar_http_iface_client:get_tx(
+			[{127, 0, 0, 1, 1984}, {127, 0, 0, 1, 1985}], <<"123">>)).
+
 %% @doc Mine a transaction into a block and retrieve it's binary body via HTTP.
 test_get_tx_body(_) ->
 	ar_test_node:disconnect_from(peer1),
@@ -797,14 +808,14 @@ test_get_tx_body(_) ->
 	TX = ar_tx:new(<<"TEST DATA">>),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
 	ar_test_node:mine(),
-	wait_until_height(main, LocalHeight + 1),
-	{ok, Data} = wait_until_syncs_tx_data(TX#tx.id),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
+	{ok, Data} = ar_test_await:http_tx_data(main, TX#tx.id),
 	?assertEqual(<<"TEST DATA">>, ar_util:decode(Data)).
 
 test_get_tx_status(_) ->
 	ar_test_node:connect_to_peer(peer1),
 	Height = ar_node:get_height(),
-	assert_wait_until_height(peer1, Height),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height)),
 	ar_test_node:disconnect_from(peer1),
 	TX = (ar_tx:new())#tx{ tags = [{<<"TestName">>, <<"TestVal">>}] },
 	ar_test_node:assert_post_tx_to_peer(main, TX),
@@ -817,15 +828,14 @@ test_get_tx_status(_) ->
 	end,
 	?assertMatch({ok, {{<<"202">>, _}, _, <<"Pending">>, _, _}}, FetchStatus()),
 	ar_test_node:mine(),
-	wait_until_height(main, Height + 1),
-	ar_util:do_until(
+	?assertMatch({ok, _}, ar_test_await:node_height(main, Height + 1)),
+	ok = ar_test_await:until(http_tx_status_200,
 		fun() ->
 			case FetchStatus() of
 				{ok, {{<<"200">>, _}, _, _, _, _}} -> true;
 				_ -> false
 			end
 		end,
-		200,
 		5000
 	),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = FetchStatus(),
@@ -840,8 +850,8 @@ test_get_tx_status(_) ->
 		maps:from_list(Res)
 	),
 	ar_test_node:mine(),
-	wait_until_height(main, Height + 2),
-	ar_util:do_until(
+	?assertMatch({ok, _}, ar_test_await:node_height(main, Height + 2)),
+	ok = ar_test_await:until(http_tx_status_confirmations,
 		fun() ->
 			{ok, {{<<"200">>, _}, _, Body2, _, _}} = FetchStatus(),
 			{Res2} = ar_serialize:dejsonify(Body2),
@@ -851,17 +861,16 @@ test_get_tx_status(_) ->
 				<<"number_of_confirmations">> => 2
 			} == maps:from_list(Res2)
 		end,
-		200,
 		5000
 	),
 	%% Create a fork which returns the TX to mempool.
 	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, Height + 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height + 1)),
 	ar_test_node:mine(peer1),
-	assert_wait_until_height(peer1, Height + 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height + 2)),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
-	wait_until_height(main, Height + 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, Height + 3)),
 	?assertMatch({ok, {{<<"202">>, _}, _, _, _, _}}, FetchStatus()).
 
 test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
@@ -909,9 +918,9 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 				path => "/tx",
 				body => ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TopUpTX))
 			}),
-		wait_until_receives_txs([TopUpTX]),
+		?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TopUpTX])),
 		ar_test_node:mine(),
-		wait_until_height(main, LocalHeight + 1),
+		?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
 		%% Send an unsigned transaction to be signed with the generated key.
 		TX = (ar_tx:new())#tx{reward = ?AR(1), last_tx = TopUpTX#tx.id},
 		UnsignedTXProps = [
@@ -950,10 +959,11 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 		ok = arweave_config:force_config(#{[internal_api_secret] => not_set}),
 		{Res} = ar_serialize:dejsonify(Body),
 		TXID = proplists:get_value(<<"id">>, Res),
-		timer:sleep(200),
+		SignedTXID = ar_util:decode(TXID),
+		ok = ar_test_await:txs_ready_for_mining(main, [#tx{ id = SignedTXID }]),
 		ar_test_node:mine(),
-		wait_until_height(main, LocalHeight + 2),
-		timer:sleep(200),
+		?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 2)),
+		ok = ar_test_await:tx_confirmed(main, SignedTXID),
 		{ok, {{<<"200">>, <<"OK">>}, _, GetTXBody, _, _}} =
 			ar_http:req(#{
 				method => get,
@@ -979,10 +989,10 @@ test_get_error_of_data_limit(_) ->
 	TX = ar_tx:new(<< <<0>> || _ <- lists:seq(1, Limit * 2) >>),
 	ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), TX#tx.id,
 			ar_serialize:tx_to_binary(TX)),
-	wait_until_receives_txs([TX]),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
 	ar_test_node:mine(),
-	wait_until_height(main, LocalHeight + 1),
-	{ok, _} = wait_until_syncs_tx_data(TX#tx.id),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
+	{ok, _} = ar_test_await:http_tx_data(main, TX#tx.id),
 	Resp =
 		ar_http:req(#{
 			method => get,
@@ -1002,12 +1012,11 @@ test_send_missing_tx_with_the_block({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs)),
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(peer1, TX) end, EverySecondTX),
 	ar_test_node:mine(),
-	BI = wait_until_height(main, LocalHeight + 1),
-	B = ar_storage:read_block(hd(BI)),
-	B2 = B#block{ txs = ar_storage:read_tx(B#block.txs) },
+	{ok, BI} = ar_test_await:node_height(main, LocalHeight + 1),
+	B2 = ar_test_await:block_stored(hd(BI), true),
 	ar_test_node:connect_to_peer(peer1),
 	ar_bridge ! {event, block, {new, B2, #{ recall_byte => undefined }}},
-	assert_wait_until_height(peer1, RemoteHeight + 1).
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, RemoteHeight + 1)).
 
 test_fallback_to_block_endpoint_if_cannot_send_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	ar_test_node:disconnect_from(peer1),
@@ -1019,11 +1028,11 @@ test_fallback_to_block_endpoint_if_cannot_send_tx({_B0, Wallet1, _Wallet2, _Stat
 			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs)),
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(peer1, TX) end, EverySecondTX),
 	ar_test_node:mine(),
-	BI = wait_until_height(main, LocalHeight + 1),
+	{ok, BI} = ar_test_await:node_height(main, LocalHeight + 1),
 	B = ar_storage:read_block(hd(BI)),
 	ar_test_node:connect_to_peer(peer1),
 	ar_bridge ! {event, block, {new, B, #{ recall_byte => undefined }}},
-	assert_wait_until_height(peer1, RemoteHeight + 1).
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, RemoteHeight + 1)).
 
 test_get_recent_hash_list_diff({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	LocalHeight = ar_node:get_height(),
@@ -1043,7 +1052,7 @@ test_get_recent_hash_list_diff({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 		peer => ar_test_node:peer_ip(main), path => "/recent_hash_list_diff",
 		headers => [], body => B0H }),
 	ar_test_node:mine(),
-	BI1 = wait_until_height(main, LocalHeight + 1),
+	{ok, BI1} = ar_test_await:node_height(main, LocalHeight + 1),
 	{B1H, _, _} = hd(BI1),
 	{ok, {{<<"200">>, _}, _, << B0H:48/binary, B1H:48/binary, 0:16 >> , _, _}} =
 		ar_http:req(#{ method => get, peer => ar_test_node:peer_ip(main),
@@ -1051,7 +1060,7 @@ test_get_recent_hash_list_diff({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 	TXs = [ar_test_node:sign_tx(main, Wallet1, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 3)],
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs),
 	ar_test_node:mine(),
-	BI2 = wait_until_height(main, LocalHeight + 2),
+	{ok, BI2} = ar_test_await:node_height(main, LocalHeight + 2),
 	{B2H, _, _} = hd(BI2),
 	[TXID1, TXID2, TXID3] = [TX#tx.id || TX <- (ar_node:get_current_block())#block.txs],
 	{ok, {{<<"200">>, _}, _, << B0H:48/binary, B1H:48/binary, 0:16, B2H:48/binary,
@@ -1084,26 +1093,6 @@ test_get_total_supply(_Args) ->
 	TotalSupplyBin = integer_to_binary(TotalSupply),
 	?assertMatch({ok, {{<<"200">>, _}, _, TotalSupplyBin, _, _}},
 			ar_http:req(#{ method => get, peer => ar_test_node:peer_ip(main), path => "/total_supply" })).
-
-wait_until_syncs_tx_data(TXID) ->
-	ar_util:do_until(
-		fun() ->
-			case ar_http:req(#{
-				method => get,
-				peer => ar_test_node:peer_ip(main),
-				path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data"
-			}) of
-				{ok, {{<<"404">>, _}, _, _, _, _}} ->
-					false;
-				{ok, {{<<"200">>, _}, _, <<>>, _, _}} ->
-					false;
-				{ok, {{<<"200">>, _}, _, Payload, _, _}} ->
-					{ok, Payload}
-			end
-		end,
-		100,
-		10000
-	).
 
 height(Node) ->
 	ar_test_node:remote_call(Node, ar_node, get_height, []).

@@ -35,16 +35,16 @@ mining_test_() ->
 test_single_node_one_chunk() ->
 	[Node, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(1),
 	ar_test_node:mine(Node),
-	BI = ar_test_node:wait_until_height(ValidatorNode, 1, false),
+	{ok, BI} = ar_test_await:node_height(ValidatorNode, 1),
 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 	?assert(byte_size((B#block.poa)#poa.data_path) > 0),
 	assert_empty_cache(Node).
-	
+
 %% @doc One-node coordinated mining cluster mining a block with two chunks.
 test_single_node_two_chunk() ->
 	[Node, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(1),
 	ar_test_node:mine(Node),
-	BI = ar_test_node:wait_until_height(ValidatorNode, 1, false),
+	{ok, BI} = ar_test_await:node_height(ValidatorNode, 1),
 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 	?assert(byte_size((B#block.poa2)#poa.data_path) > 0),
 	assert_empty_cache(Node).
@@ -459,8 +459,7 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 			ar_util:encode(CurrentB#block.hash)
 		]
 	),
-	BIValidator = ar_test_node:wait_until_height(
-		ValidatorNode, CurrentHeight + 1, false, ?COORDINATED_MINING_WAIT_TIMEOUT),
+	{ok, BIValidator} = ar_test_await:node_height(ValidatorNode, CurrentHeight + 1),
 	%% Since multiple nodes are mining in parallel it's possible that multiple blocks
 	%% were mined. Get the Validator's current height in cas it's more than CurrentHeight+1.
 	NewHeight = ar_test_node:remote_call(ValidatorNode, ar_node, get_height, []),
@@ -474,8 +473,7 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 			%% Make sure the miner contains all of the new validator hashes, it's okay if
 			%% the miner contains *more* hashes since it's possible concurrent blocks were
 			%% mined between when the Validator checked and now.
-			BIMiner = ar_test_node:wait_until_height(
-				Node, NewHeight, false, ?COORDINATED_MINING_WAIT_TIMEOUT),
+			{ok, BIMiner} = ar_test_await:node_height(Node, NewHeight),
 			MinerHashes = [Hash || {Hash, _, _} <- BIMiner],
 			Message = lists:flatten(io_lib:format(
 					"Node ~p did not mine the same block as the validator node", [Node])),

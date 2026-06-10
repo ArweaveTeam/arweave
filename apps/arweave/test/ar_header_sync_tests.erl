@@ -19,24 +19,20 @@ syncs_headers_test_() ->
 test_syncs_headers() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2000), <<>>}]),
-	ar_test_node:start(B0),
+	ar_test_node:start(#{ b0 => B0, packing => replica_2_9 }),
 	post_random_blocks(Wallet, ar_block:get_max_tx_anchor_depth() + 5, B0),
-	ar_test_node:join_on(#{ node => peer1, join_on => main }),
-	BI = assert_wait_until_height(peer1, ar_block:get_max_tx_anchor_depth() + 5),
+	ar_test_node:join_on(#{ node => peer1, join_on => main, packing => replica_2_9 }),
+	{ok, BI} = ar_test_await:node_height(peer1, ar_block:get_max_tx_anchor_depth() + 5),
 	lists:foreach(
 		fun(Height) ->
-			{ok, B} = ar_util:do_until(
+			ok = ar_test_await:until(peer1_block_available,
 				fun() ->
-					case ar_test_node:remote_call(peer1, ar_storage, read_block, [Height, BI]) of
-						unavailable ->
-							unavailable;
-						B2 ->
-							{ok, B2}
-					end
+					ar_test_node:remote_call(peer1, ar_storage, read_block, [Height, BI])
+							/= unavailable
 				end,
-				200,
 				30000
 			),
+			B = ar_test_node:remote_call(peer1, ar_storage, read_block, [Height, BI]),
 			MainB = ar_storage:read_block(Height, ar_node:get_block_index()),
 			?assertEqual(B, MainB),
 			TXs = ar_test_node:remote_call(peer1, ar_storage, read_tx, [B#block.txs]),
@@ -53,16 +49,16 @@ test_syncs_headers() ->
 		#{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
 	ar_test_node:assert_post_tx_to_peer(main, NoSpaceTX),
 	ar_test_node:mine(),
-	[{NoSpaceH, _, _} | _] = wait_until_height(main, NoSpaceHeight),
+	{ok, [{NoSpaceH, _, _} | _]} = ar_test_await:node_height(main, NoSpaceHeight),
 	timer:sleep(1000),
 	%% The cleanup is not expected to kick in yet.
-	NoSpaceB = read_block_when_stored(NoSpaceH),
+	NoSpaceB = ar_test_await:block_stored(NoSpaceH),
 	?assertMatch(#block{}, NoSpaceB),
 	?assertMatch(#tx{}, ar_storage:read_tx(NoSpaceTX#tx.id)),
 	?assertMatch({ok, _}, ar_storage:read_wallet_list(NoSpaceB#block.wallet_list)),
 	ets:new(test_syncs_header, [set, named_table]),
 	ets:insert(test_syncs_header, {height, NoSpaceHeight + 1}),
-	true = ar_util:do_until(
+	ok = ar_test_await:until(header_sync_cleanup_kicked_in,
 		fun() ->
 			%% Keep mining blocks. At some point the cleanup procedure will
 			%% kick in and remove the oldest files.
@@ -71,18 +67,17 @@ test_syncs_headers() ->
 			ar_test_node:assert_post_tx_to_peer(main, TX),
 			ar_test_node:mine(),
 			[{_, Height}] = ets:lookup(test_syncs_header, height),
-			[_ | _] = wait_until_height(main, Height),
+			{ok, [_ | _]} = ar_test_await:node_height(main, Height),
 			ets:insert(test_syncs_header, {height, Height + 1}),
 			unavailable == ar_storage:read_block(NoSpaceH)
 				andalso ar_storage:read_tx(NoSpaceTX#tx.id) == unavailable
 		end,
-		100,
 		20000
 	),
 	timer:sleep(1000),
 	[{LatestH, _, _} | _] = ar_node:get_block_index(),
 	%% The latest block must not be cleaned up.
-	LatestB = read_block_when_stored(LatestH),
+	LatestB = ar_test_await:block_stored(LatestH),
 	?assertMatch(#block{}, LatestB),
 	?assertMatch(#tx{}, ar_storage:read_tx(lists:nth(1, LatestB#block.txs))),
 	?assertMatch({ok, _}, ar_storage:read_wallet_list(LatestB#block.wallet_list)),
@@ -113,9 +108,9 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 				),
 			?LOG_INFO([{event, post_random_blocks}, {transactions_posted, length(TXs)}, {height, Height}]),
 			ar_test_node:mine(),
-			[{H, _, _} | _] = wait_until_height(main, Height),
+			{ok, [{H, _, _} | _]} = ar_test_await:node_height(main, Height),
 			?LOG_INFO([{event, post_random_blocks}, {block_mined, ar_util:encode(H)}, {height, Height}]),
-			?assertEqual(length(TXs), length((read_block_when_stored(H))#block.txs)),
+			?assertEqual(length(TXs), length((ar_test_await:block_stored(H))#block.txs)),
 			H
 		end,
 		B0#block.indep_hash,

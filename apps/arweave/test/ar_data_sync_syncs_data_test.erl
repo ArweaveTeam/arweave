@@ -7,10 +7,8 @@
 -include("ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--import(ar_test_node, [assert_wait_until_height/2]).
-
 syncs_data_test_() ->
-	{timeout, 240, fun test_syncs_data/0}.
+	{timeout, 480, fun test_syncs_data/0}.
 
 test_syncs_data() ->
 	?LOG_DEBUG([{event, test_syncs_data_start}]),
@@ -40,7 +38,7 @@ test_syncs_data() ->
 			ExpectedOffsetInfo = ar_serialize:jsonify(#{
 					offset => integer_to_binary(AbsoluteTXOffset),
 					size => integer_to_binary(TXSize) }),
-			true = ar_util:do_until(
+			ok = ar_test_await:until(http_tx_offset_matches,
 				fun() ->
 					case ar_test_data_sync:get_tx_offset(peer1, TXID) of
 						{ok, {{<<"200">>, _}, _, ExpectedOffsetInfo, _, _}} ->

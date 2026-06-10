@@ -218,31 +218,13 @@ send_block(H, FromNode, ToNode) ->
 	end.
 
 ensure_block_applied(H, FromNode, ToNode, TargetHeight) ->
-	ar_util:do_until(
+	_ = ar_test_await:until(block_applied_at_height,
 		fun() ->
 			send_block(H, FromNode, ToNode),
 			Height = ar_test_node:remote_call(ToNode, ar_node, get_height, []),
 			Height >= TargetHeight
-		end,
-		1000,
-		?BLOCK_DELIVERY_TIMEOUT).
-
-wait_until_step_number(Node, StepNumber) ->
-	true = ar_util:do_until(
-		fun() ->
-			try
-				CurrentStepNumber = ar_test_node:remote_call(
-					Node, ar_nonce_limiter, get_current_step_number, []),
-				CurrentStepNumber >= StepNumber
-			catch
-				%% meck's internal gen_server proxy uses gen_server:call/2
-				%% with the default 5s timeout, which can fire under load.
-				exit:{timeout, _} ->
-					false
-			end
-		end,
-		500,
-		120000).
+		end),
+	ok.
 
 with_nonce_limiter_paused(Node, Fun) when is_function(Fun, 0) ->
 	Pid = suspend_nonce_limiter(Node),

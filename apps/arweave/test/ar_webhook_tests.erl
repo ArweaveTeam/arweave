@@ -9,9 +9,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--import(ar_test_node, [
-		wait_until_height/2, read_block_when_stored/1]).
-
 init(Req, State) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
 	handle(SplitPath, Req, State).
@@ -126,7 +123,7 @@ test_webhooks_body(Wallet, B0) ->
 						end,
 					ar_test_node:assert_post_tx_to_peer(main, SignedTX),
 					ar_test_node:mine(),
-					wait_until_height(main, Height),
+					?assertMatch({ok, _}, ar_test_await:node_height(main, Height)),
 					[{_, AcceptedSolutionCount}] = ets:lookup(?MODULE, accepted_solutions),
 					?assert(AcceptedSolutionCount >= Height),
 					SignedTX
@@ -138,44 +135,32 @@ test_webhooks_body(Wallet, B0) ->
 		lists:foreach(
 			fun(Height) ->
 				TX = lists:nth(Height, TXs),
-				true = ar_util:do_until(
-					fun() ->
-						case ets:lookup(?MODULE, {block, Height}) of
-							[{_, B}] ->
-								{H, _, _} = ar_node:get_block_index_entry(Height),
-								B2 = read_block_when_stored(H),
-								Struct = ar_serialize:block_to_json_struct(B2),
-								Expected =
-									maps:remove(
-										<<"wallet_list">>,
-										jiffy:decode(ar_serialize:jsonify(Struct), [return_maps])
-									),
-								?assertEqual(Expected, B),
-								true;	
-							_ ->
-								false
-						end
+				await_webhook_event(webhook_block_event, {block, Height},
+					fun(B) ->
+						{H, _, _} = ar_node:get_block_index_entry(Height),
+						B2 = ar_test_await:block_stored(H),
+						Struct = ar_serialize:block_to_json_struct(B2),
+						Expected =
+							maps:remove(
+								<<"wallet_list">>,
+								jiffy:decode(ar_serialize:jsonify(Struct), [return_maps])
+							),
+						?assertEqual(Expected, B),
+						true
 					end,
-					200,
 					10000
 				),
-				true = ar_util:do_until(
-					fun() ->
-						case ets:lookup(?MODULE, {tx, ar_util:encode(TX#tx.id)}) of
-							[{_, TX2}] ->
-								Struct = ar_serialize:tx_to_json_struct(TX),
-								Expected =
-									maps:remove(
-										<<"data">>,
-										jiffy:decode(ar_serialize:jsonify(Struct), [return_maps])
-									),
-								?assertEqual(Expected, TX2),
-								true;
-							_ ->
-								false
-						end
+				await_webhook_event(webhook_tx_event, {tx, ar_util:encode(TX#tx.id)},
+					fun(TX2) ->
+						Struct = ar_serialize:tx_to_json_struct(TX),
+						Expected =
+							maps:remove(
+								<<"data">>,
+								jiffy:decode(ar_serialize:jsonify(Struct), [return_maps])
+							),
+						?assertEqual(Expected, TX2),
+						true
 					end,
-					200,
 					10000
 				),
 				case Height < 8 andalso Height rem 2 == 1 of
@@ -189,23 +174,18 @@ test_webhooks_body(Wallet, B0) ->
 			end,
 			lists:seq(1, 10)
 		),
-		true = ar_util:do_until(
-			fun() ->
-				case ets:lookup(?MODULE, {tx, ar_util:encode(UnconfirmedTX#tx.id)}) of
-					[{_, TX}] ->
-						Struct = ar_serialize:tx_to_json_struct(UnconfirmedTX),
-						Expected =
-							maps:remove(
-								<<"data">>,
-								jiffy:decode(ar_serialize:jsonify(Struct), [return_maps])
-							),
-						?assertEqual(Expected, TX),
-						true;
-					_ ->
-						false
-				end
+		await_webhook_event(webhook_unconfirmed_tx_event,
+			{tx, ar_util:encode(UnconfirmedTX#tx.id)},
+			fun(TX) ->
+				Struct = ar_serialize:tx_to_json_struct(UnconfirmedTX),
+				Expected =
+					maps:remove(
+						<<"data">>,
+						jiffy:decode(ar_serialize:jsonify(Struct), [return_maps])
+					),
+				?assertEqual(Expected, TX),
+				true
 			end,
-			200,
 			2000
 		),
 		V2TXID = (V2TX)#tx.id,
@@ -225,6 +205,21 @@ test_webhooks_body(Wallet, B0) ->
 		upload_chunks(Proofs),
 		assert_transaction_data_synced(V2TXID),
 		cowboy:stop_listener(ar_webhook_test_listener).
+
+%% @doc Poll the test's ETS receiver table until the entry at Key is present
+%% and its stored JSON satisfies MatchFun.
+await_webhook_event(Name, Key, MatchFun, Timeout) ->
+	ok = ar_test_await:until(Name,
+		fun() ->
+			case ets:lookup(?MODULE, Key) of
+				[{_, JSON}] ->
+					MatchFun(JSON);
+				_ ->
+					false
+			end
+		end,
+		Timeout
+	).
 
 create_v2_tx(Wallet) ->
 	DataSize = 3 * ?DATA_CHUNK_SIZE + 11,
@@ -251,16 +246,11 @@ encode_proof(Proof) ->
 
 assert_transaction_data_synced(TXID) ->
 	EncodedTXID = ar_util:encode(TXID),
-	true = ar_util:do_until(
-		fun() ->
-			case ets:lookup(?MODULE, {tx_data_payload, EncodedTXID}) of
-				[{_, JSON}] ->
-					maps:get(<<"event">>, JSON) == <<"transaction_data_synced">>;
-				_ ->
-					false
-			end
+	await_webhook_event(webhook_tx_data_synced,
+		{tx_data_payload, EncodedTXID},
+		fun(JSON) ->
+			maps:get(<<"event">>, JSON) == <<"transaction_data_synced">>
 		end,
-		1000,
 		30000
 	).
 
@@ -284,12 +274,11 @@ append_txid_to_file(TXID, Filename) ->
 
 assert_transaction_data_removed(TXID) ->
 	EncodedTXID = ar_util:encode(TXID),
-	true = ar_util:do_until(
-		fun() ->
-			[{_, JSON}] = ets:lookup(?MODULE, {tx_data_payload, EncodedTXID}),
+	await_webhook_event(webhook_tx_data_removed,
+		{tx_data_payload, EncodedTXID},
+		fun(JSON) ->
 			maps:get(<<"event">>, JSON) == <<"transaction_data_removed">>
 		end,
-		100,
 		60000
 	).
 

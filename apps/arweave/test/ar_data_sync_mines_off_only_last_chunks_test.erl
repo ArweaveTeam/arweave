@@ -46,12 +46,11 @@ test_mines_off_only_last_chunks() ->
 					%% the new entropy reset source.
 					[{_, Info}] = ets:lookup(node_state, nonce_limiter_info),
 					PrevStepNumber = Info#nonce_limiter_info.global_step_number,
-					true = ar_util:do_until(
+					ok = ar_test_await:until(nonce_limiter_advanced_past_reset,
 						fun() ->
 							ar_nonce_limiter:get_current_step_number()
 									> PrevStepNumber + ar_nonce_limiter:get_reset_frequency()
 						end,
-						100,
 						60000
 					);
 				0 ->

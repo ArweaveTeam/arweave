@@ -19,36 +19,36 @@ test_start_from_block() ->
    
     %% Mine a few blocks, shared by both peers
     ar_test_node:mine(peer1),
-    ar_test_node:wait_until_height(peer1, 1),
-    ar_test_node:wait_until_height(peer2, 1),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer2, 1)),
     ar_test_node:mine(peer2),
-    ar_test_node:wait_until_height(peer1, 2),
-    ar_test_node:wait_until_height(peer2, 2),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2)),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer2, 2)),
     ar_test_node:mine(peer1),
-    ar_test_node:wait_until_height(peer1, 3),
-    ar_test_node:wait_until_height(peer2, 3),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 3)),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer2, 3)),
 
     %% Disconnect peers, and have peer1 mine 1 block, and peer2 mine 3
     ar_test_node:disconnect_from(peer1),
     ar_test_node:disconnect_from(peer2),
 
     ar_test_node:mine(peer1),
-    ar_test_node:wait_until_height(peer1, 4),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 4)),
 
     ar_test_node:mine(peer2),
-    ar_test_node:wait_until_height(peer2, 4),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer2, 4)),
     ar_test_node:mine(peer2),
-    ar_test_node:wait_until_height(peer2, 5),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer2, 5)),
     ar_test_node:mine(peer2),
-    ar_test_node:wait_until_height(peer2, 6),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer2, 6)),
 
     %% Reconnect the peers. This will orphan peer1's block
     ar_test_node:connect_to_peer(peer1),
     ar_test_node:connect_to_peer(peer2),
 
-    ar_test_node:wait_until_height(peer1, 6),
-    ar_test_node:wait_until_height(peer2, 6),
-    ar_test_node:wait_until_height(main, 6),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 6)),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer2, 6)),
+    ?assertMatch({ok, _}, ar_test_await:node_height(main, 6)),
 
     ar_test_node:disconnect_from(peer1),
     ar_test_node:disconnect_from(peer2),
@@ -68,36 +68,38 @@ test_start_from_block() ->
     %% Have peer1 start_from_block
     restart_from_block(peer1, StartFrom),
     assert_start_from(main, peer1, 4),
-    restart_from_block(peer1, StartMinus1),
+    restart_from_block(peer1, StartMinus1, [peer2]),
     assert_start_from(main, peer1, 3),
 
     %% Restart peer2 off of peer1
-    ar_test_node:start_peer(peer2, B0),
-    ar_test_node:remote_call(peer2, ar_test_node, connect_to_peer, [peer1]),
-    ar_test_node:wait_until_height(peer2, 3),
+    start_peer_from(peer2, peer1, B0),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer2, 3)),
 
     assert_start_from(main, peer1, 3),
     assert_start_from(main, peer2, 3),
 
+    %% peer1 sat idle at height 3 while peer2 synced from genesis; restart it from
+    %% the same start_from_block point so its next block has no large VDF step gap.
+    restart_from_block(peer1, StartMinus1, [peer2]),
+
     %% disconnect peer2 and mine a block on peer1
     ar_test_node:remote_call(peer2, ar_test_node, disconnect_from, [peer1]),
     ar_test_node:mine(peer1),
-    ar_test_node:wait_until_height(peer1, 4),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 4)),
 
     %% Confirm legacy block index still matches
     assert_start_from(main, peer1, 3),
 
     %% Restart peer2 off of peer1
-    ar_test_node:start_peer(peer2, B0),
-    ar_test_node:remote_call(peer2, ar_test_node, connect_to_peer, [peer1]),
-    ar_test_node:wait_until_height(peer2, 4),
+    start_peer_from(peer2, peer1, B0),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer2, 4)),
 
     assert_start_from(peer1, peer2, 4),
 
     %% Mine a block on peer2
     ar_test_node:mine(peer2),
-    ar_test_node:wait_until_height(peer2, 5),
-    ar_test_node:wait_until_height(peer1, 5),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer2, 5)),
+    ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 5)),
 
     assert_start_from(peer2, peer1, 5),
 

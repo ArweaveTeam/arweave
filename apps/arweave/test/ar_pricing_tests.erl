@@ -659,6 +659,10 @@ assert_new_account_fee() ->
 			?NEW_ACCOUNT_FEE_DATA_SIZE_EQUIVALENT - 262144) <
 			ar_test_node:get_optimistic_tx_price(main, 0, <<"non-existent-address">>)).
 
+mine_and_wait_until_height(Height) ->
+	ar_test_node:mine(),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, Height)).
+
 %% @doc Return the current balance of the given account.
 get_balance(Pub) ->
 	Address = ar_wallet:to_address(Pub),

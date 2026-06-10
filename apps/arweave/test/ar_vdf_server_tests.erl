@@ -1,14 +1,30 @@
-%% @ar_test: isolated
 -module(ar_vdf_server_tests).
+-test_peers([peer1]).
 
 -export([init/2]).
+-export([
+	setup/0,
+	cleanup/1,
+	mock_reset_frequency/0,
+	test_vdf_server_push_fast_block/0,
+	test_vdf_server_push_slow_block/0,
+	test_vdf_client_fast_block/0,
+	test_vdf_client_fast_block_pull_interface/0,
+	test_vdf_client_slow_block/0,
+	test_vdf_client_slow_block_pull_interface/0,
+	test_serialize_update_format_2/0,
+	test_serialize_update_format_3/0,
+	test_serialize_update_format_4/0,
+	test_serialize_response/0,
+	test_serialize_response_compatibility/0
+]).
 
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--import(ar_test_node, [assert_wait_until_height/2, post_block/2, send_new_block/2]).
+-import(ar_test_node, [post_block/2, send_new_block/2]).
 
 %% -------------------------------------------------------------------------------------------------
 %% Test Fixtures
@@ -58,7 +74,7 @@ test_vdf_server_push_fast_block() ->
 	),
 	%% Mine a block that will be ahead of main in the VDF chain
 	ar_test_node:mine(peer1),
-	BI = assert_wait_until_height(peer1, 1),
+	{ok, BI} = ar_test_await:node_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 	%% Post the block to main which will cause it to validate VDF for the block under
 	%% the B0 session and then begin using the (later) B1 VDF session going forward
@@ -68,19 +84,7 @@ test_vdf_server_push_fast_block() ->
 	Seed0 = B0#block.nonce_limiter_info#nonce_limiter_info.next_seed,
 	Seed1 = B1#block.nonce_limiter_info#nonce_limiter_info.next_seed,
 	StepNumber1 = ar_block:vdf_step_number(B1),
-	ar_util:do_until(
-		fun() ->
-			%% Wait until both VDF sessions are present and we apply VDF upt to the block's step number.
-			case {ets:lookup(computed_output, Seed0), ets:lookup(computed_output, Seed1)} of
-				{[{Seed0, _, LatestStepNumber}], [{Seed1, _, _}]} ->
-					LatestStepNumber >= StepNumber1;
-				_ ->
-					false
-			end
-		end,
-		200,
-		20_000
-	),
+	await_vdf_sessions(Seed0, Seed1, StepNumber1, 20_000),
 
 	[{Seed0, _, LatestStepNumber0}] = get_computed_output(Seed0),
 	[{Seed1, _FirstStepNumber1, _}] = get_computed_output(Seed1),
@@ -109,10 +113,15 @@ test_vdf_server_push_slow_block() ->
 		[{port, VDFPort}],
 		#{ env => #{ dispatch => cowboy_router:compile([{'_', Routes}]) } }
 	),
+	%% Let main get ahead of peer1 in the VDF chain.
+	timer:sleep(3000),
+
+	_ = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
 
 	%% Mine a block that will be behind main in the VDF chain
 	ar_test_node:mine(peer1),
-	BI = assert_wait_until_height(peer1, 1),
+	{ok, BI} = ar_test_await:node_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 
 	%% Post the block to main which will cause it to validate VDF for the block under
@@ -150,11 +159,11 @@ test_vdf_client_fast_block() ->
 	%% Let peer1 get ahead of main in the VDF chain
 	_ = ar_test_node:start_peer(peer1, B0),
 	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
-	timer:sleep(5_000),
+	wait_until_next_vdf_session(peer1),
 
 	%% Mine a block that will be ahead of main in the VDF chain
 	ar_test_node:mine(peer1),
-	BI = assert_wait_until_height(peer1, 1),
+	{ok, BI} = ar_test_await:node_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 	ar_test_node:stop(peer1),
 
@@ -190,11 +199,11 @@ test_vdf_client_fast_block() ->
 	ar_test_node:connect_to_peer(peer1),
 
 	%% After the VDF server receives the block, it should push the old and new VDF sessions
-	%% to the VDF client allowing it to validate teh block.
+	%% to the VDF client allowing it to validate the block.
 	send_new_block(ar_test_node:peer_ip(main), B1),
 	%% If all is right, the VDF server should push the old and new VDF sessions allowing
 	%% the VDF client to finally validate the block.
-	BI = assert_wait_until_height(peer1, 1).
+	{ok, BI} = ar_test_await:node_height(peer1, 1).
 
 test_vdf_client_fast_block_pull_interface() ->
 	{_, Pub} = ar_wallet:new(),
@@ -205,11 +214,11 @@ test_vdf_client_fast_block_pull_interface() ->
 	%% Let peer1 get ahead of main in the VDF chain
 	_ = ar_test_node:start_peer(peer1, B0),
 	_ = ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
-	timer:sleep(20000),
+	wait_until_next_vdf_session(peer1),
 
 	%% Mine a block that will be ahead of main in the VDF chain
 	ar_test_node:mine(peer1),
-	BI = assert_wait_until_height(peer1, 1),
+	{ok, BI} = ar_test_await:node_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 	ar_test_node:stop(peer1),
 
@@ -260,7 +269,7 @@ test_vdf_client_slow_block() ->
 
 	%% Mine a block that will be ahead of main in the VDF chain
 	ar_test_node:mine(peer1),
-	BI = assert_wait_until_height(peer1, 1),
+	{ok, BI} = ar_test_await:node_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 	ar_test_node:stop(peer1),
 
@@ -287,7 +296,7 @@ test_vdf_client_slow_block() ->
 	%% Post the block to the VDF client, it should validate it "immediately" since the
 	%% VDF server is ahead of the block in the VDF chain.
 	send_new_block(ar_test_node:peer_ip(peer1), B1),
-	BI = assert_wait_until_height(peer1, 1).
+	{ok, BI} = ar_test_await:node_height(peer1, 1).
 
 test_vdf_client_slow_block_pull_interface() ->
 	MainPort = arweave_config:get([port]),
@@ -302,7 +311,7 @@ test_vdf_client_slow_block_pull_interface() ->
 
 	%% Mine a block that will be ahead of main in the VDF chain
 	ar_test_node:mine(peer1),
-	BI = assert_wait_until_height(peer1, 1),
+	{ok, BI} = ar_test_await:node_height(peer1, 1),
 	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
 	ar_test_node:stop(peer1),
 
@@ -330,7 +339,7 @@ test_vdf_client_slow_block_pull_interface() ->
 	%% Post the block to the VDF client, it should validate it "immediately" since the
 	%% VDF server is ahead of the block in the VDF chain.
 	send_new_block(ar_test_node:peer_ip(peer1), B1),
-	BI = assert_wait_until_height(peer1, 1).
+	{ok, BI} = ar_test_await:node_height(peer1, 1).
 
 %%
 %% serialize_test_
@@ -501,17 +510,39 @@ handle_update(Update, Req, State) ->
 	end.
 
 get_computed_output(Seed) ->
-	ar_util:do_until(
+	await_computed_output(Seed, 10_000),
+	ets:lookup(computed_output, Seed).
+
+%% @doc Wait until the test's VDF push receiver has recorded a row for Seed.
+await_computed_output(Seed, Timeout) ->
+	ok = ar_test_await:until(
+		computed_output_present,
 		fun() ->
 			case ets:lookup(computed_output, Seed) of
 				[] -> false;
 				_ -> true
 			end
 		end,
-		1000,
-		10_000
-	),
-	ets:lookup(computed_output, Seed).
+		Timeout
+	).
+
+%% @doc Wait until both VDF sessions have rows and Seed0 has advanced to StepNumber.
+await_vdf_sessions(Seed0, Seed1, StepNumber, Timeout) ->
+	ok = ar_test_await:until(
+		vdf_sessions_present,
+		fun() ->
+			case {ets:lookup(computed_output, Seed0), ets:lookup(computed_output, Seed1)} of
+				{[{Seed0, _, LatestStepNumber}], [{Seed1, _, _}]} ->
+					LatestStepNumber >= StepNumber;
+				_ ->
+					false
+			end
+		end,
+		Timeout
+	).
+
+wait_until_next_vdf_session(Node) ->
+	ok = ar_test_await:vdf_step(Node, ar_nonce_limiter:get_reset_frequency() * 2).
 
 mock_reset_frequency() ->
 	{
