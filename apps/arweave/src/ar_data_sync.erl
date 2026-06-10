@@ -173,7 +173,15 @@ put_chunk_metadata(AbsoluteEndOffset, StoreID,
 get_chunk_metadata(AbsoluteEndOffset, StoreID) ->
 	case ar_kv:get({chunks_index, StoreID}, << AbsoluteEndOffset:?OFFSET_KEY_BITSIZE >>) of
 		{ok, Value} ->
-			{ok, binary_to_term(Value, [safe])};
+			{ChunkDataKey, TXRoot, DataRoot, TXPath, _RelativeOffset, ChunkSize} =
+				binary_to_term(Value, [safe]),
+			{ok, #chunk_metadata{
+				chunk_data_key = ChunkDataKey,
+				tx_root = TXRoot,
+				tx_path = TXPath,
+				data_root = DataRoot,
+				chunk_size = ChunkSize
+			}};
 		not_found ->
 			not_found
 	end.
@@ -181,11 +189,9 @@ get_chunk_metadata(AbsoluteEndOffset, StoreID) ->
 delete_chunk_metadata(AbsoluteEndOffset, StoreID) ->
 	ar_kv:delete({chunks_index, StoreID}, << AbsoluteEndOffset:?OFFSET_KEY_BITSIZE >>).
 
-%% @doc Return {ok, Map} | {error, Error} where
-%% Map is
-%% AbsoluteEndOffset => {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize}
-%% map with all the chunk metadata found within the given range AbsoluteEndOffset >= Start,
-%% AbsoluteEndOffset =< End. Return the empty map if no metadata is found.
+%% @doc Return {ok, Map} | {error, Error} where Map maps AbsoluteEndOffset =>
+%% #chunk_metadata{} for all the chunk metadata found within the given range
+%% (AbsoluteEndOffset >= Start, AbsoluteEndOffset =< End). Empty map if none found.
 get_chunk_metadata_range(Start, End, StoreID) ->
 	case ar_kv:get_range({chunks_index, StoreID},
 			<< Start:?OFFSET_KEY_BITSIZE >>, << End:?OFFSET_KEY_BITSIZE >>) of
@@ -193,7 +199,15 @@ get_chunk_metadata_range(Start, End, StoreID) ->
 			{ok, maps:fold(
 					fun(K, V, Acc) ->
 						<< Offset:?OFFSET_KEY_BITSIZE >> = K,
-						maps:put(Offset, binary_to_term(V, [safe]), Acc)
+						{ChunkDataKey, TXRoot, DataRoot, TXPath, _RelativeOffset, ChunkSize} =
+							binary_to_term(V, [safe]),
+						maps:put(Offset, #chunk_metadata{
+							chunk_data_key = ChunkDataKey,
+							tx_root = TXRoot,
+							tx_path = TXPath,
+							data_root = DataRoot,
+							chunk_size = ChunkSize
+						}, Acc)
 					end,
 					#{},
 					Map)};
@@ -415,14 +429,21 @@ get_chunk_by_byte(Byte, StoreID) ->
 	case Result of
 		{error, Reason} ->
 			{error, Reason};
-		{ok, Key, Metadata} ->
-			<< AbsoluteEndOffset:?OFFSET_KEY_BITSIZE >> = Key,
-			{
-				ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize
-			} = binary_to_term(Metadata, [safe]),
-			FullMetaData = {AbsoluteEndOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
-				RelativeOffset, ChunkSize},
-			{ok, Key, FullMetaData}
+		{ok, << AbsoluteEndOffset:?OFFSET_KEY_BITSIZE >>, Value} ->
+			{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize} =
+				binary_to_term(Value, [safe]),
+			Metadata = #chunk_metadata{
+				chunk_data_key = ChunkDataKey,
+				tx_root = TXRoot,
+				tx_path = TXPath,
+				data_root = DataRoot,
+				chunk_size = ChunkSize
+			},
+			Offsets = #chunk_offsets{
+				absolute_offset = AbsoluteEndOffset,
+				relative_offset = RelativeOffset
+			},
+			{ok, Metadata, Offsets}
 	end.
 
 %% @doc: handle situation where get_chunks_by_byte returns invalid_iterator, so we can't
@@ -760,11 +781,12 @@ handle_cast({remove_range, End, Cursor, Ref, PID}, State) when Cursor > End ->
 handle_cast({remove_range, End, Cursor, Ref, PID}, State) ->
 	#data_sync_state{ store_id = StoreID } = State,
 	case get_chunk_by_byte(Cursor, StoreID) of
-		{ok, _Key, {AbsoluteEndOffset, _, _, _, _, _, _}}
+		{ok, _Metadata, #chunk_offsets{ absolute_offset = AbsoluteEndOffset }}
 				when AbsoluteEndOffset > End ->
 			PID ! {removed_range, Ref},
 			{noreply, State};
-		{ok, _Key, {AbsoluteEndOffset, _, _, _, _, _, ChunkSize}} ->
+		{ok, #chunk_metadata{ chunk_size = ChunkSize },
+				#chunk_offsets{ absolute_offset = AbsoluteEndOffset }} ->
 			PaddedStartOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset - ChunkSize),
 			PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
 			%% 1) store updated sync record
@@ -1213,7 +1235,8 @@ read_chunk_with_metadata(
 				{modules_covering_seek_offset, ModuleIDs},
 				{error, io_lib:format("~p", [Err])}]),
 			{error, chunk_not_found};
-		{ok, _, {AbsoluteEndOffset, _, _, _, _, _, ChunkSize}}
+		{ok, #chunk_metadata{ chunk_size = ChunkSize },
+				#chunk_offsets{ absolute_offset = AbsoluteEndOffset }}
 				when AbsoluteEndOffset - SeekOffset >= ChunkSize ->
 			log_chunk_error(RequestOrigin, chunk_offset_mismatch,
 					[{absolute_offset, AbsoluteEndOffset},
@@ -1221,7 +1244,9 @@ read_chunk_with_metadata(
 					{store_id, StoreID},
 					{stored_packing, ar_serialize:encode_packing(StoredPacking, true)}]),
 			{error, chunk_not_found};
-		{ok, _, {AbsoluteEndOffset, ChunkDataKey, TXRoot, _, TXPath, _, ChunkSize}} ->
+		{ok, #chunk_metadata{ chunk_data_key = ChunkDataKey, tx_root = TXRoot,
+					tx_path = TXPath, chunk_size = ChunkSize },
+				#chunk_offsets{ absolute_offset = AbsoluteEndOffset }} ->
 			ReadFun =
 				case ReadChunk of
 					true ->
@@ -1347,8 +1372,7 @@ delete_invalid_metadata(AbsoluteEndOffset, StoreID) ->
 	case get_chunk_metadata(AbsoluteEndOffset, StoreID) of
 		not_found ->
 			ok;
-		{ok, Metadata} ->
-			{ChunkDataKey, _, _, _, _, _} = Metadata,
+		{ok, #chunk_metadata{ chunk_data_key = ChunkDataKey }} ->
 			delete_chunk_data(ChunkDataKey, StoreID),
 			delete_chunk_metadata(AbsoluteEndOffset, StoreID)
 	end.
