@@ -127,10 +127,12 @@ deserialize(SerializedBuckets, ExpectedBucketSize) ->
 			{error, invalid_format}
 	end.
 
-%% @doc Call Fun(Bucket, Share) for each BucketSize-granularity bucket that
-%% starts before MaxBucketStartOffset, breaking each coarser stored bucket
-%% (size Size) down into Size div BucketSize sub-buckets. The bound stops a
-%% peer's coarse Size from materializing buckets beyond the current weave.
+%% @doc Iterate the buckets at BucketSize granularity, calling Fun(Bucket, Share)
+%% for each bucket that starts before MaxBucketStartOffset. The stored buckets
+%% may use a coarser size (Size); each stored entry is broken down into
+%% Size div BucketSize buckets at the requested granularity. The bound exists
+%% so a peer reporting a coarse Size cannot make us materialize buckets beyond
+%% the current weave — most of which would never be queried.
 foreach(Fun, BucketSize, MaxBucketStartOffset, {Size, Map})
 		when Size >= BucketSize, MaxBucketStartOffset > 0 ->
 	Ratio = Size div BucketSize,

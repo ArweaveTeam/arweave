@@ -9,7 +9,6 @@
 %% passes (and remove this header once all tests in the module
 %% are re-enabled).
 
-
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
 
@@ -21,11 +20,19 @@
                                         tick_ms => 30000,
                                         tick_reduction => 450}}).
 
-disabled_test_disabled() ->
+disabled_test() ->
     ?assertEqual(#{}, ?M:to_http_headers({register, no_limiting_applied, #{policies => ?POLICIES}})),
     ok.
 
-register_test_disabled() ->
+error_test() ->
+    ?assertEqual(#{}, ?M:to_http_headers({reject, error, #{policies => ?POLICIES}})),
+    ok.
+
+empty_test() ->
+    ?assertEqual(#{}, ?M:to_http_headers({anything, anything, #{}})),
+    ok.
+
+register_test_test() ->
     ?assertEqual(
        #{<<"RateLimit-Limit">> =>
              <<"10, 10;w=1;policy=\"sliding window\", 450;w=1;burst=450;policy=\"leaky bucket\" 500;w=1;policy=\"concurrency\" ">>,
@@ -50,7 +57,7 @@ register_test_disabled() ->
                           })),
     ok.
 
-reject_test_disabled() ->
+reject_test_test() ->
     ?assertEqual(
        #{<<"RateLimit-Limit">> =>
              <<"500, 10;w=1;policy=\"sliding window\", 450;w=1;burst=450;policy=\"leaky bucket\" 500;w=1;policy=\"concurrency\" ">>,

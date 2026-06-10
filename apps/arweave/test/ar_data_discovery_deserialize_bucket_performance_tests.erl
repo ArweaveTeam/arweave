@@ -71,8 +71,8 @@ run_test(EndpointType) ->
 	{BucketCount, SerializedBuckets} = generate_max_bucket_payload(ExpectedBucketSize),
 	BucketSize = ExpectedBucketSize * ?MAX_SYNC_BUCKET_SIZE_RATIO,
 	UnboundedExpandedBucketCount = BucketCount * ?MAX_SYNC_BUCKET_SIZE_RATIO,
-	%% Bounded by weave size: a peer's payload only expands into sub-buckets
-	%% within the weave we know about.
+	%% Iteration is bounded by the current weave size: a peer's payload can
+	%% only expand into sub-buckets that fall within the weave we know about.
 	ExpectedRows = expected_inserted_rows(EndpointType, UnboundedExpandedBucketCount),
 	install_bucket_mock(MockedFunction, SerializedBuckets),
 	Peer = ar_test_node:peer_ip(peer1),

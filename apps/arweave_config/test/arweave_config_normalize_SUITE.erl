@@ -129,7 +129,8 @@ assert_verify_normalize_forces_all_flags(Mode) ->
 		ok = arweave_config:set([gossip, block, max_peers], 7),
 		ok = arweave_config:set([vdf, compute], true),
 		ok = arweave_config:set([vdf, is_public_server], true),
-		%% List pre-seeds; distinct peers so cm_exit doesn't collide
+		%% List pre-seeds: cm_peer, cm_exit, vdf_client,
+		%% vdf_server. Distinct peers so cm_exit doesn't collide
 		%% with cm_peer.
 		ok = arweave_config:set([peers, cm_peer], [<<"127.0.0.1:1984">>]),
 		ok = arweave_config:set([peers, cm_exit], <<"127.0.0.2:1984">>),

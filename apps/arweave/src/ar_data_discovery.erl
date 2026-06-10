@@ -302,6 +302,8 @@ handle_cast({add_peer_sync_buckets, Peer, SyncBuckets}, State) ->
 		WeaveSize,
 		SyncBuckets
 	),
+	?LOG_DEBUG([{event, processed_peer_sync_buckets},
+		{peer, ar_util:format_peer(Peer)}]),
 	{noreply, State};
 
 handle_cast({add_peer_footprint_buckets, Peer, FootprintBuckets}, State) ->

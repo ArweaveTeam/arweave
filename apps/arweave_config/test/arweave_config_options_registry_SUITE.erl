@@ -151,8 +151,9 @@ handle_set_exception_returns_error_tuple(_Config) ->
 		arweave_config_options_registry:set([raises], value)),
 	{error, undefined} = arweave_config_options_registry:get([raises]).
 
-%% `ignore' returns the current value without touching the store; with
-%% no prior set, that's the spec default.
+%% `ignore' tells the registry to return the current value without
+%% touching the store. With no prior set, the current value is the
+%% spec default.
 handle_set_ignore_returns_current_value(_Config) ->
 	?assertEqual({ok, initial},
 		arweave_config_options_registry:set([ignored], anything_else)),
