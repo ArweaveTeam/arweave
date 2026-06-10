@@ -80,9 +80,6 @@ all_peers(test) ->
 all_peers(e2e) ->
 	[{e2e, peer1}, {e2e, peer2}].
 
-all_nodes(TestType) ->
-	[{TestType, main} | all_peers(TestType)].
-
 new_custom_size_rsa_wallet(Size) ->
 	KeyType = ?RSA_KEY_TYPE,
 	PublicExpnt = 65537,
@@ -189,8 +186,8 @@ try_boot_peer(TestType, Node, Retries) ->
 	],
 	Cmd = io_lib:format(RawCommand, CommandParams),
 	run_command(Node, Cmd),
-	case wait_until_node_is_ready(NodeName) of
-		{ok, _Node} ->
+	case ar_test_await:http_ready(Node) of
+		ok ->
 			io:format("~s started at port ~p.~n", [NodeName, Port]),
 			{node(), NodeName};
 		{error, Reason} ->
@@ -220,13 +217,10 @@ run_command_init(Node, Command) ->
 wait_for_peers([]) ->
 	ok;
 wait_for_peers([{_TestType, Node} | Peers]) ->
-	wait_for_peer(Node),
+	ok = ar_test_await:http_ready(Node),
 	wait_for_peers(Peers);
 wait_for_peers(TestType) ->
 	wait_for_peers(all_peers(TestType)).
-
-wait_for_peer(Node) ->
-	remote_call(Node, application, ensure_all_started, [arweave, permanent], 60000).
 
 self_node() ->
 	list_to_atom(get_node()).
@@ -1090,13 +1084,7 @@ connect_to_peer(Node) ->
 			path => "/info",
 			headers => p2p_headers(Node)
 		}),
-	ar_util:do_until(
-		fun() ->
-			lists:member(Peer, ar_peers:get_peers(lifetime))
-		end,
-		100,
-	        ?CONNECT_TO_PEER_TIMEOUT
-	).
+	ok = ar_test_await:peer_listed(main, Peer).
 
 disconnect_peers(Node, Peer) ->
 	remote_call(Node, ar_test_node, disconnect_from, [Peer]).
@@ -1138,151 +1126,6 @@ wait_until_syncs_genesis_data() ->
 	?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, cross_module_sync_complete}]),
 	ok.
 
-wait_until_height(Node, TargetHeight) ->
-	wait_until_height(Node, TargetHeight, true, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
-
-wait_until_height(Node, TargetHeight, Strict) ->
-	wait_until_height(Node, TargetHeight, Strict, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
-
-wait_until_height(Node, TargetHeight, Strict, Timeout) ->
-	BI = case Node of
-		main ->
-			do_wait_until_height(TargetHeight, Timeout);
-		_ ->
-			remote_call(Node, ?MODULE, do_wait_until_height, [TargetHeight, Timeout],
-				Timeout + 500)
-	end,
-	case Strict of
-		true ->
-			Height = length(BI) - 1,
-			?assert(Height >= TargetHeight,
-				iolist_to_binary(io_lib:format(
-					"Node ~p not at the expected height. Expected: ~B, got: ~B",
-					[Node, TargetHeight, Height])));
-		false ->
-			ok
-	end,
-	BI.
-
-wait_until_height(TargetHeight) ->
-	do_wait_until_height(TargetHeight, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
-
-do_wait_until_height(TargetHeight, Timeout) ->
-	{ok, BI} = ar_util:do_until(
-		fun() ->
-			case ar_node:get_blocks() of
-				BI when length(BI) - 1 >= TargetHeight ->
-					{ok, BI};
-				_ ->
-					false
-			end
-		end,
-		100,
-		Timeout
-	),
-	BI.
-
-assert_wait_until_height(Node, TargetHeight) ->
-	BI = wait_until_height(Node, TargetHeight),
-	?assert(is_list(BI), iolist_to_binary(io_lib:format("Got ~p.", [BI]))),
-	BI.
-
-wait_until_block_index(Node, BI) ->
-	remote_call(Node, ?MODULE, wait_until_block_index, [BI]).
-
-wait_until_block_index(BI) ->
-	ar_util:do_until(
-		fun() ->
-			case ar_node:get_blocks() of
-				BI ->
-					ok;
-				_ ->
-					false
-			end
-		end,
-		100,
-		?BLOCK_INDEX_TIMEOUT
-	).
-
-wait_until_mining_paused(Node) ->
-	ar_util:do_until(
-		fun() ->
-			case Node of
-				main ->
-					ar_mining_server:is_paused();
-				_ ->
-					remote_call(Node, ar_mining_server, is_paused, [])
-			end
-		end,
-		1000,
-		?WAIT_UNTIL_MINING_PAUSED_TIMEOUT
-	).
-
-%% Safely perform an rpc:call/4 and return results in a tagged tuple.
-safe_remote_call(Node, Module, Function, Args) ->
-    try rpc:call(Node, Module, Function, Args, 30000) of
-        Result -> {ok, Result}
-    catch
-        error:Reason:S ->
-            %% Log the error if necessary
-            io:format("Remote call error: ~p:~p~n", [Reason,S]),
-            {error, Reason};
-	E:R:S ->
-            %% Catching other exceptions, returning a general error.
-            io:format("Remote call error: ~p:~p:~p~n", [E,R,S]),
-            {error, unknown}
-    end.
-
-wait_until_node_is_ready(NodeName) ->
-    ar_util:do_until(
-        fun() ->
-            case net_adm:ping(NodeName) of
-                pong ->
-                    %% The node is reachable, doing a second check.
-		    % safe_remote_call(NodeName, erlang, is_alive, []);
-		    RemoteApps =
-			case safe_remote_call(NodeName, application, which_applications, []) of
-			    {ok, R} when is_list(R) -> R;
-			    _ -> []
-			end,
-		    case lists:keyfind(arweave, 1, RemoteApps) of
-			{arweave, _, _} -> {ok, ready};
-			_ -> false
-		    end;
-                pang ->
-                    %% Node is not reachable.
-                    false
-            end
-        end,
-        ?NODE_READY_CHECK_INTERVAL,
-        ?NODE_READY_CHECK_TIMEOUT
-    ).
-
-assert_wait_until_receives_txs(TXs) ->
-	?assertEqual(ok, wait_until_receives_txs(TXs)).
-
-assert_wait_until_receives_txs(Node, TXs) ->
-	?assertEqual(ok, wait_until_receives_txs(Node, TXs)).
-
-wait_until_receives_txs(Node, TXs) ->
-	remote_call(Node, ?MODULE, wait_until_receives_txs, [TXs],
-					?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT + 500).
-
-wait_until_receives_txs(TXs) ->
-	ar_util:do_until(
-		fun() ->
-			MinedTXIDs = ar_node:get_ready_for_mining_txs(),
-			case lists:all(fun(TX) -> lists:member(TX#tx.id, MinedTXIDs) end, TXs) of
-				true ->
-					ok;
-				_ ->
-					false
-			end
-		end,
-		100,
-		?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT
-	).
-
 assert_post_tx_to_peer(Node, TX) ->
 	assert_post_tx_to_peer(Node, TX, true).
 
@@ -1304,7 +1147,7 @@ post_tx_to_peer(Node, TX, Wait, Retries) ->
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			case Wait of
 				true ->
-					assert_wait_until_receives_txs(Node, [TX]);
+					?assertEqual(ok, ar_test_await:txs_ready_for_mining(Node, [TX]));
 				false ->
 					ok
 			end;
@@ -1454,8 +1297,8 @@ post_and_mine(#{ miner := Node, await_on := AwaitOnNode }, TXs) ->
 	CurrentHeight = remote_call(Node, ar_node, get_height, []),
 	lists:foreach(fun(TX) -> assert_post_tx_to_peer(Node, TX) end, TXs),
 	mine(Node),
-	[{H, _, _} | _] = wait_until_height(AwaitOnNode, CurrentHeight + 1),
-	remote_call(AwaitOnNode, ar_test_node, read_block_when_stored, [H, true],
+	{ok, [{H, _, _} | _]} = ar_test_await:node_height(AwaitOnNode, CurrentHeight + 1),
+	remote_call(AwaitOnNode, ar_test_await, block_stored, [H, true],
 	  ?POST_AND_MINE_TIMEOUT).
 
 post_block(B, ExpectedResult) when not is_list(ExpectedResult) ->
@@ -1464,7 +1307,7 @@ post_block(B, ExpectedResults) ->
 	post_block(B, ExpectedResults, peer_ip(main)).
 
 post_block(B, ExpectedResults, Peer) ->
-	Result = send_new_block_with_retry(Peer, B, 2),
+	Result = send_new_block_with_retry(Peer, B, ExpectedResults, 2),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, Result),
 	await_post_block(B, ExpectedResults, Peer).
 
@@ -1472,14 +1315,26 @@ send_new_block(Peer, B) ->
 	ar_http_iface_client:send_block_binary(Peer, B#block.indep_hash,
 			ar_serialize:block_to_binary(B)).
 
-send_new_block_with_retry(Peer, B, RetriesLeft) ->
-	case send_new_block(Peer, B) of
-		{error, {stream_error, closed}} when RetriesLeft > 0 ->
+send_new_block_with_retry(Peer, B, ExpectedResults, RetriesLeft) ->
+	Result = send_new_block(Peer, B),
+	case should_retry_post_block_response(Result, ExpectedResults, RetriesLeft) of
+		true ->
 			timer:sleep(50),
-			send_new_block_with_retry(Peer, B, RetriesLeft - 1);
-		Result ->
+			send_new_block_with_retry(Peer, B, ExpectedResults, RetriesLeft - 1);
+		false ->
 			Result
 	end.
+
+should_retry_post_block_response(_Result, _ExpectedResults, 0) ->
+	false;
+should_retry_post_block_response({error, {stream_error, closed}}, _ExpectedResults, _RetriesLeft) ->
+	true;
+should_retry_post_block_response({error, client_error}, [valid], _RetriesLeft) ->
+	false;
+should_retry_post_block_response({error, client_error}, _ExpectedResults, _RetriesLeft) ->
+	true;
+should_retry_post_block_response(_Result, _ExpectedResults, _RetriesLeft) ->
+	false.
 
 await_post_block(B, ExpectedResults) ->
 	await_post_block(B, ExpectedResults, peer_ip(main)).
@@ -1540,41 +1395,6 @@ sign_block(#block{ cumulative_diff = CDiff } = B, PrevB, {Priv, Pub}) ->
 	Signature = ar_wallet:sign(Priv, SignaturePreimage),
 	H = ar_block:indep_hash2(SignedH, Signature),
 	B2#block{ indep_hash = H, signature = Signature }.
-
-read_block_when_stored(H) ->
-	read_block_when_stored(H, false).
-
-read_block_when_stored(H, IncludeTXs) ->
-	{ok, B} = ar_util:do_until(
-		fun() ->
-			case ar_storage:read_block(H) of
-				unavailable ->
-					unavailable;
-				B2 ->
-					ar_util:do_until(
-						fun() ->
-							TXs = ar_storage:read_tx(B2#block.txs),
-							case lists:any(fun(TX) -> TX == unavailable end, TXs) of
-								true ->
-									false;
-								false ->
-									case IncludeTXs of
-										true ->
-											{ok, B2#block{ txs = TXs }};
-										false ->
-											{ok, B2}
-									end
-							end
-						end,
-						100,
-						?READ_BLOCK_TIMEOUT
-					)
-			end
-		end,
-		200,
-		?READ_BLOCK_TIMEOUT
-	),
-	B.
 
 get_chunk(Node, Offset) ->
 	get_chunk(Node, Offset, undefined).
@@ -1641,9 +1461,7 @@ get_tx_data_in_chunks(Offset, Size, Peer) ->
 get_tx_data_in_chunks(Offset, Start, _Peer, Bin) when Offset =< Start ->
 	ar_util:encode(iolist_to_binary(Bin));
 get_tx_data_in_chunks(Offset, Start, Peer, Bin) ->
-	{ok, {{<<"200">>, _}, _, JSON, _, _}}
-			= ar_http:req(#{ method => get, peer => Peer,
-					path => "/chunk/" ++ integer_to_list(Offset) }),
+	JSON = get_tx_data_chunk(Peer, Offset),
 	Map = jiffy:decode(JSON, [return_maps]),
 	Chunk = ar_util:decode(maps:get(<<"chunk">>, Map)),
 	get_tx_data_in_chunks(Offset - byte_size(Chunk), Start, Peer, [Chunk | Bin]).
