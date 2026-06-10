@@ -106,7 +106,6 @@ path_to_limiter_ref([<<"vdf3">>, <<"session">>]) -> get_vdf_session;
 path_to_limiter_ref([<<"vdf4">>, <<"session">>]) -> get_vdf_session;
 path_to_limiter_ref([<<"vdf">>, <<"previous_session">>]) -> get_previous_vdf_session;
 path_to_limiter_ref([<<"vdf2">>, <<"previous_session">>]) -> get_previous_vdf_session;
-%% No vdf3 prev_session in ar_blacklist_middleware.hrl ?RPM_BY_PATH
 path_to_limiter_ref([<<"vdf4">>, <<"previous_session">>]) -> get_previous_vdf_session;
 path_to_limiter_ref([<<"metrics">> | _ ])-> metrics;
 path_to_limiter_ref(_) -> general.

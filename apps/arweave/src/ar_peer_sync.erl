@@ -72,8 +72,6 @@
 	sweep = undefined :: undefined | #sweep{}
 }).
 
--define(GET_SYNC_RECORD_RPM_KEY, data_sync_record).
--define(GET_FOOTPRINT_RECORD_RPM_KEY, footprints).
 -define(GET_SYNC_RECORD_PATH, [<<"data_sync_record">>]).
 -define(GET_FOOTPRINT_RECORD_PATH, [<<"footprints">>]).
 -define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
@@ -506,16 +504,14 @@ get_hot_peers(Offset, normal) ->
 	Bucket = Offset div ?NETWORK_DATA_BUCKET_SIZE,
 	get_hot_peers_for_bucket(
 		fun() -> ar_data_discovery:get_bucket_peers(Bucket) end,
-		?GET_SYNC_RECORD_RPM_KEY,
 		?GET_SYNC_RECORD_PATH);
 get_hot_peers(Offset, footprint) ->
 	FootprintBucket = ar_footprint_record:get_footprint_bucket(Offset + ?DATA_CHUNK_SIZE),
 	get_hot_peers_for_bucket(
 		fun() -> ar_data_discovery:get_footprint_bucket_peers(FootprintBucket) end,
-		?GET_FOOTPRINT_RECORD_RPM_KEY,
 		?GET_FOOTPRINT_RECORD_PATH).
 
-get_hot_peers_for_bucket(GetAllFun, _RPMKey, Path) ->
+get_hot_peers_for_bucket(GetAllFun, Path) ->
 	LocalOnly = arweave_config:get([sync, local_peers_only]),
 	AllPeers =
 		case LocalOnly of
