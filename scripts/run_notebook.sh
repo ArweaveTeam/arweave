@@ -22,6 +22,8 @@ JUPYTER_CONFIG_DIR="${JUPYTER_CONFIG_DIR:-$REPO_ROOT/.jupyter}"
 LOCALNET_HTTP_HOST="${LOCALNET_HTTP_HOST:-127.0.0.1}"
 LOCALNET_HTTP_PORT="${LOCALNET_HTTP_PORT:-1984}"
 LOCALNET_NETWORK_NAME="${LOCALNET_NETWORK_NAME:-arweave.localnet}"
+LOCALNET_LOG="${LOCALNET_LOG:-$REPO_ROOT/.tmp/localnet.log}"
+LOCALNET_READY_TIMEOUT_SEC="${LOCALNET_READY_TIMEOUT_SEC:-1200}"
 
 STARTED_LOCALNET=0
 LOCALNET_PID=""
@@ -47,19 +49,15 @@ resolve_notebook() {
 }
 
 start_localnet() {
-  if [ "$(uname -s)" == "Darwin" ]; then
-    RANDOMX_JIT="disable randomx_jit"
-  else
-    RANDOMX_JIT=
-  fi
-
   export ERL_EPMD_ADDRESS=127.0.0.1
 
   ./ar-rebar3 localnet compile
 
   ERL_LOCALNET_OPTS="-pa $(./rebar3 as localnet path) $(./rebar3 as localnet path --base)/lib/arweave/test -config config/sys.config"
+  mkdir -p "$(dirname "$LOCALNET_LOG")"
+  : > "$LOCALNET_LOG"
 
-  erl $ERL_LOCALNET_OPTS -name "$NODE_NAME_FULL" -setcookie "$NODE_COOKIE" -noshell -s ar shell_localnet -eval "timer:sleep(infinity)." &
+  erl $ERL_LOCALNET_OPTS -name "$NODE_NAME_FULL" -setcookie "$NODE_COOKIE" -noshell -s ar shell_localnet -eval "timer:sleep(infinity)." > >(tee "$LOCALNET_LOG") 2>&1 &
   LOCALNET_PID="$!"
   STARTED_LOCALNET=1
 }
@@ -80,38 +78,97 @@ parse_info_height() {
   echo "$info" | sed -E -n 's/.*"height"[[:space:]]*:[[:space:]]*(-?[0-9]+).*/\1/p'
 }
 
+info_height_ready() {
+  local info="$1"
+  local network
+  local height
+
+  if [ -z "$info" ]; then
+    return 1
+  fi
+
+  network="$(parse_info_network "$info")"
+  if [ -z "$network" ]; then
+    echo "Failed to parse network from /info: $info"
+    return 2
+  fi
+  if [ "$network" != "$LOCALNET_NETWORK_NAME" ]; then
+    echo "Found node at ${LOCALNET_HTTP_HOST}:${LOCALNET_HTTP_PORT} with network ${network}, expected ${LOCALNET_NETWORK_NAME}."
+    return 2
+  fi
+
+  height="$(parse_info_height "$info")"
+  if [ -z "$height" ]; then
+    echo "Failed to parse height from /info: $info"
+    return 2
+  fi
+  if [ "$height" != "-1" ]; then
+    return 0
+  fi
+
+  return 1
+}
+
 wait_for_info_height() {
   local start
   local info
-  local network
-  local height
+  local status
   start="$(date +%s)"
 
   while true; do
     info="$(fetch_info)"
-    if [ -n "$info" ]; then
-      network="$(parse_info_network "$info")"
-      if [ -z "$network" ]; then
-        echo "Failed to parse network from /info: $info"
+    if info_height_ready "$info"; then
+      return 0
+    else
+      status="$?"
+      if [ "$status" -eq 2 ]; then
         return 1
-      fi
-      if [ "$network" != "$LOCALNET_NETWORK_NAME" ]; then
-        echo "Found node at ${LOCALNET_HTTP_HOST}:${LOCALNET_HTTP_PORT} with network ${network}, expected ${LOCALNET_NETWORK_NAME}."
-        return 1
-      fi
-
-      height="$(parse_info_height "$info")"
-      if [ -z "$height" ]; then
-        echo "Failed to parse height from /info: $info"
-        return 1
-      fi
-      if [ "$height" != "-1" ]; then
-        return 0
       fi
     fi
 
     if [ "$(( $(date +%s) - start ))" -ge "$JOIN_TIMEOUT_SEC" ]; then
+      info="$(fetch_info)"
+      if info_height_ready "$info"; then
+        return 0
+      else
+        status="$?"
+        if [ "$status" -eq 2 ]; then
+          return 1
+        fi
+      fi
       echo "Timed out waiting for localnet /info height."
+      return 1
+    fi
+
+    sleep "$JOIN_POLL_SEC"
+  done
+}
+
+wait_for_localnet_ready() {
+  local start
+  if [ "$STARTED_LOCALNET" != "1" ]; then
+    return 0
+  fi
+
+  start="$(date +%s)"
+  while true; do
+    if [ -f "$LOCALNET_LOG" ] && grep -q "Localnet node started" "$LOCALNET_LOG"; then
+      return 0
+    fi
+
+    if ! kill -0 "$LOCALNET_PID" >/dev/null 2>&1; then
+      echo "Localnet process exited before startup completed."
+      if [ -f "$LOCALNET_LOG" ]; then
+        tail -n 80 "$LOCALNET_LOG"
+      fi
+      return 1
+    fi
+
+    if [ "$(( $(date +%s) - start ))" -ge "$LOCALNET_READY_TIMEOUT_SEC" ]; then
+      echo "Timed out waiting for localnet startup to complete."
+      if [ -f "$LOCALNET_LOG" ]; then
+        tail -n 80 "$LOCALNET_LOG"
+      fi
       return 1
     fi
 
@@ -167,5 +224,9 @@ if [ -z "$(fetch_info)" ]; then
   start_localnet
 fi
 
-wait_for_info_height
+if [ "$STARTED_LOCALNET" = "1" ]; then
+  wait_for_localnet_ready
+else
+  wait_for_info_height
+fi
 run_notebook
