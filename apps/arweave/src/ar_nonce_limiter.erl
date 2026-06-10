@@ -1,5 +1,6 @@
-%% @ar_test: vdf
 -module(ar_nonce_limiter).
+-test_category([vdf]).
+-test_peers([peer1]).
 
 -behaviour(gen_server).
 
@@ -498,9 +499,15 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, RecentBI) ->
 		true ->
 			B#block.nonce_limiter_info;
 		false ->
-			{Seed, PartitionUpperBound, _TXRoot}
-					= lists:last(lists:sublist(RecentBI, ?SEARCH_SPACE_UPPER_BOUND_DEPTH)),
-			get_or_init_nonce_limiter_info(B, Seed, PartitionUpperBound)
+			case ar_node:get_block_index_upper_bound(Height, RecentBI) of
+				not_initialized ->
+					%% A short index past genesis is still loading; fail loud rather
+					%% than seed the nonce limiter from a too-recent block.
+					error({nonce_limiter_init_index_too_short,
+							{height, Height}, {index_len, length(RecentBI)}});
+				{Seed, PartitionUpperBound, _TXRoot} ->
+					get_or_init_nonce_limiter_info(B, Seed, PartitionUpperBound)
+			end
 	end.
 
 %% @doc Apply the nonce limiter update provided by the configured trusted peer.
@@ -1067,13 +1074,26 @@ apply_tip2(B, PrevB, State) ->
 			last_step_checkpoints = LastStepCheckpoints,
 			vdf_difficulty = VDFDifficulty,
 			next_vdf_difficulty = NextVDFDifficulty } = B#block.nonce_limiter_info,
+	CurrentSessionKey = State#state.current_session_key,
+	WasComputing = State#state.computing,
 	SessionKey = session_key(B#block.nonce_limiter_info),
 	PrevSessionKey = session_key(PrevB#block.nonce_limiter_info),
 	State2 = set_current_session(State, SessionKey),
 	State3 = cache_block_session(State2, SessionKey, PrevSessionKey,
 			#{ StepNumber => LastStepCheckpoints }, Seed, UpperBound, NextUpperBound,
 			VDFDifficulty, NextVDFDifficulty),
-	State3.
+	maybe_schedule_session_switch(CurrentSessionKey, WasComputing, SessionKey, State3).
+
+maybe_schedule_session_switch(SessionKey, _WasComputing, SessionKey, State) ->
+	State;
+maybe_schedule_session_switch(PreviousSessionKey, true, SessionKey, State) ->
+	?LOG_DEBUG([{event, schedule_step_after_vdf_session_switch},
+		{previous_session_key, encode_session_key(PreviousSessionKey)},
+		{session_key, encode_session_key(SessionKey)}]),
+	gen_server:cast(?MODULE, schedule_step),
+	State;
+maybe_schedule_session_switch(_PreviousSessionKey, false, _SessionKey, State) ->
+	State.
 
 prune_old_sessions(Sessions, SessionByKey, BaseInterval) ->
 	{{Interval, NextSeed, NextVdfDifficulty}, Sessions2} = gb_sets:take_smallest(Sessions),
@@ -1580,14 +1600,14 @@ test_reorg_after_join() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
-	ar_test_node:assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
 	ar_test_node:mine(peer1),
-	ar_test_node:assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:mine(peer1),
-	ar_test_node:wait_until_height(main, 2).
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)).
 
 reorg_after_join2_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun test_reorg_after_join2/0}.
@@ -1598,19 +1618,19 @@ test_reorg_after_join2() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
-	ar_test_node:assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
 	ar_test_node:mine(),
-	ar_test_node:wait_until_height(main, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:mine(peer1),
-	ar_test_node:assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:mine(peer1),
-	ar_test_node:assert_wait_until_height(peer1, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2)),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
-	ar_test_node:wait_until_height(main, 3).
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)).
 
 get_step_range_test() ->
 	?assertEqual(
