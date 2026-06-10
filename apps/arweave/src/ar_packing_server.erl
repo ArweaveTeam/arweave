@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_packing_server).
+-test_category([fast]).
 
 -behaviour(gen_server).
 
@@ -433,14 +433,34 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 init_packing_state() ->
+	%% The RandomX datasets are derived solely from ?RANDOMX_PACKING_KEY
+	%% (plus jit/large_pages), so they are identical on every start within a
+	%% BEAM, and building them takes minutes. Cache the built state in
+	%% persistent_term keyed by those inputs and reuse it across supervisor
+	%% restarts. The datasets are read-only NIF resources terminate/2 never
+	%% frees, so the cached ref stays valid after ar_packing_server stops.
+	CacheKey = {?MODULE, randomx_packing_state, ?RANDOMX_PACKING_KEY,
+			ar_mine_randomx:jit(), ar_mine_randomx:large_pages()},
+	PackingState =
+		case persistent_term:get(CacheKey, not_cached) of
+			not_cached ->
+				Built = build_packing_state(),
+				persistent_term:put(CacheKey, Built),
+				Built;
+			Cached ->
+				?LOG_INFO([{event, reused_cached_randomx_packing_state}]),
+				Cached
+		end,
+	ets:insert(?MODULE, {randomx_packing_state, PackingState}),
+	PackingState.
+
+build_packing_state() ->
 	Schedulers = erlang:system_info(dirty_cpu_schedulers_online),
 	RandomXState512 = ar_mine_randomx:init_fast(rx512, ?RANDOMX_PACKING_KEY, Schedulers),
 	RandomXState4096 = ar_mine_randomx:init_fast(rx4096, ?RANDOMX_PACKING_KEY, Schedulers),
 	RandomXStateSharedEntropy = ar_mine_randomx:init_fast(rxsquared,
 			?RANDOMX_PACKING_KEY, Schedulers),
-	PackingState = {RandomXState512, RandomXState4096, RandomXStateSharedEntropy},
-	ets:insert(?MODULE, {randomx_packing_state, PackingState}),
-	PackingState.
+	{RandomXState512, RandomXState4096, RandomXStateSharedEntropy}.
 
 get_randomx_state_by_packing({composite, _, _}, {_, RandomXState, _}) ->
 	RandomXState;
