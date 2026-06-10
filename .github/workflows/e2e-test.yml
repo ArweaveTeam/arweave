@@ -140,6 +140,12 @@ jobs:
       # to avoid reusing artifacts from someone else
       # and generating issues, an unique artifact is
       # produced using github checksum.
+      - name: Push build to LAN cache
+        uses: ./.github/actions/push-build
+        with:
+          ssh-key: ${{ secrets.CI_CACHE_SSH_KEY }}
+          cache-key: build-${{ github.sha }}
+
       - name: upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -169,17 +175,11 @@ jobs:
           submodules: "recursive"
           lfs: false
 
-      - name: Download artifact
-        uses: actions/download-artifact@v4
+      - name: Fetch build (LAN cache, fallback to artifact)
+        uses: ./.github/actions/fetch-build
         with:
-          name: build-${{ github.sha }}
-
-      - uses: ./.github/actions/ensure-zstd
-
-      - name: Extract artifact
-        run: |
-          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
-          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
+          ssh-key: ${{ secrets.CI_CACHE_SSH_KEY }}
+          cache-key: build-${{ github.sha }}
 
       - id: list
         name: Enumerate CT e2e cases
@@ -211,19 +211,11 @@ jobs:
       - uses: ./.github/actions/kill-stray-erlang
         if: always()
 
-      - name: Download artifact
-        uses: actions/download-artifact@v4
+      - name: Fetch build (LAN cache, fallback to artifact)
+        uses: ./.github/actions/fetch-build
         with:
-          name: build-${{ github.sha }}
-
-      # Both artifacts (_build and apps dir) are
-      # required.
-      - uses: ./.github/actions/ensure-zstd
-
-      - name: Extract artifact
-        run: |
-          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
-          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
+          ssh-key: ${{ secrets.CI_CACHE_SSH_KEY }}
+          cache-key: build-${{ github.sha }}
 
 
       - name: ${{ matrix.suite }}:${{ matrix.case }}

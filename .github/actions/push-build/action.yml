@@ -1,0 +1,15 @@
+name: push-build
+description: Best-effort rsync of the build artifact to the builder-1 LAN cache.
+inputs:
+  ssh-key: {description: CI cache SSH private key (secrets.CI_CACHE_SSH_KEY), required: true}
+  cache-key: {description: artifact name (used as cache path + GitHub artifact name), required: true}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        command -v rsync >/dev/null || { echo "rsync missing; skip cache push"; exit 0; }
+        install -d -m 700 ~/.ssh; printf '%s\n' "${{ inputs.ssh-key }}" > ~/.ssh/ci-cache; chmod 600 ~/.ssh/ci-cache
+        rsync -a -e 'ssh -i ~/.ssh/ci-cache -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10' \
+          _build.tar.zst apps.tar.zst ci-cache@builder-1.arweave.xyz:"${{ inputs.cache-key }}/" \
+          && echo "pushed to LAN cache" || echo "cache push failed (non-fatal; GitHub upload is the fallback)"

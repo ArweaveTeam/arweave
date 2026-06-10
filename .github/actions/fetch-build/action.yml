@@ -1,0 +1,28 @@
+name: fetch-build
+description: Fetch the build artifact from the builder-1 LAN cache (fallback to GitHub), then extract.
+inputs:
+  ssh-key: {description: CI cache SSH private key, required: true}
+  cache-key: {description: artifact name (cache path + GitHub artifact name), required: true}
+runs:
+  using: composite
+  steps:
+    - id: cache
+      shell: bash
+      run: |
+        hit=false
+        if command -v rsync >/dev/null; then
+          install -d -m 700 ~/.ssh; printf '%s\n' "${{ inputs.ssh-key }}" > ~/.ssh/ci-cache; chmod 600 ~/.ssh/ci-cache
+          O='ssh -i ~/.ssh/ci-cache -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10'
+          if rsync -a -e "$O" ci-cache@builder-1.arweave.xyz:"${{ inputs.cache-key }}/_build.tar.zst" . \
+          && rsync -a -e "$O" ci-cache@builder-1.arweave.xyz:"${{ inputs.cache-key }}/apps.tar.zst" . ; then
+            hit=true; echo "LAN cache HIT"; else echo "LAN cache miss -> GitHub artifact"; fi
+        fi
+        echo "hit=$hit" >> "$GITHUB_OUTPUT"
+    - if: steps.cache.outputs.hit != 'true'
+      uses: actions/download-artifact@v4
+      with: {name: "${{ inputs.cache-key }}"}
+    - uses: ./.github/actions/ensure-zstd
+    - shell: bash
+      run: |
+        tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+        tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst

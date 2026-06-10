@@ -185,6 +185,12 @@ jobs:
       # to avoid reusing artifacts from someone else
       # and generating issues, an unique artifact is
       # produced using github checksum.
+      - name: Push build to LAN cache
+        uses: ./.github/actions/push-build
+        with:
+          ssh-key: ${{ secrets.CI_CACHE_SSH_KEY }}
+          cache-key: build-${{ github.sha }}-${{ env.cache_key }}
+
       - name: upload artifacts
         uses: actions/upload-artifact@v4
         with:

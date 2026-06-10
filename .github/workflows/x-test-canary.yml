@@ -49,19 +49,11 @@ jobs:
       - uses: ./.github/actions/kill-stray-erlang
         if: always()
 
-      - name: Download artifact
-        uses: actions/download-artifact@v4
+      - name: Fetch build (LAN cache, fallback to artifact)
+        uses: ./.github/actions/fetch-build
         with:
-          name: build-${{ github.sha }}-${{ env.cache_key }}
-
-      # Both artifacts (_build and apps dir) are
-      # required.
-      - uses: ./.github/actions/ensure-zstd
-
-      - name: Extract artifact
-        run: |
-          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
-          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
+          ssh-key: ${{ secrets.CI_CACHE_SSH_KEY }}
+          cache-key: build-${{ github.sha }}-${{ env.cache_key }}
 
       # The canary's whole purpose is to fail — we run it to verify
       # that the test harness can detect a failing test. We absorb its
