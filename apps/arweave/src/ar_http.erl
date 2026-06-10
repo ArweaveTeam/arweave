@@ -507,21 +507,19 @@ drain_stale_gun_messages() ->
 	after 0 -> ok
 	end.
 
-should_retry_closed_connection({shutdown, normal}) ->
+%% @doc True iff the failure reason means the gun connection or stream is
+%% gone, so retrying on a freshly reopened connection can succeed; false for
+%% application-level outcomes (`timeout', `too_much_data', HTTP status codes).
+%% Matches on reason shape rather than enumerating gun's varying nested reasons.
+should_retry_closed_connection({stream_error, _}) ->
+	true;
+should_retry_closed_connection({connection_error, _}) ->
+	true;
+should_retry_closed_connection({down, _}) ->
+	true;
+should_retry_closed_connection({shutdown, _}) ->
 	true;
 should_retry_closed_connection(noproc) ->
-	true;
-should_retry_closed_connection({down, {shutdown, closed}}) ->
-	true;
-should_retry_closed_connection({down, {shutdown, {error, einval}}}) ->
-	true;
-should_retry_closed_connection({stream_error, closed}) ->
-	true;
-should_retry_closed_connection({stream_error, closing}) ->
-	true;
-should_retry_closed_connection({stream_error, {closed, normal}}) ->
-	true;
-should_retry_closed_connection({shutdown, closed}) ->
 	true;
 should_retry_closed_connection(closed) ->
 	true;
