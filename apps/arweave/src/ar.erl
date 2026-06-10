@@ -372,11 +372,6 @@ stop_shell_localnet() ->
 	ar_test_node:stop(),
 	init:stop().
 
-%% @doc Run e2e tests.
-%% Usage: ./bin/e2e [module | module:test ...]
-e2e()     -> ar_test_runner:run(e2e).
-e2e(Args) -> ar_test_runner:run(e2e, Args).
-
 %% @doc Generate the project documentation.
 docs() ->
 	Mods =

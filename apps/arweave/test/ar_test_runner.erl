@@ -6,12 +6,12 @@
 
 -export([run/1, run/2]).
 -export([start_shell/1, stop_shell/1]).
+-export([start_for_tests/1]).
 -export([list_tests/1, list_tests_json/1]).
 
 -include("ar.hrl").
 
-%% @doc Run all tests for a given test type.
-%% TestType is 'test' or 'e2e'.
+%% @doc Run all tests for a given test type. TestType is 'test'.
 run(TestType) ->
 	Modules = default_modules(TestType),
 	run_tests(TestType, {modules, Modules}).
@@ -86,13 +86,8 @@ list_tests_json(Mods) ->
 %%% Internal functions
 %%%===================================================================
 
-default_modules(e2e) ->
-	[ar_sync_pack_mine_tests, ar_repack_mine_tests, ar_repack_in_place_mine_tests];
 default_modules(test) ->
-	%% Discovery is driven by scripts/list_test_modules.sh — modules
-	%% that have eunit tests are picked up automatically. Categories
-	%% (fast / vdf / canary) come from `%% @ar_test:` annotations in
-	%% the module source. Here we want every eunit-bearing module.
+	%% scripts/list_test_modules.sh discovers every eunit-bearing module.
 	discover_modules("all").
 
 %% @doc Run `scripts/list_test_modules.sh CATEGORY plain` and parse
@@ -217,16 +212,19 @@ spec_to_eunit({test, Mod, Test}) ->
 
 start_for_tests(TestType) ->
 	UniqueName = ar_test_node:get_node_namespace(),
-	DataDir = ".tmp/data_" ++ atom_to_list(TestType) ++ "_main_" ++ UniqueName,
+	%% Anchor the data dir to project root: CT moves the BEAM's CWD to
+	%% its per-run log dir, so a relative path would dump main-BEAM data
+	%% under `_build/e2e/logs/...'.
+	DataDir = filename:join(ar_test_node:project_root(),
+		".tmp/data_" ++ atom_to_list(TestType) ++ "_main_" ++ UniqueName),
 	Port = ar_test_node:get_unused_port(),
 	%% Park the boot-time scaffolding in env vars and let
 	%% `arweave_config:bootstrap/1' apply it. The same env mirror is
 	%% what `ar_test_node:clean_up_and_stop/0' replays after each
-	%% `arweave_config:reset/0' — no test-only config code paths.
+	%% config store restore — no test-only config code paths.
 	true = os:putenv("AR_DATA_DIR", DataDir),
 	true = os:putenv("AR_PORT", integer_to_list(Port)),
 	true = os:putenv("AR_DEBUG", "true"),
-	true = os:putenv("AR_RANDOMX_JIT", "false"),
 	true = os:putenv("AR_NETWORK_CLIENT_HTTP_KEEPALIVE", "4000"),
 	true = os:putenv("AR_JOIN_AUTO", "false"),
 	ok = arweave_config:bootstrap([]),
