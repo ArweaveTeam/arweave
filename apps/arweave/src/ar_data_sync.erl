@@ -1509,7 +1509,7 @@ init_kv(State, StoreID) ->
 	}.
 
 open_store_dbs(DataDir, StoreID) ->
-	BasicOpts = [{max_open_files, 10000}],
+	BasicOpts = [{max_open_files, max_open_files()}],
 	BloomFilterOpts = [
 		{block_based_table_options, [
 			{cache_index_and_filter_blocks, true}, % Keep bloom filters in memory.
@@ -1548,15 +1548,16 @@ open_store_dbs(DataDir, StoreID) ->
 	ok = ar_kv:open(#{
 		path => filename:join(Dir, "ar_data_sync_chunk_db"),
 		name => {chunk_data_db, StoreID},
-		options => [{max_open_files, 10000},
-			{max_background_compactions, 8},
-			{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
-			{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
-			%% 10 files in L1 to make L1 == L0 as recommended by the
-			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-			{max_bytes_for_level_base, 10 * 256 * ?MiB}]}),
+		options => ar_kv:db_options(max_open_files())}),
 	ok = ar_disk_pool:open_index_db(Dir, StoreID, BloomFilterOpts),
 	ok = ar_data_roots:open_index_db(Dir, StoreID, BloomFilterOpts).
+
+%% Test builds force this to 100 — see ar_kv:db_options/1.
+-ifdef(AR_TEST).
+max_open_files() -> 100.
+-else.
+max_open_files() -> 10000.
+-endif.
 
 read_data_sync_state() ->
 	case ar_storage:read_term(data_sync_state) of

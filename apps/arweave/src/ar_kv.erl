@@ -1,12 +1,12 @@
-%% @ar_test: fast
 -module(ar_kv).
+-test_category([fast]).
 
 -behaviour(gen_server).
 
 -export([
-	start_link/0, create_ets/0, open/1, open_readonly/1, close/1, put/3, get/2,
-	get_next_by_prefix/4, get_next/2, get_prev/2, get_range/2, get_range/3,
-	delete/2, delete_range/3, count/1
+	start_link/0, create_ets/0, db_options/1, open/1, open_readonly/1, close/1,
+	put/3, get/2, get_next_by_prefix/4, get_next/2, get_prev/2, get_range/2,
+	get_range/3, delete/2, delete_range/3, count/1
 ]).
 
 -ifdef(AR_TEST).
@@ -85,6 +85,30 @@ start_link() ->
 %% This function is used within `ar_kv_sup` as well as `ar_test_node` modules.
 create_ets() ->
 	ets:new(?MODULE, [set, public, named_table, {keypos, #db.name}]).
+
+
+
+%% @doc RocksDB tunings for arweave's heavy column families, sized by the
+%% given `max_open_files'. Test builds ignore the hint and return a
+%% lightweight profile so boot-time `ar_kv:open/1' calls don't delay node
+%% launches and trigger timeouts.
+-ifdef(AR_TEST).
+db_options(_MaxOpenFiles) ->
+	[{max_open_files, 100},
+		{max_background_compactions, 1},
+		{write_buffer_size, 4 * ?MiB},
+		{target_file_size_base, 4 * ?MiB},
+		{max_bytes_for_level_base, 16 * ?MiB}].
+-else.
+db_options(MaxOpenFiles) ->
+	[{max_open_files, MaxOpenFiles},
+		{max_background_compactions, 8},
+		{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
+		{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
+		%% 10 files in L1 to make L1 == L0 as recommended by the
+		%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
+		{max_bytes_for_level_base, 10 * 256 * ?MiB}].
+-endif.
 
 
 
