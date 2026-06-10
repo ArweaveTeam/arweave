@@ -9,7 +9,7 @@
 -export([start_link/0, get_serialized_sync_record/1, get_serialized_sync_buckets/0,
 		get_serialized_footprint_buckets/0]).
 
--export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
+-export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 %% The frequency in seconds of updating serialized sync buckets.
 -ifdef(AR_TEST).
@@ -85,14 +85,6 @@ get_serialized_footprint_buckets() ->
 
 init([]) ->
 	ok = ar_events:subscribe(sync_record),
-	{ok, #state{
-		sync_record = ar_intervals:new(),
-		sync_buckets = ar_sync_buckets:new(),
-		footprint_record = ar_intervals:new(),
-		footprint_buckets = ar_sync_buckets:new(?NETWORK_FOOTPRINT_BUCKET_SIZE)
-	}, {continue, init}}.
-
-handle_continue(init, State) ->
 	SyncRecord = init_sync_record(),
 	SyncBuckets = cache_and_get_sync_buckets(SyncRecord, serialized_sync_buckets,
 			ar_sync_buckets:new()),
@@ -101,8 +93,12 @@ handle_continue(init, State) ->
 			serialized_footprint_buckets,
 			ar_sync_buckets:new(?NETWORK_FOOTPRINT_BUCKET_SIZE)),
 	?LOG_INFO([{event, ar_global_sync_record_initialized}]),
-	{noreply, State#state{ sync_record = SyncRecord, sync_buckets = SyncBuckets,
-			footprint_record = FootprintRecord, footprint_buckets = FootprintBuckets }}.
+	{ok, #state{
+		sync_record = SyncRecord,
+		sync_buckets = SyncBuckets,
+		footprint_record = FootprintRecord,
+		footprint_buckets = FootprintBuckets
+	}}.
 
 handle_call({get_serialized_sync_record, Args}, _From, State) ->
 	#state{ sync_record = SyncRecord } = State,

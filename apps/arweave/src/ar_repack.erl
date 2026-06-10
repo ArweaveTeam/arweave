@@ -1,11 +1,11 @@
-%% @ar_test: isolated
 -module(ar_repack).
 
 -behaviour(gen_server).
 
 -export([name/1, register_workers/0, get_read_range/3, chunk_range_read/4]).
 
--export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
+-export([start_link/2, init/1, handle_cast/2, handle_call/3,
+		handle_info/2, terminate/2]).
 
 -include("ar.hrl").
 -include("ar_sup.hrl").
@@ -93,14 +93,14 @@ init({StoreID, ToPacking}) ->
         {name, name(StoreID)}, {store_id, StoreID},
 		{from_packing, ar_serialize:encode_packing(FromPacking, false)},
         {to_packing, ar_serialize:encode_packing(ToPacking, false)}]),
-	
+
 	%% ModuleStart to PaddedModuleEnd is the *chunk* range that will be repacked. Chunk
-	%% offsets will later be converted to bucket offsets and entropy offsets - and the 
+	%% offsets will later be converted to bucket offsets and entropy offsets - and the
 	%% bucket and entropy ranges may differ from this chunk range.
 	Module = ar_storage_module:get_by_id(StoreID),
-    {ModuleStart, ModuleEnd} = ar_storage_module:module_range(Module),
+	{ModuleStart, ModuleEnd} = ar_storage_module:module_range(Module),
 	PaddedModuleEnd = ar_block:get_chunk_padded_offset(ModuleEnd),
-    Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
+	Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
 
 	BatchSize = arweave_config:get([packing, repack, batch_size]),
 	CacheSize = arweave_config:get([packing, repack, cache_size]),
@@ -108,16 +108,16 @@ init({StoreID, ToPacking}) ->
 	gen_server:cast(self(), repack),
 	gen_server:cast(self(), count_states),
 	ar_device_lock:set_device_lock_metric(StoreID, repack, paused),
-	State = #state{ 
+	State = #state{
 		store_id = StoreID,
+		configured_packing = FromPacking,
+		target_packing = ToPacking,
+		repack_status = paused,
 		read_batch_size = BatchSize,
 		num_entropy_offsets = NumEntropyOffsets,
 		module_start = ModuleStart,
 		module_end = PaddedModuleEnd,
-		next_cursor = Cursor, 
-		configured_packing = FromPacking,
-		target_packing = ToPacking,
-		repack_status = paused
+		next_cursor = Cursor
 	},
 	log_info(starting_repack_in_place, State, [
 		{name, name(StoreID)},
@@ -125,10 +125,10 @@ init({StoreID, ToPacking}) ->
 		{write_batch_size, State#state.write_batch_size},
 		{num_entropy_offsets, State#state.num_entropy_offsets},
 		{from_packing, ar_serialize:encode_packing(FromPacking, false)},
-        {to_packing, ar_serialize:encode_packing(ToPacking, false)},
+		{to_packing, ar_serialize:encode_packing(ToPacking, false)},
 		{raw_module_end, ModuleEnd},
 		{next_cursor, Cursor}]),
-    {ok, State}.
+	{ok, State}.
 
 %% @doc Gets the start and end offset of the range of chunks to read starting from
 %% BucketEndOffset. Also includes the BucketEndOffsets covered by that range.

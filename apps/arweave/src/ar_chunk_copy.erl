@@ -200,42 +200,23 @@ scan_module(SourceStoreID, OtherStoreIDs, #copy_state{
 		{store_id, StoreID}, {source_store_id, SourceStoreID},
 		{range_start, RangeStart}, {range_end, ScanEnd},
 		{found_intervals, length(Intervals)}]),
-	CopyState2 = CopyState#copy_state{
+	CopyState#copy_state{
 		pending_intervals = Intervals,
 		pending_modules = OtherStoreIDs
-	},
-	gen_server:cast(?MODULE, {copy, StoreID}),
-	update_progress(CopyState2, State).
+	}.
 
-%% Issue the cross-module read for one pending interval.
-read_range(OtherStoreID, {Start, End}, Rest, #copy_state{
-		store_id = StoreID } = CopyState, State) ->
-	%% Direct private call - we're already inside the gen_server, so the
-	%% public ready_for_work/1 (which does gen_server:call self) would
-	%% throw `calling_self'.
-	CopyState2 = case do_ready_for_work(OtherStoreID, State) of
-		true ->
-			gen_server:cast(?MODULE,
-				{read_range, {Start, End, OtherStoreID, StoreID}}),
-			CopyState#copy_state{ pending_intervals = Rest };
-		false ->
-			CopyState
-	end,
-	ar_util:cast_after(50, ?MODULE, {copy, StoreID}),
-	update_progress(CopyState2, State).
+save_progress(StoreID, CopyState, State) ->
+	State#state{
+		in_progress = maps:put(StoreID, CopyState, State#state.in_progress)
+	}.
 
-finish(#copy_state{
-		store_id = StoreID,
-		range_start = RangeStart,
-		range_end = RangeEnd } = _CopyState, State) ->
+finish(StoreID, State) ->
 	?LOG_DEBUG([{event, sync_local}, {stage, complete},
-		{store_id, StoreID}, {range_start, RangeStart}, {range_end, RangeEnd},
-		{next, network_sync}]),
+		{store_id, StoreID}, {next, network_sync}]),
 	ar_events:send(chunk_copy, {complete, StoreID}),
-	State#state{ in_progress = maps:remove(StoreID, State#state.in_progress) }.
-
-update_progress(#copy_state{ store_id = StoreID } = CopyState, State) ->
-	State#state{ in_progress = maps:put(StoreID, CopyState, State#state.in_progress) }.
+	State#state{
+		in_progress = maps:remove(StoreID, State#state.in_progress)
+	}.
 
 %% @doc Find unsynced intervals belonging to StoreID that are already
 %% present in OriginStoreID's sync record. Returns a list of
@@ -279,100 +260,45 @@ determine_intervals_to_copy_from_module(StoreID, OtherStoreID, RangeStart,
 	end.
 
 %%%===================================================================
-%%% Private functions — worker pool.
+%%% Worker bookkeeping.
 %%%===================================================================
 
-do_ready_for_work(StoreID, State) ->
-	Worker = maps:get(StoreID, State#state.workers, undefined),
-	case Worker of
-		undefined ->
-			?LOG_ERROR([{event, worker_not_found}, {module, ?MODULE}, {call, ready_for_work},
-				{store_id, StoreID}]),
-			false;
-		_ ->
-			%% The origin store's ar_sync_record must have finished loading before
-			%% we try to read chunks from it. Otherwise ar_chunk_storage:get can return
-			%% not_found for a chunk whose metadata is present but whose chunk-storage
-			%% sync record has not yet been loaded, causing read_range2 to permanently
-			%% invalidate a valid record.
-			ar_sync_record:await_initialized(StoreID, ?SYNC_RECORD_READY_TIMEOUT_MS)
-				andalso queue:len(Worker#worker_tasks.task_queue) < ?MAX_QUEUED_TASKS
-	end.
+is_source_busy(SourceStoreID, State) ->
+	lists:any(
+		fun({Source, _Args}) -> Source == SourceStoreID end,
+		maps:values(State#state.monitors)).
 
-enqueue_read_range(Args, State) ->
-	{_Start, _End, OriginStoreID, _TargetStoreID} = Args,
-	Worker = maps:get(OriginStoreID, State#state.workers, undefined),
-	case Worker of
-		undefined ->
-			?LOG_ERROR([{event, worker_not_found}, {module, ?MODULE},
-				{call, enqueue_read_range}, {store_id, OriginStoreID}]),
+target_has_pending_workers(TargetStoreID, State) ->
+	lists:any(
+		fun({_Source, {_, _, _, T}}) -> T == TargetStoreID end,
+		maps:values(State#state.monitors)).
+
+%% A worker exit frees its source (crashes are logged but still let the copy
+%% finish, the Ref having left `monitors'). Wake the finished worker's target and
+%% any target parked in `step/3' on the freed source — those have no worker to
+%% wake them. The gen_server serialises the casts, so one-worker-per-source holds.
+on_worker_down(Ref, Reason, State) ->
+	case maps:take(Ref, State#state.monitors) of
+		error ->
 			State;
-		_ ->
-			Worker2 = do_enqueue_read_range(Args, Worker),
-			State#state{
-				workers = maps:put(OriginStoreID, Worker2, State#state.workers)
-			}
+		{{FreedSource, Args}, Monitors2} ->
+			{_, _, _, TargetStoreID} = Args,
+			log_if_crash(Args, Reason),
+			maps:foreach(
+				fun(T, #copy_state{ waiting_on = W })
+						when T =:= TargetStoreID; W =:= FreedSource ->
+						gen_server:cast(?MODULE, {step, T});
+					(_, _) ->
+						ok
+				end, State#state.in_progress),
+			State#state{ monitors = Monitors2 }
 	end.
 
-do_enqueue_read_range(Args, Worker) ->
-	{Start, End, OriginStoreID, TargetStoreID} = Args,
-	End2 = min(Start + (?READ_RANGE_CHUNKS * ?DATA_CHUNK_SIZE), End),
-	Args2 = {Start, End2, OriginStoreID, TargetStoreID},
-	TaskQueue = queue:in(Args2, Worker#worker_tasks.task_queue),
-	Worker2 = Worker#worker_tasks{task_queue = TaskQueue},
-	case End2 == End of
-		true ->
-			Worker2;
-		false ->
-			Args3 = {End2, End, OriginStoreID, TargetStoreID},
-			do_enqueue_read_range(Args3, Worker2)
-	end.
-
-process_queues(State) ->
-	Workers = State#state.workers,
-	UpdatedWorkers = maps:map(
-		fun(_Key, Worker) ->
-			process_queue(Worker)
-		end,
-		Workers
-	),
-	State#state{workers = UpdatedWorkers}.
-
-process_queue(Worker) ->
-	case Worker#worker_tasks.active_count < ?MAX_ACTIVE_TASKS of
-		true ->
-			case queue:out(Worker#worker_tasks.task_queue) of
-				{empty, _} ->
-					Worker;
-				{{value, Args}, Q2}->
-					gen_server:cast(Worker#worker_tasks.worker, {read_range, Args}),
-					Worker2 = Worker#worker_tasks{
-						task_queue = Q2,
-						active_count = Worker#worker_tasks.active_count + 1
-					},
-					process_queue(Worker2)
-			end;
-		false ->
-			Worker
-	end.
-
-task_completed(Args, State) ->
-	{_Start, _End, OriginStoreID, _TargetStoreID} = Args,
-	Worker = maps:get(OriginStoreID, State#state.workers, undefined),
-	case Worker of
-		undefined ->
-			?LOG_ERROR([{event, worker_not_found}, {module, ?MODULE}, {call, task_completed},
-				{store_id, OriginStoreID}]),
-			State;
-		_ ->
-			ActiveCount = Worker#worker_tasks.active_count - 1,
-			Worker2 = Worker#worker_tasks{active_count = ActiveCount},
-			Worker3 = process_queue(Worker2),
-			State2 = State#state{
-				workers = maps:put(OriginStoreID, Worker3, State#state.workers)
-			},
-			State2
-	end.
+log_if_crash(_Args, normal) ->
+	ok;
+log_if_crash(Args, Reason) ->
+	?LOG_ERROR([{event, chunk_copy_worker_crash}, {module, ?MODULE},
+		{args, Args}, {reason, io_lib:format("~p", [Reason])}]).
 
 %%%===================================================================
 %%% Tests. Included in the module so they can reference private

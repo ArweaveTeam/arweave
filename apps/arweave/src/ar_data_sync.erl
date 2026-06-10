@@ -41,7 +41,7 @@
 %% For data-doctor tools
 -export([init_kv/2, open_store_dbs/2]).
 
--export([init/1, handle_continue/2, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
+-export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 -export([store_fetched_chunk/4]).
 
 -include("ar.hrl").
@@ -594,7 +594,7 @@ init({StoreID, RepackInPlacePacking}) ->
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 	RangeStart2 = max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
 	RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
-	State = #data_sync_state{
+	State0 = #data_sync_state{
 		store_id = StoreID,
 		range_start = RangeStart2,
 		range_end = RangeEnd2,
@@ -602,33 +602,26 @@ init({StoreID, RepackInPlacePacking}) ->
 		%% by set_weave_size/2).
 		weave_size = 0
 	},
-	{ok, State, {continue, {init, RepackInPlacePacking}}}.
+	State1 = init_kv(State0, StoreID),
 
-%% @doc Initialize the data syncing module. DB opens happen in handle_continue so that
-%% we don't block the rest of the node initialization process.
-handle_continue({init, RepackInPlacePacking},
-		#data_sync_state{ store_id = StoreID } = State0) ->
-	State2 = init_kv(State0, StoreID),
-
-	case RepackInPlacePacking of
+	State2 = case RepackInPlacePacking of
 		none ->
 			gen_server:cast(self(), process_store_chunk_queue),
-			State3 = State2#data_sync_state{
-				sync_status = init_sync_status(StoreID)
-			},
+			SyncStatus = init_sync_status(StoreID),
+			S = State1#data_sync_state{ sync_status = SyncStatus },
 			ar_chunk_copy:start_copy(StoreID),
-			maybe_run_footprint_record_initialization(State3),
-			?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID}]),
-			{noreply, State3};
+			maybe_run_footprint_record_initialization(S),
+			S;
 		_ ->
-			State3 = State2#data_sync_state{
-				sync_status = off
-			},
 			ar_device_lock:set_device_lock_metric(StoreID, sync, off),
-			?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID}, 
-				{repack_in_place_packing, ar_serialize:encode_packing(RepackInPlacePacking, false)}]),
-			{noreply, State3}
-	end.
+			State1#data_sync_state{ sync_status = off }
+	end,
+	?LOG_INFO([{event, ar_data_sync_initialized}, {store_id, StoreID},
+		{repack_in_place_packing, case RepackInPlacePacking of
+			none -> none;
+			_ -> ar_serialize:encode_packing(RepackInPlacePacking, false)
+		end}]),
+	{ok, State2}.
 
 handle_cast(process_store_chunk_queue, State) ->
 	ar_util:cast_after(200, self(), process_store_chunk_queue),
