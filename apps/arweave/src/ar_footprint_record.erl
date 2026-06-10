@@ -1,12 +1,12 @@
-%% @ar_test: fast
 -module(ar_footprint_record).
+-test_category([fast]).
 
 -export([add/3, add_async/4, delete/2, get_offset/1, get_padded_offset_from_footprint_offset/1,
 		get_footprint/1, get_footprint_bucket/1, get_intervals/3,
 		get_intervals/4, get_unsynced_intervals/3,
 		get_intervals_from_footprint_intervals/1,
 		get_footprint_size/0, get_footprints_per_partition/0,
-		is_recorded/2]).
+		max_offset/1, is_recorded/2]).
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
@@ -142,6 +142,16 @@ get_intervals_from_footprint_intervals(FootprintIntervals) ->
 -spec get_footprints_per_partition() -> non_neg_integer().
 get_footprints_per_partition() ->
 	?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
+
+%% @doc Return an upper bound on the footprint offsets reachable by a weave of
+%% the given byte size: the per-partition footprint capacity times the number
+%% of partitions touched by the weave.
+-spec max_offset(WeaveSize :: non_neg_integer()) -> non_neg_integer().
+max_offset(WeaveSize) when WeaveSize > 0 ->
+	NumPartitions = (WeaveSize + ?PARTITION_SIZE - 1) div ?PARTITION_SIZE,
+	NumPartitions * get_chunks_per_partition();
+max_offset(_) ->
+	0.
 
 %% @doc Return true if a chunk containing the given Offset (=< EndOffset, > StartOffset)
 %% is found in the footprint record.

@@ -1,16 +1,25 @@
-%% @ar_test: fast
 -module(ar_sync_buckets).
+-test_category([fast]).
 
 -export([new/0, new/1, from_intervals/1, from_intervals/2,
 		add/3, delete/3, cut/2, get/3, serialize/2,
-		deserialize/2, foreach/3]).
+		deserialize/2, foreach/4,
+		get_default_sync_bucket_size/0, get_network_data_bucket_size/0,
+		get_network_footprint_bucket_size/0]).
 
 -include_lib("arweave/include/ar_sync_buckets.hrl").
+-include_lib("arweave/include/ar_data_discovery.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+
+%% @doc Wrappers around the bucket-size macros so tests, where the macros are
+%% redefined smaller, can read the mainnet values.
+get_default_sync_bucket_size() -> ?DEFAULT_SYNC_BUCKET_SIZE.
+get_network_data_bucket_size() -> ?NETWORK_DATA_BUCKET_SIZE.
+get_network_footprint_bucket_size() -> ?NETWORK_FOOTPRINT_BUCKET_SIZE.
 
 %% @doc Return an empty set of buckets.
 new() ->
@@ -118,18 +127,29 @@ deserialize(SerializedBuckets, ExpectedBucketSize) ->
 			{error, invalid_format}
 	end.
 
-%% @doc Apply the given function of two arguments (Bucket, Share) to each
-%% of the given buckets breaking them down according to the given size.
-foreach(Fun, BucketSize, {Size, Map}) when Size >= BucketSize, Size rem BucketSize == 0 ->
+%% @doc Call Fun(Bucket, Share) for each BucketSize-granularity bucket that
+%% starts before MaxBucketStartOffset, breaking each coarser stored bucket
+%% (size Size) down into Size div BucketSize sub-buckets. The bound stops a
+%% peer's coarse Size from materializing buckets beyond the current weave.
+foreach(Fun, BucketSize, MaxBucketStartOffset, {Size, Map})
+		when Size >= BucketSize, MaxBucketStartOffset > 0 ->
 	Ratio = Size div BucketSize,
+	BucketCount = (MaxBucketStartOffset + BucketSize - 1) div BucketSize,
 	maps:fold(
-		fun(Bucket, Share, ok) ->
-			foreach_range(Fun, Share, Bucket * Ratio, (Bucket + 1) * Ratio)
+		fun(StoredBucket, Share, ok) ->
+			Start = StoredBucket * Ratio,
+			case Start >= BucketCount of
+				true ->
+					ok;
+				false ->
+					End = min(Start + Ratio, BucketCount),
+					foreach_range(Fun, Share, Start, End)
+			end
 		end,
 		ok,
 		Map
 	);
-foreach(_Fun, _BucketSize, _Buckets) ->
+foreach(_Fun, _BucketSize, _MaxBucketStartOffset, _Buckets) ->
 	ok.
 
 foreach_range(_Fun, _Share, SubBucket, End) when SubBucket >= End ->
