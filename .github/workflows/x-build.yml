@@ -28,7 +28,11 @@ jobs:
   build-template:
     runs-on:
       - self-hosted
-      - build-runner
+      # Build (compile) job: use a dedicated max-1-per-host compile-runner
+      # pool on ubuntu so concurrent runs' compiles spread across hosts
+      # instead of clumping. macOS keeps build-runner (no compile pool on
+      # the Mac fleet). Test jobs stay on build-runner.
+      - ${{ inputs.os_name == 'ubuntu' && 'compile-runner' || 'build-runner' }}
       - ${{ inputs.os_arch }}
       - ${{ inputs.os_name }}
       - ${{ inputs.os_release }}
@@ -161,12 +165,22 @@ jobs:
           # absolute symlinks that don't survive transport between
           # standalone runners. `_build/default/plugins' is build-time
           # only (rebar3 plugins like hex_core), never needed by the
-          # test BEAMs.
+          # test BEAMs. rocksdb's prebuilt build tree + vendored source are
+          # kept so `rebar3 ct' on the common-test runners reuses the built
+          # static lib (cmake stays a no-op) instead of rebuilding rocksdb
+          # from scratch -- a cc1plus CPU storm that severs the runner.
           tar --use-compress-program='zstd -T0 -3' \
               --exclude='_build/default/plugins' \
+              --exclude='*/.git' \
               -chf _build.tar.zst ./_build ./bin/arweave
           tar --use-compress-program='zstd -T0 -3' \
               -chf apps.tar.zst ./apps
+          # Fail the build on a truncated archive rather than uploading a
+          # poison artifact -- a short .zst passes upload but makes every
+          # downstream test job fail on extract. sync first so the write is
+          # durable before zstd reads it back.
+          sync
+          zstd -t _build.tar.zst apps.tar.zst
 
       # to avoid reusing artifacts from someone else
       # and generating issues, an unique artifact is

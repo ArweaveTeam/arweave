@@ -2,7 +2,7 @@
 # Full Arweave Test Suite. Mostly used on Linux like systems.
 #
 # Categorisation:
-#   - fast tests:  modules tagged `%% @ar_test: fast` (and the
+#   - fast tests:  modules tagged `-test_category([fast])` (and the
 #                  module has eunit tests). Run in a small number
 #                  of sharded jobs that each loop through their
 #                  slice, one BEAM per module. Shares the artifact
@@ -11,7 +11,8 @@
 #                  own matrix shard for full parallelism.
 #
 # Discovery is via scripts/list_test_modules.sh which scans the
-# source tree for eunit tests + reads `@ar_test:` annotations.
+# source tree for eunit tests + reads `-test_category([...])`
+# attributes.
 ######################################################################
 name: "arweave-test-suite-full"
 
@@ -296,3 +297,56 @@ jobs:
         run: scripts/setup_notebook_env.sh
       - name: Run autoredenomination notebook headless
         run: scripts/run_notebook_headless.sh autoredenomination_localnet
+
+  # Shell-level smoke test of every bin/* CLI wrapper. Catches the class
+  # of regressions where a tool's Erlang entry point still loads but
+  # its calls into arweave_config blow up at runtime. See
+  # scripts/smoke_cli.sh for the asserted behaviour per tool.
+  cli-smoke:
+    runs-on:
+      - self-hosted
+      - build-runner
+      - ${{ inputs.os_arch }}
+      - ${{ inputs.os_name }}
+      - ${{ inputs.os_release }}
+    steps:
+      - name: cleanup
+        if: always()
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}" && mkdir -p "${GITHUB_WORKSPACE}"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+          lfs: false
+
+      - uses: ./.github/actions/kill-stray-erlang
+        if: always()
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.sha }}-${{ env.cache_key }}
+
+      - uses: ./.github/actions/ensure-zstd
+
+      - name: Extract artifact
+        run: |
+          tar --use-compress-program='zstd -T0 -d' -xpf _build.tar.zst
+          tar --use-compress-program='zstd -T0 -d' -xpf apps.tar.zst
+
+      - name: Run CLI smoke
+        run: bash scripts/smoke_cli.sh
+
+      - name: upload artifacts in case of failure
+        uses: actions/upload-artifact@v4
+        if: always() && failure()
+        with:
+          name: "logs-cli-smoke-${{ github.run_attempt }}-${{ job.status }}-${{ runner.name }}-${{ github.sha }}"
+          retention-days: 7
+          overwrite: true
+          include-hidden-files: true
+          path: |
+            ./logs
+            *.out
+            *.dump

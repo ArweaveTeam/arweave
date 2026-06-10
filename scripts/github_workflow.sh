@@ -1,6 +1,6 @@
 #!/bin/bash
 ######################################################################
-# Run eunit / e2e tests for one or more modules. Each module runs in
+# Run eunit tests for one or more modules. Each module runs in
 # its own fresh BEAM (clean isolation). When more than one module is
 # passed, this script loops through them — useful for batched fast
 # shards that share an artifact download but still get per-module
@@ -9,7 +9,7 @@
 # Usage:
 #   github_workflow.sh MODE NAMESPACE [MODULE ...]
 #
-# - MODE: "tests" or "e2e".
+# - MODE: "tests" (the ar eunit entrypoint).
 # - NAMESPACE: identifier used in failure artifact filenames. Pass
 #   the matrix slot name (e.g. "fast_shard_0") or, for back-compat
 #   with the per-shard matrix, the single module name.
@@ -102,19 +102,13 @@ OVERALL_EXIT_CODE=0
 export PATH="${PWD}/_build/erts/bin:${PATH}"
 export ERL_EPMD_ADDRESS="127.0.0.1"
 
-if test "${MODE}" = "e2e"
-then
-	export ERL_PATH_ADD="$(echo ${PWD}/_build/e2e/lib/*/ebin)"
-	export ERL_PATH_TEST="$(echo ${PWD}/_build/e2e/lib/*/e2e)"
-else
-	export ERL_PATH_ADD="$(echo ${PWD}/_build/test/lib/*/ebin)"
-	# All apps' compiled eunit test modules, not just arweave's. The
-	# pre-discovery matrix only listed modules from apps/arweave/test/,
-	# so this single hard-coded path used to be sufficient; with
-	# auto-discovery picking up apps/arweave_limiter/test/ (and any
-	# future app's test dir), we need every app's test/ on the path.
-	export ERL_PATH_TEST="$(echo ${PWD}/_build/test/lib/*/test)"
-fi
+export ERL_PATH_ADD="$(echo ${PWD}/_build/test/lib/*/ebin)"
+# All apps' compiled eunit test modules, not just arweave's. The
+# pre-discovery matrix only listed modules from apps/arweave/test/,
+# so this single hard-coded path used to be sufficient; with
+# auto-discovery picking up apps/arweave_limiter/test/ (and any
+# future app's test dir), we need every app's test/ on the path.
+export ERL_PATH_TEST="$(echo ${PWD}/_build/test/lib/*/test)"
 
 export ERL_PATH_CONF="${PWD}/config/sys.config"
 export ERL_TEST_OPTS="-pa ${ERL_PATH_ADD} ${ERL_PATH_TEST} -config ${ERL_PATH_CONF}"
@@ -138,7 +132,10 @@ for MODULE in "${MODULES_TO_RUN[@]}"; do
 		RETRYABLE=0
 		set +e
 		set -x
-		erl +S 4:4 $ERL_TEST_OPTS \
+		# Shared test VM policy (config/vm.args.test): +sbwt none so idle
+		# schedulers sleep instead of starving the CI runner agent's
+		# heartbeat. +S pinned at 4 here (eunit is light).
+		erl +S 4:4 -args_file "${PWD}/config/vm.args.test" $ERL_TEST_OPTS \
 			-noshell \
 			-name "${NODE_NAME}" \
 			-setcookie "${COOKIE}" \
