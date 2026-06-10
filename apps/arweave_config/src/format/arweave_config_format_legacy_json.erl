@@ -444,12 +444,6 @@ parse_options([{<<"disk_pool_jobs">>, Value} | Rest])
 parse_options([{<<"disk_pool_jobs">>, Value} | _]) ->
 	{error, {bad_type, disk_pool, jobs}, Value};
 
-parse_options([{<<"requests_per_minute_limit">>, L} | Rest]) when is_integer(L) ->
-	_ = arweave_config:set([requests_per_minute_limit], L),
-	parse_options(Rest);
-parse_options([{<<"requests_per_minute_limit">>, L} | _]) ->
-	{error, {bad_type, requests_per_minute_limit, number}, L};
-
 parse_options([{<<"transaction_blacklists">>, TransactionBlacklists} | Rest])
 		when is_list(TransactionBlacklists) ->
 	case safe_map(fun binary_to_list/1, TransactionBlacklists) of

@@ -127,17 +127,6 @@ specs() ->
 		},
 		#{
 			enabled => true,
-			option_key => [requests_per_minute_limit],
-			runtime => true,
-			default => ?DEFAULT_REQUESTS_PER_MINUTE_LIMIT,
-			type => pos_integer,
-			legacy => requests_per_minute_limit,
-			short_description =>
-				<<"Maximum allowed HTTP requests per IP address per "
-				  "minute.">>
-		},
-		#{
-			enabled => true,
 			option_key => [internal_api_secret],
 			runtime => true,
 			default => not_set,

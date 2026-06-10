@@ -51,7 +51,6 @@
   "sync_jobs": 10,
   "header_sync_jobs": 1,
   "disk_pool_jobs": 2,
-  "requests_per_minute_limit": 2500,
   "verify": "log",
   "verify_samples": "all",
   "transaction_blacklists": ["some_blacklist_1", "some_blacklist_2"],

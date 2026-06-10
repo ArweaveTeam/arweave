@@ -708,7 +708,6 @@ integer_keyword_cases() ->
 		{"mining_cache_size_mb", "3", [mining, cache_size], 3},
 		{"max_emitters", "4", [gossip, tx, max_emitters], 4},
 		{"disk_space_check_frequency", "10", [disk_space_check_frequency], 10000},
-		{"requests_per_minute_limit", "2500", [requests_per_minute_limit], 2500},
 		{"max_propagation_peers", "8", [gossip, tx, max_peers], 8},
 		{"max_block_propagation_peers", "60", [gossip, block, max_peers], 60},
 		{"sync_jobs", "10", [sync, jobs], 10},
