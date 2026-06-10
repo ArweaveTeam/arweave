@@ -63,26 +63,8 @@
 	stop/0
 ]).
 
-%% Public API: peers
--export([
-	get_peers/1,
-	get_peer/1,
-	clear_peers/1,
-	replace_peers/2
-]).
-%% Public API: storage / repack / defrag modules
--export([
-	storage_modules/0,
-	repack_modules/0,
-	defrag_modules/0,
-	replace_storage_modules/1,
-	replace_repack_modules/1
-]).
 %% Public API: webhooks, semaphores, features, limiter
 -export([
-	webhooks/0,
-	replace_webhooks/1,
-	semaphores/0,
 	feature_enabled/1,
 	limiter_groups/0,
 	client_throttling_groups/0
