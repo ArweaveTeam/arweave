@@ -111,19 +111,11 @@ name(StoreID) ->
 	list_to_atom("ar_peer_sync_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
-	%% Network sync (producer + consumer per StoreID) — skip the entire
-	%% subsystem when sync_jobs=0. Same pattern as
-	%% ar_data_sync_coordinator:register_workers/0.
-	case ar_data_sync_coordinator:is_syncing_enabled() of
-		false ->
-			[];
-		true ->
-			StorageModules = arweave_config:storage_modules(),
-			StoreIDs = [
-				ar_storage_module:id(SM) || SM <- StorageModules
-			] ++ [?DEFAULT_MODULE],
-			[?CHILD_WITH_ARGS(?MODULE, worker, name(SID), [SID]) || SID <- StoreIDs]
-	end.
+	StorageModules = [arweave_config:config_to_storage_module(M)
+		|| M <- arweave_config:get([storage_modules])],
+	StoreIDs = [ar_storage_module:id(SM) || SM <- StorageModules]
+		++ [?DEFAULT_MODULE],
+	[?CHILD_WITH_ARGS(?MODULE, worker, name(SID), [SID]) || SID <- StoreIDs].
 
 start_link(StoreID) ->
 	gen_server:start_link({local, name(StoreID)}, ?MODULE, StoreID, []).
@@ -596,7 +588,7 @@ get_hot_peers_for_bucket(GetAllFun, _RPMKey, Path) ->
 	LocalOnly = arweave_config:get([sync, local_peers_only]),
 	AllPeers =
 		case LocalOnly of
-			true -> arweave_config:get_peers(local);
+			true -> arweave_config:get([peers, local]);
 			false -> GetAllFun()
 		end,
 	HotPeers = [

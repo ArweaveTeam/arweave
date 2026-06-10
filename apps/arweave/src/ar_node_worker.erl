@@ -251,7 +251,7 @@ block_index_not_found(BI) ->
 
 
 validate_trusted_peers() ->
-	case arweave_config:get_peers(trusted) of
+	case arweave_config:get([peers, trusted]) of
 		[] ->
 			ok;
 		Peers ->
@@ -267,12 +267,12 @@ validate_trusted_peers(Peers) ->
 			timer:sleep(2000),
 			init:stop(1);
 		_ ->
-			%% Wholesale-replace the trusted-peer list so unreachable
-			%% or wrong-network peers are evicted. Runs during sup
-			%% tree boot, before `arweave_config:runtime/0' freezes
-			%% static specs.
-			ok = arweave_config:replace_peers(trusted, ValidPeers),
-			case arweave_config:feature_enabled(time_syncing) of
+			%% Rewrite the trusted-peer role to evict unreachable or
+			%% wrong-network peers. Runs during sup tree boot, before
+			%% `arweave_config:runtime/0' freezes static specs.
+			ok = arweave_config:set([peers, trusted],
+				[ar_util:format_peer(Peer) || Peer <- ValidPeers]),
+			case arweave_config:get([features, time_syncing]) of
 				true ->
 					validate_clock_sync(ValidPeers);
 				false ->
@@ -1962,7 +1962,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 		replica_format = ReplicaFormat
 	} = Solution,
 	?LOG_INFO([{event, handle_found_solution}, {solution, ar_util:encode(SolutionH)}]),
-	MerkleRebaseThreshold = ?MERKLE_REBASE_SUPPORT_THRESHOLD,
+	MerkleRebaseThreshold = ar_block:get_merkle_rebase_support_threshold(),
 
 	#block{ indep_hash = PrevH, timestamp = PrevTimestamp,
 			wallet_list = WalletList,

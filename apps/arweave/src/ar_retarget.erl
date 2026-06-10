@@ -288,23 +288,21 @@ simple_retarget_test_() ->
 		lists:foreach(
 			fun(Height) ->
 				ar_test_node:mine(),
-				ar_test_node:wait_until_height(main, Height)
+				?assertMatch({ok, _}, ar_test_await:node_height(main, Height))
 			end,
 			lists:seq(1, ?RETARGET_BLOCKS + 1)
 		),
-		true = ar_util:do_until(
+		ok = ar_test_await:until(retarget_difficulty_increased,
 			fun() ->
 				[BH | _] = ar_node:get_blocks(),
 				B = ar_storage:read_block(BH),
 				B#block.diff > B0#block.diff
-			end,
-			1000,
-			5 * 60 * 1000
+			end
 		)
 	end}.
 
 calculate_difficulty_linear_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_5, fun() -> 0 end}],
 		fun test_calculate_difficulty_linear/0, 120).
 
 test_calculate_difficulty_linear() ->

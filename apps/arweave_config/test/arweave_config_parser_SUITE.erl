@@ -64,11 +64,11 @@ key_dotted_binary(_Config) ->
 
 key_with_bracketed_segment(_Config) ->
 	?assertEqual(
-		{ok, [peers, <<"127.0.0.1:1984">>, trusted]},
-		arweave_config_parser:key("peers.[127.0.0.1:1984].trusted")),
+		{ok, [webhooks, <<"hook.with.dots">>, url]},
+		arweave_config_parser:key("webhooks.[hook.with.dots].url")),
 	?assertEqual(
-		{ok, [peers, <<"127.0.0.1:1984">>, trusted]},
-		arweave_config_parser:key(<<"peers.[127.0.0.1:1984].trusted">>)),
+		{ok, [webhooks, <<"hook.with.dots">>, url]},
+		arweave_config_parser:key(<<"webhooks.[hook.with.dots].url">>)),
 	ok.
 
 key_invalid(_Config) ->
@@ -102,8 +102,8 @@ format_key_basic(_Config) ->
 	ok.
 
 format_key_wildcards(_Config) ->
-	?assertEqual(<<"peers.<peer_id>.trusted">>,
-		arweave_config_parser:format_key([peers, {peer_id}, trusted])),
+	?assertEqual(<<"webhooks.<list_item>.url">>,
+		arweave_config_parser:format_key([webhooks, {list_item}, url])),
 	?assertEqual(<<"<root>">>,
 		arweave_config_parser:format_key([{root}])),
 	ok.
@@ -135,7 +135,7 @@ is_parameter_yes_no(_Config) ->
 	?assert(arweave_config_parser:is_parameter([global, debug])),
 	?assert(arweave_config_parser:is_parameter([storage, 3, unpacked, state])),
 	?assert(arweave_config_parser:is_parameter(
-		[peers, <<"127.0.0.1:1984">>, trusted])),
+		[peers, trusted])),
 
 	%% Raw inputs.
 	?assertNot(arweave_config_parser:is_parameter("rocksdb.flush_interval")),
@@ -154,7 +154,7 @@ key_format_roundtrip(_Config) ->
 	Samples = [
 		<<"global.debug">>,
 		<<"storage.3.unpacked.state">>,
-		<<"peers.[127.0.0.1:1984].trusted">>
+		<<"webhooks.[hook.with.dots].url">>
 	],
 	lists:foreach(
 		fun(Input) ->

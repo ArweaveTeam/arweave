@@ -15,9 +15,11 @@ setup_all() ->
 	[B0] = ar_weave:init([], 1, ?WEAVE_SIZE),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	StorageModules = lists:flatten(
-		[[{8 * 262144, N, {spora_2_6, RewardAddr}}] || N <- lists:seq(0, 8)]),
-	ar_test_node:start(B0, RewardAddr, #{}, StorageModules),
-	{Setup, Cleanup} = ar_test_node:mock_functions([
+		[[arweave_config:storage_module_to_config(
+			{8 * 262144, N, {spora_2_6, RewardAddr}})]
+			|| N <- lists:seq(0, 8)]),
+	ar_test_node:start(B0, RewardAddr, #{[storage_modules] => StorageModules}),
+	{Setup, Cleanup} = ar_test_node:mock_all_nodes([
 		{ar_mining_worker, chunks_read, fun chunks_read/5},
 		{ar_block, partition_size, fun() -> 8 * 262144 end}
 	]),
@@ -144,7 +146,11 @@ get_minable_storge_modules_test() ->
 			{100, 0, {spora_2_6, Addr}},
 			{300, 0, {replica_2_9, Addr}}
 		],
-		ok = arweave_config:replace_storage_modules(Input),
+		ok = arweave_config:force_config(#{
+			[storage_modules] =>
+				[arweave_config:storage_module_to_config(StorageModule)
+					|| StorageModule <- Input]
+		}),
 		?assertEqual(Expected, ar_mining_io:get_minable_storage_modules())
 	end).
 
@@ -157,7 +163,11 @@ get_packing_test() ->
 			{300, 0, {replica_2_9, Addr}}
 		],
 		Expected = {spora_2_6, Addr},
-		ok = arweave_config:replace_storage_modules(Input),
+		ok = arweave_config:force_config(#{
+			[storage_modules] =>
+				[arweave_config:storage_module_to_config(StorageModule)
+					|| StorageModule <- Input]
+		}),
 		?assertEqual(Expected, ar_mining_io:get_packing())
 	end).
 

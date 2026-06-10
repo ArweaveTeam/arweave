@@ -1,33 +1,33 @@
-%% @ar_test: isolated
 -module(ar_get_chunk_tests).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/include/ar.hrl").
 
 get_chunk_below_strict_threshold_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[strict_data_split_threshold_mock(10 * ?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_below_strict_threshold/0,
 		120
 	).
 
 get_chunk_below_strict_threshold_small_tail_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[strict_data_split_threshold_mock(10 * ?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_below_strict_threshold_small_tail/0,
 		120
 	).
 
 get_chunk_above_strict_threshold_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[strict_data_split_threshold_mock(?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_above_strict_threshold/0,
 		180
 	).
 
 get_chunk_above_strict_threshold_small_tail_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[strict_data_split_threshold_mock(?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_above_strict_threshold_small_tail/0,
 		180

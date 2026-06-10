@@ -31,7 +31,7 @@ all() ->
 %%====================================================================
 
 known_group_ids_are_registered(_Config) ->
-    IDs = arweave_config:limiter_groups(),
+    IDs = arweave_config_options_limiter:group_ids(),
     true = length(IDs) > 0,
     true = lists:member(general, IDs),
     true = lists:member(chunk, IDs),
@@ -47,7 +47,7 @@ spec_default_round_trip(_Config) ->
     [begin
         Value = arweave_config:get([limiter, ID, concurrency_limit]),
         ?assert(Value =:= infinity orelse is_integer(Value))
-     end || ID <- arweave_config:limiter_groups()].
+     end || ID <- arweave_config_options_limiter:group_ids()].
 
 local_peers_no_limit_default_is_true(_Config) ->
     true = arweave_config:get([limiter, local_peers, no_limit]),
@@ -55,15 +55,14 @@ local_peers_no_limit_default_is_true(_Config) ->
     [?assertEqual(
         {ID, false},
         {ID, arweave_config:get([limiter, ID, no_limit])})
-     || ID <- arweave_config:limiter_groups(), ID =/= local_peers].
+     || ID <- arweave_config_options_limiter:group_ids(), ID =/= local_peers].
 
 override_only_touches_target_field(_Config) ->
     DefaultSliding =
         arweave_config:get([limiter, chunk, sliding_window_limit]),
     DefaultGeneralConcurrency =
         arweave_config:get([limiter, general, concurrency_limit]),
-    {ok, 999} =
-        arweave_config:set([limiter, chunk, concurrency_limit], 999),
+    ok = arweave_config:set([limiter, chunk, concurrency_limit], 999),
     999 = arweave_config:get([limiter, chunk, concurrency_limit]),
     %% Sibling field on the same group is untouched.
     DefaultSliding =

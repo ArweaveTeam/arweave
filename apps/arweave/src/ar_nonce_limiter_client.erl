@@ -52,7 +52,7 @@ maybe_request_sessions(SessionKey) ->
 %%%===================================================================
 
 init([]) ->
-	Peers = arweave_config:get_peers(vdf_server),
+	Peers = arweave_config:get([peers, vdf_server]),
 	case ar_nonce_limiter:use_remote_vdf_server() of
 		false ->
 			ok;
@@ -82,7 +82,7 @@ handle_cast(pull, State = #state{ request_sessions = RequestSessions }) ->
 			%% Even when pulling is disabled, periodically re-resolve VDF server peers
 			%% so that pushes (POST /vdf) continue to work (e.g., after DNS changes).
 			resolve_server_peers(
-				arweave_config:get_peers(vdf_server)),
+				arweave_config:get([peers, vdf_server])),
 			ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
 			{noreply, State}
 	end;

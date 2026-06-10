@@ -52,10 +52,10 @@ handle([<<"solution">>], Req, State) ->
 %% relies on a refresh firing within the assertion's 60s window, and
 %% the production interval is 10 minutes.
 webhooks_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
 		fun test_webhooks/0,
-		120_000
+		120
 	).
 
 test_webhooks() ->
@@ -92,9 +92,12 @@ test_webhooks_body(Wallet, B0) ->
 			[transactions, blocklist, files] => [TXBlacklistFilename]
 		},
 		ar_test_node:start(#{ b0 => B0, addr => Addr, config => Overrides,
-				webhooks => Webhooks,
-				%% Replica 2.9 modules do not support updates.
-				storage_modules =>[{10 * ?MiB, 0, {composite, Addr, 1}}] }),
+				[webhooks] => [Webhook#{enabled => true} || Webhook <- Webhooks],
+					%% Use SPoRA; replica 2.9 modules do not support updates.
+					[storage_modules] => [
+						arweave_config:storage_module_to_config(
+							{10 * ?MiB, 0, {spora_2_6, Addr}})
+					] }),
 		%% Setup a server that would be listening for the webhooks and registering
 		%% them in the ETS table.
 		ets:new(?MODULE, [named_table, set, public]),

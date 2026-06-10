@@ -1,4 +1,4 @@
-%%% @doc Behavioural tests for the indexed-webhook config model.
+%%% @doc Behavioural tests for the webhook list config model.
 %%%
 %%% Verifies legacy round-trip, validator semantics, and that
 %%% disabled webhooks vanish from the legacy list view.
@@ -26,7 +26,7 @@ all() ->
 		runtime_transition_rejects_webhook_missing_url,
 		runtime_transition_rejects_webhook_with_no_events,
 		runtime_transition_skips_disabled_webhook,
-		reload_clears_prior_legacy_instances
+		reload_replaces_prior_webhook_list
 	].
 
 %%====================================================================
@@ -41,18 +41,8 @@ roundtrip_single_webhook(_Config) ->
 	},
 	ok = arweave_config_options_webhooks:write_legacy_list([Hook]),
 
-	%% Per-instance leaves exist under legacy_1.
-	?assertEqual(true,
-		arweave_config:get([webhooks, legacy_1, enabled])),
-	?assertEqual(<<"https://example.com/hook">>,
-		arweave_config:get([webhooks, legacy_1, url])),
-	?assertEqual([block, transaction],
-		arweave_config:get([webhooks, legacy_1, events])),
-	?assertEqual([{<<"Authorization">>, <<"Bearer 123">>}],
-		arweave_config:get([webhooks, legacy_1, headers])),
-
-	%% Public aggregate reader returns the original map.
-	?assertEqual([Hook], arweave_config:webhooks()),
+	?assertEqual([Hook#{enabled => true}], arweave_config:get([webhooks])),
+	?assertEqual([Hook], arweave_config_options_webhooks:legacy_list()),
 	ok.
 
 roundtrip_multiple_webhooks_with_shared_url(_Config) ->
@@ -62,35 +52,23 @@ roundtrip_multiple_webhooks_with_shared_url(_Config) ->
 		headers => [{<<"X-Auth">>, <<"v1">>}] },
 	ok = arweave_config_options_webhooks:write_legacy_list([A, B]),
 
-	?assertEqual([A, B], arweave_config:webhooks()),
+	?assertEqual([A, B], arweave_config_options_webhooks:legacy_list()),
 	ok.
 
 disabled_webhook_omitted_from_legacy_view(_Config) ->
 	Hook = #{
 		events => [block],
 		url => <<"https://example.com/hook">>,
-		headers => []
+		headers => [],
+		enabled => false
 	},
-	ok = arweave_config_options_webhooks:write_legacy_list([Hook]),
-	%% Flip enabled to false directly.
-	{ok, _} =
-		arweave_config:set([webhooks, legacy_1, enabled], false),
-
-	?assertEqual([], arweave_config:webhooks()),
-	%% The leaves still exist if the operator wants to re-enable.
-	?assertEqual(false,
-		arweave_config:get([webhooks, legacy_1, enabled])),
-	?assertEqual(<<"https://example.com/hook">>,
-		arweave_config:get([webhooks, legacy_1, url])),
+	ok = arweave_config:set([webhooks], [Hook]),
+	?assertEqual([], arweave_config_options_webhooks:legacy_list()),
+	?assertEqual([Hook], arweave_config:get([webhooks])),
 	ok.
 
 runtime_transition_rejects_webhook_missing_url(_Config) ->
-	%% Set the leaves directly to bypass the legacy bridge's URL
-	%% requirement (a legacy hook always has a URL because the
-	%% legacy parser requires one). This simulates a hand-edited
-	%% YAML config that forgot the URL.
-	{ok, _} = arweave_config:set([webhooks, my_hook, enabled], true),
-	{ok, _} = arweave_config:set([webhooks, my_hook, events], [block]),
+	ok = arweave_config:set([webhooks], [#{events => [block]}]),
 	?assertMatch(
 		{error, _},
 		arweave_config:runtime()),
@@ -98,10 +76,9 @@ runtime_transition_rejects_webhook_missing_url(_Config) ->
 	ok.
 
 runtime_transition_rejects_webhook_with_no_events(_Config) ->
-	{ok, _} = arweave_config:set([webhooks, my_hook, enabled], true),
-	{ok, _} =
-		arweave_config:set([webhooks, my_hook, url],
-			<<"https://example.com/hook">>),
+	ok = arweave_config:set([webhooks], [
+		#{url => <<"https://example.com/hook">>}
+	]),
 	?assertMatch(
 		{error, _},
 		arweave_config:runtime()),
@@ -109,12 +86,12 @@ runtime_transition_rejects_webhook_with_no_events(_Config) ->
 	ok.
 
 runtime_transition_skips_disabled_webhook(_Config) ->
-	{ok, _} = arweave_config:set([webhooks, my_hook, enabled], false),
+	ok = arweave_config:set([webhooks], [#{enabled => false}]),
 	?assertEqual(ok, arweave_config:runtime()),
 	?assertEqual(true, arweave_config:is_runtime()),
 	ok.
 
-reload_clears_prior_legacy_instances(_Config) ->
+reload_replaces_prior_webhook_list(_Config) ->
 	A = #{ events => [block],
 		url => <<"https://a.example/hook">>, headers => [] },
 	B = #{ events => [transaction],
@@ -122,7 +99,6 @@ reload_clears_prior_legacy_instances(_Config) ->
 	ok = arweave_config_options_webhooks:write_legacy_list([A]),
 	ok = arweave_config_options_webhooks:write_legacy_list([B]),
 	%% Only B survives.
-	?assertEqual([B], arweave_config:webhooks()),
-	?assertEqual(<<"https://b.example/hook">>,
-		arweave_config:get([webhooks, legacy_1, url])),
+	?assertEqual([B], arweave_config_options_webhooks:legacy_list()),
+	?assertEqual([B#{enabled => true}], arweave_config:get([webhooks])),
 	ok.

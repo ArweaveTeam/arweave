@@ -45,8 +45,8 @@ partial_overrides_keep_other_defaults(_Config) ->
 	?assertEqual(999,
 		arweave_config:get([semaphores, get_chunk, limit])),
 
-	%% Aggregate read fills in defaults for unmentioned names.
-	Map = arweave_config:semaphores(),
+	%% List read fills in defaults for unmentioned names.
+	Map = arweave_config_options_semaphores:legacy_map(),
 	?assertEqual(999, maps:get(get_chunk, Map)),
 	?assertEqual(?MAX_PARALLEL_POST_CHUNK_REQUESTS,
 		maps:get(post_chunk, Map)),

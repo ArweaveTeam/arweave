@@ -45,8 +45,8 @@ name(StoreID) ->
 	list_to_atom("ar_entropy_gen_" ++ ar_storage_module:label(StoreID)).
 
 register_workers(Module) ->
-	StorageModules = arweave_config:storage_modules(),
-	RepackInPlaceModules = arweave_config:repack_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
+	RepackInPlaceModules = [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
 	ConfiguredWorkers = lists:filtermap(
 		fun(StorageModule) ->
 				StoreID = ar_storage_module:id(StorageModule),
@@ -543,7 +543,7 @@ store_cursor(Cursor, StoreID) ->
 %%%===================================================================
 
 entropy_offsets_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 		{ar_block, strict_data_split_threshold, fun() -> 700_000 end}
 	],
 	fun test_entropy_offsets/0, 30).

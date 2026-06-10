@@ -174,7 +174,7 @@ handle(Peer, Req, Pid) ->
 		running ->
 			Method = cowboy_req:method(Req),
 			SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-			case arweave_config:feature_enabled(http_logging) of
+			case arweave_config:get([features, http_logging]) of
 				true ->
 					?LOG_INFO([
 						{event, http_request},
@@ -337,7 +337,7 @@ handle(<<"GET">>, [<<"unconfirmed_tx2">>, Hash], Req, _Pid) ->
 %% served as HTML.
 %% GET request to endpoint /tx/{hash}/data.html
 handle(<<"GET">>, [<<"tx">>, Hash, << "data.", _/binary >>], Req, _Pid) ->
-	case arweave_config:feature_enabled(serve_html_data) of
+	case arweave_config:get([features, serve_html_data]) of
 		false ->
 			{421, #{}, <<"Serving HTML data is disabled on this node.">>, Req};
 		true ->
@@ -2085,7 +2085,7 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
 							{{true, Packing}, _StoreID} when RequestedPacking == any ->
 								acquire_chunk_semaphore(get_chunk, Packing, Req);
 							{{true, _}, _StoreID} ->
-								case arweave_config:feature_enabled(pack_served_chunks) of
+								case arweave_config:get([features, pack_served_chunks]) of
 									false ->
 										{none, {reply, {404, #{}, <<>>, Req}}};
 									true ->
@@ -2862,7 +2862,7 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 			{404, #{}, <<"Not Found.">>, Req};
 		B ->
 			case {B#block.height >= ar_fork:height_2_2(),
-					arweave_config:feature_enabled(serve_wallet_lists)} of
+					arweave_config:get([features, serve_wallet_lists])} of
 				{true, false} ->
 					{400, #{},
 						jiffy:encode(#{ error => does_not_serve_blocks_after_2_2_fork }),
@@ -2900,7 +2900,7 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
 %% field :: nonce | previous_block | timestamp | last_retarget | diff | height | hash |
 %%			indep_hash | txs | hash_list | wallet_list | reward_addr | tags | reward_pool
 process_request(get_block, [Type, ID, Field], Req) ->
-	case arweave_config:feature_enabled(subfield_queries) of
+	case arweave_config:get([features, subfield_queries]) of
 		true ->
 			case find_block(Type, ID) of
 				{error, height_not_integer} ->

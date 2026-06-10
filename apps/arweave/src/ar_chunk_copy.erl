@@ -62,114 +62,47 @@
 %%%===================================================================
 
 %% @doc Start the server.
-start_link(WorkerMap) ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, WorkerMap, []).
+start_link() ->
+	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-register_workers() ->
-	%% Local chunk-copy is a pre-network-sync optimization — skip the entire
-	%% subsystem when sync_jobs=0. Same pattern as
-	%% ar_data_sync_coordinator:register_workers/0.
-	case ar_data_sync_coordinator:is_syncing_enabled() of
-		false ->
-			[];
-		true ->
-			{Workers, WorkerMap} = register_read_workers(),
-			ChunkCopy = ?CHILD_WITH_ARGS(ar_chunk_copy, worker, ar_chunk_copy,
-					[WorkerMap]),
-			Workers ++ [ChunkCopy]
-	end.
-
-register_read_workers() ->
-	StorageModules = arweave_config:storage_modules(),
-	StoreIDs = [
-		ar_storage_module:id(StorageModule) || StorageModule <- StorageModules
-	] ++ [?DEFAULT_MODULE],
-	{Workers, WorkerMap} =
-		lists:foldl(
-			fun(StoreID, {AccWorkers, AccWorkerMap}) ->
-				Label = ar_storage_module:label(StoreID),
-				Name = list_to_atom("ar_chunk_copy_worker_" ++ Label),
-				Worker = ?CHILD_WITH_ARGS(ar_chunk_copy_worker, worker, Name, [Name]),
-				{[Worker | AccWorkers], AccWorkerMap#{StoreID => Name}}
-			end,
-			{[], #{}},
-			StoreIDs
-		),
-	{Workers, WorkerMap}.
-
-%% @doc Returns true if we can accept new tasks. Will always return false if syncing is
-%% disabled (i.e. sync_jobs = 0).
-ready_for_work(StoreID) ->
-	try
-		gen_server:call(?MODULE, {ready_for_work, StoreID}, 1000)
-	catch
-		exit:{timeout,_} ->
-			false
-	end.
-
-%% @doc Notify ar_chunk_copy that a read_range task has completed.
-task_completed(Worker, ReadResult, Args) ->
-	gen_server:cast(?MODULE, {task_completed, {read_range, {Worker, ReadResult, Args}}}).
-
-%% @doc Start (or restart) a copy operation for the given storage
-%% module. Scans neighboring on-disk modules for unsynced intervals and
-%% enqueues cross-module copy tasks. On completion an
-%% `{event, chunk_copy, {complete, StoreID}}' message is published via
-%% `ar_events'.
+%% @doc Start (or restart) a cross-module copy for `StoreID': scan neighboring
+%% on-disk modules for unsynced intervals and dispatch read-range workers as
+%% their source modules free up. Publishes `{chunk_copy, {complete, StoreID}}'
+%% via `ar_events' once scanning is done AND every worker has exited. Returns
+%% `ignore' when chunk-copy is disabled (sync_jobs = 0).
 start_copy(StoreID) ->
-	%% If syncing is not enabled, the ar_chunk_copy processes have not been
-	%% started.
 	case whereis(?MODULE) of
 		undefined ->
-			ok;
+			ignore;
 		_Pid ->
-			gen_server:cast(?MODULE, {start_copy, StoreID})
+			gen_server:cast(?MODULE, {start_copy, StoreID}),
+			ok
 	end.
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
-init(WorkerMap) ->
-	?LOG_DEBUG([{event, init}, {module, ?MODULE}, {worker_map, WorkerMap}]),
-	Workers = maps:fold(
-		fun(StoreID, Name, Acc) ->
-			Acc#{StoreID => #worker_tasks{worker = Name}}
-		end,
-		#{},
-		WorkerMap
-	),
-	ar_util:cast_after(1000, self(), process_queues),
-	{ok, #state{
-		workers = Workers
-	}}.
-
-handle_call({ready_for_work, StoreID}, _From, State) ->
-	{reply, do_ready_for_work(StoreID, State), State};
+init([]) ->
+	?LOG_DEBUG([{event, init}, {module, ?MODULE}]),
+	{ok, #state{}}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast({read_range, Args}, State) ->
-	{noreply, enqueue_read_range(Args, State)};
-
-handle_cast(process_queues, State) ->
-	ar_util:cast_after(1000, self(), process_queues),
-	{noreply, process_queues(State)};
-
-handle_cast({task_completed, {read_range, {Worker, _, Args}}}, State) ->
-	{noreply, task_completed(Args, State)};
-
 handle_cast({start_copy, StoreID}, State) ->
 	{noreply, do_start_copy(StoreID, State)};
 
-handle_cast({copy, StoreID}, State) ->
-	{noreply, copy(StoreID, State)};
+handle_cast({step, StoreID}, State) ->
+	{noreply, maybe_step(StoreID, State)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
+
+handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
+	{noreply, on_worker_down(Ref, Reason, State)};
 
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
@@ -448,125 +381,28 @@ task_completed(Args, State) ->
 
 helpers_test_() ->
 	[
-		{timeout, 30, fun test_ready_for_work/0},
-		{timeout, 30, fun test_enqueue_read_range/0},
-		{timeout, 30, fun test_process_queue/0},
-		{timeout, 30, fun test_register_workers/0}
+		{timeout, 30, fun test_is_source_busy/0},
+		{timeout, 30, fun test_target_has_pending_workers/0}
 	].
 
-test_ready_for_work() ->
-	ReadySyncRecord = fun Loop() ->
-		receive
-			{'$gen_call', From, await_initialized} ->
-				gen_server:reply(From, initialized),
-				Loop()
-		end
-	end,
-	SyncRecords = lists:map(
-		fun(StoreID) ->
-			Name = ar_sync_record:name(StoreID),
-			Pid = spawn_link(ReadySyncRecord),
-			true = register(Name, Pid),
-			{Name, Pid}
-		end,
-		[store1, store2]
-	),
+test_is_source_busy() ->
+	Ref = make_ref(),
 	State = #state{
-		workers = #{
-			store1 => #worker_tasks{
-				task_queue = queue:from_list(lists:seq(1, ?MAX_QUEUED_TASKS - 1))},
-			store2 => #worker_tasks{
-				task_queue = queue:from_list(lists:seq(1, ?MAX_QUEUED_TASKS))}
+		monitors = #{
+			Ref => {"source_a", {0, 100, "source_a", "target_x"}}
 		}
 	},
-	try
-		?assertEqual(true, do_ready_for_work(store1, State)),
-		?assertEqual(false, do_ready_for_work(store2, State))
-	after
-		lists:foreach(
-			fun({Name, Pid}) ->
-				unregister(Name),
-				exit(Pid, normal)
-			end,
-			SyncRecords
-		)
-	end.
+	?assertEqual(true, is_source_busy("source_a", State)),
+	?assertEqual(false, is_source_busy("source_b", State)),
+	?assertEqual(false, is_source_busy("source_a", #state{})).
 
-test_enqueue_read_range() ->
-	ExpectedWorker = #worker_tasks{
-		task_queue = queue:from_list(
-					[{
-						floor(2.5 * ?DATA_CHUNK_SIZE),
-						floor((2.5 + ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
-						"store1", "store2"
-					},
-					{
-						floor((2.5 + ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
-						floor((2.5 + 2 * ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
-						"store1", "store2"
-					},
-					{
-						floor((2.5 + 2 * ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
-						floor((2.5 + 3 * ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
-						"store1", "store2"
-					}]
-				)
-			},
-	Worker = do_enqueue_read_range(
-		{
-			floor(2.5 * ?DATA_CHUNK_SIZE),
-			floor((2.5 + 3 * ?READ_RANGE_CHUNKS) * ?DATA_CHUNK_SIZE),
-			"store1", "store2"
-		},
-		#worker_tasks{task_queue = queue:new()}
-	),
-	?assertEqual(
-		queue:to_list(ExpectedWorker#worker_tasks.task_queue),
-		queue:to_list(Worker#worker_tasks.task_queue)).
-
-test_process_queue() ->
-	Worker1 = #worker_tasks{
-		active_count = ?MAX_ACTIVE_TASKS
-	},
-	?assertEqual(Worker1, process_queue(Worker1)),
-
-	Worker2 = #worker_tasks{
-		active_count = ?MAX_ACTIVE_TASKS + 1
-	},
-	?assertEqual(Worker2, process_queue(Worker2)),
-
-	Worker3 = process_queue(
-		#worker_tasks{
-			active_count = ?MAX_ACTIVE_TASKS - 2,
-			task_queue = queue:from_list(
-				[{floor(2.5 * ?DATA_CHUNK_SIZE), floor(12.5 * ?DATA_CHUNK_SIZE),
-				"store1", "store2"},
-			{floor(12.5 * ?DATA_CHUNK_SIZE), floor(22.5 * ?DATA_CHUNK_SIZE),
-				"store1", "store2"},
-			{floor(22.5 * ?DATA_CHUNK_SIZE), floor(30 * ?DATA_CHUNK_SIZE),
-				"store1", "store2"}])
+test_target_has_pending_workers() ->
+	Ref = make_ref(),
+	State = #state{
+		monitors = #{
+			Ref => {"source_a", {0, 100, "source_a", "target_x"}}
 		}
-	),
-	ExpectedWorker3 = #worker_tasks{
-		active_count = ?MAX_ACTIVE_TASKS,
-		task_queue = queue:from_list(
-			[{floor(22.5 * ?DATA_CHUNK_SIZE), floor(30 * ?DATA_CHUNK_SIZE),
-				"store1", "store2"}]
-		)
 	},
-	?assertEqual(
-		ExpectedWorker3#worker_tasks.active_count, Worker3#worker_tasks.active_count),
-	?assertEqual(
-		queue:to_list(ExpectedWorker3#worker_tasks.task_queue),
-		queue:to_list(Worker3#worker_tasks.task_queue)).
-
-test_register_workers() ->
-	StorageModules = arweave_config:storage_modules(),
-	StoreIDs = [
-		ar_storage_module:id(StorageModule) || StorageModule <- StorageModules],
-	lists:foreach(
-		fun(StoreID) ->
-			?assertEqual(true, ready_for_work(StoreID))
-		end,
-		StoreIDs ++ [?DEFAULT_MODULE]
-	).
+	?assertEqual(true, target_has_pending_workers("target_x", State)),
+	?assertEqual(false, target_has_pending_workers("target_y", State)),
+	?assertEqual(false, target_has_pending_workers("target_x", #state{})).

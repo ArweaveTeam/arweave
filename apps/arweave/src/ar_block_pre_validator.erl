@@ -489,7 +489,7 @@ pre_validate_existing_solution_hash(B, PrevB, Peer) ->
 			pre_validate_nonce_limiter_global_step_number(B, PrevB, false, Peer);
 		{invalid, ExtraData2} ->
 			Code = maps:get(code, ExtraData2, check_resigned_solution_hash),
-			case arweave_config:feature_enabled(extended_block_validation_trace) of
+			case arweave_config:get([features, extended_block_validation_trace]) of
 				true ->
 					post_block_reject_warn_and_error_dump(B, Code, Peer, ExtraData2);
 				false ->

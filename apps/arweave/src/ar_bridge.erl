@@ -139,7 +139,7 @@ handle_info({event, block, {new, B, _}}, State) ->
 			{noreply, State};
 		_ ->
 			TrustedPeers = ar_peers:get_trusted_peers(),
-			SpecialPeers = arweave_config:get_peers(block_gossip),
+			SpecialPeers = arweave_config:get([peers, block_gossip]),
 			Peers = ((SpecialPeers ++ ar_peers:get_peers(current)) -- TrustedPeers) ++ TrustedPeers,
 			JSON =
 				case B#block.height >= ar_fork:height_2_6() of
@@ -267,7 +267,7 @@ send_to_worker(Peer, {JSON, B}, W) ->
 	end.
 
 send_and_log(Peer, H, Height, Format, Bin, RecallByte) ->
-	BlockGossipPeers = arweave_config:get_peers(block_gossip),
+	BlockGossipPeers = arweave_config:get([peers, block_gossip]),
 	Reply =
 		case Format of
 			json ->

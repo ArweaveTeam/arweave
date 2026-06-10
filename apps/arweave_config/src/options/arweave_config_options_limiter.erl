@@ -1,7 +1,7 @@
-%%% @doc Specs for the `limiter` option group. Each entry in the
-%%% aggregate corresponds to one HTTP API rate-limiter group started
-%%% by `arweave_limiter_sup`. A group combines a sliding-window
-%%% limiter, a leaky-bucket limiter, and a concurrency cap.
+%%% @doc Specs for the `limiter` option group. Each list entry
+%%% corresponds to one HTTP API rate-limiter group started by
+%%% `arweave_limiter_sup`. A group combines a sliding-window limiter,
+%%% a leaky-bucket limiter, and a concurrency cap.
 %%%
 %%% `default_groups/0` is the single source of truth: it lists every
 %%% known group along with the per-field defaults. `specs/0` walks the

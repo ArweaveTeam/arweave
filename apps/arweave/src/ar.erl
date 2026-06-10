@@ -167,7 +167,7 @@ set_mining_address() ->
 verify_mining_keyfile(Addr) ->
 	case ar_wallet:load_key(Addr) of
 		not_found ->
-			CMExitPeer = arweave_config:get_peer(cm_exit),
+			CMExitPeer = arweave_config:get([peers, cm_exit]),
 			PoolClient = arweave_config:get([pool, is_client]),
 			case {CMExitPeer, PoolClient} of
 				{not_set, false} ->
@@ -310,7 +310,7 @@ warn_if_single_scheduler() ->
 %% Run the VDF benchmark when no trusted VDF peers are configured so
 %% the node has a local speed estimate before joining.
 maybe_run_vdf_benchmark() ->
-	case arweave_config:get_peers(vdf_server) of
+	case arweave_config:get([peers, vdf_server]) of
 		[] ->
 			VDFSpeed = ar_bench_vdf:run_benchmark(),
 			?LOG_INFO([{event, vdf_benchmark}, {vdf_s, VDFSpeed / 1000000}]);

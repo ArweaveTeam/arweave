@@ -91,7 +91,7 @@ get_partitions(PartitionUpperBound) ->
 
 get_minable_storage_modules() ->
 	MiningAddr = arweave_config:get([mining, address]),
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	lists:filter(
 		fun	(Module) ->
 				ar_storage_module:module_address(Module) == MiningAddr

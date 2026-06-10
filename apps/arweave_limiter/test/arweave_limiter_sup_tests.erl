@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(arweave_limiter_sup_tests).
+-test_category([fast]).
 
 %% NOTE: tests in this module are currently disabled. They were
 %% picked up by the CI test-discovery rewrite but never ran in CI
@@ -16,8 +16,8 @@
 -define(M, arweave_limiter_sup).
 
 %% `test_limiter' is registered with `number_of_workers => 1' under -ifdef(AR_TEST);
-%% `test_limiter_2' uses the default count. See
-%% `arweave_config_options_limiter:test_only_groups/0'.
+%% `test_limiter_2' uses the default count. The group IDs are derived
+%% from the `[limiter, GroupID, Field]' config rows.
 
 children_spec_total_test_disabled() ->
     ChildSpec = ?M:children_spec([test_limiter, test_limiter_2]),

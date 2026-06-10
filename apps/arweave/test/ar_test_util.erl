@@ -27,7 +27,7 @@
 %% the test runs, and all modules are `meck:unload'ed on completion.
 %%
 %% This is the batch-safe alternative to
-%% `ar_test_node:test_with_mocked_functions/2,3', which broadcasts
+%% `ar_test_node:test_with_all_nodes_mocked/2,3', which broadcasts
 %% mocks to all peer nodes and therefore requires the slow path.
 %%
 %% Use this when the mocks just stub out constant-returning helpers

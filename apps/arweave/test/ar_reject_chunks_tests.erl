@@ -6,11 +6,7 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--import(ar_test_node, [sign_v1_tx/2, wait_until_height/2, assert_wait_until_height/2,
-		read_block_when_stored/1, test_with_mocked_functions/2]).
-
-rejects_invalid_chunks_test_() ->
-	{timeout, 180, fun test_rejects_invalid_chunks/0}.
+-import(ar_test_node, [sign_v1_tx/2, test_with_all_nodes_mocked/2]).
 
 test_rejects_invalid_chunks() ->
 	ar_test_data_sync:setup_nodes(),
@@ -81,13 +77,26 @@ test_rejects_invalid_chunks() ->
 		ar_test_node:post_chunk(main, << <<0>> || _ <- lists:seq(1, ?MAX_SERIALIZED_CHUNK_PROOF_SIZE + 1) >>)
 	).
 
-does_not_store_small_chunks_after_2_5_test_() ->
-	{timeout, 600, fun test_does_not_store_small_chunks_after_2_5/0}.
-
 test_does_not_store_small_chunks_after_2_5() ->
+	lists:foreach(
+		fun({Title, _, _, _, _, _, _, _, _, _, _, _}) ->
+			test_does_not_store_small_chunks_after_2_5(Title)
+		end,
+		small_chunk_splits()
+	).
+
+test_does_not_store_small_chunks_after_2_5(Title) ->
+	case lists:keyfind(Title, 1, small_chunk_splits()) of
+		false ->
+			error({unknown_small_chunk_case, Title});
+		Split ->
+			test_does_not_store_small_chunks_split(Split)
+	end.
+
+small_chunk_splits() ->
 	Size = ?DATA_CHUNK_SIZE,
 	Third = Size div 3,
-	Splits = [
+	[
 		{"Even split", Size * 3, Size, Size, Size, Size, Size * 2, Size * 3,
 				lists:seq(0, Size - 1, 2048), lists:seq(Size, Size * 2 - 1, 2048),
 				lists:seq(Size * 2, Size * 3 + 2048, 2048),
@@ -329,29 +338,14 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 	%% Mine two more blocks to make the chunks mature so that we can remove them from the
 	%% disk pool (they will stay in the corresponding storage modules though, if any).
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
 	%% The chunk should be accepted — not rejected with 400. We expect 303 (not 200)
 	%% because the chunk's absolute offset is still in the "recent" zone (within 4 blocks
 	%% of the weave tip), and the storage modules don't cover enough of the surrounding
 	%% range to satisfy is_estimated_long_term_chunk.
-	true = ar_util:do_until(
-		fun() ->
-			case ar_test_node:post_chunk(main, ar_serialize:jsonify(FirstProof1)) of
-				{ok, {{<<"303">>, _}, _, _, _, _}} ->
-					true;
-				_ ->
-					false
-			end
-		end,
-		2000,
-		30 * 1000
-	).
-
-accepts_chunks_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_5, fun() -> 0 end}],
-		fun test_accepts_chunks/0, 120).
+	ok = ar_test_await:http_post_chunk_status(main, FirstProof1, <<"303">>).
 
 test_accepts_chunks() ->
 	test_accepts_chunks(original_split).

@@ -58,7 +58,7 @@ test_mining_reward() ->
 
 % @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun test_multi_node_mining_reward/0, 120).
 
 test_multi_node_mining_reward() ->
@@ -109,7 +109,7 @@ replay_attack_test_() ->
 %% @doc Create two new wallets and a blockweave with a wallet balance.
 %% Create and verify execution of a signed exchange of value tx.
 wallet_transaction_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun test_wallet_transaction/0, 120).
 
 test_wallet_transaction() ->
@@ -164,7 +164,7 @@ persisted_mempool_test_() ->
 	%% Make the propagation delay noticeable so that the submitted transactions do not
 	%% become ready for mining before the node is restarted and we assert that waiting
 	%% transactions found in the persisted mempool are (re-)submitted to peers.
-	ar_test_node:test_with_mocked_functions([{ar_node_worker, calculate_delay,
+	ar_test_node:test_with_all_nodes_mocked([{ar_node_worker, calculate_delay,
 			fun(_Size) -> 5000 end}], fun test_persisted_mempool/0).
 
 test_persisted_mempool() ->
@@ -175,26 +175,25 @@ test_persisted_mempool() ->
 	ar_test_node:disconnect_from(peer1),
 	SignedTX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main) }),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(main, SignedTX, false),
-	true = ar_util:do_until(
-		fun() ->
-			maps:is_key(SignedTX#tx.id, ar_mempool:get_map())
-		end,
-		100,
-		30000
-	),
+	ok = ar_test_await:tx_in_mempool(main, SignedTX#tx.id),
 	arweave_config:with_test_config(fun() ->
 		ar_test_node:stop(),
 		%% Rejoin the network.
 		%% Expect the pending transactions to be picked up and distributed.
-		_ = arweave_config:set([join, start_from_latest_state], false),
-		ok = arweave_config:replace_peers(trusted,
-			[ar_test_node:peer_ip(peer1)]),
+		ok = arweave_config:force_config(#{
+			[join, start_from_latest_state] => false,
+			[peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))]
+		}),
+		%% Restart in load mode (runtime => false) so boot validators can
+		%% rewrite static config.
+		Snapshot = arweave_config:snapshot(),
+		ok = arweave_config:restore(Snapshot#{runtime => false}),
 		ar:start_dependencies(),
-		ar_test_node:wait_until_joined(),
+		ar_test_await:node_joined(main),
 		ar_test_node:connect_to_peer(peer1),
-		ar_test_node:assert_wait_until_receives_txs(peer1, [SignedTX]),
+		?assertEqual(ok, ar_test_await:txs_ready_for_mining(peer1, [SignedTX])),
 		ar_test_node:mine(),
-		[{H, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, 1),
-		B = read_block_when_stored(H),
+		{ok, [{H, _, _} | _]} = ar_test_await:node_height(peer1, 1),
+		B = ar_test_await:block_stored(H),
 		?assertEqual([SignedTX#tx.id], B#block.txs)
 	end).

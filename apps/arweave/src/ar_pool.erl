@@ -719,7 +719,7 @@ get_jobs_test() ->
 							{ns2, in2, nvd2} => [{o2, gsn2, u2, s2, d2}] })).
 
 process_partial_solution_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 		{ar_block, compute_h0,
 			fun(O, P, S, M, PD) ->
 					crypto:hash(sha256, << O/binary, P:256, S/binary, M/binary, PD:8 >>) end},
@@ -952,7 +952,7 @@ test_process_partial_solution() ->
 	).
 
 process_solution_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 		{ar_block, compute_h0,
 			fun(O, P, S, M, PD) ->
 				crypto:hash(sha256, << O/binary, P:256, S/binary, M/binary, PD:8 >>) end},

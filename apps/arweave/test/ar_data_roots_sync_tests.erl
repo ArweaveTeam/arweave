@@ -8,80 +8,35 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+-export([
+	test_chunk_after_data_roots_http_post/0,
+	test_chunk_after_data_roots_background_sync/0,
+	test_chunk_in_unconfigured_partition_requires_manual_data_roots/0,
+	test_chunk_skipped_with_duplicate_data_root/0,
+	test_chunk_skipped_with_depth_exhaustion/0,
+	test_chunk_persists_with_infinite_duplicate_data_root_depth/0,
+	data_roots_sync_mocks/0
+]).
+
 %%% Group: data roots metadata only (GET/POST /data_roots, sync from chain — no /chunk roundtrip).
 %%% ---------------------------------------------------------------------------
 
 %% Data roots sync from a peer via ar_data_root_sync when main joins with partial storage (not header sync).
 data_roots_sync_from_peer_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked(data_roots_sync_mocks(),
 		fun test_data_roots_sync_from_peer/0).
 
 %% Data roots pushed with HTTP: GET /data_roots from miner, POST /data_roots to peer; assert metadata via GET.
 data_roots_http_post_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked(data_roots_sync_mocks(),
 		fun test_data_roots_http_post/0).
-
-%%% Group: chunk POST/GET after data roots are available on the peer.
-%%% ---------------------------------------------------------------------------
-
-%% HTTP share of roots then chunk roundtrip: per block, GET roots from miner, POST to main, POST/GET /chunk.
-chunk_after_data_roots_http_post_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_after_data_roots_http_post/0).
-
-%% Background ar_data_root_sync + header_sync_jobs > 0; then POST/GET /chunk (regression: POST 200, GET 404).
-chunk_after_data_roots_background_sync_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_after_data_roots_background_sync/0).
-
-%% Background sync completes, but a block in an unconfigured partition still requires a
-%% manual POST /data_roots before POST /chunk can be accepted temporarily into the disk pool.
-chunk_in_unconfigured_partition_requires_manual_data_roots_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_in_unconfigured_partition_requires_manual_data_roots/0).
-
-chunk_skipped_with_duplicate_data_root_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_skipped_with_duplicate_data_root/0).
-
-chunk_skipped_with_depth_exhaustion_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_skipped_with_depth_exhaustion/0).
-
-chunk_persists_with_infinite_duplicate_data_root_depth_test_() ->
-	ar_test_node:test_with_mocked_functions([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_persists_with_infinite_duplicate_data_root_depth/0).
 
 test_data_roots_sync_from_peer() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 
 	%% Peer1 will mine while main stays disconnected until join_on later.
-	start_peers_then_disconnect(main, peer1, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 
 	%% Mine blocks with transactions with data on peer1 BEFORE main joins.
 	BlocksBeforeJoin = lists:map(
@@ -119,17 +74,22 @@ test_data_roots_sync_from_peer() ->
 		%% The second 3 MB of the weave (skipping 1-2 MB).
 		{3 * ?MiB, 1, {replica_2_9, MainRewardAddr}}
 	],
-    ConfiguredRanges = ar_intervals:from_list([{?MiB, 0}, {6 * ?MiB, 3 * ?MiB}]),
+	ConfiguredRanges = ar_intervals:from_list([{?MiB, 0}, {6 * ?MiB, 3 * ?MiB}]),
 
 	ar_test_node:join_on(#{ node => main, join_on => peer1,
 		config => MainConfig,
-		storage_modules => MainStorageModules }, true),
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- MainStorageModules] }, true),
 	ar_test_node:connect_to_peer(peer1),
-	ar_test_node:wait_until_joined(main),
+	ar_test_await:node_joined(main),
 
-	LastConsensusWindowHeight = 4,
+	LastBlock = lists:last(Blocks),
+	ConsensusWindowStartHeight =
+		max(0, LastBlock#block.height - ar_block:get_consensus_window_size() + 1),
+	%% The first block in the joined consensus window is the validation root for the
+	%% blocks replayed during join; it is not guaranteed to be applied as a new tip.
+	JoinedTipStartHeight = ConsensusWindowStartHeight + 1,
 	lists:foreach(
-		fun	(#block{ block_size = 0 }) ->
+		fun(#block{ block_size = 0 }) ->
 				ok;
 			(B) ->
 				BlockStart = block_start(B),
@@ -285,10 +245,10 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 	],
 	ar_test_node:join_on(#{ node => main, join_on => peer1,
 		config => MainConfig,
-		storage_modules => MainStorageModules }, true),
+		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- MainStorageModules] }, true),
 	ar_test_node:connect_to_peer(peer1),
-	ar_test_node:wait_until_joined(main),
-	ar_test_node:assert_wait_until_height(main, LastB#block.height + 11),
+	ar_test_await:node_joined(main),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LastB#block.height + 11)),
 
 	ExpectedBackgroundSync = lists:takewhile(
 		fun({B, _TXData}) -> block_start(B) < ?MiB end,

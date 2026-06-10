@@ -294,7 +294,7 @@ get_offset_get_intervals_from_footprint_intervals_reversal(ByteOffset) ->
 	?assertEqual(ByteOffset - ?DATA_CHUNK_SIZE, GotStart).
 
 get_unsynced_intervals_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_storage_module, get_by_id, fun(test_unsynced_store) -> test_unsynced_store end}],
 		fun() ->
 			%% Set up a test sync record server.
@@ -338,7 +338,7 @@ get_unsynced_intervals_test_() ->
 		end).
 
 get_intervals_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_storage_module, get_by_id, fun(test_intervals_store) -> test_intervals_store end}],
 		fun() ->
 			%% Set up a test sync record server.

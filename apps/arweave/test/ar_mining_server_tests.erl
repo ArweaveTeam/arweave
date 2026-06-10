@@ -27,10 +27,12 @@ setup_all() ->
 	Config = arweave_config:snapshot(),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
-		{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}},
-		{ar_block:partition_size(), 2, {spora_2_6, RewardAddr}}
+		arweave_config:storage_module_to_config(
+			{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}}),
+		arweave_config:storage_module_to_config(
+			{ar_block:partition_size(), 2, {spora_2_6, RewardAddr}})
 	],
-	ar_test_node:start(B0, RewardAddr, #{}, StorageModules),
+	ar_test_node:start(B0, RewardAddr, #{[storage_modules] => StorageModules}),
 	Config.
 
 cleanup_all(Config) ->
@@ -43,20 +45,22 @@ setup_pool_client() ->
 	Config = arweave_config:snapshot(),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
-		{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}},
-		{ar_block:partition_size(), 2, {spora_2_6, RewardAddr}}
+		arweave_config:storage_module_to_config(
+			{ar_block:partition_size(), 1, {spora_2_6, RewardAddr}}),
+		arweave_config:storage_module_to_config(
+			{ar_block:partition_size(), 2, {spora_2_6, RewardAddr}})
 	],
 	ar_test_node:start(B0, RewardAddr,
 		#{
-			[peers, ar_util:format_peer(vdf_server()), vdf_server] => true,
+			[storage_modules] => StorageModules,
+			[peers, vdf_server] => [ar_util:format_peer(vdf_server())],
 			[pool, is_client] => true,
 			[pool, server_address] => <<"http://localhost:2002">>,
 			[pool, api_key] => <<"pool_secret">>,
 			%% The cm validator requires mining.enabled when
 			%% pool.is_client is true.
 			[mining, enabled] => true
-		},
-		StorageModules),
+		}),
 	Config.
 
 cleanup_pool_client(Config) ->
@@ -92,7 +96,7 @@ pool_job_test_() ->
 	{setup, fun setup_pool_client/0, fun cleanup_pool_client/1,
 		{foreach, fun setup_one/0, fun cleanup_one/1,
 		[
-			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_get_current_sesssion()],
+			ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_get_current_sesssion()],
 			fun test_pool_job_no_cached_sessions/0, 120)
 		]}
     }.
@@ -223,7 +227,7 @@ do_test_chunk_cache_size_with_mocks(H1s, H2s, RecallRange2s, FirstChunks) ->
 	ets:insert(mock_counter, {compute_h2, 0}),
 	ets:insert(mock_counter, {get_recall_range, 0}),
 	ets:insert(mock_counter, {get_range, 0}),
-	{Setup, Cleanup} = ar_test_node:mock_functions([
+	{Setup, Cleanup} = ar_test_node:mock_all_nodes([
 		{
 			ar_retarget, is_retarget_height,
 			fun (_Height) ->

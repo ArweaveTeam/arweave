@@ -39,7 +39,7 @@ all() ->
 		default_multi_types,
 		default_multi_types_miss_returns_error,
 		handle_set_exception_returns_error_tuple,
-		handle_set_ignore_returns_old_value,
+		handle_set_ignore_returns_current_value,
 		handle_get_failure_with_default_falls_back,
 		handle_get_failure_without_default_returns_error,
 		unknown_call_returns_error,
@@ -50,10 +50,8 @@ all() ->
 		duplicate_option_keys_silently_overwrite,
 		default_legacy_ok,
 		duplicate_legacy_aliases_are_ambiguous,
-		resolve_exact_preferred_over_wildcard_option,
-		resolve_wildcard_option_match,
+		resolve_exact_option,
 		resolve_not_found,
-		resolve_ambiguous_wildcard_returns_error,
 		set_rejected_by_handler_preserves_store,
 		validation_rollback_restores_old_value,
 		validation_rollback_deletes_when_no_previous_value,
@@ -66,17 +64,17 @@ all() ->
 
 default(_Config) ->
 	{error, undefined} = arweave_config_options_registry:get([default]),
-	{ok, test, undefined} = arweave_config_options_registry:set([default], test),
+	{ok, test} = arweave_config_options_registry:set([default], test),
 	{ok, test} = arweave_config_store:get([default]).
 
 default_value(_Config) ->
 	{ok, true} = arweave_config_options_registry:get([default_value]),
 	{error, undefined} = arweave_config_store:get([default_value]),
-	{ok, false, true} = arweave_config_options_registry:set([default_value], false),
+	{ok, false} = arweave_config_options_registry:set([default_value], false),
 	{ok, false} = arweave_config_store:get([default_value]).
 
 default_type(_Config) ->
-	{ok, true, undefined} =
+	{ok, true} =
 		arweave_config_options_registry:set([default_type], true),
 	{error, #{ reason := type_check_failed }} =
 		arweave_config_options_registry:set([default_type], "not a boolean").
@@ -86,7 +84,7 @@ default_get(_Config) ->
 		arweave_config_options_registry:get([default_get]).
 
 default_set(_Config) ->
-	{ok, ok, undefined} =
+	{ok, ok} =
 		arweave_config_options_registry:set([default_set], self()),
 	ok = receive
 		ok -> ok
@@ -95,25 +93,25 @@ default_set(_Config) ->
 	end.
 
 default_set_state(_Config) ->
-	{ok, empty, undefined} =
+	{ok, empty} =
 		arweave_config_options_registry:set([default_set_state], ok),
-	{ok, full, empty} =
+	{ok, full} =
 		arweave_config_options_registry:set([default_set_state], ok),
 	ok.
 
 default_multi(_Config) ->
 	{ok, 1} = arweave_config_options_registry:get([one]),
-	{ok, one, 1} = arweave_config_options_registry:set([one], one),
+	{ok, one} = arweave_config_options_registry:set([one], one),
 	%% `three' always returns 3 regardless of what's set.
 	{ok, 3} = arweave_config_options_registry:get([three]),
-	{ok, 3, undefined} = arweave_config_options_registry:set([three], any),
+	{ok, 3} = arweave_config_options_registry:set([three], any),
 	ok.
 
 default_runtime(_Config) ->
 	false = arweave_config:is_runtime(),
-	{ok, 1, undefined} = arweave_config_options_registry:set([default], 1),
-	{ok, 1, undefined} = arweave_config_options_registry:set([dynamic], 1),
-	{ok, 1, undefined} = arweave_config_options_registry:set([explicitly_static], 1),
+	{ok, 1} = arweave_config_options_registry:set([default], 1),
+	{ok, 1} = arweave_config_options_registry:set([dynamic], 1),
+	{ok, 1} = arweave_config_options_registry:set([explicitly_static], 1),
 	%% Flip the lifecycle directly so we don't have to satisfy the
 	%% real validators against this minimal hand-rolled spec set.
 	ok = arweave_config_options_registry:set_runtime(true),
@@ -126,18 +124,18 @@ default_runtime(_Config) ->
 		%% Default `runtime' is false, so sets are rejected after the
 		%% lifecycle transition.
 		{error, _} = arweave_config_options_registry:set([default], 2),
-		{ok, 2, 1} = arweave_config_options_registry:set([dynamic], 2),
+		{ok, 2} = arweave_config_options_registry:set([dynamic], 2),
 		{error, _} = arweave_config_options_registry:set([explicitly_static], 2)
 	after
 		meck:unload(arweave_config_validate)
 	end.
 
 default_multi_types(_Config) ->
-	{ok, true, undefined} =
+	{ok, true} =
 		arweave_config_options_registry:set([default], <<"true">>),
-	{ok, 1, true} =
+	{ok, 1} =
 		arweave_config_options_registry:set([default], 1),
-	{ok, <<"127.0.0.1">>, 1} =
+	{ok, <<"127.0.0.1">>} =
 		arweave_config_options_registry:set([default], <<"127.0.0.1">>),
 	ok.
 
@@ -153,11 +151,10 @@ handle_set_exception_returns_error_tuple(_Config) ->
 		arweave_config_options_registry:set([raises], value)),
 	{error, undefined} = arweave_config_options_registry:get([raises]).
 
-%% `ignore' tells the registry to return `{ok, OldValue, OldValue}'
-%% without touching the store. With no prior set, `OldValue' is the
-%% spec default.
-handle_set_ignore_returns_old_value(_Config) ->
-	?assertEqual({ok, initial, initial},
+%% `ignore' returns the current value without touching the store; with
+%% no prior set, that's the spec default.
+handle_set_ignore_returns_current_value(_Config) ->
+	?assertEqual({ok, initial},
 		arweave_config_options_registry:set([ignored], anything_else)),
 	?assertEqual({error, undefined}, arweave_config_store:get([ignored])).
 
@@ -197,13 +194,12 @@ default_enabled_and_deprecated(_Config) ->
 	ok.
 
 default_wildcard_option_long_argument(_Config) ->
-	?assertMatch(
-		{ok, [peers, <<"1.2.3.4:1984">>, trusted], _Spec,
-			#{ peer_id := <<"1.2.3.4:1984">> }},
-		arweave_config_options_registry:resolve([peers, <<"1.2.3.4:1984">>, trusted])),
+	?assertEqual({error, not_found},
+		arweave_config_options_registry:resolve([webhooks, <<"hook_a">>, url])),
 
-	[{<<"--peers.[peer_id].trusted">>, _}] =
-		arweave_config_options_registry:get_long_argument(<<"--peers.[peer_id].trusted">>),
+	[{<<"--webhooks.[list_item].url">>, _}] =
+		arweave_config_options_registry:get_long_argument(
+			<<"--webhooks.[list_item].url">>),
 	ok.
 
 default_binary_option_key(_Config) ->
@@ -234,17 +230,10 @@ duplicate_legacy_aliases_are_ambiguous(_Config) ->
 		arweave_config_options_registry:get_legacy(duplicate_alias)),
 	ok.
 
-resolve_exact_preferred_over_wildcard_option(_Config) ->
+resolve_exact_option(_Config) ->
 	?assertMatch(
 		{ok, [a, b], _Spec, Bindings} when map_size(Bindings) =:= 0,
 		arweave_config_options_registry:resolve([a, b])),
-	ok.
-
-resolve_wildcard_option_match(_Config) ->
-	?assertMatch(
-		{ok, [peers, <<"id1">>, trusted], _Spec,
-			#{ peer_id := <<"id1">> }},
-		arweave_config_options_registry:resolve([peers, <<"id1">>, trusted])),
 	ok.
 
 resolve_not_found(_Config) ->
@@ -253,21 +242,13 @@ resolve_not_found(_Config) ->
 			[this, key, does, 'not', exist])),
 	ok.
 
-%% Two wildcard templates can match the same concrete key; the
-%% registry surfaces the collision rather than picking one.
-resolve_ambiguous_wildcard_returns_error(_Config) ->
-	?assertMatch(
-		{error, {ambiguous_wildcard_option, [a, b, c], _Templates}},
-		arweave_config_options_registry:resolve([a, b, c])),
-	ok.
-
 %% Originally named `validation_rollback_on_set_failure', but the
 %% spec's `handle_set' returns `{error, _}' before the store is
 %% touched, so no rollback is involved — what's actually under test
 %% is that a handler rejection leaves the previously stored value
 %% intact.
 set_rejected_by_handler_preserves_store(_Config) ->
-	{ok, <<"first">>, undefined} =
+	{ok, <<"first">>} =
 		arweave_config_options_registry:set([guarded], <<"first">>),
 	{ok, <<"first">>} = arweave_config_store:get([guarded]),
 	{error, rejected_by_handler} =
@@ -281,7 +262,7 @@ set_rejected_by_handler_preserves_store(_Config) ->
 validation_rollback_restores_old_value(_Config) ->
 	%% Seed in load mode — post-store validation only fires in
 	%% runtime mode, so the initial set must succeed unconditionally.
-	{ok, <<"first">>, undefined} =
+	{ok, <<"first">>} =
 		arweave_config_options_registry:set([rolled_back], <<"first">>),
 	{ok, <<"first">>} = arweave_config_store:get([rolled_back]),
 
@@ -330,7 +311,7 @@ validation_rollback_deletes_when_no_previous_value(_Config) ->
 	ok.
 
 get_local_set_local_basic(_Config) ->
-	?assertMatch({ok, hello, _OldValue},
+	?assertMatch({ok, hello},
 		arweave_config_options_registry:set_local([local_key], hello)),
 	?assertEqual({ok, hello},
 		arweave_config_options_registry:get_local([local_key])),
@@ -450,7 +431,7 @@ specs(handle_set_exception_returns_error_tuple) ->
 			end
 		}
 	];
-specs(handle_set_ignore_returns_old_value) ->
+specs(handle_set_ignore_returns_current_value) ->
 	[
 		#{
 			option_key => [ignored],
@@ -498,7 +479,7 @@ specs(default_enabled_and_deprecated) ->
 	];
 specs(default_wildcard_option_long_argument) ->
 	[
-		#{ option_key => [peers, {peer_id}, trusted] }
+		#{ option_key => [webhooks, {list_item}, url] }
 	];
 specs(default_binary_option_key) ->
 	[
@@ -535,25 +516,13 @@ specs(duplicate_legacy_aliases_are_ambiguous) ->
 			legacy => duplicate_alias
 		}
 	];
-specs(resolve_exact_preferred_over_wildcard_option) ->
+specs(resolve_exact_option) ->
 	[
-		#{ option_key => [a, b] },
-		#{ option_key => [a, {var}, c] }
-	];
-specs(resolve_wildcard_option_match) ->
-	[
-		#{ option_key => [peers, {peer_id}, trusted] }
+		#{ option_key => [a, b] }
 	];
 specs(resolve_not_found) ->
 	[
 		#{ option_key => [some, real, key] }
-	];
-%% Two wildcards both match [a, b, c] — the first via {x} in slot 2,
-%% the second via {y} in slot 1.
-specs(resolve_ambiguous_wildcard_returns_error) ->
-	[
-		#{ option_key => [a, {x}, c] },
-		#{ option_key => [{y}, b, c] }
 	];
 specs(set_rejected_by_handler_preserves_store) ->
 	[

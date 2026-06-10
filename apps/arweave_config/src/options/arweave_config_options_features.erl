@@ -33,16 +33,7 @@ build_per_flag_spec(#{ name := Name,
 		option_key => [features, Name],
 		default => Default,
 		type => boolean,
-		short_description => Description,
-		handle_get => fun(Option, _S) ->
-			case arweave_config_store:get(Option) of
-				{ok, V} -> {ok, V};
-				_ -> {ok, Default}
-			end
-		end,
-		handle_set => fun(_K, V, _S, _) ->
-			{store, V}
-		end
+		short_description => Description
 	}.
 
 validate() ->

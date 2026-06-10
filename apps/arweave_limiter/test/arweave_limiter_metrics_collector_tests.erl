@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(arweave_limiter_metrics_collector_tests).
+-test_category([fast]).
 
 %% NOTE: tests in this module are currently disabled. They were
 %% picked up by the CI test-discovery rewrite but never ran in CI
@@ -61,7 +61,7 @@ do_setup() ->
 apply_overrides(GroupID, Overrides) ->
     maps:fold(
         fun(Field, Value, ok) ->
-            {ok, _} = arweave_config:set(
+            ok = arweave_config:set(
                 [limiter, GroupID, Field], Value),
             ok
         end, ok, Overrides).

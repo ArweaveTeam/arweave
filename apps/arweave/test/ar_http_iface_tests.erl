@@ -32,7 +32,7 @@ setup_all_batch() ->
 	%% Never retarget the difficulty - this ensures the tests are always
 	%% run against difficulty 0. Because of this we also have to hardcode
 	%% the TX fee, otherwise it can jump pretty high.
-	{Setup, Cleanup} = ar_test_node:mock_functions([
+	{Setup, Cleanup} = ar_test_node:mock_all_nodes([
 		{ar_retarget, is_retarget_height, fun(_Height) -> false end},
 		{ar_retarget, is_retarget_block, fun(_Block) -> false end},
 		{ar_tx, get_tx_fee, fun(_Args) -> ?AR(1) end}

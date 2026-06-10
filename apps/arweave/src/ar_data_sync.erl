@@ -76,8 +76,8 @@ start_link(Name, Args) ->
 
 %% @doc Register the workers that will be monitored by ar_data_sync_sup.erl.
 register_workers() ->
-	StorageModules = arweave_config:storage_modules(),
-	RepackInPlaceModules = arweave_config:repack_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
+	RepackInPlaceModules = [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
 	StorageModuleWorkers = lists:map(
 		fun(StorageModule) ->
 			StoreID = ar_storage_module:id(StorageModule),
@@ -302,7 +302,7 @@ get_chunk_proof(Offset, Options) ->
 %% is disabled in the configuration.
 get_tx_data(TXID) ->
 	SizeLimit =
-		case arweave_config:feature_enabled(serve_tx_data_without_limits) of
+		case arweave_config:get([features, serve_tx_data_without_limits]) of
 			true ->
 				infinity;
 			false ->
@@ -323,7 +323,7 @@ get_tx_data(TXID, SizeLimit) ->
 				true ->
 					{error, tx_data_too_big};
 				false ->
-					Pack = arweave_config:feature_enabled(pack_served_chunks),
+					Pack = arweave_config:get([features, pack_served_chunks]),
 					get_tx_data(Offset - Size, Offset, [], Pack)
 			end
 	end.
@@ -633,13 +633,8 @@ handle_cast({join, RecentBI}, State) ->
 		{_, {_H, Offset, _TXRoot}} ->
 			PreviousWeaveSize = element(2, hd(CurrentBI)),
 			ok = remove_orphaned_data(State, Offset, PreviousWeaveSize),
-			StorageModules = arweave_config:storage_modules(),
-			lists:foreach(
-				fun(Module) ->
-					gen_server:cast(name(ar_storage_module:id(Module)), {cut, Offset})
-				end,
-				StorageModules)
-	end,
+			ok = cut_orphaned_storage_modules(Offset, PreviousWeaveSize)
+		end,
 	BI = ar_block_index:get_list_by_hash(element(1, lists:last(RecentBI))),
 	ar_data_roots:repair_data_root_offset_index(BI, StoreID),
 	State2 = store_sync_state(
@@ -653,7 +648,7 @@ handle_cast({cut, Start}, #data_sync_state{ store_id = StoreID,
 		not_found ->
 			ok;
 		_Interval ->
-			case arweave_config:feature_enabled(remove_orphaned_storage_module_data) of
+			case arweave_config:get([features, remove_orphaned_storage_module_data]) of
 				false ->
 					ar:console("The storage module ~s contains some orphaned data above the "
 							"weave offset ~B. Make sure you are joining the network through "

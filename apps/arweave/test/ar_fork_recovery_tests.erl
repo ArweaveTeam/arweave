@@ -101,23 +101,23 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
 	TX = #tx{ id = TXID } = ar_test_node:sign_tx(Key, #{ denomination => 1, reward => ?AR(1) }),
 	ar_test_node:assert_post_tx_to_peer(peer1, TX),
 	ar_test_node:mine(peer1),
-	[{H1, _, _} | _] = ar_test_node:wait_until_height(peer1, 1),
-	H1TXIDs = (ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [H1]))#block.txs,
+	{ok, [{H1, _, _} | _]} = ar_test_await:node_height(peer1, 1),
+	H1TXIDs = (ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H1]))#block.txs,
 	?assertEqual([TXID], H1TXIDs),
 	ar_test_node:mine(),
-	[{H2, _, _} | _] = wait_until_height(main, 1),
+	{ok, [{H2, _, _} | _]} = ar_test_await:node_height(main, 1),
 	ar_test_node:mine(),
-	[{H3, _, _}, {H2, _, _}, {_, _, _}] = wait_until_height(main, 2),
+	{ok, [{H3, _, _}, {H2, _, _}, {_, _, _}]} = ar_test_await:node_height(main, 2),
 	ar_test_node:connect_to_peer(peer1),
-	?assertMatch([{H3, _, _}, {H2, _, _}, {_, _, _}], ar_test_node:wait_until_height(peer1, 2)),
+	?assertMatch({ok, [{H3, _, _}, {H2, _, _}, {_, _, _}]}, ar_test_await:node_height(peer1, 2)),
 	ar_test_node:mine(peer1),
-	[{H4, _, _} | _] = ar_test_node:wait_until_height(peer1, 3),
-	H4TXIDs = (ar_test_node:remote_call(peer1, ar_test_node, read_block_when_stored, [H4]))#block.txs,
+	{ok, [{H4, _, _} | _]} = ar_test_await:node_height(peer1, 3),
+	H4TXIDs = (ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H4]))#block.txs,
 	?debugFmt("Expecting ~s to be re-mined.~n", [ar_util:encode(TXID)]),
 	?assertEqual([TXID], H4TXIDs).
 
 invalid_block_with_high_cumulative_difficulty_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun() -> test_invalid_block_with_high_cumulative_difficulty() end).
 
 test_invalid_block_with_high_cumulative_difficulty() ->

@@ -19,8 +19,10 @@ all() ->
 		arweave_config,
 		load,
 		force_config_runtime_guard,
-		clear_aggregate,
-		replace_aggregate,
+		peer_role_operations,
+		clear_list_value,
+		list_value_writes,
+		list_root_set_get,
 		with_test_config_isolation,
 		runtime_rejects_on_validator_error
 	].
@@ -34,11 +36,11 @@ arweave_config(_Config) ->
 
 	undefined = arweave_config:get([missing, option]),
 
-	{ok, DebugValue1} = arweave_config:set([debug], true),
-	DebugValue1 = arweave_config:get([debug]),
+	ok = arweave_config:set([debug], true),
+	true = arweave_config:get([debug]),
 
-	{ok, DebugValue2} = arweave_config:set([debug], false),
-	DebugValue2 = arweave_config:get([debug]),
+	ok = arweave_config:set([debug], false),
+	false = arweave_config:get([debug]),
 	ok.
 
 load(_Config) ->
@@ -68,6 +70,26 @@ load(_Config) ->
 
 	ok.
 
+peer_role_operations(_Config) ->
+	arweave_config:with_test_config(fun() ->
+		Peer1 = {127,0,0,1,1984},
+		Peer2 = {127,0,0,2,1984},
+
+		ok = arweave_config:set([peers, trusted],
+			[Peer1, Peer2]),
+		2 = length(arweave_config:get([peers, trusted])),
+
+		ok = arweave_config:set([peers, trusted], [Peer2]),
+		Trusted = arweave_config:get([peers, trusted]),
+		1 = length(Trusted),
+		true = lists:member(Peer2, Trusted),
+		false = lists:member(Peer1, Trusted),
+
+		ok = arweave_config:set([peers, trusted], []),
+		[] = arweave_config:get([peers, trusted])
+	end),
+	ok.
+
 force_config_runtime_guard(_Config) ->
 	false = arweave_config:is_runtime(),
 	ok = arweave_config:runtime(),
@@ -85,30 +107,89 @@ force_config_runtime_guard(_Config) ->
 
 	ok.
 
-clear_aggregate(_Config) ->
+clear_list_value(_Config) ->
 	arweave_config:with_test_config(fun() ->
 		Peers = [{127,0,0,1,1984}, {127,0,0,2,1984}],
-		ok = arweave_config:replace_peers(trusted, Peers),
-		2 = length(arweave_config:get_peers(trusted)),
+		ok = arweave_config:set([peers, trusted], Peers),
+		2 = length(arweave_config:get([peers, trusted])),
 
-		ok = arweave_config:clear_peers(trusted),
-		[] = arweave_config:get_peers(trusted)
+		ok = arweave_config:set([peers, trusted], []),
+		[] = arweave_config:get([peers, trusted])
 	end),
 	ok.
 
-replace_aggregate(_Config) ->
+list_value_writes(_Config) ->
 	arweave_config:with_test_config(fun() ->
 		OldPeers = [{127,0,0,1,1984}, {127,0,0,2,1984}],
-		ok = arweave_config:replace_peers(trusted, OldPeers),
-		2 = length(arweave_config:get_peers(trusted)),
+		ok = arweave_config:set([peers, trusted], OldPeers),
+		2 = length(arweave_config:get([peers, trusted])),
 
 		NewPeers = [{10,0,0,1,1984}],
-		ok = arweave_config:replace_peers(trusted, NewPeers),
-		Trusted = arweave_config:get_peers(trusted),
+		ok = arweave_config:set([peers, trusted], NewPeers),
+		Trusted = arweave_config:get([peers, trusted]),
 		1 = length(Trusted),
 		true = lists:member({10,0,0,1,1984}, Trusted),
 		false = lists:member({127,0,0,1,1984}, Trusted),
-		false = lists:member({127,0,0,2,1984}, Trusted)
+		false = lists:member({127,0,0,2,1984}, Trusted),
+
+		StorageModule = {100, 0, unpacked},
+		ok = arweave_config:set([storage_modules], []),
+		ok = arweave_config_options_storage_modules:write_legacy_storage_module(StorageModule),
+		[StorageModule] = arweave_config_options_storage_modules:legacy_list(),
+
+		RepackModule = {{100, 0, unpacked}, {replica_2_9, <<0:256>>}},
+		ok = arweave_config:set([repack_modules], []),
+		ok = arweave_config_options_repack_modules:write_legacy_repack_module(RepackModule),
+		[RepackModule] = arweave_config_options_repack_modules:legacy_list(),
+
+		Webhook = #{url => <<"http://127.0.0.1/hook">>, events => [block], headers => []},
+		ok = arweave_config:set([webhooks], []),
+		ok = arweave_config_options_webhooks:write_legacy_webhook(test_hook, Webhook),
+		[Webhook] = arweave_config_options_webhooks:legacy_list()
+	end),
+	ok.
+
+list_root_set_get(_Config) ->
+	arweave_config:with_test_config(fun() ->
+		PartitionSize = ar_block:partition_size(),
+		StorageMap = #{
+			partition => 0,
+			packing_format => unpacked,
+			defrag => false
+		},
+		ok = arweave_config:set([storage_modules], [StorageMap]),
+		[StorageMap] = arweave_config:get([storage_modules]),
+		[{PartitionSize, 0, unpacked}] =
+			arweave_config_options_storage_modules:legacy_list(),
+		ok = arweave_config:set([storage_modules], []),
+
+		Addr = <<0:256>>,
+		RepackMap = #{
+			partition => 1,
+			from_format => unpacked,
+			to_format => replica_2_9,
+			to_address => Addr
+		},
+		ok = arweave_config:set([repack_modules], [RepackMap]),
+		[RepackMap] = arweave_config:get([repack_modules]),
+		[{{PartitionSize, 1, unpacked}, {replica_2_9, Addr}}] =
+			arweave_config_options_repack_modules:legacy_list(),
+		ok = arweave_config:set([repack_modules], []),
+
+		WebhookMap = #{
+			enabled => true,
+			url => <<"http://127.0.0.1/hook">>,
+			events => [block],
+			headers => []
+		},
+		ok = arweave_config:set([webhooks], [WebhookMap]),
+		[WebhookMap] = arweave_config:get([webhooks]),
+		ExpectedWebhook = maps:without([enabled], WebhookMap),
+		[ExpectedWebhook] = arweave_config_options_webhooks:legacy_list(),
+		ok = arweave_config:set([webhooks], []),
+		{error, not_found} =
+			arweave_config:set([webhooks, 1, url],
+				<<"http://127.0.0.1/hook">>)
 	end),
 	ok.
 
@@ -116,7 +197,7 @@ with_test_config_isolation(_Config) ->
 	OriginalDebug = arweave_config:get([debug]),
 
 	arweave_config:with_test_config(fun() ->
-		{ok, true} = arweave_config:set([debug], true),
+		ok = arweave_config:set([debug], true),
 		true = arweave_config:get([debug])
 	end),
 
@@ -127,13 +208,13 @@ with_test_config_isolation(_Config) ->
 runtime_rejects_on_validator_error(_Config) ->
 	false = arweave_config:is_runtime(),
 
-	{ok, true} = arweave_config:set([cm, enabled], true),
+	ok = arweave_config:set([cm, enabled], true),
 	%% Sanity check: api_secret is not_set by default.
 	not_set = arweave_config:get([cm, api_secret]),
 
 	{error, _} = arweave_config:runtime(),
 	false = arweave_config:is_runtime(),
 
-	{ok, false} = arweave_config:set([cm, enabled], false),
+	ok = arweave_config:set([cm, enabled], false),
 
 	ok.

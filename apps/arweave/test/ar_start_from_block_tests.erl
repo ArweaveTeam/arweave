@@ -108,13 +108,47 @@ test_start_from_block() ->
     ok.
 
 
+start_peer_from(Peer, SourcePeer, B0) ->
+    %% Point at the source peer as a VDF server so the new peer pulls its VDF
+    %% history instead of recomputing it from genesis.
+    VDFServerConfig = #{
+        [peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(SourcePeer))]
+    },
+    ar_test_node:start_peer(Peer, #{ b0 => B0, config => VDFServerConfig }),
+    ar_test_node:remote_call(Peer, ar_test_node, connect_to_peer, [SourcePeer]).
+
 restart_from_block(Peer, BH) ->
-    ok = ar_test_node:restart_with_config(Peer, #{
+    restart_from_block(Peer, BH, []).
+
+restart_from_block(Peer, BH, VDFClientPeers) ->
+    Snapshot = ar_test_node:remote_call(Peer, arweave_config, snapshot, []),
+    VDFClientConfig = vdf_client_config(VDFClientPeers),
+    ok = restart_peer_with_overrides(Peer, Snapshot, maps:merge(VDFClientConfig, #{
         [join, start_from_latest_state] => false,
         [join, start_from_block] => BH,
         [gossip, block, pollers] => 0
-    }),
+    })),
     ar_test_node:remote_call(Peer, ar_test_node, wait_until_syncs_genesis_data, []).
+
+vdf_client_config([]) ->
+    #{};
+vdf_client_config(Peers) ->
+    #{
+        [peers, vdf_client] => [
+            ar_util:format_peer(ar_test_node:peer_ip(Peer))
+            || Peer <- Peers
+        ]
+    }.
+
+restart_peer_with_overrides(Peer, Snapshot, Overrides) ->
+    ar_test_node:stop(Peer),
+    ok = ar_test_node:remote_call(Peer, arweave_config, restore,
+        [Snapshot#{runtime => false}]),
+    ok = ar_test_node:remote_call(Peer, arweave_config, force_config,
+        [Overrides]),
+    ok = ar_test_node:remote_call(Peer, ar, start_dependencies, []),
+    ar_test_await:node_joined(Peer),
+    ok.
 
 assert_start_from(ExpectedPeer, Peer, Height) ->
     BI = get_block_index(Peer),

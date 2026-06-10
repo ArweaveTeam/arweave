@@ -7,11 +7,9 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [
-		wait_until_height/2, post_block/2,
+		post_block/2,
 		send_new_block/2, sign_block/3,
-		read_block_when_stored/2,
-		assert_wait_until_height/2,
-		test_with_mocked_functions/2]).
+		test_with_all_nodes_mocked/2]).
 
 start_node() ->
 	[B0] = ar_weave:init([], 0), %% Set difficulty to 0 to speed up tests
@@ -36,7 +34,7 @@ reset_node() ->
 	{Key, B, PrevB}.
 
 setup_all_post_2_7() ->
-	{Setup, Cleanup} = ar_test_node:mock_functions([
+	{Setup, Cleanup} = ar_test_node:mock_all_nodes([
 		{ar_fork, height_2_7, fun() -> 0 end}
 		]),
 	Functions = Setup(),
@@ -44,7 +42,7 @@ setup_all_post_2_7() ->
 	{Cleanup, Functions}.
 
 setup_all_post_2_8() ->
-	{Setup, Cleanup} = ar_test_node:mock_functions([
+	{Setup, Cleanup} = ar_test_node:mock_all_nodes([
 		{ar_fork, height_2_8, fun() -> 0 end}
 		]),
 	Functions = Setup(),
@@ -213,7 +211,7 @@ assert_not_banned(Peer) ->
 test_recall_byte_out_of_bounds() ->
 	start_node(),
 	{Key, B, PrevB} = reset_node(),
-	{Setup, Cleanup} = ar_test_node:mock_functions([
+	{Setup, Cleanup} = ar_test_node:mock_all_nodes([
 		{ar_block, get_recall_range_size,
 			fun
 				(0) -> ?LEGACY_RECALL_RANGE_SIZE;
@@ -376,7 +374,7 @@ test_reject_block_invalid_replica_format({Key, B, PrevB}) ->
 %% ------------------------------------------------------------------------------------------
 
 add_external_block_with_invalid_timestamp_test_() ->
-	ar_test_node:test_with_mocked_functions([{ar_fork, height_2_7, fun() -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_7, fun() -> 0 end}],
 		fun test_add_external_block_with_invalid_timestamp/0).
 
 test_add_external_block_with_invalid_timestamp() ->
@@ -587,19 +585,19 @@ test_rejects_invalid_blocks() ->
 	ar_blacklist_middleware:reset().
 
 rejects_blocks_with_invalid_double_signing_proof_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_9, fun() -> 0 end}],
+	test_with_all_nodes_mocked([{ar_fork, height_2_9, fun() -> 0 end}],
 		fun test_reject_block_invalid_double_signing_proof/0).
 
 rejects_blocks_with_small_rsa_keys_test_() ->
-	{timeout, 60, fun test_rejects_blocks_with_small_rsa_keys/0}.
+	{timeout, 120, fun test_rejects_blocks_with_small_rsa_keys/0}.
 
 test_rejects_blocks_with_small_rsa_keys() ->
 	[B0] = ar_weave:init(),
 	ar_test_node:start(B0),
 	ok = ar_events:subscribe(block),
 	ar_test_node:mine(main),
-	BI = ar_test_node:assert_wait_until_height(main, 1),
-	B1 = ar_storage:read_block(hd(BI)),
+	{ok, BI} = ar_test_await:node_height(main, 1),
+	B1 = ar_test_await:block_stored(hd(BI)),
 	Key2 = ar_test_node:new_custom_size_rsa_wallet(512), % normal 512-byte key
 	B2 = sign_block(B1, B0, Key2),
 	post_block(B2, invalid_resigned_solution_hash), % because reward_addr changed
@@ -704,15 +702,15 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 	TX2 = ar_test_node:sign_tx(FullKey, #{ last_tx => ar_test_node:get_tx_anchor(peer1), data => <<"a">> }),
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, [TX1, TX2]),
 	ar_test_node:mine(),
-	BI4 = assert_wait_until_height(peer1, 4),
-	B9 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI4)]),
+	{ok, BI4} = ar_test_await:node_height(peer1, 4),
+	B9 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(BI4)]),
 	Accounts2 = ar_wallets:get(B9#block.wallet_list, [BannedAddr, Target]),
 	TXID = TX2#tx.id,
 	?assertEqual(2, length(B9#block.txs)),
 	?assertMatch(#{ Target := {1, <<>>}, BannedAddr := {_, TXID, 1, false} }, Accounts2).
 
 send_block2_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun() -> test_send_block2() end).
 
 test_send_block2() ->
@@ -844,7 +842,7 @@ test_send_block2() ->
 			ar_serialize:binary_to_block_announcement_response(Body6)).
 
 resigned_solution_test_() ->
-	test_with_mocked_functions([{ar_fork, height_2_6, fun() -> 0 end}],
+	test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
 		fun() -> test_resigned_solution() end).
 
 test_resigned_solution() ->

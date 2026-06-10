@@ -44,20 +44,21 @@ start_with_snapshot(SnapshotDir) ->
 				Addr
 		end,
 	StorageModules =
-		case arweave_config:storage_modules() of
+		case [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])] of
 			[] ->
 				[{21 * ?MiB, 0, {replica_2_9, MiningAddr}}];
 			ConfiguredStorageModules ->
 				ConfiguredStorageModules
 		end,
-	%% Clear stale per-role peer entries from any earlier session .
-	ok = arweave_config:clear_peers(trusted),
-	ok = arweave_config:clear_peers(cm_exit),
-	ok = arweave_config:clear_peers(cm_peer),
-	ok = arweave_config:clear_peers(local),
+	%% Clear stale peer-list entries from any earlier session.
+	ok = arweave_config:set([peers, trusted], []),
+	ok = arweave_config:set([peers, cm_exit], not_set),
+	ok = arweave_config:set([peers, cm_peer], []),
+	ok = arweave_config:set([peers, local], []),
 	%% Localnet defaults: tight disk caps, no syncing, mining disabled
 	%% (the test driver mines on demand via mine_one_block/0).
-	ok = arweave_config:replace_storage_modules(StorageModules),
+	ok = arweave_config:set([storage_modules],
+		[arweave_config:storage_module_to_config(M) || M <- StorageModules]),
 	ok = arweave_config:load(
 		#{
 			[data_dir]                              => DataDir,

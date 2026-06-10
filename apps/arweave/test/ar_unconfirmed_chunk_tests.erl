@@ -165,26 +165,25 @@ test_from_disk_pool() ->
 %% @doc Chunk was in the disk pool but has been confirmed; served via tx_index fallback.
 test_tx_index_fallback() ->
 	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	StorageModules = [{10 * ?PARTITION_SIZE, 0,
-			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+	StorageModule = {10 * ?PARTITION_SIZE, 0,
+			ar_test_node:get_default_storage_module_packing(Addr, 0)},
 	Wallet = ar_test_data_sync:setup_nodes(
-			#{ addr => Addr, storage_modules => StorageModules }),
+			#{ addr => Addr,
+					[storage_modules] => [arweave_config:storage_module_to_config(StorageModule)] }),
 	#{ tx := TX, chunks := Chunks, chunk_end_offset := ChunkEndOffset, proof := Proof } =
 		post_single_chunk_tx(Wallet),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
+	{ok, {AbsoluteEndOffset, _}} = ar_test_await:tx_offset_known(TX#tx.id),
+	%% Let the disk pool index the chunk while it is still below confirmation depth.
+	ok = wait_until_tx_index_fallback(AbsoluteEndOffset),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 4),
-	{ok, {TXOffset, _}} = ar_data_sync:get_tx_offset(TX#tx.id),
-	AbsoluteEndOffset = TXOffset,
-	ar_test_data_sync:wait_until_syncs_chunk(AbsoluteEndOffset, #{
-		chunk => maps:get(chunk, Proof),
-		data_path => maps:get(data_path, Proof)
-	}),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 4)),
+	ok = wait_until_storage_module_offset(AbsoluteEndOffset, StorageModule),
 	{ok, {{<<"200">>, _}, _, ChunkBody, _, _}} =
 		ar_test_node:get_chunk(main, AbsoluteEndOffset),
 	ChunkResponse = jiffy:decode(ChunkBody, [return_maps]),
@@ -243,7 +242,7 @@ test_not_stored_long_term() ->
 	StorageModules = [{10 * ?PARTITION_SIZE, 5,
 			ar_test_node:get_default_storage_module_packing(Addr, 5)}],
 	Wallet = ar_test_data_sync:setup_nodes(
-			#{ addr => Addr, storage_modules => StorageModules }),
+			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
 		post_single_chunk_tx(Wallet, <<"303">>),
 	EncodedTXID = ar_util:encode(TX#tx.id),
@@ -465,7 +464,7 @@ test_offset_beyond_tx_size() ->
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
 			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
-			#{ addr => Addr, storage_modules => StorageModules }),
+			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	%% A single sub-chunk-size TX (size between 20 and 700).
 	TXSize = 500,
 	TXData = crypto:strong_rand_bytes(TXSize),

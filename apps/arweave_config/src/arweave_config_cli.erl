@@ -21,10 +21,9 @@ get(StringKey) ->
         {error, _} = Err -> Err
     end.
 
-%% @doc Set a configuration value by its canonical key. The value is
-%% passed through the spec's type coercion. Returns `{ok, NewValue}`
-%% or `{error, Reason}`.
--spec set(string(), string()) -> {ok, term()} | {error, term()}.
+%% @doc Set a configuration value by its canonical key, passing the
+%% value through the spec's type coercion.
+-spec set(string(), string()) -> ok | {error, term()}.
 set(StringKey, StringValue) ->
     case arweave_config_parser:key(StringKey) of
         {ok, Key} -> arweave_config:set(Key, StringValue);

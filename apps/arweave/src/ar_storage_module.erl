@@ -132,8 +132,8 @@ get_by_id(Atom) when is_atom(Atom) ->
 	%% May be 'default' or an atom from the unit tests.
 	Atom;
 get_by_id(ID) ->
-	StorageModules = arweave_config:storage_modules(),
-	RepackInPlace = arweave_config:repack_modules(),
+	StorageModules = storage_modules(),
+	RepackInPlace = repack_modules(),
 	RepackInPlaceModules = [element(1, El) || El <- RepackInPlace],
 	get_by_id(ID, StorageModules ++ RepackInPlaceModules).
 
@@ -186,18 +186,16 @@ get_packing(ID) ->
 %% @doc Return a configured storage module covering the given Offset, preferably
 %% with the given Packing. Return not_found if none is found.
 get(Offset, Packing) ->
-	get(Offset, Packing,
-		arweave_config:storage_modules(), not_found).
+	get(Offset, Packing, storage_modules(), not_found).
 
 %% @doc Return the list of all configured storage modules covering the given Offset.
 get_all(Offset) ->
-	get_all2(Offset,
-		arweave_config:storage_modules(), []).
+	get_all2(Offset, storage_modules(), []).
 
 %% @doc Return the list of configured storage modules whose ranges intersect
 %% the given interval.
 get_all(Start, End) ->
-	get_all(Start, End, arweave_config:storage_modules()).
+	get_all(Start, End, storage_modules()).
 
 %% @doc Return the list of storage modules chosen from the given list
 %% whose ranges intersect the given interval.
@@ -206,11 +204,11 @@ get_all(Start, End, StorageModules) ->
 
 %% @doc Return true if the given Offset belongs to at least one storage module.
 has_any(Offset) ->
-	has_any(Offset, arweave_config:storage_modules()).
+	has_any(Offset, storage_modules()).
 
 %% @doc Return true if the given range is covered by the configured storage modules.
 has_range(Start, End) ->
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = storage_modules(),
 	case ets:lookup(?MODULE, unique_sorted_intervals) of
 		[] ->
 			Intervals = get_unique_sorted_intervals(StorageModules),
@@ -238,7 +236,7 @@ has_range(Start, End) ->
 %% 3. returns [{7, 10, sm1}, {10, 20, sm_2}, {20, 25, sm_3}]
 %% 4. returns [{7, 10, sm1}, {10, 20, sm_4}, {20, 25, sm_3}]
 get_cover(Start, End, MaybeModule) ->
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = storage_modules(),
 	SortedStorageModules = sort_storage_modules_by_left_bound(
 			StorageModules, MaybeModule),
 	case get_cover2(Start, End, SortedStorageModules) of
@@ -255,11 +253,19 @@ is_repack_in_place(ID) ->
 		fun({Module, _TargetPacking}) ->
 			ar_storage_module:id(Module) == ID
 		end,
-		arweave_config:repack_modules()).
+		repack_modules()).
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
+
+storage_modules() ->
+	[arweave_config:config_to_storage_module(M)
+		|| M <- arweave_config:get([storage_modules])].
+
+repack_modules() ->
+	[arweave_config:config_to_repack_module(M)
+		|| M <- arweave_config:get([repack_modules])].
 
 id(BucketSize, Bucket, PackingString) ->
 	case BucketSize == ar_block:partition_size() of
@@ -405,18 +411,20 @@ label_test() ->
 	ets:delete(?MODULE, last_address_label),
 	try
 		arweave_config:with_test_config(fun() ->
-			ok = arweave_config:replace_storage_modules([
+			StorageModules = [
 				{ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_A}},
 				{ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_A}},
 				{ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_B}},
 				{524288, 3, {spora_2_6, ?LABEL_TEST_ADDR_B}},
 				{ar_block:partition_size(), 2, unpacked},
 				{ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_C}},
-				{524288, 2, {spora_2_6, ?LABEL_TEST_ADDR_C}},
-				{524288, 3, {composite, ?LABEL_TEST_ADDR_B, 1}},
-				{524288, 3, {composite, ?LABEL_TEST_ADDR_B, 1}},
-				{524288, 3, {composite, ?LABEL_TEST_ADDR_B, 2}}
-			]),
+				{524288, 2, {spora_2_6, ?LABEL_TEST_ADDR_C}}
+			],
+			ok = arweave_config:force_config(#{
+				[storage_modules] =>
+					[arweave_config:storage_module_to_config(M)
+						|| M <- StorageModules]
+			}),
 			?assertEqual("storage_module_0_spora_2_6_1",
 				label(id({ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_A}}))),
 			?assertEqual("storage_module_2_spora_2_6_1",
@@ -431,13 +439,7 @@ label_test() ->
 			?assertEqual("storage_module_2_spora_2_6_3",
 				label(id({ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_C}}))),
 			?assertEqual("storage_module_524288_2_spora_2_6_3",
-				label(id({524288, 2, {spora_2_6, ?LABEL_TEST_ADDR_C}}))),
-			?assertEqual("storage_module_524288_3_composite_4",
-				label(id({524288, 3, {composite, ?LABEL_TEST_ADDR_B, 1}}))),
-			?assertEqual("storage_module_524288_3_composite_4",
-				label(id({524288, 3, {composite, ?LABEL_TEST_ADDR_B, 1}}))),
-			?assertEqual("storage_module_524288_3_composite_5",
-				label(id({524288, 3, {composite, ?LABEL_TEST_ADDR_B, 2}})))
+				label(id({524288, 2, {spora_2_6, ?LABEL_TEST_ADDR_C}})))
 		end)
 	after
 		ets:match_delete(?MODULE, {{label, '_'}, '_'}),

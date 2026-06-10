@@ -220,7 +220,8 @@ print_match(no_match) ->
 bitmap(DataDir, StorageModuleConfig) ->
 	{ok, StorageModule} = arweave_config:parse_storage_module(StorageModuleConfig),
 
-	ok = arweave_config:replace_storage_modules([StorageModule]),
+	ok = arweave_config:set([storage_modules],
+		[arweave_config:storage_module_to_config(StorageModule)]),
 	ok = arweave_config:load(#{ [data_dir] => DataDir }),
 
 	StoreID = ar_storage_module:id(StorageModule),

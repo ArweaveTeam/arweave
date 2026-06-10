@@ -1224,7 +1224,7 @@ block_index_tip(CustomDir) ->
 	end.
 
 write_block(B) ->
-	case arweave_config:feature_enabled(disk_logging) of
+	case arweave_config:get([features, disk_logging]) of
 		true ->
 			?LOG_INFO([{event, writing_block_to_disk},
 					{block, ar_util:encode(B#block.indep_hash)}]);
@@ -1306,7 +1306,7 @@ get_db_name(DBName, _CustomDir) ->
 
 get_same_disk_storage_modules_total_size() ->
 	DataDir = arweave_config:get([data_dir]),
-	StorageModules = arweave_config:storage_modules(),
+	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
 	{ok, Info} = file:read_file_info(DataDir),
 	Device = Info#file_info.major_device,
 	get_same_disk_storage_modules_total_size(0, StorageModules, DataDir,

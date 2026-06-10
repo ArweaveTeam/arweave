@@ -35,7 +35,7 @@ all() ->
 		runtime_writable_pos_integer,
 		non_runtime_scalar_rejected,
 		non_runtime_address_rejected,
-		non_runtime_aggregate_replace_rejected
+		non_runtime_list_replace_rejected
 	].
 
 %%====================================================================
@@ -49,9 +49,9 @@ load_mode_accepts_every_spec(_Config) ->
 	arweave_config:with_test_config(fun() ->
 		false = arweave_config:is_runtime(),
 		%% runtime => false (default for [data_dir]).
-		{ok, _} = arweave_config:set([data_dir], "/tmp/load-mode"),
+		ok = arweave_config:set([data_dir], "/tmp/load-mode"),
 		%% runtime => true (default for [debug]).
-		{ok, true} = arweave_config:set([debug], true),
+		ok = arweave_config:set([debug], true),
 		?assertEqual("/tmp/load-mode", arweave_config:get([data_dir])),
 		?assertEqual(true, arweave_config:get([debug]))
 	end),
@@ -74,11 +74,11 @@ runtime_flip_is_idempotent(_Config) ->
 %% Booleans declared `runtime => true' accept writes after the flip.
 runtime_writable_boolean(_Config) ->
 	arweave_config:with_test_config(fun() ->
-		{ok, false} = arweave_config:set([debug], false),
+		ok = arweave_config:set([debug], false),
 		ok = arweave_config:runtime(),
-		?assertMatch({ok, true},  arweave_config:set([debug], true)),
+		ok = arweave_config:set([debug], true),
 		?assertEqual(true, arweave_config:get([debug])),
-		?assertMatch({ok, false}, arweave_config:set([debug], false)),
+		ok = arweave_config:set([debug], false),
 		?assertEqual(false, arweave_config:get([debug]))
 	end),
 	ok.
@@ -88,12 +88,12 @@ runtime_writable_boolean(_Config) ->
 runtime_writable_pos_integer(_Config) ->
 	arweave_config:with_test_config(fun() ->
 		Key = [logging, formatter, max_size],
-		{ok, _} = arweave_config:set(Key, 4096),
+		ok = arweave_config:set(Key, 4096),
 		ok = arweave_config:runtime(),
-		?assertMatch({ok, 8192}, arweave_config:set(Key, 8192)),
+		ok = arweave_config:set(Key, 8192),
 		?assertEqual(8192, arweave_config:get(Key)),
 		%% Binary input still goes through the type validator.
-		?assertMatch({ok, 1024}, arweave_config:set(Key, <<"1024">>)),
+		ok = arweave_config:set(Key, <<"1024">>),
 		?assertEqual(1024, arweave_config:get(Key))
 	end),
 	ok.
@@ -103,7 +103,7 @@ runtime_writable_pos_integer(_Config) ->
 %% load-mode value untouched.
 non_runtime_scalar_rejected(_Config) ->
 	arweave_config:with_test_config(fun() ->
-		{ok, _} = arweave_config:set([data_dir], "/tmp/load-mode"),
+		ok = arweave_config:set([data_dir], "/tmp/load-mode"),
 		ok = arweave_config:runtime(),
 		Result = arweave_config:set([data_dir], "/tmp/runtime-change"),
 		?assertMatch(
@@ -128,19 +128,17 @@ non_runtime_address_rejected(_Config) ->
 	end),
 	ok.
 
-%% Aggregate replacements (peers, storage_modules, …) also respect the
-%% runtime guard via `with_runtime_guard/2'.
-non_runtime_aggregate_replace_rejected(_Config) ->
+%% Static peer options reject normal `set/2` writes after runtime.
+non_runtime_list_replace_rejected(_Config) ->
 	arweave_config:with_test_config(fun() ->
-		ok = arweave_config:replace_peers(trusted, [{1, 2, 3, 4, 1984}]),
+		ok = arweave_config:set([peers, trusted], [{1,2,3,4,1984}]),
 		ok = arweave_config:runtime(),
 		?assertMatch(
 			{error, #{
-				reason := parameter_not_runtime_writable,
-				role := trusted
+				reason := parameter_not_runtime_writable
 			}},
-			arweave_config:replace_peers(trusted, [{5, 6, 7, 8, 1984}])),
-		?assertEqual([{1, 2, 3, 4, 1984}], arweave_config:get_peers(trusted))
+			arweave_config:set([peers, trusted],
+				[{1,2,3,4,1984}, {5,6,7,8,1984}])),
+		?assertEqual([{1,2,3,4,1984}], arweave_config:get([peers, trusted]))
 	end),
 	ok.
-

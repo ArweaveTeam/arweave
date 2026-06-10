@@ -18,74 +18,12 @@ setup() ->
 	ets:new(computed_output, [named_table, set, public]),
 	Config = arweave_config:snapshot(),
 	PeerConfig = ar_test_node:remote_call(peer1, arweave_config, snapshot, []),
-    {Config, PeerConfig}.
+	{Config, PeerConfig}.
 
 cleanup({Config, PeerConfig}) ->
 	arweave_config:restore(Config),
 	ar_test_node:remote_call(peer1, arweave_config, restore, [PeerConfig]),
 	ets:delete(computed_output).
-
-%% -------------------------------------------------------------------------------------------------
-%% Test Registration
-%% -------------------------------------------------------------------------------------------------
-
-%% @doc All vdf_server_push_test_ tests test a few things
-%% 1. VDF server posts regular VDF updates to the client
-%% 2. For partial updates (session doesn't change), each step number posted is 1 greater than
-%%    the one before
-%% 3. When the client responds that it doesn't have the session in a partial update, server
-%%    should post the full session
-%%
-%% test_vdf_server_push_fast_block tests that the VDF server can handle receiving
-%% a block that is ahead in the VDF chain: specifically:
-%%    When a block comes in that starts a new VDF session, the server should first post the
-%%    full previous session which should include all steps up to and including the
-%%    global_step_number of the block (it may also include additional "overflow" steps that
-%%    were computed before the block arrived). The server should not post the new session
-%%    until it has computed a step in that session.
-%%
-%% test_vdf_server_push_slow_block tests that the VDF server can handle receiving
-%% a block that is behind in the VDF chain: specifically:
-%%
-vdf_server_push_test_() ->
-    {foreach,
-		fun setup/0,
-     	fun cleanup/1,
-		[
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_server_push_fast_block/0, ?TEST_NODE_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_server_push_slow_block/0, ?TEST_NODE_TIMEOUT)
-		]
-    }.
-
-%% @doc Similar to the vdf_server_push_test_ tests except we test the full end-to-end
-%% flow where a VDF client has to validate a block with VDF information provided by
-%% the VDF server.
-vdf_client_test_() ->
-	{foreach,
-		fun setup/0,
-		fun cleanup/1,
-		[
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_client_fast_block/0, ?TEST_NODE_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_client_fast_block_pull_interface/0, ?TEST_NODE_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_client_slow_block/0, ?TEST_NODE_TIMEOUT),
-			ar_test_node:test_with_mocked_functions([mock_reset_frequency()],
-				fun test_vdf_client_slow_block_pull_interface/0, ?TEST_NODE_TIMEOUT)
-		]
-    }.
-
-serialize_test_() ->
-    [
-		{timeout, 300, fun test_serialize_update_format_2/0},
-		{timeout, 300, fun test_serialize_update_format_3/0},
-		{timeout, 300, fun test_serialize_update_format_4/0},
-		{timeout, 300, fun test_serialize_response/0},
-		{timeout, 300, fun test_serialize_response_compatibility/0}
-	].
 
 %% -------------------------------------------------------------------------------------------------
 %% Tests
@@ -107,8 +45,8 @@ test_vdf_server_push_fast_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(VDFPort)),
-				vdf_client] => true
+			[peers, vdf_client] => [
+				list_to_binary("127.0.0.1:" ++ integer_to_list(VDFPort))]
 		}
 	),
 	%% Setup a server to listen for VDF pushes
@@ -160,17 +98,10 @@ test_vdf_server_push_slow_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(VDFPort)),
-				vdf_client] => true
+			[peers, vdf_client] => [
+				list_to_binary("127.0.0.1:" ++ integer_to_list(VDFPort))]
 		}
 	),
-	%% Let main get ahead of peer1 in the VDF chain
-	timer:sleep(3000),
-
-	
-	_ = ar_test_node:start_peer(peer1, B0),
-	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
-
 	%% Setup a server to listen for VDF pushes
 	Routes = [{"/[...]", ar_vdf_server_tests, []}],
 	{ok, _} = cowboy:start_clear(
@@ -231,8 +162,7 @@ test_vdf_client_fast_block() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		#{
-			[peers, ar_util:format_peer(ar_test_node:peer_ip(main)),
-				vdf_server] => true
+			[peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(main))]
 		}),
 	%% Isolate the client-path assertion below: when B1 is posted directly to peer1,
 	%% peer1 must not relay it to main before we explicitly post it to main.
@@ -242,8 +172,7 @@ test_vdf_client_fast_block() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, ar_util:format_peer(ar_test_node:peer_ip(peer1)),
-				vdf_client] => true
+			[peers, vdf_client] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))]
 		}),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
@@ -288,36 +217,35 @@ test_vdf_client_fast_block_pull_interface() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		#{
-			[peers, ar_util:format_peer(ar_test_node:peer_ip(main)),
-				vdf_server] => true,
+			[peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(main))],
 			[vdf, pull] => true
 		}
 	),
+	ar_test_node:remote_call(peer1, ar_http, block_peer_connections, []),
 	%% Start the main as a VDF server
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, ar_util:format_peer(ar_test_node:peer_ip(peer1)),
-				vdf_client] => true
+			[peers, vdf_client] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))]
 		}
 	),
-	ar_test_node:connect_to_peer(peer1),
 
 	%% Post the block to the VDF client. It won't be able to validate it since the VDF server
-	%% isn't aware of the new VDF session yet.
+	%% cannot push or serve the missing VDF session while peer1's p2p requests are blocked.
 	send_new_block(ar_test_node:peer_ip(peer1), B1),
-	timer:sleep(10000),
+	timer:sleep(5_000),
 	?assertEqual(1,
 		length(ar_test_node:remote_call(peer1, ar_node, get_blocks, [])),
 		"VDF client shouldn't be able to validate the block until the VDF server posts a "
 		"new VDF session"),
 
+	ar_test_node:connect_to_peer(peer1),
 	%% After the VDF server receives the block, it should push the old and new VDF sessions
-	%% to the VDF client allowing it to validate teh block.
+	%% to the VDF client allowing it to validate the block.
 	send_new_block(ar_test_node:peer_ip(main), B1),
 	%% If all is right, the VDF server should push the old and new VDF sessions allowing
-	%% the VDF clietn to finally validate the block.
-	BI = assert_wait_until_height(peer1, 1).
+	%% the VDF client to finally validate the block.
+	{ok, BI} = ar_test_await:node_height(peer1, 1).
 
 test_vdf_client_slow_block() ->
 	MainPort = arweave_config:get([port]),
@@ -340,16 +268,17 @@ test_vdf_client_slow_block() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(MainPort)),
-				vdf_server] => true
+			[peers, vdf_server] => [
+				list_to_binary("127.0.0.1:" ++ integer_to_list(MainPort))]
 		}
 	),
 	%% Start the main as a VDF server
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))),
-				vdf_client] => true
+			[peers, vdf_client] => [
+				list_to_binary("127.0.0.1:" ++
+					integer_to_list(ar_test_node:peer_port(peer1)))]
 		}
 	),
 	ar_test_node:connect_to_peer(peer1),
@@ -381,8 +310,8 @@ test_vdf_client_slow_block_pull_interface() ->
 	_ = ar_test_node:start_peer(peer1,
 		B0, PeerAddress,
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(MainPort)),
-				vdf_server] => true,
+			[peers, vdf_server] => [
+				list_to_binary("127.0.0.1:" ++ integer_to_list(MainPort))],
 			[vdf, pull] => true
 		}
 	),
@@ -390,8 +319,9 @@ test_vdf_client_slow_block_pull_interface() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, list_to_binary("127.0.0.1:" ++ integer_to_list(ar_test_node:peer_port(peer1))),
-				vdf_client] => true
+			[peers, vdf_client] => [
+				list_to_binary("127.0.0.1:" ++
+					integer_to_list(ar_test_node:peer_port(peer1)))]
 		}
 	),
 	ar_test_node:connect_to_peer(peer1),

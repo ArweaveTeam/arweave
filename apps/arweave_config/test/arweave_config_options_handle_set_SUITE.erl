@@ -33,7 +33,7 @@ mining_address_base64(_Config) ->
 	arweave_config:with_test_config(fun() ->
 		Raw = <<0:256>>,
 		Encoded = b64fast:encode(Raw),
-		?assertMatch({ok, Raw}, arweave_config:set([mining, address], Encoded)),
+		ok = arweave_config:set([mining, address], Encoded),
 		?assertEqual(Raw, arweave_config:get([mining, address])),
 
 		%% A 16-byte payload base64-encoded is the wrong size.
@@ -47,8 +47,7 @@ start_from_block_base64(_Config) ->
 	arweave_config:with_test_config(fun() ->
 		Raw = <<0:384>>,
 		Encoded = b64fast:encode(Raw),
-		?assertMatch({ok, Raw},
-			arweave_config:set([join, start_from_block], Encoded)),
+		ok = arweave_config:set([join, start_from_block], Encoded),
 		?assertEqual(Raw, arweave_config:get([join, start_from_block])),
 
 		%% A 32-byte payload base64-encoded is the wrong size for
@@ -61,21 +60,19 @@ start_from_block_base64(_Config) ->
 
 verify_mode_atoms_and_binaries(_Config) ->
 	arweave_config:with_test_config(fun() ->
-		?assertMatch({ok, false}, arweave_config:set([verify, mode], false)),
+		ok = arweave_config:set([verify, mode], false),
 		?assertEqual(false, arweave_config:get([verify, mode])),
 
-		?assertMatch({ok, purge}, arweave_config:set([verify, mode], purge)),
+		ok = arweave_config:set([verify, mode], purge),
 		?assertEqual(purge, arweave_config:get([verify, mode])),
 
-		?assertMatch({ok, log}, arweave_config:set([verify, mode], log)),
+		ok = arweave_config:set([verify, mode], log),
 		?assertEqual(log, arweave_config:get([verify, mode])),
 
-		?assertMatch({ok, purge},
-			arweave_config:set([verify, mode], <<"purge">>)),
+		ok = arweave_config:set([verify, mode], <<"purge">>),
 		?assertEqual(purge, arweave_config:get([verify, mode])),
 
-		?assertMatch({ok, log},
-			arweave_config:set([verify, mode], <<"log">>)),
+		ok = arweave_config:set([verify, mode], <<"log">>),
 		?assertEqual(log, arweave_config:get([verify, mode])),
 
 		?assertMatch({error, _},

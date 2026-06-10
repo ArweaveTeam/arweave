@@ -40,7 +40,7 @@ handle_call(Request, _From, State) ->
 handle_cast(fetch_jobs, State) ->
 	PrevOutput = (ar_pool:get_latest_job())#job.output,
 	CMEnabled = arweave_config:get([cm, enabled]),
-	CMExitPeer = arweave_config:get_peer(cm_exit),
+	CMExitPeer = arweave_config:get([peers, cm_exit]),
 	Peer =
 		case {CMEnabled, CMExitPeer} of
 			{true, not_set} ->

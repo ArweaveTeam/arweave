@@ -24,6 +24,7 @@
 	get/2,
 	set/2,
 	delete/1,
+	delete_prefix/1,
 	items_with_prefix/1,
 	log/0,
 	to_map/0,
@@ -99,6 +100,18 @@ delete(Key) ->
 	case arweave_config_parser:key(Key) of
 		{ok, Id} ->
 			gen_server:call(?MODULE, {delete, Id});
+		Else ->
+			Else
+	end.
+
+%% @doc Delete every entry whose key starts with `Prefix'.
+-spec delete_prefix(Prefix) -> Return when
+	Prefix :: term(),
+	Return :: ok | {error, term()}.
+delete_prefix(Prefix) ->
+	case arweave_config_parser:key(Prefix) of
+		{ok, Id} when is_list(Id) ->
+			gen_server:call(?MODULE, {delete_prefix, Id}, 10_000);
 		Else ->
 			Else
 	end.
@@ -212,13 +225,28 @@ handle_call({set, Id, Value}, _From, State) ->
 		false ->
 			{reply, {error, {Id, Value}}, State}
 	end;
-handle_call({delete, Id}, From, State) ->
+handle_call({delete, Id}, _From, State) ->
 	case ets:take(?MODULE, #key{ id = Id }) of
 		[] ->
 			{reply, {error, undefined}, State};
 		[{_, #value{ value = Value}}] ->
 			{reply, {ok, {Id, Value}}, State}
 	end;
+handle_call({delete_prefix, Prefix}, _From, State) ->
+	Rows = ets:tab2list(?MODULE),
+	lists:foreach(
+		fun
+			({#key{ id = Id } = Key, _Value}) when is_list(Id) ->
+				case has_prefix(Id, Prefix) of
+					true -> ets:delete(?MODULE, Key);
+					false -> ok
+				end;
+			(_Other) ->
+				ok
+		end,
+		Rows
+	),
+	{reply, ok, State};
 handle_call({restore, Rows}, _From, State) ->
 	true = ets:delete_all_objects(?MODULE),
 	true = ets:insert(?MODULE, Rows),

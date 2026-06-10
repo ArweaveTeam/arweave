@@ -33,16 +33,15 @@ handle([<<"bad">>, <<"and">>, <<"good">>], Req, State) ->
 		),
 	{ok, cowboy_req:reply(200, #{}, Reply, Req), State}.
 
-%% Use `test_with_mocked_functions/3' so the blacklist refresh interval
-%% is mecked on every peer (and the local node) before the fixture's
-%% TestFun runs. The blacklist gen_server reschedules itself on its
-%% first `handle_cast' using `?MODULE:refresh_interval_ms()', so the
-%% mock has to be live before any peer's arweave app starts.
+%% Mock the refresh interval on every peer and the local node via
+%% `test_with_all_nodes_mocked/3': the blacklist gen_server reads
+%% `?MODULE:refresh_interval_ms()' on its first `handle_cast', so the mock
+%% must be live before any node's arweave app starts.
 uses_blacklists_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
 		fun test_uses_blacklists/0,
-		300_000
+		300
 	).
 
 test_uses_blacklists() ->
@@ -80,24 +79,24 @@ test_uses_blacklists() ->
 				],
 				[features, pack_served_chunks] => true
 			},
-			storage_modules => [StorageModule]
+			[storage_modules] => [arweave_config:storage_module_to_config(StorageModule)]
 		}),
 		ar_test_node:connect_to_peer(peer1),
 		BadV1TXIDs = [V1TX#tx.id],
 		lists:foreach(
 			fun({TX, Height}) ->
 				ar_test_node:assert_post_tx_to_peer(peer1, TX),
-				ar_test_node:assert_wait_until_receives_txs([TX]),
+				?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
 				case Height == length(TXs) of
 					true ->
 						ar_test_node:assert_post_tx_to_peer(peer1, V1TX),
-						ar_test_node:assert_wait_until_receives_txs([V1TX]);
+						?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [V1TX]));
 					_ ->
 						ok
 				end,
 				ar_test_node:mine(peer1),
 				upload_data([TX], DataTrees),
-				wait_until_height(main, Height)
+				?assertMatch({ok, _}, ar_test_await:node_height(main, Height))
 			end,
 			lists:zip(TXs, lists:seq(1, length(TXs)))
 		),

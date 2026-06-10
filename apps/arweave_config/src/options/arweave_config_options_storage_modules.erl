@@ -1,272 +1,184 @@
 %%% @doc Specs for the `storage_modules` option group. Options for
 %%% declaring what weave data the node stores and how it is encoded.
 %%%
-%%% Each storage module is stored under `[storage_modules, ID, ...]`.
-%%% The leaves for a module cover
-%%% `partition`, `range.{start, end}`, `packing.{format, address}`,
-%%% `path`, and `defrag`. Each leaf reads from `arweave_config_store`
-%%% with no per-spec default.
-%%%
-%%% The `id` is auto-derived from the storage module tuple so that the
-%%% `[storage_modules, ID, ...]` option_key matches the on-disk
-%%% directory name produced by
-%%% `ar_storage_module:id/1` — `storage_module_<bucket>_<packing>` at
-%%% the default partition size, `storage_module_<size>_<bucket>_<packing>`
-%%% otherwise. The derivation is mirrored here to avoid a reverse
-%%% dependency from `arweave_config` to `arweave`.
+%%% Storage modules are canonically stored as `[storage_modules]`, a
+%%% list of maps. Leaf specs use `{list_item}` to declare the fields
+%%% available inside each list element.
 %%%
 %%% Shape per module:
 %%%
-%%%   [storage_modules, <id>, partition] :: non_neg_integer
-%%%   [storage_modules, <id>, range, start] :: non_neg_integer
-%%%   [storage_modules, <id>, range, end] :: pos_integer
-%%%   [storage_modules, <id>, packing, format] :: unpacked | spora_2_6 | replica_2_9
-%%%   [storage_modules, <id>, packing, address] :: 32-byte binary
-%%%   [storage_modules, <id>, defrag] :: boolean
+%%%   [storage_modules, {list_item}, partition] :: non_neg_integer
+%%%   [storage_modules, {list_item}, range_start] :: non_neg_integer
+%%%   [storage_modules, {list_item}, range_end] :: pos_integer
+%%%   [storage_modules, {list_item}, packing_format] :: unpacked | spora_2_6 | replica_2_9
+%%%   [storage_modules, {list_item}, packing_address] :: 32-byte binary
+%%%   [storage_modules, {list_item}, defrag] :: boolean
 %%%
-%%% A module has either `partition` or an explicit `range.{start, end}`.
-%%% Repack-in-place modules live in their own
-%%% `[repack_modules, <id>, ...]` namespace.
+%%% A module has either `partition` or explicit `range_start` and
+%%% `range_end`.
+%%% Repack-in-place modules live in their own `[repack_modules]`
+%%% list value.
 %%%
-%%% Accepted packing formats: `unpacked`, `spora_2_6`, `replica_2_9`,
-%%% and `composite` (the latter additionally requires
-%%% `packing.difficulty`).
+%%% Accepted packing formats: `unpacked`, `spora_2_6`, and `replica_2_9`.
 -module(arweave_config_options_storage_modules).
 -behaviour(arweave_config_options).
 -export([specs/0, group_description/0, validate/0]).
 -export([
-	derived_id/1,
-	list/0,
-	defrags/0,
-	write_list/1,
-	write_defrags/1
+	storage_module_to_config/1,
+	config_to_storage_module/1,
+	legacy_list/0,
+	legacy_defrags/0,
+	write_legacy_storage_module/1,
+	write_legacy_list/1,
+	write_legacy_defrags/1
 ]).
 -include("arweave_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 
 specs() ->
 	[
-		partition_spec(),
-		range_start_spec(),
-		range_end_spec(),
-		packing_format_spec(),
-		packing_address_spec(),
-		packing_difficulty_spec(),
-		defrag_spec()
+		#{
+			enabled => true,
+			option_key => [storage_modules],
+			type => list_map,
+			default => [],
+			short_description =>
+				<<"Storage module declarations.">>
+		},
+		#{
+			enabled => true,
+			option_key => [storage_modules, {list_item}, partition],
+			type => pos_integer,
+			short_description =>
+				<<"Partition number this storage module covers.">>,
+			long_description =>
+				<<"A storage module is responsible for syncing and "
+				  "storing a particular data range. The partition shorthand "
+				  "uses the default partition size; for a custom-sized "
+				  "range, set `range_start` and `range_end` explicitly "
+				  "instead. Mutually exclusive with those range fields.">>
+		},
+		#{
+			enabled => true,
+			option_key => [storage_modules, {list_item}, range_start],
+			type => pos_integer,
+			short_description =>
+				<<"Inclusive start byte offset of the storage module's "
+				  "range.">>,
+			long_description =>
+				<<"Use range to size a storage module to a specific byte "
+				  "range. Make sure the corresponding disk has about 10% "
+				  "extra space for proofs and other metadata. Required "
+				  "when `partition` is not set.">>
+		},
+		#{
+			enabled => true,
+			option_key => [storage_modules, {list_item}, range_end],
+			type => pos_integer,
+			short_description =>
+				<<"Exclusive end byte offset of the storage module's "
+				  "range.">>,
+			long_description =>
+				<<"Required when `partition` is not set. See "
+				  "`range_start` for sizing guidance.">>
+		},
+		#{
+			enabled => true,
+			option_key => [storage_modules, {list_item}, packing_format],
+			type => atom,
+			short_description =>
+				<<"Packing format used to pack the stored data: "
+				  "unpacked, spora_2_6, or replica_2_9.">>
+		},
+		#{
+			enabled => true,
+			option_key => [storage_modules, {list_item}, packing_address],
+			type => address,
+			short_description =>
+				<<"Mining address the data is packed for.">>,
+			long_description =>
+				<<"Required unless `packing_format` is `unpacked`. "
+				  "Data already packed with different addresses is not "
+				  "repacked automatically.">>
+		},
+		#{
+			enabled => true,
+			option_key => [storage_modules, {list_item}, defrag],
+			default => false,
+			type => boolean,
+			short_description =>
+				<<"Run defragmentation of this module's chunk storage "
+				  "files at startup.">>,
+			long_description =>
+				<<"Defragmentation rewrites the chunk storage files "
+				  "more contiguously. Requires `run_defragmentation = "
+				  "true` as the master switch. After defragmentation "
+				  "completes, the node continues normally with the "
+				  "module declared as a regular storage module.">>
+		}
 	].
 
 group_description() ->
 	<<"Define and manage storage modules.">>.
 
-%% Per-leaf specs.
-
-partition_spec() ->
-	#{
-		enabled => true,
-		option_key => [storage_modules, {id}, partition],
-		type => pos_integer,
-		short_description =>
-			<<"Partition number this storage module covers.">>,
-		long_description =>
-			<<"A storage module is responsible for syncing and "
-			  "storing a particular data range. The partition shorthand "
-			  "uses the default partition size; for a custom-sized "
-			  "range, set `range.{start, end}` explicitly instead. "
-			  "Mutually exclusive with `range.{start, end}`.">>,
-		handle_get => fun store_only_get/2
-	}.
-
-range_start_spec() ->
-	#{
-		enabled => true,
-		option_key => [storage_modules, {id}, range, start],
-		type => pos_integer,
-		short_description =>
-			<<"Inclusive start byte offset of the storage module's "
-			  "range.">>,
-		long_description =>
-			<<"Use range to size a storage module to a specific byte "
-			  "range — for instance, `start = 22000000000000, "
-			  "end = 23000000000000` covers the weave between 22 TB "
-			  "and 23 TB. Make sure the corresponding disk has about "
-			  "10% extra space for proofs and other metadata. "
-			  "Required when `partition` is not set.">>,
-		handle_get => fun store_only_get/2
-	}.
-
-range_end_spec() ->
-	#{
-		enabled => true,
-		option_key => [storage_modules, {id}, range, 'end'],
-		type => pos_integer,
-		short_description =>
-			<<"Exclusive end byte offset of the storage module's "
-			  "range.">>,
-		long_description =>
-			<<"Required when `partition` is not set. See "
-			  "`range.start` for sizing guidance.">>,
-		handle_get => fun store_only_get/2
-	}.
-
-packing_format_spec() ->
-	#{
-		enabled => true,
-		option_key => [storage_modules, {id}, packing, format],
-		type => atom,
-		short_description =>
-			<<"Packing format used to pack the stored data: "
-			  "unpacked, spora_2_6, replica_2_9, or composite.">>,
-		handle_get => fun store_only_get/2
-	}.
-
-packing_address_spec() ->
-	#{
-		enabled => true,
-		option_key => [storage_modules, {id}, packing, address],
-		type => address,
-		short_description =>
-			<<"Mining address the data is packed for.">>,
-		long_description =>
-			<<"Required unless `packing.format` is `unpacked`. "
-			  "Data already packed with different addresses is not "
-			  "repacked automatically.">>,
-		handle_get => fun store_only_get/2
-	}.
-
-packing_difficulty_spec() ->
-	#{
-		enabled => true,
-		option_key => [storage_modules, {id}, packing, difficulty],
-		type => integer,
-		short_description =>
-			<<"Packing difficulty (composite packing only).">>,
-		handle_get => fun store_only_get/2
-	}.
-
-defrag_spec() ->
-	#{
-		enabled => true,
-		option_key => [storage_modules, {id}, defrag],
-		default => false,
-		type => boolean,
-		short_description =>
-			<<"Run defragmentation of this module's chunk storage "
-			  "files at startup.">>,
-		long_description =>
-			<<"Defragmentation rewrites the chunk storage files "
-			  "more contiguously. Requires `run_defragmentation = "
-			  "true` as the master switch. After defragmentation "
-			  "completes, the node continues normally with the "
-			  "module declared as a regular storage module.">>,
-		handle_get => fun store_only_get/2
-	}.
-
-%% @doc Store-only reader for `[storage_modules, ID, ...]` leaves:
-%% returns the stored value with no fallback default. Storage modules
-%% only exist when explicitly configured.
-store_only_get(Option, _S) ->
-	case arweave_config_store:get(Option) of
-		{ok, V} -> {ok, V};
-		_ -> {error, not_found}
+%% @doc Convert the canonical list of maps into the legacy tuple list.
+-spec legacy_list() -> [term()].
+legacy_list() ->
+	case arweave_config_store:get([storage_modules]) of
+		{ok, Modules} when is_list(Modules) ->
+			[config_to_storage_module(Module) || Module <- Modules];
+		_ ->
+			[]
 	end.
 
-%% @doc Derived id for a legacy storage_module tuple. Matches
-%% `ar_storage_module:id/1`.
--spec derived_id({pos_integer(), non_neg_integer(), term()}) -> binary().
-derived_id({BucketSize, Bucket, Packing}) ->
-	PackingString = packing_string(Packing),
-	case BucketSize == ?PARTITION_SIZE of
-		true ->
-			iolist_to_binary(io_lib:format(
-				"storage_module_~B_~s",
-				[Bucket, PackingString]));
-		false ->
-			iolist_to_binary(io_lib:format(
-				"storage_module_~B_~B_~s",
-				[BucketSize, Bucket, PackingString]))
+%% @doc Convert canonical maps that have `defrag => true` back into
+%% the legacy defragmentation tuple list.
+-spec legacy_defrags() -> [term()].
+legacy_defrags() ->
+	case arweave_config_store:get([storage_modules]) of
+		{ok, Modules} when is_list(Modules) ->
+			[config_to_storage_module(Module) || Module <- Modules,
+				maps:get(defrag, Module, false) =:= true];
+		_ ->
+			[]
 	end.
 
-packing_string(unpacked) ->
-	<<"unpacked">>;
-packing_string({spora_2_6, Addr}) ->
-	b64fast:encode(Addr);
-packing_string({replica_2_9, Addr}) ->
-	<< (b64fast:encode(Addr))/binary, ".replica.2.9" >>;
-packing_string({composite, Addr, PackingDifficulty}) ->
-	%% Must produce the same string as `ar_storage_module:id/1` for
-	%% composite-packed modules.
-	<< (b64fast:encode(Addr))/binary, ".",
-		(integer_to_binary(PackingDifficulty))/binary >>.
-
-%% @doc Aggregate `[storage_modules, <id>, ...]` entries back into
-%% the legacy tuple list shape.
--spec list() -> [term()].
-list() ->
-	[tuple_for(ID) || ID <- module_ids()].
-
-%% @doc Aggregate `[storage_modules, <id>, ...]` entries that have
-%% `defrag => true` back into the legacy defragmentation tuple list.
--spec defrags() -> [term()].
-defrags() ->
-	[tuple_for(ID) || ID <- module_ids(), has_defrag(ID)].
-
-%% @doc Convert a legacy tuple list into a flat per-leaf entry map
-%% suitable for `arweave_config:load/1`. Keys are
-%% `[storage_modules, <id>, ...]` option_keys; values are the leaf
-%% scalars. Pure — no side effects.
-%% @doc Take the legacy tuple list and write each entry's attributes
-%% into `[storage_modules, <id>, ...]`.
--spec write_list([term()]) -> ok.
-write_list(L) when is_list(L) ->
-	clear_non_defrag_entries(),
-	lists:foreach(fun write_storage_module/1, L),
+%% @doc Write a legacy tuple list as the canonical `[storage_modules]'
+%% list of maps.
+-spec write_legacy_list([term()]) -> ok.
+write_legacy_list(L) when is_list(L) ->
+	ExistingDefrags = legacy_defrags(),
+	write_modules(lists:usort(L ++ ExistingDefrags)),
 	ok.
 
-write_storage_module({_BucketSize, _Bucket, _Packing} = Tuple) ->
-	ID = derived_id(Tuple),
-	write_packing_attrs(ID, Tuple),
-	write_range_attrs(ID, Tuple),
+write_legacy_storage_module({_BucketSize, _Bucket, _Packing} = Tuple) ->
+	write_modules(lists:usort([Tuple | legacy_list()])),
 	ok.
 
 %% @doc Take the legacy defragmentation_modules list and set
-%% `defrag => true` on matching `[storage_modules, <id>, ...]`
+%% `defrag => true` on matching storage module maps.
 %% entries. Modules that aren't already present (defrag-only modules
 %% in legacy parlance) are synthesized with `packing.*` and the
 %% appropriate range attribute populated from the legacy tuple.
--spec write_defrags([term()]) -> ok.
-write_defrags(L) when is_list(L) ->
-	clear_defrag_flags(),
-	lists:foreach(fun write_defrag_module/1, L),
+-spec write_legacy_defrags([term()]) -> ok.
+write_legacy_defrags(L) when is_list(L) ->
+	DefragSet = sets:from_list(L),
+	Existing = legacy_list(),
+	Combined = lists:usort(Existing ++ L),
+	write_module_maps([
+		Map#{defrag => sets:is_element(Tuple, DefragSet)}
+		|| Tuple <- Combined,
+		   Map <- [storage_module_to_config(Tuple)]
+	]),
 	ok.
 
-write_defrag_module({_BucketSize, _Bucket, _Packing} = Tuple) ->
-	ID = derived_id(Tuple),
-	write_packing_attrs(ID, Tuple),
-	write_range_attrs(ID, Tuple),
-	set_local([storage_modules, ID, defrag], true),
+write_modules(Modules) ->
+	write_module_maps([storage_module_to_config(Module) || Module <- Modules]).
+
+write_module_maps(Modules) ->
+	_ = arweave_config_store:delete_prefix([storage_modules]),
+	set_local([storage_modules], Modules),
 	ok.
-
-%% Internal write helpers.
-
-write_packing_attrs(ID, {_BS, _B, unpacked}) ->
-	set_local([storage_modules, ID, packing, format], unpacked);
-write_packing_attrs(ID, {_BS, _B, {Format, Addr}})
-		when Format =:= spora_2_6; Format =:= replica_2_9 ->
-	set_local([storage_modules, ID, packing, format], Format),
-	set_local([storage_modules, ID, packing, address], Addr);
-write_packing_attrs(ID, {_BS, _B, {composite, Addr, PackingDifficulty}}) ->
-	set_local([storage_modules, ID, packing, format], composite),
-	set_local([storage_modules, ID, packing, address], Addr),
-	set_local([storage_modules, ID, packing, difficulty], PackingDifficulty).
-
-write_range_attrs(ID, {BucketSize, Bucket, _Packing})
-		when BucketSize =:= ?PARTITION_SIZE ->
-	set_local([storage_modules, ID, partition], Bucket);
-write_range_attrs(ID, {BucketSize, Bucket, _Packing}) ->
-	Start = Bucket * BucketSize,
-	End = Start + BucketSize,
-	set_local([storage_modules, ID, range, start], Start),
-	set_local([storage_modules, ID, range, 'end'], End).
 
 set_local(Key, Value) ->
 	_ = arweave_config_options_registry:set_local(Key, Value),
@@ -274,83 +186,52 @@ set_local(Key, Value) ->
 
 %% Internal read helpers.
 
-module_ids() ->
-	Items = arweave_config:get_all_with_prefix([storage_modules]),
-	lists:usort([ID || {[storage_modules, ID | _], _Value} <- Items]).
+-spec storage_module_to_config(map() | {pos_integer(), non_neg_integer(), term()}) ->
+	map().
+storage_module_to_config(Module) when is_map(Module) ->
+	Module;
+storage_module_to_config({BucketSize, Bucket, Packing}) ->
+	RangeAttrs = case BucketSize =:= ?PARTITION_SIZE of
+		true ->
+			#{partition => Bucket};
+		false ->
+			Start = Bucket * BucketSize,
+			#{range_start => Start, range_end => Start + BucketSize}
+	end,
+	(maps:merge(RangeAttrs, packing_map(Packing)))#{defrag => false}.
 
-has_defrag(ID) ->
-	case arweave_config_store:get([storage_modules, ID, defrag]) of
-		{ok, true} -> true;
-		_ -> false
-	end.
-
-tuple_for(ID) ->
-	{BucketSize, Bucket} = read_range_for(ID),
-	Packing = read_packing_for(ID),
+-spec config_to_storage_module(map()) -> {pos_integer(), non_neg_integer(), term()}.
+config_to_storage_module(Module) ->
+	{BucketSize, Bucket} = range_from_map(Module),
+	Packing = packing_from_map(Module),
 	{BucketSize, Bucket, Packing}.
 
-read_range_for(ID) ->
-	case arweave_config_store:get([storage_modules, ID, partition]) of
-		{ok, Bucket} ->
-			{?PARTITION_SIZE, Bucket};
-		_ ->
-			{ok, Start} = arweave_config_store:get(
-				[storage_modules, ID, range, start]),
-			{ok, End} = arweave_config_store:get(
-				[storage_modules, ID, range, 'end']),
-			BucketSize = End - Start,
-			Bucket = case BucketSize of
-				0 -> 0;
-				_ -> Start div BucketSize
-			end,
-			{BucketSize, Bucket}
-	end.
+range_from_map(#{partition := Bucket}) ->
+	{?PARTITION_SIZE, Bucket};
+range_from_map(#{range_start := Start, range_end := End}) ->
+	BucketSize = End - Start,
+	Bucket = case BucketSize of
+		0 -> 0;
+		_ -> Start div BucketSize
+	end,
+	{BucketSize, Bucket}.
 
-read_packing_for(ID) ->
-	case arweave_config_store:get([storage_modules, ID, packing, format]) of
-		{ok, unpacked} ->
-			unpacked;
-		{ok, Format} when Format =:= spora_2_6; Format =:= replica_2_9 ->
-			{ok, Addr} = arweave_config_store:get(
-				[storage_modules, ID, packing, address]),
-			{Format, Addr};
-		{ok, composite} ->
-			{ok, Addr} = arweave_config_store:get(
-				[storage_modules, ID, packing, address]),
-			{ok, PackingDifficulty} = arweave_config_store:get(
-				[storage_modules, ID, packing, difficulty]),
-			{composite, Addr, PackingDifficulty}
-	end.
+packing_map(unpacked) ->
+	#{packing_format => unpacked};
+packing_map({Format, Addr}) when Format =:= spora_2_6; Format =:= replica_2_9 ->
+	#{packing_format => Format, packing_address => Addr}.
 
-%% Clear helpers.
-
-%% @doc The storage_modules bridge clears entries that aren't defrag-flagged.
-%% Defrag-flagged modules are owned by the defragmentation_modules
-%% bridge and left intact across rewrites of the regular list.
-clear_non_defrag_entries() ->
-	[drop_module(ID) || ID <- module_ids(), not has_defrag(ID)],
-	ok.
-
-%% @doc The defrag bridge clears just the `defrag` attribute; module
-%% shape is left intact in case the same module is also declared via
-%% the storage_modules bridge. Defrag-only modules that lose their flag
-%% become orphan storage entries — accepted limitation on reload.
-clear_defrag_flags() ->
-	[arweave_config_store:delete([storage_modules, ID, defrag])
-		|| ID <- module_ids(), has_defrag(ID)],
-	ok.
-
-drop_module(ID) ->
-	Items = arweave_config:get_all_with_prefix([storage_modules, ID]),
-	[arweave_config_store:delete(Key) || {Key, _Value} <- Items],
-	ok.
+packing_from_map(#{packing_format := unpacked}) ->
+	unpacked;
+packing_from_map(#{packing_format := Format, packing_address := Addr})
+		when Format =:= spora_2_6; Format =:= replica_2_9 ->
+	{Format, Addr}.
 
 %% Storage-module-set validator.
 
 -spec validate() -> ok | {error, binary()}.
 validate() ->
-	IDs = module_ids(),
-	case validate_each(IDs) of
+	case validate_shape() of
 		ok ->
 			case validate_no_duplicates() of
 				ok -> validate_unique_replication_type();
@@ -360,8 +241,48 @@ validate() ->
 			Err
 	end.
 
+validate_shape() ->
+	case arweave_config_store:get([storage_modules]) of
+		{ok, Modules} when is_list(Modules) ->
+			validate_modules(Modules);
+		_ ->
+			validate_modules([])
+	end.
+
+validate_modules([]) ->
+	ok;
+validate_modules([Module | Rest]) ->
+	case validate_module(Module) of
+		ok -> validate_modules(Rest);
+		{error, _} = Err -> Err
+	end.
+
+validate_module(Module) ->
+	try
+		Tuple = config_to_storage_module(Module),
+		validate_tuple_shape(Tuple)
+	catch
+		_:_ ->
+			{error, <<"storage_modules: invalid module shape">>}
+	end.
+
+validate_tuple_shape({BucketSize, _Bucket, Packing})
+		when is_integer(BucketSize), BucketSize >= 0 ->
+	validate_tuple_packing(Packing);
+validate_tuple_shape(_) ->
+	{error, <<"storage_modules: invalid module range">>}.
+
+validate_tuple_packing(unpacked) ->
+	ok;
+validate_tuple_packing({Format, Addr})
+		when (Format =:= spora_2_6 orelse Format =:= replica_2_9),
+		     is_binary(Addr), byte_size(Addr) =:= 32 ->
+ok;
+validate_tuple_packing(_) ->
+	{error, <<"storage_modules: invalid packing">>}.
+
 validate_no_duplicates() ->
-	Modules = list(),
+	Modules = legacy_list(),
 	case length(Modules) =:= length(lists:usort(Modules)) of
 		true ->
 			ok;
@@ -375,10 +296,7 @@ validate_unique_replication_type() ->
 		true ->
 			MiningAddr = arweave_config:get([mining, address]),
 			Unique = lists:foldl(
-				fun({_, _, {composite, Addr, Difficulty}}, Acc)
-						when Addr =:= MiningAddr ->
-					sets:add_element({composite, Difficulty}, Acc);
-				({_, _, {spora_2_6, Addr}}, Acc) when Addr =:= MiningAddr ->
+				fun({_, _, {spora_2_6, Addr}}, Acc) when Addr =:= MiningAddr ->
 					sets:add_element(spora_2_6, Acc);
 				({_, _, {replica_2_9, Addr}}, Acc) when Addr =:= MiningAddr ->
 					sets:add_element(replica_2_9, Acc);
@@ -386,7 +304,7 @@ validate_unique_replication_type() ->
 					Acc
 				end,
 				sets:new(),
-				list()
+				legacy_list()
 			),
 			case sets:size(Unique) =< 1 of
 				true ->
@@ -398,109 +316,3 @@ validate_unique_replication_type() ->
 		_ ->
 			ok
 	end.
-
-validate_each([]) ->
-	ok;
-validate_each([ID | Rest]) ->
-	case validate_one(ID) of
-		ok -> validate_each(Rest);
-		{error, _} = Err -> Err
-	end.
-
-validate_one(ID) ->
-	with_steps(ID, [
-		fun validate_range_shape/1,
-		fun validate_packing/1,
-		fun validate_derived_id/1
-	]).
-
-with_steps(_ID, []) ->
-	ok;
-with_steps(ID, [Step | Rest]) ->
-	case Step(ID) of
-		ok -> with_steps(ID, Rest);
-		{error, _} = Err -> Err
-	end.
-
-validate_range_shape(ID) ->
-	HasPartition = is_set([storage_modules, ID, partition]),
-	HasRangeStart = is_set([storage_modules, ID, range, start]),
-	HasRangeEnd = is_set([storage_modules, ID, range, 'end']),
-	case {HasPartition, HasRangeStart, HasRangeEnd} of
-		{true,  false, false} -> ok;
-		{false, true,  true} -> ok;
-		{true,  _,     _} ->
-			{error, format_error(
-				<<"partition and range are mutually exclusive">>, ID)};
-		{false, false, false} ->
-			{error, format_error(<<"missing partition or range">>, ID)};
-		_ ->
-			{error, format_error(<<"range requires both start and end">>, ID)}
-	end.
-
-validate_packing(ID) ->
-	case arweave_config_store:get([storage_modules, ID, packing, format]) of
-		{ok, unpacked} ->
-			ok;
-		{ok, Format} when Format =:= spora_2_6; Format =:= replica_2_9 ->
-			case arweave_config_store:get(
-					[storage_modules, ID, packing, address]) of
-				{ok, A} when is_binary(A), byte_size(A) =:= 32 -> ok;
-				{ok, _} ->
-					{error, format_error(
-						<<"packing.address must be a 32-byte binary">>,
-						io_format_id(ID))};
-				_ ->
-					{error, format_error(
-						<<"packing.format requires packing.address">>,
-						io_format_id(ID))}
-			end;
-		{ok, composite} ->
-			%% Composite needs both address and difficulty; address is
-			%% any non-empty binary (test fixtures use shorter labels).
-			case arweave_config_store:get(
-					[storage_modules, ID, packing, difficulty]) of
-				{ok, D} when is_integer(D), D >= 0 ->
-					case arweave_config_store:get(
-							[storage_modules, ID, packing, address]) of
-						{ok, A} when is_binary(A), byte_size(A) > 0 -> ok;
-						_ -> {error, format_error(
-							<<"composite packing requires packing.address">>,
-							io_format_id(ID))}
-					end;
-				_ -> {error, format_error(
-					<<"composite packing requires packing.difficulty">>,
-					io_format_id(ID))}
-			end;
-		{ok, BadFormat} ->
-			{error, format_error(
-				<<"unsupported packing format">>,
-				<<(io_format_id(ID))/binary, " = ",
-				  (atom_to_binary(BadFormat))/binary>>)};
-		_ ->
-			{error, format_error(<<"missing packing.format">>, io_format_id(ID))}
-	end.
-
-validate_derived_id(ID) ->
-	{BucketSize, Bucket} = read_range_for(ID),
-	Packing = read_packing_for(ID),
-	Expected = derived_id({BucketSize, Bucket, Packing}),
-	case ID =:= Expected of
-		true -> ok;
-		false ->
-			{error, format_error(
-				<<"derived id mismatch (expected ", Expected/binary, ")">>,
-				io_format_id(ID))}
-	end.
-
-is_set(Key) ->
-	case arweave_config_store:get(Key) of
-		{ok, _} -> true;
-		_ -> false
-	end.
-
-io_format_id(ID) when is_binary(ID) -> ID;
-io_format_id(ID) -> list_to_binary(io_lib:format("~p", [ID])).
-
-format_error(What, Detail) when is_binary(What), is_binary(Detail) ->
-	<<"storage_modules: ", What/binary, " (", Detail/binary, ")">>.

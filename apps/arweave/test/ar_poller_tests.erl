@@ -1,12 +1,11 @@
 -module(ar_poller_tests).
+-test_peers([peer1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [assert_wait_until_height/2, read_block_when_stored/1]).
-
 polling_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 		{ar_retarget, is_retarget_height, fun(_Height) -> false end},
 		{ar_retarget, is_retarget_block, fun(_Block) -> false end}],
 		fun test_polling/0).

@@ -43,11 +43,16 @@ bench_read(Args) ->
 
 	{StorageModules, Address} = parse_storage_modules(StorageModuleConfigs, [], undefined),
 	ar:console("Assuming mining address: ~p~n", [ar_util:safe_encode(Address)]),
-	ok = arweave_config:replace_storage_modules(StorageModules),
-	ok = arweave_config:load(#{
-		[data_dir]        => DataDir,
-		[mining, address] => Address
-	}),
+	ok = arweave_config:set([storage_modules],
+		[arweave_config:storage_module_to_config(M) || M <- StorageModules]),
+	%% Skip the `[mining, address]' override when `Address' is `undefined'
+	%% (no supplied packing carried one): the option's validator rejects
+	%% `undefined' and would error on `load'.
+	LoadMap = case Address of
+		undefined -> #{[data_dir] => DataDir};
+		_         -> #{[data_dir] => DataDir, [mining, address] => Address}
+	end,
+	ok = arweave_config:load(LoadMap),
 
 	ar_kv_sup:start_link(),
 	ar_storage_sup:start_link(),

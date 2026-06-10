@@ -64,7 +64,7 @@ name(StoreID) ->
 
 register_workers() ->
     RepackInPlaceModules =
-        arweave_config:repack_modules(),
+        [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
 
     RepackInPlaceWorkers = lists:flatmap(
         fun({StorageModule, Packing}) ->
@@ -1143,7 +1143,7 @@ atom_or_binary(Bin) when is_binary(Bin) -> binary:part(Bin, {0, min(10, byte_siz
 %%%===================================================================
 
 cache_size_test_() ->
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 		{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end}
 	],
 	fun test_cache_size/0, 30).
@@ -1159,7 +1159,7 @@ test_cache_size() ->
 	
 footprint_offsets_test_() ->
 	[
-		ar_test_node:test_with_mocked_functions([
+		ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
 			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
@@ -1168,7 +1168,7 @@ footprint_offsets_test_() ->
 		fun test_footprint_offsets_small/0, 30),
 
 		%% Run footprint_offsets tests using the production constant values.
-		ar_test_node:test_with_mocked_functions([
+		ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, partition_size, fun() -> 3_600_000_000_000 end},
 			{ar_block, strict_data_split_threshold, fun() -> 30_607_159_107_830 end},
 			{ar_storage_module, get_overlap, fun(_) -> 104_857_600 end},
@@ -1277,7 +1277,7 @@ test_footprint_offsets_large() ->
 
 footprint_end_test_() ->
 	[
-		ar_test_node:test_with_mocked_functions([
+		ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
 			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 3 end},
@@ -1311,15 +1311,15 @@ test_footprint_end_small() ->
 
 assemble_repack_chunk_test_() ->
 [
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
 		],
 		fun test_assemble_repack_chunk/0, 30),
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end}
 		],
 		fun test_assemble_repack_chunk_too_small_unpacked/0, 30),
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, {spora_2_6, <<"addr">>}} end}
 		],
 		fun test_assemble_repack_chunk_too_small_packed/0, 30)
@@ -1537,31 +1537,31 @@ test_assemble_repack_chunk_too_small_packed() ->
 
 should_repack_test_() ->
 	[
-		ar_test_node:test_with_mocked_functions([
+		ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> false end},
 			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
 		],
 		fun test_should_repack_no_chunk_no_entropy/0, 30),
-		ar_test_node:test_with_mocked_functions([
+		ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, {replica_2_9, <<"addr">>}} end},
 			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
 		],
 		fun test_should_repack_chunk_and_entropy/0, 30),
-		ar_test_node:test_with_mocked_functions([
+		ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> false end},
 			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
 		],
 		fun test_should_repack_entropy_but_no_chunk/0, 30),
-		ar_test_node:test_with_mocked_functions([
+		ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
 			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> true end}
 		],
 		fun test_should_repack_unpacked_chunk_and_entropy/0, 30),
-		ar_test_node:test_with_mocked_functions([
+		ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end},
 			{ar_sync_record, is_recorded, fun(_, _, _) -> {true, unpacked} end},
 			{ar_entropy_storage, is_entropy_recorded, fun(_, _, _) -> false end}
@@ -1750,9 +1750,9 @@ test_should_repack_unpacked_chunk_no_entropy() ->
 
 init_repack_chunk_map_test_() ->
 	[
-		ar_test_node:test_with_mocked_functions(ar_test_node:mainnet_packing_mocks(),
+		ar_test_node:test_with_all_nodes_mocked(ar_test_node:mainnet_packing_mocks(),
 			fun test_init_repack_chunk_map_a/0, 30),
-		ar_test_node:test_with_mocked_functions(ar_test_node:mainnet_packing_mocks(),
+		ar_test_node:test_with_all_nodes_mocked(ar_test_node:mainnet_packing_mocks(),
 			fun test_init_repack_chunk_map_b/0, 30)
 	].
 
@@ -1823,13 +1823,13 @@ test_init_repack_chunk_map_b() ->
 	
 get_read_range_test_() ->
 	[
-		ar_test_node:test_with_mocked_functions([
+		ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
 			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, strict_data_split_threshold, fun() -> 5_000_000 end}
 		],
 			fun test_get_read_range_before_strict/0, 30),
-		ar_test_node:test_with_mocked_functions([
+		ar_test_node:test_with_all_nodes_mocked([
 			{ar_block, get_replica_2_9_entropy_sector_size, fun() -> 786432 end},
 			{ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2359296 end},
 			{ar_block, strict_data_split_threshold, fun() -> 700_000 end}

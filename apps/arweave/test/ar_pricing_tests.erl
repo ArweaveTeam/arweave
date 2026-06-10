@@ -11,7 +11,7 @@
 get_price_per_gib_minute_test_() ->
 	[
 		{timeout, 30, fun test_price_per_gib_minute_pre_block_time_history/0},
-		ar_test_node:test_with_mocked_functions(
+		ar_test_node:test_with_all_nodes_mocked(
 			[
 				{ar_fork, height_2_7_2, fun() -> 10 end},
 				{ar_pricing_transition, transition_start_2_6_8, fun() -> 5 end},
@@ -22,12 +22,12 @@ get_price_per_gib_minute_test_() ->
 				{ar_block, partition_size, fun() -> 2097152 end}
 			],
 			fun test_price_per_gib_minute_transition_phases/0),
-		ar_test_node:test_with_mocked_functions(
+		ar_test_node:test_with_all_nodes_mocked(
 			[
 				{ar_block, partition_size, fun() -> 2097152 end}
 			],
 			fun test_v2_price/0),
-		ar_test_node:test_with_mocked_functions(
+		ar_test_node:test_with_all_nodes_mocked(
 			[
 				{ar_block, partition_size, fun() -> 2097152 end},
 				{ar_difficulty, poa1_diff_multiplier, fun(_) -> 2 end}
@@ -269,7 +269,7 @@ recalculate_price_per_gib_minute_test_block() ->
 	}.
 
 recalculate_price_per_gib_minute_2_7_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_fork, height_2_6, fun() -> -1 end},
 		{ar_fork, height_2_7, fun() -> -1 end},
 		{ar_fork, height_2_7_1, fun() -> infinity end}],
@@ -280,7 +280,7 @@ recalculate_price_per_gib_minute_2_7_test_() ->
 		end).
 
 recalculate_price_per_gib_minute_2_7_1_ema_test_() ->
-	ar_test_node:test_with_mocked_functions(
+	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_fork, height_2_6, fun() -> -1 end},
 		{ar_fork, height_2_7, fun() -> -1 end},
 		{ar_fork, height_2_7_1, fun() -> -1 end}],
@@ -292,7 +292,7 @@ recalculate_price_per_gib_minute_2_7_1_ema_test_() ->
 
 auto_redenomination_and_endowment_debt_test_() ->
 	%% Set some weird mocks to preserve the existing behavior of this test
-	ar_test_node:test_with_mocked_functions([
+	ar_test_node:test_with_all_nodes_mocked([
 			{ar_pricing_transition, transition_start_2_7_2, fun() -> 3 end},
 			{ar_pricing_transition, transition_length_2_7_2, fun() -> 1 end}
 		],

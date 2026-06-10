@@ -20,17 +20,14 @@ test_sync_record() ->
 	[B0] = ar_weave:init([], 1, WeaveSize),
 	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
 	arweave_config:with_test_config(fun() ->
-		Partition = {ar_block:partition_size(), 0, {composite, RewardAddr, 1}},
+		Partition = {ar_block:partition_size(), 0, {spora_2_6, RewardAddr}},
 		PartitionID = ar_storage_module:id(Partition),
-		StorageModules = [Partition],
-		ar_test_node:start(B0, RewardAddr, #{}, StorageModules),
+		StorageModules = [arweave_config:storage_module_to_config(Partition)],
+		ar_test_node:start(B0, RewardAddr, #{[storage_modules] => StorageModules}),
 		Options = #{ format => etf, random_subset => false },
 
 		%% Genesis data only
-		{ok, Binary1} = ar_global_sync_record:get_serialized_sync_record(Options),
-		{ok, Global1} = ar_intervals:safe_from_etf(Binary1),
-
-		?assertEqual([{1048576, 0}], ar_intervals:to_list(Global1)),
+		ok = ar_test_await:global_sync_record_matches(Options, [{1048576, 0}]),
 		?assertEqual(not_found,
 			ar_sync_record:get_interval(DiskPoolStart+1, ar_data_sync, ?DEFAULT_MODULE)),
 		?assertEqual({1048576, 0}, ar_sync_record:get_interval(1, ar_data_sync, PartitionID)),

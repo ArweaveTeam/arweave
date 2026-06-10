@@ -27,10 +27,10 @@ setup_external_update() ->
 	_ = ar_test_node:start(
 		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
 		#{
-			[peers, ar_util:format_peer(vdf_server_1()),
-				vdf_server] => true,
-			[peers, ar_util:format_peer(vdf_server_2()),
-				vdf_server] => true,
+			[peers, vdf_server] => [
+				ar_util:format_peer(vdf_server_1()),
+				ar_util:format_peer(vdf_server_2())
+			],
 			[mining, enabled] => true
 		}
 	),
@@ -59,17 +59,17 @@ external_update_test_() ->
 		fun setup_external_update/0,
      	fun cleanup_external_update/1,
 		[
-			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_reset_frequency()],
 				fun test_session_overlap/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_reset_frequency()],
 				fun test_client_ahead/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_reset_frequency()],
 				fun test_skip_ahead/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_reset_frequency()],
 				fun test_2_servers_switching/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_reset_frequency()],
 				fun test_backtrack/0, 120),
-			ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+			ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_reset_frequency()],
 				fun test_2_servers_backtrack/0, 120)
 		]
     }.
@@ -79,7 +79,7 @@ mining_session_test_() ->
 		fun setup_external_update/0,
      	fun cleanup_external_update/1,
 	[
-		ar_test_node:test_with_mocked_functions([mock_add_task(), mock_reset_frequency()],
+		ar_test_node:test_with_all_nodes_mocked([mock_add_task(), mock_reset_frequency()],
 			fun test_mining_session/0, 120)
 	]
     }.

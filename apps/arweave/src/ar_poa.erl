@@ -44,7 +44,8 @@ get_data_path_validation_ruleset(BlockStartOffset, MerkleRebaseSupportThreshold,
 	end.
 
 get_data_path_validation_ruleset(BlockStartOffset) ->
-	get_data_path_validation_ruleset(BlockStartOffset, ?MERKLE_REBASE_SUPPORT_THRESHOLD,
+	get_data_path_validation_ruleset(BlockStartOffset,
+			ar_block:get_merkle_rebase_support_threshold(),
 			ar_block:strict_data_split_threshold()).
 
 validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
@@ -123,7 +124,7 @@ validate(Args) ->
 	end.
 
 chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte) ->
-	chunk_proof(ChunkMetadata, SeekByte, ?MERKLE_REBASE_SUPPORT_THRESHOLD).
+	chunk_proof(ChunkMetadata, SeekByte, ar_block:get_merkle_rebase_support_threshold()).
 
 chunk_proof(#chunk_metadata{} = ChunkMetadata, SeekByte, MerkleRebaseSupportThreshold) ->
 	{BlockStartOffset, BlockEndOffset, TXRoot} = ar_block_index:get_block_bounds(SeekByte),

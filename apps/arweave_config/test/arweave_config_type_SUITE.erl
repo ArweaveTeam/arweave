@@ -138,16 +138,16 @@ logging_template(_Config) ->
 	ok.
 
 peer_id_ip_only(_Config) ->
-	?assertEqual({ok, <<"1.2.3.4:1984">>},
+	?assertEqual({ok, {1,2,3,4,1984}},
 		arweave_config_type:peer_id(<<"1.2.3.4">>)),
-	?assertEqual({ok, <<"1.2.3.4:1984">>},
+	?assertEqual({ok, {1,2,3,4,1984}},
 		arweave_config_type:peer_id("1.2.3.4")).
 
 peer_id_ip_with_port(_Config) ->
-	?assertEqual({ok, <<"1.2.3.4:1984">>},
-		arweave_config_type:peer_id(<<"1.2.3.4:1984">>)),
-	?assertEqual({ok, <<"1.2.3.4:9999">>},
-		arweave_config_type:peer_id(<<"1.2.3.4:9999">>)).
+	?assertEqual({ok, {1,2,3,4,1984}},
+		arweave_config_type:peer_id({1,2,3,4,1984})),
+	?assertEqual({ok, {1,2,3,4,9999}},
+		arweave_config_type:peer_id({1,2,3,4,9999})).
 
 peer_id_hostname_only(_Config) ->
 	?assertEqual({ok, <<"myhost:1984">>},
@@ -162,9 +162,9 @@ peer_id_hostname_with_port(_Config) ->
 		arweave_config_type:peer_id(<<"myhost:8080">>)).
 
 peer_id_ipv4_tuple(_Config) ->
-	?assertEqual({ok, <<"1.2.3.4:1984">>},
+	?assertEqual({ok, {1,2,3,4,1984}},
 		arweave_config_type:peer_id({1, 2, 3, 4})),
-	?assertEqual({ok, <<"1.2.3.4:9999">>},
+	?assertEqual({ok, {1,2,3,4,9999}},
 		arweave_config_type:peer_id({1, 2, 3, 4, 9999})).
 
 peer_id_ipv6_bracketed(_Config) ->
@@ -176,11 +176,11 @@ peer_id_ipv6_bracketed(_Config) ->
 %% Omitting the port yields the default-port form of the same peer.
 peer_id_default_port_collapses(_Config) ->
 	{ok, A} = arweave_config_type:peer_id(<<"1.2.3.4">>),
-	{ok, B} = arweave_config_type:peer_id(<<"1.2.3.4:1984">>),
+	{ok, B} = arweave_config_type:peer_id({1,2,3,4,1984}),
 	?assertEqual(A, B).
 
 peer_id_distinct_ports_stay_distinct(_Config) ->
-	{ok, A} = arweave_config_type:peer_id(<<"1.2.3.4:1984">>),
+	{ok, A} = arweave_config_type:peer_id({1,2,3,4,1984}),
 	{ok, B} = arweave_config_type:peer_id(<<"1.2.3.4:1985">>),
 	?assertNotEqual(A, B).
 

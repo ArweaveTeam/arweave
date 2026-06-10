@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(arweave_limiter_group_tests).
+-test_category([fast]).
 
 %% NOTE: tests in this module are currently disabled. They were
 %% picked up by the CI test-discovery rewrite but never ran in CI
@@ -225,7 +225,7 @@ apply_test_config(Config) ->
     maps:fold(
         fun(id, _, ok) -> ok;
            (Field, Value, ok) ->
-                {ok, _} = arweave_config:set(
+                ok = arweave_config:set(
                     [limiter, ?TEST_LIMITER, Field], Value),
                 ok
         end, ok, Config).

@@ -57,9 +57,9 @@ names_sorted(_Config) ->
 enabled_with_stored_value(_Config) ->
 	arweave_config:with_test_config(fun() ->
 		[Flag | _] = arweave_config_features:names(),
-		{ok, _} = arweave_config:set([features, Flag], true),
+		ok = arweave_config:set([features, Flag], true),
 		?assertEqual(true, arweave_config_features:enabled(Flag)),
-		{ok, _} = arweave_config:set([features, Flag], false),
+		ok = arweave_config:set([features, Flag], false),
 		?assertEqual(false, arweave_config_features:enabled(Flag))
 	end),
 	ok.
