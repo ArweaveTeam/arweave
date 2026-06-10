@@ -18,7 +18,7 @@ merge(Args) when length(Args) < 3 ->
 merge(Args) ->
 	[DataDir, StorageModuleConfig | SrcDirs ] = Args,
 
-	StorageModule = arweave_config:parse_storage_module(StorageModuleConfig),
+	{ok, StorageModule} = arweave_config:parse_storage_module(StorageModuleConfig),
 	StoreID = ar_storage_module:id(StorageModule),
 
 	ok = merge(DataDir, StorageModule, StoreID, SrcDirs),

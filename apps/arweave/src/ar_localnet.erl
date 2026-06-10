@@ -76,9 +76,12 @@ start_with_snapshot(SnapshotDir) ->
 			[gossip, header_sync_jobs]              => 0,
 			[debug]                                 => true
 		}),
+	io:format("Starting localnet dependencies...~n"),
 	ar:start_dependencies(),
+	io:format("Localnet dependencies started; waiting for node join...~n"),
 	case wait_until_joined() of
 		true ->
+			io:format("Localnet node joined; seeding snapshot data...~n"),
 			submit_snapshot_data(),
 			io:format("~n~nLocalnet node started~n"),
 			io:format("  Snapshot: ~s~n", [SnapshotDir]),
@@ -272,8 +275,11 @@ submit_block_data(BlockStart, TXs) ->
 		|| {TX, {{_ID, DR}, End}} <- lists:zip(TXs2, SizeTaggedTXsNoPadding),
 			TX#tx.data_size > 0
 	],
-	ar_data_roots:store_block_sync(
-		BlockStart, BlockEnd, TXRoot, DataRootEntries, ?DEFAULT_MODULE),
+	%% Commit the data root synchronously before the chunks below, since
+	%% ar_disk_pool:add_chunk reads it back via ar_data_roots:get_entry (a direct
+	%% index read bypassing the mailbox). Boot has no client, so wait `infinity'.
+	ok = ar_data_roots:store_block_sync(
+		BlockStart, BlockEnd, TXRoot, DataRootEntries, ?DEFAULT_MODULE, infinity),
 	lists:foreach(fun(TX) ->
 		case TX#tx.data_size > 0 of
 			true ->
@@ -1227,4 +1233,3 @@ copy_symlink(SourcePath, TargetPath) ->
 		{error, Reason} ->
 			{error, {read_link_failed, SourcePath, Reason}}
 	end.
-

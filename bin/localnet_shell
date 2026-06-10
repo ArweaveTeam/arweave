@@ -8,12 +8,6 @@ cd "$SCRIPT_DIR/.."
 
 ./ar-rebar3 localnet compile
 
-if [ "$(uname -s)" == "Darwin" ]; then
-    RANDOMX_JIT="disable randomx_jit"
-else
-    RANDOMX_JIT=
-fi
-
 SNAPSHOT_DIR="${1:-localnet_snapshot}"
 
 export ERL_EPMD_ADDRESS=127.0.0.1
