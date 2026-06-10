@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_tx_replay_pool_tests).
+-test_category([fast]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_pricing.hrl").

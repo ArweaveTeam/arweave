@@ -19,8 +19,8 @@
 %%%
 %%% @end
 %%%===================================================================
-%% @ar_test: fast, vdf
 -module(ar_shutdown_manager).
+-test_category([fast, vdf]).
 
 %% NOTE: tests in this module are currently disabled. They were
 %% picked up by the CI test-discovery rewrite but never ran in CI
@@ -218,18 +218,33 @@ list_connections() ->
 
 list_connections(gun) ->
 	lists:flatten([
-		begin
-			ProcessInfo = process_info(P),
-			Links = proplists:get_value(links, ProcessInfo, []),
-			[ L || L <- Links, is_port(L) ]
-		end ||
-		{_, P, _, _} <- supervisor:which_children(gun_sup)
+		[ L || L <- process_links(P), is_port(L) ]
+		|| {_, P, _, _} <- supervisor_children(gun_sup)
 	]);
 list_connections(cowboy) ->
 	Port = arweave_config:get([port]),
 	Filters = [{'=:=', peer_port, Port}],
 	SocketsInfo = connections(#{ filters => Filters }),
 	[ S || #{ socket := S } <- SocketsInfo ].
+
+supervisor_children(Supervisor) ->
+	try supervisor:which_children(Supervisor) of
+		Children ->
+			Children
+	catch
+		exit:{noproc, _} ->
+			[];
+		exit:{shutdown, _} ->
+			[];
+		exit:{{shutdown, _}, _} ->
+			[]
+	end.
+
+process_links(Pid) ->
+	case process_info(Pid, links) of
+		{links, Links} -> Links;
+		undefined -> []
+	end.
 
 %%--------------------------------------------------------------------
 %% @hidden

@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_chain_stats).
+-test_category([fast]).
 
 -behaviour(gen_server).
 

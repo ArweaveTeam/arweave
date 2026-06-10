@@ -30,11 +30,11 @@ run(TestType, Args) when is_list(Args) ->
 %% Interactive shells always get the full peer cluster — we don't know
 %% which modules will be touched at the REPL.
 start_shell(TestType) ->
-	ensure_started(TestType, {modules, [no_skip_marker]}).
+	ensure_started(TestType, ar_test_node:all_peers(TestType)).
 
 %% @doc Stop the test environment started by start_shell/1.
 stop_shell(TestType) ->
-	ar_test_node:stop_peers(TestType),
+	ar_test_node:stop_peers(ar_test_node:all_peers(TestType)),
 	init:stop().
 
 %% Parse a CLI argument into either {module, Mod} or {test, Mod, Test}.
@@ -108,7 +108,8 @@ parse_module_line(Line) ->
 	end.
 
 run_tests(TestType, TestSpec) ->
-	ensure_started(TestType, TestSpec),
+	Peers = required_peers(TestType, TestSpec),
+	ensure_started(TestType, Peers),
 	Result =
 		try
 			%% `exact_execution' tells eunit NOT to auto-run the
@@ -120,32 +121,28 @@ run_tests(TestType, TestSpec) ->
 			eunit:test(build_eunit_spec(TestSpec),
 				[verbose, {print_depth, 100}, {exact_execution, true}])
 		after
-			ar_test_node:stop_peers(TestType)
+			ar_test_node:stop_peers(Peers)
 		end,
 	case Result of
 		ok -> ok;
 		_ -> init:stop(1)
 	end.
 
-%% @doc Set up the test environment. For `test' runs whose modules are
-%% all tagged `@ar_test: fast', the peer cluster is skipped — those
-%% tests don't touch peers and the boot costs ~1-2 minutes that we'd
-%% pay for nothing. Any non-fast module in the spec forces the full
-%% boot, since one slow test mixed in would need the peers.
-ensure_started(TestType, TestSpec) ->
-	SkipPeers = TestType =:= test andalso all_modules_are_fast(TestSpec),
+%% @doc Set up the test environment and boot exactly the peers the run
+%% needs. An empty `Peers' list runs only the local `main' node — the
+%% common case, since most modules touch no peer.
+ensure_started(TestType, Peers) ->
 	try
 		arweave_config:start(),
 		ok = arweave_limiter:start(),
 		start_for_tests(TestType),
-		case SkipPeers of
-			true ->
-				io:format(
-					"All requested modules are tagged `@ar_test: fast' — "
+		case Peers of
+			[] ->
+				io:format("No peers required by the modules under test — "
 					"skipping peer cluster boot~n");
-			false ->
-				ar_test_node:boot_peers(TestType),
-				ar_test_node:wait_for_peers(TestType)
+			_ ->
+				ar_test_node:boot_peers(Peers),
+				ar_test_node:wait_for_peers(Peers)
 		end
 	catch
 		Type:Reason:S ->
@@ -153,29 +150,25 @@ ensure_started(TestType, TestSpec) ->
 			init:stop(1)
 	end.
 
-%% @doc Returns true only when every module in TestSpec is tagged
-%% `@ar_test: fast'. False on any non-fast module or an empty spec.
-%% Conservative: if the discovery script fails for any reason, returns
-%% false (boot peers — the safe default).
-all_modules_are_fast({modules, []}) ->
-	false;
-all_modules_are_fast({modules, Mods}) ->
-	all_in_fast_set(Mods);
-all_modules_are_fast({mixed, []}) ->
-	false;
-all_modules_are_fast({mixed, Specs}) ->
-	all_in_fast_set([spec_module(S) || S <- Specs]).
+%% @doc The peers a run needs, as `{test, Node}' pairs: the union of the
+%% `-test_peers' declarations of the modules under test (a module with no
+%% attribute contributes none). The bare `{modules, _}' full-run spec
+%% exercises every module, so it just boots all peers rather than loading
+%% each module to read its attribute.
+required_peers(test, {modules, _Mods}) ->
+	ar_test_node:all_peers(test);
+required_peers(test, {mixed, Specs}) ->
+	Mods = [spec_module(S) || S <- Specs],
+	Atoms = lists:usort(lists:flatmap(fun module_peers/1, Mods)),
+	[{test, P} || P <- Atoms].
 
 spec_module({module, M}) -> M;
 spec_module({test, M, _}) -> M.
 
-all_in_fast_set(Mods) ->
-	try
-		FastSet = sets:from_list(discover_modules("fast")),
-		lists:all(fun(M) -> sets:is_element(M, FastSet) end, Mods)
-	catch
-		_:_ -> false
-	end.
+%% @doc Read a module's `-test_peers([...])' attribute, `[]' when absent.
+module_peers(Mod) ->
+	_ = code:ensure_loaded(Mod),
+	proplists:get_value(test_peers, Mod:module_info(attributes), []).
 
 build_eunit_spec({modules, Mods}) ->
 	%% Enumerate each module's individual test functions rather than

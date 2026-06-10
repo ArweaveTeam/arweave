@@ -1,4 +1,28 @@
 -module(ar_unconfirmed_chunk_tests).
+-test_peers([peer1]).
+
+-export([
+	test_from_disk_pool/0,
+	test_tx_index_fallback/0,
+	test_not_found/0,
+	test_invalid_input/0,
+	test_not_stored_long_term/0,
+	test_multi_chunk_tx/0,
+	test_offset_boundary/0,
+	test_sub_chunk_size/0,
+	test_same_data_different_txs/0,
+	test_same_data_second_tx_after_seed/0,
+	test_same_data_after_first_tx_confirmed/0,
+	test_same_data_after_disk_pool_cleared/0,
+	test_negative_offset/0,
+	test_offset_beyond_data/0,
+	test_offset_beyond_tx_size/0,
+	test_partial_confirmation/0,
+	test_data_path_valid/0,
+	test_concurrent_requests/0,
+	test_discover_all_unconfirmed_chunks/0,
+	test_orphaned_chunk/0
+]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -100,9 +124,9 @@ test_from_disk_pool() ->
 
 %% @doc Chunk was in the disk pool but has been confirmed; served via tx_index fallback.
 test_tx_index_fallback() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	StorageModule = {10 * ?PARTITION_SIZE, 0,
-			ar_test_node:get_default_storage_module_packing(Addr, 0)},
+			ar_test_node:storage_module_packing(Addr, 0)},
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr,
 					[storage_modules] => [arweave_config:storage_module_to_config(StorageModule)] }),
@@ -191,9 +215,9 @@ test_invalid_input() ->
 
 %% @doc When no storage module covers the vicinity, is_stored_long_term is false.
 test_not_stored_long_term() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	StorageModules = [{10 * ?PARTITION_SIZE, 5,
-			ar_test_node:get_default_storage_module_packing(Addr, 5)}],
+			ar_test_node:storage_module_packing(Addr, 5)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
@@ -290,6 +314,10 @@ test_same_data_txs(Mode) ->
 		ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
 	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
 		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
+	ExpectedChunkProof = #{
+		chunk => maps:get(chunk, Proof),
+		data_path => maps:get(data_path, Proof)
+	},
 	SeedChunk = fun() ->
 		?assertMatch(
 			{ok, {{<<"200">>, _}, _, _, _, _}},
@@ -365,11 +393,16 @@ test_same_data_txs(Mode) ->
 			?assertNotEqual(TX1#tx.id, TX2a#tx.id),
 			TX2a
 	end,
-	EncodedTXID1 = ar_util:encode(TX1#tx.id),
-	{ok, {{<<"200">>, _}, _, Body1, _, _}} = wait_for_unconfirmed_chunk(
-		EncodedTXID1, ChunkEndOffset),
-	Response1 = jiffy:decode(Body1, [return_maps]),
-	assert_unconfirmed_chunk_response(Response1, Proof, true),
+	case Mode of
+		second_after_disk_pool_cleared ->
+			ok;
+		_ ->
+			EncodedTXID1 = ar_util:encode(TX1#tx.id),
+			{ok, {{<<"200">>, _}, _, Body1, _, _}} = wait_for_unconfirmed_chunk(
+				EncodedTXID1, ChunkEndOffset),
+			Response1 = jiffy:decode(Body1, [return_maps]),
+			assert_unconfirmed_chunk_response(Response1, Proof, true)
+	end,
 	case Mode of
 		both_before_seed ->
 			ok;
@@ -410,9 +443,9 @@ test_offset_beyond_data() ->
 %% @doc GET /unconfirmed_chunk/TXID/Offset where Offset is beyond the end of the
 %% TX should return 400. 
 test_offset_beyond_tx_size() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
-			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+			ar_test_node:storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	%% A single sub-chunk-size TX (size between 20 and 700).

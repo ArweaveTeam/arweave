@@ -13,7 +13,7 @@ chunks_read(_Worker, WhichChunk, Candidate, RangeStart, ChunkOffsets) ->
 
 setup_all() ->
 	[B0] = ar_weave:init([], 1, ?WEAVE_SIZE),
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	RewardAddr = ar_test_node:generate_address(main),
 	StorageModules = lists:flatten(
 		[[arweave_config:storage_module_to_config(
 			{8 * 262144, N, {spora_2_6, RewardAddr}})]

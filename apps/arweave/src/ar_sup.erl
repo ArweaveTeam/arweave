@@ -83,8 +83,12 @@ init([]) ->
 		?CHILD_SUP(ar_packing_sup, supervisor),
 		?CHILD_SUP(ar_sync_record_sup, supervisor),
 		?CHILD(ar_header_sync, worker),
-		?CHILD_SUP(ar_chunk_storage_sup, supervisor),
+		%% `ar_data_sync_sup' must start before `ar_chunk_storage_sup' so its
+		%% workers open `chunk_data_db'/`tx_index' before `ar_repack' workers
+		%% read them; otherwise `ar_kv:get' returns `{error, db_not_found}'
+		%% and `ar_repack' crashes.
 		?CHILD_SUP(ar_data_sync_sup, supervisor),
+		?CHILD_SUP(ar_chunk_storage_sup, supervisor),
 		?CHILD_SUP(ar_data_root_sync_sup, supervisor),
 		?CHILD_SUP(ar_verify_chunks_sup, supervisor),
 		?CHILD(ar_global_sync_record, worker),

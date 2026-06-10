@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_device_lock).
+-test_category([fast]).
 
 -behaviour(gen_server).
 

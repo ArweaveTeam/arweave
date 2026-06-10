@@ -25,9 +25,8 @@ setup_nodes() ->
 	setup_nodes(#{}).
 
 setup_nodes(Options) ->
-	Addr = maps:get(addr, Options, ar_wallet:to_address(ar_wallet:new_keyfile())),
-	PeerAddr = maps:get(peer_addr, Options, ar_wallet:to_address(
-			ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []))),
+	Addr = maps:get(addr, Options, ar_test_node:generate_address(main)),
+	PeerAddr = maps:get(peer_addr, Options, ar_test_node:generate_address(peer1)),
 	setup_nodes2(Options#{ addr => Addr, peer_addr => PeerAddr }).
 
 setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
@@ -40,10 +39,15 @@ setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 			Value ->
 				{Value, Options}
 		end,
-	Options3 = Options2#{ config => #{ [features, pack_served_chunks] => true } },
+	Config = maps:get(config, Options, #{}),
+	PeerConfig = maps:get(peer_config, Options, #{}),
+	Options3 = Options2#{ config => maps:merge(Config, #{ [features, pack_served_chunks] => true }) },
 	ar_test_node:start(Options3),
-	ar_test_node:start_peer(peer1, B0, PeerAddr,
-		#{ [features, pack_served_chunks] => true }),
+	ar_test_node:start_peer(peer1, #{
+		b0 => B0,
+		addr => PeerAddr,
+		config => maps:merge(PeerConfig, #{ [features, pack_served_chunks] => true })
+	}),
 	ar_test_node:connect_to_peer(peer1),
 	Wallet.
 

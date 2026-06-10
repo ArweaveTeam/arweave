@@ -18,7 +18,7 @@ test_sync_record() ->
 	PartitionStart = ar_block:partition_size() - ?DATA_CHUNK_SIZE,
 	WeaveSize = 4 * ?DATA_CHUNK_SIZE,
 	[B0] = ar_weave:init([], 1, WeaveSize),
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	RewardAddr = ar_test_node:generate_address(main),
 	arweave_config:with_test_config(fun() ->
 		Partition = {ar_block:partition_size(), 0, {spora_2_6, RewardAddr}},
 		PartitionID = ar_storage_module:id(Partition),

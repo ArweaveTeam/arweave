@@ -1,0 +1,19 @@
+## VM args for CI/test BEAM nodes, applied via
+## `erl -args_file config/vm.args.test' by the eunit launcher
+## (scripts/github_workflow.sh), the e2e launcher (bin/e2e_ct), and the
+## peer BEAMs they spawn (apps/arweave/test/ar_test_node.erl).
+##
+## Policy: test nodes share a CI runner with the GitHub Actions agent, so
+## idle schedulers must SLEEP, not busy-wait/spin. Spinning saturates the
+## box and starves the agent's heartbeat -> GitHub kills the job as "the
+## self-hosted runner lost communication with the server". (Production,
+## config/vm.args.src, sets these to `very_long' for the opposite reason:
+## a dedicated miner that owns its box and wants latency over politeness.)
+##
+## `+S' (scheduler count) is intentionally NOT set here: it is
+## workload-specific and set inline per launcher -- eunit pins `+S 4:4',
+## e2e is tunable via AR_E2E_SCHEDULERS (default 8); peer BEAMs inherit
+## the coordinator's value via erlang:system_info(schedulers_online).
++sbwt none
++sbwtdcpu none
++sbwtdio none

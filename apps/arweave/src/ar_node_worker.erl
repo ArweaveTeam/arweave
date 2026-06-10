@@ -6,8 +6,8 @@
 
 %%% @doc The server responsible for processing blocks and transactions and
 %%% maintaining the node state. Blocks are prioritized over transactions.
-%% @ar_test: vdf
 -module(ar_node_worker).
+-test_category([vdf]).
 
 %% NOTE: tests in this module are currently disabled. They were
 %% picked up by the CI test-discovery rewrite but never ran in CI

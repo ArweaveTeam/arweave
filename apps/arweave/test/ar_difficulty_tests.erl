@@ -1,5 +1,5 @@
-%% @ar_test: fast, vdf
 -module(ar_difficulty_tests).
+-test_category([fast, vdf]).
 
 -include_lib("eunit/include/eunit.hrl").
 

@@ -23,7 +23,7 @@
 %% ------------------------------------------------------------------------------------------------
 setup_all() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	RewardAddr = ar_test_node:generate_address(main),
 	Config = arweave_config:snapshot(),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
@@ -41,7 +41,7 @@ cleanup_all(Config) ->
 %% @doc Setup the environment so we can control VDF step generation.
 setup_pool_client() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	RewardAddr = ar_test_node:generate_address(main),
 	Config = arweave_config:snapshot(),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [

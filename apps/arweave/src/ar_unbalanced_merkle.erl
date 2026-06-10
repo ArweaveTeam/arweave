@@ -1,5 +1,5 @@
-%% @ar_test: fast, vdf
 -module(ar_unbalanced_merkle).
+-test_category([fast, vdf]).
 
 -export([
 	root/2, root/3,

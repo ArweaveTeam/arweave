@@ -1,4 +1,14 @@
 -module(ar_reject_chunks_tests).
+-test_peers([peer1]).
+
+-export([
+	test_rejects_invalid_chunks/0,
+	test_does_not_store_small_chunks_after_2_5/0,
+	test_does_not_store_small_chunks_after_2_5/1,
+	test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size/0,
+	test_rejects_chunks_exceeding_disk_pool_limit/0,
+	test_accepts_chunks/0
+]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -209,11 +219,19 @@ test_rejects_chunks_with_merkle_tree_borders_exceeding_max_chunk_size() ->
 	?assertMatch({ok, {{<<"400">>, _}, _, <<"{\"error\":\"invalid_proof\"}">>, _, _}},
 			ar_test_node:post_chunk(main, ar_serialize:jsonify(BigProof))).
 
-rejects_chunks_exceeding_disk_pool_limit_test_() ->
-	{timeout, ?TEST_NODE_TIMEOUT, fun test_rejects_chunks_exceeding_disk_pool_limit/0}.
-
 test_rejects_chunks_exceeding_disk_pool_limit() ->
-	Wallet = ar_test_data_sync:setup_nodes(),
+	Addr = ar_test_node:generate_address(main),
+	Wallet = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init(
+		[{ar_wallet:to_address(Pub), ?AR(200000), <<>>}],
+		ar_retarget:switch_to_linear_diff(2)
+	),
+	Config = ar_test_node:storage_module_config(Addr, lists:seq(0, 5)),
+	ar_test_node:start(#{
+		addr => Addr,
+		b0 => B0,
+		config => Config
+	}),
 	Data1 = crypto:strong_rand_bytes(
 		(?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB * ?MiB) + 1
 	),
@@ -223,7 +241,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			ar_tx:chunks_to_size_tagged_chunks(Chunks1)
 		)
 	),
-	{TX1, Chunks1} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot1, Chunks1}),
+	{TX1, Chunks1} = tx_with_chunks(Wallet, DataRoot1, Chunks1),
 	ar_test_node:assert_post_tx_to_peer(main, TX1),
 	[{_, FirstProof1} | Proofs1] = ar_test_data_sync:build_proofs(TX1, Chunks1, [TX1], 0, 0),
 	lists:foreach(
@@ -251,7 +269,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			ar_tx:chunks_to_size_tagged_chunks(Chunks2)
 		)
 	),
-	{TX2, Chunks2} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot2, Chunks2}),
+	{TX2, Chunks2} = tx_with_chunks(Wallet, DataRoot2, Chunks2),
 	ar_test_node:assert_post_tx_to_peer(main, TX2),
 	Proofs2 = ar_test_data_sync:build_proofs(TX2, Chunks2, [TX2], 0, 0),
 	lists:foreach(
@@ -277,7 +295,7 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 			ar_tx:chunks_to_size_tagged_chunks(Chunks3)
 		)
 	),
-	{TX3, Chunks3} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot3, Chunks3}),
+	{TX3, Chunks3} = tx_with_chunks(Wallet, DataRoot3, Chunks3),
 	ar_test_node:assert_post_tx_to_peer(main, TX3),
 	[{_, FirstProof3} | Proofs3] = ar_test_data_sync:build_proofs(TX3, Chunks3, [TX3], 0, 0),
 	lists:foreach(
@@ -324,6 +342,16 @@ test_rejects_chunks_exceeding_disk_pool_limit() ->
 
 test_accepts_chunks() ->
 	test_accepts_chunks(original_split).
+
+tx_with_chunks(Wallet, DataRoot, Chunks) ->
+	ar_test_data_sync:tx(#{
+		wallet => Wallet,
+		split_type => {fixed_data, DataRoot, Chunks},
+		format => v2,
+		reward => fetch,
+		tx_anchor_peer => main,
+		get_fee_peer => main
+	}).
 
 test_accepts_chunks(Split) ->
 	Wallet = ar_test_data_sync:setup_nodes(),

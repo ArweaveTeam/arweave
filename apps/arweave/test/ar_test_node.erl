@@ -11,7 +11,10 @@
 		mainnet_packing_mocks/0,
 		get_difficulty_for_invalid_hash/0, invalid_solution/0,
 		valid_solution/0, remote_call/4, remote_call/5,
-		get_default_storage_module_packing/2, get_genesis_chunk/1,
+		generate_address/1,
+		storage_module_packing/2, storage_module_config/2, storage_module_config/3,
+		storage_module_configs/1,
+		wide_storage_modules/2, wide_storage_modules/3, get_genesis_chunk/1,
 		all_peers/1, new_custom_size_rsa_wallet/1,
 		project_root/0]).
 
@@ -79,6 +82,13 @@ all_peers(test) ->
 	[{test, peer1}, {test, peer2}, {test, peer3}, {test, peer4}];
 all_peers(e2e) ->
 	[{e2e, peer1}, {e2e, peer2}].
+
+%% @doc Generate a fresh default wallet address on a test node.
+%% `main' generates locally; peer atoms generate on the peer via `remote_call/4'.
+generate_address(main) ->
+	ar_wallet:to_address(ar_wallet:new_keyfile());
+generate_address(Node) ->
+	ar_wallet:to_address(remote_call(Node, ar_wallet, new_keyfile, [])).
 
 new_custom_size_rsa_wallet(Size) ->
 	KeyType = ?RSA_KEY_TYPE,
@@ -402,7 +412,7 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 
 %% @doc Return a base map of overrides used to start a coordinated-mining node.
 base_cm_config(Peers) ->
-	RewardAddr = ar_wallet:to_address(remote_call(peer1, ar_wallet, new_keyfile, [])),
+	RewardAddr = generate_address(peer1),
 	maps:merge(#{[peers, trusted] => [ar_util:format_peer(Peer) || Peer <- Peers]}, #{
 		[mining, cache_size]                    => 128,
 		[join, start_from_latest_state]         => true,
@@ -546,29 +556,44 @@ write_genesis_files(DataDir, B0) ->
 	),
 	_ = ar_kv:create_ets(),
 	{ok, _} = ar_kv:start_link(),
-	ok = ar_kv:open(#{
-		path => filename:join([DataDir, ?ROCKS_DB_DIR, "reward_history_db"]),
-		name => reward_history_db}),
-	ok = ar_kv:open(#{
-		path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_time_history_db"]),
-		name => block_time_history_db}),
-	ok = ar_kv:open(#{
-		path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_index_db"]),
-		name => block_index_db}),
-	H = B0#block.indep_hash,
-	WeaveSize = B0#block.weave_size,
-	TXRoot = B0#block.tx_root,
-	ok = ar_kv:put(block_index_db, << 0:256 >>, term_to_binary({H, WeaveSize, TXRoot, <<>>})),
-	ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
-	case ar_fork:height_2_7() of
-		0 ->
-			ok = ar_kv:put(block_time_history_db, H,
-					term_to_binary(hd(B0#block.block_time_history)));
-		_ ->
-			ok
+	try
+		ok = ar_kv:open(#{
+			path => filename:join([DataDir, ?ROCKS_DB_DIR, "reward_history_db"]),
+			name => reward_history_db}),
+		ok = ar_kv:open(#{
+			path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_time_history_db"]),
+			name => block_time_history_db}),
+		ok = ar_kv:open(#{
+			path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_index_db"]),
+			name => block_index_db}),
+		H = B0#block.indep_hash,
+		WeaveSize = B0#block.weave_size,
+		TXRoot = B0#block.tx_root,
+		ok = ar_kv:put(block_index_db, << 0:256 >>,
+				term_to_binary({H, WeaveSize, TXRoot, <<>>})),
+		ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
+		case ar_fork:height_2_7() of
+			0 ->
+				ok = ar_kv:put(block_time_history_db, H,
+						term_to_binary(hd(B0#block.block_time_history)));
+			_ ->
+				ok
+		end
+	after
+		case whereis(ar_kv) of
+			undefined ->
+				ok;
+			_ ->
+				_ = catch gen_server:stop(ar_kv),
+				ok
+		end,
+		case ets:info(ar_kv) of
+			undefined ->
+				ok;
+			_ ->
+				_ = ets:delete(ar_kv)
+		end
 	end,
-	ok = gen_server:stop(ar_kv),
-	_ = ets:delete(ar_kv),
 	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
 	ok = filelib:ensure_dir(WalletListDir ++ "/"),
 	RootHash = B0#block.wallet_list,
@@ -606,7 +631,7 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 	%% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
 	%% Note that replica_2_9 modules do not have ?OVERLAP.
 	RangeNumber = lists:nth(N, [0, 2, 4]),
-	[{ar_block:partition_size(), RangeNumber, get_default_storage_module_packing(RewardAddr, 0)}].
+	[{ar_block:partition_size(), RangeNumber, storage_module_packing(RewardAddr, 0)}].
 
 remote_call(Node, Module, Function, Args) ->
 	remote_call(Node, Module, Function, Args, ?REMOTE_CALL_TIMEOUT).
@@ -663,7 +688,7 @@ start(Options) when is_map(Options) ->
 	RewardAddr =
 		case maps:get(addr, Options, not_set) of
 			not_set ->
-				ar_wallet:to_address(ar_wallet:new_keyfile());
+				generate_address(main);
 			Addr ->
 				Addr
 		end,
@@ -684,12 +709,7 @@ start(Options) when is_map(Options) ->
 			true ->
 				#{};
 			false ->
-				#{[storage_modules] => [
-					arweave_config:storage_module_to_config({
-						10 * ar_block:partition_size(), N,
-						get_default_storage_module_packing(RewardAddr, N, Options)})
-					|| N <- lists:seq(0, 8)
-				]}
+				storage_module_config(RewardAddr, [0], Options)
 		end,
 	start(B0, RewardAddr, maps:merge(StorageOverrides, AllOverrides));
 start(B0) ->
@@ -706,12 +726,7 @@ start(B0, RewardAddr, Overrides) when is_map(Overrides) ->
 			true ->
 				#{};
 			false ->
-				#{[storage_modules] => [
-					arweave_config:storage_module_to_config({
-						10 * ar_block:partition_size(), N,
-						get_default_storage_module_packing(RewardAddr, N)})
-					|| N <- lists:seq(0, 8)
-				]}
+				storage_module_config(RewardAddr, [0])
 		end,
 	start_with_overrides(B0, RewardAddr, maps:merge(StorageOverrides, Overrides)).
 
@@ -960,36 +975,47 @@ generate_join_config(Node) ->
 %% applied by `join/3' via `write_list/1' (the writer handles
 %% clear-before-write so they're authoritative).
 generate_join_config() ->
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	RewardAddr = generate_address(main),
 	#{[mining, address] => RewardAddr}.
 
 %% @doc The default storage modules implied by a join config —
-%% partitions 0..4 packed for the config's mining address. Returns
-%% `[]' when the config has no `[mining, address]' (the caller is
+%% the first default test module packed for the config's mining address.
+%% Returns `[]' when the config has no `[mining, address]' (the caller is
 %% expected to pass an explicit `storage_modules' arg in that case).
 generate_join_storage_modules(JoinConfig, Options) ->
 	case maps:get([mining, address], JoinConfig, not_set) of
 		not_set ->
 			[];
 		RewardAddr ->
-			[{ar_block:partition_size(), N,
-					get_default_storage_module_packing(RewardAddr, N, Options)}
-				|| N <- lists:seq(0, 4)]
+			wide_storage_modules(RewardAddr, [0], Options)
 	end.
 
 join_on(Params) ->
 	join_on(Params, false).
 
 join_on(#{ node := Node, join_on := JoinOnNode } = Params, Rejoin) ->
-	BaseOverrides = maps:get(config, Params, generate_join_config(Node)),
+	{BaseOverrides, HasConfig} =
+		case maps:get(config, Params, not_set) of
+			not_set ->
+				{#{}, false};
+			Value ->
+				{Value, true}
+		end,
+	AddressOverrides =
+		case {maps:get(addr, Params, not_set), HasConfig} of
+			{not_set, true} ->
+				#{};
+			{not_set, false} ->
+				generate_join_config(Node);
+			{Addr, _} ->
+				#{[mining, address] => Addr}
+		end,
 	InlineOverrides = maps:filter(fun(Key, _Value) -> is_list(Key) end, Params),
-	Overrides = maps:merge(InlineOverrides, BaseOverrides),
+	Overrides = maps:merge(InlineOverrides, maps:merge(AddressOverrides, BaseOverrides)),
 	%% Storage modules in priority order:
 	%%   1. caller-supplied `[storage_modules]' override wins;
 	%%   2. `Overrides' carries a `[mining, address]' → regenerate to
-	%%      match the new address (`rejoin_on/1' takes this path —
-	%%      `generate_join_config/0' minted a fresh address and the old
-	%%      modules would be orphaned);
+	%%      match the new address (`addr' and fresh joins take this path);
 	%%   3. otherwise leave the prior modules untouched (`not_set').
 	%%      The caller is supplying a narrow override (e.g. flipping
 	%%      `[mining, enabled]'); replacing modules here would strand
@@ -1043,10 +1069,12 @@ join(JoinOnNode, Rejoin, Overrides) when is_map(Overrides) ->
 	ar_test_await:node_joined(main),
 	whereis(ar_node_worker).
 
-get_default_storage_module_packing(RewardAddr, Index) ->
-	get_default_storage_module_packing(RewardAddr, Index, #{}).
+%% @doc Return the default packing tuple for a test storage module.
+%% Options currently supports `packing' to force `spora_2_6' or `replica_2_9'.
+storage_module_packing(RewardAddr, Index) ->
+	storage_module_packing(RewardAddr, Index, #{}).
 
-get_default_storage_module_packing(RewardAddr, _Index, Options) ->
+storage_module_packing(RewardAddr, _Index, Options) ->
 	case maps:get(packing, Options, not_set) of
 		spora_2_6 ->
 			{spora_2_6, RewardAddr};
@@ -1058,6 +1086,33 @@ get_default_storage_module_packing(RewardAddr, _Index, Options) ->
 				_ -> {spora_2_6, RewardAddr}
 			end
 	end.
+
+%% @doc Convert tuple specs into arweave_config-style storage-module maps.
+%% Returns the value list for `[storage_modules]`.
+storage_module_configs(StorageModules) ->
+	[arweave_config:storage_module_to_config(Module)
+		|| Module <- StorageModules].
+
+%% @doc Return `#{[storage_modules] => Configs}` for wide modules covering `Partitions`.
+storage_module_config(RewardAddr, Partitions) ->
+	storage_module_config(RewardAddr, Partitions, #{}).
+
+storage_module_config(RewardAddr, Partitions, Options) ->
+	#{
+		[storage_modules] => storage_module_configs(
+			wide_storage_modules(RewardAddr, Partitions, Options))
+	}.
+
+%% @doc Return internal wide tuple specs: `{BucketSize, Bucket, Packing}`.
+%% Each module spans `10 * ar_block:partition_size()`.
+%% Use `storage_module_config/2,3` when building override maps.
+wide_storage_modules(RewardAddr, Partitions) ->
+	wide_storage_modules(RewardAddr, Partitions, #{}).
+
+wide_storage_modules(RewardAddr, Partitions, Options) ->
+	[{10 * ar_block:partition_size(), Partition,
+			storage_module_packing(RewardAddr, Partition, Options)}
+		|| Partition <- Partitions].
 
 connect_peers(Node, Peer) ->
 	remote_call(Node, ar_test_node, connect_to_peer, [Peer]).

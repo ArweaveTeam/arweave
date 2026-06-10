@@ -1,5 +1,4 @@
 %%% @doc The 2.6 mining server.
-%% @ar_test: isolated
 -module(ar_mining_server).
 
 -behaviour(ar_mining_server_behaviour).
@@ -473,7 +472,8 @@ add_seed(SessionKey, State) ->
 	end.
 
 update_cache_limits(State) ->
-	NumActivePartitions = length(ar_mining_io:get_partitions()),
+	Partitions = ar_mining_io:get_partitions(),
+	NumActivePartitions = length(Partitions),
 	update_cache_limits(NumActivePartitions, State).
 
 update_cache_limits(0, State) ->

@@ -19,9 +19,20 @@ syncs_headers_test_() ->
 test_syncs_headers() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2000), <<>>}]),
-	ar_test_node:start(#{ b0 => B0, packing => replica_2_9 }),
+	MainAddr = ar_test_node:generate_address(main),
+	ar_test_node:start(#{
+		b0 => B0,
+		addr => MainAddr,
+		config => wide_replica_config(MainAddr)
+	}),
 	post_random_blocks(Wallet, ar_block:get_max_tx_anchor_depth() + 5, B0),
-	ar_test_node:join_on(#{ node => peer1, join_on => main, packing => replica_2_9 }),
+	PeerAddr = ar_test_node:generate_address(peer1),
+	ar_test_node:join_on(#{
+		node => peer1,
+		join_on => main,
+		addr => PeerAddr,
+		config => wide_replica_config(PeerAddr)
+	}),
 	{ok, BI} = ar_test_await:node_height(peer1, ar_block:get_max_tx_anchor_depth() + 5),
 	lists:foreach(
 		fun(Height) ->
@@ -44,44 +55,54 @@ test_syncs_headers() ->
 	%% Throw the event to simulate running out of disk space.
 	ar_disksup:pause(),
 	ar_events:send(disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, 0, 0}),
-	NoSpaceHeight = ar_block:get_max_tx_anchor_depth() + 6,
-	NoSpaceTX = sign_v1_tx(main, Wallet,
-		#{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
-	ar_test_node:assert_post_tx_to_peer(main, NoSpaceTX),
-	ar_test_node:mine(),
-	{ok, [{NoSpaceH, _, _} | _]} = ar_test_await:node_height(main, NoSpaceHeight),
-	timer:sleep(1000),
-	%% The cleanup is not expected to kick in yet.
-	NoSpaceB = ar_test_await:block_stored(NoSpaceH),
-	?assertMatch(#block{}, NoSpaceB),
-	?assertMatch(#tx{}, ar_storage:read_tx(NoSpaceTX#tx.id)),
-	?assertMatch({ok, _}, ar_storage:read_wallet_list(NoSpaceB#block.wallet_list)),
-	ets:new(test_syncs_header, [set, named_table]),
-	ets:insert(test_syncs_header, {height, NoSpaceHeight + 1}),
-	ok = ar_test_await:until(header_sync_cleanup_kicked_in,
+	ok = ar_test_await:until(header_sync_paused_for_disk_space,
 		fun() ->
-			%% Keep mining blocks. At some point the cleanup procedure will
-			%% kick in and remove the oldest files.
-			TX = sign_v1_tx(main, Wallet, #{
-				data => random_v1_data(200 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
-			ar_test_node:assert_post_tx_to_peer(main, TX),
-			ar_test_node:mine(),
-			[{_, Height}] = ets:lookup(test_syncs_header, height),
-			{ok, [_ | _]} = ar_test_await:node_height(main, Height),
-			ets:insert(test_syncs_header, {height, Height + 1}),
-			unavailable == ar_storage:read_block(NoSpaceH)
-				andalso ar_storage:read_tx(NoSpaceTX#tx.id) == unavailable
+			ar_header_sync:is_disk_space_sufficient() =:= false
 		end,
-		20000
+		5000
 	),
-	timer:sleep(1000),
-	[{LatestH, _, _} | _] = ar_node:get_block_index(),
-	%% The latest block must not be cleaned up.
-	LatestB = ar_test_await:block_stored(LatestH),
-	?assertMatch(#block{}, LatestB),
-	?assertMatch(#tx{}, ar_storage:read_tx(lists:nth(1, LatestB#block.txs))),
-	?assertMatch({ok, _}, ar_storage:read_wallet_list(LatestB#block.wallet_list)),
-	ar_disksup:resume().
+	try
+		NoSpaceHeight = ar_block:get_max_tx_anchor_depth() + 6,
+		NoSpaceTX = sign_v1_tx(main, Wallet,
+			#{ data => random_v1_data(10 * 1024), last_tx => ar_test_node:get_tx_anchor(peer1) }),
+		ar_test_node:assert_post_tx_to_peer(main, NoSpaceTX),
+		ar_test_node:mine(),
+		{ok, [{NoSpaceH, _, _} | _]} = ar_test_await:node_height(main, NoSpaceHeight),
+		%% The cleanup is not expected to kick in yet.
+		NoSpaceB = ar_test_await:block_stored(NoSpaceH),
+		?assertMatch(#block{}, NoSpaceB),
+		?assertMatch(#tx{}, ar_storage:read_tx(NoSpaceTX#tx.id)),
+		?assertMatch({ok, _}, ar_storage:read_wallet_list(NoSpaceB#block.wallet_list)),
+		ets:new(test_syncs_header, [set, named_table]),
+		ets:insert(test_syncs_header, {height, NoSpaceHeight + 1}),
+		ok = ar_test_await:until(header_sync_cleanup_kicked_in,
+			fun() ->
+				%% Keep mining blocks. At some point the cleanup procedure will
+				%% kick in and remove the oldest files.
+				TX = sign_v1_tx(main, Wallet, #{
+					data => random_v1_data(200 * 1024),
+					last_tx => ar_test_node:get_tx_anchor(peer1)
+				}),
+				ar_test_node:assert_post_tx_to_peer(main, TX),
+				ar_test_node:mine(),
+				[{_, Height}] = ets:lookup(test_syncs_header, height),
+				{ok, [_ | _]} = ar_test_await:node_height(main, Height),
+				ets:insert(test_syncs_header, {height, Height + 1}),
+				unavailable == ar_storage:read_block(NoSpaceH)
+					andalso ar_storage:read_tx(NoSpaceTX#tx.id) == unavailable
+			end,
+			20000
+		),
+		[{LatestH, _, _} | _] = ar_node:get_block_index(),
+		%% The latest block must not be cleaned up.
+		LatestB = ar_test_await:block_stored(LatestH),
+		?assertMatch(#block{}, LatestB),
+		?assertMatch(#tx{}, ar_storage:read_tx(lists:nth(1, LatestB#block.txs))),
+		?assertMatch({ok, _}, ar_storage:read_wallet_list(LatestB#block.wallet_list))
+	after
+		ar_disksup:resume(),
+		ar_events:send(disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, 100, 20_000_000_000})
+	end.
 
 post_random_blocks(Wallet, TargetHeight, B0) ->
 	lists:foldl(
@@ -116,3 +137,7 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
 		B0#block.indep_hash,
 		lists:seq(1, TargetHeight)
 	).
+
+wide_replica_config(Addr) ->
+	ar_test_node:storage_module_config(
+		Addr, lists:seq(0, 8), #{ packing => replica_2_9 }).

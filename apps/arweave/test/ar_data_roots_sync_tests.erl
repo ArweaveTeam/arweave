@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_data_roots_sync_tests).
+-test_peers([peer1]).
 
 -include("ar.hrl").
 -include("ar_data_sync.hrl").
@@ -48,10 +48,10 @@ test_data_roots_sync_from_peer() ->
 		lists:seq(1, 3)
 	),
 	%% The node fetches this many latest blocks after joining the network.
-	%% We want all our data blocks be older so that the node has to use
-	%% the data root syncing mechanism to fetch data roots (we explicitly
-	%% assert the unexpected data roots are not synced further down here).
-	?assertEqual(10, 2 * ar_block:get_max_tx_anchor_depth()),
+	%% Mine enough newer blocks so the earliest data blocks are older than
+	%% that window and have to use data root syncing to fetch data roots.
+	LatestJoinedBlockCount = 2 * ar_block:get_max_tx_anchor_depth(),
+	?assertEqual(10, LatestJoinedBlockCount),
 	Blocks = BlocksBeforeJoin ++ lists:map(
 			fun(_) ->
 				Data = generate_random_txs(Wallet),
@@ -62,7 +62,7 @@ test_data_roots_sync_from_peer() ->
 		),
 
 	%% Now start main (node A) with header syncing disabled and storage modules covering PART of the range.
-	MainRewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	MainRewardAddr = ar_test_node:generate_address(main),
 	%% Cover only the first partition and half of the second one to ensure partial coverage.
 	MainConfig = #{
 		[mining, enabled] => false,
@@ -144,7 +144,7 @@ test_chunk_after_data_roots_http_post() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 
 	%% Main must not sync while peer1 builds the chain we will POST later.
-	start_peers_then_disconnect(main, peer1, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 
 	%% Mine blocks with data on peer1. "Guaranteed" is a block with a fixed small data tx that
 	%% is guaranteed to trigger a POST /data_roots in the test loop. The remaining random data
@@ -225,7 +225,7 @@ test_chunk_after_data_roots_background_sync() ->
 test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
-	start_peers_then_disconnect(peer1, main, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 	BlocksData = [
 		%% Use slightly different sizes so each block gets a distinct data root while still
 		%% advancing the weave quickly into the uncovered partition.
@@ -313,7 +313,7 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 test_chunk_skipped_with_duplicate_data_root() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
-	start_peers_then_disconnect(peer1, main, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 	%% Mine two consecutive blocks on peer1 with the SAME data root (identical chunk data).
 	{B1, [{TX1, Chunks1}]} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
 	{B2, [{TX2, Chunks2}]} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
@@ -361,7 +361,7 @@ run_duplicate_depth_scenario(MaxDuplicateDataRoots) ->
 	DuplicateDepth = 3,
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
-	start_peers_then_disconnect(peer1, main, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 	%% Mine one more block than the finite duplicate-depth limit so the oldest block only stays
 	%% reachable when max_duplicate_data_roots is treated as unbounded.
 	Blocks = lists:map(
@@ -635,6 +635,20 @@ random_tx_base_opts(Wallet) ->
 
 random_tx(BaseOpts, SplitType) ->
 	ar_test_data_sync:tx(BaseOpts#{ split_type => SplitType }).
+
+data_roots_sync_mocks() ->
+	[
+		{ar_block, get_consensus_window_size, fun() -> 5 end},
+		{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
+		{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}
+	].
+
+unpacked_storage_module_configs() ->
+	[
+		arweave_config:storage_module_to_config(
+			{10 * ar_block:partition_size(), N, unpacked})
+		|| N <- lists:seq(0, 8)
+	].
 
 assert_no_data_roots(Peer, B) ->
 	case get_data_roots(Peer, B) of

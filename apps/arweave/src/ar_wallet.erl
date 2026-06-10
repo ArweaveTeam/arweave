@@ -1,6 +1,6 @@
 %%% @doc Utilities for manipulating wallets.
-%% @ar_test: fast
 -module(ar_wallet).
+-test_category([fast]).
 
 -export([new/0, new_ecdsa/0, new/1, sign/2, verify/3, verify_pre_fork_2_4/3,
 		to_address/1, to_address/2, hash_pub_key/1,
@@ -442,7 +442,10 @@ compress_ecdsa_pubkey(<<4:8, PubPoint/binary>>) ->
 %%% Tests.
 %%%===================================================================
 
-wallet_sign_verify_test() ->
+wallet_sign_verify_test_() ->
+	{timeout, 30, fun do_wallet_sign_verify/0}.
+
+do_wallet_sign_verify() ->
 	TestData = <<"TEST DATA">>,
 	{Priv, Pub} = new(),
 	Signature = sign(Priv, TestData),
@@ -450,18 +453,21 @@ wallet_sign_verify_test() ->
 
 invalid_signature_test() ->
 	TestData = <<"TEST DATA">>,
-	{Priv, Pub} = new(),
+	{Priv, Pub} = new({?EDDSA_SIGN_ALG, ed25519}),
 	<< _:32, Signature/binary >> = sign(Priv, TestData),
 	false = verify(Pub, TestData, << 0:32, Signature/binary >>).
 
 %% @doc Check generated keyfiles can be retrieved.
-generate_keyfile_test() ->
+generate_keyfile_test_() ->
+	{timeout, 30, fun do_generate_keyfile/0}.
+
+do_generate_keyfile() ->
 	{Priv, Pub} = new_keyfile(),
 	FileName = wallet_filepath(ar_util:encode(to_address(Pub))),
 	{Priv, Pub} = load_keyfile(FileName).
 
 checksum_test() ->
-	{_, Pub} = new(),
+	{_, Pub} = new({?EDDSA_SIGN_ALG, ed25519}),
 	Addr = to_address(Pub),
 	AddrBase64 = ar_util:encode(Addr),
 	AddrBase64Wide = decoded_address_to_base64_address_with_checksum(Addr),

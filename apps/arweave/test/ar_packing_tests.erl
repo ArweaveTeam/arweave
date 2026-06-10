@@ -1,4 +1,5 @@
 -module(ar_packing_tests).
+-test_peers([peer1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
@@ -396,16 +397,15 @@ test_packs_chunks_depending_on_packing_threshold() ->
 			#{},
 			lists:seq(1, 20)
 		),
-	Wallet = ar_test_data_sync:setup_nodes(#{ addr => MainAddr, peer_addr => PeerAddr }),
+	Wallet = ar_test_data_sync:setup_nodes(#{
+		addr => MainAddr,
+		peer_addr => PeerAddr,
+		config => ar_test_node:storage_module_config(MainAddr, lists:seq(0, 8)),
+		peer_config => ar_test_node:storage_module_config(PeerAddr, lists:seq(0, 8))
+	}),
 	{_LegacyProofs, StrictProofs, V1Proofs} = lists:foldl(
 		fun(Height, {Acc1, Acc2, Acc3}) ->
 			{{DR1, Chunks1}, {DR2, Chunks2}, {DR3, Chunks3}} = maps:get(Height, DataMap),
-			{#tx{ id = TXID1 } = TX1, Chunks1} =
-					ar_test_data_sync:tx(Wallet, {fixed_data, DR1, Chunks1}),
-			{#tx{ id = TXID2 } = TX2, Chunks2} =
-					ar_test_data_sync:tx(Wallet, {fixed_data, DR2, Chunks2}),
-			{#tx{ id = TXID3 } = TX3, Chunks3} =
-					ar_test_data_sync:tx(Wallet, {fixed_data, DR3, Chunks3}, v1),
 			{Miner, Receiver} =
 				case rand:uniform(2) == 1 of
 					true ->
@@ -413,6 +413,12 @@ test_packs_chunks_depending_on_packing_threshold() ->
 					false ->
 						{peer1, main}
 				end,
+			{#tx{ id = TXID1 } = TX1, Chunks1} =
+					tx_with_chunks(Wallet, DR1, Chunks1, v2, Miner),
+			{#tx{ id = TXID2 } = TX2, Chunks2} =
+					tx_with_chunks(Wallet, DR2, Chunks2, v2, Miner),
+			{#tx{ id = TXID3 } = TX3, Chunks3} =
+					tx_with_chunks(Wallet, DR3, Chunks3, v1, Miner),
 			?debugFmt("miner: ~p, receiver: ~p~n", [Miner, Receiver]),
 			?debugFmt("Mining block ~B.~n", [Height]),
 			TXs = ar_util:pick_random([TX1, TX2, TX3], 2),
@@ -537,6 +543,16 @@ test_packs_chunks_depending_on_packing_threshold() ->
 	ar_test_data_sync:wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))],
 			infinity).
 
+tx_with_chunks(Wallet, DataRoot, Chunks, Format, Node) ->
+	ar_test_data_sync:tx(#{
+		wallet => Wallet,
+		split_type => {fixed_data, DataRoot, Chunks},
+		format => Format,
+		reward => fetch,
+		tx_anchor_peer => Node,
+		get_fee_peer => Node
+	}).
+
 %% @doc Assert main and peer1 both serve each tx's data, matching its chunks.
 assert_synced_data(Proofs) ->
 	maps:map(
@@ -546,4 +562,3 @@ assert_synced_data(Proofs) ->
 			ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
 		end,
 		Proofs).
-

@@ -1,5 +1,5 @@
-%% @ar_test: fast, vdf
 -module(ar_deep_hash).
+-test_category([fast, vdf]).
 -export([hash/1]).
 
 -include_lib("arweave/include/ar.hrl").

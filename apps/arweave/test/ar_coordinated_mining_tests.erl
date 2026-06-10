@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_coordinated_mining_tests).
+-test_peers([peer1, peer2, peer3, peer4]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -7,6 +7,20 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [http_get_block/2]).
+
+-export([
+	test_single_node_two_chunk/0,
+	test_two_node_retarget/0,
+	test_three_node/0,
+	test_cross_node/0,
+	test_cross_node_retarget/0,
+	test_no_secret/0,
+	test_bad_secret/0,
+	test_partition_table/0,
+	test_peers_by_partition/0,
+	mock_for_single_difficulty_adjustment_height/0,
+	mock_for_single_difficulty_adjustment_block/0
+]).
 
 -define(COORDINATED_MINING_WAIT_TIMEOUT, 900_000).
 

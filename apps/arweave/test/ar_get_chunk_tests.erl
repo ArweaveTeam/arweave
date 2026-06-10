@@ -1,40 +1,39 @@
 -module(ar_get_chunk_tests).
--test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave/include/ar.hrl").
 
 get_chunk_below_strict_threshold_test_() ->
-	ar_test_node:test_with_all_nodes_mocked(
+	ar_test_util:with_mocked(
 		[strict_data_split_threshold_mock(10 * ?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_below_strict_threshold/0,
 		120
 	).
 
 get_chunk_below_strict_threshold_small_tail_test_() ->
-	ar_test_node:test_with_all_nodes_mocked(
+	ar_test_util:with_mocked(
 		[strict_data_split_threshold_mock(10 * ?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_below_strict_threshold_small_tail/0,
 		120
 	).
 
 get_chunk_above_strict_threshold_test_() ->
-	ar_test_node:test_with_all_nodes_mocked(
+	ar_test_util:with_mocked(
 		[strict_data_split_threshold_mock(?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_above_strict_threshold/0,
 		180
 	).
 
 get_chunk_above_strict_threshold_small_tail_test_() ->
-	ar_test_node:test_with_all_nodes_mocked(
+	ar_test_util:with_mocked(
 		[strict_data_split_threshold_mock(?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_above_strict_threshold_small_tail/0,
 		180
 	).
 
 test_get_chunk_below_strict_threshold() ->
-	Wallet = ar_test_data_sync:setup_nodes(),
+	Wallet = setup_node(),
 	Chunks = [
 		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)
@@ -48,7 +47,7 @@ test_get_chunk_below_strict_threshold() ->
 
 test_get_chunk_below_strict_threshold_small_tail() ->
 	SmallChunkSize = 12345,
-	Wallet = ar_test_data_sync:setup_nodes(),
+	Wallet = setup_node(),
 	Chunks = [
 		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 		crypto:strong_rand_bytes(SmallChunkSize)
@@ -62,7 +61,7 @@ test_get_chunk_below_strict_threshold_small_tail() ->
 	fetch_and_assert_chunk(AbsoluteEndOffset, Proof).
 
 test_get_chunk_above_strict_threshold() ->
-	Wallet = ar_test_data_sync:setup_nodes(),
+	Wallet = setup_node(),
 	Chunks = [
 		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)
@@ -85,7 +84,7 @@ test_get_chunk_above_strict_threshold() ->
 	).
 
 test_get_chunk_above_strict_threshold_small_tail() ->
-	Wallet = ar_test_data_sync:setup_nodes(),
+	Wallet = setup_node(),
 	SmallChunkSize = 12345,
 	FirstChunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
 	LastChunk = crypto:strong_rand_bytes(SmallChunkSize),
@@ -181,13 +180,32 @@ assert_absolute_end_offset_header(Headers, AbsoluteEndOffset) ->
 strict_data_split_threshold_mock(Value) ->
 	{ar_block, strict_data_split_threshold, fun() -> Value end}.
 
+setup_node() ->
+	Wallet = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init(
+		[{ar_wallet:to_address(Pub), ?AR(200000), <<>>}],
+		ar_retarget:switch_to_linear_diff(2)
+	),
+	ar_test_node:start(#{
+		b0 => B0,
+		config => #{[features, pack_served_chunks] => true}
+	}),
+	Wallet.
+
 tx_with_chunks(Wallet, Chunks) ->
 	{DataRoot, _} = ar_merkle:generate_tree(
 		ar_tx:sized_chunks_to_sized_chunk_ids(
 			ar_tx:chunks_to_size_tagged_chunks(Chunks)
 		)
 	),
-	ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}).
+	ar_test_data_sync:tx(#{
+		wallet => Wallet,
+		split_type => {fixed_data, DataRoot, Chunks},
+		format => v2,
+		reward => fetch,
+		tx_anchor_peer => main,
+		get_fee_peer => main
+	}).
 
 post_and_wait_for_chunks(Proofs) ->
 	lists:foreach(

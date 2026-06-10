@@ -1,4 +1,5 @@
 -module(ar_info_tests).
+-test_peers([peer1, peer2]).
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").

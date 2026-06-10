@@ -1,4 +1,3 @@
-%% @ar_test: isolated
 -module(ar_webhook_tests).
 
 
@@ -66,7 +65,7 @@ test_webhooks_body(Wallet, B0) ->
 	Port = ar_test_node:get_unused_port(),
 		PortBinary = integer_to_binary(Port),
 		TXBlacklistFilename = random_tx_blacklist_filename(),
-		Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+		Addr = ar_test_node:generate_address(main),
 		Webhooks = [
 			#{
 				url => <<"http://127.0.0.1:", PortBinary/binary, "/tx">>,

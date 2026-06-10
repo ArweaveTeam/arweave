@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_link/1, set_largest_seen_upper_bound/1,
-			get_packing/0, get_partitions/0, get_partitions/1, 
+			get_packing/0, get_partitions/0, get_partitions/1,
 			get_minable_storage_modules/0, read_recall_range/4,
 			is_recall_range_readable/2, garbage_collect/0,
 			get_replica_format_from_packing_difficulty/1]).

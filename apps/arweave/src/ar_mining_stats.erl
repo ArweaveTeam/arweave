@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_mining_stats).
+-test_peers([peer1, peer2, peer3]).
 -behaviour(gen_server).
 
 -export([start_link/0, start_performance_reports/0, pause_performance_reports/1, mining_paused/0,
@@ -1318,24 +1318,15 @@ test_h2_peer_stats() ->
 
 test_optimal_stats_poa1_multiple_1() ->
 	test_optimal_stats({spora_2_6, ?TEST_MINING_ADDR}, 1),
-	test_optimal_stats({composite, ?TEST_MINING_ADDR, 1}, 1),
-	test_optimal_stats({composite, ?TEST_MINING_ADDR, 2}, 1).
+	test_optimal_stats({replica_2_9, ?TEST_MINING_ADDR}, 1).
 
 test_optimal_stats_poa1_multiple_2() ->
 	test_optimal_stats({spora_2_6, ?TEST_MINING_ADDR}, 2),
-	test_optimal_stats({composite, ?TEST_MINING_ADDR, 1}, 2),
-	test_optimal_stats({composite, ?TEST_MINING_ADDR, 2}, 2).
+	test_optimal_stats({replica_2_9, ?TEST_MINING_ADDR}, 2).
 
 test_optimal_stats(Packing, PoA1Multiplier) ->
 	PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
-	RecallRangeSize = case PackingDifficulty of
-		0 ->
-			0.5;
-		1 ->
-			0.125;
-		2 ->
-			0.0625
-	end,
+	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty) / ?MiB,
 	?assertEqual(0.0, 
 		optimal_partition_read_mibps(
 			Packing, undefined, ar_block:partition_size(),
@@ -1385,13 +1376,11 @@ test_optimal_stats(Packing, PoA1Multiplier) ->
 
 test_report_poa1_multiple_1() ->
 	test_report({spora_2_6, ?TEST_MINING_ADDR}, {spora_2_6, ?TEST_PACKING_ADDR}, 1),
-	test_report({composite, ?TEST_MINING_ADDR, 1}, {composite, ?TEST_PACKING_ADDR, 1}, 1),
-	test_report({composite, ?TEST_MINING_ADDR, 2}, {composite, ?TEST_PACKING_ADDR, 2}, 1).
+	test_report({replica_2_9, ?TEST_MINING_ADDR}, {replica_2_9, ?TEST_PACKING_ADDR}, 1).
 
 test_report_poa1_multiple_2() ->
 	test_report({spora_2_6, ?TEST_MINING_ADDR}, {spora_2_6, ?TEST_PACKING_ADDR}, 2),
-	test_report({composite, ?TEST_MINING_ADDR, 1}, {composite, ?TEST_PACKING_ADDR, 1}, 2),
-	test_report({composite, ?TEST_MINING_ADDR, 2}, {composite, ?TEST_PACKING_ADDR, 2}, 2).
+	test_report({replica_2_9, ?TEST_MINING_ADDR}, {replica_2_9, ?TEST_PACKING_ADDR}, 2).
 
 test_report(Mining, Packing, PoA1Multiplier) ->
 	arweave_config:with_test_config(fun() ->
@@ -1402,26 +1391,12 @@ do_test_report(Mining, Packing, PoA1Multiplier) ->
 	MiningAddress = case Mining of
 		{spora_2_6, Addr} ->
 			Addr;
-		{composite, Addr, _} ->
+		{replica_2_9, Addr} ->
 			Addr
 	end,
 	PackingDifficulty = ar_mining_server:get_packing_difficulty(Mining),
-	DifficultyDivisor = case PackingDifficulty of
-		0 ->
-			1.0;
-		1 ->
-			8.0;
-		2 ->
-			4.0
-	end,
-	RecallRangeSize = case PackingDifficulty of
-		0 ->
-			0.5;
-		1 ->
-			0.125;
-		2 ->
-			0.0625
-	end,
+	DifficultyDivisor = get_hashrate_divisor(PackingDifficulty),
+	RecallRangeSize = ar_block:get_recall_range_size(PackingDifficulty) / ?MiB,
 	StorageModules = [
 		%% partition 1
 		{floor(0.1 * ar_block:partition_size()), 10, unpacked},

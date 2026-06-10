@@ -1,5 +1,5 @@
-%% @ar_test: fast, vdf
 -module(ar_util).
+-test_category([fast, vdf]).
 
 -export([
 	assert_file_exists_and_readable/1,

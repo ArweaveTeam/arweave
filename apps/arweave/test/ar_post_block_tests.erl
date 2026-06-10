@@ -1,4 +1,5 @@
 -module(ar_post_block_tests).
+-test_peers([peer1]).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 

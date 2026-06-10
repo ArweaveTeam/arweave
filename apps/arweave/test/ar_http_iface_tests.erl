@@ -344,11 +344,12 @@ test_node_blacklisting_get_spammer() ->
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(get_info),
 	LimitWithBursts = arweave_config:get([limiter, general, sliding_window_limit])
 		+ arweave_config:get([limiter, general, leaky_rate_limit]),
+	TickReduction = arweave_config:get([limiter, general, tick_reduction]),
 	node_blacklisting_test_frame(
 		RequestFun,
 		ErrorResponse,
-		LimitWithBursts,
-		1
+		LimitWithBursts + TickReduction + 1,
+		{1, TickReduction + 1}
 	).
 
 test_node_blacklisting_post_spammer() ->
@@ -356,12 +357,13 @@ test_node_blacklisting_post_spammer() ->
 		+ arweave_config:get([limiter, general, leaky_rate_limit]),
 	{RequestFun, ErrorResponse} = get_fun_msg_pair(send_tx_binary),
 	NErrors = 11,
-	NRequests = LimitWithBursts + NErrors,
+	TickReduction = arweave_config:get([limiter, general, tick_reduction]),
+	NRequests = LimitWithBursts + TickReduction + NErrors,
 	node_blacklisting_test_frame(
 		RequestFun,
 		ErrorResponse,
 		NRequests,
-		NErrors
+		{NErrors, TickReduction + NErrors}
 	).
 
 %% @doc Given a label, return a fun and a message.
@@ -394,7 +396,9 @@ send_tx_binary(Index, InvalidTX) ->
 
 
 %% @doc Frame to test spamming an endpoint.
--spec node_blacklisting_test_frame(fun(), any(), non_neg_integer(), non_neg_integer()) -> ok.
+-spec node_blacklisting_test_frame(
+	fun(), any(), non_neg_integer(), non_neg_integer() | {non_neg_integer(), non_neg_integer()}
+) -> ok.
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
 	ar_blacklist_middleware:reset(),
 	arweave_limiter_sup:reset_all(),
@@ -411,12 +415,19 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
 	Got = count_by_response_type(ErrorResponse, Responses),
 	%% Other test nodes may occasionally make some requests in the background disturbing the stats.
 	Tolerance = 5,
+	ErrorResponses = maps:get(error_responses, Got, 0),
+	{MinErrors, MaxErrors} = expected_error_range(ExpectedErrors, Tolerance),
 	?debugFmt("Requests sent: ~p, ExpectedErrors: ~p, Tolerance: ~p, Got: ~p~n",
-		[NRequests, ExpectedErrors, Tolerance, maps:get(error_responses, Got, 0)]),
-	?assert(maps:get(error_responses, Got, 0) =< ExpectedErrors + Tolerance),
-	?assert(maps:get(error_responses, Got, 0) >= ExpectedErrors - Tolerance),
-	?assertEqual(NRequests - maps:get(error_responses, Got, 0), maps:get(ok_responses, Got, 0)),
+		[NRequests, ExpectedErrors, Tolerance, ErrorResponses]),
+	?assert(ErrorResponses =< MaxErrors),
+	?assert(ErrorResponses >= MinErrors),
+	?assertEqual(NRequests - ErrorResponses, maps:get(ok_responses, Got, 0)),
 	ar_rate_limiter:on().
+
+expected_error_range(ExpectedErrors, Tolerance) when is_integer(ExpectedErrors) ->
+	{max(0, ExpectedErrors - Tolerance), ExpectedErrors + Tolerance};
+expected_error_range({MinErrors, MaxErrors}, Tolerance) ->
+	{max(0, MinErrors - Tolerance), MaxErrors + Tolerance}.
 
 %% @doc Count the number of successful and error responses.
 count_by_response_type(ErrorResponse, Responses) ->

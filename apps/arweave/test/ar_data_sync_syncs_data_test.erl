@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_data_sync_syncs_data_test).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -12,7 +12,14 @@ syncs_data_test_() ->
 
 test_syncs_data() ->
 	?LOG_DEBUG([{event, test_syncs_data_start}]),
-	Wallet = ar_test_data_sync:setup_nodes(),
+	Addr = ar_test_node:generate_address(main),
+	PeerAddr = ar_test_node:generate_address(peer1),
+	Wallet = ar_test_data_sync:setup_nodes(#{
+		addr => Addr,
+		peer_addr => PeerAddr,
+		config => ar_test_node:storage_module_config(Addr, lists:seq(0, 8)),
+		peer_config => ar_test_node:storage_module_config(PeerAddr, lists:seq(0, 8))
+	}),
 	Records = ar_test_data_sync:post_random_blocks(Wallet),
 	RecordsWithProofs = lists:flatmap(
 			fun({B, TX, Chunks}) -> 
@@ -28,7 +35,8 @@ test_syncs_data() ->
 	),
 	Proofs = [Proof || {_, _, _, Proof} <- RecordsWithProofs],
 	ar_test_data_sync:wait_until_syncs_chunks(Proofs),
-	DiskPoolThreshold = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
+	{Height, BI} = ar_node:get_block_index_and_height(),
+	DiskPoolThreshold = ar_node:get_partition_upper_bound(Height, BI),
 	ar_test_data_sync:wait_until_syncs_chunks(peer1, Proofs, DiskPoolThreshold),
 	lists:foreach(
 		fun({B, #tx{ id = TXID }, Chunks, {_, Proof}}) ->
@@ -46,9 +54,7 @@ test_syncs_data() ->
 						_ ->
 							false
 					end
-				end,
-				100,
-				120 * 1000
+				end
 			),
 			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
 			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),

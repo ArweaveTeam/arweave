@@ -161,6 +161,22 @@ test_invalid_block_with_high_cumulative_difficulty() ->
 		binary, #{}),
 	?assertEqual(H2, B3#block.indep_hash).
 
+wait_until_fake_block_rejected(B2H, Deadline) ->
+	Timeout = max(0, Deadline - erlang:monotonic_time(millisecond)),
+	receive
+		{event, block, {rejected, invalid_cumulative_difficulty, B2H, _Peer2}} ->
+			ok;
+		{event, block, {rejected, _Reason, B2H, _Peer2}} ->
+			?assert(false, "Unexpected fake block rejection");
+		{event, block, {new, #block{ indep_hash = B2H }, _Peer3}} ->
+			?assert(false, "Unexpected block acceptance");
+		{event, block, _Other} ->
+			wait_until_fake_block_rejected(B2H, Deadline)
+	after Timeout ->
+		?assert(false, "Timed out waiting for the node to pre-validate the fake "
+				"block.")
+	end.
+
 fake_block_with_strong_cumulative_difficulty(B, PrevB, CDiff) ->
 	#block{
 		height = Height,

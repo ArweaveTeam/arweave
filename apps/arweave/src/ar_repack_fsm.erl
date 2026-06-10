@@ -1,5 +1,5 @@
-%% @ar_test: fast
 -module(ar_repack_fsm).
+-test_category([fast]).
 
 -export([crank_state/1]).
 

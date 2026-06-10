@@ -1,17 +1,21 @@
-%% @ar_test: isolated
 -module(ar_vdf_block_validation_tests).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
+-include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--define(TEST_RESET_FREQUENCY, 400).
+%% Low enough that the +100 step waits stay in the first post-reset session
+%% without burning the test budget on VDF steps.
+-define(TEST_RESET_FREQUENCY, 150).
+-define(TEST_VDF_DIFFICULTY, 100_000).
 -define(BLOCK_DELIVERY_TIMEOUT, 120000).
 
 fork_at_entropy_reset_point_test_() ->
 	[
-		{timeout, 600, fun test_fork_checkpoints_not_found/0},
-		{timeout, 900, fun test_fork_refuse_validation/0}
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_fork_checkpoints_not_found/0},
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_fork_refuse_validation/0}
 	].
 
 %% Scenario:

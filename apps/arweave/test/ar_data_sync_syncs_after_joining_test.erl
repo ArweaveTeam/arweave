@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_data_sync_syncs_after_joining_test).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -22,7 +22,8 @@ test_syncs_after_joining(Split) ->
 	{TX1, Chunks1} = ar_test_data_sync:tx(Wallet, {Split, 1}, v2, ?AR(1)),
 	B1 = ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX1]),
 	Proofs1 = ar_test_data_sync:post_proofs(main, B1, TX1, Chunks1),
-	UpperBound = ar_node:get_partition_upper_bound(ar_node:get_block_index()),
+	{Height, BI} = ar_node:get_block_index_and_height(),
+	UpperBound = ar_node:get_partition_upper_bound(Height, BI),
 	ar_test_data_sync:wait_until_syncs_chunks(peer1, Proofs1, UpperBound),
 	ar_test_data_sync:wait_until_syncs_chunks(Proofs1),
 	ar_test_node:disconnect_from(peer1),

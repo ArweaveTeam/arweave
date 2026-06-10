@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_disk_pool_chunk_processing_tests).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -86,9 +86,9 @@ test_orphaned_chunk_cleanup() ->
 %% unpacked but remain in the disk pool.
 %% -------------------------------------------------------------------
 test_immature_chunk_indexing() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
-		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+		ar_test_node:storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 		#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
@@ -126,9 +126,9 @@ test_immature_chunk_indexing() ->
 %% should NOT appear in the sync record at the blacklisted offset.
 %% -------------------------------------------------------------------
 test_blacklisted_byte_skipped() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
-		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+		ar_test_node:storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 		#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
@@ -173,9 +173,9 @@ test_blacklisted_byte_skipped() ->
 %% cache drains, the chunk should be processed normally.
 %% -------------------------------------------------------------------
 test_chunk_cache_full_defers_processing() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
-		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+		ar_test_node:storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 		#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
@@ -212,9 +212,9 @@ test_chunk_cache_full_defers_processing() ->
 %% without crashing. The chunk stays in the disk pool for retry.
 %% -------------------------------------------------------------------
 test_chunk_data_not_found_resilience() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
-		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+		ar_test_node:storage_module_packing(Addr, 0)}],
 	StoreID = ar_storage_module:id(hd(StorageModules)),
 	Wallet = ar_test_data_sync:setup_nodes(
 		#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
@@ -272,9 +272,9 @@ test_chunk_data_not_found_resilience() ->
 %% mature, the chunk should be cleaned from the disk pool.
 %% -------------------------------------------------------------------
 test_may_conclude_accumulation() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
-		ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+		ar_test_node:storage_module_packing(Addr, 0)}],
 	StoreID = ar_storage_module:id(hd(StorageModules)),
 	Wallet = ar_test_data_sync:setup_nodes(
 		#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),

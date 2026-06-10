@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_disk_pool_rotation_test).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -13,11 +13,11 @@ disk_pool_rotation_test_() ->
 
 test_disk_pool_rotation() ->
 	?LOG_DEBUG([{event, test_disk_pool_rotation_start}]),
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	%% Store the three genesis chunks + an extra chunk to cover the
 	%% long-term storage vicinity around the weave size at the time of posting.
 	StorageModules = [{4 * ?DATA_CHUNK_SIZE, 0,
-			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+			ar_test_node:storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
@@ -28,6 +28,7 @@ test_disk_pool_rotation() ->
 	),
 	{TX, Chunks} = ar_test_data_sync:tx(Wallet, {fixed_data, DataRoot, Chunks}),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
+	Expected = ar_intervals:from_list([{4 * ?DATA_CHUNK_SIZE, 3 * ?DATA_CHUNK_SIZE}]),
 	Offset = ?DATA_CHUNK_SIZE,
 	DataSize = ?DATA_CHUNK_SIZE,
 	DataPath = ar_merkle:generate_path(DataRoot, Offset, DataTree),

@@ -1,4 +1,5 @@
 -module(ar_tx_blacklist_tests).
+-test_peers([peer1]).
 
 -export([init/2]).
 
@@ -57,8 +58,8 @@ test_uses_blacklists() ->
 	} = setup(),
 	WhitelistFile = random_filename(),
 	ok = file:write_file(WhitelistFile, <<>>),
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	StorageModule = {30 * ?MiB, 0, {composite, RewardAddr, 1}},
+	RewardAddr = ar_test_node:generate_address(main),
+	StorageModules = blacklist_storage_modules(RewardAddr),
 	Config = arweave_config:snapshot(),
 	try
 		ar_test_node:start(#{ b0 => B0, addr => RewardAddr,
@@ -77,7 +78,7 @@ test_uses_blacklists() ->
 				],
 				[features, pack_served_chunks] => true
 			},
-			[storage_modules] => [arweave_config:storage_module_to_config(StorageModule)]
+			[storage_modules] => ar_test_node:storage_module_configs(StorageModules)
 		}),
 		ar_test_node:connect_to_peer(peer1),
 		BadV1TXIDs = [V1TX#tx.id],
@@ -103,8 +104,7 @@ test_uses_blacklists() ->
 		assert_removed_txs(BadV1TXIDs),
 		assert_present_offsets(GoodOffsets),
 		assert_removed_offsets(BadOffsets),
-		StoreID = ar_storage_module:id(StorageModule),
-		assert_removed_chunks(StoreID, BadOffsets),
+		assert_removed_chunks(StorageModules, BadOffsets),
 		assert_does_not_accept_offsets(BadOffsets),
 		%% Add a new transaction to the blacklist, add a blacklisted transaction to whitelist.
 		ok = file:write_file(lists:nth(3, BlacklistFiles), <<>>),
@@ -226,10 +226,15 @@ setup(Node) ->
 	Wallet = {_, Pub} = ar_test_node:remote_call(Node, ar_wallet, new_keyfile, []),
 	RewardAddr = ar_wallet:to_address(Pub),
 	[B0] = ar_weave:init([{RewardAddr, ?AR(100000000), <<>>}]),
+	StorageModules = blacklist_storage_modules(RewardAddr),
 	ar_test_node:start_peer(Node, B0, RewardAddr, #{
-		[features, pack_served_chunks] => true
+		[features, pack_served_chunks] => true,
+		[storage_modules] => ar_test_node:storage_module_configs(StorageModules)
 	}),
 	{B0, Wallet}.
+
+blacklist_storage_modules(RewardAddr) ->
+	[{30 * ?MiB, 0, {replica_2_9, RewardAddr}}].
 
 create_txs(Wallet) ->
 	lists:foldl(
@@ -352,7 +357,6 @@ assert_removed_txs(BadTXIDs) ->
 				BadTXIDs
 			)
 		end,
-		500,
 		30000
 	),
 	%% We have to keep the confirmation data even for blacklisted transactions.
@@ -400,33 +404,54 @@ assert_removed_offsets(BadOffsets) ->
 		60000
 	).
 
-assert_removed_chunks(StoreID, BadOffsets) ->
-	PaddedBadOffsets = [
+assert_removed_chunks(StorageModules, BadOffsets) ->
+	PaddedBadOffsets = lists:usort([
 		ar_block:get_chunk_padded_offset(BadOffset)
 		|| BadOffset <- lists:flatten(BadOffsets)
+	]),
+	CoveredOffsets = [
+		Offset
+		|| Offset <- PaddedBadOffsets,
+			lists:any(fun(Module) -> storage_module_covers_offset(Module, Offset) end,
+				StorageModules)
 	],
-	{Start, End} = ar_storage_module:get_range(StoreID),
+	?assertEqual(PaddedBadOffsets, CoveredOffsets),
 	ok = ar_test_await:until(blacklist_removed_chunks,
 		fun() ->
-			Chunks = ar_chunk_storage:get_range(Start, End - Start, StoreID),
-			ChunkOffsets = [Offset || {Offset, _Chunk} <- Chunks],
-			RemainingOffsets = [
-				Offset
-				|| Offset <- PaddedBadOffsets,
-					lists:member(Offset, ChunkOffsets)
-			],
+			RemainingOffsets = remaining_stored_offsets(StorageModules, PaddedBadOffsets),
 			case RemainingOffsets of
 				[] ->
 					true;
 				_ ->
 					?debugFmt("Waiting until blacklisted chunks are removed. "
-							"Remaining offsets: ~p. Stored offsets: ~p.",
-							[RemainingOffsets, ChunkOffsets]),
+							"Remaining offsets: ~p.",
+							[RemainingOffsets]),
 					false
 			end
 		end,
 		60000
 	).
+
+storage_module_covers_offset(Module, Offset) ->
+	{Start, End} = ar_storage_module:module_range(Module),
+	Start =< Offset andalso Offset < End.
+
+remaining_stored_offsets(StorageModules, PaddedBadOffsets) ->
+	lists:usort(lists:flatten([
+		remaining_stored_offsets_for_module(Module, PaddedBadOffsets)
+		|| Module <- StorageModules
+	])).
+
+remaining_stored_offsets_for_module(Module, PaddedBadOffsets) ->
+	{Start, End} = ar_storage_module:module_range(Module),
+	StoreID = ar_storage_module:id(Module),
+	Chunks = ar_chunk_storage:get_range(Start, End - Start, StoreID),
+	ChunkOffsets = [Offset || {Offset, _Chunk} <- Chunks],
+	[
+		Offset
+		|| Offset <- PaddedBadOffsets,
+			lists:member(Offset, ChunkOffsets)
+	].
 
 assert_does_not_accept_offsets(BadOffsets) ->
 	ok = ar_test_await:until(blacklist_rejects_offsets,

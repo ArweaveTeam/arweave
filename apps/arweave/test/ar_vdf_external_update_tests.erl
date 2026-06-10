@@ -1,5 +1,5 @@
-%% @ar_test: vdf
 -module(ar_vdf_external_update_tests).
+-test_category([vdf]).
 
 -export([init/2]).
 
@@ -25,7 +25,7 @@ setup_external_update() ->
 	%% this is necessary so that we can test the behavior of apply_external_update without any
 	%% auto-computed VDF steps getting in the way.
 	_ = ar_test_node:start(
-		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
+		B0, ar_test_node:generate_address(main),
 		#{
 			[peers, vdf_server] => [
 				ar_util:format_peer(vdf_server_1()),

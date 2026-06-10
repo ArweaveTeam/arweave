@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, join/3, add_tip_block/2, add_block/1, request_tx_removal/1,
-		remove_block/1, block_count/0]).
+		remove_block/1, block_count/0, is_disk_space_sufficient/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -53,6 +53,9 @@ remove_block(Height) ->
 block_count() ->
 	[{_, BlockCount}] = ets:lookup(ar_header_sync, synced_blocks),
 	BlockCount.
+
+is_disk_space_sufficient() ->
+	gen_server:call(?MODULE, is_disk_space_sufficient).
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -251,6 +254,8 @@ handle_cast(Msg, State) ->
 	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
 	{noreply, State}.
 
+handle_call(is_disk_space_sufficient, _From, State) ->
+	{reply, State#state.is_disk_space_sufficient, State};
 handle_call(_Msg, _From, State) ->
 	{reply, not_implemented, State}.
 
