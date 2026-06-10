@@ -513,7 +513,7 @@ handle_info({event, nonce_limiter, initialized}, State) ->
 		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute},
 		{merkle_rebase_support_threshold, get_merkle_rebase_threshold(B)}
 	]),
-	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
+	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(B#block.height, RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
 	ar_events:send(node_state, {initialized, B}),
 	ar_events:send(node_state, {checkpoint_block,
@@ -1033,7 +1033,7 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
 	BlockTXPairs3 = tl(BlockTXPairs2),
 	{BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs3),
 	RecentBI3 = tl(RecentBI2),
-	PartitionUpperBound = ar_node:get_partition_upper_bound(RecentBI3),
+	PartitionUpperBound = ar_node:get_partition_upper_bound(B#block.height, RecentBI3),
 	case ar_node_utils:validate(B, PrevB, Accounts, BlockAnchors, RecentTXMap,
 			PartitionUpperBound) of
 		error ->
@@ -1587,7 +1587,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 		{scheduled_price_per_gib_minute, B#block.scheduled_price_per_gib_minute},
 		{merkle_rebase_support_threshold, get_merkle_rebase_threshold(B)}
 	]),
-	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(RecentBI),
+	SearchSpaceUpperBound = ar_node:get_partition_upper_bound(B#block.height, RecentBI),
 	ar_events:send(node_state, {search_space_upper_bound, SearchSpaceUpperBound}),
 	%% IMPORTANT! Always emit new_tip before checkpoint_block! For example,
 	%% ar_nonce_limiter.erl uses new_tip to update its representation of the

@@ -473,8 +473,17 @@ set_threshold(DiskPoolThreshold) ->
 %% @doc Compute the current disk pool threshold from the block index,
 %% cache it in ETS, and return it.
 update_threshold(BI) ->
-	DiskPoolThreshold = ar_node:get_partition_upper_bound(BI),
-	set_threshold(DiskPoolThreshold).
+	case ar_node:get_partition_upper_bound(ar_node:get_height(), BI) of
+		not_initialized ->
+			%% The block index is only partially loaded (e.g. mid-restart,
+			%% height already past the depth); keep the current threshold
+			%% rather than regressing it to a premature, too-high value.
+			?LOG_DEBUG([{event, disk_pool_threshold_kept_partial_index},
+					{block_index_len, length(BI)}]),
+			get_threshold();
+		DiskPoolThreshold ->
+			set_threshold(DiskPoolThreshold)
+	end.
 
 %%%===================================================================
 %%% Initialization and index management.
