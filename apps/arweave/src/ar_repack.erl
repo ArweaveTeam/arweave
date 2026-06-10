@@ -669,7 +669,7 @@ add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = Stat
 assemble_repack_chunk(
 		RepackChunk, AbsoluteEndOffset, TargetPacking, Metadata, OffsetChunkMap,
 		ConfiguredPacking, StoreID) ->
-	{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize} = Metadata,
+	#chunk_metadata{ chunk_size = ChunkSize } = Metadata,
 
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
@@ -699,16 +699,9 @@ assemble_repack_chunk(
 				offsets = #chunk_offsets{
 					absolute_offset = AbsoluteEndOffset,
 					bucket_end_offset = BucketEndOffset,
-					padded_end_offset = PaddedEndOffset,
-					relative_offset = RelativeOffset
+					padded_end_offset = PaddedEndOffset
 				},
-				metadata = #chunk_metadata{
-					chunk_data_key = ChunkDataKey,
-					tx_root = TXRoot,
-					data_root = DataRoot,
-					tx_path = TXPath,
-					chunk_size = ChunkSize
-				},
+				metadata = Metadata,
 				chunk = maps:get(PaddedEndOffset, OffsetChunkMap, not_found)
 			};
 		{false, _} ->
@@ -851,29 +844,28 @@ read_chunk_and_data_path(RepackChunk, #state{} = State) ->
 	#chunk_metadata{
 		chunk_data_key = ChunkDataKey
 	} = Metadata,
-	case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
+	case ar_data_sync:read_chunk_with_datapath(ChunkDataKey, StoreID) of
 		not_found ->
 			log_warning(chunk_not_found_in_chunk_data_db, RepackChunk, State, []),
-			RepackChunk#repack_chunk{ 
+			RepackChunk#repack_chunk{
 				metadata = Metadata#chunk_metadata{ data_path = not_found } };
-		{ok, V} ->
-			case binary_to_term(V, [safe]) of
-				{Chunk, DataPath} ->
-					RepackChunk#repack_chunk{ 
-						metadata = Metadata#chunk_metadata{ data_path = DataPath },
-						chunk = Chunk
-					};
-				DataPath when MaybeChunk /= not_found ->
-					RepackChunk#repack_chunk{ 
-						metadata = Metadata#chunk_metadata{ data_path = DataPath },
-						chunk = MaybeChunk
-					};
-				_ ->
-					log_warning(chunk_not_found, RepackChunk, State, []),
-					RepackChunk#repack_chunk{ 
-						metadata = Metadata#chunk_metadata{ data_path = not_found }
-					}
-			end
+		{ok, Chunk, DataPath} ->
+			RepackChunk#repack_chunk{
+				metadata = Metadata#chunk_metadata{ data_path = DataPath },
+				chunk = Chunk
+			};
+		{stored_elsewhere, DataPath} when MaybeChunk /= not_found ->
+			%% Bytes live in chunk_storage; reuse the chunk we already read in bulk
+			%% rather than paying a second read.
+			RepackChunk#repack_chunk{
+				metadata = Metadata#chunk_metadata{ data_path = DataPath },
+				chunk = MaybeChunk
+			};
+		_ ->
+			log_warning(chunk_not_found, RepackChunk, State, []),
+			RepackChunk#repack_chunk{
+				metadata = Metadata#chunk_metadata{ data_path = not_found }
+			}
 	end.
 
 update_chunk_state(RepackChunk, #state{} = State) ->
@@ -1332,11 +1324,12 @@ test_assemble_repack_chunk() ->
 	TXRoot = <<"tx_root">>,
 	DataRoot = <<"data_root">>,
 	TXPath = <<"tx_path">>,
-	RelativeOffset = 1000,
+	_RelativeOffset = 1000,
 	ChunkSize = ?DATA_CHUNK_SIZE,
 	Chunk = crypto:strong_rand_bytes(ChunkSize),
 
-	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize},
+	Metadata = #chunk_metadata{ chunk_data_key = ChunkDataKey, tx_root = TXRoot,
+		data_root = DataRoot, tx_path = TXPath, chunk_size = ChunkSize },
 
 	% %% Error - BucketEndOffset hasn't been initialized
 	?assertEqual(not_found,
@@ -1360,8 +1353,7 @@ test_assemble_repack_chunk() ->
 	ExpectedOffsets1 = #chunk_offsets{
 		absolute_offset = 100,
 		bucket_end_offset = 262144,
-		padded_end_offset = 100,
-		relative_offset = RelativeOffset
+		padded_end_offset = 100
 	},
 	?assertEqual(
 		ExpectedRepackedChunk#repack_chunk{
@@ -1390,8 +1382,7 @@ test_assemble_repack_chunk() ->
 	ExpectedOffsets2 = #chunk_offsets{
 		absolute_offset = 10_000_000,
 		bucket_end_offset = 10_223_616,
-		padded_end_offset = 10_223_616,
-		relative_offset = RelativeOffset
+		padded_end_offset = 10_223_616
 	},
 	?assertEqual(
 		ExpectedRepackedChunk#repack_chunk{
@@ -1424,10 +1415,11 @@ test_assemble_repack_chunk_too_small_unpacked() ->
 	TXRoot = <<"tx_root">>,
 	DataRoot = <<"data_root">>,
 	TXPath = <<"tx_path">>,
-	RelativeOffset = 1000,
+	_RelativeOffset = 1000,
 	ChunkSize = 100,
 
-	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize},
+	Metadata = #chunk_metadata{ chunk_data_key = ChunkDataKey, tx_root = TXRoot,
+		data_root = DataRoot, tx_path = TXPath, chunk_size = ChunkSize },
 
 	%% Small chunk before the strict data split threshold
 	%% unpacked -> unpacked
@@ -1464,8 +1456,7 @@ test_assemble_repack_chunk_too_small_unpacked() ->
 		offsets = #chunk_offsets{
 			absolute_offset = 10_000_000,
 			bucket_end_offset = 10_223_616,
-			padded_end_offset = 10_223_616,
-			relative_offset = RelativeOffset
+			padded_end_offset = 10_223_616
 		},
 		chunk = not_found
 	},
@@ -1483,10 +1474,11 @@ test_assemble_repack_chunk_too_small_packed() ->
 	TXRoot = <<"tx_root">>,
 	DataRoot = <<"data_root">>,
 	TXPath = <<"tx_path">>,
-	RelativeOffset = 1000,
+	_RelativeOffset = 1000,
 	ChunkSize = 100,
 
-	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize},
+	Metadata = #chunk_metadata{ chunk_data_key = ChunkDataKey, tx_root = TXRoot,
+		data_root = DataRoot, tx_path = TXPath, chunk_size = ChunkSize },
 
 	%% Small chunk before the strict data split threshold
 	%% packed -> unpacked
@@ -1515,8 +1507,7 @@ test_assemble_repack_chunk_too_small_packed() ->
 		offsets = #chunk_offsets{
 			absolute_offset = 10_000_000,
 			bucket_end_offset = 10_223_616,
-			padded_end_offset = 10_223_616,
-			relative_offset = RelativeOffset
+			padded_end_offset = 10_223_616
 		},
 		chunk = not_found
 	},

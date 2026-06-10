@@ -353,9 +353,6 @@ handle_call({get, Packing, ID}, _From, State) ->
 	#state{ sync_record_by_id_type = SyncRecordByIDType } = State,
 	{reply, maps:get({ID, Packing}, SyncRecordByIDType, ar_intervals:new()), State};
 
-handle_call(await_initialized, _From, State) ->
-	{reply, initialized, State};
-
 handle_call({add, End, Start, ID}, _From, State) ->
 	{Reply, State2} = add2(End, Start, ID, State),
 	{reply, Reply, State2};

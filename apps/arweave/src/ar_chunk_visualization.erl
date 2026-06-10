@@ -150,7 +150,7 @@ normalize_sync_record(false, _, _) ->
 normalize_sync_record(_, _, not_found) ->
 	error;
 normalize_sync_record({true, Packing}, PaddedEndOffset, Metadata) ->
-	{_, _, _, _, _, ChunkSize} = Metadata,
+	#chunk_metadata{ chunk_size = ChunkSize } = Metadata,
 	case ar_chunk_storage:is_storage_supported(PaddedEndOffset, ChunkSize, Packing) of
 		true ->
 			Packing;

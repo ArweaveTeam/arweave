@@ -20,15 +20,19 @@
 
 -behaviour(gen_server).
 
--export([name/1, start_link/2, register_workers/0, join/1, add_tip_block/2, add_block/2,
+-export([name/1, start_link/2,
+		register_workers/0, join/1,
+		add_tip_block/2, add_block/2,
 		invalidate_bad_data_record/4, is_chunk_proof_ratio_attractive/3,
-		get_chunk/2, get_chunk_data/2, get_chunk_proof/2, get_tx_data/1, get_tx_data/2,
+		get_chunk/2, get_chunk_data/2, get_chunk_proof/2,
+		get_tx_data/1, get_tx_data/2,
 		get_tx_offset/1, get_tx_offset_data_in_range/2,
 		request_tx_data_removal/3, request_data_removal/4,
 		record_chunk_cache_size_metric/0, is_chunk_cache_full/0, is_disk_space_sufficient/1,
 		init_sync_status/1,
 		get_chunk_by_byte/2, advance_chunks_index_cursor/1, has_data_root/2,
-		read_chunk/3, write_chunk/5, read_data_path/2,
+		read_chunk_with_full_metadata/2, read_chunk_with_datapath/2,
+		write_chunk/5, read_data_path/2,
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
 		is_footprint_record_supported/3,
@@ -68,6 +72,8 @@
 %%% Public interface.
 %%%===================================================================
 
+name(StoreID) when is_atom(StoreID) ->
+	list_to_atom("ar_data_sync_" ++ atom_to_list(StoreID));
 name(StoreID) ->
 	list_to_atom("ar_data_sync_" ++ ar_storage_module:label(StoreID)).
 
@@ -456,6 +462,89 @@ advance_chunks_index_cursor(Cursor) ->
 	PrefixSpaceSize = trunc(math:pow(2, ?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
 	((Cursor div PrefixSpaceSize) + 2) * PrefixSpaceSize.
 
+%% @doc Read the chunk covering `Offset', returning its bytes and full merkle
+%% metadata. Resolves the chunk via the `chunks_index', reads from chunk_data_db
+%% falling back to chunk_storage, and tolerates the metadata-before-data flush race.
+%%
+%% Returns:
+%%   `{ok, Metadata, Offsets, Chunk}' — found; `data_path' is set.
+%%   `no_chunk'                       — nothing stored at or after `Offset'.
+%%   `{error, {data_missing, Metadata, Offsets}}' — index entry exists but the
+%%                                      chunk data never landed; the caller may
+%%                                      invalidate the record.
+%%   `{error, Reason}'                — storage error.
+-spec read_chunk_with_full_metadata(Offset, StoreID) ->
+		{ok, #chunk_metadata{}, #chunk_offsets{}, binary()}
+		| no_chunk
+		| {error, {data_missing, #chunk_metadata{}, #chunk_offsets{}}}
+		| {error, term()}
+	when Offset :: non_neg_integer(), StoreID :: term().
+read_chunk_with_full_metadata(Offset, StoreID) ->
+	case get_chunk_by_byte(Offset, StoreID) of
+		{error, invalid_iterator} ->
+			no_chunk;
+		{error, Reason} ->
+			{error, Reason};
+		{ok, #chunk_metadata{ chunk_data_key = ChunkDataKey } = Metadata,
+				#chunk_offsets{ absolute_offset = AbsoluteEndOffset } = Offsets} ->
+			case read_chunk_with_datapath(ChunkDataKey, StoreID) of
+				{ok, Chunk, DataPath} ->
+					{ok, Metadata#chunk_metadata{ data_path = DataPath }, Offsets, Chunk};
+				{stored_elsewhere, DataPath} ->
+					%% Bytes live in chunk_storage; fetch them by offset,
+					%% retrying the same index-before-data race the
+					%% chunk_data_db read above tolerates (the enciphered
+					%% chunk can land after its index entry and data path).
+					case get_chunk_storage_with_retry(AbsoluteEndOffset - 1, StoreID) of
+						{_EndOffset, Chunk} ->
+							{ok, Metadata#chunk_metadata{ data_path = DataPath }, Offsets,
+								Chunk};
+						not_found ->
+							{error, {data_missing, Metadata, Offsets}}
+					end;
+				not_found ->
+					{error, {data_missing, Metadata, Offsets}};
+				{error, Reason} ->
+					{error, Reason}
+			end
+	end.
+
+%% @doc Read a stored chunk by its `ChunkDataKey', returning the bytes and data
+%% path, tolerating the metadata-before-data flush race. A key carries no offset,
+%% so a chunk whose bytes live in chunk_storage can only be reported as
+%% `stored_elsewhere'; read by offset via `read_chunk_with_full_metadata/2' to
+%% materialize those bytes.
+%%
+%% Returns:
+%%   `{ok, Chunk, DataPath}'        — found inline in chunk_data_db.
+%%   `{stored_elsewhere, DataPath}' — chunk lives in chunk_storage; only the data
+%%                                    path is available here.
+%%   `not_found'                    — no data for this key.
+%%   `{error, Reason}'              — storage error.
+-spec read_chunk_with_datapath(ChunkDataKey, StoreID) ->
+		{ok, binary(), binary()}
+		| {stored_elsewhere, binary()}
+		| not_found
+		| {error, term()}
+	when ChunkDataKey :: binary(), StoreID :: term().
+read_chunk_with_datapath(ChunkDataKey, StoreID) ->
+	case get_chunk_data_with_retry(ChunkDataKey, StoreID) of
+		not_found ->
+			not_found;
+		{ok, Value} ->
+			case binary_to_term(Value, [safe]) of
+				{Chunk, DataPath} ->
+					{ok, Chunk, DataPath};
+				DataPath ->
+					{stored_elsewhere, DataPath}
+			end;
+		Error ->
+			Error
+	end.
+
+%% @doc Materialize a chunk from its offset and `ChunkDataKey' without retrying.
+%% Serves the `get_chunk/2' path, where chunks are already sync-recorded so a
+%% miss is a genuine absence and retrying would only add client-facing latency.
 read_chunk(Offset, ChunkDataKey, StoreID) ->
 	case get_chunk_data(ChunkDataKey, StoreID) of
 		not_found ->
@@ -474,6 +563,45 @@ read_chunk(Offset, ChunkDataKey, StoreID) ->
 			end;
 		Error ->
 			Error
+	end.
+
+-define(READ_CHUNK_RETRY_DELAY_MS, 250).
+-define(READ_CHUNK_RETRY_ATTEMPTS, 8).
+
+%% @doc Retry `get_chunk_data/2' in the rare race where the `chunks_index' entry
+%% is present before the chunk data lands.
+get_chunk_data_with_retry(ChunkDataKey, StoreID) ->
+	get_chunk_data_with_retry(ChunkDataKey, StoreID, ?READ_CHUNK_RETRY_ATTEMPTS).
+
+get_chunk_data_with_retry(ChunkDataKey, StoreID, 0) ->
+	get_chunk_data(ChunkDataKey, StoreID);
+get_chunk_data_with_retry(ChunkDataKey, StoreID, Attempts) ->
+	case get_chunk_data(ChunkDataKey, StoreID) of
+		not_found ->
+			timer:sleep(?READ_CHUNK_RETRY_DELAY_MS),
+			get_chunk_data_with_retry(ChunkDataKey, StoreID, Attempts - 1);
+		Other ->
+			Other
+	end.
+
+%% @doc Retry `ar_chunk_storage:get/2' in the same `chunks_index'-before-data
+%% race as `get_chunk_data_with_retry/2', for chunks whose bytes live in
+%% chunk_storage (e.g. replica_2_9): the index entry and `stored_elsewhere'
+%% data path can land before the enciphered chunk is written, so a single read
+%% would spuriously report `not_found' and the caller would invalidate a record
+%% that is merely still landing.
+get_chunk_storage_with_retry(Offset, StoreID) ->
+	get_chunk_storage_with_retry(Offset, StoreID, ?READ_CHUNK_RETRY_ATTEMPTS).
+
+get_chunk_storage_with_retry(Offset, StoreID, 0) ->
+	ar_chunk_storage:get(Offset, StoreID);
+get_chunk_storage_with_retry(Offset, StoreID, Attempts) ->
+	case ar_chunk_storage:get(Offset, StoreID) of
+		not_found ->
+			timer:sleep(?READ_CHUNK_RETRY_DELAY_MS),
+			get_chunk_storage_with_retry(Offset, StoreID, Attempts - 1);
+		Other ->
+			Other
 	end.
 
 write_chunk(Offset, ChunkMetadata, Chunk, Packing, StoreID) ->
@@ -685,6 +813,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
 			block_index = CurrentBI } = State,
 	{BlockStartOffset, Blocks} = pick_missing_blocks(CurrentBI, BlockTXPairs),
 	ok = remove_orphaned_data(State, BlockStartOffset, CurrentWeaveSize),
+	ok = cut_orphaned_storage_modules(BlockStartOffset, CurrentWeaveSize),
 	{WeaveSize, AddedDataRootIDs} = lists:foldl(
 		fun ({_BH, []}, Acc) ->
 				Acc;
@@ -1143,7 +1272,18 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
 								true ->
 									{ok, Proof#{ unpacked_chunk => MaybeUnpackedChunk }};
 								false ->
-									log_chunk_error(RequestOrigin, get_chunk_invalid_id,
+									%% An all-zero unpacked chunk means the slot has
+									%% entropy written but no chunk data XOR'd in yet
+									%% — a transient race in repack-in-place. Don't
+									%% invalidate the sync_record; tag it
+									%% `entropy_only_slot' to distinguish from genuine
+									%% corruption.
+									IsEntropyOnly = is_all_zero(MaybeUnpackedChunk),
+									ErrorTag = case IsEntropyOnly of
+										true  -> entropy_only_slot;
+										false -> get_chunk_invalid_id
+									end,
+									log_chunk_error(RequestOrigin, ErrorTag,
 											[{chunk_size, ChunkSize},
 											{actual_chunk_size, byte_size(MaybeUnpackedChunk)},
 											{requested_packing,
@@ -1157,8 +1297,13 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
 											{expected_chunk_id, ar_util:encode(ChunkID)},
 											{chunk_id, ar_util:encode(ComputedChunkID)},
 											{actual_chunk, binary:part(MaybeUnpackedChunk, 0, 32)}]),
-									invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize,
-										StoreID, get_chunk_invalid_id}),
+									case IsEntropyOnly of
+										true ->
+											ok;
+										false ->
+											invalidate_bad_data_record({AbsoluteEndOffset,
+												ChunkSize, StoreID, get_chunk_invalid_id})
+									end,
 									{error, chunk_not_found}
 							end
 					end
@@ -1295,6 +1440,13 @@ read_chunk_with_metadata(
 					{ok, DataPath, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath}
 			end
 	end.
+
+%% @doc True iff every byte is zero, distinguishing an entropy-only slot
+%% (transient, do not invalidate) from a genuinely corrupt chunk (invalidate).
+-spec is_all_zero(binary()) -> boolean().
+is_all_zero(<<>>) -> true;
+is_all_zero(<<0, Rest/binary>>) -> is_all_zero(Rest);
+is_all_zero(_) -> false.
 
 invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
 	T = ar_disk_pool:get_threshold(),
@@ -1603,6 +1755,19 @@ remove_orphaned_data(State, BlockStartOffset, WeaveSize) ->
 	ok = ar_sync_record:cut(BlockStartOffset, ar_data_sync, StoreID),
 	ar_events:send(sync_record, {global_cut, BlockStartOffset}),
 	ar_disk_pool:reset_orphaned_data_roots_timestamps(OrphanedDataRoots),
+	ok.
+
+cut_orphaned_storage_modules(BlockStartOffset, WeaveSize)
+		when BlockStartOffset >= WeaveSize ->
+	ok;
+cut_orphaned_storage_modules(BlockStartOffset, _WeaveSize) ->
+	StorageModules =
+		[arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
+	lists:foreach(
+		fun(Module) ->
+			gen_server:cast(name(ar_storage_module:id(Module)), {cut, BlockStartOffset})
+		end,
+		StorageModules),
 	ok.
 
 store_sync_state(#data_sync_state{ store_id = ?DEFAULT_MODULE } = State) ->
@@ -2211,8 +2376,9 @@ get_footprint_record_initialization_state(State) ->
 			{Cursor, false}
 	end.
 
-%% @doc Initialize the footprint record from the ar_data_sync record.
-%% We don't filter by packing to ensure all synced intervals are migrated.
+%% @doc Initialize the footprint record from the packing-specific sync record;
+%% it decides whether the configured storage module holds the chunk locally, so
+%% generic sync state from another packing is not enough.
 initialize_footprint_record(complete, _Packing, State) ->
 	State;
 initialize_footprint_record(Cursor, Packing, State) ->
@@ -2222,7 +2388,7 @@ initialize_footprint_record(Cursor, Packing, State) ->
 	} = State,
 	BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
 
-	case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, ar_data_sync, StoreID) of
+	case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, Packing, ar_data_sync, StoreID) of
 		not_found ->
 			ok = ar_kv:put(migration_db(StoreID),
 				?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
