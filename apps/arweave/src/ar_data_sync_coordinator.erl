@@ -8,8 +8,8 @@
 %%% This module owns global backpressure and footprint-slot accounting. Peer
 %%% workers publish their queue/in-flight load here, and the rebalance tick uses
 %%% that load plus peer ratings to resize per-peer queues and concurrency.
-%% @ar_test: fast
 -module(ar_data_sync_coordinator).
+-test_category([fast]).
 
 -behaviour(gen_server).
 
@@ -64,17 +64,14 @@
 start_link(Workers) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Workers, []).
 
+%% @doc The caller must gate on `is_syncing_enabled/0' before invoking this;
+%% when syncing is disabled the whole network-sync subtree is omitted.
 register_workers() ->
-	case is_syncing_enabled() of
-		true ->
-			{Workers, WorkerNames} = register_sync_workers(),
-			WorkerMaster = ?CHILD_WITH_ARGS(
-				ar_data_sync_coordinator, worker, ar_data_sync_coordinator,
-				[WorkerNames]),
-				[WorkerMaster] ++ Workers;
-		false ->
-			[]
-	end.
+	{Workers, WorkerNames} = register_sync_workers(),
+	WorkerMaster = ?CHILD_WITH_ARGS(
+		ar_data_sync_coordinator, worker, ar_data_sync_coordinator,
+		[WorkerNames]),
+	[WorkerMaster] ++ Workers.
 
 register_sync_workers() ->
 	SyncJobs = arweave_config:get([sync, jobs]),

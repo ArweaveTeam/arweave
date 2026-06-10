@@ -886,11 +886,12 @@ handle_info({event, node_state, {new_tip, B, _PrevB}}, State) ->
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};
 
-%% ar_chunk_copy has finished. Kick the per-StoreID ar_peer_sync gen_server
-%% to start the network-sync producer/consumer loops.
+%% ar_chunk_copy has finished. The `complete' event fires only after every
+%% dispatched read is acknowledged, so the workers' `pack_and_store_chunk'
+%% casts are already queued in this mailbox ahead of the network-sync loops.
 handle_info({event, chunk_copy, {complete, StoreID}},
 		#data_sync_state{ store_id = StoreID } = State) ->
-	ar_util:cast_after(2000, ar_peer_sync:name(StoreID), enqueue),
+	gen_server:cast(ar_peer_sync:name(StoreID), enqueue),
 	ar_peer_sync:sync(StoreID),
 	{noreply, State};
 handle_info({event, chunk_copy, _}, State) ->

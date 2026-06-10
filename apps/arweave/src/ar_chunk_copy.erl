@@ -1,60 +1,55 @@
 %%% @doc Cross-module chunk-copy subsystem.
 %%%
-%%% Two responsibilities, one gen_server:
+%%% A single registered gen_server runs the per-StoreID producer loop and
+%%% tracks in-flight transient `ar_chunk_copy_worker' processes. At most one
+%%% worker runs per source module at a time (preserving disk-seek
+%%% serialization); the producer carves each pending interval into
+%%% `?READ_RANGE_CHUNKS'-sized sub-tasks, spawning the next only when the
+%%% source frees up.
 %%%
-%%%  1. **Producer** (per-StoreID copy loop): scan for unsynced byte ranges
-%%%     that already exist on this node's disk under another storage module's
-%%%     ID, and enqueue cross-module copy tasks. 
-%%%
-%%%  2. **Worker pool** (per-StoreID): receive `read_range' tasks and
-%%%     dispatch them to `ar_chunk_copy_worker' instances.
-%%%
-%% @ar_test: fast
+%%% A copy publishes `{chunk_copy, {complete, StoreID}}' via `ar_events' only
+%%% once scanning is done AND no worker is still running for the target, so
+%%% subscribers can read the event as "every chunk I asked for has been read".
 -module(ar_chunk_copy).
+-test_category([fast]).
 
 -behaviour(gen_server).
 
--export([start_link/1, register_workers/0, task_completed/3, start_copy/1]).
+-export([start_link/0, start_copy/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_sup.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(READ_RANGE_CHUNKS, 400).
--define(MAX_ACTIVE_TASKS, 10).
--define(MAX_QUEUED_TASKS, 50).
--define(SYNC_RECORD_READY_TIMEOUT_MS, 900).
 
--record(worker_tasks, {
-	worker,
-	task_queue = queue:new(),
-	active_count = 0
-}).
-
-%% Producer-side state for one storage module's copy operation.
+%% Per-StoreID producer state.
 -record(copy_state, {
-	store_id,
 	range_start,
 	range_end,
-	%% Intervals discovered in another storage module that should be copied
-	%% into this module. Element shape: {OtherStoreID, {Start, End}}.
+	%% Intervals discovered for the current source module, as
+	%% `{SourceStoreID, {Start, End}}'. Consumed head-first by `step/3'.
 	pending_intervals = [],
-	%% Other storage modules still to scan for shared intervals.
+	%% Source storage modules still to scan.
 	pending_modules = [],
-	%% Mirror of ar_device_lock's view of this module's sync-mode lock.
-	sync_status = off
+	%% Mirror of `ar_device_lock''s sync-mode lock, carried across
+	%% iterations so re-acquires can notice state transitions.
+	sync_status = off,
+	%% Source module this target is parked on in `step/3' (head interval
+	%% blocked by `is_source_busy/2'), or `undefined'. Lets
+	%% `on_worker_down/3' wake only the targets waiting on the freed source.
+	waiting_on = undefined
 }).
 
 -record(state, {
-	workers = #{},
-	%% In-progress copy operations, one entry per StoreID:
-	%% StoreID => #copy_state{}. An entry is created on start_copy/1,
-	%% progresses through scan + read_range steps via {copy, StoreID}
-	%% casts, and is removed when the operation finishes.
-	in_progress = #{}
+	%% TargetStoreID => #copy_state{} for in-flight copy operations.
+	in_progress = #{},
+	%% Monitor Ref => {SourceStoreID, {Start, End, Source, Target}} for
+	%% running workers; on `'DOWN'' this says which source freed up and
+	%% which task it was.
+	monitors = #{}
 }).
 
 %%%===================================================================
@@ -113,83 +108,105 @@ terminate(Reason, _State) ->
 	ok.
 
 %%%===================================================================
-%%% Private functions — copy (producer side).
+%%% Producer.
 %%%===================================================================
 
-%% @doc Initialize copy state for a storage module and kick off the loop.
-%% pending_modules is seeded with the default module first (it holds
-%% pre-strict-split data clamped by DiskPoolThreshold) followed by every
-%% other on-disk module overlapping this StoreID's range.
+%% @doc Initialise per-StoreID producer state and kick the step machine.
+%% `pending_modules' leads with the default module (holding pre-strict-split
+%% data clamped by `DiskPoolThreshold'), then every other on-disk module
+%% overlapping this StoreID's range.
 do_start_copy(StoreID, State) ->
-	InProgress = State#state.in_progress,
 	{RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
 	%% Match ar_data_sync's range adjustment.
-	RangeStart2 = max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
+	RangeStart2 = max(0,
+		ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
 	RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
 	SyncStatus = ar_data_sync:init_sync_status(StoreID),
-	OtherStorageModules = [ar_storage_module:id(Module)
-		|| Module <- ar_storage_module:get_all(RangeStart2, RangeEnd2),
-		ar_storage_module:id(Module) /= StoreID],
+	OtherStorageModules = [ar_storage_module:id(M)
+		|| M <- ar_storage_module:get_all(RangeStart2, RangeEnd2),
+		ar_storage_module:id(M) /= StoreID],
 	CopyState = #copy_state{
-		store_id = StoreID,
 		range_start = RangeStart2,
 		range_end = RangeEnd2,
 		sync_status = SyncStatus,
 		pending_modules = [?DEFAULT_MODULE | OtherStorageModules]
 	},
-	gen_server:cast(?MODULE, {copy, StoreID}),
-	State#state{ in_progress = maps:put(StoreID, CopyState, InProgress) }.
+	gen_server:cast(?MODULE, {step, StoreID}),
+	save_progress(StoreID, CopyState, State).
 
-copy(StoreID, State) ->
-	with_lock(StoreID, State, fun do_copy/2,
-		fun(StoreID2) ->
-			ar_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE, {copy, StoreID2})
-		end).
-
-with_lock(StoreID, State, Active, Retry) ->
-	case maps:get(StoreID, State#state.in_progress, undefined) of
-		undefined ->
+maybe_step(StoreID, State) ->
+	case maps:find(StoreID, State#state.in_progress) of
+		error ->
 			State;
-		#copy_state{} = CopyState ->
-			Status = ar_device_lock:acquire_lock(sync, StoreID, CopyState#copy_state.sync_status),
+		{ok, CopyState} ->
+			Status = ar_device_lock:acquire_lock(sync, StoreID,
+				CopyState#copy_state.sync_status),
 			CopyState2 = CopyState#copy_state{ sync_status = Status },
 			case Status of
 				active ->
-					Active(CopyState2, State);
+					step(StoreID, CopyState2, State);
 				paused ->
-					Retry(StoreID),
-					update_progress(CopyState2, State);
+					ar_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE,
+						{step, StoreID}),
+					save_progress(StoreID, CopyState2, State);
 				_ ->
-					finish(CopyState2, State)
+					finish(StoreID, State)
 			end
 	end.
 
-%% Dispatcher: route to the right action based on what's left in copy_state.
-%% Three distinct operations:
-%%   - finish:      both work-lists empty → emit completion event
-%%   - scan_module: no pending intervals, pop next module to scan
-%%   - read_range:  pending interval, issue the cross-module read
-do_copy(#copy_state{
-		pending_intervals = [],
-		pending_modules = [] } = CopyState, State) ->
-	finish(CopyState, State);
-do_copy(#copy_state{
-		pending_intervals = [],
-		pending_modules = [OtherStoreID | OtherStoreIDs] } = CopyState, State) ->
-	scan_module(OtherStoreID, OtherStoreIDs, CopyState, State);
-do_copy(#copy_state{
-		pending_intervals = [{OtherStoreID, Range} | Rest] } = CopyState, State) ->
-	read_range(OtherStoreID, Range, Rest, CopyState, State).
+%% Scanning + dispatching done; finish iff no in-flight worker
+%% remains for this target.
+step(StoreID,
+		#copy_state{ pending_intervals = [], pending_modules = [] } = CopyState,
+		State) ->
+	case target_has_pending_workers(StoreID, State) of
+		true -> save_progress(StoreID, CopyState, State);
+		false -> finish(StoreID, State)
+	end;
+step(StoreID,
+		#copy_state{ pending_intervals = [],
+			pending_modules = [Source | Rest] } = CopyState,
+		State) ->
+	CopyState2 = enqueue_intervals_from_source(StoreID, Source, Rest, CopyState),
+	gen_server:cast(?MODULE, {step, StoreID}),
+	save_progress(StoreID, CopyState2, State);
+step(StoreID,
+		#copy_state{ pending_intervals = [{Source, {Start, End}} | Rest] } =
+			CopyState,
+		State) ->
+	case is_source_busy(Source, State) of
+		true ->
+			%% Wait — `on_worker_down/3' wakes us when this source frees up.
+			save_progress(StoreID,
+				CopyState#copy_state{ waiting_on = Source }, State);
+		false ->
+			read_chunk_range(StoreID, Source, Start, End, Rest, CopyState,
+				State)
+	end.
 
-%% Scan one source storage module for unsynced intervals belonging to
-%% this StoreID. The default module's range is clamped to
-%% DiskPoolThreshold because it holds pre-strict-split data that
-%% shouldn't be copied past the threshold; permanent modules are
-%% scanned across the full range.
-scan_module(SourceStoreID, OtherStoreIDs, #copy_state{
-		store_id = StoreID,
-		range_start = RangeStart,
-		range_end = RangeEnd } = CopyState, State) ->
+%% Carve one sub-task off the head interval, spawn+monitor a worker, and drop
+%% or shrink the head accordingly. Cast `{step, StoreID}' to try the next
+%% interval; the source-busy gate stops us piling up on this same source.
+read_chunk_range(StoreID, Source, Start, End, Rest, CopyState, State) ->
+	Span = ?READ_RANGE_CHUNKS * ?DATA_CHUNK_SIZE,
+	ChunkEnd = min(Start + Span, End),
+	Args = {Start, ChunkEnd, Source, StoreID},
+	{_Pid, Ref} = spawn_monitor(ar_chunk_copy_worker, run, [Args]),
+	Intervals2 = case ChunkEnd == End of
+		true -> Rest;
+		false -> [{Source, {ChunkEnd, End}} | Rest]
+	end,
+	CopyState2 = CopyState#copy_state{ pending_intervals = Intervals2,
+		waiting_on = undefined },
+	State2 = State#state{
+		monitors = maps:put(Ref, {Source, Args}, State#state.monitors)
+	},
+	gen_server:cast(?MODULE, {step, StoreID}),
+	save_progress(StoreID, CopyState2, State2).
+
+enqueue_intervals_from_source(StoreID, SourceStoreID, OtherStoreIDs,
+		#copy_state{ range_start = RangeStart,
+			range_end = RangeEnd } = CopyState) ->
 	ScanEnd = case SourceStoreID of
 		?DEFAULT_MODULE -> min(RangeEnd, ar_disk_pool:get_threshold());
 		_ -> RangeEnd
