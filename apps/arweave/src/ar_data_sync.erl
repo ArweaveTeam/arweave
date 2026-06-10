@@ -890,7 +890,7 @@ handle_info({chunk, {unpacked, Key, ChunkArgs}}, State) ->
 		Result ->
 			{Packing, _U, AbsoluteEndOffset, _TXRoot, ChunkSize} = ChunkArgs,
 			Reason = missing_unpacked_chunk,
-			prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+			ar_metrics:counter_inc(sync_chunks_skipped, [Reason]),
 			?LOG_DEBUG([{event, skipping_synced_chunk}, 
 					{reason, Reason}, {key, Key},
 					{packing, ar_serialize:encode_packing(Packing, true)},
@@ -1761,7 +1761,7 @@ write_not_blacklisted_chunk(Offset, ChunkDataKey, Chunk, ChunkSize, DataPath, Pa
 		{false, true} ->
 			case put_chunk_data(ChunkDataKey, StoreID, {Chunk, DataPath}) of
 				ok ->
-					prometheus_counter:inc(chunks_stored, [
+					ar_metrics:counter_inc(chunks_stored, [
 						ar_storage_module:packing_label(Packing),
 						ar_storage_module:label(StoreID)]),
 					{ok, Packing};
@@ -1825,7 +1825,7 @@ process_invalid_fetched_chunk(Peer, Byte, State) ->
 	process_invalid_fetched_chunk(Peer, Byte, State, got_invalid_proof_from_peer, []).
 process_invalid_fetched_chunk(Peer, Byte, State, Event, ExtraLogs) ->
 	#data_sync_state{ weave_size = WeaveSize } = State,
-	prometheus_counter:inc(sync_chunks_skipped, [Event]),
+	ar_metrics:counter_inc(sync_chunks_skipped, [Event]),
 	?LOG_WARNING([{event, skipping_synced_chunk},
 			{reason, Event}, {peer, ar_util:format_peer(Peer)},
 			{byte, Byte}, {weave_size, WeaveSize} | ExtraLogs]),
@@ -1840,7 +1840,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 	case is_chunk_proof_ratio_attractive(ChunkSize, TXSize, DataPath) of
 		false ->
 			Reason = got_too_big_proof_from_peer,
-			prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+			ar_metrics:counter_inc(sync_chunks_skipped, [Reason]),
 			?LOG_WARNING([{event, skipping_synced_chunk},
 					{reason, Reason},
 					{peer, ar_util:format_peer(Peer)},
@@ -1852,7 +1852,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
 			case ar_sync_record:is_recorded(Byte + 1, ar_data_sync, StoreID) of
 				{true, _} ->
 					Reason = chunk_already_synced,
-					prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+					ar_metrics:counter_inc(sync_chunks_skipped, [Reason]),
 					?LOG_DEBUG([{event, skipping_synced_chunk},
 						{reason, Reason},
 						{peer, ar_util:format_peer(Peer)},
@@ -1883,7 +1883,7 @@ pack_and_store_chunk(Args = {_, AbsoluteEndOffset, _, _, _, _, _, _, _, _, _, _}
 		true ->
 			%% We do not put data into storage modules unless it is well confirmed.
 			Reason = chunk_is_above_disk_pool_threshold,
-			prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+			ar_metrics:counter_inc(sync_chunks_skipped, [Reason]),
 			?LOG_DEBUG([{event, skipping_synced_chunk},
 				{reason, Reason},
 				{absolute_end_offset, AbsoluteEndOffset},
@@ -1915,7 +1915,7 @@ pack_and_store_chunk2(Args, State) ->
 			case maps:is_key({AbsoluteEndOffset, RequiredPacking}, PackingMap) of
 				true ->
 					Reason = chunk_already_being_packed,
-					prometheus_counter:inc(sync_chunks_skipped, [Reason]),
+					ar_metrics:counter_inc(sync_chunks_skipped, [Reason]),
 					?LOG_DEBUG([{event, skipping_synced_chunk},
 						{reason, Reason},
 						{absolute_end_offset, AbsoluteEndOffset},
@@ -2161,7 +2161,7 @@ log_insufficient_disk_space(StoreID) ->
 record_chunk_cache_size_metric() ->
 	case ets:lookup(ar_data_sync_state, chunk_cache_size) of
 		[{_, Size}] ->
-			prometheus_gauge:set(chunk_cache_size, Size);
+			ar_metrics:gauge_set(chunk_cache_size, Size);
 		_ ->
 			ok
 	end.

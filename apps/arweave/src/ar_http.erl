@@ -121,7 +121,7 @@ req(Args, ReestablishedConnection) ->
 			%%       native units and it converts it to <unit> .To query native units, use:
 			%%       erlant:monotonic_time() without any arguments.
 			%%       See: https://github.com/deadtrickster/prometheus.erl/blob/6dd56bf321e99688108bb976283a80e4d82b3d30/src/prometheus_time.erl#L2-L84
-			prometheus_histogram:observe(ar_http_request_duration_seconds, [
+			ar_metrics:histogram_observe(ar_http_request_duration_seconds, [
 					method_to_list(Method),
 					ar_http_iface_server:label_http_path(list_to_binary(Path)),
 					ar_metrics:get_status_class(Response)
@@ -174,7 +174,7 @@ handle_info({gun_up, PID, _Protocol}, #state{ status_by_pid = StatusByPID } = St
 		{{connecting, PendingRequests}, MonitorRef, Peer} ->
 			[gen_server:reply(ReplyTo, {ok, PID}) || {ReplyTo, _} <- PendingRequests],
 			StatusByPID2 = maps:put(PID, {connected, MonitorRef, Peer}, StatusByPID),
-			prometheus_gauge:inc(outbound_connections),
+			ar_metrics:gauge_inc(outbound_connections),
 			ar_peers:connected_peer(Peer),
 			{noreply, State#state{ status_by_pid = StatusByPID2 }};
 		{connected, _MonitorRef, Peer} ->
@@ -206,7 +206,7 @@ handle_info({gun_error, PID, Reason},
 				{connecting, PendingRequests} ->
 					reply_error(PendingRequests, Reason2);
 				connected ->
-					prometheus_gauge:dec(outbound_connections),
+					ar_metrics:gauge_dec(outbound_connections),
 					ok
 			end,
 			ar_peers:disconnected_peer(Peer),
@@ -240,7 +240,7 @@ handle_info({gun_down, PID, Protocol, Reason, _KilledStreams, _UnprocessedStream
 				{connecting, PendingRequests} ->
 					reply_error(PendingRequests, Reason2);
 				_ ->
-					prometheus_gauge:dec(outbound_connections),
+					ar_metrics:gauge_dec(outbound_connections),
 					ok
 			end,
 			ar_peers:disconnected_peer(Peer),
@@ -259,7 +259,7 @@ handle_info({'DOWN', _Ref, process, PID, Reason},
 				{connecting, PendingRequests} ->
 					reply_error(PendingRequests, Reason);
 				_ ->
-					prometheus_gauge:dec(outbound_connections),
+					ar_metrics:gauge_dec(outbound_connections),
 					ok
 			end,
 			ar_peers:disconnected_peer(Peer),
@@ -336,7 +336,7 @@ reply_error([PendingRequest | PendingRequests], Reason) ->
 	reply_error(PendingRequests, Reason).
 
 record_response_status(Method, Path, Response) ->
-	prometheus_counter:inc(gun_requests_total, [method_to_list(Method),
+	ar_metrics:counter_inc(gun_requests_total, [method_to_list(Method),
 			ar_http_iface_server:label_http_path(list_to_binary(Path)),
 			ar_metrics:get_status_class(Response)]).
 
@@ -473,14 +473,14 @@ log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
 	end.
 
 download_metric(Data, #{path := Path}) ->
-	prometheus_counter:inc(
+	ar_metrics:counter_inc(
 		http_client_downloaded_bytes_total,
 		[ar_http_iface_server:label_http_path(list_to_binary(Path))],
 		byte_size(Data)
 	).
 
 upload_metric(#{method := post, path := Path, body := Body}) ->
-	prometheus_counter:inc(
+	ar_metrics:counter_inc(
 		http_client_uploaded_bytes_total,
 		[ar_http_iface_server:label_http_path(list_to_binary(Path))],
 		byte_size(Body)

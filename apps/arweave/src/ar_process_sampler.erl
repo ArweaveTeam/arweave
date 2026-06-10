@@ -74,30 +74,34 @@ handle_info(sample_processes, State) ->
 	%% Clear out the process_info metric so that we don't persist data about processes that
 	%% have exited. We have to deregister and re-register the metric because we don't track
 	%% all the label values used.
-	prometheus_gauge:deregister(process_info),
-	prometheus_gauge:new([{name, process_info},
-		{labels, [process, type]},
-		{help, "Sampling info about active processes. Only set when debug=true."}]),
+	ar_metrics:gauge_deregister(process_info),
+	%% Guard this runtime re-declaration like the metric writes: prometheus
+	%% can be transiently absent during e2e restarts.
+	try prometheus_gauge:new([{name, process_info},
+			{labels, [process, type]},
+			{help, "Sampling info about active processes. Only set when debug=true."}])
+	catch _:_ -> ok
+	end,
 
 	maps:foreach(fun(ProcessName, Metrics) ->
 		Memory = maps:get(memory, Metrics),
 		Reductions = maps:get(reductions, Metrics),
 		MsgQueueLen = maps:get(message_queue_len, Metrics),
-		prometheus_gauge:set(process_info, [ProcessName, memory], Memory),
-		prometheus_gauge:set(process_info, [ProcessName, reductions], Reductions),
-		prometheus_gauge:set(process_info, [ProcessName, message_queue], MsgQueueLen),
+		ar_metrics:gauge_set(process_info, [ProcessName, memory], Memory),
+		ar_metrics:gauge_set(process_info, [ProcessName, reductions], Reductions),
+		ar_metrics:gauge_set(process_info, [ProcessName, message_queue], MsgQueueLen),
 		log_long_message_queues(ProcessName, MsgQueueLen, maps:get(processes, Metrics))
 	end, ProcessMetrics),
 
-	prometheus_gauge:set(process_info, [total, memory], erlang:memory(total)),
-	prometheus_gauge:set(process_info, [processes, memory], erlang:memory(processes)),
-	prometheus_gauge:set(process_info, [processes_used, memory], erlang:memory(processes_used)),
-	prometheus_gauge:set(process_info, [system, memory], erlang:memory(system)),
-	prometheus_gauge:set(process_info, [atom, memory], erlang:memory(atom)),
-	prometheus_gauge:set(process_info, [atom_used, memory], erlang:memory(atom_used)),
-	prometheus_gauge:set(process_info, [binary, memory], erlang:memory(binary)),
-	prometheus_gauge:set(process_info, [code, memory], erlang:memory(code)),
-	prometheus_gauge:set(process_info, [ets, memory], erlang:memory(ets)),
+	ar_metrics:gauge_set(process_info, [total, memory], erlang:memory(total)),
+	ar_metrics:gauge_set(process_info, [processes, memory], erlang:memory(processes)),
+	ar_metrics:gauge_set(process_info, [processes_used, memory], erlang:memory(processes_used)),
+	ar_metrics:gauge_set(process_info, [system, memory], erlang:memory(system)),
+	ar_metrics:gauge_set(process_info, [atom, memory], erlang:memory(atom)),
+	ar_metrics:gauge_set(process_info, [atom_used, memory], erlang:memory(atom_used)),
+	ar_metrics:gauge_set(process_info, [binary, memory], erlang:memory(binary)),
+	ar_metrics:gauge_set(process_info, [code, memory], erlang:memory(code)),
+	ar_metrics:gauge_set(process_info, [ets, memory], erlang:memory(ets)),
 
 	log_binary_alloc(),
 
@@ -149,7 +153,7 @@ average_utilization(Util) ->
 		Util),
 	maps:foreach(
 		fun(Type, {Sum, Count}) ->
-			prometheus_gauge:set(scheduler_utilization, [Type], Sum / Count)
+			ar_metrics:gauge_set(scheduler_utilization, [Type], Sum / Count)
 		end,
 		Averages).
 
@@ -238,11 +242,11 @@ log_binary_alloc_instances([Instance | _Rest]) ->
 	log_binary_alloc_carrier(Id, MBCS),
 	log_binary_alloc_carrier(Id, SBCS),
 
-	prometheus_gauge:set(allocator, [binary, Id, calls, binary_alloc_count],
+	ar_metrics:gauge_set(allocator, [binary, Id, calls, binary_alloc_count],
 		(AllocGigaCount * 1000000000) + AllocCount),
-	prometheus_gauge:set(allocator, [binary, Id, calls, binary_free_count],
+	ar_metrics:gauge_set(allocator, [binary, Id, calls, binary_free_count],
 		(FreeGigaCount * 1000000000) + FreeCount),
-	prometheus_gauge:set(allocator, [binary, Id, calls, binary_realloc_count],
+	ar_metrics:gauge_set(allocator, [binary, Id, calls, binary_realloc_count],
 		(ReallocGigaCount * 1000000000) + ReallocCount).
 
 log_binary_alloc_carrier(Id, Carrier) ->
@@ -256,20 +260,20 @@ log_binary_alloc_carrier(Id, Carrier) ->
 
 	case Blocks of
 		[{binary_alloc, [{count, _, BlockCount, _}, {size, _, BlockSize, _}]}] ->
-			prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_block_count],
+			ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_count],
 				BlockCount),
-			prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_block_size],
+			ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_size],
 				BlockSize);
 		_ ->
-			prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_block_count],
+			ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_count],
 				0),
-			prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_block_size],
+			ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_size],
 				0)
 	end,
 
-	prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_carrier_count],
+	ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_carrier_count],
 		CarrierCount),
-	prometheus_gauge:set(allocator, [binary, Id, CarrierType, binary_carrier_size],
+	ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_carrier_size],
 		CarrierSize).
 
 

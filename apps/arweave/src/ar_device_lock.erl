@@ -94,7 +94,7 @@ set_device_lock_metric(StoreID, Mode, Status) ->
 		_ -> -2		
 	end,
 	StoreIDLabel = ar_storage_module:label(StoreID),
-	prometheus_gauge:set(device_lock_status, [StoreIDLabel, Mode], StatusCode).
+	ar_metrics:gauge_set(device_lock_status, [StoreIDLabel, Mode], StatusCode).
 
 %%%===================================================================
 %%% Generic server callbacks.

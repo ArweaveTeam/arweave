@@ -157,7 +157,7 @@ handle_cast({sync_range, SyncTask}, State) ->
 			%% can be re-enqueued; otherwise it stays phantom-in-flight
 			%% in sync_task_queue's dedup overlay.
 			try
-				prometheus_counter:inc(sync_tasks,
+				ar_metrics:counter_inc(sync_tasks,
 					[dropped_unavailable, ar_util:format_peer(Peer)], 1)
 			catch
 				_:_ -> ok

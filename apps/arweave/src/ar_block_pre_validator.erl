@@ -569,7 +569,7 @@ pre_validate_nonce_limiter_global_step_number(B, PrevB, SolutionResigned, Peer) 
 					{rejected, invalid_nonce_limiter_global_step_number, H, Peer}),
 			invalid;
 		true ->
-			prometheus_gauge:set(block_vdf_advance, StepNumber - CurrentStepNumber),
+			ar_metrics:gauge_set(block_vdf_advance, StepNumber - CurrentStepNumber),
 			pre_validate_previous_solution_hash(B, PrevB, SolutionResigned, Peer)
 	end.
 
@@ -939,7 +939,7 @@ post_block_reject_warn(B, Step, Peer, Params) ->
 
 record_block_pre_validation_time(ReceiveTimestamp) ->
 	TimeMs = timer:now_diff(erlang:timestamp(), ReceiveTimestamp) / 1000,
-	prometheus_histogram:observe(block_pre_validation_time, TimeMs).
+	ar_metrics:histogram_observe(block_pre_validation_time, TimeMs).
 
 priority(B, Peer) ->
 	{B#block.height, get_peer_score(Peer)}.

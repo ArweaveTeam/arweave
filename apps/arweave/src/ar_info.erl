@@ -32,7 +32,7 @@ get_info() ->
             end,
         <<"blocks">> => ar_header_sync:block_count(),
         <<"cached_blocks">> => ar_storage:block_count(),
-        <<"peers">> => prometheus_gauge:value(arweave_peer_count),
+        <<"peers">> => ar_metrics:gauge_value(arweave_peer_count),
         <<"queue_length">> =>
             element(
                 2,

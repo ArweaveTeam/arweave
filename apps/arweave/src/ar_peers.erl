@@ -551,7 +551,7 @@ handle_cast({add_peer, Peer, Release}, State) ->
 handle_cast(rank_peers, State) ->
 	LifetimePeers = score_peers(lifetime),
 	CurrentPeers = score_peers(current),
-	prometheus_gauge:set(arweave_peer_count, length(LifetimePeers)),
+	ar_metrics:gauge_set(arweave_peer_count, length(LifetimePeers)),
 	set_ranked_peers(lifetime, rank_peers(LifetimePeers)),
 	set_ranked_peers(current, rank_peers(CurrentPeers)),
 	ar_util:cast_after(?RANK_PEERS_FREQUENCY_MS, ?MODULE, rank_peers),

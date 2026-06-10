@@ -1103,7 +1103,7 @@ count_states(cache, #state{} = State) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			prometheus_gauge:set(repack_chunk_states, [StoreIDLabel, cache, ChunkState], Count),
+			ar_metrics:gauge_set(repack_chunk_states, [StoreIDLabel, cache, ChunkState], Count),
 			Acc
 		end,
 		ok,
@@ -1128,7 +1128,7 @@ count_states(queue, #state{} = State) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			prometheus_gauge:set(repack_chunk_states, [StoreIDLabel, queue, ChunkState], Count),
+			ar_metrics:gauge_set(repack_chunk_states, [StoreIDLabel, queue, ChunkState], Count),
 			Acc
 		end,
 		ok,

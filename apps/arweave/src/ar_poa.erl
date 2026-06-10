@@ -236,7 +236,7 @@ validate2({spora_2_6, _} = Packing, Args) ->
 			TXRoot, Chunk, _UnpackedChunk, _SubChunkIndex} = Args,
 	ChunkSize = ChunkEndOffset - ChunkStartOffset,
 	AbsoluteEndOffset = BlockStartOffset + TXStartOffset + ChunkEndOffset,
-	prometheus_counter:inc(validating_packed_spora, [ar_packing_server:packing_atom(Packing)]),
+	ar_metrics:counter_inc(validating_packed_spora, [ar_packing_server:packing_atom(Packing)]),
 	case ar_packing_server:unpack(Packing, AbsoluteEndOffset, TXRoot, Chunk, ChunkSize) of
 		{error, _} ->
 			false;
@@ -280,7 +280,7 @@ validate3(Packing, Args) ->
 	%% to 256 KiB.
 	UnpackedSubChunk = binary:part(UnpackedChunk, SubChunkStartOffset, SubChunkSize),
 	PackingAtom = ar_packing_server:packing_atom(Packing),
-	prometheus_counter:inc(validating_packed_spora, [PackingAtom]),
+	ar_metrics:counter_inc(validating_packed_spora, [PackingAtom]),
 	case ar_packing_server:unpack_sub_chunk(Packing, AbsoluteEndOffset,
 			TXRoot, Chunk, SubChunkStartOffset) of
 		{error, _} ->

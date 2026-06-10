@@ -262,7 +262,7 @@ persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset, Validation, DataPa
 				ok ->
 					put_data_root_state(DataRootID, DiskPoolDataRootValue),
 					ets:update_counter(ar_data_sync_state, disk_pool_size, {2, ChunkSize}),
-					prometheus_gauge:inc(pending_chunks_size, ChunkSize),
+					ar_metrics:gauge_inc(pending_chunks_size, ChunkSize),
 					cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey, DataPathHash),
 					ok
 			end
@@ -500,7 +500,7 @@ populate_data_roots(DataRootMap, StoreID) ->
 populate_data_roots2(Index, DataRootMap, Cursor, Sum) ->
 	case ar_kv:get_next(Index, Cursor) of
 		none ->
-			prometheus_gauge:set(pending_chunks_size, Sum),
+			ar_metrics:gauge_set(pending_chunks_size, Sum),
 			maps:map(
 				fun(DataRootID, DataRootTuple = {_Size, _Timestamp, _TXIDSet}) ->
 					put_data_root_state(DataRootID, DataRootTuple)
@@ -631,7 +631,7 @@ process_next_chunk(
 	end.
 
 process_chunk(DiskPool, StoreID, DiskPoolKey, DiskPoolValue) ->
-	prometheus_counter:inc(disk_pool_processed_chunks),
+	ar_metrics:counter_inc(disk_pool_processed_chunks),
 	<< Timestamp:256, _DataPathHash/binary >> = DiskPoolKey,
 	DiskPoolChunk = parse_chunk(DiskPoolValue),
 	{_Offset, ChunkSize, DataRoot, TXSize, ChunkDataKey,
@@ -1101,7 +1101,7 @@ remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID, ChunkSize) ->
 
 decrease_occupied_size(Size, DataRootID) ->
 	ets:update_counter(ar_data_sync_state, disk_pool_size, {2, -Size}),
-	prometheus_gauge:dec(pending_chunks_size, Size),
+	ar_metrics:gauge_dec(pending_chunks_size, Size),
 	case get_data_root_state(DataRootID) of
 		not_found ->
 			ok;
@@ -1145,7 +1145,7 @@ record_chunks_count() ->
 	DB = index_db(?DEFAULT_MODULE),
 	case ar_kv:count(DB) of
 		Count when is_integer(Count) ->
-			prometheus_gauge:set(disk_pool_chunks_count, Count);
+			ar_metrics:gauge_set(disk_pool_chunks_count, Count);
 		Error ->
 			?LOG_WARNING([{event, failed_to_read_disk_pool_chunks_count},
 					{error, io_lib:format("~p", [Error])}])
