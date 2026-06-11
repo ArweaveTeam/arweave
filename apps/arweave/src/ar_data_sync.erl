@@ -1203,6 +1203,57 @@ log_chunk_error(RequestOrigin, Event, ExtraLogData) ->
 	do_log_chunk_error(error, Event, [{request_origin, RequestOrigin} | ExtraLogData]).
 
 get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrigin) ->
+	case do_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
+			RequestOrigin) of
+		{error, chunk_id_mismatch, MismatchInfo} ->
+			%% A chunk-id mismatch is only transient — and so worth retrying — in a
+			%% repack-in-place store, where a slot can momentarily hold entropy
+			%% (which unpacks to all zeroes) or partially written bytes before the
+			%% final chunk lands. Anywhere else a mismatch is genuine corruption, so
+			%% invalidate immediately and keep the retry (and its delay) off the
+			%% normal read path. Checking only on a mismatch keeps the happy path free.
+			case ar_storage_module:is_repack_in_place(StoreID) of
+				true ->
+					retry_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking,
+							StoreID, RequestOrigin, ?READ_CHUNK_RETRY_ATTEMPTS);
+				false ->
+					invalidate_after_chunk_id_mismatch(RequestOrigin, MismatchInfo)
+			end;
+		Result ->
+			Result
+	end.
+
+%% @doc Re-read after a chunk-id mismatch in a repack-in-place store: a slot can
+%% momentarily hold entropy or partially written bytes before the final chunk
+%% lands, so wait and retry to let the write catch up. A mismatch that survives
+%% the retries is genuine corruption, so invalidate the record.
+retry_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
+		RequestOrigin, 0) ->
+	case do_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
+			RequestOrigin) of
+		{error, chunk_id_mismatch, MismatchInfo} ->
+			invalidate_after_chunk_id_mismatch(RequestOrigin, MismatchInfo);
+		Result ->
+			Result
+	end;
+retry_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
+		RequestOrigin, Attempts) ->
+	timer:sleep(?READ_CHUNK_RETRY_DELAY_MS),
+	case do_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
+			RequestOrigin) of
+		{error, chunk_id_mismatch, _} ->
+			retry_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID,
+					RequestOrigin, Attempts - 1);
+		Result ->
+			Result
+	end.
+
+invalidate_after_chunk_id_mismatch(RequestOrigin, {LogData, InvalidateArgs}) ->
+	log_chunk_error(RequestOrigin, get_chunk_invalid_id, LogData),
+	invalidate_bad_data_record(InvalidateArgs),
+	{error, chunk_not_found}.
+
+do_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrigin) ->
 	case read_chunk_with_metadata(Offset, SeekOffset, StoredPacking, StoreID, true,
 			RequestOrigin) of
 		{error, Reason} ->
@@ -1272,39 +1323,31 @@ get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestOrig
 								true ->
 									{ok, Proof#{ unpacked_chunk => MaybeUnpackedChunk }};
 								false ->
-									%% An all-zero unpacked chunk means the slot has
-									%% entropy written but no chunk data XOR'd in yet
-									%% — a transient race in repack-in-place. Don't
-									%% invalidate the sync_record; tag it
-									%% `entropy_only_slot' to distinguish from genuine
-									%% corruption.
-									IsEntropyOnly = is_all_zero(MaybeUnpackedChunk),
-									ErrorTag = case IsEntropyOnly of
-										true  -> entropy_only_slot;
-										false -> get_chunk_invalid_id
-									end,
-									log_chunk_error(RequestOrigin, ErrorTag,
-											[{chunk_size, ChunkSize},
-											{actual_chunk_size, byte_size(MaybeUnpackedChunk)},
-											{requested_packing,
-												ar_serialize:encode_packing(Packing, true)},
-											{stored_packing,
-												ar_serialize:encode_packing(StoredPacking, true)},
-											{absolute_end_offset, AbsoluteEndOffset},
-											{offset, Offset},
-											{seek_offset, SeekOffset},
-											{store_id, StoreID},
-											{expected_chunk_id, ar_util:encode(ChunkID)},
-											{chunk_id, ar_util:encode(ComputedChunkID)},
-											{actual_chunk, binary:part(MaybeUnpackedChunk, 0, 32)}]),
-									case IsEntropyOnly of
-										true ->
-											ok;
-										false ->
-											invalidate_bad_data_record({AbsoluteEndOffset,
-												ChunkSize, StoreID, get_chunk_invalid_id})
-									end,
-									{error, chunk_not_found}
+									%% The unpacked bytes don't hash to the expected
+									%% chunk id. During repack-in-place the slot can
+									%% still hold entropy (which unpacks to all zeroes)
+									%% or partially written bytes, so return a retryable
+									%% marker carrying what the caller needs to log and
+									%% invalidate if the mismatch turns out to be
+									%% permanent.
+									LogData =
+										[{chunk_size, ChunkSize},
+										{actual_chunk_size, byte_size(MaybeUnpackedChunk)},
+										{requested_packing,
+											ar_serialize:encode_packing(Packing, true)},
+										{stored_packing,
+											ar_serialize:encode_packing(StoredPacking, true)},
+										{absolute_end_offset, AbsoluteEndOffset},
+										{offset, Offset},
+										{seek_offset, SeekOffset},
+										{store_id, StoreID},
+										{expected_chunk_id, ar_util:encode(ChunkID)},
+										{chunk_id, ar_util:encode(ComputedChunkID)},
+										{actual_chunk, binary:part(MaybeUnpackedChunk, 0,
+											min(32, byte_size(MaybeUnpackedChunk)))}],
+									InvalidateArgs = {AbsoluteEndOffset, ChunkSize,
+										StoreID, get_chunk_invalid_id},
+									{error, chunk_id_mismatch, {LogData, InvalidateArgs}}
 							end
 					end
 			end
@@ -1440,13 +1483,6 @@ read_chunk_with_metadata(
 					{ok, DataPath, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath}
 			end
 	end.
-
-%% @doc True iff every byte is zero, distinguishing an entropy-only slot
-%% (transient, do not invalidate) from a genuinely corrupt chunk (invalidate).
--spec is_all_zero(binary()) -> boolean().
-is_all_zero(<<>>) -> true;
-is_all_zero(<<0, Rest/binary>>) -> is_all_zero(Rest);
-is_all_zero(_) -> false.
 
 invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
 	T = ar_disk_pool:get_threshold(),
