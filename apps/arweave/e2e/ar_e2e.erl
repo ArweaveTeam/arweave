@@ -146,6 +146,32 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 		[join, auto] => true
 	}),
 
+	%% TEMP DIAGNOSTIC (uncommitted): post-restart, which index is missing TX2?
+	%% (1) tx_index resolution: get_tx_offset/1 -> {ok,{Offset,Size}} | {error,_}
+	%% (2) ar_data_sync sync record per store (drives the chunk read / re-sync)
+	DiagOffset = ?ALIGNED_PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE),
+	DiagTxOffset = ar_test_node:remote_call(Node, ar_data_sync, get_tx_offset, [TX2#tx.id]),
+	DiagPerModule = [{SID, ar_test_node:remote_call(Node, ar_sync_record,
+			is_recorded, [DiagOffset, ar_data_sync, SID])} || SID <- ModuleStoreIDs],
+	DiagDefault = ar_test_node:remote_call(Node, ar_sync_record, is_recorded,
+			[DiagOffset, ar_data_sync, "default"]),
+	DiagGlobal = ar_test_node:remote_call(Node, ar_sync_record, is_recorded,
+			[DiagOffset, ar_data_sync]),
+	?LOG_ERROR([{event, diag_post_restart_tx2}, {offset, DiagOffset},
+			{tx_offset, DiagTxOffset}, {global, DiagGlobal},
+			{default_store, DiagDefault}, {per_module, DiagPerModule}]),
+
+	%% After the restart, wait for the durable chunks to be recorded in their
+	%% modules again before serving. The persisted sync record can lag
+	%% node_joined; a stored chunk only becomes servable once the index that
+	%% points at it is back. If a chunk was genuinely lost (not just slow to
+	%% re-index) this still times out, but it isolates a recovery-timing race
+	%% from a true index loss.
+	lists:foreach(
+		fun(Offset) ->
+			ok = ar_test_await:chunk_recorded_in_modules(Node, Offset, ModuleStoreIDs)
+		end, DurableOffsets),
+
 	%% pack_served_chunks is not enabled but the data is stored unpacked, so we should
 	%% return it. After the restart-and-rejoin above the endpoint can transiently
 	%% 404 until the stored chunks become servable, so wait for the 200.
