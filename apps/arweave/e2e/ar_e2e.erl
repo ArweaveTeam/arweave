@@ -120,22 +120,15 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 
 	?LOG_INFO("Source node ~p assertions passed.", [Node]),
 
-	%% The restart below rejoins with no peers and `start_from_latest_state', which
-	%% drops disk pool data. Every chunk below the disk pool threshold (the test
-	%% places it mid-p2, so chunks up to 2 partitions are below it; B4/B5 are
-	%% deliberately left in the disk pool) must already be durable in a storage
-	%% module, or the restart loses it and the `http_tx_data' wait below times out
-	%% with nothing to re-sync from. A per-store_id sync record lookup counts only
-	%% module storage, unlike the global `http_chunks_recorded' above, which also
-	%% sees the disk pool.
-	ModuleStoreIDs = [ar_storage_module:id(Module) || Module <- StorageModules],
-	DurableOffsets = [EndOffset
-		|| {_Block, EndOffset, _ChunkSize} <- Chunks,
-			EndOffset =< 2 * ar_block:partition_size()],
-	lists:foreach(
-		fun(Offset) ->
-			ok = ar_test_await:chunk_recorded_in_modules(Node, Offset, ModuleStoreIDs)
-		end, DurableOffsets),
+	%% The restart below rejoins with no peers and `start_from_latest_state'.
+	%% `/tx/<id>/data' needs both the stored chunk and a tx_index offset lookup
+	%% (`ar_data_sync:get_tx_offset/1'); the tx_index entry can lag the chunk, and
+	%% if the restart races ahead, the graceful stop persists a tx_index with no
+	%% entry for this tx — after restart `get_tx_offset' returns `not_found' and the
+	%% endpoint 404s forever with no peer to recover from. `get_tx_data' resolves
+	%% and reads locally (no peer proxy), so confirming the endpoint serves here
+	%% means the chunk and tx_index are both present before the stop persists them.
+	{ok, _} = ar_test_await:http_tx_data(Node, TX2#tx.id),
 
 	ar_test_node:stop(TempNode),
 
@@ -145,32 +138,6 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
 		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
 		[join, auto] => true
 	}),
-
-	%% TEMP DIAGNOSTIC (uncommitted): post-restart, which index is missing TX2?
-	%% (1) tx_index resolution: get_tx_offset/1 -> {ok,{Offset,Size}} | {error,_}
-	%% (2) ar_data_sync sync record per store (drives the chunk read / re-sync)
-	DiagOffset = ?ALIGNED_PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE),
-	DiagTxOffset = ar_test_node:remote_call(Node, ar_data_sync, get_tx_offset, [TX2#tx.id]),
-	DiagPerModule = [{SID, ar_test_node:remote_call(Node, ar_sync_record,
-			is_recorded, [DiagOffset, ar_data_sync, SID])} || SID <- ModuleStoreIDs],
-	DiagDefault = ar_test_node:remote_call(Node, ar_sync_record, is_recorded,
-			[DiagOffset, ar_data_sync, "default"]),
-	DiagGlobal = ar_test_node:remote_call(Node, ar_sync_record, is_recorded,
-			[DiagOffset, ar_data_sync]),
-	?LOG_ERROR([{event, diag_post_restart_tx2}, {offset, DiagOffset},
-			{tx_offset, DiagTxOffset}, {global, DiagGlobal},
-			{default_store, DiagDefault}, {per_module, DiagPerModule}]),
-
-	%% After the restart, wait for the durable chunks to be recorded in their
-	%% modules again before serving. The persisted sync record can lag
-	%% node_joined; a stored chunk only becomes servable once the index that
-	%% points at it is back. If a chunk was genuinely lost (not just slow to
-	%% re-index) this still times out, but it isolates a recovery-timing race
-	%% from a true index loss.
-	lists:foreach(
-		fun(Offset) ->
-			ok = ar_test_await:chunk_recorded_in_modules(Node, Offset, ModuleStoreIDs)
-		end, DurableOffsets),
 
 	%% pack_served_chunks is not enabled but the data is stored unpacked, so we should
 	%% return it. After the restart-and-rejoin above the endpoint can transiently

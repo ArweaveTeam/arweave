@@ -19,7 +19,6 @@
 	%% reads the HTTP API. The two views of the same record can diverge
 	%% during boot or while caches warm, so pick deliberately.
 	chunk_recorded/3,               %% (Node, Offset, Opts) — see docstring
-	chunk_recorded_in_modules/3,    %% (Node, Offset, StoreIDs) — durable only
 	http_chunks_recorded/3,         %% (Node, Start, End)
 	http_chunks_not_recorded/3,     %% (Node, Start, End)
 	entropy_prepared/4,             %% (Node, StoreID, Start, End)
@@ -116,23 +115,6 @@
 chunk_recorded(Node, Offset, Opts) ->
 	do_until_true(chunk_recorded,
 		fun() -> is_chunk_recorded(Node, Offset, Opts) end).
-
-%% @doc Wait until `Offset' is recorded in one of `StoreIDs' — i.e. durable in a
-%% storage module, not merely in the disk pool. A per-store_id `is_recorded'
-%% lookup counts only that module; `chunk_recorded/3' tagged by packing and the
-%% HTTP `/sync_record' both also count `?DEFAULT_MODULE' (the disk pool).
--spec chunk_recorded_in_modules(Node :: atom(), Offset :: non_neg_integer(),
-		StoreIDs :: [term()]) ->
-	ok | {error, {timeout, term()}}.
-chunk_recorded_in_modules(Node, Offset, StoreIDs) ->
-	do_until_true(chunk_recorded_in_modules,
-		fun() ->
-			lists:any(
-				fun(StoreID) ->
-					on(Node, ar_sync_record, is_recorded,
-						[Offset, ar_data_sync, StoreID]) =/= false
-				end, StoreIDs)
-		end).
 
 %% @doc Wait until `Node' reports the byte range `[Start, End)' as
 %% recorded via its sync-record HTTP endpoint (plus footprint
