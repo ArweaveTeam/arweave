@@ -10,7 +10,7 @@
 -import(ar_test_node, [sign_v1_tx/3]).
 
 ar_node_interface_test_() ->
-	{timeout, 300, fun test_ar_node_interface/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_ar_node_interface/0}.
 
 test_ar_node_interface() ->
 	[B0] = ar_weave:init(),
@@ -24,7 +24,7 @@ test_ar_node_interface() ->
 	?assertEqual(H, ar_node:get_current_block_hash()).
 
 mining_reward_test_() ->
-	{timeout, 120, fun test_mining_reward/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_mining_reward/0}.
 
 test_mining_reward() ->
 	{_Priv1, Pub1} = ar_wallet:new_keyfile(),
@@ -60,7 +60,7 @@ test_mining_reward() ->
 % @doc Check that other nodes accept a new block and associated mining reward.
 multi_node_mining_reward_test_() ->
 	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
-		fun test_multi_node_mining_reward/0, 120).
+		fun test_multi_node_mining_reward/0, ?TEST_NODE_TIMEOUT).
 
 test_multi_node_mining_reward() ->
 	{_Priv1, Pub1} = ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []),
@@ -85,7 +85,7 @@ test_multi_node_mining_reward() ->
 
 %% @doc Ensure that TX replay attack mitigation works.
 replay_attack_test_() ->
-	{timeout, 120, fun() ->
+	{timeout, ?TEST_NODE_TIMEOUT, fun() ->
 		Key1 = {_Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),
@@ -111,7 +111,7 @@ replay_attack_test_() ->
 %% Create and verify execution of a signed exchange of value tx.
 wallet_transaction_test_() ->
 	ar_test_node:test_with_all_nodes_mocked([{ar_fork, height_2_6, fun() -> 0 end}],
-		fun test_wallet_transaction/0, 120).
+		fun test_wallet_transaction/0, ?TEST_NODE_TIMEOUT).
 
 test_wallet_transaction() ->
 	TestWalletTransaction = fun(KeyType) ->
@@ -133,14 +133,17 @@ test_wallet_transaction() ->
 		end
 	end,
 	[
-		{"PS256_65537", timeout, 60, TestWalletTransaction({?RSA_SIGN_ALG, 65537})},
-		{"ES256K", timeout, 60, TestWalletTransaction({?ECDSA_SIGN_ALG, secp256k1})},
-		{"Ed25519", timeout, 60, TestWalletTransaction({?EDDSA_SIGN_ALG, ed25519})}
+		{"PS256_65537", timeout, ?TEST_NODE_TIMEOUT,
+			TestWalletTransaction({?RSA_SIGN_ALG, 65537})},
+		{"ES256K", timeout, ?TEST_NODE_TIMEOUT,
+			TestWalletTransaction({?ECDSA_SIGN_ALG, secp256k1})},
+		{"Ed25519", timeout, ?TEST_NODE_TIMEOUT,
+			TestWalletTransaction({?EDDSA_SIGN_ALG, ed25519})}
 	].
 
 %% @doc Ensure that TX Id threading functions correctly (in the positive case).
 tx_threading_test_() ->
-	{timeout, 120, fun() ->
+	{timeout, ?TEST_NODE_TIMEOUT, fun() ->
 		Key1 = {_Priv1, Pub1} = ar_wallet:new(),
 		{_Priv2, Pub2} = ar_wallet:new(),
 		[B0] = ar_weave:init([{ar_wallet:to_address(Pub1), ?AR(10000), <<>>}]),

@@ -51,7 +51,7 @@ webhooks_test_() ->
 	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
 		fun test_webhooks/0,
-		120
+		?TEST_NODE_TIMEOUT
 	).
 
 test_webhooks() ->

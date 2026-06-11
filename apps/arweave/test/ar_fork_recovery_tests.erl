@@ -6,7 +6,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 height_plus_one_fork_recovery_test_() ->
-	{timeout, 240, fun test_height_plus_one_fork_recovery/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_height_plus_one_fork_recovery/0}.
 
 test_height_plus_one_fork_recovery() ->
 	%% Mine on two nodes until they fork. Mine an extra block on one of them.
@@ -35,7 +35,7 @@ test_height_plus_one_fork_recovery() ->
 	?assertEqual({ok, PeerBI}, ar_test_await:node_height(main, 4)).
 
 height_plus_three_fork_recovery_test_() ->
-	{timeout, 240, fun test_height_plus_three_fork_recovery/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_height_plus_three_fork_recovery/0}.
 
 test_height_plus_three_fork_recovery() ->
 	%% Mine on two nodes until they fork. Mine three extra blocks on one of them.
@@ -63,7 +63,7 @@ test_height_plus_three_fork_recovery() ->
 	?assertEqual({ok, MainBI}, ar_test_await:node_height(peer1, 4)).
 
 missing_txs_fork_recovery_test_() ->
-	{timeout, 240, fun test_missing_txs_fork_recovery/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_missing_txs_fork_recovery/0}.
 
 test_missing_txs_fork_recovery() ->
 	%% Mine a block with a transaction on the peer1 node
@@ -85,7 +85,7 @@ test_missing_txs_fork_recovery() ->
 	?assertEqual(1, length((ar_test_await:block_stored(H1))#block.txs)).
 
 orphaned_txs_are_remined_after_fork_recovery_test_() ->
-	{timeout, 240, fun test_orphaned_txs_are_remined_after_fork_recovery/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_orphaned_txs_are_remined_after_fork_recovery/0}.
 
 test_orphaned_txs_are_remined_after_fork_recovery() ->
 	%% Mine a transaction on peer1, mine two blocks on main to

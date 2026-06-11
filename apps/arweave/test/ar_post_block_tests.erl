@@ -94,7 +94,7 @@ post_2_8_test_() ->
 	}.
 
 recall_byte_out_of_bounds_test_() ->
-	{timeout, 120, fun test_recall_byte_out_of_bounds/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_recall_byte_out_of_bounds/0}.
 
 %% ------------------------------------------------------------------------------------------
 %% post_2_7_test_
@@ -401,7 +401,7 @@ test_add_external_block_with_invalid_timestamp() ->
 	post_block(B5, valid).
 
 rejects_invalid_blocks_test_() ->
-	{timeout, 120, fun test_rejects_invalid_blocks/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_rejects_invalid_blocks/0}.
 
 test_rejects_invalid_blocks() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
@@ -589,7 +589,7 @@ rejects_blocks_with_invalid_double_signing_proof_test_() ->
 		fun test_reject_block_invalid_double_signing_proof/0).
 
 rejects_blocks_with_small_rsa_keys_test_() ->
-	{timeout, 120, fun test_rejects_blocks_with_small_rsa_keys/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_rejects_blocks_with_small_rsa_keys/0}.
 
 test_rejects_blocks_with_small_rsa_keys() ->
 	[B0] = ar_weave:init(),

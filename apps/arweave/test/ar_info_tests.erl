@@ -7,14 +7,14 @@
 
 recent_blocks_test_() ->
 	[
-		{timeout, 300, fun test_recent_blocks_post/0},
-		{timeout, 300, fun test_recent_blocks_announcement/0}
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_recent_blocks_post/0},
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_recent_blocks_announcement/0}
 	].
 
 recent_forks_test_() ->
 	[
-		{timeout, 300, fun test_get_recent_forks/0},
-		{timeout, 300, fun test_recent_forks/0}
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_get_recent_forks/0},
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_recent_forks/0}
 	].
 
 %% -------------------------------------------------------------------------------------------

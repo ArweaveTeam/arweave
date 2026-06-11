@@ -1474,7 +1474,7 @@ get_account_tree_value(Key, Prefix, CustomDir) ->
 
 %% @doc Test block storage.
 store_and_retrieve_block_test_() ->
-	{timeout, 180, fun test_store_and_retrieve_block/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_store_and_retrieve_block/0}.
 
 test_store_and_retrieve_block() ->
 	[B0] = ar_weave:init(),

@@ -437,7 +437,7 @@ release_semaphore(Filepath) ->
 %%%===================================================================
 
 replica_2_9_test_() ->
-	{timeout, 60, fun test_replica_2_9/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_replica_2_9/0}.
 
 test_replica_2_9() ->
 	case ar_block:strict_data_split_threshold() of

@@ -9,7 +9,7 @@
 -include("ar_consensus.hrl").
 
 disk_pool_rotation_test_() ->
-	{timeout, 240, fun test_disk_pool_rotation/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_disk_pool_rotation/0}.
 
 test_disk_pool_rotation() ->
 	?LOG_DEBUG([{event, test_disk_pool_rotation_start}]),

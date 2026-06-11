@@ -9,7 +9,7 @@
 
 sync_record_test_() ->
 	[
-		{timeout, 120, fun test_sync_record/0}
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_sync_record/0}
 	].
 
 test_sync_record() ->

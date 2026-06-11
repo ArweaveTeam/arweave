@@ -8,28 +8,28 @@ get_chunk_below_strict_threshold_test_() ->
 	ar_test_util:with_mocked(
 		[strict_data_split_threshold_mock(10 * ?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_below_strict_threshold/0,
-		120
+		?TEST_NODE_TIMEOUT
 	).
 
 get_chunk_below_strict_threshold_small_tail_test_() ->
 	ar_test_util:with_mocked(
 		[strict_data_split_threshold_mock(10 * ?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_below_strict_threshold_small_tail/0,
-		120
+		?TEST_NODE_TIMEOUT
 	).
 
 get_chunk_above_strict_threshold_test_() ->
 	ar_test_util:with_mocked(
 		[strict_data_split_threshold_mock(?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_above_strict_threshold/0,
-		180
+		?TEST_NODE_TIMEOUT
 	).
 
 get_chunk_above_strict_threshold_small_tail_test_() ->
 	ar_test_util:with_mocked(
 		[strict_data_split_threshold_mock(?DATA_CHUNK_SIZE)],
 		fun test_get_chunk_above_strict_threshold_small_tail/0,
-		180
+		?TEST_NODE_TIMEOUT
 	).
 
 test_get_chunk_below_strict_threshold() ->

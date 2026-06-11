@@ -729,7 +729,7 @@ is_wallet_invalid(TX, Wallets) ->
 %%%===================================================================
 
 block_validation_test_() ->
-	{timeout, 90, fun test_block_validation/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_block_validation/0}.
 
 test_block_validation() ->
 	Wallet = {_, Pub} = ar_wallet:new(),

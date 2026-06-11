@@ -9,7 +9,7 @@
 -include("ar_consensus.hrl").
 
 recovers_from_corruption_test_() ->
-	{timeout, 300, fun test_recovers_from_corruption/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_recovers_from_corruption/0}.
 
 test_recovers_from_corruption() ->
 	?LOG_DEBUG([{event, test_recovers_from_corruption_start}]),
