@@ -78,8 +78,8 @@ end_per_testcase(_TestCase, Config) ->
 apply_overrides(GroupID, Overrides) ->
     maps:fold(
         fun(Field, Value, ok) ->
-            {ok, _} = arweave_config:set(
-                [client_throttling, GroupID, Field], Value),
+            ok = arweave_config:set(
+                   [client_throttling, GroupID, Field], Value),
             ok
         end, ok, Overrides).
 

@@ -93,7 +93,7 @@ req(Args, ReestablishedConnection) ->
 
 	LocalIPs = [
 		ar_util:peer_to_ip(LocalPeer)
-		|| LocalPeer <- arweave_config:get_peers(local)
+		|| LocalPeer <- arweave_config:get([peers, local])
 	],
 	case lists:member(ar_util:peer_to_ip(Peer), LocalIPs) of
 		true ->
