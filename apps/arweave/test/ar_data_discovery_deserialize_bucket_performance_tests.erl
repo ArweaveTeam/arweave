@@ -75,19 +75,24 @@ run_test(EndpointType) ->
 	%% only expand into sub-buckets that fall within the weave we know about.
 	ExpectedRows = expected_inserted_rows(EndpointType, UnboundedExpandedBucketCount),
 	install_bucket_mock(MockedFunction, SerializedBuckets),
-	Peer = ar_test_node:peer_ip(peer1),
+	%% Fetch from a real peer so the HTTP client path is unchanged, but insert
+	%% under a synthetic peer so background discovery for peer1 cannot skew the
+	%% ETS row-count assertion.
+	FetchPeer = ar_test_node:peer_ip(peer1),
+	TablePeer = table_peer(EndpointType),
 	ets:delete_all_objects(Table),
-	{FetchMs, {ok, Buckets}} = timer:tc(ar_http_iface_client, Endpoint, [Peer]),
-	{BeforeTableSize, BeforeTableMemoryWords, BeforeEtsMemory, BeforeTotalMemory, BeforeRSS} =
+	{FetchMs, {ok, Buckets}} = timer:tc(ar_http_iface_client, Endpoint, [FetchPeer]),
+	BeforePeerRows = peer_rows(Table, TablePeer),
+	{_BeforeTableSize, BeforeTableMemoryWords, BeforeEtsMemory, BeforeTotalMemory, BeforeRSS} =
 		memory_snapshot(Table),
 	{InsertMs, ok} = timer:tc(fun() ->
-		gen_server:cast(ar_data_discovery, {CastTag, Peer, Buckets}),
+		gen_server:cast(ar_data_discovery, {CastTag, TablePeer, Buckets}),
 		_ = sys:get_state(ar_data_discovery, infinity),
 		ok
 	end),
-	{AfterTableSize, AfterTableMemoryWords, AfterEtsMemory, AfterTotalMemory, AfterRSS} =
+	{_AfterTableSize, AfterTableMemoryWords, AfterEtsMemory, AfterTotalMemory, AfterRSS} =
 		memory_snapshot(Table),
-	RowsInserted = AfterTableSize - BeforeTableSize,
+	RowsInserted = peer_rows(Table, TablePeer) - BeforePeerRows,
 	MemoryWords = AfterTableMemoryWords - BeforeTableMemoryWords,
 	WordSize = erlang:system_info(wordsize),
 	MemoryBytes = MemoryWords * WordSize,
@@ -112,6 +117,14 @@ run_test(EndpointType) ->
 	}),
 	?assertEqual(ExpectedRows, RowsInserted),
 	ets:delete_all_objects(Table).
+
+table_peer(sync) ->
+	{127, 0, 0, 1, 0};
+table_peer(footprint) ->
+	{127, 0, 0, 1, 1}.
+
+peer_rows(Table, Peer) ->
+	ets:select_count(Table, [{{{'_', Peer}, '_'}, [], [true]}]).
 
 expected_inserted_rows(sync, UnboundedExpandedBucketCount) ->
 	WeaveSize = ar_node:get_weave_size(),
