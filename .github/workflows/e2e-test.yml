@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: [self-hosted, ubuntu, amd64, compile-runner]
+    runs-on: [self-hosted, ubuntu, amd64, build-runner]
     steps:
       # Clean workspace first (matches x-build.yml) so stale build
       # outputs from a previous job can't leak in.
@@ -190,15 +190,15 @@ jobs:
 
   e2e-tests:
     needs: [build, discover-cases]
-    # Dedicated, scheduler-capped pool (max 3/host on the two EPYCs) so
-    # the heavy 3-node-per-case mining jobs don't stack on build-runner
-    # and starve. See infra docs/04 "e2e-runner pool".
-    runs-on: [self-hosted, ubuntu, amd64, e2e-runner]
+    # Runs on the shared build-runner pool (unified; see infra docs/04).
+    # max-parallel below caps e2e fan-out so the heavy 3-node-per-case
+    # mining jobs don't oversubscribe the fleet.
+    runs-on: [self-hosted, ubuntu, amd64, build-runner]
     strategy:
       # One job per testcase. fail-fast off so a single flaky case
       # doesn't cancel the rest of the matrix.
       fail-fast: false
-      # Matches e2e-runner capacity: 3/host x 2 EPYCs = 6 concurrent.
+      # Cap concurrent e2e cases to 6 across the build-runner fleet.
       max-parallel: 6
       matrix:
         include: ${{ fromJson(needs.discover-cases.outputs.matrix) }}

@@ -28,11 +28,10 @@ jobs:
   build-template:
     runs-on:
       - self-hosted
-      # Build (compile) job: use a dedicated max-1-per-host compile-runner
-      # pool on ubuntu so concurrent runs' compiles spread across hosts
-      # instead of clumping. macOS keeps build-runner (no compile pool on
-      # the Mac fleet). Test jobs stay on build-runner.
-      - ${{ inputs.os_name == 'ubuntu' && 'compile-runner' || 'build-runner' }}
+      # Build (compile) job runs on the shared build-runner pool. The
+      # compile/e2e pools were unified into build-runner (one 24 GiB cap,
+      # max 3/host); see infra docs/04. Test jobs also use build-runner.
+      - build-runner
       - ${{ inputs.os_arch }}
       - ${{ inputs.os_name }}
       - ${{ inputs.os_release }}
