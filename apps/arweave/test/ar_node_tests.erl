@@ -174,7 +174,9 @@ test_persisted_mempool() ->
 	ar_test_node:start(B0),
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:disconnect_from(peer1),
-	SignedTX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main) }),
+	SignedTX = ar_test_node:sign_tx(main, Wallet, #{
+		last_tx => ar_test_node:get_tx_anchor(main)
+	}),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_test_node:post_tx_to_peer(main, SignedTX, false),
 	ok = ar_test_await:tx_in_mempool(main, SignedTX#tx.id),
 	arweave_config:with_test_config(fun() ->

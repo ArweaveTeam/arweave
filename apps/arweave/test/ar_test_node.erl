@@ -803,21 +803,29 @@ get_tx_price(Node, DataSize, Target) ->
 			path => Path
 		}),
 	Fee = binary_to_integer(Reply),
-	Path2 = "/price2/" ++ integer_to_list(DataSize) ++ "/"
-			++ binary_to_list(ar_util:encode(Target)),
-	{ok, {{<<"200">>, _}, _, Reply2, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => Path2
-		}),
-	Map = jiffy:decode(Reply2, [return_maps]),
-	case binary_to_integer(maps:get(<<"fee">>, Map)) of
+	{Fee2, Denomination} = get_tx_price2(Node, DataSize, Target),
+	case Fee2 of
 		Fee ->
-			{Fee, maps:get(<<"denomination">>, Map)};
-		Fee2 ->
+			{Fee, Denomination};
+		_ ->
 			?assert(false, io_lib:format("Fee mismatch, expected: ~B, got: ~B.", [Fee, Fee2]))
 	end.
+
+get_tx_price2(Node, DataSize, Target) ->
+	Path = "/price2/" ++ integer_to_list(DataSize) ++ "/"
+			++ binary_to_list(ar_util:encode(Target)),
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => peer_ip(Node),
+			path => Path
+		}),
+	Map = jiffy:decode(Reply, [return_maps]),
+	{binary_to_integer(maps:get(<<"fee">>, Map)), maps:get(<<"denomination">>, Map)}.
+
+get_tx_denomination(Node, DataSize, Target) ->
+	{_, Denomination} = get_tx_price2(Node, DataSize, Target),
+	Denomination.
 
 %% @doc Fetch the optimistic fee estimation (call GET /price/[size]) from the given node.
 get_optimistic_tx_price(Node, DataSize) ->
@@ -842,12 +850,13 @@ sign_tx(Wallet) ->
 	sign_tx(peer1, Wallet, #{ format => 2 }, fun ar_tx:sign/2).
 
 %% @doc Return a signed format=2 transaction with properties from the given Args map.
-%% If the fee is not in Args, fetch it from GET /price/{data_size}
+%% If the reward is not in Args, fetch it from GET /price/{data_size}
 %% or GET /price/{data_size}/{target} (if the target is specified) on the peer1 node.
+%% Use sign_tx/3 when Args includes a last_tx fetched from another node.
 sign_tx(Wallet, Args) ->
 	sign_tx(peer1, Wallet, insert_root(Args#{ format => 2 }), fun ar_tx:sign/2).
 
-%% @doc Like sign_tx/2, but use the given Node to fetch the fee estimation and
+%% @doc Like sign_tx/2, but use the given Node to fetch the fee estimation and default
 %% block anchor from.
 sign_tx(Node, Wallet, Args) ->
 	sign_tx(Node, Wallet, insert_root(Args#{ format => 2 }), fun ar_tx:sign/2).
@@ -857,6 +866,7 @@ sign_v1_tx(Wallet) ->
 	sign_tx(peer1, Wallet, #{}, fun ar_tx:sign_v1/2).
 
 %% @doc Like sign_tx/2 but return a format=1 transaction.
+%% Use sign_v1_tx/3 when TXParams includes a last_tx fetched from another node.
 sign_v1_tx(Wallet, TXParams) ->
 	sign_tx(peer1, Wallet, TXParams, fun ar_tx:sign_v1/2).
 
@@ -884,37 +894,49 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 	Data = maps:get(data, Args, <<>>),
 	DataSize = maps:get(data_size, Args, byte_size(Data)),
 	Format = maps:get(format, Args, 1),
-	{Fee, Denomination} = get_tx_price(Node, DataSize, maps:get(target, Args, <<>>)),
-	Fee2 =
-		case {Format, maps:get(reward, Args, none)} of
-			{1, none} ->
-				%% Make sure the v1 tx is not malleable by assigning a fee with only
-				%% the first digit being non-zero.
-				FirstDigit = binary_to_integer(binary:part(integer_to_binary(Fee), {0, 1})),
-				Len = length(integer_to_list(Fee)),
-				Fee3 = trunc((FirstDigit + 1) * math:pow(10, Len - 1)),
-				Fee3;
-			{_, none} ->
-				Fee;
-			{_, AssignedFee} ->
-				AssignedFee
-		end,
+	Target = maps:get(target, Args, <<>>),
+	{Fee, Denomination} = tx_fee_and_denomination(Node, DataSize, Target, Format, Args),
 	SignFun(
 		(ar_tx:new())#tx{
 			owner = Pub,
-			reward = Fee2,
+			reward = Fee,
 			data = Data,
-			target = maps:get(target, Args, <<>>),
+			target = Target,
 			quantity = maps:get(quantity, Args, 0),
 			tags = maps:get(tags, Args, []),
 			last_tx = maps:get(last_tx, Args, get_tx_anchor(Node)),
 			data_size = DataSize,
 			data_root = maps:get(data_root, Args, <<>>),
 			format = Format,
-			denomination = maps:get(denomination, Args, Denomination)
+			denomination = Denomination
 		},
 		Wallet
 	).
+
+tx_fee_and_denomination(Node, DataSize, Target, Format, Args) ->
+	case maps:get(reward, Args, none) of
+		none ->
+			{Fee, Denomination} = get_tx_price(Node, DataSize, Target),
+			{tx_fee(Format, Fee), maps:get(denomination, Args, Denomination)};
+		AssignedFee ->
+			Denomination =
+				case maps:find(denomination, Args) of
+					{ok, AssignedDenomination} ->
+						AssignedDenomination;
+					error ->
+						get_tx_denomination(Node, DataSize, Target)
+				end,
+			{AssignedFee, Denomination}
+	end.
+
+tx_fee(1, Fee) ->
+	%% Make sure the v1 tx is not malleable by assigning a fee with only
+	%% the first digit being non-zero.
+	FirstDigit = binary_to_integer(binary:part(integer_to_binary(Fee), {0, 1})),
+	Len = length(integer_to_list(Fee)),
+	trunc((FirstDigit + 1) * math:pow(10, Len - 1));
+tx_fee(_, Fee) ->
+	Fee.
 
 stop() ->
 	%% Match the ar_kv supervisor shutdown window so RocksDB can close before

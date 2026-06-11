@@ -29,7 +29,7 @@ test_mines_off_only_last_chunks() ->
 			DataSize = ?DATA_CHUNK_SIZE + 1023,
 			{DataRoot, DataTree} = ar_merkle:generate_tree([{RandomID, ?DATA_CHUNK_SIZE},
 					{ChunkID, DataSize}]),
-			TX = ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => DataSize,
+			TX = ar_test_node:sign_tx(main, Wallet, #{ last_tx => ar_test_node:get_tx_anchor(main), data_size => DataSize,
 					data_root => DataRoot }),
 			ar_test_node:post_and_mine(#{ miner => main, await_on => peer1 }, [TX]),
 			Offset = ?DATA_CHUNK_SIZE + 1,

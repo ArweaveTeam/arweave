@@ -5,7 +5,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--export([setup_nodes/0, setup_nodes/1,
+-export([setup_nodes/0, setup_nodes/1, setup_main_node/0, setup_main_node/1,
 		imperfect_split/1, build_proofs/3, build_proofs/4, build_proofs/5,
         tx/1, tx/2, tx/3, tx/4, make_fixed_data_tx/2, make_fixed_data_tx/3,
         wait_until_syncs_chunk/2,
@@ -30,15 +30,8 @@ setup_nodes(Options) ->
 	setup_nodes2(Options#{ addr => Addr, peer_addr => PeerAddr }).
 
 setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
-	Wallet = {_, Pub} = ar_wallet:new(),
-	{B0, Options2} =
-		case maps:get(b0, Options, not_set) of
-			not_set ->
-				[Genesis] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}], ar_retarget:switch_to_linear_diff(2)),
-				{Genesis, Options#{ b0 => Genesis }};
-			Value ->
-				{Value, Options}
-		end,
+	{Wallet, Options2} = setup_wallet_and_genesis(Options),
+	B0 = maps:get(b0, Options2),
 	Config = maps:get(config, Options, #{}),
 	PeerConfig = maps:get(peer_config, Options, #{}),
 	Options3 = Options2#{ config => maps:merge(Config, #{ [features, pack_served_chunks] => true }) },
@@ -49,6 +42,18 @@ setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
 		config => maps:merge(PeerConfig, #{ [features, pack_served_chunks] => true })
 	}),
 	ar_test_node:connect_to_peer(peer1),
+	Wallet.
+
+setup_main_node() ->
+	setup_main_node(#{}).
+
+setup_main_node(Options) ->
+	Addr = maps:get(addr, Options, ar_test_node:generate_address(main)),
+	{Wallet, Options2} = setup_wallet_and_genesis(Options#{ addr => Addr }),
+	Config = maps:get(config, Options2, #{}),
+	ar_test_node:start(Options2#{
+		config => maps:merge(Config, #{ [features, pack_served_chunks] => true })
+	}),
 	Wallet.
 
 make_fixed_data_tx(Wallet, Chunks) ->
@@ -93,7 +98,9 @@ tx(Params) when is_map(Params) ->
 		format := Format, reward := Reward } = Params,
 	TXAnchorPeer = maps:get(tx_anchor_peer, Params, main),
 	TXAnchor = ar_test_node:get_tx_anchor(TXAnchorPeer),
-	GetFeePeer = maps:get(get_fee_peer, Params, peer1),
+	%% Ensure we default to TXAnchorPeer so both the anchor and the
+	%% fee come from the same peer and avoid a potential race.
+	GetFeePeer = maps:get(get_fee_peer, Params, TXAnchorPeer),
 	case {SplitType, Format} of
 		{{fixed_data, DataRoot, Chunks}, v2} ->
 			Data = binary:list_to_bin(Chunks),
@@ -144,6 +151,21 @@ tx(Params) when is_map(Params) ->
 			TX = ar_test_node:sign_tx(GetFeePeer, Wallet, Args2),
 			{TX, Chunks}
 	end.
+
+setup_wallet_and_genesis(Options) ->
+	Wallet = {_, Pub} = ar_wallet:new(),
+	Options2 =
+		case maps:get(b0, Options, not_set) of
+			not_set ->
+				[Genesis] = ar_weave:init(
+					[{ar_wallet:to_address(Pub), ?AR(200000), <<>>}],
+					ar_retarget:switch_to_linear_diff(2)
+				),
+				Options#{ b0 => Genesis };
+			_ ->
+				Options
+		end,
+	{Wallet, Options2}.
 
 generate_random_split(ChunkCount) ->
 	Chunks = lists:foldl(
