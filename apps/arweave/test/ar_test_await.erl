@@ -49,6 +49,7 @@
 	block_index_matches/2,          %% (Node, BI)
 	node_joined/1,                  %% (Node)
 	txs_stored/1,                   %% (TXIDs)
+	txs_confirmation_data_stored/1, %% (TXIDs)
 
 	%% --- Mempool / TX state ---
 	txs_ready_for_mining/2,         %% (Node, TXs)
@@ -480,6 +481,24 @@ txs_stored(TXIDs) ->
 		fun() ->
 			lists:all(fun(TX) -> is_record(TX, tx) end,
 				ar_storage:read_tx(TXIDs))
+		end).
+
+%% @doc Wait until every TXID in `TXIDs' has confirmation data, which
+%% `ar_header_sync' records asynchronously after the block is applied.
+-spec txs_confirmation_data_stored(TXIDs :: [binary()]) ->
+	ok | {error, {timeout, term()}}.
+txs_confirmation_data_stored(TXIDs) ->
+	do_until_true(txs_confirmation_data_stored,
+		fun() ->
+			lists:all(
+				fun(TXID) ->
+					case ar_storage:get_tx_confirmation_data(TXID) of
+						{ok, {_, _}} -> true;
+						_ -> false
+					end
+				end,
+				TXIDs
+			)
 		end).
 
 %%%===================================================================

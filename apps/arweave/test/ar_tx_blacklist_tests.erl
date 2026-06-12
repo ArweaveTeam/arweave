@@ -334,12 +334,7 @@ assert_present_txs(GoodTXIDs) ->
 	?debugFmt("Waiting until these txids are stored: ~p.",
 			[[ar_util:encode(TXID) || TXID <- GoodTXIDs]]),
 	ok = ar_test_await:txs_stored(GoodTXIDs),
-	lists:foreach(
-		fun(TXID) ->
-			?assertMatch({ok, {_, _}}, ar_storage:get_tx_confirmation_data(TXID))
-		end,
-		GoodTXIDs
-	).
+	ok = ar_test_await:txs_confirmation_data_stored(GoodTXIDs).
 
 assert_removed_txs(BadTXIDs) ->
 	?debugFmt("Waiting until these txids are removed: ~p.",
@@ -360,12 +355,7 @@ assert_removed_txs(BadTXIDs) ->
 		30000
 	),
 	%% We have to keep the confirmation data even for blacklisted transactions.
-	lists:foreach(
-		fun(TXID) ->
-			?assertMatch({ok, {_, _}}, ar_storage:get_tx_confirmation_data(TXID))
-		end,
-		BadTXIDs
-	).
+	ok = ar_test_await:txs_confirmation_data_stored(BadTXIDs).
 
 assert_present_offsets(GoodOffsets) ->
 	ok = ar_test_await:until(blacklist_present_offsets,
