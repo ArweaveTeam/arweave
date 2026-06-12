@@ -1074,26 +1074,13 @@ apply_tip2(B, PrevB, State) ->
 			last_step_checkpoints = LastStepCheckpoints,
 			vdf_difficulty = VDFDifficulty,
 			next_vdf_difficulty = NextVDFDifficulty } = B#block.nonce_limiter_info,
-	CurrentSessionKey = State#state.current_session_key,
-	WasComputing = State#state.computing,
 	SessionKey = session_key(B#block.nonce_limiter_info),
 	PrevSessionKey = session_key(PrevB#block.nonce_limiter_info),
 	State2 = set_current_session(State, SessionKey),
 	State3 = cache_block_session(State2, SessionKey, PrevSessionKey,
 			#{ StepNumber => LastStepCheckpoints }, Seed, UpperBound, NextUpperBound,
 			VDFDifficulty, NextVDFDifficulty),
-	maybe_schedule_session_switch(CurrentSessionKey, WasComputing, SessionKey, State3).
-
-maybe_schedule_session_switch(SessionKey, _WasComputing, SessionKey, State) ->
-	State;
-maybe_schedule_session_switch(PreviousSessionKey, true, SessionKey, State) ->
-	?LOG_DEBUG([{event, schedule_step_after_vdf_session_switch},
-		{previous_session_key, encode_session_key(PreviousSessionKey)},
-		{session_key, encode_session_key(SessionKey)}]),
-	gen_server:cast(?MODULE, schedule_step),
-	State;
-maybe_schedule_session_switch(_PreviousSessionKey, false, _SessionKey, State) ->
-	State.
+	State3.
 
 prune_old_sessions(Sessions, SessionByKey, BaseInterval) ->
 	{{Interval, NextSeed, NextVdfDifficulty}, Sessions2} = gb_sets:take_smallest(Sessions),
