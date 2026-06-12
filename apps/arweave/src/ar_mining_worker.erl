@@ -638,7 +638,7 @@ process_all_sub_chunks(
 	<< SubChunk:?SUB_CHUNK_SIZE/binary, Rest/binary >>,
 	Candidate, Nonce, State
 ) ->
-	%% Composite packing / replica packing (aka difficulty 1+).
+	%% Replica packing (aka difficulty 1+).
 	Candidate1 = Candidate#mining_candidate{ nonce = Nonce },
 	State1 = process_sub_chunk(WhichChunk, Candidate1, SubChunk, State),
 	process_all_sub_chunks(WhichChunk, Rest, Candidate1, Nonce + 1, State1);
