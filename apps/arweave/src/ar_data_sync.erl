@@ -385,8 +385,8 @@ request_tx_data_removal(TXID, Ref, ReplyTo) ->
 request_data_removal(Start, End, Ref, ReplyTo) ->
 	remove_range(Start, End, Ref, ReplyTo).
 
-%% @doc Return true if the in-memory data chunk cache is full. Return not_initialized
-%% if there is no information yet.
+%% @doc Return true if the in-memory data chunk cache is full. A cache whose
+%% limit is not initialized yet is reported full so callers back off and retry.
 is_chunk_cache_full() ->
 	case ets:lookup(ar_data_sync_state, chunk_cache_size_limit) of
 		[{_, Limit}] ->
@@ -397,7 +397,7 @@ is_chunk_cache_full() ->
 					false
 			end;
 		_ ->
-			not_initialized
+			true
 	end.
 
 -ifdef(AR_TEST).
