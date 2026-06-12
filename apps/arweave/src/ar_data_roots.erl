@@ -699,7 +699,10 @@ terminate(Reason, _State) ->
 %%% Tests.
 %%%===================================================================
 
-get_all_in_range_returns_multiple_matches_for_same_pair_test() ->
+get_all_in_range_returns_multiple_matches_for_same_pair_test_() ->
+	{timeout, 30, fun test_get_all_in_range_returns_multiple_matches_for_same_pair/0}.
+
+test_get_all_in_range_returns_multiple_matches_for_same_pair() ->
 	with_test_index_db(
 		fun(StoreID) ->
 			DataRoot = << 1:256 >>,
@@ -718,7 +721,10 @@ get_all_in_range_returns_multiple_matches_for_same_pair_test() ->
 		end
 	).
 
-get_all_in_range_excludes_matches_outside_start_and_cursor_test() ->
+get_all_in_range_excludes_matches_outside_start_and_cursor_test_() ->
+	{timeout, 30, fun test_get_all_in_range_excludes_matches_outside_start_and_cursor/0}.
+
+test_get_all_in_range_excludes_matches_outside_start_and_cursor() ->
 	with_test_index_db(
 		fun(StoreID) ->
 			DataRoot = << 2:256 >>,
@@ -738,7 +744,10 @@ get_all_in_range_excludes_matches_outside_start_and_cursor_test() ->
 		end
 	).
 
-get_all_in_range_ignores_other_data_root_and_tx_size_test() ->
+get_all_in_range_ignores_other_data_root_and_tx_size_test_() ->
+	{timeout, 30, fun test_get_all_in_range_ignores_other_data_root_and_tx_size/0}.
+
+test_get_all_in_range_ignores_other_data_root_and_tx_size() ->
 	with_test_index_db(
 		fun(StoreID) ->
 			DataRoot = << 3:256 >>,
