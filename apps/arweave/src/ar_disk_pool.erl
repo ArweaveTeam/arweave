@@ -475,11 +475,17 @@ set_threshold(DiskPoolThreshold) ->
 update_threshold(BI) ->
 	case ar_node:get_partition_upper_bound(ar_node:get_height(), BI) of
 		not_initialized ->
-			%% The block index is only partially loaded (e.g. mid-restart,
-			%% height already past the depth); keep the current threshold
-			%% rather than regressing it to a premature, too-high value.
-			?LOG_DEBUG([{event, disk_pool_threshold_kept_partial_index},
-					{block_index_len, length(BI)}]),
+			%% This should only occur near genesis when the block index is
+			%% shorter than ?SEARCH_SPACE_UPPER_BOUND_DEPTH. No longer
+			%% relevant on mainnet, but still possible in tests.
+			%% 
+			%% In this situation we'll just return the cached disk_pool_threshold
+			%% (which is likely not exist and default to 0). As blocks
+			%% are mined up to ?SEARCH_SPACE_UPPER_BOUND_DEPTH and beyond,
+			%% this branch will no longer be taken, and a proper threshold
+			%% will be set.
+			?LOG_DEBUG([{event, disk_pool_threshold_not_updated},
+				{height, ar_node:get_height()}, {block_index_len, length(BI)}]),
 			get_threshold();
 		DiskPoolThreshold ->
 			set_threshold(DiskPoolThreshold)
