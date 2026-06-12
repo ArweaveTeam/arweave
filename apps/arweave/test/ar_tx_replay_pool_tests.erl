@@ -7,7 +7,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 verify_block_txs_test_() ->
-	{timeout, 30, fun test_verify_block_txs/0}.
+	{setup, fun ar_tx_db:setup_ets/0, fun(Cleanup) -> Cleanup() end,
+		{timeout, 30, fun test_verify_block_txs/0}}.
 
 test_verify_block_txs() ->
 	Key1 = ar_wallet:new(),
@@ -166,6 +167,45 @@ test_verify_block_txs() ->
 		TestCases
 	).
 
+verify_tx_reasons_test_() ->
+	{setup, fun ar_tx_db:setup_ets/0, fun(Cleanup) -> Cleanup() end,
+		{timeout, 30, fun test_verify_tx_reasons/0}}.
+
+%% verify_block_txs/1 collapses every rejection to the bare atom `invalid`, so
+%% the cases in verify_block_txs_test_ can only tell apart the replay-protection
+%% failures by their setup, not by what the code reports. verify_tx/2 keeps the
+%% {invalid, Reason} shape, so we pin each distinct reason here. A regression
+%% that, say, returned tx_bad_anchor where tx_already_in_weave is expected would
+%% still leave verify_block_txs/1 returning `invalid` and slip by otherwise.
+test_verify_tx_reasons() ->
+	Key = ar_wallet:new(),
+	Height = 0,
+	Wallets = wallets([wallet(Key, fee(Height))]),
+	TX = tx(Key, fee(Height), <<"hash">>),
+	Verify = fun(VerifiedTX, BlockAnchors, RecentTXMap, Mempool) ->
+		ar_tx_replay_pool:verify_tx({VerifiedTX, {1, 4}, 2000, 1, 1, Height, 0,
+				BlockAnchors, RecentTXMap, Mempool, Wallets}, verify_signature)
+	end,
+	%% The anchor is not among the recent block anchors.
+	?assertEqual({invalid, tx_bad_anchor},
+			Verify(TX, [], #{}, #{})),
+	%% The anchor is valid, but the id is already on the weave.
+	?assertEqual({invalid, tx_already_in_weave},
+			Verify(TX, [<<"hash">>], #{ TX#tx.id => ok }, #{})),
+	%% The anchor is valid and the id is not on the weave, but the same id is
+	%% already in the mempool.
+	?assertEqual({invalid, tx_already_in_mempool},
+			Verify(TX, [<<"hash">>], #{}, #{ TX#tx.id => no_tx })),
+	%% The anchor references a transaction that is itself still in the mempool
+	%% (a last_tx chain). Only checked at and after fork 1.8, which is height 0
+	%% under FORKS_RESET in the test profile.
+	MempoolAnchorTX = tx(Key, fee(Height), <<"mempool_anchor">>),
+	?assertEqual({invalid, last_tx_in_mempool},
+			Verify(MempoolAnchorTX, [<<"hash">>], #{}, #{ <<"mempool_anchor">> => no_tx })),
+	%% The anchor is valid and the id is neither on the weave nor in the mempool.
+	?assertEqual(valid,
+			Verify(TX, [<<"hash">>], #{}, #{})).
+
 make_tx_chain(Key, Height) ->
 	TX1 = tx(Key, fee(Height), <<>>),
 	TX2 = tx(Key, fee(Height), TX1#tx.id),
@@ -184,6 +224,9 @@ tx(Key = {_, {_, Owner}}, Reward, Anchor) ->
 
 wallet({_, Pub}, Balance) ->
 	{ar_wallet:to_address(Pub), Balance, <<>>}.
+
+wallets(WL) ->
+	maps:from_list([{Addr, {Balance, LastTX}} || {Addr, Balance, LastTX} <- WL]).
 
 fee(Height) ->
 	ar_tx:get_tx_fee({0, 2000, 1, <<>>, #{}, Height + 1}).
