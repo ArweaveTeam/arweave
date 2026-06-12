@@ -1,8 +1,6 @@
 name: "Arweave e2e  Tests Suites"
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 13 * * *"
 
 # One e2e run per ref at a time: a new dispatch on the same branch
 # supersedes an in-progress one, so e2e never stacks on itself and
