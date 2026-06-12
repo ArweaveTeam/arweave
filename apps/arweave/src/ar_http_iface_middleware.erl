@@ -2039,6 +2039,10 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
 			{ok, L} ->
 				{ok, lists:foldl(
 					fun({StoreID2, Packing2}, Acc) ->
+						%% Only advertise chunks stored in the module's configured
+						%% packing. Chunks held in other packings (e.g. small
+						%% unpacked chunks before the strict data split threshold)
+						%% are for now only synced via the "normal" sync mode.
 						Intervals = ar_footprint_record:get_intervals(Partition, FootprintNumber, Packing2, StoreID2),
 						ar_intervals:union(Acc, Intervals)
 					end,

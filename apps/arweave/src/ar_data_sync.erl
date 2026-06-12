@@ -755,8 +755,8 @@ handle_cast(process_store_chunk_queue, State) ->
 	ar_util:cast_after(200, self(), process_store_chunk_queue),
 	{noreply, process_store_chunk_queue(State)};
 
-handle_cast({initialize_footprint_record, Cursor, Packing}, State) ->
-	State2 = initialize_footprint_record(Cursor, Packing, State),
+handle_cast({initialize_footprint_record, Cursor}, State) ->
+	State2 = initialize_footprint_record(Cursor, State),
 	{noreply, State2};
 
 handle_cast({join, RecentBI}, State) ->
@@ -2388,16 +2388,14 @@ record_chunk_cache_size_metric() ->
 
 maybe_run_footprint_record_initialization(State) ->
 	#data_sync_state{ store_id = StoreID } = State,
-	Packing = ar_storage_module:get_packing(StoreID),
 	{FootprintRecordCursor, InitializationComplete} = get_footprint_record_initialization_state(State),
 	case InitializationComplete of
 		true ->
 			ok;
 		false ->
 			?LOG_INFO([{event, initializing_footprint_record},
-					{cursor, FootprintRecordCursor}, {store_id, StoreID},
-					{packing, ar_serialize:encode_packing(Packing, false)}]),
-			gen_server:cast(self(), {initialize_footprint_record, FootprintRecordCursor, Packing})
+					{cursor, FootprintRecordCursor}, {store_id, StoreID}]),
+			gen_server:cast(self(), {initialize_footprint_record, FootprintRecordCursor})
 	end.
 
 get_footprint_record_initialization_state(State) ->
@@ -2412,19 +2410,22 @@ get_footprint_record_initialization_state(State) ->
 			{Cursor, false}
 	end.
 
-%% @doc Initialize the footprint record from the packing-specific sync record;
-%% it decides whether the configured storage module holds the chunk locally, so
-%% generic sync state from another packing is not enough.
-initialize_footprint_record(complete, _Packing, State) ->
+%% @doc Initialize the footprint record from the ar_data_sync record.
+%% We traverse the packing-agnostic record on purpose: the footprint record
+%% must cover every synced chunk regardless of its packing, or footprint-mode
+%% syncing would keep treating locally available data as missing and re-fetch
+%% it. Each chunk is registered under its actual packing so the by-packing
+%% view of the footprint record stays truthful.
+initialize_footprint_record(complete, State) ->
 	State;
-initialize_footprint_record(Cursor, Packing, State) ->
+initialize_footprint_record(Cursor, State) ->
 	#data_sync_state{
 		store_id = StoreID,
 		range_end = RangeEnd
 	} = State,
 	BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
 
-	case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, Packing, ar_data_sync, StoreID) of
+	case ar_sync_record:get_next_synced_interval(Cursor, RangeEnd, ar_data_sync, StoreID) of
 		not_found ->
 			ok = ar_kv:put(migration_db(StoreID),
 				?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
@@ -2433,17 +2434,30 @@ initialize_footprint_record(Cursor, Packing, State) ->
 		{IntervalEnd, IntervalStart} ->
 			Cursor2 = max(Cursor, IntervalStart),
 			EndPosition = min(Cursor2 + (BatchSize * ?DATA_CHUNK_SIZE), IntervalEnd),
-			initialize_footprint_range(Cursor2, EndPosition, Packing, StoreID),
+			initialize_footprint_range(Cursor2, EndPosition, StoreID),
 			NewCursor = EndPosition,
 			ok = ar_kv:put(migration_db(StoreID),
 				?FOOTPRINT_MIGRATION_CURSOR_KEY, binary:encode_unsigned(NewCursor)),
-			ar_util:cast_after(1_000, self(), {initialize_footprint_record, NewCursor, Packing}),
+			ar_util:cast_after(1_000, self(), {initialize_footprint_record, NewCursor}),
 			State
 	end.
 
-%% @doc Migrate chunks in the given range to footprint records.
-initialize_footprint_range(Start, End, _Packing, _StoreID) when Start >= End ->
+%% @doc Migrate chunks in the given range to footprint records, registering
+%% each chunk under its actual packing. Skip unpacked_padded chunks: they are
+%% a transitional state which cannot be served (see read_chunk_with_metadata/6);
+%% ar_entropy_storage adds them to the footprint record once the entropy is
+%% applied.
+initialize_footprint_range(Start, End, _StoreID) when Start >= End ->
 	ok;
-initialize_footprint_range(Start, End, Packing, StoreID) ->
-	ar_footprint_record:add(Start + 1, Packing, StoreID),
-	initialize_footprint_range(Start + ?DATA_CHUNK_SIZE, End, Packing, StoreID).
+initialize_footprint_range(Start, End, StoreID) ->
+	case ar_sync_record:is_recorded(Start + 1, ar_data_sync, StoreID) of
+		{true, unpacked_padded} ->
+			ok;
+		{true, Packing} ->
+			ar_footprint_record:add(Start + 1, Packing, StoreID);
+		_ ->
+			%% false (the chunk was removed concurrently) or true without
+			%% a packing (not expected for ar_data_sync) — nothing to register.
+			ok
+	end,
+	initialize_footprint_range(Start + ?DATA_CHUNK_SIZE, End, StoreID).
