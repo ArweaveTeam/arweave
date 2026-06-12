@@ -113,16 +113,32 @@ export ERL_PATH_TEST="$(echo ${PWD}/_build/test/lib/*/test)"
 export ERL_PATH_CONF="${PWD}/config/sys.config"
 export ERL_TEST_OPTS="-pa ${ERL_PATH_ADD} ${ERL_PATH_TEST} -config ${ERL_PATH_CONF}"
 
+# Per-runner suffix for the test node names. The module name alone keeps
+# sibling MODULES in a shard from colliding, but the SAME module running on a
+# sibling runner that shares this host's epmd (notably the macOS dev-N user
+# accounts on one Mac) would still clash on the main-/peerN- node names and
+# fail with "the name main-<module>@127.0.0.1 seems to be in use". RUNNER_NAME
+# is unique per runner; sanitise to the chars Erlang node names allow. Empty
+# when run locally (no RUNNER_NAME) -> behaviour unchanged.
+NS_SUFFIX=""
+if [ -n "${RUNNER_NAME:-}" ]; then
+	NS_SUFFIX="-${RUNNER_NAME//[^a-zA-Z0-9._]/-}"
+fi
+
 for MODULE in "${MODULES_TO_RUN[@]}"; do
 	echo "============================================================"
 	echo "=== Running ${MODE} for module: ${MODULE} ==="
 	echo "============================================================"
 
-	# Each module's BEAM uses the module name as namespace so node
-	# names, cookies, and *.out files don't collide with sibling
-	# modules running in the same shard.
-	export NAMESPACE="${MODULE}"
-	NODE_NAME="main-${MODULE}@127.0.0.1"
+	# Node names, *.out files, and the retry probe all key on this id:
+	# the module name (so sibling modules in a shard don't collide) plus
+	# the per-runner NS_SUFFIX (so the same module on a sibling runner
+	# sharing this host's epmd doesn't collide). Peers derive their names
+	# from the main node's name (get_node_namespace/0) so they inherit the
+	# suffix automatically; the cookie is the main BEAM's (get_cookie/0).
+	NS="${MODULE}${NS_SUFFIX}"
+	export NAMESPACE="${NS}"
+	NODE_NAME="main-${NS}@127.0.0.1"
 	COOKIE="${MODULE}"
 
 	RETRYABLE=1
@@ -140,14 +156,14 @@ for MODULE in "${MODULES_TO_RUN[@]}"; do
 			-name "${NODE_NAME}" \
 			-setcookie "${COOKIE}" \
 			-run ar ${MODE} "${MODULE}" \
-			-s init stop 2>&1 | tee "main-${MODULE}.out"
+			-s init stop 2>&1 | tee "main-${NS}.out"
 		EXIT_CODE=${PIPESTATUS[0]}
 		set +x
 		set -e
 
 		if [[ ${EXIT_CODE} -ne 0 ]]
 		then
-			_check_retry "${MODULE}"
+			_check_retry "${NS}"
 		fi
 	done
 
