@@ -477,14 +477,15 @@ advance_chunks_index_cursor(Cursor) ->
 		{ok, #chunk_metadata{}, #chunk_offsets{}, binary()}
 		| no_chunk
 		| {error, {data_missing, #chunk_metadata{}, #chunk_offsets{}}}
-		| {error, term()}
+		| {error, {data_read_failed, term(), #chunk_metadata{}, #chunk_offsets{}}}
+		| {error, {index_read_failed, term()}}
 	when Offset :: non_neg_integer(), StoreID :: term().
 read_chunk_with_full_metadata(Offset, StoreID) ->
 	case get_chunk_by_byte(Offset, StoreID) of
 		{error, invalid_iterator} ->
 			no_chunk;
 		{error, Reason} ->
-			{error, Reason};
+			{error, {index_read_failed, Reason}};
 		{ok, #chunk_metadata{ chunk_data_key = ChunkDataKey } = Metadata,
 				#chunk_offsets{ absolute_offset = AbsoluteEndOffset } = Offsets} ->
 			case read_chunk_with_datapath(ChunkDataKey, StoreID) of
@@ -505,7 +506,7 @@ read_chunk_with_full_metadata(Offset, StoreID) ->
 				not_found ->
 					{error, {data_missing, Metadata, Offsets}};
 				{error, Reason} ->
-					{error, Reason}
+					{error, {data_read_failed, Reason, Metadata, Offsets}}
 			end
 	end.
 

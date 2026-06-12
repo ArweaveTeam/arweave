@@ -11,9 +11,11 @@
 %%% rather than releasing the source, which a 1:1 source/target relationship
 %%% wouldn't free for anyone else anyway.
 -module(ar_chunk_copy_worker).
+-test_category([fast]).
 
 -export([run/1]).
 
+-include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
@@ -104,6 +106,9 @@ read_and_post_chunk(MessagesRemaining, Packing,
 			read_range(MessagesRemaining,
 				{Start2, End, OriginStoreID, TargetStoreID});
 		{error, {data_missing, Metadata, Offsets}} ->
+			%% Chunk data does not exist even though an entry exists in the
+			%% index: invalidate the record so that it can be cleaned up
+			%% later and skip to the next chunk.
 			#chunk_metadata{ chunk_size = ChunkSize } = Metadata,
 			#chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
 			ar_data_sync:invalidate_bad_data_record(
@@ -111,8 +116,24 @@ read_and_post_chunk(MessagesRemaining, Packing,
 				read_range_chunk_not_found),
 			read_range(MessagesRemaining - 1,
 				{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
-		{error, Reason} ->
+		{error, {data_read_failed, Reason, Metadata2, Offsets2}} ->
+			%% The chunk's stored bytes are unreadable, since we don't know
+			%% if the data is bad or there is just a transient error we
+			%% won't invalidate the record and will just skip to the next chunk.
+			#chunk_metadata{
+				chunk_data_key = ChunkDataKey,
+				chunk_size = ChunkSize2 } = Metadata2,
+			#chunk_offsets{ absolute_offset = AbsoluteOffset2 } = Offsets2,
 			?LOG_ERROR([{event, failed_to_read_chunk},
+				{absolute_end_offset, AbsoluteOffset2},
+				{chunk_data_key, ar_util:encode(ChunkDataKey)},
+				{reason, io_lib:format("~p", [Reason])}]),
+			read_range(MessagesRemaining,
+				{Start + ChunkSize2, End, OriginStoreID, TargetStoreID});
+		{error, {index_read_failed, Reason}} ->
+			%% The chunks_index query failed; without metadata there is no
+			%% safe offset to advance to, so give up on the range.
+			?LOG_ERROR([{event, failed_to_query_chunk_metadata},
 				{offset, Start + 1},
 				{reason, io_lib:format("~p", [Reason])}]),
 			ok;
@@ -165,3 +186,85 @@ post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
 			read_range(MessagesRemaining,
 				{Start + ChunkSize, End, OriginStoreID, TargetStoreID})
 	end.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+%% Each test drives read_and_post_chunk/3 over the two-chunk range
+%% [0, 2 * ?DATA_CHUNK_SIZE) with `ar_data_sync' reads scripted per offset.
+
+data_read_failed_skips_chunk_test_() ->
+	ar_test_util:with_mocked(
+		read_range_mocks(fun
+			(1, _StoreID) ->
+				{error, {data_read_failed, io_error, test_metadata(), test_offsets()}};
+			(_Offset, _StoreID) ->
+				past_range_reply()
+		end),
+		fun() ->
+			ok = read_and_post_chunk(40, unpacked, test_range()),
+			%% The unreadable chunk is skipped and the scan reaches the next one.
+			?assertEqual(2,
+				meck:num_calls(ar_data_sync, read_chunk_with_full_metadata, '_')),
+			?assertEqual(0,
+				meck:num_calls(ar_data_sync, invalidate_bad_data_record, '_'))
+		end).
+
+index_error_aborts_range_test_() ->
+	ar_test_util:with_mocked(
+		read_range_mocks(fun(_Offset, _StoreID) ->
+			{error, {index_read_failed, rocksdb_error}}
+		end),
+		fun() ->
+			ok = read_and_post_chunk(40, unpacked, test_range()),
+			?assertEqual(1,
+				meck:num_calls(ar_data_sync, read_chunk_with_full_metadata, '_')),
+			?assertEqual(0,
+				meck:num_calls(ar_data_sync, invalidate_bad_data_record, '_'))
+		end).
+
+data_missing_invalidates_and_continues_test_() ->
+	ar_test_util:with_mocked(
+		read_range_mocks(fun
+			(1, _StoreID) ->
+				{error, {data_missing, test_metadata(), test_offsets()}};
+			(_Offset, _StoreID) ->
+				past_range_reply()
+		end),
+		fun() ->
+			ok = read_and_post_chunk(40, unpacked, test_range()),
+			?assertEqual(2,
+				meck:num_calls(ar_data_sync, read_chunk_with_full_metadata, '_')),
+			?assert(meck:called(ar_data_sync, invalidate_bad_data_record,
+				[?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE, origin_store,
+					read_range_chunk_not_found]))
+		end).
+
+test_range() ->
+	{0, 2 * ?DATA_CHUNK_SIZE, origin_store, target_store}.
+
+test_metadata() ->
+	#chunk_metadata{ chunk_data_key = <<"key">>, chunk_size = ?DATA_CHUNK_SIZE }.
+
+test_offsets() ->
+	#chunk_offsets{ absolute_offset = ?DATA_CHUNK_SIZE }.
+
+%% A reply whose absolute offset falls past the padded range end, ending the
+%% scan cleanly.
+past_range_reply() ->
+	{ok, test_metadata(),
+		#chunk_offsets{ absolute_offset = 3 * ?DATA_CHUNK_SIZE }, <<>>}.
+
+read_range_mocks(ReadFun) ->
+	[
+		{ar_block, get_chunk_padded_offset, fun(Offset) -> Offset end},
+		{ar_sync_record, is_recorded, fun(_Offset, ar_data_sync, StoreID) ->
+			case StoreID of
+				target_store -> false;
+				origin_store -> {true, unpacked}
+			end
+		end},
+		{ar_data_sync, read_chunk_with_full_metadata, ReadFun},
+		{ar_data_sync, invalidate_bad_data_record, fun(_, _, _, _) -> ok end}
+	].
