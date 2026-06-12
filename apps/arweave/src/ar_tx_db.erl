@@ -6,6 +6,12 @@
 
 -export([get_error_codes/1, put_error_codes/2, ensure_error/1, clear_error_codes/1]).
 
+%% Exported so other test modules that exercise ar_tx (which records error codes
+%% in the ar_tx_db singleton ETS table) can ensure the table exists when they run
+%% without a booted node. Idempotent: a no-op when the table already exists, e.g.
+%% because ar_sup created it. Returns a teardown fun.
+-export([setup_ets/0]).
+
 -include_lib("arweave/include/ar.hrl").
 
 -include_lib("eunit/include/eunit.hrl").

@@ -15,6 +15,9 @@ recovers_from_forks_test_() ->
 re_admits_orphaned_tx_after_fork_recovery_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun re_admits_orphaned_tx_after_fork_recovery/0}.
 
+anchor_depth_boundary_after_fork_recovery_test_() ->
+	{timeout, ?TEST_NODE_TIMEOUT, fun anchor_depth_boundary_after_fork_recovery/0}.
+
 recovers_from_forks(ForkHeight) ->
 	%% peer1 and main mine in sync, then diverge; an extra block on peer1 makes
 	%% main fork-recover onto it. Afterwards, replaying any past TX on main is
@@ -183,6 +186,65 @@ re_admits_orphaned_tx_after_fork_recovery() ->
 	ar_test_node:mine(),
 	{ok, NewBI} = ar_test_await:node_height(main, 4),
 	assert_block_txs(main, [OrphanedTX], NewBI).
+
+anchor_depth_boundary_after_fork_recovery() ->
+	%% rejects_txs_with_outdated_anchors_test_ (ar_tx_anchor_tests) pins the
+	%% anchor-depth boundary on a linearly built chain. This test pins the same
+	%% boundary after a fork recovery, where ar_node_worker:update_block_txs_pairs2/3
+	%% rebuilds block_txs_pairs (and thus BlockAnchors) by splicing the winning
+	%% fork onto the shared prefix instead of extending it block by block. An
+	%% off-by-one in that rebuild would shift the anchor window only after a reorg
+	%% and slip past the linear-path test. After main recovers onto peer1's longer
+	%% chain, a TX anchoring the deepest still-valid block (get_max_tx_anchor_depth()
+	%% from the tip) must be accepted, while a TX anchoring one block deeper must be
+	%% rejected as tx_bad_anchor.
+	Key = {_, Pub} = ar_wallet:new(),
+	[B0] = ar_weave:init([
+		{ar_wallet:to_address(Pub), ?AR(20), <<>>}
+	]),
+	_ = ar_test_node:start(B0),
+	_ = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
+	Depth = ar_block:get_max_tx_anchor_depth(),
+	%% Build a shared chain tall enough to have a full anchor window: both nodes
+	%% stay in sync up to height Depth.
+	lists:foreach(
+		fun(H) ->
+			ar_test_node:mine(peer1),
+			?assertMatch({ok, _}, ar_test_await:node_height(peer1, H)),
+			?assertMatch({ok, _}, ar_test_await:node_height(main, H))
+		end,
+		lists:seq(1, Depth)
+	),
+	ar_test_node:disconnect_from(peer1),
+	%% main mines a block (height Depth + 1) that will be orphaned.
+	ar_test_node:mine(),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, Depth + 1)),
+	%% peer1 mines two blocks so its chain wins; on reconnect main fork-recovers
+	%% onto it, replacing its own height Depth + 1 block via update_block_txs_pairs2.
+	ar_test_node:mine(peer1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, Depth + 1)),
+	ar_test_node:mine(peer1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, Depth + 2)),
+	ar_test_node:connect_to_peer(peer1),
+	{ok, BI} = ar_test_await:node_height(main, Depth + 2),
+	%% Pin both sides of the anchor-depth boundary on the recovered chain. With
+	%% the tip at height Depth + 2, the window covers the top Depth blocks, so the
+	%% Depth-th block from the tip (lists:nth(Depth, BI)) is the deepest valid
+	%% anchor and the next one down is one block too deep.
+	DeepestValidBH = element(1, lists:nth(Depth, BI)),
+	OneTooDeepBH = element(1, lists:nth(Depth + 1, BI)),
+	ValidTX = ar_test_node:sign_tx(main, Key, #{ last_tx => DeepestValidBH,
+			reward => ?AR(1), tags => [{<<"nonce">>, <<"deepest_valid">>}] }),
+	?assertMatch({valid, _},
+			ar_test_node:remote_call(main, ar_tx_validator, validate, [ValidTX])),
+	ar_test_node:assert_post_tx_to_peer(main, ValidTX),
+	TooDeepTX = ar_test_node:sign_tx(main, Key, #{ last_tx => OneTooDeepBH,
+			reward => ?AR(1), tags => [{<<"nonce">>, <<"too_deep">>}] }),
+	?assertEqual({invalid, tx_bad_anchor},
+			ar_test_node:remote_call(main, ar_tx_validator, validate, [TooDeepTX])),
+	{ok, {{<<"400">>, _}, _, <<"Invalid anchor (last_tx).">>, _, _}} =
+		ar_test_node:post_tx_to_peer(main, TooDeepTX).
 
 forget_txs(TXs) ->
 	lists:foreach(
