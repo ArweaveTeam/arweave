@@ -18,7 +18,8 @@
 
 -record(state, {
 	pause_performance_reports = false,
-	pause_performance_reports_timeout
+	pause_performance_reports_timeout,
+	report_ref
 }).
 
 -record(report, {
@@ -99,7 +100,7 @@ start_link() ->
 
 start_performance_reports() ->
 	reset_all_stats(),
-	ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance).
+	gen_server:cast(?MODULE, start_performance_reports).
 
 %% @doc Stop logging performance reports for the given number of milliseconds.
 pause_performance_reports(Time) ->
@@ -275,27 +276,32 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
 
-handle_cast(report_performance, #state{ pause_performance_reports = true,
-			pause_performance_reports_timeout = Timeout } = State) ->
-	Now = os:system_time(millisecond),
-	case Now > Timeout of
-		true ->
-			gen_server:cast(?MODULE, report_performance),
-			{noreply, State#state{ pause_performance_reports = false }};
-		false ->
-			ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
-			{noreply, State}
-	end;
-handle_cast(report_performance, State) ->
-	report_performance(),
-	ar_util:cast_after(?PERFORMANCE_REPORT_FREQUENCY_MS, ?MODULE, report_performance),
-	{noreply, State};
-
-
+handle_cast(start_performance_reports, State) ->
+	%% Installs a new report ref. Ticks from any previously armed timer no longer match the state
+	%% and are dropped, so only one timer ever reports.
+	{noreply, schedule_report(State)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.
+
+handle_info({report_performance, Ref}, #state{ report_ref = ReportRef } = State)
+		when Ref /= ReportRef ->
+	%% A tick from a superseded report timer. Do not report or reschedule.
+	{noreply, State};
+handle_info({report_performance, _Ref}, #state{ pause_performance_reports = true,
+			pause_performance_reports_timeout = Timeout } = State) ->
+	Now = os:system_time(millisecond),
+	case Now > Timeout of
+		true ->
+			report_performance(),
+			{noreply, schedule_report(State#state{ pause_performance_reports = false })};
+		false ->
+			{noreply, schedule_report(State)}
+	end;
+handle_info({report_performance, _Ref}, State) ->
+	report_performance(),
+	{noreply, schedule_report(State)};
 
 handle_info(Message, State) ->
 	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
@@ -311,6 +317,13 @@ terminate(Reason, _State) ->
 
 reset_all_stats() ->
 	ets:delete_all_objects(?MODULE).
+
+%% @doc Schedule the next report tick, tagged with a fresh ref; ticks whose ref no longer
+%% matches the state are dropped, so rescheduling supersedes any previously armed timer.
+schedule_report(State) ->
+	Ref = make_ref(),
+	erlang:send_after(?PERFORMANCE_REPORT_FREQUENCY_MS, self(), {report_performance, Ref}),
+	State#state{ report_ref = Ref }.
 
 metric_set(Name, Value) ->
 	try ar_metrics:gauge_set(Name, Value)
@@ -1580,3 +1593,18 @@ do_test_report(Mining, Packing, PoA1Multiplier) ->
 		]
 	},
 	Report2).
+
+%% Regression test: each start_performance_reports must supersede the previous report
+%% timer, otherwise a restarted ar_mining_server starts a second timer and every report
+%% is logged twice (the second one with zeroed "current" stats).
+stale_report_chain_test() ->
+	{noreply, State1} = handle_cast(start_performance_reports, #state{}),
+	#state{ report_ref = Ref1 } = State1,
+	?assert(is_reference(Ref1)),
+	{noreply, State2} = handle_cast(start_performance_reports, State1),
+	#state{ report_ref = Ref2 } = State2,
+	?assertNotEqual(Ref1, Ref2),
+	%% A tick from a superseded timer is dropped: no report, no reschedule.
+	?assertEqual({noreply, State2}, handle_info({report_performance, Ref1}, State2)),
+	%% A tick from a timer that predates an ar_mining_stats restart is also dropped.
+	?assertEqual({noreply, #state{}}, handle_info({report_performance, Ref1}, #state{})).
