@@ -472,7 +472,12 @@ advance_chunks_index_cursor(Cursor) ->
 %%   `{error, {data_missing, Metadata, Offsets}}' — index entry exists but the
 %%                                      chunk data never landed; the caller may
 %%                                      invalidate the record.
-%%   `{error, Reason}'                — storage error.
+%%   `{error, {data_read_failed, Reason, Metadata, Offsets}}' — index entry
+%%                                      exists but reading the chunk bytes failed;
+%%                                      may be transient, so the caller should not
+%%                                      invalidate the record.
+%%   `{error, {index_read_failed, Reason}}' — the `chunks_index' query itself
+%%                                      failed; no metadata is available.
 -spec read_chunk_with_full_metadata(Offset, StoreID) ->
 		{ok, #chunk_metadata{}, #chunk_offsets{}, binary()}
 		| no_chunk
