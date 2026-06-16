@@ -131,12 +131,14 @@ read_and_post_chunk(MessagesRemaining, Packing,
 			read_range(MessagesRemaining,
 				{Start + ChunkSize2, End, OriginStoreID, TargetStoreID});
 		{error, {index_read_failed, Reason}} ->
-			%% The chunks_index query failed; without metadata there is no
-			%% safe offset to advance to, so give up on the range.
+			%% The chunks_index query failed; without metadata we don't know the
+			%% chunk's size, so advance the cursor by a full chunk and keep
+			%% scanning the rest of the range.
 			?LOG_ERROR([{event, failed_to_query_chunk_metadata},
 				{offset, Start + 1},
 				{reason, io_lib:format("~p", [Reason])}]),
-			ok;
+			read_range(MessagesRemaining,
+				{Start + ?DATA_CHUNK_SIZE, End, OriginStoreID, TargetStoreID});
 		{ok, _Metadata, #chunk_offsets{ absolute_offset = AbsoluteOffset }, _Chunk}
 				when AbsoluteOffset > PaddedEnd ->
 			ok;
@@ -211,14 +213,19 @@ data_read_failed_skips_chunk_test_() ->
 				meck:num_calls(ar_data_sync, invalidate_bad_data_record, '_'))
 		end).
 
-index_error_aborts_range_test_() ->
+index_error_advances_and_continues_test_() ->
 	ar_test_util:with_mocked(
-		read_range_mocks(fun(_Offset, _StoreID) ->
-			{error, {index_read_failed, rocksdb_error}}
+		read_range_mocks(fun
+			(1, _StoreID) ->
+				{error, {index_read_failed, rocksdb_error}};
+			(_Offset, _StoreID) ->
+				past_range_reply()
 		end),
 		fun() ->
 			ok = read_and_post_chunk(40, unpacked, test_range()),
-			?assertEqual(1,
+			%% The index error advances the cursor by a full chunk and the
+			%% scan reaches the next chunk rather than aborting.
+			?assertEqual(2,
 				meck:num_calls(ar_data_sync, read_chunk_with_full_metadata, '_')),
 			?assertEqual(0,
 				meck:num_calls(ar_data_sync, invalidate_bad_data_record, '_'))
