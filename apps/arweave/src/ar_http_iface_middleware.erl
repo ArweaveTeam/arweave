@@ -2355,9 +2355,10 @@ handle_post_chunk(validate_proof, Proof, Req) ->
 	Parent = self(),
 	#{ chunk := Chunk, data_path := DataPath, data_size := TXSize, offset := Offset,
 			data_root := DataRoot } = Proof,
+	Peer = ar_http_util:arweave_peer(Req),
 	spawn(fun() ->
 			Parent ! ar_disk_pool:add_chunk(
-				DataRoot, DataPath, Chunk, Offset, TXSize)
+				DataRoot, DataPath, Chunk, Offset, TXSize, Peer)
 			end),
 	receive
 		ok ->
