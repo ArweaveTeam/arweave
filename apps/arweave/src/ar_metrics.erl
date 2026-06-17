@@ -450,7 +450,7 @@ register() ->
 				"label differs based on the type. If type is 'unpack' then the packing label "
 				"indicates the format of the chunk before being unpacked. If type is 'pack' "
 				"then the packing label indicates the format that the chunk will be packed "
-				"to. In all cases its value can be 'spora_2_5', 'spora_2_6', 'composite', "
+				"to. In all cases its value can be 'spora_2_5', 'spora_2_6', "
 				"or 'replica_2_9'. The trigger label shows where the request was triggered: "
 				"'external' (e.g. an HTTP request) or 'internal' (e.g. during syncing or "
 				"repacking)."}
@@ -465,14 +465,13 @@ register() ->
 				"indicates the format of the chunk before being unpacked. If type is 'pack' "
 				"then the packing label indicates the format that the chunk will be packed "
 				"to. In all cases its value can be 'unpacked', 'unpacked_padded', "
-				"'spora_2_5', 'spora_2_6', 'composite', or 'replica_2_9'."}
+				"'spora_2_5', 'spora_2_6', or 'replica_2_9'."}
 	]),
 	prometheus_counter:new([
 		{name, validating_packed_spora},
 		{labels, [packing]},
 		{help, "The number of SPoRA solutions based on packed chunks entered validation. "
-				"The packing label can be 'spora_2_5', 'spora_2_6', 'composite', "
-				" or replica_2_9."}
+				"The packing label can be 'spora_2_5', 'spora_2_6', or 'replica_2_9'."}
 	]),
 
 	prometheus_gauge:new([{name, packing_buffer_size},

@@ -235,7 +235,7 @@ delete_chunk_metadata_range(Start, End, State) ->
 %% Options:
 %%	_________________________________________________________________________________________
 %%	packing				| required; spora_2_5 or unpacked or {spora_2_6, <Mining Address>}
-%%							or {composite, <Mining Address>, <Difficulty>}
+%%							
 %%							or {replica_2_9, <Mining Address>}
 %%	_________________________________________________________________________________________
 %%	pack				| if false and a packed chunk is requested but stored unpacked or

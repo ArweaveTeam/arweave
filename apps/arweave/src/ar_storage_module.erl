@@ -47,9 +47,6 @@ id({BucketSize, Bucket, Packing}) ->
 		case Packing of
 			{spora_2_6, Addr} ->
 				ar_util:encode(Addr);
-			{composite, Addr, PackingDiff} ->
-				<< (ar_util:encode(Addr))/binary, ".",
-						(integer_to_binary(PackingDiff))/binary >>;
 			{replica_2_9, Addr} ->
 				<< (ar_util:encode(Addr))/binary, ".replica.2.9" >>;
 			_ ->
@@ -96,17 +93,12 @@ address_label(Addr, ReplicaType) ->
 -spec module_address(ar_storage_module:storage_module()) -> binary() | undefined.
 module_address({_, _, {spora_2_6, Addr}}) ->
 	Addr;
-module_address({_, _, {composite, Addr, _PackingDifficulty}}) ->
-	Addr;
 module_address({_, _, {replica_2_9, Addr}}) ->
 	Addr;
 module_address(_StorageModule) ->
 	undefined.
 
 -spec module_packing_difficulty(ar_storage_module:storage_module()) -> integer().
-module_packing_difficulty({_, _, {composite, _Addr, PackingDifficulty}}) ->
-	true = PackingDifficulty /= ?REPLICA_2_9_PACKING_DIFFICULTY,
-	PackingDifficulty;
 module_packing_difficulty({_, _, {replica_2_9, _Addr}}) ->
 	?REPLICA_2_9_PACKING_DIFFICULTY;
 module_packing_difficulty(_StorageModule) ->
@@ -115,9 +107,6 @@ module_packing_difficulty(_StorageModule) ->
 packing_label({spora_2_6, Addr}) ->
 	AddrLabel = ar_storage_module:address_label(Addr, spora_2_6),
 	list_to_atom("spora_2_6_" ++ AddrLabel);
-packing_label({composite, Addr, PackingDifficulty}) ->
-	AddrLabel = ar_storage_module:address_label(Addr, {composite, PackingDifficulty}),
-	list_to_atom("composite_" ++ AddrLabel);
 packing_label({replica_2_9, Addr}) ->
 	AddrLabel = ar_storage_module:address_label(Addr, replica_2_9),
 	list_to_atom("replica_2_9_" ++ AddrLabel);

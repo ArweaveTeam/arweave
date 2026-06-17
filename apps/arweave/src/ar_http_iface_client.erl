@@ -1472,11 +1472,7 @@ handle_cm_partition_table_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
 								{<<"bucketsize">>, BucketSize},
 								{<<"addr">>, EncodedAddr},
 								{<<"pdiff">>, PackingDifficulty}
-							]} when is_integer(PackingDifficulty) andalso (
-								(PackingDifficulty >= 1
-									andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY)
-										orelse
-									(PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY)) ->
+							]} when PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY ->
 								DecodedPartition = {
 									Bucket,
 									BucketSize,

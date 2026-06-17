@@ -322,20 +322,15 @@
 -define(DATA_CHUNK_SIZE, (256 * 1024)).
 
 %% The maximum allowed packing difficulty.
--define(MAX_PACKING_DIFFICULTY, 32).
+%% The number of sub-chunks in a packed chunk.
 
-%% The number of sub-chunks in a compositely packed chunk.
-%% The composite packing with the packing difficulty 1 matches approximately the non-composite
-%% 2.6 packing in terms of computational costs.
--define(COMPOSITE_PACKING_SUB_CHUNK_COUNT, 32).
 
-%% The size of a unit sub-chunk in the compositely packed chunk.
--define(COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-		(?DATA_CHUNK_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT)).
+-define(SUB_CHUNK_COUNT, 32).
 
-%% The number of RandomX rounds used for a single iteration of packing of a single sub-chunk
-%% during the composite packing.
--define(COMPOSITE_PACKING_ROUND_COUNT, 10).
+%% The size of a unit sub-chunk in a packed chunk.
+-define(SUB_CHUNK_SIZE,
+		(?DATA_CHUNK_SIZE div ?SUB_CHUNK_COUNT)).
+
 
 %% Maximum size of a `data_path`, in bytes.
 -define(MAX_PATH_SIZE, (256 * 1024)).
@@ -385,7 +380,7 @@
 	%% in the corresponding "data_root" under a particular offset.
 	data_path = <<>>,
 	%% When packing difficulty is 0 chunk stores a full ?DATA_CHUNK_SIZE-sized packed chunk.
-	%% When packing difficulty >= 1, chunk stores a ?COMPOSITE_PACKING_SUB_CHUNK_SIZE-sized
+	%% When packing difficulty >= 1, chunk stores a ?SUB_CHUNK_SIZE-sized
 	%% packed sub-chunk.
 	chunk = <<>>,
 	%% When packing difficulty is 0 unpacked_chunk is <<>>.
@@ -657,10 +652,9 @@
 	%% Applies to both poa1 and poa2.
 	%%
 	%% Packing difficulty 0 denotes the usual pre-2.8 packing scheme.
-	%% Packing difficulty 1 refers to the new composite packing of approximately the same
-	%% computational cost as the difficulty 0 packing. Packing difficulty 2 is the composite
-	%% packing where each sub-chunk is hashed twice as many times. The maximum allowed
-	%% value is 32.
+	%% Packing difficulty 1 refers to the new packing of approximately the same
+	%% computational cost as the difficulty 0 packing. Packing difficulty 2 is the
+	%% packing where each sub-chunk is hashed twice as many times.
 	%%
 	%% When packing_difficulty >= 1, both poa1 and poa2 contain the unpacked chunks.
 	%% The values of the "chunk" fields are now 8192-byte packed sub-chunks.

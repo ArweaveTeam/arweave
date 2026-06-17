@@ -396,14 +396,9 @@ get_hashrate_divisor(PackingDifficulty) ->
 	%% Raw hashrate varies based on packing difficulty. Assuming a spora_2_6 base hashrate
 	%% of 404, the raw hashrate at different packing difficulties is:
 	%% spora_2_6: 404
-	%% composite, 1: 404 * 32 / 4 / 1 = 3232
-	%% composite, 2: 404 * 32 / 4 / 2 = 1616
-	%% composite, 32: 404 * 32 / 4 / 32 = 101
 	%%
 	%% Basically:
-	%% - composite packing generate 32x the number of hashes, but they are compared against
 	%%   a higher solution difficulty
-	%% - composite uses a 4x lower read recall range which *reduces* the number of hashes
 	%%   4-fold, and increases the solution difficulty
 	%% - finally as the difficulty increases, the number of hashes generated decreases as does
 	%%   the solution difficulty

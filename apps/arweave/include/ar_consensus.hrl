@@ -11,15 +11,10 @@
 -define(RANDOMX_PACKING_ROUNDS, 8 * (?PACKING_DIFFICULTY)).
 -define(RANDOMX_PACKING_ROUNDS_2_6, 8 * (?PACKING_DIFFICULTY_2_6)).
 
-%% Stop supporting the legacy non-composite packing after this number of blocks
+%% Stop supporting the legacy packing after this number of blocks
 %% passed since the fork 2.8. 365 * 24 * 60 * 60 / 128 = 246375.
 -define(SPORA_PACKING_EXPIRATION_PERIOD_BLOCKS, (246375 * 4)).
 
-%% Stop supporting the composite packing ~60 days have passed since 2.9 fork.
-%% 30 days = 30 * 24 * 60 * 60 / 128 = 20250.
--ifndef(COMPOSITE_PACKING_EXPIRATION_PERIOD_BLOCKS).
--define(COMPOSITE_PACKING_EXPIRATION_PERIOD_BLOCKS, (20250 * 2)).
--endif.
 
 %% The number of times we apply an RX hash in each RX2 lane in-between every pair
 %% of mixings.
@@ -42,7 +37,7 @@
 %% The size in bytes of the total RX2 entropy (# of lanes * scratchpad size).
 -ifdef(AR_TEST).
 %% 32_768 bytes worth of entropy.
--define(REPLICA_2_9_ENTROPY_SIZE, (4 * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE)).
+-define(REPLICA_2_9_ENTROPY_SIZE, (4 * ?SUB_CHUNK_SIZE)).
 -else.
 %% 8_388_608 bytes worth of entropy.
 -define(REPLICA_2_9_ENTROPY_SIZE, (
@@ -56,7 +51,7 @@
 %% 1. Entropy Partition Size =
 %%      REPLICA_2_9_ENTROPY_COUNT * REPLICA_2_9_ENTROPY_SIZE >= PARTITION_SIZE
 %% 2. Sector Size =
-%%      REPLICA_2_9_ENTROPY_COUNT * COMPOSITE_PACKING_SUB_CHUNK_SIZE and
+%%      REPLICA_2_9_ENTROPY_COUNT * SUB_CHUNK_SIZE and
 %%      is divisible by DATA_CHUNK_SIZE
 %% This proves very convenient for chunk-by-chunk syncing.
 %%

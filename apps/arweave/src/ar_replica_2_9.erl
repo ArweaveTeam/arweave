@@ -62,9 +62,9 @@
 
     entropy: An 8 MiB (?REPLICA_2_9_ENTROPY_SIZE) block of entropy that contains the entropy
              for 1024 sub-chunks (?REPLICA_2_9_ENTROPY_SIZE div 
-             ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+             ?SUB_CHUNK_SIZE.
 
-    slice: The 8192 byte (?COMPOSITE_PACKING_SUB_CHUNK_SIZE) range of an 'entropy' that will
+    slice: The 8192 byte (?SUB_CHUNK_SIZE) range of an 'entropy' that will
            be enciphered with a sub-chunk when packing to the replica_2_9 format.
 
     entropy partition: contains all the entropies needed to encipher all the chunks in a
@@ -183,7 +183,7 @@ get_entropy_partition_range(PartitionNumber) ->
 %% RewardAddr: The address of the miner that mined the chunk.
 %% AbsoluteEndOffset: The absolute end offset of the chunk.
 %% SubChunkStartOffset: The start offset of the sub-chunk within the chunk. 0 is the first
-%% sub-chunk of the chunk, (?DATA_CHUNK_SIZE - ?COMPOSITE_PACKING_SUB_CHUNK_SIZE) is the
+%% sub-chunk of the chunk, (?DATA_CHUNK_SIZE - ?SUB_CHUNK_SIZE) is the
 %% last sub-chunk of the chunk.
 -spec get_entropy_key(
 		RewardAddr :: binary(),
@@ -252,8 +252,8 @@ get_entropy_index(AbsoluteChunkEndOffset, SubChunkStartOffset) ->
     ChunkBucket = (PartitionRelativeOffset rem SectorSize) div ?DATA_CHUNK_SIZE,
     %% Index of this sub-chunk into the chunk (i.e. how many sub-chunks into the chunk it
     %% falls)
-    SubChunkBucket = SubChunkStartOffset div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
-    ChunkBucket * ?COMPOSITE_PACKING_SUB_CHUNK_COUNT + SubChunkBucket.
+    SubChunkBucket = SubChunkStartOffset div ?SUB_CHUNK_SIZE,
+    ChunkBucket * ?SUB_CHUNK_COUNT + SubChunkBucket.
 
 %%%===================================================================
 %%% Tests.
@@ -269,11 +269,11 @@ get_entropy_key_test_() ->
     fun test_get_entropy_key/0, 30).
 
 test_get_entropy_key() ->
-    SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+    SubChunkSize = ?SUB_CHUNK_SIZE,
     SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
     EntropyPartitionSize = ar_block:get_replica_2_9_entropy_partition_size(),
     Addr = << 0:256 >>,
-    ?assertEqual(32, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT),
+    ?assertEqual(32, ?SUB_CHUNK_COUNT),
     ?assertEqual(0, get_entropy_index(1, 0)),
     EntropyKey = ar_util:encode(get_entropy_key(Addr, 1, 0)),
     ?assertEqual(EntropyKey,

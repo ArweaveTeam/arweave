@@ -332,6 +332,6 @@ find_offset_in_intervals([{End, Start} | Rest], Offset) ->
 get_sub_chunk(Chunk, _Nonce, 0) when byte_size(Chunk) == ?DATA_CHUNK_SIZE ->
 	Chunk;
 get_sub_chunk(Chunk, Nonce, _PackingDifficulty) ->
-	SubChunkSize = ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+	SubChunkSize = ?SUB_CHUNK_SIZE,
 	SubChunkStartOffset = SubChunkSize * Nonce,
 	binary:part(Chunk, SubChunkStartOffset, SubChunkSize).

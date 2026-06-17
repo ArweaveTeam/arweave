@@ -2067,8 +2067,7 @@ json_map_to_candidate(JSON) ->
 	Label = maps:get(<<"label">>, JSON, <<"not_set">>),
 	PackingDifficulty = maps:get(<<"packing_difficulty">>, JSON, 0),
 	ReplicaFormat = maps:get(<<"replica_format">>, JSON, 0),
-	true = (PackingDifficulty >= 0 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY
-			andalso ReplicaFormat == 0)
+	true = (PackingDifficulty == 0 andalso ReplicaFormat == 0)
 			orelse (ReplicaFormat == 1
 					andalso PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY),
 	#mining_candidate{
@@ -2185,8 +2184,7 @@ json_map_to_solution(JSON) ->
 	Steps = parse_json_checkpoints(ar_util:decode(maps:get(<<"steps">>, JSON, <<>>))),
 	PackingDifficulty = maps:get(<<"packing_difficulty">>, JSON, 0),
 	ReplicaFormat = maps:get(<<"replica_format">>, JSON, 0),
-	true = (PackingDifficulty >= 0 andalso PackingDifficulty =< ?MAX_PACKING_DIFFICULTY
-			andalso ReplicaFormat == 0)
+	true = (PackingDifficulty == 0 andalso ReplicaFormat == 0)
 			orelse (ReplicaFormat == 1
 					andalso PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY),
 	#mining_solution{
@@ -2301,9 +2299,6 @@ encode_packing(undefined, false) ->
 	"undefined";
 encode_packing({spora_2_6, Addr}, _Strict) ->
 	"spora_2_6_" ++ binary_to_list(ar_util:encode(Addr));
-encode_packing({composite, Addr, PackingDifficulty}, _Strict) ->
-	"composite_" ++ binary_to_list(ar_util:encode(Addr)) ++ "."
-			++ integer_to_list(PackingDifficulty);
 encode_packing(spora_2_5, _Strict) ->
 	"spora_2_5";
 encode_packing(unpacked, _Strict) ->
@@ -2326,25 +2321,6 @@ decode_packing(<< "spora_2_6_", Addr/binary >>, Error) ->
 			_ ->
 				Error
 		end;
-decode_packing(<<"composite_", Rest/binary>>, Error) ->
-	case binary:split(Rest, <<".">>, [global]) of
-		[AddrBin, PackingDifficultyBin] ->
-			case catch binary_to_integer(PackingDifficultyBin) of
-				PackingDifficulty when is_integer(PackingDifficulty),
-						PackingDifficulty >= 0,
-						PackingDifficulty =< ?MAX_PACKING_DIFFICULTY ->
-					case ar_util:safe_decode(AddrBin) of
-						{ok, DecodedAddr} ->
-							{composite, DecodedAddr, PackingDifficulty};
-						_ ->
-							Error
-					end;
-				_ ->
-					Error
-			end;
-		_ ->
-			Error
-	end;
 decode_packing(<< "replica_2_9_", Addr/binary >>, Error) ->
 	case ar_util:safe_decode(Addr) of
 		{ok, DecodedAddr} ->
@@ -2368,15 +2344,6 @@ binary_to_packing(<< "spora_2_6_", Addr/binary >>, Error) when byte_size(Addr) =
 		_ ->
 			Error
 	end;
-binary_to_packing(<< "composite_", PackingDifficulty:8, Addr/binary >>, Error)
-		when byte_size(Addr) =< 64,
-		PackingDifficulty =< ?MAX_PACKING_DIFFICULTY ->
-	case ar_util:safe_decode(Addr) of
-		{ok, DecodedAddr} ->
-			{composite, DecodedAddr, PackingDifficulty};
-		_ ->
-			Error
-	end;
 binary_to_packing(<< "replica_2_9_", Addr/binary >>, Error) when byte_size(Addr) =< 64 ->
 	case ar_util:safe_decode(Addr) of
 		{ok, DecodedAddr} ->
@@ -2393,9 +2360,6 @@ packing_to_binary(spora_2_5) ->
 	<<"spora_2_5">>;
 packing_to_binary({spora_2_6, Addr}) ->
 	iolist_to_binary([<<"spora_2_6_">>, ar_util:encode(Addr)]);
-packing_to_binary({composite, Addr, PackingDifficulty}) ->
-	iolist_to_binary([<<"composite_">>, << PackingDifficulty:8 >>,
-						ar_util:encode(Addr)]);
 packing_to_binary({replica_2_9, Addr}) ->
 	iolist_to_binary([<<"replica_2_9_">>, ar_util:encode(Addr)]);
 packing_to_binary(unpacked_padded) ->

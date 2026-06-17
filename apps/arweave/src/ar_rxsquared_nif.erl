@@ -36,7 +36,7 @@ init_nif() ->
 rsp_fused_entropy_nif(
 	_RandomxState,
 	_ReplicaEntropySubChunkCount,
-	_CompositePackingSubChunkSize,
+	_SubChunkSize,
 	_LaneCount,
 	_RxDepth,
 	_JitEnabled,

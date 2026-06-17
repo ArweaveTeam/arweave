@@ -110,9 +110,7 @@ check_packings_for_address(
 		Address, PaddedEndOffset, TXRoot, LocalChunk, ChunkSize, ExpectedChunkID) ->
 	Packings = [
 		{replica_2_9, Address},
-		{spora_2_6, Address},
-		{composite, Address, 1},
-		{composite, Address, 2}
+		{spora_2_6, Address}
 	],
 	check_packings(Packings, PaddedEndOffset, TXRoot, LocalChunk, ChunkSize, ExpectedChunkID).
 

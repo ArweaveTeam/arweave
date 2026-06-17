@@ -310,11 +310,11 @@ generate_all_footprints(Iteration, RandomXState, RewardAddr) ->
 		FootprintIds, infinity).
 
 generate_footprint(RandomXState, RewardAddr, UniqueId) ->
-	SubChunkIndices = lists:seq(0, ?COMPOSITE_PACKING_SUB_CHUNK_COUNT - 1),
+	SubChunkIndices = lists:seq(0, ?SUB_CHUNK_COUNT - 1),
 	ar_util:pmap(
 		fun(SubChunkIndex) ->
 			AbsoluteOffset = (UniqueId + 1) * ?DATA_CHUNK_SIZE,
-			SubChunkOffset = SubChunkIndex * ?COMPOSITE_PACKING_SUB_CHUNK_SIZE,
+			SubChunkOffset = SubChunkIndex * ?SUB_CHUNK_SIZE,
 			Key = ar_replica_2_9:get_entropy_key(RewardAddr, AbsoluteOffset, SubChunkOffset),
 			ar_mine_randomx:randomx_generate_replica_2_9_entropy(RandomXState, Key)
 		end,

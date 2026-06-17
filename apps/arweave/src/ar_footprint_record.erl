@@ -82,7 +82,7 @@ get_padded_offset_from_footprint_offset(FootprintOffset) ->
 -spec get_footprint(Offset :: non_neg_integer()) -> non_neg_integer().
 get_footprint(Offset) ->
 	EntropyIndex = ar_replica_2_9:get_entropy_index(Offset, 0),
-	EntropyIndex div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
+	EntropyIndex div ?SUB_CHUNK_COUNT.
 
 %% @doc Get the footprint bucket number of a chunk.
 -spec get_footprint_bucket(Offset :: non_neg_integer()) -> non_neg_integer().
@@ -141,7 +141,7 @@ get_intervals_from_footprint_intervals(FootprintIntervals) ->
 %% @doc Get the number of footprints contained in a partition.
 -spec get_footprints_per_partition() -> non_neg_integer().
 get_footprints_per_partition() ->
-	?REPLICA_2_9_ENTROPY_COUNT div ?COMPOSITE_PACKING_SUB_CHUNK_COUNT.
+	?REPLICA_2_9_ENTROPY_COUNT div ?SUB_CHUNK_COUNT.
 
 %% @doc Return an upper bound on the footprint offsets reachable by a weave of
 %% the given byte size: the per-partition footprint capacity times the number
@@ -165,7 +165,7 @@ is_recorded(Offset, StoreID) ->
 %%%===================================================================
 
 get_footprint_size() ->
-	?REPLICA_2_9_ENTROPY_SIZE div ?COMPOSITE_PACKING_SUB_CHUNK_SIZE.
+	?REPLICA_2_9_ENTROPY_SIZE div ?SUB_CHUNK_SIZE.
 
 get_chunks_per_partition() ->
 	FootprintSize = get_footprint_size(),
