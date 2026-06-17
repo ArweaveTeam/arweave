@@ -16,8 +16,6 @@
 	create_wallet/0,
 	create_wallet/1,
 	docs/0,
-	e2e/0,
-	e2e/1,
 	main/0,
 	main/1,
 	prep_stop/1,
@@ -353,10 +351,10 @@ shell_localnet(Args) ->
 	try
 		case Args of
 			[] ->
-				ar_localnet:start(),
+				ok = ar_localnet:start(),
 				io:format("Shell is ready.~n");
 			[SnapshotDir] ->
-				ar_localnet:start(SnapshotDir),
+				ok = ar_localnet:start(SnapshotDir),
 				io:format("Shell is ready.~n");
 			_ ->
 				io:format("Usage: ./bin/localnet_shell [snapshot_dir]~n"),
@@ -371,11 +369,6 @@ shell_localnet(Args) ->
 stop_shell_localnet() ->
 	ar_test_node:stop(),
 	init:stop().
-
-%% @doc Run e2e tests.
-%% Usage: ./bin/e2e [module | module:test ...]
-e2e()     -> ar_test_runner:run(e2e).
-e2e(Args) -> ar_test_runner:run(e2e, Args).
 
 %% @doc Generate the project documentation.
 docs() ->

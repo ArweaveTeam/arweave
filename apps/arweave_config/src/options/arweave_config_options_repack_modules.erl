@@ -3,9 +3,7 @@
 %%%
 %%% Repack modules are canonically stored as `[repack_modules]`, a
 %%% list of maps. Leaf specs use `{list_item}` to declare the fields
-%%% available inside each list element. The fields for a module cover
-%%% `partition`, `range_start`, `range_end`, `from_format`,
-%%% `from_address`, `to_format`, and `to_address`.
+%%% available inside each list element.
 %%%
 %%% The module-level validator enforces each module's shape and rejects
 %%% modules that overlap with regular `[storage_modules]` entries.
@@ -121,7 +119,7 @@ specs() ->
 group_description() ->
 	<<"Define and run repack-in-place modules.">>.
 
-%% @doc Convert the canonical list of maps back into the legacy
+%% @doc Convert the canonical list of maps into the legacy
 %% repack-in-place tuple list.
 -spec legacy_list() -> [term()].
 legacy_list() ->
@@ -278,8 +276,9 @@ validate_tuple_packing({Format, Addr})
 validate_tuple_packing(_) ->
 	{error, <<"repack_modules: invalid packing">>}.
 
-%% @doc Cross-cutting: also reads arweave_config_options_storage_modules:legacy_list/0.
-%% A repack-in-place module must not also be a regular storage module.
+%% @doc A repack-in-place module must not also be a regular storage
+%% module; cross-checks against
+%% arweave_config_options_storage_modules:legacy_list/0.
 validate_no_in_place_overlap() ->
 	StorageIDs =
 		[ar_storage_module:id(M)

@@ -60,16 +60,21 @@ init([]) ->
 	%% ar_peer_sync's enqueue decisions. Self-opts-out via `ignore' from
 	%% init/1 when sync_jobs=0. Must start BEFORE ar_peer_sync.
 	DataDiscovery = ?CHILD(ar_data_discovery, worker),
+	%% Network-sync subsystem (coordinator + workers, chunk-copy, per-StoreID
+	%% peer-sync) is a single unit gated by `sync_jobs > 0'. ar_chunk_copy and
+	%% ar_peer_sync start BEFORE ar_data_sync's per-StoreID gen_servers so their
+	%% APIs are callable from data_sync's init and the chunk_copy completion handler.
+	SyncChildren = case ar_data_sync_coordinator:is_syncing_enabled() of
+		false ->
+			[];
+		true ->
+			ar_data_sync_coordinator:register_workers()
+			++ [?CHILD(ar_chunk_copy, worker)]
+			++ ar_peer_sync:register_workers()
+	end,
 	Children =
-		[PeerWorkerSup, DataRoots, DataDiscovery] ++
-		ar_data_sync_coordinator:register_workers() ++
-		ar_chunk_copy:register_workers() ++
-		%% ar_peer_sync is the per-StoreID network-sync gen_server (owns
-		%% the task queue, the enqueue pass state, and the device lock).
-		%% Must start BEFORE ar_data_sync's per-StoreID gen_servers so
-		%% the API is callable from their init and from the chunk_copy
-		%% completion handler.
-		ar_peer_sync:register_workers() ++
-		ar_data_sync:register_workers() ++
-		[DiskPool],
+		[PeerWorkerSup, DataRoots, DataDiscovery]
+		++ SyncChildren
+		++ ar_data_sync:register_workers()
+		++ [DiskPool],
 	{ok, {{one_for_one, 5, 10}, Children}}.

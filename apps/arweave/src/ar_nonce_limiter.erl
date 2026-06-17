@@ -499,9 +499,15 @@ get_or_init_nonce_limiter_info(#block{ height = Height } = B, RecentBI) ->
 		true ->
 			B#block.nonce_limiter_info;
 		false ->
-			{Seed, PartitionUpperBound, _TXRoot}
-					= lists:last(lists:sublist(RecentBI, ?SEARCH_SPACE_UPPER_BOUND_DEPTH)),
-			get_or_init_nonce_limiter_info(B, Seed, PartitionUpperBound)
+			case ar_node:get_block_index_upper_bound(Height, RecentBI) of
+				not_initialized ->
+					%% A short index past genesis is still loading; fail loud rather
+					%% than seed the nonce limiter from a too-recent block.
+					error({nonce_limiter_init_index_too_short,
+							{height, Height}, {index_len, length(RecentBI)}});
+				{Seed, PartitionUpperBound, _TXRoot} ->
+					get_or_init_nonce_limiter_info(B, Seed, PartitionUpperBound)
+			end
 	end.
 
 %% @doc Apply the nonce limiter update provided by the configured trusted peer.
@@ -1458,9 +1464,9 @@ maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
 				step_number = StepNumber,
 				vdf_difficulty = VDFDifficulty,
 				next_vdf_difficulty = NextVDFDifficulty } = Session,
-			prometheus_gauge:set(vdf_step, StepNumber),
-			prometheus_gauge:set(vdf_difficulty, [current], VDFDifficulty),
-			prometheus_gauge:set(vdf_difficulty, [next], NextVDFDifficulty);
+			ar_metrics:gauge_set(vdf_step, StepNumber),
+			ar_metrics:gauge_set(vdf_difficulty, [current], VDFDifficulty),
+			ar_metrics:gauge_set(vdf_difficulty, [next], NextVDFDifficulty);
 		false ->
 			ok
 	end.
@@ -1581,14 +1587,14 @@ test_reorg_after_join() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
-	ar_test_node:assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
 	ar_test_node:mine(peer1),
-	ar_test_node:assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:mine(peer1),
-	ar_test_node:wait_until_height(main, 2).
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)).
 
 reorg_after_join2_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun test_reorg_after_join2/0}.
@@ -1599,19 +1605,19 @@ test_reorg_after_join2() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
-	ar_test_node:assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:join_on(#{ node => main, join_on => peer1 }),
 	ar_test_node:mine(),
-	ar_test_node:wait_until_height(main, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:mine(peer1),
-	ar_test_node:assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:mine(peer1),
-	ar_test_node:assert_wait_until_height(peer1, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2)),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
-	ar_test_node:wait_until_height(main, 3).
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)).
 
 get_step_range_test() ->
 	?assertEqual(

@@ -397,16 +397,15 @@ test_packs_chunks_depending_on_packing_threshold() ->
 			#{},
 			lists:seq(1, 20)
 		),
-	Wallet = ar_test_data_sync:setup_nodes(#{ addr => MainAddr, peer_addr => PeerAddr }),
+	Wallet = ar_test_data_sync:setup_nodes(#{
+		addr => MainAddr,
+		peer_addr => PeerAddr,
+		config => ar_test_node:storage_module_config(MainAddr, lists:seq(0, 8)),
+		peer_config => ar_test_node:storage_module_config(PeerAddr, lists:seq(0, 8))
+	}),
 	{_LegacyProofs, StrictProofs, V1Proofs} = lists:foldl(
 		fun(Height, {Acc1, Acc2, Acc3}) ->
 			{{DR1, Chunks1}, {DR2, Chunks2}, {DR3, Chunks3}} = maps:get(Height, DataMap),
-			{#tx{ id = TXID1 } = TX1, Chunks1} =
-					ar_test_data_sync:tx(Wallet, {fixed_data, DR1, Chunks1}),
-			{#tx{ id = TXID2 } = TX2, Chunks2} =
-					ar_test_data_sync:tx(Wallet, {fixed_data, DR2, Chunks2}),
-			{#tx{ id = TXID3 } = TX3, Chunks3} =
-					ar_test_data_sync:tx(Wallet, {fixed_data, DR3, Chunks3}, v1),
 			{Miner, Receiver} =
 				case rand:uniform(2) == 1 of
 					true ->
@@ -414,6 +413,12 @@ test_packs_chunks_depending_on_packing_threshold() ->
 					false ->
 						{peer1, main}
 				end,
+			{#tx{ id = TXID1 } = TX1, Chunks1} =
+					tx_with_chunks(Wallet, DR1, Chunks1, v2, Miner),
+			{#tx{ id = TXID2 } = TX2, Chunks2} =
+					tx_with_chunks(Wallet, DR2, Chunks2, v2, Miner),
+			{#tx{ id = TXID3 } = TX3, Chunks3} =
+					tx_with_chunks(Wallet, DR3, Chunks3, v1, Miner),
 			?debugFmt("miner: ~p, receiver: ~p~n", [Miner, Receiver]),
 			?debugFmt("Mining block ~B.~n", [Height]),
 			TXs = ar_util:pick_random([TX1, TX2, TX3], 2),
@@ -468,12 +473,12 @@ test_packs_chunks_depending_on_packing_threshold() ->
 		lists:seq(1, 5)
 	),
 	BILast = ar_node:get_block_index(),
-	LastB = ar_test_node:read_block_when_stored(
+	LastB = ar_test_await:block_stored(
 			element(1, lists:nth(10, lists:reverse(BILast)))),
 	lists:foldl(
 		fun(Height, PrevB) ->
 			H = element(1, lists:nth(Height + 1, lists:reverse(BILast))),
-			B = ar_test_node:read_block_when_stored(H),
+			B = ar_test_await:block_stored(H),
 			PoA = B#block.poa,
 			NonceLimiterInfo = B#block.nonce_limiter_info,
 			PartitionUpperBound =
@@ -527,23 +532,9 @@ test_packs_chunks_depending_on_packing_threshold() ->
 		lists:seq(10, 20)
 	),
 	?debugMsg("Asserting synced data with the strict splits."),
-	maps:map(
-		fun(TXID, [{_, _, Chunks, _} | _]) ->
-			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
-			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
-			ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
-		end,
-		StrictProofs
-	),
+	assert_synced_data(StrictProofs),
 	?debugMsg("Asserting synced v1 data."),
-	maps:map(
-		fun(TXID, [{_, _, Chunks, _} | _]) ->
-			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
-			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
-			ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
-		end,
-		V1Proofs
-	),
+	assert_synced_data(V1Proofs),
 	?debugMsg("Asserting synced chunks."),
 	ar_test_data_sync:wait_until_syncs_chunks([P || {_, _, _, P} <- lists:flatten(maps:values(StrictProofs))]),
 	ar_test_data_sync:wait_until_syncs_chunks([P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))]),
@@ -552,3 +543,22 @@ test_packs_chunks_depending_on_packing_threshold() ->
 	ar_test_data_sync:wait_until_syncs_chunks(peer1, [P || {_, _, _, P} <- lists:flatten(maps:values(V1Proofs))],
 			infinity).
 
+tx_with_chunks(Wallet, DataRoot, Chunks, Format, Node) ->
+	ar_test_data_sync:tx(#{
+		wallet => Wallet,
+		split_type => {fixed_data, DataRoot, Chunks},
+		format => Format,
+		reward => fetch,
+		tx_anchor_peer => Node,
+		get_fee_peer => Node
+	}).
+
+%% @doc Assert main and peer1 both serve each tx's data, matching its chunks.
+assert_synced_data(Proofs) ->
+	maps:map(
+		fun(TXID, [{_, _, Chunks, _} | _]) ->
+			ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
+			ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
+			ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
+		end,
+		Proofs).

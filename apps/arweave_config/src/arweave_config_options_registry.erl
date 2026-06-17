@@ -123,9 +123,8 @@ get_legacy(Key) ->
 			{error, undefined}
 	end.
 
-%% @doc Every live config entry whose key starts with `Prefix'.
-%% Concrete specs come from the registry; additional runtime-only
-%% entries come directly from the store.
+%% @doc Every live config entry whose key starts with `Prefix',
+%% drawing on both the registry's specs and runtime-only store entries.
 -spec get_all_with_prefix(list()) -> [{list(), term()}].
 get_all_with_prefix(Prefix) ->
 	%% Return `[]` when the registry's ETS table is gone — that happens
@@ -222,8 +221,7 @@ is_runtime() ->
 	end.
 
 %% @doc Set the lifecycle flag. The facade flips it one-way at
-%% `arweave_config:runtime/0`; tests flip it both directions through
-%% `arweave_config:force_config/1` and `arweave_config:restore/1`.
+%% `arweave_config:runtime/0`; tests flip it both directions.
 -spec set_runtime(boolean()) -> ok.
 set_runtime(Bool) when is_boolean(Bool) ->
 	_ = gen_server:call(?MODULE, {set_runtime, Bool}, 10_000),
@@ -439,11 +437,19 @@ do_set_runtime(Option, Value, Spec, Bindings) ->
 	end.
 
 do_set_parameter(Option, Value, Spec, Bindings) ->
-	case check(Option, Value, Spec) of
-		{ok, Return, _} ->
-			do_set_value(Option, Return, Spec, Bindings);
-		Else ->
-			Else
+	%% Writing a value equal to the spec's `default' bypasses the type
+	%% validator, so callers can reset to a sentinel default (e.g.
+	%% `not_set') that no general-purpose type function would accept.
+	case maps:get(default, Spec, undefined) of
+		Value ->
+			do_set_value(Option, Value, Spec, Bindings);
+		_ ->
+			case check(Option, Value, Spec) of
+				{ok, Return, _} ->
+					do_set_value(Option, Return, Spec, Bindings);
+				Else ->
+					Else
+			end
 	end.
 
 %% Run the `handle_set` callback when one is defined; otherwise fall

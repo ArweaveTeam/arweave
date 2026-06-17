@@ -7,14 +7,14 @@
 
 recent_blocks_test_() ->
 	[
-		{timeout, 300, fun test_recent_blocks_post/0},
-		{timeout, 300, fun test_recent_blocks_announcement/0}
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_recent_blocks_post/0},
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_recent_blocks_announcement/0}
 	].
 
 recent_forks_test_() ->
 	[
-		{timeout, 300, fun test_get_recent_forks/0},
-		{timeout, 300, fun test_recent_forks/0}
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_get_recent_forks/0},
+		{timeout, ?TEST_NODE_TIMEOUT, fun test_recent_forks/0}
 	].
 
 %% -------------------------------------------------------------------------------------------
@@ -40,7 +40,8 @@ test_recent_blocks(Type) ->
 	PeerBI = lists:foldl(
 		fun(Height, _Acc) ->
 			ar_test_node:mine(peer1),
-			ar_test_node:wait_until_height(peer1, Height)
+			{ok, BI} = ar_test_await:node_height(peer1, Height),
+			BI
 		end,
 		ok,
 		lists:seq(1, TargetHeight)
@@ -199,14 +200,14 @@ test_recent_forks() ->
    
 	%% Mine a few blocks, shared by both peers
 	ar_test_node:mine(peer1),
-	ar_test_node:wait_until_height(peer1, 1),
-	ar_test_node:wait_until_height(peer2, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 1)),
 	ar_test_node:mine(peer2),
-	ar_test_node:wait_until_height(peer1, 2),
-	ar_test_node:wait_until_height(peer2, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2)),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 2)),
 	ar_test_node:mine(peer1),
-	ar_test_node:wait_until_height(peer1, 3),
-	ar_test_node:wait_until_height(peer2, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 3)),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 3)),
 
 	%% Disconnect peers, and have peer1 mine 1 block, and peer2 mine 3
 	ar_test_node:disconnect_from(peer1),
@@ -214,7 +215,7 @@ test_recent_forks() ->
 	ar_test_node:disconnect_peers(peer1, peer2),
 
 	ar_test_node:mine(peer1),
-	BI1 = ar_test_node:wait_until_height(peer1, 4),
+	{ok, BI1} = ar_test_await:node_height(peer1, 4),
 	Orphans1 = [ID || {ID, _, _} <- lists:sublist(BI1, 1)],
 	Fork1 = #fork{
 		id = crypto:hash(sha256, list_to_binary(Orphans1)),
@@ -223,21 +224,21 @@ test_recent_forks() ->
 	},
 		
 	ar_test_node:mine(peer2),
-	ar_test_node:wait_until_height(peer2, 4),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 4)),
 	ar_test_node:mine(peer2),
-	ar_test_node:wait_until_height(peer2, 5),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 5)),
 	ar_test_node:mine(peer2),
-	ar_test_node:wait_until_height(peer2, 6),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 6)),
 
 	%% Reconnect the peers. This will orphan peer1's block
 	ar_test_node:connect_to_peer(peer2),
-	ar_test_node:wait_until_height(main, 6),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 6)),
 
 	ar_test_node:connect_to_peer(peer1),
-	ar_test_node:wait_until_height(peer1, 6),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 6)),
 
 	ar_test_node:connect_peers(peer1, peer2),
-	ar_test_node:wait_until_height(peer2, 6),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 6)),
 
 	%% Disconnect peers, and have peer1 mine 2 block2, and peer2 mine 3
 	ar_test_node:disconnect_from(peer1),
@@ -245,9 +246,9 @@ test_recent_forks() ->
 	ar_test_node:disconnect_peers(peer1, peer2),
 
 	ar_test_node:mine(peer1),
-	ar_test_node:wait_until_height(peer1, 7),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 7)),
 	ar_test_node:mine(peer1),
-	BI2 = ar_test_node:wait_until_height(peer1, 8),
+	{ok, BI2} = ar_test_await:node_height(peer1, 8),
 	Orphans2 = [ID || {ID, _, _} <- lists:reverse(lists:sublist(BI2, 2))],
 	Fork2 = #fork{
 		id = crypto:hash(sha256, list_to_binary(Orphans2)),
@@ -256,21 +257,21 @@ test_recent_forks() ->
 	},
 
 	ar_test_node:mine(peer2),
-	ar_test_node:wait_until_height(peer2, 7),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 7)),
 	ar_test_node:mine(peer2),
-	ar_test_node:wait_until_height(peer2, 8),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 8)),
 	ar_test_node:mine(peer2),
-	ar_test_node:wait_until_height(peer2, 9),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 9)),
 
 	%% Reconnect the peers. This will create a second fork as peer1's blocks are orphaned
 	ar_test_node:connect_to_peer(peer2),
-	ar_test_node:wait_until_height(main, 9),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 9)),
 
 	ar_test_node:connect_to_peer(peer1),
-	ar_test_node:wait_until_height(peer1, 9),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 9)),
 
 	ar_test_node:connect_peers(peer1, peer2),
-	ar_test_node:wait_until_height(peer2, 9),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer2, 9)),
 
 
 	ar_test_node:disconnect_from(peer1),

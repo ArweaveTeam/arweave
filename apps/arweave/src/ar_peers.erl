@@ -29,7 +29,7 @@
 	start_link/0,
 	stats/1
 ]).
--export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 %% The frequency in seconds of re-resolving DNS of peers configured by domain names.
 -define(STORE_RESOLVED_DOMAIN_S, 60).
@@ -520,24 +520,21 @@ init([]) ->
 		false ->
 			process_flag(trap_exit, true),
 			ok = ar_events:subscribe(block),
-			{ok, #state{}, {continue, init}};
+			load_peers(),
+			gen_server:cast(?MODULE, rank_peers),
+			gen_server:cast(?MODULE, ping_peers),
+			_ = ar_timer:apply_interval(
+				?GET_MORE_PEERS_FREQUENCY_MS,
+				?MODULE,
+				discover_peers,
+				[],
+				#{ skip_on_shutdown => true }
+			),
+			?LOG_INFO([{event, ar_peers_initialized}]),
+			{ok, #state{}};
 		_ ->
 			{ok, #state{}}
 	end.
-
-handle_continue(init, State) ->
-	load_peers(),
-	gen_server:cast(?MODULE, rank_peers),
-	gen_server:cast(?MODULE, ping_peers),
-	_ = ar_timer:apply_interval(
-		?GET_MORE_PEERS_FREQUENCY_MS,
-		?MODULE,
-		discover_peers,
-		[],
-		#{ skip_on_shutdown => true }
-	),
-	?LOG_INFO([{event, ar_peers_initialized}]),
-	{noreply, State}.
 
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -550,7 +547,7 @@ handle_cast({add_peer, Peer, Release}, State) ->
 handle_cast(rank_peers, State) ->
 	LifetimePeers = score_peers(lifetime),
 	CurrentPeers = score_peers(current),
-	prometheus_gauge:set(arweave_peer_count, length(LifetimePeers)),
+	ar_metrics:gauge_set(arweave_peer_count, length(LifetimePeers)),
 	set_ranked_peers(lifetime, rank_peers(LifetimePeers)),
 	set_ranked_peers(current, rank_peers(CurrentPeers)),
 	ar_util:cast_after(?RANK_PEERS_FREQUENCY_MS, ?MODULE, rank_peers),

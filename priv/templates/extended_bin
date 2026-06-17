@@ -217,9 +217,21 @@ schedule_symlink_cleanup() {
     (
         sleep "$delay"
         # Only remove if they're actually symlinks (safety check)
-        [ -L "${RELEASE_ROOT_DIR}/lib" ] && rm -f "${RELEASE_ROOT_DIR}/lib"
-        [ -L "${RELEASE_ROOT_DIR}/releases" ] && rm -f "${RELEASE_ROOT_DIR}/releases"
+        cleanup_release_symlinks
     ) &
+}
+
+cleanup_release_symlinks() {
+    if [ -z "$RUNNING_FROM_SOURCE" ]; then
+        return
+    fi
+
+    if [ "${ARWEAVE_SYMLINK_CLEANUP_DELAY:-30}" = "0" ]; then
+        return
+    fi
+
+    [ -L "${RELEASE_ROOT_DIR}/lib" ] && rm -f "${RELEASE_ROOT_DIR}/lib"
+    [ -L "${RELEASE_ROOT_DIR}/releases" ] && rm -f "${RELEASE_ROOT_DIR}/releases"
 }
 
 export REL_DIR="${RELEASE_ROOT_DIR}/releases/${REL_VSN}"
@@ -262,14 +274,6 @@ _error () {
 ######################################################################
 # Arweave Section
 ######################################################################
-
-# Not all systems supports randomx jit
-if test ${SYSTEM_NAME} = "Darwin"
-then
-    export RANDOMX_JIT="disable randomx_jit"
-else
-    export RANDOMX_JIT=""
-fi
 
 # This variable is the main own used to start arweave
 ARWEAVE_OPTS="-run ar main ${RANDOM_JIT}"
@@ -1615,14 +1619,13 @@ case "$1" in
 	    sleep 1
 	done
 
-	# Clean up symlinks now that VM is running (allows VSCode extensions to work)
-	# Only remove if running from source and they're actually symlinks
-	if [ -n "$RUNNING_FROM_SOURCE" ]; then
-	    [ -L "${RELEASE_ROOT_DIR}/lib" ] && rm -f "${RELEASE_ROOT_DIR}/lib"
-	    [ -L "${RELEASE_ROOT_DIR}/releases" ] && rm -f "${RELEASE_ROOT_DIR}/releases"
-	fi
-
 	relx_run_hooks "$POST_START_HOOKS"
+
+	# Clean up symlinks once post-start hooks confirm the node reached
+	# the release-ready boundary. `erlang:is_alive/0' can become true
+	# before OTP applications finish reading priv files through these
+	# paths.
+	cleanup_release_symlinks
 	;;
 
     stop)

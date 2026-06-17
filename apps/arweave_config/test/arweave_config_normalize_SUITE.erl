@@ -108,10 +108,10 @@ classify_legacy_flag_promotes_dedicated_fields(_Config) ->
 %% Helpers
 %%====================================================================
 
-%% Pre-seeds every leaf and list value verify normalize writes to the
-%% opposite of the forced value, runs normalize with `[verify, mode]'
-%% set to `Mode', and asserts every write took effect. Both `purge'
-%% and `log' trigger the same fan-out, so this is shared.
+%% Pre-seeds every leaf and list value to the opposite of the forced
+%% value, runs normalize with `[verify, mode]' set to `Mode', and
+%% asserts every write took effect. `purge' and `log' share this
+%% fan-out.
 assert_verify_normalize_forces_all_flags(Mode) ->
 	arweave_config:with_test_config(fun() ->
 		%% Leaf pre-seeds: each value is chosen so the asserted

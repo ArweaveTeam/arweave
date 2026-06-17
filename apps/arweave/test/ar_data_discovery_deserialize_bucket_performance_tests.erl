@@ -1,5 +1,5 @@
-%% @ar_test: isolated
 -module(ar_data_discovery_deserialize_bucket_performance_tests).
+-test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -21,8 +21,8 @@ max_bucket_advertisement_performance_test_() ->
 				fun() -> 37888 end}
 	],
 	{setup, fun setup_nodes/0, fun cleanup_nodes/1, [
-		ar_test_node:test_with_mocked_functions(Mocks, fun max_sync_buckets/0),
-		ar_test_node:test_with_mocked_functions(Mocks, fun max_footprint_buckets/0)
+		ar_test_node:test_with_all_nodes_mocked(Mocks, fun max_sync_buckets/0),
+		ar_test_node:test_with_all_nodes_mocked(Mocks, fun max_footprint_buckets/0)
 	]}.
 
 setup_nodes() ->
@@ -30,16 +30,16 @@ setup_nodes() ->
 	ar_test_node:start(#{
 		b0 => B0,
 		addr => MainAddr,
-		storage_modules => []
+		config => #{[storage_modules] => []}
 	}),
 	ar_test_node:start_peer(peer1, #{
 		b0 => B0,
 		addr => PeerAddr,
-		storage_modules => []
+		config => #{[storage_modules] => []}
 	}).
 
 cleanup_nodes(_) ->
-	catch ar_test_node:remote_call(peer1, ar_test_node, unmock_module,
+	catch ar_test_node:remote_call(peer1, ar_test_util, unmock_module,
 			[ar_global_sync_record]),
 	cleanup_tables().
 
@@ -75,19 +75,24 @@ run_test(EndpointType) ->
 	%% only expand into sub-buckets that fall within the weave we know about.
 	ExpectedRows = expected_inserted_rows(EndpointType, UnboundedExpandedBucketCount),
 	install_bucket_mock(MockedFunction, SerializedBuckets),
-	Peer = ar_test_node:peer_ip(peer1),
+	%% Fetch from a real peer so the HTTP client path is unchanged, but insert
+	%% under a synthetic peer so background discovery for peer1 cannot skew the
+	%% ETS row-count assertion.
+	FetchPeer = ar_test_node:peer_ip(peer1),
+	TablePeer = table_peer(EndpointType),
 	ets:delete_all_objects(Table),
-	{FetchMs, {ok, Buckets}} = timer:tc(ar_http_iface_client, Endpoint, [Peer]),
-	{BeforeTableSize, BeforeTableMemoryWords, BeforeEtsMemory, BeforeTotalMemory, BeforeRSS} =
+	{FetchMs, {ok, Buckets}} = timer:tc(ar_http_iface_client, Endpoint, [FetchPeer]),
+	BeforePeerRows = peer_rows(Table, TablePeer),
+	{_BeforeTableSize, BeforeTableMemoryWords, BeforeEtsMemory, BeforeTotalMemory, BeforeRSS} =
 		memory_snapshot(Table),
 	{InsertMs, ok} = timer:tc(fun() ->
-		gen_server:cast(ar_data_discovery, {CastTag, Peer, Buckets}),
+		gen_server:cast(ar_data_discovery, {CastTag, TablePeer, Buckets}),
 		_ = sys:get_state(ar_data_discovery, infinity),
 		ok
 	end),
-	{AfterTableSize, AfterTableMemoryWords, AfterEtsMemory, AfterTotalMemory, AfterRSS} =
+	{_AfterTableSize, AfterTableMemoryWords, AfterEtsMemory, AfterTotalMemory, AfterRSS} =
 		memory_snapshot(Table),
-	RowsInserted = AfterTableSize - BeforeTableSize,
+	RowsInserted = peer_rows(Table, TablePeer) - BeforePeerRows,
 	MemoryWords = AfterTableMemoryWords - BeforeTableMemoryWords,
 	WordSize = erlang:system_info(wordsize),
 	MemoryBytes = MemoryWords * WordSize,
@@ -112,6 +117,14 @@ run_test(EndpointType) ->
 	}),
 	?assertEqual(ExpectedRows, RowsInserted),
 	ets:delete_all_objects(Table).
+
+table_peer(sync) ->
+	{127, 0, 0, 1, 0};
+table_peer(footprint) ->
+	{127, 0, 0, 1, 1}.
+
+peer_rows(Table, Peer) ->
+	ets:select_count(Table, [{{{'_', Peer}, '_'}, [], [true]}]).
 
 expected_inserted_rows(sync, UnboundedExpandedBucketCount) ->
 	WeaveSize = ar_node:get_weave_size(),
@@ -145,9 +158,9 @@ endpoint_spec(footprint) ->
 	}.
 
 install_bucket_mock(Function, SerializedBuckets) ->
-	ok = ar_test_node:remote_call(peer1, ar_test_node, new_mock,
+	ok = ar_test_node:remote_call(peer1, ar_test_util, new_mock,
 			[ar_global_sync_record, [no_link, passthrough]]),
-	ok = ar_test_node:remote_call(peer1, ar_test_node, mock_function,
+	ok = ar_test_node:remote_call(peer1, ar_test_util, mock_function,
 			[ar_global_sync_record, Function, fun() -> {ok, SerializedBuckets} end]).
 
 generate_max_bucket_payload(ExpectedBucketSize) ->

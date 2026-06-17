@@ -7,7 +7,7 @@
 -export([start_link/2, name/1, register_workers/0, is_storage_supported/3, put/4,
 		open_files/1, get/2, get/3, locate_chunk_on_disk/2,
 		get_range/2, get_range/3, cut/2, delete/1, delete/2,
-		set_entropy_complete/1, is_entropy_complete/2,
+		set_entropy_complete/1,
 		get_filepath/2, get_handle_by_filepath/1, close_file/2, close_files/1,
 		list_files/2, run_defragmentation/0, get_position_and_relative_chunk_offset/2,
 		get_storage_module_path/2, get_chunk_storage_path/2,
@@ -333,16 +333,6 @@ get_chunk_seek_offset(Offset) ->
 set_entropy_complete(StoreID) ->
 	gen_server:cast(name(StoreID), entropy_complete).
 
-%% @doc Return true when entropy preparation has completed for the given
-%% storage module. Returns false if the gen_server is unavailable or does not
-%% reply within Timeout. Non-replica_2_9 modules initialise entropy_context to
-%% {true, none}, so this always reports true for them.
-is_entropy_complete(StoreID, Timeout) ->
-	case catch gen_server:call(name(StoreID), is_entropy_complete, Timeout) of
-		{'EXIT', _} -> false;
-		Result -> Result
-	end.
-
 read_offset(PaddedOffset, StoreID) ->
 	{_ChunkFileStart, Filepath, Position, _ChunkOffset} =
 			ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
@@ -477,9 +467,6 @@ handle_call(reset, _, #state{ store_id = StoreID, file_index = FileIndex } = Sta
 	erlang:erase(),
 	{reply, ok, State#state{ file_index = #{} }};
 
-handle_call(is_entropy_complete, _From, #state{ entropy_context = {IsPrepared, _} } = State) ->
-	{reply, IsPrepared, State};
-
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
@@ -531,7 +518,7 @@ record_chunk(
 		PaddedEndOffset, Chunk, Packing, StoreID, FileIndex) ->
 	case write_chunk(PaddedEndOffset, Chunk, FileIndex, StoreID) of
 		{ok, Filepath} ->
-			prometheus_counter:inc(chunks_stored,
+			ar_metrics:counter_inc(chunks_stored,
 				[ar_storage_module:packing_label(Packing), ar_storage_module:label(StoreID)]),
 			case ar_sync_record:add(
 					PaddedEndOffset, PaddedEndOffset - ?DATA_CHUNK_SIZE,
@@ -712,7 +699,7 @@ read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID) ->
 			ar_metrics:record_rate_metric(
 				StartTime, byte_size(Bin), 
 				chunk_read_rate_bytes_per_second, [StoreIDLabel, raw]),
-			prometheus_counter:inc(chunks_read, [StoreIDLabel], ChunkCount),
+			ar_metrics:counter_inc(chunks_read, [StoreIDLabel], ChunkCount),
 			case is_offset_valid(Byte, BucketStart, ChunkOffset) of
 				true ->
 					extract_end_offset_chunk_pairs(Bin, BucketStart, 1);

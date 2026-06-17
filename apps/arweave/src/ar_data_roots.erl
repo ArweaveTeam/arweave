@@ -22,7 +22,7 @@
 	add_block_data_roots/3,
 	store_block/5,
 	store_block_async/5,
-	store_block_sync/5,
+	store_block_sync/5, store_block_sync/6,
 	get_entry/2,
 	remove_range/3,
 	iterator/3,
@@ -74,9 +74,14 @@ store_block_async(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID) ->
 %% completes. Used by callers that need to observe the new state immediately
 %% (e.g. test harnesses).
 store_block_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID) ->
+	store_block_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID, 120000).
+
+%% @doc store_block_sync/5 with an explicit gen_server call timeout. Callers with
+%% no client to bound the wait (e.g. one-shot bulk seeding) can pass `infinity'.
+store_block_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID, Timeout) ->
 	BlockSize = BlockEnd - BlockStart,
 	gen_server:call(?MODULE,
-		{store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID}, 120000).
+		{store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID}, Timeout).
 
 %%%===================================================================
 %%% Public: DB configuration
@@ -88,14 +93,7 @@ open_index_db(Dir, DBName, StoreID, BloomFilterOpts) ->
 	ar_kv:open(#{
 		path => filename:join(Dir, DBName),
 		name => index_db(StoreID),
-		options => [
-			{max_open_files, 100}, {max_background_compactions, 8},
-			{write_buffer_size, 256 * ?MiB}, % 256 MiB per memtable.
-			{target_file_size_base, 256 * ?MiB}, % 256 MiB per SST file.
-			%% 10 files in L1 to make L1 == L0 as recommended by the
-			%% RocksDB guide https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide.
-			{max_bytes_for_level_base, 10 * 256 * ?MiB}
-		] ++ BloomFilterOpts
+		options => ar_kv:db_options(100) ++ BloomFilterOpts
 	}).
 
 column_family(Opts) ->
@@ -701,7 +699,10 @@ terminate(Reason, _State) ->
 %%% Tests.
 %%%===================================================================
 
-get_all_in_range_returns_multiple_matches_for_same_pair_test() ->
+get_all_in_range_returns_multiple_matches_for_same_pair_test_() ->
+	{timeout, 30, fun test_get_all_in_range_returns_multiple_matches_for_same_pair/0}.
+
+test_get_all_in_range_returns_multiple_matches_for_same_pair() ->
 	with_test_index_db(
 		fun(StoreID) ->
 			DataRoot = << 1:256 >>,
@@ -720,7 +721,10 @@ get_all_in_range_returns_multiple_matches_for_same_pair_test() ->
 		end
 	).
 
-get_all_in_range_excludes_matches_outside_start_and_cursor_test() ->
+get_all_in_range_excludes_matches_outside_start_and_cursor_test_() ->
+	{timeout, 30, fun test_get_all_in_range_excludes_matches_outside_start_and_cursor/0}.
+
+test_get_all_in_range_excludes_matches_outside_start_and_cursor() ->
 	with_test_index_db(
 		fun(StoreID) ->
 			DataRoot = << 2:256 >>,
@@ -740,7 +744,10 @@ get_all_in_range_excludes_matches_outside_start_and_cursor_test() ->
 		end
 	).
 
-get_all_in_range_ignores_other_data_root_and_tx_size_test() ->
+get_all_in_range_ignores_other_data_root_and_tx_size_test_() ->
+	{timeout, 30, fun test_get_all_in_range_ignores_other_data_root_and_tx_size/0}.
+
+test_get_all_in_range_ignores_other_data_root_and_tx_size() ->
 	with_test_index_db(
 		fun(StoreID) ->
 			DataRoot = << 3:256 >>,

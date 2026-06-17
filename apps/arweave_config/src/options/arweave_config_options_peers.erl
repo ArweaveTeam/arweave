@@ -123,11 +123,9 @@ normalize_peers(Peers) ->
 	lists:usort([PeerID || Peer <- Peers,
 		{ok, PeerID} <- [arweave_config_type:peer_id(Peer)]]).
 
-%% @doc Read the peer_id store for a given role. Peers are stored in
-%% their canonical form (`{A, B, C, D, Port}' for IPv4, `<<"host:port">>'
-%% binary for hostnames / IPv6) — no conversion needed.
-%%
-%% The role may be passed as an atom or a binary; binaries go through
+%% @doc Read the canonical peer_ids for a given role (`{A, B, C, D,
+%% Port}' for IPv4, `<<"host:port">>' binary for hostnames / IPv6).
+%% The role may be an atom or a binary; binaries go through
 %% `binary_to_existing_atom/1' so unknown role names fail fast.
 -spec by_role(atom() | binary()) -> [tuple() | binary()].
 by_role(Role) when is_binary(Role) ->

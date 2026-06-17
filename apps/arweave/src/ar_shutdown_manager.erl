@@ -67,9 +67,14 @@ start_link(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec state() -> shutdown | running.
-
 state() ->
-	ets:lookup_element(?MODULE, state, 2, running).
+	try ets:lookup_element(?MODULE, state, 2, running) of
+		State ->
+			State
+	catch
+		error:badarg ->
+			shutdown
+	end.
 
 %%--------------------------------------------------------------------
 %% @doc set state value to shutdown.
@@ -78,7 +83,13 @@ state() ->
 -spec shutdown() -> boolean().
 
 shutdown() ->
-	ets:insert(?MODULE, {state, shutdown}).
+	%% Tolerate a missing table (the owning process may already be gone during
+	%% teardown): an uncaught badarg here, running in `ar:prep_stop', would turn
+	%% a clean stop into an abnormal exit of the permanent `arweave' app and
+	%% halt the node.
+	try ets:insert(?MODULE, {state, shutdown})
+	catch error:badarg -> false
+	end.
 
 %%--------------------------------------------------------------------
 %% @doc apply a function only if the service is running.
@@ -104,10 +115,9 @@ apply(Module, Function, Arguments) ->
 	Arguments :: [term()],
 	Opts :: #{ skip_on_shutdown => boolean() },
 	Return :: any() | {error, shutdown}.
-
 apply(Module, Function, Arguments, #{ skip_on_shutdown := false }) ->
 	erlang:apply(Module, Function, Arguments);
-apply(Module, Function, Arguments, Opts) ->
+apply(Module, Function, Arguments, _Opts) ->
 	case state() of
 		running ->
 			erlang:apply(Module, Function, Arguments);
@@ -208,18 +218,33 @@ list_connections() ->
 
 list_connections(gun) ->
 	lists:flatten([
-		begin
-			ProcessInfo = process_info(P),
-			Links = proplists:get_value(links, ProcessInfo, []),
-			[ L || L <- Links, is_port(L) ]
-		end ||
-		{_, P, _, _} <- supervisor:which_children(gun_sup)
+		[ L || L <- process_links(P), is_port(L) ]
+		|| {_, P, _, _} <- supervisor_children(gun_sup)
 	]);
 list_connections(cowboy) ->
 	Port = arweave_config:get([port]),
 	Filters = [{'=:=', peer_port, Port}],
 	SocketsInfo = connections(#{ filters => Filters }),
 	[ S || #{ socket := S } <- SocketsInfo ].
+
+supervisor_children(Supervisor) ->
+	try supervisor:which_children(Supervisor) of
+		Children ->
+			Children
+	catch
+		exit:{noproc, _} ->
+			[];
+		exit:{shutdown, _} ->
+			[];
+		exit:{{shutdown, _}, _} ->
+			[]
+	end.
+
+process_links(Pid) ->
+	case process_info(Pid, links) of
+		{links, Links} -> Links;
+		undefined -> []
+	end.
 
 %%--------------------------------------------------------------------
 %% @hidden

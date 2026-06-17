@@ -23,7 +23,7 @@
 %% ------------------------------------------------------------------------------------------------
 setup_all() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	RewardAddr = ar_test_node:generate_address(main),
 	Config = arweave_config:snapshot(),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
@@ -41,7 +41,7 @@ cleanup_all(Config) ->
 %% @doc Setup the environment so we can control VDF step generation.
 setup_pool_client() ->
 	[B0] = ar_weave:init([], ar_test_node:get_difficulty_for_invalid_hash(), ?WEAVE_SIZE),
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	RewardAddr = ar_test_node:generate_address(main),
 	Config = arweave_config:snapshot(),
 	%% We'll use partition 0 for any unsynced ranges.
 	StorageModules = [
@@ -281,9 +281,10 @@ do_test_chunk_cache_size_with_mocks(H1s, H2s, RecallRange2s, FirstChunks) ->
 
 	try
 		ar_test_node:mine(),
-		ar_test_node:wait_until_height(main, Height),
+		?assertMatch({ok, _}, ar_test_await:node_height(main, Height)),
 		%% wait until the mining has stopped
-		?assert(ar_util:do_until(fun() -> get_chunk_cache_size() == 0 end, 200, 10000))
+		ok = ar_test_await:until(chunk_cache_drained,
+			fun() -> get_chunk_cache_size() == 0 end, 10000)
 	after
 		Cleanup(Functions)
 	end.

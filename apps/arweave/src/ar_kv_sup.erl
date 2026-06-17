@@ -22,4 +22,8 @@ start_link() ->
 
 init([]) ->
 	ar_kv:create_ets(),
-	{ok, {{one_for_one, 5, 10}, [?CHILD(ar_kv, worker)]}}.
+	{ok, {{one_for_one, 5, 10}, [ar_kv_child()]}}.
+
+ar_kv_child() ->
+	%% Give RocksDB flush/sync/close time to finish before the supervisor kills ar_kv.
+	(?CHILD(ar_kv, worker))#{shutdown => 300_000}.

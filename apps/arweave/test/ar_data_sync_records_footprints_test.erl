@@ -6,7 +6,7 @@
 -include("ar_consensus.hrl").
 
 records_footprints_test_() ->
-	{timeout, 120, fun test_records_footprints/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_records_footprints/0}.
 
 test_records_footprints() ->
 	Wallet = ar_wallet:new_keyfile(),

@@ -15,9 +15,8 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Wrappers around the bucket-size constants so tests can override them
-%% with mainnet values when running in AR_TEST mode (where the macros are
-%% redefined to smaller values).
+%% @doc Wrappers around the bucket-size macros so tests, where the macros are
+%% redefined smaller, can read the mainnet values.
 get_default_sync_bucket_size() -> ?DEFAULT_SYNC_BUCKET_SIZE.
 get_network_data_bucket_size() -> ?NETWORK_DATA_BUCKET_SIZE.
 get_network_footprint_bucket_size() -> ?NETWORK_FOOTPRINT_BUCKET_SIZE.

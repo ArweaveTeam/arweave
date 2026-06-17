@@ -121,8 +121,7 @@ specs() ->
 group_description() ->
 	<<"Define and manage storage modules.">>.
 
-%% @doc Convert the canonical list of maps back into the legacy tuple
-%% list shape.
+%% @doc Convert the canonical list of maps into the legacy tuple list.
 -spec legacy_list() -> [term()].
 legacy_list() ->
 	case arweave_config_store:get([storage_modules]) of
@@ -144,8 +143,8 @@ legacy_defrags() ->
 			[]
 	end.
 
-%% @doc Take the legacy tuple list and write the canonical
-%% `[storage_modules]' list of maps.
+%% @doc Write a legacy tuple list as the canonical `[storage_modules]'
+%% list of maps.
 -spec write_legacy_list([term()]) -> ok.
 write_legacy_list(L) when is_list(L) ->
 	ExistingDefrags = legacy_defrags(),

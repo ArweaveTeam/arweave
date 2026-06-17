@@ -4,7 +4,8 @@
 
 -export([name/1, register_workers/0, get_read_range/3, chunk_range_read/4]).
 
--export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
+-export([start_link/2, init/1, handle_cast/2, handle_call/3,
+		handle_info/2, terminate/2]).
 
 -include("ar.hrl").
 -include("ar_sup.hrl").
@@ -92,14 +93,14 @@ init({StoreID, ToPacking}) ->
         {name, name(StoreID)}, {store_id, StoreID},
 		{from_packing, ar_serialize:encode_packing(FromPacking, false)},
         {to_packing, ar_serialize:encode_packing(ToPacking, false)}]),
-	
+
 	%% ModuleStart to PaddedModuleEnd is the *chunk* range that will be repacked. Chunk
-	%% offsets will later be converted to bucket offsets and entropy offsets - and the 
+	%% offsets will later be converted to bucket offsets and entropy offsets - and the
 	%% bucket and entropy ranges may differ from this chunk range.
 	Module = ar_storage_module:get_by_id(StoreID),
-    {ModuleStart, ModuleEnd} = ar_storage_module:module_range(Module),
+	{ModuleStart, ModuleEnd} = ar_storage_module:module_range(Module),
 	PaddedModuleEnd = ar_block:get_chunk_padded_offset(ModuleEnd),
-    Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
+	Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
 
 	BatchSize = arweave_config:get([packing, repack, batch_size]),
 	CacheSize = arweave_config:get([packing, repack, cache_size]),
@@ -107,16 +108,16 @@ init({StoreID, ToPacking}) ->
 	gen_server:cast(self(), repack),
 	gen_server:cast(self(), count_states),
 	ar_device_lock:set_device_lock_metric(StoreID, repack, paused),
-	State = #state{ 
+	State = #state{
 		store_id = StoreID,
+		configured_packing = FromPacking,
+		target_packing = ToPacking,
+		repack_status = paused,
 		read_batch_size = BatchSize,
 		num_entropy_offsets = NumEntropyOffsets,
 		module_start = ModuleStart,
 		module_end = PaddedModuleEnd,
-		next_cursor = Cursor, 
-		configured_packing = FromPacking,
-		target_packing = ToPacking,
-		repack_status = paused
+		next_cursor = Cursor
 	},
 	log_info(starting_repack_in_place, State, [
 		{name, name(StoreID)},
@@ -124,10 +125,10 @@ init({StoreID, ToPacking}) ->
 		{write_batch_size, State#state.write_batch_size},
 		{num_entropy_offsets, State#state.num_entropy_offsets},
 		{from_packing, ar_serialize:encode_packing(FromPacking, false)},
-        {to_packing, ar_serialize:encode_packing(ToPacking, false)},
+		{to_packing, ar_serialize:encode_packing(ToPacking, false)},
 		{raw_module_end, ModuleEnd},
 		{next_cursor, Cursor}]),
-    {ok, State}.
+	{ok, State}.
 
 %% @doc Gets the start and end offset of the range of chunks to read starting from
 %% BucketEndOffset. Also includes the BucketEndOffsets covered by that range.
@@ -668,7 +669,7 @@ add_range_to_repack_chunk_map(OffsetChunkMap, OffsetMetadataMap, #state{} = Stat
 assemble_repack_chunk(
 		RepackChunk, AbsoluteEndOffset, TargetPacking, Metadata, OffsetChunkMap,
 		ConfiguredPacking, StoreID) ->
-	{ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize} = Metadata,
+	#chunk_metadata{ chunk_size = ChunkSize } = Metadata,
 
 	BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(AbsoluteEndOffset),
 	PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteEndOffset),
@@ -698,16 +699,9 @@ assemble_repack_chunk(
 				offsets = #chunk_offsets{
 					absolute_offset = AbsoluteEndOffset,
 					bucket_end_offset = BucketEndOffset,
-					padded_end_offset = PaddedEndOffset,
-					relative_offset = RelativeOffset
+					padded_end_offset = PaddedEndOffset
 				},
-				metadata = #chunk_metadata{
-					chunk_data_key = ChunkDataKey,
-					tx_root = TXRoot,
-					data_root = DataRoot,
-					tx_path = TXPath,
-					chunk_size = ChunkSize
-				},
+				metadata = Metadata,
 				chunk = maps:get(PaddedEndOffset, OffsetChunkMap, not_found)
 			};
 		{false, _} ->
@@ -850,29 +844,28 @@ read_chunk_and_data_path(RepackChunk, #state{} = State) ->
 	#chunk_metadata{
 		chunk_data_key = ChunkDataKey
 	} = Metadata,
-	case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
+	case ar_data_sync:read_chunk_with_datapath(ChunkDataKey, StoreID) of
 		not_found ->
 			log_warning(chunk_not_found_in_chunk_data_db, RepackChunk, State, []),
-			RepackChunk#repack_chunk{ 
+			RepackChunk#repack_chunk{
 				metadata = Metadata#chunk_metadata{ data_path = not_found } };
-		{ok, V} ->
-			case binary_to_term(V, [safe]) of
-				{Chunk, DataPath} ->
-					RepackChunk#repack_chunk{ 
-						metadata = Metadata#chunk_metadata{ data_path = DataPath },
-						chunk = Chunk
-					};
-				DataPath when MaybeChunk /= not_found ->
-					RepackChunk#repack_chunk{ 
-						metadata = Metadata#chunk_metadata{ data_path = DataPath },
-						chunk = MaybeChunk
-					};
-				_ ->
-					log_warning(chunk_not_found, RepackChunk, State, []),
-					RepackChunk#repack_chunk{ 
-						metadata = Metadata#chunk_metadata{ data_path = not_found }
-					}
-			end
+		{ok, Chunk, DataPath} ->
+			RepackChunk#repack_chunk{
+				metadata = Metadata#chunk_metadata{ data_path = DataPath },
+				chunk = Chunk
+			};
+		{stored_elsewhere, DataPath} when MaybeChunk /= not_found ->
+			%% Bytes live in chunk_storage; reuse the chunk we already read in bulk
+			%% rather than paying a second read.
+			RepackChunk#repack_chunk{
+				metadata = Metadata#chunk_metadata{ data_path = DataPath },
+				chunk = MaybeChunk
+			};
+		_ ->
+			log_warning(chunk_not_found, RepackChunk, State, []),
+			RepackChunk#repack_chunk{
+				metadata = Metadata#chunk_metadata{ data_path = not_found }
+			}
 	end.
 
 update_chunk_state(RepackChunk, #state{} = State) ->
@@ -1102,7 +1095,7 @@ count_states(cache, #state{} = State) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			prometheus_gauge:set(repack_chunk_states, [StoreIDLabel, cache, ChunkState], Count),
+			ar_metrics:gauge_set(repack_chunk_states, [StoreIDLabel, cache, ChunkState], Count),
 			Acc
 		end,
 		ok,
@@ -1127,7 +1120,7 @@ count_states(queue, #state{} = State) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			prometheus_gauge:set(repack_chunk_states, [StoreIDLabel, queue, ChunkState], Count),
+			ar_metrics:gauge_set(repack_chunk_states, [StoreIDLabel, queue, ChunkState], Count),
 			Acc
 		end,
 		ok,
@@ -1331,11 +1324,12 @@ test_assemble_repack_chunk() ->
 	TXRoot = <<"tx_root">>,
 	DataRoot = <<"data_root">>,
 	TXPath = <<"tx_path">>,
-	RelativeOffset = 1000,
+	_RelativeOffset = 1000,
 	ChunkSize = ?DATA_CHUNK_SIZE,
 	Chunk = crypto:strong_rand_bytes(ChunkSize),
 
-	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize},
+	Metadata = #chunk_metadata{ chunk_data_key = ChunkDataKey, tx_root = TXRoot,
+		data_root = DataRoot, tx_path = TXPath, chunk_size = ChunkSize },
 
 	% %% Error - BucketEndOffset hasn't been initialized
 	?assertEqual(not_found,
@@ -1359,8 +1353,7 @@ test_assemble_repack_chunk() ->
 	ExpectedOffsets1 = #chunk_offsets{
 		absolute_offset = 100,
 		bucket_end_offset = 262144,
-		padded_end_offset = 100,
-		relative_offset = RelativeOffset
+		padded_end_offset = 100
 	},
 	?assertEqual(
 		ExpectedRepackedChunk#repack_chunk{
@@ -1389,8 +1382,7 @@ test_assemble_repack_chunk() ->
 	ExpectedOffsets2 = #chunk_offsets{
 		absolute_offset = 10_000_000,
 		bucket_end_offset = 10_223_616,
-		padded_end_offset = 10_223_616,
-		relative_offset = RelativeOffset
+		padded_end_offset = 10_223_616
 	},
 	?assertEqual(
 		ExpectedRepackedChunk#repack_chunk{
@@ -1423,10 +1415,11 @@ test_assemble_repack_chunk_too_small_unpacked() ->
 	TXRoot = <<"tx_root">>,
 	DataRoot = <<"data_root">>,
 	TXPath = <<"tx_path">>,
-	RelativeOffset = 1000,
+	_RelativeOffset = 1000,
 	ChunkSize = 100,
 
-	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize},
+	Metadata = #chunk_metadata{ chunk_data_key = ChunkDataKey, tx_root = TXRoot,
+		data_root = DataRoot, tx_path = TXPath, chunk_size = ChunkSize },
 
 	%% Small chunk before the strict data split threshold
 	%% unpacked -> unpacked
@@ -1463,8 +1456,7 @@ test_assemble_repack_chunk_too_small_unpacked() ->
 		offsets = #chunk_offsets{
 			absolute_offset = 10_000_000,
 			bucket_end_offset = 10_223_616,
-			padded_end_offset = 10_223_616,
-			relative_offset = RelativeOffset
+			padded_end_offset = 10_223_616
 		},
 		chunk = not_found
 	},
@@ -1482,10 +1474,11 @@ test_assemble_repack_chunk_too_small_packed() ->
 	TXRoot = <<"tx_root">>,
 	DataRoot = <<"data_root">>,
 	TXPath = <<"tx_path">>,
-	RelativeOffset = 1000,
+	_RelativeOffset = 1000,
 	ChunkSize = 100,
 
-	Metadata = {ChunkDataKey, TXRoot, DataRoot, TXPath, RelativeOffset, ChunkSize},
+	Metadata = #chunk_metadata{ chunk_data_key = ChunkDataKey, tx_root = TXRoot,
+		data_root = DataRoot, tx_path = TXPath, chunk_size = ChunkSize },
 
 	%% Small chunk before the strict data split threshold
 	%% packed -> unpacked
@@ -1514,8 +1507,7 @@ test_assemble_repack_chunk_too_small_packed() ->
 		offsets = #chunk_offsets{
 			absolute_offset = 10_000_000,
 			bucket_end_offset = 10_223_616,
-			padded_end_offset = 10_223_616,
-			relative_offset = RelativeOffset
+			padded_end_offset = 10_223_616
 		},
 		chunk = not_found
 	},

@@ -1,214 +1,277 @@
-%%% @doc Read-range worker for ar_chunk_copy.
+%%% @doc Read-range worker for `ar_chunk_copy'. One process per task, spawned
+%%% via `spawn_monitor'. It reads chunks from the source module's sync record
+%%% and posts `{pack_and_store_chunk, ...}' casts to the target `ar_data_sync',
+%%% which does the actual storage writes; this worker only reads.
 %%%
-%%% One process per source storage module. Receives `{read_range, Args}'
-%%% casts dispatched by ar_chunk_copy's queue, reads chunks from the source
-%%% module's sync record, and posts `{pack_and_store_chunk, ...}' to the
-%%% target ar_data_sync gen_server. Reports completion to ar_chunk_copy
-%%% via `task_completed/3'.
+%%% Exit contract (read by `ar_chunk_copy''s `'DOWN'' handler): `normal' means
+%%% the range is fully processed, anything else is a crash and is logged.
 %%%
-%%% Storage writes are deliberately left to the target ar_data_sync
-%%% process; this worker only reads.
+%%% Backpressure (chunk cache full, target disk full, per-batch yield) is
+%%% handled by sleeping and re-checking; the worker stays alive across waits
+%%% rather than releasing the source, which a 1:1 source/target relationship
+%%% wouldn't free for anyone else anyway.
 -module(ar_chunk_copy_worker).
+-test_category([fast]).
 
--behaviour(gen_server).
+-export([run/1]).
 
--export([start_link/1]).
-
--export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
-
+-include_lib("eunit/include/eunit.hrl").
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 
--record(state, {
-	name = undefined,
-	request_packed_chunks = false
-}).
-
-%% # of messages to cast to ar_data_sync at once. Each message carries at
-%% least 1 chunk worth of data (256 KiB). Since there are dozens or hundreds
-%% of workers, if each one posts too many messages at once it can overload
-%% the available memory.
+%% `pack_and_store_chunk' casts to `ar_data_sync' before the worker yields so
+%% other tasks can run. Each cast carries at least one 256 KiB chunk; with
+%% multiple sources draining in parallel, unbounded posting can exhaust memory.
 -define(READ_RANGE_MESSAGES_PER_BATCH, 40).
 
 %%%===================================================================
-%%% Public interface.
+%%% Entry point.
 %%%===================================================================
 
-start_link(Name) ->
-	gen_server:start_link({local, Name}, ?MODULE, Name, []).
+%% @doc Entry point for a transient read-range worker. Returns `ok' (exiting
+%% the process `normal') when the range is fully processed.
+run(Args) ->
+	do_run(Args).
 
 %%%===================================================================
-%%% Generic server callbacks.
+%%% Internal.
 %%%===================================================================
 
-init(Name) ->
-	?LOG_INFO([{event, init}, {module, ?MODULE}, {name, Name}]),
-	RequestPackedChunks = arweave_config:get([sync, request_packed_chunks]),
-	{ok, #state{
-		name = Name,
-		request_packed_chunks = RequestPackedChunks
-	}}.
-
-handle_call(Request, _From, State) ->
-	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
-	{reply, ok, State}.
-
-handle_cast({read_range, Args}, State) ->
-	case read_range(Args) of
-		recast ->
-			ok;
-		ReadResult ->
-			ar_chunk_copy:task_completed(State#state.name, ReadResult, Args)
-	end,
-	{noreply, State};
-
-handle_cast(Cast, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
-	{noreply, State}.
-
-handle_info(_Message, State) ->
-	{noreply, State}.
-
-terminate(Reason, _State) ->
-	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, io_lib:format("~p", [Reason])}]),
-	ok.
-
-%%%===================================================================
-%%% Private functions.
-%%%===================================================================
-
-read_range({Start, End, _OriginStoreID, _TargetStoreID})
-		when Start >= End ->
+do_run({Start, End, _, _}) when Start >= End ->
 	ok;
-read_range({Start, End, _OriginStoreID, TargetStoreID} = Args) ->
+do_run({Start, End, _, TargetStoreID} = Args) ->
 	case ar_data_sync:is_chunk_cache_full() of
+		true ->
+			timer:sleep(200),
+			do_run(Args);
 		false ->
 			case ar_data_sync:is_disk_space_sufficient(TargetStoreID) of
+				false ->
+					timer:sleep(30000),
+					do_run(Args);
 				true ->
 					?LOG_DEBUG([{event, read_range}, {pid, self()},
 						{size_mb, (End - Start) / ?MiB}, {args, Args}]),
-					read_range2(?READ_RANGE_MESSAGES_PER_BATCH, Args);
-				_ ->
-					ar_util:cast_after(30000, self(), {read_range, Args}),
-					recast
-			end;
-		_ ->
-			ar_util:cast_after(200, self(), {read_range, Args}),
-			recast
-	end.
-
-read_range2(0, Args) ->
-	ar_util:cast_after(1000, self(), {read_range, Args}),
-	recast;
-read_range2(_MessagesRemaining,
-		{Start, End, _OriginStoreID, _TargetStoreID})
-		when Start >= End ->
-	ok;
-read_range2(MessagesRemaining, {Start, End, OriginStoreID, TargetStoreID}) ->
-	CheckIsRecordedAlready =
-		case ar_sync_record:is_recorded(Start + 1, ar_data_sync, TargetStoreID) of
-			{true, _} ->
-				case ar_sync_record:get_next_unsynced_interval(Start, End, ar_data_sync,
-						TargetStoreID) of
-					not_found ->
-						ok;
-					{_, Start2} ->
-						read_range2(MessagesRemaining,
-								{Start2, End, OriginStoreID, TargetStoreID})
-				end;
-			_ ->
-				false
-		end,
-	IsRecordedInTheSource =
-		case CheckIsRecordedAlready of
-			ok ->
-				ok;
-			recast ->
-				ok;
-			false ->
-				case ar_sync_record:is_recorded(Start + 1, ar_data_sync, OriginStoreID) of
-					{true, Packing} ->
-						{true, Packing};
-					SyncRecordReply ->
-						?LOG_ERROR([{event, cannot_read_requested_range},
-								{origin_store_id, OriginStoreID},
-								{missing_start_offset, Start + 1},
-								{end_offset, End},
-								{target_store_id, TargetStoreID},
-								{sync_record_reply, io_lib:format("~p", [SyncRecordReply])}])
-				end
-		end,
-	ReadChunkMetadata =
-		case IsRecordedInTheSource of
-			ok ->
-				ok;
-			{true, Packing2} ->
-				{Packing2, ar_data_sync:get_chunk_by_byte(Start + 1, OriginStoreID)}
-		end,
-	PaddedEnd = ar_block:get_chunk_padded_offset(End),
-	case ReadChunkMetadata of
-		ok ->
-			ok;
-		{_, {error, invalid_iterator}} ->
-			%% get_chunk_by_byte looks for a key with the same prefix or the next
-			%% prefix. Therefore, if there is no such key, it does not make sense to
-			%% look for any key smaller than the prefix + 2 in the next iteration.
-			PrefixSpaceSize = trunc(math:pow(2,
-					?OFFSET_KEY_BITSIZE - ?OFFSET_KEY_PREFIX_BITSIZE)),
-			Start3 = ((Start div PrefixSpaceSize) + 2) * PrefixSpaceSize,
-			read_range2(MessagesRemaining,
-					{Start3, End, OriginStoreID, TargetStoreID});
-		{_, {error, Reason}} ->
-			?LOG_ERROR([{event, failed_to_query_chunk_metadata}, {offset, Start + 1},
-					{reason, io_lib:format("~p", [Reason])}]);
-		{_, {ok, _Key, {AbsoluteOffset, _, _, _, _, _, _}}} when AbsoluteOffset > PaddedEnd ->
-			ok;
-		{Packing3, {ok, _Key, {AbsoluteOffset, ChunkDataKey, TXRoot, DataRoot, TXPath,
-				RelativeOffset, ChunkSize}}} ->
-			ReadChunk = ar_data_sync:read_chunk(AbsoluteOffset, ChunkDataKey, OriginStoreID),
-			case ReadChunk of
-				not_found ->
-					ar_data_sync:invalidate_bad_data_record(
-						AbsoluteOffset, ChunkSize, OriginStoreID, read_range_chunk_not_found),
-					read_range2(MessagesRemaining-1,
-							{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
-				{error, Error} ->
-					?LOG_ERROR([{event, failed_to_read_chunk},
-							{absolute_end_offset, AbsoluteOffset},
-							{chunk_data_key, ar_util:encode(ChunkDataKey)},
-							{reason, io_lib:format("~p", [Error])}]),
-					read_range2(MessagesRemaining,
-							{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
-				{ok, {Chunk, DataPath}} ->
-					case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
-							OriginStoreID) of
-						{true, Packing3} ->
-							ar_data_sync:increment_chunk_cache_size(),
-							UnpackedChunk =
-								case Packing3 of
-									unpacked ->
-										Chunk;
-									_ ->
-										none
-								end,
-							Args = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
-									Packing3, RelativeOffset, ChunkSize, Chunk,
-									UnpackedChunk, TargetStoreID, ChunkDataKey},
-							gen_server:cast(ar_data_sync:name(TargetStoreID),
-									{pack_and_store_chunk, Args}),
-							read_range2(MessagesRemaining-1,
-								{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
-						{true, _DifferentPacking} ->
-							%% Unlucky timing - the chunk should have been repacked
-							%% in the meantime.
-							read_range2(MessagesRemaining,
-									{Start, End, OriginStoreID, TargetStoreID});
-						Reply ->
-							?LOG_ERROR([{event, chunk_record_not_found},
-									{absolute_end_offset, AbsoluteOffset},
-									{ar_sync_record_reply, io_lib:format("~p", [Reply])}]),
-							read_range2(MessagesRemaining,
-									{Start + ChunkSize, End, OriginStoreID, TargetStoreID})
-					end
+					read_range(?READ_RANGE_MESSAGES_PER_BATCH, Args)
 			end
 	end.
+
+read_range(0, Args) ->
+	%% Batch yield: let `ar_data_sync''s mailbox drain, then re-check
+	%% backpressure via `do_run' before continuing.
+	timer:sleep(1000),
+	do_run(Args);
+read_range(_MessagesRemaining, {Start, End, _, _}) when Start >= End ->
+	ok;
+read_range(MessagesRemaining,
+		{Start, End, OriginStoreID, TargetStoreID} = Args) ->
+	case ar_sync_record:is_recorded(Start + 1, ar_data_sync, TargetStoreID) of
+		{true, _} ->
+			%% Chunk already synced at the target — skip to next gap.
+			case ar_sync_record:get_next_unsynced_interval(
+					Start, End, ar_data_sync, TargetStoreID) of
+				not_found ->
+					ok;
+				{_, Start2} ->
+					read_range(MessagesRemaining,
+						{Start2, End, OriginStoreID, TargetStoreID})
+			end;
+		_ ->
+			case ar_sync_record:is_recorded(Start + 1, ar_data_sync,
+					OriginStoreID) of
+				{true, Packing} ->
+					read_and_post_chunk(MessagesRemaining, Packing, Args);
+				SyncRecordReply ->
+					?LOG_ERROR([{event, cannot_read_requested_range},
+						{origin_store_id, OriginStoreID},
+						{missing_start_offset, Start + 1},
+						{end_offset, End},
+						{target_store_id, TargetStoreID},
+						{sync_record_reply,
+							io_lib:format("~p", [SyncRecordReply])}]),
+					ok
+			end
+	end.
+
+%% @doc Read the chunk covering `Start + 1' in the origin store and hand it to
+%% the target store for packing, routing each `read_chunk_with_full_metadata/2'
+%% outcome through the range scan.
+read_and_post_chunk(MessagesRemaining, Packing,
+		{Start, End, OriginStoreID, TargetStoreID}) ->
+	PaddedEnd = ar_block:get_chunk_padded_offset(End),
+	case ar_data_sync:read_chunk_with_full_metadata(Start + 1, OriginStoreID) of
+		no_chunk ->
+			%% No chunk at or after `Start + 1' in this prefix; skip ahead.
+			Start2 = ar_data_sync:advance_chunks_index_cursor(Start),
+			read_range(MessagesRemaining,
+				{Start2, End, OriginStoreID, TargetStoreID});
+		{error, {data_missing, Metadata, Offsets}} ->
+			%% Chunk data does not exist even though an entry exists in the
+			%% index: invalidate the record so that it can be cleaned up
+			%% later and skip to the next chunk.
+			#chunk_metadata{ chunk_size = ChunkSize } = Metadata,
+			#chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
+			ar_data_sync:invalidate_bad_data_record(
+				AbsoluteOffset, ChunkSize, OriginStoreID,
+				read_range_chunk_not_found),
+			read_range(MessagesRemaining - 1,
+				{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
+		{error, {data_read_failed, Reason, Metadata2, Offsets2}} ->
+			%% The chunk's stored bytes are unreadable, since we don't know
+			%% if the data is bad or there is just a transient error we
+			%% won't invalidate the record and will just skip to the next chunk.
+			#chunk_metadata{
+				chunk_data_key = ChunkDataKey,
+				chunk_size = ChunkSize2 } = Metadata2,
+			#chunk_offsets{ absolute_offset = AbsoluteOffset2 } = Offsets2,
+			?LOG_ERROR([{event, failed_to_read_chunk},
+				{absolute_end_offset, AbsoluteOffset2},
+				{chunk_data_key, ar_util:encode(ChunkDataKey)},
+				{reason, io_lib:format("~p", [Reason])}]),
+			read_range(MessagesRemaining,
+				{Start + ChunkSize2, End, OriginStoreID, TargetStoreID});
+		{error, {index_read_failed, Reason}} ->
+			%% The chunks_index query failed; without metadata we don't know the
+			%% chunk's size, so advance the cursor by a full chunk and keep
+			%% scanning the rest of the range.
+			?LOG_ERROR([{event, failed_to_query_chunk_metadata},
+				{offset, Start + 1},
+				{reason, io_lib:format("~p", [Reason])}]),
+			read_range(MessagesRemaining,
+				{Start + ?DATA_CHUNK_SIZE, End, OriginStoreID, TargetStoreID});
+		{ok, _Metadata, #chunk_offsets{ absolute_offset = AbsoluteOffset }, _Chunk}
+				when AbsoluteOffset > PaddedEnd ->
+			ok;
+		{ok, Metadata, Offsets, Chunk} ->
+			post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
+				{Start, End, OriginStoreID, TargetStoreID})
+	end.
+
+post_chunk(MessagesRemaining, Packing, Chunk, Metadata, Offsets,
+		{Start, End, OriginStoreID, TargetStoreID}) ->
+	#chunk_metadata{
+		chunk_data_key = ChunkDataKey,
+		tx_root = TXRoot,
+		tx_path = TXPath,
+		data_root = DataRoot,
+		data_path = DataPath,
+		chunk_size = ChunkSize
+	} = Metadata,
+	#chunk_offsets{
+		absolute_offset = AbsoluteOffset,
+		relative_offset = RelativeOffset
+	} = Offsets,
+	case ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync,
+			OriginStoreID) of
+		{true, Packing} ->
+			ar_data_sync:increment_chunk_cache_size(),
+			UnpackedChunk = case Packing of
+				unpacked -> Chunk;
+				_ -> none
+			end,
+			ChunkArgs = {DataRoot, AbsoluteOffset, TXPath, TXRoot, DataPath,
+				Packing, RelativeOffset, ChunkSize, Chunk, UnpackedChunk,
+				TargetStoreID, ChunkDataKey},
+			gen_server:cast(ar_data_sync:name(TargetStoreID),
+				{pack_and_store_chunk, ChunkArgs}),
+			read_range(MessagesRemaining - 1,
+				{Start + ChunkSize, End, OriginStoreID, TargetStoreID});
+		{true, _DifferentPacking} ->
+			%% Unlucky timing — the chunk should have been repacked
+			%% in the meantime.
+			read_range(MessagesRemaining,
+				{Start, End, OriginStoreID, TargetStoreID});
+		Reply ->
+			?LOG_ERROR([{event, chunk_record_not_found},
+				{absolute_end_offset, AbsoluteOffset},
+				{ar_sync_record_reply, io_lib:format("~p", [Reply])}]),
+			read_range(MessagesRemaining,
+				{Start + ChunkSize, End, OriginStoreID, TargetStoreID})
+	end.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+%% Each test drives read_and_post_chunk/3 over the two-chunk range
+%% [0, 2 * ?DATA_CHUNK_SIZE) with `ar_data_sync' reads scripted per offset.
+
+data_read_failed_skips_chunk_test_() ->
+	ar_test_util:with_mocked(
+		read_range_mocks(fun
+			(1, _StoreID) ->
+				{error, {data_read_failed, io_error, test_metadata(), test_offsets()}};
+			(_Offset, _StoreID) ->
+				past_range_reply()
+		end),
+		fun() ->
+			ok = read_and_post_chunk(40, unpacked, test_range()),
+			%% The unreadable chunk is skipped and the scan reaches the next one.
+			?assertEqual(2,
+				meck:num_calls(ar_data_sync, read_chunk_with_full_metadata, '_')),
+			?assertEqual(0,
+				meck:num_calls(ar_data_sync, invalidate_bad_data_record, '_'))
+		end).
+
+index_error_advances_and_continues_test_() ->
+	ar_test_util:with_mocked(
+		read_range_mocks(fun
+			(1, _StoreID) ->
+				{error, {index_read_failed, rocksdb_error}};
+			(_Offset, _StoreID) ->
+				past_range_reply()
+		end),
+		fun() ->
+			ok = read_and_post_chunk(40, unpacked, test_range()),
+			%% The index error advances the cursor by a full chunk and the
+			%% scan reaches the next chunk rather than aborting.
+			?assertEqual(2,
+				meck:num_calls(ar_data_sync, read_chunk_with_full_metadata, '_')),
+			?assertEqual(0,
+				meck:num_calls(ar_data_sync, invalidate_bad_data_record, '_'))
+		end).
+
+data_missing_invalidates_and_continues_test_() ->
+	ar_test_util:with_mocked(
+		read_range_mocks(fun
+			(1, _StoreID) ->
+				{error, {data_missing, test_metadata(), test_offsets()}};
+			(_Offset, _StoreID) ->
+				past_range_reply()
+		end),
+		fun() ->
+			ok = read_and_post_chunk(40, unpacked, test_range()),
+			?assertEqual(2,
+				meck:num_calls(ar_data_sync, read_chunk_with_full_metadata, '_')),
+			?assert(meck:called(ar_data_sync, invalidate_bad_data_record,
+				[?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE, origin_store,
+					read_range_chunk_not_found]))
+		end).
+
+test_range() ->
+	{0, 2 * ?DATA_CHUNK_SIZE, origin_store, target_store}.
+
+test_metadata() ->
+	#chunk_metadata{ chunk_data_key = <<"key">>, chunk_size = ?DATA_CHUNK_SIZE }.
+
+test_offsets() ->
+	#chunk_offsets{ absolute_offset = ?DATA_CHUNK_SIZE }.
+
+%% A reply whose absolute offset falls past the padded range end, ending the
+%% scan cleanly.
+past_range_reply() ->
+	{ok, test_metadata(),
+		#chunk_offsets{ absolute_offset = 3 * ?DATA_CHUNK_SIZE }, <<>>}.
+
+read_range_mocks(ReadFun) ->
+	[
+		{ar_block, get_chunk_padded_offset, fun(Offset) -> Offset end},
+		{ar_sync_record, is_recorded, fun(_Offset, ar_data_sync, StoreID) ->
+			case StoreID of
+				target_store -> false;
+				origin_store -> {true, unpacked}
+			end
+		end},
+		{ar_data_sync, read_chunk_with_full_metadata, ReadFun},
+		{ar_data_sync, invalidate_bad_data_record, fun(_, _, _, _) -> ok end}
+	].

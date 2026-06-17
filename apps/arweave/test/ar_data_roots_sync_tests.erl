@@ -8,80 +8,35 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+-export([
+	test_chunk_after_data_roots_http_post/0,
+	test_chunk_after_data_roots_background_sync/0,
+	test_chunk_in_unconfigured_partition_requires_manual_data_roots/0,
+	test_chunk_skipped_with_duplicate_data_root/0,
+	test_chunk_skipped_with_depth_exhaustion/0,
+	test_chunk_persists_with_infinite_duplicate_data_root_depth/0,
+	data_roots_sync_mocks/0
+]).
+
 %%% Group: data roots metadata only (GET/POST /data_roots, sync from chain — no /chunk roundtrip).
 %%% ---------------------------------------------------------------------------
 
 %% Data roots sync from a peer via ar_data_root_sync when main joins with partial storage (not header sync).
 data_roots_sync_from_peer_test_() ->
-	ar_test_node:test_with_all_nodes_mocked([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked(data_roots_sync_mocks(),
 		fun test_data_roots_sync_from_peer/0).
 
 %% Data roots pushed with HTTP: GET /data_roots from miner, POST /data_roots to peer; assert metadata via GET.
 data_roots_http_post_test_() ->
-	ar_test_node:test_with_all_nodes_mocked([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
+	ar_test_node:test_with_all_nodes_mocked(data_roots_sync_mocks(),
 		fun test_data_roots_http_post/0).
-
-%%% Group: chunk POST/GET after data roots are available on the peer.
-%%% ---------------------------------------------------------------------------
-
-%% HTTP share of roots then chunk roundtrip: per block, GET roots from miner, POST to main, POST/GET /chunk.
-chunk_after_data_roots_http_post_test_() ->
-	ar_test_node:test_with_all_nodes_mocked([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_after_data_roots_http_post/0).
-
-%% Background ar_data_root_sync + header_sync_jobs > 0; then POST/GET /chunk (regression: POST 200, GET 404).
-chunk_after_data_roots_background_sync_test_() ->
-	ar_test_node:test_with_all_nodes_mocked([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_after_data_roots_background_sync/0).
-
-%% Background sync completes, but a block in an unconfigured partition still requires a
-%% manual POST /data_roots before POST /chunk can be accepted temporarily into the disk pool.
-chunk_in_unconfigured_partition_requires_manual_data_roots_test_() ->
-	ar_test_node:test_with_all_nodes_mocked([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_in_unconfigured_partition_requires_manual_data_roots/0).
-
-chunk_skipped_with_duplicate_data_root_test_() ->
-	ar_test_node:test_with_all_nodes_mocked([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_skipped_with_duplicate_data_root/0).
-
-chunk_skipped_with_depth_exhaustion_test_() ->
-	ar_test_node:test_with_all_nodes_mocked([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_skipped_with_depth_exhaustion/0).
-
-chunk_persists_with_infinite_duplicate_data_root_depth_test_() ->
-	ar_test_node:test_with_all_nodes_mocked([
-			{ar_block, get_consensus_window_size, fun() -> 5 end},
-			{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
-			{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}],
-		fun test_chunk_persists_with_infinite_duplicate_data_root_depth/0).
 
 test_data_roots_sync_from_peer() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 
 	%% Peer1 will mine while main stays disconnected until join_on later.
-	start_peers_then_disconnect(main, peer1, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 
 	%% Mine blocks with transactions with data on peer1 BEFORE main joins.
 	BlocksBeforeJoin = lists:map(
@@ -93,10 +48,10 @@ test_data_roots_sync_from_peer() ->
 		lists:seq(1, 3)
 	),
 	%% The node fetches this many latest blocks after joining the network.
-	%% We want all our data blocks be older so that the node has to use
-	%% the data root syncing mechanism to fetch data roots (we explicitly
-	%% assert the unexpected data roots are not synced further down here).
-	?assertEqual(10, 2 * ar_block:get_max_tx_anchor_depth()),
+	%% Mine enough newer blocks so the earliest data blocks are older than
+	%% that window and have to use data root syncing to fetch data roots.
+	LatestJoinedBlockCount = 2 * ar_block:get_max_tx_anchor_depth(),
+	?assertEqual(10, LatestJoinedBlockCount),
 	Blocks = BlocksBeforeJoin ++ lists:map(
 			fun(_) ->
 				Data = generate_random_txs(Wallet),
@@ -107,7 +62,7 @@ test_data_roots_sync_from_peer() ->
 		),
 
 	%% Now start main (node A) with header syncing disabled and storage modules covering PART of the range.
-	MainRewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	MainRewardAddr = ar_test_node:generate_address(main),
 	%% Cover only the first partition and half of the second one to ensure partial coverage.
 	MainConfig = #{
 		[mining, enabled] => false,
@@ -119,17 +74,22 @@ test_data_roots_sync_from_peer() ->
 		%% The second 3 MB of the weave (skipping 1-2 MB).
 		{3 * ?MiB, 1, {replica_2_9, MainRewardAddr}}
 	],
-    ConfiguredRanges = ar_intervals:from_list([{?MiB, 0}, {6 * ?MiB, 3 * ?MiB}]),
+	ConfiguredRanges = ar_intervals:from_list([{?MiB, 0}, {6 * ?MiB, 3 * ?MiB}]),
 
 	ar_test_node:join_on(#{ node => main, join_on => peer1,
 		config => MainConfig,
 		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- MainStorageModules] }, true),
 	ar_test_node:connect_to_peer(peer1),
-	ar_test_node:wait_until_joined(main),
+	ar_test_await:node_joined(main),
 
-	LastConsensusWindowHeight = 4,
+	LastBlock = lists:last(Blocks),
+	ConsensusWindowStartHeight =
+		max(0, LastBlock#block.height - ar_block:get_consensus_window_size() + 1),
+	%% The first block in the joined consensus window is the validation root for the
+	%% blocks replayed during join; it is not guaranteed to be applied as a new tip.
+	JoinedTipStartHeight = ConsensusWindowStartHeight + 1,
 	lists:foreach(
-		fun	(#block{ block_size = 0 }) ->
+		fun(#block{ block_size = 0 }) ->
 				ok;
 			(B) ->
 				BlockStart = block_start(B),
@@ -140,34 +100,36 @@ test_data_roots_sync_from_peer() ->
 						BlockEnd = B#block.weave_size,
 						BlockRange = ar_intervals:from_list([{BlockEnd, BlockStart}]),
 						Intersection = ar_intervals:intersection(BlockRange, ConfiguredRanges),
-						case B#block.height >= LastConsensusWindowHeight of
+						case B#block.height >= JoinedTipStartHeight of
 							true ->
 								?debugFmt("Asserting data roots synced during consensus "
 									"are stored, even outside the configured storage modules, "
 									"height: ~B, configured ranges: ~0p, intersection: ~0p",
 									[B#block.height, ConfiguredRanges, Intersection]),
-								wait_for_data_roots(main, B);
+								ok = ar_test_await:http_data_roots_available(main, B);
 							false ->
 								case ar_intervals:is_empty(Intersection) of
 									false ->
 										?debugFmt("Asserting data roots synced for partitions "
 											"we configured, range intersection: ~0p", [Intersection]),
-										wait_for_data_roots(main, B);
+										ok = ar_test_await:http_data_roots_available(main, B);
 									true ->
-										?debugFmt("Asserting no data roots for partitions "
-											"we did not configure, block range: ~0p", [BlockRange]),
-										assert_no_data_roots(main, B)
+										?debugFmt("Not asserting data roots outside the configured "
+											"storage modules; join may or may not have processed "
+											"this block, height: ~B, block range: ~0p",
+											[B#block.height, BlockRange]),
+										ok
 								end
-						end
-				end
-		end,
+							end
+					end
+			end,
 		Blocks
 	).
 
 test_data_roots_http_post() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
-	start_peers_then_disconnect(peer1, main, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 	{B, _} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
 	%% Mine some empty blocks to push the data block out of the recent window.
 	mine_empty_blocks_on_peer_after(peer1, B, 11),
@@ -182,7 +144,7 @@ test_chunk_after_data_roots_http_post() ->
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
 
 	%% Main must not sync while peer1 builds the chain we will POST later.
-	start_peers_then_disconnect(main, peer1, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 
 	%% Mine blocks with data on peer1. "Guaranteed" is a block with a fixed small data tx that
 	%% is guaranteed to trigger a POST /data_roots in the test loop. The remaining random data
@@ -250,12 +212,12 @@ test_chunk_after_data_roots_http_post() ->
 test_chunk_after_data_roots_background_sync() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
-	start_peers_then_disconnect(peer1, main, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 	{B, [{TX, Chunks}]} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
 	mine_empty_blocks_on_peer_after(peer1, B, 11),
 	join_main_on_peer1(B#block.height + 11, true),
 	true = B#block.block_size > 0,
-	wait_until_data_roots_synced(main, B),
+	ok = ar_test_await:data_roots_available(main, B),
 	ar_test_node:disconnect_from(peer1),
 	post_then_get_chunks(main, B, TX, Chunks),
 	ok.
@@ -263,7 +225,7 @@ test_chunk_after_data_roots_background_sync() ->
 test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
-	start_peers_then_disconnect(peer1, main, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 	BlocksData = [
 		%% Use slightly different sizes so each block gets a distinct data root while still
 		%% advancing the weave quickly into the uncovered partition.
@@ -287,8 +249,8 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 		config => MainConfig,
 		[storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- MainStorageModules] }, true),
 	ar_test_node:connect_to_peer(peer1),
-	ar_test_node:wait_until_joined(main),
-	ar_test_node:assert_wait_until_height(main, LastB#block.height + 11),
+	ar_test_await:node_joined(main),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, LastB#block.height + 11)),
 
 	ExpectedBackgroundSync = lists:takewhile(
 		fun({B, _TXData}) -> block_start(B) < ?MiB end,
@@ -296,7 +258,7 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 	%% Background sync scans by block start offset within configured module ranges.
 	lists:foreach(
 		fun({B, _TXData}) ->
-			wait_for_data_roots(main, B)
+			ok = ar_test_await:http_data_roots_available(main, B)
 		end,
 		ExpectedBackgroundSync
 	),
@@ -351,7 +313,7 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
 test_chunk_skipped_with_duplicate_data_root() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
-	start_peers_then_disconnect(peer1, main, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 	%% Mine two consecutive blocks on peer1 with the SAME data root (identical chunk data).
 	{B1, [{TX1, Chunks1}]} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
 	{B2, [{TX2, Chunks2}]} = mine_block_with_fixed_data_tx(peer1, Wallet, 4096),
@@ -369,7 +331,7 @@ test_chunk_skipped_with_duplicate_data_root() ->
 	ar_test_node:disconnect_from(peer1),
 	{AbsEnd2, Proof2} = build_single_proof(B2, TX2, Chunks2),
 	post_chunk(main, Proof2),
-	wait_for_sync_record_update(main, AbsEnd2),
+	ok = ar_test_await:chunk_recorded(main, AbsEnd2, #{}),
 	%% POST TX1's chunk. Since we've only synced one copy of the data_roots, and we've already
 	%% postd one chunk matching that data_root (TX2's chunk), we should get a 200 when
 	%% posting Chunk1 - *but* we will not see Chunk1 persisted. This is not ideal but it is
@@ -383,10 +345,11 @@ test_chunk_skipped_with_duplicate_data_root() ->
 	?assertEqual(not_found, get_chunk(main, AbsEnd1)),
 	%% Now we post B1's data roots, which should allow Chunk1 to be persisted
 	post_data_roots(main, B1, Body1),
-	wait_for_data_roots(main, B1),
+	ok = ar_test_await:http_data_roots_available(main, B1),
 	%% Re-POST the chunk — now B1's index entry exists so the chunk can be promoted.
 	post_chunk(main, Proof1),
-	ok = wait_for_chunk_to_persist(main, AbsEnd1).
+	{ok, _} = ar_test_await:http_chunk_matches(main, AbsEnd1,
+		ar_test_data_sync:proof_to_expected_fields(Proof1), #{ packing => any }).
 
 test_chunk_skipped_with_depth_exhaustion() ->
 	run_duplicate_depth_scenario(3).
@@ -398,7 +361,7 @@ run_duplicate_depth_scenario(MaxDuplicateDataRoots) ->
 	DuplicateDepth = 3,
 	Wallet = {_, Pub} = ar_wallet:new(),
 	[B0] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(2_000_000_000_000_000), <<>>}]),
-	start_peers_then_disconnect(peer1, main, B0),
+	start_main_and_peer_then_disconnect(peer1, B0),
 	%% Mine one more block than the finite duplicate-depth limit so the oldest block only stays
 	%% reachable when max_duplicate_data_roots is treated as unbounded.
 	Blocks = lists:map(
@@ -454,14 +417,22 @@ run_duplicate_depth_scenario(MaxDuplicateDataRoots) ->
 			ok
 	end.
 
-%% Start PeerA and PeerB from the same genesis, wait until both joined, then have PeerA
-%% disconnect from PeerB so they stop syncing while tests extend the chain on one side.
-start_peers_then_disconnect(PeerA, PeerB, B0) ->
-	ar_test_node:start_peer(PeerA, B0),
-	ar_test_node:start_peer(PeerB, B0),
-	ar_test_node:wait_until_joined(PeerA),
-	ar_test_node:wait_until_joined(PeerB),
-	ar_test_node:remote_call(PeerA, ar_test_node, disconnect_from, [PeerB]),
+%% @doc Start main and Peer from the same genesis, then disconnect so Peer can
+%% build the source chain before main joins with each scenario's storage/sync config.
+start_main_and_peer_then_disconnect(Peer, B0) when Peer =/= main ->
+	%% Main is a parked sync target with no storage modules until the later join_on
+	%% installs the ones each test asserts against.
+	ar_test_node:start_peer(main, #{
+		b0 => B0,
+		config => #{
+			[mining, enabled] => false,
+			[storage_modules] => []
+		}
+	}),
+	ar_test_node:start_peer(Peer, B0),
+	ar_test_await:node_joined(main),
+	ar_test_await:node_joined(Peer),
+	ar_test_node:disconnect_from(Peer),
 	ok.
 
 %% Mine Count empty blocks on Peer immediately after Block (height advances from Block#block.height).
@@ -469,7 +440,7 @@ mine_empty_blocks_on_peer_after(Peer, Block, Count) ->
 	lists:foldl(
 		fun(_, Height) ->
 			ar_test_node:mine(Peer),
-			ar_test_node:assert_wait_until_height(Peer, Height + 1),
+			?assertMatch({ok, _}, ar_test_await:node_height(Peer, Height + 1)),
 			Height + 1
 		end,
 		Block#block.height,
@@ -492,31 +463,21 @@ join_main_on_peer1(ExpectedHeight, EnableBackgroundSync, MaxDuplicateDataRoots) 
 				true -> 2;
 				false -> 0
 			end,
-		[gossip, data_roots, syncing_enabled] => EnableBackgroundSync
+		[gossip, data_roots, syncing_enabled] => EnableBackgroundSync,
+		%% Unpacked modules: these scenarios exercise data-root admission and
+		%% disk-pool promotion, not packing or entropy generation.
+		[storage_modules] => unpacked_storage_module_configs()
 	},
 	MainConfig = case MaxDuplicateDataRoots of
 		undefined ->
 			BaseOverrides;
 		Value ->
-			ar_test_node:merge_overrides(BaseOverrides,
-				#{ [gossip, data_roots, max_duplicates] => Value })
+			BaseOverrides#{[gossip, data_roots, max_duplicates] => Value}
 	end,
 	ar_test_node:join_on(#{ node => main, join_on => peer1, config => MainConfig }, true),
 	ar_test_node:connect_to_peer(peer1),
-	ar_test_node:wait_until_joined(main),
-	ar_test_node:assert_wait_until_height(main, ExpectedHeight),
-	ok.
-
-wait_until_data_roots_synced(Peer, B) ->
-	Start = block_start(B),
-	End = B#block.weave_size,
-	true = ar_util:do_until(
-		fun() ->
-			ar_test_node:remote_call(Peer, ar_data_roots, are_synced,
-				[Start, End, B#block.tx_root, ?DEFAULT_MODULE])
-		end,
-		500,
-		120_000),
+	ar_test_await:node_joined(main),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, ExpectedHeight)),
 	ok.
 
 %% Mine one block on peer1 with a single fixed-size v2 data tx. TXData matches
@@ -615,7 +576,7 @@ post_data_roots(Peer, B, Body) ->
 sync_data_roots_to_main(B) ->
 	{ok, Body} = get_data_roots(peer1, B),
 	post_data_roots(main, B, Body),
-	wait_for_data_roots(main, B).
+	ok = ar_test_await:http_data_roots_available(main, B).
 
 %% POST /chunk with a proof map. Asserts 200.
 post_chunk(Node, Proof) ->
@@ -634,21 +595,9 @@ build_single_proof(B, TX, Chunks) ->
 post_single_proof_and_wait(Node, B, TX, Chunks) ->
 	{AbsEnd, Proof} = build_single_proof(B, TX, Chunks),
 	post_chunk(Node, Proof),
-	ok = wait_for_chunk_to_persist(Node, AbsEnd),
+	{ok, _} = ar_test_await:http_chunk_matches(Node, AbsEnd,
+		ar_test_data_sync:proof_to_expected_fields(Proof), #{ packing => any }),
 	AbsEnd.
-
-%% Poll until AbsoluteEndOffset appears in the sync record for the given node.
-wait_for_sync_record_update(Node, AbsoluteEndOffset) ->
-	true = ar_util:do_until(
-		fun() ->
-			case ar_test_node:remote_call(Node, ar_sync_record, is_recorded,
-					[AbsoluteEndOffset, ar_data_sync]) of
-				{{true, _}, _} -> true;
-				_ -> false
-			end
-		end,
-		500,
-		60_000).
 
 %% GET /chunk at the given offset with any packing. Returns ok | not_found.
 get_chunk(Node, GlobalEndOffset) ->
@@ -669,62 +618,11 @@ post_then_get_chunks(Node, B, TX, Chunks) ->
 	lists:foreach(
 		fun({_, _, _, {GlobalChunkEndOffset, Proof}}) ->
 			post_chunk(Node, Proof),
-			ok = wait_for_chunk_to_persist(Node, GlobalChunkEndOffset)
+			{ok, _} = ar_test_await:http_chunk_matches(Node, GlobalChunkEndOffset,
+				ar_test_data_sync:proof_to_expected_fields(Proof), #{ packing => any })
 		end,
 		Records
 	).
-
-%% Poll GET /chunk until HTTP 200 (disk-pool → sync_record promotion is asynchronous).
-wait_for_chunk_to_persist(Node, GlobalEndOffset) ->
-	wait_for_chunk_to_persist(Node, GlobalEndOffset, 15_000).
-
-wait_for_chunk_to_persist(Node, GlobalEndOffset, TimeoutMs) ->
-	case ar_util:do_until(
-		fun() ->
-			case get_chunk(Node, GlobalEndOffset) of
-				ok -> true;
-				not_found -> false
-			end
-		end,
-		100,
-		TimeoutMs
-	) of
-		true ->
-			ok;
-		{error, timeout} ->
-			?assert(false, 
-			lists:flatten(io_lib:format("Timeout waiting for chunk to persist: ~p",
-				[GlobalEndOffset])))
-	end.
-
-wait_for_data_roots(Peer, B) ->
-	Start = block_start(B),
-	End = B#block.weave_size,
-	Height = B#block.height,
-	true = ar_util:do_until(
-		fun() ->
-			case get_data_roots(Peer, B) of
-				{ok, Body} ->
-					case ar_serialize:binary_to_data_roots(Body) of
-						{ok, {_TXRoot, BlockSize, _Entries}}
-								when Start + BlockSize == End ->
-							true;
-						{ok, {_TXRoot, BlockSize2, _Entries}} ->
-							?debugFmt("Unexpected block size: ~B, expected: ~B, height: ~B",
-								[BlockSize2, End - Start, Height]),
-							?assert(false);
-						{error, Error} ->
-							?debugFmt("Unexpected error: ~p, height: ~B", [Error, Height]),
-							?assert(false)
-					end;
-				not_found ->
-					false
-			end
-		end,
-		200,
-		120_000
-	),
-	ok.
 
 random_tx_base_opts(Wallet) ->
 	#{
@@ -737,6 +635,20 @@ random_tx_base_opts(Wallet) ->
 
 random_tx(BaseOpts, SplitType) ->
 	ar_test_data_sync:tx(BaseOpts#{ split_type => SplitType }).
+
+data_roots_sync_mocks() ->
+	[
+		{ar_block, get_consensus_window_size, fun() -> 5 end},
+		{ar_block, get_max_tx_anchor_depth, fun() -> 5 end},
+		{ar_storage_module, get_overlap, fun(_Packing) -> 0 end}
+	].
+
+unpacked_storage_module_configs() ->
+	[
+		arweave_config:storage_module_to_config(
+			{10 * ar_block:partition_size(), N, unpacked})
+		|| N <- lists:seq(0, 8)
+	].
 
 assert_no_data_roots(Peer, B) ->
 	case get_data_roots(Peer, B) of

@@ -40,9 +40,8 @@
 %%%
 %%% Much of the node still speaks the historical config language.
 %%% Specs with a `legacy` field map old atom names to canonical
-%%% option_keys. List-backed values such as peers, storage modules, and
-%%% webhooks are stored under their canonical roots and validated by
-%%% their option specs.
+%%% option_keys. List-backed values (peers, storage modules, webhooks)
+%%% are stored under their canonical roots and validated by their specs.
 %%%
 %%% In short: parsers and legacy bridges translate input into canonical
 %%% option_keys; the registry enforces specs; the store holds values;
@@ -284,10 +283,9 @@ stop(_Args) ->
 
 -ifdef(AR_TEST).
 
-%% @doc Capture the config value store and runtime flag as an opaque
-%% snapshot for later restoration via `restore/1`. Tests use this to
-%% bracket sections that mutate config without leaking changes into
-%% sibling tests.
+%% @doc Capture the store and runtime flag as an opaque snapshot for
+%% restoration via `restore/1`, so tests can mutate config without
+%% leaking into siblings.
 -spec snapshot() -> #{store := list(), runtime := boolean()}.
 snapshot() ->
 	#{
@@ -295,9 +293,8 @@ snapshot() ->
 		runtime => is_runtime()
 	}.
 
-%% @doc Restore a snapshot captured by `snapshot/0`. Drops every
-%% current row, re-inserts the snapshot's rows, and restores the
-%% captured runtime flag.
+%% @doc Restore a `snapshot/0`: replace every store row with the
+%% snapshot's rows and restore the captured runtime flag.
 -spec restore(#{store := list(), runtime := boolean()}) -> ok.
 restore(#{store := StoreSnapshot, runtime := Runtime}) when is_boolean(Runtime) ->
 	ok = arweave_config_store:restore(StoreSnapshot),

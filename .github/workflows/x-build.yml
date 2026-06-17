@@ -28,6 +28,9 @@ jobs:
   build-template:
     runs-on:
       - self-hosted
+      # Build (compile) job runs on the shared build-runner pool. The
+      # compile/e2e pools were unified into build-runner (one 24 GiB cap,
+      # max 3/host); see infra docs/04. Test jobs also use build-runner.
       - build-runner
       - ${{ inputs.os_arch }}
       - ${{ inputs.os_name }}
@@ -161,16 +164,32 @@ jobs:
           # absolute symlinks that don't survive transport between
           # standalone runners. `_build/default/plugins' is build-time
           # only (rebar3 plugins like hex_core), never needed by the
-          # test BEAMs.
+          # test BEAMs. rocksdb's prebuilt build tree + vendored source are
+          # kept so `rebar3 ct' on the common-test runners reuses the built
+          # static lib (cmake stays a no-op) instead of rebuilding rocksdb
+          # from scratch -- a cc1plus CPU storm that severs the runner.
           tar --use-compress-program='zstd -T0 -3' \
               --exclude='_build/default/plugins' \
+              --exclude='*/.git' \
               -chf _build.tar.zst ./_build ./bin/arweave
           tar --use-compress-program='zstd -T0 -3' \
               -chf apps.tar.zst ./apps
+          # Fail the build on a truncated archive rather than uploading a
+          # poison artifact -- a short .zst passes upload but makes every
+          # downstream test job fail on extract. sync first so the write is
+          # durable before zstd reads it back.
+          sync
+          zstd -t _build.tar.zst apps.tar.zst
 
       # to avoid reusing artifacts from someone else
       # and generating issues, an unique artifact is
       # produced using github checksum.
+      - name: Push build to LAN cache
+        uses: ./.github/actions/push-build
+        with:
+          ssh-key: ${{ secrets.CI_CACHE_SSH_KEY }}
+          cache-key: build-${{ github.sha }}-${{ env.cache_key }}
+
       - name: upload artifacts
         uses: actions/upload-artifact@v4
         with:

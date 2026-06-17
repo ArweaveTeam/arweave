@@ -10,9 +10,7 @@
 -include("ar.hrl").
 
 -import(ar_test_node, [
-		sign_v1_tx/2, random_v1_data/1, 
-		wait_until_height/2,
-		assert_wait_until_height/2]).
+		sign_v1_tx/2, random_v1_data/1]).
 
 init(Req, State) ->
 	SplitPath = ar_http_iface_server:split_path(cowboy_req:path(Req)),
@@ -34,16 +32,15 @@ handle([<<"bad">>, <<"and">>, <<"good">>], Req, State) ->
 		),
 	{ok, cowboy_req:reply(200, #{}, Reply, Req), State}.
 
-%% Use `test_with_all_nodes_mocked/3' so the blacklist refresh interval
-%% is mecked on every peer (and the local node) before the fixture's
-%% TestFun runs. The blacklist gen_server reschedules itself on its
-%% first `handle_cast' using `?MODULE:refresh_interval_ms()', so the
-%% mock has to be live before any peer's arweave app starts.
+%% Mock the refresh interval on every peer and the local node via
+%% `test_with_all_nodes_mocked/3': the blacklist gen_server reads
+%% `?MODULE:refresh_interval_ms()' on its first `handle_cast', so the mock
+%% must be live before any node's arweave app starts.
 uses_blacklists_test_() ->
 	ar_test_node:test_with_all_nodes_mocked(
 		[{ar_tx_blacklist, refresh_interval_ms, fun() -> 2000 end}],
 		fun test_uses_blacklists/0,
-		300
+		?TEST_NODE_TIMEOUT
 	).
 
 test_uses_blacklists() ->
@@ -61,8 +58,8 @@ test_uses_blacklists() ->
 	} = setup(),
 	WhitelistFile = random_filename(),
 	ok = file:write_file(WhitelistFile, <<>>),
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	StorageModule = {30 * ?MiB, 0, {composite, RewardAddr, 1}},
+	RewardAddr = ar_test_node:generate_address(main),
+	StorageModules = blacklist_storage_modules(RewardAddr),
 	Config = arweave_config:snapshot(),
 	try
 		ar_test_node:start(#{ b0 => B0, addr => RewardAddr,
@@ -81,24 +78,24 @@ test_uses_blacklists() ->
 				],
 				[features, pack_served_chunks] => true
 			},
-			[storage_modules] => [arweave_config:storage_module_to_config(StorageModule)]
+			[storage_modules] => ar_test_node:storage_module_configs(StorageModules)
 		}),
 		ar_test_node:connect_to_peer(peer1),
 		BadV1TXIDs = [V1TX#tx.id],
 		lists:foreach(
 			fun({TX, Height}) ->
 				ar_test_node:assert_post_tx_to_peer(peer1, TX),
-				ar_test_node:assert_wait_until_receives_txs([TX]),
+				?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
 				case Height == length(TXs) of
 					true ->
 						ar_test_node:assert_post_tx_to_peer(peer1, V1TX),
-						ar_test_node:assert_wait_until_receives_txs([V1TX]);
+						?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [V1TX]));
 					_ ->
 						ok
 				end,
 				ar_test_node:mine(peer1),
 				upload_data([TX], DataTrees),
-				wait_until_height(main, Height)
+				?assertMatch({ok, _}, ar_test_await:node_height(main, Height))
 			end,
 			lists:zip(TXs, lists:seq(1, length(TXs)))
 		),
@@ -107,14 +104,7 @@ test_uses_blacklists() ->
 		assert_removed_txs(BadV1TXIDs),
 		assert_present_offsets(GoodOffsets),
 		assert_removed_offsets(BadOffsets),
-		StoreID = ar_storage_module:id(StorageModule),
-		Chunks = ar_chunk_storage:get_range(0, 30 * ?MiB, StoreID),
-		ChunkOffsets = [Offset || {Offset, _Chunk} <- Chunks],
-		?debugFmt("chunk offsets: ~p ~n good offsets: ~p ~n bad offsets: ~p~n",
-		[ChunkOffsets, GoodOffsets, BadOffsets]),
-		?assert(lists:all(fun(BadOffset) ->
-			not lists:member(ar_block:get_chunk_padded_offset(BadOffset), ChunkOffsets)
-		end, lists:flatten(BadOffsets))),
+		assert_removed_chunks(StorageModules, BadOffsets),
 		assert_does_not_accept_offsets(BadOffsets),
 		%% Add a new transaction to the blacklist, add a blacklisted transaction to whitelist.
 		ok = file:write_file(lists:nth(3, BlacklistFiles), <<>>),
@@ -143,7 +133,7 @@ test_uses_blacklists() ->
 				last_tx => ar_test_node:get_tx_anchor(peer1) }),
 		ar_test_node:assert_post_tx_to_peer(main, TX),
 		ar_test_node:mine(),
-		[{_, WeaveSize, _} | _] = wait_until_height(main, length(TXs) + 1),
+		{ok, [{_, WeaveSize, _} | _]} = ar_test_await:node_height(main, length(TXs) + 1),
 		assert_present_offsets([[WeaveSize]]),
 		ok = file:write_file(lists:nth(3, BlacklistFiles), ar_util:encode(TX#tx.id)),
 		assert_removed_offsets([[WeaveSize]]),
@@ -151,12 +141,12 @@ test_uses_blacklists() ->
 				last_tx => ar_test_node:get_tx_anchor(peer1) }),
 		ar_test_node:assert_post_tx_to_peer(peer1, TX2),
 		ar_test_node:mine(peer1),
-		assert_wait_until_height(peer1, length(TXs) + 1),
+		?assertMatch({ok, _}, ar_test_await:node_height(peer1, length(TXs) + 1)),
 		ar_test_node:assert_post_tx_to_peer(peer1, TX),
 		ar_test_node:mine(peer1),
-		assert_wait_until_height(peer1, length(TXs) + 2),
+		?assertMatch({ok, _}, ar_test_await:node_height(peer1, length(TXs) + 2)),
 		ar_test_node:connect_to_peer(peer1),
-		[{_, WeaveSize2, _} | _] = wait_until_height(main, length(TXs) + 2),
+		{ok, [{_, WeaveSize2, _} | _]} = ar_test_await:node_height(main, length(TXs) + 2),
 		assert_removed_offsets([[WeaveSize2]]),
 		assert_present_offsets([[WeaveSize]])
 	after
@@ -236,10 +226,15 @@ setup(Node) ->
 	Wallet = {_, Pub} = ar_test_node:remote_call(Node, ar_wallet, new_keyfile, []),
 	RewardAddr = ar_wallet:to_address(Pub),
 	[B0] = ar_weave:init([{RewardAddr, ?AR(100000000), <<>>}]),
+	StorageModules = blacklist_storage_modules(RewardAddr),
 	ar_test_node:start_peer(Node, B0, RewardAddr, #{
-		[features, pack_served_chunks] => true
+		[features, pack_served_chunks] => true,
+		[storage_modules] => ar_test_node:storage_module_configs(StorageModules)
 	}),
 	{B0, Wallet}.
+
+blacklist_storage_modules(RewardAddr) ->
+	[{30 * ?MiB, 0, {replica_2_9, RewardAddr}}].
 
 create_txs(Wallet) ->
 	lists:foldl(
@@ -338,29 +333,13 @@ upload_data(TXs, DataTrees) ->
 assert_present_txs(GoodTXIDs) ->
 	?debugFmt("Waiting until these txids are stored: ~p.",
 			[[ar_util:encode(TXID) || TXID <- GoodTXIDs]]),
-	true = ar_util:do_until(
-		fun() ->
-			lists:all(
-				fun(TXID) ->
-					is_record(ar_storage:read_tx(TXID), tx)
-				end,
-				GoodTXIDs
-			)
-		end,
-		500,
-		10000
-	),
-	lists:foreach(
-		fun(TXID) ->
-			?assertMatch({ok, {_, _}}, ar_storage:get_tx_confirmation_data(TXID))
-		end,
-		GoodTXIDs
-	).
+	ok = ar_test_await:txs_stored(GoodTXIDs),
+	ok = ar_test_await:txs_confirmation_data_stored(GoodTXIDs).
 
 assert_removed_txs(BadTXIDs) ->
 	?debugFmt("Waiting until these txids are removed: ~p.",
 			[[ar_util:encode(TXID) || TXID <- BadTXIDs]]),
-	true = ar_util:do_until(
+	ok = ar_test_await:until(blacklist_removed_txs,
 		fun() ->
 			lists:all(
 				fun(TXID) ->
@@ -373,19 +352,13 @@ assert_removed_txs(BadTXIDs) ->
 				BadTXIDs
 			)
 		end,
-		500,
 		30000
 	),
 	%% We have to keep the confirmation data even for blacklisted transactions.
-	lists:foreach(
-		fun(TXID) ->
-			?assertMatch({ok, {_, _}}, ar_storage:get_tx_confirmation_data(TXID))
-		end,
-		BadTXIDs
-	).
+	ok = ar_test_await:txs_confirmation_data_stored(BadTXIDs).
 
 assert_present_offsets(GoodOffsets) ->
-	true = ar_util:do_until(
+	ok = ar_test_await:until(blacklist_present_offsets,
 		fun() ->
 			lists:all(
 				fun(Offset) ->
@@ -399,13 +372,11 @@ assert_present_offsets(GoodOffsets) ->
 				end,
 				lists:flatten(GoodOffsets)
 			)
-		end,
-		500,
-		120000
+		end
 	).
 
 assert_removed_offsets(BadOffsets) ->
-	true = ar_util:do_until(
+	ok = ar_test_await:until(blacklist_removed_offsets,
 		fun() ->
 			lists:all(
 				fun(Offset) ->
@@ -420,51 +391,115 @@ assert_removed_offsets(BadOffsets) ->
 				lists:flatten(BadOffsets)
 			)
 		end,
-		500,
 		60000
 	).
 
+assert_removed_chunks(StorageModules, BadOffsets) ->
+	PaddedBadOffsets = lists:usort([
+		ar_block:get_chunk_padded_offset(BadOffset)
+		|| BadOffset <- lists:flatten(BadOffsets)
+	]),
+	CoveredOffsets = [
+		Offset
+		|| Offset <- PaddedBadOffsets,
+			lists:any(fun(Module) -> storage_module_covers_offset(Module, Offset) end,
+				StorageModules)
+	],
+	?assertEqual(PaddedBadOffsets, CoveredOffsets),
+	ok = ar_test_await:until(blacklist_removed_chunks,
+		fun() ->
+			RemainingOffsets = remaining_stored_offsets(StorageModules, PaddedBadOffsets),
+			case RemainingOffsets of
+				[] ->
+					true;
+				_ ->
+					?debugFmt("Waiting until blacklisted chunks are removed. "
+							"Remaining offsets: ~p.",
+							[RemainingOffsets]),
+					false
+			end
+		end,
+		60000
+	).
+
+storage_module_covers_offset(Module, Offset) ->
+	{Start, End} = ar_storage_module:module_range(Module),
+	Start =< Offset andalso Offset < End.
+
+remaining_stored_offsets(StorageModules, PaddedBadOffsets) ->
+	lists:usort(lists:flatten([
+		remaining_stored_offsets_for_module(Module, PaddedBadOffsets)
+		|| Module <- StorageModules
+	])).
+
+remaining_stored_offsets_for_module(Module, PaddedBadOffsets) ->
+	{Start, End} = ar_storage_module:module_range(Module),
+	StoreID = ar_storage_module:id(Module),
+	Chunks = ar_chunk_storage:get_range(Start, End - Start, StoreID),
+	ChunkOffsets = [Offset || {Offset, _Chunk} <- Chunks],
+	[
+		Offset
+		|| Offset <- PaddedBadOffsets,
+			lists:member(Offset, ChunkOffsets)
+	].
+
 assert_does_not_accept_offsets(BadOffsets) ->
-	true = ar_util:do_until(
+	ok = ar_test_await:until(blacklist_rejects_offsets,
 		fun() ->
 			lists:all(
-				fun(Offset) ->
-					case ar_test_node:get_chunk(main, Offset) of
-						{ok, {{<<"404">>, _}, _, _, _, _}} ->
-							{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} =
-								ar_test_node:get_chunk(peer1, Offset),
-							Proof = decode_chunk(EncodedProof),
-							DataPath = maps:get(data_path, Proof),
-							{ok, DataRoot} = ar_merkle:extract_root(DataPath),
-							RelativeOffset = ar_merkle:extract_note(DataPath),
-							Proof2 = Proof#{
-								offset => RelativeOffset - 1,
-								data_root => DataRoot,
-								data_size => 10 * ?DATA_CHUNK_SIZE
-							},
-							EncodedProof2 = encode_chunk(Proof2),
-							%% The node returns 200 but does not store the chunk.
-							case ar_test_node:post_chunk(main, EncodedProof2) of
-								{ok, {{<<"200">>, _}, _, _, _, _}} ->
-									case ar_test_node:get_chunk(main, Offset) of
-										{ok, {{<<"404">>, _}, _, _, _, _}} ->
-											true;
-										_ ->
-											false
-									end;
-								_ ->
-									false
-							end;
-						_ ->
-							false
-					end
-				end,
+				fun assert_does_not_accept_offset/1,
 				lists:flatten(BadOffsets)
 			)
 		end,
-		500,
 		60000
 	).
+
+assert_does_not_accept_offset(Offset) ->
+	case ar_test_node:get_chunk(main, Offset) of
+		{ok, {{<<"404">>, _}, _, _, _, _}} ->
+			assert_does_not_accept_offset_proof(Offset);
+		Response ->
+			?debugFmt("Waiting until main rejects end offset ~B. Response: ~p.",
+					[Offset, Response]),
+			false
+	end.
+
+assert_does_not_accept_offset_proof(Offset) ->
+	case ar_test_node:get_chunk(peer1, Offset) of
+		{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} ->
+			Proof = decode_chunk(EncodedProof),
+			DataPath = maps:get(data_path, Proof),
+			{ok, DataRoot} = ar_merkle:extract_root(DataPath),
+			RelativeOffset = ar_merkle:extract_note(DataPath),
+			Proof2 = Proof#{
+				offset => RelativeOffset - 1,
+				data_root => DataRoot,
+				data_size => 10 * ?DATA_CHUNK_SIZE
+			},
+			EncodedProof2 = encode_chunk(Proof2),
+			%% The node returns 200 but does not store the chunk.
+			case ar_test_node:post_chunk(main, EncodedProof2) of
+				{ok, {{<<"200">>, _}, _, _, _, _}} ->
+					case ar_test_node:get_chunk(main, Offset) of
+						{ok, {{<<"404">>, _}, _, _, _, _}} ->
+							true;
+						Response ->
+							?debugFmt("Waiting until main keeps end offset ~B rejected. "
+									"Response: ~p.",
+									[Offset, Response]),
+							false
+					end;
+				Response ->
+					?debugFmt("Waiting until main accepts proof for end offset ~B. "
+							"Response: ~p.",
+							[Offset, Response]),
+					false
+			end;
+		Response ->
+			?debugFmt("Waiting until peer1 serves end offset ~B. Response: ~p.",
+					[Offset, Response]),
+			false
+	end.
 
 decode_chunk(EncodedProof) ->
 	ar_serialize:json_map_to_poa_map(

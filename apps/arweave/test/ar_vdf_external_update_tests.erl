@@ -9,7 +9,7 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 
--import(ar_test_node, [assert_wait_until_height/2, post_block/2, send_new_block/2]).
+-import(ar_test_node, [post_block/2, send_new_block/2]).
 
 %% we have to wait to let the ar_events get processed whenever we apply a VDF step
 -define(WAIT_TIME, 1000).
@@ -25,7 +25,7 @@ setup_external_update() ->
 	%% this is necessary so that we can test the behavior of apply_external_update without any
 	%% auto-computed VDF steps getting in the way.
 	_ = ar_test_node:start(
-		B0, ar_wallet:to_address(ar_wallet:new_keyfile()),
+		B0, ar_test_node:generate_address(main),
 		#{
 			[peers, vdf_server] => [
 				ar_util:format_peer(vdf_server_1()),

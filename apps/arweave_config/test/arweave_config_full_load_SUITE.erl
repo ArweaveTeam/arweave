@@ -324,8 +324,7 @@ assert_wildcard_option_covered(Tag, WildcardOption, Parsed) ->
 		lists:any(fun(Key) -> maps:is_key(Key, Parsed) end, ConcreteKeys),
 		io_lib:format("~p fixture missing wildcard option ~p", [Tag, WildcardOption])).
 
-%% Returns true the option has a templated/placeholder sgement
-%% (e.g. {list_item})
+%% True when the option key has a templated segment (e.g. {list_item}).
 is_wildcard_option(Key) ->
 	lists:any(fun({_}) -> true; (_) -> false end, Key).
 

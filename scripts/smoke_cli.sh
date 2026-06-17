@@ -421,7 +421,7 @@ if daemon_start "$DAEMON_DATA" "$DAEMON_LOG"; then
 	run_check "config get debug" 0 "true" -- \
 		env "${DAEMON_ENV[@]}" ./bin/arweave config get debug
 
-	run_check "config set debug=false" 0 "false" -- \
+	run_check "config set debug=false" 0 "ok" -- \
 		env "${DAEMON_ENV[@]}" ./bin/arweave config set debug false
 
 	run_check "config get debug (after set)" 0 "false" -- \

@@ -13,7 +13,7 @@
 		get_block_index_entry/1, get_2_0_hash_of_1_0_block/1, is_joined/0, get_block_anchors/0,
 		get_recent_txs_map/0, get_mempool_size/0,
 		get_block_shadow_from_cache/1, get_recent_partition_upper_bound_by_prev_h/1,
-		get_block_txs_pairs/0, get_partition_upper_bound/1, get_nth_or_last/2,
+		get_block_txs_pairs/0, get_partition_upper_bound/2, get_block_index_upper_bound/2,
 		get_partition_number/1, get_max_partition_number/1,
 		get_current_weave_size/0, get_recent_max_block_size/0,
 		read_recent_blocks/3]).
@@ -299,18 +299,33 @@ get_block_txs_pairs() ->
 	[{_, BlockTXPairs}] = ar_util:safe_ets_lookup(node_state, block_txs_pairs),
 	BlockTXPairs.
 
-get_nth_or_last(N, BI) ->
-	case length(BI) < N of
-		true ->
-			lists:last(BI);
-		false ->
-			lists:nth(N, BI)
+%% @doc Return the weave size `?SEARCH_SPACE_UPPER_BOUND_DEPTH' blocks back from
+%% the tip, or not_initialized while the block index is still loading.
+get_partition_upper_bound(Height, BI) ->
+	case get_block_index_upper_bound(Height, BI) of
+		not_initialized ->
+			not_initialized;
+		Entry ->
+			element(2, Entry)
 	end.
 
-get_partition_upper_bound([]) ->
-	0;
-get_partition_upper_bound(BI) ->
-	element(2, get_nth_or_last(?SEARCH_SPACE_UPPER_BOUND_DEPTH, BI)).
+%% @doc Return the block index entry `?SEARCH_SPACE_UPPER_BOUND_DEPTH' blocks back
+%% from the tip, or not_initialized. See get_block_index_upper_bound/3.
+get_block_index_upper_bound(Height, BI) ->
+	get_block_index_upper_bound(Height, BI, ?SEARCH_SPACE_UPPER_BOUND_DEPTH).
+
+%% @doc Return the block index entry `Depth' blocks back from the tip, or
+%% not_initialized. Height disambiguates a short index: near genesis the oldest
+%% entry is the correct bound; past genesis a short index is still loading, so
+%% return not_initialized rather than a too-recent entry.
+get_block_index_upper_bound(_Height, [], _Depth) ->
+	not_initialized;
+get_block_index_upper_bound(_Height, BI, Depth) when length(BI) >= Depth ->
+	lists:nth(Depth, BI);
+get_block_index_upper_bound(Height, _BI, Depth) when Height >= Depth ->
+	not_initialized;
+get_block_index_upper_bound(_Height, BI, _Depth) ->
+	lists:last(BI).
 
 get_recent_partition_upper_bound_by_prev_h(H, Diff) ->
 	case ar_block_cache:get_block_and_status(block_cache, H) of
@@ -331,19 +346,15 @@ get_recent_partition_upper_bound_by_prev_h(H, Diff) ->
 	end.
 
 get_recent_partition_upper_bound_by_prev_h(H, Diff, [{H, _, _} | _] = BI, Genesis) ->
-	PartitionUpperBoundDepth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
-	Depth = PartitionUpperBoundDepth - Diff,
-	case length(BI) < Depth of
-		true ->
-			case Genesis of
-				true ->
-					{H2, PartitionUpperBound, _TXRoot} = lists:last(BI),
-					{H2, PartitionUpperBound};
-				false ->
-					not_found
-			end;
-		false ->
-			{H2, PartitionUpperBound, _TXRoot} = lists:nth(Depth, BI),
+	Depth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH - Diff,
+	%% Map Genesis to the Height get_block_index_upper_bound/3 expects: near genesis
+	%% a short index clamps to the oldest entry, otherwise the recent index is
+	%% truncated and the bound is unresolvable.
+	Height = case Genesis of true -> 0; false -> Depth end,
+	case get_block_index_upper_bound(Height, BI, Depth) of
+		not_initialized ->
+			not_found;
+		{H2, PartitionUpperBound, _TXRoot} ->
 			{H2, PartitionUpperBound}
 	end;
 get_recent_partition_upper_bound_by_prev_h(H, Diff, [_ | BI], Genesis) ->
@@ -382,6 +393,38 @@ get_recent_max_block_size() ->
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+%% Tip-first block index of N entries; entry = {Hash, WeaveSize, TXRoot}.
+make_block_index(N) ->
+	[{<<I:48>>, I * 100, <<I:48>>} || I <- lists:seq(N, 1, -1)].
+
+get_block_index_upper_bound_test() ->
+	Depth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
+	Full = make_block_index(Depth + 5),
+	Short = make_block_index(Depth - 1),
+	%% Empty index: never initialized, whatever the height.
+	?assertEqual(not_initialized, get_block_index_upper_bound(0, [])),
+	?assertEqual(not_initialized, get_block_index_upper_bound(Depth + 5, [])),
+	%% Full index: the entry `Depth' back; height is irrelevant.
+	?assertEqual(lists:nth(Depth, Full), get_block_index_upper_bound(Depth + 5, Full)),
+	?assertEqual(lists:nth(Depth, Full), get_block_index_upper_bound(0, Full)),
+	%% Short index near genesis (Height < Depth): clamp to the oldest entry.
+	?assertEqual(lists:last(Short), get_block_index_upper_bound(Depth - 1, Short)),
+	%% Short index past genesis (Height >= Depth): still loading.
+	?assertEqual(not_initialized, get_block_index_upper_bound(Depth, Short)),
+	%% Explicit Depth overrides the default.
+	?assertEqual(lists:nth(2, Full), get_block_index_upper_bound(10, Full, 2)),
+	?assertEqual(not_initialized, get_block_index_upper_bound(10, [hd(Full)], 2)),
+	?assertEqual(hd(Full), get_block_index_upper_bound(1, [hd(Full)], 2)).
+
+get_partition_upper_bound_test() ->
+	Depth = ?SEARCH_SPACE_UPPER_BOUND_DEPTH,
+	Full = make_block_index(Depth + 5),
+	Short = make_block_index(Depth - 1),
+	?assertEqual(not_initialized, get_partition_upper_bound(Depth + 5, [])),
+	?assertEqual(element(2, lists:nth(Depth, Full)), get_partition_upper_bound(Depth + 5, Full)),
+	?assertEqual(element(2, lists:last(Short)), get_partition_upper_bound(Depth - 1, Short)),
+	?assertEqual(not_initialized, get_partition_upper_bound(Depth, Short)).
 
 get_recent_partition_upper_bound_by_prev_h_short_cache_test() ->
 	ar_block_cache:new(block_cache, B0 = test_block(1, 1, <<>>)),

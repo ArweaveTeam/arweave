@@ -8,10 +8,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -import(ar_test_node, [
-		wait_until_height/2, post_block/2,
+		post_block/2,
 		send_new_block/2, sign_block/3,
-		read_block_when_stored/2,
-		assert_wait_until_height/2,
 		test_with_all_nodes_mocked/2]).
 
 start_node() ->
@@ -26,10 +24,10 @@ reset_node() ->
 	ar_test_node:connect_to_peer(peer1),
 
 	Height = height(peer1),
-	[{PrevH, _, _} | _] = wait_until_height(main, Height),
+	{ok, [{PrevH, _, _} | _]} = ar_test_await:node_height(main, Height),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
-	[{H, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, Height + 1),
+	{ok, [{H, _, _} | _]} = ar_test_await:node_height(peer1, Height + 1),
 	B = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, H]),
 	PrevB = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, PrevH]),
 	MiningAddr = ar_test_node:remote_call(peer1, arweave_config, get, [[mining, address]]),
@@ -96,7 +94,7 @@ post_2_8_test_() ->
 	}.
 
 recall_byte_out_of_bounds_test_() ->
-	{timeout, 120, fun test_recall_byte_out_of_bounds/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_recall_byte_out_of_bounds/0}.
 
 %% ------------------------------------------------------------------------------------------
 %% post_2_7_test_
@@ -192,16 +190,15 @@ assert_malformed_block_rejected(B) ->
 %% The banning process is asynchronous now so we may have to wait a little until
 %% the peer gets banned.
 assert_banned(Peer) ->
-	case ar_util:do_until(
+	case ar_test_await:until(peer_banned,
 		fun() ->
 			banned == ar_blacklist_middleware:is_peer_banned(Peer)
 		end,
-		200,
 		2000
 	) of
-		true ->
+		ok ->
 			true;
-		false ->
+		{error, _} ->
 			?assert(false, "Expected the peer to be banned but the peer was not banned.")
 	end.
 
@@ -404,7 +401,7 @@ test_add_external_block_with_invalid_timestamp() ->
 	post_block(B5, valid).
 
 rejects_invalid_blocks_test_() ->
-	{timeout, 120, fun test_rejects_invalid_blocks/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_rejects_invalid_blocks/0}.
 
 test_rejects_invalid_blocks() ->
 	[B0] = ar_weave:init([], ar_retarget:switch_to_linear_diff(2)),
@@ -412,8 +409,8 @@ test_rejects_invalid_blocks() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
-	BI = ar_test_node:assert_wait_until_height(peer1, 1),
-	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
+	{ok, BI} = ar_test_await:node_height(peer1, 1),
+	B1 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(BI)]),
 	%% Try to post an invalid block.
 	InvalidH = crypto:strong_rand_bytes(48),
 	ok = ar_events:subscribe(block),
@@ -592,15 +589,15 @@ rejects_blocks_with_invalid_double_signing_proof_test_() ->
 		fun test_reject_block_invalid_double_signing_proof/0).
 
 rejects_blocks_with_small_rsa_keys_test_() ->
-	{timeout, 60, fun test_rejects_blocks_with_small_rsa_keys/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_rejects_blocks_with_small_rsa_keys/0}.
 
 test_rejects_blocks_with_small_rsa_keys() ->
 	[B0] = ar_weave:init(),
 	ar_test_node:start(B0),
 	ok = ar_events:subscribe(block),
 	ar_test_node:mine(main),
-	BI = ar_test_node:assert_wait_until_height(main, 1),
-	B1 = ar_storage:read_block(hd(BI)),
+	{ok, BI} = ar_test_await:node_height(main, 1),
+	B1 = ar_test_await:block_stored(hd(BI)),
 	Key2 = ar_test_node:new_custom_size_rsa_wallet(512), % normal 512-byte key
 	B2 = sign_block(B1, B0, Key2),
 	post_block(B2, invalid_resigned_solution_hash), % because reward_addr changed
@@ -632,8 +629,8 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 	ar_test_node:assert_post_tx_to_peer(peer1, TX0),
 	ar_test_node:assert_post_tx_to_peer(main, TX0),
 	ar_test_node:mine(peer1),
-	BI = ar_test_node:assert_wait_until_height(peer1, 1),
-	B1 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI)]),
+	{ok, BI} = ar_test_await:node_height(peer1, 1),
+	B1 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(BI)]),
 	Random512 = crypto:strong_rand_bytes(512),
 	Random64 = crypto:strong_rand_bytes(64),
 	InvalidProof = {Random512, Random512, 2, 1, Random64, Random512, 3, 2, Random64},
@@ -657,7 +654,7 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 	B3 = sign_block(B1#block{ double_signing_proof = InvalidProof2 }, B0, Key),
 	post_block(B3, invalid_double_signing_proof_same_address),
 	ar_test_node:mine(peer1),
-	BI2 = ar_test_node:assert_wait_until_height(peer1, 2),
+	{ok, BI2} = ar_test_await:node_height(peer1, 2),
 	MainMiningAddr = arweave_config:get([mining, address]),
 	Key2 = element(1, ar_wallet:load_key(MainMiningAddr)),
 	Preimage3 = << (B0#block.hash)/binary, (crypto:strong_rand_bytes(32))/binary >>,
@@ -673,26 +670,28 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 			Signature4, CDiff, PrevCDiff, Preimage4},
 	B5 = sign_block(B1#block{ double_signing_proof = InvalidProof3 }, B0, Key),
 	post_block(B5, invalid_double_signing_proof_not_in_reward_history),
-	B6 = ar_test_node:remote_call(peer1, ar_storage, read_block, [lists:nth(2, BI2)]),
-	B7 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI2)]),
+	B6 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [lists:nth(2, BI2)]),
+	B7 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(BI2)]),
 	%% ECDSA signatures are deterministic - we add a new tag to get a new signature here.
 	B7_2 = sign_block(B7#block{ tags = [<<"new_tag">>] }, B6, Key),
 	post_block(B6, valid),
+	%% Wait until B6 is cached: its new-block event can arrive before
+	%% pre-validation of the child can find it as the previous block.
+	wait_until_block_shadow_cached(B6#block.indep_hash),
 	post_block(B7, valid),
 	post_block(B7_2, valid),
 	%% Wait until the node records conflicting proofs.
-	true = ar_util:do_until(
+	ok = ar_test_await:until(double_signing_proofs_recorded,
 		fun() ->
 			map_size(maps:get(double_signing_proofs,
 					sys:get_state(ar_node_worker), #{})) > 0
 		end,
-		200,
 		30000
 	),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(),
-	BI3 = assert_wait_until_height(peer1, 3),
-	B8 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI3)]),
+	{ok, BI3} = ar_test_await:node_height(peer1, 3),
+	B8 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(BI3)]),
 	?assertNotEqual(undefined, B8#block.double_signing_proof),
 	RewardAddr = B8#block.reward_addr,
 	BannedAddr = ar_wallet:to_address(Key),
@@ -705,8 +704,8 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
 	TX2 = ar_test_node:sign_tx(FullKey, #{ last_tx => ar_test_node:get_tx_anchor(peer1), data => <<"a">> }),
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, [TX1, TX2]),
 	ar_test_node:mine(),
-	BI4 = assert_wait_until_height(peer1, 4),
-	B9 = ar_test_node:remote_call(peer1, ar_storage, read_block, [hd(BI4)]),
+	{ok, BI4} = ar_test_await:node_height(peer1, 4),
+	B9 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(BI4)]),
 	Accounts2 = ar_wallets:get(B9#block.wallet_list, [BannedAddr, Target]),
 	TXID = TX2#tx.id,
 	?assertEqual(2, length(B9#block.txs)),
@@ -729,8 +728,8 @@ test_send_block2() ->
 	TXs = [ar_test_node:sign_tx(Wallet, #{ last_tx => ar_test_node:get_tx_anchor(peer1) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs),
 	ar_test_node:mine(),
-	[{H, _, _}, _] = wait_until_height(main, 1),
-	B = ar_storage:read_block(H),
+	{ok, [{H, _, _}, _]} = ar_test_await:node_height(main, 1),
+	B = ar_test_await:block_stored(H),
 	TXs2 = sort_txs_by_block_order(TXs, B),
 	EverySecondTX = element(2, lists:foldl(fun(TX, {N, Acc}) when N rem 2 /= 0 ->
 			{N + 1, [TX | Acc]}; (_TX, {N, Acc}) -> {N + 1, Acc} end, {0, []}, TXs2)),
@@ -771,7 +770,7 @@ test_send_block2() ->
 			data => crypto:strong_rand_bytes(10 * 1024) }) || _ <- lists:seq(1, 10)],
 	lists:foreach(fun(TX) -> ar_test_node:assert_post_tx_to_peer(main, TX) end, TXs3),
 	ar_test_node:mine(),
-	[{H2, _, _}, _, _] = wait_until_height(main, 2),
+	{ok, [{H2, _, _}, _, _]} = ar_test_await:node_height(main, 2),
 	{ok, {{<<"412">>, _}, _, <<>>, _, _}} = ar_http:req(#{ method => post,
 			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
@@ -800,7 +799,7 @@ test_send_block2() ->
 	?assertEqual({ok, B#block{ txs = [case lists:member(maps:get(TX#tx.id, Map), [1, 3]) of
 			true -> TX; _ -> TX#tx.id end || TX <- BTXs] }},
 					ar_serialize:binary_to_block(Serialized3B)),
-	B4 = read_block_when_stored(H2, true),
+	B4 = ar_test_await:block_stored(H2, true),
 	timer:sleep(500),
 	{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} = ar_http:req(#{ method => post,
 			peer => ar_test_node:peer_ip(peer1), path => "/block2",
@@ -809,11 +808,11 @@ test_send_block2() ->
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(),
-			assert_wait_until_height(peer1, Height)
+			?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height))
 		end,
 		lists:seq(3, 3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH)
 	),
-	B5 = ar_storage:read_block(ar_node:get_current_block_hash()),
+	B5 = ar_test_await:block_stored(ar_node:get_current_block_hash()),
 	{ok, {{<<"208">>, _}, _, _, _, _}} = ar_http:req(#{ method => post,
 			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
@@ -821,8 +820,8 @@ test_send_block2() ->
 					previous_block = B5#block.previous_block }) }),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(),
-	[_ | _] = wait_until_height(main, 3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1),
-	B6 = ar_storage:read_block(ar_node:get_current_block_hash()),
+	{ok, [_ | _]} = ar_test_await:node_height(main, 3 + ?SEARCH_SPACE_UPPER_BOUND_DEPTH + 1),
+	B6 = ar_test_await:block_stored(ar_node:get_current_block_hash()),
 	{ok, {{<<"200">>, _}, _, Body5, _, _}} = ar_http:req(#{ method => post,
 			peer => ar_test_node:peer_ip(peer1), path => "/block_announcement",
 			body => ar_serialize:block_announcement_to_binary(#block_announcement{
@@ -854,7 +853,7 @@ test_resigned_solution() ->
 	ar_test_node:start_peer(peer1, B0),
 	ar_test_node:connect_to_peer(peer1),
 	ar_test_node:mine(peer1),
-	wait_until_height(main, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
 	B = ar_node:get_current_block(),
@@ -865,7 +864,7 @@ test_resigned_solution() ->
 	post_block(B2, [valid]),
 	B3 = sign_block(B#block{ tags = [<<"tag2">>] }, B0, Key),
 	post_block(B3, [valid]),
-	assert_wait_until_height(peer1, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2)),
 	B4 = ar_test_node:remote_call(peer1, ar_node, get_current_block, []),
 	?assertEqual(B#block.indep_hash, B4#block.previous_block),
 	B2H = B2#block.indep_hash,
@@ -889,11 +888,11 @@ test_resigned_solution() ->
 		end,
 	B5H = B5#block.indep_hash,
 	post_block(B5, [valid]),
-	[{B5H, _, _}, {B2H, _, _}, _] = wait_until_height(main, 2),
+	{ok, [{B5H, _, _}, {B2H, _, _}, _]} = ar_test_await:node_height(main, 2),
 	ar_test_node:mine(),
-	[{B6H, _, _}, _, _, _] = wait_until_height(main, 3),
+	{ok, [{B6H, _, _}, _, _, _]} = ar_test_await:node_height(main, 3),
 	ar_test_node:connect_to_peer(peer1),
-	[{B6H, _, _}, {B5H, _, _}, {B2H, _, _}, _] = assert_wait_until_height(peer1, 3).
+	{ok, [{B6H, _, _}, {B5H, _, _}, {B2H, _, _}, _]} = ar_test_await:node_height(peer1, 3).
 
 %% ------------------------------------------------------------------------------------------
 %% Helper functions
@@ -910,6 +909,10 @@ tx_id(ID) ->
 
 height(Node) ->
 	ar_test_node:remote_call(Node, ar_node, get_height, []).
+
+wait_until_block_shadow_cached(H) ->
+	ok = ar_test_await:until(block_shadow_cached,
+		fun() -> ar_node:get_block_shadow_from_cache(H) =/= not_found end).
 
 find_oob_output(B, PrevB, PartitionUpperBound, WeaveSize, Nonce) ->
 	find_oob_output(B, PrevB, PartitionUpperBound, WeaveSize, Nonce, 1).

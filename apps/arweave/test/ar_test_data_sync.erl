@@ -5,19 +5,18 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--export([setup_nodes/0, setup_nodes/1,
+-export([setup_nodes/0, setup_nodes/1, setup_main_node/0, setup_main_node/1,
 		imperfect_split/1, build_proofs/3, build_proofs/4, build_proofs/5,
         tx/1, tx/2, tx/3, tx/4, make_fixed_data_tx/2, make_fixed_data_tx/3,
         wait_until_syncs_chunk/2,
         wait_until_syncs_chunks/1, wait_until_syncs_chunks/2, wait_until_syncs_chunks/3,
         get_tx_offset/2, get_tx_data/1,
         post_random_blocks/1, get_records_with_proofs/3, post_proofs/4, post_proofs/5,
+        proof_to_expected_fields/1,
         generate_random_split/1, generate_random_original_split/1,
         generate_random_standard_split/0, generate_random_original_v1_split/0]).
 
 -define(SYNC_CHUNKS_CHECK, 1000).
-%% Chunk sync can exceed 60s on slow CI (fork recovery, composite packing, many peers).
--define(SYNC_CHUNKS_TIMEOUT, 120_000).
 
 get_records_with_proofs(B, TX, Chunks) ->
 	[{B, TX, Chunks, Proof} || Proof <- build_proofs(B, TX, Chunks)].
@@ -26,26 +25,35 @@ setup_nodes() ->
 	setup_nodes(#{}).
 
 setup_nodes(Options) ->
-	Addr = maps:get(addr, Options, ar_wallet:to_address(ar_wallet:new_keyfile())),
-	PeerAddr = maps:get(peer_addr, Options, ar_wallet:to_address(
-			ar_test_node:remote_call(peer1, ar_wallet, new_keyfile, []))),
+	Addr = maps:get(addr, Options, ar_test_node:generate_address(main)),
+	PeerAddr = maps:get(peer_addr, Options, ar_test_node:generate_address(peer1)),
 	setup_nodes2(Options#{ addr => Addr, peer_addr => PeerAddr }).
 
 setup_nodes2(#{ peer_addr := PeerAddr } = Options) ->
-	Wallet = {_, Pub} = ar_wallet:new(),
-	{B0, Options2} =
-		case maps:get(b0, Options, not_set) of
-			not_set ->
-				[Genesis] = ar_weave:init([{ar_wallet:to_address(Pub), ?AR(200000), <<>>}], ar_retarget:switch_to_linear_diff(2)),
-				{Genesis, Options#{ b0 => Genesis }};
-			Value ->
-				{Value, Options}
-		end,
-	Options3 = Options2#{ config => #{ [features, pack_served_chunks] => true } },
+	{Wallet, Options2} = setup_wallet_and_genesis(Options),
+	B0 = maps:get(b0, Options2),
+	Config = maps:get(config, Options, #{}),
+	PeerConfig = maps:get(peer_config, Options, #{}),
+	Options3 = Options2#{ config => maps:merge(Config, #{ [features, pack_served_chunks] => true }) },
 	ar_test_node:start(Options3),
-	ar_test_node:start_peer(peer1, B0, PeerAddr,
-		#{ [features, pack_served_chunks] => true }),
+	ar_test_node:start_peer(peer1, #{
+		b0 => B0,
+		addr => PeerAddr,
+		config => maps:merge(PeerConfig, #{ [features, pack_served_chunks] => true })
+	}),
 	ar_test_node:connect_to_peer(peer1),
+	Wallet.
+
+setup_main_node() ->
+	setup_main_node(#{}).
+
+setup_main_node(Options) ->
+	Addr = maps:get(addr, Options, ar_test_node:generate_address(main)),
+	{Wallet, Options2} = setup_wallet_and_genesis(Options#{ addr => Addr }),
+	Config = maps:get(config, Options2, #{}),
+	ar_test_node:start(Options2#{
+		config => maps:merge(Config, #{ [features, pack_served_chunks] => true })
+	}),
 	Wallet.
 
 make_fixed_data_tx(Wallet, Chunks) ->
@@ -90,7 +98,9 @@ tx(Params) when is_map(Params) ->
 		format := Format, reward := Reward } = Params,
 	TXAnchorPeer = maps:get(tx_anchor_peer, Params, main),
 	TXAnchor = ar_test_node:get_tx_anchor(TXAnchorPeer),
-	GetFeePeer = maps:get(get_fee_peer, Params, peer1),
+	%% Ensure we default to TXAnchorPeer so both the anchor and the
+	%% fee come from the same peer and avoid a potential race.
+	GetFeePeer = maps:get(get_fee_peer, Params, TXAnchorPeer),
 	case {SplitType, Format} of
 		{{fixed_data, DataRoot, Chunks}, v2} ->
 			Data = binary:list_to_bin(Chunks),
@@ -141,6 +151,21 @@ tx(Params) when is_map(Params) ->
 			TX = ar_test_node:sign_tx(GetFeePeer, Wallet, Args2),
 			{TX, Chunks}
 	end.
+
+setup_wallet_and_genesis(Options) ->
+	Wallet = {_, Pub} = ar_wallet:new(),
+	Options2 =
+		case maps:get(b0, Options, not_set) of
+			not_set ->
+				[Genesis] = ar_weave:init(
+					[{ar_wallet:to_address(Pub), ?AR(200000), <<>>}],
+					ar_retarget:switch_to_linear_diff(2)
+				),
+				Options#{ b0 => Genesis };
+			_ ->
+				Options
+		end,
+	{Wallet, Options2}.
 
 generate_random_split(ChunkCount) ->
 	Chunks = lists:foldl(
@@ -343,7 +368,7 @@ post_blocks(Wallet, BlockMap) ->
 		fun
 			({empty, Height}, Acc) ->
 				ar_test_node:mine(),
-				ar_test_node:assert_wait_until_height(peer1, Height),
+				?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height)),
 				Acc;
 		({TXMap, Height}, Acc) ->
 			TXsWithChunks = lists:map(
@@ -367,7 +392,7 @@ post_blocks(Wallet, BlockMap) ->
 				#{ miner => main, await_on => main },
 				[TX || {{TX, _}, _} <- TXsWithChunks]
 			),
-			ar_test_node:assert_wait_until_height(peer1, Height),
+			?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height)),
 			Acc ++ [{B, TX, C} || {{TX, C}, Type} <- lists:sort(TXsWithChunks),
 					Type /= v2_no_data, Type /= empty_tx]
 		end,
@@ -395,34 +420,36 @@ post_proofs(Peer, B, TX, Chunks, DiskPoolThreshold) ->
 	Proofs.
 
 wait_until_syncs_chunk(Offset, ExpectedProof) ->
-	true = ar_util:do_until(
-		fun() ->
-			case ar_test_node:get_chunk(main, Offset) of
-				{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} ->
-					Proof = jiffy:decode(ProofJSON, [return_maps]),
-					{ok, {{<<"200">>, _}, _, NoChunkProofJSON, _, _}}
-						= ar_test_node:get_chunk_proof(main, Offset),
-					NoChunkProof = jiffy:decode(NoChunkProofJSON, [return_maps]),
-					?assertEqual(maps:get(<<"data_path">>, Proof),
-							maps:get(<<"data_path">>, NoChunkProof)),
-					?assertEqual(maps:get(<<"tx_path">>, Proof),
-							maps:get(<<"tx_path">>, NoChunkProof)),
-					maps:fold(
-						fun	(_Key, _Value, false) ->
-								false;
-							(Key, Value, true) ->
-								maps:get(atom_to_binary(Key), Proof, not_set) == Value
-						end,
-						true,
-						ExpectedProof
-					);
-				_ ->
-					false
-			end
-		end,
-		1000,
-		20_000
-	).
+	%% Polls `GET /chunk' and asserts `data_path' / `tx_path' match
+	%% `GET /chunk_proof'; that assertion is an invariant rather than a
+	%% predicate, hence raw `until' instead of a named helper.
+	ok = ar_test_await:until(
+		wait_until_syncs_chunk,
+		fun() -> syncs_chunk_with_invariant(Offset, ExpectedProof) end,
+		20_000).
+
+syncs_chunk_with_invariant(Offset, ExpectedProof) ->
+	case ar_test_node:get_chunk(main, Offset) of
+		{ok, {{<<"200">>, _}, _, ProofJSON, _, _}} ->
+			Proof = jiffy:decode(ProofJSON, [return_maps]),
+			{ok, {{<<"200">>, _}, _, NoChunkProofJSON, _, _}}
+				= ar_test_node:get_chunk_proof(main, Offset),
+			NoChunkProof = jiffy:decode(NoChunkProofJSON, [return_maps]),
+			?assertEqual(maps:get(<<"data_path">>, Proof),
+					maps:get(<<"data_path">>, NoChunkProof)),
+			?assertEqual(maps:get(<<"tx_path">>, Proof),
+					maps:get(<<"tx_path">>, NoChunkProof)),
+			maps:fold(
+				fun	(_Key, _Value, false) ->
+						false;
+					(Key, Value, true) ->
+						maps:get(atom_to_binary(Key), Proof, not_set) == Value
+				end,
+				true,
+				ExpectedProof);
+		_ ->
+			false
+	end.
 
 wait_until_syncs_chunks(Proofs) ->
 	wait_until_syncs_chunks(main, Proofs, infinity).
@@ -432,43 +459,20 @@ wait_until_syncs_chunks(Proofs, UpperBound) ->
 
 wait_until_syncs_chunks(Node, Proofs, UpperBound) ->
 	lists:foreach(
-		fun({EndOffset, Proof}) ->
-			true = ar_util:do_until(
-				fun() ->
-					case EndOffset > UpperBound of
-						true ->
-							true;
-						false ->
-							case ar_test_node:get_chunk(Node, EndOffset) of
-								{ok, {{<<"200">>, _}, _, EncodedProof, _, _}} ->
-									FetchedProof = ar_serialize:json_map_to_poa_map(
-										jiffy:decode(EncodedProof, [return_maps])
-									),
-									ExpectedProof = #{
-										chunk => ar_util:decode(maps:get(chunk, Proof)),
-										tx_path => ar_util:decode(maps:get(tx_path, Proof)),
-										data_path => ar_util:decode(maps:get(data_path, Proof))
-									},
-									compare_proofs(FetchedProof, ExpectedProof, EndOffset);
-								_ ->
-									false
-							end
-					end
-				end,
-				?SYNC_CHUNKS_CHECK,
-				?SYNC_CHUNKS_TIMEOUT
-			)
+		fun({EndOffset, _Proof}) when EndOffset > UpperBound ->
+				ok;
+		   ({EndOffset, Proof}) ->
+				{ok, _} = ar_test_await:http_chunk_matches(
+					Node, EndOffset, proof_to_expected_fields(Proof))
 		end,
 		Proofs
 	).
 
-compare_proofs(#{ chunk := C, data_path := D, tx_path := T },
-		#{ chunk := C, data_path := D, tx_path := T }, _EndOffset) ->
-	true;
-compare_proofs(#{ chunk := C1, data_path := D1, tx_path := T1 } = FetchedProof,
-		#{ chunk := C2, data_path := D2, tx_path := T2 }, EndOffset) ->
-	?debugFmt("Proof mismatch for ~B data_path: ~p tx_path: ~p chunk: ~p "
-			"expected chunk size :~B chunk size: ~B fetched proof packing: ~p.~n",
-			[EndOffset, D1 == D2, T1 == T2, C1 == C2, byte_size(C2), byte_size(C1),
-				maps:get(packing, FetchedProof, not_set)]),
-	false.
+%% @doc Decode a base64-encoded proof map into the raw-binary
+%% `ExpectedFields' shape `ar_test_await:http_chunk_matches/3,4' expects.
+proof_to_expected_fields(Proof) ->
+	#{
+		chunk => ar_util:decode(maps:get(chunk, Proof)),
+		tx_path => ar_util:decode(maps:get(tx_path, Proof)),
+		data_path => ar_util:decode(maps:get(data_path, Proof))
+	}.

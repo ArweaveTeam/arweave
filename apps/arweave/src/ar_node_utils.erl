@@ -729,7 +729,7 @@ is_wallet_invalid(TX, Wallets) ->
 %%%===================================================================
 
 block_validation_test_() ->
-	{timeout, 90, fun test_block_validation/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_block_validation/0}.
 
 test_block_validation() ->
 	Wallet = {_, Pub} = ar_wallet:new(),
@@ -741,19 +741,19 @@ test_block_validation() ->
 			data => crypto:strong_rand_bytes(10 * ?MiB) }),
 	ar_test_node:assert_post_tx_to_peer(main, PrevTX),
 	ar_test_node:mine(),
-	[_ | _] = ar_test_node:wait_until_height(main, 1),
+	{ok, [_ | _]} = ar_test_await:node_height(main, 1),
 	ar_test_node:mine(),
-	[{PrevH, _, _} | _ ] = ar_test_node:wait_until_height(main, 2),
+	{ok, [{PrevH, _, _} | _ ]} = ar_test_await:node_height(main, 2),
 	PrevB = ar_node:get_block_shadow_from_cache(PrevH),
 	BI = ar_node:get_block_index(),
-	PartitionUpperBound = ar_node:get_partition_upper_bound(BI),
+	PartitionUpperBound = ar_node:get_partition_upper_bound(PrevB#block.height, BI),
 	BlockAnchors = ar_node:get_block_anchors(),
 	RecentTXMap = ar_node:get_recent_txs_map(),
 	TX = ar_test_node:sign_tx(main, Wallet, #{ reward => ?AR(10),
 			data => crypto:strong_rand_bytes(7 * ?MiB), last_tx => PrevH }),
 	ar_test_node:assert_post_tx_to_peer(main, TX),
 	ar_test_node:mine(),
-	[{H, _, _} | _] = ar_test_node:wait_until_height(main, 3),
+	{ok, [{H, _, _} | _]} = ar_test_await:node_height(main, 3),
 	B = ar_node:get_block_shadow_from_cache(H),
 	Wallets = #{ ar_wallet:to_address(Pub) => {?AR(200), <<>>} },
 	?assertEqual(valid, validate(B, PrevB, Wallets, BlockAnchors, RecentTXMap,
@@ -826,11 +826,11 @@ test_block_validation() ->
 				InvCDiffB#block{ indep_hash = ar_block:indep_hash(InvCDiffB) }, PrevB})),
 
 	BI2 = ar_node:get_block_index(),
-	PartitionUpperBound2 = ar_node:get_partition_upper_bound(BI2),
+	PartitionUpperBound2 = ar_node:get_partition_upper_bound(B#block.height, BI2),
 	BlockAnchors2 = ar_node:get_block_anchors(),
 	RecentTXMap2 = ar_node:get_recent_txs_map(),
 	ar_test_node:mine(),
-	[{H2, _, _} | _ ] = ar_test_node:wait_until_height(main, 4),
+	{ok, [{H2, _, _} | _ ]} = ar_test_await:node_height(main, 4),
 	B2 = ar_node:get_block_shadow_from_cache(H2),
 	?assertEqual(valid, validate(B2, B, Wallets, BlockAnchors2, RecentTXMap2,
 			PartitionUpperBound2)).

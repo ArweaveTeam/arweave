@@ -8,6 +8,20 @@
 
 -import(ar_test_node, [http_get_block/2]).
 
+-export([
+	test_single_node_two_chunk/0,
+	test_two_node_retarget/0,
+	test_three_node/0,
+	test_cross_node/0,
+	test_cross_node_retarget/0,
+	test_no_secret/0,
+	test_bad_secret/0,
+	test_partition_table/0,
+	test_peers_by_partition/0,
+	mock_for_single_difficulty_adjustment_height/0,
+	mock_for_single_difficulty_adjustment_block/0
+]).
+
 -define(COORDINATED_MINING_WAIT_TIMEOUT, 900_000).
 
 %% --------------------------------------------------------------------
@@ -23,42 +37,7 @@ mining_test_() ->
 				{ar_retarget, is_retarget_block, fun(_Block) -> false end}
 			],
 			fun test_single_node_two_chunk/0, ?TEST_NODE_TIMEOUT),
-		ar_test_node:test_with_all_nodes_mocked(
-			[
-				ar_test_node:mock_to_force_invalid_h1(),
-				ar_test_node:mock_to_force_cross_node_h2(),
-				{ar_retarget, is_retarget_height, fun(_Height) -> false end},
-				{ar_retarget, is_retarget_block, fun(_Block) -> false end}
-			],
-			fun test_cross_node/0, ?TEST_NODE_TIMEOUT),
-		ar_test_node:test_with_all_nodes_mocked(
-			[
-				ar_test_node:mock_to_force_invalid_h1(),
-				ar_test_node:mock_to_force_cross_node_h2(),
-				mock_for_single_difficulty_adjustment_height(),
-				mock_for_single_difficulty_adjustment_block()
-			],
-			fun test_cross_node_retarget/0, 2 * ?TEST_NODE_TIMEOUT),
-		{timeout, ?TEST_NODE_TIMEOUT, fun test_two_node_retarget/0},
-		ar_test_node:test_with_all_nodes_mocked(
-			[
-				{ar_retarget, is_retarget_height, fun(_Height) -> false end},
-				{ar_retarget, is_retarget_block, fun(_Block) -> false end}
-			],
-			fun test_three_node/0, 2 * ?TEST_NODE_TIMEOUT),
 		{timeout, ?TEST_NODE_TIMEOUT, fun test_no_exit_node/0}
-	].
-
-api_test_() ->
-	[
-		{timeout, ?TEST_NODE_TIMEOUT, fun test_no_secret/0},
-		{timeout, ?TEST_NODE_TIMEOUT, fun test_bad_secret/0},
-		{timeout, ?TEST_NODE_TIMEOUT, fun test_partition_table/0}
-	].
-
-refetch_partitions_test_() ->
-	[
-		{timeout, ?TEST_NODE_TIMEOUT, fun test_peers_by_partition/0}
 	].
 
 %% --------------------------------------------------------------------
@@ -70,16 +49,16 @@ refetch_partitions_test_() ->
 test_single_node_one_chunk() ->
 	[Node, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(1),
 	ar_test_node:mine(Node),
-	BI = ar_test_node:wait_until_height(ValidatorNode, 1, false),
+	{ok, BI} = ar_test_await:node_height(ValidatorNode, 1),
 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 	?assert(byte_size((B#block.poa)#poa.data_path) > 0),
 	assert_empty_cache(Node).
-	
+
 %% @doc One-node coordinated mining cluster mining a block with two chunks.
 test_single_node_two_chunk() ->
 	[Node, _ExitNode, ValidatorNode] = ar_test_node:start_coordinated(1),
 	ar_test_node:mine(Node),
-	BI = ar_test_node:wait_until_height(ValidatorNode, 1, false),
+	{ok, BI} = ar_test_await:node_height(ValidatorNode, 1),
 	{ok, B} = http_get_block(element(1, hd(BI)), ValidatorNode),
 	?assert(byte_size((B#block.poa2)#poa.data_path) > 0),
 	assert_empty_cache(Node).
@@ -137,22 +116,11 @@ test_no_exit_node() ->
 test_no_secret() ->
 	[Node, _ExitNode, _ValidatorNode] = ar_test_node:start_coordinated(1),
 	Peer = ar_test_node:peer_ip(Node),
-	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
-			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:get_cm_partition_table(Peer)),
-	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
-			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:cm_h1_send(Peer, dummy_candidate())),
-	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
-			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:cm_h2_send(Peer, dummy_candidate())),
-	?assertMatch(
-		{error, {ok, {{<<"421">>, _}, _, 
-			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-		ar_http_iface_client:cm_publish_send(Peer, dummy_solution())).
+	ar_test_await:node_joined(Node),
+	assert_cm_api_reject(ar_http_iface_client:get_cm_partition_table(Peer)),
+	assert_cm_api_reject(ar_http_iface_client:cm_h1_send(Peer, dummy_candidate())),
+	assert_cm_api_reject(ar_http_iface_client:cm_h2_send(Peer, dummy_candidate())),
+	assert_cm_api_reject(ar_http_iface_client:cm_publish_send(Peer, dummy_solution())).
 
 test_bad_secret() ->
 	[Node, _ExitNode, _ValidatorNode] = ar_test_node:start_coordinated(1),
@@ -161,22 +129,11 @@ test_bad_secret() ->
 	try
 		ok = arweave_config:set([cm, api_secret],
 			<<"this_is_not_the_actual_secret">>),
-		?assertMatch(
-			{error, {ok, {{<<"421">>, _}, _, 
-				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-			ar_http_iface_client:get_cm_partition_table(Peer)),
-		?assertMatch(
-			{error, {ok, {{<<"421">>, _}, _, 
-				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-			ar_http_iface_client:cm_h1_send(Peer, dummy_candidate())),
-		?assertMatch(
-			{error, {ok, {{<<"421">>, _}, _, 
-				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-			ar_http_iface_client:cm_h2_send(Peer, dummy_candidate())),
-		?assertMatch(
-			{error, {ok, {{<<"421">>, _}, _, 
-				<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
-			ar_http_iface_client:cm_publish_send(Peer, dummy_solution()))
+		ar_test_await:node_joined(Node),
+		assert_cm_api_reject(ar_http_iface_client:get_cm_partition_table(Peer)),
+		assert_cm_api_reject(ar_http_iface_client:cm_h1_send(Peer, dummy_candidate())),
+		assert_cm_api_reject(ar_http_iface_client:cm_h2_send(Peer, dummy_candidate())),
+		assert_cm_api_reject(ar_http_iface_client:cm_publish_send(Peer, dummy_solution()))
 	after
 		ok = arweave_config:set([cm, api_secret], OrigSecret)
 	end.
@@ -261,48 +218,53 @@ test_peers_by_partition() ->
 	Peer3 = ar_test_node:peer_ip(peer3),
 
 	BaseConfig = ar_test_node:base_cm_config([]),
-	Config = ar_test_node:merge_overrides(BaseConfig,
-		#{[peers, cm_exit] => ar_util:format_peer(Peer1)}),
+	Config = BaseConfig#{[peers, cm_exit] => ar_util:format_peer(Peer1)},
 	MiningAddr = maps:get([mining, address], Config),
 
 	%% On peer1's own start, clear the cm_exit peer inherited from `Config`.
-	Peer1Config = maps:put([peers, cm_exit], not_set, Config),
+	Peer1Config = Config#{[peers, cm_exit] => not_set},
 	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0,
-		ar_test_node:merge_overrides(Peer1Config, lists:foldl(
-			fun maps:merge/2,
-			#{},
-			[
-				#{[peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]]},
-				#{[peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]]}
-			])),
-		false,
-		[{ar_block:partition_size(), 0, {spora_2_6, MiningAddr}},
-		 {ar_block:partition_size(), 1, {spora_2_6, MiningAddr}},
-		 {ar_block:partition_size(), 2, {spora_2_6, MiningAddr}}]]),
+		Peer1Config#{
+			[peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
+			[peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
+			[storage_modules] => [
+				arweave_config:storage_module_to_config(Module)
+				|| Module <- [
+					{ar_block:partition_size(), 0, {spora_2_6, MiningAddr}},
+					{ar_block:partition_size(), 1, {spora_2_6, MiningAddr}},
+					{ar_block:partition_size(), 2, {spora_2_6, MiningAddr}}
+				]
+			]
+		},
+		false]),
 	ar_test_node:remote_call(peer2, ar_test_node, start_node, [B0,
-		ar_test_node:merge_overrides(Config, lists:foldl(
-			fun maps:merge/2,
-			#{},
-			[
-				#{[peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer3]]},
-				#{[peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer3]]}
-			])),
-		false,
-		[{ar_block:partition_size(), 1, {spora_2_6, MiningAddr}},
-		 {ar_block:partition_size(), 2, {spora_2_6, MiningAddr}},
-		 {ar_block:partition_size(), 3, {spora_2_6, MiningAddr}}]]),
+		Config#{
+			[peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer3]],
+			[peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer3]],
+			[storage_modules] => [
+				arweave_config:storage_module_to_config(Module)
+				|| Module <- [
+					{ar_block:partition_size(), 1, {spora_2_6, MiningAddr}},
+					{ar_block:partition_size(), 2, {spora_2_6, MiningAddr}},
+					{ar_block:partition_size(), 3, {spora_2_6, MiningAddr}}
+				]
+			]
+		},
+		false]),
 	ar_test_node:remote_call(peer3, ar_test_node, start_node, [B0,
-		ar_test_node:merge_overrides(Config, lists:foldl(
-			fun maps:merge/2,
-			#{},
-			[
-				#{[peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer2]]},
-				#{[peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer2]]}
-			])),
-		false,
-		[{ar_block:partition_size(), 2, {spora_2_6, MiningAddr}},
-		 {ar_block:partition_size(), 3, {spora_2_6, MiningAddr}},
-		 {ar_block:partition_size(), 4, {spora_2_6, MiningAddr}}]]),
+		Config#{
+			[peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer2]],
+			[peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer2]],
+			[storage_modules] => [
+				arweave_config:storage_module_to_config(Module)
+				|| Module <- [
+					{ar_block:partition_size(), 2, {spora_2_6, MiningAddr}},
+					{ar_block:partition_size(), 3, {spora_2_6, MiningAddr}},
+					{ar_block:partition_size(), 4, {spora_2_6, MiningAddr}}
+				]
+			]
+		},
+		false]),
 
 	ar_test_node:remote_call(peer1, ar_mining_io, set_largest_seen_upper_bound,
 		[PartitionUpperBound]),
@@ -311,98 +273,140 @@ test_peers_by_partition() ->
 	ar_test_node:remote_call(peer3, ar_mining_io, set_largest_seen_upper_bound,
 		[PartitionUpperBound]),
 
-	timer:sleep(3000),
-	assert_peers([], peer1, 0),
-	assert_peers([Peer2], peer1, 1),
-	assert_peers([Peer2, Peer3], peer1, 2),
-	assert_peers([Peer2, Peer3], peer1, 3),
-	assert_peers([Peer3], peer1, 4),
-	assert_peers([], peer1, 5),
-
-	assert_peers([Peer1], peer2, 0),
-	assert_peers([Peer1], peer2, 1),
-	assert_peers([Peer1, Peer3], peer2, 2),
-	assert_peers([Peer3], peer2, 3),
-	assert_peers([Peer3], peer2, 4),
-	assert_peers([], peer2, 5),
-
-	assert_peers([Peer1], peer3, 0),
-	assert_peers([Peer1, Peer2], peer3, 1),
-	assert_peers([Peer1, Peer2], peer3, 2),
-	assert_peers([Peer2], peer3, 3),
-	assert_peers([], peer3, 4),
-	assert_peers([], peer3, 5),
+	refresh_peer_partitions([peer1, peer2, peer3]),
+	assert_peer_partitions(peer1, [
+		{0, []},
+		{1, [Peer2]},
+		{2, [Peer2, Peer3]},
+		{3, [Peer2, Peer3]},
+		{4, [Peer3]},
+		{5, []}
+	]),
+	assert_peer_partitions(peer2, [
+		{0, [Peer1]},
+		{1, [Peer1]},
+		{2, [Peer1, Peer3]},
+		{3, [Peer3]},
+		{4, [Peer3]},
+		{5, []}
+	]),
+	assert_peer_partitions(peer3, [
+		{0, [Peer1]},
+		{1, [Peer1, Peer2]},
+		{2, [Peer1, Peer2]},
+		{3, [Peer2]},
+		{4, []},
+		{5, []}
+	]),
 
 	ar_test_node:remote_call(peer1, ar_test_node, stop, []),
-	timer:sleep(3000),
-
-	assert_peers([Peer1], peer2, 0),
-	assert_peers([Peer1], peer2, 1),
-	assert_peers([Peer1, Peer3], peer2, 2),
-	assert_peers([Peer3], peer2, 3),
-	assert_peers([Peer3], peer2, 4),
-
-	assert_peers([Peer1], peer3, 0),
-	assert_peers([Peer1, Peer2], peer3, 1),
-	assert_peers([Peer1, Peer2], peer3, 2),
-	assert_peers([Peer2], peer3, 3),
-	assert_peers([], peer3, 4),
+	assert_peer_partitions(peer2, [
+		{0, [Peer1]},
+		{1, [Peer1]},
+		{2, [Peer1, Peer3]},
+		{3, [Peer3]},
+		{4, [Peer3]}
+	]),
+	assert_peer_partitions(peer3, [
+		{0, [Peer1]},
+		{1, [Peer1, Peer2]},
+		{2, [Peer1, Peer2]},
+		{3, [Peer2]},
+		{4, []}
+	]),
 
 	ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0,
-		ar_test_node:merge_overrides(Peer1Config, lists:foldl(
-			fun maps:merge/2,
-			#{},
-			[
-				#{[peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]]},
-				#{[peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]]}
-			])),
-		false,
-		[{ar_block:partition_size(), 0, {spora_2_6, MiningAddr}},
-		 {ar_block:partition_size(), 4, {spora_2_6, MiningAddr}},
-		 {ar_block:partition_size(), 5, {spora_2_6, MiningAddr}}]]),
+		Peer1Config#{
+			[peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
+			[peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
+			[storage_modules] => [
+				arweave_config:storage_module_to_config(Module)
+				|| Module <- [
+					{ar_block:partition_size(), 0, {spora_2_6, MiningAddr}},
+					{ar_block:partition_size(), 4, {spora_2_6, MiningAddr}},
+					{ar_block:partition_size(), 5, {spora_2_6, MiningAddr}}
+				]
+			]
+		},
+		false]),
 	ar_test_node:remote_call(peer1, ar_mining_io, set_largest_seen_upper_bound,
 		[PartitionUpperBound]),
-	timer:sleep(3000),
-
-	assert_peers([], peer1, 0),
-	assert_peers([Peer2], peer1, 1),
-	assert_peers([Peer2, Peer3], peer1, 2),
-	assert_peers([Peer2, Peer3], peer1, 3),
-	assert_peers([Peer3], peer1, 4),
-	assert_peers([], peer1, 5),
-
-	assert_peers([Peer1], peer2, 0),
-	assert_peers([], peer2, 1),
-	assert_peers([Peer3], peer2, 2),
-	assert_peers([Peer3], peer2, 3),
-	assert_peers([Peer1, Peer3], peer2, 4),
-	assert_peers([Peer1], peer2, 5),
-
-	assert_peers([Peer1], peer3, 0),
-	assert_peers([Peer2], peer3, 1),
-	assert_peers([Peer2], peer3, 2),
-	assert_peers([Peer2], peer3, 3),
-	assert_peers([Peer1], peer3, 4),
-	assert_peers([Peer1], peer3, 5),
-	ok.	
+	refresh_peer_partitions([peer1, peer2, peer3]),
+	assert_peer_partitions(peer1, [
+		{0, []},
+		{1, [Peer2]},
+		{2, [Peer2, Peer3]},
+		{3, [Peer2, Peer3]},
+		{4, [Peer3]},
+		{5, []}
+	]),
+	assert_peer_partitions(peer2, [
+		{0, [Peer1]},
+		{1, []},
+		{2, [Peer3]},
+		{3, [Peer3]},
+		{4, [Peer1, Peer3]},
+		{5, [Peer1]}
+	]),
+	assert_peer_partitions(peer3, [
+		{0, [Peer1]},
+		{1, [Peer2]},
+		{2, [Peer2]},
+		{3, [Peer2]},
+		{4, [Peer1]},
+		{5, [Peer1]}
+	]),
+	ok.
 
 %% --------------------------------------------------------------------
 %% Helpers
 %% --------------------------------------------------------------------
 
-assert_peers(ExpectedPeers, Node, Partition) ->
-	Expected = lists:sort(ExpectedPeers),
-	?assert(ar_util:do_until(
-		fun() ->
-			case ar_test_node:remote_call(
-					Node, ar_coordination, get_peers, [Partition]) of
-				{badrpc, _} -> false;
-				Peers when is_list(Peers) -> Expected == lists:sort(Peers)
-			end
+assert_cm_api_reject(Response) ->
+	?assertMatch(
+		{error, {ok, {{<<"421">>, _}, _,
+			<<"CM API disabled or invalid CM API secret in request.">>, _, _}}},
+		Response).
+
+refresh_peer_partitions(Nodes) ->
+	lists:foreach(
+		fun(Node) ->
+			ar_test_node:remote_call(
+				Node, gen_server, cast, [ar_coordination, refetch_peer_partitions])
 		end,
-		200,
+		Nodes
+	).
+
+assert_peer_partitions(Node, Expectations) ->
+	Expected = normalize_peer_partitions(Expectations),
+	case ar_test_await:until(peer_partitions_match,
+		fun() ->
+			read_peer_partitions(Node, Expectations) == Expected
+		end,
 		30000
-	)).
+	) of
+		ok ->
+			ok;
+		{error, _} ->
+			?assertEqual(Expected, read_peer_partitions(Node, Expectations))
+	end.
+
+normalize_peer_partitions(Partitions) ->
+	[{Partition, normalize_peers(Peers)}
+		|| {Partition, Peers} <- Partitions].
+
+normalize_peers(Peers) when is_list(Peers) ->
+	lists:sort(Peers);
+normalize_peers(Other) ->
+	Other.
+
+read_peer_partitions(Node, Expectations) ->
+	normalize_peer_partitions(
+		[{Partition, read_peers(Node, Partition)}
+			|| {Partition, _ExpectedPeers} <- Expectations]).
+
+read_peers(Node, Partition) ->
+	ar_test_node:remote_call(Node, ar_coordination, get_peers, [Partition]).
 
 wait_for_each_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions) ->
 	wait_for_each_node(
@@ -469,8 +473,7 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 			ar_util:encode(CurrentB#block.hash)
 		]
 	),
-	BIValidator = ar_test_node:wait_until_height(
-		ValidatorNode, CurrentHeight + 1, false, ?COORDINATED_MINING_WAIT_TIMEOUT),
+	{ok, BIValidator} = ar_test_await:node_height(ValidatorNode, CurrentHeight + 1),
 	%% Since multiple nodes are mining in parallel it's possible that multiple blocks
 	%% were mined. Get the Validator's current height in cas it's more than CurrentHeight+1.
 	NewHeight = ar_test_node:remote_call(ValidatorNode, ar_node, get_height, []),
@@ -484,8 +487,7 @@ mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
 			%% Make sure the miner contains all of the new validator hashes, it's okay if
 			%% the miner contains *more* hashes since it's possible concurrent blocks were
 			%% mined between when the Validator checked and now.
-			BIMiner = ar_test_node:wait_until_height(
-				Node, NewHeight, false, ?COORDINATED_MINING_WAIT_TIMEOUT),
+			{ok, BIMiner} = ar_test_await:node_height(Node, NewHeight),
 			MinerHashes = [Hash || {Hash, _, _} <- BIMiner],
 			Message = lists:flatten(io_lib:format(
 					"Node ~p did not mine the same block as the validator node", [Node])),

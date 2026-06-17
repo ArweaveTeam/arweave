@@ -45,3 +45,8 @@ localnet_snapshot/wallets/arweave_keyfile_*
 notebooks/.ipynb_checkpoints
 .venv
 
+# Claude Code: ignore per-user / runtime state, but allow shared team
+# config (.claude/settings.json, .claude/commands/, .claude/agents/,
+# .claude/hooks/) to be committed.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

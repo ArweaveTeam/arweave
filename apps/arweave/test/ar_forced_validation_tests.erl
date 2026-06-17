@@ -6,8 +6,7 @@
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
--import(ar_test_node, [wait_until_height/2,
-                       post_block/2,
+-import(ar_test_node, [post_block/2,
                        sign_block/3,
                        send_new_block/2]).
 
@@ -41,10 +40,10 @@ reset_node() ->
 	ar_test_node:connect_to_peer(peer1),
 
 	Height = height(peer1),
-	[{PrevH, _, _} | _] = wait_until_height(main, Height),
+	{ok, [{PrevH, _, _} | _]} = ar_test_await:node_height(main, Height),
 	ar_test_node:disconnect_from(peer1),
 	ar_test_node:mine(peer1),
-	[{H, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, Height + 1),
+	{ok, [{H, _, _} | _]} = ar_test_await:node_height(peer1, Height + 1),
 	B = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, H]),
 	PrevB = ar_test_node:remote_call(peer1, ar_block_cache, get, [block_cache, PrevH]),
 	MiningAddr = ar_test_node:remote_call(peer1, arweave_config, get, [[mining, address]]),

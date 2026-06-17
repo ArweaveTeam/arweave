@@ -1,6 +1,140 @@
 #!/usr/bin/env bash
+# Run Common Test suites under the e2e profile.
+#
+# Use this for `*_SUITE.erl' suites that exercise full peer clusters
+# (e.g. `ar_repack_mine_SUITE'). It compiles with the `e2e' profile
+# (larger PARTITION_SIZE, real RandomX, AR_TEST macro set,
+# `apps/arweave/src/e2e' added to src_dirs), then invokes
+# `ct:run_test/1' directly via `erl' so the `e2e' and `test' profiles
+# don't get merged (which they would under `rebar3 ct` and which fails
+# with `{redefine, NETWORK_NAME}` because both profiles define it).
+#
+# Examples:
+#   ./bin/e2e_ct --suite=apps/arweave/e2e/ar_repack_mine_SUITE.erl
+#   ./bin/e2e_ct --suite=apps/arweave/e2e/ar_repack_mine_SUITE.erl --case=test_replica_2_9_to_unpacked
+
 set -e
-SCRIPT_DIR=$(dirname ${0})
-export ARWEAVE_DEV=1
-ARWEAVE=${SCRIPT_DIR}/arweave
-${ARWEAVE} test_e2e ${*}
+
+SCRIPT_DIR=$(dirname "${0}")
+ROOT_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
+cd "${ROOT_DIR}"
+
+# Compile the e2e profile -- unless we're running against a prebuilt
+# artifact (CI sets AR_E2E_SKIP_COMPILE). On CI the build job already ran
+# `ar-rebar3 e2e compile' and shipped the compiled suites + native libs in
+# the artifact, so recompiling per case here is redundant -- and it was the
+# `cc1plus' CPU storm that starved the runner agent ("lost communication"
+# severs). eunit already runs prebuilt this way and never severs. Local dev
+# (no artifact, flag unset) still compiles so source edits are picked up.
+if [ -z "${AR_E2E_SKIP_COMPILE}" ]; then
+	./ar-rebar3 e2e compile
+fi
+
+# Build the code path: every dep's ebin under the e2e profile, plus the
+# four arweave apps' test/ebin so SUITE files and helpers resolve.
+BUILD="${ROOT_DIR}/_build/e2e"
+PATHS=""
+for dir in "${BUILD}"/lib/*/ebin; do
+	PATHS="${PATHS} ${dir}"
+done
+for app in arweave arweave_config arweave_limiter arweave_diagnostic; do
+	PATHS="${PATHS} ${BUILD}/lib/${app}/test"
+done
+
+# Parse --suite / --case arguments. We need them as a single
+# `ct:run_test/1' options list, so transform them here rather than
+# trying to map them onto `ct_run' flags.
+SUITE=""
+CASE=""
+DIR="${BUILD}/logs"
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--suite=*) SUITE="${1#--suite=}" ;;
+		--suite)   shift; SUITE="$1" ;;
+		--case=*)  CASE="${1#--case=}" ;;
+		--case)    shift; CASE="$1" ;;
+		--logdir=*) DIR="${1#--logdir=}" ;;
+		--logdir)  shift; DIR="$1" ;;
+		*)
+			echo "Unknown argument: $1" >&2
+			echo "Usage: $0 --suite=<suite.erl> [--case=<testcase>] [--logdir=<dir>]" >&2
+			exit 2
+			;;
+	esac
+	shift
+done
+
+if [ -z "${SUITE}" ]; then
+	echo "--suite is required" >&2
+	exit 2
+fi
+
+mkdir -p "${DIR}"
+
+## `ct:run_test/1' only honours `{testcase, X}' when the `{dir, Dir}'
+## it is given CONTAINS the suite's compiled `.beam'. The e2e suite
+## sources live in `apps/arweave/e2e' (only `.erl' there -- the beam is
+## built into `_build/e2e/lib/<app>/ebin'), so pointing `{dir}' at the
+## source dir makes CT ignore the filter and run the whole `all/0' --
+## i.e. a per-case CI job would run the ENTIRE suite. Point `{dir}' at
+## the built beam's directory instead. `auto_compile' stays false; the
+## `e2e compile' above already produced the beam.
+SUITE_MODULE=$(basename "${SUITE}" .erl)
+SUITE_BEAM=$(find "${BUILD}" -name "${SUITE_MODULE}.beam" -type f 2>/dev/null | head -1)
+if [ -z "${SUITE_BEAM}" ]; then
+	echo "Could not locate compiled beam for ${SUITE_MODULE} under ${BUILD}" >&2
+	echo "(did './ar-rebar3 e2e compile' succeed?)" >&2
+	exit 2
+fi
+SUITE_DIR=$(cd "$(dirname "${SUITE_BEAM}")" && pwd)
+
+if [ -n "${CASE}" ]; then
+	OPTS="[{dir, \"${SUITE_DIR}\"}, {suite, ${SUITE_MODULE}}, {testcase, ${CASE}}, {logdir, \"${DIR}\"}, {auto_compile, false}]"
+else
+	OPTS="[{dir, \"${SUITE_DIR}\"}, {suite, ${SUITE_MODULE}}, {logdir, \"${DIR}\"}, {auto_compile, false}]"
+fi
+
+# `init:stop(N)` with N taken from the test result so the exit code
+# reflects pass/fail. `ct:run_test/1' returns `{ok, _, _}` on success
+# or `{error, _}' / `{Failures, _, _}` for any failed/skipped count.
+# CT changes the working directory to its log dir (e.g. `_build/e2e/logs/ct_run.../`).
+# Several pieces of test infrastructure use relative paths from the project root —
+# `start_for_tests' constructs `.tmp/data_e2e_main_<ns>', `arweave_config' loads
+# `genesis_data/genesis_txs', and so on. Export the project root so the SUITE
+# can `file:set_cwd/1' it back inside `init_per_suite'.
+export ARWEAVE_PROJECT_ROOT="${ROOT_DIR}"
+
+# Cap the Erlang scheduler count per node. Each e2e job runs 3 arweave
+# nodes (coordinator + 2 peers) that VDF/RandomX-mine; left at the default
+# (`+S' = nproc = 64 on the EPYC CI runners) each node spins ~64
+# schedulers, so a single job self-oversubscribes ~3x and a few jobs on
+# one box drive it to 4x+ and starve (20-min timetrap losses). Capping
+# keeps each job light enough that several share a box (see the
+# `e2e-runner' pool in infra/host_vars). The peer BEAMs inherit this
+# automatically: ar_test_node derives their `+S' from
+# `erlang:system_info(schedulers_online)', which this sets here.
+SCHED="${AR_E2E_SCHEDULERS:-8}"
+
+# Two protections against the GitHub runner agent (Runner.Listener)
+# losing its heartbeat -> "the self-hosted runner lost communication with
+# the server":
+#   1. `-args_file config/vm.args.test' turns scheduler busy-wait OFF
+#      (+sbwt none) -- the shared test VM policy used by the eunit
+#      launcher and the peer BEAMs too -- so idle schedulers sleep
+#      instead of spinning the box to a false ~1x.
+#   2. `nice' lowers the miners' priority so the normal-priority agent
+#      always wins the CPU slice it needs.
+# `+S' (scheduler count) is e2e-specific and stays inline here (eunit
+# pins 4; peer BEAMs inherit this value via schedulers_online). Peers
+# also inherit the niceness (spawned from this process). Positive nice
+# needs no privilege.
+exec nice -n 19 erl +S "${SCHED}:${SCHED}" +SDcpu "${SCHED}" -args_file config/vm.args.test -pa ${PATHS} -noshell -name "e2e-ct@127.0.0.1" -setcookie e2e \
+	-eval "case ct:run_test(${OPTS}) of
+		{0, 0, {0, 0}} -> init:stop(0);
+		{Ok, Fail, {UserSkip, AutoSkip}} ->
+			io:format(\"~n=== ct:run_test result: ok=~p failed=~p user_skip=~p auto_skip=~p ===~n\", [Ok, Fail, UserSkip, AutoSkip]),
+			case Fail of 0 -> init:stop(0); _ -> init:stop(1) end;
+		Other ->
+			io:format(\"~n=== ct:run_test unexpected result: ~p ===~n\", [Other]),
+			init:stop(2)
+		end."

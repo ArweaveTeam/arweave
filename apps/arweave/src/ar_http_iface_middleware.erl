@@ -2039,6 +2039,10 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
 			{ok, L} ->
 				{ok, lists:foldl(
 					fun({StoreID2, Packing2}, Acc) ->
+						%% Only advertise chunks stored in the module's configured
+						%% packing. Chunks held in other packings (e.g. small
+						%% unpacked chunks before the strict data split threshold)
+						%% are for now only synced via the "normal" sync mode.
 						Intervals = ar_footprint_record:get_intervals(Partition, FootprintNumber, Packing2, StoreID2),
 						ar_intervals:union(Acc, Intervals)
 					end,
@@ -2463,9 +2467,9 @@ handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = 
 					{412, #{}, <<>>, Req};
 				#block{} ->
 					Indices = collect_missing_tx_indices(Prefixes),
-					prometheus_counter:inc(block_announcement_reported_transactions,
+					ar_metrics:counter_inc(block_announcement_reported_transactions,
 							length(Prefixes)),
-					prometheus_counter:inc(block_announcement_missing_transactions,
+					ar_metrics:counter_inc(block_announcement_missing_transactions,
 							length(Indices)),
 					Response = #block_announcement_response{ missing_chunk = true,
 							missing_tx_indices = Indices },

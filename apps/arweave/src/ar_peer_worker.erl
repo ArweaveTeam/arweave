@@ -9,6 +9,7 @@
 %%% footprint admission. The coordinator periodically rebalances those limits
 %%% from peer latency/rating and owns the global footprint-slot counter.
 -module(ar_peer_worker).
+-test_category([fast]).
 
 -behaviour(gen_server).
 
@@ -694,7 +695,7 @@ reap_dead_workers(State) ->
 %% Metric is an atom (e.g., dispatched, queued_in)
 increment_metrics(Metric, #state{ peer_formatted = PeerFormatted }, Value) ->
 	try
-		prometheus_counter:inc(sync_tasks, [Metric, PeerFormatted], Value)
+		ar_metrics:counter_inc(sync_tasks, [Metric, PeerFormatted], Value)
 	catch
 		_:_ -> ok
 	end.

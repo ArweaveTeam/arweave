@@ -111,19 +111,11 @@ name(StoreID) ->
 	list_to_atom("ar_peer_sync_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
-	%% Network sync (producer + consumer per StoreID) — skip the entire
-	%% subsystem when sync_jobs=0. Same pattern as
-	%% ar_data_sync_coordinator:register_workers/0.
-	case ar_data_sync_coordinator:is_syncing_enabled() of
-		false ->
-			[];
-		true ->
-			StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-			StoreIDs = [
-				ar_storage_module:id(SM) || SM <- StorageModules
-			] ++ [?DEFAULT_MODULE],
-			[?CHILD_WITH_ARGS(?MODULE, worker, name(SID), [SID]) || SID <- StoreIDs]
-	end.
+	StorageModules = [arweave_config:config_to_storage_module(M)
+		|| M <- arweave_config:get([storage_modules])],
+	StoreIDs = [ar_storage_module:id(SM) || SM <- StorageModules]
+		++ [?DEFAULT_MODULE],
+	[?CHILD_WITH_ARGS(?MODULE, worker, name(SID), [SID]) || SID <- StoreIDs].
 
 start_link(StoreID) ->
 	gen_server:start_link({local, name(StoreID)}, ?MODULE, StoreID, []).
@@ -207,27 +199,13 @@ handle_cast(enqueue, #state{ pass = undefined } = State) ->
 			ar_util:cast_after(1000, self(), enqueue),
 			{noreply, State}
 	end;
-handle_cast(enqueue, #state{ store_id = StoreID,
-		pass = #enqueue_pass{ offset = O, end_ = E, mode = Mode,
-			tasks_produced = TasksProduced } } = State)
-		when O >= E ->
-	NextMode = flip_mode(Mode),
-	?LOG_DEBUG([{event, sync_network}, {stage, pass_complete},
-		{store_id, StoreID}, {mode, Mode}, {tasks_produced, TasksProduced},
-		{next_mode, NextMode}]),
-	case init_pass(State, NextMode) of
-		{ok, Pass2} ->
-			ar_util:cast_after(?PASS_RESTART_DELAY_MS, self(), enqueue),
-			{noreply, State#state{ pass = Pass2 }};
-		not_ready ->
-			%% Clear pass so subsequent enqueue casts hit the pass=undefined
-			%% clause (silent retry) instead of re-entering this branch and
-			%% re-logging pass_complete every second.
-			ar_util:cast_after(1000, self(), enqueue),
-			{noreply, State#state{ pass = undefined }}
-	end;
-handle_cast(enqueue, State) ->
+handle_cast(enqueue, #state{ pass = #enqueue_pass{} } = State) ->
 	case can_enqueue(State) of
+		{wait, offset_past_end, _Delay} ->
+			%% Offset reached min(end_, WeaveSize) — the pass is done. This is the
+			%% sole completion trigger, so the pass tracks a shrinking or growing
+			%% weave tip without ever rewriting end_.
+			complete_pass(State);
 		{wait, _Reason, Delay} ->
 			ar_util:cast_after(Delay, self(), enqueue),
 			{noreply, State};
@@ -260,7 +238,9 @@ handle_cast({release_task_range, Start, End}, State) ->
 	NewQ = ar_sync_task_queue:release_task_range(Start, End, State#state.queue),
 	{noreply, State#state{ queue = NewQ }};
 
-%% Chain-tip update from ar_data_sync.
+%% Chain-tip update from ar_data_sync. A decrease (reorg) needs no special
+%% handling: the smaller tip takes effect via min(end_, WeaveSize) in the
+%% producer and is_stale_task in the consumer.
 handle_cast({set_weave_size, WeaveSize}, State) ->
 	{noreply, State#state{ weave_size = WeaveSize }};
 
@@ -281,27 +261,44 @@ terminate(Reason, _State) ->
 %%% Step implementation (operate on #state{}).
 %%%===================================================================
 
-do_sync(#state{ store_id = StoreID, queue = Q } = State) ->
-	IsQueueEmpty =
-		case ar_sync_task_queue:is_empty(Q) of
-			true ->
-				ar_util:cast_after(500, self(), sync),
-				true;
-			false ->
-				false
-		end,
+do_sync(State) ->
+	#state{ store_id = StoreID, queue = Q } = State,
+	case ar_sync_task_queue:is_empty(Q) of
+		true ->
+			ar_util:cast_after(500, self(), sync),
+			State;
+		false ->
+			Task = ar_sync_task_queue:peek_smallest(Q),
+			{FootprintKey, Start, End, Peer} = Task,
+			case is_stale_task(State, Start, End) of
+				true ->
+					%% Orphaned by a reorg that shrank the weave. Skip it ahead of
+					%% the disk/cache/worker gates so it clears even while busy.
+					gen_server:cast(self(), sync),
+					{_, Q2} = ar_sync_task_queue:take_smallest(Q),
+					Q3 = ar_sync_task_queue:release_task_range(Start, End, Q2),
+					?LOG_DEBUG([{event, sync_network}, {stage, stale_task_skipped},
+						{store_id, StoreID}, {peer, ar_util:format_peer(Peer)},
+						{start_offset, Start}, {end_offset, End},
+						{weave_size, State#state.weave_size},
+						{footprint_key, FootprintKey}]),
+					State#state{ queue = Q3 };
+				false ->
+					dispatch_head_task(State, Task)
+			end
+	end.
+
+%% Dispatch the (live) head task once disk space, chunk cache, and a worker are
+%% available; otherwise schedule a retry and leave it queued.
+dispatch_head_task(#state{ store_id = StoreID, queue = Q } = State,
+		{FootprintKey, Start, End, Peer}) ->
 	IsDiskSpaceSufficient =
-		case IsQueueEmpty of
+		case ar_data_sync:is_disk_space_sufficient(StoreID) of
 			true ->
-				false;
-			false ->
-				case ar_data_sync:is_disk_space_sufficient(StoreID) of
-					true ->
-						true;
-					_ ->
-						ar_util:cast_after(30000, self(), sync),
-						false
-				end
+				true;
+			_ ->
+				ar_util:cast_after(30000, self(), sync),
+				false
 		end,
 	IsChunkCacheFull =
 		case IsDiskSpaceSufficient of
@@ -333,12 +330,10 @@ do_sync(#state{ store_id = StoreID, queue = Q } = State) ->
 		true ->
 			State;
 		false ->
-			{FootprintKey, Start, End, Peer} =
-					ar_sync_task_queue:peek_smallest(Q),
+			gen_server:cast(self(), sync),
 			case ar_data_sync_coordinator:peer_ready_for_work(Peer) of
 				true ->
 					{_, Q2} = ar_sync_task_queue:take_smallest(Q),
-					gen_server:cast(self(), sync),
 					ar_data_sync_coordinator:sync_range(#sync_task{
 								start_offset = Start,
 								end_offset = End,
@@ -349,10 +344,15 @@ do_sync(#state{ store_id = StoreID, queue = Q } = State) ->
 					State#state{ queue = Q2 };
 				false ->
 					Q2 = ar_sync_task_queue:skip_peer(Peer, Q),
-					gen_server:cast(self(), sync),
 					State#state{ queue = Q2 }
 			end
 	end.
+
+is_stale_task(#state{ weave_size = WeaveSize }, _Start, End)
+		when is_integer(WeaveSize) ->
+	End > WeaveSize;
+is_stale_task(_State, _Start, _End) ->
+	false.
 
 do_enqueue(#state{ pass = #enqueue_pass{ mode = normal } } = State) ->
 	do_enqueue_normal(State);
@@ -447,11 +447,11 @@ can_enqueue(#state{ store_id = StoreID, weave_size = WeaveSize, queue = Q,
 			StoreIDLabel = ar_storage_module:label(StoreID),
 			QSize = ar_sync_task_queue:size(Q),
 			{NormalCount, FootprintCount} = ar_sync_task_queue:size_by_mode(Q),
-			prometheus_gauge:set(sync_task_queue_size,
+			ar_metrics:gauge_set(sync_task_queue_size,
 					[StoreIDLabel, normal], NormalCount),
-			prometheus_gauge:set(sync_task_queue_size,
+			ar_metrics:gauge_set(sync_task_queue_size,
 					[StoreIDLabel, footprint], FootprintCount),
-			prometheus_gauge:set(sync_task_queue_inflight_bytes,
+			ar_metrics:gauge_set(sync_task_queue_inflight_bytes,
 					[StoreIDLabel], ar_sync_task_queue:inflight_bytes(Q)),
 			MaxQueueSize = max(
 				?NETWORK_DATA_BUCKET_SIZE div ?DATA_CHUNK_SIZE,
@@ -470,6 +470,25 @@ can_enqueue(#state{ store_id = StoreID, weave_size = WeaveSize, queue = Q,
 			end
 	end.
 
+%% Flip mode and start the next pass; the current pass is finished (offset
+%% reached the live tip).
+complete_pass(#state{ store_id = StoreID,
+		pass = #enqueue_pass{ mode = Mode, tasks_produced = TasksProduced } } = State) ->
+	NextMode = flip_mode(Mode),
+	?LOG_DEBUG([{event, sync_network}, {stage, pass_complete},
+		{store_id, StoreID}, {mode, Mode}, {tasks_produced, TasksProduced},
+		{next_mode, NextMode}]),
+	case init_pass(State, NextMode) of
+		{ok, Pass2} ->
+			ar_util:cast_after(?PASS_RESTART_DELAY_MS, self(), enqueue),
+			{noreply, State#state{ pass = Pass2 }};
+		not_ready ->
+			%% Clear the pass so later enqueue casts hit the pass=undefined clause
+			%% (silent retry) instead of re-logging pass_complete every second.
+			ar_util:cast_after(1000, self(), enqueue),
+			{noreply, State#state{ pass = undefined }}
+	end.
+
 %% Build a new pass in the given mode.
 init_pass(#state{ store_id = StoreID, range_start = Start, range_end = End,
 		weave_size = WeaveSize }, Mode) ->
@@ -477,32 +496,29 @@ init_pass(#state{ store_id = StoreID, range_start = Start, range_end = End,
 		false ->
 			not_ready;
 		true ->
-			%% Cap pass end at the current weave tip — discover/can_enqueue
-			%% blocks once Offset reaches min(End, WeaveSize), so if the
-			%% pass end stays at the (larger) range_end, Offset can never
-			%% reach it and pass_complete never fires. That strands the
-			%% loop in normal mode forever and footprint mode never runs.
-			%% A fresh pass on the next mode-flip picks up the new WeaveSize.
+			%% end_ is the pass's static target: the storage-module range, capped
+			%% by the disk-pool threshold in footprint mode. The live weave tip is
+			%% applied as min(end_, WeaveSize) at each enqueue/completion check, so
+			%% the pass tracks the tip up and down without rewriting end_.
 			%% ready_to_start guarantees WeaveSize is bound here.
-			End2 = case Mode of
+			PassEnd = case Mode of
 				footprint ->
-					lists:min([End, WeaveSize, ar_disk_pool:get_threshold()]);
+					min(End, ar_disk_pool:get_threshold());
 				normal ->
-					min(End, WeaveSize)
+					End
 			end,
-			case Start >= End2 of
+			case Start >= min(PassEnd, WeaveSize) of
 				true ->
-					%% Storage module's range is entirely above the current
-					%% weave tip (or disk-pool threshold for footprint mode).
-					%% No data to sync yet; back off and re-check when
-					%% WeaveSize advances. Caller cast_afters on not_ready.
+					%% Storage module's range is entirely above the current weave
+					%% tip (or disk-pool threshold for footprint mode); nothing to
+					%% sync yet. Caller cast_afters on not_ready.
 					not_ready;
 				false ->
 					?LOG_DEBUG([{event, sync_network}, {stage, pass_started},
 						{store_id, StoreID}, {mode, Mode},
-						{start, Start}, {end_, End2}]),
+						{start, Start}, {end_, PassEnd}]),
 					{ok, #enqueue_pass{
-						start = Start, end_ = End2,
+						start = Start, end_ = PassEnd,
 						offset = Start, mode = Mode }}
 			end
 	end.
@@ -724,4 +740,38 @@ cut_peer_footprint_intervals_test() ->
 
 	ok.
 
--endif.
+set_weave_size_decrease_keeps_pass_and_queue_test() ->
+	Queue = ar_sync_task_queue:insert_batch(
+		[{{127, 0, 0, 1, 1984},
+			ar_intervals:from_list([{2 * ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}]), none}],
+		1,
+		ar_sync_task_queue:new()),
+	Pass = #enqueue_pass{
+		start = 0,
+		end_ = 2 * ?DATA_CHUNK_SIZE,
+		offset = ?DATA_CHUNK_SIZE,
+		mode = normal
+	},
+	State = #state{
+		store_id = test_store,
+		weave_size = 2 * ?DATA_CHUNK_SIZE,
+		queue = Queue,
+		pass = Pass
+	},
+	{noreply, State2} = handle_cast({set_weave_size, ?DATA_CHUNK_SIZE}, State),
+	%% The decrease updates the cached size and leaves the pass and queue intact;
+	%% the shrunk tip takes effect via min(end_, WeaveSize) downstream.
+	?assertEqual(?DATA_CHUNK_SIZE, State2#state.weave_size),
+	?assertEqual(2 * ?DATA_CHUNK_SIZE, (State2#state.pass)#enqueue_pass.end_),
+	?assertEqual(1, ar_sync_task_queue:size(State2#state.queue)).
+
+is_stale_task_test() ->
+	WithinTip = #state{ weave_size = ?DATA_CHUNK_SIZE },
+	%% Ends past the weave tip -> stale (skipped at dispatch).
+	?assert(is_stale_task(WithinTip, ?DATA_CHUNK_SIZE, 2 * ?DATA_CHUNK_SIZE)),
+	%% Ends at or below the tip -> not stale.
+	?assertNot(is_stale_task(WithinTip, 0, ?DATA_CHUNK_SIZE)),
+	%% Weave size not known yet -> nothing is stale.
+	?assertNot(is_stale_task(#state{ weave_size = undefined }, 0, 2 * ?DATA_CHUNK_SIZE)).
+
+	-endif.

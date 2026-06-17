@@ -2,28 +2,28 @@
 
 %% The new, more flexible, and more user-friendly interface.
 -export([boot_peers/1, wait_for_peers/1,
-		wait_until_joined/0, wait_until_joined/1,
 		restart/0, restart/1,
 		start_other_node/4, start_node/2, start_node/3,
 		start_coordinated/1,
-		base_cm_config/1, merge_overrides/2, mine/1,
-		wait_until_height/1, wait_until_height/2, wait_until_height/3, wait_until_height/4,
-		do_wait_until_height/2,
-		assert_wait_until_height/2,
-		wait_until_mining_paused/1, http_get_block/2, get_blocks/1,
+		base_cm_config/1, mine/1,
+		http_get_block/2, get_blocks/1,
 		mock_to_force_invalid_h1/0, mock_to_force_cross_node_h2/0,
 		mainnet_packing_mocks/0,
 		get_difficulty_for_invalid_hash/0, invalid_solution/0,
-		valid_solution/0, remote_call/4,
-		get_default_storage_module_packing/2, get_genesis_chunk/1,
-		all_nodes/1, all_peers/1, new_custom_size_rsa_wallet/1]).
+		valid_solution/0, remote_call/4, remote_call/5,
+		generate_address/1,
+		storage_module_packing/2, storage_module_config/2, storage_module_config/3,
+		storage_module_configs/1,
+		wide_storage_modules/2, wide_storage_modules/3, get_genesis_chunk/1,
+		all_peers/1, new_custom_size_rsa_wallet/1,
+		project_root/0]).
 
 %% The "legacy" interface.
 -export([start/0, start/1, start/2, start/3,
 		stop/0, stop/1, start_peer/2, start_peer/3, start_peer/4, peer_name/1, peer_port/1,
-		stop_peers/1, stop_peer/1, connect_peers/2, connect_to_peer/1,
+		stop_peers/1, stop_peer/1, restart_peer_beam/1, connect_peers/2, connect_to_peer/1,
 		disconnect_peers/2, disconnect_from/1,
-		join/2, join/3, join_on/1, join_on/2, rejoin_on/1,
+		join/3, join_on/1, join_on/2, rejoin_on/1,
 		generate_join_config/0, generate_join_config/1,
 		peer_ip/1, get_node_namespace/0, get_unused_port/0,
 		with_gossip_paused/2,
@@ -32,18 +32,14 @@
 		get_optimistic_tx_price/2, get_optimistic_tx_price/3,
 		sign_tx/1, sign_tx/2, sign_tx/3, sign_v1_tx/1, sign_v1_tx/2, sign_v1_tx/3,
 
-		wait_until_block_index/1, wait_until_block_index/2,
-		wait_until_receives_txs/1,
-		assert_wait_until_receives_txs/1, assert_wait_until_receives_txs/2,
 		post_tx_to_peer/2, post_tx_to_peer/3, assert_post_tx_to_peer/2, assert_post_tx_to_peer/3,
 		post_and_mine/2, post_block/2, post_block/3, send_new_block/2,
-		await_post_block/2, await_post_block/3, sign_block/3, read_block_when_stored/1,
-		read_block_when_stored/2, get_chunk/2, get_chunk/3, get_chunk_proof/2, post_chunk/2,
+		await_post_block/2, await_post_block/3, sign_block/3,
+		get_chunk/2, get_chunk/3, get_chunk_proof/2, post_chunk/2,
 		get_unconfirmed_chunk/3,
 		random_v1_data/1, assert_get_tx_data/3,
-		assert_data_not_found/2, post_tx_json/2,
+		post_tx_json/2,
 		wait_until_syncs_genesis_data/0, wait_until_syncs_genesis_data/1,
-		wait_until_syncs_offset/2, wait_until_syncs_offset/3,
 
 		mock_all_nodes/1,
 		test_with_all_nodes_mocked/2,
@@ -56,11 +52,9 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-%% May occasionally take quite long on a slow CI server, expecially in tests
-%% with height >= 20 (2 difficulty retargets).
--define(WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT, 500_000).
--define(WAIT_UNTIL_RECEIVES_TXS_TIMEOUT, 500_000).
-
+%% 5 minutes. Test-mode mining completes in seconds when healthy, so this
+%% ceiling is generous headroom while keeping a stalled run's failure
+%% surfacing quickly.
 %% Sometimes takes a while on a slow machine
 -define(PEER_START_TIMEOUT, 500_000).
 %% Set the maximum number of retry attempts
@@ -68,25 +62,16 @@
 
 -define(MAX_MINERS, 3).
 
-% define check timeout and interval, used with ar_util:do_until/3.
--define(NODE_READY_CHECK_INTERVAL, 200).
--define(NODE_READY_CHECK_TIMEOUT, 500_000).
 -define(REMOTE_CALL_TIMEOUT, 500_000).
 -define(CONNECT_TO_PEER_TIMEOUT, 500_000).
--define(BLOCK_INDEX_TIMEOUT, 500_000).
 -define(TEST_MOCKED_FUNCTIONS_TIMEOUT, 500). %% in seconds
 -define(POST_AND_MINE_TIMEOUT, 500_000).
 -define(READ_BLOCK_TIMEOUT, 500_000).
 -define(GET_TX_DATA_TIMEOUT, 200_000).
--define(WAIT_UNTIL_JOINED_TIMEOUT, 200_000).
-%% Wrapper for restart remote calls:
-%% must comfortably exceed `WAIT_UNTIL_JOINED_TIMEOUT' plus the cold
-%% start of `ar_packing_server' (re-inits RandomX datasets on every
-%% application restart in the e2e profile — ~36s for rx512/rx4096/
-%% rxsquared combined) plus the start of all sup-tree children.
+%% Restart remote calls must clear `?TIMEOUT_NODE_JOINED' (ar_test_await)
+%% plus `ar_packing_server' cold start (re-inits RandomX datasets each
+%% restart in the e2e profile, ~36s) plus all sup-tree children.
 -define(RESTART_TIMEOUT, 300_000).
--define(WAIT_SYNCS_DATA_TIMEOUT, 500_000).
--define(WAIT_UNTIL_MINING_PAUSED_TIMEOUT, 60_000).
 -define(TEST_HTTP_CLIENT_KEEPALIVE, 4_000).
 
 %%%===================================================================
@@ -98,8 +83,12 @@ all_peers(test) ->
 all_peers(e2e) ->
 	[{e2e, peer1}, {e2e, peer2}].
 
-all_nodes(TestType) ->
-	[{TestType, main} | all_peers(TestType)].
+%% @doc Generate a fresh default wallet address on a test node.
+%% `main' generates locally; peer atoms generate on the peer via `remote_call/4'.
+generate_address(main) ->
+	ar_wallet:to_address(ar_wallet:new_keyfile());
+generate_address(Node) ->
+	ar_wallet:to_address(remote_call(Node, ar_wallet, new_keyfile, [])).
 
 new_custom_size_rsa_wallet(Size) ->
 	KeyType = ?RSA_KEY_TYPE,
@@ -156,17 +145,32 @@ try_boot_peer(TestType, Node, Retries) ->
 	Port = get_unused_port(),
 	Cookie = erlang:get_cookie(),
 	Paths = code:get_path(),
-	filelib:ensure_dir("./.tmp"),
+	%% `erl -pa A B C' prepends each path (effective order `C B A'), so
+	%% reverse the main path to give peers the same module load order.
+	PeerPaths = lists:reverse(Paths),
+	ProjectRoot = project_root(),
+	filelib:ensure_dir(filename:join(ProjectRoot, ".tmp/")),
 	Schedulers = erlang:system_info(schedulers_online),
+	%% Anchor every relative path to ProjectRoot via a leading `cd' so
+	%% `-config config/sys.config' resolves under CT, which runs the BEAM
+	%% from its per-run log dir. AR_DATA_DIR is made absolute for the same
+	%% reason: a relative value would resolve against the wrong root when
+	%% a main-BEAM caller joins it to a file path (e.g. `file:rename').
 	RawCommand = string:join([
-		"AR_DATA_DIR=.tmp/data_~s_~s",
+		"cd ~s &&",
+		"AR_DATA_DIR=~s/.tmp/data_~s_~s",
 		"AR_PORT=~p",
 		"AR_JOIN_AUTO=false",
 		"AR_DISABLE_DEVICE_LIMIT=true",
 		"AR_DEBUG=true",
-		"AR_RANDOMX_JIT=false",
 		"AR_NETWORK_CLIENT_HTTP_KEEPALIVE=4000",
-		"erl +S ~B:~B",
+		%% Cap dirty CPU schedulers (RandomX packing/hashing) to `+S';
+		%% left at nproc (~64), co-tenant test nodes oversubscribe the box
+		%% and starve the CI runner agent's heartbeat.
+		"erl +S ~B:~B +SDcpu ~B",
+		%% Shared test VM policy, notably `+sbwt none' so idle schedulers
+		%% sleep rather than starve the CI runner's heartbeat.
+		"-args_file config/vm.args.test",
 		"-pa", "~s",
 		"-config", "config/sys.config",
 		"-noshell",
@@ -176,12 +180,15 @@ try_boot_peer(TestType, Node, Retries) ->
 		"> ~s-~s.out 2>&1"
 	], " "),
 	CommandParams = [
+		ProjectRoot,
+		ProjectRoot,
 		atom_to_list(TestType),
 		NodeName,
 		Port,
 		Schedulers,
 		Schedulers,
-		string:join(Paths, " "),
+		Schedulers,
+		string:join(PeerPaths, " "),
 		NodeName,
 		Cookie,
 		Node,
@@ -189,8 +196,8 @@ try_boot_peer(TestType, Node, Retries) ->
 	],
 	Cmd = io_lib:format(RawCommand, CommandParams),
 	run_command(Node, Cmd),
-	case wait_until_node_is_ready(NodeName) of
-		{ok, _Node} ->
+	case ar_test_await:http_ready(Node) of
+		ok ->
 			io:format("~s started at port ~p.~n", [NodeName, Port]),
 			{node(), NodeName};
 		{error, Reason} ->
@@ -220,13 +227,10 @@ run_command_init(Node, Command) ->
 wait_for_peers([]) ->
 	ok;
 wait_for_peers([{_TestType, Node} | Peers]) ->
-	wait_for_peer(Node),
+	ok = ar_test_await:http_ready(Node),
 	wait_for_peers(Peers);
 wait_for_peers(TestType) ->
 	wait_for_peers(all_peers(TestType)).
-
-wait_for_peer(Node) ->
-	remote_call(Node, application, ensure_all_started, [arweave, permanent], 60000).
 
 self_node() ->
 	list_to_atom(get_node()).
@@ -265,21 +269,36 @@ stop_peer(Node) ->
 			ok
 	end.
 
+%% @doc Kill the peer's BEAM, wipe its on-disk data dir, and boot a fresh
+%% one in its place, giving a test fixture a clean VM and filesystem free
+%% of state or stray storage-module dirs from prior tests. The cached
+%% `peer_port' is dropped so callers re-fetch the new BEAM's port.
+restart_peer_beam(Node) ->
+	NodeName = peer_name(Node),
+	stop_peer(Node),
+	ok = ar_test_await:node_down(NodeName),
+	timer:sleep(500),
+	wipe_peer_data_dir(Node),
+	{_, NodeName} = boot_peer(e2e, Node),
+	erlang:erase({peer_port, Node}),
+	ok = ar_test_await:http_ready(Node).
+
+%% @doc Recursively delete `Node''s data directory. Safe to call when
+%% the peer BEAM is stopped; if the directory does not exist this is a
+%% no-op.
+wipe_peer_data_dir(Node) ->
+	NodeName = atom_to_list(peer_name(Node)),
+	DataDir = filename:join(project_root(),
+		".tmp/data_e2e_" ++ NodeName),
+	case file:del_dir_r(DataDir) of
+		ok -> ok;
+		{error, enoent} -> ok
+	end.
+
 peer_ip({external, Peer}) ->
 	Peer;
 peer_ip(Node) ->
 	{127, 0, 0, 1, peer_port(Node)}.
-
-wait_until_joined(Node) ->
-	remote_call(Node, ar_test_node, wait_until_joined, []).
-
-%% @doc Wait until the node joins the network (initializes the state).
-wait_until_joined() ->
-	ar_util:do_until(
-		fun() -> ar_node:is_joined() end,
-		100,
-		?WAIT_UNTIL_JOINED_TIMEOUT
-	 ).
 
 %% @doc Apply a map of per-leaf option_keys to the local node's
 %% options registry. Test-mode invariants (`[disable_device_limit] =>
@@ -321,7 +340,7 @@ start_node(B0, Overrides, WaitUntilSync) when is_map(Overrides) ->
 	update_config(Overrides),
 	ok = arweave_limiter:start(),
 	start_dependencies(),
-	wait_until_joined(),
+	ar_test_await:node_joined(main),
 	case WaitUntilSync of
 		true ->
 			wait_until_syncs_genesis_data();
@@ -344,10 +363,10 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 
 	BaseCMConfig = base_cm_config([ValidatorPeer]),
 	RewardAddr = maps:get([mining, address], BaseCMConfig),
-	ExitNodeOverrides = merge_overrides(BaseCMConfig, maps:merge(
-		#{[mining, enabled] => true},
-		#{[peers, local] => [ar_util:format_peer(peer_ip(P)) || P <- MinerNodes]}
-	)),
+	ExitNodeOverrides = BaseCMConfig#{
+		[mining, enabled] => true,
+		[peers, local] => [ar_util:format_peer(peer_ip(P)) || P <- MinerNodes]
+	},
 	%% Validator boots WITHOUT any trusted peers — `validate_trusted_peers/0'
 	%% would otherwise try to GET each peer's network info during init,
 	%% and the not-yet-running exit peer (and the validator's own
@@ -357,11 +376,11 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 	ValidatorBase = maps:without(
 		[[peers, trusted]],
 		BaseCMConfig),
-	ValidatorNodeOverrides = merge_overrides(ValidatorBase, #{
+	ValidatorNodeOverrides = ValidatorBase#{
 		[mining, enabled] => false,
-		[cm, enabled]     => false,
-		[cm, api_secret]  => not_set
-	}),
+		[cm, enabled] => false,
+		[cm, api_secret] => not_set
+	},
 
 	%% Start the validator first so that its HTTP server is available when
 	%% other nodes validate it as a trusted peer during startup.
@@ -373,31 +392,27 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
 			MinerNode = lists:nth(I, MinerNodes),
 			MinerPeers = lists:filter(fun(Peer) -> Peer /= MinerNode end, MinerNodes),
 			MinerPeerIPs = [peer_ip(Peer) || Peer <- MinerPeers],
-			MinerOverrides = merge_overrides(BaseCMConfig, lists:foldl(
-				fun maps:merge/2,
-				#{
-					[peers, cm_exit] => ar_util:format_peer(ExitPeer)
-				},
-				[
-					#{[peers, cm_peer] =>
-						[ar_util:format_peer(Peer) || Peer <- MinerPeerIPs]},
-					#{[peers, local] =>
-						[ar_util:format_peer(Peer) || Peer <- MinerPeerIPs ++ [ExitPeer]]}
-				])),
+			MinerOverrides = BaseCMConfig#{
+				[peers, cm_exit] => ar_util:format_peer(ExitPeer),
+				[peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- MinerPeerIPs],
+				[peers, local] => [ar_util:format_peer(Peer) || Peer <- MinerPeerIPs ++ [ExitPeer]]
+			},
 			MinerStorageModules =
 				get_cm_storage_modules(RewardAddr, I, MiningNodeCount),
 			remote_call(MinerNode, ar_test_node, start_node,
-				[B0, MinerOverrides, true, MinerStorageModules])
+				[B0, MinerOverrides#{[storage_modules] => [
+					arweave_config:storage_module_to_config(Module)
+					|| Module <- MinerStorageModules
+				]}, true])
 		end,
 		lists:seq(1, MiningNodeCount)
 	),
 
 	MinerNodes ++ [peer1, main].
 
-%% @doc Return a base map of overrides used to start a coordinated-mining
-%% node. Callers layer additional entries on top via `merge_overrides/2'.
+%% @doc Return a base map of overrides used to start a coordinated-mining node.
 base_cm_config(Peers) ->
-	RewardAddr = ar_wallet:to_address(remote_call(peer1, ar_wallet, new_keyfile, [])),
+	RewardAddr = generate_address(peer1),
 	maps:merge(#{[peers, trusted] => [ar_util:format_peer(Peer) || Peer <- Peers]}, #{
 		[mining, cache_size]                    => 128,
 		[join, start_from_latest_state]         => true,
@@ -417,11 +432,6 @@ base_cm_config(Peers) ->
 		[cm, poll_interval]                     => 2000,
 		[disable_device_limit]                  => true
 	}).
-
-%% @doc Merge `Extra' overrides on top of `Base'. Extra entries shadow Base
-%% entries with the same key — matches map merge semantics.
-merge_overrides(Base, Extra) when is_map(Base), is_map(Extra) ->
-	maps:merge(Base, Extra).
 
 mine() ->
 	ar_node_worker:mine_one_block().
@@ -546,29 +556,44 @@ write_genesis_files(DataDir, B0) ->
 	),
 	_ = ar_kv:create_ets(),
 	{ok, _} = ar_kv:start_link(),
-	ok = ar_kv:open(#{
-		path => filename:join([DataDir, ?ROCKS_DB_DIR, "reward_history_db"]),
-		name => reward_history_db}),
-	ok = ar_kv:open(#{
-		path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_time_history_db"]),
-		name => block_time_history_db}),
-	ok = ar_kv:open(#{
-		path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_index_db"]),
-		name => block_index_db}),
-	H = B0#block.indep_hash,
-	WeaveSize = B0#block.weave_size,
-	TXRoot = B0#block.tx_root,
-	ok = ar_kv:put(block_index_db, << 0:256 >>, term_to_binary({H, WeaveSize, TXRoot, <<>>})),
-	ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
-	case ar_fork:height_2_7() of
-		0 ->
-			ok = ar_kv:put(block_time_history_db, H,
-					term_to_binary(hd(B0#block.block_time_history)));
-		_ ->
-			ok
+	try
+		ok = ar_kv:open(#{
+			path => filename:join([DataDir, ?ROCKS_DB_DIR, "reward_history_db"]),
+			name => reward_history_db}),
+		ok = ar_kv:open(#{
+			path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_time_history_db"]),
+			name => block_time_history_db}),
+		ok = ar_kv:open(#{
+			path => filename:join([DataDir, ?ROCKS_DB_DIR, "block_index_db"]),
+			name => block_index_db}),
+		H = B0#block.indep_hash,
+		WeaveSize = B0#block.weave_size,
+		TXRoot = B0#block.tx_root,
+		ok = ar_kv:put(block_index_db, << 0:256 >>,
+				term_to_binary({H, WeaveSize, TXRoot, <<>>})),
+		ok = ar_kv:put(reward_history_db, H, term_to_binary(hd(B0#block.reward_history))),
+		case ar_fork:height_2_7() of
+			0 ->
+				ok = ar_kv:put(block_time_history_db, H,
+						term_to_binary(hd(B0#block.block_time_history)));
+			_ ->
+				ok
+		end
+	after
+		case whereis(ar_kv) of
+			undefined ->
+				ok;
+			_ ->
+				_ = catch gen_server:stop(ar_kv),
+				ok
+		end,
+		case ets:info(ar_kv) of
+			undefined ->
+				ok;
+			_ ->
+				_ = ets:delete(ar_kv)
+		end
 	end,
-	ok = gen_server:stop(ar_kv),
-	_ = ets:delete(ar_kv),
 	WalletListDir = filename:join(DataDir, ?WALLET_LIST_DIR),
 	ok = filelib:ensure_dir(WalletListDir ++ "/"),
 	RootHash = B0#block.wallet_list,
@@ -581,48 +606,20 @@ write_genesis_files(DataDir, B0) ->
 		),
 	ok = file:write_file(WalletListFilepath, WalletListJSON).
 
+%% @doc Wait until every chunk in `[Left, Right)' is recorded under
+%% `Packing' (or any packing when `Packing = any').
 wait_until_syncs_data(Left, Right, WeaveSize, _Packing)
-  		when Left >= Right orelse
+		when Left >= Right orelse
 			Left >= WeaveSize orelse
 			(Right - Left < ?DATA_CHUNK_SIZE) orelse
 			(WeaveSize - Left < ?DATA_CHUNK_SIZE) ->
 	ok;
+wait_until_syncs_data(Left, Right, WeaveSize, any) ->
+	ok = ar_test_await:chunk_recorded(main, Left + 1, #{}),
+	wait_until_syncs_data(Left + ?DATA_CHUNK_SIZE, Right, WeaveSize, any);
 wait_until_syncs_data(Left, Right, WeaveSize, Packing) ->
-	true = ar_util:do_until(
-		fun() ->
-			case Packing of
-				any ->
-					case ar_sync_record:is_recorded(Left + 1, ar_data_sync) of
-						false ->
-							false;
-						_ ->
-							true
-					end;
-				_ ->
-					case ar_sync_record:is_recorded(Left + 1, {ar_data_sync, Packing}) of
-						{{true, _}, _} ->
-							true;
-						_ ->
-							false
-					end
-			end
-		end,
-		1000,
-		?WAIT_SYNCS_DATA_TIMEOUT
-	),
+	ok = ar_test_await:chunk_recorded(main, Left + 1, #{packing => Packing}),
 	wait_until_syncs_data(Left + ?DATA_CHUNK_SIZE, Right, WeaveSize, Packing).
-
-wait_until_syncs_offset(Offset, StoreID) ->
-	wait_until_syncs_offset(Offset, StoreID, ?WAIT_SYNCS_DATA_TIMEOUT).
-
-wait_until_syncs_offset(Offset, StoreID, Timeout) ->
-	true = ar_util:do_until(
-		fun() ->
-			ar_sync_record:is_recorded(Offset, ar_data_sync, StoreID) =/= false
-		end,
-		200,
-		Timeout
-	).
 
 get_cm_storage_modules(RewardAddr, 1, 1) ->
 	%% When there's only 1 node it covers all 3 storage modules.
@@ -634,7 +631,7 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
 	%% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
 	%% Note that replica_2_9 modules do not have ?OVERLAP.
 	RangeNumber = lists:nth(N, [0, 2, 4]),
-	[{ar_block:partition_size(), RangeNumber, get_default_storage_module_packing(RewardAddr, 0)}].
+	[{ar_block:partition_size(), RangeNumber, storage_module_packing(RewardAddr, 0)}].
 
 remote_call(Node, Module, Function, Args) ->
 	remote_call(Node, Module, Function, Args, ?REMOTE_CALL_TIMEOUT).
@@ -691,7 +688,7 @@ start(Options) when is_map(Options) ->
 	RewardAddr =
 		case maps:get(addr, Options, not_set) of
 			not_set ->
-				ar_wallet:to_address(ar_wallet:new_keyfile());
+				generate_address(main);
 			Addr ->
 				Addr
 		end,
@@ -712,12 +709,7 @@ start(Options) when is_map(Options) ->
 			true ->
 				#{};
 			false ->
-				#{[storage_modules] => [
-					arweave_config:storage_module_to_config({
-						10 * ar_block:partition_size(), N,
-						get_default_storage_module_packing(RewardAddr, N, Options)})
-					|| N <- lists:seq(0, 8)
-				]}
+				storage_module_config(RewardAddr, [0], Options)
 		end,
 	start(B0, RewardAddr, maps:merge(StorageOverrides, AllOverrides));
 start(B0) ->
@@ -734,12 +726,7 @@ start(B0, RewardAddr, Overrides) when is_map(Overrides) ->
 			true ->
 				#{};
 			false ->
-				#{[storage_modules] => [
-					arweave_config:storage_module_to_config({
-						10 * ar_block:partition_size(), N,
-						get_default_storage_module_packing(RewardAddr, N)})
-					|| N <- lists:seq(0, 8)
-				]}
+				storage_module_config(RewardAddr, [0])
 		end,
 	start_with_overrides(B0, RewardAddr, maps:merge(StorageOverrides, Overrides)).
 
@@ -762,21 +749,20 @@ start_with_overrides(B0, RewardAddr, Overrides) when is_map(Overrides) ->
 		[disk_pool, jobs]                       => 2,
 		[gossip, header_sync_jobs]              => 2,
 		[features, serve_tx_data_without_limits] => true,
-		[features, double_check_nonce_limiter]  => true,
 		[features, serve_wallet_lists]          => true,
 		[debug]                                 => true
 	},
 	update_config(maps:merge(TestDefaults, Overrides)),
 	ok = arweave_limiter:start(),
 	start_dependencies(),
-	wait_until_joined(),
+	ar_test_await:node_joined(main),
 	wait_until_syncs_genesis_data().
 
 restart() ->
 	?LOG_INFO("Restarting node"),
 	stop(),
 	start_dependencies(),
-	wait_until_joined().
+	ar_test_await:node_joined(main).
 
 restart(Node) ->
 	remote_call(Node, ?MODULE, restart, [], ?RESTART_TIMEOUT).
@@ -784,7 +770,7 @@ restart(Node) ->
 start_peer(Node, Args) when is_map(Args) ->
 	?LOG_DEBUG([{event, start_peer}, {peer, Node}]),
 	remote_call(Node, ?MODULE, start, [Args], ?PEER_START_TIMEOUT),
-	wait_until_joined(Node),
+	ar_test_await:node_joined(Node),
 	wait_until_syncs_genesis_data(Node);
 
 %% @doc Start a fresh peer node with the given genesis block.
@@ -817,21 +803,29 @@ get_tx_price(Node, DataSize, Target) ->
 			path => Path
 		}),
 	Fee = binary_to_integer(Reply),
-	Path2 = "/price2/" ++ integer_to_list(DataSize) ++ "/"
-			++ binary_to_list(ar_util:encode(Target)),
-	{ok, {{<<"200">>, _}, _, Reply2, _, _}} =
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => Path2
-		}),
-	Map = jiffy:decode(Reply2, [return_maps]),
-	case binary_to_integer(maps:get(<<"fee">>, Map)) of
+	{Fee2, Denomination} = get_tx_price2(Node, DataSize, Target),
+	case Fee2 of
 		Fee ->
-			{Fee, maps:get(<<"denomination">>, Map)};
-		Fee2 ->
+			{Fee, Denomination};
+		_ ->
 			?assert(false, io_lib:format("Fee mismatch, expected: ~B, got: ~B.", [Fee, Fee2]))
 	end.
+
+get_tx_price2(Node, DataSize, Target) ->
+	Path = "/price2/" ++ integer_to_list(DataSize) ++ "/"
+			++ binary_to_list(ar_util:encode(Target)),
+	{ok, {{<<"200">>, _}, _, Reply, _, _}} =
+		ar_http:req(#{
+			method => get,
+			peer => peer_ip(Node),
+			path => Path
+		}),
+	Map = jiffy:decode(Reply, [return_maps]),
+	{binary_to_integer(maps:get(<<"fee">>, Map)), maps:get(<<"denomination">>, Map)}.
+
+get_tx_denomination(Node, DataSize, Target) ->
+	{_, Denomination} = get_tx_price2(Node, DataSize, Target),
+	Denomination.
 
 %% @doc Fetch the optimistic fee estimation (call GET /price/[size]) from the given node.
 get_optimistic_tx_price(Node, DataSize) ->
@@ -856,12 +850,13 @@ sign_tx(Wallet) ->
 	sign_tx(peer1, Wallet, #{ format => 2 }, fun ar_tx:sign/2).
 
 %% @doc Return a signed format=2 transaction with properties from the given Args map.
-%% If the fee is not in Args, fetch it from GET /price/{data_size}
+%% If the reward is not in Args, fetch it from GET /price/{data_size}
 %% or GET /price/{data_size}/{target} (if the target is specified) on the peer1 node.
+%% Use sign_tx/3 when Args includes a last_tx fetched from another node.
 sign_tx(Wallet, Args) ->
 	sign_tx(peer1, Wallet, insert_root(Args#{ format => 2 }), fun ar_tx:sign/2).
 
-%% @doc Like sign_tx/2, but use the given Node to fetch the fee estimation and
+%% @doc Like sign_tx/2, but use the given Node to fetch the fee estimation and default
 %% block anchor from.
 sign_tx(Node, Wallet, Args) ->
 	sign_tx(Node, Wallet, insert_root(Args#{ format => 2 }), fun ar_tx:sign/2).
@@ -871,6 +866,7 @@ sign_v1_tx(Wallet) ->
 	sign_tx(peer1, Wallet, #{}, fun ar_tx:sign_v1/2).
 
 %% @doc Like sign_tx/2 but return a format=1 transaction.
+%% Use sign_v1_tx/3 when TXParams includes a last_tx fetched from another node.
 sign_v1_tx(Wallet, TXParams) ->
 	sign_tx(peer1, Wallet, TXParams, fun ar_tx:sign_v1/2).
 
@@ -898,40 +894,54 @@ sign_tx(Node, Wallet, Args, SignFun) ->
 	Data = maps:get(data, Args, <<>>),
 	DataSize = maps:get(data_size, Args, byte_size(Data)),
 	Format = maps:get(format, Args, 1),
-	{Fee, Denomination} = get_tx_price(Node, DataSize, maps:get(target, Args, <<>>)),
-	Fee2 =
-		case {Format, maps:get(reward, Args, none)} of
-			{1, none} ->
-				%% Make sure the v1 tx is not malleable by assigning a fee with only
-				%% the first digit being non-zero.
-				FirstDigit = binary_to_integer(binary:part(integer_to_binary(Fee), {0, 1})),
-				Len = length(integer_to_list(Fee)),
-				Fee3 = trunc((FirstDigit + 1) * math:pow(10, Len - 1)),
-				Fee3;
-			{_, none} ->
-				Fee;
-			{_, AssignedFee} ->
-				AssignedFee
-		end,
+	Target = maps:get(target, Args, <<>>),
+	{Fee, Denomination} = tx_fee_and_denomination(Node, DataSize, Target, Format, Args),
 	SignFun(
 		(ar_tx:new())#tx{
 			owner = Pub,
-			reward = Fee2,
+			reward = Fee,
 			data = Data,
-			target = maps:get(target, Args, <<>>),
+			target = Target,
 			quantity = maps:get(quantity, Args, 0),
 			tags = maps:get(tags, Args, []),
 			last_tx = maps:get(last_tx, Args, get_tx_anchor(Node)),
 			data_size = DataSize,
 			data_root = maps:get(data_root, Args, <<>>),
 			format = Format,
-			denomination = maps:get(denomination, Args, Denomination)
+			denomination = Denomination
 		},
 		Wallet
 	).
 
+tx_fee_and_denomination(Node, DataSize, Target, Format, Args) ->
+	case maps:get(reward, Args, none) of
+		none ->
+			{Fee, Denomination} = get_tx_price(Node, DataSize, Target),
+			{tx_fee(Format, Fee), maps:get(denomination, Args, Denomination)};
+		AssignedFee ->
+			Denomination =
+				case maps:find(denomination, Args) of
+					{ok, AssignedDenomination} ->
+						AssignedDenomination;
+					error ->
+						get_tx_denomination(Node, DataSize, Target)
+				end,
+			{AssignedFee, Denomination}
+	end.
+
+tx_fee(1, Fee) ->
+	%% Make sure the v1 tx is not malleable by assigning a fee with only
+	%% the first digit being non-zero.
+	FirstDigit = binary_to_integer(binary:part(integer_to_binary(Fee), {0, 1})),
+	Len = length(integer_to_list(Fee)),
+	trunc((FirstDigit + 1) * math:pow(10, Len - 1));
+tx_fee(_, Fee) ->
+	Fee.
+
 stop() ->
-	case stop_application(arweave, 60000) of
+	%% Match the ar_kv supervisor shutdown window so RocksDB can close before
+	%% the next test wipes or reuses the data directory.
+	case stop_application(arweave, 300_000) of
 		ok ->
 			ok;
 		{error, {not_started, arweave}} ->
@@ -946,8 +956,11 @@ stop() ->
 stop_application(App, Timeout) ->
 	Parent = self(),
 	Ref = make_ref(),
+	Start = erlang:monotonic_time(millisecond),
 	Pid = spawn(fun() -> Parent ! {Ref, application:stop(App)} end),
 	receive
+		{Ref, ok} ->
+			ar_test_await:application_stopped(App, remaining_timeout(Start, Timeout));
 		{Ref, Result} ->
 			Result
 	after Timeout ->
@@ -955,11 +968,16 @@ stop_application(App, Timeout) ->
 		{error, timeout}
 	end.
 
+remaining_timeout(Start, Timeout) ->
+	max(0, Timeout - (erlang:monotonic_time(millisecond) - Start)).
+
 force_stop_application(App) ->
 	case application_controller:get_master(App) of
 		Master when is_pid(Master) ->
 			exit(Master, kill),
-			timer:sleep(1000);
+			_ = ar_test_await:application_stopped(App, 10_000),
+			_ = ar_test_await:ar_kv_stopped(10_000),
+			ok;
 		_ ->
 			ok
 	end.
@@ -979,36 +997,47 @@ generate_join_config(Node) ->
 %% applied by `join/3' via `write_list/1' (the writer handles
 %% clear-before-write so they're authoritative).
 generate_join_config() ->
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	RewardAddr = generate_address(main),
 	#{[mining, address] => RewardAddr}.
 
 %% @doc The default storage modules implied by a join config —
-%% partitions 0..4 packed for the config's mining address. Returns
-%% `[]' when the config has no `[mining, address]' (the caller is
+%% the first default test module packed for the config's mining address.
+%% Returns `[]' when the config has no `[mining, address]' (the caller is
 %% expected to pass an explicit `storage_modules' arg in that case).
-generate_join_storage_modules(JoinConfig) ->
+generate_join_storage_modules(JoinConfig, Options) ->
 	case maps:get([mining, address], JoinConfig, not_set) of
 		not_set ->
 			[];
 		RewardAddr ->
-			[{ar_block:partition_size(), N,
-					get_default_storage_module_packing(RewardAddr, N)}
-				|| N <- lists:seq(0, 4)]
+			wide_storage_modules(RewardAddr, [0], Options)
 	end.
 
 join_on(Params) ->
 	join_on(Params, false).
 
 join_on(#{ node := Node, join_on := JoinOnNode } = Params, Rejoin) ->
-	BaseOverrides = maps:get(config, Params, generate_join_config(Node)),
+	{BaseOverrides, HasConfig} =
+		case maps:get(config, Params, not_set) of
+			not_set ->
+				{#{}, false};
+			Value ->
+				{Value, true}
+		end,
+	AddressOverrides =
+		case {maps:get(addr, Params, not_set), HasConfig} of
+			{not_set, true} ->
+				#{};
+			{not_set, false} ->
+				generate_join_config(Node);
+			{Addr, _} ->
+				#{[mining, address] => Addr}
+		end,
 	InlineOverrides = maps:filter(fun(Key, _Value) -> is_list(Key) end, Params),
-	Overrides = maps:merge(InlineOverrides, BaseOverrides),
+	Overrides = maps:merge(InlineOverrides, maps:merge(AddressOverrides, BaseOverrides)),
 	%% Storage modules in priority order:
 	%%   1. caller-supplied `[storage_modules]' override wins;
 	%%   2. `Overrides' carries a `[mining, address]' → regenerate to
-	%%      match the new address (`rejoin_on/1' takes this path —
-	%%      `generate_join_config/0' minted a fresh address and the old
-	%%      modules would be orphaned);
+	%%      match the new address (`addr' and fresh joins take this path);
 	%%   3. otherwise leave the prior modules untouched (`not_set').
 	%%      The caller is supplying a narrow override (e.g. flipping
 	%%      `[mining, enabled]'); replacing modules here would strand
@@ -1022,7 +1051,7 @@ join_on(#{ node := Node, join_on := JoinOnNode } = Params, Rejoin) ->
 					true ->
 						#{[storage_modules] => [
 							arweave_config:storage_module_to_config(Module)
-							|| Module <- generate_join_storage_modules(Overrides)
+							|| Module <- generate_join_storage_modules(Overrides, Params)
 						]};
 					false ->
 						#{}
@@ -1032,24 +1061,15 @@ join_on(#{ node := Node, join_on := JoinOnNode } = Params, Rejoin) ->
 		[JoinOnNode, Rejoin, maps:merge(StorageOverrides, Overrides)],
 		?REMOTE_CALL_TIMEOUT).
 
-join(JoinOnNode, Rejoin) ->
-	JoinConfig = generate_join_config(),
-	join(JoinOnNode, Rejoin, JoinConfig#{[storage_modules] => [
-		arweave_config:storage_module_to_config(Module)
-		|| Module <- generate_join_storage_modules(JoinConfig)
-	]}).
-
 join(JoinOnNode, Rejoin, Overrides) when is_map(Overrides) ->
 	Peer = peer_ip(JoinOnNode),
 	case Rejoin of
 		true ->
 			stop(),
-			%% Preserve current config values but return the lifecycle to
-			%% load mode. `update_config/1' handles its own guard via
-			%% `force_config/1', but boot validators downstream
-			%% (ar_node_worker:validate_trusted_peers/1 →
-			%% trusted-peer validation runs during ar_sup init
-			%% with the lifecycle expected to be load mode.
+			%% Keep current config values but return the lifecycle to load
+			%% mode, which the boot validators (e.g.
+			%% `ar_node_worker:validate_trusted_peers/1') expect during
+			%% ar_sup init.
 			Snapshot = arweave_config:snapshot(),
 			ok = arweave_config:restore(Snapshot#{runtime => false});
 		false ->
@@ -1068,48 +1088,53 @@ join(JoinOnNode, Rejoin, Overrides) when is_map(Overrides) ->
 	},
 	update_config(maps:merge(JoinDefaults, Overrides)),
 	start_dependencies(),
-	wait_until_joined(),
+	ar_test_await:node_joined(main),
 	whereis(ar_node_worker).
 
-get_default_storage_module_packing(RewardAddr, Index) ->
-	get_default_storage_module_packing(RewardAddr, Index, #{}).
+%% @doc Return the default packing tuple for a test storage module.
+%% Options currently supports `packing' to force `spora_2_6' or `replica_2_9'.
+storage_module_packing(RewardAddr, Index) ->
+	storage_module_packing(RewardAddr, Index, #{}).
 
-get_default_storage_module_packing(RewardAddr, Index, Options) ->
-	case {ar_fork:height_2_9(), ar_fork:height_2_8()} of
-		{infinity, infinity} ->
+storage_module_packing(RewardAddr, _Index, Options) ->
+	case maps:get(packing, Options, not_set) of
+		spora_2_6 ->
 			{spora_2_6, RewardAddr};
-		{infinity, 0} ->
-			{composite, RewardAddr, 1};
-		{0, 0} ->
-			case maps:get(packing, Options, not_set) of
-				spora_2_6 ->
-					{spora_2_6, RewardAddr};
-				{composite, PackingDiff} ->
-					{composite, RewardAddr, PackingDiff};
-				replica_2_9 ->
-					{replica_2_9, RewardAddr};
-				not_set ->
-					{replica_2_9, RewardAddr}
-			end;
-		_ ->
-			case maps:get(packing, Options, not_set) of
-				spora_2_6 ->
-					{spora_2_6, RewardAddr};
-				{composite, PackingDiff} ->
-					{composite, RewardAddr, PackingDiff};
-				replica_2_9 ->
-					{replica_2_9, RewardAddr};
-				not_set ->
-					case Index rem 3 of
-						0 ->
-							{spora_2_6, RewardAddr};
-						1 ->
-							{composite, RewardAddr, 1};
-						_ ->
-							{replica_2_9, RewardAddr}
-					end
+		replica_2_9 ->
+			{replica_2_9, RewardAddr};
+		not_set ->
+			case ar_fork:height_2_9() of
+				0 -> {replica_2_9, RewardAddr};
+				_ -> {spora_2_6, RewardAddr}
 			end
 	end.
+
+%% @doc Convert tuple specs into arweave_config-style storage-module maps.
+%% Returns the value list for `[storage_modules]`.
+storage_module_configs(StorageModules) ->
+	[arweave_config:storage_module_to_config(Module)
+		|| Module <- StorageModules].
+
+%% @doc Return `#{[storage_modules] => Configs}` for wide modules covering `Partitions`.
+storage_module_config(RewardAddr, Partitions) ->
+	storage_module_config(RewardAddr, Partitions, #{}).
+
+storage_module_config(RewardAddr, Partitions, Options) ->
+	#{
+		[storage_modules] => storage_module_configs(
+			wide_storage_modules(RewardAddr, Partitions, Options))
+	}.
+
+%% @doc Return internal wide tuple specs: `{BucketSize, Bucket, Packing}`.
+%% Each module spans `10 * ar_block:partition_size()`.
+%% Use `storage_module_config/2,3` when building override maps.
+wide_storage_modules(RewardAddr, Partitions) ->
+	wide_storage_modules(RewardAddr, Partitions, #{}).
+
+wide_storage_modules(RewardAddr, Partitions, Options) ->
+	[{10 * ar_block:partition_size(), Partition,
+			storage_module_packing(RewardAddr, Partition, Options)}
+		|| Partition <- Partitions].
 
 connect_peers(Node, Peer) ->
 	remote_call(Node, ar_test_node, connect_to_peer, [Peer]).
@@ -1128,14 +1153,7 @@ connect_to_peer(Node) ->
 			path => "/info",
 			headers => p2p_headers(Self)
 		}),
-	true = ar_util:do_until(
-		fun() ->
-			Peers = remote_call(Node, ar_peers, get_peers, [lifetime]),
-			lists:member(peer_ip(Self), Peers)
-		end,
-		100,
-		?CONNECT_TO_PEER_TIMEOUT
-	),
+	ok = ar_test_await:peer_listed(Node, peer_ip(Self)),
 	{ok, {{<<"200">>, <<"OK">>}, _, _, _, _}} =
 		ar_http:req(#{
 			method => get,
@@ -1143,13 +1161,7 @@ connect_to_peer(Node) ->
 			path => "/info",
 			headers => p2p_headers(Node)
 		}),
-	ar_util:do_until(
-		fun() ->
-			lists:member(Peer, ar_peers:get_peers(lifetime))
-		end,
-		100,
-	        ?CONNECT_TO_PEER_TIMEOUT
-	).
+	ok = ar_test_await:peer_listed(main, Peer).
 
 disconnect_peers(Node, Peer) ->
 	remote_call(Node, ar_test_node, disconnect_from, [Peer]).
@@ -1171,16 +1183,7 @@ wait_until_syncs_genesis_data(Node) ->
 
 wait_until_syncs_genesis_data() ->
 	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-	ar_util:do_until(
-		fun() ->
-			case ar_node:get_current_block() of
-				not_joined -> false;
-				_ -> true
-			end
-		end,
-		1000,
-		10_000
-	),
+	ok = ar_test_await:node_joined(main),
 	B = ar_node:get_current_block(),
 	WeaveSize = B#block.weave_size,
 	?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, initial_sync_started},
@@ -1199,151 +1202,6 @@ wait_until_syncs_genesis_data() ->
 			|| {Size, N, Packing} <- StorageModules],
 	?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, cross_module_sync_complete}]),
 	ok.
-
-wait_until_height(Node, TargetHeight) ->
-	wait_until_height(Node, TargetHeight, true, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
-
-wait_until_height(Node, TargetHeight, Strict) ->
-	wait_until_height(Node, TargetHeight, Strict, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
-
-wait_until_height(Node, TargetHeight, Strict, Timeout) ->
-	BI = case Node of
-		main ->
-			do_wait_until_height(TargetHeight, Timeout);
-		_ ->
-			remote_call(Node, ?MODULE, do_wait_until_height, [TargetHeight, Timeout],
-				Timeout + 500)
-	end,
-	case Strict of
-		true ->
-			Height = length(BI) - 1,
-			?assert(Height >= TargetHeight,
-				iolist_to_binary(io_lib:format(
-					"Node ~p not at the expected height. Expected: ~B, got: ~B",
-					[Node, TargetHeight, Height])));
-		false ->
-			ok
-	end,
-	BI.
-
-wait_until_height(TargetHeight) ->
-	do_wait_until_height(TargetHeight, ?WAIT_UNTIL_BLOCK_HEIGHT_TIMEOUT).
-
-do_wait_until_height(TargetHeight, Timeout) ->
-	{ok, BI} = ar_util:do_until(
-		fun() ->
-			case ar_node:get_blocks() of
-				BI when length(BI) - 1 >= TargetHeight ->
-					{ok, BI};
-				_ ->
-					false
-			end
-		end,
-		100,
-		Timeout
-	),
-	BI.
-
-assert_wait_until_height(Node, TargetHeight) ->
-	BI = wait_until_height(Node, TargetHeight),
-	?assert(is_list(BI), iolist_to_binary(io_lib:format("Got ~p.", [BI]))),
-	BI.
-
-wait_until_block_index(Node, BI) ->
-	remote_call(Node, ?MODULE, wait_until_block_index, [BI]).
-
-wait_until_block_index(BI) ->
-	ar_util:do_until(
-		fun() ->
-			case ar_node:get_blocks() of
-				BI ->
-					ok;
-				_ ->
-					false
-			end
-		end,
-		100,
-		?BLOCK_INDEX_TIMEOUT
-	).
-
-wait_until_mining_paused(Node) ->
-	ar_util:do_until(
-		fun() ->
-			case Node of
-				main ->
-					ar_mining_server:is_paused();
-				_ ->
-					remote_call(Node, ar_mining_server, is_paused, [])
-			end
-		end,
-		1000,
-		?WAIT_UNTIL_MINING_PAUSED_TIMEOUT
-	).
-
-%% Safely perform an rpc:call/4 and return results in a tagged tuple.
-safe_remote_call(Node, Module, Function, Args) ->
-    try rpc:call(Node, Module, Function, Args, 30000) of
-        Result -> {ok, Result}
-    catch
-        error:Reason:S ->
-            %% Log the error if necessary
-            io:format("Remote call error: ~p:~p~n", [Reason,S]),
-            {error, Reason};
-	E:R:S ->
-            %% Catching other exceptions, returning a general error.
-            io:format("Remote call error: ~p:~p:~p~n", [E,R,S]),
-            {error, unknown}
-    end.
-
-wait_until_node_is_ready(NodeName) ->
-    ar_util:do_until(
-        fun() ->
-            case net_adm:ping(NodeName) of
-                pong ->
-                    %% The node is reachable, doing a second check.
-		    % safe_remote_call(NodeName, erlang, is_alive, []);
-		    RemoteApps =
-			case safe_remote_call(NodeName, application, which_applications, []) of
-			    {ok, R} when is_list(R) -> R;
-			    _ -> []
-			end,
-		    case lists:keyfind(arweave, 1, RemoteApps) of
-			{arweave, _, _} -> {ok, ready};
-			_ -> false
-		    end;
-                pang ->
-                    %% Node is not reachable.
-                    false
-            end
-        end,
-        ?NODE_READY_CHECK_INTERVAL,
-        ?NODE_READY_CHECK_TIMEOUT
-    ).
-
-assert_wait_until_receives_txs(TXs) ->
-	?assertEqual(ok, wait_until_receives_txs(TXs)).
-
-assert_wait_until_receives_txs(Node, TXs) ->
-	?assertEqual(ok, wait_until_receives_txs(Node, TXs)).
-
-wait_until_receives_txs(Node, TXs) ->
-	remote_call(Node, ?MODULE, wait_until_receives_txs, [TXs],
-					?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT + 500).
-
-wait_until_receives_txs(TXs) ->
-	ar_util:do_until(
-		fun() ->
-			MinedTXIDs = ar_node:get_ready_for_mining_txs(),
-			case lists:all(fun(TX) -> lists:member(TX#tx.id, MinedTXIDs) end, TXs) of
-				true ->
-					ok;
-				_ ->
-					false
-			end
-		end,
-		100,
-		?WAIT_UNTIL_RECEIVES_TXS_TIMEOUT
-	).
 
 assert_post_tx_to_peer(Node, TX) ->
 	assert_post_tx_to_peer(Node, TX, true).
@@ -1366,7 +1224,7 @@ post_tx_to_peer(Node, TX, Wait, Retries) ->
 		{ok, {{<<"200">>, _}, _, <<"OK">>, _, _}} ->
 			case Wait of
 				true ->
-					assert_wait_until_receives_txs(Node, [TX]);
+					?assertEqual(ok, ar_test_await:txs_ready_for_mining(Node, [TX]));
 				false ->
 					ok
 			end;
@@ -1516,8 +1374,8 @@ post_and_mine(#{ miner := Node, await_on := AwaitOnNode }, TXs) ->
 	CurrentHeight = remote_call(Node, ar_node, get_height, []),
 	lists:foreach(fun(TX) -> assert_post_tx_to_peer(Node, TX) end, TXs),
 	mine(Node),
-	[{H, _, _} | _] = wait_until_height(AwaitOnNode, CurrentHeight + 1),
-	remote_call(AwaitOnNode, ar_test_node, read_block_when_stored, [H, true],
+	{ok, [{H, _, _} | _]} = ar_test_await:node_height(AwaitOnNode, CurrentHeight + 1),
+	remote_call(AwaitOnNode, ar_test_await, block_stored, [H, true],
 	  ?POST_AND_MINE_TIMEOUT).
 
 post_block(B, ExpectedResult) when not is_list(ExpectedResult) ->
@@ -1526,7 +1384,7 @@ post_block(B, ExpectedResults) ->
 	post_block(B, ExpectedResults, peer_ip(main)).
 
 post_block(B, ExpectedResults, Peer) ->
-	Result = send_new_block_with_retry(Peer, B, 2),
+	Result = send_new_block_with_retry(Peer, B, ExpectedResults, 2),
 	?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, Result),
 	await_post_block(B, ExpectedResults, Peer).
 
@@ -1534,14 +1392,26 @@ send_new_block(Peer, B) ->
 	ar_http_iface_client:send_block_binary(Peer, B#block.indep_hash,
 			ar_serialize:block_to_binary(B)).
 
-send_new_block_with_retry(Peer, B, RetriesLeft) ->
-	case send_new_block(Peer, B) of
-		{error, {stream_error, closed}} when RetriesLeft > 0 ->
+send_new_block_with_retry(Peer, B, ExpectedResults, RetriesLeft) ->
+	Result = send_new_block(Peer, B),
+	case should_retry_post_block_response(Result, ExpectedResults, RetriesLeft) of
+		true ->
 			timer:sleep(50),
-			send_new_block_with_retry(Peer, B, RetriesLeft - 1);
-		Result ->
+			send_new_block_with_retry(Peer, B, ExpectedResults, RetriesLeft - 1);
+		false ->
 			Result
 	end.
+
+should_retry_post_block_response(_Result, _ExpectedResults, 0) ->
+	false;
+should_retry_post_block_response({error, {stream_error, closed}}, _ExpectedResults, _RetriesLeft) ->
+	true;
+should_retry_post_block_response({error, client_error}, [valid], _RetriesLeft) ->
+	false;
+should_retry_post_block_response({error, client_error}, _ExpectedResults, _RetriesLeft) ->
+	true;
+should_retry_post_block_response(_Result, _ExpectedResults, _RetriesLeft) ->
+	false.
 
 await_post_block(B, ExpectedResults) ->
 	await_post_block(B, ExpectedResults, peer_ip(main)).
@@ -1603,41 +1473,6 @@ sign_block(#block{ cumulative_diff = CDiff } = B, PrevB, {Priv, Pub}) ->
 	H = ar_block:indep_hash2(SignedH, Signature),
 	B2#block{ indep_hash = H, signature = Signature }.
 
-read_block_when_stored(H) ->
-	read_block_when_stored(H, false).
-
-read_block_when_stored(H, IncludeTXs) ->
-	{ok, B} = ar_util:do_until(
-		fun() ->
-			case ar_storage:read_block(H) of
-				unavailable ->
-					unavailable;
-				B2 ->
-					ar_util:do_until(
-						fun() ->
-							TXs = ar_storage:read_tx(B2#block.txs),
-							case lists:any(fun(TX) -> TX == unavailable end, TXs) of
-								true ->
-									false;
-								false ->
-									case IncludeTXs of
-										true ->
-											{ok, B2#block{ txs = TXs }};
-										false ->
-											{ok, B2}
-									end
-							end
-						end,
-						100,
-						?READ_BLOCK_TIMEOUT
-					)
-			end
-		end,
-		200,
-		?READ_BLOCK_TIMEOUT
-	),
-	B.
-
 get_chunk(Node, Offset) ->
 	get_chunk(Node, Offset, undefined).
 
@@ -1687,30 +1522,7 @@ random_v1_data(Size) ->
 assert_get_tx_data(Node, TXID, ExpectedData) ->
 	?debugFmt("Polling for data of ~s.", [ar_util:encode(TXID)]),
 	Peer = peer_ip(Node),
-	true = ar_util:do_until(
-		fun() ->
-			case ar_http:req(#{ method => get, peer => Peer,
-					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" }) of
-				{ok, {{<<"200">>, _}, _, ExpectedData, _, _}} ->
-					true;
-				{ok, {{<<"404">>, _}, _, _, _, _}} ->
-					false;
-			{ok, {{<<"200">>, _}, _, OtherData, _, _}} ->
-				?assertEqual(byte_size(ExpectedData), byte_size(OtherData),
-						lists:flatten(io_lib:format(
-							"TX data size mismatch. TXID: ~s. Peer: ~s.",
-							[ar_util:encode(TXID), ar_util:format_peer(Peer)])));
-				UnexpectedResponse ->
-					?debugFmt("Got unexpected tx data response. TXID: ~s. Peer: ~s. "
-							" response: ~p.~n",
-							[ar_util:encode(TXID), ar_util:format_peer(Peer),
-									UnexpectedResponse]),
-					false
-			end
-		end,
-		200,
-		?GET_TX_DATA_TIMEOUT
-	),
+	ok = ar_test_await:http_tx_data_matches(Node, TXID, ExpectedData),
 	{ok, {{<<"200">>, _}, _, OffsetJSON, _, _}}
 			= ar_http:req(#{ method => get, peer => Peer,
 					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/offset" }),
@@ -1726,9 +1538,7 @@ get_tx_data_in_chunks(Offset, Size, Peer) ->
 get_tx_data_in_chunks(Offset, Start, _Peer, Bin) when Offset =< Start ->
 	ar_util:encode(iolist_to_binary(Bin));
 get_tx_data_in_chunks(Offset, Start, Peer, Bin) ->
-	{ok, {{<<"200">>, _}, _, JSON, _, _}}
-			= ar_http:req(#{ method => get, peer => Peer,
-					path => "/chunk/" ++ integer_to_list(Offset) }),
+	JSON = get_tx_data_chunk(Peer, Offset),
 	Map = jiffy:decode(JSON, [return_maps]),
 	Chunk = ar_util:decode(maps:get(<<"chunk">>, Map)),
 	get_tx_data_in_chunks(Offset - byte_size(Chunk), Start, Peer, [Chunk | Bin]).
@@ -1739,24 +1549,58 @@ get_tx_data_in_chunks_traverse_forward(Offset, Size, Peer) ->
 get_tx_data_in_chunks_traverse_forward(Offset, Start, _Peer, Bin) when Offset =< Start ->
 	ar_util:encode(iolist_to_binary(lists:reverse(Bin)));
 get_tx_data_in_chunks_traverse_forward(Offset, Start, Peer, Bin) ->
-	{ok, {{<<"200">>, _}, _, JSON, _, _}}
-			= ar_http:req(#{ method => get, peer => Peer,
-					path => "/chunk/" ++ integer_to_list(Start + 1) }),
+	JSON = get_tx_data_chunk(Peer, Start + 1),
 	Map = jiffy:decode(JSON, [return_maps]),
 	Chunk = ar_util:decode(maps:get(<<"chunk">>, Map)),
 	get_tx_data_in_chunks_traverse_forward(Offset, Start + byte_size(Chunk), Peer,
 			[Chunk | Bin]).
 
-assert_data_not_found(Node, TXID) ->
-	Peer = peer_ip(Node),
-	?assertMatch({ok, {{<<"404">>, _}, _, _Binary, _, _}},
-			ar_http:req(#{ method => get, peer => Peer,
-					path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" })).
+get_tx_data_chunk(Peer, Offset) ->
+	Path = "/chunk/" ++ integer_to_list(Offset),
+	Deadline = erlang:monotonic_time(millisecond) + ?GET_TX_DATA_TIMEOUT,
+	get_tx_data_chunk(Peer, Path, Offset, Deadline).
+
+get_tx_data_chunk(Peer, Path, Offset, Deadline) ->
+	case ar_http:req(#{ method => get, peer => Peer, path => Path }) of
+		{ok, {{<<"200">>, _}, _, JSON, _, _}} ->
+			JSON;
+		Response ->
+			case {is_retryable_tx_data_chunk_response(Response),
+					erlang:monotonic_time(millisecond) < Deadline} of
+				{true, true} ->
+					timer:sleep(200),
+					get_tx_data_chunk(Peer, Path, Offset, Deadline);
+				_ ->
+					?debugFmt("Failed to fetch TX data chunk. Offset: ~B. Peer: ~s. "
+							"Response: ~p.~n",
+							[Offset, ar_util:format_peer(Peer), Response]),
+					?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}}, Response)
+			end
+	end.
+
+is_retryable_tx_data_chunk_response({error, client_error}) ->
+	true;
+is_retryable_tx_data_chunk_response({ok, {{<<"404">>, _}, _, _, _, _}}) ->
+	true;
+is_retryable_tx_data_chunk_response(_) ->
+	false.
 
 get_node_namespace() ->
 	% Return the namespace part (everything after first - and before @)
 	{_, Namespace} = split_node_name(),
 	Namespace.
+
+%% @doc Absolute path to the project root, used to anchor peer-boot shell
+%% commands. Reads `ARWEAVE_PROJECT_ROOT' (set by `bin/e2e', since CT runs
+%% the BEAM from its per-run log dir), falling back to CWD when unset.
+project_root() ->
+	case os:getenv("ARWEAVE_PROJECT_ROOT") of
+		false ->
+			{ok, Cwd} = file:get_cwd(),
+			Cwd;
+		Root ->
+			Root
+	end.
 
 get_node() ->
 	% Return the name part (everything before first -)

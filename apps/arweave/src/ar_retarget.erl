@@ -281,24 +281,22 @@ calculate_difficulty_before_1_8(OldDiff, TS, Last, Height) ->
 
 %% Ensure that after a series of very fast mines, the diff increases.
 simple_retarget_test_() ->
-	{timeout, 300, fun() ->
+	{timeout, ?TEST_NODE_TIMEOUT, fun() ->
 		[B0] = ar_weave:init(),
 		ar_test_node:start(B0),
 		lists:foreach(
 			fun(Height) ->
 				ar_test_node:mine(),
-				ar_test_node:wait_until_height(main, Height)
+				?assertMatch({ok, _}, ar_test_await:node_height(main, Height))
 			end,
 			lists:seq(1, ?RETARGET_BLOCKS + 1)
 		),
-		true = ar_util:do_until(
+		ok = ar_test_await:until(retarget_difficulty_increased,
 			fun() ->
 				[BH | _] = ar_node:get_blocks(),
 				B = ar_storage:read_block(BH),
 				B#block.diff > B0#block.diff
-			end,
-			1000,
-			5 * 60 * 1000
+			end
 		)
 	end}.
 

@@ -64,17 +64,14 @@
 start_link(Workers) ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, Workers, []).
 
+%% @doc The caller must gate on `is_syncing_enabled/0' before invoking this;
+%% when syncing is disabled the whole network-sync subtree is omitted.
 register_workers() ->
-	case is_syncing_enabled() of
-		true ->
-			{Workers, WorkerNames} = register_sync_workers(),
-			WorkerMaster = ?CHILD_WITH_ARGS(
-				ar_data_sync_coordinator, worker, ar_data_sync_coordinator,
-				[WorkerNames]),
-				[WorkerMaster] ++ Workers;
-		false ->
-			[]
-	end.
+	{Workers, WorkerNames} = register_sync_workers(),
+	WorkerMaster = ?CHILD_WITH_ARGS(
+		ar_data_sync_coordinator, worker, ar_data_sync_coordinator,
+		[WorkerNames]),
+	[WorkerMaster] ++ Workers.
 
 register_sync_workers() ->
 	SyncJobs = arweave_config:get([sync, jobs]),
@@ -157,7 +154,7 @@ handle_cast({sync_range, SyncTask}, State) ->
 			%% can be re-enqueued; otherwise it stays phantom-in-flight
 			%% in sync_task_queue's dedup overlay.
 			try
-				prometheus_counter:inc(sync_tasks,
+				ar_metrics:counter_inc(sync_tasks,
 					[dropped_unavailable, ar_util:format_peer(Peer)], 1)
 			catch
 				_:_ -> ok

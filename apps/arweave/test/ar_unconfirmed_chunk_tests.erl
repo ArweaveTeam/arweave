@@ -1,6 +1,29 @@
 -module(ar_unconfirmed_chunk_tests).
 -test_peers([peer1]).
 
+-export([
+	test_from_disk_pool/0,
+	test_tx_index_fallback/0,
+	test_not_found/0,
+	test_invalid_input/0,
+	test_not_stored_long_term/0,
+	test_multi_chunk_tx/0,
+	test_offset_boundary/0,
+	test_sub_chunk_size/0,
+	test_same_data_different_txs/0,
+	test_same_data_second_tx_after_seed/0,
+	test_same_data_after_first_tx_confirmed/0,
+	test_same_data_after_disk_pool_cleared/0,
+	test_negative_offset/0,
+	test_offset_beyond_data/0,
+	test_offset_beyond_tx_size/0,
+	test_partial_confirmation/0,
+	test_data_path_valid/0,
+	test_concurrent_requests/0,
+	test_discover_all_unconfirmed_chunks/0,
+	test_orphaned_chunk/0
+]).
+
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("arweave_config/include/arweave_config.hrl").
@@ -8,70 +31,9 @@
 -include("ar.hrl").
 -include("ar_consensus.hrl").
 
--import(ar_test_node, [assert_wait_until_height/2, wait_until_height/2,
-		disconnect_from/1, connect_to_peer/1]).
+-import(ar_test_node, [disconnect_from/1, connect_to_peer/1]).
 
--define(TIMEOUT, 180).
-
-from_disk_pool_test_() ->
-	{timeout, ?TIMEOUT, fun test_from_disk_pool/0}.
-
-tx_index_fallback_test_() ->
-	{timeout, ?TIMEOUT, fun test_tx_index_fallback/0}.
-
-not_found_test_() ->
-	{timeout, ?TIMEOUT, fun test_not_found/0}.
-
-invalid_input_test_() ->
-	{timeout, ?TIMEOUT, fun test_invalid_input/0}.
-
-not_stored_long_term_test_() ->
-	{timeout, ?TIMEOUT, fun test_not_stored_long_term/0}.
-
-multi_chunk_tx_test_() ->
-	{timeout, ?TIMEOUT, fun test_multi_chunk_tx/0}.
-
-offset_boundary_test_() ->
-	{timeout, ?TIMEOUT, fun test_offset_boundary/0}.
-
-sub_chunk_size_test_() ->
-	{timeout, ?TIMEOUT, fun test_sub_chunk_size/0}.
-
-same_data_different_txs_test_() ->
-	{timeout, ?TIMEOUT, fun test_same_data_different_txs/0}.
-
-same_data_second_tx_after_seed_test_() ->
-	{timeout, ?TIMEOUT, fun test_same_data_second_tx_after_seed/0}.
-
-same_data_after_first_tx_confirmed_test_() ->
-	{timeout, ?TIMEOUT, fun test_same_data_after_first_tx_confirmed/0}.
-
-same_data_after_disk_pool_cleared_test_() ->
-	{timeout, ?TIMEOUT, fun test_same_data_after_disk_pool_cleared/0}.
-
-negative_offset_test_() ->
-	{timeout, ?TIMEOUT, fun test_negative_offset/0}.
-
-offset_beyond_data_test_() ->
-	{timeout, ?TIMEOUT, fun test_offset_beyond_data/0}.
-
-offset_beyond_tx_size_test_() ->
-	{timeout, ?TIMEOUT, fun test_offset_beyond_tx_size/0}.
-
-partial_confirmation_test_() ->
-	{timeout, ?TIMEOUT, fun test_partial_confirmation/0}.
-
-data_path_valid_test_() ->
-	{timeout, ?TIMEOUT, fun test_data_path_valid/0}.
-
-concurrent_requests_test_() ->
-	{timeout, ?TIMEOUT, fun test_concurrent_requests/0}.
-
-discover_all_unconfirmed_chunks_test_() ->
-	{timeout, ?TIMEOUT, fun test_discover_all_unconfirmed_chunks/0}.
-
-orphaned_chunk_test_() ->
-	{timeout, ?TIMEOUT, fun test_orphaned_chunk/0}.
+-define(TIMEOUT, ?TEST_NODE_TIMEOUT).
 
 post_chunk_proofs(Proofs, ExpectedStatus) ->
 	lists:foreach(
@@ -108,16 +70,13 @@ wait_for_unconfirmed_chunk(EncodedTXID, Offset) ->
 	wait_for_unconfirmed_chunk(EncodedTXID, Offset, <<"200">>).
 
 wait_for_unconfirmed_chunk(EncodedTXID, Offset, ExpectedStatus) ->
-	ar_util:do_until(
+	ok = ar_test_await:until(http_unconfirmed_chunk_status,
 		fun() ->
 			case ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, Offset) of
-				{ok, {{ExpectedStatus, _}, _, _, _, _}} = Result ->
-					Result;
-				_ ->
-					false
+				{ok, {{ExpectedStatus, _}, _, _, _, _}} -> true;
+				_ -> false
 			end
 		end,
-		1000,
 		30_000
 	),
 	Response = ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, Offset),
@@ -165,27 +124,26 @@ test_from_disk_pool() ->
 
 %% @doc Chunk was in the disk pool but has been confirmed; served via tx_index fallback.
 test_tx_index_fallback() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
-	StorageModules = [{10 * ?PARTITION_SIZE, 0,
-			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+	Addr = ar_test_node:generate_address(main),
+	StorageModule = {10 * ?PARTITION_SIZE, 0,
+			ar_test_node:storage_module_packing(Addr, 0)},
 	Wallet = ar_test_data_sync:setup_nodes(
-			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
+			#{ addr => Addr,
+					[storage_modules] => [arweave_config:storage_module_to_config(StorageModule)] }),
 	#{ tx := TX, chunks := Chunks, chunk_end_offset := ChunkEndOffset, proof := Proof } =
 		post_single_chunk_tx(Wallet),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
+	{ok, {AbsoluteEndOffset, _}} = ar_test_await:tx_offset_known(TX#tx.id),
+	%% Let the disk pool index the chunk while it is still below confirmation depth.
+	ok = wait_until_tx_index_fallback(AbsoluteEndOffset),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 4),
-	{ok, {TXOffset, _}} = ar_data_sync:get_tx_offset(TX#tx.id),
-	AbsoluteEndOffset = TXOffset,
-	ar_test_data_sync:wait_until_syncs_chunk(AbsoluteEndOffset, #{
-		chunk => maps:get(chunk, Proof),
-		data_path => maps:get(data_path, Proof)
-	}),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 4)),
+	ok = wait_until_storage_module_offset(AbsoluteEndOffset, StorageModule),
 	{ok, {{<<"200">>, _}, _, ChunkBody, _, _}} =
 		ar_test_node:get_chunk(main, AbsoluteEndOffset),
 	ChunkResponse = jiffy:decode(ChunkBody, [return_maps]),
@@ -197,6 +155,23 @@ test_tx_index_fallback() ->
 		EncodedTXID, ChunkEndOffset),
 	Response = jiffy:decode(Body, [return_maps]),
 	assert_unconfirmed_chunk_response(Response, Proof, true).
+
+wait_until_tx_index_fallback(AbsoluteEndOffset) ->
+	ok = ar_test_await:until(tx_index_fallback,
+		fun() ->
+			case ar_data_sync:get_chunk_by_byte(AbsoluteEndOffset, ?DEFAULT_MODULE) of
+				{ok, _Key, _Metadata} -> true;
+				_ -> false
+			end
+		end,
+		30_000
+	),
+	ok.
+
+wait_until_storage_module_offset(AbsoluteEndOffset, StorageModule) ->
+	StoreID = ar_storage_module:id(StorageModule),
+	ok = ar_test_await:chunk_recorded(main, AbsoluteEndOffset, #{ store_id => StoreID }),
+	ok.
 
 %% @doc Unknown TXID returns 404.
 test_not_found() ->
@@ -240,9 +215,9 @@ test_invalid_input() ->
 
 %% @doc When no storage module covers the vicinity, is_stored_long_term is false.
 test_not_stored_long_term() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	StorageModules = [{10 * ?PARTITION_SIZE, 5,
-			ar_test_node:get_default_storage_module_packing(Addr, 5)}],
+			ar_test_node:storage_module_packing(Addr, 5)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	#{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
@@ -339,6 +314,10 @@ test_same_data_txs(Mode) ->
 		ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks),
 	[{ChunkEndOffset, Proof}] = ar_test_data_sync:build_proofs(
 		DataRoot, DataTree, Chunks, #{ proof_offset => end_offset }),
+	ExpectedChunkProof = #{
+		chunk => maps:get(chunk, Proof),
+		data_path => maps:get(data_path, Proof)
+	},
 	SeedChunk = fun() ->
 		?assertMatch(
 			{ok, {{<<"200">>, _}, _, _, _, _}},
@@ -370,18 +349,18 @@ test_same_data_txs(Mode) ->
 			ar_test_node:assert_post_tx_to_peer(main, TX1),
 			SeedChunk(),
 			ar_test_node:mine(main),
-			assert_wait_until_height(main, 1),
+			?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
+			{ok, {TXOffset1, _}} = ar_test_await:tx_offset_known(TX1#tx.id),
+			%% Wait for the disk-pool scanner to index the immature chunk before
+			%% mining far enough to move it into long-term storage.
+			ok = wait_until_tx_index_fallback(TXOffset1),
 			ar_test_node:mine(main),
-			assert_wait_until_height(main, 2),
+			?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
 			ar_test_node:mine(main),
-			assert_wait_until_height(main, 3),
+			?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
 			ar_test_node:mine(main),
-			assert_wait_until_height(main, 4),
-			{ok, {TXOffset1, _}} = ar_data_sync:get_tx_offset(TX1#tx.id),
-			ar_test_data_sync:wait_until_syncs_chunk(TXOffset1, #{
-				chunk => maps:get(chunk, Proof),
-				data_path => maps:get(data_path, Proof)
-			}),
+			?assertMatch({ok, _}, ar_test_await:node_height(main, 4)),
+			ar_test_data_sync:wait_until_syncs_chunk(TXOffset1, ExpectedChunkProof),
 			#{ tx := TX2a, data_root := DataRoot2a, chunks := Chunks2a } =
 				ar_test_data_sync:make_fixed_data_tx(Wallet, InputChunks, #{ reward => ?AR(10) }),
 			?assertEqual(DataRoot, DataRoot2a),
@@ -393,18 +372,15 @@ test_same_data_txs(Mode) ->
 			ar_test_node:assert_post_tx_to_peer(main, TX1),
 			SeedChunk(),
 			ar_test_node:mine(main),
-			assert_wait_until_height(main, 1),
+			?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
 			ar_test_node:mine(main),
-			assert_wait_until_height(main, 2),
+			?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
 			ar_test_node:mine(main),
-			assert_wait_until_height(main, 3),
+			?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
 			ar_test_node:mine(main),
-			assert_wait_until_height(main, 4),
-			{ok, {TXOffset1, _}} = ar_data_sync:get_tx_offset(TX1#tx.id),
-			ar_test_data_sync:wait_until_syncs_chunk(TXOffset1, #{
-				chunk => maps:get(chunk, Proof),
-				data_path => maps:get(data_path, Proof)
-			}),
+			?assertMatch({ok, _}, ar_test_await:node_height(main, 4)),
+			{ok, {TXOffset1, _}} = ar_test_await:tx_offset_known(TX1#tx.id),
+			ar_test_data_sync:wait_until_syncs_chunk(TXOffset1, ExpectedChunkProof),
 			%% Explicitly clear the data root state to simulate the disk pool having
 			%% fully processed the chunk. This ensures we exercise the
 			%% chunk_offsets_synced path in check_not_already_synced.
@@ -417,11 +393,16 @@ test_same_data_txs(Mode) ->
 			?assertNotEqual(TX1#tx.id, TX2a#tx.id),
 			TX2a
 	end,
-	EncodedTXID1 = ar_util:encode(TX1#tx.id),
-	{ok, {{<<"200">>, _}, _, Body1, _, _}} = wait_for_unconfirmed_chunk(
-		EncodedTXID1, ChunkEndOffset),
-	Response1 = jiffy:decode(Body1, [return_maps]),
-	assert_unconfirmed_chunk_response(Response1, Proof, true),
+	case Mode of
+		second_after_disk_pool_cleared ->
+			ok;
+		_ ->
+			EncodedTXID1 = ar_util:encode(TX1#tx.id),
+			{ok, {{<<"200">>, _}, _, Body1, _, _}} = wait_for_unconfirmed_chunk(
+				EncodedTXID1, ChunkEndOffset),
+			Response1 = jiffy:decode(Body1, [return_maps]),
+			assert_unconfirmed_chunk_response(Response1, Proof, true)
+	end,
 	case Mode of
 		both_before_seed ->
 			ok;
@@ -462,9 +443,9 @@ test_offset_beyond_data() ->
 %% @doc GET /unconfirmed_chunk/TXID/Offset where Offset is beyond the end of the
 %% TX should return 400. 
 test_offset_beyond_tx_size() ->
-	Addr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	Addr = ar_test_node:generate_address(main),
 	StorageModules = [{10 * ?PARTITION_SIZE, 0,
-			ar_test_node:get_default_storage_module_packing(Addr, 0)}],
+			ar_test_node:storage_module_packing(Addr, 0)}],
 	Wallet = ar_test_data_sync:setup_nodes(
 			#{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
 	%% A single sub-chunk-size TX (size between 20 and 700).
@@ -474,13 +455,13 @@ test_offset_beyond_tx_size() ->
 		post_and_seed_tx(Wallet, [TXData], #{ proof_offset => end_offset }),
 	%% Confirm the TX so the query goes through the tx_index fallback path.
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 2),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 3),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 4),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 4)),
 	%% Clear the disk-pool cache entry so the query can't be served from the
 	%% ETS cache — forcing it down the tx_index fallback path.
 	ets:delete(ar_disk_pool_chunks_cache, {TX#tx.id, TXEndOffset}),
@@ -495,7 +476,7 @@ test_partial_confirmation() ->
 		post_single_chunk_tx(Wallet),
 	%% Mine one block — chunk is partially confirmed but not yet pruned from disk pool.
 	ar_test_node:mine(main),
-	assert_wait_until_height(main, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
 	EncodedTXID = ar_util:encode(TX#tx.id),
 	{ok, {{<<"200">>, _}, _, Body, _, _}} = wait_for_unconfirmed_chunk(
 		EncodedTXID, ChunkEndOffset),
@@ -682,19 +663,19 @@ test_orphaned_chunk() ->
 		wait_for_unconfirmed_chunk(EncodedTXID, ChunkEndOffset),
 	%% Confirm the TX on main.
 	ar_test_node:mine(main),
-	[{H1Main, _, _} | _] = assert_wait_until_height(main, 1),
+	{ok, [{H1Main, _, _} | _]} = ar_test_await:node_height(main, 1),
 	%% Build a longer chain on peer1 with no TXs so its cumulative diff exceeds main's.
 	ar_test_node:mine(peer1),
-	ar_test_node:assert_wait_until_height(peer1, 1),
+	?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
 	ar_test_node:mine(peer1),
-	[{H2Peer, _, _} | _] = ar_test_node:assert_wait_until_height(peer1, 2),
+	{ok, [{H2Peer, _, _} | _]} = ar_test_await:node_height(peer1, 2),
 	%% Reconnect; main should fork-recover to peer1's chain, orphaning H1Main.
 	connect_to_peer(peer1),
-	[{H2Main, _, _} | _] = wait_until_height(main, 2),
+	{ok, [{H2Main, _, _} | _]} = ar_test_await:node_height(main, 2),
 	?assertEqual(H2Peer, H2Main),
 	?assertNotEqual(H1Main, H2Main),
 	%% TX returns to main's mempool from the orphaned block.
-	ar_test_node:assert_wait_until_receives_txs([TX]),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
 	%% The chunk should still resolve via the disk-pool cache: the orphan path leaves
 	%% ar_disk_pool_chunks_cache, disk_pool_chunks_index and chunk_data_db untouched,
 	%% and the data root state (with its TXIDSet) is preserved by

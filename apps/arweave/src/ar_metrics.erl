@@ -4,6 +4,13 @@
 
 -export([register/0, get_status_class/1, record_rate_metric/4]).
 
+%% Safe runtime metric helpers — see the "Safe metric helpers" section below.
+-export([gauge_set/2, gauge_set/3, gauge_inc/1, gauge_inc/2, gauge_inc/3,
+		gauge_dec/1, gauge_dec/2, gauge_dec/3, gauge_deregister/1,
+		gauge_value/1, gauge_value/2,
+		counter_inc/1, counter_inc/2, counter_inc/3,
+		histogram_observe/2, histogram_observe/3]).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -616,7 +623,7 @@ record_rate_metric(StartTime, Bytes, Metric, Labels) ->
 			true -> 1_000_000 * Bytes / ElapsedTime;
 			false -> 0
 		end,
-	prometheus_histogram:observe(Metric, Labels, Rate).
+	histogram_observe(Metric, Labels, Rate).
 
 
 %% @doc Return the HTTP status class label for cowboy_requests_total and gun_requests_total
@@ -664,3 +671,53 @@ get_status_class(Data) when is_atom(Data) ->
 get_status_class(Data) ->
 	?LOG_DEBUG([{event, unknown_status}, {status, Data}]),
 	"unknown".
+
+%%%===================================================================
+%%% Safe metric helpers.
+%%%
+%%% Error-swallowing wrappers around the prometheus runtime API for all
+%%% runtime metric writes/reads. The prometheus_* ETS tables can be
+%%% transiently absent while the node (re)starts or stops, and an unguarded
+%%% crash in a periodic gen_server write can cascade to
+%%% reached_max_restart_intensity and halt the BEAM. Metric declarations
+%%% (prometheus_*:new/declare) are NOT wrapped — a failed declaration is a bug.
+%%%===================================================================
+
+gauge_set(Name, Value) ->
+	try prometheus_gauge:set(Name, Value) catch _:_ -> ok end.
+gauge_set(Name, Labels, Value) ->
+	try prometheus_gauge:set(Name, Labels, Value) catch _:_ -> ok end.
+
+gauge_inc(Name) ->
+	try prometheus_gauge:inc(Name) catch _:_ -> ok end.
+gauge_inc(Name, Value) ->
+	try prometheus_gauge:inc(Name, Value) catch _:_ -> ok end.
+gauge_inc(Name, Labels, Value) ->
+	try prometheus_gauge:inc(Name, Labels, Value) catch _:_ -> ok end.
+
+gauge_dec(Name) ->
+	try prometheus_gauge:dec(Name) catch _:_ -> ok end.
+gauge_dec(Name, Value) ->
+	try prometheus_gauge:dec(Name, Value) catch _:_ -> ok end.
+gauge_dec(Name, Labels, Value) ->
+	try prometheus_gauge:dec(Name, Labels, Value) catch _:_ -> ok end.
+
+gauge_deregister(Name) ->
+	try prometheus_gauge:deregister(Name) catch _:_ -> ok end.
+
+gauge_value(Name) ->
+	try prometheus_gauge:value(Name) catch _:_ -> undefined end.
+gauge_value(Name, Labels) ->
+	try prometheus_gauge:value(Name, Labels) catch _:_ -> undefined end.
+
+counter_inc(Name) ->
+	try prometheus_counter:inc(Name) catch _:_ -> ok end.
+counter_inc(Name, Value) ->
+	try prometheus_counter:inc(Name, Value) catch _:_ -> ok end.
+counter_inc(Name, Labels, Value) ->
+	try prometheus_counter:inc(Name, Labels, Value) catch _:_ -> ok end.
+
+histogram_observe(Name, Value) ->
+	try prometheus_histogram:observe(Name, Value) catch _:_ -> ok end.
+histogram_observe(Name, Labels, Value) ->
+	try prometheus_histogram:observe(Name, Labels, Value) catch _:_ -> ok end.

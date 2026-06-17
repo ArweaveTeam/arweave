@@ -71,9 +71,8 @@ boolean(String) when is_list(String); is_binary(String) ->
 	end;
 boolean(V) -> {error, V}.
 
-%% @doc Validate as a list of binaries. This intentionally stays
-%% narrow: callers that need richer list validation should do it
-%% in the owning option module's validator.
+%% @doc Validate as a list of binaries; richer element validation
+%% belongs in the owning option module's validator.
 -spec list(Input) -> Return when
 	Input :: [binary()],
 	Return :: {ok, [binary()]} | {error, Input}.
@@ -85,10 +84,9 @@ list(Values) when is_list(Values) ->
 list(Value) ->
 	{error, Value}.
 
-%% @doc Validate and normalize a list of peer IDs. Each element runs
-%% through `peer_id/1', so callers may supply mixed binaries / strings
-%% / tuples; IPv4 entries come back as `{A, B, C, D, Port}' tuples,
-%% hostnames stay as binaries.
+%% @doc Validate and normalize a list of peer IDs via `peer_id/1':
+%% accepts mixed binaries / strings / tuples; IPv4 entries come back as
+%% `{A, B, C, D, Port}' tuples, hostnames stay as binaries.
 -spec peers_list(Input) -> Return when
 	Input :: [binary() | string() | tuple()],
 	Return :: {ok, [peer_id()]} | {error, term()}.
@@ -96,8 +94,7 @@ peers_list(Values) when is_list(Values) ->
 	case io_lib:printable_unicode_list(Values) of
 		true ->
 			%% Bare CLI/env string for a single peer (`--peers.trusted
-			%% 1.2.3.4:1984') — wrap into a singleton list so the rest
-			%% of the validator runs unchanged.
+			%% 1.2.3.4:1984') — wrap into a singleton list.
 			peers_list([Values], []);
 		false ->
 			peers_list(Values, [])
@@ -436,11 +433,9 @@ type_error(Name, Reason, Data) ->
 %%% --------------------------------------------------------------------
 
 %% @doc Normalize a peer spelling to canonical form. IPv4 peers become
-%% `{A, B, C, D, Port}' 5-tuples — the same shape ar_http and the rest
-%% of the node already use. Hostnames and bracketed IPv6 stay as
-%% `<<"host:port">>' binaries (they aren't tuple-shaped without DNS
-%% resolution). Accepts strings, binaries, 4-tuples (default port
-%% applied), and 5-tuples.
+%% `{A, B, C, D, Port}' 5-tuples; hostnames and bracketed IPv6 stay as
+%% `<<"host:port">>' binaries. Accepts strings, binaries, 4-tuples
+%% (default port applied), and 5-tuples.
 -spec peer_id(Input) -> Return when
 	Input :: binary() | string() | tuple(),
 	Return :: {ok, peer_id()} | {error, term()}.

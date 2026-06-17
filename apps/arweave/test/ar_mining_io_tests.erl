@@ -13,7 +13,7 @@ chunks_read(_Worker, WhichChunk, Candidate, RangeStart, ChunkOffsets) ->
 
 setup_all() ->
 	[B0] = ar_weave:init([], 1, ?WEAVE_SIZE),
-	RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
+	RewardAddr = ar_test_node:generate_address(main),
 	StorageModules = lists:flatten(
 		[[arweave_config:storage_module_to_config(
 			{8 * 262144, N, {spora_2_6, RewardAddr}})]
@@ -178,13 +178,13 @@ default_candidate() ->
 	}.
 
 wait_for_io(NumChunks) ->
-	Result = ar_util:do_until(
-		fun() ->
-			NumChunks == length(ets:tab2list(?MODULE))
-		end,
-		100,
-		60000),
-	?assertEqual(true, Result, "Timeout while waiting to read chunks").
+	?assertEqual(ok,
+		ar_test_await:until(io_recall_chunks_loaded,
+			fun() ->
+				NumChunks == length(ets:tab2list(?MODULE))
+			end,
+			60000),
+		"Timeout while waiting to read chunks").
 
 get_recall_chunks() ->
 	case ets:tab2list(?MODULE) of

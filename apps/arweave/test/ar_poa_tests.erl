@@ -5,8 +5,6 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(ar_test_node, [wait_until_height/2, assert_wait_until_height/2, read_block_when_stored/1]).
-
 v1_transactions_after_2_0_test_() ->
 	{timeout, 420, fun test_v1_transactions_after_2_0/0}.
 
@@ -27,18 +25,18 @@ test_v1_transactions_after_2_0() ->
 		end,
 		TXs
 	),
-	ar_test_node:assert_wait_until_receives_txs(TXs),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, TXs)),
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(main, Height),
+			{ok, BI} = ar_test_await:node_height(main, Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
 				_ ->
 					noop
 			end,
-			assert_wait_until_height(peer1, Height)
+			?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height))
 		end,
 		lists:seq(1, 10)
 	),
@@ -49,18 +47,18 @@ test_v1_transactions_after_2_0() ->
 		end,
 		MoreTXs
 	),
-	ar_test_node:assert_wait_until_receives_txs(MoreTXs),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, MoreTXs)),
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(main, Height),
+			{ok, BI} = ar_test_await:node_height(main, Height),
 			case Height of
 				11 ->
 					assert_txs_mined(MoreTXs, BI);
 				_ ->
 					noop
 			end,
-			assert_wait_until_height(peer1, Height)
+			?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height))
 		end,
 		lists:seq(11, 20)
 	).
@@ -85,18 +83,18 @@ test_v2_transactions_after_2_0() ->
 		end,
 		TXs
 	),
-	ar_test_node:assert_wait_until_receives_txs(TXs),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, TXs)),
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(main, Height),
+			{ok, BI} = ar_test_await:node_height(main, Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
 				_ ->
 					noop
 			end,
-			assert_wait_until_height(peer1, Height)
+			?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height))
 		end,
 		lists:seq(1, 10)
 	),
@@ -107,18 +105,18 @@ test_v2_transactions_after_2_0() ->
 		end,
 		MoreTXs
 	),
-	ar_test_node:assert_wait_until_receives_txs(MoreTXs),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, MoreTXs)),
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(main, Height),
+			{ok, BI} = ar_test_await:node_height(main, Height),
 			case Height of
 				11 ->
 					assert_txs_mined(MoreTXs, BI);
 				_ ->
 					noop
 			end,
-			assert_wait_until_height(peer1, Height)
+			?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height))
 		end,
 		lists:seq(11, 20)
 	).
@@ -148,18 +146,18 @@ test_recall_byte_on_the_border() ->
 		end,
 		TXs
 	),
-	ar_test_node:assert_wait_until_receives_txs(TXs),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, TXs)),
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(main, Height),
+			{ok, BI} = ar_test_await:node_height(main, Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
 				_ ->
 					noop
 			end,
-			assert_wait_until_height(peer1, Height)
+			?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height))
 		end,
 		lists:seq(1, 10)
 	).
@@ -203,18 +201,18 @@ test_ignores_transactions_with_invalid_data_root() ->
 		end,
 		TXs
 	),
-	ar_test_node:assert_wait_until_receives_txs(TXs),
+	?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, TXs)),
 	lists:foreach(
 		fun(Height) ->
 			ar_test_node:mine(peer1),
-			BI = wait_until_height(main, Height),
+			{ok, BI} = ar_test_await:node_height(main, Height),
 			case Height of
 				1 ->
 					assert_txs_mined(TXs, BI);
 				_ ->
 					noop
 			end,
-			assert_wait_until_height(peer1, Height)
+			?assertMatch({ok, _}, ar_test_await:node_height(peer1, Height))
 		end,
 		lists:seq(1, 10)
 	).
@@ -265,7 +263,7 @@ random_nonce() ->
 	{<<"nonce">>, integer_to_binary(rand:uniform(1000000))}.
 
 assert_txs_mined(TXs, [{H, _, _} | _]) ->
-	B = read_block_when_stored(H),
+	B = ar_test_await:block_stored(H),
 	TXIDs = [TX#tx.id || TX <- TXs],
 	?assertEqual(length(TXIDs), length(B#block.txs)),
 	?assertEqual(lists:sort(TXIDs), lists:sort(B#block.txs)).

@@ -24,23 +24,28 @@ test_wallet_sign_verify() ->
 	].
 
 invalid_signature_test_() ->
-    TestInvalidSignature = fun(KeyTypeEnc) ->
-        fun() ->
-			KeyType = ar_serialize:binary_to_signature_type(KeyTypeEnc),
-			{Priv, Pub} = ar_wallet:new(KeyType),
-           	TestData = <<"TEST DATA">>,
+	{timeout, 30, fun test_invalid_signature/0}.
+
+test_invalid_signature() ->
+	TestInvalidSignature = fun(KeyTypeEnc) ->
+		fun() ->
+			{Priv, Pub} = ar_wallet:load_keyfile(wallet_fixture_path(KeyTypeEnc)),
+			TestData = <<"TEST DATA">>,
 			<< _:32, Signature/binary >> = ar_wallet:sign(Priv, TestData),
 			false = ar_wallet:verify(Pub, TestData, << 0:32, Signature/binary >>)
-        end
-    end,
-    [
-        {"PS256_65537", TestInvalidSignature(<<"PS256_65537">>)},
-        {"ES256K", TestInvalidSignature(<<"ES256K">>)},
+		end
+	end,
+	[
+		{"PS256_65537", TestInvalidSignature(<<"PS256_65537">>)},
+		{"ES256K", TestInvalidSignature(<<"ES256K">>)},
 		{"Ed25519", TestInvalidSignature(<<"Ed25519">>)}
-    ].
+	].
 
 %% @doc Check generated keyfiles can be retrieved.
 generate_keyfile_test_() ->
+	{timeout, 30, fun test_generate_keyfile/0}.
+
+test_generate_keyfile() ->
 	GenerateKeyFile = fun(KeyTypeEnc) ->
 		fun() ->
 			KeyType = ar_serialize:binary_to_signature_type(KeyTypeEnc),

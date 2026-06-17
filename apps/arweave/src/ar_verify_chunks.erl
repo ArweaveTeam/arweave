@@ -172,45 +172,34 @@ verify_chunks_index2({error, Reason}, State) ->
 	State2 = invalidate_sync_record(
 		chunks_index_error, Cursor, NextCursor, [{reason, Reason}], State),
 	{error, State2#state{ cursor = NextCursor }};
-verify_chunks_index2(
-	{AbsoluteOffset, _, _, _, _, _, ChunkSize}, #state{cursor = Cursor} = State)
-		when AbsoluteOffset - Cursor >= ChunkSize ->
-	NextCursor = AbsoluteOffset - ChunkSize,
-	State2 = invalidate_sync_record(chunks_index_gap, Cursor, NextCursor, [], State),
-	{error, State2#state{ cursor = NextCursor + 1 }};
 verify_chunks_index2(ChunkData, State) ->	
 	{ChunkData, State}.
 
-verify_chunk({ok, _Key, Metadata}, Intervals, State) ->
-	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
-		_TXRelativeOffset, _ChunkSize} = Metadata,
+verify_chunk({ok, Metadata, Offsets}, Intervals, State) ->
+	#chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
 	{ChunkStorageInterval, _DataSyncInterval} = Intervals,
 
 	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
-	
-	State2 = verify_chunk_storage(PaddedOffset, Metadata, ChunkStorageInterval, State),
 
-	State3 = verify_proof(Metadata, State2),
+	State2 = verify_chunk_storage(PaddedOffset, Metadata, Offsets, ChunkStorageInterval, State),
 
-	State4 = verify_packing(Metadata, State3),
+	State3 = verify_proof(Metadata, Offsets, State2),
+
+	State4 = verify_packing(Metadata, Offsets, State3),
 
 	State4#state{ cursor = PaddedOffset + 1 };
 verify_chunk(_ChunkData, _Intervals, State) ->
 	State.
 
-verify_proof(Metadata, State) ->
+verify_proof(Metadata, Offsets, State) ->
 	#state{ store_id = StoreID } = State,
-	{AbsoluteOffset, ChunkDataKey, TXRoot, _DataRoot, TXPath,
-		_TXRelativeOffset, ChunkSize} = Metadata,
+	#chunk_metadata{ chunk_data_key = ChunkDataKey, chunk_size = ChunkSize } = Metadata,
+	#chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
 
 	case ar_data_sync:read_data_path(ChunkDataKey, StoreID) of
 		{ok, DataPath} ->
-			ChunkMetadata = #chunk_metadata{
-				tx_root = TXRoot,
-				tx_path = TXPath,
-				data_path = DataPath
-			},
-			ChunkProof = ar_poa:chunk_proof(ChunkMetadata, AbsoluteOffset - 1),
+			ChunkProof = ar_poa:chunk_proof(
+				Metadata#chunk_metadata{ data_path = DataPath }, AbsoluteOffset - 1),
 			case ar_poa:validate_paths(ChunkProof) of
 				{false, _} ->
 					invalidate_chunk(validate_paths_error, AbsoluteOffset, ChunkSize, State);
@@ -225,10 +214,10 @@ verify_proof(Metadata, State) ->
 %% @doc Verify that the ar_data_sync record is configured correctly - namely that it has
 %% entry in the expected packing format. This also indirectly detects the case where an
 %% interval exists in the ar_chunk_storage record, but not the ar_data_sync record.
-verify_packing(Metadata, State) ->
+verify_packing(Metadata, Offsets, State) ->
 	#state{packing = Packing, store_id = StoreID} = State,
-	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
-			_TXRelativeOffset, ChunkSize} = Metadata,
+	#chunk_metadata{ chunk_size = ChunkSize } = Metadata,
+	#chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
 	PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
 	StoredPackingCheck = ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID),
 	ExpectedPacking =
@@ -259,11 +248,11 @@ verify_packing(Metadata, State) ->
 %% @doc Verify that chunk exists on disk or in chunk_data_db. This also indirectly detects the
 %% case where an interval exists in the ar_data_sync record, but not the ar_chunk_storage
 %% record.
-verify_chunk_storage(PaddedOffset, Metadata, {End, Start}, State)
+verify_chunk_storage(PaddedOffset, Metadata, Offsets, {End, Start}, State)
 		when PaddedOffset - ?DATA_CHUNK_SIZE >= Start andalso PaddedOffset =< End ->
 	#state{store_id = StoreID} = State,
-	{AbsoluteOffset, ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
-		_TXRelativeOffset, ChunkSize} = Metadata,
+	#chunk_metadata{ chunk_data_key = ChunkDataKey, chunk_size = ChunkSize } = Metadata,
+	#chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
 	{_ChunkFileStart, _Filepath, _Position, ExpectedChunkOffset} =
 				ar_chunk_storage:locate_chunk_on_disk(PaddedOffset, StoreID),
 	case ar_chunk_storage:read_offset(PaddedOffset, StoreID) of
@@ -296,10 +285,10 @@ verify_chunk_storage(PaddedOffset, Metadata, {End, Start}, State)
 					{is_chunk_stored_in_rocksdb, IsChunkStoredInRocksDB}
 				], State)
 	end;
-verify_chunk_storage(PaddedOffset, Metadata, Interval, State) ->
+verify_chunk_storage(PaddedOffset, Metadata, Offsets, Interval, State) ->
 	#state{ packing = Packing, store_id = StoreID } = State,
-	{AbsoluteOffset, _ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
-		_TXRelativeOffset, ChunkSize} = Metadata,
+	#chunk_metadata{ chunk_size = ChunkSize } = Metadata,
+	#chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
 	case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
 		true ->
 			Logs = [
@@ -319,13 +308,13 @@ verify_chunk_storage(PaddedOffset, Metadata, Interval, State) ->
 			],
 			invalidate_chunk(chunk_storage_gap, AbsoluteOffset, ChunkSize, Logs, State);
 		false ->
-			verify_chunk_data(Metadata, State)
+			verify_chunk_data(Metadata, Offsets, State)
 	end.
 
-verify_chunk_data(Metadata, State) ->
+verify_chunk_data(Metadata, Offsets, State) ->
 	#state{ store_id = StoreID } = State,
-	{AbsoluteOffset, ChunkDataKey, _TXRoot, _DataRoot, _TXPath,
-		_TXRelativeOffset, ChunkSize} = Metadata,
+	#chunk_metadata{ chunk_data_key = ChunkDataKey, chunk_size = ChunkSize } = Metadata,
+	#chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
 	case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
 		not_found ->
 			invalidate_chunk(chunk_data_not_found, AbsoluteOffset, ChunkSize, [], State);
@@ -676,21 +665,24 @@ test_verify_chunk_storage_in_interval() ->
 		#state{ packing = unpacked },
 		verify_chunk_storage(
 			10*?DATA_CHUNK_SIZE,
-			{10*?DATA_CHUNK_SIZE, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
+			#chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE },
+			#chunk_offsets{ absolute_offset = 10*?DATA_CHUNK_SIZE },
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
 		#state{ packing = unpacked },
 		verify_chunk_storage(
 			6*?DATA_CHUNK_SIZE,
-			{6*?DATA_CHUNK_SIZE - 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
+			#chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE div 2 },
+			#chunk_offsets{ absolute_offset = 6*?DATA_CHUNK_SIZE - 1 },
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
 		#state{ packing = unpacked },
 		verify_chunk_storage(
 			20*?DATA_CHUNK_SIZE,
-			{20*?DATA_CHUNK_SIZE - ?DATA_CHUNK_SIZE div 2, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
+			#chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE div 2 },
+			#chunk_offsets{ absolute_offset = 20*?DATA_CHUNK_SIZE - ?DATA_CHUNK_SIZE div 2 },
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	ok.
@@ -710,14 +702,16 @@ test_verify_chunk_storage_should_store() ->
 		ExpectedState,
 		verify_chunk_storage(
 			0,
-			{0, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
+			#chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE },
+			#chunk_offsets{ absolute_offset = 0 },
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
 		ExpectedState,
 		verify_chunk_storage(
 			ar_block:strict_data_split_threshold() + 1,
-			{ar_block:strict_data_split_threshold() + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
+			#chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE },
+			#chunk_offsets{ absolute_offset = ar_block:strict_data_split_threshold() + 1 },
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
@@ -732,7 +726,8 @@ test_verify_chunk_storage_should_store() ->
 		},
 		verify_chunk_storage(
 			ar_block:strict_data_split_threshold() + 1,
-			{ar_block:strict_data_split_threshold() + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
+			#chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE div 2 },
+			#chunk_offsets{ absolute_offset = ar_block:strict_data_split_threshold() + 1 },
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = {composite, Addr, 1} })),
 	ok.
@@ -745,14 +740,16 @@ test_verify_chunk_storage_should_not_store() ->
 		ExpectedState,
 		verify_chunk_storage(
 			0,
-			{0, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
+			#chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE div 2 },
+			#chunk_offsets{ absolute_offset = 0 },
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	?assertEqual(
 		ExpectedState,
 		verify_chunk_storage(
 			ar_block:strict_data_split_threshold() + 1,
-			{ar_block:strict_data_split_threshold() + 1, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
+			#chunk_metadata{ chunk_data_key = <<>>, chunk_size = ?DATA_CHUNK_SIZE div 2 },
+			#chunk_offsets{ absolute_offset = ar_block:strict_data_split_threshold() + 1 },
 			{20*?DATA_CHUNK_SIZE, 5*?DATA_CHUNK_SIZE},
 			#state{ packing = unpacked })),
 	ok.
@@ -779,12 +776,16 @@ test_verify_proof_no_datapath() ->
 	?assertEqual(
 		ExpectedState1,
 		verify_proof(
-			{10, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
+			#chunk_metadata{ chunk_data_key = <<>>, tx_root = <<>>, tx_path = <<>>,
+					chunk_size = ?DATA_CHUNK_SIZE },
+			#chunk_offsets{ absolute_offset = 10 },
 			#state{ packing = unpacked })),
 	?assertEqual(
 		ExpectedState2,
 		verify_proof(
-			{10, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
+			#chunk_metadata{ chunk_data_key = <<>>, tx_root = <<>>, tx_path = <<>>,
+					chunk_size = ?DATA_CHUNK_SIZE div 2 },
+			#chunk_offsets{ absolute_offset = 10 },
 			#state{ packing = unpacked })),
 	ok.
 
@@ -792,7 +793,9 @@ test_verify_proof_valid_paths() ->
 	?assertEqual(
 		#state{},
 		verify_proof(
-			{10, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
+			#chunk_metadata{ chunk_data_key = <<>>, tx_root = <<>>, tx_path = <<>>,
+					chunk_size = ?DATA_CHUNK_SIZE },
+			#chunk_offsets{ absolute_offset = 10 },
 			#state{})),
 	ok.
 	
@@ -818,12 +821,16 @@ test_verify_proof_invalid_paths() ->
 	?assertEqual(
 		ExpectedState1,
 		verify_proof(
-			{10, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE},
+			#chunk_metadata{ chunk_data_key = <<>>, tx_root = <<>>, tx_path = <<>>,
+					chunk_size = ?DATA_CHUNK_SIZE },
+			#chunk_offsets{ absolute_offset = 10 },
 			#state{ packing = unpacked })),
 	?assertEqual(
 		ExpectedState2,
 		verify_proof(
-			{10, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2},
+			#chunk_metadata{ chunk_data_key = <<>>, tx_root = <<>>, tx_path = <<>>,
+					chunk_size = ?DATA_CHUNK_SIZE div 2 },
+			#chunk_offsets{ absolute_offset = 10 },
 			#state{ packing = unpacked })),
 	ok.
 
@@ -845,7 +852,8 @@ test_verify_chunk() ->
 			}
 		},
 		verify_chunk(
-			{ok, <<>>, {PreSplitOffset, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2}},
+			{ok, #chunk_metadata{ chunk_size = ?DATA_CHUNK_SIZE div 2 },
+					#chunk_offsets{ absolute_offset = PreSplitOffset }},
 			{Interval, not_found},
 			#state{packing=unpacked})),
 	?assertEqual(
@@ -860,7 +868,8 @@ test_verify_chunk() ->
 			}
 		},
 		verify_chunk(
-			{ok, <<>>, {PostSplitOffset, <<>>, <<>>, <<>>, <<>>, <<>>, ?DATA_CHUNK_SIZE div 2}},
+			{ok, #chunk_metadata{ chunk_size = ?DATA_CHUNK_SIZE div 2 },
+					#chunk_offsets{ absolute_offset = PostSplitOffset }},
 			{Interval, not_found},
 			#state{packing=unpacked})),
 	ExpectedState = #state{ 

@@ -943,16 +943,16 @@ get_tx_data_root(TX) ->
 %%%===================================================================
 
 hash_list_gen_test_() ->
-	{timeout, 120, fun test_hash_list_gen/0}.
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_hash_list_gen/0}.
 
 test_hash_list_gen() ->
 	[B0] = ar_weave:init(),
 	ar_test_node:start(B0),
 	ar_test_node:mine(),
-	BI1 = ar_test_node:wait_until_height(main, 1),
+	{ok, BI1} = ar_test_await:node_height(main, 1),
 	B1 = ar_storage:read_block(hd(BI1)),
 	ar_test_node:mine(),
-	BI2 = ar_test_node:wait_until_height(main, 2),
+	{ok, BI2} = ar_test_await:node_height(main, 2),
 	B2 = ar_storage:read_block(hd(BI2)),
 	?assertEqual([B0#block.indep_hash], generate_hash_list_for_block(B1, BI2)),
 	?assertEqual([H || {H, _, _} <- BI1],

@@ -193,7 +193,7 @@ handle_cast(?MSG_HANDLE_TASK, #state{ task_queue = Q } = State) ->
 		_ ->
 			gen_server:cast(self(), ?MSG_HANDLE_TASK),
 			{{_Priority, _ID, {TaskType, Candidate, _ExtraArgs} = Task}, Q2} = gb_sets:take_smallest(Q),
-			prometheus_gauge:dec(mining_server_task_queue_len, [TaskType]),
+			ar_metrics:gauge_dec(mining_server_task_queue_len, [TaskType]),
 			case is_session_valid(State, Candidate) of
 				true ->
 					State1 = handle_task(Task, State#state{ task_queue = Q2 }),
@@ -258,8 +258,8 @@ add_task({TaskType, Candidate, _ExtraArgs} = Task, State) ->
 	#state{ task_queue = Q } = State,
 	StepNumber = Candidate#mining_candidate.step_number,
 	Q2 = gb_sets:insert({priority(TaskType, StepNumber), make_ref(), Task}, Q),
-	prometheus_gauge:inc(mining_server_task_queue_len, [TaskType]),
-	prometheus_gauge:inc(mining_server_tasks, [TaskType]),
+	ar_metrics:gauge_inc(mining_server_task_queue_len, [TaskType]),
+	ar_metrics:gauge_inc(mining_server_tasks, [TaskType]),
 	State#state{ task_queue = Q2 }.
 
 -spec handle_task(
@@ -858,7 +858,7 @@ remove_tasks(SessionKey, TaskQueue) ->
 		fun({_Priority, _ID, {TaskType, Candidate, _ExtraArgs}}) ->
 			case Candidate#mining_candidate.session_key == SessionKey of
 				true ->
-					prometheus_gauge:dec(mining_server_task_queue_len, [TaskType]),
+					ar_metrics:gauge_dec(mining_server_task_queue_len, [TaskType]),
 					false;
 				false ->
 					true
@@ -1078,9 +1078,9 @@ report_and_reset_hashes(State) ->
 	State#state{ h1_hashes = #{}, h2_hashes = #{} }.
 
 report_chunk_cache_metrics(#state{chunk_cache = ChunkCache, partition_number = Partition} = State) ->
-	prometheus_gauge:set(mining_server_chunk_cache_size, [Partition, "total"], ar_mining_cache:cache_size(ChunkCache)),
+	ar_metrics:gauge_set(mining_server_chunk_cache_size, [Partition, "total"], ar_mining_cache:cache_size(ChunkCache)),
 	case ar_mining_cache:reserved_size(ChunkCache) of
-		{ok, ReservedSize} -> prometheus_gauge:set(mining_server_chunk_cache_size, [Partition, "reserved"], ReservedSize);
+		{ok, ReservedSize} -> ar_metrics:gauge_set(mining_server_chunk_cache_size, [Partition, "reserved"], ReservedSize);
 		{error, Reason} ->
 			log_error(mining_worker_failed_to_report_chunk_cache_metrics, State, [{reason, Reason}])
 	end,
