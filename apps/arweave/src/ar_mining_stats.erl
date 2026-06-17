@@ -100,7 +100,7 @@ start_link() ->
 
 start_performance_reports() ->
 	reset_all_stats(),
-	gen_server:cast(?MODULE, start_performance_reports).
+	gen_server:call(?MODULE, start_performance_reports).
 
 %% @doc Stop logging performance reports for the given number of milliseconds.
 pause_performance_reports(Time) ->
@@ -266,6 +266,11 @@ mining_paused() ->
 init([]) ->
 	{ok, #state{}}.
 
+handle_call(start_performance_reports, _From, State) ->
+	%% Installs a new report ref. Ticks from any previously armed timer no longer match the state
+	%% and are dropped, so only one timer ever reports.
+	{reply, ok, schedule_report(State)};
+
 handle_call({pause_performance_reports, Time}, _From, State) ->
 	Now = os:system_time(millisecond),
 	Timeout = Now + Time,
@@ -275,11 +280,6 @@ handle_call({pause_performance_reports, Time}, _From, State) ->
 handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, ok, State}.
-
-handle_cast(start_performance_reports, State) ->
-	%% Installs a new report ref. Ticks from any previously armed timer no longer match the state
-	%% and are dropped, so only one timer ever reports.
-	{noreply, schedule_report(State)};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -1598,10 +1598,10 @@ do_test_report(Mining, Packing, PoA1Multiplier) ->
 %% timer, otherwise a restarted ar_mining_server starts a second timer and every report
 %% is logged twice (the second one with zeroed "current" stats).
 stale_report_chain_test() ->
-	{noreply, State1} = handle_cast(start_performance_reports, #state{}),
+	{reply, ok, State1} = handle_call(start_performance_reports, from, #state{}),
 	#state{ report_ref = Ref1 } = State1,
 	?assert(is_reference(Ref1)),
-	{noreply, State2} = handle_cast(start_performance_reports, State1),
+	{reply, ok, State2} = handle_call(start_performance_reports, from, State1),
 	#state{ report_ref = Ref2 } = State2,
 	?assertNotEqual(Ref1, Ref2),
 	%% A tick from a superseded timer is dropped: no report, no reschedule.
