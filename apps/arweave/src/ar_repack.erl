@@ -435,23 +435,15 @@ repack_footprint(Cursor, #state{} = State) ->
 			%% 2. The iteration range of this batch starts after the end of the
 			%%    storage module.
 			gen_server:cast(self(), repack),
-			Interval = ar_sync_record:get_next_unsynced_interval(
-				Cursor, infinity, TargetPacking, ar_data_sync, StoreID),
-			NextCursor = case Interval of
-				not_found ->
-					Cursor + ?DATA_CHUNK_SIZE;
-				{_, Start} ->
-					Start
-			end,
-			NextCursor2 = max(NextCursor, Cursor + ?DATA_CHUNK_SIZE),
+			NextCursor = get_next_cursor(Cursor, TargetPacking, StoreID, ModuleEnd),
 			log_debug(skipping_cursor, State, [
-				{next_cursor, NextCursor2},
+				{next_cursor, NextCursor},
 				{cursor, Cursor},
 				{footprint_start, FootprintStart},
 				{footprint_end, FootprintEnd},
 				{footprint_offsets, length(FootprintOffsets)}
 			] ++ Logs),
-			State#state{ next_cursor = NextCursor2 };
+			State#state{ next_cursor = NextCursor };
 		true ->
 			State2 = State#state{ 
 				footprint_start = FootprintStart,
@@ -504,25 +496,28 @@ should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
 	IsChunkRecorded = ar_sync_record:is_recorded(PaddedEndOffset, ar_data_sync, StoreID),
 	IsEntropyRecorded = ar_entropy_storage:is_entropy_recorded(
 		PaddedEndOffset, TargetPacking, StoreID),
-	%% Skip this offset if it's already packed to TargetPacking, or if it's not recorded
-	%% at all.
-	Skip = case {IsChunkRecorded, IsEntropyRecorded} of
-		%% Chunk is missing and we haven't written entropy yet, so we still want to process
-		%% the bucket and write entropy to it.
-		{false, false} -> false;
-		%% Chunk is missing but entropy has already been written, so we can skip.
-		{false, true} -> true;
-		%% Skip if chunk is recorded and already packed to TargetPacking
-		{{true, TargetPacking}, _} -> true;
-		%% Skip if entropy exists for an unpacked chunk as this indicates the chunks
-		%% 1. the chunks are small and therefore can't be packed
-		%% 2. have already been processed and classified as `entropy_only`
-		{{true, unpacked}, true} -> true;
-		_ -> false
+	%% Only replica_2_9 writes entropy into empty buckets; for any other target an empty
+	%% bucket has nothing to write.
+	NeedsEntropy = needs_entropy(TargetPacking),
+	%% Decide from the offset's recorded state whether it still needs repacking.
+	NeedsRepack = case {IsChunkRecorded, IsEntropyRecorded} of
+		%% Chunk and entropy both missing. Repack (to write entropy) only if the target
+		%% needs entropy; otherwise there's nothing to write here, and repacking it would
+		%% trigger a full footprint of source entropy generation for nothing.
+		{false, false} -> NeedsEntropy;
+		%% Chunk is missing but entropy has already been written, so there's nothing to do.
+		{false, true} -> false;
+		%% Chunk is recorded and already packed to TargetPacking, so there's nothing to do.
+		{{true, TargetPacking}, _} -> false;
+		%% Entropy exists for an unpacked chunk, which means the chunk is either
+		%% 1. small and therefore can't be packed, or
+		%% 2. already processed and classified as `entropy_only`.
+		{{true, unpacked}, true} -> false;
+		_ -> true
 	end,
 
 	ShouldRepack = (
-		not Skip 
+		NeedsRepack
 		andalso FootprintStart =< ModuleEnd
 		andalso FootprintEnd >= ModuleStart
 	),
@@ -533,12 +528,41 @@ should_repack(Cursor, FootprintStart, FootprintEnd, State) ->
 				{padded_end_offset, PaddedEndOffset},
 				{is_chunk_recorded, IsChunkRecorded},
 				{is_entropy_recorded, IsEntropyRecorded},
-				{skip, Skip}
+				{needs_repack, NeedsRepack}
 			],
 			{false, Logs};
 		_ ->
 			true
 	end.
+
+%% @doc Return the next cursor to try after skipping Cursor. Always advances by at
+%% least one chunk, jumping ahead to the next offset that may still need repacking.
+get_next_cursor(Cursor, TargetPacking, StoreID, ModuleEnd) ->
+	MinNext = Cursor + ?DATA_CHUNK_SIZE,
+	%% The next offset not yet packed to the target.
+	TargetStart = interval_start(ar_sync_record:get_next_unsynced_interval(
+		Cursor, infinity, TargetPacking, ar_data_sync, StoreID), MinNext),
+	Candidates = case needs_entropy(TargetPacking) of
+		true ->
+			[TargetStart];
+		false ->
+			%% A bucket with no chunk data can never be repacked to a non-entropy
+			%% packing, so also jump to the next offset that holds chunk data - or past
+			%% the module end, ending the repack, when no data remains.
+			SyncedStart = interval_start(ar_sync_record:get_next_synced_interval(
+				Cursor, infinity, ar_data_sync, StoreID), ModuleEnd + ?DATA_CHUNK_SIZE),
+			[TargetStart, SyncedStart]
+	end,
+	lists:max([MinNext | Candidates]).
+
+%% @doc Return the start offset of a sync-record interval, or Default if there is none.
+interval_start(not_found, Default) -> Default;
+interval_start({_End, Start}, _Default) -> Start.
+
+%% @doc Return true if Packing is the replica_2_9 format, the only repack source or
+%% target that carries entropy.
+needs_entropy({replica_2_9, _}) -> true;
+needs_entropy(_) -> false.
 
 %% @doc Generates the set of entropy offsets that will be used during one iteration of
 %% repack_footprint. Expects to be called with a BucketEndOffset. This is to avoid
@@ -605,19 +629,14 @@ init_repack_chunk_map([EntropyOffset | EntropyOffsets], #state{} = State) ->
 	Map2 = lists:foldl(
 		fun(BucketEndOffset, Acc) ->
 			false = maps:is_key(BucketEndOffset, Acc),
-			SourceEntropy = case SourcePacking of
-				{replica_2_9, _} ->
-					not_set;
-				_ ->
-					%% Setting to <<>> indicates that source entropy is not needed.
-					<<>>
+			%% not_set means we still need the entropy; <<>> means it isn't needed.
+			SourceEntropy = case needs_entropy(SourcePacking) of
+				true -> not_set;
+				false -> <<>>
 			end,
-			TargetEntropy = case TargetPacking of
-				{replica_2_9, _} ->
-					not_set;
-				_ ->
-					%% Setting to <<>> indicates that target entropy is not needed.
-					<<>>
+			TargetEntropy = case needs_entropy(TargetPacking) of
+				true -> not_set;
+				false -> <<>>
 			end,
 
 			RepackChunk = #repack_chunk{
@@ -918,9 +937,9 @@ process_state_change(RepackChunk, #state{} = State) ->
 			SourcePacking = RepackChunk#repack_chunk.source_packing,
 			TargetPacking = RepackChunk#repack_chunk.target_packing,
 
-			Packing = case TargetPacking of
-				{replica_2_9, _} -> unpacked_padded;
-				_ -> TargetPacking
+			Packing = case needs_entropy(TargetPacking) of
+				true -> unpacked_padded;
+				false -> TargetPacking
 			end,
 
 			ar_packing_server:request_repack({BucketEndOffset, FootprintStart}, self(),
@@ -1566,14 +1585,29 @@ test_should_repack_no_chunk_no_entropy() ->
 	?assertEqual(true,
 		should_repack(600_000, 200_000, 300_000, #state{
 			module_start = 100_000,
-			module_end = 2_000_000
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr">>}
+		})),
+	%% No chunk and no entropy, but the target packing doesn't need entropy: there is
+	%% nothing to write for this bucket so it is skipped.
+	?assertEqual({false, [
+			{cursor, 600_000},
+			{padded_end_offset, 600_000},
+			{is_chunk_recorded, false},
+			{is_entropy_recorded, false},
+			{needs_repack, false}
+		]},
+		should_repack(600_000, 200_000, 300_000, #state{
+			module_start = 100_000,
+			module_end = 2_000_000,
+			target_packing = unpacked
 		})),
 	?assertEqual({false, [
 			{cursor, 600_000},
 			{padded_end_offset, 600_000},
 			{is_chunk_recorded, false},
 			{is_entropy_recorded, false},
-			{skip, false}
+			{needs_repack, true}
 		]},
 		should_repack(600_000, 0, 50_000, #state{
 			module_start = 100_000,
@@ -1585,7 +1619,7 @@ test_should_repack_no_chunk_no_entropy() ->
 			{padded_end_offset, 600_000},
 			{is_chunk_recorded, false},
 			{is_entropy_recorded, false},
-			{skip, false}
+			{needs_repack, true}
 		]},
 		should_repack(600_000, 2_000_001, 3_000_000, #state{
 			module_start = 100_000,
@@ -1595,7 +1629,8 @@ test_should_repack_no_chunk_no_entropy() ->
 	?assertEqual(true,
 		should_repack(750_000, 200_000, 300_000, #state{
 			module_start = 100_000,
-			module_end = 2_000_000
+			module_end = 2_000_000,
+			target_packing = {replica_2_9, <<"addr">>}
 		})).
 
 test_should_repack_chunk_and_entropy() ->
@@ -1605,7 +1640,7 @@ test_should_repack_chunk_and_entropy() ->
 			{padded_end_offset, 600_000},
 			{is_chunk_recorded, {true, {replica_2_9, <<"addr">>}}},
 			{is_entropy_recorded, true},
-			{skip, true}
+			{needs_repack, false}
 		]},
 		should_repack(600_000, 200_000, 300_000, #state{
 			module_start = 100_000,
@@ -1618,7 +1653,7 @@ test_should_repack_chunk_and_entropy() ->
 			{padded_end_offset, 600_000},
 			{is_chunk_recorded, {true, {replica_2_9, <<"addr">>}}},
 			{is_entropy_recorded, true},
-			{skip, false}
+			{needs_repack, true}
 		]},
 		should_repack(600_000, 2_000_001, 3_000_000, #state{
 			module_start = 100_000,
@@ -1638,7 +1673,7 @@ test_should_repack_chunk_and_entropy() ->
 			{padded_end_offset, 600_000},
 			{is_chunk_recorded, {true, {replica_2_9, <<"addr">>}}},
 			{is_entropy_recorded, true},
-			{skip, false}
+			{needs_repack, true}
 		]},
 		should_repack(600_000, 0, 50_000, #state{
 			module_start = 100_000,
@@ -1650,7 +1685,7 @@ test_should_repack_chunk_and_entropy() ->
 			{padded_end_offset, 600_000},
 			{is_chunk_recorded, {true, {replica_2_9, <<"addr">>}}},
 			{is_entropy_recorded, true},
-			{skip, false}
+			{needs_repack, true}
 		]},
 		should_repack(600_000, 2_000_001, 3_000_000, #state{
 			module_start = 100_000,
@@ -1666,7 +1701,7 @@ test_should_repack_entropy_but_no_chunk() ->
 		{padded_end_offset, 600_000},
 		{is_chunk_recorded, false},
 		{is_entropy_recorded, true},
-		{skip, true}
+		{needs_repack, false}
 	]},
 	should_repack(600_000, 200_000, 300_000, #state{
 		module_start = 100_000,
@@ -1683,7 +1718,7 @@ test_should_repack_unpacked_chunk_and_entropy() ->
 		{padded_end_offset, 600_000},
 		{is_chunk_recorded, {true, unpacked}},
 		{is_entropy_recorded, true},
-		{skip, true}
+		{needs_repack, false}
 	]},
 	should_repack(600_000, 200_000, 300_000, #state{
 		module_start = 100_000,
@@ -1698,7 +1733,7 @@ test_should_repack_unpacked_chunk_no_entropy() ->
 		{padded_end_offset, 600_000},
 		{is_chunk_recorded, {true, unpacked}},
 		{is_entropy_recorded, false},
-		{skip, true}
+		{needs_repack, false}
 	]},
 	should_repack(600_000, 200_000, 300_000, #state{
 		module_start = 100_000,
@@ -1718,7 +1753,7 @@ test_should_repack_unpacked_chunk_no_entropy() ->
 			{padded_end_offset, 600_000},
 			{is_chunk_recorded, {true, unpacked}},
 			{is_entropy_recorded, false},
-			{skip, false}
+			{needs_repack, true}
 		]},
 		should_repack(600_000, 0, 50_000, #state{
 			module_start = 100_000,
@@ -1730,7 +1765,7 @@ test_should_repack_unpacked_chunk_no_entropy() ->
 			{padded_end_offset, 600_000},
 			{is_chunk_recorded, {true, unpacked}},
 			{is_entropy_recorded, false},
-			{skip, false}
+			{needs_repack, true}
 		]},
 		should_repack(600_000, 2_000_001, 3_000_000, #state{
 			module_start = 100_000,
@@ -1738,6 +1773,56 @@ test_should_repack_unpacked_chunk_no_entropy() ->
 			target_packing = {replica_2_9, <<"addr">>}
 		})).
 
+get_next_cursor_test_() ->
+	[
+		ar_test_node:test_with_all_nodes_mocked([
+			{ar_sync_record, get_next_unsynced_interval,
+				fun(_, _, _, _, _) -> {1_500_000, 1_000_000} end},
+			{ar_sync_record, get_next_synced_interval,
+				fun(_, _, _, _) -> {3_000_000, 2_000_000} end}
+		],
+		fun test_get_next_cursor_data_ahead/0, 30),
+		ar_test_node:test_with_all_nodes_mocked([
+			{ar_sync_record, get_next_unsynced_interval,
+				fun(_, _, _, _, _) -> not_found end},
+			{ar_sync_record, get_next_synced_interval,
+				fun(_, _, _, _) -> not_found end}
+		],
+		fun test_get_next_cursor_no_intervals/0, 30),
+		ar_test_node:test_with_all_nodes_mocked([
+			{ar_sync_record, get_next_unsynced_interval,
+				fun(_, _, _, _, _) -> {5_000_000, 600_000} end},
+			{ar_sync_record, get_next_synced_interval,
+				fun(_, _, _, _) -> {5_000_000, 400_000} end}
+		],
+		fun test_get_next_cursor_inside_intervals/0, 30)
+	].
+
+test_get_next_cursor_data_ahead() ->
+	%% replica_2_9 target: advance to the next offset not yet packed to the target.
+	?assertEqual(1_000_000,
+		get_next_cursor(600_000, {replica_2_9, <<"addr">>}, "storage_module_0_unpacked",
+			10_000_000)),
+	%% Non-entropy target: data holes can't be repacked, jump to the next synced offset.
+	?assertEqual(2_000_000,
+		get_next_cursor(600_000, unpacked, "storage_module_0_unpacked", 10_000_000)).
+
+test_get_next_cursor_no_intervals() ->
+	?assertEqual(600_000 + ?DATA_CHUNK_SIZE,
+		get_next_cursor(600_000, {replica_2_9, <<"addr">>}, "storage_module_0_unpacked",
+			10_000_000)),
+	%% Non-entropy target with no chunk data after the cursor: jump past the module end.
+	?assertEqual(10_000_000 + ?DATA_CHUNK_SIZE,
+		get_next_cursor(600_000, unpacked, "storage_module_0_unpacked", 10_000_000)).
+
+test_get_next_cursor_inside_intervals() ->
+	%% The cursor sits inside both the unsynced-as-target and the synced-data intervals:
+	%% advance by one chunk.
+	?assertEqual(600_000 + ?DATA_CHUNK_SIZE,
+		get_next_cursor(600_000, {replica_2_9, <<"addr">>}, "storage_module_0_unpacked",
+			10_000_000)),
+	?assertEqual(600_000 + ?DATA_CHUNK_SIZE,
+		get_next_cursor(600_000, unpacked, "storage_module_0_unpacked", 10_000_000)).
 
 init_repack_chunk_map_test_() ->
 	[
