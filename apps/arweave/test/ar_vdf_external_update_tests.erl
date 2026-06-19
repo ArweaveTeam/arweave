@@ -135,10 +135,8 @@ test_session_overlap() ->
 		ok,
 		apply_external_update(SessionKey2, [11, 10], 12, false, SessionKey1),
 		"Full session2, some steps already seen"),
-	timer:sleep(?WAIT_TIME),
-	?assertEqual(
-		[<<"8">>, <<"7">>, <<"6">>, <<"5">>, <<"9">>, <<"10">>, <<"11">>, <<"12">>],
-	computed_steps()),
+	wait_computed_steps(
+		[<<"8">>, <<"7">>, <<"6">>, <<"5">>, <<"9">>, <<"10">>, <<"11">>, <<"12">>]),
 	?assertEqual(SessionKey0, get_current_session_key()),
 	?assertEqual(
 		[10, 10, 10, 10, 10, 20, 20, 20],
@@ -161,11 +159,9 @@ test_client_ahead() ->
 		#nonce_limiter_update_response{ step_number = 8 },
 		apply_external_update(SessionKey1, [6, 5], 7, false, SessionKey0),
 		"Full session, client ahead"),
-	timer:sleep(?WAIT_TIME),
 	?assertEqual(SessionKey0, get_current_session_key()),
-	?assertEqual(
-		[<<"8">>, <<"7">>, <<"6">>, <<"5">>],
-		computed_steps()),
+	wait_computed_steps(
+		[<<"8">>, <<"7">>, <<"6">>, <<"5">>]),
 	?assertEqual(
 		[10, 10, 10, 10],
 		computed_upper_bounds()).
@@ -206,11 +202,9 @@ test_skip_ahead() ->
 		ok,
 		apply_external_update(SessionKey2, [11, 10], 12, false, SessionKey1),
 		"Full session2, some steps already seen"),
-	timer:sleep(?WAIT_TIME),
 	?assertEqual(SessionKey0, get_current_session_key()),
-	?assertEqual(
-		[<<"6">>, <<"5">>, <<"8">>, <<"7">>, <<"9">>, <<"12">>, <<"11">>, <<"10">>],
-		computed_steps()),
+	wait_computed_steps(
+		[<<"6">>, <<"5">>, <<"8">>, <<"7">>, <<"9">>, <<"12">>, <<"11">>, <<"10">>]),
 	?assertEqual(
 		[10, 10, 10, 10, 10, 20, 20, 20],
 		computed_upper_bounds()).
@@ -268,13 +262,12 @@ test_2_servers_switching() ->
 		ok,
 		apply_external_update(SessionKey2, [], 14, true, SessionKey1, vdf_server_2()),
 		"Partial (new) session2 from vdf_server_2"),
-	timer:sleep(?WAIT_TIME),
 	?assertEqual(SessionKey0, get_current_session_key()),
-	?assertEqual([
+	wait_computed_steps([
 		<<"7">>, <<"6">>, <<"5">>, <<"8">>, <<"9">>,
 		<<"11">>, <<"10">>, <<"10">>, <<"11">>, <<"12">>,
 		<<"12">>, <<"13">>, <<"14">>
-	], computed_steps()),
+	]),
 	?assertEqual(
 		[10, 10, 10, 10, 10, 20, 20, 20, 20, 20, 20, 20, 20],
 		computed_upper_bounds()).
@@ -309,13 +302,12 @@ test_backtrack() ->
 		apply_external_update(
 			SessionKey2, [14, 13, 12, 11, 10], 15, false, SessionKey1),
 		"Backtrack. Send full session2"),
-	timer:sleep(?WAIT_TIME),
 	?assertEqual(SessionKey0, get_current_session_key()),
-	?assertEqual([
+	wait_computed_steps([
 		<<"17">>,<<"16">>,<<"15">>,<<"14">>,<<"13">>,<<"12">>,
         <<"11">>,<<"10">>,<<"9">>,<<"8">>,<<"7">>,<<"6">>,
         <<"5">>,<<"18">>,<<"15">>
-	], computed_steps()),
+	]),
 	?assertEqual(
 		[20, 20, 20, 20, 20, 20, 20, 20, 10, 10, 10, 10, 10, 20, 30],
 		computed_upper_bounds()).
@@ -345,12 +337,11 @@ test_2_servers_backtrack() ->
 		apply_external_update(
 			SessionKey2, [14, 13, 12, 11, 10], 15, false, SessionKey1, vdf_server_2()),
 		"Backtrack in session2 from vdf_server_2"),
-	timer:sleep(?WAIT_TIME),
-	?assertEqual([
+	wait_computed_steps([
 		<<"17">>,<<"16">>,<<"15">>,<<"14">>,<<"13">>,<<"12">>,
         <<"11">>,<<"10">>,<<"9">>,<<"8">>,<<"7">>,<<"6">>,
         <<"5">>,<<"18">>,<<"15">>
-	], computed_steps()),
+	]),
 	?assertEqual(SessionKey0, get_current_session_key()),
 	?assertEqual(
 		[20, 20, 20, 20, 20, 20, 20, 20, 10, 10, 10, 10, 10, 20, 30],
@@ -481,6 +472,13 @@ vdf_server_2() ->
 
 computed_steps() ->
     lists:reverse(ets:foldl(fun({_, Step, _}, Acc) -> [Step | Acc] end, [], computed_output)).
+
+%% @doc computed_output is populated asynchronously by the nonce_limiter event
+%% subscriber loop, so poll until the recorded steps match Expected
+%% (computed_upper_bounds, read from the same ETS rows, is complete by then too).
+wait_computed_steps(Expected) ->
+	ar_test_await:until(computed_steps, fun() -> computed_steps() == Expected end),
+	?assertEqual(Expected, computed_steps()).
 
 computed_upper_bounds() ->
     lists:reverse(ets:foldl(fun({_, _, UpperBound}, Acc) -> [UpperBound | Acc] end, [], computed_output)).

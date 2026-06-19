@@ -44,6 +44,8 @@
 
 	%% --- Block / chain state ---
 	node_height/2,                  %% (Node, TargetHeight) -> {ok, BI}
+	block_applied/3,                %% (ToNode, Block, TargetHeight)
+	block_applied_from/4,           %% (ToNode, FromNode, H, TargetHeight)
 	block_stored/1,                 %% (HashOrHeight) -> Block
 	block_stored/2,                 %% (HashOrHeight, IncludeTXs) -> Block
 	block_index_matches/2,          %% (Node, BI)
@@ -427,6 +429,29 @@ node_height(Node, TargetHeight) ->
 				_ -> false
 			end
 		end).
+
+%% @doc Re-send `Block' to `ToNode' on each poll until `ToNode' reaches
+%% `TargetHeight'. Re-sending nudges application when gossip is off; a transient
+%% HTTP error from a busy peer under load just retries on the next poll, so the
+%% height is the success condition.
+-spec block_applied(ToNode :: atom(), Block :: term(),
+		TargetHeight :: non_neg_integer()) ->
+	ok | {error, {timeout, term()}}.
+block_applied(ToNode, Block, TargetHeight) ->
+	do_until_true(block_applied,
+		fun() ->
+			_ = ar_test_node:send_new_block(ar_test_node:peer_ip(ToNode), Block),
+			on(ToNode, ar_node, get_height, []) >= TargetHeight
+		end).
+
+%% @doc `block_applied/3' for a block identified by hash `H', read once from
+%% `FromNode' — i.e. propagate a block from one node to another (when gossip is
+%% off) and wait until `ToNode' applies it.
+-spec block_applied_from(ToNode :: atom(), FromNode :: atom(), H :: binary(),
+		TargetHeight :: non_neg_integer()) ->
+	ok | {error, {timeout, term()}}.
+block_applied_from(ToNode, FromNode, H, TargetHeight) ->
+	block_applied(ToNode, on(FromNode, ar_storage, read_block, [H]), TargetHeight).
 
 %% @doc Wait until a locally stored block and all its transaction
 %% headers are readable, then return the block (raising on timeout).

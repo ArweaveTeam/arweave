@@ -62,8 +62,7 @@ test_fork_checkpoints_not_found() ->
 
 				ar_test_node:mine(main),
 				{ok, [H1 | _]} = ar_test_await:node_height(main, 1),
-				send_block(H1, main, peer1),
-				?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
+				ok = ar_test_await:block_applied_from(peer1, main, H1, 1),
 
 				ar_test_node:disconnect_from(peer1),
 				%% Suspend peer1's nonce limiter so it stays in the old session while
@@ -87,8 +86,7 @@ test_fork_checkpoints_not_found() ->
 				end),
 
 				%% Get peer1 on the main chain.
-				send_block(H2, main, peer1),
-				?assertMatch({ok, _}, ar_test_await:node_height(peer1, 2)),
+				ok = ar_test_await:block_applied_from(peer1, main, H2, 2),
 
 				%% On the main chain, peer1 should now be able to mine a block.
 				ar_test_node:mine(peer1),
@@ -156,8 +154,7 @@ test_fork_refuse_validation() ->
 
 				ar_test_node:mine(main),
 				{ok, [H1 | _]} = ar_test_await:node_height(main, 1),
-				send_block(H1, main, peer1),
-				?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
+				ok = ar_test_await:block_applied_from(peer1, main, H1, 1),
 				ok = ar_test_await:vdf_step(peer1, ?TEST_RESET_FREQUENCY + 1),
 
 				ar_test_node:mine(peer1),
@@ -176,8 +173,8 @@ test_fork_refuse_validation() ->
 				ar_test_await:mining_paused(main),
 
 				ar_test_node:connect_to_peer(peer1),
-				ensure_block_applied(H2, main, peer1, 2),
-				ensure_block_applied(H3, main, peer1, 3),
+				ok = ar_test_await:block_applied_from(peer1, main, H2, 2),
+				ok = ar_test_await:block_applied_from(peer1, main, H3, 3),
 				?assertMatch({ok, _}, ar_test_await:node_height(peer1, 3))
 			end)
 		end)
@@ -209,26 +206,6 @@ test_weave() ->
 		}
 	},
 	[B1#block{ indep_hash = ar_block:indep_hash(B1) }].
-
-send_block(H, FromNode, ToNode) ->
-	Block = ar_test_node:remote_call(FromNode, ar_storage, read_block, [H]),
-	case ar_test_node:send_new_block(ar_test_node:peer_ip(ToNode), Block) of
-		{ok, {{<<"200">>, _}, _, _, _, _}} ->
-			ok;
-		{ok, {{<<"208">>, _}, _, _, _, _}} ->
-			ok;
-		Error ->
-			?assert(false, io_lib:format("Got unexpected error: ~p", [Error]))
-	end.
-
-ensure_block_applied(H, FromNode, ToNode, TargetHeight) ->
-	_ = ar_test_await:until(block_applied_at_height,
-		fun() ->
-			send_block(H, FromNode, ToNode),
-			Height = ar_test_node:remote_call(ToNode, ar_node, get_height, []),
-			Height >= TargetHeight
-		end),
-	ok.
 
 with_nonce_limiter_paused(Node, Fun) when is_function(Fun, 0) ->
 	Pid = suspend_nonce_limiter(Node),

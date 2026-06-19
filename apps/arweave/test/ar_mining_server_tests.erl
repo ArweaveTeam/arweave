@@ -174,8 +174,6 @@ test_no_solution_then_h1_solution_h2_unsynced() ->
 %% ------------------------------------------------------------------------------------------------
 %% pool_job_test_
 %% ------------------------------------------------------------------------------------------------
-%% we have to wait to let the ar_events get processed whenever we add a pool job
--define(WAIT_TIME, 1000).
 
 test_pool_job_no_cached_sessions() ->
 	SessionKey1 = {<<"session1">>, 1, 1},
@@ -191,7 +189,6 @@ test_pool_job_no_cached_sessions() ->
 		SessionKey1, 1, Output, PartitionUpperBound, Seed1, PartialDiff),
 	ar_mining_server:add_pool_job(
 		SessionKey1, 2, Output, PartitionUpperBound, Seed1, PartialDiff),
-	timer:sleep(?WAIT_TIME),
 	?assertEqual(sets:from_list([SessionKey1]), ar_mining_server:active_sessions()),
 	?assertEqual([1, 1, 2, 2], lists:sort(mined_steps())),
 
@@ -199,7 +196,6 @@ test_pool_job_no_cached_sessions() ->
 		SessionKey2, 5, Output, PartitionUpperBound, Seed2, PartialDiff),
 	ar_mining_server:add_pool_job(
 		SessionKey2, 6, Output, PartitionUpperBound, Seed2, PartialDiff),
-	timer:sleep(?WAIT_TIME),
 	?assertEqual(sets:from_list([SessionKey1, SessionKey2]), ar_mining_server:active_sessions()),
 	?assertEqual([5, 5, 6, 6], lists:sort(mined_steps())),
 
@@ -207,13 +203,11 @@ test_pool_job_no_cached_sessions() ->
 		SessionKey3, 10, Output, PartitionUpperBound, Seed3, PartialDiff),
 	ar_mining_server:add_pool_job(
 		SessionKey3, 12, Output, PartitionUpperBound, Seed3, PartialDiff),
-	timer:sleep(?WAIT_TIME),
 	?assertEqual(sets:from_list([SessionKey2, SessionKey3]), ar_mining_server:active_sessions()),
 	?assertEqual([10, 10, 12, 12],lists:sort(mined_steps())),
 
 	ar_mining_server:add_pool_job(
 		SessionKey1, 4, Output, PartitionUpperBound, Seed1, PartialDiff),
-	timer:sleep(?WAIT_TIME),
 	?assertEqual(sets:from_list([SessionKey2, SessionKey3]), ar_mining_server:active_sessions()),
 	?assertEqual([], mined_steps()).
 

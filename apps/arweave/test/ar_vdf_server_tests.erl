@@ -295,8 +295,7 @@ test_vdf_client_slow_block() ->
 
 	%% Post the block to the VDF client, it should validate it "immediately" since the
 	%% VDF server is ahead of the block in the VDF chain.
-	send_new_block(ar_test_node:peer_ip(peer1), B1),
-	{ok, BI} = ar_test_await:node_height(peer1, 1).
+	ok = ar_test_await:block_applied(peer1, B1, 1).
 
 test_vdf_client_slow_block_pull_interface() ->
 	MainPort = arweave_config:get([port]),
@@ -338,8 +337,7 @@ test_vdf_client_slow_block_pull_interface() ->
 
 	%% Post the block to the VDF client, it should validate it "immediately" since the
 	%% VDF server is ahead of the block in the VDF chain.
-	send_new_block(ar_test_node:peer_ip(peer1), B1),
-	{ok, BI} = ar_test_await:node_height(peer1, 1).
+	ok = ar_test_await:block_applied(peer1, B1, 1).
 
 %%
 %% serialize_test_
