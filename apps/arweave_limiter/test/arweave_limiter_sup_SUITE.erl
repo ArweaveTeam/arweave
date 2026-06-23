@@ -1,9 +1,3 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% @copyright 2025 (c) Arweave
-%%% @doc Common Test suite for arweave_limiter_sup.
-%%% @end
-%%%===================================================================
 -module(arweave_limiter_sup_SUITE).
 -export([suite/0, description/0]).
 -export([init_per_suite/1, end_per_suite/1]).
