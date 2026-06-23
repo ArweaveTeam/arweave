@@ -1,12 +1,4 @@
 %%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @copyright 2026 (c) Arweave
-%%% @author Arweave Team
 %%% @doc Public interface for the Arweave client-side request
 %%% throttler.
 %%%
