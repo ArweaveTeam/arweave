@@ -8,11 +8,10 @@
 %%% - Coordinate network sync next:
 %%%   - ar_data_discovery keeps a cache of what peers can serve.
 %%%   - ar_peer_sync compares that cache with this module's unsynced intervals
-%%%     and fills ar_sync_task_queue.
-%%%   - ar_data_sync_coordinator, ar_peer_worker, and ar_data_sync_worker fetch
-%%%     chunks from peers.
-%%% - Accept completed tasks back here to release dedup state and store
-%%%   validated chunks.
+%%%     and pushes tasks to ar_sync_dispatcher.
+%%%   - ar_sync_dispatcher admits tasks and spawns transient ar_data_sync_worker
+%%%     processes that fetch chunks from peers.
+%%% - Accept fetched chunks back here to store validated data.
 %%%
 %%% The default module also owns chain-tip/header-facing state used by the rest
 %%% of the node; configured storage modules own their local data range only.
@@ -1021,8 +1020,9 @@ handle_info({event, node_state, _}, State) ->
 %% casts are already queued in this mailbox ahead of the network-sync loops.
 handle_info({event, chunk_copy, {complete, StoreID}},
 		#data_sync_state{ store_id = StoreID } = State) ->
-	gen_server:cast(ar_peer_sync:name(StoreID), enqueue),
-	ar_peer_sync:sync(StoreID),
+	%% Start the ar_peer_sync work-discovery loop; it discovers work and pushes
+	%% tasks to ar_sync_dispatcher, which spawns the transient fetch workers.
+	ar_peer_sync:start(StoreID),
 	{noreply, State};
 handle_info({event, chunk_copy, _}, State) ->
 	{noreply, State};
@@ -1179,7 +1179,7 @@ terminate(Reason, #data_sync_state{ store_id = StoreID } = State) ->
 %%%===================================================================
 
 init_sync_status(StoreID) ->
-	SyncStatus = case ar_data_sync_coordinator:is_syncing_enabled() of
+	SyncStatus = case ar_sync_dispatcher:is_syncing_enabled() of
 		true -> paused;
 		false -> off
 	end,
