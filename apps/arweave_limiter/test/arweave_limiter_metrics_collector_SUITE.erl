@@ -68,7 +68,6 @@ init_per_testcase(TestCase, Config) ->
     BeforeApps = application:which_applications(),
     {ok, _Started1} = application:ensure_all_started(prometheus),
     {ok, _Started2} = application:ensure_all_started(arweave_config),
-    %catch ?ME:register(),
 
     %% It would be tempting to just use what the node has started already,
     %% but we need to start new limiters to control the config, and make
