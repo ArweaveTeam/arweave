@@ -28,9 +28,10 @@ init_per_testcase(_TestCase, _Config) ->
 
     arweave_config:set([limiter, test_limiter, number_of_workers], 10),
     arweave_config:set([limiter, test_limiter_2, number_of_workers], 5),
-    BeforeApps.
+    [{before_apps, BeforeApps}].
 
-end_per_testcase(_TestCase, BeforeApps) -> 
+end_per_testcase(_TestCase, Config) ->
+    BeforeApps = ?config(before_apps, Config),
     [application:stop(App) || App <- application:which_applications() -- BeforeApps],
     arweave_config:restore(erase({?MODULE, snapshot})),
     ok.
@@ -43,11 +44,11 @@ all() ->
 
 children_spec(_Config) ->
     GroupIDs = [test_limiter, test_limiter_2],
-    ChildSpec = ?M:children_spec(GroupIDs), 
-    SumWorkers = lists:foldl(fun(GID, AccIn) -> 
-                                     arweave_config:get([limiter, GID, number_of_workers]) + AccIn 
+    ChildSpec = ?M:children_spec(GroupIDs),
+    SumWorkers = lists:foldl(fun(GID, AccIn) ->
+                                     arweave_config:get([limiter, GID, number_of_workers]) + AccIn
                              end, 0, GroupIDs),
-                
+
     ?assertEqual(SumWorkers, length(ChildSpec)),
     ok.
 
