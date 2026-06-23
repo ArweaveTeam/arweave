@@ -92,9 +92,7 @@ do_register_or_reject_call(LimiterRef, Peer) ->
                true ->
                     ok
             end,
-            {reject, error, #{
-%%e=>E,r=>R
-}}
+            {reject, error, #{}}
     end.
 
 %% This function is called when a transaction is accepted. This is how the previous
