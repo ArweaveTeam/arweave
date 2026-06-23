@@ -81,10 +81,10 @@ init_per_testcase(TestCase, Config) ->
     arweave_config:set([limiter, ?GENERAL, concurrency_limit], 150000),
     arweave_config:set([limiter, ?METRICS, number_of_workers], 5),
 
-    SupPid = case ?S:start_link(GroupIDs) of
-                 {ok, Pid} -> Pid;
-                 {error, {already_started, Pid}} -> Pid
-             end,
+    %% Bind strictly: end_per_testcase stops the (named) supervisor
+    %% synchronously, so start_link/1 must return {ok, _} here. Adopting
+    %% an already_started sup would silently reuse a stale one.
+    {ok, SupPid} = ?S:start_link(GroupIDs),
 
     Callers = case TestCase of
                   rate_limiter_happy_path_sanity_check -> do_setup_with_data();
@@ -94,11 +94,12 @@ init_per_testcase(TestCase, Config) ->
     [{sup_pid, SupPid}, {before_apps, BeforeApps}, {callers, Callers}] ++ Config.
 
 end_per_testcase(_TestCase, Config) ->
-    cleanup(?config(callers, Config)),
-    %case ?config(sup_pid, Config) of
-    %    undefined -> ok;
-    %    SupPid -> catch exit(SupPid, shutdown)
-    %end,
+    drain_callers(?config(callers, Config)),
+    %% Synchronously stop the supervisor so its registered name is free
+    %% before the next testcase runs. Relying on the asynchronous
+    %% parent-exit teardown instead races the next start_link/1, which
+    %% then returns {already_started, StalePid}.
+    stop_sup(?config(sup_pid, Config)),
     ?ME:cleanup(),
     [application:stop(App) || App <- application:which_applications() -- ?config(before_apps, Config)],
     ok.
@@ -116,19 +117,28 @@ do_setup_with_data() ->
 
     Callers.
 
-cleanup(Callers) ->
+%% @doc Release every spawned caller so it exits normally.
+drain_callers(Callers) ->
     [Caller ! done || Caller <- Callers],
-    timer:sleep(1000),
-                                                %meck:unload(arweave_limiter_config),
-    Children = supervisor:which_children(?S),
-    lists:foreach(
-      fun({Id, _Pid, _Type, _Modules}) ->
-              supervisor:terminate_child(?S, Id),
-              supervisor:delete_child(?S, Id)
-      end,
-      Children
-     ),
     ok.
+
+%% @doc Synchronously stop the supervisor started in init_per_testcase.
+%% Unlink first so the shutdown exit signal isn't propagated back to the
+%% test process, then wait for the DOWN so the registered name is gone
+%% before returning. The supervisor's one_for_all/shutdown teardown stops
+%% its workers, so no explicit child termination is needed.
+stop_sup(SupPid) when is_pid(SupPid) ->
+    unlink(SupPid),
+    Ref = monitor(process, SupPid),
+    exit(SupPid, shutdown),
+    receive
+        {'DOWN', Ref, process, SupPid, _Reason} ->
+            ok
+    after 5000 ->
+            demonitor(Ref, [flush]),
+            exit(SupPid, kill),
+            ok
+    end.
 
 empty_limiters_sanity_check(_Config) ->
     ?assertMatch(
