@@ -253,6 +253,11 @@ For `*_SUITE.erl` files, keep comments minimal:
 - Prefer short inline `%%` comments on the specific non-obvious line, instead of a block comment above the testcase.
 - Skip comments for straightforward 2-5 line happy-path tests.
 - Keep comments that document surprising behavior, safety constraints, or setup/cleanup hazards.
+- Do not add module header comment for the common test module.
+
+### Common test exports
+
+Do not export Common Test functions in separate statement rather use `export_all` the following way: `-compile([export_all, nowarn_export_all]).`
 
 ### Private worker naming
 
