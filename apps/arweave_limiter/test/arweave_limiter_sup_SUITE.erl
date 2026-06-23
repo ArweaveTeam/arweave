@@ -1,9 +1,5 @@
 -module(arweave_limiter_sup_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([children_spec/1, child_spec/1]).
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").

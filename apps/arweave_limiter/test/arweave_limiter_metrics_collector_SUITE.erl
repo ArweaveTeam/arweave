@@ -1,12 +1,5 @@
 -module(arweave_limiter_metrics_collector_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([
-         empty_limiters_sanity_check/1,
-         rate_limiter_happy_path_sanity_check/1
-        ]).
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
