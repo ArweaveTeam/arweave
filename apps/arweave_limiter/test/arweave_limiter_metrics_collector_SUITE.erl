@@ -7,9 +7,6 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -define(M, arweave_limiter_metrics_collector).
--define(S, arweave_limiter_sup).
--define(L, arweave_limiter).
--define(ME, arweave_limiter_metrics).
 
 -define(GENERAL, general).
 -define(METRICS, metrics).
@@ -20,7 +17,7 @@
                   spawn_link(fun() ->
                                      ?assertMatch(
                                         Pattern,
-                                        ?L:register_or_reject_call(LimiterRef, Peer)),
+                                        arweave_limiter:register_or_reject_call(LimiterRef, Peer)),
                                      receive
                                          done -> ok
                                      end
@@ -64,7 +61,7 @@ init_per_testcase(TestCase, Config) ->
     %% Bind strictly: end_per_testcase stops the (named) supervisor
     %% synchronously, so start_link/1 must return {ok, _} here. Adopting
     %% an already_started sup would silently reuse a stale one.
-    {ok, SupPid} = ?S:start_link(GroupIDs),
+    {ok, SupPid} = arweave_limiter_sup:start_link(GroupIDs),
 
     Callers = case TestCase of
                   rate_limiter_happy_path_sanity_check -> do_setup_with_data();
@@ -80,7 +77,7 @@ end_per_testcase(_TestCase, Config) ->
     %% parent-exit teardown instead races the next start_link/1, which
     %% then returns {already_started, StalePid}.
     stop_sup(?config(sup_pid, Config)),
-    ?ME:cleanup(),
+    arweave_limiter_metrics:cleanup(),
     [application:stop(App) || App <- application:which_applications() -- ?config(before_apps, Config)],
     ok.
 
