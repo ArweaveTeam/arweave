@@ -309,16 +309,16 @@ limiter:
   test_limiter: *limiter_full
   test_limiter_2: *limiter_full
 client_throttling:
-  chunk: &limiter_full
+  chunk: &client_throttling_full
     id: chunk
     initial_remaining: 500
     max_queue_length: 7000
     concurrency_window_ms: 60000
-  data_sync_record: *limiter_full
-  recent_hash_list_diff: *limiter_full
-  block_index: *limiter_full
-  wallet_list: *limiter_full
-  get_vdf: *limiter_full
-  get_vdf_session: *limiter_full
-  get_previous_vdf_session: *limiter_full
-  general: *limiter_full
+  data_sync_record: *client_throttling_full
+  recent_hash_list_diff: *client_throttling_full
+  block_index: *client_throttling_full
+  wallet_list: *client_throttling_full
+  get_vdf: *client_throttling_full
+  get_vdf_session: *client_throttling_full
+  get_previous_vdf_session: *client_throttling_full
+  general: *client_throttling_full

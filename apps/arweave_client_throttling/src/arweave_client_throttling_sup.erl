@@ -53,7 +53,6 @@ children_spec_per_group(GroupID) ->
        start => {arweave_client_throttling_group, start_link, [Spec]},
        type => worker,
        shutdown => ?SHUTDOWN_TIMEOUT
-%       modules => [arweave_client_throttling_group]
       }].
 
 %% Only used in tests
