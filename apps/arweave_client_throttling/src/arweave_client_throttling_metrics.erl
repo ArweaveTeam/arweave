@@ -6,6 +6,13 @@
 -export([cleanup/0]).
 -endif.
 
+-define(LONG_LATENCY_BUCKETS, [100_000, 500_000,
+                       1_000_000, 5_000_000,
+                       10_000_000, 50_000_000,
+                       100_000_000, 500_000_000, 1000_000_000]).
+-define(SHORT_LATENCY_BUCKETS, [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000]).
+
+
 %%% Public interface.
 
 %% @doc Declare Arweave Client Throttling metrics.
@@ -23,7 +30,7 @@ register() ->
             {help, "Time request spent being throttled, including being routed "
                    "to and calling the throttling group, and being queued."},
             %% buckets might be reduced for production
-            {buckets, [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000]},
+            {buckets, ?LONG_LATENCY_BUCKETS},
             {labels, [group_id]}]),
     ok = prometheus_histogram:new(
            [{name, arweave_client_throttling_worker_response_time_microseconds},
@@ -31,7 +38,7 @@ register() ->
                    "respond to requests whether they can be executed right away or "
                    "need to be queued"},
             %% buckets might be reduced for production
-            {buckets, [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000]},
+            {buckets, ?SHORT_LATENCY_BUCKETS},
             {labels, [group_id]}]),
 
 
@@ -44,10 +51,7 @@ register() ->
             {help, "Time it took for the throttling group worker to respond "
                    "to is_throttled requests"},
             %% buckets might be reduced for production
-            {buckets, [100_000, 500_000,
-                       1_000_000, 5_000_000,
-                       10_000_000, 50_000_000,
-                       100_000_000, 500_000_000, 1000_000_000]},
+            {buckets, ?SHORT_LATENCY_BUCKETS},
             {labels, [group_id]}]),
 
     %% Practical use: We count the requests, how many of them are queued,
