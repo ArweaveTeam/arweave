@@ -84,7 +84,7 @@ do_register_or_reject_call(LimiterRef, Peer) ->
             prometheus_counter:inc(ar_limiter_requests_error, [atom_to_list(LimiterRef), ReasonStr]),
             %% Only log unexpected errors, others can be read from metrics.
             if ReasonStr == ?UNEXPECTED_ERROR_STR ->
-                    ?LOG_WARNING([{event, rate_limiter_group_error},
+                    ?LOG_ERROR([{event, rate_limiter_group_error},
                                   {limiter_ref, LimiterRef},
                                   {peer, Peer},
                                   {class, E},
@@ -421,19 +421,28 @@ reason_to_list(_) ->
 
 merge_info_maps(LimiterRef, N, #{concurrent_monitors := AccMon,
                                  leaky_tokens := AccTokens,
-                                 sliding_timestamps := AccInfoTS}) ->
+                                 sliding_timestamps := AccInfoTS} = AccIn) ->
     LimiterWorkerRef = arweave_limiter_util:worker_name(LimiterRef, N),
     %% We could do a pmap to do the gen_server calls, but the latency of this
     %% function is irrevelant, and perhaps we don't need to lock all workers at the same time.
-    #{concurrent_monitors := InfoMon,
-      leaky_tokens := InfoTokens,
-      sliding_timestamps := InfoTS} = gen_server:call(LimiterWorkerRef, get_info),
+    try gen_server:call(LimiterWorkerRef, get_info) of
+        #{concurrent_monitors := InfoMon,
+          leaky_tokens := InfoTokens,
+          sliding_timestamps := InfoTS} ->
 
-    %% The keys are either: process disjoint sets of monitor references,
-    %% or disjoint sets of peers.
-    #{concurrent_monitors => maps:merge(InfoMon, AccMon),
-      leaky_tokens => maps:merge(InfoTokens, AccTokens),
-      sliding_timestamps => maps:merge(InfoTS, AccInfoTS)}.
+            %% The keys are either: process disjoint sets of monitor references,
+            %% or disjoint sets of peers.
+            #{concurrent_monitors => maps:merge(InfoMon, AccMon),
+              leaky_tokens => maps:merge(InfoTokens, AccTokens),
+              sliding_timestamps => maps:merge(InfoTS, AccInfoTS)}
+    catch E:R ->
+            ?LOG_ERROR([{event, couldnt_scan_limiter_group_info},
+                        {limiter_ref, LimiterRef},
+                        {n, N},
+                        {class, E},
+                        {reason, R}]),
+            AccIn
+    end.
 
 ref_to_worker_ref(LimiterRef, Peer) ->
     WorkersNum = arweave_config:get([limiter, LimiterRef, number_of_workers]),
