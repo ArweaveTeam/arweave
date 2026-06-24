@@ -420,8 +420,8 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
 	{MinErrors, MaxErrors} = expected_error_range(ExpectedErrors, Tolerance),
 	?debugFmt("Requests sent: ~p, ExpectedErrors: ~p, Tolerance: ~p, Got: ~p~n",
 		[NRequests, ExpectedErrors, Tolerance, ErrorResponses]),
-	?assert(ErrorResponses =< ExpectedErrors + Tolerance),
-	?assert(ErrorResponses >= ExpectedErrors - Tolerance),
+	?assert(ErrorResponses =< MaxErrors),
+	?assert(ErrorResponses >= MinErrors),
 	?assertEqual(NRequests - ErrorResponses, maps:get(ok_responses, Got, 0)),
 	arweave_client_throttling_sup:all_on(),
 	ok.
