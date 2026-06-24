@@ -1,34 +1,24 @@
-%%% @doc Per-storage-module network-sync state machine (gen_server).
+%%% @doc Per-storage-module network-sync work discovery (gen_server).
 %%%
-%%% Owns the per-StoreID task queue (ar_sync_task_queue), the in-progress
-%%% enqueue pass, the device-lock state, and the latest known weave size.
-%%% Self-drives two cast loops:
+%%% The `enqueue' loop repeatedly sweeps the module range — one #sweep{} at a
+%%% time, alternating normal and footprint modes. Each sweep intersects
+%%% ar_data_discovery's cached peer offers with this module's unsynced gaps
+%%% (via ar_sync_record) and pushes chunk-sized #sync_task{} records to
+%%% ar_sync_dispatcher (gated by ar_sync_dispatcher:ready_for_work/0 so the
+%%% dispatcher's buffer stays bounded). No peer HTTP discovery happens here
+%%% (that is all in ar_data_discovery).
 %%%
-%%%  - `enqueue' (producer): walks the module range in normal and
-%%%    footprint modes, intersects ar_data_discovery's cached peer offers
-%%%    with this module's unsynced gaps (via ar_sync_record), inserts
-%%%    chunk-sized tasks into the queue.
-%%%
-%%%  - `sync' (consumer): pops one task from the queue, dispatches it to
-%%%    ar_data_sync_coordinator. Acquires the device lock first.
-%%%
-%%% No peer HTTP discovery happens here; that latency is isolated in
-%%% ar_data_discovery's scanner pool. This module is the bridge between
-%%% cached peer coverage and executable sync tasks.
-%%%
-%%% **Sole owner of the queue's `in_flight_intervals' overlay.** Drop
-%%% paths (rebalance cut, reaper, coordinator worker-unavailable, consumer-
-%%% side peer-saturation skip) all funnel through `task_dropped/1' to
-%%% release byte ranges. The success path uses `task_completed/4' which
-%%% also fans out per-peer accounting via ar_peer_worker.
+%%% **Sole owner of `inflight_intervals'.** A range is added when
+%%% the task is pushed and removed when ar_sync_dispatcher reports the task done
+%%% (via release_task_range/3 from its single 'DOWN' handler), or wholesale via
+%%% reset_inflight/1 when the dispatcher restarts.
 -module(ar_peer_sync).
 -test_category([fast]).
 
 -behaviour(gen_server).
 
 -export([start_link/1, name/1, register_workers/0]).
--export([enqueue/1, sync/1, task_dropped/1, task_completed/4,
-		set_weave_size/2]).
+-export([start/1, release_task_range/3, reset_inflight/0, set_weave_size/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
@@ -42,23 +32,23 @@
 -export([cut_peer_footprint_intervals/3]).
 -endif.
 
-%% One in-progress enqueue pass. All pass state lives in this record;
-%% it moves through the enqueue state machine and is replaced when the
-%% pass completes and a new one starts.
--record(enqueue_pass, {
-	%% Left bound of the pass range. For footprint mode, an inclusive
+%% One in-progress sweep over the module range. All sweep state lives in this
+%% record; it moves through the enqueue state machine and is replaced when the
+%% sweep completes and a new one starts.
+-record(sweep, {
+	%% Left bound of the sweep range. For footprint mode, an inclusive
 	%% boundary used when cutting per-peer footprint intervals to the
 	%% module.
 	start :: non_neg_integer(),
-	%% Right bound of the pass range (clamped to WeaveSize /
-	%% DiskPoolThreshold when the pass is built).
+	%% Right bound of the sweep range (clamped to WeaveSize /
+	%% DiskPoolThreshold when the sweep is built).
 	end_ :: non_neg_integer(),
 	%% Current position inside [start, end_). Advances on each step.
 	offset :: non_neg_integer(),
-	%% Which protocol we're querying peers with on this pass.
+	%% Which protocol we're querying peers with on this sweep.
 	mode :: normal | footprint,
-	%% Count of tasks produced in the current pass. Resets each pass.
-	%% Logged at pass_complete and used to gate the chunk_sync_started
+	%% Count of tasks produced in the current sweep. Resets each sweep.
+	%% Logged at sweep_complete and used to gate the chunk_sync_started
 	%% log to fire only on the first productive step.
 	tasks_produced = 0 :: non_neg_integer()
 }).
@@ -74,12 +64,12 @@
 	weave_size :: undefined | non_neg_integer(),
 	%% Mirror of ar_device_lock's view of this module's sync-mode lock.
 	sync_status = undefined,
-	%% Per-module task queue (ar_sync_task_queue library; record
+	%% Per-module task queue (ar_sync_task_queue; record
 	%% mutated only by handlers in this gen_server).
 	queue = ar_sync_task_queue:new(),
-	%% In-progress enqueue pass. `undefined' means the loop hasn't
-	%% started its first pass yet.
-	pass = undefined :: undefined | #enqueue_pass{}
+	%% In-progress sweep. `undefined' means the loop hasn't started its
+	%% first sweep yet.
+	sweep = undefined :: undefined | #sweep{}
 }).
 
 -define(GET_SYNC_RECORD_RPM_KEY, data_sync_record).
@@ -88,17 +78,14 @@
 -define(GET_FOOTPRINT_RECORD_PATH, [<<"footprints">>]).
 -define(FOOTPRINT_MIGRATION_CURSOR_KEY, <<"footprint_migration_cursor">>).
 
-%% Max queued chunks per sync worker.
--define(SYNC_TASK_QUEUE_CHUNKS_PER_WORKER, 250).
-
-%% Fixed delay between passes. Producer no longer issues HTTP (that
+%% Fixed delay between sweeps. The enqueue loop no longer issues HTTP (that
 %% lives in ar_data_discovery's per-peer scanner pool, which has its
 %% own pacing), so this only prevents tight-loop log spam and CPU spin
 %% on fully-synced modules.
 -ifdef(AR_TEST).
--define(PASS_RESTART_DELAY_MS, 1_000).
+-define(SWEEP_RESTART_DELAY_MS, 1_000).
 -else.
--define(PASS_RESTART_DELAY_MS, 10_000).
+-define(SWEEP_RESTART_DELAY_MS, 10_000).
 -endif.
 
 %%%===================================================================
@@ -111,11 +98,7 @@ name(StoreID) ->
 	list_to_atom("ar_peer_sync_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
-	StorageModules = [arweave_config:config_to_storage_module(M)
-		|| M <- arweave_config:get([storage_modules])],
-	StoreIDs = [ar_storage_module:id(SM) || SM <- StorageModules]
-		++ [?DEFAULT_MODULE],
-	[?CHILD_WITH_ARGS(?MODULE, worker, name(SID), [SID]) || SID <- StoreIDs].
+	[?CHILD_WITH_ARGS(?MODULE, worker, name(SID), [SID]) || SID <- store_ids()].
 
 start_link(StoreID) ->
 	gen_server:start_link({local, name(StoreID)}, ?MODULE, StoreID, []).
@@ -124,35 +107,31 @@ start_link(StoreID) ->
 %%% Public API.
 %%%===================================================================
 
-%% @doc Kick off the producer loop for the StoreID. Invoked by
-%% ar_data_sync after the chunk_copy phase completes.
-enqueue(StoreID) ->
+%% @doc Start (or re-kick) the work-discovery loop for the StoreID. Invoked by
+%% ar_data_sync once chunk_copy completes and whenever the store re-enters sync.
+start(StoreID) ->
 	gen_server:cast(name(StoreID), enqueue).
 
-%% @doc Kick off the consumer loop for the StoreID. Self-perpetuating
-%% once started.
-sync(StoreID) ->
-	gen_server:cast(name(StoreID), sync).
-
-%% @doc Drop path - release a byte range from the dedup overlay without
-%% touching per-peer accounting. Used when a task leaves the pipeline without
-%% completing.
-task_dropped(#sync_task{ store_id = StoreID, start_offset = Start,
-		end_offset = End }) ->
-	release_task_range(StoreID, Start, End).
-
-%% @doc Success path - fans out per-peer completion accounting (via
-%% ar_peer_worker:task_completed/6) and the byte-range release. Called by
-%% ar_data_sync_worker on definitive success or non-recast failure.
-task_completed(SyncTask, WorkerPid, Result, ElapsedUs) ->
-	#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
-			store_id = StoreID, footprint_key = FootprintKey } = SyncTask,
-	ar_peer_worker:task_completed(Peer, WorkerPid, FootprintKey, Result,
-		ElapsedUs, End - Start),
-	release_task_range(StoreID, Start, End).
-
+%% @doc Remove a byte range from the in-flight intervals. Called by
+%% ar_sync_dispatcher's 'DOWN' handler once a task's worker exits (the single
+%% terminal path), so ar_peer_sync can re-discover the range if needed.
 release_task_range(StoreID, Start, End) ->
 	gen_server:cast(name(StoreID), {release_task_range, Start, End}).
+
+%% @doc Clear every ar_peer_sync instance's in-flight intervals. Called by
+%% ar_sync_dispatcher on its init so that, after a dispatcher restart, ranges it
+%% had in flight (now lost) become re-discoverable. A cast to a not-yet-started
+%% instance is silently dropped, so this is a no-op on first boot.
+reset_inflight() ->
+	[gen_server:cast(name(StoreID), reset_inflight) || StoreID <- store_ids()],
+	ok.
+
+%% @doc The StoreIDs that have an ar_peer_sync instance (one per storage module
+%% plus the default module).
+store_ids() ->
+	StorageModules = [arweave_config:config_to_storage_module(M)
+		|| M <- arweave_config:get([storage_modules])],
+	[ar_storage_module:id(SM) || SM <- StorageModules] ++ [?DEFAULT_MODULE].
 
 %% @doc Update the weave-size snapshot. Called by ar_data_sync on chain-tip
 %% moves so the enqueue loop's range clamp follows the tip.
@@ -188,59 +167,43 @@ handle_call(Request, _From, State) ->
 	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
 	{reply, {error, unhandled}, State}.
 
-%% Producer step.
-handle_cast(enqueue, #state{ pass = undefined } = State) ->
-	case init_pass(State, normal) of
-		{ok, Pass} ->
-			gen_server:cast(self(), enqueue),
-			{noreply, State#state{ pass = Pass }};
-		not_ready ->
-			%% Node not joined yet, or footprint migration in flight.
-			ar_util:cast_after(1000, self(), enqueue),
-			{noreply, State}
-	end;
-handle_cast(enqueue, #state{ pass = #enqueue_pass{} } = State) ->
-	case can_enqueue(State) of
-		{wait, offset_past_end, _Delay} ->
-			%% Offset reached min(end_, WeaveSize) — the pass is done. This is the
-			%% sole completion trigger, so the pass tracks a shrinking or growing
-			%% weave tip without ever rewriting end_.
-			complete_pass(State);
-		{wait, _Reason, Delay} ->
-			ar_util:cast_after(Delay, self(), enqueue),
-			{noreply, State};
-		ready ->
-			{Action, NewState} = do_enqueue(State),
-			case Action of
-				cast_now -> gen_server:cast(self(), enqueue);
-				{cast_after, Ms} -> ar_util:cast_after(Ms, self(), enqueue)
-			end,
-			{noreply, NewState}
-	end;
-
-%% Consumer step.
-handle_cast(sync, State) ->
-	#state{ store_id = StoreID } = State,
-	Status = ar_device_lock:acquire_lock(sync, StoreID, State#state.sync_status),
+%% Enqueue (work-discovery) step. Kicked by ar_data_sync after the chunk_copy
+%% phase and then self-perpetuating. Hold the sync-mode device lock while the
+%% loop runs; ar_sync_dispatcher's fetch workers only write to a store in sync mode.
+handle_cast(enqueue, State) ->
+	Status = ar_device_lock:acquire_lock(
+		sync, State#state.store_id, State#state.sync_status),
 	State2 = State#state{ sync_status = Status },
 	case Status of
 		active ->
-			{noreply, do_sync(State2)};
+			enqueue(State2);
 		paused ->
-			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), sync),
+			ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), enqueue),
 			{noreply, State2};
 		_ ->
+			%% off / complete — not in sync mode. The loop is re-kicked by
+			%% ar_data_sync when the store re-enters sync.
 			{noreply, State2}
 	end;
 
-%% Byte-range release from any terminal task path.
+%% Byte-range release from the dispatcher's terminal 'DOWN' handler.
 handle_cast({release_task_range, Start, End}, State) ->
 	NewQ = ar_sync_task_queue:release_task_range(Start, End, State#state.queue),
-	{noreply, State#state{ queue = NewQ }};
+	State2 = State#state{ queue = NewQ },
+	publish_queue_metrics(State2),
+	{noreply, State2};
+
+%% Wholesale reset of the in-flight intervals after a dispatcher restart: drop
+%% every in-flight range so it can be re-discovered.
+handle_cast(reset_inflight, State) ->
+	State2 = State#state{ queue = ar_sync_task_queue:new() },
+	publish_queue_metrics(State2),
+	{noreply, State2};
 
 %% Chain-tip update from ar_data_sync. A decrease (reorg) needs no special
 %% handling: the smaller tip takes effect via min(end_, WeaveSize) in the
-%% producer and is_stale_task in the consumer.
+%% enqueue loop; tasks already pushed past the shrunk tip simply fail to fetch
+%% and have their ranges released.
 handle_cast({set_weave_size, WeaveSize}, State) ->
 	{noreply, State#state{ weave_size = WeaveSize }};
 
@@ -261,113 +224,50 @@ terminate(Reason, _State) ->
 %%% Step implementation (operate on #state{}).
 %%%===================================================================
 
-do_sync(State) ->
-	#state{ store_id = StoreID, queue = Q } = State,
-	case ar_sync_task_queue:is_empty(Q) of
-		true ->
-			ar_util:cast_after(500, self(), sync),
-			State;
-		false ->
-			Task = ar_sync_task_queue:peek_smallest(Q),
-			{FootprintKey, Start, End, Peer} = Task,
-			case is_stale_task(State, Start, End) of
-				true ->
-					%% Orphaned by a reorg that shrank the weave. Skip it ahead of
-					%% the disk/cache/worker gates so it clears even while busy.
-					gen_server:cast(self(), sync),
-					{_, Q2} = ar_sync_task_queue:take_smallest(Q),
-					Q3 = ar_sync_task_queue:release_task_range(Start, End, Q2),
-					?LOG_DEBUG([{event, sync_network}, {stage, stale_task_skipped},
-						{store_id, StoreID}, {peer, ar_util:format_peer(Peer)},
-						{start_offset, Start}, {end_offset, End},
-						{weave_size, State#state.weave_size},
-						{footprint_key, FootprintKey}]),
-					State#state{ queue = Q3 };
-				false ->
-					dispatch_head_task(State, Task)
-			end
+enqueue(#state{ sweep = undefined } = State) ->
+	case start_sweep(State, normal) of
+		{ok, Sweep} ->
+			gen_server:cast(self(), enqueue),
+			{noreply, State#state{ sweep = Sweep }};
+		not_ready ->
+			%% Node not joined yet, or footprint migration in flight.
+			ar_util:cast_after(1000, self(), enqueue),
+			{noreply, State}
+	end;
+enqueue(#state{ sweep = #sweep{} } = State) ->
+	publish_queue_metrics(State),
+	case can_enqueue(State) of
+		{wait, offset_past_end, _Delay} ->
+			%% Offset reached min(end_, WeaveSize) — the sweep is done. This is the
+			%% sole completion trigger, so the sweep tracks a shrinking or growing
+			%% weave tip without ever rewriting end_.
+			complete_sweep(State);
+		{wait, _Reason, Delay} ->
+			ar_util:cast_after(Delay, self(), enqueue),
+			{noreply, State};
+		ready ->
+			{Action, NewState} = do_enqueue(State),
+			case Action of
+				cast_now -> gen_server:cast(self(), enqueue);
+				{cast_after, Ms} -> ar_util:cast_after(Ms, self(), enqueue)
+			end,
+			{noreply, NewState}
 	end.
 
-%% Dispatch the (live) head task once disk space, chunk cache, and a worker are
-%% available; otherwise schedule a retry and leave it queued.
-dispatch_head_task(#state{ store_id = StoreID, queue = Q } = State,
-		{FootprintKey, Start, End, Peer}) ->
-	IsDiskSpaceSufficient =
-		case ar_data_sync:is_disk_space_sufficient(StoreID) of
-			true ->
-				true;
-			_ ->
-				ar_util:cast_after(30000, self(), sync),
-				false
-		end,
-	IsChunkCacheFull =
-		case IsDiskSpaceSufficient of
-			false ->
-				true;
-			true ->
-				case ar_data_sync:is_chunk_cache_full() of
-					true ->
-						ar_util:cast_after(1000, self(), sync),
-						true;
-					false ->
-						false
-				end
-		end,
-	AreSyncWorkersBusy =
-		case IsChunkCacheFull of
-			true ->
-				true;
-			false ->
-				case ar_data_sync_coordinator:ready_for_work() of
-					false ->
-						ar_util:cast_after(200, self(), sync),
-						true;
-					true ->
-						false
-				end
-		end,
-	case AreSyncWorkersBusy of
-		true ->
-			State;
-		false ->
-			gen_server:cast(self(), sync),
-			case ar_data_sync_coordinator:peer_ready_for_work(Peer) of
-				true ->
-					{_, Q2} = ar_sync_task_queue:take_smallest(Q),
-					ar_data_sync_coordinator:sync_range(#sync_task{
-								start_offset = Start,
-								end_offset = End,
-								peer = Peer,
-								store_id = StoreID,
-								footprint_key = FootprintKey
-							}),
-					State#state{ queue = Q2 };
-				false ->
-					Q2 = ar_sync_task_queue:skip_peer(Peer, Q),
-					State#state{ queue = Q2 }
-			end
-	end.
-
-is_stale_task(#state{ weave_size = WeaveSize }, _Start, End)
-		when is_integer(WeaveSize) ->
-	End > WeaveSize;
-is_stale_task(_State, _Start, _End) ->
-	false.
-
-do_enqueue(#state{ pass = #enqueue_pass{ mode = normal } } = State) ->
+do_enqueue(#state{ sweep = #sweep{ mode = normal } } = State) ->
 	do_enqueue_normal(State);
-do_enqueue(#state{ pass = #enqueue_pass{ mode = footprint } } = State) ->
+do_enqueue(#state{ sweep = #sweep{ mode = footprint } } = State) ->
 	do_enqueue_footprint(State).
 
 do_enqueue_normal(State) ->
 	#state{ store_id = StoreID, weave_size = WeaveSize, queue = Q,
-			pass = #enqueue_pass{ offset = Offset, end_ = End } = Pass } = State,
+			sweep = #sweep{ offset = Offset, end_ = End } = Sweep } = State,
 	End2 = min(min(Offset + ?QUERY_RANGE_STEP_SIZE, End), WeaveSize),
 	UnsyncedIntervals = get_unsynced_intervals(Offset, End2, StoreID),
 	case ar_intervals:is_empty(UnsyncedIntervals) of
 		true ->
-			NewPass = Pass#enqueue_pass{ offset = End2 },
-			{cast_now, State#state{ pass = NewPass }};
+			NewSweep = Sweep#sweep{ offset = End2 },
+			{cast_now, State#state{ sweep = NewSweep }};
 		false ->
 			case get_hot_peers(Offset, normal) of
 				wait ->
@@ -376,8 +276,10 @@ do_enqueue_normal(State) ->
 					{PeerCoverageEnd, FetchableEntries} =
 						determine_fetchable_intervals_normal(
 							Offset, Peers, UnsyncedIntervals),
-					{NewQ, Produced} = add_to_queue(FetchableEntries, Q),
-					maybe_log_chunk_sync_started(StoreID, normal, Pass, Produced),
+					{Tasks, NewQ} = claim_tasks(StoreID, FetchableEntries, Q),
+					ar_sync_dispatcher:enqueue(Tasks),
+					Produced = length(Tasks),
+					maybe_log_chunk_sync_started(StoreID, normal, Sweep, Produced),
 					%% If peers don't advertise data past Offset for this window,
 					%% skip the whole window to avoid spinning at the same cursor.
 					NewOffset =
@@ -385,19 +287,19 @@ do_enqueue_normal(State) ->
 							true -> min(End2, PeerCoverageEnd);
 							false -> End2
 						end,
-					NewPass = Pass#enqueue_pass{
+					NewSweep = Sweep#sweep{
 						offset = NewOffset,
-						tasks_produced = Pass#enqueue_pass.tasks_produced
+						tasks_produced = Sweep#sweep.tasks_produced
 								+ max(0, Produced)
 					},
-					{cast_now, State#state{ queue = NewQ, pass = NewPass }}
+					{cast_now, State#state{ queue = NewQ, sweep = NewSweep }}
 			end
 	end.
 
 do_enqueue_footprint(State) ->
 	#state{ store_id = StoreID, queue = Q,
-			pass = #enqueue_pass{ start = Start, end_ = End, offset = Offset }
-					= Pass } = State,
+			sweep = #sweep{ start = Start, end_ = End, offset = Offset }
+					= Sweep } = State,
 	Partition = ar_replica_2_9:get_entropy_partition(Offset + ?DATA_CHUNK_SIZE),
 	Footprint = ar_footprint_record:get_footprint(Offset + ?DATA_CHUNK_SIZE),
 	UnsyncedIntervals =
@@ -405,8 +307,8 @@ do_enqueue_footprint(State) ->
 	case ar_intervals:is_empty(UnsyncedIntervals) of
 		true ->
 			Offset2 = ar_replica_2_9:get_next_fetch_offset(Offset, Start, End),
-			NewPass = Pass#enqueue_pass{ offset = Offset2 },
-			{cast_now, State#state{ pass = NewPass }};
+			NewSweep = Sweep#sweep{ offset = Offset2 },
+			{cast_now, State#state{ sweep = NewSweep }};
 		false ->
 			case get_hot_peers(Offset, footprint) of
 				wait ->
@@ -414,52 +316,43 @@ do_enqueue_footprint(State) ->
 				Peers ->
 					FetchableEntries = determine_fetchable_intervals_footprint(
 							Partition, Footprint, Start, End, Peers, UnsyncedIntervals),
-					{NewQ, Produced} = add_to_queue(FetchableEntries, Q),
-					maybe_log_chunk_sync_started(StoreID, footprint, Pass, Produced),
+					{Tasks, NewQ} = claim_tasks(StoreID, FetchableEntries, Q),
+					ar_sync_dispatcher:enqueue(Tasks),
+					Produced = length(Tasks),
+					maybe_log_chunk_sync_started(StoreID, footprint, Sweep, Produced),
 					Offset2 = ar_replica_2_9:get_next_fetch_offset(Offset, Start, End),
-					NewPass = Pass#enqueue_pass{
+					NewSweep = Sweep#sweep{
 						offset = Offset2,
-						tasks_produced = Pass#enqueue_pass.tasks_produced
+						tasks_produced = Sweep#sweep.tasks_produced
 								+ max(0, Produced)
 					},
-					{cast_now, State#state{ queue = NewQ, pass = NewPass }}
+					{cast_now, State#state{ queue = NewQ, sweep = NewSweep }}
 			end
 	end.
 
-%% Log once per pass.
+%% Log once per sweep.
 maybe_log_chunk_sync_started(StoreID, Mode,
-		#enqueue_pass{ tasks_produced = 0 }, Produced) when Produced > 0 ->
+		#sweep{ tasks_produced = 0 }, Produced) when Produced > 0 ->
 	?LOG_DEBUG([{event, sync_network}, {stage, chunk_sync_started},
 		{store_id, StoreID}, {mode, Mode}, {tasks_enqueued, Produced}]);
 maybe_log_chunk_sync_started(_StoreID, _Mode, _Pass, _Produced) ->
 	ok.
 
-can_enqueue(#state{ pass = undefined }) ->
-	ready;
-can_enqueue(#state{ store_id = StoreID, weave_size = WeaveSize, queue = Q,
-		pass = #enqueue_pass{ offset = Offset, end_ = End } }) ->
+can_enqueue(#state{ store_id = StoreID, weave_size = WeaveSize,
+		sweep = #sweep{ offset = Offset, end_ = End } }) ->
 	case ar_data_sync:is_disk_space_sufficient(StoreID) of
 		false ->
 			{wait, disk_full, 30_000};
 		not_initialized ->
 			{wait, disk_info_missing, 1_000};
 		true ->
-			StoreIDLabel = ar_storage_module:label(StoreID),
-			QSize = ar_sync_task_queue:size(Q),
-			{NormalCount, FootprintCount} = ar_sync_task_queue:size_by_mode(Q),
-			ar_metrics:gauge_set(sync_task_queue_size,
-					[StoreIDLabel, normal], NormalCount),
-			ar_metrics:gauge_set(sync_task_queue_size,
-					[StoreIDLabel, footprint], FootprintCount),
-			ar_metrics:gauge_set(sync_task_queue_inflight_bytes,
-					[StoreIDLabel], ar_sync_task_queue:inflight_bytes(Q)),
-			MaxQueueSize = max(
-				?NETWORK_DATA_BUCKET_SIZE div ?DATA_CHUNK_SIZE,
-				ar_data_sync_coordinator:sync_jobs() * ?SYNC_TASK_QUEUE_CHUNKS_PER_WORKER),
-			case QSize > MaxQueueSize of
-				true ->
-					{wait, queue_full, 500};
+			%% Backpressure is owned by the dispatcher: it stops accepting once
+			%% its buffer + in-flight reach max_tasks, which keeps the buffer
+			%% bounded without a second queue here.
+			case ar_sync_dispatcher:ready_for_work() of
 				false ->
+					{wait, dispatcher_full, 200};
+				true ->
 					End2 = min(End, WeaveSize),
 					case Offset >= End2 of
 						true ->
@@ -470,55 +363,55 @@ can_enqueue(#state{ store_id = StoreID, weave_size = WeaveSize, queue = Q,
 			end
 	end.
 
-%% Flip mode and start the next pass; the current pass is finished (offset
+%% Flip mode and start the next sweep; the current sweep is finished (offset
 %% reached the live tip).
-complete_pass(#state{ store_id = StoreID,
-		pass = #enqueue_pass{ mode = Mode, tasks_produced = TasksProduced } } = State) ->
+complete_sweep(#state{ store_id = StoreID,
+		sweep = #sweep{ mode = Mode, tasks_produced = TasksProduced } } = State) ->
 	NextMode = flip_mode(Mode),
-	?LOG_DEBUG([{event, sync_network}, {stage, pass_complete},
+	?LOG_DEBUG([{event, sync_network}, {stage, sweep_complete},
 		{store_id, StoreID}, {mode, Mode}, {tasks_produced, TasksProduced},
 		{next_mode, NextMode}]),
-	case init_pass(State, NextMode) of
-		{ok, Pass2} ->
-			ar_util:cast_after(?PASS_RESTART_DELAY_MS, self(), enqueue),
-			{noreply, State#state{ pass = Pass2 }};
+	case start_sweep(State, NextMode) of
+		{ok, Sweep2} ->
+			ar_util:cast_after(?SWEEP_RESTART_DELAY_MS, self(), enqueue),
+			{noreply, State#state{ sweep = Sweep2 }};
 		not_ready ->
-			%% Clear the pass so later enqueue casts hit the pass=undefined clause
-			%% (silent retry) instead of re-logging pass_complete every second.
+			%% Clear the sweep so later enqueue casts hit the sweep=undefined clause
+			%% (silent retry) instead of re-logging sweep_complete every second.
 			ar_util:cast_after(1000, self(), enqueue),
-			{noreply, State#state{ pass = undefined }}
+			{noreply, State#state{ sweep = undefined }}
 	end.
 
-%% Build a new pass in the given mode.
-init_pass(#state{ store_id = StoreID, range_start = Start, range_end = End,
+%% Build a new sweep in the given mode.
+start_sweep(#state{ store_id = StoreID, range_start = Start, range_end = End,
 		weave_size = WeaveSize }, Mode) ->
 	case ready_to_start(StoreID, WeaveSize) of
 		false ->
 			not_ready;
 		true ->
-			%% end_ is the pass's static target: the storage-module range, capped
+			%% end_ is the sweep's static target: the storage-module range, capped
 			%% by the disk-pool threshold in footprint mode. The live weave tip is
 			%% applied as min(end_, WeaveSize) at each enqueue/completion check, so
-			%% the pass tracks the tip up and down without rewriting end_.
+			%% the sweep tracks the tip up and down without rewriting end_.
 			%% ready_to_start guarantees WeaveSize is bound here.
-			PassEnd = case Mode of
+			SweepEnd = case Mode of
 				footprint ->
 					min(End, ar_disk_pool:get_threshold());
 				normal ->
 					End
 			end,
-			case Start >= min(PassEnd, WeaveSize) of
+			case Start >= min(SweepEnd, WeaveSize) of
 				true ->
 					%% Storage module's range is entirely above the current weave
 					%% tip (or disk-pool threshold for footprint mode); nothing to
 					%% sync yet. Caller cast_afters on not_ready.
 					not_ready;
 				false ->
-					?LOG_DEBUG([{event, sync_network}, {stage, pass_started},
+					?LOG_DEBUG([{event, sync_network}, {stage, sweep_started},
 						{store_id, StoreID}, {mode, Mode},
-						{start, Start}, {end_, PassEnd}]),
-					{ok, #enqueue_pass{
-						start = Start, end_ = PassEnd,
+						{start, Start}, {end_, SweepEnd}]),
+					{ok, #sweep{
+						start = Start, end_ = SweepEnd,
 						offset = Start, mode = Mode }}
 			end
 	end.
@@ -577,19 +470,33 @@ determine_fetchable_intervals_footprint(
 		Peers
 	).
 
-%% Distribute work fairly across peers in a pass. Returns the updated
-%% queue and the number of tasks actually enqueued (delta).
-add_to_queue([], Queue) ->
-	{Queue, 0};
-add_to_queue(PeerEntries, Queue) ->
+%% @doc Build the new chunk-fetch #sync_task{}s from this step's fetchable
+%% peer-interval offers: cap each peer's share, drop ranges already in flight,
+%% slice the rest into chunks, and claim their ranges in the in-flight intervals
+%% (so they aren't produced again until released). Returns {Tasks, NewQueue};
+%% the caller pushes the tasks to the dispatcher.
+claim_tasks(_StoreID, [], Queue) ->
+	{[], Queue};
+claim_tasks(StoreID, PeerEntries, Queue) ->
 	TotalChunksToEnqueue = ?DEFAULT_SYNC_BUCKET_SIZE div ?DATA_CHUNK_SIZE,
 	NumPeers = length(PeerEntries),
 	ScalingFactor = 1.5,
 	ChunksPerPeer = trunc(((TotalChunksToEnqueue + NumPeers - 1) div NumPeers) * ScalingFactor),
-	PrevSize = ar_sync_task_queue:size(Queue),
-	NewQueue = ar_sync_task_queue:insert_batch(
+	Queue2 = ar_sync_task_queue:insert_batch(
 		ar_util:shuffle_list(PeerEntries), ChunksPerPeer, Queue),
-	{NewQueue, ar_sync_task_queue:size(NewQueue) - PrevSize}.
+	{Drained, Queue3} = ar_sync_task_queue:drain(Queue2),
+	Tasks = [#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
+			store_id = StoreID, footprint_key = FootprintKey }
+		|| {FootprintKey, Start, End, Peer} <- Drained],
+	{Tasks, Queue3}.
+
+%% @doc Publish this store's in-flight-interval byte total (queued + currently
+%% fetching, i.e. ranges pushed to the dispatcher and not yet released). A
+%% climbing-without-bound value flags a dedup-overlay leak.
+publish_queue_metrics(#state{ store_id = StoreID, queue = Queue }) ->
+	ar_metrics:gauge_set(sync_task_queue_inflight_bytes,
+		[ar_storage_module:label(StoreID)],
+		ar_sync_task_queue:inflight_bytes(Queue)).
 
 %%%===================================================================
 %%% Peer picking.
@@ -652,7 +559,7 @@ get_unsynced_intervals(Start, End, Intervals, StoreID) ->
 	end.
 
 %%%===================================================================
-%%% Pass lifecycle.
+%%% Sweep lifecycle.
 %%%===================================================================
 
 %% @doc The intervals returned by a peer may include intervals beyond the
@@ -740,13 +647,13 @@ cut_peer_footprint_intervals_test() ->
 
 	ok.
 
-set_weave_size_decrease_keeps_pass_and_queue_test() ->
+set_weave_size_decrease_keeps_sweep_and_queue_test() ->
 	Queue = ar_sync_task_queue:insert_batch(
 		[{{127, 0, 0, 1, 1984},
 			ar_intervals:from_list([{2 * ?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE}]), none}],
 		1,
 		ar_sync_task_queue:new()),
-	Pass = #enqueue_pass{
+	Sweep = #sweep{
 		start = 0,
 		end_ = 2 * ?DATA_CHUNK_SIZE,
 		offset = ?DATA_CHUNK_SIZE,
@@ -756,22 +663,85 @@ set_weave_size_decrease_keeps_pass_and_queue_test() ->
 		store_id = test_store,
 		weave_size = 2 * ?DATA_CHUNK_SIZE,
 		queue = Queue,
-		pass = Pass
+		sweep = Sweep
 	},
 	{noreply, State2} = handle_cast({set_weave_size, ?DATA_CHUNK_SIZE}, State),
-	%% The decrease updates the cached size and leaves the pass and queue intact;
+	%% The decrease updates the cached size and leaves the sweep and queue intact;
 	%% the shrunk tip takes effect via min(end_, WeaveSize) downstream.
 	?assertEqual(?DATA_CHUNK_SIZE, State2#state.weave_size),
-	?assertEqual(2 * ?DATA_CHUNK_SIZE, (State2#state.pass)#enqueue_pass.end_),
+	?assertEqual(2 * ?DATA_CHUNK_SIZE, (State2#state.sweep)#sweep.end_),
 	?assertEqual(1, ar_sync_task_queue:size(State2#state.queue)).
 
-is_stale_task_test() ->
-	WithinTip = #state{ weave_size = ?DATA_CHUNK_SIZE },
-	%% Ends past the weave tip -> stale (skipped at dispatch).
-	?assert(is_stale_task(WithinTip, ?DATA_CHUNK_SIZE, 2 * ?DATA_CHUNK_SIZE)),
-	%% Ends at or below the tip -> not stale.
-	?assertNot(is_stale_task(WithinTip, 0, ?DATA_CHUNK_SIZE)),
-	%% Weave size not known yet -> nothing is stale.
-	?assertNot(is_stale_task(#state{ weave_size = undefined }, 0, 2 * ?DATA_CHUNK_SIZE)).
+flip_mode_test() ->
+	?assertEqual(footprint, flip_mode(normal)),
+	?assertEqual(normal, flip_mode(footprint)),
+	?assertEqual(normal, flip_mode(undefined)).
+
+%% claim_tasks builds chunk #sync_task{}s from peer-interval offers, claims their
+%% ranges in the in-flight intervals (deduping), and is a no-op on empty input.
+claim_tasks_test() ->
+	Peer = {1, 2, 3, 4, 1984},
+	Entries = [{Peer, ar_intervals:from_list([{2 * ?DATA_CHUNK_SIZE, 0}]), none}],
+	Q0 = ar_sync_task_queue:new(),
+	%% Empty input -> no tasks, queue unchanged.
+	?assertEqual({[], Q0}, claim_tasks(store1, [], Q0)),
+	%% The 2-chunk interval becomes two tasks (store_id + footprint_key carried).
+	{Tasks, Q1} = claim_tasks(store1, Entries, Q0),
+	?assertEqual(2, length(Tasks)),
+	?assert(lists:all(fun(#sync_task{ store_id = S, footprint_key = FK }) ->
+			S =:= store1 andalso FK =:= none
+		end, Tasks)),
+	%% Re-claiming the same entries (now in flight) yields nothing.
+	?assertEqual({[], Q1}, claim_tasks(store1, Entries, Q1)).
+
+%% can_enqueue gates production on disk space, dispatcher capacity, and the tip.
+can_enqueue_test_() ->
+	ar_test_util:with_mocked([
+		{ar_data_sync, is_disk_space_sufficient, fun(_) -> true end},
+		{ar_sync_dispatcher, ready_for_work, fun() -> true end}
+	], fun test_can_enqueue/0, 30).
+
+test_can_enqueue() ->
+	Sweep = #sweep{ start = 0, end_ = 1000, offset = 0, mode = normal },
+	State = #state{ store_id = store1, weave_size = 1000, sweep = Sweep },
+	%% Disk ok, dispatcher ready, offset below the tip -> ready.
+	?assertEqual(ready, can_enqueue(State)),
+	%% Offset reached end_ -> sweep done.
+	?assertMatch({wait, offset_past_end, _},
+		can_enqueue(State#state{ sweep = Sweep#sweep{ offset = 1000 } })),
+	%% Weave tip below the offset (min(end_, WeaveSize)) -> sweep done.
+	?assertMatch({wait, offset_past_end, _}, can_enqueue(State#state{ weave_size = 0 })),
+	%% Dispatcher at capacity -> wait (disk still ok).
+	meck:expect(ar_sync_dispatcher, ready_for_work, fun() -> false end),
+	?assertMatch({wait, dispatcher_full, _}, can_enqueue(State)),
+	%% Disk gates ahead of the dispatcher check.
+	meck:expect(ar_data_sync, is_disk_space_sufficient, fun(_) -> false end),
+	?assertMatch({wait, disk_full, _}, can_enqueue(State)),
+	meck:expect(ar_data_sync, is_disk_space_sufficient, fun(_) -> not_initialized end),
+	?assertMatch({wait, disk_info_missing, _}, can_enqueue(State)).
+
+%% start_sweep builds a sweep over the module range (footprint mode capped at
+%% the disk-pool threshold) once the node is joined and the migration complete.
+start_sweep_test_() ->
+	ar_test_util:with_mocked([
+		{ar_node, is_joined, fun() -> true end},
+		{ar_data_sync, migration_db, fun(_) -> migration_db end},
+		{ar_kv, get, fun(migration_db, _) -> {ok, <<"complete">>} end},
+		{ar_disk_pool, get_threshold, fun() -> 500 end}
+	], fun test_start_sweep/0, 30).
+
+test_start_sweep() ->
+	State = #state{ store_id = store1, range_start = 0, range_end = 1000,
+		weave_size = 1000 },
+	%% Normal sweep spans the whole range from its start.
+	{ok, Normal} = start_sweep(State, normal),
+	?assertEqual({0, 1000, normal}, {Normal#sweep.offset, Normal#sweep.end_, Normal#sweep.mode}),
+	%% Footprint sweep's end_ is clamped to the disk-pool threshold (500 < 1000).
+	{ok, Footprint} = start_sweep(State, footprint),
+	?assertEqual(500, Footprint#sweep.end_),
+	%% Range entirely above the weave tip -> not_ready.
+	?assertEqual(not_ready, start_sweep(State#state{ range_start = 1000 }, normal)),
+	%% Weave size not known yet -> not_ready.
+	?assertEqual(not_ready, start_sweep(State#state{ weave_size = undefined }, normal)).
 
 	-endif.

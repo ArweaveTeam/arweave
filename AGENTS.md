@@ -180,6 +180,34 @@ fast module, that's a signal — either move the test back to slow, or
 add a local equivalent to `ar_test_util` (only when the operation
 really doesn't need peers).
 
+### Waiting on async conditions in tests
+
+Never hand-roll a poll loop or `timer:sleep` to wait for a condition.
+All wait logic goes through `ar_test_await`:
+
+- Prefer a **predefined named wait** (`ar_test_await:node_joined/1`,
+  `chunk_recorded/3`, etc.) — they read as intent and centralize the
+  timeout/poll cadence.
+- For a one-off condition, use the generic
+  `ar_test_await:until(Name, fun() -> Bool end)` (`/3` for a custom
+  timeout). `Name` is an atom that names the condition (it appears in
+  the `{error, {timeout, Name}}` result). Match `ok = ...` so a
+  timeout fails the test.
+
+  ```erlang
+  ok = ar_test_await:until(dispatcher_drained, fun() ->
+      {ok, S} = gen_server:call(Pid, get_state),
+      gb_sets:is_empty(S#state.task_queue)
+  end).
+  ```
+
+The moment the *same* generic `until/2,3` condition is needed in more
+than one place, promote it to a predefined named helper in
+`ar_test_await` and call that instead — don't copy the predicate.
+
+`timer:sleep` is reserved for deliberately time-based behaviour (e.g.
+exercising a retry backoff), never as a stand-in for a condition wait.
+
 ## Erlang style
 
 Follow OTP-style whitespace. Use a single space around `->`, `=`, `?=`, and other binary operators — do not pad with extra spaces to column-align tokens across related clauses. Alignment via multiple spaces is harder to maintain (any clause growing past the column forces a re-pad of every sibling) and noisier in diffs.

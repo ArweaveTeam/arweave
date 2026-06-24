@@ -538,18 +538,12 @@ register() ->
 		{labels, [store_id, mode]},
 		{help, "The device lock status of the storage module. "
 				"-1: off, 0: paused, 1: active, 2: complete -2: unknown"}]),
-	prometheus_gauge:new([{name, sync_task_queue_size},
-		{labels, [store_id, mode]},
-		{help, "Per-mode count of tasks in the per-StoreID sync_task_queue "
-				"ready for dispatch. 'mode' is 'normal' or 'footprint' "
-				"(derived from each task's footprint_key)."}]),
 	prometheus_gauge:new([{name, sync_task_queue_inflight_bytes},
 		{labels, [store_id]},
 		{help, "Total bytes in the per-StoreID sync_task_queue's "
-				"in_flight_intervals overlay (queued + currently-fetching "
-				"ranges, used by the producer's dedup gate). When this "
-				"climbs while sync_task_queue_size stays at 0 the dedup "
-				"overlay is leaking."}]),
+				"inflight_intervals (ranges ar_peer_sync has pushed to "
+				"ar_sync_dispatcher and not yet released, used by its dedup "
+				"gate). Climbing without bound flags a dedup-overlay leak."}]),
 
 	prometheus_gauge:new([{name, repack_chunk_states},
 		{labels, [store_id, type, state]},

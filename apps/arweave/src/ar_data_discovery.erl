@@ -223,7 +223,7 @@ init([]) ->
 	%% when sync_jobs=0. Returning `ignore' from a gen_server init is the
 	%% supervisor-friendly way to say "don't start me" — the parent sup
 	%% logs and proceeds.
-	case ar_data_sync_coordinator:is_syncing_enabled() of
+	case ar_sync_dispatcher:is_syncing_enabled() of
 		false ->
 			ignore;
 		true ->

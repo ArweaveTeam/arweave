@@ -22,8 +22,10 @@ start_link() ->
 
 init([]) ->
 	%% ETS tables owned by this subtree. Created here (sup convention) so they
-	%% survive child restarts.
-	ets:new(?WORKER_LOAD_TABLE,
+	%% survive child restarts. The ar_sync_dispatcher table holds its
+	%% active_task_count gauge, read by ar_peer_sync via
+	%% ar_sync_dispatcher:ready_for_work/0.
+	ets:new(ar_sync_dispatcher,
 		[named_table, public, set,
 			{read_concurrency, true}, {write_concurrency, true}]),
 	%% ar_data_discovery's tables. Created unconditionally so callers
@@ -40,15 +42,6 @@ init([]) ->
 	ets:new(ar_data_discovery_peer_intervals,
 		[ordered_set, public, named_table,
 			{read_concurrency, true}, {write_concurrency, true}]),
-	%% Peer worker supervisor must start before worker master
-	PeerWorkerSup = #{
-		id => ar_peer_worker_sup,
-		start => {ar_peer_worker_sup, start_link, []},
-		restart => permanent,
-		shutdown => infinity,
-		type => supervisor,
-		modules => [ar_peer_worker_sup]
-	},
 	%% ar_data_roots must start before any ar_data_sync_<StoreID> instance
 	%% so the cast/call API is available when ar_data_sync's join/cut/
 	%% add_tip_block handlers fire during early init.
@@ -60,20 +53,22 @@ init([]) ->
 	%% ar_peer_sync's enqueue decisions. Self-opts-out via `ignore' from
 	%% init/1 when sync_jobs=0. Must start BEFORE ar_peer_sync.
 	DataDiscovery = ?CHILD(ar_data_discovery, worker),
-	%% Network-sync subsystem (coordinator + workers, chunk-copy, per-StoreID
-	%% peer-sync) is a single unit gated by `sync_jobs > 0'. ar_chunk_copy and
-	%% ar_peer_sync start BEFORE ar_data_sync's per-StoreID gen_servers so their
-	%% APIs are callable from data_sync's init and the chunk_copy completion handler.
-	SyncChildren = case ar_data_sync_coordinator:is_syncing_enabled() of
+	%% Network-sync subsystem (dispatcher, chunk-copy, per-StoreID peer-sync) is a
+	%% single unit gated by `sync_jobs > 0'. ar_sync_dispatcher starts BEFORE
+	%% ar_chunk_copy and ar_peer_sync so its enqueue/ready_for_work API is callable
+	%% the moment ar_peer_sync begins; ar_chunk_copy and ar_peer_sync start before
+	%% ar_data_sync's per-StoreID gen_servers so their APIs are callable from
+	%% data_sync's init and the chunk_copy completion handler.
+	SyncChildren = case ar_sync_dispatcher:is_syncing_enabled() of
 		false ->
 			[];
 		true ->
-			ar_data_sync_coordinator:register_workers()
+			ar_sync_dispatcher:register_workers()
 			++ [?CHILD(ar_chunk_copy, worker)]
 			++ ar_peer_sync:register_workers()
 	end,
 	Children =
-		[PeerWorkerSup, DataRoots, DataDiscovery]
+		[DataRoots, DataDiscovery]
 		++ SyncChildren
 		++ ar_data_sync:register_workers()
 		++ [DiskPool],
