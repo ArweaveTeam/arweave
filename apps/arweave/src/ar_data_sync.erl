@@ -211,35 +211,35 @@ add_chunk_to_disk_pool(#{
 		case ValidateProof of
 			{error, _} = Error2 ->
 				Error2;
-			{ok, {EndOffset2, _PassesBase2, _PassesStrict2, _PassesRebase2,
+			{ok, {TXRelativeChunkOffset, _PassesBase2, _PassesStrict2, _PassesRebase2,
 					{_, Timestamp3, _}} = PassedState2} ->
 				DataPathHash = crypto:hash(sha256, DataPath),
 				DiskPoolChunkKey = << Timestamp3:256, DataPathHash/binary >>,
 				case ar_kv:get(DiskPoolChunksIndex, DiskPoolChunkKey) of
 					{ok, _DiskPoolChunk} ->
 						%% The chunk is already in disk pool.
-						{synced_disk_pool, EndOffset2};
+						{synced_disk_pool, TXRelativeChunkOffset};
 					not_found ->
 						check_posted_chunk_synced(AbsoluteOffset, DataRootIndex, DataRootKey,
-								DataRootOffsetReply, DataRoot, TXSize, Offset, EndOffset2,
+								DataRootOffsetReply, DataRoot, TXSize, Offset, TXRelativeChunkOffset,
 								DataPathHash, DiskPoolChunkKey, PassedState2);
 					{error, Reason} ->
 						?LOG_WARNING([{event, failed_to_read_chunk_from_disk_pool},
 								{reason, io_lib:format("~p", [Reason])},
 								{data_path_hash, ar_util:encode(DataPathHash)},
 								{data_root, ar_util:encode(DataRoot)},
-								{relative_offset, EndOffset2}]),
+								{relative_offset, TXRelativeChunkOffset}]),
 						{error, failed_to_store_chunk}
 				end
 		end,
 	case CheckSynced of
 		synced ->
 			ok;
-		{synced_disk_pool, EndOffset4} ->
+		{synced_disk_pool, TXRelativeChunkOffset2} ->
 			case is_estimated_long_term_chunk(
 					get_chunk_data_root_offset_reply(
-						AbsoluteOffset, DataRootOffsetReply, Offset, EndOffset4),
-					EndOffset4) of
+						AbsoluteOffset, DataRootOffsetReply, Offset, TXRelativeChunkOffset2),
+						TXRelativeChunkOffset2) of
 				false ->
 					temporary;
 				true ->
@@ -247,7 +247,7 @@ add_chunk_to_disk_pool(#{
 			end;
 		{error, _} = Error4 ->
 			Error4;
-		{ok, {DataPathHash2, DiskPoolChunkKey2, {EndOffset3, PassesBase3, PassesStrict3,
+		{ok, {DataPathHash2, DiskPoolChunkKey2, {TXRelativeChunkOffset3, PassesBase3, PassesStrict3,
 				PassesRebase3, DiskPoolDataRootValue2}}} ->
 			ChunkDataKey = get_chunk_data_key(DataPathHash2),
 			case put_chunk_data(ChunkDataKey, ?DEFAULT_MODULE, {Chunk, DataPath}) of
@@ -256,10 +256,10 @@ add_chunk_to_disk_pool(#{
 						{reason, io_lib:format("~p", [Reason2])},
 						{data_path_hash, ar_util:encode(DataPathHash2)},
 						{data_root, ar_util:encode(DataRoot)},
-						{relative_offset, EndOffset3}]),
+						{relative_offset, TXRelativeChunkOffset3}]),
 					{error, failed_to_store_chunk};
 				ok ->
-					DiskPoolChunkValue = term_to_binary({EndOffset3, ChunkSize, DataRoot,
+					DiskPoolChunkValue = term_to_binary({TXRelativeChunkOffset3, ChunkSize, DataRoot,
 							TXSize, ChunkDataKey, PassesBase3, PassesStrict3, PassesRebase3}),
 					case ar_kv:put(DiskPoolChunksIndex, DiskPoolChunkKey2,
 							DiskPoolChunkValue) of
@@ -268,7 +268,7 @@ add_chunk_to_disk_pool(#{
 								{reason, io_lib:format("~p", [Reason3])},
 								{data_path_hash, ar_util:encode(DataPathHash2)},
 								{data_root, ar_util:encode(DataRoot)},
-								{relative_offset, EndOffset3}]),
+								{relative_offset, TXRelativeChunkOffset3}]),
 							{error, failed_to_store_chunk};
 						ok ->
 							ets:insert(ar_disk_pool_data_roots,
@@ -278,8 +278,8 @@ add_chunk_to_disk_pool(#{
 							prometheus_gauge:inc(pending_chunks_size, ChunkSize),
 							case is_estimated_long_term_chunk(
 									get_chunk_data_root_offset_reply(
-										AbsoluteOffset, DataRootOffsetReply, Offset, EndOffset3),
-									EndOffset3) of
+										AbsoluteOffset, DataRootOffsetReply, Offset, TXRelativeChunkOffset3),
+									TXRelativeChunkOffset3) of
 								false ->
 									temporary;
 								true ->
@@ -291,9 +291,18 @@ add_chunk_to_disk_pool(#{
 add_chunk_to_disk_pool(_Proof) ->
 	{error, invalid_proof}.
 
+add_chunk_to_disk_pool(DataRoot, DataPath, Chunk, Offset, TXSize) ->
+	add_chunk_to_disk_pool(#{
+		data_root => DataRoot,
+		data_path => DataPath,
+		chunk => Chunk,
+		offset => Offset,
+		data_size => TXSize
+	}).
+
 
 check_posted_chunk_synced(not_set, DataRootIndex, DataRootKey, DataRootOffsetReply, _DataRoot,
-		_TXSize, _Offset, EndOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
+		_TXSize, _Offset, TXRelativeChunkOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
 	case DataRootOffsetReply of
 		not_found ->
 			{ok, {DataPathHash, DiskPoolChunkKey, PassedState}};
@@ -304,7 +313,7 @@ check_posted_chunk_synced(not_set, DataRootIndex, DataRootKey, DataRootOffsetRep
 					%% Here we only accept the chunk if any of the
 					%% last configured number of instances of this
 					%% data is not filled in yet.
-					EndOffset, TXStartOffset, Config#config.max_duplicate_data_roots) of
+					TXRelativeChunkOffset, TXStartOffset, Config#config.max_duplicate_data_roots) of
 				true ->
 					synced;
 				false ->
@@ -312,9 +321,9 @@ check_posted_chunk_synced(not_set, DataRootIndex, DataRootKey, DataRootOffsetRep
 			end
 	end;
 check_posted_chunk_synced(GlobalOffset, DataRootIndex, _DataRootKey, _DataRootOffsetReply,
-		DataRoot, TXSize, Offset, EndOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
+		DataRoot, TXSize, Offset, TXRelativeChunkOffset, DataPathHash, DiskPoolChunkKey, PassedState) ->
 	TXStartOffset = GlobalOffset - Offset,
-	AbsoluteEndOffset = TXStartOffset + EndOffset,
+	AbsoluteEndOffset = TXStartOffset + TXRelativeChunkOffset,
 	case TXStartOffset >= 0 of
 		false ->
 			{error, invalid_offset};
@@ -3140,8 +3149,8 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk) ->
 
 chunk_offsets_synced(_, _, _, _, N) when N == 0 ->
 	true;
-chunk_offsets_synced(DataRootIndex, DataRootKey, ChunkOffset, TXStartOffset, N) ->
-	case ar_sync_record:is_recorded(TXStartOffset + ChunkOffset, ar_data_sync) of
+chunk_offsets_synced(DataRootIndex, DataRootKey, TXRelativeChunkOffset, TXStartOffset, N) ->
+	case ar_sync_record:is_recorded(TXStartOffset + TXRelativeChunkOffset, ar_data_sync) of
 		{{true, _}, _StoreID} ->
 			case TXStartOffset of
 				0 ->
@@ -3155,7 +3164,7 @@ chunk_offsets_synced(DataRootIndex, DataRootKey, ChunkOffset, TXStartOffset, N) 
 						{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
 								TXStartOffset2Size:8,
 								TXStartOffset2:(TXStartOffset2Size * 8) >>, _} ->
-							chunk_offsets_synced(DataRootIndex, DataRootKey, ChunkOffset,
+							chunk_offsets_synced(DataRootIndex, DataRootKey, TXRelativeChunkOffset,
 									TXStartOffset2, N - 1);
 						{ok, _, _} ->
 							true;

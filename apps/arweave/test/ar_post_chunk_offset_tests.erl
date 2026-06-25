@@ -5,27 +5,33 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 
-post_chunk_offset_accepts_exact_match_test_() ->
+absolute_end_offset_test_() ->
 	ar_test_node:test_with_mocked_functions(
 		[strict_data_split_threshold_mock(10 * ?DATA_CHUNK_SIZE)],
-		fun test_post_chunk_offset_accepts_exact_match/0,
+		fun test_absolute_end_offset/0,
 		120
 	).
 
-post_chunk_offset_accepts_non_terminal_relative_offset_test_() ->
+absolute_offset_test_() ->
 	ar_test_node:test_with_mocked_functions(
-		[strict_data_split_threshold_mock(?DATA_CHUNK_SIZE)],
-		fun test_post_chunk_offset_accepts_non_terminal_relative_offset/0,
+		[strict_data_split_threshold_mock(10 * ?DATA_CHUNK_SIZE)],
+		fun test_absolute_offset/0,
 		120
 	).
 
-post_chunk_offset_rejects_unindexed_offset_test_() ->
-	{timeout, 120, fun test_post_chunk_offset_rejects_unindexed_offset/0}.
+reject_unindexed_offset_test_() ->
+	{timeout, 120, fun test_reject_unindexed_offset/0}.
 
-post_chunk_offset_rejects_wrong_chunk_boundary_test_() ->
-	{timeout, 120, fun test_post_chunk_offset_rejects_wrong_chunk_boundary/0}.
+reject_wrong_chunk_boundary_test_() ->
+	{timeout, 120, fun test_reject_wrong_chunk_boundary/0}.
 
-test_post_chunk_offset_accepts_exact_match() ->
+test_absolute_end_offset() ->
+	test_offset(0).
+
+test_absolute_offset() ->
+	test_offset(-100).
+
+test_offset(RequestOffsetDelta) ->
 	Wallet = setup_main_node(),
 	Chunks = [
 		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -34,24 +40,11 @@ test_post_chunk_offset_accepts_exact_match() ->
 	{TX, _} = tx_with_chunks(Wallet, Chunks),
 	B = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [TX]),
 	[{AbsoluteEndOffset, Proof} | _] = ar_test_data_sync:build_proofs(B, TX, Chunks),
-	assert_post_chunk_offset(AbsoluteEndOffset, Proof),
+	RequestOffset = AbsoluteEndOffset + RequestOffsetDelta,
+	assert_post_chunk_offset(RequestOffset, Proof),
 	assert_chunk_roundtrip(AbsoluteEndOffset, Proof).
 
-test_post_chunk_offset_accepts_non_terminal_relative_offset() ->
-	Wallet = setup_main_node(),
-	Chunks = [
-		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
-		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)
-	],
-	{TX, _} = tx_with_chunks(Wallet, Chunks),
-	B = ar_test_node:post_and_mine(#{ miner => main, await_on => main }, [TX]),
-	[{_FirstEndOffset, _FirstProof}, {SecondEndOffset, SecondProof}] =
-		ar_test_data_sync:build_proofs(B, TX, Chunks),
-	ProofAtInternalOffset = proof_with_internal_offset(Chunks, 2, SecondProof),
-	assert_post_chunk_offset(SecondEndOffset, ProofAtInternalOffset),
-	assert_chunk_roundtrip(SecondEndOffset, ProofAtInternalOffset).
-
-test_post_chunk_offset_rejects_unindexed_offset() ->
+test_reject_unindexed_offset() ->
 	Wallet = setup_main_node(),
 	Chunks1 = [
 		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -69,7 +62,7 @@ test_post_chunk_offset_rejects_unindexed_offset() ->
 	[{AbsoluteEndOffset2, _Proof2} | _] = ar_test_data_sync:build_proofs(B2, TX2, Chunks2),
 	assert_invalid_offset(AbsoluteEndOffset2, Proof1).
 
-test_post_chunk_offset_rejects_wrong_chunk_boundary() ->
+test_reject_wrong_chunk_boundary() ->
 	Wallet = setup_main_node(),
 	Chunks = [
 		crypto:strong_rand_bytes(?DATA_CHUNK_SIZE),
@@ -81,8 +74,7 @@ test_post_chunk_offset_rejects_wrong_chunk_boundary() ->
 		ar_test_data_sync:build_proofs(B, TX, Chunks),
 	assert_invalid_offset(SecondEndOffset, FirstProof).
 
-assert_post_chunk_offset(AbsoluteEndOffset, Proof) ->
-	RequestOffset = request_offset(AbsoluteEndOffset, Proof),
+assert_post_chunk_offset(RequestOffset, Proof) ->
 	?assertMatch(
 		{ok, {{<<"200">>, _}, _, _, _, _}},
 		post_chunk_at_offset(RequestOffset, Proof)
@@ -133,22 +125,6 @@ proof_end_offset(#{ data_root := DataRoot, data_path := DataPath, data_size := D
 		{{_, _, EndOffset}, _, _} ->
 			EndOffset
 	end.
-
-proof_with_internal_offset(Chunks, ChunkIndex, BaseProof) ->
-	SizeTaggedChunks = ar_tx:chunks_to_size_tagged_chunks(Chunks),
-	{DataRoot, DataTree} = ar_merkle:generate_tree(
-		ar_tx:sized_chunks_to_sized_chunk_ids(SizeTaggedChunks)
-	),
-	{Chunk, ChunkEndOffset} = lists:nth(ChunkIndex, SizeTaggedChunks),
-	ChunkStartOffset = ChunkEndOffset - byte_size(Chunk),
-	InternalOffset = ChunkStartOffset + byte_size(Chunk) div 2,
-	BaseProof#{
-		data_root => ar_util:encode(DataRoot),
-		data_path => ar_util:encode(ar_merkle:generate_path(DataRoot, InternalOffset, DataTree)),
-		chunk => ar_util:encode(Chunk),
-		offset => integer_to_binary(InternalOffset),
-		data_size => integer_to_binary(byte_size(binary:list_to_bin(Chunks)))
-	}.
 
 strict_data_split_threshold_mock(Value) ->
 	{ar_block, strict_data_split_threshold, fun() -> Value end}.
