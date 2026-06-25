@@ -274,7 +274,7 @@ peer_to_str({A, B, C, D, Port}) ->
 %% `ar_test_node:update_config' default fires) or 5-tuples
 %% (`{A,B,C,D,Port}`, what the CLI/config parsers and `peer_ip/1' return).
 %% Incoming Peers from `ar_http' are always 5-tuples. Normalize both
-%% sides to the 4-tuple before comparing — see `arweave_client_throttling:throttle/2'
+%% sides to the 4-tuple before comparing — see `arweave_throttling:throttle/2'
 %% (client side) and `ar_http_iface_rate_limiter_middleware' (server side).
 peer_to_ip({A, B, C, D}) -> {A, B, C, D};
 peer_to_ip({A, B, C, D, _Port}) -> {A, B, C, D};

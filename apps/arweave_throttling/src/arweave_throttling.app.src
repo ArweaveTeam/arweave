@@ -1,9 +1,9 @@
-{application, arweave_client_throttling,
+{application, arweave_throttling,
  [
-  {id, "arweave_client_throttling"},
+  {id, "arweave_throttling"},
   {description, "Arweave client-side request throttling"},
   {vsn, "0.0.1"},
-  {mod, {arweave_client_throttling, []}},
+  {mod, {arweave_throttling, []}},
   {env, []},
   {applications, [
                   kernel,
@@ -17,11 +17,11 @@
                   arweave_config
                  ]},
   {modules, [
-             arweave_client_throttling,
-             arweave_client_throttling_group,
-             arweave_client_throttling_sup
+             arweave_throttling,
+             arweave_throttling_group,
+             arweave_throttling_sup
             ]},
   {registered, [
-                arweave_client_throttling_sup
+                arweave_throttling_sup
                ]}
  ]}.

@@ -101,7 +101,7 @@ req(Args, ReestablishedConnection) ->
 		false ->
 			%% This call blocks until timeout, or until we think it's a good time to
 			%% call the endpoint
-			arweave_client_throttling:throttle(Peer, Path)
+			arweave_throttling:throttle(Peer, Path)
 	end,
 
 	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, 15000) of
@@ -117,7 +117,7 @@ req(Args, ReestablishedConnection) ->
 							{error, Error}
 					end;
 				{ok, {{_Status, _}, Headers, _, _Start, _End}} = Reply ->
-					arweave_client_throttling:update_quota(Peer, Path, Headers),
+					arweave_throttling:update_quota(Peer, Path, Headers),
 					Reply
 			end;
 		{'EXIT', _} -> {error, client_error};

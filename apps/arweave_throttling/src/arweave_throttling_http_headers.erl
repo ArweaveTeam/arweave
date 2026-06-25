@@ -3,7 +3,7 @@
 %%% Parses the RateLimit-* response headers advertised by a remote
 %%% Arweave node (per draft-polli-ratelimit-headers-02, as emitted by
 %%% `arweave_limiter_http_headers') and turns them into an
-%%% `arweave_client_throttling_group:update_quota/3' call.
+%%% `arweave_throttling_group:update_quota/3' call.
 %%%
 %%% The remote encodes its limiting group id inside every
 %%% `policy="<id> <type>"' quota-comment of the RateLimit-Limit
@@ -25,7 +25,7 @@
 %%% (mapped to `total'); RateLimit-Remaining maps to `remaining' and
 %%% RateLimit-Reset to `reset_seconds'.
 %%% @end
--module(arweave_client_throttling_http_headers).
+-module(arweave_throttling_http_headers).
 
 -export([parse/1, quota_from_headers/2]).
 
@@ -61,7 +61,7 @@ parse(Headers) ->
 
 %% @doc Parse `Headers' and, provided the group id encoded by the
 %% remote matches `GroupId', refresh the peer's quota via
-%% `arweave_client_throttling_group:update_quota/3'.
+%% `arweave_throttling_group:update_quota/3'.
 %%
 %% Returns `{error, {group_mismatch, Expected, Got}}' when the remote
 %% accounted the request under a different group than the caller

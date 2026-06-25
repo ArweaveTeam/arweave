@@ -7,10 +7,10 @@
 %%%
 %%% @author Arweave Team
 %%% @copyright 2026 (c) Arweave
-%%% @doc Top-level interface tests for `arweave_client_throttling'.
+%%% @doc Top-level interface tests for `arweave_throttling'.
 %%% @end
 %%%===================================================================
--module(arweave_client_throttling_SUITE).
+-module(arweave_throttling_SUITE).
 -export([suite/0, description/0]).
 -export([init_per_suite/1, end_per_suite/1]).
 -export([init_per_testcase/2, end_per_testcase/2]).
@@ -35,7 +35,7 @@
 suite() -> [{userdata, [description()]}, {timetrap, {seconds, 30}}].
 
 description() ->
-    {description, "arweave_client_throttling top-level API"}.
+    {description, "arweave_throttling top-level API"}.
 
 init_per_suite(Config) -> Config.
 
@@ -55,16 +55,16 @@ init_per_testcase(_TestCase, Config) ->
                       max_queue_length => 2,
                       concurrency_window_ms => 50}),
 
-    ct:pal(info, 1, "start arweave_client_throttling"),
-    ok = arweave_client_throttling:start(),
+    ct:pal(info, 1, "start arweave_throttling"),
+    ok = arweave_throttling:start(),
     [{apps_before,AppsBefore},
      {config, Config}].
 
 end_per_testcase(_TestCase, Config) ->
-    ct:pal(info, 1, "stop arweave_client_throttling"),
-    ok = arweave_client_throttling:stop(),
+    ct:pal(info, 1, "stop arweave_throttling"),
+    ok = arweave_throttling:stop(),
 
-    arweave_client_throttling_metrics:cleanup(),
+    arweave_throttling_metrics:cleanup(),
 
     AppsBefore = proplists:get_value(apps_before, Config),
     AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
@@ -98,7 +98,7 @@ all() ->
 
 default_groups_started(_Config) ->
     ct:pal(test, 1, "check supervisor is alive"),
-    true = is_pid(whereis(arweave_client_throttling_sup)),
+    true = is_pid(whereis(arweave_throttling_sup)),
 
     ct:pal(test, 1, "list configured groups"),
     Groups = arweave_config_options_client_throttling:group_ids(),
@@ -106,22 +106,22 @@ default_groups_started(_Config) ->
     true = lists:member(data_sync_record, Groups),
 
     ct:pal(test, 1, "each group worker is registered"),
-    true = is_pid(whereis(arweave_client_throttling_group_general)),
-    true = is_pid(whereis(arweave_client_throttling_group_data_sync_record)),
+    true = is_pid(whereis(arweave_throttling_group_general)),
+    true = is_pid(whereis(arweave_throttling_group_data_sync_record)),
     ok.
 
 throttle_and_update_quota(_Config) ->
     Peer = {127, 0, 0, 1, 1984},
 
     ct:pal(test, 1, "initial budget is consumed in order"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
     ok = wait_status(general, Peer, fun(S) ->
                                             maps:get(remaining, S) =:= 0
                                     end),
 
     ct:pal(test, 1, "refresh quota non-blockingly"),
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 10, 3, 0)),
     ok = wait_status(general, Peer, fun(S) ->
                                             (maps:get(remaining, S) =:= 3)
@@ -130,9 +130,9 @@ throttle_and_update_quota(_Config) ->
                                     end),
 
     ct:pal(test, 1, "the new budget is honored"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
     ok = wait_status(general, Peer, fun(S) ->
                                             maps:get(remaining, S) =:= 0
                                     end),
@@ -142,13 +142,13 @@ blocking_call_is_released_by_update(_Config) ->
     Peer = {10, 0, 0, 1, 1984},
 
     ct:pal(test, 1, "drain the initial budget"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
 
     ct:pal(test, 1, "next caller must block"),
     Parent = self(),
     Pid = spawn_link(fun() ->
-                             Reply = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+                             Reply = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
                              Parent ! {done, self(), Reply}
                      end),
 
@@ -158,7 +158,7 @@ blocking_call_is_released_by_update(_Config) ->
     false = receive {done, Pid, _} -> true after 100 -> false end,
 
     ct:pal(test, 1, "an update_quota releases the waiter"),
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 10, 1, 0)),
 
     receive
@@ -173,13 +173,13 @@ fifo_ordering(_Config) ->
     Parent = self(),
 
     ct:pal(test, 1, "drain initial budget"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
 
     ct:pal(test, 1, "queue three callers serially to fix the FIFO order"),
     _Pids = lists:map(fun(N) ->
                               Pid = spawn(fun() ->
-                                                  ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+                                                  ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
                                                   Parent ! {released, N, self()}
                                           end),
                               ok = wait_status(general, Peer, fun(S) ->
@@ -194,7 +194,7 @@ fifo_ordering(_Config) ->
     %% with the previous one.
     Order = lists:map(fun(_) ->
                               timer:sleep(80),
-                              ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+                              ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                                           quota(general, 10, 1, 0)),
                               receive {released, N, _} -> N after 1000 ->
                                   ct:fail("a waiter was never released")
@@ -207,11 +207,11 @@ fifo_ordering(_Config) ->
 concurrent_remaining_updates_take_min(_Config) ->
     Peer = {192, 168, 1, 1, 1984},
 
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 20, 10, 0)),
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 20, 3, 0)),
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 20, 7, 0)),
 
     ok = wait_status(general, Peer, fun(S) ->
@@ -224,7 +224,7 @@ concurrent_remaining_updates_take_min(_Config) ->
 stale_update_outside_window_overrides(_Config) ->
     Peer = {192, 168, 1, 2, 1984},
 
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 10, 2, 0)),
     ok = wait_status(general, Peer, fun(S) ->
                                             maps:get(remaining, S) =:= 2
@@ -233,7 +233,7 @@ stale_update_outside_window_overrides(_Config) ->
     ct:pal(test, 1, "sleep past the concurrency window"),
     timer:sleep(150),
 
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 10, 9, 0)),
     ok = wait_status(general, Peer, fun(S) ->
                                             maps:get(remaining, S) =:= 9
@@ -245,12 +245,12 @@ queue_full_returns_error(_Config) ->
     Parent = self(),
 
     ct:pal(test, 1, "drain initial budget"),
-    ok = arweave_client_throttling:throttle(Peer, "data_sync_record"),
+    ok = arweave_throttling:throttle(Peer, "data_sync_record"),
 
     ct:pal(test, 1, "fill the queue up to max_queue_length=2"),
     lists:foreach(fun(N) ->
                           spawn(fun() ->
-                                        Reply = arweave_client_throttling:throttle(Peer, "data_sync_record"),
+                                        Reply = arweave_throttling:throttle(Peer, "data_sync_record"),
                                         Parent ! {n, N, Reply}
                                 end),
                           ok = wait_status(data_sync_record, Peer, fun(S) ->
@@ -260,10 +260,10 @@ queue_full_returns_error(_Config) ->
 
     ct:pal(test, 1, "an extra call must be rejected immediately"),
     {error, queue_full} =
-        arweave_client_throttling:throttle(Peer, "data_sync_record"),
+        arweave_throttling:throttle(Peer, "data_sync_record"),
 
     ct:pal(test, 1, "release the queued waiters"),
-    ok = arweave_client_throttling:update_quota(Peer, "data_sync_record",
+    ok = arweave_throttling:update_quota(Peer, "data_sync_record",
                                                 quota(data_sync_record, 10, 5, 0)),
     receive {n, 1, ok} -> ok after 1000 -> ct:fail(timeout_1) end,
     receive {n, 2, ok} -> ok after 1000 -> ct:fail(timeout_2) end,
@@ -273,12 +273,12 @@ dead_caller_is_dropped_from_queue(_Config) ->
     Peer = {10, 2, 2, 2, 1984},
     Parent = self(),
 
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
 
     ct:pal(test, 1, "queue a doomed caller"),
     Doomed = spawn(fun() ->
-                           _ = (catch arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general")),
+                           _ = (catch arweave_throttling:throttle(Peer, "some/path/that/lead/to/general")),
                            Parent ! {done, self()}
                    end),
     ok = wait_status(general, Peer, fun(S) ->
@@ -293,14 +293,14 @@ dead_caller_is_dropped_from_queue(_Config) ->
 
     ct:pal(test, 1, "a fresh waiter must be the one to receive the slot"),
     Live = spawn(fun() ->
-                         ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+                         ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
                          Parent ! {live_done, self()}
                  end),
     ok = wait_status(general, Peer, fun(S) ->
                                             maps:get(queue_length, S) =:= 1
                                     end),
 
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 10, 1, 0)),
     receive {live_done, Live} -> ok after 1000 ->
         ct:fail("live waiter was not released")
@@ -311,11 +311,11 @@ reset_releases_waiters(_Config) ->
     Peer = {10, 3, 3, 3, 1984},
     Parent = self(),
 
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
-    ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
 
     [spawn(fun() ->
-                   Reply = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+                   Reply = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
                    Parent ! {released, self(), Reply}
            end) || _ <- lists:seq(1, 2)],
     ok = wait_status(general, Peer, fun(S) ->
@@ -323,7 +323,7 @@ reset_releases_waiters(_Config) ->
                                     end),
 
     ct:pal(test, 1, "reset the group"),
-    ok = arweave_client_throttling:reset(general),
+    ok = arweave_throttling:reset(general),
 
     ct:pal(test, 1, "both blocked waiters must be released"),
     [receive {released, _, ok} -> ok after 1000 ->
@@ -331,7 +331,7 @@ reset_releases_waiters(_Config) ->
      end || _ <- lists:seq(1, 2)],
 
     ct:pal(test, 1, "state is empty after reset"),
-    {ok, Status} = arweave_client_throttling:status(general, Peer),
+    {ok, Status} = arweave_throttling:status(general, Peer),
     2 = maps:get(remaining, Status),
     0 = maps:get(queue_length, Status),
     ok.
@@ -342,11 +342,11 @@ peer_4_and_5_tuple_keys(_Config) ->
     Peer4 = {127, 0, 0, 1},
     Peer5 = {127, 0, 0, 1, 1984},
 
-    ok = arweave_client_throttling:throttle(Peer4, "some/path/that/lead/to/general"),
-    ok = arweave_client_throttling:throttle(Peer5, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer4, "some/path/that/lead/to/general"),
+    ok = arweave_throttling:throttle(Peer5, "some/path/that/lead/to/general"),
 
-    {ok, S4} = arweave_client_throttling:status(general, Peer4),
-    {ok, S5} = arweave_client_throttling:status(general, Peer5),
+    {ok, S4} = arweave_throttling:status(general, Peer4),
+    {ok, S5} = arweave_throttling:status(general, Peer5),
     1 = maps:get(remaining, S4),
     1 = maps:get(remaining, S5),
     ok.
@@ -359,7 +359,7 @@ exhausted_quota_refills_after_reset_seconds(_Config) ->
     Parent = self(),
 
     ct:pal(test, 1, "report an exhausted quota with a 1s reset"),
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 5, 0, 1)),
     ok = wait_status(general, Peer, fun(S) ->
                                             (maps:get(remaining, S) =:= 0)
@@ -369,7 +369,7 @@ exhausted_quota_refills_after_reset_seconds(_Config) ->
 
     ct:pal(test, 1, "queue a waiter while the quota is exhausted"),
     spawn(fun() ->
-                  ok = arweave_client_throttling:throttle(Peer, "some/path/that/lead/to/general"),
+                  ok = arweave_throttling:throttle(Peer, "some/path/that/lead/to/general"),
                   Parent ! refilled
           end),
     ok = wait_status(general, Peer, fun(S) ->
@@ -384,7 +384,7 @@ exhausted_quota_refills_after_reset_seconds(_Config) ->
         ct:fail("reset_seconds timer did not refill the quota")
     end,
 
-    {ok, AfterStatus} = arweave_client_throttling:status(general, Peer),
+    {ok, AfterStatus} = arweave_throttling:status(general, Peer),
     0 = maps:get(reset_seconds, AfterStatus),
     true = maps:get(remaining, AfterStatus) >= 4,
     ok.
@@ -395,7 +395,7 @@ update_quota_cancels_reset_timer(_Config) ->
     Peer = {10, 5, 5, 5, 1984},
 
     ct:pal(test, 1, "report exhausted quota with a long reset window"),
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 5, 0, 30)),
     ok = wait_status(general, Peer, fun(S) ->
                                             (maps:get(reset_seconds, S) =:= 30)
@@ -404,7 +404,7 @@ update_quota_cancels_reset_timer(_Config) ->
 
     ct:pal(test, 1, "a non-exhausted update should clear the timer"),
     timer:sleep(80),
-    ok = arweave_client_throttling:update_quota(Peer, "some/path/that/lead/to/general",
+    ok = arweave_throttling:update_quota(Peer, "some/path/that/lead/to/general",
                                                 quota(general, 5, 4, 0)),
     ok = wait_status(general, Peer, fun(S) ->
                                             (maps:get(remaining, S) =:= 4)
@@ -422,7 +422,7 @@ quota(GroupId, Total, Remaining, ResetSeconds) ->
 
 wait_status(Group, Peer, Pred) ->
     wait_until(fun() ->
-                       case arweave_client_throttling:status(Group, Peer) of
+                       case arweave_throttling:status(Group, Peer) of
                            {ok, Status} -> Pred(Status);
                            _ -> false
                        end

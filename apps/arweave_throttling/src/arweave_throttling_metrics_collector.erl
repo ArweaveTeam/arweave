@@ -1,4 +1,4 @@
--module(arweave_client_throttling_metrics_collector).
+-module(arweave_throttling_metrics_collector).
 
 -behaviour(prometheus_collector).
 
@@ -38,10 +38,10 @@ add_metric_family({Name, Type, Help, Metrics}, Callback) ->
 	Callback(create_mf(?METRIC_NAME(Name), Help, Type, Metrics)).
 
 metrics() ->
-    AllInfo = arweave_client_throttling_sup:all_info(),
+    AllInfo = arweave_throttling_sup:all_info(),
     [
-     {arweave_client_throttling_peers, gauge, "The number of peers the limiter is monitoring currently", peers(AllInfo)},
-     {arweave_client_throttling_queued_requests, gauge, "The number of peers the limiter is monitoring currently", queued_requests(AllInfo)}
+     {arweave_throttling_peers, gauge, "The number of peers the limiter is monitoring currently", peers(AllInfo)},
+     {arweave_throttling_queued_requests, gauge, "The number of peers the limiter is monitoring currently", queued_requests(AllInfo)}
     ].
 
 peers(AllInfo) ->

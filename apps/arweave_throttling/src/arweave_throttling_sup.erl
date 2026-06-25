@@ -1,8 +1,8 @@
-%%% @doc Supervisor for `arweave_client_throttling'.
+%%% @doc Supervisor for `arweave_throttling'.
 %%%
-%%% Starts one `arweave_client_throttling_group' worker per group
+%%% Starts one `arweave_throttling_group' worker per group
 %%% @end
--module(arweave_client_throttling_sup).
+-module(arweave_throttling_sup).
 -behaviour(supervisor).
 
 -export([start_link/0, start_link/1]).
@@ -22,12 +22,12 @@ start_link(GroupIDs) when is_list(GroupIDs) ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, [GroupIDs]).
 
 all_info() ->
-    [{ID, arweave_client_throttling_group:info(ID)}  ||
+    [{ID, arweave_throttling_group:info(ID)}  ||
         ID <- arweave_config:client_throttling_groups()].
 
 %% Supervisor callbacks
 init([GroupIDs]) ->
-    ok = arweave_client_throttling_metrics:register(),
+    ok = arweave_throttling_metrics:register(),
     {ok, {supervisor_spec(), children_spec(GroupIDs)}}.
 
 supervisor_spec() ->
@@ -49,8 +49,8 @@ children_spec_per_group(GroupID) ->
              concurrency_window_ms => ConcurrencyWindowMS
             },
     [#{
-       id => arweave_client_throttling_group:registered_name(GroupID),
-       start => {arweave_client_throttling_group, start_link, [Spec]},
+       id => arweave_throttling_group:registered_name(GroupID),
+       start => {arweave_throttling_group, start_link, [Spec]},
        type => worker,
        shutdown => ?SHUTDOWN_TIMEOUT
       }].
@@ -58,13 +58,13 @@ children_spec_per_group(GroupID) ->
 %% Only used in tests
 -ifdef(AR_TEST).
 reset_all() ->
-    [{ID, arweave_client_throttling_group:reset(ID)}  || ID <- arweave_config:client_throttling_groups()].
+    [{ID, arweave_throttling_group:reset(ID)}  || ID <- arweave_config:client_throttling_groups()].
 
 all_off() ->
     Children = supervisor:which_children(?MODULE),
-    [{ID, arweave_client_throttling_group:turn_off(ID)}  || {ID, _Child, _Type, _Modules} <- Children].
+    [{ID, arweave_throttling_group:turn_off(ID)}  || {ID, _Child, _Type, _Modules} <- Children].
 
 all_on() ->
     Children = supervisor:which_children(?MODULE),
-    [{ID, arweave_client_throttling_group:turn_on(ID)}  || {ID, _Child, _Type, _Modules} <- Children].
+    [{ID, arweave_throttling_group:turn_on(ID)}  || {ID, _Child, _Type, _Modules} <- Children].
 -endif.

@@ -23,7 +23,7 @@ start_node() ->
 reset_node() ->
 	ar_blacklist_middleware:reset(),
 	arweave_limiter_sup:reset_all(),
-	arweave_client_throttling_sup:reset_all(),
+	arweave_throttling_sup:reset_all(),
 	ar_test_node:remote_call(peer1, ar_blacklist_middleware, reset, []),
 	ar_test_node:connect_to_peer(peer1).
 
@@ -403,7 +403,7 @@ send_tx_binary(Index, InvalidTX) ->
 node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedErrors) ->
 	ar_blacklist_middleware:reset(),
 	arweave_limiter_sup:reset_all(),
-	arweave_client_throttling_sup:all_off(),
+	arweave_throttling_sup:all_off(),
 	Responses = ar_util:batch_pmap(
 		RequestFun,
 		lists:seq(1, NRequests),
@@ -423,7 +423,7 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
 	?assert(ErrorResponses =< MaxErrors),
 	?assert(ErrorResponses >= MinErrors),
 	?assertEqual(NRequests - ErrorResponses, maps:get(ok_responses, Got, 0)),
-	arweave_client_throttling_sup:all_on(),
+	arweave_throttling_sup:all_on(),
 	ok.
 
 expected_error_range(ExpectedErrors, Tolerance) when is_integer(ExpectedErrors) ->

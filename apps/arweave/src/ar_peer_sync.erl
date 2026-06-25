@@ -519,7 +519,7 @@ get_hot_peers_for_bucket(GetAllFun, Path) ->
 			false -> GetAllFun()
 		end,
 	HotPeers = [
-		Peer || Peer <- AllPeers, not arweave_client_throttling:is_throttled(Peer, Path)
+		Peer || Peer <- AllPeers, not arweave_throttling:is_throttled(Peer, Path)
 	],
 	case length(AllPeers) > 0 andalso length(HotPeers) == 0 of
 		true ->

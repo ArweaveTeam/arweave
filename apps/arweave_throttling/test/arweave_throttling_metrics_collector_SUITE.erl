@@ -7,9 +7,9 @@
 %%%
 %%% @author Arweave Team
 %%% @copyright 2026 (c) Arweave
-%%% @doc Tests for `arweave_client_throttling_metrics_collector'.
+%%% @doc Tests for `arweave_throttling_metrics_collector'.
 %%%
-%%% The collector exposes a single `arweave_client_throttling_peers'
+%%% The collector exposes a single `arweave_throttling_peers'
 %%% gauge metric family. Each test case starts the application with
 %%% a single group whose `initial_remaining' is 0 so that every
 %%% `throttle/2' call is queued (and therefore registers the peer
@@ -17,7 +17,7 @@
 %%% collector reports.
 %%% @end
 %%%===================================================================
--module(arweave_client_throttling_metrics_collector_SUITE).
+-module(arweave_throttling_metrics_collector_SUITE).
 -export([suite/0, description/0]).
 -export([init_per_suite/1, end_per_suite/1]).
 -export([init_per_testcase/2, end_per_testcase/2]).
@@ -31,14 +31,14 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(M, arweave_client_throttling_metrics_collector).
+-define(M, arweave_throttling_metrics_collector).
 -define(GROUP, general).
 -define(PATH, "some/path/that/lead/to/general").
 
 suite() -> [{userdata, [description()]}, {timetrap, {seconds, 30}}].
 
 description() ->
-    {description, "arweave_client_throttling_metrics_collector"}.
+    {description, "arweave_throttling_metrics_collector"}.
 
 init_per_suite(Config) -> Config.
 
@@ -54,8 +54,8 @@ init_per_testcase(_TestCase, Config) ->
                                max_queue_length => 10000,
                                concurrency_window_ms => 50}),
 
-    ct:pal(info, 1, "start arweave_client_throttling"),
-    ok = arweave_client_throttling:start(),
+    ct:pal(info, 1, "start arweave_throttling"),
+    ok = arweave_throttling:start(),
 
     [{apps_before,AppsBefore},
      {config, Config}].
@@ -64,10 +64,10 @@ end_per_testcase(_TestCase, Config) ->
     %% `reset/1' sends `{request_ready, _}' to every queued waiter,
     %% so the test-spawned callers return from `throttle/2' and
     %% exit cleanly without leaking.
-    _ = catch arweave_client_throttling:reset(?GROUP),
-    ok = arweave_client_throttling:stop(),
+    _ = catch arweave_throttling:reset(?GROUP),
+    ok = arweave_throttling:stop(),
 
-    arweave_client_throttling_metrics:cleanup(),
+    arweave_throttling_metrics:cleanup(),
 
     AppsBefore = proplists:get_value(apps_before, Config),
     AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
@@ -94,8 +94,8 @@ all() ->
 %% returned by the collector reports zero peers for the configured
 %% group.
 no_peers_reported(_Config) ->
-    [{arweave_client_throttling_peers, gauge, _Help, MetricsListP},
-     {arweave_client_throttling_queued_requests, gauge, _Help2, MetricsListQ}] =
+    [{arweave_throttling_peers, gauge, _Help, MetricsListP},
+     {arweave_throttling_queued_requests, gauge, _Help2, MetricsListQ}] =
         lists:sort(?M:metrics()),
     ?assertEqual([{[{group_id,block_index}],0},
                   {[{group_id,chunk}],0},
@@ -122,11 +122,11 @@ no_peers_reported(_Config) ->
 one_peer_reported(_Config) ->
     Peer = {127, 0, 0, 1, 1984},
     _ = spawn(fun() ->
-                      arweave_client_throttling:throttle(Peer, ?PATH)
+                      arweave_throttling:throttle(Peer, ?PATH)
               end),
     ok = wait_peer_count(?GROUP, 1),
-    [{arweave_client_throttling_peers, gauge, _Help, MetricsListP},
-     {arweave_client_throttling_queued_requests, gauge, _Help2, MetricsListQ}] =
+    [{arweave_throttling_peers, gauge, _Help, MetricsListP},
+     {arweave_throttling_queued_requests, gauge, _Help2, MetricsListQ}] =
         lists:sort(?M:metrics()),
     ?assertEqual([{[{group_id,block_index}],0},
                   {[{group_id,chunk}],0},
@@ -156,11 +156,11 @@ one_peer_reported(_Config) ->
 two_hundred_peers_reported(_Config) ->
     Peers = [{10, 0, X div 256, X rem 256, 1984}
              || X <- lists:seq(1, 200)],
-    [spawn(fun() -> arweave_client_throttling:throttle(P, ?PATH) end)
+    [spawn(fun() -> arweave_throttling:throttle(P, ?PATH) end)
      || P <- Peers],
     ok = wait_peer_count(?GROUP, 200),
-    [{arweave_client_throttling_peers, gauge, _Help, MetricsListP},
-     {arweave_client_throttling_queued_requests, gauge, _Help2, MetricsListQ}] =
+    [{arweave_throttling_peers, gauge, _Help, MetricsListP},
+     {arweave_throttling_queued_requests, gauge, _Help2, MetricsListQ}] =
         ?M:metrics(),
     ?assertEqual([{[{group_id,block_index}],0},
                   {[{group_id,chunk}],0},
@@ -185,7 +185,7 @@ two_hundred_peers_reported(_Config) ->
 %% Helpers
 wait_peer_count(GroupId, N) ->
     wait_until(fun() ->
-                       case arweave_client_throttling_group:info(GroupId) of
+                       case arweave_throttling_group:info(GroupId) of
                            #{peers := N} -> true;
                            _ -> false
                        end

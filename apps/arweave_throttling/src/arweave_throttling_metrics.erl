@@ -1,4 +1,4 @@
--module(arweave_client_throttling_metrics).
+-module(arweave_throttling_metrics).
 
 -export([register/0]).
 
@@ -26,14 +26,14 @@ register() ->
     %%                We chose to measure the worker+queue latency, because that's
     %%                our #1 priority: how much latency we "introduce" in total.
     ok = prometheus_histogram:new(
-           [{name, arweave_client_throttling_request_response_time_microseconds},
+           [{name, arweave_throttling_request_response_time_microseconds},
             {help, "Time request spent being throttled, including being routed "
                    "to and calling the throttling group, and being queued."},
             %% buckets might be reduced for production
             {buckets, ?LONG_LATENCY_BUCKETS},
             {labels, [group_id]}]),
     ok = prometheus_histogram:new(
-           [{name, arweave_client_throttling_worker_response_time_microseconds},
+           [{name, arweave_throttling_worker_response_time_microseconds},
             {help, "Time it took for the throttling group worker process to "
                    "respond to requests whether they can be executed right away or "
                    "need to be queued"},
@@ -47,7 +47,7 @@ register() ->
     %%                it's load.
     %%                We want to measure the performance, to see if it slows down peer sync.
     ok = prometheus_histogram:new(
-           [{name, arweave_client_throttling_is_throttled_response_time_microseconds},
+           [{name, arweave_throttling_is_throttled_response_time_microseconds},
             {help, "Time it took for the throttling group worker to respond "
                    "to is_throttled requests"},
             %% buckets might be reduced for production
@@ -59,16 +59,16 @@ register() ->
     %%                of how over- or under-provisioned limiter/throttling quotas,
     %%                and whether that's the reason for performance degradation.
     ok = prometheus_counter:new(
-           [{name, arweave_client_throttling_requests_total},
+           [{name, arweave_throttling_requests_total},
             {help, "The number of requests the throttling workers have processed"},
             {labels, [group_id]}]),
     ok = prometheus_counter:new(
-           [{name, arweave_client_throttling_queued_total},
+           [{name, arweave_throttling_queued_total},
             {help, "The number of request were queued by throttling group workers"},
             {labels, [group_id]}
            ]),
     ok = prometheus_counter:new(
-           [{name, arweave_client_throttling_requests_error},
+           [{name, arweave_throttling_requests_error},
             {help, "The number of request returned an error when calling the "
                    "throttling logic. e.g.: timeouts"},
             {labels, [group_id, reason]}
@@ -81,12 +81,12 @@ register() ->
     %%                 limiters is the arweave node connected to.
     %%                 It's not necessarily a problem to have update errors.
     ok = prometheus_counter:new(
-           [{name, arweave_client_throttling_quota_update_requests},
+           [{name, arweave_throttling_quota_update_requests},
             {help, "The number of quota_update requests made"},
             {labels, [group_id]}
            ]),
     ok = prometheus_counter:new(
-           [{name, arweave_client_throttling_quota_update_error},
+           [{name, arweave_throttling_quota_update_error},
             {help, "The number of quota_update request that were rejected by "
                    "the throttling logic. e.g.: missing headers, incompatible headers"},
             {labels, [group_id, reason]}
@@ -95,7 +95,7 @@ register() ->
     %% Practical use: To determine load profile: many peers, few request vs few peers
     %%                with high number of requests
     ok = prometheus_gauge:new(
-           [{name, arweave_client_throttling_peers},
+           [{name, arweave_throttling_peers},
             {help, "The number of peers the throttling is monitoring currently"},
             {labels, [group_id]}]),
 
@@ -105,20 +105,20 @@ register() ->
     %%           - a lot of small but usually high frequency requests might exhaust handler
     %%             process pool.
     ok = prometheus_gauge:new(
-           [{name, arweave_client_throttling_queued_requests},
+           [{name, arweave_throttling_queued_requests},
             {help, "The number of requests throttling groups have queued currently"},
             {labels, [group_id]}]),
     ok.
 
 cleanup() ->
-    prometheus_histogram:deregister(arweave_client_throttling_request_response_time_microseconds),
-    prometheus_histogram:deregister(arweave_client_throttling_worker_response_time_microseconds),
-    prometheus_histogram:deregister(arweave_client_throttling_is_throttled_response_time_microseconds),
-    prometheus_counter:deregister(arweave_client_throttling_requests_total),
-    prometheus_counter:deregister(arweave_client_throttling_queued_total),
-    prometheus_counter:deregister(arweave_client_throttling_requests_error),
-    prometheus_counter:deregister(arweave_client_throttling_quota_update_error),
-    prometheus_counter:deregister(arweave_client_throttling_quota_update_requests),
-    prometheus_gauge:deregister(arweave_client_throttling_peers),
-    prometheus_gauge:deregister(arweave_client_throttling_queued_requests),
+    prometheus_histogram:deregister(arweave_throttling_request_response_time_microseconds),
+    prometheus_histogram:deregister(arweave_throttling_worker_response_time_microseconds),
+    prometheus_histogram:deregister(arweave_throttling_is_throttled_response_time_microseconds),
+    prometheus_counter:deregister(arweave_throttling_requests_total),
+    prometheus_counter:deregister(arweave_throttling_queued_total),
+    prometheus_counter:deregister(arweave_throttling_requests_error),
+    prometheus_counter:deregister(arweave_throttling_quota_update_error),
+    prometheus_counter:deregister(arweave_throttling_quota_update_requests),
+    prometheus_gauge:deregister(arweave_throttling_peers),
+    prometheus_gauge:deregister(arweave_throttling_queued_requests),
     ok.

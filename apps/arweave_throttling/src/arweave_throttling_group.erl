@@ -1,7 +1,7 @@
 %%%===================================================================
 %%% @doc Per-group client throttler.
 %%%
-%%% One `arweave_client_throttling_group' process exists per limiting
+%%% One `arweave_throttling_group' process exists per limiting
 %%% group. It maintains, per peer, a quota state and a FIFO queue of
 %%% waiting caller pids.
 %%%
@@ -52,7 +52,7 @@
 %%% replaced with the value from the most recent update.
 %%% @end
 %%%===================================================================
--module(arweave_client_throttling_group).
+-module(arweave_throttling_group).
 -vsn(1).
 -behaviour(gen_server).
 
@@ -127,7 +127,7 @@ start_link(#{id := ID,
     gen_server:start_link({local, registered_name(ID)}, ?MODULE, Spec, []).
 
 registered_name(ID) when is_atom(ID) ->
-    list_to_atom("arweave_client_throttling_group_" ++ atom_to_list(ID)).
+    list_to_atom("arweave_throttling_group_" ++ atom_to_list(ID)).
 
 %% @doc Blocking throttle call.
 %%
@@ -147,35 +147,35 @@ registered_name(ID) when is_atom(ID) ->
 -spec throttle(atom(), tuple()) -> ok | {error, term()}.
 throttle(GroupID, Peer) ->
     {Time, Value} = timer:tc(fun do_throttle/2, [GroupID, Peer]),
-    prometheus_histogram:observe(arweave_client_throttling_request_response_time_microseconds,
+    prometheus_histogram:observe(arweave_throttling_request_response_time_microseconds,
                                  [atom_to_list(GroupID)], Time),
     Value.
 
 -spec do_throttle(atom(), tuple()) -> ok | {error, term()}.
 do_throttle(GroupID, Peer) ->
-    prometheus_counter:inc(arweave_client_throttling_requests_total, [atom_to_list(GroupID)]),
+    prometheus_counter:inc(arweave_throttling_requests_total, [atom_to_list(GroupID)]),
     Name = registered_name(GroupID),
     {Time, WorkerReturn} = timer:tc(fun try_throttle_call/2, [Name, Peer]),
-    prometheus_histogram:observe(arweave_client_throttling_worker_response_time_microseconds,
+    prometheus_histogram:observe(arweave_throttling_worker_response_time_microseconds,
                                  [atom_to_list(GroupID)], Time),
     case WorkerReturn of
         accepted ->
             ok;
         {queued, Ref} ->
-            prometheus_counter:inc(arweave_client_throttling_queued_total, [atom_to_list(GroupID)]),
+            prometheus_counter:inc(arweave_throttling_queued_total, [atom_to_list(GroupID)]),
             receive
                 {request_ready, Ref} ->
                     ok
             after ?THROTTLE_RECEIVE_TIMEOUT_MS ->
                     gen_server:cast(Name, {cancel_request, Peer, Ref}),
-                    prometheus_counter:inc(arweave_client_throttling_requests_error,
+                    prometheus_counter:inc(arweave_throttling_requests_error,
                                            [atom_to_list(GroupID), "throttle_receive_timeout"]),
                 {error, throttle_receive_timeout}
             end;
         {error, Reason} = Error ->
             %% TODO: extract error reason
             ?LOG_ERROR([{event, client_throttling_throttle_error}, {reason, Reason}]),
-            prometheus_counter:inc(arweave_client_throttling_requests_error,
+            prometheus_counter:inc(arweave_throttling_requests_error,
                                    [atom_to_list(GroupID), "unknown"]),
             Error
     end.
@@ -208,7 +208,7 @@ update_quota(GroupID, Peer, #{
   when is_integer(Total), Total >= 0,
        is_integer(Remaining), Remaining >= 0,
        is_integer(ResetSeconds), ResetSeconds >= 0 ->
-    prometheus_counter:inc(arweave_client_throttling_quota_update_requests,
+    prometheus_counter:inc(arweave_throttling_quota_update_requests,
                            [atom_to_list(GroupID)]),
     ReceivedAt = monotonic_ms(),
     gen_server:cast(registered_name(GroupID),
@@ -219,7 +219,7 @@ update_quota(GroupID, Peer, #{
 -spec is_throttled(atom(), tuple()) -> boolean().
 is_throttled(GroupID, Peer) when is_atom(GroupID), is_tuple(Peer) ->
     {Time, Value} = timer:tc(fun do_is_throttled/2, [GroupID, Peer]),
-    prometheus_histogram:observe(arweave_client_throttling_is_throttled_response_time_microseconds,
+    prometheus_histogram:observe(arweave_throttling_is_throttled_response_time_microseconds,
                                  [atom_to_list(GroupID)], Time),
     Value.
 

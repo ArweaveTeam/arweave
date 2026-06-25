@@ -1,4 +1,4 @@
--module(arweave_client_throttling_path).
+-module(arweave_throttling_path).
 
 -export([path_to_group_id/1]).
 

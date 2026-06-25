@@ -16,7 +16,7 @@
 		prometheus_process_collector,
 		prometheus_httpd,
 		runtime_tools,
-		arweave_client_throttling
+		arweave_throttling
 	]},
 	{extra_applications, [recon]}
 ]}.

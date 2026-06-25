@@ -1,7 +1,7 @@
-%%% @doc Direct tests for the `arweave_client_throttling_group'
+%%% @doc Direct tests for the `arweave_throttling_group'
 %%% gen_server, exercised without the supervisor.
 %%% @end
--module(arweave_client_throttling_group_SUITE).
+-module(arweave_throttling_group_SUITE).
 -export([suite/0, description/0]).
 -export([init_per_suite/1, end_per_suite/1]).
 -export([init_per_testcase/2, end_per_testcase/2]).
@@ -17,14 +17,14 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(M, arweave_client_throttling_group).
+-define(M, arweave_throttling_group).
 
 %% Note: `blocking_call' waits for an exhausted-quota reset of 29s
 %% plus client-side overhead, so the timetrap has to clear that.
 suite() -> [{userdata, [description()]}, {timetrap, {seconds, 90}}].
 
 description() ->
-    {description, "arweave_client_throttling_group gen_server"}.
+    {description, "arweave_throttling_group gen_server"}.
 
 init_per_suite(Config) ->
     Config.
@@ -46,7 +46,7 @@ init_per_testcase(_TestCase, Config) ->
     [{group_pid, Pid}, {spec, Spec} | Config].
 
 end_per_testcase(_TestCase, _Config) ->
-    case whereis(arweave_client_throttling_group_general) of
+    case whereis(arweave_throttling_group_general) of
         undefined -> ok;
         _ -> ok = ?M:stop(general)
     end,
@@ -66,7 +66,7 @@ all() ->
 %% @doc Verify the worker is registered under the expected name.
 start_stop(Config) ->
     Pid = proplists:get_value(group_pid, Config),
-    Pid = whereis(arweave_client_throttling_group_general),
+    Pid = whereis(arweave_throttling_group_general),
     true = is_process_alive(Pid),
     ok.
 

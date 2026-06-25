@@ -7,7 +7,7 @@
 %%%
 %%% @author Arweave Team
 %%% @copyright 2026 (c) Arweave
-%%% @doc Tests for `arweave_client_throttling_http_headers'.
+%%% @doc Tests for `arweave_throttling_http_headers'.
 %%%
 %%% Exercises both the pure `parse/1' path and the
 %%% `update_quota_from_headers/3' path that applies the parsed quota
@@ -15,7 +15,7 @@
 %%% format produced by `arweave_limiter_http_headers'.
 %%% @end
 %%%===================================================================
--module(arweave_client_throttling_http_headers_SUITE).
+-module(arweave_throttling_http_headers_SUITE).
 -export([suite/0, description/0]).
 -export([init_per_suite/1, end_per_suite/1]).
 -export([init_per_testcase/2, end_per_testcase/2]).
@@ -34,13 +34,13 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(M, arweave_client_throttling_http_headers).
+-define(M, arweave_throttling_http_headers).
 -define(GROUP, general).
 
 suite() -> [{userdata, [description()]}, {timetrap, {seconds, 30}}].
 
 description() ->
-    {description, "arweave_client_throttling_http_headers"}.
+    {description, "arweave_throttling_http_headers"}.
 
 init_per_suite(Config) -> Config.
 
