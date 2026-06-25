@@ -17,7 +17,6 @@
 	create_wallet/1,
 	docs/0,
 	main/0,
-	main/1,
 	prep_stop/1,
 	shell/0,
 	shell_e2e/0,
@@ -56,9 +55,7 @@
 %% No CLI args — boot purely from `AR_*' env vars (and the config
 %% file if one is configured).
 main() ->
-	main([]).
-
-main(Args) ->
+	Args = init:get_plain_arguments(),
 	% arweave_config must be the first application started, it
 	% will keep the configuration for all other arweave
 	% applications or processes.
@@ -71,6 +68,7 @@ main(Args) ->
 		ok ->
 			start_dependencies();
 		Else ->
+			io:format("ERROR: couldn't read configuration file: ~p~n", [Else]),
 			arweave_config:show_cli_help(),
 			init:stop(1),
 			{error, Else}
