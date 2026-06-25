@@ -19,9 +19,11 @@
 %%%    validators see the assembled state before anything else
 %%%    proceeds.
 %%%
-%%% 2. After every successful `set` to a `runtime => true` option once
-%%%    the system is in runtime mode. If the set produces an invalid
-%%%    state the spec system rolls back the write.
+%%% 2. Before every `set` to a `runtime => true` option commits, once
+%%%    the system is in runtime mode. The validators run against the
+%%%    candidate value (exposed to them as a process-local candidate); if the
+%%%    resulting state is invalid the set is rejected and the committed
+%%%    store is left untouched.
 %%%
 %%% Sets during load (before `runtime/0` is called) do not trigger
 %%% validation. The post-load check covers them.

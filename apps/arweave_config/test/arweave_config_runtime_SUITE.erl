@@ -33,10 +33,80 @@ all() ->
 		runtime_flip_is_idempotent,
 		runtime_writable_boolean,
 		runtime_writable_pos_integer,
+		runtime_writable_options_accept_set,
 		non_runtime_scalar_rejected,
 		non_runtime_address_rejected,
 		non_runtime_list_replace_rejected
 	].
+
+%% A value for each runtime-writable option group, exercising every
+%% distinct `handle_set' path at least once. Identical per-field siblings
+%% (the gun client opts, the cowboy protocol opts behind `set_protocol_opt',
+%% the per-field network / limiter / transactions knobs) are represented by
+%% a single entry rather than enumerated; logging options have their own
+%% suite. A bad value type, a stale runtime flag, or a `handle_set' that
+%% crashes the registry surfaces here: the consumer-side setters are
+%% load-safe no-ops in this context (no node booted), so a successful `set'
+%% then `get' returning the value confirms the spec is runtime-writable end
+%% to end.
+runtime_writable_cases() ->
+	[
+		%% Tier 1 — pure runtime flag.
+		{[network, client, http, keepalive], 30000},
+		{[network, server, shutdown_mode], close},
+		{[gossip, tx, post_timeout], 25},
+		{[gossip, data_roots, syncing_enabled], false},
+		{[gossip, data_roots, max_duplicates], 5},
+		{[sync, local_peers_only], true},
+		{[sync, max_concurrent_peer_scans], 50},
+		{[requests_per_minute_limit], 500},
+		{[disk_pool, max_buffer_size], 200},
+		{[randomx, hardware_aes], false},
+		{[vdf, pull], false},
+		{[vdf, max_validation_threads], 4},
+		{[vdf, algorithm], openssl},
+		{[cm, poll_interval], 30000},
+		{[pool, api_key], <<"a-pool-api-key">>},
+		{[peers, block_gossip], [{1,2,3,4,1984}]},
+		{[peers, local], [{1,2,3,4,1984}]},
+		{[peers, cm_peer], [{1,2,3,4,1984}]},
+		{[transactions, blocklist, files], [<<"/tmp/blocklist">>]},
+		{[sync, request_packed_chunks], true},
+		%% Tier 2 — runtime flag + handle_set / live-read conversion.
+		{[gossip, tx, max_peers], 10},
+		{[gossip, block, throttle_by_ip_interval], 500},
+		{[gossip, header_cache_size], 100},
+		{[sync, cache_size_limit], 500},
+		{[packing, cache_size], 1000},
+		{[packing, entropy, cache_size], 2000},
+		{[packing, entropy, workers], 4},
+		{[mining, cache_size], 1000},
+		{[disable_device_limit], true},
+		{[disk_space_check_frequency], 5000},
+		{[rocksdb, flush_interval], 600},
+		{[rocksdb, wal_sync_interval], 30},
+		{[cm, out_batch_timeout], 50},
+		{[features, http_logging], true},
+		%% New reconfigure APIs.
+		{[limiter, chunk, concurrency_limit], 100},
+		{[network, server, tcp, max_connections], 1000},
+		{[network, server, http, request_timeout], 6000}
+	].
+
+runtime_writable_options_accept_set(_Config) ->
+	arweave_config:with_test_config(fun() ->
+		ok = arweave_config:runtime(),
+		true = arweave_config:is_runtime(),
+		lists:foreach(
+			fun({Key, Value}) ->
+				?assertEqual(ok, arweave_config:set(Key, Value),
+					lists:flatten(io_lib:format("set ~p", [Key]))),
+				?assertEqual(Value, arweave_config:get(Key),
+					lists:flatten(io_lib:format("get ~p", [Key])))
+			end,
+			runtime_writable_cases())
+	end),
+	ok.
 
 %%====================================================================
 %% Test cases

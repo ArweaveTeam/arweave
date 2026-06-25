@@ -311,11 +311,9 @@ count(Name) ->
 
 init([]) ->
 	process_flag(trap_exit, true),
-	FlushInterval = arweave_config:get([rocksdb, flush_interval]),
-	WalSyncInterval = arweave_config:get([rocksdb, wal_sync_interval]),
 	S0 = #state{
-		db_flush_timer = #timer{interval_ms = FlushInterval * 1000},
-		wal_sync_timer = #timer{interval_ms = WalSyncInterval * 1000}
+		db_flush_timer = #timer{},
+		wal_sync_timer = #timer{}
 	},
 	S1 = init_db_flush_timer(S0),
 	S2 = init_wal_sync_timer(S1),
@@ -437,15 +435,19 @@ init_timer(Timer0, MsgFun) ->
 
 
 init_db_flush_timer(#state{db_flush_timer = Timer0} = S0) ->
+	IntervalMs = arweave_config:get([rocksdb, flush_interval]) * 1000,
 	S0#state{
-		db_flush_timer = init_timer(Timer0, fun(Secret) -> ?msg_trigger_db_flush(Secret) end)
+		db_flush_timer = init_timer(Timer0#timer{interval_ms = IntervalMs},
+			fun(Secret) -> ?msg_trigger_db_flush(Secret) end)
 	}.
 
 
 
 init_wal_sync_timer(#state{wal_sync_timer = Timer0} = S0) ->
+	IntervalMs = arweave_config:get([rocksdb, wal_sync_interval]) * 1000,
 	S0#state{
-		wal_sync_timer = init_timer(Timer0, fun(Secret) -> ?msg_trigger_wal_sync(Secret) end)
+		wal_sync_timer = init_timer(Timer0#timer{interval_ms = IntervalMs},
+			fun(Secret) -> ?msg_trigger_wal_sync(Secret) end)
 	}.
 
 

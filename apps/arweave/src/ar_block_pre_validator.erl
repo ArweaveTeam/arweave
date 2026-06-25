@@ -17,10 +17,8 @@
 	size = 0,
 	%% The map IP => the timestamp of the last block from this IP.
 	ip_timestamps = #{},
-	throttle_by_ip_interval,
 	%% The map SolutionHash => the timestamp of the last block with this solution hash.
-	hash_timestamps = #{},
-	throttle_by_solution_interval
+	hash_timestamps = #{}
 }).
 
 %% The maximum size in bytes the blocks enqueued for pre-validation can occupy.
@@ -77,17 +75,10 @@ pre_validate(B, Peer, ReceiveTimestamp) ->
 init([]) ->
 	gen_server:cast(?MODULE, pre_validate),
 	ok = ar_events:subscribe(block),
-	ThrottleBySolutionInterval = arweave_config:get(
-		[gossip, block, throttle_by_solution_interval]),
-	ThrottleByIPInterval = arweave_config:get(
-		[gossip, block, throttle_by_ip_interval]),
-	{ok, #state{ throttle_by_ip_interval = ThrottleByIPInterval,
-			throttle_by_solution_interval = ThrottleBySolutionInterval }}.
+	{ok, #state{}}.
 
 handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTimestamps,
-			hash_timestamps = HashTimestamps,
-			throttle_by_ip_interval = ThrottleByIPInterval,
-			throttle_by_solution_interval = ThrottleBySolutionInterval } = State) ->
+			hash_timestamps = HashTimestamps } = State) ->
 	case gb_sets:is_empty(Q) of
 		true ->
 			ar_util:cast_after(50, ?MODULE, pre_validate),
@@ -105,6 +96,10 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
 					gen_server:cast(?MODULE, pre_validate),
 					{noreply, State#state{ pqueue = Q2, size = Size2 }};
 				false ->
+					ThrottleByIPInterval = arweave_config:get(
+						[gossip, block, throttle_by_ip_interval]),
+					ThrottleBySolutionInterval = arweave_config:get(
+						[gossip, block, throttle_by_solution_interval]),
 					ThrottleByIPResult = throttle_by_ip(Peer, IPTimestamps,
 							ThrottleByIPInterval),
 					{IPTimestamps3, HashTimestamps3} =
@@ -169,8 +164,8 @@ handle_cast({enqueue, {B, PrevB, SolutionResigned, Peer, Ref}}, State) ->
 		end,
 	{noreply, State#state{ pqueue = Q3, size = Size3 }};
 
-handle_cast({may_be_remove_ip_timestamp, IP}, #state{ ip_timestamps = Timestamps,
-		throttle_by_ip_interval = ThrottleInterval } = State) ->
+handle_cast({may_be_remove_ip_timestamp, IP}, #state{ ip_timestamps = Timestamps } = State) ->
+	ThrottleInterval = arweave_config:get([gossip, block, throttle_by_ip_interval]),
 	Now = os:system_time(millisecond),
 	case maps:get(IP, Timestamps, not_set) of
 		not_set ->
@@ -181,8 +176,8 @@ handle_cast({may_be_remove_ip_timestamp, IP}, #state{ ip_timestamps = Timestamps
 			{noreply, State}
 	end;
 
-handle_cast({may_be_remove_h_timestamp, H}, #state{ hash_timestamps = Timestamps,
-		throttle_by_solution_interval = ThrottleInterval } = State) ->
+handle_cast({may_be_remove_h_timestamp, H}, #state{ hash_timestamps = Timestamps } = State) ->
+	ThrottleInterval = arweave_config:get([gossip, block, throttle_by_solution_interval]),
 	Now = os:system_time(millisecond),
 	case maps:get(H, Timestamps, not_set) of
 		not_set ->

@@ -9,6 +9,9 @@
 -export([init/1]).
 -export([handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 -export([split_path/1, label_http_path/1, label_req/1]).
+-export([set_max_connections/1, set_protocol_opt/2]).
+
+-define(HTTP_IFACE_LISTENER, ar_http_iface_listener).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -68,6 +71,12 @@ handle_call(Msg, From, State) ->
 	?LOG_WARNING([{process, ?MODULE}, {received, Msg}, {from, From}]),
 	{noreply, State}.
 
+handle_cast(apply_protocol_opts, State) ->
+	case listener_started() of
+		false -> ok;
+		true -> ranch:set_protocol_options(?HTTP_IFACE_LISTENER, build_protocol_opts())
+	end,
+	{noreply, State};
 handle_cast(Msg, State) ->
 	?LOG_WARNING([{process, ?MODULE}, {received, Msg}]),
 	{noreply, State}.
@@ -87,7 +96,12 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 start_http_iface_listener() ->
-	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
+	cowboy:start_clear(
+		?HTTP_IFACE_LISTENER, build_transport_opts(), build_protocol_opts()).
+
+%% @doc Build the ranch transport options map from the current config. Read once
+%% at listener start — the transport socket opts are not runtime-updated.
+build_transport_opts() ->
 	Backlog = arweave_config:get([network, server, tcp, backlog]),
 	DelaySend = arweave_config:get([network, server, tcp, delay_send]),
 	Keepalive = arweave_config:get([network, server, tcp, keepalive]),
@@ -100,12 +114,7 @@ start_http_iface_listener() ->
 	SendTimeout = arweave_config:get([network, server, tcp, send_timeout]),
 	ListenerShutdown = arweave_config:get([network, server, tcp, listener_shutdown]),
 	Port = arweave_config:get([port]),
-	ActiveN = arweave_config:get([network, server, http, active_n]),
-	InactivityTimeout = arweave_config:get([network, server, http, inactivity_timeout]),
-	HTTPLingerTimeout = arweave_config:get([network, server, http, linger_timeout]),
-	RequestTimeout = arweave_config:get([network, server, http, request_timeout]),
-	IdleTimeout = arweave_config:get([network, server, transport, idle_timeout]),
-	TransportOpts = #{
+	#{
 		% ranch_tcp parameters
 		backlog => Backlog,
 		delay_send => DelaySend,
@@ -120,8 +129,18 @@ start_http_iface_listener() ->
 		socket_opts => [
 			{port, Port}
 		]
-	},
-	ProtocolOpts = #{
+	}.
+
+%% @doc Build the cowboy protocol options map from the current config. Shared by
+%% listener startup and the runtime protocol-opt updater.
+build_protocol_opts() ->
+	Dispatch = cowboy_router:compile([{'_', ?HTTP_IFACE_ROUTES}]),
+	ActiveN = arweave_config:get([network, server, http, active_n]),
+	InactivityTimeout = arweave_config:get([network, server, http, inactivity_timeout]),
+	HTTPLingerTimeout = arweave_config:get([network, server, http, linger_timeout]),
+	RequestTimeout = arweave_config:get([network, server, http, request_timeout]),
+	IdleTimeout = arweave_config:get([network, server, transport, idle_timeout]),
+	#{
 		active_n => ActiveN,
 		inactivity_timeout => InactivityTimeout,
 		linger_timeout => HTTPLingerTimeout,
@@ -133,8 +152,33 @@ start_http_iface_listener() ->
 		},
 		metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
 		stream_handlers => [cowboy_metrics_h, cowboy_stream_h]
-	},
-	cowboy:start_clear(ar_http_iface_listener, TransportOpts, ProtocolOpts).
+	}.
+
+%% @doc Set the listener's max connection count at runtime (load-safe).
+set_max_connections(V) ->
+	case listener_started() of
+		false -> ok;
+		true -> ranch:set_max_connections(?HTTP_IFACE_LISTENER, V)
+	end,
+	ok.
+
+%% @doc Rebuild the cowboy protocol options from config and apply them to the
+%% running listener (load-safe). Applies to new connections. Casts to the server
+%% so the rebuild runs after the registry has stored the new value: the
+%% handle_set that calls this runs before the store, so reading config
+%% synchronously here would still see the old value.
+set_protocol_opt(_Key, _V) ->
+	gen_server:cast(?MODULE, apply_protocol_opts),
+	ok.
+
+%% @doc Whether the cowboy/ranch listener is up. Setters are no-ops until then.
+listener_started() ->
+	try
+		_ = ranch:info(?HTTP_IFACE_LISTENER),
+		true
+	catch
+		_:_ -> false
+	end.
 
 name_route([]) ->
 	"/";

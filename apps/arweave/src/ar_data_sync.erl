@@ -35,6 +35,7 @@
 		increment_chunk_cache_size/0, decrement_chunk_cache_size/0,
 		get_chunk_metadata_range/3, get_merkle_rebase_threshold/0,
 		is_footprint_record_supported/3,
+		set_chunk_cache_size_limit/1,
 		migration_db/1]).
 
 %% Exported for ar_disk_pool
@@ -384,6 +385,32 @@ request_tx_data_removal(TXID, Ref, ReplyTo) ->
 request_data_removal(Start, End, Ref, ReplyTo) ->
 	remove_range(Start, End, Ref, ReplyTo).
 
+%% @doc Resolve the chunk cache size limit (an undefined configured value falls
+%% back to a free-memory heuristic) and store it in the shared
+%% ar_data_sync_state table; returns the resolved limit. Called at init and on
+%% every runtime change to [sync, cache_size_limit]. A no-op until ar_sup has
+%% created the table: config is loaded — firing this option's handle_set —
+%% before the supervision tree starts, so the table may not exist yet; init
+%% sets it once it does.
+set_chunk_cache_size_limit(Configured) ->
+	case ets:whereis(ar_data_sync_state) of
+		undefined ->
+			ok;
+		_ ->
+			Limit =
+				case Configured of
+					undefined ->
+						Free = proplists:get_value(free_memory,
+							memsup:get_system_memory_data(), 2000000000),
+						ar_util:ceil_int(
+							min(1000, erlang:ceil(Free * 0.9 / 3 / 262144)), 100);
+					_ ->
+						Configured
+				end,
+			ets:insert(ar_data_sync_state, {chunk_cache_size_limit, Limit}),
+			Limit
+	end.
+
 %% @doc Return true if the in-memory data chunk cache is full. A cache whose
 %% limit is not initialized yet is reported full so callers back off and retry.
 is_chunk_cache_full() ->
@@ -696,19 +723,8 @@ init({?DEFAULT_MODULE = StoreID, _}) ->
 		{range_start, State2#data_sync_state.range_start},
 		{range_end, State2#data_sync_state.range_end}]),
 	gen_server:cast(self(), store_sync_state),
-	Limit =
-		case DataCacheSizeLimit of
-			undefined ->
-				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
-						2000000000),
-				Limit2 = min(1000, erlang:ceil(Free * 0.9 / 3 / 262144)),
-				Limit3 = ar_util:ceil_int(Limit2, 100),
-				Limit3;
-			Limit2 ->
-				Limit2
-		end,
+	Limit = set_chunk_cache_size_limit(DataCacheSizeLimit),
 	ar:console("~nSetting the data chunk cache size limit to ~B chunks.~n", [Limit]),
-	ets:insert(ar_data_sync_state, {chunk_cache_size_limit, Limit}),
 	ets:insert(ar_data_sync_state, {chunk_cache_size, 0}),
 	{ok, _} = ar_timer:apply_interval(
 		200,

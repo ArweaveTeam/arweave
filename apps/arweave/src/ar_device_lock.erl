@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 
 -export([get_store_id_to_device_map/0, is_ready/0, acquire_lock/3, release_lock/2,
-	set_device_lock_metric/3]).
+	set_device_lock_metric/3, set_entropy_workers/1, set_disable_device_limit/1]).
 
 -export([start_link/0, init/1, handle_call/3, handle_info/2, handle_cast/2, terminate/2]).
 
@@ -96,6 +96,14 @@ set_device_lock_metric(StoreID, Mode, Status) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
 	ar_metrics:gauge_set(device_lock_status, [StoreIDLabel, Mode], StatusCode).
 
+%% @doc Update the number of replica 2.9 entropy workers at runtime.
+set_entropy_workers(Value) ->
+	gen_server:cast(?MODULE, {set_entropy_workers, Value}).
+
+%% @doc Update the device limit toggle at runtime.
+set_disable_device_limit(Value) ->
+	gen_server:cast(?MODULE, {set_disable_device_limit, Value}).
+
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
@@ -154,6 +162,10 @@ handle_cast(log_locks, State) ->
 	log_locks(State),
 	ar_util:cast_after(?LOCK_LOG_INTERVAL_MS, ?MODULE, log_locks), 
 	{noreply, State};
+handle_cast({set_entropy_workers, Value}, State) ->
+	{noreply, State#state{ num_replica_2_9_workers = Value }};
+handle_cast({set_disable_device_limit, Value}, State) ->
+	{noreply, State#state{ device_limit = not Value }};
 handle_cast(Request, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {request, Request}]),
 	{noreply, State}.

@@ -21,6 +21,7 @@
          register_or_reject_call/2,
          reduce_for_peer/2,
          reset_all/1,
+         set_config/3,
          stop/1
         ]).
 
@@ -107,6 +108,20 @@ reduce_for_peer(LimiterRef, Peer) ->
 
 reset_all(LimiterRef) ->
     whereis(LimiterRef) == undefined orelse gen_server:call(LimiterRef, reset_all).
+
+%% @doc Push a live config update for Field into every worker of GroupID's
+%% state. Only the timer-free fields are marked `runtime' in the spec, so the
+%% timer-interval / no_limit fields (which would need a timer re-arm) never
+%% reach here. A no-op for workers not yet started (boot/load phase).
+set_config(GroupID, Field, V) when is_atom(GroupID) ->
+    WorkersNum = arweave_config:get([limiter, GroupID, number_of_workers]),
+    lists:foreach(
+        fun(N) ->
+            WorkerName = arweave_limiter_util:worker_name(GroupID, N),
+            gen_server:cast(WorkerName, {set_config, Field, V})
+        end,
+        lists:seq(0, WorkersNum - 1)),
+    ok.
 
 stop(LimiterRef) ->
     gen_server:stop(LimiterRef).
@@ -266,6 +281,8 @@ handle_call(Request, From, State = #{id := ID}) ->
                   {config, filter_state_for_config(State)}]),
     {reply, ok, State}.
 
+handle_cast({set_config, Field, V}, State) ->
+    {noreply, State#{Field => V}};
 handle_cast(_Request, State) ->
     {noreply, State}.
 

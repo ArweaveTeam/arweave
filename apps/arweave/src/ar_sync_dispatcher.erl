@@ -17,7 +17,8 @@
 -behaviour(gen_server).
 
 -export([start_link/0, is_syncing_enabled/0, sync_jobs/0, register_workers/0,
-		ready_for_work/0, enqueue/1, default_inflight_limit/0]).
+		ready_for_work/0, enqueue/1, default_inflight_limit/0,
+		set_entropy_cache_size/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
@@ -107,6 +108,11 @@ enqueue([]) ->
 enqueue(SyncTasks) when is_list(SyncTasks) ->
 	gen_server:cast(?MODULE, {enqueue, SyncTasks}).
 
+%% @doc Recompute the footprint-slot ceiling after [packing, entropy,
+%% cache_size] changes at runtime.
+set_entropy_cache_size(_V) ->
+	gen_server:cast(?MODULE, recompute_max_footprints).
+
 default_inflight_limit() ->
 	max(?MIN_INFLIGHT_LIMIT, sync_jobs() div ?INFLIGHT_LIMIT_DIVISOR).
 
@@ -141,6 +147,9 @@ handle_call(Request, _From, State) ->
 
 handle_cast({enqueue, SyncTasks}, State) ->
 	{noreply, dispatch_fetches(lists:foldl(fun queue_task/2, State, SyncTasks))};
+
+handle_cast(recompute_max_footprints, State) ->
+	{noreply, State#state{ max_footprints = calculate_max_footprints() }};
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),

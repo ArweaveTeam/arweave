@@ -9,8 +9,9 @@
 		pack/4, unpack/5, repack/6, unpack_sub_chunk/5,
 		is_buffer_full/0, record_buffer_size_metric/0,
 		pad_chunk/1, unpad_chunk/3, unpad_chunk/4,
-		encipher_replica_2_9_chunk/2, decipher_replica_2_9_chunk/2, 
-		exor_replica_2_9_chunk/2, pack_replica_2_9_chunk/3, request_entropy_generation/3]).
+		encipher_replica_2_9_chunk/2, decipher_replica_2_9_chunk/2,
+		exor_replica_2_9_chunk/2, pack_replica_2_9_chunk/3, request_entropy_generation/3,
+		set_cache_size/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -137,6 +138,28 @@ is_buffer_full() ->
 		_ ->
 			false
 	end.
+
+%% @doc Re-derive the packing buffer size limit from config at runtime.
+set_cache_size(Value) ->
+	gen_server:cast(?MODULE, {set_cache_size, Value}).
+
+%% @doc Resolve the packing buffer size limit (an undefined configured value
+%% falls back to a free-memory heuristic) and store it in ETS. Shared by init
+%% and the runtime set_cache_size handler.
+set_buffer_size_limit(PackingCacheSizeLimit) ->
+	MaxSize =
+		case PackingCacheSizeLimit of
+			undefined ->
+				Free = proplists:get_value(free_memory,
+					memsup:get_system_memory_data(), 2000000000),
+				ar_util:ceil_int(
+					min(1200, erlang:ceil(Free * 0.9 / 3 / ?DATA_CHUNK_SIZE)), 100);
+			Limit ->
+				Limit
+		end,
+	?LOG_INFO([{event, packing_chunk_cache_size_limit}, {max_size, MaxSize}]),
+	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
+	MaxSize.
 
 pad_chunk(Chunk) ->
 	pad_chunk(Chunk, byte_size(Chunk)).
@@ -309,21 +332,8 @@ init([]) ->
 		[spawn_link(fun() -> worker(PackingState) end) || _ <- lists:seq(1, NumWorkers)]),
 	ets:insert(?MODULE, {buffer_size, 0}),
 
-	PackingCacheSizeLimit = arweave_config:get([packing, cache_size]),
-	MaxSize =
-		case PackingCacheSizeLimit of
-			undefined ->
-				Free = proplists:get_value(free_memory, memsup:get_system_memory_data(),
-						2000000000),
-				Limit2 = min(1200, erlang:ceil(Free * 0.9 / 3 / ?DATA_CHUNK_SIZE)),
-				Limit3 = ar_util:ceil_int(Limit2, 100),
-				Limit3;
-			Limit ->
-				Limit
-		end,
+	MaxSize = set_buffer_size_limit(arweave_config:get([packing, cache_size])),
 	ar:console("~nSetting the packing chunk cache size limit to ~B chunks.~n", [MaxSize]),
-	?LOG_INFO([{event, packing_chunk_cache_size_limit}, {max_size, MaxSize}]),
-	ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
 	{ok, _} = ar_timer:apply_interval(
 		200,
 		?MODULE,
@@ -392,6 +402,10 @@ handle_cast({generate_entropy, From, Ref,
 	Worker ! {generate_entropy, Ref, From,
 		{RewardAddr, BucketEndOffset, SubChunkStart, CacheEntropy}},
 	{noreply, State#state{ workers = queue:in(Worker, Workers2) }};
+handle_cast({set_cache_size, PackingCacheSizeLimit}, State) ->
+	set_buffer_size_limit(PackingCacheSizeLimit),
+	{noreply, State};
+
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
 	{noreply, State}.

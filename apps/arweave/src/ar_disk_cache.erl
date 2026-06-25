@@ -18,8 +18,6 @@
 
 %% Internal state definition.
 -record(state, {
-	limit_max,
-	limit_min,
 	size = 0,
 	path
 }).
@@ -159,7 +157,6 @@ init([]) ->
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	DataDir = arweave_config:get([data_dir]),
-	DiskCacheSize = arweave_config:get([gossip, header_cache_size]),
 	Path = filename:join(DataDir, ?DISK_CACHE_DIR),
 	BlockPath = filename:join(Path, ?DISK_CACHE_BLOCK_DIR),
 	TXPath = filename:join(Path, ?DISK_CACHE_TX_DIR),
@@ -173,11 +170,7 @@ init([]) ->
 			fun(F,Acc) -> filelib:file_size(F) + Acc end,
 			0
 		),
-	LimitMax = DiskCacheSize * 1048576, % MB to Bytes.
-	LimitMin = trunc(LimitMax * (100 - ?DISK_CACHE_CLEAN_PERCENT_MAX) / 100),
 	State = #state{
-		limit_max = LimitMax,
-		limit_min = LimitMin,
 		size = Size,
 		path = Path
 	},
@@ -228,27 +221,31 @@ handle_cast({record_written_data, Size}, State) ->
 	gen_server:cast(?MODULE, may_be_clean_up),
 	{noreply, State#state{ size = CacheSize }};
 
-handle_cast(may_be_clean_up, State) when State#state.size > State#state.limit_max ->
-	?LOG_DEBUG([{event, disk_cache_exceeds_limit}, {limit, State#state.limit_max},
-			{cache_size, State#state.size}]),
-	Files =
-		lists:sort(filelib:fold_files(
-			State#state.path,
-			"(.*\\.json$)|(.*\\.bin$)",
-			true,
-			fun(F, A) ->
-				 [{filelib:last_modified(F), filelib:file_size(F), F} | A]
-			end,
-			[])
-		),
-	%% How much space should be cleaned up.
-	ToRemove = State#state.size - State#state.limit_min,
-	Removed = delete_file(Files, ToRemove, 0),
-	Size = State#state.size - Removed,
-	erlang:garbage_collect(),
-	{noreply, State#state{ size = Size }};
 handle_cast(may_be_clean_up, State) ->
-	{noreply, State};
+	LimitMax = header_cache_limit_max(),
+	case State#state.size > LimitMax of
+		true ->
+			?LOG_DEBUG([{event, disk_cache_exceeds_limit}, {limit, LimitMax},
+					{cache_size, State#state.size}]),
+			Files =
+				lists:sort(filelib:fold_files(
+					State#state.path,
+					"(.*\\.json$)|(.*\\.bin$)",
+					true,
+					fun(F, A) ->
+						 [{filelib:last_modified(F), filelib:file_size(F), F} | A]
+					end,
+					[])
+				),
+			%% How much space should be cleaned up.
+			ToRemove = State#state.size - header_cache_limit_min(LimitMax),
+			Removed = delete_file(Files, ToRemove, 0),
+			Size = State#state.size - Removed,
+			erlang:garbage_collect(),
+			{noreply, State#state{ size = Size }};
+		false ->
+			{noreply, State}
+	end;
 
 handle_cast(Cast, State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
@@ -297,6 +294,14 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+%% @doc The header cache size limit in bytes, read live from config.
+header_cache_limit_max() ->
+	arweave_config:get([gossip, header_cache_size]) * 1048576.
+
+%% @doc The size in bytes a cleanup pass reduces the cache down to.
+header_cache_limit_min(LimitMax) ->
+	trunc(LimitMax * (100 - ?DISK_CACHE_CLEAN_PERCENT_MAX) / 100).
 
 get_block_path() ->
 	DataDir = arweave_config:get([data_dir]),

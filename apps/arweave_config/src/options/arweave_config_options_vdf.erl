@@ -11,6 +11,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [vdf, algorithm],
+			runtime => true,
 			default => openssl,
 			legacy => vdf,
 			short_description =>
@@ -35,6 +36,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [vdf, is_public_server],
+			runtime => true,
 			default => false,
 			type => boolean,
 			legacy => vdf_is_public_server,
@@ -45,6 +47,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [vdf, pull],
+			runtime => true,
 			default => true,
 			type => boolean,
 			legacy => vdf_pull,
@@ -55,6 +58,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [vdf, max_validation_threads],
+			runtime => true,
 			default => ?DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT,
 			type => pos_integer,
 			legacy => max_nonce_limiter_validation_thread_count,
@@ -65,6 +69,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [vdf, max_last_step_validation_threads],
+			runtime => true,
 			default =>
 				?DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT,
 			type => pos_integer,

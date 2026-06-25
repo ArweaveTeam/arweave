@@ -10,7 +10,7 @@
 		get_recall_bytes/5, get_recall_range/3, get_recall_range/5,
 		active_sessions/0, encode_sessions/1, add_pool_job/6,
 		is_one_chunk_solution/1, fetch_poa_from_peers/2, log_prepare_solution_failure/5,
-		get_packing_difficulty/1, get_packing_type/1]).
+		get_packing_difficulty/1, get_packing_type/1, set_cache_size/1]).
 -export([pause/0]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
@@ -87,6 +87,10 @@ set_merkle_rebase_threshold(Threshold) ->
 
 set_height(Height) ->
 	gen_server:cast(?MODULE, {set_height, Height}).
+
+%% @doc Re-derive the mining chunk cache limits from config at runtime.
+set_cache_size(_Value) ->
+	gen_server:cast(?MODULE, set_cache_size).
 
 %% @doc Add a pool job to the mining queue.
 add_pool_job(SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff) ->
@@ -245,6 +249,9 @@ handle_cast({set_merkle_rebase_threshold, Threshold}, State) ->
 
 handle_cast({set_height, Height}, State) ->
 	{noreply, State#state{ allow_replica_2_9_mining = allow_replica_2_9_mining(Height) }};
+
+handle_cast(set_cache_size, State) ->
+	{noreply, update_cache_limits(State)};
 
 handle_cast({add_pool_job, Args}, State) ->
 	{SessionKey, StepNumber, Output, PartitionUpperBound, Seed, PartialDiff} = Args,

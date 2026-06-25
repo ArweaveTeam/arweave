@@ -49,35 +49,42 @@ enabled(Flag) ->
 %% message.
 -spec catalog() -> [#{name := atom(),
                       default := boolean(),
+                      runtime => boolean(),
                       description := binary()}].
 catalog() ->
 	[
 		#{ name => disk_logging,
 		   default => false,
+		   runtime => true,
 		   description =>
 		       <<"Log block writes to disk in the storage layer. "
 		         "Verbose; debug only.">> },
 		#{ name => double_check_nonce_limiter,
 		   default => false,
+		   runtime => true,
 		   description =>
 		       <<"Re-verify each nonce-limiter step value before "
 		         "accepting it. Debug aid; substantial overhead.">> },
 		#{ name => extended_block_validation_trace,
 		   default => false,
+		   runtime => true,
 		   description =>
 		       <<"Dump a detailed trace when block pre-validation "
 		         "fails. Debug aid.">> },
 		#{ name => http_logging,
 		   default => false,
+		   runtime => true,
 		   description =>
 		       <<"Log HTTP request and response bodies. Verbose; "
 		         "debug only.">> },
 		#{ name => miner_logging,
 		   default => true,
+		   runtime => true,
 		   description =>
 		       <<"Emit mining-event logs from the watchdog process.">> },
 		#{ name => pack_served_chunks,
 		   default => false,
+		   runtime => true,
 		   description =>
 		       <<"Repack chunks before serving them via the data-sync "
 		         "HTTP API.">> },
@@ -88,21 +95,25 @@ catalog() ->
 		         "offset.">> },
 		#{ name => serve_html_data,
 		   default => true,
+		   runtime => true,
 		   description =>
 		       <<"Allow the HTTP API to serve transaction data as "
 		         "HTML.">> },
 		#{ name => serve_tx_data_without_limits,
 		   default => false,
+		   runtime => true,
 		   description =>
 		       <<"Lift the per-request transaction-data size cap when "
 		         "serving via the HTTP API.">> },
 		#{ name => serve_wallet_lists,
 		   default => false,
+		   runtime => true,
 		   description =>
 		       <<"Serve wallet lists via the HTTP API for blocks "
 		         "after the 2.2 fork.">> },
 		#{ name => subfield_queries,
 		   default => false,
+		   runtime => true,
 		   description =>
 		       <<"Enable `tx/<id>/<field>' subfield-query "
 		         "endpoints.">> },

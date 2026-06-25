@@ -10,7 +10,6 @@
 
 -record(state, {
 	peer,
-	polling_frequency_ms,
 	ref,
 	pause = false
 }).
@@ -27,9 +26,8 @@ start_link(Name) ->
 %%%===================================================================
 
 init([]) ->
-	PollIntervalSeconds = arweave_config:get([gossip, block, poll_interval]),
 	[ok] = ar_events:subscribe([node_state]),
-	State = #state{ polling_frequency_ms = PollIntervalSeconds * 1000 },
+	State = #state{},
 	case ar_node:is_joined() of
 		true ->
 			{ok, handle_node_state_initialized(State)};
@@ -55,8 +53,7 @@ handle_cast({poll, _Ref}, #state{ pause = true } = State) ->
 	{noreply, State};
 handle_cast({poll, _Ref}, #state{ peer = undefined } = State) ->
 	{noreply, State#state{ pause = true }};
-handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
-		polling_frequency_ms = FrequencyMs } = State) ->
+handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer } = State) ->
 	CurrentHeight = ar_node:get_height(),
 	{L, NotOnChain} = ar_block_cache:get_longest_chain_cache(block_cache),
 	HL = [H || {H, _TXIDs} <- L],
@@ -68,7 +65,7 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 	end,
 	case ar_http_iface_client:get_recent_hash_list_diff(Peer, HL) of
 		{ok, in_sync} ->
-			ar_util:cast_after(FrequencyMs, self(), {poll, Ref}),
+			ar_util:cast_after(polling_frequency_ms(), self(), {poll, Ref}),
 			{noreply, State};
 		{ok, {H, TXIDs, BlocksOnTop}} ->
 			case ar_ignore_registry:member({poller_worker, H})
@@ -115,7 +112,7 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer,
 							ok
 					end
 			end,
-			ar_util:cast_after(FrequencyMs, self(), {poll, Ref}),
+			ar_util:cast_after(polling_frequency_ms(), self(), {poll, Ref}),
 			{noreply, State};
 		{error, not_found} ->
 			?LOG_DEBUG([{event, peer_out_of_sync}, {peer, ar_util:format_peer(Peer)}]),
@@ -179,6 +176,10 @@ handle_node_state_initialized(State) ->
 	Ref = make_ref(),
 	gen_server:cast(self(), {poll, Ref}),
 	State#state{ ref = Ref }.
+
+%% @doc Read the block poll interval live and convert to milliseconds.
+polling_frequency_ms() ->
+	arweave_config:get([gossip, block, poll_interval]) * 1000.
 
 get_missing_tx_indices(TXIDs) ->
 	get_missing_tx_indices(TXIDs, 0).

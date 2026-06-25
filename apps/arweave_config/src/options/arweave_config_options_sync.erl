@@ -10,15 +10,22 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [sync, cache_size_limit],
+			runtime => true,
 			type => pos_integer,
 			legacy => data_cache_size_limit,
 			short_description =>
 				<<"Maximum number of data chunks kept in "
-				  "memory by the syncing processes (approximate).">>
+				  "memory by the syncing processes (approximate).">>,
+			handle_set =>
+				fun(_K, V, _S, _A) ->
+					ok = ar_data_sync:set_chunk_cache_size_limit(V),
+					{store, V}
+				end
 		},
 		#{
 			enabled => true,
 			option_key => [sync, max_concurrent_peer_scans],
+			runtime => true,
 			default => ?DEFAULT_DATA_DISCOVERY_MAX_CONCURRENT_PEER_SCANS,
 			type => pos_integer,
 			legacy => data_discovery_max_concurrent_peer_scans,
@@ -29,6 +36,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [sync, request_packed_chunks],
+			runtime => true,
 			default => false,
 			type => boolean,
 			legacy => data_sync_request_packed_chunks,
@@ -38,6 +46,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [sync, local_peers_only],
+			runtime => true,
 			default => false,
 			type => boolean,
 			legacy => sync_from_local_peers_only,

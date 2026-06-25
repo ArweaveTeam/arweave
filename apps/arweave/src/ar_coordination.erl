@@ -21,8 +21,7 @@
 -record(state, {
 	last_peer_response = #{},
 	peers_by_partition = #{},
-	out_batches = #{},
-	out_batch_timeout = ?DEFAULT_CM_BATCH_TIMEOUT_MS
+	out_batches = #{}
 }).
 
 -define(START_DELAY, 1000).
@@ -163,7 +162,6 @@ get_cluster_partitions_list() ->
 
 init([]) ->
 	CMEnabled = arweave_config:get([cm, enabled]),
-	OutBatchTimeout = arweave_config:get([cm, out_batch_timeout]),
 	CMExitPeer = arweave_config:get([peers, cm_exit]),
 
 	ar_util:cast_after(?BATCH_POLL_INTERVAL_MS, ?MODULE, check_batches),
@@ -187,8 +185,7 @@ init([]) ->
 				last_peer_response = #{}
 			}
 	end,
-	{ok, State2#state{
-		out_batch_timeout = OutBatchTimeout }}.
+	{ok, State2}.
 
 %% Helper function to see state while testing and later for monitoring API
 handle_call(get_public_state, _From, State) ->
@@ -379,7 +376,8 @@ get_peer_partitions(Peer) ->
 check_out_batches(#state{out_batches = OutBatches}) when map_size(OutBatches) == 0 ->
 	OutBatches;
 check_out_batches(State) ->
-	#state{ out_batches = OutBatches, out_batch_timeout = BatchTimeout } = State,
+	#state{ out_batches = OutBatches } = State,
+	BatchTimeout = arweave_config:get([cm, out_batch_timeout]),
 	Now = os:system_time(millisecond),
 	maps:filter(
 		fun	(_CacheRef, {Start, Candidate}) ->

@@ -250,6 +250,10 @@ TcpKeepalive = arweave_config:get([network, client, tcp, keepalive]),
 
 Atom/function/module names follow Erlang convention (`tcp_keepalive`, `parse_url`) and are unaffected. This rule applies to new variables; existing code following the older convention is left alone unless the surrounding diff already touches it.
 
+### Naming
+
+Never use the term "overlay" when naming things (variables, functions, macros, modules, records). Pick a word that names the concept directly.
+
 ### Function comments
 
 Function comments (where needed) start with `%% @doc`. Don't use plain `%%` for documentation that describes what a function does.

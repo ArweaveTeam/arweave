@@ -42,6 +42,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [cm, out_batch_timeout],
+			runtime => true,
 			default => ?DEFAULT_CM_BATCH_TIMEOUT_MS,
 			type => pos_integer,
 			legacy => cm_out_batch_timeout,
@@ -55,6 +56,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [cm, poll_interval],
+			runtime => true,
 			default => ?DEFAULT_CM_POLL_INTERVAL_MS,
 			type => pos_integer,
 			legacy => cm_poll_interval,

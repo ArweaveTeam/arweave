@@ -60,35 +60,41 @@ handle_call(Request, From, State) ->
 	{reply, ignored, State}.
 
 handle_cast(check_for_received_txs, State) ->
-	%% Check if there have been any transactions received in the last
-	%% ?CHECK_INTERVAL_MS milliseconds.
-	TimestampDiff = erlang:system_time(microsecond) - State#state.last_seen_tx_timestamp,
-	State3 =
-		case TimestampDiff > 0 andalso TimestampDiff > (?CHECK_INTERVAL_MS * 1000) of
-			true ->
-				check_for_received_txs(State);
-			false ->
-				ar_util:cast_after(?CHECK_INTERVAL_MS, self(), check_for_received_txs),
-				State
-		end,
-	{noreply, State3};
+	%% Polling can be toggled at runtime; read it live each tick. When
+	%% disabled, just reschedule and skip the work so re-enabling resumes
+	%% polling without a restart.
+	case arweave_config:get([gossip, tx, polling_enabled]) of
+		false ->
+			ar_util:cast_after(?CHECK_INTERVAL_MS, self(), check_for_received_txs),
+			{noreply, State};
+		true ->
+			%% Check if there have been any transactions received in the last
+			%% ?CHECK_INTERVAL_MS milliseconds.
+			TimestampDiff = erlang:system_time(microsecond)
+				- State#state.last_seen_tx_timestamp,
+			State3 =
+				case TimestampDiff > 0
+						andalso TimestampDiff > (?CHECK_INTERVAL_MS * 1000) of
+					true ->
+						check_for_received_txs(State);
+					false ->
+						ar_util:cast_after(?CHECK_INTERVAL_MS, self(),
+							check_for_received_txs),
+						State
+				end,
+			{noreply, State3}
+	end;
 
 handle_cast(Request, State) ->
 	?LOG_WARNING("Unexpected cast: ~p", [Request]),
 	{noreply, State}.
 
 handle_info({event, node_state, {initialized, _}}, State) ->
-	%% Send a check_for_received_txs cast periodically to check for externally submitted
-	%% transactions. If there have not been any for longer than 30 seconds, request the
-	%% mempool from a peer and download the transactions.
-    PollingEnabled = arweave_config:get([gossip, tx, polling_enabled]),
-    case PollingEnabled of
-        true ->
-            gen_server:cast(self(), check_for_received_txs);
-        false ->
-            ok
-    end,
-    {noreply, State};
+	%% Start the check_for_received_txs loop unconditionally; the loop reads
+	%% [gossip, tx, polling_enabled] live each tick, so it can be enabled or
+	%% disabled at runtime without a restart.
+	gen_server:cast(self(), check_for_received_txs),
+	{noreply, State};
 
 handle_info({event, node_state, _}, State) ->
 	{noreply, State};

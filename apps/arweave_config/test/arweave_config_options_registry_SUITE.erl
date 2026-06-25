@@ -55,7 +55,8 @@ all() ->
 		set_rejected_by_handler_preserves_store,
 		validation_rollback_restores_old_value,
 		validation_rollback_deletes_when_no_previous_value,
-		get_local_set_local_basic
+		validation_sees_candidate_value,
+		set_local_basic
 	].
 
 %%====================================================================
@@ -258,8 +259,8 @@ set_rejected_by_handler_preserves_store(_Config) ->
 		arweave_config_store:get([guarded])),
 	ok.
 
-%% Real rollback path: store succeeds, validator (mocked) fails,
-%% rollback restores the previous value.
+%% Validate-before-commit: a failing validator (mocked) means the set is
+%% never committed, so the previously stored value remains intact.
 validation_rollback_restores_old_value(_Config) ->
 	%% Seed in load mode — post-store validation only fires in
 	%% runtime mode, so the initial set must succeed unconditionally.
@@ -288,9 +289,9 @@ validation_rollback_restores_old_value(_Config) ->
 	end,
 	ok.
 
-%% Rollback's `OldValue =:= undefined' branch: when nothing was
-%% previously stored, the rollback deletes the just-written key
-%% rather than restoring anything.
+%% No-previous-value case: when nothing was stored before, a failing
+%% validator leaves the key absent because the candidate is never
+%% committed.
 validation_rollback_deletes_when_no_previous_value(_Config) ->
 	ok = arweave_config_options_registry:set_runtime(true),
 	true = arweave_config:is_runtime(),
@@ -311,11 +312,38 @@ validation_rollback_deletes_when_no_previous_value(_Config) ->
 	end,
 	ok.
 
-get_local_set_local_basic(_Config) ->
+%% A runtime set exposes its in-flight candidate to the validators (which
+%% read back through the registry) before it is committed, so a validator
+%% decides on the new value, not the old one.
+validation_sees_candidate_value(_Config) ->
+	{ok, old} = arweave_config_options_registry:set([candidate_probe], old),
+	ok = arweave_config_options_registry:set_runtime(true),
+	Self = self(),
+	ok = meck:new(arweave_config_validate, [passthrough]),
+	try
+		meck:expect(arweave_config_validate, run, fun() ->
+			Self ! {validator_saw, arweave_config:get([candidate_probe])},
+			ok
+		end),
+		{ok, new} = arweave_config_options_registry:set([candidate_probe], new),
+		receive
+			{validator_saw, Seen} -> ?assertEqual(new, Seen)
+		after 1000 ->
+			?assert(false)
+		end,
+		%% Validation passed, so the candidate is now the committed value.
+		?assertEqual({ok, new}, arweave_config_store:get([candidate_probe]))
+	after
+		meck:unload(arweave_config_validate),
+		ok = arweave_config_options_registry:set_runtime(false)
+	end,
+	ok.
+
+set_local_basic(_Config) ->
 	?assertMatch({ok, hello},
 		arweave_config_options_registry:set_local([local_key], hello)),
 	?assertEqual({ok, hello},
-		arweave_config_options_registry:get_local([local_key])),
+		arweave_config_options_registry:get([local_key])),
 	ok.
 
 %%====================================================================
@@ -556,7 +584,15 @@ specs(validation_rollback_deletes_when_no_previous_value) ->
 			handle_set => fun(_K, V, _S, _) -> {store, V} end
 		}
 	];
-specs(get_local_set_local_basic) ->
+specs(validation_sees_candidate_value) ->
+	[
+		#{
+			option_key => [candidate_probe],
+			runtime => true,
+			handle_set => fun(_K, V, _S, _) -> {store, V} end
+		}
+	];
+specs(set_local_basic) ->
 	[
 		#{ option_key => [local_key] }
 	].

@@ -10,6 +10,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [rocksdb, flush_interval],
+			runtime => true,
 			default => ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,
 			type => pos_integer,
 			legacy => rocksdb_flush_interval_s,
@@ -19,6 +20,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [rocksdb, wal_sync_interval],
+			runtime => true,
 			default => ?DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S,
 			type => pos_integer,
 			legacy => rocksdb_wal_sync_interval_s,

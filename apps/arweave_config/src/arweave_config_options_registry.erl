@@ -22,7 +22,6 @@
 	get_environments/0,
 	get_long_arguments/0,
 	get/1,
-	get_local/1,
 	get_all_with_prefix/1,
 	set/2,
 	set_local/2,
@@ -39,6 +38,11 @@
 %% Dedicated ETS table that holds the load-vs-runtime lifecycle flag.
 %% Kept separate from the spec table so the schemas don't mix.
 -define(RUNTIME_TABLE, arweave_config_options_registry_runtime).
+
+%% Process-dictionary key backing `with_value_under_validation/3' and
+%% `value_under_validation/1'. The process dictionary is private to a
+%% single process — that privacy is the whole point (see those functions).
+-define(VALIDATION_IN_PROGRESS, '$arweave_config_validation_in_progress').
 
 %% @doc Start the registry process with the default spec set.
 -spec start_link() -> Return when
@@ -57,12 +61,11 @@ start_link(Specs) ->
 stop() ->
 	gen_server:stop(?MODULE).
 
-%% @doc Look up an option's specification.
+%% @doc Look up an option's specification. The registry table is a `set'
+%% keyed on the option_key, so this is a direct key lookup rather than a
+%% match-spec scan — the common read path stays a couple of ETS lookups.
 spec(ParameterSpec) ->
-	Pattern = {'$1', '$2'},
-	Guard = [{'=:=', '$1', ParameterSpec}],
-	Select = [{{'$1', '$2'}}],
-	case ets:select(?MODULE, [{Pattern, Guard, Select}]) of
+	case ets:lookup(?MODULE, ParameterSpec) of
 		[{Option, Spec}] ->
 			{ok, Option, Spec};
 		_Else ->
@@ -156,16 +159,48 @@ get_all_with_prefix(Prefix) ->
 is_schema_key(Key) ->
 	lists:any(fun({_}) -> true; (_) -> false end, Key).
 
-%% @doc Read a value via the registry.
+%% @doc Read a value. This is a direct read: both the spec table and the
+%% value store are `protected' ETS, so reads run in the caller's process
+%% and never hit the gen_server — fast and fully concurrent. The one
+%% exception is the process running a runtime `set''s validators: it sees
+%% that set's not-yet-committed value via `value_under_validation/1' (so
+%% the validators check the new value), whereas every other process reads
+%% the committed store and can never observe an unvalidated value.
 get(Option) ->
-	%% Bypass the gen_server when the caller is already running on
-	%% the registry process — e.g. a handle_get/handle_set callback
-	%% re-entering the public API would otherwise deadlock.
-	case whereis(?MODULE) of
-		Self when Self =:= self() ->
-			get_local(Option);
-		_ ->
-			gen_server:call(?MODULE, {get, Option}, 10_000)
+	case value_under_validation(Option) of
+		{ok, _} = Found -> Found;
+		none -> do_get(Option)
+	end.
+
+%% @doc Run `Fun' with `Option => Value' visible to configuration reads
+%% made *by the current process only*. A runtime `set' uses this so its
+%% validators — which run synchronously in this same process — observe the
+%% value being validated, while every other process keeps reading the
+%% committed store. It is backed by the process dictionary precisely
+%% because that is private per process, so the in-flight value cannot leak
+%% to a concurrent reader. The entry is cleared on exit.
+-spec with_value_under_validation(Option, Value, Fun) -> Result when
+	Option :: list(),
+	Value :: term(),
+	Fun :: fun(() -> Result),
+	Result :: term().
+with_value_under_validation(Option, Value, Fun) ->
+	erlang:put(?VALIDATION_IN_PROGRESS, #{Option => Value}),
+	try
+		Fun()
+	after
+		erlang:erase(?VALIDATION_IN_PROGRESS)
+	end.
+
+%% @doc The value the *current* process is mid-validating for `Option', or
+%% `none'. Only `with_value_under_validation/3' ever sets this, and only
+%% around the validator pass, so every other process — and this one
+%% outside a `set' — gets `none'.
+-spec value_under_validation(list()) -> {ok, term()} | none.
+value_under_validation(Option) ->
+	case erlang:get(?VALIDATION_IN_PROGRESS) of
+		#{Option := Value} -> {ok, Value};
+		_ -> none
 	end.
 
 %% @doc Set a value via the registry. Validates the key + value, runs
@@ -200,15 +235,6 @@ set(Option, Value) ->
 	Return :: {ok, term()} | {error, term()}.
 set_local(Option, Value) ->
 	do_set(Option, Value).
-
-%% @doc Read an option without going through the gen_server. Safe
-%% from inside a `handle_get/2` or `handle_set/4` callback that needs
-%% to read another option without deadlocking.
--spec get_local(Option) -> Return when
-	Option :: list(),
-	Return :: {ok, term()} | {error, term()}.
-get_local(Option) ->
-	do_get(Option).
 
 %% @doc Whether the registry is in runtime mode. Lock-free ETS read so
 %% callers (including the registry process itself) can check without
@@ -280,13 +306,6 @@ init_final(State) ->
 terminate(_, _) ->
 	ok.
 
-handle_call({get, Option}, _From, State) ->
-	case do_get(Option) of
-		{ok, Value} ->
-			{reply, {ok, Value}, State};
-		Else ->
-			{reply, Else, State}
-	end;
 handle_call({set, Option, Value}, _From, State) ->
 	{reply, do_set(Option, Value), State};
 handle_call({set_runtime, Bool}, _From, State) when is_boolean(Bool) ->
@@ -487,28 +506,27 @@ do_set_value(Option, Value, Spec, _Bindings) ->
 	OldValue = arweave_config_store:get(Option, Default),
 	do_set_store_with_validation(Option, Value, OldValue, Spec).
 
-%% Run validators after every runtime-mode store; roll back on
-%% rejection. During load mode the store is transient and validation
-%% is deferred to `arweave_config:runtime/0`.
+%% Validate before committing. In runtime mode, run the validators with
+%% the new value exposed only to this process (via
+%% `with_value_under_validation/3', so the validators see it but no other
+%% process does) and write to the store only if the assembled config stays
+%% valid. A rejected set therefore never touches the committed store —
+%% concurrent direct-ETS reads can only ever observe a validated value,
+%% so no transient/rolled-back window exists. During load mode validation
+%% is deferred to `arweave_config:runtime/0', so the write is committed
+%% directly.
 do_set_store_with_validation(Option, NewValue, OldValue, Spec) ->
-	Result = do_set_store(Option, NewValue, OldValue, Spec),
-	case {Result, is_runtime()} of
-		{{ok, _}, true} ->
-			case arweave_config_validate:run() of
-				ok ->
-					Result;
-				{error, Reason} ->
-					rollback(Option, NewValue, OldValue, Spec),
-					{error, Reason}
-			end;
-		_ ->
-			Result
+	case is_runtime() of
+		true ->
+			with_value_under_validation(Option, NewValue, fun() ->
+				case arweave_config_validate:run() of
+					ok -> do_set_store(Option, NewValue, OldValue, Spec);
+					{error, _} = Err -> Err
+				end
+			end);
+		false ->
+			do_set_store(Option, NewValue, OldValue, Spec)
 	end.
-
-rollback(Option, _NewValue, undefined, _Spec) ->
-	catch arweave_config_store:delete(Option);
-rollback(Option, NewValue, OldValue, Spec) ->
-	catch do_set_store(Option, OldValue, NewValue, Spec).
 
 do_set_store(Option, NewValue, _OldValue, _Spec) ->
 	try arweave_config_store:set(Option, NewValue) of

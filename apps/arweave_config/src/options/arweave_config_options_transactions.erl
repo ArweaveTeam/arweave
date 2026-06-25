@@ -10,6 +10,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [transactions, blocklist, files],
+			runtime => true,
 			default => [],
 			legacy => transaction_blacklist_files,
 			short_description =>
@@ -20,6 +21,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [transactions, blocklist, urls],
+			runtime => true,
 			default => [],
 			legacy => transaction_blacklist_urls,
 			short_description =>
@@ -28,6 +30,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [transactions, allowlist, files],
+			runtime => true,
 			default => [],
 			legacy => transaction_whitelist_files,
 			short_description =>
@@ -40,6 +43,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [transactions, allowlist, urls],
+			runtime => true,
 			default => [],
 			legacy => transaction_whitelist_urls,
 			short_description =>

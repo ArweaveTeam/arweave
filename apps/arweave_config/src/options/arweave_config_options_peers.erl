@@ -33,6 +33,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [peers, block_gossip],
+			runtime => true,
 			default => [],
 			type => peers_list,
 			short_description =>
@@ -41,6 +42,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [peers, local],
+			runtime => true,
 			default => [],
 			type => peers_list,
 			short_description =>
@@ -49,6 +51,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [peers, cm_peer],
+			runtime => true,
 			default => [],
 			type => peers_list,
 			short_description =>
@@ -57,6 +60,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [peers, cm_exit],
+			runtime => true,
 			default => not_set,
 			type => peer_id,
 			short_description =>
@@ -141,7 +145,7 @@ by_role(Role) when is_atom(Role) ->
 singleton_by_role(Role) when is_binary(Role) ->
 	singleton_by_role(binary_to_existing_atom(Role));
 singleton_by_role(Role) when is_atom(Role) ->
-	case arweave_config_options_registry:get_local([peers, Role]) of
+	case arweave_config_options_registry:get([peers, Role]) of
 		{ok, not_set} -> not_set;
 		{ok, [PeerID | _]} -> PeerID;
 		{ok, PeerID} when is_tuple(PeerID); is_binary(PeerID) -> PeerID;
@@ -150,13 +154,13 @@ singleton_by_role(Role) when is_atom(Role) ->
 
 %% @doc Return the list of peer_ids that have `Role` set in the store.
 peers_with_role(cm_exit) ->
-	case arweave_config_options_registry:get_local([peers, cm_exit]) of
+	case arweave_config_options_registry:get([peers, cm_exit]) of
 		{ok, not_set} -> [];
 		{ok, PeerID} when is_tuple(PeerID); is_binary(PeerID) -> [PeerID];
 		_ -> []
 	end;
 peers_with_role(Role) ->
-	case arweave_config_options_registry:get_local([peers, Role]) of
+	case arweave_config_options_registry:get([peers, Role]) of
 		{ok, PeerIDs} when is_list(PeerIDs) -> PeerIDs;
 		_ -> []
 	end.

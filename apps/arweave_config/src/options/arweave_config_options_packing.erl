@@ -21,11 +21,16 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [packing, cache_size],
+			runtime => true,
 			type => pos_integer,
 			legacy => packing_cache_size_limit,
 			short_description =>
 				<<"Maximum number of data chunks kept in memory by "
-				  "the packing process (approximate).">>
+				  "the packing process (approximate).">>,
+			handle_set => fun(_K, V, _S, _A) ->
+				ok = ar_packing_server:set_cache_size(V),
+				{store, V}
+			end
 		},
 		#{
 			enabled => true,
@@ -55,6 +60,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [packing, entropy, cache_size],
+			runtime => true,
 			default => ?DEFAULT_REPLICA_2_9_ENTROPY_CACHE_SIZE_MB,
 			type => pos_integer,
 			legacy => replica_2_9_entropy_cache_size_mb,
@@ -63,11 +69,16 @@ specs() ->
 			long_description =>
 				<<"Each cached entropy is 256 MiB. The bigger the "
 				  "cache, the more replica.2.9 data can be synced "
-				  "concurrently.">>
+				  "concurrently.">>,
+			handle_set => fun(_K, V, _S, _A) ->
+				ok = ar_sync_dispatcher:set_entropy_cache_size(V),
+				{store, V}
+			end
 		},
 		#{
 			enabled => true,
 			option_key => [packing, entropy, workers],
+			runtime => true,
 			default => ?DEFAULT_REPLICA_2_9_WORKERS,
 			type => pos_integer,
 			legacy => replica_2_9_workers,
@@ -76,7 +87,11 @@ specs() ->
 			long_description =>
 				<<"Entropy workers generate entropy for the "
 				  "replica.2.9 format. By default, at most one "
-				  "worker is active per physical disk at a time.">>
+				  "worker is active per physical disk at a time.">>,
+			handle_set => fun(_K, V, _S, _A) ->
+				ok = ar_device_lock:set_entropy_workers(V),
+				{store, V}
+			end
 		}
 	].
 

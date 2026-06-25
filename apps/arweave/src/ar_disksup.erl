@@ -25,14 +25,13 @@
 -module(ar_disksup).
 -behaviour(gen_server).
 
--export([start_link/0, get_disk_space_check_frequency/0, get_disk_data/0, pause/0, resume/0]).
+-export([start_link/0, get_disk_data/0, pause/0, resume/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
 
 -record(state, {
-	timeout,
 	os,
 	diskdata = [],
 	port,
@@ -45,9 +44,6 @@
 
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
-get_disk_space_check_frequency() ->
-	arweave_config:get([disk_space_check_frequency]).
 
 get_disk_data() ->
 	gen_server:call(?MODULE, get_disk_data, ?DEFAULT_CALL_TIMEOUT).
@@ -86,9 +82,9 @@ init([]) ->
 		end,
 	%% Initiate the first check.
 	self() ! timeout,
-	Timeout = get_disk_space_check_frequency(),
+	Timeout = arweave_config:get([disk_space_check_frequency]),
 	?LOG_INFO([{event, disksup_init}, {os, OS}, {port, Port}, {timeout, Timeout}]),
-	{ok, #state{ port = Port, os = OS, timeout = Timeout }}.
+	{ok, #state{ port = Port, os = OS }}.
 
 handle_call(get_disk_data, _From, State) ->
 	{reply, State#state.diskdata, State};
@@ -107,7 +103,7 @@ handle_cast(_Msg, State) ->
 handle_info(timeout, #state{ paused = true } = State) ->
 	?LOG_INFO([{event, disksup_paused}]),
 	{ok, _} = ar_timer:send_after(
-		State#state.timeout,
+		arweave_config:get([disk_space_check_frequency]),
 		self(),
 		timeout,
 		#{ skip_on_shutdown => false }
@@ -118,7 +114,7 @@ handle_info(timeout, State) ->
 	ensure_storage_modules_paths(),
 	broadcast_disk_free(State#state.os, State#state.port),
 	{ok, _} = ar_timer:send_after(
-		State#state.timeout,
+		arweave_config:get([disk_space_check_frequency]),
 		self(),
 		timeout,
 		#{ skip_on_shutdown => false }

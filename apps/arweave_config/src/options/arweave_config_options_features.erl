@@ -27,10 +27,11 @@ specs() ->
 
 build_per_flag_spec(#{ name := Name,
                        default := Default,
-                       description := Description }) ->
+                       description := Description } = Entry) ->
 	#{
 		enabled => true,
 		option_key => [features, Name],
+		runtime => maps:get(runtime, Entry, false),
 		default => Default,
 		type => boolean,
 		short_description => Description

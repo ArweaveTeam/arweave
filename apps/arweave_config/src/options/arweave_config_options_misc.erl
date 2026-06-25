@@ -85,6 +85,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [disable_device_limit],
+			runtime => true,
 			default => false,
 			type => boolean,
 			legacy => disable_replica_2_9_device_limit,
@@ -94,7 +95,11 @@ specs() ->
 				<<"By default, at most one worker is active per "
 				  "physical disk at a time. Setting this flag removes "
 				  "that limit, allowing multiple workers to be active "
-				  "on a given physical disk.">>
+				  "on a given physical disk.">>,
+			handle_set => fun(_K, V, _S, _A) ->
+				ok = ar_device_lock:set_disable_device_limit(V),
+				{store, V}
+			end
 		},
 		#{
 			enabled => true,
@@ -123,6 +128,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [requests_per_minute_limit],
+			runtime => true,
 			default => ?DEFAULT_REQUESTS_PER_MINUTE_LIMIT,
 			type => pos_integer,
 			legacy => requests_per_minute_limit,
@@ -133,6 +139,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [internal_api_secret],
+			runtime => true,
 			default => not_set,
 			legacy => internal_api_secret,
 			short_description =>
@@ -142,6 +149,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [disk_space_check_frequency],
+			runtime => true,
 			default => ?DISK_SPACE_CHECK_FREQUENCY_MS,
 			type => pos_integer,
 			legacy => disk_space_check_frequency,

@@ -154,15 +154,34 @@ specs() ->
 		{GroupID, Fields} <- maps:to_list(default_groups()),
 		{Field, Default} <- maps:to_list(Fields)].
 
+%% Fields that are not runtime-reconfigurable yet: `number_of_workers'
+%% sizes the worker pool at sup init, and the timer-driving fields need a
+%% timer cancel/re-arm rather than a plain field write. Every other field
+%% is read live from worker state, so it can be set at runtime.
+non_runtime_fields() ->
+	[number_of_workers, no_limit, leaky_tick_ms, timestamp_cleanup_tick_ms].
+
 spec_for(GroupID, Field, Default) ->
-	#{
+	Base = #{
 		enabled => true,
 		option_key => [limiter, GroupID, Field],
 		type => type_for(Field),
 		default => Default,
 		short_description => short_description_for(Field),
 		long_description => group_coverage_for(GroupID)
-	}.
+	},
+	case lists:member(Field, non_runtime_fields()) of
+		true ->
+			Base#{ runtime => false };
+		false ->
+			Base#{
+				runtime => true,
+				handle_set => fun(_K, V, _S, _A) ->
+					ok = arweave_limiter_group:set_config(GroupID, Field, V),
+					{store, V}
+				end
+			}
+	end.
 
 type_for(no_limit) -> boolean;
 type_for(is_manual_reduction_disabled) -> boolean;

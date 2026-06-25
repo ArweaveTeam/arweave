@@ -36,6 +36,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [mining, cache_size],
+			runtime => true,
 			type => pos_integer,
 			legacy => mining_cache_size_mb,
 			short_description =>
@@ -46,7 +47,11 @@ specs() ->
 				  "there is room in the cache to store more chunks. "
 				  "This cache is subdivided into sub-caches for each "
 				  "mined partition. When omitted, it is determined "
-				  "based on the number of mining partitions.">>
+				  "based on the number of mining partitions.">>,
+			handle_set => fun(_K, V, _S, _A) ->
+				ok = ar_mining_server:set_cache_size(V),
+				{store, V}
+			end
 		},
 		#{
 			enabled => true,

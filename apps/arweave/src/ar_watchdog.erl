@@ -17,8 +17,7 @@
 -include_lib("arweave_config/include/arweave_config.hrl").
 
 -record(state, {
-	mined_blocks,
-	miner_logging = false
+	mined_blocks
 }).
 
 %%%===================================================================
@@ -66,8 +65,7 @@ start_link() ->
 %%--------------------------------------------------------------------
 init([]) ->
 	process_flag(trap_exit, true),
-	MinerLogging = arweave_config:get([features, miner_logging]),
-	State = #state{ mined_blocks = maps:new(), miner_logging = MinerLogging },
+	State = #state{ mined_blocks = maps:new() },
 	{ok, State}.
 
 %%--------------------------------------------------------------------
@@ -101,13 +99,15 @@ handle_call(Request, _From, State) ->
 %%									{stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast(started_hashing, State) when State#state.miner_logging == true ->
-	Message = "Starting to hash.",
-	?LOG_INFO([{event, starting_to_hash}]),
-	ar:console("~s~n", [Message]),
-	{noreply, State};
-
 handle_cast(started_hashing, State) ->
+	case arweave_config:get([features, miner_logging]) of
+		true ->
+			Message = "Starting to hash.",
+			?LOG_INFO([{event, starting_to_hash}]),
+			ar:console("~s~n", [Message]);
+		_ ->
+			ok
+	end,
 	{noreply, State};
 
 handle_cast({block_received_n_confirmations, BH, Height}, State) ->
@@ -116,7 +116,7 @@ handle_cast({block_received_n_confirmations, BH, Height}, State) ->
 		{BH, Map} ->
 			ar_events:send(solution, {confirmed, #{ indep_hash => BH, confirmations => 10 }}),
 			ar_mining_stats:block_found(),
-			case State#state.miner_logging of
+			case arweave_config:get([features, miner_logging]) of
 				true ->
 					Message = io_lib:format("Your block ~s was accepted by the network!",
 							[ar_util:encode(BH)]),
@@ -141,7 +141,7 @@ handle_cast({block_orphaned, BH, Height}, State) ->
 	UpdatedMinedBlocks = case maps:take(Height, MinedBlocks) of
 		{BH, Map} ->
 			ar_events:send(solution, {orphaned, #{ indep_hash => BH }}),
-			case State#state.miner_logging of
+			case arweave_config:get([features, miner_logging]) of
 				true ->
 					Message = io_lib:format("Your block ~s was orphaned.",
 							[ar_util:encode(BH)]),
@@ -157,7 +157,7 @@ handle_cast({block_orphaned, BH, Height}, State) ->
 	{noreply, State#state{ mined_blocks = UpdatedMinedBlocks }};
 
 handle_cast({mined_block, BH, Height, PrevH}, State) ->
-	case State#state.miner_logging of
+	case arweave_config:get([features, miner_logging]) of
 		true ->
 			Message = io_lib:format("Produced candidate block ~s (height ~B, previous block ~s).",
 					[ar_util:encode(BH), Height, ar_util:encode(PrevH)]),

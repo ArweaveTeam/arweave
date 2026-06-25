@@ -19,6 +19,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [randomx, hardware_aes],
+			runtime => true,
 			default => true,
 			type => boolean,
 			legacy => randomx_hardware_aes,

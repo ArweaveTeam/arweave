@@ -22,6 +22,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [pool, is_server],
+			runtime => true,
 			default => false,
 			type => boolean,
 			legacy => is_pool_server,
@@ -34,6 +35,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [pool, api_key],
+			runtime => true,
 			default => not_set,
 			legacy => pool_api_key,
 			short_description =>
@@ -42,6 +44,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [pool, server_address],
+			runtime => true,
 			default => not_set,
 			legacy => pool_server_address,
 			short_description =>
@@ -50,6 +53,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [pool, worker_name],
+			runtime => true,
 			default => not_set,
 			legacy => pool_worker_name,
 			short_description =>

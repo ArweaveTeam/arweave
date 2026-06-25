@@ -10,6 +10,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [disk_pool, data_root_expiration_time],
+			runtime => true,
 			default => ?DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S,
 			type => pos_integer,
 			legacy => disk_pool_data_root_expiration_time,
@@ -34,6 +35,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [disk_pool, max_buffer_size],
+			runtime => true,
 			default => ?DEFAULT_MAX_DISK_POOL_BUFFER_MB,
 			type => pos_integer,
 			legacy => max_disk_pool_buffer_mb,
@@ -44,6 +46,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [disk_pool, max_data_root_buffer_size],
+			runtime => true,
 			default => ?DEFAULT_MAX_DISK_POOL_DATA_ROOT_BUFFER_MB,
 			type => pos_integer,
 			legacy => max_disk_pool_data_root_buffer_mb,

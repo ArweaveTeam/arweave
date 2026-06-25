@@ -14,6 +14,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [gossip, block, poll_interval],
+			runtime => true,
 			default => ?DEFAULT_POLLING_INTERVAL,
 			type => pos_integer,
 			legacy => polling,
@@ -44,6 +45,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [gossip, block, throttle_by_ip_interval],
+			runtime => true,
 			default => ?DEFAULT_BLOCK_THROTTLE_BY_IP_INTERVAL_MS,
 			type => pos_integer,
 			legacy => block_throttle_by_ip_interval,
@@ -54,6 +56,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [gossip, block, throttle_by_solution_interval],
+			runtime => true,
 			default => ?DEFAULT_BLOCK_THROTTLE_BY_SOLUTION_INTERVAL_MS,
 			type => pos_integer,
 			legacy => block_throttle_by_solution_interval,
@@ -80,6 +83,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [gossip, tx, max_peers],
+			runtime => true,
 			default => ?DEFAULT_MAX_PROPAGATION_PEERS,
 			type => pos_integer,
 			legacy => max_propagation_peers,
@@ -90,6 +94,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [gossip, tx, polling_enabled],
+			runtime => true,
 			default => true,
 			type => boolean,
 			legacy => tx_polling_enabled,
@@ -99,6 +104,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [gossip, tx, post_timeout],
+			runtime => true,
 			default => ?DEFAULT_POST_TX_TIMEOUT,
 			type => pos_integer,
 			legacy => post_tx_timeout,
@@ -117,6 +123,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [gossip, data_roots, syncing_enabled],
+			runtime => true,
 			default => true,
 			type => boolean,
 			legacy => enable_data_roots_syncing,
@@ -126,6 +133,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [gossip, data_roots, max_duplicates],
+			runtime => true,
 			default => ?DEFAULT_MAX_DUPLICATE_DATA_ROOTS,
 			legacy => max_duplicate_data_roots,
 			short_description =>
@@ -156,6 +164,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [gossip, header_cache_size],
+			runtime => true,
 			default => ?DISK_CACHE_SIZE,
 			type => pos_integer,
 			legacy => disk_cache_size,
