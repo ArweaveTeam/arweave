@@ -53,12 +53,12 @@ validate() ->
 					{error, <<"The verify flag cannot be set together with "
 							"the mine flag.">>};
 				_ ->
-					case arweave_config_options_repack_modules:legacy_list() of
+					case arweave_config:get([repack_modules]) of
 						[] ->
 							ok;
 						_ ->
 							{error, <<"The verify flag cannot be set together with "
-									"the repack_in_place flag.">>}
+									"[repack_modules].">>}
 					end
 			end
 	end.

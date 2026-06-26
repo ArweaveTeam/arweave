@@ -135,7 +135,6 @@ packing:
   cache_size: 20000
   repack:
     batch_size: 200
-    cache_size: 2048
   entropy:
     cache_size: 2000
     workers: 16

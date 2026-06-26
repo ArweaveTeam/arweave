@@ -176,9 +176,11 @@ parse(["repack_batch_size", N | Rest]) ->
 	V = list_to_integer(N),
 	_ = arweave_config:set([packing, repack, batch_size], V),
 	parse(Rest);
-parse(["repack_cache_size_mb", N | Rest]) ->
-	V = list_to_integer(N),
-	_ = arweave_config:set([packing, repack, cache_size], V),
+parse(["repack_cache_size_mb", _N | Rest]) ->
+	?LOG_WARNING([{event, deprecated_config_option},
+		{option, repack_cache_size_mb}, {action, ignored},
+		{reason, <<"replica.2.9 repacks derive their cache size from "
+			"[packing, entropy, cache_size]">>}]),
 	parse(Rest);
 parse(["polling", Frequency | Rest]) ->
 	V = list_to_integer(Frequency),

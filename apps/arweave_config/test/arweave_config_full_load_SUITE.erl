@@ -698,7 +698,6 @@ integer_keyword_cases() ->
 	Specs = [
 		{"port", "9999", [port], 9999},
 		{"repack_batch_size", "42", [packing, repack, batch_size], 42},
-		{"repack_cache_size_mb", "2048", [packing, repack, cache_size], 2048},
 		{"polling", "10", [gossip, block, poll_interval], 10},
 		{"block_pollers", "20", [gossip, block, pollers], 20},
 		{"join_workers", "5", [join, workers], 5},

@@ -287,11 +287,12 @@ parse_options([{<<"repack_batch_size">>, N} | Rest]) when is_integer(N) ->
 parse_options([{<<"repack_batch_size">>, Opt} | _]) ->
 	{error, {bad_type, repack_batch_size, number}, Opt};
 
-parse_options([{<<"repack_cache_size_mb">>, N} | Rest]) when is_integer(N) ->
-	_ = arweave_config:set([packing, repack, cache_size], N),
+parse_options([{<<"repack_cache_size_mb">>, _Opt} | Rest]) ->
+	?LOG_WARNING([{event, deprecated_config_option},
+		{option, repack_cache_size_mb}, {action, ignored},
+		{reason, <<"replica.2.9 repacks derive their cache size from "
+			"[packing, entropy, cache_size]">>}]),
 	parse_options(Rest);
-parse_options([{<<"repack_cache_size_mb">>, Opt} | _]) ->
-	{error, {bad_type, repack_cache_size_mb, number}, Opt};
 
 parse_options([{<<"polling">>, Frequency} | Rest]) when is_integer(Frequency) ->
 	_ = arweave_config:set([gossip, block, poll_interval], Frequency),
