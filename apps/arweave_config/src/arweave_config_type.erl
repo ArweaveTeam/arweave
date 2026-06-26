@@ -484,50 +484,14 @@ peer_id_binary(<<"[", Rest/binary>>) ->
 		_ ->
 			{error, {invalid_peer, <<"[", Rest/binary>>}}
 	end;
+%% DNS Names or IPV4 addresses.
 peer_id_binary(Bin) ->
-	%% Split on `:`: covers IPv4 with optional port and bare
-	%% hostnames. Unbracketed IPv6 is ambiguous and rejected.
-	case binary:split(Bin, <<":">>, [global]) of
-		[Bin] ->
-			%% Bare host: append default port.
-			case validate_host(Bin) of
-				ok -> finalize_peer(Bin, ?DEFAULT_PORT);
-				Error -> Error
-			end;
-		[Host, PortBin] ->
-			case {validate_host(Host), parse_port(PortBin)} of
-				{ok, {ok, Port}} ->
-					finalize_peer(Host, Port);
-				{{error, R}, _} -> {error, R};
-				{_, {error, R}} -> {error, R}
-			end;
-		_ ->
-			{error, {ambiguous_peer, Bin}}
-	end.
-
-%% @doc IPv4 hosts return as 5-tuples; hostnames stay as
-%% `<<"host:port">>' binaries.
-finalize_peer(Host, Port) ->
-	case parse_ipv4_octets(Host) of
-		{ok, {A, B, C, D}} ->
-			{ok, {A, B, C, D, Port}};
-		error ->
-			{ok, <<Host/binary, ":", (integer_to_binary(Port))/binary>>}
-	end.
-
-parse_ipv4_octets(Host) when is_binary(Host) ->
-	try
-		Parts = binary:split(Host, <<".">>, [global]),
-		case [binary_to_integer(P) || P <- Parts] of
-			[A, B, C, D] when ?is_octet(A), ?is_octet(B),
-					?is_octet(C), ?is_octet(D) ->
-				{ok, {A, B, C, D}};
-			_ ->
-				error
-		end
-	catch
-		_:_ -> error
-	end.
+    case ar_util:safe_parse_peer(Bin) of
+        {error, _} = E->
+            E;
+        {ok, [{A, B, C, D, Port}]} ->
+            {ok, {A, B, C, D, Port}}
+end.
 
 validate_host(<<>>) ->
 	{error, empty_host};
