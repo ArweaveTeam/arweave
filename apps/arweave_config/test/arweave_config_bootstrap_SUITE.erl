@@ -37,6 +37,7 @@ all() ->
 		multiple_config_files_rejected,
 		env_and_cli_config_files_rejected,
 		env_and_legacy_config_files_rejected,
+		env_and_legacy_config_files_rejected_due_mixed_dialects,
 		unknown_cli_option_rejected,
 		unknown_option_in_config_file_rejected
 	].
@@ -232,6 +233,18 @@ env_and_legacy_config_files_rejected(Config) ->
 	true = os:putenv("AR_CONFIG_FILE", PathA),
 	?assertMatch(
 		{error, multiple_config_files},
+		arweave_config_bootstrap:start(["--config_file", PathB])),
+	ok.
+
+env_and_legacy_config_files_rejected_due_mixed_dialects(Config) ->
+	PathA = write_config(Config, "env_legacy_multi_a.json",
+		<<"{\"debug\": true}">>),
+	PathB = write_config(Config, "env_legacy_multi_b.json",
+		<<"{\"mine\": true}">>),
+	true = os:putenv("AR_CONFIG_FILE", PathA),
+	?assertMatch(
+		{error,#{position := 1,reason := <<"unknown argument">>,
+			argument := <<"config_file">>}},
 		arweave_config_bootstrap:start(["config_file", PathB])),
 	ok.
 

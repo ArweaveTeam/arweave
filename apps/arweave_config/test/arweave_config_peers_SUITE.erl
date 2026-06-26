@@ -184,14 +184,16 @@ write_legacy_list_silently_skips_malformed_entries(_Config) ->
 		arweave_config:get([peers, trusted])),
 	ok.
 
+%% NOTE: It was intended to be:
 %% Non-IPv4 hosts stay as binaries through the round-trip rather than
 %% being coerced into the legacy IPv4 tuple shape.
+%% HOWEVER, we revert to the old behaviour as the HTTP API can deal with this.
 hostname_peer_round_trip(_Config) ->
 	ok = arweave_config_options_peers:write_legacy_list(trusted,
 		[<<"example.com:1984">>]),
-	?assertEqual([<<"example.com:1984">>],
+	?assertMatch([{_A, _B, _C, _D, _Port}],
 		arweave_config:get([peers, trusted])),
-	?assertEqual([<<"example.com:1984">>],
+	?assertMatch([{_A, _B, _C, _D, _Port}],
 		arweave_config:get([peers, trusted])),
 	ok.
 

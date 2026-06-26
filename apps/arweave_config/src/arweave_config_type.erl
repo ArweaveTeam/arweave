@@ -486,12 +486,32 @@ peer_id_binary(<<"[", Rest/binary>>) ->
 	end;
 %% DNS Names or IPV4 addresses.
 peer_id_binary(Bin) ->
-    case ar_util:safe_parse_peer(Bin) of
-        {error, _} = E->
+    case parse_host(Bin) of
+        {error, _} = E ->
             E;
-        {ok, [{A, B, C, D, Port}]} ->
-            {ok, {A, B, C, D, Port}}
+        _ ->
+            case ar_util:safe_parse_peer(Bin) of
+                {error, invalid} ->
+                    {error, {invalid_peer, Bin}};
+                {ok, [{A, B, C, D, Port}|_]} ->
+                    %% FIXME: There might be multiple entries.
+                    case validate_port(Port) of
+                        {ok, Port} -> {ok, {A, B, C, D, Port}};
+                        {error, _} = E -> E
+                    end
+            end
+    end.
+
+parse_host(Bin) ->
+    case binary:split(Bin, <<":">>, [global]) of
+        [Bin] ->
+            Bin;
+        [HostBin, _PortBin] ->
+            HostBin;
+        _ ->
+            {error, {ambiguous_peer, Bin}}
 end.
+
 
 validate_host(<<>>) ->
 	{error, empty_host};
@@ -506,10 +526,10 @@ parse_port(<<>>) ->
 parse_port(PortBin) ->
 	try
 		Port = binary_to_integer(PortBin),
-		case Port of
-			_ when Port >= 0, Port =< 65535 -> {ok, Port};
-			_ -> {error, {port_out_of_range, Port}}
-		end
+		validate_port(Port)
 	catch
 		_:_ -> {error, {invalid_port, PortBin}}
 	end.
+
+validate_port(Port) when Port >= 0, Port =< 65535 -> {ok, Port};
+validate_port(Port) -> {error, {port_out_of_range, Port}}.
