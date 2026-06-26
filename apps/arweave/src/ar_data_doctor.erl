@@ -8,7 +8,9 @@
 -include_lib("arweave/include/ar_consensus.hrl").
 
 main() ->
-	main([]).
+    	Args = init:get_plain_arguments(),
+	main(Args).
+
 main([]) ->
 	help(),
 	init:stop(1);

@@ -181,13 +181,18 @@ verify_mining_keyfile(Addr) ->
 			ok
 	end.
 
+create_wallet() ->
+	Args = init:get_plain_arguments(),
+	create_wallet(Args).
+
 create_wallet([DataDir]) ->
 	create_wallet(DataDir, ?RSA_KEY_TYPE);
 create_wallet(_) ->
 	create_wallet_fail(?RSA_KEY_TYPE).
 
 create_ecdsa_wallet() ->
-	create_wallet_fail(?ECDSA_KEY_TYPE).
+	Args = init:get_plain_arguments(),	
+	create_ecdsa_wallet(Args).
 
 create_ecdsa_wallet([DataDir]) ->
 	create_wallet(DataDir, ?ECDSA_KEY_TYPE);
@@ -213,9 +218,6 @@ create_wallet(DataDir, KeyType) ->
 			end
 	end.
 
-create_wallet() ->
-	create_wallet_fail(?RSA_KEY_TYPE).
-
 create_wallet_fail(?RSA_KEY_TYPE) ->
 	io:format("Usage: ./bin/create-wallet [data_dir]~n"),
 	init:stop(1);
@@ -224,19 +226,25 @@ create_wallet_fail(?ECDSA_KEY_TYPE) ->
 	init:stop(1).
 
 benchmark_vdf() ->
-	benchmark_vdf([]).
+	Args = init:get_plain_arguments(),
+	benchmark_vdf(Args).
+
 benchmark_vdf(Args) ->
 	ar_bench_vdf:run_benchmark_from_cli(Args),
 	init:stop(1).
 
 benchmark_hash() ->
-	benchmark_hash([]).
+	Args = init:get_plain_arguments(),
+	benchmark_hash(Args).
+
 benchmark_hash(Args) ->
 	ar_bench_hash:run_benchmark_from_cli(Args),
 	init:stop(1).
 
 benchmark_packing() ->
-	benchmark_packing([]).
+	Args = init:get_plain_arguments(),
+	benchmark_packing(Args).
+
 benchmark_packing(Args) ->
 	ar_bench_packing:run_benchmark_from_cli(Args),
 	init:stop(1).
