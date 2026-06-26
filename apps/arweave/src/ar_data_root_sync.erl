@@ -23,6 +23,9 @@
 -define(DATA_ROOTS_SYNC_SCAN_INTERVAL_MS, 600_000). % 10 minutes.
 -endif.
 
+%% Emit a log every time this many missing blocks have been fetched.
+-define(DATA_ROOTS_SYNC_PROGRESS_BLOCKS, 100).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -87,7 +90,7 @@ terminate(_Reason, _State) ->
 sync_block_data_roots(#state{ store_id = StoreID, range_start = RangeStart,
 	range_end = RangeEnd, scan_cursor = Cursor } = State) ->
 	End = min(RangeEnd, ar_disk_pool:get_threshold()),
-	{ok, Cursor2} = sync_block_data_roots(StoreID, Cursor, End),
+	{ok, Cursor2} = sync_block_data_roots(StoreID, Cursor, End, RangeStart, {0, 0, 0}),
 	{Delay, Cursor3} =
 		case Cursor2 >= End of
 			true ->
@@ -97,24 +100,59 @@ sync_block_data_roots(#state{ store_id = StoreID, range_start = RangeStart,
 		end,
 	{Delay, State#state{ scan_cursor = Cursor3 }}.
 
-sync_block_data_roots(_StoreID, Cursor, RangeEnd) when Cursor >= RangeEnd ->
+sync_block_data_roots(StoreID, Cursor, End, _RangeStart, Stats) when Cursor >= End ->
+	{Scanned, Synced, Missing}  = Stats,
+	?LOG_INFO([{event, data_root_sync_pass_complete}, {store_id, StoreID},
+			{blocks_total, Scanned}, {blocks_synced, Synced}, {blocks_missing, Missing},
+			{synced_pct, synced_pct(Synced, Scanned)}]),
 	{ok, Cursor};
-sync_block_data_roots(StoreID, Cursor, RangeEnd) ->
+sync_block_data_roots(StoreID, Cursor, End, RangeStart, {Scanned, Synced, Missing} = Stats) ->
 	{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Cursor),
-	Cursor2 =
-		case BlockStart >= RangeEnd of
-			true ->
-				RangeEnd;
-			false ->
+	case BlockStart >= End of
+		true ->
+			sync_block_data_roots(StoreID, End, End, RangeStart, Stats);
+		false ->
+			Stats2 =
 				case ar_data_roots:are_synced(BlockStart, BlockEnd, TXRoot, ?DEFAULT_MODULE) of
 					true ->
-						BlockEnd;
+						{Scanned + 1, Synced + 1, Missing};
 					false ->
 						maybe_fetch_and_store(BlockStart, BlockEnd),
-						BlockEnd
-				end
-		end,
-	sync_block_data_roots(StoreID, Cursor2, RangeEnd).
+						FetchedStats = {Scanned + 1, Synced, Missing + 1},
+						maybe_log_data_root_sync_progress(StoreID, BlockEnd, End, RangeStart,
+								FetchedStats),
+						FetchedStats
+				end,
+			sync_block_data_roots(StoreID, BlockEnd, End, RangeStart, Stats2)
+	end.
+
+%% @doc Emit a progress log every ?DATA_ROOTS_SYNC_PROGRESS_BLOCKS
+%% missing blocks. Missing blocks are the blocks the data root syncing progress fetches.
+maybe_log_data_root_sync_progress(StoreID, Cursor, End, RangeStart,
+		{Scanned, Synced, Missing}) ->
+	case Missing > 0 andalso Missing rem ?DATA_ROOTS_SYNC_PROGRESS_BLOCKS =:= 0 of
+		true ->
+			?LOG_INFO([{event, data_root_sync_progress}, {store_id, StoreID},
+					{blocks_scanned, Scanned}, {blocks_synced, Synced},
+					{blocks_missing, Missing},
+					{range_pct, range_pct(Cursor, RangeStart, End)}, {cursor, Cursor}]);
+		false ->
+			ok
+	end.
+
+%% @doc Percentage (0-100) of the scan range covered by the given offset.
+range_pct(Offset, RangeStart, End)
+		when is_integer(Offset), is_integer(RangeStart), is_integer(End),
+			End > RangeStart, Offset > RangeStart ->
+	min(100, (Offset - RangeStart) * 100 div (End - RangeStart));
+range_pct(_Offset, _RangeStart, _End) ->
+	0.
+
+%% @doc Percentage (0-100) of scanned blocks whose data roots have been synced by the data root syncing process.
+synced_pct(_Synced, 0) ->
+	100;
+synced_pct(Synced, Total) ->
+	min(100, Synced * 100 div Total).
 
 maybe_fetch_and_store(BlockStart, BlockEnd) ->
 	Peers = ar_peers:get_peers(current),

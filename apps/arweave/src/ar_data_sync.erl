@@ -2452,14 +2452,18 @@ record_chunk_cache_size_metric() ->
 	end.
 
 maybe_run_footprint_record_initialization(State) ->
-	#data_sync_state{ store_id = StoreID } = State,
+	#data_sync_state{ store_id = StoreID, range_start = RangeStart,
+			range_end = RangeEnd } = State,
 	{FootprintRecordCursor, InitializationComplete} = get_footprint_record_initialization_state(State),
 	case InitializationComplete of
 		true ->
 			ok;
 		false ->
-			?LOG_INFO([{event, initializing_footprint_record},
-					{cursor, FootprintRecordCursor}, {store_id, StoreID}]),
+			?LOG_INFO([{event, initializing_footprint_record}, {store_id, StoreID},
+					{cursor, FootprintRecordCursor},
+					{range_start, RangeStart}, {range_end, RangeEnd},
+					{start_pct, footprint_migration_pct(FootprintRecordCursor, RangeStart, RangeEnd)},
+					{total_chunks, footprint_migration_chunks(RangeEnd, RangeStart)}]),
 			gen_server:cast(self(), {initialize_footprint_record, FootprintRecordCursor})
 	end.
 
@@ -2486,6 +2490,7 @@ initialize_footprint_record(complete, State) ->
 initialize_footprint_record(Cursor, State) ->
 	#data_sync_state{
 		store_id = StoreID,
+		range_start = RangeStart,
 		range_end = RangeEnd
 	} = State,
 	BatchSize = ?FOOTPRINT_MIGRATION_BATCH_SIZE,
@@ -2494,7 +2499,8 @@ initialize_footprint_record(Cursor, State) ->
 		not_found ->
 			ok = ar_kv:put(migration_db(StoreID),
 				?FOOTPRINT_MIGRATION_CURSOR_KEY, <<"complete">>),
-			?LOG_INFO([{event, footprint_record_initialized}, {store_id, StoreID}]),
+			?LOG_INFO([{event, footprint_record_initialized}, {store_id, StoreID},
+					{total_chunks, footprint_migration_chunks(RangeEnd, RangeStart)}]),
 			State;
 		{IntervalEnd, IntervalStart} ->
 			Cursor2 = max(Cursor, IntervalStart),
@@ -2503,6 +2509,8 @@ initialize_footprint_record(Cursor, State) ->
 			NewCursor = EndPosition,
 			ok = ar_kv:put(migration_db(StoreID),
 				?FOOTPRINT_MIGRATION_CURSOR_KEY, binary:encode_unsigned(NewCursor)),
+			maybe_log_footprint_migration_progress(Cursor, NewCursor, RangeStart, RangeEnd,
+					StoreID),
 			ar_util:cast_after(1_000, self(), {initialize_footprint_record, NewCursor}),
 			State
 	end.
@@ -2526,3 +2534,36 @@ initialize_footprint_range(Start, End, StoreID) ->
 			ok
 	end,
 	initialize_footprint_range(Start + ?DATA_CHUNK_SIZE, End, StoreID).
+
+%% @doc Log footprint-migration progress when the cursor crosses the next
+%% ?FOOTPRINT_MIGRATION_PROGRESS_STEP_PCT percent of the store's range.
+maybe_log_footprint_migration_progress(PrevCursor, NewCursor, RangeStart, RangeEnd, StoreID) ->
+	%% Emit a log each time a store crosses 1% of its range.
+	ProgressStepPct = 1,
+	PrevPct = footprint_migration_pct(PrevCursor, RangeStart, RangeEnd),
+	NewPct = footprint_migration_pct(NewCursor, RangeStart, RangeEnd),
+	case NewPct div ProgressStepPct > PrevPct div ProgressStepPct of
+		true ->
+			?LOG_INFO([{event, footprint_record_initialization_progress},
+					{store_id, StoreID}, {cursor, NewCursor},
+					{percent_migrated, NewPct}, 
+					{chunks_migrated, footprint_migration_chunks(NewCursor, RangeStart)},
+					{total_chunks, footprint_migration_chunks(RangeEnd, RangeStart)}]);
+		false ->
+			ok
+	end.
+
+%% @doc Percentage (0-100) of the store's range scanned by the footprint migration process.
+footprint_migration_pct(Offset, RangeStart, RangeEnd)
+		when is_integer(Offset), is_integer(RangeStart), is_integer(RangeEnd),
+			RangeEnd > RangeStart, Offset > RangeStart ->
+	min(100, (Offset - RangeStart) * 100 div (RangeEnd - RangeStart));
+footprint_migration_pct(_Offset, _RangeStart, _RangeEnd) ->
+	0.
+
+%% @doc Number of chunks between RangeStart and the given offset.
+footprint_migration_chunks(Offset, RangeStart)
+		when is_integer(Offset), is_integer(RangeStart), Offset > RangeStart ->
+	(Offset - RangeStart) div ?DATA_CHUNK_SIZE;
+footprint_migration_chunks(_Offset, _RangeStart) ->
+	0.
