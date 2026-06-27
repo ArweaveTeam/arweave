@@ -75,33 +75,55 @@ test_syncs_headers() ->
 		?assertMatch({ok, _}, ar_storage:read_wallet_list(NoSpaceB#block.wallet_list)),
 		ets:new(test_syncs_header, [set, named_table]),
 		ets:insert(test_syncs_header, {height, NoSpaceHeight + 1}),
+		%% Keep mining blocks. At some point the cleanup procedure will
+		%% kick in and remove the oldest files.
 		ok = ar_test_await:until(header_sync_cleanup_kicked_in,
 			fun() ->
-				%% Keep mining blocks. At some point the cleanup procedure will
-				%% kick in and remove the oldest files.
-				TX = sign_v1_tx(main, Wallet, #{
-					data => random_v1_data(200 * 1024),
-					last_tx => ar_test_node:get_tx_anchor(peer1)
-				}),
-				ar_test_node:assert_post_tx_to_peer(main, TX),
-				ar_test_node:mine(),
-				[{_, Height}] = ets:lookup(test_syncs_header, height),
-				{ok, [_ | _]} = ar_test_await:node_height(main, Height),
-				ets:insert(test_syncs_header, {height, Height + 1}),
+				_ = mine_next_block(Wallet),
 				unavailable == ar_storage:read_block(NoSpaceH)
 					andalso ar_storage:read_tx(NoSpaceTX#tx.id) == unavailable
 			end,
 			20000
 		),
-		[{LatestH, _, _} | _] = ar_node:get_block_index(),
-		%% The latest block must not be cleaned up.
-		LatestB = ar_test_await:block_stored(LatestH),
-		?assertMatch(#block{}, LatestB),
-		?assertMatch(#tx{}, ar_storage:read_tx(lists:nth(1, LatestB#block.txs))),
-		?assertMatch({ok, _}, ar_storage:read_wallet_list(LatestB#block.wallet_list))
+		%% The latest block must not be cleaned up. The tiny test header
+		%% cache can evict a just-written tip header during a cleanup pass,
+		%% so keep mining and check the live tip rather than pinning one
+		%% hash that may have been evicted (and never rewritten once idle).
+		ok = ar_test_await:until(latest_block_retained,
+			fun() -> latest_block_fully_stored(mine_next_block(Wallet)) end,
+			20000
+		)
 	after
 		ar_disksup:resume(),
 		ar_events:send(disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, 100, 20_000_000_000})
+	end.
+
+%% @doc Mine one block carrying a fresh 200 KiB v1 tx, advance the
+%% `test_syncs_header' height counter, and return the new tip's hash.
+mine_next_block(Wallet) ->
+	TX = sign_v1_tx(main, Wallet, #{
+		data => random_v1_data(200 * 1024),
+		last_tx => ar_test_node:get_tx_anchor(peer1)
+	}),
+	ar_test_node:assert_post_tx_to_peer(main, TX),
+	ar_test_node:mine(),
+	[{_, Height}] = ets:lookup(test_syncs_header, height),
+	{ok, [{LatestH, _, _} | _]} = ar_test_await:node_height(main, Height),
+	ets:insert(test_syncs_header, {height, Height + 1}),
+	LatestH.
+
+%% @doc True when block `H' and its first tx and wallet list are all
+%% readable (i.e. the block was not evicted from the disk cache).
+latest_block_fully_stored(H) ->
+	case ar_storage:read_block(H) of
+		#block{ txs = [TXID | _] } = B ->
+			ar_storage:read_tx(TXID) /= unavailable
+				andalso case ar_storage:read_wallet_list(B#block.wallet_list) of
+					{ok, _} -> true;
+					_ -> false
+				end;
+		_ ->
+			false
 	end.
 
 post_random_blocks(Wallet, TargetHeight, B0) ->
