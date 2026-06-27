@@ -291,8 +291,8 @@ validate_tuple_packing(_) ->
 	{error, <<"repack_modules: invalid packing">>}.
 
 %% @doc While any module is being repacked in place, every storage module must be a repack
-%% module: the node does not mine/sync and repack at the same time. This keeps the repack
-%% memory derivation (which assumes the whole node is repacking) sound.
+%% module. Repacking, syncing and mining are all memory-heavy processes - we do not support
+%% efficient memory utilization when they are run simultaneously so we demand repacking is executed first.
 validate_no_regular_storage_modules() ->
 	case arweave_config:get([repack_modules]) of
 		[] ->
