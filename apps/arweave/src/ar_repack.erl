@@ -94,12 +94,22 @@ register_workers() ->
 %% tracks runtime config changes. The casts are async - processed after the new value is
 %% committed - and are safe no-ops for any worker that is not currently running.
 recompute_sizing() ->
-	lists:foreach(
-		fun({StorageModule, _Packing}) ->
-			gen_server:cast(name(ar_storage_module:id(StorageModule)), recompute_sizing)
-		end,
-		[arweave_config:config_to_repack_module(M)
-			|| M <- arweave_config:get([repack_modules])]),
+	%% Resolving the worker names from config touches node state (store id -> partition)
+	%% that is not available until the node is running, and the handle_set callbacks that
+	%% call this also fire during config load. Only fan out once we are at runtime, by which
+	%% point the workers exist; before then there is nothing to recompute.
+	case arweave_config:is_runtime() of
+		true ->
+			lists:foreach(
+				fun({StorageModule, _Packing}) ->
+					gen_server:cast(
+						name(ar_storage_module:id(StorageModule)), recompute_sizing)
+				end,
+				[arweave_config:config_to_repack_module(M)
+					|| M <- arweave_config:get([repack_modules])]);
+		false ->
+			ok
+	end,
 	ok.
 
 init({StoreID, ToPacking}) ->
