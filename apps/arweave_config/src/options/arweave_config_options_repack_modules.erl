@@ -307,20 +307,30 @@ validate_no_regular_storage_modules() ->
 			end
 	end.
 
-%% @doc All repack modules must perform the same from/to packing operation. This makes the
-%% per-chunk entropy count uniform, which the batch-size derivation relies on.
+%% @doc All repack modules must use the same archetype: replica.2.9 vs not on each side -
+%% the four combinations of {unpacked|spora_2_6, replica.2.9}. Addresses may differ between
+%% modules. This keeps the per-chunk entropy count uniform, which the batch-size derivation
+%% relies on.
 validate_uniform_operation() ->
 	case arweave_config:get([repack_modules]) of
 		[] ->
 			ok;
 		Modules ->
-			Operations = lists:usort(
-				[{packing_from_map(from, M), packing_from_map(to, M)} || M <- Modules]),
-			case Operations of
+			case lists:usort([repack_archetype(M) || M <- Modules]) of
 				[_] ->
 					ok;
 				_ ->
 					{error, <<"repack_modules: all repack modules must use the same "
-						"from/to packing operation.">>}
+						"from/to packing archetype (replica.2.9 vs not, on each side); "
+						"addresses may differ.">>}
 			end
 	end.
+
+%% @doc The repack archetype ignores the mining address - only whether each side is the
+%% replica.2.9 format matters.
+repack_archetype(Module) ->
+	{is_replica_2_9(packing_from_map(from, Module)),
+		is_replica_2_9(packing_from_map(to, Module))}.
+
+is_replica_2_9({replica_2_9, _}) -> true;
+is_replica_2_9(_) -> false.
