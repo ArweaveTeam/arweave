@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([name/1, read_footprint/4, write_queue/3]).
+-export([name/1, read_footprint/5, write_queue/3]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
@@ -17,8 +17,7 @@
 """.
 
 -record(state, {
-	store_id = undefined,
-	read_batch_size = ?DEFAULT_REPACK_BATCH_SIZE
+	store_id = undefined
 }).
 
 %%%===================================================================
@@ -34,29 +33,24 @@ name(StoreID) ->
 	list_to_atom("ar_repack_io_" ++ ar_storage_module:label(StoreID)).
 
 init(StoreID) ->
-	ReadBatchSize = arweave_config:get([packing, repack, batch_size]),
-	State = #state{ 
-		store_id = StoreID,
-		read_batch_size = ReadBatchSize
-	},
+	State = #state{ store_id = StoreID },
 	log_info(ar_repack_io_init, State, [
-		{name, name(StoreID)},
-		{read_batch_size, ReadBatchSize}
+		{name, name(StoreID)}
 	]),
-	
     {ok, State}.
 
 %% @doc Read all the chunks covered by the given footprint.
 %% The footprint covers:
 %% - A list of offsets determined by the replica.2.9 entropy footprint pattern.
 %% - A set of consecutive chunks following each offset. The number of consecutive chunks
-%%   read for each footprint offset is determined by the repack_batch_size config.
+%%   read for each footprint offset is the ReadBatchSize derived by ar_repack and passed in.
 -spec read_footprint(
-	[non_neg_integer()], non_neg_integer(), non_neg_integer(), ar_storage_module:store_id()) ->
+	[non_neg_integer()], non_neg_integer(), non_neg_integer(), non_neg_integer(),
+	ar_storage_module:store_id()) ->
 	ok.
-read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, StoreID) ->
+read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, StoreID) ->
 	gen_server:cast(name(StoreID),
-		{read_footprint, FootprintOffsets, FootprintStart, FootprintEnd}).
+		{read_footprint, FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize}).
 
 write_queue(WriteQueue, Packing, StoreID) ->
 	gen_server:cast(name(StoreID), {write_queue, WriteQueue, Packing}).
@@ -71,8 +65,9 @@ handle_call(Request, _From, #state{} = State) ->
 	{reply, ok, State}.
 
 handle_cast(
-		{read_footprint, FootprintOffsets, FootprintStart, FootprintEnd}, #state{} = State) ->
-	do_read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, State),
+		{read_footprint, FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize},
+		#state{} = State) ->
+	do_read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, State),
 	{noreply, State};
 
 handle_cast({write_queue, WriteQueue, Packing}, #state{} = State) ->
@@ -97,22 +92,24 @@ terminate(Reason, #state{} = State) ->
 %%% Private functions.
 %%%===================================================================
 
-do_read_footprint([], _FootprintStart, _FootprintEnd, #state{}) ->
+do_read_footprint([], _FootprintStart, _FootprintEnd, _ReadBatchSize, #state{}) ->
 	ok;
 do_read_footprint([
-	BucketEndOffset | FootprintOffsets], FootprintStart, FootprintEnd, #state{} = State) 
+	BucketEndOffset | FootprintOffsets], FootprintStart, FootprintEnd, ReadBatchSize,
+		#state{} = State)
 		when BucketEndOffset < FootprintStart ->
 	%% Advance until we hit a chunk covered by the current storage module
-	do_read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, State);
+	do_read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, State);
 do_read_footprint(
-	[BucketEndOffset | _FootprintOffsets], _FootprintStart, FootprintEnd, #state{} ) 
+	[BucketEndOffset | _FootprintOffsets], _FootprintStart, FootprintEnd, _ReadBatchSize,
+		#state{} )
 		when BucketEndOffset > FootprintEnd ->
 	ok;
 do_read_footprint(
-	[BucketEndOffset | FootprintOffsets], FootprintStart, FootprintEnd, #state{} = State) ->
-	#state{ 
-		store_id = StoreID,
-		read_batch_size = ReadBatchSize
+	[BucketEndOffset | FootprintOffsets], FootprintStart, FootprintEnd, ReadBatchSize,
+		#state{} = State) ->
+	#state{
+		store_id = StoreID
 	} = State,
 
 	StartTime = erlang:monotonic_time(),
@@ -178,7 +175,7 @@ do_read_footprint(
 
 	ar_repack:chunk_range_read(
 		BucketEndOffset, OffsetChunkMap, OffsetMetadataMap, State#state.store_id),
-	read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, StoreID).
+	read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, StoreID).
 
 process_write_queue(WriteQueue, Packing, #state{} = State) ->
 	#state{

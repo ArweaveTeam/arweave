@@ -35,6 +35,7 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [packing, repack, batch_size],
+			runtime => true,
 			default => undefined,
 			type => pos_integer,
 			legacy => repack_batch_size,
@@ -48,7 +49,11 @@ specs() ->
 				  "footprint is always full and the entropy cache is not "
 				  "thrashed. Set a positive value only to override the "
 				  "derivation (e.g. for non-replica.2.9 repacks, which "
-				  "generate no entropy, or for benchmarking).">>
+				  "generate no entropy, or for benchmarking).">>,
+			handle_set => fun(_K, V, _S, _A) ->
+				ok = ar_repack:recompute_sizing(),
+				{store, V}
+			end
 		},
 		#{
 			enabled => true,
@@ -65,6 +70,7 @@ specs() ->
 				  "or repacked concurrently.">>,
 			handle_set => fun(_K, V, _S, _A) ->
 				ok = ar_sync_dispatcher:set_entropy_cache_size(V),
+				ok = ar_repack:recompute_sizing(),
 				{store, V}
 			end
 		},

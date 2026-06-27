@@ -52,6 +52,7 @@ all() ->
 runtime_writable_cases() ->
 	[
 		%% Tier 1 — pure runtime flag.
+		{[packing, repack, batch_size], 32},
 		{[network, client, http, keepalive], 30000},
 		{[network, server, shutdown_mode], close},
 		{[gossip, tx, post_timeout], 25},
