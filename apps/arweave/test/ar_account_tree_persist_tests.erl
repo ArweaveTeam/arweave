@@ -55,7 +55,11 @@ test_persist_equivalence() ->
 	%% Restoring from disk and re-hashing must reproduce the same root.
 	check_roundtrip(roundtrip_empty, []),
 	check_roundtrip(roundtrip_many, many_accounts(60)),
-	check_roundtrip(roundtrip_shared, shared_prefix_accounts()).
+	check_roundtrip(roundtrip_shared, shared_prefix_accounts()),
+	%% Boot path: disk -> map -> fresh ets (ar_account_tree:load_into_ets/1) reproduces the root.
+	check_load_into_ets(load_ets_empty, []),
+	check_load_into_ets(load_ets_many, many_accounts(60)),
+	check_load_into_ets(load_ets_shared, shared_prefix_accounts()).
 
 %%%===================================================================
 %%% Helpers
@@ -122,6 +126,19 @@ check_roundtrip(Name, Accounts) ->
 	{ok, Restored} = ar_storage:read_wallet_list(Root),
 	{Root2, _, _} = ar_patricia_tree:compute_hash(Restored, HashFun),
 	?assertEqual(Root, Root2, {roundtrip, Name}).
+
+%% @doc The startup path: persist a tip, read it back from disk into a map tree, load that map
+%% into a FRESH ets table via ar_account_tree:load_into_ets/1, and assert it hashes to the same
+%% root.
+check_load_into_ets(Name, Accounts) ->
+	HashFun = ar_block:wallet_list_hash_fun(),
+	clear_db(),
+	Root = ar_storage:write_wallet_list(0, build_mem(Accounts)),
+	{ok, RestoredMap} = ar_storage:read_wallet_list(Root),
+	Tid = ar_account_tree:load_into_ets(RestoredMap),
+	{RootEts, _, _} = ar_patricia_tree_ets:compute_hash(Tid, HashFun, #{}),
+	ar_patricia_tree_ets:delete_table(Tid),
+	?assertEqual(Root, RootEts, {load_into_ets, Name}).
 
 apply_mods(Accounts, Mods) ->
 	Base = maps:from_list(Accounts),

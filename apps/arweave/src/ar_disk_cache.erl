@@ -14,7 +14,6 @@
          code_change/3]).
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_wallets.hrl").
 
 %% Internal state definition.
 -record(state, {

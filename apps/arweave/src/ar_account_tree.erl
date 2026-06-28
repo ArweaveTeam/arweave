@@ -29,6 +29,9 @@
 -export([start_link/1, get/1, get/2, get_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,
 		apply_block/2, add_wallets/4, set_current/3, get_size/0]).
 
+%% Exported for ar_account_tree_persist_tests to exercise the disk -> map -> ets boot path.
+-export([load_into_ets/1]).
+
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").

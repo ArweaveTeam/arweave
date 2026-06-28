@@ -238,6 +238,24 @@ scenario_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Accounts,
 %%% Helpers
 %%%===================================================================
 
+%% add_wallets/4 with a base root that is not a node in the diff DAG should return
+%% {error, root_hash_not_found} and leave the gen_server running.
+add_wallets_unknown_root_returns_error_test() ->
+	Stubs = [ensure_stub(N) || N <- [ar_node_worker, ar_storage]],
+	{ok, New} = gen_server:start(ar_account_tree, [{blocks, []}], []),
+	UnknownRoot = crypto:strong_rand_bytes(48),
+	Result =
+		try
+			gen_server:call(New, {add_wallets, UnknownRoot, #{}, 10, 1}, 5000)
+		catch
+			Class:Reason -> {Class, Reason}
+		end,
+	Alive = is_process_alive(New),
+	catch gen_server:stop(New),
+	[begin unregister_safe(Name), exit(Pid, kill) end || {stub, Name, Pid} <- Stubs],
+	?assertEqual({error, root_hash_not_found}, Result),
+	?assert(Alive).
+
 setup() ->
 	Stubs = [ensure_stub(N) || N <- [ar_node_worker, ar_storage]],
 	{ok, New} = gen_server:start_link(ar_account_tree, [{blocks, []}], []),

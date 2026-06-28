@@ -1,10 +1,11 @@
-%%% @doc Fast, node-free equivalence tests asserting ar_patricia_tree_ets behaves
-%%% identically to ar_patricia_tree across the whole API (size, is_empty, get, foldr,
-%%% get_range/2,3, delete, compute_hash root) and that the two trees are structurally
-%%% identical (same nodes, children, suffixes, values). Persistence is covered separately
-%%% by ar_account_tree_persist_tests (node-based).
-%% @ar_test: fast
+%%% @doc Fast, node-free equivalence tests asserting ar_patricia_tree_ets behaves identically to
+%%% ar_patricia_tree across the whole API (size, is_empty, get, foldr, get_range/2,3, delete,
+%%% compute_hash root) and that the two trees are structurally identical (same nodes, children,
+%%% suffixes, values), plus a consensus-root check that the frozen reference impl
+%%% (ar_patricia_tree_legacy), the in-memory impl, and the ets impl all hash to the same root.
+%%% Persistence is covered separately by ar_account_tree_persist_tests (node-based).
 -module(ar_patricia_tree_ets_tests).
+-test_category([fast]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -14,6 +15,13 @@
 
 equivalence_test_() ->
 	{timeout, 60, fun() -> lists:foreach(fun({N, A}) -> check(N, A) end, cases()) end}.
+
+%% Check that the new account_tree implementations (ar_patricia_tree and ar_patricia_tree_ets)
+%% are equivalent to the legacy implementation (ar_patricia_tree_legacy).
+legacy_equivalence_test_() ->
+	{timeout, 60, fun() ->
+		lists:foreach(fun({N, A}) -> check_legacy_equivalent(N, A) end, cases())
+	end}.
 
 cases() ->
 	[
@@ -132,6 +140,19 @@ val2(Addr) ->
 %%====================================================================
 %% Helpers
 %%====================================================================
+
+%% Assert the legacy reference, in-memory, and ets impls all hash to the same root under the
+%% production consensus hash function.
+check_legacy_equivalent(Name, Accounts) ->
+	HashFun = ar_block:wallet_list_hash_fun(),
+	Legacy = build(ar_patricia_tree_legacy, Accounts),
+	Mem = build(ar_patricia_tree, Accounts),
+	Ets = build(ar_patricia_tree_ets, Accounts),
+	{RootLegacy, _, _} = ar_patricia_tree_legacy:compute_hash(Legacy, HashFun),
+	{RootMem, _, _} = ar_patricia_tree:compute_hash(Mem, HashFun),
+	{RootEts, _, _} = ar_patricia_tree_ets:compute_hash(Ets, HashFun, #{}),
+	?assertEqual(RootLegacy, RootMem, {legacy_vs_mem, Name}),
+	?assertEqual(RootMem, RootEts, {mem_vs_ets, Name}).
 
 %% Assert the mem and ets impls agree across the API and are structurally identical.
 check(Name, Accounts) ->
