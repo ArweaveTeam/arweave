@@ -54,6 +54,20 @@ order_independence_test_() ->
 				 {many, many_accounts(120)}])
 	end}.
 
+%% Random fuzz over many random key sets: every insertion order yields the same root
+%% (canonicity), deleting any key yields the same root as rebuilding without it (deletion
+%% equivalence), and get/2 + size agree with a plain map. Mirrors
+%% ar_patricia_tree:stochastic_test/0 for the ets impl.
+stochastic_test_() ->
+	{timeout, 120, fun() ->
+		lists:foreach(fun(_) -> check_stochastic(random_key_values(3)) end, lists:seq(1, 300))
+	end}.
+
+%% Delete edge cases not covered directly elsewhere: deleting an absent key is a no-op
+%% (structurally identical to mem), and deleting every key empties the tree.
+delete_edges_test_() ->
+	{timeout, 30, fun test_delete_edges/0}.
+
 snapshot_cases() ->
 	K = fun(Bytes) -> pad32(Bytes) end,
 	Seventh = element(1, lists:nth(7, many_accounts(60))),
@@ -202,6 +216,12 @@ assert_equivalent(Name, Mem, Ets, Accounts, HashFun) ->
 		end,
 		Accounts
 	),
+	%% get_range/3 with absent key agree (e.g. [])
+	?assertEqual(ar_patricia_tree:get_range(Absent, N + 5, Mem),
+			ar_patricia_tree_ets:get_range(Absent, N + 5, Ets), {range_absent, Name}),
+	%% get_range/3 with zero count agree (e.g. [])
+	?assertEqual(ar_patricia_tree:get_range(0, Mem),
+			ar_patricia_tree_ets:get_range(0, Ets), {range_zero, Name}),
 	%% compute_hash root agrees.
 	{RootMem, _, _} = ar_patricia_tree:compute_hash(Mem, HashFun),
 	{RootEts, _, _} = ar_patricia_tree_ets:compute_hash(Ets, HashFun, #{}),
@@ -263,3 +283,63 @@ pad32(Prefix) when byte_size(Prefix) =< 32 ->
 
 shape(I) when I rem 2 == 0 -> t1;
 shape(_I) -> t2.
+
+%% For each insertion-order permutation of KeyValues: build the tree, check get/2 + size match a
+%% plain map, and that the root is identical across permutations (canonicity). For each key,
+%% deleting it yields the same root as rebuilding the tree without it (deletion equivalence).
+check_stochastic(KeyValues) ->
+	HashFun = hash_fun(),
+	lists:foldl(
+		fun(Permutation, Acc) ->
+			Tree = build(ar_patricia_tree_ets, Permutation),
+			compare_with_map(Tree, maps:from_list(Permutation)),
+			{H, _, _} = ar_patricia_tree_ets:compute_hash(Tree, HashFun, #{}),
+			lists:foreach(
+				fun({K, V}) ->
+					WithDelete = build(ar_patricia_tree_ets, Permutation),
+					ar_patricia_tree_ets:delete(K, WithDelete),
+					{H1, _, _} = ar_patricia_tree_ets:compute_hash(WithDelete, HashFun, #{}),
+					Rebuilt = build(ar_patricia_tree_ets, Permutation -- [{K, V}]),
+					{H2, _, _} = ar_patricia_tree_ets:compute_hash(Rebuilt, HashFun, #{}),
+					?assertEqual(H1, H2, {delete_equiv, K})
+				end,
+				Permutation
+			),
+			case Acc of
+				start -> ok;
+				_ -> ?assertEqual(Acc, H, order_root)
+			end,
+			H
+		end,
+		start,
+		permutations(KeyValues)
+	).
+
+compare_with_map(Tree, Map) ->
+	?assertEqual(map_size(Map), ar_patricia_tree_ets:size(Tree)),
+	maps:foreach(fun(K, V) -> ?assertEqual(V, ar_patricia_tree_ets:get(K, Tree)) end, Map).
+
+random_key_values(N) ->
+	[{crypto:strong_rand_bytes(5), crypto:strong_rand_bytes(30)} || _ <- lists:seq(1, N)].
+
+permutations([]) ->
+	[[]];
+permutations(L) ->
+	[[KV | T] || KV <- L, T <- permutations(L -- [KV])].
+
+test_delete_edges() ->
+	HashFun = hash_fun(),
+	Accounts = shared_prefix_accounts(),
+	AbsentKey = <<16#FE, 0:248>>,
+	%% Deleting an absent key is a no-op - structurally identical to mem.
+	MemAfter = ar_patricia_tree:delete(AbsentKey, build(ar_patricia_tree, Accounts)),
+	Ets = build(ar_patricia_tree_ets, Accounts),
+	ar_patricia_tree_ets:delete(AbsentKey, Ets),
+	?assertEqual(dump(ar_patricia_tree, MemAfter), dump(ar_patricia_tree_ets, Ets),
+			delete_absent_noop),
+	%% Deleting every key empties the tree.
+	Ets2 = build(ar_patricia_tree_ets, Accounts),
+	lists:foreach(fun({K, _}) -> ar_patricia_tree_ets:delete(K, Ets2) end, Accounts),
+	?assertEqual(0, ar_patricia_tree_ets:size(Ets2), delete_all_size),
+	?assert(ar_patricia_tree_ets:is_empty(Ets2)),
+	?assertEqual(<<>>, element(1, ar_patricia_tree_ets:compute_hash(Ets2, HashFun, #{}))).
