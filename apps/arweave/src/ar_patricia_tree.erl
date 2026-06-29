@@ -997,7 +997,7 @@ stochastic_test() ->
                             _ ->
                                 ?assertEqual(H, Acc)
                         end,
-                        Acc
+                        H
                 end,
                 start,
                 permutations(KeyValues)
