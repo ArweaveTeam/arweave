@@ -1,4 +1,42 @@
-%%% @doc An implementation of a tree closely resembling a merkle patricia tree.
+%%% @doc A patricia (radix) trie - the structure Arweave stores the account tree in.
+%%%
+%%% An account tree maps each account's address (a 32-byte hash) to its value. It is stored as a
+%%% radix trie keyed by the address bytes: accounts whose addresses share leading bytes share a
+%%% path, every node is content-hashed, and the hashes bubble up to a root - the block's
+%%% wallet_list. For two accounts a and b whose addresses share a leading prefix:
+%%%
+%%%                  (root) #h0
+%%%                     |
+%%%          a, b share a leading prefix
+%%%                     |   (one compressed edge)
+%%%                  (inner) #h1
+%%%                 /          \
+%%%             leaf a        leaf b
+%%%            {bal,..} #ha   {bal,..} #hb
+%%%
+%%%            root hash #h0  ==  the block's wallet_list
+%%%
+%%% Why a patricia trie rather than, say, a sorted-leaf Merkle tree? The tree is re-hashed every
+%%% block, but a block changes only a handful of accounts out of millions, so two properties
+%%% must hold at once:
+%%%
+%%%   (1) Local updates. An account's position is fixed by its address, so an insert, update or
+%%%       delete touches a single root-to-leaf path, and re-hashing walks only the changed paths
+%%%       - cost proportional to accounts changed, not to tree size.
+%%%
+%%%   (2) Canonical root. The trie's shape is a pure function of the set of keys present, so
+%%%       every node derives the identical root regardless of the order updates arrived in.
+%%%
+%%% A sorted-leaf Merkle tree gives (2) but not (1): its positional leaves force an O(n) re-hash
+%%% whenever a new account is inserted. A balanced search tree gives (1) but not (2): its shape
+%%% depends on insertion order. A patricia trie gives both. It is not height-balanced, but its
+%%% depth is bounded by the key length (at most 32 byte-branches), never O(n), and address
+%%% hashes keep it shallow in practice.
+%%%
+%%% This module is the immutable, map-based variant: every operation returns a new tree, so it
+%%% can hold a standalone tree (the genesis weave, a tree downloaded from peers, JSON
+%%% serialization, a tree read from disk). ar_patricia_tree_ets is the mutable ETS variant used
+%%% as the live, single account tree.
 -module(ar_patricia_tree).
 -test_category([fast]).
 

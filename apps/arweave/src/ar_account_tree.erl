@@ -1,29 +1,36 @@
-%%% @doc Manages the tip account tree and account trees of all blocks from the block cache.
+%%% @doc Manages the account tree: the per-block mapping from an account's address to its
+%%% {balance, last_tx, denomination, mining_permission}, whose root hash is the block's
+%%% wallet_list. It holds the account trees of every block in the consensus window - the chain
+%%% tip, its recent ancestors, and any forks.
 %%%
-%%% There is a single account tree stored in the shared, mutable ETS table managed by
-%%% ar_patricia_tree_ets. The table holds exactly one representation at a time - it is the
-%%% "sink" of a diff DAG (ar_diff_dag) whose edges store the small per-block account diffs
-%%% needed to reconstruct previous, following, and uncle representations. Between requests the
-%%% sink rests at the current tip. Requests that must hash or traverse a non-tip
+%%% Only ONE of those trees is materialized in full: a single patricia trie in the shared,
+%%% mutable ETS table managed by ar_patricia_tree_ets. That table holds exactly one
+%%% representation at a time - it is the "sink" of a diff DAG (ar_diff_dag) whose edges store the
+%%% small per-block account diffs needed to reconstruct the previous, following, and uncle
+%%% representations. Keeping one full tree plus small diffs (instead of one tree per window
+%%% block) trades a little CPU on lookups and reorgs for a large memory saving. Between requests
+%%% the sink rests at the current tip; a request that must hash or traverse a non-tip
 %%% representation (apply_block/2, add_wallets/4, get_chunk/2 of a non-tip root) transiently
-%%% move the sink to the corresponding DAG node and restore it to the tip before returning.
+%%% moves the sink to the corresponding DAG node and restores it to the tip before returning.
 %%%
 %%% Tip reads (get/1, get_balance/1, get_last_tx/1, get_size/0) read the ETS table directly.
-%%% Non-tip reads of specific addresses (get/2, get_balance/2) read the current tip from
-%%% ETS and overlay the total diff (tip -> target) reconstructed from the diff DAG. The ETS
-%%% table is not mutated.
+%%% Non-tip reads of specific addresses (get/2, get_balance/2) read the current tip from ETS and
+%%% overlay the total diff (tip -> target) reconstructed from the diff DAG; the ETS table is not
+%%% mutated.
 %%%
-%%% Hashing a non-tip candidate (apply_block/2, add_wallets/4) needs the whole tree, but only
-%%% one tree is stored in ETS, so hashing is done in multiple steps. First, with
-%%% the sink moved to the target node, candidate_root_hash/2 applies the account diff in
-%%% place to form the candidate, computes the hash, then re-applies the inverse so the table is
-%%% back at the original node - patricia trees are canonical, so apply-then-revert restores the
-%%% structure exactly, and only the touched root-to-leaf paths are re-hashed. Second, the sink is
-%%% moved back to the original node.
+%%% Hashing a non-tip candidate (apply_block/2, add_wallets/4) needs the whole tree, but only one
+%%% tree is stored in ETS, so it is done in steps. With the sink moved to the target node, the
+%%% account diff is applied in place to form the candidate, the hash is computed, then the
+%%% inverse is re-applied so the table is back at the original node - patricia trees are
+%%% canonical, so apply-then-revert restores the structure exactly, and only the touched
+%%% root-to-leaf paths are re-hashed. The sink is then moved back to the original node.
 %%%
 %%% Persistence happens on set_current/3: after moving the sink to the new tip we re-hash it,
-%%% streaming the content-addressed dirty nodes to ar_storage. Content addressing and
-%%% incremental updates ensure every tip account tree is persisted.
+%%% streaming the content-addressed dirty nodes to ar_storage. Content addressing and incremental
+%%% hashing ensure every tip account tree is persisted.
+%%%
+%%% See ar_patricia_tree_ets for the tree structure and why a patricia trie, and ar_diff_dag for
+%%% the sink-and-diffs graph.
 -module(ar_account_tree).
 
 -export([start_link/1, get/1, get/2, get_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,

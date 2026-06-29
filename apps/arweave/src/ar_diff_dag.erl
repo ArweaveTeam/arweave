@@ -1,8 +1,16 @@
-%%% @doc A directed acyclic graph with a single sink node. The sink node is supposed
-%%% to store some big expensive to replicate entity (e.g., a wallet tree). Edges store
-%%% diffs. To compute a representation of the entity corresponding to a particular vertice,
-%%% one needs to walk from this vertice down to the sink node, collect all the diffs, and
-%%% apply them in the reverse order.
+%%% @doc A directed acyclic graph that keeps ONE big, expensive-to-replicate entity in full -
+%%% at the "sink" vertex - plus a small diff on every edge. The entity's value at any other
+%%% vertex can be reconstructed on demand, so the graph represents many versions of the entity
+%%% while storing only one of them in full.
+%%%
+%%% Each vertex is one version of the entity; each edge holds the diff between two adjacent
+%%% versions. Only the sink holds a full copy. To obtain the entity at some other vertex, walk
+%%% from that vertex down to the sink, collect the diffs along the way, and apply them in
+%%% reverse order.
+%%%
+%%% In Arweave this holds the account tree across the blocks of the consensus window (see
+%%% ar_account_tree): each vertex is one block's account tree - one kept in full, the rest as
+%%% per-block diffs.
 -module(ar_diff_dag).
 -test_category([fast]).
 

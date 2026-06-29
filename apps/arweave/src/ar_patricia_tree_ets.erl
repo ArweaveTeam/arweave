@@ -1,8 +1,8 @@
-%%% @doc An ETS-backed implementation of ar_patricia_tree.
-%%%
-%%% Uses the shared, named ETS table ar_patricia_tree, created by ar_sup at
-%%% startup. Every operation mutates that table in place and returns the table id.
-%%% new/0 resets the table to an empty tree, so there is a single account tree at a time.
+%%% @doc The ETS-backed implementation of ar_patricia_tree (see there for the structure and why a
+%%% patricia trie). The whole trie lives in the shared, named ETS table ar_patricia_tree,
+%%% created by ar_sup at startup. Every operation mutates that table in place and returns the
+%%% table id; new/0 resets it to an empty tree. So exactly one account tree is materialized at a
+%%% time - the diff-DAG "sink" in ar_account_tree.
 -module(ar_patricia_tree_ets).
 
 %% size/1 is a tree accessor here; keep it from clashing with erlang:size/1.
