@@ -4,6 +4,7 @@
 %%% wide range of tree shapes.
 -module(ar_wallets_impl_tests).
 
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
@@ -238,15 +239,34 @@ scenario_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Accounts,
 %%% Helpers
 %%%===================================================================
 
+%% apply_block/2 whose previous block's wallet_list is not a node in the diff DAG should return
+%% {error, root_hash_not_found} and leave the gen_server running.
+apply_block_unknown_prev_root_returns_error_test() ->
+	assert_unknown_root_returns_error(
+		fun(UnknownRoot) ->
+			PrevB = #block{ height = 0, denomination = 1, redenomination_height = 0,
+					wallet_list = UnknownRoot },
+			B = #block{ height = 1, denomination = 1, redenomination_height = 0 },
+			{apply_block, B, PrevB}
+		end).
+
 %% add_wallets/4 with a base root that is not a node in the diff DAG should return
 %% {error, root_hash_not_found} and leave the gen_server running.
 add_wallets_unknown_root_returns_error_test() ->
+	assert_unknown_root_returns_error(
+		fun(UnknownRoot) -> {add_wallets, UnknownRoot, #{}, 10, 1} end).
+
+%% @doc Start ar_account_tree, issue MakeRequest(UnknownRoot) - where UnknownRoot is not a node
+%% in the diff DAG - and assert the call returns {error, root_hash_not_found} without crashing
+%% the gen_server. Started unlinked (gen_server:start) so a crash does not take the test process
+%% with it.
+assert_unknown_root_returns_error(MakeRequest) ->
 	Stubs = [ensure_stub(N) || N <- [ar_node_worker, ar_storage]],
 	{ok, New} = gen_server:start(ar_account_tree, [{blocks, []}], []),
 	UnknownRoot = crypto:strong_rand_bytes(48),
 	Result =
 		try
-			gen_server:call(New, {add_wallets, UnknownRoot, #{}, 10, 1}, 5000)
+			gen_server:call(New, MakeRequest(UnknownRoot), 5000)
 		catch
 			Class:Reason -> {Class, Reason}
 		end,

@@ -127,7 +127,7 @@ handle_call({get, RootHash, Addresses}, _From, State) ->
 	end;
 
 handle_call({get_chunk, RootHash, Cursor}, _From, State) ->
-	get_chunk(State, RootHash, Cursor);
+	with_known_root(RootHash, State, fun() -> get_chunk(State, RootHash, Cursor) end);
 
 handle_call(get_size, _From, State) ->
 	{reply, ar_patricia_tree_ets:size(maps:get(tid, State)), State};
@@ -172,12 +172,12 @@ handle_call({get_last_tx, Address}, _From, State) ->
 	State};
 
 handle_call({apply_block, B, PrevB}, _From, State) ->
-	{Reply, State2} = apply_block(B, PrevB, State),
-	{reply, Reply, State2};
+	with_known_root(PrevB#block.wallet_list, State,
+			fun() -> apply_block(B, PrevB, State) end);
 
 handle_call({add_wallets, RootHash, Wallets, Height, Denomination}, _From, State) ->
-	{Reply, State2} = add_wallets(State, RootHash, Wallets, Height, Denomination),
-	{reply, Reply, State2};
+	with_known_root(RootHash, State,
+			fun() -> add_wallets(State, RootHash, Wallets, Height, Denomination) end);
 
 handle_call({set_current, RootHash, Height, PruneDepth}, _, State) ->
 	{reply, ok, set_current(State, RootHash, Height, PruneDepth)}.
@@ -435,25 +435,32 @@ set_current(State, RootHash, Height, PruneDepth) ->
 	State1#{ dag := ar_diff_dag:filter(maps:get(dag, State1), PruneDepth) }.
 
 get_chunk(State, RootHash, Cursor) ->
-	case is_sink(State, RootHash) of
-		true ->
-			{reply, {ok, get_account_tree_range(State, Cursor)}, State};
-		false ->
-			case ar_diff_dag:is_node(maps:get(dag, State), RootHash) of
-				false ->
-					{reply, {error, root_hash_not_found}, State};
-				true ->
-					Range = with_snapshot(maps:get(tid, State), fun() ->
-						_ = move_sink_to(State, RootHash),
-						get_account_tree_range(State, Cursor)
-					end),
-					{reply, {ok, Range}, State}
-			end
-	end.
+	Range =
+		case is_sink(State, RootHash) of
+			true ->
+				get_account_tree_range(State, Cursor);
+			false ->
+				with_snapshot(maps:get(tid, State), fun() ->
+					_ = move_sink_to(State, RootHash),
+					get_account_tree_range(State, Cursor)
+				end)
+		end,
+	{{ok, Range}, State}.
 
 %%%===================================================================
 %%% ETS sink / diff DAG helpers.
 %%%===================================================================
+
+%% @doc Helper function remove duplication around checking if a RootHash exists before
+%% running an operation which relies on it.
+with_known_root(RootHash, State, Fun) ->
+	case ar_diff_dag:is_node(maps:get(dag, State), RootHash) of
+		false ->
+			{reply, {error, root_hash_not_found}, State};
+		true ->
+			{Reply, State2} = Fun(),
+			{reply, Reply, State2}
+	end.
 
 is_sink(State, RootHash) ->
 	maps:get(sink, State) == RootHash.
@@ -472,7 +479,8 @@ with_snapshot(Tid, Fun) ->
 	end.
 
 %% @doc Move the materialized ETS tree (the diff DAG sink) to the representation identified by
-%% the given root hash, mutating the ETS table in place. No-op when already there.
+%% the given root hash, mutating the ETS table in place. No-op when already there. Precondition:
+%% RootHash is a node in the diff DAG - ar_diff_dag:move_sink crashes otherwise. 
 move_sink_to(State, RootHash) ->
 	case is_sink(State, RootHash) of
 		true ->
