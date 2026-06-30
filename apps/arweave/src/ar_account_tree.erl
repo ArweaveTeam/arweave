@@ -9,9 +9,10 @@
 %%% small per-block account diffs needed to reconstruct the previous, following, and uncle
 %%% representations. Keeping one full tree plus small diffs (instead of one tree per window
 %%% block) trades a little CPU on lookups and reorgs for a large memory saving. Between requests
-%%% the sink rests at the current tip; a request that must hash or traverse a non-tip
-%%% representation (apply_block/2, add_wallets/4, get_chunk/2 of a non-tip root) transiently
-%%% moves the sink to the corresponding DAG node and restores it to the tip before returning.
+%%% the sink rests at the current tip. A request that must hash or traverse a non-tip
+%%% representation (apply_block/2, add_wallets/4, get_wallet_list_chunk/2 of a non-tip root) runs
+%%% inside a snapshot: it transiently repositions the materialized ETS tree to that
+%%% representation, does its work, and the snapshot restores the tip exactly before returning.
 %%%
 %%% Tip reads (get/1, get_balance/1, get_last_tx/1, get_size/0) read the ETS table directly.
 %%% Non-tip reads of specific addresses (get/2, get_balance/2) read the current tip from ETS and
@@ -19,11 +20,12 @@
 %%% mutated.
 %%%
 %%% Hashing a non-tip candidate (apply_block/2, add_wallets/4) needs the whole tree, but only one
-%%% tree is stored in ETS, so it is done in steps. With the sink moved to the target node, the
-%%% account diff is applied in place to form the candidate, the hash is computed, then the
-%%% inverse is re-applied so the table is back at the original node - patricia trees are
-%%% canonical, so apply-then-revert restores the structure exactly, and only the touched
-%%% root-to-leaf paths are re-hashed. The sink is then moved back to the original node.
+%%% tree is stored in ETS, so it runs inside a snapshot. The ETS table is positioned at the
+%%% previous block's representation, the block's account diff is applied in place to form the
+%%% candidate, and the candidate is hashed - only the touched root-to-leaf paths are re-hashed.
+%%% snapshot_restore then rolls the table back to the tip exactly, reinstating every overwritten
+%%% node from its recorded pre-snapshot bytes (cached hashes included) - undoing both the
+%%% repositioning and the candidate diff in one step and leaving the tip clean.
 %%%
 %%% Persistence happens on set_current/3: after moving the sink to the new tip we re-hash it,
 %%% streaming the content-addressed dirty nodes to ar_storage. Content addressing and incremental
@@ -33,7 +35,7 @@
 %%% the sink-and-diffs graph.
 -module(ar_account_tree).
 
--export([start_link/1, get/1, get/2, get_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,
+-export([start_link/1, get/1, get/2, get_wallet_list_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,
 		apply_block/2, add_wallets/4, set_current/3, get_size/0]).
 
 %% Exported for ar_account_tree_persist_tests to exercise the disk -> map -> ets boot path.
@@ -68,8 +70,8 @@ get(RootHash, Addresses) ->
 %% @doc Return the map containing the accounts, up to ?WALLET_LIST_CHUNK_SIZE, starting
 %% from the given cursor (first or an address). The accounts are picked in the ascending
 %% alphabetical order, from the tree with the given root hash.
-get_chunk(RootHash, Cursor) ->
-	gen_server:call(?MODULE, {get_chunk, RootHash, Cursor}, ?DEFAULT_CALL_TIMEOUT).
+get_wallet_list_chunk(RootHash, Cursor) ->
+	gen_server:call(?MODULE, {get_wallet_list_chunk, RootHash, Cursor}, ?DEFAULT_CALL_TIMEOUT).
 
 %% @doc Return balance of the given account in the latest account tree.
 get_balance(Address) ->
@@ -123,18 +125,18 @@ init([{blocks, Blocks} | Args]) ->
 	{ok, State}.
 
 handle_call({get, Addresses}, _From, State) ->
-	{reply, get_tip_map(State, Addresses), State};
+	{reply, accounts_at_tip(State, Addresses), State};
 
 handle_call({get, RootHash, Addresses}, _From, State) ->
-	case collect_map(State, RootHash, Addresses) of
+	case accounts_at_root(State, RootHash, Addresses) of
 		{error, _} = Error ->
 			{reply, Error, State};
 		{ok, Map} ->
 			{reply, Map, State}
 	end;
 
-handle_call({get_chunk, RootHash, Cursor}, _From, State) ->
-	with_known_root(RootHash, State, fun() -> get_chunk(State, RootHash, Cursor) end);
+handle_call({get_wallet_list_chunk, RootHash, Cursor}, _From, State) ->
+	with_known_root(RootHash, State, fun() -> get_wallet_list_chunk(State, RootHash, Cursor) end);
 
 handle_call(get_size, _From, State) ->
 	{reply, ar_patricia_tree_ets:size(maps:get(tid, State)), State};
@@ -151,7 +153,7 @@ handle_call({get_balance, Address}, _From, State) ->
 	{reply, Reply, State};
 
 handle_call({get_balance, RootHash, Address}, _From, State) ->
-	case collect_map(State, RootHash, [Address]) of
+	case accounts_at_root(State, RootHash, [Address]) of
 		{error, _} = Error ->
 			{reply, Error, State};
 		{ok, Map} ->
@@ -354,7 +356,7 @@ apply_block2(B, PrevB, State) ->
 	Addresses = block_addresses(B, PrevB),
 	Outcome = with_snapshot(Tid, fun() ->
 		_ = move_sink_to(State, PrevRootHash),
-		Accounts = get_tip_map(State, Addresses),
+		Accounts = accounts_at_tip(State, Addresses),
 		apply_block_outcome(B, PrevB, Accounts, Tid)
 	end),
 	finalize_apply_block(Outcome, B, PrevRootHash, State).
@@ -438,10 +440,10 @@ set_current(State, RootHash, Height, PruneDepth) ->
 	Tid = maps:get(tid, State1),
 	{RootHash, _, _} = compute_hash(Tid, #{ sink => ar_storage }),
 	true = Height >= ar_fork:height_2_2(),
-	arweave_metrics:counter_inc(wallet_list_size, ar_patricia_tree_ets:size(Tid)),
+	arweave_metrics:gauge_set(wallet_list_size, ar_patricia_tree_ets:size(Tid)),
 	State1#{ dag := ar_diff_dag:filter(maps:get(dag, State1), PruneDepth) }.
 
-get_chunk(State, RootHash, Cursor) ->
+get_wallet_list_chunk(State, RootHash, Cursor) ->
 	Range =
 		case is_sink(State, RootHash) of
 			true ->
@@ -503,8 +505,9 @@ move_sink_to(State, RootHash) ->
 			State#{ dag := DAG2, sink := RootHash }
 	end.
 
-%% @doc Read the account data for the given addresses the current tip into a map.
-get_tip_map(State, Addresses) ->
+%% @doc Read the accounts for the given addresses at the current tip (the materialized ETS
+%% tree) into a map.
+accounts_at_tip(State, Addresses) ->
 	Tid = maps:get(tid, State),
 	lists:foldl(
 		fun(Addr, Acc) ->
@@ -522,15 +525,16 @@ get_tip_map(State, Addresses) ->
 %% @doc Collect the accounts for the given addresses at the representation identified by
 %% RootHash by overlaying the total diff (tip -> RootHash) reconstructed from the diff DAG on the
 %% current tip read from ETS.
-collect_map(State, RootHash, Addresses) ->
+accounts_at_root(State, RootHash, Addresses) ->
 	case is_sink(State, RootHash) of
 		true ->
-			{ok, get_tip_map(State, Addresses)};
+			{ok, accounts_at_tip(State, Addresses)};
 		false ->
 			case ar_diff_dag:reconstruct(maps:get(dag, State), RootHash, fun merge_total_diff/2) of
 				{error, _} = Error ->
 					Error;
 				TotalDiff0 ->
+					%% If the diff is 'ets' then there is no diff to combine.
 					TotalDiff = case TotalDiff0 of ets -> #{}; _ -> TotalDiff0 end,
 					{ok, combine(State, TotalDiff, Addresses)}
 			end
@@ -545,16 +549,22 @@ merge_total_diff(Diff, ets) ->
 merge_total_diff(Diff, Acc) ->
 	maps:merge(Acc, Diff).
 
+%% @doc Build the result map for the requested addresses at the target representation by
+%% overlaying the reconstructed tip -> target diff onto the ETS tip: an address the diff touched
+%% takes the diff's outcome, one it left alone is unchanged since the tip and is read from ETS.
 combine(State, TotalDiff, Addresses) ->
 	Tid = maps:get(tid, State),
 	lists:foldl(
 		fun(Addr, Acc) ->
 			case maps:find(Addr, TotalDiff) of
 				{ok, remove} ->
+					%% Has no account at the target - leave it out of the result.
 					Acc;
 				{ok, Value} ->
+					%% Changed between tip and target - use the target value.
 					maps:put(Addr, Value, Acc);
 				error ->
+					%% Untouched by the diff, so unchanged since the tip - read the live ETS value.
 					case ar_patricia_tree_ets:get(Addr, Tid) of
 						not_found ->
 							Acc;

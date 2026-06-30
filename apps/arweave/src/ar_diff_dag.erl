@@ -14,8 +14,8 @@
 -module(ar_diff_dag).
 -test_category([fast]).
 
--export([new/3, get_sink/1, is_sink/2, is_node/2, add_node/5, update_leaf_source/3,
-         update_sink/3, get_metadata/2, get_sink_metadata/1, reconstruct/3, move_sink/4,
+-export([new/3, legacy_get_sink/1, is_sink/2, is_node/2, add_node/5, update_leaf_source/3,
+         legacy_update_sink/3, get_metadata/2, get_sink_metadata/1, reconstruct/3, move_sink/4,
          filter/2]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -27,11 +27,6 @@
 %% @doc Create a new DAG with a sink node under the given identifier storing the given entity.
 new(ID, Entity, Metadata) ->
     {#{ ID => {sink, Entity, {0, Metadata}} }, ID, #{ ID => sets:new() }}.
-
-%% @doc Return the entity stored in the sink node.
-get_sink(DAG) ->
-    ID = element(2, DAG),
-    element(2, maps:get(ID, element(1, DAG))).
 
 %% @doc Return true if the given identifier is the identifier of the sink node.
 is_sink({_Sinks, ID, _Sources}, ID) ->
@@ -79,34 +74,6 @@ update_leaf_source(DAG, ID, UpdateFun) ->
             {Sinks2#{ NewID => {SinkID, UpdatedDiff, {Counter, UpdatedMetadata}} }, Sink,
              Sources3}
     end.
-
-%% @doc Update the sink via the given function of an entity and a metadata, which
-%% returns a "new node identifier, new entity, new metadata" triplet.
-%% If the node does not exist or is not a sink, the call fails with a badkey exception.
-update_sink({Sinks, ID, Sources}, ID, UpdateFun) ->
-    #{ ID := {sink, Entity, {Counter, Metadata}} } = Sinks,
-    {NewID, NewEntity, NewMetadata} = UpdateFun(Entity, Metadata),
-    Sinks2 = maps:remove(ID, Sinks),
-    Sinks3 = Sinks2#{ NewID => {sink, NewEntity, {Counter, NewMetadata}} },
-    {Set, Sources2} =
-        case maps:take(ID, Sources) of
-            error ->
-                {sets:new(), Sources};
-            Update ->
-                Update
-        end,
-    Sinks4 = sets:fold(
-               fun(SourceID, Acc) ->
-                       {ID, Diff, Meta} = maps:get(SourceID, Acc),
-                       Acc#{ SourceID => {NewID, Diff, Meta} }
-               end,
-               Sinks3,
-               Set
-              ),
-    Sources3 = Sources2#{ NewID => Set },
-    {Sinks4, NewID, Sources3};
-update_sink(_DAG, ID, _Fun) ->
-    error({badkey, ID}).
 
 %% @doc Return metadata stored at the given node. If the node with the given identifier
 %% does not exist, the call fails with a badkey exception.
@@ -255,13 +222,55 @@ extend_with_subtree_identifiers(ID, {Sources, ToRemove}) ->
      ).
 
 %%%===================================================================
+%%% Legacy (used only by ar_wallets_legacy).
+%%%===================================================================
+
+%% legacy_get_sink/1 and legacy_update_sink/3 read and mutate the sink vertex's entity. The live
+%% account tree (ar_account_tree) keeps its tree in ETS - the sink entity is the placeholder
+%% 'ets' - so it never uses these; only the frozen ar_wallets_legacy (reference/, test-only),
+%% which stores its tree in the DAG, does.
+
+%% @doc Return the entity stored in the sink node.
+legacy_get_sink(DAG) ->
+    ID = element(2, DAG),
+    element(2, maps:get(ID, element(1, DAG))).
+
+%% @doc Update the sink via the given function of an entity and a metadata, which
+%% returns a "new node identifier, new entity, new metadata" triplet.
+%% If the node does not exist or is not a sink, the call fails with a badkey exception.
+legacy_update_sink({Sinks, ID, Sources}, ID, UpdateFun) ->
+    #{ ID := {sink, Entity, {Counter, Metadata}} } = Sinks,
+    {NewID, NewEntity, NewMetadata} = UpdateFun(Entity, Metadata),
+    Sinks2 = maps:remove(ID, Sinks),
+    Sinks3 = Sinks2#{ NewID => {sink, NewEntity, {Counter, NewMetadata}} },
+    {Set, Sources2} =
+        case maps:take(ID, Sources) of
+            error ->
+                {sets:new(), Sources};
+            Update ->
+                Update
+        end,
+    Sinks4 = sets:fold(
+               fun(SourceID, Acc) ->
+                       {ID, Diff, Meta} = maps:get(SourceID, Acc),
+                       Acc#{ SourceID => {NewID, Diff, Meta} }
+               end,
+               Sinks3,
+               Set
+              ),
+    Sources3 = Sources2#{ NewID => Set },
+    {Sinks4, NewID, Sources3};
+legacy_update_sink(_DAG, ID, _Fun) ->
+    error({badkey, ID}).
+
+%%%===================================================================
 %%% Tests.
 %%%===================================================================
 
 diff_dag_test() ->
     %% node-1: {0, meta_1}
     DAG1 = new("node-1", 0, meta_1),
-    ?assertEqual(0, get_sink(DAG1)),
+    ?assertEqual(0, legacy_get_sink(DAG1)),
     ?assertEqual(DAG1, filter(DAG1, 0)),
     ?assertEqual(DAG1, filter(DAG1, 1)),
     ?assertEqual(DAG1, filter(DAG1, 2)),
@@ -273,7 +282,7 @@ diff_dag_test() ->
     ?assertEqual(meta_1, get_metadata(DAG1, "node-1")),
     %% node-1: {0, meta_1} <- node-2-1: {1, meta_2_1}
     DAG2 = add_node(DAG1, "node-2-1", "node-1", 1, meta_2_1),
-    ?assertEqual(0, get_sink(DAG2)),
+    ?assertEqual(0, legacy_get_sink(DAG2)),
     ?assertEqual(DAG2, filter(DAG2, 1)),
     ?assertEqual(DAG1, filter(DAG2, 0)),
     ?assertEqual(DAG2, filter(DAG2, 2)),
@@ -284,7 +293,7 @@ diff_dag_test() ->
     ?assertEqual(meta_2_1, get_metadata(DAG2, "node-2-1")),
     %% node-1: {0, meta_1} <- node-2-1: {2, meta_2_2}
     DAG3 = update_leaf_source(DAG2, "node-2-1", fun(D, _M) -> {"node-2-1", D + 1, meta_2_2} end),
-    ?assertEqual(0, get_sink(DAG3)),
+    ?assertEqual(0, legacy_get_sink(DAG3)),
     ?assertEqual(DAG1, filter(DAG3, 0)),
     ?assertEqual(DAG3, filter(DAG3, 1)),
     ?assertEqual(2, reconstruct(DAG3, "node-2-1", fun(Diff, E) -> E + Diff end)),
@@ -292,7 +301,7 @@ diff_dag_test() ->
     ?assertException(error, {badkey, "node-1"}, update_leaf_source(DAG2, "node-1", no_function)),
     %% node-1: {0, meta_1} <- node-2-2: {1, meta_2_2}
     DAG4 = update_leaf_source(DAG3, "node-2-1", fun(D, M) -> {"node-2-2", D - 1, M} end),
-    ?assertEqual(0, get_sink(DAG4)),
+    ?assertEqual(0, legacy_get_sink(DAG4)),
     ?assertEqual(1, reconstruct(DAG4, "node-2-2", fun(Diff, E) -> E + Diff end)),
     ?assertEqual(meta_2_2, get_metadata(DAG4, "node-2-2")),
     ?assertException(error, {badkey, "node-2-1"}, get_metadata(DAG4, "node-2-1")),
@@ -311,7 +320,7 @@ diff_dag_test() ->
     %% node-1: {-2, meta_1} <- node-2-2: {1, meta_2_2}
     %%                      -> node-2-3: {3, meta_2_3} -> node-3-1: {-1, meta_3_1}
     DAG7 = move_sink(DAG6, "node-3-1", fun(Diff, E) -> E + Diff end, fun(Diff, _E) -> -Diff end),
-    ?assertEqual(-1, get_sink(DAG7)),
+    ?assertEqual(-1, legacy_get_sink(DAG7)),
     ?assertEqual(1, reconstruct(DAG7, "node-2-2", fun(Diff, E) -> E + Diff end)),
     ?assertEqual(meta_2_2, get_metadata(DAG7, "node-2-2")),
     ?assertEqual(0, reconstruct(DAG7, "node-1", fun(Diff, E) -> E + Diff end)),
@@ -334,7 +343,7 @@ diff_dag_test() ->
     %% node-1: {-1, meta_1} -> node-2-2: {1, meta_2_2}
     %%                      <- node-2-3: {2, meta_2_3} <- node-3-1: {-3, meta_3_1}
     DAG9 = move_sink(DAG7, "node-2-2", fun(Diff, E) -> E + Diff end, fun(Diff, _E) -> -Diff end),
-    ?assertEqual(1, get_sink(DAG9)),
+    ?assertEqual(1, legacy_get_sink(DAG9)),
     ?assertEqual(0, reconstruct(DAG9, "node-1", fun(Diff, E) -> E + Diff end)),
     ?assertEqual(meta_1, get_metadata(DAG9, "node-1")),
     ?assertEqual(2, reconstruct(DAG9, "node-2-3", fun(Diff, E) -> E + Diff end)),
@@ -348,7 +357,7 @@ diff_dag_test() ->
     %%                      <- node-2-3: {2, meta_2_3} <- node-3-1: {-3, meta_3_1}
     DAG11 =
         move_sink(DAG10, "node-3-2", fun(Diff, E) -> E + Diff end, fun(Diff, _E) -> -Diff end),
-    ?assertEqual(11, get_sink(DAG11)),
+    ?assertEqual(11, legacy_get_sink(DAG11)),
     ?assertEqual(1, reconstruct(DAG11, "node-2-2", fun(Diff, E) -> E + Diff end)),
     ?assertEqual(meta_2_2, get_metadata(DAG11, "node-2-2")),
     ?assertEqual(0, reconstruct(DAG11, "node-1", fun(Diff, E) -> E + Diff end)),
@@ -363,8 +372,8 @@ diff_dag_test() ->
       ),
     %% node-1: {-1, meta_1} -> node-2-2: {-10, meta_2_2} -> node-3-2: {12, meta_3_2}
     %%                      <- node-2-3: {2, meta_2_3} <- node-3-1: {-3, meta_3_1}
-    DAG12 = update_sink(DAG11, "node-3-2", fun(11, meta_3_2) -> {"node-3-2", 12, meta_3_2} end),
-    ?assertEqual(12, get_sink(DAG12)),
+    DAG12 = legacy_update_sink(DAG11, "node-3-2", fun(11, meta_3_2) -> {"node-3-2", 12, meta_3_2} end),
+    ?assertEqual(12, legacy_get_sink(DAG12)),
     ?assertEqual(meta_3_2, get_metadata(DAG12, "node-3-2")),
     ?assertEqual(2, reconstruct(DAG12, "node-2-2", fun(Diff, E) -> E + Diff end)),
     ?assertEqual(meta_2_2, get_metadata(DAG12, "node-2-2")),
@@ -374,13 +383,13 @@ diff_dag_test() ->
     ?assertEqual(meta_2_3, get_metadata(DAG12, "node-2-3")),
     ?assertEqual(0, reconstruct(DAG12, "node-3-1", fun(Diff, E) -> E + Diff end)),
     ?assertEqual(meta_3_1, get_metadata(DAG12, "node-3-1")),
-    ?assertException(error, {badkey, "node-2-2"}, update_sink(DAG11, "node-2-2", no_function)),
-    ?assertException(error, {badkey, "node-3-1"}, update_sink(DAG11, "node-3-1", no_function)),
+    ?assertException(error, {badkey, "node-2-2"}, legacy_update_sink(DAG11, "node-2-2", no_function)),
+    ?assertException(error, {badkey, "node-3-1"}, legacy_update_sink(DAG11, "node-3-1", no_function)),
     %% node-1: {-1, meta_1} -> node-2-2: {-10, meta_2_2} -> new-node-3-2: {13, meta_3_2}
     %%                      <- node-2-3: {2, meta_2_3} <- node-3-1: {-3, meta_3_1}
     DAG13 =
-        update_sink(DAG12, "node-3-2", fun(12, meta_3_2) -> {"new-node-3-2", 13, meta_3_2} end),
-    ?assertEqual(13, get_sink(DAG13)),
+        legacy_update_sink(DAG12, "node-3-2", fun(12, meta_3_2) -> {"new-node-3-2", 13, meta_3_2} end),
+    ?assertEqual(13, legacy_get_sink(DAG13)),
     ?assertEqual(meta_3_2, get_metadata(DAG13, "new-node-3-2")),
     ?assertException(error, {badkey, "node-3-2"}, get_metadata(DAG13, "node-3-2")),
     ?assertEqual(3, reconstruct(DAG13, "node-2-2", fun(Diff, E) -> E + Diff end)),
@@ -393,11 +402,11 @@ diff_dag_test() ->
     ?assertEqual(meta_3_1, get_metadata(DAG13, "node-3-1")),
     %% node-1: {0, meta_1} <- node-2: {1, meta_2}
     DAG14 = add_node(new("node-1", 0, meta_1), "node-2", "node-1", 1, meta_2),
-    ?assertEqual(0, get_sink(DAG14)),
+    ?assertEqual(0, legacy_get_sink(DAG14)),
     ?assertEqual(1, reconstruct(DAG14, "node-2", fun(Diff, E) -> E + Diff end)),
     %% node-1: {-1, meta_1} -> node-2: {1, meta_2}
     DAG15 = move_sink(DAG14, "node-2", fun(Diff, E) -> E + Diff end, fun(Diff, _E) -> -Diff end),
-    ?assertEqual(1, get_sink(DAG15)),
+    ?assertEqual(1, legacy_get_sink(DAG15)),
     ?assertEqual(0, reconstruct(DAG15, "node-1", fun(Diff, E) -> E + Diff end)),
     ?assertException(error, {badkey, "node-2"}, add_node(DAG15, "node-2", "node-1", 1, meta_1)),
     ?assertException(error, {badkey, "node-1"}, add_node(DAG15, "node-1", "node-2", 1, meta_2)).
@@ -441,22 +450,22 @@ get_sink_metadata_test() ->
     %% Moving the sink makes get_sink_metadata return the new sink's metadata.
     DAG3 = move_sink(DAG2, "node-2", fun(Diff, E) -> E + Diff end, fun(Diff, _E) -> -Diff end),
     ?assertEqual(meta_2, get_sink_metadata(DAG3)),
-    %% update_sink replaces the sink metadata.
-    DAG4 = update_sink(DAG3, "node-2", fun(E, _M) -> {"node-2", E, meta_2_updated} end),
+    %% legacy_update_sink replaces the sink metadata.
+    DAG4 = legacy_update_sink(DAG3, "node-2", fun(E, _M) -> {"node-2", E, meta_2_updated} end),
     ?assertEqual(meta_2_updated, get_sink_metadata(DAG4)).
 
 update_sink_errors_test() ->
     %% node-1 (sink) <- node-2: {1, meta_2}
     DAG = add_node(new("node-1", 0, meta_1), "node-2", "node-1", 1, meta_2),
-    %% Calling update_sink on a non-sink source fails with badkey.
-    ?assertException(error, {badkey, "node-2"}, update_sink(DAG, "node-2", no_function)),
-    %% Calling update_sink on a non-existent node fails with badkey.
-    ?assertException(error, {badkey, "node-3"}, update_sink(DAG, "node-3", no_function)),
+    %% Calling legacy_update_sink on a non-sink source fails with badkey.
+    ?assertException(error, {badkey, "node-2"}, legacy_update_sink(DAG, "node-2", no_function)),
+    %% Calling legacy_update_sink on a non-existent node fails with badkey.
+    ?assertException(error, {badkey, "node-3"}, legacy_update_sink(DAG, "node-3", no_function)),
     %% The successful clause keeps the same counter and rewires sources to the new sink id.
-    DAG2 = update_sink(DAG, "node-1", fun(E, _M) -> {"node-1-renamed", E, meta_1_new} end),
+    DAG2 = legacy_update_sink(DAG, "node-1", fun(E, _M) -> {"node-1-renamed", E, meta_1_new} end),
     ?assert(is_sink(DAG2, "node-1-renamed")),
     ?assertEqual(meta_1_new, get_sink_metadata(DAG2)),
-    ?assertEqual(0, get_sink(DAG2)),
+    ?assertEqual(0, legacy_get_sink(DAG2)),
     ?assertEqual(1, reconstruct(DAG2, "node-2", fun(Diff, E) -> E + Diff end)).
 
 reconstruct_errors_test() ->
@@ -542,7 +551,7 @@ move_sink_multi_hop_test() ->
     %% Move the sink three hops to node-4.
     DAG2 = move_sink(DAG, "node-4", fun(Diff, E) -> E + Diff end, fun(Diff, _E) -> -Diff end),
     ?assert(is_sink(DAG2, "node-4")),
-    ?assertEqual(7, get_sink(DAG2)),
+    ?assertEqual(7, legacy_get_sink(DAG2)),
     %% Every original node is still reachable with its original reconstructed value...
     ?assertEqual(0, reconstruct(DAG2, "node-1", fun(Diff, E) -> E + Diff end)),
     ?assertEqual(1, reconstruct(DAG2, "node-2", fun(Diff, E) -> E + Diff end)),
@@ -565,7 +574,7 @@ move_sink_multi_hop_test() ->
 new_sink_metadata_test() ->
     %% new/3 stores the sink entity and metadata; get_metadata on the sink returns it.
     DAG = new("node-1", entity_0, meta_1),
-    ?assertEqual(entity_0, get_sink(DAG)),
+    ?assertEqual(entity_0, legacy_get_sink(DAG)),
     ?assertEqual(meta_1, get_metadata(DAG, "node-1")),
     ?assertEqual(meta_1, get_sink_metadata(DAG)),
     ?assert(is_sink(DAG, "node-1")),

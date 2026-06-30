@@ -90,7 +90,7 @@ init([{blocks, Blocks} | Args]) ->
     {ok, DAG}.
 
 handle_call({get, Addresses}, _From, DAG) ->
-    {reply, get_map(ar_diff_dag:get_sink(DAG), Addresses), DAG};
+    {reply, get_map(ar_diff_dag:legacy_get_sink(DAG), Addresses), DAG};
 
 handle_call({get, RootHash, Addresses}, _From, DAG) ->
     case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
@@ -110,10 +110,10 @@ handle_call({get_chunk, RootHash, Cursor}, _From, DAG) ->
     end;
 
 handle_call(get_size, _From, DAG) ->
-    {reply, ar_patricia_tree:size(ar_diff_dag:get_sink(DAG)), DAG};
+    {reply, ar_patricia_tree:size(ar_diff_dag:legacy_get_sink(DAG)), DAG};
 
 handle_call({get_balance, Address}, _From, DAG) ->
-    case ar_patricia_tree:get(Address, ar_diff_dag:get_sink(DAG)) of
+    case ar_patricia_tree:get(Address, ar_diff_dag:legacy_get_sink(DAG)) of
         not_found ->
             {reply, 0, DAG};
         Entry ->
@@ -149,7 +149,7 @@ handle_call({get_balance, RootHash, Address}, _From, DAG) ->
 
 handle_call({get_last_tx, Address}, _From, DAG) ->
     {reply,
-        case ar_patricia_tree:get(Address, ar_diff_dag:get_sink(DAG)) of
+        case ar_patricia_tree:get(Address, ar_diff_dag:legacy_get_sink(DAG)) of
             not_found ->
                 <<>>;
             {_Balance, LastTX} ->
@@ -373,7 +373,7 @@ apply_block2(B, PrevB, Args, Tree, DAG) ->
     end.
 
 set_current(DAG, RootHash, Height, PruneDepth) ->
-    UpdatedDAG = ar_diff_dag:update_sink(
+    UpdatedDAG = ar_diff_dag:legacy_update_sink(
         ar_diff_dag:move_sink(DAG, RootHash, fun apply_diff/2, fun reverse_diff/2),
         RootHash,
         fun(Tree, Meta) ->
@@ -383,9 +383,9 @@ set_current(DAG, RootHash, Height, PruneDepth) ->
             {RootHash, UpdatedTree, Meta}
         end
     ),
-    Tree = ar_diff_dag:get_sink(UpdatedDAG),
+    Tree = ar_diff_dag:legacy_get_sink(UpdatedDAG),
     true = Height >= ar_fork:height_2_2(),
-    arweave_metrics:counter_inc(wallet_list_size, ar_patricia_tree:size(Tree)),
+    arweave_metrics:gauge_set(wallet_list_size, ar_patricia_tree:size(Tree)),
     ar_diff_dag:filter(UpdatedDAG, PruneDepth).
 
 apply_diff(Diff, Tree) ->

@@ -233,7 +233,7 @@ all_metrics() ->
 			{name, block_vdf_advance},
 			{help, "The number of the VDF steps a received block is ahead of our current step."}
 		]},
-		{prometheus_counter, [
+		{prometheus_gauge, [
 			{name, wallet_list_size},
 			{
 				help,

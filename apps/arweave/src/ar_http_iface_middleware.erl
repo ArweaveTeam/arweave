@@ -2843,7 +2843,7 @@ get_total_supply_cached(RootHash, Denomination) ->
     end.
 
 get_total_supply(RootHash, Cursor, Sum, Denomination) ->
-    {ok, {NextCursor, Range}} = ar_account_tree:get_chunk(RootHash, Cursor),
+    {ok, {NextCursor, Range}} = ar_account_tree:get_wallet_list_chunk(RootHash, Cursor),
     RangeSum = get_balance_sum(Range, Denomination),
     case NextCursor of
         last ->
@@ -3028,7 +3028,7 @@ process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
         {_, {error, invalid}} ->
             {400, #{}, <<"Invalid root hash.">>, Req};
         {{ok, RootHash}, {ok, Cursor}} ->
-            case ar_account_tree:get_chunk(RootHash, Cursor) of
+            case ar_account_tree:get_wallet_list_chunk(RootHash, Cursor) of
                 {ok, {NextCursor, Wallets}} ->
                     SerializeFn = case cowboy_req:header(<<"content-type">>, Req) of
                                       <<"application/json">> -> fun wallet_list_chunk_to_json/1;
