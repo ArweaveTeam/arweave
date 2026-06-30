@@ -74,6 +74,7 @@
     %% boot or while caches warm, so pick deliberately.
     data_roots_available/2,         %% (Peer, Block)
     http_data_roots_available/2,    %% (Peer, Block)
+    http_data_roots/2,              %% (Peer, Block) -> {ok, Body} | not_found, retrying transient
 
     %% --- Public polling primitive ---
     %% For custom predicates; prefer a named helper above. `/2' uses the
@@ -413,6 +414,21 @@ http_data_roots_available(Peer, Block) ->
             end
         end).
 
+%% @doc GET /data_roots for Block on Peer, returning {ok, Body} for a 200 or not_found for a
+%% 404 - both definitive answers. A transient HTTP client error (e.g. a dropped gun connection)
+%% is retried until one of those arrives.
+-spec http_data_roots(Peer :: atom(), Block :: term()) -> {ok, binary()} | not_found.
+http_data_roots(Peer, Block) ->
+    {ok, Result} = do_until(http_data_roots,
+        fun() ->
+            case fetch_data_roots(Peer, Block) of
+                {ok, _Body} = Found -> {true, Found};
+                not_found -> {true, not_found};
+                {error, _} -> false
+            end
+        end),
+    Result.
+
 %%%===================================================================
 %%% Block / chain state.
 %%%===================================================================
@@ -741,7 +757,8 @@ fetch_data_roots(Peer, Block) ->
             peer => ar_test_node:peer_ip(Peer),
             path => "/data_roots/" ++ integer_to_list(Start) }) of
         {ok, {{<<"200">>, _}, _, Body, _, _}} -> {ok, Body};
-        _ -> not_found
+        {ok, {{<<"404">>, _}, _, _, _, _}} -> not_found;
+        Other -> {error, Other}
     end.
 
 %% @doc True iff the union of `Node''s `/sync_record' intervals and its

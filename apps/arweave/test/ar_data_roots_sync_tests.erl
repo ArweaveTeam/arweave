@@ -279,7 +279,7 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
     {TargetB, [{TargetTX, TargetChunks}]} =
         case lists:dropwhile(
             fun({B, _}) ->
-                get_data_roots(main, B) =/= not_found
+                ar_test_await:http_data_roots(main, B) =/= not_found
             end,
             GapCandidates
         ) of
@@ -326,7 +326,7 @@ test_chunk_skipped_with_duplicate_data_root() ->
     join_main_on_peer1(B2#block.height + 11, false),
     %% Pre-fetch B1's data roots while still connected to peer1. We'll post them to main
     %% immediately after posting B1's chunk to beat the disk pool scan.
-    {ok, Body1} = get_data_roots(peer1, B1),
+    {ok, Body1} = ar_test_await:http_data_roots(peer1, B1),
     sync_data_roots_to_main(B2),
     ar_test_node:disconnect_from(peer1),
     {AbsEnd2, Proof2} = build_single_proof(B2, TX2, Chunks2),
@@ -540,23 +540,6 @@ filter_mined_tx_data(B, TXData) ->
 data_roots_path(BlockStart) ->
     "/data_roots/" ++ integer_to_list(BlockStart).
 
-%% GET /data_roots for B on Peer. Returns {ok, Body} | not_found.
-get_data_roots(Peer, B) ->
-    Start = block_start(B),
-    case ar_http:req(#{
-        method => get,
-        peer => ar_test_node:peer_ip(Peer),
-        path => data_roots_path(Start)
-    }) of
-        {ok, {{<<"200">>, _}, _, Body, _, _}} ->
-            {ok, Body};
-        {ok, {{<<"404">>, _}, _, _, _, _}} ->
-            not_found;
-        Other ->
-            ?assert(false, lists:flatten(io_lib:format(
-                "GET /data_roots/~B: unexpected reply ~p", [Start, Other])))
-    end.
-
 %% POST /data_roots for B to Peer. Asserts 200.
 post_data_roots(Peer, B, Body) ->
     Start = block_start(B),
@@ -574,7 +557,7 @@ post_data_roots(Peer, B, Body) ->
     end.
 
 sync_data_roots_to_main(B) ->
-    {ok, Body} = get_data_roots(peer1, B),
+    {ok, Body} = ar_test_await:http_data_roots(peer1, B),
     post_data_roots(main, B, Body),
     ok = ar_test_await:http_data_roots_available(main, B).
 
@@ -651,7 +634,7 @@ unpacked_storage_module_configs() ->
     ].
 
 assert_no_data_roots(Peer, B) ->
-    case get_data_roots(Peer, B) of
+    case ar_test_await:http_data_roots(Peer, B) of
         not_found ->
             ok;
         {ok, Body} ->
