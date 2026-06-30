@@ -159,7 +159,7 @@ scenario_unknown_and_pruned({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) 
 		?assertEqual(gen_server:call(Legacy, {get, Bogus, Addrs}),
 				gen_server:call(New, {get, Bogus, Addrs})),
 		?assertEqual(gen_server:call(Legacy, {get_chunk, Bogus, first}),
-				gen_server:call(New, {get_chunk, Bogus, first})),
+				gen_server:call(New, {get_wallet_list_chunk, Bogus, first})),
 		{ok, R1} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
 		ok = cmp(New, Legacy, {set_current, R1, 10, 1}),
 		{ok, R2} = cmp(New, Legacy, {add_wallets, R1, update_range(Accounts, 0, 1), 11, Denom}),
@@ -229,7 +229,7 @@ scenario_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Accounts,
 				Denom}),
 		{ok, _R3} = gen_server:call(New, {add_wallets, R1,
 				maps:merge(remove_range(Accounts, 1, 2), add_fresh(2, Denom)), 11, Denom}),
-		gen_server:call(New, {get_chunk, R2, first}),
+		gen_server:call(New, {get_wallet_list_chunk, R2, first}),
 		gen_server:call(New, {get, R2, Addrs}),
 		[gen_server:call(New, {get_balance, R2, A}) || A <- Addrs],
 		?assertEqual(Before, table_dump())
@@ -304,12 +304,21 @@ unregister_safe(Name) ->
 drain() ->
 	receive _ -> drain() end.
 
-%% @doc Issue the same raw request to both gen_servers and assert identical replies.
+%% @doc Issue the same request to both gen_servers and assert identical replies. The request is
+%% written in the live ar_account_tree protocol and adapted for the frozen legacy reference.
 cmp(New, Legacy, Request) ->
 	NewReply = gen_server:call(New, Request),
-	LegacyReply = gen_server:call(Legacy, Request),
+	LegacyReply = gen_server:call(Legacy, legacy_request(Request)),
 	?assertEqual(LegacyReply, NewReply, {request, Request}),
 	NewReply.
+
+%% @doc Translate a request to the frozen legacy protocol. ar_account_tree renamed the chunk
+%% request to {get_wallet_list_chunk, ...}; ar_wallets_legacy still uses the original
+%% {get_chunk, ...}. Every other request is identical across the two impls.
+legacy_request({get_wallet_list_chunk, RootHash, Cursor}) ->
+	{get_chunk, RootHash, Cursor};
+legacy_request(Request) ->
+	Request.
 
 %% @doc Apply a list of diffs as a chain off Root (add_wallets then set_current for each) and
 %% return the final root. Heights increase from StartHeight.
@@ -361,7 +370,7 @@ walk_chunks(New, Legacy, Root) ->
 	walk_chunks(New, Legacy, Root, first).
 
 walk_chunks(New, Legacy, Root, Cursor) ->
-	{ok, {NextCursor, _Range}} = cmp(New, Legacy, {get_chunk, Root, Cursor}),
+	{ok, {NextCursor, _Range}} = cmp(New, Legacy, {get_wallet_list_chunk, Root, Cursor}),
 	case NextCursor of
 		last ->
 			ok;
