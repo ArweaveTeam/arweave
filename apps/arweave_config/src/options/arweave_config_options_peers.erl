@@ -26,7 +26,7 @@ specs() ->
 			enabled => true,
 			option_key => [peers, trusted],
 			default => [],
-			type => peers_list,
+			type => resolved_peers_list,
 			short_description =>
 				<<"Trusted/joining peers used for sync and header fetch.">>
 		},
@@ -34,7 +34,7 @@ specs() ->
 			enabled => true,
 			option_key => [peers, block_gossip],
 			default => [],
-			type => peers_list,
+			type => resolved_peers_list,
 			short_description =>
 				<<"Targets for outgoing block gossip.">>
 		},
@@ -42,7 +42,7 @@ specs() ->
 			enabled => true,
 			option_key => [peers, local],
 			default => [],
-			type => peers_list,
+			type => resolved_peers_list,
 			short_description =>
 				<<"Peers on the local network.">>
 		},
@@ -50,7 +50,7 @@ specs() ->
 			enabled => true,
 			option_key => [peers, cm_peer],
 			default => [],
-			type => peers_list,
+			type => resolved_peers_list,
 			short_description =>
 				<<"Peers to mine in coordination with.">>
 		},
@@ -58,7 +58,7 @@ specs() ->
 			enabled => true,
 			option_key => [peers, cm_exit],
 			default => not_set,
-			type => peer_id,
+			type => resolved_peer_id,
 			short_description =>
 				<<"Peer to send mining solutions to in coordinated mining mode.">>
 		},

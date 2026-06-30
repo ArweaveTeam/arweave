@@ -16,6 +16,8 @@
 	logging_template/1,
 	peer_id/1,
 	peers_list/1,
+	resolved_peer_id/1,
+	resolved_peers_list/1,
 	address/1
 ]).
 -include_lib("kernel/include/file.hrl").
@@ -84,34 +86,50 @@ list(Values) when is_list(Values) ->
 list(Value) ->
 	{error, Value}.
 
-%% @doc Validate and normalize a list of peer IDs via `peer_id/1':
-%% accepts mixed binaries / strings / tuples; IPv4 entries come back as
-%% `{A, B, C, D, Port}' tuples, hostnames stay as binaries.
+%% @doc Validate and normalize a list of peers, keeping hostnames as
+%% `<<"host:port">>' binaries (IPv4 entries become `{A,B,C,D,Port}'
+%% tuples). Accepts mixed binaries / strings / tuples.
 -spec peers_list(Input) -> Return when
-	Input :: [binary() | string() | tuple()],
+	Input :: [binary() | string() | tuple()] | binary() | tuple(),
 	Return :: {ok, [peer_id()]} | {error, term()}.
-peers_list(Values) when is_list(Values) ->
+peers_list(Input) ->
+	do_peers_list(Input, false).
+
+%% Shared list machinery for `peers_list/1' and `resolved_peers_list/1'.
+%% `Resolve' selects the per-entry step: keep the spelling (`false') or
+%% resolve a hostname to one-or-more IPv4 peers (`true').
+do_peers_list(Values, Resolve) when is_list(Values) ->
 	case io_lib:printable_unicode_list(Values) of
 		true ->
 			%% Bare CLI/env string for a single peer (`--peers.trusted
 			%% 1.2.3.4:1984') — wrap into a singleton list.
-			peers_list([Values], []);
+			do_peers_list([Values], Resolve, []);
 		false ->
-			peers_list(Values, [])
+			do_peers_list(Values, Resolve, [])
 	end;
-peers_list(Value) when is_binary(Value); is_tuple(Value) ->
+do_peers_list(Value, Resolve) when is_binary(Value); is_tuple(Value) ->
 	%% Same single-peer case as above for binary or tuple input.
-	peers_list([Value], []);
-peers_list(Value) ->
-	{error, Value}.
+	do_peers_list([Value], Resolve, []);
+do_peers_list(Value, _Resolve) ->
+	{error, {invalid_peer, Value}}.
 
-peers_list([], Acc) ->
+do_peers_list([], _Resolve, Acc) ->
 	{ok, lists:reverse(Acc)};
-peers_list([Peer | Rest], Acc) ->
-	case peer_id(Peer) of
-		{ok, PeerID} -> peers_list(Rest, [PeerID | Acc]);
+do_peers_list([Peer | Rest], Resolve, Acc) ->
+	case peer_ids(Peer, Resolve) of
+		{ok, PeerIDs} -> do_peers_list(Rest, Resolve, lists:reverse(PeerIDs, Acc));
 		{error, _} = Err -> Err
 	end.
+
+%% The canonical peer_id(s) for one entry: the preserved id, or — when
+%% resolving — the one-or-more IPv4 ids a hostname maps to.
+peer_ids(Peer, false) ->
+	case peer_id(Peer) of
+		{ok, PeerID} -> {ok, [PeerID]};
+		{error, _} = Err -> Err
+	end;
+peer_ids(Peer, true) ->
+	resolve_peer(Peer).
 
 %% @doc Validate the outer shape of a list of maps. The owning
 %% list root spec validates fields using its `{list_item}` schema.
@@ -456,6 +474,43 @@ peer_id({A, B, C, D, Port}) when ?is_octet(A), ?is_octet(B), ?is_octet(C),
 peer_id(Input) ->
 	{error, {invalid_peer, Input}}.
 
+%% @doc Like `peers_list/1' but resolves hostnames to IPv4 peers at
+%% parse time (matching the legacy CLI/JSON parsers), expanding a
+%% multi-record hostname into one peer per address. Used by the roles
+%% that legacy resolves eagerly; VDF roles use `peers_list/1' so their
+%% hostnames survive for the runtime resolver.
+-spec resolved_peers_list(Input) -> Return when
+	Input :: [binary() | string() | tuple()] | binary() | tuple(),
+	Return :: {ok, [peer_id()]} | {error, term()}.
+resolved_peers_list(Input) ->
+	do_peers_list(Input, true).
+
+%% @doc Resolve a single peer to one canonical IPv4 peer_id, taking the
+%% first address when a hostname has several. Mirrors the legacy
+%% `cm_exit_peer' handling.
+-spec resolved_peer_id(Input) -> Return when
+	Input :: binary() | string() | tuple(),
+	Return :: {ok, peer_id()} | {error, term()}.
+resolved_peer_id(Value) ->
+	case resolve_peer(Value) of
+		{ok, [PeerID | _]} -> {ok, PeerID};
+		{error, _} = Err -> Err
+	end.
+
+%% Resolve one peer entry to one-or-more canonical IPv4 peer_ids.
+%% Pre-formed tuples are canonicalized via `peer_id/1'; everything else
+%% goes through the resolver.
+resolve_peer(Peer) when is_tuple(Peer) ->
+	case peer_id(Peer) of
+		{ok, PeerID} -> {ok, [PeerID]};
+		{error, _} = Err -> Err
+	end;
+resolve_peer(Peer) ->
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, [_ | _] = PeerIDs} -> {ok, PeerIDs};
+		_ -> {error, {invalid_peer, Peer}}
+	end.
+
 peer_id_binary(<<>>) ->
 	{error, empty_peer};
 peer_id_binary(<<"[", Rest/binary>>) ->
@@ -484,34 +539,52 @@ peer_id_binary(<<"[", Rest/binary>>) ->
 		_ ->
 			{error, {invalid_peer, <<"[", Rest/binary>>}}
 	end;
-%% DNS Names or IPV4 addresses.
 peer_id_binary(Bin) ->
-    case parse_host(Bin) of
-        {error, _} = E ->
-            E;
-        _ ->
-            case ar_util:safe_parse_peer(Bin) of
-                {error, invalid} ->
-                    {error, {invalid_peer, Bin}};
-                {ok, [{A, B, C, D, Port}|_]} ->
-                    %% FIXME: There might be multiple entries.
-                    case validate_port(Port) of
-                        {ok, Port} -> {ok, {A, B, C, D, Port}};
-                        {error, _} = E -> E
-                    end
-            end
-    end.
+	%% Split on `:`: covers IPv4 with optional port and bare
+	%% hostnames. Unbracketed IPv6 is ambiguous and rejected.
+	case binary:split(Bin, <<":">>, [global]) of
+		[Bin] ->
+			%% Bare host: append default port.
+			case validate_host(Bin) of
+				ok -> finalize_peer(Bin, ?DEFAULT_PORT);
+				Error -> Error
+			end;
+		[Host, PortBin] ->
+			case {validate_host(Host), parse_port(PortBin)} of
+				{ok, {ok, Port}} ->
+					finalize_peer(Host, Port);
+				{{error, R}, _} -> {error, R};
+				{_, {error, R}} -> {error, R}
+			end;
+		_ ->
+			{error, {ambiguous_peer, Bin}}
+	end.
 
-parse_host(Bin) ->
-    case binary:split(Bin, <<":">>, [global]) of
-        [Bin] ->
-            Bin;
-        [HostBin, _PortBin] ->
-            HostBin;
-        _ ->
-            {error, {ambiguous_peer, Bin}}
-end.
+%% @doc IPv4 hosts return as 5-tuples; hostnames stay as
+%% `<<"host:port">>' binaries so the runtime resolver
+%% (`ar_peers:resolve_and_cache_peer/2') can re-resolve them after DNS
+%% changes.
+finalize_peer(Host, Port) ->
+	case parse_ipv4_octets(Host) of
+		{ok, {A, B, C, D}} ->
+			{ok, {A, B, C, D, Port}};
+		error ->
+			{ok, <<Host/binary, ":", (integer_to_binary(Port))/binary>>}
+	end.
 
+parse_ipv4_octets(Host) when is_binary(Host) ->
+	try
+		Parts = binary:split(Host, <<".">>, [global]),
+		case [binary_to_integer(P) || P <- Parts] of
+			[A, B, C, D] when ?is_octet(A), ?is_octet(B),
+					?is_octet(C), ?is_octet(D) ->
+				{ok, {A, B, C, D}};
+			_ ->
+				error
+		end
+	catch
+		_:_ -> error
+	end.
 
 validate_host(<<>>) ->
 	{error, empty_host};
