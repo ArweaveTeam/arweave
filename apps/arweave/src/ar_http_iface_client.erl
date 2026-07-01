@@ -9,7 +9,7 @@
 	send_block_announcement/2,
 	get_block/3, get_tx/2, get_txs/2, get_tx_from_remote_peers/3,
 	get_tx_data/2, get_wallet_list_chunk/2, get_wallet_list_chunk/3,
-	get_wallet_list/2, add_peer/1, get_info/1, get_info/2, get_peers/1,
+	add_peer/1, get_info/1, get_info/2, get_peers/1,
 	get_time/2, get_height/1, get_block_index/3,
 	get_sync_record/1, get_sync_record/3, get_sync_record/4, get_footprints/3,
 	get_chunk_binary/3, get_mempool/1,
@@ -290,33 +290,6 @@ get_wallet_list_chunk([Peer | Peers], H, Cursor) ->
 			end;
 		Response ->
 			get_wallet_list_chunk(Peers, H, Cursor)
-	end.
-
-%% @doc Get a wallet list by the given block hash from external peers.
-get_wallet_list([], _H) ->
-	not_found;
-get_wallet_list([Peer | Peers], H) ->
-	case get_wallet_list(Peer, H) of
-		unavailable ->
-			get_wallet_list(Peers, H);
-		not_found ->
-			get_wallet_list(Peers, H);
-		WL ->
-			WL
-	end;
-get_wallet_list(Peer, H) ->
-	Response =
-		ar_http:req(#{
-			method => get,
-			peer => Peer,
-			path => "/block/hash/" ++ binary_to_list(ar_util:encode(H)) ++ "/wallet_list",
-			headers => p2p_headers()
-		}),
-	case Response of
-		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			{ok, ar_serialize:json_struct_to_wallet_list(Body)};
-		{ok, {{<<"404">>, _}, _, _, _, _}} -> not_found;
-		_ -> unavailable
 	end.
 
 get_block_index(Peer, Start, End) ->
