@@ -553,7 +553,10 @@ load_from_url(URL) ->
 				path => binary_to_list(iolist_to_binary([Path, Query])),
 				is_peer_request => false,
 				timeout => 20000,
-				connect_timeout => 1000
+				connect_timeout => 1000,
+				%% The blacklist source is supposed to be trusted
+				%% so we allow it to exceed the ?MAX_BODY_SIZE default.
+				limit => infinity
 			}),
 		case Reply of
 			{ok, {{<<"200">>, _}, _, Body, _, _}} ->

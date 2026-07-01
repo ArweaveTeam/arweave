@@ -367,7 +367,11 @@ request(PID, Args) ->
 	ResponseArgs = #{ pid => PID
 			, stream_ref => Ref
 			, timeout => Timeout
-			, limit => maps:get(limit, Args, infinity)
+			%% Default to ?MAX_BODY_SIZE, matching the server-side default in
+			%% ar_http_iface_middleware:read_complete_body/2. The client-side
+			%% and server-side limits are matched purely for the sake of
+			%% implementation simplicity.
+			, limit => maps:get(limit, Args, ?MAX_BODY_SIZE)
 			, counter => 0
 			, acc => []
 			, start => os:system_time(microsecond)
