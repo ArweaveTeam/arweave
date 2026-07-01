@@ -45,7 +45,13 @@ specs() ->
 			type => list_map,
 			default => [],
 			short_description =>
-				<<"Repack-in-place module declarations.">>
+				<<"Repack-in-place module declarations.">>,
+			long_description =>
+				<<"For replica.2.9 repacks the read batch size is derived "
+				  "from [packing, entropy, cache_size]; set that cache as "
+				  "large as you can without running out of memory (a good "
+				  "starting point is ~40% of available RAM) to improve "
+				  "repacking throughput.">>
 		},
 		#{
 			enabled => true,
@@ -227,10 +233,18 @@ address_field(to) -> to_address.
 
 -spec validate() -> ok | {error, binary()}.
 validate() ->
-	case validate_shape() of
-		ok -> validate_no_in_place_overlap();
-		{error, _} = Err ->
-			Err
+	run_checks([
+		fun validate_shape/0,
+		fun validate_no_regular_storage_modules/0,
+		fun validate_uniform_operation/0
+	]).
+
+run_checks([]) ->
+	ok;
+run_checks([Check | Rest]) ->
+	case Check() of
+		ok -> run_checks(Rest);
+		{error, _} = Err -> Err
 	end.
 
 validate_shape() ->
@@ -276,27 +290,47 @@ validate_tuple_packing({Format, Addr})
 validate_tuple_packing(_) ->
 	{error, <<"repack_modules: invalid packing">>}.
 
-%% @doc A repack-in-place module must not also be a regular storage
-%% module; cross-checks against
-%% arweave_config_options_storage_modules:legacy_list/0.
-validate_no_in_place_overlap() ->
-	StorageIDs =
-		[ar_storage_module:id(M)
-			|| M <- arweave_config_options_storage_modules:legacy_list()],
-	validate_no_in_place_overlap(legacy_list(), StorageIDs).
-
-validate_no_in_place_overlap([], _Modules) ->
-	ok;
-validate_no_in_place_overlap([{Module, _ToPacking} | L], Modules) ->
-	ID = ar_storage_module:id(Module),
-	case lists:member(ID, Modules) of
-		true ->
-			Msg = iolist_to_binary(
-				io_lib:format(
-					"Cannot use the storage module ~s "
-					"while it is being repacked in place.",
-					[ID])),
-			{error, Msg};
-		false ->
-			validate_no_in_place_overlap(L, Modules)
+%% @doc While any module is being repacked in place, every storage module must be a repack
+%% module. Repacking, syncing and mining are all memory-heavy processes - we do not support
+%% efficient memory utilization when they are run simultaneously so we demand repacking is executed first.
+validate_no_regular_storage_modules() ->
+	case arweave_config:get([repack_modules]) of
+		[] ->
+			ok;
+		_ ->
+			case arweave_config:get([storage_modules]) of
+				[] ->
+					ok;
+				_ ->
+					{error, <<"repack_modules: all storage modules must be repacked in "
+						"place. Remove regular storage_modules entries while repacking.">>}
+			end
 	end.
+
+%% @doc All repack modules must use the same archetype: replica.2.9 vs not on each side -
+%% the four combinations of {unpacked|spora_2_6, replica.2.9}. Addresses may differ between
+%% modules. This keeps the per-chunk entropy count uniform, which the batch-size derivation
+%% relies on.
+validate_uniform_operation() ->
+	case arweave_config:get([repack_modules]) of
+		[] ->
+			ok;
+		Modules ->
+			case lists:usort([repack_archetype(M) || M <- Modules]) of
+				[_] ->
+					ok;
+				_ ->
+					{error, <<"repack_modules: all repack modules must use the same "
+						"from/to packing archetype (replica.2.9 vs not, on each side); "
+						"addresses may differ.">>}
+			end
+	end.
+
+%% @doc The repack archetype ignores the mining address - only whether each side is the
+%% replica.2.9 format matters.
+repack_archetype(Module) ->
+	{is_replica_2_9(packing_from_map(from, Module)),
+		is_replica_2_9(packing_from_map(to, Module))}.
+
+is_replica_2_9({replica_2_9, _}) -> true;
+is_replica_2_9(_) -> false.

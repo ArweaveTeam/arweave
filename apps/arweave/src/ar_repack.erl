@@ -2,7 +2,8 @@
 
 -behaviour(gen_server).
 
--export([name/1, register_workers/0, get_read_range/3, chunk_range_read/4]).
+-export([name/1, register_workers/0, recompute_sizing/0, get_read_range/3,
+		chunk_range_read/4]).
 
 -export([start_link/2, init/1, handle_cast/2, handle_call/3,
 		handle_info/2, terminate/2]).
@@ -87,6 +88,30 @@ register_workers() ->
 
     RepackInPlaceWorkers.
 
+%% @doc Re-derive the read batch size for every running repack worker. Called from the
+%% handle_set callbacks of the options the batch size is derived from
+%% ([packing, entropy, cache_size] and [packing, repack, batch_size]) so a running repack
+%% tracks runtime config changes. The casts are async - processed after the new value is
+%% committed - and are safe no-ops for any worker that is not currently running.
+recompute_sizing() ->
+	%% Resolving the worker names from config touches node state (store id -> partition)
+	%% that is not available until the node is running, and the handle_set callbacks that
+	%% call this also fire during config load. Only fan out once we are at runtime, by which
+	%% point the workers exist; before then there is nothing to recompute.
+	case arweave_config:is_runtime() of
+		true ->
+			lists:foreach(
+				fun({StorageModule, _Packing}) ->
+					gen_server:cast(
+						name(ar_storage_module:id(StorageModule)), recompute_sizing)
+				end,
+				[arweave_config:config_to_repack_module(M)
+					|| M <- arweave_config:get([repack_modules])]);
+		false ->
+			ok
+	end,
+	ok.
+
 init({StoreID, ToPacking}) ->
 	FromPacking = ar_storage_module:get_packing(StoreID),
 	?LOG_INFO([{event, ar_repack_init},
@@ -102,9 +127,8 @@ init({StoreID, ToPacking}) ->
 	PaddedModuleEnd = ar_block:get_chunk_padded_offset(ModuleEnd),
 	Cursor = read_cursor(StoreID, ToPacking, ModuleStart),
 
-	BatchSize = arweave_config:get([packing, repack, batch_size]),
-	CacheSize = arweave_config:get([packing, repack, cache_size]),
-	NumEntropyOffsets = calculate_num_entropy_offsets(CacheSize, BatchSize),
+	{BatchSize, NumEntropyOffsets} = compute_repack_sizing(FromPacking, ToPacking),
+	log_repack_sizing(StoreID, FromPacking, ToPacking, BatchSize, NumEntropyOffsets),
 	gen_server:cast(self(), repack),
 	gen_server:cast(self(), count_states),
 	ar_device_lock:set_device_lock_metric(StoreID, repack, paused),
@@ -243,6 +267,16 @@ handle_cast(count_states, #state{} = State) ->
 	ar_util:cast_after(?STATE_COUNT_INTERVAL, self(), count_states),
 	{noreply, State};
 
+handle_cast(recompute_sizing, #state{} = State) ->
+	#state{ store_id = StoreID, configured_packing = FromPacking,
+		target_packing = ToPacking } = State,
+	{BatchSize, NumEntropyOffsets} = compute_repack_sizing(FromPacking, ToPacking),
+	log_repack_sizing(StoreID, FromPacking, ToPacking, BatchSize, NumEntropyOffsets),
+	{noreply, State#state{
+		read_batch_size = BatchSize,
+		num_entropy_offsets = NumEntropyOffsets
+	}};
+
 handle_cast(Request, #state{} = State) ->
 	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {request, Request}]),
 	{noreply, State}.
@@ -371,6 +405,110 @@ terminate(Reason, #state{} = State) ->
 calculate_num_entropy_offsets(CacheSize, BatchSize) ->
 	min(ar_block:get_sub_chunks_per_replica_2_9_entropy(), (CacheSize * 4) div BatchSize).
 
+%% @doc Determine the read batch size and entropy footprint for this repack module.
+%%
+%% For replica.2.9 repacks (1 entropy for replica.2.9 <-> unpacked, 2 for replica.2.9 ->
+%% replica.2.9) the batch size is *derived* from the global entropy cache so that:
+%%   1. the entropy footprint is always full (no redundant entropy regeneration), and
+%%   2. the combined entropy working set of all concurrently-repacking modules fits in the
+%%      cache.
+%% A positive `repack_batch_size` overrides the derivation (e.g. for benchmarking). Repacks
+%% that involve no replica.2.9 entropy keep the legacy cache/batch sizing.
+compute_repack_sizing(FromPacking, ToPacking) ->
+	ConfiguredBatch = arweave_config:get([packing, repack, batch_size]),
+	NumEntropies = entropies_per_repack(FromPacking, ToPacking),
+	case NumEntropies of
+		0 ->
+			%% No replica.2.9 entropy is generated, so there is no entropy footprint to
+			%% spread across: process one bucket per footprint (a plain contiguous scan).
+			%% num_entropy_offsets must be at least 1 - 0 yields an empty footprint and
+			%% crashes repack_footprint.
+			Batch = case is_integer(ConfiguredBatch) of
+				true -> ConfiguredBatch;
+				false -> ?DEFAULT_REPACK_BATCH_SIZE
+			end,
+			{Batch, 1};
+		_ ->
+			Batch = case is_integer(ConfiguredBatch) of
+				true -> ConfiguredBatch;
+				false -> derive_repack_batch_size(NumEntropies)
+			end,
+			{Batch, ar_block:get_sub_chunks_per_replica_2_9_entropy()}
+	end.
+
+%% @doc Number of distinct replica.2.9 entropies generated per repacked chunk: one for each
+%% side of the operation that is in the replica.2.9 format.
+entropies_per_repack(FromPacking, ToPacking) ->
+	length([P || P <- [FromPacking, ToPacking], needs_entropy(P)]).
+
+%% @doc Derive the read batch size from the global entropy cache. The entropy working set of
+%% a repack is `Batch * footprint_size * NumModules * NumEntropies`; we pick the largest Batch
+%% whose working set still fits in the configured entropy cache.
+derive_repack_batch_size(NumEntropies) ->
+	EntropyCacheMiB = arweave_config:get([packing, entropy, cache_size]),
+	NumModules = repack_module_count(),
+	FootprintMiB = ar_block:get_replica_2_9_footprint_size() div ?MiB,
+	max(1, EntropyCacheMiB div (FootprintMiB * NumModules * NumEntropies)).
+
+repack_module_count() ->
+	max(1, length(arweave_config:get([repack_modules]))).
+
+%% @doc Report the repack sizing (batch, footprint, memory) so it is never a surprise.
+%% Emitted at init and whenever a dependent option ([packing, entropy, cache_size] or
+%% [packing, repack, batch_size]) is set at runtime - for both the derived and the
+%% explicitly-overridden batch size. Non replica.2.9 repacks carry no entropy and have
+%% nothing useful to report.
+log_repack_sizing(StoreID, FromPacking, ToPacking, Batch, Footprint) ->
+	case entropies_per_repack(FromPacking, ToPacking) of
+		0 ->
+			ok;
+		NumEntropies ->
+			EntropyCacheMiB = arweave_config:get([packing, entropy, cache_size]),
+			NumModules = repack_module_count(),
+			FootprintMiB = ar_block:get_replica_2_9_footprint_size() div ?MiB,
+			ChunkCacheMiB = Batch * FootprintMiB * NumModules,
+			EntropyWorkingSetMiB = ChunkCacheMiB * NumEntropies,
+			TotalMiB = ChunkCacheMiB + EntropyWorkingSetMiB,
+			?LOG_INFO([{event, repack_sizing}, {store_id, StoreID},
+				{entropy_cache_mb, EntropyCacheMiB}, {num_modules, NumModules},
+				{entropies_per_chunk, NumEntropies}, {batch_size, Batch},
+				{footprint, Footprint},
+				{chunk_cache_mb, ChunkCacheMiB},
+				{entropy_working_set_mb, EntropyWorkingSetMiB},
+				{total_repack_memory_mb, TotalMiB}]),
+			ar:console(
+				"~nRepack sizing for ~s:~n"
+				"  [packing, entropy, cache_size]=~B MiB, modules=~B, entropies/chunk=~B~n"
+				"  => batch=~B, footprint=~B~n"
+				"  => ~B MiB total repack memory (~B chunk cache + ~B entropy)~n",
+				[StoreID, EntropyCacheMiB, NumModules, NumEntropies, Batch, Footprint,
+					TotalMiB, ChunkCacheMiB, EntropyWorkingSetMiB]),
+			log_repack_sizing_advice(EntropyWorkingSetMiB, EntropyCacheMiB)
+	end.
+
+%% @doc Follow the sizing summary with a thrash warning when the working set exceeds the
+%% cache (only reachable via an explicit oversized batch), or with guidance to grow the
+%% cache when the batch was auto-derived.
+log_repack_sizing_advice(EntropyWorkingSetMiB, EntropyCacheMiB)
+		when EntropyWorkingSetMiB > EntropyCacheMiB ->
+	ar:console(
+		"~nWARNING: the entropy working set (~B MiB) exceeds [packing, entropy, cache_size] "
+		"(~B MiB); entropy will be regenerated redundantly. Increase the cache or lower "
+		"[packing, repack, batch_size].~n",
+		[EntropyWorkingSetMiB, EntropyCacheMiB]),
+	?LOG_WARNING([{event, repack_entropy_working_set_exceeds_cache},
+		{entropy_working_set_mb, EntropyWorkingSetMiB}, {entropy_cache_mb, EntropyCacheMiB}]);
+log_repack_sizing_advice(_EntropyWorkingSetMiB, _EntropyCacheMiB) ->
+	case is_integer(arweave_config:get([packing, repack, batch_size])) of
+		true ->
+			ok;
+		false ->
+			ar:console(
+				"~nSet [packing, entropy, cache_size] as large as you can without running "
+				"out of memory (start at ~~40% of available RAM); the batch size is derived "
+				"from it, so a larger cache means larger, more efficient reads.~n", [])
+	end.
+
 %% @doc Outer repack loop. Called via `gen_server:cast(self(), repack)`. Each call
 %% repacks another footprint of chunks. A repack footprint is N entropy footprints where N
 %% is the repack batch size.
@@ -484,7 +622,7 @@ repack_footprint(Cursor, #state{} = State) ->
 			generate_repack_entropy(BucketEndOffset, TargetPacking, State4),
 
 			ar_repack_io:read_footprint(
-				FootprintOffsets, FootprintStart, FootprintEnd, StoreID),
+				FootprintOffsets, FootprintStart, FootprintEnd, BatchSize, StoreID),
 
 			State4
 	end.
@@ -1167,7 +1305,19 @@ test_cache_size() ->
 	?assertEqual(3, calculate_num_entropy_offsets(3, 4)),
 	?assertEqual(3, calculate_num_entropy_offsets(3, 1)),
 	?assertEqual(2, calculate_num_entropy_offsets(5, 10)).
-	
+
+entropies_per_repack_test() ->
+	Addr = crypto:strong_rand_bytes(32),
+	Addr2 = crypto:strong_rand_bytes(32),
+	%% replica.2.9 <-> unpacked: one entropy.
+	?assertEqual(1, entropies_per_repack({replica_2_9, Addr}, unpacked)),
+	?assertEqual(1, entropies_per_repack(unpacked, {replica_2_9, Addr})),
+	%% replica.2.9 -> replica.2.9 (different address): two entropies.
+	?assertEqual(2, entropies_per_repack({replica_2_9, Addr}, {replica_2_9, Addr2})),
+	%% No replica.2.9 on either side: no entropy.
+	?assertEqual(0, entropies_per_repack(unpacked, {spora_2_6, Addr})),
+	?assertEqual(0, entropies_per_repack({spora_2_6, Addr}, unpacked)).
+
 footprint_offsets_test_() ->
 	[
 		ar_test_node:test_with_all_nodes_mocked([

@@ -131,8 +131,13 @@ start(normal, _Args) ->
 			ok;
 		{error, Reason} ->
 			io:format("~nConfiguration validation failed: ~p~n~n", [Reason]),
-			timer:sleep(2000),
-			init:stop(1)
+			%% Exit immediately rather than via init:stop/1: a graceful app
+			%% shutdown tears down the config registry ETS (it dies with its
+			%% owner) while ar_sup's workers are still terminating, so they
+			%% crash on `badarg` config reads. There is nothing to flush for
+			%% a boot-time config rejection, so halt cleanly (erlang:halt/1
+			%% flushes pending output before exiting).
+			erlang:halt(1)
 	end,
 
 	Result.

@@ -35,27 +35,25 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [packing, repack, batch_size],
-			default => ?DEFAULT_REPACK_BATCH_SIZE,
+			runtime => true,
+			default => undefined,
 			type => pos_integer,
 			legacy => repack_batch_size,
 			short_description =>
-				<<"Number of batches to process at a time during "
-				  "in-place repacking.">>,
+				<<"Read batch size for in-place repacking "
+				  "(unset = auto-derive, recommended).">>,
 			long_description =>
-				<<"For each partition being repacked, a batch "
-				  "requires about 512 MiB of memory.">>
-		},
-		#{
-			enabled => true,
-			option_key => [packing, repack, cache_size],
-			default => ?DEFAULT_REPACK_CACHE_SIZE_MB,
-			type => pos_integer,
-			legacy => repack_cache_size_mb,
-			short_description =>
-				<<"Cache size in MiB for in-place repacking.">>,
-			long_description =>
-				<<"The node restricts the cache size to this amount "
-				  "for each partition being repacked.">>
+				<<"When unset (the default), the batch size is derived "
+				  "automatically from [packing, entropy, cache_size] "
+				  "and the number of repack modules, so the entropy "
+				  "footprint is always full and the entropy cache is not "
+				  "thrashed. Set a positive value only to override the "
+				  "derivation (e.g. for non-replica.2.9 repacks, which "
+				  "generate no entropy, or for benchmarking).">>,
+			handle_set => fun(_K, V, _S, _A) ->
+				ok = ar_repack:recompute_sizing(),
+				{store, V}
+			end
 		},
 		#{
 			enabled => true,
@@ -69,9 +67,10 @@ specs() ->
 			long_description =>
 				<<"Each cached entropy is 256 MiB. The bigger the "
 				  "cache, the more replica.2.9 data can be synced "
-				  "concurrently.">>,
+				  "or repacked concurrently.">>,
 			handle_set => fun(_K, V, _S, _A) ->
 				ok = ar_sync_dispatcher:set_entropy_cache_size(V),
+				ok = ar_repack:recompute_sizing(),
 				{store, V}
 			end
 		},
