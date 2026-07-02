@@ -3,7 +3,7 @@
 %%% recovery) that the impl-to-impl tests do not, and assert the distinctive account-tree
 %%% behaviors: historical (non-tip) balance queries reconstructed from the diff DAG, and
 %%% correct balances after a reorg replaces the tip.
--module(ar_wallets_fork_tests).
+-module(ar_account_tree_fork_tests).
 -test_peers([peer1]).
 
 -include("ar.hrl").

@@ -2,7 +2,7 @@
 %%% tree implementations. Every scenario runs against a matrix of account sets (varying counts,
 %%% prefix-sharing keys, and 4-tuple/denominated values) so the same logic is exercised over a
 %%% wide range of tree shapes.
--module(ar_wallets_impl_tests).
+-module(ar_account_tree_impl_tests).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -11,7 +11,7 @@
 %%% Test generator
 %%%===================================================================
 
-ar_wallets_impl_test_() ->
+ar_account_tree_impl_test_() ->
 	{foreach, fun setup/0, fun cleanup/1,
 		[instantiator(Name, Scenario, Set)
 			|| {Name, Scenario} <- scenarios(), Set <- account_sets()]}.
