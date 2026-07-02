@@ -29,6 +29,10 @@
 
 -record(state, {}).
 
+%% @doc Number of extra attempts to persist an account tree node after a transient
+%% RocksDB failure. Disk-full errors are never retried.
+-define(ACCOUNT_TREE_PUT_RETRIES, 3).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -1445,33 +1449,58 @@ store_account_tree_update(Height, RootHash, Map) ->
             DBKey = << H/binary, Prefix2/binary >>,
             case ar_kv:get(account_tree_db, DBKey) of
                 not_found ->
-                    case ar_kv:put(account_tree_db, DBKey, term_to_binary(Value)) of
-                        ok ->
-                            ok;
-                        {error, Reason} ->
-                            ?LOG_ERROR([{event, failed_to_store_account_tree_key},
-                                    {key_hash, ar_util:encode(element(1, Key))},
-                                    {key_prefix, case element(2, Key) of root -> root;
-                                            Prefix -> ar_util:encode(Prefix) end},
-                                    {height, Height},
-                                    {root_hash, ar_util:encode(RootHash)},
-                                    {reason, io_lib:format("~p", [Reason])}])
-                    end;
+                    put_account_tree_key(DBKey, Value, Key, Height, RootHash);
                 {ok, _} ->
                     ok;
                 {error, Reason} ->
-                    ?LOG_ERROR([{event, failed_to_read_account_tree_key},
+                    %% Transient read error on the existence check. The node may not
+                    %% be persisted yet, so attempt the (idempotent, content-addressed)
+                    %% put rather than silently dropping it.
+                    ?LOG_WARNING([{event, failed_to_read_account_tree_key},
                             {key_hash, ar_util:encode(element(1, Key))},
                             {key_prefix, case element(2, Key) of root -> root;
                                     Prefix -> ar_util:encode(Prefix) end},
                             {height, Height},
                             {root_hash, ar_util:encode(RootHash)},
-                            {reason, io_lib:format("~p", [Reason])}])
+                            {reason, io_lib:format("~p", [Reason])}]),
+                    put_account_tree_key(DBKey, Value, Key, Height, RootHash)
             end
         end,
         Map
     ),
     ?LOG_INFO([{event, stored_account_tree}]).
+
+%% @doc Persist a single account tree node, retrying a transient RocksDB failure a
+%% few times. Disk-full errors are not retried. Logs an error if all attempts fail.
+put_account_tree_key(DBKey, Value, Key, Height, RootHash) ->
+    put_account_tree_key(DBKey, Value, Key, Height, RootHash, ?ACCOUNT_TREE_PUT_RETRIES).
+
+put_account_tree_key(DBKey, Value, Key, Height, RootHash, RetriesLeft) ->
+    case ar_kv:put(account_tree_db, DBKey, term_to_binary(Value)) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            case not is_disk_full_error(Reason) andalso RetriesLeft > 0 of
+                true ->
+                    put_account_tree_key(DBKey, Value, Key, Height, RootHash,
+                                         RetriesLeft - 1);
+                false ->
+                    ?LOG_ERROR([{event, failed_to_store_account_tree_key},
+                                {key_hash, ar_util:encode(element(1, Key))},
+                                {key_prefix, case element(2, Key) of root -> root;
+                                                 Prefix -> ar_util:encode(Prefix) end},
+                                {height, Height},
+                                {root_hash, ar_util:encode(RootHash)},
+                                {reason, io_lib:format("~p", [Reason])}])
+            end
+    end.
+
+%% @doc Return true if a RocksDB error reason indicates the disk is full. The reason
+%% is the status string from RocksDB (e.g. "IO error: No space left on device"), so
+%% match textually to be robust to the exact reason term shape.
+is_disk_full_error(Reason) ->
+    Text = lists:flatten(io_lib:format("~p", [Reason])),
+    string:find(Text, "No space left on device") =/= nomatch.
 
 %% @doc Ignore the prefix when querying a key since the prefix might depend on the order of
 %% insertions and is only used to optimize certain lookups.
