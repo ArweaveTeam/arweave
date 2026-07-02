@@ -26,7 +26,8 @@ scenarios() ->
 		{unknown_and_pruned, fun scenario_unknown_and_pruned/2},
 		{step_equivalence, fun scenario_step_equivalence/2},
 		{chunked_build, fun scenario_chunked_build/2},
-		{excursions_leave_tip_clean, fun scenario_excursions_leave_tip_clean/2}
+		{excursions_leave_tip_clean, fun scenario_excursions_leave_tip_clean/2},
+		{deep_excursions_leave_tip_clean, fun scenario_deep_excursions_leave_tip_clean/2}
 	].
 
 %% The account sets the matrix iterates over. Each is {Name, Accounts, Denomination}, where
@@ -235,6 +236,32 @@ scenario_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Accounts,
 		?assertEqual(Before, table_dump())
 	end.
 
+%% Like scenario_excursions_leave_tip_clean, but the tip sits at the end of a two-block chain and
+%% the excursions reach MULTI-HOP representations: the parent (one hop), the grandparent (two
+%% hops), and an uncle (a fork of the grandparent, reached by descending to the grandparent and
+%% climbing back up the other branch). Each get_wallet_list_chunk repositions the shared ETS tree
+%% several nodes away before snapshot-restore rolls it back, so a deep or sideways excursion must
+%% leave the tip byte-identical - cached node hashes included - just like a one-hop one.
+scenario_deep_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		{ok, R0} = gen_server:call(New, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = gen_server:call(New, {set_current, R0, 10, 20}),
+		%% An uncle: a fork of the grandparent R0.
+		{ok, Uncle} = gen_server:call(New, {add_wallets, R0, update_range(Accounts, 0, 1), 11,
+				Denom}),
+		%% The parent, then the tip - a two-block chain off R0.
+		{ok, Parent} = gen_server:call(New, {add_wallets, R0,
+				maps:merge(update_range(Accounts, 1, 2), add_fresh(2, Denom)), 11, Denom}),
+		ok = gen_server:call(New, {set_current, Parent, 11, 20}),
+		{ok, Tip} = gen_server:call(New, {add_wallets, Parent, update_range(Accounts, 2, 3), 12,
+				Denom}),
+		ok = gen_server:call(New, {set_current, Tip, 12, 20}),
+		Before = table_dump(),
+		%% Page each non-tip representation: every chunk call excurses the ETS tree there and back.
+		[walk_chunks_new(New, Root) || Root <- [Parent, R0, Uncle]],
+		?assertEqual(Before, table_dump())
+	end.
+
 %%%===================================================================
 %%% Helpers
 %%%===================================================================
@@ -255,6 +282,21 @@ apply_block_unknown_prev_root_returns_error_test() ->
 add_wallets_unknown_root_returns_error_test() ->
 	assert_unknown_root_returns_error(
 		fun(UnknownRoot) -> {add_wallets, UnknownRoot, #{}, 10, 1} end).
+
+%% Paginating an empty tip (the initial <<>> tree, no accounts) yields {ok, {last, []}} - the
+%% same as the frozen legacy impl. The account-set matrix never leaves the tip empty, so this is
+%% checked directly.
+empty_tip_chunk_read_test() ->
+	Stubs = [ensure_stub(N) || N <- [ar_node_worker, ar_storage]],
+	{ok, New} = gen_server:start(ar_account_tree, [{blocks, []}], []),
+	{ok, Legacy} = gen_server:start(ar_wallets_legacy, [{blocks, []}], []),
+	NewReply = gen_server:call(New, {get_wallet_list_chunk, <<>>, first}),
+	LegacyReply = gen_server:call(Legacy, {get_chunk, <<>>, first}),
+	catch gen_server:stop(New),
+	catch gen_server:stop(Legacy),
+	[begin unregister_safe(Name), exit(Pid, kill) end || {stub, Name, Pid} <- Stubs],
+	?assertEqual({ok, {last, []}}, NewReply),
+	?assertEqual(LegacyReply, NewReply).
 
 %% @doc Start ar_account_tree, issue MakeRequest(UnknownRoot) - where UnknownRoot is not a node
 %% in the diff DAG - and assert the call returns {error, root_hash_not_found} without crashing
@@ -376,6 +418,20 @@ walk_chunks(New, Legacy, Root, Cursor) ->
 			ok;
 		_ ->
 			walk_chunks(New, Legacy, Root, NextCursor)
+	end.
+
+%% Page every chunk of Root through New alone (no legacy comparison); used by the tip-integrity
+%% excursion scenarios, where each chunk call is one excursion of the shared ETS tree.
+walk_chunks_new(New, Root) ->
+	walk_chunks_new(New, Root, first).
+
+walk_chunks_new(New, Root, Cursor) ->
+	{ok, {NextCursor, _Range}} = gen_server:call(New, {get_wallet_list_chunk, Root, Cursor}),
+	case NextCursor of
+		last ->
+			ok;
+		_ ->
+			walk_chunks_new(New, Root, NextCursor)
 	end.
 
 table_dump() ->

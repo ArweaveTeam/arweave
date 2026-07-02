@@ -43,6 +43,41 @@ snapshot_restore_test_() ->
 		lists:foreach(fun({N, A, Ops}) -> check_snapshot(N, A, Ops) end, snapshot_cases())
 	end}.
 
+%% snapshot_restore must undo the writes even when the excursion is ABORTED partway - before
+%% compute_hash runs - the way ar_account_tree:with_snapshot restores in an `after` when the
+%% wrapped operation throws. Records a base, begins a snapshot, applies a partial mix of ops and
+%% raises, restores in an `after`, then asserts the table is byte-identical (cached hashes and
+%% size included) and still hashes to the original root.
+snapshot_restore_on_abort_test_() ->
+	{timeout, 30, fun test_snapshot_restore_on_abort/0}.
+
+test_snapshot_restore_on_abort() ->
+	HashFun = hash_fun(),
+	Accounts = many_accounts(60),
+	Existing = element(1, lists:nth(7, Accounts)),
+	Fresh = pad32(<<16#AB, 1>>),
+	Ets = build(ar_patricia_tree_ets, Accounts),
+	{Root0, _, _} = ar_patricia_tree_ets:compute_hash(Ets, HashFun, #{}),
+	Before = raw_dump(Ets),
+	Caught =
+		try
+			ar_patricia_tree_ets:snapshot_begin(Ets),
+			try
+				ar_patricia_tree_ets:insert(Fresh, val(Fresh), Ets),
+				ar_patricia_tree_ets:insert(Existing, val2(Existing), Ets),
+				ar_patricia_tree_ets:delete(element(1, hd(Accounts)), Ets),
+				error(aborted_mid_excursion)
+			after
+				ar_patricia_tree_ets:snapshot_restore(Ets)
+			end
+		catch
+			error:aborted_mid_excursion -> caught
+		end,
+	?assertEqual(caught, Caught),
+	?assertEqual(Before, raw_dump(Ets), abort_dump),
+	{Root1, _, _} = ar_patricia_tree_ets:compute_hash(Ets, HashFun, #{}),
+	?assertEqual(Root0, Root1, abort_root).
+
 %% The tree is canonical: the same accounts produce the same nodes and the same root hash
 %% regardless of insertion order. This is what makes the snapshot-restore in ar_account_tree and
 %% the consensus root hash well defined.
@@ -57,10 +92,14 @@ order_independence_test_() ->
 %% Random fuzz over many random key sets: every insertion order yields the same root
 %% (canonicity), deleting any key yields the same root as rebuilding without it (deletion
 %% equivalence), and get/2 + size agree with a plain map. Mirrors
-%% ar_patricia_tree:stochastic_test/0 for the ets impl.
+%% ar_patricia_tree:stochastic_test/0 for the ets impl. The second batch draws keys from a shared
+%% base at varying prefix lengths, so they branch at several depths - most rounds split existing
+%% nodes at multiple levels, the path fully-random 5-byte keys almost never reach.
 stochastic_test_() ->
 	{timeout, 120, fun() ->
-		lists:foreach(fun(_) -> check_stochastic(random_key_values(3)) end, lists:seq(1, 300))
+		lists:foreach(fun(_) -> check_stochastic(random_key_values(3)) end, lists:seq(1, 200)),
+		lists:foreach(fun(_) -> check_stochastic(nested_prefix_key_values(4)) end,
+				lists:seq(1, 150))
 	end}.
 
 %% Delete edge cases not covered directly elsewhere: deleting an absent key is a no-op
@@ -321,6 +360,25 @@ compare_with_map(Tree, Map) ->
 
 random_key_values(N) ->
 	[{crypto:strong_rand_bytes(5), crypto:strong_rand_bytes(30)} || _ <- lists:seq(1, N)].
+
+%% N distinct keys carved from a shared random base at VARYING prefix lengths: each key keeps a
+%% random-length (1..6 byte) leading slice of the base, then diverges with random bytes. A key
+%% sharing five base bytes nests below one that shares only two, so inserting the set splits nodes
+%% at several depths - a multi-level trie, not a single branch point. Keys are kept distinct so
+%% the map comparison and deletion-equivalence checks in check_stochastic/1 stay well defined.
+nested_prefix_key_values(N) ->
+	Base = crypto:strong_rand_bytes(6),
+	distinct_nested(Base, N, []).
+
+distinct_nested(_Base, 0, Acc) ->
+	Acc;
+distinct_nested(Base, N, Acc) ->
+	Share = 1 + binary:first(crypto:strong_rand_bytes(1)) rem byte_size(Base),
+	Key = << (binary:part(Base, 0, Share))/binary, (crypto:strong_rand_bytes(4))/binary >>,
+	case lists:keymember(Key, 1, Acc) of
+		true -> distinct_nested(Base, N, Acc);
+		false -> distinct_nested(Base, N - 1, [{Key, crypto:strong_rand_bytes(30)} | Acc])
+	end.
 
 permutations([]) ->
 	[[]];
