@@ -6,6 +6,10 @@
 -export([test_account_tree_performance/1, test_account_tree_performance/2,
 		bench_account_tree_matrix/0, bench_account_tree_matrix/1, bench_account_tree_matrix/4]).
 
+%% Accounts updated before the batched hash recomputation. Models a full block:
+%% 1000 source + 1000 target accounts + reward address + banned address.
+-define(BENCH_NUM_UPDATES, 2002).
+
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
@@ -16,6 +20,10 @@
 %%                            - ar_patricia_tree | ar_patricia_tree_legacy | ar_patricia_tree_ets
 %%   persist_updates => true (default) | false          - in_memory/legacy: return the UpdateMap;
 %%                                                         ets: stream node updates to given PID
+%%   num_updates     => 2002 (default)                  - accounts inserted before the batched
+%%                                                         hash recomputation. The default models
+%%                                                         a full block: 1000 source + 1000 target
+%%                                                         accounts + reward address + banned address.
 %% Denominations are always mixed (~50/50 old/new account format).
 test_account_tree_performance(NumAccounts) ->
 	test_account_tree_performance(NumAccounts, #{}).
@@ -24,10 +32,12 @@ test_account_tree_performance(NumAccounts, Opts) ->
 	Hash = maps:get(hash, Opts, ar_deep_hash),
 	TreeRepr = maps:get(tree_repr, Opts, in_memory),
 	PersistUpdates = maps:get(persist_updates, Opts, true),
+	NumUpdates = maps:get(num_updates, Opts, ?BENCH_NUM_UPDATES),
 	%% gc_before => true (default) runs erlang:garbage_collect/0 before every timed step.
 	%% Set it to false to measure on a warm heap (no pre-step collection).
 	GCBefore = maps:get(gc_before, Opts, true),
-	case run_account_tree_bench(NumAccounts, Hash, TreeRepr, PersistUpdates, GCBefore) of
+	case run_account_tree_bench(NumAccounts, NumUpdates, Hash, TreeRepr, PersistUpdates,
+			GCBefore) of
 		{error, Msg} ->
 			io:format("~s~n", [Msg]);
 		{ok, Metrics} ->
@@ -81,7 +91,7 @@ bench_account_tree_matrix(File, Sizes, Configs, Reps) ->
 %% @doc Run one account-tree benchmark in an isolated process (heap isolation + GC on exit)
 %% and return its metrics map, or {error, Msg} on invalid options or a crash.
 %% When GCBefore is true, call erlang:garbage_collect/0 before every step.
-run_account_tree_bench(NumAccounts, Hash, TreeRepr, PersistUpdates, GCBefore) ->
+run_account_tree_bench(NumAccounts, NumUpdates, Hash, TreeRepr, PersistUpdates, GCBefore) ->
 	case validate_account_tree_bench_opts(Hash, TreeRepr, PersistUpdates) of
 		{error, _} = Error ->
 			Error;
@@ -90,7 +100,7 @@ run_account_tree_bench(NumAccounts, Hash, TreeRepr, PersistUpdates, GCBefore) ->
 			Parent = self(),
 			{Pid, Ref} = spawn_opt(
 				fun() ->
-					Metrics = measure_account_tree(NumAccounts, Hash, TreeRepr,
+					Metrics = measure_account_tree(NumAccounts, NumUpdates, Hash, TreeRepr,
 							PersistUpdates, PersistOpts, GCBefore),
 					Parent ! {account_tree_metrics, self(), Metrics}
 				end,
@@ -133,7 +143,8 @@ account_tree_persist_opts(ets, _PersistUpdates) -> #{}.
 %% footprints in MB; serialization is skipped for the ets repr). When GCBefore is true,
 %% erlang:garbage_collect/0 runs before each timed step.
 %% Meant to run inside an isolated worker (see run_account_tree_bench/5).
-measure_account_tree(NumAccounts, Hash, TreeRepr, PersistUpdates, PersistOpts, GCBefore) ->
+measure_account_tree(NumAccounts, NumUpdates, Hash, TreeRepr, PersistUpdates, PersistOpts,
+		GCBefore) ->
 	Mod = repr_module(TreeRepr),
 	HashFun = bench_hash_fun(Hash),
 	%% ets persistence streams node-update batches to a sink process. The bench drains and
@@ -165,7 +176,7 @@ measure_account_tree(NumAccounts, Hash, TreeRepr, PersistUpdates, PersistOpts, G
 	{Time3, {_, T2, _}} = timer:tc(fun() -> Mod:compute_hash(T1, HashFun, PersistOpts2) end),
 	FootHash = account_tree_footprint(TreeRepr, T2, GCBefore),
 	maybe_gc(GCBefore),
-	{Time4, T3} = timer:tc(fun() -> bench_stream_insert(Mod, 2000, T2) end),
+	{Time4, T3} = timer:tc(fun() -> bench_stream_insert(Mod, NumUpdates, T2) end),
 	maybe_gc(GCBefore),
 	{Time5, _} = timer:tc(fun() -> Mod:compute_hash(T3, HashFun, PersistOpts2) end),
 	{A, B, LastTX} = random_wallet(),
@@ -181,6 +192,7 @@ measure_account_tree(NumAccounts, Hash, TreeRepr, PersistUpdates, PersistOpts, G
 	end,
 	#{
 		num_accounts => NumAccounts,
+		num_updates => NumUpdates,
 		hash => Hash,
 		tree_repr => TreeRepr,
 		persist_updates => PersistUpdates,
@@ -191,16 +203,18 @@ measure_account_tree(NumAccounts, Hash, TreeRepr, PersistUpdates, PersistOpts, G
 		serialization_bytes => SerBytes,
 		scratch_hash_s => Time3 / 1000000,
 		footprint_hash_mb => FootHash,
-		inserts_2k_s => Time4 / 1000000,
-		recompute_2k_s => Time5 / 1000000,
+		inserts_batch_s => Time4 / 1000000,
+		recompute_batch_s => Time5 / 1000000,
 		insert_1_s => Time6 / 1000000,
 		recompute_1_s => Time7 / 1000000
 	}.
 
 %% @doc Print one metrics map in the human-readable form.
 print_account_tree_metrics(M) ->
-	io:format("# ~B accounts, hash: ~p, tree_repr: ~p, persist_updates: ~p, gc_before: ~p~n",
-			[maps:get(num_accounts, M), maps:get(hash, M), maps:get(tree_repr, M),
+	NumUpdates = maps:get(num_updates, M),
+	io:format("# ~B accounts, ~B updates, hash: ~p, tree_repr: ~p, persist_updates: ~p, "
+			"gc_before: ~p~n",
+			[maps:get(num_accounts, M), NumUpdates, maps:get(hash, M), maps:get(tree_repr, M),
 			 maps:get(persist_updates, M), maps:get(gc_before, M)]),
 	io:format("============~n"),
 	io:format("tree buildup                    | ~f seconds~n", [maps:get(buildup_s, M)]),
@@ -215,8 +229,9 @@ print_account_tree_metrics(M) ->
 	end,
 	io:format("root hash from scratch          | ~f seconds~n", [maps:get(scratch_hash_s, M)]),
 	io:format("footprint after hash            | ~B MB~n", [maps:get(footprint_hash_mb, M)]),
-	io:format("2000 inserts                    | ~f seconds~n", [maps:get(inserts_2k_s, M)]),
-	io:format("recompute hash after 2k inserts | ~f seconds~n", [maps:get(recompute_2k_s, M)]),
+	io:format("~B inserts                       | ~f seconds~n",
+			[NumUpdates, maps:get(inserts_batch_s, M)]),
+	io:format("recompute hash after inserts    | ~f seconds~n", [maps:get(recompute_batch_s, M)]),
 	io:format("1 insert                        | ~f seconds~n", [maps:get(insert_1_s, M)]),
 	io:format("recompute hash after 1 insert   | ~f seconds~n", [maps:get(recompute_1_s, M)]),
 	ok.
@@ -326,7 +341,7 @@ bench_wallet_value(Denominations, Balance, LastTX) ->
 %% @doc Run Reps benchmarks for one cell, average the metrics across the runs that succeeded,
 %% and format a CSV row. A cell whose every run crashed yields a row with empty metric columns.
 bench_csv_cell(Size, Hash, TreeRepr, GCBefore, Reps) ->
-	Runs = [run_account_tree_bench(Size, Hash, TreeRepr, true, GCBefore)
+	Runs = [run_account_tree_bench(Size, ?BENCH_NUM_UPDATES, Hash, TreeRepr, true, GCBefore)
 			|| _ <- lists:seq(1, Reps)],
 	Metrics = average_metrics([M || {ok, M} <- Runs]),
 	bench_csv_row(Size, Hash, TreeRepr, GCBefore, Metrics).
@@ -335,7 +350,7 @@ bench_csv_cell(Size, Hash, TreeRepr, GCBefore, Reps) ->
 %% the ets repr); a metric with no numeric samples stays na.
 average_metrics(Maps) ->
 	Keys = [buildup_s, footprint_build_mb, serialization_s, serialization_bytes,
-			scratch_hash_s, footprint_hash_mb, inserts_2k_s, recompute_2k_s,
+			scratch_hash_s, footprint_hash_mb, inserts_batch_s, recompute_batch_s,
 			insert_1_s, recompute_1_s],
 	lists:foldl(
 		fun(Key, Acc) ->
@@ -350,21 +365,21 @@ average_metrics(Maps) ->
 	).
 
 bench_csv_header() ->
-	"accounts,hash,tree_repr,persist_updates,gc_before,buildup_s,footprint_build_mb,"
+	"accounts,num_updates,hash,tree_repr,persist_updates,gc_before,buildup_s,footprint_build_mb,"
 	"serialization_s,serialization_bytes,scratch_hash_s,footprint_hash_mb,"
-	"inserts_2k_s,recompute_2k_s,insert_1_s,recompute_1_s\n".
+	"inserts_batch_s,recompute_batch_s,insert_1_s,recompute_1_s\n".
 
 bench_csv_row(Size, Hash, TreeRepr, GCBefore, M) ->
-	Cols = [integer_to_list(Size), atom_to_list(Hash), atom_to_list(TreeRepr), "true",
-			atom_to_list(GCBefore),
+	Cols = [integer_to_list(Size), integer_to_list(?BENCH_NUM_UPDATES), atom_to_list(Hash),
+			atom_to_list(TreeRepr), "true", atom_to_list(GCBefore),
 			fmt_num(maps:get(buildup_s, M, na)),
 			fmt_num(maps:get(footprint_build_mb, M, na)),
 			fmt_num(maps:get(serialization_s, M, na)),
 			fmt_num(maps:get(serialization_bytes, M, na)),
 			fmt_num(maps:get(scratch_hash_s, M, na)),
 			fmt_num(maps:get(footprint_hash_mb, M, na)),
-			fmt_num(maps:get(inserts_2k_s, M, na)),
-			fmt_num(maps:get(recompute_2k_s, M, na)),
+			fmt_num(maps:get(inserts_batch_s, M, na)),
+			fmt_num(maps:get(recompute_batch_s, M, na)),
 			fmt_num(maps:get(insert_1_s, M, na)),
 			fmt_num(maps:get(recompute_1_s, M, na))],
 	[lists:join(",", Cols), "\n"].
