@@ -967,6 +967,16 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 				headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
 				body => ar_serialize:jsonify({UnsignedTXProps})
 			}),
+		%% A malformed JSON body must be rejected with 400 instead of crashing
+		%% the handler.
+		{ok, {{<<"400">>, _}, _, <<"Invalid JSON.">>, _, _}} =
+			ar_http:req(#{
+				method => post,
+				peer => ar_test_node:peer_ip(main),
+				path => "/unsigned_tx",
+				headers => [{<<"X-Internal-Api-Secret">>, <<"correct_secret">>}],
+				body => <<"{not valid json">>
+			}),
 		ok = arweave_config:force_config(#{[internal_api_secret] => not_set}),
 		{Res} = ar_serialize:dejsonify(Body),
 		TXID = proplists:get_value(<<"id">>, Res),

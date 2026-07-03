@@ -803,46 +803,51 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
 		pass ->
 			case read_complete_body(Req, Pid) of
 				{ok, Body, Req2} ->
-					{UnsignedTXProps} = ar_serialize:dejsonify(Body),
-					WalletAccessCode =
-						proplists:get_value(<<"wallet_access_code">>, UnsignedTXProps),
-					%% ar_serialize:json_struct_to_tx/1 requires all properties to be there,
-					%% so we're adding id, owner and signature with bogus values. These
-					%% will later be overwritten in ar_tx:sign/2
-					FullTxProps = lists:append(
-						proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
-						[
-							{<<"id">>, ar_util:encode(crypto:strong_rand_bytes(32))},
-							{<<"owner">>, ar_util:encode(<<"owner placeholder">>)},
-							{<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
-						]
-					),
-					KeyPair = ar_wallet:load_keyfile(
-							ar_wallet:wallet_filepath(WalletAccessCode)),
-					UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
-					Data = UnsignedTX#tx.data,
-					DataSize = byte_size(Data),
-					DataRoot = case DataSize > 0 of
-						true ->
-							TreeTX = ar_tx:generate_chunk_tree(#tx{ data = Data }),
-							TreeTX#tx.data_root;
-						false ->
-							<<>>
-					end,
-					Format2TX = UnsignedTX#tx{
-						format = 2,
-						data_size = DataSize,
-						data_root = DataRoot
-					},
-					SignedTX = ar_tx:sign(Format2TX, KeyPair),
-					Peer = ar_http_util:arweave_peer(Req),
-					Reply = ar_serialize:jsonify({[{<<"id">>,
-							ar_util:encode(SignedTX#tx.id)}]}),
-					case handle_post_tx(Req2, Peer, SignedTX) of
-						ok ->
-							{200, #{}, Reply, Req2};
-						{error_response, {Status, Headers, ErrBody}} ->
-							{Status, Headers, ErrBody, Req2}
+					case catch ar_serialize:dejsonify(Body) of
+						{UnsignedTXProps} ->
+							WalletAccessCode =
+								proplists:get_value(<<"wallet_access_code">>,
+										UnsignedTXProps),
+							%% ar_serialize:json_struct_to_tx/1 requires all properties to
+							%% be there, so we're adding id, owner and signature with bogus
+							%% values. These will later be overwritten in ar_tx:sign/2
+							FullTxProps = lists:append(
+								proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
+								[
+									{<<"id">>, ar_util:encode(crypto:strong_rand_bytes(32))},
+									{<<"owner">>, ar_util:encode(<<"owner placeholder">>)},
+									{<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
+								]
+							),
+							KeyPair = ar_wallet:load_keyfile(
+									ar_wallet:wallet_filepath(WalletAccessCode)),
+							UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
+							Data = UnsignedTX#tx.data,
+							DataSize = byte_size(Data),
+							DataRoot = case DataSize > 0 of
+								true ->
+									TreeTX = ar_tx:generate_chunk_tree(#tx{ data = Data }),
+									TreeTX#tx.data_root;
+								false ->
+									<<>>
+							end,
+							Format2TX = UnsignedTX#tx{
+								format = 2,
+								data_size = DataSize,
+								data_root = DataRoot
+							},
+							SignedTX = ar_tx:sign(Format2TX, KeyPair),
+							Peer = ar_http_util:arweave_peer(Req),
+							Reply = ar_serialize:jsonify({[{<<"id">>,
+									ar_util:encode(SignedTX#tx.id)}]}),
+							case handle_post_tx(Req2, Peer, SignedTX) of
+								ok ->
+									{200, #{}, Reply, Req2};
+								{error_response, {Status, Headers, ErrBody}} ->
+									{Status, Headers, ErrBody, Req2}
+							end;
+						_ ->
+							{400, #{}, <<"Invalid JSON.">>, Req2}
 					end;
 				{error, body_size_too_large} ->
 					{413, #{}, <<"Payload too large">>, Req};
