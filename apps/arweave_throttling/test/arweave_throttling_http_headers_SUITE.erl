@@ -22,6 +22,7 @@
 -export([all/0]).
 -export([
          parse_well_formed/1,
+         parse_well_formed_list/1,
          parse_case_insensitive_names/1,
          parse_accepts_map/1,
          parse_missing_header/1,
@@ -55,6 +56,7 @@ end_per_testcase(_TestCase, _Config) ->
 all() ->
     [
      parse_well_formed,
+     parse_well_formed_list,
      parse_case_insensitive_names,
      parse_accepts_map,
      parse_missing_header,
@@ -68,6 +70,17 @@ all() ->
 %% with the group id recovered from the policy comment.
 parse_well_formed(_Config) ->
     Headers = headers(<<"general">>, 200, 42, 7),
+    {ok, Parsed} = ?M:parse(Headers),
+    ?assertEqual(#{group_id => <<"general">>,
+                   total => 200,
+                   remaining => 42,
+                   reset_seconds => 7}, Parsed),
+    ok.
+
+parse_well_formed_list(_Config) ->
+    Headers = [{<<"RateLimit-Limit">>,limit_value(<<"general">>, 200)},
+               {<<"RateLimit-Remaining">>, integer_to_binary(42)},
+               {<<"RateLimit-Reset">>, integer_to_binary(7)}],
     {ok, Parsed} = ?M:parse(Headers),
     ?assertEqual(#{group_id => <<"general">>,
                    total => 200,

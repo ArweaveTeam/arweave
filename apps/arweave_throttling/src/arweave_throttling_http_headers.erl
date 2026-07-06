@@ -42,6 +42,8 @@
                  remaining := non_neg_integer(),
                  reset_seconds := non_neg_integer()}}
               | {error, term()}.
+parse(Headers) when is_list(Headers) ->
+    parse(maps:from_list(Headers));
 parse(Headers0) ->
     try
         Headers = lowercase_keys(Headers0),

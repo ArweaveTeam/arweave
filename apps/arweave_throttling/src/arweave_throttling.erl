@@ -133,8 +133,7 @@ is_throttled(Peer, Path) when is_tuple(Peer), is_list(Path) ->
 %% always take the value from the most recent update.
 -spec update_quota(tuple(), list(), map()) -> ok.
 update_quota(Peer, Path, Headers) when is_tuple(Peer),
-                                       is_list(Path),
-                                       is_map(Headers) ->
+                                       is_list(Path) ->
     case arweave_throttling_http_headers:parse(Headers) of
         {error, Reason} = E ->
             %% Log with unknown group, and return, there is nothing to update.
