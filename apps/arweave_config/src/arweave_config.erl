@@ -66,8 +66,7 @@
 %% Public API: webhooks, semaphores, features, limiter
 -export([
 	feature_enabled/1,
-	limiter_groups/0,
-	client_throttling_groups/0
+	limiter_groups/0
 ]).
 
 %% Public API: serialization / logging
@@ -237,14 +236,6 @@ feature_enabled(Flag) ->
 -spec limiter_groups() -> [atom()].
 limiter_groups() ->
 	arweave_config_options_limiter:group_ids().
-
-%% @doc Return the list of client throttling group IDs used by
-%% `arweave_limiter_sup` to build one supervisor branch per group.
-%% Per-field values for a given group are read via
-%% `arweave_config:get([limiter, GroupID, Field])'.
--spec client_throttling_groups() -> [atom()].
-client_throttling_groups() ->
-	arweave_config_options_client_throttling:group_ids().
 
 %% @doc Log the current configuration to `?LOG_INFO`.
 -spec log() -> ok.

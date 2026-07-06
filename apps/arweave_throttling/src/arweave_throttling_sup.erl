@@ -19,8 +19,8 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 all_info() ->
-    [{ID, arweave_throttling_group:info(ID)}  ||
-        ID <- arweave_config:client_throttling_groups()].
+    Children = supervisor:which_children(?MODULE),
+    [{worker_to_group(ID), arweave_throttling_group:info(worker_to_group(ID))}  || {ID, _Child, _Type, _Modules} <- Children].
 
 %% Supervisor callbacks
 init([]) ->
@@ -50,7 +50,8 @@ child_spec_for_group(GroupID) ->
 %% Only used in tests
 -ifdef(AR_TEST).
 reset_all() ->
-    [{ID, arweave_throttling_group:reset(ID)}  || ID <- arweave_config:client_throttling_groups()].
+    Children = supervisor:which_children(?MODULE),
+    [{worker_to_group(ID), arweave_throttling_group:reset(worker_to_group(ID))}  || {ID, _Child, _Type, _Modules} <- Children].
 
 all_off() ->
     Children = supervisor:which_children(?MODULE),
@@ -60,3 +61,7 @@ all_on() ->
     Children = supervisor:which_children(?MODULE),
     [{ID, arweave_throttling_group:turn_on(ID)}  || {ID, _Child, _Type, _Modules} <- Children].
 -endif.
+
+worker_to_group(WorkerRef) ->
+    Prefix = "arweave_throttling_group_",
+    list_to_atom(string:prefix(atom_to_list(WorkerRef), Prefix)).

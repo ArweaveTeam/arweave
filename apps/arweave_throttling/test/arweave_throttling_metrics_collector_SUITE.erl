@@ -55,8 +55,6 @@ end_per_suite(_Config) -> ok.
 init_per_testcase(_TestCase, Config) ->
     AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
 
-    application:ensure_all_started(arweave_config),
-
     ct:pal(info, 1, "start arweave_throttling"),
     ok = arweave_throttling:start(),
 
@@ -71,6 +69,8 @@ init_per_testcase(_TestCase, Config) ->
               wallet_list],
 
     ok = lists:foreach(fun arweave_throttling_sup:start_throttling_group/1, Groups),
+   
+    timer:sleep(1000),
 
     [{apps_before,AppsBefore},
      {config, Config}].

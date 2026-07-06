@@ -13,8 +13,7 @@
                   prometheus_cowboy,
                   prometheus_process_collector,
                   prometheus_httpd,
-                  runtime_tools,
-                  arweave_config
+                  runtime_tools
                  ]},
   {modules, [
              arweave_throttling,

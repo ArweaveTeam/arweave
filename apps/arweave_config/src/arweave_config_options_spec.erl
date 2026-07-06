@@ -36,7 +36,6 @@ option_modules() ->
 		arweave_config_options_packing,
 		arweave_config_options_semaphores,
 		arweave_config_options_limiter,
-		arweave_config_options_client_throttling,
 		arweave_config_options_disk_pool,
 		arweave_config_options_network,
 		arweave_config_options_pool,

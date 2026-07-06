@@ -308,17 +308,3 @@ limiter:
   local_peers: *limiter_full
   test_limiter: *limiter_full
   test_limiter_2: *limiter_full
-client_throttling:
-  chunk: &client_throttling_full
-    id: chunk
-    initial_remaining: 500
-    max_queue_length: 7000
-    concurrency_window_ms: 60000
-  data_sync_record: *client_throttling_full
-  recent_hash_list_diff: *client_throttling_full
-  block_index: *client_throttling_full
-  wallet_list: *client_throttling_full
-  get_vdf: *client_throttling_full
-  get_vdf_session: *client_throttling_full
-  get_previous_vdf_session: *client_throttling_full
-  general: *client_throttling_full

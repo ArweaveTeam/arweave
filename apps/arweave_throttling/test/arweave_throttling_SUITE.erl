@@ -56,8 +56,6 @@ end_per_suite(_Config) -> ok.
 init_per_testcase(_TestCase, Config) ->
     AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
 
-    application:ensure_all_started(arweave_config),
-
     ok = arweave_throttling:start(),
 
     [{apps_before,AppsBefore},
