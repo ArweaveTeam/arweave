@@ -118,12 +118,13 @@
 %%       be tweaked later.
 -define(IS_THROTTLED_THRESHOLD, 0.8).
 
+-define(DEFAULT_INITIAL_REMAINING, infinity).
+-define(MAX_QUEUE_LENGTH, 100).
+-define(CONCURRENCY_WINDOW_MS, 80).
+
 %% @doc Start a group process.
 -spec start_link(map()) -> {ok, pid()} | {error, term()}.
-start_link(#{id := ID,
-             initial_remaining := _,
-             max_queue_length := _,
-             concurrency_window_ms := _} = Spec) ->
+start_link(#{id := ID} = Spec) ->
     gen_server:start_link({local, registered_name(ID)}, ?MODULE, Spec, []).
 
 registered_name(ID) when is_atom(ID) ->
@@ -280,33 +281,32 @@ stop(GroupID) ->
     gen_server:stop(registered_name(GroupID)).
 
 %% gen_server callbacks
-init(#{id := _ID,
-       initial_remaining := _,
-       max_queue_length := _,
-       concurrency_window_ms := _} = Spec) ->
+init(#{id := GroupID}) ->
     process_flag(trap_exit, true),
     {ok, #{
-        is_enabled => true,
-        spec => Spec,
-        peers => #{},
-        monitors => #{}
-    }}.
+           id => GroupID,
+           is_enabled => true,
+           peers => #{},
+           monitors => #{}
+          }}.
 
 handle_call({throttle, _Peer}, _From, #{is_enabled := false} = State) ->
     {reply, accepted, State};
-handle_call({throttle, Peer}, From, #{spec := Spec, peers := Peers} = State) ->
-    PS0 = get_or_init_peer(Peer, Peers, Spec),
-    case PS0#peer_state.remaining > 0 of
-        true ->
+handle_call({throttle, Peer}, From, #{peers := Peers} = State) ->
+    PS0 = get_or_init_peer(Peer, Peers),
+    case PS0#peer_state.remaining of
+        infinity ->
+            {reply, accepted, State};
+        Remaining when is_integer(Remaining) andalso Remaining > 0 ->
             PS1 = PS0#peer_state{
                 remaining = PS0#peer_state.remaining - 1
             },
             {reply, accepted, State#{peers := Peers#{Peer => PS1}}};
-        false ->
+        _ ->
             enqueue_caller(Peer, From, PS0, State)
     end;
-handle_call({is_throttled, Peer}, _From, #{spec := Spec, peers := Peers} = State) ->
-    PS0 = get_or_init_peer(Peer, Peers, Spec),
+handle_call({is_throttled, Peer}, _From, #{peers := Peers} = State) ->
+    PS0 = get_or_init_peer(Peer, Peers),
     IsThrottled = PS0#peer_state.remaining / PS0#peer_state.total > ?IS_THROTTLED_THRESHOLD,
     {reply, {ok, IsThrottled}, State};
 handle_call(get_info, _From, #{peers := Peers} = State) ->
@@ -317,14 +317,14 @@ handle_call(get_info, _From, #{peers := Peers} = State) ->
     Reply = #{peers => map_size(Peers),
               queued => NumOfRequestsQueued},
     {reply, Reply, State};
-handle_call({status, Peer}, _From, #{spec := Spec, peers := Peers} = State) ->
+handle_call({status, Peer}, _From, #{peers := Peers} = State) ->
     Reply = case maps:find(Peer, Peers) of
                 {ok, PS} ->
                     {ok, peer_state_to_map(PS)};
                 error ->
                     {ok, #{
-                        total          => maps:get(initial_remaining, Spec),
-                        remaining      => maps:get(initial_remaining, Spec),
+                        total          => ?DEFAULT_INITIAL_REMAINING,
+                        remaining      => ?DEFAULT_INITIAL_REMAINING,
                         reset_seconds  => 0,
                         queue_length   => 0,
                         last_update_ts => undefined
@@ -350,22 +350,24 @@ handle_call(Msg, From, State) ->
     {reply, {error, unsupported}, State}.
 
 handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
-            #{spec := #{initial_remaining := InitialRemaining,
-                        concurrency_window_ms := Window} = Spec,
-              peers := Peers, monitors := Monitors} = State) ->
-    PS0 = get_or_init_peer(Peer, Peers, Spec),
+            #{peers := Peers, monitors := Monitors} = State) ->
+    PS0 = get_or_init_peer(Peer, Peers),
 
-    NewTotal = case Total =/= InitialRemaining of
-                   true  -> Total;
-                   false -> PS0#peer_state.total
-               end,
-
-    UpdatedRemaining = merge_remaining(PS0#peer_state.remaining,
-                                       PS0#peer_state.last_update_ts,
-                                       NewRemaining, ReceivedAt, Window),
+    UpdatedRemaining =
+        %% If total changed update remaining as well.
+        case Total =/= PS0#peer_state.total of
+            true ->
+                NewRemaining;
+            false ->
+                merge_remaining(PS0#peer_state.remaining,
+                                PS0#peer_state.last_update_ts,
+                                NewRemaining,
+                                ReceivedAt,
+                                ?CONCURRENCY_WINDOW_MS)
+        end,
 
     PS1 = PS0#peer_state{
-        total = NewTotal,
+        total = Total,
         remaining = UpdatedRemaining,
         reset_seconds = ResetSeconds,
         last_update_ts = ReceivedAt
@@ -438,9 +440,8 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% Internals
-enqueue_caller(Peer, From, PS0, #{spec := Spec, peers := Peers, monitors := Monitors} = State) ->
-    MaxLen = maps:get(max_queue_length, Spec),
-    case queue:len(PS0#peer_state.waiters) >= MaxLen of
+enqueue_caller(Peer, From, PS0, #{peers := Peers, monitors := Monitors} = State) ->
+    case queue:len(PS0#peer_state.waiters) >= ?MAX_QUEUE_LENGTH of
         true ->
             {reply, {error, queue_full}, State};
         false ->
@@ -457,14 +458,13 @@ enqueue_caller(Peer, From, PS0, #{spec := Spec, peers := Peers, monitors := Moni
             }}
     end.
 
-get_or_init_peer(Peer, Peers, Spec) ->
+get_or_init_peer(Peer, Peers) ->
     case maps:find(Peer, Peers) of
         {ok, PS} -> PS;
         error ->
-            Initial = maps:get(initial_remaining, Spec),
             #peer_state{
-                total = Initial,
-                remaining = Initial,
+                total = ?DEFAULT_INITIAL_REMAINING,
+                remaining = ?DEFAULT_INITIAL_REMAINING,
                 reset_seconds = 0,
                 reset_timer = undefined,
                 waiters = queue:new(),

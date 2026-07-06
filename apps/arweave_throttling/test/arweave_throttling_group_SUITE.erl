@@ -8,6 +8,7 @@
 -export([all/0]).
 -export([
          start_stop/1,
+         initial_peer_state/1,
          independent_peer_state/1,
          pending_helper/1,
          update_before_first_throttle/1,
@@ -33,10 +34,7 @@ end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(_TestCase, Config) ->
-    Spec = #{id => general,
-             initial_remaining => 1,
-             max_queue_length => 4,
-             concurrency_window_ms => 50},
+    Spec = #{id => general},
 
     ok = meck:new([prometheus_counter, prometheus_histogram], [passthrough]),
     ok = meck:expect(prometheus_counter, inc, 2, ok),
@@ -71,7 +69,7 @@ start_stop(Config) ->
     ok.
 
 %% @doc State is maintained independently per peer.
-independent_peer_state(_Config) ->
+initial_peer_state(_Config) ->
     PeerA = {1, 1, 1, 1, 1984},
     PeerB = {2, 2, 2, 2, 1984},
 
@@ -79,15 +77,46 @@ independent_peer_state(_Config) ->
 
     {ok, SA} = ?M:status(general, PeerA),
     {ok, SB} = ?M:status(general, PeerB),
-    0 = maps:get(remaining, SA),
-    1 = maps:get(remaining, SB),
-    0 = maps:get(queue_length, SB),
+    ?assertEqual(infinity, maps:get(remaining, SA)),
+    ?assertEqual(infinity, maps:get(remaining, SB)),
+    ?assertEqual(0, maps:get(queue_length, SB)),
+    ok.
+
+%% @doc State is maintained independently per peer.
+independent_peer_state(_Config) ->
+    PeerA = {1, 1, 1, 1, 1984},
+    PeerB = {2, 2, 2, 2, 1984},
+
+    ok = ?M:update_quota(general, PeerA,
+                         #{id => general,
+                           total => 1,
+                           remaining => 1,
+                           reset_seconds => 0}),
+    ok = ?M:update_quota(general, PeerB,
+                         #{id => general,
+                           total => 10,
+                           remaining => 10,
+                           reset_seconds => 0}),
+
+
+    ok = ?M:throttle(general, PeerA),
+
+    {ok, SA} = ?M:status(general, PeerA),
+    {ok, SB} = ?M:status(general, PeerB),
+    ?assertEqual(0, maps:get(remaining, SA)),
+    ?assertEqual(10, maps:get(remaining, SB)),
+    ?assertEqual(0, maps:get(queue_length, SB)),
     ok.
 
 %% @doc The `pending/2' helper reports the queue length.
 pending_helper(_Config) ->
     Peer = {3, 3, 3, 3, 1984},
     Parent = self(),
+
+    ok = ?M:update_quota(general, Peer,
+                         #{total => 1,
+                           remaining => 1,
+                           reset_seconds => 0}),
 
     0 = ?M:pending(general, Peer),
 
@@ -101,8 +130,8 @@ pending_helper(_Config) ->
                     end),
 
     ok = ?M:update_quota(general, Peer,
-                         #{total => 10, remaining => 1, reset_seconds => 0}),
-    receive done -> ok after 1000 -> ct:fail(not_released) end,
+                         #{total => 10, remaining => 1, reset_seconds => 1}),
+    receive done -> ok after 10000 -> ct:fail(not_released) end,
     0 = ?M:pending(general, Peer),
     ok.
 

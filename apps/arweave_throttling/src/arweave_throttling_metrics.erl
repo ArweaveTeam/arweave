@@ -89,7 +89,7 @@ register() ->
            [{name, arweave_throttling_quota_update_error},
             {help, "The number of quota_update request that were rejected by "
                    "the throttling logic. e.g.: missing headers, incompatible headers"},
-            {labels, [group_id, reason]}
+            {labels, [group_id, reason, peer, pathkey]}
            ]),
 
     %% Practical use: To determine load profile: many peers, few request vs few peers

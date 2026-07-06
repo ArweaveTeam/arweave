@@ -77,10 +77,10 @@ parse_well_formed(_Config) ->
 
 %% @doc Header names are matched case-insensitively.
 parse_case_insensitive_names(_Config) ->
-    Headers = [{<<"RaTeLiMiT-LiMiT">>,
-                limit_value(<<"data_sync_record">>, 10)},
-               {<<"ratelimit-remaining">>, <<"3">>},
-               {<<"RATELIMIT-RESET">>, <<"1">>}],
+    Headers = #{<<"RaTeLiMiT-LiMiT">> =>
+                    limit_value(<<"data_sync_record">>, 10),
+                <<"ratelimit-remaining">> => <<"3">>,
+                <<"RATELIMIT-RESET">> =><<"1">>},
     {ok, Parsed} = ?M:parse(Headers),
     ?assertEqual(#{group_id => <<"data_sync_record">>,
                    total => 10,
@@ -90,7 +90,7 @@ parse_case_insensitive_names(_Config) ->
 
 %% @doc The headers may be supplied as a map as well as a proplist.
 parse_accepts_map(_Config) ->
-    Headers = maps:from_list(headers(<<"general">>, 100, 99, 0)),
+    Headers = headers(<<"general">>, 100, 99, 0),
     {ok, Parsed} = ?M:parse(Headers),
     ?assertMatch(#{group_id := <<"general">>,
                    total := 100,
@@ -100,8 +100,8 @@ parse_accepts_map(_Config) ->
 
 %% @doc A missing header is reported, not silently defaulted.
 parse_missing_header(_Config) ->
-    Headers = [{<<"ratelimit-limit">>, limit_value(<<"general">>, 10)},
-               {<<"ratelimit-reset">>, <<"1">>}],
+    Headers = #{<<"ratelimit-limit">> => limit_value(<<"general">>, 10),
+                <<"ratelimit-reset">> => <<"1">>},
     ?assertEqual({error, {missing_header, <<"ratelimit-remaining">>}},
                  ?M:parse(Headers)),
     ok.
@@ -109,9 +109,9 @@ parse_missing_header(_Config) ->
 %% @doc A RateLimit-Limit value without a parseable policy comment is
 %% rejected as malformed.
 parse_malformed_limit(_Config) ->
-    Headers = [{<<"ratelimit-limit">>, <<"not a valid limit">>},
-               {<<"ratelimit-remaining">>, <<"3">>},
-               {<<"ratelimit-reset">>, <<"1">>}],
+    Headers = #{<<"ratelimit-limit">> => <<"not a valid limit">>,
+                <<"ratelimit-remaining">> => <<"3">>,
+                <<"ratelimit-reset">> => <<"1">>},
     ?assertEqual({error, malformed_headers}, ?M:parse(Headers)),
     ok.
 
@@ -137,12 +137,10 @@ update_rejects_group_mismatch(_Config) ->
     ok.
 
 old_headers(_Config) ->
-    Headers = [
-               {<<"access-control-allow-origin">>,<<"*">>},
-               {<<"content-length">>,<<"212">>},
-               {<<"date">>,<<"Thu, 28 May 2026 16:08:50 GMT">>},
-               {<<"server">>,<<"Cowboy">>}
-              ],
+    Headers = #{<<"access-control-allow-origin">> => <<"*">>,
+                <<"content-length">> => <<"212">>,
+                <<"date">> => <<"Thu, 28 May 2026 16:08:50 GMT">>,
+                <<"server">> => <<"Cowboy">>},
     ?assertEqual({error,{missing_header,<<"ratelimit-limit">>}},
                  ?M:quota_from_headers(?GROUP, Headers)),
 
@@ -153,9 +151,9 @@ old_headers(_Config) ->
 %% Build the full RateLimit-* header proplist exactly as
 %% arweave_limiter_http_headers would emit it.
 headers(GroupBin, Total, Remaining, Reset) ->
-    [{<<"RateLimit-Limit">>, limit_value(GroupBin, Total)},
-     {<<"RateLimit-Remaining">>, integer_to_binary(Remaining)},
-     {<<"RateLimit-Reset">>, integer_to_binary(Reset)}].
+    #{<<"RateLimit-Limit">> => limit_value(GroupBin, Total),
+      <<"RateLimit-Remaining">> => integer_to_binary(Remaining),
+      <<"RateLimit-Reset">> => integer_to_binary(Reset)}.
 
 %% RateLimit-Limit value: the expiring-limit followed by the three
 %% quota-policy comments, each tagged with the group id.

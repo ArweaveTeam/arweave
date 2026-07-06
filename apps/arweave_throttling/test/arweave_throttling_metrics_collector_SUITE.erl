@@ -35,6 +35,14 @@
 -define(GROUP, general).
 -define(PATH, "some/path/that/lead/to/general").
 
+-define(POLICIES, #{id => atom_to_list(?GROUP),
+                    concurrency => #{limit => 500},
+                    sliding_window => #{limit => 0,
+                                        window_seconds => 1},
+                    leaky_bucket   => #{burst => 450,
+                                        tick_ms => 30000,
+                                        tick_reduction => 450}}).
+
 suite() -> [{userdata, [description()]}, {timetrap, {seconds, 30}}].
 
 description() ->
@@ -49,13 +57,20 @@ init_per_testcase(_TestCase, Config) ->
 
     application:ensure_all_started(arweave_config),
 
-    apply_overrides(general, #{id => general,
-                               initial_remaining => 300,
-                               max_queue_length => 10000,
-                               concurrency_window_ms => 50}),
-
     ct:pal(info, 1, "start arweave_throttling"),
     ok = arweave_throttling:start(),
+
+    Groups = [block_index,
+              chunk,
+              data_sync_record,
+              general,
+              get_previous_vdf_session,
+              get_vdf,
+              get_vdf_session,
+              recent_hash_list_diff,
+              wallet_list],
+
+    ok = lists:foreach(fun arweave_throttling_sup:start_throttling_group/1, Groups),
 
     [{apps_before,AppsBefore},
      {config, Config}].
@@ -74,14 +89,6 @@ end_per_testcase(_TestCase, Config) ->
     AppsStartedForTest = AppsNow -- AppsBefore,
     lists:foreach(fun application:stop/1, AppsStartedForTest),
     ok.
-
-apply_overrides(GroupID, Overrides) ->
-    maps:fold(
-        fun(Field, Value, ok) ->
-            ok = arweave_config:set(
-                   [client_throttling, GroupID, Field], Value),
-            ok
-        end, ok, Overrides).
 
 all() ->
     [
@@ -121,6 +128,22 @@ no_peers_reported(_Config) ->
 %% collector reports exactly one peer for the group.
 one_peer_reported(_Config) ->
     Peer = {127, 0, 0, 1, 1984},
+    Headers = arweave_limiter_http_headers:to_http_headers(
+                {register, leaky,
+                 #{expiring_limit => 450,
+                   remaining      => 450, %% This isn't really lifelike here
+                   reset_seconds  => 0,
+                   policies => ?POLICIES}
+                }),
+    ct:pal("path (~p) maps to: ~p group (pathkey: ~p)", [?PATH,
+                                                         arweave_throttling_path:path_to_group_id(Peer, ?PATH),
+                                                         arweave_throttling_path:path_to_path_key(?PATH)]),
+
+    ok = arweave_throttling:update_quota(Peer, ?PATH, Headers),
+    timer:sleep(100),
+    ct:pal("path (~p) maps to: ~p group - after (pathkey:~p)", [?PATH,
+                                                   arweave_throttling_path:path_to_group_id(Peer, ?PATH),
+                                                   arweave_throttling_path:path_to_path_key(?PATH)]),
     _ = spawn(fun() ->
                       arweave_throttling:throttle(Peer, ?PATH)
               end),
@@ -154,9 +177,19 @@ one_peer_reported(_Config) ->
 %% caller stays parked on `{request_ready, _}' until
 %% `end_per_testcase' resets the group.
 two_hundred_peers_reported(_Config) ->
+    Headers = arweave_limiter_http_headers:to_http_headers(
+                {register, leaky,
+                 #{expiring_limit => 450,
+                   remaining      => 450, %% This isn't really valid here
+                   reset_seconds  => 0,
+                   policies => ?POLICIES}
+                }),
     Peers = [{10, 0, X div 256, X rem 256, 1984}
              || X <- lists:seq(1, 200)],
-    [spawn(fun() -> arweave_throttling:throttle(P, ?PATH) end)
+    [spawn(fun() ->
+                   arweave_throttling:update_quota(P, ?PATH, Headers),
+                   arweave_throttling:throttle(P, ?PATH)
+           end)
      || P <- Peers],
     ok = wait_peer_count(?GROUP, 200),
     [{arweave_throttling_peers, gauge, _Help, MetricsListP},
@@ -187,7 +220,7 @@ wait_peer_count(GroupId, N) ->
     wait_until(fun() ->
                        case arweave_throttling_group:info(GroupId) of
                            #{peers := N} -> true;
-                           _ -> false
+                           #{peers := _M} -> false
                        end
                end, 200).
 

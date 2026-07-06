@@ -3,7 +3,7 @@
 %%% arweave_limiter_group:register_or_reject_call/2) into RateLimit-* HTTP
 %%% response headers per draft-polli-ratelimit-headers-02.
 %%%
-%%% The "expiring-limit" — the first value of RateLimit-Limit — tracksSw
+%%% The "expiring-limit" — the first value of RateLimit-Limit — tracks
 %%% whichever policy is closest to its limit, switching between the
 %%% sliding window and the leaky bucket as the request flow progresses.
 %%%

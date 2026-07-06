@@ -42,8 +42,9 @@
                  remaining := non_neg_integer(),
                  reset_seconds := non_neg_integer()}}
               | {error, term()}.
-parse(Headers) ->
+parse(Headers0) ->
     try
+        Headers = lowercase_keys(Headers0),
         Limit = fetch(<<"ratelimit-limit">>, Headers),
         Remaining = fetch(<<"ratelimit-remaining">>, Headers),
         Reset = fetch(<<"ratelimit-reset">>, Headers),
@@ -55,7 +56,7 @@ parse(Headers) ->
     catch
         throw:{missing_header, _} = Reason ->
             {error, Reason};
-        _:_ ->
+        _E:_R ->
             {error, malformed_headers}
     end.
 
@@ -106,20 +107,17 @@ parse_group_id(Limit) ->
 to_integer(Bin) ->
     binary_to_integer(string:trim(to_bin(Bin))).
 
-fetch(Key, Headers) ->
-    case lookup(Key, Headers) of
-        {ok, Value} -> Value;
-        error -> throw({missing_header, Key})
-    end.
+lowercase_keys(Headers) ->
+    maps:fold(fun(K, V, AccIn) ->
+                      AccIn#{string:lowercase(K) => V}
+              end, #{}, Headers).
 
-lookup(Key, Headers) when is_map(Headers) ->
-    lookup(Key, maps:to_list(Headers));
-lookup(_Key, []) ->
-    error;
-lookup(Key, [{Name, Value} | Rest]) ->
-    case string:lowercase(to_bin(Name)) =:= Key of
-        true -> {ok, to_bin(Value)};
-        false -> lookup(Key, Rest)
+fetch(Key, Headers) ->
+    case maps:get(Key, Headers, badkey) of
+        badkey ->
+            throw({missing_header, Key});
+        Value ->
+            to_bin(Value)
     end.
 
 to_bin(B) when is_binary(B) -> B;
