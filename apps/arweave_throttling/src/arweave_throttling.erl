@@ -233,7 +233,6 @@ log_update_error(GroupID, Reason, Peer, Path) ->
     prometheus_counter:inc(arweave_throttling_quota_update_error,
                            [atom_to_list(GroupID),
                             ReasonStr,
-                            io_lib:format("~p", [Peer]),
                             io_lib:format("~p", [PathKey])
                            ]),
     ok.

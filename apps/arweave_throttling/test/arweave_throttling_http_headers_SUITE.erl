@@ -23,6 +23,8 @@
 -export([
          parse_well_formed/1,
          parse_well_formed_list/1,
+         parse_alpha2_version/1,
+         parse_malformed_policies/1,
          parse_case_insensitive_names/1,
          parse_accepts_map/1,
          parse_missing_header/1,
@@ -57,6 +59,8 @@ all() ->
     [
      parse_well_formed,
      parse_well_formed_list,
+     parse_alpha2_version,
+     parse_malformed_policies,
      parse_case_insensitive_names,
      parse_accepts_map,
      parse_missing_header,
@@ -81,13 +85,37 @@ parse_well_formed_list(_Config) ->
     Headers = [{<<"RateLimit-Limit">>,limit_value(<<"general">>, 200)},
                {<<"RateLimit-Remaining">>, integer_to_binary(42)},
                {<<"RateLimit-Reset">>, integer_to_binary(7)}],
-    {ok, Parsed} = ?M:parse(Headers),
-    ?assertEqual(#{group_id => <<"general">>,
-                   total => 200,
-                   remaining => 42,
-                   reset_seconds => 7}, Parsed),
+    ?assertEqual({ok, #{group_id => <<"general">>,
+                        total => 200,
+                        remaining => 42,
+                        reset_seconds => 7}}, ?M:parse(Headers)),
     ok.
 
+parse_alpha2_version(_Config) ->
+    Headers = [{<<"RateLimit-Limit">>,
+                <<"450, 0;w=1000;policy=\"sliding window\", 450;w=1000;burst=450;policy=\"leaky bucket\" 150;w=1;policy=\"concurrency\"">>},
+               {<<"RateLimit-Remaining">>, <<"449">>},
+               {<<"RateLimit-Reset">>, <<"19">>}],
+    ?assertEqual({error, missing_group_id},
+                 ?M:parse(Headers)),
+    ok.
+
+parse_malformed_policies(_Config) ->
+    Headers1 = [{<<"RateLimit-Limit">>,
+                <<"450, 0;w=1000;policy=\"\", 450;w=1000;burst=450;policy=\"leaky bucket\" 150;w=1;policy=\"concurrency\"">>},
+               {<<"RateLimit-Remaining">>, <<"449">>},
+               {<<"RateLimit-Reset">>, <<"19">>}],
+    ?assertEqual({error, malformed_policy},
+                 ?M:parse(Headers1)),
+    Headers2 = [{<<"RateLimit-Limit">>,
+                <<"450, 0;w=1000;policy=\"something else\", 450;w=1000;burst=450;policy=\"leaky bucket\" 150;w=1;policy=\"concurrency\"">>},
+               {<<"RateLimit-Remaining">>, <<"449">>},
+               {<<"RateLimit-Reset">>, <<"19">>}],
+    ?assertEqual({error, malformed_policy},
+                 ?M:parse(Headers2)),
+    ok.
+
+    
 %% @doc Header names are matched case-insensitively.
 parse_case_insensitive_names(_Config) ->
     Headers = #{<<"RaTeLiMiT-LiMiT">> =>

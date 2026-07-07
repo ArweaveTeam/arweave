@@ -119,7 +119,7 @@
 -define(IS_THROTTLED_THRESHOLD, 0.8).
 
 -define(DEFAULT_INITIAL_REMAINING, infinity).
--define(MAX_QUEUE_LENGTH, 100).
+-define(MAX_QUEUE_LENGTH, 5000).
 -define(CONCURRENCY_WINDOW_MS, 80).
 
 %% @doc Start a group process.
@@ -318,18 +318,8 @@ handle_call(get_info, _From, #{peers := Peers} = State) ->
               queued => NumOfRequestsQueued},
     {reply, Reply, State};
 handle_call({status, Peer}, _From, #{peers := Peers} = State) ->
-    Reply = case maps:find(Peer, Peers) of
-                {ok, PS} ->
-                    {ok, peer_state_to_map(PS)};
-                error ->
-                    {ok, #{
-                        total          => ?DEFAULT_INITIAL_REMAINING,
-                        remaining      => ?DEFAULT_INITIAL_REMAINING,
-                        reset_seconds  => 0,
-                        queue_length   => 0,
-                        last_update_ts => undefined
-                    }}
-            end,
+    PS = get_or_init_peer(Peer, Peers),
+    Reply = {ok, peer_state_to_map(PS)},
     {reply, Reply, State};
 handle_call(reset, _From, #{peers := Peers, monitors := Monitors} = State) ->
     maps:fold(fun(_Peer, PS, _) ->

@@ -269,12 +269,11 @@ queue_full_returns_error(_Config) ->
                                         Reply = arweave_throttling:throttle(?PEER1, ?PATH_DATA_SYNC),
                                         Parent ! {n, N, Reply}
                                 end)
-                  end, lists:seq(1, 103)), %% remaining quota (2) + max_queue_length (100) + 1
+                  end, lists:seq(1, 5003)), %% remaining quota (2) + max_queue_length (5000) + 1
 
     ok = wait_status(?GROUPID_DATA_SYNC, ?PEER1,
                      fun(S) ->
-                             ct:pal(">> poll status: ~p~n", [S]),
-                             maps:get(queue_length, S) =:= 0
+                             maps:get(queue_length, S) =:= 5000
                      end),
 
     {error, queue_full} =

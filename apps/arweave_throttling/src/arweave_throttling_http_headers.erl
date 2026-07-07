@@ -58,6 +58,10 @@ parse(Headers0) ->
     catch
         throw:{missing_header, _} = Reason ->
             {error, Reason};
+        throw:missing_group_id = Reason ->
+            {error, Reason};
+        throw:malformed_policy = Reason ->
+            {error, Reason};
         _E:_R ->
             {error, malformed_headers}
     end.
@@ -103,8 +107,32 @@ parse_limit(Limit) ->
 parse_group_id(Limit) ->
     [_, AfterPolicy] = binary:split(Limit, <<"policy=\"">>),
     [Comment | _] = binary:split(AfterPolicy, <<"\"">>),
-    [GroupId | _] = binary:split(Comment, <<" ">>),
-    GroupId.
+    case strip_policy_type(string:trim(Comment)) of 
+        <<"">> ->
+            throw(missing_group_id);
+        GroupID ->
+            GroupID
+    end.                
+
+strip_policy_type(Comment) ->
+    case lists:search(fun(Type) -> is_suffix(Type, Comment) end, policy_types()) of
+        {value, Type} ->
+            Prefix = binary:part(Comment, 0, byte_size(Comment) - byte_size(Type)),
+            string:trim(Prefix);
+        false ->
+            %% Unrecognised comment shape — return it verbatim rather
+            %% than guessing, so a mismatch surfaces to the caller.
+            throw(malformed_policy)
+    end.
+
+policy_types() ->
+    [<<"sliding window">>, <<"leaky bucket">>, <<"concurrency">>].
+
+is_suffix(Suffix, Bin) ->
+    SuffixSize = byte_size(Suffix),
+    BinSize = byte_size(Bin),
+    BinSize >= SuffixSize
+        andalso binary:part(Bin, BinSize - SuffixSize, SuffixSize) =:= Suffix.
 
 to_integer(Bin) ->
     binary_to_integer(string:trim(to_bin(Bin))).

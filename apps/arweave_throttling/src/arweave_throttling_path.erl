@@ -33,13 +33,12 @@ split_path(Path) ->
 %% @doc Remove variable parameters from paths.
 %% Some paths need to have their keys processed to no produce 100s or 1000s
 %% of ETS entries.
-%% We make decisions on
+%% Note: After a few tests, and looking at the endpoints the server (ar_http_iface_server)
+%%       provides, the best seems to be just taking the first element from the list usually,
+%%       and handle the exceptions (where we skip or likely have different limiting groups depending
+%%       on a component after variables).
+%%       We also have to keep an eye on the case where the path starts with a hash.
 split_path_to_path_key(["tx"|_]) -> {error, skip};
-split_path_to_path_key(["chunk" | _] ) -> ["chunk"];
-split_path_to_path_key(["chunk2" | _]) -> ["chunk"];
-split_path_to_path_key(["data_sync_record" | _]) -> ["data_sync_record"];
-split_path_to_path_key(["recent_hash_list_diff" | _]) -> ["recent_hash_list_diff"];
 split_path_to_path_key(["block", _Type, _ID, "hash_list"]) -> ["block", "hash_list"];
 split_path_to_path_key(["block", _Type, _ID, "wallet_list"]) -> ["block", "wallet_list"];
-split_path_to_path_key(["metrics" | _ ])-> ["metrics"];
-split_path_to_path_key(Other) -> Other. %% TODO: we have to make sure these won't have variables
+split_path_to_path_key([First | _])-> [First].
