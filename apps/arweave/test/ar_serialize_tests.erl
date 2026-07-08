@@ -7,6 +7,9 @@
 -include_lib("arweave/include/ar_pool.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%% The maximum allowed number of digits in an encoded integer inside JSON.
+-define(INTEGER_LIMIT, 155).
+
 block_to_binary_test_() ->
 	%% Set the mainnet values here because we are using the mainnet fixtures.
 	ar_test_node:test_with_all_nodes_mocked([
@@ -213,6 +216,38 @@ tx_roundtrip_test() ->
 		TX,
 		ar_serialize:json_struct_to_tx(JsonTX)
 	).
+
+oversized_json_integer_rejected_test() ->
+	TXBase = ar_tx:new(<<"test">>),
+	TX = TXBase#tx{
+			format = 2,
+			tags = [{<<"Name1">>, <<"Value1">>}],
+			data_root = << 0:256 >>,
+			signature_type = ?DEFAULT_KEY_TYPE,
+			owner_address = ar_wallet:to_address(TXBase#tx.owner, ?DEFAULT_KEY_TYPE) },
+	{Props} = ar_serialize:dejsonify(
+			ar_serialize:jsonify(ar_serialize:tx_to_json_struct(TX))),
+	WithField = fun(Field, Digits) ->
+		Value = binary:copy(<<$9>>, Digits),
+		?assertEqual(Digits, byte_size(Value)),
+		{lists:keyreplace(Field, 1, Props, {Field, Value})}
+	end,
+	lists:foreach(
+		fun(Field) ->
+			?assertMatch(#tx{},
+					ar_serialize:json_struct_to_tx(WithField(Field, ?INTEGER_LIMIT))),
+			?assertError(function_clause,
+					ar_serialize:json_struct_to_tx(WithField(Field, ?INTEGER_LIMIT + 1)))
+		end,
+		[<<"quantity">>, <<"reward">>]
+	).
+
+diff_pair_infinity_and_oversized_integer_test() ->
+	Jobs = fun(DiffBin) ->
+		ar_serialize:json_struct_to_jobs({[{<<"partial_diff">>, [DiffBin, DiffBin]}]})
+	end,
+	?assertMatch(#jobs{ partial_diff = {infinity, infinity} }, Jobs(<<"infinity">>)),
+	?assertError(function_clause, Jobs(binary:copy(<<$9>>, ?INTEGER_LIMIT + 1))).
 
 wallet_list_roundtrip_test_() ->
 	{timeout, 30, fun test_wallet_list_roundtrip/0}.
