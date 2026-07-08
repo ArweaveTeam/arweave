@@ -1798,7 +1798,7 @@ case "$1" in
 	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
 	    -config "$RELX_CONFIG_PATH" \
 	    -args_file "$VMARGS_PATH" \
-	    -- ${ARWEAVE_OPTS} ${ARGS}
+	    -- ${ARWEAVE_OPTS} -extra ${ARGS}
 	echo "Root: $ROOTDIR"
 
 	# Log the startup
@@ -1830,7 +1830,7 @@ case "$1" in
 	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
 	    -config "$RELX_CONFIG_PATH" \
 	    -args_file "$VMARGS_PATH" \
-	    -- ${ARWEAVE_OPTS} ${ARGS}
+	    -- ${ARWEAVE_OPTS} -extra ${ARGS}
 	# exec will replace the current image and nothing else gets
 	# executed from this point on, this explains the absence
 	# of the pre start hook

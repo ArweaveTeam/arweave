@@ -17,7 +17,6 @@
 	create_wallet/1,
 	docs/0,
 	main/0,
-	main/1,
 	prep_stop/1,
 	shell/0,
 	shell_e2e/0,
@@ -50,15 +49,11 @@
 % time_syncing (true)
 
 %%--------------------------------------------------------------------
-%% @doc Command line program entrypoint. Takes a list of arguments.
+%% @doc Command line program entrypoint.
 %% @end
 %%--------------------------------------------------------------------
-%% No CLI args — boot purely from `AR_*' env vars (and the config
-%% file if one is configured).
 main() ->
-	main([]).
-
-main(Args) ->
+	Args = init:get_plain_arguments(),
 	% arweave_config must be the first application started, it
 	% will keep the configuration for all other arweave
 	% applications or processes.
@@ -71,6 +66,7 @@ main(Args) ->
 		ok ->
 			start_dependencies();
 		Else ->
+			io:format("ERROR: couldn't read configuration file: ~p~n", [Else]),
 			arweave_config:show_cli_help(),
 			init:stop(1),
 			{error, Else}
@@ -188,13 +184,18 @@ verify_mining_keyfile(Addr) ->
 			ok
 	end.
 
+create_wallet() ->
+	Args = init:get_plain_arguments(),
+	create_wallet(Args).
+
 create_wallet([DataDir]) ->
 	create_wallet(DataDir, ?RSA_KEY_TYPE);
 create_wallet(_) ->
 	create_wallet_fail(?RSA_KEY_TYPE).
 
 create_ecdsa_wallet() ->
-	create_wallet_fail(?ECDSA_KEY_TYPE).
+	Args = init:get_plain_arguments(),	
+	create_ecdsa_wallet(Args).
 
 create_ecdsa_wallet([DataDir]) ->
 	create_wallet(DataDir, ?ECDSA_KEY_TYPE);
@@ -220,9 +221,6 @@ create_wallet(DataDir, KeyType) ->
 			end
 	end.
 
-create_wallet() ->
-	create_wallet_fail(?RSA_KEY_TYPE).
-
 create_wallet_fail(?RSA_KEY_TYPE) ->
 	io:format("Usage: ./bin/create-wallet [data_dir]~n"),
 	init:stop(1);
@@ -231,19 +229,25 @@ create_wallet_fail(?ECDSA_KEY_TYPE) ->
 	init:stop(1).
 
 benchmark_vdf() ->
-	benchmark_vdf([]).
+	Args = init:get_plain_arguments(),
+	benchmark_vdf(Args).
+
 benchmark_vdf(Args) ->
 	ar_bench_vdf:run_benchmark_from_cli(Args),
 	init:stop(1).
 
 benchmark_hash() ->
-	benchmark_hash([]).
+	Args = init:get_plain_arguments(),
+	benchmark_hash(Args).
+
 benchmark_hash(Args) ->
 	ar_bench_hash:run_benchmark_from_cli(Args),
 	init:stop(1).
 
 benchmark_packing() ->
-	benchmark_packing([]).
+	Args = init:get_plain_arguments(),
+	benchmark_packing(Args).
+
 benchmark_packing(Args) ->
 	ar_bench_packing:run_benchmark_from_cli(Args),
 	init:stop(1).

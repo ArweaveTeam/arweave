@@ -8,9 +8,28 @@ init_per_suite(Config) -> Config.
 
 end_per_suite(_Config) -> ok.
 
+init_per_testcase(TestCase, Config)
+	when TestCase == resolved_peers_list_expands_multi_record;
+		TestCase == resolved_peer_id_takes_first_record ->
+	meck:new(ar_util, [passthrough]),
+	meck:expect(ar_util, safe_parse_peer, fun(Peer) ->
+		case iolist_to_binary([Peer]) of
+			<<"multi:", PortBin/binary>> ->
+				Port = binary_to_integer(PortBin),
+				{ok, [{1, 1, 1, 1, Port}, {2, 2, 2, 2, Port}]};
+			_ ->
+				meck:passthrough([Peer])
+		end
+	end),
+	Config;
 init_per_testcase(_TestCase, Config) ->
 	Config.
 
+end_per_testcase(TestCase, _Config)
+	when TestCase == resolved_peers_list_expands_multi_record;
+		TestCase == resolved_peer_id_takes_first_record ->
+	meck:unload(ar_util),
+	ok;
 end_per_testcase(_TestCase, _Config) ->
 	ok.
 
@@ -33,7 +52,9 @@ all() ->
 		peer_id_ipv6_bracketed,
 		peer_id_default_port_collapses,
 		peer_id_distinct_ports_stay_distinct,
-		peer_id_invalid
+		peer_id_invalid,
+		resolved_peers_list_expands_multi_record,
+		resolved_peer_id_takes_first_record
 	].
 
 %%====================================================================
@@ -191,3 +212,13 @@ peer_id_invalid(_Config) ->
 	?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:99999">>)),
 	?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:-1">>)),
 	?assertMatch({error, _}, arweave_config_type:peer_id(123)).
+
+%% Eager list roles keep every address a hostname resolves to.
+resolved_peers_list_expands_multi_record(_Config) ->
+	?assertEqual({ok, [{1,1,1,1,1984}, {2,2,2,2,1984}]},
+		arweave_config_type:resolved_peers_list([<<"multi:1984">>])).
+
+%% The singleton (cm_exit) keeps the first resolved address.
+resolved_peer_id_takes_first_record(_Config) ->
+	?assertEqual({ok, {1,1,1,1,1984}},
+		arweave_config_type:resolved_peer_id(<<"multi:1984">>)).

@@ -12,10 +12,25 @@
 init_per_suite(Config) -> Config.
 end_per_suite(_Config) -> ok.
 
+init_per_testcase(hostname_peer_round_trip, Config) ->
+	ok = arweave_config:start(),
+	%% Resolve example.com deterministically so the eager-role test stays
+	%% hermetic (no DNS).
+	meck:new(ar_util, [passthrough]),
+	meck:expect(ar_util, safe_parse_peer, fun(Peer) ->
+		case iolist_to_binary([Peer]) of
+			<<"example.com:1984">> -> {ok, [{1, 2, 3, 4, 1984}]};
+			_ -> meck:passthrough([Peer])
+		end
+	end),
+	Config;
 init_per_testcase(_TestCase, Config) ->
 	ok = arweave_config:start(),
 	Config.
 
+end_per_testcase(hostname_peer_round_trip, _Config) ->
+	meck:unload(ar_util),
+	ok = arweave_config:stop();
 end_per_testcase(_TestCase, _Config) ->
 	ok = arweave_config:stop().
 
@@ -34,6 +49,7 @@ all() ->
 		write_legacy_list_silently_skips_malformed_entries,
 		write_legacy_singleton_not_set_clears_role,
 		hostname_peer_round_trip,
+		vdf_server_peer_hostname_preserved,
 		by_role_and_singleton_accept_binary_role,
 		by_role_unknown_role_binary_crashes,
 		clear_and_replace_pre_runtime,
@@ -184,15 +200,22 @@ write_legacy_list_silently_skips_malformed_entries(_Config) ->
 		arweave_config:get([peers, trusted])),
 	ok.
 
-%% Non-IPv4 hosts stay as binaries through the round-trip rather than
-%% being coerced into the legacy IPv4 tuple shape.
+%% Eager roles resolve hostnames to IPv4 peers at write time, matching
+%% the legacy CLI/JSON parsers (example.com is mocked above).
 hostname_peer_round_trip(_Config) ->
 	ok = arweave_config_options_peers:write_legacy_list(trusted,
 		[<<"example.com:1984">>]),
-	?assertEqual([<<"example.com:1984">>],
+	?assertEqual([{1, 2, 3, 4, 1984}],
 		arweave_config:get([peers, trusted])),
-	?assertEqual([<<"example.com:1984">>],
-		arweave_config:get([peers, trusted])),
+	ok.
+
+%% VDF peers must round-trip as hostnames so the runtime resolver can
+%% re-resolve them after DNS changes (see `ar_peers:resolve_and_cache_peer/2').
+vdf_server_peer_hostname_preserved(_Config) ->
+	ok = arweave_config_options_peers:write_legacy_list(vdf_server,
+		[<<"vdf.example.com">>]),
+	?assertEqual([<<"vdf.example.com:1984">>],
+		arweave_config:get([peers, vdf_server])),
 	ok.
 
 %% Both readers accept the role as a binary, routed via

@@ -35,7 +35,7 @@
 start(Args) ->
 	Env = arweave_config_format_env:parse(),
 	%% current or legacy
-	Dialect = dialect(Args),
+	Dialect = dialect(Env, Args),
 	maybe
 		{ok, ConfigFile} ?= find_config_file(Dialect, Args, Env),
 		ok ?= apply_config_file(ConfigFile),
@@ -44,8 +44,11 @@ start(Args) ->
 	end.
 
 %% Sniff `Args' to determine which CLI dialect is in play. The legacy
-%% pipeline kicks in only when no `--'-prefixed token is present.
-dialect(Args) ->
+%% pipeline kicks in when no `--'-prefixed token or `AR_*` style environmental
+%% variable is present.
+dialect(Env, _Args) when map_size(Env) > 0 ->
+    current;
+dialect(_Env, Args) ->
 	case arweave_config_format_cli:has_long_flag(Args) of
 		true -> current;
 		false -> legacy
