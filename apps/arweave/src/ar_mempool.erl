@@ -4,6 +4,7 @@
 
 -export([reset/0, load_from_disk/0, add_tx/2, drop_txs/1, drop_txs/3,
 		get_map/0, get_all_txids/0, take_chunk/2, get_tx/1, is_known_tx/1, has_tx/1,
+		evict_tx_prefix/1,
 		get_priority_set/0, get_last_tx_map/0, get_origin_tx_map/0,
 		get_propagation_queue/0, del_from_propagation_queue/2]).
 
@@ -295,6 +296,17 @@ is_known_tx(TXID) ->
 has_tx(TXID) ->
 	ets:member(node_state, {tx, TXID}).
 
+%% @doc Remove a confirmed transaction's tx_prefixes entry. Transactions still in
+%% the mempool (e.g. returned by a reorg) keep their prefix so the node keeps
+%% reporting them as known.
+evict_tx_prefix(TXID) ->
+	case has_tx(TXID) of
+		true ->
+			ok;
+		false ->
+			ets:delete_object(tx_prefixes, {ar_node_worker:tx_id_prefix(TXID), TXID})
+	end.
+
 get_priority_set() ->
 	ets:lookup_element(node_state, tx_priority_set, 2, gb_sets:new()).
 
@@ -367,17 +379,21 @@ add_to_last_tx_map(LastTXMap, TX) ->
 	maps:put(TX#tx.last_tx, Set2, LastTXMap).
 
 del_from_last_tx_map(LastTXMap, TX) ->
-	Element = unconfirmed_tx(TX),
-	case maps:get(TX#tx.last_tx, LastTXMap, not_found) of
+	del_from_map_of_sets(LastTXMap, TX#tx.last_tx, unconfirmed_tx(TX)).
+
+%% @doc Remove Element from the priority set stored under Key, dropping the key
+%% entirely when its set becomes empty so the map does not accumulate empty sets.
+del_from_map_of_sets(Map, Key, Element) ->
+	case maps:get(Key, Map, not_found) of
 		not_found ->
-			LastTXMap;
+			Map;
 		Set ->
 			Set2 = gb_sets:del_element(Element, Set),
 			case gb_sets:is_empty(Set2) of
 				true ->
-					maps:remove(TX#tx.last_tx, LastTXMap);
+					maps:remove(Key, Map);
 				false ->
-					maps:put(TX#tx.last_tx, Set2, LastTXMap)
+					maps:put(Key, Set2, Map)
 			end
 	end.
 
@@ -397,20 +413,7 @@ add_to_origin_tx_map(OriginTXMap, TX) ->
 	maps:put(Origin, Set2, OriginTXMap).
 
 del_from_origin_tx_map(OriginTXMap, TX) ->
-	Element = unconfirmed_tx(TX),
-	Origin = ar_tx:get_owner_address(TX),
-	case maps:get(Origin, OriginTXMap, not_found) of
-		not_found ->
-			OriginTXMap;
-		Set ->
-			Set2 = gb_sets:del_element(Element, Set),
-			case gb_sets:is_empty(Set2) of
-				true ->
-					maps:remove(Origin, OriginTXMap);
-				false ->
-					maps:put(Origin, Set2, OriginTXMap)
-			end
-	end.
+	del_from_map_of_sets(OriginTXMap, ar_tx:get_owner_address(TX), unconfirmed_tx(TX)).
 
 unconfirmed_tx(TX = #tx{}) ->
 	{ar_tx:utility(TX), TX#tx.id}.

@@ -11,7 +11,7 @@
 		get_by_solution_hash/5, is_known_solution_hash/2,
 		get_siblings/2, get_fork_blocks/2, update_timestamp/3,
 		get_blocks_by_miner/2,
-		get_oldest_block_start/1]).
+		get_oldest_block_start/1, tx_id/1]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").

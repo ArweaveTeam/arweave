@@ -1316,27 +1316,16 @@ block_index_entry(B) ->
 %% passes RemoveTXPrefixes = false) so the node keeps reporting
 %% them as known while they can still be re-announced. Once the block leaves the
 %% block cache the prefix is dropped, otherwise tx_prefixes grows for the node's
-%% lifetime. Transactions still in the mempool (e.g. returned by a reorg) are kept.
+%% lifetime.
 evict_confirmed_tx_prefixes(PrunedBlocks) ->
 	lists:foreach(
 		fun(#block{ txs = TXs }) ->
 			lists:foreach(
-				fun(TX) ->
-					TXID = tx_id(TX),
-					case ar_mempool:has_tx(TXID) of
-						true ->
-							ok;
-						false ->
-							ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID})
-					end
-				end,
+				fun(TX) -> ar_mempool:evict_tx_prefix(ar_block_cache:tx_id(TX)) end,
 				TXs)
 		end,
 		PrunedBlocks
 	).
-
-tx_id(#tx{ id = ID }) -> ID;
-tx_id(ID) when is_binary(ID) -> ID.
 
 update_block_txs_pairs(B, PrevBlocks, BlockTXPairs) ->
 	lists:sublist(update_block_txs_pairs2(B, PrevBlocks, BlockTXPairs),
