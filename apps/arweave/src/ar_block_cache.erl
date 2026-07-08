@@ -396,9 +396,11 @@ get_checkpoint_block(RecentBI) ->
 %%						      \  /
 %%        97                   F' 
 %%
-%% B' is the Tip. prune(Tab, 1) will remove F', E, and C from the cache.             
+%% B' is the Tip. prune(Tab, 1) will remove F', E, and C from the cache.
+%%
+%% Return the pruned on-chain blocks deeper than Depth from the tip.
 prune(Tab, Depth) ->
-	prune2(Tab, Depth, get_tip_height(Tab)).
+	prune2(Tab, Depth, get_tip_height(Tab), []).
 
 %% @doc Return true if there is at least one block in the cache with the given solution hash.
 is_known_solution_hash(Tab, SolutionH) ->
@@ -706,16 +708,16 @@ find_max_cdiff(Tab, TipHeight) ->
 		Set
 	).
 
-prune2(Tab, Depth, TipHeight) ->
+prune2(Tab, Depth, TipHeight, Pruned) ->
 	[{_, Set}] = ets:lookup(Tab, links),
 	case gb_sets:is_empty(Set) of
 		true ->
-			ok;
+			Pruned;
 		false ->
 			{{Height, H}, Set2} = gb_sets:take_smallest(Set),
 			case Height >= TipHeight - Depth of
 				true ->
-					ok;
+					Pruned;
 				false ->
 					insert(Tab, {links, Set2}, false),
 					%% The lowest block must be on-chain by construction.
@@ -737,7 +739,7 @@ prune2(Tab, Depth, TipHeight) ->
 					remove_solution(Tab, H, SolutionH),
 					delete(Tab, {block, H}),
 					ar_ignore_registry:remove(H),
-					prune2(Tab, Depth, TipHeight)
+					prune2(Tab, Depth, TipHeight, [B | Pruned])
 			end
 	end.
 
@@ -1243,7 +1245,7 @@ block_cache_test() ->
 	%% 1		B2/on_chain 
 	%%					  \ 
 	%% 0					B1/on_chain
-	prune(bcache_test, 1),
+	?assertEqual([], prune(bcache_test, 1)),
 	?assertEqual(B1, get(bcache_test, block_id(B1))),
 	?assertEqual(B1, get_by_solution_hash(bcache_test, B1#block.hash,
 			crypto:strong_rand_bytes(32), 0, 0)),
@@ -1255,8 +1257,8 @@ block_cache_test() ->
 
 	%% Height	Block/Status
 	%%
-	%% 1		B2/on_chain 
-	prune(bcache_test, 0),
+	%% 1		B2/on_chain
+	?assertEqual([block_id(B1)], [block_id(B) || B <- prune(bcache_test, 0)]),
 	?assertEqual(not_found, get(bcache_test, block_id(B1))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1#block.hash, <<>>, 0, 0)),
 	assert_longest_chain([B2], 0),
@@ -1264,7 +1266,7 @@ block_cache_test() ->
 	assert_max_cdiff({1, block_id(B2)}),
 	assert_is_valid_fork(true, on_chain, B2),
 
-	prune(bcache_test, 0),
+	?assertEqual([], prune(bcache_test, 0)),
 	?assertEqual(not_found, get(bcache_test, block_id(B1_2))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1_2#block.hash, <<>>, 0, 0)),
 	assert_longest_chain([B2], 0),
@@ -1429,7 +1431,9 @@ block_cache_test() ->
 	%% 2		B2_2/on_chain        B3/validated
 	%%                    \            /
 	%% 1                   B2/on_chain
-	prune(bcache_test, 1),
+	%% Only the pruned on-chain block B1 is returned; its fork child B1_2 is
+	%% discarded along with it but is not part of the return.
+	?assertEqual([block_id(B1)], [block_id(B) || B <- prune(bcache_test, 1)]),
 	?assertEqual(not_found, get(bcache_test, block_id(B1))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B1#block.hash, <<>>, 0, 0)),
 	assert_longest_chain([B3, B2], 1),
@@ -1449,7 +1453,7 @@ block_cache_test() ->
 	%%               |
 	%% 2		B2_2/on_chain
 	mark_tip(bcache_test, block_id(B2_3)),
-	prune(bcache_test, 1),
+	?assertEqual([block_id(B2)], [block_id(B) || B <- prune(bcache_test, 1)]),
 	?assertEqual(not_found, get(bcache_test, block_id(B2))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B2#block.hash, <<>>, 0, 0)),
 	assert_longest_chain([B2_3, B2_2], 0),
@@ -1463,7 +1467,7 @@ block_cache_test() ->
 	%% 3		B2_3/on_chain
 	%%               |
 	%% 2		B2_2/on_chain
-	prune(bcache_test, 1),
+	?assertEqual([], prune(bcache_test, 1)),
 	?assertEqual(not_found, get(bcache_test, block_id(B3))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B3#block.hash, <<>>, 0, 0)),
 	assert_longest_chain([B2_3, B2_2], 0),
@@ -1477,7 +1481,7 @@ block_cache_test() ->
 	%% 3		B2_3/on_chain
 	%%               |
 	%% 2		B2_2/on_chain
-	prune(bcache_test, 1),
+	?assertEqual([], prune(bcache_test, 1)),
 	?assertEqual(not_found, get(bcache_test, block_id(B4))),
 	?assertEqual(not_found, get_by_solution_hash(bcache_test, B4#block.hash, <<>>, 0, 0)),
 	assert_longest_chain([B2_3, B2_2], 0),
@@ -1491,7 +1495,7 @@ block_cache_test() ->
 	%% 3		B2_3/on_chain
 	%%               |
 	%% 2		B2_2/on_chain
-	prune(bcache_test, 1),
+	?assertEqual([], prune(bcache_test, 1)),
 	?assertEqual(B2_2, get(bcache_test, block_id(B2_2))),
 	?assertEqual(B2_2, get_by_solution_hash(bcache_test, B2_2#block.hash, <<>>, 0, 0)),
 	assert_longest_chain([B2_3, B2_2], 0),
@@ -1505,7 +1509,7 @@ block_cache_test() ->
 	%% 3		B2_3/on_chain
 	%%               |
 	%% 2		B2_2/on_chain
-	prune(bcache_test, 1),
+	?assertEqual([], prune(bcache_test, 1)),
 	?assertEqual(B2_3, get(bcache_test, block_id(B2_3))),
 	?assertEqual(B2_3, get_by_solution_hash(bcache_test, B2_3#block.hash, <<>>, 0, 0)),
 	assert_longest_chain([B2_3, B2_2], 0),
@@ -1802,6 +1806,24 @@ block_id(#block{ indep_hash = H }) ->
 on_top(B, PrevB) ->
 	B#block{ previous_block = PrevB#block.indep_hash, height = PrevB#block.height + 1,
 			previous_cumulative_diff = PrevB#block.cumulative_diff }.
+
+%% @doc prune/2 returns the on-chain blocks that are pruned, so callers can release
+%% per-block resources (e.g. ar_node_worker evicting their tx_prefixes entries).
+prune_returns_pruned_on_chain_blocks_test() ->
+	ets:new(bcache_test, [set, named_table]),
+	new(bcache_test, B0 = random_block(0)),
+	add(bcache_test, B1 = on_top(random_block(1), B0)),
+	add(bcache_test, B2 = on_top(random_block(2), B1)),
+	add(bcache_test, B3 = on_top(random_block(3), B2)),
+	mark_tip(bcache_test, block_id(B1)),
+	mark_tip(bcache_test, block_id(B2)),
+	mark_tip(bcache_test, block_id(B3)),
+	%% Tip height 3, Depth 1: pruned on-chain blocks below height 2 (B0, B1) are returned.
+	Pruned = prune(bcache_test, 1),
+	?assertEqual(lists:sort([block_id(B0), block_id(B1)]),
+			lists:sort([block_id(B) || B <- Pruned])),
+	%% B2 (height 2) and B3 (height 3) remain; a second prune changes nothing.
+	?assertEqual([], prune(bcache_test, 1)).
 
 %% @doc Test that get_blocks_by_miner returns the correct blocks for a given miner.
 get_blocks_by_miner_test() ->

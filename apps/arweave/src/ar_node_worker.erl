@@ -1311,6 +1311,33 @@ get_orphans([{OrphanH, _, _} | BI], H, Orphans) ->
 block_index_entry(B) ->
 	{B#block.indep_hash, B#block.weave_size, B#block.tx_root}.
 
+%% @doc Remove the tx_prefixes entries of transactions in pruned blocks.
+%% Confirmed transactions keep their prefix (drop_txs on block confirmation
+%% passes RemoveTXPrefixes = false) so the node keeps reporting
+%% them as known while they can still be re-announced. Once the block leaves the
+%% block cache the prefix is dropped, otherwise tx_prefixes grows for the node's
+%% lifetime. Transactions still in the mempool (e.g. returned by a reorg) are kept.
+evict_confirmed_tx_prefixes(PrunedBlocks) ->
+	lists:foreach(
+		fun(#block{ txs = TXs }) ->
+			lists:foreach(
+				fun(TX) ->
+					TXID = tx_id(TX),
+					case ar_mempool:has_tx(TXID) of
+						true ->
+							ok;
+						false ->
+							ets:delete_object(tx_prefixes, {tx_id_prefix(TXID), TXID})
+					end
+				end,
+				TXs)
+		end,
+		PrunedBlocks
+	).
+
+tx_id(#tx{ id = ID }) -> ID;
+tx_id(ID) when is_binary(ID) -> ID.
+
 update_block_txs_pairs(B, PrevBlocks, BlockTXPairs) ->
 	lists:sublist(update_block_txs_pairs2(B, PrevBlocks, BlockTXPairs),
 			2 * ar_block:get_max_tx_anchor_depth()).
@@ -1491,7 +1518,8 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	%% off and then back on this fork.
 	ar_block_cache:add(block_cache, B),
 	ar_block_cache:mark_tip(block_cache, BH),
-	ar_block_cache:prune(block_cache, ar_block:get_consensus_window_size()),
+	PrunedBlocks = ar_block_cache:prune(block_cache, ar_block:get_consensus_window_size()),
+	evict_confirmed_tx_prefixes(PrunedBlocks),
 	%% We could have missed a few blocks due to networking issues, which would then
 	%% be picked by ar_poller and end up waiting for missing transactions to be fetched.
 	%% Thefore, it is possible (although not likely) that there are blocks above the new tip,
