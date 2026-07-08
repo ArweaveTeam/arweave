@@ -42,7 +42,10 @@ add_tx_test_() ->
 					{timeout, Timeout, {with, GenesisData, [fun test_mixed_deposit_spend_tx_new_address/1]}},
 					{timeout, Timeout, {with, GenesisData, [fun test_clash_and_overspend_tx/1]}},
 					{timeout, Timeout, {with, GenesisData, [fun test_clash_and_low_priority_tx/1]}},
-					{timeout, Timeout, {with, GenesisData, [fun test_load_from_disk_denomination/1]}}
+					{timeout, Timeout, {with, GenesisData, [fun test_load_from_disk_denomination/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_last_tx_map_prunes_emptied_keys/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_origin_tx_map_prunes_emptied_keys/1]}},
+					{timeout, Timeout, {with, GenesisData, [fun test_origin_spent_total_map_prunes_zeroed_keys/1]}}
 			]
 		}
 	end
@@ -426,6 +429,46 @@ test_clash_and_low_priority_tx({{_, {_, Owner}}, LastTXID, _OtherKey, _B0}) ->
 
 	assertMempoolTXIDs([TX1#tx.id] ++ ExpectedTXIDs, "Clashing TX dropped"),
 	assertMempoolSize(ExpectedMempoolSize).
+
+%% @doc After the last TX corresponding to the given last_tx anchor is dropped, the
+%% anchor key must be removed from last_tx_map.
+test_last_tx_map_prunes_emptied_keys({{_, {_, Owner}}, _LastTXID, _OtherKey, _B0}) ->
+	Anchor = crypto:strong_rand_bytes(32),
+	TX = tx(1, Owner, 10, <<>>, crypto:strong_rand_bytes(32), Anchor),
+	ar_mempool:add_tx(TX, waiting),
+	?assert(maps:is_key(Anchor, ar_mempool:get_last_tx_map()),
+		"Precondition: anchor is present in last_tx_map after add_tx"),
+	ar_mempool:drop_txs([TX]),
+	?assertNot(maps:is_key(Anchor, ar_mempool:get_last_tx_map()),
+		"Emptied last_tx anchor key must be pruned from last_tx_map (H3)").
+
+%% @doc After the last TX for a given origin address is dropped, the origin
+%% key must be removed from origin_tx_map.
+test_origin_tx_map_prunes_emptied_keys({{_, {_, Owner}}, _LastTXID, _OtherKey, _B0}) ->
+	TX = tx(1, Owner, 10, <<>>),
+	Origin = ar_tx:get_owner_address(TX),
+	ar_mempool:add_tx(TX, waiting),
+	?assert(maps:is_key(Origin, ar_mempool:get_origin_tx_map()),
+		"Precondition: origin is present in origin_tx_map after add_tx"),
+	ar_mempool:drop_txs([TX]),
+	?assertNot(maps:is_key(Origin, ar_mempool:get_origin_tx_map()),
+		"Emptied origin key must be pruned from origin_tx_map (H4)").
+
+%% @doc After the last TX for a given origin is dropped, the origin key must
+%% be removed from origin_spent_total_map.
+test_origin_spent_total_map_prunes_zeroed_keys({{_, {_, Owner}}, _LastTXID, _OtherKey, _B0}) ->
+	TX = tx(1, Owner, 10, <<>>),
+	Origin = ar_tx:get_owner_address(TX),
+	ar_mempool:add_tx(TX, waiting),
+	?assert(maps:is_key(Origin, origin_spent_total_map()),
+		"Precondition: origin is present in origin_spent_total_map after add_tx"),
+	ar_mempool:drop_txs([TX]),
+	?assertNot(maps:is_key(Origin, origin_spent_total_map()),
+		"Zeroed origin key must be pruned from origin_spent_total_map (H5)").
+
+origin_spent_total_map() ->
+	[{origin_spent_total_map, Map}] = ets:lookup(node_state, origin_spent_total_map),
+	Map.
 
 add_transactions(NumTransactions, Format, Owner, DataSize) ->
 	HighestReward = NumTransactions+2,

@@ -372,7 +372,13 @@ del_from_last_tx_map(LastTXMap, TX) ->
 		not_found ->
 			LastTXMap;
 		Set ->
-			maps:put(TX#tx.last_tx, gb_sets:del_element(Element, Set), LastTXMap)
+			Set2 = gb_sets:del_element(Element, Set),
+			case gb_sets:is_empty(Set2) of
+				true ->
+					maps:remove(TX#tx.last_tx, LastTXMap);
+				false ->
+					maps:put(TX#tx.last_tx, Set2, LastTXMap)
+			end
 	end.
 
 %% @doc Store a map of addresses to a priority set of TXs that spend
@@ -397,7 +403,13 @@ del_from_origin_tx_map(OriginTXMap, TX) ->
 		not_found ->
 			OriginTXMap;
 		Set ->
-			maps:put(Origin, gb_sets:del_element(Element, Set), OriginTXMap)
+			Set2 = gb_sets:del_element(Element, Set),
+			case gb_sets:is_empty(Set2) of
+				true ->
+					maps:remove(Origin, OriginTXMap);
+				false ->
+					maps:put(Origin, Set2, OriginTXMap)
+			end
 	end.
 
 unconfirmed_tx(TX = #tx{}) ->
@@ -594,7 +606,12 @@ del_from_origin_spent_total_map(SpentTotalMap, TX, Denomination) ->
 	Origin = ar_tx:get_owner_address(TX),
 	Amount = tx_spent_amount(TX, Denomination),
 	OldAmount = maps:get(Origin, SpentTotalMap, 0),
-	maps:put(Origin, max(0, OldAmount - Amount), SpentTotalMap).
+	case max(0, OldAmount - Amount) of
+		0 ->
+			maps:remove(Origin, SpentTotalMap);
+		NewAmount ->
+			maps:put(Origin, NewAmount, SpentTotalMap)
+	end.
 
 get_origin_spent_total(Origin) ->
 	maps:get(Origin, get_origin_spent_total_map(), 0).
