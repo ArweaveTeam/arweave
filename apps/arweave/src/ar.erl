@@ -49,11 +49,9 @@
 % time_syncing (true)
 
 %%--------------------------------------------------------------------
-%% @doc Command line program entrypoint. Takes a list of arguments.
+%% @doc Command line program entrypoint.
 %% @end
 %%--------------------------------------------------------------------
-%% No CLI args — boot purely from `AR_*' env vars (and the config
-%% file if one is configured).
 main() ->
 	Args = init:get_plain_arguments(),
 	% arweave_config must be the first application started, it

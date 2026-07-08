@@ -44,7 +44,8 @@ start(Args) ->
 	end.
 
 %% Sniff `Args' to determine which CLI dialect is in play. The legacy
-%% pipeline kicks in only when no `--'-prefixed token is present.
+%% pipeline kicks in when no `--'-prefixed token or `AR_*` style environmental
+%% variable is present.
 dialect(Env, _Args) when map_size(Env) > 0 ->
     current;
 dialect(_Env, Args) ->
