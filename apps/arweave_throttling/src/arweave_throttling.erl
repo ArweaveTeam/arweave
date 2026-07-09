@@ -232,8 +232,7 @@ log_update_error(GroupID, Reason, Peer, Path) ->
     PathKey = arweave_throttling_path:path_to_path_key(Path),
     prometheus_counter:inc(arweave_throttling_quota_update_error,
                            [atom_to_list(GroupID),
-                            ReasonStr,
-                            io_lib:format("~p", [PathKey])
+                            ReasonStr
                            ]),
     ok.
 
