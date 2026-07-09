@@ -46,6 +46,25 @@ atom is a valid input) instead — it rejects inputs longer than
 `?MAX_INTEGER_DIGITS`=155 before building the bignum out of them.
 
 This does not cover bare (unquoted) JSON numbers - `jiffy:decode` handles them.
+## Configuration
+
+All node configuration goes through `arweave_config` — it is the single
+source of truth (config file, CLI, validation, and runtime-vs-static
+gating all live there).
+
+- Read a value with `arweave_config:get([group, option])`.
+- Add a new option by declaring its spec in a contributor module under
+  `apps/arweave_config/src/options/arweave_config_options_*.erl` and
+  registering that module in `arweave_config_options_spec:option_modules/0`.
+
+Do NOT use `application:get_env/2,3`, `application:set_env`, or
+`sys.config` / `vm.args` application env to read or define node
+configuration. If you need a knob operators can set, it must be an
+`arweave_config` option.
+
+Compile-time constants that are not operator-facing (internal timeouts,
+intervals, buffer sizes, etc.) stay as module `-define`s — those are
+implementation details, not configuration.
 
 ## Running Tests
 

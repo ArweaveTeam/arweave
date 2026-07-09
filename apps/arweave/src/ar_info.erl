@@ -33,11 +33,7 @@ get_info() ->
         <<"blocks">> => ar_header_sync:block_count(),
         <<"cached_blocks">> => ar_storage:block_count(),
         <<"peers">> => ar_metrics:gauge_value(arweave_peer_count),
-        <<"queue_length">> =>
-            element(
-                2,
-                erlang:process_info(whereis(ar_node_worker), message_queue_len)
-            ),
+        <<"queue_length">> => ar_util:message_queue_len(ar_node_worker),
         <<"node_state_latency">> => (Time + Time2) div 2
     }.
 
