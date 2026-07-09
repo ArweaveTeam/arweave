@@ -458,6 +458,17 @@ arweave_doctor_help() {
 ######################################################################
 # Arweave Config Section
 ######################################################################
+arweave_convert_config() {
+    ARWEAVE_OPTS="-run ar convert_config"
+    echo ${*}
+}
+
+arweave_convert_config_help() {
+    echo "Usage: ${REL_NAME} convert_config <json|yaml> <InputFile> <OutputFile>"
+    echo "Convert a legacy config.json into the new JSON or YAML format."
+    exit 1
+}
+
 arweave_config_help() {
     echo "Usage: ${REL_NAME} config <command>"
     echo "Manage Arweave configuration. Commands:"
@@ -1705,7 +1716,7 @@ case "$1" in
 	relx_rem_sh
 	;;
 
-    console|console_clean|console_boot|foreground|foreground_clean|benchmark|wallet|doctor)
+    console|console_clean|console_boot|foreground|foreground_clean|benchmark|wallet|doctor|convert_config)
 	FOREGROUNDOPTIONS=""
 	# .boot file typically just $REL_NAME (ie, the app name)
 	# however, for debugging, sometimes start_clean.boot is useful.
@@ -1721,7 +1732,7 @@ case "$1" in
 		fi
 		ARGS=${*}
 		;;
-	    foreground|foreground_clean|benchmark|wallet|doctor)
+	    foreground|foreground_clean|benchmark|wallet|doctor|convert_config)
 		shift
 		# start up the release in the foreground for use by runit
 		# or other supervision services
@@ -1746,6 +1757,10 @@ case "$1" in
 		    doctor)
 			arweave_doctor ${*}
 			ARGS=$(arweave_doctor ${*})
+			;;
+		    convert_config)
+			arweave_convert_config ${*}
+			ARGS=$(arweave_convert_config ${*})
 			;;
 		    foreground_clean)
 			ARWEAVE_OPTS=""

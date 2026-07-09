@@ -70,6 +70,11 @@ encode_value(Map) when is_map(Map) ->
 			|| {Key, Value} <- maps:to_list(Map)
 		]
 	);
+encode_value([]) ->
+	%% An empty list encodes as an empty JSON array. Special-cased
+	%% because `io_lib:printable_unicode_list([])' is `true', which
+	%% would otherwise render `[]' as an empty string.
+	[];
 encode_value(List) when is_list(List) ->
 	case io_lib:printable_unicode_list(List) of
 		true ->

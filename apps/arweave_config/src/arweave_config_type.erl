@@ -98,6 +98,11 @@ peers_list(Input) ->
 %% Shared list machinery for `peers_list/1' and `resolved_peers_list/1'.
 %% `Resolve' selects the per-entry step: keep the spelling (`false') or
 %% resolve a hostname to one-or-more IPv4 peers (`true').
+do_peers_list([], _Resolve) ->
+	%% An empty list is an empty peer set, not a bare single-peer string.
+	%% `io_lib:printable_unicode_list([])' is `true', so this must be
+	%% matched before the printable-string case below.
+	{ok, []};
 do_peers_list(Values, Resolve) when is_list(Values) ->
 	case io_lib:printable_unicode_list(Values) of
 		true ->

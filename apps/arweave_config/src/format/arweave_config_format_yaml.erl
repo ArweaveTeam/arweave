@@ -48,6 +48,13 @@ proplist_to_map([{K,V = [{_,_}|_]}|Rest], Buffer) ->
 	Recurse = proplist_to_map(V),
 	Key = arweave_config_parser:format_segment(K),
 	proplist_to_map(Rest, Buffer#{ Key => Recurse });
+proplist_to_map([{K, []}|Rest], Buffer) ->
+	%% An empty YAML sequence (`key: []') stays an empty list instead of
+	%% collapsing to `<<>>' via `list_to_binary([])'. yamerl decodes both
+	%% `[]' and `""' to the empty list; treating it as an empty list lets
+	%% list-valued options (e.g. an empty peer role) load as "no entries".
+	Key = arweave_config_parser:format_segment(K),
+	proplist_to_map(Rest, Buffer#{ Key => [] });
 proplist_to_map([{K, V}|Rest], Buffer) when is_list(V) ->
 	Key = arweave_config_parser:format_segment(K),
 	case io_lib:printable_unicode_list(V) of
@@ -123,6 +130,9 @@ encode_map(Map, Indent) ->
 		Keys
 	).
 
+encode_pair(Prefix, KeyBin, [], _Indent) ->
+	%% Empty list is an inline empty sequence, not a null or "".
+	[Prefix, KeyBin, <<": []\n">>];
 encode_pair(Prefix, KeyBin, Value, Indent) when is_map(Value) ->
 	[Prefix, KeyBin, <<":\n">>, encode_map(Value, Indent + 1)];
 encode_pair(Prefix, KeyBin, Value, Indent) when is_list(Value) ->
