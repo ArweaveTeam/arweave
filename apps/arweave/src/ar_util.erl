@@ -64,14 +64,15 @@ int_to_bool(1) -> true;
 int_to_bool(0) -> false.
 
 %% @doc Message queue length of a process given its registered name or
-%% pid, or 0 if it isn't registered or has already exited. Guards
-%% against `process_info/2' raising `badarg' on an unregistered name.
+%% pid, or 0 if the name has no live process behind it. Guards against
+%% `process_info/2' raising `badarg' on an unregistered name.
 message_queue_len(Name) when is_atom(Name) ->
 	case whereis(Name) of
-		undefined ->
-			0;
-		PID ->
-			message_queue_len(PID)
+		PID when is_pid(PID) ->
+			message_queue_len(PID);
+		_ ->
+			%% Not registered, or the name points at a port.
+			0
 	end;
 message_queue_len(PID) when is_pid(PID) ->
 	case erlang:process_info(PID, message_queue_len) of

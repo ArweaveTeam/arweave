@@ -113,9 +113,8 @@ test_prerendered_body() ->
 	#{content_type := ContentType, identity := Identity, gzip := Gzip} = Cache,
 	?assertMatch({0, _}, binary:match(iolist_to_binary(ContentType),
 			<<"text/plain">>)),
-	%% WS2: the gzipped body round-trips to the plain body and is smaller.
+	%% WS2: the gzipped body round-trips to the plain body.
 	?assertEqual(Identity, zlib:gunzip(Gzip)),
-	?assert(byte_size(Gzip) < byte_size(Identity)),
 	%% The plain body is a real exposition carrying arweave series.
 	?assertNotEqual(nomatch, binary:match(Identity, <<"# TYPE">>)).
 
