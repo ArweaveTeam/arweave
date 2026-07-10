@@ -31,6 +31,9 @@ chunk_data_not_found_resilience_test_() ->
 may_conclude_accumulation_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun test_may_conclude_accumulation/0}.
 
+multi_module_chunk_cache_accounting_test_() ->
+	{timeout, ?TEST_NODE_TIMEOUT, fun test_multi_module_chunk_cache_accounting/0}.
+
 %% -------------------------------------------------------------------
 %% Helpers
 %% -------------------------------------------------------------------
@@ -329,8 +332,60 @@ test_may_conclude_accumulation() ->
 	true = wait_until_disk_pool_size(0).
 
 %% -------------------------------------------------------------------
+%% The disk pool casts pack_and_store_chunk to every storage module
+%% covering a matured chunk and must increment chunk_cache_size once per
+%% cast, because each ar_data_sync worker decrements it once.
+%% -------------------------------------------------------------------
+test_multi_module_chunk_cache_accounting() ->
+	Addr = ar_test_node:generate_address(main),
+	%% Two same-packing modules covering the test chunk.
+	Packing = ar_test_node:storage_module_packing(Addr, 0),
+	StorageModules = [
+		{4 * ?DATA_CHUNK_SIZE, 0, Packing},
+		{?DATA_CHUNK_SIZE, 3, Packing}
+	],
+	StoreID1 = ar_storage_module:id(lists:nth(1, StorageModules)),
+	StoreID2 = ar_storage_module:id(lists:nth(2, StorageModules)),
+	Wallet = ar_test_data_sync:setup_main_node(
+		#{ addr => Addr, [storage_modules] =>
+			[arweave_config:storage_module_to_config(M) || M <- StorageModules] }),
+	#{ tx := TX, data_root := DataRoot, data_tree := DataTree, chunks := Chunks } =
+		ar_test_data_sync:make_fixed_data_tx(
+			Wallet,
+			[crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)]
+		),
+	ar_test_node:assert_post_tx_to_peer(main, TX),
+	post_chunk_proof(DataRoot, DataTree, Chunks),
+	%% Mine past the disk pool threshold (SEARCH_SPACE_UPPER_BOUND_DEPTH = 3).
+	ar_test_node:mine(main),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
+	ar_test_node:mine(main),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 2)),
+	ar_test_node:mine(main),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 3)),
+	ar_test_node:mine(main),
+	?assertMatch({ok, _}, ar_test_await:node_height(main, 4)),
+	{ok, {AbsoluteEndOffset, _}} = ar_test_await:tx_offset_known(TX#tx.id),
+	%% This chunk ends up stored in both storage modules.
+	?assertEqual(4 * ?DATA_CHUNK_SIZE, AbsoluteEndOffset),
+	ok = ar_test_await:chunk_recorded(main, AbsoluteEndOffset, #{store_id => StoreID1}),
+	ok = ar_test_await:chunk_recorded(main, AbsoluteEndOffset, #{store_id => StoreID2}),
+	true = wait_until_disk_pool_size(0),
+	%% Assert chunk cache is cleaned up. Everything async has completed by
+	%% this point, so the short timeout is safe.
+	ok = ar_test_await:until(chunk_cache_settled,
+		fun() -> chunk_cache_size() =:= 0 end, 10_000),
+	?assertEqual(0, chunk_cache_size()).
+
+%% -------------------------------------------------------------------
 %% Internal
 %% -------------------------------------------------------------------
+
+chunk_cache_size() ->
+	case ets:lookup(ar_data_sync_state, chunk_cache_size) of
+		[{_, Size}] -> Size;
+		_ -> undefined
+	end.
 
 parse_disk_pool_chunk(Bin) ->
 	case binary_to_term(Bin, [safe]) of
