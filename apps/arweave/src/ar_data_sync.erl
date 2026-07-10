@@ -1080,6 +1080,7 @@ handle_info({chunk, {unpack_error, Key, ChunkArgs, Error}}, State) ->
 					{error, io_lib:format("~p", [Error])}]),
 			State2 = State#data_sync_state{ packing_map = maps:remove(Key, PackingMap) },
 			ar_peers:issue_warning(Peer, chunk, Error),
+			decrement_chunk_cache_size(),
 			{noreply, State2};
 		_ ->
 			{noreply, State}
