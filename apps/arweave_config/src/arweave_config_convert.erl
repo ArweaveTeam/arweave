@@ -53,12 +53,7 @@ encoder(Format) ->
 	{error, {unsupported_format, Format}}.
 
 encoder_from_string(String) ->
-	case string:lowercase(String) of
-		"json" -> {ok, arweave_config_format_json};
-		"yaml" -> {ok, arweave_config_format_yaml};
-		"yml" -> {ok, arweave_config_format_yaml};
-		_ -> {error, {unsupported_format, String}}
-	end.
+    encoder(string:lowercase(String)).
 
 read_input(InputFilename) ->
 	case file:read_file(InputFilename) of
