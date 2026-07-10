@@ -1115,7 +1115,8 @@ get_height(Peer) ->
 			method => get,
 			peer => Peer,
 			path => "/height",
-			headers => p2p_headers()
+			headers => p2p_headers(),
+			limit => 100
 		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
