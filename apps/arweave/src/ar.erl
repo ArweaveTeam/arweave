@@ -238,7 +238,7 @@ convert_config() ->
 
 convert_config([Format, InputFile, OutputFile]) ->
 	arweave_config:start(),
-	case arweave_config_convert:convert(Format, InputFile, OutputFile) of
+	case arweave_config:convert_config(Format, InputFile, OutputFile) of
 		ok ->
 			ar:console("Converted ~ts to ~ts (~ts).~n",
 					[InputFile, OutputFile, Format]),

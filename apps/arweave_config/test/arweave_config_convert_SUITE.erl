@@ -9,11 +9,14 @@ init_per_suite(Config) -> Config.
 end_per_suite(_Config) -> ok.
 
 init_per_testcase(_TestCase, Config) ->
+	file:delete(out_path(Config, "converted.json")),
+	file:delete(out_path(Config, "converted.yaml")),
 	ok = arweave_config:start(),
 	Config.
 
 end_per_testcase(_TestCase, _Config) ->
-	ok = arweave_config:stop().
+	ok = arweave_config:stop(),
+	ok.
 
 all() ->
 	[
