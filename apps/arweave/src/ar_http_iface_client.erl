@@ -1282,7 +1282,7 @@ get_tx_data(Peer, Hash) ->
 %% @doc Retreive the current universal time as claimed by a foreign node.
 get_time(Peer, Timeout) ->
 	case ar_http:req(#{method => get, peer => Peer, path => "/time",
-			headers => p2p_headers(), timeout => Timeout + 100}) of
+			headers => p2p_headers(), timeout => Timeout + 100, limit => 100}) of
 		{ok, {{<<"200">>, _}, _, Body, Start, End}} ->
 			case catch ar_serialize:parse_integer(Body) of
 				{'EXIT', _} ->
