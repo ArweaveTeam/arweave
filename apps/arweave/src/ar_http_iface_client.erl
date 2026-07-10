@@ -1119,7 +1119,7 @@ get_height(Peer) ->
 		}),
 	case Response of
 		{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-			case catch binary_to_integer(Body) of
+			case catch ar_serialize:parse_integer(Body) of
 				{'EXIT', _} ->
 					{error, invalid_height};
 				Height ->
@@ -1283,7 +1283,7 @@ get_time(Peer, Timeout) ->
 	case ar_http:req(#{method => get, peer => Peer, path => "/time",
 			headers => p2p_headers(), timeout => Timeout + 100}) of
 		{ok, {{<<"200">>, _}, _, Body, Start, End}} ->
-			case catch binary_to_integer(Body) of
+			case catch ar_serialize:parse_integer(Body) of
 				{'EXIT', _} ->
 					{error, invalid_time};
 				Time ->

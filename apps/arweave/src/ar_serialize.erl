@@ -33,7 +33,8 @@
 		partial_solution_response_to_json_struct/1,
 		pool_cm_jobs_to_json_struct/1, json_map_to_pool_cm_jobs/1,
 		footprint_to_json_map/1, json_map_to_footprint/1,
-		data_roots_to_binary/1, binary_to_data_roots/1]).
+		data_roots_to_binary/1, binary_to_data_roots/1,
+		parse_integer/1, parse_integer_or_infinity/1]).
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
@@ -43,10 +44,11 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-%% The maximum length for any binary from external JSON decoded to integer.
-%% 155 digits is sufficient for the largest 512-bit number. For example,
-%% the difficulty is bound by 256 bits.
--define(MAX_JSON_INTEGER_DIGITS, 155).
+%% The maximum length of a binary carrying an integer decoded from external
+%% input (JSON bodies, URL path segments, HTTP headers). 155 digits is
+%% sufficient for the largest 512-bit number. For example, the difficulty is
+%% bound by 256 bits.
+-define(MAX_INTEGER_DIGITS, 155).
 
 %%%===================================================================
 %%% Public interface.
@@ -1379,12 +1381,12 @@ json_struct_to_block({BlockStruct}) ->
 		case find_value(<<"cumulative_diff">>, BlockStruct) of
 			_ when Height < Fork_1_6 -> 0;
 			undefined -> 0; % In case it's an invalid block (in the pre-fork format).
-			BinaryCDiff when Height >= Fork_1_8 -> parse_json_integer(BinaryCDiff);
+			BinaryCDiff when Height >= Fork_1_8 -> parse_integer(BinaryCDiff);
 			CD -> CD
 		end,
 	Diff =
 		case find_value(<<"diff">>, BlockStruct) of
-			BinaryDiff when Height >= Fork_1_8 -> parse_json_integer(BinaryDiff);
+			BinaryDiff when Height >= Fork_1_8 -> parse_integer(BinaryDiff);
 			D -> D
 		end,
 	MR =
@@ -1409,9 +1411,9 @@ json_struct_to_block({BlockStruct}) ->
 		case Height >= ar_fork:height_2_4() of
 			true ->
 				{
-					parse_json_integer(find_value(<<"reward_pool">>, BlockStruct)),
-					parse_json_integer(find_value(<<"block_size">>, BlockStruct)),
-					parse_json_integer(find_value(<<"weave_size">>, BlockStruct))
+					parse_integer(find_value(<<"reward_pool">>, BlockStruct)),
+					parse_integer(find_value(<<"block_size">>, BlockStruct)),
+					parse_integer(find_value(<<"weave_size">>, BlockStruct))
 				};
 			false ->
 				{
@@ -1427,13 +1429,13 @@ json_struct_to_block({BlockStruct}) ->
 					find_value(<<"usd_to_ar_rate">>, BlockStruct),
 				[ScheduledRateDividendBinary, ScheduledRateDivisorBinary] =
 					find_value(<<"scheduled_usd_to_ar_rate">>, BlockStruct),
-				{{parse_json_integer(RateDividendBinary),
-						parse_json_integer(RateDivisorBinary)},
-					{parse_json_integer(ScheduledRateDividendBinary),
-						parse_json_integer(ScheduledRateDivisorBinary)},
-							parse_json_integer(find_value(<<"packing_2_5_threshold">>,
+				{{parse_integer(RateDividendBinary),
+						parse_integer(RateDivisorBinary)},
+					{parse_integer(ScheduledRateDividendBinary),
+						parse_integer(ScheduledRateDivisorBinary)},
+							parse_integer(find_value(<<"packing_2_5_threshold">>,
 								BlockStruct)),
-							parse_json_integer(find_value(<<"strict_data_split_threshold">>,
+							parse_integer(find_value(<<"strict_data_split_threshold">>,
 								BlockStruct))};
 			false ->
 				{undefined, undefined, undefined, undefined}
@@ -1607,7 +1609,7 @@ json_struct_to_poa({JSONStruct}) ->
 				U
 		end,
 	#poa{
-		option = parse_json_integer(find_value(<<"option">>, JSONStruct)),
+		option = parse_integer(find_value(<<"option">>, JSONStruct)),
 		tx_path = ar_util:decode(find_value(<<"tx_path">>, JSONStruct)),
 		data_path = ar_util:decode(find_value(<<"data_path">>, JSONStruct)),
 		chunk = ar_util:decode(find_value(<<"chunk">>, JSONStruct)),
@@ -1616,7 +1618,7 @@ json_struct_to_poa({JSONStruct}) ->
 
 json_struct_to_poa_from_map(JSONStruct) ->
 	#poa{
-		option = parse_json_integer(maps:get(<<"option">>, JSONStruct)),
+		option = parse_integer(maps:get(<<"option">>, JSONStruct)),
 		tx_path = ar_util:decode(maps:get(<<"tx_path">>, JSONStruct)),
 		data_path = ar_util:decode(maps:get(<<"data_path">>, JSONStruct)),
 		chunk = ar_util:decode(maps:get(<<"chunk">>, JSONStruct)),
@@ -1650,14 +1652,14 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 			N when is_integer(N) ->
 				N;
 			N when is_binary(N) ->
-				parse_json_integer(N)
+				parse_integer(N)
 		end,
 	Denomination =
 		case find_value(<<"denomination">>, TXStruct) of
 			undefined ->
 				0;
 			EncodedDenomination ->
-				MaybeDenomination = parse_json_integer(EncodedDenomination),
+				MaybeDenomination = parse_integer(EncodedDenomination),
 				true = MaybeDenomination > 0,
 				MaybeDenomination
 		end,
@@ -1676,9 +1678,9 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
 				|| {[{<<"name">>, Name}, {<<"value">>, Value}]} <- Tags],
 		target = ar_wallet:base64_address_with_optional_checksum_to_decoded_address(
 				find_value(<<"target">>, TXStruct)),
-		quantity = parse_json_integer(find_value(<<"quantity">>, TXStruct)),
+		quantity = parse_integer(find_value(<<"quantity">>, TXStruct)),
 		data = Data,
-		reward = parse_json_integer(find_value(<<"reward">>, TXStruct)),
+		reward = parse_integer(find_value(<<"reward">>, TXStruct)),
 		signature = Sig,
 		signature_type = SigType,
 		data_size = parse_data_size(Format, TXStruct, Data, ComputeDataSize),
@@ -1721,14 +1723,14 @@ json_list_to_diff_pair(List) ->
 			undefined -> [<<"0">>, <<"0">>];
 			_ -> List
 		end,
-	PoA1Diff = parse_json_integer_or_infinity(PoA1DiffBin),
-	Diff = parse_json_integer_or_infinity(DiffBin),
+	PoA1Diff = parse_integer_or_infinity(PoA1DiffBin),
+	Diff = parse_integer_or_infinity(DiffBin),
 	{PoA1Diff, Diff}.
 	
 parse_data_size(1, _TXStruct, Data, true) ->
 	byte_size(Data);
 parse_data_size(_Format, TXStruct, _Data, _ComputeDataSize) ->
-	parse_json_integer(find_value(<<"data_size">>, TXStruct)).
+	parse_integer(find_value(<<"data_size">>, TXStruct)).
 
 etf_to_wallet_chunk_response(ETF) ->
 	catch etf_to_wallet_chunk_response_unsafe(ETF).
@@ -1803,7 +1805,7 @@ json_struct_to_wallet_list(WalletsStruct) ->
 
 json_struct_to_wallet({Wallet}) ->
 	Address = ar_util:decode(find_value(<<"address">>, Wallet)),
-	Balance = parse_json_integer(find_value(<<"balance">>, Wallet)),
+	Balance = parse_integer(find_value(<<"balance">>, Wallet)),
 	true = Balance >= 0,
 	LastTX = ar_util:decode(find_value(<<"last_tx">>, Wallet)),
 	case find_value(<<"denomination">>, Wallet) of
@@ -1822,13 +1824,14 @@ find_value(Key, List) ->
 		false -> undefined
 	end.
 
-%% @doc binary_to_integer with a digit-length cap.
-parse_json_integer(Bin) when is_binary(Bin), byte_size(Bin) =< ?MAX_JSON_INTEGER_DIGITS ->
+%% @doc Parse an integer from an externally provided binary, rejecting inputs
+%% longer than ?MAX_INTEGER_DIGITS. Use this function instead of binary_to_integer.
+parse_integer(Bin) when is_binary(Bin), byte_size(Bin) =< ?MAX_INTEGER_DIGITS ->
 	binary_to_integer(Bin).
 
-%% @doc Length-capped variant of ar_util:binary_to_integer (accepts "infinity").
-parse_json_integer_or_infinity(Bin)
-		when is_binary(Bin), byte_size(Bin) =< ?MAX_JSON_INTEGER_DIGITS ->
+%% @doc parse_integer/1 variant that also accepts the "infinity" sentinel.
+parse_integer_or_infinity(Bin)
+		when is_binary(Bin), byte_size(Bin) =< ?MAX_INTEGER_DIGITS ->
 	ar_util:binary_to_integer(Bin).
 
 %% @doc Convert an ARQL query into a JSON struct
@@ -1901,7 +1904,7 @@ json_struct_to_block_index(JSONStruct) ->
 						undefined ->
 							not_set;
 						WS ->
-							parse_json_integer(WS)
+							parse_integer(WS)
 					end,
 				TXRoot =
 					case find_value(<<"tx_root">>, JSON) of
@@ -1957,7 +1960,7 @@ json_map_to_poa_map(JSON) ->
 		chunk => ar_util:decode(maps:get(<<"chunk">>, JSON)),
 		data_path => ar_util:decode(maps:get(<<"data_path">>, JSON)),
 		tx_path => ar_util:decode(maps:get(<<"tx_path">>, JSON, <<>>)),
-		data_size => parse_json_integer(maps:get(<<"data_size">>, JSON, <<"0">>))
+		data_size => parse_integer(maps:get(<<"data_size">>, JSON, <<"0">>))
 	},
 	PackingJSON = maps:get(<<"packing">>, JSON, <<"unpacked">>),
 	Packing = decode_packing(PackingJSON, error),
@@ -1971,7 +1974,7 @@ json_map_to_poa_map(JSON) ->
 		none ->
 			Map2;
 		Offset ->
-			Map2#{ offset => parse_json_integer(Offset) }
+			Map2#{ offset => parse_integer(Offset) }
 	end.
 
 signature_type_to_binary(SigType) ->
@@ -2066,18 +2069,18 @@ json_map_to_candidate(JSON) ->
 	H2 = decode_if_set(JSON, <<"h2">>, fun ar_util:decode/1, not_set),
 	MiningAddress = ar_util:decode(maps:get(<<"mining_address">>, JSON)),
 	NextSeed = ar_util:decode(maps:get(<<"next_seed">>, JSON)),
-	NextVDFDifficulty = parse_json_integer(maps:get(<<"next_vdf_difficulty">>, JSON)),
-	Nonce = decode_if_set(JSON, <<"nonce">>, fun parse_json_integer/1, not_set),
+	NextVDFDifficulty = parse_integer(maps:get(<<"next_vdf_difficulty">>, JSON)),
+	Nonce = decode_if_set(JSON, <<"nonce">>, fun parse_integer/1, not_set),
 	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
-	PartitionNumber = parse_json_integer(maps:get(<<"partition_number">>, JSON)),
-	PartitionNumber2 = parse_json_integer(maps:get(<<"partition_number2">>, JSON)),
-	PartitionUpperBound = parse_json_integer(maps:get(<<"partition_upper_bound">>, JSON)),
+	PartitionNumber = parse_integer(maps:get(<<"partition_number">>, JSON)),
+	PartitionNumber2 = parse_integer(maps:get(<<"partition_number2">>, JSON)),
+	PartitionUpperBound = parse_integer(maps:get(<<"partition_upper_bound">>, JSON)),
 	PoA2 = decode_if_set(JSON, <<"poa2">>, fun json_struct_to_poa_from_map/1, not_set),
 	Preimage = decode_if_set(JSON, <<"preimage">>, fun ar_util:decode/1, not_set),
 	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
 	SessionKey = json_struct_to_session_key(maps:get(<<"session_key">>, JSON)),
-	StartIntervalNumber = parse_json_integer(maps:get(<<"start_interval_number">>, JSON)),
-	StepNumber = parse_json_integer(maps:get(<<"step_number">>, JSON)),
+	StartIntervalNumber = parse_integer(maps:get(<<"start_interval_number">>, JSON)),
+	StepNumber = parse_integer(maps:get(<<"step_number">>, JSON)),
 	Label = maps:get(<<"label">>, JSON, <<"not_set">>),
 	PackingDifficulty = maps:get(<<"packing_difficulty">>, JSON, 0),
 	ReplicaFormat = maps:get(<<"replica_format">>, JSON, 0),
@@ -2112,15 +2115,15 @@ json_map_to_candidate(JSON) ->
 json_struct_to_h1_list(JSON) ->
 	lists:map(fun (JSONElement) ->
 		H1 = ar_util:decode(maps:get(<<"h1">>, JSONElement)),
-		Nonce = parse_json_integer(maps:get(<<"nonce">>, JSONElement)),
+		Nonce = parse_integer(maps:get(<<"nonce">>, JSONElement)),
 		{H1, Nonce}
 	end, JSON).
 
 json_struct_to_session_key(JSON) ->
 	{
 		ar_util:decode(maps:get(<<"next_seed">>, JSON)),
-		parse_json_integer(maps:get(<<"interval">>, JSON)),
-		parse_json_integer(maps:get(<<"next_difficulty">>, JSON))
+		parse_integer(maps:get(<<"interval">>, JSON)),
+		parse_integer(maps:get(<<"next_difficulty">>, JSON))
 	}.
 
 solution_to_json_struct(
@@ -2178,23 +2181,23 @@ json_map_to_solution(JSON) ->
 	NextVDFDifficulty2 =
 		case is_binary(NextVDFDifficulty) of
 			true ->
-				parse_json_integer(NextVDFDifficulty);
+				parse_integer(NextVDFDifficulty);
 			false ->
 				NextVDFDifficulty
 		end,
 	Nonce = maps:get(<<"nonce">>, JSON),
 	NonceLimiterOutput = ar_util:decode(maps:get(<<"nonce_limiter_output">>, JSON)),
-	PartitionNumber = parse_json_integer(maps:get(<<"partition_number">>, JSON)),
-	PartitionUpperBound = parse_json_integer(maps:get(<<"partition_upper_bound">>, JSON)),
+	PartitionNumber = parse_integer(maps:get(<<"partition_number">>, JSON)),
+	PartitionUpperBound = parse_integer(maps:get(<<"partition_upper_bound">>, JSON)),
 	PoA1 = json_struct_to_poa_from_map(maps:get(<<"poa1">>, JSON)),
 	PoA2 = json_struct_to_poa_from_map(maps:get(<<"poa2">>, JSON)),
 	Preimage = ar_util:decode(maps:get(<<"preimage">>, JSON)),
-	RecallByte1 = parse_json_integer(maps:get(<<"recall_byte1">>, JSON)),
-	RecallByte2 = decode_if_set(JSON, <<"recall_byte2">>, fun parse_json_integer/1, undefined),
+	RecallByte1 = parse_integer(maps:get(<<"recall_byte1">>, JSON)),
+	RecallByte2 = decode_if_set(JSON, <<"recall_byte2">>, fun parse_integer/1, undefined),
 	Seed = ar_util:decode(maps:get(<<"seed">>, JSON)),
 	SolutionHash = ar_util:decode(maps:get(<<"solution_hash">>, JSON)),
-	StartIntervalNumber = parse_json_integer(maps:get(<<"start_interval_number">>, JSON)),
-	StepNumber = parse_json_integer(maps:get(<<"step_number">>, JSON)),
+	StartIntervalNumber = parse_integer(maps:get(<<"start_interval_number">>, JSON)),
+	StepNumber = parse_integer(maps:get(<<"step_number">>, JSON)),
 	Steps = parse_json_checkpoints(ar_util:decode(maps:get(<<"steps">>, JSON, <<>>))),
 	PackingDifficulty = maps:get(<<"packing_difficulty">>, JSON, 0),
 	ReplicaFormat = maps:get(<<"replica_format">>, JSON, 0),
@@ -2269,9 +2272,9 @@ json_struct_to_jobs(Struct) ->
 	PartialDiff = json_list_to_diff_pair(proplists:get_value(<<"partial_diff">>, Keys)),
 	Seed = ar_util:decode(proplists:get_value(<<"seed">>, Keys, <<>>)),
 	NextSeed = ar_util:decode(proplists:get_value(<<"next_seed">>, Keys, <<>>)),
-	NextVDFDiff = parse_json_integer(proplists:get_value(<<"next_vdf_difficulty">>, Keys,
+	NextVDFDiff = parse_integer(proplists:get_value(<<"next_vdf_difficulty">>, Keys,
 			<<"0">>)),
-	IntervalNumber = parse_json_integer(proplists:get_value(<<"interval_number">>, Keys,
+	IntervalNumber = parse_integer(proplists:get_value(<<"interval_number">>, Keys,
 			<<"0">>)),
 	Jobs = [json_struct_to_job(Job) || Job <- proplists:get_value(<<"jobs">>, Keys, [])],
 	#jobs{ jobs = Jobs, seed = Seed, next_seed = NextSeed,
@@ -2281,9 +2284,9 @@ json_struct_to_jobs(Struct) ->
 json_struct_to_job(Struct) ->
 	{Keys} = Struct,
 	Output = ar_util:decode(proplists:get_value(<<"nonce_limiter_output">>, Keys, <<>>)),
-	StepNumber = parse_json_integer(proplists:get_value(<<"step_number">>, Keys,
+	StepNumber = parse_integer(proplists:get_value(<<"step_number">>, Keys,
 			<<"0">>)),
-	PartitionUpperBound = parse_json_integer(proplists:get_value(<<"partition_upper_bound">>,
+	PartitionUpperBound = parse_integer(proplists:get_value(<<"partition_upper_bound">>,
 			Keys, <<"0">>)),
 	#job{ output = Output, global_step_number = StepNumber,
 			partition_upper_bound = PartitionUpperBound }.
@@ -2411,6 +2414,6 @@ footprint_to_json_map(Intervals) ->
 
 json_map_to_footprint(Map) ->
 	Intervals = maps:get(<<"intervals">>, Map),
-	Intervals2 = [{parse_json_integer(End), parse_json_integer(Start)}
+	Intervals2 = [{parse_integer(End), parse_integer(Start)}
 			|| [Start, End] <- Intervals],
 	ar_intervals:from_list(Intervals2).

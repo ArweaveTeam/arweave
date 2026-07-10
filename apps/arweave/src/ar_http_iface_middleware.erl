@@ -390,13 +390,13 @@ handle(<<"GET">>, [<<"data_sync_record">>], Req, _Pid) ->
 	end;
 
 handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pid) ->
-	case catch binary_to_integer(EncodedStart) of
+	case catch ar_serialize:parse_integer(EncodedStart) of
 		{'EXIT', _} ->
 			{400, #{}, jiffy:encode(#{ error => invalid_start_encoding }), Req};
 		Start when Start < 0 ->
 			{400, #{}, jiffy:encode(#{ error => invalid_start_value }), Req};
 		Start ->
-			case catch binary_to_integer(EncodedLimit) of
+			case catch ar_serialize:parse_integer(EncodedLimit) of
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_limit_encoding }), Req};
 				Limit when Limit =< 0 ->
@@ -418,19 +418,19 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedLimit], Req, _Pi
 	end;
 
 handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedEnd, EncodedLimit], Req, _Pid) ->
-	case catch binary_to_integer(EncodedStart) of
+	case catch ar_serialize:parse_integer(EncodedStart) of
 		{'EXIT', _} ->
 			{400, #{}, jiffy:encode(#{ error => invalid_start_encoding }), Req};
 		Start when Start < 0 ->
 			{400, #{}, jiffy:encode(#{ error => invalid_start_value }), Req};
 		Start ->
-			case catch binary_to_integer(EncodedEnd) of
+			case catch ar_serialize:parse_integer(EncodedEnd) of
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_end_encoding }), Req};
 				End when End =< Start ->
 					{400, #{}, jiffy:encode(#{ error => invalid_range }), Req};
 				End ->
-					case catch binary_to_integer(EncodedLimit) of
+					case catch ar_serialize:parse_integer(EncodedLimit) of
 						{'EXIT', _} ->
 							{400, #{}, jiffy:encode(#{ error => invalid_limit_encoding }), Req};
 						Limit when Limit =< 0 ->
@@ -486,11 +486,11 @@ handle(<<"GET">>, [<<"data_sync_record">>, EncodedStart, EncodedEnd, EncodedLimi
 %%
 %% GET /footprints/{partition_number}/{footprint_number}
 handle(<<"GET">>, [<<"footprints">>, EncodedPartition, EncodedFootprintNumber], Req, _Pid) ->
-	case catch binary_to_integer(EncodedPartition) of
+	case catch ar_serialize:parse_integer(EncodedPartition) of
 		{'EXIT', _} ->
 			{400, #{}, jiffy:encode(#{ error => invalid_partition_encoding }), Req};
 		Partition when Partition >= 0 ->
-			case catch binary_to_integer(EncodedFootprintNumber) of
+			case catch ar_serialize:parse_integer(EncodedFootprintNumber) of
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => invalid_footprint_number_encoding }), Req};
 				FootprintNumber when FootprintNumber >= 0 ->
@@ -550,7 +550,7 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
 %% which corresponds to sorted #tx records in the block.
 %% GET /data_roots/{offset}
 handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
-	case catch binary_to_integer(OffsetBin) of
+	case catch ar_serialize:parse_integer(OffsetBin) of
 		{'EXIT', _} ->
 			{400, #{}, <<>>, Req};
 		Offset when Offset < 0 ->
@@ -581,7 +581,7 @@ handle(<<"GET">>, [<<"data_roots">>, OffsetBin], Req, _Pid) ->
 handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
 	DiskPoolThreshold = ar_disk_pool:get_threshold(),
 	ReadOffset =
-		case catch binary_to_integer(OffsetBin) of
+		case catch ar_serialize:parse_integer(OffsetBin) of
 			{'EXIT', _} ->
 				{reply, {400, #{}, <<>>, Req}};
 			Offset when Offset >= DiskPoolThreshold ->
@@ -876,7 +876,7 @@ handle(<<"GET">>, [<<"peers">>], Req, _Pid) ->
 %% Return the inflation reward emitted at the given block.
 %% GET request to endpoint /price/{height}.
 handle(<<"GET">>, [<<"inflation">>, EncodedHeight], Req, _Pid) ->
-	case catch binary_to_integer(EncodedHeight) of
+	case catch ar_serialize:parse_integer(EncodedHeight) of
 		{'EXIT', _} ->
 			{400, #{}, jiffy:encode(#{ error => height_must_be_an_integer }), Req};
 		Height when Height < 0 ->
@@ -932,7 +932,7 @@ handle(<<"GET">>, [<<"optimistic_price">>, SizeInBytesBinary, EncodedAddr], Req,
 %% using the new pricing scheme.
 %% GET request to endpoint /v2price/{bytes}.
 handle(<<"GET">>, [<<"v2price">>, SizeInBytesBinary], Req, _Pid) ->
-	case catch binary_to_integer(SizeInBytesBinary) of
+	case catch ar_serialize:parse_integer(SizeInBytesBinary) of
 		{'EXIT', _} ->
 			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
 		Size ->
@@ -949,7 +949,7 @@ handle(<<"GET">>, [<<"v2price">>, SizeInBytesBinary, EncodedAddr], Req, _Pid) ->
 		{error, invalid} ->
 			{400, #{}, <<"Invalid address.">>, Req};
 		{ok, Addr} ->
-			case catch binary_to_integer(SizeInBytesBinary) of
+			case catch ar_serialize:parse_integer(SizeInBytesBinary) of
 				{'EXIT', _} ->
 					{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }),
 							Req};
@@ -1064,8 +1064,8 @@ handle(<<"GET">>, [<<"block_index">>, From, To], Req, _Pid) ->
 		Height = proplists:get_value(height, Props),
 		RecentBI = proplists:get_value(recent_block_index, Props),
 		try
-			Start = binary_to_integer(From),
-			End = binary_to_integer(To),
+			Start = ar_serialize:parse_integer(From),
+			End = ar_serialize:parse_integer(To),
 			Encoding = case erlang:get(encoding) of undefined -> json; Enc -> Enc end,
 			handle_get_block_index_range(Start, End, Height, RecentBI, Req, Encoding)
 		catch _:_ ->
@@ -1704,7 +1704,7 @@ content_type_format(Req) ->
 	end.
 
 handle_get_price(SizeInBytesBinary, Req, EstimateFun, Format) ->
-	case catch binary_to_integer(SizeInBytesBinary) of
+	case catch ar_serialize:parse_integer(SizeInBytesBinary) of
 		{'EXIT', _} ->
 			{400, #{}, jiffy:encode(#{ error => size_must_be_an_integer }), Req};
 		Size ->
@@ -1823,7 +1823,7 @@ handle_get_block(Type, ID, Req, Pid, Encoding) ->
 			end;
 		<<"height">> ->
 			CurrentHeight = ar_node:get_height(),
-			try binary_to_integer(ID) of
+			try ar_serialize:parse_integer(ID) of
 				Height when Height < 0 ->
 					{400, #{}, <<"Invalid height.">>, Req};
 				Height when Height > CurrentHeight ->
@@ -2066,7 +2066,7 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
 	end.
 
 handle_get_chunk(OffsetBinary, Req, Encoding) ->
-	case catch binary_to_integer(OffsetBinary) of
+	case catch ar_serialize:parse_integer(OffsetBinary) of
 		Offset when is_integer(Offset) ->
 			case << Offset:(?NOTE_SIZE * 8) >> of
 				%% A positive number represented by =< ?NOTE_SIZE bytes.
@@ -2172,7 +2172,7 @@ handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->
 		{error, invalid} ->
 			{400, #{}, jiffy:encode(#{ error => invalid_address }), Req};
 		{ok, TXID} ->
-			case catch binary_to_integer(OffsetBinary) of
+			case catch ar_serialize:parse_integer(OffsetBinary) of
 				Offset when is_integer(Offset), Offset > 0 ->
 					case acquire_http_semaphore(get_chunk) of
 						{error, timeout} ->
@@ -2201,7 +2201,7 @@ handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->
 	end.
 
 handle_get_chunk_proof(OffsetBinary, Req, Encoding) ->
-	case catch binary_to_integer(OffsetBinary) of
+	case catch ar_serialize:parse_integer(OffsetBinary) of
 		Offset when is_integer(Offset) ->
 			case << Offset:(?NOTE_SIZE * 8) >> of
 				%% A positive number represented by =< ?NOTE_SIZE bytes.
@@ -2272,7 +2272,7 @@ get_data_root_from_headers(Req) ->
 		{_, not_set} ->
 			not_set;
 		{EncodedDataRoot, EncodedDataSize} when byte_size(EncodedDataRoot) == 43 ->
-			case catch binary_to_integer(EncodedDataSize) of
+			case catch ar_serialize:parse_integer(EncodedDataSize) of
 				DataSize when is_integer(DataSize) ->
 					case ar_util:safe_decode(EncodedDataRoot) of
 						{ok, DataRoot} ->
@@ -2584,7 +2584,7 @@ post_block(enqueue_block, {B, Peer}, Req, ReceiveTimestamp) ->
 					not_set ->
 						B;
 					ByteBin ->
-						case catch binary_to_integer(ByteBin) of
+						case catch ar_serialize:parse_integer(ByteBin) of
 							RecallByte when is_integer(RecallByte) ->
 								B#block{ recall_byte = RecallByte };
 							_ ->
@@ -2938,7 +2938,7 @@ process_request(get_block, [Type, ID, Field], Req) ->
 
 handle_get_block_wallet_balance(EncodedHeight, EncodedAddr, Req) ->
 	CurrentHeight = ar_node:get_height(),
-	try binary_to_integer(EncodedHeight) of
+	try ar_serialize:parse_integer(EncodedHeight) of
 		Height when Height < 0 ->
 			{400, #{}, jiffy:encode(#{ error => invalid_height }), Req};
 		Height when Height > CurrentHeight ->
@@ -3042,7 +3042,7 @@ wallet_list_chunk_to_json(#{ next_cursor := NextCursor, wallets := Wallets }) ->
 
 %% @doc Find a block, given a type and a specifier.
 find_block(<<"height">>, RawHeight) ->
-	case catch binary_to_integer(RawHeight) of
+	case catch ar_serialize:parse_integer(RawHeight) of
 		{'EXIT', _} ->
 			{error, height_not_integer};
 		Height ->

@@ -37,6 +37,16 @@ coexisting with new code in the same BEAM. Prefer a single current
 contract unless the code must read persisted data or externally
 provided input from an older release.
 
+## Parsing integers from external input
+
+Never call `binary_to_integer/1` directly on a binary that came from an
+external source (a JSON body, a URL path segment, an HTTP header, a peeresponse). Use `ar_serialize:parse_integer/1` (or
+`ar_serialize:parse_integer_or_infinity/1` where the `infinity`
+atom is a valid input) instead — it rejects inputs longer than
+`?MAX_INTEGER_DIGITS`=155 before building the bignum out of them.
+
+This does not cover bare (unquoted) JSON numbers - `jiffy:decode` handles them.
+
 ## Running Tests
 
 Use `./bin/test` for EUnit-style test modules:
