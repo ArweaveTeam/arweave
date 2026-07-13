@@ -24,6 +24,7 @@ all() ->
 		dotted_key_with_list_of_maps_value_rejected,
 		nested_dotted_key_kept_literal,
 		dotted_peer_role_list_parses,
+		yaml_empty_sequence_kept_as_list,
 		yaml_encode
 	].
 
@@ -150,6 +151,24 @@ dotted_peer_role_list_parses(_Config) ->
 			<<"peers.trusted">> => [<<"1.2.3.4:1984">>]
 		})),
 	ok.
+
+%% An empty YAML sequence (`key: []') must stay an empty list, not
+%% collapse to `<<>>'. Regression for empty list-valued options such as
+%% an empty peer role failing config load with `invalid_peer'.
+yaml_empty_sequence_kept_as_list(_Config) ->
+	?assertEqual(
+		#{
+			[peers, block_gossip] => [<<"35.175.1.113:1984">>],
+			[peers, local] => []
+		},
+		parse_yaml(<<"
+peers:
+  block_gossip:
+    - \"35.175.1.113:1984\"
+  local: []
+">>)),
+	ok.
+
 
 yaml_encode(_Config) ->
 	Input = #{

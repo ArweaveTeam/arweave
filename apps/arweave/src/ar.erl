@@ -15,6 +15,7 @@
 	create_ecdsa_wallet/1,
 	create_wallet/0,
 	create_wallet/1,
+	convert_config/0,
 	docs/0,
 	main/0,
 	prep_stop/1,
@@ -226,6 +227,29 @@ create_wallet_fail(?RSA_KEY_TYPE) ->
 	init:stop(1);
 create_wallet_fail(?ECDSA_KEY_TYPE) ->
 	io:format("Usage: ./bin/create-ecdsa-wallet [data_dir]~n"),
+	init:stop(1).
+
+%% @doc CLI entrypoint for `./bin/arweave convert_config'. Converts a
+%% legacy `config.json' into the new JSON or YAML format. The plain
+%% arguments are `<json|yaml> <InputFile> <OutputFile>'.
+convert_config() ->
+	Args = init:get_plain_arguments(),
+	convert_config(Args).
+
+convert_config([Format, InputFile, OutputFile]) ->
+	arweave_config:start(),
+	case arweave_config:convert_config(Format, InputFile, OutputFile) of
+		ok ->
+			ar:console("Converted ~ts to ~ts (~ts).~n",
+					[InputFile, OutputFile, Format]),
+			init:stop(0);
+		{error, Reason} ->
+			ar:console("Failed to convert config: ~p.~n", [Reason]),
+			init:stop(1)
+	end;
+convert_config(_Args) ->
+	io:format("Usage: ./bin/arweave convert_config <json|yaml> "
+			"<InputFile> <OutputFile>~n"),
 	init:stop(1).
 
 benchmark_vdf() ->

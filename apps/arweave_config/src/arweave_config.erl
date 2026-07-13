@@ -17,7 +17,7 @@
 %%%
 %%% Configuration options are declared as maps in the
 %%% `arweave_config_options_*` modules. These spec maps define the option
-%%% name, defaults, types, read/write hooks, etc... 
+%%% name, defaults, types, read/write hooks, etc...
 %%%
 %%% == Load and runtime lifecycle ==
 %%%
@@ -75,7 +75,8 @@
 	storage_module_to_config/1,
 	config_to_storage_module/1,
 	repack_module_to_config/1,
-	config_to_repack_module/1
+	config_to_repack_module/1,
+	convert_config/3
 ]).
 % application behavior callbacks.
 -export([start/2, stop/1]).
@@ -265,6 +266,10 @@ repack_module_to_config(RepackModule) ->
 	{{pos_integer(), non_neg_integer(), term()}, term()}.
 config_to_repack_module(Config) ->
 	arweave_config_options_repack_modules:config_to_repack_module(Config).
+
+-spec convert_config(term(), term(), term()) -> ok | {error, term()}.
+convert_config(Format, InputFile, OutputFile) ->
+    arweave_config_convert:convert(Format, InputFile, OutputFile).
 
 %% @doc `application` callback.
 start(_StartType, _StartArgs) ->
