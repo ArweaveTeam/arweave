@@ -23,6 +23,7 @@
 	get_system_device/1,
 	integer_to_binary/1,
 	int_to_bool/1,
+	message_queue_len/1,
 	parse_list_indices/1,
 	parse_peer/1,
 	parse_peer/2,
@@ -61,6 +62,25 @@ bool_to_int(_) -> 0.
 
 int_to_bool(1) -> true;
 int_to_bool(0) -> false.
+
+%% @doc Message queue length of a process given its registered name or
+%% pid, or 0 if the name has no live process behind it. Guards against
+%% `process_info/2' raising `badarg' on an unregistered name.
+message_queue_len(Name) when is_atom(Name) ->
+	case whereis(Name) of
+		PID when is_pid(PID) ->
+			message_queue_len(PID);
+		_ ->
+			%% Not registered, or the name points at a port.
+			0
+	end;
+message_queue_len(PID) when is_pid(PID) ->
+	case erlang:process_info(PID, message_queue_len) of
+		{message_queue_len, Len} ->
+			Len;
+		undefined ->
+			0
+	end.
 
 %% @doc Implementations of integer_to_binary and binary_to_integer that can handle infinity.
 integer_to_binary(infinity) ->

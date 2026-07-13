@@ -492,7 +492,7 @@ emit_state_snapshot(#state{ scan_waiting = Waiting, scan_inflight = Inflight,
 			length(ar_peers:get_peers(current))
 		catch _:_ -> -1
 		end,
-	{_, MailboxLen} = erlang:process_info(self(), message_queue_len),
+	MailboxLen = ar_util:message_queue_len(self()),
 	?LOG_DEBUG([{event, data_discovery_state_snapshot},
 			{network_buckets_rows, ets:info(?MODULE, size)},
 			{footprint_buckets_rows,
