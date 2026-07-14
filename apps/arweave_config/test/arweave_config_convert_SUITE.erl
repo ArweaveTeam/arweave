@@ -20,9 +20,10 @@ end_per_testcase(_TestCase, _Config) ->
 
 all() ->
 	[
-		convert_legacy_to_json,
-		convert_legacy_to_yaml,
-		json_and_yaml_agree_on_scalars,
+		convert_to_json_preserves_legacy_semantics,
+		convert_to_yaml_preserves_legacy_semantics,
+		converted_json_shape,
+		converted_yaml_shape,
 		store_left_untouched,
 		unsupported_format_rejected,
 		missing_input_rejected,
@@ -33,54 +34,27 @@ all() ->
 %% Test cases
 %%====================================================================
 
-convert_legacy_to_json(Config) ->
-	Out = out_path(Config, "converted.json"),
-	ok = arweave_config_convert:convert(json, legacy_fixture_path(), Out),
-	true = filelib:is_regular(Out),
-	{ok, Raw} = file:read_file(Out),
-	{ok, Leaf} = arweave_config_format_json:parse(Raw),
-	assert_common_leaves(Leaf),
-	%% Addresses are emitted as base64url text, not raw bytes.
-	?assertEqual(<<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>,
-		maps:get([mining, address], Leaf)),
+convert_to_json_preserves_legacy_semantics(Config) ->
+	assert_round_trip(json, fun arweave_config_format_json:parse/1, Config).
+
+convert_to_yaml_preserves_legacy_semantics(Config) ->
+	assert_round_trip(yaml, fun arweave_config_format_yaml:parse/1, Config).
+
+%% The address must be written as base64url *text*. A load round-trip
+%% cannot see this: the `address' type would decode several spellings
+%% back to the same bytes, so only the raw file catches a regression.
+converted_json_shape(Config) ->
+	Raw = convert(json, Config),
+	arweave_config_test_util:assert_nested_json_shape(Raw),
 	?assertNotEqual(nomatch,
-		binary:match(Raw, <<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>)),
+		binary:match(Raw, arweave_config_test_util:legacy_mining_address_b64())),
 	ok.
 
-convert_legacy_to_yaml(Config) ->
-	Out = out_path(Config, "converted.yaml"),
-	ok = arweave_config_convert:convert(yaml, legacy_fixture_path(), Out),
-	true = filelib:is_regular(Out),
-	{ok, Raw} = file:read_file(Out),
-	{ok, Leaf} = arweave_config_format_yaml:parse(Raw),
-	assert_common_leaves(Leaf),
-	?assertEqual(<<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>,
-		maps:get([mining, address], Leaf)),
-	ok.
-
-%% Both target formats describe the same configuration, so the scalar
-%% leaves must agree after a round-trip through each reader.
-json_and_yaml_agree_on_scalars(Config) ->
-	JsonOut = out_path(Config, "agree.json"),
-	YamlOut = out_path(Config, "agree.yaml"),
-	ok = arweave_config_convert:convert(json, legacy_fixture_path(), JsonOut),
-	ok = arweave_config_convert:convert(yaml, legacy_fixture_path(), YamlOut),
-	{ok, JsonRaw} = file:read_file(JsonOut),
-	{ok, YamlRaw} = file:read_file(YamlOut),
-	{ok, JsonLeaf} = arweave_config_format_json:parse(JsonRaw),
-	{ok, YamlLeaf} = arweave_config_format_yaml:parse(YamlRaw),
-	Keys = [
-		[port],
-		[data_dir],
-		[debug],
-		[mining, address],
-		[semaphores, post_chunk, limit]
-	],
-	lists:foreach(
-		fun(Key) ->
-			?assertEqual(maps:get(Key, JsonLeaf), maps:get(Key, YamlLeaf))
-		end,
-		Keys),
+converted_yaml_shape(Config) ->
+	Raw = convert(yaml, Config),
+	arweave_config_test_util:assert_nested_yaml_shape(Raw),
+	?assertNotEqual(nomatch,
+		binary:match(Raw, arweave_config_test_util:legacy_mining_address_b64())),
 	ok.
 
 %% The converter borrows the global store transiently and must restore
@@ -108,51 +82,80 @@ missing_input_rejected(Config) ->
 	ok.
 
 %% A legacy `local_peers: []' must convert to an empty array
-%% (`"local": []'), not an empty string (`"local": ""').
+%% (`"local": []'), not an empty string (`"local": ""'): the peers type
+%% rejects `<<>>', so an empty string would fail to load at all.
 empty_local_peers_becomes_empty_array(Config) ->
 	Input = out_path(Config, "empty_local_peers.json"),
 	ok = file:write_file(Input, <<"{\"local_peers\": []}">>),
 	Out = out_path(Config, "empty_local_peers_out.json"),
 	ok = arweave_config_convert:convert(json, Input, Out),
 	{ok, Raw} = file:read_file(Out),
-	%% jiffy decodes an empty JSON array to `[]' and an empty JSON
-	%% string to `<<>>', so this distinguishes the two.
-	#{<<"peers">> := #{<<"local">> := Local}} =
-		jiffy:decode(Raw, [return_maps]),
-	?assertEqual([], Local),
-	%% And the new-format reader round-trips it back to an empty list.
-	{ok, Leaf} = arweave_config_format_json:parse(Raw),
-	?assertEqual([], maps:get([peers, local], Leaf)),
+	arweave_config:with_test_config(fun() ->
+		{ok, LeafMap} = arweave_config_format_json:parse(Raw),
+		ok = arweave_config:load(LeafMap),
+		?assertEqual([], arweave_config:get([peers, local]))
+	end),
 	ok.
 
 %%====================================================================
 %% Helpers
 %%====================================================================
 
-assert_common_leaves(Leaf) ->
-	?assertEqual(1985, maps:get([port], Leaf)),
-	?assertEqual(<<"some_data_dir">>, maps:get([data_dir], Leaf)),
-	?assertEqual(true, maps:get([debug], Leaf)),
-	?assertEqual(999, maps:get([semaphores, post_chunk, limit], Leaf)),
-	Trusted = maps:get([peers, trusted], Leaf),
-	?assert(is_list(Trusted)),
+%% @doc Loading the converted file must leave the node in exactly the
+%% state the legacy file itself produces — converting a config may not
+%% change how the node behaves.
+assert_round_trip(Format, Parse, Config) ->
+	FromLegacy = arweave_config:with_test_config(fun() ->
+		{ok, ok} = arweave_config_format_legacy_json:parse(legacy_fixture()),
+		option_values()
+	end),
+	Raw = convert(Format, Config),
+	FromConverted = arweave_config:with_test_config(fun() ->
+		{ok, LeafMap} = Parse(Raw),
+		ok = arweave_config:load(LeafMap),
+		%% Anchor the converted side to concrete expected values. The
+		%% comparison below is relative: without this, a conversion that
+		%% silently produced nothing would compare equal to a legacy load
+		%% that silently produced nothing, and pass.
+		arweave_config_test_util:assert_legacy_json_values(),
+		assert_trusted_peers_converted(),
+		option_values()
+	end),
+	%% Report the differing keys rather than two ~300-key maps.
+	Diff = maps:filter(
+		fun(Key, Value) -> maps:get(Key, FromConverted, undefined) =/= Value end,
+		FromLegacy),
+	?assertEqual(#{}, maps:map(
+		fun(Key, Value) -> {legacy, Value, converted, maps:get(Key, FromConverted)} end,
+		Diff)).
+
+convert(Format, Config) ->
+	Out = out_path(Config, "converted." ++ atom_to_list(Format)),
+	ok = arweave_config_convert:convert(Format, legacy_fixture_path(), Out),
+	true = filelib:is_regular(Out),
+	{ok, Raw} = file:read_file(Out),
+	Raw.
+
+option_values() ->
+	arweave_config_test_util:loaded_option_values(dns_dependent_options()).
+
+%% The fixture lists a hostname among the trusted peers, so the loaded
+%% value depends on a DNS lookup. A round-trip resolves it twice — once
+%% inside the converter, once when loading the legacy file directly — so
+%% the two sides can legitimately disagree. Checked separately below.
+dns_dependent_options() ->
+	[[peers, trusted]].
+
+assert_trusted_peers_converted() ->
 	%% IP peers need no DNS, so this entry is deterministic.
-	?assert(lists:member(<<"188.166.200.45:1984">>, Trusted)),
-	Modules = maps:get([storage_modules], Leaf),
-	?assert(is_list(Modules) andalso Modules =/= []),
-	Webhooks = maps:get([webhooks], Leaf),
-	?assertEqual(1, length(Webhooks)),
-	ok.
+	?assert(lists:member({188,166,200,45,1984},
+		arweave_config:get([peers, trusted]))).
+
+legacy_fixture() ->
+	arweave_config_test_util:legacy_fixture().
 
 legacy_fixture_path() ->
-	fixture_path("legacy_config.json").
-
-fixture_path(Name) ->
-	BeamPath = case code:which(?MODULE) of
-		non_existing -> ?FILE;
-		LoadedPath when is_list(LoadedPath) -> LoadedPath
-	end,
-	filename:join([filename:dirname(BeamPath), "fixtures", Name]).
+	arweave_config_test_util:legacy_fixture_path().
 
 out_path(Config, Name) ->
 	filename:join(proplists:get_value(priv_dir, Config), Name).
