@@ -3,6 +3,9 @@
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 
+suite() ->
+	[{timetrap, {seconds, 60}}].
+
 init_per_suite(Config) -> Config.
 
 end_per_suite(_Config) -> ok.

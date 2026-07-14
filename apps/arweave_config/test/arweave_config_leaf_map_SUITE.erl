@@ -4,6 +4,9 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
 
+suite() ->
+	[{timetrap, {seconds, 60}}].
+
 init_per_suite(Config) -> Config.
 
 end_per_suite(_Config) -> ok.

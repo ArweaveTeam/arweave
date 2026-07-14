@@ -19,20 +19,22 @@
 
 -define(MOD, arweave_config_signal_handler).
 
-init_per_suite(Config) ->
+suite() ->
+	[{timetrap, {seconds, 60}}].
+
+init_per_suite(Config) -> Config.
+
+end_per_suite(_Config) -> ok.
+
+init_per_testcase(_TestCase, Config) ->
 	ok = arweave_config:start(),
 	Config.
-
-end_per_suite(_Config) ->
-	ok = arweave_config:stop().
-
-init_per_testcase(_TestCase, Config) -> Config.
 
 end_per_testcase(_TestCase, _Config) ->
 	%% Let any spawned diagnostic processes finish writing logs before
 	%% the next case starts.
 	timer:sleep(50),
-	ok.
+	ok = arweave_config:stop().
 
 all() ->
 	[
