@@ -6,6 +6,9 @@
 %% Hostname resolution is mocked so the parity checks are hermetic (no
 %% DNS): `myhost[:Port]' resolves to {1,2,3,4,Port}. Everything else
 %% (IPv4 literals) passes through to the real parser.
+suite() ->
+	[{timetrap, {seconds, 60}}].
+
 init_per_testcase(_TestCase, Config) ->
 	ok = arweave_config:start(),
 	meck:new(ar_util, [passthrough]),

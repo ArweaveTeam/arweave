@@ -84,9 +84,23 @@ decode_value(Value) ->
 
 %% A list element coming back from `yamerl` is either:
 %%   - a proplist (a YAML mapping inside a sequence) - convert to a map,
-%%   - or a scalar — decode via `decode_value/1`.
+%%   - a nested sequence (`- [a, b]') - decode element by element,
+%%   - or a scalar — decode via `decode_value/1'.
+decode_yaml_item([]) ->
+	%% As at the top level, an empty sequence stays an empty list rather
+	%% than collapsing to `<<>>' via `list_to_binary([])'.
+	[];
 decode_yaml_item([{_, _} | _] = Proplist) ->
 	proplist_to_map(Proplist);
+decode_yaml_item(Item) when is_list(Item) ->
+	case io_lib:printable_unicode_list(Item) of
+		true ->
+			list_to_binary(Item);
+		false ->
+			%% A nested sequence. `decode_value/1' would treat it as an
+			%% iolist and concatenate the elements into one binary.
+			[decode_yaml_item(Element) || Element <- Item]
+	end;
 decode_yaml_item(Other) ->
 	decode_value(Other).
 
@@ -155,7 +169,9 @@ encode_scalar(true) -> <<"true">>;
 encode_scalar(false) -> <<"false">>;
 encode_scalar(null) -> <<"null">>;
 encode_scalar(undefined) -> <<"null">>;
-encode_scalar(infinity) -> <<".inf">>;
+%% `infinity' is Erlang's sentinel atom, not a float. Emitting YAML's
+%% `.inf' float literal would read back as `+inf' and fail the option's
+%% type check, so it falls through to the atom clause below.
 encode_scalar(Value) when is_integer(Value) ->
 	integer_to_binary(Value);
 encode_scalar(Value) when is_float(Value) ->

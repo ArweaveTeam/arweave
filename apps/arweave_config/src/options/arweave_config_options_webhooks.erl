@@ -8,7 +8,8 @@
 %%% existing node code.
 %%%
 %%% The webhook validator rejects enabled webhooks that are missing
-%%% a url or events list.
+%%% a url or events list, or that name an event `ar_webhook' cannot
+%%% subscribe to.
 -module(arweave_config_options_webhooks).
 -behaviour(arweave_config_options).
 -export([
@@ -55,17 +56,18 @@ specs() ->
 			enabled => true,
 			option_key => [webhooks, {list_item}, events],
 			default => [],
+			type => list,
 			short_description =>
-				<<"List of event atoms the webhook subscribes to "
+				<<"List of events the webhook subscribes to "
 				  "(e.g. transaction, block).">>
 		},
 		#{
 			enabled => true,
 			option_key => [webhooks, {list_item}, headers],
-			default => [],
+			default => #{},
 			short_description =>
 				<<"HTTP headers to send with each webhook request, "
-				  "as a list of {key, value} pairs.">>
+				  "as a name => value object.">>
 		}
 	].
 
@@ -94,15 +96,15 @@ normalize_webhook(Webhook) ->
 		enabled => maps:get(enabled, Webhook, true),
 		events => maps:get(events, Webhook, []),
 		url => maps:get(url, Webhook, undefined),
-		headers => maps:get(headers, Webhook, [])
+		headers => maps:get(headers, Webhook, #{})
 	}.
 
 %% @doc Convert per-webhook entries into a list of
 %% `#{events, url, headers}' maps, sorted by webhook id. Disabled
 %% webhooks are filtered out.
--spec legacy_list() -> [#{events => list(),
+-spec legacy_list() -> [#{events => [binary()],
                    url => binary() | undefined,
-                   headers => list()}].
+                   headers => map()}].
 legacy_list() ->
 	[
 		maps:without([enabled], Hook)
@@ -164,5 +166,18 @@ validate_one(Attrs) ->
 		{_, []} ->
 			{error, <<"webhook: events list is empty">>};
 		_ ->
-			ok
+			validate_events(Events)
+	end.
+
+%% An unknown event name would otherwise leave a webhook that subscribes
+%% to nothing and never fires. `ar_webhook' owns the vocabulary, so a new
+%% event needs no change here.
+validate_events(Events) ->
+	Supported = ar_webhook:supported_events(),
+	case [Event || Event <- Events, not lists:member(Event, Supported)] of
+		[] ->
+			ok;
+		Unknown ->
+			{error, iolist_to_binary(
+				io_lib:format("webhook: unknown events ~p", [Unknown]))}
 	end.

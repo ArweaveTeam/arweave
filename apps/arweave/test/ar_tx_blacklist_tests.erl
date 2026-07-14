@@ -64,17 +64,18 @@ test_uses_blacklists() ->
 	try
 		ar_test_node:start(#{ b0 => B0, addr => RewardAddr,
 			config => #{
-				[transactions, blocklist, files] => BlacklistFiles,
-				[transactions, allowlist, files] => [WhitelistFile],
+				[transactions, blocklist, files] =>
+					[list_to_binary(File) || File <- BlacklistFiles],
+				[transactions, allowlist, files] => [list_to_binary(WhitelistFile)],
 				[sync, jobs] => 10,
 				[transactions, blocklist, urls] => [
 					%% Serves empty body.
-					"http://localhost:1985/empty",
+					<<"http://localhost:1985/empty">>,
 					%% Serves a valid TX ID (one from the BadTXIDs list).
-					"http://localhost:1985/good",
+					<<"http://localhost:1985/good">>,
 					%% Serves some valid TX IDs (from the BadTXIDs list) and a line
 					%% with invalid Base64URL.
-					"http://localhost:1985/bad/and/good"
+					<<"http://localhost:1985/bad/and/good">>
 				],
 				[features, pack_served_chunks] => true
 			},

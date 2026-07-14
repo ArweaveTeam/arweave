@@ -3,6 +3,9 @@
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 
+suite() ->
+	[{timetrap, {seconds, 60}}].
+
 all() ->
 	[unsupported_extension, bad_format, empty_file,
 	 unreadable_file, readable_file, unsafe_path, relative_path].

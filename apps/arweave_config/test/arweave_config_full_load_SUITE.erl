@@ -5,11 +5,18 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-init_per_suite(Config) ->
+suite() ->
+	[{timetrap, {seconds, 60}}].
+
+init_per_suite(Config) -> Config.
+
+end_per_suite(_Config) -> ok.
+
+init_per_testcase(_TestCase, Config) ->
 	ok = arweave_config:start(),
 	Config.
 
-end_per_suite(_Config) ->
+end_per_testcase(_TestCase, _Config) ->
 	ok = arweave_config:stop().
 
 all() ->
@@ -29,22 +36,15 @@ all() ->
 %% Test cases
 %%====================================================================
 
-%% Meta test to ensure all registered options are covered by the test suite.
-%% If this fails it means the full_config.yaml fixture is missing some options.
+%% Meta test: every registered option must appear in the full_config.yaml
+%% fixture. Fails when a newly added option has no fixture entry.
 every_option_is_covered(_Config) ->
-	ExpectedKeys = [maps:get(option_key, Spec) || Spec <- enabled_specs()],
-	CoveredKeys = covered_options(),
-	Uncovered = ExpectedKeys -- CoveredKeys,
-	case Uncovered of
-		[] ->
-			ok;
-		_ ->
-			ct:fail({uncovered_options, Uncovered})
-	end.
+	assert_all_options_are_covered(full_config_yaml, full_config_data()).
 
 load_empty_json_defaults(_Config) ->
 	arweave_config:with_test_config(fun() ->
-		{ok, LeafMap} = arweave_config_format_json:parse(read_fixture("empty_config.json")),
+		{ok, LeafMap} = arweave_config_format_json:parse(
+			arweave_config_test_util:read_fixture("empty_config.json")),
 		ok = arweave_config:load(LeafMap),
 		%% Assert all option values are set to their declared defaults.
 		lists:foreach(
@@ -76,15 +76,16 @@ config_formats_roundtrip(_Config) ->
 
 load_json_and_yaml(_Config) ->
 	ConfigLeafMap = full_config_data(),
-	Expected = expected_loaded_values(ConfigLeafMap, maps:keys(ConfigLeafMap)),
+	Expected = arweave_config_test_util:expected_loaded_values(
+		ConfigLeafMap, maps:keys(ConfigLeafMap)),
 	lists:foreach(
 		fun({Tag, Data, Parser, _ShapeAssert}) ->
 			arweave_config:with_test_config(fun() ->
 				{ok, ParsedLeafMap} = Parser(Data),
 				ok = arweave_config:load(ParsedLeafMap),
 				assert_all_options_are_covered(Tag, ParsedLeafMap),
-				assert_loaded_values(Expected),
-				assert_list_values(Tag)
+				arweave_config_test_util:assert_loaded_values(Expected),
+				assert_full_config_values()
 			end)
 		end,
 		config_formats(ConfigLeafMap)),
@@ -133,7 +134,8 @@ mining:
 
 load_legacy_json(_Config) ->
 	arweave_config:with_test_config(fun() ->
-		{ok, _} = arweave_config_format_legacy_json:parse(legacy_fixture()),
+		{ok, _} = arweave_config_format_legacy_json:parse(
+			arweave_config_test_util:legacy_fixture()),
 		assert_legacy_json_subset()
 	end),
 	ok.
@@ -142,12 +144,12 @@ load_cli_and_legacy_cli(_Config) ->
 	ConfigLeafMap = full_config_data(),
 	{Args, Keys} = cli_args(ConfigLeafMap),
 	assert_cli_shape(Args),
-	Expected = expected_loaded_values(ConfigLeafMap, Keys),
+	Expected = arweave_config_test_util:expected_loaded_values(ConfigLeafMap, Keys),
 	arweave_config:with_test_config(fun() ->
 		{ok, Map} = arweave_config_format_cli:parse(Args),
 		ok = arweave_config:load(Map),
-		assert_loaded_values(Expected),
-		assert_values_present(Keys)
+		arweave_config_test_util:assert_loaded_values(Expected),
+		arweave_config_test_util:assert_values_present(Keys)
 	end),
 	assert_legacy_cli_surface(),
 	ok.
@@ -156,13 +158,13 @@ load_env(_Config) ->
 	ConfigLeafMap = full_config_data(),
 	{Vars, Keys} = env_fixture_values(ConfigLeafMap),
 	assert_env_shape(Vars),
-	Expected = expected_loaded_values(ConfigLeafMap, Keys),
+	Expected = arweave_config_test_util:expected_loaded_values(ConfigLeafMap, Keys),
 	arweave_config:with_test_config(fun() ->
 		apply_env(Vars, fun() ->
 			Parsed = arweave_config_format_env:parse(),
 			ok = arweave_config:load(Parsed),
-			assert_loaded_values(Expected),
-			assert_values_present(Keys)
+			arweave_config_test_util:assert_loaded_values(Expected),
+			arweave_config_test_util:assert_values_present(Keys)
 		end)
 	end),
 	ok.
@@ -177,14 +179,7 @@ load_env(_Config) ->
 covered_options() ->
 	[
 		maps:get(option_key, Spec)
-		|| Spec <- enabled_specs()
-	].
-
-enabled_specs() ->
-	[
-		Spec
-		|| Spec <- arweave_config_options_spec:all(),
-		   maps:get(enabled, Spec, true) =/= false
+		|| Spec <- arweave_config_test_util:enabled_specs()
 	].
 
 %% ------------------------------------------------------------------
@@ -193,17 +188,18 @@ enabled_specs() ->
 
 %% @doc #{OptionKey=>Value} map covering all enabled options.
 full_config_data() ->
-	{ok, ConfigLeafMap} = arweave_config_format_yaml:parse(read_fixture("full_config.yaml")),
+	{ok, ConfigLeafMap} = arweave_config_format_yaml:parse(
+		arweave_config_test_util:read_fixture("full_config.yaml")),
 	ConfigLeafMap.
 
 config_formats(ConfigLeafMap) ->
 	[
-		{yaml, read_fixture("full_config.yaml"),
+		{yaml, arweave_config_test_util:read_fixture("full_config.yaml"),
 			fun arweave_config_format_yaml:parse/1,
-			fun assert_nested_yaml_shape/1},
+			fun arweave_config_test_util:assert_nested_yaml_shape/1},
 		{json, nested_json_data(ConfigLeafMap),
 			fun arweave_config_format_json:parse/1,
-			fun assert_nested_json_shape/1},
+			fun arweave_config_test_util:assert_nested_json_shape/1},
 		{json_dot_only, dotted_json_data(ConfigLeafMap),
 			fun arweave_config_format_json:parse/1,
 			fun assert_dotted_json_shape/1},
@@ -229,30 +225,13 @@ dotted_yaml_data(ConfigLeafMap) ->
 %% Config file shape assertions
 %% ------------------------------------------------------------------
 %% Minimal smoke test that the data appears to be the correct format.
-%% *Not* an exhaustive check of the data.
-assert_nested_yaml_shape(FileContents) ->
-	?assertMatch({_, _}, binary:match(FileContents, <<"mining:\n">>)),
-	?assertMatch({_, _}, binary:match(FileContents, <<"  enabled: true\n">>)),
-	?assertEqual(nomatch, binary:match(FileContents, <<"mining.enabled">>)).
-
-assert_nested_json_shape(FileContents) ->
-	Decoded = decode_json_map(FileContents),
-	?assert(maps:is_key(<<"mining">>, Decoded)),
-	?assertNot(maps:is_key(<<"mining.enabled">>, Decoded)),
-	Mining = maps:get(<<"mining">>, Decoded),
-	?assert(is_map(Mining)),
-	?assertEqual(true, maps:get(<<"enabled">>, Mining)).
-
+%% *Not* an exhaustive check of the data. The nested-shape assertions
+%% live in arweave_config_test_util — the convert suite reuses them.
 assert_dotted_json_shape(FileContents) ->
-	Decoded = decode_json_map(FileContents),
+	Decoded = arweave_config_test_util:decode_json_map(FileContents),
 	?assert(maps:is_key(<<"mining.enabled">>, Decoded)),
 	?assert(maps:is_key(<<"mining.hashing_threads">>, Decoded)),
 	?assertNot(maps:is_key(<<"mining">>, Decoded)).
-
-decode_json_map(FileContents) ->
-	Decoded = jiffy:decode(FileContents, [return_maps]),
-	true = is_map(Decoded),
-	Decoded.
 
 assert_dotted_yaml_shape(FileContents) ->
 	?assertMatch({_, _}, binary:match(FileContents, <<"mining.enabled: true\n">>)),
@@ -279,12 +258,12 @@ assert_env_shape(Vars) ->
 defaulted_non_wildcard_specs() ->
 	[
 		Spec
-		|| Spec <- enabled_specs(),
+		|| Spec <- arweave_config_test_util:enabled_specs(),
 		   maps:is_key(default, Spec),
-		   not is_wildcard_option(maps:get(option_key, Spec))
+		   not arweave_config_test_util:is_wildcard_option(maps:get(option_key, Spec))
 	].
 
-assert_list_values(_Tag) ->
+assert_full_config_values() ->
 	?assertEqual([{1,2,3,4,1984}],
 		arweave_config:get([peers, trusted])),
 	?assertEqual([{5,6,7,8,1985}],
@@ -298,7 +277,23 @@ assert_list_values(_Tag) ->
 	?assertEqual([{6,6,6,6,1984}],
 		arweave_config:get([peers, cm_peer])),
 	?assertEqual({7,7,7,7,1984},
-		arweave_config:get([peers, cm_exit])).
+		arweave_config:get([peers, cm_exit])),
+	?assertEqual([<<"blacklist-a.txt">>, <<"blacklist-b.txt">>],
+		arweave_config:get([transactions, blocklist, files])),
+	?assertEqual([<<"http://blocklist.local/list.txt">>],
+		arweave_config:get([transactions, blocklist, urls])),
+	?assertEqual([<<"allowlist-a.txt">>],
+		arweave_config:get([transactions, allowlist, files])),
+	?assertEqual([<<"http://allowlist.local/list.txt">>],
+		arweave_config:get([transactions, allowlist, urls])),
+	?assertEqual(
+		[#{
+			enabled => true,
+			url => <<"https://example.com/hook">>,
+			events => [<<"transaction">>, <<"block">>],
+			headers => #{<<"Authorization">> => <<"Bearer 123">>}
+		}],
+		arweave_config:get([webhooks])).
 
 contains_config_syntax(Bin) ->
 	binary:match(Bin, [<<"{">>, <<"}">>, <<": ">>]) =/= nomatch.
@@ -306,7 +301,7 @@ contains_config_syntax(Bin) ->
 assert_all_options_are_covered(Tag, Parsed) ->
 	lists:foreach(
 		fun(Key) ->
-			case is_wildcard_option(Key) of
+			case arweave_config_test_util:is_wildcard_option(Key) of
 				false ->
 					?assert(
 						maps:is_key(Key, Parsed) orelse
@@ -323,10 +318,6 @@ assert_wildcard_option_covered(Tag, WildcardOption, Parsed) ->
 	?assert(
 		lists:any(fun(Key) -> maps:is_key(Key, Parsed) end, ConcreteKeys),
 		io_lib:format("~p fixture missing wildcard option ~p", [Tag, WildcardOption])).
-
-%% True when the option key has a templated segment (e.g. {list_item}).
-is_wildcard_option(Key) ->
-	lists:any(fun({_}) -> true; (_) -> false end, Key).
 
 wildcard_option_concrete_keys() ->
 	#{
@@ -366,70 +357,16 @@ wildcard_option_concrete_keys() ->
 			[[repack_modules]]
 	}.
 
-assert_values_present(Keys) ->
-	lists:foreach(fun assert_value_present/1, Keys).
-
-assert_value_present(Key) ->
-	?assertNotEqual(undefined, arweave_config:get(Key)).
-
-expected_loaded_values(ConfigLeafMap, Keys) ->
-	arweave_config:with_test_config(fun() ->
-		ok = arweave_config:load(ConfigLeafMap),
-		maps:from_list([{Key, arweave_config:get(Key)} || Key <- Keys])
-	end).
-
-assert_loaded_values(Expected) ->
-	maps:foreach(
-		fun(Key, ExpectedValue) ->
-			?assertEqual(ExpectedValue, arweave_config:get(Key))
-		end,
-		Expected).
-
+%% The concrete expected values live in arweave_config_test_util so the
+%% convert suite can hold the converted file to the same expectations.
 assert_legacy_json_subset() ->
-	?assertEqual(true, arweave_config:get([debug])),
-	?assertEqual(1985, arweave_config:get([port])),
-	?assertEqual(true, arweave_config:get([genesis, init])),
-	?assertEqual(42, arweave_config:get([genesis, difficulty])),
-	?assertEqual(true, arweave_config:get([mining, enabled])),
-	?assertEqual(legacy_mining_addr(), arweave_config:get([mining, address])),
-	?assertEqual(17, arweave_config:get([mining, hashing_threads])),
-	?assertEqual(10, arweave_config:get([sync, jobs])),
-	?assertEqual(true, arweave_config:get([sync, local_peers_only])),
-	?assertEqual(false, arweave_config:get([join, auto])),
-	?assertEqual(9, arweave_config:get([join, workers])),
-	?assertEqual(lists:sort([{192,168,2,3,1984}, {172,16,10,11,1985}]),
-		lists:sort(arweave_config:get([peers, local]))),
-	?assertEqual(lists:sort([{159,203,158,108,1984}, {150,150,150,150,1983}]),
-		lists:sort(arweave_config:get([peers, block_gossip]))),
-	?assertEqual(lists:sort([
-			{127,0,0,1,1984},
-			{2,3,4,5,1984},
-			{6,7,8,9,1982}
-		]),
-		lists:sort(arweave_config:get([peers, vdf_server]))),
-	?assertEqual(hiopt_m4, arweave_config:get([vdf, algorithm])),
-	?assertEqual(lists:sort(legacy_storage_modules()),
-		lists:sort(arweave_config_options_storage_modules:legacy_list())),
+	arweave_config_test_util:assert_legacy_json_values(),
 	assert_legacy_json_fixture_coverage(),
-	assert_values_present(legacy_json_supported_keys()).
-
-legacy_mining_addr() ->
-	ar_util:decode(<<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>).
-
-legacy_storage_modules() ->
-	PartitionSize = ar_block:partition_size(),
-	MiningAddr = legacy_mining_addr(),
-	[
-		{PartitionSize, 0, unpacked},
-		{PartitionSize, 2, {spora_2_6, MiningAddr}},
-		{PartitionSize, 100, unpacked},
-		{1, 0, unpacked},
-		{1000000000000, 14, {spora_2_6, MiningAddr}},
-		{PartitionSize, 0, {replica_2_9, MiningAddr}}
-	].
+	arweave_config_test_util:assert_values_present(legacy_json_supported_keys()).
 
 assert_legacy_json_fixture_coverage() ->
-	{ok, {LegacyPairs}} = ar_serialize:json_decode(legacy_fixture()),
+	{ok, {LegacyPairs}} = ar_serialize:json_decode(
+		arweave_config_test_util:legacy_fixture()),
 	Keys = sets:from_list([binary_to_atom(K) || {K, _V} <- LegacyPairs]),
 	lists:foreach(
 		fun({LegacyKey, OptionKey}) ->
@@ -502,28 +439,12 @@ fixture_structural_exclusions() ->
 %% File and generated-surface helpers
 %% ------------------------------------------------------------------
 
-read_fixture(Name) ->
-	BeamPath = case code:which(?MODULE) of
-		non_existing -> ?FILE;
-		LoadedPath when is_list(LoadedPath) -> LoadedPath
-	end,
-	Path = filename:join([
-		filename:dirname(BeamPath),
-		"fixtures",
-		Name
-	]),
-	{ok, FileContents} = file:read_file(Path),
-	FileContents.
-
-legacy_fixture() ->
-	read_fixture("legacy_config.json").
-
 cli_specs(ConfigLeafMap) ->
 	[
 		Spec
 		|| Spec <- normalized_enabled_specs(),
 		   maps:is_key(maps:get(option_key, Spec), ConfigLeafMap),
-		   not is_wildcard_option(maps:get(option_key, Spec)),
+		   not arweave_config_test_util:is_wildcard_option(maps:get(option_key, Spec)),
 		   maps:is_key(type, Spec),
 		   not cli_unsupported(Spec)
 	].
@@ -580,7 +501,7 @@ env_specs(ConfigLeafMap) ->
 		Spec
 		|| Spec <- normalized_enabled_specs(),
 		   maps:is_key(maps:get(option_key, Spec), ConfigLeafMap),
-		   not is_wildcard_option(maps:get(option_key, Spec)),
+		   not arweave_config_test_util:is_wildcard_option(maps:get(option_key, Spec)),
 		   not env_unsupported(Spec)
 	].
 
@@ -845,17 +766,17 @@ accumulating_cases() ->
 		{"vdf_server_trusted_peer accumulates", ["vdf_server_trusted_peer", "127.0.0.1"],
 			fun() -> assert_peers_eq_unordered(vdf_server, [{127,0,0,1,1984}]) end},
 		{"transaction_blacklist accumulates", ["transaction_blacklist", "/list1"],
-			fun() -> assert_eq([transactions, blocklist, files], ["/list1"]) end},
+			fun() -> assert_eq([transactions, blocklist, files], [<<"/list1">>]) end},
 		{"transaction_blacklist_url accumulates",
 			["transaction_blacklist_url", "http://example.com/b1"],
 			fun() -> assert_eq([transactions, blocklist, urls],
-				["http://example.com/b1"]) end},
+				[<<"http://example.com/b1">>]) end},
 		{"transaction_whitelist accumulates", ["transaction_whitelist", "/wl1"],
-			fun() -> assert_eq([transactions, allowlist, files], ["/wl1"]) end},
+			fun() -> assert_eq([transactions, allowlist, files], [<<"/wl1">>]) end},
 		{"transaction_whitelist_url accumulates",
 			["transaction_whitelist_url", "http://example.com/w1"],
 			fun() -> assert_eq([transactions, allowlist, urls],
-				["http://example.com/w1"]) end},
+				[<<"http://example.com/w1">>]) end},
 		%% Catalog flag — classified directly into [features, Name].
 		{"enable promotes catalog flag", ["enable", "disk_logging"],
 			fun() -> assert_eq([features, disk_logging], true) end},

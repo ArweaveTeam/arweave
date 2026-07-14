@@ -8,16 +8,19 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
-init_per_suite(Config) ->
+suite() ->
+	[{timetrap, {seconds, 60}}].
+
+init_per_suite(Config) -> Config.
+
+end_per_suite(_Config) -> ok.
+
+init_per_testcase(_TestCase, Config) ->
 	ok = arweave_config:start(),
 	Config.
 
-end_per_suite(_Config) ->
+end_per_testcase(_TestCase, _Config) ->
 	ok = arweave_config:stop().
-
-init_per_testcase(_TestCase, Config) -> Config.
-
-end_per_testcase(_TestCase, _Config) -> ok.
 
 all() ->
 	[

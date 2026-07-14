@@ -542,7 +542,11 @@ load_from_urls(URLs) ->
 
 load_from_url(URL) ->
 	try
-		#{ host := Host, path := RawPath, scheme := Scheme } = M = uri_string:parse(URL),
+		%% Config stores URLs as binaries. uri_string returns components
+		%% of the same type as its input, and the code below (a literal
+		%% "" path, "http"/"https" schemes) is written against strings.
+		#{ host := Host, path := RawPath, scheme := Scheme } = M =
+			uri_string:parse(binary_to_list(URL)),
 		Path = case RawPath of "" -> "/"; Else -> Else end,
 		Query = case maps:get(query, M, not_found) of not_found -> <<>>; Q -> [<<"?">>, Q] end,
 		Port = maps:get(port, M, case Scheme of "http" -> 80; "https" -> 443 end),
