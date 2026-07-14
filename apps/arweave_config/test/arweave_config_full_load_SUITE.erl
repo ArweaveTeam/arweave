@@ -29,18 +29,10 @@ all() ->
 %% Test cases
 %%====================================================================
 
-%% Meta test to ensure all registered options are covered by the test suite.
-%% If this fails it means the full_config.yaml fixture is missing some options.
+%% Meta test: every registered option must appear in the full_config.yaml
+%% fixture. Fails when a newly added option has no fixture entry.
 every_option_is_covered(_Config) ->
-	ExpectedKeys = [maps:get(option_key, Spec) || Spec <- arweave_config_test_util:enabled_specs()],
-	CoveredKeys = covered_options(),
-	Uncovered = ExpectedKeys -- CoveredKeys,
-	case Uncovered of
-		[] ->
-			ok;
-		_ ->
-			ct:fail({uncovered_options, Uncovered})
-	end.
+	assert_all_options_are_covered(full_config_yaml, full_config_data()).
 
 load_empty_json_defaults(_Config) ->
 	arweave_config:with_test_config(fun() ->
