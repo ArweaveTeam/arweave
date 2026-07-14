@@ -64,10 +64,10 @@ specs() ->
 		#{
 			enabled => true,
 			option_key => [webhooks, {list_item}, headers],
-			default => [],
+			default => #{},
 			short_description =>
 				<<"HTTP headers to send with each webhook request, "
-				  "as a list of {key, value} pairs.">>
+				  "as a name => value object.">>
 		}
 	].
 
@@ -96,7 +96,7 @@ normalize_webhook(Webhook) ->
 		enabled => maps:get(enabled, Webhook, true),
 		events => maps:get(events, Webhook, []),
 		url => maps:get(url, Webhook, undefined),
-		headers => maps:get(headers, Webhook, [])
+		headers => maps:get(headers, Webhook, #{})
 	}.
 
 %% @doc Convert per-webhook entries into a list of
@@ -104,7 +104,7 @@ normalize_webhook(Webhook) ->
 %% webhooks are filtered out.
 -spec legacy_list() -> [#{events => [binary()],
                    url => binary() | undefined,
-                   headers => list()}].
+                   headers => map()}].
 legacy_list() ->
 	[
 		maps:without([enabled], Hook)

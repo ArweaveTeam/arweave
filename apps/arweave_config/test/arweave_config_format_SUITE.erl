@@ -25,6 +25,7 @@ all() ->
 		nested_dotted_key_kept_literal,
 		dotted_peer_role_list_parses,
 		yaml_empty_sequence_kept_as_list,
+		yaml_nested_sequence_not_concatenated,
 		yaml_encode
 	].
 
@@ -169,6 +170,17 @@ peers:
 ">>)),
 	ok.
 
+%% A sequence nested in a sequence must decode element by element.
+%% `list_to_binary/1' would treat it as an iolist and weld the entries
+%% into one binary (`[["a", "b"]]' -> `[<<"ab">>]').
+yaml_nested_sequence_not_concatenated(_Config) ->
+	?assertEqual(
+		#{[webhooks] => [[<<"Authorization">>, <<"Bearer 123">>]]},
+		parse_yaml(<<"
+webhooks:
+  - [\"Authorization\", \"Bearer 123\"]
+">>)),
+	ok.
 
 yaml_encode(_Config) ->
 	Input = #{
