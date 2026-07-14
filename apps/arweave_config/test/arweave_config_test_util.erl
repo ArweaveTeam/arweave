@@ -120,6 +120,31 @@ assert_legacy_json_values() ->
 	?assertEqual(hiopt_m4, arweave_config:get([vdf, algorithm])),
 	?assertEqual(lists:sort(legacy_storage_modules()),
 		lists:sort(arweave_config_options_storage_modules:legacy_list())),
+	assert_legacy_json_shaped_values(),
+	ok.
+
+%% @doc Options whose loaded shape differs from their on-the-wire shape,
+%% stated in the canonical Erlang form the node's consumers expect
+%% (ar_webhook, ar_tx_blacklist). These need a value written out
+%% independently of any loader: a comparison between two loads cannot
+%% catch a coercion that is wrong on both sides alike.
+assert_legacy_json_shaped_values() ->
+	?assertEqual([<<"some_blacklist_1">>, <<"some_blacklist_2">>],
+		arweave_config:get([transactions, blocklist, files])),
+	?assertEqual([<<"http://some_blacklist_1">>, <<"http://some_blacklist_2/x">>],
+		arweave_config:get([transactions, blocklist, urls])),
+	?assertEqual([<<"some_whitelist_1">>, <<"some_whitelist_2">>],
+		arweave_config:get([transactions, allowlist, files])),
+	?assertEqual([<<"http://some_whitelist">>],
+		arweave_config:get([transactions, allowlist, urls])),
+	?assertEqual(
+		[#{
+			enabled => true,
+			url => <<"https://example.com/hook">>,
+			events => [<<"transaction">>, <<"block">>],
+			headers => #{<<"Authorization">> => <<"Bearer 123456">>}
+		}],
+		arweave_config:get([webhooks])),
 	ok.
 
 legacy_storage_modules() ->

@@ -7,7 +7,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/1]).
+-export([start_link/1, supported_events/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -59,6 +59,18 @@
 start_link(Args) ->
 	gen_server:start_link(?MODULE, Args, []).
 
+%% @doc The event names a webhook may subscribe to — one per clause of
+%% the fold in `init/1'. The webhooks config validator reads this, so a
+%% new event only has to be added here.
+-spec supported_events() -> [binary()].
+supported_events() ->
+	[
+		<<"transaction">>,
+		<<"transaction_data">>,
+		<<"block">>,
+		<<"solution">>
+	].
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -77,17 +89,17 @@ start_link(Args) ->
 init(Hook) ->
 	?LOG_DEBUG("Started web hook for ~p", [Hook]),
 	State = lists:foldl(
-		fun (transaction, Acc) ->
+		fun (<<"transaction">>, Acc) ->
 				ar_events:subscribe(tx),
 				Acc#state{ listen_to_transaction_stream = true };
-			(block, Acc) ->
+			(<<"block">>, Acc) ->
 				ok = ar_events:subscribe(block),
 				Acc#state{ listen_to_block_stream = true };
-			(transaction_data, Acc) ->
+			(<<"transaction_data">>, Acc) ->
 				ar_events:subscribe(tx),
 				ok = ar_events:subscribe(sync_record),
 				Acc#state{ listen_to_transaction_data_stream = true };
-			(solution, Acc) ->
+			(<<"solution">>, Acc) ->
 				ok = ar_events:subscribe(solution),
 				Acc;
 			(_, Acc) ->
@@ -99,7 +111,7 @@ init(Hook) ->
 	),
 	State2 = State#state{
 		url = maps:get(url, Hook, undefined),
-		headers = maps:get(headers, Hook, [])
+		headers = maps:get(headers, Hook, #{})
 	},
 	{ok, State2}.
 
@@ -318,7 +330,7 @@ do_call_webhook(URL, Headers, Entity, Event, N) when N < ?NUMBER_OF_TRIES ->
 			method => post,
 			peer => Peer,
 			path => binary_to_list(<<Path/binary, Query/binary>>),
-			headers => ?BASE_HEADERS ++ Headers,
+			headers => ?BASE_HEADERS ++ maps:to_list(Headers),
 			body => to_json(Entity),
 			timeout => 10000,
 			is_peer_request => false

@@ -62,7 +62,7 @@ converted_yaml_shape(Config) ->
 %% empty again afterwards.
 store_left_untouched(Config) ->
 	Before = lists:sort(arweave_config_store:items_with_prefix([])),
-	ok = arweave_config_convert:convert(json, legacy_fixture_path(),
+	ok = arweave_config_convert:convert(json, legacy_path(),
 		out_path(Config, "isolation.json")),
 	After = lists:sort(arweave_config_store:items_with_prefix([])),
 	?assertEqual(Before, After),
@@ -70,7 +70,7 @@ store_left_untouched(Config) ->
 
 unsupported_format_rejected(Config) ->
 	?assertMatch({error, {unsupported_format, _}},
-		arweave_config_convert:convert(xml, legacy_fixture_path(),
+		arweave_config_convert:convert(xml, legacy_path(),
 			out_path(Config, "unused.out"))),
 	ok.
 
@@ -106,7 +106,8 @@ empty_local_peers_becomes_empty_array(Config) ->
 %% change how the node behaves.
 assert_round_trip(Format, Parse, Config) ->
 	FromLegacy = arweave_config:with_test_config(fun() ->
-		{ok, ok} = arweave_config_format_legacy_json:parse(legacy_fixture()),
+		{ok, ok} = arweave_config_format_legacy_json:parse(
+			arweave_config_test_util:legacy_fixture()),
 		option_values()
 	end),
 	Raw = convert(Format, Config),
@@ -130,7 +131,7 @@ assert_round_trip(Format, Parse, Config) ->
 
 convert(Format, Config) ->
 	Out = out_path(Config, "converted." ++ atom_to_list(Format)),
-	ok = arweave_config_convert:convert(Format, legacy_fixture_path(), Out),
+	ok = arweave_config_convert:convert(Format, legacy_path(), Out),
 	true = filelib:is_regular(Out),
 	{ok, Raw} = file:read_file(Out),
 	Raw.
@@ -141,14 +142,12 @@ option_values() ->
 %% The fixture lists a hostname among the trusted peers, so the loaded
 %% value depends on a DNS lookup. A round-trip resolves it twice — once
 %% inside the converter, once when loading the legacy file directly — so
-%% the two sides can legitimately disagree. Checked separately below.
+%% the two sides can legitimately disagree. Its IP peers are asserted by
+%% arweave_config_test_util:assert_legacy_json_values/0 instead.
 dns_dependent_options() ->
 	[[peers, trusted]].
 
-legacy_fixture() ->
-	arweave_config_test_util:legacy_fixture().
-
-legacy_fixture_path() ->
+legacy_path() ->
 	arweave_config_test_util:legacy_fixture_path().
 
 out_path(Config, Name) ->

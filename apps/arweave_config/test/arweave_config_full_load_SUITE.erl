@@ -36,7 +36,8 @@ every_option_is_covered(_Config) ->
 
 load_empty_json_defaults(_Config) ->
 	arweave_config:with_test_config(fun() ->
-		{ok, LeafMap} = arweave_config_format_json:parse(arweave_config_test_util:read_fixture("empty_config.json")),
+		{ok, LeafMap} = arweave_config_format_json:parse(
+			arweave_config_test_util:read_fixture("empty_config.json")),
 		ok = arweave_config:load(LeafMap),
 		%% Assert all option values are set to their declared defaults.
 		lists:foreach(
@@ -68,7 +69,8 @@ config_formats_roundtrip(_Config) ->
 
 load_json_and_yaml(_Config) ->
 	ConfigLeafMap = full_config_data(),
-	Expected = arweave_config_test_util:expected_loaded_values(ConfigLeafMap, maps:keys(ConfigLeafMap)),
+	Expected = arweave_config_test_util:expected_loaded_values(
+		ConfigLeafMap, maps:keys(ConfigLeafMap)),
 	lists:foreach(
 		fun({Tag, Data, Parser, _ShapeAssert}) ->
 			arweave_config:with_test_config(fun() ->
@@ -76,7 +78,7 @@ load_json_and_yaml(_Config) ->
 				ok = arweave_config:load(ParsedLeafMap),
 				assert_all_options_are_covered(Tag, ParsedLeafMap),
 				arweave_config_test_util:assert_loaded_values(Expected),
-				assert_list_values(Tag)
+				assert_full_config_values()
 			end)
 		end,
 		config_formats(ConfigLeafMap)),
@@ -125,7 +127,8 @@ mining:
 
 load_legacy_json(_Config) ->
 	arweave_config:with_test_config(fun() ->
-		{ok, _} = arweave_config_format_legacy_json:parse(arweave_config_test_util:legacy_fixture()),
+		{ok, _} = arweave_config_format_legacy_json:parse(
+			arweave_config_test_util:legacy_fixture()),
 		assert_legacy_json_subset()
 	end),
 	ok.
@@ -178,7 +181,8 @@ covered_options() ->
 
 %% @doc #{OptionKey=>Value} map covering all enabled options.
 full_config_data() ->
-	{ok, ConfigLeafMap} = arweave_config_format_yaml:parse(arweave_config_test_util:read_fixture("full_config.yaml")),
+	{ok, ConfigLeafMap} = arweave_config_format_yaml:parse(
+		arweave_config_test_util:read_fixture("full_config.yaml")),
 	ConfigLeafMap.
 
 config_formats(ConfigLeafMap) ->
@@ -252,7 +256,7 @@ defaulted_non_wildcard_specs() ->
 		   not arweave_config_test_util:is_wildcard_option(maps:get(option_key, Spec))
 	].
 
-assert_list_values(_Tag) ->
+assert_full_config_values() ->
 	?assertEqual([{1,2,3,4,1984}],
 		arweave_config:get([peers, trusted])),
 	?assertEqual([{5,6,7,8,1985}],
@@ -266,7 +270,23 @@ assert_list_values(_Tag) ->
 	?assertEqual([{6,6,6,6,1984}],
 		arweave_config:get([peers, cm_peer])),
 	?assertEqual({7,7,7,7,1984},
-		arweave_config:get([peers, cm_exit])).
+		arweave_config:get([peers, cm_exit])),
+	?assertEqual([<<"blacklist-a.txt">>, <<"blacklist-b.txt">>],
+		arweave_config:get([transactions, blocklist, files])),
+	?assertEqual([<<"http://blocklist.local/list.txt">>],
+		arweave_config:get([transactions, blocklist, urls])),
+	?assertEqual([<<"allowlist-a.txt">>],
+		arweave_config:get([transactions, allowlist, files])),
+	?assertEqual([<<"http://allowlist.local/list.txt">>],
+		arweave_config:get([transactions, allowlist, urls])),
+	?assertEqual(
+		[#{
+			enabled => true,
+			url => <<"https://example.com/hook">>,
+			events => [<<"transaction">>, <<"block">>],
+			headers => #{<<"Authorization">> => <<"Bearer 123">>}
+		}],
+		arweave_config:get([webhooks])).
 
 contains_config_syntax(Bin) ->
 	binary:match(Bin, [<<"{">>, <<"}">>, <<": ">>]) =/= nomatch.
@@ -338,7 +358,8 @@ assert_legacy_json_subset() ->
 	arweave_config_test_util:assert_values_present(legacy_json_supported_keys()).
 
 assert_legacy_json_fixture_coverage() ->
-	{ok, {LegacyPairs}} = ar_serialize:json_decode(arweave_config_test_util:legacy_fixture()),
+	{ok, {LegacyPairs}} = ar_serialize:json_decode(
+		arweave_config_test_util:legacy_fixture()),
 	Keys = sets:from_list([binary_to_atom(K) || {K, _V} <- LegacyPairs]),
 	lists:foreach(
 		fun({LegacyKey, OptionKey}) ->
@@ -738,17 +759,17 @@ accumulating_cases() ->
 		{"vdf_server_trusted_peer accumulates", ["vdf_server_trusted_peer", "127.0.0.1"],
 			fun() -> assert_peers_eq_unordered(vdf_server, [{127,0,0,1,1984}]) end},
 		{"transaction_blacklist accumulates", ["transaction_blacklist", "/list1"],
-			fun() -> assert_eq([transactions, blocklist, files], ["/list1"]) end},
+			fun() -> assert_eq([transactions, blocklist, files], [<<"/list1">>]) end},
 		{"transaction_blacklist_url accumulates",
 			["transaction_blacklist_url", "http://example.com/b1"],
 			fun() -> assert_eq([transactions, blocklist, urls],
-				["http://example.com/b1"]) end},
+				[<<"http://example.com/b1">>]) end},
 		{"transaction_whitelist accumulates", ["transaction_whitelist", "/wl1"],
-			fun() -> assert_eq([transactions, allowlist, files], ["/wl1"]) end},
+			fun() -> assert_eq([transactions, allowlist, files], [<<"/wl1">>]) end},
 		{"transaction_whitelist_url accumulates",
 			["transaction_whitelist_url", "http://example.com/w1"],
 			fun() -> assert_eq([transactions, allowlist, urls],
-				["http://example.com/w1"]) end},
+				[<<"http://example.com/w1">>]) end},
 		%% Catalog flag — classified directly into [features, Name].
 		{"enable promotes catalog flag", ["enable", "disk_logging"],
 			fun() -> assert_eq([features, disk_logging], true) end},

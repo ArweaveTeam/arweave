@@ -12,6 +12,7 @@ specs() ->
 			option_key => [transactions, blocklist, files],
 			runtime => true,
 			default => [],
+			type => list,
 			legacy => transaction_blacklist_files,
 			short_description =>
 				<<"A file containing blocklisted transactions.">>,
@@ -23,6 +24,7 @@ specs() ->
 			option_key => [transactions, blocklist, urls],
 			runtime => true,
 			default => [],
+			type => list,
 			legacy => transaction_blacklist_urls,
 			short_description =>
 				<<"An HTTP endpoint serving a transaction blocklist.">>
@@ -32,6 +34,7 @@ specs() ->
 			option_key => [transactions, allowlist, files],
 			runtime => true,
 			default => [],
+			type => list,
 			legacy => transaction_whitelist_files,
 			short_description =>
 				<<"A file containing allowlisted transactions.">>,
@@ -45,6 +48,7 @@ specs() ->
 			option_key => [transactions, allowlist, urls],
 			runtime => true,
 			default => [],
+			type => list,
 			legacy => transaction_whitelist_urls,
 			short_description =>
 				<<"An HTTP endpoint serving a transaction allowlist.">>

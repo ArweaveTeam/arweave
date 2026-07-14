@@ -123,22 +123,22 @@ parse(["sync_from_local_peers_only" | Rest]) ->
 	parse(Rest);
 parse(["transaction_blacklist", File | Rest]) ->
 	Files = get_list([transactions, blocklist, files]),
-	NewFiles = [File | Files],
+	NewFiles = [list_to_binary(File) | Files],
 	_ = arweave_config:set([transactions, blocklist, files], NewFiles),
 	parse(Rest);
 parse(["transaction_blacklist_url", URL | Rest]) ->
 	URLs = get_list([transactions, blocklist, urls]),
-	NewURLs = [URL | URLs],
+	NewURLs = [list_to_binary(URL) | URLs],
 	_ = arweave_config:set([transactions, blocklist, urls], NewURLs),
 	parse(Rest);
 parse(["transaction_whitelist", File | Rest]) ->
 	Files = get_list([transactions, allowlist, files]),
-	NewFiles = [File | Files],
+	NewFiles = [list_to_binary(File) | Files],
 	_ = arweave_config:set([transactions, allowlist, files], NewFiles),
 	parse(Rest);
 parse(["transaction_whitelist_url", URL | Rest]) ->
 	URLs = get_list([transactions, allowlist, urls]),
-	NewURLs = [URL | URLs],
+	NewURLs = [list_to_binary(URL) | URLs],
 	_ = arweave_config:set([transactions, allowlist, urls], NewURLs),
 	parse(Rest);
 parse(["port", Port | Rest]) ->

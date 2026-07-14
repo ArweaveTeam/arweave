@@ -452,53 +452,29 @@ parse_options([{<<"requests_per_minute_limit">>, L} | _]) ->
 
 parse_options([{<<"transaction_blacklists">>, TransactionBlacklists} | Rest])
 		when is_list(TransactionBlacklists) ->
-	case safe_map(fun binary_to_list/1, TransactionBlacklists) of
-		{ok, TransactionBlacklistStrings} ->
-			_ = arweave_config:set([transactions, blocklist, files],
-					TransactionBlacklistStrings),
-			parse_options(Rest);
-		error ->
-			{error, bad_transaction_blacklists}
-	end;
+	parse_binary_list([transactions, blocklist, files], TransactionBlacklists,
+		bad_transaction_blacklists, Rest);
 parse_options([{<<"transaction_blacklists">>, TransactionBlacklists} | _]) ->
 	{error, {bad_type, transaction_blacklists, array}, TransactionBlacklists};
 
 parse_options([{<<"transaction_blacklist_urls">>, TransactionBlacklistURLs} | Rest])
 		when is_list(TransactionBlacklistURLs) ->
-	case safe_map(fun binary_to_list/1, TransactionBlacklistURLs) of
-		{ok, TransactionBlacklistURLStrings} ->
-			_ = arweave_config:set([transactions, blocklist, urls],
-					TransactionBlacklistURLStrings),
-			parse_options(Rest);
-		error ->
-			{error, bad_transaction_blacklist_urls}
-	end;
+	parse_binary_list([transactions, blocklist, urls], TransactionBlacklistURLs,
+		bad_transaction_blacklist_urls, Rest);
 parse_options([{<<"transaction_blacklist_urls">>, TransactionBlacklistURLs} | _]) ->
 	{error, {bad_type, transaction_blacklist_urls, array}, TransactionBlacklistURLs};
 
 parse_options([{<<"transaction_whitelists">>, TransactionWhitelists} | Rest])
 		when is_list(TransactionWhitelists) ->
-	case safe_map(fun binary_to_list/1, TransactionWhitelists) of
-		{ok, TransactionWhitelistStrings} ->
-			_ = arweave_config:set([transactions, allowlist, files],
-					TransactionWhitelistStrings),
-			parse_options(Rest);
-		error ->
-			{error, bad_transaction_whitelists}
-	end;
+	parse_binary_list([transactions, allowlist, files], TransactionWhitelists,
+		bad_transaction_whitelists, Rest);
 parse_options([{<<"transaction_whitelists">>, TransactionWhitelists} | _]) ->
 	{error, {bad_type, transaction_whitelists, array}, TransactionWhitelists};
 
 parse_options([{<<"transaction_whitelist_urls">>, TransactionWhitelistURLs} | Rest])
 		when is_list(TransactionWhitelistURLs) ->
-	case safe_map(fun binary_to_list/1, TransactionWhitelistURLs) of
-		{ok, TransactionWhitelistURLStrings} ->
-			_ = arweave_config:set([transactions, allowlist, urls],
-					TransactionWhitelistURLStrings),
-			parse_options(Rest);
-		error ->
-			{error, bad_transaction_whitelist_urls}
-	end;
+	parse_binary_list([transactions, allowlist, urls], TransactionWhitelistURLs,
+		bad_transaction_whitelist_urls, Rest);
 parse_options([{<<"transaction_whitelist_urls">>, TransactionWhitelistURLs} | _]) ->
 	{error, {bad_type, transaction_whitelist_urls, array}, TransactionWhitelistURLs};
 
@@ -1106,21 +1082,30 @@ parse_webhook([{<<"url">>, Url} | Rest], Webhook) when is_binary(Url) ->
 	parse_webhook(Rest, Webhook#{url => Url});
 parse_webhook([{<<"url">>, _} | _], _) ->
 	error;
+%% Headers become a map, as they are in every other config format.
 parse_webhook([{<<"headers">>, {Headers}} | Rest], Webhook) when is_list(Headers) ->
-	parse_webhook(Rest, Webhook#{headers => Headers});
+	parse_webhook(Rest, Webhook#{headers => maps:from_list(Headers)});
 parse_webhook([{<<"headers">>, _} | _], _) ->
 	error;
 parse_webhook([], Webhook) ->
 	{ok, Webhook}.
 
-parse_webhook_events([Event | Rest], Events) ->
-	case Event of
-		<<"transaction">> -> parse_webhook_events(Rest, [transaction | Events]);
-		<<"transaction_data">> -> parse_webhook_events(Rest, [transaction_data | Events]);
-		<<"block">> -> parse_webhook_events(Rest, [block | Events]);
-		<<"solution">> -> parse_webhook_events(Rest, [solution | Events]);
-		_ -> error
-	end;
+%% Entries stay binaries, as they are in every other config format.
+parse_binary_list(Key, Values, Error, Rest) ->
+	case lists:all(fun is_binary/1, Values) of
+		true ->
+			_ = arweave_config:set(Key, Values),
+			parse_options(Rest);
+		false ->
+			{error, Error}
+	end.
+
+%% Event names stay binaries, as they are in every other config format.
+%% Which names are legal is enforced by the webhooks validator.
+parse_webhook_events([Event | Rest], Events) when is_binary(Event) ->
+	parse_webhook_events(Rest, [Event | Events]);
+parse_webhook_events([_ | _], _) ->
+	error;
 parse_webhook_events([], Events) ->
 	{ok, lists:reverse(Events)}.
 

@@ -142,7 +142,7 @@ list_value_writes(_Config) ->
 		ok = arweave_config_options_repack_modules:write_legacy_repack_module(RepackModule),
 		[RepackModule] = arweave_config_options_repack_modules:legacy_list(),
 
-		Webhook = #{url => <<"http://127.0.0.1/hook">>, events => [block], headers => []},
+		Webhook = #{url => <<"http://127.0.0.1/hook">>, events => [<<"block">>], headers => #{}},
 		ok = arweave_config:set([webhooks], []),
 		ok = arweave_config_options_webhooks:write_legacy_webhook(test_hook, Webhook),
 		[Webhook] = arweave_config_options_webhooks:legacy_list()
@@ -179,8 +179,8 @@ list_root_set_get(_Config) ->
 		WebhookMap = #{
 			enabled => true,
 			url => <<"http://127.0.0.1/hook">>,
-			events => [block],
-			headers => []
+			events => [<<"block">>],
+			headers => #{}
 		},
 		ok = arweave_config:set([webhooks], [WebhookMap]),
 		[WebhookMap] = arweave_config:get([webhooks]),

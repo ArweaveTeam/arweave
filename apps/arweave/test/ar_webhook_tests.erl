@@ -69,23 +69,24 @@ test_webhooks_body(Wallet, B0) ->
 		Webhooks = [
 			#{
 				url => <<"http://127.0.0.1:", PortBinary/binary, "/tx">>,
-				events => [transaction]
+				events => [<<"transaction">>]
 			},
 			#{
 				url => <<"http://127.0.0.1:", PortBinary/binary, "/block">>,
-				events => [block]
+				events => [<<"block">>]
 			},
 			#{
 				url => <<"http://127.0.0.1:", PortBinary/binary, "/txdata">>,
-				events => [transaction_data]
+				events => [<<"transaction_data">>]
 			},
 			#{
 				url => <<"http://127.0.0.1:", PortBinary/binary, "/solution">>,
-				events => [solution]
+				events => [<<"solution">>]
 			}
 		],
 		Overrides = #{
-			[transactions, blocklist, files] => [TXBlacklistFilename]
+			[transactions, blocklist, files] =>
+				[list_to_binary(TXBlacklistFilename)]
 		},
 		ar_test_node:start(#{ b0 => B0, addr => Addr, config => Overrides,
 				[webhooks] => [Webhook#{enabled => true} || Webhook <- Webhooks],
