@@ -2,5 +2,16 @@
 set -e
 SCRIPT_DIR=$(dirname ${0})
 export ARWEAVE_DEV=1
+
+# Keep the logs a test run produces beside CT's reports (see bin/ct) under a
+# single ./logs root, instead of dropping them in the repo root. These are
+# the environment bindings of two separate options: [logging, path] is where
+# ar_logger writes the .log files, [log_dir] is where rocksdb and friends
+# write theirs.
+export AR_TEST_LOG_DIR="${AR_TEST_LOG_DIR:-logs/eunit}"
+export AR_LOGGING_PATH="${AR_LOGGING_PATH:-${AR_TEST_LOG_DIR}}"
+export AR_LOG_DIR="${AR_LOG_DIR:-${AR_TEST_LOG_DIR}}"
+mkdir -p "${AR_TEST_LOG_DIR}"
+
 ARWEAVE=${SCRIPT_DIR}/arweave
 ${ARWEAVE} test ${*}

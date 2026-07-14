@@ -595,7 +595,9 @@ arweave_test() {
     TEST_NODE_HOST="${NODE_HOST:-127.0.0.1}"
     TEST_COOKIE="${COOKIE:-test}"
     TEST_MODULE="tests"
-    TEST_LOG="main-localtest.out"
+    # Console transcript lands beside the node logs (see bin/test), not in
+    # the repo root.
+    TEST_LOG="${AR_TEST_LOG_DIR:-logs/eunit}/main-localtest.out"
     arweave_test_run ${*}
 }
 
@@ -642,6 +644,7 @@ arweave_test_run() {
 	ENTRY_POINT="-run ar ${TEST_MODULE} ${*} -s init stop"
 	command="erl ${PARAMS} -name ${TEST_NODE} -setcookie ${TEST_COOKIE} ${ENTRY_POINT}"
 	echo -e "\033[0;32m===> Execute command ${command}\033[0m"
+	mkdir -p "$(dirname "${TEST_LOG}")"
 	set -xe -o pipefail
 	${command} | tee "${TEST_LOG}"
 	exit $?
