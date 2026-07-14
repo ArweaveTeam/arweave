@@ -118,7 +118,6 @@ assert_round_trip(Format, Parse, Config) ->
 		%% silently produced nothing would compare equal to a legacy load
 		%% that silently produced nothing, and pass.
 		arweave_config_test_util:assert_legacy_json_values(),
-		assert_trusted_peers_converted(),
 		option_values()
 	end),
 	%% Report the differing keys rather than two ~300-key maps.
@@ -145,11 +144,6 @@ option_values() ->
 %% the two sides can legitimately disagree. Checked separately below.
 dns_dependent_options() ->
 	[[peers, trusted]].
-
-assert_trusted_peers_converted() ->
-	%% IP peers need no DNS, so this entry is deterministic.
-	?assert(lists:member({188,166,200,45,1984},
-		arweave_config:get([peers, trusted]))).
 
 legacy_fixture() ->
 	arweave_config_test_util:legacy_fixture().

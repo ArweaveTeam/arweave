@@ -102,6 +102,11 @@ assert_legacy_json_values() ->
 	?assertEqual(true, arweave_config:get([sync, local_peers_only])),
 	?assertEqual(false, arweave_config:get([join, auto])),
 	?assertEqual(9, arweave_config:get([join, workers])),
+	%% The fixture's trusted-peer list also holds a hostname, whose
+	%% resolution depends on DNS. IP peers need none, so assert on one of
+	%% those rather than the whole list.
+	?assert(lists:member({188,166,200,45,1984},
+		arweave_config:get([peers, trusted]))),
 	?assertEqual(lists:sort([{192,168,2,3,1984}, {172,16,10,11,1985}]),
 		lists:sort(arweave_config:get([peers, local]))),
 	?assertEqual(lists:sort([{159,203,158,108,1984}, {150,150,150,150,1983}]),
