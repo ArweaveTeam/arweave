@@ -155,7 +155,9 @@ encode_scalar(true) -> <<"true">>;
 encode_scalar(false) -> <<"false">>;
 encode_scalar(null) -> <<"null">>;
 encode_scalar(undefined) -> <<"null">>;
-encode_scalar(infinity) -> <<".inf">>;
+%% `infinity' is Erlang's sentinel atom, not a float. Emitting YAML's
+%% `.inf' float literal would read back as `+inf' and fail the option's
+%% type check, so it falls through to the atom clause below.
 encode_scalar(Value) when is_integer(Value) ->
 	integer_to_binary(Value);
 encode_scalar(Value) when is_float(Value) ->
