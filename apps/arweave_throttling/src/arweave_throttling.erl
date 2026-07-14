@@ -227,9 +227,6 @@ try_group_id_to_atom(Peer, HeaderGroupID) ->
 log_update_error(GroupID, Reason, Peer, Path) ->
 	ReasonStr = get_quota_error_reason(Reason),
 	log_unknown_reason(ReasonStr, Reason, GroupID, Peer, Path),
-	%% We can't log anything with a path as a prometheus label, as it might
-	%% contain parameters, resulting in a lot of prometheus labels
-	PathKey = arweave_throttling_path:path_to_path_key(Path),
 	ar_metrics:counter_inc(arweave_throttling_quota_update_error,
 						[atom_to_list(GroupID),
 							ReasonStr
