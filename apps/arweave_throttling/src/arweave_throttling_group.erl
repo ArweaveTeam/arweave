@@ -347,6 +347,12 @@ handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
         %% If total changed update remaining as well.
         case Total =/= PS0#peer_state.total of
             true ->
+                %% Log a warning, this might be an issue.
+                ?LOG_WARNING([{event, arweave_throttling_group_quota_updated},
+                              {peer, Peer},
+                              {previous, PS0#peer_state.total},
+                              {new, Total},
+                              {received_at, ReceivedAt}]),
                 NewRemaining;
             false ->
                 merge_remaining(PS0#peer_state.remaining,

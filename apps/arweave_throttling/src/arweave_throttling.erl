@@ -109,7 +109,7 @@ is_throttled(Peer, Path) when is_tuple(Peer), is_list(Path) ->
             false;
         {error, _ } ->
             false;
-        GroupID ->
+        {ok, GroupID} ->
             arweave_throttling_group:is_throttled(GroupID, Peer)
     end.
 
