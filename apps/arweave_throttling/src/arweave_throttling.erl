@@ -47,10 +47,6 @@
 
 -export([start/2, stop/1]).
 
--ifdef(AR_TEST).
--export([handle_update_group_id/4]).
--endif.
-
 -include_lib("kernel/include/logger.hrl").
 
 %% Number of throttling groups a peer is allowed to have.
@@ -139,7 +135,7 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
 			%% Log with unknown group, and return, there is nothing to update.
 			%% and likely never was or will be. We assume the error is consistent,
 			%% as the peer runs an incompatible version.
-			log_update_error('unknown', Reason, Peer, Path),
+			log_update_error(Peer, Path, 'unknown', Reason),
 			E;
 		{ok, #{group_id := HeaderGroupID} = Quota} ->
 			%% Try to look up group ID for the Peer and Path.
@@ -152,25 +148,25 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
 					%% for this Peer.
 					case try_group_id_to_atom(Peer, HeaderGroupID) of
 						{error, Reason} = E ->
-							log_update_error('unknown', Reason, Peer, Path),
+							log_update_error(Peer, Path, 'unknown', Reason),
 							E;
 						{ok, HeaderGroupIDAtom} ->
 							%% Then we can look for the throttling group process.
 							case get_or_start_throttling_group_process(HeaderGroupIDAtom) of
 								{ok, Pid} when is_pid(Pid) ->
-									handle_update_group_id(HeaderGroupIDAtom, Peer, Path, Quota);
+									handle_update_group_id(Peer, Path, HeaderGroupIDAtom, Quota);
 								{error, Reason} = E ->
-									log_update_error(HeaderGroupIDAtom, Reason, Peer, Path),
+									log_update_error(Peer, Path, HeaderGroupIDAtom, Reason),
 									E
 							end
 					end;
 				{ok, GroupID} ->
 					case HeaderGroupID =:= atom_to_binary(GroupID) of
 						true ->
-							handle_update_group_id(GroupID, Peer, Path, Quota);
+							handle_update_group_id(Peer, Path, GroupID, Quota);
 						false ->
 							E = {group_mismatch, GroupID, HeaderGroupID},
-							log_update_error(GroupID, E, Peer, Path),
+							log_update_error(Peer, Path, 'unknown', E),
 							E
 					end
 			end
@@ -224,16 +220,16 @@ try_group_id_to_atom(Peer, HeaderGroupID) ->
 			end
 	end.
 
-log_update_error(GroupID, Reason, Peer, Path) ->
+log_update_error(Peer, Path, GroupID, Reason) ->
 	ReasonStr = get_quota_error_reason(Reason),
-	log_unknown_reason(ReasonStr, Reason, GroupID, Peer, Path),
+	log_unknown_reason(Peer, Path, GroupID, Reason, ReasonStr),
 	ar_metrics:counter_inc(arweave_throttling_quota_update_error,
 						[atom_to_list(GroupID),
 							ReasonStr
 						]),
 	ok.
 
-handle_update_group_id(GroupID, Peer, Path, Quota) ->
+handle_update_group_id(Peer, Path, GroupID, Quota) ->
 	PathKey = arweave_throttling_path:path_to_path_key(Path),
 	%% PathKey
 	arweave_throttling_router:update_path(Peer, PathKey, GroupID),
@@ -265,11 +261,11 @@ get_quota_error_reason({missing_header, _HeaderKey}) ->
 get_quota_error_reason(_) ->
 	"unexpected".
 
-log_unknown_reason("unexpected", Reason, GroupID, Peer, PathKey) ->
+log_unknown_reason(Peer, Path, GroupID, Reason, "unexpected") ->
 	?LOG_ERROR([{event, update_quota_unexpected_error},
 				{reason, Reason},
 				{peer, Peer},
-				{path, PathKey},
+				{path, Path},
 				{group_id, GroupID}]);
 log_unknown_reason(_, _, _, _, _) ->
 	ok.
