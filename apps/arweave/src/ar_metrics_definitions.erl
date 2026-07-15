@@ -241,6 +241,14 @@ all_metrics() ->
 			}
 		]},
 		{prometheus_histogram, [
+			{name, account_tree_call_duration_milliseconds},
+			{labels, [call]},
+			{buckets, [1, 5, 10, 50, 100, 500, 1000, 5000, 30000]},
+			{help,
+				"The duration in milliseconds of an ar_account_tree gen_server call, "
+				"labeled by request type."}
+		]},
+		{prometheus_histogram, [
 			{name, block_pre_validation_time},
 			{buckets, [infinity]}, %% we don't care about the histogram portion
 			{help,

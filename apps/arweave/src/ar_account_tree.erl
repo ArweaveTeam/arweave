@@ -124,10 +124,24 @@ init([{blocks, Blocks} | Args]) ->
 	State = #{ dag => ar_diff_dag:new(<<>>, ets, not_set), sink => <<>>, tid => Tid },
 	{ok, State}.
 
-handle_call({get, Addresses}, _From, State) ->
+handle_call(Request, From, State) ->
+	%% The observed value must be in native time units. The metric name ends with
+	%% _duration_milliseconds, so prometheus converts native to milliseconds on scrape.
+	StartTime = erlang:monotonic_time(),
+	Result = do_handle_call(Request, From, State),
+	arweave_metrics:histogram_observe(account_tree_call_duration_milliseconds,
+			[call_label(Request)], erlang:monotonic_time() - StartTime),
+	Result.
+
+call_label(Request) when is_atom(Request) ->
+	Request;
+call_label(Request) ->
+	element(1, Request).
+
+do_handle_call({get, Addresses}, _From, State) ->
 	{reply, accounts_at_tip(State, Addresses), State};
 
-handle_call({get, RootHash, Addresses}, _From, State) ->
+do_handle_call({get, RootHash, Addresses}, _From, State) ->
 	case accounts_at_root(State, RootHash, Addresses) of
 		{error, _} = Error ->
 			{reply, Error, State};
@@ -135,13 +149,13 @@ handle_call({get, RootHash, Addresses}, _From, State) ->
 			{reply, Map, State}
 	end;
 
-handle_call({get_wallet_list_chunk, RootHash, Cursor}, _From, State) ->
+do_handle_call({get_wallet_list_chunk, RootHash, Cursor}, _From, State) ->
 	with_known_root(RootHash, State, fun() -> get_wallet_list_chunk(State, RootHash, Cursor) end);
 
-handle_call(get_size, _From, State) ->
+do_handle_call(get_size, _From, State) ->
 	{reply, ar_patricia_tree_ets:size(maps:get(tid, State)), State};
 
-handle_call({get_balance, Address}, _From, State) ->
+do_handle_call({get_balance, Address}, _From, State) ->
 	#{ dag := DAG, tid := Tid } = State,
 	Reply =
 		case ar_patricia_tree_ets:get(Address, Tid) of
@@ -152,7 +166,7 @@ handle_call({get_balance, Address}, _From, State) ->
 		end,
 	{reply, Reply, State};
 
-handle_call({get_balance, RootHash, Address}, _From, State) ->
+do_handle_call({get_balance, RootHash, Address}, _From, State) ->
 	case accounts_at_root(State, RootHash, [Address]) of
 		{error, _} = Error ->
 			{reply, Error, State};
@@ -168,7 +182,7 @@ handle_call({get_balance, RootHash, Address}, _From, State) ->
 			{reply, Reply, State}
 	end;
 
-handle_call({get_last_tx, Address}, _From, State) ->
+do_handle_call({get_last_tx, Address}, _From, State) ->
 	{reply,
 		case ar_patricia_tree_ets:get(Address, maps:get(tid, State)) of
 			not_found ->
@@ -180,15 +194,15 @@ handle_call({get_last_tx, Address}, _From, State) ->
 		end,
 	State};
 
-handle_call({apply_block, B, PrevB}, _From, State) ->
+do_handle_call({apply_block, B, PrevB}, _From, State) ->
 	with_known_root(PrevB#block.wallet_list, State,
 			fun() -> apply_block(B, PrevB, State) end);
 
-handle_call({add_wallets, RootHash, Wallets, Height, Denomination}, _From, State) ->
+do_handle_call({add_wallets, RootHash, Wallets, Height, Denomination}, _From, State) ->
 	with_known_root(RootHash, State,
 			fun() -> add_wallets(State, RootHash, Wallets, Height, Denomination) end);
 
-handle_call({set_current, RootHash, Height, PruneDepth}, _, State) ->
+do_handle_call({set_current, RootHash, Height, PruneDepth}, _, State) ->
 	{reply, ok, set_current(State, RootHash, Height, PruneDepth)}.
 
 handle_cast({init, Blocks, Args}, State) ->
