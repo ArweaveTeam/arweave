@@ -58,6 +58,16 @@ test_persist_equivalence() ->
 	check_modify(nested_insert_at_inner, [account(<<"aaa">>, t1), account(<<"aab">>, t2)],
 			[account(<<"aa">>, t2)]),
 	check_modify(nested_grow_below_leaf, nested_accounts(), [account(<<"bcde">>, t2)]),
+	%% Deletes. The first one leaves an inner node with a single child and no value - such a
+	%% node passes its child's hash up instead of hashing (see
+	%% ar_patricia_tree_ets_tests:hash_forwarding_test_).
+	check_delete(delete_to_forwarding_node,
+			[account(pad32(<<1, 2, 3, 4>>), t1), account(pad32(<<1, 2, 3, 9>>), t2),
+			 account(pad32(<<9>>), t1)],
+			[pad32(<<1, 2, 3, 9>>)]),
+	check_delete(delete_some, many_accounts(60),
+			[crypto:hash(sha256, <<7:64>>), crypto:hash(sha256, <<8:64>>)]),
+	check_delete(delete_nested_values, nested_accounts(), [<<"ab">>, <<"a">>]),
 	%% Re-persisting an unchanged (fully cached) tree is a no-op that must still restore.
 	check_repersist(repersist_many, many_accounts(60)),
 	%% Restoring from disk and re-hashing must reproduce the same root.
@@ -111,6 +121,29 @@ check_modify(Name, Accounts, Mods) ->
 	?assertEqual(RootOld, RootNew, {root, Name}),
 	?assertEqual(Final, OldAccounts, {old, Name}),
 	?assertEqual(Final, NewAccounts, {new, Name}).
+
+%% @doc Persist a base, delete Keys from the already-hashed tree, rehash and persist again,
+%% then restore. The result must equal the base minus Keys.
+check_delete(Name, Accounts, Keys) ->
+	HashFun = ar_block:wallet_list_hash_fun(),
+	Final = sort([{K, V} || {K, V} <- Accounts, not lists:member(K, Keys)]),
+	%% Old path.
+	clear_db(),
+	_ = ar_storage:write_wallet_list(0, build_mem(Accounts)),
+	{_, BaseCached, _} = ar_patricia_tree:compute_hash(build_mem(Accounts), HashFun),
+	RootOld = ar_storage:write_wallet_list(1, delete_all(ar_patricia_tree, BaseCached, Keys)),
+	OldAccounts = read(RootOld),
+	%% New path.
+	clear_db(),
+	{_, BaseEts, _} = persist_ets(build_ets(Accounts), HashFun),
+	{RootNew, _, _} = persist_ets(delete_all(ar_patricia_tree_ets, BaseEts, Keys), HashFun),
+	NewAccounts = read(RootNew),
+	?assertEqual(RootOld, RootNew, {root, Name}),
+	?assertEqual(Final, OldAccounts, {old, Name}),
+	?assertEqual(Final, NewAccounts, {new, Name}).
+
+delete_all(Mod, Tree, Keys) ->
+	lists:foldl(fun(K, T) -> Mod:delete(K, T) end, Tree, Keys).
 
 %% @doc Re-hashing/persisting a fully-cached tree produces an empty update; the root is
 %% unchanged and the tree still restores from disk.

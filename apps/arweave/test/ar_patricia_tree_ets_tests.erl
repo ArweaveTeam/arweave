@@ -127,6 +127,59 @@ stochastic_test_() ->
 delete_edges_test_() ->
 	{timeout, 30, fun test_delete_edges/0}.
 
+%% A node with no value and a single child is not hashed itself - the child's hash is passed
+%% up unchanged (the [{SingleHash, _}] branch of do_compute_hash). Inserts never create such
+%% nodes, because a split always produces two children. Deletes do: removing one of a node's
+%% two children leaves the node with one child, and delete does not merge it away. This
+%% happens on a live node when a reorg reverts an account creation. Check that a tree with
+%% such nodes hashes to the same root as a tree built without the deleted keys, and that
+%% later inserts and deletes around them work.
+hash_forwarding_test_() ->
+	{timeout, 30, fun test_hash_forwarding/0}.
+
+test_hash_forwarding() ->
+	HashFun = hash_fun(),
+	Kept = pad32(<<1, 2, 3, 4, 5>>),
+	Sibling = pad32(<<1, 2, 3, 4, 9>>),   %% differs from Kept in the last byte
+	Cousin = pad32(<<1, 2, 9>>),          %% shares only <<1, 2>> with the other two
+	Accounts = [account(Kept, t1), account(Sibling, t2), account(Cousin, t1)],
+	%% Deleting Cousin leaves the inner node above it with one child and no value.
+	Mem1 = ar_patricia_tree:delete(Cousin, build(ar_patricia_tree, Accounts)),
+	Ets = build(ar_patricia_tree_ets, Accounts),
+	ar_patricia_tree_ets:delete(Cousin, Ets),
+	assert_equivalent(one_forwarding_node, Mem1, Ets, [account(Kept, t1), account(Sibling, t2)],
+			HashFun),
+	%% Deleting Sibling creates a second such node, right above Kept's leaf.
+	Mem2 = ar_patricia_tree:delete(Sibling, Mem1),
+	ar_patricia_tree_ets:delete(Sibling, Ets),
+	assert_equivalent(two_forwarding_nodes, Mem2, Ets, [account(Kept, t1)], HashFun),
+	{RootAfterDeletes, _, _} = ar_patricia_tree_ets:compute_hash(Ets, HashFun, #{}),
+	DumpAfterDeletes = dump(ar_patricia_tree_ets, Ets),
+	%% The root matches a tree that never contained Sibling and Cousin, even though the
+	%% shapes differ: after the deletes the tree still has its two extra inner nodes, the
+	%% fresh build has none.
+	Fresh = build(ar_patricia_tree_ets, [account(Kept, t1)]),
+	{RootFresh, _, _} = ar_patricia_tree_ets:compute_hash(Fresh, HashFun, #{}),
+	?assertEqual(RootFresh, RootAfterDeletes, root_canonical),
+	?assertNotEqual(dump(ar_patricia_tree_ets, Fresh), DumpAfterDeletes, shape_differs),
+	%% Reinserting Sibling gives the node above Kept a second child again.
+	Ets2 = build(ar_patricia_tree_ets, Accounts),
+	ar_patricia_tree_ets:delete(Cousin, Ets2),
+	ar_patricia_tree_ets:delete(Sibling, Ets2),
+	ar_patricia_tree_ets:insert(Sibling, val2(Sibling), Ets2),
+	Mem3 = ar_patricia_tree:insert(Sibling, val2(Sibling), Mem2),
+	assert_equivalent(reinsert, Mem3, Ets2, [account(Kept, t1), account(Sibling, t2)], HashFun),
+	%% Deleting the last key removes the leftover inner nodes too: the table matches a
+	%% fresh empty tree.
+	Ets3 = build(ar_patricia_tree_ets, Accounts),
+	ar_patricia_tree_ets:delete(Cousin, Ets3),
+	ar_patricia_tree_ets:delete(Sibling, Ets3),
+	ar_patricia_tree_ets:delete(Kept, Ets3),
+	?assert(ar_patricia_tree_ets:is_empty(Ets3)),
+	?assertEqual(<<>>, element(1, ar_patricia_tree_ets:compute_hash(Ets3, HashFun, #{}))),
+	DumpCollapsed = raw_dump(Ets3),
+	?assertEqual(raw_dump(ar_patricia_tree_ets:new()), DumpCollapsed, collapse).
+
 snapshot_cases() ->
 	K = fun(Bytes) -> pad32(Bytes) end,
 	Seventh = element(1, lists:nth(7, many_accounts(60))),
@@ -149,7 +202,14 @@ snapshot_cases() ->
 		{nested_insert_at_inner, [account(<<"aaa">>, t1), account(<<"aab">>, t2)],
 				[{insert, <<"aa">>, val(<<"aa">>)}]},
 		{nested_delete_value_keeps_node, nested_accounts(),
-				[{delete, <<"ab">>}, {delete, <<"a">>}]}
+				[{delete, <<"ab">>}, {delete, <<"a">>}]},
+		%% Delete a key so an inner node is left with a single child (see
+		%% hash_forwarding_test_), alone and followed by reinserting the same key.
+		{delete_to_forwarding_node, [account(K(<<1, 2, 3, 4>>), t1), account(K(<<1, 2, 3, 9>>), t2),
+				account(K(<<9>>), t1)],
+				[{delete, K(<<1, 2, 3, 9>>)}]},
+		{forwarding_node_reinsert, [account(K(<<1, 2, 3, 4>>), t1), account(K(<<1, 2, 3, 9>>), t2)],
+				[{delete, K(<<1, 2, 3, 9>>)}, {insert, K(<<1, 2, 3, 9>>), val2(K(<<1, 2, 3, 9>>))}]}
 	].
 
 check_snapshot(Name, Accounts, Ops) ->
