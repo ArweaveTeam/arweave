@@ -29,37 +29,47 @@ persist_equivalence_test_() ->
 test_persist_equivalence() ->
 	%% Full-tree update: every node is in the update.
 	check_full(empty, []),
-	check_full(one_key, [acct(<<1:256>>, t1)]),
-	check_full(one_key_t2, [acct(<<1:256>>, t2)]),
-	check_full(empty_key, [acct(<<>>, t1), acct(<<7:256>>, t2)]),
+	check_full(one_key, [account(<<1:256>>, t1)]),
+	check_full(one_key_t2, [account(<<1:256>>, t2)]),
+	check_full(empty_key, [account(<<>>, t1), account(<<7:256>>, t2)]),
 	check_full(many_keys, many_accounts(60)),
 	check_full(shared_prefixes, shared_prefix_accounts()),
+	%% A node holding both a value and children is persisted as two records: one for the
+	%% value and one for the node pointing at it.
+	check_full(nested, nested_accounts()),
 	%% Incremental rehash: persist a base, apply some modifications, rehash (dirty-only),
 	%% restore - the result must equal the base with the modifications applied.
-	check_modify(add_one, many_accounts(60), [acct(<<16#AB, 1:248>>, t2)]),
+	check_modify(add_one, many_accounts(60), [account(<<16#AB, 1:248>>, t2)]),
 	check_modify(update_existing, many_accounts(60),
-			[acct(crypto:hash(sha256, <<7:64>>), t1)]),    %% same key as many_accounts I=7
+			[account(crypto:hash(sha256, <<7:64>>), t1)]),    %% same key as many_accounts I=7
 	%% Splitting (an insert lands inside an existing node's suffix, splitting it):
-	check_modify(just_split, [acct(pad32(<<1, 2, 3, 4>>), t1), acct(pad32(<<9, 9>>), t2)],
-			[acct(pad32(<<1, 2, 3, 9>>), t2)]),            %% splits at <<1,2,3>>
-	check_modify(nested_split, [acct(pad32(<<1, 2, 3, 4, 5, 6>>), t1)],
-			[acct(pad32(<<1, 2, 3, 4, 5, 9>>), t2), acct(pad32(<<1, 2, 3, 9>>), t1),
-			 acct(pad32(<<1, 9>>), t2)]),                  %% splits at depths 5, 3, 1
-	check_modify(split_and_add, [acct(pad32(<<1, 2, 3, 4>>), t1)],
-			[acct(pad32(<<1, 2, 9>>), t2), acct(pad32(<<200>>), t1)]),
+	check_modify(just_split, [account(pad32(<<1, 2, 3, 4>>), t1), account(pad32(<<9, 9>>), t2)],
+			[account(pad32(<<1, 2, 3, 9>>), t2)]),            %% splits at <<1,2,3>>
+	check_modify(nested_split, [account(pad32(<<1, 2, 3, 4, 5, 6>>), t1)],
+			[account(pad32(<<1, 2, 3, 4, 5, 9>>), t2), account(pad32(<<1, 2, 3, 9>>), t1),
+			 account(pad32(<<1, 9>>), t2)]),                  %% splits at depths 5, 3, 1
+	check_modify(split_and_add, [account(pad32(<<1, 2, 3, 4>>), t1)],
+			[account(pad32(<<1, 2, 9>>), t2), account(pad32(<<200>>), t1)]),
 	check_modify(split_and_update, shared_prefix_accounts(),
-			[acct(pad32(<<0, 0, 0, 1, 5>>), t2),           %% splits the <<0,0,0,1>> leaf
-			 acct(pad32(<<255>>), t1)]),                   %% updates existing <<255,...>>
+			[account(pad32(<<0, 0, 0, 1, 5>>), t2),           %% splits the <<0,0,0,1>> leaf
+			 account(pad32(<<255>>), t1)]),                   %% updates existing <<255,...>>
+	%% Modify around nodes that hold both a value and children: put a value on an inner
+	%% node that has none, and insert a key below an existing leaf.
+	check_modify(nested_insert_at_inner, [account(<<"aaa">>, t1), account(<<"aab">>, t2)],
+			[account(<<"aa">>, t2)]),
+	check_modify(nested_grow_below_leaf, nested_accounts(), [account(<<"bcde">>, t2)]),
 	%% Re-persisting an unchanged (fully cached) tree is a no-op that must still restore.
 	check_repersist(repersist_many, many_accounts(60)),
 	%% Restoring from disk and re-hashing must reproduce the same root.
 	check_roundtrip(roundtrip_empty, []),
 	check_roundtrip(roundtrip_many, many_accounts(60)),
 	check_roundtrip(roundtrip_shared, shared_prefix_accounts()),
+	check_roundtrip(roundtrip_nested, nested_accounts()),
 	%% Boot path: disk -> map -> fresh ets (ar_account_tree:load_into_ets/1) reproduces the root.
 	check_load_into_ets(load_ets_empty, []),
 	check_load_into_ets(load_ets_many, many_accounts(60)),
-	check_load_into_ets(load_ets_shared, shared_prefix_accounts()).
+	check_load_into_ets(load_ets_shared, shared_prefix_accounts()),
+	check_load_into_ets(load_ets_nested, nested_accounts()).
 
 %%%===================================================================
 %%% Helpers
@@ -187,16 +197,16 @@ build_ets(Accounts) ->
 sort(Accounts) ->
 	lists:sort(Accounts).
 
-acct(Addr, t1) ->
+account(Addr, t1) ->
 	{Addr, {erlang:phash2(Addr, 1000000000), last_tx(Addr)}};
-acct(Addr, t2) ->
+account(Addr, t2) ->
 	{Addr, {erlang:phash2(Addr, 1000000000), last_tx(Addr), 1 + erlang:phash2(Addr, 10), true}}.
 
 last_tx(Addr) ->
 	crypto:hash(sha256, Addr).
 
 many_accounts(N) ->
-	[acct(crypto:hash(sha256, <<I:64>>), shape(I)) || I <- lists:seq(1, N)].
+	[account(crypto:hash(sha256, <<I:64>>), shape(I)) || I <- lists:seq(1, N)].
 
 %% Keys that share a leading prefix to varying degrees (0..3 bytes), plus identical short
 %% prefixes, to exercise the radix tree's splitting/merging.
@@ -204,18 +214,31 @@ many_accounts(N) ->
 %% pads, so every key below must differ within its first non-padded bytes).
 shared_prefix_accounts() ->
 	[
-		acct(pad32(<<>>), t1),               %% all zeros
-		acct(pad32(<<0, 0, 0, 1>>), t2),     %% shares <<0,0,0>> with the next two
-		acct(pad32(<<0, 0, 0, 2>>), t1),
-		acct(pad32(<<0, 0, 0, 3>>), t2),
-		acct(pad32(<<0, 0, 9>>), t1),        %% shares <<0,0>> with the <<0,0,0,_>> group
-		acct(pad32(<<1, 2>>), t2),
-		acct(pad32(<<1, 2, 3, 4>>), t1),     %% shares <<1,2>> with the previous
-		acct(pad32(<<255>>), t2)             %% shares nothing
+		account(pad32(<<>>), t1),               %% all zeros
+		account(pad32(<<0, 0, 0, 1>>), t2),     %% shares <<0,0,0>> with the next two
+		account(pad32(<<0, 0, 0, 2>>), t1),
+		account(pad32(<<0, 0, 0, 3>>), t2),
+		account(pad32(<<0, 0, 9>>), t1),        %% shares <<0,0>> with the <<0,0,0,_>> group
+		account(pad32(<<1, 2>>), t2),
+		account(pad32(<<1, 2, 3, 4>>), t1),     %% shares <<1,2>> with the previous
+		account(pad32(<<255>>), t2)             %% shares nothing
 	].
 
 pad32(Prefix) when byte_size(Prefix) =< 32 ->
 	<< Prefix/binary, 0:((32 - byte_size(Prefix)) * 8) >>.
+
+%% Keys where one key is a prefix of another key, so some nodes hold both a value and
+%% children (see ar_patricia_tree_ets_tests:nested_accounts/0).
+nested_accounts() ->
+	[
+		account(<<"ab">>, t1),      %% has children <<"abc">> and <<"abd">>
+		account(<<"a">>, t2),       %% ancestor of every "a" key
+		account(<<"abc">>, t1),
+		account(<<"abd">>, t2),
+		account(<<"b">>, t1),
+		account(<<"bc">>, t2),      %% has child <<"bcd">>
+		account(<<"bcd">>, t1)
+	].
 
 shape(I) when I rem 2 == 0 -> t1;
 shape(_I) -> t2.

@@ -26,12 +26,29 @@ legacy_equivalence_test_() ->
 cases() ->
 	[
 		{empty, []},
-		{one_key, [acct(<<1:256>>, t1)]},
-		{one_key_t2, [acct(<<1:256>>, t2)]},
-		{empty_key, [acct(<<>>, t1), acct(<<7:256>>, t2)]},
-		{two_shared, [acct(pad32(<<1, 2, 3, 4>>), t1), acct(pad32(<<1, 2, 3, 9>>), t2)]},
+		{one_key, [account(<<1:256>>, t1)]},
+		{one_key_t2, [account(<<1:256>>, t2)]},
+		{empty_key, [account(<<>>, t1), account(<<7:256>>, t2)]},
+		{two_shared, [account(pad32(<<1, 2, 3, 4>>), t1), account(pad32(<<1, 2, 3, 9>>), t2)]},
 		{shared_prefixes, shared_prefix_accounts()},
+		{nested, nested_accounts()},
 		{many, many_accounts(100)}
+	].
+
+%% Keys where one key is a prefix of another key, like <<"a">> and <<"ab">>. The prefix key's
+%% node holds both a value and children. Real addresses are all 32 bytes long, so such nodes
+%% never appear in production, but the tree code still has branches for them. The prefix key
+%% <<"ab">> is placed first because check/2 deletes the first key: deleting it must remove the
+%% value but keep the node, since <<"abc">> and <<"abd">> still live below it.
+nested_accounts() ->
+	[
+		account(<<"ab">>, t1),      %% has children <<"abc">> and <<"abd">>
+		account(<<"a">>, t2),       %% ancestor of every "a" key
+		account(<<"abc">>, t1),
+		account(<<"abd">>, t2),
+		account(<<"b">>, t1),       %% plain leaf
+		account(<<"bc">>, t2),      %% has child <<"bcd">>
+		account(<<"bcd">>, t1)
 	].
 
 %% An excursion (snapshot_begin, mutate, compute_hash, snapshot_restore) must leave the table
@@ -85,20 +102,23 @@ order_independence_test_() ->
 	{timeout, 60, fun() ->
 		lists:foreach(fun({N, A}) -> check_order(N, A) end,
 				[{shared, shared_prefix_accounts()},
-				 {with_empty, [acct(<<>>, t2) | shared_prefix_accounts()]},
+				 {with_empty, [account(<<>>, t2) | shared_prefix_accounts()]},
+				 {nested, nested_accounts()},
 				 {many, many_accounts(120)}])
 	end}.
 
-%% Random fuzz over many random key sets: every insertion order yields the same root
-%% (canonicity), deleting any key yields the same root as rebuilding without it (deletion
-%% equivalence), and get/2 + size agree with a plain map. Mirrors
-%% ar_patricia_tree:stochastic_test/0 for the ets impl. The second batch draws keys from a shared
-%% base at varying prefix lengths, so they branch at several depths - most rounds split existing
-%% nodes at multiple levels, the path fully-random 5-byte keys almost never reach.
+%% Random fuzz. For every insertion order of a random key set: the root hash is the same, a
+%% tree with a key deleted hashes like a tree built without that key, and get/2 and size/1
+%% agree with a plain map. Mirrors ar_patricia_tree:stochastic_test/0. Runs over three kinds
+%% of key sets: fully random keys, keys branching off a shared base at several depths
+%% (nested_prefix_key_values/1), and keys that are prefixes of one another
+%% (strict_prefix_key_values/1).
 stochastic_test_() ->
 	{timeout, 120, fun() ->
 		lists:foreach(fun(_) -> check_stochastic(random_key_values(3)) end, lists:seq(1, 200)),
 		lists:foreach(fun(_) -> check_stochastic(nested_prefix_key_values(4)) end,
+				lists:seq(1, 150)),
+		lists:foreach(fun(_) -> check_stochastic(strict_prefix_key_values(4)) end,
 				lists:seq(1, 150))
 	end}.
 
@@ -115,14 +135,21 @@ snapshot_cases() ->
 		{insert_into_empty, [], [{insert, K(<<1, 2>>), val(K(<<1, 2>>))}]},
 		{insert_new, many_accounts(60), [{insert, K(<<16#AB, 1>>), val(K(<<16#AB, 1>>))}]},
 		{update_existing, many_accounts(60), [{insert, Seventh, val(Seventh)}]},
-		{split, [acct(K(<<1, 2, 3, 4>>), t1), acct(K(<<9, 9>>), t2)],
+		{split, [account(K(<<1, 2, 3, 4>>), t1), account(K(<<9, 9>>), t2)],
 				[{insert, K(<<1, 2, 3, 9>>), val(K(<<1, 2, 3, 9>>))}]},
 		{delete_one, many_accounts(60), [{delete, Seventh}]},
-		{delete_all, [acct(K(<<1>>), t1), acct(K(<<2>>), t2)],
+		{delete_all, [account(K(<<1>>), t1), account(K(<<2>>), t2)],
 				[{delete, K(<<1>>)}, {delete, K(<<2>>)}]},
 		{mixed, shared_prefix_accounts(),
 				[{insert, K(<<0, 0, 0, 5>>), val(K(<<0, 0, 0, 5>>))},
-				 {delete, K(<<255>>)}, {insert, K(<<1, 2>>), val2(K(<<1, 2>>))}]}
+				 {delete, K(<<255>>)}, {insert, K(<<1, 2>>), val2(K(<<1, 2>>))}]},
+		%% Put a value on the inner node <<"aa">>, which sits above <<"aaa">> and <<"aab">>
+		%% with no value of its own. Then delete values from nodes that keep their children
+		%% (see nested_accounts/0).
+		{nested_insert_at_inner, [account(<<"aaa">>, t1), account(<<"aab">>, t2)],
+				[{insert, <<"aa">>, val(<<"aa">>)}]},
+		{nested_delete_value_keeps_node, nested_accounts(),
+				[{delete, <<"ab">>}, {delete, <<"a">>}]}
 	].
 
 check_snapshot(Name, Accounts, Ops) ->
@@ -185,10 +212,10 @@ canon_entry({Key, {Parent, Children, Hash, Suffix, Value}}) ->
 	{Key, {Parent, lists:sort(gb_sets:to_list(Children)), Hash, Suffix, Value}}.
 
 val(Addr) ->
-	element(2, acct(Addr, t1)).
+	element(2, account(Addr, t1)).
 
 val2(Addr) ->
-	element(2, acct(Addr, t2)).
+	element(2, account(Addr, t2)).
 
 %%====================================================================
 %% Helpers
@@ -296,25 +323,25 @@ hash_fun() ->
 		(node, Hashes) -> ar_deep_hash:hash(Hashes)
 	end.
 
-acct(Addr, t1) ->
+account(Addr, t1) ->
 	{Addr, {erlang:phash2(Addr, 1000000000), crypto:hash(sha256, Addr)}};
-acct(Addr, t2) ->
+account(Addr, t2) ->
 	{Addr, {erlang:phash2(Addr, 1000000000), crypto:hash(sha256, Addr),
 			1 + erlang:phash2(Addr, 10), true}}.
 
 many_accounts(N) ->
-	[acct(crypto:hash(sha256, <<I:64>>), shape(I)) || I <- lists:seq(1, N)].
+	[account(crypto:hash(sha256, <<I:64>>), shape(I)) || I <- lists:seq(1, N)].
 
 shared_prefix_accounts() ->
 	[
-		acct(pad32(<<>>), t1),
-		acct(pad32(<<0, 0, 0, 1>>), t2),
-		acct(pad32(<<0, 0, 0, 2>>), t1),
-		acct(pad32(<<0, 0, 0, 3>>), t2),
-		acct(pad32(<<0, 0, 9>>), t1),
-		acct(pad32(<<1, 2>>), t2),
-		acct(pad32(<<1, 2, 3, 4>>), t1),
-		acct(pad32(<<255>>), t2)
+		account(pad32(<<>>), t1),
+		account(pad32(<<0, 0, 0, 1>>), t2),
+		account(pad32(<<0, 0, 0, 2>>), t1),
+		account(pad32(<<0, 0, 0, 3>>), t2),
+		account(pad32(<<0, 0, 9>>), t1),
+		account(pad32(<<1, 2>>), t2),
+		account(pad32(<<1, 2, 3, 4>>), t1),
+		account(pad32(<<255>>), t2)
 	].
 
 pad32(Prefix) when byte_size(Prefix) =< 32 ->
@@ -379,6 +406,24 @@ distinct_nested(Base, N, Acc) ->
 		true -> distinct_nested(Base, N, Acc);
 		false -> distinct_nested(Base, N - 1, [{Key, crypto:strong_rand_bytes(30)} | Acc])
 	end.
+
+%% N distinct random keys, 1 to 4 bytes long, using only the characters a and b. Only 30 such
+%% keys exist, so the chosen set usually includes a key that is a prefix of another chosen key
+%% (like <<"a">> and <<"ab">>). The prefix key's node then holds both a value and children,
+%% so the fuzz covers inserting and deleting such nodes.
+strict_prefix_key_values(N) ->
+	Shuffled = [Key || {_, Key} <- lists:sort(
+			[{crypto:strong_rand_bytes(4), Key} || Key <- ab_keys()])],
+	[{Key, crypto:strong_rand_bytes(30)} || Key <- lists:sublist(Shuffled, N)].
+
+%% All keys of length 1..4 over {a, b}.
+ab_keys() ->
+	lists:append([ab_keys(Len) || Len <- lists:seq(1, 4)]).
+
+ab_keys(0) ->
+	[<<>>];
+ab_keys(Len) ->
+	[<< Key/binary, C >> || Key <- ab_keys(Len - 1), C <- "ab"].
 
 permutations([]) ->
 	[[]];
