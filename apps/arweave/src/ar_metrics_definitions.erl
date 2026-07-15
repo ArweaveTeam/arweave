@@ -249,6 +249,13 @@ all_metrics() ->
 				"labeled by request type."}
 		]},
 		{prometheus_histogram, [
+			{name, account_tree_sink_move_hops},
+			{buckets, [1, 2, 3, 5, 8, 13, 21]},
+			{help,
+				"The number of diff DAG edges traversed when the materialized ETS account "
+				"tree is repositioned to another representation. Grows with fork depth."}
+		]},
+		{prometheus_histogram, [
 			{name, block_pre_validation_time},
 			{buckets, [infinity]}, %% we don't care about the histogram portion
 			{help,

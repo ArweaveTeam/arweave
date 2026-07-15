@@ -510,12 +510,19 @@ move_sink_to(State, RootHash) ->
 			State;
 		false ->
 			#{ dag := DAG, tid := Tid } = State,
+			HopCounter = counters:new(1, []),
 			DAG2 = ar_diff_dag:move_sink(
 				DAG,
 				RootHash,
-				fun(Diff, Entity) -> apply_diff_ets(Diff, Tid), Entity end,
+				fun(Diff, Entity) ->
+					counters:add(HopCounter, 1, 1),
+					apply_diff_ets(Diff, Tid),
+					Entity
+				end,
 				fun(Diff, _Entity) -> reverse_diff_ets(Diff, Tid) end
 			),
+			arweave_metrics:histogram_observe(account_tree_sink_move_hops, [],
+					counters:get(HopCounter, 1)),
 			State#{ dag := DAG2, sink := RootHash }
 	end.
 
