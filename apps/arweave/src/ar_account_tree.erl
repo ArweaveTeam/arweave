@@ -3,7 +3,7 @@
 %%% wallet_list. It holds the account trees of every block in the consensus window - the chain
 %%% tip, its recent ancestors, and any forks.
 %%%
-%%% Only ONE of those trees is materialized in full: a single patricia trie in the shared,
+%%% Only one of those trees is stored in full: a single patricia trie in the shared,
 %%% mutable ETS table managed by ar_patricia_tree_ets. That table holds exactly one
 %%% representation at a time - it is the "sink" of a diff DAG (ar_diff_dag) whose edges store the
 %%% small per-block account diffs needed to reconstruct the previous, following, and uncle
@@ -11,7 +11,7 @@
 %%% block) trades a little CPU on lookups and reorgs for a large memory saving. Between requests
 %%% the sink rests at the current tip. A request that must hash or traverse a non-tip
 %%% representation (apply_block/2, add_wallets/4, get_wallet_list_chunk/2 of a non-tip root) runs
-%%% inside a snapshot: it transiently repositions the materialized ETS tree to that
+%%% inside a snapshot: it transiently repositions the ETS tree to that
 %%% representation, does its work, and the snapshot restores the tip exactly before returning.
 %%%
 %%% Tip reads (get/1, get_balance/1, get_last_tx/1, get_size/0) read the ETS table directly.
@@ -112,7 +112,7 @@ get_size() ->
 init([{blocks, []} | _]) ->
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
-	Tid = ar_patricia_tree_ets:new(),
+	Tid = ar_patricia_tree_ets:new_named(),
 	State = #{ dag => ar_diff_dag:new(<<>>, ets, not_set), sink => <<>>, tid => Tid },
 	ar_node_worker ! wallets_ready,
 	{ok, State};
@@ -120,7 +120,7 @@ init([{blocks, Blocks} | Args]) ->
 	%% Trap exit to avoid corrupting any open files on quit.
 	process_flag(trap_exit, true),
 	gen_server:cast(?MODULE, {init, Blocks, Args}),
-	Tid = ar_patricia_tree_ets:new(),
+	Tid = ar_patricia_tree_ets:new_named(),
 	State = #{ dag => ar_diff_dag:new(<<>>, ets, not_set), sink => <<>>, tid => Tid },
 	{ok, State}.
 
@@ -277,7 +277,7 @@ initialize_state(Blocks, BaseTree, State) ->
 	InitialDepth = ar_block:get_consensus_window_size(),
 	Window = lists:reverse(lists:sublist(Blocks, InitialDepth)),
 	[BaseB | RestB] = Window,
-	Tid = load_into_ets(BaseTree),
+	Tid = load_into_ets(BaseTree, maps:get(tid, State)),
 	%% Persist the full base tree (every node is dirty on a freshly loaded tree).
 	{BaseRoot, _, _} = compute_hash(Tid, #{ sink => ar_storage }),
 	BaseRoot = BaseB#block.wallet_list,
@@ -342,7 +342,9 @@ load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N) ->
 
 %% @doc Copy a map-based ar_patricia_tree into a fresh ETS account tree, returning its id.
 load_into_ets(MapTree) ->
-	Tid = ar_patricia_tree_ets:new(),
+	load_into_ets(MapTree, ar_patricia_tree_ets:new()).
+
+load_into_ets(MapTree, Tid) ->
 	ar_patricia_tree:foldr(
 		fun(Key, Value, _Acc) -> ar_patricia_tree_ets:insert(Key, Value, Tid) end,
 		ok,
@@ -501,7 +503,7 @@ with_snapshot(Tid, Fun) ->
 		ar_patricia_tree_ets:snapshot_restore(Tid)
 	end.
 
-%% @doc Move the materialized ETS tree (the diff DAG sink) to the representation identified by
+%% @doc Move the ETS tree (the diff DAG sink) to the representation identified by
 %% the given root hash, mutating the ETS table in place. No-op when already there. Precondition:
 %% RootHash is a node in the diff DAG - ar_diff_dag:move_sink crashes otherwise. 
 move_sink_to(State, RootHash) ->
@@ -526,7 +528,7 @@ move_sink_to(State, RootHash) ->
 			State#{ dag := DAG2, sink := RootHash }
 	end.
 
-%% @doc Read the accounts for the given addresses at the current tip (the materialized ETS
+%% @doc Read the accounts for the given addresses at the current tip (the ETS
 %% tree) into a map.
 accounts_at_tip(State, Addresses) ->
 	Tid = maps:get(tid, State),

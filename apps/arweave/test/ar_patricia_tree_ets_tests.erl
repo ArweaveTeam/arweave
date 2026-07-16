@@ -427,7 +427,9 @@ check_stochastic(KeyValues) ->
 					{H1, _, _} = ar_patricia_tree_ets:compute_hash(WithDelete, HashFun, #{}),
 					Rebuilt = build(ar_patricia_tree_ets, Permutation -- [{K, V}]),
 					{H2, _, _} = ar_patricia_tree_ets:compute_hash(Rebuilt, HashFun, #{}),
-					?assertEqual(H1, H2, {delete_equiv, K})
+					?assertEqual(H1, H2, {delete_equiv, K}),
+					ar_patricia_tree_ets:delete_table(WithDelete),
+					ar_patricia_tree_ets:delete_table(Rebuilt)
 				end,
 				Permutation
 			),
@@ -435,6 +437,7 @@ check_stochastic(KeyValues) ->
 				start -> ok;
 				_ -> ?assertEqual(Acc, H, order_root)
 			end,
+			ar_patricia_tree_ets:delete_table(Tree),
 			H
 		end,
 		start,

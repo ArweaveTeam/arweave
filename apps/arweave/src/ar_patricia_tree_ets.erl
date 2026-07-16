@@ -1,8 +1,10 @@
 %%% @doc The ETS-backed variant of ar_patricia_tree_core (see there for the structure and why a
-%%% patricia trie). The whole trie lives in the shared, named ETS table ar_patricia_tree,
-%%% created by ar_sup at startup. Every operation mutates that table in place and returns the
-%%% table id; new/0 resets it to an empty tree. So exactly one account tree is materialized at a
-%%% time - the diff-DAG "sink" in ar_account_tree.
+%%% patricia trie). On a live node the trie lives in the named, protected ETS table
+%%% ar_patricia_tree, created and owned by the ar_account_tree gen_server (new_named/0). Only
+%%% the owner can write, so a stray process cannot corrupt the tip. Any process may still read
+%%% the table for diagnostics. Every operation mutates the table in place and returns the
+%%% table id. Exactly one account tree is stored in full at a time - the diff-DAG "sink" in
+%%% ar_account_tree. Tests and benchmarks create their own unnamed tables with new/0.
 -module(ar_patricia_tree_ets).
 
 %% size/1 is a tree accessor here; keep it from clashing with erlang:size/1.
@@ -10,8 +12,8 @@
 
 -behaviour(ar_patricia_tree_core).
 
--export([new/0, delete_table/1, insert/3, get/2, size/1, compute_hash/2, compute_hash/3,
-		foldr/3, is_empty/1, from_proplist/1, delete/2, get_range/2, get_range/3,
+-export([new/0, new_named/0, delete_table/1, insert/3, get/2, size/1, compute_hash/2,
+		compute_hash/3, foldr/3, is_empty/1, from_proplist/1, delete/2, get_range/2, get_range/3,
 		snapshot_begin/1, snapshot_restore/1]).
 
 %% ar_patricia_tree_core backend callbacks.
@@ -32,25 +34,32 @@
 %%% Public interface.
 %%%===================================================================
 
-%% @doc Reset the shared ar_patricia_tree table to an empty tree and return its id.
-%% The table is normally created by ar_sup; create it here too so the module is usable
-%% standalone (e.g. in benchmarks run outside the supervision tree).
+%% @doc Create a fresh, unnamed empty tree owned by the caller. Used by tests and benchmarks.
+%% The live node uses the named table created by new_named/0.
 new() ->
+	init_table(ets:new(ar_patricia_tree, [set, protected])).
+
+%% @doc Create or reset the named, protected ar_patricia_tree table holding the live node's
+%% account tree. Only ar_account_tree calls this. The gen_server owns the table, so it alone
+%% can write, and the table dies with it. Crashes if the name is taken by another live
+%% process.
+new_named() ->
 	Tid =
 		case ets:whereis(ar_patricia_tree) of
 			undefined ->
-				ets:new(ar_patricia_tree, [set, public, named_table]);
+				ets:new(ar_patricia_tree, [set, protected, named_table]);
 			_ ->
 				ar_patricia_tree
 		end,
+	init_table(Tid).
+
+init_table(Tid) ->
 	ets:delete_all_objects(Tid),
 	ets:insert(Tid, {?SIZE_KEY, 0}),
 	ets:insert(Tid, {root, {no_parent, gb_sets:new(), no_hash, no_prefix, no_value}}),
 	Tid.
 
-%% @doc Delete the underlying ETS table. Mainly for standalone use (e.g. benchmark
-%% teardown); under ar_sup the ar_patricia_tree table is supervisor-owned and normally
-%% persists for the lifetime of the node - prefer new/0 to reset it instead.
+%% @doc Delete the underlying ETS table.
 delete_table(Tree) ->
 	ets:delete(Tree),
 	ok.

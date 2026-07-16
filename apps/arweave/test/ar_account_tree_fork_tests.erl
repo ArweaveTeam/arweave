@@ -274,7 +274,7 @@ cached_block_at(BI, Height) ->
 	ar_node:get_block_shadow_from_cache(BH).
 
 %% @doc Assert the account tree with the given root, paged out via the public chunk API and
-%% rebuilt from scratch, hashes back to that same root - i.e. the materialized tip is the
+%% rebuilt from scratch, hashes back to that same root - i.e. the tip tree in ETS is the
 %% canonical tree for its accounts.
 assert_tip_matches_from_scratch(Root) ->
 	Accounts = collect_accounts(Root),
@@ -293,7 +293,7 @@ collect_accounts(Root, Cursor, Acc) ->
 	{ok, {NextCursor, Chunk}} = ar_account_tree:get_wallet_list_chunk(Root, Cursor),
 	collect_accounts(Root, NextCursor, Chunk ++ Acc).
 
-%% @doc The whole materialized tip tree verbatim (cached node hashes included) as a sorted list,
+%% @doc The whole tip ETS table verbatim (cached node hashes included) as a sorted list,
 %% for byte-level before/after comparison.
 table_dump() ->
 	lists:sort(ets:tab2list(ar_patricia_tree)).

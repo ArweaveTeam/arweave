@@ -252,8 +252,8 @@ all_metrics() ->
 			{name, account_tree_sink_move_hops},
 			{buckets, [1, 2, 3, 5, 8, 13, 21]},
 			{help,
-				"The number of diff DAG edges traversed when the materialized ETS account "
-				"tree is repositioned to another representation. Grows with fork depth."}
+				"The number of diff DAG edges traversed when the ETS account tree is "
+				"repositioned to another representation. Grows with fork depth."}
 		]},
 		{prometheus_histogram, [
 			{name, account_tree_rehashed_nodes},
