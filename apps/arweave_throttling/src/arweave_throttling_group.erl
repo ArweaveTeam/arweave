@@ -340,7 +340,7 @@ handle_call(Msg, From, State) ->
 	{reply, {error, unsupported}, State}.
 
 handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
-			#{peers := Peers, monitors := Monitors} = State) ->
+			#{id := ID, peers := Peers, monitors := Monitors} = State) ->
 	PS0 = get_or_init_peer(Peer, Peers),
 
 	UpdatedRemaining =
@@ -350,6 +350,7 @@ handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
 				%% Log a warning, this might be an issue.
 				?LOG_WARNING([{event, arweave_throttling_group_quota_updated},
 						{peer, Peer},
+						{group, ID},
 						{previous, PS0#peer_state.total},
 						{new, Total},
 						{received_at, ReceivedAt}]),
