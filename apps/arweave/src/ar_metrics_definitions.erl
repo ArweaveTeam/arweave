@@ -256,6 +256,12 @@ all_metrics() ->
 				"tree is repositioned to another representation. Grows with fork depth."}
 		]},
 		{prometheus_histogram, [
+			{name, account_tree_rehashed_nodes},
+			{buckets, [10, 100, 1000, 10000, 100000, 1000000, 10000000]},
+			{help,
+				"The number of dirty account tree nodes re-hashed by one compute_hash pass. "}
+		]},
+		{prometheus_histogram, [
 			{name, block_pre_validation_time},
 			{buckets, [infinity]}, %% we don't care about the histogram portion
 			{help,

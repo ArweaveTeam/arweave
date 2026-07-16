@@ -67,9 +67,10 @@ get(Key, Tree) ->
 size(Tree) ->
 	ar_patricia_tree_core:size(?MODULE, Tree).
 
-%% Recompute the root hash. The third element is always #{} (this variant does not build an
-%% UpdateMap); with PersistOpts #{ sink => PID } each node update is streamed to that process in
-%% batches instead (see maybe_persist/4).
+%% Recompute the root hash. The third element is #{ rehashed_nodes => N } - the number of dirty
+%% nodes this call re-hashed (this variant does not build an UpdateMap); with PersistOpts
+%% #{ sink => PID } each node update is streamed to that process in batches (see
+%% maybe_persist/4).
 -spec compute_hash(ets:tid(), fun()) -> {binary(), ets:tid(), map()}.
 compute_hash(Tree, HashFun) ->
 	compute_hash(Tree, HashFun, #{}).
@@ -78,9 +79,10 @@ compute_hash(Tree, HashFun) ->
 compute_hash(Tree, HashFun, PersistOpts) ->
 	Sink = maps:get(sink, PersistOpts, undefined),
 	persist_init(Sink),
+	erlang:put(pt_rehashed_count, 0),
 	{RootHash, Tree2, _} = ar_patricia_tree_core:compute_hash(?MODULE, Tree, HashFun, Sink),
 	persist_flush(Sink),
-	{RootHash, Tree2, #{}}.
+	{RootHash, Tree2, #{ rehashed_nodes => erlang:erase(pt_rehashed_count) }}.
 
 %% @doc Traverse the keys in the reversed alphabetical order iteratively applying
 %% the given function of a key, a value, and an accumulator.
@@ -172,8 +174,10 @@ set_size(Tree, Size) ->
 	put_node(Tree, ?SIZE_KEY, Size).
 
 %% Stream one node's update to the sink (a no-op when Sink is undefined). Acc is the sink,
-%% threaded through unchanged.
+%% threaded through unchanged. Called once per re-hashed node, so it also counts them for the
+%% rehashed_nodes element of compute_hash/3's result.
 emit(Sink, Hash, KeyPrefix, Value) ->
+	erlang:put(pt_rehashed_count, erlang:get(pt_rehashed_count) + 1),
 	maybe_persist(Sink, Hash, KeyPrefix, Value),
 	Sink.
 

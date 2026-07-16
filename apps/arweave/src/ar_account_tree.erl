@@ -627,7 +627,11 @@ reverse_diff_ets(Diff, Tid) ->
 	).
 
 compute_hash(Tid, PersistOpts) ->
-	ar_patricia_tree_ets:compute_hash(Tid, ar_block:wallet_list_hash_fun(), PersistOpts).
+	{RootHash, Tree, Info} =
+		ar_patricia_tree_ets:compute_hash(Tid, ar_block:wallet_list_hash_fun(), PersistOpts),
+	arweave_metrics:histogram_observe(account_tree_rehashed_nodes, [],
+			maps:get(rehashed_nodes, Info, 0)),
+	{RootHash, Tree, Info}.
 
 redenominate_balance({Balance, _LastTX}, Denomination) ->
 	ar_pricing:redenominate(Balance, 1, Denomination);
