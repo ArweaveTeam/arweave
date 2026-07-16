@@ -119,8 +119,10 @@ get_range(Start, Count, Tree) ->
 %% can wrap a transient excursion - positioning the tree at another representation to hash or
 %% traverse it - and undo it afterwards. Only one snapshot may be active at a time. The
 %% returned bytes are identical to the originals, cached node hashes included, so the restore
-%% leaves no node dirty.
+%% leaves no node dirty. Crashes if a snapshot is already active. That should not happen in
+%% practice - nesting would silently corrupt the restore.
 snapshot_begin(_Tree) ->
+	undefined = erlang:get(?SNAPSHOT_KEY),
 	erlang:put(?SNAPSHOT_KEY, #{}),
 	ok.
 
