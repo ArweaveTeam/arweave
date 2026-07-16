@@ -68,13 +68,26 @@ metrics() ->
       get_process_memory(ar_node_worker)},
      {ar_header_sync_bytes_total, gauge, "ar_header_sync process memory",
       get_process_memory(ar_header_sync)},
-     {ar_wallets_bytes_total, gauge, "account tree process memory",
-      get_process_memory(ar_account_tree)},
+     {ar_wallets_bytes_total, gauge,
+      "Total account tree memory: the ar_account_tree process heap (the diff DAG) plus "
+      "the ETS table holding the tree itself.",
+      get_process_memory(ar_account_tree) + account_tree_ets_bytes()},
+     {account_tree_ets_bytes, gauge,
+      "Memory of the ETS table holding the account tree",
+      account_tree_ets_bytes()},
      {ar_http_iface_listener_ranch_max_connections, gauge, "Maximum number of Ranch connections",
       get_ranch_max_connections(RanchInfo, ar_http_iface_listener)},
      {ar_http_iface_listener_ranch_active_connections, gauge, "Currently active Ranch connections",
       get_ranch_active_connections(RanchInfo, ar_http_iface_listener)}
     ].
+
+account_tree_ets_bytes() ->
+    case ets:info(ar_patricia_tree, memory) of
+        undefined ->
+            0;
+        Words ->
+            Words * erlang:system_info(wordsize)
+    end.
 
 get_process_memory(Name) ->
     case whereis(Name) of
