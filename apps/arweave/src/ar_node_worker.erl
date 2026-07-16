@@ -422,17 +422,17 @@ handle_cast(Message, #{ task_queue := TaskQueue } = State) ->
     end.
 
 handle_info({join_from_state, Height, BI, Blocks, CustomDir}, State) ->
-    {ok, _} = ar_account_tree:start_link([{blocks, Blocks},
-                                          {from_state, ?START_FROM_STATE_SEARCH_DEPTH},
-                                          {custom_dir, CustomDir}]),
+    {ok, PID} = ar_account_tree:start_link([{blocks, Blocks},
+                                            {from_state, ?START_FROM_STATE_SEARCH_DEPTH},
+                                            {custom_dir, CustomDir}]),
     ets:insert(node_state, {join_state, {Height, Blocks, BI, CustomDir}}),
-    {noreply, State};
+    {noreply, State#{ account_tree_pid => PID }};
 
 handle_info({join, Height, BI, Blocks}, State) ->
     Peers = ar_peers:get_trusted_peers(),
-    {ok, _} = ar_account_tree:start_link([{blocks, Blocks}, {from_peers, Peers}]),
+    {ok, PID} = ar_account_tree:start_link([{blocks, Blocks}, {from_peers, Peers}]),
     ets:insert(node_state, {join_state, {Height, Blocks, BI, not_set}}),
-    {noreply, State};
+    {noreply, State#{ account_tree_pid => PID }};
 
 handle_info({event, node_state, {account_tree_initialized, Height}}, State) ->
     [{_, {Height2, Blocks, BI, CustomDir}}] = ets:lookup(node_state, join_state),
@@ -655,6 +655,12 @@ handle_info({'DOWN', _Ref, process, PID, _Info}, State) ->
 
 handle_info({'EXIT', _PID, normal}, State) ->
     {noreply, State};
+
+%% Make sure we terminate when ar_account_tree terminates.
+handle_info({'EXIT', PID, Reason}, #{ account_tree_pid := PID } = State) ->
+    ?LOG_ERROR([{event, account_tree_terminated},
+                {reason, io_lib:format("~p", [Reason])}]),
+    {stop, {account_tree_terminated, Reason}, State};
 
 handle_info(shutdown, State) ->
     {stop, shutdown, State};
