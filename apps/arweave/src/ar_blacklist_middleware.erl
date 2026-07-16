@@ -9,8 +9,9 @@
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_blacklist_middleware.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+-define(BAN_CLEANUP_INTERVAL, 60000).
 
 start_link() ->
 	{ok, spawn_link(fun() -> start() end)}.

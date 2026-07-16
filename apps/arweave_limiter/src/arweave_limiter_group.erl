@@ -465,20 +465,27 @@ ref_to_worker_ref(LimiterRef, Peer) ->
     WorkersNum = arweave_config:get([limiter, LimiterRef, number_of_workers]),
     arweave_limiter_util:worker_ref(LimiterRef, Peer, WorkersNum).
 
-generate_policy(#{concurrency_limit := ConcurrencyLimit,
+generate_policy(#{id := GroupID,
+                  concurrency_limit := ConcurrencyLimit,
                   sliding_window_duration := SlidingWindowDuration,
                   sliding_window_limit := SlidingWindowLimit,
                   leaky_rate_limit := LeakyRateLimit,
                   leaky_tick_ms := LeakyTickMs,
                   tick_reduction := TickReduction}) ->
-    #{concurrency => #{limit => ConcurrencyLimit},
+    WS = case SlidingWindowDuration of
+             infinity ->
+                 infinity;
+             SlidingWindowDuration ->
+                 SlidingWindowDuration div 1000
+         end,
+    #{id => GroupID,
+      concurrency => #{limit => ConcurrencyLimit},
       sliding_window => #{limit => SlidingWindowLimit,
-                          window_seconds => SlidingWindowDuration},
-      leaky_bucket   => #{burst => LeakyRateLimit,
-                          tick_ms => LeakyTickMs,
-                          tick_reduction => TickReduction}
+                          window_seconds => WS},
+      leaky_bucket => #{burst => LeakyRateLimit,
+                        tick_ms => LeakyTickMs,
+                        tick_reduction => TickReduction}
      }.
-
 
 build_headers_info_sliding(Remaining, SWTimestamps, Now, Policies) ->
     SWReset = sliding_window_reset_seconds(SWTimestamps, Now),

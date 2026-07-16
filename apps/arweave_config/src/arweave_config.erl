@@ -62,6 +62,13 @@
 	start/0,
 	stop/0
 ]).
+
+%% Public API: webhooks, semaphores, features, limiter
+-export([
+	feature_enabled/1,
+	limiter_groups/0
+]).
+
 %% Public API: serialization / logging
 -export([
 	log/0
@@ -215,6 +222,21 @@ is_runtime() ->
 -spec get_all_with_prefix(list()) -> [{list(), term()}].
 get_all_with_prefix(Prefix) ->
 	arweave_config_options_registry:get_all_with_prefix(Prefix).
+
+%% @doc Whether `Flag` is enabled. Reads `[features, Flag]` from the
+%% options registry with fallback to the catalog default for the flag.
+%% Unknown flags return `false`.
+-spec feature_enabled(atom()) -> boolean().
+feature_enabled(Flag) ->
+	arweave_config_features:enabled(Flag).
+
+%% @doc Return the list of rate-limiter group IDs used by
+%% `arweave_limiter_sup` to build one supervisor branch per group.
+%% Per-field values for a given group are read via
+%% `arweave_config:get([limiter, GroupID, Field])'.
+-spec limiter_groups() -> [atom()].
+limiter_groups() ->
+	arweave_config_options_limiter:group_ids().
 
 %% @doc Log the current configuration to `?LOG_INFO`.
 -spec log() -> ok.

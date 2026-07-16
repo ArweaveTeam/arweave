@@ -7,7 +7,6 @@
 %%
 
 -include_lib("arweave/include/ar.hrl").
--include_lib("arweave/include/ar_blacklist_middleware.hrl").
 -include_lib("arweave/include/ar_block.hrl").
 -include_lib("arweave/include/ar_chain_stats.hrl").
 -include_lib("arweave/include/ar_chunk_storage.hrl").

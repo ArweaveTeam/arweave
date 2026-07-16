@@ -3,7 +3,7 @@
 %%% arweave_limiter_group:register_or_reject_call/2) into RateLimit-* HTTP
 %%% response headers per draft-polli-ratelimit-headers-02.
 %%%
-%%% The "expiring-limit" — the first value of RateLimit-Limit — tracksSw
+%%% The "expiring-limit" — the first value of RateLimit-Limit — tracks
 %%% whichever policy is closest to its limit, switching between the
 %%% sliding window and the leaky bucket as the request flow progresses.
 %%%
@@ -18,6 +18,9 @@ to_http_headers({register, no_limiting_applied, _Info}) ->
 to_http_headers({reject, error, _Info}) ->
     #{};
 to_http_headers({_RegOrRej, _Mode, Info}) when map_size(Info) == 0 ->
+    #{};
+to_http_headers({_, _, #{remaining := infinity,
+                         reset_seconds := _Reset}}) ->
     #{};
 to_http_headers({RegOrRej, _Mode, #{expiring_limit := _ExpiringLimit,
                                     remaining      := Remaining,
@@ -34,7 +37,8 @@ to_http_headers({RegOrRej, _Mode, #{expiring_limit := _ExpiringLimit,
 %% the `policy=` quota-comment, so clients aware of multiple policies can
 %% see both the sliding window and the leaky bucket.
 ratelimit_limit_value(#{expiring_limit := Expiring,
-                        policies := #{concurrency := #{limit := ConcurrencyLimit},
+                        policies := #{id := ID,
+                                      concurrency := #{limit := ConcurrencyLimit},
                                       sliding_window := SW,
                                       leaky_bucket   := LB}}) ->
     SWLimit  = maps:get(limit, SW),
@@ -42,10 +46,10 @@ ratelimit_limit_value(#{expiring_limit := Expiring,
     LBBurst  = maps:get(burst, LB),
     iolist_to_binary(
       io_lib:format(
-        "~B, ~B;w=~B;policy=\"sliding window\", "
-        "~B;w=~B;burst=~B;policy=\"leaky bucket\" "
-        "~B;w=~B;policy=\"concurrency\" ",
-        [Expiring, SWLimit, SWWindow, LBBurst, SWWindow, LBBurst, ConcurrencyLimit, 1])).
+        "~B, ~B;w=~B;policy=\"~s sliding window\", "
+        "~B;w=~B;burst=~B;policy=\"~s leaky bucket\" "
+        "~B;w=~B;policy=\"~s concurrency\" ",
+        [Expiring, SWLimit, SWWindow, ID, LBBurst, SWWindow, LBBurst, ID, ConcurrencyLimit, 1, ID])).
 
 %% When both Retry-After and RateLimit-Reset are present they
 %% should reference the same instant. We add Retry-After only on rejects

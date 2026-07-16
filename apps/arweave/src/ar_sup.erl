@@ -68,7 +68,6 @@ init([]) ->
 	ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
 	Children = [
 		?CHILD(ar_shutdown_manager, worker),
-		?CHILD(ar_rate_limiter, worker),
 		?CHILD(ar_disksup, worker),
 		?CHILD_SUP(ar_events_sup, supervisor),
 		?CHILD_SUP(ar_http_sup, supervisor),

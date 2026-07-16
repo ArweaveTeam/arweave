@@ -42,17 +42,6 @@ pkgs.writeText "config.json" (builtins.toJSON (filterTopLevelNulls {
     arql = 10;
     gateway_arql = 10;
   };
-  requests_per_minute_limit = arweaveConfig.requestsPerMinuteLimit;
   max_connections = arweaveConfig.maxConnections;
 
-  requests_per_minute_limit_by_ip = lib.lists.foldr
-    (ipObj: acc: acc // {
-      "${ipObj.ip}" = {
-        chunk = ipObj.chunkLimit;
-        data_sync_record = ipObj.dataSyncRecordLimit;
-        default = ipObj.defaultLimit;
-      };
-    })
-    { }
-    arweaveConfig.requestsPerMinuteLimitByIp;
 }))

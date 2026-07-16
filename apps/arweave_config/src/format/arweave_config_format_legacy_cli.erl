@@ -286,10 +286,6 @@ parse(["enable", Feature | Rest]) ->
 parse(["disable", Feature | Rest]) ->
 	arweave_config_features:classify_legacy_flag(list_to_atom(Feature), disable),
 	parse(Rest);
-parse(["requests_per_minute_limit", Num | Rest]) ->
-	V = list_to_integer(Num),
-	_ = arweave_config:set([requests_per_minute_limit], V),
-	parse(Rest);
 parse(["max_propagation_peers", Num | Rest]) ->
 	V = list_to_integer(Num),
 	_ = arweave_config:set([gossip, tx, max_peers], V),

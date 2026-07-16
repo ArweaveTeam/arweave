@@ -5,7 +5,6 @@ debug: false
 disable_device_limit: true
 chunk_storage_file_size: 1048576
 port: 1985
-requests_per_minute_limit: 2500
 internal_api_secret: "full-secret"
 disk_space_check_frequency: 10000
 logging:

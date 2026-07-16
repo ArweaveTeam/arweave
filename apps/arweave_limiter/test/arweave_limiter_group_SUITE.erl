@@ -802,11 +802,11 @@ leaky_manual_reduction(_Config) ->
     ok.
 
 leaky_manual_reduction_disabled(Config) ->
-    LimiterConfig = ?config(limiter_config, Config),
+    LimiterConfig = #{id := ID} = ?config(limiter_config, Config),
     %% init state, the ip is not blocked
     IP = {1,2,3,4},
 
-    Policies = ?M:generate_policy(LimiterConfig),
+    Policies = ?M:generate_policy(LimiterConfig#{id := atom_to_list(ID)}),
 
     Caller1 = ?assertHandlerRegisterOrRejectCall(
                  ?TEST_LIMITER, {register, leaky,
