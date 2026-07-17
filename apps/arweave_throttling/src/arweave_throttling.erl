@@ -11,23 +11,20 @@
 %%%
 %%% == Peer keys ==
 %%%
-%%% A peer is identified by an opaque tuple, typically the IPv4
-%%% 4-tuple `{A, B, C, D}' or the 5-tuple `{A, B, C, D, Port}'. Any
-%%% other Erlang term that can be a map key would also work; the
-%%% throttler treats the peer as opaque.
+%%% Throttling ledger keys are the exact peer terms supplied by callers;
+%%% the throttler does not normalize them. Different tuple
+%%% representations of the same IP address therefore have independent
+%%% quota state.
 %%%
 %%% == Example ==
 %%%
 %%% ```
 %%% ok = arweave_throttling:start(),
 %%% Peer = {127, 0, 0, 1, 1984},
-%%% ok = arweave_throttling:throttle(general, Peer),
+%%% Path = "info",
+%%% ok = arweave_throttling:throttle(Peer, Path),
 %%% %% ... issue HTTP request and read rate-limit headers ...
-%%% ok = arweave_throttling:update_quota(general, Peer, #{
-%%%     total => 200,
-%%%     remaining => 42,
-%%%     reset_seconds => 0
-%%% }).
+%%% ok = arweave_throttling:update_quota(Peer, Path, Headers).
 %%% '''
 %%% @end
 %%%===================================================================
@@ -72,14 +69,15 @@ stop() ->
 	application:stop(?MODULE).
 
 %% @doc Blocking call: returns `ok' when the caller is allowed to
-%% issue an outgoing request to `Peer' inside group `GroupID'.
+%% issue an outgoing request to `Peer' for `Path'.
 %%
 %% The gen_server itself never blocks: it replies immediately with
 %% `accepted', `{queued, Ref}' or `{error, queue_full}'. In the
 %% queued case `throttle/2' waits in the caller's own mailbox for a
 %% `{request_ready, Ref}' notification, with a 60s ceiling - on
-%% expiry it cancels the queued entry and returns `{error, timeout}'.
--spec throttle(atom(), tuple()) -> ok | {error, term()}.
+%% expiry it cancels the queued entry and returns
+%% `{error, throttle_receive_timeout}'.
+-spec throttle(tuple(), list()) -> ok | {error, term()}.
 throttle(Peer, Path) when is_tuple(Peer), is_list(Path) ->
 	case arweave_throttling_path:path_to_group_id(Peer, Path) of
 		{error, skip} ->
@@ -97,7 +95,8 @@ throttle(Peer, Path) when is_tuple(Peer), is_list(Path) ->
 			arweave_throttling_group:throttle(GroupID, Peer)
 	end.
 
-%% @doc Return true if Peer is being throttled for the given path
+%% @doc Return true when this node should avoid selecting `Peer' for
+%% `Path' because its outbound quota is near exhaustion.
 -spec is_throttled(tuple(), list()) -> boolean().
 is_throttled(Peer, Path) when is_tuple(Peer), is_list(Path) ->
 	case arweave_throttling_path:path_to_group_id(Peer, Path) of

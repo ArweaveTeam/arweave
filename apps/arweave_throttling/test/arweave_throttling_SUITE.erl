@@ -11,24 +11,7 @@
 %%% @end
 %%%===================================================================
 -module(arweave_throttling_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([no_groups_started/1,
-		groups_started_on_update_quota/1,
-		throttle_and_update_quota/1,
-		blocking_call_is_released_by_update/1,
-		fifo_ordering/1,
-		concurrent_remaining_updates_take_min/1,
-		stale_update_outside_window_overrides/1,
-		queue_full_returns_error/1,
-		dead_caller_is_dropped_from_queue/1,
-		reset_releases_waiters/1,
-		peer_4_and_5_tuple_keys/1,
-		exhausted_quota_refills_after_reset_seconds/1,
-		update_quota_cancels_reset_timer/1
-		]).
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -37,6 +20,7 @@
 
 -define(PEER1, {1,2,3,4,1984}).
 -define(PEER2, {2,3,4,5,1984}).
+-define(PEER3, {3,4,5,6,1984}).
 
 -define(PATH_GENERAL, "some/path/that/lead/to/general").
 -define(PATH_DATA_SYNC, "data_sync_record").
@@ -56,12 +40,14 @@ end_per_suite(_Config) -> ok.
 init_per_testcase(_TestCase, Config) ->
 	AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
 
+	ok = arweave_config:start(),
+	ConfigSnapshot = arweave_config:snapshot(),
 	ok = arweave_throttling:start(),
 
-	[{apps_before,AppsBefore},
-	{config, Config}].
+	[{apps_before, AppsBefore}, {config_snapshot, ConfigSnapshot} | Config].
 
 end_per_testcase(_TestCase, Config) ->
+	ok = arweave_config:restore(?config(config_snapshot, Config)),
 	ok = arweave_throttling:stop(),
 
 	arweave_throttling_metrics:cleanup(),
@@ -86,9 +72,15 @@ all() ->
 	dead_caller_is_dropped_from_queue,
 	reset_releases_waiters,
 	peer_4_and_5_tuple_keys,
+	configured_local_peer_obeys_outbound_quota,
+	configured_local_ip_does_not_exempt_peer_shapes,
 	exhausted_quota_refills_after_reset_seconds,
 	update_quota_cancels_reset_timer
 	].
+
+%%====================================================================
+%% Test cases
+%%====================================================================
 
 no_groups_started(_Config) ->
 	?assert(is_pid(whereis(arweave_throttling_sup))),
@@ -154,25 +146,7 @@ blocking_call_is_released_by_update(_Config) ->
 	ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
 	ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
 
-	Parent = self(),
-	Pid = spawn_link(fun() ->
-				Reply = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
-				Parent ! {done, self(), Reply}
-			end),
-
-	ok = wait_status(general, ?PEER1, fun(S) ->
-						maps:get(queue_length, S) =:= 1
-					end),
-	false = receive {done, Pid, _} -> true after 100 -> false end,
-
-	ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, headers(?GROUPID_GENERAL, 10, 1, 0)),
-
-	receive
-		{done, Pid, ok} -> ok
-	after 1000 ->
-		ct:fail("blocked caller was not released")
-	end,
-	ok.
+	assert_throttle_blocks_until_quota_update(?PEER1, ?PATH_GENERAL, ?GROUPID_GENERAL).
 
 fifo_ordering(_Config) ->
 	?assertNot(is_pid(whereis(arweave_throttling_group_general))),
@@ -281,8 +255,8 @@ queue_full_returns_error(_Config) ->
 	ok = arweave_throttling:update_quota(?PEER1, ?PATH_DATA_SYNC,
 						headers(?GROUPID_DATA_SYNC, 10, 5, 0)),
 
-	receive {n, 1, ok} -> ok after 1000 -> ct:fail(timeout_1) end,
-	receive {n, 2, ok} -> ok after 1000 -> ct:fail(timeout_2) end,
+	receive {n, _N1, ok} -> ok after 1000 -> ct:fail(timeout_1) end,
+	receive {n, _N2, ok} -> ok after 1000 -> ct:fail(timeout_2) end,
 	ok.
 
 dead_caller_is_dropped_from_queue(_Config) ->
@@ -381,6 +355,30 @@ peer_4_and_5_tuple_keys(_Config) ->
 	?assertEqual(1, maps:get(remaining, S5)),
 	ok.
 
+configured_local_peer_obeys_outbound_quota(_Config) ->
+	ok = arweave_config:set([peers, local], [?PEER1]),
+	ok = record_quota(?PEER1, 1, 0, 600),
+	ok = record_quota(?PEER3, 10, 10, 0),
+
+	?assert(arweave_throttling:is_throttled(?PEER1, ?PATH_GENERAL)),
+	?assertNot(arweave_throttling:is_throttled(?PEER3, ?PATH_GENERAL)),
+
+	assert_throttle_blocks_until_quota_update(?PEER1, ?PATH_GENERAL, ?GROUPID_GENERAL).
+
+configured_local_ip_does_not_exempt_peer_shapes(_Config) ->
+	LocalPeerShapes = [
+		{1,2,3,4},
+		{1,2,3,4,9999},
+		{{1,2,3,4},9999}
+	],
+	ok = arweave_config:set([peers, local], [?PEER1]),
+	lists:foreach(fun(Peer) -> ok = record_quota(Peer, 1, 0, 600) end, LocalPeerShapes),
+
+	lists:foreach(fun(Peer) ->
+		?assert(arweave_throttling:is_throttled(Peer, ?PATH_GENERAL))
+	end, LocalPeerShapes),
+	ok.
+
 %% @doc When `update_quota' reports an exhausted quota together with
 %% `reset_seconds > 0', a timer must refill `remaining' to `total'
 %% once that many seconds elapse, releasing any blocked waiters.
@@ -448,7 +446,40 @@ update_quota_cancels_reset_timer(_Config) ->
 					end),
 	ok.
 
+%%====================================================================
 %% Helpers
+%%====================================================================
+
+assert_throttle_blocks_until_quota_update(Peer, Path, GroupID) ->
+	Parent = self(),
+	Pid = spawn_link(fun() ->
+		Result = arweave_throttling:throttle(Peer, Path),
+		Parent ! {throttle_result, self(), Result}
+	end),
+	ok = wait_status(GroupID, Peer, fun(Status) ->
+		maps:get(queue_length, Status) =:= 1
+	end),
+	false = receive
+		{throttle_result, Pid, _Result} -> true
+	after 100 ->
+		false
+	end,
+	ok = arweave_throttling:update_quota(Peer, Path,
+		headers(GroupID, 10, 1, 0)),
+	receive
+		{throttle_result, Pid, ok} -> ok
+	after 1000 ->
+		ct:fail(throttle_was_not_released)
+	end.
+
+record_quota(Peer, Total, Remaining, ResetSeconds) ->
+	ok = arweave_throttling:update_quota(Peer, ?PATH_GENERAL,
+		headers(?GROUPID_GENERAL, Total, Remaining, ResetSeconds)),
+	wait_status(?GROUPID_GENERAL, Peer, fun(Status) ->
+		maps:get(total, Status) =:= Total andalso
+			maps:get(remaining, Status) =:= Remaining
+	end).
+
 headers(GroupID, Total, Remaining) ->
 	headers(GroupID, Total, Remaining, 0).
 
@@ -472,20 +503,9 @@ policies(Group, Total) ->
 				tick_reduction => Total}}.
 
 wait_status(Group, Peer, Pred) ->
-	wait_until(fun() ->
+	ar_test_await:until(throttling_status_reached, fun() ->
 			case arweave_throttling:status(Group, Peer) of
 				{ok, Status} -> Pred(Status);
 				_ -> false
 			end
-		end).
-
-wait_until(Fun) -> wait_until(Fun, 50).
-
-wait_until(_Fun, 0) -> {error, timeout};
-wait_until(Fun, N) ->
-	case Fun() of
-		true -> ok;
-		_ ->
-			timer:sleep(20),
-			wait_until(Fun, N - 1)
-	end.
+		end, 1000).

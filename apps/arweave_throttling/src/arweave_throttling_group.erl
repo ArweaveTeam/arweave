@@ -109,7 +109,7 @@
 %% How long throttle/2 waits for a `{request_ready, Ref}' message
 %% after the gen_server replies with `{queued, Ref}'. On expiry the
 %% caller sends a `cancel_request' cast so the entry can be evicted
-%% from the queue and returns `{error, timeout}'.
+%% from the queue and returns `{error, throttle_receive_timeout}'.
 -define(THROTTLE_RECEIVE_TIMEOUT_MS, 60000).
 
 %% NOTE: this threshold doesn't reflect when the peer is actually throttled,
@@ -216,7 +216,8 @@ update_quota(GroupID, Peer, #{
 					{update_quota, Peer, Total, Remaining,
 						ResetSeconds, ReceivedAt}).
 
-%% @doc Return true if Peer is being throttled for the given path
+%% @doc Return true when this node should avoid selecting `Peer' in
+%% `GroupID' because its outbound quota is near exhaustion.
 -spec is_throttled(atom(), tuple()) -> boolean().
 is_throttled(GroupID, Peer) when is_atom(GroupID), is_tuple(Peer) ->
 	{Time, Value} = timer:tc(fun do_is_throttled/2, [GroupID, Peer]),
@@ -307,7 +308,7 @@ handle_call({throttle, Peer}, From, #{peers := Peers} = State) ->
 	end;
 handle_call({is_throttled, Peer}, _From, #{peers := Peers} = State) ->
 	PS0 = get_or_init_peer(Peer, Peers),
-	IsThrottled = PS0#peer_state.remaining / PS0#peer_state.total > ?IS_THROTTLED_THRESHOLD,
+	IsThrottled = quota_is_throttled(PS0),
 	{reply, {ok, IsThrottled}, State};
 handle_call(get_info, _From, #{peers := Peers} = State) ->
 	NumOfRequestsQueued =
@@ -436,6 +437,14 @@ code_change(_OldVsn, State, _Extra) ->
 	{ok, State}.
 
 %% Internals
+quota_is_throttled(#peer_state{remaining = 0}) ->
+	true;
+quota_is_throttled(#peer_state{total = Total, remaining = Remaining})
+		when is_integer(Total), Total > 0 ->
+	(Total - Remaining) / Total > ?IS_THROTTLED_THRESHOLD;
+quota_is_throttled(_PeerState) ->
+	false.
+
 enqueue_caller(Peer, From, PS0, #{peers := Peers, monitors := Monitors} = State) ->
 	case queue:len(PS0#peer_state.waiters) >= ?MAX_QUEUE_LENGTH of
 		true ->

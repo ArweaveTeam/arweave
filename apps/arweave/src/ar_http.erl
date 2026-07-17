@@ -1,5 +1,6 @@
 %%% A wrapper library for gun.
 -module(ar_http).
+-test_category([fast]).
 
 -behaviour(gen_server).
 
@@ -12,6 +13,7 @@
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include_lib("arweave/include/ar.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
 	pid_by_peer = #{},
@@ -91,18 +93,9 @@ req(Args, ReestablishedConnection) ->
 	StartTime = erlang:monotonic_time(),
 	#{ peer := Peer, path := Path, method := Method } = Args,
 
-	LocalIPs = [
-		ar_util:peer_to_ip(LocalPeer)
-		|| LocalPeer <- arweave_config:get([peers, local])
-	],
-	case lists:member(ar_util:peer_to_ip(Peer), LocalIPs) of
-		true ->
-			ok;
-		false ->
-			%% This call blocks until timeout, or until we think it's a good time to
-			%% call the endpoint
-			arweave_throttling:throttle(Peer, Path)
-	end,
+	%% This call blocks until timeout, or until we think it's a good time to
+	%% call the endpoint.
+	arweave_throttling:throttle(Peer, Path),
 
 	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, 15000) of
 		{ok, PID} ->
@@ -564,3 +557,33 @@ gen_code_rest(429) ->
 	{<<"429">>, <<"Too Many Requests">>};
 gen_code_rest(N) ->
 	{integer_to_binary(N), <<>>}.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+configured_local_peer_calls_throttler_test_() ->
+	ar_test_util:with_mocked([
+		{arweave_throttling, throttle, fun(Peer, Path) ->
+			throw({throttle_called, Peer, Path})
+		end}
+	], fun configured_local_peer_calls_throttler/0).
+
+configured_local_peer_calls_throttler() ->
+	AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
+	ok = arweave_config:start(),
+	ConfigSnapshot = arweave_config:snapshot(),
+	Peer = {127, 0, 0, 1, arweave_config:get([port])},
+	Path = "/info",
+	try
+		ok = arweave_config:set([peers, local], [Peer]),
+		?assertThrow({throttle_called, Peer, Path}, req(#{
+			peer => Peer,
+			path => Path,
+			method => get
+		}, false))
+	after
+		ok = arweave_config:restore(ConfigSnapshot),
+		AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
+		lists:foreach(fun application:stop/1, AppsNow -- AppsBefore)
+	end.
