@@ -7,7 +7,7 @@
 -export([start/0, stop/0]).
 -export([start/2, stop/1]).
 
--export([register/0, cleanup/0, get_status_class/1, record_rate_metric/4]).
+-export([start_cache/0, register/0, cleanup/0, get_status_class/1, record_rate_metric/4]).
 
 %% Safe runtime metric helpers — see the "Safe metric helpers" section below.
 -export([gauge_set/2, gauge_set/3, gauge_inc/1, gauge_inc/2, gauge_inc/3,
@@ -49,10 +49,13 @@ stop(_State) ->
 	arweave_metrics:cleanup(),
 	ok.
 
-
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
+%% @doc start metrics cache
+start_cache() ->
+    arweave_metrics_sup:start_cache().
+
 
 %% @doc Declare Arweave metrics.
 register() ->

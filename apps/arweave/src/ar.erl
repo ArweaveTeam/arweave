@@ -317,6 +317,7 @@ stop_dependencies() ->
 start_dependencies() ->
 	ok = arweave_limiter:start(),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
+	arweave_metrics:start_cache(),
 	ok.
 
 %% One scheduler => one dirty scheduler => Calculating a RandomX hash, e.g.

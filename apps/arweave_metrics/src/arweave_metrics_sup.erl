@@ -3,17 +3,20 @@
 
 -behaviour(supervisor).
 
--export([start_link/0]).
+-export([start_link/0, start_cache/0]).
 -export([init/1]).
 
 start_link() ->
 	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-	Children = [
-		#{
-			id => arweave_metrics_cache,
-			start => {arweave_metrics_cache, start_link, []}
-		}
-	],
-	{ok, {{one_for_one, 5, 10}, Children}}.
+    {ok, {{one_for_one, 5, 10}, []}}.
+
+start_cache() ->
+    	supervisor:start_child(?MODULE, cache_child_spec()).
+
+cache_child_spec() ->
+    #{
+      id => arweave_metrics_cache,
+      start => {arweave_metrics_cache, start_link, []}
+     }.
