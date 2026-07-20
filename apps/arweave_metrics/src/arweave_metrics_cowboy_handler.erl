@@ -7,7 +7,7 @@
 %% a non-text format, or an encoding other than identity/gzip) fall back
 %% to a synchronous render.
 %% @end
--module(ar_prometheus_cowboy_handler).
+-module(arweave_metrics_cowboy_handler).
 
 %% -behaviour(cowboy_handler).
 

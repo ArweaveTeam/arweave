@@ -118,7 +118,7 @@ throttle_and_update_quota(_Config) ->
 					end),
 
 	Headers = headers(?GROUPID_GENERAL, 10, 3, 0),
-	ct:pal(">> headers: ~p~n >>> parsed Quota: ~p~n", [Headers, arweave_throttling_http_headers:parse(Headers)]),
+
 	ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
 										Headers),
 

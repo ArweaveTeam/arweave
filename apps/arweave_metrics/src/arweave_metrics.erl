@@ -56,7 +56,6 @@ stop(_State) ->
 start_cache() ->
     arweave_metrics_sup:start_cache().
 
-
 %% @doc Declare Arweave metrics.
 register() ->
 	%% App info
@@ -873,9 +872,7 @@ cleanup() ->
 	%% ---------------------------------------------------------------------------------------
 	%% Replica 2.9 metrics
 	%% ---------------------------------------------------------------------------------------
-	prometheus_counter:deregister([{name, replica_2_9_entropy_stored},
-		{labels, [store_id]},
-		{help, "The number of bytes of replica.2.9 entropy written to chunk storage."}]),
+	prometheus_counter:deregister(replica_2_9_entropy_stored),
 	prometheus_counter:deregister(replica_2_9_entropy_generated),
 	prometheus_gauge:deregister(replica_2_9_entropy_cache),
 	prometheus_counter:deregister(replica_2_9_entropy_stats),

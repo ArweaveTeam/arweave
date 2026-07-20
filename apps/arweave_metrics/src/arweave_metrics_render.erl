@@ -1,7 +1,7 @@
 %%% @doc Single home for rendering the Prometheus registry into an
 %%% exposition and negotiating its format/encoding. Wraps
 %%% `prometheus_http_impl:reply/1' so `arweave_metrics_cache' (background
-%%% render) and `ar_prometheus_cowboy_handler' (request serving) stay
+%%% render) and `arweave_metrics_cowboy_handler' (request serving) stay
 %%% thin and neither re-derives the reply request shape or the content
 %%% negotiation.
 -module(arweave_metrics_render).
