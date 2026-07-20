@@ -34,7 +34,8 @@ all() ->
 		empty_local_peers_becomes_empty_array,
 		no_implicit_storage_defaults_emitted,
 		only_user_semaphores_emitted,
-		peer_strings_preserved
+		peer_strings_preserved,
+		yaml_string_scalars_and_minimal_quoting
 	].
 
 %%====================================================================
@@ -149,6 +150,24 @@ peer_strings_preserved(Config) ->
 	?assertNotEqual(nomatch, binary:match(Raw, <<"\"127.0.0.1:2984\"">>)),
 	?assertNotEqual(nomatch, binary:match(Raw, <<"\"127.0.0.1\"">>)),
 	?assertEqual(nomatch, binary:match(Raw, <<"127.0.0.1:1984">>)),
+	ok.
+
+%% The legacy parser stores paths as Erlang strings, which the YAML
+%% encoder must emit as scalars, not sequences of character codes.
+%% Quoting must be minimal and consistent: plain-safe strings
+%% (hostnames, paths) stay unquoted; only YAML-special content
+%% (host:port colons) is quoted.
+yaml_string_scalars_and_minimal_quoting(Config) ->
+	Input = out_path(Config, "yaml_scalars_in.json"),
+	ok = file:write_file(Input,
+		<<"{\"data_dir\": \"/opt/data\","
+		  " \"peers\": [\"chain-1.arweave.xyz\", \"1.2.3.4:1985\"]}">>),
+	Out = out_path(Config, "yaml_scalars_out.yaml"),
+	ok = arweave_config_convert:convert(yaml, Input, Out),
+	{ok, Raw} = file:read_file(Out),
+	?assertNotEqual(nomatch, binary:match(Raw, <<"data_dir: /opt/data\n">>)),
+	?assertNotEqual(nomatch, binary:match(Raw, <<"- chain-1.arweave.xyz\n">>)),
+	?assertNotEqual(nomatch, binary:match(Raw, <<"- \"1.2.3.4:1985\"\n">>)),
 	ok.
 
 %%====================================================================
