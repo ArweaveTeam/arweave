@@ -257,7 +257,7 @@ set_storage_module_data_size(
 	update_tip_partition_data_size().
 
 mining_paused() ->
-	clearweave_metrics().
+	clear_metrics().
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -688,7 +688,7 @@ set_peer_metrics([PeerReport | PeerReports]) ->
 		PeerReport#peer_report.total_h2_from_peer),
 	set_peer_metrics(PeerReports).
 
-clearweave_metrics() ->
+clear_metrics() ->
 	Report = generate_report(),
 	arweave_metrics:gauge_set(mining_rate, [read, total], 0),
 	arweave_metrics:gauge_set(mining_rate, [hash, total],  0),
