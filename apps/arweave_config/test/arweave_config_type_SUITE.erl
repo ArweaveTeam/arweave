@@ -13,13 +13,17 @@ end_per_suite(_Config) -> ok.
 
 init_per_testcase(TestCase, Config)
 	when TestCase == resolved_peers_list_expands_multi_record;
-		TestCase == resolved_peer_id_takes_first_record ->
+		TestCase == resolved_peers_list_skips_unresolvable;
+		TestCase == resolved_peer_id_takes_first_record;
+		TestCase == resolved_peer_id_unresolvable_errors ->
 	meck:new(ar_util, [passthrough]),
 	meck:expect(ar_util, safe_parse_peer, fun(Peer) ->
 		case iolist_to_binary([Peer]) of
 			<<"multi:", PortBin/binary>> ->
 				Port = binary_to_integer(PortBin),
 				{ok, [{1, 1, 1, 1, Port}, {2, 2, 2, 2, Port}]};
+			<<"dead.example", _/binary>> ->
+				{error, {invalid_peer, Peer}};
 			_ ->
 				meck:passthrough([Peer])
 		end
@@ -30,7 +34,9 @@ init_per_testcase(_TestCase, Config) ->
 
 end_per_testcase(TestCase, _Config)
 	when TestCase == resolved_peers_list_expands_multi_record;
-		TestCase == resolved_peer_id_takes_first_record ->
+		TestCase == resolved_peers_list_skips_unresolvable;
+		TestCase == resolved_peer_id_takes_first_record;
+		TestCase == resolved_peer_id_unresolvable_errors ->
 	meck:unload(ar_util),
 	ok;
 end_per_testcase(_TestCase, _Config) ->
@@ -57,7 +63,9 @@ all() ->
 		peer_id_distinct_ports_stay_distinct,
 		peer_id_invalid,
 		resolved_peers_list_expands_multi_record,
-		resolved_peer_id_takes_first_record
+		resolved_peers_list_skips_unresolvable,
+		resolved_peer_id_takes_first_record,
+		resolved_peer_id_unresolvable_errors
 	].
 
 %%====================================================================
@@ -221,7 +229,20 @@ resolved_peers_list_expands_multi_record(_Config) ->
 	?assertEqual({ok, [{1,1,1,1,1984}, {2,2,2,2,1984}]},
 		arweave_config_type:resolved_peers_list([<<"multi:1984">>])).
 
+%% Mirrors the legacy parser: an unresolvable entry is skipped with a
+%% warning, never fatal for the list — a stale DNS name must not stop
+%% a node from booting.
+resolved_peers_list_skips_unresolvable(_Config) ->
+	?assertEqual({ok, [{1,2,3,4,1984}]},
+		arweave_config_type:resolved_peers_list(
+			[<<"dead.example:1984">>, <<"1.2.3.4:1984">>])).
+
 %% The singleton (cm_exit) keeps the first resolved address.
 resolved_peer_id_takes_first_record(_Config) ->
 	?assertEqual({ok, {1,1,1,1,1984}},
 		arweave_config_type:resolved_peer_id(<<"multi:1984">>)).
+
+%% The singleton stays strict, matching legacy bad_cm_exit_peer.
+resolved_peer_id_unresolvable_errors(_Config) ->
+	?assertMatch({error, _},
+		arweave_config_type:resolved_peer_id(<<"dead.example:1984">>)).

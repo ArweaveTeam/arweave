@@ -4,6 +4,7 @@
 -module(arweave_config_format_legacy_json).
 -export([
 	parse/1,
+	parse/2,
 	parse_config_file/1,
 	parse_config_file/2,
 	parse_storage_module/1
@@ -14,6 +15,8 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
+
+-define(RAW_PEERS, {?MODULE, raw_peers}).
 
 %%%===================================================================
 %%% Public interface.
@@ -68,16 +71,40 @@ read_config_from_file(Path) ->
 			{error, file_unreadable, Path}
 	end.
 
-parse(Config) when is_binary(Config) ->
-	case ar_serialize:json_decode(Config) of
-		{ok, JSONValue} ->
-			case parse_options(JSONValue) of
-				ok -> {ok, ok};
-				{error, _} = E -> E;
-				{error, _, _} = E -> E
-			end;
-		{error, _} -> {error, bad_json, Config}
+parse(Config) ->
+	parse(Config, #{}).
+
+%% @doc Like `parse/1'. `#{raw_peers => true}' keeps peer options as
+%% the operator's original strings — validated for shape, but never
+%% resolved to IPs or normalized with default ports. Used by the
+%% converter so converted files preserve peer spellings and convert
+%% needs no DNS.
+parse(Config, Opts) when is_binary(Config) ->
+	%% User erlang:put to avoid having to pass the raw_peer flag down into
+	%% all of the dozens of parse_options clauses.
+	Previous = erlang:put(?RAW_PEERS, maps:get(raw_peers, Opts, false)),
+	try
+		case ar_serialize:json_decode(Config) of
+			{ok, JSONValue} ->
+				case parse_options(JSONValue) of
+					ok -> {ok, ok};
+					{error, _} = E -> E;
+					{error, _, _} = E -> E
+				end;
+			{error, _} -> {error, bad_json, Config}
+		end
+	after
+		case Previous of
+			undefined -> erlang:erase(?RAW_PEERS);
+			_ -> erlang:put(?RAW_PEERS, Previous)
+		end
 	end.
+
+%% The raw-peers flag is process-scoped for the duration of parse/2:
+%% threading an option through every parse_options clause would touch
+%% ~100 function heads for one boolean.
+raw_peers() ->
+	erlang:get(?RAW_PEERS) =:= true.
 
 parse_storage_module(IOList) ->
 	Bin = iolist_to_binary(IOList),
@@ -124,7 +151,7 @@ parse_options([{<<"config_file">>, _} | _]) ->
 parse_options([{<<"peers">>, Peers} | Rest]) when is_list(Peers) ->
 	case parse_peers(Peers, []) of
 		{ok, ParsedPeers} ->
-			_ = arweave_config_options_peers:write_legacy_list(trusted, ParsedPeers),
+			write_peers(trusted, ParsedPeers),
 			parse_options(Rest);
 		error ->
 			{error, bad_peers, Peers}
@@ -135,7 +162,7 @@ parse_options([{<<"peers">>, Peers} | _]) ->
 parse_options([{<<"block_gossip_peers">>, Peers} | Rest]) when is_list(Peers) ->
 	case parse_peers(Peers, []) of
 		{ok, ParsedPeers} ->
-			_ = arweave_config_options_peers:write_legacy_list(block_gossip, ParsedPeers),
+			write_peers(block_gossip, ParsedPeers),
 			parse_options(Rest);
 		error ->
 			{error, bad_peers, Peers}
@@ -146,7 +173,7 @@ parse_options([{<<"block_gossip_peers">>, Peers} | _]) ->
 parse_options([{<<"local_peers">>, Peers} | Rest]) when is_list(Peers) ->
 	case parse_peers(Peers, []) of
 		{ok, ParsedPeers} ->
-			_ = arweave_config_options_peers:write_legacy_list(local, ParsedPeers),
+			write_peers(local, ParsedPeers),
 			parse_options(Rest);
 		error ->
 			{error, bad_local_peers, Peers}
@@ -269,8 +296,10 @@ parse_options([{<<"storage_modules">>, L} | Rest]) when is_list(L) ->
 				{[], []},
 				L
 			),
-		_ = arweave_config_options_storage_modules:write_legacy_list(StorageModules),
-		_ = arweave_config_options_repack_modules:write_legacy_list(RepackInPlaceStorageModules),
+		_ = arweave_config_options_storage_modules:write_legacy_list(
+			StorageModules),
+		_ = arweave_config_options_repack_modules:write_legacy_list(
+			RepackInPlaceStorageModules),
 		parse_options(Rest)
 	catch Error:Reason ->
 		?LOG_ERROR([{event, parse_failure}, {option, storage_modules},
@@ -533,8 +562,12 @@ parse_options([{<<"webhooks">>, Webhooks} | _]) ->
 	{error, {bad_type, webhooks, array}, Webhooks};
 
 parse_options([{<<"semaphores">>, Semaphores} | Rest]) when is_tuple(Semaphores) ->
-	Existing = arweave_config_options_semaphores:legacy_map(),
-	case parse_atom_number_map(Semaphores, Existing) of
+	%% Seed empty rather than with the full default map: unmentioned
+	%% names revert to their compile-time defaults anyway
+	%% (write_legacy_map clears first), and only operator-written
+	%% entries should become explicit store values (and hence appear in
+	%% a converted config).
+	case parse_atom_number_map(Semaphores, #{}) of
 		{ok, ParsedSemaphores} ->
 			_ = arweave_config_options_semaphores:write_legacy_map(ParsedSemaphores),
 			parse_options(Rest);
@@ -598,7 +631,7 @@ parse_options([{<<"vdf_server_trusted_peers">>, Peers} | _]) ->
 	{error, {bad_type, vdf_server_trusted_peers, array}, Peers};
 
 parse_options([{<<"vdf_client_peers">>, Peers} | Rest]) when is_list(Peers) ->
-	_ = arweave_config_options_peers:write_legacy_list(vdf_client, Peers),
+	write_peers(vdf_client, Peers),
 	parse_options(Rest);
 parse_options([{<<"vdf_client_peers">>, Peers} | _]) ->
 	{error, {bad_type, vdf_client_peers, array}, Peers};
@@ -674,19 +707,16 @@ parse_options([{<<"cm_poll_interval">>, CMPollInterval} | _]) ->
 parse_options([{<<"cm_peers">>, Peers} | Rest]) when is_list(Peers) ->
 	case parse_peers(Peers, []) of
 		{ok, ParsedPeers} ->
-			_ = arweave_config_options_peers:write_legacy_list(cm_peer, ParsedPeers),
+			write_peers(cm_peer, ParsedPeers),
 			parse_options(Rest);
 		error ->
 			{error, bad_peers, Peers}
 	end;
 
 parse_options([{<<"cm_exit_peer">>, Peer} | Rest]) ->
-	case ar_util:safe_parse_peer(Peer) of
-		{ok, [ParsedPeer|_]} ->
-			_ = arweave_config_options_peers:write_legacy_singleton(cm_exit, ParsedPeer),
-			parse_options(Rest);
-		{error, _} ->
-			{error, bad_cm_exit_peer, Peer}
+	case parse_cm_exit_peer(Peer) of
+		ok -> parse_options(Rest);
+		error -> {error, bad_cm_exit_peer, Peer}
 	end;
 
 parse_options([{<<"cm_out_batch_timeout">>, CMBatchTimeout} | Rest])
@@ -1042,16 +1072,73 @@ safe_map(Fun, List) ->
 	end.
 
 parse_peers([Peer | Rest], ParsedPeers) ->
-	case ar_util:safe_parse_peer(Peer) of
-		{ok, ParsedPeer} -> parse_peers(Rest, ParsedPeer ++ ParsedPeers);
-		{error, _} -> 
-			?LOG_WARNING([{event, invalid_peer_in_config}, {peer, Peer}, {action, ignored}]),
-			parse_peers(Rest, ParsedPeers)
+	case raw_peers() of
+		true -> parse_raw_peer(Peer, Rest, ParsedPeers);
+		false -> parse_resolved_peer(Peer, Rest, ParsedPeers)
 	end;
 parse_peers([], ParsedPeers) ->
 	Flatten = lists:flatten(ParsedPeers),
 	Reverse = lists:reverse(Flatten),
 	{ok, Reverse}.
+
+parse_resolved_peer(Peer, Rest, ParsedPeers) ->
+	case ar_util:safe_parse_peer(Peer) of
+		{ok, ParsedPeer} -> parse_peers(Rest, ParsedPeer ++ ParsedPeers);
+		{error, _} ->
+			?LOG_WARNING([{event, invalid_peer_in_config}, {peer, Peer}, {action, ignored}]),
+			parse_peers(Rest, ParsedPeers)
+	end.
+
+%% @doc Raw-peers mode: validate the peer's shape without DNS and keep
+%% the original string.
+parse_raw_peer(Peer, Rest, ParsedPeers) ->
+	case arweave_config_type:peer_id(Peer) of
+		{ok, _} -> parse_peers(Rest, [Peer | ParsedPeers]);
+		{error, _} ->
+			?LOG_WARNING([{event, invalid_peer_in_config}, {peer, Peer}, {action, ignored}]),
+			parse_peers(Rest, ParsedPeers)
+	end.
+
+%% @doc Resolve-and-write the `cm_exit_peer' singleton, or keep the
+%% original string in raw-peers mode. `error' maps to
+%% `bad_cm_exit_peer' at the call site.
+parse_cm_exit_peer(Peer) ->
+	case raw_peers() of
+		true ->
+			case arweave_config_type:peer_id(Peer) of
+				{ok, _} ->
+					%% Direct store write; see write_peers/2.
+					_ = arweave_config_store:set([peers, cm_exit], Peer),
+					ok;
+				{error, _} ->
+					error
+			end;
+		false ->
+			case ar_util:safe_parse_peer(Peer) of
+				{ok, [ParsedPeer | _]} ->
+					_ = arweave_config_options_peers:write_legacy_singleton(
+						cm_exit, ParsedPeer),
+					ok;
+				{error, _} ->
+					error
+			end
+	end.
+
+%% @doc Route a parsed peer list to the normalizing legacy writer, or —
+%% in raw-peers mode — write the store directly so the operator's
+%% original strings survive. The direct write deliberately bypasses the
+%% registry: its set path runs the spec's type function, which would
+%% resolve/normalize the peers again (and, unlike the legacy
+%% warn-and-skip, drop the whole list when one hostname fails to
+%% resolve). Raw entries are already shape-validated by
+%% parse_raw_peer, and the converter snapshot-restores the store
+%% around the parse.
+write_peers(Role, Peers) ->
+	case raw_peers() of
+		true -> _ = arweave_config_store:set([peers, Role], Peers);
+		false -> _ = arweave_config_options_peers:write_legacy_list(Role, Peers)
+	end,
+	ok.
 
 parse_webhooks([{WebhookConfig} | Rest], ParsedWebhookConfigs) when is_list(WebhookConfig) ->
 	case parse_webhook(WebhookConfig, #{}) of
@@ -1118,9 +1205,20 @@ parse_atom_number({Key, Value}, Parsed) ->
 	Parsed.
 
 add_vdf_server_trusted_peer(Peer) when is_binary(Peer) ->
-	add_vdf_server_trusted_peer(binary_to_list(Peer));
+	%% vdf peers never DNS-resolve in either mode. The flag is consulted
+	%% here because raw-peers mode must also skip normalization: the
+	%% binary_to_list conversion and, via write_peers, the peer_id
+	%% port-stamping/usort in write_legacy_list — keeping the operator's
+	%% exact string.
+	case raw_peers() of
+		true -> append_vdf_server_trusted_peer(Peer);
+		false -> add_vdf_server_trusted_peer(binary_to_list(Peer))
+	end;
 add_vdf_server_trusted_peer(Peer) ->
+	append_vdf_server_trusted_peer(Peer).
+
+append_vdf_server_trusted_peer(Peer) ->
 	Peers = arweave_config_options_peers:by_role(vdf_server),
-	_ = arweave_config_options_peers:write_legacy_list(vdf_server, Peers ++ [Peer]),
+	write_peers(vdf_server, Peers ++ [Peer]),
 	ok.
 

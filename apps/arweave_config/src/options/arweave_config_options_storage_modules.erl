@@ -146,6 +146,8 @@ legacy_defrags() ->
 %% @doc Write a legacy tuple list as the canonical `[storage_modules]'
 %% list of maps.
 -spec write_legacy_list([term()]) -> ok.
+write_legacy_list([]) ->
+	ok;
 write_legacy_list(L) when is_list(L) ->
 	ExistingDefrags = legacy_defrags(),
 	write_modules(lists:usort(L ++ ExistingDefrags)),

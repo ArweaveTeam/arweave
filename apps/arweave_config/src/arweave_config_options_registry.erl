@@ -17,6 +17,10 @@
 	start_link/1,
 	stop/0,
 	resolve/1,
+	default/1,
+	is_default/2,
+	list_item_key/2,
+	type/1,
 	get_legacy/0,
 	get_legacy/1,
 	get_environments/0,
@@ -83,6 +87,46 @@ resolve(Option) ->
 			{ok, Option, Spec, #{}};
 		_ ->
 			{error, not_found}
+	end.
+
+%% @doc The spec's declared default for the option at `Option', or
+%% `error' when the option has no spec or its spec declares no default.
+-spec default(Option) -> Return when
+	Option :: list(),
+	Return :: {ok, term()} | error.
+default(Option) ->
+	find_in_spec(Option, default).
+
+%% @doc Whether `Value' equals the spec's declared default for the
+%% option at `Option'. `false' when the option has no spec or its spec
+%% declares no default.
+-spec is_default(Option, Value) -> boolean() when
+	Option :: list(),
+	Value :: term().
+is_default(Option, Value) ->
+	default(Option) =:= {ok, Value}.
+
+%% @doc The canonical spec key for `Field' inside `Root''s list items
+%% (a `list_map' option such as `[storage_modules]' or `[webhooks]').
+-spec list_item_key(Root, Field) -> Key when
+	Root :: list(),
+	Field :: atom(),
+	Key :: list().
+list_item_key(Root, Field) when is_list(Root), is_atom(Field) ->
+	Root ++ [{list_item}, Field].
+
+%% @doc The spec's registered type for the option at `Option', or
+%% `error' when the option has no spec or its spec declares no type.
+-spec type(Option) -> Return when
+	Option :: list(),
+	Return :: {ok, atom()} | error.
+type(Option) ->
+	find_in_spec(Option, type).
+
+find_in_spec(Option, SpecKey) ->
+	case resolve(Option) of
+		{ok, _Option, Spec, _Bindings} -> maps:find(SpecKey, Spec);
+		_ -> error
 	end.
 
 %% @doc List of supported environment variables.
@@ -663,7 +707,7 @@ check_list_map_fields(Option, [{Field, Spec} | Rest], Item, Acc) ->
 	end.
 
 check_list_map_field(Option, Field, Value, Spec, Rest, Item, Acc) ->
-	FieldOption = Option ++ [{list_item}, Field],
+	FieldOption = list_item_key(Option, Field),
 	case check(FieldOption, Value, Spec) of
 		{ok, Checked, _} ->
 			check_list_map_fields(

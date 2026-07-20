@@ -53,7 +53,11 @@ encoder(Format) ->
 	{error, {unsupported_format, Format}}.
 
 encoder_from_string(String) ->
-    encoder(string:lowercase(String)).
+	case string:lowercase(String) of
+		"json" -> encoder(json);
+		"yaml" -> encoder(yaml);
+		Other -> {error, {unsupported_format, Other}}
+	end.
 
 read_input(InputFilename) ->
 	case file:read_file(InputFilename) of
@@ -76,7 +80,11 @@ legacy_to_nested(Data) ->
 		%% Start from an empty store so the read-back reflects only the
 		%% values this file produces.
 		ok = arweave_config_store:restore([]),
-		case arweave_config_format_legacy_json:parse(Data) of
+		%% raw_peers: the converted file keeps the operator's original
+		%% peer strings; hostnames then resolve at load, on every boot,
+		%% exactly as the input file's did.
+		Opts = #{raw_peers => true},
+		case arweave_config_format_legacy_json:parse(Data, Opts) of
 			{ok, ok} ->
 				arweave_config_leaf_map:leaf_map_to_nested(build_leaf_map());
 			{error, Reason} ->
@@ -113,9 +121,9 @@ encode_leaf(Path, Value) ->
 %% Resolve the registered type for an option path, or `undefined' when
 %% the path has no concrete spec (e.g. dotted literals).
 spec_type(Path) ->
-	case arweave_config_options_registry:resolve(Path) of
-		{ok, _Option, Spec, _Bindings} -> maps:get(type, Spec, undefined);
-		_ -> undefined
+	case arweave_config_options_registry:type(Path) of
+		{ok, Type} -> Type;
+		error -> undefined
 	end.
 
 encode_typed(address, _Path, Bin) when is_binary(Bin) ->
@@ -123,25 +131,44 @@ encode_typed(address, _Path, Bin) when is_binary(Bin) ->
 encode_typed(Type, _Path, Peers)
 		when (Type =:= resolved_peers_list orelse Type =:= peers_list),
 			 is_list(Peers) ->
-	[ar_util:format_peer(Peer) || Peer <- Peers];
+	[encode_peer(Peer) || Peer <- Peers];
 encode_typed(resolved_peer_id, _Path, Peer) ->
-	ar_util:format_peer(Peer);
+	encode_peer(Peer);
 encode_typed(list_map, Path, Items) when is_list(Items) ->
 	[encode_list_item(Path, Item) || Item <- Items];
 encode_typed(_Type, _Path, Value) ->
 	encode_container(Value).
+
+%% Raw-peers parses (see legacy parse/2) store the operator's original
+%% peer strings, which pass through untouched; resolved peer tuples
+%% still need formatting.
+encode_peer(Peer) when is_binary(Peer) -> Peer;
+encode_peer(Peer) -> ar_util:format_peer(Peer).
 
 %% @doc Encode one element of a `list_map' value (a storage module,
 %% webhook, ...), encoding each field by its own `{list_item}' spec.
 encode_list_item(Root, Item) when is_map(Item) ->
 	maps:from_list(
 		[{Field, encode_field(Root, Field, Value)}
-		 || {Field, Value} <- maps:to_list(Item)]);
+		 || {Field, Value} <- maps:to_list(Item),
+			not is_list_item_default(Root, Field, Value)]);
 encode_list_item(_Root, Item) ->
 	encode_container(Item).
 
+%% @doc Whether a list-item field's value equals its spec default.
+%% Default-valued fields are dropped from list items, and ONLY from
+%% list items: the legacy bridge stamps them (e.g. `defrag => false'
+%% on every storage module) even though the operator never wrote them,
+%% and the loader reapplies the default anyway. Top-level leaves are
+%% never filtered this way — everything the parse writes there is
+%% operator-authored and is kept verbatim, defaults included.
+is_list_item_default(Root, Field, Value) ->
+	Key = arweave_config_options_registry:list_item_key(Root, Field),
+	arweave_config_options_registry:is_default(Key, Value).
+
 encode_field(Root, Field, Value) ->
-	case spec_type(Root ++ [{list_item}, Field]) of
+	FieldKey = arweave_config_options_registry:list_item_key(Root, Field),
+	case spec_type(FieldKey) of
 		address when is_binary(Value) -> ar_util:encode(Value);
 		_ -> encode_container(Value)
 	end.

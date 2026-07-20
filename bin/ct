@@ -10,4 +10,7 @@ set -e
 CT_LOGDIR="${CT_LOGDIR:-logs/ct}"
 mkdir -p "${CT_LOGDIR}"
 
-./rebar3 as test ct --logdir "${CT_LOGDIR}" "$@"
+# Plain `ct` (not `as test ct`): the ct task already runs under the
+# test profile, and `as` splits every argument on commas for task
+# chaining — which breaks comma-separated `--suite a,b` lists.
+./rebar3 ct --logdir "${CT_LOGDIR}" "$@"
