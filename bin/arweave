@@ -1762,6 +1762,14 @@ case "$1" in
 			ARGS=$(arweave_doctor ${*})
 			;;
 		    convert_config)
+			# Boot only kernel/stdlib (start_clean, interactive
+			# code loading): the converter starts arweave_config
+			# and its dependencies itself. Skipping the full
+			# release boot keeps os_mon's memsup port program out
+			# of the run — its shutdown race prints a scary
+			# "Error writing to pipe: Broken pipe" to users.
+			BOOTFILE="$REL_DIR/start_clean"
+			CODE_LOADING_MODE="${CODE_LOADING_MODE:-interactive}"
 			arweave_convert_config ${*}
 			ARGS=$(arweave_convert_config ${*})
 			;;
