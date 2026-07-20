@@ -32,7 +32,7 @@ get_info() ->
             end,
         <<"blocks">> => ar_header_sync:block_count(),
         <<"cached_blocks">> => ar_storage:block_count(),
-        <<"peers">> => ar_metrics:gauge_value(arweave_peer_count),
+        <<"peers">> => arweave_metrics:gauge_value(arweave_peer_count),
         <<"queue_length">> => ar_util:message_queue_len(ar_node_worker),
         <<"node_state_latency">> => (Time + Time2) div 2
     }.

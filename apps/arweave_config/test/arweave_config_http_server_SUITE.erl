@@ -17,6 +17,10 @@ end_per_suite(_Config) ->
 	ok.
 
 init_per_testcase(_TestCase, Config) ->
+        BeforeApps = application:which_applications(),
+    io:format(user, "apps started: ~p~n", [BeforeApps]),
+
+
 	ok = arweave_config:start(),
 	Config.
 

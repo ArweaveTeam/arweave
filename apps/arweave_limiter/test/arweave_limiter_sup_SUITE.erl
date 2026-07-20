@@ -28,7 +28,7 @@ init_per_testcase(_TestCase, _Config) ->
 
 end_per_testcase(_TestCase, Config) ->
     BeforeApps = ?config(before_apps, Config),
-    [application:stop(App) || App <- application:which_applications() -- BeforeApps],
+    [application:stop(App) || App <- (application:which_applications() -- BeforeApps)],
     arweave_config:restore(erase({?MODULE, snapshot})),
     ok.
 

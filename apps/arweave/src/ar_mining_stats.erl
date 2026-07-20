@@ -113,7 +113,7 @@ vdf_computed(Now) ->
 	increment_count(vdf, 1, Now).
 
 raw_read_rate(PartitionNumber, ReadRate) ->
-	ar_metrics:gauge_set(mining_rate, [raw_read, PartitionNumber], ReadRate).
+	arweave_metrics:gauge_set(mining_rate, [raw_read, PartitionNumber], ReadRate).
 
 chunks_read(PartitionNumber, Count) ->
 	chunks_read(PartitionNumber, Count, erlang:monotonic_time(millisecond)).
@@ -257,7 +257,7 @@ set_storage_module_data_size(
 	update_tip_partition_data_size().
 
 mining_paused() ->
-	clear_metrics().
+	clearweave_metrics().
 
 %%%===================================================================
 %%% Generic server callbacks.
@@ -326,12 +326,12 @@ schedule_report(State) ->
 	State#state{ report_ref = Ref }.
 
 metric_set(Name, Value) ->
-	try ar_metrics:gauge_set(Name, Value)
+	try arweave_metrics:gauge_set(Name, Value)
 	catch _:_ -> ok
 	end.
 
 metric_set(Name, Labels, Value) ->
-	try ar_metrics:gauge_set(Name, Labels, Value)
+	try arweave_metrics:gauge_set(Name, Labels, Value)
 	catch _:_ -> ok
 	end.
 
@@ -649,14 +649,14 @@ log_report_lines([Line | Lines]) ->
 	log_report_lines(Lines).
 
 set_metrics(Report) ->
-	ar_metrics:gauge_set(mining_rate, [read, total], Report#report.current_read_mibps),
-	ar_metrics:gauge_set(mining_rate, [hash, total],  Report#report.current_hash_hps),
-	ar_metrics:gauge_set(mining_rate, [ideal_read, total],  Report#report.optimal_overall_read_mibps),
-	ar_metrics:gauge_set(mining_rate, [ideal_hash, total],  Report#report.optimal_overall_hash_hps),
-	ar_metrics:gauge_set(cm_h1_rate, [total, to], Report#report.current_h1_to_peer_hps),
-	ar_metrics:gauge_set(cm_h1_rate, [total, from], Report#report.current_h1_from_peer_hps),
-	ar_metrics:gauge_set(cm_h2_count, [total, to], Report#report.total_h2_to_peer),
-	ar_metrics:gauge_set(cm_h2_count, [total, from], Report#report.total_h2_from_peer),
+	arweave_metrics:gauge_set(mining_rate, [read, total], Report#report.current_read_mibps),
+	arweave_metrics:gauge_set(mining_rate, [hash, total],  Report#report.current_hash_hps),
+	arweave_metrics:gauge_set(mining_rate, [ideal_read, total],  Report#report.optimal_overall_read_mibps),
+	arweave_metrics:gauge_set(mining_rate, [ideal_hash, total],  Report#report.optimal_overall_hash_hps),
+	arweave_metrics:gauge_set(cm_h1_rate, [total, to], Report#report.current_h1_to_peer_hps),
+	arweave_metrics:gauge_set(cm_h1_rate, [total, from], Report#report.current_h1_from_peer_hps),
+	arweave_metrics:gauge_set(cm_h2_count, [total, to], Report#report.total_h2_to_peer),
+	arweave_metrics:gauge_set(cm_h2_count, [total, from], Report#report.total_h2_from_peer),
 	set_partition_metrics(Report#report.partitions),
 	set_peer_metrics(Report#report.peers).
 
@@ -664,13 +664,13 @@ set_partition_metrics([]) ->
 	ok;
 set_partition_metrics([PartitionReport | PartitionReports]) ->
 	PartitionNumber = PartitionReport#partition_report.partition_number,
-	ar_metrics:gauge_set(mining_rate, [read, PartitionNumber],
+	arweave_metrics:gauge_set(mining_rate, [read, PartitionNumber],
 		PartitionReport#partition_report.current_read_mibps),
-	ar_metrics:gauge_set(mining_rate, [hash, PartitionNumber],
+	arweave_metrics:gauge_set(mining_rate, [hash, PartitionNumber],
 		PartitionReport#partition_report.current_hash_hps),
-	ar_metrics:gauge_set(mining_rate, [ideal_read, PartitionNumber],
+	arweave_metrics:gauge_set(mining_rate, [ideal_read, PartitionNumber],
 		PartitionReport#partition_report.optimal_read_mibps),
-	ar_metrics:gauge_set(mining_rate, [ideal_hash, PartitionNumber],
+	arweave_metrics:gauge_set(mining_rate, [ideal_hash, PartitionNumber],
 		PartitionReport#partition_report.optimal_hash_hps),
 	set_partition_metrics(PartitionReports).
 
@@ -678,25 +678,25 @@ set_peer_metrics([]) ->
 	ok;
 set_peer_metrics([PeerReport | PeerReports]) ->
 	Peer = ar_util:format_peer(PeerReport#peer_report.peer),
-	ar_metrics:gauge_set(cm_h1_rate, [Peer, to],
+	arweave_metrics:gauge_set(cm_h1_rate, [Peer, to],
 		PeerReport#peer_report.current_h1_to_peer_hps),
-	ar_metrics:gauge_set(cm_h1_rate, [Peer, from],
+	arweave_metrics:gauge_set(cm_h1_rate, [Peer, from],
 		PeerReport#peer_report.current_h1_from_peer_hps),
-	ar_metrics:gauge_set(cm_h2_count, [Peer, to],
+	arweave_metrics:gauge_set(cm_h2_count, [Peer, to],
 		PeerReport#peer_report.total_h2_to_peer),
-	ar_metrics:gauge_set(cm_h2_count, [Peer, from],
+	arweave_metrics:gauge_set(cm_h2_count, [Peer, from],
 		PeerReport#peer_report.total_h2_from_peer),
 	set_peer_metrics(PeerReports).
 
-clear_metrics() ->
+clearweave_metrics() ->
 	Report = generate_report(),
-	ar_metrics:gauge_set(mining_rate, [read, total], 0),
-	ar_metrics:gauge_set(mining_rate, [hash, total],  0),
-	ar_metrics:gauge_set(mining_rate, [ideal, total],  0),
-	ar_metrics:gauge_set(cm_h1_rate, [total, to], 0),
-	ar_metrics:gauge_set(cm_h1_rate, [total, from], 0),
-	ar_metrics:gauge_set(cm_h2_count, [total, to], 0),
-	ar_metrics:gauge_set(cm_h2_count, [total, from], 0),
+	arweave_metrics:gauge_set(mining_rate, [read, total], 0),
+	arweave_metrics:gauge_set(mining_rate, [hash, total],  0),
+	arweave_metrics:gauge_set(mining_rate, [ideal, total],  0),
+	arweave_metrics:gauge_set(cm_h1_rate, [total, to], 0),
+	arweave_metrics:gauge_set(cm_h1_rate, [total, from], 0),
+	arweave_metrics:gauge_set(cm_h2_count, [total, to], 0),
+	arweave_metrics:gauge_set(cm_h2_count, [total, from], 0),
 	clear_partition_metrics(Report#report.partitions),
 	clear_peer_metrics(Report#report.peers).
 
@@ -704,19 +704,19 @@ clear_partition_metrics([]) ->
 	ok;
 clear_partition_metrics([PartitionReport | PartitionReports]) ->
 	PartitionNumber = PartitionReport#partition_report.partition_number,
-	ar_metrics:gauge_set(mining_rate, [read, PartitionNumber], 0),
-	ar_metrics:gauge_set(mining_rate, [hash, PartitionNumber], 0),
-	ar_metrics:gauge_set(mining_rate, [ideal, PartitionNumber], 0),
+	arweave_metrics:gauge_set(mining_rate, [read, PartitionNumber], 0),
+	arweave_metrics:gauge_set(mining_rate, [hash, PartitionNumber], 0),
+	arweave_metrics:gauge_set(mining_rate, [ideal, PartitionNumber], 0),
 	clear_partition_metrics(PartitionReports).
 
 clear_peer_metrics([]) ->
 	ok;
 clear_peer_metrics([PeerReport | PeerReports]) ->
 	Peer = ar_util:format_peer(PeerReport#peer_report.peer),
-	ar_metrics:gauge_set(cm_h1_rate, [Peer, to], 0),
-	ar_metrics:gauge_set(cm_h1_rate, [Peer, from], 0),
-	ar_metrics:gauge_set(cm_h2_count, [Peer, to], 0),
-	ar_metrics:gauge_set(cm_h2_count, [Peer, from], 0),
+	arweave_metrics:gauge_set(cm_h1_rate, [Peer, to], 0),
+	arweave_metrics:gauge_set(cm_h1_rate, [Peer, from], 0),
+	arweave_metrics:gauge_set(cm_h2_count, [Peer, to], 0),
+	arweave_metrics:gauge_set(cm_h2_count, [Peer, from], 0),
 	clear_peer_metrics(PeerReports).
 
 format_report(Report) ->

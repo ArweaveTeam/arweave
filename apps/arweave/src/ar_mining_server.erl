@@ -150,7 +150,7 @@ log_prepare_solution_failure2(Solution, FailureType, FailureReason, Source, Addi
 			{reason, FailureReason},
 			{solution_hash, ar_util:safe_encode(SolutionH)},
 			{packing_difficulty, PackingDifficulty} | AdditionalLogData]),
-	ar_metrics:gauge_inc(mining_solution, [FailureReason]).
+	arweave_metrics:gauge_inc(mining_solution, [FailureReason]).
 
 -spec get_packing_difficulty(Packing :: ar_storage_module:packing()) ->
 	PackingDifficulty :: non_neg_integer().
@@ -1164,7 +1164,7 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
 				partition_upper_bound = PartitionUpperBound,
 				cm_diff = PartialDiff
 			},
-			ar_metrics:gauge_inc(mining_vdf_step),
+			arweave_metrics:gauge_inc(mining_vdf_step),
 			distribute_output(Candidate, State3),
 			?LOG_DEBUG([{event, mining_debug_processing_vdf_output},
 				{step_number, StepNumber}, {output, ar_util:safe_encode(Output)},

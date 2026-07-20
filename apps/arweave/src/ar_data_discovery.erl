@@ -416,9 +416,9 @@ handle_info(telemetry_tick, State) ->
 	emit_state_snapshot(State),
 	emit_bucket_stats(),
 	maybe_trim_interval_cache(),
-	ar_metrics:gauge_set(peer_interval_cache_size, [rows],
+	arweave_metrics:gauge_set(peer_interval_cache_size, [rows],
 			ets:info(?PEER_INTERVAL_CACHE_TABLE, size)),
-	ar_metrics:gauge_set(peer_interval_cache_size, [bytes],
+	arweave_metrics:gauge_set(peer_interval_cache_size, [bytes],
 			ets:info(?PEER_INTERVAL_CACHE_TABLE, memory)
 					* erlang:system_info(wordsize)),
 	{noreply, State};
@@ -561,7 +561,7 @@ collect_peers_for_bucket(Bucket, Table, Peers, Cursor) ->
 
 set_num_peers_metric(StoreID, Type, NumPeers) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
-	ar_metrics:gauge_set(data_discovery, [Type, StoreIDLabel, num_peers],
+	arweave_metrics:gauge_set(data_discovery, [Type, StoreIDLabel, num_peers],
 			NumPeers).
 
 %%%===================================================================
@@ -949,7 +949,7 @@ wipe_peer_cache_rows(Peer) ->
 			[{ {{Peer, '_', '_'}, '_', '_', '_'}, [], [true] }]),
 	case Deleted > 0 of
 		true ->
-			ar_metrics:counter_inc(peer_interval_cache_evictions,
+			arweave_metrics:counter_inc(peer_interval_cache_evictions,
 					[peer_removed], Deleted);
 		false ->
 			ok
@@ -1003,7 +1003,7 @@ maybe_trim_interval_cache() ->
 			Deleted = ets:select_delete(?PEER_INTERVAL_CACHE_TABLE,
 					[{ {'_', '_', '_', '$1'},
 							[{'=<', '$1', Threshold}], [true] }]),
-			ar_metrics:counter_inc(peer_interval_cache_evictions,
+			arweave_metrics:counter_inc(peer_interval_cache_evictions,
 					[trim], Deleted),
 			MbAfter = ets:info(?PEER_INTERVAL_CACHE_TABLE, memory)
 					* erlang:system_info(wordsize) div ?MiB,

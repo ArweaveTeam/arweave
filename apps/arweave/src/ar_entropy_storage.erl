@@ -155,14 +155,14 @@ get_next_unsynced_interval(Offset, Packing, StoreID) ->
 update_sync_records(IsComplete, PaddedEndOffset, StoreID, RewardAddr) ->
 	BucketEnd = ar_chunk_storage:get_chunk_bucket_end(PaddedEndOffset),
 	add_record_async(replica_2_9_entropy, BucketEnd, {replica_2_9, RewardAddr}, StoreID),
-	ar_metrics:counter_inc(replica_2_9_entropy_stored,
+	arweave_metrics:counter_inc(replica_2_9_entropy_stored,
 		[ar_storage_module:label(StoreID)], ?DATA_CHUNK_SIZE),
 	StartOffset = PaddedEndOffset - ?DATA_CHUNK_SIZE,
 	case IsComplete of
 		true ->
 			Packing = {replica_2_9, RewardAddr},
 			
-			ar_metrics:counter_inc(chunks_stored,
+			arweave_metrics:counter_inc(chunks_stored,
 				[ar_storage_module:packing_label(Packing),
 				ar_storage_module:label(StoreID)]),
 			ar_sync_record:add_async(replica_2_9_entropy_with_chunk,

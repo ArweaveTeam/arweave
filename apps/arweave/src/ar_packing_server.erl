@@ -271,11 +271,11 @@ generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, t
 	entropy_generation_lock(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	case ar_entropy_cache:get(Key) of
 		{ok, Entropy} ->
-			ar_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, cache_hit]),
+			arweave_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, cache_hit]),
 			entropy_generation_release(Key),
 			Entropy;
 		not_found ->
-			ar_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, cache_miss]),
+			arweave_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, cache_miss]),
 			Entropy = do_generate_entropy(RewardAddr, Key),
 			update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
 			EntropyCacheSizeMb = arweave_config:get([packing, entropy, cache_size]),
@@ -850,7 +850,7 @@ decrement_buffer_size() ->
 record_buffer_size_metric() ->
 	case ets:lookup(?MODULE, buffer_size) of
 		[{_, Size}] ->
-			ar_metrics:gauge_set(packing_buffer_size, Size);
+			arweave_metrics:gauge_set(packing_buffer_size, Size);
 		_ ->
 			ok
 	end.
@@ -869,7 +869,7 @@ record_packing_request(Type, RequestedPacking, StoredPacking) ->
 		repack -> RequestedPacking;
 		encipher -> RequestedPacking
 	end,
-	ar_metrics:counter_inc(packing_requests, [Type, packing_atom(Packing)]).
+	arweave_metrics:counter_inc(packing_requests, [Type, packing_atom(Packing)]).
 	
 exor_replica_2_9_chunk(Chunk, Entropy) ->
 	iolist_to_binary(exor_replica_2_9_sub_chunks(Chunk, Entropy)).
@@ -898,7 +898,7 @@ update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartO
 	Tab = entropy_generation_stats,
 	Time = erlang:monotonic_time(millisecond),
 	ets:update_counter(Tab, Key, {2, 1}, {Key, 0, Time}),
-	ar_metrics:counter_inc(replica_2_9_entropy_generated, ?REPLICA_2_9_ENTROPY_SIZE),
+	arweave_metrics:counter_inc(replica_2_9_entropy_generated, ?REPLICA_2_9_ENTROPY_SIZE),
 	maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
 	remove_outdated_entropy_generation_stats().
 
@@ -909,7 +909,7 @@ maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubC
 	case Count > 1 of
 		true ->
 			Partition = ar_node:get_partition_number(BucketEndOffset),
-			ar_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, redundant]),
+			arweave_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, redundant]),
 			?LOG_DEBUG([{event, possibly_redundant_entropy_generation},
 					{reward_addr, ar_util:encode(RewardAddr)},
 					{key, ar_util:encode(Key)},

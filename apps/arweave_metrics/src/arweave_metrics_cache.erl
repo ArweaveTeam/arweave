@@ -2,7 +2,7 @@
 %%% Every 15s render and cache the metrics so that GET /metrics can
 %%% return quickly. Fall back to a synchronous render if the cache is
 %%% not available.
--module(ar_metrics_cache).
+-module(arweave_metrics_cache).
 -test_category([fast]).
 
 -behaviour(gen_server).
@@ -11,7 +11,7 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
--include_lib("arweave/include/ar.hrl").
+-include_lib("arweave/include/ar.hrl"). %% FIXME: circular dependency
 -include_lib("eunit/include/eunit.hrl").
 
 %% Registry we keep pre-rendered. Everything arweave emits currently
@@ -26,7 +26,6 @@
 %% ===================================================================
 %% API
 %% ===================================================================
-
 start_link() ->
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -81,7 +80,7 @@ schedule_render(DelayMs) ->
 
 render() ->
 	Registry = ?CACHED_REGISTRY,
-	try ar_metrics_render:render(Registry) of
+	try arweave_metrics_render:render(Registry) of
 		{ok, Cache} ->
 			persistent_term:put({?MODULE, Registry}, Cache);
 		{error, Reason} ->

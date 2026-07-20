@@ -42,6 +42,7 @@ init_per_testcase(_TestCase, Config) ->
 
 	ok = arweave_config:start(),
 	ConfigSnapshot = arweave_config:snapshot(),
+
 	ok = arweave_throttling:start(),
 
 	[{apps_before, AppsBefore}, {config_snapshot, ConfigSnapshot} | Config].
@@ -56,7 +57,7 @@ end_per_testcase(_TestCase, Config) ->
 	AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
 	AppsStartedForTest = AppsNow -- AppsBefore,
 	lists:foreach(fun application:stop/1, AppsStartedForTest),
-
+	catch arweave_metrics:cleanup(),
 	ok.
 
 all() ->

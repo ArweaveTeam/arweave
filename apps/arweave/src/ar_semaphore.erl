@@ -52,7 +52,7 @@ handle_call(acquire, {FromPid, FromRef}, {Capacity, WaitingPids, Queue}) when is
 					{reply, ok, {Capacity - 1, WaitingPids#{ FromPid => {} }, Queue}};
 				false ->
 					Queue1 = queue:in({FromPid, FromRef}, Queue),
-					ar_metrics:gauge_inc(element(2, process_info(self(), registered_name))),
+					arweave_metrics:gauge_inc(element(2, process_info(self(), registered_name))),
 					{noreply, {Capacity, WaitingPids, Queue1}}
 			end
 	end;
@@ -85,12 +85,12 @@ dequeue({Capacity, WaitingPids, Queue}) ->
 		true ->
 			case queue:out(Queue) of
 				{empty, Queue} ->
-					ar_metrics:gauge_set(element(2, process_info(self(), registered_name)), 0),
+					arweave_metrics:gauge_set(element(2, process_info(self(), registered_name)), 0),
 					{noreply, {Capacity, WaitingPids, Queue}};
 				{{value, {FromPid, FromRef}}, NewQueue} ->
 					monitor(process, FromPid),
 					gen_server:reply({FromPid, FromRef}, ok),
-					ar_metrics:gauge_dec(element(2, process_info(self(), registered_name))),
+					arweave_metrics:gauge_dec(element(2, process_info(self(), registered_name))),
 					{noreply, {Capacity - 1, WaitingPids#{ FromPid => {} }, NewQueue}}
 			end
 	end.

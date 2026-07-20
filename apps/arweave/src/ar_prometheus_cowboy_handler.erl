@@ -1,7 +1,7 @@
 %% @doc
 %% Cowboy2 handler for exporting prometheus metrics.
 %%
-%% Scrapes are served from the pre-rendered `ar_metrics_cache'
+%% Scrapes are served from the pre-rendered `arweave_metrics_cache'
 %% (plain and gzipped), so nothing is collected or formatted on the
 %% request thread. Requests the cache can't answer (an uncached registry,
 %% a non-text format, or an encoding other than identity/gzip) fall back
@@ -64,12 +64,12 @@ gen_metrics_response(Registry, Request) ->
 %% the client wants the text format in an encoding we keep ready
 %% (identity or gzip). Anything else signals `fallback'.
 cached_response(Registry, Accept, AcceptEncoding) ->
-	case ar_metrics_cache:lookup(Registry) of
+	case arweave_metrics_cache:lookup(Registry) of
 		not_cached ->
 			fallback;
 		#{content_type := ContentType, identity := Identity, gzip := Gzip} ->
-			case ar_metrics_render:is_text_format(Accept)
-					andalso ar_metrics_render:negotiate_encoding(AcceptEncoding) of
+			case arweave_metrics_render:is_text_format(Accept)
+					andalso arweave_metrics_render:negotiate_encoding(AcceptEncoding) of
 				<<"gzip">> ->
 					{ok, response_headers(ContentType, <<"gzip">>), Gzip};
 				<<"identity">> ->
@@ -86,7 +86,7 @@ synchronous_response(Registry, Request) ->
 		fun(Name, Default) ->
 			cowboy_req:header(iolist_to_binary(Name), Request, Default)
 		end,
-	{Code, RespHeaders, Body} = ar_metrics_render:reply(Registry, GetHeader),
+	{Code, RespHeaders, Body} = arweave_metrics_render:reply(Registry, GetHeader),
 	Headers = prometheus_cowboy:to_cowboy_headers(RespHeaders),
 	Headers2 = maps:merge(?CORS_HEADERS, maps:from_list(Headers)),
 	cowboy_req:reply(Code, Headers2, Body, Request).

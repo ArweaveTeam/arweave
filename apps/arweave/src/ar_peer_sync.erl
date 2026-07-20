@@ -492,7 +492,7 @@ claim_tasks(StoreID, PeerEntries, Queue) ->
 %% fetching, i.e. ranges pushed to the dispatcher and not yet released). A
 %% climbing-without-bound value flags a dedup-overlay leak.
 publish_queue_metrics(#state{ store_id = StoreID, queue = Queue }) ->
-	ar_metrics:gauge_set(sync_task_queue_inflight_bytes,
+	arweave_metrics:gauge_set(sync_task_queue_inflight_bytes,
 		[ar_storage_module:label(StoreID)],
 		ar_sync_task_queue:inflight_bytes(Queue)).
 

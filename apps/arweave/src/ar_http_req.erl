@@ -24,11 +24,11 @@ body_read_time(Req) ->
 read_body_chunk(Req, Size, Timeout) ->
 	case cowboy_req:read_body(Req, #{ length => Size, period => Timeout }) of
 		{_, Chunk, Req2} when byte_size(Chunk) >= Size ->
-			ar_metrics:counter_inc(http_server_accepted_bytes_total,
+			arweave_metrics:counter_inc(http_server_accepted_bytes_total,
 					[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req2 })], Size),
 			{ok, Chunk, Req2};
 		{_, Chunk, Req2} ->
-			ar_metrics:counter_inc(http_server_accepted_bytes_total,
+			arweave_metrics:counter_inc(http_server_accepted_bytes_total,
 					[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req2 })],
 					byte_size(Chunk)),
 			exit(timeout)
@@ -91,7 +91,7 @@ do_read_body(Req, Parent, Ref, SizeLimit, ReadSoFar) ->
 		   period => ?DEFAULT_HTTP_READ_BODY_PERIOD_MS,
 		   timeout => ?DEFAULT_HTTP_READ_BODY_PERIOD_MS + 1000 }),
 	DataSize = byte_size(Data),
-	ar_metrics:counter_inc(
+	arweave_metrics:counter_inc(
 		http_server_accepted_bytes_total,
 		[ar_prometheus_cowboy_labels:label_value(route, #{ req => Req })],
 		DataSize),

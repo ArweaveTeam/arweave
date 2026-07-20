@@ -192,7 +192,7 @@ handle_cast(process_item, #state{ is_disk_space_sufficient = false } = State) ->
 	ar_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, self(), process_item),
 	{noreply, State};
 handle_cast(process_item, #state{ retry_queue = Queue, retry_record = RetryRecord } = State) ->
-	ar_metrics:gauge_set(downloader_queue_size, queue:len(Queue)),
+	arweave_metrics:gauge_set(downloader_queue_size, queue:len(Queue)),
 	Queue2 = process_item(Queue),
 	State2 = State#state{ retry_queue = Queue2 },
 	case pick_unsynced_block(State) of
@@ -364,7 +364,7 @@ terminate(Reason, _State) ->
 store_sync_state(State) ->
 	#state{ sync_record = SyncRecord, height = LastHeight, block_index = BI } = State,
 	SyncedCount = ar_intervals:sum(SyncRecord),
-	ar_metrics:gauge_set(synced_blocks, SyncedCount),
+	arweave_metrics:gauge_set(synced_blocks, SyncedCount),
 	ets:insert(?MODULE, {synced_blocks, SyncedCount}),
 	ar_storage:write_term(header_sync_state, {SyncRecord, LastHeight, BI}).
 

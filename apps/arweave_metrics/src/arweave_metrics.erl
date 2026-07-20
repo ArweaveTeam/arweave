@@ -1,8 +1,13 @@
--module(ar_metrics).
+%%% @doc The Arweave metrics application.
+%%%
+-module(arweave_metrics).
 
--include("ar.hrl").
+-behaviour(application).
 
--export([register/0, get_status_class/1, record_rate_metric/4]).
+-export([start/0, stop/0]).
+-export([start/2, stop/1]).
+
+-export([register/0, cleanup/0, get_status_class/1, record_rate_metric/4]).
 
 %% Safe runtime metric helpers — see the "Safe metric helpers" section below.
 -export([gauge_set/2, gauge_set/3, gauge_inc/1, gauge_inc/2, gauge_inc/3,
@@ -10,6 +15,40 @@
 		gauge_value/1, gauge_value/2,
 		counter_inc/1, counter_inc/2, counter_inc/3,
 		histogram_observe/2, histogram_observe/3]).
+
+-include_lib("kernel/include/logger.hrl").
+-include_lib("arweave/include/ar.hrl"). %% FIXME: this is a circular dependency
+
+%% @doc Start the `arweave_metrics' application and its dependencies.
+-spec start() -> ok | {error, term()}.
+start() ->
+	case application:ensure_all_started(?MODULE, permanent) of
+		{ok, Dependencies} ->
+			?LOG_DEBUG("arweave_metrics started dependencies: ~p", [Dependencies]),
+			ok;
+		Else ->
+			Else
+	end.
+
+%% @doc Stop the `arweave_metrics' application.
+-spec stop() -> ok.
+stop() ->
+	application:stop(?MODULE).
+
+%% @doc `application' callback. Register the Prometheus collectors and
+%% declare the Arweave metrics, then bring up the supervisor which owns
+%% the render-cache ETS table and the `arweave_metrics_cache' renderer.
+start(_StartType, _StartArgs) ->
+	prometheus_registry:register_collector(prometheus_process_collector),
+	prometheus_registry:register_collector(arweave_metrics_collector),
+	arweave_metrics:register(),
+	arweave_metrics_sup:start_link().
+
+%% @doc `application' callback.
+stop(_State) ->
+	arweave_metrics:cleanup(),
+	ok.
+
 
 %%%===================================================================
 %%% Public interface.
@@ -110,7 +149,7 @@ register() ->
 		{buckets, [infinity]}, %% we don't care about the histogram portion
 		{help, "The throughput (in bits/s) of transaction propagation."}
 	]),
-	prometheus_gauge:new([
+	prometheus_gauge:declare([
 		{name, mempool_header_size_bytes},
 		{
 			help,
@@ -714,3 +753,140 @@ histogram_observe(Name, Value) ->
 	try prometheus_histogram:observe(Name, Value) catch _:_ -> ok end.
 histogram_observe(Name, Labels, Value) ->
 	try prometheus_histogram:observe(Name, Labels, Value) catch _:_ -> ok end.
+
+
+
+
+cleanup() ->
+	%% App info
+	prometheus_gauge:deregister(arweave_release),
+
+	%% Networking.
+	prometheus_counter:deregister(http_server_accepted_bytes_total),
+	prometheus_counter:deregister(http_server_served_bytes_total),
+	prometheus_counter:deregister(http_client_downloaded_bytes_total),
+	prometheus_counter:deregister(http_client_uploaded_bytes_total),
+	prometheus_gauge:deregister(arweave_peer_count),
+	prometheus_counter:deregister(gun_requests_total),
+	prometheus_histogram:deregister(ar_http_request_duration_seconds),
+	prometheus_histogram:deregister(http_client_get_chunk_duration_seconds),
+	prometheus_gauge:deregister(downloader_queue_size),
+	prometheus_gauge:deregister(outbound_connections),
+
+	%% Transaction and block propagation.
+	prometheus_gauge:deregister(tx_queue_size),
+	prometheus_counter:deregister(propagated_transactions_total),
+	prometheus_histogram:declare(tx_propagation_bits_per_second),
+	prometheus_gauge:deregister(mempool_header_size_bytes),
+	prometheus_gauge:deregister(mempool_data_size_bytes),
+	prometheus_counter:deregister(block_announcement_missing_transactions),
+	prometheus_counter:deregister(block_announcement_reported_transactions),
+	prometheus_counter:deregister(block2_received_transactions),
+	prometheus_counter:deregister(block_announcement_missing_chunks),
+	prometheus_counter:deregister(block_announcement_reported_chunks),
+	prometheus_counter:deregister(block2_fetched_chunks),
+	prometheus_histogram:deregister(ar_mempool_add_tx_duration_milliseconds),
+	prometheus_histogram:deregister(reverify_mempool_chunk_duration_milliseconds),
+	prometheus_histogram:deregister(drop_txs_duration_milliseconds),
+	prometheus_histogram:deregister(del_from_propagation_queue_duration_milliseconds),
+
+	%% Data seeding.
+	prometheus_gauge:deregister(weave_size),
+	prometheus_gauge:deregister(v2_index_data_size),
+	prometheus_gauge:deregister(v2_index_data_size_by_packing),
+	prometheus_gauge:deregister(tip_partition_data_size_by_packing),
+
+	%% Disk pool.
+	prometheus_gauge:deregister(pending_chunks_size),
+	prometheus_gauge:deregister(disk_pool_chunks_count),
+	prometheus_counter:deregister(disk_pool_processed_chunks),
+
+	%% Consensus.
+	prometheus_gauge:deregister(arweave_block_height),
+	prometheus_gauge:deregister(block_time),
+	prometheus_gauge:deregister(block_vdf_time),
+	prometheus_gauge:deregister(block_vdf_advance),
+
+	prometheus_counter:deregister(wallet_list_size),
+	prometheus_histogram:deregister(block_pre_validation_time),
+	prometheus_histogram:deregister(block_processing_time),
+	prometheus_gauge:deregister(synced_blocks),
+
+	%% Mining.
+	prometheus_gauge:deregister(mining_rate),
+	prometheus_gauge:deregister(cm_h1_rate),
+	prometheus_gauge:deregister(cm_h2_count),
+	prometheus_gauge:deregister(mining_server_chunk_cache_size),
+	prometheus_gauge:deregister(mining_server_task_queue_len),
+	prometheus_gauge:deregister(mining_solution),
+	prometheus_histogram:deregister(chunk_storage_sync_record_check_duration_milliseconds),
+	prometheus_gauge:deregister(mining_server_tasks),
+	prometheus_gauge:deregister(mining_vdf_step),
+
+	%% VDF.
+	prometheus_histogram:deregister(vdf_step_time_milliseconds),
+	prometheus_gauge:deregister(vdf_step),
+	prometheus_gauge:deregister(vdf_difficulty),
+
+	%% Economic metrics.
+	prometheus_gauge:deregister(average_network_hash_rate),
+	prometheus_gauge:deregister(average_block_reward),
+	prometheus_gauge:deregister(expected_block_reward),
+	prometheus_gauge:deregister(network_data_size),
+	prometheus_gauge:deregister(v2_price_per_gibibyte_minute),
+	prometheus_gauge:deregister(price_per_gibibyte_minute),
+	prometheus_gauge:deregister(legacy_price_per_gibibyte_minute),
+	prometheus_gauge:deregister(endowment_pool),
+	prometheus_gauge:deregister(kryder_plus_rate_multiplier),
+	prometheus_gauge:deregister(endowment_pool_take),
+	prometheus_gauge:deregister(endowment_pool_give),
+	prometheus_gauge:deregister(available_supply),
+	prometheus_gauge:deregister(debt_supply),
+	prometheus_gauge:deregister(poa_count),
+	prometheus_gauge:deregister(log_diff),
+	prometheus_gauge:deregister(network_hashrate),
+	prometheus_gauge:deregister(expected_minimum_200_years_storage_costs_decline_rate),
+	prometheus_gauge:deregister(expected_minimum_200_years_storage_costs_decline_rate_10_usd_ar),
+
+	%% Packing.
+	prometheus_histogram:deregister(packing_duration_milliseconds),
+	prometheus_counter:deregister(packing_requests),
+	prometheus_counter:deregister(validating_packed_spora),
+	prometheus_gauge:deregister(packing_buffer_size),
+	prometheus_gauge:deregister(chunk_cache_size),
+	prometheus_counter:deregister(chunks_stored),
+	prometheus_counter:deregister(chunks_read),
+	prometheus_histogram:deregister(chunk_read_rate_bytes_per_second),
+	prometheus_histogram:deregister(chunk_write_rate_bytes_per_second),
+	prometheus_gauge:deregister(data_discovery),
+	prometheus_gauge:deregister(peer_interval_cache_size),
+	prometheus_counter:deregister(peer_interval_cache_evictions),
+	prometheus_counter:deregister(sync_tasks),
+	prometheus_counter:deregister(sync_chunks_skipped),
+	prometheus_gauge:deregister(device_lock_status),
+	prometheus_gauge:deregister(sync_task_queue_inflight_bytes),
+	prometheus_gauge:deregister(repack_chunk_states),
+
+	%% ---------------------------------------------------------------------------------------
+	%% Replica 2.9 metrics
+	%% ---------------------------------------------------------------------------------------
+	prometheus_counter:deregister([{name, replica_2_9_entropy_stored},
+		{labels, [store_id]},
+		{help, "The number of bytes of replica.2.9 entropy written to chunk storage."}]),
+	prometheus_counter:deregister(replica_2_9_entropy_generated),
+	prometheus_gauge:deregister(replica_2_9_entropy_cache),
+	prometheus_counter:deregister(replica_2_9_entropy_stats),
+	prometheus_histogram:deregister(replica_2_9_entropy_duration_milliseconds),
+
+	%% Pool related metrics
+	prometheus_counter:deregister(pool_job_request_count),
+
+	prometheus_counter:deregister(pool_total_job_got_count),
+	%% Debug-only metrics
+	prometheus_counter:deregister(process_functions),
+	%% process_info gets unregistered and re-registered in ar_process_sampler.erl
+	prometheus_gauge:deregister(process_info),
+	prometheus_gauge:deregister(scheduler_utilization),
+	prometheus_gauge:deregister(allocator),
+	ok.
+	
