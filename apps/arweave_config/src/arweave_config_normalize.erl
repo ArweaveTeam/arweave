@@ -21,12 +21,12 @@
 
 -spec run() -> ok.
 run() ->
-	lists:foreach(
-		fun normalize_one/1,
-		arweave_config_options_spec:option_modules()).
+    lists:foreach(
+        fun normalize_one/1,
+        arweave_config_options_spec:option_modules()).
 
 normalize_one(Module) ->
-	case erlang:function_exported(Module, normalize, 0) of
-		true -> _ = Module:normalize(), ok;
-		false -> ok
-	end.
+    case erlang:function_exported(Module, normalize, 0) of
+        true -> _ = Module:normalize(), ok;
+        false -> ok
+    end.

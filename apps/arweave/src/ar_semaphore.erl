@@ -12,85 +12,85 @@
 %% @doc Open a semaphore registered with Name, with the specified
 %% Capacity.
 start_link(Name, InitCapacity) ->
-	prometheus_gauge:new([
-		{name, Name},
-		{help, "The size of the corresponding semaphore queue."}
-	]),
-	gen_server:start_link({local, Name}, ?MODULE, [InitCapacity], []).
+    prometheus_gauge:new([
+        {name, Name},
+        {help, "The size of the corresponding semaphore queue."}
+    ]),
+    gen_server:start_link({local, Name}, ?MODULE, [InitCapacity], []).
 
 %% @doc Acquire the semaphore, willing to wait for the provided
 %% Timeout.
 acquire(Name, Timeout) ->
-	try
-		gen_server:call(Name, acquire, Timeout)
-	catch
-		exit:{timeout, _} -> {error, timeout}
-	end.
+    try
+        gen_server:call(Name, acquire, Timeout)
+    catch
+        exit:{timeout, _} -> {error, timeout}
+    end.
 
 %% @doc Close the semaphore and stop the process registered under the
 %% given name.
 stop(Name) ->
-	gen_server:stop(Name).
+    gen_server:stop(Name).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
 init([InitCapacity]) when is_integer(InitCapacity) ->
-	{ok, {InitCapacity, #{}, queue:new()}};
+    {ok, {InitCapacity, #{}, queue:new()}};
 init([infinity]) ->
-	{ok, {infinity, undefined, undefined}}.
+    {ok, {infinity, undefined, undefined}}.
 
 handle_call(acquire, {FromPid, FromRef}, {Capacity, WaitingPids, Queue}) when is_integer(Capacity) ->
-	case maps:is_key(FromPid, WaitingPids) of
-		true ->
-			{reply, {error, process_already_waiting}, {Capacity, WaitingPids, Queue}};
-		false ->
-			case Capacity > 0 of
-				true ->
-					monitor(process, FromPid),
-					{reply, ok, {Capacity - 1, WaitingPids#{ FromPid => {} }, Queue}};
-				false ->
-					Queue1 = queue:in({FromPid, FromRef}, Queue),
-					arweave_metrics:gauge_inc(element(2, process_info(self(), registered_name))),
-					{noreply, {Capacity, WaitingPids, Queue1}}
-			end
-	end;
+    case maps:is_key(FromPid, WaitingPids) of
+        true ->
+            {reply, {error, process_already_waiting}, {Capacity, WaitingPids, Queue}};
+        false ->
+            case Capacity > 0 of
+                true ->
+                    monitor(process, FromPid),
+                    {reply, ok, {Capacity - 1, WaitingPids#{ FromPid => {} }, Queue}};
+                false ->
+                    Queue1 = queue:in({FromPid, FromRef}, Queue),
+                    arweave_metrics:gauge_inc(element(2, process_info(self(), registered_name))),
+                    {noreply, {Capacity, WaitingPids, Queue1}}
+            end
+    end;
 handle_call(acquire, _, {infinity, _, _} = State) ->
-	{reply, ok, State}.
+    {reply, ok, State}.
 
 handle_cast(_, State) ->
-	{stop, {error, handle_cast_unsupported}, State}.
+    {stop, {error, handle_cast_unsupported}, State}.
 
 handle_info({'DOWN', _,  process, Pid, _}, {Capacity, WaitingPids, Queue}) ->
-	case maps:take(Pid, WaitingPids) of
-		{{}, WaitingPids1} ->
-			dequeue({Capacity + 1, WaitingPids1, Queue});
-		error ->
-			{noreply, {Capacity, WaitingPids, Queue}}
-	end.
+    case maps:take(Pid, WaitingPids) of
+        {{}, WaitingPids1} ->
+            dequeue({Capacity + 1, WaitingPids1, Queue});
+        error ->
+            {noreply, {Capacity, WaitingPids, Queue}}
+    end.
 
 terminate(Reason, _State) ->
-	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
-	ok.
+    ?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
+    ok.
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
 dequeue({Capacity, WaitingPids, Queue}) ->
-	case Capacity > 0 of
-		false ->
-			{noreply, {Capacity, WaitingPids, Queue}};
-		true ->
-			case queue:out(Queue) of
-				{empty, Queue} ->
-					arweave_metrics:gauge_set(element(2, process_info(self(), registered_name)), 0),
-					{noreply, {Capacity, WaitingPids, Queue}};
-				{{value, {FromPid, FromRef}}, NewQueue} ->
-					monitor(process, FromPid),
-					gen_server:reply({FromPid, FromRef}, ok),
-					arweave_metrics:gauge_dec(element(2, process_info(self(), registered_name))),
-					{noreply, {Capacity - 1, WaitingPids#{ FromPid => {} }, NewQueue}}
-			end
-	end.
+    case Capacity > 0 of
+        false ->
+            {noreply, {Capacity, WaitingPids, Queue}};
+        true ->
+            case queue:out(Queue) of
+                {empty, Queue} ->
+                    arweave_metrics:gauge_set(element(2, process_info(self(), registered_name)), 0),
+                    {noreply, {Capacity, WaitingPids, Queue}};
+                {{value, {FromPid, FromRef}}, NewQueue} ->
+                    monitor(process, FromPid),
+                    gen_server:reply({FromPid, FromRef}, ok),
+                    arweave_metrics:gauge_dec(element(2, process_info(self(), registered_name))),
+                    {noreply, {Capacity - 1, WaitingPids#{ FromPid => {} }, NewQueue}}
+            end
+    end.

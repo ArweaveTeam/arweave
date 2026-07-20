@@ -33,10 +33,10 @@ end_per_testcase(_TestCase, Config) ->
     ok.
 
 all() ->
-	[
-		children_spec,
-		child_spec
-	].
+    [
+        children_spec,
+        child_spec
+    ].
 
 children_spec(_Config) ->
     GroupIDs = [test_limiter, test_limiter_2],

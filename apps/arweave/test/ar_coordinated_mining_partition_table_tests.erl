@@ -5,7 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 partition_table_test_() ->
-	[
-		{timeout, ?TEST_NODE_TIMEOUT,
-			fun ar_coordinated_mining_tests:test_partition_table/0}
-	].
+    [
+        {timeout, ?TEST_NODE_TIMEOUT,
+            fun ar_coordinated_mining_tests:test_partition_table/0}
+    ].

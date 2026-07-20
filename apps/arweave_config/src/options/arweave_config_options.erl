@@ -47,7 +47,7 @@
 -callback specs() -> [map()].
 
 -callback validate() -> ok | {error, Reason} when
-	Reason :: binary() | string().
+    Reason :: binary() | string().
 
 %% Optional callback. Returns the group atom for this option module.
 %% When omitted, the group is derived from the module name by

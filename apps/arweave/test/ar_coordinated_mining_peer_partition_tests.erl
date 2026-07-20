@@ -5,7 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 peer_partitions_test_() ->
-	[
-		{timeout, ?TEST_NODE_TIMEOUT,
-			fun ar_coordinated_mining_tests:test_peers_by_partition/0}
-	].
+    [
+        {timeout, ?TEST_NODE_TIMEOUT,
+            fun ar_coordinated_mining_tests:test_peers_by_partition/0}
+    ].

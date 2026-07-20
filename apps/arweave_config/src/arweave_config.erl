@@ -53,46 +53,46 @@
 -vsn(1).
 -behavior(application).
 -export([
-	get/1,
-	get_all_with_prefix/1,
-	is_runtime/0,
-	runtime/0,
-	set/2,
-	load/1,
-	start/0,
-	stop/0
+    get/1,
+    get_all_with_prefix/1,
+    is_runtime/0,
+    runtime/0,
+    set/2,
+    load/1,
+    start/0,
+    stop/0
 ]).
 
 %% Public API: webhooks, semaphores, features, limiter
 -export([
-	feature_enabled/1,
-	limiter_groups/0
+    feature_enabled/1,
+    limiter_groups/0
 ]).
 
 %% Public API: serialization / logging
 -export([
-	log/0
+    log/0
 ]).
 %% Public API: bootstrap and orchestration helpers
 -export([
-	bootstrap/1,
-	normalize/0,
-	show_cli_help/0,
-	parse_storage_module/1,
-	storage_module_to_config/1,
-	config_to_storage_module/1,
-	repack_module_to_config/1,
-	config_to_repack_module/1,
-	convert_config/3
+    bootstrap/1,
+    normalize/0,
+    show_cli_help/0,
+    parse_storage_module/1,
+    storage_module_to_config/1,
+    config_to_storage_module/1,
+    repack_module_to_config/1,
+    config_to_repack_module/1,
+    convert_config/3
 ]).
 % application behavior callbacks.
 -export([start/2, stop/1]).
 -ifdef(AR_TEST).
 -export([
-	force_config/1,
-	restore/1,
-	snapshot/0,
-	with_test_config/1
+    force_config/1,
+    restore/1,
+    snapshot/0,
+    with_test_config/1
 ]).
 -endif.
 -compile({no_auto_import,[get/1]}).
@@ -101,18 +101,18 @@
 %% @doc Start the `arweave_config` application and its dependencies.
 -spec start() -> ok | {error, term()}.
 start() ->
-	case application:ensure_all_started(?MODULE, permanent) of
-		{ok, Dependencies} ->
-			?LOG_DEBUG("arweave_config started dependencies: ~p", Dependencies),
-			ok;
-		Else ->
-			Else
-	end.
+    case application:ensure_all_started(?MODULE, permanent) of
+        {ok, Dependencies} ->
+            ?LOG_DEBUG("arweave_config started dependencies: ~p", Dependencies),
+            ok;
+        Else ->
+            Else
+    end.
 
 %% @doc Stop the `arweave_config` application.
 -spec stop() -> ok.
 stop() ->
-	application:stop(?MODULE).
+    application:stop(?MODULE).
 
 %% @doc Read a configuration value by its canonical option_key.
 %%
@@ -129,13 +129,13 @@ stop() ->
 %% undefined
 %% '''
 -spec get(OptionKey) -> Return when
-	OptionKey :: [atom() | integer() | binary()],
-	Return :: term() | undefined.
+    OptionKey :: [atom() | integer() | binary()],
+    Return :: term() | undefined.
 get(Option) when is_list(Option) ->
-	case arweave_config_options_registry:get(Option) of
-		{ok, Value} -> Value;
-		_ -> undefined
-	end.
+    case arweave_config_options_registry:get(Option) of
+        {ok, Value} -> Value;
+        _ -> undefined
+    end.
 
 %% @doc Set a configuration value using a key.
 %%
@@ -156,19 +156,19 @@ get(Option) when is_list(Option) ->
 %% '''
 %%
 -spec set(OptionKey, Value) -> Return when
-	OptionKey :: atom() | string() | binary() | list(),
-	Value :: term(),
-	Return :: ok | {error, term()}.
+    OptionKey :: atom() | string() | binary() | list(),
+    Value :: term(),
+    Return :: ok | {error, term()}.
 set(Key, Value) ->
-	case arweave_config_parser:key(Key) of
-		{ok, Option} ->
-			case arweave_config_options_registry:set(Option, Value) of
-				{ok, _NewValue} -> ok;
-				Else -> Else
-			end;
-		Else ->
-			Else
-	end.
+    case arweave_config_parser:key(Key) of
+        {ok, Option} ->
+            case arweave_config_options_registry:set(Option, Value) of
+                {ok, _NewValue} -> ok;
+                Else -> Else
+            end;
+        Else ->
+            Else
+    end.
 
 %% @doc Boot-time bulk mutator. Apply a leaf map emitted by the format
 %% parsers to the options registry.
@@ -186,17 +186,17 @@ set(Key, Value) ->
 %% lifecycle flag; callers that need to mutate config after that point
 %% should use `with_test_config/1` (tests only).
 -spec load(Map) -> Return when
-	Map :: #{[term()] => term()},
-	Return :: ok | {error, {[term()], term()}}.
+    Map :: #{[term()] => term()},
+    Return :: ok | {error, {[term()], term()}}.
 load(Map) when is_map(Map) ->
-	maps:fold(
-		fun(_, _, {error, _} = Err) -> Err;
-		   (Key, Value, ok) ->
-				case set(Key, Value) of
-					ok -> ok;
-					Else -> {error, {Key, Else}}
-				end
-		end, ok, Map).
+    maps:fold(
+        fun(_, _, {error, _} = Err) -> Err;
+           (Key, Value, ok) ->
+                case set(Key, Value) of
+                    ok -> ok;
+                    Else -> {error, {Key, Else}}
+                end
+        end, ok, Map).
 
 %% @doc Switch to runtime mode. Validators run against the assembled
 %% config first; if any rejects, the transition is refused and the
@@ -204,31 +204,31 @@ load(Map) when is_map(Map) ->
 %% one-way.
 -spec runtime() -> ok | {error, term()}.
 runtime() ->
-	case arweave_config_validate:run() of
-		ok ->
-			arweave_config_options_registry:set_runtime(true);
-		{error, _} = Err ->
-			Err
-	end.
+    case arweave_config_validate:run() of
+        ok ->
+            arweave_config_options_registry:set_runtime(true);
+        {error, _} = Err ->
+            Err
+    end.
 
 %% @doc Whether arweave_config is in runtime mode.
 -spec is_runtime() -> boolean().
 is_runtime() ->
-	arweave_config_options_registry:is_runtime().
+    arweave_config_options_registry:is_runtime().
 
 %% @doc Return `[{OptionKey, Value}]` for every registered spec whose
 %% option_key starts with `Prefix`. Defaults fill in for unset options.
 %% Wildcard specs are skipped (see registry's `get_all_with_prefix/1').
 -spec get_all_with_prefix(list()) -> [{list(), term()}].
 get_all_with_prefix(Prefix) ->
-	arweave_config_options_registry:get_all_with_prefix(Prefix).
+    arweave_config_options_registry:get_all_with_prefix(Prefix).
 
 %% @doc Whether `Flag` is enabled. Reads `[features, Flag]` from the
 %% options registry with fallback to the catalog default for the flag.
 %% Unknown flags return `false`.
 -spec feature_enabled(atom()) -> boolean().
 feature_enabled(Flag) ->
-	arweave_config_features:enabled(Flag).
+    arweave_config_features:enabled(Flag).
 
 %% @doc Return the list of rate-limiter group IDs used by
 %% `arweave_limiter_sup` to build one supervisor branch per group.
@@ -236,12 +236,12 @@ feature_enabled(Flag) ->
 %% `arweave_config:get([limiter, GroupID, Field])'.
 -spec limiter_groups() -> [atom()].
 limiter_groups() ->
-	arweave_config_options_limiter:group_ids().
+    arweave_config_options_limiter:group_ids().
 
 %% @doc Log the current configuration to `?LOG_INFO`.
 -spec log() -> ok.
 log() ->
-	arweave_config_store:log().
+    arweave_config_store:log().
 
 %% @doc Bootstrap arweave_config from a list of CLI arguments. Loads
 %% the environment, parses the config file, parses CLI arguments, and
@@ -249,45 +249,45 @@ log() ->
 %% calls `normalize/0` and `runtime/0` later in its boot sequence.
 -spec bootstrap([string() | binary()]) -> ok | {error, term()}.
 bootstrap(Args) ->
-	arweave_config_bootstrap:start(Args).
+    arweave_config_bootstrap:start(Args).
 
 %% @doc Normalize the assembled configuration. Promotes legacy
 %% enable/disable lists into per-flag `[features, Flag]` entries and
 %% performs other post-parse fixups.
 -spec normalize() -> ok.
 normalize() ->
-	arweave_config_normalize:run().
+    arweave_config_normalize:run().
 
 %% @doc Print the command-line help text to standard output.
 -spec show_cli_help() -> ok.
 show_cli_help() ->
-	arweave_config_help:print().
+    arweave_config_help:print().
 
 %% @doc Parse a single storage_module configuration string (in the
 %% form accepted by the CLI / config file) into the storage_module
 %% tuple. Returns `{ok, Tuple}` or `{error, Reason}`.
 -spec parse_storage_module(string() | binary()) ->
-	{ok, term()} | {error, term()}.
+    {ok, term()} | {error, term()}.
 parse_storage_module(Config) ->
-	arweave_config_format_legacy_json:parse_storage_module(Config).
+    arweave_config_format_legacy_json:parse_storage_module(Config).
 
 -spec storage_module_to_config(map() | {pos_integer(), non_neg_integer(), term()}) ->
-	map().
+    map().
 storage_module_to_config(StorageModule) ->
-	arweave_config_options_storage_modules:storage_module_to_config(StorageModule).
+    arweave_config_options_storage_modules:storage_module_to_config(StorageModule).
 
 -spec config_to_storage_module(map()) -> {pos_integer(), non_neg_integer(), term()}.
 config_to_storage_module(Config) ->
-	arweave_config_options_storage_modules:config_to_storage_module(Config).
+    arweave_config_options_storage_modules:config_to_storage_module(Config).
 
 -spec repack_module_to_config({{pos_integer(), non_neg_integer(), term()}, term()}) -> map().
 repack_module_to_config(RepackModule) ->
-	arweave_config_options_repack_modules:repack_module_to_config(RepackModule).
+    arweave_config_options_repack_modules:repack_module_to_config(RepackModule).
 
 -spec config_to_repack_module(map()) ->
-	{{pos_integer(), non_neg_integer(), term()}, term()}.
+    {{pos_integer(), non_neg_integer(), term()}, term()}.
 config_to_repack_module(Config) ->
-	arweave_config_options_repack_modules:config_to_repack_module(Config).
+    arweave_config_options_repack_modules:config_to_repack_module(Config).
 
 -spec convert_config(term(), term(), term()) -> ok | {error, term()}.
 convert_config(Format, InputFile, OutputFile) ->
@@ -295,13 +295,13 @@ convert_config(Format, InputFile, OutputFile) ->
 
 %% @doc `application` callback.
 start(_StartType, _StartArgs) ->
-	?LOG_INFO("arweave_config application starting"),
-	arweave_config_sup:start_link().
+    ?LOG_INFO("arweave_config application starting"),
+    arweave_config_sup:start_link().
 
 %% @doc `application` callback.
 stop(_Args) ->
-	?LOG_INFO("arweave_config application stopped"),
-	ok.
+    ?LOG_INFO("arweave_config application stopped"),
+    ok.
 
 
 %%%===================================================================
@@ -315,17 +315,17 @@ stop(_Args) ->
 %% leaking into siblings.
 -spec snapshot() -> #{store := list(), runtime := boolean()}.
 snapshot() ->
-	#{
-		store => arweave_config_store:snapshot(),
-		runtime => is_runtime()
-	}.
+    #{
+        store => arweave_config_store:snapshot(),
+        runtime => is_runtime()
+    }.
 
 %% @doc Restore a `snapshot/0`: replace every store row with the
 %% snapshot's rows and restore the captured runtime flag.
 -spec restore(#{store := list(), runtime := boolean()}) -> ok.
 restore(#{store := StoreSnapshot, runtime := Runtime}) when is_boolean(Runtime) ->
-	ok = arweave_config_store:restore(StoreSnapshot),
-	ok = arweave_config_options_registry:set_runtime(Runtime).
+    ok = arweave_config_store:restore(StoreSnapshot),
+    ok = arweave_config_options_registry:set_runtime(Runtime).
 
 %% @doc Test-only scaffolding. Snapshot the store, run `Fun`, and
 %% restore the snapshot on exit (even when `Fun` raises).
@@ -342,12 +342,12 @@ restore(#{store := StoreSnapshot, runtime := Runtime}) when is_boolean(Runtime) 
 %% '''
 -spec with_test_config(fun(() -> Result)) -> Result.
 with_test_config(Fun) when is_function(Fun, 0) ->
-	Snapshot = snapshot(),
-	try
-		Fun()
-	after
-		restore(Snapshot)
-	end.
+    Snapshot = snapshot(),
+    try
+        Fun()
+    after
+        restore(Snapshot)
+    end.
 
 %% @doc Apply overrides via `load/1` with the runtime guard
 %% temporarily disabled. The flag is snapshotted, flipped to `false`
@@ -361,21 +361,21 @@ with_test_config(Fun) when is_function(Fun, 0) ->
 %% Use `with_test_config/1` when the store contents must also be
 %% snapshotted and restored.
 -spec force_config(Map) -> Return when
-	Map :: #{[term()] => term()},
-	Return :: ok | {error, term()}.
+    Map :: #{[term()] => term()},
+    Return :: ok | {error, term()}.
 force_config(Map) when is_map(Map) ->
-	WasRuntime = is_runtime(),
-	case WasRuntime of
-		true -> ok = arweave_config_options_registry:set_runtime(false);
-		false -> ok
-	end,
-	try
-		load(Map)
-	after
-		case WasRuntime of
-			true -> ok = arweave_config_options_registry:set_runtime(true);
-			false -> ok
-		end
-	end.
+    WasRuntime = is_runtime(),
+    case WasRuntime of
+        true -> ok = arweave_config_options_registry:set_runtime(false);
+        false -> ok
+    end,
+    try
+        load(Map)
+    after
+        case WasRuntime of
+            true -> ok = arweave_config_options_registry:set_runtime(true);
+            false -> ok
+        end
+    end.
 
 -endif.

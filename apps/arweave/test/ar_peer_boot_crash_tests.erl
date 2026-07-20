@@ -13,22 +13,22 @@
 -include_lib("eunit/include/eunit.hrl").
 
 hostname_trusted_peer_boots_node_test_() ->
-	{timeout, 300, fun hostname_trusted_peer_boots_node/0}.
+    {timeout, 300, fun hostname_trusted_peer_boots_node/0}.
 
 hostname_trusted_peer_boots_node() ->
-	[B0] = ar_weave:init(),
-	%% peer1 is the trusted peer `main' probes during boot, so it must be up
-	%% first. It runs in its own BEAM and survives `main's clean restart.
-	ar_test_node:start_peer(peer1, B0),
-	%% `localhost' resolves to 127.0.0.1 (peer1's address) without external
-	%% DNS, but stays a `<<"host:port">>' binary when peer resolution is off.
-	{_, _, _, _, Port} = ar_test_node:peer_ip(peer1),
-	Hostname = list_to_binary("localhost:" ++ integer_to_list(Port)),
-	%% Boot `main' trusting the hostname. `validate_trusted_peers/0' runs
-	%% during boot and GETs each trusted peer's info; an unresolved binary
-	%% badargs in `ar_http:req2/1' and the node fails to start.
-	ar_test_node:start(#{
-		b0 => B0,
-		[peers, trusted] => [Hostname]
-	}),
-	?assertEqual(ok, ar_test_await:node_joined(main)).
+    [B0] = ar_weave:init(),
+    %% peer1 is the trusted peer `main' probes during boot, so it must be up
+    %% first. It runs in its own BEAM and survives `main's clean restart.
+    ar_test_node:start_peer(peer1, B0),
+    %% `localhost' resolves to 127.0.0.1 (peer1's address) without external
+    %% DNS, but stays a `<<"host:port">>' binary when peer resolution is off.
+    {_, _, _, _, Port} = ar_test_node:peer_ip(peer1),
+    Hostname = list_to_binary("localhost:" ++ integer_to_list(Port)),
+    %% Boot `main' trusting the hostname. `validate_trusted_peers/0' runs
+    %% during boot and GETs each trusted peer's info; an unresolved binary
+    %% badargs in `ar_http:req2/1' and the node fails to start.
+    ar_test_node:start(#{
+        b0 => B0,
+        [peers, trusted] => [Hostname]
+    }),
+    ?assertEqual(ok, ar_test_await:node_joined(main)).

@@ -57,25 +57,25 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/1,
-	registered_name/1,
-	throttle/2,
-	is_throttled/2,
-	info/1,
-	update_quota/3,
-	status/2,
-	reset/1,
-	pending/2,
-	stop/1
+    start_link/1,
+    registered_name/1,
+    throttle/2,
+    is_throttled/2,
+    info/1,
+    update_quota/3,
+    status/2,
+    reset/1,
+    pending/2,
+    stop/1
 ]).
 
 -export([
-	init/1,
-	handle_call/3,
-	handle_cast/2,
-	handle_info/2,
-	terminate/2,
-	code_change/3
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
 ]).
 
 -ifdef(AR_TEST).
@@ -97,12 +97,12 @@
 %% the `{request_ready, Ref}' notification to, and the monitor
 %% reference we use to remove the entry if the caller dies.
 -record(peer_state, {
-	total          :: non_neg_integer(),
-	remaining      :: non_neg_integer(),
-	reset_seconds  :: non_neg_integer(),
-	reset_timer    :: {reference(), reference()} | undefined,
-	waiters        :: queue:queue({reference(), pid(), reference()}),
-	last_update_ts :: integer() | undefined
+    total          :: non_neg_integer(),
+    remaining      :: non_neg_integer(),
+    reset_seconds  :: non_neg_integer(),
+    reset_timer    :: {reference(), reference()} | undefined,
+    waiters        :: queue:queue({reference(), pid(), reference()}),
+    last_update_ts :: integer() | undefined
 }).
 
 -define(CALL_TIMEOUT, 1000).
@@ -125,10 +125,10 @@
 %% @doc Start a group process.
 -spec start_link(map()) -> {ok, pid()} | {error, term()}.
 start_link(#{id := ID} = Spec) ->
-	gen_server:start_link({local, registered_name(ID)}, ?MODULE, Spec, []).
+    gen_server:start_link({local, registered_name(ID)}, ?MODULE, Spec, []).
 
 registered_name(ID) when is_atom(ID) ->
-	list_to_atom("arweave_throttling_group_" ++ atom_to_list(ID)).
+    list_to_atom("arweave_throttling_group_" ++ atom_to_list(ID)).
 
 %% @doc Blocking throttle call.
 %%
@@ -154,40 +154,40 @@ throttle(GroupID, Peer) ->
 
 -spec do_throttle(atom(), tuple()) -> ok | {error, term()}.
 do_throttle(GroupID, Peer) ->
-	arweave_metrics:counter_inc(arweave_throttling_requests_total, [atom_to_list(GroupID)]),
-	Name = registered_name(GroupID),
-	{Time, WorkerReturn} = timer:tc(fun try_throttle_call/2, [Name, Peer]),
-	arweave_metrics:histogram_observe(arweave_throttling_worker_response_time_microseconds,
-					[atom_to_list(GroupID)], Time),
-	case WorkerReturn of
-		accepted ->
-			ok;
-		{queued, Ref} ->
-			arweave_metrics:counter_inc(arweave_throttling_queued_total, [atom_to_list(GroupID)]),
-			receive
-				{request_ready, Ref} ->
-					ok
-			after ?THROTTLE_RECEIVE_TIMEOUT_MS ->
-					gen_server:cast(Name, {cancel_request, Peer, Ref}),
-					arweave_metrics:counter_inc(arweave_throttling_requests_error,
-								[atom_to_list(GroupID), "throttle_receive_timeout"]),
-				{error, throttle_receive_timeout}
-			end;
-		{error, Reason} = Error ->
-			%% TODO: extract error reason
-			?LOG_ERROR([{event, client_throttling_throttle_error}, {reason, Reason}]),
-			arweave_metrics:counter_inc(arweave_throttling_requests_error,
-						[atom_to_list(GroupID), "unknown"]),
-			Error
-	end.
+    arweave_metrics:counter_inc(arweave_throttling_requests_total, [atom_to_list(GroupID)]),
+    Name = registered_name(GroupID),
+    {Time, WorkerReturn} = timer:tc(fun try_throttle_call/2, [Name, Peer]),
+    arweave_metrics:histogram_observe(arweave_throttling_worker_response_time_microseconds,
+                                      [atom_to_list(GroupID)], Time),
+    case WorkerReturn of
+        accepted ->
+            ok;
+        {queued, Ref} ->
+            arweave_metrics:counter_inc(arweave_throttling_queued_total, [atom_to_list(GroupID)]),
+            receive
+                {request_ready, Ref} ->
+                    ok
+            after ?THROTTLE_RECEIVE_TIMEOUT_MS ->
+                    gen_server:cast(Name, {cancel_request, Peer, Ref}),
+                    arweave_metrics:counter_inc(arweave_throttling_requests_error,
+                                                [atom_to_list(GroupID), "throttle_receive_timeout"]),
+                    {error, throttle_receive_timeout}
+            end;
+        {error, Reason} = Error ->
+            %% TODO: extract error reason
+            ?LOG_ERROR([{event, client_throttling_throttle_error}, {reason, Reason}]),
+            arweave_metrics:counter_inc(arweave_throttling_requests_error,
+                                        [atom_to_list(GroupID), "unknown"]),
+            Error
+    end.
 
 try_throttle_call(Name, Peer) ->
-	try
-		gen_server:call(Name, {throttle, Peer}, ?CALL_TIMEOUT)
-	catch
-		E:R:Stack ->
-			{error, {E,R,Stack}}
-	end.
+    try
+        gen_server:call(Name, {throttle, Peer}, ?CALL_TIMEOUT)
+    catch
+        E:R:Stack ->
+            {error, {E,R,Stack}}
+    end.
 
 %% @doc Non-blocking quota refresh.
 %%
@@ -202,370 +202,370 @@ try_throttle_call(Name, Peer) ->
 %%       integer) when not exhausted.</li>
 %% </ul>
 -spec update_quota(atom(), tuple(), map()) -> ok.
-update_quota(GroupID, Peer, #{
-		total := Total,
-		remaining := Remaining,
-		reset_seconds := ResetSeconds})
-	  when is_integer(Total), Total >= 0,
-		is_integer(Remaining), Remaining >= 0,
-		is_integer(ResetSeconds), ResetSeconds >= 0 ->
-		arweave_metrics:counter_inc(arweave_throttling_quota_update_requests,
-				[atom_to_list(GroupID)]),
-	ReceivedAt = monotonic_ms(),
-	gen_server:cast(registered_name(GroupID),
-					{update_quota, Peer, Total, Remaining,
-						ResetSeconds, ReceivedAt}).
+update_quota(GroupID, Peer, 
+             #{total := Total,
+               remaining := Remaining,
+               reset_seconds := ResetSeconds})
+  when is_integer(Total), Total >= 0,
+       is_integer(Remaining), Remaining >= 0,
+       is_integer(ResetSeconds), ResetSeconds >= 0 ->
+    arweave_metrics:counter_inc(arweave_throttling_quota_update_requests,
+                                [atom_to_list(GroupID)]),
+    ReceivedAt = monotonic_ms(),
+    gen_server:cast(registered_name(GroupID),
+                    {update_quota, Peer, Total, Remaining,
+                     ResetSeconds, ReceivedAt}).
 
 %% @doc Return true when this node should avoid selecting `Peer' in
 %% `GroupID' because its outbound quota is near exhaustion.
 -spec is_throttled(atom(), tuple()) -> boolean().
 is_throttled(GroupID, Peer) when is_atom(GroupID), is_tuple(Peer) ->
-	{Time, Value} = timer:tc(fun do_is_throttled/2, [GroupID, Peer]),
-	arweave_metrics:histogram_observe(arweave_throttling_is_throttled_response_time_microseconds,
-								[atom_to_list(GroupID)], Time),
-	Value.
+    {Time, Value} = timer:tc(fun do_is_throttled/2, [GroupID, Peer]),
+    arweave_metrics:histogram_observe(arweave_throttling_is_throttled_response_time_microseconds,
+                                      [atom_to_list(GroupID)], Time),
+    Value.
 
 -spec do_is_throttled(atom(), tuple()) -> boolean().
 do_is_throttled(GroupID, Peer) when is_atom(GroupID), is_tuple(Peer) ->
-	try
-		{ok, IsThrottled} = gen_server:call(registered_name(GroupID), {is_throttled, Peer}, ?CALL_TIMEOUT),
-		IsThrottled
-	catch
-		{'EXIT', {noproc, {gen_server, call, _}}} -> false;
-		{'EXIT', Reason} -> exit(Reason);
-		E:R:Stack ->
-			?LOG_ERROR([{event, client_throttling_is_throttled_error},
-						{class, E},
-						{reason, R},
-						{stacktrace, Stack}]),
-			%% previous solution
-			false
-	end.
+    try
+        {ok, IsThrottled} = gen_server:call(registered_name(GroupID), {is_throttled, Peer}, ?CALL_TIMEOUT),
+        IsThrottled
+    catch
+        {'EXIT', {noproc, {gen_server, call, _}}} -> false;
+        {'EXIT', Reason} -> exit(Reason);
+        E:R:Stack ->
+            ?LOG_ERROR([{event, client_throttling_is_throttled_error},
+                        {class, E},
+                        {reason, R},
+                        {stacktrace, Stack}]),
+            %% previous solution
+            false
+    end.
 
 %% @doc Get all info
 info(GroupID) ->
-	gen_server:call(registered_name(GroupID), get_info).
+    gen_server:call(registered_name(GroupID), get_info).
 
 %% @doc Return a snapshot of the per-peer state.
 -spec status(atom(), tuple()) -> {ok, map()} | {error, term()}.
 status(GroupID, Peer) ->
-	gen_server:call(registered_name(GroupID), {status, Peer}).
+    gen_server:call(registered_name(GroupID), {status, Peer}).
 
 %% @doc Number of waiting callers currently queued for `Peer'.
 -spec pending(atom(), tuple()) -> non_neg_integer().
 pending(GroupID, Peer) ->
-	case status(GroupID, Peer) of
-		{ok, #{queue_length := N}} -> N;
-		_ -> 0
-	end.
+    case status(GroupID, Peer) of
+        {ok, #{queue_length := N}} -> N;
+        _ -> 0
+    end.
 
 %% @doc Drop all per-peer state. Pending waiters receive a
 %% `{request_ready, Ref}' notification so their `throttle/2' returns
 %% `ok' rather than staying blocked.
 -spec reset(atom()) -> ok.
 reset(GroupID) ->
-	gen_server:call(registered_name(GroupID), reset).
+    gen_server:call(registered_name(GroupID), reset).
 
 
 -spec turn_off(atom()) -> ok.
 turn_off(WorkerRef) ->
-	gen_server:call(WorkerRef, turn_off).
+    gen_server:call(WorkerRef, turn_off).
 
 -spec turn_on(atom()) -> ok.
 turn_on(WorkerRef) ->
-	gen_server:call(WorkerRef, turn_on).
+    gen_server:call(WorkerRef, turn_on).
 
 
 %% @doc Stop the group process.
 -spec stop(atom()) -> ok.
 stop(GroupID) ->
-	gen_server:stop(registered_name(GroupID)).
+    gen_server:stop(registered_name(GroupID)).
 
 %% gen_server callbacks
 init(#{id := GroupID}) ->
-	process_flag(trap_exit, true),
-	{ok, #{
-		id => GroupID,
-		is_enabled => true,
-		peers => #{},
-		monitors => #{}
-		}}.
+    process_flag(trap_exit, true),
+    {ok, #{
+        id => GroupID,
+        is_enabled => true,
+        peers => #{},
+        monitors => #{}
+        }}.
 
 handle_call({throttle, _Peer}, _From, #{is_enabled := false} = State) ->
-	{reply, accepted, State};
+    {reply, accepted, State};
 handle_call({throttle, Peer}, From, #{peers := Peers} = State) ->
-	PS0 = get_or_init_peer(Peer, Peers),
-	case PS0#peer_state.remaining of
-		infinity ->
-			{reply, accepted, State};
-		Remaining when is_integer(Remaining) andalso Remaining > 0 ->
-			PS1 = PS0#peer_state{
-				remaining = PS0#peer_state.remaining - 1
-			},
-			{reply, accepted, State#{peers := Peers#{Peer => PS1}}};
-		_ ->
-			enqueue_caller(Peer, From, PS0, State)
-	end;
+    PS0 = get_or_init_peer(Peer, Peers),
+    case PS0#peer_state.remaining of
+        infinity ->
+            {reply, accepted, State};
+        Remaining when is_integer(Remaining) andalso Remaining > 0 ->
+            PS1 = PS0#peer_state{
+                remaining = PS0#peer_state.remaining - 1
+            },
+            {reply, accepted, State#{peers := Peers#{Peer => PS1}}};
+        _ ->
+            enqueue_caller(Peer, From, PS0, State)
+    end;
 handle_call({is_throttled, Peer}, _From, #{peers := Peers} = State) ->
-	PS0 = get_or_init_peer(Peer, Peers),
-	IsThrottled = quota_is_throttled(PS0),
-	{reply, {ok, IsThrottled}, State};
+    PS0 = get_or_init_peer(Peer, Peers),
+    IsThrottled = quota_is_throttled(PS0),
+    {reply, {ok, IsThrottled}, State};
 handle_call(get_info, _From, #{peers := Peers} = State) ->
-	NumOfRequestsQueued =
-		maps:fold(fun(_Peer, #peer_state{waiters = Waiters}, Acc) ->
-						queue:len(Waiters) + Acc
-				end, 0, Peers),
-	Reply = #{peers => map_size(Peers),
-			queued => NumOfRequestsQueued},
-	{reply, Reply, State};
+    NumOfRequestsQueued =
+        maps:fold(fun(_Peer, #peer_state{waiters = Waiters}, Acc) ->
+                        queue:len(Waiters) + Acc
+                end, 0, Peers),
+    Reply = #{peers => map_size(Peers),
+            queued => NumOfRequestsQueued},
+    {reply, Reply, State};
 handle_call({status, Peer}, _From, #{peers := Peers} = State) ->
-	PS = get_or_init_peer(Peer, Peers),
-	Reply = {ok, peer_state_to_map(PS)},
-	{reply, Reply, State};
+    PS = get_or_init_peer(Peer, Peers),
+    Reply = {ok, peer_state_to_map(PS)},
+    {reply, Reply, State};
 handle_call(reset, _From, #{peers := Peers, monitors := Monitors} = State) ->
-	maps:fold(fun(_Peer, PS, _) ->
-					cancel_reset_timer(PS#peer_state.reset_timer),
-					drain_for_reset(PS#peer_state.waiters)
-			end, ok, Peers),
-	maps:fold(fun(MRef, _Peer, _) ->
-					erlang:demonitor(MRef, [flush])
-			end, ok, Monitors),
-	{reply, ok, State#{peers := #{}, monitors := #{}}};
+    maps:fold(fun(_Peer, PS, _) ->
+                    cancel_reset_timer(PS#peer_state.reset_timer),
+                    drain_for_reset(PS#peer_state.waiters)
+            end, ok, Peers),
+    maps:fold(fun(MRef, _Peer, _) ->
+                    erlang:demonitor(MRef, [flush])
+            end, ok, Monitors),
+    {reply, ok, State#{peers := #{}, monitors := #{}}};
 handle_call(turn_off, _From, State) ->
-	{reply, ok, State#{is_enabled => false}};
+    {reply, ok, State#{is_enabled => false}};
 handle_call(turn_on, _From, State) ->
-	{reply, ok, State#{is_enabled => true}};
+    {reply, ok, State#{is_enabled => true}};
 handle_call(Msg, From, State) ->
-	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE},
-				{msg, Msg}, {from, From}]),
-	{reply, {error, unsupported}, State}.
+    ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE},
+                {msg, Msg}, {from, From}]),
+    {reply, {error, unsupported}, State}.
 
 handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
-			#{id := ID, peers := Peers, monitors := Monitors} = State) ->
-	PS0 = get_or_init_peer(Peer, Peers),
+            #{id := ID, peers := Peers, monitors := Monitors} = State) ->
+    PS0 = get_or_init_peer(Peer, Peers),
 
-	UpdatedRemaining =
-		%% If total changed update remaining as well.
-		case Total =/= PS0#peer_state.total of
-			true ->
-				%% Log a warning, this might be an issue.
-				?LOG_WARNING([{event, arweave_throttling_group_quota_updated},
-						{peer, Peer},
-						{group, ID},
-						{previous, PS0#peer_state.total},
-						{new, Total},
-						{received_at, ReceivedAt}]),
-				NewRemaining;
-			false ->
-				merge_remaining(PS0#peer_state.remaining,
-						PS0#peer_state.last_update_ts,
-						NewRemaining,
-						ReceivedAt,
-						?CONCURRENCY_WINDOW_MS)
-		end,
+    UpdatedRemaining =
+        %% If total changed update remaining as well.
+        case Total =/= PS0#peer_state.total of
+            true ->
+                %% Log a warning, this might be an issue.
+                ?LOG_WARNING([{event, arweave_throttling_group_quota_updated},
+                        {peer, Peer},
+                        {group, ID},
+                        {previous, PS0#peer_state.total},
+                        {new, Total},
+                        {received_at, ReceivedAt}]),
+                NewRemaining;
+            false ->
+                merge_remaining(PS0#peer_state.remaining,
+                        PS0#peer_state.last_update_ts,
+                        NewRemaining,
+                        ReceivedAt,
+                        ?CONCURRENCY_WINDOW_MS)
+        end,
 
-	PS1 = PS0#peer_state{
-		total = Total,
-		remaining = UpdatedRemaining,
-		reset_seconds = ResetSeconds,
-		last_update_ts = ReceivedAt
-	},
-	{PS2, Monitors1} = drain_waiters(PS1, Monitors),
-	PS3 = arm_or_clear_reset_timer(Peer, PS2, ResetSeconds),
-	{noreply, State#{
-		peers := Peers#{Peer => PS3},
-		monitors := Monitors1
-	}};
+    PS1 = PS0#peer_state{
+        total = Total,
+        remaining = UpdatedRemaining,
+        reset_seconds = ResetSeconds,
+        last_update_ts = ReceivedAt
+    },
+    {PS2, Monitors1} = drain_waiters(PS1, Monitors),
+    PS3 = arm_or_clear_reset_timer(Peer, PS2, ResetSeconds),
+    {noreply, State#{
+        peers := Peers#{Peer => PS3},
+        monitors := Monitors1
+    }};
 handle_cast({cancel_request, Peer, Ref}, #{peers := Peers, monitors := Monitors} = State) ->
-	case maps:find(Peer, Peers) of
-		{ok, PS0} ->
-			{Q1, Monitors1} = drop_waiter_by_ref(Ref,
-								PS0#peer_state.waiters,
-								Monitors),
-			PS1 = PS0#peer_state{waiters = Q1},
-			{noreply, State#{
-				peers := Peers#{Peer => PS1},
-				monitors := Monitors1
-			}};
-		error ->
-			{noreply, State}
-	end;
+    case maps:find(Peer, Peers) of
+        {ok, PS0} ->
+            {Q1, Monitors1} = drop_waiter_by_ref(Ref,
+                                PS0#peer_state.waiters,
+                                Monitors),
+            PS1 = PS0#peer_state{waiters = Q1},
+            {noreply, State#{
+                peers := Peers#{Peer => PS1},
+                monitors := Monitors1
+            }};
+        error ->
+            {noreply, State}
+    end;
 handle_cast(Msg, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE},
-				{msg, Msg}]),
-	{noreply, State}.
+    ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE},
+                {msg, Msg}]),
+    {noreply, State}.
 
 handle_info({reset_quota, Peer, Tag}, #{peers := Peers, monitors := Monitors} = State) ->
-	case maps:find(Peer, Peers) of
-		{ok, #peer_state{reset_timer = {_TRef, Tag}} = PS0} ->
-			PS1 = PS0#peer_state{
-				remaining = PS0#peer_state.total,
-				reset_seconds = 0,
-				reset_timer = undefined
-			},
-			{PS2, Monitors1} = drain_waiters(PS1, Monitors),
-			{noreply, State#{
-				peers := Peers#{Peer => PS2},
-				monitors := Monitors1
-			}};
-		_ ->
-			%% Stale timer (cancelled or already replaced).
-			{noreply, State}
-	end;
+    case maps:find(Peer, Peers) of
+        {ok, #peer_state{reset_timer = {_TRef, Tag}} = PS0} ->
+            PS1 = PS0#peer_state{
+                remaining = PS0#peer_state.total,
+                reset_seconds = 0,
+                reset_timer = undefined
+            },
+            {PS2, Monitors1} = drain_waiters(PS1, Monitors),
+            {noreply, State#{
+                peers := Peers#{Peer => PS2},
+                monitors := Monitors1
+            }};
+        _ ->
+            %% Stale timer (cancelled or already replaced).
+            {noreply, State}
+    end;
 handle_info({'DOWN', MRef, process, _Pid, _Reason}, #{peers := Peers, monitors := Monitors} = State) ->
-	case maps:take(MRef, Monitors) of
-		{Peer, Monitors1} ->
-			PS0 = maps:get(Peer, Peers),
-			PS1 = PS0#peer_state{
-				waiters = drop_waiter_by_mref(MRef,PS0#peer_state.waiters)
-			},
-			{noreply, State#{
-				peers := Peers#{Peer => PS1},
-				monitors := Monitors1
-			}};
-		error ->
-			{noreply, State}
-	end;
+    case maps:take(MRef, Monitors) of
+        {Peer, Monitors1} ->
+            PS0 = maps:get(Peer, Peers),
+            PS1 = PS0#peer_state{
+                waiters = drop_waiter_by_mref(MRef,PS0#peer_state.waiters)
+            },
+            {noreply, State#{
+                peers := Peers#{Peer => PS1},
+                monitors := Monitors1
+            }};
+        error ->
+            {noreply, State}
+    end;
 handle_info(Info, State) ->
-	?LOG_DEBUG([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
-	{noreply, State}.
+    ?LOG_DEBUG([{event, unhandled_info}, {module, ?MODULE}, {info, Info}]),
+    {noreply, State}.
 
 terminate(_Reason, _State) ->
-	ok.
+    ok.
 
 code_change(_OldVsn, State, _Extra) ->
-	{ok, State}.
+    {ok, State}.
 
 %% Internals
 quota_is_throttled(#peer_state{remaining = 0}) ->
-	true;
+    true;
 quota_is_throttled(#peer_state{total = Total, remaining = Remaining})
-		when is_integer(Total), Total > 0 ->
-	(Total - Remaining) / Total > ?IS_THROTTLED_THRESHOLD;
+        when is_integer(Total), Total > 0 ->
+    (Total - Remaining) / Total > ?IS_THROTTLED_THRESHOLD;
 quota_is_throttled(_PeerState) ->
-	false.
+    false.
 
 enqueue_caller(Peer, From, PS0, #{peers := Peers, monitors := Monitors} = State) ->
-	case queue:len(PS0#peer_state.waiters) >= ?MAX_QUEUE_LENGTH of
-		true ->
-			{reply, {error, queue_full}, State};
-		false ->
-			{FromPid, _Tag} = From,
-			MRef = erlang:monitor(process, FromPid),
-			Ref = make_ref(),
-			PS1 = PS0#peer_state{
-				waiters = queue:in({Ref, FromPid, MRef},
-							PS0#peer_state.waiters)
-			},
-			{reply, {queued, Ref}, State#{
-				peers := Peers#{Peer => PS1},
-				monitors := Monitors#{MRef => Peer}
-			}}
-	end.
+    case queue:len(PS0#peer_state.waiters) >= ?MAX_QUEUE_LENGTH of
+        true ->
+            {reply, {error, queue_full}, State};
+        false ->
+            {FromPid, _Tag} = From,
+            MRef = erlang:monitor(process, FromPid),
+            Ref = make_ref(),
+            PS1 = PS0#peer_state{
+                waiters = queue:in({Ref, FromPid, MRef},
+                            PS0#peer_state.waiters)
+            },
+            {reply, {queued, Ref}, State#{
+                peers := Peers#{Peer => PS1},
+                monitors := Monitors#{MRef => Peer}
+            }}
+    end.
 
 get_or_init_peer(Peer, Peers) ->
-	case maps:find(Peer, Peers) of
-		{ok, PS} -> PS;
-		error ->
-			#peer_state{
-				total = ?DEFAULT_INITIAL_REMAINING,
-				remaining = ?DEFAULT_INITIAL_REMAINING,
-				reset_seconds = 0,
-				reset_timer = undefined,
-				waiters = queue:new(),
-				last_update_ts = undefined
-			}
-	end.
+    case maps:find(Peer, Peers) of
+        {ok, PS} -> PS;
+        error ->
+            #peer_state{
+                total = ?DEFAULT_INITIAL_REMAINING,
+                remaining = ?DEFAULT_INITIAL_REMAINING,
+                reset_seconds = 0,
+                reset_timer = undefined,
+                waiters = queue:new(),
+                last_update_ts = undefined
+            }
+    end.
 
 %% Merge an incoming `remaining' value with the current one. See the
 %% module docstring for the rationale.
 merge_remaining(_Old, undefined, New, _Now, _Window) ->
-	New;
+    New;
 merge_remaining(Old, LastTs, New, Now, Window) when Now - LastTs =< Window ->
-	min(Old, New);
+    min(Old, New);
 merge_remaining(_Old, _LastTs, New, _Now, _Window) ->
-	New.
+    New.
 
 drain_waiters(#peer_state{remaining = 0} = PS, Monitors) ->
-	{PS, Monitors};
+    {PS, Monitors};
 drain_waiters(#peer_state{remaining = R, waiters = Q} = PS, Monitors)
   when R > 0 ->
-	case queue:out(Q) of
-		{empty, _} ->
-			{PS, Monitors};
-		{{value, {Ref, Pid, MRef}}, Q1} ->
-			erlang:demonitor(MRef, [flush]),
-			Pid ! {request_ready, Ref},
-			PS1 = PS#peer_state{
-				remaining = R - 1,
-				waiters = Q1
-			},
-			drain_waiters(PS1, maps:remove(MRef, Monitors))
-	end.
+    case queue:out(Q) of
+        {empty, _} ->
+            {PS, Monitors};
+        {{value, {Ref, Pid, MRef}}, Q1} ->
+            erlang:demonitor(MRef, [flush]),
+            Pid ! {request_ready, Ref},
+            PS1 = PS#peer_state{
+                remaining = R - 1,
+                waiters = Q1
+            },
+            drain_waiters(PS1, maps:remove(MRef, Monitors))
+    end.
 
 %% Arm a refresh timer when remaining is 0 and we have a positive
 %% reset_seconds. Cancel any previous timer; do nothing (and cancel)
 %% if no timer is needed.
 arm_or_clear_reset_timer(_Peer,
-			#peer_state{remaining = R,
-					reset_timer = OldTimer} = PS,
-					_ResetSeconds) when R > 0 ->
-	cancel_reset_timer(OldTimer),
-	PS#peer_state{reset_timer = undefined};
+            #peer_state{remaining = R,
+                    reset_timer = OldTimer} = PS,
+                    _ResetSeconds) when R > 0 ->
+    cancel_reset_timer(OldTimer),
+    PS#peer_state{reset_timer = undefined};
 arm_or_clear_reset_timer(_Peer,
-				#peer_state{reset_timer = OldTimer} = PS, 0) ->
-	cancel_reset_timer(OldTimer),
-	PS#peer_state{reset_timer = undefined};
+                #peer_state{reset_timer = OldTimer} = PS, 0) ->
+    cancel_reset_timer(OldTimer),
+    PS#peer_state{reset_timer = undefined};
 arm_or_clear_reset_timer(Peer,
-				#peer_state{reset_timer = OldTimer} = PS,
-				ResetSeconds) when ResetSeconds > 0 ->
-	cancel_reset_timer(OldTimer),
-	Tag = make_ref(),
-	TRef = erlang:send_after(ResetSeconds * 1000, self(),
-					{reset_quota, Peer, Tag}),
-	PS#peer_state{reset_timer = {TRef, Tag}}.
+                #peer_state{reset_timer = OldTimer} = PS,
+                ResetSeconds) when ResetSeconds > 0 ->
+    cancel_reset_timer(OldTimer),
+    Tag = make_ref(),
+    TRef = erlang:send_after(ResetSeconds * 1000, self(),
+                    {reset_quota, Peer, Tag}),
+    PS#peer_state{reset_timer = {TRef, Tag}}.
 
 cancel_reset_timer(undefined) ->
-	ok;
+    ok;
 cancel_reset_timer({TRef, _Tag}) ->
-	_ = erlang:cancel_timer(TRef),
-	ok.
+    _ = erlang:cancel_timer(TRef),
+    ok.
 
 drop_waiter_by_mref(MRef, Q) ->
-	queue:filter(fun({_Ref, _Pid, M}) -> M =/= MRef end, Q).
+    queue:filter(fun({_Ref, _Pid, M}) -> M =/= MRef end, Q).
 
 drop_waiter_by_ref(Ref, Q, Monitors) ->
-	L0 = queue:to_list(Q),
-	case lists:keytake(Ref, 1, L0) of
-		{value, {Ref, _Pid, MRef}, L1} ->
-			erlang:demonitor(MRef, [flush]),
-			{queue:from_list(L1), maps:remove(MRef, Monitors)};
-		false ->
-			{Q, Monitors}
-	end.
+    L0 = queue:to_list(Q),
+    case lists:keytake(Ref, 1, L0) of
+        {value, {Ref, _Pid, MRef}, L1} ->
+            erlang:demonitor(MRef, [flush]),
+            {queue:from_list(L1), maps:remove(MRef, Monitors)};
+        false ->
+            {Q, Monitors}
+    end.
 
 drain_for_reset(Q) ->
-	case queue:out(Q) of
-		{empty, _} -> ok;
-		{{value, {Ref, Pid, MRef}}, Q1} ->
-			erlang:demonitor(MRef, [flush]),
-			Pid ! {request_ready, Ref},
-			drain_for_reset(Q1)
-	end.
+    case queue:out(Q) of
+        {empty, _} -> ok;
+        {{value, {Ref, Pid, MRef}}, Q1} ->
+            erlang:demonitor(MRef, [flush]),
+            Pid ! {request_ready, Ref},
+            drain_for_reset(Q1)
+    end.
 
 peer_state_to_map(#peer_state{
-		total = Total,
-		remaining = Remaining,
-		reset_seconds = ResetSeconds,
-		waiters = Waiters,
-		last_update_ts = LastTs}) ->
-	#{
-		total          => Total,
-		remaining      => Remaining,
-		reset_seconds  => ResetSeconds,
-		queue_length   => queue:len(Waiters),
-		last_update_ts => LastTs
-	}.
+        total = Total,
+        remaining = Remaining,
+        reset_seconds = ResetSeconds,
+        waiters = Waiters,
+        last_update_ts = LastTs}) ->
+    #{
+        total          => Total,
+        remaining      => Remaining,
+        reset_seconds  => ResetSeconds,
+        queue_length   => queue:len(Waiters),
+        last_update_ts => LastTs
+    }.
 
 monotonic_ms() ->
-	erlang:monotonic_time(millisecond).
+    erlang:monotonic_time(millisecond).

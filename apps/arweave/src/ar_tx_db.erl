@@ -19,87 +19,87 @@
 %% @doc Put an Erlang term into the meta DB. Typically these are
 %% write-once values.
 put_error_codes(TXID, ErrorCodes) ->
-	ets:insert(?MODULE, {TXID, ErrorCodes}),
-	{ok, _} = ar_timer:apply_after(
-		1800*1000,
-		?MODULE,
-		clear_error_codes,
-		[TXID],
-		#{ skip_on_shutdown => false }
-	),
-	ok.
+    ets:insert(?MODULE, {TXID, ErrorCodes}),
+    {ok, _} = ar_timer:apply_after(
+        1800*1000,
+        ?MODULE,
+        clear_error_codes,
+        [TXID],
+        #{ skip_on_shutdown => false }
+    ),
+    ok.
 
 %% @doc Retreive a term from the meta db.
 get_error_codes(TXID) ->
-	case ets:lookup(?MODULE, TXID) of
-		[{_, ErrorCodes}] -> {ok, ErrorCodes};
-		[] -> not_found
-	end.
+    case ets:lookup(?MODULE, TXID) of
+        [{_, ErrorCodes}] -> {ok, ErrorCodes};
+        [] -> not_found
+    end.
 
 %% @doc Writes an unknown error code if there are not already any error codes
 %% for this TX.
 ensure_error(TXID) ->
-	case ets:lookup(?MODULE, TXID) of
-		[_] -> ok;
-		[] -> put_error_codes(TXID, ["unknown_error"])
-	end.
+    case ets:lookup(?MODULE, TXID) of
+        [_] -> ok;
+        [] -> put_error_codes(TXID, ["unknown_error"])
+    end.
 
 %% @doc Removes all error codes for this TX.
 clear_error_codes(TXID) ->
-	ets:delete(?MODULE, TXID).
+    ets:delete(?MODULE, TXID).
 
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
 
 setup_ets() ->
-	case ets:info(?MODULE) of
-		undefined ->
-			ets:new(?MODULE, [set, public, named_table]),
-			fun() -> ets:delete(?MODULE) end;
-		_ ->
-			fun() -> ok end
-	end.
+    case ets:info(?MODULE) of
+        undefined ->
+            ets:new(?MODULE, [set, public, named_table]),
+            fun() -> ets:delete(?MODULE) end;
+        _ ->
+            fun() -> ok end
+    end.
 
 read_write_test_() ->
-	{setup, fun setup_ets/0, fun(Cleanup) -> Cleanup() end,
-		fun(_) -> [fun() ->
-			put_error_codes(mocked_txid1, mocked_error),
-			put_error_codes(mocked_txid2, mocked_error),
-			ensure_error(mocked_txid3),
-			assert_clear_error_codes(mocked_txid1),
-			assert_clear_error_codes(mocked_txid2),
-			assert_clear_error_codes(mocked_txid3)
-		end] end}.
+    {setup, fun setup_ets/0, fun(Cleanup) -> Cleanup() end,
+        fun(_) -> [fun() ->
+            put_error_codes(mocked_txid1, mocked_error),
+            put_error_codes(mocked_txid2, mocked_error),
+            ensure_error(mocked_txid3),
+            assert_clear_error_codes(mocked_txid1),
+            assert_clear_error_codes(mocked_txid2),
+            assert_clear_error_codes(mocked_txid3)
+        end] end}.
 
 assert_clear_error_codes(TXID) ->
-	Fetched = get_error_codes(TXID),
-	?assertMatch({ok, _}, Fetched),
-	clear_error_codes(TXID),
-	?assert(not_found == get_error_codes(TXID)),
-	ok.
+    Fetched = get_error_codes(TXID),
+    ?assertMatch({ok, _}, Fetched),
+    clear_error_codes(TXID),
+    ?assert(not_found == get_error_codes(TXID)),
+    ok.
 
 tx_db_test_() ->
-	{setup, fun setup_ets/0, fun(Cleanup) -> Cleanup() end,
-		fun(_) -> [{timeout, 30, fun test_tx_db/0}] end}.
+    {setup, fun setup_ets/0, fun(Cleanup) -> Cleanup() end,
+        fun(_) -> [{timeout, 30, fun test_tx_db/0}] end}.
 
 test_tx_db() ->
-	{_, Pub1 = {_, Owner1}} = ar_wallet:new(),
-	{Priv2, Pub2} = ar_wallet:new(),
-	Wallets = [
-		{ar_wallet:to_address(Pub1), ?AR(10000), <<>>},
-		{ar_wallet:to_address(Pub2), ?AR(10000), <<>>}
-	],
-	WL = maps:from_list([{A, {B, LTX}} || {A, B, LTX} <- Wallets]),
-	OrphanedTX1 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
-	BadTX = OrphanedTX1#tx{ owner = Owner1, signature = <<"BAD">> },
-	Timestamp = os:system_time(seconds),
-	?assert(not ar_tx:verify(BadTX, {{1, 4}, 1, 1, 1, 0, 1, WL, Timestamp})),
-	Expected = {ok, ["same_owner_as_target", "tx_id_not_valid", "tx_signature_not_valid"]},
-	?assertEqual(Expected, get_error_codes(BadTX#tx.id)),
-	OrphanedTX2 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
-	SignedTX = ar_tx:sign_v1(OrphanedTX2, Priv2, Pub2),
-	?assert(ar_tx:verify(SignedTX, {{1, 4}, 1, 1, 1, 0, 1, WL, Timestamp})),
-	clear_error_codes(BadTX#tx.id),
-	clear_error_codes(SignedTX#tx.id),
-	ok.
+    {_, Pub1 = {_, Owner1}} = ar_wallet:new(),
+    {Priv2, Pub2} = ar_wallet:new(),
+    Wallets = [
+        {ar_wallet:to_address(Pub1), ?AR(10000), <<>>},
+        {ar_wallet:to_address(Pub2), ?AR(10000), <<>>}
+    ],
+    WL = maps:from_list([{A, {B, LTX}} || {A, B, LTX} <- Wallets]),
+    OrphanedTX1 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
+    BadTX = OrphanedTX1#tx{ owner = Owner1, signature = <<"BAD">> },
+    Timestamp = os:system_time(seconds),
+    ?assert(not ar_tx:verify(BadTX, {{1, 4}, 1, 1, 1, 0, 1, WL, Timestamp})),
+    Expected = {ok, ["same_owner_as_target", "tx_id_not_valid", "tx_signature_not_valid"]},
+    ?assertEqual(Expected, get_error_codes(BadTX#tx.id)),
+    OrphanedTX2 = ar_tx:new(Pub1, ?AR(1), ?AR(5000), <<>>),
+    SignedTX = ar_tx:sign_v1(OrphanedTX2, Priv2, Pub2),
+    ?assert(ar_tx:verify(SignedTX, {{1, 4}, 1, 1, 1, 0, 1, WL, Timestamp})),
+    clear_error_codes(BadTX#tx.id),
+    clear_error_codes(SignedTX#tx.id),
+    ok.

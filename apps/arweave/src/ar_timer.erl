@@ -31,11 +31,11 @@
 %%% ```
 %%% {ok, Ref1} =
 %%%   ar_timer:apply_after(
-%%%   	10_000,
-%%%   	io,
-%%%   	format,
-%%%   	["hello"],
-%%%   	#{}
+%%%     10_000,
+%%%     io,
+%%%     format,
+%%%     ["hello"],
+%%%     #{}
 %%% ).
 %%% '''
 %%%
@@ -74,20 +74,20 @@
 %%%===================================================================
 -module(ar_timer).
 -export([
-	apply_after/4,
-	apply_after/5,
-	apply_interval/4,
-	apply_interval/5,
-	cancel/1,
-	insert_timer/2,
-	list_timers/0,
-	terminate_timers/0,
-	send_after/2,
-	send_after/3,
-	send_after/4,
-	send_interval/2,
-	send_interval/3,
-	send_interval/4
+    apply_after/4,
+    apply_after/5,
+    apply_interval/4,
+    apply_interval/5,
+    cancel/1,
+    insert_timer/2,
+    list_timers/0,
+    terminate_timers/0,
+    send_after/2,
+    send_after/3,
+    send_after/4,
+    send_interval/2,
+    send_interval/3,
+    send_interval/4
 ]).
 -include_lib("kernel/include/logger.hrl").
 -type ar_timer_opts() :: #{ skip_on_shutdown => boolean() }.
@@ -98,14 +98,14 @@
 %% @end
 %%--------------------------------------------------------------------
 -spec apply_after(Time, Module, Function, Arguments) -> Return when
-	Time :: pos_integer(),
-	Module :: atom(),
-	Function :: atom(),
-	Arguments :: [term()],
-	Return :: shutdown | {ok, reference()}.
+    Time :: pos_integer(),
+    Module :: atom(),
+    Function :: atom(),
+    Arguments :: [term()],
+    Return :: shutdown | {ok, reference()}.
 
 apply_after(Time, Module, Function, Arguments) ->
-	apply_after(Time, Module, Function, Arguments, #{}).
+    apply_after(Time, Module, Function, Arguments, #{}).
 
 %%--------------------------------------------------------------------
 %% @doc wrapper around timer:apply_after/4.
@@ -114,22 +114,22 @@ apply_after(Time, Module, Function, Arguments) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec apply_after(Time, Module, Function, Arguments, Opts) -> Return when
-	Time :: pos_integer(),
-	Module :: atom(),
-	Function :: atom(),
-	Arguments :: [term()],
-	Opts :: ar_timer_opts(),
-	Return :: shutdown
-		| {ok, reference()}.
+    Time :: pos_integer(),
+    Module :: atom(),
+    Function :: atom(),
+    Arguments :: [term()],
+    Opts :: ar_timer_opts(),
+    Return :: shutdown
+        | {ok, reference()}.
 
 apply_after(Time, Module, Function, Arguments, Opts) ->
-	M = timer,
-	F = apply_after,
-	A = [Time, Module, Function, Arguments],
-	case ar_shutdown_manager:apply(M, F, A, Opts) of
-		{ok, TimerRef} -> {ok, TimerRef};
-		Else -> Else
-	end.
+    M = timer,
+    F = apply_after,
+    A = [Time, Module, Function, Arguments],
+    case ar_shutdown_manager:apply(M, F, A, Opts) of
+        {ok, TimerRef} -> {ok, TimerRef};
+        Else -> Else
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc wrapper around timer:apply_interval/4.
@@ -137,46 +137,46 @@ apply_after(Time, Module, Function, Arguments, Opts) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec apply_interval(Time, Module, Function, Arguments) -> Return when
-	Time :: pos_integer(),
-	Module :: atom(),
-	Function :: atom(),
-	Arguments :: [term()],
-	Return :: shutdown
-		| {ok, reference()}.
+    Time :: pos_integer(),
+    Module :: atom(),
+    Function :: atom(),
+    Arguments :: [term()],
+    Return :: shutdown
+        | {ok, reference()}.
 
 apply_interval(Time, Module, Function, Arguments) ->
-	apply_interval(Time, Module, Function, Arguments, #{}).
+    apply_interval(Time, Module, Function, Arguments, #{}).
 
 %%--------------------------------------------------------------------
 %% @doc wrapper around timer:apply_interval/4
 %% @end
 %%--------------------------------------------------------------------
 -spec apply_interval(Time, Module, Function, Arguments, Opts) -> Return when
-	Time :: pos_integer(),
-	Module :: atom(),
-	Function :: atom(),
-	Arguments :: [term()],
-	Opts :: ar_timer_opts(),
-	Return :: shutdown
-		| {ok, reference()}.
+    Time :: pos_integer(),
+    Module :: atom(),
+    Function :: atom(),
+    Arguments :: [term()],
+    Opts :: ar_timer_opts(),
+    Return :: shutdown
+        | {ok, reference()}.
 
 apply_interval(Time, Module, Function, Arguments, Opts) ->
-	M = timer,
-	F = apply_interval,
-	A = [Time, Module, Function, Arguments],
-	case ar_shutdown_manager:apply(M, F, A, Opts) of
-		{ok, TimerRef} ->
-			insert_timer(TimerRef, #{
-				pid => self(),
-				module => Module,
-				function => Function,
-				arguments => Arguments,
-				time => Time
-			}),
-			{ok, TimerRef};
-		Else ->
-			Else
-	end.
+    M = timer,
+    F = apply_interval,
+    A = [Time, Module, Function, Arguments],
+    case ar_shutdown_manager:apply(M, F, A, Opts) of
+        {ok, TimerRef} ->
+            insert_timer(TimerRef, #{
+                pid => self(),
+                module => Module,
+                function => Function,
+                arguments => Arguments,
+                time => Time
+            }),
+            {ok, TimerRef};
+        Else ->
+            Else
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc wrapper around timer:send_after/4.
@@ -184,12 +184,12 @@ apply_interval(Time, Module, Function, Arguments, Opts) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec send_after(Time, Message) -> Return when
-	Time :: pos_integer(),
-	Message :: term(),
-	Return :: shutdown | {ok, reference()}.
+    Time :: pos_integer(),
+    Message :: term(),
+    Return :: shutdown | {ok, reference()}.
 
 send_after(Time, Message) ->
-	send_after(Time, self(), Message).
+    send_after(Time, self(), Message).
 
 %%--------------------------------------------------------------------
 %% @doc wrapper around timer:send_after/3.
@@ -197,13 +197,13 @@ send_after(Time, Message) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec send_after(Time, Pid, Message) -> Return when
-	Time :: pos_integer(),
-	Pid :: pid() | atom(),
-	Message :: term(),
-	Return :: shutdown | {ok, reference()}.
+    Time :: pos_integer(),
+    Pid :: pid() | atom(),
+    Message :: term(),
+    Return :: shutdown | {ok, reference()}.
 
 send_after(Time, Pid, Message) ->
-	send_after(Time, Pid, Message, #{}).
+    send_after(Time, Pid, Message, #{}).
 
 %%--------------------------------------------------------------------
 %% @doc wrapper around timer:send_after/3.
@@ -211,20 +211,20 @@ send_after(Time, Pid, Message) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec send_after(Time, Pid, Message, Opts) -> Return when
-	Time :: pos_integer(),
-	Pid :: pid() | atom(),
-	Message :: term(),
-	Opts :: ar_timer_opts(),
-	Return :: shutdown | {ok, reference()}.
+    Time :: pos_integer(),
+    Pid :: pid() | atom(),
+    Message :: term(),
+    Opts :: ar_timer_opts(),
+    Return :: shutdown | {ok, reference()}.
 
 send_after(Time, Pid, Message, Opts) ->
-	M = timer,
-	F = send_after,
-	A = [Time, Pid, Message],
-	case ar_shutdown_manager:apply(M, F, A, Opts) of
-		{ok, TimerRef} -> {ok, TimerRef};
-		Else -> Else
-	end.
+    M = timer,
+    F = send_after,
+    A = [Time, Pid, Message],
+    case ar_shutdown_manager:apply(M, F, A, Opts) of
+        {ok, TimerRef} -> {ok, TimerRef};
+        Else -> Else
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc wrapper around timer:send_interval/2.
@@ -232,12 +232,12 @@ send_after(Time, Pid, Message, Opts) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec send_interval(Time, Message) -> Return when
-	Time :: pos_integer(),
-	Message :: term(),
-	Return :: shutdown | {ok, reference()}.
+    Time :: pos_integer(),
+    Message :: term(),
+    Return :: shutdown | {ok, reference()}.
 
 send_interval(Time, Message) ->
-	send_interval(Time, self(), Message).
+    send_interval(Time, self(), Message).
 
 %%--------------------------------------------------------------------
 %% @doc wrapper around timer:interval/3.
@@ -245,13 +245,13 @@ send_interval(Time, Message) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec send_interval(Time, Pid, Message) -> Return when
-	Time :: pos_integer(),
-	Pid :: atom() | pid(),
-	Message :: term(),
-	Return :: shutdown | {ok, reference()}.
+    Time :: pos_integer(),
+    Pid :: atom() | pid(),
+    Message :: term(),
+    Return :: shutdown | {ok, reference()}.
 
 send_interval(Time, Pid, Message) ->
-	send_interval(Time, Pid, Message, #{}).
+    send_interval(Time, Pid, Message, #{}).
 
 %%--------------------------------------------------------------------
 %% @doc wrapper around timer:interval/3.
@@ -259,26 +259,26 @@ send_interval(Time, Pid, Message) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec send_interval(Time, Pid, Message, Opts) -> Return when
-	Time :: pos_integer(),
-	Pid :: atom() | pid(),
-	Message :: term(),
-	Opts :: ar_timer_opts(),
-	Return :: shutdown | {ok, reference()}.
+    Time :: pos_integer(),
+    Pid :: atom() | pid(),
+    Message :: term(),
+    Opts :: ar_timer_opts(),
+    Return :: shutdown | {ok, reference()}.
 
 send_interval(Time, Pid, Message, Opts) ->
-	M = timer,
-	F = send_interval,
-	A = [Time, Pid, Message],
-	case ar_shutdown_manager:apply(M, F, A, Opts) of
-		{ok, TimerRef} ->
-			insert_timer(TimerRef, #{
-				pid => self(),
-				time => Time
-			}),
-			{ok, TimerRef};
-		Else ->
-			Else
-	end.
+    M = timer,
+    F = send_interval,
+    A = [Time, Pid, Message],
+    case ar_shutdown_manager:apply(M, F, A, Opts) of
+        {ok, TimerRef} ->
+            insert_timer(TimerRef, #{
+                pid => self(),
+                time => Time
+            }),
+            {ok, TimerRef};
+        Else ->
+            Else
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc wrapper around timer:cancel/1.
@@ -286,40 +286,40 @@ send_interval(Time, Pid, Message, Opts) ->
 %% @end
 %%--------------------------------------------------------------------
 cancel(TimerRef) ->
-	case timer:cancel(TimerRef) of
-		{ok, _} = Reply ->
-			ets:delete(?MODULE, {timer, TimerRef}),
-			?LOG_DEBUG([
-				{module, ?MODULE},
-				{reference, TimerRef},
-				{action, cancel}
-			]),
-			Reply;
-		Else ->
-			Else
-	end.
+    case timer:cancel(TimerRef) of
+        {ok, _} = Reply ->
+            ets:delete(?MODULE, {timer, TimerRef}),
+            ?LOG_DEBUG([
+                {module, ?MODULE},
+                {reference, TimerRef},
+                {action, cancel}
+            ]),
+            Reply;
+        Else ->
+            Else
+    end.
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 insert_timer(TimerRef, Meta) ->
-	CreatedAt = erlang:system_time(),
-	NewMeta = Meta#{
-		created_at => CreatedAt
-	},
-	?LOG_DEBUG([
-		{module, ?MODULE},
-		{pid, self()},
-		{meta, NewMeta},
-		{reference, TimerRef}
-	]),
-	ets:insert(?MODULE, {{timer, TimerRef}, NewMeta}).
+    CreatedAt = erlang:system_time(),
+    NewMeta = Meta#{
+        created_at => CreatedAt
+    },
+    ?LOG_DEBUG([
+        {module, ?MODULE},
+        {pid, self()},
+        {meta, NewMeta},
+        {reference, TimerRef}
+    ]),
+    ets:insert(?MODULE, {{timer, TimerRef}, NewMeta}).
 
 %%--------------------------------------------------------------------
 %% @hidden
 %%--------------------------------------------------------------------
 list_timers() ->
-	[ Ref || [Ref] <- ets:match(?MODULE, {{timer, '$1'}, '_'}) ].
+    [ Ref || [Ref] <- ets:match(?MODULE, {{timer, '$1'}, '_'}) ].
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -328,13 +328,13 @@ list_timers() ->
 %% @end
 %%--------------------------------------------------------------------
 terminate_timers() ->
-	% cancel all intervals first
-	[ cancel(Ref) || Ref <- list_timers() ],
+    % cancel all intervals first
+    [ cancel(Ref) || Ref <- list_timers() ],
 
-	% then cancel all others timers from timer_tab.
-	case ets:whereis(timer_tab) of
-		undefined ->
-			ok;
-		_ ->
-			[ timer:cancel(Ref) || {Ref, _, _} <- ets:tab2list(timer_tab) ]
-	end.
+    % then cancel all others timers from timer_tab.
+    case ets:whereis(timer_tab) of
+        undefined ->
+            ok;
+        _ ->
+            [ timer:cancel(Ref) || {Ref, _, _} <- ets:tab2list(timer_tab) ]
+    end.

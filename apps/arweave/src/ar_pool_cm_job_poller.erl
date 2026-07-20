@@ -19,66 +19,66 @@
 
 %% @doc Start the server.
 start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %%%===================================================================
 %%% Generic server callbacks.
 %%%===================================================================
 
 init([]) ->
-	case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
-		{true, true} ->
-			gen_server:cast(self(), fetch_cm_jobs);
-		_ ->
-			%% If we are a CM miner and not an exit peer, our exit peer will push
-			%% the pool CM jobs to us.
-			ok
-	end,
-	{ok, #state{}}.
+    case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
+        {true, true} ->
+            gen_server:cast(self(), fetch_cm_jobs);
+        _ ->
+            %% If we are a CM miner and not an exit peer, our exit peer will push
+            %% the pool CM jobs to us.
+            ok
+    end,
+    {ok, #state{}}.
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
-	{reply, ok, State}.
+    ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+    {reply, ok, State}.
 
 handle_cast(fetch_cm_jobs, State) ->
-	Peer = ar_pool:pool_peer(),
-	Partitions = ar_coordination:get_cluster_partitions_list(),
-	PartitionJobs = #pool_cm_jobs{ partitions = Partitions },
-	case ar_http_iface_client:get_pool_cm_jobs(Peer, PartitionJobs) of
-		{ok, Jobs} ->
-			push_cm_jobs_to_cm_peers(Jobs),
-			ar_pool:process_cm_jobs(Jobs, Peer),
-			ar_util:cast_after(?FETCH_CM_JOBS_FREQUENCY_MS, self(), fetch_cm_jobs);
-		{error, Error} ->
-			?LOG_WARNING([{event, failed_to_fetch_pool_cm_jobs},
-					{error, io_lib:format("~p", [Error])}]),
-			ar_util:cast_after(?FETCH_CM_JOBS_RETRY_MS, self(), fetch_cm_jobs)
-	end,
-	{noreply, State};
+    Peer = ar_pool:pool_peer(),
+    Partitions = ar_coordination:get_cluster_partitions_list(),
+    PartitionJobs = #pool_cm_jobs{ partitions = Partitions },
+    case ar_http_iface_client:get_pool_cm_jobs(Peer, PartitionJobs) of
+        {ok, Jobs} ->
+            push_cm_jobs_to_cm_peers(Jobs),
+            ar_pool:process_cm_jobs(Jobs, Peer),
+            ar_util:cast_after(?FETCH_CM_JOBS_FREQUENCY_MS, self(), fetch_cm_jobs);
+        {error, Error} ->
+            ?LOG_WARNING([{event, failed_to_fetch_pool_cm_jobs},
+                          {error, io_lib:format("~p", [Error])}]),
+            ar_util:cast_after(?FETCH_CM_JOBS_RETRY_MS, self(), fetch_cm_jobs)
+    end,
+    {noreply, State};
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
-	{noreply, State}.
+    ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+    {noreply, State}.
 
 handle_info(Message, State) ->
-	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
-	{noreply, State}.
+    ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
+    {noreply, State}.
 
 terminate(Reason, _State) ->
-	?LOG_INFO([ {module, ?MODULE}, {pid, self()}, {callback, terminate}, {reason, Reason} ]),
-	ok.
+    ?LOG_INFO([ {module, ?MODULE}, {pid, self()}, {callback, terminate}, {reason, Reason} ]),
+    ok.
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
 push_cm_jobs_to_cm_peers(Jobs) ->
-	Peers = arweave_config:get([peers, cm_peer]),
-	Payload = ar_serialize:jsonify(ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
-	push_cm_jobs_to_cm_peers(Payload, Peers).
+    Peers = arweave_config:get([peers, cm_peer]),
+    Payload = ar_serialize:jsonify(ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
+    push_cm_jobs_to_cm_peers(Payload, Peers).
 
 push_cm_jobs_to_cm_peers(_Payload, []) ->
-	ok;
+    ok;
 push_cm_jobs_to_cm_peers(Payload, [Peer | Peers]) ->
-	spawn(fun() -> ar_http_iface_client:post_pool_cm_jobs(Peer, Payload) end),
-	push_cm_jobs_to_cm_peers(Payload, Peers).
+    spawn(fun() -> ar_http_iface_client:post_pool_cm_jobs(Peer, Payload) end),
+    push_cm_jobs_to_cm_peers(Payload, Peers).

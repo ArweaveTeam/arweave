@@ -12,37 +12,37 @@
 -behaviour(gen_server).
 
 -export([
-	start_link/0,
-	open_index_db/3,
-	open_index_db/4,
-	column_family/1,
-	keys_column_family/1,
-	legacy_db/1,
-	keys_db/1,
-	add_block_data_roots/3,
-	store_block/5,
-	store_block_async/5,
-	store_block_sync/5, store_block_sync/6,
-	get_entry/2,
-	remove_range/3,
-	iterator/3,
-	next/1,
-	reset/1,
-	id/1,
-	id/2,
-	index_key/3,
-	get_block/1,
-	validate_data_roots/4,
-	are_synced/2,
-	are_synced/4,
-	is_synced/2,
-	repair/3,
-	%% Block lifecycle helpers.
-	add_block/3,
-	update_tx_index/3,
-	repair_data_root_offset_index/2,
-	remove_tx_index_range/3
-]).
+         start_link/0,
+         open_index_db/3,
+         open_index_db/4,
+         column_family/1,
+         keys_column_family/1,
+         legacy_db/1,
+         keys_db/1,
+         add_block_data_roots/3,
+         store_block/5,
+         store_block_async/5,
+         store_block_sync/5, store_block_sync/6,
+         get_entry/2,
+         remove_range/3,
+         iterator/3,
+         next/1,
+         reset/1,
+         id/1,
+         id/2,
+         index_key/3,
+         get_block/1,
+         validate_data_roots/4,
+         are_synced/2,
+         are_synced/4,
+         is_synced/2,
+         repair/3,
+         %% Block lifecycle helpers.
+         add_block/3,
+         update_tx_index/3,
+         repair_data_root_offset_index/2,
+         remove_tx_index_range/3
+        ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -53,123 +53,123 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -type data_root_entry() :: {DataRoot :: binary(), TXSize :: non_neg_integer(),
-		TXStartOffset :: non_neg_integer(), TXPath :: binary()}.
+                            TXStartOffset :: non_neg_integer(), TXPath :: binary()}.
 -type data_root_entries() :: [data_root_entry()].
 %%%===================================================================
 %%% Public: gen_server lifecycle
 %%%===================================================================
 
 start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Asynchronously store a block's data roots into StoreID's index.
 %% Serialized through the ar_data_roots gen_server so concurrent block
 %% confirmations can't race on the same offset.
 store_block_async(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID) ->
-	BlockSize = BlockEnd - BlockStart,
-	gen_server:cast(?MODULE,
-		{store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID}).
+    BlockSize = BlockEnd - BlockStart,
+    gen_server:cast(?MODULE,
+                    {store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID}).
 
 %% @doc Synchronous variant of store_block_async/5. Blocks until the write
 %% completes. Used by callers that need to observe the new state immediately
 %% (e.g. test harnesses).
 store_block_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID) ->
-	store_block_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID, 120000).
+    store_block_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID, 120000).
 
 %% @doc store_block_sync/5 with an explicit gen_server call timeout. Callers with
 %% no client to bound the wait (e.g. one-shot bulk seeding) can pass `infinity'.
 store_block_sync(BlockStart, BlockEnd, TXRoot, DataRootEntries, StoreID, Timeout) ->
-	BlockSize = BlockEnd - BlockStart,
-	gen_server:call(?MODULE,
-		{store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID}, Timeout).
+    BlockSize = BlockEnd - BlockStart,
+    gen_server:call(?MODULE,
+                    {store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID}, Timeout).
 
 %%%===================================================================
 %%% Public: DB configuration
 %%%===================================================================
 open_index_db(Dir, StoreID, BloomFilterOpts) ->
-	open_index_db(Dir, "ar_data_sync_data_root_index_db", StoreID, BloomFilterOpts).
+    open_index_db(Dir, "ar_data_sync_data_root_index_db", StoreID, BloomFilterOpts).
 
 open_index_db(Dir, DBName, StoreID, BloomFilterOpts) ->
-	ar_kv:open(#{
-		path => filename:join(Dir, DBName),
-		name => index_db(StoreID),
-		options => ar_kv:db_options(100) ++ BloomFilterOpts
-	}).
+    ar_kv:open(#{
+                 path => filename:join(Dir, DBName),
+                 name => index_db(StoreID),
+                 options => ar_kv:db_options(100) ++ BloomFilterOpts
+                }).
 
 column_family(Opts) ->
-	{"data_root_index", Opts}.
+    {"data_root_index", Opts}.
 
 keys_column_family(Opts) ->
-	{"data_root_offset_index", Opts}.
+    {"data_root_offset_index", Opts}.
 
 legacy_db(StoreID) ->
-	{data_root_index_old, StoreID}.
+    {data_root_index_old, StoreID}.
 
 %% A reference to the on-disk key-value storage mapping
 %% AbsoluteBlockStartOffset => {TXRoot, BlockSize, DataRootIDs}.
 %% Each key in DataRootIDs is a << DataRoot/binary, TXSize:256 >> binary.
 %% Used to remove orphaned entries from DataRootIndex.
 keys_db(StoreID) ->
-	{data_root_offset_index, StoreID}.
+    {data_root_offset_index, StoreID}.
 
 %%%===================================================================
 %%% Public: Block data root entries
 %%%===================================================================
 add_block_data_roots([], _BlockStart, _StoreID) ->
-	{ok, sets:new()};
+    {ok, sets:new()};
 add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID) ->
-	{TXRoot, BlockSize, DataRootEntries} =
-		build_block_data_root_entries(BlockStart, SizeTaggedTXs),
-	case BlockSize > 0 of
-		true ->
-			store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID);
-		false ->
-			{ok, sets:new()}
-	end.
+    {TXRoot, BlockSize, DataRootEntries} =
+        build_block_data_root_entries(BlockStart, SizeTaggedTXs),
+    case BlockSize > 0 of
+        true ->
+            store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID);
+        false ->
+            {ok, sets:new()}
+    end.
 
 %% @doc Build `{TXRoot, BlockSize, DataRootEntries}` for the given size-tagged txs.
 build_block_data_root_entries(BlockStart, SizeTaggedTXs) ->
-	SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
-	{TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
-	{BlockSize, DataRootEntries} = lists:foldl(
-		fun ({_, Offset}, {Offset, _} = Acc) ->
-				Acc;
-			({{padding, _}, Offset}, {_, DataRootEntriesAcc}) ->
-				{Offset, DataRootEntriesAcc};
-			({{_, DataRoot}, Offset}, {_, DataRootEntriesAcc}) when byte_size(DataRoot) < 32 ->
-				{Offset, DataRootEntriesAcc};
-			({{_, DataRoot}, TXEndOffset}, {PrevOffset, DataRootEntriesAcc}) ->
-				TXPath = ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree),
-				TXOffset = BlockStart + PrevOffset,
-				TXSize = TXEndOffset - PrevOffset,
-				{TXEndOffset,
-						[{DataRoot, TXSize, TXOffset, TXPath} | DataRootEntriesAcc]}
-		end,
-		{0, []},
-		SizeTaggedTXs
-	),
-	{TXRoot, BlockSize, DataRootEntries}.
+    SizeTaggedDataRoots = [{Root, Offset} || {{_, Root}, Offset} <- SizeTaggedTXs],
+    {TXRoot, TXTree} = ar_merkle:generate_tree(SizeTaggedDataRoots),
+    {BlockSize, DataRootEntries} = lists:foldl(
+                                     fun ({_, Offset}, {Offset, _} = Acc) ->
+                                             Acc;
+                                         ({{padding, _}, Offset}, {_, DataRootEntriesAcc}) ->
+                                             {Offset, DataRootEntriesAcc};
+                                         ({{_, DataRoot}, Offset}, {_, DataRootEntriesAcc}) when byte_size(DataRoot) < 32 ->
+                                             {Offset, DataRootEntriesAcc};
+                                         ({{_, DataRoot}, TXEndOffset}, {PrevOffset, DataRootEntriesAcc}) ->
+                                             TXPath = ar_merkle:generate_path(TXRoot, TXEndOffset - 1, TXTree),
+                                             TXOffset = BlockStart + PrevOffset,
+                                             TXSize = TXEndOffset - PrevOffset,
+                                             {TXEndOffset,
+                                              [{DataRoot, TXSize, TXOffset, TXPath} | DataRootEntriesAcc]}
+                                     end,
+                                     {0, []},
+                                     SizeTaggedTXs
+                                    ),
+    {TXRoot, BlockSize, DataRootEntries}.
 
 %% @doc Store all data roots for a given block.
 %% DataRootEntries is a list of `{DataRoot, TXSize, TXStartOffset, TXPath}` tuples.
 store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID) ->
-	% Update index_db
-	lists:foreach(
-		fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
-			ok = ar_kv:put(index_db(StoreID),
-				index_key(DataRoot, TXSize, TXStartOffset), TXPath)
-		end,
-		DataRootEntries
-	),
-	% Update keys_db
-	DataRootIDs = sets:from_list([
-		id(DataRoot, TXSize)
-		|| {DataRoot, TXSize, _TXStart, _TXPath} <- DataRootEntries
-	]),
-	ok = ar_kv:put(keys_db(StoreID),
-			<< BlockStart:?OFFSET_KEY_BITSIZE >>,
-			term_to_binary({TXRoot, BlockSize, DataRootIDs})),
-	{ok, DataRootIDs}.
+                                                % Update index_db
+    lists:foreach(
+      fun({DataRoot, TXSize, TXStartOffset, TXPath}) ->
+              ok = ar_kv:put(index_db(StoreID),
+                             index_key(DataRoot, TXSize, TXStartOffset), TXPath)
+      end,
+      DataRootEntries
+     ),
+                                                % Update keys_db
+    DataRootIDs = sets:from_list([
+                                  id(DataRoot, TXSize)
+                                  || {DataRoot, TXSize, _TXStart, _TXPath} <- DataRootEntries
+                                 ]),
+    ok = ar_kv:put(keys_db(StoreID),
+                   << BlockStart:?OFFSET_KEY_BITSIZE >>,
+                   term_to_binary({TXRoot, BlockSize, DataRootIDs})),
+    {ok, DataRootIDs}.
 
 %% @doc Get the data roots for the block containing the given block offset.
 %% Return only entries corresponding to non-empty transactions.
@@ -178,198 +178,198 @@ store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID) ->
 %% Return {ok, {TXRoot, BlockSize, DataRootEntries}}
 %% or {error, Reason}.
 get_block(Offset) ->
-	case Offset >= ar_disk_pool:get_threshold() of
-		true ->
-			{error, not_found};
-		false ->
-			{BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Offset),
-			true = Offset >= BlockStart andalso Offset < BlockEnd,
-			case get_keys(BlockStart, ?DEFAULT_MODULE) of
-				not_found ->
-					{error, not_found};
-				{ok, Bin} ->
-					{TXRoot2, BlockSize, DataRootIDs} = binary_to_term(Bin),
-					true = TXRoot2 == TXRoot,
-					DataRootEntriesLists = sets:fold(
-						fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
-							%% List of lists is intended. We'll keep one result list per key and
-							%% flatten once after the fold.
-							[get_all_in_range(DataRoot, TXSize, BlockStart, BlockEnd,
-									?DEFAULT_MODULE) | Acc]
-						end,
-						[],
-						DataRootIDs
-					),
-					DataRootEntries = lists:append(DataRootEntriesLists),
-					SortedDataRootEntries = lists:sort(
-						fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
-								{_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
-							TXStart1 < TXStart2
-						end,
-						DataRootEntries
-					),
-					{ok, {TXRoot, BlockSize, SortedDataRootEntries}}
-			end
-	end.
+    case Offset >= ar_disk_pool:get_threshold() of
+        true ->
+            {error, not_found};
+        false ->
+            {BlockStart, BlockEnd, TXRoot} = ar_block_index:get_block_bounds(Offset),
+            true = Offset >= BlockStart andalso Offset < BlockEnd,
+            case get_keys(BlockStart, ?DEFAULT_MODULE) of
+                not_found ->
+                    {error, not_found};
+                {ok, Bin} ->
+                    {TXRoot2, BlockSize, DataRootIDs} = binary_to_term(Bin),
+                    true = TXRoot2 == TXRoot,
+                    DataRootEntriesLists = sets:fold(
+                                             fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
+                                                     %% List of lists is intended. We'll keep one result list per key and
+                                                     %% flatten once after the fold.
+                                                     [get_all_in_range(DataRoot, TXSize, BlockStart, BlockEnd,
+                                                                       ?DEFAULT_MODULE) | Acc]
+                                             end,
+                                             [],
+                                             DataRootIDs
+                                            ),
+                    DataRootEntries = lists:append(DataRootEntriesLists),
+                    SortedDataRootEntries = lists:sort(
+                                              fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
+                                                  {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
+                                                      TXStart1 < TXStart2
+                                              end,
+                                              DataRootEntries
+                                             ),
+                    {ok, {TXRoot, BlockSize, SortedDataRootEntries}}
+            end
+    end.
 
 %% @doc Validate the given data roots against the local block index.
 %% Also recompute the TXRoot from entries and verify Merkle paths.
 validate_data_roots(TXRoot, BlockSize, DataRootEntries, Offset) ->
-	{BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
-	maybe
-		ok ?=
-			case Offset >= BlockStart andalso Offset < BlockEnd of
-				true ->
-					ok;
-				false ->
-					{error, invalid_block_bounds}
-			end,
-		ok ?=
-			case BlockSize == BlockEnd - BlockStart of
-				true ->
-					ok;
-				false ->
-					{error, invalid_block_size}
-			end,
-		ok ?=
-			case TXRoot == ExpectedTXRoot of
-				true ->
-					ok;
-				false ->
-					{error, invalid_tx_root}
-			end,
-		ok ?= verify_data_root_entries(DataRootEntries, TXRoot, BlockStart, BlockSize, 0, 0),
-		{ok, {TXRoot, BlockSize, DataRootEntries}}
-	end.
+    {BlockStart, BlockEnd, ExpectedTXRoot} = ar_block_index:get_block_bounds(Offset),
+    maybe
+        ok ?=
+            case Offset >= BlockStart andalso Offset < BlockEnd of
+                true ->
+                    ok;
+                false ->
+                    {error, invalid_block_bounds}
+            end,
+        ok ?=
+            case BlockSize == BlockEnd - BlockStart of
+                true ->
+                    ok;
+                false ->
+                    {error, invalid_block_size}
+            end,
+        ok ?=
+            case TXRoot == ExpectedTXRoot of
+                true ->
+                    ok;
+                false ->
+                    {error, invalid_tx_root}
+            end,
+        ok ?= verify_data_root_entries(DataRootEntries, TXRoot, BlockStart, BlockSize, 0, 0),
+        {ok, {TXRoot, BlockSize, DataRootEntries}}
+    end.
 
 %%%===================================================================
 %%% Public: Entry lookup and iteration
 %%%===================================================================
 %% @doc Get the entry containing the given data root id.
 get_entry(DataRootID, StoreID) ->
-	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootID,
-	% Since the index_db keys include the TX start offset, we have will stub in "a" (which is
-	% guaranteed to be alphanumerically greater than any TX offset) and then query the
-	% previous key.
-	DataRootIndexKey = << DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary,
-			<<"a">>/binary >>,
-	prev_entry(DataRootIndexKey, DataRoot, TXSize, StoreID).
+    << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootID,
+                                                % Since the index_db keys include the TX start offset, we have will stub in "a" (which is
+                                                % guaranteed to be alphanumerically greater than any TX offset) and then query the
+                                                % previous key.
+    DataRootIndexKey = << DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary,
+                          <<"a">>/binary >>,
+    prev_entry(DataRootIndexKey, DataRoot, TXSize, StoreID).
 
 iterator(DataRootID, TXStartOffset, StoreID) ->
-	{DataRootID, TXStartOffset, TXStartOffset, StoreID, 1}.
+    {DataRootID, TXStartOffset, TXStartOffset, StoreID, 1}.
 
 next(Args) ->
-	MaxDuplicates = arweave_config:get([gossip, data_roots, max_duplicates]),
-	next(Args, MaxDuplicates).
+    MaxDuplicates = arweave_config:get([gossip, data_roots, max_duplicates]),
+    next(Args, MaxDuplicates).
 
 next({_, _, _, _, Count}, Limit) when Count > Limit ->
-	none;
+    none;
 next({_, 0, _, _, _}, _Limit) ->
-	none;
+    none;
 next(Args, _Limit) ->
-	{DataRootID, TXStartOffset, LatestTXStartOffset, StoreID, Count} = Args,
-	case prev_entry(DataRootID, TXStartOffset, StoreID) of
-		not_found ->
-			none;
-		{ok, {_DataRoot, _TXSize, TXStartOffset2, _TXPath} = Entry} ->
-			{ok, Entry,
-					{DataRootID, TXStartOffset2, LatestTXStartOffset, StoreID,
-							Count + 1}};
-		{error, _} = Error ->
-			Error
-	end.
+    {DataRootID, TXStartOffset, LatestTXStartOffset, StoreID, Count} = Args,
+    case prev_entry(DataRootID, TXStartOffset, StoreID) of
+        not_found ->
+            none;
+        {ok, {_DataRoot, _TXSize, TXStartOffset2, _TXPath} = Entry} ->
+            {ok, Entry,
+             {DataRootID, TXStartOffset2, LatestTXStartOffset, StoreID,
+              Count + 1}};
+        {error, _} = Error ->
+            Error
+    end.
 
 reset({DataRootID, _, TXStartOffset, StoreID, _}) ->
-	{DataRootID, TXStartOffset, TXStartOffset, StoreID, 1}.
+    {DataRootID, TXStartOffset, TXStartOffset, StoreID, 1}.
 
 id(Iterator) ->
-	element(1, Iterator).
+    element(1, Iterator).
 
 %%%===================================================================
 %%% Public: Sync status and maintenance
 %%%===================================================================
 remove_range(Start, End, StoreID) ->
-	{ok, RemovedDataRoots} =
-		case ar_kv:get_range(keys_db(StoreID), << Start:?OFFSET_KEY_BITSIZE >>,
-				<< (End - 1):?OFFSET_KEY_BITSIZE >>) of
-			{ok, EmptyMap} when map_size(EmptyMap) == 0 ->
-				{ok, sets:new()};
-			{ok, Map} ->
-				maps:fold(
-					fun
-						(_, _Value, {error, _} = Error) ->
-							Error;
-						(_, Value, {ok, RemovedDataRoots}) ->
-							{_TXRoot, _BlockSize, DataRootIDs} = binary_to_term(Value, [safe]),
-							sets:fold(
-								fun (_Key, {error, _} = Error) ->
-										Error;
-									(<< _DataRoot:32/binary, _TXSize:?OFFSET_KEY_BITSIZE >> = DataRootID,
-											{ok, Removed}) ->
-										case remove(DataRootID, Start, End, StoreID) of
-											removed ->
-												{ok, sets:add_element(DataRootID, Removed)};
-											ok ->
-												{ok, Removed};
-											Error ->
-												Error
-										end;
-									(_, Acc) ->
-										Acc
-								end,
-								{ok, RemovedDataRoots},
-								DataRootIDs
-							)
-					end,
-					{ok, sets:new()},
-					Map
-				);
-			Error ->
-				Error
-		end,
-	ok = ar_kv:delete_range(keys_db(StoreID),
-		<< Start:?OFFSET_KEY_BITSIZE >>, << End:?OFFSET_KEY_BITSIZE >>),
-	{ok, RemovedDataRoots}.
+    {ok, RemovedDataRoots} =
+        case ar_kv:get_range(keys_db(StoreID), << Start:?OFFSET_KEY_BITSIZE >>,
+                             << (End - 1):?OFFSET_KEY_BITSIZE >>) of
+            {ok, EmptyMap} when map_size(EmptyMap) == 0 ->
+                {ok, sets:new()};
+            {ok, Map} ->
+                maps:fold(
+                  fun
+                      (_, _Value, {error, _} = Error) ->
+                                 Error;
+                      (_, Value, {ok, RemovedDataRoots}) ->
+                                 {_TXRoot, _BlockSize, DataRootIDs} = binary_to_term(Value, [safe]),
+                                 sets:fold(
+                                   fun (_Key, {error, _} = Error) ->
+                                           Error;
+                                       (<< _DataRoot:32/binary, _TXSize:?OFFSET_KEY_BITSIZE >> = DataRootID,
+                                        {ok, Removed}) ->
+                                           case remove(DataRootID, Start, End, StoreID) of
+                                               removed ->
+                                                   {ok, sets:add_element(DataRootID, Removed)};
+                                               ok ->
+                                                   {ok, Removed};
+                                               Error ->
+                                                   Error
+                                           end;
+                                       (_, Acc) ->
+                                           Acc
+                                   end,
+                                   {ok, RemovedDataRoots},
+                                   DataRootIDs
+                                  )
+                         end,
+                  {ok, sets:new()},
+                  Map
+                 );
+            Error ->
+                Error
+        end,
+    ok = ar_kv:delete_range(keys_db(StoreID),
+                            << Start:?OFFSET_KEY_BITSIZE >>, << End:?OFFSET_KEY_BITSIZE >>),
+    {ok, RemovedDataRoots}.
 
 %% @doc Return true if the data roots for the given block range are synced, false otherwise.
 are_synced(B, StoreID) ->
-	BlockEnd = B#block.weave_size,
-	BlockStart = BlockEnd - B#block.block_size,
-	are_synced(BlockStart, BlockEnd, B#block.tx_root, StoreID).
+    BlockEnd = B#block.weave_size,
+    BlockStart = BlockEnd - B#block.block_size,
+    are_synced(BlockStart, BlockEnd, B#block.tx_root, StoreID).
 are_synced(BlockStart, BlockEnd, TXRoot, StoreID) ->
-	case get_keys(BlockStart, StoreID) of
-		not_found ->
-			false;
-		{ok, Bin} ->
-			{TXRoot2, BlockSize, _DataRootIDs} = binary_to_term(Bin),
-			TXRoot2 == TXRoot andalso BlockSize == BlockEnd - BlockStart
-	end.
+    case get_keys(BlockStart, StoreID) of
+        not_found ->
+            false;
+        {ok, Bin} ->
+            {TXRoot2, BlockSize, _DataRootIDs} = binary_to_term(Bin),
+            TXRoot2 == TXRoot andalso BlockSize == BlockEnd - BlockStart
+    end.
 
 %% @doc Returns true if the given data root id is in the data root index.
 is_synced(DataRootID, StoreID) ->
-	case get_entry(DataRootID, StoreID) of
-		{ok, _} ->
-			true;
-		_ ->
-			false
-	end.
+    case get_entry(DataRootID, StoreID) of
+        {ok, _} ->
+            true;
+        _ ->
+            false
+    end.
 
 %%%===================================================================
 %%% Public: Repair
 %%%===================================================================
 repair(BI, StoreID, RemoveTXRangeFun) ->
-	MigrationDB = ar_data_sync:migration_db(StoreID),
-	case ar_kv:get(MigrationDB, <<"repair_data_root_offset_index">>) of
-		not_found ->
-			?LOG_INFO([{event, starting_data_root_offset_index_scan}]),
-			ReverseBI = lists:reverse(BI),
-			ResyncBlocks = repair(ReverseBI, <<>>, 0, [], StoreID, RemoveTXRangeFun),
-			ok = ar_kv:put(MigrationDB, <<"repair_data_root_offset_index">>, <<>>),
-			?LOG_INFO([{event, data_root_offset_index_scan_complete}]),
-			{ok, ResyncBlocks};
-		_ ->
-			ok
-	end.
+    MigrationDB = ar_data_sync:migration_db(StoreID),
+    case ar_kv:get(MigrationDB, <<"repair_data_root_offset_index">>) of
+        not_found ->
+            ?LOG_INFO([{event, starting_data_root_offset_index_scan}]),
+            ReverseBI = lists:reverse(BI),
+            ResyncBlocks = repair(ReverseBI, <<>>, 0, [], StoreID, RemoveTXRangeFun),
+            ok = ar_kv:put(MigrationDB, <<"repair_data_root_offset_index">>, <<>>),
+            ?LOG_INFO([{event, data_root_offset_index_scan_complete}]),
+            {ok, ResyncBlocks};
+        _ ->
+            ok
+    end.
 
 %%%===================================================================
 %%% Private: DB internals
@@ -377,183 +377,183 @@ repair(BI, StoreID, RemoveTXRangeFun) ->
 %% @doc Maintains a record of the data roots that have been synced and mapping of data roots
 %% to TX start offsets and paths.
 index_db(StoreID) ->
-	{data_root_index, StoreID}.
+    {data_root_index, StoreID}.
 
 get_keys(BlockStart, StoreID) ->
-	ar_kv:get(keys_db(StoreID), << BlockStart:?OFFSET_KEY_BITSIZE >>).
+    ar_kv:get(keys_db(StoreID), << BlockStart:?OFFSET_KEY_BITSIZE >>).
 
 id(DataRoot, TXSize) ->
-	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>.
+    << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>.
 
 index_key(DataRoot, TXSize, TXStartOffset) ->
-	<< DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary,
-			(ar_serialize:encode_int(TXStartOffset, 8))/binary >>.
+    << DataRoot:32/binary, (ar_serialize:encode_int(TXSize, 8))/binary,
+       (ar_serialize:encode_int(TXStartOffset, 8))/binary >>.
 
 parse_index_key(DataRootIndexKey) ->
-	<< DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
-		TXStartOffsetSize:8, TXStartOffset:(TXStartOffsetSize * 8) >> = DataRootIndexKey,
-	{DataRoot, TXSize, TXStartOffset}.
+    << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
+       TXStartOffsetSize:8, TXStartOffset:(TXStartOffsetSize * 8) >> = DataRootIndexKey,
+    {DataRoot, TXSize, TXStartOffset}.
 
 %%%===================================================================
 %%% Private: Entry lookup and range operations
 %%%===================================================================
 prev_entry(DataRootID, TXStartOffset, StoreID) ->
-	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootID,
-	DataRootIndexKey = index_key(DataRoot, TXSize, TXStartOffset - 1),
-	prev_entry(DataRootIndexKey, StoreID).
+    << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootID,
+    DataRootIndexKey = index_key(DataRoot, TXSize, TXStartOffset - 1),
+    prev_entry(DataRootIndexKey, StoreID).
 
 prev_entry(DataRootIndexKey, StoreID) ->
-	{DataRoot, TXSize, _TXStartOffset} = parse_index_key(DataRootIndexKey),
-	prev_entry(DataRootIndexKey, DataRoot, TXSize, StoreID).
+    {DataRoot, TXSize, _TXStartOffset} = parse_index_key(DataRootIndexKey),
+    prev_entry(DataRootIndexKey, DataRoot, TXSize, StoreID).
 
 prev_entry(DataRootIndexKey, DataRoot, TXSize, StoreID) ->
-	case ar_kv:get_prev(index_db(StoreID), DataRootIndexKey) of
-		none ->
-			not_found;
-		{ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
-				OffsetSize:8, TXStartOffset:(OffsetSize * 8) >>, TXPath} ->
-			{ok, {DataRoot, TXSize, TXStartOffset, TXPath}};
-		{ok, _, _} ->
-			not_found;
-		{error, _} = Error ->
-			Error
-	end.
+    case ar_kv:get_prev(index_db(StoreID), DataRootIndexKey) of
+        none ->
+            not_found;
+        {ok, << DataRoot:32/binary, TXSizeSize:8, TXSize:(TXSizeSize * 8),
+                OffsetSize:8, TXStartOffset:(OffsetSize * 8) >>, TXPath} ->
+            {ok, {DataRoot, TXSize, TXStartOffset, TXPath}};
+        {ok, _, _} ->
+            not_found;
+        {error, _} = Error ->
+            Error
+    end.
 
 remove(DataRootID, Start, End, StoreID) ->
-	<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootID,
-	StartIndexKey = index_key(DataRoot, TXSize, Start),
-	EndIndexKey = index_key(DataRoot, TXSize, End),
-	case ar_kv:delete_range(index_db(StoreID), StartIndexKey, EndIndexKey) of
-		ok ->
-			case prev_entry(StartIndexKey, StoreID) of
-				{ok, _} ->
-					ok;
-				not_found ->
-					removed;
-				{error, _} = Error ->
-					Error
-			end;
-		Error ->
-			Error
-	end.
+    << DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >> = DataRootID,
+    StartIndexKey = index_key(DataRoot, TXSize, Start),
+    EndIndexKey = index_key(DataRoot, TXSize, End),
+    case ar_kv:delete_range(index_db(StoreID), StartIndexKey, EndIndexKey) of
+        ok ->
+            case prev_entry(StartIndexKey, StoreID) of
+                {ok, _} ->
+                    ok;
+                not_found ->
+                    removed;
+                {error, _} = Error ->
+                    Error
+            end;
+        Error ->
+            Error
+    end.
 
 %% @doc Get all the matching data root tuples matching DataRoom in the provided range
 get_all_in_range(_DataRoot, _TXSize, Start, Cursor, _StoreID) when Cursor =< Start ->
-	[];
+    [];
 get_all_in_range(DataRoot, TXSize, Start, Cursor, StoreID) ->
-	StartIndexKey = index_key(DataRoot, TXSize, Start),
-	EndIndexKey = index_key(DataRoot, TXSize, Cursor - 1),
-	case ar_kv:get_range(index_db(StoreID), StartIndexKey, EndIndexKey) of
-		{ok, Range} ->
-			DataRootEntries = maps:fold(
-				fun(DataRootIndexKey, TXPath, Acc) ->
-					case parse_index_key(DataRootIndexKey) of
-						{DataRoot, TXSize, TXStart} ->
-							[{DataRoot, TXSize, TXStart, TXPath} | Acc];
-						_ ->
-							Acc
-					end
-				end,
-				[],
-				Range
-			),
-			lists:sort(
-				fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
-						{_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
-					TXStart1 > TXStart2
-				end,
-				DataRootEntries
-			);
-		_ ->
-			[]
-	end.
+    StartIndexKey = index_key(DataRoot, TXSize, Start),
+    EndIndexKey = index_key(DataRoot, TXSize, Cursor - 1),
+    case ar_kv:get_range(index_db(StoreID), StartIndexKey, EndIndexKey) of
+        {ok, Range} ->
+            DataRootEntries = maps:fold(
+                                fun(DataRootIndexKey, TXPath, Acc) ->
+                                        case parse_index_key(DataRootIndexKey) of
+                                            {DataRoot, TXSize, TXStart} ->
+                                                [{DataRoot, TXSize, TXStart, TXPath} | Acc];
+                                            _ ->
+                                                Acc
+                                        end
+                                end,
+                                [],
+                                Range
+                               ),
+            lists:sort(
+              fun({_DataRoot1, _TXSize1, TXStart1, _TXPath1},
+                  {_DataRoot2, _TXSize2, TXStart2, _TXPath2}) ->
+                      TXStart1 > TXStart2
+              end,
+              DataRootEntries
+             );
+        _ ->
+            []
+    end.
 
 %%%===================================================================
 %%% Private: Validation
 %%%===================================================================
 get_padded_size(TXSize, BlockStart) ->
-	case BlockStart >= ar_block:strict_data_split_threshold() of
-		true ->
-			ar_poa:get_padded_offset(TXSize, 0);
-		false ->
-			TXSize
-	end.
+    case BlockStart >= ar_block:strict_data_split_threshold() of
+        true ->
+            ar_poa:get_padded_offset(TXSize, 0);
+        false ->
+            TXSize
+    end.
 
 verify_data_root_entries([], _TXRoot, _BlockStart, BlockSize, Total, Total)
-		when Total == BlockSize ->
-	ok;
+  when Total == BlockSize ->
+    ok;
 verify_data_root_entries([], _TXRoot, _BlockStart, _BlockSize, _TXStartOffset, _Total) ->
-	{error, invalid_total_tx_size};
+    {error, invalid_total_tx_size};
 verify_data_root_entries([{_DataRoot, 0, _TXStartOffset, _TXPath} | _], _TXRoot, _BlockStart,
-		_BlockSize, _ExpectedTXStartOffset, _Total) ->
-	{error, invalid_zero_tx_size};
+                         _BlockSize, _ExpectedTXStartOffset, _Total) ->
+    {error, invalid_zero_tx_size};
 verify_data_root_entries([{DataRoot, TXSize, TXStartOffset, TXPath} | DataRootEntries], TXRoot,
-		BlockStart, BlockSize, ExpectedTXStartOffset, Total) ->
-	TXEndOffset = TXStartOffset + TXSize - BlockStart,
-	case TXEndOffset >= 0 of
-		false ->
-			{error, invalid_entry_merkle_label};
-		true ->
-			case ar_merkle:validate_path(TXRoot, TXEndOffset - 1, BlockSize, TXPath) of
-				false ->
-					{error, invalid_tx_path};
-				{DataRoot, ExpectedTXStartOffset, TXEndOffset} ->
-					PaddedTXSize = get_padded_size(TXSize, BlockStart),
-					PaddedEndOffset = get_padded_size(TXEndOffset, BlockStart),
-					verify_data_root_entries(
-						DataRootEntries,
-						TXRoot,
-						BlockStart,
-						BlockSize,
-						PaddedEndOffset,
-						Total + PaddedTXSize
-					);
-				_ ->
-					{error, invalid_tx_path}
-			end
-	end.
+                         BlockStart, BlockSize, ExpectedTXStartOffset, Total) ->
+    TXEndOffset = TXStartOffset + TXSize - BlockStart,
+    case TXEndOffset >= 0 of
+        false ->
+            {error, invalid_entry_merkle_label};
+        true ->
+            case ar_merkle:validate_path(TXRoot, TXEndOffset - 1, BlockSize, TXPath) of
+                false ->
+                    {error, invalid_tx_path};
+                {DataRoot, ExpectedTXStartOffset, TXEndOffset} ->
+                    PaddedTXSize = get_padded_size(TXSize, BlockStart),
+                    PaddedEndOffset = get_padded_size(TXEndOffset, BlockStart),
+                    verify_data_root_entries(
+                      DataRootEntries,
+                      TXRoot,
+                      BlockStart,
+                      BlockSize,
+                      PaddedEndOffset,
+                      Total + PaddedTXSize
+                     );
+                _ ->
+                    {error, invalid_tx_path}
+            end
+    end.
 
 %%%===================================================================
 %%% Private: Repair
 %%%===================================================================
 repair(BI, Cursor, Height, ResyncBlocks, StoreID, RemoveTXRangeFun) ->
-	case ar_kv:get_next(keys_db(StoreID), Cursor) of
-		none ->
-			ResyncBlocks;
-		{ok, Key, Value} ->
-			<< BlockStart:?OFFSET_KEY_BITSIZE >> = Key,
-			{TXRoot, BlockSize, _DataRootIDs} = binary_to_term(Value, [safe]),
-			BlockEnd = BlockStart + BlockSize,
-			case shift_block_index(TXRoot, BlockStart, BlockEnd, Height, ResyncBlocks, BI) of
-				{ok, {Height2, BI2}} ->
-					Cursor2 = << (BlockStart + 1):?OFFSET_KEY_BITSIZE >>,
-					repair(BI2, Cursor2, Height2, ResyncBlocks, StoreID, RemoveTXRangeFun);
-				{bad_key, []} ->
-					ResyncBlocks;
-				{bad_key, ResyncBlocks2} ->
-					?LOG_INFO([{event, removing_data_root_index_range},
-							{range_start, BlockStart}, {range_end, BlockEnd}]),
-					ok = RemoveTXRangeFun(BlockStart, BlockEnd),
-					{ok, _} = remove_range(BlockStart, BlockEnd, StoreID),
-					repair(BI, Cursor, Height, ResyncBlocks2, StoreID, RemoveTXRangeFun)
-			end
-	end.
+    case ar_kv:get_next(keys_db(StoreID), Cursor) of
+        none ->
+            ResyncBlocks;
+        {ok, Key, Value} ->
+            << BlockStart:?OFFSET_KEY_BITSIZE >> = Key,
+            {TXRoot, BlockSize, _DataRootIDs} = binary_to_term(Value, [safe]),
+            BlockEnd = BlockStart + BlockSize,
+            case shift_block_index(TXRoot, BlockStart, BlockEnd, Height, ResyncBlocks, BI) of
+                {ok, {Height2, BI2}} ->
+                    Cursor2 = << (BlockStart + 1):?OFFSET_KEY_BITSIZE >>,
+                    repair(BI2, Cursor2, Height2, ResyncBlocks, StoreID, RemoveTXRangeFun);
+                {bad_key, []} ->
+                    ResyncBlocks;
+                {bad_key, ResyncBlocks2} ->
+                    ?LOG_INFO([{event, removing_data_root_index_range},
+                               {range_start, BlockStart}, {range_end, BlockEnd}]),
+                    ok = RemoveTXRangeFun(BlockStart, BlockEnd),
+                    {ok, _} = remove_range(BlockStart, BlockEnd, StoreID),
+                    repair(BI, Cursor, Height, ResyncBlocks2, StoreID, RemoveTXRangeFun)
+            end
+    end.
 
 shift_block_index(_TXRoot, _BlockStart, _BlockEnd, _Height, ResyncBlocks, []) ->
-	{bad_key, ResyncBlocks};
+    {bad_key, ResyncBlocks};
 shift_block_index(TXRoot, BlockStart, BlockEnd, Height, ResyncBlocks,
-		[{_H, WeaveSize, _TXRoot} | BI]) when BlockEnd > WeaveSize ->
-	ResyncBlocks2 =
-		case BlockStart < WeaveSize of
-			true -> [Height | ResyncBlocks];
-			false -> ResyncBlocks
-		end,
-	shift_block_index(TXRoot, BlockStart, BlockEnd, Height + 1, ResyncBlocks2, BI);
+                  [{_H, WeaveSize, _TXRoot} | BI]) when BlockEnd > WeaveSize ->
+    ResyncBlocks2 =
+        case BlockStart < WeaveSize of
+            true -> [Height | ResyncBlocks];
+            false -> ResyncBlocks
+        end,
+    shift_block_index(TXRoot, BlockStart, BlockEnd, Height + 1, ResyncBlocks2, BI);
 shift_block_index(TXRoot, _BlockStart, WeaveSize, Height, _ResyncBlocks,
-		[{_H, WeaveSize, TXRoot} | BI]) ->
-	{ok, {Height + 1, BI}};
+                  [{_H, WeaveSize, TXRoot} | BI]) ->
+    {ok, {Height + 1, BI}};
 shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) ->
-	{bad_key, [Height | ResyncBlocks]}.
+    {bad_key, [Height | ResyncBlocks]}.
 
 %%%===================================================================
 %%% Public: Block lifecycle helpers.
@@ -562,345 +562,345 @@ shift_block_index(_TXRoot, _BlockStart, _WeaveSize, Height, ResyncBlocks, _BI) -
 %% @doc If the block's data roots aren't already indexed for this StoreID,
 %% record them and update the per-tx offset/index. Idempotent.
 add_block(B, SizeTaggedTXs, StoreID) ->
-	#block{ indep_hash = H, weave_size = WeaveSize, tx_root = TXRoot } = B,
-	case ar_block_index:get_element_by_height(B#block.height) of
-		{H, WeaveSize, TXRoot} ->
-			case are_synced(B, StoreID) of
-				false ->
-					BlockStart = B#block.weave_size - B#block.block_size,
-					{ok, _} =
-						add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID),
-					ok = update_tx_index(SizeTaggedTXs, BlockStart, StoreID),
-					ok;
-				_ ->
-					ok
-			end;
-		_ ->
-			ok
-	end.
+    #block{ indep_hash = H, weave_size = WeaveSize, tx_root = TXRoot } = B,
+    case ar_block_index:get_element_by_height(B#block.height) of
+        {H, WeaveSize, TXRoot} ->
+            case are_synced(B, StoreID) of
+                false ->
+                    BlockStart = B#block.weave_size - B#block.block_size,
+                    {ok, _} =
+                        add_block_data_roots(SizeTaggedTXs, BlockStart, StoreID),
+                    ok = update_tx_index(SizeTaggedTXs, BlockStart, StoreID),
+                    ok;
+                _ ->
+                    ok
+            end;
+        _ ->
+            ok
+    end.
 
 %% @doc Update tx_index and tx_offset_index for the given block's transactions.
 update_tx_index([], _BlockStartOffset, _StoreID) ->
-	ok;
+    ok;
 update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
-	lists:foldl(
-		fun ({_, Offset}, Offset) ->
-				Offset;
-			({{padding, _}, Offset}, _) ->
-				Offset;
-			({{TXID, _}, TXEndOffset}, PreviousOffset) ->
-				AbsoluteEndOffset = BlockStartOffset + TXEndOffset,
-				TXSize = TXEndOffset - PreviousOffset,
-				AbsoluteStartOffset = AbsoluteEndOffset - TXSize,
-				case ar_kv:put({tx_offset_index, StoreID},
-						<< AbsoluteStartOffset:?OFFSET_KEY_BITSIZE >>, TXID) of
-					ok ->
-						case ar_kv:put({tx_index, StoreID}, TXID,
-								term_to_binary({AbsoluteEndOffset, TXSize})) of
-							ok ->
-								ar_events:send(tx, {registered_offset, TXID, AbsoluteEndOffset,
-										TXSize}),
-								ar_tx_blacklist:notify_about_added_tx(TXID, AbsoluteEndOffset,
-										AbsoluteStartOffset),
-								TXEndOffset;
-							{error, Reason} ->
-								?LOG_ERROR([{event, failed_to_update_tx_index},
-										{reason, io_lib:format("~p", [Reason])},
-										{tx, ar_util:encode(TXID)}]),
-								TXEndOffset
-						end;
-					{error, Reason} ->
-						?LOG_ERROR([{event, failed_to_update_tx_offset_index},
-								{reason, io_lib:format("~p", [Reason])},
-								{tx, ar_util:encode(TXID)}]),
-						TXEndOffset
-				end
-		end,
-		0,
-		SizeTaggedTXs
-	),
-	ok.
+    lists:foldl(
+      fun ({_, Offset}, Offset) ->
+              Offset;
+          ({{padding, _}, Offset}, _) ->
+              Offset;
+          ({{TXID, _}, TXEndOffset}, PreviousOffset) ->
+              AbsoluteEndOffset = BlockStartOffset + TXEndOffset,
+              TXSize = TXEndOffset - PreviousOffset,
+              AbsoluteStartOffset = AbsoluteEndOffset - TXSize,
+              case ar_kv:put({tx_offset_index, StoreID},
+                             << AbsoluteStartOffset:?OFFSET_KEY_BITSIZE >>, TXID) of
+                  ok ->
+                      case ar_kv:put({tx_index, StoreID}, TXID,
+                                     term_to_binary({AbsoluteEndOffset, TXSize})) of
+                          ok ->
+                              ar_events:send(tx, {registered_offset, TXID, AbsoluteEndOffset,
+                                                  TXSize}),
+                              ar_tx_blacklist:notify_about_added_tx(TXID, AbsoluteEndOffset,
+                                                                    AbsoluteStartOffset),
+                              TXEndOffset;
+                          {error, Reason} ->
+                              ?LOG_ERROR([{event, failed_to_update_tx_index},
+                                          {reason, io_lib:format("~p", [Reason])},
+                                          {tx, ar_util:encode(TXID)}]),
+                              TXEndOffset
+                      end;
+                  {error, Reason} ->
+                      ?LOG_ERROR([{event, failed_to_update_tx_offset_index},
+                                  {reason, io_lib:format("~p", [Reason])},
+                                  {tx, ar_util:encode(TXID)}]),
+                      TXEndOffset
+              end
+      end,
+      0,
+      SizeTaggedTXs
+     ),
+    ok.
 
 %% @doc Run the data_root_offset_index repair scan for the given block
 %% index and storage module. Removes tx_index ranges for any
 %% inconsistent blocks discovered during the scan.
 repair_data_root_offset_index(BI, StoreID) ->
-	RemoveTXRange = fun(BlockStart, BlockEnd) ->
-		remove_tx_index_range(BlockStart, BlockEnd, StoreID)
-	end,
-	case repair(BI, StoreID, RemoveTXRange) of
-		{ok, ResyncBlocks} ->
-			[ar_header_sync:remove_block(Height) || Height <- ResyncBlocks],
-			ok;
-		ok ->
-			ok
-	end.
+    RemoveTXRange = fun(BlockStart, BlockEnd) ->
+                            remove_tx_index_range(BlockStart, BlockEnd, StoreID)
+                    end,
+    case repair(BI, StoreID, RemoveTXRange) of
+        {ok, ResyncBlocks} ->
+            [ar_header_sync:remove_block(Height) || Height <- ResyncBlocks],
+            ok;
+        ok ->
+            ok
+    end.
 
 %% @doc Remove tx_index / tx_offset_index entries for the given byte range.
 %% Used during reorgs and on-startup orphan cleanup.
 remove_tx_index_range(Start, End, StoreID) ->
-	TXOffsetIndex = {tx_offset_index, StoreID},
-	TXIndex = {tx_index, StoreID},
-	ok = case ar_kv:get_range(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>,
-			<< (End - 1):?OFFSET_KEY_BITSIZE >>) of
-		{ok, EmptyMap} when map_size(EmptyMap) == 0 ->
-			ok;
-		{ok, Map} ->
-			maps:fold(
-				fun
-					(_, _Value, {error, _} = Error) ->
-						Error;
-					(_, TXID, ok) ->
-						ar_kv:delete(TXIndex, TXID),
-						ar_tx_blacklist:norify_about_orphaned_tx(TXID)
-				end,
-				ok,
-				Map
-			);
-		Error ->
-			Error
-	end,
-	ar_kv:delete_range(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>,
-			<< End:?OFFSET_KEY_BITSIZE >>).
+    TXOffsetIndex = {tx_offset_index, StoreID},
+    TXIndex = {tx_index, StoreID},
+    ok = case ar_kv:get_range(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>,
+                              << (End - 1):?OFFSET_KEY_BITSIZE >>) of
+             {ok, EmptyMap} when map_size(EmptyMap) == 0 ->
+                 ok;
+             {ok, Map} ->
+                 maps:fold(
+                   fun
+                       (_, _Value, {error, _} = Error) ->
+                                  Error;
+                       (_, TXID, ok) ->
+                                  ar_kv:delete(TXIndex, TXID),
+                                  ar_tx_blacklist:norify_about_orphaned_tx(TXID)
+                          end,
+                   ok,
+                   Map
+                  );
+             Error ->
+                 Error
+         end,
+    ar_kv:delete_range(TXOffsetIndex, << Start:?OFFSET_KEY_BITSIZE >>,
+                       << End:?OFFSET_KEY_BITSIZE >>).
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
 init([]) ->
-	?LOG_INFO([{event, ar_data_roots_start}]),
-	{ok, undefined}.
+    ?LOG_INFO([{event, ar_data_roots_start}]),
+    {ok, undefined}.
 
 handle_call({store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID},
-		_From, State) ->
-	{ok, _} = store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID),
-	{reply, ok, State};
+            _From, State) ->
+    {ok, _} = store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID),
+    {reply, ok, State};
 handle_call(Request, _From, State) ->
-	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
-	{reply, ok, State}.
+    ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+    {reply, ok, State}.
 
 handle_cast({store_block, BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID}, State) ->
-	{ok, _} = store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID),
-	{noreply, State};
+    {ok, _} = store_block(BlockStart, BlockSize, TXRoot, DataRootEntries, StoreID),
+    {noreply, State};
 handle_cast(Cast, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
-	{noreply, State}.
+    ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+    {noreply, State}.
 
 handle_info(Message, State) ->
-	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
-	{noreply, State}.
+    ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
+    {noreply, State}.
 
 terminate(Reason, _State) ->
-	?LOG_DEBUG([{event, terminate}, {module, ?MODULE},
-		{reason, io_lib:format("~p", [Reason])}]),
-	ok.
+    ?LOG_DEBUG([{event, terminate}, {module, ?MODULE},
+                {reason, io_lib:format("~p", [Reason])}]),
+    ok.
 
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
 
 get_all_in_range_returns_multiple_matches_for_same_pair_test_() ->
-	{timeout, 30, fun test_get_all_in_range_returns_multiple_matches_for_same_pair/0}.
+    {timeout, 30, fun test_get_all_in_range_returns_multiple_matches_for_same_pair/0}.
 
 test_get_all_in_range_returns_multiple_matches_for_same_pair() ->
-	with_test_index_db(
-		fun(StoreID) ->
-			DataRoot = << 1:256 >>,
-			TXSize = 100,
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 20, <<"path-20">>),
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 30, <<"path-30">>),
-			?assertEqual(
-				[
-					{DataRoot, TXSize, 30, <<"path-30">>},
-					{DataRoot, TXSize, 20, <<"path-20">>},
-					{DataRoot, TXSize, 10, <<"path-10">>}
-				],
-				get_all_in_range(DataRoot, TXSize, 10, 40, StoreID)
-			)
-		end
-	).
+    with_test_index_db(
+      fun(StoreID) ->
+              DataRoot = << 1:256 >>,
+              TXSize = 100,
+              ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
+              ok = put_test_tx(StoreID, DataRoot, TXSize, 20, <<"path-20">>),
+              ok = put_test_tx(StoreID, DataRoot, TXSize, 30, <<"path-30">>),
+              ?assertEqual(
+                 [
+                  {DataRoot, TXSize, 30, <<"path-30">>},
+                  {DataRoot, TXSize, 20, <<"path-20">>},
+                  {DataRoot, TXSize, 10, <<"path-10">>}
+                 ],
+                 get_all_in_range(DataRoot, TXSize, 10, 40, StoreID)
+                )
+      end
+     ).
 
 get_all_in_range_excludes_matches_outside_start_and_cursor_test_() ->
-	{timeout, 30, fun test_get_all_in_range_excludes_matches_outside_start_and_cursor/0}.
+    {timeout, 30, fun test_get_all_in_range_excludes_matches_outside_start_and_cursor/0}.
 
 test_get_all_in_range_excludes_matches_outside_start_and_cursor() ->
-	with_test_index_db(
-		fun(StoreID) ->
-			DataRoot = << 2:256 >>,
-			TXSize = 100,
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 5, <<"path-5">>),
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 20, <<"path-20">>),
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 30, <<"path-30">>),
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 40, <<"path-40">>),
-			?assertEqual(
-				[
-					{DataRoot, TXSize, 30, <<"path-30">>},
-					{DataRoot, TXSize, 20, <<"path-20">>}
-				],
-				get_all_in_range(DataRoot, TXSize, 15, 35, StoreID)
-			)
-		end
-	).
+    with_test_index_db(
+      fun(StoreID) ->
+              DataRoot = << 2:256 >>,
+              TXSize = 100,
+              ok = put_test_tx(StoreID, DataRoot, TXSize, 5, <<"path-5">>),
+              ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
+              ok = put_test_tx(StoreID, DataRoot, TXSize, 20, <<"path-20">>),
+              ok = put_test_tx(StoreID, DataRoot, TXSize, 30, <<"path-30">>),
+              ok = put_test_tx(StoreID, DataRoot, TXSize, 40, <<"path-40">>),
+              ?assertEqual(
+                 [
+                  {DataRoot, TXSize, 30, <<"path-30">>},
+                  {DataRoot, TXSize, 20, <<"path-20">>}
+                 ],
+                 get_all_in_range(DataRoot, TXSize, 15, 35, StoreID)
+                )
+      end
+     ).
 
 get_all_in_range_ignores_other_data_root_and_tx_size_test_() ->
-	{timeout, 30, fun test_get_all_in_range_ignores_other_data_root_and_tx_size/0}.
+    {timeout, 30, fun test_get_all_in_range_ignores_other_data_root_and_tx_size/0}.
 
 test_get_all_in_range_ignores_other_data_root_and_tx_size() ->
-	with_test_index_db(
-		fun(StoreID) ->
-			DataRoot = << 3:256 >>,
-			OtherDataRoot = << 4:256 >>,
-			TXSize = 100,
-			ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
-			ok = put_test_tx(StoreID, DataRoot, TXSize + 1, 20, <<"wrong-size">>),
-			ok = put_test_tx(StoreID, OtherDataRoot, TXSize, 30, <<"wrong-root">>),
-			?assertEqual(
-				[{DataRoot, TXSize, 10, <<"path-10">>}],
-				get_all_in_range(DataRoot, TXSize, 0, 40, StoreID)
-			)
-		end
-	).
+    with_test_index_db(
+      fun(StoreID) ->
+              DataRoot = << 3:256 >>,
+              OtherDataRoot = << 4:256 >>,
+              TXSize = 100,
+              ok = put_test_tx(StoreID, DataRoot, TXSize, 10, <<"path-10">>),
+              ok = put_test_tx(StoreID, DataRoot, TXSize + 1, 20, <<"wrong-size">>),
+              ok = put_test_tx(StoreID, OtherDataRoot, TXSize, 30, <<"wrong-root">>),
+              ?assertEqual(
+                 [{DataRoot, TXSize, 10, <<"path-10">>}],
+                 get_all_in_range(DataRoot, TXSize, 0, 40, StoreID)
+                )
+      end
+     ).
 
 validate_data_roots_accepts_valid_entries_test() ->
-	BlockStart = 0,
-	Offset = 1,
-	{TXRoot, BlockSize, DataRootEntries} = make_valid_data_root_entries(BlockStart, [10, 20]),
-	with_mocked_block_bounds(
-		BlockStart,
-		BlockStart + BlockSize,
-		TXRoot,
-		fun() ->
-			?assertEqual(
-				{ok, {TXRoot, BlockSize, DataRootEntries}},
-				validate_data_roots(TXRoot, BlockSize, DataRootEntries, Offset)
-			)
-		end
-	).
+    BlockStart = 0,
+    Offset = 1,
+    {TXRoot, BlockSize, DataRootEntries} = make_valid_data_root_entries(BlockStart, [10, 20]),
+    with_mocked_block_bounds(
+      BlockStart,
+      BlockStart + BlockSize,
+      TXRoot,
+      fun() ->
+              ?assertEqual(
+                 {ok, {TXRoot, BlockSize, DataRootEntries}},
+                 validate_data_roots(TXRoot, BlockSize, DataRootEntries, Offset)
+                )
+      end
+     ).
 
 validate_data_roots_rejects_invalid_tx_path_test() ->
-	BlockStart = 0,
-	Offset = 1,
-	{TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath} | Rest]} =
-		make_valid_data_root_entries(BlockStart, [10, 20]),
-	InvalidEntries = [{DataRoot, TXSize, TXStartOffset, << TXPath/binary, 0 >>} | Rest],
-	with_mocked_block_bounds(
-		BlockStart,
-		BlockStart + BlockSize,
-		TXRoot,
-		fun() ->
-			?assertEqual(
-				{error, invalid_tx_path},
-				validate_data_roots(TXRoot, BlockSize, InvalidEntries, Offset)
-			)
-		end
-	).
+    BlockStart = 0,
+    Offset = 1,
+    {TXRoot, BlockSize, [{DataRoot, TXSize, TXStartOffset, TXPath} | Rest]} =
+        make_valid_data_root_entries(BlockStart, [10, 20]),
+    InvalidEntries = [{DataRoot, TXSize, TXStartOffset, << TXPath/binary, 0 >>} | Rest],
+    with_mocked_block_bounds(
+      BlockStart,
+      BlockStart + BlockSize,
+      TXRoot,
+      fun() ->
+              ?assertEqual(
+                 {error, invalid_tx_path},
+                 validate_data_roots(TXRoot, BlockSize, InvalidEntries, Offset)
+                )
+      end
+     ).
 
 validate_data_roots_rejects_invalid_zero_tx_size_test() ->
-	BlockStart = 0,
-	Offset = 1,
-	{TXRoot, BlockSize, [{DataRoot, _TXSize, TXStartOffset, TXPath} | Rest]} =
-		make_valid_data_root_entries(BlockStart, [10, 20]),
-	InvalidEntries = [{DataRoot, 0, TXStartOffset, TXPath} | Rest],
-	with_mocked_block_bounds(
-		BlockStart,
-		BlockStart + BlockSize,
-		TXRoot,
-		fun() ->
-			?assertEqual(
-				{error, invalid_zero_tx_size},
-				validate_data_roots(TXRoot, BlockSize, InvalidEntries, Offset)
-			)
-		end
-	).
+    BlockStart = 0,
+    Offset = 1,
+    {TXRoot, BlockSize, [{DataRoot, _TXSize, TXStartOffset, TXPath} | Rest]} =
+        make_valid_data_root_entries(BlockStart, [10, 20]),
+    InvalidEntries = [{DataRoot, 0, TXStartOffset, TXPath} | Rest],
+    with_mocked_block_bounds(
+      BlockStart,
+      BlockStart + BlockSize,
+      TXRoot,
+      fun() ->
+              ?assertEqual(
+                 {error, invalid_zero_tx_size},
+                 validate_data_roots(TXRoot, BlockSize, InvalidEntries, Offset)
+                )
+      end
+     ).
 
 validate_data_roots_rejects_invalid_total_tx_size_test() ->
-	BlockStart = 0,
-	Offset = 1,
-	{TXRoot, BlockSize, [Entry | _Rest]} =
-		make_valid_data_root_entries(BlockStart, [10, 20]),
-	InvalidEntries = [Entry],
-	with_mocked_block_bounds(
-		BlockStart,
-		BlockStart + BlockSize,
-		TXRoot,
-		fun() ->
-			?assertEqual(
-				{error, invalid_total_tx_size},
-				validate_data_roots(TXRoot, BlockSize, InvalidEntries, Offset)
-			)
-		end
-	).
+    BlockStart = 0,
+    Offset = 1,
+    {TXRoot, BlockSize, [Entry | _Rest]} =
+        make_valid_data_root_entries(BlockStart, [10, 20]),
+    InvalidEntries = [Entry],
+    with_mocked_block_bounds(
+      BlockStart,
+      BlockStart + BlockSize,
+      TXRoot,
+      fun() ->
+              ?assertEqual(
+                 {error, invalid_total_tx_size},
+                 validate_data_roots(TXRoot, BlockSize, InvalidEntries, Offset)
+                )
+      end
+     ).
 
 validate_data_roots_rejects_invalid_tx_root_test() ->
-	BlockStart = 0,
-	Offset = 1,
-	{TXRoot, BlockSize, DataRootEntries} = make_valid_data_root_entries(BlockStart, [10, 20]),
-	InvalidTXRoot = << 999:256 >>,
-	with_mocked_block_bounds(
-		BlockStart,
-		BlockStart + BlockSize,
-		TXRoot,
-		fun() ->
-			?assertEqual(
-				{error, invalid_tx_root},
-				validate_data_roots(InvalidTXRoot, BlockSize, DataRootEntries, Offset)
-			)
-		end
-	).
+    BlockStart = 0,
+    Offset = 1,
+    {TXRoot, BlockSize, DataRootEntries} = make_valid_data_root_entries(BlockStart, [10, 20]),
+    InvalidTXRoot = << 999:256 >>,
+    with_mocked_block_bounds(
+      BlockStart,
+      BlockStart + BlockSize,
+      TXRoot,
+      fun() ->
+              ?assertEqual(
+                 {error, invalid_tx_root},
+                 validate_data_roots(InvalidTXRoot, BlockSize, DataRootEntries, Offset)
+                )
+      end
+     ).
 
 with_test_index_db(Fun) ->
-	ensure_test_kv_started(),
-	Unique = integer_to_list(erlang:unique_integer([positive])),
-	DBName = "ar_data_roots_test_" ++ Unique,
-	StoreID = {ar_data_roots_test, Unique},
-	ok = ar_kv:test_destroy(DBName),
-	ok = open_index_db(ar_kv:test_db_path(), DBName, StoreID, []),
-	try
-		Fun(StoreID)
-	after
-		_ = ar_kv:test_close(index_db(StoreID)),
-		ok = ar_kv:test_destroy(DBName)
-	end.
+    ensure_test_kv_started(),
+    Unique = integer_to_list(erlang:unique_integer([positive])),
+    DBName = "ar_data_roots_test_" ++ Unique,
+    StoreID = {ar_data_roots_test, Unique},
+    ok = ar_kv:test_destroy(DBName),
+    ok = open_index_db(ar_kv:test_db_path(), DBName, StoreID, []),
+    try
+        Fun(StoreID)
+    after
+        _ = ar_kv:test_close(index_db(StoreID)),
+        ok = ar_kv:test_destroy(DBName)
+    end.
 
 ensure_test_kv_started() ->
-	case ar_kv_sup:start_link() of
-		{ok, _} ->
-			ok;
-		{error, {already_started, _}} ->
-			ok
-	end.
+    case ar_kv_sup:start_link() of
+        {ok, _} ->
+            ok;
+        {error, {already_started, _}} ->
+            ok
+    end.
 
 put_test_tx(StoreID, DataRoot, TXSize, TXStartOffset, TXPath) ->
-	ar_kv:put(index_db(StoreID), index_key(DataRoot, TXSize, TXStartOffset), TXPath).
+    ar_kv:put(index_db(StoreID), index_key(DataRoot, TXSize, TXStartOffset), TXPath).
 
 with_mocked_block_bounds(BlockStart, BlockEnd, TXRoot, Fun) ->
-	meck:new(ar_block_index, [passthrough]),
-	meck:expect(
-		ar_block_index,
-		get_block_bounds,
-		fun(_) -> {BlockStart, BlockEnd, TXRoot} end
-	),
-	try
-		Fun()
-	after
-		ok = meck:unload(ar_block_index)
-	end.
+    meck:new(ar_block_index, [passthrough]),
+    meck:expect(
+      ar_block_index,
+      get_block_bounds,
+      fun(_) -> {BlockStart, BlockEnd, TXRoot} end
+     ),
+    try
+        Fun()
+    after
+        ok = meck:unload(ar_block_index)
+    end.
 
 make_valid_data_root_entries(BlockStart, TXSizes) ->
-	SizeTaggedTXs =
-		lists:mapfoldl(
-			fun(TXSize, TXEndOffset) ->
-				DataRoot = << TXEndOffset:256 >>,
-				NextTXEndOffset = TXEndOffset + TXSize,
-				{{{dummy, DataRoot}, NextTXEndOffset}, NextTXEndOffset}
-			end,
-			0,
-			TXSizes
-		),
-	{SizeTaggedTXs2, _} = SizeTaggedTXs,
-	{TXRoot, BlockSize, DataRootEntriesReversed} =
-		build_block_data_root_entries(BlockStart, SizeTaggedTXs2),
-	DataRootEntries = lists:reverse(DataRootEntriesReversed),
-	{TXRoot, BlockSize, DataRootEntries}.
+    SizeTaggedTXs =
+        lists:mapfoldl(
+          fun(TXSize, TXEndOffset) ->
+                  DataRoot = << TXEndOffset:256 >>,
+                  NextTXEndOffset = TXEndOffset + TXSize,
+                  {{{dummy, DataRoot}, NextTXEndOffset}, NextTXEndOffset}
+          end,
+          0,
+          TXSizes
+         ),
+    {SizeTaggedTXs2, _} = SizeTaggedTXs,
+    {TXRoot, BlockSize, DataRootEntriesReversed} =
+        build_block_data_root_entries(BlockStart, SizeTaggedTXs2),
+    DataRootEntries = lists:reverse(DataRootEntriesReversed),
+    {TXRoot, BlockSize, DataRootEntries}.

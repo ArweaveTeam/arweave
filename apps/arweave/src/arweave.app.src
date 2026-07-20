@@ -1,24 +1,26 @@
-{application, arweave, [
-	{description, "Arweave"},
-	{vsn, "2.9.6-alpha1"},
-	{mod, {ar, []}},
-	{applications, [
-		kernel,
-		stdlib,
-		sasl,
-		os_mon,
-		gun,
-		cowlib,
-		ranch,
-		cowboy,
-		prometheus,
-		prometheus_cowboy,
-		prometheus_process_collector,
-		prometheus_httpd,
-		runtime_tools,
-		arweave_metrics,
-		arweave_limiter,
-		arweave_throttling
-	]},
-	{extra_applications, [recon]}
-]}.
+{application, arweave,
+ [
+  {description, "Arweave"},
+  {vsn, "2.9.6-alpha1"},
+  {mod, {ar, []}},
+  {applications, 
+   [
+    kernel,
+    stdlib,
+    sasl,
+    os_mon,
+    gun,
+    cowlib,
+    ranch,
+    cowboy,
+    prometheus,
+    prometheus_cowboy,
+    prometheus_process_collector,
+    prometheus_httpd,
+    runtime_tools,
+    arweave_metrics,
+    arweave_limiter,
+    arweave_throttling
+   ]},
+  {extra_applications, [recon]}
+ ]}.

@@ -3,8 +3,8 @@
 -behaviour(prometheus_collector).
 
 -export([
-	deregister_cleanup/1,
-	collect_mf/2
+    deregister_cleanup/1,
+    collect_mf/2
 ]).
 
 -ifdef(AR_TEST).
@@ -26,12 +26,12 @@
 
 %% called to collect Metric Families
 -spec collect_mf(_Registry, Callback) -> ok when
-	_Registry :: prometheus_registry:registry(),
-	Callback :: prometheus_collector:callback().
+    _Registry :: prometheus_registry:registry(),
+    Callback :: prometheus_collector:callback().
 collect_mf(_Registry, Callback) ->
-	Metrics = metrics(),
-	[add_metric_family(Metric, Callback) || Metric <- Metrics],
-	ok.
+    Metrics = metrics(),
+    [add_metric_family(Metric, Callback) || Metric <- Metrics],
+    ok.
 
 %% called when collector deregistered
 deregister_cleanup(_Registry) -> ok.
@@ -41,7 +41,7 @@ deregister_cleanup(_Registry) -> ok.
 %% ===================================================================
 
 add_metric_family({Name, Type, Help, Metrics}, Callback) ->
-	Callback(create_mf(?METRIC_NAME(Name), Help, Type, Metrics)).
+    Callback(create_mf(?METRIC_NAME(Name), Help, Type, Metrics)).
 
 metrics() ->
     AllInfo = arweave_limiter_sup:all_info(),

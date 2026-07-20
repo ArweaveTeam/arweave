@@ -5,229 +5,231 @@
 -include_lib("eunit/include/eunit.hrl").
 
 suite() ->
-	[{timetrap, {seconds, 60}}].
+    [{timetrap, {seconds, 60}}].
 
 init_per_suite(Config) -> Config.
 
 end_per_suite(_Config) -> ok.
 
 init_per_testcase(TestCase, Config)
-	when TestCase == resolved_peers_list_expands_multi_record;
-		TestCase == resolved_peers_list_skips_unresolvable;
-		TestCase == resolved_peer_id_takes_first_record;
-		TestCase == resolved_peer_id_unresolvable_errors ->
-	meck:new(ar_util, [passthrough]),
-	meck:expect(ar_util, safe_parse_peer, fun(Peer) ->
-		case iolist_to_binary([Peer]) of
-			<<"multi:", PortBin/binary>> ->
+  when TestCase == resolved_peers_list_expands_multi_record;
+       TestCase == resolved_peers_list_skips_unresolvable;
+       TestCase == resolved_peer_id_takes_first_record;
+       TestCase == resolved_peer_id_unresolvable_errors ->
+    meck:new(ar_util, [passthrough]),
+    meck:expect(ar_util, safe_parse_peer,
+                fun(Peer) ->
+                        case iolist_to_binary([Peer]) of
+                            <<"multi:", PortBin/binary>> ->
 				Port = binary_to_integer(PortBin),
 				{ok, [{1, 1, 1, 1, Port}, {2, 2, 2, 2, Port}]};
-			<<"dead.example", _/binary>> ->
+                            <<"dead.example", _/binary>> ->
 				{error, {invalid_peer, Peer}};
-			_ ->
+                            _ ->
 				meck:passthrough([Peer])
-		end
-	end),
-	Config;
+                        end
+                end),
+    Config;
+
 init_per_testcase(_TestCase, Config) ->
-	Config.
+    Config.
 
 end_per_testcase(TestCase, _Config)
-	when TestCase == resolved_peers_list_expands_multi_record;
-		TestCase == resolved_peers_list_skips_unresolvable;
-		TestCase == resolved_peer_id_takes_first_record;
-		TestCase == resolved_peer_id_unresolvable_errors ->
-	meck:unload(ar_util),
-	ok;
+  when TestCase == resolved_peers_list_expands_multi_record;
+       TestCase == resolved_peers_list_skips_unresolvable;
+       TestCase == resolved_peer_id_takes_first_record;
+       TestCase == resolved_peer_id_unresolvable_errors ->
+    meck:unload(ar_util),
+    ok;
 end_per_testcase(_TestCase, _Config) ->
-	ok.
+    ok.
 
 all() ->
-	[
-		atom,
-		integer,
-		boolean,
-		pos_integer,
-		ipv4,
-		path,
-		tcp_port,
-		file,
-		logging_template,
-		peer_id_ip_only,
-		peer_id_ip_with_port,
-		peer_id_hostname_only,
-		peer_id_hostname_with_port,
-		peer_id_ipv4_tuple,
-		peer_id_ipv6_bracketed,
-		peer_id_default_port_collapses,
-		peer_id_distinct_ports_stay_distinct,
-		peer_id_invalid,
-		resolved_peers_list_expands_multi_record,
-		resolved_peers_list_skips_unresolvable,
-		resolved_peer_id_takes_first_record,
-		resolved_peer_id_unresolvable_errors
-	].
+    [
+     atom,
+     integer,
+     boolean,
+     pos_integer,
+     ipv4,
+     path,
+     tcp_port,
+     file,
+     logging_template,
+     peer_id_ip_only,
+     peer_id_ip_with_port,
+     peer_id_hostname_only,
+     peer_id_hostname_with_port,
+     peer_id_ipv4_tuple,
+     peer_id_ipv6_bracketed,
+     peer_id_default_port_collapses,
+     peer_id_distinct_ports_stay_distinct,
+     peer_id_invalid,
+     resolved_peers_list_expands_multi_record,
+     resolved_peers_list_skips_unresolvable,
+     resolved_peer_id_takes_first_record,
+     resolved_peer_id_unresolvable_errors
+    ].
 
 %%====================================================================
 %% Test cases
 %%====================================================================
 
 atom(_Config) ->
-	{ok, atom} = arweave_config_type:atom(atom),
-	{ok, atom} = arweave_config_type:atom(<<"atom">>),
-	{ok, atom} = arweave_config_type:atom("atom").
+    {ok, atom} = arweave_config_type:atom(atom),
+    {ok, atom} = arweave_config_type:atom(<<"atom">>),
+    {ok, atom} = arweave_config_type:atom("atom").
 
 boolean(_Config) ->
-	[
-		{ok, true} = arweave_config_type:boolean(X)
-		|| X <- [<<"true">>, "true", true]
-	],
-	[
-		{ok, false} = arweave_config_type:boolean(X)
-		|| X <- [<<"false">>, "false", false]
-	],
-	{error, not_boolean} =
-		arweave_config_type:boolean(not_boolean).
+    [
+        {ok, true} = arweave_config_type:boolean(X)
+        || X <- [<<"true">>, "true", true]
+    ],
+    [
+        {ok, false} = arweave_config_type:boolean(X)
+        || X <- [<<"false">>, "false", false]
+    ],
+    {error, not_boolean} =
+        arweave_config_type:boolean(not_boolean).
 
 integer(_Config) ->
-	{ok, 1} = arweave_config_type:integer(1),
-	{ok, 1} = arweave_config_type:integer("1"),
-	{ok, 1} = arweave_config_type:integer(<<"1">>),
-	{error, a} = arweave_config_type:integer(a).
+    {ok, 1} = arweave_config_type:integer(1),
+    {ok, 1} = arweave_config_type:integer("1"),
+    {ok, 1} = arweave_config_type:integer(<<"1">>),
+    {error, a} = arweave_config_type:integer(a).
 
 pos_integer(_Config) ->
-	{ok, 1} = arweave_config_type:pos_integer(1),
-	{error, -1} = arweave_config_type:pos_integer(-1).
+    {ok, 1} = arweave_config_type:pos_integer(1),
+    {error, -1} = arweave_config_type:pos_integer(-1).
 
 ipv4(_Config) ->
-	{ok, <<"127.0.0.1">>} = arweave_config_type:ipv4("127.0.0.1"),
-	{ok, <<"127.0.0.1">>} = arweave_config_type:ipv4({127,0,0,1}),
-	{ok, <<"127.0.0.1">>} = arweave_config_type:ipv4(<<"127.0.0.1">>),
-	{error, _ } = arweave_config_type:ipv4(test).
+    {ok, <<"127.0.0.1">>} = arweave_config_type:ipv4("127.0.0.1"),
+    {ok, <<"127.0.0.1">>} = arweave_config_type:ipv4({127,0,0,1}),
+    {ok, <<"127.0.0.1">>} = arweave_config_type:ipv4(<<"127.0.0.1">>),
+    {error, _ } = arweave_config_type:ipv4(test).
 
 path(Config) ->
-	_PrivDir = proplists:get_value(priv_dir, Config),
-	{ok, Cwd} = file:get_cwd(),
+    _PrivDir = proplists:get_value(priv_dir, Config),
+    {ok, Cwd} = file:get_cwd(),
 
-	% absolute path
-	{ok, <<"/">>} = arweave_config_type:path(<<"/">>),
-	{ok, <<"/">>} = arweave_config_type:path("/"),
+    % absolute path
+    {ok, <<"/">>} = arweave_config_type:path(<<"/">>),
+    {ok, <<"/">>} = arweave_config_type:path("/"),
 
-	% relative path: convert automatically in absolute path
-	CwdBinary = list_to_binary(Cwd),
-	{ok, CwdBinary} = arweave_config_type:path(<<"./">>),
-	{ok, CwdBinary} = arweave_config_type:path("./").
+    % relative path: convert automatically in absolute path
+    CwdBinary = list_to_binary(Cwd),
+    {ok, CwdBinary} = arweave_config_type:path(<<"./">>),
+    {ok, CwdBinary} = arweave_config_type:path("./").
 
 tcp_port(_Config) ->
-	{ok, 0} = arweave_config_type:tcp_port(0),
-	{ok, 65535} = arweave_config_type:tcp_port(65535),
-	{ok, 1234} = arweave_config_type:tcp_port(1234),
-	{ok, 1234} = arweave_config_type:tcp_port("1234"),
-	{ok, 1234} = arweave_config_type:tcp_port(<<"1234">>),
-	{error, 78912} = arweave_config_type:tcp_port(<<"78912">>).
+    {ok, 0} = arweave_config_type:tcp_port(0),
+    {ok, 65535} = arweave_config_type:tcp_port(65535),
+    {ok, 1234} = arweave_config_type:tcp_port(1234),
+    {ok, 1234} = arweave_config_type:tcp_port("1234"),
+    {ok, 1234} = arweave_config_type:tcp_port(<<"1234">>),
+    {error, 78912} = arweave_config_type:tcp_port(<<"78912">>).
 
 file(_Config) ->
-	{ok, <<"/tmp/arweave.sock">>} =
-		arweave_config_type:file(<<"/tmp/arweave.sock">>),
+    {ok, <<"/tmp/arweave.sock">>} =
+        arweave_config_type:file(<<"/tmp/arweave.sock">>),
 
-	{ok, P1} =
-		arweave_config_type:file("./arweave.sock"),
-	true = is_binary(P1),
+    {ok, P1} =
+        arweave_config_type:file("./arweave.sock"),
+    true = is_binary(P1),
 
-	{error, _} =
-		arweave_config_type:file("/random/t/a/b/c.sock"),
+    {error, _} =
+        arweave_config_type:file("/random/t/a/b/c.sock"),
 
-	{error, _} =
-		arweave_config_type:file("/root/data/arweave.sock"),
+    {error, _} =
+        arweave_config_type:file("/root/data/arweave.sock"),
 
-	{error, _} =
-		arweave_config_type:file(1234),
+    {error, _} =
+        arweave_config_type:file(1234),
 
-	ok.
+    ok.
 
 logging_template(_Config) ->
-	{ok, ["test", "\n"]} =
-		arweave_config_type:logging_template("test"),
+    {ok, ["test", "\n"]} =
+        arweave_config_type:logging_template("test"),
 
-	{ok, ["test","\n"]} =
-		arweave_config_type:logging_template(<<"test">>),
+    {ok, ["test","\n"]} =
+        arweave_config_type:logging_template(<<"test">>),
 
-	{ok, [test,"\n"]} =
-		arweave_config_type:logging_template(<<"%test">>),
+    {ok, [test,"\n"]} =
+        arweave_config_type:logging_template(<<"%test">>),
 
-	{ok, ["message:", " ", test, "\n"]} =
-		arweave_config_type:logging_template("message: %test"),
+    {ok, ["message:", " ", test, "\n"]} =
+        arweave_config_type:logging_template("message: %test"),
 
-	{ok, ["message:%test","\n"]} =
-		arweave_config_type:logging_template("message:%test"),
+    {ok, ["message:%test","\n"]} =
+        arweave_config_type:logging_template("message:%test"),
 
-	{error, _} =
-		arweave_config_type:logging_template("%test!#&"),
+    {error, _} =
+        arweave_config_type:logging_template("%test!#&"),
 
-	{error, _} =
-		arweave_config_type:logging_template("%total_random_atom"),
+    {error, _} =
+        arweave_config_type:logging_template("%total_random_atom"),
 
-	ok.
+    ok.
 
 peer_id_ip_only(_Config) ->
-	?assertEqual({ok, {1,2,3,4,1984}},
-		arweave_config_type:peer_id(<<"1.2.3.4">>)),
-	?assertEqual({ok, {1,2,3,4,1984}},
-		arweave_config_type:peer_id("1.2.3.4")).
+    ?assertEqual({ok, {1,2,3,4,1984}},
+        arweave_config_type:peer_id(<<"1.2.3.4">>)),
+    ?assertEqual({ok, {1,2,3,4,1984}},
+        arweave_config_type:peer_id("1.2.3.4")).
 
 peer_id_ip_with_port(_Config) ->
-	?assertEqual({ok, {1,2,3,4,1984}},
-		arweave_config_type:peer_id({1,2,3,4,1984})),
-	?assertEqual({ok, {1,2,3,4,9999}},
-		arweave_config_type:peer_id({1,2,3,4,9999})).
+    ?assertEqual({ok, {1,2,3,4,1984}},
+        arweave_config_type:peer_id({1,2,3,4,1984})),
+    ?assertEqual({ok, {1,2,3,4,9999}},
+        arweave_config_type:peer_id({1,2,3,4,9999})).
 
 peer_id_hostname_only(_Config) ->
-	?assertEqual({ok, <<"myhost:1984">>},
-		arweave_config_type:peer_id(<<"myhost">>)),
-	?assertEqual({ok, <<"my-host.example.com:1984">>},
-		arweave_config_type:peer_id(<<"my-host.example.com">>)).
+    ?assertEqual({ok, <<"myhost:1984">>},
+        arweave_config_type:peer_id(<<"myhost">>)),
+    ?assertEqual({ok, <<"my-host.example.com:1984">>},
+        arweave_config_type:peer_id(<<"my-host.example.com">>)).
 
 peer_id_hostname_with_port(_Config) ->
-	?assertEqual({ok, <<"myhost:1984">>},
-		arweave_config_type:peer_id(<<"myhost:1984">>)),
-	?assertEqual({ok, <<"myhost:8080">>},
-		arweave_config_type:peer_id(<<"myhost:8080">>)).
+    ?assertEqual({ok, <<"myhost:1984">>},
+        arweave_config_type:peer_id(<<"myhost:1984">>)),
+    ?assertEqual({ok, <<"myhost:8080">>},
+        arweave_config_type:peer_id(<<"myhost:8080">>)).
 
 peer_id_ipv4_tuple(_Config) ->
-	?assertEqual({ok, {1,2,3,4,1984}},
-		arweave_config_type:peer_id({1, 2, 3, 4})),
-	?assertEqual({ok, {1,2,3,4,9999}},
-		arweave_config_type:peer_id({1, 2, 3, 4, 9999})).
+    ?assertEqual({ok, {1,2,3,4,1984}},
+        arweave_config_type:peer_id({1, 2, 3, 4})),
+    ?assertEqual({ok, {1,2,3,4,9999}},
+        arweave_config_type:peer_id({1, 2, 3, 4, 9999})).
 
 peer_id_ipv6_bracketed(_Config) ->
-	?assertEqual({ok, <<"[::1]:1984">>},
-		arweave_config_type:peer_id(<<"[::1]">>)),
-	?assertEqual({ok, <<"[::1]:9999">>},
-		arweave_config_type:peer_id(<<"[::1]:9999">>)).
+    ?assertEqual({ok, <<"[::1]:1984">>},
+        arweave_config_type:peer_id(<<"[::1]">>)),
+    ?assertEqual({ok, <<"[::1]:9999">>},
+        arweave_config_type:peer_id(<<"[::1]:9999">>)).
 
 %% Omitting the port yields the default-port form of the same peer.
 peer_id_default_port_collapses(_Config) ->
-	{ok, A} = arweave_config_type:peer_id(<<"1.2.3.4">>),
-	{ok, B} = arweave_config_type:peer_id({1,2,3,4,1984}),
-	?assertEqual(A, B).
+    {ok, A} = arweave_config_type:peer_id(<<"1.2.3.4">>),
+    {ok, B} = arweave_config_type:peer_id({1,2,3,4,1984}),
+    ?assertEqual(A, B).
 
 peer_id_distinct_ports_stay_distinct(_Config) ->
-	{ok, A} = arweave_config_type:peer_id({1,2,3,4,1984}),
-	{ok, B} = arweave_config_type:peer_id(<<"1.2.3.4:1985">>),
-	?assertNotEqual(A, B).
+    {ok, A} = arweave_config_type:peer_id({1,2,3,4,1984}),
+    {ok, B} = arweave_config_type:peer_id(<<"1.2.3.4:1985">>),
+    ?assertNotEqual(A, B).
 
 peer_id_invalid(_Config) ->
-	?assertMatch({error, _}, arweave_config_type:peer_id(<<>>)),
-	?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:bad_port">>)),
-	?assertMatch({error, _}, arweave_config_type:peer_id(<<"host with space">>)),
-	?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:99999">>)),
-	?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:-1">>)),
-	?assertMatch({error, _}, arweave_config_type:peer_id(123)).
+    ?assertMatch({error, _}, arweave_config_type:peer_id(<<>>)),
+    ?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:bad_port">>)),
+    ?assertMatch({error, _}, arweave_config_type:peer_id(<<"host with space">>)),
+    ?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:99999">>)),
+    ?assertMatch({error, _}, arweave_config_type:peer_id(<<"1.2.3.4:-1">>)),
+    ?assertMatch({error, _}, arweave_config_type:peer_id(123)).
 
 %% Eager list roles keep every address a hostname resolves to.
 resolved_peers_list_expands_multi_record(_Config) ->
-	?assertEqual({ok, [{1,1,1,1,1984}, {2,2,2,2,1984}]},
-		arweave_config_type:resolved_peers_list([<<"multi:1984">>])).
+    ?assertEqual({ok, [{1,1,1,1,1984}, {2,2,2,2,1984}]},
+        arweave_config_type:resolved_peers_list([<<"multi:1984">>])).
 
 %% Mirrors the legacy parser: an unresolvable entry is skipped with a
 %% warning, never fatal for the list — a stale DNS name must not stop
@@ -239,10 +241,10 @@ resolved_peers_list_skips_unresolvable(_Config) ->
 
 %% The singleton (cm_exit) keeps the first resolved address.
 resolved_peer_id_takes_first_record(_Config) ->
-	?assertEqual({ok, {1,1,1,1,1984}},
-		arweave_config_type:resolved_peer_id(<<"multi:1984">>)).
+    ?assertEqual({ok, {1,1,1,1,1984}},
+                 arweave_config_type:resolved_peer_id(<<"multi:1984">>)).
 
 %% The singleton stays strict, matching legacy bad_cm_exit_peer.
 resolved_peer_id_unresolvable_errors(_Config) ->
-	?assertMatch({error, _},
-		arweave_config_type:resolved_peer_id(<<"dead.example:1984">>)).
+    ?assertMatch({error, _},
+                 arweave_config_type:resolved_peer_id(<<"dead.example:1984">>)).

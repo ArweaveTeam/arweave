@@ -10,7 +10,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 suite() ->
-	[{timetrap, {seconds, 60}}].
+    [{timetrap, {seconds, 60}}].
 
 init_per_suite(Config) -> Config.
 

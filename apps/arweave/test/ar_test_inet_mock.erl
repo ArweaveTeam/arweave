@@ -11,16 +11,16 @@
 %% @end
 %%--------------------------------------------------------------------
 getaddrs("single.record.local", _) ->
-	{ok, [{127, 0, 0, 1}]};
+    {ok, [{127, 0, 0, 1}]};
 getaddrs("multi.record.local", _) ->
-	{ok, [
-		{127,0,0,2},
-		{127,0,0,3},
-		{127,0,0,4},
-		{127,0,0,5}
-	]};
+    {ok, [
+        {127,0,0,2},
+        {127,0,0,3},
+        {127,0,0,4},
+        {127,0,0,5}
+    ]};
 getaddrs("error.record.local", _) ->
-	{error, not_found};
+    {error, not_found};
 getaddrs(_, _) ->
-	{error, invalid}.
+    {error, invalid}.
 

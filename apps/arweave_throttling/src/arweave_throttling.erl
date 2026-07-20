@@ -33,13 +33,13 @@
 -behavior(application).
 
 -export([
-	start/0,
-	stop/0,
-	throttle/2,
-	is_throttled/2,
-	update_quota/3,
-	status/2,
-	reset/1
+    start/0,
+    stop/0,
+    throttle/2,
+    is_throttled/2,
+    update_quota/3,
+    status/2,
+    reset/1
 ]).
 
 -export([start/2, stop/1]).
@@ -55,18 +55,18 @@
 %% with its dependencies.
 -spec start() -> ok | {error, term()}.
 start() ->
-	case application:ensure_all_started(?MODULE, permanent) of
-		{ok, _Deps} -> ok;
-		Error ->
-			?LOG_ERROR([{event, arweave_throttling_start_error},
-						{error, Error}]),
-			Error
-	end.
+    case application:ensure_all_started(?MODULE, permanent) of
+        {ok, _Deps} -> ok;
+        Error ->
+            ?LOG_ERROR([{event, arweave_throttling_start_error},
+                        {error, Error}]),
+            Error
+    end.
 
 %% @doc Stop the application.
 -spec stop() -> ok.
 stop() ->
-	application:stop(?MODULE).
+    application:stop(?MODULE).
 
 %% @doc Blocking call: returns `ok' when the caller is allowed to
 %% issue an outgoing request to `Peer' for `Path'.
@@ -79,34 +79,34 @@ stop() ->
 %% `{error, throttle_receive_timeout}'.
 -spec throttle(tuple(), list()) -> ok | {error, term()}.
 throttle(Peer, Path) when is_tuple(Peer), is_list(Path) ->
-	case arweave_throttling_path:path_to_group_id(Peer, Path) of
-		{error, skip} ->
-			ok;
-		{error, unknown_key} ->
-			%% This is okay. We haven't seen requests for this {Peer, Path}, so
-			%% we wouldn't know how to throttle the requests - what group it
-			%% belongs to and what is the quota for that group.
-			%% This might allow requests through, and be rejected when the quota
-			%% is low and we are in a burst (like startups), but the worst thing
-			%% can happen is getting rejected by the remote peer.
-			%% Rejection is part of life. ¯\_(ツ)_/¯
-			ok;
-		{ok, GroupID} ->
-			arweave_throttling_group:throttle(GroupID, Peer)
-	end.
+    case arweave_throttling_path:path_to_group_id(Peer, Path) of
+        {error, skip} ->
+            ok;
+        {error, unknown_key} ->
+            %% This is okay. We haven't seen requests for this {Peer, Path}, so
+            %% we wouldn't know how to throttle the requests - what group it
+            %% belongs to and what is the quota for that group.
+            %% This might allow requests through, and be rejected when the quota
+            %% is low and we are in a burst (like startups), but the worst thing
+            %% can happen is getting rejected by the remote peer.
+            %% Rejection is part of life. ¯\_(ツ)_/¯
+            ok;
+        {ok, GroupID} ->
+            arweave_throttling_group:throttle(GroupID, Peer)
+    end.
 
 %% @doc Return true when this node should avoid selecting `Peer' for
 %% `Path' because its outbound quota is near exhaustion.
 -spec is_throttled(tuple(), list()) -> boolean().
 is_throttled(Peer, Path) when is_tuple(Peer), is_list(Path) ->
-	case arweave_throttling_path:path_to_group_id(Peer, Path) of
-		{error, skip} ->
-			false;
-		{error, _ } ->
-			false;
-		{ok, GroupID} ->
-			arweave_throttling_group:is_throttled(GroupID, Peer)
-	end.
+    case arweave_throttling_path:path_to_group_id(Peer, Path) of
+        {error, skip} ->
+            false;
+        {error, _ } ->
+            false;
+        {ok, GroupID} ->
+            arweave_throttling_group:is_throttled(GroupID, Peer)
+    end.
 
 %% @doc Non-blocking refresh of the peer's quota state.
 %%
@@ -128,143 +128,143 @@ is_throttled(Peer, Path) when is_tuple(Peer), is_list(Path) ->
 %% always take the value from the most recent update.
 -spec update_quota(tuple(), list(), map()) -> ok.
 update_quota(Peer, Path, Headers) when is_tuple(Peer),
-				        is_list(Path) ->
-	case arweave_throttling_http_headers:parse(Headers) of
-		{error, Reason} = E ->
-			%% Log with unknown group, and return, there is nothing to update.
-			%% and likely never was or will be. We assume the error is consistent,
-			%% as the peer runs an incompatible version.
-			log_update_error(Peer, Path, 'unknown', Reason),
-			E;
-		{ok, #{group_id := HeaderGroupID} = Quota} ->
-			%% Try to look up group ID for the Peer and Path.
-			case arweave_throttling_path:path_to_group_id(Peer, Path) of
-				{error, skip} ->
-					ok;
-				{error, unknown_key} ->
-					%% We received group quota information for a {Peer, Path} pair we
-					%% haven't seen before. GroupID might have been seen for other Paths
-					%% for this Peer.
-					case try_group_id_to_atom(Peer, HeaderGroupID) of
-						{error, Reason} = E ->
-							log_update_error(Peer, Path, 'unknown', Reason),
-							E;
-						{ok, HeaderGroupIDAtom} ->
-							%% Then we can look for the throttling group process.
-							case get_or_start_throttling_group_process(HeaderGroupIDAtom) of
-								{ok, Pid} when is_pid(Pid) ->
-									handle_update_group_id(Peer, Path, HeaderGroupIDAtom, Quota);
-								{error, Reason} = E ->
-									log_update_error(Peer, Path, HeaderGroupIDAtom, Reason),
-									E
-							end
-					end;
-				{ok, GroupID} ->
-					case HeaderGroupID =:= atom_to_binary(GroupID) of
-						true ->
-							handle_update_group_id(Peer, Path, GroupID, Quota);
-						false ->
-							E = {group_mismatch, GroupID, HeaderGroupID},
-							log_update_error(Peer, Path, 'unknown', E),
-							E
-					end
-			end
-	end.
+                        is_list(Path) ->
+    case arweave_throttling_http_headers:parse(Headers) of
+        {error, Reason} = E ->
+            %% Log with unknown group, and return, there is nothing to update.
+            %% and likely never was or will be. We assume the error is consistent,
+            %% as the peer runs an incompatible version.
+            log_update_error(Peer, Path, 'unknown', Reason),
+            E;
+        {ok, #{group_id := HeaderGroupID} = Quota} ->
+            %% Try to look up group ID for the Peer and Path.
+            case arweave_throttling_path:path_to_group_id(Peer, Path) of
+                {error, skip} ->
+                    ok;
+                {error, unknown_key} ->
+                    %% We received group quota information for a {Peer, Path} pair we
+                    %% haven't seen before. GroupID might have been seen for other Paths
+                    %% for this Peer.
+                    case try_group_id_to_atom(Peer, HeaderGroupID) of
+                        {error, Reason} = E ->
+                            log_update_error(Peer, Path, 'unknown', Reason),
+                            E;
+                        {ok, HeaderGroupIDAtom} ->
+                            %% Then we can look for the throttling group process.
+                            case get_or_start_throttling_group_process(HeaderGroupIDAtom) of
+                                {ok, Pid} when is_pid(Pid) ->
+                                    handle_update_group_id(Peer, Path, HeaderGroupIDAtom, Quota);
+                                {error, Reason} = E ->
+                                    log_update_error(Peer, Path, HeaderGroupIDAtom, Reason),
+                                    E
+                            end
+                    end;
+                {ok, GroupID} ->
+                    case HeaderGroupID =:= atom_to_binary(GroupID) of
+                        true ->
+                            handle_update_group_id(Peer, Path, GroupID, Quota);
+                        false ->
+                            E = {group_mismatch, GroupID, HeaderGroupID},
+                            log_update_error(Peer, Path, 'unknown', E),
+                            E
+                    end
+            end
+    end.
 
 %% @doc Return a snapshot of the throttler state for `Peer' in
 %% `GroupID': `total', `remaining', `reset_seconds', `queue_length',
 %% `last_update_ts'.
 -spec status(atom(), tuple()) -> {ok, map()} | {error, term()}.
 status(GroupID, Peer) when is_atom(GroupID), is_tuple(Peer) ->
-	arweave_throttling_group:status(GroupID, Peer).
+    arweave_throttling_group:status(GroupID, Peer).
 
 %% @doc Drop the per-peer state for `GroupID' and release any blocked
 %% callers with `ok'. Intended for tests and operational recovery.
 -spec reset(atom()) -> ok.
 reset(GroupID) when is_atom(GroupID) ->
-	arweave_throttling_group:reset(GroupID).
+    arweave_throttling_group:reset(GroupID).
 
 %% application behaviour callbacks
 start(_StartType, _StartArgs) ->
-	?LOG_INFO("arweave_throttling application starting"),
-	arweave_throttling_sup:start_link().
+    ?LOG_INFO("arweave_throttling application starting"),
+    arweave_throttling_sup:start_link().
 
 stop(_State) ->
-	?LOG_INFO("arweave_throttling application stopped"),
-	ok.
+    ?LOG_INFO("arweave_throttling application stopped"),
+    ok.
 
 %% Private
 try_group_id_to_atom(Peer, HeaderGroupID) ->
-	%% First let's check if we saw this GroupID for this Peer, perhaps
-	%% for other Paths.
-	case arweave_throttling_distinct_group:is_stored(Peer, HeaderGroupID) of
-		{ok, true} ->
-			%% Yes, It was seen before, so the atom is safe to use.
-			{ok, binary_to_atom(HeaderGroupID)};
-		{ok, false} ->
-			%% We limit the number of GroupIDs a peer can submit, to avoid
-			%% a malicious peer spamming new GroupIDs until we run out of
-			%% memory or possible atoms.
-			case arweave_throttling_distinct_group:distinct_count(Peer) of
-				{ok, Count} when Count >= ?DISTINCT_GROUP_ID_LIMIT ->
-					%% This is a problem, the Peer has posted too many GroupIDs.
-					%% We have to limit this number be, so we don't create too many atoms.
-					{too_many_groups, HeaderGroupID};
-				{error, _Reason} = E ->
-					E;
-				{ok, _Count} ->
-					%% Limit wasn't breached, it's a new GroupID, let's store it.
-					{ok, _} = arweave_throttling_distinct_group:insert(Peer, HeaderGroupID),
-					{ok, binary_to_atom(HeaderGroupID)}
-			end
-	end.
+    %% First let's check if we saw this GroupID for this Peer, perhaps
+    %% for other Paths.
+    case arweave_throttling_distinct_group:is_stored(Peer, HeaderGroupID) of
+        {ok, true} ->
+            %% Yes, It was seen before, so the atom is safe to use.
+            {ok, binary_to_atom(HeaderGroupID)};
+        {ok, false} ->
+            %% We limit the number of GroupIDs a peer can submit, to avoid
+            %% a malicious peer spamming new GroupIDs until we run out of
+            %% memory or possible atoms.
+            case arweave_throttling_distinct_group:distinct_count(Peer) of
+                {ok, Count} when Count >= ?DISTINCT_GROUP_ID_LIMIT ->
+                    %% This is a problem, the Peer has posted too many GroupIDs.
+                    %% We have to limit this number be, so we don't create too many atoms.
+                    {too_many_groups, HeaderGroupID};
+                {error, _Reason} = E ->
+                    E;
+                {ok, _Count} ->
+                    %% Limit wasn't breached, it's a new GroupID, let's store it.
+                    {ok, _} = arweave_throttling_distinct_group:insert(Peer, HeaderGroupID),
+                    {ok, binary_to_atom(HeaderGroupID)}
+            end
+    end.
 
 log_update_error(Peer, Path, GroupID, Reason) ->
-	ReasonStr = get_quota_error_reason(Reason),
-	log_unknown_reason(Peer, Path, GroupID, Reason, ReasonStr),
-	arweave_metrics:counter_inc(arweave_throttling_quota_update_error,
-						[atom_to_list(GroupID),
-							ReasonStr
-						]),
-	ok.
+    ReasonStr = get_quota_error_reason(Reason),
+    log_unknown_reason(Peer, Path, GroupID, Reason, ReasonStr),
+    arweave_metrics:counter_inc(arweave_throttling_quota_update_error,
+                                [atom_to_list(GroupID),
+                                 ReasonStr
+                                ]),
+    ok.
 
 handle_update_group_id(Peer, Path, GroupID, Quota) ->
-	PathKey = arweave_throttling_path:path_to_path_key(Path),
-	%% PathKey
-	arweave_throttling_router:update_path(Peer, PathKey, GroupID),
-	arweave_throttling_group:update_quota(GroupID, Peer, Quota).
+    PathKey = arweave_throttling_path:path_to_path_key(Path),
+    %% PathKey
+    arweave_throttling_router:update_path(Peer, PathKey, GroupID),
+    arweave_throttling_group:update_quota(GroupID, Peer, Quota).
 
 get_or_start_throttling_group_process(GroupID) ->
-	case whereis(arweave_throttling_group:registered_name(GroupID)) of
-		Pid when is_pid(Pid) ->
-			{ok, Pid};
-		_ ->
-			case arweave_throttling_sup:start_throttling_group(GroupID) of
-				{ok, Child} ->
-					{ok, Child};
-				{ok, Child, _Info} ->
-					{ok, Child};
-				{error, _Reason} = E ->
-					E
-			end
-	end.
+    case whereis(arweave_throttling_group:registered_name(GroupID)) of
+        Pid when is_pid(Pid) ->
+            {ok, Pid};
+        _ ->
+            case arweave_throttling_sup:start_throttling_group(GroupID) of
+                {ok, Child} ->
+                    {ok, Child};
+                {ok, Child, _Info} ->
+                    {ok, Child};
+                {error, _Reason} = E ->
+                    E
+            end
+    end.
 
 get_quota_error_reason(Reason) when is_atom(Reason) ->
-	atom_to_list(Reason);
+    atom_to_list(Reason);
 get_quota_error_reason({too_many_groups, _HeaderGroupID}) ->
-	"too_many_groups";
+    "too_many_groups";
 get_quota_error_reason({group_mismatch, _GroupID, _HeaderGroupID}) ->
-	"group_mismatch";
+    "group_mismatch";
 get_quota_error_reason({missing_header, _HeaderKey}) ->
-	"missing_header";
+    "missing_header";
 get_quota_error_reason(_) ->
-	"unexpected".
+    "unexpected".
 
 log_unknown_reason(Peer, Path, GroupID, Reason, "unexpected") ->
-	?LOG_ERROR([{event, update_quota_unexpected_error},
-				{reason, Reason},
-				{peer, Peer},
-				{path, Path},
-				{group_id, GroupID}]);
+    ?LOG_ERROR([{event, update_quota_unexpected_error},
+                {reason, Reason},
+                {peer, Peer},
+                {path, Path},
+                {group_id, GroupID}]);
 log_unknown_reason(_, _, _, _, _) ->
-	ok.
+    ok.

@@ -2,10 +2,10 @@
 -test_category([fast]).
 
 -export([get_overlap/1, id/1, label/1, address_label/2, module_address/1,
-		module_packing_difficulty/1, packing_label/1, get_by_id/1,
-		get_range/1, module_range/1, module_range/2, get_packing/1,
-		get/2, get_all/1, get_all/2, get_all/3,
-		has_any/1, has_range/2, get_cover/3, is_repack_in_place/1]).
+        module_packing_difficulty/1, packing_label/1, get_by_id/1,
+        get_range/1, module_range/1, module_range/2, get_packing/1,
+        get/2, get_all/1, get_all/2, get_all/3,
+        has_any/1, has_range/2, get_cover/3, is_repack_in_place/1]).
 
 -include_lib("arweave_config/include/arweave_config.hrl").
 
@@ -29,183 +29,183 @@
 -endif.
 
 -type storage_module() :: {integer(), integer(), {atom(), binary()}}
-						| {integer(), integer(), {atom(), binary(), integer()}}.
+                        | {integer(), integer(), {atom(), binary(), integer()}}.
 
 %%%===================================================================
 %%% Public interface.
 %%%===================================================================
 
 get_overlap({replica_2_9, _Addr}) ->
-	?REPLICA_2_9_OVERLAP;
+    ?REPLICA_2_9_OVERLAP;
 get_overlap(_Packing) ->
-	?OVERLAP.
+    ?OVERLAP.
 
 %% @doc Return the storage module identifier.
 id(?DEFAULT_MODULE) -> ?DEFAULT_MODULE;
 id({BucketSize, Bucket, Packing}) ->
-	PackingString =
-		case Packing of
-			{spora_2_6, Addr} ->
-				ar_util:encode(Addr);
-			{replica_2_9, Addr} ->
-				<< (ar_util:encode(Addr))/binary, ".replica.2.9" >>;
-			_ ->
-				atom_to_list(Packing)
-		end,
-	id(BucketSize, Bucket, PackingString).
+    PackingString =
+        case Packing of
+            {spora_2_6, Addr} ->
+                ar_util:encode(Addr);
+            {replica_2_9, Addr} ->
+                << (ar_util:encode(Addr))/binary, ".replica.2.9" >>;
+            _ ->
+                atom_to_list(Packing)
+        end,
+    id(BucketSize, Bucket, PackingString).
 
 %% @doc Return the obscure unique label for the given storage module.
 label(?DEFAULT_MODULE) ->
-	?DEFAULT_MODULE;
+    ?DEFAULT_MODULE;
 label(StoreID) ->
-	case ets:lookup(?MODULE, {label, StoreID}) of
-		[] ->
-			StorageModule = get_by_id(StoreID),
-			{BucketSize, Bucket, Packing} = StorageModule,
-			PackingLabel = packing_label(Packing),
-			Label = id(BucketSize, Bucket, PackingLabel),
-			ets:insert(?MODULE, {{label, StoreID}, Label}),
-			Label;
-		[{_, Label}] ->
-			Label
-	end.
+    case ets:lookup(?MODULE, {label, StoreID}) of
+        [] ->
+            StorageModule = get_by_id(StoreID),
+            {BucketSize, Bucket, Packing} = StorageModule,
+            PackingLabel = packing_label(Packing),
+            Label = id(BucketSize, Bucket, PackingLabel),
+            ets:insert(?MODULE, {{label, StoreID}, Label}),
+            Label;
+        [{_, Label}] ->
+            Label
+    end.
 
 %% @doc Return the obscure unique label for the given
 %% replica owner address + replica type pair.
 address_label(Addr, ReplicaType) ->
-	Key = {Addr, ReplicaType},
-	case ets:lookup(?MODULE, {address_label, Key}) of
-		[] ->
-			Label =
-				case ets:lookup(?MODULE, last_address_label) of
-					[] ->
-						1;
-					[{_, Counter}] ->
-						Counter + 1
-				end,
-			ets:insert(?MODULE, {{address_label, Key}, Label}),
-			ets:insert(?MODULE, {last_address_label, Label}),
-			integer_to_list(Label);
-		[{_, Label}] ->
-			integer_to_list(Label)
-	end.
+    Key = {Addr, ReplicaType},
+    case ets:lookup(?MODULE, {address_label, Key}) of
+        [] ->
+            Label =
+                case ets:lookup(?MODULE, last_address_label) of
+                    [] ->
+                        1;
+                    [{_, Counter}] ->
+                        Counter + 1
+                end,
+            ets:insert(?MODULE, {{address_label, Key}, Label}),
+            ets:insert(?MODULE, {last_address_label, Label}),
+            integer_to_list(Label);
+        [{_, Label}] ->
+            integer_to_list(Label)
+    end.
 
 -spec module_address(ar_storage_module:storage_module()) -> binary() | undefined.
 module_address({_, _, {spora_2_6, Addr}}) ->
-	Addr;
+    Addr;
 module_address({_, _, {replica_2_9, Addr}}) ->
-	Addr;
+    Addr;
 module_address(_StorageModule) ->
-	undefined.
+    undefined.
 
 -spec module_packing_difficulty(ar_storage_module:storage_module()) -> integer().
 module_packing_difficulty({_, _, {replica_2_9, _Addr}}) ->
-	?REPLICA_2_9_PACKING_DIFFICULTY;
+    ?REPLICA_2_9_PACKING_DIFFICULTY;
 module_packing_difficulty(_StorageModule) ->
-	0.
+    0.
 
 packing_label({spora_2_6, Addr}) ->
-	AddrLabel = ar_storage_module:address_label(Addr, spora_2_6),
-	list_to_atom("spora_2_6_" ++ AddrLabel);
+    AddrLabel = ar_storage_module:address_label(Addr, spora_2_6),
+    list_to_atom("spora_2_6_" ++ AddrLabel);
 packing_label({replica_2_9, Addr}) ->
-	AddrLabel = ar_storage_module:address_label(Addr, replica_2_9),
-	list_to_atom("replica_2_9_" ++ AddrLabel);
+    AddrLabel = ar_storage_module:address_label(Addr, replica_2_9),
+    list_to_atom("replica_2_9_" ++ AddrLabel);
 packing_label(Packing) ->
-	Packing.
+    Packing.
 
 %% @doc Return the storage module with the given identifier or not_found.
 %% Search across both attached modules and repacked in-place modules.
 get_by_id(?DEFAULT_MODULE) ->
-	?DEFAULT_MODULE;
+    ?DEFAULT_MODULE;
 get_by_id(Atom) when is_atom(Atom) ->
-	%% May be 'default' or an atom from the unit tests.
-	Atom;
+    %% May be 'default' or an atom from the unit tests.
+    Atom;
 get_by_id(ID) ->
-	StorageModules = storage_modules(),
-	RepackInPlace = repack_modules(),
-	RepackInPlaceModules = [element(1, El) || El <- RepackInPlace],
-	get_by_id(ID, StorageModules ++ RepackInPlaceModules).
+    StorageModules = storage_modules(),
+    RepackInPlace = repack_modules(),
+    RepackInPlaceModules = [element(1, El) || El <- RepackInPlace],
+    get_by_id(ID, StorageModules ++ RepackInPlaceModules).
 
 get_by_id(_ID, []) ->
-	not_found;
+    not_found;
 get_by_id(ID, [Module | Modules]) ->
-	case ar_storage_module:id(Module) == ID of
-		true ->
-			Module;
-		false ->
-			get_by_id(ID, Modules)
-	end.
+    case ar_storage_module:id(Module) == ID of
+        true ->
+            Module;
+        false ->
+            get_by_id(ID, Modules)
+    end.
 
 %% @doc Return {StartOffset, EndOffset} the given module is responsible for.
 get_range(?DEFAULT_MODULE) ->
-	{0, infinity};
+    {0, infinity};
 get_range(ID) ->
-	Module = get_by_id(ID),
-	case Module of
-		not_found ->
-			not_found;
-		_ ->
-			module_range(Module)
-	end.
+    Module = get_by_id(ID),
+    case Module of
+        not_found ->
+            not_found;
+        _ ->
+            module_range(Module)
+    end.
 
 -spec module_range(ar_storage_module:storage_module()) ->
-	{non_neg_integer(), non_neg_integer()}.
+    {non_neg_integer(), non_neg_integer()}.
 module_range(Module) ->
-	{_BucketSize, _Bucket, Packing} = Module,
-	module_range(Module, ar_storage_module:get_overlap(Packing)).
+    {_BucketSize, _Bucket, Packing} = Module,
+    module_range(Module, ar_storage_module:get_overlap(Packing)).
 
 module_range(Module, Overlap) ->
-	{BucketSize, Bucket, _Packing} = Module,
-	{BucketSize * Bucket, (Bucket + 1) * BucketSize + Overlap}.
+    {BucketSize, Bucket, _Packing} = Module,
+    {BucketSize * Bucket, (Bucket + 1) * BucketSize + Overlap}.
 
 %% @doc Return the packing configured for the given module.
 get_packing(?DEFAULT_MODULE) ->
-	unpacked;
+    unpacked;
 get_packing({_BucketSize, _Bucket, Packing}) ->
-	Packing;
+    Packing;
 get_packing(ID) ->
-	Module = get_by_id(ID),
-	case Module of
-		not_found ->
-			not_found;
-		_ ->
-			get_packing(Module)
-	end.
+    Module = get_by_id(ID),
+    case Module of
+        not_found ->
+            not_found;
+        _ ->
+            get_packing(Module)
+    end.
 
 %% @doc Return a configured storage module covering the given Offset, preferably
 %% with the given Packing. Return not_found if none is found.
 get(Offset, Packing) ->
-	get(Offset, Packing, storage_modules(), not_found).
+    get(Offset, Packing, storage_modules(), not_found).
 
 %% @doc Return the list of all configured storage modules covering the given Offset.
 get_all(Offset) ->
-	get_all2(Offset, storage_modules(), []).
+    get_all2(Offset, storage_modules(), []).
 
 %% @doc Return the list of configured storage modules whose ranges intersect
 %% the given interval.
 get_all(Start, End) ->
-	get_all(Start, End, storage_modules()).
+    get_all(Start, End, storage_modules()).
 
 %% @doc Return the list of storage modules chosen from the given list
 %% whose ranges intersect the given interval.
 get_all(Start, End, StorageModules) ->
-	get_all2(Start, End, StorageModules, []).
+    get_all2(Start, End, StorageModules, []).
 
 %% @doc Return true if the given Offset belongs to at least one storage module.
 has_any(Offset) ->
-	has_any(Offset, storage_modules()).
+    has_any(Offset, storage_modules()).
 
 %% @doc Return true if the given range is covered by the configured storage modules.
 has_range(Start, End) ->
-	StorageModules = storage_modules(),
-	case ets:lookup(?MODULE, unique_sorted_intervals) of
-		[] ->
-			Intervals = get_unique_sorted_intervals(StorageModules),
-			ets:insert(?MODULE, {unique_sorted_intervals, Intervals}),
-			has_range(Start, End, Intervals);
-		[{_, Intervals}] ->
-			has_range(Start, End, Intervals)
-	end.
+    StorageModules = storage_modules(),
+    case ets:lookup(?MODULE, unique_sorted_intervals) of
+        [] ->
+            Intervals = get_unique_sorted_intervals(StorageModules),
+            ets:insert(?MODULE, {unique_sorted_intervals, Intervals}),
+            has_range(Start, End, Intervals);
+        [{_, Intervals}] ->
+            has_range(Start, End, Intervals)
+    end.
 
 %% @doc Return the list of at least one {Start, End, StoreID} covering the given range
 %% or not_found. The given StoreID (may be none) has a higher chance to be picked in case
@@ -225,163 +225,163 @@ has_range(Start, End) ->
 %% 3. returns [{7, 10, sm1}, {10, 20, sm_2}, {20, 25, sm_3}]
 %% 4. returns [{7, 10, sm1}, {10, 20, sm_4}, {20, 25, sm_3}]
 get_cover(Start, End, MaybeModule) ->
-	StorageModules = storage_modules(),
-	SortedStorageModules = sort_storage_modules_by_left_bound(
-			StorageModules, MaybeModule),
-	case get_cover2(Start, End, SortedStorageModules) of
-		[] ->
-			not_found;
-		not_found ->
-			not_found;
-		Cover ->
-			Cover
-	end.
+    StorageModules = storage_modules(),
+    SortedStorageModules = sort_storage_modules_by_left_bound(
+            StorageModules, MaybeModule),
+    case get_cover2(Start, End, SortedStorageModules) of
+        [] ->
+            not_found;
+        not_found ->
+            not_found;
+        Cover ->
+            Cover
+    end.
 
 is_repack_in_place(ID) ->
-	lists:any(
-		fun({Module, _TargetPacking}) ->
-			ar_storage_module:id(Module) == ID
-		end,
-		repack_modules()).
+    lists:any(
+        fun({Module, _TargetPacking}) ->
+            ar_storage_module:id(Module) == ID
+        end,
+        repack_modules()).
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
 storage_modules() ->
-	[arweave_config:config_to_storage_module(M)
-		|| M <- arweave_config:get([storage_modules])].
+    [arweave_config:config_to_storage_module(M)
+        || M <- arweave_config:get([storage_modules])].
 
 repack_modules() ->
-	[arweave_config:config_to_repack_module(M)
-		|| M <- arweave_config:get([repack_modules])].
+    [arweave_config:config_to_repack_module(M)
+        || M <- arweave_config:get([repack_modules])].
 
 id(BucketSize, Bucket, PackingString) ->
-	case BucketSize == ar_block:partition_size() of
-		true ->
-			binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~s",
-					[Bucket, PackingString])));
-		false ->
-			binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~B_~s",
-					[BucketSize, Bucket, PackingString])))
-	end.
+    case BucketSize == ar_block:partition_size() of
+        true ->
+            binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~s",
+                    [Bucket, PackingString])));
+        false ->
+            binary_to_list(iolist_to_binary(io_lib:format("storage_module_~B_~B_~s",
+                    [BucketSize, Bucket, PackingString])))
+    end.
 
 get(Offset, Packing, [{BucketSize, Bucket, Packing2} | StorageModules], StorageModule) ->
-	case Offset =< BucketSize * Bucket
-			orelse Offset > BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing2) of
-		true ->
-			get(Offset, Packing, StorageModules, StorageModule);
-		false ->
-			case Packing == Packing2 of
-				true ->
-					{BucketSize, Bucket, Packing};
-				false ->
-					get(Offset, Packing, StorageModules, {BucketSize, Bucket, Packing})
-			end
-	end;
+    case Offset =< BucketSize * Bucket
+            orelse Offset > BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing2) of
+        true ->
+            get(Offset, Packing, StorageModules, StorageModule);
+        false ->
+            case Packing == Packing2 of
+                true ->
+                    {BucketSize, Bucket, Packing};
+                false ->
+                    get(Offset, Packing, StorageModules, {BucketSize, Bucket, Packing})
+            end
+    end;
 get(_Offset, _Packing, [], StorageModule) ->
-	StorageModule.
+    StorageModule.
 
 get_all2(Offset, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
-	case Offset =< BucketSize * Bucket
-			orelse Offset > BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing) of
-		true ->
-			get_all2(Offset, StorageModules, FoundModules);
-		false ->
-			get_all2(Offset, StorageModules, [StorageModule | FoundModules])
-	end;
+    case Offset =< BucketSize * Bucket
+            orelse Offset > BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing) of
+        true ->
+            get_all2(Offset, StorageModules, FoundModules);
+        false ->
+            get_all2(Offset, StorageModules, [StorageModule | FoundModules])
+    end;
 get_all2(_Offset, [], FoundModules) ->
-	FoundModules.
+    FoundModules.
 
 get_all2(Start, End, [{BucketSize, Bucket, Packing} = StorageModule | StorageModules], FoundModules) ->
-	case End =< BucketSize * Bucket
-			orelse Start >= BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing) of
-		true ->
-			get_all2(Start, End, StorageModules, FoundModules);
-		false ->
-			get_all2(Start, End, StorageModules, [StorageModule | FoundModules])
-	end;
+    case End =< BucketSize * Bucket
+            orelse Start >= BucketSize * (Bucket + 1) + ar_storage_module:get_overlap(Packing) of
+        true ->
+            get_all2(Start, End, StorageModules, FoundModules);
+        false ->
+            get_all2(Start, End, StorageModules, [StorageModule | FoundModules])
+    end;
 get_all2(_Start, _End, [], FoundModules) ->
-	FoundModules.
+    FoundModules.
 
 has_any(_Offset, []) ->
-	false;
+    false;
 has_any(Offset, [{BucketSize, Bucket, Packing} | StorageModules]) ->
-	case Offset > Bucket * BucketSize
-			andalso Offset =< (Bucket + 1) * BucketSize + ar_storage_module:get_overlap(Packing) of
-		true ->
-			true;
-		false ->
-			has_any(Offset, StorageModules)
-	end.
+    case Offset > Bucket * BucketSize
+            andalso Offset =< (Bucket + 1) * BucketSize + ar_storage_module:get_overlap(Packing) of
+        true ->
+            true;
+        false ->
+            has_any(Offset, StorageModules)
+    end.
 
 get_unique_sorted_intervals(StorageModules) ->
-	get_unique_sorted_intervals(StorageModules, ar_intervals:new()).
+    get_unique_sorted_intervals(StorageModules, ar_intervals:new()).
 
 get_unique_sorted_intervals([], Intervals) ->
-	[{Start, End} || {End, Start} <- ar_intervals:to_list(Intervals)];
+    [{Start, End} || {End, Start} <- ar_intervals:to_list(Intervals)];
 get_unique_sorted_intervals([{BucketSize, Bucket, _Packing} | StorageModules], Intervals) ->
-	End = (Bucket + 1) * BucketSize,
-	Start = Bucket * BucketSize,
-	get_unique_sorted_intervals(StorageModules, ar_intervals:add(Intervals, End, Start)).
+    End = (Bucket + 1) * BucketSize,
+    Start = Bucket * BucketSize,
+    get_unique_sorted_intervals(StorageModules, ar_intervals:add(Intervals, End, Start)).
 
 has_range(PartitionStart, PartitionEnd, _Intervals)
-		when PartitionStart >= PartitionEnd ->
-	true;
+        when PartitionStart >= PartitionEnd ->
+    true;
 has_range(_PartitionStart, _PartitionEnd, []) ->
-	false;
+    false;
 has_range(PartitionStart, _PartitionEnd, [{Start, _End} | _Intervals])
-		when PartitionStart < Start ->
-	%% The given intervals are unique and sorted.
-	false;
+        when PartitionStart < Start ->
+    %% The given intervals are unique and sorted.
+    false;
 has_range(PartitionStart, PartitionEnd, [{_Start, End} | Intervals])
-		when PartitionStart >= End ->
-	has_range(PartitionStart, PartitionEnd, Intervals);
+        when PartitionStart >= End ->
+    has_range(PartitionStart, PartitionEnd, Intervals);
 has_range(_PartitionStart, PartitionEnd, [{_Start, End} | Intervals]) ->
-	has_range(End, PartitionEnd, Intervals).
+    has_range(End, PartitionEnd, Intervals).
 
 sort_storage_modules_by_left_bound(StorageModules, MaybeModule) ->
-	lists:sort(
-		fun({BucketSize1, Bucket1, _} = M1, {BucketSize2, Bucket2, _} = M2) ->
-			Start1 = BucketSize1 * Bucket1,
-			Start2 = BucketSize2 * Bucket2,
-			case Start1 =< Start2 of
-				false ->
-					false;
-				true ->
-					case Start1 == Start2 of
-						true ->
-							M1 == MaybeModule orelse M2 /= MaybeModule;
-						false ->
-							true
-					end
-			end
-		end,
-		StorageModules
-	).
+    lists:sort(
+        fun({BucketSize1, Bucket1, _} = M1, {BucketSize2, Bucket2, _} = M2) ->
+            Start1 = BucketSize1 * Bucket1,
+            Start2 = BucketSize2 * Bucket2,
+            case Start1 =< Start2 of
+                false ->
+                    false;
+                true ->
+                    case Start1 == Start2 of
+                        true ->
+                            M1 == MaybeModule orelse M2 /= MaybeModule;
+                        false ->
+                            true
+                    end
+            end
+        end,
+        StorageModules
+    ).
 
 get_cover2(Start, End, _StorageModules)
-		when Start >= End ->
-	[];
+        when Start >= End ->
+    [];
 get_cover2(_Start, _End, []) ->
-	not_found;
+    not_found;
 get_cover2(Start, _End, [{BucketSize, Bucket, _Packing} | _StorageModules])
-		when BucketSize * Bucket > Start ->
-	not_found;
+        when BucketSize * Bucket > Start ->
+    not_found;
 get_cover2(Start, End, [{BucketSize, Bucket, _Packing} | StorageModules])
-		when BucketSize * Bucket + BucketSize =< Start ->
-	get_cover2(Start, End, StorageModules);
+        when BucketSize * Bucket + BucketSize =< Start ->
+    get_cover2(Start, End, StorageModules);
 get_cover2(Start, End, [{BucketSize, Bucket, _Packing} = StorageModule | StorageModules]) ->
-	Start2 = BucketSize * Bucket,
-	End2 = Start2 + BucketSize,
-	End3 = min(End, End2),
-	StoreID = ar_storage_module:id(StorageModule),
-	case get_cover2(End3, End, StorageModules) of
-		not_found ->
-			not_found;
-		List ->
-			[{Start, End3, StoreID} | List]
-	end.
+    Start2 = BucketSize * Bucket,
+    End2 = Start2 + BucketSize,
+    End3 = min(End, End2),
+    StoreID = ar_storage_module:id(StorageModule),
+    case get_cover2(End3, End, StorageModules) of
+        not_found ->
+            not_found;
+        List ->
+            [{Start, End3, StoreID} | List]
+    end.
 
 %%%===================================================================
 %%% Tests.
@@ -392,96 +392,96 @@ get_cover2(Start, End, [{BucketSize, Bucket, _Packing} = StorageModule | Storage
 -define(LABEL_TEST_ADDR_C, <<255, 255, 255, "label-test-c-cccccccccccccccc">>).
 
 label_test() ->
-	OldLabels = ets:match_object(?MODULE, {{label, '_'}, '_'}),
-	OldAddrLabels = ets:match_object(?MODULE, {{address_label, '_'}, '_'}),
-	OldLastLabel = ets:lookup(?MODULE, last_address_label),
-	ets:match_delete(?MODULE, {{label, '_'}, '_'}),
-	ets:match_delete(?MODULE, {{address_label, '_'}, '_'}),
-	ets:delete(?MODULE, last_address_label),
-	try
-		arweave_config:with_test_config(fun() ->
-			StorageModules = [
-				{ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_A}},
-				{ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_A}},
-				{ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_B}},
-				{524288, 3, {spora_2_6, ?LABEL_TEST_ADDR_B}},
-				{ar_block:partition_size(), 2, unpacked},
-				{ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_C}},
-				{524288, 2, {spora_2_6, ?LABEL_TEST_ADDR_C}}
-			],
-			ok = arweave_config:force_config(#{
-				[storage_modules] =>
-					[arweave_config:storage_module_to_config(M)
-						|| M <- StorageModules]
-			}),
-			?assertEqual("storage_module_0_spora_2_6_1",
-				label(id({ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_A}}))),
-			?assertEqual("storage_module_2_spora_2_6_1",
-				label(id({ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_A}}))),
-			?assertEqual("storage_module_0_spora_2_6_2",
-				label(id({ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_B}}))),
-			?assertEqual("storage_module_524288_3_spora_2_6_2",
-				label(id({524288, 3, {spora_2_6, ?LABEL_TEST_ADDR_B}}))),
-			?assertEqual("storage_module_2_unpacked",
-				label(id({ar_block:partition_size(), 2, unpacked}))),
-			%% force a _ in the encoded address
-			?assertEqual("storage_module_2_spora_2_6_3",
-				label(id({ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_C}}))),
-			?assertEqual("storage_module_524288_2_spora_2_6_3",
-				label(id({524288, 2, {spora_2_6, ?LABEL_TEST_ADDR_C}})))
-		end)
-	after
-		ets:match_delete(?MODULE, {{label, '_'}, '_'}),
-		ets:match_delete(?MODULE, {{address_label, '_'}, '_'}),
-		ets:delete(?MODULE, last_address_label),
-		ets:insert(?MODULE, OldLabels),
-		ets:insert(?MODULE, OldAddrLabels),
-		ets:insert(?MODULE, OldLastLabel)
-	end.
+    OldLabels = ets:match_object(?MODULE, {{label, '_'}, '_'}),
+    OldAddrLabels = ets:match_object(?MODULE, {{address_label, '_'}, '_'}),
+    OldLastLabel = ets:lookup(?MODULE, last_address_label),
+    ets:match_delete(?MODULE, {{label, '_'}, '_'}),
+    ets:match_delete(?MODULE, {{address_label, '_'}, '_'}),
+    ets:delete(?MODULE, last_address_label),
+    try
+        arweave_config:with_test_config(fun() ->
+            StorageModules = [
+                {ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_A}},
+                {ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_A}},
+                {ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_B}},
+                {524288, 3, {spora_2_6, ?LABEL_TEST_ADDR_B}},
+                {ar_block:partition_size(), 2, unpacked},
+                {ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_C}},
+                {524288, 2, {spora_2_6, ?LABEL_TEST_ADDR_C}}
+            ],
+            ok = arweave_config:force_config(#{
+                [storage_modules] =>
+                    [arweave_config:storage_module_to_config(M)
+                        || M <- StorageModules]
+            }),
+            ?assertEqual("storage_module_0_spora_2_6_1",
+                label(id({ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_A}}))),
+            ?assertEqual("storage_module_2_spora_2_6_1",
+                label(id({ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_A}}))),
+            ?assertEqual("storage_module_0_spora_2_6_2",
+                label(id({ar_block:partition_size(), 0, {spora_2_6, ?LABEL_TEST_ADDR_B}}))),
+            ?assertEqual("storage_module_524288_3_spora_2_6_2",
+                label(id({524288, 3, {spora_2_6, ?LABEL_TEST_ADDR_B}}))),
+            ?assertEqual("storage_module_2_unpacked",
+                label(id({ar_block:partition_size(), 2, unpacked}))),
+            %% force a _ in the encoded address
+            ?assertEqual("storage_module_2_spora_2_6_3",
+                label(id({ar_block:partition_size(), 2, {spora_2_6, ?LABEL_TEST_ADDR_C}}))),
+            ?assertEqual("storage_module_524288_2_spora_2_6_3",
+                label(id({524288, 2, {spora_2_6, ?LABEL_TEST_ADDR_C}})))
+        end)
+    after
+        ets:match_delete(?MODULE, {{label, '_'}, '_'}),
+        ets:match_delete(?MODULE, {{address_label, '_'}, '_'}),
+        ets:delete(?MODULE, last_address_label),
+        ets:insert(?MODULE, OldLabels),
+        ets:insert(?MODULE, OldAddrLabels),
+        ets:insert(?MODULE, OldLastLabel)
+    end.
 
 has_any_test() ->
-	?assertEqual(false, has_any(0, [])),
-	?assertEqual(false, has_any(0, [{10, 1, p}])),
-	?assertEqual(false, has_any(10, [{10, 1, p}])),
-	?assertEqual(true, has_any(11, [{10, 1, p}])),
-	?assertEqual(true, has_any(11, [{10, 1, {replica_2_9, a}}])),
-	?assertEqual(true, has_any(20 + ?OVERLAP, [{10, 1, p}])),
-	?assertEqual(true, has_any(20 + ?OVERLAP, [{10, 1, {replica_2_9, a}}])).
+    ?assertEqual(false, has_any(0, [])),
+    ?assertEqual(false, has_any(0, [{10, 1, p}])),
+    ?assertEqual(false, has_any(10, [{10, 1, p}])),
+    ?assertEqual(true, has_any(11, [{10, 1, p}])),
+    ?assertEqual(true, has_any(11, [{10, 1, {replica_2_9, a}}])),
+    ?assertEqual(true, has_any(20 + ?OVERLAP, [{10, 1, p}])),
+    ?assertEqual(true, has_any(20 + ?OVERLAP, [{10, 1, {replica_2_9, a}}])).
 
 get_unique_sorted_intervals_test() ->
-	?assertEqual([{0, 24}, {90, 120}],
-			get_unique_sorted_intervals([{10, 0, p}, {30, 3, p}, {20, 0, p}, {12, 1, p}])).
+    ?assertEqual([{0, 24}, {90, 120}],
+            get_unique_sorted_intervals([{10, 0, p}, {30, 3, p}, {20, 0, p}, {12, 1, p}])).
 
 has_range_test() ->
-	?assertEqual(false, has_range(0, 10, [])),
-	?assertEqual(false, has_range(0, 10, [{0, 9}])),
-	?assertEqual(true, has_range(0, 10, [{0, 10}])),
-	?assertEqual(true, has_range(0, 10, [{0, 11}])),
-	?assertEqual(true, has_range(0, 10, [{0, 9}, {9, 10}])),
-	?assertEqual(true, has_range(5, 10, [{0, 9}, {9, 10}])),
-	?assertEqual(true, has_range(5, 10, [{0, 2}, {2, 9}, {9, 10}])).
+    ?assertEqual(false, has_range(0, 10, [])),
+    ?assertEqual(false, has_range(0, 10, [{0, 9}])),
+    ?assertEqual(true, has_range(0, 10, [{0, 10}])),
+    ?assertEqual(true, has_range(0, 10, [{0, 11}])),
+    ?assertEqual(true, has_range(0, 10, [{0, 9}, {9, 10}])),
+    ?assertEqual(true, has_range(5, 10, [{0, 9}, {9, 10}])),
+    ?assertEqual(true, has_range(5, 10, [{0, 2}, {2, 9}, {9, 10}])).
 
 sort_storage_modules_by_left_bound_test() ->
-	?assertEqual([], sort_storage_modules_by_left_bound([], none)),
-	?assertEqual([{1, 0, p}], sort_storage_modules_by_left_bound([{1, 0, p}], none)),
-	?assertEqual([{10, 0, p}, {10, 1, p}, {10, 2, p}],
-			sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 2, p}], none)),
-	?assertEqual([{10, 0, p}, {7, 1, p}, {10, 1, p}, {10, 2, p}],
-			sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 2, p},
-					{7, 1, p}], none)),
-	?assertEqual([{10, 0, p}, {10, 1, p}, {10, 1, p2}],
-			sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 1, p2}], none)),
-	?assertEqual([{10, 0, p}, {10, 1, p2}, {10, 1, p}],
-			sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 1, p2}],
-					{10, 1, p2})).
+    ?assertEqual([], sort_storage_modules_by_left_bound([], none)),
+    ?assertEqual([{1, 0, p}], sort_storage_modules_by_left_bound([{1, 0, p}], none)),
+    ?assertEqual([{10, 0, p}, {10, 1, p}, {10, 2, p}],
+            sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 2, p}], none)),
+    ?assertEqual([{10, 0, p}, {7, 1, p}, {10, 1, p}, {10, 2, p}],
+            sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 2, p},
+                    {7, 1, p}], none)),
+    ?assertEqual([{10, 0, p}, {10, 1, p}, {10, 1, p2}],
+            sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 1, p2}], none)),
+    ?assertEqual([{10, 0, p}, {10, 1, p2}, {10, 1, p}],
+            sort_storage_modules_by_left_bound([{10, 1, p}, {10, 0, p}, {10, 1, p2}],
+                    {10, 1, p2})).
 
 get_cover2_test() ->
-	?assertEqual(not_found, get_cover2(0, 1, [])),
-	?assertEqual([{0, 1, "storage_module_1_0_p"}], get_cover2(0, 1, [{1, 0, p}])),
-	?assertEqual([{0, 1, "storage_module_1_0_p"}, {1, 2, "storage_module_1_1_p"}],
-			get_cover2(0, 2, [{1, 0, p}, {1, 1, p}])),
-	?assertEqual(not_found, get_cover2(0, 2, [{1, 0, p}, {1, 2, p}])),
-	?assertEqual([{0, 2, "storage_module_2_0_p"}],
-			get_cover2(0, 2, [{2, 0, p}, {1, 0, p}])),
-	?assertEqual([{0, 2, "storage_module_2_0_p"}, {2, 3, "storage_module_3_0_p"}],
-			get_cover2(0, 3, [{2, 0, p}, {3, 0, p}])).
+    ?assertEqual(not_found, get_cover2(0, 1, [])),
+    ?assertEqual([{0, 1, "storage_module_1_0_p"}], get_cover2(0, 1, [{1, 0, p}])),
+    ?assertEqual([{0, 1, "storage_module_1_0_p"}, {1, 2, "storage_module_1_1_p"}],
+            get_cover2(0, 2, [{1, 0, p}, {1, 1, p}])),
+    ?assertEqual(not_found, get_cover2(0, 2, [{1, 0, p}, {1, 2, p}])),
+    ?assertEqual([{0, 2, "storage_module_2_0_p"}],
+            get_cover2(0, 2, [{2, 0, p}, {1, 0, p}])),
+    ?assertEqual([{0, 2, "storage_module_2_0_p"}, {2, 3, "storage_module_3_0_p"}],
+            get_cover2(0, 3, [{2, 0, p}, {3, 0, p}])).

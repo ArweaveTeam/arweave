@@ -15,17 +15,17 @@
 
 %% The mainnet name. Does not change at the hard forks.
 -ifndef(NETWORK_NAME).
-	-ifdef(AR_TEST).
-		-define(NETWORK_NAME, "arweave.localtest").
-	-else.
-		-define(NETWORK_NAME, "arweave.N.1").
-	-endif.
+-ifdef(AR_TEST).
+-define(NETWORK_NAME, "arweave.localtest").
+-else.
+-define(NETWORK_NAME, "arweave.N.1").
+-endif.
 -endif.
 
 %% When a request is received without specifing the X-Network header, this network name
 %% is assumed.
 -ifndef(DEFAULT_NETWORK_NAME).
-	-define(DEFAULT_NETWORK_NAME, "arweave.N.1").
+-define(DEFAULT_NETWORK_NAME, "arweave.N.1").
 -endif.
 
 %% The current release number of the arweave client software.
@@ -36,14 +36,14 @@
 -define(RELEASE_NUMBER, 93).
 
 -define(DEFAULT_REQUEST_HEADERS,
-	[
-		{<<"X-Network">>, ?NETWORK_NAME},
-		{<<"X-Version">>, <<"8">>},
-		{<<"X-Block-Format">>, <<"3">>}
-	]).
+        [
+         {<<"X-Network">>, ?NETWORK_NAME},
+         {<<"X-Version">>, <<"8">>},
+         {<<"X-Block-Format">>, <<"3">>}
+        ]).
 
 -define(CORS_HEADERS,
-	#{<<"access-control-allow-origin">> => <<"*">>}).
+        #{<<"access-control-allow-origin">> => <<"*">>}).
 
 -ifdef(FORKS_RESET).
 -define(FORK_1_6, 0).
@@ -329,7 +329,7 @@
 
 %% The size of a unit sub-chunk in a packed chunk.
 -define(SUB_CHUNK_SIZE,
-		(?DATA_CHUNK_SIZE div ?SUB_CHUNK_COUNT)).
+        (?DATA_CHUNK_SIZE div ?SUB_CHUNK_COUNT)).
 
 
 %% Maximum size of a `data_path`, in bytes.
@@ -369,384 +369,384 @@
 
 %% @doc A chunk with the proofs of its presence in the weave at a particular offset.
 -record(poa, {
-	%% DEPRECATED. Not used since the fork 2.4.
-	option = 1,
-	%% The path through the Merkle tree of transactions' "data_root"s.
-	%% Proofs the inclusion of the "data_root" in the corresponding "tx_root"
-	%% under the particular offset.
-	tx_path = <<>>,
-	%% The path through the Merkle tree of the identifiers of the chunks
-	%% of the corresponding transaction. Proofs the inclusion of the chunk
-	%% in the corresponding "data_root" under a particular offset.
-	data_path = <<>>,
-	%% When packing difficulty is 0 chunk stores a full ?DATA_CHUNK_SIZE-sized packed chunk.
-	%% When packing difficulty >= 1, chunk stores a ?SUB_CHUNK_SIZE-sized
-	%% packed sub-chunk.
-	chunk = <<>>,
-	%% When packing difficulty is 0 unpacked_chunk is <<>>.
-	%% When packing difficulty >= 1, unpacked_chunk stores a full 0-padded
-	%% ?DATA_CHUNK_SIZE-sized unpacked chunk.
-	unpacked_chunk = <<>>
-}).
+              %% DEPRECATED. Not used since the fork 2.4.
+              option = 1,
+              %% The path through the Merkle tree of transactions' "data_root"s.
+              %% Proofs the inclusion of the "data_root" in the corresponding "tx_root"
+              %% under the particular offset.
+              tx_path = <<>>,
+              %% The path through the Merkle tree of the identifiers of the chunks
+              %% of the corresponding transaction. Proofs the inclusion of the chunk
+              %% in the corresponding "data_root" under a particular offset.
+              data_path = <<>>,
+              %% When packing difficulty is 0 chunk stores a full ?DATA_CHUNK_SIZE-sized packed chunk.
+              %% When packing difficulty >= 1, chunk stores a ?SUB_CHUNK_SIZE-sized
+              %% packed sub-chunk.
+              chunk = <<>>,
+              %% When packing difficulty is 0 unpacked_chunk is <<>>.
+              %% When packing difficulty >= 1, unpacked_chunk stores a full 0-padded
+              %% ?DATA_CHUNK_SIZE-sized unpacked chunk.
+              unpacked_chunk = <<>>
+             }).
 
 %% @doc The information which simplifies validation of the nonce limiting procedures.
 -record(nonce_limiter_info, {
-	%% The output of the latest step - the source of the entropy for the mining nonces.
-	output = <<>>,
-	%% The output of the latest step of the previous block.
-	prev_output = <<>>,
-	%% The hash of the latest block mined below the current reset line.
-	seed = <<>>,
-	%% The hash of the latest block mined below the future reset line.
-	next_seed = <<>>,
-	%% The weave size of the latest block mined below the current reset line.
-	partition_upper_bound = 0,
-	%% The weave size of the latest block mined below the future reset line.
-	next_partition_upper_bound = 0,
-	%% The global sequence number of the nonce limiter step at which the block was found.
-	global_step_number = 1,
-	%% ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints from the most recent step in the nonce
-	%% limiter process.
-	last_step_checkpoints = [],
-	%% A list of the output of each step of the nonce limiting process. Note: each step
-	%% has ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints, the last of which is that step's output.
-	steps = [],
+                             %% The output of the latest step - the source of the entropy for the mining nonces.
+                             output = <<>>,
+                             %% The output of the latest step of the previous block.
+                             prev_output = <<>>,
+                             %% The hash of the latest block mined below the current reset line.
+                             seed = <<>>,
+                             %% The hash of the latest block mined below the future reset line.
+                             next_seed = <<>>,
+                             %% The weave size of the latest block mined below the current reset line.
+                             partition_upper_bound = 0,
+                             %% The weave size of the latest block mined below the future reset line.
+                             next_partition_upper_bound = 0,
+                             %% The global sequence number of the nonce limiter step at which the block was found.
+                             global_step_number = 1,
+                             %% ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints from the most recent step in the nonce
+                             %% limiter process.
+                             last_step_checkpoints = [],
+                             %% A list of the output of each step of the nonce limiting process. Note: each step
+                             %% has ?VDF_CHECKPOINT_COUNT_IN_STEP checkpoints, the last of which is that step's output.
+                             steps = [],
 
-	%% The fields added at the fork 2.7
+                             %% The fields added at the fork 2.7
 
-	%% The number of SHA2-256 iterations in a single VDF checkpoint. The protocol aims to keep the
-	%% checkoint calculation time to around 40ms by varying this paramter. Note: there are
-	%% 25 checkpoints in a single VDF step - so the protocol aims to keep the step calculation at
-	%% 1 second by varying this parameter.
-	vdf_difficulty = ?INITIAL_VDF_DIFFICULTY,
-	%% The VDF difficulty scheduled for to be applied after the next VDF reset line.
-	next_vdf_difficulty = ?INITIAL_VDF_DIFFICULTY
-}).
+                             %% The number of SHA2-256 iterations in a single VDF checkpoint. The protocol aims to keep the
+                             %% checkoint calculation time to around 40ms by varying this paramter. Note: there are
+                             %% 25 checkpoints in a single VDF step - so the protocol aims to keep the step calculation at
+                             %% 1 second by varying this parameter.
+                             vdf_difficulty = ?INITIAL_VDF_DIFFICULTY,
+                             %% The VDF difficulty scheduled for to be applied after the next VDF reset line.
+                             next_vdf_difficulty = ?INITIAL_VDF_DIFFICULTY
+                            }).
 
 %% @doc A VDF session.
 -record(vdf_session, {
-	step_number,
-	seed,
-	step_checkpoints_map = #{},
-	steps,
-	prev_session_key,
-	upper_bound,
-	next_upper_bound,
-	vdf_difficulty,
-	next_vdf_difficulty
-}).
+                      step_number,
+                      seed,
+                      step_checkpoints_map = #{},
+                      steps,
+                      prev_session_key,
+                      upper_bound,
+                      next_upper_bound,
+                      vdf_difficulty,
+                      next_vdf_difficulty
+                     }).
 
 %% @doc The format of the nonce limiter update provided by the configured trusted peer.
 -record(nonce_limiter_update, {
-	session_key,
-	session,
-	is_partial = true
-}).
+                               session_key,
+                               session,
+                               is_partial = true
+                              }).
 
 %% @doc The format of the response to nonce limiter updates by configured trusted peers.
 -record(nonce_limiter_update_response, {
-	session_found = true,
-	step_number,
-	postpone = 0,
-	format = 2
-}).
+                                        session_found = true,
+                                        step_number,
+                                        postpone = 0,
+                                        format = 2
+                                       }).
 
 %% @doc A compact announcement of a new block gossiped to peers. Peers
 %% who have not received this block yet and decide to receive it from us,
 %% should reply with a #block_announcement_response.
 -record(block_announcement, {
-	indep_hash,
-	previous_block,
-	recall_byte,
-	tx_prefixes = [], % 8 byte prefixes of transaction identifiers.
-	recall_byte2,
-	solution_hash
-}).
+                             indep_hash,
+                             previous_block,
+                             recall_byte,
+                             tx_prefixes = [], % 8 byte prefixes of transaction identifiers.
+                             recall_byte2,
+                             solution_hash
+                            }).
 
 %% @doc A reply to a block announcement when we are willing to receive this
 %% block from the announcing peer.
 -record(block_announcement_response, {
-	missing_chunk = false,
-	missing_tx_indices = [], % Missing transactions' indices, 0 =<, =< 999.
-	missing_chunk2
-}).
+                                      missing_chunk = false,
+                                      missing_tx_indices = [], % Missing transactions' indices, 0 =<, =< 999.
+                                      missing_chunk2
+                                     }).
 
 %% @doc A block (txs is a list of tx records) or a block shadow (txs is a list of
 %% transaction identifiers).
 -record(block, {
-	%% The nonce chosen to solve the mining problem.
-	nonce,
-	%% `indep_hash` of the previous block in the weave.
-	previous_block = <<>>,
-	%% POSIX time of block discovery.
-	timestamp,
-	%% POSIX time of the last difficulty retarget.
-	last_retarget,
-	%% Mining difficulty, the number `hash` must be greater than.
-	diff,
-	height = 0,
-	%% Mining solution hash.
-	hash = <<>>,
-	%% The block identifier.
-	indep_hash,
-	%% The list of transaction identifiers or transactions (tx records).
-	txs = [],
-	%% The Merkle root of the tree of Merkle roots of block's transactions' data.
-	tx_root = <<>>,
-	%% The Merkle tree of Merkle roots of block's transactions' data. Used internally,
-	%% not gossiped.
-	tx_tree = [],
-	%% Deprecated. Not used, not gossiped.
-	hash_list = unset,
-	%% The Merkle root of the block index - the list of
-	%% {`indep_hash`, `weave_size`, `tx_root`} triplets describing the past blocks
-	%% excluding this one.
-	hash_list_merkle = <<>>,
-	%% The root hash of the Merkle Patricia Tree containing all wallet (account) balances and
-	%% the identifiers of the last transactions posted by them, if any
-	wallet_list,
-	%% The mining address. Before the fork 2.6, either the atom 'unclaimed' or
-	%% a SHA2-256 hash of the RSA PSS public key. In 2.6, 'unclaimed' is not supported.
-    reward_addr = unclaimed,
-	%% Miner-specified tags (a list of strings) to store with the block.
-    tags = [],
-	%% The number of Winston in the endowment pool.
-	reward_pool,
-	%% The total number of bytes whose storage is incentivized.
-	weave_size,
-	%% The total number of bytes added to the storage incentivization by this block.
-	block_size,
-	%% The sum of the average number of hashes computed by the network to produce the past
-	%% blocks including this one.
-	cumulative_diff,
-	%% The list of {{`tx_id`, `data_root`}, `offset`} pairs. Used internally, not gossiped.
-	size_tagged_txs = unset,
-	%% The first proof of access.
-	poa = #poa{},
-	%% The estimated USD to AR conversion rate used in the pricing calculations.
-	%% A tuple {Dividend, Divisor}.
-	%% Used until the transition to the new fee calculation method is complete.
-	usd_to_ar_rate,
-	%% The estimated USD to AR conversion rate scheduled to be used a bit later, used to
-	%% compute the necessary fee for the currently signed txs. A tuple {Dividend, Divisor}.
-	%% Used until the transition to the new fee calculation method is complete.
-	scheduled_usd_to_ar_rate,
-	%% The offset on the weave separting the data which has to be packed for mining after the
-	%% fork 2.5 from the data which does not have to be packed yet. It is set to the
-	%% weave_size of the 50th previous block at the hard fork block and moves down at a speed
-	%% of ?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND chunks/s. The motivation behind the
-	%% threshold is a smooth transition to the new algorithm - big miners who might not want
-	%% to adopt the new algorithm are still incentivized to upgrade and stay in the network
-	%% for some time.
-	packing_2_5_threshold,
-	%% The offset on the weave separating the data which has to be split according to the
-	%% stricter rules introduced in the fork 2.5 from the historical data. The new rules
-	%% require all chunk sizes to be 256 KiB excluding the last or the only chunks of the
-	%% corresponding transactions and the second last chunks of their transactions where they
-	%% exceed 256 KiB in size when combined with the following (last) chunk. Furthermore, the
-	%% new chunks may not be smaller than their Merkle proofs unless they are the last chunks.
-	%% The motivation is to be able to put all chunks into 256 KiB buckets. It makes all
-	%% chunks equally attractive because they have equal chances of being chosen as recall
-	%% chunks. Moreover, every chunk costs the same in terms of storage and computation
-	%% expenditure when packed (smaller chunks are simply padded before packing).
-	strict_data_split_threshold,
-	%% Used internally by tests.
-	account_tree,
+                %% The nonce chosen to solve the mining problem.
+                nonce,
+                %% `indep_hash` of the previous block in the weave.
+                previous_block = <<>>,
+                %% POSIX time of block discovery.
+                timestamp,
+                %% POSIX time of the last difficulty retarget.
+                last_retarget,
+                %% Mining difficulty, the number `hash` must be greater than.
+                diff,
+                height = 0,
+                %% Mining solution hash.
+                hash = <<>>,
+                %% The block identifier.
+                indep_hash,
+                %% The list of transaction identifiers or transactions (tx records).
+                txs = [],
+                %% The Merkle root of the tree of Merkle roots of block's transactions' data.
+                tx_root = <<>>,
+                %% The Merkle tree of Merkle roots of block's transactions' data. Used internally,
+                %% not gossiped.
+                tx_tree = [],
+                %% Deprecated. Not used, not gossiped.
+                hash_list = unset,
+                %% The Merkle root of the block index - the list of
+                %% {`indep_hash`, `weave_size`, `tx_root`} triplets describing the past blocks
+                %% excluding this one.
+                hash_list_merkle = <<>>,
+                %% The root hash of the Merkle Patricia Tree containing all wallet (account) balances and
+                %% the identifiers of the last transactions posted by them, if any
+                wallet_list,
+                %% The mining address. Before the fork 2.6, either the atom 'unclaimed' or
+                %% a SHA2-256 hash of the RSA PSS public key. In 2.6, 'unclaimed' is not supported.
+                reward_addr = unclaimed,
+                %% Miner-specified tags (a list of strings) to store with the block.
+                tags = [],
+                %% The number of Winston in the endowment pool.
+                reward_pool,
+                %% The total number of bytes whose storage is incentivized.
+                weave_size,
+                %% The total number of bytes added to the storage incentivization by this block.
+                block_size,
+                %% The sum of the average number of hashes computed by the network to produce the past
+                %% blocks including this one.
+                cumulative_diff,
+                %% The list of {{`tx_id`, `data_root`}, `offset`} pairs. Used internally, not gossiped.
+                size_tagged_txs = unset,
+                %% The first proof of access.
+                poa = #poa{},
+                %% The estimated USD to AR conversion rate used in the pricing calculations.
+                %% A tuple {Dividend, Divisor}.
+                %% Used until the transition to the new fee calculation method is complete.
+                usd_to_ar_rate,
+                %% The estimated USD to AR conversion rate scheduled to be used a bit later, used to
+                %% compute the necessary fee for the currently signed txs. A tuple {Dividend, Divisor}.
+                %% Used until the transition to the new fee calculation method is complete.
+                scheduled_usd_to_ar_rate,
+                %% The offset on the weave separting the data which has to be packed for mining after the
+                %% fork 2.5 from the data which does not have to be packed yet. It is set to the
+                %% weave_size of the 50th previous block at the hard fork block and moves down at a speed
+                %% of ?PACKING_2_5_THRESHOLD_CHUNKS_PER_SECOND chunks/s. The motivation behind the
+                %% threshold is a smooth transition to the new algorithm - big miners who might not want
+                %% to adopt the new algorithm are still incentivized to upgrade and stay in the network
+                %% for some time.
+                packing_2_5_threshold,
+                %% The offset on the weave separating the data which has to be split according to the
+                %% stricter rules introduced in the fork 2.5 from the historical data. The new rules
+                %% require all chunk sizes to be 256 KiB excluding the last or the only chunks of the
+                %% corresponding transactions and the second last chunks of their transactions where they
+                %% exceed 256 KiB in size when combined with the following (last) chunk. Furthermore, the
+                %% new chunks may not be smaller than their Merkle proofs unless they are the last chunks.
+                %% The motivation is to be able to put all chunks into 256 KiB buckets. It makes all
+                %% chunks equally attractive because they have equal chances of being chosen as recall
+                %% chunks. Moreover, every chunk costs the same in terms of storage and computation
+                %% expenditure when packed (smaller chunks are simply padded before packing).
+                strict_data_split_threshold,
+                %% Used internally by tests.
+                account_tree,
 
-	%%
-	%% The fields below were added at the fork 2.6.
-	%%
+                %%
+                %% The fields below were added at the fork 2.6.
+                %%
 
-	%% A part of the solution hash preimage. Used for the initial solution validation
-	%% without a data chunk.
-	hash_preimage = <<>>,
-	%% The absolute recall offset.
-	recall_byte,
-	%% The total amount of winston the miner receives for this block.
-	reward = 0,
-	%% The solution hash of the previous block.
-	previous_solution_hash = <<>>,
-	%% The sequence number of the mining partition where the block was found.
-	partition_number,
-	%% The nonce limiter information.
-	nonce_limiter_info = #nonce_limiter_info{},
-	%% The second proof of access (empty when the solution was found with only one chunk).
-	poa2 = #poa{},
-	%% The absolute second recall offset.
-	recall_byte2,
-	%% The block signature.
-	signature = <<>>,
-	%% {KeyType, PubKey} - the public key the block was signed with.
-	%% The only supported KeyType is currently {rsa, 65537}.
-	reward_key,
-	%% The estimated number of Winstons it costs the network to store one gibibyte
-	%% for one minute.
-	price_per_gib_minute = 0,
-	%% The updated estimation of the number of Winstons it costs the network to store
-	%% one gibibyte for one minute.
-	scheduled_price_per_gib_minute = 0,
-	%% The recursive hash of the network hash rates, block rewards, mining addresses,
-	%% and denominations.
-	%% Note that the length of the reward history has increased from
-	%% ?LEGACY_REWARD_HISTORY_BLOCKS to ?REWARD_HISTORY_BLOCKS in 2.8.
-	%% Before 2.8 every new hash was computed over the latest ?REWARD_HISTORY_BLOCKS.
-	%% After 2.8 the new hash is computed from the new history element and the previous hash.
-	reward_history_hash,
-	%% The network hash rates, block rewards, and mining addresses from the latest
-	%% ?REWARD_HISTORY_BLOCKS + ar_block:get_consensus_window_size() blocks. Used internally, not gossiped.
-	reward_history = [],
-	%% The total number of Winston emitted when the endowment was not sufficient
-	%% to compensate mining.
-	debt_supply = 0,
-	%% An additional multiplier for the transaction fees doubled every time the
-	%% endowment pool becomes empty.
-	kryder_plus_rate_multiplier = 1,
-	%% A lock controlling the updates of kryder_plus_rate_multiplier. It is set to 1
-	%% after the update and back to 0 when the endowment pool is bigger than
-	%% ?RESET_KRYDER_PLUS_LATCH_THRESHOLD (redenominated according to the denomination
-	%% used at the time).
-	kryder_plus_rate_multiplier_latch = 0,
-	%% The code for the denomination of AR in base units.
-	%% 1 is the default which corresponds to the original denomination of 1^12 base units.
-	%% Every time the available supply falls below ?REDENOMINATION_THRESHOLD,
-	%% the denomination is multiplied by 1000, the code is incremented.
-	%% Transaction denomination code must not exceed the block's denomination code.
-	denomination = 1,
-	%% The biggest known redenomination height (0 means there were no redenominations yet).
-	redenomination_height = 0,
-	%% The proof of signing the same block several times or extending two equal forks.
-	double_signing_proof,
-	%% The cumulative difficulty of the previous block.
-	previous_cumulative_diff = 0,
+                %% A part of the solution hash preimage. Used for the initial solution validation
+                %% without a data chunk.
+                hash_preimage = <<>>,
+                %% The absolute recall offset.
+                recall_byte,
+                %% The total amount of winston the miner receives for this block.
+                reward = 0,
+                %% The solution hash of the previous block.
+                previous_solution_hash = <<>>,
+                %% The sequence number of the mining partition where the block was found.
+                partition_number,
+                %% The nonce limiter information.
+                nonce_limiter_info = #nonce_limiter_info{},
+                %% The second proof of access (empty when the solution was found with only one chunk).
+                poa2 = #poa{},
+                %% The absolute second recall offset.
+                recall_byte2,
+                %% The block signature.
+                signature = <<>>,
+                %% {KeyType, PubKey} - the public key the block was signed with.
+                %% The only supported KeyType is currently {rsa, 65537}.
+                reward_key,
+                %% The estimated number of Winstons it costs the network to store one gibibyte
+                %% for one minute.
+                price_per_gib_minute = 0,
+                %% The updated estimation of the number of Winstons it costs the network to store
+                %% one gibibyte for one minute.
+                scheduled_price_per_gib_minute = 0,
+                %% The recursive hash of the network hash rates, block rewards, mining addresses,
+                %% and denominations.
+                %% Note that the length of the reward history has increased from
+                %% ?LEGACY_REWARD_HISTORY_BLOCKS to ?REWARD_HISTORY_BLOCKS in 2.8.
+                %% Before 2.8 every new hash was computed over the latest ?REWARD_HISTORY_BLOCKS.
+                %% After 2.8 the new hash is computed from the new history element and the previous hash.
+                reward_history_hash,
+                %% The network hash rates, block rewards, and mining addresses from the latest
+                %% ?REWARD_HISTORY_BLOCKS + ar_block:get_consensus_window_size() blocks. Used internally, not gossiped.
+                reward_history = [],
+                %% The total number of Winston emitted when the endowment was not sufficient
+                %% to compensate mining.
+                debt_supply = 0,
+                %% An additional multiplier for the transaction fees doubled every time the
+                %% endowment pool becomes empty.
+                kryder_plus_rate_multiplier = 1,
+                %% A lock controlling the updates of kryder_plus_rate_multiplier. It is set to 1
+                %% after the update and back to 0 when the endowment pool is bigger than
+                %% ?RESET_KRYDER_PLUS_LATCH_THRESHOLD (redenominated according to the denomination
+                %% used at the time).
+                kryder_plus_rate_multiplier_latch = 0,
+                %% The code for the denomination of AR in base units.
+                %% 1 is the default which corresponds to the original denomination of 1^12 base units.
+                %% Every time the available supply falls below ?REDENOMINATION_THRESHOLD,
+                %% the denomination is multiplied by 1000, the code is incremented.
+                %% Transaction denomination code must not exceed the block's denomination code.
+                denomination = 1,
+                %% The biggest known redenomination height (0 means there were no redenominations yet).
+                redenomination_height = 0,
+                %% The proof of signing the same block several times or extending two equal forks.
+                double_signing_proof,
+                %% The cumulative difficulty of the previous block.
+                previous_cumulative_diff = 0,
 
-	%%
-	%% The fields below were added at the fork 2.7 (note that 2.6.8 was a hard fork too).
-	%%
+                %%
+                %% The fields below were added at the fork 2.7 (note that 2.6.8 was a hard fork too).
+                %%
 
-	%% The merkle trees of the data written after this weave offset may be constructed
-	%% in a way where some subtrees are "rebased", i.e., their offsets start from 0 as if
-	%% they were the leftmost subtree of the entire tree. The merkle paths for the chunks
-	%% belonging to the subtrees will include a 32-byte 0-sequence preceding the pivot to
-	%% the corresponding subtree. The rebases allow for flexible combination of data before
-	%% registering it on the weave, extremely useful e.g., for the bundling services.
-	merkle_rebase_support_threshold,
-	%% The SHA2-256 of the packed chunk.
-	chunk_hash,
-	%% The SHA2-256 of the packed chunk2, when present.
-	chunk2_hash,
+                %% The merkle trees of the data written after this weave offset may be constructed
+                %% in a way where some subtrees are "rebased", i.e., their offsets start from 0 as if
+                %% they were the leftmost subtree of the entire tree. The merkle paths for the chunks
+                %% belonging to the subtrees will include a 32-byte 0-sequence preceding the pivot to
+                %% the corresponding subtree. The rebases allow for flexible combination of data before
+                %% registering it on the weave, extremely useful e.g., for the bundling services.
+                merkle_rebase_support_threshold,
+                %% The SHA2-256 of the packed chunk.
+                chunk_hash,
+                %% The SHA2-256 of the packed chunk2, when present.
+                chunk2_hash,
 
-	%% The hashes of the history of block times (in seconds), VDF times (in steps),
-	%% and solution types (one-chunk vs two-chunk) of the latest
-	%% ?BLOCK_TIME_HISTORY_BLOCKS blocks.
-	block_time_history_hash,
-	%% The block times (in seconds), VDF times (in steps), and solution types (one-chunk vs
-	%% two-chunk) of the latest ?BLOCK_TIME_HISTORY_BLOCKS blocks.
-	%% Used internally, not gossiped.
-	block_time_history = [], % {block_interval, vdf_interval, chunk_count}
+                %% The hashes of the history of block times (in seconds), VDF times (in steps),
+                %% and solution types (one-chunk vs two-chunk) of the latest
+                %% ?BLOCK_TIME_HISTORY_BLOCKS blocks.
+                block_time_history_hash,
+                %% The block times (in seconds), VDF times (in steps), and solution types (one-chunk vs
+                %% two-chunk) of the latest ?BLOCK_TIME_HISTORY_BLOCKS blocks.
+                %% Used internally, not gossiped.
+                block_time_history = [], % {block_interval, vdf_interval, chunk_count}
 
-	%%
-	%% The fields below were added at the fork 2.8.
-	%%
+                %%
+                %% The fields below were added at the fork 2.8.
+                %%
 
-	%% The packing difficulty of the replica the block was mined with.
-	%% Applies to both poa1 and poa2.
-	%%
-	%% Packing difficulty 0 denotes the usual pre-2.8 packing scheme.
-	%% Packing difficulty 1 refers to the new packing of approximately the same
-	%% computational cost as the difficulty 0 packing. Packing difficulty 2 is the
-	%% packing where each sub-chunk is hashed twice as many times.
-	%%
-	%% When packing_difficulty >= 1, both poa1 and poa2 contain the unpacked chunks.
-	%% The values of the "chunk" fields are now 8192-byte packed sub-chunks.
-	%%
-	%% If the block is associated with the new replication format (replica_format=1,)
-	%% the packing difficulty is constant and determines the number of nonces
-	%% (also, sub-chunks) in the recall range and their mining difficulty, in line with
-	%% the chosen computational difficulty of the entropy computation.
-	packing_difficulty = 0,
-	%% The SHA2-256 of the unpacked 0-padded (if less than 256 KiB) chunk.
-	%% undefined when packing_difficulty == 0, has a value otherwise.
-	unpacked_chunk_hash,
-	%% The SHA2-256 of the unpacked 0-padded (if less than 256 KiB) chunk2.
-	%% undefined when packing_difficulty == 0 or recall_byte2 == undefined,
-	%% has a value otherwise.
-	unpacked_chunk2_hash,
+                %% The packing difficulty of the replica the block was mined with.
+                %% Applies to both poa1 and poa2.
+                %%
+                %% Packing difficulty 0 denotes the usual pre-2.8 packing scheme.
+                %% Packing difficulty 1 refers to the new packing of approximately the same
+                %% computational cost as the difficulty 0 packing. Packing difficulty 2 is the
+                %% packing where each sub-chunk is hashed twice as many times.
+                %%
+                %% When packing_difficulty >= 1, both poa1 and poa2 contain the unpacked chunks.
+                %% The values of the "chunk" fields are now 8192-byte packed sub-chunks.
+                %%
+                %% If the block is associated with the new replication format (replica_format=1,)
+                %% the packing difficulty is constant and determines the number of nonces
+                %% (also, sub-chunks) in the recall range and their mining difficulty, in line with
+                %% the chosen computational difficulty of the entropy computation.
+                packing_difficulty = 0,
+                %% The SHA2-256 of the unpacked 0-padded (if less than 256 KiB) chunk.
+                %% undefined when packing_difficulty == 0, has a value otherwise.
+                unpacked_chunk_hash,
+                %% The SHA2-256 of the unpacked 0-padded (if less than 256 KiB) chunk2.
+                %% undefined when packing_difficulty == 0 or recall_byte2 == undefined,
+                %% has a value otherwise.
+                unpacked_chunk2_hash,
 
-	%% The replica format 0 is the inefficient "packing" where every chunk is packed
-	%% independently. The replica format 1 is new the blazing fast replication format.
-	replica_format = 0,
+                %% The replica format 0 is the inefficient "packing" where every chunk is packed
+                %% independently. The replica format 1 is new the blazing fast replication format.
+                replica_format = 0,
 
-	%% Used internally, not gossiped. Convenient for validating potentially non-unique
-	%% merkle proofs assigned to the different signatures of the same solution
-	%% (see validate_poa_against_cached_poa in ar_block_pre_validator.erl).
-	poa_cache,
-	%% Used internally, not gossiped. Convenient for validating potentially non-unique
-	%% merkle proofs assigned to the different signatures of the same solution
-	%% (see validate_poa_against_cached_poa in ar_block_pre_validator.erl).
-	poa2_cache,
+                %% Used internally, not gossiped. Convenient for validating potentially non-unique
+                %% merkle proofs assigned to the different signatures of the same solution
+                %% (see validate_poa_against_cached_poa in ar_block_pre_validator.erl).
+                poa_cache,
+                %% Used internally, not gossiped. Convenient for validating potentially non-unique
+                %% merkle proofs assigned to the different signatures of the same solution
+                %% (see validate_poa_against_cached_poa in ar_block_pre_validator.erl).
+                poa2_cache,
 
-	%% Used internally, not gossiped.
-	receive_timestamp
-}).
+                %% Used internally, not gossiped.
+                receive_timestamp
+               }).
 
 %% @doc A transaction.
 -record(tx, {
-	%% 1 or 2.
-	format = 1,
-	%% The transaction identifier.
-	id = <<>>,
-	%% Either the identifier of the previous transaction from
-	%% the same wallet or the identifier of one of the
-	%% last ar_block:get_max_tx_anchor_depth() blocks.
-	last_tx = <<>>,
-	%% The public key the transaction is signed with.
-	owner =	<<>>,
-	%% The owner address. Used as a cache to avoid recomputing it, not serialized.
-	owner_address = not_set,
-	%% A list of arbitrary key-value pairs. Keys and values are binaries.
-	tags = [],
-	%% The address of the recipient, if any. The SHA2-256 hash of the public key.
-	target = <<>>,
-	%% The amount of Winstons to send to the recipient, if any.
-	quantity = 0,
-	%% The data to upload, if any. For v2 transactions, the field is optional - a fee
-	%% is charged based on the "data_size" field, data itself may be uploaded any time
-	%% later in chunks.
-	data = <<>>,
-	%% Size in bytes of the transaction data.
-	data_size = 0,
-	%% Deprecated. Not used, not gossiped.
-	data_tree = [],
-	%% The Merkle root of the Merkle tree of data chunks.
-	data_root = <<>>,
-	%% The signature.
-	signature = <<>>,
-	%% The fee in Winstons.
-	reward = 0,
+             %% 1 or 2.
+             format = 1,
+             %% The transaction identifier.
+             id = <<>>,
+             %% Either the identifier of the previous transaction from
+             %% the same wallet or the identifier of one of the
+             %% last ar_block:get_max_tx_anchor_depth() blocks.
+             last_tx = <<>>,
+             %% The public key the transaction is signed with.
+             owner = <<>>,
+             %% The owner address. Used as a cache to avoid recomputing it, not serialized.
+             owner_address = not_set,
+             %% A list of arbitrary key-value pairs. Keys and values are binaries.
+             tags = [],
+             %% The address of the recipient, if any. The SHA2-256 hash of the public key.
+             target = <<>>,
+             %% The amount of Winstons to send to the recipient, if any.
+             quantity = 0,
+             %% The data to upload, if any. For v2 transactions, the field is optional - a fee
+             %% is charged based on the "data_size" field, data itself may be uploaded any time
+             %% later in chunks.
+             data = <<>>,
+             %% Size in bytes of the transaction data.
+             data_size = 0,
+             %% Deprecated. Not used, not gossiped.
+             data_tree = [],
+             %% The Merkle root of the Merkle tree of data chunks.
+             data_root = <<>>,
+             %% The signature.
+             signature = <<>>,
+             %% The fee in Winstons.
+             reward = 0,
 
-	%% The code for the denomination of AR in base units.
-	%%
-	%% 1 corresponds to the original denomination of 1^12 base units.
-	%% Every time the available supply falls below ?REDENOMINATION_THRESHOLD,
-	%% the denomination is multiplied by 1000, the code is incremented.
-	%%
-	%% 0 is the default denomination code. It is treated as the denomination code of the
-	%% current block. We do NOT default to 1 because we want to distinguish between the
-	%% transactions with the explicitly assigned denomination (the denomination then becomes
-	%% a part of the signature preimage) and transactions signed the way they were signed
-	%% before the upgrade. The motivation is to keep supporting legacy client libraries after
-	%% redenominations and at the same time protect users from an attack where
-	%% a post-redenomination transaction is included in a pre-redenomination block. The attack
-	%% is prevented by forbidding inclusion of transactions with denomination=0 in the 100
-	%% blocks preceding the redenomination block.
-	%%
-	%% Transaction denomination code must not exceed the block's denomination code.
-	denomination = 0,
+             %% The code for the denomination of AR in base units.
+             %%
+             %% 1 corresponds to the original denomination of 1^12 base units.
+             %% Every time the available supply falls below ?REDENOMINATION_THRESHOLD,
+             %% the denomination is multiplied by 1000, the code is incremented.
+             %%
+             %% 0 is the default denomination code. It is treated as the denomination code of the
+             %% current block. We do NOT default to 1 because we want to distinguish between the
+             %% transactions with the explicitly assigned denomination (the denomination then becomes
+             %% a part of the signature preimage) and transactions signed the way they were signed
+             %% before the upgrade. The motivation is to keep supporting legacy client libraries after
+             %% redenominations and at the same time protect users from an attack where
+             %% a post-redenomination transaction is included in a pre-redenomination block. The attack
+             %% is prevented by forbidding inclusion of transactions with denomination=0 in the 100
+             %% blocks preceding the redenomination block.
+             %%
+             %% Transaction denomination code must not exceed the block's denomination code.
+             denomination = 0,
 
-	%% The type of signature this transaction was signed with. A system field,
-	%% not used by the protocol yet.
-	signature_type = ?DEFAULT_KEY_TYPE
-}).
+             %% The type of signature this transaction was signed with. A system field,
+             %% not used by the protocol yet.
+             signature_type = ?DEFAULT_KEY_TYPE
+            }).
 
 %% @doc The data_path field will only be not_found if the chunk record is corrupt/invalid.
 %% This can happen if the chunk entry exists in the chunks_index but not in the chunk_data_db.
@@ -754,20 +754,20 @@
 %% - not_set means that a field has not been queried yet.
 %% - not_found means that the field has been queried but could not be found.
 -record(chunk_metadata, {
-	chunk_data_key = not_set :: not_set | binary(),
-	tx_root = not_set :: not_set | binary(),
-	tx_path = not_set :: not_set | binary(),
-	data_root = not_set :: not_set | binary(),
-	data_path = not_set :: not_set | not_found | binary(),
-	chunk_size = not_set :: not_set | non_neg_integer()
-}).
+                         chunk_data_key = not_set :: not_set | binary(),
+                         tx_root = not_set :: not_set | binary(),
+                         tx_path = not_set :: not_set | binary(),
+                         data_root = not_set :: not_set | binary(),
+                         data_path = not_set :: not_set | not_found | binary(),
+                         chunk_size = not_set :: not_set | non_neg_integer()
+                        }).
 
 -record(chunk_offsets, {
-	absolute_offset = not_set :: not_set | non_neg_integer(),
-	bucket_end_offset = not_set :: not_set | non_neg_integer(),
-	padded_end_offset = not_set :: not_set | non_neg_integer(),
-	relative_offset = not_set :: not_set | non_neg_integer()
-}).
+                        absolute_offset = not_set :: not_set | non_neg_integer(),
+                        bucket_end_offset = not_set :: not_set | non_neg_integer(),
+                        padded_end_offset = not_set :: not_set | non_neg_integer(),
+                        relative_offset = not_set :: not_set | non_neg_integer()
+                       }).
 
 %% A macro to convert AR into Winstons.
 -define(AR(AR), (?WINSTON_PER_AR * AR)).

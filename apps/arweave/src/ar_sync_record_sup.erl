@@ -14,35 +14,35 @@
 %%%===================================================================
 
 start_link() ->
-	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% ===================================================================
 %% Supervisor callbacks.
 %% ===================================================================
 
 init([]) ->
-	ets:new(sync_records, [set, public, named_table, {read_concurrency, true}]),
-	StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-	RepackInPlaceModules = [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
-	ConfiguredWorkers = lists:map(
-		fun(StorageModule) ->
-			StoreID = ar_storage_module:id(StorageModule),
-			Label = ar_storage_module:label(StoreID),
-			Name = list_to_atom("ar_sync_record_" ++ Label),
-			?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
-		end,
-		StorageModules
-	),
-	DefaultSyncRecordWorker = ?CHILD_WITH_ARGS(ar_sync_record, worker, ar_sync_record_default,
-		[ar_sync_record_default, ?DEFAULT_MODULE]),
-	RepackInPlaceWorkers = lists:map(
-		fun({StorageModule, _Packing}) ->
-			StoreID = ar_storage_module:id(StorageModule),
-			Label = ar_storage_module:label(StoreID),
-			Name = list_to_atom("ar_sync_record_" ++ Label),
-			?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
-		end,
-		RepackInPlaceModules
-	),
-	Workers = [DefaultSyncRecordWorker] ++ ConfiguredWorkers ++ RepackInPlaceWorkers,
-	{ok, {{one_for_one, 5, 10}, Workers}}.
+    ets:new(sync_records, [set, public, named_table, {read_concurrency, true}]),
+    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
+    RepackInPlaceModules = [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
+    ConfiguredWorkers = lists:map(
+        fun(StorageModule) ->
+            StoreID = ar_storage_module:id(StorageModule),
+            Label = ar_storage_module:label(StoreID),
+            Name = list_to_atom("ar_sync_record_" ++ Label),
+            ?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
+        end,
+        StorageModules
+    ),
+    DefaultSyncRecordWorker = ?CHILD_WITH_ARGS(ar_sync_record, worker, ar_sync_record_default,
+        [ar_sync_record_default, ?DEFAULT_MODULE]),
+    RepackInPlaceWorkers = lists:map(
+        fun({StorageModule, _Packing}) ->
+            StoreID = ar_storage_module:id(StorageModule),
+            Label = ar_storage_module:label(StoreID),
+            Name = list_to_atom("ar_sync_record_" ++ Label),
+            ?CHILD_WITH_ARGS(ar_sync_record, worker, Name, [Name, StoreID])
+        end,
+        RepackInPlaceModules
+    ),
+    Workers = [DefaultSyncRecordWorker] ++ ConfiguredWorkers ++ RepackInPlaceWorkers,
+    {ok, {{one_for_one, 5, 10}, Workers}}.

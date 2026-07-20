@@ -9,9 +9,9 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_taking_down/0, is_tx_blacklisted/1, is_byte_blacklisted/1,
-		get_blacklisted_intervals/2, get_next_not_blacklisted_byte/1,
-		notify_about_removed_tx/1, norify_about_orphaned_tx/1, notify_about_added_tx/3,
-		store_state/0, refresh_interval_ms/0]).
+        get_blacklisted_intervals/2, get_next_not_blacklisted_byte/1,
+        notify_about_removed_tx/1, norify_about_orphaned_tx/1, notify_about_added_tx/3,
+        store_state/0, refresh_interval_ms/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
 
@@ -45,16 +45,16 @@
 
 %% @doc The server state.
 -record(ar_tx_blacklist_state, {
-	%% The timestamp of the last requested transaction header takedown.
-	%% It is used to throttle the takedown requests.
-	header_takedown_request_timestamp = os:system_time(millisecond),
-	%% The timestamp of the last requested transaction data takedown.
-	%% It is used to throttle the takedown requests.
-	data_takedown_request_timestamp = os:system_time(millisecond),
-	%% A cursor pointing to a TXID in the list of pending unblacklisted transactions.
-	%% Some of them might be orphaned or simply non-existent.
-	pending_restore_cursor = first,
-	unblacklist_timeout = os:system_time(second)
+    %% The timestamp of the last requested transaction header takedown.
+    %% It is used to throttle the takedown requests.
+    header_takedown_request_timestamp = os:system_time(millisecond),
+    %% The timestamp of the last requested transaction data takedown.
+    %% It is used to throttle the takedown requests.
+    data_takedown_request_timestamp = os:system_time(millisecond),
+    %% A cursor pointing to a TXID in the list of pending unblacklisted transactions.
+    %% Some of them might be orphaned or simply non-existent.
+    pending_restore_cursor = first,
+    unblacklist_timeout = os:system_time(second)
 }).
 
 %%%===================================================================
@@ -62,75 +62,75 @@
 %%%===================================================================
 
 start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @doc Start removing blacklisted headers and data, if any.
 start_taking_down() ->
-	gen_server:cast(?MODULE, start_taking_down).
+    gen_server:cast(?MODULE, start_taking_down).
 
 %% @doc Check whether the given transaction is blacklisted.
 is_tx_blacklisted(TXID) ->
-	ets:member(ar_tx_blacklist, TXID).
+    ets:member(ar_tx_blacklist, TXID).
 
 %% @doc Check whether the byte with the given global offset is blacklisted.
 is_byte_blacklisted(Offset) ->
-	ar_ets_intervals:is_inside(ar_tx_blacklist_offsets, Offset).
+    ar_ets_intervals:is_inside(ar_tx_blacklist_offsets, Offset).
 
 %% @doc Return the smallest not blacklisted byte bigger than or equal to
 %% the byte at the given global offset.
 get_next_not_blacklisted_byte(Offset) ->
-	case ets:next(ar_tx_blacklist_offsets, Offset - 1) of
-		'$end_of_table' ->
-			Offset;
-		NextOffset ->
-			case ets:lookup(ar_tx_blacklist_offsets, NextOffset) of
-				[{NextOffset, Start}] ->
-					case Start >= Offset of
-						true ->
-							Offset;
-						false ->
-							NextOffset + 1
-					end;
-				[] ->
-					%% The key should have been just removed, unlucky timing.
-					get_next_not_blacklisted_byte(Offset)
-			end
-	end.
+    case ets:next(ar_tx_blacklist_offsets, Offset - 1) of
+        '$end_of_table' ->
+            Offset;
+        NextOffset ->
+            case ets:lookup(ar_tx_blacklist_offsets, NextOffset) of
+                [{NextOffset, Start}] ->
+                    case Start >= Offset of
+                        true ->
+                            Offset;
+                        false ->
+                            NextOffset + 1
+                    end;
+                [] ->
+                    %% The key should have been just removed, unlucky timing.
+                    get_next_not_blacklisted_byte(Offset)
+            end
+    end.
 
 %% @doc Return the blacklisted intervals intersecting the given range.
 get_blacklisted_intervals(Start, End) ->
-	get_blacklisted_intervals(Start, End, ar_intervals:new()).
+    get_blacklisted_intervals(Start, End, ar_intervals:new()).
 
 get_blacklisted_intervals(Start, End, Intervals) ->
-	case ets:next(ar_tx_blacklist_offsets, Start) of
-		'$end_of_table' ->
-			Intervals;
-		Offset ->
-			case ets:lookup(ar_tx_blacklist_offsets, Offset) of
-				[{Offset, Start2}] when Start2 >= End ->
-					Intervals;
-				[{Offset, Start2}] when Offset >= End ->
-					ar_intervals:add(Intervals, End, max(Start2, Start));
-				[{Offset, Start2}] ->
-					get_blacklisted_intervals(Offset, End,
-							ar_intervals:add(Intervals, Offset, max(Start2, Start)));
-				[] ->
-					%% The key should have been just removed, unlucky timing.
-					get_blacklisted_intervals(Start, End, Intervals)
-			end
-	end.
+    case ets:next(ar_tx_blacklist_offsets, Start) of
+        '$end_of_table' ->
+            Intervals;
+        Offset ->
+            case ets:lookup(ar_tx_blacklist_offsets, Offset) of
+                [{Offset, Start2}] when Start2 >= End ->
+                    Intervals;
+                [{Offset, Start2}] when Offset >= End ->
+                    ar_intervals:add(Intervals, End, max(Start2, Start));
+                [{Offset, Start2}] ->
+                    get_blacklisted_intervals(Offset, End,
+                            ar_intervals:add(Intervals, Offset, max(Start2, Start)));
+                [] ->
+                    %% The key should have been just removed, unlucky timing.
+                    get_blacklisted_intervals(Start, End, Intervals)
+            end
+    end.
 
 %% @doc Notify the server about the removed transaction header.
 notify_about_removed_tx(TXID) ->
-	gen_server:cast(?MODULE, {removed_tx, TXID}).
+    gen_server:cast(?MODULE, {removed_tx, TXID}).
 
 %% @doc Notify the server about the orphaned tx caused by the fork.
 norify_about_orphaned_tx(TXID) ->
-	gen_server:cast(?MODULE, {orphaned_tx, TXID}).
+    gen_server:cast(?MODULE, {orphaned_tx, TXID}).
 
 %% @doc Notify the server about the added transaction.
 notify_about_added_tx(TXID, End, Start) ->
-	gen_server:cast(?MODULE, {added_tx, TXID, End, Start}).
+    gen_server:cast(?MODULE, {added_tx, TXID, End, Start}).
 
 %% @doc Interval between blacklist refresh cycles. 
 -spec refresh_interval_ms() -> non_neg_integer().
@@ -141,565 +141,565 @@ refresh_interval_ms() -> ?REFRESH_BLACKLISTS_FREQUENCY_MS.
 %%%===================================================================
 
 init([]) ->
-	?LOG_DEBUG([{event, initializing_tx_blacklist}, {tags, [tx_blacklist]}]),
-	ok = initialize_state(),
-	%% Trap exit to avoid corrupting any open files on quit.
-	process_flag(trap_exit, true),
-	ok = ar_events:subscribe(tx),
-	gen_server:cast(?MODULE, refresh_blacklist),
-	{ok, _} = ar_timer:apply_interval(
-		?STORE_STATE_FREQUENCY_MS,
-		?MODULE,
-		store_state,
-		[],
-		#{ skip_on_shutdown => false }
-	),
-	{ok, #ar_tx_blacklist_state{}}.
+    ?LOG_DEBUG([{event, initializing_tx_blacklist}, {tags, [tx_blacklist]}]),
+    ok = initialize_state(),
+    %% Trap exit to avoid corrupting any open files on quit.
+    process_flag(trap_exit, true),
+    ok = ar_events:subscribe(tx),
+    gen_server:cast(?MODULE, refresh_blacklist),
+    {ok, _} = ar_timer:apply_interval(
+        ?STORE_STATE_FREQUENCY_MS,
+        ?MODULE,
+        store_state,
+        [],
+        #{ skip_on_shutdown => false }
+    ),
+    {ok, #ar_tx_blacklist_state{}}.
 
 handle_call(Request, _From, State) ->
-	?LOG_ERROR([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
-	{reply, ok, State}.
+    ?LOG_ERROR([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+    {reply, ok, State}.
 
 handle_cast(start_taking_down, State) ->
-	?LOG_DEBUG([{event, start_taking_down}, {tags, [tx_blacklist]}]),
-	gen_server:cast(?MODULE, maybe_restore),
-	gen_server:cast(?MODULE, maybe_request_takedown),
-	{noreply, State};
+    ?LOG_DEBUG([{event, start_taking_down}, {tags, [tx_blacklist]}]),
+    gen_server:cast(?MODULE, maybe_restore),
+    gen_server:cast(?MODULE, maybe_request_takedown),
+    {noreply, State};
 
 handle_cast(refresh_blacklist, State) ->
-	case refresh_blacklist() of
-		error ->
-			_ = ar_timer:apply_after(
-				?REFRESH_BLACKLISTS_RETRY_DELAY_MS,
-				gen_server,
-				cast,
-				[self(), refresh_blacklist],
-				#{ skip_on_shutdown => true }
-			);
-		ok ->
-			_ = ar_timer:apply_after(
-				?MODULE:refresh_interval_ms(),
-				gen_server,
-				cast,
-				[self(), refresh_blacklist],
-				#{ skip_on_shutdown => true }
-			)
-	end,
-	{noreply, State};
+    case refresh_blacklist() of
+        error ->
+            _ = ar_timer:apply_after(
+                ?REFRESH_BLACKLISTS_RETRY_DELAY_MS,
+                gen_server,
+                cast,
+                [self(), refresh_blacklist],
+                #{ skip_on_shutdown => true }
+            );
+        ok ->
+            _ = ar_timer:apply_after(
+                ?MODULE:refresh_interval_ms(),
+                gen_server,
+                cast,
+                [self(), refresh_blacklist],
+                #{ skip_on_shutdown => true }
+            )
+    end,
+    {noreply, State};
 
 handle_cast(maybe_request_takedown, State) ->
-	#ar_tx_blacklist_state{
-		header_takedown_request_timestamp = HTS,
-		data_takedown_request_timestamp = DTS
-	} = State,
-	Now = os:system_time(millisecond),
-	State2 =
-		case HTS + ?REQUEST_TAKEDOWN_DELAY_MS < Now of
-			true ->
-				request_header_takedown(State);
-			false ->
-				State
-		end,
-	State3 =
-		case DTS + ?REQUEST_TAKEDOWN_DELAY_MS < Now of
-			true ->
-				request_data_takedown(State2);
-			false ->
-				State2
-		end,
-	_ = ar_timer:apply_after(
-		?CHECK_PENDING_ITEMS_INTERVAL_MS,
-		gen_server,
-		cast,
-		[self(), maybe_request_takedown],
-		#{ skip_on_shutdown => true }
-	),
-	{noreply, State3};
+    #ar_tx_blacklist_state{
+        header_takedown_request_timestamp = HTS,
+        data_takedown_request_timestamp = DTS
+    } = State,
+    Now = os:system_time(millisecond),
+    State2 =
+        case HTS + ?REQUEST_TAKEDOWN_DELAY_MS < Now of
+            true ->
+                request_header_takedown(State);
+            false ->
+                State
+        end,
+    State3 =
+        case DTS + ?REQUEST_TAKEDOWN_DELAY_MS < Now of
+            true ->
+                request_data_takedown(State2);
+            false ->
+                State2
+        end,
+    _ = ar_timer:apply_after(
+        ?CHECK_PENDING_ITEMS_INTERVAL_MS,
+        gen_server,
+        cast,
+        [self(), maybe_request_takedown],
+        #{ skip_on_shutdown => true }
+    ),
+    {noreply, State3};
 
 handle_cast(maybe_restore, #ar_tx_blacklist_state{ pending_restore_cursor = Cursor,
-		unblacklist_timeout = UnblacklistTimeout } = State) ->
-	Now = os:system_time(second),
-	ar_util:cast_after(200, ?MODULE, maybe_restore),
-	case UnblacklistTimeout + 30000 < Now of
-		true ->
-			Read =
-				case Cursor of
-					first ->
-						ets:first(ar_tx_blacklist_pending_restore_headers);
-					_ ->
-						ets:next(ar_tx_blacklist_pending_restore_headers, Cursor)
-				end,
-			case Read of
-				'$end_of_table' ->
-					{noreply, State#ar_tx_blacklist_state{ pending_restore_cursor = first,
-							unblacklist_timeout = Now }};
-				TXID ->
-					?LOG_DEBUG([{event, preparing_transaction_unblacklisting},
-							{tags, [tx_blacklist]},
-							{tx, ar_util:encode(TXID)}]),
-					ar_events:send(tx, {preparing_unblacklisting, TXID}),
-					{noreply, State#ar_tx_blacklist_state{ pending_restore_cursor = TXID,
-							unblacklist_timeout = Now }}
-			end;
-		false ->
-			{noreply, State}
-	end;
+        unblacklist_timeout = UnblacklistTimeout } = State) ->
+    Now = os:system_time(second),
+    ar_util:cast_after(200, ?MODULE, maybe_restore),
+    case UnblacklistTimeout + 30000 < Now of
+        true ->
+            Read =
+                case Cursor of
+                    first ->
+                        ets:first(ar_tx_blacklist_pending_restore_headers);
+                    _ ->
+                        ets:next(ar_tx_blacklist_pending_restore_headers, Cursor)
+                end,
+            case Read of
+                '$end_of_table' ->
+                    {noreply, State#ar_tx_blacklist_state{ pending_restore_cursor = first,
+                            unblacklist_timeout = Now }};
+                TXID ->
+                    ?LOG_DEBUG([{event, preparing_transaction_unblacklisting},
+                            {tags, [tx_blacklist]},
+                            {tx, ar_util:encode(TXID)}]),
+                    ar_events:send(tx, {preparing_unblacklisting, TXID}),
+                    {noreply, State#ar_tx_blacklist_state{ pending_restore_cursor = TXID,
+                            unblacklist_timeout = Now }}
+            end;
+        false ->
+            {noreply, State}
+    end;
 
 handle_cast({removed_tx, TXID}, State) ->
-	case ets:member(ar_tx_blacklist_pending_headers, TXID) of
-		false ->
-			{noreply, State};
-		true ->
-			ets:delete(ar_tx_blacklist_pending_headers, TXID),
-			{noreply, request_header_takedown(State)}
-	end;
+    case ets:member(ar_tx_blacklist_pending_headers, TXID) of
+        false ->
+            {noreply, State};
+        true ->
+            ets:delete(ar_tx_blacklist_pending_headers, TXID),
+            {noreply, request_header_takedown(State)}
+    end;
 
 handle_cast({orphaned_tx, TXID}, State) ->
-	case ets:lookup(ar_tx_blacklist, TXID) of
-		[{TXID, End, Start}] ->
-			restore_offsets(End, Start),
-			ets:insert(ar_tx_blacklist, [{TXID}]);
-		_ ->
-			ok
-	end,
-	{noreply, State};
+    case ets:lookup(ar_tx_blacklist, TXID) of
+        [{TXID, End, Start}] ->
+            restore_offsets(End, Start),
+            ets:insert(ar_tx_blacklist, [{TXID}]);
+        _ ->
+            ok
+    end,
+    {noreply, State};
 
 handle_cast({added_tx, TXID, End, Start}, State) ->
-	case ets:lookup(ar_tx_blacklist, TXID) of
-		[{TXID}] ->
-			ets:insert(ar_tx_blacklist, [{TXID, End, Start}]),
-			ets:insert(ar_tx_blacklist_pending_data, [{TXID}]),
-			{noreply, request_data_takedown(State)};
-		[{TXID, CurrentEnd, CurrentStart}] ->
-			restore_offsets(CurrentEnd, CurrentStart),
-			ets:insert(ar_tx_blacklist, [{TXID, End, Start}]),
-			ets:insert(ar_tx_blacklist_pending_data, [{TXID}]),
-			{noreply, request_data_takedown(State)};
-		_ ->
-			{noreply, State}
-	end;
+    case ets:lookup(ar_tx_blacklist, TXID) of
+        [{TXID}] ->
+            ets:insert(ar_tx_blacklist, [{TXID, End, Start}]),
+            ets:insert(ar_tx_blacklist_pending_data, [{TXID}]),
+            {noreply, request_data_takedown(State)};
+        [{TXID, CurrentEnd, CurrentStart}] ->
+            restore_offsets(CurrentEnd, CurrentStart),
+            ets:insert(ar_tx_blacklist, [{TXID, End, Start}]),
+            ets:insert(ar_tx_blacklist_pending_data, [{TXID}]),
+            {noreply, request_data_takedown(State)};
+        _ ->
+            {noreply, State}
+    end;
 
 handle_cast(Msg, State) ->
-	?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
-	{noreply, State}.
+    ?LOG_ERROR([{event, unhandled_cast}, {module, ?MODULE}, {message, Msg}]),
+    {noreply, State}.
 
 handle_info({removed_range, Ref}, State) ->
-	case erlang:get(Ref) of
-		undefined ->
-			{noreply, State};
-		{range, {Start, End}} ->
-			erlang:erase(Ref),
-			case ets:lookup(ar_tx_blacklist, {End, Start}) of
-				[{{End, Start}}] ->
-					ets:delete(ar_tx_blacklist_pending_data, {End, Start}),
-					{noreply, request_data_takedown(State)};
-				_ ->
-					{noreply, State}
-			end;
-		{tx, {TXID, Start, End}} ->
-			erlang:erase(Ref),
-			case ets:lookup(ar_tx_blacklist, TXID) of
-				[{TXID, End, Start}] ->
-					ets:delete(ar_tx_blacklist_pending_data, TXID),
-					{noreply, request_data_takedown(State)};
-				_ ->
-					{noreply, State}
-			end
-	end;
+    case erlang:get(Ref) of
+        undefined ->
+            {noreply, State};
+        {range, {Start, End}} ->
+            erlang:erase(Ref),
+            case ets:lookup(ar_tx_blacklist, {End, Start}) of
+                [{{End, Start}}] ->
+                    ets:delete(ar_tx_blacklist_pending_data, {End, Start}),
+                    {noreply, request_data_takedown(State)};
+                _ ->
+                    {noreply, State}
+            end;
+        {tx, {TXID, Start, End}} ->
+            erlang:erase(Ref),
+            case ets:lookup(ar_tx_blacklist, TXID) of
+                [{TXID, End, Start}] ->
+                    ets:delete(ar_tx_blacklist_pending_data, TXID),
+                    {noreply, request_data_takedown(State)};
+                _ ->
+                    {noreply, State}
+            end
+    end;
 
 handle_info({event, tx, {ready_for_unblacklisting, TXID}}, State) ->
-	?LOG_DEBUG([{event, unblacklisting_transaction},
-		{tags, [tx_blacklist]},
-		{tx, ar_util:encode(TXID)}]),
-	ets:delete(ar_tx_blacklist_pending_restore_headers, TXID),
-	{noreply, State#ar_tx_blacklist_state{ unblacklist_timeout = os:system_time(second) }};
+    ?LOG_DEBUG([{event, unblacklisting_transaction},
+        {tags, [tx_blacklist]},
+        {tx, ar_util:encode(TXID)}]),
+    ets:delete(ar_tx_blacklist_pending_restore_headers, TXID),
+    {noreply, State#ar_tx_blacklist_state{ unblacklist_timeout = os:system_time(second) }};
 
 handle_info({event, tx, _}, State) ->
-	{noreply, State};
+    {noreply, State};
 
 handle_info(Info, State) ->
-	?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
-	{noreply, State}.
+    ?LOG_ERROR([{event, unhandled_info}, {module, ?MODULE}, {message, Info}]),
+    {noreply, State}.
 
 terminate(Reason, _State) ->
-	store_state(),
-	close_dets(),
-	?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, Reason}]).
+    store_state(),
+    close_dets(),
+    ?LOG_INFO([{event, terminate}, {module, ?MODULE}, {reason, Reason}]).
 
 %%%===================================================================
 %%% Private functions.
 %%%===================================================================
 
 initialize_state() ->
-	DataDir = arweave_config:get([data_dir]),
-	Dir = filename:join(DataDir, "ar_tx_blacklist"),
-	ok = filelib:ensure_dir(Dir ++ "/"),
-	Names = [
-		ar_tx_blacklist,
-		ar_tx_blacklist_pending_headers,
-		ar_tx_blacklist_pending_data,
-		ar_tx_blacklist_offsets,
-		ar_tx_blacklist_pending_restore_headers
-	],
-	lists:foreach(
-		fun
-			(Name) ->
-				{ok, _} = dets:open_file(Name, [{file, filename:join(Dir, Name)}]),
-				true = ets:from_dets(Name, Name)
-		end,
-		Names
-	).
+    DataDir = arweave_config:get([data_dir]),
+    Dir = filename:join(DataDir, "ar_tx_blacklist"),
+    ok = filelib:ensure_dir(Dir ++ "/"),
+    Names = [
+        ar_tx_blacklist,
+        ar_tx_blacklist_pending_headers,
+        ar_tx_blacklist_pending_data,
+        ar_tx_blacklist_offsets,
+        ar_tx_blacklist_pending_restore_headers
+    ],
+    lists:foreach(
+        fun
+            (Name) ->
+                {ok, _} = dets:open_file(Name, [{file, filename:join(Dir, Name)}]),
+                true = ets:from_dets(Name, Name)
+        end,
+        Names
+    ).
 
 refresh_blacklist() ->
-	WhitelistFiles = arweave_config:get([transactions, allowlist, files]),
-	case load_from_files(WhitelistFiles) of
-		error ->
-			error;
-		{ok, Whitelist} ->
-			WhitelistURLs = arweave_config:get(
-				[transactions, allowlist, urls]),
-			case load_from_urls(WhitelistURLs) of
-				error ->
-					error;
-				{ok, Whitelist2} ->
-					refresh_blacklist(sets:union(Whitelist, Whitelist2))
-			end
-	end.
+    WhitelistFiles = arweave_config:get([transactions, allowlist, files]),
+    case load_from_files(WhitelistFiles) of
+        error ->
+            error;
+        {ok, Whitelist} ->
+            WhitelistURLs = arweave_config:get(
+                [transactions, allowlist, urls]),
+            case load_from_urls(WhitelistURLs) of
+                error ->
+                    error;
+                {ok, Whitelist2} ->
+                    refresh_blacklist(sets:union(Whitelist, Whitelist2))
+            end
+    end.
 
 refresh_blacklist(Whitelist) ->
-	BlacklistFiles = arweave_config:get([transactions, blocklist, files]),
-	case load_from_files(BlacklistFiles) of
-		error ->
-			error;
-		{ok, Blacklist} ->
-			BlacklistURLs = arweave_config:get(
-				[transactions, blocklist, urls]),
-			case load_from_urls(BlacklistURLs) of
-				error ->
-					error;
-				{ok, Blacklist2} ->
-					refresh_blacklist(Whitelist, sets:union(Blacklist, Blacklist2))
-			end
-	end.
+    BlacklistFiles = arweave_config:get([transactions, blocklist, files]),
+    case load_from_files(BlacklistFiles) of
+        error ->
+            error;
+        {ok, Blacklist} ->
+            BlacklistURLs = arweave_config:get(
+                [transactions, blocklist, urls]),
+            case load_from_urls(BlacklistURLs) of
+                error ->
+                    error;
+                {ok, Blacklist2} ->
+                    refresh_blacklist(Whitelist, sets:union(Blacklist, Blacklist2))
+            end
+    end.
 
 refresh_blacklist(Whitelist, Blacklist) ->
-	Removed =
-		sets:fold(
-			fun	(TXID, Acc) when is_binary(TXID) ->
-					case not sets:is_element(TXID, Whitelist)
-							andalso not ets:member(ar_tx_blacklist, TXID) of
-						true ->
-							[TXID | Acc];
-						false ->
-							Acc
-					end;
-				({End, Start}, Acc) ->
-					case ets:member(ar_tx_blacklist, {End, Start}) of
-						true ->
-							Acc;
-						false ->
-							[{End, Start} | Acc]
-					end
-			end,
-			[],
-			Blacklist
-		),
-	Restored =
-		ets:foldl(
-			fun	({End, Start}, Acc) ->
-					case sets:is_element({End, Start}, Blacklist) of
-						true ->
-							Acc;
-						false ->
-							[{End, Start} | Acc]
-					end;
-				(Entry, Acc) ->
-					TXID = element(1, Entry),
-					case sets:is_element(TXID, Whitelist)
-							orelse not sets:is_element(TXID, Blacklist) of
-						true ->
-							[TXID | Acc];
-						false ->
-							Acc
-					end
-			end,
-			[],
-			ar_tx_blacklist
-		),
-	lists:foreach(
-		fun	(TXID) when is_binary(TXID) ->
-				ets:insert(ar_tx_blacklist, [{TXID}]),
-				ets:insert(ar_tx_blacklist_pending_headers, [{TXID}]),
-				ets:insert(ar_tx_blacklist_pending_data, [{TXID}]),
-				ets:delete(ar_tx_blacklist_pending_restore_headers, TXID);
-			({End, Start}) ->
-				ets:insert(ar_tx_blacklist, [{{End, Start}}]),
-				ets:insert(ar_tx_blacklist_pending_data, [{{End, Start}}])
-		end,
-		Removed
-	),
-	lists:foreach(
-		fun	(TXID) when is_binary(TXID) ->
-				ets:insert(ar_tx_blacklist_pending_restore_headers, [{TXID}]),
-				case ets:lookup(ar_tx_blacklist, TXID) of
-					[{TXID}] ->
-						ok;
-					[{TXID, End, Start}] ->
-						restore_offsets(End, Start)
-				end,
-				ets:delete(ar_tx_blacklist, TXID),
-				ets:delete(ar_tx_blacklist_pending_data, TXID),
-				ets:delete(ar_tx_blacklist_pending_headers, TXID);
-			({End, Start}) ->
-				restore_offsets(End, Start),
-				ets:delete(ar_tx_blacklist, {End, Start}),
-				ets:delete(ar_tx_blacklist_pending_data, {End, Start})
-		end,
-		Restored
-	),
-	?LOG_DEBUG([{event, refreshed_blacklist},
-		{tags, [tx_blacklist]},
-		{whitelist, sets:size(Whitelist)},
-		{blacklist, sets:size(Blacklist)},
-		{removed, length(Removed)},
-		{restored, length(Restored)},
-		{ar_tx_blacklist, ets:info(ar_tx_blacklist, size)},
-		{ar_tx_blacklist_pending_headers, ets:info(ar_tx_blacklist_pending_headers, size)},
-		{ar_tx_blacklist_pending_data, ets:info(ar_tx_blacklist_pending_data, size)},
-		{ar_tx_blacklist_pending_restore_headers,
-			ets:info(ar_tx_blacklist_pending_restore_headers, size)}
-	]),
-	ok.
+    Removed =
+        sets:fold(
+            fun (TXID, Acc) when is_binary(TXID) ->
+                    case not sets:is_element(TXID, Whitelist)
+                            andalso not ets:member(ar_tx_blacklist, TXID) of
+                        true ->
+                            [TXID | Acc];
+                        false ->
+                            Acc
+                    end;
+                ({End, Start}, Acc) ->
+                    case ets:member(ar_tx_blacklist, {End, Start}) of
+                        true ->
+                            Acc;
+                        false ->
+                            [{End, Start} | Acc]
+                    end
+            end,
+            [],
+            Blacklist
+        ),
+    Restored =
+        ets:foldl(
+            fun ({End, Start}, Acc) ->
+                    case sets:is_element({End, Start}, Blacklist) of
+                        true ->
+                            Acc;
+                        false ->
+                            [{End, Start} | Acc]
+                    end;
+                (Entry, Acc) ->
+                    TXID = element(1, Entry),
+                    case sets:is_element(TXID, Whitelist)
+                            orelse not sets:is_element(TXID, Blacklist) of
+                        true ->
+                            [TXID | Acc];
+                        false ->
+                            Acc
+                    end
+            end,
+            [],
+            ar_tx_blacklist
+        ),
+    lists:foreach(
+        fun (TXID) when is_binary(TXID) ->
+                ets:insert(ar_tx_blacklist, [{TXID}]),
+                ets:insert(ar_tx_blacklist_pending_headers, [{TXID}]),
+                ets:insert(ar_tx_blacklist_pending_data, [{TXID}]),
+                ets:delete(ar_tx_blacklist_pending_restore_headers, TXID);
+            ({End, Start}) ->
+                ets:insert(ar_tx_blacklist, [{{End, Start}}]),
+                ets:insert(ar_tx_blacklist_pending_data, [{{End, Start}}])
+        end,
+        Removed
+    ),
+    lists:foreach(
+        fun (TXID) when is_binary(TXID) ->
+                ets:insert(ar_tx_blacklist_pending_restore_headers, [{TXID}]),
+                case ets:lookup(ar_tx_blacklist, TXID) of
+                    [{TXID}] ->
+                        ok;
+                    [{TXID, End, Start}] ->
+                        restore_offsets(End, Start)
+                end,
+                ets:delete(ar_tx_blacklist, TXID),
+                ets:delete(ar_tx_blacklist_pending_data, TXID),
+                ets:delete(ar_tx_blacklist_pending_headers, TXID);
+            ({End, Start}) ->
+                restore_offsets(End, Start),
+                ets:delete(ar_tx_blacklist, {End, Start}),
+                ets:delete(ar_tx_blacklist_pending_data, {End, Start})
+        end,
+        Restored
+    ),
+    ?LOG_DEBUG([{event, refreshed_blacklist},
+        {tags, [tx_blacklist]},
+        {whitelist, sets:size(Whitelist)},
+        {blacklist, sets:size(Blacklist)},
+        {removed, length(Removed)},
+        {restored, length(Restored)},
+        {ar_tx_blacklist, ets:info(ar_tx_blacklist, size)},
+        {ar_tx_blacklist_pending_headers, ets:info(ar_tx_blacklist_pending_headers, size)},
+        {ar_tx_blacklist_pending_data, ets:info(ar_tx_blacklist_pending_data, size)},
+        {ar_tx_blacklist_pending_restore_headers,
+            ets:info(ar_tx_blacklist_pending_restore_headers, size)}
+    ]),
+    ok.
 
 load_from_files(Files) ->
-	Lists = lists:map(fun load_from_file/1, Files),
-	case lists:all(fun(error) -> false; (_) -> true end, Lists) of
-		true ->
-			{ok, sets:from_list(lists:flatten(Lists))};
-		false ->
-			error
-	end.
+    Lists = lists:map(fun load_from_file/1, Files),
+    case lists:all(fun(error) -> false; (_) -> true end, Lists) of
+        true ->
+            {ok, sets:from_list(lists:flatten(Lists))};
+        false ->
+            error
+    end.
 
 load_from_file(File) ->
-	try
-		{ok, Binary} = file:read_file(File),
-		parse_binary(Binary)
-	catch Type:Pattern ->
-		Warning = [
-			{event, failed_to_load_and_parse_file},
-			{tags, [tx_blacklist]},
-			{file, File},
-			{exception, {Type, Pattern}}
-		],
-		?LOG_WARNING(Warning),
-		error
-	end.
+    try
+        {ok, Binary} = file:read_file(File),
+        parse_binary(Binary)
+    catch Type:Pattern ->
+        Warning = [
+            {event, failed_to_load_and_parse_file},
+            {tags, [tx_blacklist]},
+            {file, File},
+            {exception, {Type, Pattern}}
+        ],
+        ?LOG_WARNING(Warning),
+        error
+    end.
 
 parse_binary(Binary) ->
-	lists:filtermap(
-		fun(Line) ->
-			case Line of
-				<<>> ->
-					false;
-				TXIDOrRange ->
-					case binary:split(TXIDOrRange, <<",">>, [global]) of
-						[StartBin, EndBin] ->
-							case {catch binary_to_integer(StartBin),
-									catch binary_to_integer(EndBin)} of
-								{Start, End} when is_integer(Start),
-									is_integer(End), End > Start, Start >= 0 ->
-									{true, {End, Start}};
-								_ ->
-									?LOG_WARNING([{event, failed_to_parse_line},
-											{tags, [tx_blacklist]},
-											{line, Line}]),
-									false
-							end;
-						_ ->
-							case ar_util:safe_decode(TXIDOrRange) of
-								{error, invalid} ->
-									?LOG_WARNING([{event, failed_to_parse_line},
-											{tags, [tx_blacklist]},
-											{line, Line}]),
-									false;
-								{ok, TXID} ->
-									{true, TXID}
-							end
-					end
-			end
-		end,
-		binary:split(Binary, <<"\n">>, [global])
-	).
+    lists:filtermap(
+        fun(Line) ->
+            case Line of
+                <<>> ->
+                    false;
+                TXIDOrRange ->
+                    case binary:split(TXIDOrRange, <<",">>, [global]) of
+                        [StartBin, EndBin] ->
+                            case {catch binary_to_integer(StartBin),
+                                    catch binary_to_integer(EndBin)} of
+                                {Start, End} when is_integer(Start),
+                                    is_integer(End), End > Start, Start >= 0 ->
+                                    {true, {End, Start}};
+                                _ ->
+                                    ?LOG_WARNING([{event, failed_to_parse_line},
+                                            {tags, [tx_blacklist]},
+                                            {line, Line}]),
+                                    false
+                            end;
+                        _ ->
+                            case ar_util:safe_decode(TXIDOrRange) of
+                                {error, invalid} ->
+                                    ?LOG_WARNING([{event, failed_to_parse_line},
+                                            {tags, [tx_blacklist]},
+                                            {line, Line}]),
+                                    false;
+                                {ok, TXID} ->
+                                    {true, TXID}
+                            end
+                    end
+            end
+        end,
+        binary:split(Binary, <<"\n">>, [global])
+    ).
 
 load_from_urls(URLs) ->
-	Lists = lists:map(fun load_from_url/1, URLs),
-	case lists:all(fun(error) -> false; (_) -> true end, Lists) of
-		true ->
-			{ok, sets:from_list(lists:flatten(Lists))};
-		false ->
-			error
-	end.
+    Lists = lists:map(fun load_from_url/1, URLs),
+    case lists:all(fun(error) -> false; (_) -> true end, Lists) of
+        true ->
+            {ok, sets:from_list(lists:flatten(Lists))};
+        false ->
+            error
+    end.
 
 load_from_url(URL) ->
-	try
-		%% Config stores URLs as binaries. uri_string returns components
-		%% of the same type as its input, and the code below (a literal
-		%% "" path, "http"/"https" schemes) is written against strings.
-		#{ host := Host, path := RawPath, scheme := Scheme } = M =
-			uri_string:parse(binary_to_list(URL)),
-		Path = case RawPath of "" -> "/"; Else -> Else end,
-		Query = case maps:get(query, M, not_found) of not_found -> <<>>; Q -> [<<"?">>, Q] end,
-		Port = maps:get(port, M, case Scheme of "http" -> 80; "https" -> 443 end),
-		Reply =
-			ar_http:req(#{
-				method => get,
-				peer => {Host, Port},
-				path => binary_to_list(iolist_to_binary([Path, Query])),
-				is_peer_request => false,
-				timeout => 20000,
-				connect_timeout => 1000,
-				%% The blacklist source is supposed to be trusted
-				%% so we allow it to exceed the ?MAX_BODY_SIZE default.
-				limit => infinity
-			}),
-		case Reply of
-			{ok, {{<<"200">>, _}, _, Body, _, _}} ->
-				parse_binary(Body);
-			_ ->
-				?LOG_WARNING([
-					{event, failed_to_download_tx_blacklist},
-					{tags, [tx_blacklist]},
-					{url, URL},
-					{reply, Reply}
-				]),
-				error
-		end
-	catch Type:Pattern ->
-		?LOG_WARNING([
-			{event, failed_to_load_and_parse_tx_blacklist},
-			{tags, [tx_blacklist]},
-			{url, URL},
-			{exception, {Type, Pattern}}
-		]),
-		error
-	end.
+    try
+        %% Config stores URLs as binaries. uri_string returns components
+        %% of the same type as its input, and the code below (a literal
+        %% "" path, "http"/"https" schemes) is written against strings.
+        #{ host := Host, path := RawPath, scheme := Scheme } = M =
+            uri_string:parse(binary_to_list(URL)),
+        Path = case RawPath of "" -> "/"; Else -> Else end,
+        Query = case maps:get(query, M, not_found) of not_found -> <<>>; Q -> [<<"?">>, Q] end,
+        Port = maps:get(port, M, case Scheme of "http" -> 80; "https" -> 443 end),
+        Reply =
+            ar_http:req(#{
+                method => get,
+                peer => {Host, Port},
+                path => binary_to_list(iolist_to_binary([Path, Query])),
+                is_peer_request => false,
+                timeout => 20000,
+                connect_timeout => 1000,
+                %% The blacklist source is supposed to be trusted
+                %% so we allow it to exceed the ?MAX_BODY_SIZE default.
+                limit => infinity
+            }),
+        case Reply of
+            {ok, {{<<"200">>, _}, _, Body, _, _}} ->
+                parse_binary(Body);
+            _ ->
+                ?LOG_WARNING([
+                    {event, failed_to_download_tx_blacklist},
+                    {tags, [tx_blacklist]},
+                    {url, URL},
+                    {reply, Reply}
+                ]),
+                error
+        end
+    catch Type:Pattern ->
+        ?LOG_WARNING([
+            {event, failed_to_load_and_parse_tx_blacklist},
+            {tags, [tx_blacklist]},
+            {url, URL},
+            {exception, {Type, Pattern}}
+        ]),
+        error
+    end.
 
 request_header_takedown(State) ->
-	case ets:first(ar_tx_blacklist_pending_headers) of
-		'$end_of_table' ->
-			State;
-		TXID ->
-			ar_header_sync:request_tx_removal(TXID),
-			State#ar_tx_blacklist_state{
-				header_takedown_request_timestamp = os:system_time(millisecond)
-			}
-	end.
+    case ets:first(ar_tx_blacklist_pending_headers) of
+        '$end_of_table' ->
+            State;
+        TXID ->
+            ar_header_sync:request_tx_removal(TXID),
+            State#ar_tx_blacklist_state{
+                header_takedown_request_timestamp = os:system_time(millisecond)
+            }
+    end.
 
 request_data_takedown(State) ->
-	case ets:first(ar_tx_blacklist_pending_data) of
-		'$end_of_table' ->
-			State;
-		TXID when is_binary(TXID)  ->
-			case ets:lookup(ar_tx_blacklist, TXID) of
-				[{TXID}] ->
-					case ar_data_sync:get_tx_offset(TXID) of
-						{ok, {End, Size}} ->
-							Start = End - Size,
-							ets:insert(ar_tx_blacklist, [{TXID, End, Start}]),
-							blacklist_offsets(TXID, End, Start, State);
-						{error, Reason} ->
-							?LOG_WARNING([{event, failed_to_find_blocklisted_tx_in_the_index},
-									{tags, [tx_blacklist]},
-									{tx, ar_util:encode(TXID)},
-									{reason, io_lib:format("~p", [Reason])}]),
-							ets:delete(ar_tx_blacklist_pending_data, TXID),
-							ets:delete(ar_tx_blacklist, TXID),
-							State
-					end;
-				[{TXID, End, Start}] ->
-					blacklist_offsets(TXID, End, Start, State)
-			end;
-		{End, Start} ->
-			blacklist_offsets(End, Start, State)
-	end.
+    case ets:first(ar_tx_blacklist_pending_data) of
+        '$end_of_table' ->
+            State;
+        TXID when is_binary(TXID)  ->
+            case ets:lookup(ar_tx_blacklist, TXID) of
+                [{TXID}] ->
+                    case ar_data_sync:get_tx_offset(TXID) of
+                        {ok, {End, Size}} ->
+                            Start = End - Size,
+                            ets:insert(ar_tx_blacklist, [{TXID, End, Start}]),
+                            blacklist_offsets(TXID, End, Start, State);
+                        {error, Reason} ->
+                            ?LOG_WARNING([{event, failed_to_find_blocklisted_tx_in_the_index},
+                                    {tags, [tx_blacklist]},
+                                    {tx, ar_util:encode(TXID)},
+                                    {reason, io_lib:format("~p", [Reason])}]),
+                            ets:delete(ar_tx_blacklist_pending_data, TXID),
+                            ets:delete(ar_tx_blacklist, TXID),
+                            State
+                    end;
+                [{TXID, End, Start}] ->
+                    blacklist_offsets(TXID, End, Start, State)
+            end;
+        {End, Start} ->
+            blacklist_offsets(End, Start, State)
+    end.
 
 store_state() ->
-	Names = [
-		ar_tx_blacklist,
-		ar_tx_blacklist_pending_headers,
-		ar_tx_blacklist_pending_data,
-		ar_tx_blacklist_offsets,
-		ar_tx_blacklist_pending_restore_headers
-	],
-	lists:foreach(
-		fun
-			(Name) ->
-				ets:to_dets(Name, Name)
-		end,
-		Names
-	),
-	?LOG_DEBUG([{event, stored_state},
-		{tags, [tx_blacklist]},
-		{ar_tx_blacklist, ets:info(ar_tx_blacklist, size)},
-		{ar_tx_blacklist_pending_headers, ets:info(ar_tx_blacklist_pending_headers, size)},
-		{ar_tx_blacklist_pending_data, ets:info(ar_tx_blacklist_pending_data, size)},
-		{ar_tx_blacklist_offsets, ets:info(ar_tx_blacklist_offsets, size)},
-		{ar_tx_blacklist_pending_restore_headers,
-			ets:info(ar_tx_blacklist_pending_restore_headers, size)}
-	]).
+    Names = [
+        ar_tx_blacklist,
+        ar_tx_blacklist_pending_headers,
+        ar_tx_blacklist_pending_data,
+        ar_tx_blacklist_offsets,
+        ar_tx_blacklist_pending_restore_headers
+    ],
+    lists:foreach(
+        fun
+            (Name) ->
+                ets:to_dets(Name, Name)
+        end,
+        Names
+    ),
+    ?LOG_DEBUG([{event, stored_state},
+        {tags, [tx_blacklist]},
+        {ar_tx_blacklist, ets:info(ar_tx_blacklist, size)},
+        {ar_tx_blacklist_pending_headers, ets:info(ar_tx_blacklist_pending_headers, size)},
+        {ar_tx_blacklist_pending_data, ets:info(ar_tx_blacklist_pending_data, size)},
+        {ar_tx_blacklist_offsets, ets:info(ar_tx_blacklist_offsets, size)},
+        {ar_tx_blacklist_pending_restore_headers,
+            ets:info(ar_tx_blacklist_pending_restore_headers, size)}
+    ]).
 
 restore_offsets(End, Start) ->
-	ar_ets_intervals:delete(ar_tx_blacklist_offsets, End, Start).
+    ar_ets_intervals:delete(ar_tx_blacklist_offsets, End, Start).
 
 blacklist_offsets(End, Start, State) ->
-	ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
-	Ref = make_ref(),
-	erlang:put(Ref, {range, {Start, End}}),
-	?LOG_DEBUG([{event, requesting_data_removal},
-		{tags, [tx_blacklist]},
-		{s, Start},
-		{e, End}]),
-	ar_data_sync:request_data_removal(Start, End, Ref, self()),
-	State#ar_tx_blacklist_state{
-		data_takedown_request_timestamp = os:system_time(millisecond)
-	}.
+    ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
+    Ref = make_ref(),
+    erlang:put(Ref, {range, {Start, End}}),
+    ?LOG_DEBUG([{event, requesting_data_removal},
+        {tags, [tx_blacklist]},
+        {s, Start},
+        {e, End}]),
+    ar_data_sync:request_data_removal(Start, End, Ref, self()),
+    State#ar_tx_blacklist_state{
+        data_takedown_request_timestamp = os:system_time(millisecond)
+    }.
 
 blacklist_offsets(TXID, End, Start, State) ->
-	ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
-	Ref = make_ref(),
-	erlang:put(Ref, {tx, {TXID, Start, End}}),
-	?LOG_DEBUG([{event, requesting_tx_data_removal},
-		{tags, [tx_blacklist]},
-		{tx, ar_util:encode(TXID)},
-		{s, Start},
-		{e, End}]),
-	ar_data_sync:request_tx_data_removal(TXID, Ref, self()),
-	State#ar_tx_blacklist_state{
-		data_takedown_request_timestamp = os:system_time(millisecond)
-	}.
+    ar_ets_intervals:add(ar_tx_blacklist_offsets, End, Start),
+    Ref = make_ref(),
+    erlang:put(Ref, {tx, {TXID, Start, End}}),
+    ?LOG_DEBUG([{event, requesting_tx_data_removal},
+        {tags, [tx_blacklist]},
+        {tx, ar_util:encode(TXID)},
+        {s, Start},
+        {e, End}]),
+    ar_data_sync:request_tx_data_removal(TXID, Ref, self()),
+    State#ar_tx_blacklist_state{
+        data_takedown_request_timestamp = os:system_time(millisecond)
+    }.
 
 close_dets() ->
-	Names = [
-		ar_tx_blacklist,
-		ar_tx_blacklist_pending_headers,
-		ar_tx_blacklist_pending_data,
-		ar_tx_blacklist_offsets,
-		ar_tx_blacklist_pending_restore_headers
-	],
-	lists:foreach(
-		fun
-			(Name) ->
-				case dets:close(Name) of
-					ok ->
-						ok;
-					{error, Reason} ->
-						?LOG_ERROR([
-							{event, failed_to_close_dets_table},
-							{tags, [tx_blacklist]},
-							{name, Name},
-							{reason, Reason}
-						])
-				end
-		end,
-		Names
-	).
+    Names = [
+        ar_tx_blacklist,
+        ar_tx_blacklist_pending_headers,
+        ar_tx_blacklist_pending_data,
+        ar_tx_blacklist_offsets,
+        ar_tx_blacklist_pending_restore_headers
+    ],
+    lists:foreach(
+        fun
+            (Name) ->
+                case dets:close(Name) of
+                    ok ->
+                        ok;
+                    {error, Reason} ->
+                        ?LOG_ERROR([
+                            {event, failed_to_close_dets_table},
+                            {tags, [tx_blacklist]},
+                            {name, Name},
+                            {reason, Reason}
+                        ])
+                end
+        end,
+        Names
+    ).

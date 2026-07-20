@@ -5,7 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 api_auth_test_() ->
-	[
-		{timeout, ?TEST_NODE_TIMEOUT, fun ar_coordinated_mining_tests:test_no_secret/0},
-		{timeout, ?TEST_NODE_TIMEOUT, fun ar_coordinated_mining_tests:test_bad_secret/0}
-	].
+    [
+        {timeout, ?TEST_NODE_TIMEOUT, fun ar_coordinated_mining_tests:test_no_secret/0},
+        {timeout, ?TEST_NODE_TIMEOUT, fun ar_coordinated_mining_tests:test_bad_secret/0}
+    ].

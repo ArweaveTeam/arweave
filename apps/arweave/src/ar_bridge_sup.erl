@@ -14,21 +14,21 @@
 %%%===================================================================
 
 start_link() ->
-	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% ===================================================================
 %% Supervisor callbacks.
 %% ===================================================================
 
 init([]) ->
-	Children = lists:map(
-		fun(Num) ->
-			Name = list_to_atom("ar_block_propagation_worker" ++ integer_to_list(Num)),
-			{Name, {ar_block_propagation_worker, start_link, [Name]}, permanent,
-			 ?SHUTDOWN_TIMEOUT, worker, [ar_block_propagation_worker]}
-		end,
-		lists:seq(1, ar_bridge:block_propagation_parallelization())
-	),
-	Workers = [element(1, El) || El <- Children],
-	Children2 = [?CHILD_WITH_ARGS(ar_bridge, worker, ar_bridge, [ar_bridge, Workers]) | Children],
-	{ok, {{one_for_one, 5, 10}, Children2}}.
+    Children = lists:map(
+                 fun(Num) ->
+                         Name = list_to_atom("ar_block_propagation_worker" ++ integer_to_list(Num)),
+                         {Name, {ar_block_propagation_worker, start_link, [Name]}, permanent,
+                          ?SHUTDOWN_TIMEOUT, worker, [ar_block_propagation_worker]}
+                 end,
+                 lists:seq(1, ar_bridge:block_propagation_parallelization())
+                ),
+    Workers = [element(1, El) || El <- Children],
+    Children2 = [?CHILD_WITH_ARGS(ar_bridge, worker, ar_bridge, [ar_bridge, Workers]) | Children],
+    {ok, {{one_for_one, 5, 10}, Children2}}.

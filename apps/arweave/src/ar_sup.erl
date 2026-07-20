@@ -21,100 +21,100 @@
 %% ===================================================================
 
 start_link() ->
-	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
 
 init([]) ->
-	%% These ETS tables should belong to the supervisor.
-	ets:new(ar_shutdown_manager, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_timer, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_peers, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_http, [set, public, named_table]),
-	ets:new(ar_blacklist_middleware, [set, public, named_table]),
-	ets:new(blacklist, [set, public, named_table]),
-	ets:new(ignored_ids, [bag, public, named_table]),
-	ets:new(ar_tx_emitter_recently_emitted, [set, public, named_table]),
-	ets:new(ar_tx_db, [set, public, named_table]),
-	ets:new(ar_nonce_limiter, [set, public, named_table]),
-	ets:new(ar_nonce_limiter_server, [set, public, named_table]),
-	ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
-	%% ar_data_discovery* tables moved to ar_data_sync_sup (the sup that
-	%% owns the gen_server that uses them).
-	ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_chunk_storage, [set, public, named_table]),
-	ets:new(ar_entropy_storage, [set, public, named_table]),
-	ets:new(ar_mining_stats, [set, public, named_table]),
-	ets:new(entropy_generation_stats, [ordered_set, public, named_table]),
-	ets:new(ar_global_sync_record, [set, public, named_table]),
-	ets:new(ar_disk_pool_data_roots, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_disk_pool_chunks_cache, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_disk_pool_chunks_cache_reverse, [bag, public, named_table]),
-	ets:new(ar_tx_blacklist, [set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_tx_blacklist_pending_headers,
-			[set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_tx_blacklist_pending_data,
-			[set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_tx_blacklist_offsets,
-			[ordered_set, public, named_table, {read_concurrency, true}]),
-	ets:new(ar_tx_blacklist_pending_restore_headers,
-			[ordered_set, public, named_table, {read_concurrency, true}]),
-	ets:new(block_cache, [set, public, named_table]),
-	ets:new(tx_prefixes, [bag, public, named_table]),
-	ets:new(block_index, [ordered_set, public, named_table]),
-	ets:new(node_state, [set, public, named_table]),
-	ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
-	Children = [
-		?CHILD(ar_shutdown_manager, worker),
-		?CHILD(ar_disksup, worker),
-		?CHILD_SUP(ar_events_sup, supervisor),
-		?CHILD_SUP(ar_http_sup, supervisor),
-		?CHILD_SUP(ar_kv_sup, supervisor),
-		?CHILD_SUP(ar_storage_sup, supervisor),
-		?CHILD(ar_peers, worker),
-		?CHILD(ar_disk_cache, worker),
-		?CHILD(ar_watchdog, worker),
-		?CHILD(ar_tx_blacklist, worker),
-		?CHILD_SUP(ar_bridge_sup, supervisor),
-		?CHILD_SUP(ar_packing_sup, supervisor),
-		?CHILD_SUP(ar_sync_record_sup, supervisor),
-		?CHILD(ar_header_sync, worker),
-		%% `ar_data_sync_sup' must start before `ar_chunk_storage_sup' so its
-		%% workers open `chunk_data_db'/`tx_index' before `ar_repack' workers
-		%% read them; otherwise `ar_kv:get' returns `{error, db_not_found}'
-		%% and `ar_repack' crashes.
-		?CHILD_SUP(ar_data_sync_sup, supervisor),
-		?CHILD_SUP(ar_chunk_storage_sup, supervisor),
-		?CHILD_SUP(ar_data_root_sync_sup, supervisor),
-		?CHILD_SUP(ar_verify_chunks_sup, supervisor),
-		?CHILD(ar_global_sync_record, worker),
-		?CHILD_SUP(ar_nonce_limiter_sup, supervisor),
-		mining_sup(),
-		?CHILD(ar_coordination, worker),
-		?CHILD_SUP(ar_tx_emitter_sup, supervisor),
-		?CHILD(ar_tx_poller, worker),
-		?CHILD_SUP(ar_block_pre_validator_sup, supervisor),
-		?CHILD_SUP(ar_poller_sup, supervisor),
-		?CHILD_SUP(ar_webhook_sup, supervisor),
-		?CHILD(ar_pool, worker),
-		?CHILD(ar_pool_job_poller, worker),
-		?CHILD(ar_pool_cm_job_poller, worker),
-		?CHILD(ar_chain_stats, worker),
-		?CHILD_SUP(ar_node_sup, supervisor)
-	],
-	Debug = arweave_config:get([debug]),
-	DebugChildren = case Debug of
-		true -> [?CHILD(ar_process_sampler, worker)];
-		false -> []
-	end,
-	{ok, {{one_for_one, 5, 10}, Children ++ DebugChildren}}.
+    %% These ETS tables should belong to the supervisor.
+    ets:new(ar_shutdown_manager, [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_timer, [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_peers, [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_http, [set, public, named_table]),
+    ets:new(ar_blacklist_middleware, [set, public, named_table]),
+    ets:new(blacklist, [set, public, named_table]),
+    ets:new(ignored_ids, [bag, public, named_table]),
+    ets:new(ar_tx_emitter_recently_emitted, [set, public, named_table]),
+    ets:new(ar_tx_db, [set, public, named_table]),
+    ets:new(ar_nonce_limiter, [set, public, named_table]),
+    ets:new(ar_nonce_limiter_server, [set, public, named_table]),
+    ets:new(ar_header_sync, [set, public, named_table, {read_concurrency, true}]),
+    %% ar_data_discovery* tables moved to ar_data_sync_sup (the sup that
+    %% owns the gen_server that uses them).
+    ets:new(ar_data_sync_state, [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_chunk_storage, [set, public, named_table]),
+    ets:new(ar_entropy_storage, [set, public, named_table]),
+    ets:new(ar_mining_stats, [set, public, named_table]),
+    ets:new(entropy_generation_stats, [ordered_set, public, named_table]),
+    ets:new(ar_global_sync_record, [set, public, named_table]),
+    ets:new(ar_disk_pool_data_roots, [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_disk_pool_chunks_cache, [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_disk_pool_chunks_cache_reverse, [bag, public, named_table]),
+    ets:new(ar_tx_blacklist, [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_tx_blacklist_pending_headers,
+            [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_tx_blacklist_pending_data,
+            [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_tx_blacklist_offsets,
+            [ordered_set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_tx_blacklist_pending_restore_headers,
+            [ordered_set, public, named_table, {read_concurrency, true}]),
+    ets:new(block_cache, [set, public, named_table]),
+    ets:new(tx_prefixes, [bag, public, named_table]),
+    ets:new(block_index, [ordered_set, public, named_table]),
+    ets:new(node_state, [set, public, named_table]),
+    ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
+    Children = [
+        ?CHILD(ar_shutdown_manager, worker),
+        ?CHILD(ar_disksup, worker),
+        ?CHILD_SUP(ar_events_sup, supervisor),
+        ?CHILD_SUP(ar_http_sup, supervisor),
+        ?CHILD_SUP(ar_kv_sup, supervisor),
+        ?CHILD_SUP(ar_storage_sup, supervisor),
+        ?CHILD(ar_peers, worker),
+        ?CHILD(ar_disk_cache, worker),
+        ?CHILD(ar_watchdog, worker),
+        ?CHILD(ar_tx_blacklist, worker),
+        ?CHILD_SUP(ar_bridge_sup, supervisor),
+        ?CHILD_SUP(ar_packing_sup, supervisor),
+        ?CHILD_SUP(ar_sync_record_sup, supervisor),
+        ?CHILD(ar_header_sync, worker),
+        %% `ar_data_sync_sup' must start before `ar_chunk_storage_sup' so its
+        %% workers open `chunk_data_db'/`tx_index' before `ar_repack' workers
+        %% read them; otherwise `ar_kv:get' returns `{error, db_not_found}'
+        %% and `ar_repack' crashes.
+        ?CHILD_SUP(ar_data_sync_sup, supervisor),
+        ?CHILD_SUP(ar_chunk_storage_sup, supervisor),
+        ?CHILD_SUP(ar_data_root_sync_sup, supervisor),
+        ?CHILD_SUP(ar_verify_chunks_sup, supervisor),
+        ?CHILD(ar_global_sync_record, worker),
+        ?CHILD_SUP(ar_nonce_limiter_sup, supervisor),
+        mining_sup(),
+        ?CHILD(ar_coordination, worker),
+        ?CHILD_SUP(ar_tx_emitter_sup, supervisor),
+        ?CHILD(ar_tx_poller, worker),
+        ?CHILD_SUP(ar_block_pre_validator_sup, supervisor),
+        ?CHILD_SUP(ar_poller_sup, supervisor),
+        ?CHILD_SUP(ar_webhook_sup, supervisor),
+        ?CHILD(ar_pool, worker),
+        ?CHILD(ar_pool_job_poller, worker),
+        ?CHILD(ar_pool_cm_job_poller, worker),
+        ?CHILD(ar_chain_stats, worker),
+        ?CHILD_SUP(ar_node_sup, supervisor)
+    ],
+    Debug = arweave_config:get([debug]),
+    DebugChildren = case Debug of
+        true -> [?CHILD(ar_process_sampler, worker)];
+        false -> []
+    end,
+    {ok, {{one_for_one, 5, 10}, Children ++ DebugChildren}}.
 
 -ifdef(LOCALNET).
 mining_sup() ->
-	?CHILD_SUP(ar_localnet_mining_sup, supervisor).
+    ?CHILD_SUP(ar_localnet_mining_sup, supervisor).
 -else.
 mining_sup() ->
-	?CHILD_SUP(ar_mining_sup, supervisor).
+    ?CHILD_SUP(ar_mining_sup, supervisor).
 -endif.
