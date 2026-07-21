@@ -140,6 +140,8 @@ legacy_list() ->
 %% attributes — both the source `from` and the target `to` — into
 %% the canonical `[repack_modules]' list of maps.
 -spec write_legacy_list([term()]) -> ok.
+write_legacy_list([]) ->
+	ok;
 write_legacy_list(L) when is_list(L) ->
 	write_modules(L),
 	ok.

@@ -150,7 +150,14 @@ encode_pair(Prefix, KeyBin, [], _Indent) ->
 encode_pair(Prefix, KeyBin, Value, Indent) when is_map(Value) ->
 	[Prefix, KeyBin, <<":\n">>, encode_map(Value, Indent + 1)];
 encode_pair(Prefix, KeyBin, Value, Indent) when is_list(Value) ->
-	[Prefix, KeyBin, <<":\n">>, encode_list(Value, Indent + 1)];
+	%% An Erlang string (e.g. a legacy-parsed path like "/opt/data") is
+	%% a scalar, not a sequence of character codes.
+	case io_lib:printable_unicode_list(Value) of
+		true ->
+			[Prefix, KeyBin, <<": ">>, encode_scalar(Value), <<"\n">>];
+		false ->
+			[Prefix, KeyBin, <<":\n">>, encode_list(Value, Indent + 1)]
+	end;
 encode_pair(Prefix, KeyBin, Value, _Indent) ->
 	[Prefix, KeyBin, <<": ">>, encode_scalar(Value), <<"\n">>].
 
@@ -181,7 +188,7 @@ encode_scalar(Value) when is_atom(Value) ->
 encode_scalar(Value) when is_binary(Value) ->
 	yaml_quote(Value);
 encode_scalar(Value) when is_list(Value) ->
-	yaml_quote(list_to_binary(Value));
+	yaml_quote(unicode:characters_to_binary(Value));
 encode_scalar(Value) ->
 	yaml_quote(iolist_to_binary(io_lib:format("~p", [Value]))).
 
@@ -230,14 +237,19 @@ is_numeric_string(Bin) ->
 	end.
 
 has_special_chars(Bin) ->
+	%% `-' is deliberately NOT in this list: a hyphen is only a YAML
+	%% indicator at the start of a scalar (see below); mid-string
+	%% hyphens (hostnames like chain-1.arweave.xyz) are plain-safe and
+	%% quoting them made the output inconsistently quoted.
 	binary:match(Bin, [<<":">>, <<"#">>, <<"{">>, <<"}">>,
 		<<"[">>, <<"]">>, <<",">>, <<"&">>, <<"*">>,
-		<<"?">>, <<"|">>, <<"-">>, <<"<">>, <<">">>,
+		<<"?">>, <<"|">>, <<"<">>, <<">">>,
 		<<"=">>, <<"!">>, <<"%">>, <<"@">>, <<"`">>,
 		<<"\"">>, <<"'">>, <<"\n">>, <<"\r">>, <<"\t">>]) =/= nomatch
 	orelse
-	%% Leading or trailing whitespace also forces quoting.
+	%% A leading hyphen or leading/trailing whitespace forces quoting.
 	case Bin of
+		<<"-", _/binary>> -> true;
 		<<" ", _/binary>> -> true;
 		_ ->
 			Size = byte_size(Bin) - 1,

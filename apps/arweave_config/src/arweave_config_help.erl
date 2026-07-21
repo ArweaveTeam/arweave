@@ -42,7 +42,8 @@ print_intro() ->
 	io:format(
 		"Each option key can be set four ways:~n"
 		"  CLI flag:           --option.key value~n"
-		"  JSON / YAML:        option.key: value~n"
+		"  JSON config file:   \"option.key\": value~n"
+		"  YAML config file:   option.key: value~n"
 		"  Environment var:    AR_OPTION_KEY=value~n"
 		"~n"
 		"Run `arweave config help <group>` for detailed help on "

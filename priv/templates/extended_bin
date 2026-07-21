@@ -843,7 +843,10 @@ find_erts_dir() {
 	    __erts_version="$("$__erl" -boot no_dot_erlang -sasl errlog_type error -noshell -eval "$erts_version_code")"
 	    ERTS_DIR="${__erl_root}/erts-${__erts_version}"
 	    if [ -d "$ERTS_DIR" ]; then
-		echo "Exact ERTS version (${ERTS_VSN}) match not found, instead using ${__erts_version}. The release may fail to run." 1>&2
+		# Warn only when the release actually pinned an ERTS version:
+		# builds without include_erts render ERTS_VSN empty and always
+		# use the system ERTS — nothing to mismatch.
+		[ -n "$ERTS_VSN" ] && echo "Exact ERTS version (${ERTS_VSN}) match not found, instead using ${__erts_version}. The release may fail to run." 1>&2
 		ERTS_VSN=${__erts_version}
 	    else
 		echo "Can not run the release. There is no ERTS bundled with the release or found on the system."
@@ -1784,6 +1787,14 @@ case "$1" in
 			ARGS=$(arweave_doctor ${*})
 			;;
       		    convert_config)
+			# Boot only kernel/stdlib (start_clean, interactive
+			# code loading): the converter starts arweave_config
+			# and its dependencies itself. Skipping the full
+			# release boot keeps os_mon's memsup port program out
+			# of the run — its shutdown race prints a scary
+			# "Error writing to pipe: Broken pipe" to users.
+			BOOTFILE="$REL_DIR/start_clean"
+			CODE_LOADING_MODE="${CODE_LOADING_MODE:-interactive}"
 			arweave_convert_config ${*}
 			ARGS=$(arweave_convert_config ${*})
 			;;

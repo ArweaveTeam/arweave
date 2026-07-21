@@ -21,6 +21,7 @@
 	address/1
 ]).
 -include_lib("kernel/include/file.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -define(DEFAULT_PORT, 1984).
 -define(is_octet(X), (is_integer(X) andalso X >= 0 andalso X =< 255)).
@@ -119,22 +120,30 @@ do_peers_list(Value, _Resolve) ->
 	{error, {invalid_peer, Value}}.
 
 do_peers_list([], _Resolve, Acc) ->
-	{ok, lists:reverse(Acc)};
-do_peers_list([Peer | Rest], Resolve, Acc) ->
-	case peer_ids(Peer, Resolve) of
-		{ok, PeerIDs} -> do_peers_list(Rest, Resolve, lists:reverse(PeerIDs, Acc));
+	%% usort mirrors the legacy writer (normalize_peers): duplicates
+	%% collapse and the loaded order is canonical regardless of the
+	%% spelling order in the config file.
+	{ok, lists:usort(Acc)};
+do_peers_list([Peer | Rest], true = Resolve, Acc) ->
+	case resolve_peer(Peer) of
+		{ok, PeerIDs} ->
+			do_peers_list(Rest, Resolve, PeerIDs ++ Acc);
+		{error, _} ->
+			%% Mirror the legacy parser's tolerance: an entry that fails
+			%% to resolve (e.g. a temporarily-dead hostname) is warned
+			%% about and skipped, never fatal for the whole list — a
+			%% stale DNS name must not stop a node from booting.
+			?LOG_WARNING([{event, invalid_peer_in_config},
+				{peer, Peer}, {action, ignored}]),
+			do_peers_list(Rest, Resolve, Acc)
+	end;
+do_peers_list([Peer | Rest], false = Resolve, Acc) ->
+	%% When we're not resolving a peer, a bad entry is a genuine typo and
+	%% stays a hard error.
+	case peer_id(Peer) of
+		{ok, PeerID} -> do_peers_list(Rest, Resolve, [PeerID | Acc]);
 		{error, _} = Err -> Err
 	end.
-
-%% The canonical peer_id(s) for one entry: the preserved id, or — when
-%% resolving — the one-or-more IPv4 ids a hostname maps to.
-peer_ids(Peer, false) ->
-	case peer_id(Peer) of
-		{ok, PeerID} -> {ok, [PeerID]};
-		{error, _} = Err -> Err
-	end;
-peer_ids(Peer, true) ->
-	resolve_peer(Peer).
 
 %% @doc Validate the outer shape of a list of maps. The owning
 %% list root spec validates fields using its `{list_item}` schema.

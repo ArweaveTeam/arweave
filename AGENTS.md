@@ -76,6 +76,9 @@ Use `./bin/test` for EUnit-style test modules:
 
 # Run a specific test
 ./bin/test test_module:test
+
+# Run all Common Tests
+./rebar3 as test ct
 ```
 
 For example:
@@ -92,8 +95,12 @@ goes through the EUnit path.
 # Run one Common Test suite
 ./bin/ct --suite apps/arweave_config/test/arweave_config_full_load_SUITE.erl
 
-# Run multiple Common Test suites
-./bin/ct --suite apps/arweave_config/test/arweave_config_full_load_SUITE.erl --suite apps/arweave_config/test/arweave_config_format_SUITE.erl
+# Run multiple Common Test suites: comma-separated, ONE --suite flag.
+# (Repeating the --suite flag silently runs only the first suite.)
+./bin/ct --suite apps/arweave_config/test/arweave_config_full_load_SUITE.erl,apps/arweave_config/test/arweave_config_format_SUITE.erl
+
+# Or run every suite in a directory:
+./bin/ct --dir apps/arweave_config/test
 ```
 
 ## CI test categories
