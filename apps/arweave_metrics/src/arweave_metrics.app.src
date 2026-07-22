@@ -18,6 +18,7 @@
                  ]},
   {modules, [
              arweave_metrics,
+             arweave_metrics_definitions,
              arweave_metrics_sup,
              arweave_metrics_cache,
              arweave_metrics_collector,
