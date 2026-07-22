@@ -1,9 +1,9 @@
-%%% @doc The ETS-backed variant of ar_patricia_tree_core (see there for the structure and why a
-%%% patricia trie). On a live node the trie lives in the named, protected ETS table
-%%% ar_patricia_tree, created and owned by the ar_account_tree gen_server (new_named/0). Only
-%%% the owner can write, so a stray process cannot corrupt the tip. Any process may still read
-%%% the table for diagnostics. Every operation mutates the table in place and returns the
-%%% table id. Exactly one account tree is stored in full at a time - the diff-DAG "sink" in
+%%% @doc The ETS-backed variant of ar_patricia_tree_core (see there for the tree structure).
+%%% On a production node the tree lives in the named, protected ETS table ar_patricia_tree,
+%%% created and owned by the ar_account_tree gen_server (new_named/0). Only the owner can
+%%% write, so a stray process cannot corrupt the tip. Any process may still read the table
+%%% for diagnostics. Every operation mutates the table in place and returns the table id.
+%%% Exactly one account tree is stored in full at a time - the diff DAG sink in
 %%% ar_account_tree. Tests and benchmarks create their own unnamed tables with new/0.
 -module(ar_patricia_tree_ets).
 

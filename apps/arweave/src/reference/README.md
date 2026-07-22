@@ -1,7 +1,7 @@
 # `src/reference/`
 
 Legacy reference implementations kept **only** for us in tests and benchmarks.
-Thes modulse are not used in production any more.
+These modules are not used in production any more.
 
 ## Rules for this directory
 

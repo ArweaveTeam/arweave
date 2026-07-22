@@ -1,54 +1,19 @@
-%%% @doc A patricia (radix) trie - the structure Arweave stores the account tree in. This
-%%% module holds the algorithm; the storage is supplied by a Backend module (see the callbacks
-%%% below), so the same code drives both ar_patricia_tree (immutable, map-based) and
-%%% ar_patricia_tree_ets (mutable, ETS-based).
+%%% @doc A radix tree with hashed nodes, used for the account tree. Every node caches its
+%%% hash and an update invalidates only the hashes on its root-to-leaf path, so recomputing
+%%% the root hash costs time proportional to the number of updated keys, not the tree size.
 %%%
-%%% An account tree maps each account's address (a 32-byte hash) to its value. It is stored as a
-%%% radix trie keyed by the address bytes: accounts whose addresses share leading bytes share a
-%%% path, every node is content-hashed, and the hashes bubble up to a root - the block's
-%%% wallet_list. For two accounts a and b whose addresses share a leading prefix:
-%%%
-%%%                  (root) #h0
-%%%                     |
-%%%          a, b share a leading prefix
-%%%                     |   (one compressed edge)
-%%%                  (inner) #h1
-%%%                 /          \
-%%%             leaf a        leaf b
-%%%            {bal,..} #ha   {bal,..} #hb
-%%%
-%%%            root hash #h0  ==  the block's wallet_list
-%%%
-%%% Why a patricia trie rather than, say, a sorted-leaf Merkle tree? The tree is re-hashed every
-%%% block, but a block changes only a handful of accounts out of millions, so two properties
-%%% must hold at once:
-%%%
-%%%   (1) Local updates. An account's position is fixed by its address, so an insert, update or
-%%%       delete touches a single root-to-leaf path, and re-hashing walks only the changed paths
-%%%       - cost proportional to accounts changed, not to tree size.
-%%%
-%%%   (2) Canonical root. The trie's shape is a pure function of the set of keys present, so
-%%%       every node derives the identical root regardless of the order updates arrived in.
-%%%
-%%% A sorted-leaf Merkle tree gives (2) but not (1): its positional leaves force an O(n) re-hash
-%%% whenever a new account is inserted. A balanced search tree gives (1) but not (2): its shape
-%%% depends on insertion order. A patricia trie gives both. It is not height-balanced, but its
-%%% depth is bounded by the key length (at most 32 byte-branches), never O(n), and address
-%%% hashes keep it shallow in practice.
-%%%
-%%% Every operation threads a Tree value through writes (Tree2 = Backend:put_node(Tree, ...)):
-%%% the map backend returns a new tree, the ETS backend mutates in place and returns the same
-%%% table id, so a single threading style serves both.
+%%% This module implements the algorithm. Storage is provided by a Backend module
+%%% implementing the callbacks below - ar_patricia_tree (map-based) or ar_patricia_tree_ets
+%%% (ETS-based).
 -module(ar_patricia_tree_core).
 
 -export([insert/4, get_value/3, lookup/3, size/2, is_empty/2, from_proplist/2, delete/3,
 		get_range/3, get_range/4, foldr/4, compute_hash/4]).
 
-%% The storage backend. get_node returns the 5-tuple node {Parent, Children, Hash, Suffix,
-%% Value} or not_found; put_node/del_node/set_size return the (possibly new) Tree; emit is
-%% called once per hashed node during compute_hash, threading Acc (the map backend accumulates
-%% an update map; the ETS backend streams to a sink and returns Acc unchanged); progress_extra
-%% yields extra fields for the diagnostic progress log (e.g. ETS memory).
+%% The storage backend. get_node returns the node {Parent, Children, Hash, Suffix, Value}
+%% or not_found. put_node, del_node, and set_size return the (possibly new) Tree. emit is
+%% called once per hashed node during compute_hash, threading Acc. progress_extra returns
+%% extra fields for the progress log.
 -callback new() -> Tree :: term().
 -callback get_node(Tree :: term(), Key :: term()) -> tuple() | not_found.
 -callback put_node(Tree :: term(), Key :: term(), Node :: tuple()) -> Tree :: term().
@@ -127,12 +92,10 @@ foldr(Backend, Fun, Acc, Tree) ->
 			foldr(Backend, Fun, Acc, Tree, root)
 	end.
 
-%% @doc Recompute the root hash, re-hashing only dirty (no_hash) paths. HashFun has two
-%% clauses: HashFun(leaf, {Key, Value}) hashes a leaf, HashFun(node, ChildHashes) combines
-%% sibling hashes. At each hashed node Backend:emit(Acc, NodeHash, KeyPrefix, Value) -> Acc is
-%% called - the map backend accumulates an update map in Acc, the ETS backend streams to a sink
-%% and returns Acc unchanged. The accumulator is threaded through and returned as the third
-%% element: {RootHash, Tree, Acc}.
+%% @doc Recompute the root hash, re-hashing only the paths invalidated since the previous
+%% computation. HashFun(leaf, {Key, Value}) hashes a leaf, HashFun(node, ChildHashes)
+%% combines child hashes. Backend:emit is called at every hashed node, threading Acc.
+%% Return {RootHash, Tree, Acc}.
 compute_hash(Backend, Tree, HashFun, Acc) ->
 	case Backend:get_size(Tree) of
 		0 ->
@@ -492,11 +455,8 @@ get_next_start_from_sibling(Backend, Key, Parent, Tree) ->
 	end.
 
 %% @doc Diagnostic progress logging for compute_hash, gated by the AR_PATRICIA_PROGRESS
-%% environment variable (off by default). When enabled, logs a line every ?PROGRESS_CHUNK
-%% leaves with elapsed/throughput plus total heap memory, GCs since start, and any
-%% backend-specific extra (Backend:progress_extra/1, e.g. ETS table memory) - intended to
-%% pinpoint the non-linear slowdown on large trees. Uses the process dictionary; compute_hash
-%% runs in a single process.
+%% environment variable (off by default). Logs a line every ?PROGRESS_CHUNK leaves. Uses the
+%% process dictionary. compute_hash runs in a single process.
 progress_init(Backend, Tree) ->
 	case os:getenv("AR_PATRICIA_PROGRESS") of
 		V when V == false; V == ""; V == "0"; V == "false" ->

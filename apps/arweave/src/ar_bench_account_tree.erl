@@ -1,13 +1,13 @@
-%%% @doc Manual benchmark harness for the account-tree implementations
-%%% (ar_patricia_tree / ar_patricia_tree_legacy / ar_patricia_tree_ets). Not run by
-%%% CI - invoke it by hand from a node console.
+%%% @doc Manual benchmarks for the account-tree implementations: ar_patricia_tree,
+%%% ar_patricia_tree_legacy, and ar_patricia_tree_ets. Not run by CI - invoke by hand from
+%%% a node console.
 -module(ar_bench_account_tree).
 
 -export([test_account_tree_performance/1, test_account_tree_performance/2,
 		bench_account_tree_matrix/0, bench_account_tree_matrix/1, bench_account_tree_matrix/4]).
 
-%% Accounts updated before the batched hash recomputation. Models a full block:
-%% 1000 source + 1000 target accounts + reward address + banned address.
+%% Accounts updated before the batched hash recomputation. Models a full block: 1000 source
+%% accounts, 1000 target accounts, the reward address, and the banned address.
 -define(BENCH_NUM_UPDATES, 2002).
 
 %%%===================================================================
@@ -16,15 +16,15 @@
 
 %% @doc Benchmark account-tree build and hashing. Opts (all optional):
 %%   hash            => ar_deep_hash (default) | sha256 - leaf and node hashing
-%%   tree_repr       => in_memory (default) | legacy | ets
-%%                            - ar_patricia_tree | ar_patricia_tree_legacy | ar_patricia_tree_ets
-%%   persist_updates => true (default) | false          - in_memory/legacy: return the UpdateMap;
-%%                                                         ets: stream node updates to given PID
-%%   num_updates     => 2002 (default)                  - accounts inserted before the batched
-%%                                                         hash recomputation. The default models
-%%                                                         a full block: 1000 source + 1000 target
-%%                                                         accounts + reward address + banned address.
-%% Denominations are always mixed (~50/50 old/new account format).
+%%   tree_repr       => in_memory (default) | legacy | ets - ar_patricia_tree,
+%%                      ar_patricia_tree_legacy, or ar_patricia_tree_ets
+%%   persist_updates => true (default) | false - in_memory and legacy return the UpdateMap,
+%%                      ets streams node updates to the given PID
+%%   num_updates     => 2002 (default) - accounts inserted before the batched hash
+%%                      recomputation. The default models a full block: 1000 source
+%%                      accounts, 1000 target accounts, the reward address, and the
+%%                      banned address.
+%% Accounts are always generated in a mix of the old and new formats, roughly half each.
 test_account_tree_performance(NumAccounts) ->
 	test_account_tree_performance(NumAccounts, #{}).
 
@@ -44,10 +44,10 @@ test_account_tree_performance(NumAccounts, Opts) ->
 			print_account_tree_metrics(Metrics)
 	end.
 
-%% @doc Run the account-tree benchmark over Sizes * Configs ({Hash, TreeRepr}), averaging Reps
-%% runs per cell, and stream one CSV row per cell to File as it completes. persist_updates is
-%% set to true. Serialization is skipped for the ets repr. Each row is flushed as written, so
-%% partial results survive an early stop.
+%% @doc Run the account-tree benchmark for every combination of Sizes and Configs
+%% ({Hash, TreeRepr}), averaging Reps runs per cell, and write one CSV row per cell to File.
+%% persist_updates is always true. Serialization is skipped for the ets representation.
+%% Rows are flushed as they are written, so partial results survive an early stop.
 bench_account_tree_matrix() ->
 	bench_account_tree_matrix("account_tree_bench.csv").
 
@@ -88,9 +88,9 @@ bench_account_tree_matrix(File, Sizes, Configs, Reps) ->
 %%% Internal functions.
 %%%===================================================================
 
-%% @doc Run one account-tree benchmark in an isolated process (heap isolation + GC on exit)
-%% and return its metrics map, or {error, Msg} on invalid options or a crash.
-%% When GCBefore is true, call erlang:garbage_collect/0 before every step.
+%% @doc Run one account-tree benchmark in a spawned process, so the benchmark heap is
+%% isolated and freed on exit. Return its metrics map, or {error, Msg} on invalid options
+%% or a crash. When GCBefore is true, erlang:garbage_collect/0 runs before every timed step.
 run_account_tree_bench(NumAccounts, NumUpdates, Hash, TreeRepr, PersistUpdates, GCBefore) ->
 	case validate_account_tree_bench_opts(Hash, TreeRepr, PersistUpdates) of
 		{error, _} = Error ->
@@ -131,25 +131,26 @@ repr_module(in_memory) -> ar_patricia_tree;
 repr_module(legacy) -> ar_patricia_tree_legacy;
 repr_module(ets) -> ar_patricia_tree_ets.
 
-%% @doc Map the persist_updates flag to the impl-specific compute_hash/3 PersistOpts. For ets,
-%% the #{ sink => Pid } entry is added by measure_account_tree/6.
+%% @doc Map the persist_updates flag to the PersistOpts passed to the representation's
+%% compute_hash/3. For ets, the #{ sink => Pid } entry is added by measure_account_tree/7.
 account_tree_persist_opts(in_memory, true) -> #{ return_update_map => true };
 account_tree_persist_opts(in_memory, false) -> #{};
 account_tree_persist_opts(legacy, true) -> #{ return_update_map => true };
 account_tree_persist_opts(legacy, false) -> #{};
 account_tree_persist_opts(ets, _PersistUpdates) -> #{}.
 
-%% @doc Run the build/hash/rehash measurements and return a metrics map (all times in seconds,
-%% footprints in MB; serialization is skipped for the ets repr). When GCBefore is true,
-%% erlang:garbage_collect/0 runs before each timed step.
-%% Meant to run inside an isolated worker (see run_account_tree_bench/5).
+%% @doc Run the build, hash, and rehash measurements and return a metrics map. Times are in
+%% seconds, footprints in MB. Serialization is skipped for the ets representation. When
+%% GCBefore is true, erlang:garbage_collect/0 runs before each timed step. Meant to run
+%% inside the process spawned by run_account_tree_bench/6.
 measure_account_tree(NumAccounts, NumUpdates, Hash, TreeRepr, PersistUpdates, PersistOpts,
 		GCBefore) ->
 	Mod = repr_module(TreeRepr),
 	HashFun = bench_hash_fun(Hash),
 	%% ets persistence streams node-update batches to a sink process. The bench drains and
-	%% discards them, so compute_hash measures hashing + batch shipping but not storage I/O -
-	%% a fair head-to-head with the in-memory impls (which only build the UpdateMap on the heap).
+	%% discards them, so compute_hash measures hashing and batch shipping but not storage I/O.
+	%% This keeps the comparison with the in-memory implementations fair - they only build
+	%% the UpdateMap on the heap.
 	{PersistOpts2, Sink} =
 		case {TreeRepr, PersistUpdates} of
 			{ets, true} -> S = spawn_discard_sink(), {PersistOpts#{ sink => S }, S};
@@ -159,8 +160,9 @@ measure_account_tree(NumAccounts, NumUpdates, Hash, TreeRepr, PersistUpdates, Pe
 	maybe_gc(GCBefore),
 	{Time1, T1} = timer:tc(fun() -> bench_stream_build(Mod, NumAccounts) end),
 	FootBuild = account_tree_footprint(TreeRepr, T1, GCBefore),
-	%% Serialization applies only to the in-memory impls: ar_serialize:wallet_list_to_json_struct/3
-	%% traverses the ar_patricia_tree map and does not support the ets store.
+	%% Serialization applies only to the in-memory implementations:
+	%% ar_serialize:wallet_list_to_json_struct/3 traverses the ar_patricia_tree map and does
+	%% not support the ets store.
 	{SerS, SerBytes} =
 		case TreeRepr of
 			ets ->
@@ -259,10 +261,11 @@ stop_sink(Sink) ->
 maybe_gc(true) -> erlang:garbage_collect();
 maybe_gc(false) -> ok.
 
-%% O(1) footprint: the ets tree lives off the process heap (read ets:info/2); the in-memory
-%% tree (and its UpdateMap) live on the process heap, so GC first (when GCBefore) and read live
-%% process memory. With GCBefore=false the heap footprint includes uncollected garbage, so it is
-%% only an upper bound - but skipping the collection is what keeps the next recompute warm.
+%% @doc Measure the tree footprint without traversing it. The ets tree lives off the process
+%% heap, so read ets:info/2. The in-memory tree (and its UpdateMap) live on the process
+%% heap, so garbage-collect first (when GCBefore) and read the process memory. With
+%% GCBefore=false the heap footprint includes uncollected garbage and is only an upper
+%% bound, but skipping the collection is what keeps the next recompute warm.
 account_tree_footprint(ets, Tree, _GCBefore) ->
 	ets_table_mb(Tree);
 account_tree_footprint(_Repr, _Tree, GCBefore) ->
@@ -280,11 +283,11 @@ random_wallet() ->
 		crypto:strong_rand_bytes(32)
 	}.
 
-%% @doc Build the unified hash function for the benchmarks (Algo is used for both leaf and
-%% node): HashFun(leaf, {Addr, Value}) hashes a leaf, HashFun(node, Hashes) combines siblings.
-%% The default ar_deep_hash algo is the production consensus hash, so delegate to
-%% ar_block:wallet_list_hash_fun/0 - the two must never drift. The sha256/sha384 funs exist
-%% only to benchmark alternative algorithms and are bench-local.
+%% @doc Build the hash function for the benchmarks. Algo is used for both leaves and nodes:
+%% HashFun(leaf, {Addr, Value}) hashes a leaf, HashFun(node, Hashes) combines sibling
+%% hashes. The default ar_deep_hash algorithm is the production consensus hash, so delegate
+%% to ar_block:wallet_list_hash_fun/0 - the two must never drift. The sha256 and sha384
+%% funs exist only to benchmark alternative algorithms.
 bench_hash_fun(ar_deep_hash) ->
 	ar_block:wallet_list_hash_fun();
 bench_hash_fun(Algo) ->
@@ -346,8 +349,8 @@ bench_csv_cell(Size, Hash, TreeRepr, GCBefore, Reps) ->
 	Metrics = average_metrics([M || {ok, M} <- Runs]),
 	bench_csv_row(Size, Hash, TreeRepr, GCBefore, Metrics).
 
-%% @doc Average each numeric metric over the given maps, ignoring na entries (serialization on
-%% the ets repr); a metric with no numeric samples stays na.
+%% @doc Average each numeric metric over the given maps, ignoring na entries (serialization
+%% on the ets representation). A metric with no numeric samples stays na.
 average_metrics(Maps) ->
 	Keys = [buildup_s, footprint_build_mb, serialization_s, serialization_bytes,
 			scratch_hash_s, footprint_hash_mb, inserts_batch_s, recompute_batch_s,

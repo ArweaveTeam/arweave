@@ -1,9 +1,10 @@
-%%% @doc Fast, node-free equivalence tests asserting ar_patricia_tree_ets behaves identically to
-%%% ar_patricia_tree across the whole API (size, is_empty, get, foldr, get_range/2,3, delete,
-%%% compute_hash root) and that the two trees are structurally identical (same nodes, children,
-%%% suffixes, values), plus a consensus-root check that the frozen reference impl
-%%% (ar_patricia_tree_legacy), the in-memory impl, and the ets impl all hash to the same root.
-%%% Persistence is covered separately by ar_account_tree_persist_tests (node-based).
+%%% @doc Tests asserting ar_patricia_tree_ets behaves identically to ar_patricia_tree
+%%% across the whole API (size, is_empty, get, foldr, get_range/2,3, delete, compute_hash
+%%% root) and that the two trees are structurally identical (same nodes, children,
+%%% suffixes, values). Also checks ar_patricia_tree_legacy, ar_patricia_tree, and
+%%% ar_patricia_tree_ets all hash to the same root under the production consensus hash
+%%% function. The tests need no test node. Persistence is covered separately by
+%%% ar_account_tree_persist_tests.
 -module(ar_patricia_tree_ets_tests).
 -test_category([fast]).
 
@@ -16,8 +17,8 @@
 equivalence_test_() ->
 	{timeout, 60, fun() -> lists:foreach(fun({N, A}) -> check(N, A) end, cases()) end}.
 
-%% Check that the new account_tree implementations (ar_patricia_tree and ar_patricia_tree_ets)
-%% are equivalent to the legacy implementation (ar_patricia_tree_legacy).
+%% @doc The new account tree implementations (ar_patricia_tree and ar_patricia_tree_ets)
+%% hash to the same root as the legacy ar_patricia_tree_legacy.
 legacy_equivalence_test_() ->
 	{timeout, 60, fun() ->
 		lists:foreach(fun({N, A}) -> check_legacy_equivalent(N, A) end, cases())
@@ -35,11 +36,12 @@ cases() ->
 		{many, many_accounts(100)}
 	].
 
-%% Keys where one key is a prefix of another key, like <<"a">> and <<"ab">>. The prefix key's
-%% node holds both a value and children. Real addresses are all 32 bytes long, so such nodes
-%% never appear in production, but the tree code still has branches for them. The prefix key
-%% <<"ab">> is placed first because check/2 deletes the first key: deleting it must remove the
-%% value but keep the node, since <<"abc">> and <<"abd">> still live below it.
+%% @doc Keys where one key is a prefix of another key, like <<"a">> and <<"ab">>. The
+%% prefix key's node holds both a value and children. Real addresses are all 32 bytes long,
+%% so such nodes never appear in production, but the tree code still has branches for them.
+%% The prefix key <<"ab">> is placed first because check/2 deletes the first key: deleting
+%% it must remove the value but keep the node, since <<"abc">> and <<"abd">> still live
+%% below it.
 nested_accounts() ->
 	[
 		account(<<"ab">>, t1),      %% has children <<"abc">> and <<"abd">>
@@ -51,20 +53,21 @@ nested_accounts() ->
 		account(<<"bcd">>, t1)
 	].
 
-%% An excursion (snapshot_begin, mutate, compute_hash, snapshot_restore) must leave the table
-%% byte-identical to before - every node tuple including its cached hash, plus the size entry -
-%% so the tip is never left dirty by hashing a fork. Covers inserts of new keys, updates of
-%% existing ones, deletes, node splits, and their mixes, over empty and populated bases.
+%% @doc A snapshot round trip (snapshot_begin, mutate, compute_hash, snapshot_restore)
+%% must leave the table byte-identical to before - every node tuple including its cached
+%% hash, plus the size entry - so the tip is never left dirty by hashing a fork. Covers
+%% inserts of new keys, updates of existing ones, deletes, node splits, and their mixes,
+%% over empty and populated bases.
 snapshot_restore_test_() ->
 	{timeout, 60, fun() ->
 		lists:foreach(fun({N, A, Ops}) -> check_snapshot(N, A, Ops) end, snapshot_cases())
 	end}.
 
-%% snapshot_restore must undo the writes even when the excursion is ABORTED partway - before
-%% compute_hash runs - the way ar_account_tree:with_snapshot restores in an `after` when the
-%% wrapped operation throws. Records a base, begins a snapshot, applies a partial mix of ops and
-%% raises, restores in an `after`, then asserts the table is byte-identical (cached hashes and
-%% size included) and still hashes to the original root.
+%% @doc snapshot_restore must undo the writes even when the work between snapshot_begin
+%% and compute_hash throws, the way ar_account_tree:with_snapshot restores in an `after`
+%% clause when the wrapped operation fails. Record a base, begin a snapshot, apply some
+%% inserts and a delete, raise, restore in an `after`, then assert the table is
+%% byte-identical (cached hashes and size included) and still hashes to the original root.
 snapshot_restore_on_abort_test_() ->
 	{timeout, 30, fun test_snapshot_restore_on_abort/0}.
 
@@ -95,9 +98,9 @@ test_snapshot_restore_on_abort() ->
 	{Root1, _, _} = ar_patricia_tree_ets:compute_hash(Ets, HashFun, #{}),
 	?assertEqual(Root0, Root1, abort_root).
 
-%% The tree is canonical: the same accounts produce the same nodes and the same root hash
-%% regardless of insertion order. This is what makes the snapshot-restore in ar_account_tree and
-%% the consensus root hash well defined.
+%% @doc The same accounts produce the same nodes and the same root hash regardless of
+%% insertion order. This is what makes the snapshot restore in ar_account_tree and the
+%% consensus root hash well defined.
 order_independence_test_() ->
 	{timeout, 60, fun() ->
 		lists:foreach(fun({N, A}) -> check_order(N, A) end,
@@ -107,11 +110,11 @@ order_independence_test_() ->
 				 {many, many_accounts(120)}])
 	end}.
 
-%% Random fuzz. For every insertion order of a random key set: the root hash is the same, a
-%% tree with a key deleted hashes like a tree built without that key, and get/2 and size/1
-%% agree with a plain map. Mirrors ar_patricia_tree:stochastic_test/0. Runs over three kinds
-%% of key sets: fully random keys, keys branching off a shared base at several depths
-%% (nested_prefix_key_values/1), and keys that are prefixes of one another
+%% @doc Random fuzz. For every insertion order of a random key set: the root hash is the
+%% same, a tree with a key deleted hashes like a tree built without that key, and get/2 and
+%% size/1 agree with a plain map. Mirrors ar_patricia_tree:stochastic_test/0. Runs over
+%% three kinds of key sets: fully random keys, keys branching off a shared base at several
+%% depths (nested_prefix_key_values/1), and keys that are prefixes of one another
 %% (strict_prefix_key_values/1).
 stochastic_test_() ->
 	{timeout, 120, fun() ->
@@ -122,18 +125,19 @@ stochastic_test_() ->
 				lists:seq(1, 150))
 	end}.
 
-%% Delete edge cases not covered directly elsewhere: deleting an absent key is a no-op
-%% (structurally identical to mem), and deleting every key empties the tree.
+%% @doc Delete edge cases not covered directly elsewhere: deleting an absent key is a
+%% no-op (structurally identical to the map-based tree), and deleting every key empties
+%% the tree.
 delete_edges_test_() ->
 	{timeout, 30, fun test_delete_edges/0}.
 
-%% A node with no value and a single child is not hashed itself - the child's hash is passed
-%% up unchanged (the [{SingleHash, _}] branch of do_compute_hash). Inserts never create such
-%% nodes, because a split always produces two children. Deletes do: removing one of a node's
-%% two children leaves the node with one child, and delete does not merge it away. This
-%% happens on a live node when a reorg reverts an account creation. Check that a tree with
-%% such nodes hashes to the same root as a tree built without the deleted keys, and that
-%% later inserts and deletes around them work.
+%% @doc A node with no value and a single child is not hashed itself - the child's hash is
+%% passed up unchanged (the [{SingleHash, _}] branch of do_compute_hash). Inserts never
+%% create such nodes, because a split always produces two children. Deletes do: removing
+%% one of a node's two children leaves the node with one child, and delete does not merge
+%% it away. This happens on a live node when a reorg reverts an account creation. Check
+%% that a tree with such nodes hashes to the same root as a tree built without the deleted
+%% keys, and that later inserts and deletes around them work.
 hash_forwarding_test_() ->
 	{timeout, 30, fun test_hash_forwarding/0}.
 
@@ -254,15 +258,16 @@ apply_ops(Ets, Ops) ->
 		end,
 		Ops).
 
-%% The full table verbatim, hashes included, as a sorted list. Unlike dump/2 this keeps the
-%% cached Hash, so an equality check proves the bytes - and therefore the dirty/clean state -
-%% are identical. Used for snapshot-restore, where restore reinstates the exact node tuples.
+%% @doc The full table, hashes included, as a sorted list. Unlike dump/2 this keeps the
+%% cached Hash, so an equality check proves the bytes, and therefore the hash caching
+%% state, are identical. Used for the snapshot tests, where restore reinstates the exact
+%% node tuples.
 raw_dump(Ets) ->
 	lists:sort(ets:tab2list(Ets)).
 
-%% Like raw_dump but with each node's Children gb_set normalized to a sorted list. A gb_set's
-%% internal shape depends on insertion order even for an equal set, so canonicity (same accounts
-%% in any order) is checked against this normalized view, which still keeps the cached hash.
+%% @doc Like raw_dump but with each node's Children gb_set normalized to a sorted list. A
+%% gb_set's internal shape depends on insertion order even for an equal set, so order
+%% independence is checked against this normalized view, which still keeps the cached hash.
 canon_dump(Ets) ->
 	lists:sort([canon_entry(Entry) || Entry <- ets:tab2list(Ets)]).
 
@@ -281,8 +286,8 @@ val2(Addr) ->
 %% Helpers
 %%====================================================================
 
-%% Assert the legacy reference, in-memory, and ets impls all hash to the same root under the
-%% production consensus hash function.
+%% @doc Assert the legacy, the map-based, and the ETS-based implementations all hash to
+%% the same root under the production consensus hash function.
 check_legacy_equivalent(Name, Accounts) ->
 	HashFun = ar_block:wallet_list_hash_fun(),
 	Legacy = build(ar_patricia_tree_legacy, Accounts),
@@ -294,7 +299,8 @@ check_legacy_equivalent(Name, Accounts) ->
 	?assertEqual(RootLegacy, RootMem, {legacy_vs_mem, Name}),
 	?assertEqual(RootMem, RootEts, {mem_vs_ets, Name}).
 
-%% Assert the mem and ets impls agree across the API and are structurally identical.
+%% @doc Assert the map-based and the ETS-based trees agree across the API and are
+%% structurally identical.
 check(Name, Accounts) ->
 	HashFun = hash_fun(),
 	Mem = build(ar_patricia_tree, Accounts),
@@ -356,9 +362,9 @@ assert_equivalent(Name, Mem, Ets, Accounts, HashFun) ->
 	?assertEqual(dump(ar_patricia_tree, Mem), dump(ar_patricia_tree_ets, Ets),
 			{structure, Name}).
 
-%% A normalized, hash-state-independent view of the tree: a sorted list of
+%% @doc A normalized view of the tree: a sorted list of
 %% {KeyPrefix, {Parent, SortedChildKeys, Suffix, MaybeValue}}. Drops the cached Hash so it
-%% compares regardless of whether compute_hash has run; the root-hash assertion covers the
+%% compares regardless of whether compute_hash has run. The root-hash assertion covers the
 %% hashes.
 dump(Mod, Tree) ->
 	lists:sort(
@@ -377,7 +383,7 @@ node_entries(ar_patricia_tree_ets, Tree) ->
 build(Mod, Accounts) ->
 	lists:foldl(fun({K, V}, T) -> Mod:insert(K, V, T) end, Mod:new(), Accounts).
 
-%% Unified hash function (node-free): sha256 leaf, deep_hash node.
+%% @doc A test hash function: sha256 for leaves, ar_deep_hash for inner nodes.
 hash_fun() ->
 	fun	(leaf, {K, V}) -> crypto:hash(sha256, << K/binary, (term_to_binary(V))/binary >>);
 		(node, Hashes) -> ar_deep_hash:hash(Hashes)
@@ -410,9 +416,9 @@ pad32(Prefix) when byte_size(Prefix) =< 32 ->
 shape(I) when I rem 2 == 0 -> t1;
 shape(_I) -> t2.
 
-%% For each insertion-order permutation of KeyValues: build the tree, check get/2 + size match a
-%% plain map, and that the root is identical across permutations (canonicity). For each key,
-%% deleting it yields the same root as rebuilding the tree without it (deletion equivalence).
+%% @doc For each insertion-order permutation of KeyValues: build the tree, check get/2 and
+%% size/1 match a plain map, and check the root is identical across permutations. For each
+%% key, deleting it yields the same root as rebuilding the tree without it.
 check_stochastic(KeyValues) ->
 	HashFun = hash_fun(),
 	lists:foldl(
@@ -451,11 +457,12 @@ compare_with_map(Tree, Map) ->
 random_key_values(N) ->
 	[{crypto:strong_rand_bytes(5), crypto:strong_rand_bytes(30)} || _ <- lists:seq(1, N)].
 
-%% N distinct keys carved from a shared random base at VARYING prefix lengths: each key keeps a
-%% random-length (1..6 byte) leading slice of the base, then diverges with random bytes. A key
-%% sharing five base bytes nests below one that shares only two, so inserting the set splits nodes
-%% at several depths - a multi-level trie, not a single branch point. Keys are kept distinct so
-%% the map comparison and deletion-equivalence checks in check_stochastic/1 stay well defined.
+%% @doc N distinct keys carved from a shared random base at varying prefix lengths: each
+%% key keeps a random-length (1..6 byte) leading slice of the base, then diverges with
+%% random bytes. A key sharing five base bytes nests below one that shares only two, so
+%% inserting the set splits nodes at several depths rather than at a single branch point.
+%% Keys are kept distinct so the map comparison and deletion checks in check_stochastic/1
+%% stay well defined.
 nested_prefix_key_values(N) ->
 	Base = crypto:strong_rand_bytes(6),
 	distinct_nested(Base, N, []).
@@ -470,16 +477,16 @@ distinct_nested(Base, N, Acc) ->
 		false -> distinct_nested(Base, N - 1, [{Key, crypto:strong_rand_bytes(30)} | Acc])
 	end.
 
-%% N distinct random keys, 1 to 4 bytes long, using only the characters a and b. Only 30 such
-%% keys exist, so the chosen set usually includes a key that is a prefix of another chosen key
-%% (like <<"a">> and <<"ab">>). The prefix key's node then holds both a value and children,
-%% so the fuzz covers inserting and deleting such nodes.
+%% @doc N distinct random keys, 1 to 4 bytes long, using only the characters a and b. Only
+%% 30 such keys exist, so the chosen set usually includes a key that is a prefix of another
+%% chosen key (like <<"a">> and <<"ab">>). The prefix key's node then holds both a value
+%% and children, so the fuzz covers inserting and deleting such nodes.
 strict_prefix_key_values(N) ->
 	Shuffled = [Key || {_, Key} <- lists:sort(
 			[{crypto:strong_rand_bytes(4), Key} || Key <- ab_keys()])],
 	[{Key, crypto:strong_rand_bytes(30)} || Key <- lists:sublist(Shuffled, N)].
 
-%% All keys of length 1..4 over {a, b}.
+%% @doc All keys of length 1..4 over the characters a and b.
 ab_keys() ->
 	lists:append([ab_keys(Len) || Len <- lists:seq(1, 4)]).
 
@@ -497,7 +504,7 @@ test_delete_edges() ->
 	HashFun = hash_fun(),
 	Accounts = shared_prefix_accounts(),
 	AbsentKey = <<16#FE, 0:248>>,
-	%% Deleting an absent key is a no-op - structurally identical to mem.
+	%% Deleting an absent key is a no-op - structurally identical to the map-based tree.
 	MemAfter = ar_patricia_tree:delete(AbsentKey, build(ar_patricia_tree, Accounts)),
 	Ets = build(ar_patricia_tree_ets, Accounts),
 	ar_patricia_tree_ets:delete(AbsentKey, Ets),

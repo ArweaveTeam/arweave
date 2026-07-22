@@ -1,16 +1,12 @@
-%%% @doc A directed acyclic graph that keeps ONE big, expensive-to-replicate entity in full -
-%%% at the "sink" vertex - plus a small diff on every edge. The entity's value at any other
-%%% vertex can be reconstructed on demand, so the graph represents many versions of the entity
-%%% while storing only one of them in full.
+%%% @doc A directed acyclic graph that stores many versions of one large entity while
+%%% keeping only one version - the one at the sink node - in full. Every edge holds the
+%%% diff between two adjacent versions, so the entity at any node can be reconstructed by
+%%% walking from that node to the sink, collecting the diffs along the way, and applying
+%%% them in reverse order.
 %%%
-%%% Each vertex is one version of the entity; each edge holds the diff between two adjacent
-%%% versions. Only the sink holds a full copy. To obtain the entity at some other vertex, walk
-%%% from that vertex down to the sink, collect the diffs along the way, and apply them in
-%%% reverse order.
-%%%
-%%% In Arweave this holds the account tree across the blocks of the consensus window (see
-%%% ar_account_tree): each vertex is one block's account tree - one kept in full, the rest as
-%%% per-block diffs.
+%%% In Arweave this holds the account tree across the blocks of the consensus window: each
+%%% node is one block's account tree, one kept in full, the rest as per-block diffs (see
+%%% ar_account_tree).
 -module(ar_diff_dag).
 -test_category([fast]).
 
@@ -38,10 +34,9 @@ is_sink(_DAG, _ID) ->
 is_node({Sinks, _Sink, _Sources}, ID) ->
     maps:is_key(ID, Sinks).
 
-%% @doc Create a node with an edge connecting the given source and sink identifiers,
-%% directed towards the given sink identifier.
-%% If the node with the given sink identifier does not exist or the node with the given source
-%% identifier already exists, the call fails with a badkey exception.
+%% @doc Add a node under SourceID with an edge holding Diff directed towards the existing
+%% node under SinkID. Fails with a badkey exception when SinkID does not exist or SourceID
+%% already exists.
 add_node(DAG, SourceID, SinkID, Diff, Metadata) when SourceID /= SinkID ->
     assert_exists(SinkID, DAG),
     assert_not_exists(SourceID, DAG),
@@ -54,10 +49,9 @@ add_node(DAG, SourceID, SinkID, Diff, Metadata) when SourceID /= SinkID ->
     {_ID, _Entity, {Counter, _Metadata}} = maps:get(SinkID, Sinks),
     {Sinks#{ SourceID => {SinkID, Diff, {Counter + 1, Metadata}} }, Sink, UpdatedSources}.
 
-%% @doc Update the given node via the given function of a diff and a metadata, which
-%% returns a "new node identifier, new diff, new metadata" triplet. The node must be
-%% a source (must have a sink) and a leaf (must be a sink for no node).
-%% If the node does not exist or is not a leaf source, the call fails with a badkey exception.
+%% @doc Update the given node via UpdateFun(Diff, Metadata) returning {NewID, NewDiff,
+%% NewMetadata}. The node must be a leaf source: not the sink and with no edges pointing at
+%% it. Fails with a badkey exception when the node does not exist or is not a leaf source.
 update_leaf_source(DAG, ID, UpdateFun) ->
     assert_exists(ID, DAG),
     assert_not_sink(ID, DAG),
@@ -75,20 +69,18 @@ update_leaf_source(DAG, ID, UpdateFun) ->
              Sources3}
     end.
 
-%% @doc Return metadata stored at the given node. If the node with the given identifier
-%% does not exist, the call fails with a badkey exception.
+%% @doc Return the metadata stored at the given node. Fails with a badkey exception if the
+%% node does not exist.
 get_metadata(DAG, ID) ->
     element(2, element(3, maps:get(ID, element(1, DAG)))).
 
-%% @doc Return metadata stored at the sink node. If the node with the given identifier
-%% does not exist, the call fails with a badkey exception.
+%% @doc Return the metadata stored at the sink node.
 get_sink_metadata(DAG) ->
     ID = element(2, DAG),
     get_metadata(DAG, ID).
 
-%% @doc Reconstruct the entity corresponding to the given node using
-%% the given diff application function - a function of a diff and an entity.
-%% If the node with the given identifier does not exist, returns {error, not_found}.
+%% @doc Reconstruct the entity at the given node by applying ApplyDiffFun(Diff, Entity)
+%% along the path from the sink. Return {error, not_found} if the node does not exist.
 reconstruct(DAG, ID, ApplyDiffFun) ->
     Sinks = element(1, DAG),
     case maps:is_key(ID, Sinks) of
@@ -98,11 +90,10 @@ reconstruct(DAG, ID, ApplyDiffFun) ->
             {error, not_found}
     end.
 
-%% @doc Make the given node the sink node. The diffs are reversed
-%% according to the given function of a diff and an entity.
-%% The new entity is constructed by applying the diffs on the path from the previous
-%% sink to the new one using the given diff application function of a diff and an entity.
-%% If the node with the given identifier does not exist, the call fails with a badkey exception.
+%% @doc Make the given node the sink. Walk the path from the previous sink applying each
+%% diff with ApplyDiffFun(Diff, Entity) to build the new entity, and flip each traversed
+%% edge, replacing its diff with ReverseDiffFun(Diff, Entity). Fails with a badkey
+%% exception if the node does not exist.
 move_sink(DAG, ID, ApplyDiffFun, ReverseDiffFun) ->
     assert_exists(ID, DAG),
     move_sink(DAG, ID, ApplyDiffFun, ReverseDiffFun, []).
@@ -225,19 +216,18 @@ extend_with_subtree_identifiers(ID, {Sources, ToRemove}) ->
 %%% Legacy (used only by ar_wallets_legacy).
 %%%===================================================================
 
-%% legacy_get_sink/1 and legacy_update_sink/3 read and mutate the sink vertex's entity. The live
-%% account tree (ar_account_tree) keeps its tree in ETS - the sink entity is the placeholder
-%% 'ets' - so it never uses these; only the frozen ar_wallets_legacy (reference/, test-only),
-%% which stores its tree in the DAG, does.
+%% legacy_get_sink/1 and legacy_update_sink/3 read and mutate the sink node's entity. The
+%% production implementation of the account tree (ar_account_tree) keeps its tree in ETS
+%% and its sink entity is the atom 'ets', so it never uses these. Only the test-only
+%% ar_wallets_legacy, which stores its tree in the DAG, does.
 
 %% @doc Return the entity stored in the sink node.
 legacy_get_sink(DAG) ->
     ID = element(2, DAG),
     element(2, maps:get(ID, element(1, DAG))).
 
-%% @doc Update the sink via the given function of an entity and a metadata, which
-%% returns a "new node identifier, new entity, new metadata" triplet.
-%% If the node does not exist or is not a sink, the call fails with a badkey exception.
+%% @doc Update the sink via UpdateFun(Entity, Metadata) returning {NewID, NewEntity,
+%% NewMetadata}. Fails with a badkey exception if the given identifier is not the sink.
 legacy_update_sink({Sinks, ID, Sources}, ID, UpdateFun) ->
     #{ ID := {sink, Entity, {Counter, Metadata}} } = Sinks,
     {NewID, NewEntity, NewMetadata} = UpdateFun(Entity, Metadata),
@@ -461,7 +451,8 @@ update_sink_errors_test() ->
     ?assertException(error, {badkey, "node-2"}, legacy_update_sink(DAG, "node-2", no_function)),
     %% Calling legacy_update_sink on a non-existent node fails with badkey.
     ?assertException(error, {badkey, "node-3"}, legacy_update_sink(DAG, "node-3", no_function)),
-    %% The successful clause keeps the same counter and rewires sources to the new sink id.
+    %% The successful clause keeps the same counter and rewires sources to the new sink
+    %% identifier.
     DAG2 = legacy_update_sink(DAG, "node-1", fun(E, _M) -> {"node-1-renamed", E, meta_1_new} end),
     ?assert(is_sink(DAG2, "node-1-renamed")),
     ?assertEqual(meta_1_new, get_sink_metadata(DAG2)),
@@ -483,13 +474,13 @@ update_leaf_source_non_leaf_test() ->
     %% node-1 (sink) <- node-2: {1, meta_2} <- node-3: {2, meta_3}
     DAG0 = add_node(new("node-1", 0, meta_1), "node-2", "node-1", 1, meta_2),
     DAG = add_node(DAG0, "node-3", "node-2", 2, meta_3),
-    %% node-2 is a source but not a leaf (node-3 points at it) -> badkey.
+    %% node-2 is a source but not a leaf (node-3 points at it), so badkey.
     ?assertException(error, {badkey, "node-2"}, update_leaf_source(DAG, "node-2", no_function)),
-    %% node-1 is the sink (not a source) -> badkey.
+    %% node-1 is the sink (not a source), so badkey.
     ?assertException(error, {badkey, "node-1"}, update_leaf_source(DAG, "node-1", no_function)),
-    %% A non-existent node -> badkey.
+    %% A non-existent node also fails with badkey.
     ?assertException(error, {badkey, "node-4"}, update_leaf_source(DAG, "node-4", no_function)),
-    %% node-3 is a leaf source -> succeeds.
+    %% node-3 is a leaf source, so the update succeeds.
     DAG2 = update_leaf_source(DAG, "node-3", fun(D, M) -> {"node-3", D + 10, M} end),
     ?assertEqual(13, reconstruct(DAG2, "node-3", fun(Diff, E) -> E + Diff end)),
     ?assertEqual(meta_3, get_metadata(DAG2, "node-3")).

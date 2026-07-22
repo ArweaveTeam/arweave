@@ -1,7 +1,7 @@
-%%% @doc Impl-to-impl equivalence tests for the ETS-based and the map-based account
-%%% tree implementations. Every scenario runs against a matrix of account sets (varying counts,
-%%% prefix-sharing keys, and 4-tuple/denominated values) so the same logic is exercised over a
-%%% wide range of tree shapes.
+%%% @doc Tests asserting the ETS-based ar_account_tree and the map-based ar_wallets_legacy
+%%% reply identically to the same sequences of requests. Every scenario runs against a
+%%% matrix of account sets (varying counts, prefix-sharing keys, and denominated four-tuple
+%%% values) so the same logic is exercised over a wide range of tree shapes.
 -module(ar_account_tree_impl_tests).
 
 -include_lib("arweave/include/ar.hrl").
@@ -30,11 +30,11 @@ scenarios() ->
 		{deep_excursions_leave_tip_clean, fun scenario_deep_excursions_leave_tip_clean/2}
 	].
 
-%% The account sets the matrix iterates over. Each is {Name, Accounts, Denomination}, where
-%% Accounts is a list of {Address, WalletValue} with distinct keys, and every account's base
-%% denomination is =< Denomination.
-%% The empty-address account exists on mainnet, so most sets include a {<<>>, _} account. It is
-%% placed first, so the position-based diffs below update and remove it as well.
+%% @doc The account sets the matrix iterates over. Each is {Name, Accounts, Denomination},
+%% where Accounts is a list of {Address, WalletValue} with distinct keys, and every
+%% account's base denomination is at most Denomination.
+%% The empty-address account exists on mainnet, so most sets include a {<<>>, _} account.
+%% It is placed first, so the position-based diffs below update and remove it as well.
 account_sets() ->
 	[
 		{tiny, [empty_account(short) | simple_accounts(1, 3)], 1},
@@ -59,7 +59,8 @@ instantiator(Name, Scenario, {SetName, _, _} = Set) ->
 %%% Scenarios
 %%%===================================================================
 
-%% Build a tip, fork it two ways, and assert tip and non-tip query results agree.
+%% @doc Build a tip, fork it two ways, and assert the two implementations agree on tip and
+%% non-tip reads.
 scenario_tip_and_fork_reads({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 	fun() ->
 		Addrs = addrs(Accounts),
@@ -81,8 +82,8 @@ scenario_tip_and_fork_reads({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) 
 		reads_at_all(New, Legacy, [R1, R2, R3, <<>>], Query)
 	end.
 
-%% Switch the tip across forks and confirm queries of the tip, the previous tip (now an uncle)
-%% and the fork base all agree after each move.
+%% @doc Switch the tip across forks and assert reads of the tip, the previous tip (now an
+%% uncle), and the fork base agree after each move.
 scenario_reorg_and_uncle({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 	fun() ->
 		Addrs = addrs(Accounts),
@@ -105,7 +106,8 @@ scenario_reorg_and_uncle({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 		reads_at_all(New, Legacy, [R1, R2, R3, R4], Query)
 	end.
 
-%% A diff that removes existing accounts must reconstruct identically in both impls.
+%% @doc A diff that removes existing accounts must reconstruct identically in both
+%% implementations.
 scenario_removals({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 	fun() ->
 		Addrs = addrs(Accounts),
@@ -121,7 +123,7 @@ scenario_removals({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 		cmp(New, Legacy, get_size)
 	end.
 
-%% Advance the denomination on a fork and confirm balances redenominate identically.
+%% @doc Advance the denomination on a fork and assert balances redenominate identically.
 scenario_denomination({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 	fun() ->
 		Addrs = addrs(Accounts),
@@ -138,8 +140,8 @@ scenario_denomination({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 		[cmp(New, Legacy, {get_balance, R1, A}) || A <- Addrs]
 	end.
 
-%% With ?WALLET_LIST_CHUNK_SIZE == 2 under test, more than two accounts paginate. Walk the
-%% cursor over the tip and over a non-tip root.
+%% @doc With ?WALLET_LIST_CHUNK_SIZE == 2 under test, more than two accounts paginate.
+%% Walk the cursor over the tip and over a non-tip root.
 scenario_chunk_pagination({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 	fun() ->
 		{ok, R1} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
@@ -151,8 +153,8 @@ scenario_chunk_pagination({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 		walk_chunks(New, Legacy, R1)
 	end.
 
-%% Unknown roots return the same error in both impls. A chain deeper than the prune depth drops
-%% the base off both DAGs together.
+%% @doc Unknown roots return the same error in both implementations. A chain deeper than
+%% the prune depth drops the base off both DAGs together.
 scenario_unknown_and_pruned({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 	fun() ->
 		Addrs = addrs(Accounts),
@@ -173,9 +175,10 @@ scenario_unknown_and_pruned({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) 
 		reads_at_all(New, Legacy, [R3], Addrs)
 	end.
 
-%% Reaching a state one-shot, in several steps, and in several steps with a rollback in the
-%% middle must all produce the same tip root (and so the same balances) in both impls. This pins
-%% canonicity and the move_sink/snapshot round trips through the public API.
+%% @doc Reaching a state in one step, in several steps, and in several steps with a
+%% rollback in the middle must all produce the same tip root, and therefore the same
+%% balances, in both implementations. This exercises the move_sink and snapshot round
+%% trips through the public API.
 scenario_step_equivalence({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 	fun() ->
 		%% Disjoint batches so the merged one-shot diff equals applying them in sequence.
@@ -203,10 +206,10 @@ scenario_step_equivalence({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 		[cmp(New, Legacy, {get_balance, A}) || A <- addrs(Accounts)]
 	end.
 
-%% The tree is canonical: the same accounts reach the same tip root no matter the order they are
-%% added in. This matters across forks, where competing chains can apply the same updates in
-%% different orders. Build the set one-shot and as disjoint chunks added forward and reversed,
-%% and assert all reach the same root in both impls.
+%% @doc The same accounts must reach the same tip root no matter the order they are added
+%% in. This matters across forks, where competing chains can apply the same updates in
+%% different orders. Build the set in one step and as disjoint chunks added forward and
+%% reversed, and assert all reach the same root in both implementations.
 scenario_chunked_build({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 	fun() ->
 		{ok, OneShot} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
@@ -217,9 +220,9 @@ scenario_chunked_build({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 		?assertEqual(OneShot, Reverse, reverse)
 	end.
 
-%% Hashing or traversing a non-tip representation moves the shared ETS working tree off the tip
-%% and back. With snapshot-restore that round trip must leave the tip's ETS table byte-identical
-%% (cached hashes included), so the next tip operation re-hashes nothing extra.
+%% @doc Hashing or traversing a non-tip representation moves the shared ETS tree off the
+%% tip and back. That round trip must leave the tip's ETS table byte-identical, cached node
+%% hashes included, so the next tip operation re-hashes nothing extra.
 scenario_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 	fun() ->
 		Addrs = addrs(Accounts),
@@ -236,12 +239,13 @@ scenario_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Accounts,
 		?assertEqual(Before, table_dump())
 	end.
 
-%% Like scenario_excursions_leave_tip_clean, but the tip sits at the end of a two-block chain and
-%% the excursions reach MULTI-HOP representations: the parent (one hop), the grandparent (two
-%% hops), and an uncle (a fork of the grandparent, reached by descending to the grandparent and
-%% climbing back up the other branch). Each get_wallet_list_chunk repositions the shared ETS tree
-%% several nodes away before snapshot-restore rolls it back, so a deep or sideways excursion must
-%% leave the tip byte-identical - cached node hashes included - just like a one-hop one.
+%% @doc Like scenario_excursions_leave_tip_clean, but the tip sits at the end of a
+%% two-block chain and the reads reach representations several hops away: the parent (one
+%% hop), the grandparent (two hops), and an uncle (a fork of the grandparent, reached by
+%% descending to the grandparent and climbing back up the other branch). Each
+%% get_wallet_list_chunk call moves the shared ETS tree several nodes away before
+%% snapshot_restore rolls it back, and must leave the tip byte-identical, cached node
+%% hashes included, just like a one-hop read.
 scenario_deep_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
 	fun() ->
 		{ok, R0} = gen_server:call(New, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
@@ -257,7 +261,7 @@ scenario_deep_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Acco
 				Denom}),
 		ok = gen_server:call(New, {set_current, Tip, 12, 20}),
 		Before = table_dump(),
-		%% Page each non-tip representation: every chunk call excurses the ETS tree there and back.
+		%% Page each non-tip representation: every chunk call moves the ETS tree there and back.
 		[walk_chunks_new(New, Root) || Root <- [Parent, R0, Uncle]],
 		?assertEqual(Before, table_dump())
 	end.
@@ -266,8 +270,8 @@ scenario_deep_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Acco
 %%% Helpers
 %%%===================================================================
 
-%% apply_block/2 whose previous block's wallet_list is not a node in the diff DAG should return
-%% {error, root_hash_not_found} and leave the gen_server running.
+%% @doc apply_block/2 whose previous block's wallet_list is not a node in the diff DAG
+%% returns {error, root_hash_not_found} and leaves the gen_server running.
 apply_block_unknown_prev_root_returns_error_test() ->
 	assert_unknown_root_returns_error(
 		fun(UnknownRoot) ->
@@ -277,15 +281,15 @@ apply_block_unknown_prev_root_returns_error_test() ->
 			{apply_block, B, PrevB}
 		end).
 
-%% add_wallets/4 with a base root that is not a node in the diff DAG should return
-%% {error, root_hash_not_found} and leave the gen_server running.
+%% @doc add_wallets/4 with a base root that is not a node in the diff DAG returns
+%% {error, root_hash_not_found} and leaves the gen_server running.
 add_wallets_unknown_root_returns_error_test() ->
 	assert_unknown_root_returns_error(
 		fun(UnknownRoot) -> {add_wallets, UnknownRoot, #{}, 10, 1} end).
 
-%% Paginating an empty tip (the initial <<>> tree, no accounts) yields {ok, {last, []}} - the
-%% same as the frozen legacy impl. The account-set matrix never leaves the tip empty, so this is
-%% checked directly.
+%% @doc Paginating an empty tip (the initial <<>> tree, no accounts) yields
+%% {ok, {last, []}}, the same as ar_wallets_legacy. The account-set matrix never leaves the
+%% tip empty, so this is checked directly.
 empty_tip_chunk_read_test() ->
 	Stubs = [ensure_stub(N) || N <- [ar_node_worker, ar_storage]],
 	{ok, New} = gen_server:start(ar_account_tree, [{blocks, []}], []),
@@ -346,17 +350,19 @@ unregister_safe(Name) ->
 drain() ->
 	receive _ -> drain() end.
 
-%% @doc Issue the same request to both gen_servers and assert identical replies. The request is
-%% written in the live ar_account_tree protocol and adapted for the frozen legacy reference.
+%% @doc Issue the same request to both gen_servers and assert identical replies. The
+%% request uses the ar_account_tree protocol and is translated for ar_wallets_legacy via
+%% legacy_request/1.
 cmp(New, Legacy, Request) ->
 	NewReply = gen_server:call(New, Request),
 	LegacyReply = gen_server:call(Legacy, legacy_request(Request)),
 	?assertEqual(LegacyReply, NewReply, {request, Request}),
 	NewReply.
 
-%% @doc Translate a request to the frozen legacy protocol. ar_account_tree renamed the chunk
-%% request to {get_wallet_list_chunk, ...}; ar_wallets_legacy still uses the original
-%% {get_chunk, ...}. Every other request is identical across the two impls.
+%% @doc Translate a request to the ar_wallets_legacy protocol. ar_account_tree renamed the
+%% chunk request to {get_wallet_list_chunk, ...} while ar_wallets_legacy still uses the
+%% original {get_chunk, ...}. Every other request is identical across the two
+%% implementations.
 legacy_request({get_wallet_list_chunk, RootHash, Cursor}) ->
 	{get_chunk, RootHash, Cursor};
 legacy_request(Request) ->
@@ -376,7 +382,7 @@ apply_steps(New, Legacy, Root, Diffs, Denom, StartHeight) ->
 	),
 	Final.
 
-%% Add each disjoint chunk on top of the previous tip, returning the final root.
+%% @doc Add each disjoint chunk on top of the previous tip and return the final root.
 build_chunks(New, Legacy, Chunks, Denom) ->
 	{Root, _} = lists:foldl(
 		fun(Chunk, {Base, Height}) ->
@@ -390,7 +396,7 @@ build_chunks(New, Legacy, Chunks, Denom) ->
 	),
 	Root.
 
-%% Split a list into N (or fewer) disjoint contiguous chunks.
+%% @doc Split a list into N (or fewer) disjoint contiguous chunks.
 chunkify(List, N) ->
 	Size = max(1, (length(List) + N - 1) div N),
 	chunk_by(List, Size).
@@ -420,8 +426,9 @@ walk_chunks(New, Legacy, Root, Cursor) ->
 			walk_chunks(New, Legacy, Root, NextCursor)
 	end.
 
-%% Page every chunk of Root through New alone (no legacy comparison); used by the tip-integrity
-%% excursion scenarios, where each chunk call is one excursion of the shared ETS tree.
+%% @doc Page every chunk of Root through New alone, without the legacy comparison. Used by
+%% the scenarios asserting the tip stays clean, where each chunk call moves the shared ETS
+%% tree to Root and back.
 walk_chunks_new(New, Root) ->
 	walk_chunks_new(New, Root, first).
 
@@ -450,30 +457,30 @@ base_map(Accounts) ->
 simple_accounts(From, To) ->
 	[{addr(I), {I * 100, tx(I)}} || I <- lists:seq(From, To)].
 
-%% Distinct 32-byte keys sharing leading bytes to varying degrees, to exercise the radix tree's
-%% splitting and merging.
+%% @doc Distinct 32-byte keys sharing leading bytes to varying degrees, to exercise the
+%% radix tree's splitting and merging.
 prefix_accounts() ->
 	Keys = lists:usort([pad32(<< (I rem 3):8, (I rem 5):8, I:8 >>) || I <- lists:seq(1, 40)]),
 	[{Key, {erlang:phash2(Key, 1000000000), crypto:hash(sha256, Key)}} || Key <- Keys].
 
-%% 4-tuple accounts {Balance, LastTX, BaseDenomination, MiningPermission} with base
+%% @doc Four-tuple accounts {Balance, LastTX, BaseDenomination, MiningPermission} with base
 %% denominations 1..3, used with a tree denomination of 3.
 four_tuple_accounts() ->
 	[{addr(1000 + I), {I * 1000, tx(1000 + I), 1 + (I rem 3), I rem 2 == 0}}
 			|| I <- lists:seq(1, 20)].
 
-%% A diff updating the accounts at 0-indexed positions From..To-1 to bumped values.
+%% @doc A diff updating the accounts at 0-indexed positions From..To-1 to bumped values.
 update_range(Accounts, From, To) ->
 	maps:from_list([{Addr, bump(Value)} || {Addr, Value} <- slice(Accounts, From, To)]).
 
-%% A diff removing the accounts at 0-indexed positions From..To-1.
+%% @doc A diff removing the accounts at 0-indexed positions From..To-1.
 remove_range(Accounts, From, To) ->
 	maps:from_list([{Addr, remove} || {Addr, _} <- slice(Accounts, From, To)]).
 
 slice(Accounts, From, To) ->
 	lists:sublist(Accounts, From + 1, max(0, To - From)).
 
-%% A diff adding N fresh accounts (keys disjoint from every account set).
+%% @doc A diff adding N fresh accounts (keys disjoint from every account set).
 add_fresh(N, _Denom) ->
 	maps:from_list([{Addr, {900000 + I, tx_bin(Addr)}} || {I, Addr} <- enum(fresh_addrs(N))]).
 

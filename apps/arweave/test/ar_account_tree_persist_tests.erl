@@ -1,17 +1,18 @@
-%%% @doc Equivalence tests for the two account-tree persistence paths:
-%%% the old path (ar_patricia_tree:compute_hash returns an UpdateMap which
-%%% ar_storage:store_account_tree_update/3 writes to account_tree_db) and the new path
-%%% (ar_patricia_tree_ets:compute_hash with #{sink => Pid} streams the same node updates as
-%%% batches to a sink, which here writes them to account_tree_db just as ar_storage does on a
-%%% live node). Both must persist the same content-addressed nodes, so the tree restored from
-%%% disk (ar_storage:read_wallet_list/1) is identical either way.
+%%% @doc Equivalence tests for the two account-tree persistence paths. In the old path
+%%% ar_patricia_tree:compute_hash returns an UpdateMap which
+%%% ar_storage:store_account_tree_update/3 writes to account_tree_db. In the new path
+%%% ar_patricia_tree_ets:compute_hash with #{ sink => Pid } streams the same node updates
+%%% as batches to a sink, which here writes them to account_tree_db just as ar_storage does
+%%% on a live node. Both must persist the same content-addressed nodes, so the tree
+%%% restored from disk (ar_storage:read_wallet_list/1) is identical either way.
 %%%
-%%% Node-based: relies on the booted test node where account_tree_db is open.
+%%% The tests rely on the booted test node, where account_tree_db is open.
 -module(ar_account_tree_persist_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 
-%% Wide bound covering every account_tree_db key (48-byte hash + <=32-byte prefix).
+%% Upper bound above every account_tree_db key (a 48-byte hash followed by a key prefix of
+%% up to 32 bytes).
 -define(DB_END, <<255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
 		255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
 		255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
@@ -75,7 +76,8 @@ test_persist_equivalence() ->
 	check_roundtrip(roundtrip_many, many_accounts(60)),
 	check_roundtrip(roundtrip_shared, shared_prefix_accounts()),
 	check_roundtrip(roundtrip_nested, nested_accounts()),
-	%% Boot path: disk -> map -> fresh ets (ar_account_tree:load_into_ets/1) reproduces the root.
+	%% Boot path: read from disk into a map tree, load it into a fresh ets table
+	%% (ar_account_tree:load_into_ets/1), and reproduce the root.
 	check_load_into_ets(load_ets_empty, []),
 	check_load_into_ets(load_ets_many, many_accounts(60)),
 	check_load_into_ets(load_ets_shared, shared_prefix_accounts()),
@@ -85,9 +87,9 @@ test_persist_equivalence() ->
 %%% Helpers
 %%%===================================================================
 
-%% @doc Assert old and new persistence reconstruct the same tree (== the input accounts).
-%% Old path: ar_storage:write_wallet_list/2 (hash_wallet_list -> store_account_tree_update).
-%% New path: the ets impl streams the same node updates to account_tree_db while hashing.
+%% @doc Assert the old and the new persistence paths reconstruct the same tree, equal to
+%% the input accounts. The old path goes through ar_storage:write_wallet_list/2, the new
+%% one streams the node updates to account_tree_db while hashing the ets tree.
 check_full(Name, Accounts) ->
 	HashFun = ar_block:wallet_list_hash_fun(),
 	clear_db(),
@@ -100,9 +102,10 @@ check_full(Name, Accounts) ->
 	?assertEqual(sort(Accounts), OldAccounts, {old, Name}),
 	?assertEqual(sort(Accounts), NewAccounts, {new, Name}).
 
-%% @doc Persist a base, apply Mods (inserts of new keys and/or updates of existing ones) to
-%% the already-hashed tree, rehash (dirty-only) and persist again, then restore. The result
-%% must equal the base with Mods applied. Covers updates, splitting, and their mixes.
+%% @doc Persist a base, apply Mods (inserts of new keys and updates of existing ones) to
+%% the already-hashed tree, rehash and persist again (only the changed paths are re-hashed),
+%% then restore. The result must equal the base with Mods applied. Covers updates,
+%% splitting, and their mixes.
 check_modify(Name, Accounts, Mods) ->
 	HashFun = ar_block:wallet_list_hash_fun(),
 	Final = apply_mods(Accounts, Mods),
@@ -145,8 +148,8 @@ check_delete(Name, Accounts, Keys) ->
 delete_all(Mod, Tree, Keys) ->
 	lists:foldl(fun(K, T) -> Mod:delete(K, T) end, Tree, Keys).
 
-%% @doc Re-hashing/persisting a fully-cached tree produces an empty update; the root is
-%% unchanged and the tree still restores from disk.
+%% @doc Re-hashing and persisting a fully cached tree produces an empty update. The root
+%% is unchanged and the tree still restores from disk.
 check_repersist(Name, Accounts) ->
 	HashFun = ar_block:wallet_list_hash_fun(),
 	clear_db(),
@@ -170,9 +173,9 @@ check_roundtrip(Name, Accounts) ->
 	{Root2, _, _} = ar_patricia_tree:compute_hash(Restored, HashFun),
 	?assertEqual(Root, Root2, {roundtrip, Name}).
 
-%% @doc The startup path: persist a tip, read it back from disk into a map tree, load that map
-%% into a FRESH ets table via ar_account_tree:load_into_ets/1, and assert it hashes to the same
-%% root.
+%% @doc The startup path: persist a tip, read it back from disk into a map tree, load that
+%% map into a fresh ets table via ar_account_tree:load_into_ets/1, and assert it hashes to
+%% the same root.
 check_load_into_ets(Name, Accounts) ->
 	HashFun = ar_block:wallet_list_hash_fun(),
 	clear_db(),
@@ -241,10 +244,9 @@ last_tx(Addr) ->
 many_accounts(N) ->
 	[account(crypto:hash(sha256, <<I:64>>), shape(I)) || I <- lists:seq(1, N)].
 
-%% Keys that share a leading prefix to varying degrees (0..3 bytes), plus identical short
-%% prefixes, to exercise the radix tree's splitting/merging.
-%% Distinct 32-byte keys sharing leading prefixes to varying degrees (note: pad32 zero-
-%% pads, so every key below must differ within its first non-padded bytes).
+%% @doc Distinct 32-byte keys sharing leading prefixes to varying degrees, to exercise the
+%% radix tree's splitting and merging. pad32 zero-pads, so every key below must differ
+%% within its first non-padded bytes.
 shared_prefix_accounts() ->
 	[
 		account(pad32(<<>>), t1),               %% all zeros
@@ -260,7 +262,7 @@ shared_prefix_accounts() ->
 pad32(Prefix) when byte_size(Prefix) =< 32 ->
 	<< Prefix/binary, 0:((32 - byte_size(Prefix)) * 8) >>.
 
-%% Keys where one key is a prefix of another key, so some nodes hold both a value and
+%% @doc Keys where one key is a prefix of another key, so some nodes hold both a value and
 %% children (see ar_patricia_tree_ets_tests:nested_accounts/0).
 nested_accounts() ->
 	[

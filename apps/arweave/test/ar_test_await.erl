@@ -74,7 +74,7 @@
     %% boot or while caches warm, so pick deliberately.
     data_roots_available/2,         %% (Peer, Block)
     http_data_roots_available/2,    %% (Peer, Block)
-    http_data_roots/2,              %% (Peer, Block) -> {ok, Body} | not_found, retrying transient
+    http_data_roots/2,              %% (Peer, Block) -> {ok, Body} | not_found
 
     %% --- Public polling primitive ---
     %% For custom predicates; prefer a named helper above. `/2' uses the

@@ -1,8 +1,8 @@
-%%% @doc Higher-level integration tests for the ETS-based ar_account_tree running inside a real
-%%% node. These drive the consensus path (apply_block/set_current via mining and fork
-%%% recovery) that the impl-to-impl tests do not, and assert the distinctive account-tree
-%%% behaviors: historical (non-tip) balance queries reconstructed from the diff DAG, and
-%%% correct balances after a reorg replaces the tip.
+%%% @doc Integration tests for ar_account_tree running inside a real node. These drive the
+%%% consensus path - apply_block and set_current, via mining and fork recovery - which
+%%% ar_account_tree_impl_tests does not, and assert the behaviors specific to the account
+%%% tree: historical (non-tip) balance queries reconstructed from the diff DAG, and correct
+%%% balances after a reorg replaces the tip.
 -module(ar_account_tree_fork_tests).
 -test_peers([peer1]).
 
@@ -22,9 +22,10 @@ apply_block_failure_leaves_tip_consistent_test_() ->
 boot_from_disk_preserves_tree_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun boot_from_disk_preserves_tree/0}.
 
-%% @doc Mine a couple of blocks moving funds around, then query the wallet tree of each past
-%% block by its root hash. Non-tip roots are served by overlaying the diff DAG on the current
-%% ETS tip, so this pins that path against blocks produced by real apply_block/set_current.
+%% @doc Mine two blocks moving funds around, then query the account tree of each past block
+%% by its root hash. Non-tip roots are served by combining the per-block diffs from the
+%% diff DAG with the current ETS tip, so this exercises that path against blocks produced
+%% by real apply_block and set_current calls.
 %%
 %%   B0                 B1                      B2  <- tip
 %%   Pub1=100AR  --->   Pub1->Pub2 (10AR)  ---> Pub1->Pub3 (20AR)
@@ -32,7 +33,7 @@ boot_from_disk_preserves_tree_test_() ->
 %%   queried at each block's wallet_list root:
 %%     B0: Pub1=100, Pub2=0,  Pub3=0
 %%     B1: Pub2=10,  Pub3=0
-%%     B2: Pub2=10,  Pub3=20   (== tip)
+%%     B2: Pub2=10,  Pub3=20   (the tip)
 historical_root_queries() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
 	Addr1 = ar_wallet:to_address(Pub1),
@@ -77,10 +78,10 @@ historical_root_queries() ->
 	?assert(maps:is_key(Addr2, Map2)),
 	?assert(maps:is_key(Addr3, Map2)).
 
-%% @doc Diverge main and peer1 after a shared prefix, mine a longer chain on peer1, then let
-%% main fork-recover onto it. The transaction on the orphaned tip must vanish and the winning
-%% chain's transaction must be reflected - on both nodes, at the tip and at the historical
-%% root that carried it.
+%% @doc Diverge main and peer1 after a shared block, mine a longer chain on peer1, then let
+%% main fork-recover onto it. The payment on the orphaned branch must vanish and the
+%% winning chain's payment must be in effect - on both nodes, at the tip and at the
+%% historical root that carried it.
 %%
 %%                              B2  (main)   Pub1->Pub2 (10AR)   [orphaned]
 %%                             /
@@ -89,9 +90,9 @@ historical_root_queries() ->
 %%                              B2' ------- B3'  (peer1)         [wins, longer]
 %%                              Pub1->Pub3 (20AR)
 %%
-%%   On reconnect main fork-recovers onto peer1's chain (tip = B3', height 3). Afterwards, on
-%%   both nodes: Pub2=0 (orphaned payment gone), Pub3=20 (winning payment in effect). The
-%%   recovered B2' root still reflects Pub3=20, Pub2=0.
+%%   On reconnect main fork-recovers onto peer1's chain, making B3' the tip. Afterwards,
+%%   on both nodes: Pub2=0 (orphaned payment gone), Pub3=20 (winning payment in effect).
+%%   The recovered B2' root still reflects Pub3=20, Pub2=0.
 balances_after_fork_recovery() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
 	Addr1 = ar_wallet:to_address(Pub1),
@@ -138,31 +139,28 @@ balances_after_fork_recovery() ->
 	?assertEqual(?AR(20), ar_account_tree:get_balance(B2#block.wallet_list, Addr3)),
 	?assertEqual(0, ar_account_tree:get_balance(B2#block.wallet_list, Addr2)).
 
-%% @doc A rejected apply_block must not corrupt the tip. Mine two funds-moving blocks, then feed
-%% apply_block two doomed candidates off the same parent (the height-1 block):
+%% @doc A rejected apply_block must not corrupt the tip. Mine two funds-moving blocks, then
+%% feed apply_block two invalid candidates off the same parent (the height-1 block). The
+%% first has a bumped denomination and is rejected (invalid_denomination) before the ETS
+%% tree is touched at all. The second has a tampered wallet_list and is rejected
+%% (invalid_wallet_list) only after apply_block has positioned the ETS tree at the parent,
+%% applied the candidate diff in place, and hashed the result - so this candidate really
+%% writes into the tip tree and relies on snapshot_restore to roll it back.
 %%
-%%   - one with a bumped denomination, rejected by the pre-mutation guard (invalid_denomination),
-%%     before the ETS tree is touched at all;
-%%   - one with a tampered wallet_list, which runs the full snapshot excursion (position the tree
-%%     at the parent, apply the diff, re-hash) and is rejected only at the end
-%%     (invalid_wallet_list). Because apply_block mutates the ETS tree - apply_diff_ets, then the
-%%     re-hash - before the wallet_list check, this candidate really writes the diff into the tip
-%%     tree and relies on snapshot_restore to roll it back.
+%% The tampered candidate carries the real height-2 transaction, so the applied and rolled
+%% back diff touches several accounts (the sender, the recipient, and the reward address),
+%% not just the reward address an empty block would touch.
 %%
-%% The tampered candidate carries the real height-2 transaction, so the applied-then-rolled-back
-%% diff touches several accounts (its sender, its recipient, and the reward address), not just the
-%% reward address an empty block would.
+%% After both rejections the tip size and balances are unchanged, historical and tip roots
+%% still resolve, and the tip ETS tree hashes to the same root as a tree rebuilt from
+%% scratch. A valid follow-up block then advances the tip, and its tree likewise matches a
+%% from-scratch rebuild.
 %%
-%% After both rejections the gen_server is still alive, the tip size and balances are unchanged,
-%% historical and tip roots still resolve, and the tip ETS tree hashes to the canonical root
-%% (== the same tree built from scratch). A valid follow-up block then advances the tip, and its
-%% tree likewise matches a from-scratch rebuild.
-%%
-%% The candidate/parent fed to apply_block come from the block cache (ar_node:
-%% get_block_shadow_from_cache/1), not disk: a cached block keeps its reward_history (needed by
-%% block_addresses/2 -> ar_rewards:get_oldest_locked_address/1), whereas a block read back from
-%% storage has it stripped. The cache carries transactions as ids, so the candidate's txs are
-%% restored to the full record apply_txs/3 needs.
+%% The candidate and parent blocks come from the block cache
+%% (ar_node:get_block_shadow_from_cache/1), not disk: a cached block keeps the
+%% reward_history that ar_account_tree needs on the parent block, whereas a block read back
+%% from storage has it stripped. The cache carries transactions as identifiers, so the
+%% candidate's txs are restored to the full records ar_node_utils:apply_txs/3 needs.
 apply_block_failure_leaves_tip_consistent() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
 	Addr1 = ar_wallet:to_address(Pub1),
@@ -219,11 +217,11 @@ apply_block_failure_leaves_tip_consistent() ->
 	?assertEqual(?AR(15), ar_node:get_balance(Pub2)),
 	assert_tip_matches_from_scratch(B3#block.wallet_list).
 
-%% @doc The from-state boot path. Mine a couple of blocks, restart the node in place (which keeps
-%% the data directory and re-reads it), and assert the account tree comes back intact: the base
-%% tree is reloaded from disk into ETS, the consensus window is replayed to rebuild the diff DAG,
-%% and set_current re-materializes the tip. Tip size and balances survive, non-tip roots still
-%% reconstruct, and the reloaded tip tree hashes to the canonical root.
+%% @doc The from-state boot path. Mine two blocks, restart the node in place (which keeps
+%% the data directory and re-reads it), and assert the account tree comes back intact: the
+%% base tree is reloaded from disk into ETS, the consensus window is replayed to rebuild
+%% the diff DAG, and set_current restores the tip. Tip size and balances survive, non-tip
+%% roots still reconstruct, and the reloaded tip tree hashes to the same root as before.
 boot_from_disk_preserves_tree() ->
 	Key1 = {_, Pub1} = ar_wallet:new(),
 	Addr1 = ar_wallet:to_address(Pub1),
@@ -273,9 +271,8 @@ cached_block_at(BI, Height) ->
 	{BH, _, _} = lists:nth(length(BI) - Height, BI),
 	ar_node:get_block_shadow_from_cache(BH).
 
-%% @doc Assert the account tree with the given root, paged out via the public chunk API and
-%% rebuilt from scratch, hashes back to that same root - i.e. the tip tree in ETS is the
-%% canonical tree for its accounts.
+%% @doc Read all accounts of the tree with the given root via the chunk API, rebuild a
+%% map-based tree from them, and assert it hashes to the same root.
 assert_tip_matches_from_scratch(Root) ->
 	Accounts = collect_accounts(Root),
 	Tree = lists:foldl(fun({Key, Value}, Acc) -> ar_patricia_tree:insert(Key, Value, Acc) end,
@@ -293,7 +290,7 @@ collect_accounts(Root, Cursor, Acc) ->
 	{ok, {NextCursor, Chunk}} = ar_account_tree:get_wallet_list_chunk(Root, Cursor),
 	collect_accounts(Root, NextCursor, Chunk ++ Acc).
 
-%% @doc The whole tip ETS table verbatim (cached node hashes included) as a sorted list,
-%% for byte-level before/after comparison.
+%% @doc Return the whole tip ETS table (cached node hashes included) as a sorted list, for
+%% comparing the table before and after an operation.
 table_dump() ->
 	lists:sort(ets:tab2list(ar_patricia_tree)).

@@ -271,8 +271,8 @@ find_local_account_tree(Blocks, SearchDepth, Skipped, CustomDir) ->
 	end.
 
 %% @doc Load the base account tree into ETS, build the diff DAG by applying each block in the
-%% consensus window on top of it, then make the last block the current tip. Tree is the
-%% map-based ar_patricia_tree returned by the disk/peer loaders; we copy it into the ETS table.
+%% consensus window on top of it, then make the last block the current tip. Originally a
+%% map-based implementation of the tree is constructed then it is loaded into ETS.
 initialize_state(Blocks, BaseTree, State) ->
 	InitialDepth = ar_block:get_consensus_window_size(),
 	Window = lists:reverse(lists:sublist(Blocks, InitialDepth)),
@@ -340,7 +340,7 @@ load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N) ->
 			load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N)
 	end.
 
-%% @doc Copy a map-based ar_patricia_tree into a fresh ETS account tree, returning its id.
+%% @doc Copy a map-based ar_patricia_tree into a fresh ETS account tree, returning its ID.
 load_into_ets(MapTree) ->
 	load_into_ets(MapTree, ar_patricia_tree_ets:new()).
 
@@ -362,10 +362,10 @@ apply_block(B, PrevB, State) ->
 			{{error, invalid_denomination}, State}
 	end.
 
-%% Positioning the ETS tree at PrevB and hashing the candidate runs inside a snapshot, so the
-%% tip ETS - and the diff DAG sink, which stays at the tip throughout - are left untouched. The
-%% candidate is recorded in the DAG as a diff off PrevB. It is persisted only once it becomes
-%% the tip via set_current/3.
+%% @doc Compute the account tree of B on top of PrevB's tree. The work runs inside a snapshot:
+%% the ETS tree is moved to PrevB's representation, B's account diff is applied in place and
+%% hashed, then the snapshot restores the tip. The new tree is recorded in the DAG as a diff
+%% off PrevB and is persisted only when it becomes the tip via set_current/3.
 apply_block2(B, PrevB, State) ->
 	Tid = maps:get(tid, State),
 	PrevRootHash = PrevB#block.wallet_list,
@@ -473,11 +473,11 @@ get_wallet_list_chunk(State, RootHash, Cursor) ->
 	{{ok, Range}, State}.
 
 %%%===================================================================
-%%% ETS sink / diff DAG helpers.
+%%% ETS sink and diff DAG helpers.
 %%%===================================================================
 
-%% @doc Helper function remove duplication around checking if a RootHash exists before
-%% running an operation which relies on it.
+%% @doc Reply {error, root_hash_not_found} if RootHash is not a node in the diff DAG.
+%% Otherwise run Fun and reply with its result.
 with_known_root(RootHash, State, Fun) ->
 	case ar_diff_dag:is_node(maps:get(dag, State), RootHash) of
 		false ->
@@ -490,11 +490,10 @@ with_known_root(RootHash, State, Fun) ->
 is_sink(State, RootHash) ->
 	maps:get(sink, State) == RootHash.
 
-%% @doc Run Fun with snapshot recording active and restore the ETS table to its pre-call bytes
-%% afterwards (cached node hashes included), so positioning the tree at a non-tip representation
-%% to hash or traverse it leaves the tip untouched. The diff DAG sink is not moved by the
-%% excursion - move_sink_to/2 inside Fun returns a state the caller discards, keeping the
-%% original DAG, which stays consistent with the restored tip ETS.
+%% @doc Run Fun with snapshot recording active, then restore the ETS table to its pre-call
+%% state, cached node hashes included. Fun may move the tree to another representation and
+%% mutate it - the tip is intact on return. The caller discards any state produced inside
+%% Fun, so the DAG sink also stays at the tip.
 with_snapshot(Tid, Fun) ->
 	ar_patricia_tree_ets:snapshot_begin(Tid),
 	try
@@ -504,8 +503,8 @@ with_snapshot(Tid, Fun) ->
 	end.
 
 %% @doc Move the ETS tree (the diff DAG sink) to the representation identified by
-%% the given root hash, mutating the ETS table in place. No-op when already there. Precondition:
-%% RootHash is a node in the diff DAG - ar_diff_dag:move_sink crashes otherwise. 
+%% the given root hash, mutating the ETS table in place. No-op when already there.
+%% RootHash must be an existing node in the graph.
 move_sink_to(State, RootHash) ->
 	case is_sink(State, RootHash) of
 		true ->
@@ -528,8 +527,7 @@ move_sink_to(State, RootHash) ->
 			State#{ dag := DAG2, sink := RootHash }
 	end.
 
-%% @doc Read the accounts for the given addresses at the current tip (the ETS
-%% tree) into a map.
+%% @doc Read the accounts for the given addresses at the current tip into a map.
 accounts_at_tip(State, Addresses) ->
 	Tid = maps:get(tid, State),
 	lists:foldl(
@@ -545,9 +543,9 @@ accounts_at_tip(State, Addresses) ->
 		Addresses
 	).
 
-%% @doc Collect the accounts for the given addresses at the representation identified by
-%% RootHash by overlaying the total diff (tip -> RootHash) reconstructed from the diff DAG on the
-%% current tip read from ETS.
+%% @doc Read the accounts for the given addresses from the tree with the given root hash,
+%% without moving the ETS tree: build the total diff from the tip to RootHash out of the
+%% per-block diffs in the DAG, then resolve each address through it (see combine/3).
 accounts_at_root(State, RootHash, Addresses) ->
 	case is_sink(State, RootHash) of
 		true ->
@@ -563,31 +561,29 @@ accounts_at_root(State, RootHash, Addresses) ->
 			end
 	end.
 
-%% @doc Fold function for ar_diff_dag:reconstruct/3 that accumulates the total diff transforming
-%% the tip into the target representation. reconstruct seeds the fold with the sink entity, which
-%% is the placeholder atom 'ets' (the real tree lives in the ETS table, not the DAG), so the
-%% first step replaces it. Later steps merge, with the diff closer to the target winning.
+%% @doc Merge the per-block diffs along the DAG path from the tip to the target into one
+%% total diff. Passed to ar_diff_dag:reconstruct/3, which folds starting from the sink
+%% entity. In this DAG the sink entity is the atom 'ets' - the tree itself lives in the ETS
+%% table - so the first diff replaces it. When two diffs touch the same address, the one
+%% closer to the target wins.
 merge_total_diff(Diff, ets) ->
 	Diff;
 merge_total_diff(Diff, Acc) ->
 	maps:merge(Acc, Diff).
 
-%% @doc Build the result map for the requested addresses at the target representation by
-%% overlaying the reconstructed tip -> target diff onto the ETS tip: an address the diff touched
-%% takes the diff's outcome, one it left alone is unchanged since the tip and is read from ETS.
+%% @doc Resolve each requested address: if TotalDiff has it, use the diff value ('remove'
+%% means the account does not exist at the target), otherwise it is unchanged since the tip
+%% and is read from ETS.
 combine(State, TotalDiff, Addresses) ->
 	Tid = maps:get(tid, State),
 	lists:foldl(
 		fun(Addr, Acc) ->
 			case maps:find(Addr, TotalDiff) of
 				{ok, remove} ->
-					%% Has no account at the target - leave it out of the result.
 					Acc;
 				{ok, Value} ->
-					%% Changed between tip and target - use the target value.
 					maps:put(Addr, Value, Acc);
 				error ->
-					%% Untouched by the diff, so unchanged since the tip - read the live ETS value.
 					case ar_patricia_tree_ets:get(Addr, Tid) of
 						not_found ->
 							Acc;
@@ -657,13 +653,13 @@ get_account_tree_range(State, Cursor) ->
 	end.
 
 maybe_add_node(DAG, RootHash, RootHash, _Wallets, _Metadata) ->
-	%% The wallet list has not changed - there are no transactions
+	%% The account tree has not changed - there are no transactions
 	%% and the miner did not claim the reward.
 	DAG;
 maybe_add_node(DAG, UpdatedRootHash, RootHash, Wallets, Metadata) ->
 	case ar_diff_dag:is_node(DAG, UpdatedRootHash) of
 		true ->
-			%% The new wallet list is already known from a different fork.
+			%% The new account tree is already known from a different fork.
 			DAG;
 		false ->
 			ar_diff_dag:add_node(DAG, UpdatedRootHash, RootHash, Wallets, Metadata)

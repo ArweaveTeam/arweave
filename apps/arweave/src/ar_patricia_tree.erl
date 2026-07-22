@@ -1,7 +1,7 @@
-%%% @doc The immutable, map-based variant of ar_patricia_tree_core (see there for the structure
-%%% and why a patricia trie). Every operation returns a new tree, so it can hold a standalone
-%%% tree (the genesis weave, a tree downloaded from peers, JSON serialization, a tree read from
-%%% disk). ar_patricia_tree_ets is the mutable ETS variant used as the live, single account tree.
+%%% @doc The immutable, map-based backend of ar_patricia_tree_core (see there for the tree
+%%% structure). Every operation returns a new tree, so it can hold a standalone tree (the
+%%% genesis weave, a tree downloaded from peers, JSON serialization, a tree read from disk).
+%%% ar_patricia_tree_ets is the mutable ETS variant backing the production account tree.
 -module(ar_patricia_tree).
 -test_category([fast]).
 
