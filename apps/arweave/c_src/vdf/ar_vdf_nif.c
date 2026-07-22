@@ -258,7 +258,6 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	// NOTE last paramemter will be array later
 	size_t outCheckpointSize = VDF_SHA_HASH_SIZE*(1+checkpointCount)*(1+skipCheckpointCount);
 	ERL_NIF_TERM outputTermCheckpoint;
 	unsigned char* outCheckpoint = enif_make_new_binary(
@@ -267,7 +266,6 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 		Salt.data, Seed.data, checkpointCount, skipCheckpointCount, hashingIterations,
 		InRes.data, InCheckpoint.data, outCheckpoint, ResetSalt.data, ResetSeed.data,
 		maxThreadCount);
-	// TODO return all checkpoints
 	if (!res) {
 		return error_tuple(envPtr, "verification failed");
 	}
