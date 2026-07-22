@@ -16,6 +16,9 @@ historical_root_queries_test_() ->
 balances_after_fork_recovery_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun balances_after_fork_recovery/0}.
 
+valid_apply_block_off_non_tip_parent_test_() ->
+	{timeout, ?TEST_NODE_TIMEOUT, fun valid_apply_block_off_non_tip_parent/0}.
+
 apply_block_failure_leaves_tip_consistent_test_() ->
 	{timeout, ?TEST_NODE_TIMEOUT, fun apply_block_failure_leaves_tip_consistent/0}.
 
@@ -138,6 +141,79 @@ balances_after_fork_recovery() ->
 	B2 = block_at(BI, 2),
 	?assertEqual(?AR(20), ar_account_tree:get_balance(B2#block.wallet_list, Addr3)),
 	?assertEqual(0, ar_account_tree:get_balance(B2#block.wallet_list, Addr2)).
+
+%% @doc Apply a valid candidate block whose parent is not the tip. Diverge main and peer1
+%% after a shared height-1 block: main mines B2 paying Pub2 - B2 becomes and stays main's
+%% tip - while peer1 mines a competing B2' paying Pub3. Feed B2' to main's
+%% ar_account_tree:apply_block/2 directly - a valid candidate off the non-tip parent B1
+%% while the sink sits at B2. The candidate must validate to its own wallet_list without
+%% moving the tip, and set_current must then be able to reorg the tip onto the new root
+%% (a sink move of two hops, down to B1 and up to B2') and back. This is the success-path
+%% counterpart of apply_block_failure_leaves_tip_consistent, which only rejects candidates
+%% off B1.
+%%
+%%                              B2   (main tip)   Pub1->Pub2 (10AR)
+%%                             /
+%%   B0 ------- B1 (shared) ---
+%%   Pub1=100AR               \
+%%                              B2'  (peer1)      Pub1->Pub3 (20AR)
+valid_apply_block_off_non_tip_parent() ->
+	Key1 = {_, Pub1} = ar_wallet:new(),
+	Addr1 = ar_wallet:to_address(Pub1),
+	{_, Pub2} = ar_wallet:new(),
+	Addr2 = ar_wallet:to_address(Pub2),
+	{_, Pub3} = ar_wallet:new(),
+	Addr3 = ar_wallet:to_address(Pub3),
+	[B0] = ar_weave:init([{Addr1, ?AR(100), <<>>}]),
+	_ = ar_test_node:start(B0),
+	_ = ar_test_node:start_peer(peer1, B0),
+	ar_test_node:connect_to_peer(peer1),
+	%% Shared prefix at height 1.
+	ar_test_node:mine(peer1),
+	{ok, _} = ar_test_await:node_height(peer1, 1),
+	{ok, _} = ar_test_await:node_height(main, 1),
+	ar_test_node:disconnect_from(peer1),
+	%% main mines B2 paying Pub2. It stays the tip throughout.
+	TipTX = ar_test_node:sign_tx(main, Key1, #{ target => Addr2, quantity => ?AR(10),
+			last_tx => ar_test_node:get_tx_anchor(main) }),
+	ar_test_node:assert_post_tx_to_peer(main, TipTX),
+	ar_test_node:mine(),
+	{ok, BIMain} = ar_test_await:node_height(main, 2),
+	%% peer1 mines the competing B2' paying Pub3.
+	ForkTX = ar_test_node:sign_tx(Key1, #{ target => Addr3, quantity => ?AR(20),
+			last_tx => ar_test_node:get_tx_anchor(peer1) }),
+	ar_test_node:assert_post_tx_to_peer(peer1, ForkTX),
+	ar_test_node:mine(peer1),
+	{ok, BIPeer} = ar_test_await:node_height(peer1, 2),
+	B1 = cached_block_at(BIMain, 1),
+	TipRoot = (cached_block_at(BIMain, 2))#block.wallet_list,
+	%% The candidate comes from peer1's block cache with its transaction restored to the
+	%% full record, like a block arriving from the network during fork recovery.
+	{BH, _, _} = lists:nth(length(BIPeer) - 2, BIPeer),
+	B2Prime = ar_test_node:remote_call(peer1, ar_node, get_block_shadow_from_cache, [BH]),
+	Candidate = B2Prime#block{ txs = [ForkTX] },
+	ForkRoot = Candidate#block.wallet_list,
+	?assertNotEqual(TipRoot, ForkRoot),
+	%% The valid candidate off the non-tip parent validates to its own root.
+	?assertEqual({ok, ForkRoot}, ar_account_tree:apply_block(Candidate, B1)),
+	%% Applying only records the diff in the DAG. The tip is unchanged.
+	?assertEqual(?AR(10), ar_account_tree:get_balance(Addr2)),
+	?assertEqual(0, ar_account_tree:get_balance(Addr3)),
+	%% Reorg the tip onto the fork root. Tip reads flip, the old tip root remains
+	%% reconstructable, and the reorged tree hashes to the same root as a tree rebuilt
+	%% from scratch.
+	ok = ar_account_tree:set_current(ForkRoot, 2, 20),
+	?assertEqual(0, ar_account_tree:get_balance(Addr2)),
+	?assertEqual(?AR(20), ar_account_tree:get_balance(Addr3)),
+	?assertEqual(?AR(10), ar_account_tree:get_balance(TipRoot, Addr2)),
+	?assertEqual(0, ar_account_tree:get_balance(TipRoot, Addr3)),
+	assert_tip_matches_from_scratch(ForkRoot),
+	%% Reorg back to the original tip and assert it is fully restored.
+	ok = ar_account_tree:set_current(TipRoot, 2, 20),
+	?assertEqual(?AR(10), ar_account_tree:get_balance(Addr2)),
+	?assertEqual(0, ar_account_tree:get_balance(Addr3)),
+	?assertEqual(?AR(20), ar_account_tree:get_balance(ForkRoot, Addr3)),
+	assert_tip_matches_from_scratch(TipRoot).
 
 %% @doc A rejected apply_block must not corrupt the tip. Mine two funds-moving blocks, then
 %% feed apply_block two invalid candidates off the same parent (the height-1 block). The

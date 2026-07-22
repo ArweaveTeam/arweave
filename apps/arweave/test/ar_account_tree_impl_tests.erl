@@ -24,6 +24,9 @@ scenarios() ->
 		{denomination, fun scenario_denomination/2},
 		{chunk_pagination, fun scenario_chunk_pagination/2},
 		{unknown_and_pruned, fun scenario_unknown_and_pruned/2},
+		{prune_drops_uncle, fun scenario_prune_drops_uncle/2},
+		{noop_diff, fun scenario_noop_diff/2},
+		{remove_then_readd, fun scenario_remove_then_readd/2},
 		{step_equivalence, fun scenario_step_equivalence/2},
 		{chunked_build, fun scenario_chunked_build/2},
 		{excursions_leave_tip_clean, fun scenario_excursions_leave_tip_clean/2},
@@ -173,6 +176,74 @@ scenario_unknown_and_pruned({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) 
 		?assertEqual(gen_server:call(Legacy, {get, <<>>, Addrs}),
 				gen_server:call(New, {get, <<>>, Addrs})),
 		reads_at_all(New, Legacy, [R3], Addrs)
+	end.
+
+%% @doc Pruning drops a losing fork, not only the linear base. Fork R1 into R2 and the
+%% uncle R3, extend the winning chain to R4, then set_current(R4) with prune depth 1. The
+%% fork base R1 falls out of the depth window and takes the uncle R3 with it: R3's only
+%% path to the sink ran through R1, so it is dropped as part of R1's subtree even though
+%% its own counter distance to the sink is within the depth. The winning chain (R2, R4)
+%% must remain readable throughout.
+scenario_prune_drops_uncle({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		Addrs = addrs(Accounts),
+		{ok, R1} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = cmp(New, Legacy, {set_current, R1, 10, 20}),
+		{ok, R2} = cmp(New, Legacy, {add_wallets, R1, update_range(Accounts, 0, 1), 11, Denom}),
+		{ok, R3} = cmp(New, Legacy, {add_wallets, R1, update_range(Accounts, 1, 2), 11, Denom}),
+		ok = cmp(New, Legacy, {set_current, R2, 11, 20}),
+		%% Before the prune the uncle is readable like any other root.
+		reads_at_all(New, Legacy, [R1, R2, R3], Addrs),
+		{ok, R4} = cmp(New, Legacy, {add_wallets, R2, update_range(Accounts, 2, 3), 12, Denom}),
+		ok = cmp(New, Legacy, {set_current, R4, 12, 1}),
+		%% The base and the uncle hanging off it are gone together.
+		?assertEqual({error, not_found}, gen_server:call(New, {get, R1, Addrs})),
+		?assertEqual({error, not_found}, gen_server:call(New, {get, R3, Addrs})),
+		cmp(New, Legacy, {get, R1, Addrs}),
+		cmp(New, Legacy, {get, R3, Addrs}),
+		cmp(New, Legacy, {get_balance, R3, hd(Addrs)}),
+		cmp(New, Legacy, {get_wallet_list_chunk, R3, first}),
+		%% The winning chain still reads.
+		reads_at_all(New, Legacy, [R2, R4], Addrs)
+	end.
+
+%% @doc An empty diff leaves the root unchanged: add_wallets must return the base root and
+%% record nothing - no new DAG node, no ETS write. This exercises the
+%% maybe_add_node(DAG, R, R, ...) clause.
+scenario_noop_diff({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		{ok, R1} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = cmp(New, Legacy, {set_current, R1, 10, 20}),
+		TableBefore = table_dump(),
+		StateBefore = sys:get_state(New),
+		{ok, R1} = cmp(New, Legacy, {add_wallets, R1, #{}, 11, Denom}),
+		?assertEqual(StateBefore, sys:get_state(New)),
+		?assertEqual(TableBefore, table_dump()),
+		%% The tip still advances normally after the no-op.
+		ok = cmp(New, Legacy, {set_current, R1, 11, 20}),
+		reads_at_all(New, Legacy, [R1], addrs(Accounts))
+	end.
+
+%% @doc Remove an account in the middle of a chain and re-add it at the tip with a different
+%% value. A read at the middle root must see the account absent and a read at the base root
+%% must see the original value - not the tip's. This checks the merge order in
+%% merge_total_diff: the diff closer to the target must win over the one closer to the tip.
+scenario_remove_then_readd({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
+	fun() ->
+		[{Addr, Value} | _] = Accounts,
+		{ok, RA} = cmp(New, Legacy, {add_wallets, <<>>, base_map(Accounts), 10, Denom}),
+		ok = cmp(New, Legacy, {set_current, RA, 10, 20}),
+		{ok, RB} = cmp(New, Legacy, {add_wallets, RA, #{ Addr => remove }, 11, Denom}),
+		ok = cmp(New, Legacy, {set_current, RB, 11, 20}),
+		{ok, RC} = cmp(New, Legacy, {add_wallets, RB, #{ Addr => bump(Value) }, 12, Denom}),
+		ok = cmp(New, Legacy, {set_current, RC, 12, 20}),
+		%% The tip holds the re-added (bumped) value. It must not leak into the middle or
+		%% base roots.
+		?assertEqual(#{ Addr => bump(Value) }, gen_server:call(New, {get, [Addr]})),
+		?assertEqual(#{}, gen_server:call(New, {get, RB, [Addr]})),
+		?assertEqual(0, gen_server:call(New, {get_balance, RB, Addr})),
+		?assertEqual(#{ Addr => Value }, gen_server:call(New, {get, RA, [Addr]})),
+		reads_at_all(New, Legacy, [RA, RB, RC], addrs(Accounts))
 	end.
 
 %% @doc Reaching a state in one step, in several steps, and in several steps with a
