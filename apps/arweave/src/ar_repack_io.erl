@@ -152,7 +152,7 @@ do_read_footprint(
 		0, 
 		OffsetChunkMap
 	),
-	ar_metrics:record_rate_metric(
+	arweave_metrics:record_rate_metric(
 		StartTime, ChunkReadSizeInBytes,
 		chunk_read_rate_bytes_per_second, [ar_storage_module:label(StoreID), repack]),
 
@@ -189,7 +189,7 @@ process_write_queue(WriteQueue, Packing, #state{} = State) ->
         ok,
         WriteQueue
     ),
-	ar_metrics:record_rate_metric(
+	arweave_metrics:record_rate_metric(
 		StartTime, gb_sets:size(WriteQueue) * ?DATA_CHUNK_SIZE,
 		chunk_write_rate_bytes_per_second, [ar_storage_module:label(StoreID), repack]),
 	EndTime = erlang:monotonic_time(),

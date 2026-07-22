@@ -1,0 +1,31 @@
+{application, arweave_metrics,
+ [
+  {id, "arweave_metrics"},
+  {description, "Arweave Prometheus metrics subsystem"},
+  {vsn, "0.0.1"},
+  {mod, {arweave_metrics, []}},
+  {env, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  sasl,
+                  prometheus,
+                  prometheus_cowboy,
+                  prometheus_process_collector,
+                  prometheus_httpd,
+                  cowboy,
+                  runtime_tools
+                 ]},
+  {modules, [
+             arweave_metrics,
+             arweave_metrics_definitions,
+             arweave_metrics_sup,
+             arweave_metrics_cache,
+             arweave_metrics_collector,
+             arweave_metrics_render
+            ]},
+  {registered, [
+                arweave_metrics_sup,
+                arweave_metrics_cache
+               ]}
+ ]}.

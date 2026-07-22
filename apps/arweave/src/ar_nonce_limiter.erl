@@ -1464,9 +1464,9 @@ maybe_set_vdf_metrics(SessionKey, CurrentSessionKey, Session) ->
 				step_number = StepNumber,
 				vdf_difficulty = VDFDifficulty,
 				next_vdf_difficulty = NextVDFDifficulty } = Session,
-			ar_metrics:gauge_set(vdf_step, StepNumber),
-			ar_metrics:gauge_set(vdf_difficulty, [current], VDFDifficulty),
-			ar_metrics:gauge_set(vdf_difficulty, [next], NextVDFDifficulty);
+			arweave_metrics:gauge_set(vdf_step, StepNumber),
+			arweave_metrics:gauge_set(vdf_difficulty, [current], VDFDifficulty),
+			arweave_metrics:gauge_set(vdf_difficulty, [next], NextVDFDifficulty);
 		false ->
 			ok
 	end.

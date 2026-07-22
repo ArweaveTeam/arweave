@@ -103,13 +103,6 @@ start(normal, _Args) ->
 	?LOG_INFO("========== Starting Arweave Node  =========="),
 	arweave_config:log(),
 
-	%% Start the Prometheus metrics subsystem.
-	prometheus_registry:register_collector(prometheus_process_collector),
-	prometheus_registry:register_collector(ar_metrics_collector),
-
-	%% Register custom metrics.
-	ar_metrics:register(),
-
 	%% Start other apps which we depend on.
 	set_mining_address(),
 	ar_chunk_storage:run_defragmentation(),
@@ -322,7 +315,6 @@ stop_dependencies() ->
 	lists:foreach(fun(Dep) -> application:stop(Dep) end, lists:reverse(Deps)).
 
 start_dependencies() ->
-	ok = arweave_limiter:start(),
 	{ok, _} = application:ensure_all_started(arweave, permanent),
 	ok.
 

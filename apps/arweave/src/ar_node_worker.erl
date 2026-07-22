@@ -687,13 +687,13 @@ terminate(Reason, _State) ->
 
 record_metrics() ->
 	[{mempool_size, MempoolSize}] = ets:lookup(node_state, mempool_size),
-	ar_metrics:gauge_set(arweave_block_height, ar_node:get_height()),
+	arweave_metrics:gauge_set(arweave_block_height, ar_node:get_height()),
 	record_mempool_size_metrics(MempoolSize),
-	ar_metrics:gauge_set(weave_size, ar_node:get_weave_size()).
+	arweave_metrics:gauge_set(weave_size, ar_node:get_weave_size()).
 
 record_mempool_size_metrics({HeaderSize, DataSize}) ->
-	ar_metrics:gauge_set(mempool_header_size_bytes, HeaderSize),
-	ar_metrics:gauge_set(mempool_data_size_bytes, DataSize).
+	arweave_metrics:gauge_set(mempool_header_size_bytes, HeaderSize),
+	arweave_metrics:gauge_set(mempool_data_size_bytes, DataSize).
 
 may_be_initialize_nonce_limiter([#block{ height = Height } = B | Blocks], BI) ->
 	case Height + 1 == ar_fork:height_2_6() of
@@ -1520,7 +1520,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
 	maybe_report_n_confirmations(B, RecentBI),
 	PrevB = hd(PrevBlocks),
 	ForkRootB = lists:last(PrevBlocks), %% The root of any detected fork
-	ar_metrics:gauge_set(block_time, B#block.timestamp - PrevB#block.timestamp),
+	arweave_metrics:gauge_set(block_time, B#block.timestamp - PrevB#block.timestamp),
 	record_economic_metrics(B, PrevB),
 	lists:foldl(
 		fun(OrphanH, OrphanHeight) ->
@@ -1661,11 +1661,11 @@ record_economic_metrics(B, PrevB) ->
 
 record_economic_metrics2(B, PrevB) ->
 	{PoA1Diff, Diff} = ar_difficulty:diff_pair(B),
-	ar_metrics:gauge_set(log_diff, [poa1], ar_retarget:switch_to_log_diff(PoA1Diff)),
-	ar_metrics:gauge_set(log_diff, [poa2], ar_retarget:switch_to_log_diff(Diff)),
-	ar_metrics:gauge_set(network_hashrate, ar_difficulty:get_hash_rate_fixed_ratio(B)),
-	ar_metrics:gauge_set(endowment_pool, B#block.reward_pool),
-	ar_metrics:gauge_set(kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier),
+	arweave_metrics:gauge_set(log_diff, [poa1], ar_retarget:switch_to_log_diff(PoA1Diff)),
+	arweave_metrics:gauge_set(log_diff, [poa2], ar_retarget:switch_to_log_diff(Diff)),
+	arweave_metrics:gauge_set(network_hashrate, ar_difficulty:get_hash_rate_fixed_ratio(B)),
+	arweave_metrics:gauge_set(endowment_pool, B#block.reward_pool),
+	arweave_metrics:gauge_set(kryder_plus_rate_multiplier, B#block.kryder_plus_rate_multiplier),
 	Period_200_Years = 200 * 365 * 24 * 60 * 60,
 	case B#block.height >= ar_fork:height_2_6() of
 		true ->
@@ -1673,11 +1673,11 @@ record_economic_metrics2(B, PrevB) ->
 			RewardHistorySize = length(RewardHistory),
 			AverageHashRate = ar_util:safe_divide(lists:sum([HR
 					|| {_, HR, _, _} <- RewardHistory]), RewardHistorySize),
-			ar_metrics:gauge_set(average_network_hash_rate, AverageHashRate),
+			arweave_metrics:gauge_set(average_network_hash_rate, AverageHashRate),
 			AverageBlockReward = ar_util:safe_divide(lists:sum([R
 					|| {_, _, R, _} <- RewardHistory]), RewardHistorySize),
-			ar_metrics:gauge_set(average_block_reward, AverageBlockReward),
-			ar_metrics:gauge_set(price_per_gibibyte_minute, B#block.price_per_gib_minute),
+			arweave_metrics:gauge_set(average_block_reward, AverageBlockReward),
+			arweave_metrics:gauge_set(price_per_gibibyte_minute, B#block.price_per_gib_minute),
 			BlockInterval = ar_block_time_history:compute_block_interval(PrevB),
 			Args = {PrevB#block.reward_pool, PrevB#block.debt_supply, B#block.txs,
 					B#block.weave_size, B#block.height, PrevB#block.price_per_gib_minute,
@@ -1686,15 +1686,15 @@ record_economic_metrics2(B, PrevB) ->
 					BlockInterval},
 			{ExpectedBlockReward,
 					_, _, _, _, Give, Take} = ar_pricing:get_miner_reward_endowment_pool_debt_supply(Args),
-			ar_metrics:gauge_set(endowment_pool_take, Take),
-			ar_metrics:gauge_set(endowment_pool_give, Give),
-			ar_metrics:gauge_set(expected_block_reward, ExpectedBlockReward),
+			arweave_metrics:gauge_set(endowment_pool_take, Take),
+			arweave_metrics:gauge_set(endowment_pool_give, Give),
+			arweave_metrics:gauge_set(expected_block_reward, ExpectedBlockReward),
 			LegacyPricePerGibibyte = ar_pricing:get_storage_cost(?MiB * 1024,
 					os:system_time(second), PrevB#block.usd_to_ar_rate, B#block.height),
-			ar_metrics:gauge_set(legacy_price_per_gibibyte_minute, LegacyPricePerGibibyte),
-			ar_metrics:gauge_set(available_supply,
+			arweave_metrics:gauge_set(legacy_price_per_gibibyte_minute, LegacyPricePerGibibyte),
+			arweave_metrics:gauge_set(available_supply,
 					?TOTAL_SUPPLY - B#block.reward_pool + B#block.debt_supply),
-			ar_metrics:gauge_set(debt_supply, B#block.debt_supply);
+			arweave_metrics:gauge_set(debt_supply, B#block.debt_supply);
 		false ->
 			ok
 	end,
@@ -1704,7 +1704,7 @@ record_economic_metrics2(B, PrevB) ->
 		{'EXIT', _} ->
 			?LOG_ERROR([{event, failed_to_compute_expected_min_decline_rate}]);
 		{RateDivisor, RateDividend} ->
-			ar_metrics:gauge_set(expected_minimum_200_years_storage_costs_decline_rate,
+			arweave_metrics:gauge_set(expected_minimum_200_years_storage_costs_decline_rate,
 					ar_util:safe_divide(RateDivisor, RateDividend))
 	end,
 	case catch ar_pricing:get_expected_min_decline_rate(B#block.timestamp,
@@ -1713,7 +1713,7 @@ record_economic_metrics2(B, PrevB) ->
 		{'EXIT', _} ->
 			?LOG_ERROR([{event, failed_to_compute_expected_min_decline_rate2}]);
 		{RateDivisor2, RateDividend2} ->
-			ar_metrics:gauge_set(
+			arweave_metrics:gauge_set(
 					expected_minimum_200_years_storage_costs_decline_rate_10_usd_ar,
 					ar_util:safe_divide(RateDivisor2, RateDividend2))
 	end.
@@ -1723,7 +1723,7 @@ record_vdf_metrics(#block{ height = Height } = B, PrevB) ->
 		true ->
 			StepNumber = ar_block:vdf_step_number(B),
 			PrevBStepNumber = ar_block:vdf_step_number(PrevB),
-			ar_metrics:gauge_set(block_vdf_time, StepNumber - PrevBStepNumber);
+			arweave_metrics:gauge_set(block_vdf_time, StepNumber - PrevBStepNumber);
 		false ->
 			ok
 	end.
@@ -1835,7 +1835,7 @@ collect_mining_transactions(Limit, Set, TXs) ->
 
 record_processing_time(StartTimestamp) ->
 	ProcessingTime = timer:now_diff(erlang:timestamp(), StartTimestamp) / 1000000,
-	ar_metrics:histogram_observe(block_processing_time, ProcessingTime).
+	arweave_metrics:histogram_observe(block_processing_time, ProcessingTime).
 
 priority(apply_block) ->
 	{1, 1};
@@ -2300,7 +2300,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
 							undefined -> 1;
 							_ -> 2
 						end}]),
-			ar_metrics:gauge_inc(mining_solution, [success]),
+			arweave_metrics:gauge_inc(mining_solution, [success]),
 			ar_block_cache:add(block_cache, B),
 			ar_events:send(solution, {accepted,
 					#{ indep_hash => H, source => Source, is_rebase => IsRebase }}),

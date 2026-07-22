@@ -94,7 +94,7 @@ set_device_lock_metric(StoreID, Mode, Status) ->
 		_ -> -2		
 	end,
 	StoreIDLabel = ar_storage_module:label(StoreID),
-	ar_metrics:gauge_set(device_lock_status, [StoreIDLabel, Mode], StatusCode).
+	arweave_metrics:gauge_set(device_lock_status, [StoreIDLabel, Mode], StatusCode).
 
 %% @doc Update the number of replica 2.9 entropy workers at runtime.
 set_entropy_workers(Value) ->

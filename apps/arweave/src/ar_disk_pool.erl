@@ -267,7 +267,7 @@ persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset, Validation, DataPa
 				ok ->
 					put_data_root_state(DataRootID, DiskPoolDataRootValue),
 					ets:update_counter(ar_data_sync_state, disk_pool_size, {2, ?DATA_CHUNK_SIZE}),
-					ar_metrics:gauge_inc(pending_chunks_size, ?DATA_CHUNK_SIZE),
+					arweave_metrics:gauge_inc(pending_chunks_size, ?DATA_CHUNK_SIZE),
 					cache_chunk(DiskPoolDataRootValue, EndOffset, DiskPoolChunkKey, DataPathHash),
 					ok
 			end
@@ -513,7 +513,7 @@ populate_data_roots(DataRootMap, StoreID) ->
 populate_data_roots2(Index, DataRootMap, Cursor, Sum) ->
 	case ar_kv:get_next(Index, Cursor) of
 		none ->
-			ar_metrics:gauge_set(pending_chunks_size, Sum),
+			arweave_metrics:gauge_set(pending_chunks_size, Sum),
 			maps:map(
 				fun(DataRootID, DataRootTuple = {_Size, _Timestamp, _TXIDSet}) ->
 					put_data_root_state(DataRootID, DataRootTuple)
@@ -638,7 +638,7 @@ process_next_chunk(
 	end.
 
 process_chunk(DiskPool, StoreID, DiskPoolKey, DiskPoolValue) ->
-	ar_metrics:counter_inc(disk_pool_processed_chunks),
+	arweave_metrics:counter_inc(disk_pool_processed_chunks),
 	<< Timestamp:256, _DataPathHash/binary >> = DiskPoolKey,
 	DiskPoolChunk = parse_chunk(DiskPoolValue),
 	{_Offset, _ChunkSize, DataRoot, TXSize, ChunkDataKey,
@@ -1109,7 +1109,7 @@ remove_chunk(StoreID, DiskPoolKey, ChunkDataKey, DataRootID) ->
 
 decrease_occupied_size(Size, DataRootID) ->
 	ets:update_counter(ar_data_sync_state, disk_pool_size, {2, -Size}),
-	ar_metrics:gauge_dec(pending_chunks_size, Size),
+	arweave_metrics:gauge_dec(pending_chunks_size, Size),
 	case get_data_root_state(DataRootID) of
 		not_found ->
 			ok;
@@ -1153,7 +1153,7 @@ record_chunks_count() ->
 	DB = index_db(?DEFAULT_MODULE),
 	case ar_kv:count(DB) of
 		Count when is_integer(Count) ->
-			ar_metrics:gauge_set(disk_pool_chunks_count, Count);
+			arweave_metrics:gauge_set(disk_pool_chunks_count, Count);
 		Error ->
 			?LOG_WARNING([{event, failed_to_read_disk_pool_chunks_count},
 					{error, io_lib:format("~p", [Error])}])

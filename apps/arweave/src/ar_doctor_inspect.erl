@@ -22,7 +22,7 @@ main(Args) ->
 		["chunks", Dir, StartStr, EndStr | AddrListStr] when length(AddrListStr) >= 1 ->
 			Addresses = [ar_util:decode(AddrStr) || AddrStr <- AddrListStr],
 			ok = arweave_config:load(#{ [randomx, large_pages] => true }),
-			ar_metrics:register(),
+			arweave_metrics:register(),
 			ar_packing_sup:start_link(),
 			Start = ar_block:get_chunk_padded_offset(list_to_integer(StartStr)),
 			End = ar_block:get_chunk_padded_offset(list_to_integer(EndStr)),

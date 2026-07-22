@@ -43,7 +43,7 @@ init_per_testcase(TestCase, Config) ->
     %% the suite is robust to other suites having registered them in the
     %% same Common Test run.
 
-    BeforeApps = application:which_applications(),
+    AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
     {ok, _Started1} = application:ensure_all_started(prometheus),
     {ok, _Started2} = application:ensure_all_started(arweave_config),
 
@@ -68,7 +68,7 @@ init_per_testcase(TestCase, Config) ->
                   _ -> []
               end,
 
-    [{sup_pid, SupPid}, {before_apps, BeforeApps}, {callers, Callers}] ++ Config.
+    [{sup_pid, SupPid}, {before_apps, AppsBefore}, {callers, Callers}] ++ Config.
 
 end_per_testcase(_TestCase, Config) ->
     drain_callers(?config(callers, Config)),
@@ -77,8 +77,10 @@ end_per_testcase(_TestCase, Config) ->
     %% parent-exit teardown instead races the next start_link/1, which
     %% then returns {already_started, StalePid}.
     stop_sup(?config(sup_pid, Config)),
-    arweave_limiter_metrics:cleanup(),
-    [application:stop(App) || App <- application:which_applications() -- ?config(before_apps, Config)],
+    AppsBefore = ?config(before_apps, Config),
+    AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
+    AppsStartedForTest = AppsNow -- AppsBefore,
+    lists:foreach(fun application:stop/1, AppsStartedForTest),
     ok.
 
 do_setup_with_data() ->
@@ -90,7 +92,7 @@ do_setup_with_data() ->
                                   Acc ++ [?assertHandlerRegisterOrRejectCall(?GENERAL, {register, _, _}, IP) ||
                                              _ <- lists:seq(1,150)]
                           end, [], IPs),
-    timer:sleep(500),
+    timer:sleep(1500),
 
     Callers.
 

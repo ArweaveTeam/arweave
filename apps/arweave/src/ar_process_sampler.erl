@@ -74,7 +74,7 @@ handle_info(sample_processes, State) ->
 	%% Clear out the process_info metric so that we don't persist data about processes that
 	%% have exited. We have to deregister and re-register the metric because we don't track
 	%% all the label values used.
-	ar_metrics:gauge_deregister(process_info),
+	arweave_metrics:gauge_deregister(process_info),
 	%% Guard this runtime re-declaration like the metric writes: prometheus
 	%% can be transiently absent during e2e restarts.
 	try prometheus_gauge:new([{name, process_info},
@@ -87,21 +87,21 @@ handle_info(sample_processes, State) ->
 		Memory = maps:get(memory, Metrics),
 		Reductions = maps:get(reductions, Metrics),
 		MsgQueueLen = maps:get(message_queue_len, Metrics),
-		ar_metrics:gauge_set(process_info, [ProcessName, memory], Memory),
-		ar_metrics:gauge_set(process_info, [ProcessName, reductions], Reductions),
-		ar_metrics:gauge_set(process_info, [ProcessName, message_queue], MsgQueueLen),
+		arweave_metrics:gauge_set(process_info, [ProcessName, memory], Memory),
+		arweave_metrics:gauge_set(process_info, [ProcessName, reductions], Reductions),
+		arweave_metrics:gauge_set(process_info, [ProcessName, message_queue], MsgQueueLen),
 		log_long_message_queues(ProcessName, MsgQueueLen, maps:get(processes, Metrics))
 	end, ProcessMetrics),
 
-	ar_metrics:gauge_set(process_info, [total, memory], erlang:memory(total)),
-	ar_metrics:gauge_set(process_info, [processes, memory], erlang:memory(processes)),
-	ar_metrics:gauge_set(process_info, [processes_used, memory], erlang:memory(processes_used)),
-	ar_metrics:gauge_set(process_info, [system, memory], erlang:memory(system)),
-	ar_metrics:gauge_set(process_info, [atom, memory], erlang:memory(atom)),
-	ar_metrics:gauge_set(process_info, [atom_used, memory], erlang:memory(atom_used)),
-	ar_metrics:gauge_set(process_info, [binary, memory], erlang:memory(binary)),
-	ar_metrics:gauge_set(process_info, [code, memory], erlang:memory(code)),
-	ar_metrics:gauge_set(process_info, [ets, memory], erlang:memory(ets)),
+	arweave_metrics:gauge_set(process_info, [total, memory], erlang:memory(total)),
+	arweave_metrics:gauge_set(process_info, [processes, memory], erlang:memory(processes)),
+	arweave_metrics:gauge_set(process_info, [processes_used, memory], erlang:memory(processes_used)),
+	arweave_metrics:gauge_set(process_info, [system, memory], erlang:memory(system)),
+	arweave_metrics:gauge_set(process_info, [atom, memory], erlang:memory(atom)),
+	arweave_metrics:gauge_set(process_info, [atom_used, memory], erlang:memory(atom_used)),
+	arweave_metrics:gauge_set(process_info, [binary, memory], erlang:memory(binary)),
+	arweave_metrics:gauge_set(process_info, [code, memory], erlang:memory(code)),
+	arweave_metrics:gauge_set(process_info, [ets, memory], erlang:memory(ets)),
 
 	log_binary_alloc(),
 
@@ -153,7 +153,7 @@ average_utilization(Util) ->
 		Util),
 	maps:foreach(
 		fun(Type, {Sum, Count}) ->
-			ar_metrics:gauge_set(scheduler_utilization, [Type], Sum / Count)
+			arweave_metrics:gauge_set(scheduler_utilization, [Type], Sum / Count)
 		end,
 		Averages).
 
@@ -242,11 +242,11 @@ log_binary_alloc_instances([Instance | _Rest]) ->
 	log_binary_alloc_carrier(Id, MBCS),
 	log_binary_alloc_carrier(Id, SBCS),
 
-	ar_metrics:gauge_set(allocator, [binary, Id, calls, binary_alloc_count],
+	arweave_metrics:gauge_set(allocator, [binary, Id, calls, binary_alloc_count],
 		(AllocGigaCount * 1000000000) + AllocCount),
-	ar_metrics:gauge_set(allocator, [binary, Id, calls, binary_free_count],
+	arweave_metrics:gauge_set(allocator, [binary, Id, calls, binary_free_count],
 		(FreeGigaCount * 1000000000) + FreeCount),
-	ar_metrics:gauge_set(allocator, [binary, Id, calls, binary_realloc_count],
+	arweave_metrics:gauge_set(allocator, [binary, Id, calls, binary_realloc_count],
 		(ReallocGigaCount * 1000000000) + ReallocCount).
 
 log_binary_alloc_carrier(Id, Carrier) ->
@@ -260,20 +260,20 @@ log_binary_alloc_carrier(Id, Carrier) ->
 
 	case Blocks of
 		[{binary_alloc, [{count, _, BlockCount, _}, {size, _, BlockSize, _}]}] ->
-			ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_count],
+			arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_count],
 				BlockCount),
-			ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_size],
+			arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_size],
 				BlockSize);
 		_ ->
-			ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_count],
+			arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_count],
 				0),
-			ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_size],
+			arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_size],
 				0)
 	end,
 
-	ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_carrier_count],
+	arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_carrier_count],
 		CarrierCount),
-	ar_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_carrier_size],
+	arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_carrier_size],
 		CarrierSize).
 
 

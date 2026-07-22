@@ -222,7 +222,7 @@ try_group_id_to_atom(Peer, HeaderGroupID) ->
 log_update_error(Peer, Path, GroupID, Reason) ->
 	ReasonStr = get_quota_error_reason(Reason),
 	log_unknown_reason(Peer, Path, GroupID, Reason, ReasonStr),
-	ar_metrics:counter_inc(arweave_throttling_quota_update_error,
+	arweave_metrics:counter_inc(arweave_throttling_quota_update_error,
 						[atom_to_list(GroupID),
 							ReasonStr
 						]),

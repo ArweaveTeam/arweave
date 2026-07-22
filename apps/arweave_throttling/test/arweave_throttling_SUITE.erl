@@ -42,6 +42,7 @@ init_per_testcase(_TestCase, Config) ->
 
 	ok = arweave_config:start(),
 	ConfigSnapshot = arweave_config:snapshot(),
+
 	ok = arweave_throttling:start(),
 
 	[{apps_before, AppsBefore}, {config_snapshot, ConfigSnapshot} | Config].
@@ -56,7 +57,7 @@ end_per_testcase(_TestCase, Config) ->
 	AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
 	AppsStartedForTest = AppsNow -- AppsBefore,
 	lists:foreach(fun application:stop/1, AppsStartedForTest),
-
+	catch arweave_metrics:cleanup(),
 	ok.
 
 all() ->
@@ -117,7 +118,7 @@ throttle_and_update_quota(_Config) ->
 					end),
 
 	Headers = headers(?GROUPID_GENERAL, 10, 3, 0),
-	ct:pal(">> headers: ~p~n >>> parsed Quota: ~p~n", [Headers, arweave_throttling_http_headers:parse(Headers)]),
+
 	ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
 										Headers),
 

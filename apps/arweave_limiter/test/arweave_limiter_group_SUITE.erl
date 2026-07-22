@@ -326,11 +326,12 @@ timeout(_Config) ->
     ok.
 
 timeout_setup(Config) ->
+    BeforeApps = application:which_applications(),
+
     ?TABLE = ets:new(?TABLE, [named_table, public]), %% This is not used, but I don't
     %% want to complicate cleanup
     {module, arweave_limiter_time} = code:ensure_loaded(arweave_limiter_time),
 
-    BeforeApps = application:which_applications(),
     application:ensure_all_started(arweave_config),
 
     put({?MODULE, snapshot}, arweave_config:snapshot()),
@@ -369,10 +370,11 @@ timeout_setup(Config) ->
     {LimiterPID, BeforeApps}.
 
 setup(Config) ->
+    BeforeApps = application:which_applications(),
+
     ?TABLE = ets:new(?TABLE, [named_table, public]),
     ?setTSMock(0),
 
-    BeforeApps = application:which_applications(),
     application:ensure_all_started(arweave_config),
 
     put({?MODULE, snapshot}, arweave_config:snapshot()),
@@ -417,7 +419,7 @@ cleanup(_Config, {_LimiterPID, BeforeApps}) ->
                       arweave_limiter_time]),
     ?M:stop(?TEST_LIMITER_0),
 
-    [application:stop(App) || App <- application:which_applications() -- BeforeApps],
+    [application:stop(App) || App <- (application:which_applications() -- BeforeApps)],
     true = ets:delete(?TABLE),
     arweave_config:restore(erase({?MODULE, snapshot})),
     ok.

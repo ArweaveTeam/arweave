@@ -81,7 +81,7 @@ clean_up_space(Size, MaxSize, Table, OrderedKeyTable) ->
 					clean_up_space(Size, MaxSize, Table, OrderedKeyTable)
 			end;
 		false ->
-			ar_metrics:gauge_set(replica_2_9_entropy_cache, TotalSize + Size),
+			arweave_metrics:gauge_set(replica_2_9_entropy_cache, TotalSize + Size),
 			ok
 	end.
 

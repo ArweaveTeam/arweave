@@ -1252,7 +1252,7 @@ count_states(cache, #state{} = State) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			ar_metrics:gauge_set(repack_chunk_states, [StoreIDLabel, cache, ChunkState], Count),
+			arweave_metrics:gauge_set(repack_chunk_states, [StoreIDLabel, cache, ChunkState], Count),
 			Acc
 		end,
 		ok,
@@ -1277,7 +1277,7 @@ count_states(queue, #state{} = State) ->
 	StoreIDLabel = ar_storage_module:label(StoreID),
 	maps:fold(
 		fun(ChunkState, Count, Acc) ->
-			ar_metrics:gauge_set(repack_chunk_states, [StoreIDLabel, queue, ChunkState], Count),
+			arweave_metrics:gauge_set(repack_chunk_states, [StoreIDLabel, queue, ChunkState], Count),
 			Acc
 		end,
 		ok,

@@ -2473,9 +2473,9 @@ handle_block_announcement(#block_announcement{ indep_hash = H, previous_block = 
 					{412, #{}, <<>>, Req};
 				#block{} ->
 					Indices = collect_missing_tx_indices(Prefixes),
-					ar_metrics:counter_inc(block_announcement_reported_transactions,
+					arweave_metrics:counter_inc(block_announcement_reported_transactions,
 							length(Prefixes)),
-					ar_metrics:counter_inc(block_announcement_missing_transactions,
+					arweave_metrics:counter_inc(block_announcement_missing_transactions,
 							length(Indices)),
 					Response = #block_announcement_response{ missing_chunk = true,
 							missing_tx_indices = Indices },
