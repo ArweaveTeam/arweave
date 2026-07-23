@@ -1537,6 +1537,14 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
       Orphans
      ),
     ar_chain_stats:log_fork(Orphans, ForkRootB),
+    case Orphans of
+        [] ->
+            ok;
+        _ ->
+            %% The new fork is [B | PrevBlocks] without ForkRootB (the common parent),
+            %% so its depth is length(PrevBlocks).
+            arweave_metrics:histogram_observe(fork_recovery_depth, [], length(PrevBlocks))
+    end,
     record_vdf_metrics(B, PrevB),
     return_orphaned_txs_to_mempool(CurrentH, ForkRootB#block.indep_hash),
     lists:foldl(

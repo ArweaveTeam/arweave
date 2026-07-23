@@ -262,6 +262,13 @@ all_metrics() ->
 				"The number of dirty account tree nodes re-hashed by one compute_hash pass. "}
 		]},
 		{prometheus_histogram, [
+			{name, fork_recovery_depth},
+			{buckets, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 50]},
+			{help,
+				"The number of blocks on the fork we switch to, counted from the first "
+				"block after the last block shared with the abandoned chain."}
+		]},
+		{prometheus_histogram, [
 			{name, block_pre_validation_time},
 			{buckets, [infinity]}, %% we don't care about the histogram portion
 			{help,
