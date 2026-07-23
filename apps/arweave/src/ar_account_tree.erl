@@ -371,7 +371,7 @@ apply_block2(B, PrevB, State) ->
     PrevRootHash = PrevB#block.wallet_list,
     Addresses = block_addresses(B, PrevB),
     Outcome = with_snapshot(Tid, fun() ->
-                                         _ = move_sink_to(State, PrevRootHash),
+                                         _ = move_sink_to(State, PrevRootHash, apply_block),
                                          Accounts = accounts_at_tip(State, Addresses),
                                          apply_block_outcome(B, PrevB, Accounts, Tid)
                                  end),
@@ -443,7 +443,7 @@ add_wallets(State, RootHash, Wallets, Height, Denomination) ->
     Tid = maps:get(tid, State),
     true = Height >= ar_fork:height_2_2(),
     RootHash2 = with_snapshot(Tid, fun() ->
-                                           _ = move_sink_to(State, RootHash),
+                                           _ = move_sink_to(State, RootHash, add_wallets),
                                            apply_diff_ets(Wallets, Tid),
                                            {Root, _, _} = compute_hash(Tid, #{}),
                                            Root
@@ -452,7 +452,7 @@ add_wallets(State, RootHash, Wallets, Height, Denomination) ->
     {{ok, RootHash2}, State#{ dag := DAG2 }}.
 
 set_current(State, RootHash, Height, PruneDepth) ->
-    State1 = move_sink_to(State, RootHash),
+    State1 = move_sink_to(State, RootHash, set_current),
     Tid = maps:get(tid, State1),
     {RootHash, _, _} = compute_hash(Tid, #{ sink => ar_storage }),
     true = Height >= ar_fork:height_2_2(),
@@ -466,7 +466,8 @@ get_wallet_list_chunk(State, RootHash, Cursor) ->
                 get_account_tree_range(State, Cursor);
             false ->
                 with_snapshot(maps:get(tid, State), fun() ->
-                                                            _ = move_sink_to(State, RootHash),
+                                                            _ = move_sink_to(State, RootHash,
+                                                                             wallet_list_chunk),
                                                             get_account_tree_range(State, Cursor)
                                                     end)
         end,
@@ -504,8 +505,9 @@ with_snapshot(Tid, Fun) ->
 
 %% @doc Move the ETS tree (the diff DAG sink) to the representation identified by
 %% the given root hash, mutating the ETS table in place. No-op when already there.
-%% RootHash must be an existing node in the graph.
-move_sink_to(State, RootHash) ->
+%% RootHash must be an existing node in the graph. Call names the caller in the
+%% account_tree_sink_move_hops metric.
+move_sink_to(State, RootHash, Call) ->
     case is_sink(State, RootHash) of
         true ->
             State;
@@ -522,7 +524,7 @@ move_sink_to(State, RootHash) ->
                      end,
                      fun(Diff, _Entity) -> reverse_diff_ets(Diff, Tid) end
                     ),
-            arweave_metrics:histogram_observe(account_tree_sink_move_hops, [],
+            arweave_metrics:histogram_observe(account_tree_sink_move_hops, [Call],
                                               counters:get(HopCounter, 1)),
             State#{ dag := DAG2, sink := RootHash }
     end.

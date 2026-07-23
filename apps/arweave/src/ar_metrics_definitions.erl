@@ -250,10 +250,12 @@ all_metrics() ->
 		]},
 		{prometheus_histogram, [
 			{name, account_tree_sink_move_hops},
+			{labels, [call]},
 			{buckets, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 50]},
 			{help,
 				"The number of diff DAG edges traversed when the ETS account tree is "
-				"repositioned to another representation. Grows with fork depth."}
+				"repositioned to another representation, labeled by the operation that "
+				"triggered the move. Grows with fork depth."}
 		]},
 		{prometheus_histogram, [
 			{name, account_tree_rehashed_nodes},
