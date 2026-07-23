@@ -1443,10 +1443,14 @@ case "$1" in
 	    help|"")
 		shift
 		subcommand="config"
-		BOOTFILE="$REL_DIR/start"
-		if [ -f "$REL_DIR/$REL_NAME.boot" ]; then
-		  BOOTFILE="$REL_DIR/$REL_NAME"
-		fi
+		# Help output is pure — it reads the option spec modules
+		# directly and needs no running application. Boot only
+		# kernel/stdlib and skip vm.args so help never starts
+		# distribution (whose -name collides with a running node)
+		# nor the full release apps.
+		BOOTFILE="$REL_DIR/start_clean"
+		CODE_LOADING_MODE="${CODE_LOADING_MODE:-interactive}"
+		VMARGS_PATH="/dev/null"
 		FOREGROUNDOPTIONS="-noinput +Bd"
 		ARWEAVE_OPTS="-run arweave_config_help main"
 		ARGS=${*}
@@ -1700,6 +1704,12 @@ case "$1" in
 			ARGS=$(arweave_benchmark ${*})
 			;;
 		    wallet)
+			# One-shot local run beside a possibly-running node:
+			# skip vm.args so wallet creation never starts
+			# distribution with the node's -name. Keeps the full
+			# release boot — create_wallet needs the started
+			# arweave_config application.
+			VMARGS_PATH="/dev/null"
 			arweave_wallet ${*}
 			ARGS=$(arweave_wallet ${*})
 			;;
