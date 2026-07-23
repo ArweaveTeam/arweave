@@ -15,7 +15,8 @@ all() ->
 	[
 		default_help_lists_groups,
 		group_form_prints_group_detail,
-		hidden_options_left_out
+		hidden_options_left_out,
+		runtime_marker_and_legend
 	].
 
 %%====================================================================
@@ -45,6 +46,15 @@ hidden_options_left_out(_Config) ->
 	?assertEqual(nomatch, binary:match(Output, <<"=== config ===">>)),
 	ok.
 
+%% Summary layout: runtime-writable options carry a `*' marker
+%% directly before the key, and a legend explains it once.
+runtime_marker_and_legend(_Config) ->
+	Output = capture(fun arweave_config_help:print/0),
+	?assertNotEqual(nomatch, binary:match(Output, <<"* peers.block_gossip">>)),
+	?assertNotEqual(nomatch,
+		binary:match(Output, <<"(* = settable at runtime via `config set`)">>)),
+	ok.
+
 %%====================================================================
 %% Helpers
 %%====================================================================
@@ -53,4 +63,6 @@ capture(Fun) ->
 	ct:capture_start(),
 	Fun(),
 	ct:capture_stop(),
-	iolist_to_binary(ct:capture_get()).
+	%% characters_to_binary, not iolist_to_binary: the output contains
+	%% codepoints above Latin-1 (the `…' truncation marker).
+	unicode:characters_to_binary(ct:capture_get()).

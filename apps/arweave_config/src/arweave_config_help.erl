@@ -22,6 +22,7 @@ main(_) ->
 print() ->
     print_intro(),
     lists:foreach(fun print_group_summary/1, grouped_parameters()),
+    io:format("(* = settable at runtime via `config set`)~n"),
     ok.
 
 %% @doc Detailed help for a single group: per-option key, long
@@ -65,14 +66,41 @@ print_group_summary({Group, Description, Options}) ->
         _ -> io:format("~ts~n", [Description])
     end,
     io:nl(),
-    lists:foreach(fun print_option_summary/1, Options),
+    %% Aligned columns (key | default | description) so a block of
+    %% options scans as vertical lanes; widths are computed per group
+    %% so narrow groups stay tight.
+    KeyWidth = column_width([key_string(Option) || Option <- Options]),
+    DefaultWidth = column_width([summary_default(Option) || Option <- Options]),
+    lists:foreach(
+        fun(Option) ->
+            print_option_summary(Option, KeyWidth, DefaultWidth)
+        end, Options),
     io:nl().
 
-print_option_summary(Option) ->
-    Runtime = atom_to_binary(maps:get(runtime, Option, false)),
-    io:format("  ~ts (default: ~ts, runtime: ~ts) - ~ts~n",
-        [key_string(Option), default_string(Option), Runtime,
-         short_desc(Option)]).
+print_option_summary(Option, KeyWidth, DefaultWidth) ->
+    Marker = case maps:get(runtime, Option, false) of
+        true -> <<"* ">>;
+        _ -> <<"  ">>
+    end,
+    io:format("  ~ts~-*ts  ~-*ts  ~ts~n",
+        [Marker, KeyWidth, key_string(Option),
+         DefaultWidth, summary_default(Option), short_desc(Option)]).
+
+column_width(Strings) ->
+    lists:max([string:length(String) || String <- Strings]).
+
+%% @doc Summary default column: the bare value, truncated so a long
+%% default (peer lists, paths) cannot blow up the column — the full
+%% value is in the per-group view.
+summary_default(Option) ->
+    Bin = unicode:characters_to_binary(default_string(Option)),
+    case string:length(Bin) > 20 of
+        true ->
+            Truncated = string:slice(Bin, 0, 19),
+            <<(unicode:characters_to_binary(Truncated))/binary, "…"/utf8>>;
+        false ->
+            Bin
+    end.
 
 %%%===================================================================
 %%% Per-group detailed help.
