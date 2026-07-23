@@ -35,12 +35,24 @@ deregister_cleanup(_Registry) -> ok.
 add_metric_family({Name, Type, Help, Metrics}, Callback) ->
     Callback(create_mf(?METRIC_NAME(Name), Help, Type, Metrics)).
 
+%% @doc ar_header_sync owns this table and creates it after the metrics
+%% endpoint is already up: a scrape during that boot window (or while
+%% header sync restarts) must degrade to 0, not crash the whole render.
+%% The lookup's own default only covers a missing key, not a missing
+%% table.
+synced_blocks() ->
+    try
+        ets:lookup_element(ar_header_sync, synced_blocks, 2, 0)
+    catch error:badarg ->
+        0
+    end.
+
 metrics() ->
     RanchInfo = ranch:info(),
     [
      {storage_blocks_stored, gauge,
       "Blocks stored",
-      ets:lookup_element(ar_header_sync, synced_blocks, 2, 0)},
+      synced_blocks()},
      {arnode_queue_len, gauge,
       "Size of message queuee on ar_node_worker",
       ar_util:message_queue_len(ar_node_worker)},
