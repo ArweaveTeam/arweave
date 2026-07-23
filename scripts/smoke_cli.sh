@@ -30,12 +30,6 @@ ROOT="$(pwd)"
 unset ARWEAVE_DEV ARWEAVE_BUILD_TARGET ARWEAVE_NAMESPACE ARWEAVE_NS_SUFFIX
 unset ARNODE ARCOOKIE
 
-# bin/arweave schedules a background `rm` of the lib/ and releases/
-# symlinks 30s after VM boot (intended to unblock VSCode extensions).
-# That clobbers the next bin/arweave invocation mid-boot when the
-# smoke runs many tools back-to-back — disable it.
-export ARWEAVE_SYMLINK_CLEANUP_DELAY=0
-
 CONFIG_FIXTURE="$ROOT/scripts/smoke_node_config.json"
 
 # Erlang crash patterns. Any one of these in command output flags the

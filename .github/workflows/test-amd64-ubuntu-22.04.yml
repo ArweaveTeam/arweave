@@ -10,6 +10,16 @@ on:
   workflow_dispatch:
 
 jobs:
+  # bin/arweave is the committed pre-render of priv/templates/extended_bin
+  # (the relx overlay template); a launcher change applied to only one of
+  # them ships different behavior to source checkouts vs release installs.
+  # Cheap standalone check — needs no build artifact.
+  bin-arweave-lockstep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/check_bin_arweave_lockstep.sh
+
   build:
     uses: ./.github/workflows/x-build.yml
     secrets: inherit

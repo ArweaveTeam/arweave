@@ -172,69 +172,22 @@ then
 	fi
 fi
 
-# ROOTDIR is used by the Erlang VM for code:root_dir() and relative path resolution.
-# Keep it as the project root so config files and logs work correctly.
-export ROOTDIR="$RELEASE_ROOT_DIR"
+# ROOTDIR is what the Erlang VM uses for code:root_dir(), the boot
+# script's $ROOT lib resolution, and nodetool/escript lookups. On a
+# pre-built release install it is this directory (real lib/ and
+# releases/ next to bin/). On a source checkout it is the rebar3
+# release under _build, so the VM loads boot files and code from their
+# real locations — no root-level lib/releases symlinks, and no delayed
+# cleanup racing the next boot's file reads. The process CWD stays at
+# the project root (see the cd before command dispatch), so relative
+# config files, screenlogs, and data paths are unaffected.
+if [ -d "${RELEASE_ROOT_DIR}/releases/${REL_VSN}" ] && [ ! -L "${RELEASE_ROOT_DIR}/releases" ]; then
+    export ROOTDIR="$RELEASE_ROOT_DIR"
+else
+    export ROOTDIR="${BUILD_DIR}/default/rel/${REL_NAME}"
+fi
 
-# Track whether we're running from source (need symlinks) or pre-built release (have real dirs)
-RUNNING_FROM_SOURCE=""
-
-# Function to create symlinks to the build release directory on-demand.
-# Called after arweave_developer_mode (if any) so symlinks aren't deleted by ar-rebar3.
-# Only needed when running from source; pre-built releases have real lib/ and releases/ dirs.
-ensure_release_symlinks() {
-    # If releases dir already exists as a real directory, we're running a pre-built release
-    if [ -d "${RELEASE_ROOT_DIR}/releases/${REL_VSN}" ] && [ ! -L "${RELEASE_ROOT_DIR}/releases" ]; then
-        RUNNING_FROM_SOURCE=""
-        return
-    fi
-
-    # Running from source - create symlinks to the build directory
-    RUNNING_FROM_SOURCE="1"
-    RELEASE_BUILD_DIR="${BUILD_DIR}/default/rel/${REL_NAME}"
-    if [ -d "${RELEASE_BUILD_DIR}/releases" ] && [ ! -e "${RELEASE_ROOT_DIR}/releases" ]; then
-        ln -sf "${RELEASE_BUILD_DIR}/releases" "${RELEASE_ROOT_DIR}/releases"
-    fi
-    if [ -d "${RELEASE_BUILD_DIR}/lib" ] && [ ! -e "${RELEASE_ROOT_DIR}/lib" ]; then
-        ln -sf "${RELEASE_BUILD_DIR}/lib" "${RELEASE_ROOT_DIR}/lib"
-    fi
-}
-
-# Schedule symlink cleanup after VM boots. The symlinks are only needed during
-# boot to load code; once loaded, they can be removed so VSCode extensions work.
-# Default delay is 30 seconds; set ARWEAVE_SYMLINK_CLEANUP_DELAY to override (0 to disable).
-# Only runs when running from source (RUNNING_FROM_SOURCE is set).
-schedule_symlink_cleanup() {
-    # Only cleanup if we're running from source and created symlinks
-    if [ -z "$RUNNING_FROM_SOURCE" ]; then
-        return
-    fi
-
-    local delay="${ARWEAVE_SYMLINK_CLEANUP_DELAY:-30}"
-    if [ "$delay" = "0" ]; then
-        return
-    fi
-    (
-        sleep "$delay"
-        # Only remove if they're actually symlinks (safety check)
-        cleanup_release_symlinks
-    ) &
-}
-
-cleanup_release_symlinks() {
-    if [ -z "$RUNNING_FROM_SOURCE" ]; then
-        return
-    fi
-
-    if [ "${ARWEAVE_SYMLINK_CLEANUP_DELAY:-30}" = "0" ]; then
-        return
-    fi
-
-    [ -L "${RELEASE_ROOT_DIR}/lib" ] && rm -f "${RELEASE_ROOT_DIR}/lib"
-    [ -L "${RELEASE_ROOT_DIR}/releases" ] && rm -f "${RELEASE_ROOT_DIR}/releases"
-}
-
-export REL_DIR="${RELEASE_ROOT_DIR}/releases/${REL_VSN}"
+export REL_DIR="${ROOTDIR}/releases/${REL_VSN}"
 export RUNNER_LOG_DIR="${RUNNER_LOG_DIR:-$RELEASE_ROOT_DIR/logs}"
 export ESCRIPT_NAME="${ESCRIPT_NAME-$SCRIPT}"
 
@@ -543,7 +496,7 @@ arweave_developer_mode() {
 
 # check if a command (subcommand) is a developer command.
 is_arweave_developer_command() {
-  local commands="test test_e2e"
+  local commands="test"
   local value="${1}"
   if test "${ARWEAVE_DEV}"
   then
@@ -595,7 +548,9 @@ arweave_test() {
     TEST_NODE_HOST="${NODE_HOST:-127.0.0.1}"
     TEST_COOKIE="${COOKIE:-test}"
     TEST_MODULE="tests"
-    TEST_LOG="main-localtest.out"
+    # Console transcript lands beside the node logs (see bin/test), not in
+    # the repo root.
+    TEST_LOG="${AR_TEST_LOG_DIR:-logs/eunit}/main-localtest.out"
     arweave_test_run ${*}
 }
 
@@ -608,27 +563,6 @@ arweave_test_help() {
     echo "  test mod1 mod2:test mod3 - mixed mode"
 }
 
-arweave_e2e() {
-    TEST_CONFIG="./config/sys.config"
-    TEST_PROFILE="e2e"
-    TEST_NODE_NAME="${NODE_NAME:-main-e2e${ARWEAVE_NS_SUFFIX:-}}"
-    TEST_NODE_HOST="${NODE_HOST:-127.0.0.1}"
-    TEST_COOKIE="${COOKIE:-e2e}"
-    TEST_MODULE="e2e"
-    TEST_LOG="main-e2e.out"
-    arweave_test_run ${*}
-}
-
-arweave_e2e_help() {
-    echo "Usage: ${REL_NAME} test_e2e [module | module:test ...]"
-    echo "Run Arweave e2e Test Suite"
-    echo "  test_e2e                     - run all e2e tests"
-    echo "  test_e2e module              - run all tests in module"
-    echo "  test_e2e module:test         - run specific test from module"
-    echo "  test_e2e mod1 mod2:test mod3 - mixed mode"
-}
-
-# test and e2e features are sharing the same procedures.
 arweave_test_run() {
     (
 	echo -e "\033[0;32m===> Enter into ${PARENT_DIR}\033[0m"
@@ -663,6 +597,7 @@ arweave_test_run() {
 	ENTRY_POINT="-run ar ${TEST_MODULE} ${*} -s init stop"
 	command="erl ${PARAMS} -name ${TEST_NODE} -setcookie ${TEST_COOKIE} ${ENTRY_POINT}"
 	echo -e "\033[0;32m===> Execute command ${command}\033[0m"
+	mkdir -p "$(dirname "${TEST_LOG}")"
 	set -xe -o pipefail
 	${command} | tee "${TEST_LOG}"
 	exit $?
@@ -773,9 +708,6 @@ relx_usage() {
 	test)
 	    arweave_test_help
 	    ;;
-	test_e2e)
-	    arweave_e2e_help
-	    ;;
 	*)
 	    # check for extension
 	    IS_EXTENSION=$(relx_is_extension "$command")
@@ -822,7 +754,6 @@ relx_usage() {
 		  echo ""
 		  echo "Arweave Commands (developer mode):"
 		  echo "  test [MODULE [TEST]]     Run Arweave test Suite"
-		  echo "  test_e2e [MODULE [TEST]] Run Arweave e2e Test Suite"
 		fi
 	    fi
 	    ;;
@@ -830,7 +761,7 @@ relx_usage() {
 }
 
 find_erts_dir() {
-    __erts_dir="$RELEASE_ROOT_DIR/erts-$ERTS_VSN"
+    __erts_dir="$ROOTDIR/erts-$ERTS_VSN"
     if [ -d "$__erts_dir" ]; then
 	ERTS_DIR="$__erts_dir";
     else
@@ -1294,9 +1225,6 @@ then
     arweave_developer_mode
 fi
 
-# Ensure symlinks exist after any rebuild (ar-rebar3 removes them during build)
-ensure_release_symlinks
-
 # process internal arguments
 process_internal_args "$@"
 
@@ -1569,7 +1497,6 @@ case "$1" in
 
 	relx_run_hooks "$PRE_START_HOOKS"
 	arweave_check
-	schedule_symlink_cleanup
 
 	exec "$BINDIR/erlexec" \
 	    ${VM_PARAMS} \
@@ -1634,12 +1561,6 @@ case "$1" in
 	done
 
 	relx_run_hooks "$POST_START_HOOKS"
-
-	# Clean up symlinks once post-start hooks confirm the node reached
-	# the release-ready boundary. `erlang:is_alive/0' can become true
-	# before OTP applications finish reading priv files through these
-	# paths.
-	cleanup_release_symlinks
 	;;
 
     stop)
@@ -1786,7 +1707,7 @@ case "$1" in
 			arweave_doctor ${*}
 			ARGS=$(arweave_doctor ${*})
 			;;
-      		    convert_config)
+		    convert_config)
 			# Boot only kernel/stdlib (start_clean, interactive
 			# code loading): the converter starts arweave_config
 			# and its dependencies itself. Skipping the full
@@ -1795,6 +1716,12 @@ case "$1" in
 			# "Error writing to pipe: Broken pipe" to users.
 			BOOTFILE="$REL_DIR/start_clean"
 			CODE_LOADING_MODE="${CODE_LOADING_MODE:-interactive}"
+			# One-shot local run: skip vm.args so the converter
+			# does not start distribution with the node's -name
+			# (which collides with a RUNNING node when the config
+			# is regenerated before a restart) nor inherit
+			# server-tuned VM flags.
+			VMARGS_PATH="/dev/null"
 			arweave_convert_config ${*}
 			ARGS=$(arweave_convert_config ${*})
 			;;
@@ -1849,7 +1776,7 @@ case "$1" in
 	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
 	    -config "$RELX_CONFIG_PATH" \
 	    -args_file "$VMARGS_PATH" \
-	    -- ${ARWEAVE_OPTS} ${ARGS}
+	    -- ${ARWEAVE_OPTS} -extra ${ARGS}
 	echo "Root: $ROOTDIR"
 
 	# Log the startup
@@ -1866,9 +1793,6 @@ case "$1" in
 	# check system configuration
 	arweave_check
 
-	# Schedule cleanup of symlinks after VM boots (allows VSCode extensions to work)
-	schedule_symlink_cleanup
-
 	# Start the VM
 	# The variabre FOREGROUNDOPTIONS must NOT be quoted.
 	# shellcheck disable=SC2086
@@ -1881,7 +1805,7 @@ case "$1" in
 	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
 	    -config "$RELX_CONFIG_PATH" \
 	    -args_file "$VMARGS_PATH" \
-	    -- ${ARWEAVE_OPTS} ${ARGS}
+	    -- ${ARWEAVE_OPTS} -extra ${ARGS}
 	# exec will replace the current image and nothing else gets
 	# executed from this point on, this explains the absence
 	# of the pre start hook
@@ -1935,10 +1859,6 @@ case "$1" in
     test)
 	shift
 	arweave_test ${*}
-	;;
-    test_e2e)
-	shift
-	arweave_e2e ${*}
 	;;
     help)
 	if [ -z "$2" ]; then
