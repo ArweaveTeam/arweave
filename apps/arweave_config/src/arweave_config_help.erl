@@ -28,10 +28,17 @@ print() ->
 %% description, default, runtime flag.
 -spec print_group(string()) -> ok.
 print_group(GroupName) when is_list(GroupName) ->
-    try list_to_existing_atom(GroupName) of
-        GroupAtom -> do_print_group(GroupAtom)
-    catch
-        error:badarg -> unknown_group(GroupName)
+    %% Match by string rather than list_to_existing_atom: `config
+    %% help` runs under a minimal boot where the group atoms only come
+    %% into existence once the spec modules are loaded (which
+    %% grouped_parameters/0 does).
+    Groups = grouped_parameters(),
+    Search = lists:search(
+        fun({Group, _, _}) -> atom_to_list(Group) =:= GroupName end,
+        Groups),
+    case Search of
+        {value, {GroupAtom, _, _}} -> do_print_group(GroupAtom);
+        false -> unknown_group(GroupName)
     end.
 
 %%%===================================================================
@@ -153,7 +160,8 @@ visible_parameters() ->
     [
         Option
         || Option <- arweave_config_options_spec:all(),
-           maps:get(enabled, Option, true) =/= false
+           maps:get(enabled, Option, true) =/= false,
+           maps:get(hidden, Option, false) =/= true
     ].
 
 sort_by_key(Options) ->

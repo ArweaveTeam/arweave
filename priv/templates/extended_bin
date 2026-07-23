@@ -1076,7 +1076,12 @@ check_replace_os_vars() {
     ORIG_FILE_PATH="$IN_FILE_PATH.orig"
     if [ -f "$SRC_FILE_PATH" ]; then
 	OUT_FILE_PATH=$(make_out_file_path "$IN_FILE_PATH")
-	replace_os_vars "$SRC_FILE_PATH" "$OUT_FILE_PATH"
+	# A non-owning user (e.g. an operator running `config help`)
+	# cannot re-render into the release dir: keep the file rendered
+	# at deploy time instead of spraying awk write errors.
+	if [ -w "$OUT_FILE_PATH" ] || { [ ! -e "$OUT_FILE_PATH" ] && [ -w "$(dirname "$OUT_FILE_PATH")" ]; }; then
+	    replace_os_vars "$SRC_FILE_PATH" "$OUT_FILE_PATH"
+	fi
     elif [ "$RELX_REPLACE_OS_VARS" ]; then
 	OUT_FILE_PATH=$(make_out_file_path "$IN_FILE_PATH")
 	# If vm.args.orig or sys.config.orig is present then use that

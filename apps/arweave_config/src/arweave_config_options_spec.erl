@@ -64,6 +64,7 @@ field_order() ->
     [
         option_key,
         enabled,
+        hidden,
         default,
         handle_get,
         handle_set,
@@ -92,6 +93,15 @@ field_rules() ->
             validate => fun valid_enabled/1,
             normalize => fun identity/1,
             effect => fun maybe_skip_disabled/2
+        },
+        %% Hidden options stay fully registered (settable, gettable,
+        %% loadable from config files) but are left out of `config
+        %% help`. For options whose backing feature is gated off
+        %% (e.g. the AR_TEST-only config HTTP server).
+        hidden => #{
+            default => false,
+            validate => fun valid_hidden/1,
+            normalize => fun identity/1
         },
         %% Default value returned when nothing is stored.
         default => #{
@@ -404,6 +414,9 @@ handle_field_callback_error(Field, _Rule, Module, E, R, S) ->
 
 valid_enabled(Value) ->
     is_boolean(Value) orelse is_disabled_with_reason(Value).
+
+valid_hidden(Value) ->
+    is_boolean(Value).
 
 valid_deprecated(Value) ->
     is_boolean(Value) orelse is_deprecated_with_message(Value).

@@ -9,10 +9,14 @@
 %% can set these options, but `arweave_config_http_server:start_as_child/0'
 %% is gated under `-ifdef(AR_TEST)' and refuses to launch outside the
 %% test profile, so setting these has no effect on a release build.
-%% Remove that guard (and the warnings here) when the feature ships.
+%% `hidden => true' keeps the whole group out of `config help` while
+%% the options stay registered (config files that set them still
+%% load). Remove that guard, the warnings here, and the hidden flags
+%% when the feature ships.
 specs() ->
     [
         #{
+            hidden => true,
             option_key => [config,http,enabled],
             short_description =>
                 <<"Enable the Arweave configuration HTTP API interface.">>,
@@ -26,6 +30,7 @@ specs() ->
             runtime => false
         },
         #{
+            hidden => true,
             option_key => [config,http,listen,port],
             short_description =>
                 <<"Set the Arweave configuration HTTP API port.">>,
@@ -37,6 +42,7 @@ specs() ->
             runtime => false
         },
         #{
+            hidden => true,
             option_key => [config,http,listen,address],
             short_description =>
                 <<"Set the Arweave configuration HTTP API listen address.">>,
