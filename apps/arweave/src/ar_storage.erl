@@ -1200,18 +1200,25 @@ handle_cast(Cast, State) ->
     {noreply, State}.
 
 %% @doc Receive a batch of account tree node updates streamed by
-%% ar_patricia_tree_ets:compute_hash/3 (with #{ sink => PID }) and persist them to
-%% account_tree_db. Nodes are content-addressed (the key embeds the node hash), so the
-%% write is idempotent.
+%% ar_patricia_tree_ets:compute_hash/3 (with #{ sink => PID }) and persist the ones not
+%% yet stored to account_tree_db. Nodes are content-addressed (the key embeds the node
+%% hash), so already-present keys are skipped. On restart the full tree is streamed
+%% again, but only the nodes missing from the database are written.
 handle_info({account_tree_node_batch, Batch}, State) ->
-    case ar_kv:write_batch(account_tree_db,
-                           [{Key, term_to_binary(Value)} || {Key, Value} <- Batch]) of
-        ok ->
+    NewNodes = [{Key, term_to_binary(Value)} || {Key, Value} <- Batch,
+                                                not is_account_tree_node_stored(Key)],
+    case NewNodes of
+        [] ->
             ok;
-        {error, Reason} ->
-            ?LOG_ERROR([{event, failed_to_store_account_tree_node_batch},
-                        {batch_size, length(Batch)},
-                        {reason, io_lib:format("~p", [Reason])}])
+        _ ->
+            case ar_kv:write_batch(account_tree_db, NewNodes) of
+                ok ->
+                    ok;
+                {error, Reason} ->
+                    ?LOG_ERROR([{event, failed_to_store_account_tree_node_batch},
+                                {batch_size, length(NewNodes)},
+                                {reason, io_lib:format("~p", [Reason])}])
+            end
     end,
     {noreply, State};
 
@@ -1493,6 +1500,17 @@ put_account_tree_key(DBKey, Value, Key, Height, RootHash, RetriesLeft) ->
                                 {root_hash, ar_util:encode(RootHash)},
                                 {reason, io_lib:format("~p", [Reason])}])
             end
+    end.
+
+%% @doc Return true if the content-addressed node key is already in account_tree_db.
+%% A read error counts as not stored so the idempotent write is attempted rather than
+%% the node silently dropped.
+is_account_tree_node_stored(DBKey) ->
+    case ar_kv:get(account_tree_db, DBKey) of
+        {ok, _} ->
+            true;
+        _ ->
+            false
     end.
 
 %% @doc Return true if a RocksDB error reason indicates the disk is full. The reason
