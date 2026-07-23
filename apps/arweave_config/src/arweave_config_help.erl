@@ -69,8 +69,10 @@ print_group_summary({Group, Description, Options}) ->
     io:nl().
 
 print_option_summary(Option) ->
-    io:format("  ~ts (default: ~ts) - ~ts~n",
-        [key_string(Option), default_string(Option), short_desc(Option)]).
+    Runtime = atom_to_binary(maps:get(runtime, Option, false)),
+    io:format("  ~ts (default: ~ts, runtime: ~ts) - ~ts~n",
+        [key_string(Option), default_string(Option), Runtime,
+         short_desc(Option)]).
 
 %%%===================================================================
 %%% Per-group detailed help.
