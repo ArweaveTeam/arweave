@@ -112,7 +112,7 @@
 %% after the gen_server replies with `{queued, Ref}'. On expiry the
 %% caller sends a `cancel_request' cast so the entry can be evicted
 %% from the queue and returns `{error, throttle_receive_timeout}'.
--define(THROTTLE_RECEIVE_TIMEOUT_MS, 60000).
+-define(THROTTLE_RECEIVE_TIMEOUT_MS, 190000).
 
 %% NOTE: this threshold doesn't reflect when the peer is actually throttled,
 %%       just a threshold to consider approaching throttling limit.
