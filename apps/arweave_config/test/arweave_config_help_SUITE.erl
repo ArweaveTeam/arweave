@@ -47,12 +47,12 @@ hidden_options_left_out(_Config) ->
 	ok.
 
 %% Summary layout: runtime-writable options carry a `*' marker
-%% directly before the key, and a legend explains it once.
+%% directly before the key, and a legend up top explains it.
 runtime_marker_and_legend(_Config) ->
 	Output = capture(fun arweave_config_help:print/0),
 	?assertNotEqual(nomatch, binary:match(Output, <<"* peers.block_gossip">>)),
 	?assertNotEqual(nomatch,
-		binary:match(Output, <<"(* = settable at runtime via `config set`)">>)),
+		binary:match(Output, <<"* = settable at runtime via `config set`">>)),
 	ok.
 
 %%====================================================================

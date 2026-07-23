@@ -21,8 +21,8 @@ main(_) ->
 -spec print() -> ok.
 print() ->
     print_intro(),
+    io:format("* = settable at runtime via `config set`~n~n"),
     lists:foreach(fun print_group_summary/1, grouped_parameters()),
-    io:format("(* = settable at runtime via `config set`)~n"),
     ok.
 
 %% @doc Detailed help for a single group: per-option key, long
