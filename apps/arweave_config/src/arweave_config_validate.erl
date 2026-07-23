@@ -34,33 +34,33 @@
 
 -spec run() -> ok | {error, term()}.
 run() ->
-	run_each(arweave_config_options_spec:option_modules()).
+    run_each(arweave_config_options_spec:option_modules()).
 
 run_each([]) ->
-	ok;
+    ok;
 run_each([Module | Rest]) ->
-	case run_one(Module) of
-		ok ->
-			run_each(Rest);
-		{error, _} = Err ->
-			Err
-	end.
+    case run_one(Module) of
+        ok ->
+            run_each(Rest);
+        {error, _} = Err ->
+            Err
+    end.
 
 run_one(Module) ->
-	try Module:validate() of
-		ok ->
-			ok;
-		{error, Reason} ->
-			{error, Reason};
-		Other ->
-			?LOG_WARNING(
-				"validator ~p returned unexpected value: ~p",
-				[Module, Other]),
-			{error, {validator_returned, Module, Other}}
-	catch
-		E:R:S ->
-			?LOG_ERROR(
-				"validator ~p crashed: ~p:~p ~p",
-				[Module, E, R, S]),
-			{error, {validator_crash, Module, E, R}}
-	end.
+    try Module:validate() of
+        ok ->
+            ok;
+        {error, Reason} ->
+            {error, Reason};
+        Other ->
+            ?LOG_WARNING(
+                "validator ~p returned unexpected value: ~p",
+                [Module, Other]),
+            {error, {validator_returned, Module, Other}}
+    catch
+        E:R:S ->
+            ?LOG_ERROR(
+                "validator ~p crashed: ~p:~p ~p",
+                [Module, E, R, S]),
+            {error, {validator_crash, Module, E, R}}
+    end.

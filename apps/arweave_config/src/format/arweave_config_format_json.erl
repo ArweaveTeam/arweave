@@ -5,91 +5,91 @@
 -module(arweave_config_format_json).
 -compile(warnings_as_errors).
 -export([
-	parse/1,
-	parse/2,
-	encode/1,
-	encode/2
+    parse/1,
+    parse/2,
+    encode/1,
+    encode/2
 ]).
 
 -spec parse(FileContents) -> Return when
-	FileContents :: string() | binary(),
-	Return :: {ok, map()} | {error, term()}.
+    FileContents :: string() | binary(),
+    Return :: {ok, map()} | {error, term()}.
 parse(FileContents) ->
-	parse(FileContents, #{}).
+    parse(FileContents, #{}).
 
 -spec parse(FileContents, Opts) -> Return when
-	FileContents :: string() | binary(),
-	Opts :: map(),
-	Return :: {ok, map()} | {error, term()}.
+    FileContents :: string() | binary(),
+    Opts :: map(),
+    Return :: {ok, map()} | {error, term()}.
 parse(<<>>, _Opts) ->
-	{ok, #{}};
+    {ok, #{}};
 parse([], _Opts) ->
-	{ok, #{}};
+    {ok, #{}};
 parse(FileContents, _Opts) ->
-	try
-		Json = jiffy:decode(FileContents, [return_maps]),
-		parse_map(Json)
-	catch
-		_Error:{Position, Reason} ->
-			{error, #{
-					reason => Reason,
-					position => Position
-				}
-			}
-	end.
+    try
+        Json = jiffy:decode(FileContents, [return_maps]),
+        parse_map(Json)
+    catch
+        _Error:{Position, Reason} ->
+            {error, #{
+                    reason => Reason,
+                    position => Position
+                }
+            }
+    end.
 
 parse_map(Json) when is_map(Json) ->
-	arweave_config_format_dotted:to_leaf_map(Json);
+    arweave_config_format_dotted:to_leaf_map(Json);
 parse_map(_) ->
-	{error, #{ reason => root_not_object }}.
+    {error, #{ reason => root_not_object }}.
 
 -spec encode(Data) -> Return when
-	Data :: map(),
-	Return :: {ok, binary()} | {error, term()}.
+    Data :: map(),
+    Return :: {ok, binary()} | {error, term()}.
 encode(Data) ->
-	encode(Data, #{}).
+    encode(Data, #{}).
 
 -spec encode(Data, Opts) -> Return when
-	Data :: map(),
-	Opts :: map(),
-	Return :: {ok, binary()} | {error, term()}.
+    Data :: map(),
+    Opts :: map(),
+    Return :: {ok, binary()} | {error, term()}.
 encode(Data, _Opts) when is_map(Data) ->
-	try
-		{ok, iolist_to_binary(jiffy:encode(encode_value(Data), [pretty]))}
-	catch
-		_:Reason ->
-			{error, Reason}
-	end;
+    try
+        {ok, iolist_to_binary(jiffy:encode(encode_value(Data), [pretty]))}
+    catch
+        _:Reason ->
+            {error, Reason}
+    end;
 encode(Data, _) ->
-	{error, {invalid_data, Data}}.
+    {error, {invalid_data, Data}}.
 
 encode_value(Map) when is_map(Map) ->
-	maps:from_list(
-		[
-			{arweave_config_parser:format_segment(Key), encode_value(Value)}
-			|| {Key, Value} <- maps:to_list(Map)
-		]
-	);
+    maps:from_list(
+        [
+            {arweave_config_parser:format_segment(Key), encode_value(Value)}
+            || {Key, Value} <- maps:to_list(Map)
+        ]
+    );
 encode_value([]) ->
-	%% An empty list encodes as an empty JSON array. Special-cased
-	%% because `io_lib:printable_unicode_list([])' is `true', which
-	%% would otherwise render `[]' as an empty string.
-	[];
+    %% An empty list encodes as an empty JSON array. Special-cased
+    %% because `io_lib:printable_unicode_list([])' is `true', which
+    %% would otherwise render `[]' as an empty string.
+    [];
 encode_value(List) when is_list(List) ->
-	case io_lib:printable_unicode_list(List) of
-		true ->
-			unicode:characters_to_binary(List);
-		false ->
-			[encode_value(Value) || Value <- List]
-	end;
+    case io_lib:printable_unicode_list(List) of
+        true ->
+            unicode:characters_to_binary(List);
+        false ->
+            [encode_value(Value) || Value <- List]
+    end;
 encode_value(Binary) when is_binary(Binary) ->
-	Binary;
+    Binary;
 encode_value(true) ->
-	true;
+    true;
 encode_value(false) ->
-	false;
+    false;
 encode_value(Atom) when is_atom(Atom) ->
-	atom_to_binary(Atom);
+    atom_to_binary(Atom);
 encode_value(Value) ->
-	Value.
+    Value.
 

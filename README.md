@@ -13,6 +13,9 @@ store rare data.
 
 For instructions on how to build and update the source, please refer to the [Development Docs](https://docs.arweave.org/developers/development/getting-started)
 
+Extensive reformatting has been applied to the repository, to keep `git blame` useful and ignore the reformatting commits, use the configuration below after cloning the repository:
+`git config blame.ignoreRevsFile .git-blame-ignore-revs`
+
 # Contact
 
 If you have questions or comments about Arweave you can get in touch by

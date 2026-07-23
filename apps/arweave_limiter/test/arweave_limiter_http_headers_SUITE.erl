@@ -28,62 +28,62 @@ init_per_testcase(_TestCase, Config) -> Config.
 end_per_testcase(_TestCase, _Config) -> ok.
 
 all() ->
-	[
-		disabled,
-		register,
-		reject
-	].
+    [
+        disabled,
+        register,
+        reject
+    ].
 
 disabled(_Config) ->
-	?assertEqual(#{}, ?M:to_http_headers({register, no_limiting_applied, #{policies => ?POLICIES}})),
-	ok.
+    ?assertEqual(#{}, ?M:to_http_headers({register, no_limiting_applied, #{policies => ?POLICIES}})),
+    ok.
 
 register(_Config) ->
-	?assertEqual(
-	   #{<<"RateLimit-Limit">> =>
-	         <<"10, 10;w=1;policy=\"test_limiter sliding window\", 450;w=1;burst=450;policy=\"test_limiter leaky bucket\" 500;w=1;policy=\"test_limiter concurrency\" ">>,
-	     <<"RateLimit-Remaining">> => <<"9">>,
-	     <<"RateLimit-Reset">> => <<"1">>},
-	   ?M:to_http_headers({register, sliding,
-	                       #{expiring_limit => 10,
-	                         remaining      => 9,
-	                         reset_seconds  => 1,
-	                         policies => ?POLICIES}
-	                      })),
-	?assertEqual(
-	   #{<<"RateLimit-Limit">> =>
-	         <<"450, 10;w=1;policy=\"test_limiter sliding window\", 450;w=1;burst=450;policy=\"test_limiter leaky bucket\" 500;w=1;policy=\"test_limiter concurrency\" ">>,
-	     <<"RateLimit-Remaining">> => <<"449">>,
-	     <<"RateLimit-Reset">> => <<"29">>},
-	   ?M:to_http_headers({register, leaky,
-	                       #{expiring_limit => 450,
-	                         remaining      => 449,
-	                         reset_seconds  => 29,
-	                         policies => ?POLICIES}
-	                      })),
-	ok.
+    ?assertEqual(
+       #{<<"RateLimit-Limit">> =>
+             <<"10, 10;w=1;policy=\"test_limiter sliding window\", 450;w=1;burst=450;policy=\"test_limiter leaky bucket\" 500;w=1;policy=\"test_limiter concurrency\" ">>,
+         <<"RateLimit-Remaining">> => <<"9">>,
+         <<"RateLimit-Reset">> => <<"1">>},
+       ?M:to_http_headers({register, sliding,
+                           #{expiring_limit => 10,
+                             remaining      => 9,
+                             reset_seconds  => 1,
+                             policies => ?POLICIES}
+                          })),
+    ?assertEqual(
+       #{<<"RateLimit-Limit">> =>
+             <<"450, 10;w=1;policy=\"test_limiter sliding window\", 450;w=1;burst=450;policy=\"test_limiter leaky bucket\" 500;w=1;policy=\"test_limiter concurrency\" ">>,
+         <<"RateLimit-Remaining">> => <<"449">>,
+         <<"RateLimit-Reset">> => <<"29">>},
+       ?M:to_http_headers({register, leaky,
+                           #{expiring_limit => 450,
+                             remaining      => 449,
+                             reset_seconds  => 29,
+                             policies => ?POLICIES}
+                          })),
+    ok.
 
 reject(_Config) ->
-	?assertEqual(
-	   #{<<"RateLimit-Limit">> =>
-	         <<"500, 10;w=1;policy=\"test_limiter sliding window\", 450;w=1;burst=450;policy=\"test_limiter leaky bucket\" 500;w=1;policy=\"test_limiter concurrency\" ">>,
-	     <<"RateLimit-Remaining">> => <<"0">>,
-	     <<"RateLimit-Reset">> => <<"1">>},
-	   ?M:to_http_headers({register, concurrency,
-	                       #{expiring_limit => 500,
-	                         remaining      => 0,
-	                         reset_seconds  => 1,
-	                         policies => ?POLICIES}
-	                      })),
-	?assertEqual(
-	   #{<<"RateLimit-Limit">> =>
-	         <<"450, 10;w=1;policy=\"test_limiter sliding window\", 450;w=1;burst=450;policy=\"test_limiter leaky bucket\" 500;w=1;policy=\"test_limiter concurrency\" ">>,
-	     <<"RateLimit-Remaining">> => <<"0">>,
-	     <<"RateLimit-Reset">> => <<"15">>},
-	   ?M:to_http_headers({register, rate_limit,
-	                       #{expiring_limit => 450,
-	                         remaining      => 0,
-	                         reset_seconds  => 15,
-	                         policies => ?POLICIES}
-	                      })),
-	ok.
+    ?assertEqual(
+       #{<<"RateLimit-Limit">> =>
+             <<"500, 10;w=1;policy=\"test_limiter sliding window\", 450;w=1;burst=450;policy=\"test_limiter leaky bucket\" 500;w=1;policy=\"test_limiter concurrency\" ">>,
+         <<"RateLimit-Remaining">> => <<"0">>,
+         <<"RateLimit-Reset">> => <<"1">>},
+       ?M:to_http_headers({register, concurrency,
+                           #{expiring_limit => 500,
+                             remaining      => 0,
+                             reset_seconds  => 1,
+                             policies => ?POLICIES}
+                          })),
+    ?assertEqual(
+       #{<<"RateLimit-Limit">> =>
+             <<"450, 10;w=1;policy=\"test_limiter sliding window\", 450;w=1;burst=450;policy=\"test_limiter leaky bucket\" 500;w=1;policy=\"test_limiter concurrency\" ">>,
+         <<"RateLimit-Remaining">> => <<"0">>,
+         <<"RateLimit-Reset">> => <<"15">>},
+       ?M:to_http_headers({register, rate_limit,
+                           #{expiring_limit => 450,
+                             remaining      => 0,
+                             reset_seconds  => 15,
+                             policies => ?POLICIES}
+                          })),
+    ok.

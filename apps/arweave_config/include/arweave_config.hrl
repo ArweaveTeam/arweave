@@ -64,7 +64,7 @@
 -endif.
 
 -define(NUM_HASHING_PROCESSES,
-	max(1, (erlang:system_info(schedulers_online) - 1))).
+        max(1, (erlang:system_info(schedulers_online) - 1))).
 
 -define(MAX_PARALLEL_BLOCK_INDEX_REQUESTS, 1).
 -define(MAX_PARALLEL_GET_CHUNK_REQUESTS, 100).
@@ -86,12 +86,12 @@
 %% The default value for the maximum number of threads used for nonce limiter chain
 %% validation.
 -define(DEFAULT_MAX_NONCE_LIMITER_VALIDATION_THREAD_COUNT,
-		max(1, (erlang:system_info(schedulers_online) div 2))).
+        max(1, (erlang:system_info(schedulers_online) div 2))).
 
 %% The default value for the maximum number of threads used for nonce limiter chain
 %% last step validation.
 -define(DEFAULT_MAX_NONCE_LIMITER_LAST_STEP_VALIDATION_THREAD_COUNT,
-		max(1, (erlang:system_info(schedulers_online) - 1))).
+        max(1, (erlang:system_info(schedulers_online) - 1))).
 
 %% Accept a block from the given IP only once in so many milliseconds.
 -ifdef(AR_TEST).
@@ -172,7 +172,7 @@
 
 %% Total wall-clock limit for reading the complete request body.
 -define(DEFAULT_HTTP_MAX_BODY_READ_TIME_MS,
-	?DEFAULT_HTTP_HANDLER_TIMEOUT_MS - 2000).
+        ?DEFAULT_HTTP_HANDLER_TIMEOUT_MS - 2000).
 
 %% Default Cowboy HTTP/TCP options
 -define(DEFAULT_COWBOY_HTTP_ACTIVE_N, 100).

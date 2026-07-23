@@ -12,270 +12,269 @@
 -define(LONG_MESSAGE_QUEUE_THRESHOLD, 1000).
 
 -record(state, {
-	scheduler_samples = undefined
-}).
+                scheduler_samples = undefined
+               }).
 
 %% API
 start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% gen_server callbacks
 init([]) ->
-	{ok, _} = ar_timer:send_interval(
-		?SAMPLE_PROCESSES_INTERVAL,
-		self(),
-		sample_processes,
-		#{ skip_on_shutdown => false }
-	),
-	ar_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
-	{ok, #state{}}.
+    {ok, _} = ar_timer:send_interval(
+                ?SAMPLE_PROCESSES_INTERVAL,
+                self(),
+                sample_processes,
+                #{ skip_on_shutdown => false }
+               ),
+    ar_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
+    {ok, #state{}}.
 
 handle_call(_Request, _From, State) ->
-	{reply, ok, State}.
+    {reply, ok, State}.
 
 handle_cast(sample_schedulers, State) ->
-	State2 = sample_schedulers(State),
-	{noreply, State2};
+    State2 = sample_schedulers(State),
+    {noreply, State2};
 
 handle_cast(_Msg, State) ->
-	{noreply, State}.
+    {noreply, State}.
 
 handle_info(sample_processes, State) ->
-	StartTime = erlang:monotonic_time(),
-	Processes = erlang:processes(),
-	ProcessData = lists:filtermap(fun(Pid) -> process_function(Pid) end, Processes),
+    StartTime = erlang:monotonic_time(),
+    Processes = erlang:processes(),
+    ProcessData = lists:filtermap(fun(Pid) -> process_function(Pid) end, Processes),
 
-	ProcessMetrics =
-		lists:foldl(fun(Process, Acc) ->
-			%% Sum the data for each process. This is a compromise for handling unregistered
-			%% processes. It has the effect of summing the memory and message queue length across all unregistered processes running off the
-			%% same function. In general this is what we want (e.g. for the io threads within
-			%% ar_mining_io and the hashing threads within ar_mining_hashing, we wand to
-			%% see if, in aggregate, their memory or message queue length has spiked).
-			ProcessName = maps:get(process_name, Process),
-			Metrics0 = maps:get(ProcessName, Acc, #{
-					memory => 0,
-					reductions => 0,
-					message_queue_len => 0,
-					processes => []
-				}),
-			Metrics = Metrics0#{
-				memory := maps:get(memory, Metrics0) + maps:get(memory, Process),
-				reductions := maps:get(reductions, Metrics0) + maps:get(reductions, Process),
-				message_queue_len :=
-					maps:get(message_queue_len, Metrics0)
-							+ maps:get(message_queue_len, Process),
-				processes := [Process | maps:get(processes, Metrics0)]},
-			maps:put(ProcessName, Metrics, Acc)
-		end,
-		#{},
-		ProcessData),
+    ProcessMetrics =
+        lists:foldl(fun(Process, Acc) ->
+                            %% Sum the data for each process. This is a compromise for handling unregistered
+                            %% processes. It has the effect of summing the memory and message queue length across all unregistered processes running off the
+                            %% same function. In general this is what we want (e.g. for the io threads within
+                            %% ar_mining_io and the hashing threads within ar_mining_hashing, we wand to
+                            %% see if, in aggregate, their memory or message queue length has spiked).
+                            ProcessName = maps:get(process_name, Process),
+                            Metrics0 = maps:get(ProcessName, Acc, #{
+                                                                    memory => 0,
+                                                                    reductions => 0,
+                                                                    message_queue_len => 0,
+                                                                    processes => []
+                                                                   }),
+                            Metrics = Metrics0#{
+                                                memory := maps:get(memory, Metrics0) + maps:get(memory, Process),
+                                                reductions := maps:get(reductions, Metrics0) + maps:get(reductions, Process),
+                                                message_queue_len :=
+                                                    maps:get(message_queue_len, Metrics0)
+                                                + maps:get(message_queue_len, Process),
+                                                processes := [Process | maps:get(processes, Metrics0)]},
+                            maps:put(ProcessName, Metrics, Acc)
+                    end,
+                    #{},
+                    ProcessData),
 
-	%% Clear out the process_info metric so that we don't persist data about processes that
-	%% have exited. We have to deregister and re-register the metric because we don't track
-	%% all the label values used.
-	arweave_metrics:gauge_deregister(process_info),
-	%% Guard this runtime re-declaration like the metric writes: prometheus
-	%% can be transiently absent during e2e restarts.
-	try prometheus_gauge:new([{name, process_info},
-			{labels, [process, type]},
-			{help, "Sampling info about active processes. Only set when debug=true."}])
-	catch _:_ -> ok
-	end,
+    %% Clear out the process_info metric so that we don't persist data about processes that
+    %% have exited. We have to deregister and re-register the metric because we don't track
+    %% all the label values used.
+    arweave_metrics:gauge_deregister(process_info),
+    %% Guard this runtime re-declaration like the metric writes: prometheus
+    %% can be transiently absent during e2e restarts.
+    try prometheus_gauge:new([{name, process_info},
+                              {labels, [process, type]},
+                              {help, "Sampling info about active processes. Only set when debug=true."}])
+    catch _:_ -> ok
+    end,
 
-	maps:foreach(fun(ProcessName, Metrics) ->
-		Memory = maps:get(memory, Metrics),
-		Reductions = maps:get(reductions, Metrics),
-		MsgQueueLen = maps:get(message_queue_len, Metrics),
-		arweave_metrics:gauge_set(process_info, [ProcessName, memory], Memory),
-		arweave_metrics:gauge_set(process_info, [ProcessName, reductions], Reductions),
-		arweave_metrics:gauge_set(process_info, [ProcessName, message_queue], MsgQueueLen),
-		log_long_message_queues(ProcessName, MsgQueueLen, maps:get(processes, Metrics))
-	end, ProcessMetrics),
+    maps:foreach(fun(ProcessName, Metrics) ->
+                         Memory = maps:get(memory, Metrics),
+                         Reductions = maps:get(reductions, Metrics),
+                         MsgQueueLen = maps:get(message_queue_len, Metrics),
+                         arweave_metrics:gauge_set(process_info, [ProcessName, memory], Memory),
+                         arweave_metrics:gauge_set(process_info, [ProcessName, reductions], Reductions),
+                         arweave_metrics:gauge_set(process_info, [ProcessName, message_queue], MsgQueueLen),
+                         log_long_message_queues(ProcessName, MsgQueueLen, maps:get(processes, Metrics))
+                 end, ProcessMetrics),
 
-	arweave_metrics:gauge_set(process_info, [total, memory], erlang:memory(total)),
-	arweave_metrics:gauge_set(process_info, [processes, memory], erlang:memory(processes)),
-	arweave_metrics:gauge_set(process_info, [processes_used, memory], erlang:memory(processes_used)),
-	arweave_metrics:gauge_set(process_info, [system, memory], erlang:memory(system)),
-	arweave_metrics:gauge_set(process_info, [atom, memory], erlang:memory(atom)),
-	arweave_metrics:gauge_set(process_info, [atom_used, memory], erlang:memory(atom_used)),
-	arweave_metrics:gauge_set(process_info, [binary, memory], erlang:memory(binary)),
-	arweave_metrics:gauge_set(process_info, [code, memory], erlang:memory(code)),
-	arweave_metrics:gauge_set(process_info, [ets, memory], erlang:memory(ets)),
+    arweave_metrics:gauge_set(process_info, [total, memory], erlang:memory(total)),
+    arweave_metrics:gauge_set(process_info, [processes, memory], erlang:memory(processes)),
+    arweave_metrics:gauge_set(process_info, [processes_used, memory], erlang:memory(processes_used)),
+    arweave_metrics:gauge_set(process_info, [system, memory], erlang:memory(system)),
+    arweave_metrics:gauge_set(process_info, [atom, memory], erlang:memory(atom)),
+    arweave_metrics:gauge_set(process_info, [atom_used, memory], erlang:memory(atom_used)),
+    arweave_metrics:gauge_set(process_info, [binary, memory], erlang:memory(binary)),
+    arweave_metrics:gauge_set(process_info, [code, memory], erlang:memory(code)),
+    arweave_metrics:gauge_set(process_info, [ets, memory], erlang:memory(ets)),
 
-	log_binary_alloc(),
+    log_binary_alloc(),
 
-	EndTime = erlang:monotonic_time(),
-	ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, microsecond),
-	?LOG_DEBUG([{event, sample_processes}, {elapsed_ms, ElapsedTime / 1000}]),
-	{noreply, State};
+    EndTime = erlang:monotonic_time(),
+    ElapsedTime = erlang:convert_time_unit(EndTime-StartTime, native, microsecond),
+    ?LOG_DEBUG([{event, sample_processes}, {elapsed_ms, ElapsedTime / 1000}]),
+    {noreply, State};
 
 handle_info(_Info, State) ->
-	{noreply, State}.
+    {noreply, State}.
 
 terminate(Reason, _State) ->
-	?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
-	ok.
+    ?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
+    ok.
 
 %% Internal functions
 sample_schedulers(#state{ scheduler_samples = undefined } = State) ->
-	%% Start sampling
-	erlang:system_flag(scheduler_wall_time,true),
-	Samples = scheduler:sample_all(),
-	%% Every ?SAMPLE_SCHEDULERS_INTERVAL ms, we'll sample the schedulers for
-	%% ?SAMPLE_SCHEDULERS_DURATION ms.
-	ar_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
-	ar_util:cast_after(?SAMPLE_SCHEDULERS_DURATION, ?MODULE, sample_schedulers),
-	State#state{ scheduler_samples = Samples };
+    %% Start sampling
+    erlang:system_flag(scheduler_wall_time,true),
+    Samples = scheduler:sample_all(),
+    %% Every ?SAMPLE_SCHEDULERS_INTERVAL ms, we'll sample the schedulers for
+    %% ?SAMPLE_SCHEDULERS_DURATION ms.
+    ar_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
+    ar_util:cast_after(?SAMPLE_SCHEDULERS_DURATION, ?MODULE, sample_schedulers),
+    State#state{ scheduler_samples = Samples };
 sample_schedulers(#state{ scheduler_samples = Samples1 } = State) ->
-	%% Finish sampling
-	Samples2 = scheduler:sample_all(),
-	Util = scheduler:utilization(Samples1, Samples2),
-	erlang:system_flag(scheduler_wall_time,false),
-	average_utilization(Util),
-	State#state{ scheduler_samples = undefined }.
+    %% Finish sampling
+    Samples2 = scheduler:sample_all(),
+    Util = scheduler:utilization(Samples1, Samples2),
+    erlang:system_flag(scheduler_wall_time,false),
+    average_utilization(Util),
+    State#state{ scheduler_samples = undefined }.
 
 average_utilization(Util) ->
-	Averages = lists:foldl(
-		fun
-		({Type, Value, _}, Acc) ->
-			maps:put(Type, {Value, 1}, Acc);
-		({Type, _, Value, _}, Acc) ->
-			case (Type == io andalso Value > 0) orelse (Type /= io) of
-				true ->
-					{Sum, Count} = maps:get(Type, Acc, {0, 0}),
-					maps:put(Type, {Sum+Value, Count+1}, Acc);
-				false ->
-					Acc
-			end
-		end,
-		#{},
-		Util),
-	maps:foreach(
-		fun(Type, {Sum, Count}) ->
-			arweave_metrics:gauge_set(scheduler_utilization, [Type], Sum / Count)
-		end,
-		Averages).
+    Averages = lists:foldl(
+                 fun
+                     ({Type, Value, _}, Acc) ->
+                                  maps:put(Type, {Value, 1}, Acc);
+                     ({Type, _, Value, _}, Acc) ->
+                                  case (Type == io andalso Value > 0) orelse (Type /= io) of
+                                      true ->
+                                          {Sum, Count} = maps:get(Type, Acc, {0, 0}),
+                                          maps:put(Type, {Sum+Value, Count+1}, Acc);
+                                      false ->
+                                          Acc
+                                  end
+                          end,
+                 #{},
+                 Util),
+    maps:foreach(
+      fun(Type, {Sum, Count}) ->
+              arweave_metrics:gauge_set(scheduler_utilization, [Type], Sum / Count)
+      end,
+      Averages).
 
 process_function(Pid) ->
-	case process_info(Pid, [current_function, current_stacktrace, registered_name,
-		status, memory, reductions, message_queue_len]) of
-	[{current_function, {erlang, process_info, _A}}, _, _, _, _, _, _] ->
-		false;
-	[{current_function, CurrentFunction}, {current_stacktrace, Stack},
-			{registered_name, Name}, {status, Status},
-			{memory, Memory}, {reductions, Reductions},
-			{message_queue_len, MsgQueueLen}] ->
-		ProcessName = process_name(Name, Stack, Pid),
-		{true, #{
-				status => Status,
-				process_name => ProcessName,
-				memory => Memory,
-				reductions => Reductions,
-				message_queue_len => MsgQueueLen,
-				pid => Pid,
-				current_function => CurrentFunction,
-				current_stacktrace => Stack
-			}};
-	_ ->
-		false
-	end.
+    case process_info(Pid, [current_function, current_stacktrace, registered_name,
+                            status, memory, reductions, message_queue_len]) of
+        [{current_function, {erlang, process_info, _A}}, _, _, _, _, _, _] ->
+            false;
+        [{current_function, CurrentFunction}, {current_stacktrace, Stack},
+         {registered_name, Name}, {status, Status},
+         {memory, Memory}, {reductions, Reductions},
+         {message_queue_len, MsgQueueLen}] ->
+            ProcessName = process_name(Name, Stack, Pid),
+            {true, #{
+                     status => Status,
+                     process_name => ProcessName,
+                     memory => Memory,
+                     reductions => Reductions,
+                     message_queue_len => MsgQueueLen,
+                     pid => Pid,
+                     current_function => CurrentFunction,
+                     current_stacktrace => Stack
+                    }};
+        _ ->
+            false
+    end.
 
 format_head_messages(0, _Messages) ->
-	[];
+    [];
 format_head_messages(_MsgQueueLen, Messages) ->
-	[format_message(Msg) || Msg <- lists:sublist(Messages, 10)].
+    [format_message(Msg) || Msg <- lists:sublist(Messages, 10)].
 
 log_long_message_queues(ProcessName, AggregateMsgQueueLen, ProcessesForName)
-		when AggregateMsgQueueLen > ?LONG_MESSAGE_QUEUE_THRESHOLD ->
-	SortedProcesses = lists:sort(
-		fun(Process1, Process2) ->
-			maps:get(message_queue_len, Process1) >= maps:get(message_queue_len, Process2)
-		end,
-		ProcessesForName),
-	TopProcesses = lists:sublist(SortedProcesses, 3),
-	lists:foreach(
-		fun(Process) ->
-			Pid = maps:get(pid, Process),
-			HeadMessages = case process_info(Pid, messages) of
-				{messages, Messages} ->
-					format_head_messages(maps:get(message_queue_len, Process), Messages);
-				undefined ->
-					[]
-			end,
-			?LOG_DEBUG([{event, process_long_message_queue}, {pid, Pid},
-				{process_name, ProcessName},
-				{current_function, maps:get(current_function, Process)},
-				{current_stacktrace, maps:get(current_stacktrace, Process)},
-				{memory, maps:get(memory, Process)},
-				{reductions, maps:get(reductions, Process)},
-				{message_queue_len, maps:get(message_queue_len, Process)},
-				{aggregate_message_queue_len, AggregateMsgQueueLen},
-				{head_messages, HeadMessages}])
-		end,
-		TopProcesses);
+  when AggregateMsgQueueLen > ?LONG_MESSAGE_QUEUE_THRESHOLD ->
+    SortedProcesses = lists:sort(
+                        fun(Process1, Process2) ->
+                                maps:get(message_queue_len, Process1) >= maps:get(message_queue_len, Process2)
+                        end,
+                        ProcessesForName),
+    TopProcesses = lists:sublist(SortedProcesses, 3),
+    lists:foreach(
+      fun(Process) ->
+              Pid = maps:get(pid, Process),
+              HeadMessages = case process_info(Pid, messages) of
+                                 {messages, Messages} ->
+                                     format_head_messages(maps:get(message_queue_len, Process), Messages);
+                                 undefined ->
+                                     []
+                             end,
+              ?LOG_DEBUG([{event, process_long_message_queue}, {pid, Pid},
+                          {process_name, ProcessName},
+                          {current_function, maps:get(current_function, Process)},
+                          {current_stacktrace, maps:get(current_stacktrace, Process)},
+                          {memory, maps:get(memory, Process)},
+                          {reductions, maps:get(reductions, Process)},
+                          {message_queue_len, maps:get(message_queue_len, Process)},
+                          {aggregate_message_queue_len, AggregateMsgQueueLen},
+                          {head_messages, HeadMessages}])
+      end,
+      TopProcesses);
 log_long_message_queues(_ProcessName, _AggregateMsgQueueLen, _ProcessesForName) ->
-	ok.
+    ok.
 
 log_binary_alloc() ->
-	[Instance0 | _Rest] = erlang:system_info({allocator, binary_alloc}),
-	log_binary_alloc_instances([Instance0]).
+    [Instance0 | _Rest] = erlang:system_info({allocator, binary_alloc}),
+    log_binary_alloc_instances([Instance0]).
 
 log_binary_alloc_instances([]) ->
-	ok;
+    ok;
 log_binary_alloc_instances([Instance | _Rest]) ->
-	{instance, Id, [
-		_Versions,
-		_Options,
-		MBCS,
-		SBCS,
-		Calls
-	]} = Instance,
-	{calls, [
-		{binary_alloc, AllocGigaCount, AllocCount},
-		{binary_free, FreeGigaCount, FreeCount},
-		{binary_realloc, ReallocGigaCount, ReallocCount},
-		_MsegAllocCount, _MsegDeallocCount, _MsegReallocCount,
-		_SysAllocCount, _SysDeallocCount, _SysReallocCount
-	]} = Calls,
+    {instance, Id, [
+                    _Versions,
+                    _Options,
+                    MBCS,
+                    SBCS,
+                    Calls
+                   ]} = Instance,
+    {calls, [
+             {binary_alloc, AllocGigaCount, AllocCount},
+             {binary_free, FreeGigaCount, FreeCount},
+             {binary_realloc, ReallocGigaCount, ReallocCount},
+             _MsegAllocCount, _MsegDeallocCount, _MsegReallocCount,
+             _SysAllocCount, _SysDeallocCount, _SysReallocCount
+            ]} = Calls,
 
-	log_binary_alloc_carrier(Id, MBCS),
-	log_binary_alloc_carrier(Id, SBCS),
+    log_binary_alloc_carrier(Id, MBCS),
+    log_binary_alloc_carrier(Id, SBCS),
 
-	arweave_metrics:gauge_set(allocator, [binary, Id, calls, binary_alloc_count],
-		(AllocGigaCount * 1000000000) + AllocCount),
-	arweave_metrics:gauge_set(allocator, [binary, Id, calls, binary_free_count],
-		(FreeGigaCount * 1000000000) + FreeCount),
-	arweave_metrics:gauge_set(allocator, [binary, Id, calls, binary_realloc_count],
-		(ReallocGigaCount * 1000000000) + ReallocCount).
+    arweave_metrics:gauge_set(allocator, [binary, Id, calls, binary_alloc_count],
+                         (AllocGigaCount * 1000000000) + AllocCount),
+    arweave_metrics:gauge_set(allocator, [binary, Id, calls, binary_free_count],
+                         (FreeGigaCount * 1000000000) + FreeCount),
+    arweave_metrics:gauge_set(allocator, [binary, Id, calls, binary_realloc_count],
+                         (ReallocGigaCount * 1000000000) + ReallocCount).
 
 log_binary_alloc_carrier(Id, Carrier) ->
-	{CarrierType, [
-		{blocks, Blocks},
-		{carriers, _, CarrierCount, _},
-		_MsegCount, _SysCount,
-		{carriers_size, _, CarrierSize, _},
-		_MsegSize, _SysSize
-	]} = Carrier,
+    {CarrierType, [
+                   {blocks, Blocks},
+                   {carriers, _, CarrierCount, _},
+                   _MsegCount, _SysCount,
+                   {carriers_size, _, CarrierSize, _},
+                   _MsegSize, _SysSize
+                  ]} = Carrier,
 
-	case Blocks of
-		[{binary_alloc, [{count, _, BlockCount, _}, {size, _, BlockSize, _}]}] ->
-			arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_count],
-				BlockCount),
-			arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_size],
-				BlockSize);
-		_ ->
-			arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_count],
-				0),
-			arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_size],
-				0)
-	end,
+    case Blocks of
+        [{binary_alloc, [{count, _, BlockCount, _}, {size, _, BlockSize, _}]}] ->
+            arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_count],
+                                 BlockCount),
+            arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_size],
+                                 BlockSize);
+        _ ->
+            arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_count],
+                                 0),
+            arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_block_size],
+                                 0)
+    end,
 
-	arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_carrier_count],
-		CarrierCount),
-	arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_carrier_size],
-		CarrierSize).
-
+    arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_carrier_count],
+                         CarrierCount),
+    arweave_metrics:gauge_set(allocator, [binary, Id, CarrierType, binary_carrier_size],
+                         CarrierSize).
 
 %% @doc Anonymous processes don't have a registered name. So we'll name them after their
 %% module, function and arity.
@@ -285,41 +284,41 @@ log_binary_alloc_carrier(Id, Carrier) ->
 %% there) — collapse those to module-only so a gen_server shows up as
 %% `ar_data_sync' rather than `ar_data_sync:init/1'.
 process_name([], [], _Pid) ->
-	"unknown";
+    "unknown";
 process_name([], Stack, Pid) ->
-	InitialCall = initial_call(lists:reverse(Stack), Pid),
-	M = element(1, InitialCall),
-	F = element(2, InitialCall),
-	A = element(3, InitialCall),
-	case F of
-		init when A =:= 1 ->
-			atom_to_list(M);
-		_ ->
-			atom_to_list(M) ++ ":" ++ atom_to_list(F) ++ "/" ++ integer_to_list(A)
-	end;
+    InitialCall = initial_call(lists:reverse(Stack), Pid),
+    M = element(1, InitialCall),
+    F = element(2, InitialCall),
+    A = element(3, InitialCall),
+    case F of
+        init when A =:= 1 ->
+            atom_to_list(M);
+        _ ->
+            atom_to_list(M) ++ ":" ++ atom_to_list(F) ++ "/" ++ integer_to_list(A)
+    end;
 process_name(Name, _Stack, _Pid) ->
-	atom_to_list(Name).
+    atom_to_list(Name).
 
 initial_call([], Pid) ->
-	%% Fallback to proc_lib's initial_call which reads $initial_call from the
-	%% process dictionary - gives us the actual callback module instead of
-	%% gen_server:loop/7 or similar OTP internals.
-	try proc_lib:initial_call(Pid) of
-		false -> {unknown, unknown, 0};
-		{M, F, Args} when is_list(Args) -> {M, F, length(Args)}
-	catch
-		_:_ -> {unknown, unknown, 0}
-	end;
+    %% Fallback to proc_lib's initial_call which reads $initial_call from the
+    %% process dictionary - gives us the actual callback module instead of
+    %% gen_server:loop/7 or similar OTP internals.
+    try proc_lib:initial_call(Pid) of
+        false -> {unknown, unknown, 0};
+        {M, F, Args} when is_list(Args) -> {M, F, length(Args)}
+    catch
+        _:_ -> {unknown, unknown, 0}
+    end;
 initial_call([{M, _F, _A, _Location} | Stack], Pid)
-		when M =:= proc_lib; M =:= gen_server; M =:= gen_statem; M =:= gen_event;
-				%% Skip stdlib higher-order helpers so the reported name lands
-				%% on the caller's spawned-fun frame (typically the actual
-				%% application code) instead of the generic library entry.
-				M =:= lists; M =:= maps; M =:= sets; M =:= dict; M =:= queue;
-				M =:= gb_sets; M =:= gb_trees; M =:= orddict; M =:= ordsets ->
-	initial_call(Stack, Pid);
+  when M =:= proc_lib; M =:= gen_server; M =:= gen_statem; M =:= gen_event;
+       %% Skip stdlib higher-order helpers so the reported name lands
+       %% on the caller's spawned-fun frame (typically the actual
+       %% application code) instead of the generic library entry.
+       M =:= lists; M =:= maps; M =:= sets; M =:= dict; M =:= queue;
+       M =:= gb_sets; M =:= gb_trees; M =:= orddict; M =:= ordsets ->
+    initial_call(Stack, Pid);
 initial_call([InitialCall | _Stack], _Pid) ->
-	InitialCall.
+    InitialCall.
 
 
 format_message(Msg) ->

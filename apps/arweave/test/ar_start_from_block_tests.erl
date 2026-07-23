@@ -7,12 +7,12 @@
 
 start_from_block_test_() ->
     [
-		{timeout, ?TEST_NODE_TIMEOUT, fun test_start_from_block/0}
-	].
+        {timeout, ?TEST_NODE_TIMEOUT, fun test_start_from_block/0}
+    ].
 
 test_start_from_block() ->
     [B0] = ar_weave:init(),
-	ar_test_node:start(B0),
+    ar_test_node:start(B0),
     ar_test_node:start_peer(peer1, B0),
     ar_test_node:start_peer(peer2, B0),
     ar_test_node:connect_to_peer(peer1),

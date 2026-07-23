@@ -1,5 +1,11 @@
 # Arweave Development
 
+## Setting up workspace
+
+- Ignore reformatting commits included in `./.git-blame-ignore-revs`
+  when using `git blame`. After cloning the repository, Configure your
+  workspace with: `git config blame.ignoreRevsFile .git-blame-ignore-revs`
+
 ## Workspace conventions
 
 - **`scripts/`** is for scripts intended to be committed to the repo

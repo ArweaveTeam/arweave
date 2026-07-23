@@ -4,31 +4,31 @@
 
 %% @doc get a simplified version of the path (no variables).
 path_to_path_key(Path) ->
-	split_path_to_path_key(split_path(Path)).
+    split_path_to_path_key(split_path(Path)).
 
 %% @doc find throttling group ID for a certain request (Peer, Path) pair.
 %%
 path_to_group_id(Peer, Path) ->
-	case path_to_path_key(Path) of
-		{error, skip} ->
-			{error, skip};
-		PathKey when is_list(PathKey) ->
-			case arweave_throttling_router:lookup_path(Peer, PathKey) of
-				{error, _} = E ->
-					%% any error is passed, including unknown_key
-					E;
-				{ok, _GroupID} = G ->
-					G
-			end
-	end.
+    case path_to_path_key(Path) of
+        {error, skip} ->
+            {error, skip};
+        PathKey when is_list(PathKey) ->
+            case arweave_throttling_router:lookup_path(Peer, PathKey) of
+                {error, _} = E ->
+                    %% any error is passed, including unknown_key
+                    E;
+                {ok, _GroupID} = G ->
+                    G
+            end
+    end.
 %% Private
 split_path(Path) ->
-	case string:split(Path, "/", all) of
-		[[]|Rest] ->
-			Rest;
-		NotEmpty ->
-			NotEmpty
-	end.
+    case string:split(Path, "/", all) of
+        [[]|Rest] ->
+            Rest;
+        NotEmpty ->
+            NotEmpty
+    end.
 
 %% @doc Remove variable parameters from paths.
 %% Some paths need to have their keys processed to no produce 100s or 1000s

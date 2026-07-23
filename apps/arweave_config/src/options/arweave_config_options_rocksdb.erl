@@ -6,31 +6,31 @@
 -include("arweave_config.hrl").
 
 specs() ->
-	[
-		#{
-			enabled => true,
-			option_key => [rocksdb, flush_interval],
-			runtime => true,
-			default => ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,
-			type => pos_integer,
-			legacy => rocksdb_flush_interval_s,
-			short_description =>
-				<<"RocksDB flush interval in seconds.">>
-		},
-		#{
-			enabled => true,
-			option_key => [rocksdb, wal_sync_interval],
-			runtime => true,
-			default => ?DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S,
-			type => pos_integer,
-			legacy => rocksdb_wal_sync_interval_s,
-			short_description =>
-				<<"RocksDB WAL sync interval in seconds.">>
-		}
-	].
+    [
+        #{
+            enabled => true,
+            option_key => [rocksdb, flush_interval],
+            runtime => true,
+            default => ?DEFAULT_ROCKSDB_FLUSH_INTERVAL_S,
+            type => pos_integer,
+            legacy => rocksdb_flush_interval_s,
+            short_description =>
+                <<"RocksDB flush interval in seconds.">>
+        },
+        #{
+            enabled => true,
+            option_key => [rocksdb, wal_sync_interval],
+            runtime => true,
+            default => ?DEFAULT_ROCKSDB_WAL_SYNC_INTERVAL_S,
+            type => pos_integer,
+            legacy => rocksdb_wal_sync_interval_s,
+            short_description =>
+                <<"RocksDB WAL sync interval in seconds.">>
+        }
+    ].
 
 validate() ->
-	ok.
+    ok.
 
 group_description() ->
-	<<"Set RocksDB flush and synchronization behavior.">>.
+    <<"Set RocksDB flush and synchronization behavior.">>.

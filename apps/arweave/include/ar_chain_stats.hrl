@@ -10,10 +10,10 @@
 -endif.
 
 -record(fork, {
-    id,
-    height,
-    timestamp,
-    block_ids
-}).
+               id,
+               height,
+               timestamp,
+               block_ids
+              }).
 
 -endif.

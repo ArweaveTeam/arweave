@@ -22,23 +22,23 @@
 -include("arweave_config.hrl").
 
 specs() ->
-	[build_per_flag_spec(Entry)
-		|| Entry <- arweave_config_features:catalog()].
+    [build_per_flag_spec(Entry)
+        || Entry <- arweave_config_features:catalog()].
 
 build_per_flag_spec(#{ name := Name,
                        default := Default,
                        description := Description } = Entry) ->
-	#{
-		enabled => true,
-		option_key => [features, Name],
-		runtime => maps:get(runtime, Entry, false),
-		default => Default,
-		type => boolean,
-		short_description => Description
-	}.
+    #{
+        enabled => true,
+        option_key => [features, Name],
+        runtime => maps:get(runtime, Entry, false),
+        default => Default,
+        type => boolean,
+        short_description => Description
+    }.
 
 validate() ->
-	arweave_config_features:validate().
+    arweave_config_features:validate().
 
 group_description() ->
-	<<"Manage optional node feature flags.">>.
+    <<"Manage optional node feature flags.">>.

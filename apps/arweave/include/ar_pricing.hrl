@@ -9,19 +9,19 @@
 -define(N_REPLICATIONS, fun(_MACRO_Height) -> 200 end).
 -else.
 -define(N_REPLICATIONS, fun(MACRO_Height) ->
-	MACRO_Forks = {
-		ar_fork:height_2_5(),
-		ar_fork:height_2_6()
-	},
-	case MACRO_Forks of
-		{_MACRO_Fork_2_5, MACRO_Fork_2_6} when MACRO_Height >= MACRO_Fork_2_6 ->
-			20;
-		{MACRO_Fork_2_5, _MACRO_Fork_2_6} when MACRO_Height >= MACRO_Fork_2_5 ->
-			45;
-		_ ->
-			10
-	end
-end).
+                                MACRO_Forks = {
+                                               ar_fork:height_2_5(),
+                                               ar_fork:height_2_6()
+                                              },
+                                case MACRO_Forks of
+                                    {_MACRO_Fork_2_5, MACRO_Fork_2_6} when MACRO_Height >= MACRO_Fork_2_6 ->
+                                        20;
+                                    {MACRO_Fork_2_5, _MACRO_Fork_2_6} when MACRO_Height >= MACRO_Fork_2_5 ->
+                                        45;
+                                    _ ->
+                                        10
+                                end
+                        end).
 -endif.
 
 %% The miners always receive ?MINER_FEE_SHARE of the transaction fees, even
@@ -54,42 +54,42 @@ end).
 
 %% The number of recent blocks with the reserved (temporarily locked) mining rewards.
 -ifdef(AR_TEST).
-	% testnet value should have same ratio 30:1 to VDF_DIFFICULTY_RETARGET
-	% BUT. For tests we are using old value
-	-define(LOCKED_REWARDS_BLOCKS, 3).
+                                                % testnet value should have same ratio 30:1 to VDF_DIFFICULTY_RETARGET
+                                                % BUT. For tests we are using old value
+-define(LOCKED_REWARDS_BLOCKS, 3).
 -else.
-	-ifndef(LOCKED_REWARDS_BLOCKS).
-		-define(LOCKED_REWARDS_BLOCKS, (30 * 24 * 30)).
-	-endif.
+-ifndef(LOCKED_REWARDS_BLOCKS).
+-define(LOCKED_REWARDS_BLOCKS, (30 * 24 * 30)).
+-endif.
 -endif.
 
 %% The number of recent blocks contributing data points to the continuous estimation
 %% of the average price of storing a gibibyte for a minute. A recent subset of the
 %% reward history is used for tracking the reserved mining rewards.
 -ifdef(AR_TEST).
-	-define(REWARD_HISTORY_BLOCKS, 3).
+-define(REWARD_HISTORY_BLOCKS, 3).
 -else.
-	-ifndef(REWARD_HISTORY_BLOCKS).
-		-define(REWARD_HISTORY_BLOCKS, (3 * 30 * 24 * 30)).
-	-endif.
+-ifndef(REWARD_HISTORY_BLOCKS).
+-define(REWARD_HISTORY_BLOCKS, (3 * 30 * 24 * 30)).
+-endif.
 -endif.
 
 %% The REWARD_HISTORY_BLOCKS before 2.8.
 -ifdef(AR_TEST).
-	-define(LEGACY_REWARD_HISTORY_BLOCKS, 3).
+-define(LEGACY_REWARD_HISTORY_BLOCKS, 3).
 -else.
-	-ifndef(LEGACY_REWARD_HISTORY_BLOCKS).
-		-define(LEGACY_REWARD_HISTORY_BLOCKS, (30 * 24 * 30)).
-	-endif.
+-ifndef(LEGACY_REWARD_HISTORY_BLOCKS).
+-define(LEGACY_REWARD_HISTORY_BLOCKS, (30 * 24 * 30)).
+-endif.
 -endif.
 
 %% The prices are re-estimated every so many blocks.
 -ifdef(AR_TEST).
 -define(PRICE_ADJUSTMENT_FREQUENCY, 2).
 -else.
-	-ifndef(PRICE_ADJUSTMENT_FREQUENCY).
-		-define(PRICE_ADJUSTMENT_FREQUENCY, 50).
-	-endif.
+-ifndef(PRICE_ADJUSTMENT_FREQUENCY).
+-define(PRICE_ADJUSTMENT_FREQUENCY, 50).
+-endif.
 -endif.
 
 %% An approximation of the natural logarithm of ?PRICE_DECAY_ANNUAL (0.995),
@@ -118,18 +118,18 @@ end).
 %% Does NOT include the additional emission which may start in the far future if and when
 %% the endowment pool runs empty.
 -ifdef(AR_TEST).
-	%% The debug constant is not always actually equal to the sum of genesis balances plust
-	%% the total emission. We just set a relatively low value so that we can reproduce
-	%% autoredenomination in tests.
-	-define(TOTAL_SUPPLY, 1500000000000).
+%% The debug constant is not always actually equal to the sum of genesis balances plust
+%% the total emission. We just set a relatively low value so that we can reproduce
+%% autoredenomination in tests.
+-define(TOTAL_SUPPLY, 1500000000000).
 -else.
-	-ifdef(FORKS_RESET).
-		%% This value should be ideally adjusted if the genesis balances
-		%% of a new weave differ from those in mainnet.
-		-define(TOTAL_SUPPLY, 66000015859279336957).
-	-else.
-		-define(TOTAL_SUPPLY, 66_000_015_859_279_336_957).
-	-endif.
+-ifdef(FORKS_RESET).
+%% This value should be ideally adjusted if the genesis balances
+%% of a new weave differ from those in mainnet.
+-define(TOTAL_SUPPLY, 66000015859279336957).
+-else.
+-define(TOTAL_SUPPLY, 66_000_015_859_279_336_957).
+-endif.
 -endif.
 
 %% Re-denominate AR (multiply by 1000) when the available supply falls below this
@@ -156,17 +156,17 @@ end).
 %% USD to AR rate at any block based on the change in the network difficulty and inflation
 %% rewards.
 -define(INITIAL_USD_TO_AR(Height), fun() ->
-	Forks = {
-		ar_fork:height_2_4(),
-		ar_fork:height_2_5()
-	},
-	case Forks of
-		{_Fork_2_4, Fork_2_5} when Height >= Fork_2_5 ->
-			{1, 65};
-		{Fork_2_4, _Fork_2_5} when Height >= Fork_2_4 ->
-			?INITIAL_USD_TO_AR_PRE_FORK_2_5
-	end
-end).
+                                           Forks = {
+                                                    ar_fork:height_2_4(),
+                                                    ar_fork:height_2_5()
+                                                   },
+                                           case Forks of
+                                               {_Fork_2_4, Fork_2_5} when Height >= Fork_2_5 ->
+                                                   {1, 65};
+                                               {Fork_2_4, _Fork_2_5} when Height >= Fork_2_4 ->
+                                                   ?INITIAL_USD_TO_AR_PRE_FORK_2_5
+                                           end
+                                   end).
 
 %% The original USD to AR conversion rate, defined as a fraction. Set up at fork 2.4.
 %% Used until the fork 2.5.
@@ -176,49 +176,49 @@ end).
 %% ?INITIAL_USD_TO_AR(Height). Used to account for the change in the network
 %% difficulty when estimating the new USD to AR rate.
 -define(INITIAL_USD_TO_AR_DIFF(Height), fun() ->
-	Forks = {
-		ar_fork:height_1_9(),
-		ar_fork:height_2_2(),
-		ar_fork:height_2_5()
-	},
-	case Forks of
-		{_Fork_1_9, _Fork_2_2, Fork_2_5} when Height >= Fork_2_5 ->
-			32;
-		{_Fork_1_9, Fork_2_2, _Fork_2_5} when Height >= Fork_2_2 ->
-			34;
-		{Fork_1_9, _Fork_2_2, _Fork_2_5} when Height < Fork_1_9 ->
-			28;
-		_ ->
-			29
-	end
-end).
+                                                Forks = {
+                                                         ar_fork:height_1_9(),
+                                                         ar_fork:height_2_2(),
+                                                         ar_fork:height_2_5()
+                                                        },
+                                                case Forks of
+                                                    {_Fork_1_9, _Fork_2_2, Fork_2_5} when Height >= Fork_2_5 ->
+                                                        32;
+                                                    {_Fork_1_9, Fork_2_2, _Fork_2_5} when Height >= Fork_2_2 ->
+                                                        34;
+                                                    {Fork_1_9, _Fork_2_2, _Fork_2_5} when Height < Fork_1_9 ->
+                                                        28;
+                                                    _ ->
+                                                        29
+                                                end
+                                        end).
 
 %% The network height at the time when the USD to AR exchange rate was
 %% ?INITIAL_USD_TO_AR(Height). Used to account for the change in inflation
 %% rewards when estimating the new USD to AR rate.
 -define(INITIAL_USD_TO_AR_HEIGHT(Height), fun() ->
-	Forks = {
-		ar_fork:height_1_9(),
-		ar_fork:height_2_2(),
-		ar_fork:height_2_5(),
-		ar_fork:height_2_6()
-	},
-	%% In case the fork heights are reset to 0 (e.g. on testnets),
-	%% set the initial height to 1 - the height where the inflation
-	%% emission essentially begins.
-	case Forks of
-		{_Fork_1_9, _Fork_2_2, _Fork_2_5, Fork_2_6} when Height >= Fork_2_6 ->
-			max(Fork_2_6, 1);
-		{_Fork_1_9, _Fork_2_2, Fork_2_5, _Fork_2_6} when Height >= Fork_2_5 ->
-			max(Fork_2_5, 1);
-		{_Fork_1_9, Fork_2_2, _Fork_2_5, _Fork_2_6} when Height >= Fork_2_2 ->
-			max(Fork_2_2, 1);
-		{Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6} when Height < Fork_1_9 ->
-			max(ar_fork:height_1_8(), 1);
-		{Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6} ->
-			max(Fork_1_9, 1)
-	end
-end).
+                                                  Forks = {
+                                                           ar_fork:height_1_9(),
+                                                           ar_fork:height_2_2(),
+                                                           ar_fork:height_2_5(),
+                                                           ar_fork:height_2_6()
+                                                          },
+                                                  %% In case the fork heights are reset to 0 (e.g. on testnets),
+                                                  %% set the initial height to 1 - the height where the inflation
+                                                  %% emission essentially begins.
+                                                  case Forks of
+                                                      {_Fork_1_9, _Fork_2_2, _Fork_2_5, Fork_2_6} when Height >= Fork_2_6 ->
+                                                          max(Fork_2_6, 1);
+                                                      {_Fork_1_9, _Fork_2_2, Fork_2_5, _Fork_2_6} when Height >= Fork_2_5 ->
+                                                          max(Fork_2_5, 1);
+                                                      {_Fork_1_9, Fork_2_2, _Fork_2_5, _Fork_2_6} when Height >= Fork_2_2 ->
+                                                          max(Fork_2_2, 1);
+                                                      {Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6} when Height < Fork_1_9 ->
+                                                          max(ar_fork:height_1_8(), 1);
+                                                      {Fork_1_9, _Fork_2_2, _Fork_2_5, _Fork_2_6} ->
+                                                          max(Fork_1_9, 1)
+                                                  end
+                                          end).
 
 %% The base wallet generation fee in USD, defined as a fraction.
 %% The amount in AR depends on the current difficulty and height.
@@ -264,19 +264,19 @@ end).
 
 %% Initial $/AR exchange rate. Used until the fork 2.4.
 -define(INITIAL_USD_PER_AR(Height), fun() ->
-	Forks = {
-		ar_fork:height_1_9(),
-		ar_fork:height_2_2()
-	},
-	case Forks of
-		{Fork_1_9, _Fork_2_2} when Height < Fork_1_9 ->
-			1.5;
-		{_Fork_1_9, Fork_2_2} when Height >= Fork_2_2 ->
-			4;
-		_ ->
-			1.2
-	end
-end).
+                                            Forks = {
+                                                     ar_fork:height_1_9(),
+                                                     ar_fork:height_2_2()
+                                                    },
+                                            case Forks of
+                                                {Fork_1_9, _Fork_2_2} when Height < Fork_1_9 ->
+                                                    1.5;
+                                                {_Fork_1_9, Fork_2_2} when Height >= Fork_2_2 ->
+                                                    4;
+                                                _ ->
+                                                    1.2
+                                            end
+                                    end).
 
 %% Base wallet generation fee. Used until fork 2.2.
 -define(WALLET_GEN_FEE, 250000000000).

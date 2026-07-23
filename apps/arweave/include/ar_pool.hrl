@@ -19,26 +19,26 @@
 
 %% @doc A collection of mining jobs.
 -record(jobs, {
-	jobs = [], %% The information about a single VDF output (a "job").
-	partial_diff = {0, 0}, %% Partial difficulty.
-	seed = <<>>,
-	next_seed = <<>>,
-	interval_number = 0,
-	next_vdf_difficulty = 0
-}).
+               jobs = [], %% The information about a single VDF output (a "job").
+               partial_diff = {0, 0}, %% Partial difficulty.
+               seed = <<>>,
+               next_seed = <<>>,
+               interval_number = 0,
+               next_vdf_difficulty = 0
+              }).
 
 %% @doc A mining job.
 -record(job, {
-	output = <<>>,
-	global_step_number = 0,
-	partition_upper_bound = 0
-}).
+              output = <<>>,
+              global_step_number = 0,
+              partition_upper_bound = 0
+             }).
 
 %% @doc Partial solution validation response.
 -record(partial_solution_response, {
-	indep_hash = <<>>,
-	status = <<>>
-}).
+                                    indep_hash = <<>>,
+                                    status = <<>>
+                                   }).
 
 %% @doc A set of coordinated mining jobs provided by the pool.
 %%
@@ -46,9 +46,9 @@
 %% When miners fetch jobs, they specify the partitions and leave the job fields empty.
 %% When miners submit jobs, they leave the partitions field empty.
 -record(pool_cm_jobs, {
-	h1_to_h2_jobs = [], % [#mining_candidate{}]
-	h1_read_jobs = [], % [#mining_candidate{}]
-	%% A list of {[{bucket, ...}, {bucketsize, ...}, {addr, ...}]} or
-	%% {[{bucket, ...}, {bucketsize, ...}, {addr, ...}, {pdiff, ...}]} JSON structs.
-	partitions = []
-}).
+                       h1_to_h2_jobs = [], % [#mining_candidate{}]
+                       h1_read_jobs = [], % [#mining_candidate{}]
+                       %% A list of {[{bucket, ...}, {bucketsize, ...}, {addr, ...}]} or
+                       %% {[{bucket, ...}, {bucketsize, ...}, {addr, ...}, {pdiff, ...}]} JSON structs.
+                       partitions = []
+                      }).

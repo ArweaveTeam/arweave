@@ -3,9 +3,9 @@
 -behaviour(prometheus_collector).
 
 -export([
-	deregister_cleanup/1,
-	collect_mf/2
-]).
+         deregister_cleanup/1,
+         collect_mf/2
+        ]).
 
 -import(prometheus_model_helpers, [create_mf/4]).
 
@@ -18,12 +18,12 @@
 
 %% called to collect Metric Families
 -spec collect_mf(_Registry, Callback) -> ok when
-	_Registry :: prometheus_registry:registry(),
-	Callback :: prometheus_collector:callback().
+      _Registry :: prometheus_registry:registry(),
+      Callback :: prometheus_collector:callback().
 collect_mf(_Registry, Callback) ->
-	Metrics = metrics(),
-	[add_metric_family(Metric, Callback) || Metric <- Metrics],
-	ok.
+    Metrics = metrics(),
+    [add_metric_family(Metric, Callback) || Metric <- Metrics],
+    ok.
 
 %% called when collector deregistered
 deregister_cleanup(_Registry) -> ok.
@@ -33,45 +33,45 @@ deregister_cleanup(_Registry) -> ok.
 %% ===================================================================
 
 add_metric_family({Name, Type, Help, Metrics}, Callback) ->
-	Callback(create_mf(?METRIC_NAME(Name), Help, Type, Metrics)).
+    Callback(create_mf(?METRIC_NAME(Name), Help, Type, Metrics)).
 
 metrics() ->
-	RanchInfo = ranch:info(),
-	[
-	 {storage_blocks_stored, gauge,
-		"Blocks stored",
-		ets:lookup_element(ar_header_sync, synced_blocks, 2, 0)},
-	 {arnode_queue_len, gauge,
-		"Size of message queuee on ar_node_worker",
-		ar_util:message_queue_len(ar_node_worker)},
-	 {arbridge_queue_len, gauge,
-		"Size of message queuee on ar_bridge",
-		ar_util:message_queue_len(ar_bridge)},
-	 {ignored_ids_len, gauge,
-		"Size of table of Ignored/already seen IDs:",
-		ets:info(ignored_ids, size)},
-	 {ar_data_discovery_bytes_total, gauge, "ar_data_discovery process memory",
-		get_process_memory(ar_data_discovery)},
-	 {ar_node_worker_bytes_total, gauge, "ar_node_worker process memory",
-		get_process_memory(ar_node_worker)},
-	 {ar_header_sync_bytes_total, gauge, "ar_header_sync process memory",
-		get_process_memory(ar_header_sync)},
-	 {ar_wallets_bytes_total, gauge, "ar_wallets process memory",
-		get_process_memory(ar_wallets)},
-         {ar_http_iface_listener_ranch_max_connections, gauge, "Maximum number of Ranch connections",
-          get_ranch_max_connections(RanchInfo, ar_http_iface_listener)},
-         {ar_http_iface_listener_ranch_active_connections, gauge, "Currently active Ranch connections",
-          get_ranch_active_connections(RanchInfo, ar_http_iface_listener)}
-	].
+    RanchInfo = ranch:info(),
+    [
+     {storage_blocks_stored, gauge,
+      "Blocks stored",
+      ets:lookup_element(ar_header_sync, synced_blocks, 2, 0)},
+     {arnode_queue_len, gauge,
+      "Size of message queuee on ar_node_worker",
+      ar_util:message_queue_len(ar_node_worker)},
+     {arbridge_queue_len, gauge,
+      "Size of message queuee on ar_bridge",
+      ar_util:message_queue_len(ar_bridge)},
+     {ignored_ids_len, gauge,
+      "Size of table of Ignored/already seen IDs:",
+      ets:info(ignored_ids, size)},
+     {ar_data_discovery_bytes_total, gauge, "ar_data_discovery process memory",
+      get_process_memory(ar_data_discovery)},
+     {ar_node_worker_bytes_total, gauge, "ar_node_worker process memory",
+      get_process_memory(ar_node_worker)},
+     {ar_header_sync_bytes_total, gauge, "ar_header_sync process memory",
+      get_process_memory(ar_header_sync)},
+     {ar_wallets_bytes_total, gauge, "ar_wallets process memory",
+      get_process_memory(ar_wallets)},
+     {ar_http_iface_listener_ranch_max_connections, gauge, "Maximum number of Ranch connections",
+      get_ranch_max_connections(RanchInfo, ar_http_iface_listener)},
+     {ar_http_iface_listener_ranch_active_connections, gauge, "Currently active Ranch connections",
+      get_ranch_active_connections(RanchInfo, ar_http_iface_listener)}
+    ].
 
 get_process_memory(Name) ->
-	case whereis(Name) of
-		undefined ->
-			0;
-		PID ->
-			{memory, Memory} = erlang:process_info(PID, memory),
-			Memory
-	end.
+    case whereis(Name) of
+        undefined ->
+            0;
+        PID ->
+            {memory, Memory} = erlang:process_info(PID, memory),
+            Memory
+    end.
 
 get_ranch_max_connections(RInfo, Name) ->
     get_ranch_info_value(RInfo, Name, max_connections).

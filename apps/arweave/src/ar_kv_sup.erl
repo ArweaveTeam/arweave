@@ -14,16 +14,16 @@
 %%%===================================================================
 
 start_link() ->
-	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% ===================================================================
 %% Supervisor callbacks.
 %% ===================================================================
 
 init([]) ->
-	ar_kv:create_ets(),
-	{ok, {{one_for_one, 5, 10}, [ar_kv_child()]}}.
+    ar_kv:create_ets(),
+    {ok, {{one_for_one, 5, 10}, [ar_kv_child()]}}.
 
 ar_kv_child() ->
-	%% Give RocksDB flush/sync/close time to finish before the supervisor kills ar_kv.
-	(?CHILD(ar_kv, worker))#{shutdown => 300_000}.
+    %% Give RocksDB flush/sync/close time to finish before the supervisor kills ar_kv.
+    (?CHILD(ar_kv, worker))#{shutdown => 300_000}.

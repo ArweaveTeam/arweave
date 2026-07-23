@@ -19,19 +19,19 @@
 %% API functions
 %% ===================================================================
 start_link() ->
-	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
 init([]) ->
-	{ok, {supervisor_spec(), children_spec()}}.
+    {ok, {supervisor_spec(), children_spec()}}.
 
 supervisor_spec() ->
-	#{ strategy => one_for_all
-	 , intensity => 5
-	 , period => 10
-	 }.
+    #{ strategy => one_for_all
+     , intensity => 5
+     , period => 10
+     }.
 
 %%--------------------------------------------------------------------
 %% the order is important. the first process to be started is
@@ -39,24 +39,24 @@ supervisor_spec() ->
 %% is in reverse, the last process to be stopped is ar_node_worker.
 %%--------------------------------------------------------------------
 children_spec() ->
-	lists:flatten([
-		ar_node_worker_spec(),
-		ar_semaphores_spec(),
-		ar_blacklist_middleware_spec(),
-		ar_http_iface_server_spec()
-	]).
+    lists:flatten([
+                   ar_node_worker_spec(),
+                   ar_semaphores_spec(),
+                   ar_blacklist_middleware_spec(),
+                   ar_http_iface_server_spec()
+                  ]).
 
 %%--------------------------------------------------------------------
 %% ar_node_worker is the main process, must be started before others,
 %% and should be stopped at last. This process should not be restarted.
 %%--------------------------------------------------------------------
 ar_node_worker_spec() ->
-	#{ id => ar_node_worker
-	 , start => {ar_node_worker, start_link, []}
-	 , type => worker
-	 , shutdown => ?SHUTDOWN_TIMEOUT
-	 , restart => temporary
-	 }.
+    #{ id => ar_node_worker
+     , start => {ar_node_worker, start_link, []}
+     , type => worker
+     , shutdown => ?SHUTDOWN_TIMEOUT
+     , restart => temporary
+     }.
 
 %%--------------------------------------------------------------------
 %% ar_http_iface_server process is a frontend to cowboy:start*/3,
@@ -66,11 +66,11 @@ ar_node_worker_spec() ->
 %% child too early during the shutdown procedure.
 %%--------------------------------------------------------------------
 ar_http_iface_server_spec() ->
-	#{ id => ar_http_iface_server
-	 , start => {ar_http_iface_server, start_link, []}
-	 , type => worker
-	 , shutdown => ?SHUTDOWN_TCP_CONNECTION_TIMEOUT*2*1000
-	 }.
+    #{ id => ar_http_iface_server
+     , start => {ar_http_iface_server, start_link, []}
+     , type => worker
+     , shutdown => ?SHUTDOWN_TCP_CONNECTION_TIMEOUT*2*1000
+     }.
 
 %%--------------------------------------------------------------------
 %% ar_blacklist_middle process is transient, it will configure
@@ -78,27 +78,27 @@ ar_http_iface_server_spec() ->
 %% restarted.
 %%--------------------------------------------------------------------
 ar_blacklist_middleware_spec() ->
-	#{ id => ar_blacklist_middleware
-	 , start => {ar_blacklist_middleware, start_link, []}
-	 , type => worker
-	 , restart => transient
-	 , shutdown => ?SHUTDOWN_TIMEOUT
-	 }.
+    #{ id => ar_blacklist_middleware
+     , start => {ar_blacklist_middleware, start_link, []}
+     , type => worker
+     , restart => transient
+     , shutdown => ?SHUTDOWN_TIMEOUT
+     }.
 
 %%--------------------------------------------------------------------
 %% ar_semaphores are processes started based on arweave
 %% configuration.
 %%--------------------------------------------------------------------
 ar_semaphores_spec() ->
-	Semaphores = maps:from_list(
-		[{Name, Limit}
-		 || {[semaphores, Name, limit], Limit} <-
-			arweave_config:get_all_with_prefix([semaphores])]),
-	[ ar_semaphore_spec(Name, N) || {Name, N} <- maps:to_list(Semaphores) ].
+    Semaphores = maps:from_list(
+                   [{Name, Limit}
+                    || {[semaphores, Name, limit], Limit} <-
+                           arweave_config:get_all_with_prefix([semaphores])]),
+    [ ar_semaphore_spec(Name, N) || {Name, N} <- maps:to_list(Semaphores) ].
 
 ar_semaphore_spec(Name, N) ->
-	#{ id => Name
-	 , start => {ar_semaphore, start_link, [Name, N]}
-	 , type => worker
-	 , shutdown => ?SHUTDOWN_TIMEOUT
-	 }.
+    #{ id => Name
+     , start => {ar_semaphore, start_link, [Name, N]}
+     , type => worker
+     , shutdown => ?SHUTDOWN_TIMEOUT
+     }.

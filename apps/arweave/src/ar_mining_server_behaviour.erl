@@ -4,9 +4,9 @@
 -include("ar_mining.hrl").
 
 -callback start_mining({DiffPair, MerkleRebaseThreshold, Height}) -> ok when
-	DiffPair :: {non_neg_integer() | infinity, non_neg_integer() | infinity},
-	MerkleRebaseThreshold :: non_neg_integer() | infinity,
-	Height :: non_neg_integer().
+      DiffPair :: {non_neg_integer() | infinity, non_neg_integer() | infinity},
+      MerkleRebaseThreshold :: non_neg_integer() | infinity,
+      Height :: non_neg_integer().
 
 -callback pause() -> ok.
 

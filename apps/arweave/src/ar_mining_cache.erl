@@ -4,11 +4,11 @@
 -include_lib("arweave/include/ar.hrl").
 
 -export([
-	new/1, new/2, set_limit/2, get_limit/1,
-	cache_size/1, actual_cache_size/1, available_size/1, reserved_size/1, reserved_size/2,
-	add_session/2, reserve_for_session/3, release_for_session/3, drop_session/2,
-	session_exists/2, get_sessions/1, with_cached_value/4
-]).
+         new/1, new/2, set_limit/2, get_limit/1,
+         cache_size/1, actual_cache_size/1, available_size/1, reserved_size/1, reserved_size/2,
+         add_session/2, reserve_for_session/3, release_for_session/3, drop_session/2,
+         session_exists/2, get_sessions/1, with_cached_value/4
+        ]).
 
 -define(CACHE_SESSIONS_LIMIT, 4).
 
@@ -18,53 +18,53 @@
 
 %% @doc Creates a new mining cache with a default limit of 0.
 -spec new(Name :: term()) ->
-	Cache :: #ar_mining_cache{}.
+          Cache :: #ar_mining_cache{}.
 new(Name) -> #ar_mining_cache{name = Name}.
 
 %% @doc Creates a new mining cache with a given limit.
 -spec new(Name :: term(), Limit :: pos_integer()) ->
-	Cache :: #ar_mining_cache{}.
+          Cache :: #ar_mining_cache{}.
 new(Name, Limit) -> #ar_mining_cache{name = Name, mining_cache_limit_bytes = Limit}.
 
 %% @doc Sets the limit for the mining cache.
 -spec set_limit(Limit :: pos_integer(), Cache :: #ar_mining_cache{}) ->
-	Cache :: #ar_mining_cache{}.
+          Cache :: #ar_mining_cache{}.
 set_limit(Limit, Cache) ->
-	Cache#ar_mining_cache{mining_cache_limit_bytes = Limit}.
+    Cache#ar_mining_cache{mining_cache_limit_bytes = Limit}.
 
 %% @doc Returns the limit for the mining cache.
 -spec get_limit(Cache :: #ar_mining_cache{}) ->
-	Limit :: non_neg_integer().
+          Limit :: non_neg_integer().
 get_limit(Cache) ->
-	Cache#ar_mining_cache.mining_cache_limit_bytes.
+    Cache#ar_mining_cache.mining_cache_limit_bytes.
 
 %% @doc Returns the size of the cached data in bytes.
 %% Note, that cache size includes both the cached data and the reserved space for sessions.
 -spec cache_size(Cache :: #ar_mining_cache{}) ->
-	Size :: non_neg_integer().
+          Size :: non_neg_integer().
 cache_size(Cache) ->
-	maps:fold(
-		fun(_, #ar_mining_cache_session{mining_cache_size_bytes = Size, reserved_mining_cache_bytes = ReservedSize}, Acc) ->
-			Acc + Size + ReservedSize
-		end,
-		0,
-		Cache#ar_mining_cache.mining_cache_sessions
-	).
+    maps:fold(
+      fun(_, #ar_mining_cache_session{mining_cache_size_bytes = Size, reserved_mining_cache_bytes = ReservedSize}, Acc) ->
+              Acc + Size + ReservedSize
+      end,
+      0,
+      Cache#ar_mining_cache.mining_cache_sessions
+     ).
 
 %% @doc Returns the size of the cached data in bytes.
 %% Note, that cache size includes both the cached data and the reserved space for sessions.
 -spec actual_cache_size(Cache :: #ar_mining_cache{}) ->
-	Size :: non_neg_integer().
+          Size :: non_neg_integer().
 actual_cache_size(Cache) ->
-	maps:fold(
-		fun(_, #ar_mining_cache_session{mining_cache = MiningCache}, Acc) ->
-			Acc + maps:fold(fun(_, CacheValue, Acc0) ->
-				Acc0 + cached_value_size(CacheValue)
-			end, 0, MiningCache)
-		end,
-		0,
-		Cache#ar_mining_cache.mining_cache_sessions
-	).
+    maps:fold(
+      fun(_, #ar_mining_cache_session{mining_cache = MiningCache}, Acc) ->
+              Acc + maps:fold(fun(_, CacheValue, Acc0) ->
+                                      Acc0 + cached_value_size(CacheValue)
+                              end, 0, MiningCache)
+      end,
+      0,
+      Cache#ar_mining_cache.mining_cache_sessions
+     ).
 
 %% @doc Returns the available size for the mining cache.
 %% Note, that this value does not include the reserved space for sessions,
@@ -72,124 +72,124 @@ actual_cache_size(Cache) ->
 %% @see reserved_size/1,2
 %% @see cache_size/1
 -spec available_size(Cache :: #ar_mining_cache{}) ->
-	Size :: non_neg_integer().
+          Size :: non_neg_integer().
 available_size(Cache) ->
-	Cache#ar_mining_cache.mining_cache_limit_bytes - cache_size(Cache).
+    Cache#ar_mining_cache.mining_cache_limit_bytes - cache_size(Cache).
 
 %% @doc Returns the reserved size for a cache.
 -spec reserved_size(Cache0 :: #ar_mining_cache{}) ->
-	{ok, Size :: non_neg_integer()} | {error, Reason :: term()}.
+          {ok, Size :: non_neg_integer()} | {error, Reason :: term()}.
 reserved_size(Cache0) ->
-	{ok, lists:sum([
-		begin
-			{ok, Size} = reserved_size(SessionKey, Cache0),
-			Size
-		end || SessionKey <- get_sessions(Cache0)
-	])}.
+    {ok, lists:sum([
+                    begin
+                        {ok, Size} = reserved_size(SessionKey, Cache0),
+                        Size
+                    end || SessionKey <- get_sessions(Cache0)
+                   ])}.
 
 %% @doc Returns the reserved size for a session.
 -spec reserved_size(SessionKey :: term(), Cache0 :: #ar_mining_cache{}) ->
-	{ok, Size :: non_neg_integer()} | {error, Reason :: term()}.
+          {ok, Size :: non_neg_integer()} | {error, Reason :: term()}.
 reserved_size(SessionKey, Cache0) ->
-	case with_mining_cache_session(SessionKey, fun(Session) ->
-		{ok, Session#ar_mining_cache_session.reserved_mining_cache_bytes, Session}
-	end, Cache0) of
-		{ok, Size, _Cache1} -> {ok, Size};
-		{error, Reason} -> {error, Reason}
-	end.
+    case with_mining_cache_session(SessionKey, fun(Session) ->
+                                                       {ok, Session#ar_mining_cache_session.reserved_mining_cache_bytes, Session}
+                                               end, Cache0) of
+        {ok, Size, _Cache1} -> {ok, Size};
+        {error, Reason} -> {error, Reason}
+    end.
 
 %% @doc Adds a new mining cache session to the cache.
 %% If the cache limit is exceeded, the oldest session is dropped.
 -spec add_session(SessionKey :: term(), Cache0 :: #ar_mining_cache{}) ->
-	Cache1 :: #ar_mining_cache{}.
+          Cache1 :: #ar_mining_cache{}.
 add_session(SessionKey, Cache0) ->
-	case maps:is_key(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions) of
-		true -> Cache0;
-		false ->
-			Cache1 = Cache0#ar_mining_cache{
-				mining_cache_sessions = maps:put(SessionKey, #ar_mining_cache_session{}, Cache0#ar_mining_cache.mining_cache_sessions),
-				mining_cache_sessions_queue = queue:in(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions_queue)
-			},
-			case queue:len(Cache1#ar_mining_cache.mining_cache_sessions_queue) > ?CACHE_SESSIONS_LIMIT of
-				true ->
-					{{value, LastSessionKey}, Queue1} = queue:out(Cache1#ar_mining_cache.mining_cache_sessions_queue),
-					Cache2 = drop_session(LastSessionKey, Cache1),
-					?LOG_DEBUG([
-						{event, mining_cache_add_drop_session},
-						{cache_name, Cache1#ar_mining_cache.name},
-						{added_session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-						{dropped_session_key, ar_nonce_limiter:encode_session_key(LastSessionKey)},
-						{num_sessions, queue:len(Queue1)}]),
-					Cache2#ar_mining_cache{mining_cache_sessions_queue = Queue1};
-				false ->
-					?LOG_DEBUG([
-						{event, mining_cache_add_session},
-						{cache_name, Cache1#ar_mining_cache.name},
-						{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-						{num_sessions,
-							queue:len(Cache1#ar_mining_cache.mining_cache_sessions_queue)}]),
-					Cache1
-			end
-	end.
+    case maps:is_key(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions) of
+        true -> Cache0;
+        false ->
+            Cache1 = Cache0#ar_mining_cache{
+                       mining_cache_sessions = maps:put(SessionKey, #ar_mining_cache_session{}, Cache0#ar_mining_cache.mining_cache_sessions),
+                       mining_cache_sessions_queue = queue:in(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions_queue)
+                      },
+            case queue:len(Cache1#ar_mining_cache.mining_cache_sessions_queue) > ?CACHE_SESSIONS_LIMIT of
+                true ->
+                    {{value, LastSessionKey}, Queue1} = queue:out(Cache1#ar_mining_cache.mining_cache_sessions_queue),
+                    Cache2 = drop_session(LastSessionKey, Cache1),
+                    ?LOG_DEBUG([
+                                {event, mining_cache_add_drop_session},
+                                {cache_name, Cache1#ar_mining_cache.name},
+                                {added_session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+                                {dropped_session_key, ar_nonce_limiter:encode_session_key(LastSessionKey)},
+                                {num_sessions, queue:len(Queue1)}]),
+                    Cache2#ar_mining_cache{mining_cache_sessions_queue = Queue1};
+                false ->
+                    ?LOG_DEBUG([
+                                {event, mining_cache_add_session},
+                                {cache_name, Cache1#ar_mining_cache.name},
+                                {session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+                                {num_sessions,
+                                 queue:len(Cache1#ar_mining_cache.mining_cache_sessions_queue)}]),
+                    Cache1
+            end
+    end.
 
 %% @doc Reserves a certain amount of space for a session.
 %% Note, that if the session already has a reserved amount of space, it will be
 %% added to the existing reserved space.
 -spec reserve_for_session(SessionKey :: term(), Size :: non_neg_integer(), Cache0 :: #ar_mining_cache{}) ->
-	{ok, Cache1 :: #ar_mining_cache{}} | {error, Reason :: term()}.
+          {ok, Cache1 :: #ar_mining_cache{}} | {error, Reason :: term()}.
 reserve_for_session(SessionKey, Size, Cache0) ->
-	case available_size(Cache0) < Size of
-		true -> {error, cache_limit_exceeded};
-		false ->
-			with_mining_cache_session(SessionKey, fun(#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize} = Session) ->
-				{ok, Session#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize + Size}}
-			end, Cache0)
-	end.
+    case available_size(Cache0) < Size of
+        true -> {error, cache_limit_exceeded};
+        false ->
+            with_mining_cache_session(SessionKey, fun(#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize} = Session) ->
+                                                          {ok, Session#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize + Size}}
+                                                  end, Cache0)
+    end.
 
 %% @doc Releases the reserved space for a session.
 %% If the reserved space is less than the released size, the reserved space will be set to 0.
 -spec release_for_session(SessionKey :: term(), Size :: non_neg_integer(), Cache0 :: #ar_mining_cache{}) ->
-	{ok, Cache1 :: #ar_mining_cache{}} | {error, Reason :: term()}.
+          {ok, Cache1 :: #ar_mining_cache{}} | {error, Reason :: term()}.
 release_for_session(SessionKey, Size, Cache0) ->
-	with_mining_cache_session(SessionKey, fun(#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize} = Session) ->
-		{ok, Session#ar_mining_cache_session{reserved_mining_cache_bytes = max(0, ReservedSize - Size)}}
-	end, Cache0).
+    with_mining_cache_session(SessionKey, fun(#ar_mining_cache_session{reserved_mining_cache_bytes = ReservedSize} = Session) ->
+                                                  {ok, Session#ar_mining_cache_session{reserved_mining_cache_bytes = max(0, ReservedSize - Size)}}
+                                          end, Cache0).
 
 %% @doc Drops a mining cache session from the cache.
 -spec drop_session(SessionKey :: term(), Cache0 :: #ar_mining_cache{}) ->
-	Cache1 :: #ar_mining_cache{}.
+          Cache1 :: #ar_mining_cache{}.
 drop_session(SessionKey, Cache0) ->
-	case maps:take(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions) of
-		{Session, Sessions} ->
-			maybe_search_for_anomalies(SessionKey, Session),
-			Queue0 = queue:filter(
-				fun(SessionKey0) -> SessionKey0 =/= SessionKey end,
-				Cache0#ar_mining_cache.mining_cache_sessions_queue
-			),
-			?LOG_DEBUG([
-				{event, mining_cache_drop_session},
-				{cache_name, Cache0#ar_mining_cache.name},
-				{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-				{num_sessions, queue:len(Queue0)}]),
-			Cache0#ar_mining_cache{
-				mining_cache_sessions = Sessions,
-				mining_cache_sessions_queue = Queue0
-			};
-		_ -> Cache0
-	end.
+    case maps:take(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions) of
+        {Session, Sessions} ->
+            maybe_search_for_anomalies(SessionKey, Session),
+            Queue0 = queue:filter(
+                       fun(SessionKey0) -> SessionKey0 =/= SessionKey end,
+                       Cache0#ar_mining_cache.mining_cache_sessions_queue
+                      ),
+            ?LOG_DEBUG([
+                        {event, mining_cache_drop_session},
+                        {cache_name, Cache0#ar_mining_cache.name},
+                        {session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+                        {num_sessions, queue:len(Queue0)}]),
+            Cache0#ar_mining_cache{
+              mining_cache_sessions = Sessions,
+              mining_cache_sessions_queue = Queue0
+             };
+        _ -> Cache0
+    end.
 
 %% @doc Checks if a session exists in the cache.
 -spec session_exists(SessionKey :: term(), Cache0 :: #ar_mining_cache{}) ->
-	Exists :: boolean().
+          Exists :: boolean().
 session_exists(SessionKey, Cache0) ->
-	maps:is_key(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions).
+    maps:is_key(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions).
 
 %% @doc Returns the list of sessions in the cache.
 %% Note, that this list is not sorted by the chronological order.
 -spec get_sessions(Cache0 :: #ar_mining_cache{}) ->
-	Sessions :: [term()].
+          Sessions :: [term()].
 get_sessions(Cache0) ->
-	queue:to_list(Cache0#ar_mining_cache.mining_cache_sessions_queue).
+    queue:to_list(Cache0#ar_mining_cache.mining_cache_sessions_queue).
 
 %% @doc Maps a cached value for a session into a new value.
 %%
@@ -209,73 +209,73 @@ get_sessions(Cache0) ->
 %% If the returned value equals to the argument passed into the `Fun`, the cache
 %% will not be changed. This implies that cache will not store the empty value.
 -spec with_cached_value(
-	Key :: term(),
-	SessionKey :: term(),
-	Cache0 :: #ar_mining_cache{},
-	Fun :: fun(
-		(Value :: #ar_mining_cache_value{}) ->
-			{ok, drop} |
-			{ok, drop, Size :: non_neg_integer()} |
-			{ok, Value1 :: #ar_mining_cache_value{}} |
-			{ok, Value1 :: #ar_mining_cache_value{}, Size :: non_neg_integer()} |
-			{error, Reason :: term()}
-	)
-) ->
-	Result :: {ok, Cache1 :: #ar_mining_cache{}} | {error, Reason :: term()}.
+        Key :: term(),
+        SessionKey :: term(),
+        Cache0 :: #ar_mining_cache{},
+        Fun :: fun(
+          (Value :: #ar_mining_cache_value{}) ->
+                          {ok, drop} |
+                          {ok, drop, Size :: non_neg_integer()} |
+                          {ok, Value1 :: #ar_mining_cache_value{}} |
+                          {ok, Value1 :: #ar_mining_cache_value{}, Size :: non_neg_integer()} |
+                          {error, Reason :: term()}
+                              )
+       ) ->
+          Result :: {ok, Cache1 :: #ar_mining_cache{}} | {error, Reason :: term()}.
 with_cached_value(Key, SessionKey, Cache0, Fun) ->
-	with_mining_cache_session(SessionKey, fun(Session) ->
-		Value0 = maps:get(Key, Session#ar_mining_cache_session.mining_cache, #ar_mining_cache_value{}),
-		case Fun(Value0) of
-			{error, Reason} -> {error, Reason};
-			{ok, drop} ->
-				{ok, Session#ar_mining_cache_session{
-					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
-					mining_cache_size_bytes = max(0, Session#ar_mining_cache_session.mining_cache_size_bytes - cached_value_size(Value0))
-				}};
-			{ok, drop, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
-				{ok, Session#ar_mining_cache_session{
-					mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
-					reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + ReservationSizeAdjustment),
-					mining_cache_size_bytes = max(0, Session#ar_mining_cache_session.mining_cache_size_bytes - cached_value_size(Value0))
-				}};
-			{ok, Value0} -> {ok, Session};
-			{ok, Value0, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
-				{ok, Session#ar_mining_cache_session{
-					reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + ReservationSizeAdjustment)
-				}};
-			{ok, Value1} ->
-				SizeDiff = cached_value_size(Value1) - cached_value_size(Value0),
-				SessionAvailableSize = available_size(Cache0) + Session#ar_mining_cache_session.reserved_mining_cache_bytes,
-				CacheLimit = get_limit(Cache0),
-				case SizeDiff > SessionAvailableSize of
-					true when CacheLimit =/= 0 -> {error, cache_limit_exceeded};
-					_ ->
-						{ok, Session#ar_mining_cache_session{
-							mining_cache = maps:put(Key, Value1, Session#ar_mining_cache_session.mining_cache),
-							reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes - SizeDiff),
-							mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes + SizeDiff
-						}}
-				end;
-			{ok, Value1, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
-				SizeDiff = cached_value_size(Value1) - cached_value_size(Value0),
-				SessionAvailableSize = available_size(Cache0) + Session#ar_mining_cache_session.reserved_mining_cache_bytes,
-				CacheLimit = get_limit(Cache0),
-				case SizeDiff > SessionAvailableSize of
-					true when CacheLimit =/= 0 -> {error, cache_limit_exceeded};
-					_ ->
-						{ok, Session#ar_mining_cache_session{
-							mining_cache = maps:put(Key, Value1, Session#ar_mining_cache_session.mining_cache),
-							reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes - SizeDiff + ReservationSizeAdjustment),
-							mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes + SizeDiff
-						}}
-				end;
-			Other ->
-				?LOG_WARNING([
-					{event, unexpected_return_value_from_with_cached_value},
-					{cache_name, Cache0#ar_mining_cache.name}, {value, Other}]),
-				{error, unexpected_return_value_from_with_cached_value}
-		end
-	end, Cache0).
+    with_mining_cache_session(SessionKey, fun(Session) ->
+                                                  Value0 = maps:get(Key, Session#ar_mining_cache_session.mining_cache, #ar_mining_cache_value{}),
+                                                  case Fun(Value0) of
+                                                      {error, Reason} -> {error, Reason};
+                                                      {ok, drop} ->
+                                                          {ok, Session#ar_mining_cache_session{
+                                                                 mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
+                                                                 mining_cache_size_bytes = max(0, Session#ar_mining_cache_session.mining_cache_size_bytes - cached_value_size(Value0))
+                                                                }};
+                                                      {ok, drop, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
+                                                          {ok, Session#ar_mining_cache_session{
+                                                                 mining_cache = maps:remove(Key, Session#ar_mining_cache_session.mining_cache),
+                                                                 reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + ReservationSizeAdjustment),
+                                                                 mining_cache_size_bytes = max(0, Session#ar_mining_cache_session.mining_cache_size_bytes - cached_value_size(Value0))
+                                                                }};
+                                                      {ok, Value0} -> {ok, Session};
+                                                      {ok, Value0, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
+                                                          {ok, Session#ar_mining_cache_session{
+                                                                 reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes + ReservationSizeAdjustment)
+                                                                }};
+                                                      {ok, Value1} ->
+                                                          SizeDiff = cached_value_size(Value1) - cached_value_size(Value0),
+                                                          SessionAvailableSize = available_size(Cache0) + Session#ar_mining_cache_session.reserved_mining_cache_bytes,
+                                                          CacheLimit = get_limit(Cache0),
+                                                          case SizeDiff > SessionAvailableSize of
+                                                              true when CacheLimit =/= 0 -> {error, cache_limit_exceeded};
+                                                              _ ->
+                                                                  {ok, Session#ar_mining_cache_session{
+                                                                         mining_cache = maps:put(Key, Value1, Session#ar_mining_cache_session.mining_cache),
+                                                                         reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes - SizeDiff),
+                                                                         mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes + SizeDiff
+                                                                        }}
+                                                          end;
+                                                      {ok, Value1, ReservationSizeAdjustment} when ReservationSizeAdjustment < 0 ->
+                                                          SizeDiff = cached_value_size(Value1) - cached_value_size(Value0),
+                                                          SessionAvailableSize = available_size(Cache0) + Session#ar_mining_cache_session.reserved_mining_cache_bytes,
+                                                          CacheLimit = get_limit(Cache0),
+                                                          case SizeDiff > SessionAvailableSize of
+                                                              true when CacheLimit =/= 0 -> {error, cache_limit_exceeded};
+                                                              _ ->
+                                                                  {ok, Session#ar_mining_cache_session{
+                                                                         mining_cache = maps:put(Key, Value1, Session#ar_mining_cache_session.mining_cache),
+                                                                         reserved_mining_cache_bytes = max(0, Session#ar_mining_cache_session.reserved_mining_cache_bytes - SizeDiff + ReservationSizeAdjustment),
+                                                                         mining_cache_size_bytes = Session#ar_mining_cache_session.mining_cache_size_bytes + SizeDiff
+                                                                        }}
+                                                          end;
+                                                      Other ->
+                                                          ?LOG_WARNING([
+                                                                        {event, unexpected_return_value_from_with_cached_value},
+                                                                        {cache_name, Cache0#ar_mining_cache.name}, {value, Other}]),
+                                                          {error, unexpected_return_value_from_with_cached_value}
+                                                  end
+                                          end, Cache0).
 
 %%%===================================================================
 %%% Private functions.
@@ -289,11 +289,11 @@ log_anomaly_warning(LogData) -> ?LOG_WARNING(LogData).
 
 %% Returns the size of the cached data in bytes.
 cached_value_size(#ar_mining_cache_value{ chunk1 = Chunk1, chunk2 = Chunk2 }) ->
-  MaybeBinarySize = fun
-		(undefined) -> 0;
-		(Binary) -> byte_size(Binary)
-  end,
-  MaybeBinarySize(Chunk1) + MaybeBinarySize(Chunk2).
+    MaybeBinarySize = fun
+                          (undefined) -> 0;
+        (Binary) -> byte_size(Binary)
+                                                                              end,
+MaybeBinarySize(Chunk1) + MaybeBinarySize(Chunk2).
 
 %% Executes the `Fun` function with the chunk cache session as argument.
 %% If the session does not exist, it returns an error without executing the `Fun`.
@@ -303,20 +303,20 @@ cached_value_size(#ar_mining_cache_value{ chunk1 = Chunk1, chunk2 = Chunk2 }) ->
 %%   be used to replace the old cache session and return a value to the caller.
 %% - an error `{error, Reason}` to report back to the caller.
 with_mining_cache_session(SessionKey, Fun, Cache0) ->
-	case maps:is_key(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions) of
-		true ->
-			case Fun(maps:get(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions)) of
-				{ok, Return, Session1} -> {ok, Return, Cache0#ar_mining_cache{
-					mining_cache_sessions = maps:put(SessionKey, Session1, Cache0#ar_mining_cache.mining_cache_sessions)
-				}};
-				{ok, Session1} -> {ok, Cache0#ar_mining_cache{
-					mining_cache_sessions = maps:put(SessionKey, Session1, Cache0#ar_mining_cache.mining_cache_sessions)
-				}};
-				{error, Reason} -> {error, Reason}
-			end;
-		false ->
-			{error, session_not_found}
-	end.
+    case maps:is_key(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions) of
+        true ->
+            case Fun(maps:get(SessionKey, Cache0#ar_mining_cache.mining_cache_sessions)) of
+                {ok, Return, Session1} -> {ok, Return, Cache0#ar_mining_cache{
+                                                         mining_cache_sessions = maps:put(SessionKey, Session1, Cache0#ar_mining_cache.mining_cache_sessions)
+                                                        }};
+                {ok, Session1} -> {ok, Cache0#ar_mining_cache{
+                                         mining_cache_sessions = maps:put(SessionKey, Session1, Cache0#ar_mining_cache.mining_cache_sessions)
+                                        }};
+                {error, Reason} -> {error, Reason}
+            end;
+        false ->
+            {error, session_not_found}
+    end.
 
 %% Searches for anomalies in the mining cache session.
 %% If the actual cache size is different from the expected cache size,
@@ -327,125 +327,125 @@ with_mining_cache_session(SessionKey, Fun, Cache0) ->
 %%
 %% Perhaps it is a good idea to put this under a config flag, disabled by default.
 maybe_search_for_anomalies(SessionKey, #ar_mining_cache_session{
-  mining_cache = MiningCache,
-  mining_cache_size_bytes = MiningCacheSize,
-  reserved_mining_cache_bytes = ReservedMiningCacheBytes
-}) ->
-	ActualCacheSize = maybe_search_for_anomalies_cache_values(SessionKey, MiningCache),
-	case {ActualCacheSize, MiningCacheSize} of
-		{0, 0} -> ok;
-		{EqualSize, EqualSize} -> log_anomaly_warning([
-			{event, mining_cache_anomaly}, {anomaly, cache_size_non_zero},
-			{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-			{actual_size, ActualCacheSize}, {reported_size, MiningCacheSize}]);
-		{_, _} -> log_anomaly_warning([
-			{event, mining_cache_anomaly}, {anomaly, cache_size_mismatch},
-			{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-			{actual_size, ActualCacheSize}, {reported_size, MiningCacheSize}])
-	end,
-	case ReservedMiningCacheBytes of
-		0 -> ok;
-		_ -> log_anomaly_warning([
-			{event, mining_cache_anomaly}, {anomaly, reserved_size_non_zero},
-			{session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
-			{actual_size, ReservedMiningCacheBytes}, {expected_size, 0}])
-	end;
+                                          mining_cache = MiningCache,
+                                          mining_cache_size_bytes = MiningCacheSize,
+                                          reserved_mining_cache_bytes = ReservedMiningCacheBytes
+                                         }) ->
+    ActualCacheSize = maybe_search_for_anomalies_cache_values(SessionKey, MiningCache),
+    case {ActualCacheSize, MiningCacheSize} of
+        {0, 0} -> ok;
+        {EqualSize, EqualSize} -> log_anomaly_warning([
+                                                       {event, mining_cache_anomaly}, {anomaly, cache_size_non_zero},
+                                                       {session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+                                                       {actual_size, ActualCacheSize}, {reported_size, MiningCacheSize}]);
+        {_, _} -> log_anomaly_warning([
+                                       {event, mining_cache_anomaly}, {anomaly, cache_size_mismatch},
+                                       {session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+                                       {actual_size, ActualCacheSize}, {reported_size, MiningCacheSize}])
+    end,
+    case ReservedMiningCacheBytes of
+        0 -> ok;
+        _ -> log_anomaly_warning([
+                                  {event, mining_cache_anomaly}, {anomaly, reserved_size_non_zero},
+                                  {session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
+                                  {actual_size, ReservedMiningCacheBytes}, {expected_size, 0}])
+    end;
 maybe_search_for_anomalies(SessionKey, _InvalidSession) ->
-	?LOG_ERROR([{event, mining_cache_anomaly}, {anomaly, invalid_session_type},
-		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
-	ok.
+    ?LOG_ERROR([{event, mining_cache_anomaly}, {anomaly, invalid_session_type},
+                {session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
+    ok.
 
 maybe_search_for_anomalies_cache_values(SessionKey, MiningCache) when is_map(MiningCache) ->
-	OuterAcc0 = {_Anomalies = #{}, _ActualSize = 0},
-	{Anomalies, ActualSize} = maps:fold(fun(Key, Value, {Anomalies0, ActualSize0}) ->
-		Anomalies1 = lists:foldl(fun(Check, Anomalies) -> Check({Key, Value}, Anomalies) end, Anomalies0, [
-			fun maybe_search_for_anomalies_cache_values_chunk1_failed/2,
-			fun maybe_search_for_anomalies_cache_values_chunk1_stale/2,
-			fun maybe_search_for_anomalies_cache_values_chunk2_failed/2,
-			fun maybe_search_for_anomalies_cache_values_chunk2_stale/2,
-			fun maybe_search_for_anomalies_cache_values_h1_missing/2,
-			fun maybe_search_for_anomalies_cache_values_h2_missing/2,
-			fun maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present/2
-		]),
-		{Anomalies1, ActualSize0 + cached_value_size(Value)}
-	end, OuterAcc0, MiningCache),
-	case maps:size(Anomalies) > 0 of
-		true -> log_anomaly_warning([
-			{event, mining_cache_anomaly}, {anomaly, cached_values_anomalies},
-			{anomalies, Anomalies},
-			{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]);
-		false -> ok
-	end,
-	ActualSize;
+    OuterAcc0 = {_Anomalies = #{}, _ActualSize = 0},
+    {Anomalies, ActualSize} = maps:fold(fun(Key, Value, {Anomalies0, ActualSize0}) ->
+                                                Anomalies1 = lists:foldl(fun(Check, Anomalies) -> Check({Key, Value}, Anomalies) end, Anomalies0, [
+                                                                                                                                                   fun maybe_search_for_anomalies_cache_values_chunk1_failed/2,
+                                                                                                                                                   fun maybe_search_for_anomalies_cache_values_chunk1_stale/2,
+                                                                                                                                                   fun maybe_search_for_anomalies_cache_values_chunk2_failed/2,
+                                                                                                                                                   fun maybe_search_for_anomalies_cache_values_chunk2_stale/2,
+                                                                                                                                                   fun maybe_search_for_anomalies_cache_values_h1_missing/2,
+                                                                                                                                                   fun maybe_search_for_anomalies_cache_values_h2_missing/2,
+                                                                                                                                                   fun maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present/2
+                                                                                                                                                  ]),
+                                                {Anomalies1, ActualSize0 + cached_value_size(Value)}
+                                        end, OuterAcc0, MiningCache),
+    case maps:size(Anomalies) > 0 of
+        true -> log_anomaly_warning([
+                                     {event, mining_cache_anomaly}, {anomaly, cached_values_anomalies},
+                                     {anomalies, Anomalies},
+                                     {session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]);
+        false -> ok
+    end,
+    ActualSize;
 maybe_search_for_anomalies_cache_values(SessionKey, _InvalidCache) ->
-	?LOG_ERROR([{event, mining_cache_anomaly}, {anomaly, invalid_cache_type},
-		{session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
-	0.
+    ?LOG_ERROR([{event, mining_cache_anomaly}, {anomaly, invalid_cache_type},
+                {session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
+    0.
 
 maybe_search_for_anomalies_cache_values_chunk1_failed({
-	Key,
-	#ar_mining_cache_value{ chunk1 = undefined, chunk1_failed = false } = Value
-}, Anomalies) ->
-	maps:update_with(chunk1_failed, fun(V) -> V + 1 end, 1,
-		maps:update_with(chunk1_failed_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+                                                       Key,
+                                                       #ar_mining_cache_value{ chunk1 = undefined, chunk1_failed = false } = Value
+                                                      }, Anomalies) ->
+    maps:update_with(chunk1_failed, fun(V) -> V + 1 end, 1,
+                     maps:update_with(chunk1_failed_sample, fun(V) -> V end, {Key, Value}, Anomalies));
 maybe_search_for_anomalies_cache_values_chunk1_failed({_, _}, Anomalies) ->
-	Anomalies.
+    Anomalies.
 
 maybe_search_for_anomalies_cache_values_chunk1_stale({
-	Key,
-	#ar_mining_cache_value{ chunk1 = Chunk1, chunk1_failed = true } = Value
-}, Anomalies) when undefined =/= Chunk1 ->
-	maps:update_with(chunk1_stale, fun(V) -> V + 1 end, 1,
-		maps:update_with(chunk1_stale_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+                                                      Key,
+                                                      #ar_mining_cache_value{ chunk1 = Chunk1, chunk1_failed = true } = Value
+                                                     }, Anomalies) when undefined =/= Chunk1 ->
+    maps:update_with(chunk1_stale, fun(V) -> V + 1 end, 1,
+                     maps:update_with(chunk1_stale_sample, fun(V) -> V end, {Key, Value}, Anomalies));
 maybe_search_for_anomalies_cache_values_chunk1_stale({_, _}, Anomalies) ->
-	Anomalies.
+    Anomalies.
 
 maybe_search_for_anomalies_cache_values_chunk2_failed({
-	Key,
-	#ar_mining_cache_value{ chunk2 = undefined, chunk2_failed = false } = Value
-}, Anomalies) ->
-	maps:update_with(chunk2_failed, fun(V) -> V + 1 end, 1,
-		maps:update_with(chunk2_failed_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+                                                       Key,
+                                                       #ar_mining_cache_value{ chunk2 = undefined, chunk2_failed = false } = Value
+                                                      }, Anomalies) ->
+    maps:update_with(chunk2_failed, fun(V) -> V + 1 end, 1,
+                     maps:update_with(chunk2_failed_sample, fun(V) -> V end, {Key, Value}, Anomalies));
 maybe_search_for_anomalies_cache_values_chunk2_failed({_, _}, Anomalies) ->
-	Anomalies.
+    Anomalies.
 
 maybe_search_for_anomalies_cache_values_chunk2_stale({
-	Key,
-	#ar_mining_cache_value{ chunk2 = Chunk2, chunk2_failed = true } = Value
-}, Anomalies) when undefined =/= Chunk2 ->
-	maps:update_with(chunk2_stale, fun(V) -> V + 1 end, 1,
-		maps:update_with(chunk2_stale_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+                                                      Key,
+                                                      #ar_mining_cache_value{ chunk2 = Chunk2, chunk2_failed = true } = Value
+                                                     }, Anomalies) when undefined =/= Chunk2 ->
+    maps:update_with(chunk2_stale, fun(V) -> V + 1 end, 1,
+                     maps:update_with(chunk2_stale_sample, fun(V) -> V end, {Key, Value}, Anomalies));
 maybe_search_for_anomalies_cache_values_chunk2_stale({_, _}, Anomalies) ->
-	Anomalies.
+    Anomalies.
 
 maybe_search_for_anomalies_cache_values_h1_missing({
-	Key,
-	#ar_mining_cache_value{ h1 = undefined, chunk1 = Chunk1 } = Value
-}, Anomalies)
-when undefined =/= Chunk1 ->
-	maps:update_with(h1_missing, fun(V) -> V + 1 end, 1,
-		maps:update_with(h1_missing_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+                                                    Key,
+                                                    #ar_mining_cache_value{ h1 = undefined, chunk1 = Chunk1 } = Value
+                                                   }, Anomalies)
+  when undefined =/= Chunk1 ->
+    maps:update_with(h1_missing, fun(V) -> V + 1 end, 1,
+                     maps:update_with(h1_missing_sample, fun(V) -> V end, {Key, Value}, Anomalies));
 maybe_search_for_anomalies_cache_values_h1_missing({_, _}, Anomalies) ->
-	Anomalies.
+    Anomalies.
 
 maybe_search_for_anomalies_cache_values_h2_missing({
-	Key,
-	#ar_mining_cache_value{ h2 = undefined, chunk2 = Chunk2 } = Value
-}, Anomalies)
-when undefined =/= Chunk2 ->
-	maps:update_with(h2_missing, fun(V) -> V + 1 end, 1,
-		maps:update_with(h2_missing_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+                                                    Key,
+                                                    #ar_mining_cache_value{ h2 = undefined, chunk2 = Chunk2 } = Value
+                                                   }, Anomalies)
+  when undefined =/= Chunk2 ->
+    maps:update_with(h2_missing, fun(V) -> V + 1 end, 1,
+                     maps:update_with(h2_missing_sample, fun(V) -> V end, {Key, Value}, Anomalies));
 maybe_search_for_anomalies_cache_values_h2_missing({_, _}, Anomalies) ->
-	Anomalies.
+    Anomalies.
 
 maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present({
-	Key,
-	#ar_mining_cache_value{ h1_passes_diff_checks = true } = Value
-}, Anomalies) ->
-	maps:update_with(h1_passes_diff_checks_present, fun(V) -> V + 1 end, 1,
-		maps:update_with(h1_passes_diff_checks_present_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+                                                                       Key,
+                                                                       #ar_mining_cache_value{ h1_passes_diff_checks = true } = Value
+                                                                      }, Anomalies) ->
+    maps:update_with(h1_passes_diff_checks_present, fun(V) -> V + 1 end, 1,
+                     maps:update_with(h1_passes_diff_checks_present_sample, fun(V) -> V end, {Key, Value}, Anomalies));
 maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present({_, _}, Anomalies) ->
-	Anomalies.
+    Anomalies.
 
 
 
@@ -456,173 +456,173 @@ maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present({_, _}, An
 -include_lib("eunit/include/eunit.hrl").
 
 cache_size_test() ->
-	Cache = new(test_cache),
-	?assertEqual(0, cache_size(Cache)).
+    Cache = new(test_cache),
+    ?assertEqual(0, cache_size(Cache)).
 
 add_session_test() ->
-	Cache0 = new(test_cache),
-	SessionKey0 = session0,
-	Cache1 = add_session(SessionKey0, Cache0),
-	?assert(session_exists(SessionKey0, Cache1)),
-	?assertEqual(0, cache_size(Cache1)),
-	Cache1 = add_session(SessionKey0, Cache1),
-	?assertEqual([SessionKey0], get_sessions(Cache1)).
+    Cache0 = new(test_cache),
+    SessionKey0 = session0,
+    Cache1 = add_session(SessionKey0, Cache0),
+    ?assert(session_exists(SessionKey0, Cache1)),
+    ?assertEqual(0, cache_size(Cache1)),
+    Cache1 = add_session(SessionKey0, Cache1),
+    ?assertEqual([SessionKey0], get_sessions(Cache1)).
 
 add_session_limit_test() ->
-	Cache0 = new(test_cache),
-	Cache1 = add_session(session0, Cache0),
-	Cache2 = add_session(session1, Cache1),
-	Cache3 = add_session(session2, Cache2),
-	Cache4 = add_session(session3, Cache3),
-	?assertEqual([session0, session1, session2, session3], get_sessions(Cache4)),
-	?assertEqual(0, cache_size(Cache4)),
-	Cache5 = add_session(session4, Cache4),
-	?assertEqual([session1, session2, session3, session4], get_sessions(Cache5)),
-	?assertEqual(0, cache_size(Cache5)).
+    Cache0 = new(test_cache),
+    Cache1 = add_session(session0, Cache0),
+    Cache2 = add_session(session1, Cache1),
+    Cache3 = add_session(session2, Cache2),
+    Cache4 = add_session(session3, Cache3),
+    ?assertEqual([session0, session1, session2, session3], get_sessions(Cache4)),
+    ?assertEqual(0, cache_size(Cache4)),
+    Cache5 = add_session(session4, Cache4),
+    ?assertEqual([session1, session2, session3, session4], get_sessions(Cache5)),
+    ?assertEqual(0, cache_size(Cache5)).
 
 reserve_test() ->
-	Cache0 = new(test_cache, 1024),
-	SessionKey0 = session0,
-	ChunkId = chunk0,
-	Data = <<"chunk_data">>,
-	ReservedSize = 100,
-	%% Add session
-	Cache1 = add_session(SessionKey0, Cache0),
-	%% Reserve space
-	{ok, Cache2} = reserve_for_session(SessionKey0, ReservedSize, Cache1),
-	?assertEqual(ReservedSize, cache_size(Cache2)),
-	?assertMatch({ok, ReservedSize}, reserved_size(SessionKey0, Cache2)),
-	%% Add chunk1
-	{ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
-	end),
-	?assertEqual(ReservedSize, cache_size(Cache3)),
-	?assertEqual(byte_size(Data), actual_cache_size(Cache3)),
-	ExpectedReservedSize = ReservedSize - byte_size(Data),
-	?assertMatch({ok, ExpectedReservedSize}, reserved_size(SessionKey0, Cache3)),
-	%% Reserve more space
-	?assertMatch({error, cache_limit_exceeded}, reserve_for_session(SessionKey0, 1024 + ReservedSize, Cache3)),
-	%% Drop session
-	Cache4 = drop_session(SessionKey0, Cache3),
-	?assertEqual(0, cache_size(Cache4)).
+    Cache0 = new(test_cache, 1024),
+    SessionKey0 = session0,
+    ChunkId = chunk0,
+    Data = <<"chunk_data">>,
+    ReservedSize = 100,
+    %% Add session
+    Cache1 = add_session(SessionKey0, Cache0),
+    %% Reserve space
+    {ok, Cache2} = reserve_for_session(SessionKey0, ReservedSize, Cache1),
+    ?assertEqual(ReservedSize, cache_size(Cache2)),
+    ?assertMatch({ok, ReservedSize}, reserved_size(SessionKey0, Cache2)),
+    %% Add chunk1
+    {ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
+                                                                           {ok, Value#ar_mining_cache_value{ chunk1 = Data }}
+                                                                   end),
+    ?assertEqual(ReservedSize, cache_size(Cache3)),
+    ?assertEqual(byte_size(Data), actual_cache_size(Cache3)),
+    ExpectedReservedSize = ReservedSize - byte_size(Data),
+    ?assertMatch({ok, ExpectedReservedSize}, reserved_size(SessionKey0, Cache3)),
+    %% Reserve more space
+    ?assertMatch({error, cache_limit_exceeded}, reserve_for_session(SessionKey0, 1024 + ReservedSize, Cache3)),
+    %% Drop session
+    Cache4 = drop_session(SessionKey0, Cache3),
+    ?assertEqual(0, cache_size(Cache4)).
 
 release_test() ->
-	Cache0 = new(test_cache, 1024),
-	SessionKey0 = session0,
-	ChunkId = chunk0,
-	Data = <<"chunk_data">>,
-	ReservedSize = 100,
-	%% Add session
-	Cache1 = add_session(SessionKey0, Cache0),
-	%% Reserve space
-	{ok, Cache2} = reserve_for_session(SessionKey0, ReservedSize, Cache1),
-	?assertEqual(ReservedSize, cache_size(Cache2)),
-	?assertMatch({ok, ReservedSize}, reserved_size(SessionKey0, Cache2)),
-	%% Add chunk1
-	{ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
-	end),
-	ExpectedReservedSize = ReservedSize - byte_size(Data),
-	?assertMatch({ok, ExpectedReservedSize}, reserved_size(SessionKey0, Cache3)),
-	?assertEqual(byte_size(Data), actual_cache_size(Cache3)),
-	%% Release space
-	{ok, Cache4} = release_for_session(SessionKey0, 10, Cache3),
-	ExpectedReleasedReserveSize = ExpectedReservedSize - 10,
-	?assertMatch({ok, ExpectedReleasedReserveSize}, reserved_size(SessionKey0, Cache4)),
-	?assertEqual(byte_size(Data), actual_cache_size(Cache4)),
-	%% Drop session
-	Cache5 = drop_session(SessionKey0, Cache4),
-	?assertEqual(0, cache_size(Cache5)).
+    Cache0 = new(test_cache, 1024),
+    SessionKey0 = session0,
+    ChunkId = chunk0,
+    Data = <<"chunk_data">>,
+    ReservedSize = 100,
+    %% Add session
+    Cache1 = add_session(SessionKey0, Cache0),
+    %% Reserve space
+    {ok, Cache2} = reserve_for_session(SessionKey0, ReservedSize, Cache1),
+    ?assertEqual(ReservedSize, cache_size(Cache2)),
+    ?assertMatch({ok, ReservedSize}, reserved_size(SessionKey0, Cache2)),
+    %% Add chunk1
+    {ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
+                                                                           {ok, Value#ar_mining_cache_value{ chunk1 = Data }}
+                                                                   end),
+    ExpectedReservedSize = ReservedSize - byte_size(Data),
+    ?assertMatch({ok, ExpectedReservedSize}, reserved_size(SessionKey0, Cache3)),
+    ?assertEqual(byte_size(Data), actual_cache_size(Cache3)),
+    %% Release space
+    {ok, Cache4} = release_for_session(SessionKey0, 10, Cache3),
+    ExpectedReleasedReserveSize = ExpectedReservedSize - 10,
+    ?assertMatch({ok, ExpectedReleasedReserveSize}, reserved_size(SessionKey0, Cache4)),
+    ?assertEqual(byte_size(Data), actual_cache_size(Cache4)),
+    %% Drop session
+    Cache5 = drop_session(SessionKey0, Cache4),
+    ?assertEqual(0, cache_size(Cache5)).
 
 with_cached_value_add_chunk_test() ->
-	Cache0 = new(test_cache, 1024),
-	ChunkId = chunk0,
-	Data = <<"chunk_data">>,
-	SessionKey0 = session0,
-	%% Add session
-	Cache1 = add_session(SessionKey0, Cache0),
-	%% Add chunk1
-	{ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
-	end),
-	?assertEqual(byte_size(Data), cache_size(Cache2)),
-	%% Add chunk2
-	{ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{ chunk2 = Data }}
-	end),
-	?assertEqual(byte_size(Data) * 2, cache_size(Cache3)).
+    Cache0 = new(test_cache, 1024),
+    ChunkId = chunk0,
+    Data = <<"chunk_data">>,
+    SessionKey0 = session0,
+    %% Add session
+    Cache1 = add_session(SessionKey0, Cache0),
+    %% Add chunk1
+    {ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
+                                                                           {ok, Value#ar_mining_cache_value{ chunk1 = Data }}
+                                                                   end),
+    ?assertEqual(byte_size(Data), cache_size(Cache2)),
+    %% Add chunk2
+    {ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
+                                                                           {ok, Value#ar_mining_cache_value{ chunk2 = Data }}
+                                                                   end),
+    ?assertEqual(byte_size(Data) * 2, cache_size(Cache3)).
 
 with_cached_value_add_hash_test() ->
-	Cache0 = new(test_cache),
-	ChunkId = chunk0,
-	Hash = <<"hash">>,
-	SessionKey0 = session0,
-	%% Add session
-	Cache1 = add_session(SessionKey0, Cache0),
-	%% Add h1
-	{ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{ h1 = Hash }}
-	end),
-	?assertEqual(0, cache_size(Cache2)),
-	%% Add h2
-	{ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{ h2 = Hash }}
-	end),
-	?assertEqual(0, cache_size(Cache3)).
+    Cache0 = new(test_cache),
+    ChunkId = chunk0,
+    Hash = <<"hash">>,
+    SessionKey0 = session0,
+    %% Add session
+    Cache1 = add_session(SessionKey0, Cache0),
+    %% Add h1
+    {ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
+                                                                           {ok, Value#ar_mining_cache_value{ h1 = Hash }}
+                                                                   end),
+    ?assertEqual(0, cache_size(Cache2)),
+    %% Add h2
+    {ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(Value) ->
+                                                                           {ok, Value#ar_mining_cache_value{ h2 = Hash }}
+                                                                   end),
+    ?assertEqual(0, cache_size(Cache3)).
 
 with_cached_value_drop_test() ->
-	Cache0 = new(test_cache, 1024),
-	ChunkId = chunk0,
-	Data = <<"chunk_data">>,
-	SessionKey0 = session0,
-	%% Add session
-	Cache1 = add_session(SessionKey0, Cache0),
-	%% Add chunk1
-	{ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
-	end),
-	?assertEqual(byte_size(Data), cache_size(Cache2)),
-	%% Drop
-	{ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(_Value) ->
-		{ok, drop}
-	end),
-	?assertEqual(0, cache_size(Cache3)),
-	?assertEqual(0, actual_cache_size(Cache3)).
+    Cache0 = new(test_cache, 1024),
+    ChunkId = chunk0,
+    Data = <<"chunk_data">>,
+    SessionKey0 = session0,
+    %% Add session
+    Cache1 = add_session(SessionKey0, Cache0),
+    %% Add chunk1
+    {ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
+                                                                           {ok, Value#ar_mining_cache_value{ chunk1 = Data }}
+                                                                   end),
+    ?assertEqual(byte_size(Data), cache_size(Cache2)),
+    %% Drop
+    {ok, Cache3} = with_cached_value(ChunkId, SessionKey0, Cache2, fun(_Value) ->
+                                                                           {ok, drop}
+                                                                   end),
+    ?assertEqual(0, cache_size(Cache3)),
+    ?assertEqual(0, actual_cache_size(Cache3)).
 
 set_limit_test() ->
-	Cache0 = new(test_cache),
-	Data = <<"chunk_data">>,
-	SessionKey0 = session0,
-	%% Add session
-	Cache1 = add_session(SessionKey0, Cache0),
-	%% Add chunk1
-	ChunkId0 = chunk0,
-	{ok, Cache2} = with_cached_value(ChunkId0, SessionKey0, Cache1, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
-	end),
-	?assertEqual(byte_size(Data), cache_size(Cache2)),
-	%% Set limit
-	ChunkId1 = chunk1,
-	Cache3 = set_limit(5, Cache2),
-	%% Try to add chunk2
-	{error, cache_limit_exceeded} = with_cached_value(ChunkId1, SessionKey0, Cache3, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
-	end),
-	?assertEqual(byte_size(Data), cache_size(Cache3)).
+    Cache0 = new(test_cache),
+    Data = <<"chunk_data">>,
+    SessionKey0 = session0,
+    %% Add session
+    Cache1 = add_session(SessionKey0, Cache0),
+    %% Add chunk1
+    ChunkId0 = chunk0,
+    {ok, Cache2} = with_cached_value(ChunkId0, SessionKey0, Cache1, fun(Value) ->
+                                                                            {ok, Value#ar_mining_cache_value{ chunk1 = Data }}
+                                                                    end),
+    ?assertEqual(byte_size(Data), cache_size(Cache2)),
+    %% Set limit
+    ChunkId1 = chunk1,
+    Cache3 = set_limit(5, Cache2),
+    %% Try to add chunk2
+    {error, cache_limit_exceeded} = with_cached_value(ChunkId1, SessionKey0, Cache3, fun(Value) ->
+                                                                                             {ok, Value#ar_mining_cache_value{ chunk1 = Data }}
+                                                                                     end),
+    ?assertEqual(byte_size(Data), cache_size(Cache3)).
 
 drop_session_test() ->
-	Cache0 = new(test_cache, 1024),
-	ChunkId = chunk0,
-	Data = <<"chunk_data">>,
-	SessionKey0 = session0,
-	%% Add session
-	Cache1 = add_session(SessionKey0, Cache0),
-	%% Add chunk1
-	{ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
-		{ok, Value#ar_mining_cache_value{ chunk1 = Data }}
-	end),
-	?assertEqual(byte_size(Data), cache_size(Cache2)),
-	%% Drop session
-	Cache3 = drop_session(SessionKey0, Cache2),
-	?assertNot(session_exists(SessionKey0, Cache3)),
-	?assertEqual(0, cache_size(Cache3)).
+    Cache0 = new(test_cache, 1024),
+    ChunkId = chunk0,
+    Data = <<"chunk_data">>,
+    SessionKey0 = session0,
+    %% Add session
+    Cache1 = add_session(SessionKey0, Cache0),
+    %% Add chunk1
+    {ok, Cache2} = with_cached_value(ChunkId, SessionKey0, Cache1, fun(Value) ->
+                                                                           {ok, Value#ar_mining_cache_value{ chunk1 = Data }}
+                                                                   end),
+    ?assertEqual(byte_size(Data), cache_size(Cache2)),
+    %% Drop session
+    Cache3 = drop_session(SessionKey0, Cache2),
+    ?assertNot(session_exists(SessionKey0, Cache3)),
+    ?assertEqual(0, cache_size(Cache3)).

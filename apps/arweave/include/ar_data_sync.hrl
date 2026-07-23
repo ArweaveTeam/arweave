@@ -16,13 +16,13 @@
 %% `none` means the task has no footprint constraint. `retry_count` counts
 %% down on transient errors; the task is abandoned at 0.
 -record(sync_task, {
-	start_offset,
-	end_offset,
-	peer,
-	store_id,
-	retry_count = 3,
-	footprint_key = none
-}).
+                    start_offset,
+                    end_offset,
+                    peer,
+                    store_id,
+                    retry_count = 3,
+                    footprint_key = none
+                   }).
 
 %% The size in bits of the key prefix used in prefix bloom filter
 %% when looking up chunks by offsets from kv database.
@@ -85,78 +85,78 @@
 
 %% @doc The state of the server managing data synchronization.
 -record(data_sync_state, {
-	%% The last entries of the block index.
-	%% Used to determine orphaned data upon startup or chain reorg.
-	block_index,
-	%% The current weave size. The upper limit for the absolute chunk end offsets.
-	weave_size,
-	%% A reference to the on-disk key-value storage mapping
-	%% AbsoluteChunkEndOffset
-	%%   => {ChunkDataKey, TXRoot, DataRoot, TXPath, ChunkOffset, ChunkSize}
-	%%
-	%% Chunks themselves and their DataPaths are stored separately (in chunk_data_db)
-	%% because the offsets may change after a reorg. However, after the offset falls below
-	%% DiskPoolThreshold, the chunk is packed for mining and recorded in the fast storage
-	%% under the offset key.
-	%%
-	%% The index is used to look up the chunk by a random offset when a peer
-	%% asks for it and to look up chunks of a transaction.
-	chunks_index,
-	%% A reference to the on-disk key-value storage mapping
-	%% << DataRoot/binary, TXSize/binary, AbsoluteTXStartOffset/binary >> => TXPath.
-	%%
-	%% The index is used to look up tx_root for a submitted chunk and compute
-	%% AbsoluteChunkEndOffset for the accepted chunk.
-	%%
-	%% We need the index because users should be able to submit their data without
-	%% monitoring the chain, otherwise chain reorganisations might make the experience
-	%% very unnerving. The index is NOT consulted when serving random chunks therefore
-	%% it is possible to develop a lightweight client which would sync and serve random
-	%% portions of the weave without maintaining this index.
-	%% A reference to the on-disk key value storage mapping
-	%% << DataRootTimestamp:256, ChunkDataIndexKey/binary >> =>
-	%%     {RelativeChunkEndOffset, ChunkSize, DataRoot, TXSize, ChunkDataKey, IsStrictSplit}.
-	%%
-	%% A reference to the on-disk key value storage mapping
-	%% TXID => {AbsoluteTXEndOffset, TXSize}.
-	%% Is used to serve transaction data by TXID.
-	tx_index,
-	%% A reference to the on-disk key value storage mapping
-	%% AbsoluteTXStartOffset => TXID. Is used to cleanup orphaned transactions from tx_index.
-	tx_offset_index,
-	%% A reference to the on-disk key value storage mapping
-	%% << Timestamp:256, DataPathHash/binary >> to raw chunk data (possibly packed).
-	%%
-	%% Is used to store disk pool chunks (their global offsets cannot be determined with
-	%% certainty yet).
-	%%
-	%% The timestamp prefix is used to make the written entries sorted from the start,
-	%% to minimize the LSTM compaction overhead.
-	chunk_data_db,
-	%% A reference to the on-disk key value storage mapping migration names to their stages.
-	migrations_index,
-	%% A flag indicating the process has started collecting the intervals for syncing.
-	%% We consult the other storage modules first, then search among the network peers.
-	sync_status = undefined,
-	%% The offsets of the chunks currently scheduled for (re-)packing (keys) and
-	%% some chunk metadata needed for storing the chunk once it is packed.
-	packing_map = #{},
-	%% The mining address the chunks are packed with in 2.6.
-	mining_address,
-	%% The identifier of the storage module the process is responsible for.
-	store_id,
-	%% The start offset of the range the module is responsible for.
-	range_start = -1,
-	%% The end offset of the range the module is responsible for.
-	range_end = -1,
-	%% The priority queue of chunks sorted by offset. The motivation is to have chunks
-	%% stack up, per storage module, before writing them on disk so that we can write
-	%% them in the ascending order and reduce out-of-order disk writes causing fragmentation.
-	store_chunk_queue = gb_sets:new(),
-	%% The length of the store chunk queue.
-	store_chunk_queue_len = 0,
-	%% The threshold controlling the brief accumuluation of the chunks in the queue before
-	%% the actual disk dump, to reduce the chance of out-of-order write causing disk
-	%% fragmentation.
-	store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
-}).
+                          %% The last entries of the block index.
+                          %% Used to determine orphaned data upon startup or chain reorg.
+                          block_index,
+                          %% The current weave size. The upper limit for the absolute chunk end offsets.
+                          weave_size,
+                          %% A reference to the on-disk key-value storage mapping
+                          %% AbsoluteChunkEndOffset
+                          %%   => {ChunkDataKey, TXRoot, DataRoot, TXPath, ChunkOffset, ChunkSize}
+                          %%
+                          %% Chunks themselves and their DataPaths are stored separately (in chunk_data_db)
+                          %% because the offsets may change after a reorg. However, after the offset falls below
+                          %% DiskPoolThreshold, the chunk is packed for mining and recorded in the fast storage
+                          %% under the offset key.
+                          %%
+                          %% The index is used to look up the chunk by a random offset when a peer
+                          %% asks for it and to look up chunks of a transaction.
+                          chunks_index,
+                          %% A reference to the on-disk key-value storage mapping
+                          %% << DataRoot/binary, TXSize/binary, AbsoluteTXStartOffset/binary >> => TXPath.
+                          %%
+                          %% The index is used to look up tx_root for a submitted chunk and compute
+                          %% AbsoluteChunkEndOffset for the accepted chunk.
+                          %%
+                          %% We need the index because users should be able to submit their data without
+                          %% monitoring the chain, otherwise chain reorganisations might make the experience
+                          %% very unnerving. The index is NOT consulted when serving random chunks therefore
+                          %% it is possible to develop a lightweight client which would sync and serve random
+                          %% portions of the weave without maintaining this index.
+                          %% A reference to the on-disk key value storage mapping
+                          %% << DataRootTimestamp:256, ChunkDataIndexKey/binary >> =>
+                          %%     {RelativeChunkEndOffset, ChunkSize, DataRoot, TXSize, ChunkDataKey, IsStrictSplit}.
+                          %%
+                          %% A reference to the on-disk key value storage mapping
+                          %% TXID => {AbsoluteTXEndOffset, TXSize}.
+                          %% Is used to serve transaction data by TXID.
+                          tx_index,
+                          %% A reference to the on-disk key value storage mapping
+                          %% AbsoluteTXStartOffset => TXID. Is used to cleanup orphaned transactions from tx_index.
+                          tx_offset_index,
+                          %% A reference to the on-disk key value storage mapping
+                          %% << Timestamp:256, DataPathHash/binary >> to raw chunk data (possibly packed).
+                          %%
+                          %% Is used to store disk pool chunks (their global offsets cannot be determined with
+                          %% certainty yet).
+                          %%
+                          %% The timestamp prefix is used to make the written entries sorted from the start,
+                          %% to minimize the LSTM compaction overhead.
+                          chunk_data_db,
+                          %% A reference to the on-disk key value storage mapping migration names to their stages.
+                          migrations_index,
+                          %% A flag indicating the process has started collecting the intervals for syncing.
+                          %% We consult the other storage modules first, then search among the network peers.
+                          sync_status = undefined,
+                          %% The offsets of the chunks currently scheduled for (re-)packing (keys) and
+                          %% some chunk metadata needed for storing the chunk once it is packed.
+                          packing_map = #{},
+                          %% The mining address the chunks are packed with in 2.6.
+                          mining_address,
+                          %% The identifier of the storage module the process is responsible for.
+                          store_id,
+                          %% The start offset of the range the module is responsible for.
+                          range_start = -1,
+                          %% The end offset of the range the module is responsible for.
+                          range_end = -1,
+                          %% The priority queue of chunks sorted by offset. The motivation is to have chunks
+                          %% stack up, per storage module, before writing them on disk so that we can write
+                          %% them in the ascending order and reduce out-of-order disk writes causing fragmentation.
+                          store_chunk_queue = gb_sets:new(),
+                          %% The length of the store chunk queue.
+                          store_chunk_queue_len = 0,
+                          %% The threshold controlling the brief accumuluation of the chunks in the queue before
+                          %% the actual disk dump, to reduce the chance of out-of-order write causing disk
+                          %% fragmentation.
+                          store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
+                         }).

@@ -13,7 +13,7 @@
 
 %% Very similar but not identical to ar_limiter_tests macro
 -define(assertHandlerRegisterOrRejectCall(LimiterRef, Pattern, Peer),
- 	((fun () ->
+    ((fun () ->
                   spawn_link(fun() ->
                                      ?assertMatch(
                                         Pattern,
@@ -22,7 +22,7 @@
                                          done -> ok
                                      end
                              end)
-	  end)())).
+      end)())).
 
 suite() -> [{userdata, [description()]}].
 

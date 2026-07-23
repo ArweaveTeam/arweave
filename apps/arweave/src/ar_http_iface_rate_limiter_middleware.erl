@@ -26,65 +26,65 @@
 -include_lib("arweave/include/ar.hrl").
 
 execute(Req0, Env) ->
-	LimiterRef = get_limiter_ref(Req0),
-	PeerKey = get_peer_key(Req0),
+    LimiterRef = get_limiter_ref(Req0),
+    PeerKey = get_peer_key(Req0),
 
-	case arweave_limiter:register_or_reject_call(LimiterRef, PeerKey) of
-		{reject, Reason, Data} = Reject ->
-			?LOG_DEBUG([{event, rate_limiter_reject}, {reason, Reason}, {data, Data}]),
-				Headers = arweave_limiter_http_headers:to_http_headers(Reject),
-				Req = cowboy_req:set_resp_headers(Headers, Req0),
-			{stop, reject(Req, Headers, Reason, Data)};
-		Accept ->
-			Headers = arweave_limiter_http_headers:to_http_headers(Accept),
-			Req = cowboy_req:set_resp_headers(Headers, Req0),
-			{ok, Req, Env}
-	end.
+    case arweave_limiter:register_or_reject_call(LimiterRef, PeerKey) of
+        {reject, Reason, Data} = Reject ->
+            ?LOG_DEBUG([{event, rate_limiter_reject}, {reason, Reason}, {data, Data}]),
+            Headers = arweave_limiter_http_headers:to_http_headers(Reject),
+            Req = cowboy_req:set_resp_headers(Headers, Req0),
+            {stop, reject(Req, Headers, Reason, Data)};
+        Accept ->
+            Headers = arweave_limiter_http_headers:to_http_headers(Accept),
+            Req = cowboy_req:set_resp_headers(Headers, Req0),
+            {ok, Req, Env}
+    end.
 
 get_limiter_ref(Req) ->
-	LocalIPs = [
-		ar_util:peer_to_ip(Peer)
-		|| Peer <- arweave_config:get([peers, local])
-	],
-	PeerIP = ar_util:peer_to_ip(get_peer_key(Req)),
+    LocalIPs = [
+                ar_util:peer_to_ip(Peer)
+                || Peer <- arweave_config:get([peers, local])
+               ],
+    PeerIP = ar_util:peer_to_ip(get_peer_key(Req)),
 
-	case lists:member(PeerIP, LocalIPs) of
-		true ->
-			local_peers;
-		_ ->
-			Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
-			path_to_limiter_ref(Path)
-	end.
+    case lists:member(PeerIP, LocalIPs) of
+        true ->
+            local_peers;
+        _ ->
+            Path = ar_http_iface_server:split_path(cowboy_req:path(Req)),
+            path_to_limiter_ref(Path)
+    end.
 
 reject(Req, _Headers, error, _Data) ->
-	%% On errors, we don't have reasonable data to form Polli headers
-	cowboy_req:reply(503, #{}, <<"Service Unavailable">>, Req);
+    %% On errors, we don't have reasonable data to form Polli headers
+    cowboy_req:reply(503, #{}, <<"Service Unavailable">>, Req);
 reject(Req, Headers, _Reason, _Data) ->
-	cowboy_req:reply(
-		429,
-		Headers,
-		<<"Too Many Requests">>,
-		Req
-	).
+    cowboy_req:reply(
+      429,
+      Headers,
+      <<"Too Many Requests">>,
+      Req
+     ).
 
 -ifdef(AR_TEST).
 get_peer_key(Req) ->
-	{{A, B, C, D}, _Port} = cowboy_req:peer(Req),
-	case cowboy_req:header(<<"x-p2p-port">>, Req) of
-		undefined ->
-			{A, B, C, D};
-		PortBin ->
-			case catch binary_to_integer(PortBin) of
-				Port when is_integer(Port) ->
-					{A, B, C, D, Port};
-				_ ->
-					{A, B, C, D}
-			end
-	end.
+    {{A, B, C, D}, _Port} = cowboy_req:peer(Req),
+    case cowboy_req:header(<<"x-p2p-port">>, Req) of
+        undefined ->
+            {A, B, C, D};
+        PortBin ->
+            case catch binary_to_integer(PortBin) of
+                Port when is_integer(Port) ->
+                    {A, B, C, D, Port};
+                _ ->
+                    {A, B, C, D}
+            end
+    end.
 -else.
 get_peer_key(Req) ->
-	{{A, B, C, D}, _Port} = cowboy_req:peer(Req),
-	{A, B, C, D}.
+    {{A, B, C, D}, _Port} = cowboy_req:peer(Req),
+    {A, B, C, D}.
 -endif.
 
 path_to_limiter_ref([<<"chunk">> | _]) -> chunk;

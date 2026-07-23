@@ -16,574 +16,576 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
-	pid_by_peer = #{},
-	status_by_pid = #{}
-}).
+                pid_by_peer = #{},
+                status_by_pid = #{}
+               }).
 
 %%% ==================================================================
 %%% Public interface.
 %%% ==================================================================
 
 start_link() ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 
 -ifdef(AR_TEST).
 block_peer_connections() ->
-	ets:insert(?MODULE, {block_peer_connections}),
-	ok.
+    ets:insert(?MODULE, {block_peer_connections}),
+    ok.
 
 unblock_peer_connections() ->
-	ets:delete(?MODULE, block_peer_connections),
-	ok.
+    ets:delete(?MODULE, block_peer_connections),
+    ok.
 
 req(Args) ->
-	case ar_shutdown_manager:state() of
-		running ->
-			req2(Args);
-		shutdown ->
-			{error, shutdown}
-	end.
+    case ar_shutdown_manager:state() of
+        running ->
+            req2(Args);
+        shutdown ->
+            {error, shutdown}
+    end.
 
 req2(#{ peer := {_, _} } = Args) ->
-	req(Args, false);
+    req(Args, false);
 req2(#{ peer := Peer } = Args) ->
-	Port = arweave_config:get([port]),
-	case Port == element(5, Peer) of
-		true ->
-			%% Do not block requests to self.
-			req(Args, false);
-		false ->
-			case ets:lookup(?MODULE, block_peer_connections) of
-				[{_}] ->
-					case lists:keyfind(<<"x-p2p-port">>, 1, maps:get(headers, Args, [])) of
-						{_, _} ->
-							{error, blocked};
-						_ ->
-							%% Do not block requests made from the test processes.
-							req(Args, false)
-					end;
-				_ ->
-					req(Args, false)
-			end
-	end.
+    Port = arweave_config:get([port]),
+    case Port == element(5, Peer) of
+        true ->
+            %% Do not block requests to self.
+            req(Args, false);
+        false ->
+            case ets:lookup(?MODULE, block_peer_connections) of
+                [{_}] ->
+                    case lists:keyfind(<<"x-p2p-port">>, 1, maps:get(headers, Args, [])) of
+                        {_, _} ->
+                            {error, blocked};
+                        _ ->
+                            %% Do not block requests made from the test processes.
+                            req(Args, false)
+                    end;
+                _ ->
+                    req(Args, false)
+            end
+    end.
 -else.
 req(Args) ->
-	req(Args, false).
+    req(Args, false).
 -endif.
 
 req(Args, ReestablishedConnection) ->
-	%% Drop stale gun_* messages from the calling process's mailbox before
-	%% issuing a new request. Each gun stream can leave straggler messages
-	%% (e.g. {gun_error, _, _, {badstate, "The stream cannot be found."}})
-	%% after gun:await returns - the connection died asynchronously after
-	%% we moved past that stream. Without draining, those accumulate in
-	%% callers' mailboxes; gun:await's selective receive then scans the
-	%% entire mailbox each iteration looking for its own ref, slowing
-	%% scanners over time.
-	%%
-	%% ar_http is the only production Gun client. Callers that also own Gun
-	%% messages can pass `drain_gun => false'. Only drain on the top-level
-	%% call, not on the recursive retry that needs to keep messages from
-	%% the just-issued in-flight request.
-	case {ReestablishedConnection, maps:get(drain_gun, Args, true)} of
-		{false, true} -> drain_stale_gun_messages();
-		_ -> ok
-	end,
-	StartTime = erlang:monotonic_time(),
-	#{ peer := Peer, path := Path, method := Method } = Args,
+    %% Drop stale gun_* messages from the calling process's mailbox before
+    %% issuing a new request. Each gun stream can leave straggler messages
+    %% (e.g. {gun_error, _, _, {badstate, "The stream cannot be found."}})
+    %% after gun:await returns - the connection died asynchronously after
+    %% we moved past that stream. Without draining, those accumulate in
+    %% callers' mailboxes; gun:await's selective receive then scans the
+    %% entire mailbox each iteration looking for its own ref, slowing
+    %% scanners over time.
+    %%
+    %% ar_http is the only production Gun client. Callers that also own Gun
+    %% messages can pass `drain_gun => false'. Only drain on the top-level
+    %% call, not on the recursive retry that needs to keep messages from
+    %% the just-issued in-flight request.
+    case {ReestablishedConnection, maps:get(drain_gun, Args, true)} of
+        {false, true} -> drain_stale_gun_messages();
+        _ -> ok
+    end,
+    StartTime = erlang:monotonic_time(),
+    #{ peer := Peer, path := Path, method := Method } = Args,
 
-	%% This call blocks until timeout, or until we think it's a good time to
-	%% call the endpoint.
-	arweave_throttling:throttle(Peer, Path),
+    %% This call blocks until timeout, or until we think it's a good time to
+    %% call the endpoint.
+    arweave_throttling:throttle(Peer, Path),
 
-	Response = case catch gen_server:call(?MODULE, {get_connection, Args}, 15000) of
-		{ok, PID} ->
-			case request(PID, Args) of
-				{error, Error} ->
-					case {ReestablishedConnection, should_retry_closed_connection(Error)} of
-						{false, true} ->
-							req(Args, true);
-						{_, true} ->
-							{error, client_error};
-						{_, false} ->
-							{error, Error}
-					end;
-				{ok, {{_Status, _}, Headers, _, _Start, _End}} = Reply ->
-					arweave_throttling:update_quota(Peer, Path, Headers),
-					Reply
-			end;
-		{'EXIT', _} -> {error, client_error};
-		Error -> Error
-	end,
-	EndTime = erlang:monotonic_time(),
-	%% Only log the metric for the top-level call to req/2 - not the recursive call
-	%% that happens when the connection is reestablished.
-	case ReestablishedConnection of
-		true ->
-			ok;
-		false ->
-			%% NOTE: the erlang prometheus client looks at the metric name to determine units.
-			%%       If it sees <name>_duration_<unit> it assumes the observed value is in
-			%%       native units and it converts it to <unit> .To query native units, use:
-			%%       erlant:monotonic_time() without any arguments.
-			%%       See: https://github.com/deadtrickster/prometheus.erl/blob/6dd56bf321e99688108bb976283a80e4d82b3d30/src/prometheus_time.erl#L2-L84
-			arweave_metrics:histogram_observe(ar_http_request_duration_seconds, [
-					method_to_list(Method),
-					ar_http_iface_server:label_http_path(list_to_binary(Path)),
-					arweave_metrics:get_status_class(Response)
-				], EndTime - StartTime)
-	end,
-	Response.
+    Response = case catch gen_server:call(?MODULE, {get_connection, Args}, 15000) of
+                   {ok, PID} ->
+                       case request(PID, Args) of
+                           {error, Error} ->
+                               case {ReestablishedConnection, should_retry_closed_connection(Error)} of
+                                   {false, true} ->
+                                       req(Args, true);
+                                   {_, true} ->
+                                       {error, client_error};
+                                   {_, false} ->
+                                       {error, Error}
+                               end;
+                           {ok, {{_Status, _}, Headers, _, _Start, _End}} = Reply ->
+                               arweave_throttling:update_quota(Peer, Path, Headers),
+                               Reply
+                       end;
+                   {'EXIT', _} -> {error, client_error};
+                   Error -> Error
+               end,
+    EndTime = erlang:monotonic_time(),
+    %% Only log the metric for the top-level call to req/2 - not the recursive call
+    %% that happens when the connection is reestablished.
+    case ReestablishedConnection of
+        true ->
+            ok;
+        false ->
+            %% NOTE: the erlang prometheus client looks at the metric name to determine units.
+            %%       If it sees <name>_duration_<unit> it assumes the observed value is in
+            %%       native units and it converts it to <unit> .To query native units, use:
+            %%       erlant:monotonic_time() without any arguments.
+            %%       See: https://github.com/deadtrickster/prometheus.erl/blob/6dd56bf321e99688108bb976283a80e4d82b3d30/src/prometheus_time.erl#L2-L84
+            arweave_metrics:histogram_observe(ar_http_request_duration_seconds, [
+                                                                            method_to_list(Method),
+                                                                            ar_http_iface_server:label_http_path(list_to_binary(Path)),
+                                                                            arweave_metrics:get_status_class(Response)
+                                                                           ], EndTime - StartTime)
+    end,
+    Response.
 
 %%% ==================================================================
 %%% gen_server callbacks.
 %%% ==================================================================
 
 init([]) ->
-	{ok, #state{}}.
+    {ok, #state{}}.
 
 handle_call({get_connection, Args}, From,
-		#state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
-	Peer = maps:get(peer, Args),
-	case maps:get(Peer, PIDByPeer, not_found) of
-		not_found ->
-			{ok, PID} = open_connection(Args),
-			MonitorRef = monitor(process, PID),
-			PIDByPeer2 = maps:put(Peer, PID, PIDByPeer),
-			StatusByPID2 = maps:put(PID, {{connecting, [{From, Args}]}, MonitorRef, Peer},
-					StatusByPID),
-			{noreply, State#state{ pid_by_peer = PIDByPeer2, status_by_pid = StatusByPID2 }};
-		PID ->
-			case maps:get(PID, StatusByPID) of
-				{{connecting, PendingRequests}, MonitorRef, Peer} ->
-					StatusByPID2 = maps:put(PID, {{connecting,
-							[{From, Args} | PendingRequests]}, MonitorRef, Peer}, StatusByPID),
-					{noreply, State#state{ status_by_pid = StatusByPID2 }};
-				{connected, _MonitorRef, Peer} ->
-					{reply, {ok, PID}, State}
-			end
-	end;
+            #state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
+    Peer = maps:get(peer, Args),
+    case maps:get(Peer, PIDByPeer, not_found) of
+        not_found ->
+            {ok, PID} = open_connection(Args),
+            MonitorRef = monitor(process, PID),
+            PIDByPeer2 = maps:put(Peer, PID, PIDByPeer),
+            StatusByPID2 = maps:put(PID, {{connecting, [{From, Args}]}, MonitorRef, Peer},
+                                    StatusByPID),
+            {noreply, State#state{ pid_by_peer = PIDByPeer2, status_by_pid = StatusByPID2 }};
+        PID ->
+            case maps:get(PID, StatusByPID) of
+                {{connecting, PendingRequests}, MonitorRef, Peer} ->
+                    StatusByPID2 = maps:put(PID, {{connecting,
+                                                   [{From, Args} | PendingRequests]}, MonitorRef, Peer}, StatusByPID),
+                    {noreply, State#state{ status_by_pid = StatusByPID2 }};
+                {connected, _MonitorRef, Peer} ->
+                    {reply, {ok, PID}, State}
+            end
+    end;
 
 handle_call(Request, _From, State) ->
-	?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
-	{reply, ok, State}.
+    ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
+    {reply, ok, State}.
 
 handle_cast(Cast, State) ->
-	?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
-	{noreply, State}.
+    ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
+    {noreply, State}.
 
 handle_info({gun_up, PID, _Protocol}, #state{ status_by_pid = StatusByPID } = State) ->
-	case maps:get(PID, StatusByPID, not_found) of
-		not_found ->
-			%% A connection timeout should have occurred.
-			{noreply, State};
-		{{connecting, PendingRequests}, MonitorRef, Peer} ->
-			[gen_server:reply(ReplyTo, {ok, PID}) || {ReplyTo, _} <- PendingRequests],
-			StatusByPID2 = maps:put(PID, {connected, MonitorRef, Peer}, StatusByPID),
-			arweave_metrics:gauge_inc(outbound_connections),
-			ar_peers:connected_peer(Peer),
-			{noreply, State#state{ status_by_pid = StatusByPID2 }};
-		{connected, _MonitorRef, Peer} ->
-			?LOG_WARNING([{event, gun_up_pid_already_exists},
-					{peer, ar_util:format_peer(Peer)}]),
-			ar_peers:connected_peer(Peer),
-			{noreply, State}
-	end;
+    case maps:get(PID, StatusByPID, not_found) of
+        not_found ->
+            %% A connection timeout should have occurred.
+            {noreply, State};
+        {{connecting, PendingRequests}, MonitorRef, Peer} ->
+            [gen_server:reply(ReplyTo, {ok, PID}) || {ReplyTo, _} <- PendingRequests],
+            StatusByPID2 = maps:put(PID, {connected, MonitorRef, Peer}, StatusByPID),
+            arweave_metrics:gauge_inc(outbound_connections),
+            ar_peers:connected_peer(Peer),
+            {noreply, State#state{ status_by_pid = StatusByPID2 }};
+        {connected, _MonitorRef, Peer} ->
+            ?LOG_WARNING([{event, gun_up_pid_already_exists},
+                          {peer, ar_util:format_peer(Peer)}]),
+            ar_peers:connected_peer(Peer),
+            {noreply, State}
+    end;
 
 handle_info({gun_error, PID, Reason},
-		#state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
-	case maps:get(PID, StatusByPID, not_found) of
-		not_found ->
-			?LOG_WARNING([{even, gun_connection_error_with_unknown_pid}]),
-			{noreply, State};
-		{Status, _MonitorRef, Peer} ->
-			PIDByPeer2 = maps:remove(Peer, PIDByPeer),
-			StatusByPID2 = maps:remove(PID, StatusByPID),
-			Reason2 =
-				case Reason of
-					timeout ->
-						connect_timeout;
-					{Type, _} ->
-						Type;
-					_ ->
-						Reason
-				end,
-			case Status of
-				{connecting, PendingRequests} ->
-					reply_error(PendingRequests, Reason2);
-				connected ->
-					arweave_metrics:gauge_dec(outbound_connections),
-					ok
-			end,
-			ar_peers:disconnected_peer(Peer),
-			gun:shutdown(PID),
-			?LOG_DEBUG([{event, connection_error}, {reason, io_lib:format("~p", [Reason])}]),
-			{noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
-	end;
+            #state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
+    case maps:get(PID, StatusByPID, not_found) of
+        not_found ->
+            ?LOG_WARNING([{even, gun_connection_error_with_unknown_pid}]),
+            {noreply, State};
+        {Status, _MonitorRef, Peer} ->
+            PIDByPeer2 = maps:remove(Peer, PIDByPeer),
+            StatusByPID2 = maps:remove(PID, StatusByPID),
+            Reason2 =
+                case Reason of
+                    timeout ->
+                        connect_timeout;
+                    {Type, _} ->
+                        Type;
+                    _ ->
+                        Reason
+                end,
+            case Status of
+                {connecting, PendingRequests} ->
+                    reply_error(PendingRequests, Reason2);
+                connected ->
+                    arweave_metrics:gauge_dec(outbound_connections),
+                    ok
+            end,
+            ar_peers:disconnected_peer(Peer),
+            gun:shutdown(PID),
+            ?LOG_DEBUG([{event, connection_error}, {reason, io_lib:format("~p", [Reason])}]),
+            {noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
+    end;
 
-% missing pattern from gun 2.2+
+%% missing pattern from gun 2.2+
 handle_info({gun_down, Pid, Protocol, Reason, Streams}, State) ->
-	handle_info({gun_down, Pid, Protocol, Reason, [], Streams}, State);
+    handle_info({gun_down, Pid, Protocol, Reason, [], Streams}, State);
 
 handle_info({gun_down, PID, Protocol, Reason, _KilledStreams, _UnprocessedStreams},
-			#state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
-	case maps:get(PID, StatusByPID, not_found) of
-		not_found ->
-			?LOG_WARNING([{even, gun_connection_down_with_unknown_pid},
-					{protocol, Protocol}]),
-			{noreply, State};
-		{Status, _MonitorRef, Peer} ->
-			PIDByPeer2 = maps:remove(Peer, PIDByPeer),
-			StatusByPID2 = maps:remove(PID, StatusByPID),
-			Reason2 =
-				case Reason of
-					{Type, _} ->
-						Type;
-					_ ->
-						Reason
-				end,
-			case Status of
-				{connecting, PendingRequests} ->
-					reply_error(PendingRequests, Reason2);
-				_ ->
-					arweave_metrics:gauge_dec(outbound_connections),
-					ok
-			end,
-			ar_peers:disconnected_peer(Peer),
-			{noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
-	end;
+            #state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
+    case maps:get(PID, StatusByPID, not_found) of
+        not_found ->
+            ?LOG_WARNING([{even, gun_connection_down_with_unknown_pid},
+                          {protocol, Protocol}]),
+            {noreply, State};
+        {Status, _MonitorRef, Peer} ->
+            PIDByPeer2 = maps:remove(Peer, PIDByPeer),
+            StatusByPID2 = maps:remove(PID, StatusByPID),
+            Reason2 =
+                case Reason of
+                    {Type, _} ->
+                        Type;
+                    _ ->
+                        Reason
+                end,
+            case Status of
+                {connecting, PendingRequests} ->
+                    reply_error(PendingRequests, Reason2);
+                _ ->
+                    arweave_metrics:gauge_dec(outbound_connections),
+                    ok
+            end,
+            ar_peers:disconnected_peer(Peer),
+            {noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
+    end;
 
 handle_info({'DOWN', _Ref, process, PID, Reason},
-		#state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
-	case maps:get(PID, StatusByPID, not_found) of
-		not_found ->
-			{noreply, State};
-		{Status, _MonitorRef, Peer} ->
-			PIDByPeer2 = maps:remove(Peer, PIDByPeer),
-			StatusByPID2 = maps:remove(PID, StatusByPID),
-			case Status of
-				{connecting, PendingRequests} ->
-					reply_error(PendingRequests, Reason);
-				_ ->
-					arweave_metrics:gauge_dec(outbound_connections),
-					ok
-			end,
-			ar_peers:disconnected_peer(Peer),
-			{noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
-	end;
+            #state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
+    case maps:get(PID, StatusByPID, not_found) of
+        not_found ->
+            {noreply, State};
+        {Status, _MonitorRef, Peer} ->
+            PIDByPeer2 = maps:remove(Peer, PIDByPeer),
+            StatusByPID2 = maps:remove(PID, StatusByPID),
+            case Status of
+                {connecting, PendingRequests} ->
+                    reply_error(PendingRequests, Reason);
+                _ ->
+                    arweave_metrics:gauge_dec(outbound_connections),
+                    ok
+            end,
+            ar_peers:disconnected_peer(Peer),
+            {noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
+    end;
 
 handle_info(Message, State) ->
-	?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
-	{noreply, State}.
+    ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
+    {noreply, State}.
 
 terminate(Reason, #state{ status_by_pid = StatusByPID }) ->
-	maps:map(fun(PID, _Status) -> gun:shutdown(PID) end, StatusByPID),
-	?LOG_INFO([{event, http_client_terminating}, {reason, io_lib:format("~p", [Reason])}]),
-	ok.
+    maps:map(fun(PID, _Status) -> gun:shutdown(PID) end, StatusByPID),
+    ?LOG_INFO([{event, http_client_terminating}, {reason, io_lib:format("~p", [Reason])}]),
+    ok.
 
 %%% ==================================================================
 %%% Private functions.
 %%% ==================================================================
 
 open_connection(#{ peer := Peer } = Args) ->
-	{IPOrHost, Port} = get_ip_port(Peer),
-	ConnectTimeout = maps:get(connect_timeout, Args,
-			maps:get(timeout, Args, ?HTTP_REQUEST_CONNECT_TIMEOUT)),
-	ClosingTimeout = arweave_config:get(
-		[network, client, http, closing_timeout]),
-	HTTPKeepalive = arweave_config:get(
-		[network, client, http, keepalive]),
-	TCPDelaySend = arweave_config:get(
-		[network, client, tcp, delay_send]),
-	TCPKeepalive = arweave_config:get(
-		[network, client, tcp, keepalive]),
-	TCPLinger = arweave_config:get(
-		[network, client, tcp, linger]),
-	TCPLingerTimeout = arweave_config:get(
-		[network, client, tcp, linger_timeout]),
-	TCPNodelay = arweave_config:get(
-		[network, client, tcp, nodelay]),
-	TCPSendTimeoutClose = arweave_config:get(
-		[network, client, tcp, send_timeout_close]),
-	TCPSendTimeout = arweave_config:get(
-		[network, client, tcp, send_timeout]),
-	GunOpts = #{
-		retry => 0,
-		connect_timeout => ConnectTimeout,
-		http_opts => #{
-			closing_timeout => ClosingTimeout,
-			keepalive => HTTPKeepalive
-		},
-		tcp_opts => [
-			{delay_send, TCPDelaySend},
-			{keepalive, TCPKeepalive},
-			{linger, {TCPLinger, TCPLingerTimeout}},
-			{nodelay, TCPNodelay},
-			{send_timeout_close, TCPSendTimeoutClose},
-			{send_timeout, TCPSendTimeout}
-		]
-	},
-	gun:open(IPOrHost, Port, GunOpts).
+    {IPOrHost, Port} = get_ip_port(Peer),
+    ConnectTimeout = maps:get(connect_timeout, Args,
+                              maps:get(timeout, Args, ?HTTP_REQUEST_CONNECT_TIMEOUT)),
+    ClosingTimeout = arweave_config:get(
+                       [network, client, http, closing_timeout]),
+    HTTPKeepalive = arweave_config:get(
+                      [network, client, http, keepalive]),
+    TCPDelaySend = arweave_config:get(
+                     [network, client, tcp, delay_send]),
+    TCPKeepalive = arweave_config:get(
+                     [network, client, tcp, keepalive]),
+    TCPLinger = arweave_config:get(
+                  [network, client, tcp, linger]),
+    TCPLingerTimeout = arweave_config:get(
+                         [network, client, tcp, linger_timeout]),
+    TCPNodelay = arweave_config:get(
+                   [network, client, tcp, nodelay]),
+    TCPSendTimeoutClose = arweave_config:get(
+                            [network, client, tcp, send_timeout_close]),
+    TCPSendTimeout = arweave_config:get(
+                       [network, client, tcp, send_timeout]),
+    GunOpts = #{
+                retry => 0,
+                connect_timeout => ConnectTimeout,
+                http_opts => #{
+                               closing_timeout => ClosingTimeout,
+                               keepalive => HTTPKeepalive
+                              },
+                tcp_opts => [
+                             {delay_send, TCPDelaySend},
+                             {keepalive, TCPKeepalive},
+                             {linger, {TCPLinger, TCPLingerTimeout}},
+                             {nodelay, TCPNodelay},
+                             {send_timeout_close, TCPSendTimeoutClose},
+                             {send_timeout, TCPSendTimeout}
+                            ]
+               },
+    gun:open(IPOrHost, Port, GunOpts).
 
 get_ip_port({_, _} = Peer) ->
-	Peer;
+    Peer;
 get_ip_port(Peer) ->
-	{erlang:delete_element(size(Peer), Peer), erlang:element(size(Peer), Peer)}.
+    {erlang:delete_element(size(Peer), Peer), erlang:element(size(Peer), Peer)}.
 
 reply_error([], _Reason) ->
-	ok;
+    ok;
 reply_error([PendingRequest | PendingRequests], Reason) ->
-	ReplyTo = element(1, PendingRequest),
-	Args = element(2, PendingRequest),
-	Method = maps:get(method, Args),
-	Path = maps:get(path, Args),
-	record_response_status(Method, Path, {error, Reason}),
-	gen_server:reply(ReplyTo, {error, Reason}),
-	reply_error(PendingRequests, Reason).
+    ReplyTo = element(1, PendingRequest),
+    Args = element(2, PendingRequest),
+    Method = maps:get(method, Args),
+    Path = maps:get(path, Args),
+    record_response_status(Method, Path, {error, Reason}),
+    gen_server:reply(ReplyTo, {error, Reason}),
+    reply_error(PendingRequests, Reason).
 
 record_response_status(Method, Path, Response) ->
-	arweave_metrics:counter_inc(gun_requests_total, [method_to_list(Method),
-			ar_http_iface_server:label_http_path(list_to_binary(Path)),
-			arweave_metrics:get_status_class(Response)]).
+    arweave_metrics:counter_inc(gun_requests_total, 
+                                [method_to_list(Method),
+                                 ar_http_iface_server:label_http_path(list_to_binary(Path)),
+                                 arweave_metrics:get_status_class(Response)]).
 
 method_to_list(get) ->
-	"GET";
+    "GET";
 method_to_list(post) ->
-	"POST";
+    "POST";
 method_to_list(put) ->
-	"PUT";
+    "PUT";
 method_to_list(head) ->
-	"HEAD";
+    "HEAD";
 method_to_list(delete) ->
-	"DELETE";
+    "DELETE";
 method_to_list(connect) ->
-	"CONNECT";
+    "CONNECT";
 method_to_list(options) ->
-	"OPTIONS";
+    "OPTIONS";
 method_to_list(trace) ->
-	"TRACE";
+    "TRACE";
 method_to_list(patch) ->
-	"PATCH";
+    "PATCH";
 method_to_list(_) ->
-	"unknown".
+    "unknown".
 
 request(PID, Args) ->
-	Timeout = maps:get(timeout, Args, ?HTTP_REQUEST_SEND_TIMEOUT),
-	Ref = request2(PID, Args),
-	ResponseArgs = #{ pid => PID
-			, stream_ref => Ref
-			, timeout => Timeout
-			%% Default to ?MAX_BODY_SIZE, matching the server-side default in
-			%% ar_http_iface_middleware:read_complete_body/2. The client-side
-			%% and server-side limits are matched purely for the sake of
-			%% implementation simplicity.
-			, limit => maps:get(limit, Args, ?MAX_BODY_SIZE)
-			, counter => 0
-			, acc => []
-			, start => os:system_time(microsecond)
-			, is_peer_request => maps:get(is_peer_request, Args, true)
-			},
-	Response = await_response(maps:merge(Args, ResponseArgs)),
-	Method = maps:get(method, Args),
-	Path = maps:get(path, Args),
-	record_response_status(Method, Path, Response),
-	Response.
+    Timeout = maps:get(timeout, Args, ?HTTP_REQUEST_SEND_TIMEOUT),
+    Ref = request2(PID, Args),
+    ResponseArgs = #{ pid => PID
+                    , stream_ref => Ref
+                    , timeout => Timeout
+                      %% Default to ?MAX_BODY_SIZE, matching the server-side default in
+                      %% ar_http_iface_middleware:read_complete_body/2. The client-side
+                      %% and server-side limits are matched purely for the sake of
+                      %% implementation simplicity.
+                    , limit => maps:get(limit, Args, ?MAX_BODY_SIZE)
+                    , counter => 0
+                    , acc => []
+                    , start => os:system_time(microsecond)
+                    , is_peer_request => maps:get(is_peer_request, Args, true)
+                    },
+    Response = await_response(maps:merge(Args, ResponseArgs)),
+    Method = maps:get(method, Args),
+    Path = maps:get(path, Args),
+    record_response_status(Method, Path, Response),
+    Response.
 
 request2(PID, #{ path := Path } = Args) ->
-	Headers =
-		case maps:get(is_peer_request, Args, true) of
-			true ->
-				merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Args, []));
-			_ ->
-				maps:get(headers, Args, [])
-		end,
-	Method = case maps:get(method, Args) of get -> "GET"; post -> "POST" end,
-	gun:request(PID, Method, Path, Headers, maps:get(body, Args, <<>>)).
+    Headers =
+        case maps:get(is_peer_request, Args, true) of
+            true ->
+                merge_headers(?DEFAULT_REQUEST_HEADERS, maps:get(headers, Args, []));
+            _ ->
+                maps:get(headers, Args, [])
+        end,
+    Method = case maps:get(method, Args) of get -> "GET"; post -> "POST" end,
+    gun:request(PID, Method, Path, Headers, maps:get(body, Args, <<>>)).
 
 merge_headers(HeadersA, HeadersB) ->
-	lists:ukeymerge(1, lists:keysort(1, HeadersB), lists:keysort(1, HeadersA)).
+    lists:ukeymerge(1, lists:keysort(1, HeadersB), lists:keysort(1, HeadersA)).
 
 await_response( #{ pid := PID, stream_ref := Ref, timeout := Timeout
-		 , start := Start, limit := Limit, counter := Counter
-		 , acc := Acc, method := Method, path := Path } = Args) ->
-	case gun:await(PID, Ref, Timeout) of
-		{response, fin, Status, Headers} ->
-			End = os:system_time(microsecond),
-			upload_metric(Args),
-			{ok, {{integer_to_binary(Status), <<>>}, Headers, <<>>, Start, End}};
+                 , start := Start, limit := Limit, counter := Counter
+                 , acc := Acc, method := Method, path := Path } = Args) ->
+    case gun:await(PID, Ref, Timeout) of
+        {response, fin, Status, Headers} ->
+            End = os:system_time(microsecond),
+            upload_metric(Args),
+            {ok, {{integer_to_binary(Status), <<>>}, Headers, <<>>, Start, End}};
 
-		{response, nofin, Status, Headers} ->
-			await_response(Args#{ status => Status, headers => Headers });
+        {response, nofin, Status, Headers} ->
+            await_response(Args#{ status => Status, headers => Headers });
 
-		{data, nofin, Data} ->
-			case Limit of
-				infinity ->
-					await_response(Args#{ acc := [Acc | Data] });
-				Limit ->
-					Counter2 = size(Data) + Counter,
-					case Limit >= Counter2 of
-						true ->
-							await_response(Args#{ counter := Counter2, acc := [Acc | Data] });
-						false ->
-							log(err, http_fetched_too_much_data, Args,
-									<<"Fetched too much data">>),
-							{error, too_much_data}
-					end
-			end;
+        {data, nofin, Data} ->
+            case Limit of
+                infinity ->
+                    await_response(Args#{ acc := [Acc | Data] });
+                Limit ->
+                    Counter2 = size(Data) + Counter,
+                    case Limit >= Counter2 of
+                        true ->
+                            await_response(Args#{ counter := Counter2, acc := [Acc | Data] });
+                        false ->
+                            log(err, http_fetched_too_much_data, Args,
+                                <<"Fetched too much data">>),
+                            {error, too_much_data}
+                    end
+            end;
 
-		{data, fin, Data} ->
-			End = os:system_time(microsecond),
-			FinData = iolist_to_binary([Acc | Data]),
-			download_metric(FinData, Args),
-			upload_metric(Args),
-			ResponseCode = gen_code_rest(maps:get(status, Args)),
-			ResponseHeaders = maps:get(headers, Args),
-			Response = {ResponseCode, ResponseHeaders, FinData, Start, End},
-			{ok, Response};
+        {data, fin, Data} ->
+            End = os:system_time(microsecond),
+            FinData = iolist_to_binary([Acc | Data]),
+            download_metric(FinData, Args),
+            upload_metric(Args),
+            ResponseCode = gen_code_rest(maps:get(status, Args)),
+            ResponseHeaders = maps:get(headers, Args),
+            Response = {ResponseCode, ResponseHeaders, FinData, Start, End},
+            {ok, Response};
 
-		{error, timeout} = Response ->
-			record_response_status(Method, Path, Response),
-			gun:cancel(PID, Ref),
-			log(warn, gun_await_process_down, Args, Response),
-			Response;
+        {error, timeout} = Response ->
+            record_response_status(Method, Path, Response),
+            gun:cancel(PID, Ref),
+            log(warn, gun_await_process_down, Args, Response),
+            Response;
 
-		{error, Reason} = Response when is_tuple(Reason) ->
-			record_response_status(Method, Path, Response),
-			gun:cancel(PID, Ref),
-			log(warn, gun_await_process_down, Args, Reason),
-			Response;
+        {error, Reason} = Response when is_tuple(Reason) ->
+            record_response_status(Method, Path, Response),
+            gun:cancel(PID, Ref),
+            log(warn, gun_await_process_down, Args, Reason),
+            Response;
 
-		Response ->
-			record_response_status(Method, Path, Response),
-			gun:cancel(PID, Ref),
-			log(warn, gun_await_unknown, Args, Response),
-			Response
-	end.
+        Response ->
+            record_response_status(Method, Path, Response),
+            gun:cancel(PID, Ref),
+            log(warn, gun_await_unknown, Args, Response),
+            Response
+    end.
 
 log(Type, Event, #{method := Method, peer := Peer, path := Path}, Reason) ->
-	case arweave_config:get([features, http_logging]) of
-		true when Type == warn ->
-			?LOG_WARNING([
-				{event, Event},
-				{http_method, Method},
-				{peer, ar_util:format_peer(Peer)},
-				{path, Path},
-				{reason, Reason}
-			]);
-		true when Type == err ->
-			?LOG_ERROR([
-				{event, Event},
-				{http_method, Method},
-				{peer, ar_util:format_peer(Peer)},
-				{path, Path},
-				{reason, Reason}
-			]);
-		_ ->
-			ok
-	end.
+    case arweave_config:get([features, http_logging]) of
+        true when Type == warn ->
+            ?LOG_WARNING([
+                          {event, Event},
+                          {http_method, Method},
+                          {peer, ar_util:format_peer(Peer)},
+                          {path, Path},
+                          {reason, Reason}
+                         ]);
+        true when Type == err ->
+            ?LOG_ERROR([
+                        {event, Event},
+                        {http_method, Method},
+                        {peer, ar_util:format_peer(Peer)},
+                        {path, Path},
+                        {reason, Reason}
+                       ]);
+        _ ->
+            ok
+    end.
 
 download_metric(Data, #{path := Path}) ->
-	arweave_metrics:counter_inc(
-		http_client_downloaded_bytes_total,
-		[ar_http_iface_server:label_http_path(list_to_binary(Path))],
-		byte_size(Data)
-	).
+    arweave_metrics:counter_inc(
+      http_client_downloaded_bytes_total,
+      [ar_http_iface_server:label_http_path(list_to_binary(Path))],
+      byte_size(Data)
+     ).
 
 upload_metric(#{method := post, path := Path, body := Body}) ->
-	arweave_metrics:counter_inc(
-		http_client_uploaded_bytes_total,
-		[ar_http_iface_server:label_http_path(list_to_binary(Path))],
-		byte_size(Body)
-	);
+    arweave_metrics:counter_inc(
+      http_client_uploaded_bytes_total,
+      [ar_http_iface_server:label_http_path(list_to_binary(Path))],
+      byte_size(Body)
+     );
+
 upload_metric(_) ->
-	ok.
+    ok.
 
 %% Non-blocking drain of any gun_* messages currently sitting in the caller's
 %% mailbox. Late messages can still arrive after this returns; worker processes
 %% that sit idle after ar_http:req may still need local handle_info ignore
 %% clauses for those stragglers.
 drain_stale_gun_messages() ->
-	receive
-		{gun_error, _, _, _} -> drain_stale_gun_messages();
-		{gun_error, _, _} -> drain_stale_gun_messages();
-		{gun_response, _, _, _, _, _} -> drain_stale_gun_messages();
-		{gun_data, _, _, _, _} -> drain_stale_gun_messages();
-		{gun_trailers, _, _, _} -> drain_stale_gun_messages();
-		{gun_inform, _, _, _, _} -> drain_stale_gun_messages();
-		{gun_push, _, _, _, _, _, _} -> drain_stale_gun_messages();
-		{gun_down, _, _, _, _} -> drain_stale_gun_messages();
-		{gun_down, _, _, _, _, _} -> drain_stale_gun_messages();
-		{gun_up, _, _} -> drain_stale_gun_messages()
-	after 0 -> ok
-	end.
+    receive
+        {gun_error, _, _, _} -> drain_stale_gun_messages();
+        {gun_error, _, _} -> drain_stale_gun_messages();
+        {gun_response, _, _, _, _, _} -> drain_stale_gun_messages();
+        {gun_data, _, _, _, _} -> drain_stale_gun_messages();
+        {gun_trailers, _, _, _} -> drain_stale_gun_messages();
+        {gun_inform, _, _, _, _} -> drain_stale_gun_messages();
+        {gun_push, _, _, _, _, _, _} -> drain_stale_gun_messages();
+        {gun_down, _, _, _, _} -> drain_stale_gun_messages();
+        {gun_down, _, _, _, _, _} -> drain_stale_gun_messages();
+        {gun_up, _, _} -> drain_stale_gun_messages()
+    after 0 -> ok
+    end.
 
 %% @doc True iff the failure reason means the gun connection or stream is
 %% gone, so retrying on a freshly reopened connection can succeed; false for
 %% application-level outcomes (`timeout', `too_much_data', HTTP status codes).
 %% Matches on reason shape rather than enumerating gun's varying nested reasons.
 should_retry_closed_connection({stream_error, _}) ->
-	true;
+    true;
 should_retry_closed_connection({connection_error, _}) ->
-	true;
+    true;
 should_retry_closed_connection({down, _}) ->
-	true;
+    true;
 should_retry_closed_connection({shutdown, _}) ->
-	true;
+    true;
 should_retry_closed_connection(noproc) ->
-	true;
+    true;
 should_retry_closed_connection(closed) ->
-	true;
+    true;
 should_retry_closed_connection(closing) ->
-	true;
+    true;
 should_retry_closed_connection(_) ->
-	false.
+    false.
 
 gen_code_rest(200) ->
-	{<<"200">>, <<"OK">>};
+    {<<"200">>, <<"OK">>};
 gen_code_rest(201) ->
-	{<<"201">>, <<"Created">>};
+    {<<"201">>, <<"Created">>};
 gen_code_rest(202) ->
-	{<<"202">>, <<"Accepted">>};
+    {<<"202">>, <<"Accepted">>};
 gen_code_rest(208) ->
-	{<<"208">>, <<"Transaction already processed">>};
+    {<<"208">>, <<"Transaction already processed">>};
 gen_code_rest(400) ->
-	{<<"400">>, <<"Bad Request">>};
+    {<<"400">>, <<"Bad Request">>};
 gen_code_rest(419) ->
-	{<<"419">>, <<"419 Missing Chunk">>};
+    {<<"419">>, <<"419 Missing Chunk">>};
 gen_code_rest(421) ->
-	{<<"421">>, <<"Misdirected Request">>};
+    {<<"421">>, <<"Misdirected Request">>};
 gen_code_rest(429) ->
-	{<<"429">>, <<"Too Many Requests">>};
+    {<<"429">>, <<"Too Many Requests">>};
 gen_code_rest(N) ->
-	{integer_to_binary(N), <<>>}.
+    {integer_to_binary(N), <<>>}.
 
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
 
 configured_local_peer_calls_throttler_test_() ->
-	ar_test_util:with_mocked([
-		{arweave_throttling, throttle, fun(Peer, Path) ->
-			throw({throttle_called, Peer, Path})
-		end}
-	], fun configured_local_peer_calls_throttler/0).
+    ar_test_util:with_mocked([
+                              {arweave_throttling, throttle, fun(Peer, Path) ->
+                                                                     throw({throttle_called, Peer, Path})
+                                                             end}
+                             ], fun configured_local_peer_calls_throttler/0).
 
 configured_local_peer_calls_throttler() ->
-	AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
-	ok = arweave_config:start(),
-	ConfigSnapshot = arweave_config:snapshot(),
-	Peer = {127, 0, 0, 1, arweave_config:get([port])},
-	Path = "/info",
-	try
-		ok = arweave_config:set([peers, local], [Peer]),
-		?assertThrow({throttle_called, Peer, Path}, req(#{
-			peer => Peer,
-			path => Path,
-			method => get
-		}, false))
-	after
-		ok = arweave_config:restore(ConfigSnapshot),
-		AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
-		lists:foreach(fun application:stop/1, AppsNow -- AppsBefore)
-	end.
+    AppsBefore = [App || {App, _Desc, _Vsn} <- application:which_applications()],
+    ok = arweave_config:start(),
+    ConfigSnapshot = arweave_config:snapshot(),
+    Peer = {127, 0, 0, 1, arweave_config:get([port])},
+    Path = "/info",
+    try
+        ok = arweave_config:set([peers, local], [Peer]),
+        ?assertThrow({throttle_called, Peer, Path}, req(#{
+                                                          peer => Peer,
+                                                          path => Path,
+                                                          method => get
+                                                         }, false))
+    after
+        ok = arweave_config:restore(ConfigSnapshot),
+        AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
+        lists:foreach(fun application:stop/1, AppsNow -- AppsBefore)
+    end.
