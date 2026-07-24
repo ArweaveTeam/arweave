@@ -154,9 +154,12 @@ _epmd_restart() {
 
 		# 2. Plain systemctl — works when we are root or polkit
 		#    grants it (system-managed epmd.service).
+		#    --no-ask-password: without it polkit prompts
+		#    interactively inside the heartbeat's screen session
+		#    instead of failing fast.
 		if test "${ret}" -ne 0
 		then
-			systemctl restart epmd 2>/dev/null
+			systemctl --no-ask-password restart epmd 2>/dev/null
 			ret=${?}
 		fi
 
