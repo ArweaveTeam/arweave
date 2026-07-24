@@ -20,15 +20,13 @@ ARWEAVE_RESTART_DELAY=${ARWEAVE_RESTART_DELAY:=15}
 ARWEAVE_RESTART_LIMIT=${ARWEAVE_RESTART_LIMIT:=""}
 
 # set epmd auto restart. this is a workaround when arweave crash, an
-# epmd session can still be present (epmd session leak). If enabled,
-# a recovery/restart procedure is started automatically.
+# epmd session can still be present (epmd session leak). Set to 1 to
+# enable ("" / 0 / false / off disable): when a leaked session blocks
+# a boot, the recovery tries, in order, a direct kill (node-spawned
+# epmd running as our user), plain systemctl, and sudo systemctl (a
+# system-managed epmd.service; the infra epmd role deploys the narrow
+# sudoers rule for it). Every attempt is cheap and fails fast.
 ARWEAVE_EPMD_AUTO_RESTART=${ARWEAVE_EPMD_AUTO_RESTART:=""}
-
-# defines the method to restart method to use. At this time, only
-# kill and systemctl are supported. If systemctl is used, epmd service
-# must be called "epmd". If epmd is running with a different user,
-# systemctl will be called with sudo and the process' user.
-ARWEAVE_EPMD_RESTART_METHOD=${ARWEAVE_EPMD_RESTART_METHOD:="kill"}
 
 ######################################################################
 # function helper to print arweave heartbeat messages.
@@ -77,9 +75,11 @@ _signal_sys() {
 # epmd keeps its session. It can be annoying.
 ######################################################################
 _epmd_restart() {
-	# only try to restart epmd if ARWEAVE_EPMD_AUTO_RESTART is set
-	# not everyone want to do that.
-	test "${ARWEAVE_EPMD_AUTO_RESTART}" || return 0
+	# only try to restart epmd if ARWEAVE_EPMD_AUTO_RESTART is
+	# enabled, not everyone want to do that.
+	case "${ARWEAVE_EPMD_AUTO_RESTART}" in
+		""|0|false|off) return 0 ;;
+	esac
 	_msg "Start epmd restart procedure"
 
 	# check epmd program existance.
@@ -132,45 +132,38 @@ _epmd_restart() {
 	then
 		local ret=1
 
-		# kill method used. only called if epmd's user is the same
-		# than the one used by this script.
-		if test "${ARWEAVE_EPMD_RESTART_METHOD}" = "kill" \
-			&& test "${epmd_pid_user}" = "${USER}"
+		# Try every restart approach in order until one succeeds;
+		# each attempt is cheap and fails fast.
+
+		# 1. Direct kill — works when epmd runs as our user (the
+		#    node-spawned epmd case). A foreign-user epmd cannot be
+		#    signalled from here.
+		if test "${epmd_pid_user}" = "${USER}"
 		then
 			kill ${epmd_pid}
 			ret=${?}
 		fi
 
-		# systemctl method used. invoke systemctl to restart epmd.
-		if test "${ARWEAVE_EPMD_RESTART_METHOD}" = "systemctl" \
-			&& test "${epmd_pid_user}" = "${USER}"
+		# 2. Plain systemctl — works when we are root or polkit
+		#    grants it (system-managed epmd.service).
+		if test "${ret}" -ne 0
 		then
-			systemctl restart epmd
+			systemctl restart epmd 2>/dev/null
 			ret=${?}
 		fi
 
-		# systemctl method (sudo) used. invoke systemctl with
-		# sudo and the pid's user.
-		if test "${ARWEAVE_EPMD_RESTART_METHOD}" = "systemctl" \
-			&& test "${epmd_pid_user}" != "${USER}"
+		# 3. sudo systemctl — works with the narrow sudoers rule the
+		#    infra epmd role deploys (arweave -> `systemctl restart
+		#    epmd`). `-n` fails cleanly when the rule is absent.
+		if test "${ret}" -ne 0
 		then
-			sudo -u "${epmd_pid_user}" systemctl restart epmd
+			sudo -n systemctl restart epmd 2>/dev/null
 			ret=${?}
-		fi
-
-		# if no methods are available, and the user's pid is
-		# not our, then we stop.
-		if test "${epmd_pid_user}" != "${USER}" \
-			&& test "${ret}" != 0
-		then
-			_msg "epmd can't be restarted (uid:${epmd_pid_user})."
-			ret=${ret}
 		fi
 
 		if test "${ret}" -ne 0
 		then
-			_msg "epmd (${epmd_pid}) restart failed."
-			ret=${ret}
+			_msg "epmd (${epmd_pid}) restart failed (owner: ${epmd_pid_user})."
 		fi
 
 		return "${ret}"
