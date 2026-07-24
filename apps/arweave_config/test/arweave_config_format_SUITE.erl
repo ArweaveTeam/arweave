@@ -203,8 +203,10 @@ yaml_encode(_Config) ->
     ?assertMatch({_, _}, binary:match(Yaml, <<"with_number_string: \"123\"\n">>)),
     ?assertMatch({_, _}, binary:match(Yaml, <<"with_specials: \"a:b#c\"\n">>)),
     ?assertMatch({_, _}, binary:match(Yaml, <<"with_newline: \"line1\\nline2\"\n">>)),
-    ?assertMatch({_, _}, binary:match(Yaml, <<"-\n">>)),
-    ?assertMatch({_, _}, binary:match(Yaml, <<"host: \"1.2.3.4:1984\"\n">>)),
+    %% Mapping items fold their first (sorted) key onto the dash line;
+    %% the bare-dash style is gone.
+    ?assertEqual(nomatch, binary:match(Yaml, <<"-\n">>)),
+    ?assertMatch({_, _}, binary:match(Yaml, <<"- host: \"1.2.3.4:1984\"\n">>)),
     ?assertMatch({_, _}, binary:match(Yaml, <<"trusted: true\n">>)),
     ok.
 
