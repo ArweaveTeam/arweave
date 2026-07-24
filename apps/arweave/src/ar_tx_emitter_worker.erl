@@ -88,13 +88,13 @@ tx_to_propagated_tx(#tx{ format = 2 } = TX, Peer, TrustedPeers) ->
 record_propagation_status(not_sent) ->
     ok;
 record_propagation_status(Data) ->
-    StatusClass = ar_metrics:get_status_class(Data),
-    ar_metrics:counter_inc(propagated_transactions_total, [StatusClass]),
+    StatusClass = arweave_metrics:get_status_class(Data),
+    arweave_metrics:counter_inc(propagated_transactions_total, [StatusClass]),
     StatusClass.
 
 record_propagation_rate(PropagatedSize, PropagationTimeUs) ->
     BitsPerSecond = PropagatedSize * 1000000 / PropagationTimeUs * 8,
-    ar_metrics:histogram_observe(tx_propagation_bits_per_second, BitsPerSecond),
+    arweave_metrics:histogram_observe(tx_propagation_bits_per_second, BitsPerSecond),
     BitsPerSecond.
 
 % retrieve information about peer(s)
