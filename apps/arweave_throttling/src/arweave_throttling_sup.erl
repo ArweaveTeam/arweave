@@ -24,9 +24,6 @@ all_info() ->
 
 %% Supervisor callbacks
 init([]) ->
-    ok = arweave_throttling_metrics:register(),
-    ok = arweave_throttling_router:init(),
-    ok = arweave_throttling_distinct_group:init(),
     {ok, {supervisor_spec(), []}}.
 
 supervisor_spec() ->

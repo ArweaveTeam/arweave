@@ -187,9 +187,15 @@ reset(GroupID) when is_atom(GroupID) ->
 %% application behaviour callbacks
 start(_StartType, _StartArgs) ->
     ?LOG_INFO("arweave_throttling application starting"),
-    arweave_throttling_sup:start_link().
+    ok = arweave_throttling_metrics:register(),
+    ok = arweave_throttling_router:init(),
+    ok = arweave_throttling_distinct_group:init(),
+    S = arweave_throttling_sup:start_link(),
+    prometheus_registry:register_collector(arweave_throttling_metrics_collector),
+    S.
 
 stop(_State) ->
+    ok = arweave_throttling_metrics:cleanup(),
     ?LOG_INFO("arweave_throttling application stopped"),
     ok.
 

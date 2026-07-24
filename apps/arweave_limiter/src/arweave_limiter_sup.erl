@@ -16,9 +16,7 @@
 -include_lib("arweave/include/ar_sup.hrl").
 -include_lib("kernel/include/logger.hrl").
 
-%% ===================================================================
 %% API functions
-%% ===================================================================
 
 %% @doc Start the supervisor, building one child gen_server per
 %% configured `[limiter, GroupID, number_of_workers]'. The list of groups and
@@ -30,11 +28,8 @@ start_link() ->
 start_link(GroupIDs) when is_list(GroupIDs) ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, [GroupIDs]).
 
-%% ===================================================================
 %% Supervisor callbacks
-%% ===================================================================
 init([GroupIDs]) ->
-    ok = arweave_limiter_metrics:register(),
     {ok, {supervisor_spec(), children_spec(GroupIDs)}}.
 
 supervisor_spec() ->
@@ -42,9 +37,7 @@ supervisor_spec() ->
        intensity => 5,
        period => 10 }.
 
-%%--------------------------------------------------------------------
 %% Child spec generation.
-%%--------------------------------------------------------------------
 children_spec(GroupIDs) ->
     lists:flatten([children_spec_per_group(ID) || ID <- GroupIDs]).
 
