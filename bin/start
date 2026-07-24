@@ -22,7 +22,8 @@ ARWEAVE_RESTART_LIMIT=${ARWEAVE_RESTART_LIMIT:=""}
 # set epmd auto restart. this is a workaround when arweave crash, an
 # epmd session can still be present (epmd session leak). Set to 1 to
 # enable ("" / 0 / false / off disable): when a leaked session blocks
-# a boot, the recovery tries, in order, a direct kill (node-spawned
+# a boot, the recovery tries, in order, a targeted `epmd -stop <name>`
+# (needs -relaxed_command_check on epmd), a direct kill (node-spawned
 # epmd running as our user), plain systemctl, and sudo systemctl (a
 # system-managed epmd.service; the infra epmd role deploys the narrow
 # sudoers rule for it). Every attempt is cheap and fails fast.
@@ -87,17 +88,11 @@ _epmd_restart() {
 	test "${epmd}" || return 1
 	test -x "${epmd}" || return 1
 
-	# check how many arweave process is running, if
-	# there is more than one, there is a problem and epmd
-	# should not be restarted.
-	local instances=$(pgrep -f "${ARWEAVE}" | wc -l)
-	if test "${instances}" -gt 1
-	then
-		_msg "More than one arweave instance is running."
-		_msg "epmd can't be restarted, here the nodes:"
-		epmd -names
-		return 1
-	fi
+	# the name we are about to boot under: from ARNODE (the service
+	# environment sets e.g. tip@127.0.0.1 on multi-node boxes),
+	# "arweave" otherwise.
+	local node_name="${ARNODE%%@*}"
+	node_name="${node_name:-arweave}"
 
 	# check if epmd daemon is started. If it's the case, then we
 	# extract some information (e.g. UID, GID, PPID)
@@ -123,17 +118,30 @@ _epmd_restart() {
 		"with ${epmd_sessions_count} sessions" \
 		"with ppid ${epmd_pid_ppid}."
 
-	# check if there is an epmd session leak,
-	# an arweave existing session should not be present.
-	# only work if node's name is "arweave".
-	${epmd} -names | awk 'BEGIN{f=0} $1~/name/ && $2~/arweave/{f=1} END{exit f}'
+	# check if there is an epmd session leak: our own name should
+	# not be registered while we are about to boot.
+	${epmd} -names | awk -v n="${node_name}" \
+		'BEGIN{f=0} $1=="name" && $2==n{f=1} END{exit f}'
 	epmd_session_leak="$?"
 	if test "${epmd_session_leak}" -eq 1
 	then
 		local ret=1
 
-		# Try every restart approach in order until one succeeds;
-		# each attempt is cheap and fails fast.
+		# Try every approach in order until one succeeds; each
+		# attempt is cheap and fails fast.
+
+		# 0. Targeted unregister — clears just our stale name,
+		#    leaving other registrations on this epmd untouched.
+		#    Needs epmd started with -relaxed_command_check (the
+		#    infra epmd role enables it); refused harmlessly
+		#    otherwise.
+		${epmd} -stop "${node_name}" >/dev/null 2>&1
+		if ${epmd} -names | awk -v n="${node_name}" \
+			'BEGIN{f=0} $1=="name" && $2==n{f=1} END{exit f}'
+		then
+			_msg "epmd: unregistered stale name ${node_name}"
+			return 0
+		fi
 
 		# 1. Direct kill — works when epmd runs as our user (the
 		#    node-spawned epmd case). A foreign-user epmd cannot be
