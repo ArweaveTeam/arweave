@@ -67,8 +67,14 @@ main() ->
         ok ->
             start_dependencies();
         Else ->
-            io:format("ERROR: couldn't read configuration file: ~p~n", [Else]),
-            arweave_config:show_cli_help(),
+            %% Keep the failure output short: dumping the full option
+            %% reference here buries the actual error. Point the user
+            %% at `config help' instead.
+            io:format("ERROR: couldn't read configuration: ~p~n", [Else]),
+            io:format(
+                "Run './bin/arweave config help' for usage, or "
+                "'./bin/arweave config help <group>' for details on "
+                "a group of options.~n"),
             init:stop(1),
             {error, Else}
     end.
