@@ -201,7 +201,7 @@ daemon_start() {
 	local deadline=$((SECONDS + 90))
 	while [ $SECONDS -lt $deadline ]; do
 		if $SETSID env "${DAEMON_ENV[@]}" ./bin/arweave config get debug \
-				</dev/null 2>/dev/null | grep -q '^true$'; then
+				</dev/null 2>/dev/null | grep -Eq '^"?true"?$'; then
 			DAEMON_RUNNING=1
 			log "  $(green PASS) daemon ready"
 			PASS=$((PASS + 1))
