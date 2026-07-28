@@ -172,69 +172,22 @@ then
 	fi
 fi
 
-# ROOTDIR is used by the Erlang VM for code:root_dir() and relative path resolution.
-# Keep it as the project root so config files and logs work correctly.
-export ROOTDIR="$RELEASE_ROOT_DIR"
+# ROOTDIR is what the Erlang VM uses for code:root_dir(), the boot
+# script's $ROOT lib resolution, and nodetool/escript lookups. On a
+# pre-built release install it is this directory (real lib/ and
+# releases/ next to bin/). On a source checkout it is the rebar3
+# release under _build, so the VM loads boot files and code from their
+# real locations — no root-level lib/releases symlinks, and no delayed
+# cleanup racing the next boot's file reads. The process CWD stays at
+# the project root (see the cd before command dispatch), so relative
+# config files, screenlogs, and data paths are unaffected.
+if [ -d "${RELEASE_ROOT_DIR}/releases/${REL_VSN}" ] && [ ! -L "${RELEASE_ROOT_DIR}/releases" ]; then
+    export ROOTDIR="$RELEASE_ROOT_DIR"
+else
+    export ROOTDIR="${BUILD_DIR}/default/rel/${REL_NAME}"
+fi
 
-# Track whether we're running from source (need symlinks) or pre-built release (have real dirs)
-RUNNING_FROM_SOURCE=""
-
-# Function to create symlinks to the build release directory on-demand.
-# Called after arweave_developer_mode (if any) so symlinks aren't deleted by ar-rebar3.
-# Only needed when running from source; pre-built releases have real lib/ and releases/ dirs.
-ensure_release_symlinks() {
-    # If releases dir already exists as a real directory, we're running a pre-built release
-    if [ -d "${RELEASE_ROOT_DIR}/releases/${REL_VSN}" ] && [ ! -L "${RELEASE_ROOT_DIR}/releases" ]; then
-        RUNNING_FROM_SOURCE=""
-        return
-    fi
-
-    # Running from source - create symlinks to the build directory
-    RUNNING_FROM_SOURCE="1"
-    RELEASE_BUILD_DIR="${BUILD_DIR}/default/rel/${REL_NAME}"
-    if [ -d "${RELEASE_BUILD_DIR}/releases" ] && [ ! -e "${RELEASE_ROOT_DIR}/releases" ]; then
-        ln -sf "${RELEASE_BUILD_DIR}/releases" "${RELEASE_ROOT_DIR}/releases"
-    fi
-    if [ -d "${RELEASE_BUILD_DIR}/lib" ] && [ ! -e "${RELEASE_ROOT_DIR}/lib" ]; then
-        ln -sf "${RELEASE_BUILD_DIR}/lib" "${RELEASE_ROOT_DIR}/lib"
-    fi
-}
-
-# Schedule symlink cleanup after VM boots. The symlinks are only needed during
-# boot to load code; once loaded, they can be removed so VSCode extensions work.
-# Default delay is 30 seconds; set ARWEAVE_SYMLINK_CLEANUP_DELAY to override (0 to disable).
-# Only runs when running from source (RUNNING_FROM_SOURCE is set).
-schedule_symlink_cleanup() {
-    # Only cleanup if we're running from source and created symlinks
-    if [ -z "$RUNNING_FROM_SOURCE" ]; then
-        return
-    fi
-
-    local delay="${ARWEAVE_SYMLINK_CLEANUP_DELAY:-30}"
-    if [ "$delay" = "0" ]; then
-        return
-    fi
-    (
-        sleep "$delay"
-        # Only remove if they're actually symlinks (safety check)
-        cleanup_release_symlinks
-    ) &
-}
-
-cleanup_release_symlinks() {
-    if [ -z "$RUNNING_FROM_SOURCE" ]; then
-        return
-    fi
-
-    if [ "${ARWEAVE_SYMLINK_CLEANUP_DELAY:-30}" = "0" ]; then
-        return
-    fi
-
-    [ -L "${RELEASE_ROOT_DIR}/lib" ] && rm -f "${RELEASE_ROOT_DIR}/lib"
-    [ -L "${RELEASE_ROOT_DIR}/releases" ] && rm -f "${RELEASE_ROOT_DIR}/releases"
-}
-
-export REL_DIR="${RELEASE_ROOT_DIR}/releases/${REL_VSN}"
+export REL_DIR="${ROOTDIR}/releases/${REL_VSN}"
 export RUNNER_LOG_DIR="${RUNNER_LOG_DIR:-$RELEASE_ROOT_DIR/logs}"
 export ESCRIPT_NAME="${ESCRIPT_NAME-$SCRIPT}"
 
@@ -808,7 +761,7 @@ relx_usage() {
 }
 
 find_erts_dir() {
-    __erts_dir="$RELEASE_ROOT_DIR/erts-$ERTS_VSN"
+    __erts_dir="$ROOTDIR/erts-$ERTS_VSN"
     if [ -d "$__erts_dir" ]; then
 	ERTS_DIR="$__erts_dir";
     else
@@ -1123,7 +1076,12 @@ check_replace_os_vars() {
     ORIG_FILE_PATH="$IN_FILE_PATH.orig"
     if [ -f "$SRC_FILE_PATH" ]; then
 	OUT_FILE_PATH=$(make_out_file_path "$IN_FILE_PATH")
-	replace_os_vars "$SRC_FILE_PATH" "$OUT_FILE_PATH"
+	# A non-owning user (e.g. an operator running `config help`)
+	# cannot re-render into the release dir: keep the file rendered
+	# at deploy time instead of spraying awk write errors.
+	if [ -w "$OUT_FILE_PATH" ] || { [ ! -e "$OUT_FILE_PATH" ] && [ -w "$(dirname "$OUT_FILE_PATH")" ]; }; then
+	    replace_os_vars "$SRC_FILE_PATH" "$OUT_FILE_PATH"
+	fi
     elif [ "$RELX_REPLACE_OS_VARS" ]; then
 	OUT_FILE_PATH=$(make_out_file_path "$IN_FILE_PATH")
 	# If vm.args.orig or sys.config.orig is present then use that
@@ -1271,9 +1229,6 @@ if test "${ARWEAVE_DEV}"
 then
     arweave_developer_mode
 fi
-
-# Ensure symlinks exist after any rebuild (ar-rebar3 removes them during build)
-ensure_release_symlinks
 
 # process internal arguments
 process_internal_args "$@"
@@ -1493,10 +1448,14 @@ case "$1" in
 	    help|"")
 		shift
 		subcommand="config"
-		BOOTFILE="$REL_DIR/start"
-		if [ -f "$REL_DIR/$REL_NAME.boot" ]; then
-		  BOOTFILE="$REL_DIR/$REL_NAME"
-		fi
+		# Help output is pure — it reads the option spec modules
+		# directly and needs no running application. Boot only
+		# kernel/stdlib and skip vm.args so help never starts
+		# distribution (whose -name collides with a running node)
+		# nor the full release apps.
+		BOOTFILE="$REL_DIR/start_clean"
+		CODE_LOADING_MODE="${CODE_LOADING_MODE:-interactive}"
+		VMARGS_PATH="/dev/null"
 		FOREGROUNDOPTIONS="-noinput +Bd"
 		ARWEAVE_OPTS="-run arweave_config_help main"
 		ARGS=${*}
@@ -1547,7 +1506,6 @@ case "$1" in
 
 	relx_run_hooks "$PRE_START_HOOKS"
 	arweave_check
-	schedule_symlink_cleanup
 
 	exec "$BINDIR/erlexec" \
 	    ${VM_PARAMS} \
@@ -1612,12 +1570,6 @@ case "$1" in
 	done
 
 	relx_run_hooks "$POST_START_HOOKS"
-
-	# Clean up symlinks once post-start hooks confirm the node reached
-	# the release-ready boundary. `erlang:is_alive/0' can become true
-	# before OTP applications finish reading priv files through these
-	# paths.
-	cleanup_release_symlinks
 	;;
 
     stop)
@@ -1757,6 +1709,12 @@ case "$1" in
 			ARGS=$(arweave_benchmark ${*})
 			;;
 		    wallet)
+			# One-shot local run beside a possibly-running node:
+			# skip vm.args so wallet creation never starts
+			# distribution with the node's -name. Keeps the full
+			# release boot — create_wallet needs the started
+			# arweave_config application.
+			VMARGS_PATH="/dev/null"
 			arweave_wallet ${*}
 			ARGS=$(arweave_wallet ${*})
 			;;
@@ -1773,6 +1731,12 @@ case "$1" in
 			# "Error writing to pipe: Broken pipe" to users.
 			BOOTFILE="$REL_DIR/start_clean"
 			CODE_LOADING_MODE="${CODE_LOADING_MODE:-interactive}"
+			# One-shot local run: skip vm.args so the converter
+			# does not start distribution with the node's -name
+			# (which collides with a RUNNING node when the config
+			# is regenerated before a restart) nor inherit
+			# server-tuned VM flags.
+			VMARGS_PATH="/dev/null"
 			arweave_convert_config ${*}
 			ARGS=$(arweave_convert_config ${*})
 			;;
@@ -1843,9 +1807,6 @@ case "$1" in
 
 	# check system configuration
 	arweave_check
-
-	# Schedule cleanup of symlinks after VM boots (allows VSCode extensions to work)
-	schedule_symlink_cleanup
 
 	# Start the VM
 	# The variabre FOREGROUNDOPTIONS must NOT be quoted.

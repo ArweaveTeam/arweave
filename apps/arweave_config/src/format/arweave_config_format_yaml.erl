@@ -164,8 +164,24 @@ encode_pair(Prefix, KeyBin, Value, _Indent) ->
 encode_list(List, Indent) ->
     Prefix = indent(Indent),
     lists:map(
-        fun(Item) when is_map(Item) ->
-            [Prefix, <<"-\n">>, encode_map(Item, Indent + 1)];
+        fun(Item) when is_map(Item), map_size(Item) > 0 ->
+            %% Conventional block style: the first key rides on the
+            %% dash line (`- k: v`), the remaining keys align under
+            %% it. `- ' is exactly one indent level wide, so nested
+            %% values land on the same columns either way.
+            [FirstKey | _] = lists:sort(maps:keys(Item)),
+            First = encode_pair(
+                [Prefix, <<"- ">>],
+                arweave_config_parser:format_segment(FirstKey),
+                maps:get(FirstKey, Item),
+                Indent + 1
+            ),
+            Rest = encode_map(maps:remove(FirstKey, Item), Indent + 1),
+            [First, Rest];
+        (Item) when is_map(Item) ->
+            %% An empty map must stay a list element; a bare `-' would
+            %% read back as null, so emit an explicit empty mapping.
+            [Prefix, <<"- {}\n">>];
         (Item) ->
             [Prefix, <<"- ">>, encode_scalar(Item), <<"\n">>]
         end,

@@ -28,6 +28,8 @@ all() ->
         get_canonical_single_segment,
         get_canonical_dotted,
         get_legacy_alias_not_translated,
+        get_formats_binary_as_text,
+        get_formats_list_of_binaries,
         get_unknown_atom_segment_returns_error,
         get_malformed_key_returns_error,
         set_canonical_dotted_coerces_value,
@@ -42,21 +44,34 @@ all() ->
 %%====================================================================
 
 get_canonical_single_segment(_Config) ->
-    false = arweave_config_cli:get("debug"),
+    "false" = arweave_config_cli:get("debug"),
     ok = arweave_config:set([debug], true),
-    true = arweave_config_cli:get("debug").
+    "true" = arweave_config_cli:get("debug").
 
 get_canonical_dotted(_Config) ->
-    false = arweave_config_cli:get("mining.enabled"),
+    "false" = arweave_config_cli:get("mining.enabled"),
     ok = arweave_config:set([mining, enabled], true),
-    true = arweave_config_cli:get("mining.enabled").
+    "true" = arweave_config_cli:get("mining.enabled").
 
 %% The CLI accepts canonical keys only — `mine` and `mining_addr` are
 %% legacy aliases of `[mining, enabled]` / `[mining, address]`, not
 %% canonical keys, so they don't resolve.
 get_legacy_alias_not_translated(_Config) ->
-    undefined = arweave_config_cli:get("mine"),
-    undefined = arweave_config_cli:get("mining_addr").
+    "undefined" = arweave_config_cli:get("mine"),
+    "undefined" = arweave_config_cli:get("mining_addr").
+
+%% Binaries render as their text — the whole reason get/1 formats:
+%% `erl_call -a' shows raw binaries as opaque `#Bin<...>' dumps.
+get_formats_binary_as_text(_Config) ->
+    ok = arweave_config:set([data_dir], <<"/opt/data">>),
+    "/opt/data" = arweave_config_cli:get("data_dir").
+
+get_formats_list_of_binaries(_Config) ->
+    ok = arweave_config:set(
+        [transactions, blocklist, urls],
+        [<<"http://a.example/x.txt">>, <<"http://b.example/y.txt">>]),
+    "[http://a.example/x.txt, http://b.example/y.txt]" =
+        arweave_config_cli:get("transactions.blocklist.urls").
 
 %% The parser uses `binary_to_existing_atom` for each segment, so a
 %% key containing an atom that no spec ever loads is rejected up front
@@ -66,16 +81,16 @@ get_unknown_atom_segment_returns_error(_Config) ->
     %% test VM will have interned them — required because the shared-VM
     %% test runner keeps the atom table populated across suites and
     %% common atoms (`does`, `not`, `exist`) leak in from elsewhere.
-    {error, #{ reason := invalid_key }} =
-        arweave_config_cli:get("xyz_unknown.zzz_segment"),
-    {error, #{ reason := invalid_key }} =
-        arweave_config_cli:get("xyz_totally_made_up_alias").
+    Err1 = arweave_config_cli:get("xyz_unknown.zzz_segment"),
+    {match, _} = re:run(Err1, "error.*invalid_key"),
+    Err2 = arweave_config_cli:get("xyz_totally_made_up_alias"),
+    {match, _} = re:run(Err2, "error.*invalid_key").
 
 get_malformed_key_returns_error(_Config) ->
     %% Trailing separator — the parser rejects.
-    {error, _} = arweave_config_cli:get("mining."),
+    {match, _} = re:run(arweave_config_cli:get("mining."), "error"),
     %% Double separator.
-    {error, _} = arweave_config_cli:get("mining..enabled").
+    {match, _} = re:run(arweave_config_cli:get("mining..enabled"), "error").
 
 set_canonical_dotted_coerces_value(_Config) ->
     %% String value flows through the spec's type coercion.

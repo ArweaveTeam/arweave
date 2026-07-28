@@ -30,12 +30,6 @@ ROOT="$(pwd)"
 unset ARWEAVE_DEV ARWEAVE_BUILD_TARGET ARWEAVE_NAMESPACE ARWEAVE_NS_SUFFIX
 unset ARNODE ARCOOKIE
 
-# bin/arweave schedules a background `rm` of the lib/ and releases/
-# symlinks 30s after VM boot (intended to unblock VSCode extensions).
-# That clobbers the next bin/arweave invocation mid-boot when the
-# smoke runs many tools back-to-back — disable it.
-export ARWEAVE_SYMLINK_CLEANUP_DELAY=0
-
 CONFIG_FIXTURE="$ROOT/scripts/smoke_node_config.json"
 
 # Erlang crash patterns. Any one of these in command output flags the
@@ -108,9 +102,20 @@ run_check() {
 	fi
 
 	if [ -n "$marker" ]; then
-		if ! grep -Eq -- "$marker" "$out_file"; then
-			failures+=("missing marker /$marker/")
-		fi
+		case "$marker" in
+		!*)
+			# Leading `!` inverts the assertion: the regex must NOT
+			# appear in the output.
+			if grep -Eq -- "${marker#!}" "$out_file"; then
+				failures+=("forbidden marker /${marker#!}/ present")
+			fi
+			;;
+		*)
+			if ! grep -Eq -- "$marker" "$out_file"; then
+				failures+=("missing marker /$marker/")
+			fi
+			;;
+		esac
 	fi
 
 	local launch_error=""
@@ -196,7 +201,7 @@ daemon_start() {
 	local deadline=$((SECONDS + 90))
 	while [ $SECONDS -lt $deadline ]; do
 		if $SETSID env "${DAEMON_ENV[@]}" ./bin/arweave config get debug \
-				</dev/null 2>/dev/null | grep -q '^true$'; then
+				</dev/null 2>/dev/null | grep -Eq '^"?true"?$'; then
 			DAEMON_RUNNING=1
 			log "  $(green PASS) daemon ready"
 			PASS=$((PASS + 1))
@@ -310,13 +315,25 @@ run_check "arweave check" 0 "" -- \
 run_check "config help" 0 "Available option groups" -- \
 	./bin/arweave config help
 
-run_check "config help mining" 0 "mining" -- \
+# Assert an option KEY from the detailed per-group view — the bare
+# group name is a useless marker (it also appears in the
+# "Available groups" listing of the failure output).
+run_check "config help mining" 0 'mining\.enabled' -- \
 	./bin/arweave config help mining
 
-# A group name that is not a known atom — must hit the "Unknown group"
+# A group name that does not exist — must hit the "Unknown group"
 # branch in arweave_config_help.
 run_check "config help bogus" 1 "Unknown group" -- \
 	./bin/arweave config help xyzzy_smoke_does_not_exist
+
+# Hidden option groups (`hidden => true' in the specs — the gated
+# config.http.* HTTP server options) must not render in help, and
+# addressing the hidden group directly is "unknown".
+run_check "config help hides gated group" 0 '!config\.http' -- \
+	./bin/arweave config help
+
+run_check "config help config (hidden group)" 1 "Unknown group" -- \
+	./bin/arweave config help config
 
 # create-wallet: no args → usage + exit 1
 run_check "create-wallet (no args)" 1 "Usage: ./bin/create-wallet" -- \

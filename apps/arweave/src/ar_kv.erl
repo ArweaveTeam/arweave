@@ -458,7 +458,8 @@ new_dbrec(Name, Filepath, LogFilepath, UserOptions, ReadOnly) ->
     ok = filelib:ensure_dir(Filepath ++ "/"),
     ok = filelib:ensure_dir(LogDir ++ "/"),
     DefaultOptionsMap = (?DEFAULT_ROCKSDB_DATABASE_OPTIONS)#{db_log_dir => LogDir},
-    DbOptions = maps:to_list(maps:merge(maps:from_list(UserOptions), DefaultOptionsMap)),
+    UserOptions1 = maybe_cap_open_files(UserOptions),
+    DbOptions = maps:to_list(maps:merge(maps:from_list(UserOptions1), DefaultOptionsMap)),
     #db{ name = Name, filepath = Filepath, db_options = DbOptions, readonly = ReadOnly }.
 
 
@@ -469,13 +470,32 @@ new_dbrec(CfNames, CfDescriptors, Filepath, LogFilepath, UserOptions, ReadOnly) 
     ok = filelib:ensure_dir(Filepath ++ "/"),
     ok = filelib:ensure_dir(LogDir ++ "/"),
     DefaultOptionsMap = (?DEFAULT_ROCKSDB_DATABASE_OPTIONS)#{db_log_dir => LogDir},
-    DbOptions = maps:to_list(maps:merge(maps:from_list(UserOptions), DefaultOptionsMap)),
+    UserOptions1 = maybe_cap_open_files(UserOptions),
+    DbOptions = maps:to_list(maps:merge(maps:from_list(UserOptions1), DefaultOptionsMap)),
     #db{
        name = hd(CfNames), filepath = Filepath,
        db_options = DbOptions,
        cf_descriptors = CfDescriptors, cf_names = CfNames,
        readonly = ReadOnly
       }.
+
+%% RocksDB's default `max_open_files' is -1: every SST stays open, so
+%% a node's fd numbers grow with its database size. On macOS that is
+%% fatal once any fd number reaches 32768: Darwin's libc `fdopen'
+%% fails with EMFILE for fd >= 32768 (its FILE keeps the fd in a
+%% short), and RocksDB wraps WAL/MANIFEST reads in stdio streams —
+%% the next database open dies with a misleading "Too many open
+%% files" IO error regardless of RLIMIT_NOFILE. Cap the per-database
+%% table cache on Darwin so fd numbers stay far below the stdio
+%% ceiling. Callers that pass their own `max_open_files' keep it.
+-define(DARWIN_MAX_OPEN_FILES, 2048).
+maybe_cap_open_files(Options) ->
+    case {os:type(), lists:keymember(max_open_files, 1, Options)} of
+        {{unix, darwin}, false} ->
+            [{max_open_files, ?DARWIN_MAX_OPEN_FILES} | Options];
+        _ ->
+            Options
+    end.
 
 
 

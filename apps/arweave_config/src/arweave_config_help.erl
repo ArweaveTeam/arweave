@@ -21,6 +21,7 @@ main(_) ->
 -spec print() -> ok.
 print() ->
     print_intro(),
+    io:format("* = settable at runtime via `config set`~n~n"),
     lists:foreach(fun print_group_summary/1, grouped_parameters()),
     ok.
 
@@ -28,10 +29,17 @@ print() ->
 %% description, default, runtime flag.
 -spec print_group(string()) -> ok.
 print_group(GroupName) when is_list(GroupName) ->
-    try list_to_existing_atom(GroupName) of
-        GroupAtom -> do_print_group(GroupAtom)
-    catch
-        error:badarg -> unknown_group(GroupName)
+    %% Match by string rather than list_to_existing_atom: `config
+    %% help` runs under a minimal boot where the group atoms only come
+    %% into existence once the spec modules are loaded (which
+    %% grouped_parameters/0 does).
+    Groups = grouped_parameters(),
+    Search = lists:search(
+        fun({Group, _, _}) -> atom_to_list(Group) =:= GroupName end,
+        Groups),
+    case Search of
+        {value, {GroupAtom, _, _}} -> do_print_group(GroupAtom);
+        false -> unknown_group(GroupName)
     end.
 
 %%%===================================================================
@@ -58,12 +66,41 @@ print_group_summary({Group, Description, Options}) ->
         _ -> io:format("~ts~n", [Description])
     end,
     io:nl(),
-    lists:foreach(fun print_option_summary/1, Options),
+    %% Aligned columns (key | default | description) so a block of
+    %% options scans as vertical lanes; widths are computed per group
+    %% so narrow groups stay tight.
+    KeyWidth = column_width([key_string(Option) || Option <- Options]),
+    DefaultWidth = column_width([summary_default(Option) || Option <- Options]),
+    lists:foreach(
+        fun(Option) ->
+            print_option_summary(Option, KeyWidth, DefaultWidth)
+        end, Options),
     io:nl().
 
-print_option_summary(Option) ->
-    io:format("  ~ts (default: ~ts) - ~ts~n",
-        [key_string(Option), default_string(Option), short_desc(Option)]).
+print_option_summary(Option, KeyWidth, DefaultWidth) ->
+    Marker = case maps:get(runtime, Option, false) of
+        true -> <<"* ">>;
+        _ -> <<"  ">>
+    end,
+    io:format("  ~ts~-*ts  ~-*ts  ~ts~n",
+        [Marker, KeyWidth, key_string(Option),
+         DefaultWidth, summary_default(Option), short_desc(Option)]).
+
+column_width(Strings) ->
+    lists:max([string:length(String) || String <- Strings]).
+
+%% @doc Summary default column: the bare value, truncated so a long
+%% default (peer lists, paths) cannot blow up the column — the full
+%% value is in the per-group view.
+summary_default(Option) ->
+    Bin = unicode:characters_to_binary(default_string(Option)),
+    case string:length(Bin) > 20 of
+        true ->
+            Truncated = string:slice(Bin, 0, 19),
+            <<(unicode:characters_to_binary(Truncated))/binary, "…"/utf8>>;
+        false ->
+            Bin
+    end.
 
 %%%===================================================================
 %%% Per-group detailed help.
@@ -153,7 +190,8 @@ visible_parameters() ->
     [
         Option
         || Option <- arweave_config_options_spec:all(),
-           maps:get(enabled, Option, true) =/= false
+           maps:get(enabled, Option, true) =/= false,
+           maps:get(hidden, Option, false) =/= true
     ].
 
 sort_by_key(Options) ->
