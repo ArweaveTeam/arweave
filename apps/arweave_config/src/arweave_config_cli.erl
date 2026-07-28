@@ -10,7 +10,7 @@
 -module(arweave_config_cli).
 -compile(warnings_as_errors).
 -compile({no_auto_import,[get/1]}).
--export([get/1, set/2]).
+-export([get/1, set/2, set_base64/2]).
 
 %% @doc Read a configuration value by its canonical key in dotted
 %% form (or as a single segment). Returns the value formatted as a
@@ -45,6 +45,21 @@ set(StringKey, StringValue) ->
         {ok, Key} -> arweave_config:set(Key, decode_value(StringValue));
         {error, _} = Err -> Err
     end.
+
+%% @doc `set/2' with base64-encoded arguments. `./bin/arweave config
+%% set' ships key and value through `erl_call -a', which parses its
+%% argument string as Erlang terms — a value containing quotes (e.g. a
+%% JSON array) shreds that parse no matter how the shell escapes it.
+%% Base64 keeps the transported tokens quote-free; the real key/value
+%% are recovered here.
+-spec set_base64(string() | binary(), string() | binary()) ->
+    ok | {error, term()}.
+set_base64(KeyB64, ValueB64) ->
+    Key = unicode:characters_to_list(
+        base64:decode(iolist_to_binary(KeyB64))),
+    Value = unicode:characters_to_list(
+        base64:decode(iolist_to_binary(ValueB64))),
+    set(Key, Value).
 
 %%====================================================================
 %% Internal

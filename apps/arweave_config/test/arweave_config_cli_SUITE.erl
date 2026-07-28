@@ -34,6 +34,7 @@ all() ->
         get_malformed_key_returns_error,
         set_canonical_dotted_coerces_value,
         set_json_array_sets_list_option,
+        set_base64_transport_round_trip,
         set_json_fallback_keeps_scalar_semantics,
         set_legacy_alias_not_translated,
         set_unknown_returns_error,
@@ -102,6 +103,16 @@ set_json_array_sets_list_option(_Config) ->
         "transactions.blocklist.urls",
         "[\"http://a.example/x.txt\", \"http://b.example/y.txt\"]"),
     [<<"http://a.example/x.txt">>, <<"http://b.example/y.txt">>] =
+        arweave_config:get([transactions, blocklist, urls]).
+
+%% The shell CLI ships key/value base64-encoded (quotes in a JSON
+%% value shred erl_call's term parsing) — set_base64/2 must decode and
+%% behave exactly like set/2.
+set_base64_transport_round_trip(_Config) ->
+    Key = base64:encode("transactions.blocklist.urls"),
+    Value = base64:encode("[\"http://b64.example/x.txt\"]"),
+    ok = arweave_config_cli:set_base64(Key, Value),
+    [<<"http://b64.example/x.txt">>] =
         arweave_config:get([transactions, blocklist, urls]).
 
 %% Values that merely look like JSON but fail to decode (or that are

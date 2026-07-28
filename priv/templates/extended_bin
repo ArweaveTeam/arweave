@@ -476,10 +476,15 @@ arweave_config_set() {
 
     ping_or_exit
 
-    local escaped_key escaped_value
-    escaped_key="$(escape_for_erl_string "${key}")"
-    escaped_value="$(escape_for_erl_string "${value}")"
-    erl_rpc arweave_config_cli set "[\"${escaped_key}\", \"${escaped_value}\"]"
+    # erl_call -a parses its argument string as Erlang terms, so a
+    # value containing quotes (e.g. a JSON array for a list option)
+    # cannot be safely embedded as a string literal, no matter the
+    # escaping. Ship both tokens base64-encoded (quote-free by
+    # construction) and let arweave_config_cli:set_base64/2 decode.
+    local b64_key b64_value
+    b64_key="$(printf '%s' "${key}" | base64 | tr -d '\n')"
+    b64_value="$(printf '%s' "${value}" | base64 | tr -d '\n')"
+    erl_rpc arweave_config_cli set_base64 "[\"${b64_key}\", \"${b64_value}\"]"
 }
 
 ######################################################################
