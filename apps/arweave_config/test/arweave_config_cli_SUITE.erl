@@ -33,6 +33,8 @@ all() ->
         get_unknown_atom_segment_returns_error,
         get_malformed_key_returns_error,
         set_canonical_dotted_coerces_value,
+        set_json_array_sets_list_option,
+        set_json_fallback_keeps_scalar_semantics,
         set_legacy_alias_not_translated,
         set_unknown_returns_error,
         set_bad_value_returns_error,
@@ -91,6 +93,26 @@ get_malformed_key_returns_error(_Config) ->
     {match, _} = re:run(arweave_config_cli:get("mining."), "error"),
     %% Double separator.
     {match, _} = re:run(arweave_config_cli:get("mining..enabled"), "error").
+
+%% JSON-shaped values decode to real terms so list-typed runtime
+%% options are settable from the CLI (a bare string would coerce to a
+%% singleton list and silently replace the whole value).
+set_json_array_sets_list_option(_Config) ->
+    ok = arweave_config_cli:set(
+        "transactions.blocklist.urls",
+        "[\"http://a.example/x.txt\", \"http://b.example/y.txt\"]"),
+    [<<"http://a.example/x.txt">>, <<"http://b.example/y.txt">>] =
+        arweave_config:get([transactions, blocklist, urls]).
+
+%% Values that merely look like JSON but fail to decode (or that are
+%% plain scalars) keep the historical raw-string path.
+set_json_fallback_keeps_scalar_semantics(_Config) ->
+    ok = arweave_config_cli:set("port", "1985"),
+    1985 = arweave_config:get([port]),
+    %% Broken JSON falls back to the raw string, which then fails the
+    %% option's type coercion — not a JSON error.
+    {error, _} = arweave_config_cli:set("transactions.blocklist.urls", "[oops"),
+    [] = arweave_config:get([transactions, blocklist, urls]).
 
 set_canonical_dotted_coerces_value(_Config) ->
     %% String value flows through the spec's type coercion.

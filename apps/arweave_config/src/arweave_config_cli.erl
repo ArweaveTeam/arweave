@@ -29,16 +29,42 @@ get(StringKey) ->
 
 %% @doc Set a configuration value by its canonical key, passing the
 %% value through the spec's type coercion.
+%%
+%% Scalar values pass through as the raw string. A value whose first
+%% non-space character is `[' or `{' is decoded as JSON first, so
+%% list- and map-typed runtime options are settable from the CLI:
+%%
+%%   config set peers.local '["1.2.3.4:1984", "peer.example:1984"]'
+%%
+%% A value that starts JSON-shaped but fails to decode falls back to
+%% the raw string (and then fails the option's type coercion with the
+%% usual error, rather than a JSON error masking a scalar typo).
 -spec set(string(), string()) -> ok | {error, term()}.
 set(StringKey, StringValue) ->
     case arweave_config_parser:key(StringKey) of
-        {ok, Key} -> arweave_config:set(Key, StringValue);
+        {ok, Key} -> arweave_config:set(Key, decode_value(StringValue));
         {error, _} = Err -> Err
     end.
 
 %%====================================================================
 %% Internal
 %%====================================================================
+
+%% JSON-shaped set values decode into real terms; anything else stays
+%% the raw string for scalar type coercion.
+decode_value(StringValue) ->
+    case string:trim(StringValue, leading) of
+        [C | _] when C =:= $[; C =:= ${ ->
+            try
+                jiffy:decode(
+                    unicode:characters_to_binary(StringValue),
+                    [return_maps])
+            catch
+                _:_ -> StringValue
+            end;
+        _ ->
+            StringValue
+    end.
 
 %% Human-oriented value rendering. Text-like data prints as text; the
 %% structure of lists and maps is kept but their elements are
