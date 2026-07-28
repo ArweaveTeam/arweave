@@ -20,9 +20,7 @@
 -include_lib("prometheus/include/prometheus.hrl").
 -define(METRIC_NAME_PREFIX, "arweave_").
 
-%% ===================================================================
 %% API
-%% ===================================================================
 
 %% called to collect Metric Families
 -spec collect_mf(_Registry, Callback) -> ok when
@@ -36,10 +34,7 @@ collect_mf(_Registry, Callback) ->
 %% called when collector deregistered
 deregister_cleanup(_Registry) -> ok.
 
-%% ===================================================================
 %% Private functions
-%% ===================================================================
-
 add_metric_family({Name, Type, Help, Metrics}, Callback) ->
     Callback(create_mf(?METRIC_NAME(Name), Help, Type, Metrics)).
 

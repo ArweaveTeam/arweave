@@ -35,23 +35,22 @@ start() ->
 stop() ->
 	application:stop(?MODULE).
 
-%% @doc `application' callback. Register the Prometheus collectors and
-%% declare the Arweave metrics, then bring up the supervisor which owns
-%% the render-cache ETS table and the `arweave_metrics_cache' renderer.
+%% @doc `application' callback. Declare the Arweave metrics, then bring
+%% up the supervisor that runs the `arweave_metrics_cache' renderer, and
+%% at last register the collectors.
 start(_StartType, _StartArgs) ->
-	prometheus_registry:register_collector(prometheus_process_collector),
-	prometheus_registry:register_collector(arweave_metrics_collector),
-	arweave_metrics:register(),
-	arweave_metrics_sup:start_link().
+    arweave_metrics:register(),
+    S = arweave_metrics_sup:start_link(),
+    prometheus_registry:register_collector(prometheus_process_collector),
+    prometheus_registry:register_collector(arweave_metrics_collector),
+    S.
 
 %% @doc `application' callback.
 stop(_State) ->
 	arweave_metrics:cleanup(),
 	ok.
 
-%%%===================================================================
 %%% Public interface.
-%%%===================================================================
 %% @doc Declare Arweave metrics.
 register() ->
 	lists:foreach(
@@ -125,7 +124,6 @@ get_status_class(Data) ->
 	?LOG_DEBUG([{event, unknown_status}, {status, Data}]),
 	"unknown".
 
-%%%===================================================================
 %%% Safe metric helpers.
 %%%
 %%% Error-swallowing wrappers around the prometheus runtime API for all
@@ -134,7 +132,6 @@ get_status_class(Data) ->
 %%% crash in a periodic gen_server write can cascade to
 %%% reached_max_restart_intensity and halt the BEAM. Metric declarations
 %%% (prometheus_*:new/declare) are NOT wrapped — a failed declaration is a bug.
-%%%===================================================================
 
 gauge_set(Name, Value) ->
 	try prometheus_gauge:set(Name, Value) catch _:_ -> ok end.
