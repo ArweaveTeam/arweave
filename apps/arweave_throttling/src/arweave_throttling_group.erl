@@ -81,7 +81,7 @@
 ]).
 
 -ifdef(AR_TEST).
--export([turn_off/1, turn_on/1]).
+-export([turn_off/1, turn_on/1, try_throttle_call/2]).
 -else.
 -compile({nowarn_unused_function, [{turn_off, 1}, {turn_on, 1}]}).
 -endif.
@@ -377,38 +377,12 @@ handle_call(Msg, From, State) ->
                 {msg, Msg}, {from, From}]),
     {reply, {error, unsupported}, State}.
 
-handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
-            #{id := ID, peers := Peers, monitors := Monitors} = State) ->
+handle_cast({update_quota, Peer, Total, Remaining, ResetSeconds, ReceivedAt},
+            #{peers := Peers, monitors := Monitors} = State) ->
     PS0 = get_or_init_peer(Peer, Peers),
-
-    UpdatedRemaining =
-        %% If total changed update remaining as well.
-        case Total =/= PS0#peer_state.total of
-            true ->
-                %% Log a warning, this might be an issue.
-                case PS0#peer_state.total of
-                    infinity ->
-                        ok;
-                    _ ->
-                        ?LOG_INFO([{event, arweave_throttling_group_quota_updated},
-                                   {peer, Peer},
-                                   {group, ID},
-                                   {previous, PS0#peer_state.total},
-                                   {new, Total},
-                                   {received_at, ReceivedAt}])
-                end,
-                NewRemaining;
-            false ->
-                merge_remaining(PS0#peer_state.remaining,
-                        PS0#peer_state.last_update_ts,
-                        NewRemaining,
-                        ReceivedAt,
-                        ?CONCURRENCY_WINDOW_MS)
-        end,
-
     PS1 = PS0#peer_state{
         total = Total,
-        remaining = UpdatedRemaining,
+        remaining = Remaining,
         reset_seconds = ResetSeconds,
         last_update_ts = ReceivedAt
     },
@@ -518,15 +492,6 @@ get_or_init_peer(Peer, Peers) ->
                 last_update_ts = undefined
             }
     end.
-
-%% Merge an incoming `remaining' value with the current one. See the
-%% module docstring for the rationale.
-merge_remaining(_Old, undefined, New, _Now, _Window) ->
-    New;
-merge_remaining(Old, LastTs, New, Now, Window) when Now - LastTs =< Window ->
-    min(Old, New);
-merge_remaining(_Old, _LastTs, New, _Now, _Window) ->
-    New.
 
 drain_waiters(#peer_state{remaining = 0} = PS, Monitors) ->
     {PS, Monitors};

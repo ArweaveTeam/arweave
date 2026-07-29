@@ -47,6 +47,7 @@ all() ->
      pending_helper,
      remote_peer_reverted_no_more_headers,
      update_before_first_throttle,
+     small_sliding_window_transitioning_to_leaky_bucket,
      blocking_call
     ].
 
@@ -160,6 +161,18 @@ update_before_first_throttle(_Config) ->
                         false
                 end
             end),
+    ok.
+
+
+%%% @doc weird edge case where switching from sliding window to leaky
+%%%      can cause funny behaviour
+small_sliding_window_transitioning_to_leaky_bucket(_Config) ->
+    Peer = {5,5,5,5, 1985},
+
+    ok = ?M:update_quota(general, Peer, #{total => 3, remaining => 2, reset_seconds => 0}),
+    ok = ?M:update_quota(general, Peer, #{total => 3, remaining => 1, reset_seconds => 0}),
+    ok = ?M:update_quota(general, Peer, #{total => 3, remaining => 0, reset_seconds => 0}),
+
     ok.
 
 %%% @doc This is a long test, making sure that a potentially extreme wait can

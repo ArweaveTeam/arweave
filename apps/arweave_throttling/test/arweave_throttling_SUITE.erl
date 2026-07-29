@@ -176,28 +176,6 @@ fifo_ordering(_Config) ->
     [1, 2, 3] = Order,
     ok.
 
-concurrent_remaining_updates_take_min(_Config) ->
-    ?assertNot(is_pid(whereis(arweave_throttling_group_general))),
-    ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
-    ?assertNot(is_pid(whereis(arweave_throttling_group_general))),
-
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, headers(?GROUPID_GENERAL, 2, 2)),
-    ?assert(is_pid(whereis(arweave_throttling_group_general))),
-
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
-                        headers(?GROUPID_GENERAL, 20, 10, 0)),
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
-                        headers(?GROUPID_GENERAL, 20, 3, 0)),
-    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
-                        headers(?GROUPID_GENERAL, 20, 7, 0)),
-
-    ok = wait_status(general, ?PEER1, fun(S) ->
-                        (maps:get(remaining, S) =:= 3)
-                        andalso (maps:get(total, S) =:= 20)
-                        andalso (maps:get(last_update_ts, S) =/= undefined)
-                    end),
-    ok.
-
 stale_update_outside_window_overrides(_Config) ->
     ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL,
                         headers(?GROUPID_GENERAL,10, 2, 0)),

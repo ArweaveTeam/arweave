@@ -258,53 +258,96 @@ cleanup_timestamps_map(_Config) ->
     ok.
 
 build_headers_info_sliding(_Config) ->
-    Policies = #{sliding_window => #{limit => 987}},
+    Policies = #{sliding_window => #{limit => 987},
+                 leaky_bucket => #{burst => 4000}},
 
     %% Empty
     ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 1,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(1, 0, [], 0, Policies)),
+
+    ?assertMatch(#{expiring_limit := 4000,
                    remaining      := 0,
                    reset_seconds  := 0,
                    policies       := Policies},
-                 ?M:build_headers_info_sliding(0, [], 0, Policies)),
+                 ?M:build_headers_info_sliding(0, 0, [], 0, Policies)),
 
     ?assertMatch(#{expiring_limit := 987,
-                   remaining      := 0,
+                   remaining      := 1,
                    reset_seconds  := 0,
                    policies       := Policies},
-                 ?M:build_headers_info_sliding(0, [], 0, Policies)),
+                 ?M:build_headers_info_sliding(1, 120, [], 0, Policies)),
 
-    ?assertMatch(#{expiring_limit := 987,
-                   remaining      := 0,
+    ?assertMatch(#{expiring_limit := 4000,
+                   remaining      := 120,
                    reset_seconds  := 0,
                    policies       := Policies},
-                 ?M:build_headers_info_sliding(0, [], 0, Policies)),
+                 ?M:build_headers_info_sliding(0, 120, [], 0, Policies)),
 
-    ?assertMatch(#{expiring_limit := 987,
-                   remaining      := 0,
+    ?assertMatch(#{expiring_limit := 4000,
+                   remaining      := 120,
                    reset_seconds  := 0,
                    policies       := Policies},
-                 ?M:build_headers_info_sliding(0, [], 1000, Policies)),
+                 ?M:build_headers_info_sliding(0, 120, [], 0, Policies)),
+
+    ?assertMatch(#{expiring_limit := 4000,
+                   remaining      := 120,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, 120, [], 1000, Policies)),
 
     %% single one equal to current time (not very likely edge case)
     ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 1,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(1, 0, [1000], 1000, Policies)),
+    ?assertMatch(#{expiring_limit := 4000,
                    remaining      := 0,
                    reset_seconds  := 0,
                    policies       := Policies},
-                 ?M:build_headers_info_sliding(0, [1000], 1000, Policies)),
+                 ?M:build_headers_info_sliding(0, 0, [1000], 1000, Policies)),
+    ?assertMatch(#{expiring_limit := 4000,
+                   remaining      := 120,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, 120, [1000], 1000, Policies)),
 
     %% single one in the past
     ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 1,
+                   reset_seconds  := 1,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(1, 0, [500], 1000, Policies)),
+    ?assertMatch(#{expiring_limit := 4000,
                    remaining      := 0,
                    reset_seconds  := 1,
                    policies       := Policies},
-                 ?M:build_headers_info_sliding(0, [500], 1000, Policies)),
+                 ?M:build_headers_info_sliding(0, 0, [500], 1000, Policies)),
+    ?assertMatch(#{expiring_limit := 4000,
+                   remaining      := 120,
+                   reset_seconds  := 1,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, 120, [500], 1000, Policies)),
 
     %% single one in the future
     ?assertMatch(#{expiring_limit := 987,
+                   remaining      := 1,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(1, 0, [1500], 1000, Policies)),
+    ?assertMatch(#{expiring_limit := 4000,
                    remaining      := 0,
                    reset_seconds  := 0,
                    policies       := Policies},
-                 ?M:build_headers_info_sliding(0, [1500], 1000, Policies)),
+                 ?M:build_headers_info_sliding(0, 0, [1500], 1000, Policies)),
+    ?assertMatch(#{expiring_limit := 4000,
+                   remaining      := 120,
+                   reset_seconds  := 0,
+                   policies       := Policies},
+                 ?M:build_headers_info_sliding(0, 120, [1500], 1000, Policies)),
 
     ok.
 
@@ -691,7 +734,10 @@ peer_cleanup(Config) ->
     %% init state, the ip is not blocked
     IP = {1,2,3,4},
 
-    Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, sliding, _}, IP, 1),
+    %% Exhausted 1 sliding window, but has 1 leaky_bucket token available to spend
+    Caller1 = ?assertHandlerRegisterOrRejectCall(
+                 ?TEST_LIMITER, {register, sliding,
+                                 #{expiring_limit := 1,remaining := 1,reset_seconds := 0}}, IP, 1),
 
     %% wait a bit so they are surely started.
     timer:sleep(100),
@@ -700,7 +746,9 @@ peer_cleanup(Config) ->
                    sliding_timestamps := #{IP := [_]},
                    leaky_tokens := #{}} when map_size(Monitors) == 1, ?M:info(?TEST_LIMITER)),
 
-    Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 20),
+    Caller2 = ?assertHandlerRegisterOrRejectCall(
+                 ?TEST_LIMITER, {register, leaky,
+                                 #{expiring_limit := 1,remaining := 0,reset_seconds := 1}}, IP, 20),
 
     %% wait a tiny bit so the logic surely runs.
     timer:sleep(100),
@@ -762,10 +810,19 @@ leaky_manual_reduction(_Config) ->
     IP = {1,2,3,4},
     NonRecordedIP = {2,3,4,5,1984},
 
-    Caller1 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 1),
-    Caller2 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 20),
-    Caller3 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 40),
-    Caller4 = ?assertHandlerRegisterOrRejectCall(?TEST_LIMITER, {register, leaky, _}, IP, 60),
+    Caller1 = ?assertHandlerRegisterOrRejectCall(
+                 ?TEST_LIMITER, {register, leaky,
+                                 #{expiring_limit := 5,remaining := 4,reset_seconds := 99}}, IP, 1),
+    Caller2 = ?assertHandlerRegisterOrRejectCall(
+                 ?TEST_LIMITER, {register, leaky,
+                                 #{expiring_limit := 5,remaining := 3,reset_seconds := 99}}, IP, 20),
+    Caller3 = ?assertHandlerRegisterOrRejectCall(
+                 ?TEST_LIMITER, {register, leaky,
+                                 #{expiring_limit := 5,remaining := 2,reset_seconds := 99}}, IP, 40),
+    Caller4 = ?assertHandlerRegisterOrRejectCall(
+                 ?TEST_LIMITER, {register, leaky,
+                                 #{expiring_limit := 5,remaining := 1,reset_seconds := 99}}, IP, 60),
+
     %% wait a bit so they are surely started.
     timer:sleep(100),
     %% 2 concurrent, 2 token
