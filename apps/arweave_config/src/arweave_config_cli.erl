@@ -10,7 +10,7 @@
 -module(arweave_config_cli).
 -compile(warnings_as_errors).
 -compile({no_auto_import,[get/1]}).
--export([get/1, set/2, set_base64/2]).
+-export([get/1, get_base64/1, set/2, set_base64/2]).
 
 %% @doc Read a configuration value by its canonical key in dotted
 %% form (or as a single segment). Returns the value formatted as a
@@ -45,6 +45,18 @@ set(StringKey, StringValue) ->
         {ok, Key} -> arweave_config:set(Key, decode_value(StringValue));
         {error, _} = Err -> Err
     end.
+
+%% @doc `get/1' with the result base64-encoded. The shell CLI cannot
+%% render erl_call's return value verbatim (the term printer quotes
+%% strings and there is no bare-string term type), so the display
+%% string travels base64 — quote-free by construction — and the shell
+%% just decodes it. Symmetric with `set_base64/2'.
+-spec get_base64(string()) -> string().
+get_base64(StringKey) ->
+    %% Returned as a charlist: erl_call renders charlists as quoted
+    %% strings, but binaries as opaque #Bin<...> dumps.
+    unicode:characters_to_list(
+        base64:encode(unicode:characters_to_binary(get(StringKey)))).
 
 %% @doc `set/2' with base64-encoded arguments. `./bin/arweave config
 %% set' ships key and value through `erl_call -a', which parses its
@@ -93,6 +105,12 @@ format_value({A, _, _, _, _} = Peer) when is_integer(A) ->
         B when is_binary(B) -> B;
         _ -> io_lib:format("~tp", [Peer])
     end;
+format_value([]) ->
+    %% An empty list renders as the JSON empty array, not an empty
+    %% string (`io_lib:printable_unicode_list([])' is `true', which
+    %% would otherwise display nothing — and an empty display string
+    %% breaks the base64 get transport).
+    "[]";
 format_value(V) when is_list(V) ->
     case io_lib:printable_unicode_list(V) of
         true -> V;

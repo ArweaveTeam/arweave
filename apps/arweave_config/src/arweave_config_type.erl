@@ -109,15 +109,26 @@ do_peers_list(Values, Resolve) when is_list(Values) ->
         true ->
             %% Bare CLI/env string for a single peer (`--peers.trusted
             %% 1.2.3.4:1984') — wrap into a singleton list.
-            do_peers_list([Values], Resolve, []);
+            do_singleton(Values, Resolve);
         false ->
             do_peers_list(Values, Resolve, [])
     end;
 do_peers_list(Value, Resolve) when is_binary(Value); is_tuple(Value) ->
     %% Same single-peer case as above for binary or tuple input.
-    do_peers_list([Value], Resolve, []);
+    do_singleton(Value, Resolve);
 do_peers_list(Value, _Resolve) ->
     {error, {invalid_peer, Value}}.
+
+%% A scalar input that entirely fails to parse is a typo, not a stale
+%% DNS entry: reject it instead of warn-skipping into an empty list —
+%% otherwise `config set peers.local <garbage>' silently wipes the
+%% list while returning ok. (The per-entry warn-skip below still
+%% applies to entries WITHIN a list.)
+do_singleton(Value, Resolve) ->
+    case do_peers_list([Value], Resolve, []) of
+        {ok, []} -> {error, {invalid_peer, Value}};
+        Other -> Other
+    end.
 
 do_peers_list([], _Resolve, Acc) ->
     %% usort mirrors the legacy writer (normalize_peers): duplicates

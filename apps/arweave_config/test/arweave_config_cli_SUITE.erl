@@ -36,6 +36,10 @@ all() ->
         set_canonical_dotted_coerces_value,
         set_json_array_sets_list_option,
         set_base64_transport_round_trip,
+        get_base64_transport_round_trip,
+        set_scalar_garbage_rejected_not_wiped,
+        get_empty_list_renders_json,
+        set_empty_json_array_clears_list,
         set_json_fallback_keeps_scalar_semantics,
         set_legacy_alias_not_translated,
         set_unknown_returns_error,
@@ -127,6 +131,41 @@ set_base64_transport_round_trip(_Config) ->
     ok = arweave_config_cli:set_base64(Key, Value),
     [<<"http://b64.example/x.txt">>] =
         arweave_config:get([transactions, blocklist, urls]).
+
+%% The get transport mirrors set: the display string travels base64
+%% so erl_call's term printer never quotes or mangles it.
+get_base64_transport_round_trip(_Config) ->
+    ok = arweave_config:set(
+        [peers, local], [<<"10.0.0.5:1984">>, <<"192.0.2.7:2984">>]),
+    Shown = arweave_config_cli:get("peers.local"),
+    B64 = arweave_config_cli:get_base64("peers.local"),
+    %% Must be a charlist (erl_call prints charlists as strings but
+    %% binaries as #Bin dumps) containing only base64 alphabet.
+    true = is_list(B64),
+    Shown = unicode:characters_to_list(
+        base64:decode(list_to_binary(B64))).
+
+%% A scalar value that fails peer parsing must be rejected — not
+%% warn-skipped into silently wiping the stored list (the bash-eats-
+%% quotes footgun: `config set peers.local [1.2.3.4:1984,...]`).
+set_scalar_garbage_rejected_not_wiped(_Config) ->
+    ok = arweave_config:set([peers, local], [<<"10.0.0.5:1984">>]),
+    {error, _} = arweave_config_cli:set(
+        "peers.local", "[10.0.0.5:1984,192.0.2.7:2984]"),
+    "[\"10.0.0.5:1984\"]" = arweave_config_cli:get("peers.local").
+
+get_empty_list_renders_json(_Config) ->
+    ok = arweave_config:set([transactions, blocklist, urls], []),
+    "[]" = arweave_config_cli:get("transactions.blocklist.urls"),
+    %% and the base64 transport of it stays decodable
+    "W10=" = arweave_config_cli:get_base64("transactions.blocklist.urls").
+
+%% Clearing a list is the explicit `[]` — accepted, unlike garbage
+%% that merely DEGRADES to empty (set_scalar_garbage_rejected...).
+set_empty_json_array_clears_list(_Config) ->
+    ok = arweave_config:set([peers, local], [<<"10.0.0.5:1984">>]),
+    ok = arweave_config_cli:set("peers.local", "[]"),
+    "[]" = arweave_config_cli:get("peers.local").
 
 %% Values that merely look like JSON but fail to decode (or that are
 %% plain scalars) keep the historical raw-string path.

@@ -463,7 +463,22 @@ arweave_config_get() {
     # erl_call -a parses the trailing token as Erlang. Args must be a
     # list, otherwise a bare string "debug" is interpreted as a
     # 5-element charlist and apply tries arweave_config_cli:get/5.
-    erl_rpc arweave_config_cli get "[\"${escaped_key}\"]"
+    #
+    # The display string travels base64 (erl_call's term printer
+    # would otherwise quote it); the token is pure base64 alphabet,
+    # so stripping erl_call's outer quotes is unambiguous. Symmetric
+    # with the set transport.
+    local output ret
+    output=$(erl_rpc arweave_config_cli get_base64 "[\"${escaped_key}\"]")
+    ret=${?}
+    if [ "${ret}" -ne 0 ]; then
+        printf '%s\n' "${output}"
+        return "${ret}"
+    fi
+    output="${output#\"}"
+    output="${output%\"}"
+    printf '%s' "${output}" | base64 --decode
+    printf '\n'
 }
 
 arweave_config_set() {
