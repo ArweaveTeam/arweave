@@ -37,6 +37,7 @@
 -include("ar_mining.hrl").
 -include("ar_wallets.hrl").
 -include("ar_pool.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 %%--------------------------------------------------------------------
 %% @doc Send a JSON-encoded transaction to the given Peer with default
@@ -1043,12 +1044,9 @@ handle_get_recent_hash_list_response(Response) ->
 
 handle_get_recent_hash_list_diff_response({ok, {{<<"200">>, _}, _, Body, _, _}}, HL, Peer) ->
     case parse_recent_hash_list_diff(Body, HL) of
-        {error, invalid_input} ->
-            ar_peers:issue_warning(Peer, recent_hash_list_diff, invalid_input),
-            {error, invalid_input};
-        {error, unknown_base} ->
-            ar_peers:issue_warning(Peer, recent_hash_list_diff, unknown_base),
-            {error, unknown_base};
+        {error, Reason} ->
+            ar_peers:issue_warning(Peer, recent_hash_list_diff, Reason),
+            {error, Reason};
         {ok, Reply} ->
             {ok, Reply}
     end;
@@ -1525,3 +1523,17 @@ log_failed_request(Reason, Log) ->
         {error,{stream_error,{closed,normal}}} -> ok;
         _ -> ?LOG_DEBUG(Log)
     end.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+%% @doc A known base hash followed by a partial tail should yield a clean
+%% {error, _} from the 200-response handler.
+recent_hash_list_diff_parse_error_test() ->
+    BaseHash = crypto:strong_rand_bytes(48),
+    HL = [BaseHash],
+    Body = << BaseHash/binary, 1, 2, 3 >>,
+    Response = {ok, {{<<"200">>, <<"OK">>}, [], Body, undefined, undefined}},
+    ?assertMatch({error, _},
+        handle_get_recent_hash_list_diff_response(Response, HL, undefined_peer)).
