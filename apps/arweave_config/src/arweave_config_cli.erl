@@ -81,37 +81,33 @@ decode_value(StringValue) ->
             StringValue
     end.
 
-%% Human-oriented value rendering. Text-like data prints as text; the
-%% structure of lists and maps is kept but their elements are
-%% formatted recursively; anything else falls back to `~tp'.
-format_value(V) when is_binary(V) ->
-    case unicode:characters_to_list(V) of
-        L when is_list(L) ->
-            case io_lib:printable_unicode_list(L) of
-                true -> L;
-                false -> io_lib:format("~tp", [V])
-            end;
-        _ ->
-            io_lib:format("~tp", [V])
+%% Value rendering, symmetric with `decode_value/1': scalars render
+%% bare (`true', `200', `/opt/data'), containers render as **JSON** —
+%% the exact form `config set' accepts — so `get' output pastes
+%% straight back into `set'. Peers render as their canonical
+%% `ip:port' spelling (hostnames are resolved at load time, so the
+%% original hostname is not recoverable); non-printable binaries
+%% (addresses) render base64url, matching their config-file spelling.
+format_value({A, _, _, _, _} = Peer) when is_integer(A) ->
+    case arweave_config_format_json:encode_value(Peer) of
+        B when is_binary(B) -> B;
+        _ -> io_lib:format("~tp", [Peer])
     end;
+format_value(V) when is_list(V) ->
+    case io_lib:printable_unicode_list(V) of
+        true -> V;
+        false -> jiffy:encode(arweave_config_format_json:encode_value(V))
+    end;
+format_value(V) when is_map(V) ->
+    jiffy:encode(arweave_config_format_json:encode_value(V));
+format_value(V) when is_binary(V) ->
+    unicode:characters_to_list(
+        arweave_config_format_json:encode_value(V));
 format_value(V) when is_atom(V) ->
     atom_to_list(V);
 format_value(V) when is_integer(V) ->
     integer_to_list(V);
 format_value(V) when is_float(V) ->
     float_to_list(V, [{decimals, 10}, compact]);
-format_value(V) when is_list(V) ->
-    case io_lib:printable_unicode_list(V) of
-        true ->
-            V;
-        false ->
-            ["[", lists:join(", ", [format_value(E) || E <- V]), "]"]
-    end;
-format_value(V) when is_map(V) ->
-    Pairs = [
-        [format_value(K), " => ", format_value(Val)]
-     || {K, Val} <- lists:sort(maps:to_list(V))
-    ],
-    ["#{", lists:join(", ", Pairs), "}"];
 format_value(V) ->
     io_lib:format("~tp", [V]).

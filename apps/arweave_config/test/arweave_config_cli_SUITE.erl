@@ -30,6 +30,7 @@ all() ->
         get_legacy_alias_not_translated,
         get_formats_binary_as_text,
         get_formats_list_of_binaries,
+        get_formats_peers_as_ip_port,
         get_unknown_atom_segment_returns_error,
         get_malformed_key_returns_error,
         set_canonical_dotted_coerces_value,
@@ -73,8 +74,20 @@ get_formats_list_of_binaries(_Config) ->
     ok = arweave_config:set(
         [transactions, blocklist, urls],
         [<<"http://a.example/x.txt">>, <<"http://b.example/y.txt">>]),
-    "[http://a.example/x.txt, http://b.example/y.txt]" =
+    %% Containers render as JSON — the exact form set accepts.
+    "[\"http://a.example/x.txt\",\"http://b.example/y.txt\"]" =
         arweave_config_cli:get("transactions.blocklist.urls").
+
+%% Peers render as canonical `ip:port` strings inside a JSON array,
+%% and the printed form is the literal round trip: get output is a
+%% valid set value that reproduces itself.
+get_formats_peers_as_ip_port(_Config) ->
+    ok = arweave_config:set(
+        [peers, local], [<<"10.0.0.5:1984">>, <<"192.0.2.7:2984">>]),
+    Shown = arweave_config_cli:get("peers.local"),
+    "[\"10.0.0.5:1984\",\"192.0.2.7:2984\"]" = Shown,
+    ok = arweave_config_cli:set("peers.local", Shown),
+    Shown = arweave_config_cli:get("peers.local").
 
 %% The parser uses `binary_to_existing_atom` for each segment, so a
 %% key containing an atom that no spec ever loads is rejected up front
