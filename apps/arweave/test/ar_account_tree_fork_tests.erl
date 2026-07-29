@@ -117,8 +117,10 @@ balances_after_fork_recovery() ->
                                                    last_tx => ar_test_node:get_tx_anchor(main) }),
     ar_test_node:assert_post_tx_to_peer(main, OrphanTX),
     ar_test_node:mine(),
-    {ok, _} = ar_test_await:node_height(main, 2),
+    {ok, BIMain} = ar_test_await:node_height(main, 2),
     ?assertEqual(?AR(10), ar_node:get_balance(Pub2)),
+    OrphanRoot = (cached_block_at(BIMain, 2))#block.wallet_list,
+    OrphanSenderBalance = ar_node:get_balance(Pub1),
     %% peer1 builds a longer chain paying Pub3 instead.
     WinTX = ar_test_node:sign_tx(Key1, #{ target => Addr3, quantity => ?AR(20),
                                           last_tx => ar_test_node:get_tx_anchor(peer1) }),
@@ -126,7 +128,14 @@ balances_after_fork_recovery() ->
     ar_test_node:mine(peer1),
     {ok, _} = ar_test_await:node_height(peer1, 2),
     ar_test_node:mine(peer1),
-    {ok, _} = ar_test_await:node_height(peer1, 3),
+    {ok, BIPeer} = ar_test_await:node_height(peer1, 3),
+    %% The fork is genuinely in place before reconnecting: the branches share the height-1
+    %% block, disagree at height 2, and each side holds only its own payment.
+    ?assertEqual(entry_at(BIMain, 1), entry_at(BIPeer, 1)),
+    ?assertNotEqual(entry_at(BIMain, 2), entry_at(BIPeer, 2)),
+    ?assertEqual(0, ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub2])),
+    ?assertEqual(?AR(20), ar_test_node:remote_call(peer1, ar_node, get_balance, [Pub3])),
+    ?assertEqual(0, ar_node:get_balance(Pub3)),
     %% Reconnect; main fork-recovers onto peer1's chain (height 3).
     ar_test_node:connect_to_peer(peer1),
     {ok, BI} = ar_test_await:node_height(main, 3),
@@ -140,7 +149,13 @@ balances_after_fork_recovery() ->
     %% The recovered height-2 block carried the winning transaction; its root reflects it.
     B2 = block_at(BI, 2),
     ?assertEqual(?AR(20), ar_account_tree:get_balance(B2#block.wallet_list, Addr3)),
-    ?assertEqual(0, ar_account_tree:get_balance(B2#block.wallet_list, Addr2)).
+    ?assertEqual(0, ar_account_tree:get_balance(B2#block.wallet_list, Addr2)),
+    %% The orphaned root still reconstructs from the diff DAG and reflects the orphaned
+    %% branch: the orphaned payment is present, the winning one absent, and the sender
+    %% balance is exactly what it was when the orphaned block was the tip.
+    ?assertEqual(?AR(10), ar_account_tree:get_balance(OrphanRoot, Addr2)),
+    ?assertEqual(0, ar_account_tree:get_balance(OrphanRoot, Addr3)),
+    ?assertEqual(OrphanSenderBalance, ar_account_tree:get_balance(OrphanRoot, Addr1)).
 
 %% @doc Apply a valid candidate block whose parent is not the tip. Diverge main and peer1
 %% after a shared height-1 block: main mines B2 paying Pub2 - B2 becomes and stays main's
@@ -185,11 +200,15 @@ valid_apply_block_off_non_tip_parent() ->
     ar_test_node:assert_post_tx_to_peer(peer1, ForkTX),
     ar_test_node:mine(peer1),
     {ok, BIPeer} = ar_test_await:node_height(peer1, 2),
+    %% The fork is genuinely in place: the branches share the height-1 block and disagree
+    %% at height 2, so the candidate below really is off main's non-tip parent.
+    ?assertEqual(entry_at(BIMain, 1), entry_at(BIPeer, 1)),
+    ?assertNotEqual(entry_at(BIMain, 2), entry_at(BIPeer, 2)),
     B1 = cached_block_at(BIMain, 1),
     TipRoot = (cached_block_at(BIMain, 2))#block.wallet_list,
     %% The candidate comes from peer1's block cache with its transaction restored to the
     %% full record, like a block arriving from the network during fork recovery.
-    {BH, _, _} = lists:nth(length(BIPeer) - 2, BIPeer),
+    {BH, _, _} = entry_at(BIPeer, 2),
     B2Prime = ar_test_node:remote_call(peer1, ar_node, get_block_shadow_from_cache, [BH]),
     Candidate = B2Prime#block{ txs = [ForkTX] },
     ForkRoot = Candidate#block.wallet_list,
@@ -336,15 +355,19 @@ boot_from_disk_preserves_tree() ->
     %% The tip tree reloaded into ETS hashes to the canonical root.
     assert_tip_matches_from_scratch(TipRoot).
 
+%% @doc The entry at the given height in a tip-first block index.
+entry_at(BI, Height) ->
+    lists:nth(length(BI) - Height, BI).
+
 %% @doc Fetch the block at the given height from a tip-first block index.
 block_at(BI, Height) ->
-    {BH, _, _} = lists:nth(length(BI) - Height, BI),
+    {BH, _, _} = entry_at(BI, Height),
     ar_test_await:block_stored(BH).
 
 %% @doc Fetch the block at the given height from the in-memory block cache, which - unlike the
 %% on-disk copy - still carries the reward_history that apply_block/2 needs on the parent block.
 cached_block_at(BI, Height) ->
-    {BH, _, _} = lists:nth(length(BI) - Height, BI),
+    {BH, _, _} = entry_at(BI, Height),
     ar_node:get_block_shadow_from_cache(BH).
 
 %% @doc Read all accounts of the tree with the given root via the chunk API, rebuild a
