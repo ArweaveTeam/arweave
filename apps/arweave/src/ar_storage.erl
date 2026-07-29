@@ -876,12 +876,13 @@ read_tx_file(Filename) ->
 read_file_raw(Filename) ->
     case file:open(Filename, [read, raw, binary]) of
         {ok, File} ->
-            case file:read(File, 20000000) of
-                {ok, Bin} ->
-                    file:close(File),
-                    {ok, Bin};
-                Error ->
-                    Error
+            %% Close on every branch - file:read returns the bare eof atom for
+            %% an empty file and {error, _} on I/O errors, both of which would
+            %% otherwise leak the descriptor.
+            try
+                file:read(File, 20000000)
+            after
+                file:close(File)
             end;
         Error ->
             Error
@@ -1956,4 +1957,27 @@ update_block_index_kv_read_error_test() ->
         ?assertEqual({error, simulated_io_error}, update_block_index2(1, 0, []))
     after
         meck:unload(ar_kv)
+    end.
+
+%% @doc read_file_raw/1 must close the descriptor on every branch, including the
+%% eof branch taken for an empty file. We capture the exact handle opened and
+%% assert it is closed, so an unrelated file:close cannot mask a leak.
+read_file_raw_closes_fd_on_eof_test() ->
+    Filename = "ar_storage_fd_leak_test_"
+        ++ integer_to_list(erlang:phash2(erlang:make_ref())) ++ ".tmp",
+    ok = file:write_file(Filename, <<>>),
+    meck:new(file, [unstick, passthrough]),
+    meck:expect(file, open, fun(F, Modes) ->
+            R = meck:passthrough([F, Modes]),
+            case R of {ok, Fd} -> put(test_fd, Fd); _ -> ok end,
+            R
+        end),
+    try
+        ?assertEqual(eof, read_file_raw(Filename)),
+        Fd = get(test_fd),
+        ?assertNotEqual(undefined, Fd),
+        ?assert(meck:called(file, close, [Fd]))
+    after
+        meck:unload(file),
+        file:delete(Filename)
     end.

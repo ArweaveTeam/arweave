@@ -639,9 +639,12 @@ delete_chunk(PaddedOffset, StoreID) ->
                         Chunk
                 end,
             ar_entropy_storage:acquire_semaphore(Filepath),
-            Result = file:pwrite(F, Position, ZeroChunk),
-            ar_entropy_storage:release_semaphore(Filepath),
-            Result;
+            try
+                file:pwrite(F, Position, ZeroChunk)
+            after
+                ar_entropy_storage:release_semaphore(Filepath),
+                file:close(F)
+            end;
         {error, enoent} ->
             ok;
         Error ->
