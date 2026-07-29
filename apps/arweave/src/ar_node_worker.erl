@@ -334,20 +334,12 @@ validate_clock_sync(Peers) ->
                                 end
                         end,
     Responses = arweave_util:pmap(ValidatePeerClock, [P || P <- Peers, not is_pid(P)]),
-    case checker(Responses) of
-        % If more valid nodes are present than invalid nodes, it should be
-        % good
-        {X, #{true := True, false := False}}
-          when X>0, True>False ->
+    case clock_sync_ok(Responses) of
+        true ->
             ok;
-
-        % If all nodes are valid, then its good
-        {_, #{ true := _ }} ->
-            ok;
-
-        % Else there is a problem somewhere. Too many peers
-        % with clock issues will only cause problems.
-        _ ->
+                                                % Too many peers with clock issues
+                                                % will only cause problems.
+        false ->
             ar:console(
               "~n\tInvalid peers. A valid peer must be part of the"
               " network ~s and its clock must deviate from ours by no"
@@ -357,6 +349,13 @@ validate_clock_sync(Peers) ->
             timer:sleep(1000),
             init:stop(1)
     end.
+
+%% @doc Accept the local clock only when the peers reporting it valid strictly
+%% outnumber those reporting it invalid. A single valid peer amid a majority of
+%% invalid ones (and ties) must be rejected.
+clock_sync_ok(Responses) ->
+    {_, Counter} = checker(Responses),
+    maps:get(true, Counter, 0) > maps:get(false, Counter, 0).
 
 log_peer_clock_diff(Peer, Delta) ->
     Warning = "Your local clock deviates from peer ~s by ~B seconds or more.",
@@ -2480,3 +2479,17 @@ checker_test_disabled() ->
     ?assertEqual({3, #{ true => 3 }}, checker([true, true, true])),
     ?assertEqual({3, #{ true => 2, false => 1}}, checker([true, true, false])),
     ?assertEqual({3, #{ true => 1, false => 2}}, checker([true, false, false])).
+
+clock_sync_ok_test() ->
+    %% All valid, or valid strictly outnumbering invalid, is accepted.
+    ?assert(clock_sync_ok([true])),
+    ?assert(clock_sync_ok([true, true, true])),
+    ?assert(clock_sync_ok([true, true, false])),
+    %% One valid peer amid a majority of invalid ones must be rejected -
+    %% this is the case the old #{true := _} catch-all wrongly accepted.
+    ?assertNot(clock_sync_ok([true, false, false, false, false])),
+    %% A tie is not a majority.
+    ?assertNot(clock_sync_ok([true, false])),
+    %% No valid peers, or none at all, is rejected.
+    ?assertNot(clock_sync_ok([false, false])),
+    ?assertNot(clock_sync_ok([])).
