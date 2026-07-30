@@ -234,6 +234,18 @@ record_chunk(
     {_ChunkFileStart, Filepath, _Position, _ChunkOffset} =
         ar_chunk_storage:locate_chunk_on_disk(PaddedEndOffset, StoreID),
     acquire_semaphore(Filepath),
+    %% Release on every exit path. If the function crashes, without this
+    %% the semaphore entry leaks in the supervisor-owned ETS table and every
+    %% future writer to this file spins forever. Mirrors do_store_entropy/5.
+    try
+        do_record_chunk(PaddedEndOffset, Chunk, StoreID, FileIndex, IsPrepared, RewardAddr,
+                        Packing, StartOffset)
+    after
+        release_semaphore(Filepath)
+    end.
+
+do_record_chunk(PaddedEndOffset, Chunk, StoreID, FileIndex, IsPrepared, RewardAddr, Packing,
+                StartOffset) ->
     CheckIsChunkStoredAlready =
         ar_sync_record:is_recorded(PaddedEndOffset, ar_chunk_storage, StoreID),
     CheckIsEntropyRecorded =
@@ -257,34 +269,32 @@ record_chunk(
             true ->
                 ar_chunk_storage:get(StartOffset, StartOffset, StoreID)
         end,
-    RecordChunk = case ReadEntropy of
-                      {error, _} = Error2 ->
-                          Error2;
-                      not_found ->
-                          delete_record(PaddedEndOffset, StoreID),
-                          {error, not_prepared_yet};
-                      missing_entropy ->
-                          ?LOG_WARNING([{event, missing_entropy}, {padded_end_offset, PaddedEndOffset},
-                                        {store_id, StoreID}, {packing, ar_serialize:encode_packing(Packing, true)}]),
-                          Entropy = generate_missing_entropy(PaddedEndOffset, RewardAddr),
-                          case Entropy of
-                              {error, Reason} ->
-                                  {error, Reason};
-                              _ ->
-                                  PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
-                                  ar_chunk_storage:record_chunk(
-                                    PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
-                          end;
-                      no_entropy_yet ->
-                          ar_chunk_storage:record_chunk(
-                            PaddedEndOffset, Chunk, unpacked_padded, StoreID,  FileIndex);
-                      {_EndOffset, Entropy} ->
-                          PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
-                          ar_chunk_storage:record_chunk(
-                            PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
-                  end,
-    release_semaphore(Filepath),
-    RecordChunk.
+    case ReadEntropy of
+        {error, _} = Error2 ->
+            Error2;
+        not_found ->
+            delete_record(PaddedEndOffset, StoreID),
+            {error, not_prepared_yet};
+        missing_entropy ->
+            ?LOG_WARNING([{event, missing_entropy}, {padded_end_offset, PaddedEndOffset},
+                          {store_id, StoreID}, {packing, ar_serialize:encode_packing(Packing, true)}]),
+            Entropy = generate_missing_entropy(PaddedEndOffset, RewardAddr),
+            case Entropy of
+                {error, Reason} ->
+                    {error, Reason};
+                _ ->
+                    PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
+                    ar_chunk_storage:record_chunk(
+                      PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
+            end;
+        no_entropy_yet ->
+            ar_chunk_storage:record_chunk(
+              PaddedEndOffset, Chunk, unpacked_padded, StoreID,  FileIndex);
+        {_EndOffset, Entropy} ->
+            PackedChunk = ar_packing_server:encipher_replica_2_9_chunk(Chunk, Entropy),
+            ar_chunk_storage:record_chunk(
+              PaddedEndOffset, PackedChunk, Packing, StoreID, FileIndex)
+    end.
 
 do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID, ok) ->
     do_store_entropy(ChunkEntropy, BucketEndOffset, RewardAddr, StoreID).
@@ -435,6 +445,31 @@ release_semaphore(Filepath) ->
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+%% @doc An exception in the record_chunk critical section must still release the
+%% per-file semaphore; otherwise the stale ETS entry wedges all future writers.
+record_chunk_releases_semaphore_on_exception_test() ->
+    Filepath = "test_entropy_semaphore_file",
+    case ets:info(ar_entropy_storage) of
+        undefined -> ets:new(ar_entropy_storage, [set, public, named_table]);
+        _ -> ok
+    end,
+    ets:delete(ar_entropy_storage, {semaphore, Filepath}),
+    meck:new(ar_block, [passthrough]),
+    meck:expect(ar_block, get_chunk_padded_offset, fun(X) -> X end),
+    meck:new(ar_chunk_storage, [passthrough]),
+    meck:expect(ar_chunk_storage, get_chunk_bucket_start, fun(_) -> 0 end),
+    meck:expect(ar_chunk_storage, locate_chunk_on_disk, fun(_, _) -> {0, Filepath, 0, 0} end),
+    meck:new(ar_sync_record, [passthrough]),
+    meck:expect(ar_sync_record, is_recorded, fun(_, _, _) -> throw(boom) end),
+    try
+        Threw = try record_chunk(1, <<0>>, "store", #{}, {true, <<"addr">>}), false
+                catch throw:boom -> true end,
+        ?assert(Threw),
+        ?assertEqual([], ets:lookup(ar_entropy_storage, {semaphore, Filepath}))
+    after
+        meck:unload([ar_block, ar_chunk_storage, ar_sync_record])
+    end.
 
 replica_2_9_test_() ->
     {timeout, ?TEST_NODE_TIMEOUT, fun test_replica_2_9/0}.
