@@ -20,7 +20,8 @@ end_per_testcase(_TestCase, _Config) ->
 
 all() ->
     [
-        parser
+        parser,
+        typeless_option
     ].
 
 %%====================================================================
@@ -88,6 +89,17 @@ parser(_Config) ->
     {error, #{ reason := <<"bad value">> }} =
         arweave_config_format_cli:parse([<<"--port">>, <<"bad">>]),
 
+    ok.
+
+%% An option registered without a `type' (here modelled on internal_api_secret)
+%% must be accepted by the CLI parser and keep its raw value, not abort boot.
+typeless_option(_Config) ->
+    Opts = #{ long_arguments => #{ <<"--secret">> => #{
+                option_key => [internal_api_secret] }}},
+    ?assertMatch({ok, #{ [internal_api_secret] := <<"abc">> }},
+        arweave_config_format_cli:parse([<<"--secret">>, <<"abc">>], Opts)),
+    ?assertMatch({ok, #{ [internal_api_secret] := <<"abc">> }},
+        arweave_config_format_cli:parse([<<"--secret=abc">>], Opts)),
     ok.
 
 %%====================================================================

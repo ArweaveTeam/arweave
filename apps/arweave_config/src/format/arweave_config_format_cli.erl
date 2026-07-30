@@ -217,7 +217,13 @@ decode_value(#{type := Type}, Value, Pos) ->
                 type => Type,
                 position => Pos
             }}
-    end.
+    end;
+decode_value(_Spec, Value, _Pos) ->
+    %% Options registered without a `type' (e.g. those relying on a handle_set
+    %% callback, such as internal_api_secret / pool_api_key / vdf.*) keep the raw
+    %% value; coercion and validation happen downstream when the option is set.
+    %% Without this clause such a flag has no matching clause and aborts boot.
+    {ok, Value}.
 
 %% Record a parsed (Spec, Value) into the buffer. `[config_file]` is
 %% intentionally dropped — bootstrap locates and loads it separately,
