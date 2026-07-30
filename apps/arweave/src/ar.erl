@@ -120,6 +120,14 @@ start(normal, _Args) ->
     %% before any downstream consumer reads the config.
     Result = ar_sup:start_link(),
 
+    %% Prometheus metrics collector - metrics should be defined 
+    %% in arweave_metrics already. We only start the metrics collector
+    %% when the processes have been started by the supervisor.
+    prometheus_registry:register_collector(ar_metrics_collector),
+    %% Release number never changes so just set it here. The metrics should
+    %% be defined by the arweave_metrics app.
+    prometheus_gauge:set(arweave_release, ?RELEASE_NUMBER),
+
     %% All boot-time mutations are done. Flip to runtime mode so any
     %% subsequent write to a static spec is rejected.
     case arweave_config:runtime() of
