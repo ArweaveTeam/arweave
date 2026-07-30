@@ -2,18 +2,7 @@
 %%% gen_server, exercised without the supervisor.
 %%% @end
 -module(arweave_throttling_group_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([
-        start_stop/1,
-        initial_peer_state/1,
-        independent_peer_state/1,
-        pending_helper/1,
-        update_before_first_throttle/1,
-        blocking_call/1
-        ]).
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -53,11 +42,12 @@ end_per_testcase(_TestCase, _Config) ->
 
 all() ->
     [
-    start_stop,
-    independent_peer_state,
-    pending_helper,
-    update_before_first_throttle,
-    blocking_call
+     start_stop,
+     independent_peer_state,
+     pending_helper,
+     remote_peer_reverted_no_more_headers,
+     update_before_first_throttle,
+     blocking_call
     ].
 
 
@@ -132,6 +122,25 @@ pending_helper(_Config) ->
                 #{total => 10, remaining => 1, reset_seconds => 1}),
     receive done -> ok after 10000 -> ct:fail(not_released) end,
     0 = ?M:pending(general, Peer),
+    ok.
+
+remote_peer_reverted_no_more_headers(_Config) ->
+    Peer = {1, 2, 3, 4, 1984},
+
+    ok = ?M:update_quota(general, Peer, #{total => 10, remaining => 9, reset_seconds => 0}),
+    ok = ?M:throttle(general, Peer),
+    {ok, S1} = ?M:status(general, Peer),
+    ?assertMatch(#{total := 10, remaining := 8}, S1),
+    ok = ?M:update_quota(general, Peer, #{total => 10, remaining => 8, reset_seconds => 0}),
+    {ok, S2} = ?M:status(general, Peer),
+    ?assertMatch(#{total := 10, remaining := 8}, S2),
+    %% So far everything is going alright. Let's do another one.
+    ok = ?M:throttle(general, Peer),
+    {ok, S3} = ?M:status(general, Peer),
+    ?assertMatch(#{total := 10, remaining := 7}, S3),
+    ok = ?M:reset_peer(general, Peer),
+    {ok, S4} = ?M:status(general, Peer),
+    ?assertMatch(#{total := infinity}, S4),
     ok.
 
 %% @doc An update arriving before any throttle/2 must initialise the
