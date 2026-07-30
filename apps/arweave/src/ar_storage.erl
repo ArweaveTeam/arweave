@@ -213,7 +213,13 @@ update_block_index2(IndexHeight, OrphanCount, BI) ->
                             {error, not_found};
                         {ok, Bin} ->
                             {PrevH, _, _, _} = binary_to_term(Bin, [safe]),
-                            update_block_index3(IndexHeight, PrevH, BI)
+                            update_block_index3(IndexHeight, PrevH, BI);
+                        {error, Reason} ->
+                            ?LOG_ERROR([{event, failed_to_update_block_index},
+                                    {reason, failed_to_read_prev_element},
+                                    {prev_height, IndexHeight - 1},
+                                    {error, io_lib:format("~p", [Reason])}]),
+                            {error, Reason}
                     end
             end;
         {error, Error} ->
@@ -1941,3 +1947,13 @@ test_update_block_index() ->
         {<<"hash_o">>, 0, <<"root_o">>},
         {<<"hash_j">>, 0, <<"root_j">>}
     ], read_block_index()).
+
+update_block_index_kv_read_error_test() ->
+    meck:new(ar_kv, [passthrough]),
+    meck:expect(ar_kv, delete_range, fun(_, _, _) -> ok end),
+    meck:expect(ar_kv, get, fun(block_index_db, _) -> {error, simulated_io_error} end),
+    try
+        ?assertEqual({error, simulated_io_error}, update_block_index2(1, 0, []))
+    after
+        meck:unload(ar_kv)
+    end.
