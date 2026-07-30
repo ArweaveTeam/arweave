@@ -446,6 +446,16 @@ if daemon_start "$DAEMON_DATA" "$DAEMON_LOG"; then
 
 	run_check "config set unknown key returns error" 0 "error" -- \
 		env "${DAEMON_ENV[@]}" ./bin/arweave config set xyzzy_smoke_no_such_key value
+
+	# JSON-shaped set values decode to real terms so list-typed
+	# runtime options are settable from the CLI (a bare string would
+	# replace the whole list with a singleton).
+	run_check "config set list via JSON array" 0 "ok" -- \
+		env "${DAEMON_ENV[@]}" ./bin/arweave config set transactions.blocklist.urls \
+			'["http://smoke.example/a.txt", "http://smoke.example/b.txt"]'
+
+	run_check "config get list (after JSON set)" 0 'http://smoke\.example/b\.txt' -- \
+		env "${DAEMON_ENV[@]}" ./bin/arweave config get transactions.blocklist.urls
 fi
 
 # Shell-glue check: with no node running, `arweave config get` should

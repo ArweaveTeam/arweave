@@ -8,8 +8,11 @@
     parse/1,
     parse/2,
     encode/1,
-    encode/2
+    encode/2,
+    encode_value/1
 ]).
+
+-define(is_octet(X), (is_integer(X) andalso X >= 0 andalso X =< 255)).
 
 -spec parse(FileContents) -> Return when
     FileContents :: string() | binary(),
@@ -63,6 +66,16 @@ encode(Data, _Opts) when is_map(Data) ->
 encode(Data, _) ->
     {error, {invalid_data, Data}}.
 
+%% @doc Convert a configuration value into a jiffy-encodable term
+%% using the canonical config spellings. Handles file-shaped values
+%% and the runtime-only shapes a live store holds: resolved peer
+%% tuples render as `ip:port' and raw (non-printable) binaries —
+%% addresses — render base64url. Also used by `arweave_config_cli' to
+%% display values in the exact form `config set' accepts.
+encode_value({A, B, C, D, Port})
+        when ?is_octet(A), ?is_octet(B), ?is_octet(C), ?is_octet(D),
+             is_integer(Port), Port >= 0, Port =< 65535 ->
+    iolist_to_binary(io_lib:format("~b.~b.~b.~b:~b", [A, B, C, D, Port]));
 encode_value(Map) when is_map(Map) ->
     maps:from_list(
         [
@@ -83,7 +96,15 @@ encode_value(List) when is_list(List) ->
             [encode_value(Value) || Value <- List]
     end;
 encode_value(Binary) when is_binary(Binary) ->
-    Binary;
+    case unicode:characters_to_list(Binary) of
+        L when is_list(L) ->
+            case io_lib:printable_unicode_list(L) of
+                true -> Binary;
+                false -> b64fast:encode(Binary)
+            end;
+        _ ->
+            b64fast:encode(Binary)
+    end;
 encode_value(true) ->
     true;
 encode_value(false) ->
