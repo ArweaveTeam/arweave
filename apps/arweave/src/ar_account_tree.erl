@@ -308,6 +308,10 @@ initialize_state(Blocks, State) ->
                         RestB
                        ),
     ar_events:send(node_state, {account_tree_initialized, LastB#block.height}),
+    %% The initialization burst tenures transient data faster than the minor collections
+    %% reclaim it, leaving the heap above 1GB until a distant full sweep. One major
+    %% collection shrinks it to under 1MB in under 100ms.
+    erlang:garbage_collect(),
     {noreply, StateN}.
 
 %% @doc Download the account tree with the given block's wallet_list root hash from the
