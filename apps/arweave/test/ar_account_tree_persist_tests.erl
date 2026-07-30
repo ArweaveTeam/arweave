@@ -76,12 +76,18 @@ test_persist_equivalence() ->
     check_roundtrip(roundtrip_many, many_accounts(60)),
     check_roundtrip(roundtrip_shared, shared_prefix_accounts()),
     check_roundtrip(roundtrip_nested, nested_accounts()),
-    %% Boot path: read from disk into a map tree, load it into a fresh ets table
+    %% Read from disk into a map tree, load it into a fresh ets table
     %% (ar_account_tree:load_into_ets/1), and reproduce the root.
     check_load_into_ets(load_ets_empty, []),
     check_load_into_ets(load_ets_many, many_accounts(60)),
     check_load_into_ets(load_ets_shared, shared_prefix_accounts()),
-    check_load_into_ets(load_ets_nested, nested_accounts()).
+    check_load_into_ets(load_ets_nested, nested_accounts()),
+    %% Boot path: stream from disk straight into a fresh ets table
+    %% (ar_storage:fold_wallet_list/4), and reproduce the root.
+    check_stream_into_ets(stream_ets_empty, []),
+    check_stream_into_ets(stream_ets_many, many_accounts(60)),
+    check_stream_into_ets(stream_ets_shared, shared_prefix_accounts()),
+    check_stream_into_ets(stream_ets_nested, nested_accounts()).
 
 %%%===================================================================
 %%% Helpers
@@ -185,6 +191,20 @@ check_load_into_ets(Name, Accounts) ->
     {RootEts, _, _} = ar_patricia_tree_ets:compute_hash(Tid, HashFun, #{}),
     ar_patricia_tree_ets:delete_table(Tid),
     ?assertEqual(Root, RootEts, {load_into_ets, Name}).
+
+%% @doc The startup path: persist a tip, stream it from disk straight into a fresh ets
+%% table via ar_storage:fold_wallet_list/4, and assert it hashes to the same root.
+check_stream_into_ets(Name, Accounts) ->
+    HashFun = ar_block:wallet_list_hash_fun(),
+    clear_db(),
+    Root = ar_storage:write_wallet_list(0, build_mem(Accounts)),
+    Tid = ar_patricia_tree_ets:new(),
+    {ok, Tid} = ar_storage:fold_wallet_list(Root,
+            fun(Key, Value, Tid2) -> ar_patricia_tree_ets:insert(Key, Value, Tid2) end,
+            Tid, not_set),
+    {RootEts, _, _} = ar_patricia_tree_ets:compute_hash(Tid, HashFun, #{}),
+    ar_patricia_tree_ets:delete_table(Tid),
+    ?assertEqual(Root, RootEts, {stream_into_ets, Name}).
 
 apply_mods(Accounts, Mods) ->
     Base = maps:from_list(Accounts),

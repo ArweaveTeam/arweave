@@ -38,7 +38,7 @@
 -export([start_link/1, get/1, get/2, get_wallet_list_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,
          apply_block/2, add_wallets/4, set_current/3, get_size/0]).
 
-%% Exported for ar_account_tree_persist_tests to exercise the disk -> map -> ets boot path.
+%% Exported for ar_account_tree_persist_tests.
 -export([load_into_ets/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
@@ -206,6 +206,7 @@ do_handle_call({set_current, RootHash, Height, PruneDepth}, _, State) ->
     {reply, ok, set_current(State, RootHash, Height, PruneDepth)}.
 
 handle_cast({init, Blocks, Args}, State) ->
+    Tid = maps:get(tid, State),
     case proplists:get_value(from_state, Args) of
         undefined ->
             Peers = proplists:get_value(from_peers, Args),
@@ -216,20 +217,20 @@ handle_cast({init, Blocks, Args}, State) ->
                     false ->
                         lists:last(Blocks)
                 end,
-            Tree = get_tree_from_peers(B, Peers),
-            initialize_state(Blocks, Tree, State);
+            load_tree_from_peers(B, Peers, Tid),
+            initialize_state(Blocks, State);
         SearchDepth ->
             ?LOG_DEBUG([{event, init_from_state}, {block_count, length(Blocks)}]),
             CustomDir = proplists:get_value(custom_dir, Args, not_set),
-            case find_local_account_tree(Blocks, SearchDepth, CustomDir) of
+            case load_local_account_tree(Blocks, SearchDepth, CustomDir, Tid) of
                 not_found ->
                     ar:console("~n~n\tThe local state is missing an account tree, consider joining "
                                "the network via the trusted peers.~n"),
                     timer:sleep(1000),
                     init:stop(1);
-                {Skipped, Tree} ->
+                Skipped ->
                     Blocks2 = lists:nthtail(Skipped, Blocks),
-                    initialize_state(Blocks2, Tree, State)
+                    initialize_state(Blocks2, State)
             end
     end;
 
@@ -244,12 +245,15 @@ terminate(Reason, _State) ->
 %%% Private functions.
 %%%===================================================================
 
-find_local_account_tree(Blocks, SearchDepth, CustomDir) ->
-    find_local_account_tree(Blocks, SearchDepth, 0, CustomDir).
+%% @doc Stream the account tree of the deepest window block from the local storage into the
+%% ETS table, probing up to SearchDepth blocks. Return the number of skipped blocks or
+%% not_found.
+load_local_account_tree(Blocks, SearchDepth, CustomDir, Tid) ->
+    load_local_account_tree(Blocks, SearchDepth, 0, CustomDir, Tid).
 
-find_local_account_tree(_Blocks, Skipped, Skipped, _CustomDir) ->
+load_local_account_tree(_Blocks, Skipped, Skipped, _CustomDir, _Tid) ->
     not_found;
-find_local_account_tree(Blocks, SearchDepth, Skipped, CustomDir) ->
+load_local_account_tree(Blocks, SearchDepth, Skipped, CustomDir, Tid) ->
     {IsLast, B} =
         case length(Blocks) >= ar_block:get_consensus_window_size() of
             true ->
@@ -258,26 +262,31 @@ find_local_account_tree(Blocks, SearchDepth, Skipped, CustomDir) ->
                 {true, lists:last(Blocks)}
         end,
     ID = B#block.wallet_list,
-    case ar_storage:read_wallet_list(ID, CustomDir) of
-        {ok, Tree} ->
-            {Skipped, Tree};
+    case ar_storage:fold_wallet_list(ID,
+            fun(Key, Value, Tid2) -> ar_patricia_tree_ets:insert(Key, Value, Tid2) end,
+            Tid, CustomDir) of
+        {ok, _} ->
+            Skipped;
         _ ->
+            %% Drop whatever the failed streaming inserted before probing the next block.
+            ar_patricia_tree_ets:clear(Tid),
             case IsLast of
                 true ->
                     not_found;
                 false ->
-                    find_local_account_tree(tl(Blocks), SearchDepth, Skipped + 1, CustomDir)
+                    load_local_account_tree(tl(Blocks), SearchDepth, Skipped + 1, CustomDir, Tid)
             end
     end.
 
-%% @doc Load the base account tree into ETS, build the diff DAG by applying each block in the
-%% consensus window on top of it, then make the last block the current tip. Originally a
-%% map-based implementation of the tree is constructed then it is loaded into ETS.
-initialize_state(Blocks, BaseTree, State) ->
+%% @doc Build the diff DAG by applying each block in the consensus window on top of the
+%% base account tree, advancing the tip with set_current/4 after every block so the sink
+%% follows the window one hop at a time. The caller streams the base tree accounts into
+%% the ETS table before this runs.
+initialize_state(Blocks, State) ->
     InitialDepth = ar_block:get_consensus_window_size(),
     Window = lists:reverse(lists:sublist(Blocks, InitialDepth)),
     [BaseB | RestB] = Window,
-    Tid = load_into_ets(BaseTree, maps:get(tid, State)),
+    Tid = maps:get(tid, State),
     %% Persist the full base tree (every node is dirty on a freshly loaded tree).
     {BaseRoot, _, _} = compute_hash(Tid, #{ sink => ar_storage }),
     BaseRoot = BaseB#block.wallet_list,
@@ -286,65 +295,58 @@ initialize_state(Blocks, BaseTree, State) ->
                     sink => BaseRoot,
                     tid => Tid
                    },
+    State2 = set_current(State1, BaseRoot, BaseB#block.height, InitialDepth),
     {StateN, LastB} = lists:foldl(
                         fun(B, {AccState, PrevB}) ->
                                 ExpectedRootHash = B#block.wallet_list,
                                 {{ok, ExpectedRootHash}, AccState2} = apply_block(B, PrevB, AccState),
-                                {AccState2, B}
+                                AccState3 = set_current(AccState2, ExpectedRootHash,
+                                                        B#block.height, InitialDepth),
+                                {AccState3, B}
                         end,
-                        {State1, BaseB},
+                        {State2, BaseB},
                         RestB
                        ),
-    State2 = set_current(StateN, LastB#block.wallet_list, LastB#block.height, InitialDepth),
     ar_events:send(node_state, {account_tree_initialized, LastB#block.height}),
-    {noreply, State2}.
+    {noreply, StateN}.
 
-get_tree_from_peers(B, Peers) ->
+%% @doc Download the account tree with the given block's wallet_list root hash from the
+%% peers, inserting the accounts into the ETS table as the chunks arrive.
+load_tree_from_peers(B, Peers, Tid) ->
     ID = B#block.wallet_list,
     ar:console("Downloading the wallet tree, chunk 1.~n", []),
     case ar_http_iface_client:get_wallet_list_chunk(Peers, ID) of
         {ok, {Cursor, Chunk}} ->
-            {ok, Tree} = load_wallet_tree_from_peers(
-                           ID,
-                           Peers,
-                           ar_patricia_tree:from_proplist(Chunk),
-                           Cursor,
-                           2
-                          ),
-            ar:console("Downloaded the wallet tree successfully.~n", []),
-            Tree;
+            insert_chunk(Chunk, Tid),
+            load_tree_from_peers(ID, Peers, Tid, Cursor, 2),
+            ar:console("Downloaded the wallet tree successfully.~n", []);
         _ ->
             ar:console("Failed to download wallet tree chunk, retrying...~n", []),
             timer:sleep(1000),
-            get_tree_from_peers(B, Peers)
+            load_tree_from_peers(B, Peers, Tid)
     end.
 
-load_wallet_tree_from_peers(_ID, _Peers, Acc, last, _) ->
-    {ok, Acc};
-load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N) ->
+load_tree_from_peers(_ID, _Peers, _Tid, last, _N) ->
+    ok;
+load_tree_from_peers(ID, Peers, Tid, Cursor, N) ->
     ar_util:terminal_clear(),
     ar:console("Downloading the wallet tree, chunk ~B.~n", [N]),
     case ar_http_iface_client:get_wallet_list_chunk(Peers, ID, Cursor) of
         {ok, {NextCursor, Chunk}} ->
-            Acc3 =
-                lists:foldl(
-                  fun({K, V}, Acc2) -> ar_patricia_tree:insert(K, V, Acc2)
-                  end,
-                  Acc,
-                  Chunk
-                 ),
-            load_wallet_tree_from_peers(ID, Peers, Acc3, NextCursor, N + 1);
+            insert_chunk(Chunk, Tid),
+            load_tree_from_peers(ID, Peers, Tid, NextCursor, N + 1);
         _ ->
             ar:console("Failed to download wallet tree chunk, retrying...~n", []),
             timer:sleep(1000),
-            load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N)
+            load_tree_from_peers(ID, Peers, Tid, Cursor, N)
     end.
+
+insert_chunk(Chunk, Tid) ->
+    lists:foreach(fun({K, V}) -> ar_patricia_tree_ets:insert(K, V, Tid) end, Chunk).
 
 %% @doc Copy a map-based ar_patricia_tree into a fresh ETS account tree, returning its ID.
 load_into_ets(MapTree) ->
-    load_into_ets(MapTree, ar_patricia_tree_ets:new()).
-
-load_into_ets(MapTree, Tid) ->
+    Tid = ar_patricia_tree_ets:new(),
     ar_patricia_tree:foldr(
       fun(Key, Value, _Acc) -> ar_patricia_tree_ets:insert(Key, Value, Tid) end,
       ok,

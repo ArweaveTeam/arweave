@@ -9,7 +9,7 @@
         store_block_time_history_part/2, store_block_time_history_part2/1,
         block_count/0, write_full_block/2, read_block/1, read_block/2, read_block/3, write_tx/1,
         read_tx/1, read_tx/2, read_tx_data/1, read_tx_data/2, update_confirmation_index/1, get_tx_confirmation_data/1,
-        read_wallet_list/1, read_wallet_list/2, write_wallet_list/2,
+        read_wallet_list/1, read_wallet_list/2, fold_wallet_list/4, write_wallet_list/2,
         delete_blacklisted_tx/1, lookup_tx_filename/1, lookup_tx_filename/2, open_databases/0,
         open_start_from_state_databases/1, close_start_from_state_databases/0,
         wallet_list_filepath/1, wallet_list_filepath/2, tx_filepath/1, tx_filepath/2,
@@ -936,55 +936,70 @@ write_wallet_list(Height, Tree) ->
 read_wallet_list(WalletListHash) ->
     read_wallet_list(WalletListHash, not_set).
 
-read_wallet_list(<<>>, _CustomDir) ->
-    {ok, ar_patricia_tree:new()};
-read_wallet_list(WalletListHash, CustomDir) when is_binary(WalletListHash) ->
-    Key = WalletListHash,
-    read_wallet_list(get_account_tree_value(Key, <<>>, CustomDir), ar_patricia_tree:new(), [],
-            WalletListHash, WalletListHash, CustomDir).
+read_wallet_list(WalletListHash, CustomDir) ->
+    fold_wallet_list(WalletListHash,
+            fun(Key, Value, Tree) -> ar_patricia_tree:insert(Key, Value, Tree) end,
+            ar_patricia_tree:new(), CustomDir).
 
-read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K, CustomDir) ->
+%% @doc Fold Fun(Address, Account, Acc) over every account in the stored account tree with
+%% the given root hash, streaming from disk without building an in-memory tree. Return
+%% {ok, Acc2}, not_found, or {error, Reason}. Fun may write to a shared destination such as
+%% an ETS table. It must tolerate seeing the same account twice: when the node tree in
+%% account_tree_db is incomplete the fold falls back to the chunk files and re-passes every
+%% account (an upsert does).
+fold_wallet_list(<<>>, _Fun, Acc, _CustomDir) ->
+    {ok, Acc};
+fold_wallet_list(WalletListHash, Fun, Acc, CustomDir) when is_binary(WalletListHash) ->
+    Key = WalletListHash,
+    fold_wallet_list(get_account_tree_value(Key, <<>>, CustomDir), Fun, Acc, [],
+            WalletListHash, Key, CustomDir).
+
+fold_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Fun, Acc, Keys, RootHash, K, CustomDir) ->
     case binary_to_term(Bin, [safe]) of
         {Key, Value} ->
-            Tree2 = ar_patricia_tree:insert(Key, Value, Tree),
+            Acc2 = Fun(Key, Value, Acc),
             case Keys of
                 [] ->
-                    {ok, Tree2};
+                    {ok, Acc2};
                 [{H, Prefix} | Keys2] ->
-                    read_wallet_list(get_account_tree_value(H, Prefix, CustomDir), Tree2, Keys2,
-                            RootHash, H, CustomDir)
+                    fold_wallet_list(get_account_tree_value(H, Prefix, CustomDir), Fun, Acc2,
+                            Keys2, RootHash, H, CustomDir)
             end;
         [{H, Prefix} | Hs] ->
-            read_wallet_list(get_account_tree_value(H, Prefix, CustomDir), Tree, Hs ++ Keys, RootHash,
-                    H, CustomDir)
+            fold_wallet_list(get_account_tree_value(H, Prefix, CustomDir), Fun, Acc, Hs ++ Keys,
+                    RootHash, H, CustomDir)
     end;
-read_wallet_list({ok, _, _}, _Tree, _Keys, RootHash, _K, CustomDir) ->
-    read_wallet_list_from_chunk_files(RootHash, CustomDir);
-read_wallet_list(none, _Tree, _Keys, RootHash, _K, CustomDir) ->
-    read_wallet_list_from_chunk_files(RootHash, CustomDir);
-read_wallet_list(Error, _Tree, _Keys, _RootHash, _K, _CustomDir) ->
+fold_wallet_list({ok, _, _}, Fun, Acc, _Keys, RootHash, _K, CustomDir) ->
+    fold_wallet_list_from_chunk_files(RootHash, Fun, Acc, CustomDir);
+fold_wallet_list(none, Fun, Acc, _Keys, RootHash, _K, CustomDir) ->
+    fold_wallet_list_from_chunk_files(RootHash, Fun, Acc, CustomDir);
+fold_wallet_list(Error, _Fun, _Acc, _Keys, _RootHash, _K, _CustomDir) ->
     Error.
 
-read_wallet_list_from_chunk_files(WalletListHash, CustomDir) when is_binary(WalletListHash) ->
-    case read_wallet_list_chunk(WalletListHash, CustomDir) of
+fold_wallet_list_from_chunk_files(WalletListHash, Fun, Acc, CustomDir)
+        when is_binary(WalletListHash) ->
+    case fold_wallet_list_chunks(WalletListHash, 0, Fun, Acc, CustomDir) of
         not_found ->
             Filename = wallet_list_filepath(WalletListHash, CustomDir),
             case file:read_file(Filename) of
                 {ok, JSON} ->
-                    parse_wallet_list_json(JSON);
+                    case parse_wallet_list_json(JSON) of
+                        {ok, Tree} ->
+                            {ok, ar_patricia_tree:foldr(Fun, Acc, Tree)};
+                        Error ->
+                            Error
+                    end;
                 {error, enoent} ->
                     not_found;
                 Error ->
                     Error
             end;
-        {ok, Tree} ->
-            {ok, Tree};
-        {error, _Reason} = Error ->
-            Error
+        Result ->
+            Result
     end;
-read_wallet_list_from_chunk_files(WL, _CustomDir) when is_list(WL) ->
-    {ok, ar_patricia_tree:from_proplist([{get_wallet_key(T), get_wallet_value(T)}
-            || T <- WL])}.
+fold_wallet_list_from_chunk_files(WL, Fun, Acc, _CustomDir) when is_list(WL) ->
+    {ok, lists:foldl(fun(T, Acc2) -> Fun(get_wallet_key(T), get_wallet_value(T), Acc2) end,
+            Acc, WL)}.
 
 get_wallet_key(T) ->
     element(1, T).
@@ -994,10 +1009,7 @@ get_wallet_value({_, Balance, LastTX}) ->
 get_wallet_value({_, Balance, LastTX, Denomination, MiningPermission}) ->
     {Balance, LastTX, Denomination, MiningPermission}.
 
-read_wallet_list_chunk(RootHash, CustomDir) ->
-    read_wallet_list_chunk(RootHash, 0, ar_patricia_tree:new(), CustomDir).
-
-read_wallet_list_chunk(RootHash, Position, Tree, CustomDir) ->
+fold_wallet_list_chunks(RootHash, Position, Fun, Acc, CustomDir) ->
     Dir =
         case CustomDir of
             not_set ->
@@ -1026,17 +1038,12 @@ read_wallet_list_chunk(RootHash, Position, Tree, CustomDir) ->
                     _ ->
                         {Position + ?WALLET_LIST_CHUNK_SIZE, Chunk}
                 end,
-            Tree2 =
-                lists:foldl(
-                    fun({K, V}, Acc) -> ar_patricia_tree:insert(K, V, Acc) end,
-                    Tree,
-                    Wallets
-                ),
+            Acc2 = lists:foldl(fun({K, V}, A) -> Fun(K, V, A) end, Acc, Wallets),
             case NextPosition of
                 last ->
-                    {ok, Tree2};
+                    {ok, Acc2};
                 _ ->
-                    read_wallet_list_chunk(RootHash, NextPosition, Tree2, CustomDir)
+                    fold_wallet_list_chunks(RootHash, NextPosition, Fun, Acc2, CustomDir)
             end;
         {error, Reason} = Error ->
             ?LOG_ERROR([

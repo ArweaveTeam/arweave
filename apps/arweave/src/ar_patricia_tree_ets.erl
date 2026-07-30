@@ -12,7 +12,7 @@
 
 -behaviour(ar_patricia_tree_core).
 
--export([new/0, new_named/0, delete_table/1, insert/3, get/2, size/1, compute_hash/2,
+-export([new/0, new_named/0, clear/1, delete_table/1, insert/3, get/2, size/1, compute_hash/2,
          compute_hash/3, foldr/3, is_empty/1, from_proplist/1, delete/2, get_range/2, get_range/3,
          snapshot_begin/1, snapshot_restore/1]).
 
@@ -58,6 +58,10 @@ init_table(Tid) ->
     ets:insert(Tid, {?SIZE_KEY, 0}),
     ets:insert(Tid, {root, {no_parent, gb_sets:new(), no_hash, no_prefix, no_value}}),
     Tid.
+
+%% @doc Reset the tree to empty, keeping the underlying ETS table.
+clear(Tree) ->
+    init_table(Tree).
 
 %% @doc Delete the underlying ETS table.
 delete_table(Tree) ->
