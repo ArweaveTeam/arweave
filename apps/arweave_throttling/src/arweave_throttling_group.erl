@@ -56,7 +56,8 @@
 -vsn(1).
 -behaviour(gen_server).
 
--export([
+-export(
+   [
     start_link/1,
     registered_name/1,
     throttle/2,
@@ -65,6 +66,7 @@
     update_quota/3,
     status/2,
     reset/1,
+    reset_peer/2,
     pending/2,
     stop/1
 ]).
@@ -202,7 +204,7 @@ try_throttle_call(Name, Peer) ->
 %%       integer) when not exhausted.</li>
 %% </ul>
 -spec update_quota(atom(), tuple(), map()) -> ok.
-update_quota(GroupID, Peer, 
+update_quota(GroupID, Peer,
              #{total := Total,
                remaining := Remaining,
                reset_seconds := ResetSeconds})
@@ -266,6 +268,11 @@ pending(GroupID, Peer) ->
 reset(GroupID) ->
     gen_server:call(registered_name(GroupID), reset).
 
+%% @doc when we don't know the quota for a remote peer anymore, we remove
+%% it from all
+-spec reset_peer(atom(), tuple()) -> ok.
+reset_peer(GroupID, Peer) ->
+    gen_server:call(registered_name(GroupID), {reset_peer, Peer}).
 
 -spec turn_off(atom()) -> ok.
 turn_off(WorkerRef) ->
@@ -331,6 +338,36 @@ handle_call(reset, _From, #{peers := Peers, monitors := Monitors} = State) ->
                     erlang:demonitor(MRef, [flush])
             end, ok, Monitors),
     {reply, ok, State#{peers := #{}, monitors := #{}}};
+handle_call({reset_peer, Peer}, _From, #{peers := Peers, monitors := Monitors} = State) ->
+    case maps:take(Peer, Peers) of
+        error ->
+            %% This is good news, this group doesn't have record of the Peer, we're good.
+            {reply, ok, State};
+        {#peer_state{
+            total = _Total,
+            remaining = _Remaining,
+            reset_seconds = _ResetSeconds,
+            reset_timer = ResetTimer,
+            waiters = WaitersQueue,
+            last_update_ts = _TS
+           }, NewPeers} ->
+            cancel_reset_timer(ResetTimer),
+            %% Drain all the request, let them be performed, it's
+            %% very likely that the node is has reverted or failing anyway.
+            %% Let the caller notice this, and get unblocked.
+            drain_for_reset(WaitersQueue),
+            %% Demonitor callers
+            %% Please note: the Peer being matched
+            NewMonitors =
+                maps:fold(fun(MRef, P, Acc) when P =:= Peer ->
+                                  erlang:demonitor(MRef, [flush]),
+                                  Acc;
+                             (MRef, OtherPeer, Acc) ->
+                                  Acc#{MRef => OtherPeer}
+                          end, #{}, Monitors),
+            {reply, ok, State#{peers => NewPeers, monitors => NewMonitors}}
+        end;
+
 handle_call(turn_off, _From, State) ->
     {reply, ok, State#{is_enabled => false}};
 handle_call(turn_on, _From, State) ->

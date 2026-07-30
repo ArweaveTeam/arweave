@@ -130,7 +130,18 @@ is_throttled(Peer, Path) when is_tuple(Peer), is_list(Path) ->
 update_quota(Peer, Path, Headers) when is_tuple(Peer),
                         is_list(Path) ->
     case arweave_throttling_http_headers:parse(Headers) of
+        {error, {missing_header, _Key} = Reason} = E ->
+            %% Missing header should reset peer state across all
+            %% groups. We don't know at this point what groups the peer was a part
+            %% of.
+            arweave_throttling_sup:reset_peer_in_all_groups(Peer),
+            %% Probably it would be nice to mark it in ETS as well, so we don't block
+            %% all throttling group processes every single time we get a quota update
+            %% with no headers for a request.
+            log_update_error(Peer, Path, 'unknown', Reason),
+            E;
         {error, Reason} = E ->
+            %% We can be more tolerant towards other errors, no reset.
             %% Log with unknown group, and return, there is nothing to update.
             %% and likely never was or will be. We assume the error is consistent,
             %% as the peer runs an incompatible version.
