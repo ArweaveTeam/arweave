@@ -625,22 +625,31 @@ prepare_solution(Solution, State) ->
                    h1 = H1,
                    chunk1 = Chunk1
                   },
-    Candidate3 =
+    Solution2 = Solution#mining_solution{ merkle_rebase_threshold = RebaseThreshold },
+    %% Compare the supplied preimage/H2 with the locally recomputed values instead
+    %% of pattern-matching them - a publish with a mismatching preimage must be
+    %% rejected, not crash the mining server.
+    {PreimageMatches, Candidate3} =
         case PoA2#poa.chunk of
             <<>> ->
-                Preimage = Preimage1,
-                Candidate2;
+                {Preimage =:= Preimage1, Candidate2};
             Chunk2 ->
-                {H2, Preimage} = ar_block:compute_h2(H1, Chunk2, H0),
-                Candidate2#mining_candidate{ h2 = H2, chunk2 = Chunk2 }
+                {H2, ExpectedPreimage} = ar_block:compute_h2(H1, Chunk2, H0),
+                {Preimage =:= ExpectedPreimage,
+                 Candidate2#mining_candidate{ h2 = H2, chunk2 = Chunk2 }}
         end,
-    Solution2 = Solution#mining_solution{ merkle_rebase_threshold = RebaseThreshold },
-    %% A pool client does not validate VDF before sharing a solution.
-    case IsPoolClient of
-        true ->
-            prepare_solution(proofs, Candidate3, Solution2);
+    case PreimageMatches of
         false ->
-            prepare_solution(last_step_checkpoints, Candidate3, Solution2)
+            log_prepare_solution_failure(Solution2, rejected, mismatching_preimages, miner, []),
+            error;
+        true ->
+            %% A pool client does not validate VDF before sharing a solution.
+            case IsPoolClient of
+                true ->
+                    prepare_solution(proofs, Candidate3, Solution2);
+                false ->
+                    prepare_solution(last_step_checkpoints, Candidate3, Solution2)
+            end
     end.
 
 prepare_solution_from_candidate(Candidate, State) ->
