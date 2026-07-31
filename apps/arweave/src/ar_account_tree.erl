@@ -119,9 +119,13 @@ init([{blocks, []} | _]) ->
 init([{blocks, Blocks} | Args]) ->
     %% Trap exit to avoid corrupting any open files on quit.
     process_flag(trap_exit, true),
-    gen_server:cast(?MODULE, {init, Blocks, Args}),
+    %% Defer the initialization work to a cast so start_link returns immediately.
+    %% The blocks ride in the state, not in the message: a send copies its payload
+    %% even when a process sends to itself, and the window blocks are tens of MB.
+    gen_server:cast(?MODULE, init),
     Tid = ar_patricia_tree_ets:new_named(),
-    State = #{ dag => ar_diff_dag:new(<<>>, ets, not_set), sink => <<>>, tid => Tid },
+    State = #{ dag => ar_diff_dag:new(<<>>, ets, not_set), sink => <<>>, tid => Tid,
+               init_args => {Blocks, Args} },
     {ok, State}.
 
 handle_call(Request, From, State) ->
@@ -205,8 +209,10 @@ do_handle_call({add_wallets, RootHash, Wallets, Height, Denomination}, _From, St
 do_handle_call({set_current, RootHash, Height, PruneDepth}, _, State) ->
     {reply, ok, set_current(State, RootHash, Height, PruneDepth)}.
 
-handle_cast({init, Blocks, Args}, State) ->
-    Tid = maps:get(tid, State),
+handle_cast(init, State) ->
+    {Blocks, Args} = maps:get(init_args, State),
+    State1 = maps:remove(init_args, State),
+    Tid = maps:get(tid, State1),
     case proplists:get_value(from_state, Args) of
         undefined ->
             Peers = proplists:get_value(from_peers, Args),
@@ -218,7 +224,7 @@ handle_cast({init, Blocks, Args}, State) ->
                         lists:last(Blocks)
                 end,
             load_tree_from_peers(B, Peers, Tid),
-            initialize_state(Blocks, State);
+            initialize_state(Blocks, State1);
         SearchDepth ->
             ?LOG_DEBUG([{event, init_from_state}, {block_count, length(Blocks)}]),
             CustomDir = proplists:get_value(custom_dir, Args, not_set),
@@ -230,7 +236,7 @@ handle_cast({init, Blocks, Args}, State) ->
                     init:stop(1);
                 Skipped ->
                     Blocks2 = lists:nthtail(Skipped, Blocks),
-                    initialize_state(Blocks2, State)
+                    initialize_state(Blocks2, State1)
             end
     end;
 
@@ -308,11 +314,11 @@ initialize_state(Blocks, State) ->
                         RestB
                        ),
     ar_events:send(node_state, {account_tree_initialized, LastB#block.height}),
-    %% The initialization burst tenures transient data faster than the minor collections
-    %% reclaim it, leaving the heap above 1GB until a distant full sweep. One major
-    %% collection shrinks it to under 1MB in under 100ms.
-    erlang:garbage_collect(),
-    {noreply, StateN}.
+    %% Hibernate to compact the heap once the window blocks and the streamed tree nodes
+    %% are dropped. Initialization churns through hundreds of MB that would otherwise
+    %% linger until a distant full sweep. A garbage collection here would run too early,
+    %% while the blocks are still referenced by this callback.
+    {noreply, StateN, hibernate}.
 
 %% @doc Download the account tree with the given block's wallet_list root hash from the
 %% peers, inserting the accounts into the ETS table as the chunks arrive.
