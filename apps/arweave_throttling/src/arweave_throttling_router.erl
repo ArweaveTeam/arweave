@@ -1,4 +1,3 @@
-%%%===================================================================
 %%% @doc Peer/path -> group-id routing table.
 %%%
 %%% Maps a `{Peer, PathKey}' key to the throttling group id that should
@@ -13,7 +12,6 @@
 %%%       counts without scanning the whole routing table.</li>
 %%% </ul>
 %%% @end
-%%%===================================================================
 -module(arweave_throttling_router).
 
 -export([
@@ -31,17 +29,10 @@
 %% any other function in this module.
 -spec init() -> ok.
 init() ->
-    ?MODULE = ets:new(?MODULE, [
-        named_table,
-        set,
-        public,
-        {read_concurrency, true}
-    ]),
-    ?COUNTER_TABLE = ets:new(?COUNTER_TABLE, [
-        named_table,
-        set,
-        public
-    ]),
+    ?MODULE =
+        ets:new(?MODULE, [named_table, set, public, {read_concurrency, true}]),
+    ?COUNTER_TABLE =
+        ets:new(?COUNTER_TABLE, [named_table, set, public]),
     ok.
 
 %% @doc Route `{Peer, PathKey}' to `GroupID'.
@@ -144,9 +135,7 @@ cleanup() ->
     catch ets:delete(?COUNTER_TABLE),
     ok.
 
-%%%===================================================================
 %%% Internals
-%%%===================================================================
 
 %% @doc Increment the key count for `GroupID', creating the entry at 0
 %% first if needed.

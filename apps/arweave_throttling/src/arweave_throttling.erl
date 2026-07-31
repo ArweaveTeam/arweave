@@ -134,11 +134,17 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
             %% Missing header should reset peer state across all
             %% groups. We don't know at this point what groups the peer was a part
             %% of.
-            arweave_throttling_sup:reset_peer_in_all_groups(Peer),
-            %% Probably it would be nice to mark it in ETS as well, so we don't block
-            %% all throttling group processes every single time we get a quota update
-            %% with no headers for a request.
-            log_update_error(Peer, Path, 'unknown', Reason),
+            case arweave_throttling_peer_compatibility_register:is_peer_marked_incompatible(Peer) of
+                true ->
+                    %% When it's marked incompatibl already, we're good. we don't have to
+                    %% do anything.
+                    ok;
+                false ->
+                    %% Reset
+                    arweave_throttling_sup:reset_peer_in_all_groups(Peer),
+                    log_update_error(Peer, Path, 'unknown', Reason),
+                    arweave_throttling_peer_compatibility_register:mark_incompatible(Peer)
+            end,
             E;
         {error, Reason} = E ->
             %% We can be more tolerant towards other errors, no reset.
@@ -149,6 +155,7 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
             E;
         {ok, #{group_id := HeaderGroupID} = Quota} ->
             %% Try to look up group ID for the Peer and Path.
+            arweave_throttling_peer_compatibility_register:mark_compatible(Peer),
             case arweave_throttling_path:path_to_group_id(Peer, Path) of
                 {error, skip} ->
                     ok;
@@ -201,6 +208,7 @@ start(_StartType, _StartArgs) ->
     ok = arweave_throttling_metrics:register(),
     ok = arweave_throttling_router:init(),
     ok = arweave_throttling_distinct_group:init(),
+    ok = arweave_throttling_peer_compatibility_register:init(),
     S = arweave_throttling_sup:start_link(),
     prometheus_registry:register_collector(arweave_throttling_metrics_collector),
     S.
