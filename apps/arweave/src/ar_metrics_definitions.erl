@@ -8,7 +8,7 @@
 %%% property is mandatory and is used by `arweave_metrics:cleanup/0' to
 %%% deregister the metric.
 %%%
--module(arweave_metrics_definitions).
+-module(ar_metrics_definitions).
 
 -export([all_metrics/0]).
 

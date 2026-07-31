@@ -109,6 +109,9 @@ start(normal, _Args) ->
     ?LOG_INFO("========== Starting Arweave Node  =========="),
     arweave_config:log(),
 
+    %% Register arweave metrics.
+    ar_metrics:register(),
+
     %% Start other apps which we depend on.
     set_mining_address(),
     ar_chunk_storage:run_defragmentation(),

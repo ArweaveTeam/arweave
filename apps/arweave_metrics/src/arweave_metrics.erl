@@ -57,12 +57,6 @@ stop(_State) ->
 %%% Public interface.
 %% @doc Declare Arweave metrics.
 register() ->
-	lists:foreach(
-		fun({MetricType, Definition}) ->
-			MetricType:new(Definition)
-		end,
-		arweave_metrics_definitions:all_metrics()
-	),
 	ok.
 
 record_rate_metric(StartTime, Bytes, Metric, Labels) ->
@@ -175,11 +169,4 @@ histogram_observe(Name, Labels, Value) ->
 	try prometheus_histogram:observe(Name, Labels, Value) catch _:_ -> ok end.
 
 cleanup() ->
-	lists:foreach(
-		fun({MetricType, Definition}) ->
-			Name = proplists:get_value(name, Definition),
-			MetricType:deregister(Name)
-		end,
-		arweave_metrics_definitions:all_metrics()
-	),
 	ok.
