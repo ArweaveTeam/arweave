@@ -130,7 +130,8 @@ static ERL_NIF_TERM rx512_decrypt_chunk_nif(
 	int argc,
 	const ERL_NIF_TERM argv[]
 ) {
-	int outChunkLen, randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
+	unsigned int outChunkLen;
+	int randomxRoundCount, jitEnabled, largePagesEnabled, hardwareAESEnabled;
 	struct state* statePtr;
 	ErlNifBinary inputData;
 	ErlNifBinary inputChunk;
@@ -149,7 +150,8 @@ static ERL_NIF_TERM rx512_decrypt_chunk_nif(
 		inputChunk.size > MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[3], &outChunkLen)) {
+	if (!enif_get_uint(envPtr, argv[3], &outChunkLen) ||
+		outChunkLen > (unsigned int)MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_int(envPtr, argv[4], &randomxRoundCount)) {
@@ -212,11 +214,13 @@ static ERL_NIF_TERM rx512_reencrypt_chunk_nif(
 	if (!enif_inspect_binary(envPtr, argv[2], &encryptKey)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_inspect_binary(envPtr, argv[3], &inputChunk) || inputChunk.size == 0) {
+	if (!enif_inspect_binary(envPtr, argv[3], &inputChunk) ||
+		inputChunk.size == 0 ||
+		inputChunk.size > MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_int(envPtr, argv[4], &chunkSize)  ||
-		chunkSize == 0 ||
+		chunkSize <= 0 ||
 		chunkSize > MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
 	}

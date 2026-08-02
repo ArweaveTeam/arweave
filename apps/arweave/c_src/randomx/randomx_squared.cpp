@@ -57,11 +57,12 @@ extern "C" {
 	void _rsp_exec_inplace(
 		randomx_vm* machine,
 		uint64_t* tempHash,
-		int programCount,
+		unsigned int programCount,
 		size_t scratchpadSize
 	) {
 		machine->resetRoundingMode();
-		for (int chain = 0; chain < programCount-1; chain++) {
+		// NOTE i+1 rather than programCount-1: programCount is unsigned, 0 must not wrap
+		for (unsigned int i = 0; i + 1 < programCount; i++) {
 			machine->run(tempHash);
 			int blakeResult = randomx_blake2b(
 				tempHash, 64,
@@ -124,7 +125,7 @@ extern "C" {
 	void _rsp_mix_entropy_far(
 		randomx_vm** inSet,
 		randomx_vm** outSet,
-		int count,
+		unsigned int count,
 		size_t scratchpadSize,
 		size_t jumpSize,
 		size_t blockSize)
@@ -157,12 +158,12 @@ extern "C" {
 	int rsp_fused_entropy(
 		randomx_vm** vmList,
 		size_t scratchpadSize,
-		int subChunkCount,
-		int subChunkSize,
-		int laneCount,
-		int rxDepth,
-		int randomxProgramCount,
-		int blockSize,
+		unsigned int subChunkCount,
+		unsigned int subChunkSize,
+		unsigned int laneCount,
+		unsigned int rxDepth,
+		unsigned int randomxProgramCount,
+		unsigned int blockSize,
 		const unsigned char* keyData,
 		size_t keySize,
 		unsigned char* outEntropy
@@ -177,7 +178,7 @@ extern "C" {
 		}
 
 		// Initialize the scratchaps for each lane
-		for (int i = 0; i < laneCount; i++) {
+		for (unsigned int i = 0; i < laneCount; i++) {
 			// laneSeed = sha256(<<keyData, i>>)
 			// laneSeed should be unique - i.e. now two lanes across all entropies and all
 			// replicas should have the same seed. Current key (as off 2025-01-01) is
@@ -204,8 +205,8 @@ extern "C" {
 			vmList[i]->initScratchpad(&vmHashes[i].tempHash);
 		}
 
-		for (int d = 0; d < rxDepth; d++) {
-			for (int lane = 0; lane < laneCount; lane++) {
+		for (unsigned int d = 0; d < rxDepth; d++) {
+			for (unsigned int lane = 0; lane < laneCount; lane++) {
 				_rsp_exec_inplace(
 					vmList[lane],
 					vmHashes[lane].tempHash,
@@ -217,7 +218,7 @@ extern "C" {
 
 			if (d + 1 < rxDepth) {
 				d++;
-				for (int lane = 0; lane < laneCount; lane++) {
+				for (unsigned int lane = 0; lane < laneCount; lane++) {
 					_rsp_exec_inplace(
 						vmList[lane+laneCount],
 						vmHashes[lane].tempHash,
@@ -233,14 +234,14 @@ extern "C" {
 
 		if ((rxDepth % 2) == 0) {
 			unsigned char* outEntropyPtr = outEntropy;
-			for (int i = 0; i < laneCount; i++) {
+			for (unsigned int i = 0; i < laneCount; i++) {
 				void* sp = (void*)vmList[i]->getScratchpad();
 				memcpy(outEntropyPtr, sp, scratchpadSize);
 				outEntropyPtr += scratchpadSize;
 			}
 		} else {
 			unsigned char* outEntropyPtr = outEntropy;
-			for (int i = laneCount; i < 2*laneCount; i++) {
+			for (unsigned int i = laneCount; i < 2*laneCount; i++) {
 				void* sp = (void*)vmList[i]->getScratchpad();
 				memcpy(outEntropyPtr, sp, scratchpadSize);
 				outEntropyPtr += scratchpadSize;

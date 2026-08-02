@@ -122,23 +122,23 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 	}
 
 	// 2. Parse each integer
-	int subChunkCount;
-	if (!enif_get_int(envPtr, argv[1], &subChunkCount)) {
+	unsigned int subChunkCount;
+	if (!enif_get_uint(envPtr, argv[1], &subChunkCount)) {
 		return enif_make_badarg(envPtr);
 	}
 
-	int subChunkSize;
-	if (!enif_get_int(envPtr, argv[2], &subChunkSize)) {
+	unsigned int subChunkSize;
+	if (!enif_get_uint(envPtr, argv[2], &subChunkSize)) {
 		return enif_make_badarg(envPtr);
 	}
 
-	int laneCount;
-	if (!enif_get_int(envPtr, argv[3], &laneCount)) {
+	unsigned int laneCount;
+	if (!enif_get_uint(envPtr, argv[3], &laneCount)) {
 		return enif_make_badarg(envPtr);
 	}
 
-	int rxDepth;
-	if (!enif_get_int(envPtr, argv[4], &rxDepth)) {
+	unsigned int rxDepth;
+	if (!enif_get_uint(envPtr, argv[4], &rxDepth)) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -157,8 +157,8 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 		return enif_make_badarg(envPtr);
 	}
 
-	int randomxProgramCount;
-	if (!enif_get_int(envPtr, argv[8], &randomxProgramCount)) {
+	unsigned int randomxProgramCount;
+	if (!enif_get_uint(envPtr, argv[8], &randomxProgramCount)) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -169,7 +169,7 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 	}
 
 	// 4. Create VMs
-	int totalVMs = 2 * laneCount;
+	unsigned int totalVMs = 2 * laneCount;
 	randomx_vm** vmList = (randomx_vm**)calloc(totalVMs, sizeof(randomx_vm*));
 	if (!vmList) {
 		return error_tuple(envPtr, "vmList_alloc_failed");
@@ -189,7 +189,7 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 
 	// 6. Create the randomx_vm objects
 	int isRandomxReleased = 0;
-	for (int i = 0; i < totalVMs; i++) {
+	for (unsigned int i = 0; i < totalVMs; i++) {
 		vmList[i] = create_vm(
 			statePtr,
 			(statePtr->mode == HASHING_MODE_FAST),
@@ -200,7 +200,7 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 		);
 		if (!vmList[i]) {
 			// Clean up partial
-			for (int j = 0; j < i; j++) {
+			for (unsigned int j = 0; j < i; j++) {
 				destroy_vm(statePtr, vmList[j]);
 			}
 			free(vmList);
@@ -229,7 +229,7 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 	// 8. If the function returned false, we interpret that as an error
 	if (!success) {
 		// Cleanup
-		for (int i = 0; i < totalVMs; i++) {
+		for (unsigned int i = 0; i < totalVMs; i++) {
 			if (vmList[i]) {
 				destroy_vm(statePtr, vmList[i]);
 			}
@@ -239,7 +239,7 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 	}
 
 	// 9. If success, destroy VMs and return {ok, outEntropyTerm}
-	for (int i = 0; i < totalVMs; i++) {
+	for (unsigned int i = 0; i < totalVMs; i++) {
 		destroy_vm(statePtr, vmList[i]);
 	}
 	free(vmList);

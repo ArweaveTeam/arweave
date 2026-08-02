@@ -23,9 +23,9 @@ typedef void (*vdf_sha2_fn)(
 	unsigned char* seed,
 	unsigned char* out,
 	unsigned char* outCheckpoint,
-	int checkpointCount,
-	int skipCheckpointCount,
-	int hashingIterations
+	unsigned int checkpointCount,
+	unsigned int skipCheckpointCount,
+	unsigned int hashingIterations
 );
 static vdf_sha2_fn vdf_sha2_fused_ptr = NULL;
 static vdf_sha2_fn vdf_sha2_hiopt_ptr = NULL;
@@ -73,9 +73,9 @@ static int vdf_load(ErlNifEnv* env, void** priv, ERL_NIF_TERM load_info) {
 static ERL_NIF_TERM vdf_sha2_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
 	ErlNifBinary Salt, Seed;
-	int checkpointCount;
-	int skipCheckpointCount;
-	int hashingIterations;
+	unsigned int checkpointCount;
+	unsigned int skipCheckpointCount;
+	unsigned int hashingIterations;
 
 	if (argc != 5) {
 		return enif_make_badarg(envPtr);
@@ -92,18 +92,18 @@ static ERL_NIF_TERM vdf_sha2_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM
 	if (Seed.size != VDF_SHA_HASH_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[2], &checkpointCount)) {
+	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
 		return enif_make_badarg(envPtr);
 	}
 
 	unsigned char temp_result[VDF_SHA_HASH_SIZE];
-	size_t outCheckpointSize = VDF_SHA_HASH_SIZE*checkpointCount;
+	size_t outCheckpointSize = (size_t)VDF_SHA_HASH_SIZE*checkpointCount;
 	ERL_NIF_TERM outputTermCheckpoint;
 	unsigned char* outCheckpoint = enif_make_new_binary(envPtr, outCheckpointSize, &outputTermCheckpoint);
 	vdf_sha2(Salt.data, Seed.data, temp_result, outCheckpoint, checkpointCount, skipCheckpointCount, hashingIterations);
@@ -113,9 +113,9 @@ static ERL_NIF_TERM vdf_sha2_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM
 static ERL_NIF_TERM vdf_sha2_fused_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
 	ErlNifBinary Salt, Seed;
-	int checkpointCount;
-	int skipCheckpointCount;
-	int hashingIterations;
+	unsigned int checkpointCount;
+	unsigned int skipCheckpointCount;
+	unsigned int hashingIterations;
 
 	if (argc != 5) {
 		return enif_make_badarg(envPtr);
@@ -132,18 +132,18 @@ static ERL_NIF_TERM vdf_sha2_fused_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	if (Seed.size != VDF_SHA_HASH_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[2], &checkpointCount)) {
+	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
 		return enif_make_badarg(envPtr);
 	}
 
 	unsigned char temp_result[VDF_SHA_HASH_SIZE];
-	size_t outCheckpointSize = VDF_SHA_HASH_SIZE*checkpointCount;
+	size_t outCheckpointSize = (size_t)VDF_SHA_HASH_SIZE*checkpointCount;
 	ERL_NIF_TERM outputTermCheckpoint;
 	unsigned char* outCheckpoint = enif_make_new_binary(envPtr, outCheckpointSize, &outputTermCheckpoint);
 	vdf_sha2_fused_ptr(Salt.data, Seed.data, temp_result, outCheckpoint, checkpointCount, skipCheckpointCount, hashingIterations);
@@ -153,9 +153,9 @@ static ERL_NIF_TERM vdf_sha2_fused_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 static ERL_NIF_TERM vdf_sha2_hiopt_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
 	ErlNifBinary Salt, Seed;
-	int checkpointCount;
-	int skipCheckpointCount;
-	int hashingIterations;
+	unsigned int checkpointCount;
+	unsigned int skipCheckpointCount;
+	unsigned int hashingIterations;
 
 	if (argc != 5) {
 		return enif_make_badarg(envPtr);
@@ -172,18 +172,18 @@ static ERL_NIF_TERM vdf_sha2_hiopt_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	if (Seed.size != VDF_SHA_HASH_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[2], &checkpointCount)) {
+	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
 		return enif_make_badarg(envPtr);
 	}
 
 	unsigned char temp_result[VDF_SHA_HASH_SIZE];
-	size_t outCheckpointSize = VDF_SHA_HASH_SIZE*checkpointCount;
+	size_t outCheckpointSize = (size_t)VDF_SHA_HASH_SIZE*checkpointCount;
 	ERL_NIF_TERM outputTermCheckpoint;
 	unsigned char* outCheckpoint = enif_make_new_binary(envPtr, outCheckpointSize, &outputTermCheckpoint);
 	vdf_sha2_hiopt_ptr(Salt.data, Seed.data, temp_result, outCheckpoint, checkpointCount, skipCheckpointCount, hashingIterations);
@@ -197,9 +197,9 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 	const ERL_NIF_TERM argv[]
 ) {
 	ErlNifBinary Salt, Seed, InCheckpoint, InRes, ResetSalt, ResetSeed;
-	int checkpointCount;
-	int skipCheckpointCount;
-	int hashingIterations;
+	unsigned int checkpointCount;
+	unsigned int skipCheckpointCount;
+	unsigned int hashingIterations;
 	int maxThreadCount;
 
 	if (argc != 10) {
@@ -218,19 +218,19 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 	if (Seed.size != VDF_SHA_HASH_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[2], &checkpointCount)) {
+	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_inspect_binary(envPtr, argv[5], &InCheckpoint)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (InCheckpoint.size != checkpointCount*VDF_SHA_HASH_SIZE) {
+	if (InCheckpoint.size != (size_t)checkpointCount*VDF_SHA_HASH_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_inspect_binary(envPtr, argv[6], &InRes)) {
@@ -258,7 +258,8 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	size_t outCheckpointSize = VDF_SHA_HASH_SIZE*(1+checkpointCount)*(1+skipCheckpointCount);
+	size_t outCheckpointSize =
+		(size_t)VDF_SHA_HASH_SIZE*(1+(size_t)checkpointCount)*(1+(size_t)skipCheckpointCount);
 	ERL_NIF_TERM outputTermCheckpoint;
 	unsigned char* outCheckpoint = enif_make_new_binary(
 		envPtr, outCheckpointSize, &outputTermCheckpoint);

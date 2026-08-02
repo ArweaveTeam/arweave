@@ -83,6 +83,10 @@ static ERL_NIF_TERM init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM arg
 	if (!enif_get_uint(envPtr, argv[4], &numWorkers)) {
 		return enif_make_badarg(envPtr);
 	}
+	// numWorkers is only used to build the dataset, which happens in fast mode only
+	if (mode == HASHING_MODE_FAST && numWorkers == 0) {
+		return enif_make_badarg(envPtr);
+	}
 
 	statePtr = enif_alloc_resource(stateType, sizeof(struct state));
 	statePtr->cachePtr = NULL;
