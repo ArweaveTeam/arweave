@@ -250,6 +250,46 @@ than one place, promote it to a predefined named helper in
 `timer:sleep` is reserved for deliberately time-based behaviour (e.g.
 exercising a retry backoff), never as a stand-in for a condition wait.
 
+### Pattern matching in tests
+
+Never use assert macros wrapped in reused functions, nor do pattern matching
+to force badmatch in tests similar way.
+
+Do:
+```
+testcase() ->
+    ?assertMatch(pattern, helper_function_call()).
+
+helper_function() ->
+    function_producing_value().
+```
+instead of:
+```
+testcase() ->
+    helper_function().
+
+
+helper_function ->
+    ?assertMatch(pattern, function_producing_value()).
+```
+
+Similarly, do:
+```
+testcase() ->
+    pattern = helper_function_call().
+
+helper_function() ->
+    function_producing_value().
+```
+instead of:
+```
+testcase() ->
+    helper_function().
+
+helper_function ->
+    pattern = function_producing_value().
+```
+
 ## Erlang style
 
 Follow OTP-style whitespace. Use a single space around `->`, `=`, `?=`, and other binary operators — do not pad with extra spaces to column-align tokens across related clauses. Alignment via multiple spaces is harder to maintain (any clause growing past the column forces a re-pad of every sibling) and noisier in diffs.

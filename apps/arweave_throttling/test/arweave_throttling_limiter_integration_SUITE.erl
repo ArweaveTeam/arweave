@@ -100,7 +100,7 @@
                                    {ok, GroupID} ->
                                        %% This means throttling group should exist, we can translate
                                        %% path into a group ID.
-                                       ?assertShouldFindThrottlingGroup(ShouldFindThrottlingGroup),
+                                       ?assert(ShouldFindThrottlingGroup),
 
                                        %% By doing all this, now we can use assert to validate the
                                        %% actual return value from the throttling call. It normally
@@ -113,7 +113,7 @@
                                        %% This means, we didn't find the group for a Path, the throttling
                                        %% process is not ready. If our expectations haven't been met
                                        %% we stop the test here, with this macro.
-                                       ?assertShouldFindThrottlingGroup(not ShouldFindThrottlingGroup),
+                                       ?assertNot(ShouldFindThrottlingGroup),
                                        ok
                                end,
                                %% Calling the limiter - please note there is no connection
@@ -121,7 +121,7 @@
                                LimiterResult = arweave_limiter_group:register_or_reject_call(
                                                  LimiterRef, Peer),
                                %% Validate Limiter Result against expected
-                               ?assertMatch(LimiterExpectedResult, LimiterResult),
+                               ?assertMatch(ExpectedLimiterResult, LimiterResult),
                                %% Produce the headers from the limiter call
                                Headers = res_to_headers(LimiterResult),
                                
@@ -262,9 +262,6 @@ no_throttling_under_sliding_overflow_with_large_burst(_Config) ->
                 tick_ms => 3600000},
           sliding_window => #{limit => 3,window_seconds => 2}},
     
-
-    %% 30 requests at 5 req/s, one in flight at a time.
-    %Results = run_load(?GROUP_ID, ?PEER, 30, 200, 1),
     Pid0 = ?assertRequestRoundtripDetails(
              ?GROUP_ID, 
              {register,sliding,
