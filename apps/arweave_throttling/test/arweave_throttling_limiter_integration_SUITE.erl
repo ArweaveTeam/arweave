@@ -22,82 +22,127 @@
 -define(CLOCK_TABLE, arweave_throttling_limiter_integration_clock).
 -define(setTSMock(TS), ets:insert(?CLOCK_TABLE, {?CLOCK_KEY, TS})).
 
+%% Notes on Macro Magic:
+%%
+%% 1) assert macros use begin/end blocks to make sure syntax errors made in the
+%% macro arguments are caught properly by the compiler. So when the compilation
+%% fails, the error is pointing to the line the error is made, instead of
+%% leaking to following lines, confusing the developer.
+%% 2) Macros wrap logic in a ((fun() -> ... end)()) unnamed function that is
+%% immediately called and evaluated. This is to shadow variables, and give a
+%% scope separation to the macros.
+%%
+%% Within these blocks we are free to make function calls (possibly very
+%% specific to the testcase) and use pattern matching in elaborate ways. When
+%% outcomes fail to match our expectations we can construct specific error
+%% messages. Often the value of the macro is in these custom, very specific
+%% error messages that can greatly improve debugging experience of failing tests
+%%
+%% Why not functions?
+%%
+%% When an assert macro is defined in a function, the ?LINE macro will be
+%% the line where the macro is present, not where the function is called from.
+%% So when the function is reused, it will be ambigious which testcase is
+%% failing.
+%%
+%%
+%% 1 test1() ->
+%% 2   my_fun(true).
+%% 3 test2() ->
+%% 4   my_fun(false). 
+%% 5
+%% 6 my_fun(BoolExpr) -> ?assert(BoolExpr).
+%% would always fail with `{assert, [..., {line, 6}, ...]}` regardless what
+%% line `my_call` is called from.
 
--define(
-   assertTime(Time, MaxMsPassed), 
-   begin
-       ((fun () ->
-                 case (Time div 1000) of
-                     Ms when Ms < MaxMsPassed ->
-                         ok;
-                     Ms ->
-                         erlang:error({assertTimePassed,
-                                       [{module, ?MODULE},
-                                        {line, ?LINE},
-                                        {time_passed, Ms},
-                                        {max_ms_passedd, MaxMsPassed}]})
-                 end
-         end)())
-   end).
+%% Synonym for assert
+-define(assertShouldFindThrottlingGroup(BoolExpr), ?assert(BoolExpr)).
 
+%% Simulate a complete roundtrip of a request: 1) throttling (client)
+%% 2) limiting (server) 3) update_quota (client.
+%% We use the appropriate functions to generate headers, and parse them
+%% so we couple the public facing APIs together (but skipping the HTTP API).
+%%
+%% Why bother with this?
+%% For certain, detail testcases we want to validate each step on the path of
+%% the request from a throttling-limiting perspective. If we implemented a
+%% function expecting to fail on pattern matching (`Pattern = function_call()`
+%% style), we would miss informatin about failures, making it difficult to debug
+%% and likely would need to put extra tracing to the test.
+%%
+%% If we would use assert macros within a function that we call multiple times
+%% with different parameters, the ?LINE macro would always point to the same
+%% line where the assert macro is in the function, not the function call.
+%%
+%% We want to repeat these calls, with different parameters, and use assert macros
+%% inside it.
 -define(
-   assertShouldFindThrottlingGroup(BoolExpr),
-   begin
-       ((fun () ->
-                 X__T = is_process_alive(self()),  % cheap source of truth
-                 case (BoolExpr) of
-                     X__T -> ok;
-                     X__V -> erlang:error({assert,
-                                           [{module, ?MODULE},
-                                            {line, ?LINE},
-                                            {expression, (??BoolExpr)},
-                                            {expected, true},
-                                            case not X__T of
-                                                X__V -> {value, false};
-                                                _ -> {not_boolean, X__V}
-                                            end]})
-                 end
-         end)())
-   end).
-
--define(
-   assertHandlerRegisterOrRejectCall(LimiterRef, Pattern, Peer, Now, 
-                                     MaxMsPassed, ShouldFindThrottlingGroup),
+   assertRequestRoundtripDetails(LimiterRef, ExpectedLimiterResult, Peer, Now, 
+                                 ExpectedThrottlingOutput, ShouldFindThrottlingGroup),
    begin
        ((fun () ->
                  Parent = self(),
+                 %% Set time for arweave_limiter_time:ts_now().
                  ?assert(?setTSMock(Now)),
+                 
+                 %% We start a separate process for our "caller". The process
+                 %% can be the same for the throttling, and the limiter group but
+                 %% the point is this case is to be different from the test process.
                  PID = 
                      spawn_link(
                        fun() ->
+                               %% We turn the LimiterRef into an arbitrary Path, the point
+                               %% is to make it consistent with the limiter group (same limiter,
+                               %% same path).
                                Path = [atom_to_list(LimiterRef)],
+                               %% Try to get a throttling group ID for a path.
                                case arweave_throttling_path:path_to_group_id(Peer, Path) of
                                    {ok, GroupID} ->
+                                       %% This means throttling group should exist, we can translate
+                                       %% path into a group ID.
                                        ?assertShouldFindThrottlingGroup(ShouldFindThrottlingGroup),
-                                       {Time, Value} = 
-                                           timer:tc(
-                                             fun() ->
-                                                     arweave_throttling_group:throttle(GroupID, Peer) 
-                                             end),
-                                       ?assertMatch(ok, Value),
-                                       ?assertTime(Time, MaxMsPassed),
+
+                                       %% By doing all this, now we can use assert to validate the
+                                       %% actual return value from the throttling call. It normally
+                                       %% would be hidden by the functions handling this.
+                                       Name = arweave_throttling_group:registered_name(GroupID),
+                                       Value = arweave_throttling_group:try_throttle_call(Name, Peer),
+                                       ?assertMatch(ExpectedThrottlingOutput, Value),
                                        ok;
                                    _ ->
+                                       %% This means, we didn't find the group for a Path, the throttling
+                                       %% process is not ready. If our expectations haven't been met
+                                       %% we stop the test here, with this macro.
                                        ?assertShouldFindThrottlingGroup(not ShouldFindThrottlingGroup),
                                        ok
                                end,
+                               %% Calling the limiter - please note there is no connection
+                               %% at this direction (throttle -> limiter)
                                LimiterResult = arweave_limiter_group:register_or_reject_call(
                                                  LimiterRef, Peer),
-                               ?assertMatch(Pattern, LimiterResult),
+                               %% Validate Limiter Result against expected
+                               ?assertMatch(LimiterExpectedResult, LimiterResult),
+                               %% Produce the headers from the limiter call
                                Headers = res_to_headers(LimiterResult),
+                               
+                               %% Update quota should always return ok. Use the headers
+                               %% produced by the limiter, so the throttling is fed information
+                               %% from the limiter.
                                ?assertMatch(
                                   ok,
                                   arweave_throttling:update_quota(Peer, Path, Headers)),
+                               %% We send a message to the parent so we don't block any longer
                                Parent ! call_done,
+                               %% We have a receive structure here, so the process is waiting
+                               %% indefinitely until we release it, so we can pretend we have
+                               %% concurrent calls still in progress.
+                               %% The tests will need to send `done` messages.
                                receive
                                    done -> ok
                                end
                        end),
+                 %% We add this receive here, so we block the call until the test completes
+                 %% and we can release this from the spawned process.
                  receive
                      call_done ->
                          ok
@@ -220,34 +265,41 @@ no_throttling_under_sliding_overflow_with_large_burst(_Config) ->
 
     %% 30 requests at 5 req/s, one in flight at a time.
     %Results = run_load(?GROUP_ID, ?PEER, 30, 200, 1),
-    Pid0 = ?assertHandlerRegisterOrRejectCall(
+    Pid0 = ?assertRequestRoundtripDetails(
              ?GROUP_ID, 
              {register,sliding,
               #{remaining := 2, reset_seconds := 0, expiring_limit := 3, 
                 policies := Policies}},
-              ?PEER, 0, 0, false),
+              ?PEER, 0, accepted, false),
     Pid0 ! done,
-    Pid1 = ?assertHandlerRegisterOrRejectCall(
+    Pid1 = ?assertRequestRoundtripDetails(
              ?GROUP_ID, 
              {register,sliding,
               #{remaining := 1, reset_seconds := 1, expiring_limit := 3, 
                 policies := Policies}},
-              ?PEER, 1, 100, true),
+              ?PEER, 1, accepted, true),
     Pid1 ! done,
-    Pid2 = ?assertHandlerRegisterOrRejectCall(
+    Pid2 = ?assertRequestRoundtripDetails(
              ?GROUP_ID, 
              {register,sliding,
               #{remaining := 45000, reset_seconds := 1, expiring_limit := 45000, 
                 policies := Policies}},
-              ?PEER, 2, 100, true),
+              ?PEER, 2, accepted, true),
     Pid2 ! done,
-    Pid3 = ?assertHandlerRegisterOrRejectCall(
-             ?GROUP_ID, 
+    Pid3 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
              {register,leaky,
               #{remaining := 44999, reset_seconds := 1, expiring_limit := 45000, 
                 policies := Policies}},
-              ?PEER, 3, 100, true),
+              ?PEER, 3, accepted, true),
     Pid3 ! done,
+    Pid4 = ?assertRequestRoundtripDetails(
+             ?GROUP_ID,
+             {register,leaky,
+              #{remaining := 44998, reset_seconds := 1, expiring_limit := 45000, 
+                policies := Policies}},
+              ?PEER, 3, accepted, true),
+    Pid4 ! done,
 
     ok.
 
