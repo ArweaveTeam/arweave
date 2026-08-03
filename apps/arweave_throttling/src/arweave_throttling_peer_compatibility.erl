@@ -1,17 +1,17 @@
 %%% @doc Peer compatibility register.
 %%%
-%%%
+%%% Allows marking Peers as incompatible so we can check this detail
+%%% before hitting the throttling group processes.
 %%%
 %%% @end
--module(arweave_throttling_peer_compatibility_register).
+-module(arweave_throttling_peer_compatibility).
 
 -export([
     init/0,
-    is_peer_marked_incompatible/1,
+    is_peer_marked_compatible/1,
     mark_incompatible/1,
     mark_compatible/1
    ]).
-
 
 -ifdef(AR_TEST).
 -export([cleanup/0]).
@@ -25,10 +25,10 @@ init() ->
     ok.
 
 %% @doc Check if the peer has been marked as incompatible
-is_peer_marked_incompatible(Peer) ->
+is_peer_marked_compatible(Peer) ->
     try ets:lookup(?MODULE, Peer) of
         [] ->
-            false;
+            true;
         [{Peer, Value}] ->
             Value
     catch
@@ -38,12 +38,12 @@ is_peer_marked_incompatible(Peer) ->
 
 %% @doc Mark peer as incompatible
 mark_incompatible(Peer) ->
-    ets:insert(?MODULE, {Peer, true}),
+    ets:insert(?MODULE, {Peer, false}),
     ok.
 
 %% @doc Mark peer as compatible
 mark_compatible(Peer) ->
-    is_peer_marked_incompatible(Peer) andalso ets:delete(?MODULE, Peer),
+    is_peer_marked_compatible(Peer) orelse ets:delete(?MODULE, Peer),
     ok.
 
 %% @doc Delete tables

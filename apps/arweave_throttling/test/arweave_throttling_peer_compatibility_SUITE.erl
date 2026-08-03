@@ -1,12 +1,12 @@
 %%% @doc Tests for the `arweave_throttling_peer_groups' ETS store.
 %%% @end
--module(arweave_throttling_peer_compatibility_register_SUITE).
+-module(arweave_throttling_peer_compatibility_SUITE).
 -compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(M, arweave_throttling_peer_compatibility_register).
+-define(M, arweave_throttling_peer_compatibility).
 
 suite() -> [{userdata, [description()]}, {timetrap, {seconds, 30}}].
 
@@ -34,14 +34,30 @@ all() ->
 
 happy_path(_Config) ->
     Peer = {1,2,3,4},
+    Peer2 = {2,3,4,5},
+    
+    %% Default is compatible
+    ?assert(?M:is_peer_marked_compatible(Peer)),
 
-    ?assertNot(?M:is_peer_marked_incompatible(Peer)),
+    %% No header -> incompatible
     ?assertEqual(ok, ?M:mark_incompatible(Peer)),
-    ?assert(?M:is_peer_marked_incompatible(Peer)),
+    ?assertNot(?M:is_peer_marked_compatible(Peer)),
+    %% Idempotence
+    ?assertEqual(ok, ?M:mark_incompatible(Peer)),
+    ?assertNot(?M:is_peer_marked_compatible(Peer)),
 
+    %% Header -> compatible
     ?assertEqual(ok, ?M:mark_compatible(Peer)),
-    ?assertNot(?M:is_peer_marked_incompatible(Peer)),
+    ?assert(?M:is_peer_marked_compatible(Peer)),
+    %% Idempotence
     ?assertEqual(ok, ?M:mark_compatible(Peer)),
-    ?assertNot(?M:is_peer_marked_incompatible(Peer)),
+    ?assert(?M:is_peer_marked_compatible(Peer)),
+
+    %% Can be cycled any number of times.
+    ?assertEqual(ok, ?M:mark_incompatible(Peer)),
+    ?assertNot(?M:is_peer_marked_compatible(Peer)),
+
+    %% State independence
+    ?assert(?M:is_peer_marked_compatible(Peer2)),
 
     ok.

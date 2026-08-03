@@ -134,16 +134,16 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
             %% Missing header should reset peer state across all
             %% groups. We don't know at this point what groups the peer was a part
             %% of.
-            case arweave_throttling_peer_compatibility_register:is_peer_marked_incompatible(Peer) of
-                true ->
+            case arweave_throttling_peer_compatibility:is_peer_marked_compatible(Peer) of
+                false ->
                     %% When it's marked incompatibl already, we're good. we don't have to
                     %% do anything.
                     ok;
-                false ->
+                true ->
                     %% Reset
                     arweave_throttling_sup:reset_peer_in_all_groups(Peer),
-                    log_update_error(Peer, Path, 'unknown', Reason),
-                    arweave_throttling_peer_compatibility_register:mark_incompatible(Peer)
+                    maybe_log_update_error(Peer, Path, 'unknown', Reason),
+                    arweave_throttling_peer_compatibility:mark_incompatible(Peer)
             end,
             E;
         {error, Reason} = E ->
@@ -151,11 +151,11 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
             %% Log with unknown group, and return, there is nothing to update.
             %% and likely never was or will be. We assume the error is consistent,
             %% as the peer runs an incompatible version.
-            log_update_error(Peer, Path, 'unknown', Reason),
+            maybe_log_update_error(Peer, Path, 'unknown', Reason),
             E;
         {ok, #{group_id := HeaderGroupID} = Quota} ->
             %% Try to look up group ID for the Peer and Path.
-            arweave_throttling_peer_compatibility_register:mark_compatible(Peer),
+            arweave_throttling_peer_compatibility:mark_compatible(Peer),
             case arweave_throttling_path:path_to_group_id(Peer, Path) of
                 {error, skip} ->
                     ok;
@@ -165,7 +165,7 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
                     %% for this Peer.
                     case try_group_id_to_atom(Peer, HeaderGroupID) of
                         {error, Reason} = E ->
-                            log_update_error(Peer, Path, 'unknown', Reason),
+                            maybe_log_update_error(Peer, Path, 'unknown', Reason),
                             E;
                         {ok, HeaderGroupIDAtom} ->
                             %% Then we can look for the throttling group process.
@@ -173,7 +173,7 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
                                 {ok, Pid} when is_pid(Pid) ->
                                     handle_update_group_id(Peer, Path, HeaderGroupIDAtom, Quota);
                                 {error, Reason} = E ->
-                                    log_update_error(Peer, Path, HeaderGroupIDAtom, Reason),
+                                    maybe_log_update_error(Peer, Path, HeaderGroupIDAtom, Reason),
                                     E
                             end
                     end;
@@ -183,7 +183,7 @@ update_quota(Peer, Path, Headers) when is_tuple(Peer),
                             handle_update_group_id(Peer, Path, GroupID, Quota);
                         false ->
                             E = {group_mismatch, GroupID, HeaderGroupID},
-                            log_update_error(Peer, Path, 'unknown', E),
+                            maybe_log_update_error(Peer, Path, 'unknown', E),
                             E
                     end
             end
@@ -208,7 +208,7 @@ start(_StartType, _StartArgs) ->
     ok = arweave_throttling_metrics:register(),
     ok = arweave_throttling_router:init(),
     ok = arweave_throttling_distinct_group:init(),
-    ok = arweave_throttling_peer_compatibility_register:init(),
+    ok = arweave_throttling_peer_compatibility:init(),
     S = arweave_throttling_sup:start_link(),
     prometheus_registry:register_collector(arweave_throttling_metrics_collector),
     S.
@@ -244,7 +244,8 @@ try_group_id_to_atom(Peer, HeaderGroupID) ->
             end
     end.
 
-log_update_error(Peer, Path, GroupID, Reason) ->
+%% @doc Increase prometheus counters for common errors, 
+maybe_log_update_error(Peer, Path, GroupID, Reason) ->
     ReasonStr = get_quota_error_reason(Reason),
     log_unknown_reason(Peer, Path, GroupID, Reason, ReasonStr),
     arweave_metrics:counter_inc(arweave_throttling_quota_update_error,
