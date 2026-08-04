@@ -1,11 +1,16 @@
 %%% @doc Boundary/validation tests for the RandomX NIF argument checks.
 %%%
-%%% Every test here pins down one of the argument checks added in the
-%%% "more strict boundaries" commit. The rejection tests are cheap: the NIFs
-%%% validate all arguments before creating a RandomX VM, so a light-mode state
-%%% is enough and no hashing happens.
+%%% The first group pins down the argument checks added in the "more strict
+%%% boundaries" commit. The second group covers checks that are still missing;
+%%% those tests assert the behaviour a fix should produce and so FAIL today.
+%%% The rejection tests are cheap: the NIFs validate all arguments before
+%%% creating a RandomX VM, so a light-mode state is enough and no hashing
+%%% happens.
 -module(ar_randomx_nif_boundary_tests).
 -test_category([fast]).
+
+%% Runs on the throwaway node started by call_on_peer/3, not from this one.
+-export([remote_fused_entropy/1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -15,9 +20,15 @@
 %% MAX_CHUNK_SIZE in apps/arweave/c_src/randomx/rx512/ar_rx512_nif.c.
 -define(MAX_CHUNK_SIZE, (256 * 1024)).
 
+%% randomx_decrypt_chunk asserts inChunkSize % (2 * FEISTEL_BLOCK_LENGTH) == 0, so a short
+%% chunk has to be a multiple of 64 bytes.
+-define(SHORT_CHUNK_SIZE, 1024).
+
 %% Keep the packing work per call to a minimum - these tests are about argument
 %% validation, not about packing output.
 -define(ROUNDS, 1).
+
+-define(PEER_TIMEOUT, 30000).
 
 setup() ->
     {rx512, State512} = ar_mine_randomx:init_light2(rx512, ?RANDOMX_PACKING_KEY, 0, 0),
@@ -41,7 +52,16 @@ randomx_nif_boundary_test_() ->
                 test_register(fun test_reencrypt_rejects_empty_chunk/1, SetupData),
                 test_register(fun test_reencrypt_accepts_chunk_size_bounds/1, SetupData),
                 test_register(fun test_fused_entropy_rejects_negative_counts/1, SetupData),
-                test_register(fun test_fused_entropy_zero_program_count/1, SetupData)
+                test_register(fun test_fused_entropy_zero_program_count/1, SetupData),
+
+                %% Checks that have not landed yet - these currently fail.
+                test_register(fun test_decrypt_rejects_out_size_above_chunk_size/1, SetupData),
+                test_register(fun test_reencrypt_rejects_chunk_size_above_chunk_size/1,
+                    SetupData),
+                test_register(fun test_init_rejects_unknown_hashing_mode/1, SetupData),
+                test_register(fun test_fused_entropy_rejects_zero_lane_count/1, SetupData),
+                test_register(fun test_fused_entropy_rejects_zero_depth/1, SetupData),
+                test_register(fun test_fused_entropy_lane_count_does_not_abort/1, SetupData)
             ]
         end
     }.
@@ -193,3 +213,90 @@ test_fused_entropy_zero_program_count(_Fixture = {_, StateRsp}) ->
         StateRsp, ?SUB_CHUNK_COUNT, ?SUB_CHUNK_SIZE, LaneCount, RxDepth,
         0, 0, 0, 0, ?RANDOMX_PACKING_KEY),
     ?assertEqual(LaneCount * ?RANDOMX_SCRATCHPAD_SIZE, byte_size(Entropy)).
+
+%% ===========================================================================================
+%% Checks that have not landed yet. Each test asserts the behaviour a fix should produce, so
+%% they fail until the check lands.
+%% ===========================================================================================
+
+%% decrypt writes inputChunk.size bytes into an uninitialised MAX_CHUNK_SIZE stack buffer but
+%% returns outChunkLen of them, so a short chunk with a large OutSize returns C stack: 259830
+%% of the 261120 extra bytes were non-zero when measured, covering all 256 byte values.
+%% outChunkLen is bounded by MAX_CHUNK_SIZE above, but not by inputChunk.size.
+test_decrypt_rejects_out_size_above_chunk_size(_Fixture = {State512, _}) ->
+    Chunk = crypto:strong_rand_bytes(?SHORT_CHUNK_SIZE),
+    ?assertError(badarg,
+        ar_rx512_nif:rx512_decrypt_chunk_nif(
+            State512, ?RANDOMX_PACKING_KEY, Chunk, ?MAX_CHUNK_SIZE, ?ROUNDS, 0, 0, 0)),
+    ?assertError(badarg,
+        ar_rx512_nif:rx512_decrypt_chunk_nif(
+            State512, ?RANDOMX_PACKING_KEY, Chunk, ?SHORT_CHUNK_SIZE + 1, ?ROUNDS, 0, 0, 0)).
+
+%% reencrypt shares that buffer and re-encrypts chunkSize bytes out of it, so it returns the
+%% uninitialised tail twice - in the clear as Decrypted, and under the caller's key as
+%% Reencrypted.
+test_reencrypt_rejects_chunk_size_above_chunk_size(_Fixture = {State512, _}) ->
+    Chunk = crypto:strong_rand_bytes(?SHORT_CHUNK_SIZE),
+    ?assertError(badarg,
+        ar_rx512_nif:rx512_reencrypt_chunk_nif(
+            State512, ?RANDOMX_PACKING_KEY, ?RANDOMX_PACKING_KEY, Chunk,
+            ?MAX_CHUNK_SIZE, ?ROUNDS, ?ROUNDS, 0, 0, 0)),
+    ?assertError(badarg,
+        ar_rx512_nif:rx512_reencrypt_chunk_nif(
+            State512, ?RANDOMX_PACKING_KEY, ?RANDOMX_PACKING_KEY, Chunk,
+            ?SHORT_CHUNK_SIZE + 1, ?ROUNDS, ?ROUNDS, 0, 0, 0)).
+
+%% Any mode that is not HASHING_MODE_FAST silently takes the light branch, skipping the
+%% numWorkers check above. Only info_nif notices, much later.
+test_init_rejects_unknown_hashing_mode(_Fixture) ->
+    Key = ?RANDOMX_PACKING_KEY,
+    UnknownMode = 42,
+    ?assertError(badarg, ar_rx512_nif:rx512_init_nif(Key, UnknownMode, 0, 0, 0)),
+    ?assertError(badarg, ar_rx4096_nif:rx4096_init_nif(Key, UnknownMode, 0, 0, 0)),
+    ?assertError(badarg, ar_rxsquared_nif:rxsquared_init_nif(Key, UnknownMode, 0, 0, 0)),
+    ?assertError(badarg, ar_rx512_nif:rx512_init_nif(Key, -1, 0, 0, 0)).
+
+%% laneCount reaches C as a bare loop bound with no validation; zero lanes yields an empty
+%% entropy binary instead of a rejection.
+test_fused_entropy_rejects_zero_lane_count(_Fixture = {_, StateRsp}) ->
+    ?assertError(badarg,
+        ar_rxsquared_nif:rsp_fused_entropy_nif(
+            StateRsp, ?SUB_CHUNK_COUNT, ?SUB_CHUNK_SIZE, 0, ?REPLICA_2_9_RANDOMX_DEPTH,
+            0, 0, 0, ?REPLICA_2_9_RANDOMX_PROGRAM_COUNT, ?RANDOMX_PACKING_KEY)).
+
+%% rxDepth = 0 skips every RandomX round and returns the initial scratchpads verbatim.
+test_fused_entropy_rejects_zero_depth(_Fixture = {_, StateRsp}) ->
+    ?assertError(badarg,
+        ar_rxsquared_nif:rsp_fused_entropy_nif(
+            StateRsp, ?SUB_CHUNK_COUNT, ?SUB_CHUNK_SIZE, ?REPLICA_2_9_RANDOMX_LANE_COUNT, 0,
+            0, 0, 0, ?REPLICA_2_9_RANDOMX_PROGRAM_COUNT, ?RANDOMX_PACKING_KEY)).
+
+%% The upper end of the same missing laneCount bound: `unsigned int totalVMs = 2 * laneCount`
+%% wraps to 0 at 2^31, leaving an empty vmList that rsp_fused_entropy still indexes up to
+%% laneCount. The emulator never gets that far - the outEntropy allocation of
+%% scratchpadSize * laneCount (4 PiB) aborts it first, which is why this runs on a peer node.
+test_fused_entropy_lane_count_does_not_abort(_Fixture) ->
+    ?assertError(badarg, call_on_peer(?MODULE, remote_fused_entropy, [1 bsl 31])).
+
+remote_fused_entropy(LaneCount) ->
+    {rxsquared, State} = ar_mine_randomx:init_light2(rxsquared, ?RANDOMX_PACKING_KEY, 0, 0),
+    ar_rxsquared_nif:rsp_fused_entropy_nif(
+        State, ?SUB_CHUNK_COUNT, ?SUB_CHUNK_SIZE, LaneCount, ?REPLICA_2_9_RANDOMX_DEPTH,
+        0, 0, 0, ?REPLICA_2_9_RANDOMX_PROGRAM_COUNT, ?RANDOMX_PACKING_KEY).
+
+%% Runs the call on a throwaway node so that an emulator abort fails this test instead of
+%% taking the suite down with it. The node talks over standard_io rather than distribution,
+%% so it needs no cookie and no epmd. A remote badarg is re-raised here as badarg; a node
+%% that dies or hangs surfaces as peer_died.
+call_on_peer(Module, Function, Args) ->
+    {ok, Peer, _Node} = peer:start(
+        #{connection => standard_io, args => ["-pa" | code:get_path()],
+          env => [{"ERL_CRASH_DUMP_SECONDS", "0"}]}),
+    try
+        peer:call(Peer, Module, Function, Args, ?PEER_TIMEOUT)
+    catch
+        exit:Reason ->
+            error({peer_died, Reason})
+    after
+        catch peer:stop(Peer)
+    end.
