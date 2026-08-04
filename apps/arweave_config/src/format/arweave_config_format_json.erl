@@ -7,6 +7,7 @@
 -export([
     parse/1,
     parse/2,
+    decode_maybe/1,
     encode/1,
     encode/2,
     encode_value/1
@@ -45,6 +46,44 @@ parse_map(Json) when is_map(Json) ->
     arweave_config_format_dotted:to_leaf_map(Json);
 parse_map(_) ->
     {error, #{ reason => root_not_object }}.
+
+%% @doc Decode a single JSON-shaped value, falling back to the input.
+%% A value whose first non-space character is `[' or `{' is decoded as
+%% JSON (objects as maps), so list- and map-typed options can be given
+%% as one quoted argument. Anything else — including a value that
+%% starts JSON-shaped but fails to decode — is returned unchanged and
+%% left to the option's scalar type coercion, so a typo surfaces as
+%% the usual type error rather than a JSON error. Shared by the
+%% startup CLI/env parsers and the runtime `config set' facade.
+-spec decode_maybe(Value) -> Return when
+    Value :: string() | binary() | term(),
+    Return :: term().
+decode_maybe(Value) when is_binary(Value); is_list(Value) ->
+    case json_shaped(Value) of
+        true ->
+            try
+                jiffy:decode(
+                    unicode:characters_to_binary(Value),
+                    [return_maps])
+            catch
+                _:_ -> Value
+            end;
+        false ->
+            Value
+    end;
+decode_maybe(Value) ->
+    Value.
+
+json_shaped(Value) when is_binary(Value) ->
+    case string:trim(Value, leading) of
+        <<C, _/binary>> when C =:= $[; C =:= ${ -> true;
+        _ -> false
+    end;
+json_shaped(Value) when is_list(Value) ->
+    case string:trim(Value, leading) of
+        [C | _] when C =:= $[; C =:= ${ -> true;
+        _ -> false
+    end.
 
 -spec encode(Data) -> Return when
     Data :: map(),

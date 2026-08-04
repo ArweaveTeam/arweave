@@ -1,11 +1,17 @@
-%% @doc Returns a map of `OptionKey => Value` binaries built from
+%% @doc Returns a map of `OptionKey => Value` entries built from
 %% the OS environment variables (e.g. `AR_VDF_IS_PUBLIC_SERVER`).
 %% Only Options that support being set via the environment are included.
+%% Values are binaries, except that a JSON-shaped value (first
+%% non-space character `[' or `{') is decoded into a real term (see
+%% `arweave_config_format_json:decode_maybe/1'), so list- and
+%% map-typed options can be set from the environment:
+%%
+%%   AR_PEERS_TRUSTED='["peers.arweave.xyz", "1.2.3.4:1984"]'
 -module(arweave_config_format_env).
 -compile(warnings_as_errors).
 -export([parse/0, find_config_file/1]).
 
--spec parse() -> #{list() => binary()}.
+-spec parse() -> #{list() => term()}.
 parse() ->
     Bindings = arweave_config_options_registry:get_environments(),
     lists:foldl(
@@ -14,7 +20,10 @@ parse() ->
                 [K, V] ->
                     Key = list_to_binary(K),
                     case lists:keyfind(Key, 1, Bindings) of
-                        {Key, OptionKey} -> Acc#{OptionKey => list_to_binary(V)};
+                        {Key, OptionKey} ->
+                            Value = arweave_config_format_json:decode_maybe(
+                                list_to_binary(V)),
+                            Acc#{OptionKey => Value};
                         false -> Acc
                     end;
                 _ ->

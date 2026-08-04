@@ -55,6 +55,27 @@ parser(_Config) ->
         [port],
         7),
 
+    %% JSON-shaped values decode into real terms before type
+    %% coercion, so list-typed options are settable from the CLI.
+    assert_parse_sets(
+        [<<"--peers.trusted">>, <<"[\"5.6.7.8:1984\", \"1.2.3.4:1984\"]">>],
+        [peers, trusted],
+        [{1, 2, 3, 4, 1984}, {5, 6, 7, 8, 1984}]),
+    assert_parse_sets(
+        [<<"--peers.trusted=[\"1.2.3.4:1984\"]">>],
+        [peers, trusted],
+        [{1, 2, 3, 4, 1984}]),
+    %% A bare scalar still becomes a singleton list.
+    assert_parse_sets(
+        [<<"--peers.trusted">>, <<"1.2.3.4:1984">>],
+        [peers, trusted],
+        [{1, 2, 3, 4, 1984}]),
+    %% A JSON-shaped value that fails to decode falls back to the raw
+    %% string and is rejected by the option's type, not by JSON.
+    {error, #{ reason := <<"bad value">> }} =
+        arweave_config_format_cli:parse(
+            [<<"--peers.trusted">>, <<"[\"1.2.3.4:1984\"">>]),
+
     {error, #{ reason := <<"bad_argument">> }} =
         arweave_config_format_cli:parse([<<"---bad-arg">>]),
     {error, #{ reason := <<"bad_argument">> }} =

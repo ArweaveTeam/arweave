@@ -42,7 +42,9 @@ get(StringKey) ->
 -spec set(string(), string()) -> ok | {error, term()}.
 set(StringKey, StringValue) ->
     case arweave_config_parser:key(StringKey) of
-        {ok, Key} -> arweave_config:set(Key, decode_value(StringValue));
+        {ok, Key} ->
+            arweave_config:set(Key,
+                arweave_config_format_json:decode_maybe(StringValue));
         {error, _} = Err -> Err
     end.
 
@@ -77,23 +79,8 @@ set_base64(KeyB64, ValueB64) ->
 %% Internal
 %%====================================================================
 
-%% JSON-shaped set values decode into real terms; anything else stays
-%% the raw string for scalar type coercion.
-decode_value(StringValue) ->
-    case string:trim(StringValue, leading) of
-        [C | _] when C =:= $[; C =:= ${ ->
-            try
-                jiffy:decode(
-                    unicode:characters_to_binary(StringValue),
-                    [return_maps])
-            catch
-                _:_ -> StringValue
-            end;
-        _ ->
-            StringValue
-    end.
-
-%% Value rendering, symmetric with `decode_value/1': scalars render
+%% Value rendering, symmetric with
+%% `arweave_config_format_json:decode_maybe/1': scalars render
 %% bare (`true', `200', `/opt/data'), containers render as **JSON** —
 %% the exact form `config set' accepts — so `get' output pastes
 %% straight back into `set'. Peers render as their canonical

@@ -1,6 +1,13 @@
 %%% @doc CLI argument parser for long-form flags (`--foo`, `--foo bar`,
 %%% `--foo=bar`).
 %%%
+%%% A flag value whose first non-space character is `[' or `{' is
+%%% decoded as JSON before type coercion (see
+%%% `arweave_config_format_json:decode_maybe/1'), so list- and
+%%% map-typed options can be set from the command line:
+%%%
+%%%   --peers.trusted '["peers.arweave.xyz", "1.2.3.4:1984"]'
+%%%
 %%% `parse/1` is pure: it returns a `#{OptionKey => Value}` map suitable
 %%% for `arweave_config:load/1`. Writes to the spec store happen
 %%% downstream, not as a side effect of parsing. The `[config_file]`
@@ -197,7 +204,11 @@ consume_flag(Spec, _, Pos, _Buffer) ->
     }}.
 
 decode_value(#{type := Type}, Value, Pos) ->
-    case arweave_config_type:Type(Value) of
+    %% JSON-shaped values decode into real terms first (a failed
+    %% decode falls back to the raw value), matching the runtime
+    %% `config set' facade.
+    Decoded0 = arweave_config_format_json:decode_maybe(Value),
+    case arweave_config_type:Type(Decoded0) of
         {ok, Decoded} -> {ok, Decoded};
         _ ->
             {error, #{
