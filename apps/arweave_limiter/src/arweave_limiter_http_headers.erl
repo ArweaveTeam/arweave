@@ -43,14 +43,12 @@ ratelimit_limit_value(#{expiring_limit := Expiring,
                                       sliding_window := SW,
                                       leaky_bucket := LB}}) ->
     SWLimit  = maps:get(limit, SW),
-    SWWindow = maps:get(window_seconds, SW),
     LBBurst  = maps:get(burst, LB),
     iolist_to_binary(
       io_lib:format(
-        "~B, ~B;w=~B;policy=\"~s sliding window\", "
-        "~B;w=~B;burst=~B;policy=\"~s leaky bucket\" "
-        "~B;w=~B;policy=\"~s concurrency\" ",
-        [Expiring, SWLimit, SWWindow, ID, LBBurst, SWWindow, LBBurst, ID, ConcurrencyLimit, 1, ID])).
+        "~B, ~B;policy=\"~s usage\", "
+        "~B;policy=\"~s concurrency\" ",
+        [Expiring, SWLimit + LBBurst, ID, ConcurrencyLimit, ID])).
 
 %% When both Retry-After and RateLimit-Reset are present they
 %% should reference the same instant. We add Retry-After only on rejects

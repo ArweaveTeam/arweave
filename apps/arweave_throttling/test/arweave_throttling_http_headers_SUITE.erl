@@ -92,8 +92,9 @@ parse_well_formed_list(_Config) ->
     ok.
 
 parse_alpha2_version(_Config) ->
+    %% This is alpha2 version: no group ids but correct policy names.
     Headers = [{<<"RateLimit-Limit">>,
-                <<"450, 0;w=1000;policy=\"sliding window\", 450;w=1000;burst=450;policy=\"leaky bucket\" 150;w=1;policy=\"concurrency\"">>},
+                <<"460, 460;policy=\"usage\", 500;policy=\"concurrency\" ">>},
             {<<"RateLimit-Remaining">>, <<"449">>},
             {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, missing_group_id},
@@ -101,8 +102,9 @@ parse_alpha2_version(_Config) ->
     ok.
 
 parse_malformed_policies(_Config) ->
+    %% Earlier alpha version
     Headers1 = [{<<"RateLimit-Limit">>,
-                <<"450, 0;w=1000;policy=\"\", 450;w=1000;burst=450;policy=\"leaky bucket\" 150;w=1;policy=\"concurrency\"">>},
+                 <<"450, 0;w=1000;policy=\"\", 450;w=1000;burst=450;policy=\"leaky bucket\" 150;w=1;policy=\"concurrency\"">>},
             {<<"RateLimit-Remaining">>, <<"449">>},
             {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, malformed_policy},
@@ -113,9 +115,18 @@ parse_malformed_policies(_Config) ->
             {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, malformed_policy},
                 ?M:parse(Headers2)),
+    %% Version with no group names.
+    %% (this doesn't really exists with these names, but let's make sure it returns correct error)
+    Headers3 =
+        [{<<"RateLimit-Limit">>,
+          <<"460, 460;policy=\"leaky bucket\", 500;policy=\"concurrency\" ">>},
+         {<<"RateLimit-Remaining">>, <<"449">>},
+         {<<"RateLimit-Reset">>, <<"19">>}],
+    ?assertEqual({error, malformed_policy},
+                ?M:parse(Headers3)),
     ok.
 
-    
+
 %% @doc Header names are matched case-insensitively.
 parse_case_insensitive_names(_Config) ->
     Headers = #{<<"RaTeLiMiT-LiMiT">> => limit_value(<<"data_sync_record">>, 10),
@@ -200,7 +211,6 @@ headers(GroupBin, Total, Remaining, Reset) ->
 limit_value(GroupBin, ExpiringLimit) ->
     iolist_to_binary(
     io_lib:format(
-        "~B, 10;w=1;policy=\"~s sliding window\", "
-        "450;w=1;burst=450;policy=\"~s leaky bucket\" "
-        "500;w=1;policy=\"~s concurrency\" ",
-        [ExpiringLimit, GroupBin, GroupBin, GroupBin])).
+        "~B, 10;policy=\"~s usage\", "
+        "500;policy=\"~s concurrency\" ",
+        [ExpiringLimit, GroupBin, GroupBin])).

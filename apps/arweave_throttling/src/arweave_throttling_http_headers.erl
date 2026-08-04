@@ -126,7 +126,7 @@ strip_policy_type(Comment) ->
     end.
 
 policy_types() ->
-    [<<"sliding window">>, <<"leaky bucket">>, <<"concurrency">>].
+    [<<"usage">>, <<"concurrency">>].
 
 is_suffix(Suffix, Bin) ->
     SuffixSize = byte_size(Suffix),

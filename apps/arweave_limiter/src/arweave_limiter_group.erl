@@ -35,8 +35,8 @@
          drop_expired/3,
          add_and_order_timestamps/2,
          cleanup_expired_sliding_peers/3,
-         generate_policy/1,
-         build_headers_info_sliding/5]).
+         generate_policy/1
+        ]).
 -endif.
 
 -include_lib("arweave/include/ar.hrl").
@@ -207,42 +207,40 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                       is_disabled := false,
                       leaky_rate_limit := LeakyRateLimit,
                       leaky_tokens := LeakyTokens,
-                      next_leaky_tick_ts := NextLeakyTickTS,
                       concurrent_monitors := ConcurrentMonitors,
                       sliding_window_duration := SlidingWindowDuration,
                       sliding_window_limit := SlidingWindowLimit,
                       sliding_timestamps := SlidingTimestamps
                      }) ->
     Now = arweave_limiter_time:ts_now(),
-    Tokens = maps:get(Peer, LeakyTokens, 0) + 1,
+    Tokens = maps:get(Peer, LeakyTokens, 0),
 
     SlidingTimestampsForPeer0 =
         expire_and_get_requests(Peer, SlidingTimestamps, SlidingWindowDuration, Now),
 
-    Policies = generate_policy(State),
     LbRemaining = LeakyRateLimit - Tokens,
     case length(SlidingTimestampsForPeer0) + 1 > SlidingWindowLimit of
         true ->
             %% Sliding Window limited, check Leaky Bucket Tokens
-            case LbRemaining < 0 of
+            case LbRemaining =< 0 of
                 true ->
                     %% Burst exhausted with the Leaky Tokens
                     ?LOG_DEBUG([{event, ar_limiter_reject}, {reason, rate_limit},
                                 {sliding_window_limit, SlidingWindowLimit},
                                 {leaky_rate_limit, LeakyRateLimit},
                                 {peer, Peer}, {id, ID}]),
-                    HeadersInfo = build_headers_info_leaky(
-                                    0, LeakyRateLimit, NextLeakyTickTS,
-                                    SlidingTimestampsForPeer0, Now,
-                                    Policies),
+
+                    HeadersInfo = build_headers_info(
+                                    0, 0,
+                                    SlidingTimestampsForPeer0, Now, State),
                     {reply, {reject, rate_limit, HeadersInfo}, State};
                 false ->
-                    NewLeakyTokens = update_token(Peer, Tokens, LeakyTokens),
+                    NewLeakyTokens = update_token(Peer, Tokens + 1, LeakyTokens),
                     NewMonitors = register_concurrent(FromPid, ConcurrentMonitors),
-                    HeadersInfo = build_headers_info_leaky(
-                                    LbRemaining, LeakyRateLimit, NextLeakyTickTS,
-                                    SlidingTimestampsForPeer0, Now,
-                                    Policies),
+                    SlidingRemaining = SlidingWindowLimit - length(SlidingTimestampsForPeer0),
+                    HeadersInfo = build_headers_info(
+                                    SlidingRemaining, LbRemaining - 1,
+                                    SlidingTimestampsForPeer0, Now, State),
                     {reply, {register, leaky, HeadersInfo},
                      State#{leaky_tokens => NewLeakyTokens,
                             concurrent_monitors => NewMonitors}}
@@ -251,10 +249,11 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
             NewMonitors = register_concurrent(FromPid, ConcurrentMonitors),
             SlidingTimestampsForPeer1 = add_and_order_timestamps(Now, SlidingTimestampsForPeer0),
             NewSlidingTimestamps = SlidingTimestamps#{Peer => SlidingTimestampsForPeer1},
-            SWRemaining = max(0, SlidingWindowLimit
-                              - length(SlidingTimestampsForPeer1)),
-            HeadersInfo = build_headers_info_sliding(
-                            SWRemaining, LbRemaining + 1, SlidingTimestampsForPeer1, Now, Policies),
+            SlidingRemaining = SlidingWindowLimit - length(SlidingTimestampsForPeer1),
+            HeadersInfo = build_headers_info(
+                            SlidingRemaining, LbRemaining,
+                            SlidingTimestampsForPeer1, Now, State),
+
             {reply, {register, sliding, HeadersInfo},
              State#{sliding_timestamps => NewSlidingTimestamps,
                     concurrent_monitors => NewMonitors}}
@@ -464,6 +463,25 @@ ref_to_worker_ref(LimiterRef, Peer) ->
     WorkersNum = arweave_config:get([limiter, LimiterRef, number_of_workers]),
     arweave_limiter_util:worker_ref(LimiterRef, Peer, WorkersNum).
 
+build_headers_info(SlidingRemaining, LeakyRemaining,
+                   SWTimestamps, Now,
+                   #{sliding_window_limit := SlidingLimit,
+                     leaky_rate_limit := LeakyLimit,
+                     next_leaky_tick_ts := NextLeakyTickTS
+                    } = State) ->
+    Policies = generate_policy(State),
+    ExpiringLimit = SlidingLimit + LeakyLimit,
+    Remaining = SlidingRemaining + LeakyRemaining,
+
+    LBReset = max(1, (NextLeakyTickTS - Now) div 1000),
+    SWReset = sliding_window_reset_seconds(SWTimestamps, Now),
+    Reset = reset_seconds(SlidingLimit, LeakyLimit, SWReset, LBReset),
+
+    #{expiring_limit => ExpiringLimit,
+      remaining      => Remaining,
+      reset_seconds  => Reset,
+      policies       => Policies}.
+
 generate_policy(#{id := GroupID,
                   concurrency_limit := ConcurrencyLimit,
                   sliding_window_duration := SlidingWindowDuration,
@@ -486,42 +504,14 @@ generate_policy(#{id := GroupID,
                         tick_reduction => TickReduction}
      }.
 
-%% @doc Generate headers for sliding windows.
-build_headers_info_sliding(0, LeakyTokensRemaining, SWTimestamps, Now, Policies) ->
-    %% This is an edge case, where we ran out of sliding window allowance, but
-    %% we might have leaky bucket remaining.
-    %% We need to show the leaky_bucket allowances to allow smooth transition for
-    %% throttling. - otherwise the client might think it ran out of all quota.
-    SWReset = sliding_window_reset_seconds(SWTimestamps, Now),
-    LB = maps:get(leaky_bucket, Policies),
-    ExpiringLimit = maps:get(burst, LB),
-    #{expiring_limit => ExpiringLimit,
-      remaining      => LeakyTokensRemaining,
-      reset_seconds  => SWReset,
-      policies       => Policies};
-build_headers_info_sliding(Remaining, _LeakyTokensRemaining, SWTimestamps, Now, Policies) ->
-    SWReset = sliding_window_reset_seconds(SWTimestamps, Now),
-    SW = maps:get(sliding_window, Policies),
-    ExpiringLimit = maps:get(limit, SW),
-    #{expiring_limit => ExpiringLimit,
-      remaining      => Remaining,
-      reset_seconds  => SWReset,
-      policies       => Policies}.
-
-build_headers_info_leaky(Remaining, LbCapacity, NextLeakyTickTS, SWTimestamps, Now, Policies) ->
-    LbReset = max(1, (NextLeakyTickTS - Now) div 1000), %% This should be never negative really
-    SWReset = sliding_window_reset_seconds(SWTimestamps, Now),
-
-    %% This is pretty much a short circuit for
-    Reset = if SWReset > 0 -> min(SWReset, LbReset);
-               true -> LbReset
-            end,
-
-    ExpiringLimit = LbCapacity,
-    #{expiring_limit => ExpiringLimit,
-      remaining      => Remaining,
-      reset_seconds  => Reset,
-      policies       => Policies}.
+reset_seconds(0, _LeakyLimit, _SWReset, LBReset) ->
+    %% Only consider Leaky Bucket when Sliding Window is not active
+    LBReset;
+reset_seconds(_SlidingLimit, 0, SWReset, _LBReset) ->
+    %% Only consider Sliding Window when Leaky Bucket is not active
+    SWReset;
+reset_seconds(_SlidingLimit, _LeakyLimit, SWReset, LBReset) ->
+    min(SWReset, LBReset).
 
 %% Seconds until the oldest in-window timestamp ages out. 0 when the window
 %% has spare capacity (no meaningful "reset" to advertise).

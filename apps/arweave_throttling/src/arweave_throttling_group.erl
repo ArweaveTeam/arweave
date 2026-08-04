@@ -311,7 +311,12 @@ handle_call({throttle, Peer}, From, #{peers := Peers} = State) ->
             },
             {reply, accepted, State#{peers := Peers#{Peer => PS1}}};
         _ ->
-            enqueue_caller(Peer, From, PS0, State)
+            case enqueue_caller(Peer, From, PS0, State) of
+                {error, _} = E ->
+                    {reply, E, State};
+                {Ref, NewState} ->
+                    {reply, {queued, Ref}, NewState}
+            end
     end;
 handle_call({is_throttled, Peer}, _From, #{peers := Peers} = State) ->
     PS0 = get_or_init_peer(Peer, Peers),
@@ -464,7 +469,7 @@ quota_is_throttled(_PeerState) ->
 enqueue_caller(Peer, From, PS0, #{peers := Peers, monitors := Monitors} = State) ->
     case queue:len(PS0#peer_state.waiters) >= ?MAX_QUEUE_LENGTH of
         true ->
-            {reply, {error, queue_full}, State};
+            {error, queue_full};
         false ->
             {FromPid, _Tag} = From,
             MRef = erlang:monitor(process, FromPid),
@@ -473,10 +478,10 @@ enqueue_caller(Peer, From, PS0, #{peers := Peers, monitors := Monitors} = State)
                 waiters = queue:in({Ref, FromPid, MRef},
                             PS0#peer_state.waiters)
             },
-            {reply, {queued, Ref}, State#{
-                peers := Peers#{Peer => PS1},
-                monitors := Monitors#{MRef => Peer}
-            }}
+            {Ref, State#{
+                         peers := Peers#{Peer => PS1},
+                         monitors := Monitors#{MRef => Peer}
+                        }}
     end.
 
 get_or_init_peer(Peer, Peers) ->
