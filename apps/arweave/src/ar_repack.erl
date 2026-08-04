@@ -175,7 +175,12 @@ get_read_range(BucketEndOffset, RangeEnd, BatchSize) ->
         ar_replica_2_9:get_entropy_partition_range(Partition),
     SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
     EntropyPartitionStartBucket = ar_chunk_storage:get_chunk_bucket_start(EntropyPartitionStart),
-    Sector = (BucketEndOffset - EntropyPartitionStartBucket) div SectorSize,
+    %% Assign the bucket to a sector by its start offset (a bucket ending exactly on a
+    %% sector boundary belongs to the sector it ends, not the one it starts); an
+    %% end-anchored division pushes the cap a sector too far, so the read range would
+    %% swallow the footprint's next entropy offset and produce duplicate buckets.
+    BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(BucketEndOffset),
+    Sector = (BucketStartOffset - EntropyPartitionStartBucket) div SectorSize,
     SectorBucketEnd = EntropyPartitionStartBucket + (Sector + 1) * SectorSize,
     SectorChunkEnd =
         ar_chunk_storage:get_chunk_byte_from_bucket_end(SectorBucketEnd) + ?DATA_CHUNK_SIZE,
@@ -1979,7 +1984,14 @@ init_repack_chunk_map_test_() ->
      ar_test_node:test_with_all_nodes_mocked(ar_test_node:mainnet_packing_mocks(),
                                              fun test_init_repack_chunk_map_a/0, 30),
      ar_test_node:test_with_all_nodes_mocked(ar_test_node:mainnet_packing_mocks(),
-                                             fun test_init_repack_chunk_map_b/0, 30)
+                                             fun test_init_repack_chunk_map_b/0, 30),
+     ar_test_node:test_with_all_nodes_mocked([
+                                              {ar_block, get_replica_2_9_entropy_sector_size, fun() -> 524288 end},
+                                              {ar_block, get_replica_2_9_entropy_partition_size, fun() -> 2097152 end},
+                                              {ar_block, get_sub_chunks_per_replica_2_9_entropy, fun() -> 4 end},
+                                              {ar_block, strict_data_split_threshold, fun() -> 786432 end}
+                                             ],
+                                             fun test_init_repack_chunk_map_sector_boundary/0, 30)
     ].
 
 %% @doc This tests a specific off-by-one error that occurred in the footprint_end calculation.
@@ -2047,6 +2059,36 @@ test_init_repack_chunk_map_b() ->
     ?assertEqual(EntropyEnd2, lists:max(ReadRangeOffsets)),
     ok.
 
+%% @doc Regression for a footprint whose base bucket ends exactly on a sector boundary
+%% (the first cursor of a small, sub-partition storage module): the base offset's read
+%% range used to run one sector too far and swallow the footprint's next entropy offset,
+%% crashing init_repack_chunk_map's duplicate-bucket sanity check.
+test_init_repack_chunk_map_sector_boundary() ->
+    Cursor = 1_000_001,
+    ModuleStart = 1_000_000,
+    ModuleEnd = 1_572_864,
+    BatchSize = 500,
+    BucketEndOffset = ar_chunk_storage:get_chunk_bucket_end(Cursor),
+    BucketStartOffset = ar_chunk_storage:get_chunk_bucket_start(Cursor),
+    ?assertEqual(1_048_576, BucketEndOffset),
+    FootprintOffsets = footprint_offsets(BucketEndOffset, 4, ModuleEnd),
+    ?assertEqual([1_048_576, 1_572_864], FootprintOffsets),
+    FootprintStart = BucketStartOffset + 1,
+    FootprintEnd = footprint_end(FootprintOffsets, ModuleEnd, BatchSize),
+    State = #state{
+               module_start = ModuleStart,
+               module_end = ModuleEnd,
+               footprint_start = FootprintStart,
+               footprint_end = FootprintEnd,
+               read_batch_size = BatchSize,
+               repack_chunk_map = #{},
+               target_packing = {replica_2_9, <<"addr">>}
+              },
+    State2 = init_repack_chunk_map(FootprintOffsets, State),
+    ?assertEqual([1_048_576, 1_572_864],
+                 lists:sort(maps:keys(State2#state.repack_chunk_map))),
+    ok.
+
 get_read_range_test_() ->
     [
      ar_test_node:test_with_all_nodes_mocked([
@@ -2090,6 +2132,13 @@ test_get_read_range_before_strict() ->
        {3932159, 4456447, [3932160, 4194304]},
        get_read_range(3932160, 6_000_000, 3)
       ),
+    %% sector-boundary bucket: 2883584 ends exactly on a sector boundary, so its range
+    %% is capped at its own bucket rather than running into the next sector (which
+    %% holds the footprint's next entropy offset)
+    ?assertEqual(
+       {2883583, 3145727, [2883584]},
+       get_read_range(2883584, 4_000_000, 4)
+      ),
     ok.
 
 test_get_read_range_after_strict() ->
@@ -2118,5 +2167,10 @@ test_get_read_range_after_strict() ->
     ?assertEqual(
        {3845728, 4370016, [3932160, 4194304]},
        get_read_range(3932160, 6_000_000, 3)
+      ),
+    %% sector-boundary bucket: capped at its own bucket, see the before-strict case
+    ?assertEqual(
+       {2797152, 3059296, [2883584]},
+       get_read_range(2883584, 4_000_000, 4)
       ),
     ok.
