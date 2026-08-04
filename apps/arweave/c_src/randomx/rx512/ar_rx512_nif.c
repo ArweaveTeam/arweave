@@ -145,11 +145,16 @@ static ERL_NIF_TERM rx512_decrypt_chunk_nif(
 	if (!enif_inspect_binary(envPtr, argv[1], &inputData)) {
 		return enif_make_badarg(envPtr);
 	}
+	// A packed chunk is always a full MAX_CHUNK_SIZE - encrypt_chunk pads to it and
+	// ar_packing_server:validate_chunk_size/3 rejects anything else before we get here. It is
+	// also what fills the MAX_CHUNK_SIZE stack buffer below: randomx_decrypt_chunk writes
+	// inputChunk.size bytes into it and the rest would be returned as uninitialised stack.
 	if (!enif_inspect_binary(envPtr, argv[2], &inputChunk) ||
-		inputChunk.size == 0 ||
-		inputChunk.size > MAX_CHUNK_SIZE) {
+		inputChunk.size != (size_t)MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
+	// outChunkLen is the unpadded size of the chunk, so it never exceeds the packed size -
+	// which is MAX_CHUNK_SIZE, as checked just above.
 	if (!enif_get_uint(envPtr, argv[3], &outChunkLen) ||
 		outChunkLen > (unsigned int)MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
@@ -214,11 +219,13 @@ static ERL_NIF_TERM rx512_reencrypt_chunk_nif(
 	if (!enif_inspect_binary(envPtr, argv[2], &encryptKey)) {
 		return enif_make_badarg(envPtr);
 	}
+	// The input is a packed chunk, so a full MAX_CHUNK_SIZE - see decrypt above.
 	if (!enif_inspect_binary(envPtr, argv[3], &inputChunk) ||
-		inputChunk.size == 0 ||
-		inputChunk.size > MAX_CHUNK_SIZE) {
+		inputChunk.size != (size_t)MAX_CHUNK_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
+	// chunkSize is the unpadded size of the chunk - same bound as outChunkLen in decrypt
+	// above, except that here it also sizes the input of the re-encrypt step.
 	if (!enif_get_int(envPtr, argv[4], &chunkSize)  ||
 		chunkSize <= 0 ||
 		chunkSize > MAX_CHUNK_SIZE) {

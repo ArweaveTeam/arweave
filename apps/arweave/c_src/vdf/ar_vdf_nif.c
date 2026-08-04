@@ -15,6 +15,24 @@
 	#include <sys/sysctl.h>
 #endif
 
+// The number of checkpoints skipped in between two reported checkpoints. Unlike
+// checkpointCount - which vdf_parallel_sha_verify_with_reset_nif pins to the size of the
+// caller's InCheckpoint binary - nothing bounds this one, and it multiplies both the hashing
+// work and the size of the verify output buffer:
+//   VDF_SHA_HASH_SIZE * (1 + checkpointCount) * (1 + skipCheckpointCount)
+// enif_make_new_binary aborts the emulator instead of returning NULL when that product
+// exceeds what can be allocated. ar_vdf:compute/3 passes 0 and ar_vdf:verify/8 passes
+// ?VDF_CHECKPOINT_COUNT_IN_STEP - 1 = 24, so this leaves ample headroom.
+#define MAX_SKIP_CHECKPOINT_COUNT 1024
+
+// The implementations do not agree below 2 iterations. The reference implementation
+// (_vdf_sha2 in vdf.cpp) hashes an unconditional first block - and, without skips, an
+// unconditional last one - around its inner loop, so it never runs fewer than 2 rounds per
+// checkpoint; the fused/hiopt implementations run exactly hashingIterations and return the
+// seed unhashed at 0. Rather than touch the optimised implementations, reject the range
+// where they disagree: it is far below any production VDF difficulty.
+#define MIN_HASHING_ITERATIONS 2
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //    SHA
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -95,10 +113,12 @@ static ERL_NIF_TERM vdf_sha2_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM
 	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount) ||
+		skipCheckpointCount > MAX_SKIP_CHECKPOINT_COUNT) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations) ||
+		hashingIterations < MIN_HASHING_ITERATIONS) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -135,10 +155,12 @@ static ERL_NIF_TERM vdf_sha2_fused_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount) ||
+		skipCheckpointCount > MAX_SKIP_CHECKPOINT_COUNT) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations) ||
+		hashingIterations < MIN_HASHING_ITERATIONS) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -175,10 +197,12 @@ static ERL_NIF_TERM vdf_sha2_hiopt_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount) ||
+		skipCheckpointCount > MAX_SKIP_CHECKPOINT_COUNT) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations) ||
+		hashingIterations < MIN_HASHING_ITERATIONS) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -221,10 +245,12 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount) ||
+		skipCheckpointCount > MAX_SKIP_CHECKPOINT_COUNT) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations) ||
+		hashingIterations < MIN_HASHING_ITERATIONS) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_inspect_binary(envPtr, argv[5], &InCheckpoint)) {

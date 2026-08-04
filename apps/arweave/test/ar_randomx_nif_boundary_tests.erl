@@ -1,8 +1,7 @@
 %%% @doc Boundary/validation tests for the RandomX NIF argument checks.
 %%%
 %%% The first group pins down the argument checks added in the "more strict
-%%% boundaries" commit. The second group covers checks that are still missing;
-%%% those tests assert the behaviour a fix should produce and so FAIL today.
+%%% boundaries" commit. The second group covers the checks added on top of it.
 %%% The rejection tests are cheap: the NIFs validate all arguments before
 %%% creating a RandomX VM, so a light-mode state is enough and no hashing
 %%% happens.
@@ -54,7 +53,7 @@ randomx_nif_boundary_test_() ->
                 test_register(fun test_fused_entropy_rejects_negative_counts/1, SetupData),
                 test_register(fun test_fused_entropy_zero_program_count/1, SetupData),
 
-                %% Checks that have not landed yet - these currently fail.
+                %% Checks added on top of that commit.
                 test_register(fun test_decrypt_rejects_out_size_above_chunk_size/1, SetupData),
                 test_register(fun test_reencrypt_rejects_chunk_size_above_chunk_size/1,
                     SetupData),
@@ -215,8 +214,7 @@ test_fused_entropy_zero_program_count(_Fixture = {_, StateRsp}) ->
     ?assertEqual(LaneCount * ?RANDOMX_SCRATCHPAD_SIZE, byte_size(Entropy)).
 
 %% ===========================================================================================
-%% Checks that have not landed yet. Each test asserts the behaviour a fix should produce, so
-%% they fail until the check lands.
+%% Checks added on top of the "more strict boundaries" commit.
 %% ===========================================================================================
 
 %% decrypt writes inputChunk.size bytes into an uninitialised MAX_CHUNK_SIZE stack buffer but

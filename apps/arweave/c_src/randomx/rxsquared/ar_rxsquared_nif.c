@@ -10,6 +10,18 @@
 const int PACKING_KEY_SIZE = 32;
 const int MAX_CHUNK_SIZE = 256*1024;
 
+// rsp_fused_entropy derives every lane seed from a one byte lane index, so lane seeds start
+// repeating past 256 lanes. The same bound keeps `2 * laneCount` from wrapping and keeps the
+// output binary (scratchpadSize * laneCount) within what the emulator can allocate -
+// enif_make_new_binary aborts the VM instead of returning NULL. Production uses
+// REPLICA_2_9_RANDOMX_LANE_COUNT = 4.
+const unsigned int MAX_LANE_COUNT = 256;
+
+// The number of RX2 rounds. Nothing is allocated per round, so this only keeps a bogus depth
+// from occupying a dirty scheduler indefinitely. Production uses
+// REPLICA_2_9_RANDOMX_DEPTH = 3.
+const unsigned int MAX_RX_DEPTH = 1024;
+
 static int rxsquared_load(ErlNifEnv* envPtr, void** priv, ERL_NIF_TERM info);
 static ERL_NIF_TERM rxsquared_info_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM rxsquared_init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
@@ -132,13 +144,20 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 		return enif_make_badarg(envPtr);
 	}
 
+	// Zero lanes would return an empty entropy binary rather than an error; see MAX_LANE_COUNT
+	// above for the upper bound.
 	unsigned int laneCount;
-	if (!enif_get_uint(envPtr, argv[3], &laneCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &laneCount) ||
+		laneCount == 0 ||
+		laneCount > MAX_LANE_COUNT) {
 		return enif_make_badarg(envPtr);
 	}
 
+	// Zero depth would skip every RandomX round and return the initial scratchpads verbatim.
 	unsigned int rxDepth;
-	if (!enif_get_uint(envPtr, argv[4], &rxDepth)) {
+	if (!enif_get_uint(envPtr, argv[4], &rxDepth) ||
+		rxDepth == 0 ||
+		rxDepth > MAX_RX_DEPTH) {
 		return enif_make_badarg(envPtr);
 	}
 

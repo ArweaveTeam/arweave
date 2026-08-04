@@ -1,9 +1,8 @@
 %%% @doc Boundary/validation tests for the VDF NIF argument checks.
 %%%
 %%% The first group pins down the argument checks and the size arithmetic
-%%% changed in the "more strict boundaries" commit. The second group covers
-%%% checks that are still missing; those tests assert the behaviour a fix should
-%%% produce and so FAIL today. The mainstream (positive) VDF vectors are covered
+%%% changed in the "more strict boundaries" commit. The second group covers the
+%%% checks added on top of it. The mainstream (positive) VDF vectors are covered
 %%% by ar_mine_vdf_tests.
 -module(ar_vdf_nif_boundary_tests).
 -test_category([vdf, fast]).
@@ -92,6 +91,8 @@ test_vdf_verify_checkpoint_size_does_not_overflow() ->
 %% rounds into its prologue/epilogue and asks the inner loop for `hashingIterations - 1` or
 %% `- 2`; unsigned, that wraps to ~4e9 for a small iteration count unless the subtraction
 %% saturates. On a wrap this test fails on the eunit timeout rather than on an assertion.
+%% MIN_HASHING_ITERATIONS is 2, so 2 is the smallest count that reaches the C layer and it is
+%% the one that asks for `- 2` rounds.
 %%
 %% Runs on every architecture: only the ARM build takes the saturating path, so this test is
 %% the reason the module carries the `vdf` category (the macOS/ARM VDF workflow).
@@ -119,24 +120,23 @@ test_vdf_small_iteration_counts() ->
                         %% Both branches of the C implementations: no skips, and skips.
                         [{0, 0}, {2, 0}, {0, 3}, {2, 3}])
                 end,
-                [0, 1, 2])
+                [2, 3])
         end,
         Fns).
 
 %% ===========================================================================================
-%% Checks that have not landed yet. Each test asserts the behaviour a fix should produce, so
-%% they fail until the check lands.
+%% Checks added on top of the "more strict boundaries" commit.
 %% ===========================================================================================
 
 %% The openssl implementation always runs at least 2 SHA rounds per checkpoint (it hashes an
 %% unconditional first and last block around its inner loop); the x86 fused implementation
 %% runs exactly hashingIterations, returning the seed unhashed at 0. So below 2 iterations the
-%% `openssl` and `fused` algorithms disagree on the same machine, in consensus code -
-%% iterations_minus/2 fixed that for ARM only. test_vdf_small_iteration_counts above covers
-%% these inputs but asserts only the output sizes.
+%% `openssl` and `fused` algorithms disagreed on the same machine, in consensus code -
+%% iterations_minus/2 fixed that for ARM only.
 %%
-%% Either fix satisfies this test: make the implementations agree, or reject
-%% hashingIterations < 2 in all of them (production difficulty is never that low).
+%% The optimised implementations are left alone: MIN_HASHING_ITERATIONS rejects the range
+%% where they disagree instead, which is far below any production difficulty. All three
+%% implementations therefore return badarg here, which compares equal just as agreement would.
 vdf_implementations_agree_on_small_iteration_counts_test_() ->
     {timeout, 60, fun test_vdf_implementations_agree_on_small_iteration_counts/0}.
 

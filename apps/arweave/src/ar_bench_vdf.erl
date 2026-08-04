@@ -10,7 +10,14 @@ run_benchmark_from_cli(Args) ->
     Difficulty = list_to_integer(get_flag_value(Args, "difficulty", integer_to_list(?VDF_DIFFICULTY))),
     Verify = list_to_atom(get_flag_value(Args, "verify", "false")),
 
-    run_benchmark(Mode, Difficulty, Verify).
+    case Difficulty < ?MIN_VDF_DIFFICULTY of
+        true ->
+            io:format("~nThe VDF difficulty must be at least ~p, got ~p.~n",
+                      [?MIN_VDF_DIFFICULTY, Difficulty]),
+            show_help();
+        false ->
+            run_benchmark(Mode, Difficulty, Verify)
+    end.
 
 get_flag_value([], _, DefaultValue) ->
     DefaultValue;
@@ -23,7 +30,8 @@ show_help() ->
     io:format("~nUsage: benchmark vdf [options]~n"),
     io:format("Options:~n"),
     io:format("  mode <default|openssl|fused|hiopt_m4> (default: default)~n"),
-    io:format("  difficulty <vdf_difficulty> (default: ~p)~n", [?VDF_DIFFICULTY]),
+    io:format("  difficulty <vdf_difficulty> (minimum: ~p, default: ~p)~n",
+              [?MIN_VDF_DIFFICULTY, ?VDF_DIFFICULTY]),
     io:format("  verify <true|false> (default: false)~n"),
     init:stop(1).
 

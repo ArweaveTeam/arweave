@@ -10,6 +10,11 @@
 -define(VDF_DIFFICULTY, ?VDF_SHA_1S div ?VDF_CHECKPOINT_COUNT_IN_STEP).
 -endif.
 
+%% The VDF difficulty is the number of SHA rounds per checkpoint. The NIFs reject anything
+%% below 2 (MIN_HASHING_ITERATIONS in apps/arweave/c_src/vdf/ar_vdf_nif.c): that is the range
+%% where the openssl and the fused/hiopt implementations disagree.
+-define(MIN_VDF_DIFFICULTY, 2).
+
 -ifdef(AR_TEST).
                                                 % NOTE. VDF_DIFFICULTY_RETARGET should be > 10 because it's > 10 in mainnet
                                                 % So VDF difficulty should change slower than difficulty

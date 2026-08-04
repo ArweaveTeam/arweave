@@ -71,7 +71,16 @@ static ERL_NIF_TERM init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM arg
 	if (!enif_inspect_binary(envPtr, argv[0], &key)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[1], &mode)) {
+	// hashing_mode* is not int*, so without the cast this is a -Wincompatible-pointer-types
+	// warning - and a hard error on gcc 14+. The enum has no negative and no large
+	// enumerators, so it is int-sized here; the value itself is checked right below.
+	if (!enif_get_int(envPtr, argv[1], (int*) &mode)) {
+		return enif_make_badarg(envPtr);
+	}
+	// Without this check any unknown mode takes the light branch below - skipping the
+	// numWorkers check - and is then stored in the state as is. Only info_nif notices,
+	// long after the state has been used for hashing.
+	if (mode != HASHING_MODE_FAST && mode != HASHING_MODE_LIGHT) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_get_int(envPtr, argv[2], &jitEnabled)) {
