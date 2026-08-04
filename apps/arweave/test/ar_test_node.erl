@@ -939,6 +939,13 @@ tx_fee(_, Fee) ->
     Fee.
 
 stop() ->
+    %% If the arweave app is still starting (this node's boot answers HTTP
+    %% before ar:start/2 returns, so a stop can arrive mid-boot), let the
+    %% start finish first: application:stop/1 reports a starting app as
+    %% not_started, and stopping the dependency apps below would then yank
+    %% prometheus out from under the still-running ar:start/2, failing the
+    %% permanent app and halting the BEAM.
+    _ = wait_for_app_start_settled(arweave, 120_000),
     %% Match the ar_kv supervisor shutdown window so RocksDB can close before
     %% the next test wipes or reuses the data directory.
     case stop_application(arweave, 300_000) of
@@ -952,6 +959,25 @@ stop() ->
     end,
     ar:stop_dependencies(),
     arweave_limiter:stop().
+
+wait_for_app_start_settled(App, Timeout) ->
+    Start = erlang:monotonic_time(millisecond),
+    wait_for_app_start_settled(App, Start, Timeout).
+
+wait_for_app_start_settled(App, Start, Timeout) ->
+    Starting = proplists:get_value(starting, application:info(), []),
+    case lists:keymember(App, 1, Starting) of
+        false ->
+            ok;
+        true ->
+            case erlang:monotonic_time(millisecond) - Start > Timeout of
+                true ->
+                    {error, timeout};
+                false ->
+                    timer:sleep(100),
+                    wait_for_app_start_settled(App, Start, Timeout)
+            end
+    end.
 
 stop_application(App, Timeout) ->
     Parent = self(),
