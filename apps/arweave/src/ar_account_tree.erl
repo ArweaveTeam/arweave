@@ -340,7 +340,6 @@ load_tree_from_peers(B, Peers, Tid) ->
 load_tree_from_peers(_ID, _Peers, _Tid, last, _N) ->
     ok;
 load_tree_from_peers(ID, Peers, Tid, Cursor, N) ->
-    ar_util:terminal_clear(),
     ar:console("Downloading the wallet tree, chunk ~B.~n", [N]),
     case ar_http_iface_client:get_wallet_list_chunk(Peers, ID, Cursor) of
         {ok, {NextCursor, Chunk}} ->
