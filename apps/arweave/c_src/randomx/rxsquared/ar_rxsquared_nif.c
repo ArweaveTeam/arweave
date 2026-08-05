@@ -17,11 +17,6 @@ const int MAX_CHUNK_SIZE = 256*1024;
 // REPLICA_2_9_RANDOMX_LANE_COUNT = 4.
 const unsigned int MAX_LANE_COUNT = 256;
 
-// The number of RX2 rounds. Nothing is allocated per round, so this only keeps a bogus depth
-// from occupying a dirty scheduler indefinitely. Production uses
-// REPLICA_2_9_RANDOMX_DEPTH = 3.
-const unsigned int MAX_RX_DEPTH = 1024;
-
 static int rxsquared_load(ErlNifEnv* envPtr, void** priv, ERL_NIF_TERM info);
 static ERL_NIF_TERM rxsquared_info_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
 static ERL_NIF_TERM rxsquared_init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[]);
@@ -155,9 +150,7 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 
 	// Zero depth would skip every RandomX round and return the initial scratchpads verbatim.
 	unsigned int rxDepth;
-	if (!enif_get_uint(envPtr, argv[4], &rxDepth) ||
-		rxDepth == 0 ||
-		rxDepth > MAX_RX_DEPTH) {
+	if (!enif_get_uint(envPtr, argv[4], &rxDepth) || rxDepth == 0) {
 		return enif_make_badarg(envPtr);
 	}
 
