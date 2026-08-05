@@ -36,19 +36,19 @@
 execute(Req, #{ handler := ar_http_iface_handler }) ->
     Pid = self(),
     HandlerPid = spawn_link(fun() ->
-                                    {Duration, Response = {Code, _, _, Resp}}
-                                        = timer:tc(fun() ->
-                                                           handle(Req, Pid)
-                                                   end),
-                                    log(Code, Resp, #{duration => Duration}),
-                                    Pid ! {handled, Response}
-                            end),
+        {Duration, Response = {Code, _, _, Resp}}
+            = timer:tc(fun() ->
+                handle(Req, Pid)
+            end),
+        log(Code, Resp, #{duration => Duration}),
+        Pid ! {handled, Response}
+    end),
     {ok, TimeoutRef} = ar_timer:send_after(
-                         ?HANDLER_TIMEOUT,
-                         self(),
-                         {timeout, HandlerPid, Req},
-                         #{ skip_on_shutdown => false }
-                        ),
+        ?HANDLER_TIMEOUT,
+        self(),
+        {timeout, HandlerPid, Req},
+        #{ skip_on_shutdown => false }
+    ),
     loop(TimeoutRef);
 execute(Req, Env) ->
     {ok, Req, Env}.
@@ -531,9 +531,9 @@ handle(<<"GET">>, [<<"tx">>, EncodedID, <<"offset">>], Req, _Pid) ->
             case ar_data_sync:get_tx_offset(ID) of
                 {ok, {Offset, Size}} ->
                     ResponseBody = jiffy:encode(#{
-                                                  offset => integer_to_binary(Offset),
-                                                  size => integer_to_binary(Size)
-                                                 }),
+                        offset => integer_to_binary(Offset),
+                        size => integer_to_binary(Size)
+                    }),
                     {200, #{}, ResponseBody, Req};
                 {error, not_found} ->
                     {404, #{}, <<>>, Req};
@@ -613,12 +613,12 @@ handle(<<"POST">>, [<<"data_roots">>, OffsetBin], Req, Pid) ->
                     case ar_serialize:binary_to_data_roots(Body) of
                         {ok, {TXRoot, BlockSize, DataRootEntries}} ->
                             case ar_data_roots:validate_data_roots(
-                                   TXRoot, BlockSize, DataRootEntries, Offset2
-                                  ) of
+                                    TXRoot, BlockSize, DataRootEntries, Offset2
+                            ) of
                                 {ok, _} ->
                                     case catch ar_data_roots:store_block_sync(
-                                                 BlockStart2, BlockEnd2, TXRoot, DataRootEntries,
-                                                 ?DEFAULT_MODULE) of
+                                            BlockStart2, BlockEnd2, TXRoot, DataRootEntries,
+                                            ?DEFAULT_MODULE) of
                                         ok ->
                                             {200, #{}, <<>>, Req2};
                                         {'EXIT', {timeout, _}} ->
@@ -775,9 +775,9 @@ handle(<<"POST">>, [<<"wallet">>], Req, _Pid) ->
                     {500, #{}, <<>>, Req};
                 {_, Pub} ->
                     ResponseProps = [
-                                     {<<"wallet_address">>, ar_util:encode(ar_wallet:to_address(Pub))},
-                                     {<<"wallet_access_code">>, WalletAccessCode}
-                                    ],
+                        {<<"wallet_address">>, ar_util:encode(ar_wallet:to_address(Pub))},
+                        {<<"wallet_access_code">>, WalletAccessCode}
+                    ],
                     {200, #{}, ar_serialize:jsonify({ResponseProps}), Req}
             end;
         {reject, {Status, Headers, Body}} ->
@@ -807,39 +807,39 @@ handle(<<"POST">>, [<<"unsigned_tx">>], Req, Pid) ->
                         {UnsignedTXProps} ->
                             WalletAccessCode =
                                 proplists:get_value(<<"wallet_access_code">>,
-                                                    UnsignedTXProps),
+                                    UnsignedTXProps),
                             %% ar_serialize:json_struct_to_tx/1 requires all properties to
                             %% be there, so we're adding id, owner and signature with bogus
                             %% values. These will later be overwritten in ar_tx:sign/2
                             FullTxProps = lists:append(
-                                            proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
-                                            [
-                                             {<<"id">>, ar_util:encode(crypto:strong_rand_bytes(32))},
-                                             {<<"owner">>, ar_util:encode(<<"owner placeholder">>)},
-                                             {<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
-                                            ]
-                                           ),
+                                proplists:delete(<<"wallet_access_code">>, UnsignedTXProps),
+                                [
+                                    {<<"id">>, ar_util:encode(crypto:strong_rand_bytes(32))},
+                                    {<<"owner">>, ar_util:encode(<<"owner placeholder">>)},
+                                    {<<"signature">>, ar_util:encode(<<"signature placeholder">>)}
+                                ]
+                            ),
                             KeyPair = ar_wallet:load_keyfile(
-                                        ar_wallet:wallet_filepath(WalletAccessCode)),
+                                ar_wallet:wallet_filepath(WalletAccessCode)),
                             UnsignedTX = ar_serialize:json_struct_to_tx({FullTxProps}),
                             Data = UnsignedTX#tx.data,
                             DataSize = byte_size(Data),
                             DataRoot = case DataSize > 0 of
-                                           true ->
-                                               TreeTX = ar_tx:generate_chunk_tree(#tx{ data = Data }),
-                                               TreeTX#tx.data_root;
-                                           false ->
-                                               <<>>
-                                       end,
+                                true ->
+                                    TreeTX = ar_tx:generate_chunk_tree(#tx{ data = Data }),
+                                    TreeTX#tx.data_root;
+                                false ->
+                                    <<>>
+                            end,
                             Format2TX = UnsignedTX#tx{
-                                          format = 2,
-                                          data_size = DataSize,
-                                          data_root = DataRoot
-                                         },
+                                format = 2,
+                                data_size = DataSize,
+                                data_root = DataRoot
+                            },
                             SignedTX = ar_tx:sign(Format2TX, KeyPair),
                             Peer = ar_http_util:arweave_peer(Req),
                             Reply = ar_serialize:jsonify({[{<<"id">>,
-                                                            ar_util:encode(SignedTX#tx.id)}]}),
+                                ar_util:encode(SignedTX#tx.id)}]}),
                             case handle_post_tx(Req2, Peer, SignedTX) of
                                 ok ->
                                     {200, #{}, Reply, Req2};
@@ -969,7 +969,7 @@ handle(<<"GET">>, [<<"reward_history">>, EncodedBH], Req, _Pid) ->
               when (Status == on_chain orelse Status == validated),
                    Height >= Fork_2_6 ->
                 RewardHistory2 = ar_rewards:trim_buffered_reward_history(Height,
-                                                                         RewardHistory),
+                    RewardHistory),
                 {200, #{}, ar_serialize:reward_history_to_binary(RewardHistory2),
                  Req};
             _ ->
@@ -992,7 +992,7 @@ handle(<<"GET">>, [<<"block_time_history">>, EncodedBH], Req, _Pid) ->
                   when (Status == on_chain orelse Status == validated),
                        Height >= Fork_2_7 ->
                     {200, #{}, ar_serialize:block_time_history_to_binary(
-                                 BlockTimeHistory), Req};
+                        BlockTimeHistory), Req};
                 _ ->
                     {404, #{}, <<>>, Req}
             end;
@@ -1092,7 +1092,7 @@ handle(<<"GET">>, [<<"recent_hash_list_diff">>], Req, Pid) ->
                     {BlockTXPairs, _}
                         = ar_block_cache:get_longest_chain_cache(block_cache),
                     case get_recent_hash_list_diff(ReverseHL,
-                                                   lists:reverse(BlockTXPairs)) of
+                            lists:reverse(BlockTXPairs)) of
                         no_intersection ->
                             {404, #{}, <<>>, Req2};
                         Bin ->
@@ -1284,11 +1284,11 @@ handle(<<"GET">>, [<<"tx">>, Hash, Field], Req, _Pid) ->
             case Field of
                 <<"tags">> ->
                     {200, #{}, ar_serialize:jsonify(lists:map(
-                                                      fun({Name, Value}) ->
-                                                              {[{name, ar_util:encode(Name)},
-                                                                {value, ar_util:encode(Value)}]}
-                                                      end,
-                                                      TX#tx.tags)), Req};
+                        fun({Name, Value}) ->
+                            {[{name, ar_util:encode(Name)},
+                                {value, ar_util:encode(Value)}]}
+                        end,
+                        TX#tx.tags)), Req};
                 <<"data">> ->
                     serve_tx_data(Req, TX);
                 _ ->
@@ -1392,31 +1392,31 @@ handle(<<"GET">>, [<<"coordinated_mining">>, <<"partition_table">>], Req, _Pid) 
             {Status, Headers, Body, Req}
     end;
 
-                                                % If somebody want to make GUI, monitoring tool
+% If somebody want to make GUI, monitoring tool
 handle(<<"GET">>, [<<"coordinated_mining">>, <<"state">>], Req, _Pid) ->
     case check_cm_api_secret(Req) of
         pass ->
             {ok, {LastPeerResponse}} = ar_coordination:get_public_state(),
             Peers = maps:fold(fun(Peer, Value, Acc) ->
-                                      {AliveStatus, PartitionList} = Value,
-                                      Table = lists:map(
-                                                fun (ListValue) ->
-                                                        {Bucket, BucketSize, Addr, PackingDifficulty} = ListValue,
-                                                        ar_serialize:partition_to_json_struct(Bucket, BucketSize,
-                                                                                              Addr, PackingDifficulty)
-                                                end,
-                                                PartitionList
-                                               ),
-                                      Val = {[
-                                              {peer, ar_util:format_peer(Peer)},
-                                              {alive, AliveStatus},
-                                              {partition_table, Table}
-                                             ]},
-                                      [Val | Acc]
-                              end,
-                              [],
-                              LastPeerResponse
-                             ),
+                {AliveStatus, PartitionList} = Value,
+                Table = lists:map(
+                    fun (ListValue) ->
+                        {Bucket, BucketSize, Addr, PackingDifficulty} = ListValue,
+                        ar_serialize:partition_to_json_struct(Bucket, BucketSize,
+                            Addr, PackingDifficulty)
+                    end,
+                    PartitionList
+                ),
+                Val = {[
+                    {peer, ar_util:format_peer(Peer)},
+                    {alive, AliveStatus},
+                    {partition_table, Table}
+                ]},
+                [Val | Acc]
+            end,
+                [],
+                LastPeerResponse
+            ),
             {200, #{}, ar_serialize:jsonify(Peers), Req};
         {reject, {Status, Headers, Body}} ->
             {Status, Headers, Body, Req}
@@ -1486,7 +1486,7 @@ handle_get_block_index_range(Start, End, CurrentHeight, RecentBI, Req, Encoding)
                 Top = min(CurrentHeight, End),
                 Range1 = lists:nthtail(CurrentHeight - Top, RecentBI),
                 lists:sublist(Range1, min(Top - Start + 1,
-                                          ar_block:get_consensus_window_size() - (CurrentHeight - Top)));
+                    ar_block:get_consensus_window_size() - (CurrentHeight - Top)));
             false ->
                 []
         end,
@@ -1502,7 +1502,7 @@ handle_get_block_index_range(Start, End, CurrentHeight, RecentBI, Req, Encoding)
             {200, #{}, ar_serialize:block_index_to_binary(Range), Req};
         json ->
             {200, #{}, ar_serialize:jsonify(ar_serialize:block_index_to_json_struct(
-                                              format_bi_for_peer(Range, Req))), Req}
+                format_bi_for_peer(Range, Req))), Req}
     end.
 
 sendfile(Filename) ->
@@ -1533,9 +1533,9 @@ handle_get_tx_status(EncodedTXID, Req) ->
                     case ar_storage:get_tx_confirmation_data(TXID) of
                         {ok, {Height, BH}} ->
                             PseudoTags = [
-                                          {<<"block_height">>, Height},
-                                          {<<"block_indep_hash">>, ar_util:encode(BH)}
-                                         ],
+                                {<<"block_height">>, Height},
+                                {<<"block_indep_hash">>, ar_util:encode(BH)}
+                            ],
                             case ar_block_index:get_element_by_height(Height) of
                                 not_found ->
                                     {404, #{}, <<"Not Found.">>, Req};
@@ -1546,7 +1546,7 @@ handle_get_tx_status(EncodedTXID, Req) ->
                                     NumberOfConfirmations = CurrentHeight - Height + 1,
                                     Status = PseudoTags
                                         ++ [{<<"number_of_confirmations">>,
-                                             NumberOfConfirmations}],
+                                            NumberOfConfirmations}],
                                     {200, #{}, ar_serialize:jsonify({Status}), Req};
                                 _ ->
                                     {404, #{}, <<"Not Found.">>, Req}
@@ -1834,7 +1834,7 @@ handle_get_block(Type, ID, Req, Pid, Encoding) ->
                             {404, #{}, <<"Block not found.">>, Req};
                         {H, _, _} ->
                             handle_get_block(<<"hash">>, ar_util:encode(H), Req, Pid,
-                                             Encoding)
+                                Encoding)
                     end
             catch _:_ ->
                     {400, #{}, <<"Invalid height.">>, Req}
@@ -2072,9 +2072,9 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
                 %% A positive number represented by =< ?NOTE_SIZE bytes.
                 << Offset:(?NOTE_SIZE * 8) >> ->
                     RequestedPacking = ar_serialize:decode_packing(
-                                         cowboy_req:header(<<"x-packing">>, Req, <<"unpacked">>),
-                                         any
-                                        ),
+                        cowboy_req:header(<<"x-packing">>, Req, <<"unpacked">>),
+                        any
+                    ),
                     IsBucketBasedOffset =
                         case cowboy_req:header(<<"x-bucket-based-offset">>, Req, not_set) of
                             not_set ->
@@ -2111,14 +2111,14 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
                             case ar_data_sync:get_chunk(Offset, Args) of
                                 {ok, Proof} ->
                                     Proof2 = maps:remove(unpacked_chunk,
-                                                         Proof#{ packing => ReadPacking }),
+                                        Proof#{ packing => ReadPacking }),
                                     Headers = get_chunk_response_headers(Proof2),
                                     Reply =
                                         case Encoding of
                                             json ->
                                                 jiffy:encode(
-                                                  ar_serialize:poa_map_to_json_map(
-                                                    Proof2));
+                                                    ar_serialize:poa_map_to_json_map(
+                                                        Proof2));
                                             binary ->
                                                 ar_serialize:poa_map_to_binary(Proof2)
                                         end,
@@ -2135,11 +2135,11 @@ handle_get_chunk(OffsetBinary, Req, Encoding) ->
                                     not_joined(Req);
                                 {error, Error} ->
                                     ?LOG_ERROR([{event, get_chunk_error}, {offset, Offset},
-                                                {requested_packing,
-                                                 ar_serialize:encode_packing(RequestedPacking, false)},
-                                                {read_packing,
-                                                 ar_serialize:encode_packing(ReadPacking, false)},
-                                                {error, Error}]),
+                                        {requested_packing,
+                                            ar_serialize:encode_packing(RequestedPacking, false)},
+                                        {read_packing,
+                                            ar_serialize:encode_packing(ReadPacking, false)},
+                                        {error, Error}]),
                                     {500, #{}, <<>>, Req}
                             end
                     end;
@@ -2181,11 +2181,11 @@ handle_get_unconfirmed_chunk(EncodedTXID, OffsetBinary, Req) ->
                             case ar_disk_pool:get_unconfirmed_chunk(TXID, Offset) of
                                 {ok, {Chunk, DataPath, IsStoredLongTerm}} ->
                                     Body = jiffy:encode(#{
-                                                          chunk => ar_util:encode(Chunk),
-                                                          data_path => ar_util:encode(DataPath),
-                                                          packing => <<"unpacked">>,
-                                                          is_stored_long_term => IsStoredLongTerm
-                                                         }),
+                                        chunk => ar_util:encode(Chunk),
+                                        data_path => ar_util:encode(DataPath),
+                                        packing => <<"unpacked">>,
+                                        is_stored_long_term => IsStoredLongTerm
+                                    }),
                                     {200, #{}, Body, Req};
                                 {error, not_found} ->
                                     {404, #{}, <<>>, Req};
@@ -2245,8 +2245,8 @@ handle_get_chunk_proof2(Offset, Req, Encoding) ->
                             case Encoding of
                                 json ->
                                     jiffy:encode(
-                                      ar_serialize:poa_no_chunk_map_to_json_map(
-                                        Proof));
+                                        ar_serialize:poa_no_chunk_map_to_json_map(
+                                            Proof));
                                 binary ->
                                     ar_serialize:poa_no_chunk_map_to_binary(Proof)
                             end,
@@ -2475,11 +2475,11 @@ handle_block_announcement(
                 #block{} ->
                     Indices = collect_missing_tx_indices(Prefixes),
                     arweave_metrics:counter_inc(block_announcement_reported_transactions,
-                                           length(Prefixes)),
+                        length(Prefixes)),
                     arweave_metrics:counter_inc(block_announcement_missing_transactions,
-                                           length(Indices)),
+                        length(Indices)),
                     Response = #block_announcement_response{ missing_chunk = true,
-                                                             missing_tx_indices = Indices },
+                        missing_tx_indices = Indices },
                     Response2 =
                         case RecallByte2 == undefined of
                             true ->
@@ -2903,9 +2903,9 @@ process_request(get_block, [Type, ID, <<"wallet_list">>], Req) ->
                         case ar_storage:read_wallet_list(B#block.wallet_list) of
                             {ok, Tree} ->
                                 {200, #{}, ar_serialize:jsonify(
-                                             ar_serialize:wallet_list_to_json_struct(
-                                               B#block.reward_addr, false, Tree
-                                              )), Req};
+                                    ar_serialize:wallet_list_to_json_struct(
+                                        B#block.reward_addr, false, Tree
+                                    )), Req};
                             _ ->
                                 {404, #{}, <<"Block not found.">>, Req}
                         end
@@ -2983,10 +2983,10 @@ handle_get_block_wallet_balance(EncodedHeight, EncodedAddr, Req) ->
                             case ar_util:safe_decode(EncodedAddr) of
                                 {ok, Addr} ->
                                     handle_get_block_wallet_balance2(Addr, RootHash,
-                                                                     Req);
+                                        Req);
                                 {error, invalid} ->
                                     {400, #{}, jiffy:encode(#{
-                                                              error => invalid_address }), Req}
+                                        error => invalid_address }), Req}
                             end
                     end
             end
@@ -3031,10 +3031,10 @@ process_get_wallet_list_chunk(EncodedRootHash, EncodedCursor, Req) ->
             case ar_account_tree:get_wallet_list_chunk(RootHash, Cursor) of
                 {ok, {NextCursor, Wallets}} ->
                     SerializeFn = case cowboy_req:header(<<"content-type">>, Req) of
-                                      <<"application/json">> -> fun wallet_list_chunk_to_json/1;
-                                      <<"application/etf">> -> fun erlang:term_to_binary/1;
-                                      _ -> fun erlang:term_to_binary/1
-                                  end,
+                        <<"application/json">> -> fun wallet_list_chunk_to_json/1;
+                        <<"application/etf">> -> fun erlang:term_to_binary/1;
+                        _ -> fun erlang:term_to_binary/1
+                    end,
                     Reply = SerializeFn(#{ next_cursor => NextCursor, wallets => Wallets }),
                     {200, #{}, Reply, Req};
                 {error, root_hash_not_found} ->
@@ -3339,10 +3339,10 @@ handle_mining_h1(Req, Pid) ->
                                     PoolPeer = ar_pool:pool_peer(),
                                     Jobs = #pool_cm_jobs{ h1_to_h2_jobs = [Candidate] },
                                     Payload = ar_serialize:jsonify(
-                                                ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
+                                        ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
                                     spawn(fun() ->
-                                                  ar_http_iface_client:post_pool_cm_jobs(PoolPeer,
-                                                                                         Payload) end),
+                                        ar_http_iface_client:post_pool_cm_jobs(PoolPeer,
+                                            Payload) end),
                                     {200, #{}, <<>>, Req2};
                                 _ ->
                                     ar_coordination:compute_h2_for_peer(Peer, Candidate),
@@ -3374,7 +3374,7 @@ handle_mining_h2(Req, Pid) ->
                             %% Mirrors the H1 receive path in
                             %% `ar_coordination:compute_h2_for_peer/2'.
                             Candidate = Candidate0#mining_candidate{
-                                          cm_lead_peer = Peer },
+                                cm_lead_peer = Peer },
                             ?LOG_INFO([{event, h2_received},
                                        {peer, ar_util:format_peer(Peer)}]),
                             case {ar_pool:is_client(), ar_coordination:is_exit_peer()} of
@@ -3382,10 +3382,10 @@ handle_mining_h2(Req, Pid) ->
                                     PoolPeer = ar_pool:pool_peer(),
                                     Jobs = #pool_cm_jobs{ h1_read_jobs = [Candidate] },
                                     Payload = ar_serialize:jsonify(
-                                                ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
+                                        ar_serialize:pool_cm_jobs_to_json_struct(Jobs)),
                                     spawn(fun() ->
-                                                  ar_http_iface_client:post_pool_cm_jobs(PoolPeer,
-                                                                                         Payload) end),
+                                        ar_http_iface_client:post_pool_cm_jobs(PoolPeer,
+                                            Payload) end),
                                     {200, #{}, <<>>, Req2};
                                 _ ->
                                     ar_mining_server:prepare_and_post_solution(Candidate),
@@ -3414,11 +3414,11 @@ handle_mining_cm_publish(Req, Pid) ->
                     try ar_serialize:json_map_to_solution(JSON) of
                         #mining_solution{} = Solution ->
                             ar:console("Block candidate ~p from ~p ~n", [
-                                                                         ar_util:encode(Solution#mining_solution.solution_hash),
-                                                                         ar_util:format_peer(Peer)]),
+                                ar_util:encode(Solution#mining_solution.solution_hash),
+                                ar_util:format_peer(Peer)]),
                             ?LOG_INFO("Block candidate ~p from ~p ~n", [
-                                                                        ar_util:encode(Solution#mining_solution.solution_hash),
-                                                                        ar_util:format_peer(Peer)]),
+                                ar_util:encode(Solution#mining_solution.solution_hash),
+                                ar_util:format_peer(Peer)]),
                             ar_mining_server:prepare_and_post_solution(Solution),
                             {200, #{}, <<>>, Req}
                     catch

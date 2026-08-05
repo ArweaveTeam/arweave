@@ -103,25 +103,25 @@ filter({Sinks, ID, Sources}, Depth) ->
     {sink, _Entity, {SinkCounter, _Metadata}} = maps:get(ID, Sinks),
     {ToRemove, Sources2} = filter(maps:iterator(Sinks), SinkCounter, Depth, Sources, sets:new()),
     {UpdatedSinks, UpdatedSources} = sets:fold(
-                                       fun(RemoveID, {CurrentSinks, CurrentSources}) ->
-                                               #{ RemoveID := {SinkID, _CurrentEntity, _CurrentMetadata} } = CurrentSinks,
-                                               CurrentSources2 =
-                                                   case sets:is_element(SinkID, ToRemove) of
-                                                       false ->
-                                                           Set = maps:get(SinkID, CurrentSources, sets:new()),
-                                                           maps:put(
-                                                             SinkID,
-                                                             sets:del_element(RemoveID, Set),
-                                                             CurrentSources
-                                                            );
-                                                       true ->
-                                                           CurrentSources
-                                                   end,
-                                               {maps:remove(RemoveID, CurrentSinks), CurrentSources2}
-                                       end,
-                                       {Sinks, Sources2},
-                                       ToRemove
-                                      ),
+        fun(RemoveID, {CurrentSinks, CurrentSources}) ->
+            #{ RemoveID := {SinkID, _CurrentEntity, _CurrentMetadata} } = CurrentSinks,
+            CurrentSources2 =
+                case sets:is_element(SinkID, ToRemove) of
+                    false ->
+                        Set = maps:get(SinkID, CurrentSources, sets:new()),
+                        maps:put(
+                            SinkID,
+                            sets:del_element(RemoveID, Set),
+                            CurrentSources
+                        );
+                    true ->
+                        CurrentSources
+                end,
+            {maps:remove(RemoveID, CurrentSinks), CurrentSources2}
+        end,
+        {Sinks, Sources2},
+        ToRemove
+    ),
     {UpdatedSinks, ID, UpdatedSources}.
 
 %%%===================================================================
@@ -161,23 +161,23 @@ move_sink(DAG, ID, ApplyDiffFun, ReverseDiffFun, Diffs) ->
     case DAG of
         {#{ ID := {sink, Entity, Metadata} }, ID, _Sources} ->
             {UpdatedSinkID, UpdatedEntity, UpdatedMetadata, UpdatedDAG} = lists:foldl(
-                                                                            fun({SinkID, Diff, Meta}, {SourceID, CurrentEntity, CurrentMeta, CurrentDAG}) ->
-                                                                                    ReversedDiff = ReverseDiffFun(Diff, CurrentEntity),
-                                                                                    {Sinks, _Sink, Sources} = CurrentDAG,
-                                                                                    Sinks2 = Sinks#{ SourceID => {SinkID, ReversedDiff, CurrentMeta} },
-                                                                                    SourceIDSet2 = sets:del_element(SinkID, maps:get(SourceID, Sources)),
-                                                                                    SinkIDSet2 =
-                                                                                        sets:add_element(SourceID, maps:get(SinkID, Sources, sets:new())),
-                                                                                    Sources2 = Sources#{ SinkID => SinkIDSet2, SourceID => SourceIDSet2 },
-                                                                                    {SinkID, ApplyDiffFun(Diff, CurrentEntity), Meta, {Sinks2, SinkID, Sources2}}
-                                                                            end,
-                                                                            {ID, Entity, Metadata, DAG},
-                                                                            Diffs
-                                                                           ),
+                fun({SinkID, Diff, Meta}, {SourceID, CurrentEntity, CurrentMeta, CurrentDAG}) ->
+                    ReversedDiff = ReverseDiffFun(Diff, CurrentEntity),
+                    {Sinks, _Sink, Sources} = CurrentDAG,
+                    Sinks2 = Sinks#{ SourceID => {SinkID, ReversedDiff, CurrentMeta} },
+                    SourceIDSet2 = sets:del_element(SinkID, maps:get(SourceID, Sources)),
+                    SinkIDSet2 =
+                        sets:add_element(SourceID, maps:get(SinkID, Sources, sets:new())),
+                    Sources2 = Sources#{ SinkID => SinkIDSet2, SourceID => SourceIDSet2 },
+                    {SinkID, ApplyDiffFun(Diff, CurrentEntity), Meta, {Sinks2, SinkID, Sources2}}
+                end,
+                {ID, Entity, Metadata, DAG},
+                Diffs
+            ),
             {UpdatedSinks, UpdatedSinkID, UpdatedSources} = UpdatedDAG,
             UpdatedSinks2 = UpdatedSinks#{
-                                          UpdatedSinkID => {sink, UpdatedEntity, UpdatedMetadata}
-                                         },
+                UpdatedSinkID => {sink, UpdatedEntity, UpdatedMetadata}
+            },
             {UpdatedSinks2, UpdatedSinkID, UpdatedSources};
         {#{ ID := {SinkID, Diff, Metadata} }, _Sink, _Sinks} ->
             move_sink(DAG, SinkID, ApplyDiffFun, ReverseDiffFun, [{ID, Diff, Metadata} | Diffs])

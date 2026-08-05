@@ -511,7 +511,7 @@ filter_clashing_txs(ClashingTXIDs) ->
         true ->
             [];
         false ->
-                                                % Exclude the highest priority TX from the list of TXs to be dropped
+            % Exclude the highest priority TX from the list of TXs to be dropped
             {_, UncomfirmableTXIDs} = gb_sets:take_largest(ClashingTXIDs),
             to_txs(UncomfirmableTXIDs)
     end.

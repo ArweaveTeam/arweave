@@ -124,10 +124,10 @@ insert(Key, Value, Tree, Level, Parent) ->
                     UpdatedNode = {KeyPrefix, NodeChildren, NodeHash, NodeSuffix3, NodeValue},
                     Size = maps:get(size, Tree),
                     Tree2 = Tree#{
-                                  KeyPrefix => PivotNode,
-                                  UpdatedNodeKey => UpdatedNode,
-                                  size => Size + 1
-                                 },
+                        KeyPrefix => PivotNode,
+                        UpdatedNodeKey => UpdatedNode,
+                        size => Size + 1
+                    },
                     Tree3 = update_children_parent(UpdatedNodeKey, NodeChildren, Tree2),
                     invalidate_hash(NodeParent, Tree3);
                 {false, false, false} ->
@@ -141,11 +141,11 @@ insert(Key, Value, Tree, Level, Parent) ->
                     PivotNode = {NodeParent, PivotChildren, no_hash, Common, no_value},
                     Size = maps:get(size, Tree),
                     Tree2 = Tree#{
-                                  NewNodeKey => NewNode,
-                                  UpdatedNodeKey => UpdatedNode,
-                                  KeyPrefix => PivotNode,
-                                  size => Size + 1
-                                 },
+                        NewNodeKey => NewNode,
+                        UpdatedNodeKey => UpdatedNode,
+                        KeyPrefix => PivotNode,
+                        size => Size + 1
+                    },
                     Tree3 = update_children_parent(UpdatedNodeKey, NodeChildren, Tree2),
                     invalidate_hash(NodeParent, Tree3)
             end;
@@ -155,10 +155,10 @@ insert(Key, Value, Tree, Level, Parent) ->
             UpdatedChildren = gb_sets:insert(KeyPrefix, Children),
             Size = maps:get(size, Tree),
             Tree2 = Tree#{
-                          KeyPrefix => NewNode,
-                          Parent => {NextParent, UpdatedChildren, no_hash, NextSuffix, ParentValue},
-                          size => Size + 1
-                         },
+                KeyPrefix => NewNode,
+                Parent => {NextParent, UpdatedChildren, no_hash, NextSuffix, ParentValue},
+                size => Size + 1
+            },
             invalidate_hash(NextParent, Tree2)
     end.
 
@@ -232,21 +232,21 @@ do_compute_hash(Tree, HashFun, Persist, KeyPrefix, UpdateMap) ->
                     Key = << KeyPrefix/binary, Suffix/binary >>,
                     NewHash = HashFun(leaf, {Key, Value}),
                     NewTree = Tree#{
-                                    KeyPrefix => {Parent, gb_sets:new(), NewHash, Suffix, {v, Value}}
-                                   },
+                        KeyPrefix => {Parent, gb_sets:new(), NewHash, Suffix, {v, Value}}
+                    },
                     UpdateMap2 = accumulate(Persist, {NewHash, KeyPrefix}, {Key, Value},
-                                            UpdateMap),
+                            UpdateMap),
                     {NewHash, NewTree, UpdateMap2};
                 false ->
                     {Hashes, UpdatedTree, UpdateMap2} = gb_sets_foldr(
-                                                          fun(Child, {HashesAcc, TreeAcc, UpdateMapAcc}) ->
-                                                                  {ChildHash, TreeAcc2, UpdateMapAcc2} = do_compute_hash(TreeAcc,
-                                                                                                                         HashFun, Persist, Child, UpdateMapAcc),
-                                                                  {[{ChildHash, Child} | HashesAcc], TreeAcc2, UpdateMapAcc2}
-                                                          end,
-                                                          {[], Tree, UpdateMap},
-                                                          Children
-                                                         ),
+                        fun(Child, {HashesAcc, TreeAcc, UpdateMapAcc}) ->
+                            {ChildHash, TreeAcc2, UpdateMapAcc2} = do_compute_hash(TreeAcc,
+                                    HashFun, Persist, Child, UpdateMapAcc),
+                            {[{ChildHash, Child} | HashesAcc], TreeAcc2, UpdateMapAcc2}
+                        end,
+                        {[], Tree, UpdateMap},
+                        Children
+                    ),
                     {NewHash, UpdateMap3} =
                         case MaybeValue of
                             {v, Value} ->
@@ -255,25 +255,25 @@ do_compute_hash(Tree, HashFun, Persist, KeyPrefix, UpdateMap) ->
                                 Hashes2 = [H || {H, _} <- Hashes],
                                 NewHash3 = HashFun(node, [NewHash2 | Hashes2]),
                                 UpdateMapA = accumulate(Persist, {NewHash2, KeyPrefix},
-                                                        {Key, Value}, UpdateMap2),
+                                        {Key, Value}, UpdateMap2),
                                 UpdateMapB = accumulate(Persist, {NewHash3, KeyPrefix},
-                                                        [{NewHash2, KeyPrefix} | Hashes], UpdateMapA),
+                                        [{NewHash2, KeyPrefix} | Hashes], UpdateMapA),
                                 {NewHash3, UpdateMapB};
                             no_value ->
                                 case Hashes of
                                     [{SingleHash, _}] ->
                                         {SingleHash, accumulate(Persist, {SingleHash, KeyPrefix},
-                                                                Hashes, UpdateMap2)};
+                                                Hashes, UpdateMap2)};
                                     _ ->
                                         Hashes2 = [H || {H, _} <- Hashes],
                                         NewHash2 = HashFun(node, Hashes2),
                                         {NewHash2, accumulate(Persist, {NewHash2, KeyPrefix},
-                                                              Hashes, UpdateMap2)}
+                                                Hashes, UpdateMap2)}
                                 end
                         end,
                     {NewHash, UpdatedTree#{
-                                           KeyPrefix => {Parent, Children, NewHash, Suffix, MaybeValue}
-                                          }, UpdateMap3}
+                        KeyPrefix => {Parent, Children, NewHash, Suffix, MaybeValue}
+                    }, UpdateMap3}
             end;
         _ ->
             {Hash, Tree, UpdateMap}
@@ -347,9 +347,9 @@ delete(Key, Tree, Level) ->
                                             delete2(KeyPrefix, Parent, Tree2);
                                         false ->
                                             Node2 = {Parent, Children, no_hash, Suffix,
-                                                     no_value},
+                                                    no_value},
                                             invalidate_hash(Parent,
-                                                            Tree2#{ KeyPrefix => Node2 })
+                                                    Tree2#{ KeyPrefix => Node2 })
                                     end
                             end
                     end
@@ -454,7 +454,7 @@ get_next_start_from_sibling(Key, Parent, Tree) ->
             case MaybeValue of
                 no_value ->
                     get_next_start_from_children(NextSiblingKey, Key, NextSiblingChildren,
-                                                 Tree);
+                            Tree);
                 {v, _} ->
                     {{NextSiblingKey, NextSibling}, Tree}
             end

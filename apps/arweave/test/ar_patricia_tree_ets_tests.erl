@@ -21,8 +21,8 @@ equivalence_test_() ->
 %% hash to the same root as the legacy ar_patricia_tree_legacy.
 legacy_equivalence_test_() ->
     {timeout, 60, fun() ->
-                          lists:foreach(fun({N, A}) -> check_legacy_equivalent(N, A) end, cases())
-                  end}.
+        lists:foreach(fun({N, A}) -> check_legacy_equivalent(N, A) end, cases())
+    end}.
 
 cases() ->
     [
@@ -60,8 +60,8 @@ nested_accounts() ->
 %% over empty and populated bases.
 snapshot_restore_test_() ->
     {timeout, 60, fun() ->
-                          lists:foreach(fun({N, A, Ops}) -> check_snapshot(N, A, Ops) end, snapshot_cases())
-                  end}.
+        lists:foreach(fun({N, A, Ops}) -> check_snapshot(N, A, Ops) end, snapshot_cases())
+    end}.
 
 %% @doc snapshot_restore must undo the writes even when the work between snapshot_begin
 %% and compute_hash throws, the way ar_account_tree:with_snapshot restores in an `after`
@@ -103,12 +103,12 @@ test_snapshot_restore_on_abort() ->
 %% consensus root hash well defined.
 order_independence_test_() ->
     {timeout, 60, fun() ->
-                          lists:foreach(fun({N, A}) -> check_order(N, A) end,
-                                        [{shared, shared_prefix_accounts()},
-                                         {with_empty, [account(<<>>, t2) | shared_prefix_accounts()]},
-                                         {nested, nested_accounts()},
-                                         {many, many_accounts(120)}])
-                  end}.
+        lists:foreach(fun({N, A}) -> check_order(N, A) end,
+                [{shared, shared_prefix_accounts()},
+                 {with_empty, [account(<<>>, t2) | shared_prefix_accounts()]},
+                 {nested, nested_accounts()},
+                 {many, many_accounts(120)}])
+    end}.
 
 %% @doc Random fuzz. For every insertion order of a random key set: the root hash is the
 %% same, a tree with a key deleted hashes like a tree built without that key, and get/2 and
@@ -118,12 +118,12 @@ order_independence_test_() ->
 %% (strict_prefix_key_values/1).
 stochastic_test_() ->
     {timeout, 120, fun() ->
-                           lists:foreach(fun(_) -> check_stochastic(random_key_values(3)) end, lists:seq(1, 200)),
-                           lists:foreach(fun(_) -> check_stochastic(nested_prefix_key_values(4)) end,
-                                         lists:seq(1, 150)),
-                           lists:foreach(fun(_) -> check_stochastic(strict_prefix_key_values(4)) end,
-                                         lists:seq(1, 150))
-                   end}.
+        lists:foreach(fun(_) -> check_stochastic(random_key_values(3)) end, lists:seq(1, 200)),
+        lists:foreach(fun(_) -> check_stochastic(nested_prefix_key_values(4)) end,
+                lists:seq(1, 150)),
+        lists:foreach(fun(_) -> check_stochastic(strict_prefix_key_values(4)) end,
+                lists:seq(1, 150))
+    end}.
 
 %% @doc Delete edge cases not covered directly elsewhere: deleting an absent key is a
 %% no-op (structurally identical to the map-based tree), and deleting every key empties
@@ -483,7 +483,7 @@ distinct_nested(Base, N, Acc) ->
 %% and children, so the fuzz covers inserting and deleting such nodes.
 strict_prefix_key_values(N) ->
     Shuffled = [Key || {_, Key} <- lists:sort(
-                                     [{crypto:strong_rand_bytes(4), Key} || Key <- ab_keys()])],
+            [{crypto:strong_rand_bytes(4), Key} || Key <- ab_keys()])],
     [{Key, crypto:strong_rand_bytes(30)} || Key <- lists:sublist(Shuffled, N)].
 
 %% @doc All keys of length 1..4 over the characters a and b.

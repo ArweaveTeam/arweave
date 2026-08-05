@@ -335,7 +335,7 @@ test_chunk_skipped_with_duplicate_data_root() ->
     %% POST TX1's chunk. Since we've only synced one copy of the data_roots, and we've already
     %% postd one chunk matching that data_root (TX2's chunk), we should get a 200 when
     %% posting Chunk1 - *but* we will not see Chunk1 persisted. This is not ideal but it is
-    %% by design. 
+    %% by design.
     %% For more context, and to track the state of any improvements to the process, see:
     %% https://github.com/ArweaveTeam/arweave-dev/issues/1112
     {AbsEnd1, Proof1} = build_single_proof(B1, TX1, Chunks1),

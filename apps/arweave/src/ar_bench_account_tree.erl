@@ -62,25 +62,25 @@ bench_account_tree_matrix(File, Sizes, Configs, Reps) ->
     ok = file:write(Fd, bench_csv_header()),
     ok = file:datasync(Fd),
     lists:foreach(
-      fun(Size) ->
-              lists:foreach(
+        fun(Size) ->
+            lists:foreach(
                 fun({Hash, TreeRepr}) ->
-                        lists:foreach(
-                          fun(GCBefore) ->
-                                  Row = bench_csv_cell(Size, Hash, TreeRepr, GCBefore, Reps),
-                                  ok = file:write(Fd, Row),
-                                  ok = file:datasync(Fd),
-                                  io:format("wrote ~Bk ~p/~p gc_before=~p~n",
-                                            [Size div 1000, Hash, TreeRepr, GCBefore])
-                          end,
-                          [true, false]
-                         )
+                    lists:foreach(
+                        fun(GCBefore) ->
+                            Row = bench_csv_cell(Size, Hash, TreeRepr, GCBefore, Reps),
+                            ok = file:write(Fd, Row),
+                            ok = file:datasync(Fd),
+                            io:format("wrote ~Bk ~p/~p gc_before=~p~n",
+                                    [Size div 1000, Hash, TreeRepr, GCBefore])
+                        end,
+                        [true, false]
+                    )
                 end,
                 Configs
-               )
-      end,
-      Sizes
-     ),
+            )
+        end,
+        Sizes
+    ),
     ok = file:close(Fd),
     io:format("done; wrote ~s~n", [File]).
 
@@ -99,13 +99,13 @@ run_account_tree_bench(NumAccounts, NumUpdates, Hash, TreeRepr, PersistUpdates, 
             PersistOpts = account_tree_persist_opts(TreeRepr, PersistUpdates),
             Parent = self(),
             {Pid, Ref} = spawn_opt(
-                           fun() ->
-                                   Metrics = measure_account_tree(NumAccounts, NumUpdates, Hash, TreeRepr,
-                                                                  PersistUpdates, PersistOpts, GCBefore),
-                                   Parent ! {account_tree_metrics, self(), Metrics}
-                           end,
-                           [monitor]
-                          ),
+                fun() ->
+                    Metrics = measure_account_tree(NumAccounts, NumUpdates, Hash, TreeRepr,
+                            PersistUpdates, PersistOpts, GCBefore),
+                    Parent ! {account_tree_metrics, self(), Metrics}
+                end,
+                [monitor]
+            ),
             receive
                 {account_tree_metrics, Pid, Metrics} ->
                     erlang:demonitor(Ref, [flush]),
@@ -170,8 +170,8 @@ measure_account_tree(NumAccounts, NumUpdates, Hash, TreeRepr, PersistUpdates, Pe
             _ ->
                 maybe_gc(GCBefore),
                 {Time2, Binary} = timer:tc(fun() ->
-                                                   ar_serialize:jsonify(
-                                                     ar_serialize:wallet_list_to_json_struct(unclaimed, false, T1)) end),
+                    ar_serialize:jsonify(
+                            ar_serialize:wallet_list_to_json_struct(unclaimed, false, T1)) end),
                 {Time2 / 1000000, byte_size(Binary)}
         end,
     maybe_gc(GCBefore),
@@ -184,7 +184,7 @@ measure_account_tree(NumAccounts, NumUpdates, Hash, TreeRepr, PersistUpdates, Pe
     {A, B, LastTX} = random_wallet(),
     maybe_gc(GCBefore),
     {Time6, T4} = timer:tc(fun() ->
-                                   Mod:insert(A, bench_wallet_value(mixed, B, LastTX), T2) end),
+        Mod:insert(A, bench_wallet_value(mixed, B, LastTX), T2) end),
     maybe_gc(GCBefore),
     {Time7, _} = timer:tc(fun() -> Mod:compute_hash(T4, HashFun, PersistOpts2) end),
     stop_sink(Sink),
@@ -193,22 +193,22 @@ measure_account_tree(NumAccounts, NumUpdates, Hash, TreeRepr, PersistUpdates, Pe
         _ -> ok
     end,
     #{
-      num_accounts => NumAccounts,
-      num_updates => NumUpdates,
-      hash => Hash,
-      tree_repr => TreeRepr,
-      persist_updates => PersistUpdates,
-      gc_before => GCBefore,
-      buildup_s => Time1 / 1000000,
-      footprint_build_mb => FootBuild,
-      serialization_s => SerS,
-      serialization_bytes => SerBytes,
-      scratch_hash_s => Time3 / 1000000,
-      footprint_hash_mb => FootHash,
-      inserts_batch_s => Time4 / 1000000,
-      recompute_batch_s => Time5 / 1000000,
-      insert_1_s => Time6 / 1000000,
-      recompute_1_s => Time7 / 1000000
+        num_accounts => NumAccounts,
+        num_updates => NumUpdates,
+        hash => Hash,
+        tree_repr => TreeRepr,
+        persist_updates => PersistUpdates,
+        gc_before => GCBefore,
+        buildup_s => Time1 / 1000000,
+        footprint_build_mb => FootBuild,
+        serialization_s => SerS,
+        serialization_bytes => SerBytes,
+        scratch_hash_s => Time3 / 1000000,
+        footprint_hash_mb => FootHash,
+        inserts_batch_s => Time4 / 1000000,
+        recompute_batch_s => Time5 / 1000000,
+        insert_1_s => Time6 / 1000000,
+        recompute_1_s => Time7 / 1000000
      }.
 
 %% @doc Print one metrics map in the human-readable form.
@@ -278,9 +278,9 @@ ets_table_mb(Tree) ->
 
 random_wallet() ->
     {
-     crypto:strong_rand_bytes(32),
-     rand:uniform(1000000000000000000),
-     crypto:strong_rand_bytes(32)
+        crypto:strong_rand_bytes(32),
+        rand:uniform(1000000000000000000),
+        crypto:strong_rand_bytes(32)
     }.
 
 %% @doc Build the hash function for the benchmarks. Algo is used for both leaves and nodes:
@@ -356,15 +356,15 @@ average_metrics(Maps) ->
             scratch_hash_s, footprint_hash_mb, inserts_batch_s, recompute_batch_s,
             insert_1_s, recompute_1_s],
     lists:foldl(
-      fun(Key, Acc) ->
-              Present = [V || M <- Maps, V <- [maps:get(Key, M, na)], V =/= na],
-              case Present of
-                  [] -> Acc#{ Key => na };
-                  _ -> Acc#{ Key => lists:sum(Present) / length(Present) }
-              end
-      end,
-      #{},
-      Keys
+        fun(Key, Acc) ->
+            Present = [V || M <- Maps, V <- [maps:get(Key, M, na)], V =/= na],
+            case Present of
+                [] -> Acc#{ Key => na };
+                _ -> Acc#{ Key => lists:sum(Present) / length(Present) }
+            end
+        end,
+        #{},
+        Keys
      ).
 
 bench_csv_header() ->

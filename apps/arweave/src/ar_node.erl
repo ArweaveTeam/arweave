@@ -106,10 +106,10 @@ get_ready_for_mining_txs() ->
     gb_sets:fold(
       fun
           ({_Utility, TXID, ready_for_mining}, Acc) ->
-                        [TXID | Acc];
+              [TXID | Acc];
           (_, Acc) ->
-                        Acc
-                end,
+              Acc
+      end,
       [],
       ar_mempool:get_priority_set()
      ).
@@ -132,7 +132,7 @@ read_recent_blocks(BI, SearchDepth, CustomDir) ->
                         SearchDepth, 0, CustomDir).
 
 read_recent_blocks2(_BI, Depth, Skipped, _CustomDir) when Skipped > Depth orelse
-                                                          (Skipped > 0 andalso Depth == Skipped) ->
+        (Skipped > 0 andalso Depth == Skipped) ->
     not_found;
 read_recent_blocks2([], _SearchDepth, Skipped, _CustomDir) ->
     {Skipped, []};
@@ -145,9 +145,9 @@ read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped, CustomDir) ->
                     read_recent_blocks2(BI, SearchDepth, Skipped + 1, CustomDir);
                 false ->
                     SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
-                                                                                B#block.height),
+                            B#block.height),
                     case read_recent_blocks3(BI, 2 * ar_block:get_max_tx_anchor_depth() - 1,
-                                             [B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }], CustomDir) of
+                            [B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs }], CustomDir) of
                         not_found ->
                             not_found;
                         Blocks ->
@@ -156,7 +156,7 @@ read_recent_blocks2([{BH, _, _} | BI], SearchDepth, Skipped, CustomDir) ->
             end;
         Error ->
             ar:console("Skipping the block ~s, reason: ~p.~n", [ar_util:encode(BH),
-                                                                io_lib:format("~p", [Error])]),
+                    io_lib:format("~p", [Error])]),
             read_recent_blocks2(BI, SearchDepth, Skipped + 1, CustomDir)
     end.
 
@@ -175,9 +175,9 @@ read_recent_blocks3([{BH, _, _} | BI], BlocksToRead, Blocks, CustomDir) ->
                     not_found;
                 false ->
                     SizeTaggedTXs = ar_block:generate_size_tagged_list_from_txs(TXs,
-                                                                                B#block.height),
+                            B#block.height),
                     read_recent_blocks3(BI, BlocksToRead - 1,
-                                        [B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | Blocks], CustomDir)
+                            [B#block{ size_tagged_txs = SizeTaggedTXs, txs = TXs } | Blocks], CustomDir)
             end;
         Error ->
             ar:console("Failed to read block header ~s, reason: ~p.~n",

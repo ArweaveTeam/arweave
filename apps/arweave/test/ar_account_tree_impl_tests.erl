@@ -94,7 +94,7 @@ scenario_reorg_and_uncle({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
             ok = cmp(New, Legacy, {set_current, R1, 10, 20}),
             {ok, R2} = cmp(New, Legacy, {add_wallets, R1, update_range(Accounts, 0, 1), 11, Denom}),
             {ok, R3} = cmp(New, Legacy, {add_wallets, R1,
-                                         maps:merge(update_range(Accounts, 1, 2), add_fresh(1, Denom)), 11, Denom}),
+                    maps:merge(update_range(Accounts, 1, 2), add_fresh(1, Denom)), 11, Denom}),
             Query = Addrs ++ fresh_addrs(1),
             ok = cmp(New, Legacy, {set_current, R2, 11, 20}),
             %% R2 bumped the LastTX (and balance) of the updated accounts. get_last_tx reflects it.
@@ -118,8 +118,8 @@ scenario_removals({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
             ok = cmp(New, Legacy, {set_current, R1, 10, 20}),
             {ok, R2} = cmp(New, Legacy, {add_wallets, R1, remove_range(Accounts, 0, 1), 11, Denom}),
             {ok, R3} = cmp(New, Legacy, {add_wallets, R1,
-                                         maps:merge(remove_range(Accounts, 1, 2), update_range(Accounts, 2, 3)), 11,
-                                         Denom}),
+                    maps:merge(remove_range(Accounts, 1, 2), update_range(Accounts, 2, 3)), 11,
+                    Denom}),
             reads_at_all(New, Legacy, [R1, R2, R3], Addrs),
             ok = cmp(New, Legacy, {set_current, R2, 11, 20}),
             reads_at_all(New, Legacy, [R1, R2, R3], Addrs),
@@ -135,7 +135,7 @@ scenario_denomination({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
             [cmp(New, Legacy, {get_balance, A}) || A <- Addrs],
             %% A fork advancing the denomination by one, also touching one account.
             {ok, R2} = cmp(New, Legacy, {add_wallets, R1, update_range(Accounts, 0, 1), 11,
-                                         Denom + 1}),
+                    Denom + 1}),
             [cmp(New, Legacy, {get_balance, R2, A}) || A <- Addrs],
             cmp(New, Legacy, {get, R2, Addrs}),
             ok = cmp(New, Legacy, {set_current, R2, 11, 20}),
@@ -151,7 +151,7 @@ scenario_chunk_pagination({New, Legacy, _Stubs}, {_SetName, Accounts, Denom}) ->
             ok = cmp(New, Legacy, {set_current, R1, 10, 20}),
             walk_chunks(New, Legacy, R1),
             {ok, R2} = cmp(New, Legacy, {add_wallets, R1,
-                                         maps:merge(add_fresh(2, Denom), remove_range(Accounts, 0, 1)), 11, Denom}),
+                    maps:merge(add_fresh(2, Denom), remove_range(Accounts, 0, 1)), 11, Denom}),
             walk_chunks(New, Legacy, R2),
             walk_chunks(New, Legacy, R1)
     end.
@@ -301,9 +301,9 @@ scenario_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Accounts,
             ok = gen_server:call(New, {set_current, R1, 10, 20}),
             Before = table_dump(),
             {ok, R2} = gen_server:call(New, {add_wallets, R1, update_range(Accounts, 0, 1), 11,
-                                             Denom}),
+                    Denom}),
             {ok, _R3} = gen_server:call(New, {add_wallets, R1,
-                                              maps:merge(remove_range(Accounts, 1, 2), add_fresh(2, Denom)), 11, Denom}),
+                    maps:merge(remove_range(Accounts, 1, 2), add_fresh(2, Denom)), 11, Denom}),
             gen_server:call(New, {get_wallet_list_chunk, R2, first}),
             gen_server:call(New, {get, R2, Addrs}),
             [gen_server:call(New, {get_balance, R2, A}) || A <- Addrs],
@@ -323,13 +323,13 @@ scenario_deep_excursions_leave_tip_clean({New, _Legacy, _Stubs}, {_SetName, Acco
             ok = gen_server:call(New, {set_current, R0, 10, 20}),
             %% An uncle: a fork of the grandparent R0.
             {ok, Uncle} = gen_server:call(New, {add_wallets, R0, update_range(Accounts, 0, 1), 11,
-                                                Denom}),
+                    Denom}),
             %% The parent, then the tip - a two-block chain off R0.
             {ok, Parent} = gen_server:call(New, {add_wallets, R0,
-                                                 maps:merge(update_range(Accounts, 1, 2), add_fresh(2, Denom)), 11, Denom}),
+                    maps:merge(update_range(Accounts, 1, 2), add_fresh(2, Denom)), 11, Denom}),
             ok = gen_server:call(New, {set_current, Parent, 11, 20}),
             {ok, Tip} = gen_server:call(New, {add_wallets, Parent, update_range(Accounts, 2, 3), 12,
-                                              Denom}),
+                    Denom}),
             ok = gen_server:call(New, {set_current, Tip, 12, 20}),
             Before = table_dump(),
             %% Page each non-tip representation: every chunk call moves the ETS tree there and back.
@@ -443,28 +443,28 @@ legacy_request(Request) ->
 %% return the final root. Heights increase from StartHeight.
 apply_steps(New, Legacy, Root, Diffs, Denom, StartHeight) ->
     {Final, _} = lists:foldl(
-                   fun(Diff, {Base, Height}) ->
-                           {ok, Next} = cmp(New, Legacy, {add_wallets, Base, Diff, Height, Denom}),
-                           ok = cmp(New, Legacy, {set_current, Next, Height, 20}),
-                           {Next, Height + 1}
-                   end,
-                   {Root, StartHeight},
-                   Diffs
-                  ),
+        fun(Diff, {Base, Height}) ->
+            {ok, Next} = cmp(New, Legacy, {add_wallets, Base, Diff, Height, Denom}),
+            ok = cmp(New, Legacy, {set_current, Next, Height, 20}),
+            {Next, Height + 1}
+        end,
+        {Root, StartHeight},
+        Diffs
+    ),
     Final.
 
 %% @doc Add each disjoint chunk on top of the previous tip and return the final root.
 build_chunks(New, Legacy, Chunks, Denom) ->
     {Root, _} = lists:foldl(
-                  fun(Chunk, {Base, Height}) ->
-                          {ok, Next} = cmp(New, Legacy, {add_wallets, Base, maps:from_list(Chunk), Height,
-                                                         Denom}),
-                          ok = cmp(New, Legacy, {set_current, Next, Height, 20}),
-                          {Next, Height + 1}
-                  end,
-                  {<<>>, 10},
-                  Chunks
-                 ),
+        fun(Chunk, {Base, Height}) ->
+            {ok, Next} = cmp(New, Legacy, {add_wallets, Base, maps:from_list(Chunk), Height,
+                    Denom}),
+            ok = cmp(New, Legacy, {set_current, Next, Height, 20}),
+            {Next, Height + 1}
+        end,
+        {<<>>, 10},
+        Chunks
+    ),
     Root.
 
 %% @doc Split a list into N (or fewer) disjoint contiguous chunks.

@@ -134,7 +134,7 @@ handle_call(Request, From, State) ->
     StartTime = erlang:monotonic_time(),
     Result = do_handle_call(Request, From, State),
     arweave_metrics:histogram_observe(account_tree_call_duration_milliseconds,
-                                      [call_label(Request)], erlang:monotonic_time() - StartTime),
+            [call_label(Request)], erlang:monotonic_time() - StartTime),
     Result.
 
 call_label(Request) when is_atom(Request) ->
@@ -189,12 +189,12 @@ do_handle_call({get_balance, RootHash, Address}, _From, State) ->
 do_handle_call({get_last_tx, Address}, _From, State) ->
     {reply,
      case ar_patricia_tree_ets:get(Address, maps:get(tid, State)) of
-         not_found ->
-             <<>>;
-         {_Balance, LastTX} ->
-             LastTX;
-         {_Balance, LastTX, _Denomination, _MiningPermission} ->
-             LastTX
+        not_found ->
+            <<>>;
+        {_Balance, LastTX} ->
+            LastTX;
+        {_Balance, LastTX, _Denomination, _MiningPermission} ->
+            LastTX
      end,
      State};
 
@@ -297,22 +297,23 @@ initialize_state(Blocks, State) ->
     {BaseRoot, _, _} = compute_hash(Tid, #{ sink => ar_storage }),
     BaseRoot = BaseB#block.wallet_list,
     State1 = State#{
-                    dag => ar_diff_dag:new(BaseRoot, ets, BaseB#block.denomination),
-                    sink => BaseRoot,
-                    tid => Tid
-                   },
+        dag => ar_diff_dag:new(BaseRoot, ets, BaseB#block.denomination),
+        sink => BaseRoot,
+        tid => Tid
+    },
     State2 = set_current(State1, BaseRoot, BaseB#block.height, InitialDepth),
     {StateN, LastB} = lists:foldl(
-                        fun(B, {AccState, PrevB}) ->
-                                ExpectedRootHash = B#block.wallet_list,
-                                {{ok, ExpectedRootHash}, AccState2} = apply_block(B, PrevB, AccState),
-                                AccState3 = set_current(AccState2, ExpectedRootHash,
-                                                        B#block.height, InitialDepth),
-                                {AccState3, B}
-                        end,
-                        {State2, BaseB},
-                        RestB
-                       ),
+        fun(B, {AccState, PrevB}) ->
+            ExpectedRootHash = B#block.wallet_list,
+            {{ok, ExpectedRootHash}, AccState2} = apply_block(B, PrevB, AccState),
+            AccState3 = set_current(
+                AccState2, ExpectedRootHash,
+                B#block.height, InitialDepth),
+            {AccState3, B}
+        end,
+        {State2, BaseB},
+        RestB
+    ),
     ar_events:send(node_state, {account_tree_initialized, LastB#block.height}),
     %% Hibernate to compact the heap once the window blocks and the streamed tree nodes
     %% are dropped. Initialization churns through hundreds of MB that would otherwise
@@ -382,11 +383,12 @@ apply_block2(B, PrevB, State) ->
     Tid = maps:get(tid, State),
     PrevRootHash = PrevB#block.wallet_list,
     Addresses = block_addresses(B, PrevB),
-    Outcome = with_snapshot(Tid, fun() ->
-                                         _ = move_sink_to(State, PrevRootHash, apply_block),
-                                         Accounts = accounts_at_tip(State, Addresses),
-                                         apply_block_outcome(B, PrevB, Accounts, Tid)
-                                 end),
+    Outcome = with_snapshot(Tid,
+        fun() ->
+            _ = move_sink_to(State, PrevRootHash, apply_block),
+            Accounts = accounts_at_tip(State, Addresses),
+            apply_block_outcome(B, PrevB, Accounts, Tid)
+        end),
     finalize_apply_block(Outcome, B, PrevRootHash, State).
 
 %% @doc The addresses whose accounts a block may change: the reward address, the senders and
@@ -443,7 +445,7 @@ finalize_apply_block({ok, RootHash2, Accounts, Denomination2}, B, PrevRootHash, 
     case B#block.wallet_list == RootHash2 of
         true ->
             DAG2 = maybe_add_node(maps:get(dag, State), RootHash2, PrevRootHash, Accounts,
-                                  Denomination2),
+                    Denomination2),
             {{ok, RootHash2}, State#{ dag := DAG2 }};
         false ->
             {{error, invalid_wallet_list}, State}
@@ -454,12 +456,13 @@ finalize_apply_block({error, _} = Error, _B, _PrevRootHash, State) ->
 add_wallets(State, RootHash, Wallets, Height, Denomination) ->
     Tid = maps:get(tid, State),
     true = Height >= ar_fork:height_2_2(),
-    RootHash2 = with_snapshot(Tid, fun() ->
-                                           _ = move_sink_to(State, RootHash, add_wallets),
-                                           apply_diff_ets(Wallets, Tid),
-                                           {Root, _, _} = compute_hash(Tid, #{}),
-                                           Root
-                                   end),
+    RootHash2 = with_snapshot(Tid,
+        fun() ->
+            _ = move_sink_to(State, RootHash, add_wallets),
+            apply_diff_ets(Wallets, Tid),
+            {Root, _, _} = compute_hash(Tid, #{}),
+            Root
+        end),
     DAG2 = maybe_add_node(maps:get(dag, State), RootHash2, RootHash, Wallets, Denomination),
     {{ok, RootHash2}, State#{ dag := DAG2 }}.
 
@@ -477,11 +480,12 @@ get_wallet_list_chunk(State, RootHash, Cursor) ->
             true ->
                 get_account_tree_range(State, Cursor);
             false ->
-                with_snapshot(maps:get(tid, State), fun() ->
-                                                            _ = move_sink_to(State, RootHash,
-                                                                             wallet_list_chunk),
-                                                            get_account_tree_range(State, Cursor)
-                                                    end)
+                with_snapshot(maps:get(tid, State),
+                    fun() ->
+                        _ = move_sink_to(State, RootHash,
+                                wallet_list_chunk),
+                        get_account_tree_range(State, Cursor)
+                    end)
         end,
     {{ok, Range}, State}.
 
@@ -527,17 +531,17 @@ move_sink_to(State, RootHash, Call) ->
             #{ dag := DAG, tid := Tid } = State,
             HopCounter = counters:new(1, []),
             DAG2 = ar_diff_dag:move_sink(
-                     DAG,
-                     RootHash,
-                     fun(Diff, Entity) ->
-                             counters:add(HopCounter, 1, 1),
-                             apply_diff_ets(Diff, Tid),
-                             Entity
-                     end,
-                     fun(Diff, _Entity) -> reverse_diff_ets(Diff, Tid) end
-                    ),
+                DAG,
+                RootHash,
+                fun(Diff, Entity) ->
+                    counters:add(HopCounter, 1, 1),
+                    apply_diff_ets(Diff, Tid),
+                    Entity
+                end,
+                fun(Diff, _Entity) -> reverse_diff_ets(Diff, Tid) end
+            ),
             arweave_metrics:histogram_observe(account_tree_sink_move_hops, [Call],
-                                              counters:get(HopCounter, 1)),
+                    counters:get(HopCounter, 1)),
             State#{ dag := DAG2, sink := RootHash }
     end.
 
@@ -545,17 +549,17 @@ move_sink_to(State, RootHash, Call) ->
 accounts_at_tip(State, Addresses) ->
     Tid = maps:get(tid, State),
     lists:foldl(
-      fun(Addr, Acc) ->
-              case ar_patricia_tree_ets:get(Addr, Tid) of
-                  not_found ->
-                      Acc;
-                  Value ->
-                      maps:put(Addr, Value, Acc)
-              end
-      end,
-      #{},
-      Addresses
-     ).
+        fun(Addr, Acc) ->
+            case ar_patricia_tree_ets:get(Addr, Tid) of
+                not_found ->
+                    Acc;
+                Value ->
+                    maps:put(Addr, Value, Acc)
+            end
+        end,
+        #{},
+        Addresses
+    ).
 
 %% @doc Read the accounts for the given addresses from the tree with the given root hash,
 %% without moving the ETS tree: build the total diff from the tip to RootHash out of the
@@ -591,35 +595,35 @@ merge_total_diff(Diff, Acc) ->
 combine(State, TotalDiff, Addresses) ->
     Tid = maps:get(tid, State),
     lists:foldl(
-      fun(Addr, Acc) ->
-              case maps:find(Addr, TotalDiff) of
-                  {ok, remove} ->
-                      Acc;
-                  {ok, Value} ->
-                      maps:put(Addr, Value, Acc);
-                  error ->
-                      case ar_patricia_tree_ets:get(Addr, Tid) of
-                          not_found ->
-                              Acc;
-                          Value ->
-                              maps:put(Addr, Value, Acc)
-                      end
-              end
-      end,
-      #{},
-      Addresses
+        fun(Addr, Acc) ->
+            case maps:find(Addr, TotalDiff) of
+                {ok, remove} ->
+                    Acc;
+                {ok, Value} ->
+                    maps:put(Addr, Value, Acc);
+                error ->
+                    case ar_patricia_tree_ets:get(Addr, Tid) of
+                        not_found ->
+                            Acc;
+                        Value ->
+                            maps:put(Addr, Value, Acc)
+                    end
+            end
+        end,
+        #{},
+        Addresses
      ).
 
 %% @doc Apply an account diff (Addr => Value | remove) to the ETS table in place.
 apply_diff_ets(Diff, Tid) ->
     maps:foreach(
-      fun (Addr, remove) ->
-              ar_patricia_tree_ets:delete(Addr, Tid);
-          (Addr, Value) ->
-              ar_patricia_tree_ets:insert(Addr, Value, Tid)
-      end,
-      Diff
-     ),
+        fun (Addr, remove) ->
+                ar_patricia_tree_ets:delete(Addr, Tid);
+            (Addr, Value) ->
+                ar_patricia_tree_ets:insert(Addr, Value, Tid)
+        end,
+        Diff
+    ),
     ok.
 
 %% @doc Build the reverse of a diff against the current ETS state: for every touched address,
@@ -627,22 +631,22 @@ apply_diff_ets(Diff, Tid) ->
 %% keep the DAG reconstructable as the sink moves.
 reverse_diff_ets(Diff, Tid) ->
     maps:map(
-      fun(Addr, _Value) ->
-              case ar_patricia_tree_ets:get(Addr, Tid) of
-                  not_found ->
-                      remove;
-                  Value ->
-                      Value
-              end
-      end,
-      Diff
-     ).
+        fun(Addr, _Value) ->
+            case ar_patricia_tree_ets:get(Addr, Tid) of
+                not_found ->
+                    remove;
+                Value ->
+                    Value
+            end
+        end,
+        Diff
+    ).
 
 compute_hash(Tid, PersistOpts) ->
     {RootHash, Tree, Info} =
         ar_patricia_tree_ets:compute_hash(Tid, ar_block:wallet_list_hash_fun(), PersistOpts),
     arweave_metrics:histogram_observe(account_tree_rehashed_nodes, [],
-                                      maps:get(rehashed_nodes, Info, 0)),
+            maps:get(rehashed_nodes, Info, 0)),
     {RootHash, Tree, Info}.
 
 redenominate_balance({Balance, _LastTX}, Denomination) ->

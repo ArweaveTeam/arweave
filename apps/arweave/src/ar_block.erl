@@ -105,20 +105,20 @@ block_field_size_limit(B) ->
         end,
     RewardAddrCheck = byte_size(B#block.reward_addr) =< 32,
     Check = (byte_size(B#block.nonce) =< 512) and
-                                                (byte_size(B#block.previous_block) =< 48) and
-                                                                                            (byte_size(integer_to_binary(B#block.timestamp)) =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
-                                                                                                                                                                               (byte_size(integer_to_binary(B#block.last_retarget))
-                                                                                                                                                                                =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
-                                                                                                                                                                                                                  (byte_size(integer_to_binary(B#block.diff)) =< DiffBytesLimit) and
-                                                                                                                                                                                                                                                                                   (byte_size(integer_to_binary(B#block.height)) =< 20) and
-                                                                                                                                                                                                                                                                                                                                          (byte_size(B#block.hash) =< 48) and
-                                                                                                                                                                                                                                                                                                                                                                            (byte_size(B#block.indep_hash) =< 48) and
+        (byte_size(B#block.previous_block) =< 48) and
+        (byte_size(integer_to_binary(B#block.timestamp)) =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
+        (byte_size(integer_to_binary(B#block.last_retarget))
+            =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
+        (byte_size(integer_to_binary(B#block.diff)) =< DiffBytesLimit) and
+        (byte_size(integer_to_binary(B#block.height)) =< 20) and
+        (byte_size(B#block.hash) =< 48) and
+        (byte_size(B#block.indep_hash) =< 48) and
         RewardAddrCheck and
         validate_tags_size(B) and
-                                (byte_size(integer_to_binary(B#block.weave_size)) =< 64) and
-                                                                                           (byte_size(integer_to_binary(B#block.block_size)) =< 64) and
-                                                                                                                                                      (ChunkSize =< ?DATA_CHUNK_SIZE) and
-                                                                                                                                                                                        (DataPathSize =< ?MAX_PATH_SIZE),
+        (byte_size(integer_to_binary(B#block.weave_size)) =< 64) and
+        (byte_size(integer_to_binary(B#block.block_size)) =< 64) and
+        (ChunkSize =< ?DATA_CHUNK_SIZE) and
+        (DataPathSize =< ?MAX_PATH_SIZE),
     case Check of
         false ->
             ?LOG_INFO(
@@ -199,8 +199,8 @@ verify_cumulative_diff(NewB, OldB) ->
 verify_block_hash_list_merkle(NewB, CurrentB) ->
     true = NewB#block.height > ar_fork:height_2_0(),
     NewB#block.hash_list_merkle == ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle,
-                                                             {CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
-                                                             fun ar_unbalanced_merkle:hash_block_index_entry/1).
+            {CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
+            fun ar_unbalanced_merkle:hash_block_index_entry/1).
 
 %% @doc Compute the root of the new block tree given the previous block.
 compute_hash_list_merkle(B) ->
@@ -497,7 +497,7 @@ verify_signature(BlockPreimage, PrevCDiff,
   when byte_size(Signature) == ?RSA_BLOCK_SIG_SIZE,
        byte_size(Pub) == ?RSA_BLOCK_SIG_SIZE ->
     SignaturePreimage = get_block_signature_preimage(CDiff, PrevCDiff,
-                                                     << PrevSolutionH/binary, BlockPreimage/binary >>, Height),
+            << PrevSolutionH/binary, BlockPreimage/binary >>, Height),
     ar_wallet:to_address(RewardKey) == RewardAddr andalso
         ar_wallet:verify(RewardKey, SignaturePreimage, Signature);
 verify_signature(BlockPreimage, PrevCDiff,
@@ -506,7 +506,7 @@ verify_signature(BlockPreimage, PrevCDiff,
                          cumulative_diff = CDiff, height = Height })
   when byte_size(Signature) == ?ECDSA_SIG_SIZE, byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE ->
     SignaturePreimage = get_block_signature_preimage(CDiff, PrevCDiff,
-                                                     << PrevSolutionH/binary, BlockPreimage/binary >>, Height),
+            << PrevSolutionH/binary, BlockPreimage/binary >>, Height),
     case Height >= ar_fork:height_2_9() of
         true ->
             ar_wallet:to_address(RewardKey) == RewardAddr andalso

@@ -114,7 +114,7 @@ test_mitm_poa2_chunk_tamper_warn({Key, B, PrevB}) ->
     %% test limitation. In the wild the poa2 chunk could be modified without resigning.
     ok = ar_events:subscribe(block),
     assert_not_banned(ar_test_node:peer_ip(main)),
-    B2 = sign_block(B#block{ 
+    B2 = sign_block(B#block{
             recall_byte2 = 100000000,
             poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
     post_block(B2, invalid_second_chunk),

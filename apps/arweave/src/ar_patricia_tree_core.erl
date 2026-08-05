@@ -168,7 +168,7 @@ insert(Backend, Key, Value, Tree, Level, Parent) ->
             Size = Backend:get_size(Tree),
             Tree1 = Backend:put_node(Tree, KeyPrefix, NewNode),
             Tree2 = Backend:put_node(Tree1, Parent,
-                                     {NextParent, UpdatedChildren, no_hash, NextSuffix, ParentValue}),
+                {NextParent, UpdatedChildren, no_hash, NextSuffix, ParentValue}),
             Tree3 = Backend:set_size(Tree2, Size + 1),
             invalidate_hash(Backend, NextParent, Tree3)
     end.
@@ -243,18 +243,18 @@ do_compute_hash(Backend, Tree, HashFun, Acc, KeyPrefix) ->
                     NewHash = HashFun(leaf, {Key, Value}),
                     progress_tick(Backend, Tree),
                     Tree2 = Backend:put_node(Tree, KeyPrefix,
-                                             {Parent, gb_sets:new(), NewHash, Suffix, {v, Value}}),
+                        {Parent, gb_sets:new(), NewHash, Suffix, {v, Value}}),
                     {NewHash, Tree2, Backend:emit(Acc, NewHash, KeyPrefix, {Key, Value})};
                 false ->
                     {Hashes, Tree2, ChildrenAcc} = gb_sets_foldr(
-                                                     fun(Child, {HashesIn, TreeIn, AccIn}) ->
-                                                             {ChildHash, TreeOut, AccOut} = do_compute_hash(Backend, TreeIn,
-                                                                                                            HashFun, AccIn, Child),
-                                                             {[{ChildHash, Child} | HashesIn], TreeOut, AccOut}
-                                                     end,
-                                                     {[], Tree, Acc},
-                                                     Children
-                                                    ),
+                        fun(Child, {HashesIn, TreeIn, AccIn}) ->
+                            {ChildHash, TreeOut, AccOut} = do_compute_hash(
+                                Backend, TreeIn, HashFun, AccIn, Child),
+                            {[{ChildHash, Child} | HashesIn], TreeOut, AccOut}
+                        end,
+                        {[], Tree, Acc},
+                        Children
+                    ),
                     ChildHashes = [H || {H, _} <- Hashes],
                     {NewHash, NewAcc} =
                         case MaybeValue of
@@ -263,23 +263,23 @@ do_compute_hash(Backend, Tree, HashFun, Acc, KeyPrefix) ->
                                 ValueHash = HashFun(leaf, {Key, Value}),
                                 NodeHash = HashFun(node, [ValueHash | ChildHashes]),
                                 ValueAcc = Backend:emit(ChildrenAcc, ValueHash, KeyPrefix,
-                                                        {Key, Value}),
+                                        {Key, Value}),
                                 NodeAcc = Backend:emit(ValueAcc, NodeHash, KeyPrefix,
-                                                       [{ValueHash, KeyPrefix} | Hashes]),
+                                        [{ValueHash, KeyPrefix} | Hashes]),
                                 {NodeHash, NodeAcc};
                             no_value ->
                                 case Hashes of
                                     [{SingleHash, _}] ->
                                         {SingleHash, Backend:emit(ChildrenAcc, SingleHash,
-                                                                  KeyPrefix, Hashes)};
+                                                KeyPrefix, Hashes)};
                                     _ ->
                                         NodeHash = HashFun(node, ChildHashes),
                                         {NodeHash, Backend:emit(ChildrenAcc, NodeHash,
-                                                                KeyPrefix, Hashes)}
+                                                KeyPrefix, Hashes)}
                                 end
                         end,
                     Tree3 = Backend:put_node(Tree2, KeyPrefix,
-                                             {Parent, Children, NewHash, Suffix, MaybeValue}),
+                        {Parent, Children, NewHash, Suffix, MaybeValue}),
                     {NewHash, Tree3, NewAcc}
             end;
         _ ->
@@ -295,12 +295,12 @@ foldr(Backend, Fun, Acc, Tree, KeyPrefix) ->
             Fun(Key, Value, Acc);
         false ->
             Acc2 = gb_sets_foldr(
-                     fun(Child, ChildrenAcc) ->
-                             foldr(Backend, Fun, ChildrenAcc, Tree, Child)
-                     end,
-                     Acc,
-                     Children
-                    ),
+                fun(Child, ChildrenAcc) ->
+                        foldr(Backend, Fun, ChildrenAcc, Tree, Child)
+                end,
+                Acc,
+                Children
+            ),
             case MaybeValue of
                 {v, Value} ->
                     Key = << KeyPrefix/binary, Suffix/binary >>,
@@ -340,7 +340,7 @@ delete(Backend, Key, Tree, Level) ->
                                             delete2(Backend, KeyPrefix, Parent, Tree2);
                                         false ->
                                             Node2 = {Parent, Children, no_hash, Suffix,
-                                                     no_value},
+                                                no_value},
                                             Tree3 = Backend:put_node(Tree2, KeyPrefix, Node2),
                                             invalidate_hash(Backend, Parent, Tree3)
                                     end
@@ -354,7 +354,7 @@ delete2(Backend, Key, Parent, Tree) ->
     {ParentParent, ParentChildren, _Hash, Suffix, ParentValue} = Backend:get_node(Tree2, Parent),
     ParentChildren2 = gb_sets:del_element(Key, ParentChildren),
     Tree3 = Backend:put_node(Tree2, Parent,
-                             {ParentParent, ParentChildren2, no_hash, Suffix, ParentValue}),
+        {ParentParent, ParentChildren2, no_hash, Suffix, ParentValue}),
     case {Parent == root, gb_sets:is_empty(ParentChildren2), ParentValue} of
         {false, true, no_value} ->
             delete2(Backend, Parent, ParentParent, Tree3);
@@ -448,7 +448,7 @@ get_next_start_from_sibling(Backend, Key, Parent, Tree) ->
             case MaybeValue of
                 no_value ->
                     get_next_start_from_children(Backend, NextSiblingKey, Key, NextSiblingChildren,
-                                                 Tree);
+                            Tree);
                 {v, _} ->
                     {{NextSiblingKey, NextSibling}, Tree}
             end
