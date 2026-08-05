@@ -237,9 +237,8 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                 false ->
                     NewLeakyTokens = update_token(Peer, Tokens + 1, LeakyTokens),
                     NewMonitors = register_concurrent(FromPid, ConcurrentMonitors),
-                    SlidingRemaining = SlidingWindowLimit - length(SlidingTimestampsForPeer0),
                     HeadersInfo = build_headers_info(
-                                    SlidingRemaining, LbRemaining - 1,
+                                    0, LbRemaining - 1,
                                     SlidingTimestampsForPeer0, Now, State),
                     {reply, {register, leaky, HeadersInfo},
                      State#{leaky_tokens => NewLeakyTokens,
