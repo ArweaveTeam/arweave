@@ -1218,14 +1218,7 @@ handle_info({account_tree_node_batch, Batch}, State) ->
         [] ->
             ok;
         _ ->
-            case ar_kv:write_batch(account_tree_db, NewNodes) of
-                ok ->
-                    ok;
-                {error, Reason} ->
-                    ?LOG_ERROR([{event, failed_to_store_account_tree_node_batch},
-                                {batch_size, length(NewNodes)},
-                                {reason, io_lib:format("~p", [Reason])}])
-            end
+            write_account_tree_node_batch(NewNodes, ?ACCOUNT_TREE_PUT_RETRIES)
     end,
     {noreply, State};
 
@@ -1505,6 +1498,24 @@ put_account_tree_key(DBKey, Value, Key, Height, RootHash, RetriesLeft) ->
                                                  Prefix -> ar_util:encode(Prefix) end},
                                 {height, Height},
                                 {root_hash, ar_util:encode(RootHash)},
+                                {reason, io_lib:format("~p", [Reason])}])
+            end
+    end.
+
+%% @doc Persist a batch of account tree nodes, retrying a transient RocksDB failure a
+%% few times. Disk-full errors are not retried. The write is idempotent (the keys are
+%% content-addressed). Logs an error if all attempts fail.
+write_account_tree_node_batch(NewNodes, RetriesLeft) ->
+    case ar_kv:write_batch(account_tree_db, NewNodes) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            case not is_disk_full_error(Reason) andalso RetriesLeft > 0 of
+                true ->
+                    write_account_tree_node_batch(NewNodes, RetriesLeft - 1);
+                false ->
+                    ?LOG_ERROR([{event, failed_to_store_account_tree_node_batch},
+                                {batch_size, length(NewNodes)},
                                 {reason, io_lib:format("~p", [Reason])}])
             end
     end.
