@@ -66,6 +66,7 @@ init([]) ->
     ets:new(block_index, [ordered_set, public, named_table]),
     ets:new(node_state, [set, public, named_table]),
     ets:new(mining_state, [set, public, named_table, {read_concurrency, true}]),
+    ets:new(ar_total_supply_cache, [set, public, named_table, {read_concurrency, true}]),
     Children = [
         ?CHILD(ar_shutdown_manager, worker),
         ?CHILD(ar_disksup, worker),

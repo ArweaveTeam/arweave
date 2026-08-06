@@ -1113,8 +1113,8 @@ handle(<<"GET">>, [<<"total_supply">>], Req, _Pid) ->
     maybe
         ok ?= acquire_http_semaphore(get_wallet_list),
         B = ar_node:get_current_block(),
-        TotalSupply = get_total_supply(B#block.wallet_list, first, 0,
-                                       B#block.denomination),
+        TotalSupply = get_total_supply_cached(B#block.wallet_list,
+                                              B#block.denomination),
         {200, #{}, integer_to_binary(TotalSupply), Req}
     else
         {error, timeout} ->
@@ -2822,6 +2822,20 @@ get_recent_hash_list_diff([{H, TXIDs} | BlockTXPairs]) ->
        (get_recent_hash_list_diff(BlockTXPairs))/binary >>;
 get_recent_hash_list_diff([]) ->
     <<>>.
+
+%% @doc Return the total supply for the wallet tree with the given root hash,
+%% caching the result. Walking the whole wallet tree is expensive, so we keep the
+%% last computed value keyed by the root hash: as long as the current block's
+%% wallet tree root has not changed, we return the cached sum without recomputing.
+get_total_supply_cached(RootHash, Denomination) ->
+    case ets:lookup(ar_total_supply_cache, last) of
+        [{last, RootHash, TotalSupply}] ->
+            TotalSupply;
+        _ ->
+            TotalSupply = get_total_supply(RootHash, first, 0, Denomination),
+            ets:insert(ar_total_supply_cache, {last, RootHash, TotalSupply}),
+            TotalSupply
+    end.
 
 get_total_supply(RootHash, Cursor, Sum, Denomination) ->
     {ok, {NextCursor, Range}} = ar_wallets:get_chunk(RootHash, Cursor),
