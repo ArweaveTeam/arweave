@@ -837,10 +837,10 @@ handle_post_pool_cm_jobs_response(Reply) ->
     {error, Reply}.
 
 handle_post_partial_solution_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-    case catch jiffy:decode(Body, [return_maps]) of
-        {'EXIT', _} ->
+    case ar_serialize:json_decode(Body, [return_maps]) of
+        {error, _} ->
             {error, invalid_json};
-        Response ->
+        {ok, Response} ->
             {ok, Response}
     end;
 handle_post_partial_solution_response(Reply) ->
@@ -893,28 +893,36 @@ handle_sync_record_response(Reply, _, _) ->
     {error, Reply}.
 
 handle_footprints_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-    case catch ar_serialize:json_map_to_footprint(jiffy:decode(Body, [return_maps])) of
-        {'EXIT', Reason} ->
+    case ar_serialize:json_decode(Body, [return_maps]) of
+        {error, Reason} ->
             {error, Reason};
-        Footprint ->
-            {ok, Footprint}
+        {ok, Decoded} ->
+            case catch ar_serialize:json_map_to_footprint(Decoded) of
+                {'EXIT', Reason} ->
+                    {error, Reason};
+                Footprint ->
+                    {ok, Footprint}
+            end
     end;
 handle_footprints_response({ok, {{<<"404">>, _}, _, _, _, _}}) ->
     not_found;
 handle_footprints_response({ok, {{<<"400">>, _}, _, Body, _, _}}) ->
-    case catch jiffy:decode(Body, [return_maps]) of
-        {'EXIT', Reason} ->
+    case ar_serialize:json_decode(Body, [return_maps]) of
+        {error, Reason} ->
             {error, Reason};
-        #{ <<"error">> := <<"footprint_number_too_large">> } ->
-            {error, footprint_number_too_large};
-        #{ <<"error">> := <<"negative_footprint_number">> } ->
-            {error, negative_footprint_number};
-        #{ <<"error">> := <<"negative_partition_number">> } ->
-            {error, negative_partition_number};
-        #{ <<"error">> := <<"invalid_footprint_number_encoding">> } ->
-            {error, invalid_footprint_number_encoding};
-        Response ->
-            {error, Response}
+        {ok, Decoded} ->
+            case Decoded of
+                #{ <<"error">> := <<"footprint_number_too_large">> } ->
+                    {error, footprint_number_too_large};
+                #{ <<"error">> := <<"negative_footprint_number">> } ->
+                    {error, negative_footprint_number};
+                #{ <<"error">> := <<"negative_partition_number">> } ->
+                    {error, negative_partition_number};
+                #{ <<"error">> := <<"invalid_footprint_number_encoding">> } ->
+                    {error, invalid_footprint_number_encoding};
+                Response ->
+                    {error, Response}
+            end
     end;
 handle_footprints_response({ok, {{<<"429">>, _}, _, _, _, _}}) ->
     {error, too_many_requests};
@@ -961,43 +969,43 @@ handle_chunk_response(Response, _RequestedPacking, _Peer) ->
     {error, Response}.
 
 handle_mempool_response({ok, {{<<"200">>, _}, _, Body, _, _}}, Peer) ->
-    case catch jiffy:decode(Body) of
-        {'EXIT', Error} ->
+    case ar_serialize:json_decode(Body) of
+        {error, Error} ->
             ?LOG_WARNING([{event, failed_to_parse_peer_mempool},
-                          {error, io_lib:format("~p", [Error])}]),
+                {error, io_lib:format("~p", [Error])}]),
             {error, invalid_json};
-        L when is_list(L) ->
+        {ok, L} when is_list(L) ->
             Result = lists:foldr(
-                       fun  (_, {error, Reason}) ->
-                               {error, Reason};
-                            (EncodedTXID, {ok, Acc}) ->
-                               case ar_util:safe_decode(EncodedTXID) of
-                                   {ok, TXID} when byte_size(TXID) /= 32 ->
-                                       ?LOG_WARNING([{event, failed_to_parse_peer_mempool},
-                                                     {reason, invalid_txid},
-                                                     {txid, io_lib:format("~p", [EncodedTXID])}]),
-                                       {error, invalid_txid};
-                                   {ok, TXID} ->
-                                       {ok, [TXID | Acc]};
-                                   {error, invalid} ->
-                                       ?LOG_WARNING([{event, failed_to_parse_peer_mempool},
-                                                     {reason, invalid_txid},
-                                                     {txid, io_lib:format("~p", [EncodedTXID])}]),
-                                       {error, invalid_txid}
-                               end
-                       end,
-                       {ok, []},
-                       L
-                      ),
+                fun    (_, {error, Reason}) ->
+                        {error, Reason};
+                    (EncodedTXID, {ok, Acc}) ->
+                        case ar_util:safe_decode(EncodedTXID) of
+                            {ok, TXID} when byte_size(TXID) /= 32 ->
+                                ?LOG_WARNING([{event, failed_to_parse_peer_mempool},
+                                    {reason, invalid_txid},
+                                    {txid, io_lib:format("~p", [EncodedTXID])}]),
+                                {error, invalid_txid};
+                            {ok, TXID} ->
+                                {ok, [TXID | Acc]};
+                            {error, invalid} ->
+                                ?LOG_WARNING([{event, failed_to_parse_peer_mempool},
+                                    {reason, invalid_txid},
+                                    {txid, io_lib:format("~p", [EncodedTXID])}]),
+                                {error, invalid_txid}
+                        end
+                end,
+                {ok, []},
+                L
+            ),
             case Result of
                 {ok, TXIDs} ->
                     {{ok, TXIDs}, Peer};
                 {error, Reason2} ->
                     {error, Reason2}
             end;
-        NotList ->
+        {ok, NotList} ->
             ?LOG_WARNING([{event, failed_to_parse_peer_mempool}, {reason, invalid_format},
-                          {reply, io_lib:format("~p", [NotList])}]),
+                {reply, io_lib:format("~p", [NotList])}]),
             {error, invalid_format}
     end;
 handle_mempool_response(Response, _Peer) ->
@@ -1419,55 +1427,55 @@ handle_tx_response(Peer, _Encoding, Response) ->
     {error, Response}.
 
 handle_cm_partition_table_response({ok, {{<<"200">>, _}, _, Body, _, _}}) ->
-    case catch jiffy:decode(Body) of
-        {'EXIT', Error} ->
+    case ar_serialize:json_decode(Body) of
+        {error, Error} ->
             ?LOG_WARNING([{event, failed_to_parse_cm_partition_table},
-                          {error, io_lib:format("~p", [Error])}]),
+                {error, io_lib:format("~p", [Error])}]),
             {error, invalid_json};
-        L when is_list(L) ->
+        {ok, L} when is_list(L) ->
             lists:foldr(
-              fun   (_, {error, Reason}) ->
-                      {error, Reason};
+                fun    (_, {error, Reason}) ->
+                        {error, Reason};
                     (Partition, {ok, Acc}) ->
-                      case Partition of
-                          {[
-                            {<<"bucket">>, Bucket},
-                            {<<"bucketsize">>, BucketSize},
-                            {<<"addr">>, EncodedAddr}
-                           ]} ->
-                              DecodedPartition = {
-                                                  Bucket,
-                                                  BucketSize,
-                                                  ar_util:decode(EncodedAddr),
-                                                  0
-                                                 },
-                              {ok, [DecodedPartition | Acc]};
-                          {[
-                            {<<"bucket">>, Bucket},
-                            {<<"bucketsize">>, BucketSize},
-                            {<<"addr">>, EncodedAddr},
-                            {<<"pdiff">>, PackingDifficulty}
-                           ]} when PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY ->
-                              DecodedPartition = {
-                                                  Bucket,
-                                                  BucketSize,
-                                                  ar_util:decode(EncodedAddr),
-                                                  PackingDifficulty
-                                                 },
-                              {ok, [DecodedPartition | Acc]};
-                          _ ->
-                              ?LOG_WARNING([{event, failed_to_parse_cm_partition_table},
-                                            {reason, invalid_partition},
-                                            {txid, io_lib:format("~p", [Partition])}]),
-                              {error, invalid_partition}
-                      end
-              end,
-              {ok, []},
-              L
-             );
-        NotList ->
+                        case Partition of
+                            {[
+                                {<<"bucket">>, Bucket},
+                                {<<"bucketsize">>, BucketSize},
+                                {<<"addr">>, EncodedAddr}
+                            ]} ->
+                                DecodedPartition = {
+                                    Bucket,
+                                    BucketSize,
+                                    ar_util:decode(EncodedAddr),
+                                    0
+                                },
+                                {ok, [DecodedPartition | Acc]};
+                            {[
+                                {<<"bucket">>, Bucket},
+                                {<<"bucketsize">>, BucketSize},
+                                {<<"addr">>, EncodedAddr},
+                                {<<"pdiff">>, PackingDifficulty}
+                            ]} when PackingDifficulty == ?REPLICA_2_9_PACKING_DIFFICULTY ->
+                                DecodedPartition = {
+                                    Bucket,
+                                    BucketSize,
+                                    ar_util:decode(EncodedAddr),
+                                    PackingDifficulty
+                                },
+                                {ok, [DecodedPartition | Acc]};
+                            _ ->
+                                ?LOG_WARNING([{event, failed_to_parse_cm_partition_table},
+                                    {reason, invalid_partition},
+                                    {txid, io_lib:format("~p", [Partition])}]),
+                                {error, invalid_partition}
+                        end
+                end,
+                {ok, []},
+                L
+            );
+        {ok, NotList} ->
             ?LOG_WARNING([{event, failed_to_parse_cm_partition_table}, {reason, invalid_format},
-                          {reply, io_lib:format("~p", [NotList])}]),
+                {reply, io_lib:format("~p", [NotList])}]),
             {error, invalid_format}
     end;
 handle_cm_partition_table_response(Response) ->

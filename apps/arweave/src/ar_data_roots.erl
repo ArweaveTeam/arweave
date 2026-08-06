@@ -188,7 +188,7 @@ get_block(Offset) ->
                 not_found ->
                     {error, not_found};
                 {ok, Bin} ->
-                    {TXRoot2, BlockSize, DataRootIDs} = binary_to_term(Bin),
+                    {TXRoot2, BlockSize, DataRootIDs} = binary_to_term(Bin, [safe]),
                     true = TXRoot2 == TXRoot,
                     DataRootEntriesLists = sets:fold(
                                              fun(<< DataRoot:32/binary, TXSize:?OFFSET_KEY_BITSIZE >>, Acc) ->
@@ -341,7 +341,7 @@ are_synced(BlockStart, BlockEnd, TXRoot, StoreID) ->
         not_found ->
             false;
         {ok, Bin} ->
-            {TXRoot2, BlockSize, _DataRootIDs} = binary_to_term(Bin),
+            {TXRoot2, BlockSize, _DataRootIDs} = binary_to_term(Bin, [safe]),
             TXRoot2 == TXRoot andalso BlockSize == BlockEnd - BlockStart
     end.
 

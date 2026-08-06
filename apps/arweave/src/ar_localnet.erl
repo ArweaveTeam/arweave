@@ -915,7 +915,7 @@ read_block_index_from_map(Map, Height, End, PrevH, BI) ->
         not_found ->
             not_found;
         _ ->
-            case binary_to_term(V) of
+            case binary_to_term(V, [safe]) of
                 {H, WeaveSize, TXRoot, PrevH} ->
                     read_block_index_from_map(Map, Height + 1, End, H,
                                               [{H, WeaveSize, TXRoot} | BI]);

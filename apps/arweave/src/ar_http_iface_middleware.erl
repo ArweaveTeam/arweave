@@ -2646,15 +2646,20 @@ handle_post_partial_solution(Req, Pid) ->
 handle_post_partial_solution_pool_server(Req, Pid) ->
     case read_complete_body(Req, Pid) of
         {ok, Body, Req2} ->
-            try ar_serialize:json_map_to_solution(
-                  jiffy:decode(Body, [return_maps])) of
-                #mining_solution{} = Solution ->
-                    Response = ar_pool:process_partial_solution(Solution),
-                    JSON = ar_serialize:partial_solution_response_to_json_struct(Response),
-                    {200, #{}, ar_serialize:jsonify(JSON), Req2}
-            catch
-                _:_ ->
-                    {400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+            case ar_serialize:json_decode(Body, [return_maps]) of
+                {error, _} ->
+                    {400, #{}, jiffy:encode(#{ error => invalid_json }), Req2};
+                {ok, Decoded} ->
+                    try ar_serialize:json_map_to_solution(Decoded) of
+                        #mining_solution{} = Solution ->
+                            Response = ar_pool:process_partial_solution(Solution),
+                            JSON = ar_serialize:partial_solution_response_to_json_struct(
+                                     Response),
+                            {200, #{}, ar_serialize:jsonify(JSON), Req2}
+                    catch
+                        _:_ ->
+                            {400, #{}, jiffy:encode(#{ error => invalid_json }), Req2}
+                    end
             end;
         {error, body_size_too_large} ->
             {413, #{}, <<"Payload too large">>, Req};
