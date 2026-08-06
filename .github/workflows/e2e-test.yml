@@ -4,7 +4,7 @@ on:
 
 # One e2e run per ref at a time: a new dispatch on the same branch
 # supersedes an in-progress one, so e2e never stacks on itself and
-# double-loads the shared build-runner pool. Branch dispatches and the
+# double-loads the e2e-runner pool. Branch dispatches and the
 # daily master cron are separate refs, so they don't cancel each other.
 concurrency:
   group: e2e-${{ github.workflow }}-${{ github.ref }}
@@ -188,16 +188,15 @@ jobs:
 
   e2e-tests:
     needs: [build, discover-cases]
-    # Runs on the shared build-runner pool (unified; see infra docs/04).
-    # max-parallel below caps e2e fan-out so the heavy 3-node-per-case
-    # mining jobs don't oversubscribe the fleet.
-    runs-on: [self-hosted, ubuntu, amd64, build-runner]
+    # Runs on the dedicated e2e-runner pool (1 runner/host, memory-capped;
+    # see infra docs/04): the heavy 3-node-per-case mining jobs spread
+    # 1-per-host instead of packing onto one builder and OOM-killing it.
+    # The pool caps fleet-wide concurrency, so no max-parallel here.
+    runs-on: [self-hosted, ubuntu, amd64, e2e-runner]
     strategy:
       # One job per testcase. fail-fast off so a single flaky case
       # doesn't cancel the rest of the matrix.
       fail-fast: false
-      # Cap concurrent e2e cases to 6 across the build-runner fleet.
-      max-parallel: 6
       matrix:
         include: ${{ fromJson(needs.discover-cases.outputs.matrix) }}
     steps:
