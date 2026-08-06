@@ -130,10 +130,11 @@ one_peer_reported(_Config) ->
     Peer = {127, 0, 0, 1, 1984},
     Headers = arweave_limiter_http_headers:to_http_headers(
                 {register, leaky,
-                #{expiring_limit => 450,
-                remaining      => 450, %% This isn't really lifelike here
-                reset_seconds  => 0,
-                policies => ?POLICIES}
+                 #{expiring_limit => 450,
+                   remaining => 449,
+                   reset_amount => 1,
+                   reset_seconds  => 0,
+                   policies => ?POLICIES}
                 }),
     ct:pal("path (~p) maps to: ~p group (pathkey: ~p)", [?PATH,
                                                         arweave_throttling_path:path_to_group_id(Peer, ?PATH),
@@ -179,10 +180,11 @@ one_peer_reported(_Config) ->
 two_hundred_peers_reported(_Config) ->
     Headers = arweave_limiter_http_headers:to_http_headers(
                 {register, leaky,
-                #{expiring_limit => 450,
-                remaining      => 450, %% This isn't really valid here
-                reset_seconds  => 0,
-                policies => ?POLICIES}
+                 #{expiring_limit => 450,
+                   remaining => 449,
+                   reset_amount => 1,
+                   reset_seconds => 0,
+                   policies => ?POLICIES}
                 }),
     Peers = [{10, 0, X div 256, X rem 256, 1984}
             || X <- lists:seq(1, 200)],

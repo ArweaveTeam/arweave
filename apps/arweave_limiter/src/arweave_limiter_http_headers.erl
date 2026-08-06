@@ -25,10 +25,12 @@ to_http_headers({_, _, #{remaining := infinity,
 to_http_headers({RegOrRej, _Mode, #{expiring_limit := _ExpiringLimit,
                                     remaining := Remaining,
                                     reset_seconds := Reset,
+                                    reset_amount := ResetAmount,
                                     policies := _Policies} = HeadersInfo}) ->
     Headers = #{<<"RateLimit-Limit">> => ratelimit_limit_value(HeadersInfo),
                 <<"RateLimit-Remaining">> => integer_to_binary(Remaining),
-                <<"RateLimit-Reset">> => integer_to_binary(Reset)},
+                <<"RateLimit-Reset">> => integer_to_binary(Reset),
+                <<"ar-RateLimit-Reset-Amount">> => integer_to_binary(ResetAmount)},
     maybe_add_retry_after(RegOrRej, Remaining, Reset, Headers).
 
 %% RateLimit-Limit = expiring-limit *( "," quota-policy )

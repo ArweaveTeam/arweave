@@ -43,22 +43,26 @@ register(_Config) ->
        #{<<"RateLimit-Limit">> =>
              <<"460, 460;policy=\"test_limiter usage\", 500;policy=\"test_limiter concurrency\" ">>,
          <<"RateLimit-Remaining">> => <<"9">>,
+         <<"ar-RateLimit-Reset-Amount">> => <<"123">>,
          <<"RateLimit-Reset">> => <<"1">>},
        ?M:to_http_headers({register, sliding,
                            #{expiring_limit => 460,
                              remaining      => 9,
                              reset_seconds  => 1,
+                             reset_amount   => 123,
                              policies => ?POLICIES}
                           })),
     ?assertEqual(
        #{<<"RateLimit-Limit">> =>
              <<"460, 460;policy=\"test_limiter usage\", 500;policy=\"test_limiter concurrency\" ">>,
          <<"RateLimit-Remaining">> => <<"449">>,
+         <<"ar-RateLimit-Reset-Amount">> => <<"123">>,
          <<"RateLimit-Reset">> => <<"29">>},
        ?M:to_http_headers({register, leaky,
                            #{expiring_limit => 460,
                              remaining      => 449,
                              reset_seconds  => 29,
+                             reset_amount   => 123,
                              policies => ?POLICIES}
                           })),
     ok.
@@ -69,11 +73,13 @@ reject(_Config) ->
              <<"500, 460;policy=\"test_limiter usage\", 500;policy=\"test_limiter concurrency\" ">>,
          <<"RateLimit-Remaining">> => <<"0">>,
          <<"RateLimit-Reset">> => <<"1">>,
+         <<"ar-RateLimit-Reset-Amount">> => <<"123">>,
          <<"Retry-After">> => <<"1">>},
        ?M:to_http_headers({reject, concurrency,
                            #{expiring_limit => 500,
                              remaining      => 0,
                              reset_seconds  => 1,
+                             reset_amount   => 123,
                              policies => ?POLICIES}
                           })),
     ?assertEqual(
@@ -81,11 +87,13 @@ reject(_Config) ->
              <<"460, 460;policy=\"test_limiter usage\", 500;policy=\"test_limiter concurrency\" ">>,
          <<"RateLimit-Remaining">> => <<"0">>,
          <<"RateLimit-Reset">> => <<"15">>,
+         <<"ar-RateLimit-Reset-Amount">> => <<"123">>,
          <<"Retry-After">> => <<"15">>},
        ?M:to_http_headers({reject, rate_limit,
                            #{expiring_limit => 460,
                              remaining      => 0,
                              reset_seconds  => 15,
+                             reset_amount   => 123,
                              policies => ?POLICIES}
                           })),
     ok.

@@ -642,7 +642,11 @@ peer_cleanup(Config) ->
     %% Exhausted 1 sliding window, but has 1 leaky_bucket token available to spend
     Caller1 = ?assertHandlerRegisterOrRejectCall(
                  ?TEST_LIMITER, {register, sliding,
-                                 #{expiring_limit := 2, remaining := 1,reset_seconds := 0}}, IP, 1),
+                                 #{expiring_limit := 2,
+                                   remaining := 1,
+                                   reset_seconds := 0,
+                                   reset_amount := 1
+                                  }}, IP, 1),
 
     %% wait a bit so they are surely started.
     timer:sleep(100),
@@ -653,7 +657,12 @@ peer_cleanup(Config) ->
 
     Caller2 = ?assertHandlerRegisterOrRejectCall(
                  ?TEST_LIMITER, {register, leaky,
-                                 #{expiring_limit := 2,remaining := 0,reset_seconds := 1}}, IP, 20),
+                                 #{expiring_limit := 2,
+                                   remaining := 0,
+                                   reset_seconds := 1,
+                                    %% In one seconds, we only clean up the sliding timestamps
+                                   reset_amount := 1
+                                  }}, IP, 20),
 
     %% wait a tiny bit so the logic surely runs.
     timer:sleep(100),
@@ -664,7 +673,9 @@ peer_cleanup(Config) ->
 
     %% further requests are rejected
     Caller3 = ?assertHandlerRegisterOrRejectCall(
-                 ?TEST_LIMITER, {reject, concurrency, _Data}, IP, 300),
+                 ?TEST_LIMITER, {reject, concurrency,
+                                 #{reset_seconds := 1}
+                                }, IP, 300),
 
     %% Tokens reduced, will register again
     %% wait a tiny bit so the logic surely runs.
@@ -777,6 +788,7 @@ leaky_manual_reduction_disabled(Config) ->
                                  #{expiring_limit := 5,
                                    remaining      := 4,
                                    reset_seconds  := 99,
+                                   reset_amount   := 1,
                                    policies       := Policies}
                                 }, IP, 1),
     ?assertEqual(1, arweave_limiter_time:ts_now()),
@@ -785,6 +797,7 @@ leaky_manual_reduction_disabled(Config) ->
                                  #{expiring_limit := 5,
                                    remaining      := 3,
                                    reset_seconds  := 99,
+                                   reset_amount   := 1, %% Reduction is 1.
                                    policies       := Policies}
                                 }, IP, 20),
     ?assertEqual(20, arweave_limiter_time:ts_now()),
@@ -793,6 +806,7 @@ leaky_manual_reduction_disabled(Config) ->
                                  #{expiring_limit := 5,
                                    remaining      := 2,
                                    reset_seconds  := 95,
+                                   reset_amount   := 1,
                                    policies       := Policies}
                                 }, IP, 4001),
     ?assertEqual(4001, arweave_limiter_time:ts_now()),
@@ -801,6 +815,7 @@ leaky_manual_reduction_disabled(Config) ->
                                  #{expiring_limit := 5,
                                    remaining      := 1,
                                    reset_seconds  := 89,
+                                   reset_amount   := 1,
                                    policies       := Policies}
                                 }, IP, 10001),
     ?assertEqual(10001, arweave_limiter_time:ts_now()),

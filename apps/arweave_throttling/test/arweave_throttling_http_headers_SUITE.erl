@@ -76,27 +76,31 @@ parse_well_formed(_Config) ->
     Headers = headers(<<"general">>, 200, 42, 7),
     {ok, Parsed} = ?M:parse(Headers),
     ?assertEqual(#{group_id => <<"general">>,
-                total => 200,
-            remaining => 42,
-            reset_seconds => 7}, Parsed),
+                   total => 200,
+                   remaining => 42,
+                   reset_amount => 158,
+                   reset_seconds => 7}, Parsed),
     ok.
 
 parse_well_formed_list(_Config) ->
     Headers = [{<<"RateLimit-Limit">>,limit_value(<<"general">>, 200)},
-            {<<"RateLimit-Remaining">>, integer_to_binary(42)},
-            {<<"RateLimit-Reset">>, integer_to_binary(7)}],
+               {<<"RateLimit-Remaining">>, <<"42">>},
+               {<<"ar-RateLimit-Reset-Amount">>, <<"158">>},
+               {<<"RateLimit-Reset">>, <<"7">>}],
     ?assertEqual({ok, #{group_id => <<"general">>,
-                total => 200,
-                remaining => 42,
-                reset_seconds => 7}}, ?M:parse(Headers)),
+                        total => 200,
+                        remaining => 42,
+                        reset_amount => 158,
+                        reset_seconds => 7}}, ?M:parse(Headers)),
     ok.
 
 parse_alpha2_version(_Config) ->
     %% This is alpha2 version: no group ids but correct policy names.
     Headers = [{<<"RateLimit-Limit">>,
                 <<"460, 460;policy=\"usage\", 500;policy=\"concurrency\" ">>},
-            {<<"RateLimit-Remaining">>, <<"449">>},
-            {<<"RateLimit-Reset">>, <<"19">>}],
+               {<<"RateLimit-Remaining">>, <<"449">>},
+               {<<"ar-RateLimit-Reset-Amount">>, <<"1">>},
+               {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, missing_group_id},
                 ?M:parse(Headers)),
     ok.
@@ -105,14 +109,16 @@ parse_malformed_policies(_Config) ->
     %% Earlier alpha version
     Headers1 = [{<<"RateLimit-Limit">>,
                  <<"450, 0;w=1000;policy=\"\", 450;w=1000;burst=450;policy=\"leaky bucket\" 150;w=1;policy=\"concurrency\"">>},
-            {<<"RateLimit-Remaining">>, <<"449">>},
-            {<<"RateLimit-Reset">>, <<"19">>}],
+                {<<"RateLimit-Remaining">>, <<"449">>},
+                {<<"ar-RateLimit-Reset-Amount">>, <<"1">>},
+                {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, malformed_policy},
                 ?M:parse(Headers1)),
     Headers2 = [{<<"RateLimit-Limit">>,
                 <<"450, 0;w=1000;policy=\"something else\", 450;w=1000;burst=450;policy=\"leaky bucket\" 150;w=1;policy=\"concurrency\"">>},
-            {<<"RateLimit-Remaining">>, <<"449">>},
-            {<<"RateLimit-Reset">>, <<"19">>}],
+                {<<"RateLimit-Remaining">>, <<"449">>},
+                {<<"ar-RateLimit-Reset-Amount">>, <<"1">>},
+                {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, malformed_policy},
                 ?M:parse(Headers2)),
     %% Version with no group names.
@@ -121,6 +127,7 @@ parse_malformed_policies(_Config) ->
         [{<<"RateLimit-Limit">>,
           <<"460, 460;policy=\"leaky bucket\", 500;policy=\"concurrency\" ">>},
          {<<"RateLimit-Remaining">>, <<"449">>},
+         {<<"ar-RateLimit-Reset-Amount">>, <<"1">>},
          {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, malformed_policy},
                 ?M:parse(Headers3)),
@@ -130,13 +137,15 @@ parse_malformed_policies(_Config) ->
 %% @doc Header names are matched case-insensitively.
 parse_case_insensitive_names(_Config) ->
     Headers = #{<<"RaTeLiMiT-LiMiT">> => limit_value(<<"data_sync_record">>, 10),
-            <<"ratelimit-remaining">> => <<"3">>,
-            <<"RATELIMIT-RESET">> =><<"1">>},
+                <<"ratelimit-remaining">> => <<"3">>,
+                <<"ar-RateLimit-Reset-Amount">> => <<"7">>,
+                <<"RATELIMIT-RESET">> =><<"1">>},
     {ok, Parsed} = ?M:parse(Headers),
     ?assertEqual(#{group_id => <<"data_sync_record">>,
-                total => 10,
-                remaining => 3,
-                reset_seconds => 1}, Parsed),
+                   total => 10,
+                   remaining => 3,
+                   reset_amount => 7,
+                   reset_seconds => 1}, Parsed),
     ok.
 
 %% @doc The headers may be supplied as a map as well as a proplist.
@@ -152,6 +161,7 @@ parse_accepts_map(_Config) ->
 %% @doc A missing header is reported, not silently defaulted.
 parse_missing_header(_Config) ->
     Headers = #{<<"ratelimit-limit">> => limit_value(<<"general">>, 10),
+                <<"ar-RateLimit-Reset-Amount">> => <<"1">>,
                 <<"ratelimit-reset">> => <<"1">>},
     ?assertEqual({error, {missing_header, <<"ratelimit-remaining">>}},
                 ?M:parse(Headers)),
@@ -162,6 +172,7 @@ parse_missing_header(_Config) ->
 parse_malformed_limit(_Config) ->
     Headers = #{<<"ratelimit-limit">> => <<"not a valid limit">>,
                 <<"ratelimit-remaining">> => <<"3">>,
+                <<"ar-RateLimit-Reset-Amount">> => <<"7">>,
                 <<"ratelimit-reset">> => <<"1">>},
     ?assertEqual({error, malformed_headers}, ?M:parse(Headers)),
     ok.
@@ -203,7 +214,8 @@ old_headers(_Config) ->
 %% arweave_limiter_http_headers would emit it.
 headers(GroupBin, Total, Remaining, Reset) ->
     #{<<"RateLimit-Limit">> => limit_value(GroupBin, Total),
-    <<"RateLimit-Remaining">> => integer_to_binary(Remaining),
+      <<"RateLimit-Remaining">> => integer_to_binary(Remaining),
+      <<"ar-RateLimit-Reset-Amount">> => integer_to_binary(Total - Remaining), %% simplest scenario
     <<"RateLimit-Reset">> => integer_to_binary(Reset)}.
 
 %% RateLimit-Limit value: the expiring-limit followed by the three

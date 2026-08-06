@@ -229,17 +229,18 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                                 {sliding_window_limit, SlidingWindowLimit},
                                 {leaky_rate_limit, LeakyRateLimit},
                                 {peer, Peer}, {id, ID}]),
-
+                    %% This is where
                     HeadersInfo = build_headers_info(
-                                    0, 0,
-                                    SlidingTimestampsForPeer0, Now, State),
+                                    0, 0, SlidingTimestampsForPeer0, Now,
+                                    reject, State),
                     {reply, {reject, rate_limit, HeadersInfo}, State};
                 false ->
                     NewLeakyTokens = update_token(Peer, Tokens + 1, LeakyTokens),
                     NewMonitors = register_concurrent(FromPid, ConcurrentMonitors),
                     HeadersInfo = build_headers_info(
                                     0, LbRemaining - 1,
-                                    SlidingTimestampsForPeer0, Now, State),
+                                    SlidingTimestampsForPeer0, Now,
+                                    leaky, State),
                     {reply, {register, leaky, HeadersInfo},
                      State#{leaky_tokens => NewLeakyTokens,
                             concurrent_monitors => NewMonitors}}
@@ -251,7 +252,8 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
             SlidingRemaining = SlidingWindowLimit - length(SlidingTimestampsForPeer1),
             HeadersInfo = build_headers_info(
                             SlidingRemaining, LbRemaining,
-                            SlidingTimestampsForPeer1, Now, State),
+                            SlidingTimestampsForPeer1, Now,
+                            sliding, State),
 
             {reply, {register, sliding, HeadersInfo},
              State#{sliding_timestamps => NewSlidingTimestamps,
@@ -463,23 +465,50 @@ ref_to_worker_ref(LimiterRef, Peer) ->
     arweave_limiter_util:worker_ref(LimiterRef, Peer, WorkersNum).
 
 build_headers_info(SlidingRemaining, LeakyRemaining,
-                   SWTimestamps, Now,
+                   SWTimestamps, Now, Mode,
                    #{sliding_window_limit := SlidingLimit,
                      leaky_rate_limit := LeakyLimit,
+                     tick_reduction := TickReduction,
                      next_leaky_tick_ts := NextLeakyTickTS
                     } = State) ->
     Policies = generate_policy(State),
     ExpiringLimit = SlidingLimit + LeakyLimit,
     Remaining = SlidingRemaining + LeakyRemaining,
 
+    %% We need to tell the client when the quota is going to be reset.
+    %% It can be the next time a sliding window timestamp expires, or the
+    %% next time a leaky bucket reduction is performed (next tick).
+    %% Whatever comes first.
+    %% However, one of the modes might be disabled, in this case the only the
+    %% other mode's reset time is shown.
     LBReset = max(1, (NextLeakyTickTS - Now) div 1000),
     SWReset = sliding_window_reset_seconds(SWTimestamps, Now),
-    Reset = reset_seconds(SlidingLimit, LeakyLimit, SWReset, LBReset),
+    {ResetMode, ResetSeconds} = reset_mode_and_seconds(SlidingLimit, LeakyLimit, SWReset, LBReset),
+
+    %% Reset Amount - the amount of requests we will allow after next reset cycle
+    %% (whatever is that expiring timestamps, or leaky bucket reduction)
+    %% It helps the client to know this, because they can send this amount of requests
+    %% as soon as their timer expires.
+    %% For Sliding window we'll need to know the amount of timestamps within ResetSeconds
+    %% seconds to determine how many will be reset. Since ResetSeconds is calculated as
+    %% the difference of time between the oldest timestamp and now, all the currently stored
+    %% timestamps will expire.
+    ResetAmount = reset_amount(Mode, ResetMode, length(SWTimestamps), TickReduction),
 
     #{expiring_limit => ExpiringLimit,
       remaining      => Remaining,
-      reset_seconds  => Reset,
+      reset_seconds  => ResetSeconds,
+      reset_amount   => ResetAmount,
       policies       => Policies}.
+
+reset_amount(sliding, _ResetMode, SlidingResetAmount, _LeakyResetAmount) ->
+    SlidingResetAmount;
+reset_amount(leaky, _ResetMode, _SlidingResetAmount, LeakyResetAmount) ->
+    LeakyResetAmount;
+reset_amount(reject, sliding, SlidingResetAmount, _LeakyResetAmount) ->
+    SlidingResetAmount;
+reset_amount(reject, leaky, _SlidingResetAmount, LeakyResetAmount) ->
+    LeakyResetAmount.
 
 generate_policy(#{id := GroupID,
                   concurrency_limit := ConcurrencyLimit,
@@ -503,14 +532,17 @@ generate_policy(#{id := GroupID,
                         tick_reduction => TickReduction}
      }.
 
-reset_seconds(0, _LeakyLimit, _SWReset, LBReset) ->
+reset_mode_and_seconds(0, _LeakyLimit, _SWReset, LBReset) ->
     %% Only consider Leaky Bucket when Sliding Window is not active
-    LBReset;
-reset_seconds(_SlidingLimit, 0, SWReset, _LBReset) ->
+    {leaky, LBReset};
+reset_mode_and_seconds(_SlidingLimit, 0, SWReset, _LBReset) ->
     %% Only consider Sliding Window when Leaky Bucket is not active
-    SWReset;
-reset_seconds(_SlidingLimit, _LeakyLimit, SWReset, LBReset) ->
-    min(SWReset, LBReset).
+    {sliding, SWReset};
+reset_mode_and_seconds(_SlidingLimit, _LeakyLimit, SWReset, LBReset) when SWReset < LBReset ->
+    {sliding, SWReset};
+reset_mode_and_seconds(_SlidingLimit, _LeakyLimit, SWReset, LBReset) ->
+    {leaky, LBReset}.
+
 
 %% Seconds until the oldest in-window timestamp ages out. 0 when the window
 %% has spare capacity (no meaningful "reset" to advertise).

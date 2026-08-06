@@ -47,14 +47,19 @@ parse(Headers) when is_list(Headers) ->
 parse(Headers0) ->
     try
         Headers = lowercase_keys(Headers0),
+        %% NOTE: use lowercase keys to fetch, as we converted
+        %% all keys in the map to lowercase already. This will keep
+        %% header keys case-insensitive.
         Limit = fetch(<<"ratelimit-limit">>, Headers),
         Remaining = fetch(<<"ratelimit-remaining">>, Headers),
         Reset = fetch(<<"ratelimit-reset">>, Headers),
+        ResetAmount = fetch(<<"ar-ratelimit-reset-amount">>, Headers),
         {Total, GroupId} = parse_limit(Limit),
         {ok, #{group_id => GroupId,
-            total => Total,
-            remaining => to_integer(Remaining),
-            reset_seconds => to_integer(Reset)}}
+               total => Total,
+               remaining => to_integer(Remaining),
+               reset_amount => to_integer(ResetAmount),
+               reset_seconds => to_integer(Reset)}}
     catch
         throw:{missing_header, _} = Reason ->
             {error, Reason};
