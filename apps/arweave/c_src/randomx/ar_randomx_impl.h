@@ -8,6 +8,7 @@
 
 #include <erl_nif.h>
 #include <randomx.h>
+#include <string.h>
 
 // From RandomX/src/jit_compiler.hpp
 // needed for the JIT compiler to work on OpenBSD, NetBSD and Apple Silicon
@@ -83,8 +84,16 @@ static ERL_NIF_TERM init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM arg
 	if (!enif_get_uint(envPtr, argv[4], &numWorkers)) {
 		return enif_make_badarg(envPtr);
 	}
+	// numWorkers is only used to build the dataset in fast mode. Light mode
+	// legitimately passes 0, so only require at least one worker for fast mode.
+	if (mode == HASHING_MODE_FAST && numWorkers < 1u) {
+		return enif_make_badarg(envPtr);
+	}
 
 	statePtr = enif_alloc_resource(stateType, sizeof(struct state));
+	if (statePtr == NULL) {
+		return error_tuple(envPtr, "enif_alloc_resource failed");
+	}
 	statePtr->cachePtr = NULL;
 	statePtr->datasetPtr = NULL;
 	statePtr->isRandomxReleased = 0;
@@ -276,11 +285,29 @@ static boolean init_dataset(
 	boolean anyThreadFailed;
 
 	workerPtrPtr = enif_alloc(sizeof(struct workerThread *) * numWorkers);
+	if (workerPtrPtr == NULL) {
+		return FALSE;
+	}
+	(void)memset(workerPtrPtr, 0, sizeof(struct workerThread *) * numWorkers);
+
 	itemsPerThread = randomx_dataset_item_count() / numWorkers;
 	itemsRemainder = randomx_dataset_item_count() % numWorkers;
 	startItem = 0;
 	for (int i = 0; i < numWorkers; i++) {
 		workerPtrPtr[i] = enif_alloc(sizeof(struct workerThread));
+		if (workerPtrPtr[i] == NULL) {
+			for (int j = 0; j < i; j++) {
+				workerPtr = workerPtrPtr[j];
+				if (workerPtr != NULL) {
+					(void)enif_thread_join(workerPtr->threadId, NULL);
+					enif_thread_opts_destroy(workerPtr->optsPtr);
+					enif_free(workerPtr);
+					workerPtrPtr[j] = NULL;
+				}
+			}
+			enif_free(workerPtrPtr);
+			return FALSE;
+		}
 		workerPtr = workerPtrPtr[i];
 
 		workerPtr->cachePtr = cachePtr;

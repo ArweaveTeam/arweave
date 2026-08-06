@@ -991,6 +991,10 @@ void sha2_p2_32_32_norm_rev (unsigned char *output,
 }
 
 void _vdf_sha2_fused_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
+	if (hashingIterations < 2) {
+		vdf_sha2(saltBuffer, seed, out, outCheckpoint, checkpointCount, skipCheckpointCount, hashingIterations);
+		return;
+	}
 	unsigned char tempOut[VDF_SHA_HASH_SIZE];
 	// 2 different branches for different optimisation cases
 	if (skipCheckpointCount == 0) {

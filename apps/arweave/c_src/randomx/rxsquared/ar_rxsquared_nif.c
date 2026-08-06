@@ -1,4 +1,6 @@
 #include <string.h>
+#include <stdint.h>
+#include <limits.h>
 #include <openssl/sha.h>
 #include <ar_nif.h>
 #include "../randomx_long_with_entropy.h"
@@ -6,6 +8,13 @@
 #include "../randomx_squared.h"
 
 #include "../ar_randomx_impl.h"
+
+#define RX2_MAX_LANES 4096u
+#define RX2_MAX_DEPTH 8192
+#define RX2_MAX_SUBCHUNKS 65536
+#define RX2_MAX_SUBCHUNK_SIZE (1024 * 1024)
+#define RX2_MAX_PROGRAM_COUNT 10000
+#define RX2_MAX_KEY_BYTES (16 * 1024 * 1024)
 
 const int PACKING_KEY_SIZE = 32;
 const int MAX_CHUNK_SIZE = 256*1024;
@@ -57,7 +66,7 @@ static ERL_NIF_TERM rsp_feistel_encrypt_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	if (msgSize % 64 != 0) {
+	if (msgSize % 64 != 0 || msgSize < 64) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -66,7 +75,9 @@ static ERL_NIF_TERM rsp_feistel_encrypt_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	feistel_encrypt(inMsgBin.data, msgSize, inKeyBin.data, outMsgData);
+	if (!feistel_encrypt(inMsgBin.data, msgSize, inKeyBin.data, outMsgData)) {
+		return error_tuple(envPtr, "feistel_encrypt failed");
+	}
 
 	return ok_tuple(envPtr, outMsgTerm);
 }
@@ -96,7 +107,7 @@ static ERL_NIF_TERM rsp_feistel_decrypt_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	if (msgSize % 64 != 0) {
+	if (msgSize % 64 != 0 || msgSize < 64) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -105,7 +116,9 @@ static ERL_NIF_TERM rsp_feistel_decrypt_nif(
 		return enif_make_badarg(envPtr);
 	}
 
-	feistel_decrypt(inMsgBin.data, msgSize, inKeyBin.data, outMsgData);
+	if (!feistel_decrypt(inMsgBin.data, msgSize, inKeyBin.data, outMsgData)) {
+		return error_tuple(envPtr, "feistel_decrypt failed");
+	}
 
 	return ok_tuple(envPtr, outMsgTerm);
 }
@@ -167,18 +180,48 @@ static ERL_NIF_TERM rsp_fused_entropy_nif(ErlNifEnv* envPtr, int argc, const ERL
 	if (!enif_inspect_binary(envPtr, argv[9], &keyBin)) {
 		return enif_make_badarg(envPtr);
 	}
+	if (subChunkCount < 1 || subChunkCount > RX2_MAX_SUBCHUNKS) {
+		return enif_make_badarg(envPtr);
+	}
+	if (subChunkSize < 1 || subChunkSize > RX2_MAX_SUBCHUNK_SIZE) {
+		return enif_make_badarg(envPtr);
+	}
+	if (laneCount < 1 || laneCount > (int)RX2_MAX_LANES) {
+		return enif_make_badarg(envPtr);
+	}
+	if (rxDepth < 1 || rxDepth > RX2_MAX_DEPTH) {
+		return enif_make_badarg(envPtr);
+	}
+	if (randomxProgramCount < 1 || randomxProgramCount > RX2_MAX_PROGRAM_COUNT) {
+		return enif_make_badarg(envPtr);
+	}
+	if (keyBin.size < 1 || keyBin.size > RX2_MAX_KEY_BYTES) {
+		return enif_make_badarg(envPtr);
+	}
+	if (laneCount > INT_MAX / 2) {
+		return enif_make_badarg(envPtr);
+	}
 
-	// 4. Create VMs
+	size_t scratchpadSize = randomx_get_scratchpad_size();
+	if (scratchpadSize == 0) {
+		return enif_make_badarg(envPtr);
+	}
+	if ((size_t)laneCount > SIZE_MAX / scratchpadSize) {
+		return enif_make_badarg(envPtr);
+	}
+
 	int totalVMs = 2 * laneCount;
-	randomx_vm** vmList = (randomx_vm**)calloc(totalVMs, sizeof(randomx_vm*));
+	if ((size_t)totalVMs > SIZE_MAX / sizeof(randomx_vm*)) {
+		return enif_make_badarg(envPtr);
+	}
+	// 4. Create VMs
+	randomx_vm** vmList = (randomx_vm**)calloc((size_t)totalVMs, sizeof(randomx_vm*));
 	if (!vmList) {
 		return error_tuple(envPtr, "vmList_alloc_failed");
 	}
 
-	size_t scratchpadSize = randomx_get_scratchpad_size();
-
 	// 5. Pre-allocate the final output binary to store all scratchpads
-	size_t outEntropySize = scratchpadSize * laneCount;
+	size_t outEntropySize = scratchpadSize * (size_t)laneCount;
 	ERL_NIF_TERM outEntropyTerm;
 	unsigned char* outEntropy =
 		enif_make_new_binary(envPtr, outEntropySize, &outEntropyTerm);

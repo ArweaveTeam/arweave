@@ -93,8 +93,15 @@ void feistel_decrypt_block(const unsigned char *in_left, const unsigned char *in
 // feistel_encrypt accepts padded message with 2*FEISTEL_BLOCK_LENGTH = 64 bytes
 // in_key_length == plaintext_len
 // CBC
-void feistel_encrypt(const unsigned char *plaintext, const size_t plaintext_len, const unsigned char *in_key, unsigned char *ciphertext) {
-	size_t block_count = plaintext_len / (2*FEISTEL_BLOCK_LENGTH);
+bool feistel_encrypt(const unsigned char *plaintext, const size_t plaintext_len, const unsigned char *in_key, unsigned char *ciphertext) {
+	const size_t stride = (size_t)2 * FEISTEL_BLOCK_LENGTH;
+	if (plaintext == NULL || in_key == NULL || ciphertext == NULL) {
+		return false;
+	}
+	if (plaintext_len < stride || (plaintext_len % stride) != 0) {
+		return false;
+	}
+	size_t block_count = plaintext_len / stride;
 	unsigned char feed_key[2*FEISTEL_BLOCK_LENGTH] = {0};
 
 	const unsigned char *in = plaintext;
@@ -115,10 +122,18 @@ void feistel_encrypt(const unsigned char *plaintext, const size_t plaintext_len,
 		in  += 2*FEISTEL_BLOCK_LENGTH;
 		key += 2*FEISTEL_BLOCK_LENGTH;
 	}
+	return true;
 }
 
-void feistel_decrypt(const unsigned char *ciphertext, const size_t ciphertext_len, const unsigned char *in_key, unsigned char *plaintext) {
-	size_t block_count = ciphertext_len / (2*FEISTEL_BLOCK_LENGTH);
+bool feistel_decrypt(const unsigned char *ciphertext, const size_t ciphertext_len, const unsigned char *in_key, unsigned char *plaintext) {
+	const size_t stride = (size_t)2 * FEISTEL_BLOCK_LENGTH;
+	if (ciphertext == NULL || in_key == NULL || plaintext == NULL) {
+		return false;
+	}
+	if (ciphertext_len < stride || (ciphertext_len % stride) != 0) {
+		return false;
+	}
+	size_t block_count = ciphertext_len / stride;
 	unsigned char feed_key[2*FEISTEL_BLOCK_LENGTH] = {0};
 
 	const unsigned char *in = ciphertext + ciphertext_len - 2*FEISTEL_BLOCK_LENGTH;
@@ -137,5 +152,5 @@ void feistel_decrypt(const unsigned char *ciphertext, const size_t ciphertext_le
 	}
 
 	feistel_decrypt_block(in, in + FEISTEL_BLOCK_LENGTH, key, out, out + FEISTEL_BLOCK_LENGTH);
+	return true;
 }
-
