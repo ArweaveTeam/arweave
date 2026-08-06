@@ -642,8 +642,10 @@ reverse_diff_ets(Diff, Tid) ->
     ).
 
 compute_hash(Tid, PersistOpts) ->
+    Progress = arweave_config:get([logging, patricia]) == true,
+    PersistOpts2 = PersistOpts#{ progress => Progress },
     {RootHash, Tree, Info} =
-        ar_patricia_tree_ets:compute_hash(Tid, ar_block:wallet_list_hash_fun(), PersistOpts),
+        ar_patricia_tree_ets:compute_hash(Tid, ar_block:wallet_list_hash_fun(), PersistOpts2),
     arweave_metrics:histogram_observe(account_tree_rehashed_nodes, [],
             maps:get(rehashed_nodes, Info, 0)),
     {RootHash, Tree, Info}.

@@ -8,7 +8,7 @@
 -module(ar_patricia_tree_core).
 
 -export([insert/4, get_value/3, lookup/3, size/2, is_empty/2, from_proplist/2, delete/3,
-         get_range/3, get_range/4, foldr/4, compute_hash/4]).
+         get_range/3, get_range/4, foldr/4, compute_hash/4, compute_hash/5]).
 
 %% The storage backend. get_node returns the node {Parent, Children, Hash, Suffix, Value}
 %% or not_found. put_node, del_node, and set_size return the (possibly new) Tree. emit is
@@ -97,11 +97,16 @@ foldr(Backend, Fun, Acc, Tree) ->
 %% combines child hashes. Backend:emit is called at every hashed node, threading Acc.
 %% Return {RootHash, Tree, Acc}.
 compute_hash(Backend, Tree, HashFun, Acc) ->
+    compute_hash(Backend, Tree, HashFun, Acc, false).
+
+%% @doc Like compute_hash/4. When Progress is true, log a progress line every
+%% ?PROGRESS_CHUNK hashed leaves (see progress_init/3).
+compute_hash(Backend, Tree, HashFun, Acc, Progress) ->
     case Backend:get_size(Tree) of
         0 ->
             {<<>>, Tree, Acc};
         _ ->
-            progress_init(Backend, Tree),
+            progress_init(Backend, Tree, Progress),
             Result = do_compute_hash(Backend, Tree, HashFun, Acc, root),
             progress_finish(Backend, Tree),
             Result
@@ -454,22 +459,19 @@ get_next_start_from_sibling(Backend, Key, Parent, Tree) ->
             end
     end.
 
-%% @doc Diagnostic progress logging for compute_hash, gated by the AR_PATRICIA_PROGRESS
-%% environment variable (off by default). Logs a line every ?PROGRESS_CHUNK leaves. Uses the
+%% @doc Diagnostic progress logging for compute_hash, gated by the Progress argument of
+%% compute_hash/5 (off by default). Logs a line every ?PROGRESS_CHUNK leaves. Uses the
 %% process dictionary. compute_hash runs in a single process.
-progress_init(Backend, Tree) ->
-    case os:getenv("AR_PATRICIA_PROGRESS") of
-        V when V == false; V == ""; V == "0"; V == "false" ->
-            erlang:erase(pt_progress),
-            erlang:erase(pt_progress_gc0);
-        _ ->
-            Now = erlang:monotonic_time(millisecond),
-            {GCs, _, _} = erlang:statistics(garbage_collection),
-            erlang:put(pt_progress, {0, Now, Now}),
-            erlang:put(pt_progress_gc0, GCs),
-            io:format("[~s progress] start mem=~BMB~s~n",
-                      [Backend, erlang:memory(total) div (1024 * 1024), Backend:progress_extra(Tree)])
-    end.
+progress_init(_Backend, _Tree, false) ->
+    erlang:erase(pt_progress),
+    erlang:erase(pt_progress_gc0);
+progress_init(Backend, Tree, true) ->
+    Now = erlang:monotonic_time(millisecond),
+    {GCs, _, _} = erlang:statistics(garbage_collection),
+    erlang:put(pt_progress, {0, Now, Now}),
+    erlang:put(pt_progress_gc0, GCs),
+    io:format("[~s progress] start mem=~BMB~s~n",
+              [Backend, erlang:memory(total) div (1024 * 1024), Backend:progress_extra(Tree)]).
 
 progress_tick(Backend, Tree) ->
     case erlang:get(pt_progress) of

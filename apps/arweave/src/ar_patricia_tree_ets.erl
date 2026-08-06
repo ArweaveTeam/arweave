@@ -83,7 +83,8 @@ size(Tree) ->
 %% Recompute the root hash. The third element is #{ rehashed_nodes => N } - the number of dirty
 %% nodes this call re-hashed (this variant does not build an UpdateMap); with PersistOpts
 %% #{ sink => PID } each node update is streamed to that process in batches (see
-%% maybe_persist/4).
+%% maybe_persist/4). PersistOpts #{ progress => true } logs progress lines during the
+%% computation.
 -spec compute_hash(ets:tid(), fun()) -> {binary(), ets:tid(), map()}.
 compute_hash(Tree, HashFun) ->
     compute_hash(Tree, HashFun, #{}).
@@ -91,9 +92,11 @@ compute_hash(Tree, HashFun) ->
 -spec compute_hash(ets:tid(), fun(), map()) -> {binary(), ets:tid(), map()}.
 compute_hash(Tree, HashFun, PersistOpts) ->
     Sink = maps:get(sink, PersistOpts, undefined),
+    Progress = maps:get(progress, PersistOpts, false) == true,
     persist_init(Sink),
     erlang:put(pt_rehashed_count, 0),
-    {RootHash, Tree2, _} = ar_patricia_tree_core:compute_hash(?MODULE, Tree, HashFun, Sink),
+    {RootHash, Tree2, _} =
+        ar_patricia_tree_core:compute_hash(?MODULE, Tree, HashFun, Sink, Progress),
     persist_flush(Sink),
     {RootHash, Tree2, #{ rehashed_nodes => erlang:erase(pt_rehashed_count) }}.
 

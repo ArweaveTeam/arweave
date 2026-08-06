@@ -133,11 +133,13 @@ repr_module(ets) -> ar_patricia_tree_ets.
 
 %% @doc Map the persist_updates flag to the PersistOpts passed to the representation's
 %% compute_hash/3. For ets, the #{ sink => Pid } entry is added by measure_account_tree/7.
-account_tree_persist_opts(in_memory, true) -> #{ return_update_map => true };
-account_tree_persist_opts(in_memory, false) -> #{};
+%% Progress logging is always on in the benchmark. The legacy representation does not
+%% support it.
+account_tree_persist_opts(in_memory, true) -> #{ return_update_map => true, progress => true };
+account_tree_persist_opts(in_memory, false) -> #{ progress => true };
 account_tree_persist_opts(legacy, true) -> #{ return_update_map => true };
 account_tree_persist_opts(legacy, false) -> #{};
-account_tree_persist_opts(ets, _PersistUpdates) -> #{}.
+account_tree_persist_opts(ets, _PersistUpdates) -> #{ progress => true }.
 
 %% @doc Run the build, hash, and rehash measurements and return a metrics map. Times are in
 %% seconds, footprints in MB. Serialization is skipped for the ets representation. When
