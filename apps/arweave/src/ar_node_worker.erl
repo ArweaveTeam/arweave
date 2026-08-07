@@ -335,18 +335,18 @@ validate_clock_sync(Peers) ->
                         end,
     Responses = ar_util:pmap(ValidatePeerClock, [P || P <- Peers, not is_pid(P)]),
     case checker(Responses) of
-                                                % If more valid nodes are present than invalid nodes, it should be
-                                                % good
+        % If more valid nodes are present than invalid nodes, it should be
+        % good
         {X, #{true := True, false := False}}
           when X>0, True>False ->
             ok;
 
-                                                % If all nodes are valid, then its good
+        % If all nodes are valid, then its good
         {_, #{ true := _ }} ->
             ok;
 
-                                                % Else there is a problem somewhere. Too many peers
-                                                % with clock issues will only cause problems.
+        % Else there is a problem somewhere. Too many peers
+        % with clock issues will only cause problems.
         _ ->
             ar:console(
               "~n\tInvalid peers. A valid peer must be part of the"
@@ -422,17 +422,17 @@ handle_cast(Message, #{ task_queue := TaskQueue } = State) ->
     end.
 
 handle_info({join_from_state, Height, BI, Blocks, CustomDir}, State) ->
-    {ok, _} = ar_wallets:start_link([{blocks, Blocks},
-                                     {from_state, ?START_FROM_STATE_SEARCH_DEPTH},
-                                     {custom_dir, CustomDir}]),
+    {ok, PID} = ar_account_tree:start_link([{blocks, Blocks},
+                                            {from_state, ?START_FROM_STATE_SEARCH_DEPTH},
+                                            {custom_dir, CustomDir}]),
     ets:insert(node_state, {join_state, {Height, Blocks, BI, CustomDir}}),
-    {noreply, State};
+    {noreply, State#{ account_tree_pid => PID }};
 
 handle_info({join, Height, BI, Blocks}, State) ->
     Peers = ar_peers:get_trusted_peers(),
-    {ok, _} = ar_wallets:start_link([{blocks, Blocks}, {from_peers, Peers}]),
+    {ok, PID} = ar_account_tree:start_link([{blocks, Blocks}, {from_peers, Peers}]),
     ets:insert(node_state, {join_state, {Height, Blocks, BI, not_set}}),
-    {noreply, State};
+    {noreply, State#{ account_tree_pid => PID }};
 
 handle_info({event, node_state, {account_tree_initialized, Height}}, State) ->
     [{_, {Height2, Blocks, BI, CustomDir}}] = ets:lookup(node_state, join_state),
@@ -656,6 +656,12 @@ handle_info({'DOWN', _Ref, process, PID, _Info}, State) ->
 handle_info({'EXIT', _PID, normal}, State) ->
     {noreply, State};
 
+%% Make sure we terminate when ar_account_tree terminates.
+handle_info({'EXIT', PID, Reason}, #{ account_tree_pid := PID } = State) ->
+    ?LOG_ERROR([{event, account_tree_terminated},
+                {reason, io_lib:format("~p", [Reason])}]),
+    {stop, {account_tree_terminated, Reason}, State};
+
 handle_info(shutdown, State) ->
     {stop, shutdown, State};
 
@@ -779,13 +785,13 @@ handle_task({filter_mempool, Mempool}, State) ->
             [{usd_to_ar_rate, Rate}] = ets:lookup(node_state, usd_to_ar_rate),
             [{price_per_gib_minute, Price}] = ets:lookup(node_state, price_per_gib_minute),
             [{kryder_plus_rate_multiplier, KryderPlusRateMultiplier}] = ets:lookup(node_state,
-                                                                                   kryder_plus_rate_multiplier),
+                    kryder_plus_rate_multiplier),
             [{denomination, Denomination}] = ets:lookup(node_state, denomination),
             [{redenomination_height, RedenominationHeight}] = ets:lookup(node_state,
-                                                                         redenomination_height),
+                    redenomination_height),
             [{block_anchors, BlockAnchors}] = ets:lookup(node_state, block_anchors),
             [{recent_txs_map, RecentTXMap}] = ets:lookup(node_state, recent_txs_map),
-            Wallets = ar_wallets:get(WalletList, ar_tx:get_addresses(List)),
+            Wallets = ar_account_tree:get(WalletList, ar_tx:get_addresses(List)),
             InvalidTXs =
                 prometheus_histogram:observe_duration(
                   reverify_mempool_chunk_duration_milliseconds,
@@ -793,9 +799,9 @@ handle_task({filter_mempool, Mempool}, State) ->
                           lists:foldl(
                             fun(TX, Acc) ->
                                     case ar_tx_replay_pool:verify_tx({TX, Rate, Price,
-                                                                      KryderPlusRateMultiplier, Denomination, Height,
-                                                                      RedenominationHeight, BlockAnchors, RecentTXMap,
-                                                                      #{}, Wallets}, do_not_verify_signature) of
+                                            KryderPlusRateMultiplier, Denomination, Height,
+                                            RedenominationHeight, BlockAnchors, RecentTXMap,
+                                            #{}, Wallets}, do_not_verify_signature) of
                                         valid ->
                                             Acc;
                                         {invalid, _Reason} ->
@@ -1027,7 +1033,7 @@ apply_block3(B, [PrevB | _] = PrevBlocks, Timestamp, State) ->
     [{recent_block_index, RecentBI}] = ets:lookup(node_state, recent_block_index),
     RootHash = PrevB#block.wallet_list,
     TXs = B#block.txs,
-    Accounts = ar_wallets:get(RootHash, [B#block.reward_addr | ar_tx:get_addresses(TXs)]),
+    Accounts = ar_account_tree:get(RootHash, [B#block.reward_addr | ar_tx:get_addresses(TXs)]),
     {Orphans, RecentBI2} = update_block_index(B, PrevBlocks, RecentBI),
     BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
     BlockTXPairs3 = tl(BlockTXPairs2),
@@ -1189,13 +1195,13 @@ may_be_get_double_signing_proof2(Iterator, RootHash, LockedRewards, Height) ->
             case ValidCDiffs of
                 false ->
                     may_be_get_double_signing_proof2(Iterator2,
-                                                     RootHash, LockedRewards, Height);
+                            RootHash, LockedRewards, Height);
                 true ->
-                    Accounts = ar_wallets:get(RootHash, [Addr]),
+                    Accounts = ar_account_tree:get(RootHash, [Addr]),
                     case ar_node_utils:is_account_banned(Addr, Accounts) of
                         true ->
                             may_be_get_double_signing_proof2(Iterator2,
-                                                             RootHash, LockedRewards, Height);
+                                    RootHash, LockedRewards, Height);
                         false ->
                             Proof2
                     end
@@ -1248,15 +1254,15 @@ pack_block_with_transactions(B, PrevB) ->
             Proof ->
                 [ar_wallet:hash_pub_key(element(1, Proof)) | Addresses2]
         end,
-    Accounts = ar_wallets:get(PrevB#block.wallet_list, Addresses3),
+    Accounts = ar_account_tree:get(PrevB#block.wallet_list, Addresses3),
     [{block_txs_pairs, BlockTXPairs}] = ets:lookup(node_state, block_txs_pairs),
     PrevBlocks = ar_block_cache:get_fork_blocks(block_cache, B),
     BlockTXPairs2 = update_block_txs_pairs(B, PrevBlocks, BlockTXPairs),
     BlockTXPairs3 = tl(BlockTXPairs2),
     {BlockAnchors, RecentTXMap} = get_block_anchors_and_recent_txs_map(BlockTXPairs3),
     ValidTXs = ar_tx_replay_pool:pick_txs_to_mine({BlockAnchors, RecentTXMap, Height - 1,
-                                                   RedenominationHeight, Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
-                                                   PrevDenomination, B#block.timestamp, Accounts, TXs}),
+            RedenominationHeight, Rate, PricePerGiBMinute, KryderPlusRateMultiplier,
+            PrevDenomination, B#block.timestamp, Accounts, TXs}),
     BlockSize =
         lists:foldl(
           fun(TX, Acc) ->
@@ -1271,12 +1277,12 @@ pack_block_with_transactions(B, PrevB) ->
                   size_tagged_txs = ar_block:generate_size_tagged_list_from_txs(ValidTXs, Height) },
     {ok, {EndowmentPool, Reward, DebtSupply, KryderPlusRateMultiplierLatch,
           KryderPlusRateMultiplier2, Accounts2}} = ar_node_utils:update_accounts(B2, PrevB,
-                                                                                 Accounts),
+            Accounts),
     Reward2 = ar_pricing:redenominate(Reward, PrevDenomination, Denomination),
     EndowmentPool2 = ar_pricing:redenominate(EndowmentPool, PrevDenomination, Denomination),
     DebtSupply2 = ar_pricing:redenominate(DebtSupply, PrevDenomination, Denomination),
-    {ok, RootHash} = ar_wallets:add_wallets(PrevB#block.wallet_list, Accounts2, Height,
-                                            Denomination),
+    {ok, RootHash} = ar_account_tree:add_wallets(PrevB#block.wallet_list, Accounts2, Height,
+                                                 Denomination),
     RewardHistory2 = ar_rewards:add_element(B2#block{ reward = Reward2 }, RewardHistory),
     %% Pre-2.8: slice the reward history to compute the hash
     %% Post-2.8: use the previous reward history hash and the head of the history to compute
@@ -1340,7 +1346,7 @@ block_txs_pair(B) ->
     {B#block.indep_hash, B#block.size_tagged_txs}.
 
 validate_wallet_list(#block{ indep_hash = H } = B, PrevB) ->
-    case ar_wallets:apply_block(B, PrevB) of
+    case ar_account_tree:apply_block(B, PrevB) of
         {error, invalid_denomination} ->
             ?LOG_WARNING([{event, received_invalid_block},
                           {validation_error, invalid_denomination}, {h, ar_util:encode(H)}]),
@@ -1531,6 +1537,14 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
       Orphans
      ),
     ar_chain_stats:log_fork(Orphans, ForkRootB),
+    case Orphans of
+        [] ->
+            ok;
+        _ ->
+            %% The new fork is [B | PrevBlocks] without ForkRootB (the common parent),
+            %% so its depth is length(PrevBlocks).
+            arweave_metrics:histogram_observe(fork_recovery_depth, [], length(PrevBlocks))
+    end,
     record_vdf_metrics(B, PrevB),
     return_orphaned_txs_to_mempool(CurrentH, ForkRootB#block.indep_hash),
     lists:foldl(
@@ -1540,7 +1554,7 @@ apply_validated_block2(State, B, PrevBlocks, Orphans, RecentBI, BlockTXPairs) ->
               Wallets = CurrentB#block.wallet_list,
               %% Use a twice bigger depth than the depth requested on join to serve
               %% the wallet trees to the joining nodes.
-              ok = ar_wallets:set_current(
+              ok = ar_account_tree:set_current(
                      Wallets, CurrentB#block.height, ar_block:get_consensus_window_size() * 2),
               CurrentB
       end,
@@ -1672,10 +1686,10 @@ record_economic_metrics2(B, PrevB) ->
             #block{ reward_history = RewardHistory } = B,
             RewardHistorySize = length(RewardHistory),
             AverageHashRate = ar_util:safe_divide(lists:sum([HR
-                                                             || {_, HR, _, _} <- RewardHistory]), RewardHistorySize),
+                    || {_, HR, _, _} <- RewardHistory]), RewardHistorySize),
             arweave_metrics:gauge_set(average_network_hash_rate, AverageHashRate),
             AverageBlockReward = ar_util:safe_divide(lists:sum([R
-                                                                || {_, _, R, _} <- RewardHistory]), RewardHistorySize),
+                    || {_, _, R, _} <- RewardHistory]), RewardHistorySize),
             arweave_metrics:gauge_set(average_block_reward, AverageBlockReward),
             arweave_metrics:gauge_set(price_per_gibibyte_minute, B#block.price_per_gib_minute),
             BlockInterval = ar_block_time_history:compute_block_interval(PrevB),
@@ -1690,26 +1704,26 @@ record_economic_metrics2(B, PrevB) ->
             arweave_metrics:gauge_set(endowment_pool_give, Give),
             arweave_metrics:gauge_set(expected_block_reward, ExpectedBlockReward),
             LegacyPricePerGibibyte = ar_pricing:get_storage_cost(?MiB * 1024,
-                                                                 os:system_time(second), PrevB#block.usd_to_ar_rate, B#block.height),
+                    os:system_time(second), PrevB#block.usd_to_ar_rate, B#block.height),
             arweave_metrics:gauge_set(legacy_price_per_gibibyte_minute, LegacyPricePerGibibyte),
             arweave_metrics:gauge_set(available_supply,
-                                 ?TOTAL_SUPPLY - B#block.reward_pool + B#block.debt_supply),
+                    ?TOTAL_SUPPLY - B#block.reward_pool + B#block.debt_supply),
             arweave_metrics:gauge_set(debt_supply, B#block.debt_supply);
         false ->
             ok
     end,
     case catch ar_pricing:get_expected_min_decline_rate(B#block.timestamp,
-                                                        Period_200_Years, B#block.reward_pool, B#block.weave_size, B#block.usd_to_ar_rate,
-                                                        B#block.height) of
+            Period_200_Years, B#block.reward_pool, B#block.weave_size, B#block.usd_to_ar_rate,
+            B#block.height) of
         {'EXIT', _} ->
             ?LOG_ERROR([{event, failed_to_compute_expected_min_decline_rate}]);
         {RateDivisor, RateDividend} ->
             arweave_metrics:gauge_set(expected_minimum_200_years_storage_costs_decline_rate,
-                                 ar_util:safe_divide(RateDivisor, RateDividend))
+                    ar_util:safe_divide(RateDivisor, RateDividend))
     end,
     case catch ar_pricing:get_expected_min_decline_rate(B#block.timestamp,
-                                                        Period_200_Years, B#block.reward_pool, B#block.weave_size, {1, 10},
-                                                        B#block.height) of
+            Period_200_Years, B#block.reward_pool, B#block.weave_size, {1, 10},
+            B#block.height) of
         {'EXIT', _} ->
             ?LOG_ERROR([{event, failed_to_compute_expected_min_decline_rate2}]);
         {RateDivisor2, RateDividend2} ->
@@ -1884,7 +1898,7 @@ start_from_state(BI, Height, CustomDir) ->
             RewardHistoryBI = ar_rewards:interim_reward_history_bi(Height, BI2),
 
             BlockTimeHistoryBI = lists:sublist(BI2,
-                                               ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
+                    ar_block_time_history:history_length() + ar_block:get_consensus_window_size()),
             case {ar_storage:read_reward_history(RewardHistoryBI, CustomDir),
                   ar_storage:read_block_time_history(Height2, BlockTimeHistoryBI, CustomDir)} of
                 {not_found, _} ->
@@ -2009,7 +2023,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
                 Now
         end,
     IsBanned = ar_node_utils:is_account_banned(MiningAddress,
-                                               ar_wallets:get(WalletList, MiningAddress)),
+                                               ar_account_tree:get(WalletList, MiningAddress)),
     %% Check the solution is ahead of the previous solution on the timeline.
     NonceLimiterInfo = #nonce_limiter_info{ global_step_number = StepNumber,
                                             output = NonceLimiterOutput,
@@ -2018,27 +2032,27 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
         case IsBanned of
             true ->
                 ar_mining_server:log_prepare_solution_failure(Solution, rejected,
-                                                              mining_address_banned, Source, []),
+                        mining_address_banned, Source, []),
                 {false, address_banned};
             false ->
                 case ar_block:validate_replica_format(Height, PackingDifficulty, ReplicaFormat) of
                     false ->
                         ar_mining_server:log_prepare_solution_failure(Solution,
-                                                                      rejected, invalid_packing_difficulty, Source, []),
+                                rejected, invalid_packing_difficulty, Source, []),
                         {false, invalid_packing_difficulty};
                     true ->
                         case ar_nonce_limiter:is_ahead_on_the_timeline(NonceLimiterInfo,
-                                                                       PrevNonceLimiterInfo) of
+                                PrevNonceLimiterInfo) of
                             false ->
                                 SolutionVDF =
                                     NonceLimiterInfo#nonce_limiter_info.global_step_number,
                                 PrevBlockVDF =
                                     PrevNonceLimiterInfo#nonce_limiter_info.global_step_number,
                                 ar_mining_server:log_prepare_solution_failure(Solution,
-                                                                              stale, stale_solution, Source, [
-                                                                                                              {solution_vdf, SolutionVDF},
-                                                                                                              {prev_block_vdf, PrevBlockVDF}
-                                                                                                             ]),
+                                        stale, stale_solution, Source, [
+                                            {solution_vdf, SolutionVDF},
+                                            {prev_block_vdf, PrevBlockVDF}
+                                        ]),
                                 {false, timeline};
                             true ->
                                 true
@@ -2061,17 +2075,17 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
                     == {PrevIntervalNumber, PrevNextSeed, PrevNextVDFDifficulty, PrevSeed} of
                     false ->
                         ar_mining_server:log_prepare_solution_failure(Solution, stale,
-                                                                      vdf_seed_data_does_not_match_current_block, Source, [
-                                                                                                                           {output, ar_util:encode(NonceLimiterOutput)},
-                                                                                                                           {interval_number, IntervalNumber},
-                                                                                                                           {prev_interval_number, PrevIntervalNumber},
-                                                                                                                           {nonce_limiter_next_seed, ar_util:encode(NonceLimiterNextSeed)},
-                                                                                                                           {nonce_limiter_seed, ar_util:encode(NonceLimiterSeed)},
-                                                                                                                           {prev_nonce_limiter_next_seed, ar_util:encode(PrevNextSeed)},
-                                                                                                                           {prev_nonce_limiter_seed, ar_util:encode(PrevSeed)},
-                                                                                                                           {nonce_limiter_next_vdf_difficulty, NonceLimiterNextVDFDifficulty},
-                                                                                                                           {prev_nonce_limiter_next_vdf_difficulty, PrevNextVDFDifficulty}
-                                                                                                                          ]),
+                                vdf_seed_data_does_not_match_current_block, Source, [
+                                    {output, ar_util:encode(NonceLimiterOutput)},
+                                    {interval_number, IntervalNumber},
+                                    {prev_interval_number, PrevIntervalNumber},
+                                    {nonce_limiter_next_seed, ar_util:encode(NonceLimiterNextSeed)},
+                                    {nonce_limiter_seed, ar_util:encode(NonceLimiterSeed)},
+                                    {prev_nonce_limiter_next_seed, ar_util:encode(PrevNextSeed)},
+                                    {prev_nonce_limiter_seed, ar_util:encode(PrevSeed)},
+                                    {nonce_limiter_next_vdf_difficulty, NonceLimiterNextVDFDifficulty},
+                                    {prev_nonce_limiter_next_vdf_difficulty, PrevNextVDFDifficulty}
+                                ]),
                         {false, seed_data};
                     true ->
                         true
@@ -2083,7 +2097,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
     LastRetarget = PrevB#block.last_retarget,
     PrevTS = PrevB#block.timestamp,
     DiffPair = {_PoA1Diff, Diff} = ar_retarget:maybe_retarget(PrevB#block.height + 1,
-                                                              PrevDiffPair, Timestamp, LastRetarget, PrevTS),
+            PrevDiffPair, Timestamp, LastRetarget, PrevTS),
     PassesDiffCheck =
         case PassesSeedCheck of
             {false, Reason2} ->
@@ -2092,7 +2106,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
                 case ar_node_utils:solution_passes_diff_check(Solution, DiffPair) of
                     false ->
                         ar_mining_server:log_prepare_solution_failure(Solution, partial,
-                                                                      does_not_pass_diff_check, Source, []),
+                                does_not_pass_diff_check, Source, []),
                         {false, diff};
                     true ->
                         true
@@ -2116,7 +2130,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
                 case RewardKey of
                     not_found ->
                         ar_mining_server:log_prepare_solution_failure(Solution, rejected,
-                                                                      missing_key_file, Source, []),
+                                missing_key_file, Source, []),
                         {false, wallet_not_found};
                     _ ->
                         true
@@ -2133,7 +2147,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
                         true;
                     _ ->
                         ar_mining_server:log_prepare_solution_failure(Solution, rejected,
-                                                                      invalid_merkle_rebase_threshold, Source, []),
+                                invalid_merkle_rebase_threshold, Source, []),
                         {false, rebase_threshold}
                 end
         end,
@@ -2148,7 +2162,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
                 case check_no_double_signing(CDiff, PrevCDiff, MiningAddress, Height) of
                     false ->
                         ar_mining_server:log_prepare_solution_failure(Solution, rejected,
-                                                                      double_signing, Source, []),
+                                double_signing, Source, []),
                         {false, double_signing};
                     true ->
                         true
@@ -2170,7 +2184,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
     HaveSteps2 =
         case HaveSteps of
             not_found ->
-                                                % TODO verify
+                % TODO verify
                 SuppliedSteps;
             _ ->
                 HaveSteps
@@ -2185,7 +2199,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
                           {seed, ar_util:encode(PrevNextSeed)}, {prev_step_number, PrevStepNumber},
                           {step_number, StepNumber}]),
             ar_mining_server:log_prepare_solution_failure(Solution, rejected,
-                                                          vdf_steps_not_found, Source, []),
+                    vdf_steps_not_found, Source, []),
             {noreply, State};
         [NonceLimiterOutput | _] = Steps ->
             {Seed, NextSeed, PartitionUpperBound, NextPartitionUpperBound, VDFDifficulty}
@@ -2203,75 +2217,75 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
                         PrevOutput2 = ar_nonce_limiter:maybe_add_entropy(
                                         PrevOutput, PrevStepNumber, StepNumber, PrevNextSeed),
                         {ok, NonceLimiterOutput, Checkpoints} = ar_nonce_limiter:compute(
-                                                                  StepNumber, PrevOutput2, VDFDifficulty),
+                                StepNumber, PrevOutput2, VDFDifficulty),
                         Checkpoints;
                     _ ->
                         LastStepCheckpoints
                 end,
             NextVDFDifficulty = ar_block:compute_next_vdf_difficulty(PrevB),
             NonceLimiterInfo2 = NonceLimiterInfo#nonce_limiter_info{ seed = Seed,
-                                                                     next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
-                                                                     next_partition_upper_bound = NextPartitionUpperBound,
-                                                                     vdf_difficulty = VDFDifficulty,
-                                                                     next_vdf_difficulty = NextVDFDifficulty,
-                                                                     last_step_checkpoints = LastStepCheckpoints2,
-                                                                     steps = Steps },
+                    next_seed = NextSeed, partition_upper_bound = PartitionUpperBound,
+                    next_partition_upper_bound = NextPartitionUpperBound,
+                    vdf_difficulty = VDFDifficulty,
+                    next_vdf_difficulty = NextVDFDifficulty,
+                    last_step_checkpoints = LastStepCheckpoints2,
+                    steps = Steps },
             {Rate, ScheduledRate} = ar_pricing:recalculate_usd_to_ar_rate(PrevB),
             {PricePerGiBMinute, ScheduledPricePerGiBMinute} =
                 ar_pricing:recalculate_price_per_gib_minute(PrevB),
             Denomination = PrevB#block.denomination,
             {Denomination2, RedenominationHeight2} = ar_pricing:may_be_redenominate(PrevB),
             PricePerGiBMinute2 = ar_pricing:redenominate(PricePerGiBMinute, Denomination,
-                                                         Denomination2),
+                    Denomination2),
             ScheduledPricePerGiBMinute2 = ar_pricing:redenominate(ScheduledPricePerGiBMinute,
-                                                                  Denomination, Denomination2),
+                    Denomination, Denomination2),
             UnsignedB = pack_block_with_transactions(#block{
-                                                        nonce = Nonce,
-                                                        previous_block = PrevH,
-                                                        timestamp = Timestamp,
-                                                        last_retarget =
-                                                            case ar_retarget:is_retarget_height(Height) of
-                                                                true -> Timestamp;
-                                                                false -> PrevB#block.last_retarget
-                                                            end,
-                                                        diff = Diff,
-                                                        height = Height,
-                                                        hash = SolutionH,
-                                                        hash_list_merkle = ar_block:compute_hash_list_merkle(PrevB),
-                                                        reward_addr = ar_wallet:to_address(RewardKey),
-                                                        tags = [],
-                                                        cumulative_diff = CDiff,
-                                                        previous_cumulative_diff = PrevB#block.cumulative_diff,
-                                                        poa = PoA1,
-                                                        poa_cache = PoACache,
-                                                        usd_to_ar_rate = Rate,
-                                                        scheduled_usd_to_ar_rate = ScheduledRate,
-                                                        packing_2_5_threshold = 0,
-                                                        strict_data_split_threshold = PrevB#block.strict_data_split_threshold,
-                                                        hash_preimage = SolutionPreimage,
-                                                        recall_byte = RecallByte1,
-                                                        previous_solution_hash = PrevB#block.hash,
-                                                        partition_number = PartitionNumber,
-                                                        nonce_limiter_info = NonceLimiterInfo2,
-                                                        poa2 = case PoA2 of not_set -> #poa{}; _ -> PoA2 end,
-                                                        poa2_cache = PoA2Cache,
-                                                        recall_byte2 = RecallByte2,
-                                                        reward_key = element(2, RewardKey),
-                                                        price_per_gib_minute = PricePerGiBMinute2,
-                                                        scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute2,
-                                                        denomination = Denomination2,
-                                                        redenomination_height = RedenominationHeight2,
-                                                        double_signing_proof = may_be_get_double_signing_proof(PrevB, State),
-                                                        merkle_rebase_support_threshold = MerkleRebaseThreshold,
-                                                        chunk_hash = get_chunk_hash(PoA1, Height),
-                                                        chunk2_hash = get_chunk_hash(PoA2, Height),
-                                                        packing_difficulty = PackingDifficulty,
-                                                        replica_format = ReplicaFormat,
-                                                        unpacked_chunk_hash = get_unpacked_chunk_hash(
-                                                                                PoA1, PackingDifficulty, RecallByte1),
-                                                        unpacked_chunk2_hash = get_unpacked_chunk_hash(
-                                                                                 PoA2, PackingDifficulty, RecallByte2)
-                                                       }, PrevB),
+                    nonce = Nonce,
+                    previous_block = PrevH,
+                    timestamp = Timestamp,
+                    last_retarget =
+                        case ar_retarget:is_retarget_height(Height) of
+                            true -> Timestamp;
+                            false -> PrevB#block.last_retarget
+                        end,
+                    diff = Diff,
+                    height = Height,
+                    hash = SolutionH,
+                    hash_list_merkle = ar_block:compute_hash_list_merkle(PrevB),
+                    reward_addr = ar_wallet:to_address(RewardKey),
+                    tags = [],
+                    cumulative_diff = CDiff,
+                    previous_cumulative_diff = PrevB#block.cumulative_diff,
+                    poa = PoA1,
+                    poa_cache = PoACache,
+                    usd_to_ar_rate = Rate,
+                    scheduled_usd_to_ar_rate = ScheduledRate,
+                    packing_2_5_threshold = 0,
+                    strict_data_split_threshold = PrevB#block.strict_data_split_threshold,
+                    hash_preimage = SolutionPreimage,
+                    recall_byte = RecallByte1,
+                    previous_solution_hash = PrevB#block.hash,
+                    partition_number = PartitionNumber,
+                    nonce_limiter_info = NonceLimiterInfo2,
+                    poa2 = case PoA2 of not_set -> #poa{}; _ -> PoA2 end,
+                    poa2_cache = PoA2Cache,
+                    recall_byte2 = RecallByte2,
+                    reward_key = element(2, RewardKey),
+                    price_per_gib_minute = PricePerGiBMinute2,
+                    scheduled_price_per_gib_minute = ScheduledPricePerGiBMinute2,
+                    denomination = Denomination2,
+                    redenomination_height = RedenominationHeight2,
+                    double_signing_proof = may_be_get_double_signing_proof(PrevB, State),
+                    merkle_rebase_support_threshold = MerkleRebaseThreshold,
+                    chunk_hash = get_chunk_hash(PoA1, Height),
+                    chunk2_hash = get_chunk_hash(PoA2, Height),
+                    packing_difficulty = PackingDifficulty,
+                    replica_format = ReplicaFormat,
+                    unpacked_chunk_hash = get_unpacked_chunk_hash(
+                            PoA1, PackingDifficulty, RecallByte1),
+                    unpacked_chunk2_hash = get_unpacked_chunk_hash(
+                            PoA2, PackingDifficulty, RecallByte2)
+            }, PrevB),
 
             BlockTimeHistory2 = lists:sublist(
                                   ar_block_time_history:update_history(UnsignedB, PrevB),
@@ -2283,7 +2297,7 @@ handle_found_solution(Args, PrevB, State, IsRebase) ->
             SignedH = ar_block:generate_signed_hash(UnsignedB2),
             PrevCDiff = PrevB#block.cumulative_diff,
             SignaturePreimage = ar_block:get_block_signature_preimage(CDiff, PrevCDiff,
-                                                                      << (PrevB#block.hash)/binary, SignedH/binary >>, Height),
+                    << (PrevB#block.hash)/binary, SignedH/binary >>, Height),
             assert_key_type(RewardKey, Height),
             Signature = ar_wallet:sign(element(1, RewardKey), SignaturePreimage),
             H = ar_block:indep_hash2(SignedH, Signature),

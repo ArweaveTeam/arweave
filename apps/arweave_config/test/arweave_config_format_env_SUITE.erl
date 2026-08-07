@@ -42,6 +42,13 @@ parse_returns_spec_matched_env(_Config) ->
     ?assertEqual(<<"/tmp/arweave-env-data">>,
         maps:get([data_dir], Map, undefined)),
 
+    %% A JSON-shaped value decodes into a real list; a value that
+    %% only looks JSON-shaped stays the raw binary.
+    ?assertEqual([<<"1.2.3.4:1984">>, <<"5.6.7.8:1984">>],
+        maps:get([peers, trusted], Map, undefined)),
+    ?assertEqual(<<"[not-json">>,
+        maps:get([peers, local], Map, undefined)),
+
     ok.
 
 %%====================================================================
@@ -53,7 +60,9 @@ environment() ->
         {"AR_TEST_ENVIRONMENT_VARIABLE", "test"},
         {"AR_DEBUG", "true"},
         {"AR_MINING_HASHING_THREADS", "4"},
-        {"AR_DATA_DIR", "/tmp/arweave-env-data"}
+        {"AR_DATA_DIR", "/tmp/arweave-env-data"},
+        {"AR_PEERS_TRUSTED", "[\"1.2.3.4:1984\", \"5.6.7.8:1984\"]"},
+        {"AR_PEERS_LOCAL", "[not-json"}
     ].
 
 set_environment() ->

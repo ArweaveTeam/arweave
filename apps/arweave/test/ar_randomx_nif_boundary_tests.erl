@@ -202,16 +202,18 @@ test_fused_entropy_rejects_negative_counts(_Fixture = {_, StateRsp}) ->
         end,
         lists:seq(1, length(Args))).
 
-%% _rsp_exec_inplace loops while `chain + 1 < programCount`. Written the other way round
-%% (`chain < programCount - 1`) with an unsigned programCount, a program count of 0 wraps to
-%% 4294967295 and the call never returns - this test would then fail on the eunit timeout.
+%% A program count of 0 does no RandomX work at all, so the NIF rejects it outright. That
+%% also keeps _rsp_exec_inplace's `chain + 1 < programCount` loop away from 0: written the
+%% other way round (`chain < programCount - 1`) with an unsigned programCount it would wrap to
+%% 4294967295 and never return - this test would then fail on the eunit timeout rather than on
+%% the assertion.
 test_fused_entropy_zero_program_count(_Fixture = {_, StateRsp}) ->
     LaneCount = 1,
     RxDepth = 1,
-    {ok, Entropy} = ar_rxsquared_nif:rsp_fused_entropy_nif(
-        StateRsp, ?SUB_CHUNK_COUNT, ?SUB_CHUNK_SIZE, LaneCount, RxDepth,
-        0, 0, 0, 0, ?RANDOMX_PACKING_KEY),
-    ?assertEqual(LaneCount * ?RANDOMX_SCRATCHPAD_SIZE, byte_size(Entropy)).
+    ?assertError(badarg,
+        ar_rxsquared_nif:rsp_fused_entropy_nif(
+            StateRsp, ?SUB_CHUNK_COUNT, ?SUB_CHUNK_SIZE, LaneCount, RxDepth,
+            0, 0, 0, 0, ?RANDOMX_PACKING_KEY)).
 
 %% ===========================================================================================
 %% Checks added on top of the "more strict boundaries" commit.

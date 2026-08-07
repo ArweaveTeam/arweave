@@ -1341,7 +1341,12 @@ json_decode(JSON) ->
     json_decode(JSON, []).
 
 json_decode(JSON, JiffyOpts) ->
-    case catch jiffy:decode(JSON, JiffyOpts) of
+    %% Reject deeply nested JSON inside the jiffy NIF via the {max_depth, _}
+    %% option. A pathological input like `[[[[[ ... ]]]]]` would otherwise
+    %% exhaust the NIF's allocator or blow the C stack, crashing the whole VM
+    %% (uncatchable from the surrounding `catch`). The depth guard lives in
+    %% our jiffy fork; it bails out with `{Pos, max_depth_exceeded}` instead.
+    case catch jiffy:decode(JSON, [{max_depth, ?MAX_JSON_DEPTH} | JiffyOpts]) of
         {'EXIT', {Reason, _Stacktrace}} ->
             {error, Reason};
         DecodedJSON ->
@@ -1641,8 +1646,19 @@ json_struct_to_tx(TXStruct, ComputeDataSize) ->
         case find_value(<<"tags">>, TXStruct) of
             undefined ->
                 [];
-            Xs ->
-                Xs
+            Xs when is_list(Xs) ->
+                %% Reject oversized tag lists before running the per-element
+                %% base64 decode comprehension below — otherwise an attacker
+                %% can amplify CPU work by sending a 15 MiB body of empty
+                %% tag pairs.
+                case length(Xs) > ?MAX_TX_TAGS of
+                    true ->
+                        throw({error, too_many_tags});
+                    false ->
+                        Xs
+                end;
+            _ ->
+                throw({error, invalid_tags})
         end,
     Data = ar_util:decode(find_value(<<"data">>, TXStruct)),
     Format =

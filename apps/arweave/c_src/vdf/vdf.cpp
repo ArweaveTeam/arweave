@@ -1,4 +1,5 @@
 #include <thread>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -36,13 +37,13 @@ public:
 	unsigned int hashingIterationsRandomx;
 
 	std::vector<vdf_sha_verify_thread_arg> _vdf_sha_verify_thread_arg_list;
-	volatile bool verifyRes;
+	std::atomic<bool> verifyRes;
 	std::mutex lock;
 };
 
 struct vdf_sha_verify_thread_arg {
 	std::thread* thread;
-	volatile bool in_progress;
+	bool in_progress;
 
 	vdf_verify_job* job;
 	unsigned int checkpointIdx;
@@ -155,7 +156,7 @@ void vdf_sha2(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out
 void _vdf_sha_verify_thread(vdf_sha_verify_thread_arg* _arg) {
 	vdf_sha_verify_thread_arg* arg = _arg;
 	while(true) {
-		if (!arg->job->verifyRes) {
+		if (!arg->job->verifyRes.load()) {
 			return;
 		}
 
@@ -182,7 +183,7 @@ void _vdf_sha_verify_thread(vdf_sha_verify_thread_arg* _arg) {
 		}
 		// 0 == equal
 		if (0 != memcmp(expdOut, out, VDF_SHA_HASH_SIZE)) {
-			arg->job->verifyRes = false;
+			arg->job->verifyRes.store(false);
 			return;
 		}
 
@@ -225,7 +226,7 @@ bool fast_rev_cmp256(unsigned char* a, unsigned char* b) {
 void _vdf_sha_verify_with_reset_thread(vdf_sha_verify_thread_arg* _arg) {
 	vdf_sha_verify_thread_arg* arg = _arg;
 	while(true) {
-		if (!arg->job->verifyRes) {
+		if (!arg->job->verifyRes.load()) {
 			return;
 		}
 
@@ -261,7 +262,7 @@ void _vdf_sha_verify_with_reset_thread(vdf_sha_verify_thread_arg* _arg) {
 		}
 		// 0 == equal
 		if (0 != memcmp(expdOut, out, VDF_SHA_HASH_SIZE)) {
-			arg->job->verifyRes = false;
+			arg->job->verifyRes.store(false);
 			return;
 		}
 
@@ -298,7 +299,7 @@ bool vdf_parallel_sha_verify_with_reset(unsigned char* startSaltBuffer, unsigned
 	job.hashingIterationsSha = hashingIterations;
 	job.resetStepNumberBin256 = resetStepNumberBin256;
 	job.resetSeed = resetSeed;
-	job.verifyRes = true;
+	job.verifyRes.store(true);
 
 	job._vdf_sha_verify_thread_arg_list    .resize(checkpointCount);
 
@@ -321,7 +322,7 @@ bool vdf_parallel_sha_verify_with_reset(unsigned char* startSaltBuffer, unsigned
 		if (freeThreadCount == 0) break;
 	}
 
-	if (job.verifyRes) {
+	if (job.verifyRes.load()) {
 		unsigned char expdOut[VDF_SHA_HASH_SIZE];
 		unsigned char* sha_temp_result;
 		if (checkpointCount == 0) {
@@ -359,7 +360,7 @@ bool vdf_parallel_sha_verify_with_reset(unsigned char* startSaltBuffer, unsigned
 			// NOTE long_add included
 		}
 		if (0 != memcmp(expdOut, inRes, VDF_SHA_HASH_SIZE)) {
-			job.verifyRes = false;
+			job.verifyRes.store(false);
 		}
 	}
 
@@ -368,11 +369,12 @@ bool vdf_parallel_sha_verify_with_reset(unsigned char* startSaltBuffer, unsigned
 
 		if (_vdf_sha_verify_thread_arg->thread) {
 			_vdf_sha_verify_thread_arg->thread->join();
-			free(_vdf_sha_verify_thread_arg->thread);
+			delete _vdf_sha_verify_thread_arg->thread;
+			_vdf_sha_verify_thread_arg->thread = NULL;
 		}
 	}
 
-	return job.verifyRes;
+	return job.verifyRes.load();
 }
 
 }

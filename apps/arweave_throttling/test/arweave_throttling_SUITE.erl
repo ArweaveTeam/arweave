@@ -1,15 +1,5 @@
-%%%===================================================================
-%%% GNU General Public License, version 2 (GPL-2.0)
-%%% The GNU General Public License (GPL-2.0)
-%%% Version 2, June 1991
-%%%
-%%% ------------------------------------------------------------------
-%%%
-%%% @author Arweave Team
-%%% @copyright 2026 (c) Arweave
 %%% @doc Top-level interface tests for `arweave_throttling'.
 %%% @end
-%%%===================================================================
 -module(arweave_throttling_SUITE).
 -compile([export_all, nowarn_export_all]).
 
@@ -60,21 +50,22 @@ end_per_testcase(_TestCase, Config) ->
 
 all() ->
     [
-    no_groups_started,
-    groups_started_on_update_quota,
-    throttle_and_update_quota,
-    blocking_call_is_released_by_update,
-    fifo_ordering,
-    concurrent_remaining_updates_take_min,
-    stale_update_outside_window_overrides,
-    queue_full_returns_error,
-    dead_caller_is_dropped_from_queue,
-    reset_releases_waiters,
-    peer_4_and_5_tuple_keys,
-    configured_local_peer_obeys_outbound_quota,
-    configured_local_ip_does_not_exempt_peer_shapes,
-    exhausted_quota_refills_after_reset_seconds,
-    update_quota_cancels_reset_timer
+     no_groups_started,
+     groups_started_on_update_quota,
+     throttle_and_update_quota,
+     blocking_call_is_released_by_update,
+     fifo_ordering,
+     concurrent_remaining_updates_take_min,
+     stale_update_outside_window_overrides,
+     queue_full_returns_error,
+     dead_caller_is_dropped_from_queue,
+     reset_releases_waiters,
+     peer_4_and_5_tuple_keys,
+     configured_local_peer_obeys_outbound_quota,
+     configured_local_ip_does_not_exempt_peer_shapes,
+     exhausted_quota_refills_after_reset_seconds,
+     update_quota_cancels_reset_timer,
+     update_quota_with_no_header_resets_peer
     ].
 
 %%====================================================================
@@ -442,6 +433,25 @@ update_quota_cancels_reset_timer(_Config) ->
                         (maps:get(remaining, S) =:= 4)
                         andalso (maps:get(reset_seconds, S) =:= 0)
                     end),
+    ok.
+
+update_quota_with_no_header_resets_peer(_Config) ->
+    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, headers(?GROUPID_GENERAL, 10, 9)),
+    ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
+    {ok, S1} = arweave_throttling:status(?GROUPID_GENERAL, ?PEER1),
+    ?assertMatch(#{total := 10, remaining := 8}, S1),
+    ok = arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, headers(?GROUPID_GENERAL, 10, 8)),
+    {ok, S2} = arweave_throttling:status(?GROUPID_GENERAL, ?PEER1),
+    ?assertMatch(#{total := 10, remaining := 8}, S2),
+
+    ok = arweave_throttling:throttle(?PEER1, ?PATH_GENERAL),
+    {ok, S3} = arweave_throttling:status(?GROUPID_GENERAL, ?PEER1),
+    ?assertMatch(#{total := 10, remaining := 7}, S3),
+    ?assertMatch({error, {missing_header, <<"ratelimit-limit">>}},
+                 arweave_throttling:update_quota(?PEER1, ?PATH_GENERAL, #{})),
+    %% Peer reset.
+    {ok, S4} = arweave_throttling:status(?GROUPID_GENERAL, ?PEER1),
+    ?assertMatch(#{total := infinity}, S4),
     ok.
 
 %%====================================================================

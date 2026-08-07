@@ -264,7 +264,13 @@ verify({{KeyAlg, KeyCrv}, Pub}, Data, Sig)
         Data,
         Sig,
         [Pub, KeyCrv]
-    ).
+    );
+verify(KeyInfo, _Data, _Sig) ->
+    ?LOG_ERROR([
+        {event, wallet_verify_unknown_key_type},
+        {key_info, io_lib:format("~p", [KeyInfo])}
+    ]),
+    false.
 
 %%--------------------------------------------------------------------
 %% @doc Verify that  a signature is correct. The function  was used to

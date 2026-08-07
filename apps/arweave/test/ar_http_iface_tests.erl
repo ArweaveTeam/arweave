@@ -1104,14 +1104,14 @@ test_get_recent_hash_list_diff({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
 test_get_total_supply(_Args) ->
     BlockDenomination = (ar_node:get_current_block())#block.denomination,
     TotalSupply =
-        ar_patricia_tree:foldr(
+        ar_patricia_tree_ets:foldr(
             fun (_, {B, _}, Acc) ->
                     Acc + ar_pricing:redenominate(B, 1, BlockDenomination);
                 (_, {B, _, Denomination, _}, Acc) ->
                     Acc + ar_pricing:redenominate(B, Denomination, BlockDenomination)
             end,
             0,
-            ar_diff_dag:get_sink(sys:get_state(ar_wallets))
+            maps:get(tid, sys:get_state(ar_account_tree))
         ),
     TotalSupplyBin = integer_to_binary(TotalSupply),
     ?assertMatch({ok, {{<<"200">>, _}, _, TotalSupplyBin, _, _}},

@@ -155,6 +155,20 @@
 %% The maximum byte size of a single POST body.
 -define(MAX_BODY_SIZE, 15 * ?MiB).
 
+%% The maximum nesting depth for JSON inputs accepted via
+%% ar_serialize:json_decode/2, passed to the jiffy NIF as {max_depth, _}.
+%% The guard lives in our jiffy fork: it bails out with
+%% {Pos, max_depth_exceeded} rather than blowing the C stack or exhausting
+%% its allocator, which would crash the VM uncatchably.
+-define(MAX_JSON_DEPTH, 256).
+
+%% The maximum number of tags a transaction may carry. Mirrors the
+%% post-fork-2.5 limit enforced in ar_tx:validate_tags_length/2 and the
+%% binary parser in ar_serialize:parse_tx_tags/1. Enforced early — at
+%% JSON parse time and at tx validation entry — so we never run an
+%% O(N) decode loop on a maliciously oversized list.
+-define(MAX_TX_TAGS, 2048).
+
 %% The maximum allowed size in bytes for the data field of
 %% a format=1 transaction.
 -define(TX_DATA_SIZE_LIMIT, 10 * ?MiB).

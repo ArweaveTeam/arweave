@@ -1,8 +1,11 @@
-%%% @doc The module manages the states of wallets (their balances and last transactions)
+%%% @doc The pre-ETS, map-based account-tree manager, kept verbatim (module and registered
+%%% names aside, including the tree module renamed to ar_patricia_tree_legacy) so the
+%%% ETS-based ar_wallets can be compared against it head-to-head in tests.
+%%% The module manages the states of wallets (their balances and last transactions)
 %%% in different blocks. Since wallet lists are huge, only one copy is stored at any time,
 %%% along with the small "diffs", which allow to reconstruct the wallet lists of the previous,
 %%% following, and uncle blocks.
--module(ar_wallets).
+-module(ar_wallets_legacy).
 
 -export([start_link/1, get/1, get/2, get_chunk/2, get_balance/1, get_balance/2, get_last_tx/1,
         apply_block/2, add_wallets/4, set_current/3, get_size/0]).
@@ -22,7 +25,7 @@ start_link(Args) ->
 %% @doc Return the map mapping the given addresses to the corresponding wallets
 %% from the latest wallet tree.
 get(Address) when is_binary(Address) ->
-    ar_wallets:get([Address]);
+    ?MODULE:get([Address]);
 get(Addresses) ->
     gen_server:call(?MODULE, {get, Addresses}, ?DEFAULT_CALL_TIMEOUT).
 
@@ -77,18 +80,18 @@ get_size() ->
 init([{blocks, []} | _]) ->
     %% Trap exit to avoid corrupting any open files on quit.
     process_flag(trap_exit, true),
-    DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
+    DAG = ar_diff_dag:new(<<>>, ar_patricia_tree_legacy:new(), not_set),
     ar_node_worker ! wallets_ready,
     {ok, DAG};
 init([{blocks, Blocks} | Args]) ->
     %% Trap exit to avoid corrupting any open files on quit.
     process_flag(trap_exit, true),
     gen_server:cast(?MODULE, {init, Blocks, Args}),
-    DAG = ar_diff_dag:new(<<>>, ar_patricia_tree:new(), not_set),
+    DAG = ar_diff_dag:new(<<>>, ar_patricia_tree_legacy:new(), not_set),
     {ok, DAG}.
 
 handle_call({get, Addresses}, _From, DAG) ->
-    {reply, get_map(ar_diff_dag:get_sink(DAG), Addresses), DAG};
+    {reply, get_map(ar_diff_dag:legacy_get_sink(DAG), Addresses), DAG};
 
 handle_call({get, RootHash, Addresses}, _From, DAG) ->
     case ar_diff_dag:reconstruct(DAG, RootHash, fun apply_diff/2) of
@@ -108,10 +111,10 @@ handle_call({get_chunk, RootHash, Cursor}, _From, DAG) ->
     end;
 
 handle_call(get_size, _From, DAG) ->
-    {reply, ar_patricia_tree:size(ar_diff_dag:get_sink(DAG)), DAG};
+    {reply, ar_patricia_tree_legacy:size(ar_diff_dag:legacy_get_sink(DAG)), DAG};
 
 handle_call({get_balance, Address}, _From, DAG) ->
-    case ar_patricia_tree:get(Address, ar_diff_dag:get_sink(DAG)) of
+    case ar_patricia_tree_legacy:get(Address, ar_diff_dag:legacy_get_sink(DAG)) of
         not_found ->
             {reply, 0, DAG};
         Entry ->
@@ -130,7 +133,7 @@ handle_call({get_balance, RootHash, Address}, _From, DAG) ->
         {error, _} = Error ->
             {reply, Error, DAG};
         Tree ->
-            case ar_patricia_tree:get(Address, Tree) of
+            case ar_patricia_tree_legacy:get(Address, Tree) of
                 not_found ->
                     {reply, 0, DAG};
                 Entry ->
@@ -147,7 +150,7 @@ handle_call({get_balance, RootHash, Address}, _From, DAG) ->
 
 handle_call({get_last_tx, Address}, _From, DAG) ->
     {reply,
-        case ar_patricia_tree:get(Address, ar_diff_dag:get_sink(DAG)) of
+        case ar_patricia_tree_legacy:get(Address, ar_diff_dag:legacy_get_sink(DAG)) of
             not_found ->
                 <<>>;
             {_Balance, LastTX} ->
@@ -267,7 +270,7 @@ get_tree_from_peers(B, Peers) ->
             {ok, Tree} = load_wallet_tree_from_peers(
                 ID,
                 Peers,
-                ar_patricia_tree:from_proplist(Chunk),
+                ar_patricia_tree_legacy:from_proplist(Chunk),
                 Cursor,
                 2
             ),
@@ -288,7 +291,7 @@ load_wallet_tree_from_peers(ID, Peers, Acc, Cursor, N) ->
         {ok, {NextCursor, Chunk}} ->
             Acc3 =
                 lists:foldl(
-                    fun({K, V}, Acc2) -> ar_patricia_tree:insert(K, V, Acc2)
+                    fun({K, V}, Acc2) -> ar_patricia_tree_legacy:insert(K, V, Acc2)
                     end,
                     Acc,
                     Chunk
@@ -371,7 +374,7 @@ apply_block2(B, PrevB, Args, Tree, DAG) ->
     end.
 
 set_current(DAG, RootHash, Height, PruneDepth) ->
-    UpdatedDAG = ar_diff_dag:update_sink(
+    UpdatedDAG = ar_diff_dag:legacy_update_sink(
         ar_diff_dag:move_sink(DAG, RootHash, fun apply_diff/2, fun reverse_diff/2),
         RootHash,
         fun(Tree, Meta) ->
@@ -381,19 +384,19 @@ set_current(DAG, RootHash, Height, PruneDepth) ->
             {RootHash, UpdatedTree, Meta}
         end
     ),
-    Tree = ar_diff_dag:get_sink(UpdatedDAG),
+    Tree = ar_diff_dag:legacy_get_sink(UpdatedDAG),
     true = Height >= ar_fork:height_2_2(),
-    arweave_metrics:counter_inc(wallet_list_size, ar_patricia_tree:size(Tree)),
+    arweave_metrics:gauge_set(wallet_list_size, ar_patricia_tree_legacy:size(Tree)),
     ar_diff_dag:filter(UpdatedDAG, PruneDepth).
 
 apply_diff(Diff, Tree) ->
     maps:fold(
         fun (Addr, remove, Acc) ->
-                ar_patricia_tree:delete(Addr, Acc);
+                ar_patricia_tree_legacy:delete(Addr, Acc);
             (Addr, {Balance, LastTX}, Acc) ->
-                ar_patricia_tree:insert(Addr, {Balance, LastTX}, Acc);
+                ar_patricia_tree_legacy:insert(Addr, {Balance, LastTX}, Acc);
             (Addr, {Balance, LastTX, Denomination, MiningPermission}, Acc) ->
-                ar_patricia_tree:insert(Addr,
+                ar_patricia_tree_legacy:insert(Addr,
                         {Balance, LastTX, Denomination, MiningPermission}, Acc)
         end,
         Tree,
@@ -403,7 +406,7 @@ apply_diff(Diff, Tree) ->
 reverse_diff(Diff, Tree) ->
     maps:map(
         fun(Addr, _Value) ->
-            case ar_patricia_tree:get(Addr, Tree) of
+            case ar_patricia_tree_legacy:get(Addr, Tree) of
                 not_found ->
                     remove;
                 Value ->
@@ -416,7 +419,7 @@ reverse_diff(Diff, Tree) ->
 get_map(Tree, Addresses) ->
     lists:foldl(
         fun(Addr, Acc) ->
-            case ar_patricia_tree:get(Addr, Tree) of
+            case ar_patricia_tree_legacy:get(Addr, Tree) of
                 not_found ->
                     Acc;
                 Value ->
@@ -431,9 +434,9 @@ get_account_tree_range(Tree, Cursor) ->
     Range =
         case Cursor of
             first ->
-                ar_patricia_tree:get_range(?WALLET_LIST_CHUNK_SIZE + 1, Tree);
+                ar_patricia_tree_legacy:get_range(?WALLET_LIST_CHUNK_SIZE + 1, Tree);
             _ ->
-                ar_patricia_tree:get_range(Cursor, ?WALLET_LIST_CHUNK_SIZE + 1, Tree)
+                ar_patricia_tree_legacy:get_range(Cursor, ?WALLET_LIST_CHUNK_SIZE + 1, Tree)
         end,
     case length(Range) of
         ?WALLET_LIST_CHUNK_SIZE + 1 ->

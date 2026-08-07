@@ -33,7 +33,7 @@ validate(TX) ->
     KryderPlusRateMultiplier = proplists:get_value(kryder_plus_rate_multiplier, Props),
     Denomination = proplists:get_value(denomination, Props),
     RedenominationHeight = proplists:get_value(redenomination_height, Props),
-    Wallets = ar_wallets:get(WL, ar_tx:get_addresses([TX])),
+    Wallets = ar_account_tree:get(WL, ar_tx:get_addresses([TX])),
     Mempool = ar_mempool:get_map(),
     Result = ar_tx_replay_pool:verify_tx({TX, USDToARRate, PricePerGiBMinute,
             KryderPlusRateMultiplier, Denomination, Height, RedenominationHeight, BlockAnchors,

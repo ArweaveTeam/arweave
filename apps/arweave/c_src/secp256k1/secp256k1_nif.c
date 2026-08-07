@@ -133,9 +133,17 @@ static ERL_NIF_TERM sign_recoverable(ErlNifEnv *env, int argc, const ERL_NIF_TER
 	unsigned char privbytes[SECP256K1_PRIVKEY_SIZE];
 	unsigned char signature_compact[SECP256K1_SIGNATURE_COMPACT_SIZE];
 	unsigned char signature_recoverable[SECP256K1_SIGNATURE_RECOVERABLE_SIZE];
+	ERL_NIF_TERM signature_term = enif_make_atom(env, "undefined");
 	int recid;
 	secp256k1_ecdsa_recoverable_signature s;
 	secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+
+	/* secp256k1_context_create() may return NULL on allocation failure.
+	 * Without this guard, the subsequent libsecp256k1 calls would hit
+	 * ARG_CHECK(ctx != NULL) and abort() the whole BEAM VM. */
+	if (ctx == NULL) {
+		return error_tuple(env, "Failed to create secp256k1 context.");
+	}
 
 	memcpy(digest, Digest.data, SECP256K1_DIGEST_SIZE);
 	memcpy(privbytes, PrivateBytes.data, SECP256K1_PRIVKEY_SIZE);
@@ -167,7 +175,7 @@ static ERL_NIF_TERM sign_recoverable(ErlNifEnv *env, int argc, const ERL_NIF_TER
 	memcpy(signature_recoverable, signature_compact, SECP256K1_SIGNATURE_COMPACT_SIZE);
 	signature_recoverable[64] = (unsigned char)(recid);
 
-	ERL_NIF_TERM signature_term = make_output_binary(env, signature_recoverable, SECP256K1_SIGNATURE_RECOVERABLE_SIZE);
+	signature_term = make_output_binary(env, signature_recoverable, SECP256K1_SIGNATURE_RECOVERABLE_SIZE);
 
 cleanup:
 	secp256k1_context_destroy(ctx);
@@ -210,6 +218,11 @@ static ERL_NIF_TERM recover_pk_and_verify(ErlNifEnv *env, int argc, const ERL_NI
 	secp256k1_ecdsa_recoverable_signature rs;
 	secp256k1_ecdsa_signature s;
 	secp256k1_pubkey pubkey;
+	/* Declared up-front so the `cleanup:` exit paths never read uninitialized
+	 * storage even if a future edit introduces a non-error `goto cleanup`
+	 * before these are assigned in the success path. */
+	int is_valid = 0;
+	ERL_NIF_TERM pubkey_term = enif_make_atom(env, "undefined");
 
 	memcpy(digest, Digest.data, SECP256K1_DIGEST_SIZE);
 	memcpy(signature_recoverable, Signature.data, SECP256K1_SIGNATURE_RECOVERABLE_SIZE);
@@ -244,8 +257,8 @@ static ERL_NIF_TERM recover_pk_and_verify(ErlNifEnv *env, int argc, const ERL_NI
 
 	// NOTE. https://github.com/bitcoin-core/secp256k1/blob/f79f46c70386c693ff4e7aef0b9e7923ba284e56/src/secp256k1.c#L461
 	// Verify performs check for low-s
-	int is_valid = secp256k1_ecdsa_verify(secp256k1_context_static, &s, digest, &pubkey);
-	ERL_NIF_TERM pubkey_term = make_output_binary(env, pubbytes, SECP256K1_PUBKEY_COMPRESSED_SIZE);
+	is_valid = secp256k1_ecdsa_verify(secp256k1_context_static, &s, digest, &pubkey);
+	pubkey_term = make_output_binary(env, pubbytes, SECP256K1_PUBKEY_COMPRESSED_SIZE);
 
 cleanup:
 	memset(digest, 0, SECP256K1_DIGEST_SIZE);

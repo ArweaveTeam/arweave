@@ -5,8 +5,8 @@
 
 -export([
          start_link/0, create_ets/0, db_options/1, open/1, open_readonly/1, close/1,
-         put/3, get/2, get_next_by_prefix/4, get_next/2, get_prev/2, get_range/2,
-         get_range/3, delete/2, delete_range/3, count/1
+         put/3, write_batch/2, get/2, get_next_by_prefix/4, get_next/2, get_prev/2,
+         get_range/2, get_range/3, delete/2, delete_range/3, count/1
         ]).
 
 -ifdef(AR_TEST).
@@ -151,22 +151,32 @@ open_readonly(Args) ->
 %% @doc Store the given value under the given key.
 put(Name, Key, Value) ->
     ?WITH_DB(Name, fun
-                       (#db{db_handle = Db, cf_handle = undefined}) ->
-                    rocksdb:put(Db, Key, Value, []);
-                 (#db{db_handle = Db, cf_handle = Cf}) ->
-                    rocksdb:put(Db, Cf, Key, Value, [])
-            end).
+        (#db{db_handle = Db, cf_handle = undefined}) ->
+            rocksdb:put(Db, Key, Value, []);
+        (#db{db_handle = Db, cf_handle = Cf}) ->
+            rocksdb:put(Db, Cf, Key, Value, [])
+    end).
+
+%% @doc Atomically store the given list of {Key, Value} pairs as a single RocksDB write
+%% batch (one NIF call for the whole list).
+write_batch(Name, KVs) ->
+    ?WITH_DB(Name, fun
+        (#db{db_handle = Db, cf_handle = undefined}) ->
+            rocksdb:write(Db, [{put, K, V} || {K, V} <- KVs], []);
+        (#db{db_handle = Db, cf_handle = Cf}) ->
+            rocksdb:write(Db, [{put, Cf, K, V} || {K, V} <- KVs], [])
+    end).
 
 
 
 %% @doc Return the value stored under the given key.
 get(Name, Key) ->
     ?WITH_DB(Name, fun
-                       (#db{db_handle = Db, cf_handle = undefined}) ->
-                    rocksdb:get(Db, Key, []);
-                 (#db{db_handle = Db, cf_handle = Cf}) ->
-                    rocksdb:get(Db, Cf, Key, [])
-            end).
+        (#db{db_handle = Db, cf_handle = undefined}) ->
+            rocksdb:get(Db, Key, []);
+        (#db{db_handle = Db, cf_handle = Cf}) ->
+            rocksdb:get(Db, Cf, Key, [])
+    end).
 
 
 
@@ -174,8 +184,8 @@ get(Name, Key) ->
 %% either the matching PrefixBitSize first bits or PrefixBitSize first bits bigger by one.
 get_next_by_prefix(Name, PrefixBitSize, KeyBitSize, OffsetBinary) ->
     ?WITH_ITERATOR(Name, [{prefix_same_as_start, true}], fun
-                                                             (Iterator) -> get_next_by_prefix2(Iterator, PrefixBitSize, KeyBitSize, OffsetBinary)
-                  end).
+        (Iterator) -> get_next_by_prefix2(Iterator, PrefixBitSize, KeyBitSize, OffsetBinary)
+    end).
 
 
 
@@ -198,8 +208,8 @@ get_next_by_prefix2(Iterator, PrefixBitSize, KeyBitSize, OffsetBinary) ->
 %% or none.
 get_next(Name, Cursor) ->
     ?WITH_ITERATOR(Name, [{total_order_seek, true}], fun
-                                                         (Iterator) -> get_next2(Iterator, Cursor)
-                  end).
+        (Iterator) -> get_next2(Iterator, Cursor)
+    end).
 
 
 
@@ -215,8 +225,8 @@ get_next2(Iterator, Cursor) ->
 %% or none.
 get_prev(Name, Cursor) ->
     ?WITH_ITERATOR(Name, [{total_order_seek, true}], fun
-                                                         (Iterator) -> get_prev2(Iterator, Cursor)
-                  end).
+        (Iterator) -> get_prev2(Iterator, Cursor)
+    end).
 
 
 
@@ -243,8 +253,8 @@ get_range(Name, Start, End) ->
 
 get_range2(Name, {StartOffsetBinary, MaybeEndOffsetBinary}) ->
     ?WITH_ITERATOR(Name, [{total_order_seek, true}], fun
-                                                         (Iterator) -> get_range3(Iterator, {StartOffsetBinary, MaybeEndOffsetBinary})
-                  end).
+        (Iterator) -> get_range3(Iterator, {StartOffsetBinary, MaybeEndOffsetBinary})
+    end).
 
 
 

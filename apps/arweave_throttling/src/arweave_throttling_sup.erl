@@ -5,7 +5,7 @@
 -module(arweave_throttling_sup).
 -behaviour(supervisor).
 
--export([start_link/0, all_info/0, start_throttling_group/1]).
+-export([start_link/0, all_info/0, start_throttling_group/1, reset_peer_in_all_groups/1]).
 -export([init/1]).
 
 -ifdef(AR_TEST).
@@ -14,6 +14,8 @@
 
 -include_lib("arweave/include/ar_sup.hrl").
 
+-define(PMAP_TIMEOUT, 1000).
+
 %% API
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
@@ -21,6 +23,14 @@ start_link() ->
 all_info() ->
     Children = supervisor:which_children(?MODULE),
     [{worker_to_group(ID), arweave_throttling_group:info(worker_to_group(ID))}  || {ID, _Child, _Type, _Modules} <- Children].
+
+%% FIXME: using ar_util introduces circular dependency.
+%% (I created an issue to follow this up)
+reset_peer_in_all_groups(Peer) ->
+    Children = supervisor:which_children(?MODULE),
+    Groups = [worker_to_group(ID)||{ID, _Child, _Type, _Modules} <- Children],
+    ar_util:pmap(fun(GroupID) -> arweave_throttling_group:reset_peer(GroupID, Peer) end,
+         Groups, ?PMAP_TIMEOUT).
 
 %% Supervisor callbacks
 init([]) ->

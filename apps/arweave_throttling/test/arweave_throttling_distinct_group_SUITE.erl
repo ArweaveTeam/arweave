@@ -1,20 +1,7 @@
-%%% @doc Tests for the `arweave_throttling_peer_groups' ETS store.
+%%% @doc Tests for the `arweave_throttling_distinct_group' ETS store.
 %%% @end
 -module(arweave_throttling_distinct_group_SUITE).
--export([suite/0, description/0]).
--export([init_per_suite/1, end_per_suite/1]).
--export([init_per_testcase/2, end_per_testcase/2]).
--export([all/0]).
--export([
-        init_creates_tables/1,
-        insert_new_and_duplicate/1,
-        is_stored_reflects_membership/1,
-        distinct_count_counts_distinct_group_ids/1,
-        distinct_count_unknown_peer_is_zero/1,
-        peers_counted_independently/1,
-        errors_without_tables/1,
-        cleanup_removes_tables/1
-        ]).
+-compile([export_all, nowarn_export_all]).
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -24,7 +11,7 @@
 suite() -> [{userdata, [description()]}, {timetrap, {seconds, 30}}].
 
 description() ->
-    {description, "arweave_throttling_peer_groups ETS store"}.
+    {description, "arweave_throttling_distinct_group ETS store"}.
 
 init_per_suite(Config) ->
     Config.

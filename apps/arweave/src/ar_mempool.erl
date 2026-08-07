@@ -483,7 +483,7 @@ should_drop_low_priority_tx(_TX, {_MempoolHeaderSize, _MempoolDataSize}) ->
 find_clashing_txs(#tx{ last_tx = <<>> }) ->
     [];
 find_clashing_txs(TX = #tx{}) ->
-    Wallets = ar_wallets:get(ar_tx:get_addresses([TX])),
+    Wallets = ar_account_tree:get(ar_tx:get_addresses([TX])),
     find_clashing_txs(TX, Wallets).
 
 find_clashing_txs(TX = #tx{}, Wallets) when is_map(Wallets) ->
@@ -511,7 +511,7 @@ filter_clashing_txs(ClashingTXIDs) ->
         true ->
             [];
         false ->
-                                                % Exclude the highest priority TX from the list of TXs to be dropped
+            % Exclude the highest priority TX from the list of TXs to be dropped
             {_, UncomfirmableTXIDs} = gb_sets:take_largest(ClashingTXIDs),
             to_txs(UncomfirmableTXIDs)
     end.
@@ -639,7 +639,7 @@ redenominate_origin_spent_total(SpentTotalMap, OldDenomination, NewDenomination)
      ).
 
 get_confirmed_balance(Origin, Denomination) ->
-    Wallet = ar_wallets:get(Origin),
+    Wallet = ar_account_tree:get(Origin),
     case maps:get(Origin, Wallet, not_found) of
         not_found ->
             0;

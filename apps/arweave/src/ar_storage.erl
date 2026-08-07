@@ -9,7 +9,7 @@
         store_block_time_history_part/2, store_block_time_history_part2/1,
         block_count/0, write_full_block/2, read_block/1, read_block/2, read_block/3, write_tx/1,
         read_tx/1, read_tx/2, read_tx_data/1, read_tx_data/2, update_confirmation_index/1, get_tx_confirmation_data/1,
-        read_wallet_list/1, read_wallet_list/2, write_wallet_list/2,
+        read_wallet_list/1, read_wallet_list/2, fold_wallet_list/4, write_wallet_list/2,
         delete_blacklisted_tx/1, lookup_tx_filename/1, lookup_tx_filename/2, open_databases/0,
         open_start_from_state_databases/1, close_start_from_state_databases/0,
         wallet_list_filepath/1, wallet_list_filepath/2, tx_filepath/1, tx_filepath/2,
@@ -28,6 +28,10 @@
 -include_lib("kernel/include/file.hrl").
 
 -record(state, {}).
+
+%% @doc Number of extra attempts to persist an account tree node after a transient
+%% RocksDB failure. Disk-full errors are never retried.
+-define(ACCOUNT_TREE_PUT_RETRIES, 3).
 
 %%%===================================================================
 %%% Public interface.
@@ -440,7 +444,7 @@ read_account2(Addr, RootHash, CustomDir) ->
     %% Unfortunately, we do not have an easy access to the information about how many
     %% accounts there were in the given tree so we perform the binary search starting
     %% from the number in the latest block.
-    Size = ar_wallets:get_size(),
+    Size = ar_account_tree:get_size(),
     MaxFileCount = Size div ?WALLET_LIST_CHUNK_SIZE + 1,
     Dir =
         case CustomDir of
@@ -932,55 +936,70 @@ write_wallet_list(Height, Tree) ->
 read_wallet_list(WalletListHash) ->
     read_wallet_list(WalletListHash, not_set).
 
-read_wallet_list(<<>>, _CustomDir) ->
-    {ok, ar_patricia_tree:new()};
-read_wallet_list(WalletListHash, CustomDir) when is_binary(WalletListHash) ->
-    Key = WalletListHash,
-    read_wallet_list(get_account_tree_value(Key, <<>>, CustomDir), ar_patricia_tree:new(), [],
-            WalletListHash, WalletListHash, CustomDir).
+read_wallet_list(WalletListHash, CustomDir) ->
+    fold_wallet_list(WalletListHash,
+            fun(Key, Value, Tree) -> ar_patricia_tree:insert(Key, Value, Tree) end,
+            ar_patricia_tree:new(), CustomDir).
 
-read_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Tree, Keys, RootHash, K, CustomDir) ->
+%% @doc Fold Fun(Address, Account, Acc) over every account in the stored account tree with
+%% the given root hash, streaming from disk without building an in-memory tree. Return
+%% {ok, Acc2}, not_found, or {error, Reason}. Fun may write to a shared destination such as
+%% an ETS table. It must tolerate seeing the same account twice: when the node tree in
+%% account_tree_db is incomplete the fold falls back to the chunk files and re-passes every
+%% account (an upsert does).
+fold_wallet_list(<<>>, _Fun, Acc, _CustomDir) ->
+    {ok, Acc};
+fold_wallet_list(WalletListHash, Fun, Acc, CustomDir) when is_binary(WalletListHash) ->
+    Key = WalletListHash,
+    fold_wallet_list(get_account_tree_value(Key, <<>>, CustomDir), Fun, Acc, [],
+            WalletListHash, Key, CustomDir).
+
+fold_wallet_list({ok, << K:48/binary, _/binary >>, Bin}, Fun, Acc, Keys, RootHash, K, CustomDir) ->
     case binary_to_term(Bin, [safe]) of
         {Key, Value} ->
-            Tree2 = ar_patricia_tree:insert(Key, Value, Tree),
+            Acc2 = Fun(Key, Value, Acc),
             case Keys of
                 [] ->
-                    {ok, Tree2};
+                    {ok, Acc2};
                 [{H, Prefix} | Keys2] ->
-                    read_wallet_list(get_account_tree_value(H, Prefix, CustomDir), Tree2, Keys2,
-                            RootHash, H, CustomDir)
+                    fold_wallet_list(get_account_tree_value(H, Prefix, CustomDir), Fun, Acc2,
+                            Keys2, RootHash, H, CustomDir)
             end;
         [{H, Prefix} | Hs] ->
-            read_wallet_list(get_account_tree_value(H, Prefix, CustomDir), Tree, Hs ++ Keys, RootHash,
-                    H, CustomDir)
+            fold_wallet_list(get_account_tree_value(H, Prefix, CustomDir), Fun, Acc, Hs ++ Keys,
+                    RootHash, H, CustomDir)
     end;
-read_wallet_list({ok, _, _}, _Tree, _Keys, RootHash, _K, CustomDir) ->
-    read_wallet_list_from_chunk_files(RootHash, CustomDir);
-read_wallet_list(none, _Tree, _Keys, RootHash, _K, CustomDir) ->
-    read_wallet_list_from_chunk_files(RootHash, CustomDir);
-read_wallet_list(Error, _Tree, _Keys, _RootHash, _K, _CustomDir) ->
+fold_wallet_list({ok, _, _}, Fun, Acc, _Keys, RootHash, _K, CustomDir) ->
+    fold_wallet_list_from_chunk_files(RootHash, Fun, Acc, CustomDir);
+fold_wallet_list(none, Fun, Acc, _Keys, RootHash, _K, CustomDir) ->
+    fold_wallet_list_from_chunk_files(RootHash, Fun, Acc, CustomDir);
+fold_wallet_list(Error, _Fun, _Acc, _Keys, _RootHash, _K, _CustomDir) ->
     Error.
 
-read_wallet_list_from_chunk_files(WalletListHash, CustomDir) when is_binary(WalletListHash) ->
-    case read_wallet_list_chunk(WalletListHash, CustomDir) of
+fold_wallet_list_from_chunk_files(WalletListHash, Fun, Acc, CustomDir)
+        when is_binary(WalletListHash) ->
+    case fold_wallet_list_chunks(WalletListHash, 0, Fun, Acc, CustomDir) of
         not_found ->
             Filename = wallet_list_filepath(WalletListHash, CustomDir),
             case file:read_file(Filename) of
                 {ok, JSON} ->
-                    parse_wallet_list_json(JSON);
+                    case parse_wallet_list_json(JSON) of
+                        {ok, Tree} ->
+                            {ok, ar_patricia_tree:foldr(Fun, Acc, Tree)};
+                        Error ->
+                            Error
+                    end;
                 {error, enoent} ->
                     not_found;
                 Error ->
                     Error
             end;
-        {ok, Tree} ->
-            {ok, Tree};
-        {error, _Reason} = Error ->
-            Error
+        Result ->
+            Result
     end;
-read_wallet_list_from_chunk_files(WL, _CustomDir) when is_list(WL) ->
-    {ok, ar_patricia_tree:from_proplist([{get_wallet_key(T), get_wallet_value(T)}
-            || T <- WL])}.
+fold_wallet_list_from_chunk_files(WL, Fun, Acc, _CustomDir) when is_list(WL) ->
+    {ok, lists:foldl(fun(T, Acc2) -> Fun(get_wallet_key(T), get_wallet_value(T), Acc2) end,
+            Acc, WL)}.
 
 get_wallet_key(T) ->
     element(1, T).
@@ -990,10 +1009,7 @@ get_wallet_value({_, Balance, LastTX}) ->
 get_wallet_value({_, Balance, LastTX, Denomination, MiningPermission}) ->
     {Balance, LastTX, Denomination, MiningPermission}.
 
-read_wallet_list_chunk(RootHash, CustomDir) ->
-    read_wallet_list_chunk(RootHash, 0, ar_patricia_tree:new(), CustomDir).
-
-read_wallet_list_chunk(RootHash, Position, Tree, CustomDir) ->
+fold_wallet_list_chunks(RootHash, Position, Fun, Acc, CustomDir) ->
     Dir =
         case CustomDir of
             not_set ->
@@ -1022,17 +1038,12 @@ read_wallet_list_chunk(RootHash, Position, Tree, CustomDir) ->
                     _ ->
                         {Position + ?WALLET_LIST_CHUNK_SIZE, Chunk}
                 end,
-            Tree2 =
-                lists:foldl(
-                    fun({K, V}, Acc) -> ar_patricia_tree:insert(K, V, Acc) end,
-                    Tree,
-                    Wallets
-                ),
+            Acc2 = lists:foldl(fun({K, V}, A) -> Fun(K, V, A) end, Acc, Wallets),
             case NextPosition of
                 last ->
-                    {ok, Tree2};
+                    {ok, Acc2};
                 _ ->
-                    read_wallet_list_chunk(RootHash, NextPosition, Tree2, CustomDir)
+                    fold_wallet_list_chunks(RootHash, NextPosition, Fun, Acc2, CustomDir)
             end;
         {error, Reason} = Error ->
             ?LOG_ERROR([
@@ -1194,6 +1205,22 @@ handle_cast({store_account_tree_update, Height, RootHash, Map}, State) ->
 handle_cast(Cast, State) ->
     ?LOG_WARNING([{event, unhandled_cast}, {module, ?MODULE}, {cast, Cast}]),
     {noreply, State}.
+
+%% @doc Receive a batch of account tree node updates streamed by
+%% ar_patricia_tree_ets:compute_hash/3 (with #{ sink => PID }) and persist the ones not
+%% yet stored to account_tree_db. Nodes are content-addressed (the key embeds the node
+%% hash), so already-present keys are skipped. On restart the full tree is streamed
+%% again, but only the nodes missing from the database are written.
+handle_info({account_tree_node_batch, Batch}, State) ->
+    NewNodes = [{Key, term_to_binary(Value)} || {Key, Value} <- Batch,
+                                                not is_account_tree_node_stored(Key)],
+    case NewNodes of
+        [] ->
+            ok;
+        _ ->
+            write_account_tree_node_batch(NewNodes, ?ACCOUNT_TREE_PUT_RETRIES)
+    end,
+    {noreply, State};
 
 handle_info(Message, State) ->
     ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
@@ -1429,33 +1456,87 @@ store_account_tree_update(Height, RootHash, Map) ->
             DBKey = << H/binary, Prefix2/binary >>,
             case ar_kv:get(account_tree_db, DBKey) of
                 not_found ->
-                    case ar_kv:put(account_tree_db, DBKey, term_to_binary(Value)) of
-                        ok ->
-                            ok;
-                        {error, Reason} ->
-                            ?LOG_ERROR([{event, failed_to_store_account_tree_key},
-                                    {key_hash, ar_util:encode(element(1, Key))},
-                                    {key_prefix, case element(2, Key) of root -> root;
-                                            Prefix -> ar_util:encode(Prefix) end},
-                                    {height, Height},
-                                    {root_hash, ar_util:encode(RootHash)},
-                                    {reason, io_lib:format("~p", [Reason])}])
-                    end;
+                    put_account_tree_key(DBKey, Value, Key, Height, RootHash);
                 {ok, _} ->
                     ok;
                 {error, Reason} ->
-                    ?LOG_ERROR([{event, failed_to_read_account_tree_key},
+                    %% Transient read error on the existence check. The node may not
+                    %% be persisted yet, so attempt the (idempotent, content-addressed)
+                    %% put rather than silently dropping it.
+                    ?LOG_WARNING([{event, failed_to_read_account_tree_key},
                             {key_hash, ar_util:encode(element(1, Key))},
                             {key_prefix, case element(2, Key) of root -> root;
                                     Prefix -> ar_util:encode(Prefix) end},
                             {height, Height},
                             {root_hash, ar_util:encode(RootHash)},
-                            {reason, io_lib:format("~p", [Reason])}])
+                            {reason, io_lib:format("~p", [Reason])}]),
+                    put_account_tree_key(DBKey, Value, Key, Height, RootHash)
             end
         end,
         Map
     ),
     ?LOG_INFO([{event, stored_account_tree}]).
+
+%% @doc Persist a single account tree node, retrying a transient RocksDB failure a
+%% few times. Disk-full errors are not retried. Logs an error if all attempts fail.
+put_account_tree_key(DBKey, Value, Key, Height, RootHash) ->
+    put_account_tree_key(DBKey, Value, Key, Height, RootHash, ?ACCOUNT_TREE_PUT_RETRIES).
+
+put_account_tree_key(DBKey, Value, Key, Height, RootHash, RetriesLeft) ->
+    case ar_kv:put(account_tree_db, DBKey, term_to_binary(Value)) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            case not is_disk_full_error(Reason) andalso RetriesLeft > 0 of
+                true ->
+                    put_account_tree_key(DBKey, Value, Key, Height, RootHash,
+                                         RetriesLeft - 1);
+                false ->
+                    ?LOG_ERROR([{event, failed_to_store_account_tree_key},
+                                {key_hash, ar_util:encode(element(1, Key))},
+                                {key_prefix, case element(2, Key) of root -> root;
+                                                 Prefix -> ar_util:encode(Prefix) end},
+                                {height, Height},
+                                {root_hash, ar_util:encode(RootHash)},
+                                {reason, io_lib:format("~p", [Reason])}])
+            end
+    end.
+
+%% @doc Persist a batch of account tree nodes, retrying a transient RocksDB failure a
+%% few times. Disk-full errors are not retried. The write is idempotent (the keys are
+%% content-addressed). Logs an error if all attempts fail.
+write_account_tree_node_batch(NewNodes, RetriesLeft) ->
+    case ar_kv:write_batch(account_tree_db, NewNodes) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            case not is_disk_full_error(Reason) andalso RetriesLeft > 0 of
+                true ->
+                    write_account_tree_node_batch(NewNodes, RetriesLeft - 1);
+                false ->
+                    ?LOG_ERROR([{event, failed_to_store_account_tree_node_batch},
+                                {batch_size, length(NewNodes)},
+                                {reason, io_lib:format("~p", [Reason])}])
+            end
+    end.
+
+%% @doc Return true if the content-addressed node key is already in account_tree_db.
+%% A read error counts as not stored so the idempotent write is attempted rather than
+%% the node silently dropped.
+is_account_tree_node_stored(DBKey) ->
+    case ar_kv:get(account_tree_db, DBKey) of
+        {ok, _} ->
+            true;
+        _ ->
+            false
+    end.
+
+%% @doc Return true if a RocksDB error reason indicates the disk is full. The reason
+%% is the status string from RocksDB (e.g. "IO error: No space left on device"), so
+%% match textually to be robust to the exact reason term shape.
+is_disk_full_error(Reason) ->
+    Text = lists:flatten(io_lib:format("~p", [Reason])),
+    string:find(Text, "No space left on device") =/= nomatch.
 
 %% @doc Ignore the prefix when querying a key since the prefix might depend on the order of
 %% insertions and is only used to optimize certain lookups.

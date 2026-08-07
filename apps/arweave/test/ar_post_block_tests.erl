@@ -114,7 +114,7 @@ test_mitm_poa2_chunk_tamper_warn({Key, B, PrevB}) ->
     %% test limitation. In the wild the poa2 chunk could be modified without resigning.
     ok = ar_events:subscribe(block),
     assert_not_banned(ar_test_node:peer_ip(main)),
-    B2 = sign_block(B#block{ 
+    B2 = sign_block(B#block{
             recall_byte2 = 100000000,
             poa2 = #poa{ chunk = crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) } }, PrevB, Key),
     post_block(B2, invalid_second_chunk),
@@ -695,7 +695,7 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
     ?assertNotEqual(undefined, B8#block.double_signing_proof),
     RewardAddr = B8#block.reward_addr,
     BannedAddr = ar_wallet:to_address(Key),
-    Accounts = ar_wallets:get(B8#block.wallet_list, [BannedAddr, RewardAddr]),
+    Accounts = ar_account_tree:get(B8#block.wallet_list, [BannedAddr, RewardAddr]),
     ?assertMatch(#{ BannedAddr := {_, _, 1, false}, RewardAddr := {_, _} }, Accounts),
     %% The banned address may still use their accounts for transfers/uploads.
     Key3 = ar_wallet:new(),
@@ -706,7 +706,7 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
     ar_test_node:mine(),
     {ok, BI4} = ar_test_await:node_height(peer1, 4),
     B9 = ar_test_node:remote_call(peer1, ar_test_await, block_stored, [hd(BI4)]),
-    Accounts2 = ar_wallets:get(B9#block.wallet_list, [BannedAddr, Target]),
+    Accounts2 = ar_account_tree:get(B9#block.wallet_list, [BannedAddr, Target]),
     TXID = TX2#tx.id,
     ?assertEqual(2, length(B9#block.txs)),
     ?assertMatch(#{ Target := {1, <<>>}, BannedAddr := {_, TXID, 1, false} }, Accounts2).

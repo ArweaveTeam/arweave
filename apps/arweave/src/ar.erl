@@ -109,6 +109,9 @@ start(normal, _Args) ->
     ?LOG_INFO("========== Starting Arweave Node  =========="),
     arweave_config:log(),
 
+    %% Register arweave metrics.
+    ar_metrics:register(),
+
     %% Start other apps which we depend on.
     set_mining_address(),
     ar_chunk_storage:run_defragmentation(),
@@ -119,6 +122,14 @@ start(normal, _Args) ->
     %% supervisor tree's child order guarantees those validators run
     %% before any downstream consumer reads the config.
     Result = ar_sup:start_link(),
+
+    %% Prometheus metrics collector - metrics should be defined 
+    %% in arweave_metrics already. We only start the metrics collector
+    %% when the processes have been started by the supervisor.
+    prometheus_registry:register_collector(ar_metrics_collector),
+    %% Release number never changes so just set it here. The metrics should
+    %% be defined by the arweave_metrics app.
+    prometheus_gauge:set(arweave_release, ?RELEASE_NUMBER),
 
     %% All boot-time mutations are done. Flip to runtime mode so any
     %% subsequent write to a static spec is rejected.

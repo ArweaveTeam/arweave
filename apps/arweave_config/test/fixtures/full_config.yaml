@@ -14,6 +14,7 @@ logging:
     depth: 128
     chars_limit: 4096
   path: "/tmp/arweave-logs-full"
+  patricia: true
   max_no_files: 25
   max_no_bytes: 1048576
   compress_on_rotate: true

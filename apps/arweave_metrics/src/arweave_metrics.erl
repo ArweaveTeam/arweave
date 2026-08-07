@@ -7,7 +7,13 @@
 -export([start/0, stop/0]).
 -export([start/2, stop/1]).
 
--export([register/0, cleanup/0, get_status_class/1, record_rate_metric/4]).
+-export([register/0, get_status_class/1, record_rate_metric/4]).
+
+-ifdef(AR_TEST).
+-export([cleanup/0]).
+-else.
+-compile({nowarn_unused_function, [{cleanup, 0}]}).
+-endif.
 
 %% Safe runtime metric helpers — see the "Safe metric helpers" section below.
 -export([gauge_set/2, gauge_set/3, gauge_inc/1, gauge_inc/2, gauge_inc/3,
@@ -17,7 +23,6 @@
 		histogram_observe/2, histogram_observe/3]).
 
 -include_lib("kernel/include/logger.hrl").
--include_lib("arweave/include/ar.hrl"). %% FIXME: this is a circular dependency
 
 %% @doc Start the `arweave_metrics' application and its dependencies.
 -spec start() -> ok | {error, term()}.
@@ -42,7 +47,6 @@ start(_StartType, _StartArgs) ->
     arweave_metrics:register(),
     S = arweave_metrics_sup:start_link(),
     prometheus_registry:register_collector(prometheus_process_collector),
-    prometheus_registry:register_collector(arweave_metrics_collector),
     S.
 
 %% @doc `application' callback.
@@ -53,14 +57,6 @@ stop(_State) ->
 %%% Public interface.
 %% @doc Declare Arweave metrics.
 register() ->
-	lists:foreach(
-		fun({MetricType, Definition}) ->
-			MetricType:new(Definition)
-		end,
-		arweave_metrics_definitions:all_metrics()
-	),
-	%% Release number never changes so just set it here.
-	prometheus_gauge:set(arweave_release, ?RELEASE_NUMBER),
 	ok.
 
 record_rate_metric(StartTime, Bytes, Metric, Labels) ->
@@ -173,11 +169,4 @@ histogram_observe(Name, Labels, Value) ->
 	try prometheus_histogram:observe(Name, Labels, Value) catch _:_ -> ok end.
 
 cleanup() ->
-	lists:foreach(
-		fun({MetricType, Definition}) ->
-			Name = proplists:get_value(name, Definition),
-			MetricType:deregister(Name)
-		end,
-		arweave_metrics_definitions:all_metrics()
-	),
 	ok.

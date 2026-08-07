@@ -7,8 +7,10 @@
          get_sub_chunks_per_replica_2_9_entropy/0, get_replica_2_9_entropy_count/0,
          get_replica_2_9_footprint_size/0, strict_data_split_threshold/0,
          get_merkle_rebase_support_threshold/0,
-         block_field_size_limit/1, verify_timestamp/2, get_max_timestamp_deviation/0, verify_last_retarget/2,
-         verify_weave_size/3, verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
+         block_field_size_limit/1, verify_timestamp/2, get_max_timestamp_deviation/0,
+         verify_last_retarget/2, verify_weave_size/3,
+         verify_cumulative_diff/2, verify_block_hash_list_merkle/2,
+         wallet_list_hash_fun/0,
          compute_hash_list_merkle/1, compute_h0/2, compute_h0/5, compute_h0/6,
          compute_h1/3, compute_h2/3, compute_solution_h/2,
          indep_hash/1, indep_hash/2, indep_hash2/2, get_block_signature_preimage/4,
@@ -18,8 +20,6 @@
          hash_wallet_list/1, generate_hash_list_for_block/2,
          generate_tx_root_for_block/1, generate_tx_root_for_block/2,
          generate_size_tagged_list_from_txs/2, generate_tx_tree/1, generate_tx_tree/2,
-         test_wallet_list_performance/0, test_wallet_list_performance/1,
-         test_wallet_list_performance/2, test_wallet_list_performance/3,
          poa_to_list/1, shift_packing_2_5_threshold/1,
          get_packing_threshold/2, compute_next_vdf_difficulty/1,
          validate_proof_size/1, vdf_step_number/1, get_packing/3,
@@ -105,20 +105,20 @@ block_field_size_limit(B) ->
         end,
     RewardAddrCheck = byte_size(B#block.reward_addr) =< 32,
     Check = (byte_size(B#block.nonce) =< 512) and
-                                                (byte_size(B#block.previous_block) =< 48) and
-                                                                                            (byte_size(integer_to_binary(B#block.timestamp)) =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
-                                                                                                                                                                               (byte_size(integer_to_binary(B#block.last_retarget))
-                                                                                                                                                                                =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
-                                                                                                                                                                                                                  (byte_size(integer_to_binary(B#block.diff)) =< DiffBytesLimit) and
-                                                                                                                                                                                                                                                                                   (byte_size(integer_to_binary(B#block.height)) =< 20) and
-                                                                                                                                                                                                                                                                                                                                          (byte_size(B#block.hash) =< 48) and
-                                                                                                                                                                                                                                                                                                                                                                            (byte_size(B#block.indep_hash) =< 48) and
+        (byte_size(B#block.previous_block) =< 48) and
+        (byte_size(integer_to_binary(B#block.timestamp)) =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
+        (byte_size(integer_to_binary(B#block.last_retarget))
+            =< ?TIMESTAMP_FIELD_SIZE_LIMIT) and
+        (byte_size(integer_to_binary(B#block.diff)) =< DiffBytesLimit) and
+        (byte_size(integer_to_binary(B#block.height)) =< 20) and
+        (byte_size(B#block.hash) =< 48) and
+        (byte_size(B#block.indep_hash) =< 48) and
         RewardAddrCheck and
         validate_tags_size(B) and
-                                (byte_size(integer_to_binary(B#block.weave_size)) =< 64) and
-                                                                                           (byte_size(integer_to_binary(B#block.block_size)) =< 64) and
-                                                                                                                                                      (ChunkSize =< ?DATA_CHUNK_SIZE) and
-                                                                                                                                                                                        (DataPathSize =< ?MAX_PATH_SIZE),
+        (byte_size(integer_to_binary(B#block.weave_size)) =< 64) and
+        (byte_size(integer_to_binary(B#block.block_size)) =< 64) and
+        (ChunkSize =< ?DATA_CHUNK_SIZE) and
+        (DataPathSize =< ?MAX_PATH_SIZE),
     case Check of
         false ->
             ?LOG_INFO(
@@ -199,8 +199,8 @@ verify_cumulative_diff(NewB, OldB) ->
 verify_block_hash_list_merkle(NewB, CurrentB) ->
     true = NewB#block.height > ar_fork:height_2_0(),
     NewB#block.hash_list_merkle == ar_unbalanced_merkle:root(CurrentB#block.hash_list_merkle,
-                                                             {CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
-                                                             fun ar_unbalanced_merkle:hash_block_index_entry/1).
+            {CurrentB#block.indep_hash, CurrentB#block.weave_size, CurrentB#block.tx_root},
+            fun ar_unbalanced_merkle:hash_block_index_entry/1).
 
 %% @doc Compute the root of the new block tree given the previous block.
 compute_hash_list_merkle(B) ->
@@ -497,7 +497,7 @@ verify_signature(BlockPreimage, PrevCDiff,
   when byte_size(Signature) == ?RSA_BLOCK_SIG_SIZE,
        byte_size(Pub) == ?RSA_BLOCK_SIG_SIZE ->
     SignaturePreimage = get_block_signature_preimage(CDiff, PrevCDiff,
-                                                     << PrevSolutionH/binary, BlockPreimage/binary >>, Height),
+            << PrevSolutionH/binary, BlockPreimage/binary >>, Height),
     ar_wallet:to_address(RewardKey) == RewardAddr andalso
         ar_wallet:verify(RewardKey, SignaturePreimage, Signature);
 verify_signature(BlockPreimage, PrevCDiff,
@@ -506,7 +506,7 @@ verify_signature(BlockPreimage, PrevCDiff,
                          cumulative_diff = CDiff, height = Height })
   when byte_size(Signature) == ?ECDSA_SIG_SIZE, byte_size(Pub) == ?ECDSA_PUB_KEY_SIZE ->
     SignaturePreimage = get_block_signature_preimage(CDiff, PrevCDiff,
-                                                     << PrevSolutionH/binary, BlockPreimage/binary >>, Height),
+            << PrevSolutionH/binary, BlockPreimage/binary >>, Height),
     case Height >= ar_fork:height_2_9() of
         true ->
             ar_wallet:to_address(RewardKey) == RewardAddr andalso
@@ -786,26 +786,30 @@ encode_bin(N, S) -> ar_serialize:encode_bin(N, S).
 encode_bin_list(L, LS, ES) -> ar_serialize:encode_bin_list(L, LS, ES).
 
 hash_wallet_list(WalletList) ->
-    ar_patricia_tree:compute_hash(WalletList,
-                                  fun   (Addr, {Balance, LastTX}) ->
-                                          EncodedBalance = binary:encode_unsigned(Balance),
-                                          ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
-                                        (Addr, {Balance, LastTX, Denomination, MiningPermission}) ->
-                                          MiningPermissionBin =
-                                              case MiningPermission of
-                                                  true ->
-                                                      <<1>>;
-                                                  false ->
-                                                      <<0>>
-                                              end,
-                                          Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
-                                                        (ar_serialize:encode_int(Balance, 8))/binary,
-                                                        (ar_serialize:encode_bin(LastTX, 8))/binary,
-                                                        (ar_serialize:encode_int(Denomination, 8))/binary,
-                                                        MiningPermissionBin/binary >>,
-                                          crypto:hash(sha384, Preimage)
-                                  end
-                                 ).
+    ar_patricia_tree:compute_hash(WalletList, wallet_list_hash_fun()).
+
+%% @doc Hash the leaf or node of the account tree.
+wallet_list_hash_fun() ->
+    fun (leaf, {Addr, {Balance, LastTX}}) ->
+            EncodedBalance = binary:encode_unsigned(Balance),
+            ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
+        (leaf, {Addr, {Balance, LastTX, Denomination, MiningPermission}}) ->
+            MiningPermissionBin =
+                case MiningPermission of
+                    true ->
+                        <<1>>;
+                    false ->
+                        <<0>>
+                end,
+            Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
+                          (ar_serialize:encode_int(Balance, 8))/binary,
+                          (ar_serialize:encode_bin(LastTX, 8))/binary,
+                          (ar_serialize:encode_int(Denomination, 8))/binary,
+                          MiningPermissionBin/binary >>,
+            crypto:hash(sha384, Preimage);
+        (node, Hashes) ->
+            ar_deep_hash:hash(Hashes)
+    end.
 
 %% @doc Generate the TX tree and set the TX root for a block.
 generate_tx_tree(B) ->
@@ -971,151 +975,6 @@ generate_size_tagged_list_from_txs_test() ->
                                                      #tx{ id = <<"4">>, format = 2 },
                                                      #tx{ id = <<"5">>, format = 2 },
                                                      #tx{ id = <<"6">>, format = 2, data_size = 262144 }], Fork_2_5)).
-
-test_wallet_list_performance() ->
-    test_wallet_list_performance(250_000, ar_deep_hash, mixed).
-
-test_wallet_list_performance(Length) ->
-    test_wallet_list_performance(Length, ar_deep_hash, mixed).
-
-test_wallet_list_performance(Length, Algo) ->
-    test_wallet_list_performance(Length, Algo, mixed).
-
-test_wallet_list_performance(Length, Algo, Denominations) ->
-    SupportedAlgos = [ar_deep_hash, no_ar_deep_hash_sha384, sha256],
-    case lists:member(Algo, SupportedAlgos) of
-        false ->
-            io:format("Supported Algo: ~p~n", [SupportedAlgos]);
-        true ->
-            SupportedDenominations = [old, new, mixed],
-            case lists:member(Denominations, SupportedDenominations) of
-                false ->
-                    io:format("Supported Algo: ~p~n", [SupportedDenominations]);
-                true ->
-                    test_wallet_list_performance2(Length, Algo, Denominations)
-            end
-    end.
-
-test_wallet_list_performance2(Length, Algo, Denominations) ->
-
-    io:format("# ~B wallets, denominations: ~p, algo: ~p~n", [Length, Denominations, Algo]),
-    io:format("============~n"),
-    WL = [random_wallet() || _ <- lists:seq(1, Length)],
-    {Time1, T1} =
-        timer:tc(
-          fun() ->
-                  lists:foldl(
-                    fun({A, B, LastTX}, Acc) ->
-                            case Denominations of
-                                old ->
-                                    ar_patricia_tree:insert(A, {B, LastTX}, Acc);
-                                new ->
-                                    ar_patricia_tree:insert(A, {B, LastTX,
-                                                                1 + rand:uniform(10), true}, Acc);
-                                mixed ->
-                                    case rand:uniform(2) == 1 of
-                                        true ->
-                                            ar_patricia_tree:insert(A, {B, LastTX}, Acc);
-                                        false ->
-                                            ar_patricia_tree:insert(A, {B, LastTX,
-                                                                        1 + rand:uniform(10), true}, Acc)
-                                    end
-                            end
-                    end,
-                    ar_patricia_tree:new(),
-                    WL
-                   )
-          end
-         ),
-    io:format("tree buildup                    | ~f seconds~n", [Time1 / 1000000]),
-    {Time2, Binary} =
-        timer:tc(
-          fun() ->
-                  ar_serialize:jsonify(
-                    ar_serialize:wallet_list_to_json_struct(unclaimed, false, T1)
-                   )
-          end
-         ),
-    io:format("serialization                   | ~f seconds~n", [Time2 / 1000000]),
-    io:format("                                | ~B bytes~n", [byte_size(Binary)]),
-    ComputeHashFun =
-        fun (Addr, {Balance, LastTX}) ->
-                case Algo of
-                    ar_deep_hash ->
-                        EncodedBalance = binary:encode_unsigned(Balance),
-                        ar_deep_hash:hash([Addr, EncodedBalance, LastTX]);
-                    _ ->
-                        Denomination = 0,
-                        MiningPermissionBin = <<1>>,
-                        Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
-                                      (ar_serialize:encode_int(Balance, 8))/binary,
-                                      (ar_serialize:encode_bin(LastTX, 8))/binary,
-                                      (ar_serialize:encode_int(Denomination, 8))/binary,
-                                      MiningPermissionBin/binary >>,
-                        case Algo of
-                            no_ar_deep_hash_sha384 ->
-                                crypto:hash(sha384, Preimage);
-                            sha256 ->
-                                crypto:hash(sha256, Preimage)
-                        end
-                end;
-            (Addr, {Balance, LastTX, Denomination, MiningPermission}) ->
-                MiningPermissionBin =
-                    case MiningPermission of
-                        true ->
-                            <<1>>;
-                        false ->
-                            <<0>>
-                    end,
-                Preimage = << (ar_serialize:encode_bin(Addr, 8))/binary,
-                              (ar_serialize:encode_int(Balance, 8))/binary,
-                              (ar_serialize:encode_bin(LastTX, 8))/binary,
-                              (ar_serialize:encode_int(Denomination, 8))/binary,
-                              MiningPermissionBin/binary >>,
-                case Algo of
-                    sha256 ->
-                        crypto:hash(sha256, Preimage);
-                    _ ->
-                        crypto:hash(sha384, Preimage)
-                end
-        end,
-    {Time3, {_, T2, _}} =
-        timer:tc(fun() -> ar_patricia_tree:compute_hash(T1, ComputeHashFun) end),
-    io:format("root hash from scratch          | ~f seconds~n", [Time3 / 1000000]),
-    {Time4, T3} =
-        timer:tc(
-          fun() ->
-                  lists:foldl(
-                    fun({A, B, LastTX}, Acc) ->
-                            ar_patricia_tree:insert(A, {B, LastTX}, Acc)
-                    end,
-                    T2,
-                    [random_wallet() || _ <- lists:seq(1, 2000)]
-                   )
-          end
-         ),
-    io:format("2000 inserts                    | ~f seconds~n", [Time4 / 1000000]),
-    {Time5, _} =
-        timer:tc(fun() -> ar_patricia_tree:compute_hash(T3, ComputeHashFun) end),
-    io:format("recompute hash after 2k inserts | ~f seconds~n", [Time5 / 1000000]),
-    {Time6, T4} =
-        timer:tc(
-          fun() ->
-                  {A, B, LastTX} = random_wallet(),
-                  ar_patricia_tree:insert(A, {B, LastTX}, T2)
-          end
-         ),
-    io:format("1 insert                        | ~f seconds~n", [Time6 / 1000000]),
-    {Time7, _} =
-        timer:tc(fun() -> ar_patricia_tree:compute_hash(T4, ComputeHashFun) end),
-    io:format("recompute hash after 1 insert   | ~f seconds~n", [Time7 / 1000000]).
-
-random_wallet() ->
-    {
-     crypto:strong_rand_bytes(32),
-     rand:uniform(1000000000000000000),
-     crypto:strong_rand_bytes(32)
-    }.
 
 validate_replica_format_test_() ->
     [

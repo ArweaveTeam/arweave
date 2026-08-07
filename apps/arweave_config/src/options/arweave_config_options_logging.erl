@@ -98,6 +98,18 @@ specs() ->
         },
         #{
             enabled => true,
+            %% Read by ar_account_tree at the start of every account tree hash
+            %% recomputation, so a runtime set takes effect from the next
+            %% recomputation on.
+            option_key => [logging,patricia],
+            default => false,
+            type => boolean,
+            runtime => true,
+            short_description =>
+                <<"Log account tree hashing progress lines.">>
+        },
+        #{
+            enabled => true,
             %% see: https://www.erlang.org/doc/apps/kernel/logger_formatter.html
             option_key => [logging,formatter,max_size],
             default => ?LOG_FORMATTER_MAX_SIZE,
