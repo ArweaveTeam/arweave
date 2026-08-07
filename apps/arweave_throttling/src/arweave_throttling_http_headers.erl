@@ -53,7 +53,7 @@ parse(Headers0) ->
         Limit = fetch(<<"ratelimit-limit">>, Headers),
         Remaining = fetch(<<"ratelimit-remaining">>, Headers),
         Reset = fetch(<<"ratelimit-reset">>, Headers),
-        ResetAmount = fetch(<<"ar-ratelimit-reset-amount">>, Headers),
+        ResetAmount = fetch(<<"ratelimit-reset-amount">>, Headers),
         {Total, GroupId} = parse_limit(Limit),
         {ok, #{group_id => GroupId,
                total => Total,

@@ -134,7 +134,7 @@ pending_helper(_Config) ->
 remote_peer_reverted_no_more_headers(_Config) ->
     Peer = {1, 2, 3, 4, 1984},
 
-    ok = ?M:update_quota(general, Peer, #{total => 10, remaining => 9, 
+    ok = ?M:update_quota(general, Peer, #{total => 10, remaining => 9,
                                           reset_amount => 1, reset_seconds => 0}),
     ok = ?M:throttle(general, Peer),
     {ok, S1} = ?M:status(general, Peer),
@@ -197,11 +197,12 @@ blocking_and_draining_to_reset_amount(_Config) ->
     Parent = self(),
     SeqNos = lists:seq(1,5),
     lists:foreach(
-      fun(N) ->
-              spawn(fun() ->
+        fun(N) ->
+                spawn(
+                    fun() ->
                             ok = ?M:throttle(general, Peer),
                             Parent ! {done, N}
-                    end)
+                  end)
       end, SeqNos),
 
     ok = wait_until(fun() -> ?M:pending(general, Peer) == 5 end),
@@ -210,7 +211,8 @@ blocking_and_draining_to_reset_amount(_Config) ->
     ?assertEqual(5, ?M:pending(general, Peer)),
 
     lists:foreach(
-      fun(N) -> receive
+        fun(N) ->
+                receive
                     {done, N} ->
                         ok
                 after 3000 ->
@@ -219,7 +221,7 @@ blocking_and_draining_to_reset_amount(_Config) ->
                         %% something is wrong
                         erlang:error({receive_timeout, [{seqno, N}]})
                 end
-      end, SeqNos),
+        end, SeqNos),
 
     %% By the time we received the messages, none should be pending
     ?assertEqual(0, ?M:pending(general, Peer)),
@@ -227,7 +229,7 @@ blocking_and_draining_to_reset_amount(_Config) ->
     %% 20 was reset, and then 5 waiters were drained, and served
     ?assertMatch(
        {ok, #{total := 100,remaining := 15,queue_length := 0,
-              reset_seconds := 0, last_update_ts := _}}, 
+              reset_seconds := 0, last_update_ts := _}},
        ?M:status(general, Peer)),
     ok.
 

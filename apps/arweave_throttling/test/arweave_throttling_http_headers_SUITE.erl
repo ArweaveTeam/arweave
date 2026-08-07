@@ -85,7 +85,7 @@ parse_well_formed(_Config) ->
 parse_well_formed_list(_Config) ->
     Headers = [{<<"RateLimit-Limit">>,limit_value(<<"general">>, 200)},
                {<<"RateLimit-Remaining">>, <<"42">>},
-               {<<"ar-RateLimit-Reset-Amount">>, <<"158">>},
+               {<<"RateLimit-Reset-Amount">>, <<"158">>},
                {<<"RateLimit-Reset">>, <<"7">>}],
     ?assertEqual({ok, #{group_id => <<"general">>,
                         total => 200,
@@ -99,7 +99,7 @@ parse_alpha2_version(_Config) ->
     Headers = [{<<"RateLimit-Limit">>,
                 <<"460, 460;policy=\"usage\", 500;policy=\"concurrency\" ">>},
                {<<"RateLimit-Remaining">>, <<"449">>},
-               {<<"ar-RateLimit-Reset-Amount">>, <<"1">>},
+               {<<"RateLimit-Reset-Amount">>, <<"1">>},
                {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, missing_group_id},
                 ?M:parse(Headers)),
@@ -110,14 +110,14 @@ parse_malformed_policies(_Config) ->
     Headers1 = [{<<"RateLimit-Limit">>,
                  <<"450, 0;w=1000;policy=\"\", 450;w=1000;burst=450;policy=\"leaky bucket\" 150;w=1;policy=\"concurrency\"">>},
                 {<<"RateLimit-Remaining">>, <<"449">>},
-                {<<"ar-RateLimit-Reset-Amount">>, <<"1">>},
+                {<<"RateLimit-Reset-Amount">>, <<"1">>},
                 {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, malformed_policy},
                 ?M:parse(Headers1)),
     Headers2 = [{<<"RateLimit-Limit">>,
                 <<"450, 0;w=1000;policy=\"something else\", 450;w=1000;burst=450;policy=\"leaky bucket\" 150;w=1;policy=\"concurrency\"">>},
                 {<<"RateLimit-Remaining">>, <<"449">>},
-                {<<"ar-RateLimit-Reset-Amount">>, <<"1">>},
+                {<<"RateLimit-Reset-Amount">>, <<"1">>},
                 {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, malformed_policy},
                 ?M:parse(Headers2)),
@@ -127,7 +127,7 @@ parse_malformed_policies(_Config) ->
         [{<<"RateLimit-Limit">>,
           <<"460, 460;policy=\"leaky bucket\", 500;policy=\"concurrency\" ">>},
          {<<"RateLimit-Remaining">>, <<"449">>},
-         {<<"ar-RateLimit-Reset-Amount">>, <<"1">>},
+         {<<"RateLimit-Reset-Amount">>, <<"1">>},
          {<<"RateLimit-Reset">>, <<"19">>}],
     ?assertEqual({error, malformed_policy},
                 ?M:parse(Headers3)),
@@ -138,7 +138,7 @@ parse_malformed_policies(_Config) ->
 parse_case_insensitive_names(_Config) ->
     Headers = #{<<"RaTeLiMiT-LiMiT">> => limit_value(<<"data_sync_record">>, 10),
                 <<"ratelimit-remaining">> => <<"3">>,
-                <<"ar-RateLimit-Reset-Amount">> => <<"7">>,
+                <<"RateLimit-Reset-Amount">> => <<"7">>,
                 <<"RATELIMIT-RESET">> =><<"1">>},
     {ok, Parsed} = ?M:parse(Headers),
     ?assertEqual(#{group_id => <<"data_sync_record">>,
@@ -161,7 +161,7 @@ parse_accepts_map(_Config) ->
 %% @doc A missing header is reported, not silently defaulted.
 parse_missing_header(_Config) ->
     Headers = #{<<"ratelimit-limit">> => limit_value(<<"general">>, 10),
-                <<"ar-RateLimit-Reset-Amount">> => <<"1">>,
+                <<"RateLimit-Reset-Amount">> => <<"1">>,
                 <<"ratelimit-reset">> => <<"1">>},
     ?assertEqual({error, {missing_header, <<"ratelimit-remaining">>}},
                 ?M:parse(Headers)),
@@ -172,7 +172,7 @@ parse_missing_header(_Config) ->
 parse_malformed_limit(_Config) ->
     Headers = #{<<"ratelimit-limit">> => <<"not a valid limit">>,
                 <<"ratelimit-remaining">> => <<"3">>,
-                <<"ar-RateLimit-Reset-Amount">> => <<"7">>,
+                <<"RateLimit-Reset-Amount">> => <<"7">>,
                 <<"ratelimit-reset">> => <<"1">>},
     ?assertEqual({error, malformed_headers}, ?M:parse(Headers)),
     ok.
@@ -215,7 +215,7 @@ old_headers(_Config) ->
 headers(GroupBin, Total, Remaining, Reset) ->
     #{<<"RateLimit-Limit">> => limit_value(GroupBin, Total),
       <<"RateLimit-Remaining">> => integer_to_binary(Remaining),
-      <<"ar-RateLimit-Reset-Amount">> => integer_to_binary(Total - Remaining), %% simplest scenario
+      <<"RateLimit-Reset-Amount">> => integer_to_binary(Total - Remaining), %% simplest scenario
     <<"RateLimit-Reset">> => integer_to_binary(Reset)}.
 
 %% RateLimit-Limit value: the expiring-limit followed by the three

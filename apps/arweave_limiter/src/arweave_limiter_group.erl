@@ -229,7 +229,6 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                                 {sliding_window_limit, SlidingWindowLimit},
                                 {leaky_rate_limit, LeakyRateLimit},
                                 {peer, Peer}, {id, ID}]),
-                    %% This is where
                     HeadersInfo = build_headers_info(
                                     0, 0, SlidingTimestampsForPeer0, Now,
                                     reject, State),
@@ -540,7 +539,7 @@ reset_mode_and_seconds(_SlidingLimit, 0, SWReset, _LBReset) ->
     {sliding, SWReset};
 reset_mode_and_seconds(_SlidingLimit, _LeakyLimit, SWReset, LBReset) when SWReset < LBReset ->
     {sliding, SWReset};
-reset_mode_and_seconds(_SlidingLimit, _LeakyLimit, SWReset, LBReset) ->
+reset_mode_and_seconds(_SlidingLimit, _LeakyLimit, _SWReset, LBReset) ->
     {leaky, LBReset}.
 
 
