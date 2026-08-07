@@ -216,7 +216,7 @@ headers(GroupBin, Total, Remaining, Reset) ->
     #{<<"RateLimit-Limit">> => limit_value(GroupBin, Total),
       <<"RateLimit-Remaining">> => integer_to_binary(Remaining),
       <<"RateLimit-Reset-Amount">> => integer_to_binary(Total - Remaining), %% simplest scenario
-    <<"RateLimit-Reset">> => integer_to_binary(Reset)}.
+      <<"RateLimit-Reset">> => integer_to_binary(Reset)}.
 
 %% RateLimit-Limit value: the expiring-limit followed by the three
 %% quota-policy comments, each tagged with the group id.

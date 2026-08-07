@@ -110,7 +110,7 @@ pending_helper(_Config) ->
                            remaining => 1,
                            reset_amount => 0,
                            reset_seconds => 0}),
-
+    
     0 = ?M:pending(general, Peer),
 
     ok = ?M:throttle(general, Peer),
@@ -203,7 +203,7 @@ blocking_and_draining_to_reset_amount(_Config) ->
                             ok = ?M:throttle(general, Peer),
                             Parent ! {done, N}
                   end)
-      end, SeqNos),
+        end, SeqNos),
 
     ok = wait_until(fun() -> ?M:pending(general, Peer) == 5 end),
 
@@ -212,15 +212,15 @@ blocking_and_draining_to_reset_amount(_Config) ->
 
     lists:foreach(
         fun(N) ->
-                receive
-                    {done, N} ->
-                        ok
-                after 3000 ->
-                        %% reset seconds is 2, so if we have to wait 3 for
-                        %% the throttled/queued requests to progress
-                        %% something is wrong
-                        erlang:error({receive_timeout, [{seqno, N}]})
-                end
+            receive
+                {done, N} ->
+                    ok
+            after 3000 ->
+                    %% reset seconds is 2, so if we have to wait 3 for
+                    %% the throttled/queued requests to progress
+                    %% something is wrong
+                    erlang:error({receive_timeout, [{seqno, N}]})
+            end
         end, SeqNos),
 
     %% By the time we received the messages, none should be pending
