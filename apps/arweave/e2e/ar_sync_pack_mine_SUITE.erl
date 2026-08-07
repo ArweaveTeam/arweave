@@ -297,7 +297,7 @@ do_entropy_first_sync_pack_mine(
     StorageModules = [ Module ],
 
     BaseOverrides = #{
-                      [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
+                      [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                       [join, start_from_latest_state] => true,
                       [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
                       [join, auto] => true,
@@ -351,7 +351,7 @@ do_entropy_last_sync_pack_mine(
     StorageModules = [ Module ],
 
     BaseOverrides = #{
-                      [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
+                      [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                       [join, start_from_latest_state] => true,
                       [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
                       [join, auto] => true,
@@ -400,7 +400,7 @@ do_small_module_aligned_sync_pack_mine(
 
     %% Sync the second half of partition 1
     Overrides = #{
-                  [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
+                  [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                   [join, start_from_latest_state] => true,
                   [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
                   [join, auto] => true,
@@ -420,8 +420,8 @@ do_small_module_aligned_sync_pack_mine(
     ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 1, 4)),
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart, RangeEnd),
 
-    AlignedStart = ar_util:floor_int(RangeStart, ?DATA_CHUNK_SIZE),
-    AlignedEnd = ar_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE,
+    AlignedStart = arweave_util:floor_int(RangeStart, ?DATA_CHUNK_SIZE),
+    AlignedEnd = arweave_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE,
     ok = ar_test_await:entropy_prepared(SinkNode, StoreID, AlignedStart, AlignedEnd),
     ok = ar_test_await:entropy_not_prepared(SinkNode, StoreID, AlignedEnd, AlignedEnd + ar_block:partition_size()),
 
@@ -444,7 +444,7 @@ do_small_module_unaligned_sync_pack_mine(
     StorageModules = [ Module ],
 
     Overrides = #{
-                  [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
+                  [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                   [join, start_from_latest_state] => true,
                   [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
                   [join, auto] => true,
@@ -464,8 +464,8 @@ do_small_module_unaligned_sync_pack_mine(
     ar_e2e:assert_chunks(SinkNode, SinkPacking, lists:sublist(Chunks, 5, 4)),
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart, RangeEnd),
 
-    AlignedStart = ar_util:floor_int(RangeStart, ?DATA_CHUNK_SIZE),
-    AlignedEnd = ar_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE,
+    AlignedStart = arweave_util:floor_int(RangeStart, ?DATA_CHUNK_SIZE),
+    AlignedEnd = arweave_util:ceil_int(RangeEnd, ?DATA_CHUNK_SIZE) + ?DATA_CHUNK_SIZE,
     ok = ar_test_await:entropy_prepared(SinkNode, StoreID, AlignedStart, AlignedEnd),
     ok = ar_test_await:entropy_not_prepared(SinkNode, StoreID, 0, AlignedStart),
 
@@ -489,7 +489,7 @@ do_large_module_aligned_sync_pack_mine(
     StorageModules = [ Module ],
 
     Overrides = #{
-                  [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
+                  [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                   [join, start_from_latest_state] => true,
                   [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
                   [join, auto] => true,
@@ -552,7 +552,7 @@ do_large_module_unaligned_sync_pack_mine(
     StorageModules = [ Module ],
 
     Overrides = #{
-                  [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
+                  [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                   [join, start_from_latest_state] => true,
                   [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
                   [join, auto] => true,
@@ -640,7 +640,7 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
                      ],
     NodePeerName = ar_test_node:peer_name(Node),
     NodePeerName = ar_test_node:start_other_node(Node, B0, #{
-                                                             [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
+                                                             [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                                                              [join, start_from_latest_state] => true,
                                                              [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
                                                              [join, auto] => true,
@@ -662,7 +662,7 @@ start_sink_node(Node, SourceNode, B0, PackingType1, PackingType2) ->
 
     NodePeerName = ar_test_node:peer_name(Node),
     NodePeerName = ar_test_node:start_other_node(Node, B0, #{
-                                                             [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(SourceNode))],
+                                                             [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                                                              [join, start_from_latest_state] => true,
                                                              [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
                                                              [join, auto] => true,

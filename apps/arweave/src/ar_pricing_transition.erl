@@ -173,7 +173,7 @@ get_transition_price(Height, V2Price) ->
             Interval2 = PriceTransitionEnd - Height,
             InterpolatedPrice =
                 (StartPrice * Interval2 + V2Price * Interval1) div (Interval1 + Interval2),
-            PricePerGiBPerMinute = ar_util:between(InterpolatedPrice, LowerBound, UpperBound),
+            PricePerGiBPerMinute = arweave_util:between(InterpolatedPrice, LowerBound, UpperBound),
             ?LOG_DEBUG([{event, get_price_per_gib_minute},
                         {height, Height}, {price1, StartPrice}, {price2, V2Price},
                         {lower_bound, LowerBound}, {upper_bound, UpperBound},

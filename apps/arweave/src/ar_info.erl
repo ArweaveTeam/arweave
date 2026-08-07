@@ -28,12 +28,12 @@ get_info() ->
       <<"current">> =>
           case is_atom(Current) of
               true -> atom_to_binary(Current, utf8);
-              false -> ar_util:encode(Current)
+              false -> arweave_util:encode(Current)
           end,
       <<"blocks">> => ar_header_sync:block_count(),
       <<"cached_blocks">> => ar_storage:block_count(),
       <<"peers">> => arweave_metrics:gauge_value(arweave_peer_count),
-      <<"queue_length">> => ar_util:message_queue_len(ar_node_worker),
+      <<"queue_length">> => arweave_util:message_queue_len(ar_node_worker),
       <<"node_state_latency">> => (Time + Time2) div 2
      }.
 
@@ -67,7 +67,7 @@ get_recent_blocks() ->
                fun(H, Acc) ->
                        B = ar_block_cache:get(block_cache, H),
                        [#{
-                          <<"id">> => ar_util:encode(H),
+                          <<"id">> => arweave_util:encode(H),
                           <<"received">> => get_block_timestamp(B, length(Acc)),
                           <<"height">> => B#block.height
                          } | Acc]
@@ -97,10 +97,10 @@ get_recent_forks() ->
                                        id = ID, height = Height, timestamp = Timestamp,
                                        block_ids = BlockIDs} = Fork,
                                     [#{
-                                       <<"id">> => ar_util:encode(ID),
+                                       <<"id">> => arweave_util:encode(ID),
                                        <<"height">> => Height,
                                        <<"timestamp">> => Timestamp div 1000,
-                                       <<"blocks">> => [ ar_util:encode(BlockID) || BlockID <- BlockIDs ]
+                                       <<"blocks">> => [ arweave_util:encode(BlockID) || BlockID <- BlockIDs ]
                                       } | Acc]
                             end,
                             [],
@@ -116,4 +116,4 @@ get_block_timestamp(B, Depth)
        B#block.receive_timestamp =:= undefined ->
     <<"pending">>;
 get_block_timestamp(B, _Depth) ->
-    ar_util:timestamp_to_seconds(B#block.receive_timestamp).
+    arweave_util:timestamp_to_seconds(B#block.receive_timestamp).

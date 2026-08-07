@@ -677,7 +677,7 @@ set_partition_metrics([PartitionReport | PartitionReports]) ->
 set_peer_metrics([]) ->
     ok;
 set_peer_metrics([PeerReport | PeerReports]) ->
-    Peer = ar_util:format_peer(PeerReport#peer_report.peer),
+    Peer = arweave_util:format_peer(PeerReport#peer_report.peer),
     arweave_metrics:gauge_set(cm_h1_rate, [Peer, to],
                          PeerReport#peer_report.current_h1_to_peer_hps),
     arweave_metrics:gauge_set(cm_h1_rate, [Peer, from],
@@ -712,7 +712,7 @@ clear_partition_metrics([PartitionReport | PartitionReports]) ->
 clear_peer_metrics([]) ->
     ok;
 clear_peer_metrics([PeerReport | PeerReports]) ->
-    Peer = ar_util:format_peer(PeerReport#peer_report.peer),
+    Peer = arweave_util:format_peer(PeerReport#peer_report.peer),
     arweave_metrics:gauge_set(cm_h1_rate, [Peer, to], 0),
     arweave_metrics:gauge_set(cm_h1_rate, [Peer, from], 0),
     arweave_metrics:gauge_set(cm_h2_count, [Peer, to], 0),
@@ -846,7 +846,7 @@ format_peer_row(PeerReport) ->
     io_lib:format(
       "| ~20s | ~8B h/s | ~8B h/s | ~7B h/s | ~7B h/s | ~6B | ~6B |\n",
       [
-       ar_util:format_peer(Peer),
+       arweave_util:format_peer(Peer),
        floor(CurrentH1To), floor(AverageH1To),
        floor(CurrentH1From), floor(AverageH1From),
        TotalH2To, TotalH2From

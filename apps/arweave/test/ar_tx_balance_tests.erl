@@ -144,7 +144,7 @@ test_does_not_allow_to_replay_empty_wallet_txs() ->
     ar_test_node:assert_post_tx_to_peer(peer1, TX1),
     ar_test_node:mine(peer1),
     ?assertMatch({ok, _}, ar_test_await:node_height(peer1, 1)),
-    GetBalancePath = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub2))),
+    GetBalancePath = binary_to_list(arweave_util:encode(ar_wallet:to_address(Pub2))),
     {ok, {{<<"200">>, _}, _, Body, _, _}} =
         ar_http:req(#{
             method => get,

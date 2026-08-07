@@ -150,7 +150,7 @@ test_webhooks_body(Wallet, B0) ->
                     end,
                     10000
                 ),
-                await_webhook_event(webhook_tx_event, {tx, ar_util:encode(TX#tx.id)},
+                await_webhook_event(webhook_tx_event, {tx, arweave_util:encode(TX#tx.id)},
                     fun(TX2) ->
                         Struct = ar_serialize:tx_to_json_struct(TX),
                         Expected =
@@ -175,7 +175,7 @@ test_webhooks_body(Wallet, B0) ->
             lists:seq(1, 10)
         ),
         await_webhook_event(webhook_unconfirmed_tx_event,
-            {tx, ar_util:encode(UnconfirmedTX#tx.id)},
+            {tx, arweave_util:encode(UnconfirmedTX#tx.id)},
             fun(TX) ->
                 Struct = ar_serialize:tx_to_json_struct(UnconfirmedTX),
                 Expected =
@@ -237,15 +237,15 @@ create_v2_tx(Wallet) ->
 
 encode_proof(Proof) ->
     ar_serialize:jsonify(#{
-        chunk => ar_util:encode(maps:get(chunk, Proof)),
-        data_path => ar_util:encode(maps:get(data_path, Proof)),
-        data_root => ar_util:encode(maps:get(data_root, Proof)),
+        chunk => arweave_util:encode(maps:get(chunk, Proof)),
+        data_path => arweave_util:encode(maps:get(data_path, Proof)),
+        data_root => arweave_util:encode(maps:get(data_root, Proof)),
         data_size => integer_to_binary(maps:get(data_size, Proof)),
         offset => integer_to_binary(maps:get(offset, Proof))
     }).
 
 assert_transaction_data_synced(TXID) ->
-    EncodedTXID = ar_util:encode(TXID),
+    EncodedTXID = arweave_util:encode(TXID),
     await_webhook_event(webhook_tx_data_synced,
         {tx_data_payload, EncodedTXID},
         fun(JSON) ->
@@ -265,15 +265,15 @@ random_tx_blacklist_filename() ->
     filename:join(DataDir,
         "ar-webhook-tests-transaction-blacklist-"
         ++
-        binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32)))).
+        binary_to_list(arweave_util:encode(crypto:strong_rand_bytes(32)))).
 
 append_txid_to_file(TXID, Filename) ->
     {ok, F} = file:open(Filename, [append]),
-    ok = file:write(F, io_lib:format("~s~n", [ar_util:encode(TXID)])),
+    ok = file:write(F, io_lib:format("~s~n", [arweave_util:encode(TXID)])),
     file:close(F).
 
 assert_transaction_data_removed(TXID) ->
-    EncodedTXID = ar_util:encode(TXID),
+    EncodedTXID = arweave_util:encode(TXID),
     await_webhook_event(webhook_tx_data_removed,
         {tx_data_payload, EncodedTXID},
         fun(JSON) ->

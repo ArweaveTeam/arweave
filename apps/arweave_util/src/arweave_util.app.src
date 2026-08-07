@@ -1,0 +1,17 @@
+{application, arweave_util, [
+                             {id, "arweave_util"},
+                             {description, "Arweave Utility Library"},
+                             {vsn, "0.0.1"},
+                             {mod, {arweave_util, []}},
+                             {env, []},
+                             {applications, [
+                                             kernel,
+                                             stdlib,
+                                             sasl
+                                            ]},
+                             {modules, [
+                                        arweave_util
+                                       ]},
+                             {registered, [
+                                          ]}
+                            ]}.

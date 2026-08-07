@@ -1,4 +1,8 @@
--module(ar_util).
+%%% @doc Arweave utility library application.
+%%%
+%%% This module is the application API. It exposes the utility
+%%% functions. The application does not start any process.
+-module(arweave_util).
 -test_category([fast, vdf]).
 
 -export([
@@ -47,12 +51,15 @@
     shuffle_list/1,
     take_every_nth/2,
     terminal_clear/0,
-    timestamp_to_seconds/1,invert_map/1,
+    timestamp_to_seconds/1,
+    invert_map/1,
     unique/1,
     pad_to_closest_multiple_equal_or_above/2
 ]).
 
--include("ar.hrl").
+
+
+-include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(DEFAULT_PMAP_TIMEOUT, 60_000).
@@ -475,7 +482,7 @@ genesis_wallets() ->
         fun(Line) ->
             [Addr, RawQty] = string:tokens(Line, ","),
             {
-                ar_util:decode(Addr),
+                arweave_util:decode(Addr),
                 erlang:trunc(math:ceil(list_to_integer(RawQty))) * ?WINSTON_PER_AR,
                 <<>>
             }

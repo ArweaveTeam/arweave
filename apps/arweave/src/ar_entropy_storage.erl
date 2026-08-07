@@ -387,7 +387,7 @@ classify_unpacked_target(BucketEndOffset, Byte, StoreID) ->
            Byte + 1, ar_chunk_storage:sync_record_id(unpacked_padded), StoreID) of
         {_IntervalEnd, IntervalStart} ->
             EndOffset = IntervalStart
-                + ar_util:floor_int(Byte - IntervalStart, ?DATA_CHUNK_SIZE)
+                + arweave_util:floor_int(Byte - IntervalStart, ?DATA_CHUNK_SIZE)
                 + ?DATA_CHUNK_SIZE,
             case ar_chunk_storage:get_chunk_bucket_end(EndOffset) == BucketEndOffset of
                 true ->

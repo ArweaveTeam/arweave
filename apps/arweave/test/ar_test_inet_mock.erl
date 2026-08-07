@@ -7,7 +7,7 @@
 
 %%--------------------------------------------------------------------
 %% @doc a function to mock `inet:getaddrs/2'. mostly used to test
-%% internal resolver feature in `ar_peers' and `ar_util'.
+%% internal resolver feature in `ar_peers' and `arweave_util'.
 %% @end
 %%--------------------------------------------------------------------
 getaddrs("single.record.local", _) ->

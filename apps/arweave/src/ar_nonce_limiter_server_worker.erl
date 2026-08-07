@@ -58,7 +58,7 @@ handle_cast(re_resolve_peer_domain, #state{ raw_peer = RawPeer } = State) ->
                           {error, io_lib:format("~p", [Error])},
                           {peer, io_lib:format("~p", [RawPeer])}])
     end,
-    ar_util:cast_after(?RE_RESOLVE_PEER_DOMAIN_MS, ?MODULE, re_resolve_peer_domain),
+    arweave_util:cast_after(?RE_RESOLVE_PEER_DOMAIN_MS, ?MODULE, re_resolve_peer_domain),
     {noreply, State};
 
 handle_cast(Cast, State) ->
@@ -95,7 +95,7 @@ handle_computed_output(Peer, Args, State) ->
     #state{ pause_until = Timestamp, format = Format } = State,
     {SessionKey, StepNumber, Output, _PartitionUpperBound} = Args,
     CurrentStepNumber = ar_nonce_limiter:get_current_step_number(),
-    ?LOG_DEBUG([{event, handle_computed_output}, {peer, ar_util:format_peer(Peer)},
+    ?LOG_DEBUG([{event, handle_computed_output}, {peer, arweave_util:format_peer(Peer)},
                 {session_key, ar_nonce_limiter:encode_session_key(SessionKey)}, {step_number, StepNumber},
                 {current_step_number, CurrentStepNumber},
                 {timestamp, Timestamp}, {format, Format}]),
@@ -136,7 +136,7 @@ push_update(SessionKey, StepNumber, Output, Peer, Format, State) ->
                         {false, _, _, _} ->
                             %% Client requested a different payload format
                             ?LOG_DEBUG([{event, vdf_client_requested_different_format},
-                                        {peer, ar_util:format_peer(Peer)}, {step_number, StepNumber},
+                                        {peer, arweave_util:format_peer(Peer)}, {step_number, StepNumber},
                                         {format, Format}, {requested_format, RequestedFormat}]),
                             push_update(SessionKey, StepNumber, Output, Peer, RequestedFormat,
                                         State#state{ format = RequestedFormat });
@@ -197,8 +197,8 @@ log_failure(Peer, SessionKey, Update, Error, Extra) ->
     StepNumber = Update#nonce_limiter_update.session#vdf_session.step_number,
     Log = [{event, failed_to_push_nonce_limiter_update_to_peer},
            {reason, io_lib:format("~p", [Error])},
-           {peer, ar_util:format_peer(Peer)},
-           {session_seed, ar_util:encode(SessionSeed)},
+           {peer, arweave_util:format_peer(Peer)},
+           {session_seed, arweave_util:encode(SessionSeed)},
            {session_interval, SessionInterval},
            {session_difficulty, NextVDFDifficulty},
            {server_step_number, StepNumber}] ++ Extra,

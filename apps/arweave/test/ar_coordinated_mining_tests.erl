@@ -218,15 +218,15 @@ test_peers_by_partition() ->
     Peer3 = ar_test_node:peer_ip(peer3),
 
     BaseConfig = ar_test_node:base_cm_config([]),
-    Config = BaseConfig#{[peers, cm_exit] => ar_util:format_peer(Peer1)},
+    Config = BaseConfig#{[peers, cm_exit] => arweave_util:format_peer(Peer1)},
     MiningAddr = maps:get([mining, address], Config),
 
     %% On peer1's own start, clear the cm_exit peer inherited from `Config`.
     Peer1Config = Config#{[peers, cm_exit] => not_set},
     ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0,
         Peer1Config#{
-            [peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
-            [peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
+            [peers, cm_peer] => [arweave_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
+            [peers, local] => [arweave_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
             [storage_modules] => [
                 arweave_config:storage_module_to_config(Module)
                 || Module <- [
@@ -239,8 +239,8 @@ test_peers_by_partition() ->
         false]),
     ar_test_node:remote_call(peer2, ar_test_node, start_node, [B0,
         Config#{
-            [peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer3]],
-            [peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer3]],
+            [peers, cm_peer] => [arweave_util:format_peer(Peer) || Peer <- [Peer1, Peer3]],
+            [peers, local] => [arweave_util:format_peer(Peer) || Peer <- [Peer1, Peer3]],
             [storage_modules] => [
                 arweave_config:storage_module_to_config(Module)
                 || Module <- [
@@ -253,8 +253,8 @@ test_peers_by_partition() ->
         false]),
     ar_test_node:remote_call(peer3, ar_test_node, start_node, [B0,
         Config#{
-            [peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer2]],
-            [peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer1, Peer2]],
+            [peers, cm_peer] => [arweave_util:format_peer(Peer) || Peer <- [Peer1, Peer2]],
+            [peers, local] => [arweave_util:format_peer(Peer) || Peer <- [Peer1, Peer2]],
             [storage_modules] => [
                 arweave_config:storage_module_to_config(Module)
                 || Module <- [
@@ -317,8 +317,8 @@ test_peers_by_partition() ->
 
     ar_test_node:remote_call(peer1, ar_test_node, start_node, [B0,
         Peer1Config#{
-            [peers, cm_peer] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
-            [peers, local] => [ar_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
+            [peers, cm_peer] => [arweave_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
+            [peers, local] => [arweave_util:format_peer(Peer) || Peer <- [Peer2, Peer3]],
             [storage_modules] => [
                 arweave_config:storage_module_to_config(Module)
                 || Module <- [
@@ -462,15 +462,15 @@ wait_for_cross_node(Miners, ValidatorNode, CurrentHeight, ExpectedPartitions, Re
 mine_in_parallel(Miners, ValidatorNode, CurrentHeight) ->
     report_miners(Miners),
     CurrentB = ar_test_node:remote_call(ValidatorNode, ar_node, get_current_block, []),
-    ar_util:pmap(fun(Node) -> ar_test_node:mine(Node) end, Miners),
+    arweave_util:pmap(fun(Node) -> ar_test_node:mine(Node) end, Miners),
     ?debugFmt(
         "Waiting until the validator node (port ~B) advances to height ~B. "
         "Current block hash: ~s, solution hash: ~s.",
         [
             ar_test_node:peer_port(ValidatorNode),
             CurrentHeight + 1,
-            ar_util:encode(CurrentB#block.indep_hash),
-            ar_util:encode(CurrentB#block.hash)
+            arweave_util:encode(CurrentB#block.indep_hash),
+            arweave_util:encode(CurrentB#block.hash)
         ]
     ),
     {ok, BIValidator} = ar_test_await:node_height(ValidatorNode, CurrentHeight + 1),

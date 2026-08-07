@@ -196,7 +196,7 @@ calculate_difficulty_after_2_4_before_2_5(OldDiff, TS, Last, Height) ->
             MaxDiff = ?MAX_DIFF,
             MinDiff = ar_difficulty:min_difficulty(Height),
             DiffInverse = erlang:trunc((MaxDiff - OldDiff) * TimeDelta),
-            ar_util:between(
+            arweave_util:between(
                 MaxDiff - DiffInverse,
                 MinDiff,
                 MaxDiff
@@ -215,7 +215,7 @@ calculate_difficulty_at_2_4(OldDiff, TS, Last, Height) ->
     MaxDiff = ?MAX_DIFF,
     MinDiff = ar_difficulty:min_difficulty(Height),
     DiffInverse = erlang:trunc((MaxDiff - OldDiff) * TimeDelta),
-    ar_util:between(
+    arweave_util:between(
         MaxDiff - DiffInverse,
         MinDiff,
         MaxDiff
@@ -231,13 +231,13 @@ calculate_difficulty_at_and_after_1_9_before_2_4(OldDiff, TS, Last, Height) ->
         false ->
             MaxDiff = ?MAX_DIFF,
             MinDiff = ar_difficulty:min_difficulty(Height),
-            EffectiveTimeDelta = ar_util:between(
+            EffectiveTimeDelta = arweave_util:between(
                 ActualTime / TargetTime,
                 1 / ?DIFF_ADJUSTMENT_UP_LIMIT,
                 ?DIFF_ADJUSTMENT_DOWN_LIMIT
             ),
             DiffInverse = erlang:trunc((MaxDiff - OldDiff) * EffectiveTimeDelta),
-            ar_util:between(
+            arweave_util:between(
                 MaxDiff - DiffInverse,
                 MinDiff,
                 MaxDiff
@@ -254,7 +254,7 @@ calculate_difficulty_after_1_8_before_1_9(OldDiff, TS, Last, Height) ->
         false ->
             MaxDiff = ?MAX_DIFF,
             MinDiff = ar_difficulty:min_difficulty(Height),
-            ar_util:between(
+            arweave_util:between(
                 MaxDiff - (MaxDiff - OldDiff) * ActualTime div TargetTime,
                 max(MinDiff, OldDiff div 2),
                 min(MaxDiff, OldDiff * 4)

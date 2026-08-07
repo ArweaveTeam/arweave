@@ -152,7 +152,7 @@ post_random_blocks(Wallet, TargetHeight, B0) ->
             ?LOG_INFO([{event, post_random_blocks}, {transactions_posted, length(TXs)}, {height, Height}]),
             ar_test_node:mine(),
             {ok, [{H, _, _} | _]} = ar_test_await:node_height(main, Height),
-            ?LOG_INFO([{event, post_random_blocks}, {block_mined, ar_util:encode(H)}, {height, Height}]),
+            ?LOG_INFO([{event, post_random_blocks}, {block_mined, arweave_util:encode(H)}, {height, Height}]),
             ?assertEqual(length(TXs), length((ar_test_await:block_stored(H))#block.txs)),
             H
         end,

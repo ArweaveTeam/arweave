@@ -302,7 +302,7 @@ pack_single_chunk(ChunkDir, PaddedEndOffset, UnpackEntropy) ->
 
 generate_all_footprints(Iteration, RandomXState, RewardAddr) ->
     FootprintIds = lists:seq(0, ?FOOTPRINTS_PER_ITERATION - 1),
-    ar_util:pmap(
+    arweave_util:pmap(
       fun(FootprintId) ->
               UniqueId = Iteration * ?FOOTPRINTS_PER_ITERATION + FootprintId,
               generate_footprint(RandomXState, RewardAddr, UniqueId)
@@ -311,7 +311,7 @@ generate_all_footprints(Iteration, RandomXState, RewardAddr) ->
 
 generate_footprint(RandomXState, RewardAddr, UniqueId) ->
     SubChunkIndices = lists:seq(0, ?SUB_CHUNK_COUNT - 1),
-    ar_util:pmap(
+    arweave_util:pmap(
       fun(SubChunkIndex) ->
               AbsoluteOffset = (UniqueId + 1) * ?DATA_CHUNK_SIZE,
               SubChunkOffset = SubChunkIndex * ?SUB_CHUNK_SIZE,

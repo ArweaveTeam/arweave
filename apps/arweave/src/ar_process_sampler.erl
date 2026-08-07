@@ -27,7 +27,7 @@ init([]) ->
                 sample_processes,
                 #{ skip_on_shutdown => false }
                ),
-    ar_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
+    arweave_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
     {ok, #state{}}.
 
 handle_call(_Request, _From, State) ->
@@ -124,8 +124,8 @@ sample_schedulers(#state{ scheduler_samples = undefined } = State) ->
     Samples = scheduler:sample_all(),
     %% Every ?SAMPLE_SCHEDULERS_INTERVAL ms, we'll sample the schedulers for
     %% ?SAMPLE_SCHEDULERS_DURATION ms.
-    ar_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
-    ar_util:cast_after(?SAMPLE_SCHEDULERS_DURATION, ?MODULE, sample_schedulers),
+    arweave_util:cast_after(?SAMPLE_SCHEDULERS_INTERVAL, ?MODULE, sample_schedulers),
+    arweave_util:cast_after(?SAMPLE_SCHEDULERS_DURATION, ?MODULE, sample_schedulers),
     State#state{ scheduler_samples = Samples };
 sample_schedulers(#state{ scheduler_samples = Samples1 } = State) ->
     %% Finish sampling

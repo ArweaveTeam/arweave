@@ -53,7 +53,7 @@ setup_pool_client() ->
     ar_test_node:start(B0, RewardAddr,
         #{
             [storage_modules] => StorageModules,
-            [peers, vdf_server] => [ar_util:format_peer(vdf_server())],
+            [peers, vdf_server] => [arweave_util:format_peer(vdf_server())],
             [pool, is_client] => true,
             [pool, server_address] => <<"http://localhost:2002">>,
             [pool, api_key] => <<"pool_secret">>,

@@ -120,29 +120,29 @@ test_back_to_back_decode() ->
 assert_encode(Input) ->
     case catch encode(Input) of
         {'EXIT', {badarg, _}} ->
-            ?assertException(error, badarg, ar_util:encode(Input));
+            ?assertException(error, badarg, arweave_util:encode(Input));
         {'EXIT', {function_clause, _}} ->
-            ?assertException(error, badarg, ar_util:encode(Input));
+            ?assertException(error, badarg, arweave_util:encode(Input));
         {'EXIT', {badarith, _}} ->
-            ?assertException(error, badarg, ar_util:encode(Input));
+            ?assertException(error, badarg, arweave_util:encode(Input));
         {'EXIT', {missing_padding, _}} ->
-            ?assertException(error, badarg, ar_util:encode(Input));
+            ?assertException(error, badarg, arweave_util:encode(Input));
         Output ->
-            ?assertEqual(Output, ar_util:encode(Input))
+            ?assertEqual(Output, arweave_util:encode(Input))
     end.
 
 assert_decode(Input) ->
     case catch decode(Input) of
         {'EXIT', {badarg, _}} ->
-            ?assertException(error, badarg, ar_util:decode(Input));
+            ?assertException(error, badarg, arweave_util:decode(Input));
         {'EXIT', {function_clause, _}} ->
-            ?assertException(error, badarg, ar_util:decode(Input));
+            ?assertException(error, badarg, arweave_util:decode(Input));
         {'EXIT', {badarith, _}} ->
-            ?assertException(error, badarg, ar_util:decode(Input));
+            ?assertException(error, badarg, arweave_util:decode(Input));
         {'EXIT', {missing_padding, _}} ->
-            ?assertException(error, badarg, ar_util:decode(Input));
+            ?assertException(error, badarg, arweave_util:decode(Input));
         Output ->
-            ?assertEqual(Output, ar_util:decode(Input))
+            ?assertEqual(Output, arweave_util:decode(Input))
     end.
 
 encode(Bin) when is_binary(Bin) ->

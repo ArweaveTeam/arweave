@@ -153,7 +153,7 @@ check_admission(Metadata, Offset, DataRootEntry, DataRootInDiskPool) ->
         {not_found, not_found} ->
             ?LOG_INFO([{event, failed_to_add_chunk_to_disk_pool},
                        {reason, data_root_not_found}, {offset, Offset},
-                       {data_root, ar_util:encode(DataRoot)}]),
+                       {data_root, arweave_util:encode(DataRoot)}]),
             {error, data_root_not_found};
         {not_found, {Size, Timestamp, TXIDSet}} ->
             case Size + ?DATA_CHUNK_SIZE > DataRootLimit
@@ -229,8 +229,8 @@ check_not_already_synced(Metadata, DataRootID, DataRootEntry, EndOffset,
         {error, Reason} ->
             ?LOG_WARNING([{event, failed_to_read_chunk_from_disk_pool},
                           {reason, io_lib:format("~p", [Reason])},
-                          {data_path_hash, ar_util:encode(DataPathHash)},
-                          {data_root, ar_util:encode(DataRoot)},
+                          {data_path_hash, arweave_util:encode(DataPathHash)},
+                          {data_root, arweave_util:encode(DataRoot)},
                           {relative_offset, EndOffset}]),
             {error, failed_to_store_chunk}
     end.
@@ -248,8 +248,8 @@ persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset, Validation, DataPa
         {error, Reason} ->
             ?LOG_WARNING([{event, failed_to_store_chunk_in_disk_pool},
                           {reason, io_lib:format("~p", [Reason])},
-                          {data_path_hash, ar_util:encode(DataPathHash)},
-                          {data_root, ar_util:encode(DataRoot)},
+                          {data_path_hash, arweave_util:encode(DataPathHash)},
+                          {data_root, arweave_util:encode(DataRoot)},
                           {relative_offset, EndOffset}]),
             {error, failed_to_store_chunk};
         ok ->
@@ -260,8 +260,8 @@ persist_chunk(Metadata, Chunk, TXSize, DataRootID, EndOffset, Validation, DataPa
                 {error, Reason2} ->
                     ?LOG_WARNING([{event, failed_to_record_chunk_in_disk_pool},
                                   {reason, io_lib:format("~p", [Reason2])},
-                                  {data_path_hash, ar_util:encode(DataPathHash)},
-                                  {data_root, ar_util:encode(DataRoot)},
+                                  {data_path_hash, arweave_util:encode(DataPathHash)},
+                                  {data_root, arweave_util:encode(DataRoot)},
                                   {relative_offset, EndOffset}]),
                     {error, failed_to_store_chunk};
                 ok ->
@@ -746,8 +746,8 @@ route_chunk_by_maturity(Iterator, AbsoluteEndOffset, CanRemoveFromDiskPool, Args
             ?LOG_INFO([{event, disk_pool_chunk_from_bad_split},
                        {absolute_end_offset, AbsoluteEndOffset},
                        {relative_offset, Offset},
-                       {data_path_hash, ar_util:encode(DataPathHash)},
-                       {data_root, ar_util:encode(DataRoot)}
+                       {data_path_hash, arweave_util:encode(DataPathHash)},
+                       {data_root, arweave_util:encode(DataRoot)}
                       | validation_logs(AbsoluteEndOffset, ValidationTuple)]),
             {next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool};
         true ->
@@ -829,11 +829,11 @@ process_immature_chunk(Iterator, AbsoluteEndOffset, Args,
                 {error, Reason} ->
                     ?LOG_WARNING([{event, failed_to_index_disk_pool_chunk},
                                   {reason, io_lib:format("~p", [Reason])},
-                                  {data_path_hash, ar_util:encode(DataPathHash)},
-                                  {data_root, ar_util:encode(DataRoot)},
+                                  {data_path_hash, arweave_util:encode(DataPathHash)},
+                                  {data_root, arweave_util:encode(DataRoot)},
                                   {absolute_end_offset, AbsoluteEndOffset},
                                   {relative_offset, Offset},
-                                  {chunk_data_key, ar_util:encode(ChunkDataKey)}]),
+                                  {chunk_data_key, arweave_util:encode(ChunkDataKey)}]),
                     {next_chunk, unmark_key_in_process(DiskPoolKey, DiskPool)}
             end
     end.
@@ -903,20 +903,20 @@ process_mature_chunk(Iterator, AbsoluteEndOffset, CanRemoveFromDiskPool, Args,
                 {error, Reason2} ->
                     ?LOG_ERROR([{event, failed_to_read_disk_pool_chunk},
                                 {reason, io_lib:format("~p", [Reason2])},
-                                {data_path_hash, ar_util:encode(DataPathHash)},
-                                {data_root, ar_util:encode(DataRoot)},
+                                {data_path_hash, arweave_util:encode(DataPathHash)},
+                                {data_root, arweave_util:encode(DataRoot)},
                                 {absolute_end_offset, AbsoluteEndOffset},
                                 {relative_offset, Offset},
-                                {chunk_data_key, ar_util:encode(ChunkDataKey)}]),
+                                {chunk_data_key, arweave_util:encode(ChunkDataKey)}]),
                     {next_chunk, unmark_key_in_process(DiskPoolKey, DiskPool)};
                 _ ->
                     %% not_found, or no inline chunk for this key.
                     ?LOG_ERROR([{event, disk_pool_chunk_not_found},
-                                {data_path_hash, ar_util:encode(DataPathHash)},
-                                {data_root, ar_util:encode(DataRoot)},
+                                {data_path_hash, arweave_util:encode(DataPathHash)},
+                                {data_root, arweave_util:encode(DataRoot)},
                                 {absolute_end_offset, AbsoluteEndOffset},
                                 {relative_offset, Offset},
-                                {chunk_data_key, ar_util:encode(ChunkDataKey)}]),
+                                {chunk_data_key, arweave_util:encode(ChunkDataKey)}]),
                     {next_offset, Iterator, CanRemoveFromDiskPool, Args, DiskPool}
             end;
         Else ->
@@ -1212,7 +1212,7 @@ handle_call(Request, _From, State) ->
 %%%===================================================================
 
 handle_cast(process_disk_pool_item, #disk_pool_state{ scan_pause = true } = State) ->
-    ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
+    arweave_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
     {noreply, State};
 handle_cast(process_disk_pool_item, State) ->
     handle_disk_pool_actions(process_next_chunk(State, ?DEFAULT_MODULE), State);
@@ -1269,8 +1269,8 @@ handle_disk_pool_actions({wrapped, Timestamp, Key, Value, DiskPool}, _OldState)
               process_chunk(DiskPool, ?DEFAULT_MODULE, Key, Value), DiskPool)
     end;
 handle_disk_pool_actions({none, DiskPool}, _OldState) ->
-    ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, resume_disk_pool_scan),
-    ar_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
+    arweave_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, resume_disk_pool_scan),
+    arweave_util:cast_after(?DISK_POOL_SCAN_DELAY_MS, ?MODULE, process_disk_pool_item),
     {noreply, DiskPool#disk_pool_state{ scan_pause = true }};
 handle_disk_pool_actions({next_offset, Key, Value, TXStartOffset, DiskPool}, _OldState)
   when is_binary(Key), is_binary(Value), is_integer(TXStartOffset) ->
@@ -1298,7 +1298,7 @@ handle_disk_pool_actions(
                     {process_disk_pool_chunk_offsets, Iterator, false, ContinueArgs}),
     case CacheHint of
         {cache_offset, Offset, ChunkDataKey} ->
-            ar_util:cast_after(
+            arweave_util:cast_after(
               ?CACHE_RECENTLY_PROCESSED_DISK_POOL_OFFSET_LIFETIME_MS,
               ?MODULE,
               {remove_recently_processed_disk_pool_offset, Offset, ChunkDataKey}

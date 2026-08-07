@@ -794,12 +794,12 @@ singleton_compound_cases() ->
             fun() -> assert_peer_eq(cm_exit, {1,2,3,4,1984}) end},
         {"mining_addr", ["mining_addr", "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"],
             fun() -> assert_eq([mining, address],
-                ar_util:decode(<<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>)) end},
+                arweave_util:decode(<<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>)) end},
         {"start_from_block",
             ["start_from_block",
              "lfoR_PyKV6t7Z6Xi2QJZlZ0JWThh0Ke7Zc5Q82CSshUhFGcjiYufP234ph1mVofX"],
             fun() -> assert_eq([join, start_from_block],
-                ar_util:decode(
+                arweave_util:decode(
                     <<"lfoR_PyKV6t7Z6Xi2QJZlZ0JWThh0Ke7Zc5Q82CSshUhFGcjiYufP234ph1mVofX">>)) end},
         {"storage_module unpacked", ["storage_module", "0,unpacked"],
             fun() ->

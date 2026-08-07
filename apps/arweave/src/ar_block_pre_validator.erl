@@ -52,8 +52,8 @@ pre_validate(B, Peer, ReceiveTimestamp) ->
                 case pre_validate_is_peer_banned(B2, Peer) of
                     enqueued ->
                         ?LOG_DEBUG([{event, enqueued_block},
-                                    {hash, ar_util:encode(H)},
-                                    {peer, ar_util:format_peer(Peer)}]),
+                                    {hash, arweave_util:encode(H)},
+                                    {peer, arweave_util:format_peer(Peer)}]),
                         ok;
                     Other ->
                         ar_ignore_registry:remove_ref(H, Ref),
@@ -81,7 +81,7 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
                                   hash_timestamps = HashTimestamps } = State) ->
     case gb_sets:is_empty(Q) of
         true ->
-            ar_util:cast_after(50, ?MODULE, pre_validate),
+            arweave_util:cast_after(50, ?MODULE, pre_validate),
             {noreply, State};
         false ->
             {{_, {B, PrevB, SolutionResigned, Peer, Ref}}, Q2} = gb_sets:take_largest(Q),
@@ -91,7 +91,7 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
             case ar_ignore_registry:permanent_member(BH) of
                 true ->
                     ?LOG_DEBUG([{event, indep_hash_already_processed2},
-                                {hash, ar_util:encode(BH)}]),
+                                {hash, arweave_util:encode(BH)}]),
                     ar_ignore_registry:remove_ref(BH, Ref),
                     gen_server:cast(?MODULE, pre_validate),
                     {noreply, State#state{ pqueue = Q2, size = Size2 }};
@@ -107,8 +107,8 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
                             false ->
                                 ?LOG_DEBUG([{event, dropping_block},
                                             {reason, throttle_by_ip},
-                                            {hash, ar_util:encode(BH)},
-                                            {peer, ar_util:format_peer(Peer)}]),
+                                            {hash, arweave_util:encode(BH)},
+                                            {peer, arweave_util:format_peer(Peer)}]),
                                 ar_ignore_registry:remove_ref(BH, Ref),
                                 {IPTimestamps, HashTimestamps};
                             {true, IPTimestamps2} ->
@@ -116,15 +116,15 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
                                                                ThrottleBySolutionInterval) of
                                     {true, HashTimestamps2} ->
                                         ?LOG_INFO([{event, processing_block},
-                                                   {peer, ar_util:format_peer(Peer)},
+                                                   {peer, arweave_util:format_peer(Peer)},
                                                    {height, B#block.height},
                                                    {step_number, ar_block:vdf_step_number(B)},
-                                                   {block, ar_util:encode(BH)},
+                                                   {block, arweave_util:encode(BH)},
                                                    {miner_address,
-                                                    ar_util:encode(B#block.reward_addr)},
+                                                    arweave_util:encode(B#block.reward_addr)},
                                                    {previous_block,
-                                                    ar_util:encode(PrevB#block.indep_hash)},
-                                                   {solution_hash, ar_util:encode(B#block.hash)},
+                                                    arweave_util:encode(PrevB#block.indep_hash)},
+                                                   {solution_hash, arweave_util:encode(B#block.hash)},
                                                    {cdiff, B#block.cumulative_diff},
                                                    {prev_cdiff, PrevB#block.cumulative_diff}]),
                                         pre_validate_nonce_limiter_seed_data(B, PrevB,
@@ -136,8 +136,8 @@ handle_cast(pre_validate, #state{ pqueue = Q, size = Size, ip_timestamps = IPTim
                                     false ->
                                         ?LOG_DEBUG([{event, dropping_block},
                                                     {reason, throttle_by_solution_hash},
-                                                    {hash, ar_util:encode(BH)},
-                                                    {peer, ar_util:format_peer(Peer)}]),
+                                                    {hash, arweave_util:encode(BH)},
+                                                    {peer, arweave_util:format_peer(Peer)}]),
                                         ar_ignore_registry:remove_ref(BH, Ref),
                                         {IPTimestamps2, HashTimestamps}
                                 end
@@ -217,7 +217,7 @@ pre_validate_is_peer_banned(B, Peer) ->
             pre_validate_previous_block(B, Peer);
         banned ->
             ?LOG_DEBUG([{event, peer_banned},
-                        {hash, ar_util:encode(B#block.indep_hash)}]),
+                        {hash, arweave_util:encode(B#block.indep_hash)}]),
             skipped
     end.
 
@@ -230,15 +230,15 @@ pre_validate_previous_block(B, Peer) ->
             %% ban the peer as the block might be valid. If the network adopts
             %% this block, ar_poller will catch up.
             ?LOG_DEBUG([{event, previous_block_not_found},
-                        {hash, ar_util:encode(B#block.indep_hash)},
-                        {prev_hash, ar_util:encode(PrevH)}]),
+                        {hash, arweave_util:encode(B#block.indep_hash)},
+                        {prev_hash, arweave_util:encode(PrevH)}]),
             skipped;
         #block{ height = PrevHeight } = PrevB ->
             case B#block.height == PrevHeight + 1 of
                 false ->
                     ?LOG_DEBUG([{event, previous_block_height_mismatch},
-                                {hash, ar_util:encode(B#block.indep_hash)},
-                                {prev_hash, ar_util:encode(PrevH)},
+                                {hash, arweave_util:encode(B#block.indep_hash)},
+                                {prev_hash, arweave_util:encode(PrevH)},
                                 {height, B#block.height},
                                 {prev_height, PrevHeight}]),
                     invalid;
@@ -250,8 +250,8 @@ pre_validate_previous_block(B, Peer) ->
                             pre_validate_proof_sizes(B, PrevB, Peer);
                         false ->
                             ?LOG_DEBUG([{event, previous_block_cumulative_diff_mismatch},
-                                        {hash, ar_util:encode(B#block.indep_hash)},
-                                        {prev_hash, ar_util:encode(PrevH)},
+                                        {hash, arweave_util:encode(B#block.indep_hash)},
+                                        {prev_hash, arweave_util:encode(PrevH)},
                                         {cumulative_diff, PrevCDiff},
                                         {prev_cumulative_diff, PrevB#block.cumulative_diff}]),
                             invalid
@@ -368,7 +368,7 @@ pre_validate_indep_hash(#block{ indep_hash = H } = B, PrevB, Peer) ->
             case ar_ignore_registry:permanent_member(H) of
                 true ->
                     ?LOG_DEBUG([{event, indep_hash_already_processed},
-                                {hash, ar_util:encode(H)}]),
+                                {hash, arweave_util:encode(H)}]),
                     skipped;
                 false ->
                     pre_validate_timestamp(B, PrevB, Peer)
@@ -812,7 +812,7 @@ pre_validate_poa_with_block_bounds(B, PrevB, PartitionUpperBound, H0, H1, Peer, 
                          Packing, SubChunkIndex, not_set}) of
         error ->
             ?LOG_ERROR([{event, failed_to_validate_proof_of_access},
-                        {block, ar_util:encode(B#block.indep_hash)}]),
+                        {block, arweave_util:encode(B#block.indep_hash)}]),
             invalid;
         false ->
             post_block_reject_warn_and_error_dump(B, check_poa, Peer),
@@ -850,7 +850,7 @@ pre_validate_poa_with_block_bounds(B, PrevB, PartitionUpperBound, H0, H1, Peer, 
                                                  B#block.poa2, Packing, SubChunkIndex, not_set}) of
                                 error ->
                                     ?LOG_ERROR([{event, failed_to_validate_proof_of_access},
-                                                {block, ar_util:encode(B#block.indep_hash)}]),
+                                                {block, arweave_util:encode(B#block.indep_hash)}]),
                                     invalid;
                                 false ->
                                     post_block_reject_warn_and_error_dump(B, check_poa2, Peer),
@@ -894,7 +894,7 @@ accept_block(B, Peer, Gossip) ->
     ar_events:send(block, {new, B,
                            #{ source => {peer, Peer}, gossip => Gossip }}),
     ?LOG_INFO([{event, accepted_block}, {height, B#block.height},
-               {indep_hash, ar_util:encode(B#block.indep_hash)}]),
+               {indep_hash, arweave_util:encode(B#block.indep_hash)}]),
     ok.
 
 compute_hash(B, PrevCDiff) ->
@@ -912,24 +912,24 @@ post_block_reject_warn_and_error_dump(B, Step, Peer) ->
 
 post_block_reject_warn_and_error_dump(B, Step, Peer, ExtraData) ->
     DataDir = arweave_config:get([data_dir]),
-    ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
+    ID = binary_to_list(arweave_util:encode(crypto:strong_rand_bytes(16))),
     File = filename:join(DataDir, "invalid_block_dump_" ++ ID),
     file:write_file(File, term_to_binary({B, ExtraData})),
     post_block_reject_warn(B, Step, Peer),
     ?LOG_WARNING([{event, post_block_rejected},
-                  {hash, ar_util:encode(B#block.indep_hash)}, {step, Step},
-                  {peer, ar_util:format_peer(Peer)},
+                  {hash, arweave_util:encode(B#block.indep_hash)}, {step, Step},
+                  {peer, arweave_util:format_peer(Peer)},
                   {error_dump, File}]).
 
 post_block_reject_warn(B, Step, Peer) ->
     ?LOG_WARNING([{event, post_block_rejected},
-                  {hash, ar_util:encode(B#block.indep_hash)}, {step, Step},
-                  {peer, ar_util:format_peer(Peer)}]).
+                  {hash, arweave_util:encode(B#block.indep_hash)}, {step, Step},
+                  {peer, arweave_util:format_peer(Peer)}]).
 
 post_block_reject_warn(B, Step, Peer, Params) ->
     ?LOG_WARNING([{event, post_block_rejected},
-                  {hash, ar_util:encode(B#block.indep_hash)}, {step, Step},
-                  {params, Params}, {peer, ar_util:format_peer(Peer)}]).
+                  {hash, arweave_util:encode(B#block.indep_hash)}, {step, Step},
+                  {params, Params}, {peer, arweave_util:format_peer(Peer)}]).
 
 record_block_pre_validation_time(ReceiveTimestamp) ->
     TimeMs = timer:now_diff(erlang:timestamp(), ReceiveTimestamp) / 1000,
@@ -959,7 +959,7 @@ drop_tail(Q, Size) ->
 throttle_by_ip(Peer, Timestamps, ThrottleInterval) ->
     IP = get_ip(Peer),
     Now = os:system_time(millisecond),
-    ar_util:cast_after(ThrottleInterval * 2, ?MODULE, {may_be_remove_ip_timestamp, IP}),
+    arweave_util:cast_after(ThrottleInterval * 2, ?MODULE, {may_be_remove_ip_timestamp, IP}),
     case maps:get(IP, Timestamps, not_set) of
         not_set ->
             {true, maps:put(IP, Now, Timestamps)};
@@ -974,7 +974,7 @@ get_ip({A, B, C, D, _Port}) ->
 
 throttle_by_solution_hash(H, Timestamps, ThrottleInterval) ->
     Now = os:system_time(millisecond),
-    ar_util:cast_after(ThrottleInterval * 2, ?MODULE, {may_be_remove_h_timestamp, H}),
+    arweave_util:cast_after(ThrottleInterval * 2, ?MODULE, {may_be_remove_h_timestamp, H}),
     case maps:get(H, Timestamps, not_set) of
         not_set ->
             {true, maps:put(H, Now, Timestamps)};

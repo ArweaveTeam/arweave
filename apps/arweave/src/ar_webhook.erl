@@ -194,7 +194,7 @@ handle_info({event, tx, {orphaned, TX}},
         #state{ listen_to_transaction_data_stream = true } = State) ->
     URL = State#state.url,
     Headers = State#state.headers,
-    Payload = #{ event => transaction_orphaned, txid => ar_util:encode(TX#tx.id) },
+    Payload = #{ event => transaction_orphaned, txid => arweave_util:encode(TX#tx.id) },
     call_webhook(URL, Headers, Payload, transaction_orphaned),
     Cache = State#state.tx_offset_cache,
     Cache2 = cache_remove_tx_offset_data(TX#tx.id, Cache),
@@ -226,7 +226,7 @@ handle_info({event, solution, {rejected, #{ solution_hash := SolutionH, reason :
     URL = State#state.url,
     Headers = State#state.headers,
     Payload = #{ event => solution_rejected,
-        solution_hash => ar_util:encode(SolutionH),
+        solution_hash => arweave_util:encode(SolutionH),
         reason => Reason,
         source => Source },
     call_webhook(URL, Headers, Payload, solution_rejected),
@@ -235,7 +235,7 @@ handle_info({event, solution, {stale, #{ solution_hash := SolutionH, source := S
     URL = State#state.url,
     Headers = State#state.headers,
     Payload = #{ event => solution_stale,
-        solution_hash => ar_util:encode(SolutionH),
+        solution_hash => arweave_util:encode(SolutionH),
         source => Source },
     call_webhook(URL, Headers, Payload, solution_stale),
     {noreply, State};
@@ -243,7 +243,7 @@ handle_info({event, solution, {partial, #{ solution_hash := SolutionH, source :=
     URL = State#state.url,
     Headers = State#state.headers,
     Payload = #{ event => solution_partial,
-        solution_hash => ar_util:encode(SolutionH),
+        solution_hash => arweave_util:encode(SolutionH),
         source => Source },
     call_webhook(URL, Headers, Payload, solution_partial),
     {noreply, State};
@@ -251,7 +251,7 @@ handle_info({event, solution, {accepted, #{ indep_hash := H, source := Source, i
     URL = State#state.url,
     Headers = State#state.headers,
     Payload = #{ event => solution_accepted,
-        indep_hash => ar_util:encode(H),
+        indep_hash => arweave_util:encode(H),
         source => Source,
         is_rebase => IsRebase },
     call_webhook(URL, Headers, Payload, solution_accepted),
@@ -260,7 +260,7 @@ handle_info({event, solution, {confirmed, #{ indep_hash := BH, confirmations := 
     URL = State#state.url,
     Headers = State#state.headers,
     Payload = #{ event => solution_confirmed,
-        indep_hash => ar_util:encode(BH),
+        indep_hash => arweave_util:encode(BH),
         confirmations => N },
     call_webhook(URL, Headers, Payload, solution_confirmed),
     {noreply, State};
@@ -268,7 +268,7 @@ handle_info({event, solution, {orphaned, #{ indep_hash := BH }}}, State) ->
     URL = State#state.url,
     Headers = State#state.headers,
     Payload = #{ event => solution_orphaned,
-        indep_hash => ar_util:encode(BH) },
+        indep_hash => arweave_util:encode(BH) },
     call_webhook(URL, Headers, Payload, solution_orphaned),
     {noreply, State};
 handle_info({event, solution, _}, State) ->
@@ -370,11 +370,11 @@ do_call_webhook(URL, Headers, Entity, Event, _N) ->
     ]),
     ok.
 
-entity_id(#block{ indep_hash = ID }) -> ar_util:encode(ID);
-entity_id(#tx{ id = ID }) -> ar_util:encode(ID);
-entity_id(#{ txid := TXID }) -> ar_util:encode(TXID);
-entity_id(#{ indep_hash := H }) -> ar_util:encode(H);
-entity_id(#{ solution_hash := H }) -> ar_util:encode(H).
+entity_id(#block{ indep_hash = ID }) -> arweave_util:encode(ID);
+entity_id(#tx{ id = ID }) -> arweave_util:encode(ID);
+entity_id(#{ txid := TXID }) -> arweave_util:encode(TXID);
+entity_id(#{ indep_hash := H }) -> arweave_util:encode(H);
+entity_id(#{ solution_hash := H }) -> arweave_util:encode(H).
 
 to_json(#block{} = Block) ->
     {JSONKVPairs} = ar_serialize:block_to_json_struct(Block),
@@ -500,7 +500,7 @@ cache_add_tx_offset_data([{TXID, Start, End} | Data], Cache) ->
                         {cached_tx_end_offset, End2},
                         {tx_start_offset, Start},
                         {tx_end_offset, End},
-                        {txid, ar_util:encode(TXID)}]),
+                        {txid, arweave_util:encode(TXID)}]),
                 maps:put(TXID, {Start, End}, OffsetMap)
         end,
     Cache2 = Cache#tx_offset_cache{
@@ -528,10 +528,10 @@ check_offset_set_consistency2(Start, End, TXID, Iterator) ->
                     {check, end_offset_txid_start_offset},
                     {cached_tx_start_offset, Start2},
                     {cached_tx_end_offset, End2},
-                    {cached_txid, ar_util:encode(TXID2)},
+                    {cached_txid, arweave_util:encode(TXID2)},
                     {tx_start_offset, Start},
                     {tx_end_offset, End},
-                    {txid, ar_util:encode(TXID)}]);
+                    {txid, arweave_util:encode(TXID)}]);
         {_, Iterator2} ->
             check_offset_set_consistency2(Start, End, TXID, Iterator2)
     end.
@@ -614,7 +614,7 @@ maybe_call_transaction_data_synced_webhook(Start, End, TXID, MaybeModule, State)
                 URL = State#state.url,
                 Headers = State#state.headers,
                 Payload = #{ event => transaction_data_synced,
-                        txid => ar_util:encode(TXID) },
+                        txid => arweave_util:encode(TXID) },
                 call_webhook(URL, Headers, Payload, transaction_data_synced),
                 cache_mark_tx_data_synced(TXID, Cache);
             false ->
@@ -676,7 +676,7 @@ process_removed_tx_data([{TXID, _Start, _End} | Data], State) ->
         false ->
             URL = State#state.url,
             Headers = State#state.headers,
-            Payload = #{ event => transaction_data_removed, txid => ar_util:encode(TXID) },
+            Payload = #{ event => transaction_data_removed, txid => arweave_util:encode(TXID) },
             call_webhook(URL, Headers, Payload, transaction_data_removed),
             Cache2 = cache_mark_tx_data_unsynced(TXID, Cache),
             State2 = State#state{ tx_offset_cache = Cache2 },

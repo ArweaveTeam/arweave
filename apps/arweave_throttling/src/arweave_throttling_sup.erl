@@ -24,12 +24,10 @@ all_info() ->
     Children = supervisor:which_children(?MODULE),
     [{worker_to_group(ID), arweave_throttling_group:info(worker_to_group(ID))}  || {ID, _Child, _Type, _Modules} <- Children].
 
-%% FIXME: using ar_util introduces circular dependency.
-%% (I created an issue to follow this up)
 reset_peer_in_all_groups(Peer) ->
     Children = supervisor:which_children(?MODULE),
     Groups = [worker_to_group(ID)||{ID, _Child, _Type, _Modules} <- Children],
-    ar_util:pmap(fun(GroupID) -> arweave_throttling_group:reset_peer(GroupID, Peer) end,
+    arweave_util:pmap(fun(GroupID) -> arweave_throttling_group:reset_peer(GroupID, Peer) end,
          Groups, ?PMAP_TIMEOUT).
 
 %% Supervisor callbacks

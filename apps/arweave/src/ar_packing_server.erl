@@ -45,22 +45,22 @@ request_unpack(Ref, Args) ->
     request_unpack(Ref, self(), Args).
 
 request_unpack(Ref, ReplyTo, Args) ->
-    ar_util:cast_after(600000, ReplyTo, {expire_unpack_request, Ref}),
+    arweave_util:cast_after(600000, ReplyTo, {expire_unpack_request, Ref}),
     gen_server:cast(?MODULE, {unpack_request, ReplyTo, Ref, Args}).
 
 request_repack(Ref, Args) ->
     request_repack(Ref, self(), Args).
 
 request_repack(Ref, ReplyTo, Args) ->
-    ar_util:cast_after(600000, ReplyTo, {expire_repack_request, Ref}),
+    arweave_util:cast_after(600000, ReplyTo, {expire_repack_request, Ref}),
     gen_server:cast(?MODULE, {repack_request, ReplyTo, Ref, Args}).
 
 request_encipher(Ref, ReplyTo, {Chunk, Entropy}) ->
-    ar_util:cast_after(600000, ReplyTo, {expire_encipher_request, Ref}),
+    arweave_util:cast_after(600000, ReplyTo, {expire_encipher_request, Ref}),
     gen_server:cast(?MODULE, {encipher_request, ReplyTo, Ref, {Chunk, Entropy}}).
 
 request_decipher(Ref, ReplyTo, {Chunk, Entropy}) ->
-    ar_util:cast_after(600000, ReplyTo, {expire_decipher_request, Ref}),
+    arweave_util:cast_after(600000, ReplyTo, {expire_decipher_request, Ref}),
     gen_server:cast(?MODULE, {decipher_request, ReplyTo, Ref, {Chunk, Entropy}}).
 
 request_entropy_generation(
@@ -152,7 +152,7 @@ set_buffer_size_limit(PackingCacheSizeLimit) ->
             undefined ->
                 Free = proplists:get_value(free_memory,
                                            memsup:get_system_memory_data(), 2000000000),
-                ar_util:ceil_int(
+                arweave_util:ceil_int(
                   min(1200, erlang:ceil(Free * 0.9 / 3 / ?DATA_CHUNK_SIZE)), 100);
             Limit ->
                 Limit
@@ -315,8 +315,8 @@ pack_replica_2_9_chunk(RewardAddr, AbsoluteEndOffset, Chunk) ->
 init([]) ->
     ar:console("~nInitialising RandomX datasets. Keys: ~p, ~p. "
                "The process may take several minutes.~n",
-               [ar_util:encode(?RANDOMX_PACKING_KEY),
-                ar_util:encode(?RANDOMX_PACKING_KEY)]),
+               [arweave_util:encode(?RANDOMX_PACKING_KEY),
+                arweave_util:encode(?RANDOMX_PACKING_KEY)]),
     {RandomXState512, _RandomXState4096, _RandomXStateSharedEntropy}
         = PackingState = init_packing_state(),
     ar:console("RandomX dataset initialisation complete.~n", []),
@@ -911,8 +911,8 @@ maybe_report_redundant_entropy_generation(Key, RewardAddr, BucketEndOffset, SubC
             Partition = ar_node:get_partition_number(BucketEndOffset),
             arweave_metrics:counter_inc(replica_2_9_entropy_stats, [Partition, redundant]),
             ?LOG_DEBUG([{event, possibly_redundant_entropy_generation},
-                        {reward_addr, ar_util:encode(RewardAddr)},
-                        {key, ar_util:encode(Key)},
+                        {reward_addr, arweave_util:encode(RewardAddr)},
+                        {key, arweave_util:encode(Key)},
                         {bucket_end_offset, BucketEndOffset},
                         {sub_chunk_start_offset, SubChunkStartOffset},
                         {count, Count},

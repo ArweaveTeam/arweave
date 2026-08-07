@@ -102,7 +102,7 @@ test_get_chunk_above_strict_threshold_small_tail() ->
     fetch_and_assert_chunk(SecondEndOffset, SecondProof).
 
 fetch_and_assert_chunk(AbsoluteEndOffset, ExpectedProof) ->
-    ChunkSize = byte_size(ar_util:decode(maps:get(chunk, ExpectedProof))),
+    ChunkSize = byte_size(arweave_util:decode(maps:get(chunk, ExpectedProof))),
     StartOffset = AbsoluteEndOffset - ChunkSize,
     Offsets = unique_offsets([
         AbsoluteEndOffset,
@@ -145,9 +145,9 @@ fetch_chunk_response(binary, Offset) ->
     {ok, Response} = ar_serialize:binary_to_poa(ProofBinary),
     #{
         headers => Headers,
-        chunk => ar_util:encode(maps:get(chunk, Response)),
-        data_path => ar_util:encode(maps:get(data_path, Response)),
-        tx_path => ar_util:encode(maps:get(tx_path, Response)),
+        chunk => arweave_util:encode(maps:get(chunk, Response)),
+        data_path => arweave_util:encode(maps:get(data_path, Response)),
+        tx_path => arweave_util:encode(maps:get(tx_path, Response)),
         absolute_end_offset => proplists:get_value(<<"arweave-absolute-end-offset">>, Headers),
         chunk_size => integer_to_binary(byte_size(maps:get(chunk, Response))),
         packing => iolist_to_binary(ar_serialize:encode_packing(maps:get(packing, Response), true))
@@ -160,7 +160,7 @@ assert_chunk_response(Response, AbsoluteEndOffset, ExpectedProof) ->
     ?assertEqual(maps:get(tx_path, ExpectedProof), maps:get(tx_path, Response)),
     ?assertEqual(integer_to_binary(AbsoluteEndOffset), maps:get(absolute_end_offset, Response)),
     ?assertEqual(
-        integer_to_binary(byte_size(ar_util:decode(maps:get(chunk, ExpectedProof)))),
+        integer_to_binary(byte_size(arweave_util:decode(maps:get(chunk, ExpectedProof)))),
         maps:get(chunk_size, Response)
     ),
     ?assertEqual(

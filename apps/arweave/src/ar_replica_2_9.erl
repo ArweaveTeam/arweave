@@ -140,7 +140,7 @@ get_entropy_partition_range(PartitionNumber) ->
     %%    ar_node:get_partition_number(BucketStart).
     %% 
     %% I say "rough reverseal" because several of the steps are not reversible (e.g. 
-    %% ar_util:floor_int/2 discards data and so it not perfectly reversible). 
+    %% arweave_util:floor_int/2 discards data and so it not perfectly reversible). 
     %% 
     %% 1. Reverse ar_node:get_partition_number(BucketStart) to get the pick offsets
     %%    representing the byte boundaries of the recall partition.
@@ -218,7 +218,7 @@ get_slice_index(AbsoluteChunkEndOffset) ->
 get_entropy_bucket_start(AbsoluteChunkEndOffset) ->
     PaddedEndOffset = ar_block:get_chunk_padded_offset(AbsoluteChunkEndOffset),
     PickOffset = max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE),
-    BucketStart = ar_util:floor_int(PickOffset, ?DATA_CHUNK_SIZE),
+    BucketStart = arweave_util:floor_int(PickOffset, ?DATA_CHUNK_SIZE),
 
     true = BucketStart == ar_chunk_storage:get_chunk_bucket_start(PaddedEndOffset),
     
@@ -275,43 +275,43 @@ test_get_entropy_key() ->
     Addr = << 0:256 >>,
     ?assertEqual(32, ?SUB_CHUNK_COUNT),
     ?assertEqual(0, get_entropy_index(1, 0)),
-    EntropyKey = ar_util:encode(get_entropy_key(Addr, 1, 0)),
+    EntropyKey = arweave_util:encode(get_entropy_key(Addr, 1, 0)),
     ?assertEqual(EntropyKey,
-            ar_util:encode(get_entropy_key(Addr, 1, 0))),
+            arweave_util:encode(get_entropy_key(Addr, 1, 0))),
     ?assertEqual(EntropyKey,
-            ar_util:encode(get_entropy_key(Addr, 262144, 0))),
+            arweave_util:encode(get_entropy_key(Addr, 262144, 0))),
     %% The strict data split threshold in tests is 262144 * 3. Before the strict data
     %% split threshold, the mapping works such that the chunk end offset up to but excluding
     %% the bucket border is mapped to the previous bucket.
     ?assertEqual(EntropyKey,
-            ar_util:encode(get_entropy_key(Addr, 262144 * 2 - 1, 0))),
-    EntropyKey2 = ar_util:encode(get_entropy_key(Addr, 262144 * 2, 0)),
+            arweave_util:encode(get_entropy_key(Addr, 262144 * 2 - 1, 0))),
+    EntropyKey2 = arweave_util:encode(get_entropy_key(Addr, 262144 * 2, 0)),
     ?assertNotEqual(EntropyKey, EntropyKey2),
     ?assertEqual(EntropyKey2,
-            ar_util:encode(get_entropy_key(Addr, 262144 * 3 - 1, 0))),
-    EntropyKey3 = ar_util:encode(get_entropy_key(Addr, 262144 * 3, 0)),
+            arweave_util:encode(get_entropy_key(Addr, 262144 * 3 - 1, 0))),
+    EntropyKey3 = arweave_util:encode(get_entropy_key(Addr, 262144 * 3, 0)),
     ?assertNotEqual(EntropyKey2, EntropyKey3),
-    EntropyKey4 = ar_util:encode(get_entropy_key(Addr, 262144 * 3 + 1, 0)),
+    EntropyKey4 = arweave_util:encode(get_entropy_key(Addr, 262144 * 3 + 1, 0)),
     %% 262144 * 3 is the strict data split threshold so chunks ending after it are mapped
     %% to the first bucket after the threshold so the key does not equal the one of the
     %% chunk ending exactly at the threshold which is still mapped to the previous bucket.
     ?assertNotEqual(EntropyKey3, EntropyKey4),
     ?assertEqual(EntropyKey4,
-            ar_util:encode(get_entropy_key(Addr, 262144 * 4 - 1, 0))),
+            arweave_util:encode(get_entropy_key(Addr, 262144 * 4 - 1, 0))),
     ?assertEqual(EntropyKey4,
-            ar_util:encode(get_entropy_key(Addr, 262144 * 4, 0))),
+            arweave_util:encode(get_entropy_key(Addr, 262144 * 4, 0))),
     %% The mapping then goes this way indefinitely.
-    EntropyKey5 = ar_util:encode(get_entropy_key(Addr, 262144 * 5, 0)),
+    EntropyKey5 = arweave_util:encode(get_entropy_key(Addr, 262144 * 5, 0)),
     ?assertNotEqual(EntropyKey4, EntropyKey5),
     %% Shift by sector size.
     ?assertEqual(EntropyKey4,
-            ar_util:encode(get_entropy_key(Addr, 262144 * 3 + 1 + SectorSize, 0))),
+            arweave_util:encode(get_entropy_key(Addr, 262144 * 3 + 1 + SectorSize, 0))),
     ?assertEqual(EntropyKey4,
-            ar_util:encode(get_entropy_key(Addr, 262144 * 4 + SectorSize, 0))),
+            arweave_util:encode(get_entropy_key(Addr, 262144 * 4 + SectorSize, 0))),
     ?assertEqual(EntropyKey5,
-            ar_util:encode(get_entropy_key(Addr, 262144 * 4 + 1 + SectorSize, 0))),
+            arweave_util:encode(get_entropy_key(Addr, 262144 * 4 + 1 + SectorSize, 0))),
     ?assertEqual(EntropyKey5,
-            ar_util:encode(get_entropy_key(Addr, 262144 * 5 + SectorSize, 0))),
+            arweave_util:encode(get_entropy_key(Addr, 262144 * 5 + SectorSize, 0))),
 
     %% Exactly equal to the recall partition size:
     ?assertEqual(0, get_entropy_partition(262144 * 5 + SectorSize)),
@@ -322,11 +322,11 @@ test_get_entropy_key() ->
     ?assertEqual(1, get_entropy_partition(262144 * 6 + SectorSize + 1)),
     %% The new partition => the new entropy.
     EntropyKey6 =
-            ar_util:encode(get_entropy_key(Addr, 262144 * 5 + 2 * SectorSize, 0)),
+            arweave_util:encode(get_entropy_key(Addr, 262144 * 5 + 2 * SectorSize, 0)),
     ?assertNotEqual(EntropyKey6, EntropyKey5),
     %% There is, of course, regularity within every partition.
     ?assertEqual(EntropyKey6,
-            ar_util:encode(get_entropy_key(Addr, 262144 * 5 + 3 * SectorSize, 0))),
+            arweave_util:encode(get_entropy_key(Addr, 262144 * 5 + 3 * SectorSize, 0))),
 
     %% Test the edges of recall partition vs. entropy partition.
     ?assertEqual(0, get_entropy_partition(ar_block:partition_size())),    

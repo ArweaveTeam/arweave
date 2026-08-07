@@ -45,7 +45,7 @@ lookup_block_filename(H, CustomDir) when is_binary(H)->
             _ ->
                 filename:join([CustomDir, ?DISK_CACHE_DIR, ?DISK_CACHE_BLOCK_DIR])
         end,
-    FileName = binary_to_list(ar_util:encode(H)),
+    FileName = binary_to_list(arweave_util:encode(H)),
     FilePath = filename:join(PathBlock, FileName),
     FilePathJSON = iolist_to_binary([FilePath, ".json"]),
     case ar_storage:is_file(FilePathJSON) of
@@ -80,7 +80,7 @@ lookup_tx_filename(Hash, CustomDir) when is_binary(Hash) ->
             _ ->
                 filename:join([CustomDir, ?DISK_CACHE_DIR, ?DISK_CACHE_TX_DIR])
         end,
-    FileName = binary_to_list(ar_util:encode(Hash)) ++ ".json",
+    FileName = binary_to_list(arweave_util:encode(Hash)) ++ ".json",
     File = filename:join(PathTX, FileName),
     case ar_storage:is_file(File) of
         true ->
@@ -90,12 +90,12 @@ lookup_tx_filename(Hash, CustomDir) when is_binary(Hash) ->
     end.
 
 write_block_shadow(B) ->
-    Name = binary_to_list(ar_util:encode(B#block.indep_hash)) ++ ".bin",
+    Name = binary_to_list(arweave_util:encode(B#block.indep_hash)) ++ ".bin",
     File = filename:join(get_block_path(), Name),
     Bin = ar_serialize:block_to_binary(B),
     Size = byte_size(Bin),
     ?LOG_DEBUG([{event, write_block_shadow},
-                {hash, ar_util:encode(B#block.indep_hash)}, {size, Size}]),
+                {hash, arweave_util:encode(B#block.indep_hash)}, {size, Size}]),
     gen_server:cast(?MODULE, {record_written_data, Size}),
     case ar_storage:write_file_atomic(File, Bin) of
         ok ->
@@ -313,13 +313,13 @@ get_tx_path() ->
     filename:join(Path, ?DISK_CACHE_TX_DIR).
 
 write_tx(TX) ->
-    Name = binary_to_list(ar_util:encode(TX#tx.id)) ++ ".json",
+    Name = binary_to_list(arweave_util:encode(TX#tx.id)) ++ ".json",
     File = filename:join(get_tx_path(), Name),
     TXHeader = case TX#tx.format of 1 -> TX; 2 -> TX#tx{ data = <<>> } end,
     JSONStruct = ar_serialize:tx_to_json_struct(TXHeader),
     Data = ar_serialize:jsonify(JSONStruct),
     Size = byte_size(Data),
-    ?LOG_DEBUG([{event, write_tx}, {txid, ar_util:encode(TX#tx.id)}, {size, Size}]),
+    ?LOG_DEBUG([{event, write_tx}, {txid, arweave_util:encode(TX#tx.id)}, {size, Size}]),
     gen_server:cast(?MODULE, {record_written_data, Size}),
     case ar_storage:write_file_atomic(File, Data) of
         ok ->

@@ -188,7 +188,7 @@ parse_options([{<<"start_from_state">>, Folder} | _], _Opts) ->
     {error, {bad_type, start_from_state, string}, Folder};
 
 parse_options([{<<"start_from_block">>, H} | Rest], Opts) when is_binary(H) ->
-    case ar_util:safe_decode(H) of
+    case arweave_util:safe_decode(H) of
         {ok, Decoded} when byte_size(Decoded) == 48 ->
             _ = arweave_config:set([join, start_from_block], Decoded),
             parse_options(Rest, Opts);
@@ -364,7 +364,7 @@ parse_options([{<<"diff">>, Diff} | _], _Opts) ->
     {error, {bad_type, diff, number}, Diff};
 
 parse_options([{<<"mining_addr">>, Addr} | Rest], Opts) when is_binary(Addr) ->
-    case ar_util:safe_decode(Addr) of
+    case arweave_util:safe_decode(Addr) of
         {ok, D} when byte_size(D) == 32 ->
             _ = arweave_config:set([mining, address], D),
             parse_options(Rest, Opts);
@@ -1019,9 +1019,9 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
             <<"unpacked">> ->
                 unpacked;
             << MiningAddr:43/binary, ".replica.2.9" >> ->
-                {replica_2_9, ar_util:decode(MiningAddr)};
+                {replica_2_9, arweave_util:decode(MiningAddr)};
             MiningAddr when byte_size(MiningAddr) == 43 ->
-                {spora_2_6, ar_util:decode(MiningAddr)}
+                {spora_2_6, arweave_util:decode(MiningAddr)}
         end,
     {ok, {RangeSize, RangeNumber, Packing}}.
 
@@ -1031,18 +1031,18 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
             <<"unpacked">> ->
                 unpacked;
             << MiningAddr:43/binary, ".replica.2.9" >> ->
-                {replica_2_9, ar_util:decode(MiningAddr)};
+                {replica_2_9, arweave_util:decode(MiningAddr)};
             MiningAddr when byte_size(MiningAddr) == 43 ->
-                {spora_2_6, ar_util:decode(MiningAddr)}
+                {spora_2_6, arweave_util:decode(MiningAddr)}
         end,
     ToPacking =
         case ToPackingBin of
             <<"unpacked">> ->
                 unpacked;
             << ToMiningAddr:43/binary, ".replica.2.9" >> ->
-                {replica_2_9, ar_util:decode(ToMiningAddr)};
+                {replica_2_9, arweave_util:decode(ToMiningAddr)};
             ToMiningAddr when byte_size(ToMiningAddr) == 43 ->
-                {spora_2_6, ar_util:decode(ToMiningAddr)}
+                {spora_2_6, arweave_util:decode(ToMiningAddr)}
         end,
     {repack_in_place, {{RangeSize, RangeNumber, Packing}, ToPacking}}.
 
@@ -1064,7 +1064,7 @@ parse_peers([], ParsedPeers, _Opts) ->
     {ok, Reverse}.
 
 parse_resolved_peer(Peer, Rest, ParsedPeers, Opts) ->
-    case ar_util:safe_parse_peer(Peer) of
+    case arweave_util:safe_parse_peer(Peer) of
         {ok, ParsedPeer} -> parse_peers(Rest, ParsedPeer ++ ParsedPeers, Opts);
         {error, _} ->
             ?LOG_WARNING([{event, invalid_peer_in_config}, {peer, Peer}, {action, ignored}]),
@@ -1096,7 +1096,7 @@ parse_cm_exit_peer(Peer, Opts) ->
                     error
             end;
         false ->
-            case ar_util:safe_parse_peer(Peer) of
+            case arweave_util:safe_parse_peer(Peer) of
                 {ok, [ParsedPeer | _]} ->
                     _ = arweave_config_options_peers:write_legacy_singleton(
                           cm_exit, ParsedPeer),

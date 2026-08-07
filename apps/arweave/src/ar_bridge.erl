@@ -280,8 +280,8 @@ send_and_log(Peer, H, Height, Format, Bin, RecallByte) ->
             ?LOG_INFO([{event, sent_block_to_block_gossip_peer},
                        {format, Format},
                        {height, Height},
-                       {block, ar_util:encode(H)},
-                       {peer, ar_util:format_peer(Peer)},
+                       {block, arweave_util:encode(H)},
+                       {peer, arweave_util:format_peer(Peer)},
                        {reply, arweave_metrics:get_status_class(Reply)}]);
         false ->
             ok
@@ -295,7 +295,7 @@ block_to_json(B) ->
                  %% Add the P2P port field to be backwards compatible with nodes
                  %% running the old version of the P2P port feature.
                  {<<"port">>, ?DEFAULT_HTTP_IFACE_PORT},
-                 {<<"block_data_segment">>, ar_util:encode(BDS)}
+                 {<<"block_data_segment">>, arweave_util:encode(BDS)}
                 ],
     ar_serialize:jsonify({PostProps}).
 

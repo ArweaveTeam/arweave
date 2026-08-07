@@ -73,7 +73,7 @@ update_accounts(B, PrevB, Accounts) ->
       Reason :: term().
 
 validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
-    ?LOG_INFO([{event, validating_block}, {hash, ar_util:encode(NewB#block.indep_hash)}]),
+    ?LOG_INFO([{event, validating_block}, {hash, arweave_util:encode(NewB#block.indep_hash)}]),
     case timer:tc(
            fun() ->
                    try
@@ -85,7 +85,7 @@ validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
                                        {class, C},
                                        {reason, R},
                                        {stacktrace, S},
-                                       {hash, ar_util:encode(NewB#block.indep_hash)},
+                                       {hash, arweave_util:encode(NewB#block.indep_hash)},
                                        {height, NewB#block.height}
                                       ]),
                            {invalid, validation_exception}
@@ -95,22 +95,22 @@ validate(NewB, B, Wallets, BlockAnchors, RecentTXMap, PartitionUpperBound) ->
           ) of
         {TimeTaken, valid} ->
             ?LOG_INFO([{event, block_validation_successful},
-                       {hash, ar_util:encode(NewB#block.indep_hash)},
+                       {hash, arweave_util:encode(NewB#block.indep_hash)},
                        {time_taken_us, TimeTaken}]),
             valid;
         {TimeTaken, {invalid, Reason}} ->
             ?LOG_INFO([{event, block_validation_failed}, {reason, Reason},
-                       {hash, ar_util:encode(NewB#block.indep_hash)},
+                       {hash, arweave_util:encode(NewB#block.indep_hash)},
                        {time_taken_us, TimeTaken}]),
             {invalid, Reason};
         {TimeTaken, {error, Reason}} ->
             ?LOG_INFO([{event, block_validation_failed}, {reason, Reason},
-                       {hash, ar_util:encode(NewB#block.indep_hash)},
+                       {hash, arweave_util:encode(NewB#block.indep_hash)},
                        {time_taken_us, TimeTaken}]),
             {invalid, Reason};
         {TimeTaken, Else} ->
             ?LOG_ERROR([{event, block_validation_failed}, {reason, Else},
-                        {hash, ar_util:encode(NewB#block.indep_hash)},
+                        {hash, arweave_util:encode(NewB#block.indep_hash)},
                         {time_taken_us, TimeTaken}]),
             {invalid, Else}
 
@@ -332,8 +332,8 @@ may_be_apply_double_signing_proof3(B, PrevB, Accounts) ->
                     {error, invalid_double_signing_proof_invalid_signature};
                 true ->
                     ?LOG_INFO([{event, banning_account},
-                               {address, ar_util:encode(Addr)},
-                               {previous_block, ar_util:encode(B#block.previous_block)},
+                               {address, arweave_util:encode(Addr)},
+                               {previous_block, arweave_util:encode(B#block.previous_block)},
                                {height, Height}]),
                     {ok, ban_account(Addr, Accounts, PrevB#block.denomination)}
             end

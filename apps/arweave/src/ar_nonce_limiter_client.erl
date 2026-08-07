@@ -76,14 +76,14 @@ handle_cast(pull, State = #state{ request_sessions = RequestSessions }) ->
     case DoPull of
         true ->
             {Delay, State1} = do_pull(State),
-            ar_util:cast_after(Delay, ?MODULE, pull),
+            arweave_util:cast_after(Delay, ?MODULE, pull),
             {noreply, State1};
         false ->
             %% Even when pulling is disabled, periodically re-resolve VDF server peers
             %% so that pushes (POST /vdf) continue to work (e.g., after DNS changes).
             resolve_server_peers(
               arweave_config:get([peers, vdf_server])),
-            ar_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
+            arweave_util:cast_after(?PULL_FREQUENCY_MS, ?MODULE, pull),
             {noreply, State}
     end;
 
@@ -105,7 +105,7 @@ handle_cast({maybe_request_sessions, SessionKey}, State) ->
                     %% Ensure the current and previous sessions are fetched and applied on
                     %% the next `pull` message.
                     ?LOG_DEBUG([{event, vdf_request_sessions},
-                                {peer, ar_util:format_peer(Peer)},
+                                {peer, arweave_util:format_peer(Peer)},
                                 {session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
                     {noreply, State#state{ request_sessions = true }}
             end
@@ -210,14 +210,14 @@ do_pull(State) ->
                     end;
                 {error, not_found} ->
                     ?LOG_WARNING([{event, failed_to_fetch_vdf_update},
-                                  {peer, ar_util:format_peer(Peer)},
+                                  {peer, arweave_util:format_peer(Peer)},
                                   {error, not_found}]),
                     %% The server might be restarting.
                     %% Try another one, if there are any.
                     {?PULL_THROTTLE_MS, State#state{ remote_servers = RotatedServers }};
                 {error, Reason} ->
                     ?LOG_WARNING([{event, failed_to_fetch_vdf_update},
-                                  {peer, ar_util:format_peer(Peer)},
+                                  {peer, arweave_util:format_peer(Peer)},
                                   {error, io_lib:format("~p", [Reason])}]),
                     %% Try another server, if there are any.
                     {?PULL_THROTTLE_MS, State#state{ remote_servers = RotatedServers }}
@@ -255,13 +255,13 @@ fetch_and_apply_session_and_previous_session(Peer) ->
                     fetch_and_apply_session_and_previous_session(Peer);
                 {error, Reason} = Error ->
                     ?LOG_WARNING([{event, failed_to_fetch_previous_vdf_session},
-                                  {peer, ar_util:format_peer(Peer)},
+                                  {peer, arweave_util:format_peer(Peer)},
                                   {error, io_lib:format("~p", [Reason])}]),
                     Error
             end;
         {error, Reason2} = Error2 ->
             ?LOG_WARNING([{event, failed_to_fetch_vdf_session},
-                          {peer, ar_util:format_peer(Peer)},
+                          {peer, arweave_util:format_peer(Peer)},
                           {error, io_lib:format("~p", [Reason2])}]),
             Error2
     end.
@@ -272,7 +272,7 @@ fetch_and_apply_session(Peer) ->
             ar_nonce_limiter:apply_external_update(Update, Peer);
         {error, Reason} = Error ->
             ?LOG_WARNING([{event, failed_to_fetch_vdf_session},
-                          {peer, ar_util:format_peer(Peer)},
+                          {peer, arweave_util:format_peer(Peer)},
                           {error, io_lib:format("~p", [Reason])}]),
             Error
     end.

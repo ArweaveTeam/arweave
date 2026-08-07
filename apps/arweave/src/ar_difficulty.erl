@@ -91,7 +91,7 @@ scale_diff(Diff, {ScaleDividend, ScaleDivisor}, Height) ->
     %% Scale DiffInverse by ScaleDivisor/ScaleDividend because it's an inverse value.
     %% I.e. passing in {100, 1} will scale DiffInverse by 1/100 and *increase* the difficulty.
     DiffInverse = (MaxDiff - Diff) * ScaleDivisor div ScaleDividend,
-    ar_util:between(
+    arweave_util:between(
       MaxDiff - DiffInverse,
       MinDiff,
       MaxDiff - 1
