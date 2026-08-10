@@ -47,6 +47,7 @@ all() ->
      pending_helper,
      remote_peer_reverted_no_more_headers,
      update_before_first_throttle,
+     blocking_and_draining_to_reset_amount,
      blocking_call
     ].
 
@@ -79,14 +80,16 @@ independent_peer_state(_Config) ->
 
     ok = ?M:update_quota(general, PeerA,
                 #{id => general,
-                    total => 1,
-                    remaining => 1,
-                    reset_seconds => 0}),
+                  total => 1,
+                  remaining => 1,
+                  reset_amount => 0,
+                  reset_seconds => 0}),
     ok = ?M:update_quota(general, PeerB,
-                #{id => general,
-                    total => 10,
-                    remaining => 10,
-                    reset_seconds => 0}),
+                         #{id => general,
+                           total => 10,
+                           remaining => 10,
+                           reset_amount => 0,
+                           reset_seconds => 0}),
 
     ok = ?M:throttle(general, PeerA),
 
@@ -103,10 +106,11 @@ pending_helper(_Config) ->
     Parent = self(),
 
     ok = ?M:update_quota(general, Peer,
-                #{total => 1,
-                    remaining => 1,
-                    reset_seconds => 0}),
-
+                         #{total => 1,
+                           remaining => 1,
+                           reset_amount => 0,
+                           reset_seconds => 0}),
+    
     0 = ?M:pending(general, Peer),
 
     ok = ?M:throttle(general, Peer),
@@ -119,7 +123,10 @@ pending_helper(_Config) ->
     end),
 
     ok = ?M:update_quota(general, Peer,
-                #{total => 10, remaining => 1, reset_seconds => 1}),
+                         #{total => 10,
+                           remaining => 1,
+                           reset_amount => 9,
+                           reset_seconds => 1}),
     receive done -> ok after 10000 -> ct:fail(not_released) end,
     0 = ?M:pending(general, Peer),
     ok.
@@ -127,11 +134,13 @@ pending_helper(_Config) ->
 remote_peer_reverted_no_more_headers(_Config) ->
     Peer = {1, 2, 3, 4, 1984},
 
-    ok = ?M:update_quota(general, Peer, #{total => 10, remaining => 9, reset_seconds => 0}),
+    ok = ?M:update_quota(general, Peer, #{total => 10, remaining => 9,
+                                          reset_amount => 1, reset_seconds => 0}),
     ok = ?M:throttle(general, Peer),
     {ok, S1} = ?M:status(general, Peer),
     ?assertMatch(#{total := 10, remaining := 8}, S1),
-    ok = ?M:update_quota(general, Peer, #{total => 10, remaining => 8, reset_seconds => 0}),
+    ok = ?M:update_quota(general, Peer, #{total => 10, remaining => 8,
+                                          reset_amount => 2, reset_seconds => 0}),
     {ok, S2} = ?M:status(general, Peer),
     ?assertMatch(#{total := 10, remaining := 8}, S2),
     %% So far everything is going alright. Let's do another one.
@@ -150,7 +159,10 @@ update_before_first_throttle(_Config) ->
     Peer = {4, 4, 4, 4, 1984},
 
     ok = ?M:update_quota(general, Peer,
-                        #{total => 50, remaining => 7, reset_seconds => 0}),
+                        #{total => 50,
+                          remaining => 7,
+                          reset_amount => 43,
+                          reset_seconds => 0}),
     ok = wait_until(fun() ->
                 case ?M:status(general, Peer) of
                     {ok, S} ->
@@ -167,12 +179,58 @@ update_before_first_throttle(_Config) ->
 blocking_call(_Config) ->
     Peer = {5, 5, 5, 5, 1984},
     ok = ?M:update_quota(general, Peer,
-                #{total => 1, remaining => 0, reset_seconds => 29}),
+                #{total => 1, remaining => 0, reset_amount => 1, reset_seconds => 29}),
     {Time, Return} =
         timer:tc(?M, throttle, [general, Peer]),
 
     ?assertEqual(ok, Return),
     ?assert(Time > 29000000),
+    ok.
+
+blocking_and_draining_to_reset_amount(_Config) ->
+    Peer = {6, 6, 6, 6, 1984},
+
+    ok = ?M:update_quota(general, Peer,
+                         #{total => 100, remaining => 0,
+                           reset_amount => 20, reset_seconds => 2}),
+
+    Parent = self(),
+    SeqNos = lists:seq(1,5),
+    lists:foreach(
+        fun(N) ->
+                spawn(
+                    fun() ->
+                            ok = ?M:throttle(general, Peer),
+                            Parent ! {done, N}
+                  end)
+        end, SeqNos),
+
+    ok = wait_until(fun() -> ?M:pending(general, Peer) == 5 end),
+
+    %% 5requests get throttled and queued.
+    ?assertEqual(5, ?M:pending(general, Peer)),
+
+    lists:foreach(
+        fun(N) ->
+            receive
+                {done, N} ->
+                    ok
+            after 3000 ->
+                    %% reset seconds is 2, so if we have to wait 3 for
+                    %% the throttled/queued requests to progress
+                    %% something is wrong
+                    erlang:error({receive_timeout, [{seqno, N}]})
+            end
+        end, SeqNos),
+
+    %% By the time we received the messages, none should be pending
+    ?assertEqual(0, ?M:pending(general, Peer)),
+    %% The status should reflect 20-5 remaining, 0 reset seconds, 100 total.
+    %% 20 was reset, and then 5 waiters were drained, and served
+    ?assertMatch(
+       {ok, #{total := 100,remaining := 15,queue_length := 0,
+              reset_seconds := 0, last_update_ts := _}},
+       ?M:status(general, Peer)),
     ok.
 
 %% Helpers

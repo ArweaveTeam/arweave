@@ -81,7 +81,7 @@
 ]).
 
 -ifdef(AR_TEST).
--export([turn_off/1, turn_on/1]).
+-export([turn_off/1, turn_on/1, try_throttle_call/2]).
 -else.
 -compile({nowarn_unused_function, [{turn_off, 1}, {turn_on, 1}]}).
 -endif.
@@ -101,6 +101,7 @@
 -record(peer_state, {
     total          :: non_neg_integer(),
     remaining      :: non_neg_integer(),
+    reset_amount   :: non_neg_integer(),
     reset_seconds  :: non_neg_integer(),
     reset_timer    :: {reference(), reference()} | undefined,
     waiters        :: queue:queue({reference(), pid(), reference()}),
@@ -112,7 +113,7 @@
 %% after the gen_server replies with `{queued, Ref}'. On expiry the
 %% caller sends a `cancel_request' cast so the entry can be evicted
 %% from the queue and returns `{error, throttle_receive_timeout}'.
--define(THROTTLE_RECEIVE_TIMEOUT_MS, 60000).
+-define(THROTTLE_RECEIVE_TIMEOUT_MS, 190000).
 
 %% NOTE: this threshold doesn't reflect when the peer is actually throttled,
 %%       just a threshold to consider approaching throttling limit.
@@ -207,16 +208,18 @@ try_throttle_call(Name, Peer) ->
 update_quota(GroupID, Peer,
              #{total := Total,
                remaining := Remaining,
+               reset_amount := ResetAmount,
                reset_seconds := ResetSeconds})
   when is_integer(Total), Total >= 0,
        is_integer(Remaining), Remaining >= 0,
+       is_integer(ResetAmount), Remaining >= 0,
        is_integer(ResetSeconds), ResetSeconds >= 0 ->
     arweave_metrics:counter_inc(arweave_throttling_quota_update_requests,
                                 [atom_to_list(GroupID)]),
     ReceivedAt = monotonic_ms(),
     gen_server:cast(registered_name(GroupID),
                     {update_quota, Peer, Total, Remaining,
-                     ResetSeconds, ReceivedAt}).
+                     ResetAmount, ResetSeconds, ReceivedAt}).
 
 %% @doc Return true when this node should avoid selecting `Peer' in
 %% `GroupID' because its outbound quota is near exhaustion.
@@ -311,7 +314,12 @@ handle_call({throttle, Peer}, From, #{peers := Peers} = State) ->
             },
             {reply, accepted, State#{peers := Peers#{Peer => PS1}}};
         _ ->
-            enqueue_caller(Peer, From, PS0, State)
+            case enqueue_caller(Peer, From, PS0, State) of
+                {error, _} = E ->
+                    {reply, E, State};
+                {Ref, NewState} ->
+                    {reply, {queued, Ref}, NewState}
+            end
     end;
 handle_call({is_throttled, Peer}, _From, #{peers := Peers} = State) ->
     PS0 = get_or_init_peer(Peer, Peers),
@@ -377,41 +385,16 @@ handle_call(Msg, From, State) ->
                 {msg, Msg}, {from, From}]),
     {reply, {error, unsupported}, State}.
 
-handle_cast({update_quota, Peer, Total, NewRemaining, ResetSeconds, ReceivedAt},
-            #{id := ID, peers := Peers, monitors := Monitors} = State) ->
+handle_cast({update_quota, Peer, Total, Remaining, ResetAmount, ResetSeconds, ReceivedAt},
+            #{peers := Peers, monitors := Monitors} = State) ->
     PS0 = get_or_init_peer(Peer, Peers),
-
-    UpdatedRemaining =
-        %% If total changed update remaining as well.
-        case Total =/= PS0#peer_state.total of
-            true ->
-                %% Log a warning, this might be an issue.
-                case PS0#peer_state.total of
-                    infinity ->
-                        ok;
-                    _ ->
-                        ?LOG_INFO([{event, arweave_throttling_group_quota_updated},
-                                   {peer, Peer},
-                                   {group, ID},
-                                   {previous, PS0#peer_state.total},
-                                   {new, Total},
-                                   {received_at, ReceivedAt}])
-                end,
-                NewRemaining;
-            false ->
-                merge_remaining(PS0#peer_state.remaining,
-                        PS0#peer_state.last_update_ts,
-                        NewRemaining,
-                        ReceivedAt,
-                        ?CONCURRENCY_WINDOW_MS)
-        end,
-
     PS1 = PS0#peer_state{
-        total = Total,
-        remaining = UpdatedRemaining,
-        reset_seconds = ResetSeconds,
-        last_update_ts = ReceivedAt
-    },
+            total = Total,
+            remaining = Remaining,
+            reset_amount = ResetAmount,
+            reset_seconds = ResetSeconds,
+            last_update_ts = ReceivedAt
+           },
     {PS2, Monitors1} = drain_waiters(PS1, Monitors),
     PS3 = arm_or_clear_reset_timer(Peer, PS2, ResetSeconds),
     {noreply, State#{
@@ -441,9 +424,13 @@ handle_info({reset_quota, Peer, Tag}, #{peers := Peers, monitors := Monitors} = 
     case maps:find(Peer, Peers) of
         {ok, #peer_state{reset_timer = {_TRef, Tag}} = PS0} ->
             PS1 = PS0#peer_state{
-                remaining = PS0#peer_state.total,
-                reset_seconds = 0,
-                reset_timer = undefined
+                    %% New remaining is previous remaining + how much the next reset allows to
+                    %% add. It can't ever be larger that total.
+                    remaining = min(PS0#peer_state.total,
+                                    PS0#peer_state.remaining + PS0#peer_state.reset_amount),
+                    reset_seconds = 0,
+                    reset_amount = 0,
+                    reset_timer = undefined
             },
             {PS2, Monitors1} = drain_waiters(PS1, Monitors),
             {noreply, State#{
@@ -490,7 +477,7 @@ quota_is_throttled(_PeerState) ->
 enqueue_caller(Peer, From, PS0, #{peers := Peers, monitors := Monitors} = State) ->
     case queue:len(PS0#peer_state.waiters) >= ?MAX_QUEUE_LENGTH of
         true ->
-            {reply, {error, queue_full}, State};
+            {error, queue_full};
         false ->
             {FromPid, _Tag} = From,
             MRef = erlang:monitor(process, FromPid),
@@ -499,10 +486,10 @@ enqueue_caller(Peer, From, PS0, #{peers := Peers, monitors := Monitors} = State)
                 waiters = queue:in({Ref, FromPid, MRef},
                             PS0#peer_state.waiters)
             },
-            {reply, {queued, Ref}, State#{
-                peers := Peers#{Peer => PS1},
-                monitors := Monitors#{MRef => Peer}
-            }}
+            {Ref, State#{
+                         peers := Peers#{Peer => PS1},
+                         monitors := Monitors#{MRef => Peer}
+                        }}
     end.
 
 get_or_init_peer(Peer, Peers) ->
@@ -518,15 +505,6 @@ get_or_init_peer(Peer, Peers) ->
                 last_update_ts = undefined
             }
     end.
-
-%% Merge an incoming `remaining' value with the current one. See the
-%% module docstring for the rationale.
-merge_remaining(_Old, undefined, New, _Now, _Window) ->
-    New;
-merge_remaining(Old, LastTs, New, Now, Window) when Now - LastTs =< Window ->
-    min(Old, New);
-merge_remaining(_Old, _LastTs, New, _Now, _Window) ->
-    New.
 
 drain_waiters(#peer_state{remaining = 0} = PS, Monitors) ->
     {PS, Monitors};
