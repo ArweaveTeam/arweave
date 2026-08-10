@@ -16,8 +16,7 @@ test_records_footprints() ->
             b0 => B0,
             addr => Addr,
             [storage_modules] => [
-                arweave_config:storage_module_to_config(
-                    {262144 * 3, 0, {replica_2_9, Addr}})
+                {0, 262144 * 3, {replica_2_9, Addr}}
             ]
         }),
     Peer = ar_test_node:peer_ip(main),

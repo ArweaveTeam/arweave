@@ -242,7 +242,13 @@ assert_cli_shape(Args) ->
     ?assert(lists:member(<<"--mining.enabled">>, Args)),
     ?assert(lists:member(<<"--mining.hashing_threads">>, Args)),
     ?assert(lists:all(fun is_binary/1, Args)),
-    ?assertEqual(false, lists:any(fun contains_config_syntax/1, Args)).
+    %% JSON list values (see json_value_type/1) are legitimate CLI
+    %% syntax; no other argument may contain config-file syntax.
+    NonJson = [Arg || Arg <- Args, not is_json_list_value(Arg)],
+    ?assertEqual(false, lists:any(fun contains_config_syntax/1, NonJson)).
+
+is_json_list_value(<<"[", _/binary>>) -> true;
+is_json_list_value(_) -> false.
 
 assert_env_shape(Vars) ->
     Names = [env_name(Key) || {Key, _Value} <- Vars],
@@ -422,6 +428,9 @@ legacy_json_fixture_covers(LegacyKey, Keys) ->
 
 fixture_structural_exclusions() ->
     [
+        %% Internal, stamped by the node at bootstrap - never written
+        %% by operators, so never present in a config file.
+        [config_dialect],
         %% JSON/YAML cannot represent a scalar at a path and a nested
         %% object below the same path in one document. These parent
         %% booleans are covered by CLI/env and read their defaults in
@@ -460,14 +469,21 @@ cli_unsupported(#{ option_key := [config_file] }) ->
     true;
 cli_unsupported(#{ option_key := [config, http, listen, address] }) ->
     true;
-cli_unsupported(#{ type := list }) ->
-    true;
-cli_unsupported(#{ type := list_map }) ->
-    true;
 cli_unsupported(#{ type := logging_template }) ->
     true;
 cli_unsupported(_) ->
     false.
+
+%% Types whose values are passed on the CLI and in env vars as a
+%% single JSON value (the same format `config set` accepts).
+json_value_type(list) -> true;
+json_value_type(list_map) -> true;
+json_value_type(storage_modules) -> true;
+json_value_type(repack_modules) -> true;
+json_value_type(_) -> false.
+
+json_value(Value) ->
+    iolist_to_binary(jiffy:encode(Value)).
 
 normalized_enabled_specs() ->
     {ok, Normalized} = arweave_config_options_spec:normalize_specs(
@@ -483,7 +499,11 @@ spec_to_cli_args(Spec = #{ option_key := Key, long_argument := Long }, ConfigLea
     Value = maps:get(Key, ConfigLeafMap),
     case {maps:get(type, Spec, undefined), Value} of
         {boolean, true} -> [Long];
-        _ -> [Long, to_cli_string(Value)]
+        {Type, _} ->
+            case json_value_type(Type) of
+                true -> [Long, json_value(Value)];
+                false -> [Long, to_cli_string(Value)]
+            end
     end.
 
 env_fixture_values(ConfigLeafMap) ->
@@ -505,16 +525,20 @@ env_specs(ConfigLeafMap) ->
            not env_unsupported(Spec)
     ].
 
-spec_to_env_var(#{ option_key := Key }, ConfigLeafMap) ->
-    case to_env_string(maps:get(Key, ConfigLeafMap)) of
-        {ok, ValueString} -> {true, {Key, ValueString}};
-        skip -> false
+spec_to_env_var(Spec = #{ option_key := Key }, ConfigLeafMap) ->
+    Value = maps:get(Key, ConfigLeafMap),
+    case json_value_type(maps:get(type, Spec, undefined)) of
+        true ->
+            {true, {Key, binary_to_list(json_value(Value))}};
+        false ->
+            case to_env_string(Value) of
+                {ok, ValueString} -> {true, {Key, ValueString}};
+                skip -> false
+            end
     end.
 
 %% AR_CONFIG_FILE is tested in the bootstrap suite.
 env_unsupported(#{ option_key := [config_file] }) ->
-    true;
-env_unsupported(#{ type := list_map }) ->
     true;
 env_unsupported(#{ type := logging_template }) ->
     true;
@@ -583,10 +607,11 @@ assert_peer_eq(Role, Expected) ->
     ?assertEqual(Expected, arweave_config:get([peers, Role])).
 
 assert_storage_modules_eq(Expected) ->
-    ?assertEqual(Expected, arweave_config_options_storage_modules:legacy_list()).
+    ?assertEqual(Expected, arweave_config_options_storage_modules:storage_modules()).
 
 assert_defrag_modules_eq(Expected) ->
-    ?assertEqual(Expected, arweave_config_options_storage_modules:legacy_defrags()).
+    ?assertEqual(Expected,
+        arweave_config_options_storage_modules:defrag_storage_modules()).
 
 boolean_flag_cases() ->
     [
@@ -804,11 +829,11 @@ singleton_compound_cases() ->
         {"storage_module unpacked", ["storage_module", "0,unpacked"],
             fun() ->
                 PartitionSize = ar_block:partition_size(),
-                assert_storage_modules_eq([{PartitionSize, 0, unpacked}]) end},
+                assert_storage_modules_eq([{0, PartitionSize, unpacked}]) end},
         {"defragment_module unpacked", ["defragment_module", "0,unpacked"],
             fun() ->
                 PartitionSize = ar_block:partition_size(),
-                assert_defrag_modules_eq([{PartitionSize, 0, unpacked}]) end}
+                assert_defrag_modules_eq([{0, PartitionSize, unpacked}]) end}
     ].
 
 no_op_cases() ->

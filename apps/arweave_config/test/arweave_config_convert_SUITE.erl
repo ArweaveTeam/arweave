@@ -35,7 +35,10 @@ all() ->
      no_implicit_storage_defaults_emitted,
      only_user_semaphores_emitted,
      peer_strings_preserved,
-     yaml_string_scalars_and_minimal_quoting
+     yaml_string_scalars_and_minimal_quoting,
+     custom_bucket_size_storage_module_rejected,
+     custom_bucket_size_repack_module_rejected,
+     legacy_fixture_custom_bucket_sizes_rejected
     ].
 
 %%====================================================================
@@ -70,7 +73,7 @@ converted_yaml_shape(Config) ->
 %% empty again afterwards.
 store_left_untouched(Config) ->
     Before = lists:sort(arweave_config_store:items_with_prefix([])),
-    ok = arweave_config_convert:convert(json, legacy_path(),
+    ok = arweave_config_convert:convert(json, sanitized_legacy_path(Config),
         out_path(Config, "isolation.json")),
     After = lists:sort(arweave_config_store:items_with_prefix([])),
     ?assertEqual(Before, After),
@@ -80,9 +83,9 @@ store_left_untouched(Config) ->
 %% encoder mapped strings explicitly, any string/binary format made
 %% encoder/1 recurse on itself forever (caught here by the timetrap).
 string_format_accepted(Config) ->
-	ok = arweave_config_convert:convert("json", legacy_path(),
+	ok = arweave_config_convert:convert("json", sanitized_legacy_path(Config),
 		out_path(Config, "string_format.json")),
-	ok = arweave_config_convert:convert(<<"YAML">>, legacy_path(),
+	ok = arweave_config_convert:convert(<<"YAML">>, sanitized_legacy_path(Config),
 		out_path(Config, "string_format.yaml")),
 	?assertMatch({error, {unsupported_format, "xml"}},
 		arweave_config_convert:convert("xml", legacy_path(),
@@ -170,9 +173,77 @@ yaml_string_scalars_and_minimal_quoting(Config) ->
 	?assertNotEqual(nomatch, binary:match(Raw, <<"- \"1.2.3.4:1985\"\n">>)),
 	ok.
 
+%% Custom (non-partition) bucket sizes cannot be converted without
+%% renaming the module's on-disk directory, so the converter must
+%% refuse them, naming the offending modules.
+custom_bucket_size_storage_module_rejected(Config) ->
+    Input = out_path(Config, "custom_bucket_in.json"),
+    ok = file:write_file(Input,
+        <<"{\"storage_modules\": [\"9,unpacked\", \"5,1000000,unpacked\"]}">>),
+    Out = out_path(Config, "custom_bucket_out.json"),
+    ?assertMatch(
+        {error, {unsupported_custom_bucket_sizes, Message}}
+            when is_binary(Message),
+        arweave_config_convert:convert(json, Input, Out)),
+    ?assertNot(filelib:is_regular(Out)),
+    ok.
+
+custom_bucket_size_repack_module_rejected(Config) ->
+    Input = out_path(Config, "custom_bucket_repack_in.json"),
+    ok = file:write_file(Input,
+        <<"{\"storage_modules\": "
+          "[\"5,1000000,unpacked,repack_in_place,"
+          "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw\"]}">>),
+    Out = out_path(Config, "custom_bucket_repack_out.json"),
+    ?assertMatch(
+        {error, {unsupported_custom_bucket_sizes, Message}}
+            when is_binary(Message),
+        arweave_config_convert:convert(json, Input, Out)),
+    ?assertNot(filelib:is_regular(Out)),
+    ok.
+
+%% The shared legacy fixture deliberately contains custom bucket
+%% sizes (two storage modules and one repack-in-place source);
+%% converting it must fail.
+legacy_fixture_custom_bucket_sizes_rejected(Config) ->
+    ?assertMatch(
+        {error, {unsupported_custom_bucket_sizes, Message}}
+            when is_binary(Message),
+        arweave_config_convert:convert(json, legacy_path(),
+            out_path(Config, "fixture_rejected.json"))),
+    ok.
+
 %%====================================================================
 %% Helpers
 %%====================================================================
+
+%% @doc The shared legacy fixture minus its custom-bucket-size
+%% entries (which the converter rejects) - the input for the
+%% conversion round-trip tests. Partition-sized entries are the
+%% 2-part strings and the 4-part repack_in_place strings. The
+%% `defragment_modules' list holds the same notation and synthesizes
+%% storage modules on load, so it is filtered the same way.
+sanitized_legacy_path(Config) ->
+    {ok, Raw} = file:read_file(legacy_path()),
+    Decoded = jiffy:decode(Raw, [return_maps]),
+    Sanitized = Decoded#{
+        <<"storage_modules">> =>
+            [Entry || Entry <- maps:get(<<"storage_modules">>, Decoded),
+                partition_sized(Entry)],
+        <<"defragment_modules">> =>
+            [Entry || Entry <- maps:get(<<"defragment_modules">>, Decoded),
+                partition_sized(Entry)]
+    },
+    Path = out_path(Config, "sanitized_legacy.json"),
+    ok = file:write_file(Path, jiffy:encode(Sanitized)),
+    Path.
+
+partition_sized(Entry) ->
+    case binary:split(Entry, <<",">>, [global]) of
+        [_Partition, _Packing] -> true;
+        [_Partition, _Packing, <<"repack_in_place">>, _ToPacking] -> true;
+        _ -> false
+    end.
 
 convert_raw(Config, Name, LegacyJSON) ->
 	Input = out_path(Config, Name ++ "_in.json"),
@@ -186,9 +257,9 @@ convert_raw(Config, Name, LegacyJSON) ->
 %% state the legacy file itself produces — converting a config may not
 %% change how the node behaves.
 assert_round_trip(Format, Parse, Config) ->
+    {ok, Sanitized} = file:read_file(sanitized_legacy_path(Config)),
     FromLegacy = arweave_config:with_test_config(fun() ->
-        {ok, ok} = arweave_config_format_legacy_json:parse(
-            arweave_config_test_util:legacy_fixture()),
+        {ok, ok} = arweave_config_format_legacy_json:parse(Sanitized),
         option_values()
     end),
     Raw = convert(Format, Config),
@@ -199,7 +270,8 @@ assert_round_trip(Format, Parse, Config) ->
         %% comparison below is relative: without this, a conversion that
         %% silently produced nothing would compare equal to a legacy load
         %% that silently produced nothing, and pass.
-        arweave_config_test_util:assert_legacy_json_values(),
+        arweave_config_test_util:assert_legacy_json_values(
+            arweave_config_test_util:partition_sized_legacy_storage_modules()),
         option_values()
     end),
     %% Report the differing keys rather than two ~300-key maps.
@@ -212,7 +284,7 @@ assert_round_trip(Format, Parse, Config) ->
 
 convert(Format, Config) ->
     Out = out_path(Config, "converted." ++ atom_to_list(Format)),
-    ok = arweave_config_convert:convert(Format, legacy_path(), Out),
+    ok = arweave_config_convert:convert(Format, sanitized_legacy_path(Config), Out),
     true = filelib:is_regular(Out),
     {ok, Raw} = file:read_file(Out),
     Raw.

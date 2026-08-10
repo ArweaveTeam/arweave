@@ -18,7 +18,9 @@
     peers_list/1,
     resolved_peer_id/1,
     resolved_peers_list/1,
-    address/1
+    address/1,
+    storage_modules/1,
+    repack_modules/1
 ]).
 -include_lib("kernel/include/file.hrl").
 -include_lib("kernel/include/logger.hrl").
@@ -158,15 +160,40 @@ do_peers_list([Peer | Rest], false = Resolve, Acc) ->
 
 %% @doc Validate the outer shape of a list of maps. The owning
 %% list root spec validates fields using its `{list_item}` schema.
--spec list_map(Input) -> Return when
-    Input :: [map()],
-    Return :: {ok, [map()]} | {error, Input}.
 list_map(Values) when is_list(Values) ->
     case lists:all(fun is_map/1, Values) of
         true -> {ok, Values};
         false -> {error, Values}
     end;
 list_map(Value) ->
+    {error, Value}.
+
+%% @doc Validate and normalize a `[storage_modules]` value: a list
+%% whose entries are canonical maps (kept as-is) or runtime-dialect
+%% `{RangeStart, RangeEnd, Packing}` tuples (converted to their
+%% canonical map). Mirrors how `peers_list/1` normalizes peers at set
+%% time, so callers can pass runtime tuples directly to `set`.
+storage_modules(Values) when is_list(Values) ->
+    try
+        {ok, [arweave_config_options_storage_modules:normalize_entry(V)
+            || V <- Values]}
+    catch
+        _:_ -> {error, Values}
+    end;
+storage_modules(Value) ->
+    {error, Value}.
+
+%% @doc Same as `storage_modules/1` for `[repack_modules]`: entries
+%% are canonical maps or runtime-dialect `{{RangeStart, RangeEnd,
+%% FromPacking}, ToPacking}` pairs.
+repack_modules(Values) when is_list(Values) ->
+    try
+        {ok, [arweave_config_options_repack_modules:normalize_entry(V)
+            || V <- Values]}
+    catch
+        _:_ -> {error, Values}
+    end;
+repack_modules(Value) ->
     {error, Value}.
 
 %% @doc Validate as an integer.

@@ -1023,7 +1023,9 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin) ->
             MiningAddr when byte_size(MiningAddr) == 43 ->
                 {spora_2_6, arweave_util:decode(MiningAddr)}
         end,
-    {ok, {RangeSize, RangeNumber, Packing}}.
+    %% Legacy bucket notation converts to the runtime range here -
+    %% the only place the {BucketSize, Bucket} arithmetic exists.
+    {ok, {RangeNumber * RangeSize, (RangeNumber + 1) * RangeSize, Packing}}.
 
 parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
     Packing =
@@ -1044,7 +1046,9 @@ parse_storage_module(RangeNumber, RangeSize, PackingBin, ToPackingBin) ->
             ToMiningAddr when byte_size(ToMiningAddr) == 43 ->
                 {spora_2_6, arweave_util:decode(ToMiningAddr)}
         end,
-    {repack_in_place, {{RangeSize, RangeNumber, Packing}, ToPacking}}.
+    {repack_in_place,
+        {{RangeNumber * RangeSize, (RangeNumber + 1) * RangeSize, Packing},
+            ToPacking}}.
 
 safe_map(Fun, List) ->
     try

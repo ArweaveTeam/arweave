@@ -132,12 +132,8 @@ do_repack_mine(FromPackingType, ToPackingType) ->
                 _ -> ar_wallet:to_address(WalletB)
             end,
     ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
-    ExistingStorageModuleConfigs = ar_test_node:remote_call(
-                                     RepackerNode, arweave_config, get, [[storage_modules]]),
-    ExistingStorageModules = [
-                              arweave_config:config_to_storage_module(M)
-                              || M <- ExistingStorageModuleConfigs
-                             ],
+    ExistingStorageModules = ar_test_node:remote_call(
+                                     RepackerNode, arweave_config, storage_modules, []),
     %% For replica_2_9 destinations, mount old and new modules with
     %% sync_jobs=0 first so new modules prepare entropy without
     %% concurrent cross-module sync: otherwise a chunk copied in as
@@ -147,7 +143,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
     case ToPackingType of
         replica_2_9 ->
             ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
-                                                                  [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- ExistingStorageModules ++ StorageModules],
+                                                                  [storage_modules] => ExistingStorageModules ++ StorageModules,
                                                                   [mining, address] => AddrB,
                                                                   [sync, jobs] => 0
                                                                  }),
@@ -156,7 +152,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
             ok
     end,
     ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
-                                                          [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- ExistingStorageModules ++ StorageModules],
+                                                          [storage_modules] => ExistingStorageModules ++ StorageModules,
                                                           [mining, address] => AddrB
                                                          }),
 
@@ -175,7 +171,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
     ok = ar_test_await:partition_empty(RepackerNode, 4, ToPacking),
 
     ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
-                                                          [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                                                          [storage_modules] => StorageModules,
                                                           [mining, address] => AddrB
                                                          }),
     ok = ar_test_await:http_chunks_recorded(RepackerNode, 0, 4*ar_block:partition_size()),

@@ -1332,11 +1332,10 @@ get_db_name(DBName, _CustomDir) ->
 
 get_same_disk_storage_modules_total_size() ->
     DataDir = arweave_config:get([data_dir]),
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
     {ok, Info} = file:read_file_info(DataDir),
     Device = Info#file_info.major_device,
-    get_same_disk_storage_modules_total_size(0, StorageModules, DataDir,
-            Device).
+    get_same_disk_storage_modules_total_size(0, arweave_config:storage_modules(),
+            DataDir, Device).
 
 get_same_disk_storage_modules_total_size(TotalSize, [], _DataDir, _Device) ->
     TotalSize;

@@ -92,8 +92,7 @@ test_webhooks_body(Wallet, B0) ->
                 [webhooks] => [Webhook#{enabled => true} || Webhook <- Webhooks],
                     %% Use SPoRA; replica 2.9 modules do not support updates.
                     [storage_modules] => [
-                        arweave_config:storage_module_to_config(
-                            {10 * ?MiB, 0, {spora_2_6, Addr}})
+                        {0, 10 * ?MiB, {spora_2_6, Addr}}
                     ] }),
         %% Setup a server that would be listening for the webhooks and registering
         %% them in the ETS table.

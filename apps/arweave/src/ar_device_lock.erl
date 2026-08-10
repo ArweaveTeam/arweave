@@ -184,9 +184,7 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 initialize_state(State) ->
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-    RepackInPlace = [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
-    RepackInPlaceModules = [element(1, El) || El <- RepackInPlace],
+    RepackInPlaceModules = arweave_config:repack_modules(module_only),
     StoreIDToDevice = lists:foldl(
                         fun(Module, Acc) ->
                                 StoreID = ar_storage_module:id(Module),
@@ -196,7 +194,7 @@ initialize_state(State) ->
                                 maps:put(StoreID, Device, Acc)
                         end,
                         #{},
-                        StorageModules ++ RepackInPlaceModules
+                        arweave_config:storage_modules() ++ RepackInPlaceModules
                        ),
     State2 = State#state{
                store_id_to_device = StoreIDToDevice,

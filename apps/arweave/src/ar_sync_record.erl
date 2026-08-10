@@ -47,10 +47,6 @@
     storage_module,
     %% The partition covered by the storage module.
     partition_number,
-    %% The size in bytes of the storage module; undefined for the "default" storage.
-    storage_module_size,
-    %% The index of the storage module; undefined for the "default" storage.
-    storage_module_index,
     %% The number of entries in the write-ahead log.
     wal,
     %% Whether the sync record is in memory only.
@@ -300,18 +296,19 @@ init(StoreID) ->
     process_flag(trap_exit, true),
     StorageModule = ar_storage_module:get_by_id(StoreID),
     DataDir = arweave_config:get([data_dir]),
-    {Dir, StorageModuleSize, StorageModuleIndex, PartitionNumber} =
+    {Dir, PartitionNumber} =
         case StorageModule of
             ?DEFAULT_MODULE ->
                 {filename:join([DataDir, ?ROCKS_DB_DIR, "ar_sync_record_db"]),
-                    undefined, undefined, undefined};
+                    undefined};
             Atom when is_atom(Atom) ->
                 %% A module without a storage, to use in tests.
-                {undefined, undefined, undefined, undefined};
-            {Size, Index, _Packing} ->
-                {filename:join([DataDir, "storage_modules", StoreID, ?ROCKS_DB_DIR,
-                        "ar_sync_record_db"]), Size, Index,
-                            ar_node:get_partition_number(Size * Index)}
+                {undefined, undefined};
+            {Start, _End, _Packing} ->
+                {filename:join([ar_chunk_storage:storage_module_path(
+                            DataDir, StoreID), ?ROCKS_DB_DIR,
+                        "ar_sync_record_db"]),
+                    ar_node:get_partition_number(Start)}
         end,
     StateDB = {sync_record, StoreID},
     State = #state{
@@ -319,8 +316,6 @@ init(StoreID) ->
         store_id = StoreID,
         storage_module = StorageModule,
         partition_number = PartitionNumber,
-        storage_module_size = StorageModuleSize,
-        storage_module_index = StorageModuleIndex,
         sync_record_by_id = #{},
         sync_record_by_id_type = #{},
         wal = undefined,
@@ -736,9 +731,7 @@ store_state(#state{ in_memory = true }) ->
 store_state(State) ->
     #state{ state_db = StateDB, sync_record_by_id = SyncRecordByID,
             sync_record_by_id_type = SyncRecordByIDType, store_id = StoreID,
-            partition_number = PartitionNumber,
-            storage_module_size = StorageModuleSize,
-            storage_module_index = StorageModuleIndex } = State,
+            partition_number = PartitionNumber } = State,
     StoreSyncRecords =
         ar_kv:put(
             StateDB,
@@ -763,8 +756,7 @@ store_state(State) ->
             maps:map(
                 fun ({ar_data_sync, Packing}, TypeRecord) ->
                         ar_mining_stats:set_storage_module_data_size(
-                            StoreID, Packing, PartitionNumber, StorageModuleSize,
-                            StorageModuleIndex,
+                            StoreID, Packing, PartitionNumber,
                             ar_intervals:sum(TypeRecord));
                     (_, _) ->
                         ok

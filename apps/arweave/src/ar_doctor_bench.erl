@@ -20,17 +20,19 @@ help() ->
     ar:console("data-doctor bench <duration> <data_dir> <storage_module> [<storage_module> ...]~n"),
     ar:console("  duration: How long, in seconds, to run the benchmark for.~n"),
     ar:console("  data_dir: Full path to your data_dir.~n"),
-    ar:console("  storage_module: List of storage modules in same format used for Arweave ~n"),
-    ar:console("                  configuration (e.g. 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI).~n"),
+    ar:console("  storage_module: List of storage modules, each a JSON~n"),
+    ar:console("                  storage_modules entry~n"),
+    ar:console("                  (e.g. '{\"partition\": 0, \"packing_format\": \"replica_2_9\",~n"),
+    ar:console("                  \"packing_address\": \"En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI\"}'~n"),
+    ar:console("                  or with range_start/range_end).~n"),
     ar:console("                  It's recommended that you specify all configured storage_modules ~n"),
     ar:console("                  in order to benchmark the overall system performance including  ~n"),
     ar:console("                  any data busses that are shared across disks.~n"),
     ar:console("~n"),
     ar:console("Example:~n"),
-    ar:console("data-doctor bench 60 /mnt/arweave-data 0,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI \\~n"),
-    ar:console("    1,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI \\~n"),
-    ar:console("    2,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI \\~n"),
-    ar:console("    3,En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI~n"),
+    ar:console("data-doctor bench 60 /mnt/arweave-data \\~n"),
+    ar:console("    '{\"partition\": 0, \"packing_format\": \"replica_2_9\", \"packing_address\": \"En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI\"}' \\~n"),
+    ar:console("    '{\"partition\": 1, \"packing_format\": \"replica_2_9\", \"packing_address\": \"En2eqsVJARnTVOSh723PBXAKGmKgrGSjQ2YIGwE_ZRI\"}'~n"),
     ar:console("~n"),
     ar:console("Note: During the run data will be logged to ~p in the format:~n", [?OUTPUT_FILENAME]),
     ar:console("      '~s'~n", [?FILE_FORMAT]).
@@ -41,10 +43,15 @@ bench_read(Args) ->
     [DurationString, DataDir | StorageModuleConfigs] = Args,
     Duration = list_to_integer(DurationString),
 
-    {StorageModules, Address} = parse_storage_modules(StorageModuleConfigs, [], undefined),
+    Entries = [begin
+                   {ok, Entry} =
+                       arweave_config:parse_storage_module_arg(Config),
+                   Entry
+               end || Config <- StorageModuleConfigs],
+    ok = arweave_config:set([storage_modules], Entries),
+    StorageModules = arweave_config:storage_modules(),
+    Address = resolve_mining_address(StorageModules, undefined),
     ar:console("Assuming mining address: ~p~n", [arweave_util:safe_encode(Address)]),
-    ok = arweave_config:set([storage_modules],
-                            [arweave_config:storage_module_to_config(M) || M <- StorageModules]),
     %% Skip the `[mining, address]' override when `Address' is `undefined'
     %% (no supplied packing carried one): the option's validator rejects
     %% `undefined' and would error on `load'.
@@ -84,10 +91,9 @@ bench_read(Args) ->
 
     true.
 
-parse_storage_modules([], StorageModules, Address) ->
-    {StorageModules, Address};
-parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModules, Address) ->
-    {ok, StorageModule} = arweave_config:parse_storage_module(StorageModuleConfig),
+resolve_mining_address([], Address) ->
+    Address;
+resolve_mining_address([StorageModule | StorageModules], Address) ->
     Address2 = ar_storage_module:module_address(StorageModule),
     case Address2 == Address orelse Address == undefined of
         true ->
@@ -95,10 +101,7 @@ parse_storage_modules([StorageModuleConfig | StorageModuleConfigs], StorageModul
         false ->
             ar:console("Warning: multiple mining addresses specified in storage_modules:~n")
     end,
-    parse_storage_modules(
-      StorageModuleConfigs,
-      StorageModules ++ [StorageModule],
-      Address2).
+    resolve_mining_address(StorageModules, Address2).
 
 read_storage_module(_DataDir, StorageModule, StopTime) ->
     StoreID = ar_storage_module:id(StorageModule),

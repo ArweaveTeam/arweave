@@ -11,14 +11,20 @@ main(Args) ->
     merge(Args).
 
 help() ->
-    ar:console("data-doctor merge data_dir storage_module src_directories~n").
+    ar:console("data-doctor merge data_dir storage_module src_directories~n"),
+    ar:console("  storage_module: a JSON storage_modules entry~n"),
+    ar:console("                  (e.g. '{\"partition\": 0, \"packing_format\": \"replica_2_9\",~n"),
+    ar:console("                  \"packing_address\": \"<addr>\"}' or with range_start/range_end).~n").
 
 merge(Args) when length(Args) < 3 ->
     false;
 merge(Args) ->
     [DataDir, StorageModuleConfig | SrcDirs ] = Args,
 
-    {ok, StorageModule} = arweave_config:parse_storage_module(StorageModuleConfig),
+    {ok, Entry} =
+        arweave_config:parse_storage_module_arg(StorageModuleConfig),
+    ok = arweave_config:set([storage_modules], [Entry]),
+    [StorageModule] = arweave_config:storage_modules(),
     StoreID = ar_storage_module:id(StorageModule),
 
     ok = merge(DataDir, StorageModule, StoreID, SrcDirs),
@@ -28,7 +34,7 @@ merge(_DataDir, _StorageModule, _StoreID, []) ->
     ok;
 merge(DataDir, StorageModule, StoreID, [SrcDir | SrcDirs]) ->
 
-    DstDir = filename:join([DataDir, "storage_modules", StoreID]),
+    DstDir = ar_chunk_storage:storage_module_path(DataDir, StoreID),
     ar:console("~n~nMerge data from ~p into ~p~n~n", [SrcDir, DstDir]),
 
     move_chunk_storage(SrcDir, DstDir),

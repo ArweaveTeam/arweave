@@ -175,24 +175,20 @@ entropy_not_prepared(Node, StoreID, Start, End) ->
 
 %% @doc Wait until every replica_2_9 storage module on `Node' has its
 %% entropy prepared over its full range. Other modules are skipped.
--spec all_entropy_prepared(Node :: atom()) -> ok.
 all_entropy_prepared(Node) ->
-    StorageModuleConfigs = on(Node, arweave_config, get, [[storage_modules]]),
+    StorageModules = on(Node, arweave_config, storage_modules, []),
     lists:foreach(
-        fun(Config) ->
-            case arweave_config:config_to_storage_module(Config) of
-                {_, _, {replica_2_9, _}} = Module ->
-                    StoreID = ar_storage_module:id(Module),
-                    %% Derive the range from `Module' directly: a registry
-                    %% lookup would miss, since these modules live on `Node'
-                    %% not the test runner's local BEAM.
-                    {Start, End} = ar_storage_module:module_range(Module),
-                    ok = entropy_prepared(Node, StoreID, Start, End);
-                _ ->
-                    ok
-            end
+        fun({_, _, {replica_2_9, _}} = Module) ->
+                StoreID = ar_storage_module:id(Module),
+                %% Derive the range from `Module' directly: a registry
+                %% lookup would miss, since these modules live on `Node'
+                %% not the test runner's local BEAM.
+                {Start, End} = ar_storage_module:module_range(Module),
+                ok = entropy_prepared(Node, StoreID, Start, End);
+           (_) ->
+                ok
         end,
-        StorageModuleConfigs).
+        StorageModules).
 
 %% @doc Wait until the global sync record served for `Options' decodes
 %% to exactly the interval list `Expected'.

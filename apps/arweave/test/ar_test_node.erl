@@ -306,7 +306,9 @@ peer_ip(Node) ->
 %% overrides — they cannot be disabled by a caller's map.
 %%
 %% Overrides must be a map of `[option_key_segment, ...] => Value'.
-%% List values must already be in canonical config form.
+%% `[storage_modules]` / `[repack_modules]` entries may be runtime
+%% tuples or canonical maps - `arweave_config` normalizes them at set
+%% time.
 update_config(Overrides) when is_map(Overrides) ->
     Final = maps:merge(Overrides, #{
         [disable_device_limit]                  => true,
@@ -400,10 +402,8 @@ start_coordinated(MiningNodeCount) when MiningNodeCount >= 1, MiningNodeCount =<
             MinerStorageModules =
                 get_cm_storage_modules(RewardAddr, I, MiningNodeCount),
             remote_call(MinerNode, ar_test_node, start_node,
-                [B0, MinerOverrides#{[storage_modules] => [
-                    arweave_config:storage_module_to_config(Module)
-                    || Module <- MinerStorageModules
-                ]}, true])
+                [B0, MinerOverrides#{
+                    [storage_modules] => MinerStorageModules}, true])
         end,
         lists:seq(1, MiningNodeCount)
     ),
@@ -631,7 +631,9 @@ get_cm_storage_modules(RewardAddr, N, MiningNodeCount)
     %% skip partitions so that no two nodes can mine the same range even accounting for ?OVERLAP
     %% Note that replica_2_9 modules do not have ?OVERLAP.
     RangeNumber = lists:nth(N, [0, 2, 4]),
-    [{ar_block:partition_size(), RangeNumber, storage_module_packing(RewardAddr, 0)}].
+    [{RangeNumber * ar_block:partition_size(),
+        (RangeNumber + 1) * ar_block:partition_size(),
+        storage_module_packing(RewardAddr, 0)}].
 
 remote_call(Node, Module, Function, Args) ->
     remote_call(Node, Module, Function, Args, ?REMOTE_CALL_TIMEOUT).
@@ -1075,10 +1077,8 @@ join_on(#{ node := Node, join_on := JoinOnNode } = Params, Rejoin) ->
             false ->
                 case maps:is_key([mining, address], Overrides) of
                     true ->
-                        #{[storage_modules] => [
-                            arweave_config:storage_module_to_config(Module)
-                            || Module <- generate_join_storage_modules(Overrides, Params)
-                        ]};
+                        #{[storage_modules] =>
+                            generate_join_storage_modules(Overrides, Params)};
                     false ->
                         #{}
                 end
@@ -1135,11 +1135,10 @@ storage_module_packing(RewardAddr, _Index, Options) ->
             end
     end.
 
-%% @doc Convert tuple specs into arweave_config-style storage-module maps.
-%% Returns the value list for `[storage_modules]`.
+%% @doc Storage module lists are passed to `[storage_modules]`
+%% overrides as-is - `arweave_config` accepts runtime tuples directly.
 storage_module_configs(StorageModules) ->
-    [arweave_config:storage_module_to_config(Module)
-        || Module <- StorageModules].
+    StorageModules.
 
 %% @doc Return `#{[storage_modules] => Configs}` for wide modules covering `Partitions`.
 storage_module_config(RewardAddr, Partitions) ->
@@ -1151,14 +1150,15 @@ storage_module_config(RewardAddr, Partitions, Options) ->
             wide_storage_modules(RewardAddr, Partitions, Options))
     }.
 
-%% @doc Return internal wide tuple specs: `{BucketSize, Bucket, Packing}`.
-%% Each module spans `10 * ar_block:partition_size()`.
+%% @doc Return wide runtime module tuples `{RangeStart, RangeEnd,
+%% Packing}`. Each module spans `10 * ar_block:partition_size()`.
 %% Use `storage_module_config/2,3` when building override maps.
 wide_storage_modules(RewardAddr, Partitions) ->
     wide_storage_modules(RewardAddr, Partitions, #{}).
 
 wide_storage_modules(RewardAddr, Partitions, Options) ->
-    [{10 * ar_block:partition_size(), Partition,
+    Size = 10 * ar_block:partition_size(),
+    [{Partition * Size, (Partition + 1) * Size,
             storage_module_packing(RewardAddr, Partition, Options)}
         || Partition <- Partitions].
 
@@ -1208,14 +1208,14 @@ wait_until_syncs_genesis_data(Node) ->
     ok = remote_call(Node, ar_test_node, wait_until_syncs_genesis_data, [], 100_000).
 
 wait_until_syncs_genesis_data() ->
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
     ok = ar_test_await:node_joined(main),
     B = ar_node:get_current_block(),
     WeaveSize = B#block.weave_size,
     ?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, initial_sync_started},
         {weave_size, WeaveSize}]),
-    [wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, any)
-            || {Size, N, _Packing} <- StorageModules],
+    StorageModules = arweave_config:storage_modules(),
+    [wait_until_syncs_data(Start, End, WeaveSize, any)
+            || {Start, End, _Packing} <- StorageModules],
     ?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, initial_sync_complete}]),
     %% Once the data is stored in the disk pool, make the storage modules
     %% copy the missing data over from each other. This procedure is executed on startup
@@ -1224,8 +1224,8 @@ wait_until_syncs_genesis_data() ->
         ar_chunk_copy:start_copy(ar_storage_module:id(M))
         || M <- StorageModules
     ],
-    [wait_until_syncs_data(N * Size, (N + 1) * Size, WeaveSize, Packing)
-            || {Size, N, Packing} <- StorageModules],
+    [wait_until_syncs_data(Start, End, WeaveSize, Packing)
+            || {Start, End, Packing} <- StorageModules],
     ?LOG_INFO([{event, wait_until_syncs_genesis_data}, {status, cross_module_sync_complete}]),
     ok.
 

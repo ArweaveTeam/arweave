@@ -86,7 +86,23 @@ legacy_to_nested(Data) ->
         Opts = #{raw_peers => true},
         case arweave_config_format_legacy_json:parse(Data, Opts) of
             {ok, ok} ->
-                arweave_config_leaf_map:leaf_map_to_nested(build_leaf_map());
+                case has_custom_bucket_sizes() of
+                    false ->
+                        arweave_config_leaf_map:leaf_map_to_nested(
+                            build_leaf_map());
+                    true ->
+                        {error, {unsupported_custom_bucket_sizes,
+                            <<"The config declares storage modules with "
+                              "custom (non-partition) bucket sizes, which "
+                              "cannot be converted automatically: the "
+                              "current notation names storage module "
+                              "directories differently, so converting "
+                              "would require renaming them on disk. "
+                              "Keep the legacy config, or migrate these "
+                              "modules and their directories by hand - "
+                              "see the Migrating Your Configuration guide "
+                              "at docs.arweave.org for the steps.">>}}
+                end;
             {error, Reason} ->
                 {error, {parse_input, Reason}};
             {error, Reason, Item} ->
@@ -94,6 +110,28 @@ legacy_to_nested(Data) ->
         end
     after
         ok = arweave_config_store:restore(Snapshot)
+    end.
+
+%% @doc Legacy configs may declare custom (non-partition) bucket
+%% sizes. Their on-disk directories are named after the bucket
+%% notation, while the current notation names directories after the
+%% byte range - converting such a config would silently require the
+%% operator to rename directories, which this tool must not imply.
+%% Refuse instead so the operator can stay on the legacy config or
+%% migrate the config and the directories by hand.
+%%
+%% After the legacy parse, every module map holds either the
+%% `partition` shorthand (partition-sized buckets) or explicit
+%% `range_start`/`range_end` fields (custom bucket sizes) - so a
+%% range-form entry identifies a custom bucket size.
+has_custom_bucket_sizes() ->
+    Modules = store_list([storage_modules]) ++ store_list([repack_modules]),
+    lists:any(fun(Module) -> maps:is_key(range_start, Module) end, Modules).
+
+store_list(Key) ->
+    case arweave_config_store:get(Key) of
+        {ok, List} when is_list(List) -> List;
+        _ -> []
     end.
 
 %% @doc Build a per-leaf config map from every value the parse wrote
@@ -134,7 +172,10 @@ encode_typed(Type, _Path, Peers)
     [encode_peer(Peer) || Peer <- Peers];
 encode_typed(resolved_peer_id, _Path, Peer) ->
     encode_peer(Peer);
-encode_typed(list_map, Path, Items) when is_list(Items) ->
+encode_typed(Type, Path, Items)
+  when (Type =:= list_map orelse Type =:= storage_modules
+            orelse Type =:= repack_modules),
+       is_list(Items) ->
     [encode_list_item(Path, Item) || Item <- Items];
 encode_typed(_Type, _Path, Value) ->
     encode_container(Value).

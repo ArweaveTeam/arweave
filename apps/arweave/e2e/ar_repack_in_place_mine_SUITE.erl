@@ -136,10 +136,7 @@ do_repack_in_place_mine(FromPackingType, ToPackingType, ModuleSize) ->
 
     ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
                                                           [storage_modules] => [],
-                                                          [repack_modules] => [
-                                                                               arweave_config:repack_module_to_config(ConfigModule)
-                                                                               || ConfigModule <- RepackInPlaceStorageModules
-                                                                              ],
+                                                          [repack_modules] => RepackInPlaceStorageModules,
                                                           [mining, address] => not_set
                                                          }),
 
@@ -153,18 +150,18 @@ do_repack_in_place_mine(FromPackingType, ToPackingType, ModuleSize) ->
     DataDir = ar_test_node:remote_call(
                 RepackerNode, arweave_config, get, [[data_dir]]),
     lists:foreach(fun({SourceModule, Packing}) ->
-                          {BucketSize, Bucket, _Packing} = SourceModule,
+                          {ModuleStart, ModuleEnd, _Packing} = SourceModule,
                           SourceID = ar_storage_module:id(SourceModule),
-                          SourcePath = ar_chunk_storage:get_storage_module_path(DataDir, SourceID),
+                          SourcePath = ar_chunk_storage:storage_module_path(DataDir, SourceID),
 
-                          TargetModule = {BucketSize, Bucket, Packing},
+                          TargetModule = {ModuleStart, ModuleEnd, Packing},
                           TargetID = ar_storage_module:id(TargetModule),
-                          TargetPath = ar_chunk_storage:get_storage_module_path(DataDir, TargetID),
+                          TargetPath = ar_chunk_storage:storage_module_path(DataDir, TargetID),
                           ok = file:rename(SourcePath, TargetPath)
                   end, RepackInPlaceStorageModules),
 
     ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
-                                                          [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- FinalStorageModules],
+                                                          [storage_modules] => FinalStorageModules,
                                                           [repack_modules] => [],
                                                           [mining, address] => AddrB
                                                          }),

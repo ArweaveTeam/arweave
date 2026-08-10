@@ -82,8 +82,6 @@ start_link(Name, Args) ->
 
 %% @doc Register the workers that will be monitored by ar_data_sync_sup.erl.
 register_workers() ->
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-    RepackInPlaceModules = [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
     StorageModuleWorkers = lists:map(
                              fun(StorageModule) ->
                                      StoreID = ar_storage_module:id(StorageModule),
@@ -91,7 +89,7 @@ register_workers() ->
                                      Name = list_to_atom("ar_data_sync_" ++ StoreLabel),
                                      ?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, none}])
                              end,
-                             StorageModules
+                             arweave_config:storage_modules()
                             ),
     DefaultStorageModuleWorker = ?CHILD_WITH_ARGS(ar_data_sync, worker,
                                                   ar_data_sync_default, [ar_data_sync_default, {?DEFAULT_MODULE, none}]),
@@ -101,7 +99,7 @@ register_workers() ->
                                      Name = ar_data_sync:name(StoreID),
                                      ?CHILD_WITH_ARGS(ar_data_sync, worker, Name, [Name, {StoreID, TargetPacking}])
                              end,
-                             RepackInPlaceModules
+                             arweave_config:repack_modules(full)
                             ),
     StorageModuleWorkers ++ [DefaultStorageModuleWorker] ++ RepackInPlaceWorkers.
 
@@ -1764,7 +1762,8 @@ open_store_dbs(DataDir, StoreID) ->
             ?DEFAULT_MODULE ->
                 filename:join(DataDir, ?ROCKS_DB_DIR);
             _ ->
-                filename:join([DataDir, "storage_modules", StoreID, ?ROCKS_DB_DIR])
+                filename:join([ar_chunk_storage:storage_module_path(
+                    DataDir, StoreID), ?ROCKS_DB_DIR])
         end,
     ok = ar_kv:open(#{
                       path => filename:join(Dir, "ar_data_sync_db"),
@@ -1820,13 +1819,11 @@ cut_orphaned_storage_modules(BlockStartOffset, WeaveSize)
   when BlockStartOffset >= WeaveSize ->
     ok;
 cut_orphaned_storage_modules(BlockStartOffset, _WeaveSize) ->
-    StorageModules =
-        [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
     lists:foreach(
       fun(Module) ->
               gen_server:cast(name(ar_storage_module:id(Module)), {cut, BlockStartOffset})
       end,
-      StorageModules),
+      arweave_config:storage_modules()),
     ok.
 
 store_sync_state(#data_sync_state{ store_id = ?DEFAULT_MODULE } = State) ->

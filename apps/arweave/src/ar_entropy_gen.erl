@@ -45,8 +45,6 @@ name(StoreID) ->
     list_to_atom("ar_entropy_gen_" ++ ar_storage_module:label(StoreID)).
 
 register_workers(Module) ->
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-    RepackInPlaceModules = [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
     ConfiguredWorkers = lists:filtermap(
                           fun(StorageModule) ->
                                   StoreID = ar_storage_module:id(StorageModule),
@@ -62,7 +60,7 @@ register_workers(Module) ->
                                           false
                                   end
                           end,
-                          StorageModules
+                          arweave_config:storage_modules()
                          ),
 
     RepackInPlaceWorkers = lists:filtermap(
@@ -85,7 +83,7 @@ register_workers(Module) ->
                                              false
                                      end
                              end,
-                             RepackInPlaceModules
+                             arweave_config:repack_modules(full)
                             ),
 
     ConfiguredWorkers ++ RepackInPlaceWorkers.
@@ -552,8 +550,8 @@ test_entropy_offsets() ->
     SectorSize = ar_block:get_replica_2_9_entropy_sector_size(),
     ?assertEqual(2 * ?DATA_CHUNK_SIZE, SectorSize),
 
-    Module0 = {ar_block:partition_size(), 0, unpacked},
-    Module1 = {ar_block:partition_size(), 1, unpacked},
+    Module0 = {0, ar_block:partition_size(), unpacked},
+    Module1 = {ar_block:partition_size(), 2 * ar_block:partition_size(), unpacked},
 
     {_ModuleStart0, ModuleEnd0} = ar_storage_module:module_range(Module0),
     {_ModuleStart1, ModuleEnd1} = ar_storage_module:module_range(Module1),

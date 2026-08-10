@@ -7,6 +7,23 @@
 
 specs() ->
     [
+        %% Internal: which configuration notation this launch used.
+        %% Stamped by bootstrap from the CLI dialect sniff (and by the
+        %% data-doctor tools for their legacy-notation arguments);
+        %% never set by operators. Drives the legacy bucket-notation
+        %% directory naming (ar_storage_module:disk_dir_name/1).
+        #{
+            enabled => true,
+            hidden => true,
+            option_key => [config_dialect],
+            default => current,
+            runtime => false,
+            type => atom,
+            short_description =>
+                <<"Internal: the configuration notation used at launch "
+                  "(current or legacy). Set by the node, never by "
+                  "operators.">>
+        },
         #{
             enabled => true,
             option_key => [config_file],
@@ -154,7 +171,14 @@ specs() ->
     ].
 
 validate() ->
-    ok.
+    case arweave_config:get([config_dialect]) of
+        Dialect when Dialect =:= current; Dialect =:= legacy ->
+            ok;
+        Other ->
+            {error, iolist_to_binary(io_lib:format(
+                "config_dialect: expected current or legacy, got ~p",
+                [Other]))}
+    end.
 
 group_description() ->
     <<"Manage node behavior not covered by other groups.">>.

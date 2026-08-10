@@ -135,15 +135,15 @@ list_value_writes(_Config) ->
         false = lists:member({127,0,0,1,1984}, Trusted),
         false = lists:member({127,0,0,2,1984}, Trusted),
 
-        StorageModule = {100, 0, unpacked},
+        StorageModule = {0, 100, unpacked},
         ok = arweave_config:set([storage_modules], []),
         ok = arweave_config_options_storage_modules:write_legacy_storage_module(StorageModule),
-        [StorageModule] = arweave_config_options_storage_modules:legacy_list(),
+        [StorageModule] = arweave_config_options_storage_modules:storage_modules(),
 
-        RepackModule = {{100, 0, unpacked}, {replica_2_9, <<0:256>>}},
+        RepackModule = {{0, 100, unpacked}, {replica_2_9, <<0:256>>}},
         ok = arweave_config:set([repack_modules], []),
         ok = arweave_config_options_repack_modules:write_legacy_repack_module(RepackModule),
-        [RepackModule] = arweave_config_options_repack_modules:legacy_list(),
+        [RepackModule] = arweave_config_options_repack_modules:repack_modules(full),
 
         Webhook = #{url => <<"http://127.0.0.1/hook">>, events => [<<"block">>], headers => #{}},
         ok = arweave_config:set([webhooks], []),
@@ -162,8 +162,8 @@ list_root_set_get(_Config) ->
         },
         ok = arweave_config:set([storage_modules], [StorageMap]),
         [StorageMap] = arweave_config:get([storage_modules]),
-        [{PartitionSize, 0, unpacked}] =
-            arweave_config_options_storage_modules:legacy_list(),
+        [{0, PartitionSize, unpacked}] =
+            arweave_config_options_storage_modules:storage_modules(),
         ok = arweave_config:set([storage_modules], []),
 
         Addr = <<0:256>>,
@@ -175,8 +175,9 @@ list_root_set_get(_Config) ->
         },
         ok = arweave_config:set([repack_modules], [RepackMap]),
         [RepackMap] = arweave_config:get([repack_modules]),
-        [{{PartitionSize, 1, unpacked}, {replica_2_9, Addr}}] =
-            arweave_config_options_repack_modules:legacy_list(),
+        DoublePartitionSize = 2 * PartitionSize,
+        [{{PartitionSize, DoublePartitionSize, unpacked}, {replica_2_9, Addr}}] =
+            arweave_config_options_repack_modules:repack_modules(full),
         ok = arweave_config:set([repack_modules], []),
 
         WebhookMap = #{

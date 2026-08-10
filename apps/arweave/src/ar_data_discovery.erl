@@ -512,7 +512,6 @@ emit_state_snapshot(#state{ scan_waiting = Waiting, scan_inflight = Inflight,
 %% emitted by the telemetry tick.
 emit_bucket_stats() ->
     StartTime = erlang:monotonic_time(millisecond),
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
     lists:foreach(
       fun(Module) ->
               StoreID = ar_storage_module:id(Module),
@@ -520,7 +519,7 @@ emit_bucket_stats() ->
               report_bucket_stats(StoreID, RangeStart, RangeEnd, normal),
               report_bucket_stats(StoreID, RangeStart, RangeEnd, footprint)
       end,
-      StorageModules
+      arweave_config:storage_modules()
      ),
     ElapsedMs = erlang:monotonic_time(millisecond) - StartTime,
     ?LOG_DEBUG([{event, bucket_stats_complete}, {elapsed_ms, ElapsedMs}]).
@@ -709,10 +708,9 @@ run_peer_scan(Peer, Mode) ->
                 {advertised_mib, Stats#scan_stats.advertised_bytes div (1024 * 1024)}]).
 
 scan_normal_for_peer(Peer, SyncBuckets, Init) ->
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
     %% Shuffle modules so concurrent scanners don't all hammer the same
     %% module first - spreads load across the configured range.
-    Modules = arweave_util:shuffle_list(StorageModules),
+    Modules = arweave_util:shuffle_list(arweave_config:storage_modules()),
     lists:foldl(
       fun(StorageModule, Acc) ->
               StoreID = ar_storage_module:id(StorageModule),
@@ -787,8 +785,7 @@ unsynced_intervals_in_window(Start, End, Acc, StoreID) ->
     end.
 
 scan_footprint_for_peer(Peer, FootprintBuckets, Init) ->
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-    Modules = arweave_util:shuffle_list(StorageModules),
+    Modules = arweave_util:shuffle_list(arweave_config:storage_modules()),
     lists:foldl(
       fun(StorageModule, Acc) ->
               StoreID = ar_storage_module:id(StorageModule),

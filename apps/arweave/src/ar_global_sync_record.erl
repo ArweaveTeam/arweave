@@ -177,14 +177,12 @@ terminate(Reason, _State) ->
 %%%===================================================================
 
 init_sync_record() ->
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-    Modules = [M || M <- [?DEFAULT_MODULE | StorageModules],
+    Modules = [M || M <- [?DEFAULT_MODULE | arweave_config:storage_modules()],
                     not is_replica_2_9(M)],
     get_records_wait(ar_data_sync, Modules, ar_intervals:new()).
 
 init_footprint_record() ->
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-    get_records_wait(ar_data_sync_footprints, StorageModules,
+    get_records_wait(ar_data_sync_footprints, arweave_config:storage_modules(),
                      ar_intervals:new()).
 
 %% @doc Handle potential race condition when ar_global_sync_record init is called before

@@ -29,13 +29,15 @@
 %% @doc Configure Arweave options from the OS environment, config file
 %% (if any), and CLI args. The assembled state lives in the options
 %% registry; callers read it back through `arweave_config:get/1`.
--spec start(Args) -> Return when
-    Args :: [string() | binary()],
-    Return :: ok | {error, term()}.
 start(Args) ->
     Env = arweave_config_format_env:parse(),
     %% current or legacy
     Dialect = dialect(Env, Args),
+    %% Recorded so consumers can tell how the node was configured -
+    %% ar_storage_module uses the legacy bucket-notation directory
+    %% names only for legacy launches (see
+    %% arweave_config:is_legacy_launch/0).
+    ok = arweave_config:set([config_dialect], Dialect),
     maybe
         {ok, ConfigFile} ?= find_config_file(Dialect, Args, Env),
         ok ?= apply_config_file(ConfigFile),

@@ -125,11 +125,11 @@ test_from_disk_pool() ->
 %% @doc Chunk was in the disk pool but has been confirmed; served via tx_index fallback.
 test_tx_index_fallback() ->
     Addr = ar_test_node:generate_address(main),
-    StorageModule = {10 * ?PARTITION_SIZE, 0,
+    StorageModule = {0, 10 * ?PARTITION_SIZE,
             ar_test_node:storage_module_packing(Addr, 0)},
     Wallet = ar_test_data_sync:setup_nodes(
             #{ addr => Addr,
-                    [storage_modules] => [arweave_config:storage_module_to_config(StorageModule)] }),
+                    [storage_modules] => [StorageModule] }),
     #{ tx := TX, chunks := Chunks, chunk_end_offset := ChunkEndOffset, proof := Proof } =
         post_single_chunk_tx(Wallet),
     ar_test_node:mine(main),
@@ -216,10 +216,10 @@ test_invalid_input() ->
 %% @doc When no storage module covers the vicinity, is_stored_long_term is false.
 test_not_stored_long_term() ->
     Addr = ar_test_node:generate_address(main),
-    StorageModules = [{10 * ?PARTITION_SIZE, 5,
+    StorageModules = [{5 * 10 * ?PARTITION_SIZE, 6 * 10 * ?PARTITION_SIZE,
             ar_test_node:storage_module_packing(Addr, 5)}],
     Wallet = ar_test_data_sync:setup_nodes(
-            #{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
+            #{ addr => Addr, [storage_modules] => StorageModules }),
     #{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
         post_single_chunk_tx(Wallet, <<"303">>),
     EncodedTXID = arweave_util:encode(TX#tx.id),
@@ -444,10 +444,10 @@ test_offset_beyond_data() ->
 %% TX should return 400. 
 test_offset_beyond_tx_size() ->
     Addr = ar_test_node:generate_address(main),
-    StorageModules = [{10 * ?PARTITION_SIZE, 0,
+    StorageModules = [{0, 10 * ?PARTITION_SIZE,
             ar_test_node:storage_module_packing(Addr, 0)}],
     Wallet = ar_test_data_sync:setup_nodes(
-            #{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
+            #{ addr => Addr, [storage_modules] => StorageModules }),
     %% A single sub-chunk-size TX (size between 20 and 700).
     TXSize = 500,
     TXData = crypto:strong_rand_bytes(TXSize),
