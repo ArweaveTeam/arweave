@@ -23,7 +23,7 @@
 %% tight for some test scenarios.
 -define(LIMITER_TIMESTAMP_CLEANUP_INTERVAL, 120000).
 -define(LIMITER_TIMESTAMP_CLEANUP_EXPIRY, 120000).
--define(LIMITER_IS_MANUAL_REDUCTION_DISABLED, false).
+-define(LIMITER_IS_MANUAL_REDUCTION_DISABLED, true).
 
 %% general
 
@@ -292,7 +292,10 @@ test_only_groups() ->
             ?LIMITER_GENERAL_LEAKY_LIMIT,
             ?LIMITER_GENERAL_LEAKY_TICK_INTERVAL,
             ?LIMITER_GENERAL_LEAKY_TICK_REDUCTION,
-            ?LIMITER_GENERAL_CONCURRENCY_LIMIT))#{number_of_workers => 1},
+            ?LIMITER_GENERAL_CONCURRENCY_LIMIT))#{
+            number_of_workers => 1,
+            is_manual_reduction_disabled => false
+        },
         test_limiter_2 => standard(
             ?LIMITER_GENERAL_SLIDING_WINDOW_LIMIT,
             ?LIMITER_GENERAL_SLIDING_WINDOW_DURATION,
@@ -363,13 +366,15 @@ production_groups() ->
             ?LIMITER_GET_PREVIOUS_VDF_SESSION_LEAKY_TICK_INTERVAL,
             ?LIMITER_GET_PREVIOUS_VDF_SESSION_LEAKY_TICK_REDUCTION,
             ?LIMITER_GET_PREVIOUS_VDF_SESSION_CONCURRENCY_LIMIT),
-        general => standard(
+        general => (standard(
             ?LIMITER_GENERAL_SLIDING_WINDOW_LIMIT,
             ?LIMITER_GENERAL_SLIDING_WINDOW_DURATION,
             ?LIMITER_GENERAL_LEAKY_LIMIT,
             ?LIMITER_GENERAL_LEAKY_TICK_INTERVAL,
             ?LIMITER_GENERAL_LEAKY_TICK_REDUCTION,
-            ?LIMITER_GENERAL_CONCURRENCY_LIMIT),
+            ?LIMITER_GENERAL_CONCURRENCY_LIMIT))#{
+            is_manual_reduction_disabled => false
+        },
         %% Metrics is a static low-traffic endpoint; one worker is enough.
         metrics => (standard(
             ?LIMITER_METRICS_SLIDING_WINDOW_LIMIT,
