@@ -50,7 +50,7 @@ test_generate_keyfile() ->
         fun() ->
             KeyType = ar_serialize:binary_to_signature_type(KeyTypeEnc),
             {Priv, Pub} = ar_wallet:new_keyfile(KeyType),
-            FileName = ar_wallet:wallet_filepath(ar_util:encode(ar_wallet:to_address(Pub))),
+            FileName = ar_wallet:wallet_filepath(arweave_util:encode(ar_wallet:to_address(Pub))),
             {Priv, Pub} = ar_wallet:load_keyfile(FileName)
         end
     end,

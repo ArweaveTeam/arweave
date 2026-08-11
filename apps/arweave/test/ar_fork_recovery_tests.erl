@@ -111,7 +111,7 @@ test_orphaned_txs_are_remined_after_fork_recovery() ->
     ar_test_node:mine(peer1),
     {ok, [{H4, _, _} | _]} = ar_test_await:node_height(peer1, 3),
     H4TXIDs = (ar_test_node:remote_call(peer1, ar_test_await, block_stored, [H4]))#block.txs,
-    ?debugFmt("Expecting ~s to be re-mined.~n", [ar_util:encode(TXID)]),
+    ?debugFmt("Expecting ~s to be re-mined.~n", [arweave_util:encode(TXID)]),
     ?assertEqual([TXID], H4TXIDs).
 
 invalid_block_with_high_cumulative_difficulty_test_() ->
@@ -124,7 +124,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
     %% ignores the invalid block and continues to build on top of the valid fork.
     RewardKey = ar_wallet:new_keyfile(),
     RewardAddr = ar_wallet:to_address(RewardKey),
-    WalletName = ar_util:encode(RewardAddr),
+    WalletName = arweave_util:encode(RewardAddr),
     Path = ar_wallet:wallet_filepath(WalletName),
     PeerPath = ar_test_node:remote_call(peer1, ar_wallet, wallet_filepath, [WalletName]),
     %% Copy the key because we mine blocks on both nodes using the same key in this test.
@@ -142,7 +142,7 @@ test_invalid_block_with_high_cumulative_difficulty() ->
     B1 = ar_test_await:block_stored(H2),
     B2 = fake_block_with_strong_cumulative_difficulty(B1, B0, 10000000000000000),
     B2H = B2#block.indep_hash,
-    ?debugFmt("Fake block: ~s.", [ar_util:encode(B2H)]),
+    ?debugFmt("Fake block: ~s.", [arweave_util:encode(B2H)]),
     ok = ar_events:subscribe(block),
     ?assertMatch({ok, {{<<"200">>, _}, _, _, _, _}},
             ar_http_iface_client:send_block_binary(ar_test_node:peer_ip(main), B2#block.indep_hash,

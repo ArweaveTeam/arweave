@@ -30,7 +30,7 @@ test_recent_blocks(Type) ->
     [B0] = ar_weave:init(),
     ar_test_node:start_peer(peer1, B0),
     GenesisBlock = [#{
-        <<"id">> => ar_util:encode(B0#block.indep_hash),
+        <<"id">> => arweave_util:encode(B0#block.indep_hash),
         <<"received">> => <<"pending">>,
         <<"height">> => 0
     }],
@@ -96,11 +96,11 @@ expected_blocks(Node, BI, ForcePending) ->
                 false ->
                     case length(Acc) < ?RECENT_BLOCKS_WITHOUT_TIMESTAMP of
                         true -> <<"pending">>;
-                        false -> ar_util:timestamp_to_seconds(B#block.receive_timestamp)
+                        false -> arweave_util:timestamp_to_seconds(B#block.receive_timestamp)
                     end
                 end,
             [#{
-                <<"id">> => ar_util:encode(H),
+                <<"id">> => arweave_util:encode(H),
                 <<"received">> => Timestamp,
                 <<"height">> => B#block.height
             } | Acc]
@@ -287,9 +287,9 @@ assert_forks_json_equal(ExpectedForks) ->
 assert_forks_json_equal(ExpectedForks, ActualForks) ->
     ExpectedForksStripped = [ 
         #{
-            <<"id">> => ar_util:encode(Fork#fork.id),
+            <<"id">> => arweave_util:encode(Fork#fork.id),
             <<"height">> => Fork#fork.height,
-            <<"blocks">> => [ ar_util:encode(BlockID) || BlockID <- Fork#fork.block_ids ]
+            <<"blocks">> => [ arweave_util:encode(BlockID) || BlockID <- Fork#fork.block_ids ]
         } 
         || Fork <- ExpectedForks],
     ActualForksStripped = [ maps:remove(<<"timestamp">>, Fork) || Fork <- ActualForks ],

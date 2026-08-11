@@ -158,7 +158,7 @@ log_row({#key{ id = Id }, #value{ value = Value }}) ->
 format_value(V) when is_binary(V) ->
     case io_lib:printable_unicode_list(binary_to_list(V)) of
         true -> V;
-        false -> ar_util:encode(V)
+        false -> arweave_util:encode(V)
     end;
 format_value(V) ->
     iolist_to_binary(io_lib:format("~tp", [V])).

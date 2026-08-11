@@ -116,7 +116,7 @@ test_from_disk_pool() ->
     Wallet = ar_test_data_sync:setup_nodes(),
     #{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
         post_single_chunk_tx(Wallet),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     {ok, {{<<"200">>, _}, _, Body, _, _}} = wait_for_unconfirmed_chunk(
         EncodedTXID, ChunkEndOffset),
     Response = jiffy:decode(Body, [return_maps]),
@@ -147,8 +147,8 @@ test_tx_index_fallback() ->
     {ok, {{<<"200">>, _}, _, ChunkBody, _, _}} =
         ar_test_node:get_chunk(main, AbsoluteEndOffset),
     ChunkResponse = jiffy:decode(ChunkBody, [return_maps]),
-    ?assertEqual(ar_util:encode(hd(Chunks)), maps:get(<<"chunk">>, ChunkResponse)),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    ?assertEqual(arweave_util:encode(hd(Chunks)), maps:get(<<"chunk">>, ChunkResponse)),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     %% Force the request down the tx_index path instead of the disk pool ETS cache path.
     ets:delete(ar_disk_pool_chunks_cache, {TX#tx.id, ChunkEndOffset}),
     {ok, {{<<"200">>, _}, _, Body, _, _}} = wait_for_unconfirmed_chunk(
@@ -176,7 +176,7 @@ wait_until_storage_module_offset(AbsoluteEndOffset, StorageModule) ->
 %% @doc Unknown TXID returns 404.
 test_not_found() ->
     ar_test_data_sync:setup_nodes(),
-    RandomTXID = ar_util:encode(crypto:strong_rand_bytes(32)),
+    RandomTXID = arweave_util:encode(crypto:strong_rand_bytes(32)),
     ?assertMatch(
         {ok, {{<<"404">>, _}, _, _, _, _}},
         ar_test_node:get_unconfirmed_chunk(main, RandomTXID, ?DATA_CHUNK_SIZE)
@@ -185,7 +185,7 @@ test_not_found() ->
 %% @doc Invalid TXID encoding returns 400; invalid offset returns 400.
 test_invalid_input() ->
     ar_test_data_sync:setup_nodes(),
-    ValidTXID = ar_util:encode(crypto:strong_rand_bytes(32)),
+    ValidTXID = arweave_util:encode(crypto:strong_rand_bytes(32)),
     Peer = ar_test_node:peer_ip(main),
     ?assertMatch(
         {ok, {{<<"400">>, _}, _, _, _, _}},
@@ -222,7 +222,7 @@ test_not_stored_long_term() ->
             #{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
     #{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
         post_single_chunk_tx(Wallet, <<"303">>),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     {ok, {{<<"200">>, _}, _, Body, _, _}} = wait_for_unconfirmed_chunk(
         EncodedTXID, ChunkEndOffset),
     Response = jiffy:decode(Body, [return_maps]),
@@ -233,7 +233,7 @@ test_multi_chunk_tx() ->
     Wallet = ar_test_data_sync:setup_nodes(),
     InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 3)],
     #{ tx := TX, proofs := Proofs } = post_and_seed_tx(Wallet, InputChunks),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     lists:foreach(
         fun({ChunkEndOffset, Proof}) ->
             {ok, {{<<"200">>, _}, _, Body, _, _}} = wait_for_unconfirmed_chunk(
@@ -249,7 +249,7 @@ test_offset_boundary() ->
     Wallet = ar_test_data_sync:setup_nodes(),
     InputChunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE) || _ <- lists:seq(1, 3)],
     #{ tx := TX } = post_and_seed_tx(Wallet, InputChunks),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     %% The exact end offset works.
     {ok, {{<<"200">>, _}, _, _, _, _}} =
         wait_for_unconfirmed_chunk(EncodedTXID, 2 * ?DATA_CHUNK_SIZE),
@@ -273,7 +273,7 @@ test_sub_chunk_size() ->
     InputChunks = [Chunk1, Chunk2],
     #{ tx := TX, proofs := Proofs } = post_and_seed_tx(Wallet, InputChunks),
     [{Chunk1EndOffset, Proof1}, {Chunk2EndOffset, Proof2}] = Proofs,
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     %% Retrieve the full-size first chunk.
     {ok, {{<<"200">>, _}, _, Body1, _, _}} = wait_for_unconfirmed_chunk(
         EncodedTXID, Chunk1EndOffset),
@@ -397,7 +397,7 @@ test_same_data_txs(Mode) ->
         second_after_disk_pool_cleared ->
             ok;
         _ ->
-            EncodedTXID1 = ar_util:encode(TX1#tx.id),
+            EncodedTXID1 = arweave_util:encode(TX1#tx.id),
             {ok, {{<<"200">>, _}, _, Body1, _, _}} = wait_for_unconfirmed_chunk(
                 EncodedTXID1, ChunkEndOffset),
             Response1 = jiffy:decode(Body1, [return_maps]),
@@ -410,7 +410,7 @@ test_same_data_txs(Mode) ->
             ar_test_node:assert_post_tx_to_peer(main, TX2),
             SeedChunk()
     end,
-    EncodedTXID2 = ar_util:encode(TX2#tx.id),
+    EncodedTXID2 = arweave_util:encode(TX2#tx.id),
     {ok, {{<<"200">>, _}, _, Body2, _, _}} = wait_for_unconfirmed_chunk(
         EncodedTXID2, ChunkEndOffset),
     Response2 = jiffy:decode(Body2, [return_maps]),
@@ -419,7 +419,7 @@ test_same_data_txs(Mode) ->
 %% @doc Negative offset returns 400.
 test_negative_offset() ->
     ar_test_data_sync:setup_nodes(),
-    ValidTXID = ar_util:encode(crypto:strong_rand_bytes(32)),
+    ValidTXID = arweave_util:encode(crypto:strong_rand_bytes(32)),
     Peer = ar_test_node:peer_ip(main),
     ?assertMatch(
         {ok, {{<<"400">>, _}, _, _, _, _}},
@@ -434,7 +434,7 @@ test_negative_offset() ->
 test_offset_beyond_data() ->
     Wallet = ar_test_data_sync:setup_nodes(),
     #{ tx := TX } = post_single_chunk_tx(Wallet),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     ?assertMatch(
         {ok, {{<<"404">>, _}, _, _, _, _}},
         ar_test_node:get_unconfirmed_chunk(main, EncodedTXID, ?DATA_CHUNK_SIZE * 10)
@@ -465,7 +465,7 @@ test_offset_beyond_tx_size() ->
     %% Clear the disk-pool cache entry so the query can't be served from the
     %% ETS cache — forcing it down the tx_index fallback path.
     ets:delete(ar_disk_pool_chunks_cache, {TX#tx.id, TXEndOffset}),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     %% Offset 700 is past the TX's size (500) and must be rejected.
     wait_for_unconfirmed_chunk(EncodedTXID, 700, <<"400">>).
 
@@ -477,7 +477,7 @@ test_partial_confirmation() ->
     %% Mine one block — chunk is partially confirmed but not yet pruned from disk pool.
     ar_test_node:mine(main),
     ?assertMatch({ok, _}, ar_test_await:node_height(main, 1)),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     {ok, {{<<"200">>, _}, _, Body, _, _}} = wait_for_unconfirmed_chunk(
         EncodedTXID, ChunkEndOffset),
     Response = jiffy:decode(Body, [return_maps]),
@@ -488,13 +488,13 @@ test_data_path_valid() ->
     Wallet = ar_test_data_sync:setup_nodes(),
     #{ tx := TX, data_root := DataRoot, chunk_end_offset := ChunkEndOffset, proof := Proof } =
         post_single_chunk_tx(Wallet),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     {ok, {{<<"200">>, _}, _, Body, _, _}} = wait_for_unconfirmed_chunk(
         EncodedTXID, ChunkEndOffset),
     Response = jiffy:decode(Body, [return_maps]),
     assert_unconfirmed_chunk_response(Response, Proof, true),
-    {ok, ReturnedDataPath} = ar_util:safe_decode(maps:get(<<"data_path">>, Response)),
-    {ok, ReturnedChunk} = ar_util:safe_decode(maps:get(<<"chunk">>, Response)),
+    {ok, ReturnedDataPath} = arweave_util:safe_decode(maps:get(<<"data_path">>, Response)),
+    {ok, ReturnedChunk} = arweave_util:safe_decode(maps:get(<<"chunk">>, Response)),
     %% Validate the returned data_path is a valid merkle proof.
     ?assertMatch(
         {_, _, _},
@@ -512,9 +512,9 @@ test_concurrent_requests() ->
     Wallet = ar_test_data_sync:setup_nodes(),
     #{ tx := TX, chunk_end_offset := ChunkEndOffset, proof := Proof } =
         post_single_chunk_tx(Wallet),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     NumRequests = 5,
-    Results = ar_util:pmap(
+    Results = arweave_util:pmap(
         fun(_) ->
             wait_for_unconfirmed_chunk(EncodedTXID, ChunkEndOffset)
         end,
@@ -573,8 +573,8 @@ test_discover_all_unconfirmed_chunks() ->
             path => "/tx/pending"
         }),
     PendingTXIDs = jiffy:decode(PendingBody),
-    EncodedTX1ID = ar_util:encode(TX1#tx.id),
-    EncodedTX2ID = ar_util:encode(TX2#tx.id),
+    EncodedTX1ID = arweave_util:encode(TX1#tx.id),
+    EncodedTX2ID = arweave_util:encode(TX2#tx.id),
     ?assert(lists:member(EncodedTX1ID, PendingTXIDs)),
     ?assert(lists:member(EncodedTX2ID, PendingTXIDs)),
 
@@ -591,7 +591,7 @@ test_discover_all_unconfirmed_chunks() ->
                 }),
             TXJson = jiffy:decode(TXBody, [return_maps]),
             DiscoveredDataSize = binary_to_integer(maps:get(<<"data_size">>, TXJson)),
-            {ok, DiscoveredDataRoot} = ar_util:safe_decode(
+            {ok, DiscoveredDataRoot} = arweave_util:safe_decode(
                 maps:get(<<"data_root">>, TXJson)
             ),
 
@@ -605,10 +605,10 @@ test_discover_all_unconfirmed_chunks() ->
                     {ok, {{<<"200">>, _}, _, ChunkBody, _, _}} = wait_for_unconfirmed_chunk(
                         DiscoveredTXID, EndOffset),
                     ChunkResponse = jiffy:decode(ChunkBody, [return_maps]),
-                    {ok, ReturnedChunk} = ar_util:safe_decode(
+                    {ok, ReturnedChunk} = arweave_util:safe_decode(
                         maps:get(<<"chunk">>, ChunkResponse)
                     ),
-                    {ok, ReturnedDataPath} = ar_util:safe_decode(
+                    {ok, ReturnedDataPath} = arweave_util:safe_decode(
                         maps:get(<<"data_path">>, ChunkResponse)
                     ),
                     ?assertEqual(<<"unpacked">>, maps:get(<<"packing">>, ChunkResponse)),
@@ -657,7 +657,7 @@ test_orphaned_chunk() ->
         {ok, {{<<"200">>, _}, _, _, _, _}},
         ar_test_node:post_chunk(main, ar_serialize:jsonify(Proof))
     ),
-    EncodedTXID = ar_util:encode(TX#tx.id),
+    EncodedTXID = arweave_util:encode(TX#tx.id),
     %% Sanity check: the chunk is queryable while pending.
     {ok, {{<<"200">>, _}, _, _, _, _}} =
         wait_for_unconfirmed_chunk(EncodedTXID, ChunkEndOffset),

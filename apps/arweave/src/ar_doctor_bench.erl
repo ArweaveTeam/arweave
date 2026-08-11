@@ -42,7 +42,7 @@ bench_read(Args) ->
     Duration = list_to_integer(DurationString),
 
     {StorageModules, Address} = parse_storage_modules(StorageModuleConfigs, [], undefined),
-    ar:console("Assuming mining address: ~p~n", [ar_util:safe_encode(Address)]),
+    ar:console("Assuming mining address: ~p~n", [arweave_util:safe_encode(Address)]),
     ok = arweave_config:set([storage_modules],
                             [arweave_config:storage_module_to_config(M) || M <- StorageModules]),
     %% Skip the `[mining, address]' override when `Address' is `undefined'
@@ -66,7 +66,7 @@ bench_read(Args) ->
 
     StopTime = erlang:monotonic_time() + erlang:convert_time_unit(Duration, second, native),
 
-    Results = ar_util:pmap(
+    Results = arweave_util:pmap(
                 fun(StorageModule) ->
                         read_storage_module(DataDir, StorageModule, StopTime)
                 end,
@@ -275,7 +275,7 @@ get_mounted_device(FilePath) ->
 
 open_files(DataDir, StoreID) ->
     AllFilepaths = ar_chunk_storage:list_files(DataDir, StoreID),
-    Filepaths = lists:sublist(ar_util:shuffle_list(AllFilepaths), ?NUM_FILES),
+    Filepaths = lists:sublist(arweave_util:shuffle_list(AllFilepaths), ?NUM_FILES),
     lists:foldl(
       fun(Filepath, Acc) ->
               {ok, FileInfo} = file:read_file_info(Filepath),

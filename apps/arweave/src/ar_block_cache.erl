@@ -104,8 +104,8 @@ add(Tab,
             insert(Tab, {{block, H}, {B, CurrentStatus, CurrentTimestamp, Children}});
         _ ->
             ?LOG_WARNING([{event, attempt_to_update_already_validated_cached_block},
-                          {h, ar_util:encode(H)}, {height, Height},
-                          {previous_block, ar_util:encode(PrevH)}]),
+                          {h, arweave_util:encode(H)}, {height, Height},
+                          {previous_block, arweave_util:encode(PrevH)}]),
             ok
     end.
 
@@ -134,7 +134,7 @@ remove_expired_alternative_blocks2(Tab, [H | Hs]) ->
             case timer:now_diff(erlang:timestamp(), ExpirationTimestamp) >= 0 of
                 true ->
                     ?LOG_INFO([{event, removing_expired_alternative_block_from_cache},
-                               {block, ar_util:encode(H)},
+                               {block, arweave_util:encode(H)},
                                {status, Status}]),
                     remove(Tab, H),
                     remove_expired_alternative_blocks2(Tab, Hs);
@@ -669,7 +669,7 @@ is_valid_fork(Tab, B, Status) ->
 
 is_valid_fork(_Tab, #block{ height = Height, indep_hash = H }, _Status, CheckpointHeight)
   when Height < CheckpointHeight ->
-    ?LOG_WARNING([{event, found_invalid_heavy_fork}, {hash, ar_util:encode(H)},
+    ?LOG_WARNING([{event, found_invalid_heavy_fork}, {hash, arweave_util:encode(H)},
                   {height, Height}, {checkpoint_height, CheckpointHeight}]),
     false;
 is_valid_fork(_Tab, _B, on_chain, _CheckpointHeight) ->

@@ -176,7 +176,7 @@ handle_cast(enqueue, State) ->
         active ->
             enqueue(State2);
         paused ->
-            ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), enqueue),
+            arweave_util:cast_after(?DEVICE_LOCK_WAIT, self(), enqueue),
             {noreply, State2};
         _ ->
             %% off / complete — not in sync mode. The loop is re-kicked by
@@ -229,7 +229,7 @@ enqueue(#state{ sweep = undefined } = State) ->
             {noreply, State#state{ sweep = Sweep }};
         not_ready ->
             %% Node not joined yet, or footprint migration in flight.
-            ar_util:cast_after(1000, self(), enqueue),
+            arweave_util:cast_after(1000, self(), enqueue),
             {noreply, State}
     end;
 enqueue(#state{ sweep = #sweep{} } = State) ->
@@ -241,13 +241,13 @@ enqueue(#state{ sweep = #sweep{} } = State) ->
             %% weave tip without ever rewriting end_.
             complete_sweep(State);
         {wait, _Reason, Delay} ->
-            ar_util:cast_after(Delay, self(), enqueue),
+            arweave_util:cast_after(Delay, self(), enqueue),
             {noreply, State};
         ready ->
             {Action, NewState} = do_enqueue(State),
             case Action of
                 cast_now -> gen_server:cast(self(), enqueue);
-                {cast_after, Ms} -> ar_util:cast_after(Ms, self(), enqueue)
+                {cast_after, Ms} -> arweave_util:cast_after(Ms, self(), enqueue)
             end,
             {noreply, NewState}
     end.
@@ -371,12 +371,12 @@ complete_sweep(#state{ store_id = StoreID,
                 {next_mode, NextMode}]),
     case start_sweep(State, NextMode) of
         {ok, Sweep2} ->
-            ar_util:cast_after(?SWEEP_RESTART_DELAY_MS, self(), enqueue),
+            arweave_util:cast_after(?SWEEP_RESTART_DELAY_MS, self(), enqueue),
             {noreply, State#state{ sweep = Sweep2 }};
         not_ready ->
             %% Clear the sweep so later enqueue casts hit the sweep=undefined clause
             %% (silent retry) instead of re-logging sweep_complete every second.
-            ar_util:cast_after(1000, self(), enqueue),
+            arweave_util:cast_after(1000, self(), enqueue),
             {noreply, State#state{ sweep = undefined }}
     end.
 
@@ -481,7 +481,7 @@ claim_tasks(StoreID, PeerEntries, Queue) ->
     ScalingFactor = 1.5,
     ChunksPerPeer = trunc(((TotalChunksToEnqueue + NumPeers - 1) div NumPeers) * ScalingFactor),
     Queue2 = ar_sync_task_queue:insert_batch(
-               ar_util:shuffle_list(PeerEntries), ChunksPerPeer, Queue),
+               arweave_util:shuffle_list(PeerEntries), ChunksPerPeer, Queue),
     {Drained, Queue3} = ar_sync_task_queue:drain(Queue2),
     Tasks = [#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
                          store_id = StoreID, footprint_key = FootprintKey }

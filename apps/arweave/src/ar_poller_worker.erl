@@ -65,7 +65,7 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer } = State) ->
     end,
     case ar_http_iface_client:get_recent_hash_list_diff(Peer, HL) of
         {ok, in_sync} ->
-            ar_util:cast_after(polling_frequency_ms(), self(), {poll, Ref}),
+            arweave_util:cast_after(polling_frequency_ms(), self(), {poll, Ref}),
             {noreply, State};
         {ok, {H, TXIDs, BlocksOnTop}} ->
             case ar_ignore_registry:member({poller_worker, H})
@@ -98,30 +98,30 @@ handle_cast({poll, Ref}, #state{ ref = Ref, peer = Peer } = State) ->
                                     ok;
                                 failed ->
                                     ?LOG_WARNING([{event, failed_to_get_block_txs_from_peer},
-                                                  {block, ar_util:encode(H)},
-                                                  {peer, ar_util:format_peer(Peer)},
+                                                  {block, arweave_util:encode(H)},
+                                                  {peer, arweave_util:format_peer(Peer)},
                                                   {tx_count, length(B#block.txs)}]),
                                     ok
                             end;
                         Error ->
                             ar_ignore_registry:remove_ref({poller_worker, H}, IgnoreRef),
                             ?LOG_DEBUG([{event, failed_to_fetch_block},
-                                        {peer, ar_util:format_peer(Peer)},
-                                        {block, ar_util:encode(H)},
+                                        {peer, arweave_util:format_peer(Peer)},
+                                        {block, arweave_util:encode(H)},
                                         {error, io_lib:format("~p", [Error])}]),
                             ok
                     end
             end,
-            ar_util:cast_after(polling_frequency_ms(), self(), {poll, Ref}),
+            arweave_util:cast_after(polling_frequency_ms(), self(), {poll, Ref}),
             {noreply, State};
         {error, not_found} ->
-            ?LOG_DEBUG([{event, peer_out_of_sync}, {peer, ar_util:format_peer(Peer)}]),
+            ?LOG_DEBUG([{event, peer_out_of_sync}, {peer, arweave_util:format_peer(Peer)}]),
             gen_server:cast(ar_poller, {peer_out_of_sync, Peer}),
             {noreply, State#state{ pause = true }};
         {error, Reason} ->
             ar_http_iface_client:log_failed_request(Reason,
                                                     [{event, failed_to_get_recent_hash_list_diff},
-                                                     {peer, ar_util:format_peer(Peer)},
+                                                     {peer, arweave_util:format_peer(Peer)},
                                                      {reason, io_lib:format("~p", [Reason])}]),
             {noreply, State#state{ pause = true }}
     end;
@@ -196,7 +196,7 @@ get_missing_tx_indices([TXID | TXIDs], N) ->
 
 slow_block_application_warning(N) ->
     ar_mining_stats:pause_performance_reports(60000),
-    ar_util:terminal_clear(),
+    arweave_util:terminal_clear(),
     ar:console("WARNING: there are more than ~B not yet validated blocks on the longest chain."
                " Please, double-check if you are in sync with the network and make sure your "
                "CPU computes VDF fast enough or you are connected to a VDF server."
@@ -217,13 +217,13 @@ warning(Peer, Event) ->
                     fork ->
                         "is on a fork branching off of our fork 5 or more blocks behind"
                 end,
-            ar_util:terminal_clear(),
+            arweave_util:terminal_clear(),
             ar:console("WARNING: peer ~s ~s. "
                        "Please, double-check if you are in sync with the network and "
                        "make sure your CPU computes VDF fast enough or you are connected "
                        "to a VDF server.~nThe node may be still mining, but console performance "
                        "reports are temporarily paused.~n~n",
-                       [ar_util:format_peer(Peer), EventMessage])
+                       [arweave_util:format_peer(Peer), EventMessage])
     end.
 
 collect_missing_transactions([#tx{} = TX | TXs]) ->

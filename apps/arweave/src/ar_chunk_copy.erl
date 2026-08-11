@@ -146,7 +146,7 @@ maybe_step(StoreID, State) ->
                 active ->
                     step(StoreID, CopyState2, State);
                 paused ->
-                    ar_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE,
+                    arweave_util:cast_after(?DEVICE_LOCK_WAIT, ?MODULE,
                                        {step, StoreID}),
                     save_progress(StoreID, CopyState2, State);
                 _ ->

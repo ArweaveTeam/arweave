@@ -44,10 +44,10 @@ vdf_sha_test_() ->
     {timeout, 500, fun test_vdf_sha/0}.
 
 test_vdf_sha() ->
-    PrevState = ar_util:decode(?ENCODED_PREV_STATE),
-    OutCheckpointSha3 = ar_util:decode(?ENCODED_SHA_CHECKPOINT),
-    OutCheckpointSha3Full = ar_util:decode(?ENCODED_SHA_CHECKPOINT_FULL),
-    RealSha3 = ar_util:decode(?ENCODED_SHA_RES),
+    PrevState = arweave_util:decode(?ENCODED_PREV_STATE),
+    OutCheckpointSha3 = arweave_util:decode(?ENCODED_SHA_CHECKPOINT),
+    OutCheckpointSha3Full = arweave_util:decode(?ENCODED_SHA_CHECKPOINT_FULL),
+    RealSha3 = arweave_util:decode(?ENCODED_SHA_RES),
     Salt1 = << (1):256 >>,
     Salt2 = << (2):256 >>,
 
@@ -108,9 +108,9 @@ vdf_sha_skip_iterations_test_() ->
     {timeout, 500, fun test_vdf_sha_skip_iterations/0}.
 
 test_vdf_sha_skip_iterations() ->
-    PrevState = ar_util:decode(?ENCODED_PREV_STATE),
-    OutCheckpointSha3 = ar_util:decode(?ENCODED_SHA_CHECKPOINT_SKIP),
-    RealSha3 = ar_util:decode(?ENCODED_SHA_RES_SKIP),
+    PrevState = arweave_util:decode(?ENCODED_PREV_STATE),
+    OutCheckpointSha3 = arweave_util:decode(?ENCODED_SHA_CHECKPOINT_SKIP),
+    RealSha3 = arweave_util:decode(?ENCODED_SHA_RES_SKIP),
     Salt1 = << (1):256 >>,
     SaltJump = << (1+?CHECKPOINT_SKIP_COUNT+1):256 >>,
 

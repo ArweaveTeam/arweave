@@ -40,7 +40,7 @@ test_fork_checkpoints_not_found() ->
         ar_test_node:start(#{
             b0 => B0,
             config => #{
-                [peers, vdf_client] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))],
+                [peers, vdf_client] => [arweave_util:format_peer(ar_test_node:peer_ip(peer1))],
                 [gossip, block, pollers] => 0
             }
         }),
@@ -49,7 +49,7 @@ test_fork_checkpoints_not_found() ->
         ar_test_node:start_peer(peer1, #{
             b0 => B0,
             config => #{
-                [peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(main))],
+                [peers, vdf_server] => [arweave_util:format_peer(ar_test_node:peer_ip(main))],
                 [gossip, block, pollers] => 0
             }
         }),
@@ -131,7 +131,7 @@ test_fork_refuse_validation() ->
         ar_test_node:start(#{
             b0 => B0,
             config => #{
-                [peers, vdf_client] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))],
+                [peers, vdf_client] => [arweave_util:format_peer(ar_test_node:peer_ip(peer1))],
                 [gossip, block, pollers] => 0
             }
         }),
@@ -140,7 +140,7 @@ test_fork_refuse_validation() ->
         ar_test_node:start_peer(peer1, #{
             b0 => B0,
             config => #{
-                [peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(main))],
+                [peers, vdf_server] => [arweave_util:format_peer(ar_test_node:peer_ip(main))],
                 [gossip, block, pollers] => 0,
                 [vdf, pull] => false
             }

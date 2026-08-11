@@ -189,7 +189,7 @@ handle_cast({add_block, B}, State) ->
     {noreply, element(2, add_block(B, State))};
 
 handle_cast(process_item, #state{ is_disk_space_sufficient = false } = State) ->
-    ar_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, self(), process_item),
+    arweave_util:cast_after(?CHECK_AFTER_SYNCED_INTERVAL_MS, self(), process_item),
     {noreply, State};
 handle_cast(process_item, #state{ retry_queue = Queue, retry_record = RetryRecord } = State) ->
     arweave_metrics:gauge_set(downloader_queue_size, queue:len(Queue)),
@@ -240,7 +240,7 @@ handle_cast({remove_block, Height}, State) ->
     {noreply, State2};
 
 handle_cast(store_sync_state, State) ->
-    ar_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, self(), store_sync_state),
+    arweave_util:cast_after(?STORE_HEADER_STATE_FREQUENCY_MS, self(), store_sync_state),
     case store_sync_state(State) of
         ok ->
             {noreply, State};
@@ -264,7 +264,7 @@ handle_info({event, tx, {preparing_unblacklisting, TXID}}, State) ->
     case ar_storage:get_tx_confirmation_data(TXID) of
         {ok, {Height, _BH}} ->
             ?LOG_DEBUG([{event, mark_block_with_blacklisted_tx_for_resyncing},
-                        {tx, ar_util:encode(TXID)}, {height, Height}]),
+                        {tx, arweave_util:encode(TXID)}, {height, Height}]),
             State2 = State#state{ sync_record = ar_intervals:delete(SyncRecord, Height,
                                                                     Height - 1), retry_record = ar_intervals:delete(RetryRecord, Height,
                                                                                                                     Height - 1) },
@@ -413,7 +413,7 @@ add_block2(B, #state{ sync_record = SyncRecord, retry_record = RetryRecord } = S
                     {ok, State#state{ sync_record = SyncRecord2, retry_record = RetryRecord2 }}
             end;
         {error, Reason} ->
-            ?LOG_WARNING([{event, failed_to_store_block}, {block, ar_util:encode(H)},
+            ?LOG_WARNING([{event, failed_to_store_block}, {block, arweave_util:encode(H)},
                           {height, Height}, {reason, Reason}]),
             {{error, Reason}, State}
     end.
@@ -447,11 +447,11 @@ process_item(Queue) ->
     Now = os:system_time(second),
     case queue:out(Queue) of
         {empty, _Queue} ->
-            ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, self(), process_item),
+            arweave_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, self(), process_item),
             Queue;
         {{value, {Item, {BackoffTimestamp, _} = Backoff}}, Queue2}
           when BackoffTimestamp > Now ->
-            ar_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, self(), process_item),
+            arweave_util:cast_after(?PROCESS_ITEM_INTERVAL_MS, self(), process_item),
             enqueue(Item, Backoff, Queue2);
         {{value, {{block, {H, H2, TXRoot, Height}}, Backoff}}, Queue2} ->
             case check_fork(Height, H, TXRoot) of
@@ -518,7 +518,7 @@ download_block(Peers, H, H2, TXRoot) ->
         unavailable ->
             ?LOG_WARNING([
                           {event, ar_header_sync_failed_to_download_block_header},
-                          {block, ar_util:encode(H)}
+                          {block, arweave_util:encode(H)}
                          ]),
             {error, block_header_unavailable};
         {Peer, #block{ height = Height } = B, Time, BlockSize} ->
@@ -543,8 +543,8 @@ download_block(Peers, H, H2, TXRoot) ->
                 _ ->
                     ?LOG_WARNING([
                                   {event, ar_header_sync_block_hash_mismatch},
-                                  {block, ar_util:encode(H)},
-                                  {peer, ar_util:format_peer(Peer)}
+                                  {block, arweave_util:encode(H)},
+                                  {peer, arweave_util:format_peer(Peer)}
                                  ]),
                     {error, block_hash_mismatch}
             end
@@ -562,26 +562,26 @@ download_txs(Peers, B, TXRoot) ->
                 _ ->
                     ?LOG_WARNING([
                                   {event, ar_header_sync_block_tx_root_mismatch},
-                                  {block, ar_util:encode(B#block.indep_hash)}
+                                  {block, arweave_util:encode(B#block.indep_hash)}
                                  ]),
                     {error, block_tx_root_mismatch}
             end;
         {error, txs_exceed_block_size_limit} ->
             ?LOG_WARNING([
                           {event, ar_header_sync_block_txs_exceed_block_size_limit},
-                          {block, ar_util:encode(B#block.indep_hash)}
+                          {block, arweave_util:encode(B#block.indep_hash)}
                          ]),
             {error, txs_exceed_block_size_limit};
         {error, txs_count_exceeds_limit} ->
             ?LOG_WARNING([
                           {event, ar_header_sync_block_txs_count_exceeds_limit},
-                          {block, ar_util:encode(B#block.indep_hash)}
+                          {block, arweave_util:encode(B#block.indep_hash)}
                          ]),
             {error, txs_count_exceeds_limit};
         {error, tx_not_found} ->
             ?LOG_WARNING([
                           {event, ar_header_sync_block_tx_not_found},
-                          {block, ar_util:encode(B#block.indep_hash)}
+                          {block, arweave_util:encode(B#block.indep_hash)}
                          ]),
             {error, tx_not_found}
     end.
@@ -590,7 +590,7 @@ log_download_source(B, BlockSource) ->
     ?LOG_DEBUG([
                 {event, header_sync_block_synced},
                 {height, B#block.height},
-                {block, ar_util:encode(B#block.indep_hash)},
+                {block, arweave_util:encode(B#block.indep_hash)},
                 {block_source, BlockSource},
                 {tx_count, length(B#block.txs)}
                ]).

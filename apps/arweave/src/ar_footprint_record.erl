@@ -169,7 +169,7 @@ get_footprint_size() ->
 
 get_chunks_per_partition() ->
     FootprintSize = get_footprint_size(),
-    ar_util:pad_to_closest_multiple_equal_or_above(?PARTITION_SIZE, ?DATA_CHUNK_SIZE * FootprintSize) div ?DATA_CHUNK_SIZE.
+    arweave_util:pad_to_closest_multiple_equal_or_above(?PARTITION_SIZE, ?DATA_CHUNK_SIZE * FootprintSize) div ?DATA_CHUNK_SIZE.
 
 collect_intervals(Start, End, Packing, StoreID) ->
     collect_intervals(Start, End, Packing, StoreID, ar_intervals:new()).

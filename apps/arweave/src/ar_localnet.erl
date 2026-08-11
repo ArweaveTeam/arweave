@@ -86,7 +86,7 @@ start_with_snapshot(SnapshotDir) ->
             io:format("~n~nLocalnet node started~n"),
             io:format("  Snapshot: ~s~n", [SnapshotDir]),
             io:format("  Data dir: ~s~n", [DataDir]),
-            io:format("  Mining address: ~s~n", [ar_util:encode(MiningAddr)]),
+            io:format("  Mining address: ~s~n", [arweave_util:encode(MiningAddr)]),
             io:format("  Storage modules:~n"),
             lists:foreach(fun({Size, Partition, Packing}) ->
                                   io:format("    - partition ~B, size ~B MB, packing ~s~n",
@@ -141,7 +141,7 @@ create_snapshot() ->
 %% @doc Poll every 100ms until the node has joined the network, or until
 %% WAIT_UNTIL_JOINED_TIMEOUT ms have elapsed.
 wait_until_joined() ->
-    ar_util:do_until(
+    arweave_util:do_until(
       fun() -> ar_node:is_joined() end,
       100,
       ?WAIT_UNTIL_JOINED_TIMEOUT
@@ -235,10 +235,10 @@ submit_snapshot_data() ->
                                               {ok, JSON} ->
                                                   Map = jiffy:decode(JSON, [return_maps]),
                                                   #tx{
-                                                     id = ar_util:decode(TXID),
+                                                     id = arweave_util:decode(TXID),
                                                      data_size = binary_to_integer(maps:get(<<"data_size">>, Map, <<"0">>)),
-                                                     data = ar_util:decode(maps:get(<<"data">>, Map, <<>>)),
-                                                     data_root = ar_util:decode(maps:get(<<"data_root">>, Map, <<>>)),
+                                                     data = arweave_util:decode(maps:get(<<"data">>, Map, <<>>)),
+                                                     data_root = arweave_util:decode(maps:get(<<"data_root">>, Map, <<>>)),
                                                      format = maps:get(<<"format">>, Map, 1)
                                                     };
                                               {error, Reason} ->
@@ -290,7 +290,7 @@ submit_block_data(BlockStart, TXs) ->
                                           ok;
                                       {error, Errors} ->
                                           io:format("  Failed to write data for tx ~s: ~p~n",
-                                                    [binary_to_list(ar_util:encode(TXID)), Errors])
+                                                    [binary_to_list(arweave_util:encode(TXID)), Errors])
                                   end;
                               false ->
                                   ok
@@ -983,7 +983,7 @@ store_snapshot_blocks_with_dbs(Blocks, BlockDb, TxConfirmationDb, LogPrefix) ->
                    case Acc of
                        {ok, TxIdSet} ->
                            io:format("~s: block ~s height ~B~n",
-                                     [LogPrefix, ar_util:encode(B#block.indep_hash), B#block.height]),
+                                     [LogPrefix, arweave_util:encode(B#block.indep_hash), B#block.height]),
                            case store_block_snapshot(B, BlockDb) of
                                ok ->
                                    TxIds = lists:map(fun tx_id/1, B#block.txs),
@@ -993,12 +993,12 @@ store_snapshot_blocks_with_dbs(Blocks, BlockDb, TxConfirmationDb, LogPrefix) ->
                                            {ok, sets:union(TxIdSet, sets:from_list(TxIds))};
                                        {error, _} = Error ->
                                            io:format("~s: error confirmations for block ~s: ~p~n",
-                                                     [LogPrefix, ar_util:encode(B#block.indep_hash), Error]),
+                                                     [LogPrefix, arweave_util:encode(B#block.indep_hash), Error]),
                                            Error
                                    end;
                                {error, _} = Error ->
                                    io:format("~s: error storing block ~s: ~p~n",
-                                             [LogPrefix, ar_util:encode(B#block.indep_hash), Error]),
+                                             [LogPrefix, arweave_util:encode(B#block.indep_hash), Error]),
                                    Error
                            end;
                        {error, _} = Error ->
@@ -1034,16 +1034,16 @@ store_snapshot_tx_headers(TxIds, SnapshotDir) ->
                                       store_tx_header_snapshot(TX, tx_db);
                                   unavailable ->
                                       io:format("Startup copy: missing tx header ~s~n",
-                                                [ar_util:encode(TXID2)]),
+                                                [arweave_util:encode(TXID2)]),
                                       {error, {tx_unavailable, TXID2}};
                                   Error ->
                                       io:format("Startup copy: error reading tx ~s: ~p~n",
-                                                [ar_util:encode(TXID2), Error]),
+                                                [arweave_util:encode(TXID2), Error]),
                                       {error, {tx_unavailable, TXID2, Error}}
                               end;
                           {error, _} = Error ->
                               io:format("Startup copy: error reading tx db ~s: ~p~n",
-                                        [ar_util:encode(TXID2), Error]),
+                                        [arweave_util:encode(TXID2), Error]),
                               {error, {tx_db_read_failed, TXID2, Error}}
                       end;
                   {error, _} = Error ->
@@ -1071,16 +1071,16 @@ store_snapshot_history_entries(HistoryBI, SourceDb, DestDb, Label) ->
                                       ar_kv:put(DestDb, BH, Bin);
                                   not_found ->
                                       io:format("Startup copy: missing ~p entry ~s~n",
-                                                [Label, ar_util:encode(BH)]),
+                                                [Label, arweave_util:encode(BH)]),
                                       {error, {Label, not_found, BH}};
                                   {error, Reason} ->
                                       io:format("Startup copy: error ~p entry ~s: ~p~n",
-                                                [Label, ar_util:encode(BH), Reason]),
+                                                [Label, arweave_util:encode(BH), Reason]),
                                       {error, {Label, Reason, BH}}
                               end;
                           {error, _} = Error ->
                               io:format("Startup copy: error reading ~p entry ~s: ~p~n",
-                                        [Label, ar_util:encode(BH), Error]),
+                                        [Label, arweave_util:encode(BH), Error]),
                               {error, {Label, Error, BH}}
                       end;
                   {error, _} = Error ->
@@ -1100,7 +1100,7 @@ store_snapshot_wallet_list(Blocks, SnapshotDir, SearchDepth) ->
         {ok, {B, Tree}} ->
             {RootHash, _UpdatedTree, UpdateMap} = ar_block:hash_wallet_list(Tree),
             io:format("Startup copy: wallet list root ~s height ~B~n",
-                      [ar_util:encode(RootHash), B#block.height]),
+                      [arweave_util:encode(RootHash), B#block.height]),
             case RootHash == B#block.wallet_list of
                 true ->
                     store_account_tree_update_snapshot(

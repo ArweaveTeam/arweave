@@ -126,7 +126,7 @@ read_and_post_chunk(MessagesRemaining, Packing,
             #chunk_offsets{ absolute_offset = AbsoluteOffset2 } = Offsets2,
             ?LOG_ERROR([{event, failed_to_read_chunk},
                         {absolute_end_offset, AbsoluteOffset2},
-                        {chunk_data_key, ar_util:encode(ChunkDataKey)},
+                        {chunk_data_key, arweave_util:encode(ChunkDataKey)},
                         {reason, io_lib:format("~p", [Reason])}]),
             read_range(MessagesRemaining,
                        {Start + ChunkSize2, End, OriginStoreID, TargetStoreID});

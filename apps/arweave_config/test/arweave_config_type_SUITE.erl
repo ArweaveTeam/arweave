@@ -16,8 +16,8 @@ init_per_testcase(TestCase, Config)
        TestCase == resolved_peers_list_skips_unresolvable;
        TestCase == resolved_peer_id_takes_first_record;
        TestCase == resolved_peer_id_unresolvable_errors ->
-    meck:new(ar_util, [passthrough]),
-    meck:expect(ar_util, safe_parse_peer,
+    meck:new(arweave_util, [passthrough]),
+    meck:expect(arweave_util, safe_parse_peer,
                 fun(Peer) ->
                         case iolist_to_binary([Peer]) of
                             <<"multi:", PortBin/binary>> ->
@@ -39,7 +39,7 @@ end_per_testcase(TestCase, _Config)
        TestCase == resolved_peers_list_skips_unresolvable;
        TestCase == resolved_peer_id_takes_first_record;
        TestCase == resolved_peer_id_unresolvable_errors ->
-    meck:unload(ar_util),
+    meck:unload(arweave_util),
     ok;
 end_per_testcase(_TestCase, _Config) ->
     ok.

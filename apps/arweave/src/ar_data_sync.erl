@@ -373,11 +373,11 @@ request_tx_data_removal(TXID, Ref, ReplyTo) ->
             {End, Size} = binary_to_term(Value, [safe]),
             remove_range(End - Size, End, Ref, ReplyTo);
         not_found ->
-            ?LOG_WARNING([{event, tx_offset_not_found}, {tx, ar_util:encode(TXID)}]),
+            ?LOG_WARNING([{event, tx_offset_not_found}, {tx, arweave_util:encode(TXID)}]),
             ok;
         {error, Reason} ->
             ?LOG_ERROR([{event, failed_to_fetch_blacklisted_tx_offset},
-                        {tx, ar_util:encode(TXID)}, {reason, Reason}]),
+                        {tx, arweave_util:encode(TXID)}, {reason, Reason}]),
             ok
     end.
 
@@ -402,7 +402,7 @@ set_chunk_cache_size_limit(Configured) ->
                     undefined ->
                         Free = proplists:get_value(free_memory,
                                                    memsup:get_system_memory_data(), 2000000000),
-                        ar_util:ceil_int(
+                        arweave_util:ceil_int(
                           min(1000, erlang:ceil(Free * 0.9 / 3 / 262144)), 100);
                     _ ->
                         Configured
@@ -773,7 +773,7 @@ init({StoreID, RepackInPlacePacking}) ->
     {ok, State2}.
 
 handle_cast(process_store_chunk_queue, State) ->
-    ar_util:cast_after(200, self(), process_store_chunk_queue),
+    arweave_util:cast_after(200, self(), process_store_chunk_queue),
     {noreply, process_store_chunk_queue(State)};
 
 handle_cast({initialize_footprint_record, Cursor}, State) ->
@@ -865,7 +865,7 @@ handle_cast({pack_and_store_chunk, Args} = Cast,
         true ->
             pack_and_store_chunk(Args, State);
         _ ->
-            ar_util:cast_after(30000, self(), Cast),
+            arweave_util:cast_after(30000, self(), Cast),
             {noreply, State}
     end;
 
@@ -990,8 +990,8 @@ handle_cast({expire_repack_request, Key}, State) ->
             decrement_chunk_cache_size(),
             DataPathHash = crypto:hash(sha256, DataPath),
             ?LOG_DEBUG([{event, expired_repack_chunk_request},
-                        {data_path_hash, ar_util:encode(DataPathHash)},
-                        {data_root, ar_util:encode(DataRoot)},
+                        {data_path_hash, arweave_util:encode(DataPathHash)},
+                        {data_root, arweave_util:encode(DataRoot)},
                         {relative_offset, Offset}]),
             State2 = State#data_sync_state{ packing_map = maps:remove(Key, PackingMap) },
             {noreply, State2};
@@ -1012,7 +1012,7 @@ handle_cast({expire_unpack_request, Key}, State) ->
 
 handle_cast(store_sync_state, State) ->
     store_sync_state(State),
-    ar_util:cast_after(?STORE_STATE_FREQUENCY_MS, self(), store_sync_state),
+    arweave_util:cast_after(?STORE_STATE_FREQUENCY_MS, self(), store_sync_state),
     {noreply, State};
 
 handle_cast(Cast, State) ->
@@ -1073,7 +1073,7 @@ handle_info({chunk, {unpack_error, Key, ChunkArgs, Error}}, State) ->
             {_AbsoluteTXStartOffset, _TXSize, _DataPath, _TXPath, _DataRoot,
              _Chunk2, _ChunkID, _ChunkEndOffset, Peer, _Byte} = Args,
             ?LOG_WARNING([{event, got_invalid_packed_chunk},
-                          {peer, ar_util:format_peer(Peer)},
+                          {peer, arweave_util:format_peer(Peer)},
                           {absolute_end_offset, AbsoluteEndOffset},
                           {packing, ar_serialize:encode_packing(Packing, true)},
                           {chunk_size, ChunkSize},
@@ -1364,8 +1364,8 @@ do_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestO
                                          {offset, Offset},
                                          {seek_offset, SeekOffset},
                                          {store_id, StoreID},
-                                         {expected_chunk_id, ar_util:encode(ChunkID)},
-                                         {chunk_id, ar_util:encode(ComputedChunkID)},
+                                         {expected_chunk_id, arweave_util:encode(ChunkID)},
+                                         {chunk_id, arweave_util:encode(ComputedChunkID)},
                                          {actual_chunk, binary:part(MaybeUnpackedChunk, 0,
                                                                     min(32, byte_size(MaybeUnpackedChunk)))}],
                                     InvalidateArgs = {AbsoluteEndOffset, ChunkSize,
@@ -1470,7 +1470,7 @@ read_chunk_with_metadata(
                                      {stored_packing,
                                       ar_serialize:encode_packing(StoredPacking, true)},
                                      {modules_covering_seek_offset, ModuleIDs},
-                                     {chunk_data_key, ar_util:encode(ChunkDataKey)},
+                                     {chunk_data_key, arweave_util:encode(ChunkDataKey)},
                                      {read_fun, ReadFun}]),
                     invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID,
                                                 failed_to_read_chunk_data_path}),
@@ -1478,7 +1478,7 @@ read_chunk_with_metadata(
                 {error, Error} ->
                     log_chunk_error(RequestOrigin, failed_to_read_chunk,
                                     [{reason, io_lib:format("~p", [Error])},
-                                     {chunk_data_key, ar_util:encode(ChunkDataKey)},
+                                     {chunk_data_key, arweave_util:encode(ChunkDataKey)},
                                      {absolute_end_offset, Offset}]),
                     {error, failed_to_read_chunk};
                 {ok, {Chunk, DataPath}} ->
@@ -1613,8 +1613,8 @@ validate_fetched_chunk(Args) ->
                     end;
                 {_BlockStart, _BlockEnd, TXRoot2} ->
                     log_chunk_error(RequestOrigin, stored_chunk_invalid_tx_root,
-                                    [{end_offset, Offset}, {tx_root, ar_util:encode(TXRoot2)},
-                                     {stored_tx_root, ar_util:encode(TXRoot)}, {store_id, StoreID}]),
+                                    [{end_offset, Offset}, {tx_root, arweave_util:encode(TXRoot2)},
+                                     {stored_tx_root, arweave_util:encode(TXRoot)}, {store_id, StoreID}]),
                     invalidate_bad_data_record({Offset, ChunkSize, StoreID,
                                                 stored_chunk_invalid_tx_root}),
                     false
@@ -1631,7 +1631,7 @@ get_tx_offset(TXIndex, TXID) ->
         {error, Reason} ->
             ?LOG_ERROR([{event, failed_to_read_tx_offset},
                         {reason, io_lib:format("~p", [Reason])},
-                        {tx, ar_util:encode(TXID)}]),
+                        {tx, arweave_util:encode(TXID)}]),
             {error, failed_to_read_offset}
     end.
 
@@ -1862,7 +1862,7 @@ unpack_fetched_chunk(Cast, AbsoluteEndOffset, ChunkArgs, Args, State) ->
         false ->
             case ar_packing_server:is_buffer_full() of
                 true ->
-                    ar_util:cast_after(1000, self(), Cast),
+                    arweave_util:cast_after(1000, self(), Cast),
                     {noreply, State};
                 false ->
                     ar_packing_server:request_unpack({AbsoluteEndOffset, unpacked}, ChunkArgs),
@@ -1937,7 +1937,7 @@ do_additional_validation(ChunkProof, DataPath, Peer) ->
            DataRoot, TXRelativeOffset, TXSize, DataPath, Ruleset) of
         true ->
             log_invalid_fetched_data_path(redundant_rebase_marker, Peer,
-                                          [{data_root, ar_util:encode(DataRoot)},
+                                          [{data_root, arweave_util:encode(DataRoot)},
                                            {offset, TXRelativeOffset}, {tx_size, TXSize}]),
             false;
         false ->
@@ -1946,7 +1946,7 @@ do_additional_validation(ChunkProof, DataPath, Peer) ->
                     true;
                 false ->
                     log_invalid_fetched_data_path(negative_leaf_size, Peer,
-                                                  [{data_root, ar_util:encode(DataRoot)},
+                                                  [{data_root, arweave_util:encode(DataRoot)},
                                                    {offset, TXRelativeOffset}, {tx_size, TXSize},
                                                    {chunk_start_offset, ChunkStartOffset},
                                                    {chunk_end_offset, ChunkEndOffset}]),
@@ -1956,7 +1956,7 @@ do_additional_validation(ChunkProof, DataPath, Peer) ->
 
 log_invalid_fetched_data_path(Reason, Peer, Logs) ->
     ?LOG_ERROR([{event, invalid_fetched_data_path}, {reason, Reason},
-                {peer, ar_util:format_peer(Peer)} | Logs]).
+                {peer, arweave_util:format_peer(Peer)} | Logs]).
 
 validate_proof2(
   TXRoot, TXPath, DataPath, BlockStartOffset, BlockEndOffset, BlockRelativeOffset,
@@ -2113,7 +2113,7 @@ process_invalid_fetched_chunk(Peer, Byte, State, Event, ExtraLogs) ->
     #data_sync_state{ weave_size = WeaveSize } = State,
     arweave_metrics:counter_inc(sync_chunks_skipped, [Event]),
     ?LOG_WARNING([{event, skipping_synced_chunk},
-                  {reason, Event}, {peer, ar_util:format_peer(Peer)},
+                  {reason, Event}, {peer, arweave_util:format_peer(Peer)},
                   {byte, Byte}, {weave_size, WeaveSize} | ExtraLogs]),
     {noreply, State}.
 
@@ -2129,7 +2129,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
             arweave_metrics:counter_inc(sync_chunks_skipped, [Reason]),
             ?LOG_WARNING([{event, skipping_synced_chunk},
                           {reason, Reason},
-                          {peer, ar_util:format_peer(Peer)},
+                          {peer, arweave_util:format_peer(Peer)},
                           {absolute_end_offset, AbsoluteEndOffset},
                           {store_id, StoreID}]),
             decrement_chunk_cache_size(),
@@ -2141,7 +2141,7 @@ process_valid_fetched_chunk(ChunkArgs, Args, State) ->
                     arweave_metrics:counter_inc(sync_chunks_skipped, [Reason]),
                     ?LOG_DEBUG([{event, skipping_synced_chunk},
                                 {reason, Reason},
-                                {peer, ar_util:format_peer(Peer)},
+                                {peer, arweave_util:format_peer(Peer)},
                                 {absolute_end_offset, AbsoluteEndOffset},
                                 {store_id, StoreID}]),
                     %% The chunk has been synced by another job already.
@@ -2211,7 +2211,7 @@ pack_and_store_chunk2(Args, State) ->
                 false ->
                     case ar_packing_server:is_buffer_full() of
                         true ->
-                            ar_util:cast_after(1000, self(), {pack_and_store_chunk, Args}),
+                            arweave_util:cast_after(1000, self(), {pack_and_store_chunk, Args}),
                             {noreply, State};
                         false ->
                             {Packing2, Chunk2} =
@@ -2372,24 +2372,24 @@ log_failed_to_store_chunk(already_stored,
     ?LOG_INFO([{event, chunk_already_stored},
                {absolute_end_offset, AbsoluteEndOffset},
                {relative_offset, Offset},
-               {data_path_hash, ar_util:safe_encode(DataPathHash)},
-               {data_root, ar_util:safe_encode(DataRoot)},
+               {data_path_hash, arweave_util:safe_encode(DataPathHash)},
+               {data_root, arweave_util:safe_encode(DataRoot)},
                {store_id, StoreID}]);
 log_failed_to_store_chunk(not_prepared_yet,
                           AbsoluteEndOffset, Offset, DataRoot, DataPathHash, StoreID) ->
     ?LOG_WARNING([{event, chunk_not_prepared_yet},
                   {absolute_end_offset, AbsoluteEndOffset},
                   {relative_offset, Offset},
-                  {data_path_hash, ar_util:safe_encode(DataPathHash)},
-                  {data_root, ar_util:safe_encode(DataRoot)},
+                  {data_path_hash, arweave_util:safe_encode(DataPathHash)},
+                  {data_root, arweave_util:safe_encode(DataRoot)},
                   {store_id, StoreID}]);
 log_failed_to_store_chunk(Reason, AbsoluteEndOffset, Offset, DataRoot, DataPathHash, StoreID) ->
     ?LOG_ERROR([{event, failed_to_store_chunk},
                 {reason, io_lib:format("~p", [Reason])},
                 {absolute_end_offset, AbsoluteEndOffset},
                 {relative_offset, Offset},
-                {data_path_hash, ar_util:safe_encode(DataPathHash)},
-                {data_root, ar_util:safe_encode(DataRoot)},
+                {data_path_hash, arweave_util:safe_encode(DataPathHash)},
+                {data_root, arweave_util:safe_encode(DataRoot)},
                 {store_id, StoreID}]).
 
 get_required_chunk_packing(_Offset, _ChunkSize, #data_sync_state{ store_id = ?DEFAULT_MODULE }) ->
@@ -2512,7 +2512,7 @@ initialize_footprint_record(Cursor, State) ->
                            ?FOOTPRINT_MIGRATION_CURSOR_KEY, binary:encode_unsigned(NewCursor)),
             maybe_log_footprint_migration_progress(Cursor, NewCursor, RangeStart, RangeEnd,
                                                    StoreID),
-            ar_util:cast_after(1_000, self(), {initialize_footprint_record, NewCursor}),
+            arweave_util:cast_after(1_000, self(), {initialize_footprint_record, NewCursor}),
             State
     end.
 

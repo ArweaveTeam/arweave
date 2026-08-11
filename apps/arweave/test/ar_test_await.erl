@@ -1,7 +1,7 @@
 %%% @doc Named, semantic waits for asynchronous test conditions
 %%% (sync-record coverage, HTTP availability, partition state, etc.),
 %%% all behind one polling primitive. Prefer a named helper; add one
-%%% here rather than writing a fresh `ar_util:do_until' loop in a test.
+%%% here rather than writing a fresh `arweave_util:do_until' loop in a test.
 %%% Reserve raw `timer:sleep' for deliberately time-based behaviour,
 %%% never as a stand-in for a condition wait.
 %%%
@@ -286,7 +286,7 @@ http_tx_data(Node, TXID) ->
 %% `GET /tx/<TXID>/data' from `Node'.
 request_tx_data(Node, TXID) ->
     ar_http:req(#{ method => get, peer => ar_test_node:peer_ip(Node),
-        path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data" }).
+        path => "/tx/" ++ binary_to_list(arweave_util:encode(TXID)) ++ "/data" }).
 
 %% @doc Wait until `POST /chunk' of `Proof' to `Node' responds with the
 %% HTTP status `Status' (e.g. `<<"303">>').

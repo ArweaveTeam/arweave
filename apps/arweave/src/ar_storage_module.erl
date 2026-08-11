@@ -46,9 +46,9 @@ id({BucketSize, Bucket, Packing}) ->
     PackingString =
         case Packing of
             {spora_2_6, Addr} ->
-                ar_util:encode(Addr);
+                arweave_util:encode(Addr);
             {replica_2_9, Addr} ->
-                << (ar_util:encode(Addr))/binary, ".replica.2.9" >>;
+                << (arweave_util:encode(Addr))/binary, ".replica.2.9" >>;
             _ ->
                 atom_to_list(Packing)
         end,

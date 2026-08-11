@@ -83,7 +83,7 @@ add_delayed_task(Worker, TaskType, Candidate) ->
     %% in particular when the chunk cache fills up it's possible for all queued compute_h0 tasks
     %% to be delayed at about the same time.
     Delay = rand:uniform(?TASK_CHECK_INTERVAL_MS) + ?TASK_CHECK_INTERVAL_MS,
-    ar_util:cast_after(Delay, Worker, ?MSG_ADD_TASK({TaskType, Candidate, []})).
+    arweave_util:cast_after(Delay, Worker, ?MSG_ADD_TASK({TaskType, Candidate, []})).
 
 -spec chunks_read(
         Worker :: pid(),
@@ -188,7 +188,7 @@ handle_cast(?MSG_ADD_TASK({TaskType, Candidate, _ExtraArgs} = Task), State) ->
 handle_cast(?MSG_HANDLE_TASK, #state{ task_queue = Q } = State) ->
     case gb_sets:is_empty(Q) of
         true ->
-            ar_util:cast_after(?TASK_CHECK_INTERVAL_MS, self(), ?MSG_HANDLE_TASK),
+            arweave_util:cast_after(?TASK_CHECK_INTERVAL_MS, self(), ?MSG_HANDLE_TASK),
             {noreply, State};
         _ ->
             gen_server:cast(self(), ?MSG_HANDLE_TASK),
@@ -209,7 +209,7 @@ handle_cast(?MSG_HANDLE_TASK, #state{ task_queue = Q } = State) ->
 
 handle_cast(?MSG_CHECK_WORKER_STATUS, State) ->
     maybe_warn_about_lag(State#state.task_queue, State#state.name),
-    ar_util:cast_after(?STATUS_CHECK_INTERVAL_MS, self(), ?MSG_CHECK_WORKER_STATUS),
+    arweave_util:cast_after(?STATUS_CHECK_INTERVAL_MS, self(), ?MSG_CHECK_WORKER_STATUS),
     {noreply, State};
 
 handle_cast(?MSG_GARBAGE_COLLECT, State) ->
@@ -217,7 +217,7 @@ handle_cast(?MSG_GARBAGE_COLLECT, State) ->
     {noreply, State};
 
 handle_cast(?MSG_REPORT_CHUNK_CACHE_METRICS, State) ->
-    ar_util:cast_after(?REPORT_CHUNK_CACHE_METRICS_INTERVAL_MS, self(), ?MSG_REPORT_CHUNK_CACHE_METRICS),
+    arweave_util:cast_after(?REPORT_CHUNK_CACHE_METRICS_INTERVAL_MS, self(), ?MSG_REPORT_CHUNK_CACHE_METRICS),
     {noreply, report_chunk_cache_metrics(State)};
 
 handle_cast(Cast, State) ->
@@ -360,7 +360,7 @@ handle_task({computed_h1, Candidate, _ExtraArgs}, State) ->
             ar_mining_server:prepare_and_post_solution(Candidate);
         true ->
             log_info(found_h1_solution, Candidate, State1, [
-                                                            {h1, ar_util:encode(H1)},
+                                                            {h1, arweave_util:encode(H1)},
                                                             {difficulty, get_difficulty(State1, Candidate)}]),
             ar_mining_server:prepare_and_post_solution(Candidate),
             ar_mining_stats:h1_solution()
@@ -418,13 +418,13 @@ handle_task({computed_h2, Candidate, _ExtraArgs}, State) ->
         false -> ok;
         partial ->
             log_info(found_h2_partial_solution, Candidate, State1, [
-                                                                    {h0, ar_util:safe_encode(Candidate#mining_candidate.h0)},
-                                                                    {h2, ar_util:safe_encode(H2)},
+                                                                    {h0, arweave_util:safe_encode(Candidate#mining_candidate.h0)},
+                                                                    {h2, arweave_util:safe_encode(H2)},
                                                                     {partial_difficulty, get_partial_difficulty(State1, Candidate)}]);
         true ->
             log_info(found_h2_solution, Candidate, State1, [
-                                                            {h0, ar_util:safe_encode(Candidate#mining_candidate.h0)},
-                                                            {h2, ar_util:safe_encode(H2)},
+                                                            {h0, arweave_util:safe_encode(Candidate#mining_candidate.h0)},
+                                                            {h2, arweave_util:safe_encode(H2)},
                                                             {difficulty, get_difficulty(State1, Candidate)},
                                                             {partial_difficulty, get_partial_difficulty(State1, Candidate)}]),
             ar_mining_stats:h2_solution()

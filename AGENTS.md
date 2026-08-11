@@ -124,7 +124,7 @@ To opt a module into a non-default category, add `-test_category`:
 
 ```erlang
 %%% @doc Pure utility module — safe to batch with siblings.
--module(ar_util).
+-module(arweave_util).
 -test_category([fast]).
 ```
 

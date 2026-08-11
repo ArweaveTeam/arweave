@@ -153,12 +153,12 @@ handle_call(Request, _From, State) ->
 handle_cast(initialize_state, State) ->
     State3 = case ar_device_lock:is_ready() of
                  false ->
-                     ar_util:cast_after(1000, self(), initialize_state),
+                     arweave_util:cast_after(1000, self(), initialize_state),
                      State;
                  true ->
                      case start_io_threads(State) of
                          {error, _} ->
-                             ar_util:cast_after(1000, self(), initialize_state),
+                             arweave_util:cast_after(1000, self(), initialize_state),
                              State;
                          State2 ->
                              State2
@@ -228,7 +228,7 @@ start_io_threads(State) ->
             {error, Reason};
         StoreIDToDevice ->
             ?LOG_INFO([{event, starting_mining_io_threads}, {store_id_to_device, StoreIDToDevice}]),
-            DeviceToStoreIDs = ar_util:invert_map(StoreIDToDevice),
+            DeviceToStoreIDs = arweave_util:invert_map(StoreIDToDevice),
                                                 % Step 2: Start IO threads for each device and populate map indices
             State2 = maps:fold(
                        fun(Device, StoreIDs, StateAcc) ->
@@ -310,7 +310,7 @@ handle_io_thread_down(Ref, Reason, State) ->
     Refs2 = maps:remove(Ref, Refs),
     Threads2 = maps:remove(Device, Threads),
 
-    DeviceToStoreIDs = ar_util:invert_map(StoreIDToDevice),
+    DeviceToStoreIDs = arweave_util:invert_map(StoreIDToDevice),
     StoreIDs = maps:get(Device, DeviceToStoreIDs, sets:new()),
     Thread = start_io_thread(Mode, sets:to_list(StoreIDs)),
     ThreadRef = monitor(process, Thread),
@@ -402,7 +402,7 @@ cached_read_range(Mode, WhichChunk, Candidate, RangeStart, StoreID, Cache) ->
                         {store_id, StoreID},
                         {partition_number, Candidate#mining_candidate.partition_number},
                         {partition_number2, Candidate#mining_candidate.partition_number2},
-                        {cm_peer, ar_util:format_peer(Candidate#mining_candidate.cm_lead_peer)},
+                        {cm_peer, arweave_util:format_peer(Candidate#mining_candidate.cm_lead_peer)},
                         {cache_ref, Candidate#mining_candidate.cache_ref},
                         {session,
                          ar_nonce_limiter:encode_session_key(Candidate#mining_candidate.session_key)}]),

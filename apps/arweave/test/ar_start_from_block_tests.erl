@@ -115,7 +115,7 @@ start_peer_from(Peer, SourcePeer, B0) ->
     %% Point at the source peer as a VDF server so the new peer pulls its VDF
     %% history instead of recomputing it from genesis.
     VDFServerConfig = #{
-        [peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(SourcePeer))]
+        [peers, vdf_server] => [arweave_util:format_peer(ar_test_node:peer_ip(SourcePeer))]
     },
     ar_test_node:start_peer(Peer, #{ b0 => B0, config => VDFServerConfig }),
     ar_test_node:remote_call(Peer, ar_test_node, connect_to_peer, [SourcePeer]).
@@ -138,7 +138,7 @@ vdf_client_config([]) ->
 vdf_client_config(Peers) ->
     #{
         [peers, vdf_client] => [
-            ar_util:format_peer(ar_test_node:peer_ip(Peer))
+            arweave_util:format_peer(ar_test_node:peer_ip(Peer))
             || Peer <- Peers
         ]
     }.
@@ -188,7 +188,7 @@ get_reward_history(Peer, H) ->
     case ar_http:req(#{
         peer => PeerIP,
         method => get,
-        path => "/reward_history/" ++ binary_to_list(ar_util:encode(H)),
+        path => "/reward_history/" ++ binary_to_list(arweave_util:encode(H)),
         timeout => 30000
     }) of
         {ok, {{<<"200">>, _}, _, Body, _, _}} ->
