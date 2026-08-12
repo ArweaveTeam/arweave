@@ -66,6 +66,7 @@ all() ->
      both_exhausted,
      peer_cleanup,
      leaky_manual_reduction,
+     sliding_manual_reduction,
      leaky_manual_reduction_disabled
     ].
 
@@ -79,6 +80,7 @@ process_testcases() ->
      both_exhausted,
      peer_cleanup,
      leaky_manual_reduction,
+     sliding_manual_reduction,
      leaky_manual_reduction_disabled
     ].
 
@@ -151,6 +153,16 @@ limiter_config(leaky_manual_reduction) ->
       leaky_rate_limit => 5,
       concurrency_limit => 10,
       sliding_window_limit => 0,
+      sliding_window_duration => 1000,
+      timestamp_cleanup_expiry => 1000,
+      leaky_tick_ms => 100000};
+limiter_config(sliding_manual_reduction) ->
+    #{id => ?TEST_LIMITER,
+      number_of_workers => 1,
+      tick_reduction => 1,
+      leaky_rate_limit => 0,
+      concurrency_limit => 10,
+      sliding_window_limit => 5,
       sliding_window_duration => 1000,
       timestamp_cleanup_expiry => 1000,
       leaky_tick_ms => 100000};
@@ -741,7 +753,7 @@ leaky_manual_reduction(_Config) ->
 
     %% wait a bit so they are surely started.
     timer:sleep(100),
-    %% 2 concurrent, 2 token
+    %% 4 concurrent, 4 token
     ?assertMatch(#{concurrent_monitors := Monitors,
                    leaky_tokens := #{IP := 4}} when map_size(Monitors) == 4, ?M:info(?TEST_LIMITER)),
 
@@ -751,7 +763,7 @@ leaky_manual_reduction(_Config) ->
     %% call for one that's surely not in the state
     ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, NonRecordedIP)),
 
-    %% 2 concurrent, but tokens reduced.
+    %% 4 concurrent, but tokens reduced.
     ?assertMatch(#{concurrent_monitors := Monitors,
                    leaky_tokens := #{IP := 2}} when map_size(Monitors) == 4, ?M:info(?TEST_LIMITER)),
 
@@ -767,6 +779,81 @@ leaky_manual_reduction(_Config) ->
     %% 4 concurrent, no change, there is nothing to reduce beyond 0
     ?assertMatch(#{concurrent_monitors := Monitors,
                    leaky_tokens := #{IP := 0}} when map_size(Monitors) == 4, ?M:info(?TEST_LIMITER)),
+
+    %% Clean up
+    Caller1 ! done,
+    Caller2 ! done,
+    Caller3 ! done,
+    Caller4 ! done,
+
+    ok.
+
+sliding_manual_reduction(_Config) ->
+    %% init state, the ip is not blocked
+    IP = {1,2,3,4},
+    NonRecordedIP = {2,3,4,5,1984},
+
+    Caller1 = ?assertHandlerRegisterOrRejectCall(
+                 ?TEST_LIMITER, {register, sliding,
+                                 #{expiring_limit := 5,remaining := 4,reset_seconds := 0}}, IP, 1),
+    Caller2 = ?assertHandlerRegisterOrRejectCall(
+                 ?TEST_LIMITER, {register, sliding,
+                                 #{expiring_limit := 5,remaining := 3,reset_seconds := 1}}, IP, 20),
+    Caller3 = ?assertHandlerRegisterOrRejectCall(
+                 ?TEST_LIMITER, {register, sliding,
+                                 #{expiring_limit := 5,remaining := 2,reset_seconds := 1}}, IP, 40),
+    Caller4 = ?assertHandlerRegisterOrRejectCall(
+                 ?TEST_LIMITER, {register, sliding,
+                                 #{expiring_limit := 5,remaining := 1,reset_seconds := 1}}, IP, 60),
+
+    %% wait a bit so they are surely started.
+    timer:sleep(100),
+    %% 4 concurrent, 4 timestamps
+   ?assertMatch(
+         #{concurrent_monitors := Monitors,
+           sliding_timestamps := #{IP := SlidingTimestamps},
+           leaky_tokens := LeakyTokens} when
+        map_size(Monitors) == 4 andalso
+        length(SlidingTimestamps) == 4 andalso
+        map_size(LeakyTokens) == 0,
+        ?M:info(?TEST_LIMITER)),
+
+    ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+    ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+
+    %% call for one that's surely not in the state
+    ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, NonRecordedIP)),
+
+    ?assertMatch(
+         #{concurrent_monitors := Monitors,
+           sliding_timestamps := #{IP := SlidingTimestamps},
+           leaky_tokens := LeakyTokens} when
+        map_size(Monitors) == 4 andalso
+        length(SlidingTimestamps) == 4 andalso
+        map_size(LeakyTokens) == 0,
+        ?M:info(?TEST_LIMITER)),
+
+    ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+    ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+
+    %% 4 concurrent, but timestamps reduced.
+    ?assertMatch(#{concurrent_monitors := Monitors,
+                   sliding_timestamps := #{IP := SlidingTimestamps},
+                   leaky_tokens := LeakyTokens}
+                 when map_size(Monitors) == 4 andalso
+                      length(SlidingTimestamps) == 4 andalso
+                      map_size(LeakyTokens) == 0, ?M:info(?TEST_LIMITER)),
+
+    ?assertEqual(ok, ?M:reduce_for_peer(?TEST_LIMITER, IP)),
+
+    %% 4 concurrent, no change, there is nothing to reduce beyond 0
+    ?assertMatch(#{concurrent_monitors := Monitors,
+                   sliding_timestamps := #{IP := SlidingTimestamps},
+                   leaky_tokens := LeakyTokens}
+                 when map_size(Monitors) == 4 andalso
+                      length(SlidingTimestamps) == 4 andalso
+                      map_size(LeakyTokens) == 0,
+                      ?M:info(?TEST_LIMITER)),
 
     %% Clean up
     Caller1 ! done,

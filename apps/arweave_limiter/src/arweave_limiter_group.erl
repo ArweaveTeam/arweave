@@ -260,9 +260,15 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
     end;
 handle_call({reduce_for_peer, Peer}, _From, State =
                 #{is_manual_reduction_disabled := false,
+                  sliding_timestamps := SlidingTimestamps,
+                  leaky_rate_limit := LeakyRateLimit,
                   leaky_tokens := LeakyTokens}) ->
-    NewLeakyTokens = do_reduce_for_peer(Peer, LeakyTokens),
-    {reply, ok, State#{leaky_tokens => NewLeakyTokens}};
+    TimestampsForPeer = maps:get(Peer, SlidingTimestamps, []),
+    {NewTimestampsForPeer, NewLeakyTokens} =
+        do_reduce_for_peer(LeakyRateLimit, Peer, LeakyTokens, TimestampsForPeer),
+    NewSlidingTimestamps = SlidingTimestamps#{Peer => NewTimestampsForPeer},
+    {reply, ok, State#{leaky_tokens => NewLeakyTokens,
+                       sliding_timestamps => NewSlidingTimestamps}};
 handle_call({reduce_for_peer, _Peer}, _From, State =
                 #{is_manual_reduction_disabled := true}) ->
     {reply, disabled, State};
@@ -301,7 +307,6 @@ handle_info({tick, leaky_bucket_reduction},
                       leaky_tokens := LeakyTokens}) ->
     Now = arweave_limiter_time:ts_now(),
     %% NextLBTickTS is an approximate value for rate-limiting headers to use.
-    %%
     NextLBTickTS = Now + LeakyTickMs,
     prometheus_counter:inc(ar_limiter_leaky_ticks, [ID]),
     SizeBefore = maps:size(LeakyTokens),
@@ -374,12 +379,21 @@ cleanup_expired_sliding_peers(SlidingTimestamps, WindowDuration, Now) ->
 update_token(Peer, Token, LeakyToken) ->
     maps:put(Peer, Token, LeakyToken).
 
-do_reduce_for_peer(Peer, LeakyTokens) ->
+do_reduce_for_peer(0, _Peer, LeakyTokens, []) ->
+    %% When leaky bucket is inactive, and we have no timestamps,
+    %% we can't do anything, can we?
+    {[], LeakyTokens};
+do_reduce_for_peer(0, _Peer, LeakyTokens, [_TS, RestOfTSsForPeer]) ->
+    %% Leaky bucket is inactive, let's expire a timestamp (the oldest one)
+    {RestOfTSsForPeer, LeakyTokens};
+do_reduce_for_peer(_LeakyRateLimit, Peer, LeakyTokens, TimestampsForPeer) ->
     case maps:get(Peer, LeakyTokens, 0) of
         0 ->
-            LeakyTokens;
+            %% If leaky bucket is active, but there tokens is at 0, we don't care about reduction.
+            %% This is simplifying an edgecase. (We basically can afford not reducing)
+            {TimestampsForPeer, LeakyTokens};
         Tokens ->
-            LeakyTokens#{Peer => Tokens - 1}
+            {TimestampsForPeer, LeakyTokens#{Peer => Tokens - 1}}
     end.
 
 fold_decrease_rate(_ID, _Key, Counter, Acc, _TickReduction)
