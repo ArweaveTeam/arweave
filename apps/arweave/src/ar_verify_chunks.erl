@@ -202,13 +202,15 @@ verify_proof(Metadata, Offsets, State) ->
                 Metadata#chunk_metadata{ data_path = DataPath }, AbsoluteOffset - 1),
             case ar_poa:validate_paths(ChunkProof) of
                 {false, _} ->
-                    invalidate_chunk(validate_paths_error, AbsoluteOffset, ChunkSize, State);
+                    invalidate_chunk(validate_paths_error, AbsoluteOffset, ChunkSize,
+                                     ChunkDataKey, State);
                 {true, _} ->
                     State
             end;
         Error ->
             invalidate_chunk(
-                read_data_path_error, AbsoluteOffset, ChunkSize, [{reason, Error}], State)
+                read_data_path_error, AbsoluteOffset, ChunkSize, ChunkDataKey,
+                [{reason, Error}], State)
     end.
 
 %% @doc Verify that the ar_data_sync record is configured correctly - namely that it has
@@ -216,7 +218,7 @@ verify_proof(Metadata, Offsets, State) ->
 %% interval exists in the ar_chunk_storage record, but not the ar_data_sync record.
 verify_packing(Metadata, Offsets, State) ->
     #state{packing = Packing, store_id = StoreID} = State,
-    #chunk_metadata{ chunk_size = ChunkSize } = Metadata,
+    #chunk_metadata{ chunk_size = ChunkSize, chunk_data_key = ChunkDataKey } = Metadata,
     #chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
     PaddedOffset = ar_block:get_chunk_padded_offset(AbsoluteOffset),
     StoredPackingCheck = ar_sync_record:is_recorded(AbsoluteOffset, ar_data_sync, StoreID),
@@ -238,10 +240,10 @@ verify_packing(Metadata, Offsets, State) ->
             %% unpacked_padded format. This check will invalidate those chunks as well.
             %% Miners should make sure to only run `verify` in the `purge` mode after they
             %% have completed packing.
-            invalidate_chunk(unexpected_packing, AbsoluteOffset, ChunkSize, 
+            invalidate_chunk(unexpected_packing, AbsoluteOffset, ChunkSize, ChunkDataKey,
                 [{stored_packing, ar_serialize:encode_packing(StoredPacking, true)}], State);
         {Reply, _} ->
-            invalidate_chunk(missing_packing_info, AbsoluteOffset, ChunkSize,
+            invalidate_chunk(missing_packing_info, AbsoluteOffset, ChunkSize, ChunkDataKey,
                 [{packing_reply, io_lib:format("~p", [Reply])}], State)
     end.
 
@@ -261,8 +263,8 @@ verify_chunk_storage(PaddedOffset, Metadata, Offsets, {End, Start}, State)
         {ok, << ActualChunkOffset:?OFFSET_BIT_SIZE >>} ->
             %% The chunk is recorded in the ar_chunk_storage sync record, but not stored.
             invalidate_chunk(
-                invalid_chunk_offset, AbsoluteOffset, ChunkSize, [
-                    {expected_chunk_offset, ExpectedChunkOffset}, 
+                invalid_chunk_offset, AbsoluteOffset, ChunkSize, ChunkDataKey, [
+                    {expected_chunk_offset, ExpectedChunkOffset},
                     {actual_chunk_offset, ActualChunkOffset}
                 ], State);
         Error ->
@@ -279,15 +281,15 @@ verify_chunk_storage(PaddedOffset, Metadata, Offsets, {End, Start}, State)
                         end
                 end,
             invalidate_chunk(
-                invalid_chunk_offset, AbsoluteOffset, ChunkSize, [
-                    {expected_chunk_offset, ExpectedChunkOffset}, 
+                invalid_chunk_offset, AbsoluteOffset, ChunkSize, ChunkDataKey, [
+                    {expected_chunk_offset, ExpectedChunkOffset},
                     {error, Error},
                     {is_chunk_stored_in_rocksdb, IsChunkStoredInRocksDB}
                 ], State)
     end;
 verify_chunk_storage(PaddedOffset, Metadata, Offsets, Interval, State) ->
     #state{ packing = Packing, store_id = StoreID } = State,
-    #chunk_metadata{ chunk_size = ChunkSize } = Metadata,
+    #chunk_metadata{ chunk_size = ChunkSize, chunk_data_key = ChunkDataKey } = Metadata,
     #chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
     case ar_chunk_storage:is_storage_supported(PaddedOffset, ChunkSize, Packing) of
         true ->
@@ -306,7 +308,8 @@ verify_chunk_storage(PaddedOffset, Metadata, Offsets, Interval, State) ->
                 {interval, Interval},
                 {padded_offset, PaddedOffset}
             ],
-            invalidate_chunk(chunk_storage_gap, AbsoluteOffset, ChunkSize, Logs, State);
+            invalidate_chunk(chunk_storage_gap, AbsoluteOffset, ChunkSize, ChunkDataKey, Logs,
+                             State);
         false ->
             verify_chunk_data(Metadata, Offsets, State)
     end.
@@ -317,28 +320,31 @@ verify_chunk_data(Metadata, Offsets, State) ->
     #chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
     case ar_data_sync:get_chunk_data(ChunkDataKey, StoreID) of
         not_found ->
-            invalidate_chunk(chunk_data_not_found, AbsoluteOffset, ChunkSize, [], State);
+            invalidate_chunk(chunk_data_not_found, AbsoluteOffset, ChunkSize, ChunkDataKey, [],
+                             State);
         {ok, Value} ->
             case binary_to_term(Value, [safe]) of
                 {_Chunk, _DataPath} ->
                     State;
                 _DataPath ->
                     invalidate_chunk(
-                        chunk_data_no_chunk, AbsoluteOffset, ChunkSize, [], State)
+                        chunk_data_no_chunk, AbsoluteOffset, ChunkSize, ChunkDataKey, [], State)
             end;
         Error ->
             invalidate_chunk(
-                chunk_data_error, AbsoluteOffset, ChunkSize, [{reason, Error}], State)
+                chunk_data_error, AbsoluteOffset, ChunkSize, ChunkDataKey, [{reason, Error}],
+                State)
     end.
 
-invalidate_chunk(Type, AbsoluteOffset, ChunkSize, State) ->
-    invalidate_chunk(Type, AbsoluteOffset, ChunkSize, [], State).
+invalidate_chunk(Type, AbsoluteOffset, ChunkSize, ChunkDataKey, State) ->
+    invalidate_chunk(Type, AbsoluteOffset, ChunkSize, ChunkDataKey, [], State).
 
-invalidate_chunk(Type, AbsoluteOffset, ChunkSize, Logs, State) ->
+invalidate_chunk(Type, AbsoluteOffset, ChunkSize, ChunkDataKey, Logs, State) ->
     #state{ mode = Mode, store_id = StoreID } = State,
     case Mode of
         purge ->
-            ar_data_sync:invalidate_bad_data_record(AbsoluteOffset, ChunkSize, StoreID, Type);
+            ar_data_sync:invalidate_bad_data_record(AbsoluteOffset, ChunkSize, StoreID,
+                                                    ChunkDataKey, Type);
         log ->
             ok
     end,
@@ -600,6 +606,26 @@ verify_chunk_test_() ->
             fun test_verify_chunk/0
         )
     ].
+
+invalidate_threads_chunk_data_key_test_() ->
+    ar_test_util:with_mocked(
+        [{ar_data_sync, get_chunk_data, fun(_, _) -> not_found end},
+         {ar_data_sync, invalidate_bad_data_record, fun(_, _, _, _, _) -> ok end}],
+        fun test_invalidate_threads_chunk_data_key/0).
+
+%% In purge mode, the observed chunk_data_key is forwarded to
+%% ar_data_sync:invalidate_bad_data_record so a copy freshly rewritten by a
+%% concurrent repack isn't clobbered by this stale verdict.
+test_invalidate_threads_chunk_data_key() ->
+    ChunkDataKey = <<"observed-key">>,
+    AbsoluteOffset = 10 * ?DATA_CHUNK_SIZE,
+    verify_chunk_data(
+        #chunk_metadata{ chunk_data_key = ChunkDataKey, chunk_size = ?DATA_CHUNK_SIZE },
+        #chunk_offsets{ absolute_offset = AbsoluteOffset },
+        #state{ mode = purge, store_id = "test_store", packing = unpacked }),
+    ?assert(meck:called(ar_data_sync, invalidate_bad_data_record,
+                        [AbsoluteOffset, ?DATA_CHUNK_SIZE, "test_store", ChunkDataKey,
+                         chunk_data_not_found])).
 
 test_align_intervals() ->
     ?assertEqual(
