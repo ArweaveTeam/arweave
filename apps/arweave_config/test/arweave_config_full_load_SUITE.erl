@@ -445,7 +445,6 @@ cli_specs(ConfigLeafMap) ->
         || Spec <- normalized_enabled_specs(),
            maps:is_key(maps:get(option_key, Spec), ConfigLeafMap),
            not arweave_config_test_util:is_wildcard_option(maps:get(option_key, Spec)),
-           maps:is_key(type, Spec),
            not cli_unsupported(Spec)
     ].
 

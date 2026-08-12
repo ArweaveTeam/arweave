@@ -196,34 +196,34 @@ consume_flag(Spec, [Value | Rest], Pos, Buffer) ->
         {error, _} = Err -> Err
     end;
 consume_flag(Spec, _, Pos, _Buffer) ->
-    Type = maps:get(type, Spec),
     {error, #{
         reason => <<"missing value">>,
-        type => Type,
+        type => maps:get(type, Spec, undefined),
         position => Pos + 1
     }}.
 
-decode_value(#{type := Type}, Value, Pos) ->
-    %% JSON-shaped values decode into real terms first (a failed
-    %% decode falls back to the raw value), matching the runtime
-    %% `config set' facade.
-    Decoded0 = arweave_config_format_json:decode_maybe(Value),
+%% JSON-shaped values decode into real terms first (a failed decode
+%% falls back to the raw value), matching the runtime `config set'
+%% facade, then the spec's declared type coerces the result.
+decode_value(Spec, Value, Pos) ->
+    coerce(Spec, arweave_config_format_json:decode_maybe(Value), Value, Pos).
+
+coerce(#{type := Type}, Decoded0, Raw, Pos) ->
     case arweave_config_type:Type(Decoded0) of
         {ok, Decoded} -> {ok, Decoded};
         _ ->
             {error, #{
                 reason => <<"bad value">>,
-                value => Value,
+                value => Raw,
                 type => Type,
                 position => Pos
             }}
     end;
-decode_value(_Spec, Value, _Pos) ->
-    %% Options registered without a `type' (e.g. those relying on a handle_set
-    %% callback, such as internal_api_secret / pool_api_key / vdf.*) keep the raw
-    %% value; coercion and validation happen downstream when the option is set.
-    %% Without this clause such a flag has no matching clause and aborts boot.
-    {ok, Value}.
+coerce(_Spec, Decoded, _Raw, _Pos) ->
+    %% Options registered without a `type' (internal_api_secret,
+    %% cm.api_secret, pool.*, vdf.algorithm, vdf.compute) take the value
+    %% as-is; those with a `handle_set' convert it when the option is set.
+    {ok, Decoded}.
 
 %% Record a parsed (Spec, Value) into the buffer. `[config_file]` is
 %% intentionally dropped — bootstrap locates and loads it separately,

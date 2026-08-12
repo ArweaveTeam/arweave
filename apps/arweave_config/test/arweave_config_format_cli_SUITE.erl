@@ -91,15 +91,23 @@ parser(_Config) ->
 
     ok.
 
-%% An option registered without a `type' (here modelled on internal_api_secret)
-%% must be accepted by the CLI parser and keep its raw value, not abort boot.
+%% Options registered without a `type' must parse from the CLI and keep
+%% their value, not abort boot.
 typeless_option(_Config) ->
-    Opts = #{ long_arguments => #{ <<"--secret">> => #{
-                option_key => [internal_api_secret] }}},
-    ?assertMatch({ok, #{ [internal_api_secret] := <<"abc">> }},
-        arweave_config_format_cli:parse([<<"--secret">>, <<"abc">>], Opts)),
-    ?assertMatch({ok, #{ [internal_api_secret] := <<"abc">> }},
-        arweave_config_format_cli:parse([<<"--secret=abc">>], Opts)),
+    assert_parse_sets([<<"--internal_api_secret">>, <<"a_long_enough_secret">>],
+        [internal_api_secret], <<"a_long_enough_secret">>),
+    assert_parse_sets([<<"--cm.api_secret=a_long_enough_secret">>],
+        [cm, api_secret], <<"a_long_enough_secret">>),
+    assert_parse_sets([<<"--pool.api_key">>, <<"pool-key">>],
+        [pool, api_key], <<"pool-key">>),
+    %% A `handle_set' callback converts the value on set.
+    assert_parse_sets([<<"--vdf.algorithm">>, <<"hiopt_m4">>],
+        [vdf, algorithm], hiopt_m4),
+    assert_parse_sets([<<"--vdf.compute">>, <<"true">>], [vdf, compute], true),
+
+    {error, #{ reason := <<"missing value">> }} =
+        arweave_config_format_cli:parse([<<"--internal_api_secret">>]),
+
     ok.
 
 %%====================================================================
