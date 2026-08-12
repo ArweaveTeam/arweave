@@ -124,8 +124,7 @@ add_tip_block(BlockTXPairs, RecentBI) ->
     gen_server:cast(ar_data_sync_default, {add_tip_block, BlockTXPairs, RecentBI}).
 
 invalidate_bad_data_record(AbsoluteEndOffset, ChunkSize, StoreID, Case) ->
-    gen_server:cast(?MODULE:name(StoreID), {invalidate_bad_data_record,
-                                            {AbsoluteEndOffset, ChunkSize, StoreID, Case}}).
+    invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, Case, undefined}).
 
 %% @doc Store a chunk fetched from a peer.
 store_fetched_chunk(StoreID, Peer, Byte, Proof) ->
@@ -856,7 +855,7 @@ handle_cast({add_tip_block, BlockTXPairs, BI}, State) ->
     {noreply, State2};
 
 handle_cast({invalidate_bad_data_record, Args}, State) ->
-    invalidate_bad_data_record(Args),
+    do_invalidate_bad_data_record(Args),
     {noreply, State};
 
 handle_cast({pack_and_store_chunk, Args} = Cast,
@@ -1281,10 +1280,10 @@ do_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestO
                                   RequestOrigin) of
         {error, Reason} ->
             {error, Reason};
-        {ok, {Chunk, DataPath}, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath} ->
+        {ok, {Chunk, DataPath}, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath, ChunkDataKey} ->
             ChunkID =
                 case validate_fetched_chunk({AbsoluteEndOffset, DataPath, TXPath, TXRoot,
-                                             ChunkSize, StoreID, RequestOrigin}) of
+                                             ChunkSize, StoreID, RequestOrigin, ChunkDataKey}) of
                     {true, ID} ->
                         ID;
                     false ->
@@ -1369,7 +1368,8 @@ do_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestO
                                          {actual_chunk, binary:part(MaybeUnpackedChunk, 0,
                                                                     min(32, byte_size(MaybeUnpackedChunk)))}],
                                     InvalidateArgs = {AbsoluteEndOffset, ChunkSize,
-                                                      StoreID, get_chunk_invalid_id},
+                                                      StoreID, get_chunk_invalid_id,
+                                                      ChunkDataKey},
                                     {error, chunk_id_mismatch, {LogData, InvalidateArgs}}
                             end
                     end
@@ -1381,10 +1381,10 @@ get_chunk_proof(Offset, SeekOffset, StoredPacking, StoreID, RequestOrigin) ->
            Offset, SeekOffset, StoredPacking, StoreID, false, RequestOrigin) of
         {error, Reason} ->
             {error, Reason};
-        {ok, DataPath, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath} ->
+        {ok, DataPath, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath, ChunkDataKey} ->
             CheckProof =
                 case validate_fetched_chunk({AbsoluteEndOffset, DataPath, TXPath, TXRoot,
-                                             ChunkSize, StoreID, false}) of
+                                             ChunkSize, StoreID, false, ChunkDataKey}) of
                     {true, ID} ->
                         ID;
                     false ->
@@ -1473,7 +1473,7 @@ read_chunk_with_metadata(
                                      {chunk_data_key, arweave_util:encode(ChunkDataKey)},
                                      {read_fun, ReadFun}]),
                     invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID,
-                                                failed_to_read_chunk_data_path}),
+                                                failed_to_read_chunk_data_path, ChunkDataKey}),
                     {error, chunk_not_found};
                 {error, Error} ->
                     log_chunk_error(RequestOrigin, failed_to_read_chunk,
@@ -1500,21 +1500,44 @@ read_chunk_with_metadata(
                             %% in the meantime - very unlucky timing.
                             {error, chunk_not_found};
                         true ->
-                            {ok, {Chunk, DataPath}, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath}
+                            {ok, {Chunk, DataPath}, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath,
+                             ChunkDataKey}
                     end;
                 {ok, DataPath} ->
-                    {ok, DataPath, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath}
+                    {ok, DataPath, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath, ChunkDataKey}
             end
     end.
 
-invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
+invalidate_bad_data_record({_AbsoluteEndOffset, _ChunkSize, StoreID, _Type,
+                            _ObservedChunkDataKey} = Args) ->
+    gen_server:cast(?MODULE:name(StoreID), {invalidate_bad_data_record, Args}).
+
+do_invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, Type,
+                               ObservedChunkDataKey}) ->
     T = ar_disk_pool:get_threshold(),
     case AbsoluteEndOffset > T of
         true ->
             %% Do not invalidate fresh records - a reorg may be in progress.
             ok;
         false ->
-            invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type})
+            case is_stale_invalidation(AbsoluteEndOffset, StoreID, ObservedChunkDataKey) of
+                true ->
+                    ?LOG_INFO([{event, skipping_stale_chunk_invalidation}, {type, Type},
+                               {absolute_end_offset, AbsoluteEndOffset}, {store_id, StoreID}]),
+                    ok;
+                false ->
+                    invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type})
+            end
+    end.
+
+is_stale_invalidation(_AbsoluteEndOffset, _StoreID, undefined) ->
+    false;
+is_stale_invalidation(AbsoluteEndOffset, StoreID, ObservedChunkDataKey) ->
+    case get_chunk_metadata(AbsoluteEndOffset, StoreID) of
+        {ok, #chunk_metadata{ chunk_data_key = CurrentChunkDataKey }} ->
+            CurrentChunkDataKey =/= ObservedChunkDataKey;
+        not_found ->
+            false
     end.
 
 invalidate_bad_data_record2({AbsoluteEndOffset, ChunkSize, StoreID, Type}) ->
@@ -1583,7 +1606,8 @@ delete_invalid_metadata(AbsoluteEndOffset, StoreID) ->
     end.
 
 validate_fetched_chunk(Args) ->
-    {Offset, DataPath, TXPath, TXRoot, ChunkSize, StoreID, RequestOrigin} = Args,
+    {Offset, DataPath, TXPath, TXRoot, ChunkSize, StoreID, RequestOrigin,
+     ObservedChunkDataKey} = Args,
     T = ar_disk_pool:get_threshold(),
     case Offset > T orelse not ar_node:is_joined() of
         true ->
@@ -1608,7 +1632,8 @@ validate_fetched_chunk(Args) ->
                             log_chunk_error(RequestOrigin, failed_to_validate_chunk_proofs,
                                             [{absolute_end_offset, Offset}, {store_id, StoreID}]),
                             invalidate_bad_data_record({Offset, ChunkSize, StoreID,
-                                                        failed_to_validate_chunk_proofs}),
+                                                        failed_to_validate_chunk_proofs,
+                                                        ObservedChunkDataKey}),
                             false
                     end;
                 {_BlockStart, _BlockEnd, TXRoot2} ->
@@ -1616,7 +1641,8 @@ validate_fetched_chunk(Args) ->
                                     [{end_offset, Offset}, {tx_root, arweave_util:encode(TXRoot2)},
                                      {stored_tx_root, arweave_util:encode(TXRoot)}, {store_id, StoreID}]),
                     invalidate_bad_data_record({Offset, ChunkSize, StoreID,
-                                                stored_chunk_invalid_tx_root}),
+                                                stored_chunk_invalid_tx_root,
+                                                ObservedChunkDataKey}),
                     false
             end
     end.
@@ -2333,8 +2359,9 @@ store_chunk2(ChunkArgs, Args, State) ->
                     already_stored ->
                         case ar_sync_record:is_recorded(PaddedOffset, Packing, ar_data_sync, StoreID) of
                             false ->
-                                invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize,
-                                                            StoreID, chunk_already_stored_but_not_in_sync_record});
+                                do_invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize,
+                                                               StoreID, chunk_already_stored_but_not_in_sync_record,
+                                                               undefined});
                             true ->
                                 case ar_footprint_record:is_recorded(PaddedOffset, StoreID) of
                                     false ->
