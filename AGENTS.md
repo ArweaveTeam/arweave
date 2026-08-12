@@ -427,3 +427,44 @@ option_key_for(LegacyField) when is_atom(LegacyField) ->
 ## PR reviews
 
 After completing a PR review, ask the user whether to write unit tests covering the issues you flagged. Keep each test as small and simple as possible — one test per issue, just enough to make the problem reproducible. The set of tests doubles as a concise description of what's wrong and as a checklist the PR author can work through.
+
+## Evaluating a reported security issue
+
+When asked to evaluate, investigate, or triage a reported security issue — a
+request like `evaluate issue <link>` pointing at a security-tracker issue — do
+all of the following, and keep every write-up brief. Operate on the issue by its
+URL (`gh issue edit <url>` / `gh issue comment <url>`) so the commands target the
+right repository without one being named here.
+
+1. **Reformat the issue.** Rewrite the body as clean Markdown: `##` headings per
+   section and fenced code blocks with language hints (` ```erlang ` /
+   ` ```python ` / ` ```bash `). Preserve the content verbatim; only fix
+   formatting. Push it back with `gh issue edit <url>`.
+
+2. **Validate against the code.** Read the actual code on `master` for every
+   file/function/line the report names — verify the vulnerable code, the full
+   reachability chain, and any ordering claims yourself (e.g. "runs before the
+   semaphore / signature / size check", whether an exception is caught vs
+   crashes, header/dedup bypasses). Do not trust the report's claims unread.
+   Also look for sibling instances of the same bug class a real fix must cover.
+
+3. **Compare across releases.** State vulnerable/not-vulnerable at the tag(s) the
+   reporter targeted and at the current release-line tags (`git tag` to list,
+   pick the relevant ones), with dates. If `master` differs, find the fix
+   commit(s) (`git log -S <token> -- <file>`) and confirm presence per tag with
+   `git merge-base --is-ancestor <sha> <tag>`. If separate private-development
+   and public source repositories are configured (check `git remote -v`), note
+   which remote each fix commit lives in and whether it has reached the public
+   one. Link commits by full SHA.
+
+4. **Post the assessment** as an issue comment (`gh issue comment <url>`). Lead
+   with a summary table: is the finding valid; exploitable on `master`;
+   exploitable on each affected tag; 1-2 lines on how to exploit; 1-2 lines on
+   impact; your own severity rating per version. Follow with a short detailed
+   write-up only if warranted (confirmed code + reachability, per-version
+   breakdown, fix-commit links).
+
+5. **Fix if needed.** If `master` still contains the bug, fix it following the
+   Erlang style rules above and leave the change UNCOMMITTED for review. If
+   `master` already carries the fix, make no code change — say so, and note
+   whether a backport to an affected release line is warranted.
