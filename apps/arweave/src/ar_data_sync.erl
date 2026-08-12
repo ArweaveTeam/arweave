@@ -22,7 +22,7 @@
 -export([name/1, start_link/2,
          register_workers/0, join/1,
          add_tip_block/2, add_block/2,
-         invalidate_bad_data_record/4, is_chunk_proof_ratio_attractive/3,
+         invalidate_bad_data_record/5, is_chunk_proof_ratio_attractive/3,
          get_chunk/2, get_chunk_data/2, get_chunk_proof/2,
          get_tx_data/1, get_tx_data/2,
          get_tx_offset/1, get_tx_offset_data_in_range/2,
@@ -123,8 +123,8 @@ join(RecentBI) ->
 add_tip_block(BlockTXPairs, RecentBI) ->
     gen_server:cast(ar_data_sync_default, {add_tip_block, BlockTXPairs, RecentBI}).
 
-invalidate_bad_data_record(AbsoluteEndOffset, ChunkSize, StoreID, Case) ->
-    invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, Case, undefined}).
+invalidate_bad_data_record(AbsoluteEndOffset, ChunkSize, StoreID, ChunkDataKey, Case) ->
+    invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, ChunkDataKey, Case}).
 
 %% @doc Store a chunk fetched from a peer.
 store_fetched_chunk(StoreID, Peer, Byte, Proof) ->
@@ -1283,7 +1283,7 @@ do_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestO
         {ok, {Chunk, DataPath}, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath, ChunkDataKey} ->
             ChunkID =
                 case validate_fetched_chunk({AbsoluteEndOffset, DataPath, TXPath, TXRoot,
-                                             ChunkSize, StoreID, RequestOrigin, ChunkDataKey}) of
+                                             ChunkSize, StoreID, ChunkDataKey, RequestOrigin}) of
                     {true, ID} ->
                         ID;
                     false ->
@@ -1368,8 +1368,8 @@ do_get_chunk(Offset, SeekOffset, Pack, Packing, StoredPacking, StoreID, RequestO
                                          {actual_chunk, binary:part(MaybeUnpackedChunk, 0,
                                                                     min(32, byte_size(MaybeUnpackedChunk)))}],
                                     InvalidateArgs = {AbsoluteEndOffset, ChunkSize,
-                                                      StoreID, get_chunk_invalid_id,
-                                                      ChunkDataKey},
+                                                      StoreID, ChunkDataKey,
+                                                      get_chunk_invalid_id},
                                     {error, chunk_id_mismatch, {LogData, InvalidateArgs}}
                             end
                     end
@@ -1384,7 +1384,7 @@ get_chunk_proof(Offset, SeekOffset, StoredPacking, StoreID, RequestOrigin) ->
         {ok, DataPath, AbsoluteEndOffset, TXRoot, ChunkSize, TXPath, ChunkDataKey} ->
             CheckProof =
                 case validate_fetched_chunk({AbsoluteEndOffset, DataPath, TXPath, TXRoot,
-                                             ChunkSize, StoreID, false, ChunkDataKey}) of
+                                             ChunkSize, StoreID, ChunkDataKey, false}) of
                     {true, ID} ->
                         ID;
                     false ->
@@ -1473,7 +1473,7 @@ read_chunk_with_metadata(
                                      {chunk_data_key, arweave_util:encode(ChunkDataKey)},
                                      {read_fun, ReadFun}]),
                     invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID,
-                                                failed_to_read_chunk_data_path, ChunkDataKey}),
+                                                ChunkDataKey, failed_to_read_chunk_data_path}),
                     {error, chunk_not_found};
                 {error, Error} ->
                     log_chunk_error(RequestOrigin, failed_to_read_chunk,
@@ -1508,12 +1508,12 @@ read_chunk_with_metadata(
             end
     end.
 
-invalidate_bad_data_record({_AbsoluteEndOffset, _ChunkSize, StoreID, _Type,
-                            _ObservedChunkDataKey} = Args) ->
+invalidate_bad_data_record({_AbsoluteEndOffset, _ChunkSize, StoreID, _ObservedChunkDataKey,
+                            _Type} = Args) ->
     gen_server:cast(?MODULE:name(StoreID), {invalidate_bad_data_record, Args}).
 
-do_invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, Type,
-                               ObservedChunkDataKey}) ->
+do_invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize, StoreID, ObservedChunkDataKey,
+                               Type}) ->
     T = ar_disk_pool:get_threshold(),
     case AbsoluteEndOffset > T of
         true ->
@@ -1606,8 +1606,8 @@ delete_invalid_metadata(AbsoluteEndOffset, StoreID) ->
     end.
 
 validate_fetched_chunk(Args) ->
-    {Offset, DataPath, TXPath, TXRoot, ChunkSize, StoreID, RequestOrigin,
-     ObservedChunkDataKey} = Args,
+    {Offset, DataPath, TXPath, TXRoot, ChunkSize, StoreID, ObservedChunkDataKey,
+     RequestOrigin} = Args,
     T = ar_disk_pool:get_threshold(),
     case Offset > T orelse not ar_node:is_joined() of
         true ->
@@ -1632,8 +1632,8 @@ validate_fetched_chunk(Args) ->
                             log_chunk_error(RequestOrigin, failed_to_validate_chunk_proofs,
                                             [{absolute_end_offset, Offset}, {store_id, StoreID}]),
                             invalidate_bad_data_record({Offset, ChunkSize, StoreID,
-                                                        failed_to_validate_chunk_proofs,
-                                                        ObservedChunkDataKey}),
+                                                        ObservedChunkDataKey,
+                                                        failed_to_validate_chunk_proofs}),
                             false
                     end;
                 {_BlockStart, _BlockEnd, TXRoot2} ->
@@ -1641,8 +1641,8 @@ validate_fetched_chunk(Args) ->
                                     [{end_offset, Offset}, {tx_root, arweave_util:encode(TXRoot2)},
                                      {stored_tx_root, arweave_util:encode(TXRoot)}, {store_id, StoreID}]),
                     invalidate_bad_data_record({Offset, ChunkSize, StoreID,
-                                                stored_chunk_invalid_tx_root,
-                                                ObservedChunkDataKey}),
+                                                ObservedChunkDataKey,
+                                                stored_chunk_invalid_tx_root}),
                     false
             end
     end.
@@ -2360,8 +2360,8 @@ store_chunk2(ChunkArgs, Args, State) ->
                         case ar_sync_record:is_recorded(PaddedOffset, Packing, ar_data_sync, StoreID) of
                             false ->
                                 do_invalidate_bad_data_record({AbsoluteEndOffset, ChunkSize,
-                                                               StoreID, chunk_already_stored_but_not_in_sync_record,
-                                                               undefined});
+                                                               StoreID, undefined,
+                                                               chunk_already_stored_but_not_in_sync_record});
                             true ->
                                 case ar_footprint_record:is_recorded(PaddedOffset, StoreID) of
                                     false ->
@@ -2595,3 +2595,54 @@ footprint_migration_chunks(Offset, RangeStart)
     (Offset - RangeStart) div ?DATA_CHUNK_SIZE;
 footprint_migration_chunks(_Offset, _RangeStart) ->
     0.
+
+-ifdef(AR_TEST).
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+%% @doc A reader-path invalidation must be dropped when the chunk_data_key the
+%% reader observed no longer matches the currently indexed one - a newer write
+%% replaced the copy the verdict was formed on. With no observed key (legacy
+%% callers) or nothing indexed, there is no fresh copy to protect, so the
+%% invalidation proceeds.
+is_stale_invalidation_test_() ->
+    [
+        {"undefined observed key never skips",
+         fun() ->
+             ?assertEqual(false, is_stale_invalidation(?DATA_CHUNK_SIZE, "s", undefined))
+         end},
+        {"matching key proceeds",
+         with_mocked_chunks_index(<<"k1">>,
+             fun() ->
+                 ?assertEqual(false, is_stale_invalidation(?DATA_CHUNK_SIZE, "s", <<"k1">>))
+             end)},
+        {"mismatched key is stale and skips",
+         with_mocked_chunks_index(<<"k2">>,
+             fun() ->
+                 ?assertEqual(true, is_stale_invalidation(?DATA_CHUNK_SIZE, "s", <<"k1">>))
+             end)},
+        {"missing metadata proceeds",
+         with_mocked_chunks_index(not_found,
+             fun() ->
+                 ?assertEqual(false, is_stale_invalidation(?DATA_CHUNK_SIZE, "s", <<"k1">>))
+             end)}
+    ].
+
+%% Resolve get_chunk_metadata to a chunk whose chunk_data_key is `CurrentKey',
+%% or to `not_found' when `CurrentKey' is the atom `not_found', by mocking the
+%% underlying chunks_index read.
+with_mocked_chunks_index(CurrentKey, TestFun) ->
+    Reply =
+        case CurrentKey of
+            not_found ->
+                not_found;
+            _ ->
+                {ok, term_to_binary({CurrentKey, <<>>, <<>>, <<>>, 0, ?DATA_CHUNK_SIZE})}
+        end,
+    ar_test_util:with_mocked(
+        [{ar_kv, get, fun(_Name, _Key) -> Reply end}],
+        TestFun).
+
+-endif.
