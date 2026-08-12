@@ -1057,8 +1057,9 @@ process_state_change(RepackChunk, #state{} = State) ->
     case RepackChunk#repack_chunk.state of
         invalid ->
             ChunkSize = RepackChunk#repack_chunk.metadata#chunk_metadata.chunk_size,
+            ChunkDataKey = RepackChunk#repack_chunk.metadata#chunk_metadata.chunk_data_key,
             ar_data_sync:invalidate_bad_data_record(
-              AbsoluteEndOffset, ChunkSize, StoreID, repack_found_stale_indices),
+              AbsoluteEndOffset, ChunkSize, StoreID, ChunkDataKey, repack_found_stale_indices),
             RepackChunk2 = RepackChunk#repack_chunk{ chunk = invalid },
             State2 = cache_repack_chunk(RepackChunk2, State),
             update_chunk_state(RepackChunk2, State2);
