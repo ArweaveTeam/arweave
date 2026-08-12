@@ -108,12 +108,14 @@ read_and_post_chunk(MessagesRemaining, Packing,
         {error, {data_missing, Metadata, Offsets}} ->
             %% Chunk data does not exist even though an entry exists in the
             %% index: invalidate the record so that it can be cleaned up
-            %% later and skip to the next chunk.
-            #chunk_metadata{ chunk_size = ChunkSize } = Metadata,
+            %% later and skip to the next chunk. Thread the observed
+            %% chunk_data_key so a copy freshly rewritten by another worker
+            %% isn't clobbered by this stale verdict.
+            #chunk_metadata{ chunk_size = ChunkSize, chunk_data_key = ChunkDataKey } = Metadata,
             #chunk_offsets{ absolute_offset = AbsoluteOffset } = Offsets,
             ar_data_sync:invalidate_bad_data_record(
               AbsoluteOffset, ChunkSize, OriginStoreID,
-              read_range_chunk_not_found),
+              ChunkDataKey, read_range_chunk_not_found),
             read_range(MessagesRemaining - 1,
                        {Start + ChunkSize, End, OriginStoreID, TargetStoreID});
         {error, {data_read_failed, Reason, Metadata2, Offsets2}} ->
@@ -245,7 +247,7 @@ data_missing_invalidates_and_continues_test_() ->
                            meck:num_calls(ar_data_sync, read_chunk_with_full_metadata, '_')),
               ?assert(meck:called(ar_data_sync, invalidate_bad_data_record,
                                   [?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE, origin_store,
-                                   read_range_chunk_not_found]))
+                                   <<"key">>, read_range_chunk_not_found]))
       end).
 
 test_range() ->
@@ -273,5 +275,5 @@ read_range_mocks(ReadFun) ->
                                            end
                                    end},
      {ar_data_sync, read_chunk_with_full_metadata, ReadFun},
-     {ar_data_sync, invalidate_bad_data_record, fun(_, _, _, _) -> ok end}
+     {ar_data_sync, invalidate_bad_data_record, fun(_, _, _, _, _) -> ok end}
     ].
