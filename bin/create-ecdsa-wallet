@@ -2,4 +2,4 @@
 set -e
 SCRIPT_DIR=$(dirname ${0})
 ARWEAVE=${SCRIPT_DIR}/arweave
-${ARWEAVE} wallet create ecdsa ${*}
+"${ARWEAVE}" wallet create ecdsa "$@"

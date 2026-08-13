@@ -399,6 +399,16 @@ DOC_SRC=$(mktmp doctor-src)
 run_check "data-doctor (no args)" 1 "data-doctor merge" -- \
 	./bin/data-doctor
 
+# Argument-boundary regression: a quoted JSON storage_module argument
+# must reach the doctor as ONE argument. If the launcher (bin/arweave,
+# bin/data-doctor) re-splits it on whitespace, parse_storage_module_arg
+# gets a JSON fragment and the run dies with a badmatch (caught by
+# CRASH_SIGS) instead of reaching the missing-directory check.
+run_check "data-doctor merge JSON arg boundary" 1 \
+	"Storage module directory not found" -- \
+	./bin/data-doctor merge "$DOC_DATA" \
+	'{"partition": 0, "packing_format": "unpacked"}' "$DOC_SRC"
+
 # TODO: `data-doctor merge` needs a populated source dir with valid
 # RocksDB databases to exercise its end-to-end path. Against an empty
 # src dir it crashes on the first ar_kv:open. The arweave_config
