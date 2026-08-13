@@ -1,0 +1,7 @@
+interface:
+  display_name: "Arweave Fix Issue"
+  short_description: "Implement and test an Arweave issue fix"
+  default_prompt: "Use $ar-fix-issue to implement and test a fix for this issue."
+
+policy:
+  allow_implicit_invocation: true

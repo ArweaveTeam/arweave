@@ -1,3 +1,10 @@
-# Arweave protocol technical details and caveats
+---
+name: protocol
+description: "Arweave protocol technical details and caveats"
+alwaysApply: false
+---
 
-Recall bytes always point to chunks, not sub-chunks. We always consider all sub-chunks of every chunk durining mining. Nonce rem SubChunkCount determines which sub-chunk goes into the proof.
+# Arweave protocol details and caveats
+
+Moved to [`doc/agents/protocol.md`](../../doc/agents/protocol.md) so that every
+agent can read it, not only Cursor. Read that file.

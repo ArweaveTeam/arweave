@@ -1,0 +1,7 @@
+interface:
+  display_name: "Arweave Code Review"
+  short_description: "Review changes using Arweave conventions"
+  default_prompt: "Use $ar-code-review to review these changes."
+
+policy:
+  allow_implicit_invocation: true
