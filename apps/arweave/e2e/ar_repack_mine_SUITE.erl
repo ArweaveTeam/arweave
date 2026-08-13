@@ -208,7 +208,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
 start_validator_node(ValidatorNode, RepackerNode, B0) ->
     ValidatorPeerName = ar_test_node:peer_name(ValidatorNode),
     ValidatorPeerName = ar_test_node:start_other_node(ValidatorNode, B0, #{
-                                                                           [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(RepackerNode))],
+                                                                           [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(RepackerNode))],
                                                                            [join, start_from_latest_state] => true,
                                                                            [join, auto] => true,
                                                                            [storage_modules] => []

@@ -119,8 +119,8 @@ handle_cast({block_received_n_confirmations, BH, Height}, State) ->
             case arweave_config:get([features, miner_logging]) of
                 true ->
                     Message = io_lib:format("Your block ~s was accepted by the network!",
-                            [ar_util:encode(BH)]),
-                    ?LOG_INFO([{event, block_got_10_confirmations}, {block, ar_util:encode(BH)}]),
+                            [arweave_util:encode(BH)]),
+                    ?LOG_INFO([{event, block_got_10_confirmations}, {block, arweave_util:encode(BH)}]),
                     ar:console("~s~n", [Message]),
                     ar_mining_stats:block_found(),
                     Map;
@@ -144,8 +144,8 @@ handle_cast({block_orphaned, BH, Height}, State) ->
             case arweave_config:get([features, miner_logging]) of
                 true ->
                     Message = io_lib:format("Your block ~s was orphaned.",
-                            [ar_util:encode(BH)]),
-                    ?LOG_INFO([{event, mined_block_orphaned}, {block, ar_util:encode(BH)}]),
+                            [arweave_util:encode(BH)]),
+                    ?LOG_INFO([{event, mined_block_orphaned}, {block, arweave_util:encode(BH)}]),
                     ar:console("~s~n", [Message]),
                     Map;
                 _ ->
@@ -160,9 +160,9 @@ handle_cast({mined_block, BH, Height, PrevH}, State) ->
     case arweave_config:get([features, miner_logging]) of
         true ->
             Message = io_lib:format("Produced candidate block ~s (height ~B, previous block ~s).",
-                    [ar_util:encode(BH), Height, ar_util:encode(PrevH)]),
-            ?LOG_INFO([{event, mined_block}, {block, ar_util:encode(BH)}, {height, Height},
-                    {previous_block, ar_util:encode(PrevH)}]),
+                    [arweave_util:encode(BH), Height, arweave_util:encode(PrevH)]),
+            ?LOG_INFO([{event, mined_block}, {block, arweave_util:encode(BH)}, {height, Height},
+                    {previous_block, arweave_util:encode(PrevH)}]),
             ar:console("~s~n", [Message]);
         _ ->
             ok

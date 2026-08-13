@@ -82,7 +82,7 @@ maybe_verify(true, Input, Difficulty, Output, Checkpoints) ->
             io:format("Output matches.~n");
         false ->
             io:format("Output mismatch. Expected: ~p, Got: ~p~n",
-                      [ar_util:encode(Output), ar_util:encode(VerifyOutput)])
+                      [arweave_util:encode(Output), arweave_util:encode(VerifyOutput)])
     end,
     case Checkpoints == VerifyCheckpoints of
         true ->

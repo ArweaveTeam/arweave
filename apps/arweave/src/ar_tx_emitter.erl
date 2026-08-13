@@ -84,7 +84,7 @@ handle_cast(process_chunk, State) ->
     % check later if emit/6 returns an empty set
     case sets:is_empty(State2#state.currently_emitting) of
         true ->
-            ar_util:cast_after(?CHECK_MEMPOOL_FREQUENCY, ?MODULE, process_chunk);
+            arweave_util:cast_after(?CHECK_MEMPOOL_FREQUENCY, ?MODULE, process_chunk);
         false ->
             ok
     end,
@@ -119,8 +119,8 @@ handle_info({timeout, TXID, Peer}, State) ->
             %% Should have been emitted.
             {noreply, State};
         true ->
-            ?LOG_DEBUG([{event, tx_propagation_timeout}, {txid, ar_util:encode(TXID)},
-                    {peer, ar_util:format_peer(Peer)}]),
+            ?LOG_DEBUG([{event, tx_propagation_timeout}, {txid, arweave_util:encode(TXID)},
+                    {peer, arweave_util:format_peer(Peer)}]),
             Emitting2 = sets:del_element({TXID, Peer}, Emitting),
             case sets:is_empty(Emitting2) of
                 true ->

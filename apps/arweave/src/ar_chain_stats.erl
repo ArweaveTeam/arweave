@@ -105,14 +105,14 @@ record_fork_depth([H | Orphans], ForkRootB, N) ->
         case ar_block_cache:get(block_cache, H) of
             not_found ->
                 %% Should never happen, by construction.
-                ?LOG_ERROR([{event, block_not_found_in_cache}, {h, ar_util:encode(H)}]),
+                ?LOG_ERROR([{event, block_not_found_in_cache}, {h, arweave_util:encode(H)}]),
                 [];
             #block{ hash = SolutionH } ->
-                [{solution_hash, ar_util:encode(SolutionH)}]
+                [{solution_hash, arweave_util:encode(SolutionH)}]
         end,
     LogInfo = [
-               {event, orphaning_block}, {block, ar_util:encode(H)}, {depth, N},
-               {fork_root, ar_util:encode(ForkRootB#block.indep_hash)},
+               {event, orphaning_block}, {block, arweave_util:encode(H)}, {depth, N},
+               {fork_root, arweave_util:encode(ForkRootB#block.indep_hash)},
                {fork_height, ForkRootB#block.height + 1} | SolutionHashInfo],
     ?LOG_INFO(LogInfo),
     record_fork_depth(Orphans, ForkRootB, N + 1).

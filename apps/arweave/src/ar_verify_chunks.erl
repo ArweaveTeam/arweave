@@ -65,7 +65,7 @@ init(StoreID) ->
     }}.
 
 handle_cast(sample, #state{ready = false, end_offset = EndOffset} = State) ->
-    ar_util:cast_after(1000, self(), sample),
+    arweave_util:cast_after(1000, self(), sample),
     {noreply, State#state{ready = is_ready(EndOffset)}};
 handle_cast(sample,
         #state{cursor = Cursor, end_offset = EndOffset} = State) when Cursor >= EndOffset ->
@@ -89,7 +89,7 @@ handle_cast(sample, State) ->
     {noreply, State};
 
 handle_cast(verify, #state{ready = false, end_offset = EndOffset} = State) ->
-    ar_util:cast_after(1000, self(), verify),
+    arweave_util:cast_after(1000, self(), verify),
     {noreply, State#state{ready = is_ready(EndOffset)}};
 handle_cast(verify,
         #state{cursor = Cursor, end_offset = EndOffset} = State) when Cursor >= EndOffset ->

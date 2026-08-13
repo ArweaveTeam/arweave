@@ -44,7 +44,7 @@ fetch_range(#sync_task{ start_offset = Start, end_offset = End })
 fetch_range(#sync_task{ retry_count = 0, peer = Peer,
                         start_offset = Start, end_offset = End }) ->
     ?LOG_INFO([{event, fetch_range_retries_exhausted},
-               {peer, ar_util:format_peer(Peer)},
+               {peer, arweave_util:format_peer(Peer)},
                {start_offset, Start}, {end_offset, End}]),
     {error, timeout};
 fetch_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
@@ -72,7 +72,7 @@ fetch_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
                     fetch_range(Task#sync_task{ start_offset = Start3 });
                 {error, timeout} ->
                     ?LOG_DEBUG([{event, timeout_fetching_chunk},
-                                {peer, ar_util:format_peer(Peer)},
+                                {peer, arweave_util:format_peer(Peer)},
                                 {start_offset, Start2}, {end_offset, End}]),
                     timer:sleep(1000),
                     fetch_range(Task#sync_task{ retry_count = RetryCount - 1 });
@@ -81,7 +81,7 @@ fetch_range(#sync_task{ start_offset = Start, end_offset = End, peer = Peer,
                 {error, Reason} ->
                     ar_http_iface_client:log_failed_request({error, Reason}, [
                                                                               {event, failed_to_fetch_chunk},
-                                                                              {peer, ar_util:format_peer(Peer)},
+                                                                              {peer, arweave_util:format_peer(Peer)},
                                                                               {start_offset, Start2}, {end_offset, End},
                                                                               {reason, io_lib:format("~p", [Reason])}]),
                     {error, Reason}

@@ -162,7 +162,7 @@ set_mining_address() ->
                 W ->
                     Addr = ar_wallet:to_address(W),
                     ar:console("~nSetting the mining address to ~s.~n",
-                               [ar_util:encode(Addr)]),
+                               [arweave_util:encode(Addr)]),
                     _ = arweave_config:set([mining, address], Addr),
                     verify_mining_keyfile(Addr)
             end;
@@ -186,7 +186,7 @@ verify_mining_keyfile(Addr) ->
                                " [data_dir]/~s/[mining_addr].json or "
                                "[data_dir]/~s/arweave_keyfile_[mining_addr].json file)."
                                " Do not specify \"mining_addr\" if you want one to be generated.~n~n",
-                               [ar_util:encode(Addr), ?WALLET_DIR, ?WALLET_DIR, ?WALLET_DIR]),
+                               [arweave_util:encode(Addr), ?WALLET_DIR, ?WALLET_DIR, ?WALLET_DIR]),
                     init:stop(1);
                 _ ->
                     ok
@@ -227,7 +227,7 @@ create_wallet(DataDir, KeyType) ->
                     init:stop(1);
                 W ->
                     Addr = ar_wallet:to_address(W),
-                    ar:console("Created a wallet with address ~s.~n", [ar_util:encode(Addr)]),
+                    ar:console("Created a wallet with address ~s.~n", [arweave_util:encode(Addr)]),
                     init:stop(1)
             end
     end.

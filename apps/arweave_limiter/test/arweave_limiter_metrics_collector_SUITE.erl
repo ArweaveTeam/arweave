@@ -91,29 +91,21 @@ empty_limiters_sanity_check(_Config) ->
     ?assertMatch(
        [{ar_limiter_tracked_items_total,gauge,
          "tracked requests, timestamps, leaky tokens",
-         _},
-        {ar_limiter_peers,gauge,
-         "The number of peers the limiter is monitoring currently", _}], ?M:metrics()),
+         _}], ?M:metrics()),
     ok.
 
 rate_limiter_happy_path_sanity_check(_Config) ->
     ?assertMatch(
        [{ar_limiter_tracked_items_total,gauge,
          "tracked requests, timestamps, leaky tokens",
-         _},
-        {ar_limiter_peers,gauge,
-         "The number of peers the limiter is monitoring currently", _}], ?M:metrics()),
+         _}], ?M:metrics()),
 
     Info = arweave_limiter_group:info(?GENERAL),
     ?assertMatch(
        [
-        {[{limiter_id, ?GENERAL}, {limiting_type, concurrency}], 150*1000},
-        {[{limiter_id, ?GENERAL}, {limiting_type, leaky_bucket_tokens}], 1000},
-        {[{limiter_id, ?GENERAL}, {limiting_type, sliding_window_timestamps}], 0}
+        {[{limiter_id, ?GENERAL}, {item_type, concurrency_peers}], 150*1000},
+        {[{limiter_id, ?GENERAL}, {item_type, leaky_bucket_peers}], 0},
+        {[{limiter_id, ?GENERAL}, {item_type, sliding_window_timestamps}], 150*1000},
+        {[{limiter_id, ?GENERAL}, {item_type, sliding_window_peers}], 1000}
        ], ?M:tracked_items([{?GENERAL, Info}])),
-    ?assertMatch(
-       [
-        {[{limiter_id, ?GENERAL}, {limiting_type, leaky_bucket_tokens}], 1000},
-        {[{limiter_id, ?GENERAL}, {limiting_type, sliding_window_timestamps}], 0}
-       ], ?M:peers([{?GENERAL, Info}])),
     ok.

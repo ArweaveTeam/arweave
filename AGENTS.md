@@ -124,7 +124,7 @@ To opt a module into a non-default category, add `-test_category`:
 
 ```erlang
 %%% @doc Pure utility module — safe to batch with siblings.
--module(ar_util).
+-module(arweave_util).
 -test_category([fast]).
 ```
 
@@ -249,6 +249,46 @@ than one place, promote it to a predefined named helper in
 
 `timer:sleep` is reserved for deliberately time-based behaviour (e.g.
 exercising a retry backoff), never as a stand-in for a condition wait.
+
+### Pattern matching in tests
+
+Never use assert macros wrapped in reused functions, nor do pattern matching
+to force badmatch in tests similar way.
+
+Do:
+```
+testcase() ->
+    ?assertMatch(pattern, helper_function_call()).
+
+helper_function() ->
+    function_producing_value().
+```
+instead of:
+```
+testcase() ->
+    helper_function().
+
+
+helper_function ->
+    ?assertMatch(pattern, function_producing_value()).
+```
+
+Similarly, do:
+```
+testcase() ->
+    pattern = helper_function_call().
+
+helper_function() ->
+    function_producing_value().
+```
+instead of:
+```
+testcase() ->
+    helper_function().
+
+helper_function ->
+    pattern = function_producing_value().
+```
 
 ## Erlang style
 

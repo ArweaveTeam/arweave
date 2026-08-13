@@ -171,7 +171,7 @@ test_vdf_client_fast_block() ->
     _ = ar_test_node:start_peer(peer1,
         B0, PeerAddress,
         #{
-            [peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(main))]
+            [peers, vdf_server] => [arweave_util:format_peer(ar_test_node:peer_ip(main))]
         }),
     %% Isolate the client-path assertion below: when B1 is posted directly to peer1,
     %% peer1 must not relay it to main before we explicitly post it to main.
@@ -181,7 +181,7 @@ test_vdf_client_fast_block() ->
     _ = ar_test_node:start(
         B0, ar_test_node:generate_address(main),
         #{
-            [peers, vdf_client] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))]
+            [peers, vdf_client] => [arweave_util:format_peer(ar_test_node:peer_ip(peer1))]
         }),
 
     %% Post the block to the VDF client. It won't be able to validate it since the VDF server
@@ -226,7 +226,7 @@ test_vdf_client_fast_block_pull_interface() ->
     _ = ar_test_node:start_peer(peer1,
         B0, PeerAddress,
         #{
-            [peers, vdf_server] => [ar_util:format_peer(ar_test_node:peer_ip(main))],
+            [peers, vdf_server] => [arweave_util:format_peer(ar_test_node:peer_ip(main))],
             [vdf, pull] => true
         }
     ),
@@ -235,7 +235,7 @@ test_vdf_client_fast_block_pull_interface() ->
     _ = ar_test_node:start(
         B0, ar_test_node:generate_address(main),
         #{
-            [peers, vdf_client] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))]
+            [peers, vdf_client] => [arweave_util:format_peer(ar_test_node:peer_ip(peer1))]
         }
     ),
 

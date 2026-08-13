@@ -82,7 +82,7 @@ account_tree_initialized(Blocks) ->
     gen_server:cast(?MODULE, {account_tree_initialized, Blocks}).
 
 encode_session_key({NextSeed, StartIntervalNumber, NextVDFDifficulty}) ->
-    {ar_util:safe_encode(NextSeed), StartIntervalNumber, NextVDFDifficulty};
+    {arweave_util:safe_encode(NextSeed), StartIntervalNumber, NextVDFDifficulty};
 encode_session_key(SessionKey) ->
     SessionKey.
 
@@ -371,7 +371,7 @@ request_validation(H, #nonce_limiter_info{ output = Output,
     {StartStepNumber, StartOutput, ComputedSteps} =
         skip_already_computed_steps(PrevStepNumber, StepNumber, PrevOutput,
                                     StepsToValidate, SessionSteps),
-    ?LOG_INFO([{event, vdf_validation_start}, {block, ar_util:encode(H)},
+    ?LOG_INFO([{event, vdf_validation_start}, {block, arweave_util:encode(H)},
                {session_key, encode_session_key(SessionKey)},
                {next_session_key, encode_session_key(NextSessionKey)},
                {prev_step_number, PrevStepNumber}, {step_number, StepNumber},
@@ -448,10 +448,10 @@ request_validation(H, #nonce_limiter_info{ output = Output,
                                                        EntropyResetPoint, crypto:hash(sha256, Seed),
                                                        ThreadCount, VDFDifficulty}),
                                           ?LOG_ERROR([{event, nonce_limiter_validation_failed},
-                                                      {block, ar_util:encode(H)},
+                                                      {block, arweave_util:encode(H)},
                                                       {start_step_number, StartStepNumber2},
                                                       {error_id, ErrorID},
-                                                      {prev_output, ar_util:encode(StartOutput2)},
+                                                      {prev_output, arweave_util:encode(StartOutput2)},
                                                       {exception, io_lib:format("~p", [Exc])}]),
                                           ar_events:send(nonce_limiter, {validation_error, H});
                                       false ->
@@ -682,7 +682,7 @@ handle_call(Request, _From, State) ->
 
 handle_cast(check_external_vdf_server_input,
             #state{ last_external_update = {_, 0} } = State) ->
-    ar_util:cast_after(1000, ?MODULE, check_external_vdf_server_input),
+    arweave_util:cast_after(1000, ?MODULE, check_external_vdf_server_input),
     {noreply, State};
 handle_cast(check_external_vdf_server_input,
             #state{ last_external_update = {_, Time} } = State) ->
@@ -691,9 +691,9 @@ handle_cast(check_external_vdf_server_input,
         true ->
             ?LOG_WARNING([{event, no_message_from_any_vdf_servers},
                           {last_message_seconds_ago, (Now - Time) div 1000}]),
-            ar_util:cast_after(30000, ?MODULE, check_external_vdf_server_input);
+            arweave_util:cast_after(30000, ?MODULE, check_external_vdf_server_input);
         false ->
-            ar_util:cast_after(1000, ?MODULE, check_external_vdf_server_input)
+            arweave_util:cast_after(1000, ?MODULE, check_external_vdf_server_input)
     end,
     {noreply, State};
 
@@ -834,9 +834,9 @@ handle_info({computed, Args}, State) ->
                     ok;
                 false ->
                     ?LOG_WARNING([{event, computed_for_outdated_key}, {step_number, StepNumber},
-                                  {output, ar_util:encode(Output)},
-                                  {prev_output, ar_util:encode(PrevOutput)},
-                                  {session_output, ar_util:encode(SessionOutput2)},
+                                  {output, arweave_util:encode(Output)},
+                                  {prev_output, arweave_util:encode(PrevOutput)},
+                                  {session_output, arweave_util:encode(SessionOutput2)},
                                   {current_session_key, encode_session_key(CurrentSessionKey)},
                                   {session_key, encode_session_key(SessionKey)}])
             end,
@@ -915,7 +915,7 @@ send_output(SessionKey, Session) ->
 
 dump_error(Data) ->
     DataDir = arweave_config:get([data_dir]),
-    ErrorID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(8))),
+    ErrorID = binary_to_list(arweave_util:encode(crypto:strong_rand_bytes(8))),
     ErrorDumpFile = filename:join(DataDir, "error_dump_" ++ ErrorID),
     file:write_file(ErrorDumpFile, term_to_binary(Data)),
     ErrorID.
@@ -1244,7 +1244,7 @@ apply_external_update2(Update, State) ->
                         true ->
                             ?LOG_DEBUG([{event, apply_external_vdf},
                                         {result, ahead_of_server},
-                                        {vdf_server, ar_util:format_peer(Peer)},
+                                        {vdf_server, arweave_util:format_peer(Peer)},
                                         {session_key, encode_session_key(SessionKey)},
                                         {client_step_number, CurrentStepNumber},
                                         {server_step_number, StepNumber}]);
@@ -1270,7 +1270,7 @@ apply_external_update_session_not_found(Update, State) ->
             %% Inform the peer we have not initialized the corresponding session yet.
             ?LOG_DEBUG([{event, apply_external_vdf},
                         {result, session_not_found},
-                        {vdf_server, ar_util:format_peer(Peer)},
+                        {vdf_server, arweave_util:format_peer(Peer)},
                         {is_partial, IsPartial},
                         {session_key, encode_session_key(SessionKey)},
                         {server_step_number, StepNumber}]),
@@ -1322,7 +1322,7 @@ apply_external_update3(Update, CurrentSession, State) ->
                     %% Inform the peer we miss some steps.
                     ?LOG_DEBUG([{event, apply_external_vdf},
                                 {result, missing_steps},
-                                {vdf_server, ar_util:format_peer(Peer)},
+                                {vdf_server, arweave_util:format_peer(Peer)},
                                 {is_partial, IsPartial},
                                 {session_key, encode_session_key(SessionKey)},
                                 {client_step_number, CurrentStepNumber},
@@ -1353,7 +1353,7 @@ apply_external_update4(State, SessionKey, Session, Steps) ->
     #state{ last_external_update = {Peer, _} } = State,
 
     ?LOG_DEBUG([{event, new_vdf_step}, {source, apply_external_vdf},
-                {vdf_server, ar_util:format_peer(Peer)},
+                {vdf_server, arweave_util:format_peer(Peer)},
                 {session_key, encode_session_key(SessionKey)},
                 {step_number, Session#vdf_session.step_number},
                 {length, length(Steps)}]),
@@ -1489,7 +1489,7 @@ debug_double_check(Label, Result, Func, Args) ->
                 true ->
                     Result;
                 false ->
-                    ID = ar_util:encode(crypto:strong_rand_bytes(16)),
+                    ID = arweave_util:encode(crypto:strong_rand_bytes(16)),
                     file:write_file(Label ++ "_" ++ binary_to_list(ID),
                                     term_to_binary(Args)),
                     Event = "nonce_limiter_" ++ Label ++ "_mismatch",

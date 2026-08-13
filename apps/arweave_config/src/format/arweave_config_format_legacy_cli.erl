@@ -86,7 +86,7 @@ parse(["vdf", Mode | Rest]) ->
     _ = arweave_config:set([vdf, algorithm], ParsedMode),
     parse(Rest);
 parse(["peer", Peer | Rest]) ->
-    case ar_util:safe_parse_peer(Peer) of
+    case arweave_util:safe_parse_peer(Peer) of
         {ok, ValidPeers} when is_list(ValidPeers) ->
             Ps = arweave_config_options_peers:by_role(trusted),
             NewPeers = ValidPeers ++ Ps,
@@ -97,7 +97,7 @@ parse(["peer", Peer | Rest]) ->
             parse(Rest)
     end;
 parse(["block_gossip_peer", Peer | Rest]) ->
-    case ar_util:safe_parse_peer(Peer) of
+    case arweave_util:safe_parse_peer(Peer) of
         {ok, ValidPeer} when is_list(ValidPeer) ->
             Peers = arweave_config_options_peers:by_role(block_gossip),
             NewPeers = ValidPeer ++ Peers,
@@ -108,7 +108,7 @@ parse(["block_gossip_peer", Peer | Rest]) ->
             parse(Rest)
     end;
 parse(["local_peer", Peer | Rest]) ->
-    case ar_util:safe_parse_peer(Peer) of
+    case arweave_util:safe_parse_peer(Peer) of
         {ok, ValidPeer} when is_list(ValidPeer) ->
             Peers = arweave_config_options_peers:by_role(local),
             NewPeers = ValidPeer ++ Peers,
@@ -208,7 +208,7 @@ parse(["mining_addr", Addr | Rest]) ->
     end,
     case Current of
         not_set ->
-            case ar_util:safe_decode(Addr) of
+            case arweave_util:safe_decode(Addr) of
                 {ok, DecodedAddr} when byte_size(DecodedAddr) == 32 ->
                     _ = arweave_config:set([mining, address], DecodedAddr),
                     parse(Rest);
@@ -252,7 +252,7 @@ parse(["start_from_state", Folder | Rest]) ->
     _ = arweave_config:set([join, start_from_state], Folder),
     parse(Rest);
 parse(["start_from_block", H | Rest]) ->
-    case ar_util:safe_decode(H) of
+    case arweave_util:safe_decode(H) of
         {ok, Decoded} when byte_size(Decoded) == 48 ->
             _ = arweave_config:set([join, start_from_block], Decoded),
             parse(Rest);
@@ -439,7 +439,7 @@ parse(["cm_poll_interval", Num | Rest]) ->
     _ = arweave_config:set([cm, poll_interval], V),
     parse(Rest);
 parse(["cm_peer", Peer | Rest]) ->
-    case ar_util:safe_parse_peer(Peer) of
+    case arweave_util:safe_parse_peer(Peer) of
         {ok, ValidPeer} when is_list(ValidPeer) ->
             Ps = arweave_config_options_peers:by_role(cm_peer),
             NewPeers = ValidPeer ++ Ps,
@@ -450,7 +450,7 @@ parse(["cm_peer", Peer | Rest]) ->
             parse(Rest)
     end;
 parse(["cm_exit_peer", Peer | Rest]) ->
-    case ar_util:safe_parse_peer(Peer) of
+    case arweave_util:safe_parse_peer(Peer) of
         {ok, [ValidPeer|_]} ->
             _ = arweave_config_options_peers:write_legacy_singleton(cm_exit, ValidPeer),
             parse(Rest);

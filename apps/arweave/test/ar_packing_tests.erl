@@ -78,7 +78,7 @@ test_full_chunk() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
     ChunkSize = 256*1024,
-    TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     ?assertEqual(
@@ -113,7 +113,7 @@ test_partial_chunk() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.100kb"),
 
     ChunkSize = 100*1024,
-    TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     ?assertEqual(
@@ -148,7 +148,7 @@ test_full_chunk_repack() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
     ChunkSize = 256*1024,
-    TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     ?assertEqual(
@@ -196,7 +196,7 @@ test_partial_chunk_repack() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.100kb"),
 
     ChunkSize = 100*1024,
-    TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     ?assertEqual(
@@ -246,7 +246,7 @@ test_invalid_pad() ->
 
     ShortUnpackedData = binary:part(UnpackedData, 0, ChunkSize),
 
-    TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     ?assertEqual(
@@ -285,7 +285,7 @@ test_request_repack() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
     ChunkSize = 256*1024,
-    TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     %% unpacked -> unpacked
@@ -338,7 +338,7 @@ test_request_unpack() ->
     Spora26Data = ar_test_util:load_fixture("ar_packing_tests/spora26.256kb"),
 
     ChunkSize = 256*1024,
-    TXRoot = ar_util:decode(?ENCODED_TX_ROOT),
+    TXRoot = arweave_util:decode(?ENCODED_TX_ROOT),
     RewardAddress = ar_test_util:load_fixture("ar_packing_tests/address.bin"),
 
     %% unpacked -> unpacked
@@ -421,7 +421,7 @@ test_packs_chunks_depending_on_packing_threshold() ->
                     tx_with_chunks(Wallet, DR3, Chunks3, v1, Miner),
             ?debugFmt("miner: ~p, receiver: ~p~n", [Miner, Receiver]),
             ?debugFmt("Mining block ~B.~n", [Height]),
-            TXs = ar_util:pick_random([TX1, TX2, TX3], 2),
+            TXs = arweave_util:pick_random([TX1, TX2, TX3], 2),
             B = ar_test_node:post_and_mine(#{ miner => Miner, await_on => Receiver }, TXs),
             Acc1_2 =
                 case lists:member(TX1, TXs) of
@@ -500,8 +500,8 @@ test_packs_chunks_depending_on_packing_threshold() ->
                     "Computed search space upper bound: ~B. "
                     "Block start: ~B. Block end: ~B. TX root: ~s.",
                     [RecallByte, B#block.recall_byte, Height,
-                    ar_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
-                    BlockStart, BlockEnd, ar_util:encode(TXRoot)]),
+                    arweave_util:encode(PrevB#block.indep_hash), PartitionUpperBound,
+                    BlockStart, BlockEnd, arweave_util:encode(TXRoot)]),
             ?assertEqual(RecallByte, B#block.recall_byte),
             SubChunkIndex = ar_block:get_sub_chunk_index(B#block.packing_difficulty,
                     B#block.nonce),
@@ -557,7 +557,7 @@ tx_with_chunks(Wallet, DataRoot, Chunks, Format, Node) ->
 assert_synced_data(Proofs) ->
     maps:map(
         fun(TXID, [{_, _, Chunks, _} | _]) ->
-            ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
+            ExpectedData = arweave_util:encode(binary:list_to_bin(Chunks)),
             ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
             ar_test_node:assert_get_tx_data(peer1, TXID, ExpectedData)
         end,

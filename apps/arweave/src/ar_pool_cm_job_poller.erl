@@ -48,11 +48,11 @@ handle_cast(fetch_cm_jobs, State) ->
         {ok, Jobs} ->
             push_cm_jobs_to_cm_peers(Jobs),
             ar_pool:process_cm_jobs(Jobs, Peer),
-            ar_util:cast_after(?FETCH_CM_JOBS_FREQUENCY_MS, self(), fetch_cm_jobs);
+            arweave_util:cast_after(?FETCH_CM_JOBS_FREQUENCY_MS, self(), fetch_cm_jobs);
         {error, Error} ->
             ?LOG_WARNING([{event, failed_to_fetch_pool_cm_jobs},
                           {error, io_lib:format("~p", [Error])}]),
-            ar_util:cast_after(?FETCH_CM_JOBS_RETRY_MS, self(), fetch_cm_jobs)
+            arweave_util:cast_after(?FETCH_CM_JOBS_RETRY_MS, self(), fetch_cm_jobs)
     end,
     {noreply, State};
 

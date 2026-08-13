@@ -188,7 +188,7 @@ test_persisted_mempool() ->
         %% Expect the pending transactions to be picked up and distributed.
         ok = arweave_config:force_config(#{
             [join, start_from_latest_state] => false,
-            [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(peer1))]
+            [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(peer1))]
         }),
         %% Restart in load mode (runtime => false) so boot validators can
         %% rewrite static config.

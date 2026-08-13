@@ -11,12 +11,12 @@ suite() ->
 
 init_per_testcase(_TestCase, Config) ->
     ok = arweave_config:start(),
-    meck:new(ar_util, [passthrough]),
-    meck:expect(ar_util, safe_parse_peer, fun mock_safe_parse_peer/1),
+    meck:new(arweave_util, [passthrough]),
+    meck:expect(arweave_util, safe_parse_peer, fun mock_safe_parse_peer/1),
     Config.
 
 end_per_testcase(_TestCase, _Config) ->
-    meck:unload(ar_util),
+    meck:unload(arweave_util),
     ok = arweave_config:stop().
 
 all() ->

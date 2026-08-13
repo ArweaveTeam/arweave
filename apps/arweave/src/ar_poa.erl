@@ -57,7 +57,7 @@ validate_data_path(DataRoot, Offset, TXSize, DataPath, Chunk, Peer) ->
     case has_redundant_rebase_marker_for_chunk(DataRoot, Offset, TXSize, DataPath, Chunk) of
         true ->
             log_invalid_data_path(redundant_rebase_marker, Peer,
-                                  [{data_root, ar_util:encode(DataRoot)}, {offset, Offset}, {tx_size, TXSize}]),
+                                  [{data_root, arweave_util:encode(DataRoot)}, {offset, Offset}, {tx_size, TXSize}]),
             %% Conservatively reject paths with redundant rebase markers as there's no
             %% productive case for their use.
             false;
@@ -105,7 +105,7 @@ validate_data_path2(DataRoot, Offset, TXSize, DataPath, Chunk, Peer) ->
                                     {true, PassesBase, PassesStrict, PassesRebase, EndOffset};
                                 false ->
                                     log_invalid_data_path(negative_leaf_size, Peer,
-                                                          [{data_root, ar_util:encode(DataRoot)},
+                                                          [{data_root, arweave_util:encode(DataRoot)},
                                                            {offset, Offset}, {tx_size, TXSize},
                                                            {chunk_start_offset, StartOffset},
                                                            {chunk_end_offset, EndOffset}]),
@@ -129,7 +129,7 @@ log_invalid_data_path(_Reason, not_set, _Logs) ->
     ok;
 log_invalid_data_path(Reason, Peer, Logs) ->
     ?LOG_ERROR([{event, invalid_data_path}, {reason, Reason},
-                {peer, ar_util:format_peer(Peer)} | Logs]).
+                {peer, arweave_util:format_peer(Peer)} | Logs]).
 
 %% @doc Validate a proof of access.
 validate(Args) ->

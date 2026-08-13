@@ -114,7 +114,7 @@ keep_value(_) -> true.
 %% new options are handled automatically.
 encode_leaf([join, start_from_block], Bin) when is_binary(Bin) ->
     %% Raw 48-byte block hash; the spec carries no type, so special-case.
-    ar_util:encode(Bin);
+    arweave_util:encode(Bin);
 encode_leaf(Path, Value) ->
     encode_typed(spec_type(Path), Path, Value).
 
@@ -127,7 +127,7 @@ spec_type(Path) ->
     end.
 
 encode_typed(address, _Path, Bin) when is_binary(Bin) ->
-    ar_util:encode(Bin);
+    arweave_util:encode(Bin);
 encode_typed(Type, _Path, Peers)
   when (Type =:= resolved_peers_list orelse Type =:= peers_list),
        is_list(Peers) ->
@@ -143,7 +143,7 @@ encode_typed(_Type, _Path, Value) ->
 %% peer strings, which pass through untouched; resolved peer tuples
 %% still need formatting.
 encode_peer(Peer) when is_binary(Peer) -> Peer;
-encode_peer(Peer) -> ar_util:format_peer(Peer).
+encode_peer(Peer) -> arweave_util:format_peer(Peer).
 
 %% @doc Encode one element of a `list_map' value (a storage module,
 %% webhook, ...), encoding each field by its own `{list_item}' spec.
@@ -169,7 +169,7 @@ is_list_item_default(Root, Field, Value) ->
 encode_field(Root, Field, Value) ->
     FieldKey = arweave_config_options_registry:list_item_key(Root, Field),
     case spec_type(FieldKey) of
-        address when is_binary(Value) -> ar_util:encode(Value);
+        address when is_binary(Value) -> arweave_util:encode(Value);
         _ -> encode_container(Value)
     end.
 

@@ -219,7 +219,7 @@ handle_cast(repack, #state{} = State) ->
                  active ->
                      repack(State2);
                  paused ->
-                     ar_util:cast_after(?DEVICE_LOCK_WAIT, self(), repack),
+                     arweave_util:cast_after(?DEVICE_LOCK_WAIT, self(), repack),
                      State2;
                  _ ->
                      State2
@@ -269,7 +269,7 @@ handle_cast({expire_decipher_request, _Ref}, #state{} = State) ->
 
 handle_cast(count_states, #state{} = State) ->
     count_states(cache, State),
-    ar_util:cast_after(?STATE_COUNT_INTERVAL, self(), count_states),
+    arweave_util:cast_after(?STATE_COUNT_INTERVAL, self(), count_states),
     {noreply, State};
 
 handle_cast(recompute_sizing, #state{} = State) ->
@@ -398,7 +398,7 @@ handle_info(Request, #state{} = State) ->
     {noreply, State}.
 
 terminate(Reason, #state{} = State) ->
-    log_debug(terminate, State, [{reason, ar_util:safe_format(Reason)}]),
+    log_debug(terminate, State, [{reason, arweave_util:safe_format(Reason)}]),
     store_cursor(State),
     ?LOG_INFO([{module, ?MODULE},{pid, self()},{callback, terminate},{reason, Reason}]),
     ok.
@@ -538,7 +538,7 @@ repack(#state{ next_cursor = Cursor, module_end = ModuleEnd } = State)
         _ ->
             log_debug(repacking_complete_but_waiting, State, [
                                                               {target_packing, ar_serialize:encode_packing(TargetPacking, false)}]),
-            ar_util:cast_after(5000, self(), repack),
+            arweave_util:cast_after(5000, self(), repack),
             State
     end;
 
@@ -549,7 +549,7 @@ repack(#state{} = State) ->
         true ->
             log_debug(waiting_for_repack_buffer, State, [
                                                          {target_packing, ar_serialize:encode_packing(TargetPacking, false)}]),
-            ar_util:cast_after(200, self(), repack),
+            arweave_util:cast_after(200, self(), repack),
             State;
         false ->
             repack_footprint(Cursor, State)

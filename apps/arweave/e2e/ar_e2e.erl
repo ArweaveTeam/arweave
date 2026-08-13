@@ -54,7 +54,7 @@ load_wallet_fixture(WalletFixture) ->
     FixturePath = filename:join([FixtureDir, WalletName ++ ".json"]),
     Wallet = ar_wallet:load_keyfile(FixturePath),
     Address = ar_wallet:to_address(Wallet),
-    WalletPath = ar_wallet:wallet_filepath(ar_util:encode(Address)),
+    WalletPath = ar_wallet:wallet_filepath(arweave_util:encode(Address)),
     file:copy(FixturePath, WalletPath),
     ar_wallet:load_keyfile(WalletPath).
 
@@ -103,7 +103,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
     {_, StorageModules} = source_node_storage_modules(Node, unpacked, wallet_a, ModuleSize),
     [B0, _, {TX2, _} | _] = Blocks,
     ar_test_node:start_other_node(Node, B0, #{
-                                              [peers, trusted] => [ar_util:format_peer(ar_test_node:peer_ip(TempNode))],
+                                              [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(TempNode))],
                                               [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
                                               [join, auto] => true
                                              }, true),
@@ -143,7 +143,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
     {ok, Data} = ar_test_await:http_tx_data(Node, TX2#tx.id),
     {ok, ExpectedData} = load_chunk_fixture(
                            unpacked, ?ALIGNED_PARTITION_SIZE + floor(3.75 * ?DATA_CHUNK_SIZE)),
-    ExpectedData = ar_util:decode(Data),
+    ExpectedData = arweave_util:decode(Data),
 
     ?LOG_INFO("Source node ~p restarted.", [Node]),
 
@@ -248,7 +248,7 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
     {ok, {{<<"404">>, _}, _, _, _, _}} = ar_http:req(#{
                                                        method => get,
                                                        peer => ar_test_node:peer_ip(Node),
-                                                       path => "/tx/" ++ binary_to_list(ar_util:encode(TX1#tx.id)) ++ "/data"
+                                                       path => "/tx/" ++ binary_to_list(arweave_util:encode(TX1#tx.id)) ++ "/data"
                                                       }),
 
     ?LOG_INFO("Source node ~p assertions passed.", [Node]),

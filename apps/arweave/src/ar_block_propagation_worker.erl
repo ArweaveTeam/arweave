@@ -31,7 +31,7 @@ handle_call(Request, _From, State) ->
 handle_cast({send_block, SendFun, RetryCount, From}, State) ->
     case SendFun() of
         {ok, {{<<"412">>, _}, _, _, _, _}} when RetryCount > 0 ->
-            ar_util:cast_after(2000, self(),
+            arweave_util:cast_after(2000, self(),
                                {send_block, SendFun, RetryCount - 1, From}),
             {noreply, State};
         _ ->
@@ -42,18 +42,18 @@ handle_cast({send_block, SendFun, RetryCount, From}, State) ->
 handle_cast({send_block2, Peer, SendAnnouncementFun, SendFun, RetryCount, From}, State) ->
     case SendAnnouncementFun() of
         {ok, {{<<"412">>, _}, _, _, _, _}} when RetryCount > 0 ->
-            ar_util:cast_after(2000, self(),
+            arweave_util:cast_after(2000, self(),
                                {send_block2, Peer, SendAnnouncementFun, SendFun,
                                 RetryCount - 1, From});
         {ok, {{<<"200">>, _}, _, Body, _, _}} ->
             case catch ar_serialize:binary_to_block_announcement_response(Body) of
                 {'EXIT', Reason} ->
-                    ?LOG_INFO([{event, send_announcement_response}, {peer, ar_util:format_peer(Peer)},
+                    ?LOG_INFO([{event, send_announcement_response}, {peer, arweave_util:format_peer(Peer)},
                                {exit, Reason}]),
                     ar_peers:issue_warning(Peer, block_announcement, Reason),
                     From ! {worker_sent_block, self()};
                 {error, Reason} ->
-                    ?LOG_INFO([{event, send_announcement_response}, {peer, ar_util:format_peer(Peer)},
+                    ?LOG_INFO([{event, send_announcement_response}, {peer, arweave_util:format_peer(Peer)},
                                {error, Reason}]),
                     ar_peers:issue_warning(Peer, block_announcement, Reason),
                     From ! {worker_sent_block, self()};

@@ -148,7 +148,7 @@ log_prepare_solution_failure2(Solution, FailureType, FailureReason, Source, Addi
                [FailureReason]),
     ?LOG_ERROR([{event, failed_to_prepare_block_from_mining_solution},
                 {reason, FailureReason},
-                {solution_hash, ar_util:safe_encode(SolutionH)},
+                {solution_hash, arweave_util:safe_encode(SolutionH)},
                 {packing_difficulty, PackingDifficulty} | AdditionalLogData]),
     arweave_metrics:gauge_inc(mining_solution, [FailureReason]).
 
@@ -300,7 +300,7 @@ handle_cast({manual_garbage_collect, Ref}, #state{ gc_process_ref = Ref } = Stat
       State#state.workers
      ),
     ar_coordination:garbage_collect(),
-    ar_util:cast_after(State#state.gc_frequency_ms, ?MODULE, {manual_garbage_collect, Ref}),
+    arweave_util:cast_after(State#state.gc_frequency_ms, ?MODULE, {manual_garbage_collect, Ref}),
     {noreply, State};
 handle_cast({manual_garbage_collect, _}, State) ->
     %% Does not originate from the running instance of the server; happens in tests.
@@ -430,7 +430,7 @@ add_sessions([SessionKey | AddedSessions], State) ->
     {NextSeed, StartIntervalNumber, NextVDFDifficulty} = SessionKey,
     ar:console("Starting new mining session: "
                "next entropy nonce: ~s, interval number: ~B, next vdf difficulty: ~B.~n",
-               [ar_util:safe_encode(NextSeed), StartIntervalNumber, NextVDFDifficulty]),
+               [arweave_util:safe_encode(NextSeed), StartIntervalNumber, NextVDFDifficulty]),
     ?LOG_INFO([{event, new_mining_session},
                {session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
     add_sessions(AddedSessions, add_seed(SessionKey, State)).
@@ -718,11 +718,11 @@ prepare_solution(steps, Candidate, Solution) ->
                                 ar_nonce_limiter:encode_session_key(SolutionSessionKey)},
                                {start_step_number, PrevStepNumber},
                                {next_step_number, StepNumber},
-                               {seed, ar_util:safe_encode(PrevSeed)},
-                               {next_seed, ar_util:safe_encode(PrevNextSeed)},
+                               {seed, arweave_util:safe_encode(PrevSeed)},
+                               {next_seed, arweave_util:safe_encode(PrevNextSeed)},
                                {next_vdf_difficulty, PrevNextVDFDifficulty},
-                               {h1, ar_util:safe_encode(Candidate#mining_candidate.h1)},
-                               {h2, ar_util:safe_encode(Candidate#mining_candidate.h2)}],
+                               {h1, arweave_util:safe_encode(Candidate#mining_candidate.h1)},
+                               {h2, arweave_util:safe_encode(Candidate#mining_candidate.h2)}],
                     ?LOG_INFO([{event, found_solution_but_failed_to_find_checkpoints}
                               | LogData]),
                     may_be_leave_it_to_exit_peer(
@@ -737,10 +737,10 @@ prepare_solution(steps, Candidate, Solution) ->
             log_prepare_solution_failure(Solution, stale, stale_step_number, miner, [
                                                                                      {start_step_number, PrevStepNumber},
                                                                                      {next_step_number, StepNumber},
-                                                                                     {next_seed, ar_util:safe_encode(PrevNextSeed)},
+                                                                                     {next_seed, arweave_util:safe_encode(PrevNextSeed)},
                                                                                      {next_vdf_difficulty, PrevNextVDFDifficulty},
-                                                                                     {h1, ar_util:safe_encode(Candidate#mining_candidate.h1)},
-                                                                                     {h2, ar_util:safe_encode(Candidate#mining_candidate.h2)}
+                                                                                     {h1, arweave_util:safe_encode(Candidate#mining_candidate.h1)},
+                                                                                     {h2, arweave_util:safe_encode(Candidate#mining_candidate.h2)}
                                                                                     ]),
             error
     end;
@@ -928,7 +928,7 @@ prepare_poa(PoAType, Candidate, CurrentPoA) ->
                                        {recall_byte, RecallByte},
                                        {nonce, Nonce},
                                        {partition, PartitionNumber},
-                                       {mining_address, ar_util:safe_encode(MiningAddress)},
+                                       {mining_address, arweave_util:safe_encode(MiningAddress)},
                                        {packing, ar_serialize:encode_packing(Packing, true)},
                                        {packing_difficulty, PackingDifficulty}]),
                             {error, Error};
@@ -1009,11 +1009,11 @@ post_solution(not_set, Solution, State) ->
             ?LOG_WARNING([{event, failed_to_validate_solution},
                           {partition, PartitionNumber},
                           {step_number, StepNumber},
-                          {mining_address, ar_util:safe_encode(MiningAddress)},
+                          {mining_address, arweave_util:safe_encode(MiningAddress)},
                           {recall_byte1, RecallByte1},
                           {recall_byte2, RecallByte2},
-                          {solution_h, ar_util:safe_encode(H)},
-                          {nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)},
+                          {solution_h, arweave_util:safe_encode(H)},
+                          {nonce_limiter_output, arweave_util:safe_encode(NonceLimiterOutput)},
                           {diff_pair, DiffPair}]),
             ar:console("WARNING: we failed to validate our solution. Check logs for more "
                        "details~n"),
@@ -1025,11 +1025,11 @@ post_solution(not_set, Solution, State) ->
                           {reason, Reason},
                           {partition, PartitionNumber},
                           {step_number, StepNumber},
-                          {mining_address, ar_util:safe_encode(MiningAddress)},
+                          {mining_address, arweave_util:safe_encode(MiningAddress)},
                           {recall_byte1, RecallByte1},
                           {recall_byte2, RecallByte2},
-                          {solution_h, ar_util:safe_encode(H)},
-                          {nonce_limiter_output, ar_util:safe_encode(NonceLimiterOutput)},
+                          {solution_h, arweave_util:safe_encode(H)},
+                          {nonce_limiter_output, arweave_util:safe_encode(NonceLimiterOutput)},
                           {diff_pair, DiffPair}]),
             ar:console("WARNING: the solution we found is invalid. Check logs for more "
                        "details~n"),
@@ -1099,7 +1099,7 @@ fetch_poa_from_peers(RecallByte, _PackingDifficulty) ->
               spawn(
                 fun() ->
                         ?LOG_INFO([{event, last_moment_proof_search},
-                                   {peer, ar_util:format_peer(Peer)}, {recall_byte, RecallByte}]),
+                                   {peer, arweave_util:format_peer(Peer)}, {recall_byte, RecallByte}]),
                         case fetch_poa_from_peer(Peer, RecallByte) of
                             not_found ->
                                 ok;
@@ -1167,7 +1167,7 @@ handle_computed_output(SessionKey, StepNumber, Output, PartitionUpperBound,
             arweave_metrics:gauge_inc(mining_vdf_step),
             distribute_output(Candidate, State3),
             ?LOG_DEBUG([{event, mining_debug_processing_vdf_output},
-                        {step_number, StepNumber}, {output, ar_util:safe_encode(Output)},
+                        {step_number, StepNumber}, {output, arweave_util:safe_encode(Output)},
                         {start_interval_number, StartIntervalNumber},
                         {session_key, ar_nonce_limiter:encode_session_key(SessionKey)},
                         {partition_upper_bound, PartitionUpperBound}])
@@ -1206,7 +1206,7 @@ read_poa(RecallByte, ChunkOrSubChunk, Packing, Nonce) ->
 
 dump_invalid_solution_data(Data) ->
     DataDir = arweave_config:get([data_dir]),
-    ID = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(16))),
+    ID = binary_to_list(arweave_util:encode(crypto:strong_rand_bytes(16))),
     File = filename:join(DataDir, "invalid_solution_data_dump_" ++ ID),
     file:write_file(File, term_to_binary(Data)).
 
@@ -1299,8 +1299,8 @@ validate_solution(Solution, DiffPair) ->
                                     {true, PoACache, undefined};
                                 _ ->
                                     ?LOG_ERROR([{event, invalid_solution_hash},
-                                                {solution_hash, ar_util:encode(SolutionHash)},
-                                                {h1, ar_util:encode(H1)}]),
+                                                {solution_hash, arweave_util:encode(SolutionHash)},
+                                                {h1, arweave_util:encode(H1)}]),
                                     error
                             end;
                         false ->
@@ -1311,8 +1311,8 @@ validate_solution(Solution, DiffPair) ->
                                     %% there is no H2 solution, so we flag the solution invalid.
                                     {Diff1, _} = DiffPair,
                                     {false, {h1_diff_check,
-                                             ar_util:safe_encode(H0),
-                                             ar_util:safe_encode(H1),
+                                             arweave_util:safe_encode(H0),
+                                             arweave_util:safe_encode(H1),
                                              binary:decode_unsigned(H1),
                                              ar_node_utils:scaled_diff(Diff1, PackingDifficulty)
                                             }};
@@ -1325,9 +1325,9 @@ validate_solution(Solution, DiffPair) ->
                                         false ->
                                             {_, Diff2} = DiffPair,
                                             {false, {h2_diff_check,
-                                                     ar_util:safe_encode(H0),
-                                                     ar_util:safe_encode(H1),
-                                                     ar_util:safe_encode(H2),
+                                                     arweave_util:safe_encode(H0),
+                                                     arweave_util:safe_encode(H1),
+                                                     arweave_util:safe_encode(H2),
                                                      binary:decode_unsigned(H2),
                                                      ar_node_utils:scaled_diff(Diff2, PackingDifficulty)
                                                     }};
@@ -1373,7 +1373,7 @@ validate_solution(Solution, DiffPair) ->
 reset_gc_timer(GarbageCollectionFrequency, State) ->
     State2 = maybe_cancel_gc_timer(State),
     Ref = erlang:make_ref(),
-    ar_util:cast_after(GarbageCollectionFrequency, ?MODULE,
+    arweave_util:cast_after(GarbageCollectionFrequency, ?MODULE,
                        {manual_garbage_collect, Ref}),
     State2#state{ gc_process_ref = Ref, gc_frequency_ms = GarbageCollectionFrequency }.
 

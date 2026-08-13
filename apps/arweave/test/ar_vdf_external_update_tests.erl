@@ -28,8 +28,8 @@ setup_external_update() ->
         B0, ar_test_node:generate_address(main),
         #{
             [peers, vdf_server] => [
-                ar_util:format_peer(vdf_server_1()),
-                ar_util:format_peer(vdf_server_2())
+                arweave_util:format_peer(vdf_server_1()),
+                arweave_util:format_peer(vdf_server_2())
             ],
             [mining, enabled] => true
         }

@@ -41,7 +41,7 @@ test_syncs_data() ->
     lists:foreach(
         fun({B, #tx{ id = TXID }, Chunks, {_, Proof}}) ->
             TXSize = byte_size(binary:list_to_bin(Chunks)),
-            TXOffset = ar_merkle:extract_note(ar_util:decode(maps:get(tx_path, Proof))),
+            TXOffset = ar_merkle:extract_note(arweave_util:decode(maps:get(tx_path, Proof))),
             AbsoluteTXOffset = B#block.weave_size - B#block.block_size + TXOffset,
             ExpectedOffsetInfo = ar_serialize:jsonify(#{
                     offset => integer_to_binary(AbsoluteTXOffset),
@@ -56,7 +56,7 @@ test_syncs_data() ->
                     end
                 end
             ),
-            ExpectedData = ar_util:encode(binary:list_to_bin(Chunks)),
+            ExpectedData = arweave_util:encode(binary:list_to_bin(Chunks)),
             ar_test_node:assert_get_tx_data(main, TXID, ExpectedData),
             case AbsoluteTXOffset > DiskPoolThreshold of
                 true ->

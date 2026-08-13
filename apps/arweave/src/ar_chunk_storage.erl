@@ -292,7 +292,7 @@ get_chunk_storage_path(DataDir, StoreID) ->
 -spec get_chunk_bucket_start(Offset :: non_neg_integer()) -> non_neg_integer().
 get_chunk_bucket_start(Offset) ->
     PaddedEndOffset = ar_block:get_chunk_padded_offset(Offset),
-    ar_util:floor_int(max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE).
+    arweave_util:floor_int(max(0, PaddedEndOffset - ?DATA_CHUNK_SIZE), ?DATA_CHUNK_SIZE).
 
 -spec get_chunk_bucket_end(Offset :: non_neg_integer()) -> non_neg_integer().
 get_chunk_bucket_end(Offset) ->
@@ -548,7 +548,7 @@ get_chunk_file_start(EndOffset) ->
     get_chunk_file_start_by_start_offset(StartOffset).
 
 get_chunk_file_start_by_start_offset(StartOffset) ->
-    ar_util:floor_int(StartOffset, get_chunk_group_size()).
+    arweave_util:floor_int(StartOffset, get_chunk_group_size()).
 
 write_chunk(PaddedOffset, Chunk, FileIndex, StoreID) ->
     {_ChunkFileStart, Filepath, Position, ChunkOffset} =
@@ -607,7 +607,7 @@ get_position_and_relative_chunk_offset(ChunkFileStart, Offset) ->
     get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, BucketPickOffset).
 
 get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, BucketPickOffset) ->
-    BucketStart = ar_util:floor_int(BucketPickOffset, ?DATA_CHUNK_SIZE),
+    BucketStart = arweave_util:floor_int(BucketPickOffset, ?DATA_CHUNK_SIZE),
     ChunkOffset = case BucketPickOffset - BucketStart of
                       0 ->
                           %% Represent 0 as the largest possible offset plus one,
@@ -688,7 +688,7 @@ read_chunk(Byte, Start, ChunkFileStart, Filepath, ChunkCount, StoreID) ->
 read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount, StoreID) ->
     {Position, _ChunkOffset} =
         get_position_and_relative_chunk_offset_by_start_offset(ChunkFileStart, Start),
-    BucketStart = ar_util:floor_int(Start, ?DATA_CHUNK_SIZE),
+    BucketStart = arweave_util:floor_int(Start, ?DATA_CHUNK_SIZE),
     read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID).
 
 read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID) ->
@@ -1263,7 +1263,7 @@ assert_get(Expected, Offset, StoreID) ->
 
 defrag_command_test() ->
     RandomID = crypto:strong_rand_bytes(16),
-    Filepath = "test_defrag_" ++ binary_to_list(ar_util:encode(RandomID)),
+    Filepath = "test_defrag_" ++ binary_to_list(arweave_util:encode(RandomID)),
     {ok, F} = file:open(Filepath, [binary, write]),
     {O1, C1} = {236, crypto:strong_rand_bytes(262144)},
     {O2, C2} = {262144, crypto:strong_rand_bytes(262144)},

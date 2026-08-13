@@ -764,9 +764,9 @@ test_sign_tx() ->
                     ar_tx:get_addresses([TX])
                 ),
             Args1 = {Rate, PricePerGiBMinute, 1, 1, 0, 0, Accounts, Timestamp},
-            ?assert(verify(TX, Args1), ar_util:encode(TX#tx.id)),
+            ?assert(verify(TX, Args1), arweave_util:encode(TX#tx.id)),
             Args2 = {Rate, PricePerGiBMinute, 1, 1, 0, 1, Accounts, Timestamp},
-            ?assert(verify(TX, Args2), ar_util:encode(TX#tx.id))
+            ?assert(verify(TX, Args2), arweave_util:encode(TX#tx.id))
         end,
         ValidTXs
     ),
@@ -797,9 +797,9 @@ test_sign_tx() ->
                     ar_tx:get_addresses([TX])
                 ),
             Args3 = {Rate, PricePerGiBMinute, 1, 1, 0, 0, Accounts, Timestamp},
-            ?assert(not verify(TX, Args3), ar_util:encode(TX#tx.id)),
+            ?assert(not verify(TX, Args3), arweave_util:encode(TX#tx.id)),
             Args4 = {Rate, PricePerGiBMinute, 1, 1, 0, 1, Accounts, Timestamp},
-            ?assert(not verify(TX, Args4), ar_util:encode(TX#tx.id))
+            ?assert(not verify(TX, Args4), arweave_util:encode(TX#tx.id))
         end,
         InvalidTXs
     ).
@@ -919,7 +919,7 @@ generate_and_validate_uneven_chunk_tree_test() ->
     ).
 
 test_generate_chunk_tree_and_validate_path(Data, ChallengeLocation) ->
-    ChunkStart = ar_util:floor_int(ChallengeLocation, ?DATA_CHUNK_SIZE),
+    ChunkStart = arweave_util:floor_int(ChallengeLocation, ?DATA_CHUNK_SIZE),
     Chunk = binary:part(Data, ChunkStart, min(?DATA_CHUNK_SIZE, byte_size(Data) - ChunkStart)),
     #tx{ data_root = DataRoot, data_tree = DataTree } =
         ar_tx:generate_chunk_tree(

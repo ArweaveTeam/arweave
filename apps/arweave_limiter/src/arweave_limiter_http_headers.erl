@@ -23,11 +23,14 @@ to_http_headers({_, _, #{remaining := infinity,
                          reset_seconds := _Reset}}) ->
     #{};
 to_http_headers({RegOrRej, _Mode, #{expiring_limit := _ExpiringLimit,
-                                    remaining      := Remaining,
-                                    reset_seconds  := Reset} = HeadersInfo}) ->
+                                    remaining := Remaining,
+                                    reset_seconds := Reset,
+                                    reset_amount := ResetAmount,
+                                    policies := _Policies} = HeadersInfo}) ->
     Headers = #{<<"RateLimit-Limit">> => ratelimit_limit_value(HeadersInfo),
                 <<"RateLimit-Remaining">> => integer_to_binary(Remaining),
-                <<"RateLimit-Reset">> =>     integer_to_binary(Reset)},
+                <<"RateLimit-Reset">> => integer_to_binary(Reset),
+                <<"RateLimit-Reset-Amount">> => integer_to_binary(ResetAmount)},
     maybe_add_retry_after(RegOrRej, Remaining, Reset, Headers).
 
 %% RateLimit-Limit = expiring-limit *( "," quota-policy )
@@ -40,16 +43,14 @@ ratelimit_limit_value(#{expiring_limit := Expiring,
                         policies := #{id := ID,
                                       concurrency := #{limit := ConcurrencyLimit},
                                       sliding_window := SW,
-                                      leaky_bucket   := LB}}) ->
+                                      leaky_bucket := LB}}) ->
     SWLimit  = maps:get(limit, SW),
-    SWWindow = maps:get(window_seconds, SW),
     LBBurst  = maps:get(burst, LB),
     iolist_to_binary(
       io_lib:format(
-        "~B, ~B;w=~B;policy=\"~s sliding window\", "
-        "~B;w=~B;burst=~B;policy=\"~s leaky bucket\" "
-        "~B;w=~B;policy=\"~s concurrency\" ",
-        [Expiring, SWLimit, SWWindow, ID, LBBurst, SWWindow, LBBurst, ID, ConcurrencyLimit, 1, ID])).
+        "~B, ~B;policy=\"~s usage\", "
+        "~B;policy=\"~s concurrency\" ",
+        [Expiring, SWLimit + LBBurst, ID, ConcurrencyLimit, ID])).
 
 %% When both Retry-After and RateLimit-Reset are present they
 %% should reference the same instant. We add Retry-After only on rejects

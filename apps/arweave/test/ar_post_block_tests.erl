@@ -619,7 +619,7 @@ test_reject_block_invalid_double_signing_proof(KeyType) ->
     Key0 = ar_wallet:new(),
     Addr0 = ar_wallet:to_address(Key0),
     [B0] = ar_weave:init([{Addr0, ?AR(1000), <<>>}], ar_retarget:switch_to_linear_diff(2)),
-    ?debugFmt("Genesis address: ~s, initial balance: ~B AR.~n", [ar_util:encode(Addr0), 1000]),
+    ?debugFmt("Genesis address: ~s, initial balance: ~B AR.~n", [arweave_util:encode(Addr0), 1000]),
     ar_test_node:start(B0),
     ar_test_node:start_peer(peer1, B0, MiningAddr),
     ar_test_node:disconnect_from(peer1),

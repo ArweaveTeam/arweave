@@ -297,12 +297,12 @@ build_chunk_proofs(SizeTaggedChunks, DataRoot, DataTree, DataSize, Options) ->
                 ({Chunk, ChunkEndOffset}, Proofs) ->
                     ProofOffset = proof_offset(ChunkEndOffset, ProofOffsetType),
                     Proof = maybe_add_tx_path(#{
-                        data_root => ar_util:encode(DataRoot),
+                        data_root => arweave_util:encode(DataRoot),
                         data_path =>
-                            ar_util:encode(
+                            arweave_util:encode(
                                 ar_merkle:generate_path(DataRoot, ProofOffset, DataTree)
                             ),
-                        chunk => ar_util:encode(Chunk),
+                        chunk => arweave_util:encode(Chunk),
                         offset => integer_to_binary(ProofOffset),
                         data_size => integer_to_binary(DataSize)
                     }, Options),
@@ -319,7 +319,7 @@ proof_offset(ChunkEndOffset, inclusive_end) ->
     ChunkEndOffset - 1.
 
 maybe_add_tx_path(Proof, #{ tx_path := TXPath }) ->
-    Proof#{ tx_path => ar_util:encode(TXPath) };
+    Proof#{ tx_path => arweave_util:encode(TXPath) };
 maybe_add_tx_path(Proof, _Options) ->
     Proof.
 
@@ -328,7 +328,7 @@ get_tx_offset(Node, TXID) ->
     ar_http:req(#{
         method => get,
         peer => Peer,
-        path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/offset"
+        path => "/tx/" ++ binary_to_list(arweave_util:encode(TXID)) ++ "/offset"
     }).
 
 get_tx_data(TXID) ->
@@ -336,7 +336,7 @@ get_tx_data(TXID) ->
     ar_http:req(#{
         method => get,
         peer => {127, 0, 0, 1, Port},
-        path => "/tx/" ++ binary_to_list(ar_util:encode(TXID)) ++ "/data"
+        path => "/tx/" ++ binary_to_list(arweave_util:encode(TXID)) ++ "/data"
     }).
 
 post_random_blocks(Wallet) ->
@@ -472,7 +472,7 @@ wait_until_syncs_chunks(Node, Proofs, UpperBound) ->
 %% `ExpectedFields' shape `ar_test_await:http_chunk_matches/3,4' expects.
 proof_to_expected_fields(Proof) ->
     #{
-        chunk => ar_util:decode(maps:get(chunk, Proof)),
-        tx_path => ar_util:decode(maps:get(tx_path, Proof)),
-        data_path => ar_util:decode(maps:get(data_path, Proof))
+        chunk => arweave_util:decode(maps:get(chunk, Proof)),
+        tx_path => arweave_util:decode(maps:get(tx_path, Proof)),
+        data_path => arweave_util:decode(maps:get(data_path, Proof))
     }.

@@ -642,7 +642,7 @@ get_balance(Pub) ->
         ar_http:req(#{
             method => get,
             peer => Peer,
-            path => "/wallet/" ++ binary_to_list(ar_util:encode(Address)) ++ "/balance"
+            path => "/wallet/" ++ binary_to_list(arweave_util:encode(Address)) ++ "/balance"
         }),
     Balance = binary_to_integer(Reply),
     B = ar_node:get_current_block(),
@@ -650,8 +650,8 @@ get_balance(Pub) ->
         ar_http:req(#{
             method => get,
             peer => Peer,
-            path => "/wallet_list/" ++ binary_to_list(ar_util:encode(B#block.wallet_list))
-                    ++ "/" ++ binary_to_list(ar_util:encode(Address)) ++ "/balance"
+            path => "/wallet_list/" ++ binary_to_list(arweave_util:encode(B#block.wallet_list))
+                    ++ "/" ++ binary_to_list(arweave_util:encode(Address)) ++ "/balance"
         }),
     case binary_to_integer(Reply2) of
         Balance ->
@@ -667,7 +667,7 @@ get_reserved_balance(Address) ->
         ar_http:req(#{
             method => get,
             peer => Peer,
-            path => "/wallet/" ++ binary_to_list(ar_util:encode(Address))
+            path => "/wallet/" ++ binary_to_list(arweave_util:encode(Address))
                     ++ "/reserved_rewards_total"
         }),
     binary_to_integer(Reply).

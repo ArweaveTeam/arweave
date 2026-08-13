@@ -115,7 +115,7 @@ handle_cast({update_serialized_sync_buckets, serialized_sync_buckets = Key}, Sta
     {SyncBuckets2, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets,
                                                                       ?MAX_SYNC_BUCKETS_SIZE),
     ets:insert(?MODULE, {Key, SerializedSyncBuckets}),
-    ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
+    arweave_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
                        ?MODULE, {update_serialized_sync_buckets, Key}),
     {noreply, State#state{ sync_buckets = SyncBuckets2 }};
 handle_cast({update_serialized_sync_buckets, serialized_footprint_buckets = Key}, State) ->
@@ -123,7 +123,7 @@ handle_cast({update_serialized_sync_buckets, serialized_footprint_buckets = Key}
     {FootprintBuckets2, SerializedFootprintBuckets} = ar_sync_buckets:serialize(
                                                         FootprintBuckets, ?MAX_SYNC_BUCKETS_SIZE),
     ets:insert(?MODULE, {Key, SerializedFootprintBuckets}),
-    ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
+    arweave_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
                        ?MODULE, {update_serialized_sync_buckets, Key}),
     {noreply, State#state{ footprint_buckets = FootprintBuckets2 }};
 
@@ -221,7 +221,7 @@ cache_and_get_sync_buckets(SyncRecord, Key, SyncBuckets) ->
     {SyncBuckets3, SerializedSyncBuckets} = ar_sync_buckets:serialize(SyncBuckets2,
                                                                       ?MAX_SYNC_BUCKETS_SIZE),
     ets:insert(?MODULE, {Key, SerializedSyncBuckets}),
-    ar_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
+    arweave_util:cast_after(?UPDATE_SERIALIZED_SYNC_BUCKETS_FREQUENCY_S * 1000,
                        ?MODULE, {update_serialized_sync_buckets, Key}),
     SyncBuckets3.
 

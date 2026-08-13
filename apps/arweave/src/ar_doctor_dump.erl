@@ -27,7 +27,7 @@ dump([IncludeTXs, H, MinHeight, DataDir, OutputDir]) ->
     ar_kv_sup:start_link(),
     ar_storage_sup:start_link(),
 
-    dump_blocks(ar_util:decode(H),
+    dump_blocks(arweave_util:decode(H),
                 list_to_integer(MinHeight),
                 OutputDir,
                 list_to_boolean(IncludeTXs)),
@@ -40,7 +40,7 @@ list_to_boolean("false") -> false;
 list_to_boolean(_) -> false.
 
 dump_blocks(BH, MinHeight, OutputDir, IncludeTXs) ->
-    H = ar_util:encode(BH),
+    H = arweave_util:encode(BH),
     case ar_kv:get(block_db, BH) of
         {ok, Bin} ->
             try
@@ -49,7 +49,7 @@ dump_blocks(BH, MinHeight, OutputDir, IncludeTXs) ->
                         case B#block.height >= MinHeight of
                             true ->
                                 io:format("Block: ~p / ~p", [B#block.height, H]),
-                                JsonFilename = io_lib:format("~s.json", [ar_util:encode(B#block.indep_hash)]),
+                                JsonFilename = io_lib:format("~s.json", [arweave_util:encode(B#block.indep_hash)]),
                                 OutputFilePath = filename:join([OutputDir, "blocks", JsonFilename]),
                                 case file:read_file_info(OutputFilePath) of
                                     {ok, _FileInfo} ->
@@ -92,7 +92,7 @@ dump_txs([TXID | TXIDs], OutputDir) ->
             {ok, TX} = ar_serialize:binary_to_tx(Bin),
             Json = ar_serialize:tx_to_json_struct(TX),
             JsonString = ar_serialize:jsonify(Json),
-            JsonFilename = io_lib:format("~s.json", [ar_util:encode(TXID)]),
+            JsonFilename = io_lib:format("~s.json", [arweave_util:encode(TXID)]),
             OutputFilePath = filename:join([OutputDir, "txs", JsonFilename]),
             file:write_file(OutputFilePath, JsonString);
         _ ->

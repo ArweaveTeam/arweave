@@ -135,19 +135,19 @@ test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
     {JSON3} = ar_serialize:tx_to_json_struct(TX2),
     InvalidPayloads = [
         [{<<"target">>, <<":">>} | JSON2],
-        [{<<"target">>, << <<":">>/binary, (ar_util:encode(<< 0:32 >>))/binary >>} | JSON2],
-        [{<<"target">>, << (ar_util:encode(Address19))/binary, <<":">>/binary,
-                (ar_util:encode(<< (erlang:crc32(Address19)):32 >> ))/binary >>} | JSON2],
-        [{<<"target">>, << (ar_util:encode(Address65))/binary, <<":">>/binary,
-                (ar_util:encode(<< (erlang:crc32(Address65)):32 >>))/binary >>} | JSON2],
-        [{<<"target">>, << (ar_util:encode(Address32))/binary, <<":">>/binary,
-                (ar_util:encode(<< 0:32 >>))/binary >>} | JSON2],
-        [{<<"target">>, << (ar_util:encode(Address20))/binary, <<":">>/binary,
-                (ar_util:encode(<< 1:32 >>))/binary >>} | JSON2],
-        [{<<"target">>, << (ar_util:encode(Address32))/binary, <<":">>/binary,
-                (ar_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary,
+        [{<<"target">>, << <<":">>/binary, (arweave_util:encode(<< 0:32 >>))/binary >>} | JSON2],
+        [{<<"target">>, << (arweave_util:encode(Address19))/binary, <<":">>/binary,
+                (arweave_util:encode(<< (erlang:crc32(Address19)):32 >> ))/binary >>} | JSON2],
+        [{<<"target">>, << (arweave_util:encode(Address65))/binary, <<":">>/binary,
+                (arweave_util:encode(<< (erlang:crc32(Address65)):32 >>))/binary >>} | JSON2],
+        [{<<"target">>, << (arweave_util:encode(Address32))/binary, <<":">>/binary,
+                (arweave_util:encode(<< 0:32 >>))/binary >>} | JSON2],
+        [{<<"target">>, << (arweave_util:encode(Address20))/binary, <<":">>/binary,
+                (arweave_util:encode(<< 1:32 >>))/binary >>} | JSON2],
+        [{<<"target">>, << (arweave_util:encode(Address32))/binary, <<":">>/binary,
+                (arweave_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary,
                 <<":">>/binary >>} | JSON2],
-        [{<<"target">>, << (ar_util:encode(Address32))/binary, <<":">>/binary >>} | JSON3]
+        [{<<"target">>, << (arweave_util:encode(Address32))/binary, <<":">>/binary >>} | JSON3]
     ],
     lists:foreach(
         fun(Struct) ->
@@ -158,8 +158,8 @@ test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
         InvalidPayloads
     ),
     ValidPayloads = [
-        [{<<"target">>, << (ar_util:encode(Address32))/binary, <<":">>/binary,
-                (ar_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary >>} | JSON3],
+        [{<<"target">>, << (arweave_util:encode(Address32))/binary, <<":">>/binary,
+                (arweave_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary >>} | JSON3],
         JSON
     ],
     lists:foreach(
@@ -176,17 +176,17 @@ test_addresses_with_checksum({_, Wallet1, {_, Pub2}, _}) ->
     {ok, [{H, _, _} | _]} = ar_test_await:node_height(main, LocalHeight + 1),
     ?assertMatch({ok, _}, ar_test_await:node_height(peer1, RemoteHeight + 1)),
     B = ar_test_await:block_stored(H, true),
-    ChecksumAddr = << (ar_util:encode(Address32))/binary, <<":">>/binary,
-            (ar_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary >>,
+    ChecksumAddr = << (arweave_util:encode(Address32))/binary, <<":">>/binary,
+            (arweave_util:encode(<< (erlang:crc32(Address32)):32 >>))/binary >>,
     ?assertEqual(2, length(B#block.txs)),
-    Balance = get_balance(ar_util:encode(Address32)),
+    Balance = get_balance(arweave_util:encode(Address32)),
     ?assertEqual(Balance, get_balance(ChecksumAddr)),
-    LastTX = get_last_tx(ar_util:encode(Address32)),
+    LastTX = get_last_tx(arweave_util:encode(Address32)),
     ?assertEqual(LastTX, get_last_tx(ChecksumAddr)),
-    Price = get_price(ar_util:encode(Address32)),
+    Price = get_price(arweave_util:encode(Address32)),
     ?assertEqual(Price, get_price(ChecksumAddr)),
     ServeTXTarget = maps:get(<<"target">>, jiffy:decode(get_tx(TX2#tx.id), [return_maps])),
-    ?assertEqual(ar_util:encode(TX2#tx.target), ServeTXTarget).
+    ?assertEqual(arweave_util:encode(TX2#tx.target), ServeTXTarget).
 
 get_balance(EncodedAddr) ->
     Peer = ar_test_node:peer_ip(main),
@@ -226,7 +226,7 @@ get_price(EncodedAddr) ->
 
 test_price_endpoints({_B0, _Wallet1, _Wallet2, {_, StaticPub}}) ->
     Peer = ar_test_node:peer_ip(main),
-    Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(StaticPub))),
+    Addr = binary_to_list(arweave_util:encode(ar_wallet:to_address(StaticPub))),
     ExpectedFee = ?AR(1),
     ExpectedDenomination = 1,
     assert_price_endpoint(Peer, "/price/100", [], binary,
@@ -288,7 +288,7 @@ get_tx(ID) ->
         ar_http:req(#{
             method => get,
             peer => Peer,
-            path => "/tx/" ++ binary_to_list(ar_util:encode(ID)),
+            path => "/tx/" ++ binary_to_list(arweave_util:encode(ID)),
             headers => [{<<"x-p2p-port">>, integer_to_binary(Port)}]
         }),
     Reply.
@@ -404,7 +404,7 @@ node_blacklisting_test_frame(RequestFun, ErrorResponse, NRequests, ExpectedError
     ar_blacklist_middleware:reset(),
     arweave_limiter_sup:reset_all(),
     arweave_throttling_sup:all_off(),
-    Responses = ar_util:batch_pmap(
+    Responses = arweave_util:batch_pmap(
         RequestFun,
         lists:seq(1, NRequests),
         50,
@@ -460,7 +460,7 @@ group(Grouper, [Item | List], Acc) ->
 %% @doc Check that balances can be retreived over the network.
 test_get_balance({B0, _, _, {_, Pub1}}) ->
     LocalHeight = ar_node:get_height(),
-    Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1))),
+    Addr = binary_to_list(arweave_util:encode(ar_wallet:to_address(Pub1))),
     {ok, {{<<"200">>, _}, _, Body, _, _}} =
         ar_http:req(#{
             method => get,
@@ -468,7 +468,7 @@ test_get_balance({B0, _, _, {_, Pub1}}) ->
             path => "/wallet/" ++ Addr ++ "/balance"
         }),
     ?assertEqual(?AR(10), binary_to_integer(Body)),
-    RootHash = binary_to_list(ar_util:encode(B0#block.wallet_list)),
+    RootHash = binary_to_list(arweave_util:encode(B0#block.wallet_list)),
     {ok, {{<<"200">>, _}, _, Body, _, _}} =
         ar_http:req(#{
             method => get,
@@ -488,7 +488,7 @@ test_get_wallet_list_in_chunks({B0, {_, Pub1}, {_, Pub2}, {_, StaticPub}}) ->
     Addr1 = ar_wallet:to_address(Pub1),
     Addr2 = ar_wallet:to_address(Pub2),
     StaticAddr = ar_wallet:to_address(StaticPub),
-    NonExistentRootHash = binary_to_list(ar_util:encode(crypto:strong_rand_bytes(32))),
+    NonExistentRootHash = binary_to_list(arweave_util:encode(crypto:strong_rand_bytes(32))),
     {ok, {{<<"404">>, _}, _, <<"Root hash not found.">>, _, _}} =
         ar_http:req(#{
             method => get,
@@ -505,7 +505,7 @@ test_get_wallet_list_in_chunks({B0, {_, Pub1}, {_, Pub2}, {_, StaticPub}}) ->
             {StaticAddr, {?AR(10), <<"TEST_ID">>}},
             {GenesisAddr, {0, TXID}}]),
     {ExpectedWallets1, ExpectedWallets2} = lists:split(2, ExpectedWallets),
-    RootHash = binary_to_list(ar_util:encode(B0#block.wallet_list)),
+    RootHash = binary_to_list(arweave_util:encode(B0#block.wallet_list)),
     {ok, {{<<"200">>, _}, _, Body1, _, _}} =
         ar_http:req(#{
             method => get,
@@ -522,7 +522,7 @@ test_get_wallet_list_in_chunks({B0, {_, Pub1}, {_, Pub2}, {_, StaticPub}}) ->
         ar_http:req(#{
             method => get,
             peer => ar_test_node:peer_ip(main),
-            path => "/wallet_list/" ++ RootHash ++ "/" ++ ar_util:encode(Cursor)
+            path => "/wallet_list/" ++ RootHash ++ "/" ++ arweave_util:encode(Cursor)
         }),
     ?assertEqual(#{
             next_cursor => last,
@@ -538,14 +538,14 @@ test_get_height(_) ->
 
 %% @doc Test that last tx associated with a wallet can be fetched.
 test_get_last_tx_single({_, _, _, {_, StaticPub}}) ->
-    Addr = binary_to_list(ar_util:encode(ar_wallet:to_address(StaticPub))),
+    Addr = binary_to_list(arweave_util:encode(ar_wallet:to_address(StaticPub))),
     {ok, {{<<"200">>, _}, _, Body, _, _}} =
         ar_http:req(#{
             method => get,
             peer => ar_test_node:peer_ip(main),
             path => "/wallet/" ++ Addr ++ "/last_tx"
         }),
-    ?assertEqual(<<"TEST_ID">>, ar_util:decode(Body)).
+    ?assertEqual(<<"TEST_ID">>, arweave_util:decode(Body)).
 
 %% @doc Ensure that blocks can be received via a hash.
 test_get_block_by_hash({B0, _, _, _}) ->
@@ -573,7 +573,7 @@ test_get_current_block({B0, _, _, _}) ->
     {ok, {{<<"200">>, _}, _, Body, _, _}} =
         ar_http:req(#{ method => get, peer => ar_test_node:peer_ip(main), path => "/block/current" }),
     {JSONStruct} = jiffy:decode(Body),
-    ?assertEqual(ar_util:encode(B0#block.indep_hash),
+    ?assertEqual(arweave_util:encode(B0#block.indep_hash),
             proplists:get_value(<<"indep_hash">>, JSONStruct)).
 
 %% @doc Test that the various different methods of GETing a block all perform
@@ -609,9 +609,9 @@ test_get_format_2_tx(_) ->
             data_root = DataRoot },
     InvalidDataRootTX = #tx{ id = InvalidTXID } = (ar_tx:new(<<"DATA">>))#tx{ format = 2 },
     EmptyTX = #tx{ id = EmptyTXID } = (ar_tx:new())#tx{ format = 2 },
-    EncodedTXID = binary_to_list(ar_util:encode(TXID)),
-    EncodedInvalidTXID = binary_to_list(ar_util:encode(InvalidTXID)),
-    EncodedEmptyTXID = binary_to_list(ar_util:encode(EmptyTXID)),
+    EncodedTXID = binary_to_list(arweave_util:encode(TXID)),
+    EncodedInvalidTXID = binary_to_list(arweave_util:encode(InvalidTXID)),
+    EncodedEmptyTXID = binary_to_list(arweave_util:encode(EmptyTXID)),
     ar_http_iface_client:send_tx_json(ar_test_node:peer_ip(main), ValidTX#tx.id,
             ar_serialize:jsonify(ar_serialize:tx_to_json_struct(ValidTX))),
     {ok, {{<<"400">>, _}, _, <<"The attached data is split in an unknown way.">>, _, _}} =
@@ -643,7 +643,7 @@ test_get_format_2_tx(_) ->
         }, (ar_serialize:json_struct_to_tx(Body))#tx{ owner_address = not_set }),
     %% Ensure data can be fetched for format=2 transactions via /tx/[ID]/data.
     {ok, Data} = ar_test_await:http_tx_data(main, TXID),
-    ?assertEqual(ar_util:encode(<<"DATA">>), Data),
+    ?assertEqual(arweave_util:encode(<<"DATA">>), Data),
     {ok, {{<<"404">>, _}, _, _, _, _}} =
         ar_http:req(#{
             method => get,
@@ -673,7 +673,7 @@ test_get_format_2_tx(_) ->
 test_get_format_1_tx(_) ->
     LocalHeight = ar_node:get_height(),
     TX = #tx{ id = TXID } = ar_tx:new(<<"DATA">>),
-    EncodedTXID = binary_to_list(ar_util:encode(TXID)),
+    EncodedTXID = binary_to_list(arweave_util:encode(TXID)),
     ar_http_iface_client:send_tx_binary(ar_test_node:peer_ip(main), TX#tx.id,
             ar_serialize:tx_to_binary(TX)),
     ?assertEqual(ok, ar_test_await:txs_ready_for_mining(main, [TX])),
@@ -764,10 +764,10 @@ test_add_tx_and_get_last({_B0, Wallet1, Wallet2, _StaticWallet}) ->
             method => get,
             peer => ar_test_node:peer_ip(main),
             path => "/wallet/"
-                    ++ binary_to_list(ar_util:encode(ar_wallet:to_address(Pub1)))
+                    ++ binary_to_list(arweave_util:encode(ar_wallet:to_address(Pub1)))
                     ++ "/last_tx"
         }),
-    ?assertEqual(ID, ar_util:decode(Body)).
+    ?assertEqual(ID, arweave_util:decode(Body)).
 
 %% @doc Post a tx to the network and ensure that its subfields can be gathered
 test_get_subfields_of_tx(_) ->
@@ -780,7 +780,7 @@ test_get_subfields_of_tx(_) ->
     ?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
     {ok, Body} = ar_test_await:http_tx_data(main, TX#tx.id),
     Orig = TX#tx.data,
-    ?assertEqual(Orig, ar_util:decode(Body)).
+    ?assertEqual(Orig, arweave_util:decode(Body)).
 
 %% @doc Correctly check the status of pending is returned for a pending transaction
 test_get_pending_tx(_) ->
@@ -792,7 +792,7 @@ test_get_pending_tx(_) ->
         ar_http:req(#{
             method => get,
             peer => ar_test_node:peer_ip(main),
-            path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id))
+            path => "/tx/" ++ binary_to_list(arweave_util:encode(TX#tx.id))
         }),
     ?assertEqual(<<"Pending">>, Body).
 
@@ -823,7 +823,7 @@ test_get_tx_body(_) ->
     ar_test_node:mine(),
     ?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 1)),
     {ok, Data} = ar_test_await:http_tx_data(main, TX#tx.id),
-    ?assertEqual(<<"TEST DATA">>, ar_util:decode(Data)).
+    ?assertEqual(<<"TEST DATA">>, arweave_util:decode(Data)).
 
 test_get_tx_status(_) ->
     ar_test_node:connect_to_peer(peer1),
@@ -836,7 +836,7 @@ test_get_tx_status(_) ->
         ar_http:req(#{
             method => get,
             peer => ar_test_node:peer_ip(main),
-            path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/status"
+            path => "/tx/" ++ binary_to_list(arweave_util:encode(TX#tx.id)) ++ "/status"
         })
     end,
     ?assertMatch({ok, {{<<"202">>, _}, _, <<"Pending">>, _, _}}, FetchStatus()),
@@ -857,7 +857,7 @@ test_get_tx_status(_) ->
     ?assertEqual(
         #{
             <<"block_height">> => length(BI) - 1,
-            <<"block_indep_hash">> => ar_util:encode(element(1, hd(BI))),
+            <<"block_indep_hash">> => arweave_util:encode(element(1, hd(BI))),
             <<"number_of_confirmations">> => 1
         },
         maps:from_list(Res)
@@ -870,7 +870,7 @@ test_get_tx_status(_) ->
             {Res2} = ar_serialize:dejsonify(Body2),
             #{
                 <<"block_height">> => length(BI) - 1,
-                <<"block_indep_hash">> => ar_util:encode(element(1, hd(BI))),
+                <<"block_indep_hash">> => arweave_util:encode(element(1, hd(BI))),
                 <<"number_of_confirmations">> => 2
             } == maps:from_list(Res2)
         end,
@@ -920,7 +920,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
         %% Top up the new wallet.
         TopUpTX = ar_test_node:sign_tx(Wallet, #{
             owner => Pub,
-            target => ar_util:decode(Address),
+            target => arweave_util:decode(Address),
             quantity => ?AR(100),
             reward => ?AR(1)
             }),
@@ -982,7 +982,7 @@ test_post_unsigned_tx({_B0, Wallet1, _Wallet2, _StaticWallet}) ->
         ok = arweave_config:force_config(#{[internal_api_secret] => not_set}),
         {Res} = ar_serialize:dejsonify(Body),
         TXID = proplists:get_value(<<"id">>, Res),
-        SignedTXID = ar_util:decode(TXID),
+        SignedTXID = arweave_util:decode(TXID),
         ok = ar_test_await:txs_ready_for_mining(main, [#tx{ id = SignedTXID }]),
         ar_test_node:mine(),
         ?assertMatch({ok, _}, ar_test_await:node_height(main, LocalHeight + 2)),
@@ -1020,7 +1020,7 @@ test_get_error_of_data_limit(_) ->
         ar_http:req(#{
             method => get,
             peer => ar_test_node:peer_ip(main),
-            path => "/tx/" ++ binary_to_list(ar_util:encode(TX#tx.id)) ++ "/data",
+            path => "/tx/" ++ binary_to_list(arweave_util:encode(TX#tx.id)) ++ "/data",
             limit => Limit
         }),
     ?assertEqual({error, too_much_data}, Resp).

@@ -57,11 +57,11 @@ handle_cast(fetch_jobs, State) ->
         {ok, Jobs} ->
             emit_pool_jobs(Jobs),
             ar_pool:cache_jobs(Jobs),
-            ar_util:cast_after(?FETCH_JOBS_FREQUENCY_MS, self(), fetch_jobs);
+            arweave_util:cast_after(?FETCH_JOBS_FREQUENCY_MS, self(), fetch_jobs);
         {error, Error} ->
             ?LOG_WARNING([{event, failed_to_fetch_pool_jobs},
                           {error, io_lib:format("~p", [Error])}]),
-            ar_util:cast_after(?FETCH_JOBS_RETRY_MS, self(), fetch_jobs)
+            arweave_util:cast_after(?FETCH_JOBS_RETRY_MS, self(), fetch_jobs)
     end,
     {noreply, State};
 

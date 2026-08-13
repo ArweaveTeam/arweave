@@ -606,13 +606,13 @@ update_tx_index(SizeTaggedTXs, BlockStartOffset, StoreID) ->
                           {error, Reason} ->
                               ?LOG_ERROR([{event, failed_to_update_tx_index},
                                           {reason, io_lib:format("~p", [Reason])},
-                                          {tx, ar_util:encode(TXID)}]),
+                                          {tx, arweave_util:encode(TXID)}]),
                               TXEndOffset
                       end;
                   {error, Reason} ->
                       ?LOG_ERROR([{event, failed_to_update_tx_offset_index},
                                   {reason, io_lib:format("~p", [Reason])},
-                                  {tx, ar_util:encode(TXID)}]),
+                                  {tx, arweave_util:encode(TXID)}]),
                       TXEndOffset
               end
       end,

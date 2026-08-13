@@ -51,7 +51,7 @@ validate_path(ID, Dest, RightBound, Path) ->
 %% @doc Validate the given merkle path using the given set of rules.
 validate_path(ID, Dest, RightBound, _Path, _Ruleset) when RightBound =< 0 ->
     ?LOG_ERROR([{event, validate_path_called_with_non_positive_right_bound},
-                {root, ar_util:encode(ID)}, {dest, Dest}, {right_bound, RightBound}]),
+                {root, arweave_util:encode(ID)}, {dest, Dest}, {right_bound, RightBound}]),
     throw(invalid_right_bound);
 validate_path(ID, Dest, RightBound, Path, Ruleset) when Dest >= RightBound ->
     validate_path(ID, RightBound - 1, RightBound, Path, Ruleset);
@@ -149,7 +149,7 @@ validate_path(ID, _Dest, LeftBound, RightBound,
                                _ when ChunkSize == (?DATA_CHUNK_SIZE) ->
                                    LeftBound rem (?DATA_CHUNK_SIZE) == 0;
                                _ when EndOffset == DataSize ->
-                                   Border = ar_util:floor_int(RightBound,   ?DATA_CHUNK_SIZE),
+                                   Border = arweave_util:floor_int(RightBound,   ?DATA_CHUNK_SIZE),
                                    RightBound rem (?DATA_CHUNK_SIZE) > 0
                                        andalso LeftBound =< Border;
                                _ ->
@@ -387,7 +387,7 @@ generate_leaf({Data, EndOffset}) ->
 
 %% Note: This implementation leaves some duplicates in the tree structure.
 %% The produced trees could be a little smaller if these duplicates were
-%% not present, but removing them with ar_util:unique takes far too long.
+%% not present, but removing them with arweave_util:unique takes far too long.
 generate_all_rows([RootN], Tree) ->
     RootID = RootN#node.id,
     {RootID, Tree};

@@ -85,7 +85,7 @@ legacy_mining_address_b64() ->
     <<"LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw">>.
 
 legacy_mining_addr() ->
-    ar_util:decode(legacy_mining_address_b64()).
+    arweave_util:decode(legacy_mining_address_b64()).
 
 %% @doc The in-memory values `legacy_config.json' must produce. Asserted
 %% both against a direct legacy load and against a load of the file the
