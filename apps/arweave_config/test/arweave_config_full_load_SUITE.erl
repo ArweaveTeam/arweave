@@ -28,6 +28,7 @@ all() ->
         load_mixed_dot_and_nested_json_yaml,
         reject_mixed_dot_and_nested_conflicts,
         load_legacy_json,
+        legacy_cache_limit_rounds_up,
         load_cli_and_legacy_cli,
         load_env
     ].
@@ -137,6 +138,29 @@ load_legacy_json(_Config) ->
         {ok, _} = arweave_config_format_legacy_json:parse(
             arweave_config_test_util:legacy_fixture()),
         assert_legacy_json_subset()
+    end),
+    ok.
+
+legacy_cache_limit_rounds_up(_Config) ->
+    arweave_config:with_test_config(fun() ->
+        ok = arweave_config_format_legacy_cli:parse(["data_cache_size_limit", "5"]),
+        ?assertEqual(2, arweave_config:get([sync, cache_size]))
+    end),
+    %% [packing, cache_size] stays in chunks (ar_packing_server takes chunks):
+    %% the legacy value passes through without unit conversion.
+    arweave_config:with_test_config(fun() ->
+        ok = arweave_config_format_legacy_cli:parse(["packing_cache_size_limit", "5"]),
+        ?assertEqual(5, arweave_config:get([packing, cache_size]))
+    end),
+    arweave_config:with_test_config(fun() ->
+        {ok, _} = arweave_config_format_legacy_json:parse(
+            <<"{\"data_cache_size_limit\":5}">>),
+        ?assertEqual(2, arweave_config:get([sync, cache_size]))
+    end),
+    arweave_config:with_test_config(fun() ->
+        {ok, _} = arweave_config_format_legacy_json:parse(
+            <<"{\"packing_cache_size_limit\":5}">>),
+        ?assertEqual(5, arweave_config:get([packing, cache_size]))
     end),
     ok.
 
@@ -648,23 +672,23 @@ integer_keyword_cases() ->
         {"join_workers", "5", [join, workers], 5},
         {"diff", "42", [genesis, difficulty], 42},
         {"hashing_threads", "8", [mining, hashing_threads], 8},
-        {"data_cache_size_limit", "10000", [sync, cache_size_limit], 10000},
+        {"data_cache_size_limit", "10000", [sync, cache_size], 2500},
         {"packing_cache_size_limit", "20000", [packing, cache_size], 20000},
         {"mining_cache_size_mb", "3", [mining, cache_size], 3},
         {"max_emitters", "4", [gossip, tx, max_emitters], 4},
         {"disk_space_check_frequency", "10", [disk_space_check_frequency], 10000},
         {"max_propagation_peers", "8", [gossip, tx, max_peers], 8},
         {"max_block_propagation_peers", "60", [gossip, block, max_peers], 60},
-        {"sync_jobs", "10", [sync, jobs], 10},
-        {"header_sync_jobs", "1", [gossip, header_sync_jobs], 1},
+        {"sync_max_download_rate", "10000000", [sync, max_download_rate], 10000000},
+        {"header_sync_jobs", "1", [gossip, header, workers], 1},
         {"post_tx_timeout", "50", [gossip, tx, post_timeout], 50},
-        {"max_connections", "512", [network, server, tcp, max_connections], 512},
+        {"max_connections", "512", [network, server, http, max_connections], 512},
         {"disk_pool_data_root_expiration_time", "10000",
             [disk_pool, data_root_expiration_time], 10000},
         {"max_disk_pool_buffer_mb", "100000", [disk_pool, max_buffer_size], 100000},
         {"max_disk_pool_data_root_buffer_mb", "100000000",
             [disk_pool, max_data_root_buffer_size], 100000000},
-        {"disk_cache_size_mb", "1024", [gossip, header_cache_size], 1024},
+        {"disk_cache_size_mb", "1024", [gossip, header, cache_size], 1024},
         {"packing_workers", "25", [packing, workers], 25},
         {"replica_2_9_workers", "16", [packing, entropy, workers], 16},
         {"replica_2_9_entropy_cache_size_mb", "2000",
@@ -678,19 +702,19 @@ integer_keyword_cases() ->
         {"block_throttle_by_solution_interval", "12000",
             [gossip, block, throttle_by_solution_interval], 12000},
         {"http_api.tcp.idle_timeout_seconds", "15",
-            [network, server, transport, idle_timeout], 15000},
+            [network, server, http, idle_timeout], 15000},
         {"cm_poll_interval", "1000", [cm, poll_interval], 1000},
         {"cm_out_batch_timeout", "20", [cm, out_batch_timeout], 20},
         {"rocksdb_flush_interval", "1800", [rocksdb, flush_interval], 1800},
         {"rocksdb_wal_sync_interval", "60", [rocksdb, wal_sync_interval], 60},
         {"network.tcp.connection_timeout", "30",
-            [network, server, shutdown_connection_timeout], 30},
+            [network, server, shutdown, connection_timeout], 30},
         {"http_client.http.keepalive", "30000",
             [network, client, http, keepalive], 30000},
         {"http_client.tcp.linger_timeout", "0",
-            [network, client, tcp, linger_timeout], 0},
+            [network, client, socket, linger_timeout], 0},
         {"http_client.tcp.send_timeout", "15000",
-            [network, client, tcp, send_timeout], 15000},
+            [network, client, socket, send_timeout], 15000},
         {"http_api.http.active_n", "100", [network, server, http, active_n], 100},
         {"http_api.http.inactivity_timeout", "300000",
             [network, server, http, inactivity_timeout], 300000},
@@ -698,15 +722,15 @@ integer_keyword_cases() ->
             [network, server, http, linger_timeout], 1000},
         {"http_api.http.request_timeout", "5000",
             [network, server, http, request_timeout], 5000},
-        {"http_api.tcp.backlog", "1024", [network, server, tcp, backlog], 1024},
+        {"http_api.tcp.backlog", "1024", [network, server, socket, backlog], 1024},
         {"http_api.tcp.linger_timeout", "0",
-            [network, server, tcp, linger_timeout], 0},
+            [network, server, socket, linger_timeout], 0},
         {"http_api.tcp.listener_shutdown", "5000",
-            [network, server, tcp, listener_shutdown], 5000},
+            [network, server, http, listener_shutdown], 5000},
         {"http_api.tcp.num_acceptors", "500",
-            [network, server, tcp, num_acceptors], 500},
+            [network, server, http, num_acceptors], 500},
         {"http_api.tcp.send_timeout", "15000",
-            [network, server, tcp, send_timeout], 15000},
+            [network, server, socket, send_timeout], 15000},
         {"chunk_storage_file_size", "2097152000", [chunk_storage_file_size], 2097152000}
     ],
     [{Keyword, [Keyword, Value], fun() -> assert_eq(Key, Expected) end}
@@ -741,36 +765,36 @@ enum_keyword_cases() ->
         {"vdf hiopt_m4", ["vdf", "hiopt_m4"],
             fun() -> assert_eq([vdf, algorithm], hiopt_m4) end},
         {"network.socket.backend socket", ["network.socket.backend", "socket"],
-            fun() -> assert_eq([network, server, socket_backend], socket) end},
+            fun() -> assert_eq([network, server, socket, backend], socket) end},
         {"network.tcp.shutdown.mode shutdown",
             ["network.tcp.shutdown.mode", "shutdown"],
-            fun() -> assert_eq([network, server, shutdown_mode], shutdown) end},
+            fun() -> assert_eq([network, server, shutdown, mode], shutdown) end},
         {"max_duplicate_data_roots infinity", ["max_duplicate_data_roots", "infinity"],
             fun() -> assert_eq([gossip, data_roots, max_duplicates], infinity) end},
         {"enable_data_roots_syncing true", ["enable_data_roots_syncing", "true"],
             fun() -> assert_eq([gossip, data_roots, syncing_enabled], true) end},
         {"http_client.tcp.delay_send true", ["http_client.tcp.delay_send", "true"],
-            fun() -> assert_eq([network, client, tcp, delay_send], true) end},
+            fun() -> assert_eq([network, client, socket, delay_send], true) end},
         {"http_client.tcp.keepalive true", ["http_client.tcp.keepalive", "true"],
-            fun() -> assert_eq([network, client, tcp, keepalive], true) end},
+            fun() -> assert_eq([network, client, socket, keepalive], true) end},
         {"http_client.tcp.linger true", ["http_client.tcp.linger", "true"],
-            fun() -> assert_eq([network, client, tcp, linger], true) end},
+            fun() -> assert_eq([network, client, socket, linger], true) end},
         {"http_client.tcp.nodelay true", ["http_client.tcp.nodelay", "true"],
-            fun() -> assert_eq([network, client, tcp, nodelay], true) end},
+            fun() -> assert_eq([network, client, socket, nodelay], true) end},
         {"http_client.tcp.send_timeout_close true",
             ["http_client.tcp.send_timeout_close", "true"],
-            fun() -> assert_eq([network, client, tcp, send_timeout_close], true) end},
+            fun() -> assert_eq([network, client, socket, send_timeout_close], true) end},
         {"http_api.tcp.delay_send true", ["http_api.tcp.delay_send", "true"],
-            fun() -> assert_eq([network, server, tcp, delay_send], true) end},
+            fun() -> assert_eq([network, server, socket, delay_send], true) end},
         {"http_api.tcp.keepalive false", ["http_api.tcp.keepalive", "false"],
-            fun() -> assert_eq([network, server, tcp, keepalive], false) end},
+            fun() -> assert_eq([network, server, socket, keepalive], false) end},
         {"http_api.tcp.linger true", ["http_api.tcp.linger", "true"],
-            fun() -> assert_eq([network, server, tcp, linger], true) end},
+            fun() -> assert_eq([network, server, socket, linger], true) end},
         {"http_api.tcp.nodelay true", ["http_api.tcp.nodelay", "true"],
-            fun() -> assert_eq([network, server, tcp, nodelay], true) end},
+            fun() -> assert_eq([network, server, socket, nodelay], true) end},
         {"http_api.tcp.send_timeout_close true",
             ["http_api.tcp.send_timeout_close", "true"],
-            fun() -> assert_eq([network, server, tcp, send_timeout_close], true) end}
+            fun() -> assert_eq([network, server, socket, send_timeout_close], true) end}
     ].
 
 accumulating_cases() ->

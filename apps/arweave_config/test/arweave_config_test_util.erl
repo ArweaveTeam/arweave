@@ -105,7 +105,7 @@ assert_legacy_json_values(ExpectedStorageModules) ->
     ?assertEqual(true, arweave_config:get([mining, enabled])),
     ?assertEqual(legacy_mining_addr(), arweave_config:get([mining, address])),
     ?assertEqual(17, arweave_config:get([mining, hashing_threads])),
-    ?assertEqual(10, arweave_config:get([sync, jobs])),
+    ?assertEqual(10000000, arweave_config:get([sync, max_download_rate])),
     ?assertEqual(true, arweave_config:get([sync, local_peers_only])),
     ?assertEqual(false, arweave_config:get([join, auto])),
     ?assertEqual(9, arweave_config:get([join, workers])),

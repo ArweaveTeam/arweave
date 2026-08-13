@@ -339,7 +339,7 @@ start_node(B0, Overrides, WaitUntilSync) when is_map(Overrides) ->
     arweave_config:start(),
     DataDir = arweave_config:get([data_dir]),
     write_genesis_files(DataDir, B0),
-    update_config(Overrides),
+    ok = update_config(Overrides),
     ok = arweave_limiter:start(),
     start_dependencies(),
     ar_test_await:node_joined(main),
@@ -419,9 +419,8 @@ base_cm_config(Peers) ->
         [join, auto]                            => true,
         [mining, address]                       => RewardAddr,
         [mining, hashing_threads]               => 1,
-        [sync, jobs]                            => 2,
-        [disk_pool, jobs]                       => 2,
-        [gossip, header_sync_jobs]              => 2,
+        [disk_pool, workers]                       => 2,
+        [gossip, header, workers]              => 2,
         [features, serve_tx_data_without_limits] => true,
         [features, serve_wallet_lists]          => true,
         [features, pack_served_chunks]          => true,
@@ -518,7 +517,7 @@ clean_up_and_stop() ->
     ok = filelib:ensure_dir(DataDir),
     {ok, Entries} = file:list_dir_all(DataDir),
     lists:foreach(
-        fun ("wallets") ->
+        fun    ("wallets") ->
                 ok;
             (Entry) ->
                 ?LOG_DEBUG([{event, clean_up_and_stop},
@@ -747,14 +746,13 @@ start_with_overrides(B0, RewardAddr, Overrides) when is_map(Overrides) ->
         [join, auto]                            => true,
         [mining, address]                       => RewardAddr,
         [disk_space_check_frequency]            => 1000,
-        [sync, jobs]                            => 2,
-        [disk_pool, jobs]                       => 2,
-        [gossip, header_sync_jobs]              => 2,
+        [disk_pool, workers]                       => 2,
+        [gossip, header, workers]              => 2,
         [features, serve_tx_data_without_limits] => true,
         [features, serve_wallet_lists]          => true,
         [debug]                                 => true
     },
-    update_config(maps:merge(TestDefaults, Overrides)),
+    ok = update_config(maps:merge(TestDefaults, Overrides)),
     ok = arweave_limiter:start(),
     start_dependencies(),
     ar_test_await:node_joined(main),
@@ -1112,7 +1110,7 @@ join(JoinOnNode, Rejoin, Overrides) when is_map(Overrides) ->
         [join, auto]                    => true,
         [peers, trusted]                => [arweave_util:format_peer(Peer)]
     },
-    update_config(maps:merge(JoinDefaults, Overrides)),
+    ok = update_config(maps:merge(JoinDefaults, Overrides)),
     start_dependencies(),
     ar_test_await:node_joined(main),
     whereis(ar_node_worker).

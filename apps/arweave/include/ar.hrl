@@ -13,6 +13,9 @@
 %% Is a subject for future changes.
 -define(DEFAULT_CALL_TIMEOUT, 600000).
 
+%% Delay between retries for work that cannot start until the node has joined.
+-define(NODE_JOIN_RETRY_DELAY_MS, 1_000).
+
 %% The mainnet name. Does not change at the hard forks.
 -ifndef(NETWORK_NAME).
 -ifdef(AR_TEST).

@@ -8,7 +8,7 @@
         get_network_footprint_bucket_size/0]).
 
 -include_lib("arweave/include/ar_sync_buckets.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
+-include_lib("arweave/include/ar_sync.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %%%===================================================================
@@ -112,7 +112,7 @@ deserialize(SerializedBuckets, ExpectedBucketSize) ->
                 BucketSize >= ExpectedBucketSize,
                 BucketSize =< ExpectedBucketSize * ?MAX_SYNC_BUCKET_SIZE_RATIO ->
             {ok, {BucketSize, maps:filter(
-                fun (Bucket, Share) when
+                fun    (Bucket, Share) when
                             is_integer(Bucket), Bucket >= 0,
                             is_number(Share), Share > 0, Share =< 1 ->
                         true;

@@ -1242,7 +1242,8 @@ count_states(cache, #state{} = State) ->
       } = State,
     MapCount = maps:fold(
                  fun(_BucketEndOffset, RepackChunk, Acc) ->
-                         maps:update_with(RepackChunk#repack_chunk.state, fun(Count) -> Count + 1 end, 1, Acc)
+                         arweave_util:increment_map_value(
+                             RepackChunk#repack_chunk.state, Acc)
                  end,
                  #{},
                  Map
@@ -1267,7 +1268,8 @@ count_states(queue, #state{} = State) ->
       } = State,
     WriteQueueCount = gb_sets:fold(
                         fun({_BucketEndOffset, RepackChunk}, Acc) ->
-                                maps:update_with(RepackChunk#repack_chunk.state, fun(Count) -> Count + 1 end, 1, Acc)
+                                arweave_util:increment_map_value(
+                                    RepackChunk#repack_chunk.state, Acc)
                         end,
                         #{},
                         WriteQueue

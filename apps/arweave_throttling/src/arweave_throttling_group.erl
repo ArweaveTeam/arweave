@@ -150,10 +150,10 @@ registered_name(ID) when is_atom(ID) ->
 %% to evict the entry from the queue and returns `{error, timeout}'.
 -spec throttle(atom(), tuple()) -> ok | {error, term()}.
 throttle(GroupID, Peer) ->
-	{Time, Value} = timer:tc(fun do_throttle/2, [GroupID, Peer]),
-	arweave_metrics:histogram_observe(arweave_throttling_request_response_time_microseconds,
-					[atom_to_list(GroupID)], Time),
-	Value.
+    {Time, Value} = timer:tc(fun do_throttle/2, [GroupID, Peer]),
+    arweave_metrics:histogram_observe(arweave_throttling_request_response_time_microseconds,
+                    [atom_to_list(GroupID)], Time),
+    Value.
 
 -spec do_throttle(atom(), tuple()) -> ok | {error, term()}.
 do_throttle(GroupID, Peer) ->

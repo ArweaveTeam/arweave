@@ -33,7 +33,7 @@
 -include("ar_consensus.hrl").
 -include("ar_data_sync.hrl").
 -include("ar_sync_buckets.hrl").
--include("ar_data_discovery.hrl").
+-include("ar_sync.hrl").
 -include("ar_mining.hrl").
 -include("ar_wallets.hrl").
 -include("ar_pool.hrl").
@@ -409,7 +409,7 @@ get_chunk_binary(Peer, Offset, RequestedPacking) ->
                              peer => Peer,
                              method => get,
                              path => "/chunk2/" ++ integer_to_binary(Offset),
-                             timeout => 120 * 1000,
+                             timeout => ?FETCH_TIMEOUT_MS,
                              connect_timeout => 5000,
                              limit => ?MAX_SERIALIZED_CHUNK_PROOF_SIZE,
                              headers => p2p_headers() ++ Headers

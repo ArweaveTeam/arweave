@@ -48,7 +48,7 @@
   "max_block_propagation_peers": 60,
   "post_tx_timeout": 50,
   "max_emitters": 4,
-  "sync_jobs": 10,
+  "sync_max_download_rate": 10000000,
   "header_sync_jobs": 1,
   "disk_pool_jobs": 2,
   "verify": "log",

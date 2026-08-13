@@ -58,7 +58,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, backlog],
+            option_key => [network, server, socket, backlog],
             default => ?DEFAULT_COWBOY_TCP_BACKLOG,
             type => pos_integer,
             legacy => 'http_api.tcp.backlog',
@@ -68,7 +68,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, delay_send],
+            option_key => [network, server, socket, delay_send],
             default => ?DEFAULT_COWBOY_TCP_DELAY_SEND,
             type => boolean,
             legacy => 'http_api.tcp.delay_send',
@@ -77,7 +77,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, keepalive],
+            option_key => [network, server, socket, keepalive],
             default => ?DEFAULT_COWBOY_TCP_KEEPALIVE,
             type => boolean,
             legacy => 'http_api.tcp.keepalive',
@@ -86,7 +86,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, linger],
+            option_key => [network, server, socket, linger],
             default => ?DEFAULT_COWBOY_TCP_LINGER,
             type => boolean,
             legacy => 'http_api.tcp.linger',
@@ -95,7 +95,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, linger_timeout],
+            option_key => [network, server, socket, linger_timeout],
             default => ?DEFAULT_COWBOY_TCP_LINGER_TIMEOUT,
             type => pos_integer,
             legacy => 'http_api.tcp.linger_timeout',
@@ -104,7 +104,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, listener_shutdown],
+            option_key => [network, server, http, listener_shutdown],
             default => ?DEFAULT_COWBOY_TCP_LISTENER_SHUTDOWN,
             type => pos_integer,
             legacy => 'http_api.tcp.listener_shutdown',
@@ -114,7 +114,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, max_connections],
+            option_key => [network, server, http, max_connections],
             runtime => true,
             default => ?DEFAULT_COWBOY_TCP_MAX_CONNECTIONS,
             type => pos_integer,
@@ -130,7 +130,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, nodelay],
+            option_key => [network, server, socket, nodelay],
             default => ?DEFAULT_COWBOY_TCP_NODELAY,
             type => boolean,
             legacy => 'http_api.tcp.nodelay',
@@ -140,7 +140,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, num_acceptors],
+            option_key => [network, server, http, num_acceptors],
             default => ?DEFAULT_COWBOY_TCP_NUM_ACCEPTORS,
             type => pos_integer,
             legacy => 'http_api.tcp.num_acceptors',
@@ -149,7 +149,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, send_timeout],
+            option_key => [network, server, socket, send_timeout],
             default => ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT,
             type => pos_integer,
             legacy => 'http_api.tcp.send_timeout',
@@ -158,7 +158,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, tcp, send_timeout_close],
+            option_key => [network, server, socket, send_timeout_close],
             default => ?DEFAULT_COWBOY_TCP_SEND_TIMEOUT_CLOSE,
             type => boolean,
             legacy => 'http_api.tcp.send_timeout_close',
@@ -168,7 +168,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, transport, idle_timeout],
+            option_key => [network, server, http, idle_timeout],
             runtime => true,
             default => ?DEFAULT_COWBOY_TCP_IDLE_TIMEOUT_SECOND * 1000,
             type => pos_integer,
@@ -186,7 +186,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, shutdown_connection_timeout],
+            option_key => [network, server, shutdown, connection_timeout],
             runtime => true,
             default => ?SHUTDOWN_TCP_CONNECTION_TIMEOUT,
             type => pos_integer,
@@ -196,7 +196,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, shutdown_mode],
+            option_key => [network, server, shutdown, mode],
             runtime => true,
             default => ?SHUTDOWN_TCP_MODE,
             type => atom,
@@ -206,7 +206,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, server, socket_backend],
+            option_key => [network, server, socket, backend],
             default => ?DEFAULT_SOCKET_BACKEND,
             type => atom,
             legacy => 'socket.backend',
@@ -241,7 +241,18 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, client, tcp, delay_send],
+            option_key => [network, client, http, connections_per_peer],
+            runtime => true,
+            default => ?DEFAULT_HTTP_CONNECTIONS_PER_PEER,
+            type => pos_integer,
+            short_description =>
+                <<"Maximum parallel HTTP client connections per peer. The pool "
+                  "grows toward this only for peers under sustained load and "
+                  "shrinks idle peers back to one.">>
+        },
+        #{
+            enabled => true,
+            option_key => [network, client, socket, delay_send],
             runtime => true,
             default => ?DEFAULT_GUN_TCP_DELAY_SEND,
             type => boolean,
@@ -251,7 +262,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, client, tcp, keepalive],
+            option_key => [network, client, socket, keepalive],
             runtime => true,
             default => ?DEFAULT_GUN_TCP_KEEPALIVE,
             type => boolean,
@@ -261,7 +272,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, client, tcp, linger],
+            option_key => [network, client, socket, linger],
             runtime => true,
             default => ?DEFAULT_GUN_TCP_LINGER,
             type => boolean,
@@ -271,7 +282,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, client, tcp, linger_timeout],
+            option_key => [network, client, socket, linger_timeout],
             runtime => true,
             default => ?DEFAULT_GUN_TCP_LINGER_TIMEOUT,
             type => pos_integer,
@@ -281,7 +292,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, client, tcp, nodelay],
+            option_key => [network, client, socket, nodelay],
             runtime => true,
             default => ?DEFAULT_GUN_TCP_NODELAY,
             type => boolean,
@@ -292,7 +303,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, client, tcp, send_timeout],
+            option_key => [network, client, socket, send_timeout],
             runtime => true,
             default => ?DEFAULT_GUN_TCP_SEND_TIMEOUT,
             type => pos_integer,
@@ -302,7 +313,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [network, client, tcp, send_timeout_close],
+            option_key => [network, client, socket, send_timeout_close],
             runtime => true,
             default => ?DEFAULT_GUN_TCP_SEND_TIMEOUT_CLOSE,
             type => boolean,

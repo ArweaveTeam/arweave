@@ -126,34 +126,34 @@ empty_local_peers_becomes_empty_array(Config) ->
 %% `defrag => false' — neither written by the operator, neither should
 %% be emitted.
 no_implicit_storage_defaults_emitted(Config) ->
-	Raw = convert_raw(Config, "storage",
-		<<"{\"storage_modules\": [\"0,unpacked\", \"1,unpacked\"]}">>),
-	?assertEqual(nomatch, binary:match(Raw, <<"repack_modules">>)),
-	?assertEqual(nomatch, binary:match(Raw, <<"defrag">>)),
-	?assertNotEqual(nomatch, binary:match(Raw, <<"storage_modules">>)),
-	ok.
+    Raw = convert_raw(Config, "storage",
+        <<"{\"storage_modules\": [\"0,unpacked\", \"1,unpacked\"]}">>),
+    ?assertEqual(nomatch, binary:match(Raw, <<"repack_modules">>)),
+    ?assertEqual(nomatch, binary:match(Raw, <<"defrag">>)),
+    ?assertNotEqual(nomatch, binary:match(Raw, <<"storage_modules">>)),
+    ok.
 
 %% Legacy semaphores parsing used to materialize the full default map;
 %% only the operator-written entries may appear in the output.
 only_user_semaphores_emitted(Config) ->
-	Raw = convert_raw(Config, "semaphores",
-		<<"{\"semaphores\": {\"get_chunk\": 1000}}">>),
-	?assertNotEqual(nomatch, binary:match(Raw, <<"get_chunk">>)),
-	?assertEqual(nomatch, binary:match(Raw, <<"post_tx">>)),
-	?assertEqual(nomatch, binary:match(Raw, <<"get_wallet_list">>)),
-	ok.
+    Raw = convert_raw(Config, "semaphores",
+        <<"{\"semaphores\": {\"get_chunk\": 1000}}">>),
+    ?assertNotEqual(nomatch, binary:match(Raw, <<"get_chunk">>)),
+    ?assertEqual(nomatch, binary:match(Raw, <<"post_tx">>)),
+    ?assertEqual(nomatch, binary:match(Raw, <<"get_wallet_list">>)),
+    ok.
 
 %% Peer strings must survive conversion verbatim: no hostname->IP
 %% resolution baked into the file, no default :1984 appended.
 peer_strings_preserved(Config) ->
-	Raw = convert_raw(Config, "peers",
-		<<"{\"peers\": [\"localhost\", \"127.0.0.1:2984\"],"
-		  " \"local_peers\": [\"127.0.0.1\"]}">>),
-	?assertNotEqual(nomatch, binary:match(Raw, <<"\"localhost\"">>)),
-	?assertNotEqual(nomatch, binary:match(Raw, <<"\"127.0.0.1:2984\"">>)),
-	?assertNotEqual(nomatch, binary:match(Raw, <<"\"127.0.0.1\"">>)),
-	?assertEqual(nomatch, binary:match(Raw, <<"127.0.0.1:1984">>)),
-	ok.
+    Raw = convert_raw(Config, "peers",
+        <<"{\"peers\": [\"localhost\", \"127.0.0.1:2984\"],"
+          " \"local_peers\": [\"127.0.0.1\"]}">>),
+    ?assertNotEqual(nomatch, binary:match(Raw, <<"\"localhost\"">>)),
+    ?assertNotEqual(nomatch, binary:match(Raw, <<"\"127.0.0.1:2984\"">>)),
+    ?assertNotEqual(nomatch, binary:match(Raw, <<"\"127.0.0.1\"">>)),
+    ?assertEqual(nomatch, binary:match(Raw, <<"127.0.0.1:1984">>)),
+    ok.
 
 %% The legacy parser stores paths as Erlang strings, which the YAML
 %% encoder must emit as scalars, not sequences of character codes.
@@ -161,17 +161,17 @@ peer_strings_preserved(Config) ->
 %% (hostnames, paths) stay unquoted; only YAML-special content
 %% (host:port colons) is quoted.
 yaml_string_scalars_and_minimal_quoting(Config) ->
-	Input = out_path(Config, "yaml_scalars_in.json"),
-	ok = file:write_file(Input,
-		<<"{\"data_dir\": \"/opt/data\","
-		  " \"peers\": [\"chain-1.arweave.xyz\", \"1.2.3.4:1985\"]}">>),
-	Out = out_path(Config, "yaml_scalars_out.yaml"),
-	ok = arweave_config_convert:convert(yaml, Input, Out),
-	{ok, Raw} = file:read_file(Out),
-	?assertNotEqual(nomatch, binary:match(Raw, <<"data_dir: /opt/data\n">>)),
-	?assertNotEqual(nomatch, binary:match(Raw, <<"- chain-1.arweave.xyz\n">>)),
-	?assertNotEqual(nomatch, binary:match(Raw, <<"- \"1.2.3.4:1985\"\n">>)),
-	ok.
+    Input = out_path(Config, "yaml_scalars_in.json"),
+    ok = file:write_file(Input,
+        <<"{\"data_dir\": \"/opt/data\","
+          " \"peers\": [\"chain-1.arweave.xyz\", \"1.2.3.4:1985\"]}">>),
+    Out = out_path(Config, "yaml_scalars_out.yaml"),
+    ok = arweave_config_convert:convert(yaml, Input, Out),
+    {ok, Raw} = file:read_file(Out),
+    ?assertNotEqual(nomatch, binary:match(Raw, <<"data_dir: /opt/data\n">>)),
+    ?assertNotEqual(nomatch, binary:match(Raw, <<"- chain-1.arweave.xyz\n">>)),
+    ?assertNotEqual(nomatch, binary:match(Raw, <<"- \"1.2.3.4:1985\"\n">>)),
+    ok.
 
 %% Custom (non-partition) bucket sizes cannot be converted without
 %% renaming the module's on-disk directory, so the converter must
@@ -246,12 +246,12 @@ partition_sized(Entry) ->
     end.
 
 convert_raw(Config, Name, LegacyJSON) ->
-	Input = out_path(Config, Name ++ "_in.json"),
-	ok = file:write_file(Input, LegacyJSON),
-	Out = out_path(Config, Name ++ "_out.json"),
-	ok = arweave_config_convert:convert(json, Input, Out),
-	{ok, Raw} = file:read_file(Out),
-	Raw.
+    Input = out_path(Config, Name ++ "_in.json"),
+    ok = file:write_file(Input, LegacyJSON),
+    Out = out_path(Config, Name ++ "_out.json"),
+    ok = arweave_config_convert:convert(json, Input, Out),
+    {ok, Raw} = file:read_file(Out),
+    Raw.
 
 %% @doc Loading the converted file must leave the node in exactly the
 %% state the legacy file itself produces — converting a config may not

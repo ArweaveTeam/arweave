@@ -3,8 +3,12 @@
 -test_category([fast]).
 
 -export([new/0, from_list/1, add/3, delete/3, cut/2, is_inside/2, sum/1, union/2, serialize/2,
-         safe_from_etf/1, count/1, is_empty/1, take_smallest/1, take_largest/1, largest/1,
-         smallest/1, to_list/1, iterator_from/2, next/1, fold/3, outerjoin/2, intersection/2]).
+        safe_from_etf/1, count/1, is_empty/1, take_smallest/1, take_largest/1, largest/1,
+        smallest/1, to_list/1, iterator_from/2, next/1, fold/3, outerjoin/2, intersection/2]).
+-export_type([interval/0, intervals/0]).
+
+-type interval() :: {integer(), integer()}.
+-type intervals() :: gb_sets:set(interval()).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -80,12 +84,12 @@ union(I1, I2) ->
                 {I2, I1}
         end,
     gb_sets:fold(
-      fun({End, Start}, Acc) ->
-              add(Acc, End, Start)
-      end,
-      Longer,
-      Shorter
-     ).
+        fun({End, Start}, Acc) ->
+            add(Acc, End, Start)
+        end,
+        Longer,
+        Shorter
+    ).
 
 %% @doc Serialize a subset of the intervals using the requested format, etf | json.
 %% The subset is always smaller than or equal to Limit. If random_subset key is present,
@@ -171,7 +175,7 @@ intersection(I1, I2) ->
             {_, Start2} = gb_sets:smallest(I2),
             Start = min(Start1, Start2),
             intersection(gb_sets:iterator_from({Start, infinity}, I1),
-                         gb_sets:iterator_from({Start, infinity}, I2), new())
+                    gb_sets:iterator_from({Start, infinity}, I2), new())
     end.
 
 %%%===================================================================
@@ -239,7 +243,7 @@ serialize_random_subset(Intervals, [Offset | Offsets], Format, PickedIntervals, 
             serialize_random_subset(Intervals, Offsets, Format, PickedIntervals, Limit);
         {{End, Start}, _} ->
             serialize_random_subset(Intervals, Offsets, Format,
-                                    ar_intervals:add(PickedIntervals, End, Start), Limit)
+                    ar_intervals:add(PickedIntervals, End, Start), Limit)
     end.
 
 serialize_list(L, etf) ->
@@ -280,7 +284,7 @@ from_etf(Binary) ->
 from_etf([], _, Intervals) ->
     {ok, Intervals};
 from_etf([{<< End:256 >>, << Start:256 >>} | List], R, Intervals)
-  when End > Start andalso R > End andalso Start >= 0 ->
+        when End > Start andalso R > End andalso Start >= 0 ->
     from_etf(List, Start, gb_sets:add_element({End, Start}, Intervals)).
 
 inverse(Intervals) ->
@@ -331,9 +335,9 @@ intervals_test() ->
     ?assertEqual(<<"[]">>, serialize(#{ start => 0, format => json, limit => 1 }, I)),
     ?assertEqual(<<"[]">>, serialize(#{ start => 1, format => json, limit => 1 }, I)),
     ?assertEqual(
-       {ok, new()},
-       safe_from_etf(serialize(#{ random_subset => true, format => etf, limit => 1 }, I))
-      ),
+        {ok, new()},
+        safe_from_etf(serialize(#{ random_subset => true, format => etf, limit => 1 }, I))
+    ),
     ?assertEqual(new(), outerjoin(I, I)),
     ?assertEqual(new(), delete(I, 2, 1)),
     I2 = add(I, 2, 1),
@@ -352,32 +356,32 @@ intervals_test() ->
     compare(I2, cut(I2, 2)),
     compare(I2, cut(I2, 3)),
     ?assertEqual(
-       <<"[{\"2\":\"1\"}]">>,
-       serialize(#{ random_subset => true, limit => 1, format => json }, I2)
-      ),
+        <<"[{\"2\":\"1\"}]">>,
+        serialize(#{ random_subset => true, limit => 1, format => json }, I2)
+    ),
     ?assertEqual(
-       <<"[]">>,
-       serialize(#{ random_subset => true, limit => 0, format => json }, I2)
-      ),
+        <<"[]">>,
+        serialize(#{ random_subset => true, limit => 0, format => json }, I2)
+    ),
     ?assertEqual(
-       <<"[{\"2\":\"1\"}]">>,
-       serialize(#{ start => 2, limit => 1, format => json }, I2)
-      ),
+        <<"[{\"2\":\"1\"}]">>,
+        serialize(#{ start => 2, limit => 1, format => json }, I2)
+    ),
     ?assertEqual(
-       <<"[]">>,
-       serialize(#{ start => 3, limit => 1, format => json }, I2)
-      ),
+        <<"[]">>,
+        serialize(#{ start => 3, limit => 1, format => json }, I2)
+    ),
     ?assertEqual(
-       <<"[]">>,
-       serialize(#{ start => 2, limit => 0, format => json }, I2)
-      ),
+        <<"[]">>,
+        serialize(#{ start => 2, limit => 0, format => json }, I2)
+    ),
     {ok, I2_FromETF} =
         safe_from_etf(serialize(#{ format => etf, limit => 1, random_subset => true }, I2)),
     compare(I2, I2_FromETF),
     ?assertEqual(
-       {ok, new()},
-       safe_from_etf(serialize(#{ format => etf, limit => 0, random_subset => true }, I2))
-      ),
+        {ok, new()},
+        safe_from_etf(serialize(#{ format => etf, limit => 0, random_subset => true }, I2))
+    ),
     compare(I2, add(I2, 2, 1)),
     compare(add(new(), 3, 1), add(I2, 3, 1)),
     compare(add(new(), 2, 0), add(I2, 2, 0)),
@@ -404,21 +408,21 @@ intervals_test() ->
     compare(add(I2, 5, 3), cut(I3, 5)),
     compare(I3, cut(I3, 6)),
     ?assertEqual(
-       <<"[{\"6\":\"3\"},{\"2\":\"1\"}]">>,
-       serialize(#{ random_subset => true, limit => 1000, format => json }, I3)
-      ),
+        <<"[{\"6\":\"3\"},{\"2\":\"1\"}]">>,
+        serialize(#{ random_subset => true, limit => 1000, format => json }, I3)
+    ),
     ?assertEqual(
-       <<"[{\"6\":\"3\"},{\"2\":\"1\"}]">>,
-       serialize(#{ start => 1, limit => 10, format => json }, I3)
-      ),
+        <<"[{\"6\":\"3\"},{\"2\":\"1\"}]">>,
+        serialize(#{ start => 1, limit => 10, format => json }, I3)
+    ),
     ?assertEqual(
-       <<"[{\"2\":\"1\"}]">>,
-       serialize(#{ start => 1, limit => 1, format => json }, I3)
-      ),
+        <<"[{\"2\":\"1\"}]">>,
+        serialize(#{ start => 1, limit => 1, format => json }, I3)
+    ),
     ?assertEqual(
-       <<"[{\"6\":\"3\"}]">>,
-       serialize(#{ start => 3, limit => 10, format => json }, I3)
-      ),
+        <<"[{\"6\":\"3\"}]">>,
+        serialize(#{ start => 3, limit => 10, format => json }, I3)
+    ),
     {ok, I3_FromETF} =
         safe_from_etf(serialize(#{ format => etf, limit => 1000, random_subset => true }, I3)),
     compare(I3, I3_FromETF),
@@ -445,11 +449,11 @@ intervals_test() ->
     compare(add(I2, 5, 3), cut(I4, 5)),
     compare(I4, cut(I4, 7)),
     ?assertEqual(
-       <<"[{\"7\":\"3\"},{\"2\":\"1\"}]">>,
-       serialize(#{ format => json, limit => 1000, random_subset => true }, I4)
-      ),
+        <<"[{\"7\":\"3\"},{\"2\":\"1\"}]">>,
+        serialize(#{ format => json, limit => 1000, random_subset => true }, I4)
+    ),
     {ok, I4_FromETF} = safe_from_etf(serialize(#{ limit => 1000, random_subset => true,
-                                                  format => etf }, I4)),
+            format => etf }, I4)),
     compare(I4, I4_FromETF),
     I5 = add(I4, 3, 2),
     ?assertEqual(1, count(I5)),
@@ -460,9 +464,9 @@ intervals_test() ->
 
 compare(I1, I2) ->
     ?assertEqual(
-       serialize(#{ format => json, limit => count(I1), start => 0 }, I1),
-       serialize(#{ format => json, limit => count(I2), start => 0 }, I2)
-      ),
+        serialize(#{ format => json, limit => count(I1), start => 0 }, I1),
+        serialize(#{ format => json, limit => count(I2), start => 0 }, I2)
+    ),
     Folded1 = gb_sets:fold(fun({K, V}, Acc) -> [{K, V} | Acc] end, [], I1),
     Folded2 = gb_sets:fold(fun({K, V}, Acc) -> [{K, V} | Acc] end, [], I2),
     ?assertEqual(Folded1, Folded2).

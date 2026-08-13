@@ -777,7 +777,7 @@ has_range(Node, StartOffset, EndOffset) ->
 collect_footprint_intervals(NodeIP, StartOffset, EndOffset) ->
     StartPartition = ar_replica_2_9:get_entropy_partition(StartOffset + 1),
     LastPartition = ar_replica_2_9:get_entropy_partition(EndOffset + 1),
-    FootprintsPerPartition = ar_footprint_record:get_footprints_per_partition(),
+    FootprintsPerPartition = ar_replica_2_9:get_footprints_per_partition(),
     collect_footprint_intervals(NodeIP, StartPartition, LastPartition,
         0, FootprintsPerPartition - 1, ar_intervals:new()).
 
@@ -793,7 +793,7 @@ collect_footprint_intervals(NodeIP, Partition, LastPartition,
     FootprintByteIntervals =
         case ar_http_iface_client:get_footprints(NodeIP, Partition, Footprint) of
             {ok, FootprintIntervals} ->
-                ar_footprint_record:get_intervals_from_footprint_intervals(
+                ar_footprint_record:footprint_intervals_to_byte_intervals(
                     FootprintIntervals);
             not_found ->
                 ?LOG_INFO([{event, footprint_record_not_found},

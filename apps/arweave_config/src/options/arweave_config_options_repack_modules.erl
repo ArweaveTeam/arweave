@@ -159,7 +159,7 @@ normalize_entry({{Start, End, _From}, _To} = Module)
 %% canonical `[repack_modules]' list of maps.
 -spec write_legacy_list([term()]) -> ok.
 write_legacy_list([]) ->
-	ok;
+    ok;
 write_legacy_list(L) when is_list(L) ->
     write_modules(L),
     ok.

@@ -263,7 +263,7 @@ test_chunk_data_not_found_resilience() ->
     %% Both chunks should be removed from the disk pool: the healthy one because it was
     %% successfully processed, and the missing one because its data is gone (keeping a
     %% dead entry would block re-ingestion and cause repeated errors every scan cycle).
-    %% The data root is on-chain so normal peer sync can recover the missing chunk.
+    %% The data root is on-chain so byte peer sync can recover the missing chunk.
     true = wait_until_disk_pool_size(0).
 
 %% -------------------------------------------------------------------

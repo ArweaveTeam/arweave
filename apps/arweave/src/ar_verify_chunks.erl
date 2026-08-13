@@ -375,13 +375,13 @@ log_error(Type, AbsoluteOffset, ChunkSize, Logs, State) ->
         ++ Logs,
     ?LOG_INFO(LogMessage),
     NewBytes = maps:get(Type, Report#verify_report.error_bytes, 0) + ChunkSize,
-    NewChunks = maps:get(Type, Report#verify_report.error_chunks, 0) + 1,
 
     Report2 = Report#verify_report{
         total_error_bytes = Report#verify_report.total_error_bytes + ChunkSize,
         total_error_chunks = Report#verify_report.total_error_chunks + 1,
         error_bytes = maps:put(Type, NewBytes, Report#verify_report.error_bytes),
-        error_chunks = maps:put(Type, NewChunks, Report#verify_report.error_chunks)
+        error_chunks = arweave_util:increment_map_value(
+            Type, Report#verify_report.error_chunks)
     },
     State#state{ verify_report = Report2 }.
 

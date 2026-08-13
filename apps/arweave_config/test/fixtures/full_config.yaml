@@ -83,7 +83,7 @@ defrag:
   threshold: 1000
 disk_pool:
   data_root_expiration_time: 10000
-  jobs: 2
+  workers: 2
   max_buffer_size: 100000
   max_data_root_buffer_size: 100000000
 genesis:
@@ -98,31 +98,32 @@ network:
   server:
     http:
       active_n: 101
+      idle_timeout: 10001
       inactivity_timeout: 300001
       linger_timeout: 1001
+      listener_shutdown: 5001
+      max_connections: 512
+      num_acceptors: 501
       request_timeout: 5001
-    tcp:
+    socket:
+      backend: inet
       backlog: 1025
       delay_send: true
       keepalive: false
       linger: true
       linger_timeout: 1
-      listener_shutdown: 5001
-      max_connections: 512
       nodelay: false
-      num_acceptors: 501
       send_timeout: 15001
       send_timeout_close: false
-    transport:
-      idle_timeout: 10001
-    shutdown_connection_timeout: 31
-    shutdown_mode: shutdown
-    socket_backend: inet
+    shutdown:
+      connection_timeout: 31
+      mode: shutdown
   client:
     http:
       closing_timeout: 15001
+      connections_per_peer: 5
       keepalive: 60001
-    tcp:
+    socket:
       delay_send: true
       keepalive: false
       linger: true
@@ -239,8 +240,9 @@ gossip:
   data_roots:
     syncing_enabled: false
     max_duplicates: 7
-  header_sync_jobs: 1
-  header_cache_size: 1024
+  header:
+    cache_size: 1024
+    workers: 1
 join:
   auto: false
   workers: 2
@@ -272,11 +274,11 @@ repack_modules:
     to_format: unpacked
     to_address: "LKC84RnISouGUw4uMQGCpPS9yDC-tIoqM2UVbUIt-Sw"
 sync:
-  cache_size_limit: 10000
-  max_concurrent_peer_scans: 101
+  cache_size: 10000
+  max_concurrent_sync_bucket_jobs: 101
   request_packed_chunks: true
   local_peers_only: true
-  jobs: 3
+  max_download_rate: 12000000
 vdf:
   algorithm: hiopt_m4
   compute: auto

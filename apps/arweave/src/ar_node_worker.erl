@@ -1459,8 +1459,7 @@ get_missing_txs_and_retry(_H, _TXIDs, _Worker, _Peers, _TXs, TotalSize)
 get_missing_txs_and_retry(H, [], Worker, _Peers, TXs, _TotalSize) ->
     gen_server:cast(Worker, {cache_missing_txs, H, lists:reverse(TXs)});
 get_missing_txs_and_retry(H, TXIDs, Worker, Peers, TXs, TotalSize) ->
-    Split = min(5, length(TXIDs)),
-    {Bulk, Rest} = lists:split(Split, TXIDs),
+    {Bulk, Rest} = arweave_util:split_at_most(5, TXIDs),
     Fetch =
         lists:foldl(
           fun   (TX = #tx{ format = 1, data_size = DataSize }, {Acc1, Acc2}) ->
@@ -2500,8 +2499,7 @@ checker(List) ->
 checker([], Length, Buffer) ->
     {Length, Buffer};
 checker([H|T], Length, Buffer) ->
-    V = maps:get(H, Buffer, 0),
-    checker(T, Length, Buffer#{ H => V+1 }).
+    checker(T, Length, arweave_util:increment_map_value(H, Buffer)).
 
 checker_test_disabled() ->
     ?assertEqual({0, #{}}, checker([])),

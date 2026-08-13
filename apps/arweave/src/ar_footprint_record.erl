@@ -2,15 +2,16 @@
 -test_category([fast]).
 
 -export([add/3, add_async/4, delete/2, get_offset/1, get_padded_offset_from_footprint_offset/1,
-         get_footprint/1, get_footprint_bucket/1, get_intervals/3,
+        get_footprint/1, get_location/1, get_footprint_bucket/1,
+        get_intervals/3,
          get_intervals/4, get_unsynced_intervals/3,
-         get_intervals_from_footprint_intervals/1,
-         get_footprint_size/0, get_footprints_per_partition/0,
+        footprint_intervals_to_byte_intervals/1,
+        footprint_intervals_to_byte_intervals/3,
          max_offset/1, is_recorded/2]).
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
--include("ar_data_discovery.hrl").
+-include("ar_sync.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -51,12 +52,12 @@ add_async(Tag, Offset, Packing, StoreID) ->
 -spec get_offset(Offset :: non_neg_integer()) -> non_neg_integer().
 get_offset(Offset) ->
     PaddedOffset = ar_block:get_chunk_padded_offset(Offset),
-    FootprintSize = get_footprint_size(),
-    FootprintsPerPartition = get_footprints_per_partition(),
+    FootprintSize = ar_replica_2_9:get_footprint_size(),
+    FootprintsPerPartition = ar_replica_2_9:get_footprints_per_partition(),
 
     ChunksPerPartition = get_chunks_per_partition(),
     Partition = ar_replica_2_9:get_entropy_partition(PaddedOffset),
-    PartitionOffset = (PaddedOffset - Partition * ?PARTITION_SIZE) div ?DATA_CHUNK_SIZE - 1,
+    PartitionOffset = (PaddedOffset - Partition * ar_block:partition_size()) div ?DATA_CHUNK_SIZE - 1,
 
     %% Which footprint within the partition
     Footprint = PartitionOffset rem FootprintsPerPartition,
@@ -67,14 +68,14 @@ get_offset(Offset) ->
 %% @doc Return the largest end offset of the chunk that maps to the given footprint offset.
 get_padded_offset_from_footprint_offset(FootprintOffset) ->
     Start = FootprintOffset - 1,
-    FootprintSize = get_footprint_size(),
+    FootprintSize = ar_replica_2_9:get_footprint_size(),
     ChunksPerPartition = get_chunks_per_partition(),
     Partition = Start div ChunksPerPartition,
-    FootprintsPerPartition = get_footprints_per_partition(),
+    FootprintsPerPartition = ar_replica_2_9:get_footprints_per_partition(),
     PartitionStart = Partition * ChunksPerPartition,
     Footprint = (Start - PartitionStart) div FootprintSize,
     InFootprintOffset = (Start - PartitionStart) rem FootprintSize,
-    EndOffset = Partition * ?PARTITION_SIZE + (InFootprintOffset * FootprintsPerPartition + (Footprint + 1)) * ?DATA_CHUNK_SIZE,
+    EndOffset = Partition * ar_block:partition_size() + (InFootprintOffset * FootprintsPerPartition + (Footprint + 1)) * ?DATA_CHUNK_SIZE,
     ar_block:get_chunk_padded_offset(EndOffset).
 
 %% @doc Get the chunk's footprint's number, >= 0, < the maximum number of footprints
@@ -83,6 +84,12 @@ get_padded_offset_from_footprint_offset(FootprintOffset) ->
 get_footprint(Offset) ->
     EntropyIndex = ar_replica_2_9:get_entropy_index(Offset, 0),
     EntropyIndex div ?SUB_CHUNK_COUNT.
+
+%% @doc Get the replica 2.9 partition and footprint containing a chunk offset.
+-spec get_location(Offset :: non_neg_integer()) ->
+        {Partition :: non_neg_integer(), Footprint :: non_neg_integer()}.
+get_location(Offset) ->
+    {ar_replica_2_9:get_entropy_partition(Offset), get_footprint(Offset)}.
 
 %% @doc Get the footprint bucket number of a chunk.
 -spec get_footprint_bucket(Offset :: non_neg_integer()) -> non_neg_integer().
@@ -105,13 +112,14 @@ get_intervals(Partition, Footprint, StoreID) ->
         Packing :: term(),
         StoreID :: string()
        ) -> term().
+get_intervals(Partition, Footprint, any, StoreID) ->
+    {Start, End} = footprint_range(Partition, Footprint),
+    ar_sync_record:collect_synced_intervals(
+      Start, End, ar_data_sync_footprints, StoreID);
 get_intervals(Partition, Footprint, Packing, StoreID) ->
-    FootprintSize = get_footprint_size(),
-    ChunksPerPartition = get_chunks_per_partition(),
-    PartitionStartOffset = Partition * ChunksPerPartition,
-    FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
-    End = min(FootprintStart + FootprintSize, PartitionStartOffset + ChunksPerPartition),
-    collect_intervals(FootprintStart, End, Packing, StoreID).
+    {Start, End} = footprint_range(Partition, Footprint),
+    ar_sync_record:collect_synced_intervals(Start, End, Packing,
+        ar_data_sync_footprints, StoreID).
 
 %% @doc Get the unsynced footprint intervals of a chunk.
 -spec get_unsynced_intervals(
@@ -120,12 +128,8 @@ get_intervals(Partition, Footprint, Packing, StoreID) ->
         StoreID :: string()
        ) -> term().
 get_unsynced_intervals(Partition, Footprint, StoreID) ->
-    FootprintSize = get_footprint_size(),
-    ChunksPerPartition = get_chunks_per_partition(),
-    PartitionStartOffset = Partition * ChunksPerPartition,
-    FootprintStart = PartitionStartOffset + Footprint * FootprintSize,
-    End = min(FootprintStart + FootprintSize, PartitionStartOffset + ChunksPerPartition),
-    collect_unsynced_intervals(FootprintStart, End, StoreID).
+    {Start, End} = footprint_range(Partition, Footprint),
+    ar_sync_record:collect_unsynced_intervals(Start, End, ar_data_sync_footprints, StoreID).
 
 %% @doc Delete a chunk from the footprint record.
 -spec delete(Offset :: non_neg_integer(), StoreID :: string()) -> ok.
@@ -133,22 +137,36 @@ delete(Offset, StoreID) ->
     FootprintOffset = get_offset(Offset),
     ar_sync_record:delete(FootprintOffset, FootprintOffset - 1, ar_data_sync_footprints, StoreID).
 
-%% @doc Convert a list of footprint intervals to a list of intervals.
--spec get_intervals_from_footprint_intervals(FootprintIntervals :: term()) -> term().
-get_intervals_from_footprint_intervals(FootprintIntervals) ->
-    get_intervals_from_footprint_intervals(ar_intervals:to_list(FootprintIntervals), ar_intervals:new()).
+%% @doc Convert footprint intervals to byte intervals.
+-spec footprint_intervals_to_byte_intervals(FootprintIntervals :: term()) -> term().
+footprint_intervals_to_byte_intervals(FootprintIntervals) ->
+    do_footprint_intervals_to_byte_intervals(
+        ar_intervals:to_list(FootprintIntervals), ar_intervals:new()).
 
-%% @doc Get the number of footprints contained in a partition.
--spec get_footprints_per_partition() -> non_neg_integer().
-get_footprints_per_partition() ->
-    ?REPLICA_2_9_ENTROPY_COUNT div ?SUB_CHUNK_COUNT.
+%% @doc Convert footprint intervals to byte intervals, cut at End, and drop
+%% bytes before the chunk containing Start.
+-spec footprint_intervals_to_byte_intervals(
+    FootprintIntervals :: term(),
+    Start :: non_neg_integer(),
+    End :: non_neg_integer()
+) -> term().
+footprint_intervals_to_byte_intervals(FootprintIntervals, Start, End) ->
+    ByteIntervals = footprint_intervals_to_byte_intervals(FootprintIntervals),
+    ByteIntervals2 = ar_intervals:cut(ByteIntervals, End),
+    PaddedStart =
+        case ar_block:get_chunk_padded_offset(Start) of
+            Start -> Start;
+            PaddedOffset -> PaddedOffset - ?DATA_CHUNK_SIZE
+        end,
+    ar_intervals:outerjoin(
+        ar_intervals:from_list([{PaddedStart, -1}]), ByteIntervals2).
 
 %% @doc Return an upper bound on the footprint offsets reachable by a weave of
 %% the given byte size: the per-partition footprint capacity times the number
 %% of partitions touched by the weave.
 -spec max_offset(WeaveSize :: non_neg_integer()) -> non_neg_integer().
 max_offset(WeaveSize) when WeaveSize > 0 ->
-    NumPartitions = (WeaveSize + ?PARTITION_SIZE - 1) div ?PARTITION_SIZE,
+    NumPartitions = (WeaveSize + ar_block:partition_size() - 1) div ar_block:partition_size(),
     NumPartitions * get_chunks_per_partition();
 max_offset(_) ->
     0.
@@ -164,67 +182,30 @@ is_recorded(Offset, StoreID) ->
 %%% Private functions.
 %%%===================================================================
 
-get_footprint_size() ->
-    ?REPLICA_2_9_ENTROPY_SIZE div ?SUB_CHUNK_SIZE.
-
 get_chunks_per_partition() ->
-    FootprintSize = get_footprint_size(),
-    arweave_util:pad_to_closest_multiple_equal_or_above(?PARTITION_SIZE, ?DATA_CHUNK_SIZE * FootprintSize) div ?DATA_CHUNK_SIZE.
+    FootprintSize = ar_replica_2_9:get_footprint_size(),
+    arweave_util:pad_to_closest_multiple_equal_or_above(ar_block:partition_size(), ?DATA_CHUNK_SIZE * FootprintSize) div ?DATA_CHUNK_SIZE.
 
-collect_intervals(Start, End, Packing, StoreID) ->
-    collect_intervals(Start, End, Packing, StoreID, ar_intervals:new()).
+footprint_range(Partition, Footprint) ->
+    FootprintSize = ar_replica_2_9:get_footprint_size(),
+    ChunksPerPartition = get_chunks_per_partition(),
+    PartitionStartOffset = Partition * ChunksPerPartition,
+    Start = PartitionStartOffset + Footprint * FootprintSize,
+    End = min(Start + FootprintSize, PartitionStartOffset + ChunksPerPartition),
+    {Start, End}.
 
-collect_intervals(Start, End, _Packing, _StoreID, Intervals) when Start >= End ->
+do_footprint_intervals_to_byte_intervals([], Intervals) ->
     Intervals;
-collect_intervals(Start, End, Packing, StoreID, Intervals) ->
-    Query =
-        case Packing of
-            any ->
-                ar_sync_record:get_next_synced_interval(Start, End,
-                                                        ar_data_sync_footprints, StoreID);
-            Packing ->
-                ar_sync_record:get_next_synced_interval(Start, End,
-                                                        Packing, ar_data_sync_footprints, StoreID)
-        end,
-    case Query of
-        not_found ->
-            Intervals;
-        {End2, Start2} ->
-            End3 = min(End2, End),
-            Start3 = max(Start2, Start),
-            collect_intervals(End3, End, Packing, StoreID,
-                              ar_intervals:add(Intervals, End3, Start3))
-    end.
+do_footprint_intervals_to_byte_intervals([{End, Start} | Rest], Intervals) ->
+    Intervals2 = do_footprint_intervals_to_byte_intervals(Start, End, Intervals),
+    do_footprint_intervals_to_byte_intervals(Rest, Intervals2).
 
-collect_unsynced_intervals(Start, End, StoreID) ->
-    collect_unsynced_intervals(Start, End, StoreID, ar_intervals:new()).
-
-collect_unsynced_intervals(Start, End, _StoreID, Intervals) when Start >= End ->
+do_footprint_intervals_to_byte_intervals(Start, End, Intervals) when Start >= End ->
     Intervals;
-collect_unsynced_intervals(Start, End, StoreID, Intervals) ->
-    Query = ar_sync_record:get_next_unsynced_interval(Start, End, ar_data_sync_footprints, StoreID),
-    case Query of
-        not_found ->
-            Intervals;
-        {End2, Start2} ->
-            End3 = min(End2, End),
-            Start3 = max(Start2, Start),
-            collect_unsynced_intervals(End3, End, StoreID,
-                                       ar_intervals:add(Intervals, End3, Start3))
-    end.
-
-get_intervals_from_footprint_intervals([], Intervals) ->
-    Intervals;
-get_intervals_from_footprint_intervals([{End, Start} | Rest], Intervals) ->
-    Intervals2 = get_intervals_from_footprint_intervals(Start, End, Intervals),
-    get_intervals_from_footprint_intervals(Rest, Intervals2).
-
-get_intervals_from_footprint_intervals(Start, End, Intervals) when Start >= End ->
-    Intervals;
-get_intervals_from_footprint_intervals(Start, End, Intervals) ->
+do_footprint_intervals_to_byte_intervals(Start, End, Intervals) ->
     Offset = get_padded_offset_from_footprint_offset(Start + 1),
     Intervals2 = ar_intervals:add(Intervals, Offset, Offset - ?DATA_CHUNK_SIZE),
-    get_intervals_from_footprint_intervals(Start + 1, End, Intervals2).
+    do_footprint_intervals_to_byte_intervals(Start + 1, End, Intervals2).
 
 %%%===================================================================
 %%% Tests.
@@ -288,16 +269,16 @@ get_padded_offset_from_footprint_offset_test() ->
     ?assertEqual(317123481, ar_footprint_record:get_offset(79280870522880)),
     ?assertEqual(79280870522880, ar_footprint_record:get_padded_offset_from_footprint_offset(317123481)).
 
-get_offset_get_intervals_from_footprint_intervals_reversal_test() ->
+get_offset_footprint_intervals_to_byte_intervals_reversal_test() ->
     Offsets = [?DATA_CHUNK_SIZE, ?DATA_CHUNK_SIZE * 2, ?DATA_CHUNK_SIZE * 3, ?DATA_CHUNK_SIZE * 4,
                ?DATA_CHUNK_SIZE * 8, ?DATA_CHUNK_SIZE * 9],
-    [get_offset_get_intervals_from_footprint_intervals_reversal(Offset) || Offset <- Offsets].
+    [get_offset_footprint_intervals_to_byte_intervals_reversal(Offset) || Offset <- Offsets].
 
-get_offset_get_intervals_from_footprint_intervals_reversal(ByteOffset) ->
+get_offset_footprint_intervals_to_byte_intervals_reversal(ByteOffset) ->
     FootprintOffset = get_offset(ByteOffset),
 
     FootprintInterval = ar_intervals:from_list([{FootprintOffset, FootprintOffset - 1}]),
-    ResultingByteIntervals = get_intervals_from_footprint_intervals(FootprintInterval),
+    ResultingByteIntervals = footprint_intervals_to_byte_intervals(FootprintInterval),
     [{GotEnd, GotStart}] = ar_intervals:to_list(ResultingByteIntervals),
 
     ?assertEqual(ByteOffset, GotEnd),
@@ -451,7 +432,7 @@ get_offset_get_padded_offset_from_footprint_offset_reversal(Offset) ->
     PaddedEndOffset = get_padded_offset_from_footprint_offset(FootprintOffset),
     ?assertEqual(ar_block:get_chunk_padded_offset(Offset), PaddedEndOffset).
 
-get_intervals_from_footprint_intervals_test() ->
+footprint_intervals_to_byte_intervals_test() ->
     TestCases =
         [
          {[], [], "Empty"},
@@ -486,13 +467,59 @@ get_intervals_from_footprint_intervals_test() ->
                                          {?DATA_CHUNK_SIZE * 14, ?DATA_CHUNK_SIZE * 13}],
           "Completely covered partition plus three chunks"}
         ],
-    test_get_intervals_from_footprint_intervals(TestCases).
+    test_footprint_intervals_to_byte_intervals(TestCases).
 
-test_get_intervals_from_footprint_intervals([]) ->
+test_footprint_intervals_to_byte_intervals([]) ->
     ok;
-test_get_intervals_from_footprint_intervals([{Input, Expected, Title} | Rest]) ->
+test_footprint_intervals_to_byte_intervals([{Input, Expected, Title} | Rest]) ->
     ?assertEqual(ar_intervals:from_list(Expected),
-                 get_intervals_from_footprint_intervals(ar_intervals:from_list(Input)), Title),
-    test_get_intervals_from_footprint_intervals(Rest).
+            footprint_intervals_to_byte_intervals(ar_intervals:from_list(Input)), Title),
+    test_footprint_intervals_to_byte_intervals(Rest).
+
+bounded_footprint_intervals_to_byte_intervals_test() ->
+    ?assertEqual(
+        ar_intervals:from_list([{786432, 524288}, {1310720, 1048576}]),
+        footprint_intervals_to_byte_intervals(
+            ar_intervals:from_list([{4, 0}]), 262144, 1572864),
+        "Full Footprint 0, aligned boundaries"),
+
+    ?assertEqual(
+        ar_intervals:from_list([{524288, 262144}, {1048576, 786432}, {1572864, 1310720}]),
+        footprint_intervals_to_byte_intervals(
+            ar_intervals:from_list([{8, 4}]), 262144, 1572864),
+        "Full Footprint 1 cut to aligned boundaries"),
+
+    ?assertEqual(
+        ar_intervals:from_list([
+            {262144, 200000}, {786432, 524288}, {1310720, 1048576}, {1600000, 1572864}]),
+        footprint_intervals_to_byte_intervals(
+            ar_intervals:from_list([{4, 0}]), 200000, 1600000),
+        "Full Footprint 0, unaligned boundaries, pre-strict"),
+
+    ?assertEqual(
+        ar_intervals:from_list([{524288, 262144}, {1048576, 786432}, {1572864, 1310720}]),
+        footprint_intervals_to_byte_intervals(
+            ar_intervals:from_list([{8, 4}]), 200000, 1600000),
+        "Full Footprint 1, unaligned boundaries, pre-strict"),
+
+    ?assertEqual(
+        ar_intervals:from_list([{2883584, 2621440}, {3407872, 3145728}]),
+        footprint_intervals_to_byte_intervals(
+            ar_intervals:from_list([{12, 8}]), 2400000, 3500000),
+        "Full Footprint 2, unaligned boundaries, post-strict"),
+
+    ?assertEqual(
+        ar_intervals:from_list([{2621440, 2359296}, {3145728, 2883584}, {3500000, 3407872}]),
+        footprint_intervals_to_byte_intervals(
+            ar_intervals:from_list([{16, 12}]), 2400000, 3500000),
+        "Full Footprint 3, unaligned boundaries, post-strict"),
+
+    ?assertEqual(
+        ar_intervals:from_list([{2621440, 2359296}, {3500000, 3407872}]),
+        footprint_intervals_to_byte_intervals(
+            ar_intervals:from_list([{16, 14}, {13, 12}]), 2400000, 3500000),
+        "Partial Footprint 3, unaligned boundaries, post-strict"),
+
+    ok.
 
 -endif.

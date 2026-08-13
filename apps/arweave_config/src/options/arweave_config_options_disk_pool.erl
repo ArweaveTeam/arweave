@@ -20,7 +20,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [disk_pool, jobs],
+            option_key => [disk_pool, workers],
             default => ?DEFAULT_DISK_POOL_JOBS,
             type => pos_integer,
             legacy => disk_pool_jobs,

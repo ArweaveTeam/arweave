@@ -1,7 +1,7 @@
 -module(ar_entropy_cache).
 -test_category([fast]).
 
--export([get/1, clean_up_space/2, put/3, total_size/0]).
+-export([get/1, clean_up_space/2, put/3, put_with_limit/4, total_size/0]).
 
 -include("ar.hrl").
 
@@ -12,7 +12,7 @@
 %%%===================================================================
 
 %% @doc Return the stored value, if any, for the given Key.
--spec get(Key :: string()) -> {ok, term()} | not_found.
+-spec get(Key :: term()) -> {ok, term()} | not_found.
 get(Key) ->
     get(Key, ar_entropy_cache).
 
@@ -29,10 +29,21 @@ clean_up_space(Size, MaxSize) ->
     OrderedKeyTable = ar_entropy_cache_ordered_keys,
     clean_up_space(Size, MaxSize, Table, OrderedKeyTable).
 
+%% @doc Evict the oldest entries needed to fit Size bytes, then store Value.
+-spec put_with_limit(
+        Key :: term(),
+        Value :: term(),
+        Size :: non_neg_integer(),
+        MaxSize :: non_neg_integer()
+       ) -> ok.
+put_with_limit(Key, Value, Size, MaxSize) ->
+    clean_up_space(Size, MaxSize),
+    put(Key, Value, Size).
+
 %% @doc Store the given Value in the cache. Associate it with the given Size and
 %% increase the total cache size accordingly.
 -spec put(
-        Key :: string(),
+        Key :: term(),
         Value :: term(),
         Size :: non_neg_integer()
        ) -> ok.
@@ -58,7 +69,7 @@ get(Key, Table) ->
     case ets:lookup(Table, {key, Key}) of
         [] ->
             not_found;
-        [{_, Value}] ->
+        [{{key, Key}, Value}] ->
             %% Track the number of used keys per entropy to estimate the efficiency
             %% of the cache.
             ets:update_counter(Table, {fetched_key_count, Key}, 1,
@@ -75,8 +86,14 @@ clean_up_space(Size, MaxSize, Table, OrderedKeyTable) ->
                     ok;
                 {_Timestamp, Key, ElementSize} = EarliestKey ->
                     ets:delete(Table, {key, Key}),
-                    ets:update_counter(Table, total_size, -ElementSize, {total_size, 0}),
                     ets:delete(OrderedKeyTable, EarliestKey),
+                    %% Eviction is the first point at which this entropy's final
+                    %% reuse count is known.
+                    arweave_metrics:histogram_observe(
+                        replica_2_9_entropy_reuse_count,
+                        get_fetched_key_count(Table, Key)),
+                    ets:update_counter(Table, total_size, -ElementSize,
+                        {total_size, 0}),
                     ets:delete(Table, {fetched_key_count, Key}),
                     clean_up_space(Size, MaxSize, Table, OrderedKeyTable)
             end;
@@ -89,10 +106,11 @@ get_fetched_key_count(Table, Key) ->
     ets:lookup_element(Table, {fetched_key_count, Key}, 2, 0).
 
 put(Key, Value, Size, Table, OrderedKeyTable) ->
+    Timestamp = erlang:unique_integer([monotonic, positive]),
     ets:insert(Table, {{key, Key}, Value}),
-    Timestamp = os:system_time(microsecond),
     ets:insert(OrderedKeyTable, {{Timestamp, Key, Size}}),
-    ets:update_counter(Table, total_size, Size, {total_size, 0}).
+    _ = ets:update_counter(Table, total_size, Size, {total_size, 0}),
+    ok.
 
 %%%===================================================================
 %%% Tests.
@@ -128,16 +146,21 @@ cache_test() ->
     put(yet_another_key, yet_another_value, 64, Table, OrderedKeyTable),
     ?assertEqual(0, get_fetched_key_count(Table, some_key)),
     ?assertEqual({ok, some_value}, get(some_key, Table)),
-    ?assertEqual({ok, some_other_value}, get(some_other_key, Table)),
-    ?assertEqual({ok, yet_another_value}, get(yet_another_key, Table)),
+    ?assertEqual({ok, some_other_value},
+        get(some_other_key, Table)),
+    ?assertEqual({ok, yet_another_value},
+        get(yet_another_key, Table)),
     ?assertEqual(1, get_fetched_key_count(Table, some_key)),
     ?assertEqual(1, get_fetched_key_count(Table, some_other_key)),
     ?assertEqual(1, get_fetched_key_count(Table, yet_another_key)),
     %% Basically, we are simply reducing the cache 192 -> 128.
     clean_up_space(0, 128, Table, OrderedKeyTable),
     ?assertEqual(not_found, get(some_key, Table)),
-    ?assertEqual({ok, some_other_value}, get(some_other_key, Table)),
-    ?assertEqual({ok, yet_another_value}, get(yet_another_key, Table)),
+    ?assertEqual({ok, some_other_value},
+        get(some_other_key, Table)),
+    ?assertEqual({ok, yet_another_value},
+        get(yet_another_key, Table)),
     clean_up_space(64, 128, Table, OrderedKeyTable),
     ?assertEqual(not_found, get(some_other_key, Table)),
-    ?assertEqual({ok, yet_another_value}, get(yet_another_key, Table)).
+    ?assertEqual({ok, yet_another_value},
+        get(yet_another_key, Table)).

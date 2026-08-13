@@ -10,20 +10,6 @@
 -define(DEVICE_LOCK_WAIT, 5_000).
 -endif.
 
-%% A single sync unit: fetch the byte range [start_offset, end_offset) from
-%% `peer` into storage module `store_id`. `footprint_key` groups chunks that
-%% share the same 256 MiB entropy (replica.2.9 mode) for admission control;
-%% `none` means the task has no footprint constraint. `retry_count` counts
-%% down on transient errors; the task is abandoned at 0.
--record(sync_task, {
-                    start_offset,
-                    end_offset,
-                    peer,
-                    store_id,
-                    retry_count = 3,
-                    footprint_key = none
-                   }).
-
 %% The size in bits of the key prefix used in prefix bloom filter
 %% when looking up chunks by offsets from kv database.
 %% 29 bytes of the prefix correspond to the 16777216 (16 Mib) max distance
@@ -135,14 +121,9 @@
                           chunk_data_db,
                           %% A reference to the on-disk key value storage mapping migration names to their stages.
                           migrations_index,
-                          %% A flag indicating the process has started collecting the intervals for syncing.
-                          %% We consult the other storage modules first, then search among the network peers.
-                          sync_status = undefined,
                           %% The offsets of the chunks currently scheduled for (re-)packing (keys) and
                           %% some chunk metadata needed for storing the chunk once it is packed.
                           packing_map = #{},
-                          %% The mining address the chunks are packed with in 2.6.
-                          mining_address,
                           %% The identifier of the storage module the process is responsible for.
                           store_id,
                           %% The start offset of the range the module is responsible for.
@@ -152,11 +133,5 @@
                           %% The priority queue of chunks sorted by offset. The motivation is to have chunks
                           %% stack up, per storage module, before writing them on disk so that we can write
                           %% them in the ascending order and reduce out-of-order disk writes causing fragmentation.
-                          store_chunk_queue = gb_sets:new(),
-                          %% The length of the store chunk queue.
-                          store_chunk_queue_len = 0,
-                          %% The threshold controlling the brief accumuluation of the chunks in the queue before
-                          %% the actual disk dump, to reduce the chance of out-of-order write causing disk
-                          %% fragmentation.
-                          store_chunk_queue_threshold = ?STORE_CHUNK_QUEUE_FLUSH_SIZE_THRESHOLD
+                          store_chunk_queue = gb_sets:new()
                          }).

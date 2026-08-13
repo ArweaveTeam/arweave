@@ -342,7 +342,9 @@ restore(#{store := StoreSnapshot, runtime := Runtime}) when is_boolean(Runtime) 
     ok = arweave_config_options_registry:set_runtime(Runtime).
 
 %% @doc Test-only scaffolding. Snapshot the store, run `Fun`, and
-%% restore the snapshot on exit (even when `Fun` raises).
+%% restore the snapshot on exit (even when `Fun` raises). Changed
+%% options with `handle_set` callbacks are restored through the normal
+%% setter first so their runtime side effects are restored as well.
 %%
 %% Single-threaded: concurrent setters during a `with_test_config/1`
 %% call are not safe.
@@ -357,10 +359,51 @@ restore(#{store := StoreSnapshot, runtime := Runtime}) when is_boolean(Runtime) 
 -spec with_test_config(fun(() -> Result)) -> Result.
 with_test_config(Fun) when is_function(Fun, 0) ->
     Snapshot = snapshot(),
+    OriginalValues = maps:from_list(
+        arweave_config_store:items_with_prefix([])),
     try
         Fun()
     after
+        restore_test_config(Snapshot, OriginalValues)
+    end.
+
+restore_test_config(Snapshot, OriginalValues) ->
+    CurrentValues = maps:from_list(
+        arweave_config_store:items_with_prefix([])),
+    SideEffectValues = restored_side_effect_values(
+        OriginalValues, CurrentValues),
+    try
+        case map_size(SideEffectValues) of
+            0 -> ok;
+            _ -> ok = force_config(SideEffectValues)
+        end
+    after
+        %% Replaying a default can create a row that was absent in the
+        %% snapshot. Restore once more to preserve the exact store state.
         restore(Snapshot)
+    end.
+
+restored_side_effect_values(OriginalValues, CurrentValues) ->
+    Keys = lists:usort(
+        maps:keys(OriginalValues) ++ maps:keys(CurrentValues)),
+    maps:from_list(lists:filtermap(fun(Key) ->
+        case maps:find(Key, OriginalValues) =:=
+                maps:find(Key, CurrentValues) of
+            true ->
+                false;
+            false ->
+                original_side_effect_value(Key, OriginalValues)
+        end
+    end, Keys)).
+
+original_side_effect_value(Key, OriginalValues) ->
+    case arweave_config_options_registry:resolve(Key) of
+        {ok, Key, #{ set := _ } = Spec, _Bindings} ->
+            Value = maps:get(Key, OriginalValues,
+                maps:get(default, Spec, undefined)),
+            {true, {Key, Value}};
+        _ ->
+            false
     end.
 
 %% @doc Apply overrides via `load/1` with the runtime guard

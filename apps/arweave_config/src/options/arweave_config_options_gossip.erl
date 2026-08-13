@@ -151,7 +151,7 @@ specs() ->
         %-----------------------------------------------------
         #{
             enabled => true,
-            option_key => [gossip, header_sync_jobs],
+            option_key => [gossip, header, workers],
             default => ?DEFAULT_HEADER_SYNC_JOBS,
             type => pos_integer,
             legacy => header_sync_jobs,
@@ -163,7 +163,7 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [gossip, header_cache_size],
+            option_key => [gossip, header, cache_size],
             runtime => true,
             default => ?DISK_CACHE_SIZE,
             type => pos_integer,

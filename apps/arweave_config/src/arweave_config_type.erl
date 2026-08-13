@@ -7,6 +7,7 @@
     list/1,
     list_map/1,
     pos_integer/1,
+    finite_pos_integer/1,
     ipv4/1,
     file/1,
     tcp_port/1,
@@ -210,6 +211,16 @@ integer(Integer) when is_integer(Integer) ->
     {ok, Integer};
 integer(V) ->
     {error, V}.
+
+%% @doc Validate as a finite positive integer: `infinity' is rejected.
+%% For options whose setters do arithmetic on the value.
+-spec finite_pos_integer(Input) -> Return when
+    Input :: list() | binary() | pos_integer(),
+    Return :: {ok, pos_integer()} | {error, term()}.
+finite_pos_integer(infinity) -> {error, infinity};
+finite_pos_integer(<<"infinity">>) -> {error, <<"infinity">>};
+finite_pos_integer("infinity") -> {error, "infinity"};
+finite_pos_integer(V) -> pos_integer(V).
 
 %% @doc Validate as a positive integer, or the atom `infinity'.
 %% `infinity' is accepted so options can carry a sentinel meaning

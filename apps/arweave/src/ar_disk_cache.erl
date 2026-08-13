@@ -296,7 +296,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% @doc The header cache size limit in bytes, read live from config.
 header_cache_limit_max() ->
-    arweave_config:get([gossip, header_cache_size]) * 1048576.
+    arweave_config:get([gossip, header, cache_size]) * ?MiB.
 
 %% @doc The size in bytes a cleanup pass reduces the cache down to.
 header_cache_limit_min(LimitMax) ->

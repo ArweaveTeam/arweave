@@ -1054,12 +1054,12 @@ hash_computed(WhichHash, Candidate, State) ->
     case WhichHash of
         h1 ->
             PartitionNumber = Candidate#mining_candidate.partition_number,
-            Hashes = maps:get(PartitionNumber, State#state.h1_hashes, 0),
-            State#state{ h1_hashes = maps:put(PartitionNumber, Hashes+1, State#state.h1_hashes) };
+            State#state{ h1_hashes = arweave_util:increment_map_value(
+                PartitionNumber, State#state.h1_hashes) };
         h2 ->
             PartitionNumber = Candidate#mining_candidate.partition_number2,
-            Hashes = maps:get(PartitionNumber, State#state.h2_hashes, 0),
-            State#state{ h2_hashes = maps:put(PartitionNumber, Hashes+1, State#state.h2_hashes) }
+            State#state{ h2_hashes = arweave_util:increment_map_value(
+                PartitionNumber, State#state.h2_hashes) }
     end.
 
 report_and_reset_hashes(State) ->

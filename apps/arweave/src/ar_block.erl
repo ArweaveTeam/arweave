@@ -1,6 +1,9 @@
 -module(ar_block).
 -test_category([vdf]).
 
+-ifdef(AR_TEST).
+-export([override_partition_size/1, reset_all_overrides/0]).
+-endif.
 -export([get_consensus_window_size/0, get_max_tx_anchor_depth/0,
          partition_size/0,
          get_replica_2_9_entropy_sector_size/0, get_replica_2_9_entropy_partition_size/0,
@@ -52,7 +55,21 @@ get_max_tx_anchor_depth() ->
     ar_block:get_consensus_window_size().
 
 %% @doc Expose constants through a function to allow mocking/injection in tests.
+-ifdef(AR_TEST).
+%% Sim seam (house persistent_term pattern, never a mock): mainnet-geometry
+%% sim scenarios override the partition size so footprint arithmetic
+%% matches their mainnet-scale store offsets. Production compiles to the
+%% bare constant.
+partition_size() ->
+    persistent_term:get({?MODULE, partition_size}, ?PARTITION_SIZE).
+override_partition_size(Size) ->
+    persistent_term:put({?MODULE, partition_size}, Size).
+reset_all_overrides() ->
+    persistent_term:erase({?MODULE, partition_size}),
+    ok.
+-else.
 partition_size() -> ?PARTITION_SIZE.
+-endif.
 strict_data_split_threshold() -> ?STRICT_DATA_SPLIT_THRESHOLD.
 get_merkle_rebase_support_threshold() -> ?MERKLE_REBASE_SUPPORT_THRESHOLD.
 
@@ -60,28 +77,28 @@ get_merkle_rebase_support_threshold() -> ?MERKLE_REBASE_SUPPORT_THRESHOLD.
 %% area where the 2.9 entropy of every chunk is unique.
 -spec get_replica_2_9_entropy_sector_size() -> pos_integer().
 get_replica_2_9_entropy_sector_size() ->
-    ?REPLICA_2_9_ENTROPY_COUNT * ?SUB_CHUNK_SIZE.
+    ar_replica_2_9:entropy_count() * ?SUB_CHUNK_SIZE.
 
 %% @doc Return the size of the 2.9 entropy partition.
 -spec get_replica_2_9_entropy_partition_size() -> pos_integer().
 get_replica_2_9_entropy_partition_size() ->
-    ?REPLICA_2_9_ENTROPY_COUNT * ?REPLICA_2_9_ENTROPY_SIZE.
+    ar_replica_2_9:entropy_count() * ar_replica_2_9:entropy_size().
 
 %% @doc Return the number of sub-chunks per entropy. We'll generally create 32x entropies
 %% in order to fully encipher this many chunks.
 -spec get_sub_chunks_per_replica_2_9_entropy() -> pos_integer().
 get_sub_chunks_per_replica_2_9_entropy() ->
-    ?REPLICA_2_9_ENTROPY_SIZE div ?SUB_CHUNK_SIZE.
+    ar_replica_2_9:get_footprint_size().
 
 %% @doc Return the total size in bytes for a full footprint of entropy.
 -spec get_replica_2_9_footprint_size() -> pos_integer().
 get_replica_2_9_footprint_size() ->
-    ?REPLICA_2_9_ENTROPY_SIZE * ?SUB_CHUNK_COUNT.
+    ar_replica_2_9:entropy_size() * ?SUB_CHUNK_COUNT.
 
 %% @doc Return the number of entropies per partition.
 -spec get_replica_2_9_entropy_count() -> pos_integer().
 get_replica_2_9_entropy_count() ->
-    ?REPLICA_2_9_ENTROPY_COUNT div ?SUB_CHUNK_COUNT.
+    ar_replica_2_9:get_footprints_per_partition().
 
 %% @doc Check whether the block fields conform to the specified size limits.
 block_field_size_limit(B = #block{ reward_addr = unclaimed }) ->

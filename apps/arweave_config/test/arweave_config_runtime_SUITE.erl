@@ -57,12 +57,12 @@ runtime_writable_cases() ->
         %% Tier 1 — pure runtime flag.
         {[packing, repack, batch_size], 32},
         {[network, client, http, keepalive], 30000},
-        {[network, server, shutdown_mode], close},
+        {[network, server, shutdown, mode], close},
         {[gossip, tx, post_timeout], 25},
         {[gossip, data_roots, syncing_enabled], false},
         {[gossip, data_roots, max_duplicates], 5},
         {[sync, local_peers_only], true},
-        {[sync, max_concurrent_peer_scans], 50},
+        {[sync, max_concurrent_sync_bucket_jobs], 50},
         {[disk_pool, max_buffer_size], 200},
         {[randomx, hardware_aes], false},
         {[vdf, pull], false},
@@ -78,8 +78,8 @@ runtime_writable_cases() ->
         %% Tier 2 — runtime flag + handle_set / live-read conversion.
         {[gossip, tx, max_peers], 10},
         {[gossip, block, throttle_by_ip_interval], 500},
-        {[gossip, header_cache_size], 100},
-        {[sync, cache_size_limit], 500},
+        {[gossip, header, cache_size], 100},
+        {[sync, cache_size], 500},
         {[packing, cache_size], 1000},
         {[packing, entropy, cache_size], 2000},
         {[packing, entropy, workers], 4},
@@ -92,7 +92,7 @@ runtime_writable_cases() ->
         {[features, http_logging], true},
         %% New reconfigure APIs.
         {[limiter, chunk, concurrency_limit], 100},
-        {[network, server, tcp, max_connections], 1000},
+        {[network, server, http, max_connections], 1000},
         {[network, server, http, request_timeout], 6000}
     ].
 

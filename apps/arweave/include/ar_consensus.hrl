@@ -35,14 +35,15 @@
 -define(RANDOMX_SCRATCHPAD_SIZE, 2097152).
 
 %% The size in bytes of the total RX2 entropy (# of lanes * scratchpad size).
+-define(MAINNET_REPLICA_2_9_ENTROPY_SIZE, (
+          ?REPLICA_2_9_RANDOMX_LANE_COUNT * ?RANDOMX_SCRATCHPAD_SIZE
+         )).
 -ifdef(AR_TEST).
 %% 32_768 bytes worth of entropy.
 -define(REPLICA_2_9_ENTROPY_SIZE, (4 * ?SUB_CHUNK_SIZE)).
 -else.
 %% 8_388_608 bytes worth of entropy.
--define(REPLICA_2_9_ENTROPY_SIZE, (
-          ?REPLICA_2_9_RANDOMX_LANE_COUNT * ?RANDOMX_SCRATCHPAD_SIZE
-         )).
+-define(REPLICA_2_9_ENTROPY_SIZE, ?MAINNET_REPLICA_2_9_ENTROPY_SIZE).
 -endif.
 
 %% The number of entropies generated per partition.
@@ -69,8 +70,9 @@
 %% map to chunks that are as far as possible from each other within a partition. With
 %% an entropy size of 8_388_608 bytes and a slice size of 8192 bytes, there are 1024 slices per
 %% entropy, which yields 1024 sectors per partition.
+-define(MAINNET_REPLICA_2_9_ENTROPY_COUNT, 429_184).
 -ifndef(REPLICA_2_9_ENTROPY_COUNT).
--define(REPLICA_2_9_ENTROPY_COUNT, 429_184).
+-define(REPLICA_2_9_ENTROPY_COUNT, ?MAINNET_REPLICA_2_9_ENTROPY_COUNT).
 -endif.
 
 %% The effective packing difficulty of the new replication format (replica_format=1.)
@@ -82,8 +84,9 @@
 %% The size of the mining partition. The weave is broken down into partitions
 %% of equal size. A miner can search for a solution in each of the partitions
 %% in parallel, per mining address.
+-define(MAINNET_PARTITION_SIZE, 3_600_000_000_000). % 90% of 4 TB.
 -ifndef(PARTITION_SIZE).
--define(PARTITION_SIZE, 3_600_000_000_000). % 90% of 4 TB.
+-define(PARTITION_SIZE, ?MAINNET_PARTITION_SIZE).
 -endif.
 
 %% The size of a recall range. The first range is randomly chosen from the given

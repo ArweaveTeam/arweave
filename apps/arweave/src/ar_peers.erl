@@ -20,8 +20,9 @@
          is_connected_peer/1,
          is_public_peer/1,
          issue_warning/3,
+    pick_peers/2,
          rate_fetched_data/4,
-         rate_fetched_data/6,
+    rate_fetched_data/5,
          rate_gossiped_data/4,
          resolve_and_cache_peer/2,
          resolve_and_cache_peer/3,
@@ -196,6 +197,20 @@ get_peers(Ranking) ->
             Peers
     end.
 
+%% @doc Uniformly sample up to N peers from the given peer list.
+pick_peers(Peers, N) ->
+    pick_peers(Peers, length(Peers), N).
+
+pick_peers(Peers, PeerLen, N) when N >= PeerLen ->
+    Peers;
+pick_peers([], _PeerLen, _N) ->
+    [];
+pick_peers(_Peers, _PeerLen, N) when N =< 0 ->
+    [];
+pick_peers(Peers, _PeerLen, N) ->
+    %% Sample N candidates uniformly so callers keep exploring the whole peer list.
+    arweave_util:pick_random(Peers, N).
+
 filter_peers(Peers, {timestamp, Seconds})
   when is_integer(Seconds) ->
     Timefilter = erlang:system_time(seconds) - Seconds,
@@ -295,15 +310,15 @@ get_peer_release(Peer) ->
     end.
 
 rate_fetched_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
-    rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, 1).
-rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize, Concurrency) ->
+    rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize).
+rate_fetched_data(Peer, DataType, ok, LatencyMicroseconds, DataSize) ->
     try
         gen_server:cast(?MODULE,
-                        {valid_data, Peer, DataType, LatencyMicroseconds / 1000, DataSize, Concurrency})
+            {valid_data, Peer, DataType, LatencyMicroseconds / 1000, DataSize})
     catch
         _:_ -> ok
     end;
-rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize, _Concurrency) ->
+rate_fetched_data(Peer, DataType, _, _LatencyMicroseconds, _DataSize) ->
     try
         gen_server:cast(?MODULE, {invalid_data, Peer, DataType})
     catch
@@ -314,7 +329,7 @@ rate_gossiped_data(Peer, DataType, LatencyMicroseconds, DataSize) ->
     case check_peer(Peer) of
         ok ->
             gen_server:cast(?MODULE,
-                            {valid_data, Peer, DataType,  LatencyMicroseconds / 1000, DataSize, 1});
+                {valid_data, Peer, DataType, LatencyMicroseconds / 1000, DataSize});
         _ ->
             ok
     end.
@@ -558,9 +573,8 @@ handle_cast(ping_peers, State) ->
     ping_peers(lists:sublist(Peers, 100)),
     {noreply, State};
 
-handle_cast({valid_data, Peer, _DataType, LatencyMilliseconds, DataSize, Concurrency},
-            State) ->
-    update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, true),
+handle_cast({valid_data, Peer, _DataType, LatencyMilliseconds, DataSize}, State) ->
+    update_rating(Peer, LatencyMilliseconds, DataSize, true),
     {noreply, State};
 
 handle_cast({invalid_data, Peer, _DataType}, State) ->
@@ -649,31 +663,19 @@ get_or_init_performance(Peer) ->
 set_performance(Peer, Performance) ->
     ets:insert(?MODULE, [{{peer, Peer}, Performance}]).
 
-get_total_rating(Rating) ->
-    ets:lookup_element(?MODULE, {rating_total, Rating}, 2, 0).
-
-set_total_rating(Rating, Total) ->
-    ets:insert(?MODULE, {{rating_total, Rating}, Total}).
-
-recalculate_total_rating(Rating) ->
-    TotalRating = ets:foldl(
-                    fun ({{peer, _Peer}, Performance}, Acc) ->
-                            Acc + get_peer_rating(Rating, Performance);
-                        (_, Acc) ->
-                            Acc
-                    end,
-                    0,
-                    ?MODULE
-                   ),
-    set_total_rating(Rating, TotalRating).
-
-get_peer_rating(Rating, Performance) ->
-    case Rating of
-        lifetime ->
-            Performance#performance.lifetime_rating;
-        current ->
-            Performance#performance.current_rating
-    end.
+%% @doc The peer's rating, DERIVED from the stored accumulators: an estimate of
+%% effective throughput in bytes per millisecond, discounted by success rate.
+%% `lifetime' considers all data ever received from this peer; `current'
+%% weights recently received data higher.
+get_peer_rating(lifetime, #performance{ total_transfers = TotalTransfers,
+        total_throughput = TotalThroughput, average_success = AverageSuccess })
+        when TotalTransfers > 0 ->
+    (TotalThroughput / TotalTransfers) * AverageSuccess;
+get_peer_rating(lifetime, _Performance) ->
+    0.0;
+get_peer_rating(current, #performance{ average_throughput = AverageThroughput,
+        average_success = AverageSuccess }) ->
+    AverageThroughput * AverageSuccess.
 
 discover_peers([]) ->
     ok;
@@ -711,13 +713,13 @@ format_stats(lifetime, Peer, Perf) ->
     io:format(
       "\t~s ~.2f kB/s (~.2f kB, ~.2f success, ~p transfers)~n",
       [string:pad(arweave_util:format_peer(Peer), 21, trailing, $\s),
-       float(Perf#performance.lifetime_rating), KB,
+            float(get_peer_rating(lifetime, Perf)), KB,
        Perf#performance.average_success, Perf#performance.total_transfers]);
 format_stats(current, Peer, Perf) ->
     io:format(
       "\t~s ~.2f kB/s (~.2f success)~n",
       [string:pad(arweave_util:format_peer(Peer), 21, trailing, $\s),
-       float(Perf#performance.current_rating),
+            float(get_peer_rating(current, Perf)),
        Perf#performance.average_success]).
 
 load_peers() ->
@@ -728,27 +730,24 @@ load_peers() ->
             ?LOG_INFO([{event, polling_saved_peers}, {records, length(Records)}]),
             ar:console("Polling saved peers...~n"),
             load_peers(Records),
-            recalculate_total_rating(lifetime),
-            recalculate_total_rating(current),
             ?LOG_INFO([{event, polled_saved_peers}]),
             ar:console("Polled saved peers.~n");
         {ok, {_TotalRating, Records, Tags}} ->
             ?LOG_INFO([{event, polling_saved_peers}, {records, length(Records)}]),
             ar:console("Polling saved peers...~n"),
             load_peers(Records),
-            recalculate_total_rating(lifetime),
-            recalculate_total_rating(current),
             [ ets:insert(?MODULE, {K, V}) || {K, V} <- Tags ],
             ?LOG_INFO([{event, polled_saved_peers}]),
             ar:console("Polled saved peers.~n")
     end.
 
-load_peers(Peers) when length(Peers) < 20 ->
-    arweave_util:pmap(fun load_peer/1, Peers);
 load_peers(Peers) ->
-    {Peers2, Peers3} = lists:split(20, Peers),
-    arweave_util:pmap(fun load_peer/1, Peers2),
-    load_peers(Peers3).
+    {Batch, Rest} = arweave_util:split_at_most(20, Peers),
+    Result = arweave_util:pmap(fun load_peer/1, Batch),
+    case Rest of
+        [] -> Result;
+        _ -> load_peers(Rest)
+    end.
 
 load_peer({Peer, Performance}) ->
     case ar_http_iface_client:get_info(Peer, network) of
@@ -759,33 +758,57 @@ load_peer({Peer, Performance}) ->
             maybe_rotate_peer_ports(Peer),
             case Performance of
                 {performance, TotalBytes, _TotalLatency, Transfers, _Failures, Rating} ->
-                    %% For backwards compatibility.
+                    %% For backwards compatibility. The legacy Rating was the
+                    %% completed AVERAGE, while total_throughput is a running
+                    %% SUM that get_peer_rating/2 divides by total_transfers —
+                    %% scale the average back up by the transfer count, or an
+                    %% established peer reloads at Rating/Transfers and stays
+                    %% de-ranked for ~Transfers further samples.
                     set_performance(Peer, #performance{
                                              total_bytes = TotalBytes,
-                                             total_throughput = Rating,
+                        total_throughput = Rating * Transfers,
                                              total_transfers = Transfers,
-                                             average_throughput = Rating,
-                                             lifetime_rating = Rating,
-                                             current_rating = Rating
+                        average_throughput = Rating
                                             });
                 {performance, TotalBytes, _TotalLatency, Transfers, _Failures, Rating, Release} ->
-                    %% For backwards compatibility.
+                    %% For backwards compatibility; see the scaling note above.
                     set_performance(Peer, #performance{
                                              release = Release,
                                              total_bytes = TotalBytes,
-                                             total_throughput = Rating,
+                        total_throughput = Rating * Transfers,
                                              total_transfers = Transfers,
-                                             average_throughput = Rating,
-                                             lifetime_rating = Rating,
-                                             current_rating = Rating
+                        average_throughput = Rating
                                             });
                 {performance, 3,
-                 _Release, _TotalBytes, _TotalThroughput, _TotalTransfers,
-                 _AverageLatency, _AverageThroughput, _AverageSuccess, _LifetimeRating,
-                 _CurrentRating} ->
-                    %% Going forward whenever we change the #performance record we should increment the
-                    %% version field so we can match on it when doing a load. Here we're handling the
-                    %% version 3 format.
+                        Release, TotalBytes, TotalThroughput, TotalTransfers,
+                        _AverageLatency, AverageThroughput, AverageSuccess,
+                        _LifetimeRating, _CurrentRating} ->
+                    %% Version 3: drop the never-read average_latency and the
+                    %% stored ratings (now derived on read).
+                    set_performance(Peer, #performance{
+                        release = Release,
+                        total_bytes = TotalBytes,
+                        total_throughput = TotalThroughput,
+                        total_transfers = TotalTransfers,
+                        average_throughput = AverageThroughput,
+                        average_success = AverageSuccess
+                    });
+                {performance, 4,
+                        Release, TotalBytes, TotalThroughput, TotalTransfers,
+                        AverageThroughput, AverageSuccess,
+                        _LifetimeRating, _CurrentRating} ->
+                    %% Version 4: drop the stored ratings (now derived on read).
+                    set_performance(Peer, #performance{
+                        release = Release,
+                        total_bytes = TotalBytes,
+                        total_throughput = TotalThroughput,
+                        total_transfers = TotalTransfers,
+                        average_throughput = AverageThroughput,
+                        average_success = AverageSuccess
+                    });
+                #performance{ version = 5 } ->
+                    %% Going forward whenever we change the #performance record we should
+                    %% increment the version field so we can match on it when doing a load.
                     set_performance(Peer, Performance)
             end,
             ok;
@@ -850,12 +873,13 @@ shift_port_map_left(PortMap, Max, N) ->
     PortMap2 = erlang:setelement(N, PortMap, element(N + 1, PortMap)),
     shift_port_map_left(PortMap2, Max, N + 1).
 
-ping_peers(Peers) when length(Peers) < 100 ->
-    arweave_util:pmap(fun ar_http_iface_client:add_peer/1, Peers);
 ping_peers(Peers) ->
-    {Send, Rest} = lists:split(100, Peers),
-    arweave_util:pmap(fun ar_http_iface_client:add_peer/1, Send),
-    ping_peers(Rest).
+    {Batch, Rest} = arweave_util:split_at_most(100, Peers),
+    Result = arweave_util:pmap(fun ar_http_iface_client:add_peer/1, Batch),
+    case Rest of
+        [] -> Result;
+        _ -> ping_peers(Rest)
+    end.
 
 -ifdef(AR_TEST).
 %% Do not filter out loopback IP addresses with custom port in the debug mode
@@ -876,16 +900,15 @@ is_loopback_ip({_, _, _, _}) -> false.
 -endif.
 
 score_peers(Rating) ->
-    Total = get_total_rating(Rating),
     ets:foldl(
       fun ({{peer, Peer}, Performance}, Acc) ->
               %% Bigger score increases the chances to end up on the top
               %% of the peer list, but at the same time the ranking is
               %% probabilistic to always give everyone a chance to improve
               %% in the competition (i.e., reduce the advantage gained by
-              %% being the first to earn a reputation).
-              Score = rand:uniform() * get_peer_rating(Rating, Performance)
-                  / (Total + 0.0001),
+                %% being the first to earn a reputation). (Only the relative
+                %% order matters downstream, so no normalization is needed.)
+                Score = rand:uniform() * get_peer_rating(Rating, Performance),
               [{Peer, Score} | Acc];
           (_, Acc) ->
               Acc
@@ -943,43 +966,33 @@ check_peer(Peer, IsPeerScopeValid) ->
     end.
 
 update_rating(Peer, IsSuccess) ->
-    update_rating(Peer, undefined, undefined, 1, IsSuccess).
-update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, false)
+    update_rating(Peer, undefined, undefined, IsSuccess).
+update_rating(Peer, LatencyMilliseconds, DataSize, false)
   when LatencyMilliseconds =/= undefined; DataSize =/= undefined ->
     %% Don't credit peers for failed requests.
-    update_rating(Peer, undefined, undefined, Concurrency, false);
-update_rating(Peer, 0, _DataSize, Concurrency, IsSuccess) ->
-    update_rating(Peer, undefined, undefined, Concurrency, IsSuccess);
-update_rating(Peer, 0.0, _DataSize, Concurrency, IsSuccess) ->
-    update_rating(Peer, undefined, undefined, Concurrency, IsSuccess);
-update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
+    update_rating(Peer, undefined, undefined, false);
+update_rating(Peer, 0, _DataSize, IsSuccess) ->
+    update_rating(Peer, undefined, undefined, IsSuccess);
+update_rating(Peer, +0.0, _DataSize, IsSuccess) ->
+    update_rating(Peer, undefined, undefined, IsSuccess);
+update_rating(Peer, LatencyMilliseconds, DataSize, IsSuccess) ->
     Performance = get_or_init_performance(Peer),
 
     #performance{
        total_bytes = TotalBytes,
        total_throughput = TotalThroughput,
        total_transfers = TotalTransfers,
-       average_latency = AverageLatency,
        average_throughput = AverageThroughput,
-       average_success = AverageSuccess,
-       lifetime_rating = LifetimeRating,
-       current_rating = CurrentRating
+        average_success = AverageSuccess
       } = Performance,
     TotalBytes2 = case DataSize of
                       undefined -> TotalBytes;
                       _ -> TotalBytes + DataSize
                   end,
-    AverageLatency2 = case LatencyMilliseconds of
-                          undefined -> AverageLatency;
-                          _ -> arweave_util:ema(AverageLatency, LatencyMilliseconds, ?THROUGHPUT_ALPHA)
-                      end,
-    %% In order to approximate the impact of multiple concurrent requests we multiply
-    %% DataSize by the Concurrency value. We do this *only* when updating the AverageThroughput
-    %% value so that it doesn't distort the TotalThroughput.
     AverageThroughput2 = case LatencyMilliseconds of
                              undefined -> AverageThroughput;
                              _ -> arweave_util:ema(
-                                    AverageThroughput, (DataSize * Concurrency) / LatencyMilliseconds, ?THROUGHPUT_ALPHA)
+            AverageThroughput, DataSize / LatencyMilliseconds, ?THROUGHPUT_ALPHA)
                          end,
     TotalThroughput2 = case LatencyMilliseconds of
                            undefined -> TotalThroughput;
@@ -990,36 +1003,15 @@ update_rating(Peer, LatencyMilliseconds, DataSize, Concurrency, IsSuccess) ->
                           _ -> TotalTransfers + 1
                       end,
     AverageSuccess2 = arweave_util:ema(AverageSuccess, arweave_util:bool_to_int(IsSuccess), ?SUCCESS_ALPHA),
-    %% Rating is an estimate of the peer's effective throughput in bytes per millisecond.
-    %% 'lifetime' considers all data ever received from this peer
-    %% 'current' considers recently received data
-    LifetimeRating2 = case TotalTransfers2 > 0 of
-                          true -> (TotalThroughput2 / TotalTransfers2) * AverageSuccess2;
-                          _ -> LifetimeRating
-                      end,
-    CurrentRating2 = case AverageThroughput2 > 0 of
-                         true -> AverageThroughput2 * AverageSuccess2;
-                         _ -> CurrentRating
-                     end,
     Performance2 = Performance#performance{
                      total_bytes = TotalBytes2,
                      total_throughput = TotalThroughput2,
                      total_transfers = TotalTransfers2,
-                     average_latency = AverageLatency2,
                      average_throughput = AverageThroughput2,
-                     average_success = AverageSuccess2,
-                     lifetime_rating = LifetimeRating2,
-                     current_rating = CurrentRating2
+        average_success = AverageSuccess2
                     },
-    TotalLifetimeRating = get_total_rating(lifetime),
-    TotalLifetimeRating2 = TotalLifetimeRating - LifetimeRating + LifetimeRating2,
-    TotalCurrentRating = get_total_rating(current),
-    TotalCurrentRating2 = TotalCurrentRating - CurrentRating + CurrentRating2,
-
     maybe_rotate_peer_ports(Peer),
     set_performance(Peer, Performance2),
-    set_total_rating(lifetime, TotalLifetimeRating2),
-    set_total_rating(current, TotalCurrentRating2),
     Performance2.
 
 maybe_add_peer(Peer, Release) ->
@@ -1051,11 +1043,6 @@ remove_peer(Reason, RemovedPeer) ->
                         {reason, Reason}
                        ])
     end,
-    Performance = get_or_init_performance(RemovedPeer),
-    TotalLifetimeRating = get_total_rating(lifetime),
-    TotalCurrentRating = get_total_rating(current),
-    set_total_rating(lifetime, TotalLifetimeRating - get_peer_rating(lifetime, Performance)),
-    set_total_rating(current, TotalCurrentRating - get_peer_rating(current, Performance)),
     ets:delete(?MODULE, {peer, RemovedPeer}),
     remove_peer_tags(RemovedPeer),
     remove_peer_port(RemovedPeer),
@@ -1098,10 +1085,6 @@ is_port_map_empty(PortMap, Max, N) ->
     end.
 
 store_peers() ->
-    case get_total_rating(lifetime) of
-        0 ->
-            ok;
-        Total ->
             Records =
                 ets:foldl(
                   fun   ({{peer, Peer}, Performance}, Acc) ->
@@ -1112,15 +1095,20 @@ store_peers() ->
                   [],
                   ?MODULE
                  ),
+    case Records of
+        [] ->
+            ok;
+        _ ->
             Tags = ets:foldl(fun ({{ar_tags, _, _, _}, _} = Tag, Acc) ->
                                      [Tag|Acc];
                                  (_, Acc) -> Acc
                              end, [], ?MODULE),
             ?LOG_INFO([{event, store_peers}
-                      , {total, Total}
                       , {records, length(Records)}
                       , {tags, length(Tags)}]),
-            ar_storage:write_term(peers, {Total, Records, Tags})
+            %% The leading 0 keeps the on-disk tuple shape older releases read
+            %% (they ignored the total-rating slot too).
+            ar_storage:write_term(peers, {0, Records, Tags})
     end.
 
 %%--------------------------------------------------------------------
@@ -1314,74 +1302,61 @@ update_rating_test() ->
     Peer2 = {5, 6, 7, 8, 1984},
 
     ?assertEqual(#performance{}, get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
 
     update_rating(Peer1, true),
     ?assertEqual(#performance{}, get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
-
 
     update_rating(Peer1, false),
     assert_performance(#performance{ average_success = 0.965 }, get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
-
 
     %% Failed transfer should impact bytes or latency
-    update_rating(Peer1, 1000, 100, 1, false),
+    update_rating(Peer1, 1000, 100, false),
     assert_performance(#performance{
                           average_success = 0.9312 },
                        get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
 
-
-    %% Test successful transfer
-    update_rating(Peer1, 1000, 100, 1, true),
+    %% Test successful transfer; ratings are derived on read.
+    update_rating(Peer1, 1000, 100, true),
     assert_performance(#performance{
                           total_bytes = 100,
                           total_throughput = 0.1,
                           total_transfers = 1,
-                          average_latency = 50,
                           average_throughput = 0.005,
-                          average_success = 0.9336,
-                          lifetime_rating = 0.0934,
-                          current_rating = 0.0047 },
+            average_success = 0.9336 },
                        get_or_init_performance(Peer1)),
-    ?assertEqual(0.0934, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0047, round(get_total_rating(current), 4)),
+    ?assertEqual(0.0934,
+        round(get_peer_rating(lifetime, get_or_init_performance(Peer1)), 4)),
+    ?assertEqual(0.0047,
+        round(get_peer_rating(current, get_or_init_performance(Peer1)), 4)),
 
-    %% Test concurrency
-    update_rating(Peer1, 1000, 50, 10, true),
+    %% A smaller transfer moves the throughput EWMA by its own delivered rate
+    %% (no concurrency scaling).
+    update_rating(Peer1, 1000, 50, true),
     assert_performance(#performance{
                           total_bytes = 150,
                           total_throughput = 0.15,
                           total_transfers = 2,
-                          average_latency = 97.5,
-                          average_throughput = 0.0298,
-                          average_success = 0.936,
-                          lifetime_rating = 0.0702,
-                          current_rating = 0.0278 },
+            average_throughput = 0.0073,
+            average_success = 0.936 },
                        get_or_init_performance(Peer1)),
-    ?assertEqual(0.0702, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0278, round(get_total_rating(current), 4)),
+    ?assertEqual(0.0702,
+        round(get_peer_rating(lifetime, get_or_init_performance(Peer1)), 4)),
+    ?assertEqual(0.0068,
+        round(get_peer_rating(current, get_or_init_performance(Peer1)), 4)),
 
-    %% With 2 peers total rating should be the sum of both
-    update_rating(Peer2, 1000, 100, 1, true),
+    %% A second peer's ratings are independent.
+    update_rating(Peer2, 1000, 100, true),
     assert_performance(#performance{
                           total_bytes = 100,
                           total_throughput = 0.1,
                           total_transfers = 1,
-                          average_latency = 50,
                           average_throughput = 0.005,
-                          average_success = 1,
-                          lifetime_rating = 0.1,
-                          current_rating = 0.005 },
+            average_success = 1 },
                        get_or_init_performance(Peer2)),
-    ?assertEqual(0.1702, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0328, round(get_total_rating(current), 4)).
+    ?assertEqual(0.1,
+        round(get_peer_rating(lifetime, get_or_init_performance(Peer2)), 4)),
+    ?assertEqual(0.005,
+        round(get_peer_rating(current, get_or_init_performance(Peer2)), 4)).
 
 block_rejected_test_() ->
     [
@@ -1413,19 +1388,40 @@ test_block_rejected() ->
     ?assertEqual(#{Peer => #performance{}}, ar_peers:get_peer_performances([Peer])),
     ?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(Peer)).
 
+%% Legacy 6/7-arity performance tuples stored the completed AVERAGE rating;
+%% the loader must scale it by the transfer count so the derived lifetime
+%% rating (total_throughput / total_transfers) reloads unchanged — not as
+%% Rating/Transfers.
+legacy_performance_load_test() ->
+    ets:delete_all_objects(?MODULE),
+    Peer = {5, 6, 7, 8, 1984},
+    Rating = 750.0,
+    Transfers = 12000,
+    meck:new(ar_http_iface_client, [passthrough]),
+    meck:expect(ar_http_iface_client, get_info,
+        fun(_, network) -> <<?NETWORK_NAME>> end),
+    try
+        load_peer({Peer, {performance, 1000, 0, Transfers, 0, Rating}}),
+        Loaded = get_or_init_performance(Peer),
+        ?assertEqual(Rating, get_peer_rating(lifetime, Loaded)),
+        ?assertEqual(Rating, get_peer_rating(current, Loaded)),
+        load_peer({Peer, {performance, 1000, 0, Transfers, 0, Rating, 66}}),
+        Loaded2 = get_or_init_performance(Peer),
+        ?assertEqual(66, Loaded2#performance.release),
+        ?assertEqual(Rating, get_peer_rating(lifetime, Loaded2))
+    after
+        meck:unload(ar_http_iface_client)
+    end.
+
 rate_data_test() ->
     ets:delete_all_objects(?MODULE),
     Peer1 = {1, 2, 3, 4, 1984},
 
     ?assertEqual(#performance{}, get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
 
-    ar_peers:rate_fetched_data(Peer1, chunk, {error, timeout}, 1000000, 100, 10),
+    ar_peers:rate_fetched_data(Peer1, chunk, {error, timeout}, 1000000, 100),
     timer:sleep(500),
     assert_performance(#performance{ average_success = 0.965 }, get_or_init_performance(Peer1)),
-    ?assertEqual(0, get_total_rating(lifetime)),
-    ?assertEqual(0, get_total_rating(current)),
 
     ar_peers:rate_fetched_data(Peer1, block, 1000000, 100),
     timer:sleep(500),
@@ -1433,29 +1429,27 @@ rate_data_test() ->
                           total_bytes = 100,
                           total_throughput = 0.1,
                           total_transfers = 1,
-                          average_latency = 50,
                           average_throughput = 0.005,
-                          average_success = 0.9662,
-                          lifetime_rating = 0.0966,
-                          current_rating = 0.0048 },
+            average_success = 0.9662 },
                        get_or_init_performance(Peer1)),
-    ?assertEqual(0.0966, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0048, round(get_total_rating(current), 4)),
+    ?assertEqual(0.0966,
+        round(get_peer_rating(lifetime, get_or_init_performance(Peer1)), 4)),
+    ?assertEqual(0.0048,
+        round(get_peer_rating(current, get_or_init_performance(Peer1)), 4)),
 
-    ar_peers:rate_fetched_data(Peer1, tx, ok, 1000000, 100, 2),
+    ar_peers:rate_fetched_data(Peer1, tx, ok, 1000000, 100),
     timer:sleep(500),
     assert_performance(#performance{
                           total_bytes = 200,
                           total_throughput = 0.2,
                           total_transfers = 2,
-                          average_latency = 97.5,
-                          average_throughput = 0.0148,
-                          average_success = 0.9674,
-                          lifetime_rating = 0.0967,
-                          current_rating = 0.0143 },
+            average_throughput = 0.0098,
+            average_success = 0.9674 },
                        get_or_init_performance(Peer1)),
-    ?assertEqual(0.0967, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0143, round(get_total_rating(current), 4)),
+    ?assertEqual(0.0967,
+        round(get_peer_rating(lifetime, get_or_init_performance(Peer1)), 4)),
+    ?assertEqual(0.0094,
+        round(get_peer_rating(current, get_or_init_performance(Peer1)), 4)),
 
     ar_peers:rate_gossiped_data(Peer1, block, 1000000, 100),
     timer:sleep(500),
@@ -1463,14 +1457,16 @@ rate_data_test() ->
                           total_bytes = 300,
                           total_throughput = 0.3,
                           total_transfers = 3,
-                          average_latency = 142.625,
-                          average_throughput = 0.019,
-                          average_success = 0.9685,
-                          lifetime_rating = 0.0969,
-                          current_rating = 0.0184 },
+            average_throughput = 0.0143,
+            average_success = 0.9685 },
                        get_or_init_performance(Peer1)),
-    ?assertEqual(0.0969, round(get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0184, round(get_total_rating(current), 4)).
+    ?assertEqual(0.0969,
+        round(get_peer_rating(lifetime, get_or_init_performance(Peer1)), 4)),
+    ?assertEqual(0.0138,
+        round(get_peer_rating(current, get_or_init_performance(Peer1)), 4)).
+
+%% Goodput sampling moved to ar_sync_peer, scoped to the scheduler's active-peer
+%% set. See the update_delivery_test there.
 
 assert_performance(Expected, Actual) ->
     ?assertEqual(Expected#performance.total_bytes, Actual#performance.total_bytes),
@@ -1479,20 +1475,11 @@ assert_performance(Expected, Actual) ->
        round(Actual#performance.total_throughput, 4)),
     ?assertEqual(Expected#performance.total_transfers, Actual#performance.total_transfers),
     ?assertEqual(
-       round(Expected#performance.average_latency, 4),
-       round(Actual#performance.average_latency, 4)),
-    ?assertEqual(
        round(Expected#performance.average_throughput, 4),
        round(Actual#performance.average_throughput, 4)),
     ?assertEqual(
        round(Expected#performance.average_success, 4),
-       round(Actual#performance.average_success, 4)),
-    ?assertEqual(
-       round(Expected#performance.lifetime_rating, 4),
-       round(Actual#performance.lifetime_rating, 4)),
-    ?assertEqual(
-       round(Expected#performance.current_rating, 4),
-       round(Actual#performance.current_rating, 4)).
+        round(Actual#performance.average_success, 4)).
 
 round(Float, N) ->
     Multiplier = math:pow(10, N),

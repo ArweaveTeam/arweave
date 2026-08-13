@@ -127,9 +127,9 @@ init([]) ->
 handle_call(get_state, _From, State) ->
     {reply, State, State};
 handle_call({acquire_lock, Mode, StoreID}, _From, State) ->
-    case State#state.initialized of
-        false ->
-                                                % Not yet initialized.
+    case {State#state.initialized, State#state.device_limit} of
+        {false, true} ->
+            %% Device-scoped locking needs the initialized store-to-device map.
             {reply, false, State};
         _ ->
             {Acquired, State2} = do_acquire_lock(Mode, StoreID, State),
@@ -142,16 +142,16 @@ handle_call(Request, _From, State) ->
 handle_cast(initialize_state, State) ->
     State2 = case ar_node:is_joined() of
                  false ->
-                     arweave_util:cast_after(1000, self(), initialize_state),
+                     arweave_util:cast_after(?NODE_JOIN_RETRY_DELAY_MS, self(), initialize_state),
                      State;
                  true ->
                      initialize_state(State)
              end,
     {noreply, State2};
 handle_cast({release_lock, Mode, StoreID}, State) ->
-    case State#state.initialized of
-        false ->
-                                                % Not yet initialized.
+    case {State#state.initialized, State#state.device_limit} of
+        {false, true} ->
+            %% Device-scoped locking needs the initialized store-to-device map.
             {noreply, State};
         _ ->
             State2 = do_release_lock(Mode, StoreID, State),
@@ -398,11 +398,26 @@ device_locks_test_() ->
     [
      {timeout, 30, fun test_acquire_lock/0},
      {timeout, 30, fun test_acquire_lock_without_device_limit/0},
+        {timeout, 30, fun test_locks_before_device_map_without_device_limit/0},
      {timeout, 30, fun test_release_lock/0},
      {timeout, 30, fun test_release_lock_without_device_limit/0},
      {timeout, 30, fun test_count_prepare_locks/0},
      {timeout, 30, fun test_log_locks/0}
     ].
+
+test_locks_before_device_map_without_device_limit() ->
+    StoreID = "storage_module_0_unpacked",
+    %% One worker leaves one prepare-lock slot available for this store.
+    State = #state{
+        initialized = false,
+        device_limit = false,
+        num_replica_2_9_workers = 1
+    },
+    {reply, true, State2} = handle_call(
+        {acquire_lock, prepare, StoreID}, self(), State),
+    ?assertEqual(prepare, maps:get(StoreID, State2#state.store_id_locks)),
+    {noreply, State3} = handle_cast({release_lock, prepare, StoreID}, State2),
+    ?assertEqual(sync, maps:get(StoreID, State3#state.store_id_locks)).
 
 test_acquire_lock() ->
     State = #state{

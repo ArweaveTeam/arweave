@@ -59,6 +59,8 @@ all() ->
         validation_rollback_restores_old_value,
         validation_rollback_deletes_when_no_previous_value,
         validation_sees_candidate_value,
+        with_test_config_restores_handle_set_side_effect,
+        with_test_config_restores_default_handle_set_side_effect,
         set_local_basic
     ].
 
@@ -342,6 +344,39 @@ validation_sees_candidate_value(_Config) ->
     end,
     ok.
 
+with_test_config_restores_handle_set_side_effect(_Config) ->
+    Key = {?MODULE, handle_set_side_effect},
+    try
+        ?assertEqual(ok, arweave_config:set([side_effect], original)),
+        ?assertEqual(original, persistent_term:get(Key)),
+        arweave_config:with_test_config(fun() ->
+            ?assertEqual(ok, arweave_config:set([side_effect], changed)),
+            ?assertEqual(changed, persistent_term:get(Key))
+        end),
+        ?assertEqual(original, arweave_config:get([side_effect])),
+        ?assertEqual(original, persistent_term:get(Key))
+    after
+        persistent_term:erase(Key)
+    end.
+
+with_test_config_restores_default_handle_set_side_effect(_Config) ->
+    Key = {?MODULE, handle_set_side_effect},
+    persistent_term:put(Key, original),
+    try
+        ?assertEqual({error, undefined},
+            arweave_config_store:get([side_effect])),
+        arweave_config:with_test_config(fun() ->
+            ?assertEqual(ok, arweave_config:set([side_effect], changed)),
+            ?assertEqual(changed, persistent_term:get(Key))
+        end),
+        ?assertEqual(original, arweave_config:get([side_effect])),
+        ?assertEqual(original, persistent_term:get(Key)),
+        ?assertEqual({error, undefined},
+            arweave_config_store:get([side_effect]))
+    after
+        persistent_term:erase(Key)
+    end.
+
 set_local_basic(_Config) ->
     ?assertMatch({ok, hello},
         arweave_config_options_registry:set_local([local_key], hello)),
@@ -595,7 +630,21 @@ specs(validation_sees_candidate_value) ->
             handle_set => fun(_K, V, _S, _) -> {store, V} end
         }
     ];
+specs(with_test_config_restores_handle_set_side_effect) ->
+    [side_effect_spec()];
+specs(with_test_config_restores_default_handle_set_side_effect) ->
+    [side_effect_spec()];
 specs(set_local_basic) ->
     [
         #{ option_key => [local_key] }
     ].
+
+side_effect_spec() ->
+    #{
+        option_key => [side_effect],
+        default => original,
+        handle_set => fun(_K, V, _S, _) ->
+            persistent_term:put({?MODULE, handle_set_side_effect}, V),
+            {store, V}
+        end
+    }.

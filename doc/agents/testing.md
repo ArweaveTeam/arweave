@@ -111,6 +111,12 @@ Tests run on a `main` node that is always started. Additional peer nodes
 
 ## Adding a new test
 
+Every magic number in a test — bounds, floors, margins, and expected values —
+must carry a brief comment deriving it. For example, explain that four equal
+peers split a 100 cps budget at roughly 25 each, so 10 is a wide floor under
+that split. A reviewer should never have to reverse-engineer where a constant
+came from.
+
 Just write it. The discovery script picks up any new file with EUnit test exports
 on the next CI run. New tests default to `slow` (their own shard) and to no
 peers. If the tests are pure and would be safe to batch, add

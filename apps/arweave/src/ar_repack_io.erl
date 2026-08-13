@@ -131,15 +131,6 @@ do_read_footprint(
                 maps:from_list(Range)
         end,
 
-    ChunkReadSizeInBytes = maps:fold(
-                             fun(_Key, Value, Acc) -> Acc + byte_size(Value) end,
-                             0,
-                             OffsetChunkMap
-                            ),
-    arweave_metrics:record_rate_metric(
-      StartTime, ChunkReadSizeInBytes,
-      chunk_read_rate_bytes_per_second, [ar_storage_module:label(StoreID), repack]),
-
     OffsetMetadataMap =
         case ar_data_sync:get_chunk_metadata_range(ReadRangeStart+1, ReadRangeEnd, StoreID) of
             {ok, MetadataMap} ->
@@ -155,8 +146,16 @@ do_read_footprint(
                 #{}
         end,
 
+    ChunkReadSizeInBytes = maps:fold(
+                             fun(_Key, Value, Acc) -> Acc + byte_size(Value) end,
+                             0,
+                             OffsetChunkMap
+                            ),
     EndTime = erlang:monotonic_time(),
     ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
+    arweave_metrics:histogram_observe(
+      repack_read_duration_milliseconds, [ar_storage_module:label(StoreID)],
+      EndTime - StartTime),
     log_debug(read_footprint, State, [
                                       {bucket_end_offset, BucketEndOffset},
                                       {read_range_start, ReadRangeStart},
@@ -177,9 +176,6 @@ do_read_footprint(
     read_footprint(FootprintOffsets, FootprintStart, FootprintEnd, ReadBatchSize, StoreID).
 
 process_write_queue(WriteQueue, Packing, #state{} = State) ->
-    #state{
-       store_id = StoreID
-      } = State,
     StartTime = erlang:monotonic_time(),
     gb_sets:fold(
       fun({_BucketEndOffset, RepackChunk}, _) ->
@@ -188,9 +184,6 @@ process_write_queue(WriteQueue, Packing, #state{} = State) ->
       ok,
       WriteQueue
      ),
-    arweave_metrics:record_rate_metric(
-      StartTime, gb_sets:size(WriteQueue) * ?DATA_CHUNK_SIZE,
-      chunk_write_rate_bytes_per_second, [ar_storage_module:label(StoreID), repack]),
     EndTime = erlang:monotonic_time(),
     ElapsedTime =  max(1, erlang:convert_time_unit(EndTime - StartTime, native, millisecond)),
     log_debug(process_write_queue, State, [

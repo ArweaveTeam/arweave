@@ -64,7 +64,7 @@ start_link() ->
 %% on-disk modules for unsynced intervals and dispatch read-range workers as
 %% their source modules free up. Publishes `{chunk_copy, {complete, StoreID}}'
 %% via `ar_events' once scanning is done AND every worker has exited. Returns
-%% `ignore' when chunk-copy is disabled (sync_jobs = 0).
+%% `ignore' when chunk-copy is disabled (syncing disabled).
 start_copy(StoreID) ->
     case whereis(?MODULE) of
         undefined ->
@@ -116,11 +116,8 @@ terminate(Reason, _State) ->
 %% data clamped by `DiskPoolThreshold'), then every other on-disk module
 %% overlapping this StoreID's range.
 do_start_copy(StoreID, State) ->
-    {RangeStart, RangeEnd} = ar_storage_module:get_range(StoreID),
     %% Match ar_data_sync's range adjustment.
-    RangeStart2 = max(0,
-                      ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
-    RangeEnd2 = ar_block:get_chunk_padded_offset(RangeEnd),
+    {RangeStart2, RangeEnd2} = ar_storage_module:get_padded_range(StoreID),
     SyncStatus = ar_data_sync:init_sync_status(StoreID),
     OtherStorageModules = [ar_storage_module:id(M)
                            || M <- ar_storage_module:get_all(RangeStart2, RangeEnd2),

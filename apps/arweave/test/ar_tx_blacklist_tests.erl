@@ -68,7 +68,6 @@ test_uses_blacklists() ->
                 [transactions, blocklist, files] =>
                     [list_to_binary(File) || File <- BlacklistFiles],
                 [transactions, allowlist, files] => [list_to_binary(WhitelistFile)],
-                [sync, jobs] => 10,
                 [transactions, blocklist, urls] => [
                     %% Serves empty body.
                     <<"http://localhost:1985/empty">>,

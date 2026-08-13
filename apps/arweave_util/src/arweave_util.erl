@@ -25,6 +25,7 @@
     format_peer/1,
     genesis_wallets/0,
     get_system_device/1,
+    increment_map_value/2,
     integer_to_binary/1,
     int_to_bool/1,
     message_queue_len/1,
@@ -48,7 +49,9 @@
     safe_parse_peer/1,
     safe_parse_peer/2,
     ema/3,
+    index_of/2,
     shuffle_list/1,
+    split_at_most/2,
     take_every_nth/2,
     terminal_clear/0,
     timestamp_to_seconds/1,
@@ -180,6 +183,10 @@ invert_map(Map) ->
     #{},
     Map
     ).
+
+%% @doc Increment the value for a key, inserting 1 when the key is absent.
+increment_map_value(Key, Map) ->
+    maps:update_with(Key, fun(Value) -> Value + 1 end, 1, Map).
 
 
 %%--------------------------------------------------------------------
@@ -431,13 +438,7 @@ batch_pmap(_Mapper, [], _BatchSize, _Timeout) ->
 batch_pmap(Mapper, List, BatchSize, Timeout)
         when BatchSize > 0 ->
     Self = self(),
-    {Batch, Rest} =
-        case length(List) >= BatchSize of
-            true ->
-                lists:split(BatchSize, List);
-            false ->
-                {List, []}
-        end,
+    {Batch, Rest} = split_at_most(BatchSize, List),
     ListWithRefs = [{Elem, make_ref()} || Elem <- Batch],
     lists:foreach(fun({Elem, Ref}) ->
         spawn_link(fun() ->
@@ -454,6 +455,33 @@ batch_pmap(Mapper, List, BatchSize, Timeout)
         end,
         ListWithRefs
     ) ++ batch_pmap(Mapper, Rest, BatchSize, Timeout).
+
+%% @doc The 1-based position of the first occurrence of Element in List, or
+%% undefined if absent.
+-spec index_of(term(), list()) -> pos_integer() | undefined.
+index_of(Element, List) ->
+    index_of(Element, List, 1).
+
+index_of(_Element, [], _N) ->
+    undefined;
+index_of(Element, [Element | _Rest], N) ->
+    N;
+index_of(Element, [_Other | Rest], N) ->
+    index_of(Element, Rest, N + 1).
+
+%% @doc Split a list after at most N elements, returning the prefix and remainder.
+-spec split_at_most(non_neg_integer(), [T]) -> {[T], [T]} when T :: term().
+split_at_most(N, List) when is_integer(N), N >= 0, is_list(List) ->
+    do_split_at_most(N, List, []);
+split_at_most(N, List) ->
+    erlang:error(badarg, [N, List]).
+
+do_split_at_most(0, Rest, Acc) ->
+    {lists:reverse(Acc), Rest};
+do_split_at_most(_N, [], Acc) ->
+    {lists:reverse(Acc), []};
+do_split_at_most(N, [Head | Rest], Acc) ->
+    do_split_at_most(N - 1, Rest, [Head | Acc]).
 
 %% @doc Filter the list in parallel.
 pfilter(Fun, List) ->
@@ -571,14 +599,32 @@ safe_format(Value, Depth, Limit) ->
             ValueStr
     end.
 
-%%%
+%%%===================================================================
 %%% Tests.
-%%%
+%%%===================================================================
+
+increment_map_value_test() ->
+    %% A missing key starts at one; incrementing it again raises it to two.
+    ?assertEqual(#{key => 1}, increment_map_value(key, #{})),
+    ?assertEqual(#{key => 2}, increment_map_value(key, #{key => 1})).
 
 %% @doc Test that unique functions correctly.
 basic_unique_test() ->
     [a, b, c] = unique([a, a, b, b, b, c, c]),
     [a, b, c] = unique([a, b, c, c, b, a]).
+
+index_of_test() ->
+    ?assertEqual(1, index_of(a, [a, b, c])),
+    ?assertEqual(3, index_of(c, [a, b, c])),
+    ?assertEqual(1, index_of(a, [a, a])),
+    ?assertEqual(undefined, index_of(d, [a, b, c])),
+    ?assertEqual(undefined, index_of(a, [])).
+
+split_at_most_test() ->
+    ?assertEqual({[], []}, split_at_most(3, [])),
+    ?assertEqual({[], [a, b]}, split_at_most(0, [a, b])),
+    ?assertEqual({[a, b], []}, split_at_most(3, [a, b])),
+    ?assertEqual({[a, b], [c]}, split_at_most(2, [a, b, c])).
 
 basic_peer_format_test() ->
     <<"127.0.0.1:9001">> = format_peer({127,0,0,1,9001}).
@@ -685,4 +731,3 @@ assert_file_exists_and_readable(FilePath) ->
             io:format("~nThe filepath ~p doesn't exist or isn't readable.~n~n", [FilePath]),
             init:stop(1)
     end.
-

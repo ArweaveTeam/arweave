@@ -18,6 +18,7 @@ their tools to the shared documents.
 | [doc/agents/erlang-style.md](doc/agents/erlang-style.md) | Writing or reviewing Erlang beyond the basics below — spacing, naming, `-spec` policy, `maybe` vs nested `case`, comments and `%% @doc`, `?LOG_*` |
 | [doc/agents/testing.md](doc/agents/testing.md) | **Adding, modifying, or disabling any test** — `-test_category`, `-test_peers`, `ar_test_await`, `./bin/test`, `./bin/ct` |
 | [doc/agents/configuration.md](doc/agents/configuration.md) | Adding or reading a node configuration option |
+| [doc/agents/metrics.md](doc/agents/metrics.md) | Querying live or historical node metrics through the node API, Prometheus, or Grafana |
 | [doc/agents/protocol.md](doc/agents/protocol.md) | Working on mining, packing, or recall-range code |
 | [doc/agents/code-review.md](doc/agents/code-review.md) | Reviewing a pull request, branch, or diff |
 | [doc/agents/security-threat-model.md](doc/agents/security-threat-model.md) | Rating the severity or exploitability of any security finding |

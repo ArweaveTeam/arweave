@@ -10,7 +10,7 @@
 -include("ar_consensus.hrl").
 -include("ar_mining.hrl").
 -include("ar_data_sync.hrl").
--include("ar_data_discovery.hrl").
+-include("ar_sync.hrl").
 
 -include("ar_pool.hrl").
 
@@ -2139,7 +2139,7 @@ handle_get_footprints(Partition, FootprintNumber, Req) ->
                                %% Only advertise chunks stored in the module's configured
                                %% packing. Chunks held in other packings (e.g. small
                                %% unpacked chunks before the strict data split threshold)
-                               %% are for now only synced via the "normal" sync mode.
+                        %% are for now only synced via the byte sync mode.
                                Intervals = ar_footprint_record:get_intervals(Partition, FootprintNumber, Packing2, StoreID2),
                                ar_intervals:union(Acc, Intervals)
                        end,

@@ -170,15 +170,15 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
     %% encipher is still pending its module's entropy, get chunk_storage
     %% `not_found' and invalidate a valid record
     %% (ar_chunk_copy_worker:read_and_post_chunk) — dropping overlap chunks and
-    %% leaving the partition short. Starting with `sync_jobs = 0' keeps
+    %% leaving the partition short. Starting with syncing disabled keeps
     %% ar_chunk_copy from running; once entropy is prepared, restart with sync on.
     case PackingType of
         replica_2_9 ->
             ExpectedNodeName = ar_test_node:start_other_node(
-                                 Node, B0, BaseConfig#{ [sync, jobs] => 0 }, true),
+                Node, B0, BaseConfig#{ [sync, max_download_rate] => 0 }, true),
             Snapshot = ar_test_node:remote_call(Node, arweave_config, snapshot, []),
             ar_test_await:all_entropy_prepared(Node),
-            restart_node(Node, Snapshot, #{ [sync, jobs] => ?DEFAULT_SYNC_JOBS });
+            restart_node(Node, Snapshot, #{ [sync, max_download_rate] => infinity });
         _ ->
             ExpectedNodeName = ar_test_node:start_other_node(Node, B0, BaseConfig, true)
     end,

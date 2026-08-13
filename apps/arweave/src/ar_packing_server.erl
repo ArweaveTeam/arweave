@@ -143,23 +143,34 @@ is_buffer_full() ->
 set_cache_size(Value) ->
     gen_server:cast(?MODULE, {set_cache_size, Value}).
 
-%% @doc Resolve the packing buffer size limit (an undefined configured value
-%% falls back to a free-memory heuristic) and store it in ETS. Shared by init
-%% and the runtime set_cache_size handler.
+%% @doc Auto-size the packing chunk cache when [packing, cache_size] is not
+%% explicitly configured. The cache buffers chunks being packed or unpacked, so
+%% the default stays conservative: 3% of total memory  capped at 1200 chunks (~300 MiB).
+%% It uses total memory instead of free memory, which is volatile at startup; a cached
+%% chunk costs its raw size (256 KiB).
+-define(PACKING_CACHE_MEMORY_FRACTION, 0.03).
+-define(PACKING_CACHE_MAX_CHUNKS, 1200).
+-define(PACKING_CACHE_ROUND_CHUNKS, 100).
+-define(PACKING_CACHE_FALLBACK_TOTAL_MEMORY, 2000000000). % 2 GB if total_memory unknown
+
 set_buffer_size_limit(PackingCacheSizeLimit) ->
     MaxSize =
         case PackingCacheSizeLimit of
             undefined ->
-                Free = proplists:get_value(free_memory,
-                                           memsup:get_system_memory_data(), 2000000000),
-                arweave_util:ceil_int(
-                  min(1200, erlang:ceil(Free * 0.9 / 3 / ?DATA_CHUNK_SIZE)), 100);
-            Limit ->
-                Limit
+                Total = proplists:get_value(total_memory,
+                    memsup:get_system_memory_data(), ?PACKING_CACHE_FALLBACK_TOTAL_MEMORY),
+                default_buffer_size_limit(Total);
+            MiB ->
+                MiB * (?MiB div ?DATA_CHUNK_SIZE)
         end,
     ?LOG_INFO([{event, packing_chunk_cache_size_limit}, {max_size, MaxSize}]),
     ets:insert(?MODULE, {buffer_size_limit, MaxSize}),
     MaxSize.
+
+default_buffer_size_limit(Total) ->
+    MemCapChunks = erlang:ceil(Total * ?PACKING_CACHE_MEMORY_FRACTION / ?DATA_CHUNK_SIZE),
+    min(?PACKING_CACHE_MAX_CHUNKS,
+        arweave_util:ceil_int(MemCapChunks, ?PACKING_CACHE_ROUND_CHUNKS)).
 
 pad_chunk(Chunk) ->
     pad_chunk(Chunk, byte_size(Chunk)).
@@ -280,8 +291,8 @@ generate_replica_2_9_entropy(RewardAddr, BucketEndOffset, SubChunkStartOffset, t
             update_entropy_generation_stats(Key, RewardAddr, BucketEndOffset, SubChunkStartOffset),
             EntropyCacheSizeMb = arweave_config:get([packing, entropy, cache_size]),
             MaxSize = EntropyCacheSizeMb * ?MiB,
-            ar_entropy_cache:clean_up_space(?REPLICA_2_9_ENTROPY_SIZE, MaxSize),
-            ar_entropy_cache:put(Key, Entropy, ?REPLICA_2_9_ENTROPY_SIZE),
+            ar_entropy_cache:put_with_limit(
+                Key, Entropy, ?REPLICA_2_9_ENTROPY_SIZE, MaxSize),
             entropy_generation_release(Key),
             Entropy
     end.
@@ -937,6 +948,20 @@ remove_outdated_entropy_generation_stats() ->
 %%%===================================================================
 %%% Tests.
 %%%===================================================================
+
+default_buffer_size_limit_test() ->
+    %% Large host: memory heuristic exceeds the packing cache cap.
+    ?assertEqual(?PACKING_CACHE_MAX_CHUNKS, default_buffer_size_limit(64 * ?GiB)),
+    %% Fallback total memory keeps the historical conservative default, rounded to 100.
+    ?assertEqual(300, default_buffer_size_limit(?PACKING_CACHE_FALLBACK_TOTAL_MEMORY)),
+    %% Small memory budgets round up to one 100-chunk step.
+    ?assertEqual(?PACKING_CACHE_ROUND_CHUNKS,
+        default_buffer_size_limit(100 * ?DATA_CHUNK_SIZE)),
+    %% Preserve ceil_int/2 behavior: exact 100-chunk boundaries round up again.
+    Exact100ChunkBudgetTotal =
+        ?PACKING_CACHE_ROUND_CHUNKS * ?DATA_CHUNK_SIZE / ?PACKING_CACHE_MEMORY_FRACTION,
+    ?assertEqual(2 * ?PACKING_CACHE_ROUND_CHUNKS,
+        default_buffer_size_limit(Exact100ChunkBudgetTotal)).
 
 pack_test() ->
     Root = crypto:strong_rand_bytes(32),

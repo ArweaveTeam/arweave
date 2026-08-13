@@ -31,6 +31,7 @@ end_per_testcase(_TestCase, _Config) ->
 all() ->
     [
         debug_toggle_updates_store_and_handler,
+        with_test_config_restores_debug_side_effect,
         logging_path_coerces_to_list,
         logging_formatter_and_limits_update,
         logger_set_with_no_live_handler_stores_anyway,
@@ -49,6 +50,17 @@ debug_toggle_updates_store_and_handler(_Config) ->
     ?assertEqual(true, arweave_config:get([debug])),
     ?assertMatch({ok, _}, logger:get_handler_config(arweave_debug)),
     ok = arweave_config:set([debug], false),
+    ?assertEqual(false, arweave_config:get([debug])),
+    ?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
+    ok.
+
+with_test_config_restores_debug_side_effect(_Config) ->
+    ?assertEqual(false, arweave_config:get([debug])),
+    ?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
+    arweave_config:with_test_config(fun() ->
+        ?assertEqual(ok, arweave_config:set([debug], true)),
+        ?assertMatch({ok, _}, logger:get_handler_config(arweave_debug))
+    end),
     ?assertEqual(false, arweave_config:get([debug])),
     ?assertMatch({error, _}, logger:get_handler_config(arweave_debug)),
     ok.

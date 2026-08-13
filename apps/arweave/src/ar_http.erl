@@ -15,9 +15,25 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%% Fixed connection pool. Each peer's pool grows toward connections_per_peer as
+%% requests arrive (get_connection) and shrinks one connection per tick while the
+%% peer is idle (evaluate_pools). There is no sizing beyond the configured ceiling:
+%% for a store/peer-bound workload more connections don't raise throughput and can
+%% overload the peer, so connections_per_peer is a fixed cap, not a controller.
+-define(POOL_EVAL_INTERVAL_MS, 10_000).
+%% Per-peer count of requests currently inside req/2 (throttle -> get_connection ->
+%% gun request/await). evaluate_pools only shrinks a peer whose count is 0, so a
+%% connection carrying a long-running stream - which can span several 10s ticks
+%% while req_by_peer for that tick reads 0 - is never shut down mid-request.
+-define(HTTP_INFLIGHT_TABLE, ar_http_inflight).
+
 -record(state, {
                 pid_by_peer = #{},
-                status_by_pid = #{}
+                status_by_pid = #{},
+                %% Per-peer request count since the last evaluate_pools tick; used only
+                %% to tell active peers from idle ones (idle peers get a connection
+                %% shrunk).
+                reqs_by_peer = #{}
                }).
 
 %%% ==================================================================
@@ -97,11 +113,16 @@ req(Args, ReestablishedConnection) ->
     %% call the endpoint.
     arweave_throttling:throttle(Peer, Path),
 
-    Response = case catch gen_server:call(?MODULE, {get_connection, Args}, 15000) of
+    %% Count this request as in-flight for the whole call so evaluate_pools never
+    %% shrinks a connection out from under an active (possibly long) stream.
+    ets:update_counter(?HTTP_INFLIGHT_TABLE, Peer, 1, {Peer, 0}),
+    Response = try
+        case catch gen_server:call(?MODULE, {get_connection, Args}, 15000) of
                    {ok, PID} ->
                        case request(PID, Args) of
                            {error, Error} ->
-                               case {ReestablishedConnection, should_retry_closed_connection(Error)} of
+                            case {ReestablishedConnection,
+                                    should_retry_closed_connection(Error)} of
                                    {false, true} ->
                                        req(Args, true);
                                    {_, true} ->
@@ -115,7 +136,10 @@ req(Args, ReestablishedConnection) ->
                        end;
                    {'EXIT', _} -> {error, client_error};
                    Error -> Error
-               end,
+        end
+    after
+        ets:update_counter(?HTTP_INFLIGHT_TABLE, Peer, -1, {Peer, 0})
+    end,
     EndTime = erlang:monotonic_time(),
     %% Only log the metric for the top-level call to req/2 - not the recursive call
     %% that happens when the connection is reestablished.
@@ -141,27 +165,42 @@ req(Args, ReestablishedConnection) ->
 %%% ==================================================================
 
 init([]) ->
+    erlang:send_after(?POOL_EVAL_INTERVAL_MS, self(), evaluate_pools),
     {ok, #state{}}.
 
 handle_call({get_connection, Args}, From,
-            #state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID } = State) ->
+        #state{ pid_by_peer = PIDByPeer, status_by_pid = StatusByPID,
+                reqs_by_peer = ReqsByPeer } = State0) ->
     Peer = maps:get(peer, Args),
-    case maps:get(Peer, PIDByPeer, not_found) of
-        not_found ->
+    %% Count the request so evaluate_pools can distinguish active from idle peers.
+    State = State0#state{ reqs_by_peer =
+            arweave_util:increment_map_value(Peer, ReqsByPeer) },
+    PIDs = maps:get(Peer, PIDByPeer, []),
+    %% Grow toward the fixed ceiling connections_per_peer; round-robin once full.
+    Target = connections_per_peer(),
+    case length(PIDs) < Target of
+        true ->
+            %% Grow this peer's pool: open a new connection and route this request
+            %% to it (queued until it connects). This fills the pool over the first
+            %% N requests to the peer. With connections_per_peer = 1 (the default)
+            %% this is exactly the original single-connection behaviour.
             {ok, PID} = open_connection(Args),
             MonitorRef = monitor(process, PID),
-            PIDByPeer2 = maps:put(Peer, PID, PIDByPeer),
+            PIDByPeer2 = maps:put(Peer, [PID | PIDs], PIDByPeer),
             StatusByPID2 = maps:put(PID, {{connecting, [{From, Args}]}, MonitorRef, Peer},
                                     StatusByPID),
             {noreply, State#state{ pid_by_peer = PIDByPeer2, status_by_pid = StatusByPID2 }};
-        PID ->
+        false ->
+            %% Pool full: round-robin across the peer's connections (rotate the list).
+            {PID, Rotated} = rotate(PIDs),
+            State2 = State#state{ pid_by_peer = maps:put(Peer, Rotated, PIDByPeer) },
             case maps:get(PID, StatusByPID) of
                 {{connecting, PendingRequests}, MonitorRef, Peer} ->
                     StatusByPID2 = maps:put(PID, {{connecting,
                                                    [{From, Args} | PendingRequests]}, MonitorRef, Peer}, StatusByPID),
-                    {noreply, State#state{ status_by_pid = StatusByPID2 }};
+                    {noreply, State2#state{ status_by_pid = StatusByPID2 }};
                 {connected, _MonitorRef, Peer} ->
-                    {reply, {ok, PID}, State}
+                    {reply, {ok, PID}, State2}
             end
     end;
 
@@ -198,7 +237,7 @@ handle_info({gun_error, PID, Reason},
             ?LOG_WARNING([{even, gun_connection_error_with_unknown_pid}]),
             {noreply, State};
         {Status, _MonitorRef, Peer} ->
-            PIDByPeer2 = maps:remove(Peer, PIDByPeer),
+            PIDByPeer2 = remove_pid(Peer, PID, PIDByPeer),
             StatusByPID2 = maps:remove(PID, StatusByPID),
             Reason2 =
                 case Reason of
@@ -216,7 +255,7 @@ handle_info({gun_error, PID, Reason},
                     arweave_metrics:gauge_dec(outbound_connections),
                     ok
             end,
-            ar_peers:disconnected_peer(Peer),
+            disconnected_if_last(Peer, PIDByPeer2),
             gun:shutdown(PID),
             ?LOG_DEBUG([{event, connection_error}, {reason, io_lib:format("~p", [Reason])}]),
             {noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
@@ -234,7 +273,7 @@ handle_info({gun_down, PID, Protocol, Reason, _KilledStreams, _UnprocessedStream
                           {protocol, Protocol}]),
             {noreply, State};
         {Status, _MonitorRef, Peer} ->
-            PIDByPeer2 = maps:remove(Peer, PIDByPeer),
+            PIDByPeer2 = remove_pid(Peer, PID, PIDByPeer),
             StatusByPID2 = maps:remove(PID, StatusByPID),
             Reason2 =
                 case Reason of
@@ -250,7 +289,7 @@ handle_info({gun_down, PID, Protocol, Reason, _KilledStreams, _UnprocessedStream
                     arweave_metrics:gauge_dec(outbound_connections),
                     ok
             end,
-            ar_peers:disconnected_peer(Peer),
+            disconnected_if_last(Peer, PIDByPeer2),
             {noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
     end;
 
@@ -260,7 +299,7 @@ handle_info({'DOWN', _Ref, process, PID, Reason},
         not_found ->
             {noreply, State};
         {Status, _MonitorRef, Peer} ->
-            PIDByPeer2 = maps:remove(Peer, PIDByPeer),
+            PIDByPeer2 = remove_pid(Peer, PID, PIDByPeer),
             StatusByPID2 = maps:remove(PID, StatusByPID),
             case Status of
                 {connecting, PendingRequests} ->
@@ -269,9 +308,31 @@ handle_info({'DOWN', _Ref, process, PID, Reason},
                     arweave_metrics:gauge_dec(outbound_connections),
                     ok
             end,
-            ar_peers:disconnected_peer(Peer),
+            disconnected_if_last(Peer, PIDByPeer2),
             {noreply, State#state{ status_by_pid = StatusByPID2, pid_by_peer = PIDByPeer2 }}
     end;
+
+handle_info(evaluate_pools, #state{ pid_by_peer = PIDByPeer,
+        reqs_by_peer = ReqsByPeer } = State) ->
+    Max = connections_per_peer(),
+    %% Shrink one connection per tick from any peer that is idle (no requests this
+    %% tick) or above the ceiling (e.g. connections_per_peer lowered at runtime).
+    %% Active peers keep the pool get_connection grew up to the ceiling. gun:shutdown
+    %% routes through the existing 'DOWN' handler so cleanup stays in one place.
+    maps:foreach(fun(Peer, PIDs) ->
+            Idle = maps:get(Peer, ReqsByPeer, 0) == 0,
+            %% Never shrink a peer with a request in flight - the connection we'd
+            %% shut down (lists:last) may be carrying a live stream.
+            NoInFlight = ets:lookup_element(?HTTP_INFLIGHT_TABLE, Peer, 2, 0) == 0,
+            ShouldShrink = length(PIDs) > 1 andalso NoInFlight
+                    andalso (Idle orelse length(PIDs) > Max),
+            case ShouldShrink of
+                true -> catch gun:shutdown(lists:last(PIDs));
+                false -> ok
+            end
+        end, PIDByPeer),
+    erlang:send_after(?POOL_EVAL_INTERVAL_MS, self(), evaluate_pools),
+    {noreply, State#state{ reqs_by_peer = #{} }};
 
 handle_info(Message, State) ->
     ?LOG_WARNING([{event, unhandled_info}, {module, ?MODULE}, {message, Message}]),
@@ -295,19 +356,19 @@ open_connection(#{ peer := Peer } = Args) ->
     HTTPKeepalive = arweave_config:get(
                       [network, client, http, keepalive]),
     TCPDelaySend = arweave_config:get(
-                     [network, client, tcp, delay_send]),
+        [network, client, socket, delay_send]),
     TCPKeepalive = arweave_config:get(
-                     [network, client, tcp, keepalive]),
+        [network, client, socket, keepalive]),
     TCPLinger = arweave_config:get(
-                  [network, client, tcp, linger]),
+        [network, client, socket, linger]),
     TCPLingerTimeout = arweave_config:get(
-                         [network, client, tcp, linger_timeout]),
+        [network, client, socket, linger_timeout]),
     TCPNodelay = arweave_config:get(
-                   [network, client, tcp, nodelay]),
+        [network, client, socket, nodelay]),
     TCPSendTimeoutClose = arweave_config:get(
-                            [network, client, tcp, send_timeout_close]),
+        [network, client, socket, send_timeout_close]),
     TCPSendTimeout = arweave_config:get(
-                       [network, client, tcp, send_timeout]),
+        [network, client, socket, send_timeout]),
     GunOpts = #{
                 retry => 0,
                 connect_timeout => ConnectTimeout,
@@ -330,6 +391,44 @@ get_ip_port({_, _} = Peer) ->
     Peer;
 get_ip_port(Peer) ->
     {erlang:delete_element(size(Peer), Peer), erlang:element(size(Peer), Peer)}.
+
+%% @doc Parallel HTTP connections to maintain per peer (>= 1). Read fresh each
+%% call so a runtime change takes effect as connections are (re)opened. A single
+%% peer isn't limited to one TCP flow / one gun process — see the connection-pool
+%% plan. Defaults to 1 (original single-connection behaviour) if unset.
+connections_per_peer() ->
+    case catch arweave_config:get([network, client, http, connections_per_peer]) of
+        N when is_integer(N), N >= 1 -> N;
+        _ -> 1
+    end.
+
+%% @doc Round-robin: return the head connection and the list rotated by one, so
+%% successive get_connection calls for a peer spread across its pool.
+rotate([PID | Rest]) ->
+    {PID, Rest ++ [PID]}.
+
+%% @doc Remove a dead connection PID from a peer's pool, dropping the peer key
+%% entirely once its last connection is gone.
+remove_pid(Peer, PID, PIDByPeer) ->
+    case maps:get(Peer, PIDByPeer, []) of
+        [] ->
+            PIDByPeer;
+        PIDs ->
+            case lists:delete(PID, PIDs) of
+                [] -> maps:remove(Peer, PIDByPeer);
+                Rest -> maps:put(Peer, Rest, PIDByPeer)
+            end
+    end.
+
+%% @doc Mark the peer disconnected only when its last connection is gone. With a
+%% multi-connection pool, one connection dying must not mark a peer that still has
+%% healthy connections as disconnected. remove_pid/3 drops the peer key when its
+%% last PID is removed, so an absent key means no connections remain.
+disconnected_if_last(Peer, PIDByPeer) ->
+    case maps:is_key(Peer, PIDByPeer) of
+        false -> ar_peers:disconnected_peer(Peer);
+        true -> ok
+    end.
 
 reply_error([], _Reason) ->
     ok;
@@ -589,3 +688,63 @@ configured_local_peer_calls_throttler() ->
         AppsNow = [App || {App, _Desc, _Vsn} <- application:which_applications()],
         lists:foreach(fun application:stop/1, AppsNow -- AppsBefore)
     end.
+
+-ifdef(AR_TEST).
+
+%% Round-robin over a peer's connection pool: head is selected, list rotates, and
+%% a full cycle returns to the start.
+rotate_test() ->
+    ?assertEqual({a, [b, c, a]}, rotate([a, b, c])),
+    ?assertEqual({a, [a]}, rotate([a])),
+    {P1, R1} = rotate([a, b, c]),
+    {P2, R2} = rotate(R1),
+    {P3, R3} = rotate(R2),
+    ?assertEqual([a, b, c], [P1, P2, P3]),
+    ?assertEqual([a, b, c], R3).
+
+%% A dead connection is removed from its peer's pool; the peer key is dropped only
+%% when its last connection is gone; unknown pid/peer is a no-op.
+remove_pid_test() ->
+    M = #{ peer1 => [a, b, c], peer2 => [x] },
+    ?assertEqual(#{ peer1 => [a, c], peer2 => [x] }, remove_pid(peer1, b, M)),
+    ?assertEqual(#{ peer1 => [a, b, c] }, remove_pid(peer2, x, M)),
+    ?assertEqual(M, remove_pid(peer1, z, M)),
+    ?assertEqual(M, remove_pid(peer3, a, M)).
+
+%% Review point 2: one connection dying must not mark a peer disconnected while
+%% other connections remain; only the loss of the last connection disconnects it.
+disconnected_if_last_test() ->
+    meck:new(ar_peers, [passthrough]),
+    meck:expect(ar_peers, disconnected_peer, fun(_) -> ok end),
+    disconnected_if_last(peer1, #{ peer1 => [pidA] }),
+    ?assertEqual(0, meck:num_calls(ar_peers, disconnected_peer, [peer1])),
+    disconnected_if_last(peer1, #{}),
+    ?assertEqual(1, meck:num_calls(ar_peers, disconnected_peer, [peer1])),
+    meck:unload(ar_peers).
+
+%% Review point 1: evaluate_pools must not shut down a connection while the peer
+%% has a request in flight (a long stream can span several idle 10s ticks).
+evaluate_pools_inflight_test() ->
+    catch ets:new(?HTTP_INFLIGHT_TABLE, [named_table, public, set]),
+    meck:new(gun, [passthrough]),
+    meck:expect(gun, shutdown, fun(_) -> ok end),
+    State = #state{ pid_by_peer = #{ peer1 => [pidA, pidB] }, reqs_by_peer = #{} },
+    %% Idle this tick but a request in flight -> must NOT shrink.
+    ets:insert(?HTTP_INFLIGHT_TABLE, {peer1, 1}),
+    handle_info(evaluate_pools, State),
+    ?assertEqual(0, meck:num_calls(gun, shutdown, ['_'])),
+    %% Nothing in flight -> the idle peer shrinks by one connection.
+    ets:insert(?HTTP_INFLIGHT_TABLE, {peer1, 0}),
+    handle_info(evaluate_pools, State),
+    ?assertEqual(1, meck:num_calls(gun, shutdown, ['_'])),
+    meck:unload(gun).
+
+%% The restartable worker must accept the inflight table already owned by its
+%% long-lived supervisor instead of trying to replace it during init.
+init_reuses_supervisor_owned_inflight_table_test() ->
+    catch ets:new(?HTTP_INFLIGHT_TABLE, [named_table, public, set]),
+    Owner = ets:info(?HTTP_INFLIGHT_TABLE, owner),
+    ?assertMatch({ok, #state{}}, init([])),
+    ?assertEqual(Owner, ets:info(?HTTP_INFLIGHT_TABLE, owner)).
+
+-endif.
