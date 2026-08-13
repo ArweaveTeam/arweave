@@ -223,6 +223,19 @@ compute_next_vdf_difficulty_test_block() ->
         scheduled_price_per_gib_minute = 15000
     }.
 
+%% @doc The same block, but with a VDF difficulty and a block time history driving the
+%% retarget below ?MIN_VDF_DIFFICULTY.
+compute_next_vdf_difficulty_min_test_block() ->
+    B = compute_next_vdf_difficulty_test_block(),
+    Info = B#block.nonce_limiter_info,
+    B#block{
+        nonce_limiter_info = Info#nonce_limiter_info{
+            vdf_difficulty = 1,
+            next_vdf_difficulty = 1
+        },
+        block_time_history = lists:duplicate(ar_block_time_history:history_length(), {129, 0, 1})
+    }.
+
 compute_next_vdf_difficulty_2_7_test_()->
     ar_test_node:test_with_all_nodes_mocked(
         [{ar_fork, height_2_6, fun() -> -1 end},
@@ -231,6 +244,28 @@ compute_next_vdf_difficulty_2_7_test_()->
         fun() ->
             B = compute_next_vdf_difficulty_test_block(),
             10465 = ar_block:compute_next_vdf_difficulty(B),
+            ok
+        end).
+
+compute_next_vdf_difficulty_min_2_7_test_()->
+    ar_test_node:test_with_all_nodes_mocked(
+        [{ar_fork, height_2_6, fun() -> -1 end},
+        {ar_fork, height_2_7, fun() -> -1 end},
+        {ar_fork, height_2_7_1, fun() -> infinity end}],
+        fun() ->
+            B = compute_next_vdf_difficulty_min_test_block(),
+            ?MIN_VDF_DIFFICULTY = ar_block:compute_next_vdf_difficulty(B),
+            ok
+        end).
+
+compute_next_vdf_difficulty_min_2_7_1_test_()->
+    ar_test_node:test_with_all_nodes_mocked(
+        [{ar_fork, height_2_6, fun() -> -1 end},
+        {ar_fork, height_2_7, fun() -> -1 end},
+        {ar_fork, height_2_7_1, fun() -> -1 end}],
+        fun() ->
+            B = compute_next_vdf_difficulty_min_test_block(),
+            ?MIN_VDF_DIFFICULTY = ar_block:compute_next_vdf_difficulty(B),
             ok
         end).
 
