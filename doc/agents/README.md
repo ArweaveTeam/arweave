@@ -16,18 +16,24 @@ Content lives here, in plain Markdown, once. Each tool gets a thin pointer:
 | Tool | Entry point |
 |---|---|
 | Codex | `AGENTS.md` is loaded automatically; `.agents/skills/ar-*` exposes repo-local skills |
-| Claude Code | `CLAUDE.md` imports `AGENTS.md`; `.claude/skills/ar-*` symlinks the same skills |
+| Claude Code | `CLAUDE.md` imports `AGENTS.md`; `.claude/skills` symlinks `.agents/skills` |
 | Cursor | `.cursor/rules/build.mdc` points at `AGENTS.md` |
 
 Codex discovers repo-local skills under `.agents/skills/` from the current
 working directory up to the repository root. Run `/skills` to browse them.
 
-Claude Code discovers the same skills under `.claude/skills/`, where each
-`SKILL.md` is a relative symlink to its `.agents/skills/` counterpart — one file
-per skill, not two copies to keep in step. Both trees sit three levels below the
-repository root, so the `../../../doc/agents/…` links resolve identically
-whichever path an agent reads. Skills are named `ar-*` and contain only pointers
-to the canonical documents in this directory.
+Claude Code discovers the same skills under `.claude/skills/`, which is a
+relative symlink to `.agents/skills`:
+
+```
+.claude/skills -> ../.agents/skills
+```
+
+One link for the whole set, so a skill added under `.agents/skills/` is visible
+to Claude Code with no further step. Each `SKILL.md` sits three levels below the
+repository root by either path, so the `../../../doc/agents/…` links inside
+resolve identically whichever way an agent reaches the file. Skills are named
+`ar-*` and contain only pointers to the canonical documents in this directory.
 
 Invoke a skill explicitly with the tool's native prefix:
 
@@ -40,14 +46,8 @@ Codex may also invoke a skill implicitly when its policy allows it, and Claude
 Code may load a skill automatically when its description matches the request.
 `ar-security-triage` is explicit-only because it writes to an external issue.
 
-Adding a skill means creating it under `.agents/skills/ar-<name>/SKILL.md` and
-linking it:
-
-```bash
-mkdir -p .claude/skills/ar-<name>
-ln -s ../../../.agents/skills/ar-<name>/SKILL.md \
-    .claude/skills/ar-<name>/SKILL.md
-```
+Adding a skill means creating `.agents/skills/ar-<name>/SKILL.md`. There is no
+Claude Code step — the directory symlink picks it up.
 
 Keep descriptions tool-neutral — one file serves every agent, so a description
 naming one tool's features is wrong for the others reading it.

@@ -1,1 +1,0 @@
-../../../.agents/skills/ar-security-triage/SKILL.md

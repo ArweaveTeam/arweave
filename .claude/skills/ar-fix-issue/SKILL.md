@@ -1,1 +1,0 @@
-../../../.agents/skills/ar-fix-issue/SKILL.md
