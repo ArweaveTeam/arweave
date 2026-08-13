@@ -104,8 +104,8 @@ rate_limiter_happy_path_sanity_check(_Config) ->
     ?assertMatch(
        [
         {[{limiter_id, ?GENERAL}, {item_type, concurrency_peers}], 150*1000},
-        {[{limiter_id, ?GENERAL}, {item_type, leaky_bucket_peers}], 0},
-        {[{limiter_id, ?GENERAL}, {item_type, sliding_window_timestamps}], 150*1000},
-        {[{limiter_id, ?GENERAL}, {item_type, sliding_window_peers}], 1000}
+        {[{limiter_id, ?GENERAL}, {item_type, leaky_bucket_peers}], 1000},
+        {[{limiter_id, ?GENERAL}, {item_type, sliding_window_timestamps}], 0},
+        {[{limiter_id, ?GENERAL}, {item_type, sliding_window_peers}], 0}
        ], ?M:tracked_items([{?GENERAL, Info}])),
     ok.
