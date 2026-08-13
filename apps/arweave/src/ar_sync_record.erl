@@ -730,7 +730,8 @@ store_state(#state{ in_memory = true }) ->
     ok;
 store_state(State) ->
     #state{ state_db = StateDB, sync_record_by_id = SyncRecordByID,
-            sync_record_by_id_type = SyncRecordByIDType, store_id = StoreID,
+            sync_record_by_id_type = SyncRecordByIDType,
+            storage_module = StorageModule,
             partition_number = PartitionNumber } = State,
     StoreSyncRecords =
         ar_kv:put(
@@ -756,7 +757,7 @@ store_state(State) ->
             maps:map(
                 fun ({ar_data_sync, Packing}, TypeRecord) ->
                         ar_mining_stats:set_storage_module_data_size(
-                            StoreID, Packing, PartitionNumber,
+                            StorageModule, Packing, PartitionNumber,
                             ar_intervals:sum(TypeRecord));
                     (_, _) ->
                         ok

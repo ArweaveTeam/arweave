@@ -1260,7 +1260,9 @@ assert_get(Expected, Offset, StoreID) ->
 
 defrag_command_test() ->
     RandomID = crypto:strong_rand_bytes(16),
-    Filepath = "test_defrag_" ++ binary_to_list(arweave_util:encode(RandomID)),
+    Filepath = filename:join(".tmp",
+        "test_defrag_" ++ binary_to_list(arweave_util:encode(RandomID))),
+    ok = filelib:ensure_dir(Filepath),
     {ok, F} = file:open(Filepath, [binary, write]),
     {O1, C1} = {236, crypto:strong_rand_bytes(262144)},
     {O2, C2} = {262144, crypto:strong_rand_bytes(262144)},
@@ -1284,4 +1286,6 @@ defrag_command_test() ->
     ?assertMatch({ok, << O1:24, C1:262144/binary, O2:24, C2:262144/binary,
                          0:((262144 + 3) * 2 * 8) >>}, file:pread(F2, 10000001, (262144 + 3) * 4)),
     ?assertMatch({ok, << O3:24, C3:262144/binary >>},
-                 file:pread(F2, 30000001, 262144 + 3 + 100)). % End of file => +100 is ignored.
+                 file:pread(F2, 30000001, 262144 + 3 + 100)), % End of file => +100 is ignored.
+    ok = file:close(F2),
+    ok = file:delete(Filepath).

@@ -177,9 +177,11 @@ all_metrics() ->
         ]},
         {prometheus_gauge, [
             {name, v2_index_data_size_by_packing},
-            {labels, [store_id, packing, partition_number, packing_difficulty]},
+            {labels, [store_id, packing, partition_number, range_start, range_end,
+                packing_difficulty]},
             {help, "The size (in bytes) of the data stored and indexed. Grouped by the "
-                    "store ID, packing, partition number, and packing difficulty."}
+                    "store ID, packing, partition number, storage module range "
+                    "(range_start / range_end), and packing difficulty."}
         ]},
         {prometheus_gauge, [
             {name, tip_partition_data_size_by_packing},

@@ -241,12 +241,24 @@ update_tip_partition_data_size() ->
               RemovedPackingLabels)
     end.
 
-set_storage_module_data_size(StoreID, Packing, PartitionNumber, DataSize) ->
+%% @doc Record the amount of indexed data a storage module holds in the
+%% given packing. `StorageModule' is the runtime module tuple
+%% `{RangeStart, RangeEnd, ModulePacking}' (or ?DEFAULT_MODULE for the
+%% default store); `Packing' is the packing of the recorded data, which
+%% for a module in transition differs from the module's target packing.
+set_storage_module_data_size(StorageModule, Packing, PartitionNumber, DataSize) ->
+    StoreID = ar_storage_module:id(StorageModule),
+    {RangeStart, RangeEnd} =
+        case StorageModule of
+            {Start, End, _ModulePacking} -> {Start, End};
+            ?DEFAULT_MODULE -> {undefined, undefined}
+        end,
     StoreIDLabel = ar_storage_module:label(StoreID),
     PackingLabel = ar_storage_module:packing_label(Packing),
     PackingDifficulty = ar_mining_server:get_packing_difficulty(Packing),
     metric_set(v2_index_data_size_by_packing,
-               [StoreIDLabel, PackingLabel, PartitionNumber, PackingDifficulty],
+               [StoreIDLabel, PackingLabel, PartitionNumber, RangeStart, RangeEnd,
+                PackingDifficulty],
                DataSize),
     ets:insert(?MODULE, {
                          {partition, PartitionNumber, storage_module, StoreID, packing, Packing}, DataSize}),
@@ -1097,33 +1109,33 @@ do_test_data_size_stats(Mining, Packing) ->
     ?assertEqual(0, get_partition_data_size(2, Mining)),
 
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({10 * floor(0.1 * ar_block:partition_size()), 11 * floor(0.1 * ar_block:partition_size()), unpacked}),
+      {10 * floor(0.1 * ar_block:partition_size()), 11 * floor(0.1 * ar_block:partition_size()), unpacked},
       unpacked, 1, 101),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({10 * floor(0.1 * ar_block:partition_size()), 11 * floor(0.1 * ar_block:partition_size()), Mining}),
+      {10 * floor(0.1 * ar_block:partition_size()), 11 * floor(0.1 * ar_block:partition_size()), Mining},
       Mining, 1, 102),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({10 * floor(0.1 * ar_block:partition_size()), 11 * floor(0.1 * ar_block:partition_size()), Packing}),
+      {10 * floor(0.1 * ar_block:partition_size()), 11 * floor(0.1 * ar_block:partition_size()), Packing},
       Packing, 1, 103),
 
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({4 * floor(0.3 * ar_block:partition_size()), 5 * floor(0.3 * ar_block:partition_size()), unpacked}),
+      {4 * floor(0.3 * ar_block:partition_size()), 5 * floor(0.3 * ar_block:partition_size()), unpacked},
       unpacked, 1, 111),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({4 * floor(0.3 * ar_block:partition_size()), 5 * floor(0.3 * ar_block:partition_size()), Mining}),
+      {4 * floor(0.3 * ar_block:partition_size()), 5 * floor(0.3 * ar_block:partition_size()), Mining},
       Mining, 1, 112),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({4 * floor(0.3 * ar_block:partition_size()), 5 * floor(0.3 * ar_block:partition_size()), Packing}),
+      {4 * floor(0.3 * ar_block:partition_size()), 5 * floor(0.3 * ar_block:partition_size()), Packing},
       Packing, 1, 113),
 
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({2 * ar_block:partition_size(), 3 * ar_block:partition_size(), unpacked}),
+      {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), unpacked},
       unpacked, 2, 201),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({2 * ar_block:partition_size(), 3 * ar_block:partition_size(), Mining}),
+      {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), Mining},
       Mining, 2, 202),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({2 * ar_block:partition_size(), 3 * ar_block:partition_size(), Packing}),
+      {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), Packing},
       Packing, 2, 203),
 
     ?assertEqual(214, get_partition_data_size(1, Mining)),
@@ -1131,23 +1143,23 @@ do_test_data_size_stats(Mining, Packing) ->
     ?assertEqual(214, get_total_minable_data_size(Mining)),
 
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({8 * floor(0.2 * ar_block:partition_size()), 9 * floor(0.2 * ar_block:partition_size()), unpacked}),
+      {8 * floor(0.2 * ar_block:partition_size()), 9 * floor(0.2 * ar_block:partition_size()), unpacked},
       unpacked, 1, 121),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({8 * floor(0.2 * ar_block:partition_size()), 9 * floor(0.2 * ar_block:partition_size()), Mining}),
+      {8 * floor(0.2 * ar_block:partition_size()), 9 * floor(0.2 * ar_block:partition_size()), Mining},
       Mining, 1, 122),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({8 * floor(0.2 * ar_block:partition_size()), 9 * floor(0.2 * ar_block:partition_size()), Packing}),
+      {8 * floor(0.2 * ar_block:partition_size()), 9 * floor(0.2 * ar_block:partition_size()), Packing},
       Packing, 1, 123),
 
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({2 * ar_block:partition_size(), 3 * ar_block:partition_size(), unpacked}),
+      {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), unpacked},
       unpacked, 2, 51),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({2 * ar_block:partition_size(), 3 * ar_block:partition_size(), Mining}),
+      {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), Mining},
       Mining, 2, 52),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({2 * ar_block:partition_size(), 3 * ar_block:partition_size(), Packing}),
+      {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), Packing},
       Packing, 2, 53),
 
     ?assertEqual(336, get_partition_data_size(1, Mining)),
@@ -1437,19 +1449,16 @@ do_test_report(Mining, Packing, PoA1Multiplier) ->
     WeaveSize = floor(10 * ar_block:partition_size()),
     ets:insert(node_state, [{weave_size, WeaveSize}]),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({10 * floor(0.1 * ar_block:partition_size()), 11 * floor(0.1 * ar_block:partition_size()), Mining}),
-      Mining, 1,
-      floor(0.1 * ar_block:partition_size())),
+      {10 * floor(0.1 * ar_block:partition_size()), 11 * floor(0.1 * ar_block:partition_size()), Mining},
+      Mining, 1, floor(0.1 * ar_block:partition_size())),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({4 * floor(0.3 * ar_block:partition_size()), 5 * floor(0.3 * ar_block:partition_size()), Mining}),
-      Mining, 1,
-      floor(0.2 * ar_block:partition_size())),
+      {4 * floor(0.3 * ar_block:partition_size()), 5 * floor(0.3 * ar_block:partition_size()), Mining},
+      Mining, 1, floor(0.2 * ar_block:partition_size())),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({8 * floor(0.2 * ar_block:partition_size()), 9 * floor(0.2 * ar_block:partition_size()), Mining}),
-      Mining, 1,
-      floor(0.05 * ar_block:partition_size())),
+      {8 * floor(0.2 * ar_block:partition_size()), 9 * floor(0.2 * ar_block:partition_size()), Mining},
+      Mining, 1, floor(0.05 * ar_block:partition_size())),
     ar_mining_stats:set_storage_module_data_size(
-      ar_storage_module:id({2 * ar_block:partition_size(), 3 * ar_block:partition_size(), Mining}),
+      {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), Mining},
       Mining, 2, floor(0.25 * ar_block:partition_size())),
     vdf_computed(Now),
     vdf_computed(Now),
