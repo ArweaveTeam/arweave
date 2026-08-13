@@ -78,11 +78,11 @@
     bootstrap/1,
     normalize/0,
     show_cli_help/0,
-    parse_storage_module/1,
-    storage_module_to_config/1,
-    config_to_storage_module/1,
-    repack_module_to_config/1,
-    config_to_repack_module/1,
+    parse_storage_module_arg/1,
+    storage_modules/0,
+    defrag_storage_modules/0,
+    repack_modules/1,
+    is_legacy_launch/0,
     convert_config/3
 ]).
 % application behavior callbacks.
@@ -259,35 +259,49 @@ normalize() ->
     arweave_config_normalize:run().
 
 %% @doc Print the command-line help text to standard output.
--spec show_cli_help() -> ok.
 show_cli_help() ->
     arweave_config_help:print().
 
-%% @doc Parse a single storage_module configuration string (in the
-%% form accepted by the CLI / config file) into the storage_module
-%% tuple. Returns `{ok, Tuple}` or `{error, Reason}`.
--spec parse_storage_module(string() | binary()) ->
-    {ok, term()} | {error, term()}.
-parse_storage_module(Config) ->
-    arweave_config_format_legacy_json:parse_storage_module(Config).
+%% @doc Parse a single CLI storage_module argument (data doctor): a
+%% JSON object with the same fields as a `storage_modules` config
+%% entry, e.g. `{"partition": 0, ...}` or
+%% `{"range_start": ..., "range_end": ..., ...}`. Returns
+%% `{ok, Entry}` where Entry can be passed to
+%% `set([storage_modules], [Entry])`, or `{error, Reason}`.
+parse_storage_module_arg(Arg) ->
+    case arweave_config_format_json:decode_maybe(Arg) of
+        Map when is_map(Map) ->
+            {ok, Map};
+        _ ->
+            {error, invalid_storage_module}
+    end.
 
--spec storage_module_to_config(map() | {pos_integer(), non_neg_integer(), term()}) ->
-    map().
-storage_module_to_config(StorageModule) ->
-    arweave_config_options_storage_modules:storage_module_to_config(StorageModule).
+%% @doc Return the configured storage modules as runtime tuples
+%% `{RangeStart, RangeEnd, Packing}`.
+storage_modules() ->
+    arweave_config_options_storage_modules:storage_modules().
 
--spec config_to_storage_module(map()) -> {pos_integer(), non_neg_integer(), term()}.
-config_to_storage_module(Config) ->
-    arweave_config_options_storage_modules:config_to_storage_module(Config).
+%% @doc Return the storage modules flagged for defragmentation, as
+%% runtime tuples.
+defrag_storage_modules() ->
+    arweave_config_options_storage_modules:defrag_storage_modules().
 
--spec repack_module_to_config({{pos_integer(), non_neg_integer(), term()}, term()}) -> map().
-repack_module_to_config(RepackModule) ->
-    arweave_config_options_repack_modules:repack_module_to_config(RepackModule).
+%% @doc Return the configured repack-in-place modules. With
+%% `module_only' only the source storage module of each entry is
+%% returned (`{RangeStart, RangeEnd, FromPacking}`); with `full' the
+%% full repack spec pairs
+%% `{{RangeStart, RangeEnd, FromPacking}, ToPacking}`.
+repack_modules(Shape) ->
+    arweave_config_options_repack_modules:repack_modules(Shape).
 
--spec config_to_repack_module(map()) ->
-    {{pos_integer(), non_neg_integer(), term()}, term()}.
-config_to_repack_module(Config) ->
-    arweave_config_options_repack_modules:config_to_repack_module(Config).
+%% @doc Whether this node was configured using the legacy notation
+%% (space-separated arguments / flat config.json). Stamped at
+%% bootstrap; false when bootstrap has not run. Drives the legacy
+%% bucket-notation directory naming in
+%% `ar_storage_module:disk_dir_name/1`.
+is_legacy_launch() ->
+    arweave_config:get([config_dialect]) =:= legacy.
+
 
 -spec convert_config(term(), term(), term()) -> ok | {error, term()}.
 convert_config(Format, InputFile, OutputFile) ->

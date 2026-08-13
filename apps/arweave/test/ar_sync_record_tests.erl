@@ -20,10 +20,9 @@ test_sync_record() ->
     [B0] = ar_weave:init([], 1, WeaveSize),
     RewardAddr = ar_test_node:generate_address(main),
     arweave_config:with_test_config(fun() ->
-        Partition = {ar_block:partition_size(), 0, {spora_2_6, RewardAddr}},
+        Partition = {0, ar_block:partition_size(), {spora_2_6, RewardAddr}},
         PartitionID = ar_storage_module:id(Partition),
-        StorageModules = [arweave_config:storage_module_to_config(Partition)],
-        ar_test_node:start(B0, RewardAddr, #{[storage_modules] => StorageModules}),
+        ar_test_node:start(B0, RewardAddr, #{[storage_modules] => [Partition]}),
         Options = #{ format => etf, random_subset => false },
 
         %% Genesis data only

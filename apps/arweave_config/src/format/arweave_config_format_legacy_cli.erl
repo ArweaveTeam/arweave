@@ -39,13 +39,6 @@ find_config_file([_Arg | Rest], Found, Pos) ->
 
 %% @doc Parse a legacy CLI argument list, writing each parsed option
 %% into the options registry.
--spec parse(Args) -> Return when
-    Args :: [string()],
-    Return :: ok | {error, Actions},
-    Actions :: [{M, F, A}],
-    M :: atom(),
-    F :: atom(),
-    A :: [term()].
 parse([]) ->
     ok;
 parse(["config_file",_|Rest]) ->
@@ -155,12 +148,12 @@ parse(["storage_module", StorageModuleString | Rest]) ->
     try
         case arweave_config_format_legacy_json:parse_storage_module(StorageModuleString) of
             {ok, StorageModule} ->
-                StorageModules = arweave_config_options_storage_modules:legacy_list(),
+                StorageModules = arweave_config_options_storage_modules:storage_modules(),
                 NewModules = [StorageModule | StorageModules],
                 _ = arweave_config_options_storage_modules:write_legacy_list(NewModules),
                 parse(Rest);
             {repack_in_place, StorageModule} ->
-                StorageModules = arweave_config_options_repack_modules:legacy_list(),
+                StorageModules = arweave_config_options_repack_modules:repack_modules(full),
                 NewModules = [StorageModule | StorageModules],
                 _ = arweave_config_options_repack_modules:write_legacy_list(NewModules),
                 parse(Rest)
@@ -404,7 +397,7 @@ parse(["block_throttle_by_solution_interval", Num | Rest]) ->
     _ = arweave_config:set([gossip, block, throttle_by_solution_interval], V),
     parse(Rest);
 parse(["defragment_module", DefragModuleString | Rest]) ->
-    DefragModules = arweave_config_options_storage_modules:legacy_defrags(),
+    DefragModules = arweave_config_options_storage_modules:defrag_storage_modules(),
     try
         {ok, DefragModule} = arweave_config_format_legacy_json:parse_storage_module(DefragModuleString),
         DefragModules2 = [DefragModule | DefragModules],

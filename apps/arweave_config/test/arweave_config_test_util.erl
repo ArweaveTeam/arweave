@@ -91,6 +91,13 @@ legacy_mining_addr() ->
 %% both against a direct legacy load and against a load of the file the
 %% converter emits from it, so the two paths are held to one expectation.
 assert_legacy_json_values() ->
+    assert_legacy_json_values(legacy_storage_modules()).
+
+%% @doc Same, but with an explicit expected storage-module list - the
+%% convert suite loads a fixture stripped of custom bucket sizes (the
+%% converter rejects those), so its expected list is the
+%% partition-sized subset.
+assert_legacy_json_values(ExpectedStorageModules) ->
     ?assertEqual(true, arweave_config:get([debug])),
     ?assertEqual(1985, arweave_config:get([port])),
     ?assertEqual(true, arweave_config:get([genesis, init])),
@@ -118,8 +125,8 @@ assert_legacy_json_values() ->
         ]),
         lists:sort(arweave_config:get([peers, vdf_server]))),
     ?assertEqual(hiopt_m4, arweave_config:get([vdf, algorithm])),
-    ?assertEqual(lists:sort(legacy_storage_modules()),
-        lists:sort(arweave_config_options_storage_modules:legacy_list())),
+    ?assertEqual(lists:sort(ExpectedStorageModules),
+        lists:sort(arweave_config_options_storage_modules:storage_modules())),
     assert_legacy_json_shaped_values(),
     ok.
 
@@ -147,16 +154,25 @@ assert_legacy_json_shaped_values() ->
         arweave_config:get([webhooks])),
     ok.
 
+%% The legacy fixture's storage modules that are expressible in the
+%% current notation without a directory rename - i.e. the
+%% partition-sized ones. This is the module set the converter accepts.
+partition_sized_legacy_storage_modules() ->
+    PartitionSize = ar_block:partition_size(),
+    [Module || {Start, End, _Packing} = Module <- legacy_storage_modules(),
+        End - Start =:= PartitionSize].
+
+%% The legacy fixture's storage modules, as runtime range tuples.
 legacy_storage_modules() ->
     PartitionSize = ar_block:partition_size(),
     MiningAddr = legacy_mining_addr(),
     [
-        {PartitionSize, 0, unpacked},
-        {PartitionSize, 2, {spora_2_6, MiningAddr}},
-        {PartitionSize, 100, unpacked},
-        {1, 0, unpacked},
-        {1000000000000, 14, {spora_2_6, MiningAddr}},
-        {PartitionSize, 0, {replica_2_9, MiningAddr}}
+        {0, PartitionSize, unpacked},
+        {2 * PartitionSize, 3 * PartitionSize, {spora_2_6, MiningAddr}},
+        {100 * PartitionSize, 101 * PartitionSize, unpacked},
+        {0, 1, unpacked},
+        {14 * 1000000000000, 15 * 1000000000000, {spora_2_6, MiningAddr}},
+        {0, PartitionSize, {replica_2_9, MiningAddr}}
     ].
 
 %%====================================================================

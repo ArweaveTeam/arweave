@@ -69,7 +69,7 @@ get_partitions(PartitionUpperBound) ->
                               PackingDifficulty =
                                   ar_storage_module:module_packing_difficulty(Module),
                               {Start, End} = ar_storage_module:module_range(Module, 0),
-                              Partitions = get_store_id_partitions({Start, End}, []),
+                              Partitions = get_store_id_partitions(Start, End),
                               lists:foldl(
                                 fun(PartitionNumber, AccInner) ->
                                         sets:add_element({PartitionNumber, Addr, PackingDifficulty}, AccInner)
@@ -91,12 +91,11 @@ get_partitions(PartitionUpperBound) ->
 
 get_minable_storage_modules() ->
     MiningAddr = arweave_config:get([mining, address]),
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
     lists:filter(
       fun   (Module) ->
               ar_storage_module:module_address(Module) == MiningAddr
       end,
-      StorageModules
+      arweave_config:storage_modules()
      ).
 
 
@@ -273,7 +272,7 @@ map_partition_to_store_ids([StoreID | StoreIDs], PartitionToStoreIDs) ->
             map_partition_to_store_ids(StoreIDs, PartitionToStoreIDs);
         StorageModule ->
             {Start, End} = ar_storage_module:module_range(StorageModule, 0),
-            Partitions = get_store_id_partitions({Start, End}, []),
+            Partitions = get_store_id_partitions(Start, End),
             PartitionToStoreIDs2 = lists:foldl(
                                      fun(Partition, Acc) ->
                                              maps:update_with(Partition,
@@ -284,11 +283,10 @@ map_partition_to_store_ids([StoreID | StoreIDs], PartitionToStoreIDs) ->
             map_partition_to_store_ids(StoreIDs, PartitionToStoreIDs2)
     end.
 
-get_store_id_partitions({Start, End}, Partitions) when Start >= End ->
-    Partitions;
-get_store_id_partitions({Start, End}, Partitions) ->
-    PartitionNumber = ar_node:get_partition_number(Start),
-    get_store_id_partitions({Start + ar_block:partition_size(), End}, [PartitionNumber | Partitions]).
+%% Every partition the range [Start, End) intersects.
+get_store_id_partitions(Start, End) ->
+    lists:seq(ar_node:get_partition_number(Start),
+        ar_node:get_partition_number(End - 1)).
 
 open_files(StoreIDs) ->
     lists:foreach(

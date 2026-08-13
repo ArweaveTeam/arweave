@@ -235,7 +235,7 @@ setup(Node) ->
     {B0, Wallet}.
 
 blacklist_storage_modules(RewardAddr) ->
-    [{30 * ?MiB, 0, {replica_2_9, RewardAddr}}].
+    [{0, 30 * ?MiB, {replica_2_9, RewardAddr}}].
 
 create_txs(Wallet) ->
     lists:foldl(

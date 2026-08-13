@@ -70,15 +70,15 @@ test_data_roots_sync_from_peer() ->
     },
     MainStorageModules = [
         %% The first MB of the weave.
-        {?MiB, 0, {replica_2_9, MainRewardAddr}},
+        {0, ?MiB, {replica_2_9, MainRewardAddr}},
         %% The second 3 MB of the weave (skipping 1-2 MB).
-        {3 * ?MiB, 1, {replica_2_9, MainRewardAddr}}
+        {3 * ?MiB, 6 * ?MiB, {replica_2_9, MainRewardAddr}}
     ],
     ConfiguredRanges = ar_intervals:from_list([{?MiB, 0}, {6 * ?MiB, 3 * ?MiB}]),
 
     ar_test_node:join_on(#{ node => main, join_on => peer1,
         config => MainConfig,
-        [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- MainStorageModules] }, true),
+        [storage_modules] => MainStorageModules }, true),
     ar_test_node:connect_to_peer(peer1),
     ar_test_await:node_joined(main),
 
@@ -242,12 +242,12 @@ test_chunk_in_unconfigured_partition_requires_manual_data_roots() ->
         [gossip, data_roots, syncing_enabled] => true
     },
     MainStorageModules = [
-        {?MiB, 0, unpacked},
-        {3 * ?MiB, 1, unpacked}
+        {0, ?MiB, unpacked},
+        {3 * ?MiB, 6 * ?MiB, unpacked}
     ],
     ar_test_node:join_on(#{ node => main, join_on => peer1,
         config => MainConfig,
-        [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- MainStorageModules] }, true),
+        [storage_modules] => MainStorageModules }, true),
     ar_test_node:connect_to_peer(peer1),
     ar_test_await:node_joined(main),
     ?assertMatch({ok, _}, ar_test_await:node_height(main, LastB#block.height + 11)),
@@ -627,11 +627,8 @@ data_roots_sync_mocks() ->
     ].
 
 unpacked_storage_module_configs() ->
-    [
-        arweave_config:storage_module_to_config(
-            {10 * ar_block:partition_size(), N, unpacked})
-        || N <- lists:seq(0, 8)
-    ].
+    Size = 10 * ar_block:partition_size(),
+    [{N * Size, (N + 1) * Size, unpacked} || N <- lists:seq(0, 8)].
 
 assert_no_data_roots(Peer, B) ->
     case ar_test_await:http_data_roots(Peer, B) of

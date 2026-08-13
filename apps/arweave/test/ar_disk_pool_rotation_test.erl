@@ -16,10 +16,10 @@ test_disk_pool_rotation() ->
     Addr = ar_test_node:generate_address(main),
     %% Store the three genesis chunks + an extra chunk to cover the
     %% long-term storage vicinity around the weave size at the time of posting.
-    StorageModules = [{4 * ?DATA_CHUNK_SIZE, 0,
+    StorageModules = [{0, 4 * ?DATA_CHUNK_SIZE,
             ar_test_node:storage_module_packing(Addr, 0)}],
     Wallet = ar_test_data_sync:setup_nodes(
-            #{ addr => Addr, [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules] }),
+            #{ addr => Addr, [storage_modules] => StorageModules }),
     Chunks = [crypto:strong_rand_bytes(?DATA_CHUNK_SIZE)],
     {DataRoot, DataTree} = ar_merkle:generate_tree(
         ar_tx:sized_chunks_to_sized_chunk_ids(

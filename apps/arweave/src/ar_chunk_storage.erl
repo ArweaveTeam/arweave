@@ -10,7 +10,7 @@
          set_entropy_complete/1,
          get_filepath/2, get_handle_by_filepath/1, close_file/2, close_files/1,
          list_files/2, run_defragmentation/0, get_position_and_relative_chunk_offset/2,
-         get_storage_module_path/2, get_chunk_storage_path/2,
+         storage_module_path/2, get_chunk_storage_path/2,
          get_chunk_bucket_start/1, get_chunk_bucket_end/1,
          get_chunk_byte_from_bucket_end/1, get_chunk_seek_offset/1,
          get_chunk_file_start/1,
@@ -52,8 +52,6 @@ name(StoreID) ->
     list_to_atom("ar_chunk_storage_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-    RepackInPlaceModules = [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
     ConfiguredWorkers = lists:map(
                           fun(StorageModule) ->
                                   StoreID = ar_storage_module:id(StorageModule),
@@ -62,7 +60,7 @@ register_workers() ->
                                   ?CHILD_WITH_ARGS(ar_chunk_storage, worker,
                                                    ChunkStorageName, [ChunkStorageName, StoreID])
                           end,
-                          StorageModules
+                          arweave_config:storage_modules()
                          ),
 
     DefaultChunkStorageWorker = ?CHILD_WITH_ARGS(ar_chunk_storage, worker,
@@ -78,7 +76,7 @@ register_workers() ->
                                      ?CHILD_WITH_ARGS(ar_chunk_storage, worker,
                                                       ChunkStorageName, [ChunkStorageName, StoreID])
                              end,
-                             RepackInPlaceModules
+                             arweave_config:repack_modules(full)
                             ),
 
     ConfiguredWorkers ++ RepackInPlaceWorkers ++ [DefaultChunkStorageWorker].
@@ -270,20 +268,24 @@ run_defragmentation() ->
             Threshold = arweave_config:get([defrag, threshold]),
             DataDir = arweave_config:get([data_dir]),
             ar:console("Defragmentation threshold: ~B bytes.~n", [Threshold]),
-            DefragModules = modules_to_defrag(),
             Sizes = read_chunks_sizes(DataDir),
-            Files = files_to_defrag(DefragModules, DataDir, Threshold, Sizes),
+            Files = files_to_defrag(arweave_config:defrag_storage_modules(),
+                DataDir, Threshold, Sizes),
             ok = defrag_files(Files),
             ok = update_sizes_file(Files, #{})
     end.
 
-get_storage_module_path(DataDir, ?DEFAULT_MODULE) ->
+storage_module_path(DataDir, ?DEFAULT_MODULE) ->
     DataDir;
-get_storage_module_path(DataDir, StoreID) ->
-    filename:join([DataDir, "storage_modules", StoreID]).
+storage_module_path(DataDir, StoreID) ->
+    %% The on-disk directory name may differ from the store id for
+    %% legacy bucket-notation directories - see
+    %% ar_storage_module:disk_dir_name/1.
+    filename:join([DataDir, "storage_modules",
+        ar_storage_module:disk_dir_name(StoreID)]).
 
 get_chunk_storage_path(DataDir, StoreID) ->
-    filename:join([get_storage_module_path(DataDir, StoreID), ?CHUNK_DIR]).
+    filename:join([storage_module_path(DataDir, StoreID), ?CHUNK_DIR]).
 
 %% @doc Return the start and end offset of the bucket containing the given offset.
 %% A chunk bucket is a 0-based, 256-KiB wide, 256-KiB aligned range that
@@ -353,7 +355,7 @@ init(?DEFAULT_MODULE = StoreID) ->
     %% Trap exit to avoid corrupting any open files on quit..
     process_flag(trap_exit, true),
     DataDir = arweave_config:get([data_dir]),
-    Dir = get_storage_module_path(DataDir, StoreID),
+    Dir = storage_module_path(DataDir, StoreID),
     ok = filelib:ensure_dir(Dir ++ "/"),
     ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
     FileIndex = read_file_index(Dir),
@@ -372,7 +374,7 @@ init(StoreID) ->
     %% Trap exit to avoid corrupting any open files on quit..
     process_flag(trap_exit, true),
     DataDir = arweave_config:get([data_dir]),
-    Dir = get_storage_module_path(DataDir, StoreID),
+    Dir = storage_module_path(DataDir, StoreID),
     ok = filelib:ensure_dir(Dir ++ "/"),
     ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
     FileIndex = read_file_index(Dir),
@@ -831,7 +833,7 @@ sync_and_close_files([]) ->
     ok.
 
 list_files(DataDir, StoreID) ->
-    Dir = get_storage_module_path(DataDir, StoreID),
+    Dir = storage_module_path(DataDir, StoreID),
     ok = filelib:ensure_dir(Dir ++ "/"),
     ok = filelib:ensure_dir(filename:join(Dir, ?CHUNK_DIR) ++ "/"),
     StorageIndex = read_file_index(Dir),
@@ -918,11 +920,6 @@ read_chunks_sizes(DataDir) ->
             error
     end.
 
-modules_to_defrag() ->
-    Modules = arweave_config:get([storage_modules]),
-    [arweave_config:config_to_storage_module(Module)
-     || Module <- Modules,
-        maps:get(defrag, Module, false)].
 
 %%%===================================================================
 %%% Tests.
@@ -1266,7 +1263,9 @@ assert_get(Expected, Offset, StoreID) ->
 
 defrag_command_test() ->
     RandomID = crypto:strong_rand_bytes(16),
-    Filepath = "test_defrag_" ++ binary_to_list(arweave_util:encode(RandomID)),
+    Filepath = filename:join(".tmp",
+        "test_defrag_" ++ binary_to_list(arweave_util:encode(RandomID))),
+    ok = filelib:ensure_dir(Filepath),
     {ok, F} = file:open(Filepath, [binary, write]),
     {O1, C1} = {236, crypto:strong_rand_bytes(262144)},
     {O2, C2} = {262144, crypto:strong_rand_bytes(262144)},
@@ -1290,4 +1289,6 @@ defrag_command_test() ->
     ?assertMatch({ok, << O1:24, C1:262144/binary, O2:24, C2:262144/binary,
                          0:((262144 + 3) * 2 * 8) >>}, file:pread(F2, 10000001, (262144 + 3) * 4)),
     ?assertMatch({ok, << O3:24, C3:262144/binary >>},
-                 file:pread(F2, 30000001, 262144 + 3 + 100)). % End of file => +100 is ignored.
+                 file:pread(F2, 30000001, 262144 + 3 + 100)), % End of file => +100 is ignored.
+    ok = file:close(F2),
+    ok = file:delete(Filepath).

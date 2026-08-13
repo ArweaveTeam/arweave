@@ -26,12 +26,11 @@ init([]) ->
     {ok, {{one_for_one, 5, 10}, Workers}}.
 
 register_workers() ->
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
     lists:map(
       fun(StorageModule) ->
               StoreID = ar_storage_module:id(StorageModule),
               Name = ar_data_root_sync:name(StoreID),
               ?CHILD_WITH_ARGS(ar_data_root_sync, worker, Name, [StoreID])
       end,
-      StorageModules
+      arweave_config:storage_modules()
      ).

@@ -27,8 +27,8 @@ test_chunk_cache_leak_on_unpack_error() ->
         peer_addr => PeerAddr,
         config => #{
             [sync, cache_size_limit] => 1,
-            [storage_modules] => [arweave_config:storage_module_to_config(
-                    {10 * ar_block:partition_size(), 0, unpacked})]
+            [storage_modules] =>
+                [{0, 10 * ar_block:partition_size(), unpacked}]
         },
         peer_config => ar_test_node:storage_module_config(PeerAddr, [0])
     }),

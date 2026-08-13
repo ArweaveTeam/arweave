@@ -15,6 +15,7 @@ all() ->
 	[
 		default_help_lists_groups,
 		group_form_prints_group_detail,
+		group_detail_includes_legacy_name,
 		hidden_options_left_out,
 		runtime_marker_and_legend
 	].
@@ -36,6 +37,15 @@ default_help_lists_groups(_Config) ->
 group_form_prints_group_detail(_Config) ->
 	Output = capture(fun() -> arweave_config_help:print_group("peers") end),
 	?assertNotEqual(nomatch, binary:match(Output, <<"peers.trusted">>)),
+	ok.
+
+%% Options that replace a legacy option show its name on a `legacy:`
+%% line; options without a legacy counterpart print no such line.
+group_detail_includes_legacy_name(_Config) ->
+	Mining = capture(fun() -> arweave_config_help:print_group("mining") end),
+	?assertNotEqual(nomatch, binary:match(Mining, <<"legacy: mine">>)),
+	Peers = capture(fun() -> arweave_config_help:print_group("peers") end),
+	?assertEqual(nomatch, binary:match(Peers, <<"legacy: ">>)),
 	ok.
 
 %% Options marked `hidden => true' (the gated config.http.* group)

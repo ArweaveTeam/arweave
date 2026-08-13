@@ -64,9 +64,6 @@ name(StoreID) ->
     list_to_atom("ar_repack_" ++ ar_storage_module:label(StoreID)).
 
 register_workers() ->
-    RepackInPlaceModules =
-        [arweave_config:config_to_repack_module(M) || M <- arweave_config:get([repack_modules])],
-
     RepackInPlaceWorkers = lists:flatmap(
                              fun({StorageModule, Packing}) ->
                                      StoreID = ar_storage_module:id(StorageModule),
@@ -83,7 +80,7 @@ register_workers() ->
 
                                      [RepackWorker, RepackIOWorker]
                              end,
-                             RepackInPlaceModules
+                             arweave_config:repack_modules(full)
                             ),
 
     RepackInPlaceWorkers.
@@ -105,8 +102,7 @@ recompute_sizing() ->
                       gen_server:cast(
                         name(ar_storage_module:id(StorageModule)), recompute_sizing)
               end,
-              [arweave_config:config_to_repack_module(M)
-               || M <- arweave_config:get([repack_modules])]);
+              arweave_config:repack_modules(full));
         false ->
             ok
     end,
@@ -1346,8 +1342,8 @@ footprint_offsets_test_() ->
     ].
 
 test_footprint_offsets_small() ->
-    {Start0, End0} = ar_storage_module:module_range({ar_block:partition_size(), 0, unpacked}),
-    {Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 1, unpacked}),
+    {Start0, End0} = ar_storage_module:module_range({0, ar_block:partition_size(), unpacked}),
+    {Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 2 * ar_block:partition_size(), unpacked}),
     PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
     PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
 
@@ -1387,9 +1383,9 @@ test_footprint_offsets_small() ->
 
 %% @doc run a series of footprint_offsets tests using the production constant values.
 test_footprint_offsets_large() ->
-    {Start0, End0} = ar_storage_module:module_range({ar_block:partition_size(), 0, unpacked}),
-    {Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 1, unpacked}),
-    {Start30, End30} = ar_storage_module:module_range({ar_block:partition_size(), 30, unpacked}),
+    {Start0, End0} = ar_storage_module:module_range({0, ar_block:partition_size(), unpacked}),
+    {Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 2 * ar_block:partition_size(), unpacked}),
+    {Start30, End30} = ar_storage_module:module_range({30 * ar_block:partition_size(), 31 * ar_block:partition_size(), unpacked}),
     PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
     PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
     PaddedEnd30 = ar_block:get_chunk_padded_offset(End30),
@@ -1454,8 +1450,8 @@ footprint_end_test_() ->
     ].
 
 test_footprint_end_small() ->
-    {Start0, End0} = ar_storage_module:module_range({ar_block:partition_size(), 0, unpacked}),
-    {Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 1, unpacked}),
+    {Start0, End0} = ar_storage_module:module_range({0, ar_block:partition_size(), unpacked}),
+    {Start1, End1} = ar_storage_module:module_range({ar_block:partition_size(), 2 * ar_block:partition_size(), unpacked}),
     PaddedEnd0 = ar_block:get_chunk_padded_offset(End0),
     PaddedEnd1 = ar_block:get_chunk_padded_offset(End1),
 

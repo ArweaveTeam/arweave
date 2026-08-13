@@ -485,14 +485,13 @@ test_replica_2_9() ->
     RewardAddr = ar_wallet:to_address(ar_wallet:new_keyfile()),
     Packing = {replica_2_9, RewardAddr},
     StorageModules = [
-                      {ar_block:partition_size(), 0, Packing},
-                      {ar_block:partition_size(), 1, Packing}
+                      {0, ar_block:partition_size(), Packing},
+                      {ar_block:partition_size(), 2 * ar_block:partition_size(), Packing}
                      ],
     arweave_config:with_test_config(fun() ->
                                             ar_test_node:start(#{
                                                                  reward_addr => RewardAddr,
-                                                                 [storage_modules] =>
-                                                                     [arweave_config:storage_module_to_config(Module) || Module <- StorageModules]
+                                                                 [storage_modules] => StorageModules
                                                                 }),
                                             StoreID1 = ar_storage_module:id(lists:nth(1, StorageModules)),
                                             StoreID2 = ar_storage_module:id(lists:nth(2, StorageModules)),

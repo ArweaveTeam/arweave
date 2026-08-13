@@ -297,15 +297,15 @@ arweave_benchmark() {
     in
 	hash)
 	    shift
-	    arweave_benchmark_hash ${*}
+	    arweave_benchmark_hash "$@"
 	    ;;
 	packing)
 	    shift
-	    arweave_benchmark_packing ${*}
+	    arweave_benchmark_packing "$@"
 	    ;;
 	vdf)
 	    shift
-	    arweave_benchmark_vdf ${*}
+	    arweave_benchmark_vdf "$@"
 	    ;;
 	*)
 	    arweave_benchmark_help
@@ -324,17 +324,17 @@ arweave_benchmark_help() {
 
 arweave_benchmark_hash() {
     ARWEAVE_OPTS="-run ar benchmark_hash"
-    echo ${*}
+    ARGS=("$@")
 }
 
 arweave_benchmark_packing() {
     ARWEAVE_OPTS="-run ar benchmark_packing"
-    echo ${*}
+    ARGS=("$@")
 }
 
 arweave_benchmark_vdf() {
     ARWEAVE_OPTS="-run ar benchmark_vdf"
-    echo ${*}
+    ARGS=("$@")
 }
 
 ######################################################################
@@ -344,7 +344,7 @@ arweave_wallet() {
     case "${1}" in
 	create)
 	    shift
-	    arweave_wallet_create ${*}
+	    arweave_wallet_create "$@"
 	    ;;
 	*)
 	    arweave_wallet_help
@@ -364,11 +364,11 @@ arweave_wallet_create() {
     case "${1}" in
 	rsa)
 	    shift
-	    arweave_wallet_create_rsa ${*}
+	    arweave_wallet_create_rsa "$@"
 	    ;;
 	ecdsa)
 	    shift
-	    arweave_wallet_create_ecdsa ${*}
+	    arweave_wallet_create_ecdsa "$@"
 	    ;;
 	*)
 	    arweave_wallet_create_help
@@ -386,12 +386,12 @@ arweave_wallet_create_help() {
 
 arweave_wallet_create_rsa() {
     ARWEAVE_OPTS="-run ar create_wallet"
-    echo ${*}
+    ARGS=("$@")
 }
 
 arweave_wallet_create_ecdsa() {
     ARWEAVE_OPTS="-run ar create_ecdsa_wallet"
-    echo ${*}
+    ARGS=("$@")
 }
 
 ######################################################################
@@ -399,7 +399,7 @@ arweave_wallet_create_ecdsa() {
 ######################################################################
 arweave_doctor() {
     ARWEAVE_OPTS="-run ar_data_doctor main"
-    echo ${*}
+    ARGS=("$@")
 }
 
 arweave_doctor_help() {
@@ -413,7 +413,7 @@ arweave_doctor_help() {
 ######################################################################
 arweave_convert_config() {
     ARWEAVE_OPTS="-run ar convert_config"
-    echo ${*}
+    ARGS=("$@")
 }
 
 arweave_convert_config_help() {
@@ -571,7 +571,7 @@ arweave_test() {
     # Console transcript lands beside the node logs (see bin/test), not in
     # the repo root.
     TEST_LOG="${AR_TEST_LOG_DIR:-logs/eunit}/main-localtest.out"
-    arweave_test_run ${*}
+    arweave_test_run "$@"
 }
 
 arweave_test_help() {
@@ -1215,32 +1215,27 @@ process_internal_args() {
 # and the one after. The one before is used as Erlang
 # VM parameters and should overwrite default configuration,
 # The last part (LOCAL_PARAMS) contains arweave parameters.
-# This function export LOCAL_PARAMS and VM_PARAMS variables.
+# This function sets the LOCAL_PARAMS and VM_PARAMS arrays. Arrays
+# preserve argument boundaries: a single quoted argument containing
+# whitespace (e.g. a JSON storage module) stays one argument.
 parse_args() {
 	local separator="--"
-	local vm_params=""
-	local params=""
-	while test "${*}"
+	VM_PARAMS=()
+	LOCAL_PARAMS=()
+	while [ $# -gt 0 ]
 	do
-		local arg="${1}"
-		if test "${arg}" = ${separator}
+		if test "${1}" = "${separator}"
 		then
-			test "${vm_params}" \
-				&& vm_params="${vm_params} ${params}" \
-				|| vm_params="${params}"
-			params=""
+			VM_PARAMS+=("${LOCAL_PARAMS[@]}")
+			LOCAL_PARAMS=()
 		else
-			test "${params}" \
-				&& params="${params} ${arg}" \
-				|| params="${arg}"
+			LOCAL_PARAMS+=("${1}")
 		fi
 
 		# don't forget to shift to remove the previous
 		# argument from the list
 		shift
 	done
-	export VM_PARAMS="${vm_params}"
-	export LOCAL_PARAMS="${params}"
 }
 
 # if ARWEAVE_DEV environment is defined, then
@@ -1459,7 +1454,7 @@ fi
 case "$1" in
     check)
 	shift
-	arweave_check ${*}
+	arweave_check "$@"
 	;;
 
     config)
@@ -1478,7 +1473,7 @@ case "$1" in
 		VMARGS_PATH="/dev/null"
 		FOREGROUNDOPTIONS="-noinput +Bd"
 		ARWEAVE_OPTS="-run arweave_config_help main"
-		ARGS=${*}
+		ARGS=("$@")
 		;;
 	    get)
 		shift
@@ -1495,8 +1490,8 @@ case "$1" in
 		;;
 	esac
 
-	parse_args ${ARGS}
-	ARGS=${LOCAL_PARAMS}
+	parse_args "${ARGS[@]}"
+	ARGS=("${LOCAL_PARAMS[@]}")
 	CODE_LOADING_MODE="${CODE_LOADING_MODE:-embedded}"
 	EMU="beam"
 	PROGNAME="${0#*/}"
@@ -1505,7 +1500,7 @@ case "$1" in
 	export PROGNAME
 
 	echo "Exec: $BINDIR/erlexec" \
-	    ${VM_PARAMS} \
+	    "${VM_PARAMS[@]}" \
 	    ${EXTRA_DIST_ARGS} \
 	    ${FOREGROUNDOPTIONS} \
 	    -boot "$BOOTFILE" \
@@ -1513,7 +1508,7 @@ case "$1" in
 	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
 	    -config "$RELX_CONFIG_PATH" \
 	    -args_file "$VMARGS_PATH" \
-	    -- ${ARWEAVE_OPTS} ${ARGS}
+	    -- ${ARWEAVE_OPTS} "${ARGS[@]}"
 	echo "Root: $ROOTDIR"
 
 	echo "$RELEASE_ROOT_DIR"
@@ -1528,7 +1523,7 @@ case "$1" in
 	arweave_check
 
 	exec "$BINDIR/erlexec" \
-	    ${VM_PARAMS} \
+	    "${VM_PARAMS[@]}" \
 	    ${EXTRA_DIST_ARGS} \
 	    ${FOREGROUNDOPTIONS} \
 	    -boot "$BOOTFILE" \
@@ -1536,12 +1531,12 @@ case "$1" in
 	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
 	    -config "$RELX_CONFIG_PATH" \
 	    -args_file "$VMARGS_PATH" \
-	    -- ${ARWEAVE_OPTS} ${ARGS}
+	    -- ${ARWEAVE_OPTS} "${ARGS[@]}"
 	;;
 
     version)
 	shift
-	arweave_version ${*}
+	arweave_version "$@"
 	;;
 
     daemon|daemon_boot)
@@ -1559,7 +1554,16 @@ case "$1" in
 		;;
 	esac
 
-	ARGS="$(printf "'%s' " "$@")"
+	# Build a single-quoted argument string for the run_erl command
+	# line. printf with no arguments still renders its format once,
+	# which would fabricate one empty '' argument - so only build the
+	# string when there are arguments to quote.
+	if [ $# -gt 0 ]
+	then
+		ARGS="$(printf "'%s' " "$@")"
+	else
+		ARGS=""
+	fi
 
 	# shellcheck disable=SC2174
 	test -z "$PIPE_BASE_DIR" || mkdir -m 1777 -p "$PIPE_BASE_DIR"
@@ -1708,7 +1712,7 @@ case "$1" in
 		else
 		  BOOTFILE="$REL_DIR/start"
 		fi
-		ARGS=${*}
+		ARGS=("$@")
 		;;
 	    foreground|foreground_clean|benchmark|wallet|doctor|convert_config)
 		shift
@@ -1725,8 +1729,7 @@ case "$1" in
 		# foreground mode, ARGS will be modified.
 		case ${subcommand} in
 		    benchmark)
-			arweave_benchmark ${*}
-			ARGS=$(arweave_benchmark ${*})
+			arweave_benchmark "$@"
 			;;
 		    wallet)
 			# One-shot local run beside a possibly-running node:
@@ -1735,12 +1738,10 @@ case "$1" in
 			# release boot — create_wallet needs the started
 			# arweave_config application.
 			VMARGS_PATH="/dev/null"
-			arweave_wallet ${*}
-			ARGS=$(arweave_wallet ${*})
+			arweave_wallet "$@"
 			;;
 		    doctor)
-			arweave_doctor ${*}
-			ARGS=$(arweave_doctor ${*})
+			arweave_doctor "$@"
 			;;
 		    convert_config)
 			# Boot only kernel/stdlib (start_clean, interactive
@@ -1757,15 +1758,14 @@ case "$1" in
 			# is regenerated before a restart) nor inherit
 			# server-tuned VM flags.
 			VMARGS_PATH="/dev/null"
-			arweave_convert_config ${*}
-			ARGS=$(arweave_convert_config ${*})
+			arweave_convert_config "$@"
 			;;
 		    foreground_clean)
 			ARWEAVE_OPTS=""
-			ARGS=${*}
+			ARGS=("$@")
 			;;
 		    *)
-			ARGS=${*}
+			ARGS=("$@")
 			;;
 		esac
 		;;
@@ -1774,21 +1774,21 @@ case "$1" in
 		# if not set by user use interactive mode for console_clean
 		CODE_LOADING_MODE="${CODE_LOADING_MODE:-interactive}"
 		BOOTFILE="$REL_DIR/start_clean"
-		ARGS=${*}
+		ARGS=("$@")
 		;;
 	    console_boot)
 		shift
 		BOOTFILE="$1"
 		shift
-		ARGS=${*}
+		ARGS=("$@")
 		;;
 	esac
 
 	# split the argument in two parts based on the previously
 	# passed args, LOCAL_PARAMS is for arweave, VM_PARAMS is for
 	# the vm.
-	parse_args ${ARGS}
-	ARGS=${LOCAL_PARAMS}
+	parse_args "${ARGS[@]}"
+	ARGS=("${LOCAL_PARAMS[@]}")
 
 	# if not set by user or console_clean use embedded
 	CODE_LOADING_MODE="${CODE_LOADING_MODE:-embedded}"
@@ -1803,7 +1803,7 @@ case "$1" in
 	# Dump environment info for logging purposes
 	# shellcheck disable=SC2086
 	echo "Exec: $BINDIR/erlexec" \
-	    ${VM_PARAMS} \
+	    "${VM_PARAMS[@]}" \
 	    ${EXTRA_DIST_ARGS} \
 	    ${FOREGROUNDOPTIONS} \
 	    -boot "$BOOTFILE" \
@@ -1811,7 +1811,7 @@ case "$1" in
 	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
 	    -config "$RELX_CONFIG_PATH" \
 	    -args_file "$VMARGS_PATH" \
-	    -- ${ARWEAVE_OPTS} -extra ${ARGS}
+	    -- ${ARWEAVE_OPTS} -extra "${ARGS[@]}"
 	echo "Root: $ROOTDIR"
 
 	# Log the startup
@@ -1832,7 +1832,7 @@ case "$1" in
 	# The variabre FOREGROUNDOPTIONS must NOT be quoted.
 	# shellcheck disable=SC2086
 	exec "$BINDIR/erlexec" \
-	    ${VM_PARAMS} \
+	    "${VM_PARAMS[@]}" \
 	    ${EXTRA_DIST_ARGS} \
 	    ${FOREGROUNDOPTIONS} \
 	    -boot "$BOOTFILE" \
@@ -1840,7 +1840,7 @@ case "$1" in
 	    -boot_var SYSTEM_LIB_DIR "$SYSTEM_LIB_DIR" \
 	    -config "$RELX_CONFIG_PATH" \
 	    -args_file "$VMARGS_PATH" \
-	    -- ${ARWEAVE_OPTS} -extra ${ARGS}
+	    -- ${ARWEAVE_OPTS} -extra "${ARGS[@]}"
 	# exec will replace the current image and nothing else gets
 	# executed from this point on, this explains the absence
 	# of the pre start hook
@@ -1893,7 +1893,7 @@ case "$1" in
 	;;
     test)
 	shift
-	arweave_test ${*}
+	arweave_test "$@"
 	;;
     help)
 	if [ -z "$2" ]; then

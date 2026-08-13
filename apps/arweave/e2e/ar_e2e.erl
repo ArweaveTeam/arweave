@@ -104,7 +104,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
     [B0, _, {TX2, _} | _] = Blocks,
     ar_test_node:start_other_node(Node, B0, #{
                                               [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(TempNode))],
-                                              [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                                              [storage_modules] => StorageModules,
                                               [join, auto] => true
                                              }, true),
     InitialSnapshot = ar_test_node:remote_call(
@@ -133,7 +133,7 @@ start_source_node(Node, unpacked, _WalletFixture, ModuleSize) ->
     restart_node(Node, InitialSnapshot, #{
                                           [peers, trusted] => [],
                                           [join, start_from_latest_state] => true,
-                                          [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                                          [storage_modules] => StorageModules,
                                           [join, auto] => true
                                          }),
 
@@ -161,7 +161,7 @@ start_source_node(Node, PackingType, WalletFixture, ModuleSize) ->
     BaseConfig = #{
                    [peers, trusted] => [],
                    [join, start_from_latest_state] => true,
-                   [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                   [storage_modules] => StorageModules,
                    [join, auto] => true,
                    [mining, address] => RewardAddr
                   },
@@ -270,22 +270,14 @@ max_chunk_offset(Chunks) ->
     lists:foldl(fun({_, EndOffset, _}, Acc) -> max(Acc, EndOffset) end, 0, Chunks).
 
 aligned_partition_size(Node, Partition, Packing) ->
-    StorageModuleConfigs = ar_test_node:remote_call(
-                             Node, arweave_config, get, [[storage_modules]]),
-    StorageModulesList = [
-                          arweave_config:config_to_storage_module(M)
-                          || M <- StorageModuleConfigs
-                         ],
-    RepackInPlaceConfigs = ar_test_node:remote_call(
-                             Node, arweave_config, get, [[repack_modules]]),
-    RepackInPlaceList = [
-                         arweave_config:config_to_repack_module(M)
-                         || M <- RepackInPlaceConfigs
-                        ],
+    StorageModulesList = ar_test_node:remote_call(
+                             Node, arweave_config, storage_modules, []),
+    RepackInPlaceList = ar_test_node:remote_call(
+                             Node, arweave_config, repack_modules, [full]),
     %% Include both regular storage modules and repack_in_place modules.
     %% For repack_in_place modules, use the target packing.
-    RepackInPlaceModules = [{BucketSize, Bucket, TargetPacking}
-                            || {{BucketSize, Bucket, _FromPacking}, TargetPacking} <- RepackInPlaceList],
+    RepackInPlaceModules = [{ModuleStart, ModuleEnd, TargetPacking}
+                            || {{ModuleStart, ModuleEnd, _FromPacking}, TargetPacking} <- RepackInPlaceList],
     AllStorageModules = StorageModulesList ++ RepackInPlaceModules,
     PartitionStart = Partition * ar_block:partition_size(),
     PartitionEnd = (Partition + 1) * ar_block:partition_size(),
@@ -295,9 +287,7 @@ aligned_partition_size(Node, Partition, Packing) ->
     aligned_partition_size2(StorageModules2, PartitionStart, PartitionEnd, 0).
 
 filter_storage_modules_by_partition(PartitionStart, PartitionEnd, Modules) ->
-    lists:filter(fun({ModuleSize, Bucket, _Packing}) ->
-                         ModuleStart = Bucket * ModuleSize,
-                         ModuleEnd = ModuleStart + ModuleSize,
+    lists:filter(fun({ModuleStart, ModuleEnd, _Packing}) ->
                          ModuleStart < PartitionEnd andalso ModuleEnd > PartitionStart
                  end, Modules).
 
@@ -310,10 +300,8 @@ filter_storage_modules_by_packing([_Module | Modules], Packing) ->
 filter_storage_modules_by_packing([], _Packing) ->
     [].
 
-aligned_partition_size2([{ModuleSize, Bucket, Packing} | Modules], PartitionStart, PartitionEnd, Acc) ->
+aligned_partition_size2([{ModuleStart, ModuleEnd, Packing} | Modules], PartitionStart, PartitionEnd, Acc) ->
     Overlap = ar_storage_module:get_overlap(Packing),
-    ModuleStart = Bucket * ModuleSize,
-    ModuleEnd = ModuleStart + ModuleSize,
     ClippedStart = max(ModuleStart, PartitionStart),
     ClippedEnd = min(ModuleEnd, PartitionEnd),
     AlignedModuleStart = max(0, ar_block:get_chunk_padded_offset(ClippedStart) - ?DATA_CHUNK_SIZE),
@@ -336,13 +324,15 @@ source_node_storage_modules(Node, PackingType, WalletFixture, ModuleSize) ->
 
 source_node_storage_modules(SourcePacking, default) ->
     Size = ar_block:partition_size(),
-    lists:map(fun(I) -> {Size, I, SourcePacking} end, lists:seq(0, 4));
+    lists:map(fun(I) -> {I * Size, (I + 1) * Size, SourcePacking} end,
+        lists:seq(0, 4));
 
 source_node_storage_modules(SourcePacking, small) ->
     Size = ar_block:partition_size() div 4,
     %% Put strict data split threshold inside the first storage module.
-    [{Size * 2, 0, SourcePacking}
-    | lists:map(fun(I) -> {Size, I, SourcePacking} end, lists:seq(2, 19))].
+    [{0, Size * 2, SourcePacking}
+    | lists:map(fun(I) -> {I * Size, (I + 1) * Size, SourcePacking} end,
+        lists:seq(2, 19))].
 
 mine_block(Node, Wallet, DataSize, IsTemporary) ->
     WeaveSize = ar_test_node:remote_call(Node, ar_node, get_current_weave_size, []),

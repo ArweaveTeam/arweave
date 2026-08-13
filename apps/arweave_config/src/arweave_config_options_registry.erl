@@ -386,14 +386,21 @@ check(Option, Value, Spec) ->
 %% Dispatch to the type function in `arweave_config_type`. Expected
 %% return is `ok`, `{ok, ConvertedValue}`, or `{error, Term}`.
 check_type(Option, Value, Spec = #{ type := list_map }, Buffer) ->
-    case check_list_map(Option, Value) of
-        {ok, V} ->
-            NewBuffer = Buffer#{ type => ok },
-            check_final(Option, V, Spec, NewBuffer);
-        Error ->
-            NewBuffer = Buffer#{ type => Error },
-            check_final(Option, Value, Spec, NewBuffer)
-    end;
+    check_list_map_type(Option, Value, Value, Spec, Buffer);
+%% The `storage_modules` / `repack_modules` types are list_map
+%% variants that additionally accept runtime tuples as entries: the
+%% type function converts tuples to their canonical maps, then the
+%% usual `{list_item}` schema check runs (atomizing keys and coercing
+%% field values). A value the type function rejects is passed through
+%% unconverted so `check_list_map' reports its usual error.
+check_type(Option, Value, Spec = #{ type := Type }, Buffer)
+        when Type =:= storage_modules;
+             Type =:= repack_modules ->
+    Normalized = case arweave_config_type:Type(Value) of
+        {ok, V} -> V;
+        {error, _} -> Value
+    end,
+    check_list_map_type(Option, Normalized, Value, Spec, Buffer);
 check_type(Option, Value, Spec = #{ type := Type }, Buffer) ->
     case
         check_type(Value, Type)
@@ -628,6 +635,17 @@ strip_prefix(_Prefix, _Key) ->
 
 is_list_item_schema_key(Key) ->
     lists:member({list_item}, Key).
+
+%% Validate a list_map-shaped value against its `{list_item}` schema.
+%% On success the checked (normalized) list is stored; on error the
+%% caller's original value is reported.
+check_list_map_type(Option, Value, OriginalValue, Spec, Buffer) ->
+    case check_list_map(Option, Value) of
+        {ok, V} ->
+            check_final(Option, V, Spec, Buffer#{ type => ok });
+        Error ->
+            check_final(Option, OriginalValue, Spec, Buffer#{ type => Error })
+    end.
 
 check_list_map(Option, Values) when is_list(Values) ->
     FieldSpecs = list_item_field_specs(Option),

@@ -44,9 +44,9 @@ start_with_snapshot(SnapshotDir) ->
                 Addr
         end,
     StorageModules =
-        case [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])] of
+        case arweave_config:storage_modules() of
             [] ->
-                [{21 * ?MiB, 0, {replica_2_9, MiningAddr}}];
+                [{0, 21 * ?MiB, {replica_2_9, MiningAddr}}];
             ConfiguredStorageModules ->
                 ConfiguredStorageModules
         end,
@@ -57,8 +57,7 @@ start_with_snapshot(SnapshotDir) ->
     ok = arweave_config:set([peers, local], []),
     %% Localnet defaults: tight disk caps, no syncing, mining disabled
     %% (the test driver mines on demand via mine_one_block/0).
-    ok = arweave_config:set([storage_modules],
-                            [arweave_config:storage_module_to_config(M) || M <- StorageModules]),
+    ok = arweave_config:set([storage_modules], StorageModules),
     ok = arweave_config:load(
            #{
              [data_dir]                              => DataDir,
@@ -88,9 +87,10 @@ start_with_snapshot(SnapshotDir) ->
             io:format("  Data dir: ~s~n", [DataDir]),
             io:format("  Mining address: ~s~n", [arweave_util:encode(MiningAddr)]),
             io:format("  Storage modules:~n"),
-            lists:foreach(fun({Size, Partition, Packing}) ->
-                                  io:format("    - partition ~B, size ~B MB, packing ~s~n",
-                                            [Partition, Size div (1_000_000), ar_serialize:encode_packing(Packing, false)])
+            lists:foreach(fun({Start, End, Packing}) ->
+                                  io:format("    - range ~B-~B MB, packing ~s~n",
+                                            [Start div (1_000_000), End div (1_000_000),
+                                             ar_serialize:encode_packing(Packing, false)])
                           end, StorageModules),
             io:format("~nMining is disabled. Call ar_localnet:mine_one_block/0 to mine a block.~n"
                       "Call ar_localnet:mine_until_height/1 to mine until the given height.~n~n");

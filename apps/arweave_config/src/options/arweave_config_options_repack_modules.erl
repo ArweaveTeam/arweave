@@ -27,22 +27,22 @@
 -export([
     specs/0,
     group_description/0,
-    repack_module_to_config/1,
+    repack_modules/1,
+    normalize_entry/1,
     config_to_repack_module/1,
-    legacy_list/0,
+    runtime_to_config/1,
     write_legacy_repack_module/1,
     write_legacy_list/1,
     validate/0
 ]).
 -include("arweave_config.hrl").
--include_lib("arweave/include/ar_consensus.hrl").
 
 specs() ->
     [
         #{
             enabled => true,
             option_key => [repack_modules],
-            type => list_map,
+            type => repack_modules,
             default => [],
             short_description =>
                 <<"Repack-in-place module declarations.">>,
@@ -73,8 +73,9 @@ specs() ->
             short_description =>
                 <<"Inclusive start byte offset of the range to repack.">>,
             long_description =>
-                <<"Required when `partition' is not set. The range must "
-                  "match the source storage module's on-disk layout.">>
+                <<"Required when `partition' is not set. Any range with "
+                  "`range_end > range_start' is valid, but it must match "
+                  "the source storage module's on-disk layout.">>
         },
         #{
             enabled => true,
@@ -125,20 +126,37 @@ specs() ->
 group_description() ->
     <<"Define and run repack-in-place modules.">>.
 
-%% @doc Convert the canonical list of maps into the legacy
-%% repack-in-place tuple list.
--spec legacy_list() -> [term()].
-legacy_list() ->
-    case arweave_config_store:get([repack_modules]) of
-        {ok, Modules} when is_list(Modules) ->
-            [config_to_repack_module(Module) || Module <- Modules];
-        _ ->
-            []
+%% @doc Return the configured repack-in-place modules. With
+%% `module_only' only the source storage module of each entry is
+%% returned (`{RangeStart, RangeEnd, FromPacking}`); with `full' the
+%% full repack spec pairs
+%% `{{RangeStart, RangeEnd, FromPacking}, ToPacking}`.
+repack_modules(Shape) ->
+    Pairs =
+        case arweave_config_store:get([repack_modules]) of
+            {ok, Modules} when is_list(Modules) ->
+                [config_to_repack_module(Module) || Module <- Modules];
+            _ ->
+                []
+        end,
+    case Shape of
+        module_only -> [Module || {Module, _ToPacking} <- Pairs];
+        full -> Pairs
     end.
 
-%% @doc Take the legacy repack-in-place list and write each entry's
-%% attributes — both the source `from` and the target `to` — into
-%% the canonical `[repack_modules]' list of maps.
+%% @doc Normalize one `[repack_modules]` list entry at set time:
+%% canonical maps pass through, runtime pairs convert to their
+%% canonical map. Called by the `repack_modules` type
+%% (`arweave_config_type:repack_modules/1`).
+normalize_entry(Module) when is_map(Module) ->
+    Module;
+normalize_entry({{Start, End, _From}, _To} = Module)
+        when is_integer(Start), is_integer(End) ->
+    runtime_to_config(Module).
+
+%% @doc Write the parsed legacy repack-in-place list (already
+%% converted to runtime pairs by the legacy parser) into the
+%% canonical `[repack_modules]' list of maps.
 -spec write_legacy_list([term()]) -> ok.
 write_legacy_list([]) ->
 	ok;
@@ -146,82 +164,46 @@ write_legacy_list(L) when is_list(L) ->
     write_modules(L),
     ok.
 
-write_legacy_repack_module({{_BucketSize, _Bucket, _Packing}, _ToPacking} = Tuple) ->
-    write_modules(lists:usort([Tuple | legacy_list()])),
+write_legacy_repack_module({{_Start, _End, _Packing}, _ToPacking} = Tuple) ->
+    write_modules(lists:usort([Tuple | repack_modules(full)])),
     ok.
-
-set_local(Key, Value) ->
-    _ = arweave_config_options_registry:set_local(Key, Value),
-    ok.
-
-%% Internal read helpers.
 
 write_modules(Modules) ->
-    write_module_maps([repack_module_to_config(Module) || Module <- Modules]).
+    arweave_config_options_storage_modules:write_module_maps(
+        [repack_modules], [runtime_to_config(Module) || Module <- Modules]).
 
-write_module_maps(Modules) ->
-    _ = arweave_config_store:delete_prefix([repack_modules]),
-    set_local([repack_modules], Modules),
-    ok.
+%% Map <-> runtime pair conversions. The shared per-side helpers live
+%% in arweave_config_options_storage_modules; here each side (`from'
+%% and `to') carries its own field names.
 
--spec repack_module_to_config(
-    {{pos_integer(), non_neg_integer(), term()}, term()}) -> map().
-repack_module_to_config({{BucketSize, Bucket, FromPacking}, ToPacking}) ->
-    RangeAttrs = case BucketSize =:= ?PARTITION_SIZE of
-        true ->
-            #{partition => Bucket};
-        false ->
-            Start = Bucket * BucketSize,
-            #{range_start => Start, range_end => Start + BucketSize}
-    end,
+%% @doc Convert a canonical map into the RUNTIME-dialect pair
+%% `{{RangeStart, RangeEnd, FromPacking}, ToPacking}'.
+config_to_repack_module(Module) ->
+    {Start, End} =
+        arweave_config_options_storage_modules:range_from_map(Module),
+    From = packing_from_map(from, Module),
+    To = packing_from_map(to, Module),
+    {{Start, End, From}, To}.
+
+%% @doc Convert a RUNTIME-dialect pair `{{RangeStart, RangeEnd,
+%% FromPacking}, ToPacking}' into the canonical map - the inverse of
+%% `config_to_repack_module/1'.
+runtime_to_config({{Start, End, FromPacking}, ToPacking}) ->
     maps:merge(
-        RangeAttrs,
+        arweave_config_options_storage_modules:range_to_config(Start, End),
         maps:merge(
             packing_map(from, FromPacking),
             packing_map(to, ToPacking)
         )
     ).
 
--spec config_to_repack_module(map()) ->
-    {{pos_integer(), non_neg_integer(), term()}, term()}.
-config_to_repack_module(Module) ->
-    {BucketSize, Bucket} = range_from_map(Module),
-    From = packing_from_map(from, Module),
-    To = packing_from_map(to, Module),
-    {{BucketSize, Bucket, From}, To}.
-
-range_from_map(#{partition := Bucket}) ->
-    {?PARTITION_SIZE, Bucket};
-range_from_map(#{range_start := Start, range_end := End}) ->
-    BucketSize = End - Start,
-    Bucket = case BucketSize of
-        0 -> 0;
-        _ -> Start div BucketSize
-    end,
-    {BucketSize, Bucket}.
-
-packing_map(Prefix, unpacked) ->
-    #{
-        format_field(Prefix) => unpacked
-    };
-packing_map(Prefix, {Format, Addr})
-        when Format =:= spora_2_6; Format =:= replica_2_9 ->
-    #{
-        format_field(Prefix) => Format,
-        address_field(Prefix) => Addr
-    }.
+packing_map(Prefix, Packing) ->
+    arweave_config_options_storage_modules:packing_map(
+        format_field(Prefix), address_field(Prefix), Packing).
 
 packing_from_map(Prefix, Module) ->
-    FormatField = format_field(Prefix),
-    AddressField = address_field(Prefix),
-    packing_from_map2(maps:get(FormatField, Module), AddressField, Module).
-
-packing_from_map2(unpacked, _AddressField, _Module) ->
-    unpacked;
-packing_from_map2(Format, AddressField, Module)
-        when Format =:= spora_2_6; Format =:= replica_2_9 ->
-    Addr = maps:get(AddressField, Module),
-    {Format, Addr}.
+    arweave_config_options_storage_modules:packing_from_map(
+        format_field(Prefix), address_field(Prefix), Module).
 
 format_field(from) -> from_format;
 format_field(to) -> to_format.
@@ -265,32 +247,24 @@ validate_modules([Module | Rest]) ->
         {error, _} = Err -> Err
     end.
 
-validate_module(Module) ->
-    try
-        Tuple = config_to_repack_module(Module),
-        validate_tuple_shape(Tuple)
-    catch
-        _:_ ->
-            {error, <<"repack_modules: invalid module shape">>}
-    end.
-
-validate_tuple_shape({{BucketSize, _Bucket, From}, To})
-        when is_integer(BucketSize), BucketSize >= 0 ->
-    case validate_tuple_packing(From) of
-        ok -> validate_tuple_packing(To);
-        {error, _} = Err -> Err
+validate_module(Module) when is_map(Module) ->
+    case arweave_config_options_storage_modules:validate_range_fields(
+            <<"repack_modules">>, Module) of
+        ok ->
+            case validate_module_packing(from, Module) of
+                ok -> validate_module_packing(to, Module);
+                {error, _} = Err -> Err
+            end;
+        {error, _} = Err ->
+            Err
     end;
-validate_tuple_shape(_) ->
-    {error, <<"repack_modules: invalid module range">>}.
+validate_module(_) ->
+    {error, <<"repack_modules: invalid module shape">>}.
 
-validate_tuple_packing(unpacked) ->
-    ok;
-validate_tuple_packing({Format, Addr})
-        when (Format =:= spora_2_6 orelse Format =:= replica_2_9),
-             is_binary(Addr), byte_size(Addr) =:= 32 ->
-    ok;
-validate_tuple_packing(_) ->
-    {error, <<"repack_modules: invalid packing">>}.
+validate_module_packing(Prefix, Module) ->
+    arweave_config_options_storage_modules:validate_module_packing(
+        <<"repack_modules">>, format_field(Prefix), address_field(Prefix),
+        Module).
 
 %% @doc While any module is being repacked in place, every storage module must be a repack
 %% module. Repacking, syncing and mining are all memory-heavy processes - we do not support

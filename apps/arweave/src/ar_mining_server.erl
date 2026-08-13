@@ -832,7 +832,7 @@ prepare_solution(poa1, Candidate, Solution) ->
                                   {error, io_lib:format("~p", [Error])},
                                   {tags, [solution_proofs]} | LogData]),
                     case ar_storage_module:get(RecallByte1 + 1, Packing) of
-                        {_BucketSize, _Bucket, Packing} = StorageModule ->
+                        {_ModuleStart, _ModuleEnd, Packing} = StorageModule ->
                             StoreID = ar_storage_module:id(StorageModule),
                             case ar_chunk_storage:get(RecallByte1, StoreID) of
                                 not_found ->

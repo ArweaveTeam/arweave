@@ -203,7 +203,9 @@ do
 
 	# start arweave
 	_msg "Launching Erlang Virtual Machine..."
-	${ARWEAVE} foreground ${*}
+	# "$@" (not ${*}) so quoted arguments containing whitespace
+	# (e.g. JSON list values) keep their boundaries.
+	"${ARWEAVE}" foreground "$@"
 	ret="${?}"
 
 	# arweave terminated normally (0).

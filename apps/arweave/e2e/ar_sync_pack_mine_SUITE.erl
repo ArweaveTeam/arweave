@@ -292,14 +292,14 @@ do_entropy_first_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    Module = {ar_block:partition_size(), 1, SinkPacking},
+    Module = {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking},
     StoreID = ar_storage_module:id(Module),
     StorageModules = [ Module ],
 
     BaseOverrides = #{
                       [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                       [join, start_from_latest_state] => true,
-                      [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                      [storage_modules] => StorageModules,
                       [join, auto] => true,
                       [mining, address] => SinkAddr,
                       [sync, jobs] => 0
@@ -346,14 +346,14 @@ do_entropy_last_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    Module = {ar_block:partition_size(), 1, SinkPacking},
+    Module = {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking},
     StoreID = ar_storage_module:id(Module),
     StorageModules = [ Module ],
 
     BaseOverrides = #{
                       [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                       [join, start_from_latest_state] => true,
-                      [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                      [storage_modules] => StorageModules,
                       [join, auto] => true,
                       [mining, address] => SinkAddr,
                       [packing, entropy, workers] => 0
@@ -394,7 +394,8 @@ do_small_module_aligned_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    Module = {floor(0.5 * ar_block:partition_size()), 2, SinkPacking},
+    Module = {ar_block:partition_size(),
+        floor(1.5 * ar_block:partition_size()), SinkPacking},
     StoreID = ar_storage_module:id(Module),
     StorageModules = [ Module ],
 
@@ -402,14 +403,14 @@ do_small_module_aligned_sync_pack_mine(
     Overrides = #{
                   [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                   [join, start_from_latest_state] => true,
-                  [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                  [storage_modules] => StorageModules,
                   [join, auto] => true,
                   [mining, address] => SinkAddr
                  },
     SinkPeerName = ar_test_node:peer_name(SinkNode),
     SinkPeerName = ar_test_node:start_other_node(SinkNode, B0, Overrides, true),
 
-    RangeStart = floor(ar_block:partition_size()),
+    RangeStart = ar_block:partition_size(),
     RangeEnd = floor(1.5 * ar_block:partition_size()),
     Partition = ar_node:get_partition_number(RangeStart),
     RangeSize = ar_e2e:aligned_partition_size(SinkNode, Partition, SinkPacking),
@@ -439,14 +440,15 @@ do_small_module_unaligned_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    Module = {floor(0.5 * ar_block:partition_size()), 3, SinkPacking},
+    Module = {floor(1.5 * ar_block:partition_size()),
+        2 * ar_block:partition_size(), SinkPacking},
     StoreID = ar_storage_module:id(Module),
     StorageModules = [ Module ],
 
     Overrides = #{
                   [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                   [join, start_from_latest_state] => true,
-                  [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                  [storage_modules] => StorageModules,
                   [join, auto] => true,
                   [mining, address] => SinkAddr
                  },
@@ -454,7 +456,7 @@ do_small_module_unaligned_sync_pack_mine(
     SinkPeerName = ar_test_node:start_other_node(SinkNode, B0, Overrides, true),
 
     RangeStart = floor(1.5 * ar_block:partition_size()),
-    RangeEnd = floor(2 * ar_block:partition_size()),
+    RangeEnd = 2 * ar_block:partition_size(),
     Partition = ar_node:get_partition_number(RangeStart),
     RangeSize = ar_e2e:aligned_partition_size(SinkNode, Partition, SinkPacking),
 
@@ -483,15 +485,15 @@ do_large_module_aligned_sync_pack_mine(
     SinkAddr = ar_wallet:to_address(Wallet),
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
-    ModuleSize = floor(2 * ar_block:partition_size()),
-    Module = {ModuleSize, 0, SinkPacking},
+    ModuleSize = 2 * ar_block:partition_size(),
+    Module = {0, ModuleSize, SinkPacking},
     StoreID = ar_storage_module:id(Module),
     StorageModules = [ Module ],
 
     Overrides = #{
                   [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                   [join, start_from_latest_state] => true,
-                  [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                  [storage_modules] => StorageModules,
                   [join, auto] => true,
                   [mining, address] => SinkAddr
                  },
@@ -547,14 +549,14 @@ do_large_module_unaligned_sync_pack_mine(
     SinkPacking = ar_e2e:packing_type_to_packing(SinkPackingType, SinkAddr),
 
     ModuleSize = floor(1.5 * ar_block:partition_size()),
-    Module = {ModuleSize, 1, SinkPacking},
+    Module = {ModuleSize, 2 * ModuleSize, SinkPacking},
     StoreID = ar_storage_module:id(Module),
     StorageModules = [ Module ],
 
     Overrides = #{
                   [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                   [join, start_from_latest_state] => true,
-                  [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                  [storage_modules] => StorageModules,
                   [join, auto] => true,
                   [mining, address] => SinkAddr
                  },
@@ -630,19 +632,19 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
     SinkPacking = ar_e2e:packing_type_to_packing(PackingType, SinkAddr),
 
     StorageModules = [
-                      {ar_block:partition_size(), 1, SinkPacking},
-                      {ar_block:partition_size(), 2, SinkPacking},
-                      {ar_block:partition_size(), 3, SinkPacking},
-                      {ar_block:partition_size(), 4, SinkPacking},
-                      {ar_block:partition_size(), 5, SinkPacking},
-                      {ar_block:partition_size(), 6, SinkPacking},
-                      {ar_block:partition_size(), 10, SinkPacking}
+                      {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking},
+                      {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), SinkPacking},
+                      {3 * ar_block:partition_size(), 4 * ar_block:partition_size(), SinkPacking},
+                      {4 * ar_block:partition_size(), 5 * ar_block:partition_size(), SinkPacking},
+                      {5 * ar_block:partition_size(), 6 * ar_block:partition_size(), SinkPacking},
+                      {6 * ar_block:partition_size(), 7 * ar_block:partition_size(), SinkPacking},
+                      {10 * ar_block:partition_size(), 11 * ar_block:partition_size(), SinkPacking}
                      ],
     NodePeerName = ar_test_node:peer_name(Node),
     NodePeerName = ar_test_node:start_other_node(Node, B0, #{
                                                              [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                                                              [join, start_from_latest_state] => true,
-                                                             [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                                                             [storage_modules] => StorageModules,
                                                              [join, auto] => true,
                                                              [mining, address] => SinkAddr
                                                             }, true),
@@ -656,15 +658,15 @@ start_sink_node(Node, SourceNode, B0, PackingType1, PackingType2) ->
     SinkPacking2 = ar_e2e:packing_type_to_packing(PackingType2, SinkAddr),
 
     StorageModules = [
-                      {ar_block:partition_size(), 1, SinkPacking1},
-                      {ar_block:partition_size(), 1, SinkPacking2}
+                      {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking1},
+                      {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking2}
                      ],
 
     NodePeerName = ar_test_node:peer_name(Node),
     NodePeerName = ar_test_node:start_other_node(Node, B0, #{
                                                              [peers, trusted] => [arweave_util:format_peer(ar_test_node:peer_ip(SourceNode))],
                                                              [join, start_from_latest_state] => true,
-                                                             [storage_modules] => [arweave_config:storage_module_to_config(ConfigModule) || ConfigModule <- StorageModules],
+                                                             [storage_modules] => StorageModules,
                                                              [join, auto] => true,
                                                              [mining, address] => SinkAddr
                                                             }, true),

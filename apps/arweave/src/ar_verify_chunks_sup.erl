@@ -25,14 +25,13 @@ init([]) ->
         false ->
             ignore;
         _ ->
-            StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
             Workers = lists:map(
                 fun(StorageModule) ->
                     StoreID = ar_storage_module:id(StorageModule),
                     Name = ar_verify_chunks:name(StoreID),
                     ?CHILD_WITH_ARGS(ar_verify_chunks, worker, Name, [Name, StoreID])
                 end,
-                StorageModules
+                arweave_config:storage_modules()
             ),
             Reporter = ?CHILD(ar_verify_chunks_reporter, worker),
             {ok, {{one_for_one, 5, 10}, [Reporter | Workers]}}

@@ -4,6 +4,7 @@
 -compile([export_all, nowarn_export_all]).
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("arweave/include/ar_consensus.hrl").
 
 suite() ->
     [{timetrap, {seconds, 60}}].
@@ -26,6 +27,9 @@ all() ->
         walker_catches_exceptions,
         validator_cm_requires_secret,
         validator_storage_modules_dedup,
+        validator_storage_modules_arbitrary_range,
+        validator_storage_modules_rejects_empty_range,
+        validator_storage_modules_rejects_partition_and_range,
         validator_repack_allows_differing_addresses,
         validator_repack_rejects_mixed_archetypes
     ].
@@ -89,6 +93,72 @@ validator_storage_modules_dedup(_Config) ->
             {error, _} -> ok;
             Else ->
                 ct:fail({expected_storage_modules_error, Else})
+        end
+    end),
+    ok.
+
+%% An arbitrary (unaligned) byte range is valid and converts to the
+%% runtime {RangeStart, RangeEnd, Packing} tuple as-is.
+validator_storage_modules_arbitrary_range(_Config) ->
+    arweave_config:with_test_config(fun() ->
+        Module = #{
+            range_start => 3_000_000_000_000,
+            range_end => 5_000_000_000_000,
+            packing_format => unpacked,
+            defrag => false
+        },
+        ok = arweave_config:set([storage_modules], [Module]),
+        ?assertEqual(ok, arweave_config_validate:run()),
+        ?assertEqual([{3_000_000_000_000, 5_000_000_000_000, unpacked}],
+            arweave_config:storage_modules()),
+        %% Setting the runtime tuple directly stores the same
+        %% canonical map.
+        ok = arweave_config:set([storage_modules],
+            [{3_000_000_000_000, 5_000_000_000_000, unpacked}]),
+        ?assertEqual([Module], arweave_config:get([storage_modules])),
+        %% A runtime tuple covering exactly one aligned partition
+        %% stores as the partition shorthand.
+        P = ?PARTITION_SIZE,
+        ok = arweave_config:set([storage_modules], [{2 * P, 3 * P, unpacked}]),
+        ?assertEqual(
+            [#{partition => 2, packing_format => unpacked, defrag => false}],
+            arweave_config:get([storage_modules])),
+        ?assertEqual([{2 * P, 3 * P, unpacked}],
+            arweave_config:storage_modules())
+    end),
+    ok.
+
+validator_storage_modules_rejects_empty_range(_Config) ->
+    arweave_config:with_test_config(fun() ->
+        Module = #{
+            range_start => 1000,
+            range_end => 1000,
+            packing_format => unpacked,
+            defrag => false
+        },
+        ok = arweave_config:set([storage_modules], [Module]),
+        case arweave_config_validate:run() of
+            {error, _} -> ok;
+            Else ->
+                ct:fail({expected_range_error, Else})
+        end
+    end),
+    ok.
+
+validator_storage_modules_rejects_partition_and_range(_Config) ->
+    arweave_config:with_test_config(fun() ->
+        Module = #{
+            partition => 0,
+            range_start => 0,
+            range_end => 1000,
+            packing_format => unpacked,
+            defrag => false
+        },
+        ok = arweave_config:set([storage_modules], [Module]),
+        case arweave_config_validate:run() of
+            {error, _} -> ok;
+            Else ->
+                ct:fail({expected_conflict_error, Else})
         end
     end),
     ok.

@@ -55,9 +55,6 @@ parse_map(_) ->
 %% left to the option's scalar type coercion, so a typo surfaces as
 %% the usual type error rather than a JSON error. Shared by the
 %% startup CLI/env parsers and the runtime `config set' facade.
--spec decode_maybe(Value) -> Return when
-    Value :: string() | binary() | term(),
-    Return :: term().
 decode_maybe(Value) when is_binary(Value); is_list(Value) ->
     case json_shaped(Value) of
         true ->

@@ -113,19 +113,19 @@ terminate(_Reason, _State) ->
 
 mine_block(State) ->
     MiningAddr = arweave_config:get([mining, address]),
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
-    mine_block2(pick_random_storage_module(StorageModules), State, MiningAddr, StorageModules).
+    mine_block2(pick_random_storage_module(arweave_config:storage_modules()),
+        State, MiningAddr).
 
-mine_block2(error, _State, _MiningAddr, _StorageModules) ->
+mine_block2(error, _State, _MiningAddr) ->
     ?LOG_ERROR([{event, failed_to_create_localnet_block}, {step, sample_storage_module}, {reason, all_storage_modules_empty}]),
     error;
-mine_block2({StoreID, Intervals}, State, MiningAddr, StorageModules) ->
-    mine_block3(sample_chunk_with_proof(StoreID, Intervals, MiningAddr), State, MiningAddr, StorageModules).
+mine_block2({StoreID, Intervals}, State, MiningAddr) ->
+    mine_block3(sample_chunk_with_proof(StoreID, Intervals, MiningAddr), State, MiningAddr).
 
-mine_block3({error, Error}, _State, _MiningAddr, _StorageModules) ->
+mine_block3({error, Error}, _State, _MiningAddr) ->
     ?LOG_ERROR([{event, failed_to_create_localnet_block}, {step, sample_chunk_with_proof}, {reason, io_lib:format("~p", [Error])}]),
     error;
-mine_block3({RecallByte1, _Chunk1, PoA1}, State, MiningAddr, StorageModules) ->
+mine_block3({RecallByte1, _Chunk1, PoA1}, State, MiningAddr) ->
     NoncesPerChunk = ar_block:get_nonces_per_chunk(?REPLICA_2_9_PACKING_DIFFICULTY),
     Nonce = rand:uniform(NoncesPerChunk) - 1,
     SubChunk1 = get_sub_chunk(PoA1#poa.chunk, Nonce, ?REPLICA_2_9_PACKING_DIFFICULTY),
@@ -135,21 +135,22 @@ mine_block3({RecallByte1, _Chunk1, PoA1}, State, MiningAddr, StorageModules) ->
                    nonce => Nonce
                   },
     IsTwoChunk = rand:uniform(?POA1_DIFF_MULTIPLIER + 1) > 1,
-    mine_block4(IsTwoChunk, Stage1Data, State, MiningAddr, StorageModules).
+    mine_block4(IsTwoChunk, Stage1Data, State, MiningAddr).
 
-mine_block4(false, Stage1Data, State, MiningAddr, _StorageModules) ->
+mine_block4(false, Stage1Data, State, MiningAddr) ->
     mine_block7(Stage1Data, one_chunk, State, MiningAddr);
-mine_block4(true, Stage1Data, State, MiningAddr, StorageModules) ->
-    mine_block5(pick_random_storage_module(StorageModules), Stage1Data, State, MiningAddr, StorageModules).
+mine_block4(true, Stage1Data, State, MiningAddr) ->
+    mine_block5(pick_random_storage_module(arweave_config:storage_modules()),
+        Stage1Data, State, MiningAddr).
 
-mine_block5(error, Stage1Data, State, MiningAddr, _StorageModules) ->
+mine_block5(error, Stage1Data, State, MiningAddr) ->
     mine_block7(Stage1Data, one_chunk, State, MiningAddr);
-mine_block5({StoreID2, Intervals2}, Stage1Data, State, MiningAddr, StorageModules) ->
-    mine_block6(sample_chunk_with_proof(StoreID2, Intervals2, MiningAddr), Stage1Data, State, MiningAddr, StorageModules).
+mine_block5({StoreID2, Intervals2}, Stage1Data, State, MiningAddr) ->
+    mine_block6(sample_chunk_with_proof(StoreID2, Intervals2, MiningAddr), Stage1Data, State, MiningAddr).
 
-mine_block6({error, _Error}, Stage1Data, State, MiningAddr, _StorageModules) ->
+mine_block6({error, _Error}, Stage1Data, State, MiningAddr) ->
     mine_block7(Stage1Data, one_chunk, State, MiningAddr);
-mine_block6({RecallByte2, _Chunk2, PoA2}, Stage1Data, State, MiningAddr, _StorageModules) ->
+mine_block6({RecallByte2, _Chunk2, PoA2}, Stage1Data, State, MiningAddr) ->
     #{ nonce := Nonce } = Stage1Data,
     SubChunk2 = get_sub_chunk(PoA2#poa.chunk, Nonce, ?REPLICA_2_9_PACKING_DIFFICULTY),
     Stage2Data = #{

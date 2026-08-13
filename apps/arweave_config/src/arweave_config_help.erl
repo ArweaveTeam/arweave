@@ -134,6 +134,12 @@ print_option_detail(Option) ->
     end,
     io:format("~tsdefault: ~ts~n", [Indent, default_string(Option)]),
     io:format("~tsruntime: ~ts~n", [Indent, Runtime]),
+    case maps:get(legacy, Option, undefined) of
+        undefined ->
+            ok;
+        Legacy ->
+            io:format("~tslegacy: ~ts~n", [Indent, atom_to_binary(Legacy)])
+    end,
     io:nl().
 
 %% Print `Text` with `Indent` prepended to every line, so multi-line

@@ -17,8 +17,7 @@
 main(Args) ->
     case Args of
         ["bitmap", DataDir, StorageModuleConfig] ->
-            bitmap(DataDir, StorageModuleConfig),
-            true;
+            bitmap(DataDir, StorageModuleConfig);
         ["chunks", Dir, StartStr, EndStr | AddrListStr] when length(AddrListStr) >= 1 ->
             Addresses = [arweave_util:decode(AddrStr) || AddrStr <- AddrListStr],
             ok = arweave_config:load(#{ [randomx, large_pages] => true }),
@@ -38,7 +37,10 @@ main(Args) ->
 
 help() ->
     ar:console("Usage: inspect chunks <directory> <start_range> <end_range> <address1> [address2 ...]~n"),
-    ar:console("       inspect bitmap <data_dir> <storage_module>~n").
+    ar:console("       inspect bitmap <data_dir> <storage_module>~n"),
+    ar:console("storage_module is a JSON storage_modules entry, e.g.~n"),
+    ar:console("'{\"partition\": 0, \"packing_format\": \"replica_2_9\", \"packing_address\": \"<addr>\"}'~n"),
+    ar:console("or with range_start/range_end.~n").
 
 %%--------------------------------------------------------------------
 %% Inspect Chunks
@@ -216,14 +218,22 @@ print_match(no_match) ->
 %% the color is determined by the packing format of the chunk. Each row of the bitmap
 %% is a replica.2.9 sector (so the bitmap is 1024 rows high).
 bitmap(DataDir, StorageModuleConfig) ->
-    {ok, StorageModule} = arweave_config:parse_storage_module(StorageModuleConfig),
-
-    ok = arweave_config:set([storage_modules],
-                            [arweave_config:storage_module_to_config(StorageModule)]),
+    {ok, Entry} =
+        arweave_config:parse_storage_module_arg(StorageModuleConfig),
+    ok = arweave_config:set([storage_modules], [Entry]),
     ok = arweave_config:load(#{ [data_dir] => DataDir }),
 
+    [StorageModule] = arweave_config:storage_modules(),
     StoreID = ar_storage_module:id(StorageModule),
 
+    case ar_data_doctor:check_module_dir(DataDir, StoreID) of
+        false ->
+            false;
+        true ->
+            bitmap(DataDir, StorageModule, StoreID)
+    end.
+
+bitmap(DataDir, StorageModule, StoreID) ->
     ar_kv_sup:start_link(),
     ar_storage_sup:start_link(),
     ar_sync_record_sup:start_link(),
@@ -238,4 +248,5 @@ bitmap(DataDir, StorageModuleConfig) ->
 
     Filename = "bitmap_" ++ StoreID ++ ".ppm",
     file:write_file(Filename, ar_chunk_visualization:bitmap_to_binary(Bitmap)),
-    ar:console("Bitmap written to ~s~n", [Filename]).
+    ar:console("Bitmap written to ~s~n", [Filename]),
+    true.

@@ -127,9 +127,8 @@ reset_inflight() ->
 %% @doc The StoreIDs that have an ar_peer_sync instance (one per storage module
 %% plus the default module).
 store_ids() ->
-    StorageModules = [arweave_config:config_to_storage_module(M)
-                      || M <- arweave_config:get([storage_modules])],
-    [ar_storage_module:id(SM) || SM <- StorageModules] ++ [?DEFAULT_MODULE].
+    [ar_storage_module:id(SM) || SM <- arweave_config:storage_modules()]
+        ++ [?DEFAULT_MODULE].
 
 %% @doc Update the weave-size snapshot. Called by ar_data_sync on chain-tip
 %% moves so the enqueue loop's range clamp follows the tip.

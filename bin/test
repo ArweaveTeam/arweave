@@ -14,4 +14,4 @@ export AR_LOG_DIR="${AR_LOG_DIR:-${AR_TEST_LOG_DIR}}"
 mkdir -p "${AR_TEST_LOG_DIR}"
 
 ARWEAVE=${SCRIPT_DIR}/arweave
-${ARWEAVE} test ${*}
+"${ARWEAVE}" test "$@"

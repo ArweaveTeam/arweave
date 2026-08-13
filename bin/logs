@@ -3,4 +3,4 @@ set -e
 
 SCRIPT_DIR="$(dirname "$0")"
 LOGS_DIR="$(cd $SCRIPT_DIR/../logs && pwd -P)"
-tail -n 500 ${*} ${LOGS_DIR}/*info.log
+tail -n 500 "$@" ${LOGS_DIR}/*info.log

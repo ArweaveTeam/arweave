@@ -414,13 +414,13 @@ skip_to_eol([_ | T]) ->
 
 get_storage_modules_paths() ->
     DataDir = arweave_config:get([data_dir]),
-    StorageModules = [arweave_config:config_to_storage_module(M) || M <- arweave_config:get([storage_modules])],
     SMDirs = lists:map(
                fun(StorageModule) ->
                        StoreID = ar_storage_module:id(StorageModule),
-                       {StoreID, filename:join([DataDir, "storage_modules", StoreID])}
+                       {StoreID, ar_chunk_storage:storage_module_path(
+                                   DataDir, StoreID)}
                end,
-               StorageModules
+               arweave_config:storage_modules()
               ),
     [{?DEFAULT_MODULE, DataDir} | SMDirs].
 
