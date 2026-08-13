@@ -4,6 +4,7 @@ description: >-
   Reformat, evaluate against the Arweave threat model, and post an assessment
   on a security-tracker issue. Use only when the user explicitly invokes this
   skill with an issue URL.
+disable-model-invocation: true
 ---
 
 # Security issue triage
