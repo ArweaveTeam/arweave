@@ -571,7 +571,7 @@ arweave_test() {
     # Console transcript lands beside the node logs (see bin/test), not in
     # the repo root.
     TEST_LOG="${AR_TEST_LOG_DIR:-logs/eunit}/main-localtest.out"
-    arweave_test_run ${*}
+    arweave_test_run "$@"
 }
 
 arweave_test_help() {
@@ -1454,7 +1454,7 @@ fi
 case "$1" in
     check)
 	shift
-	arweave_check ${*}
+	arweave_check "$@"
 	;;
 
     config)
@@ -1536,7 +1536,7 @@ case "$1" in
 
     version)
 	shift
-	arweave_version ${*}
+	arweave_version "$@"
 	;;
 
     daemon|daemon_boot)
@@ -1554,7 +1554,16 @@ case "$1" in
 		;;
 	esac
 
-	ARGS="$(printf "'%s' " "$@")"
+	# Build a single-quoted argument string for the run_erl command
+	# line. printf with no arguments still renders its format once,
+	# which would fabricate one empty '' argument - so only build the
+	# string when there are arguments to quote.
+	if [ $# -gt 0 ]
+	then
+		ARGS="$(printf "'%s' " "$@")"
+	else
+		ARGS=""
+	fi
 
 	# shellcheck disable=SC2174
 	test -z "$PIPE_BASE_DIR" || mkdir -m 1777 -p "$PIPE_BASE_DIR"
@@ -1884,7 +1893,7 @@ case "$1" in
 	;;
     test)
 	shift
-	arweave_test ${*}
+	arweave_test "$@"
 	;;
     help)
 	if [ -z "$2" ]; then
