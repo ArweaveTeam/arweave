@@ -8,8 +8,7 @@
 specs() ->
     [
         %% Internal: which configuration notation this launch used.
-        %% Stamped by bootstrap from the CLI dialect sniff (and by the
-        %% data-doctor tools for their legacy-notation arguments);
+        %% Stamped by bootstrap from the CLI dialect sniff;
         %% never set by operators. Drives the legacy bucket-notation
         %% directory naming (ar_storage_module:disk_dir_name/1).
         #{

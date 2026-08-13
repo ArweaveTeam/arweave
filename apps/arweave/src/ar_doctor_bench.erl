@@ -50,6 +50,17 @@ bench_read(Args) ->
                end || Config <- StorageModuleConfigs],
     ok = arweave_config:set([storage_modules], Entries),
     StorageModules = arweave_config:storage_modules(),
+    Missing = [Module || Module <- StorageModules,
+        not ar_data_doctor:check_module_dir(
+            DataDir, ar_storage_module:id(Module))],
+    case Missing of
+        [_ | _] ->
+            false;
+        [] ->
+            bench_read(Duration, DataDir, StorageModules)
+    end.
+
+bench_read(Duration, DataDir, StorageModules) ->
     Address = resolve_mining_address(StorageModules, undefined),
     ar:console("Assuming mining address: ~p~n", [arweave_util:safe_encode(Address)]),
     %% Skip the `[mining, address]' override when `Address' is `undefined'

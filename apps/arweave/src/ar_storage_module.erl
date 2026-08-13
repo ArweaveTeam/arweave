@@ -295,7 +295,7 @@ is_repack_in_place(ID) ->
 %%
 %% The id is a pure function of the range. The legacy bucket-notation
 %% directory names are a disk-level compatibility concern handled by
-%% disk_dir_name/2, not part of the module's identity.
+%% disk_dir_name/1, not part of the module's identity.
 %%
 %% The guard excludes invalid (empty or reversed) ranges: config
 %% validation rejects them at load, so hitting one here is a bug and

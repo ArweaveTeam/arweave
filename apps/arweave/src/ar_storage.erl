@@ -1124,8 +1124,6 @@ init([]) ->
         CustomDir ->
             open_start_from_state_databases(CustomDir)
     end,
-    ets:insert(?MODULE, [{same_disk_storage_modules_total_size,
-            get_same_disk_storage_modules_total_size()}]),
     {ok, #state{}}.
 
 open_databases() ->
@@ -1329,29 +1327,6 @@ get_db_name(DBName, not_set) ->
     DBName;
 get_db_name(DBName, _CustomDir) ->
     list_to_atom("start_from_state_" ++ atom_to_list(DBName)).
-
-get_same_disk_storage_modules_total_size() ->
-    DataDir = arweave_config:get([data_dir]),
-    {ok, Info} = file:read_file_info(DataDir),
-    Device = Info#file_info.major_device,
-    get_same_disk_storage_modules_total_size(0, arweave_config:storage_modules(),
-            DataDir, Device).
-
-get_same_disk_storage_modules_total_size(TotalSize, [], _DataDir, _Device) ->
-    TotalSize;
-get_same_disk_storage_modules_total_size(TotalSize,
-        [{Size, _Bucket, _Packing} = Module | StorageModules], DataDir, Device) ->
-    Path = filename:join([DataDir, "storage_modules", ar_storage_module:id(Module)]),
-    filelib:ensure_dir(Path ++ "/"),
-    {ok, Info} = file:read_file_info(Path),
-    TotalSize2 =
-        case Info#file_info.major_device == Device of
-            true ->
-                TotalSize + Size;
-            false ->
-                TotalSize
-        end,
-    get_same_disk_storage_modules_total_size(TotalSize2, StorageModules, DataDir, Device).
 
 tx_filepath(TX) ->
     tx_filepath(TX, not_set).

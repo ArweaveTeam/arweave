@@ -27,8 +27,13 @@ merge(Args) ->
     [StorageModule] = arweave_config:storage_modules(),
     StoreID = ar_storage_module:id(StorageModule),
 
-    ok = merge(DataDir, StorageModule, StoreID, SrcDirs),
-    true.
+    case ar_data_doctor:check_module_dir(DataDir, StoreID) of
+        false ->
+            false;
+        true ->
+            ok = merge(DataDir, StorageModule, StoreID, SrcDirs),
+            true
+    end.
 
 merge(_DataDir, _StorageModule, _StoreID, []) ->
     ok;

@@ -17,8 +17,7 @@
 main(Args) ->
     case Args of
         ["bitmap", DataDir, StorageModuleConfig] ->
-            bitmap(DataDir, StorageModuleConfig),
-            true;
+            bitmap(DataDir, StorageModuleConfig);
         ["chunks", Dir, StartStr, EndStr | AddrListStr] when length(AddrListStr) >= 1 ->
             Addresses = [arweave_util:decode(AddrStr) || AddrStr <- AddrListStr],
             ok = arweave_config:load(#{ [randomx, large_pages] => true }),
@@ -227,6 +226,14 @@ bitmap(DataDir, StorageModuleConfig) ->
     [StorageModule] = arweave_config:storage_modules(),
     StoreID = ar_storage_module:id(StorageModule),
 
+    case ar_data_doctor:check_module_dir(DataDir, StoreID) of
+        false ->
+            false;
+        true ->
+            bitmap(DataDir, StorageModule, StoreID)
+    end.
+
+bitmap(DataDir, StorageModule, StoreID) ->
     ar_kv_sup:start_link(),
     ar_storage_sup:start_link(),
     ar_sync_record_sup:start_link(),
@@ -241,4 +248,5 @@ bitmap(DataDir, StorageModuleConfig) ->
 
     Filename = "bitmap_" ++ StoreID ++ ".ppm",
     file:write_file(Filename, ar_chunk_visualization:bitmap_to_binary(Bitmap)),
-    ar:console("Bitmap written to ~s~n", [Filename]).
+    ar:console("Bitmap written to ~s~n", [Filename]),
+    true.

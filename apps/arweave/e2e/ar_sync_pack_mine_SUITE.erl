@@ -632,13 +632,13 @@ start_sink_node(Node, SourceNode, B0, PackingType) ->
     SinkPacking = ar_e2e:packing_type_to_packing(PackingType, SinkAddr),
 
     StorageModules = [
-                      {ar_block:partition_size(), 1, SinkPacking},
-                      {ar_block:partition_size(), 2, SinkPacking},
-                      {ar_block:partition_size(), 3, SinkPacking},
-                      {ar_block:partition_size(), 4, SinkPacking},
-                      {ar_block:partition_size(), 5, SinkPacking},
-                      {ar_block:partition_size(), 6, SinkPacking},
-                      {ar_block:partition_size(), 10, SinkPacking}
+                      {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking},
+                      {2 * ar_block:partition_size(), 3 * ar_block:partition_size(), SinkPacking},
+                      {3 * ar_block:partition_size(), 4 * ar_block:partition_size(), SinkPacking},
+                      {4 * ar_block:partition_size(), 5 * ar_block:partition_size(), SinkPacking},
+                      {5 * ar_block:partition_size(), 6 * ar_block:partition_size(), SinkPacking},
+                      {6 * ar_block:partition_size(), 7 * ar_block:partition_size(), SinkPacking},
+                      {10 * ar_block:partition_size(), 11 * ar_block:partition_size(), SinkPacking}
                      ],
     NodePeerName = ar_test_node:peer_name(Node),
     NodePeerName = ar_test_node:start_other_node(Node, B0, #{
@@ -658,8 +658,8 @@ start_sink_node(Node, SourceNode, B0, PackingType1, PackingType2) ->
     SinkPacking2 = ar_e2e:packing_type_to_packing(PackingType2, SinkAddr),
 
     StorageModules = [
-                      {ar_block:partition_size(), 1, SinkPacking1},
-                      {ar_block:partition_size(), 1, SinkPacking2}
+                      {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking1},
+                      {ar_block:partition_size(), 2 * ar_block:partition_size(), SinkPacking2}
                      ],
 
     NodePeerName = ar_test_node:peer_name(Node),
