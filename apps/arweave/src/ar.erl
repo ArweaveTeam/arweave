@@ -100,7 +100,7 @@ start(normal, _Args) ->
     maybe_install_dumb_term_logger(),
 
     %% Set erlang socket backend
-    SocketBackend = arweave_config:get([network, server, socket_backend]),
+    SocketBackend = arweave_config:get([network, server, socket, backend]),
     persistent_term:put({kernel, inet_backend}, SocketBackend),
 
     %% Configure logger

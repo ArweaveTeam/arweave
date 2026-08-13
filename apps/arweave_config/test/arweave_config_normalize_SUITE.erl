@@ -60,11 +60,11 @@ verify_normalize_noop_when_disabled(_Config) ->
         %% Pre-set a couple of flags to non-default values that the
         %% active-verify path would otherwise clobber.
         ok = arweave_config:set([join, auto], false),
-        ok = arweave_config:set([sync, jobs], 7),
+        ok = arweave_config:set([sync, max_download_rate], 7),
         ok = arweave_config:set([cm, enabled], true),
         ?assertEqual(ok, arweave_config_normalize:run()),
         ?assertEqual(false, arweave_config:get([join, auto])),
-        ?assertEqual(7, arweave_config:get([sync, jobs])),
+        ?assertEqual(7, arweave_config:get([sync, max_download_rate])),
         ?assertEqual(true, arweave_config:get([cm, enabled]))
     end),
     ok.
@@ -122,9 +122,9 @@ assert_verify_normalize_forces_all_flags(Mode) ->
         %% write happened.
         ok = arweave_config:set([join, auto], true),
         ok = arweave_config:set([join, start_from_latest_state], false),
-        ok = arweave_config:set([sync, jobs], 7),
+        ok = arweave_config:set([sync, max_download_rate], 7),
         ok = arweave_config:set([gossip, block, pollers], 7),
-        ok = arweave_config:set([gossip, header_sync_jobs], 7),
+        ok = arweave_config:set([gossip, header, workers], 7),
         ok = arweave_config:set([gossip, tx, polling_enabled], true),
         ok = arweave_config:set([packing, entropy, workers], 7),
         ok = arweave_config:set([cm, enabled], true),
@@ -151,9 +151,9 @@ assert_verify_normalize_forces_all_flags(Mode) ->
         %% Every leaf write took effect.
         ?assertEqual(false, arweave_config:get([join, auto])),
         ?assertEqual(true, arweave_config:get([join, start_from_latest_state])),
-        ?assertEqual(0, arweave_config:get([sync, jobs])),
+        ?assertEqual(0, arweave_config:get([sync, max_download_rate])),
         ?assertEqual(0, arweave_config:get([gossip, block, pollers])),
-        ?assertEqual(0, arweave_config:get([gossip, header_sync_jobs])),
+        ?assertEqual(0, arweave_config:get([gossip, header, workers])),
         ?assertEqual(false, arweave_config:get([gossip, tx, polling_enabled])),
         ?assertEqual(0, arweave_config:get([packing, entropy, workers])),
         ?assertEqual(false, arweave_config:get([cm, enabled])),

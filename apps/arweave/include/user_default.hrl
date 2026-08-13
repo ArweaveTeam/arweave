@@ -12,7 +12,7 @@
 -include_lib("arweave/include/ar_chunk_storage.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
+-include_lib("arweave/include/ar_sync.hrl").
 -include_lib("arweave/include/ar_data_sync.hrl").
 -include_lib("arweave/include/ar_header_sync.hrl").
 -include_lib("arweave/include/ar_inflation.hrl").

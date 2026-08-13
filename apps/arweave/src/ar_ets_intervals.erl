@@ -8,8 +8,9 @@
 -module(ar_ets_intervals).
 -test_category([fast]).
 
--export([init_from_gb_set/2, add/3, delete/3, cut/2, is_inside/2, get_interval_with_byte/2,
-         get_next_interval_outside/3, get_next_interval/3, get_intersection_size/3]).
+-export([init_from_gb_set/2, to_gb_set/1, add/3, delete/3, cut/2, is_inside/2,
+        get_interval_with_byte/2, get_next_interval_outside/3, get_next_interval/3,
+        get_intersection_size/3]).
 
 -include_lib("arweave/include/ar.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -21,6 +22,11 @@
 %% @doc Record intervals from the given gb_sets set.
 init_from_gb_set(Table, Set) ->
     init_from_gb_set_iterator(Table, gb_sets:iterator(Set)).
+
+%% @doc Return the recorded intervals as a gb_sets set of {End, Start} pairs
+%% (the ar_intervals representation).
+to_gb_set(Table) ->
+    gb_sets:from_ordset(ets:tab2list(Table)).
 
 %% @doc Record an interval, bytes Start + 1, Start + 2 ... End.
 add(Table, End, Start) when End > Start ->
@@ -146,7 +152,7 @@ get_interval_with_byte(Table, Offset) ->
 %% strictly above the given Offset, and with the end offset at most EndOffsetUpperBound.
 %% Return not_found if there are no such intervals.
 get_next_interval_outside(_Table, Offset, EndOffsetUpperBound)
-  when Offset >= EndOffsetUpperBound ->
+        when Offset >= EndOffsetUpperBound ->
     not_found;
 get_next_interval_outside(Table, Offset, EndOffsetUpperBound) ->
     case ets:next(Table, Offset) of
@@ -237,13 +243,13 @@ find_largest_continuous_interval(Table, End, Start, End2, Start2, InnerEnds) ->
                     {End2, Start2, InnerEnds};
                 [{End3, Start3}] ->
                     find_largest_continuous_interval(
-                      Table,
-                      End,
-                      End3 + 1,
-                      max(End2, End3),
-                      min(Start2, Start3),
-                      [End3 | InnerEnds]
-                     )
+                        Table,
+                        End,
+                        End3 + 1,
+                        max(End2, End3),
+                        min(Start2, Start3),
+                        [End3 | InnerEnds]
+                    )
             end
     end.
 
@@ -427,7 +433,8 @@ ets_intervals_test() ->
     assert_is_inside(35, 13),
     assert_is_inside(12, 7),
     assert_is_not_inside(13, 12),
-    assert_is_not_inside(40, 35).
+    assert_is_not_inside(40, 35),
+    ?assertEqual([{12, 7}, {35, 13}], gb_sets:to_list(to_gb_set(ets_intervals_test))).
 
 assert_is_inside(End, End) ->
     ok;

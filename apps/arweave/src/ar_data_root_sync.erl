@@ -52,7 +52,7 @@ init([StoreID]) ->
 handle_cast(sync, State) ->
     case ar_node:is_joined() of
         false ->
-            arweave_util:cast_after(500, self(), sync),
+            arweave_util:cast_after(?NODE_JOIN_RETRY_DELAY_MS, self(), sync),
             {noreply, State};
         true ->
             SyncingEnabled = arweave_config:get(

@@ -8,10 +8,11 @@
 
 %%% Fetched chunks that fail unpacking must not leak chunk cache counts:
 %%% ar_data_sync's unpack_error handler has to decrement the cache size like
-%%% every other terminal path, or the leaked counts exceed
-%%% [sync, cache_size_limit] and ar_sync_dispatcher stops dispatching
-%%% forever. The test corrupts a packed chunk on peer1 and requires that a
-%%% valid chunk appearing afterwards still syncs.
+%%% every other terminal path, or the leaked counts exceed the chunk cache
+%%% limit and ar_sync_scheduler stops dispatching forever. The test corrupts
+%%% a packed chunk on peer1 and requires that a valid chunk appearing
+%%% afterwards still syncs. The one-chunk cache is forced through the
+%%% AR_TEST override — the configured limit floors at 1000 chunks.
 
 chunk_cache_leak_on_unpack_error_test_() ->
     {timeout, 600, fun test_chunk_cache_leak_on_unpack_error/0}.
@@ -26,12 +27,14 @@ test_chunk_cache_leak_on_unpack_error() ->
         addr => Addr,
         peer_addr => PeerAddr,
         config => #{
-            [sync, cache_size_limit] => 1,
             [storage_modules] =>
                 [{0, 10 * ar_block:partition_size(), unpacked}]
         },
         peer_config => ar_test_node:storage_module_config(PeerAddr, [0])
     }),
+    %% The one-chunk cache: forced directly — the configured limit floors
+    %% at 1000 chunks, which would never stall on a single leak.
+    ok = ar_data_sync:force_chunk_cache_size_limit(1),
     %% Fill the weave up to the strict data split threshold so both target
     %% chunks land bucket-padded in peer1's ar_chunk_storage.
     StrictThreshold = ar_block:strict_data_split_threshold(),

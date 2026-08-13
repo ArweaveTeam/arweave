@@ -47,7 +47,6 @@ test_uses_blacklists() ->
                 [transactions, blocklist, files] =>
                     [list_to_binary(File) || File <- BlacklistFiles],
                 [transactions, allowlist, files] => [list_to_binary(WhitelistFile)],
-                [sync, jobs] => 10,
                 [transactions, blocklist, urls] =>
                     blocklist_urls(BlocklistPort),
                 [features, pack_served_chunks] => true

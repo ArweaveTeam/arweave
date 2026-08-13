@@ -382,72 +382,89 @@ maybe_search_for_anomalies_cache_values(SessionKey, _InvalidCache) ->
                 {session_key, ar_nonce_limiter:encode_session_key(SessionKey)}]),
     0.
 
-maybe_search_for_anomalies_cache_values_chunk1_failed({
-                                                       Key,
-                                                       #ar_mining_cache_value{ chunk1 = undefined, chunk1_failed = false } = Value
-                                                      }, Anomalies) ->
-    maps:update_with(chunk1_failed, fun(V) -> V + 1 end, 1,
-                     maps:update_with(chunk1_failed_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+maybe_search_for_anomalies_cache_values_chunk1_failed(
+        {Key, #ar_mining_cache_value{
+            chunk1 = undefined,
+            chunk1_failed = false
+        } = Value},
+        Anomalies) ->
+    record_cache_value_anomaly(
+        chunk1_failed, chunk1_failed_sample, {Key, Value}, Anomalies);
 maybe_search_for_anomalies_cache_values_chunk1_failed({_, _}, Anomalies) ->
     Anomalies.
 
-maybe_search_for_anomalies_cache_values_chunk1_stale({
-                                                      Key,
-                                                      #ar_mining_cache_value{ chunk1 = Chunk1, chunk1_failed = true } = Value
-                                                     }, Anomalies) when undefined =/= Chunk1 ->
-    maps:update_with(chunk1_stale, fun(V) -> V + 1 end, 1,
-                     maps:update_with(chunk1_stale_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+maybe_search_for_anomalies_cache_values_chunk1_stale(
+        {Key, #ar_mining_cache_value{
+            chunk1 = Chunk1,
+            chunk1_failed = true
+        } = Value},
+        Anomalies) when Chunk1 =/= undefined ->
+    record_cache_value_anomaly(
+        chunk1_stale, chunk1_stale_sample, {Key, Value}, Anomalies);
 maybe_search_for_anomalies_cache_values_chunk1_stale({_, _}, Anomalies) ->
     Anomalies.
 
-maybe_search_for_anomalies_cache_values_chunk2_failed({
-                                                       Key,
-                                                       #ar_mining_cache_value{ chunk2 = undefined, chunk2_failed = false } = Value
-                                                      }, Anomalies) ->
-    maps:update_with(chunk2_failed, fun(V) -> V + 1 end, 1,
-                     maps:update_with(chunk2_failed_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+maybe_search_for_anomalies_cache_values_chunk2_failed(
+        {Key, #ar_mining_cache_value{
+            chunk2 = undefined,
+            chunk2_failed = false
+        } = Value},
+        Anomalies) ->
+    record_cache_value_anomaly(
+        chunk2_failed, chunk2_failed_sample, {Key, Value}, Anomalies);
 maybe_search_for_anomalies_cache_values_chunk2_failed({_, _}, Anomalies) ->
     Anomalies.
 
-maybe_search_for_anomalies_cache_values_chunk2_stale({
-                                                      Key,
-                                                      #ar_mining_cache_value{ chunk2 = Chunk2, chunk2_failed = true } = Value
-                                                     }, Anomalies) when undefined =/= Chunk2 ->
-    maps:update_with(chunk2_stale, fun(V) -> V + 1 end, 1,
-                     maps:update_with(chunk2_stale_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+maybe_search_for_anomalies_cache_values_chunk2_stale(
+        {Key, #ar_mining_cache_value{
+            chunk2 = Chunk2,
+            chunk2_failed = true
+        } = Value},
+        Anomalies) when Chunk2 =/= undefined ->
+    record_cache_value_anomaly(
+        chunk2_stale, chunk2_stale_sample, {Key, Value}, Anomalies);
 maybe_search_for_anomalies_cache_values_chunk2_stale({_, _}, Anomalies) ->
     Anomalies.
 
-maybe_search_for_anomalies_cache_values_h1_missing({
-                                                    Key,
-                                                    #ar_mining_cache_value{ h1 = undefined, chunk1 = Chunk1 } = Value
-                                                   }, Anomalies)
-  when undefined =/= Chunk1 ->
-    maps:update_with(h1_missing, fun(V) -> V + 1 end, 1,
-                     maps:update_with(h1_missing_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+maybe_search_for_anomalies_cache_values_h1_missing(
+        {Key, #ar_mining_cache_value{
+            h1 = undefined,
+            chunk1 = Chunk1
+        } = Value},
+        Anomalies) when Chunk1 =/= undefined ->
+    record_cache_value_anomaly(
+        h1_missing, h1_missing_sample, {Key, Value}, Anomalies);
 maybe_search_for_anomalies_cache_values_h1_missing({_, _}, Anomalies) ->
     Anomalies.
 
-maybe_search_for_anomalies_cache_values_h2_missing({
-                                                    Key,
-                                                    #ar_mining_cache_value{ h2 = undefined, chunk2 = Chunk2 } = Value
-                                                   }, Anomalies)
-  when undefined =/= Chunk2 ->
-    maps:update_with(h2_missing, fun(V) -> V + 1 end, 1,
-                     maps:update_with(h2_missing_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+maybe_search_for_anomalies_cache_values_h2_missing(
+        {Key, #ar_mining_cache_value{
+            h2 = undefined,
+            chunk2 = Chunk2
+        } = Value},
+        Anomalies) when Chunk2 =/= undefined ->
+    record_cache_value_anomaly(
+        h2_missing, h2_missing_sample, {Key, Value}, Anomalies);
 maybe_search_for_anomalies_cache_values_h2_missing({_, _}, Anomalies) ->
     Anomalies.
 
-maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present({
-                                                                       Key,
-                                                                       #ar_mining_cache_value{ h1_passes_diff_checks = true } = Value
-                                                                      }, Anomalies) ->
-    maps:update_with(h1_passes_diff_checks_present, fun(V) -> V + 1 end, 1,
-                     maps:update_with(h1_passes_diff_checks_present_sample, fun(V) -> V end, {Key, Value}, Anomalies));
+maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present(
+        {Key, #ar_mining_cache_value{
+            h1_passes_diff_checks = true
+        } = Value},
+        Anomalies) ->
+    record_cache_value_anomaly(h1_passes_diff_checks_present,
+        h1_passes_diff_checks_present_sample, {Key, Value}, Anomalies);
 maybe_search_for_anomalies_cache_values_h1_passes_diff_checks_present({_, _}, Anomalies) ->
     Anomalies.
 
-
+%% @doc Increment an anomaly count while preserving its first observed sample.
+record_cache_value_anomaly(AnomalyKey, SampleKey, Sample, Anomalies) ->
+    Anomalies2 = case maps:is_key(SampleKey, Anomalies) of
+        true -> Anomalies;
+        false -> maps:put(SampleKey, Sample, Anomalies)
+    end,
+    arweave_util:increment_map_value(AnomalyKey, Anomalies2).
 
 %%%===================================================================
 %%% Tests.

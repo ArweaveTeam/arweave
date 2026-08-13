@@ -64,15 +64,15 @@ start_with_snapshot(SnapshotDir) ->
              [join, start_from_state]                => SnapshotDir,
              [mining, address]                       => MiningAddr,
              [join, start_from_latest_state]         => true,
-             [gossip, header_cache_size]             => 128,
+            [gossip, header, cache_size]             => 128,
              [disk_pool, max_buffer_size]            => 128,
              [disk_pool, max_data_root_buffer_size]  => 128,
              [join, auto]                            => true,
              [mining, enabled]                       => false,
              [disk_space_check_frequency]            => 1000,
-             [sync, jobs]                            => 0,
-             [disk_pool, jobs]                       => 1,
-             [gossip, header_sync_jobs]              => 0,
+            [sync, max_download_rate]                  => 0,
+            [disk_pool, workers]                       => 1,
+            [gossip, header, workers]              => 0,
              [debug]                                 => true
             }),
     io:format("Starting localnet dependencies...~n"),
@@ -138,12 +138,12 @@ create_snapshot() ->
             end
     end.
 
-%% @doc Poll every 100ms until the node has joined the network, or until
+%% @doc Poll until the node has joined the network, or until
 %% WAIT_UNTIL_JOINED_TIMEOUT ms have elapsed.
 wait_until_joined() ->
     arweave_util:do_until(
       fun() -> ar_node:is_joined() end,
-      100,
+        ?NODE_JOIN_RETRY_DELAY_MS,
       ?WAIT_UNTIL_JOINED_TIMEOUT
      ).
 

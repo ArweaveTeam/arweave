@@ -6,11 +6,14 @@
         is_recorded/2, is_recorded/3, is_recorded/4, is_recorded_any/3,
         get_next_synced_interval/4, get_next_synced_interval/5,
         get_next_unsynced_interval/4, get_next_unsynced_interval/5,
+        collect_unsynced_intervals/4, collect_synced_intervals/4, collect_synced_intervals/5,
         get_interval/3, get_intersection_size/4, name/1]).
 
 -export([init/1, handle_cast/2, handle_call/3, handle_info/2, terminate/2]).
 
 -include("ar.hrl").
+
+-include_lib("eunit/include/eunit.hrl").
 
 %% The kv storage key to the sync records.
 -define(SYNC_RECORDS_KEY, <<"sync_records">>).
@@ -25,20 +28,22 @@
 -define(STORE_SYNC_RECORD_FREQUENCY_MS, 60 * 1000).
 -endif.
 
+%% The intervals themselves are NOT kept in the server state. The single
+%% source of truth is a set of ar_ets_intervals tables, one per record
+%% (keyed {ID, StoreID} and {ID, Packing, StoreID} in the `sync_records'
+%% registry), each holding non-overlapping intervals of global byte
+%% offsets {End, Start} denoting some synced data. End offsets are defined
+%% on [1, WeaveSize], start offsets are defined on [0, WeaveSize).
+%%
+%% Each set serves as a compact map of what is synced by the node.
+%% No matter how big the weave is or how much of it the node stores,
+%% this record can remain very small compared to the space taken by
+%% chunk identifiers, whose number grows unlimited with time.
+%%
+%% The tables are owned by this gen_server (they die with it) and are
+%% only mutated by it; other processes read them lock-free through the
+%% registry. The state below keeps the persistence bookkeeping only.
 -record(state, {
-    %% A map ID => Intervals
-    %% where Intervals is a set of non-overlapping intervals
-    %% of global byte offsets {End, Start} denoting some synced
-    %% data. End offsets are defined on [1, WeaveSize], start
-    %% offsets are defined on [0, WeaveSize).
-    %%
-    %% Each set serves as a compact map of what is synced by the node.
-    %% No matter how big the weave is or how much of it the node stores,
-    %% this record can remain very small compared to the space taken by
-    %% chunk identifiers, whose number grows unlimited with time.
-    sync_record_by_id,
-    %% A map {ID, Packing} => Intervals.
-    sync_record_by_id_type,
     %% The name of the WAL store.
     state_db,
     %% The identifier of the storage module.
@@ -61,25 +66,15 @@
 start_link(Name, StoreID) ->
     gen_server:start_link({local, Name}, ?MODULE, StoreID, []).
 
-%% @doc Return the set of intervals.
+%% @doc Return the set of intervals. Reads the ETS interval table directly;
+%% returns an empty set when the record does not exist.
 get(ID, StoreID) ->
-    GenServerID = name(StoreID),
-    case catch gen_server:call(GenServerID, {get, ID}, 20000) of
-        {'EXIT', {timeout, {gen_server, call, _}}} ->
-            {error, timeout};
-        Reply ->
-            Reply
-    end.
+    read_intervals({ID, StoreID}).
 
-%% @doc Return the set of intervals.
+%% @doc Return the set of intervals. Reads the ETS interval table directly;
+%% returns an empty set when the record does not exist.
 get(ID, Packing, StoreID) ->
-    GenServerID = name(StoreID),
-    case catch gen_server:call(GenServerID, {get, Packing, ID}, 20000) of
-        {'EXIT', {timeout, {gen_server, call, _}}} ->
-            {error, timeout};
-        Reply ->
-            Reply
-    end.
+    read_intervals({ID, Packing, StoreID}).
 
 %% @doc Add the given interval to the record with the
 %% given ID. Store the changes on disk before returning ok.
@@ -154,29 +149,15 @@ is_recorded(Offset, {ID, Packing}) ->
         true ->
             {{true, Packing}, ?DEFAULT_MODULE};
         false ->
-            ModuleOffset =
-                case ID of
-                    ar_data_sync_footprints ->
-                        ar_footprint:get_padded_offset_from_footprint_offset(Offset);
-                    _ ->
-                        Offset
-                end,
-            StorageModules = [Module
-                    || {_, _, ModulePacking} = Module <- ar_storage_module:get_all(ModuleOffset),
-                        ModulePacking == Packing],
+            StorageModules = lists:filter(
+                fun({_, _, ModulePacking}) -> ModulePacking == Packing end,
+                ar_storage_module:get_all(Offset)),
             is_recorded_any_by_type(Offset, ID, StorageModules)
     end;
 is_recorded(Offset, ID) ->
     case is_recorded(Offset, ID, ?DEFAULT_MODULE) of
         false ->
-            ModuleOffset =
-                case ID of
-                    ar_data_sync_footprints ->
-                        ar_footprint:get_padded_offset_from_footprint_offset(Offset);
-                    _ ->
-                        Offset
-                end,
-            StorageModules = ar_storage_module:get_all(ModuleOffset),
+            StorageModules = ar_storage_module:get_all(Offset),
             is_recorded_any(Offset, ID, StorageModules);
         Reply ->
             {Reply, ?DEFAULT_MODULE}
@@ -239,6 +220,22 @@ get_next_unsynced_interval(Offset, EndOffsetUpperBound, ID, StoreID) ->
         [{_, TID}] ->
             ar_ets_intervals:get_next_interval_outside(TID, Offset, EndOffsetUpperBound)
     end.
+
+%% @doc Return every unsynced interval in [Start, End) for ID and StoreID.
+collect_unsynced_intervals(Start, End, ID, StoreID) ->
+    collect_intervals(Start, End,
+        fun(Offset) -> get_next_unsynced_interval(Offset, End, ID, StoreID) end).
+
+%% @doc Return every synced interval in [Start, End) for ID and StoreID.
+collect_synced_intervals(Start, End, ID, StoreID) ->
+    collect_intervals(Start, End,
+        fun(Offset) -> get_next_synced_interval(Offset, End, ID, StoreID) end).
+
+%% @doc Return every synced interval with the given Packing in [Start, End)
+%% for ID and StoreID.
+collect_synced_intervals(Start, End, Packing, ID, StoreID) ->
+    collect_intervals(Start, End,
+        fun(Offset) -> get_next_synced_interval(Offset, End, Packing, ID, StoreID) end).
 
 %% @doc Return the lowest synced interval with the end offset strictly above the given Offset
 %% and at most EndOffsetUpperBound.
@@ -316,88 +313,38 @@ init(StoreID) ->
         store_id = StoreID,
         storage_module = StorageModule,
         partition_number = PartitionNumber,
-        sync_record_by_id = #{},
-        sync_record_by_id_type = #{},
         wal = undefined,
         in_memory = Dir == undefined
     },
+    %% The interval tables of a previous incarnation died with it; drop the
+    %% registry entries pointing at them before creating fresh tables.
+    clear_sync_records_ets(StoreID),
     case Dir of
         undefined ->
-            initialize_sync_record_by_id_type_ets(#{}, StoreID),
-            initialize_sync_record_by_id_ets(#{}, StoreID),
             {ok, State};
         _ ->
             ok = ar_kv:open(#{ path => Dir, name => StateDB }),
             gen_server:cast(self(), store_state),
-            {SyncRecordByID, SyncRecordByIDType, WAL} = read_sync_records(StateDB, StoreID),
-            initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
-            initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
+            WAL = load_sync_records(StateDB, StoreID),
             ?LOG_INFO([{event, ar_sync_record_initialized}, {store_id, StoreID}]),
-            {ok, State#state{
-                sync_record_by_id = SyncRecordByID,
-                sync_record_by_id_type = SyncRecordByIDType,
-                wal = WAL
-            }}
+            {ok, State#state{ wal = WAL }}
     end.
 
-handle_call({get, ID}, _From, State) ->
-    #state{ sync_record_by_id = SyncRecordByID } = State,
-    {reply, maps:get(ID, SyncRecordByID, ar_intervals:new()), State};
-
-handle_call({get, Packing, ID}, _From, State) ->
-    #state{ sync_record_by_id_type = SyncRecordByIDType } = State,
-    {reply, maps:get({ID, Packing}, SyncRecordByIDType, ar_intervals:new()), State};
-
 handle_call({add, End, Start, ID}, _From, State) ->
-    {Reply, State2} = add2(End, Start, ID, State),
+    {Reply, State2} = do_add(End, Start, ID, State),
     {reply, Reply, State2};
 
 handle_call({add, End, Start, Packing, ID}, _From, State) ->
-    {Reply, State2} = add2(End, Start, Packing, ID, State),
+    {Reply, State2} = do_add(End, Start, Packing, ID, State),
     {reply, Reply, State2};
 
 handle_call({delete, End, Start, ID}, _From, State) ->
-    {Reply, State2} = delete2(End, Start, ID, State),
+    {Reply, State2} = do_delete(End, Start, ID, State),
     {reply, Reply, State2};
 
 handle_call({cut, Offset, ID}, _From, State) ->
-    #state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
-            state_db = StateDB, store_id = StoreID } = State,
-    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-    SyncRecord2 = ar_intervals:cut(SyncRecord, Offset),
-    SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-    TID = get_or_create_type_tid({ID, StoreID}),
-    ar_ets_intervals:cut(TID, Offset),
-    SyncRecordByIDType2 =
-        maps:map(
-            fun
-                ({ID2, _}, ByType) when ID2 == ID ->
-                    ar_intervals:cut(ByType, Offset);
-                (_, ByType) ->
-                    ByType
-            end,
-            SyncRecordByIDType
-        ),
-    ets:foldl(
-        fun
-            ({{ID2, _, SID}, TypeTID}, _) when ID2 == ID, SID == StoreID ->
-                ar_ets_intervals:cut(TypeTID, Offset);
-            (_, _) ->
-                ok
-        end,
-        ok,
-        sync_records
-    ),
-    State2 = State#state{ sync_record_by_id = SyncRecordByID2,
-            sync_record_by_id_type = SyncRecordByIDType2 },
-    {Reply, State3} = update_write_ahead_log({cut, {Offset, ID}}, StateDB, State2),
-    case Reply of
-        ok ->
-            emit_cut(Offset, StoreID);
-        _ ->
-            ok
-    end,
-    {reply, Reply, State3};
+    {Reply, State2} = do_cut(Offset, ID, State),
+    {reply, Reply, State2};
 
 handle_call(Request, _From, State) ->
     ?LOG_WARNING([{event, unhandled_call}, {module, ?MODULE}, {request, Request}]),
@@ -415,7 +362,7 @@ handle_cast(store_state, State) ->
     {noreply, State2};
 
 handle_cast({add_async, Event, End, Start, ID}, State) ->
-    {Reply, State2} = add2(End, Start, ID, State),
+    {Reply, State2} = do_add(End, Start, ID, State),
     case Reply of
         ok ->
             ok;
@@ -430,7 +377,7 @@ handle_cast({add_async, Event, End, Start, ID}, State) ->
     {noreply, State2};
 
 handle_cast({add_async, Event, End, Start, Packing, ID}, State) ->
-    {Reply, State2} = add2(End, Start, Packing, ID, State),
+    {Reply, State2} = do_add(End, Start, Packing, ID, State),
     case Reply of
         ok ->
             ok;
@@ -466,86 +413,122 @@ name(StoreID) when is_atom(StoreID) ->
 name(StoreID) ->
     list_to_atom("ar_sync_record_" ++ ar_storage_module:label(StoreID)).
 
-add2(End, Start, ID, State) ->
-    #state{ sync_record_by_id = SyncRecordByID, state_db = StateDB,
-            store_id = StoreID, storage_module = Module } = State,
-    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-    SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
-    SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-    TID = get_or_create_type_tid({ID, StoreID}),
-    ar_ets_intervals:add(TID, End, Start),
-    State2 = State#state{ sync_record_by_id = SyncRecordByID2 },
-    {Reply, State3} = update_write_ahead_log({add, {End, Start, ID}}, StateDB, State2),
+do_add(End, Start, ID, State) ->
+    #state{ state_db = StateDB, store_id = StoreID, storage_module = Module } = State,
+    record_add(End, Start, ID, StoreID),
+    {Reply, State2} = update_write_ahead_log({add, {End, Start, ID}}, StateDB, State),
     case Reply of
         ok ->
             emit_add_range(Start, End, ID, #{ module => Module });
         _ ->
             ok
     end,
-    {Reply, State3}.
+    {Reply, State2}.
 
-add2(End, Start, Packing, ID, State) ->
-    #state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
-            state_db = StateDB, store_id = StoreID, storage_module = Module } = State,
-    ByType = maps:get({ID, Packing}, SyncRecordByIDType, ar_intervals:new()),
-    ByType2 = ar_intervals:add(ByType, End, Start),
-    SyncRecordByIDType2 = maps:put({ID, Packing}, ByType2, SyncRecordByIDType),
-    TypeTID = get_or_create_type_tid({ID, Packing, StoreID}),
-    ar_ets_intervals:add(TypeTID, End, Start),
-    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-    SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
-    SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-    TID = get_or_create_type_tid({ID, StoreID}),
-    ar_ets_intervals:add(TID, End, Start),
-    State2 = State#state{ sync_record_by_id = SyncRecordByID2,
-        sync_record_by_id_type = SyncRecordByIDType2 },
-    {Reply, State3} = update_write_ahead_log({{add, Packing}, {End, Start, ID}}, StateDB, State2),
+do_add(End, Start, Packing, ID, State) ->
+    #state{ state_db = StateDB, store_id = StoreID, storage_module = Module } = State,
+    record_add(End, Start, Packing, ID, StoreID),
+    {Reply, State2} = update_write_ahead_log(
+        {{add, Packing}, {End, Start, ID}}, StateDB, State),
     case Reply of
         ok ->
             emit_add_range(Start, End, ID, #{ module => Module, packing => Packing });
         _ ->
             ok
     end,
-    {Reply, State3}.
+    {Reply, State2}.
 
-delete2(End, Start, ID, State) ->
-    #state{ sync_record_by_id = SyncRecordByID, sync_record_by_id_type = SyncRecordByIDType,
-            state_db = StateDB, store_id = StoreID } = State,
-    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-    SyncRecord2 = ar_intervals:delete(SyncRecord, End, Start),
-    SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-    TID = get_or_create_type_tid({ID, StoreID}),
-    ar_ets_intervals:delete(TID, End, Start),
-    SyncRecordByIDType2 =
-        maps:map(
-            fun
-                ({ID2, _}, ByType) when ID2 == ID ->
-                    ar_intervals:delete(ByType, End, Start);
-                (_, ByType) ->
-                    ByType
-            end,
-            SyncRecordByIDType
-        ),
-    ets:foldl(
-        fun
-            ({{ID2, _, SID}, TypeTID}, _) when ID2 == ID, SID == StoreID ->
-                ar_ets_intervals:delete(TypeTID, End, Start);
-            (_, _) ->
-                ok
-        end,
-        ok,
-        sync_records
-    ),
-    State2 = State#state{ sync_record_by_id = SyncRecordByID2,
-            sync_record_by_id_type = SyncRecordByIDType2 },
-    {Reply, State3} = update_write_ahead_log({delete, {End, Start, ID}}, StateDB, State2),
+do_delete(End, Start, ID, State) ->
+    #state{ state_db = StateDB, store_id = StoreID } = State,
+    record_delete(End, Start, ID, StoreID),
+    {Reply, State2} = update_write_ahead_log({delete, {End, Start, ID}}, StateDB, State),
     case Reply of
         ok ->
             emit_remove_range(Start, End, StoreID);
         _ ->
             ok
     end,
-    {Reply, State3}.
+    {Reply, State2}.
+
+do_cut(Offset, ID, State) ->
+    #state{ state_db = StateDB, store_id = StoreID } = State,
+    record_cut(Offset, ID, StoreID),
+    {Reply, State2} = update_write_ahead_log({cut, {Offset, ID}}, StateDB, State),
+    case Reply of
+        ok ->
+            emit_cut(Offset, StoreID);
+        _ ->
+            ok
+    end,
+    {Reply, State2}.
+
+%% @doc Add the interval to the {ID, StoreID} ETS interval table.
+record_add(End, Start, ID, StoreID) ->
+    TID = get_or_create_tid({ID, StoreID}),
+    ar_ets_intervals:add(TID, End, Start).
+
+%% @doc Add the interval to the {ID, Packing, StoreID} and {ID, StoreID}
+%% ETS interval tables.
+record_add(End, Start, Packing, ID, StoreID) ->
+    TypeTID = get_or_create_tid({ID, Packing, StoreID}),
+    ar_ets_intervals:add(TypeTID, End, Start),
+    record_add(End, Start, ID, StoreID).
+
+%% @doc Remove the interval from the {ID, StoreID} ETS interval table and
+%% from every {ID, Packing, StoreID} table of the store.
+record_delete(End, Start, ID, StoreID) ->
+    TID = get_or_create_tid({ID, StoreID}),
+    ar_ets_intervals:delete(TID, End, Start),
+    ets:foldl(
+        fun    ({{ID2, _, SID}, TypeTID}, _) when ID2 == ID, SID == StoreID ->
+                ar_ets_intervals:delete(TypeTID, End, Start);
+            (_, _) ->
+                ok
+        end,
+        ok,
+        sync_records
+    ).
+
+%% @doc Cut the {ID, StoreID} ETS interval table and every
+%% {ID, Packing, StoreID} table of the store at the given Offset.
+record_cut(Offset, ID, StoreID) ->
+    TID = get_or_create_tid({ID, StoreID}),
+    ar_ets_intervals:cut(TID, Offset),
+    ets:foldl(
+        fun    ({{ID2, _, SID}, TypeTID}, _) when ID2 == ID, SID == StoreID ->
+                ar_ets_intervals:cut(TypeTID, Offset);
+            (_, _) ->
+                ok
+        end,
+        ok,
+        sync_records
+    ).
+
+%% @doc Return the intervals stored in the ETS table registered under Key,
+%% an empty set when the record does not exist.
+read_intervals(Key) ->
+    case ets:lookup(sync_records, Key) of
+        [] ->
+            ar_intervals:new();
+        [{_, TID}] ->
+            ar_ets_intervals:to_gb_set(TID)
+    end.
+
+collect_intervals(Start, End, NextFun) ->
+    do_collect_intervals(Start, End, NextFun, ar_intervals:new()).
+
+do_collect_intervals(Start, End, _NextFun, Intervals) when Start >= End ->
+    Intervals;
+do_collect_intervals(Start, End, NextFun, Intervals) ->
+    case NextFun(Start) of
+        not_found ->
+            Intervals;
+        {End2, Start2} ->
+            End3 = min(End2, End),
+            Start3 = max(Start2, Start),
+            do_collect_intervals(End3, End, NextFun,
+                ar_intervals:add(Intervals, End3, Start3))
+    end.
 
 is_recorded_any_by_type(Offset, ID, [StorageModule | StorageModules]) ->
     StoreID = ar_storage_module:id(StorageModule),
@@ -589,19 +572,21 @@ is_recorded2(Offset, {ID, Packing, StoreID}, ID, StoreID) ->
 is_recorded2(Offset, Key, ID, StoreID) ->
     is_recorded2(Offset, ets:next(sync_records, Key), ID, StoreID).
 
-read_sync_records(StateDB, StoreID) ->
+%% @doc Populate the ETS interval tables from the on-disk snapshot and replay
+%% the write-ahead log on top of them. Return the number of WAL entries.
+load_sync_records(StateDB, StoreID) ->
     {SyncRecordByID, SyncRecordByIDType} =
         case ar_kv:get(StateDB, ?SYNC_RECORDS_KEY) of
             not_found ->
                 {#{}, #{}};
-        {ok, V} ->
-            binary_to_term(V, [safe])
-    end,
-    {SyncRecordByID2, SyncRecordByIDType2, WAL} =
-        replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, StateDB, StoreID),
-    {SyncRecordByID2, SyncRecordByIDType2, WAL}.
+            {ok, V} ->
+                binary_to_term(V, [safe])
+        end,
+    initialize_sync_record_by_id_type_ets(SyncRecordByIDType, StoreID),
+    initialize_sync_record_by_id_ets(SyncRecordByID, StoreID),
+    replay_write_ahead_log(StateDB, StoreID).
 
-replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, StateDB, StoreID) ->
+replay_write_ahead_log(StateDB, StoreID) ->
     WAL =
         case ar_kv:get(StateDB, ?WAL_COUNT_KEY) of
             not_found ->
@@ -609,85 +594,36 @@ replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, StateDB, StoreID) ->
             {ok, V} ->
                 binary:decode_unsigned(V)
         end,
-    replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, WAL, StateDB, StoreID).
-
-replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, WAL, StateDB, StoreID) ->
     Module = ar_storage_module:get_by_id(StoreID),
-    replay_write_ahead_log(
-        SyncRecordByID, SyncRecordByIDType, 1, WAL, StateDB, StoreID, Module).
+    replay_write_ahead_log(1, WAL, StateDB, StoreID, Module).
 
-replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, _StateDB, _StoreID, _Module)
-        when N > WAL ->
-    {SyncRecordByID, SyncRecordByIDType, WAL};
-replay_write_ahead_log(SyncRecordByID, SyncRecordByIDType, N, WAL, StateDB, StoreID, Module) ->
+replay_write_ahead_log(N, WAL, _StateDB, _StoreID, _Module) when N > WAL ->
+    WAL;
+replay_write_ahead_log(N, WAL, StateDB, StoreID, Module) ->
     case ar_kv:get(StateDB, binary:encode_unsigned(N)) of
         not_found ->
             %% The VM crashed after recording the number.
-            {SyncRecordByID, SyncRecordByIDType, WAL};
+            WAL;
         {ok, V} ->
             {Op, Params} = binary_to_term(V, [safe]),
-            case Op of
-                add ->
-                    {End, Start, ID} = Params,
-                    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-                    SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
-                    emit_add_range(Start, End, ID, #{ module => Module }),
-                    SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-                    replay_write_ahead_log(
-                        SyncRecordByID2, SyncRecordByIDType, N + 1,
-                        WAL, StateDB, StoreID, Module);
-                {add, Packing} ->
-                    {End, Start, ID} = Params,
-                    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-                    SyncRecord2 = ar_intervals:add(SyncRecord, End, Start),
-                    SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-                    ByType = maps:get({ID, Packing}, SyncRecordByIDType, ar_intervals:new()),
-                    ByType2 = ar_intervals:add(ByType, End, Start),
-                    emit_add_range(Start, End, ID, #{ module => Module, packing => Packing }),
-                    SyncRecordByIDType2 = maps:put({ID, Packing}, ByType2, SyncRecordByIDType),
-                    replay_write_ahead_log(
-                        SyncRecordByID2, SyncRecordByIDType2, N + 1,
-                        WAL, StateDB, StoreID, Module);
-                delete ->
-                    {End, Start, ID} = Params,
-                    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-                    SyncRecord2 = ar_intervals:delete(SyncRecord, End, Start),
-                    emit_remove_range(Start, End, Module),
-                    SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-                    SyncRecordByIDType2 =
-                        maps:map(
-                            fun
-                                ({ID2, _}, ByType) when ID2 == ID ->
-                                    ar_intervals:delete(ByType, End, Start);
-                                (_, ByType) ->
-                                    ByType
-                            end,
-                            SyncRecordByIDType
-                        ),
-                    replay_write_ahead_log(
-                        SyncRecordByID2, SyncRecordByIDType2, N + 1,
-                        WAL, StateDB, StoreID, Module);
-                cut ->
-                    {Offset, ID} = Params,
-                    SyncRecord = maps:get(ID, SyncRecordByID, ar_intervals:new()),
-                    SyncRecord2 = ar_intervals:cut(SyncRecord, Offset),
-                    emit_cut(Offset, Module),
-                    SyncRecordByID2 = maps:put(ID, SyncRecord2, SyncRecordByID),
-                    SyncRecordByIDType2 =
-                        maps:map(
-                            fun
-                                ({ID2, _}, ByType) when ID2 == ID ->
-                                    ar_intervals:cut(ByType, Offset);
-                                (_, ByType) ->
-                                    ByType
-                            end,
-                            SyncRecordByIDType
-                        ),
-                    replay_write_ahead_log(
-                        SyncRecordByID2, SyncRecordByIDType2, N + 1,
-                        WAL, StateDB, StoreID, Module)
-            end
+            apply_write_ahead_log_op(Op, Params, StoreID, Module),
+            replay_write_ahead_log(N + 1, WAL, StateDB, StoreID, Module)
     end.
+
+%% @doc Apply a replayed WAL operation to the ETS interval tables and emit
+%% the corresponding sync_record event.
+apply_write_ahead_log_op(add, {End, Start, ID}, StoreID, Module) ->
+    record_add(End, Start, ID, StoreID),
+    emit_add_range(Start, End, ID, #{ module => Module });
+apply_write_ahead_log_op({add, Packing}, {End, Start, ID}, StoreID, Module) ->
+    record_add(End, Start, Packing, ID, StoreID),
+    emit_add_range(Start, End, ID, #{ module => Module, packing => Packing });
+apply_write_ahead_log_op(delete, {End, Start, ID}, StoreID, Module) ->
+    record_delete(End, Start, ID, StoreID),
+    emit_remove_range(Start, End, Module);
+apply_write_ahead_log_op(cut, {Offset, ID}, StoreID, Module) ->
+    record_cut(Offset, ID, StoreID),
+    emit_cut(Offset, Module).
 
 emit_add_range(Start, End, ar_data_sync, Options) ->
     ar_events:send(sync_record, {add_range, Start, End, ar_data_sync, Options});
@@ -701,6 +637,12 @@ emit_remove_range(Start, End, Module) ->
 
 emit_cut(Offset, Module) ->
     ar_events:send(sync_record, {cut, Offset, Module}).
+
+%% @doc Remove the registry entries of the given store from the sync_records
+%% ETS table.
+clear_sync_records_ets(StoreID) ->
+    ets:match_delete(sync_records, {{'_', StoreID}, '_'}),
+    ets:match_delete(sync_records, {{'_', '_', StoreID}, '_'}).
 
 initialize_sync_record_by_id_ets(SyncRecordByID, StoreID) ->
     Iterator = maps:iterator(SyncRecordByID),
@@ -726,13 +668,29 @@ initialize_sync_record_by_id_type_ets2({{ID, Packing}, SyncRecord, Iterator}, St
     ets:insert(sync_records, {{ID, Packing, StoreID}, TID}),
     initialize_sync_record_by_id_type_ets2(maps:next(Iterator), StoreID).
 
+%% @doc Collect the intervals of every record of the given store from the
+%% ETS tables into the {SyncRecordByID, SyncRecordByIDType} maps used as the
+%% on-disk snapshot format.
+read_sync_records_from_ets(StoreID) ->
+    ets:foldl(
+        fun    ({{ID, SID}, TID}, {ByID, ByIDType}) when SID == StoreID ->
+                {maps:put(ID, ar_ets_intervals:to_gb_set(TID), ByID), ByIDType};
+            ({{ID, Packing, SID}, TID}, {ByID, ByIDType}) when SID == StoreID ->
+                {ByID, maps:put({ID, Packing}, ar_ets_intervals:to_gb_set(TID), ByIDType)};
+            (_, Acc) ->
+                Acc
+        end,
+        {#{}, #{}},
+        sync_records
+    ).
+
 store_state(#state{ in_memory = true }) ->
     ok;
 store_state(State) ->
-    #state{ state_db = StateDB, sync_record_by_id = SyncRecordByID,
-            sync_record_by_id_type = SyncRecordByIDType,
+    #state{ state_db = StateDB, store_id = StoreID,
             storage_module = StorageModule,
             partition_number = PartitionNumber } = State,
+    {SyncRecordByID, SyncRecordByIDType} = read_sync_records_from_ets(StoreID),
     StoreSyncRecords =
         ar_kv:put(
             StateDB,
@@ -755,7 +713,7 @@ store_state(State) ->
             {Error2, State};
         ok ->
             maps:map(
-                fun ({ar_data_sync, Packing}, TypeRecord) ->
+                fun    ({ar_data_sync, Packing}, TypeRecord) ->
                         ar_mining_stats:set_storage_module_data_size(
                             StorageModule, Packing, PartitionNumber,
                             ar_intervals:sum(TypeRecord));
@@ -767,11 +725,11 @@ store_state(State) ->
             {ok, State#state{ wal = 0 }}
     end.
 
-get_or_create_type_tid(IDType) ->
-    case ets:lookup(sync_records, IDType) of
+get_or_create_tid(Key) ->
+    case ets:lookup(sync_records, Key) of
         [] ->
             TID = ets:new(sync_record_type, [ordered_set, public, {read_concurrency, true}]),
-            ets:insert(sync_records, {IDType, TID}),
+            ets:insert(sync_records, {Key, TID}),
             TID;
         [{_, TID2}] ->
             TID2
@@ -794,3 +752,91 @@ update_write_ahead_log(OpParams, StateDB, State) ->
                     {Error2, State}
             end
     end.
+
+%%%===================================================================
+%%% Tests.
+%%%===================================================================
+
+-ifdef(AR_TEST).
+
+get_after_add_test_() ->
+    ar_test_util:with_mocked([
+        {ar_storage_module, get_by_id, fun
+            (test_sync_record_get) -> test_sync_record_get;
+            (StoreID) -> meck:passthrough([StoreID])
+        end}
+    ], fun test_get_after_add/0, 30).
+
+%% @doc Exercise the direct-ETS read path of get/2,3: reads reflect adds,
+%% deletes, and cuts without going through the server, and a record that was
+%% never created reads as the empty set.
+test_get_after_add() ->
+    StoreID = test_sync_record_get,
+    ID = test_sync_record_get_id,
+    {ok, Pid} = start_link(name(StoreID), StoreID),
+    ?assertEqual([], ar_intervals:to_list(get(ID, StoreID))),
+    ?assertEqual([], ar_intervals:to_list(get(ID, unpacked, StoreID))),
+    ok = add(2, 0, unpacked, ID, StoreID),
+    ?assertEqual([{2, 0}], ar_intervals:to_list(get(ID, StoreID))),
+    ?assertEqual([{2, 0}], ar_intervals:to_list(get(ID, unpacked, StoreID))),
+    ok = add(4, 3, ID, StoreID),
+    ?assertEqual([{2, 0}, {4, 3}], ar_intervals:to_list(get(ID, StoreID))),
+    ?assertEqual([{2, 0}], ar_intervals:to_list(get(ID, unpacked, StoreID))),
+    ok = delete(2, 1, ID, StoreID),
+    ?assertEqual([{1, 0}, {4, 3}], ar_intervals:to_list(get(ID, StoreID))),
+    ?assertEqual([{1, 0}], ar_intervals:to_list(get(ID, unpacked, StoreID))),
+    ok = cut(1, ID, StoreID),
+    ?assertEqual([{1, 0}], ar_intervals:to_list(get(ID, StoreID))),
+    kill(Pid).
+
+persistence_roundtrip_test_() ->
+    ar_test_util:with_mocked([
+        {ar_storage_module, get_by_id, fun
+            (test_sync_record_persist) -> {ar_block:partition_size(), 0, unpacked};
+            (StoreID) -> meck:passthrough([StoreID])
+        end}
+    ], fun test_persistence_roundtrip/0, 60).
+
+test_persistence_roundtrip() ->
+    StoreID = test_sync_record_persist,
+    ID = test_sync_record_persist_id,
+    StateDB = {sync_record, StoreID},
+    %% Wipe state left over from a previous run — the test data dir
+    %% persists across runs.
+    DataDir = arweave_config:get([data_dir]),
+    _ = file:del_dir_r(filename:join([DataDir, "storage_modules", StoreID])),
+    {ok, Pid} = start_link(name(StoreID), StoreID),
+    %% The operations below land in the WAL; kill the server before the next
+    %% snapshot so init has to replay them into the ETS tables.
+    ok = add(2, 1, ID, StoreID),
+    ok = add(4, 3, unpacked, ID, StoreID),
+    ok = cut(3, ID, StoreID),
+    kill(Pid),
+    {ok, Pid2} = start_link(name(StoreID), StoreID),
+    ?assertEqual([{2, 1}], ar_intervals:to_list(get(ID, StoreID))),
+    ?assertEqual([], ar_intervals:to_list(get(ID, unpacked, StoreID))),
+    ?assertEqual(true, is_recorded(2, ID, StoreID)),
+    %% Mutate again and wait for the periodic snapshot (it resets the WAL
+    %% counter) so the next restart loads the state from the snapshot.
+    ok = add(6, 5, unpacked, ID, StoreID),
+    ok = delete(2, 1, ID, StoreID),
+    ok = ar_test_await:until(sync_record_snapshot_stored, fun() ->
+        case ar_kv:get(StateDB, ?WAL_COUNT_KEY) of
+            {ok, V} -> binary:decode_unsigned(V) == 0;
+            _ -> false
+        end
+    end),
+    kill(Pid2),
+    {ok, Pid3} = start_link(name(StoreID), StoreID),
+    ?assertEqual([{6, 5}], ar_intervals:to_list(get(ID, StoreID))),
+    ?assertEqual([{6, 5}], ar_intervals:to_list(get(ID, unpacked, StoreID))),
+    ?assertEqual(false, is_recorded(2, ID, StoreID)),
+    kill(Pid3).
+
+kill(Pid) ->
+    unlink(Pid),
+    MonitorRef = monitor(process, Pid),
+    exit(Pid, kill),
+    receive {'DOWN', MonitorRef, process, Pid, _} -> ok end.
+
+-endif.

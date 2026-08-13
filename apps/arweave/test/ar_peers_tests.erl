@@ -322,70 +322,75 @@ update_rating_test() ->
     Peer2 = {5, 6, 7, 8, 1984},
 
     ?assertEqual(#performance{}, ar_peers:get_or_init_performance(Peer1)),
-    ?assertEqual(0, ar_peers:get_total_rating(lifetime)),
-    ?assertEqual(0, ar_peers:get_total_rating(current)),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1))),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1))),
 
     ar_peers:update_rating(Peer1, true),
     ?assertEqual(#performance{}, ar_peers:get_or_init_performance(Peer1)),
-    ?assertEqual(0, ar_peers:get_total_rating(lifetime)),
-    ?assertEqual(0, ar_peers:get_total_rating(current)),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1))),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1))),
 
     ar_peers:update_rating(Peer1, false),
     ?assertEqual(rounded_performance(#performance{average_success = 0.965}),
         rounded_performance(ar_peers:get_or_init_performance(Peer1))),
-    ?assertEqual(0, ar_peers:get_total_rating(lifetime)),
-    ?assertEqual(0, ar_peers:get_total_rating(current)),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1))),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1))),
 
-    ar_peers:update_rating(Peer1, 1000, 100, 1, false),
+    ar_peers:update_rating(Peer1, 1000, 100, false),
     ?assertEqual(rounded_performance(#performance{average_success = 0.9312}),
         rounded_performance(ar_peers:get_or_init_performance(Peer1))),
-    ?assertEqual(0, ar_peers:get_total_rating(lifetime)),
-    ?assertEqual(0, ar_peers:get_total_rating(current)),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1))),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1))),
 
-    ar_peers:update_rating(Peer1, 1000, 100, 1, true),
+    ar_peers:update_rating(Peer1, 1000, 100, true),
     ?assertEqual(rounded_performance(#performance{
         total_bytes = 100,
         total_throughput = 0.1,
         total_transfers = 1,
-        average_latency = 50,
         average_throughput = 0.005,
-        average_success = 0.9336,
-        lifetime_rating = 0.0934,
-        current_rating = 0.0047
+        average_success = 0.9336
     }),
         rounded_performance(ar_peers:get_or_init_performance(Peer1))),
-    ?assertEqual(0.0934, round(ar_peers:get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0047, round(ar_peers:get_total_rating(current), 4)),
+    ?assertEqual(0.0934, round(ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1)), 4)),
+    ?assertEqual(0.0047, round(ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1)), 4)),
 
-    ar_peers:update_rating(Peer1, 1000, 50, 10, true),
+    ar_peers:update_rating(Peer1, 1000, 50, true),
     ?assertEqual(rounded_performance(#performance{
         total_bytes = 150,
         total_throughput = 0.15,
         total_transfers = 2,
-        average_latency = 97.5,
-        average_throughput = 0.0298,
-        average_success = 0.936,
-        lifetime_rating = 0.0702,
-        current_rating = 0.0278
+        average_throughput = 0.0073,
+        average_success = 0.936
     }),
         rounded_performance(ar_peers:get_or_init_performance(Peer1))),
-    ?assertEqual(0.0702, round(ar_peers:get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0278, round(ar_peers:get_total_rating(current), 4)),
+    ?assertEqual(0.0702, round(ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1)), 4)),
+    ?assertEqual(0.0068, round(ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1)), 4)),
 
-    ar_peers:update_rating(Peer2, 1000, 100, 1, true),
+    ar_peers:update_rating(Peer2, 1000, 100, true),
     ?assertEqual(rounded_performance(#performance{
         total_bytes = 100,
         total_throughput = 0.1,
         total_transfers = 1,
-        average_latency = 50,
         average_throughput = 0.005,
-        average_success = 1,
-        lifetime_rating = 0.1,
-        current_rating = 0.005
+        average_success = 1
     }),
         rounded_performance(ar_peers:get_or_init_performance(Peer2))),
-    ?assertEqual(0.1702, round(ar_peers:get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0328, round(ar_peers:get_total_rating(current), 4)).
+    ?assertEqual(0.1, round(ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer2)), 4)),
+    ?assertEqual(0.005, round(ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer2)), 4)).
 
 block_rejected_test_() ->
     with_inbound_peers({setup,
@@ -417,20 +422,49 @@ test_block_rejected() ->
         ar_peers:get_peer_performances([Peer])),
     ?assertEqual(banned, ar_blacklist_middleware:is_peer_banned(Peer)).
 
+%% Legacy 6/7-arity performance tuples stored the completed AVERAGE rating;
+%% the loader must scale it by the transfer count so the derived lifetime
+%% rating (total_throughput / total_transfers) reloads unchanged — not as
+%% Rating/Transfers.
+legacy_performance_load_test() ->
+    ets:delete_all_objects(ar_peers),
+    Peer = {5, 6, 7, 8, 1984},
+    Rating = 750.0,
+    Transfers = 12000,
+    meck:new(ar_http_iface_client, [passthrough]),
+    meck:expect(ar_http_iface_client, get_info,
+        fun(_, network) -> <<?NETWORK_NAME>> end),
+    try
+        ar_peers:load_peer({Peer, {performance, 1000, 0, Transfers, 0, Rating}}),
+        Loaded = ar_peers:get_or_init_performance(Peer),
+        ?assertEqual(Rating, ar_peers:get_peer_rating(lifetime, Loaded)),
+        ?assertEqual(Rating, ar_peers:get_peer_rating(current, Loaded)),
+        ar_peers:load_peer({Peer, {performance, 1000, 0, Transfers, 0, Rating, 66}}),
+        Loaded2 = ar_peers:get_or_init_performance(Peer),
+        ?assertEqual(66, Loaded2#performance.release),
+        ?assertEqual(Rating, ar_peers:get_peer_rating(lifetime, Loaded2))
+    after
+        meck:unload(ar_http_iface_client)
+    end.
+
 rate_data_test() ->
     ets:delete_all_objects(ar_peers),
     Peer1 = {1, 2, 3, 4, 1984},
 
     ?assertEqual(#performance{}, ar_peers:get_or_init_performance(Peer1)),
-    ?assertEqual(0, ar_peers:get_total_rating(lifetime)),
-    ?assertEqual(0, ar_peers:get_total_rating(current)),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1))),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1))),
 
-    ar_peers:rate_fetched_data(Peer1, chunk, {error, timeout}, 1000000, 100, 10),
+    ar_peers:rate_fetched_data(Peer1, chunk, {error, timeout}, 1000000, 100),
     sys:get_state(ar_peers), %% Wait for updates; ignore the state.
     ?assertEqual(rounded_performance(#performance{average_success = 0.965}),
         rounded_performance(ar_peers:get_or_init_performance(Peer1))),
-    ?assertEqual(0, ar_peers:get_total_rating(lifetime)),
-    ?assertEqual(0, ar_peers:get_total_rating(current)),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1))),
+    ?assertEqual(0.0, ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1))),
 
     ar_peers:rate_fetched_data(Peer1, block, 1000000, 100),
     sys:get_state(ar_peers), %% Wait for updates; ignore the state.
@@ -438,31 +472,29 @@ rate_data_test() ->
         total_bytes = 100,
         total_throughput = 0.1,
         total_transfers = 1,
-        average_latency = 50,
         average_throughput = 0.005,
-        average_success = 0.9662,
-        lifetime_rating = 0.0966,
-        current_rating = 0.0048
+        average_success = 0.9662
     }),
         rounded_performance(ar_peers:get_or_init_performance(Peer1))),
-    ?assertEqual(0.0966, round(ar_peers:get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0048, round(ar_peers:get_total_rating(current), 4)),
+    ?assertEqual(0.0966, round(ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1)), 4)),
+    ?assertEqual(0.0048, round(ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1)), 4)),
 
-    ar_peers:rate_fetched_data(Peer1, tx, ok, 1000000, 100, 2),
+    ar_peers:rate_fetched_data(Peer1, tx, ok, 1000000, 100),
     sys:get_state(ar_peers), %% Wait for updates; ignore the state.
     ?assertEqual(rounded_performance(#performance{
         total_bytes = 200,
         total_throughput = 0.2,
         total_transfers = 2,
-        average_latency = 97.5,
-        average_throughput = 0.0148,
-        average_success = 0.9674,
-        lifetime_rating = 0.0967,
-        current_rating = 0.0143
+        average_throughput = 0.0098,
+        average_success = 0.9674
     }),
         rounded_performance(ar_peers:get_or_init_performance(Peer1))),
-    ?assertEqual(0.0967, round(ar_peers:get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0143, round(ar_peers:get_total_rating(current), 4)),
+    ?assertEqual(0.0967, round(ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1)), 4)),
+    ?assertEqual(0.0094, round(ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1)), 4)),
 
     ar_peers:rate_gossiped_data(Peer1, block, 1000000, 100),
     sys:get_state(ar_peers), %% Wait for updates; ignore the state.
@@ -470,15 +502,14 @@ rate_data_test() ->
         total_bytes = 300,
         total_throughput = 0.3,
         total_transfers = 3,
-        average_latency = 142.625,
-        average_throughput = 0.019,
-        average_success = 0.9685,
-        lifetime_rating = 0.0969,
-        current_rating = 0.0184
+        average_throughput = 0.0143,
+        average_success = 0.9685
     }),
         rounded_performance(ar_peers:get_or_init_performance(Peer1))),
-    ?assertEqual(0.0969, round(ar_peers:get_total_rating(lifetime), 4)),
-    ?assertEqual(0.0184, round(ar_peers:get_total_rating(current), 4)).
+    ?assertEqual(0.0969, round(ar_peers:get_peer_rating(lifetime,
+        ar_peers:get_or_init_performance(Peer1)), 4)),
+    ?assertEqual(0.0138, round(ar_peers:get_peer_rating(current,
+        ar_peers:get_or_init_performance(Peer1)), 4)).
 
 %% @doc Wait for the event dispatcher and peer process to handle an event.
 send_block_event(Event) ->
@@ -495,11 +526,8 @@ send_block_event(Event) ->
 rounded_performance(Performance) ->
     Performance#performance{
         total_throughput = round(Performance#performance.total_throughput, 4),
-        average_latency = round(Performance#performance.average_latency, 4),
         average_throughput = round(Performance#performance.average_throughput, 4),
-        average_success = round(Performance#performance.average_success, 4),
-        lifetime_rating = round(Performance#performance.lifetime_rating, 4),
-        current_rating = round(Performance#performance.current_rating, 4)
+        average_success = round(Performance#performance.average_success, 4)
     }.
 
 round(Float, N) ->

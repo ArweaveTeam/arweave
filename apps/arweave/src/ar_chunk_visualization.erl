@@ -197,9 +197,7 @@ chunk_statistics(ChunkPackings) ->
     lists:foldl(
       fun(Row, AccCounts) ->
               lists:foldl(
-                fun(Packing, RowAccCounts) ->
-                        maps:update_with(Packing, fun(N) -> N + 1 end, 1, RowAccCounts)
-                end,
+                fun arweave_util:increment_map_value/2,
                 AccCounts,
                 Row)
       end,

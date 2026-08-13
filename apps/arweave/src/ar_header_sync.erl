@@ -67,7 +67,7 @@ init([]) ->
     process_flag(trap_exit, true),
     [ok, ok] = ar_events:subscribe([tx, disksup]),
     DataDir = arweave_config:get([data_dir]),
-    HeaderSyncJobs = arweave_config:get([gossip, header_sync_jobs]),
+    HeaderSyncJobs = arweave_config:get([gossip, header, workers]),
     ok = ar_kv:open(#{
                       path => filename:join([DataDir, ?ROCKS_DB_DIR, "ar_header_sync_db"]),
                       name => ?MODULE}),
@@ -296,9 +296,9 @@ handle_info({event, disksup, {remaining_disk_space, ?DEFAULT_MODULE, true, _Perc
             State) ->
     MaxDiskPoolBufferMb = arweave_config:get(
                             [disk_pool, max_buffer_size]),
-    DiskCacheSizeMb = arweave_config:get([gossip, header_cache_size]),
+    DiskCacheSizeMb = arweave_config:get([gossip, header, cache_size]),
     DiskPoolSize = MaxDiskPoolBufferMb * ?MiB,
-    DiskCacheSize = DiskCacheSizeMb * 1048576,
+    DiskCacheSize = DiskCacheSizeMb * ?MiB,
     BufferSize = 10_000_000_000,
     case Bytes < DiskPoolSize + DiskCacheSize + BufferSize div 2 of
         true ->

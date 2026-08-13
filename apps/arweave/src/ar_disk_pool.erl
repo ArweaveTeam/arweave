@@ -1182,7 +1182,7 @@ start_link() ->
 %% ar_data_sync_default has opened the disk-pool rocksdb tables.
 init([]) ->
     ?LOG_INFO([{event, ar_disk_pool_start}]),
-    DiskPoolJobs = arweave_config:get([disk_pool, jobs]),
+    DiskPoolJobs = arweave_config:get([disk_pool, workers]),
     [ok] = ar_events:subscribe([node_state]),
     %% Shared ETS state (ar_disk_pool_data_roots, disk_pool_threshold) is owned by
     %% ar_data_sync_default. ar_disk_pool manipulates them, but they have to be initialized

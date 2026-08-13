@@ -1,10 +1,10 @@
--module(ar_data_discovery_deserialize_bucket_performance_tests).
+-module(ar_sync_discovery_deserialize_bucket_performance_tests).
 -test_peers([peer1]).
 
 -include_lib("eunit/include/eunit.hrl").
 
 -include("ar.hrl").
--include("ar_data_discovery.hrl").
+-include("ar_sync.hrl").
 -include("ar_sync_buckets.hrl").
 
 
@@ -65,8 +65,7 @@ run_test(EndpointType) ->
         expected_bucket_size := ExpectedBucketSize,
         endpoint := Endpoint,
         mocked_function := MockedFunction,
-        table := Table,
-        cast_tag := CastTag
+        mode := Mode
     } = endpoint_spec(EndpointType),
     {BucketCount, SerializedBuckets} = generate_max_bucket_payload(ExpectedBucketSize),
     BucketSize = ExpectedBucketSize * ?MAX_SYNC_BUCKET_SIZE_RATIO,
@@ -80,19 +79,26 @@ run_test(EndpointType) ->
     %% ETS row-count assertion.
     FetchPeer = ar_test_node:peer_ip(peer1),
     TablePeer = table_peer(EndpointType),
-    ets:delete_all_objects(Table),
+    gen_server:cast(ar_sync_discovery, {add_peers, [TablePeer]}),
+    _ = sys:get_state(ar_sync_discovery, infinity),
+    ok = ar_test_await:until(sync_bucket_jobs_finished, fun() ->
+        ar_sync_discovery:inflight_count() =:= 0
+    end),
+    _ = sys:get_state(ar_sync_discovery, infinity),
+    ets:delete_all_objects(?SYNC_BUCKET_CACHE_TABLE),
     {FetchMs, {ok, Buckets}} = timer:tc(ar_http_iface_client, Endpoint, [FetchPeer]),
-    BeforePeerRows = peer_rows(Table, TablePeer),
+    BeforePeerRows = peer_rows(Mode, TablePeer),
     {_BeforeTableSize, BeforeTableMemoryWords, BeforeEtsMemory, BeforeTotalMemory, BeforeRSS} =
-        memory_snapshot(Table),
+        memory_snapshot(?SYNC_BUCKET_CACHE_TABLE),
     {InsertMs, ok} = timer:tc(fun() ->
-        gen_server:cast(ar_data_discovery, {CastTag, TablePeer, Buckets}),
-        _ = sys:get_state(ar_data_discovery, infinity),
+        gen_server:cast(ar_sync_discovery,
+            {cache_sync_buckets, Mode, TablePeer, Buckets}),
+        _ = sys:get_state(ar_sync_discovery, infinity),
         ok
     end),
     {_AfterTableSize, AfterTableMemoryWords, AfterEtsMemory, AfterTotalMemory, AfterRSS} =
-        memory_snapshot(Table),
-    RowsInserted = peer_rows(Table, TablePeer) - BeforePeerRows,
+        memory_snapshot(?SYNC_BUCKET_CACHE_TABLE),
+    RowsInserted = peer_rows(Mode, TablePeer) - BeforePeerRows,
     MemoryWords = AfterTableMemoryWords - BeforeTableMemoryWords,
     WordSize = erlang:system_info(wordsize),
     MemoryBytes = MemoryWords * WordSize,
@@ -116,15 +122,16 @@ run_test(EndpointType) ->
         rss_bytes => RSSBytes
     }),
     ?assertEqual(ExpectedRows, RowsInserted),
-    ets:delete_all_objects(Table).
+    ets:delete_all_objects(?SYNC_BUCKET_CACHE_TABLE).
 
 table_peer(sync) ->
     {127, 0, 0, 1, 0};
 table_peer(footprint) ->
     {127, 0, 0, 1, 1}.
 
-peer_rows(Table, Peer) ->
-    ets:select_count(Table, [{{{'_', Peer}, '_'}, [], [true]}]).
+peer_rows(Mode, Peer) ->
+    ets:select_count(?SYNC_BUCKET_CACHE_TABLE,
+        [{{{Mode, '_', Peer}, '_', '_'}, [], [true]}]).
 
 expected_inserted_rows(sync, UnboundedExpandedBucketCount) ->
     WeaveSize = ar_node:get_weave_size(),
@@ -144,8 +151,7 @@ endpoint_spec(sync) ->
         expected_bucket_size => ar_sync_buckets:get_default_sync_bucket_size(),
         endpoint => get_sync_buckets,
         mocked_function => get_serialized_sync_buckets,
-        table => ar_data_discovery,
-        cast_tag => add_peer_sync_buckets
+        mode => byte
     };
 endpoint_spec(footprint) ->
     #{
@@ -153,8 +159,7 @@ endpoint_spec(footprint) ->
                 ar_sync_buckets:get_network_footprint_bucket_size(),
         endpoint => get_footprint_buckets,
         mocked_function => get_serialized_footprint_buckets,
-        table => ar_data_discovery_footprint_buckets,
-        cast_tag => add_peer_footprint_buckets
+        mode => footprint
     }.
 
 install_bucket_mock(Function, SerializedBuckets) ->
@@ -241,5 +246,4 @@ print_measurement(Result) ->
         ]).
 
 cleanup_tables() ->
-    ets:delete_all_objects(ar_data_discovery),
-    ets:delete_all_objects(ar_data_discovery_footprint_buckets).
+    ets:delete_all_objects(?SYNC_BUCKET_CACHE_TABLE).

@@ -1277,7 +1277,8 @@ count_states(cache, #state{} = State) ->
       } = State,
     MapCount = maps:fold(
                  fun(_BucketEndOffset, RepackChunk, Acc) ->
-                         maps:update_with(RepackChunk#repack_chunk.state, fun(Count) -> Count + 1 end, 1, Acc)
+                         arweave_util:increment_map_value(
+                             RepackChunk#repack_chunk.state, Acc)
                  end,
                  #{},
                  Map
@@ -1302,7 +1303,8 @@ count_states(queue, #state{} = State) ->
       } = State,
     WriteQueueCount = gb_sets:fold(
                         fun({_BucketEndOffset, RepackChunk}, Acc) ->
-                                maps:update_with(RepackChunk#repack_chunk.state, fun(Count) -> Count + 1 end, 1, Acc)
+                                arweave_util:increment_map_value(
+                                    RepackChunk#repack_chunk.state, Acc)
                         end,
                         #{},
                         WriteQueue
@@ -2053,7 +2055,7 @@ test_init_repack_chunk_map_a() ->
                repack_chunk_map = #{},
                %% No footprint limit, so nothing is clipped.
                footprint_limit =
-                   ar_footprint_record:get_footprints_per_partition(),
+                   ar_replica_2_9:get_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
 
@@ -2086,7 +2088,7 @@ test_init_repack_chunk_map_b() ->
                repack_chunk_map = #{},
                %% No footprint limit, so nothing is clipped.
                footprint_limit =
-                   ar_footprint_record:get_footprints_per_partition(),
+                   ar_replica_2_9:get_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
     State2 = init_repack_chunk_map(FootprintOffsets, State),
@@ -2122,7 +2124,7 @@ test_init_repack_chunk_map_sector_boundary() ->
                repack_chunk_map = #{},
                %% No footprint limit, so nothing is clipped.
                footprint_limit =
-                   ar_footprint_record:get_footprints_per_partition(),
+                   ar_replica_2_9:get_footprints_per_partition(),
                target_packing = {replica_2_9, <<"addr">>}
               },
     State2 = init_repack_chunk_map(FootprintOffsets, State),

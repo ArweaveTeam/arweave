@@ -18,7 +18,7 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_consensus.hrl").
 -include_lib("arweave_config/include/arweave_config.hrl").
--include_lib("arweave/include/ar_data_discovery.hrl").
+-include_lib("arweave/include/ar_sync.hrl").
 -include_lib("arweave/include/ar_mining.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
@@ -1100,8 +1100,8 @@ may_be_empty_poa(#poa{} = PoA) ->
 fetch_poa_from_peers(_RecallByte, PackingDifficulty) when PackingDifficulty >= 1 ->
     not_found;
 fetch_poa_from_peers(RecallByte, _PackingDifficulty) ->
-    BucketPeers = ar_data_discovery:get_bucket_peers(RecallByte div ?NETWORK_DATA_BUCKET_SIZE),
-    Peers = ar_data_discovery:pick_peers(BucketPeers, ?QUERY_BEST_PEERS_COUNT),
+    CandidatePeers = ar_sync:get_peers_for_offset(RecallByte),
+    Peers = ar_peers:pick_peers(CandidatePeers, ?QUERY_BEST_PEERS_COUNT),
     From = self(),
     lists:foreach(
       fun(Peer) ->

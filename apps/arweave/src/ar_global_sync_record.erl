@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -include("ar.hrl").
--include("ar_data_discovery.hrl").
+-include("ar_sync.hrl").
 -include("ar_sync_buckets.hrl").
 
 -export([start_link/0, get_serialized_sync_record/1, get_serialized_sync_buckets/0,

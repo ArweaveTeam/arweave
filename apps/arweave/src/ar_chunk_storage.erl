@@ -114,6 +114,19 @@ is_storage_supported(Offset, ChunkSize, Packing) ->
 %% @doc Store the chunk under the given end offset,
 %% bytes Offset - ?DATA_CHUNK_SIZE, Offset - ?DATA_CHUNK_SIZE + 1, .., Offset - 1.
 put(PaddedOffset, Chunk, Packing, StoreID) ->
+    StartTime = erlang:monotonic_time(),
+    Result = do_put_call(PaddedOffset, Chunk, Packing, StoreID),
+    %% Caller-observed latency: queue wait behind the per-store server PLUS the
+    %% write itself. Individual writes are page-cache fast, so the signal lives
+    %% in the queue-wait component: p99 drifting ms -> s flags destination-disk
+    %% saturation long before puts hit the 180s call timeout (the write-stall
+    %% mechanism observed 2026-07-10).
+    arweave_metrics:histogram_observe(chunk_storage_put_duration_milliseconds,
+        [ar_storage_module:label(StoreID)],
+        erlang:monotonic_time() - StartTime),
+    Result.
+
+do_put_call(PaddedOffset, Chunk, Packing, StoreID) ->
     GenServerID = name(StoreID),
     case catch gen_server:call(GenServerID, {put, PaddedOffset, Chunk, Packing}, 180_000) of
         {'EXIT', {shutdown, {gen_server, call, _}}} ->
@@ -125,6 +138,21 @@ put(PaddedOffset, Chunk, Packing, StoreID) ->
                         {store_id, StoreID}
                        ]),
             {error, timeout};
+        {'EXIT', Reason} ->
+            %% E.g. noproc or killed when the worker is down or taken down
+            %% while the call is in flight. Strip the gen_server call
+            %% arguments from the reason, when present, so the chunk binary
+            %% doesn't end up in the caller's crash report or logs.
+            ExitReason = case Reason of
+                {R, {gen_server, call, _}} -> R;
+                _ -> Reason
+            end,
+            ?LOG_ERROR([{event, gen_server_exit_putting_chunk},
+                {reason, io_lib:format("~p", [ExitReason])},
+                {padded_offset, PaddedOffset},
+                {store_id, StoreID}
+            ]),
+            {error, ExitReason};
         Reply ->
             Reply
     end.
@@ -166,8 +194,14 @@ get(Byte, IntervalStart, StoreID) ->
     %% should begin at a multiple of ?DATA_CHUNK_SIZE to the right of IntervalStart.
     ChunkStart = Byte - (Byte - IntervalStart) rem ?DATA_CHUNK_SIZE,
     ChunkFileStart = get_chunk_file_start_by_start_offset(ChunkStart),
-
-    case get(Byte, ChunkStart, ChunkFileStart, StoreID, 1) of
+    StartTime = erlang:monotonic_time(),
+    Result = get(Byte, ChunkStart, ChunkFileStart, StoreID, 1),
+    %% Caller-boundary mirror of the put metric: open + pread + close, no
+    %% queue, so this measures the disk / page cache directly.
+    arweave_metrics:histogram_observe(chunk_storage_read_duration_milliseconds,
+        [ar_storage_module:label(StoreID)],
+        erlang:monotonic_time() - StartTime),
+    case Result of
         [] ->
             not_found;
         [{PaddedEndOffset, Chunk}] ->
@@ -697,13 +731,9 @@ read_chunk2(Byte, Start, ChunkFileStart, File, ChunkCount, StoreID) ->
     read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID).
 
 read_chunk3(Byte, Position, BucketStart, File, ChunkCount, StoreID) ->
-    StartTime = erlang:monotonic_time(),
     case file:pread(File, Position, (?DATA_CHUNK_SIZE + ?OFFSET_SIZE) * ChunkCount) of
         {ok, << ChunkOffset:?OFFSET_BIT_SIZE, _Chunk/binary >> = Bin} ->
             StoreIDLabel = ar_storage_module:label(StoreID),
-            arweave_metrics:record_rate_metric(
-              StartTime, byte_size(Bin),
-              chunk_read_rate_bytes_per_second, [StoreIDLabel, raw]),
             arweave_metrics:counter_inc(chunks_read, [StoreIDLabel], ChunkCount),
             case is_offset_valid(Byte, BucketStart, ChunkOffset) of
                 true ->
@@ -1292,3 +1322,47 @@ defrag_command_test() ->
                  file:pread(F2, 30000001, 262144 + 3 + 100)), % End of file => +100 is ignored.
     ok = file:close(F2),
     ok = file:delete(Filepath).
+
+%% put/4 must map a caller exit to an error tuple for every exit reason,
+%% not only shutdown and timeout. When a chunk storage worker was killed
+%% by its supervisor mid-call (e.g. after exceeding its shutdown budget),
+%% the {'EXIT', {killed, ...}} used to leak through as the return value
+%% and crash the calling ar_data_sync worker with a case_clause, which
+%% its supervisor then restarted mid-shutdown.
+
+put_to_missing_worker_test() ->
+    StoreID = "ar_chunk_storage_put_test_missing",
+    seed_label_cache(StoreID),
+    ?assertEqual({error, noproc},
+        ar_chunk_storage:put(262144, <<>>, unpacked, StoreID)).
+
+put_to_killed_worker_test() ->
+    StoreID = "ar_chunk_storage_put_test_killed",
+    seed_label_cache(StoreID),
+    Name = ar_chunk_storage:name(StoreID),
+    TestPid = self(),
+    %% A stub worker that accepts the call, signals us, and never replies.
+    Stub = spawn(fun() ->
+        receive {'$gen_call', _From, _Request} ->
+            TestPid ! stub_got_call,
+            receive after infinity -> ok end
+        end
+    end),
+    register(Name, Stub),
+    spawn_link(fun() ->
+        TestPid ! {put_result, ar_chunk_storage:put(262144, <<>>, unpacked, StoreID)}
+    end),
+    receive stub_got_call -> ok
+    after 10000 -> ?assert(false, "stub never received the put call")
+    end,
+    exit(Stub, kill),
+    receive {put_result, Result} ->
+        ?assertEqual({error, killed}, Result)
+    after 10000 ->
+        ?assert(false, "put did not return after the worker was killed")
+    end.
+
+%% @doc Seed ar_storage_module's label cache so ar_chunk_storage:name/1
+%% resolves without a configured storage module.
+seed_label_cache(StoreID) ->
+    ets:insert(ar_storage_module, {{label, StoreID}, StoreID}).

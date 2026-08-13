@@ -16,7 +16,7 @@
 %% footprint_limit clamped to at least one and at most every footprint of
 %% a partition, or every footprint without a limit.
 get(StoreID) ->
-    All = ar_footprint_record:get_footprints_per_partition(),
+    All = ar_replica_2_9:get_footprints_per_partition(),
     case ar_storage_module:get_by_id(StoreID) of
         {_Start, _End, _Packing} = Module ->
             clamp(arweave_config:storage_module_footprint_limit(Module), All);
@@ -31,7 +31,7 @@ clamp(Limit, All) ->
 
 %% @doc Whether the limit keeps every footprint of a partition.
 is_unlimited(Limit) ->
-    Limit >= ar_footprint_record:get_footprints_per_partition().
+    Limit >= ar_replica_2_9:get_footprints_per_partition().
 
 %% @doc Whether the chunk with the given bucket end offset lies past the
 %% limit, in the part of its sector the module does not keep.
@@ -86,7 +86,7 @@ get_test() ->
     arweave_config:with_test_config(fun() ->
         P = ar_block:partition_size(),
         Addr = crypto:strong_rand_bytes(32),
-        All = ar_footprint_record:get_footprints_per_partition(),
+        All = ar_replica_2_9:get_footprints_per_partition(),
         ok = arweave_config:force_config(#{
             [storage_modules] => [
                 #{partition => 0, packing_format => replica_2_9,

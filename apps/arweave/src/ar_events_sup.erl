@@ -17,7 +17,7 @@
 
 %% Helper macro for declaring children of supervisor.
 -define(CHILD(Mod, I, Type), {I, {Mod, start_link, [I]}, permanent, ?SHUTDOWN_TIMEOUT, Type,
-                              [Mod]}).
+        [Mod]}).
 
 %% ===================================================================
 %% API functions
@@ -32,31 +32,33 @@ start_link() ->
 
 init([]) ->
     {ok, {{one_for_one, 5, 10}, [
-                                 %% Events: remaining_disk_space.
-                                 ?CHILD(ar_events, disksup, worker),
-                                 %% Events: new, ready_for_mining, orphaned, emitting_scheduled,
-                                 %% preparing_unblacklisting, ready_for_unblacklisting, registered_offset.
-                                 ?CHILD(ar_events, tx, worker),
-                                 %% Events: discovered, rejected, new, mined_block_received.
-                                 ?CHILD(ar_events, block, worker),
-                                 %% Events: unpacked, packed.
-                                 ?CHILD(ar_events, chunk, worker),
-                                 %% Events: removed
-                                 ?CHILD(ar_events, peer, worker),
-                                 %% Events: account_tree_initialized, initialized,
-                                 %% new_tip, checkpoint_block, search_space_upper_bound.
-                                 ?CHILD(ar_events, node_state, worker),
-                                 %% Events: initialized, valid, invalid, validation_error, refuse_validation,
-                                 %% computed_output.
-                                 ?CHILD(ar_events, nonce_limiter, worker),
-                                 %% Events: removed_file.
-                                 ?CHILD(ar_events, chunk_storage, worker),
-                                 %% Events: add_range, remove_range, global_remove_range, cut, global_cut.
-                                 ?CHILD(ar_events, sync_record, worker),
-                                 %% Events: rejected, stale, partial, accepted, confirmed, orphaned.
-                                 ?CHILD(ar_events, solution, worker),
-                                 %% Events: complete (per-StoreID chunk-copy drain finished).
-                                 ?CHILD(ar_events, chunk_copy, worker),
-                                 %% Used for the testing purposes.
-                                 ?CHILD(ar_events, testing, worker)
-                                ]}}.
+        %% Events: remaining_disk_space.
+        ?CHILD(ar_events, disksup, worker),
+        %% Events: new, ready_for_mining, orphaned, emitting_scheduled,
+        %% preparing_unblacklisting, ready_for_unblacklisting, registered_offset.
+        ?CHILD(ar_events, tx, worker),
+        %% Events: discovered, rejected, new, mined_block_received.
+        ?CHILD(ar_events, block, worker),
+        %% Events: unpacked, packed.
+        ?CHILD(ar_events, chunk, worker),
+        %% Events: removed
+        ?CHILD(ar_events, peer, worker),
+        %% Events: account_tree_initialized, initialized,
+        %% new_tip, checkpoint_block, search_space_upper_bound.
+        ?CHILD(ar_events, node_state, worker),
+        %% Events: initialized, valid, invalid, validation_error, refuse_validation,
+        %% computed_output.
+        ?CHILD(ar_events, nonce_limiter, worker),
+        %% Events: removed_file.
+        ?CHILD(ar_events, chunk_storage, worker),
+        %% Events: add_range, remove_range, global_remove_range, cut, global_cut.
+        ?CHILD(ar_events, sync_record, worker),
+        %% Events: rejected, stale, partial, accepted, confirmed, orphaned.
+        ?CHILD(ar_events, solution, worker),
+        %% Events: complete (per-StoreID chunk-copy drain finished).
+        ?CHILD(ar_events, chunk_copy, worker),
+        %% Events: chunk_intervals_updated.
+        ?CHILD(ar_events, sync_discovery, worker),
+        %% Used for the testing purposes.
+        ?CHILD(ar_events, testing, worker)
+    ]}}.

@@ -25,15 +25,15 @@ suite() ->
 
 all() ->
     [
-     test_replica_2_9_to_replica_2_9,
-     test_replica_2_9_to_spora_2_6,
-     test_replica_2_9_to_unpacked,
+        test_replica_2_9_to_replica_2_9,
+        test_replica_2_9_to_spora_2_6,
+        test_replica_2_9_to_unpacked,
 
-     test_unpacked_to_replica_2_9,
-     test_unpacked_to_spora_2_6,
-     test_spora_2_6_to_replica_2_9,
-     test_spora_2_6_to_spora_2_6,
-     test_spora_2_6_to_unpacked
+        test_unpacked_to_replica_2_9,
+        test_unpacked_to_spora_2_6,
+        test_spora_2_6_to_replica_2_9,
+        test_spora_2_6_to_spora_2_6,
+        test_spora_2_6_to_unpacked
     ].
 
 %%====================================================================
@@ -112,30 +112,30 @@ test_spora_2_6_to_unpacked(_Config) ->
 %% then mine and validate.
 do_repack_mine(FromPackingType, ToPackingType) ->
     ?LOG_INFO([{event, test_repack_mine}, {module, ?MODULE},
-               {from_packing_type, FromPackingType}, {to_packing_type, ToPackingType}]),
+        {from_packing_type, FromPackingType}, {to_packing_type, ToPackingType}]),
     ValidatorNode = peer1,
     RepackerNode = peer2,
     ar_test_node:stop(ValidatorNode),
     ar_test_node:stop(RepackerNode),
     {Blocks, _AddrA, Chunks} = ar_e2e:start_source_node(
-                                 RepackerNode, FromPackingType, wallet_a),
+        RepackerNode, FromPackingType, wallet_a),
     RepackerSnapshot = ar_test_node:remote_call(
-                         RepackerNode, arweave_config, snapshot, []),
+        RepackerNode, arweave_config, snapshot, []),
 
     [B0 | _] = Blocks,
     start_validator_node(ValidatorNode, RepackerNode, B0),
 
     {WalletB, StorageModules} = ar_e2e:source_node_storage_modules(
-                                  RepackerNode, ToPackingType, wallet_b),
+        RepackerNode, ToPackingType, wallet_b),
     AddrB = case WalletB of
-                not_set -> not_set;
-                _ -> ar_wallet:to_address(WalletB)
-            end,
+        not_set -> not_set;
+        _ -> ar_wallet:to_address(WalletB)
+    end,
     ToPacking = ar_e2e:packing_type_to_packing(ToPackingType, AddrB),
     ExistingStorageModules = ar_test_node:remote_call(
                                      RepackerNode, arweave_config, storage_modules, []),
     %% For replica_2_9 destinations, mount old and new modules with
-    %% sync_jobs=0 first so new modules prepare entropy without
+    %% Syncing disabled first so new modules prepare entropy without
     %% concurrent cross-module sync: otherwise a chunk copied in as
     %% `unpacked_padded' could be read as `not_found' from another new
     %% module and invalidated via `read_range2'. The second restart
@@ -145,7 +145,7 @@ do_repack_mine(FromPackingType, ToPackingType) ->
             ar_e2e:restart_node(RepackerNode, RepackerSnapshot, #{
                                                                   [storage_modules] => ExistingStorageModules ++ StorageModules,
                                                                   [mining, address] => AddrB,
-                                                                  [sync, jobs] => 0
+                                                                  [sync, max_download_rate] => 0
                                                                  }),
             ar_test_await:all_entropy_prepared(RepackerNode);
         _ ->

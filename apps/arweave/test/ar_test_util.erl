@@ -9,7 +9,7 @@
 %%%===================================================================
 -module(ar_test_util).
 
--export([with_mocked/2, with_mocked/3]).
+-export([with_mocked/2, with_mocked/3, with_mocked/4]).
 -export([new_mock/2, mock_function/3, unmock_module/1]).
 -export([load_fixture/1]).
 
@@ -36,12 +36,18 @@ with_mocked(Mocks, TestFun) ->
     with_mocked(Mocks, TestFun, ?DEFAULT_TIMEOUT).
 
 with_mocked(Mocks, TestFun, Timeout) ->
+    with_mocked(Mocks, TestFun, Timeout, [passthrough]).
+
+%% @doc Same as with_mocked/3 with explicit meck options, e.g.
+%% [passthrough, no_history] for tests whose mocks are called millions of
+%% times (recording history would dominate the run).
+with_mocked(Mocks, TestFun, Timeout, MockOptions) ->
     {
         setup,
         fun() ->
             Modules = lists:usort([M || {M, _, _} <- Mocks]),
             lists:foreach(
-                fun(M) -> new_mock(M, [passthrough]) end, Modules),
+                fun(M) -> new_mock(M, MockOptions) end, Modules),
             lists:foreach(
                 fun({M, F, Impl}) -> mock_function(M, F, Impl) end, Mocks),
             Modules

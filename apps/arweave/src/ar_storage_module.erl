@@ -4,7 +4,8 @@
 -export([get_overlap/1, id/1, label/1, address_label/2, module_address/1,
         disk_dir_name/1,
         module_packing_difficulty/1, packing_label/1, get_by_id/1,
-        get_range/1, module_range/1, module_range/2, get_packing/1,
+        get_range/1, get_range_safe/1, get_padded_range/1,
+        module_range/1, module_range/2, get_packing/1,
         get/2, get_all/1, get_all/2, get_all/3,
         has_any/1, has_range/2, get_cover/3, is_repack_in_place/1]).
 
@@ -150,6 +151,31 @@ get_range(ID) ->
             module_range(Module)
     end.
 
+%% @doc Return {StartOffset, EndOffset} or not_found if the module is absent or
+%% the storage-module registry is not ready yet.
+-spec get_range_safe(term()) -> {non_neg_integer(), non_neg_integer() | infinity} | not_found.
+get_range_safe(ID) ->
+    case catch get_range(ID) of
+        {'EXIT', _} -> not_found;
+        not_found -> not_found;
+        {Start, End} -> {Start, End}
+    end.
+
+%% @doc Return the chunk-padded finite range used by sync producers.
+-spec get_padded_range(term()) -> {integer(), integer()}.
+get_padded_range(?DEFAULT_MODULE) ->
+    {-1, -1};
+get_padded_range(ID) ->
+    case get_range_safe(ID) of
+        {RangeStart, RangeEnd} when is_integer(RangeStart), is_integer(RangeEnd) ->
+            {max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
+                ar_block:get_chunk_padded_offset(RangeEnd)};
+        not_found ->
+            {-1, -1}
+    end.
+
+-spec module_range(ar_storage_module:storage_module()) ->
+    {non_neg_integer(), non_neg_integer()}.
 module_range(Module) ->
     Packing = get_packing(Module),
     module_range(Module, ar_storage_module:get_overlap(Packing)).
@@ -502,6 +528,26 @@ disk_dir_name_test() ->
             disk_dir_name(BucketStoreID)),
         %% ...and whole partitions keep their (identical) name.
         ?assertEqual(PartitionStoreID, disk_dir_name(PartitionStoreID))
+    end).
+
+range_helpers_test() ->
+    arweave_config:with_test_config(fun() ->
+        Module = {1_000_000, 1, unpacked},
+        StoreID = id(Module),
+        ok = arweave_config:force_config(#{
+            [storage_modules] => [arweave_config:storage_module_to_config(Module)]
+        }),
+        RawRange = module_range(Module),
+        ?assertEqual(RawRange, get_range_safe(StoreID)),
+        {RangeStart, RangeEnd} = RawRange,
+        ?assertEqual(
+            {max(0, ar_block:get_chunk_padded_offset(RangeStart) - ?DATA_CHUNK_SIZE),
+                ar_block:get_chunk_padded_offset(RangeEnd)},
+            get_padded_range(StoreID)),
+        ?assertEqual(not_found, get_range_safe(missing_store)),
+        ?assertEqual({-1, -1}, get_padded_range(missing_store)),
+        ?assertEqual({0, infinity}, get_range_safe(?DEFAULT_MODULE)),
+        ?assertEqual({-1, -1}, get_padded_range(?DEFAULT_MODULE))
     end).
 
 has_any_test() ->

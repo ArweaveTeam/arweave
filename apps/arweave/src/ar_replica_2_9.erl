@@ -3,7 +3,13 @@
 
 -export([get_entropy_partition/1, get_entropy_partition_range/1, get_entropy_key/3,
     get_slice_index/1, get_partition_offset/1, get_entropy_index/2,
-    get_next_fetch_offset/3]).
+    get_next_fetch_offset/3, get_footprints_per_partition/0, get_footprint_size/0]).
+-export([entropy_size/0, entropy_count/0]).
+-ifdef(AR_TEST).
+-export([override_entropy_size/1, override_entropy_count/1,
+    reset_all_overrides/0]).
+-endif.
+
 
 -include("ar.hrl").
 -include("ar_consensus.hrl").
@@ -127,6 +133,38 @@ get_next_fetch_offset(Offset, Start, End) ->
                 Offset + ?DATA_CHUNK_SIZE
         end,
     min(Offset2, End).
+
+%% Entropy size and count are overridable in tests using persistent_term.
+%% Mainnet-sized simulation scenarios need real 8 MiB entropies; the test
+%% build shrinks them to 32 KiB, which shrinks footprints to 4 chunks and
+%% hides every footprint-vs-cap magnitude effect.
+-ifdef(AR_TEST).
+entropy_size() ->
+    persistent_term:get({?MODULE, entropy_size}, ?REPLICA_2_9_ENTROPY_SIZE).
+entropy_count() ->
+    persistent_term:get({?MODULE, entropy_count}, ?REPLICA_2_9_ENTROPY_COUNT).
+override_entropy_size(Size) ->
+    persistent_term:put({?MODULE, entropy_size}, Size).
+override_entropy_count(Count) ->
+    persistent_term:put({?MODULE, entropy_count}, Count).
+reset_all_overrides() ->
+    persistent_term:erase({?MODULE, entropy_size}),
+    persistent_term:erase({?MODULE, entropy_count}),
+    ok.
+-else.
+entropy_size() -> ?REPLICA_2_9_ENTROPY_SIZE.
+entropy_count() -> ?REPLICA_2_9_ENTROPY_COUNT.
+-endif.
+
+%% @doc Return the number of footprints contained in a partition.
+-spec get_footprints_per_partition() -> non_neg_integer().
+get_footprints_per_partition() ->
+    entropy_count() div ?SUB_CHUNK_COUNT.
+
+%% @doc Return the size of a footprint, in sub-chunks (sub-chunks per entropy).
+-spec get_footprint_size() -> non_neg_integer().
+get_footprint_size() ->
+    entropy_size() div ?SUB_CHUNK_SIZE.
 
 get_entropy_partition_range(PartitionNumber) ->
     %% The goal of this function is to return the minimum and maximum byte offsets that, when

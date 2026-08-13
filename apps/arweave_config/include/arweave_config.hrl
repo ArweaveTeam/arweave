@@ -4,6 +4,13 @@
 -include_lib("arweave/include/ar.hrl").
 -include_lib("arweave/include/ar_verify_chunks.hrl").
 
+%% Convert a legacy cache limit (in chunks) to the new-style MiB option using
+%% CEILING division with a floor of 1, so a small legacy count never rounds down
+%% to a smaller capacity - or to 0, which is invalid for the positive-integer
+%% option. Chunks is always a bound variable at the call sites (no double-eval).
+-define(LEGACY_CHUNKS_TO_CACHE_MIB(Chunks),
+    max(1, (Chunks + (?MiB div ?DATA_CHUNK_SIZE) - 1) div (?MiB div ?DATA_CHUNK_SIZE))).
+
 %% The polling frequency in seconds.
 -define(DEFAULT_POLLING_INTERVAL, 2).
 
@@ -12,14 +19,6 @@
 
 %% The number of processes fetching the recent blocks and transactions on join.
 -define(DEFAULT_JOIN_WORKERS, 10).
-
-%% The number of data sync jobs to run. Each job periodically picks a range
-%% and downloads it from peers.
--ifdef(AR_TEST).
--define(DEFAULT_SYNC_JOBS, 10).
--else.
--define(DEFAULT_SYNC_JOBS, 100).
--endif.
 
 %% The number of disk pool jobs to run. Disk pool jobs scan the disk pool to index
 %% no longer pending or orphaned chunks, pack chunks with a sufficient number of confirmations,
@@ -30,11 +29,10 @@
 %% block header and downloads it from peers.
 -define(DEFAULT_HEADER_SYNC_JOBS, 1).
 
-%% Maximum concurrent peer-discovery scanners across all (Peer, Mode) pairs.
-%% Each scanner walks one peer's advertised buckets and refreshes the
-%% per-peer interval cache; per-peer rate limiting is enforced separately by
-%% ar_client_throttling, so this knob just caps total parallelism.
--define(DEFAULT_DATA_DISCOVERY_MAX_CONCURRENT_PEER_SCANS, 100).
+%% Maximum concurrent sync bucket jobs. Each
+%% worker refreshes one peer's supported maps sequentially; per-peer rate
+%% limiting is enforced separately by arweave_throttling.
+-define(DEFAULT_SYNC_MAX_CONCURRENT_SYNC_BUCKET_JOBS, 100).
 
 %% The default expiration time for a data root in the disk pool.
 -define(DEFAULT_DISK_POOL_DATA_ROOT_EXPIRATION_TIME_S, 30 * 60).
@@ -64,7 +62,7 @@
 -endif.
 
 -define(NUM_HASHING_PROCESSES,
-        max(1, (erlang:system_info(schedulers_online) - 1))).
+    max(1, (erlang:system_info(schedulers_online) - 1))).
 
 -define(MAX_PARALLEL_BLOCK_INDEX_REQUESTS, 1).
 -define(MAX_PARALLEL_GET_CHUNK_REQUESTS, 100).
@@ -153,6 +151,12 @@
 %% Default Gun HTTP/TCP options
 -define(DEFAULT_GUN_HTTP_CLOSING_TIMEOUT, 15_000).
 -define(DEFAULT_GUN_HTTP_KEEPALIVE, 60_000).
+%% Fixed ceiling on parallel HTTP client connections per peer. The pool (see ar_http)
+%% grows toward this as requests arrive and shrinks idle peers back to one, so
+%% low-volume peers cost nothing. It is a fixed cap, not a controller: a live sweep
+%% showed throughput flat from ~4 connections up (the workload is store/peer-bound,
+%% not connection-bound) and higher counts only add load on the peer, so keep it small.
+-define(DEFAULT_HTTP_CONNECTIONS_PER_PEER, 8).
 -define(DEFAULT_GUN_TCP_DELAY_SEND, false).
 -define(DEFAULT_GUN_TCP_KEEPALIVE, true).
 -define(DEFAULT_GUN_TCP_LINGER, false).
@@ -172,7 +176,7 @@
 
 %% Total wall-clock limit for reading the complete request body.
 -define(DEFAULT_HTTP_MAX_BODY_READ_TIME_MS,
-        ?DEFAULT_HTTP_HANDLER_TIMEOUT_MS - 2000).
+    ?DEFAULT_HTTP_HANDLER_TIMEOUT_MS - 2000).
 
 %% Default Cowboy HTTP/TCP options
 -define(DEFAULT_COWBOY_HTTP_ACTIVE_N, 100).

@@ -23,55 +23,55 @@ suite() ->
 
 all() ->
     [
-     %% replica_2_9 source × 3 sinks
-     test_replica_2_9_to_replica_2_9_sync_pack_mine,
-     test_replica_2_9_to_spora_2_6_sync_pack_mine,
-     test_replica_2_9_to_unpacked_sync_pack_mine,
+        %% replica_2_9 source × 3 sinks
+        test_replica_2_9_to_replica_2_9_sync_pack_mine,
+        test_replica_2_9_to_spora_2_6_sync_pack_mine,
+        test_replica_2_9_to_unpacked_sync_pack_mine,
 
-     %% spora_2_6 source × 3 sinks
-     test_spora_2_6_to_replica_2_9_sync_pack_mine,
-     test_spora_2_6_to_spora_2_6_sync_pack_mine,
-     test_spora_2_6_to_unpacked_sync_pack_mine,
+        %% spora_2_6 source × 3 sinks
+        test_spora_2_6_to_replica_2_9_sync_pack_mine,
+        test_spora_2_6_to_spora_2_6_sync_pack_mine,
+        test_spora_2_6_to_unpacked_sync_pack_mine,
 
-     %% unpacked source × 3 sinks
-     test_unpacked_to_replica_2_9_sync_pack_mine,
-     test_unpacked_to_spora_2_6_sync_pack_mine,
-     test_unpacked_to_unpacked_sync_pack_mine,
+        %% unpacked source × 3 sinks
+        test_unpacked_to_replica_2_9_sync_pack_mine,
+        test_unpacked_to_spora_2_6_sync_pack_mine,
+        test_unpacked_to_unpacked_sync_pack_mine,
 
-     %% Edge cases: unpacked source
-     test_unpacked_to_replica_2_9_and_unpacked,
-     test_unpacked_to_unpacked_and_replica_2_9,
-     test_unpacked_entropy_first_replica_2_9,
-     test_unpacked_entropy_last_replica_2_9,
+        %% Edge cases: unpacked source
+        test_unpacked_to_replica_2_9_and_unpacked,
+        test_unpacked_to_unpacked_and_replica_2_9,
+        test_unpacked_entropy_first_replica_2_9,
+        test_unpacked_entropy_last_replica_2_9,
 
-     %% Edge cases: spora_2_6 source
-     test_spora_2_6_to_replica_2_9_and_unpacked,
-     test_spora_2_6_to_unpacked_and_replica_2_9,
-     test_spora_2_6_entropy_first_replica_2_9,
-     test_spora_2_6_entropy_last_replica_2_9,
+        %% Edge cases: spora_2_6 source
+        test_spora_2_6_to_replica_2_9_and_unpacked,
+        test_spora_2_6_to_unpacked_and_replica_2_9,
+        test_spora_2_6_entropy_first_replica_2_9,
+        test_spora_2_6_entropy_last_replica_2_9,
 
-     %% Small module: 3 sources × 2 alignments
-     test_unpacked_small_module_aligned,
-     test_unpacked_small_module_unaligned,
-     test_replica_2_9_small_module_aligned,
-     test_replica_2_9_small_module_unaligned,
-     test_spora_2_6_small_module_aligned,
-     test_spora_2_6_small_module_unaligned,
+        %% Small module: 3 sources × 2 alignments
+        test_unpacked_small_module_aligned,
+        test_unpacked_small_module_unaligned,
+        test_replica_2_9_small_module_aligned,
+        test_replica_2_9_small_module_unaligned,
+        test_spora_2_6_small_module_aligned,
+        test_spora_2_6_small_module_unaligned,
 
-     %% Large module: 3 sources × 2 alignments
-     test_unpacked_large_module_aligned,
-     test_unpacked_large_module_unaligned,
-     test_replica_2_9_large_module_aligned,
-     test_replica_2_9_large_module_unaligned,
-     test_spora_2_6_large_module_aligned,
-     test_spora_2_6_large_module_unaligned,
+        %% Large module: 3 sources × 2 alignments
+        test_unpacked_large_module_aligned,
+        test_unpacked_large_module_unaligned,
+        test_replica_2_9_large_module_aligned,
+        test_replica_2_9_large_module_unaligned,
+        test_spora_2_6_large_module_aligned,
+        test_spora_2_6_large_module_unaligned,
 
-     %% Disk-pool threshold pairs
-     test_unpacked_to_replica_2_9_disk_pool,
-     test_unpacked_to_spora_2_6_disk_pool,
-     test_spora_2_6_to_replica_2_9_disk_pool,
-     test_spora_2_6_to_spora_2_6_disk_pool,
-     test_spora_2_6_to_unpacked_disk_pool
+        %% Disk-pool threshold pairs
+        test_unpacked_to_replica_2_9_disk_pool,
+        test_unpacked_to_spora_2_6_disk_pool,
+        test_spora_2_6_to_replica_2_9_disk_pool,
+        test_spora_2_6_to_spora_2_6_disk_pool,
+        test_spora_2_6_to_unpacked_disk_pool
     ].
 
 %%====================================================================
@@ -133,29 +133,29 @@ test_unpacked_to_unpacked_sync_pack_mine(_C) ->
 
 test_unpacked_to_replica_2_9_and_unpacked(_C) ->
     do_unpacked_and_packed_sync_pack_mine(
-      setup_source_node(unpacked), {replica_2_9, unpacked}).
+        setup_source_node(unpacked), {replica_2_9, unpacked}).
 test_unpacked_to_unpacked_and_replica_2_9(_C) ->
     do_unpacked_and_packed_sync_pack_mine(
-      setup_source_node(unpacked), {unpacked, replica_2_9}).
+        setup_source_node(unpacked), {unpacked, replica_2_9}).
 test_unpacked_entropy_first_replica_2_9(_C) ->
     do_entropy_first_sync_pack_mine(
-      setup_source_node(unpacked), replica_2_9).
+        setup_source_node(unpacked), replica_2_9).
 test_unpacked_entropy_last_replica_2_9(_C) ->
     do_entropy_last_sync_pack_mine(
-      setup_source_node(unpacked), replica_2_9).
+        setup_source_node(unpacked), replica_2_9).
 
 test_spora_2_6_to_replica_2_9_and_unpacked(_C) ->
     do_unpacked_and_packed_sync_pack_mine(
-      setup_source_node(spora_2_6), {replica_2_9, unpacked}).
+        setup_source_node(spora_2_6), {replica_2_9, unpacked}).
 test_spora_2_6_to_unpacked_and_replica_2_9(_C) ->
     do_unpacked_and_packed_sync_pack_mine(
-      setup_source_node(spora_2_6), {unpacked, replica_2_9}).
+        setup_source_node(spora_2_6), {unpacked, replica_2_9}).
 test_spora_2_6_entropy_first_replica_2_9(_C) ->
     do_entropy_first_sync_pack_mine(
-      setup_source_node(spora_2_6), replica_2_9).
+        setup_source_node(spora_2_6), replica_2_9).
 test_spora_2_6_entropy_last_replica_2_9(_C) ->
     do_entropy_last_sync_pack_mine(
-      setup_source_node(spora_2_6), replica_2_9).
+        setup_source_node(spora_2_6), replica_2_9).
 
 %%====================================================================
 %% Test cases — small/large module variants
@@ -163,45 +163,45 @@ test_spora_2_6_entropy_last_replica_2_9(_C) ->
 
 test_unpacked_small_module_aligned(_C) ->
     do_small_module_aligned_sync_pack_mine(
-      setup_source_node(unpacked), replica_2_9).
+        setup_source_node(unpacked), replica_2_9).
 test_unpacked_small_module_unaligned(_C) ->
     do_small_module_unaligned_sync_pack_mine(
-      setup_source_node(unpacked), replica_2_9).
+        setup_source_node(unpacked), replica_2_9).
 
 test_replica_2_9_small_module_aligned(_C) ->
     do_small_module_aligned_sync_pack_mine(
-      setup_source_node(replica_2_9), replica_2_9).
+        setup_source_node(replica_2_9), replica_2_9).
 test_replica_2_9_small_module_unaligned(_C) ->
     do_small_module_unaligned_sync_pack_mine(
-      setup_source_node(replica_2_9), replica_2_9).
+        setup_source_node(replica_2_9), replica_2_9).
 
 test_spora_2_6_small_module_aligned(_C) ->
     do_small_module_aligned_sync_pack_mine(
-      setup_source_node(spora_2_6), replica_2_9).
+        setup_source_node(spora_2_6), replica_2_9).
 test_spora_2_6_small_module_unaligned(_C) ->
     do_small_module_unaligned_sync_pack_mine(
-      setup_source_node(spora_2_6), replica_2_9).
+        setup_source_node(spora_2_6), replica_2_9).
 
 test_unpacked_large_module_aligned(_C) ->
     do_large_module_aligned_sync_pack_mine(
-      setup_source_node(unpacked), replica_2_9).
+        setup_source_node(unpacked), replica_2_9).
 test_unpacked_large_module_unaligned(_C) ->
     do_large_module_unaligned_sync_pack_mine(
-      setup_source_node(unpacked), replica_2_9).
+        setup_source_node(unpacked), replica_2_9).
 
 test_replica_2_9_large_module_aligned(_C) ->
     do_large_module_aligned_sync_pack_mine(
-      setup_source_node(replica_2_9), replica_2_9).
+        setup_source_node(replica_2_9), replica_2_9).
 test_replica_2_9_large_module_unaligned(_C) ->
     do_large_module_unaligned_sync_pack_mine(
-      setup_source_node(replica_2_9), replica_2_9).
+        setup_source_node(replica_2_9), replica_2_9).
 
 test_spora_2_6_large_module_aligned(_C) ->
     do_large_module_aligned_sync_pack_mine(
-      setup_source_node(spora_2_6), replica_2_9).
+        setup_source_node(spora_2_6), replica_2_9).
 test_spora_2_6_large_module_unaligned(_C) ->
     do_large_module_unaligned_sync_pack_mine(
-      setup_source_node(spora_2_6), replica_2_9).
+        setup_source_node(spora_2_6), replica_2_9).
 
 %%====================================================================
 %% Test cases — disk pool threshold
@@ -234,7 +234,7 @@ setup_source_node(PackingType) ->
 
 do_sync_pack_mine({Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
     ?LOG_INFO([{event, test_sync_pack_mine}, {module, ?MODULE},
-               {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+        {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
     [B0 | _] = Blocks,
     SourceNode = peer1,
     SinkNode = peer2,
@@ -256,16 +256,16 @@ do_sync_pack_mine({Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
     end.
 
 do_unpacked_and_packed_sync_pack_mine(
-  {Blocks, _Chunks, SourcePackingType}, {PackingType1, PackingType2}) ->
+        {Blocks, _Chunks, SourcePackingType}, {PackingType1, PackingType2}) ->
     ?LOG_INFO([{event, test_unpacked_and_packed_sync_pack_mine}, {module, ?MODULE},
-               {from_packing_type, SourcePackingType},
-               {to_packing_type, {PackingType1, PackingType2}}]),
+        {from_packing_type, SourcePackingType},
+        {to_packing_type, {PackingType1, PackingType2}}]),
     [B0 | _] = Blocks,
     SourceNode = peer1,
     SinkNode = peer2,
 
     {SinkPacking1, SinkPacking2} = start_sink_node(
-                                     SinkNode, SourceNode, B0, PackingType1, PackingType2),
+        SinkNode, SourceNode, B0, PackingType1, PackingType2),
 
     RangeStart1 = ar_block:partition_size(),
     RangeEnd1 = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking1),
@@ -275,15 +275,15 @@ do_unpacked_and_packed_sync_pack_mine(
     ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking2),
 
     MinablePacking = case PackingType1 of
-                         unpacked -> SinkPacking2;
-                         _ -> SinkPacking1
-                     end,
+        unpacked -> SinkPacking2;
+        _ -> SinkPacking1
+    end,
     ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, MinablePacking).
 
 do_entropy_first_sync_pack_mine(
-  {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
+        {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
     ?LOG_INFO([{event, test_entropy_first_sync_pack_mine}, {module, ?MODULE},
-               {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+        {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
     [B0 | _] = Blocks,
     SourceNode = peer1,
     SinkNode = peer2,
@@ -302,12 +302,12 @@ do_entropy_first_sync_pack_mine(
                       [storage_modules] => StorageModules,
                       [join, auto] => true,
                       [mining, address] => SinkAddr,
-                      [sync, jobs] => 0
+                      [sync, max_download_rate] => 0
                      },
     SinkPeerName = ar_test_node:peer_name(SinkNode),
     SinkPeerName = ar_test_node:start_other_node(SinkNode, B0, BaseOverrides, true),
     SinkSnapshot = ar_test_node:remote_call(
-                     SinkNode, arweave_config, snapshot, []),
+        SinkNode, arweave_config, snapshot, []),
 
     RangeStart = ar_block:partition_size(),
     RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
@@ -318,13 +318,13 @@ do_entropy_first_sync_pack_mine(
 
     DeleteOffset1 = RangeStart + ?DATA_CHUNK_SIZE,
     ar_test_node:remote_call(SinkNode, ar_chunk_storage, delete,
-                             [DeleteOffset1, StoreID]),
+        [DeleteOffset1, StoreID]),
     DeleteOffset2 = DeleteOffset1 + ?DATA_CHUNK_SIZE,
     ar_test_node:remote_call(SinkNode, ar_chunk_storage, delete_chunk,
-                             [DeleteOffset2, StoreID]),
+        [DeleteOffset2, StoreID]),
 
     ar_e2e:restart_node(SinkNode, SinkSnapshot,
-                        BaseOverrides#{[sync, jobs] => 100}),
+        BaseOverrides#{[sync, max_download_rate] => infinity}),
 
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart, RangeEnd),
     ar_e2e:assert_partition_size(SinkNode, 1, SinkPacking),
@@ -335,9 +335,9 @@ do_entropy_first_sync_pack_mine(
     ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking).
 
 do_entropy_last_sync_pack_mine(
-  {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
+        {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
     ?LOG_INFO([{event, test_entropy_last_sync_pack_mine}, {module, ?MODULE},
-               {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+        {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
     [B0 | _] = Blocks,
     SourceNode = peer1,
     SinkNode = peer2,
@@ -361,7 +361,7 @@ do_entropy_last_sync_pack_mine(
     SinkPeerName = ar_test_node:peer_name(SinkNode),
     SinkPeerName = ar_test_node:start_other_node(SinkNode, B0, BaseOverrides, true),
     SinkSnapshot = ar_test_node:remote_call(
-                     SinkNode, arweave_config, snapshot, []),
+        SinkNode, arweave_config, snapshot, []),
 
     RangeStart = ar_block:partition_size(),
     RangeEnd = 2*ar_block:partition_size() + ar_storage_module:get_overlap(SinkPacking),
@@ -371,7 +371,7 @@ do_entropy_last_sync_pack_mine(
     ok = ar_test_await:partition_empty(SinkNode, 1, unpacked),
 
     ar_e2e:restart_node(SinkNode, SinkSnapshot,
-                        BaseOverrides#{[packing, entropy, workers] => 8}),
+        BaseOverrides#{[packing, entropy, workers] => 8}),
 
     ok = ar_test_await:entropy_prepared(SinkNode, StoreID, RangeStart, RangeEnd),
     ok = ar_test_await:http_chunks_recorded(SinkNode, RangeStart, RangeEnd),
@@ -383,9 +383,9 @@ do_entropy_last_sync_pack_mine(
     ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking).
 
 do_small_module_aligned_sync_pack_mine(
-  {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
+        {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
     ?LOG_INFO([{event, test_small_module_aligned_sync_pack_mine}, {module, ?MODULE},
-               {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+        {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
     [B0 | _] = Blocks,
     SourceNode = peer1,
     SinkNode = peer2,
@@ -429,9 +429,9 @@ do_small_module_aligned_sync_pack_mine(
     ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking).
 
 do_small_module_unaligned_sync_pack_mine(
-  {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
+        {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
     ?LOG_INFO([{event, test_small_module_unaligned_sync_pack_mine}, {module, ?MODULE},
-               {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+        {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
     [B0 | _] = Blocks,
     SourceNode = peer1,
     SinkNode = peer2,
@@ -474,9 +474,9 @@ do_small_module_unaligned_sync_pack_mine(
     ar_e2e:assert_mine_and_validate(SinkNode, SourceNode, SinkPacking).
 
 do_large_module_aligned_sync_pack_mine(
-  {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
+        {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
     ?LOG_INFO([{event, test_large_module_aligned_sync_pack_mine}, {module, ?MODULE},
-               {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+        {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
     [B0 | _] = Blocks,
     SourceNode = peer1,
     SinkNode = peer2,
@@ -527,9 +527,9 @@ do_large_module_aligned_sync_pack_mine(
 %% an unpack+repack-with-sink-address cycle, so the sink can't mine
 %% until `http_chunks_recorded' completes — which itself needs height 6.
 do_large_module_unaligned_sync_pack_mine(
-  {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
+        {Blocks, Chunks, SourcePackingType}, SinkPackingType) ->
     ?LOG_INFO([{event, test_large_module_unaligned_sync_pack_mine}, {module, ?MODULE},
-               {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+        {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
     [B0 | _] = Blocks,
     SourceNode = peer1,
     SinkNode = peer2,
@@ -539,7 +539,7 @@ do_large_module_unaligned_sync_pack_mine(
             ok;
         _ ->
             SourceHeight = ar_test_node:remote_call(
-                             SourceNode, ar_node, get_height, []),
+                SourceNode, ar_node, get_height, []),
             ar_test_node:mine(SourceNode),
             {ok, _} = ar_test_await:node_height(SourceNode, SourceHeight + 1)
     end,
@@ -586,7 +586,7 @@ do_large_module_unaligned_sync_pack_mine(
 
 do_disk_pool_threshold(SourcePackingType, SinkPackingType) ->
     ?LOG_INFO([{event, test_disk_pool_threshold}, {module, ?MODULE},
-               {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
+        {from_packing_type, SourcePackingType}, {to_packing_type, SinkPackingType}]),
 
     SourceNode = peer1,
     SinkNode = peer2,
@@ -596,7 +596,7 @@ do_disk_pool_threshold(SourcePackingType, SinkPackingType) ->
 
     SinkPacking = start_sink_node(SinkNode, SourceNode, B0, SinkPackingType),
     ok = ar_test_await:http_chunks_recorded(SinkNode,
-                                            ar_block:partition_size(), 4*ar_block:partition_size()),
+        ar_block:partition_size(), 4*ar_block:partition_size()),
     %% At height 6 the disk-pool threshold sits at the depth-3 weave
     %% 6291456 (inside partition 3): partitions 1-2 are fully below it,
     %% partition 3 holds only the two chunks below the threshold, and
@@ -618,7 +618,7 @@ do_disk_pool_threshold(SourcePackingType, SinkPackingType) ->
             %% (inside partition 4): partition 3 is now fully below it and
             %% partition 4 holds the two chunks below it.
             ok = ar_test_await:http_chunks_recorded(SinkNode,
-                                                    ar_block:partition_size(), 4*ar_block:partition_size()),
+                ar_block:partition_size(), 4*ar_block:partition_size()),
             ar_e2e:assert_partition_size(SinkNode, 2, SinkPacking),
             ar_e2e:assert_partition_size(SinkNode, 3, SinkPacking),
             ar_test_await:partition_at_size(SinkNode, 4, SinkPacking, 2 * ?DATA_CHUNK_SIZE),

@@ -273,7 +273,7 @@ killers_connections_init(Sockets) ->
 killers_connections_loop([]) -> ok;
 killers_connections_loop(Killers) ->
     ConnectionTimeout = arweave_config:get(
-        [network, server, shutdown_connection_timeout]),
+        [network, server, shutdown, connection_timeout]),
     TCPTimeout = 1000 * ConnectionTimeout,
     receive
         {'EXIT', Pid, _} ->
@@ -322,7 +322,7 @@ killer_init(Socket) ->
     ?LOG_DEBUG([{socket, Socket}, {pid, self()}, {action, started}]),
     erlang:process_flag(trap_exit, true),
     erlang:link(Socket),
-    Mode = arweave_config:get([network, server, shutdown_mode]),
+    Mode = arweave_config:get([network, server, shutdown, mode]),
     State = socket_info(Socket),
     NewState = killer_loop(State#{
         counter => 0,

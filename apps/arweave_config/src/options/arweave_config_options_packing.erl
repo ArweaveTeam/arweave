@@ -69,7 +69,6 @@ specs() ->
                   "cache, the more replica.2.9 data can be synced "
                   "or repacked concurrently.">>,
             handle_set => fun(_K, V, _S, _A) ->
-                ok = ar_sync_dispatcher:set_entropy_cache_size(V),
                 ok = ar_repack:recompute_sizing(),
                 {store, V}
             end

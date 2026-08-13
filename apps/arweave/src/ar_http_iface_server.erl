@@ -25,8 +25,8 @@
                                 ]).
 
 -define(HTTP_IFACE_ROUTES, [
-	{"/metrics/[:registry]", arweave_metrics_cowboy_handler, []},
-	{"/[...]", ar_http_iface_handler, []}
+    {"/metrics/[:registry]", arweave_metrics_cowboy_handler, []},
+    {"/[...]", ar_http_iface_handler, []}
 ]).
 
 -define(ENDPOINTS, ["info", "block", "block_announcement", "block2", "tx", "tx2",
@@ -102,17 +102,17 @@ start_http_iface_listener() ->
 %% @doc Build the ranch transport options map from the current config. Read once
 %% at listener start — the transport socket opts are not runtime-updated.
 build_transport_opts() ->
-    Backlog = arweave_config:get([network, server, tcp, backlog]),
-    DelaySend = arweave_config:get([network, server, tcp, delay_send]),
-    Keepalive = arweave_config:get([network, server, tcp, keepalive]),
-    Linger = arweave_config:get([network, server, tcp, linger]),
-    LingerTimeout = arweave_config:get([network, server, tcp, linger_timeout]),
-    MaxConnections = arweave_config:get([network, server, tcp, max_connections]),
-    Nodelay = arweave_config:get([network, server, tcp, nodelay]),
-    NumAcceptors = arweave_config:get([network, server, tcp, num_acceptors]),
-    SendTimeoutClose = arweave_config:get([network, server, tcp, send_timeout_close]),
-    SendTimeout = arweave_config:get([network, server, tcp, send_timeout]),
-    ListenerShutdown = arweave_config:get([network, server, tcp, listener_shutdown]),
+    Backlog = arweave_config:get([network, server, socket, backlog]),
+    DelaySend = arweave_config:get([network, server, socket, delay_send]),
+    Keepalive = arweave_config:get([network, server, socket, keepalive]),
+    Linger = arweave_config:get([network, server, socket, linger]),
+    LingerTimeout = arweave_config:get([network, server, socket, linger_timeout]),
+    MaxConnections = arweave_config:get([network, server, http, max_connections]),
+    Nodelay = arweave_config:get([network, server, socket, nodelay]),
+    NumAcceptors = arweave_config:get([network, server, http, num_acceptors]),
+    SendTimeoutClose = arweave_config:get([network, server, socket, send_timeout_close]),
+    SendTimeout = arweave_config:get([network, server, socket, send_timeout]),
+    ListenerShutdown = arweave_config:get([network, server, http, listener_shutdown]),
     Port = arweave_config:get([port]),
     #{
                                                 % ranch_tcp parameters
@@ -139,7 +139,7 @@ build_protocol_opts() ->
     InactivityTimeout = arweave_config:get([network, server, http, inactivity_timeout]),
     HTTPLingerTimeout = arweave_config:get([network, server, http, linger_timeout]),
     RequestTimeout = arweave_config:get([network, server, http, request_timeout]),
-    IdleTimeout = arweave_config:get([network, server, transport, idle_timeout]),
+    IdleTimeout = arweave_config:get([network, server, http, idle_timeout]),
     #{
       active_n => ActiveN,
       inactivity_timeout => InactivityTimeout,

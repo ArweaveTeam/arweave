@@ -9,29 +9,37 @@ specs() ->
     [
         #{
             enabled => true,
-            option_key => [sync, cache_size_limit],
+            option_key => [sync, cache_size],
             runtime => true,
-            type => pos_integer,
+            type => finite_pos_integer,
             legacy => data_cache_size_limit,
             short_description =>
-                <<"Maximum number of data chunks kept in "
-                  "memory by the syncing processes (approximate).">>,
+                <<"Total memory budget in MiB for the syncing processes' "
+                  "in-memory caches (approximate).">>,
+            long_description =>
+                <<"Split ~90/10 between the fetched-chunk cache (downloaded "
+                  "chunks awaiting the write path) and the peer interval "
+                  "cache (warmed per-peer sync intervals; 10% share, floored "
+                  "at 64 MiB). Note: this option previously sized only the "
+                  "chunk cache; it now covers both, so the chunk cache gets "
+                  "~90% of a previously-tuned value.">>,
             handle_set =>
                 fun(_K, V, _S, _A) ->
-                    ok = ar_data_sync:set_chunk_cache_size_limit(V),
+                    %% set_chunk_cache_size_limit/1 returns the resolved limit (in
+                    %% chunks), or ok only before the ETS table exists - don't match ok.
+                    _ = ar_data_sync:set_chunk_cache_size_limit(V),
                     {store, V}
                 end
         },
         #{
             enabled => true,
-            option_key => [sync, max_concurrent_peer_scans],
+            option_key => [sync, max_concurrent_sync_bucket_jobs],
             runtime => true,
-            default => ?DEFAULT_DATA_DISCOVERY_MAX_CONCURRENT_PEER_SCANS,
+            default => ?DEFAULT_SYNC_MAX_CONCURRENT_SYNC_BUCKET_JOBS,
             type => pos_integer,
             legacy => data_discovery_max_concurrent_peer_scans,
             short_description =>
-                <<"Maximum concurrent peer-discovery scanners across "
-                  "all (Peer, Mode) pairs.">>
+                <<"Maximum concurrent sync bucket jobs.">>
         },
         #{
             enabled => true,
@@ -56,15 +64,23 @@ specs() ->
         },
         #{
             enabled => true,
-            option_key => [sync, jobs],
-            default => ?DEFAULT_SYNC_JOBS,
+            option_key => [sync, max_download_rate],
+            runtime => true,
+            default => infinity,
             type => pos_integer,
-            legacy => sync_jobs,
+            legacy => sync_max_download_rate,
             short_description =>
-                <<"Number of data-syncing jobs to run.">>,
+                <<"Maximum sync download rate in bytes per second.">>,
             long_description =>
-                <<"Each job periodically picks a byte range and "
-                  "downloads it from peers.">>
+                <<"Aggregate budget for chunk fetching. `infinity` (the "
+                  "default) syncs as fast as peers, disks, and the link "
+                  "allow; 0 at startup disables data syncing entirely. "
+                  "Fetch concurrency is sized automatically from per-peer "
+                  "behavior, so this rate is the only sync-throughput "
+                  "dial. The rate may be changed at runtime; a runtime 0 "
+                  "pauses dispatch but does not stop the sync processes. "
+                  "(Replaces the removed sync_jobs / [sync, workers] "
+                  "option.)">>
         }
     ].
 
