@@ -23,7 +23,7 @@
 %% tight for some test scenarios.
 -define(LIMITER_TIMESTAMP_CLEANUP_INTERVAL, 120000).
 -define(LIMITER_TIMESTAMP_CLEANUP_EXPIRY, 120000).
--define(LIMITER_IS_MANUAL_REDUCTION_DISABLED, true).
+-define(LIMITER_IS_EXTERNAL_REDUCTION_ENABLED, false).
 
 %% general
 
@@ -186,7 +186,7 @@ spec_for(GroupID, Field, Default) ->
     end.
 
 type_for(no_limit) -> boolean;
-type_for(is_manual_reduction_disabled) -> boolean;
+type_for(is_external_reduction_enabled) -> boolean;
 type_for(_) -> pos_integer.
 
 group_coverage_for(chunk) ->
@@ -248,7 +248,7 @@ short_description_for(timestamp_cleanup_tick_ms) ->
 short_description_for(timestamp_cleanup_expiry) ->
     <<"Idle time in milliseconds after which a peer's "
       "sliding-window state is discarded.">>;
-short_description_for(is_manual_reduction_disabled) ->
+short_description_for(is_external_reduction_enabled) ->
     <<"Skip the extra leaky-bucket reduction performed after "
       "each accepted request.">>;
 short_description_for(no_limit) ->
@@ -294,7 +294,7 @@ test_only_groups() ->
             ?LIMITER_GENERAL_LEAKY_TICK_REDUCTION,
             ?LIMITER_GENERAL_CONCURRENCY_LIMIT))#{
             number_of_workers => 1,
-            is_manual_reduction_disabled => false
+            is_external_reduction_enabled => true
         },
         test_limiter_2 => standard(
             ?LIMITER_GENERAL_SLIDING_WINDOW_LIMIT,
@@ -373,7 +373,7 @@ production_groups() ->
             ?LIMITER_GENERAL_LEAKY_TICK_INTERVAL,
             ?LIMITER_GENERAL_LEAKY_TICK_REDUCTION,
             ?LIMITER_GENERAL_CONCURRENCY_LIMIT))#{
-            is_manual_reduction_disabled => false
+            is_external_reduction_enabled => true
         },
         %% Metrics is a static low-traffic endpoint; one worker is enough.
         metrics => (standard(
@@ -427,8 +427,8 @@ common() ->
             ?LIMITER_TIMESTAMP_CLEANUP_INTERVAL,
         timestamp_cleanup_expiry =>
             ?LIMITER_TIMESTAMP_CLEANUP_EXPIRY,
-        is_manual_reduction_disabled =>
-            ?LIMITER_IS_MANUAL_REDUCTION_DISABLED,
+        is_external_reduction_enabled =>
+            ?LIMITER_IS_EXTERNAL_REDUCTION_ENABLED,
         no_limit => false,
         number_of_workers => ?LIMITER_DEFAULT_WORKERS
     }.

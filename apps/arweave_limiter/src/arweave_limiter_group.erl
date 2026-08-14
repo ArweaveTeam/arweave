@@ -1,4 +1,3 @@
-%%%
 %%% @doc Leaky bucket token rate limiter based on
 %%%      https://gist.github.com/humaite/21a84c3b3afac07fcebe476580f3a40b
 %%%      combined with a concurrency limiter similar to Ranch's connection pool.
@@ -96,9 +95,12 @@ do_register_or_reject_call(LimiterRef, Peer) ->
             {reject, error, #{}}
     end.
 
-%% This function is called when a transaction is accepted. This is how the previous
-%% solution dealt with high loads. This will perform double reduction. (as the periodic
-%% reduction is still occurring).
+%% This function is called when a transaction is accepted.
+%%
+%% We don't want to limit valid transaction gossip. So the solution is
+%% that we treat requests just as any other request. Then when the validation
+%% succeeds, the handler can call this function, and reduce a token (or
+%% timestamps) and removing the load from the pool.
 reduce_for_peer(LimiterRef, Peer) ->
     LimiterWorkerRef = ref_to_worker_ref(LimiterRef, Peer),
     Result = gen_server:call(LimiterWorkerRef, {reduce_for_peer, Peer}),
@@ -138,7 +140,7 @@ init([GroupID]) when is_atom(GroupID) ->
     ID = atom_to_list(GroupID),
 
     IsDisabled = arweave_config:get([limiter, GroupID, no_limit]),
-    IsManualReductionDisabled = arweave_config:get([limiter, GroupID, is_manual_reduction_disabled]),
+    IsExternalReductionEnabled = arweave_config:get([limiter, GroupID, is_external_reduction_enabled]),
     LeakyTickMs = arweave_config:get([limiter, GroupID, leaky_tick_ms]),
     TimestampCleanupTickMs = arweave_config:get([limiter, GroupID, timestamp_cleanup_tick_ms]),
     TimestampCleanupExpiry = arweave_config:get([limiter, GroupID, timestamp_cleanup_expiry]),
@@ -157,7 +159,7 @@ init([GroupID]) when is_atom(GroupID) ->
     {ok, #{
            id => ID,
            is_disabled => IsDisabled,
-           is_manual_reduction_disabled => IsManualReductionDisabled,
+           is_external_reduction_enabled => IsExternalReductionEnabled,
            leaky_tick_timer_ref => LeakyRef,
            timestamp_cleanup_timer_ref => TSRef,
            leaky_tick_ms => LeakyTickMs,
@@ -259,18 +261,17 @@ handle_call({register_or_reject, Peer}, {FromPid, _},
                     concurrent_monitors => NewMonitors}}
     end;
 handle_call({reduce_for_peer, Peer}, _From, State =
-                #{is_manual_reduction_disabled := false,
+                #{is_external_reduction_enabled := true,
                   sliding_timestamps := SlidingTimestamps,
                   leaky_rate_limit := LeakyRateLimit,
                   leaky_tokens := LeakyTokens}) ->
-    TimestampsForPeer = maps:get(Peer, SlidingTimestamps, []),
-    {NewTimestampsForPeer, NewLeakyTokens} =
-        do_reduce_for_peer(LeakyRateLimit, Peer, LeakyTokens, TimestampsForPeer),
-    NewSlidingTimestamps = SlidingTimestamps#{Peer => NewTimestampsForPeer},
+    %% Let's reduce a token, or timestamp for a peer, depending on the settings.
+    {NewSlidingTimestamps, NewLeakyTokens} =
+        do_reduce_for_peer(LeakyRateLimit, Peer, LeakyTokens, SlidingTimestamps),
     {reply, ok, State#{leaky_tokens => NewLeakyTokens,
                        sliding_timestamps => NewSlidingTimestamps}};
 handle_call({reduce_for_peer, _Peer}, _From, State =
-                #{is_manual_reduction_disabled := true}) ->
+                #{is_external_reduction_enabled := false}) ->
     {reply, disabled, State};
 handle_call(get_info, _From, State =
                 #{sliding_timestamps := SlidingTimestamps,
@@ -379,22 +380,27 @@ cleanup_expired_sliding_peers(SlidingTimestamps, WindowDuration, Now) ->
 update_token(Peer, Token, LeakyToken) ->
     maps:put(Peer, Token, LeakyToken).
 
-do_reduce_for_peer(0, _Peer, LeakyTokens, []) ->
-    %% When leaky bucket is inactive, and we have no timestamps,
-    %% we can't do anything, can we?
-    {[], LeakyTokens};
-do_reduce_for_peer(0, _Peer, LeakyTokens, [_TS, RestOfTSsForPeer]) ->
-    %% Leaky bucket is inactive, let's expire a timestamp (the oldest one)
-    {RestOfTSsForPeer, LeakyTokens};
-do_reduce_for_peer(_LeakyRateLimit, Peer, LeakyTokens, TimestampsForPeer) ->
-    case maps:get(Peer, LeakyTokens, 0) of
-        0 ->
-            %% If leaky bucket is active, but there tokens is at 0, we don't care about reduction.
-            %% This is simplifying an edgecase. (We basically can afford not reducing)
-            {TimestampsForPeer, LeakyTokens};
-        Tokens ->
-            {TimestampsForPeer, LeakyTokens#{Peer => Tokens - 1}}
-    end.
+do_reduce_for_peer(0, Peer, LeakyTokens, SlidingTimestamps) ->
+    NewTimestampsForPeer =
+        case maps:get(Peer, SlidingTimestamps, []) of
+            [] ->
+                %% When leaky bucket is inactive, and we have no timestamps,
+                %% we can't do anything, can we?
+                [];
+            [_TS | RestOfTSsForPeer] ->
+                %% Leaky bucket is inactive, let's expire a timestamp (the oldest one)
+                RestOfTSsForPeer
+        end,
+    {SlidingTimestamps#{Peer => NewTimestampsForPeer}, LeakyTokens};
+do_reduce_for_peer(_LeakyRateLimit, Peer, LeakyTokens, SlidingTimestamps) ->
+    %% We don't touch timestamps for peers.
+    %%
+    %% If leaky bucket is active, but there tokens is at 0, we don't care about reduction.
+    %% This is simplifying an edgecase. (We basically can afford not reducing, and we
+    %% don't want to think about whether a periodic reduction has been performed just
+    %% before calling the external reduction. (like validating a transaction).
+    NewTokens = max((maps:get(Peer, LeakyTokens, 0) - 1), 0),
+    {SlidingTimestamps, LeakyTokens#{Peer => NewTokens}}.
 
 fold_decrease_rate(_ID, _Key, Counter, Acc, _TickReduction)
   when is_integer(Counter), Counter =< 0 ->
@@ -418,7 +424,7 @@ remove_concurrent(MonitorRef, _Pid, _Reason, ConcurrentMonitors) ->
 
 filter_state_for_config(#{id := ID,
                           is_disabled := IsDisabled,
-                          is_manual_reduction_disabled := IsManualReductionDisabled,
+                          is_external_reduction_enabled := IsExternalReductionEnabled,
                           leaky_tick_ms := LeakyTickMs,
                           timestamp_cleanup_tick_ms := TimestampCleanupTickMs,
                           timestamp_cleanup_expiry := TimestampCleanupExpiry,
@@ -429,7 +435,7 @@ filter_state_for_config(#{id := ID,
                           sliding_window_limit := SlidingWindowLimit}) ->
     #{id => ID,
       is_disabled => IsDisabled,
-      is_manual_reduction_disabled => IsManualReductionDisabled,
+      is_external_reduction_enabled => IsExternalReductionEnabled,
       leaky_tick_ms => LeakyTickMs,
       timestamp_cleanup_tick_ms => TimestampCleanupTickMs,
       timestamp_cleanup_expiry => TimestampCleanupExpiry,

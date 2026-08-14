@@ -294,7 +294,7 @@ limiter:
     concurrency_limit: 250
     timestamp_cleanup_tick_ms: 60000
     timestamp_cleanup_expiry: 90000
-    is_manual_reduction_disabled: true
+    is_external_reduction_enabled: false
     no_limit: false
     number_of_workers: 8
   data_sync_record: *limiter_full
