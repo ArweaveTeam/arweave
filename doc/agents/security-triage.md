@@ -110,8 +110,19 @@ release, and the latest alpha release, with the exact tags and dates.
 
 If the refs differ, find the fix commit(s) with
 `git log -S <token> -- <file>` and confirm presence in each of the three refs
-with `git merge-base --is-ancestor <sha> <ref>`. Link commits by full SHA when
-the assessment destination is permitted to see them.
+with `git merge-base --is-ancestor <sha> <ref>`.
+
+Link commits when the assessment destination is permitted to see them. Render
+every commit hash as a Markdown link to the commit — never a bare hash — with
+the full SHA in the URL:
+
+```markdown
+[`c2beb09a5`](https://github.com/ArweaveTeam/arweave-dev/commit/c2beb09a5d1ce1c4cb848b68275326bbd3d05b36)
+```
+
+Use the short SHA as the link text in prose, and the full SHA as the link text
+where the assessment records a comparison ref. Hashes inside fenced code blocks
+stay bare, since links do not render there.
 
 ## 5. Post the assessment
 
