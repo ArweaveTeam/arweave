@@ -16,44 +16,62 @@
 	#include <sys/sysctl.h>
 #endif
 
-#define VDF_MAX_CHECKPOINTS 1000000
-#define VDF_MAX_SKIP_CHECKPOINTS 1000000
+// The number of reported checkpoints. It sizes the output buffer directly
+// (VDF_SHA_HASH_SIZE * checkpointCount), and enif_make_new_binary aborts the emulator
+// instead of returning NULL once that exceeds what can be allocated. ar_vdf:compute/3
+// passes ?VDF_CHECKPOINT_COUNT_IN_STEP - 1 = 24.
+#define VDF_MAX_CHECKPOINTS 1000000u
+
+// The number of checkpoints skipped in between two reported checkpoints. Unlike
+// checkpointCount - which vdf_parallel_sha_verify_with_reset_nif also pins to the size of the
+// caller's InCheckpoint binary - nothing else bounds this one, and it multiplies both the
+// hashing work and the size of the verify output buffer:
+//   VDF_SHA_HASH_SIZE * (1 + checkpointCount) * (1 + skipCheckpointCount)
+// ar_vdf:compute/3 passes 0 and ar_vdf:verify/8 passes ?VDF_CHECKPOINT_COUNT_IN_STEP - 1 = 24,
+// so this leaves ample headroom.
+#define VDF_MAX_SKIP_CHECKPOINTS 1024u
+
+// The implementations do not agree below 2 iterations. The reference implementation
+// (_vdf_sha2 in vdf.cpp) hashes an unconditional first block - and, without skips, an
+// unconditional last one - around its inner loop, so it never runs fewer than 2 rounds per
+// checkpoint; the fused/hiopt implementations run exactly hashingIterations and return the
+// seed unhashed at 0. Rather than touch the optimised implementations, reject the range
+// where they disagree: it is far below any production VDF difficulty.
+#define MIN_HASHING_ITERATIONS 2u
+
 #define VDF_MAX_THREADS 4096
 
-static int vdf_validate_common_params(int checkpointCount, int skipCheckpointCount, int hashingIterations)
+static int vdf_validate_common_params(unsigned int checkpointCount,
+		unsigned int skipCheckpointCount, unsigned int hashingIterations)
 {
-	if (checkpointCount < 0 || checkpointCount > VDF_MAX_CHECKPOINTS) {
+	if (checkpointCount > VDF_MAX_CHECKPOINTS) {
 		return 0;
 	}
-	if (skipCheckpointCount < 0 || skipCheckpointCount > VDF_MAX_SKIP_CHECKPOINTS) {
+	if (skipCheckpointCount > VDF_MAX_SKIP_CHECKPOINTS) {
 		return 0;
 	}
-	/* OpenSSL reference path supports hashingIterations >= 1; fused ARM needs a fallback below 2 */
-	if (hashingIterations < 1) {
+	if (hashingIterations < MIN_HASHING_ITERATIONS) {
 		return 0;
 	}
 	return 1;
 }
 
-static int vdf_mul_size_checkpoint_output(int checkpointCount, size_t *out_size)
+// VDF_SHA_HASH_SIZE * checkpointCount. The bounds above keep this well inside a 64-bit
+// size_t; the explicit check is what makes it safe on a 32-bit one too.
+static int vdf_checkpoint_output_size(unsigned int checkpointCount, size_t *out_size)
 {
-	if (checkpointCount < 0) {
-		return 0;
-	}
 	size_t n = (size_t)checkpointCount;
-	size_t sz = n * (size_t)VDF_SHA_HASH_SIZE;
-	if (checkpointCount != 0 && sz / (size_t)VDF_SHA_HASH_SIZE != n) {
+	if (n > SIZE_MAX / (size_t)VDF_SHA_HASH_SIZE) {
 		return 0;
 	}
-	*out_size = sz;
+	*out_size = n * (size_t)VDF_SHA_HASH_SIZE;
 	return 1;
 }
 
-static int vdf_parallel_verify_output_size(int checkpointCount, int skipCheckpointCount, size_t *out_size)
+// VDF_SHA_HASH_SIZE * (1 + checkpointCount) * (1 + skipCheckpointCount)
+static int vdf_parallel_verify_output_size(unsigned int checkpointCount,
+		unsigned int skipCheckpointCount, size_t *out_size)
 {
-	if (checkpointCount < 0 || skipCheckpointCount < 0) {
-		return 0;
-	}
 	size_t a = (size_t)checkpointCount + 1u;
 	size_t b = (size_t)skipCheckpointCount + 1u;
 	if (a > SIZE_MAX / b) {
@@ -67,10 +85,10 @@ static int vdf_parallel_verify_output_size(int checkpointCount, int skipCheckpoi
 	return 1;
 }
 
-static int vdf_in_checkpoint_size_matches(int checkpointCount, size_t bin_size)
+static int vdf_in_checkpoint_size_matches(unsigned int checkpointCount, size_t bin_size)
 {
 	size_t expected;
-	if (!vdf_mul_size_checkpoint_output(checkpointCount, &expected)) {
+	if (!vdf_checkpoint_output_size(checkpointCount, &expected)) {
 		return 0;
 	}
 	return bin_size == expected;
@@ -84,9 +102,9 @@ typedef void (*vdf_sha2_fn)(
 	unsigned char* seed,
 	unsigned char* out,
 	unsigned char* outCheckpoint,
-	int checkpointCount,
-	int skipCheckpointCount,
-	int hashingIterations
+	unsigned int checkpointCount,
+	unsigned int skipCheckpointCount,
+	unsigned int hashingIterations
 );
 static vdf_sha2_fn vdf_sha2_fused_ptr = NULL;
 static vdf_sha2_fn vdf_sha2_hiopt_ptr = NULL;
@@ -134,9 +152,9 @@ static int vdf_load(ErlNifEnv* env, void** priv, ERL_NIF_TERM load_info) {
 static ERL_NIF_TERM vdf_sha2_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
 	ErlNifBinary Salt, Seed;
-	int checkpointCount;
-	int skipCheckpointCount;
-	int hashingIterations;
+	unsigned int checkpointCount;
+	unsigned int skipCheckpointCount;
+	unsigned int hashingIterations;
 
 	if (argc != 5) {
 		return enif_make_badarg(envPtr);
@@ -153,13 +171,13 @@ static ERL_NIF_TERM vdf_sha2_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM
 	if (Seed.size != VDF_SHA_HASH_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[2], &checkpointCount)) {
+	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!vdf_validate_common_params(checkpointCount, skipCheckpointCount, hashingIterations)) {
@@ -167,7 +185,7 @@ static ERL_NIF_TERM vdf_sha2_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM
 	}
 
 	size_t outCheckpointSize;
-	if (!vdf_mul_size_checkpoint_output(checkpointCount, &outCheckpointSize)) {
+	if (!vdf_checkpoint_output_size(checkpointCount, &outCheckpointSize)) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -181,9 +199,9 @@ static ERL_NIF_TERM vdf_sha2_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM
 static ERL_NIF_TERM vdf_sha2_fused_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
 	ErlNifBinary Salt, Seed;
-	int checkpointCount;
-	int skipCheckpointCount;
-	int hashingIterations;
+	unsigned int checkpointCount;
+	unsigned int skipCheckpointCount;
+	unsigned int hashingIterations;
 
 	if (argc != 5) {
 		return enif_make_badarg(envPtr);
@@ -200,13 +218,13 @@ static ERL_NIF_TERM vdf_sha2_fused_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	if (Seed.size != VDF_SHA_HASH_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[2], &checkpointCount)) {
+	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!vdf_validate_common_params(checkpointCount, skipCheckpointCount, hashingIterations)) {
@@ -214,7 +232,7 @@ static ERL_NIF_TERM vdf_sha2_fused_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	}
 
 	size_t outCheckpointSize;
-	if (!vdf_mul_size_checkpoint_output(checkpointCount, &outCheckpointSize)) {
+	if (!vdf_checkpoint_output_size(checkpointCount, &outCheckpointSize)) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -228,9 +246,9 @@ static ERL_NIF_TERM vdf_sha2_fused_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 static ERL_NIF_TERM vdf_sha2_hiopt_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM argv[])
 {
 	ErlNifBinary Salt, Seed;
-	int checkpointCount;
-	int skipCheckpointCount;
-	int hashingIterations;
+	unsigned int checkpointCount;
+	unsigned int skipCheckpointCount;
+	unsigned int hashingIterations;
 
 	if (argc != 5) {
 		return enif_make_badarg(envPtr);
@@ -247,13 +265,13 @@ static ERL_NIF_TERM vdf_sha2_hiopt_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	if (Seed.size != VDF_SHA_HASH_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[2], &checkpointCount)) {
+	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!vdf_validate_common_params(checkpointCount, skipCheckpointCount, hashingIterations)) {
@@ -261,7 +279,7 @@ static ERL_NIF_TERM vdf_sha2_hiopt_nif(ErlNifEnv* envPtr, int argc, const ERL_NI
 	}
 
 	size_t outCheckpointSize;
-	if (!vdf_mul_size_checkpoint_output(checkpointCount, &outCheckpointSize)) {
+	if (!vdf_checkpoint_output_size(checkpointCount, &outCheckpointSize)) {
 		return enif_make_badarg(envPtr);
 	}
 
@@ -279,9 +297,9 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 	const ERL_NIF_TERM argv[]
 ) {
 	ErlNifBinary Salt, Seed, InCheckpoint, InRes, ResetSalt, ResetSeed;
-	int checkpointCount;
-	int skipCheckpointCount;
-	int hashingIterations;
+	unsigned int checkpointCount;
+	unsigned int skipCheckpointCount;
+	unsigned int hashingIterations;
 	int maxThreadCount;
 
 	if (argc != 10) {
@@ -300,13 +318,13 @@ static ERL_NIF_TERM vdf_parallel_sha_verify_with_reset_nif(
 	if (Seed.size != VDF_SHA_HASH_SIZE) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[2], &checkpointCount)) {
+	if (!enif_get_uint(envPtr, argv[2], &checkpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[3], &skipCheckpointCount)) {
+	if (!enif_get_uint(envPtr, argv[3], &skipCheckpointCount)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[4], &hashingIterations)) {
+	if (!enif_get_uint(envPtr, argv[4], &hashingIterations)) {
 		return enif_make_badarg(envPtr);
 	}
 	if (!enif_inspect_binary(envPtr, argv[5], &InCheckpoint)) {

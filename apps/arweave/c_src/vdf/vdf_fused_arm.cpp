@@ -348,7 +348,7 @@ void sha2_p2_32_32_rev_norm (unsigned char *output,
 
 void sha2_p2_32_32_norm_loop(unsigned char  *tempOut,
                         const unsigned char *saltBuffer,
-                        int                 iterations)
+                        unsigned int        iterations)
 {
 	uint32_t state[8] = {
 		0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
@@ -362,7 +362,7 @@ void sha2_p2_32_32_norm_loop(unsigned char  *tempOut,
 	MSG2 = vld1q_u32((const uint32_t *)(tempOut + 0));
 	MSG3 = vld1q_u32((const uint32_t *)(tempOut + 16));
 
-	for (int i = 0; i < iterations; ++i) {
+	for (unsigned int i = 0; i < iterations; ++i) {
 		STATE0 = vld1q_u32(&state[0]);
 		STATE1 = vld1q_u32(&state[4]);
 
@@ -990,7 +990,16 @@ void sha2_p2_32_32_norm_rev (unsigned char *output,
 	}
 }
 
-void _vdf_sha2_fused_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
+// saltBuffer-only rounds are skipped, so the iteration count is short by 1 or 2. Saturate:
+// iterations is unsigned, a small hashingIterations must stay a no-op loop rather than wrap.
+static inline unsigned int iterations_minus(unsigned int hashingIterations, unsigned int skipped) {
+	return hashingIterations > skipped ? hashingIterations - skipped : 0;
+}
+
+void _vdf_sha2_fused_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, unsigned int checkpointCount, unsigned int skipCheckpointCount, unsigned int hashingIterations) {
+	// The NIF rejects anything below MIN_HASHING_ITERATIONS, but the C entry point is also
+	// called directly from the benchmarks: below 2 rounds this implementation and the
+	// reference one disagree, so defer to the reference.
 	if (hashingIterations < 2) {
 		vdf_sha2(saltBuffer, seed, out, outCheckpoint, checkpointCount, skipCheckpointCount, hashingIterations);
 		return;
@@ -998,38 +1007,38 @@ void _vdf_sha2_fused_arm(unsigned char* saltBuffer, unsigned char* seed, unsigne
 	unsigned char tempOut[VDF_SHA_HASH_SIZE];
 	// 2 different branches for different optimisation cases
 	if (skipCheckpointCount == 0) {
-		for(int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
+		for(unsigned int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
 			unsigned char* locIn  = checkpointIdx == 0               ? seed : (outCheckpoint + VDF_SHA_HASH_SIZE*(checkpointIdx-1));
 			unsigned char* locOut = checkpointIdx == checkpointCount ? out  : (outCheckpoint + VDF_SHA_HASH_SIZE*checkpointIdx);
 
 			sha2_p2_32_32_rev_norm(tempOut, saltBuffer, locIn);
-			sha2_p2_32_32_norm_loop(tempOut, saltBuffer, hashingIterations-2);
+			sha2_p2_32_32_norm_loop(tempOut, saltBuffer, iterations_minus(hashingIterations, 2));
 			sha2_p2_32_32_norm_rev(locOut, saltBuffer, tempOut);
 			long_add(saltBuffer, 1);
 		}
 	} else {
-		for(int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
+		for(unsigned int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
 			unsigned char* locIn  = checkpointIdx == 0               ? seed : (outCheckpoint + VDF_SHA_HASH_SIZE*(checkpointIdx-1));
 			unsigned char* locOut = checkpointIdx == checkpointCount ? out  : (outCheckpoint + VDF_SHA_HASH_SIZE*checkpointIdx);
 
 			sha2_p2_32_32_rev_norm(tempOut, saltBuffer, locIn);
 			// 1 skip on start
-			sha2_p2_32_32_norm_loop(tempOut, saltBuffer, hashingIterations-1);
+			sha2_p2_32_32_norm_loop(tempOut, saltBuffer, iterations_minus(hashingIterations, 1));
 			long_add(saltBuffer, 1);
-			for(int j = 1; j < skipCheckpointCount; j++) {
+			for(unsigned int j = 1; j < skipCheckpointCount; j++) {
 				// no skips
 				sha2_p2_32_32_norm_loop(tempOut, saltBuffer, hashingIterations);
 				long_add(saltBuffer, 1);
 			}
 			// 1 skip on end
-			sha2_p2_32_32_norm_loop(tempOut, saltBuffer, hashingIterations-1);
+			sha2_p2_32_32_norm_loop(tempOut, saltBuffer, iterations_minus(hashingIterations, 1));
 			sha2_p2_32_32_norm_rev(locOut, saltBuffer, tempOut);
 			long_add(saltBuffer, 1);
 		}
 	}
 }
 
-void vdf_sha2_fused_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
+void vdf_sha2_fused_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, unsigned int checkpointCount, unsigned int skipCheckpointCount, unsigned int hashingIterations) {
 	unsigned char saltBufferStack[SALT_SIZE];
 	// ensure 1 L1 cache page used
 	// no access to heap, except of 0-iteration

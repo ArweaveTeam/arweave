@@ -377,10 +377,10 @@ run_check "benchmark-hash" 1 "Hashing benchmark" -- \
 	./bin/benchmark-hash randomx 512 jit 1 large_pages 0 hw_aes 0
 
 # mode=openssl exercises arweave_config:set([vdf, algorithm], …), the
-# integration we most want to smoke. difficulty=1 keeps the VDF step
-# tiny.
+# integration we most want to smoke. difficulty=2 keeps the VDF step
+# tiny - it is also MIN_VDF_DIFFICULTY, below which the NIFs badarg.
 run_check "benchmark-vdf" 1 "VDF step computed" -- \
-	./bin/benchmark-vdf mode openssl difficulty 1 verify false
+	./bin/benchmark-vdf mode openssl difficulty 2 verify false
 
 # Single entropy-only sample (no `dir` arg → skip Phase 2 disk I/O in
 # the bench). Calls arweave_config:set([randomx, large_pages], …) —

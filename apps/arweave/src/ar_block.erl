@@ -287,7 +287,8 @@ compute_next_vdf_difficulty(PrevB) ->
                                   HistoryPart
                                  ),
                             NewVDFDifficulty =
-                                (VDFIntervalTotal * VDFDifficulty) div IntervalTotal,
+                                max(?MIN_VDF_DIFFICULTY,
+                                    (VDFIntervalTotal * VDFDifficulty) div IntervalTotal),
                             ?LOG_DEBUG([{event, vdf_difficulty_retarget},
                                         {height, Height},
                                         {old_vdf_difficulty, VDFDifficulty},
@@ -312,7 +313,9 @@ compute_next_vdf_difficulty(PrevB) ->
                                  ),
                             NewVDFDifficulty =
                                 (VDFIntervalTotal * VDFDifficulty) div IntervalTotal,
-                            EMAVDFDifficulty = (9*VDFDifficulty + NewVDFDifficulty) div 10,
+                            EMAVDFDifficulty =
+                                max(?MIN_VDF_DIFFICULTY,
+                                    (9*VDFDifficulty + NewVDFDifficulty) div 10),
                             ?LOG_DEBUG([{event, vdf_difficulty_retarget},
                                         {height, Height},
                                         {old_vdf_difficulty, VDFDifficulty},

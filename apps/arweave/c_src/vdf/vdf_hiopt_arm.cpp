@@ -38,7 +38,7 @@ unsigned int H07[8] = { 0x6a09e667U,0xbb67ae85U,0x3c6ef372U,0xa54ff53aU,
 //    SHA
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // NOTE saltBuffer is mutable in progress
-void _vdf_sha2_hiopt_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
+void _vdf_sha2_hiopt_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, unsigned int checkpointCount, unsigned int skipCheckpointCount, unsigned int hashingIterations) {
 	//unsigned char tempOut[VDF_SHA_HASH_SIZE];
 	// 2 different branches for different optimisation cases
 
@@ -47,7 +47,7 @@ void _vdf_sha2_hiopt_arm(unsigned char* saltBuffer, unsigned char* seed, unsigne
 	unsigned char inBuffer[64];
 
 	if (skipCheckpointCount == 0) {
-		for (int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
+		for (unsigned int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
 			unsigned char* locIn = checkpointIdx == 0 ? seed : (outCheckpoint + VDF_SHA_HASH_SIZE * (checkpointIdx - 1));
 			unsigned char* locOut = checkpointIdx == checkpointCount ? out : (outCheckpoint + VDF_SHA_HASH_SIZE * checkpointIdx);
 
@@ -61,7 +61,7 @@ void _vdf_sha2_hiopt_arm(unsigned char* saltBuffer, unsigned char* seed, unsigne
 		}
 	}
 	else {
-		for (int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
+		for (unsigned int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
 			unsigned char* locIn = checkpointIdx == 0 ? seed : (outCheckpoint + VDF_SHA_HASH_SIZE * (checkpointIdx - 1));
 			unsigned char* locOut = checkpointIdx == checkpointCount ? out : (outCheckpoint + VDF_SHA_HASH_SIZE * checkpointIdx);
 			
@@ -74,7 +74,7 @@ void _vdf_sha2_hiopt_arm(unsigned char* saltBuffer, unsigned char* seed, unsigne
 			memcpy(&inBuffer[32], sha256, 32);
 			long_add(saltBuffer, 1);
 			reverse_endianness_asm((uint32_t*)saltBuffer, inBuffer);
-			for (int j = 1; j < skipCheckpointCount; j++) {
+			for (unsigned int j = 1; j < skipCheckpointCount; j++) {
 				// no skips
 				memcpy(sha256, H07, 32);
 				sha256_block_vdf_order(sha256, inBuffer, hashingIterations);
@@ -96,7 +96,7 @@ void _vdf_sha2_hiopt_arm(unsigned char* saltBuffer, unsigned char* seed, unsigne
 //   unsigned char* outCheckpoint = (unsigned char*)malloc(checkpointCount*VDF_SHA_HASH_SIZE);
 //   free(outCheckpoint);
 // for call
-void vdf_sha2_hiopt_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
+void vdf_sha2_hiopt_arm(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, unsigned int checkpointCount, unsigned int skipCheckpointCount, unsigned int hashingIterations) {
 	unsigned char saltBufferStack[SALT_SIZE];
 	// ensure 1 L1 cache page used
 	// no access to heap, except of 0-iteration

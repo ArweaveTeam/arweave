@@ -501,39 +501,39 @@
 }
 
 // TODO make even better impl with ideas from ARM impl
-void _vdf_sha2_fused_x86(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
+void _vdf_sha2_fused_x86(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, unsigned int checkpointCount, unsigned int skipCheckpointCount, unsigned int hashingIterations) {
 	// 2 different branches for different optimisation cases
 	if (skipCheckpointCount == 0) {
-		for(int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
+		for(unsigned int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
 			unsigned char* locIn  = checkpointIdx == 0               ? seed : (outCheckpoint + VDF_SHA_HASH_SIZE*(checkpointIdx-1));
 			unsigned char* locOut = checkpointIdx == checkpointCount ? out  : (outCheckpoint + VDF_SHA_HASH_SIZE*checkpointIdx);
 			memcpy(locOut, locIn, VDF_SHA_HASH_SIZE);
 
-			for(int i = 0; i < hashingIterations; i++) {
+			for(unsigned int i = 0; i < hashingIterations; i++) {
 				sha2_p2_32_32(locOut, saltBuffer, locOut);
 			}
 			long_add(saltBuffer, 1);
 		}
 	} else {
-		for(int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
+		for(unsigned int checkpointIdx = 0; checkpointIdx <= checkpointCount; checkpointIdx++) {
 			unsigned char* locIn  = checkpointIdx == 0               ? seed : (outCheckpoint + VDF_SHA_HASH_SIZE*(checkpointIdx-1));
 			unsigned char* locOut = checkpointIdx == checkpointCount ? out  : (outCheckpoint + VDF_SHA_HASH_SIZE*checkpointIdx);
 			memcpy(locOut, locIn, VDF_SHA_HASH_SIZE);
 
 			// 1 skip on start
-			for(int i = 0; i < hashingIterations; i++) {
+			for(unsigned int i = 0; i < hashingIterations; i++) {
 				sha2_p2_32_32(locOut, saltBuffer, locOut);
 			}
 			long_add(saltBuffer, 1);
-			for(int j = 1; j < skipCheckpointCount; j++) {
+			for(unsigned int j = 1; j < skipCheckpointCount; j++) {
 				// no skips
-				for(int i = 0; i < hashingIterations; i++) {
+				for(unsigned int i = 0; i < hashingIterations; i++) {
 					sha2_p2_32_32(locOut, saltBuffer, locOut);
 				}
 				long_add(saltBuffer, 1);
 			}
 			// 1 skip on end
-			for(int i = 0; i < hashingIterations; i++) {
+			for(unsigned int i = 0; i < hashingIterations; i++) {
 				sha2_p2_32_32(locOut, saltBuffer, locOut);
 			}
 			long_add(saltBuffer, 1);
@@ -541,7 +541,7 @@ void _vdf_sha2_fused_x86(unsigned char* saltBuffer, unsigned char* seed, unsigne
 	}
 }
 
-void vdf_sha2_fused_x86(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, int checkpointCount, int skipCheckpointCount, int hashingIterations) {
+void vdf_sha2_fused_x86(unsigned char* saltBuffer, unsigned char* seed, unsigned char* out, unsigned char* outCheckpoint, unsigned int checkpointCount, unsigned int skipCheckpointCount, unsigned int hashingIterations) {
 	unsigned char saltBufferStack[SALT_SIZE];
 	// ensure 1 L1 cache page used
 	// no access to heap, except of 0-iteration

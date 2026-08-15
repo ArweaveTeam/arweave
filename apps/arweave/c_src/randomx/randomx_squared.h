@@ -10,12 +10,12 @@ extern "C" {
 RANDOMX_EXPORT int rsp_fused_entropy(
     randomx_vm** vmList,
     size_t scratchpadSize,
-    int subChunkCount,
-    int subChunkSize,
-    int laneCount,
-    int rxDepth,
-    int randomxProgramCount,
-    int blockSize,
+    unsigned int subChunkCount,
+    unsigned int subChunkSize,
+    unsigned int laneCount,
+    unsigned int rxDepth,
+    unsigned int randomxProgramCount,
+    unsigned int blockSize,
     const unsigned char* keyData,
     size_t keySize,
     unsigned char* outEntropy  // We'll pass in a pointer for final scratchpad data

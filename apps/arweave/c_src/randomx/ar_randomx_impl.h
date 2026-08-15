@@ -66,15 +66,28 @@ static ERL_NIF_TERM init_nif(ErlNifEnv* envPtr, int argc, const ERL_NIF_TERM arg
 	struct state *statePtr;
 	ERL_NIF_TERM resource;
 	unsigned int numWorkers;
+	int modeArg;
 	int jitEnabled, largePagesEnabled;
 	randomx_flags flags;
 
 	if (!enif_inspect_binary(envPtr, argv[0], &key)) {
 		return enif_make_badarg(envPtr);
 	}
-	if (!enif_get_int(envPtr, argv[1], &mode)) {
+	// Read into an int rather than casting &mode to int*: the underlying type of an enum
+	// with only small non-negative enumerators is implementation-defined, so it may be
+	// unsigned int, or as narrow as unsigned char under -fshort-enums. Writing four bytes
+	// through such a pointer overflows the object and clobbers whatever follows it.
+	// Validating the int first also avoids storing an out-of-range value in the enum.
+	if (!enif_get_int(envPtr, argv[1], &modeArg)) {
 		return enif_make_badarg(envPtr);
 	}
+	// Without this check any unknown mode takes the light branch below - skipping the
+	// numWorkers check - and is then stored in the state as is. Only info_nif notices,
+	// long after the state has been used for hashing.
+	if (modeArg != HASHING_MODE_FAST && modeArg != HASHING_MODE_LIGHT) {
+		return enif_make_badarg(envPtr);
+	}
+	mode = (hashing_mode) modeArg;
 	if (!enif_get_int(envPtr, argv[2], &jitEnabled)) {
 		return enif_make_badarg(envPtr);
 	}
